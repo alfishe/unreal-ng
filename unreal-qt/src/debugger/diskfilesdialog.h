@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 #include <QDialog>
 
 class Emulator;
@@ -16,7 +18,7 @@ class DiskFilesDialog : public QDialog
     Q_OBJECT
 
 public:
-    DiskFilesDialog(Emulator* emulator, QWidget* parent = nullptr);
+    DiskFilesDialog(std::shared_ptr<Emulator> emulator, QWidget* parent = nullptr);
 
 public slots:
     void refresh();
@@ -32,7 +34,7 @@ private:
     /// The disk:X/NAME.T path of the selected file ("" when none)
     QString selectedPath() const;
 
-    Emulator* _emulator;
+    std::shared_ptr<Emulator> _emulator;
     QComboBox* _drive = nullptr;
     QTableWidget* _table = nullptr;
     QPushButton* _open = nullptr;

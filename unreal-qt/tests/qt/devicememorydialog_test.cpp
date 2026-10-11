@@ -39,7 +39,7 @@ TEST_F(DeviceMemoryDialog_Test, TypedBytesReachTheTsConfPalette)
     auto* decoder = dynamic_cast<PortDecoder_TSConf*>(_emulator->GetContext()->pPortDecoder);
     ASSERT_NE(decoder, nullptr);
 
-    DeviceMemoryDialog dialog(_emulator.get());
+    DeviceMemoryDialog dialog(_emulator);
     auto* regions = dialog.findChild<QComboBox*>();
     auto* view = dialog.findChild<QHexView*>();
     ASSERT_NE(regions, nullptr);
@@ -70,7 +70,7 @@ TEST_F(DeviceMemoryDialog_Test, TypedBytesReachTheTsConfPalette)
 TEST_F(DeviceMemoryDialog_Test, MachineWithoutRegions)
 {
     ASSERT_NO_FATAL_FAILURE(Create("48K"));
-    DeviceMemoryDialog dialog(_emulator.get());
+    DeviceMemoryDialog dialog(_emulator);
     EXPECT_EQ(dialog.findChild<QComboBox*>()->count(), 0);
     EXPECT_FALSE(dialog.findChild<QHexView*>()->isEnabled());
 }

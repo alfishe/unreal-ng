@@ -64,13 +64,14 @@ enum EmulatorStateEnum : uint8_t
     StatePaused,
     StateResumed,
     StateStopped,
-    StateDestroying  // Prevents new operations during destruction
+    StateDestroying,  // Prevents new operations during destruction
+    StateRetired      // Removed from the manager: stopped, detached, refuses changes; alive until its last holder lets go
 };
 
 inline const char* getEmulatorStateName(EmulatorStateEnum value)
 {
     static const char* names[] = {"StateUnknown", "StateInitialized", "StateRun",       "StatePaused",
-                                  "StateResumed", "StateStopped",     "StateDestroying"};
+                                  "StateResumed", "StateStopped",     "StateDestroying", "StateRetired"};
 
     return names[value];
 };
@@ -297,9 +298,16 @@ private:
     volatile bool _isReleased = false;
 
     // Context leases (LeaseContext): readers hold _leaseMutex shared; the
-    // removal sets _retiring, then takes it exclusively before Stop()/Release()
-    mutable std::shared_mutex _leaseMutex;
+    // removal sets _retiring, then takes it exclusively before Stop()/Retire()
+    mutable std::shared_timed_mutex _leaseMutex;
     std::atomic<bool> _retiring{false};
+    /// Retire() has run: stopped, detached, refusing changes; the memory stays until the last shared_ptr goes
+    std::atomic<bool> _isRetired{false};
+    /// The emulation thread has left Start() (StopFor waits on it with a timeout instead of an unbounded join)
+    std::mutex _loopExitMutex;
+    std::condition_variable _loopExitCv;
+    bool _loopExited = true;
+    std::function<void()> _threadExitHook;
     std::atomic<bool> _romReloadPending{false};  ///< RequestRomReload: reread the ROM at the next Reset
 
     // Step-over synchronization
@@ -345,6 +353,7 @@ public:
     void RequestHardReset() { Reset(true); }
 
 private:
+    void RetireNoGuard();
     void ReleaseNoGuard();
 
 public:
@@ -383,7 +392,15 @@ public:
     }
 
     [[nodiscard]] bool Init();
+    /// Retire (if not yet) and free everything: the context, Core, every device. For the last owner (~Emulator) and
+    /// direct callers (tests, a failed Init). EmulatorManager never calls it: a removal retires, the last holder frees
     void Release();
+    /// The removal's end (EmulatorManager, after Stop): the instance stops being a live machine. No emulation thread,
+    /// no host input, no audio callback, no coordinator session; the arbiter refuses execution and the coordinator
+    /// refuses machine-changing operations. Nothing is freed: a holder of a shared_ptr (a GUI handler that runs late,
+    /// a WebAPI request in flight) keeps reading a stopped, valid machine. Idempotent
+    void Retire();
+    bool IsRetired() const { return _isRetired.load(); }
     /// The configuration loader of this instance (what the INI said beyond CONFIG: the media set, [MIDI] Bank=);
     /// nullptr before Init
     const Config* GetConfigLoader() const
@@ -545,6 +562,12 @@ public:
     /// overwrites the freshly written state. See MainLoop::WaitForPauseConfirmation.
     bool WaitForPauseConfirmation(uint32_t timeout_ms = 1000);
     void Stop();
+    /// Stop() bounded: false when the emulation thread has not left within @p timeout. The thread is then detached
+    /// and still runs; the instance must never be freed (EmulatorManager keeps it as stuck)
+    [[nodiscard]] bool StopFor(std::chrono::milliseconds timeout);
+    /// Tests: runs on the emulation thread after the main loop has returned, before the thread reports its exit
+    /// (holding it there makes a stuck thread for StopFor)
+    void SetThreadExitHookForTest(std::function<void()> hook) { _threadExitHook = std::move(hook); }
 
     // File format operations
     /// `reportedPath`: the file named in the load notification and the core
@@ -791,18 +814,15 @@ public:
     const std::string& GetId() const;
     EmulatorStateEnum GetState();
 
-    /// Release() has run: the context and every subsystem are gone. A holder
-    /// of a shared_ptr (a UI binding) must not call into the instance any more
+    /// Release() has run: the context and every subsystem are gone. Only the last owner (~Emulator) or a direct
+    /// caller releases; a removed instance is retired instead (IsRetired) and stays readable while held
     bool IsReleased() const { return _isReleased; }
 
-    /// A short-lived guarantee that the context (and every subsystem it points
-    /// to) stays alive: EmulatorManager::RemoveEmulator() waits for all live
-    /// leases before it stops and frees the instance. Empty (false) once the
-    /// removal has begun or the instance is released - the holder then must not
-    /// touch the instance. For threads that do not own the instance (the UI):
-    /// a raw GetContext() can be freed by a removal on another thread at any
-    /// moment. Keep a lease for one handler at most, and never remove the leased
-    /// instance (or wait for a thread that does) while holding it.
+    /// A short-lived guarantee that the machine is live, not being removed: EmulatorManager::RemoveEmulator() waits
+    /// (bounded) for the live leases before it stops and retires the instance. Empty (false) once the removal has
+    /// begun or the instance is released - the holder then must not change the machine. Memory safety does not
+    /// depend on it: the memory stays while a shared_ptr<Emulator> is held. Keep a lease for one handler at most,
+    /// and never remove the leased instance (or wait for a thread that does) while holding it.
     class ContextLease
     {
     public:
@@ -826,12 +846,12 @@ public:
 
     private:
         friend class Emulator;
-        ContextLease(std::shared_lock<std::shared_mutex>&& lock, EmulatorContext* context)
+        ContextLease(std::shared_lock<std::shared_timed_mutex>&& lock, EmulatorContext* context)
             : _lock(std::move(lock)), _context(context)
         {
         }
 
-        std::shared_lock<std::shared_mutex> _lock;
+        std::shared_lock<std::shared_timed_mutex> _lock;
         EmulatorContext* _context = nullptr;
     };
     ContextLease LeaseContext();
@@ -840,9 +860,12 @@ public:
     bool IsRetiring() const { return _retiring.load(); }
     /// EmulatorManager, first step of a removal: refuse new leases
     void BeginRetirement();
-    /// EmulatorManager, before Stop()/Release(): wait until every lease taken
+    /// EmulatorManager, before Stop()/Retire(): wait until every lease taken
     /// before BeginRetirement() has ended. Hold no lock a lease holder may wait for
     void WaitForContextLeases();
+    /// The same, bounded: false when a lease is still held after @p timeout. Safe for a removal, which then retires
+    /// (frees nothing): the holder goes on reading a retired machine
+    [[nodiscard]] bool WaitForContextLeases(std::chrono::milliseconds timeout);
     void SetState(EmulatorStateEnum state);
 
     // Status methods

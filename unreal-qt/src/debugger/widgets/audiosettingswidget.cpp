@@ -7,6 +7,7 @@
 #include <QFileInfo>
 #include <QToolTip>
 #include "base/featuremanager.h"
+#include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/sound/covox.h"
@@ -15,8 +16,8 @@
 #include "emulator/sound/chips/neogs/neogsmedia.h"
 #include "emulator/soundcharacterpreferences.h"
 
-AudioSettingsWidget::AudioSettingsWidget(EmulatorContext* context, QWidget* parent)
-    : QWidget(parent), _context(context)
+AudioSettingsWidget::AudioSettingsWidget(std::shared_ptr<Emulator> emulator, QWidget* parent)
+    : QWidget(parent), _emulator(std::move(emulator))
 {
     setWindowTitle("Audio Settings");
     setMinimumWidth(380);
@@ -36,14 +37,19 @@ AudioSettingsWidget::~AudioSettingsWidget()
         _meterTimer->stop();
 }
 
-void AudioSettingsWidget::setContext(EmulatorContext* context)
+void AudioSettingsWidget::setEmulator(std::shared_ptr<Emulator> emulator)
 {
     // Stop timer FIRST to prevent race with stale context access
     if (_meterTimer)
         _meterTimer->stop();
 
-    _context = context;
+    _emulator = std::move(emulator);
     refreshFromContext();
+}
+
+EmulatorContext* AudioSettingsWidget::context() const
+{
+    return _emulator ? _emulator->GetContext() : nullptr;  // lifetime-ok: the widget holds the shared_ptr
 }
 
 void AudioSettingsWidget::createUI()
@@ -388,10 +394,10 @@ void AudioSettingsWidget::rebuildSourcesSection()
     grid->addWidget(new QLabel("", this), 0, 4);  // volume label
     grid->addWidget(new QLabel("Level", this), 0, 5);
 
-    if (!_context || !_context->pSoundManager)
+    if (!context() || !context()->pSoundManager)
         return;
 
-    const auto& devices = _context->pSoundManager->devices();
+    const auto& devices = context()->pSoundManager->devices();
     int row = 1;
 
     for (const auto& dev : devices)
@@ -558,7 +564,7 @@ void AudioSettingsWidget::refreshFromContext()
 {
     disconnectSignals();
 
-    bool hasContext = _context && _context->pSoundManager;
+    bool hasContext = context() && context()->pSoundManager;
 
     _controlsContainer->setEnabled(hasContext);
     _statusLabel->setVisible(!hasContext);
@@ -569,7 +575,7 @@ void AudioSettingsWidget::refreshFromContext()
 
     if (hasContext)
     {
-        SoundManager* sm = _context->pSoundManager;
+        SoundManager* sm = context()->pSoundManager;
 
         // Load AY settings from chip 0 (stereo/model shared across both chips)
         SoundChip_AY8910* ay0 = sm->getAYChip(0);
@@ -671,9 +677,9 @@ void AudioSettingsWidget::refreshFromContext()
         updatePunchVoicingHint();
 
         // FIR filter
-        if (_context->pFeatureManager)
+        if (context()->pFeatureManager)
         {
-            _firCheckbox->setChecked(_context->pFeatureManager->isEnabled(Features::kSoundHQ));
+            _firCheckbox->setChecked(context()->pFeatureManager->isEnabled(Features::kSoundHQ));
         }
 
         // General Sound slot section
@@ -710,9 +716,9 @@ void AudioSettingsWidget::refreshFromContext()
 void AudioSettingsWidget::updateSoloIndicator()
 {
     bool anySolo = false;
-    if (_context && _context->pSoundManager)
+    if (context() && context()->pSoundManager)
     {
-        for (const auto& dev : _context->pSoundManager->devices())
+        for (const auto& dev : context()->pSoundManager->devices())
         {
             if (dev.solo)
             {
@@ -730,32 +736,32 @@ void AudioSettingsWidget::updateSoloIndicator()
 void AudioSettingsWidget::onSourceMuteChanged(int state)
 {
     auto* check = qobject_cast<QCheckBox*>(sender());
-    if (!check || !_context || !_context->pSoundManager)
+    if (!check || !context() || !context()->pSoundManager)
         return;
 
     auto type = static_cast<AudioSourceType>(check->property("sourceType").toInt());
-    _context->pSoundManager->setDeviceMute(type, state == Qt::Checked);
+    context()->pSoundManager->setDeviceMute(type, state == Qt::Checked);
 }
 
 void AudioSettingsWidget::onSourceSoloChanged(int state)
 {
     auto* check = qobject_cast<QCheckBox*>(sender());
-    if (!check || !_context || !_context->pSoundManager)
+    if (!check || !context() || !context()->pSoundManager)
         return;
 
     auto type = static_cast<AudioSourceType>(check->property("sourceType").toInt());
-    _context->pSoundManager->setDeviceSolo(type, state == Qt::Checked);
+    context()->pSoundManager->setDeviceSolo(type, state == Qt::Checked);
     updateSoloIndicator();
 }
 
 void AudioSettingsWidget::onSourceVolumeChanged(int value)
 {
     auto* slider = qobject_cast<QSlider*>(sender());
-    if (!slider || !_context || !_context->pSoundManager)
+    if (!slider || !context() || !context()->pSoundManager)
         return;
 
     auto type = static_cast<AudioSourceType>(slider->property("sourceType").toInt());
-    _context->pSoundManager->setDeviceVolume(type, value / 100.0f);
+    context()->pSoundManager->setDeviceVolume(type, value / 100.0f);
 
     // Update label
     for (auto& row : _sourceRows)
@@ -772,13 +778,13 @@ void AudioSettingsWidget::onSourceVolumeChanged(int value)
 
 void AudioSettingsWidget::onStereoModeChanged(int index)
 {
-    if (!_context || !_context->pSoundManager)
+    if (!context() || !context()->pSoundManager)
         return;
 
     // Apply to all AY chips
-    for (int i = 0; i < _context->pSoundManager->getAYChipCount(); i++)
+    for (int i = 0; i < context()->pSoundManager->getAYChipCount(); i++)
     {
-        SoundChip_AY8910* ay = _context->pSoundManager->getAYChip(i);
+        SoundChip_AY8910* ay = context()->pSoundManager->getAYChip(i);
         if (ay)
             ay->setStereoMode(static_cast<AYStereoMode>(index));
     }
@@ -786,19 +792,19 @@ void AudioSettingsWidget::onStereoModeChanged(int index)
 
 void AudioSettingsWidget::onChipModelChanged(int index)
 {
-    if (!_context || !_context->pSoundManager)
+    if (!context() || !context()->pSoundManager)
         return;
 
     // TSFM: the YM2203's SSG half is a fixed YM2149 (§8.3) - the selector is
     // locked, but ignore stray programmatic changes too
-    ITurboSoundDevice* tsDevice = _context->pSoundManager->getTurboSound();
+    ITurboSoundDevice* tsDevice = context()->pSoundManager->getTurboSound();
     if (tsDevice && tsDevice->hasFm())
         return;
 
     // Apply to all AY chips
-    for (int i = 0; i < _context->pSoundManager->getAYChipCount(); i++)
+    for (int i = 0; i < context()->pSoundManager->getAYChipCount(); i++)
     {
-        SoundChip_AY8910* ay = _context->pSoundManager->getAYChip(i);
+        SoundChip_AY8910* ay = context()->pSoundManager->getAYChip(i);
         if (ay)
             ay->setChipModel(static_cast<AYChipModel>(index));
     }
@@ -806,7 +812,7 @@ void AudioSettingsWidget::onChipModelChanged(int index)
 
 void AudioSettingsWidget::onAYVoicingChanged(int index)
 {
-    if (!_context || !_context->pSoundManager || index < 0)
+    if (!context() || !context()->pSoundManager || index < 0)
         return;
 
     const std::string id = _ayVoicingCombo->itemData(index).toString().toStdString();
@@ -815,17 +821,17 @@ void AudioSettingsWidget::onAYVoicingChanged(int index)
         return;
 
     // Thread-safe request: the audio switches click-free at the next frame
-    _context->pSoundManager->setAYVoicing(preset);
+    context()->pSoundManager->setAYVoicing(preset);
     SoundCharacterPreferences::Save("ay_voicing", id);
     updatePunchVoicingHint();
 }
 
 void AudioSettingsWidget::onAYPunchChanged(int state)
 {
-    if (_context && _context->pSoundManager)
+    if (context() && context()->pSoundManager)
     {
         const bool enabled = state == Qt::Checked;
-        _context->pSoundManager->setAYPunch(enabled);
+        context()->pSoundManager->setAYPunch(enabled);
         SoundCharacterPreferences::Save("ay_punch", enabled ? "on" : "off");
         updatePunchVoicingHint();
     }
@@ -833,10 +839,10 @@ void AudioSettingsWidget::onAYPunchChanged(int state)
 
 void AudioSettingsWidget::onAYRoomModeChanged(int index)
 {
-    if (_context && _context->pSoundManager)
+    if (context() && context()->pSoundManager)
     {
         auto mode = static_cast<AudioCharacterChain::RoomMode>(_ayRoomCombo->itemData(index).toInt());
-        _context->pSoundManager->setAYRoomMode(mode);
+        context()->pSoundManager->setAYRoomMode(mode);
         SoundCharacterPreferences::Save("ay_room", AudioCharacterChain::roomModeId(mode));
     }
 }
@@ -852,19 +858,19 @@ void AudioSettingsWidget::updatePunchVoicingHint()
 
 void AudioSettingsWidget::onFirChanged(int state)
 {
-    if (_context && _context->pFeatureManager)
-        _context->pFeatureManager->setFeature("soundhq", state == Qt::Checked);
+    if (context() && context()->pFeatureManager)
+        context()->pFeatureManager->setFeature("soundhq", state == Qt::Checked);
 }
 
 void AudioSettingsWidget::onFmTrimChanged(int value)
 {
-    if (!_context || !_context->pSoundManager)
+    if (!context() || !context()->pSoundManager)
         return;
 
     // Half-dB slider units -> dB, applied live to every YM2203 FM: the TurboSound FM's two chips and a ZX-MultiSound's
     // (§7.1; the same [SOUND] TSFM_FmLevelDb calibration)
     const double db = value / 2.0;
-    _context->pSoundManager->setFmTrimDb(db);
+    context()->pSoundManager->setFmTrimDb(db);
     _fmTrimLabel->setText(QString("%1%2 dB").arg(db >= 0 ? "+" : "").arg(db, 0, 'f', 1));
 }
 
@@ -873,13 +879,13 @@ void AudioSettingsWidget::onFmTrimChanged(int value)
 void AudioSettingsWidget::onChannelMuteChanged(int state)
 {
     auto* check = qobject_cast<QCheckBox*>(sender());
-    if (!check || !_context || !_context->pSoundManager)
+    if (!check || !context() || !context()->pSoundManager)
         return;
 
     int chip = check->property("chip").toInt();
     int channel = check->property("channel").toInt();
 
-    SoundChip_AY8910* ay = _context->pSoundManager->getAYChip(chip);
+    SoundChip_AY8910* ay = context()->pSoundManager->getAYChip(chip);
     if (ay)
         ay->setChannelMuted(channel, state == Qt::Checked);
 }
@@ -887,14 +893,14 @@ void AudioSettingsWidget::onChannelMuteChanged(int state)
 void AudioSettingsWidget::onChannelVolumeChanged(int value)
 {
     auto* slider = qobject_cast<QSlider*>(sender());
-    if (!slider || !_context || !_context->pSoundManager)
+    if (!slider || !context() || !context()->pSoundManager)
         return;
 
     int chip = slider->property("chip").toInt();
     int channel = slider->property("channel").toInt();
     _channelVolumeLabels[chip][channel]->setText(QString("%1%").arg(value));
 
-    SoundChip_AY8910* ay = _context->pSoundManager->getAYChip(chip);
+    SoundChip_AY8910* ay = context()->pSoundManager->getAYChip(chip);
     if (ay)
         ay->setChannelVolume(channel, value / 100.0);
 }
@@ -903,10 +909,10 @@ void AudioSettingsWidget::onChannelVolumeChanged(int value)
 
 void AudioSettingsWidget::onBeeperPunchChanged(int state)
 {
-    if (_context && _context->pSoundManager)
+    if (context() && context()->pSoundManager)
     {
         const bool enabled = state == Qt::Checked;
-        _context->pSoundManager->setBeeperPunch(enabled);
+        context()->pSoundManager->setBeeperPunch(enabled);
         SoundCharacterPreferences::Save("beeper_punch", enabled ? "on" : "off");
     }
 }
@@ -915,18 +921,18 @@ void AudioSettingsWidget::onBeeperPunchChanged(int state)
 
 void AudioSettingsWidget::onCovoxDCRemovalChanged(int state)
 {
-    if (_context && _context->pSoundManager && _context->pSoundManager->hasCovox())
-        _context->pSoundManager->getCovox()->setDCRemovalEnabled(state == Qt::Checked);
+    if (context() && context()->pSoundManager && context()->pSoundManager->hasCovox())
+        context()->pSoundManager->getCovox()->setDCRemovalEnabled(state == Qt::Checked);
 }
 
 void AudioSettingsWidget::onCovoxChannelMuteChanged(int state)
 {
     auto* check = qobject_cast<QCheckBox*>(sender());
-    if (!check || !_context || !_context->pSoundManager || !_context->pSoundManager->hasCovox())
+    if (!check || !context() || !context()->pSoundManager || !context()->pSoundManager->hasCovox())
         return;
 
     int channel = check->property("channel").toInt();
-    _context->pSoundManager->getCovox()->setChannelMute(static_cast<Covox::Channel>(channel), state == Qt::Checked);
+    context()->pSoundManager->getCovox()->setChannelMute(static_cast<Covox::Channel>(channel), state == Qt::Checked);
 }
 
 // ============ Meter updates ============
@@ -937,14 +943,14 @@ void AudioSettingsWidget::updateDeviceInfo()
         return;
 
     QString text;
-    if (!_context || !_context->pSoundManager)
+    if (!context() || !context()->pSoundManager)
     {
         text = "Audio device: — (no active emulator)";
     }
     else
     {
-        const size_t coreRate = _context->pSoundManager->getCoreRate();
-        if (const AudioDeviceDescriptor* dev = _context->pAudioDeviceDescriptor.load(std::memory_order_acquire))
+        const size_t coreRate = context()->pSoundManager->getCoreRate();
+        if (const AudioDeviceDescriptor* dev = context()->pAudioDeviceDescriptor.load(std::memory_order_acquire))
         {
             text = QString("Device: %1 @ %2 Hz · Core: %3 Hz")
                        .arg(QString::fromUtf8(dev->deviceName))
@@ -974,13 +980,13 @@ void AudioSettingsWidget::updateDeviceInfo()
 /// is stamped by the GUI frame source; their difference is the A/V offset.
 QString AudioSettingsWidget::buildDeviceDetailText() const
 {
-    if (!_context || !_context->pSoundManager)
+    if (!context() || !context()->pSoundManager)
         return "No active emulator";
 
-    const AudioDeviceDescriptor* dev = _context->pAudioDeviceDescriptor.load(std::memory_order_acquire);
+    const AudioDeviceDescriptor* dev = context()->pAudioDeviceDescriptor.load(std::memory_order_acquire);
     if (!dev)
         return QString("No audio device attached · Core: %1 Hz")
-            .arg(_context->pSoundManager->getCoreRate());
+            .arg(context()->pSoundManager->getCoreRate());
 
     const uint32_t rate = dev->sampleRate.load(std::memory_order_relaxed);
     const double frameToMs = rate ? 1000.0 / rate : 0.0;
@@ -991,20 +997,20 @@ QString AudioSettingsWidget::buildDeviceDetailText() const
     // (~10 ms) around the setpoint depending on sampling phase. The
     // DRC-filtered EMA is the stable figure - per-sample latency is
     // constant; use it for the A/V offset so the readout doesn't wander.
-    const double ringFilteredMs = _context->pSoundManager->getDrcFilteredOccupancyMs();
+    const double ringFilteredMs = context()->pSoundManager->getDrcFilteredOccupancyMs();
     const double ringMs = (ringFilteredMs > 0.0) ? ringFilteredMs : ringInstantMs;
 
     const double hwMs = dev->deviceBufferFrames.load(std::memory_order_relaxed) * frameToMs;
     const double devOutMs = dev->deviceOutputLatencyFrames.load(std::memory_order_relaxed) * frameToMs;
     const double audioMs = ringMs + hwMs + devOutMs;
-    const double videoMs = _context->pVideoPresentLatencyUs.load(std::memory_order_relaxed) / 1000.0;
+    const double videoMs = context()->pVideoPresentLatencyUs.load(std::memory_order_relaxed) / 1000.0;
 
     QString text;
     text += QString("Device: %1 @ %2 Hz, %3 ch\n")
                 .arg(QString::fromUtf8(dev->deviceName))
                 .arg(rate)
                 .arg(dev->channels.load(std::memory_order_relaxed));
-    text += QString("Core rate: %1 Hz\n").arg(_context->pSoundManager->getCoreRate());
+    text += QString("Core rate: %1 Hz\n").arg(context()->pSoundManager->getCoreRate());
     text += QString("Audio delay: ring %1 ms (%2 now) + HW %3 ms + device output %4 ms = %5 ms\n")
                 .arg(ringMs, 0, 'f', 1)
                 .arg(ringInstantMs, 0, 'f', 1)
@@ -1035,7 +1041,7 @@ QString AudioSettingsWidget::buildDeviceDetailText() const
 
 void AudioSettingsWidget::onUpdateMeters()
 {
-    if (!_context || !_context->pSoundManager || !isVisible())
+    if (!context() || !context()->pSoundManager || !isVisible())
         return;
 
     updateDeviceInfo();
@@ -1045,8 +1051,8 @@ void AudioSettingsWidget::onUpdateMeters()
     // drops "NeoGS MP3", so the panel is rebuilt whenever the card or the
     // source list itself differs from what is shown; a new SD card only
     // needs its row
-    const GeneralSoundSlot gsSlot = _context->pSoundManager->generalSoundSlot();
-    const auto& devices = _context->pSoundManager->devices();
+    const GeneralSoundSlot gsSlot = context()->pSoundManager->generalSoundSlot();
+    const auto& devices = context()->pSoundManager->devices();
     bool sourcesChanged = gsSlot.kind != _shownGSSlot.kind || devices.size() != _sourceRows.size();
     for (size_t i = 0; !sourcesChanged && i < devices.size(); i++)
     {
@@ -1099,10 +1105,10 @@ void AudioSettingsWidget::updateGSSection(const GeneralSoundSlot& slot)
 
     _neoGSControls->setVisible(neoGS);
     _neoGSStereoRow->setVisible(neoGS);
-    if (neoGS && _context && _context->pSoundManager)
+    if (neoGS && context() && context()->pSoundManager)
     {
         const QSignalBlocker stereoBlocker(_neoGSStereoCombo);
-        const int stereoIndex = _neoGSStereoCombo->findData(static_cast<int>(_context->pSoundManager->neoGSStereoMode()));
+        const int stereoIndex = _neoGSStereoCombo->findData(static_cast<int>(context()->pSoundManager->neoGSStereoMode()));
         if (stereoIndex >= 0)
             _neoGSStereoCombo->setCurrentIndex(stereoIndex);
     }
@@ -1122,7 +1128,7 @@ void AudioSettingsWidget::updateGSSection(const GeneralSoundSlot& slot)
 
 void AudioSettingsWidget::onGSCardChanged(int index)
 {
-    if (!_context || !_context->pSoundManager)
+    if (!context() || !context()->pSoundManager)
         return;
 
     const auto target = static_cast<GSTypeKind>(_gsCardCombo->itemData(index).toInt());
@@ -1141,7 +1147,7 @@ void AudioSettingsWidget::onGSCardChanged(int index)
 
 void AudioSettingsWidget::onNeoGSInsertSd()
 {
-    if (!_context)
+    if (!context())
         return;
 
     const QString startDir = _shownGSSlot.sdCardImage.empty()
@@ -1153,25 +1159,25 @@ void AudioSettingsWidget::onNeoGSInsertSd()
         return;
 
     // Checked here, carried out on the emulation thread; the meter poll shows the result
-    const NeoGSMediaResult result = NeoGSRequestSdInsert(_context, path.toStdString());
+    const NeoGSMediaResult result = NeoGSRequestSdInsert(context(), path.toStdString());
     _gsStatusLabel->setText(NeoGSMediaAccepted(result) ? QString() : QString("SD card: %1").arg(NeoGSMediaResultText(result)));
     _gsStatusLabel->setVisible(!NeoGSMediaAccepted(result));
 }
 
 void AudioSettingsWidget::onNeoGSEjectSd()
 {
-    if (!_context)
+    if (!context())
         return;
 
-    const NeoGSMediaResult result = NeoGSRequestSdEject(_context);
+    const NeoGSMediaResult result = NeoGSRequestSdEject(context());
     _gsStatusLabel->setText(NeoGSMediaAccepted(result) ? QString() : QString("SD card: %1").arg(NeoGSMediaResultText(result)));
     _gsStatusLabel->setVisible(!NeoGSMediaAccepted(result));
 }
 
 void AudioSettingsWidget::onNeoGSStereoModeChanged(int index)
 {
-    if (!_context || !_context->pSoundManager)
+    if (!context() || !context()->pSoundManager)
         return;
     // Kept by the SoundManager (any thread), taken by the card at the next frame
-    _context->pSoundManager->setNeoGSStereoMode(static_cast<NeoGSConfig::StereoMode>(_neoGSStereoCombo->itemData(index).toInt()));
+    context()->pSoundManager->setNeoGSStereoMode(static_cast<NeoGSConfig::StereoMode>(_neoGSStereoCombo->itemData(index).toInt()));
 }

@@ -12,6 +12,7 @@
 /// or not. A thin adapter like the automation surfaces: everything through
 /// Vdac2Control.
 
+#include <string>
 #include <QWidget>
 
 #include "debugger/vdac2/ft812linechart.h"
@@ -60,6 +61,7 @@ protected:
 
 private:
     EmulatorContext* context() const;
+    std::string boundId() const;   ///< the bound machine's id, empty when none
     /// measure-always on for the machine shown while the window is open, back off after
     void claimMeasuring();
     void releaseMeasuring();
@@ -69,7 +71,7 @@ private:
     QLabel* _note = nullptr;
     QSpinBox* _margin = nullptr;
     Ft812LineChart* _chart = nullptr;
-    EmulatorContext* _measuring = nullptr;  ///< the machine whose card measure-always this window turned on
+    std::string _measuringId;               ///< the machine (id) whose card measure-always this window turned on
     bool _measuringWasOn = false;           ///< it was on before (automation): leave it on
     bool _loadingMargin = false;
 };

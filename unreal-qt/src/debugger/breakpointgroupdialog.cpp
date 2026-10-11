@@ -5,7 +5,7 @@
 #include <QInputDialog>
 #include <QMessageBox>
 
-BreakpointGroupDialog::BreakpointGroupDialog(Emulator* emulator, QWidget* parent)
+BreakpointGroupDialog::BreakpointGroupDialog(std::shared_ptr<Emulator> emulator, QWidget* parent)
     : QDialog(parent), _emulator(emulator)
 {
     setWindowTitle("Manage Breakpoint Groups");

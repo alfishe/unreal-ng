@@ -310,6 +310,9 @@ public:
     bool ServingAborted() const { return _servingAborted.load(std::memory_order_relaxed); }
     /// Stop: queued requests are Refused("stopping"), the served command is aborted, the loop is told to exit
     void BeginStop();
+    /// The machine was removed (Emulator::Retire, after Stop): from now on intents and commands that drive the Z80
+    /// are Refused("retired"); commands that do not drive it (readers, saves) still run. One way
+    void Retire();
     /// endregion </Priority lane>
 
     /// region <Run-control claim>
@@ -364,6 +367,8 @@ private:
     void CompleteLocked(const std::shared_ptr<detail::Request>& request, Outcome outcome, std::string detail = {});
     void RecomputeLocked();
     bool RefusedByClaimLocked(const detail::Request& request) const;
+    /// "stopping", "retired" or nullptr: the machine's lifecycle refuses the request
+    const char* LifecycleRefusalLocked(const detail::Request& request) const;
     std::string HolderLocked() const;
     void LogLocked(Decision::Kind kind, const detail::Request* request, Outcome outcome, Intent before, bool edge,
                    bool inlined = false, bool priority = false);
@@ -395,6 +400,7 @@ private:
 
     bool _loopAttached = false;
     bool _loopParked = false;
+    bool _retired = false;   ///< Retire(): intents and driving commands are refused for good
     std::thread::id _loopThread;
 
     std::optional<Requester> _claim;

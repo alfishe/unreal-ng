@@ -1,4 +1,6 @@
 #pragma once
+
+#include <memory>
 #ifndef DEBUGVISUALIZATIONWINDOW_H
 #define DEBUGVISUALIZATIONWINDOW_H
 
@@ -30,10 +32,10 @@ class DebugVisualizationWindow : public QWidget, public Observer
 {
     Q_OBJECT
 public:
-    explicit DebugVisualizationWindow(Emulator* emulator = nullptr, QWidget* parent = nullptr);
+    explicit DebugVisualizationWindow(std::shared_ptr<Emulator> emulator = nullptr, QWidget* parent = nullptr);
     virtual ~DebugVisualizationWindow() override;
 
-    void setEmulator(Emulator* emulator);
+    void setEmulator(std::shared_ptr<Emulator> emulator);
     Emulator* getEmulator();
 
     void reset();
@@ -63,7 +65,7 @@ signals:
 
 private:
     Ui::DebugVisualizationWindow* ui;
-    Emulator* _emulator = nullptr;
+    std::shared_ptr<Emulator> _emulator;
     EmulatorStateEnum _emulatorState = EmulatorStateEnum::StateUnknown;
 
     // Widgets

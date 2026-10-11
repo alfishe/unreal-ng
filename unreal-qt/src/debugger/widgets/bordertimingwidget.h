@@ -1,4 +1,6 @@
 #pragma once
+
+#include <memory>
 #ifndef BORDERTIMINGWIDGET_H
 #define BORDERTIMINGWIDGET_H
 
@@ -15,7 +17,7 @@ public:
     explicit BorderTimingWidget(QWidget *parent = nullptr);
     virtual ~BorderTimingWidget();
 
-    void setEmulator(Emulator* emulator);
+    void setEmulator(std::shared_ptr<Emulator> emulator);
     void reset();
     void refresh();
 
@@ -26,7 +28,7 @@ protected:
 private:
     void createUI();
     
-    Emulator* _emulator = nullptr;
+    std::shared_ptr<Emulator> _emulator;
     QLabel* _titleLabel = nullptr;
     
     // Border timing data

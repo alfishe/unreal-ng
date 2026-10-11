@@ -594,11 +594,11 @@ bool Emulator::Init()
 
 void Emulator::Release()
 {
-    // No context lease outlives the context, whoever releases. EmulatorManager
-    // has already waited for the leases (with no lock held), so there this
-    // never blocks
+    // No context lease outlives the context, whoever releases. The last owner
+    // runs this (~Emulator): a lease holder also holds a reference, so a lease
+    // still live here belongs to another thread finishing its handler
     BeginRetirement();
-    std::unique_lock<std::shared_mutex> leaseLock(_leaseMutex);
+    std::unique_lock<std::shared_timed_mutex> leaseLock(_leaseMutex);
 
     // Lock mutex until exiting current scope
     std::lock_guard<std::mutex> lock(_mutexInitialization);
@@ -612,20 +612,39 @@ void Emulator::Release()
 
     _isReleased = true;
 
+    // A direct release (a test, a failed Init, a never-removed instance) retires first; a removed one already has
+    if (!_isRetired.exchange(true))
+        RetireNoGuard();
+
     // Mark as destroying to prevent new operations from other threads
     SetState(StateDestroying);
 
     ReleaseNoGuard();
 }
 
-void Emulator::ReleaseNoGuard()
+void Emulator::Retire()
 {
-    // Guard against null context (shouldn't happen, but be safe)
+    BeginRetirement();
+    std::lock_guard<std::mutex> lock(_mutexInitialization);
+    if (_isReleased || _isRetired.exchange(true))
+        return;
+    RetireNoGuard();
+    SetState(StateRetired);
+}
+
+void Emulator::RetireNoGuard()
+{
+    // Nothing executes it any more, nothing changes it: the arbiter refuses execution, the coordinator refuses
+    // machine-changing operations (BUGS.md #11, docs/inprogress/2026-10-10-gui-instance-lifetime)
+    _arbiter.Retire();
+    if (_coordinator)
+        _coordinator->Retire();
+
     if (!_context)
         return;
 
     // Host input first: its handlers run on the message center's thread and reach the debug manager, the TTD
-    // controller, the main loop and the core's devices - all deleted below. Detaching waits for a handler in progress
+    // controller, the main loop and the core's devices. Detaching waits for a handler in progress
     if (_context->pKeyboard)
         _context->pKeyboard->DetachHostInput();
     if (_context->pMouseManager)
@@ -637,9 +656,21 @@ void Emulator::ReleaseNoGuard()
     // Cleanup any pending step-over operation (orphan cleanup; the emulation thread is stopped by now)
     if (const uint16_t pending = _pendingStepOverBpId.exchange(0))
     {
-        MLOGDEBUG("Emulator::ReleaseNoGuard - Cleaning up orphaned step-over breakpoint ID %d", pending);
+        MLOGDEBUG("Emulator::RetireNoGuard - Cleaning up orphaned step-over breakpoint ID %d", pending);
         FinishStepOver(pending, false);
     }
+
+    // The host's audio stops pulling from this machine
+    ClearAudioCallback();
+}
+
+void Emulator::ReleaseNoGuard()
+{
+    // Guard against null context (shouldn't happen, but be safe)
+    if (!_context)
+        return;
+
+    // Host input, the step-over hold, a pending step-over and the audio callback are gone (RetireNoGuard)
 
     // Release debug manager (and related components)
     if (_context->pDebugManager)
@@ -921,7 +952,7 @@ Emulator::ContextLease Emulator::LeaseContext()
     // and a blocking shared lock behind a waiting writer would deadlock a thread
     // that already holds a lease (rwlocks may prefer writers). try_lock_shared
     // may fail spuriously, so retry until it succeeds or the removal shows up
-    std::shared_lock<std::shared_mutex> lock(_leaseMutex, std::defer_lock);
+    std::shared_lock<std::shared_timed_mutex> lock(_leaseMutex, std::defer_lock);
     while (!lock.try_lock())
     {
         if (_retiring.load())
@@ -942,7 +973,13 @@ void Emulator::BeginRetirement()
 
 void Emulator::WaitForContextLeases()
 {
-    std::unique_lock<std::shared_mutex> lock(_leaseMutex);
+    std::unique_lock<std::shared_timed_mutex> lock(_leaseMutex);
+}
+
+bool Emulator::WaitForContextLeases(std::chrono::milliseconds timeout)
+{
+    std::unique_lock<std::shared_timed_mutex> lock(_leaseMutex, std::defer_lock);
+    return lock.try_lock_for(timeout);
 }
 
 ModuleLogger* Emulator::GetLogger()
@@ -1351,6 +1388,12 @@ void Emulator::Start()
         MLOGERROR("Emulator::Start() - not initialized");
         return;
     }
+    // A removed instance never runs again (a late GUI start, a request in flight)
+    if (_retiring.load())
+    {
+        MLOGWARNING("Emulator::Start() refused - the instance is being removed");
+        return;
+    }
 
     // StartAsync() raises the running flag on the caller thread before the
     // worker is spawned; the synchronous Start() path relies on this method
@@ -1405,6 +1448,13 @@ void Emulator::Start()
 
 void Emulator::StartAsync()
 {
+    // A removed instance never runs again (a late GUI start, a request in flight)
+    if (_retiring.load())
+    {
+        MLOGWARNING("Emulator::StartAsync() refused - the instance is being removed");
+        return;
+    }
+
     // Stop the existing thread
     if (_asyncThread)
         Stop();
@@ -1426,6 +1476,10 @@ void Emulator::StartAsync()
     std::string shortId = _emulatorId.length() > 12 ? _emulatorId.substr(_emulatorId.length() - 12) : _emulatorId;
     std::string threadName = "emulator-" + shortId;
 
+    {
+        std::lock_guard<std::mutex> exitLock(_loopExitMutex);
+        _loopExited = false;
+    }
     _asyncThread = new std::thread([this, threadName]() {
         ThreadHelper::setThreadName(threadName.c_str());
         // Scheduling is NOT set here: MainLoop::Run owns it (UpdateRealtimeScheduling),
@@ -1435,6 +1489,15 @@ void Emulator::StartAsync()
         // a time-constraint thread running flat out is throttled by the kernel
 
         this->Start();
+        if (_threadExitHook)
+            _threadExitHook();
+
+        // StopFor waits for this instead of an unbounded join
+        {
+            std::lock_guard<std::mutex> exitLock(_loopExitMutex);
+            _loopExited = true;
+        }
+        _loopExitCv.notify_all();
     });
 }
 
@@ -1713,6 +1776,11 @@ bool Emulator::WaitForPauseConfirmation(uint32_t timeout_ms)
 
 void Emulator::Stop()
 {
+    (void)StopFor(std::chrono::milliseconds::max());
+}
+
+bool Emulator::StopFor(std::chrono::milliseconds timeout)
+{
     // Every caller blocks here until the emulation thread has actually been
     // joined, not merely signaled. The old lock-free compare-exchange let a
     // caller that lost the race return immediately while the winner was still
@@ -1728,7 +1796,7 @@ void Emulator::Stop()
     if (_asyncThread && _asyncThread->get_id() == std::this_thread::get_id())
     {
         MLOGERROR("Emulator::Stop() called from the emulation thread itself - ignored");
-        return;
+        return false;
     }
 
     std::lock_guard<std::mutex> stopLock(_stopMutex);
@@ -1740,7 +1808,7 @@ void Emulator::Stop()
     {
         // Already stopped - whoever won the race already ran the join above
         // under this same mutex, so the thread is genuinely gone by now.
-        return;
+        return true;
     }
 
     // Request emulator to stop
@@ -1755,9 +1823,24 @@ void Emulator::Stop()
     // HDD: flush changes and unmount
     // Fully shut down video / sound
 
-    // If executed in async thread - wait for thread finish and destroy it
+    // If executed in async thread - wait for thread finish and destroy it. Bounded for a removal (StopFor): the
+    // thread signals its exit; a thread that does not leave is detached and the instance must never be freed
     if (_asyncThread && _asyncThread->joinable())
     {
+        if (timeout != std::chrono::milliseconds::max())
+        {
+            std::unique_lock<std::mutex> exitLock(_loopExitMutex);
+            if (!_loopExitCv.wait_for(exitLock, timeout, [this]() { return _loopExited; }))
+            {
+                exitLock.unlock();
+                MLOGERROR("Emulator::StopFor - the emulation thread of %s did not stop within %lld ms; detached, the "
+                          "instance is never freed", _emulatorId.c_str(), static_cast<long long>(timeout.count()));
+                _asyncThread->detach();
+                delete _asyncThread;
+                _asyncThread = nullptr;
+                return false;   // the stop request stays: the thread leaves whenever it gets to its next check
+            }
+        }
         _asyncThread->join();
         delete _asyncThread;
         _asyncThread = nullptr;
@@ -1773,6 +1856,7 @@ void Emulator::Stop()
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     EmulatorStateChangePayload* payload = new EmulatorStateChangePayload(GetId(), StateStopped);
     messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
+    return true;
 }
 
 // endregion
@@ -2875,9 +2959,17 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
 
 Emulator::DirectStepScope::DirectStepScope(Emulator& emulator, const char* tag) : _emulator(emulator)
 {
+    // A removed machine (retired, kept alive by a holder) never executes again: a late step or run from the GUI or a
+    // request in flight does not run
+    if (_emulator._retiring.load())
+    {
+        LOGWARNING("Emulator - a direct run '%s' refused: the instance is being removed", tag);
+        _refused = true;
+        t_directRunRefused = true;
+    }
     // A running machine: take the CPU first - park the loop, pause (outermost), and keep everybody else out until
     // the run ends. Not running (a fixture, a ZX-Poly slave its master steps): nothing else drives it
-    if (_emulator._isRunning && _emulator._mainloop)
+    else if (_emulator._isRunning && _emulator._mainloop)
     {
         execution::Result result;
         execution::CommandOptions options;
@@ -3930,7 +4022,8 @@ bool Emulator::RunWhileParked(const std::function<void()>& work)
 
 bool Emulator::IsDestroying()
 {
-    return _state == StateDestroying || _isReleased;
+    // A retired instance refuses changes the same way: a late GUI handler or request must not change it
+    return _state == StateDestroying || _isReleased || _isRetired.load();
 }
 
 bool Emulator::IsDebug()

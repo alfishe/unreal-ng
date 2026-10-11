@@ -50,7 +50,6 @@ SOURCES += \
     src/debugger/stackwidget.cpp \
     src/emulator/emulatormanager.cpp \
     src/emulator/filemanager.cpp \
-    src/emulator/guiemulatorcontext.cpp \
     src/emulator/keyboardmanager.cpp \
     src/emulator/soundmanager.cpp \
     src/logviewer/logstatusbar.cpp \
@@ -92,7 +91,6 @@ HEADERS += \
     src/debugger/stackwidget.h \
     src/emulator/emulatormanager.h \
     src/emulator/filemanager.h \
-    src/emulator/guiemulatorcontext.h \
     src/emulator/keyboardmanager.h \
     src/emulator/soundmanager.h \
     src/logviewer/logstatusbar.h \

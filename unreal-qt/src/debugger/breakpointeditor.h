@@ -1,4 +1,6 @@
 #pragma once
+
+#include <memory>
 #ifndef BREAKPOINTEDITOR_H
 #define BREAKPOINTEDITOR_H
 
@@ -19,8 +21,8 @@ class BreakpointEditor : public QDialog
 public:
     enum Mode { Add, Edit };
     
-    explicit BreakpointEditor(Emulator* emulator, Mode mode, QWidget* parent = nullptr);
-    explicit BreakpointEditor(Emulator* emulator, Mode mode, uint16_t breakpointId, QWidget* parent = nullptr);
+    explicit BreakpointEditor(std::shared_ptr<Emulator> emulator, Mode mode, QWidget* parent = nullptr);
+    explicit BreakpointEditor(std::shared_ptr<Emulator> emulator, Mode mode, uint16_t breakpointId, QWidget* parent = nullptr);
     ~BreakpointEditor();
     
     BreakpointDescriptor getBreakpointDescriptor() const;
@@ -37,7 +39,7 @@ private:
     void loadBreakpointData(uint16_t breakpointId);
     bool validateAddress(const QString& text, uint16_t& address);
     
-    Emulator* _emulator;
+    std::shared_ptr<Emulator> _emulator;
     Mode _mode;
     uint16_t _breakpointId;
     BreakpointDescriptor _descriptor;

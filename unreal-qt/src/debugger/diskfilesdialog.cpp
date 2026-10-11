@@ -70,7 +70,7 @@ void ShowText(QWidget* parent, const QString& title, const QString& text, const 
 }
 }  // namespace
 
-DiskFilesDialog::DiskFilesDialog(Emulator* emulator, QWidget* parent) : QDialog(parent), _emulator(emulator)
+DiskFilesDialog::DiskFilesDialog(std::shared_ptr<Emulator> emulator, QWidget* parent) : QDialog(parent), _emulator(emulator)
 {
     setWindowTitle(tr("Disk Files"));
     resize(640, 420);

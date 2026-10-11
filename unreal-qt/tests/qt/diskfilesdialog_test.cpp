@@ -24,7 +24,7 @@ TEST(DiskFilesDialog_Test, ListsTheFilesWithTheirFormats)
                                  .Execute({"encode", {{"text", "START LD A,1\n RET\n"}, {"codec", "alasm"}, {"output", "disk:A/PROBE.H"}}});
     ASSERT_TRUE(written.Ok()) << written.message;
 
-    DiskFilesDialog dialog(emulator.get());
+    DiskFilesDialog dialog(emulator);
     auto* table = dialog.findChild<QTableWidget*>();
     ASSERT_NE(table, nullptr);
     int row = -1;

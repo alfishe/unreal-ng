@@ -5,13 +5,16 @@ Workers in parallel, each in a loop: create an instance of a random model, run i
 state endpoints automation uses (video changes / map, screen, memory search, disasm, port trace, debug wait), maybe
 switch its model, delete it. Two long-lived neighbours keep running and are read all the time.
 Usage: webapi_stress.py <port> <seconds> <workers>
+STRESS_SELECT_CLI_PORT=<cli port> (stress_round.sh --busy-gui): before half of the deletes the worker selects its
+instance through the CLI, so the GUI binds to it and its windows read it while the delete runs (BUGS.md #11)
 """
-import json, random, sys, threading, time, urllib.request, urllib.error
+import json, os, random, socket, sys, threading, time, urllib.request, urllib.error
 
 PORT, SECONDS, WORKERS = int(sys.argv[1]), float(sys.argv[2]), int(sys.argv[3])
 BASE = f'http://localhost:{PORT}/api/v1'
 stop = time.time() + SECONDS
-stats = {'ok': 0, 'http_err': 0, 'conn_err': 0, 'cycles': 0}
+stats = {'ok': 0, 'http_err': 0, 'conn_err': 0, 'cycles': 0, 'selected': 0}
+SELECT_CLI_PORT = int(os.environ.get('STRESS_SELECT_CLI_PORT', '0'))
 lock = threading.Lock()
 
 
@@ -43,6 +46,23 @@ READS = ['/video/changes', '/video/layout', '/video/beam', '/state/screen', '/st
          '/registers', '/disasm?count=16', '/debug/snapshot', '/debug/wait?timeout_ms=0', '/memory/info',
          '/state/fdc', '/state/audio/ay', '/capture/ocr', '/profiler/porttrace/status', '/debug/pchist?depth=8',
          '/video/pixel?x=100&y=100']
+
+
+def select_in_gui(eid):
+    """The CLI's select: the GUI follows the selection and adopts the instance"""
+    try:
+        with socket.create_connection(('localhost', SELECT_CLI_PORT), timeout=5) as s:
+            s.settimeout(2)
+            s.sendall(f'select {eid}\n'.encode())
+            try:
+                s.recv(4096)
+            except socket.timeout:
+                pass
+        with lock:
+            stats['selected'] += 1
+    except OSError:
+        with lock:
+            stats['conn_err'] += 1
 
 
 def read_some(eid, n):
@@ -79,6 +99,9 @@ def worker(index):
                         eid = ids[0]
                 read_some(eid, rnd.randint(1, 6))
         finally:
+            if SELECT_CLI_PORT and rnd.random() < 0.5:
+                select_in_gui(eid)
+                time.sleep(rnd.uniform(0.0, 0.2))   # the GUI adopts it and its windows start reading
             call('DELETE', f'/emulator/{eid}', timeout=60)
             with lock:
                 stats['cycles'] += 1

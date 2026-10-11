@@ -260,7 +260,7 @@ SpeedControlWidget::SpeedControlWidget(QWidget* parent)
     updateLabel();
 }
 
-void SpeedControlWidget::setEmulator(Emulator* emulator)
+void SpeedControlWidget::setEmulator(std::shared_ptr<Emulator> emulator)
 {
     _emulator = emulator;
     updateLabel();

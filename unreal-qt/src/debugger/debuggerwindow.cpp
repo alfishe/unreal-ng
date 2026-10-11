@@ -33,7 +33,7 @@
 
 /// region <Constructor / destructors>
 
-DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(parent), ui(new Ui::DebuggerWindow)
+DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* parent) : QWidget(parent), ui(new Ui::DebuggerWindow)
 {
     _emulator = emulator;
     _curPageOffset = 0;  // Initialize to 0 to prevent uninitialized memory access
@@ -284,18 +284,14 @@ DebuggerWindow::~DebuggerWindow()
 
 /// endregion </Constructor / destructors>
 
-void DebuggerWindow::setEmulator(Emulator* emulator)
+void DebuggerWindow::setEmulator(std::shared_ptr<Emulator> emulator)
 {
     qDebug() << "DebuggerWindow::setEmulator() - Setting emulator to"
              << (emulator ? QString::fromStdString(emulator->GetId()) : "nullptr");
 
     _emulator = emulator;
 
-    // Propagate to speed control widget
-    if (m_speedControl)
-        m_speedControl->setEmulator(_emulator);
-    if (_liveSourceWindow)
-        _liveSourceWindow->setEmulator(_emulator);
+    propagateEmulator();
 
     if (_emulator)
     {
@@ -349,7 +345,7 @@ Emulator* DebuggerWindow::getEmulator()
     {
         return m_binding->emulator();
     }
-    return _emulator;
+    return _emulator.get();
 }
 
 void DebuggerWindow::setBinding(EmulatorBinding* binding)
@@ -390,12 +386,10 @@ void DebuggerWindow::setBinding(EmulatorBinding* binding)
         // If binding already has an emulator, sync state
         if (m_binding->isBound())
         {
-            _emulator = m_binding->emulator();
+            _emulator = m_binding->emulatorShared();
             _emulatorState = m_binding->state();
 
-            // Propagate to speed control widget
-            if (m_speedControl)
-                m_speedControl->setEmulator(_emulator);
+            propagateEmulator();
             if (m_binding->isReady())
             {
                 onBindingReady();
@@ -406,12 +400,21 @@ void DebuggerWindow::setBinding(EmulatorBinding* binding)
     {
         _emulator = nullptr;
 
-        // Propagate to speed control widget
-        if (m_speedControl)
-            m_speedControl->setEmulator(nullptr);
+        propagateEmulator();
 
         reset();
     }
+}
+
+void DebuggerWindow::propagateEmulator()
+{
+    // Every child that keeps the machine follows the debugger's: a removed one is let go here (BUGS.md #11)
+    if (m_speedControl)
+        m_speedControl->setEmulator(_emulator);
+    if (_liveSourceWindow)
+        _liveSourceWindow->setEmulator(_emulator);
+    if (_visualizationWindow)
+        _visualizationWindow->setEmulator(_emulator);
 }
 
 void DebuggerWindow::onBindingBound()
@@ -419,12 +422,10 @@ void DebuggerWindow::onBindingBound()
     qDebug() << "DebuggerWindow::onBindingBound()";
     if (m_binding)
     {
-        _emulator = m_binding->emulator();
+        _emulator = m_binding->emulatorShared();
         _emulatorState = m_binding->state();
 
-        // Propagate to speed control widget
-        if (m_speedControl)
-            m_speedControl->setEmulator(_emulator);
+        propagateEmulator();
         // Delegate to state handler - toolbar enabled based on actual state
         onBindingStateChanged(_emulatorState);
     }
@@ -435,9 +436,7 @@ void DebuggerWindow::onBindingUnbound()
     qDebug() << "DebuggerWindow::onBindingUnbound()";
     _emulator = nullptr;
 
-    // Propagate to speed control widget
-    if (m_speedControl)
-        m_speedControl->setEmulator(nullptr);
+    propagateEmulator();
 
     reset();
     emit notReadyForChildren();
@@ -833,9 +832,7 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 // Time to disable all rendering activities and set controls to initial inactive state
                 _emulator = nullptr;
 
-                // Propagate to speed control widget
-                if (m_speedControl)
-                    m_speedControl->setEmulator(nullptr);
+                propagateEmulator();
 
                 // Don't call reset() here since emulator is now null
                 // Just clear the UI manually without trying to read emulator state
@@ -1260,7 +1257,7 @@ void DebuggerWindow::portOut()
         QMessageBox::warning(this, "Port OUT", QString::fromStdString(error));
         return;
     }
-    const PortWrite::Result result = PortWrite::Write(_emulator, port, value, "qt");
+    const PortWrite::Result result = PortWrite::Write(_emulator.get(), port, value, "qt");
     if (!result.ok)
     {
         QMessageBox::warning(this, "Port OUT", QString::fromStdString(result.error));
