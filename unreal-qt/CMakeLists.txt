@@ -8,6 +8,9 @@ include(${CMAKE_CURRENT_LIST_DIR}/../cmake/MacOSDeploymentTarget.cmake)
 
 project(unreal-qt LANGUAGES CXX)
 
+# -DSANITIZE=address,undefined | thread: before any target (docs/testing/sanitizers.md)
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/Sanitize.cmake)
+
 # Automation options follow the root CMakeLists.txt (single source of truth).
 # option() never overrides an existing cache entry: in a root-level build the values
 # chosen there (including -D overrides) are inherited unchanged; in a standalone
