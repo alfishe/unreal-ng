@@ -104,10 +104,29 @@ public:
     MachineMode mode = MachineMode::Live;
     /// Answers Mode() with these first, one per call (a mode that changes between two reads)
     mutable std::vector<MachineMode> modes;
+    bool replaying = false;
+    bool Replaying() const override { return replaying; }
 
 private:
     CallLog* _log;
     mutable std::mutex _mutex;
+};
+
+/// A mode listener: each transition into the shared call log as "<name>:<from>-><to>[:replaying]"
+class FakeListener : public IModeListener
+{
+public:
+    FakeListener(CallLog* log, std::string name) : _log(log), _name(std::move(name)) {}
+
+    void OnModeChanged(const ModeState& from, const ModeState& to) override
+    {
+        _log->Add(_name + ":" + MachineModeName(from.mode) + "->" + MachineModeName(to.mode) +
+                  (to.replaying ? ":replaying" : ""));
+    }
+
+private:
+    CallLog* _log;
+    std::string _name;
 };
 
 class FakeOwner : public IOpOwner

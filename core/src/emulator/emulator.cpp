@@ -216,6 +216,8 @@ Emulator::~Emulator()
     // Accessing _context->pFeatureManager after Release() is a use-after-free.
     if (_featureManager)
     {
+        if (_coordinator)
+            _coordinator->Unlisten(_featureManager);
         if (_context)
             _context->pFeatureManager = nullptr;
         delete _featureManager;
@@ -1133,6 +1135,9 @@ void Emulator::WireCoordinator()
     _coordinator->SetMachine(_coordinatorPorts.get(), _coordinatorPorts.get());
     _coordinator->SetSession(_ttdSessionPort.get());
     _context->pMachineOps = _coordinator.get();
+    // Mode listeners (architecture §5): each writes its own setting from the published mode
+    if (_featureManager)
+        _coordinator->Listen(_featureManager);
     for (OpKind kind : {OpKind::Reset, OpKind::Autostart, OpKind::SnapshotLoad, OpKind::NetworkChange,
                         OpKind::IdeDriveKind, OpKind::RzxRestore, OpKind::ModelSwitch})
         _coordinator->Own(kind, _coordinatorPorts.get());
@@ -3635,18 +3640,19 @@ bool Emulator::LoadROM(std::string path)
 
 void Emulator::DebugOn()
 {
-    // Switch to slow but instrumented memory interface
+    // Switch to slow but instrumented memory interface: through the 'debugmode' feature, whose manager is the one
+    // writer of the CPU's debug mode (M4)
     _isDebug = true;
-    _z80->isDebugMode = true;
-    _core->SelectMemoryInterface();
+    if (_featureManager)
+        _featureManager->setFeature(Features::kDebugMode, true);
 }
 
 void Emulator::DebugOff()
 {
-    // Switch to fast memory interface
+    // Switch to fast memory interface (a replay keeps the instrumented one until it ends)
     _isDebug = false;
-    _z80->isDebugMode = false;
-    _core->SelectMemoryInterface();
+    if (_featureManager)
+        _featureManager->setFeature(Features::kDebugMode, false);
 }
 
 // region <Video mode>

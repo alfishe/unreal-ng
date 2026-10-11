@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "common/inifile.h"
+#include "emulator/coordinator/ports.h"
 
 // Forward declaration to avoid circular dependency
 class EmulatorContext;
@@ -158,7 +159,7 @@ constexpr const char* const kStateHigh = "high";
 /// - Query or set feature state/mode at runtime.
 /// - Load/save state from/to features.ini.
 /// - Integrate with CLI for user control.
-class FeatureManager
+class FeatureManager : public coordinator::IModeListener
 {
 public:
     // Explicitly require EmulatorContext for construction
@@ -209,6 +210,13 @@ public:
     /// read as off (they change the CPU path the recording follows)
     bool isRzxPlaying() const;
 
+    /// @brief The machine's mode changed (the coordinator's broadcast, architecture §5). A replay runs on the
+    /// instrumented memory path whatever the 'debugmode' feature says: the manager holds debug mode on while the
+    /// machine replays and gives the feature its say back after. The one writer of Z80::isDebugMode (M4)
+    void OnModeChanged(const coordinator::ModeState& from, const coordinator::ModeState& to) override;
+    /// @brief Debug mode as the CPU runs it: the feature, or a replay's hold
+    bool debugModeInEffect() const;
+
     EmulatorContext* context() const
     {
         return _context;
@@ -229,6 +237,9 @@ private:
     /// frame, so the engine state has to be pushed here explicitly. Idempotent: only
     /// calls Core if the actual state disagrees with the desired one.
     void syncTurboModeWithTtdState();
+    /// @brief Z80::isDebugMode from debugModeInEffect(), then the memory interface and the caches that follow it
+    void applyDebugMode();
+    bool _replayDebugHold = false;  ///< the machine replays: debug mode on (OnModeChanged)
 
     EmulatorContext* _context;
     std::unordered_map<std::string, FeatureInfo> _features;  // id -> FeatureInfo

@@ -2,7 +2,10 @@
 
 #include "ttdsessionport.h"
 
+#include "base/featuremanager.h"
 #include "debugger/ttd/timetravelhooks.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 
 namespace ttd
@@ -26,6 +29,31 @@ MachineMode TTDSessionPort::Mode() const
     if (ttd->IsRecording())
         return MachineMode::BlackBox;   // a background recording: the black box, a debugger's history
     return MachineMode::Live;
+}
+
+bool TTDSessionPort::Replaying() const
+{
+    return _context && _context->ttdReplayActive;
+}
+
+void NoteSessionChange(EmulatorContext* context)
+{
+    if (!context)
+        return;
+    if (context->pMachineOps)
+    {
+        context->pMachineOps->SessionChanged();
+        return;
+    }
+    coordinator::ModeState to;
+    to.replaying = context->ttdReplayActive;
+    if (context->pFeatureManager)
+        context->pFeatureManager->OnModeChanged({}, to);
+    else if (to.replaying && context->pCore)
+    {
+        context->pCore->GetZ80()->isDebugMode = true;
+        context->pCore->SelectMemoryInterface();
+    }
 }
 
 void TTDSessionPort::Apply(SessionEffect effect, const std::string& reason)

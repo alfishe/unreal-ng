@@ -68,6 +68,7 @@
 #endif
 #include "emulator/sound/soundmanager.h"                 // SoundManager
 #include "stdafx.h"
+#include "debugger/ttd/ttdsessionport.h"
 
 // Static assertion: the .ttd v1 format assumes a little-endian host. Every
 // multi-byte field in the header / cpu_state / chipset_state is written in
@@ -601,6 +602,7 @@ void TimeTravelManager::SetState(TTDSessionState next)
     else if (next == TTDSessionState::Idle)
         ReleaseRecordingLock();
     SyncJournalSegment();   // a recording starts or ends a journal segment (D40)
+    ttd::NoteSessionChange(_context);   // the coordinator publishes the mode and tells its listeners (M4)
 }
 
 bool TimeTravelManager::JournalLive() const
@@ -1993,16 +1995,10 @@ void TimeTravelManager::EnterReplayMode()
     // The replay observers - the access probe, the frame-cache capture, the
     // dirty marks a mid-frame resume needs - live on the debug memory path.
     // The user's debug mode may have that path switched off (a recording
-    // switches it back off on stop), so engage it for the replay only; the
-    // feature settings stay untouched.
-    if (Core* core = _context->pCore)
-    {
-        _debugModeBeforeReplay = core->GetZ80()->isDebugMode;
-        core->GetZ80()->isDebugMode = true;
-        core->SelectMemoryInterface();  // the debug path, contended where the machine is
-    }
-    if (_memory)
-        _memory->UpdateFeatureCache();
+    // switches it back off on stop): the feature manager, the one writer of
+    // debug mode, holds it on while the machine replays (the coordinator's
+    // mode broadcast, M4); the feature settings stay untouched
+    ttd::NoteSessionChange(_context);
 
     MLOGINFO("TimeTravelManager::EnterReplayMode — replay mode engaged (host audio output held)");
 }
@@ -2030,13 +2026,7 @@ void TimeTravelManager::ExitReplayMode()
         _replayEngine->BusVectors().Stop();
     SyncMediaReadJournal();
 
-    if (Core* core = _context->pCore)
-    {
-        core->GetZ80()->isDebugMode = _debugModeBeforeReplay;
-        core->SelectMemoryInterface();
-    }
-    if (_memory)
-        _memory->UpdateFeatureCache();
+    ttd::NoteSessionChange(_context);   // debug mode back to the feature's
 
     MLOGINFO("TimeTravelManager::ExitReplayMode — replay mode disengaged (host audio output released)");
 }

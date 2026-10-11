@@ -50,6 +50,7 @@ void MachineCoordinator::SetSession(ISessionSink* session)
     std::lock_guard<std::recursive_mutex> op(_opMutex);
     std::unique_lock<std::shared_mutex> ports(_portsMutex);
     _session = session;
+    _modeSession.store(session);
 }
 
 bool MachineCoordinator::Own(OpKind kind, IOpOwner* owner)
@@ -92,6 +93,45 @@ MachineMode MachineCoordinator::Mode() const
 MachineMode MachineCoordinator::ModeLocked() const
 {
     return _session ? _session->Mode() : MachineMode::Live;
+}
+
+void MachineCoordinator::Listen(IModeListener* listener)
+{
+    std::lock_guard<std::recursive_mutex> lock(_modeMutex);
+    if (listener && std::find(_listeners.begin(), _listeners.end(), listener) == _listeners.end())
+        _listeners.push_back(listener);
+}
+
+void MachineCoordinator::Unlisten(IModeListener* listener)
+{
+    std::lock_guard<std::recursive_mutex> lock(_modeMutex);
+    _listeners.erase(std::remove(_listeners.begin(), _listeners.end(), listener), _listeners.end());
+}
+
+void MachineCoordinator::SessionChanged()
+{
+    // Not under the ports' lock: TTD reports from inside an operation's session effect as well
+    std::lock_guard<std::recursive_mutex> lock(_modeMutex);
+    ModeState now;
+    if (ISessionSink* session = _modeSession.load())
+    {
+        now.mode = session->Mode();
+        now.replaying = session->Replaying();
+    }
+    if (now == _published)
+        return;
+    const ModeState from = _published;
+    _published = now;
+    // A copy: a listener may unregister itself (it is still told this once)
+    const std::vector<IModeListener*> listeners = _listeners;
+    for (IModeListener* listener : listeners)
+        listener->OnModeChanged(from, now);
+}
+
+ModeState MachineCoordinator::Published() const
+{
+    std::lock_guard<std::recursive_mutex> lock(_modeMutex);
+    return _published;
 }
 
 OpResult MachineCoordinator::WouldRefuse(const MachineOp& op) const

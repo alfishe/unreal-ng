@@ -14,10 +14,13 @@
 /// composite operation) runs inline. Wiring calls (SetMachine, SetSession, Own, Disown) wait for a running
 /// operation and are meant for start-up and teardown.
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <mutex>
 #include <shared_mutex>
+#include <vector>
 
 #include "machineop.h"
 #include "machinepolicy.h"
@@ -40,6 +43,10 @@ public:
     bool Own(OpKind kind, IOpOwner* owner);
     /// @p owner is never called again once this returns (a running operation finishes first)
     void Disown(IOpOwner* owner);
+    /// @p listener hears every mode transition from now on, after the listeners registered before it; it hears
+    /// nothing once Unlisten returns
+    void Listen(IModeListener* listener);
+    void Unlisten(IModeListener* listener);
 
     // Operations
     /// Runs @p op: the rules, the park, the owner's Prepare and Commit, the session effect at the commit point,
@@ -51,6 +58,8 @@ public:
     /// WouldRefuse for a surface that asks before its own preparation; a refusal is logged like Run's
     OpResult Ask(MachineOp op) override;
     MachineMode Mode() const override;
+    void SessionChanged() override;
+    ModeState Published() const override;
     const OperationLog& Log() const { return _log; }
 
 private:
@@ -66,5 +75,11 @@ private:
     ISessionSink* _session = nullptr;
     std::array<IOpOwner*, static_cast<size_t>(OpKind::Count)> _owners{};
     OperationLog _log;
+    /// The published mode and its listeners. Recursive: a listener may report again (the transition it causes is
+    /// published before it returns)
+    mutable std::recursive_mutex _modeMutex;
+    std::vector<IModeListener*> _listeners;
+    ModeState _published;
+    std::atomic<ISessionSink*> _modeSession{nullptr};   ///< _session, for SessionChanged
 };
 }  // namespace coordinator
