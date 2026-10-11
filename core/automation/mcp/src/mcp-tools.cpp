@@ -406,12 +406,16 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                     body["profi"]["ay_clock"] = args["profi_ay_clock"].asString();
                 if (args.isMember("slots") && args["slots"].isObject())
                     body["slots"] = args["slots"];
-                caller.Call("POST", "/api/v1/emulator/start", &body, [done](int status, Json::Value response) {
+                // The reply has no model (symbolic_id is the instance's own name, usually empty): the text names the asked one
+                const std::string model = body.get("model", "").asString();
+                caller.Call("POST", "/api/v1/emulator/start", &body, [done, model](int status, Json::Value response) {
                     if (status == 201 || status == 200)
                     {
                         // the text first: argument order is unspecified, and gcc moves `response` out before reading it
+                        const std::string symbolic = response.get("symbolic_id", "").asString();
                         const std::string text = "Created and started emulator " + response["id"].asString() + " (model " +
-                                                 response.get("symbolic_id", Json::Value("")).asString() + ")";
+                                                 (model.empty() ? std::string("default") : model) +
+                                                 (symbolic.empty() ? "" : ", name " + symbolic) + ")";
                         done(ToolResult::Ok(text, std::move(response)));
                         return;
                     }

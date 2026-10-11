@@ -24,6 +24,25 @@ constexpr const char* kSupportedProtocolVersions[] = {"2024-11-05", "2025-03-26"
 /// 2025-03-26
 constexpr const char* kProtocolVersionHeader = "MCP-Protocol-Version";
 
+/// An Origin header naming this machine: http(s)://localhost, 127.0.0.1 or [::1], any port. A web page elsewhere
+/// (DNS rebinding) and the opaque "null" origin are not local
+inline bool IsLocalOrigin(const std::string& origin)
+{
+    const size_t scheme = origin.find("://");
+    if (scheme == std::string::npos)
+        return false;
+    const std::string kind = origin.substr(0, scheme);
+    if (kind != "http" && kind != "https")
+        return false;
+    std::string host = origin.substr(scheme + 3);
+    host = host.substr(0, host.find('/'));
+    if (!host.empty() && host[0] == '[')
+        host = host.substr(0, host.find(']') + 1);  // [::1]:port
+    else
+        host = host.substr(0, host.find(':'));
+    return host == "localhost" || host == "127.0.0.1" || host == "[::1]";
+}
+
 inline bool IsSupportedProtocolVersion(const std::string& version)
 {
     for (const char* supported : kSupportedProtocolVersions)
