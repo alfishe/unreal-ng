@@ -27,6 +27,22 @@ GENS4 at 26000 leaves `#C000` and up free for small programs; at 45000 it leaves
 Machine: **48K** (`model: "48K"`) for the tape builds. The TR-DOS build GENS4B runs on `PENTAGON`, started from the
 TR-DOS prompt (its disk calls need TR-DOS's system variables).
 
+
+## A host source into GENS4 (tape, at 26000)
+
+Write the source at its `>` prompt; `A,8000` assembles it (a large text needs the symbol table size):
+
+```text
+asm_source  {"action":"sync_inject","path":"/abs/main.asm","assembler":"gens-4","force":true}
+type_input  {"action":"type","text":"A,8000\n"}
+```
+
+The source is written as GENS4 text (left-to-right chains, signed words, names of 6 characters, `IF` / `END`, the
+undocumented instructions as bytes: [research-sjasmplus-to-gens.md](../../docs/inprogress/2026-10-05-unreal-asm/research-sjasmplus-to-gens.md))
+as `G` leaves a text. GENS keeps no "changed" flag: a loaded text is replaced only by force (or when it is the push
+watch's own). A source with `DISP` or `INCBIN` does not convert. `tools/verification/unreal-asm/emulator/inject-oracle.py
+gens4 <DEVPAC_4.TAP> <source.asm> 0x6000 --wait 240` runs the whole check (a 48K machine, sources below 26000).
+
 ## MCP (preferred)
 
 Create a 48K instance and put GENS4 at 26000 (the bytes of tape block 5 without its flag and checksum byte, as a JSON

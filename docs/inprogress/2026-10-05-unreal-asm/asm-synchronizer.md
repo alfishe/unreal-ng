@@ -401,6 +401,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Work** | **1.5 d** |
 | **Verified: GENS4, GENS3M21, GENS 4.3t** (2026-10-10, dumps `gens4-*`, `gens3m21-*`, `gens43t-*`) | `Linear`: the text follows the code, records `[number lo] [number hi] text #0D`, from a start word to an end word (exclusive) that is an operand the code rewrites, `+#36` from the load address in the tape builds. GENS4 (tape, at 26000): text `#8AED`, start `(#67A8)`, end `(#65C6)`. GENS3M21 (Devpac 3 M21 tape, at 49000): text `#E20A` (above `#C000`, page 0), start `(#DE54)`, end `(#BF9E)`. GENS 4.3t (Aysoft, TR-DOS, `GENS4tf`): text `#8F2E`, start `(#689C)`, end `(#61FB)`. While a line is inserted (`I`) the editor sets bit 7 of the high byte of the number of the line it goes before (numbers stay below 32768): the reader clears it (`clearLineMark`). Identified by their copyright / version strings. The tape builds have no save here: their dumps are the loaded text and a line being typed; 4.3t saves with `P`, so it has an edited case. GENS4B (MOA B-Disk, at 30000): text `#A06A`, start `(#7928)`, end `(#7566)` (`+#36` again); it needs TR-DOS's variables, so it is started from 48K BASIC through `RANDOMIZE USR 15616`, `LOAD "gens4b" CODE 30000`, `RETURN`, `RANDOMIZE USR 30000` (docs/disasm/software/gens4b, dumps `gens4b-*`). Descriptors `gens-4`, `gens-3m21`, `gens-4.3t`, `gens-4b`; each a build at its usual address (GENS is relocatable) |
 
+| **Built: inject (Z4, 2026-10-11)** | GENS4 (tape, at 26000) at its `>` prompt (the key wait returns through `#685D`, `#68DD`, `#67D9`): the file from the start word, the end word one past it, as `G` leaves them; no "changed" flag, so a loaded text is replaced by force or when it is the caller's own. GENS4 assembled the injected `oracle1.asm` and every instruction form to sjasmplus' bytes (research-sjasmplus-to-gens.md §3) |
 ### 7.14 ZEUS 1983, GG, 1.1 (PHT), v7.E; Zeus Plus 2.16, Zeus Pro 2.01
 
 | | |
@@ -859,6 +860,14 @@ characters, `BEGIN` / `END`, `PHASE`, lines of at most 31 characters (MASM's lin
 (`SyncDescriptor::idleZeroAt`). Checked in MASM 1.1: `oracle1.asm` and every instruction form to sjasmplus' bytes,
 loaded from its disk and injected. With it every Z3 backend is done (ALASM, XAS, STORM, TASM 4.12, ZX-ASM, MASM).
 Details: [research-sjasmplus-to-masm.md](research-sjasmplus-to-masm.md).
+
+**Built (2026-10-11): Z4 for GENS4.** The GENS backend (`dialects/gens/gensbackend.cpp`) writes left-to-right chains
+(`ChainWriter`, now shared with the MASM backend) with GENS' signed division taken care of (`high` as
+`&#FF00/256&255`), names unique in 6 characters, `IF` / `END`, `DEFM`, `*F`; the undocumented instructions as bytes,
+the index halves through PROMETHEUS' instruction table (`RetroWriter::HalfRegisterBytes`). The inject is the second
+`Linear` one (`LinearParams::injectable`). On the way: the live synchronizer missed page 5 on a 48K machine (it copied
+pages 0-2 by number): `CopyNow` takes the mapped pages always. Checked in GENS4: `oracle1.asm` and every instruction
+form to sjasmplus' bytes, loaded from tape and injected. Details: [research-sjasmplus-to-gens.md](research-sjasmplus-to-gens.md).
 
 ## 20. Effort (part B)
 

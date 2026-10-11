@@ -80,19 +80,21 @@ void CopyNow(EmulatorContext* context, MachineCopy& out, const std::vector<int>*
             out.view.windows[w] = memory->GetMemoryBankMode(w) == BANK_RAM ? static_cast<int>(memory->GetRAMPageForBank(w)) : -1;
         std::vector<int> wanted;
         if (only)
-        {
             wanted = *only;
-            wanted.insert(wanted.end(), out.view.windows.begin(), out.view.windows.end());
-        }
         else
             for (uint32_t i = 0; i < count; i++)
                 wanted.push_back(static_cast<int>(i));
+        wanted.insert(wanted.end(), out.view.windows.begin(), out.view.windows.end());   // a 48K machine maps 5, 2, 0 of 3 pages
         std::sort(wanted.begin(), wanted.end());
         wanted.erase(std::unique(wanted.begin(), wanted.end()), wanted.end());
         for (const int page : wanted)
-            if (page >= 0 && static_cast<uint32_t>(page) < count)
+        {
+            // a page mapped in a window is copied even beyond the model's count
+            const bool mapped = std::find(out.view.windows.begin(), out.view.windows.end(), page) != out.view.windows.end();
+            if (page >= 0 && (static_cast<uint32_t>(page) < count || (mapped && page < MAX_RAM_PAGES)))
                 if (const uint8_t* bytes = memory->RAMPageAddress(static_cast<uint16_t>(page)))
                     out.pages.emplace_back(static_cast<uint16_t>(page), std::vector<uint8_t>(bytes, bytes + PAGE_SIZE));
+        }
         if (Z80* z80 = context->pCore ? context->pCore->GetZ80() : nullptr)
             out.view.sp = z80->sp;
     }

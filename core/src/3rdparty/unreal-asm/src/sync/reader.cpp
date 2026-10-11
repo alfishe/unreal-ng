@@ -645,6 +645,7 @@ SyncDescriptor Zasm315()
     d.linear.endAt = 0x8837;
     d.linear.upperPage = 6;
     d.linear.stateLine = ";!";
+    d.linear.injectable = true;
     d.linear.resetFrom = 0x882B;   // the cursor line and the marks, up to the end word
     d.linear.resetTo = 0x8837;
     d.typing = {TypingRule::NotInText, 0, 0};
@@ -848,6 +849,17 @@ SyncDescriptor Gens(const std::string& id, const std::string& title, Signature i
     d.linear.upperPage = 0;
     d.linear.clearLineMark = true;
     d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
+/// GENS4 at 26000 also takes a text at its command prompt (>): its key wait returns through #685D, #68DD, #67D9 (the
+/// line input of I: #685D, #69C6); the text from the start word, the end word one past it, as G leaves them
+SyncDescriptor Gens4Tape()
+{
+    SyncDescriptor d = Gens("gens-4", "GENS4 (HiSoft Devpac 4, tape, at 26000)", {0x88F0, "Copyright (C) HiSoft 1987"}, 0x67A8, 0x65C6);
+    d.linear.injectable = true;
+    d.idleChain = {0x685D, 0x68DD, 0x67D9};
+    d.idleWhere = "its > prompt";
     return d;
 }
 
@@ -1309,7 +1321,7 @@ InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& d, const
     InjectPlan plan;
     if (d.family == LayoutFamily::GapBuffer && d.gapBuffer.loadedForm)
         return PlanInjectLoaded(machine, d, file, options);
-    if (d.family == LayoutFamily::Linear && d.linear.resetFrom)
+    if (d.family == LayoutFamily::Linear && d.linear.injectable)
         return PlanInjectLinear(machine, d, file, options);
     if (d.family != LayoutFamily::FileImage)
     {
@@ -1637,7 +1649,7 @@ const std::vector<SyncDescriptor>& Descriptors()
         Zeus("zeus-7e", "ZEUS v7.E (ZKSoft)", "pht", 0xE020,
              "\x5C\x3E\xF7\x21\x6A\x5C\xA6\x77\xCD\x27\xF2\x0F\x00\x18\x1B\xCD\xC0\xDA\xDA\x12\xE1\xC3\xC5\xE0", 0xFAAB, "Z"),
         Zeus("primus-2.9", "Primus Assembler 2.9 (Trunov)", "primus", 0x6D17, "PRIMUS ASSEMBLER Version", 0x61B1, "C"),
-        Gens("gens-4", "GENS4 (HiSoft Devpac 4, tape, at 26000)", {0x88F0, "Copyright (C) HiSoft 1987"}, 0x67A8, 0x65C6),
+        Gens4Tape(),
         Gens("gens-3m21", "GENS3M21 (HiSoft Devpac 3, tape, at 49000)", {0xE001, "HISOFT GENS3M2 ASSEMBLER"}, 0xDE54, 0xBF9E),
         Gens("gens-4b", "GENS4B 4.1 (MOA B-Disk, at 30000)", {0x9A70, "MOA B-Disk version."}, 0x7928, 0x7566),
         Gens("gens-4.3t", "GENS 4.3t (Aysoft, TR-DOS)", {0x8A9F, "BETA DISK VERSION 4.3t"}, 0x689C, 0x61FB),

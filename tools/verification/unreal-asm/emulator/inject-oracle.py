@@ -12,6 +12,7 @@ from the same source. The assembler disk is the collection's; the tool creates i
     inject-oracle.py tasm412 <TASM_412 disk> <source.asm> <address> [--wait 15]
     inject-oracle.py zasm315 <ZASM315 disk with STUB.a> <source.asm> <address>
     inject-oracle.py masm11 <MASM_11 disk> <source.asm> <address> [--wait 20]
+    inject-oracle.py gens4 <DEVPAC_4.TAP> <source.asm> <address> [--wait 240]
 
 XAS (Z3): started from its disk, the first source of its list loaded (or a new text), its command line opened (EXT;
 9.x need the keys held 12 frames), the source written there and assembled with A.
@@ -32,6 +33,9 @@ are the file it saved.
 MASM 1.1 (Z3): started from its disk, the source written at its MASM128> prompt as its LOAD leaves a file, assembled
 with A.
 
+GENS4 (Z4): its tape block written at 26000 of a 48K machine and started there, the source written at its > prompt
+as G leaves a text, assembled with A,8000 (a symbol table of 8000 bytes). Give sources below 26000 or above its text.
+
 With --project the source goes as a path, and each file it INCLUDEs into an ALASM text page of its own (the INCLUDE
 names the page); --template always takes the INCLUDEs (zxasm inject reads them beside the source).
 
@@ -43,6 +47,7 @@ system page: give sources that ORG below #8000. Exit 0 when the bytes agree; a s
 is saved next to the source as <source>.<assembler>.png.
 """
 import argparse
+import importlib.util
 import os
 import subprocess
 import sys
@@ -238,9 +243,34 @@ def masm11(emu, args, expected):
     return bytes(emu.read(args.address, len(expected)))
 
 
+def gens4(emu, args, expected):
+    spec = importlib.util.spec_from_file_location('aie', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assemble-in-emulator.py'))
+    aie = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(aie)
+    code = [b for b in aie.tape_blocks(open(args.disk, 'rb').read()) if len(b) == 10882][0][1:-1]   # the 'gens4' block
+    emu.post('/reset')
+    time.sleep(3)
+    emu.write(26000, code)
+    emu.post('/basic/run', {'command': 'RANDOMIZE USR 26000'})
+    time.sleep(2)
+    with open(args.source, encoding='utf-8') as f:
+        body = {'from': args.from_, 'assembler': 'gens-4', 'title': 'INJECTED', 'text': f.read()}
+    reply = emu.post('/asm/sync/inject', body)
+    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
+    for d in reply.get('diagnostics', []):
+        if d.get('severity') != 'info':
+            print('  ', d)
+    emu.write(args.address, [0xAA] * len(expected))
+    emu.type('A,8000')                                 # Assemble with a symbol table of 8000 bytes
+    emu.tap('enter')
+    time.sleep(args.wait)
+    emu.screenshot(os.path.abspath(args.source) + '.gens-4.png')
+    return bytes(emu.read(args.address, len(expected)))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412', 'zasm315', 'masm11'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412', 'zasm315', 'masm11', 'gens4'])
     parser.add_argument('disk', help='the assembler disk, or with --template an idle template snapshot')
     parser.add_argument('--template', action='store_true', help='inject with zxasm into the template snapshot instead (Z1)')
     parser.add_argument('--zxasm', default=os.environ.get('ZXASM', 'zxasm'))
@@ -261,10 +291,12 @@ def main():
     parser.add_argument('--keep', action='store_true', help='keep the instance (default: delete it)')
     args = parser.parse_args()
     expected = sjasmplus_bytes(args.sjasmplus, args.source, args.address)
-    emu = Emulator(port=args.port)
+    emu = Emulator(port=args.port, model='48K' if args.assembler == 'gens4' else 'PENTAGON')
     try:
         if args.assembler == 'xas':
             built = xas(emu, args, expected)
+        elif args.assembler == 'gens4':
+            built = gens4(emu, args, expected)
         elif args.assembler == 'masm11':
             built = masm11(emu, args, expected)
         elif args.assembler == 'zasm315':

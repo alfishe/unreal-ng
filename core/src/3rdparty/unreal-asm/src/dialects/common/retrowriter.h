@@ -130,6 +130,9 @@ protected:
     std::vector<std::string> InstructionText(const Statement& s);
     /// The bytes of an instruction the target lacks, as a DB line with the instruction as its comment
     std::string Bytes(const std::vector<std::string>& items, const std::string& instruction) const;
+    /// An instruction on IXH / IXL / IYH / IYL (a target without them: GENS) as its bytes: the H / L form's opcode
+    /// (PROMETHEUS' instruction table) after DD / FD; nullopt when it uses none
+    std::optional<std::vector<std::string>> HalfRegisterBytes(const Statement& s);
     std::vector<std::string> StatementText(const Statement& s, const std::string& label);
 
     // ---- conditions ----

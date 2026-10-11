@@ -6,7 +6,7 @@
 #include <map>
 #include <set>
 
-#include "dialects/common/retrowriter.h"
+#include "dialects/common/chainwriter.h"
 #include "dialects/common/z80.h"
 
 namespace unrealasm::dialects
@@ -77,84 +77,28 @@ std::string CommentText(const std::string& utf8)
     return out;
 }
 
-class MasmWriter : public RetroWriter
+class MasmWriter : public ChainWriter
 {
 public:
-    MasmWriter(const ir::Program& program, const BackendOptions& options, BackendResult& result) : RetroWriter(program, options, result) {}
+    MasmWriter(const ir::Program& program, const BackendOptions& options, BackendResult& result) : ChainWriter(program, options, result) {}
 
 private:
     std::string Title() const override { return "MASM"; }
     size_t Significant() const override { return kLabelLength; }
     bool Reserved(const std::string& upper) const override { return kWords.count(upper) || z80::IsMnemonic(z80::Lower(upper)); }
 
-    std::string NumberText(const Expr& e) const
+    const char* OperatorSymbol(Op op) const override
     {
-        const int64_t v = e.value & 0xFFFF;
-        switch (e.spelling)
+        switch (op)
         {
-            case ir::NumberSpelling::Hex: return "#" + z80::HexDigits(static_cast<uint64_t>(v), std::clamp(e.digits, 1, 4));
-            case ir::NumberSpelling::Binary:
-            {
-                std::string bits;
-                for (int k = std::clamp(e.digits, 1, 16) - 1; k >= 0; --k)
-                    bits.push_back(((v >> k) & 1) ? '1' : '0');
-                return "%" + bits;
-            }
-            case ir::NumberSpelling::Character:
-                if (e.text.size() == 1 && e.text[0] > 0x20 && e.text[0] < 0x7F && e.text[0] != '"')
-                    return "\"" + e.text + "\"";
-                return Number(v);
-            default: return std::to_string(v);
-        }
-    }
-
-    /// An operand of a chain: a number, a name or $, else its value when known
-    std::optional<std::string> Atom(const Expr& e)
-    {
-        const Expr& u = Unwrapped(e);
-        if (u.kind == Expr::Kind::Number)
-            return NumberText(u);
-        if (u.kind == Expr::Kind::Symbol || u.kind == Expr::Kind::Current || u.kind == Expr::Kind::Raw)
-            return SymbolText(u);
-        if (const auto v = Value(u))
-            return Number(*v);
-        return std::nullopt;
-    }
-
-    static bool IsAtom(const Expr& e)
-    {
-        const Expr& u = Unwrapped(e);
-        return u.kind == Expr::Kind::Number || u.kind == Expr::Kind::Symbol || u.kind == Expr::Kind::Current ||
-               (u.kind == Expr::Kind::Raw && u.text.size() >= 2);
-    }
-
-    /// MASM text computing the source's value modulo #10000 left to right, each operator taking an atom (as for XAS,
-    /// research-sjasmplus-to-xas.md §2, with & and |); nullopt when it cannot be put so
-    std::optional<std::string> Text(const Expr& e) override
-    {
-        switch (e.kind)
-        {
-            case Expr::Kind::Number: case Expr::Kind::Symbol: case Expr::Kind::Current: case Expr::Kind::Raw: return Atom(e);
-            case Expr::Kind::Group: return Text(e.args[0]);
-            case Expr::Kind::Unary:
-            {
-                const auto inner = Text(e.args[0]);
-                switch (e.op)
-                {
-                    case Op::Plus: return inner;
-                    case Op::Negate:
-                        if (IsAtom(e.args[0]))
-                            if (const auto a = Atom(e.args[0]))
-                                return "0-" + *a;
-                        return inner ? std::optional<std::string>(*inner + "*#FFFF") : std::nullopt;
-                    case Op::Not: return inner ? std::optional<std::string>(*inner + (EndsWithName(*inner) ? "+0@#FFFF" : "@#FFFF")) : std::nullopt;
-                    case Op::High: return inner ? std::optional<std::string>(*inner + "/256") : std::nullopt;
-                    case Op::Low: return inner ? std::optional<std::string>(*inner + "&255") : std::nullopt;
-                    default: return std::nullopt;
-                }
-            }
-            case Expr::Kind::Binary: return Binary(e);
-            default: return std::nullopt;
+            case Op::Add: return "+";
+            case Op::Sub: return "-";
+            case Op::Mul: return "*";
+            case Op::Div: return "/";
+            case Op::And: return "&";
+            case Op::Or: return "|";
+            case Op::Xor: return "@";
+            default: return nullptr;
         }
     }
 
@@ -167,73 +111,10 @@ private:
         return k < t.size() && !std::isdigit(static_cast<unsigned char>(t[k])) && t[k] != '#' && t[k] != '%';
     }
 
-    std::optional<std::string> Binary(const Expr& e)
-    {
-        const auto text = BinaryText(e);
-        if (text && text->size() > kWidth - 11 - 5 && Value(e))
-            Problem("too long for MASM's line");   // written as its value
-        return text;
-    }
+    /// MASM reads "@" after a name as part of it (LAB@#FF: an error in MASM 1.1): +0 ends the name first
+    std::string Guard(const std::string& left, const char* symbol) const override { return symbol[0] == '@' && EndsWithName(left) ? "+0" : ""; }
 
-    std::optional<std::string> BinaryText(const Expr& e)
-    {
-        const Expr& a = e.args[0];
-        const Expr& b = Unwrapped(e.args[1]);
-        const auto join = [&](const char* symbol, const Expr& left, const Expr& right) -> std::optional<std::string> {
-            const auto l = Text(left);
-            const auto r = Atom(right);
-            if (!l || !r)
-                return std::nullopt;
-            // MASM reads "@" after a name as part of it (LAB@#FF: an error in MASM 1.1): +0 ends the name first
-            if (symbol[0] == '@' && EndsWithName(*l))
-                return *l + "+0" + symbol + *r;
-            return *l + symbol + *r;
-        };
-        switch (e.op)
-        {
-            case Op::Add: case Op::Sub: case Op::Mul: case Op::Xor: case Op::And: case Op::Or:
-            {
-                const char* symbol = e.op == Op::Add ? "+" : e.op == Op::Sub ? "-" : e.op == Op::Mul ? "*" : e.op == Op::Xor ? "@" : e.op == Op::And ? "&" : "|";
-                if (IsAtom(b))
-                    return join(symbol, a, b);
-                // a+(c+d) = a+c+d, a-(c+d) = a-c-d ...; a*(c*d), a@(c@d), a&(c&d), a|(c|d) alike
-                if (b.kind == Expr::Kind::Binary && ((e.op == Op::Add || e.op == Op::Sub) && (b.op == Op::Add || b.op == Op::Sub)))
-                {
-                    const Op first = e.op;
-                    const Op second = e.op == Op::Add ? b.op : (b.op == Op::Add ? Op::Sub : Op::Add);
-                    return Text(Expr::Binary(second, Expr::Binary(first, a, b.args[0]), b.args[1]));
-                }
-                if (b.kind == Expr::Kind::Binary && b.op == e.op && e.op != Op::Add && e.op != Op::Sub)
-                    return Text(Expr::Binary(e.op, Expr::Binary(e.op, a, b.args[0]), b.args[1]));
-                // the commuting operators: the atom goes to the right
-                if (e.op != Op::Sub && IsAtom(a))
-                    return join(symbol, b, a);
-                if (e.op == Op::Sub && IsAtom(a))
-                {
-                    const auto r = Text(b);
-                    const auto l = Atom(a);
-                    if (r && l)
-                        return *r + "*#FFFF+" + *l;   // a-b = (b*#FFFF)+a
-                }
-                return join(symbol, a, b);
-            }
-            case Op::Div:
-                if (!InWord(a) || !InWord(b))
-                    Problem("a division MASM makes in 16-bit unsigned words");
-                return join("/", a, b);
-            case Op::Shl: case Op::Shr: case Op::ShrUnsigned:
-            {
-                const auto shift = Value(b);
-                if (!shift || *shift < 0 || *shift > 15)
-                    return std::nullopt;
-                if (e.op != Op::Shl && !InWord(a))
-                    Problem("a right shift of a value outside 0..#FFFF");
-                const auto l = Text(a);
-                return l ? std::optional<std::string>(*l + (e.op == Op::Shl ? "*" : "/") + Number(int64_t{1} << *shift)) : std::nullopt;
-            }
-            default: return std::nullopt;
-        }
-    }
+    size_t ExpressionWidth() const override { return kWidth - 11 - 5; }
 
     /// A string of DB: printable runs of three characters or more quoted; the quote, control characters and bytes above
     /// #7F as numbers
