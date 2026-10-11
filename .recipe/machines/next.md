@@ -99,6 +99,25 @@ accesses inside the 16-clock byte time). A command line is `#<seq> frame <n> T <
 `R1 none` = the card ignored it (before CMD0, or while streaming). CLI `state next sd [on|off|clear]`, Lua `next_sd{...}`, Python
 `emu.next_sd(...)`. The text above is the one `NextSdJournalMachine_Test.TheCliPrintsTheCardsAndTheJournal` checks.
 
+### 3a2. Why is the DivMMC in, and which esxDOS calls were made? (the DivMMC journal)
+
+`state/next` shows `divmmc.mapped` now; the DivMMC journal shows what put it there. Off by default.
+
+```text
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/next/divmmc-journal","body":{"enabled":true,"clear":true}}
+... run the program ...
+inspect_state {"aspects":["next_divmmc"],"nr_dm_kinds":"esx_call","nr_dm_limit":20}
+invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/state/next/divmmc?kinds=map_in,map_out,retn&limit=30"}
+```
+
+`entries` is NR `#B8`-`#BB` decoded: which addresses map the DivMMC in, whether only with the 48K ROM paged (`rom3_only`) and whether
+the opcode of that fetch already comes from the DivMMC (`instant`). `esx_call` is an entry at `#0008`: the byte after `RST 8`, its
+name from the firmware's `esxapi.def`, the return address and the registers the program set; `basic_rom: true` means the 48K ROM was
+paged, where `RST 8` is a BASIC error report and the byte an error code, not an esxDOS call. A latch that never goes out (no
+`map_out` / `retn` after a `map_in`) is the usual reason a program "hangs in the DivMMC". The same report is `state next divmmc` on the
+CLI, `next_divmmc{...}` in Lua, `emu.next_divmmc(...)` in Python. The text is the one
+`NextDivMmcJournalMachine_Test.TheCliPrintsTheEntriesAndTheCalls` checks.
+
 ### 3b. What did the program configure? (the debugger reports)
 
 Guessing from port traces and one register at a time found the DMA writing into ROM, the tilemap reading bank 7 as 16K and a card

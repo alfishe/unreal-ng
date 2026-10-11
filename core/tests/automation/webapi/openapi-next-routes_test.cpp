@@ -63,7 +63,8 @@ TEST(OpenApiNextRoutes_Test, TheRoutesAreFoundInTheHeader)
                                  "Post /api/v1/emulator/{id}/next/nextreg", "Get /api/v1/emulator/{id}/state/next/copper",
                                  "Get /api/v1/emulator/{id}/state/next/sprites", "Post /api/v1/emulator/{id}/next/layer-capture",
                                  "Get /api/v1/emulator/{id}/state/next/pixel",
-                                 "Get /api/v1/emulator/{id}/state/next/sd", "Post /api/v1/emulator/{id}/next/sd-journal"})
+                                 "Get /api/v1/emulator/{id}/state/next/sd", "Post /api/v1/emulator/{id}/next/sd-journal",
+                                 "Get /api/v1/emulator/{id}/state/next/divmmc", "Post /api/v1/emulator/{id}/next/divmmc-journal"})
         EXPECT_TRUE(found.count(expected)) << expected << " is not registered in emulator_api.h";
 }
 

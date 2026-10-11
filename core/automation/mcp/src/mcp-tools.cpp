@@ -1627,7 +1627,7 @@ void RegisterInspectState(ToolRegistry& registry)
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "profi", "isa", "network", "mouse",
-                               "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_sd", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel", "sprinter", "sprinter_ports", "sprinter_text",
+                               "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_sd", "next_divmmc", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
                                "audio_multisound", "audio_midi", "execution"})
@@ -1717,6 +1717,11 @@ void RegisterInspectState(ToolRegistry& registry)
         "every command with its argument and R1, every block read / written, with frame, T and PC; the journal is off by default "
         "(invoke_api POST /api/v1/emulator/{id}/next/sd-journal {enabled:true, clear:true}; nr_sd_kinds = 'command,read,write', nr_sd_card, "
         "nr_sd_since, nr_sd_limit); "
+        "'next_divmmc' = why the DivMMC is in: the state now (#E3, the automap latch, the DRIVE button's NMI entry), NR #B8-#BB decoded "
+        "entry by entry, and the DivMMC journal - what paged it in and out (the fetch address, instant or delayed; #1FF8, RETN, NR #0A / "
+        "#83, reset), the #E3 writes and, for an entry at #0008, the esxDOS call (F_OPEN, F_READ ...) with the registers; off by default "
+        "(invoke_api POST /api/v1/emulator/{id}/next/divmmc-journal {enabled:true, clear:true}; nr_dm_kinds = 'map_in,esx_call', nr_dm_since, "
+        "nr_dm_limit); "
         "'next_dma' = the DMA as programmed (mode zxn / z80, ports A / B, direction, burst, prescaler, counters, status byte; reading does not "
         "step its read sequence), 'next_video' = layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster "
         "position, 'next_palette' = the 9-bit palettes (nr_palette = '0'-'7' | name | 'all', default the selected one; nr_range = '16-31'), "
@@ -1782,6 +1787,14 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["nr_sd_since"]["description"] = "'next_sd': events after this seq";
     schema["properties"]["nr_sd_limit"]["type"] = "integer";
     schema["properties"]["nr_sd_limit"]["description"] = "'next_sd': the newest N events (default 40)";
+    schema["properties"]["nr_dm_kinds"]["type"] = "string";
+    schema["properties"]["nr_dm_kinds"]["description"] =
+        "'next_divmmc' (the DivMMC journal; off by default - POST /api/v1/emulator/{id}/next/divmmc-journal {enabled:true} via invoke_api): comma list: "
+        "map_in, map_out, retn, disabled, reset, program_start, port, mapram_clear, button, esx_call";
+    schema["properties"]["nr_dm_since"]["type"] = "integer";
+    schema["properties"]["nr_dm_since"]["description"] = "'next_divmmc': events after this seq";
+    schema["properties"]["nr_dm_limit"]["type"] = "integer";
+    schema["properties"]["nr_dm_limit"]["description"] = "'next_divmmc': the newest N events (default 40)";
     schema["properties"]["nr_palette"]["type"] = "string";
     schema["properties"]["nr_palette"]["description"] =
         "'next_palette': 0-7, a name (ula_1 layer2_1 sprites_1 tilemap_1 ula_2 layer2_2 sprites_2 tilemap_2) or 'all'; default = the palette NR #43 selects";
@@ -1890,7 +1903,7 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
                     aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "profi" && aspect != "isa" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
-                    aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "next" && aspect != "next_regs" && aspect != "next_mmu" && aspect != "next_reg_journal" && aspect != "next_sd" && aspect != "next_dma" && aspect != "next_video" && aspect != "next_palette" && aspect != "next_ports" && aspect != "next_nextreg" && aspect != "next_copper" && aspect != "next_sprites" && aspect != "next_pixel" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
+                    aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "next" && aspect != "next_regs" && aspect != "next_mmu" && aspect != "next_reg_journal" && aspect != "next_sd" && aspect != "next_divmmc" && aspect != "next_dma" && aspect != "next_video" && aspect != "next_palette" && aspect != "next_ports" && aspect != "next_nextreg" && aspect != "next_copper" && aspect != "next_sprites" && aspect != "next_pixel" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
@@ -1992,6 +2005,11 @@ void RegisterInspectState(ToolRegistry& registry)
                 add("since", text("nr_sd_since"));
                 add("limit", text("nr_sd_limit").empty() ? std::string("40") : text("nr_sd_limit"));
                 nrReports["next_sd"] = q;
+                q.clear();
+                add("kinds", text("nr_dm_kinds"));
+                add("since", text("nr_dm_since"));
+                add("limit", text("nr_dm_limit").empty() ? std::string("40") : text("nr_dm_limit"));
+                nrReports["next_divmmc"] = q;
             }
             const bool hasScreenArg = args.isMember("screen");
             const int screenArg = hasScreenArg ? args["screen"].asInt() : -1;
@@ -2325,7 +2343,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
-                        else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu" || aspect == "next_reg_journal" || aspect == "next_sd" ||
+                        else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu" || aspect == "next_reg_journal" || aspect == "next_sd" || aspect == "next_divmmc" ||
                                  aspect == "next_dma" || aspect == "next_video" || aspect == "next_palette" || aspect == "next_ports" ||
                                  aspect == "next_nextreg" || aspect == "next_copper" || aspect == "next_sprites" || aspect == "next_pixel")
                         {
@@ -2948,7 +2966,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                         << (value["port_map"]["extended_map"].asBool() ? "open" : "closed") << ", 8255 control #"
                                         << std::hex << value["ppi8255"]["control"].asInt() << std::dec;
                             }
-                            else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu" || aspect == "next_reg_journal" || aspect == "next_sd" ||
+                            else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu" || aspect == "next_reg_journal" || aspect == "next_sd" || aspect == "next_divmmc" ||
                                      aspect == "next_dma" || aspect == "next_video" || aspect == "next_palette" || aspect == "next_ports" ||
                                      aspect == "next_nextreg" || aspect == "next_copper" || aspect == "next_sprites" || aspect == "next_pixel")
                             {
@@ -3033,6 +3051,26 @@ void RegisterInspectState(ToolRegistry& registry)
                                             out << e["command"].asString() << " " << e["argument"].asString() << " -> R1 " << e["r1"].asString();
                                         else
                                             out << e["kind"].asString() << " block " << e["block"].asUInt64();
+                                    }
+                                }
+                                else if (aspect == "next_divmmc")
+                                {
+                                    const auto& st = value["state"];
+                                    out << "\n[next_divmmc] " << (st["mapped"].asBool() ? "in" : "out") << ", automap latch "
+                                        << (st["automap_latch"].asBool() ? "set" : "clear") << ", #E3 " << st["control"].asString()
+                                        << "; journal " << (value["enabled"].asBool() ? "on" : "OFF (POST /next/divmmc-journal {enabled:true})") << ", "
+                                        << value["size"].asUInt64() << " held, " << value["evicted"].asUInt64() << " evicted";
+                                    for (const auto& e : value["events"])
+                                    {
+                                        out << "\n  #" << e["seq"].asUInt64() << " f" << e["frame"].asUInt64() << " pc " << e["pc"].asString() << " "
+                                            << e["kind"].asString();
+                                        if (e.isMember("address"))
+                                            out << " " << e["address"].asString();
+                                        if (e["kind"].asString() == "esx_call")
+                                            out << " " << (e.isMember("name") ? e["name"].asString() : e["call"].asString())
+                                                << " (return " << e["return_address"].asString() << ", A,F " << e["af"].asString() << ", BC "
+                                                << e["bc"].asString() << ", DE " << e["de"].asString() << ", HL " << e["hl"].asString() << ")"
+                                                << (e["basic_rom"].asBool() ? " BASIC ROM: error report" : "");
                                     }
                                 }
                                 else if (aspect == "next_mmu")

@@ -225,7 +225,8 @@ NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.
 ## Automation gaps against other debuggers and the hardware (2026-10-11, [automation-gaps-2026-10-11.md](automation-gaps-2026-10-11.md))
 - [x] Survey: jnext, ZEsarUX, MAME, CSpect (plugins only), DeZog/DZRP and the VHDL against our five planes; ranked gaps G1-G10, device gaps D1-D2, phases P1-P6
 - [x] **P1 (G1)** SD/SPI journal and report on every plane: `state next sd`, `POST next/sd-journal`, MCP `next_sd`, Lua `next_sd()`, Python `next_sd()`; `SdCardSpi::setTraceListener`
-- [ ] P2 DivMMC automap latch + trigger journal + ESXDOS call trace; P3 NextREG breakpoints; P4 NMI / Multiface / interrupt log / reset reason; P5 audio, input, small decodes; P6 magic breakpoint/port, DZRP extras, TTD of NEXTREG writes (owner decision)
+- [x] **P2 (G2)** DivMMC report and journal on every plane: `state next divmmc`, `POST next/divmmc-journal`, MCP `next_divmmc`, Lua / Python `next_divmmc()`; the automap latch, NR #B8-#BB decoded, map in / out with the fetch address, RETN, disable, reset, #E3 writes and the **esxDOS call trace** (`RST $08`: name from the firmware's esxapi.def, return address, registers)
+- [ ] P3 NextREG breakpoints; P4 NMI / Multiface / interrupt log / reset reason; P5 audio, input, small decodes; P6 magic breakpoint/port, DZRP extras, TTD of NEXTREG writes (owner decision)
 - [ ] Device gaps D1 (UART/ESP/Pi) and D2 (Kempston mouse, ULA+, Radastan): the reports follow the devices
 
 ## Automation coverage - what is left (2026-10-10)

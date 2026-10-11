@@ -472,6 +472,8 @@ GET  /api/v1/emulator/{id}/state/next/reg-journal ?regs=07,02&sources=nextreg,po
 POST /api/v1/emulator/{id}/next/reg-journal   {"enabled": true|false, "clear": true, "capacity": N} - switch (off by default), clear or resize the NextREG write journal
 GET  /api/v1/emulator/{id}/state/next/sd     ?kinds=command,read,write&card=0|1&since=&from=&to=&limit= - the Next SD cards (SDSC/SDHC, protocol state, blocks), the SPI engine and the SD journal: every command with argument and R1, every block read / written, with frame, T and PC
 POST /api/v1/emulator/{id}/next/sd-journal   {"enabled": true|false, "clear": true, "capacity": N} - switch (off by default), clear or resize the SD journal
+GET  /api/v1/emulator/{id}/state/next/divmmc ?kinds=map_in,esx_call&since=&from=&to=&limit= - the Next DivMMC (#E3, the automap latch, the DRIVE button), NR #B8-#BB decoded entry by entry and the DivMMC journal: what paged it in and out (fetch address, instant or delayed, #1FF8, RETN, NR #0A / #83, reset) and, for an entry at #0008, the esxDOS call (F_OPEN, F_READ ...) with the registers
+POST /api/v1/emulator/{id}/next/divmmc-journal {"enabled": true|false, "clear": true, "capacity": N} - switch (off by default), clear or resize the DivMMC journal
 GET  /api/v1/emulator/{id}/state/next/dma    the Next DMA as programmed and running (mode zxn|z80, ports a/b, direction, burst, prescaler, counters, src/dst + src_kind/dst_kind, holds_bus, status); no side effect on its read sequence
 GET  /api/v1/emulator/{id}/state/next/video  layer order, ULA/Layer 2/tilemap/sprites switches, clip windows, transparency, raster, timing
 GET  /api/v1/emulator/{id}/state/next/palette ?palette=selected|0-7|name|all&range=0-255 - the 9-bit palettes; no palette index moves
