@@ -125,20 +125,20 @@ std::string ClientKey(const std::string& label, const std::string& client)
 }
 }  // namespace
 
-bool EmulatorContext::TakeRunControl(const UUID& owner, const std::string& surfaceLabel,
+bool EmulatorContext::TakeRunControl(const unreal::UUID& owner, const std::string& surfaceLabel,
                                      std::string* errorReason)
 {
     return TakeRunControl(owner, surfaceLabel, errorReason, {}, std::chrono::milliseconds(0));
 }
 
-bool EmulatorContext::TakeRunControl(const UUID& owner, const std::string& surfaceLabel, std::string* errorReason,
+bool EmulatorContext::TakeRunControl(const unreal::UUID& owner, const std::string& surfaceLabel, std::string* errorReason,
                                      const std::string& client, std::chrono::milliseconds lease,
                                      const std::string& peer)
 {
     return TakeRunControlAs(owner, surfaceLabel, errorReason, client, lease, peer, {});
 }
 
-bool EmulatorContext::TakeRunControlAs(const UUID& owner, const std::string& surfaceLabel, std::string* errorReason,
+bool EmulatorContext::TakeRunControlAs(const unreal::UUID& owner, const std::string& surfaceLabel, std::string* errorReason,
                                        const std::string& client, std::chrono::milliseconds lease,
                                        const std::string& peer, const std::string& implicitIdentity)
 {
@@ -176,7 +176,7 @@ bool EmulatorContext::TakeRunControlAs(const UUID& owner, const std::string& sur
 
         if (!refusedCooldown)
         {
-            const UUID& current = _runControlClaim.owner;
+            const unreal::UUID& current = _runControlClaim.owner;
             if (current.isNil())
             {
                 // Unclaimed — take it. The execution arbiter enforces it: a run (an intent or a direct run) from any
@@ -217,7 +217,7 @@ bool EmulatorContext::TakeRunControlAs(const UUID& owner, const std::string& sur
     return taken;
 }
 
-void EmulatorContext::ReleaseRunControl(const UUID& owner)
+void EmulatorContext::ReleaseRunControl(const unreal::UUID& owner)
 {
     std::string label, client;
     {
@@ -271,14 +271,14 @@ bool EmulatorContext::RevokeRunControl(const std::string& by)
     return true;
 }
 
-bool EmulatorContext::IsRunControlRevoked(const UUID& owner) const
+bool EmulatorContext::IsRunControlRevoked(const unreal::UUID& owner) const
 {
     std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
     const auto& revoked = _runControlClaim.revokedOwners;
     return std::find(revoked.begin(), revoked.end(), owner.toString()) != revoked.end();
 }
 
-void EmulatorContext::TouchRunControl(const UUID& owner)
+void EmulatorContext::TouchRunControl(const unreal::UUID& owner)
 {
     std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
     if (_runControlClaim.owner == owner)
@@ -341,7 +341,7 @@ EmulatorContext::ImplicitControl EmulatorContext::EnterImplicitRunControl(const 
                 return result;
             }
     }
-    const UUID owner = UUID::Generate();
+    const unreal::UUID owner = unreal::UUID::Generate();
     std::string reason;
     if (!TakeRunControlAs(owner, surfaceLabel, &reason, client, lease, peer, identity))
     {
@@ -359,7 +359,7 @@ EmulatorContext::ImplicitControl EmulatorContext::EnterImplicitRunControl(const 
 
 void EmulatorContext::ReleaseImplicitRunControl(const std::string& identity)
 {
-    UUID owner;
+    unreal::UUID owner;
     {
         std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
         if (_runControlClaim.owner.isNil() || _runControlClaim.implicitIdentity.empty() ||
@@ -401,7 +401,7 @@ void EmulatorContext::PostRunControlChanged(const std::string& event, const std:
         NC_RUN_CONTROL_CHANGED, new RunControlChangedPayload(emulatorId, event, label, client, owner), true);
 }
 
-bool EmulatorContext::HasRunControl(const UUID& owner) const
+bool EmulatorContext::HasRunControl(const unreal::UUID& owner) const
 {
     ExpireIdleRunControl();
     std::lock_guard<std::mutex> lock(_runControlClaim.mutex);

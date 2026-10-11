@@ -379,16 +379,16 @@ public:
     /// opens explicitly. `client`: the client's name (also the key of its re-take cooldown); `lease`: an
     /// HTTP session ends after that long without a request of it (TouchRunControl), 0 = no lease; `peer`: where the
     /// client connects from ("192.168.1.5:51234"; empty for an in-process script) - the GUI shows it to the user
-    bool TakeRunControl(const UUID& owner, const std::string& surfaceLabel, std::string* errorReason,
+    bool TakeRunControl(const unreal::UUID& owner, const std::string& surfaceLabel, std::string* errorReason,
                         const std::string& client, std::chrono::milliseconds lease, const std::string& peer = {});
     /// The user takes control back at the GUI: the session ends, its direct run (if one is under way) is aborted at the
     /// next instruction, its owner is refused from now on (IsRunControlRevoked: revoked_by_user), and the same client
     /// cannot take control again for the cooldown (revoked_cooldown) unless the user allows it (AllowRunControlRetake)
     bool RevokeRunControl(const std::string& by = "gui");
     /// The owner's session was taken back by the user: its requests answer revoked_by_user (never retried)
-    bool IsRunControlRevoked(const UUID& owner) const;
+    bool IsRunControlRevoked(const unreal::UUID& owner) const;
     /// A request of this session arrived: its idle lease starts again
-    void TouchRunControl(const UUID& owner);
+    void TouchRunControl(const unreal::UUID& owner);
     /// The user allows a client (or, with an empty key, every client) to take control again before its cooldown ends
     void AllowRunControlRetake(const std::string& clientKey = {});
     /// The re-take cooldown after a take-back (tests shorten it; default 300 s)
@@ -399,7 +399,7 @@ public:
     {
         bool allowed = false;      // go on, as `owner`
         bool opened = false;       // this request opened the session
-        UUID owner;
+        unreal::UUID owner;
         std::string error;         // refused: "held_by_other" (someone else's session) | "revoked_by_user"
         std::string message;
     };
@@ -422,14 +422,14 @@ public:
     /// @param errorReason Optional: filled with a reason string when returning false.
     /// @return true if claim taken (or already held by the same owner - idempotent);
     ///         false if held by a different owner.
-    bool TakeRunControl(const UUID& owner, const std::string& surfaceLabel,
+    bool TakeRunControl(const unreal::UUID& owner, const std::string& surfaceLabel,
                         std::string* errorReason = nullptr);
 
     /// Release the claim. No-op if @p owner does not match the current holder.
-    void ReleaseRunControl(const UUID& owner);
+    void ReleaseRunControl(const unreal::UUID& owner);
 
     /// Identity check: does @p owner currently hold the claim? No blocking.
-    bool HasRunControl(const UUID& owner) const;
+    bool HasRunControl(const unreal::UUID& owner) const;
 
     /// Is the claim held by anyone?
     bool IsRunControlClaimed() const;
@@ -440,7 +440,7 @@ public:
 private:
     struct RunControlClaim
     {
-        UUID owner;                   // Nil UUID = unclaimed
+        unreal::UUID owner;                   // Nil UUID = unclaimed
         std::string surfaceLabel;
         std::string client;
         std::string peer;
@@ -455,7 +455,7 @@ private:
     };
     /// An HTTP session whose lease ran out ends (called from the queries; posts "expired")
     void ExpireIdleRunControl() const;
-    bool TakeRunControlAs(const UUID& owner, const std::string& surfaceLabel, std::string* errorReason,
+    bool TakeRunControlAs(const unreal::UUID& owner, const std::string& surfaceLabel, std::string* errorReason,
                           const std::string& client, std::chrono::milliseconds lease, const std::string& peer,
                           const std::string& implicitIdentity);
     void PostRunControlChanged(const std::string& event, const std::string& label, const std::string& client,
