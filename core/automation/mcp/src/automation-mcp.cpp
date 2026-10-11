@@ -32,13 +32,24 @@
 #include <unistd.h>
 #endif
 
-/// region <Protocol version header>
+/// region <Request checks>
 
+/// The request checks of every /mcp method: a non-local Origin is refused with 403 (DNS rebinding); then
 /// MCP-Protocol-Version (2025-06-18): a client names the negotiated revision on every request after initialize. An
 /// unsupported one is refused with 400 (the spec's answer); none means 2025-03-26 and passes. True when refused
-static bool RefuseUnsupportedProtocolVersion(const drogon::HttpRequestPtr& req,
+static bool RefuseRequest(const drogon::HttpRequestPtr& req,
                                              const std::function<void(const drogon::HttpResponsePtr&)>& callback)
 {
+    // Origin (MCP Streamable HTTP, DNS rebinding): a web page's request carries the page's origin; only a local one
+    // may drive the emulator. The stdio bridge, curl and scripts send none and pass
+    if (const std::string origin = req->getHeader("Origin"); !origin.empty() && !mcp::IsLocalOrigin(origin))
+    {
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(
+            mcp::MakeRpcError(Json::Value(), mcp::kInvalidRequest, "Origin not allowed: " + origin + " (local origins only)"));
+        resp->setStatusCode(drogon::HttpStatusCode::k403Forbidden);
+        callback(resp);
+        return true;
+    }
     const std::string version = req->getHeader(mcp::kProtocolVersionHeader);
     if (version.empty() || mcp::IsSupportedProtocolVersion(version))
         return false;
@@ -53,7 +64,7 @@ static bool RefuseUnsupportedProtocolVersion(const drogon::HttpRequestPtr& req,
     return true;
 }
 
-/// endregion </Protocol version header>
+/// endregion </Request checks>
 
 /// region <Port availability>
 
@@ -174,7 +185,7 @@ void AutomationMCP::start()
         "/mcp",
         [dispatcher, caller](const drogon::HttpRequestPtr& req,
                              std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-            if (RefuseUnsupportedProtocolVersion(req, callback))
+            if (RefuseRequest(req, callback))
                 return;
             // Parse the JSON-RPC request body
             Json::Value request;
@@ -272,7 +283,7 @@ void AutomationMCP::start()
         "/mcp",
         [](const drogon::HttpRequestPtr& req,
            std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-            if (RefuseUnsupportedProtocolVersion(req, callback))
+            if (RefuseRequest(req, callback))
                 return;
             if (req->isHead())
             {

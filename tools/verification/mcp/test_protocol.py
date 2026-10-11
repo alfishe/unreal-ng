@@ -41,6 +41,21 @@ def test_protocol_version_header(s):
         expect(status == expected, f'MCP-Protocol-Version {version}: HTTP {expected}', status)
 
 
+def test_origin_check(s):
+    body = json.dumps({'jsonrpc': '2.0', 'id': 8, 'method': 'ping', 'params': {}}).encode()
+    for origin, expected in ((None, 200), ('http://localhost:3000', 200), ('http://127.0.0.1', 200),
+                             ('http://evil.example', 403), ('null', 403)):
+        headers = {'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream'}
+        if origin:
+            headers['Origin'] = origin
+        try:
+            with urllib.request.urlopen(urllib.request.Request(s.url, data=body, headers=headers), timeout=10) as r:
+                status = r.status
+        except urllib.error.HTTPError as error:
+            status = error.code
+        expect(status == expected, f'Origin {origin}: HTTP {expected}', status)
+
+
 def test_every_tool_has_a_schema_and_response_format(s):
     tools = s.tools()
     expect(len(tools) >= 15, f'the tool set ({len(tools)})', sorted(tools))

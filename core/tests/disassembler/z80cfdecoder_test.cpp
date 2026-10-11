@@ -157,6 +157,12 @@ struct ConditionalJPTestCase
     uint8_t flags_not_taken;  // F register value that makes the condition FALSE
 };
 
+// Without this gtest dumps the raw struct bytes (padding included) at registration, which valgrind flags as uninitialised
+void PrintTo(const ConditionalJPTestCase& tc, std::ostream* os)
+{
+    *os << "{opcode=0x" << std::hex << std::uppercase << static_cast<int>(tc.opcode) << ", name=" << tc.name << "}";
+}
+
 class Z80CFDecoder_ConditionalJP_Test : public Z80CFDecoder_Test,
                                          public ::testing::WithParamInterface<ConditionalJPTestCase> {};
 
@@ -190,7 +196,10 @@ INSTANTIATE_TEST_SUITE_P(AllConditions, Z80CFDecoder_ConditionalJP_Test,
         ConditionalJPTestCase{ 0xEA, "JP PE", 0x04, 0x00 },  // PE: P/V set
         ConditionalJPTestCase{ 0xF2, "JP P",  0x00, 0x80 },  // P:  S clear
         ConditionalJPTestCase{ 0xFA, "JP M",  0x80, 0x00 }   // M:  S set
-    ));
+    ),
+    [](const ::testing::TestParamInfo<ConditionalJPTestCase>& info) {
+        return StringHelper::Format("Op%02X", info.param.opcode);
+    });
 
 
 // ============================================================================
