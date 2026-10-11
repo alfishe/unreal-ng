@@ -75,8 +75,8 @@ From ALASM 5.07's help (`al50help`) and checked in unreal-ng where marked.
 | IF0 takes the block on 0, IFN on not 0; before 5.03 IF0 is spelled IF | `==` / `!=` as a subtraction; `a<b` as `a-b+#8000/#8000` (0 when a<b, exact while a-b+#8000 lies in 0..#FFFF, checked with the values); `exist x` as `?x` |
 | REPEAT ... UNTIL0 x runs the body until x is 0 (UNTIL before 5.07) | WHILE c as `IF0/IFN c`, `REPEAT`, body, `UNTIL0 c` (or `c-1` for a 0/1 test), `ENDIF` |
 | Index halves HX LX HY LY; INF, SLI, EXA, `OUT (C),0` | written so |
-| **emulator**: `ADD B` puts nothing down in 5.09 (one byte per `ADD x` / `ADD A,x` pair came out) | ADD / ADC / SBC always `A,x` |
-| **emulator**: `DW "AB"` puts down `41 42`, the characters | a one or two character string in DW is written as the number |
+| **emulator**: `ADD B`, `ADC 5`, `SBC (HL)`, `ADD HX` are errors in 5.09 (code `#00`, nothing put down); only `A,x` assembles | ADD / ADC / SBC always `A,x` |
+| **emulator**: a character constant is the first character low, the last high: `DW "AB"` = `41 42`, `LD HL,"AB"` = `21 41 42`, `DW "ABC"` = `41 43` | a string of one or two characters in DW, and every multi-character constant, written as its number |
 | LOCAL / ENDL hides the labels inside (a label used before the block stays global) | macro and repeat labels |
 | `DS n,a,b` repeats the pattern n times | sjasmplus' `DS n,v`; STORM's cyclic fill as DS + DB |
 | ALASM 5.09 assembles #8000-#BFFF into its system page | the oracle sources ORG #6000 |
@@ -104,6 +104,27 @@ that slot. The idle rule is therefore "the words #91E3, #9707 follow each other 
 (`SyncDescriptor::idleChain`). Found by reading the stack paused in the wait loop in each state; breakpoints did not
 fire in that instance (reported).
 
+Every other build has the same chain at its own addresses: the pair right below the word both states share (#2D2B;
+#1B76 in 3.8c), read at the prompt and in the editor with each build started from its own disk (64-column loaders;
+4.5's and 3.8c's only loader):
+
+| Build | Loader | Prompt pair | Editor's word there |
+|---|---|---|---|
+| 5.09 | `alasm64` | `91E3 9707` | `9733` |
+| 5.08 | `alasm64` | `91E8 970C` | `9738` |
+| 5.07, 5.05 | `alasm64` | `91DA 96FE` | `972A` |
+| 5.00 | `alasm64` | `99EA 8B93` | `8BBF` |
+| 4.5 | `ALASM4.5` | `998F 8B6B` | `8B98` |
+| 4.46 | `boot64+` | `9A07 8B92` | `8BBE` |
+| 4.45 | `boot64` | `99E1 8B93` | `8BC0` |
+| 4.44 | `al64_444` | `9A08 8BA8` | `8BD5` |
+| 4.43 | `al64_443` | `99A4 8B99` | `8BC6` |
+| 4.42 | `alasm442` | `99B2 8B8F` | `8BBC` |
+| 3.8c | `ALASM` | `943A 8149` | `816D` |
+
+Checked in every build: `inject-oracle.py alasm --boot ... --assembler alasm-X` wrote a source at the prompt and the
+build assembled it to sjasmplus' bytes; in the editor the same write was refused (409).
+
 ## 5. Oracle results
 
 | Check | Result |
@@ -124,6 +145,9 @@ fire in that instance (reported).
   stay as they are, with a warning.
 - A comparison used as a value (not in IF / WHILE) has no ALASM form: folded where the values are known, else a
   warning.
-- The idle rule is known for 5.09 only. The other builds refuse injection unless `force` is given.
-- The ALASM frontend reads `ADD B` as `ADD A,B` and `DW "AB"` as the word #4142. ALASM 5.09 does neither (§3).
+- The idle rule is known for every build of the table above (2026-10-10); the 42-column loaders were not read (their
+  code may sit elsewhere): a build not identified or without a rule refuses injection unless `force` is given.
+- Fixed (2026-10-10): the ALASM frontend read `ADD B` as `ADD A,B` and `"AB"` as #4142. It now takes ALASM 5.09's rules
+  (§3): a probe of 22 forms converted to sjasmplus builds the 49 bytes ALASM 5.09 put down
+  (`Dialects_Test.AlasmBuildsWhatAlasm509Builds`).
   Recorded in TODO.

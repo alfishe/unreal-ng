@@ -190,8 +190,8 @@ phase; master only after the owner's review.
     - [x] Z0 ALASM backend + the file image writer + inject on WebAPI / CLI / MCP / Lua / Python, checked by ALASM 5.09 assembling the injected text (2026-10-10, research-sjasmplus-to-alasm.md)
       - [ ] a project: the INCLUDEd sources into more text pages (ALASM keeps one text per page)
       - [ ] label values for sources of other dialects (their sjasmplus conversion's layout, symbols/fromsource.h)
-      - [ ] idle rules for the other ALASM builds (5.08 ... 3.8c): the command line's return chain in each
-      - [ ] the ALASM frontend reads `ADD B` as ADD A,B and `DW "AB"` as #4142; ALASM 5.09 puts nothing / `41 42` down: check more forms (LD HL,"AB", ADC, SBC) and fix
+      - [x] idle rules for the other ALASM builds (5.08 ... 3.8c, 2026-10-10): the command line's return pair read in each at the prompt and in the editor; inject checked in each (assembled at the prompt, refused in the editor)
+      - [x] the ALASM frontend took `ADD B` as ADD A,B and `"AB"` as #4142 (2026-10-10): ALASM 5.09 rejects ADD / ADC / SBC without A, (code #00) and takes "AB" as #4241, "ABC" as #4341; a 22-form probe assembled by ALASM 5.09 and converted to sjasmplus agree byte for byte
       - [ ] the `retrobackend` core split out of the ALASM backend with the second target (Z3)
     - [x] Z1 snapshots and disks both ways, no emulator needed (2026-10-10, asm-synchronizer.md §16.3, §19): `snapshot.h` (.sna / .z80 / .szx), disks through unreal-disk, `WriteAs`, `sync::InjectIntoSnapshot`; `zxasm probe / extract / inject`; `snapshot` + `output` on the sync verbs (WebAPI / CLI / MCP / Lua / Python); the ALASM 5.09 idle templates (`make-template.py`); checked by ALASM 5.09 assembling the injected snapshots and disk
       - [ ] templates of the other assemblers (with their idle rules, Z3) and a named template list (`templates` verb) if the surfaces need it

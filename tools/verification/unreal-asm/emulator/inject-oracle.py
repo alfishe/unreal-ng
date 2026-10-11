@@ -4,6 +4,7 @@
 from the same source. The assembler disk is the collection's; the tool creates its own instance and deletes it.
 
     inject-oracle.py alasm509 <ALASM509.trd> <source.asm> <address> [--sjasmplus PATH] [--port P] [--keep]
+    inject-oracle.py alasm <disk> <source.asm> <address> --boot NAME --assembler alasm-4.44 [--help-key]   # any build
     inject-oracle.py alasm509 --template <alasm509.szx|.sna|.z80> <source.asm> <address> [--zxasm PATH] ...
 
 With --template (Z1) the source goes into the template snapshot with `zxasm inject` instead, without an emulator; the
@@ -40,11 +41,16 @@ def sjasmplus_bytes(sjasmplus, source, address):
 
 
 def alasm509(emu, args, expected):
+    if args.assembler == 'alasm':
+        args.boot = args.boot or 'alasm64'
+    else:
+        args.boot, args.descriptor = 'alasm64', 'alasm-5.09'
+
     if args.template:
         # zxasm writes the source into the template; the snapshot it writes is loaded as it is
         injected = os.path.abspath(args.source) + '.injected' + os.path.splitext(args.disk)[1]
         run = subprocess.run([args.zxasm, 'inject', args.source, args.disk, '-o', injected, '--from', args.from_,
-                              '--title', 'INJECTED'], capture_output=True, text=True)
+                              '--title', 'INJECTED', '--assembler', args.descriptor], capture_output=True, text=True)
         print('zxasm inject:', run.stderr.strip().splitlines()[-1] if run.stderr.strip() else run.returncode)
         if run.returncode != 0:
             raise SystemExit(run.stderr)
@@ -56,11 +62,14 @@ def alasm509(emu, args, expected):
         time.sleep(1)
     else:
         emu.insert_disk(os.path.abspath(args.disk))
-        emu.run_trdos('alasm64')
-        time.sleep(2)                                  # the memory test, then the A> prompt
+        emu.run_trdos(args.boot)
+        time.sleep(3)                                  # the memory test, then the A> prompt
+        if args.help_key:
+            emu.tap('enter')                           # 3.8c shows its help screen first
+            time.sleep(1)
         with open(args.source, encoding='utf-8') as f:
             text = f.read()
-        body = {'text': text, 'from': args.from_, 'assembler': 'alasm-5.09', 'title': 'INJECTED'}
+        body = {'text': text, 'from': args.from_, 'assembler': args.descriptor, 'title': 'INJECTED'}
         reply = emu.post('/asm/sync/inject', body)
         print('inject:', {k: reply.get(k) for k in ('assembler', 'name', 'page', 'bytes', 'lines', 'previous')})
         for d in reply.get('diagnostics', []):
@@ -69,16 +78,19 @@ def alasm509(emu, args, expected):
     emu.type('a')                                  # ASSEMBLE
     emu.tap('enter')
     time.sleep(args.wait)
-    emu.screenshot(os.path.abspath(args.source) + '.alasm509.png')
+    emu.screenshot(os.path.abspath(args.source) + '.' + args.descriptor + '.png')
     return bytes(emu.read(args.address, len(expected)))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm'])
     parser.add_argument('disk', help='the assembler disk, or with --template an idle template snapshot')
     parser.add_argument('--template', action='store_true', help='inject with zxasm into the template snapshot instead (Z1)')
     parser.add_argument('--zxasm', default=os.environ.get('ZXASM', 'zxasm'))
+    parser.add_argument('--boot', help='alasm: the BASIC program that starts it (default alasm64)')
+    parser.add_argument('--assembler', dest='descriptor', default='alasm-5.09', help='alasm: the descriptor (alasm-4.44 ...)')
+    parser.add_argument('--help-key', action='store_true', help='alasm: a key closes a help screen at the start (3.8c)')
     parser.add_argument('source')
     parser.add_argument('address', type=lambda v: int(v, 0))
     parser.add_argument('--from', dest='from_', default='sjasmplus', help='the source\'s dialect (default sjasmplus)')
@@ -90,7 +102,7 @@ def main():
     expected = sjasmplus_bytes(args.sjasmplus, args.source, args.address)
     emu = Emulator(port=args.port)
     try:
-        built = alasm509(emu, args, expected)
+        built = alasm509(emu, args, expected)   # every ALASM build: the same steps
     finally:
         if not args.keep:
             emu._request('DELETE', emu.base)   # the instance this run created

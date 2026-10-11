@@ -1054,19 +1054,21 @@ InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& d, const
 const std::vector<SyncDescriptor>& Descriptors()
 {
     static const std::vector<SyncDescriptor> descriptors = {
-        // Each checked with dumps (testdata/sync): the text, the file it saves, the title where the editor leaves it
+        // Each checked with dumps (testdata/sync): the text, the file it saves, the title where the editor leaves it.
+        // The idle chain: the line input's return and the command loop's above SP at the A> prompt, read in each build
+        // at the prompt and in its editor (research-sjasmplus-to-alasm.md §4; the 64-column loaders, 4.5's and 3.8c's own)
         Alasm("5.09", "5.07", 0x97C5, "", true, {0x91E3, 0x9707}),
-        Alasm("5.08", "5.07", 0x97CA),
-        Alasm("5.07", "5.07", 0x97BC),
-        Alasm("5.05", "5.05", 0x97BC),
-        Alasm("5.00", "5.0", 0x9E22),
-        Alasm("4.5", "4.5", 0x9E06),
-        Alasm("4.46", "4.44", 0x9E6E),
-        Alasm("4.45", "4.44", 0x9E53),
-        Alasm("4.44", "4.44", 0x9E7E),
-        Alasm("4.43", "4.5", 0x9E1B, "", false),
-        Alasm("4.42", "4.42", 0x9E2F),
-        Alasm("3.8c", "3.8", 0x9951, "3.8c\r Written by"),
+        Alasm("5.08", "5.07", 0x97CA, "", true, {0x91E8, 0x970C}),
+        Alasm("5.07", "5.07", 0x97BC, "", true, {0x91DA, 0x96FE}),
+        Alasm("5.05", "5.05", 0x97BC, "", true, {0x91DA, 0x96FE}),
+        Alasm("5.00", "5.0", 0x9E22, "", true, {0x99EA, 0x8B93}),
+        Alasm("4.5", "4.5", 0x9E06, "", true, {0x998F, 0x8B6B}),
+        Alasm("4.46", "4.44", 0x9E6E, "", true, {0x9A07, 0x8B92}),
+        Alasm("4.45", "4.44", 0x9E53, "", true, {0x99E1, 0x8B93}),
+        Alasm("4.44", "4.44", 0x9E7E, "", true, {0x9A08, 0x8BA8}),
+        Alasm("4.43", "4.5", 0x9E1B, "", false, {0x99A4, 0x8B99}),
+        Alasm("4.42", "4.42", 0x9E2F, "", true, {0x99B2, 0x8B8F}),
+        Alasm("3.8c", "3.8", 0x9951, "3.8c\r Written by", true, {0x943A, 0x8149}),
         Xas("4.18", "4.18", 0xB51A, "XAS by Max Petrov (HPM) 3.091"),
         Xas("5.05", "5.05", 0xB601, "XAS by Max Petrov (HPM) 5.05 "),   // 5.05 and 5.05SE alike
         Xas("7.43c", "7.43c", 0xB961, "by Max Petrov & Creator v7.43"),

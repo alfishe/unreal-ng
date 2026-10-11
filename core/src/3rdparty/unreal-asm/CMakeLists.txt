@@ -138,12 +138,12 @@ target_compile_options(unreal-asm-tools-common PRIVATE ${UNREAL_ASM_WARNINGS})
 
 # Command-line tool: zxasm (decision D-12)
 add_executable(zxasm tools/zxasm/zxasm.cpp)
-target_link_libraries(zxasm PRIVATE unreal-asm unreal-asm-tools-common)
+target_link_libraries(zxasm PRIVATE unreal-asm-tools-common)   # it brings unreal-asm and unreal-disk
 target_compile_options(zxasm PRIVATE ${UNREAL_ASM_WARNINGS})
 
 # Command-line tool: symconv, symbol files from any format to any format (symbols/tdd.md §10, S4)
 add_executable(symconv tools/symconv/symconv.cpp)
-target_link_libraries(symconv PRIVATE unreal-asm unreal-asm-tools-common)
+target_link_libraries(symconv PRIVATE unreal-asm-tools-common)
 target_compile_options(symconv PRIVATE ${UNREAL_ASM_WARNINGS})
 
 # Examples (decision D-14): small programs on the public API, built with the library
