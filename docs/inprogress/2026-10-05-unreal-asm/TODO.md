@@ -202,6 +202,9 @@ phase; master only after the owner's review.
       - [ ] unreal-ng's Z80 snapshot writer starts a run right after a single `ED` (`ED ED ED 05 00`): every reader takes it for 237 bytes of #05; reported, the fix is the writer's (`loader_z80.cpp` compress)
     - [x] Z2 push watch (host file → inject on save), Inject in the Qt dock (2026-10-11, asm-synchronizer.md §19): `sync-push-watch` on every surface, the watch's own text replaced, the user's a conflict, a busy assembler waited for; Live source window Inject... and Push; checked live in ALASM 5.09
     - [ ] Z3 backends + writers + templates: TASM, XAS, STORM, ZX-ASM, MASM
+      - [x] XAS (2026-10-11, research-sjasmplus-to-xas.md): backend, inject at the command line with LOAD's editor variables, idle rules for 4.18-9.10; every build assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
+      - [ ] XAS idle templates (snapshots at the command line) and a project into XAS (one text: its INCLUDEs onto the disk)
+      - [ ] the `retrobackend` core shared by the ALASM and XAS backends (names, values, conditions, the walk)
     - [ ] Z4 48K targets: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
     - [ ] Z5 sjasmplus frontend coverage of real projects (STRUCT, MODULE, DEVICE / SLOT / PAGE, SAVEBIN, DEFINE)
   - First cuts: ALASM both ways about 14 days; + TASM 4.12 about 20; + watch / push watch, hints, live labels, Qt dock about 27

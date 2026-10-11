@@ -25,7 +25,8 @@ unreal-asm/
     sync-dumps.py               profiles alasm509, alasm444, tasm412: golden RAM dumps for the asm-synchronizer, each
                                 editor state with the file the assembler saved at that moment (testdata/sync)
     inject-oracle.py            profiles alasm509 and alasm (any build: --boot, --assembler, --help-key; --project: the
-                                files the source INCLUDEs into ALASM pages of their own): a host source written into the running assembler (sync-inject),
+                                files the source INCLUDEs into ALASM pages of their own) and xas (any build: --boot,
+                                --assembler, --right, --combo-frames; --save keeps the bytes built): a host source written into the running assembler (sync-inject),
                                 assembled by it, its bytes compared with sjasmplus' build (part B's oracle); with
                                 --template the source goes into an idle template snapshot by `zxasm inject` and the
                                 snapshot is loaded and assembled (Z1)
