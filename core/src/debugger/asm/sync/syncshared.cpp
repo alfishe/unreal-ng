@@ -154,6 +154,12 @@ bool InjectProject(EmulatorContext* context, const sync::SyncDescriptor& descrip
                 uint8_t* bytes = memory->RAMPageAddress(static_cast<uint16_t>(page.page));
                 std::copy(page.bytes.begin(), page.bytes.end(), bytes);
                 memory->MarkRamPageEdited(static_cast<uint16_t>(page.page));
+                // the editor variables the assembler's LOAD sets (XAS)
+                for (const sync::InjectPlan::Poke& poke : page.pokes)
+                {
+                    memory->RAMPageAddress(static_cast<uint16_t>(poke.page))[poke.offset] = poke.value;
+                    memory->MarkRamPageEdited(static_cast<uint16_t>(poke.page));
+                }
             }
         };
         if (context->pEmulator)

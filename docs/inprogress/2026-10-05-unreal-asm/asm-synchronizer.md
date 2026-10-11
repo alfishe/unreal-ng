@@ -368,6 +368,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | editor state | SAVE also rewrites header bytes 29-34 from the editor's variables (the cursor line address, 7.447: the operand of `LD HL,nn` at `#8097`; the column and row). The reader leaves those six bytes as the memory holds them: a live file differs from the next save there and only there, and the codec keeps them as they are |
 | identification | the title a new text gets, in the code: 4.18 `XAS by Max Petrov (HPM) 3.091` at `#B51A`; 5.05 / 5.05SE `XAS by Max Petrov (HPM) 5.05` at `#B601`; 7.43c `by Max Petrov & Creator v7.43` at `#B961`; 7.447 `... v7.44` at `#9B00`; 9.07m `XAS 9.07 ReCompiled by Mythos` at `#B8EA`; 9.10 `XAS by Max Petrov,64sm by STS` at `#B912` |
 | **Built** | descriptors `xas-4.18`, `-5.05`, `-7.43c`, `-7.447`, `-9.07m`, `-9.10`; checked live on 7.447 (a watch built the labels, a typed label joined them) |
+| **Built: inject (Z3, 2026-10-11)** | at the command line (EXT), the idle rule its return chain in each build; the file over `#C000` of page 3, and the editor's variables (cursor line, top line, flag, text end) set as LOAD sets them, found by its two routines in the code (`FileImageParams::loadVariables`, research-sjasmplus-to-xas.md §3); every build assembled the injected `oracle1.asm` and every instruction form to sjasmplus' bytes |
 | done | 9.07m and 9.10 SAVE wrote nothing to the disk in unreal-ng. Cause on the emulator's side: a status read erased the WD1793's Type II error bits, so the catalog read that missed its sector (XAS's STEP `#20` after each operation leaves the head one cylinder past the track register) read as status `#00` and XAS skipped its READ ADDRESS recovery. Fixed 2026-10-09: both versions save the edited text (TODO) Since then 9.07m and 9.10 have edited dumps with their saved files too (`xas907m-edited`, `xas910-edited`, 2026-10-10) |
 
 ### 7.12 MASM 1.0 demo, 1.1, 1.3, 2.0, 3.0
@@ -804,6 +805,17 @@ three-file project assembled to sjasmplus' bytes; a save of an INCLUDEd file wri
 was in its editor waited and went in after Extend `q`; a line typed in ALASM made the next save a conflict and the
 text stayed. Tests: `SyncControl_Test.ThePushWatchWritesEachSaveAndKeepsTheUsersChanges`,
 `LiveSourceWindow_Test.APushWatchShowsInTheStatusLineAndOutlivesTheWindow`.
+
+**Built (2026-10-11): Z3 for XAS.** The XAS backend (`dialects/xas/xasbackend.cpp`) writes the IR as XAS 4.18-9.10
+text: expressions as left-to-right chains of atoms (regrouped where `+ - * !` allow, high / low bytes and negation by
+arithmetic, the rest as values from the layout), names unique in 7 characters, conditions decided while converting
+(`IFNZ` / `IFZ` for the others in 7.x), `DUP` as `!ASSM` or unrolled, `WHILE` unrolled, macros expanded, a name
+assigned with `=` written as its values. The inject writes XAS's editor variables too (its LOAD's, found in its code:
+`InjectPlan::pokes`). Two XAS bugs the oracle found are written as bytes (4.18 / 5.05 `LD IY,(nn)`, 4.18 `LD LY,n`),
+and 4.18's `!ASSM n` (one pass) is unrolled. Checked in all seven builds (4.18, 5.05, 5.05SE, 7.43c, 7.447, 9.07m,
+9.10): `oracle1.asm` (143 bytes) and every instruction form (1173 bytes) assembled by XAS to sjasmplus' bytes. The
+`retrobackend` core is still not split out (XAS's backend shares the ALASM backend's design, not its code). Details:
+[research-sjasmplus-to-xas.md](research-sjasmplus-to-xas.md).
 
 ## 20. Effort (part B)
 
