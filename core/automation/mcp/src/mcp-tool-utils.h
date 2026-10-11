@@ -346,6 +346,17 @@ inline std::vector<SeriesStep> ReportSeriesProgress(std::vector<SeriesStep> step
 
 /// region <Calls>
 
+/// Wraps a tool's done: a successful result gets its structured fields appended to the text as key=value
+/// (FlatFields), for the calls whose text is a headline only ("Joystick status")
+inline ToolCallback AppendFields(ToolCallback done)
+{
+    return [done](ToolResult result) {
+        if (!result.isError && result.structured.isObject() && !result.structured.empty())
+            result.text += "\n" + FlatFields(result.structured);
+        done(std::move(result));
+    };
+}
+
 /// Performs a WebAPI call and wraps the outcome into a ToolResult.
 /// okPrefix prefixes the text summary on success; the full body goes to structuredContent.
 inline void ForwardCall(const std::string& method, const std::string& path, const Json::Value* body, IApiCaller& caller,

@@ -366,7 +366,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
             // 'status' command prints and the WebAPI serves - one source.
             if (action == "server")
             {
-                ForwardCall("GET", "/api/v1/emulator/status", nullptr, caller, "Server build fingerprint and creatable models", done);
+                ForwardCall("GET", "/api/v1/emulator/status", nullptr, caller, "Server build fingerprint and creatable models", AppendFields(done));
                 return;
             }
 
@@ -424,7 +424,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
             auto forward = [&caller, &args, action, done](const std::string& id) {
                 if (action == "status")
                 {
-                    ForwardCall("GET", Endpoint(id), nullptr, caller, "Status of " + id, done);
+                    ForwardCall("GET", Endpoint(id), nullptr, caller, "Status of " + id, AppendFields(done));
                 }
                 else if (action == "operations")
                 {
@@ -3344,7 +3344,13 @@ void RegisterInspectState(ToolRegistry& registry)
                                 }
                                 else if (aspect == "audio_opl4_fm")
                                 {
-                                    out << "\n[audio_opl4_fm]";
+                                    unsigned keyed = 0;
+                                    for (const Json::Value& ch : value["channels"])
+                                        keyed += ch["key_on"].asBool() ? 1u : 0u;
+                                    out << "\n[audio_opl4_fm] " << value["channels"].size() << " channel(s), keyed " << keyed
+                                        << ", NEW " << (value["new_mode"].asBool() ? "on" : "off") << ", rhythm "
+                                        << (value["rhythm"].asBool() ? "on" : "off") << ", 4-op connections "
+                                        << value["four_op_connections"].asUInt() << ", status " << value["status"].asUInt();
                                     for (const Json::Value& ch : value["channels"])
                                         if (ch["key_on"].asBool())
                                             out << "\n  ch" << ch["channel"].asUInt() << ": " << ch["frequency_hz"].asDouble()
@@ -3352,7 +3358,12 @@ void RegisterInspectState(ToolRegistry& registry)
                                 }
                                 else
                                 {
-                                    out << "\n[audio_opl4_pcm]";
+                                    unsigned keyed = 0;
+                                    for (const Json::Value& slot : value["slots"])
+                                        keyed += slot["key_on"].asBool() ? 1u : 0u;
+                                    out << "\n[audio_opl4_pcm] " << value["slots"].size() << " slot(s), keyed " << keyed << ", wave "
+                                        << (value["wave_enabled"].asBool() ? "enabled" : "disabled") << ", memory address "
+                                        << value["memory_address"].asUInt();
                                     for (const Json::Value& slot : value["slots"])
                                         if (slot["key_on"].asBool())
                                             out << "\n  slot" << slot["slot"].asUInt() << ": wave " << slot["wave"].asUInt()
@@ -3599,6 +3610,29 @@ void RegisterInspectState(ToolRegistry& registry)
                                         out << " sha256:" << page["sha256"].asString().substr(0, 16) << "...";
                                 }
                             }
+                            else if (aspect == "screen_attributes" && value["screens"].isArray())
+                            {
+                                // The attribute grid as bytes, one row per line (FLASH<<7 | BRIGHT<<6 | PAPER<<3 | INK)
+                                const unsigned cols = value["cols"].asUInt();
+                                out << "\n[screen_attributes] " << value["model"].asString() << ", " << cols << "x"
+                                    << value["rows"].asUInt() << " cells, byte = FLASH<<7 | BRIGHT<<6 | PAPER<<3 | INK";
+                                for (Json::ArrayIndex n = 0; n < value["screens"].size(); ++n)
+                                {
+                                    const Json::Value& cells = value["screens"][n]["cells"];
+                                    out << "\n  screen " << n << ":";
+                                    char byte[4];
+                                    for (Json::ArrayIndex i = 0; cols && i < cells.size(); ++i)
+                                    {
+                                        const Json::Value& c = cells[i];
+                                        const unsigned attr = (c["flash"].asBool() ? 0x80u : 0u) | (c["bright"].asBool() ? 0x40u : 0u) |
+                                                              ((c["paper"].asUInt() & 7u) << 3) | (c["ink"].asUInt() & 7u);
+                                        if (i % cols == 0)
+                                            out << "\n  ";
+                                        std::snprintf(byte, sizeof(byte), "%02X", attr);
+                                        out << byte;
+                                    }
+                                }
+                            }
                             else
                             {
                                 out << "\n[" << aspect << "] " << FlatFields(value);
@@ -3672,7 +3706,7 @@ void RegisterTypeInput(ToolRegistry& registry)
 
             if (action == "status")
             {
-                ResolveAndForward(args, "GET", "/keyboard/status", nullptr, caller, "Keyboard status", done);
+                ResolveAndForward(args, "GET", "/keyboard/status", nullptr, caller, "Keyboard status", AppendFields(done));
                 return;
             }
             if (action == "route")
@@ -3828,7 +3862,7 @@ void RegisterMouseInput(ToolRegistry& registry)
             {
                 const std::string device = args.isMember("device") ? args["device"].asString() : std::string();
                 ResolveAndForward(args, "GET", device.empty() ? "/mouse/status" : "/mouse/status?device=" + device,
-                                  nullptr, caller, "Mouse status", done);
+                                  nullptr, caller, "Mouse status", AppendFields(done));
                 return;
             }
             if (action == "glide")
@@ -4047,7 +4081,7 @@ void RegisterJoystickInput(ToolRegistry& registry)
 
             if (action == "status")
             {
-                ResolveAndForward(args, "GET", "/joystick", nullptr, caller, "Joystick status", done);
+                ResolveAndForward(args, "GET", "/joystick", nullptr, caller, "Joystick status", AppendFields(done));
                 return;
             }
             if (action == "press" || action == "release" || action == "tap")

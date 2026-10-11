@@ -505,7 +505,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
             }
             if (action == "frame_cost")
             {
-                ResolveAndForward(args, "GET", "/frame_cost", nullptr, caller, "Frame cost", done);
+                ResolveAndForward(args, "GET", "/frame_cost", nullptr, caller, "Frame cost", AppendFields(done));
                 return;
             }
             if (action == "vdac2_line_budget" || action == "vdac2_line_budget_set")
@@ -578,7 +578,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
             }
             if (action == "profile_status")
             {
-                ResolveAndForward(args, "GET", "/profiler/status", nullptr, caller, "Profiler status", done);
+                ResolveAndForward(args, "GET", "/profiler/status", nullptr, caller, "Profiler status", AppendFields(done));
                 return;
             }
 

@@ -4069,3 +4069,75 @@ TEST(McpToolUtils_Test, FlatFieldsShowsTheValues)
     EXPECT_NE(cut.find("more field(s)"), std::string::npos) << cut;
     EXPECT_LE(cut.find(" ..."), 30u) << cut;
 }
+
+/// Calls whose text was a headline only carry their fields as key=value (AppendFields)
+TEST_F(McpTools_Test, JoystickStatus_FieldsInTheText)
+{
+    Json::Value body;
+    body["kempston"]["connected"] = true;
+    body["kempston"]["state_hex"] = "0x10";
+    _caller->routes["GET /api/v1/emulator/emu-1/joystick"] = {200, body};
+    Json::Value args;
+    args["action"] = "status";
+    mcp::ToolResult result = RunTool(*_registry, "joystick_input", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Joystick status [target emu-1]\nkempston.connected=true kempston.state_hex=0x10"),
+              std::string::npos) << result.text;
+}
+
+/// screen_attributes writes the grid as attribute bytes, one row of cells per line
+TEST_F(McpTools_Test, InspectState_ScreenAttributesGridInTheText)
+{
+    Json::Value body;
+    body["available"] = true;
+    body["model"] = "Pentagon";
+    body["cols"] = 2;
+    body["rows"] = 2;
+    Json::Value screen;
+    for (int i = 0; i < 4; ++i)
+    {
+        Json::Value cell;
+        cell["ink"] = i;
+        cell["paper"] = 7;
+        cell["bright"] = i == 1;
+        cell["flash"] = i == 3;
+        screen["cells"].append(cell);
+    }
+    body["screens"].append(screen);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/screen/attributes"] = {200, body};
+    Json::Value args;
+    args["aspects"].append("screen_attributes");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("screen 0:\n  3879\n  3ABB"), std::string::npos) << result.text;
+}
+
+/// manage_symbols list: from / to go to the WebAPI as numbers, name filters by substring, the text lists the labels
+TEST_F(McpTools_Test, ManageSymbols_ListFiltersAndWritesTheLabels)
+{
+    Json::Value body;
+    body["total"] = 3;
+    for (const auto& [name, address] : {std::pair<const char*, int>{"PRINT_OUT", 0x09F4}, {"PO_CHAR", 0x0B65}, {"CLS", 0x0D6B}})
+    {
+        Json::Value label;
+        label["name"] = name;
+        label["address"] = address;
+        label["type"] = "code";
+        body["labels"].append(label);
+    }
+    body["count"] = 3;
+    _caller->routes["GET /api/v1/emulator/emu-1/labels?from=2048&to=4095"] = {200, body};
+    Json::Value args;
+    args["action"] = "list";
+    args["from"] = "0x0800";
+    args["to"] = "$0FFF";
+    args["name"] = "print";
+    mcp::ToolResult result = RunTool(*_registry, "manage_symbols", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/labels?from=2048&to=4095"));
+    EXPECT_NE(result.text.find(": 1 of 3\n0x09F4 PRINT_OUT code"), std::string::npos) << result.text;
+    EXPECT_EQ(result.structured["count"].asUInt(), 1u);
+
+    args["from"] = "zz";
+    EXPECT_TRUE(RunTool(*_registry, "manage_symbols", args, *_caller).isError);
+}

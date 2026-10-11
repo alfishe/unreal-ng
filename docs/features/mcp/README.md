@@ -112,7 +112,13 @@ listings are in the text either way: `debug_code disassemble` writes the listing
 `memory_access read` the bytes (hexdump, up to 256 lines), `control_execution bp_list` one line per breakpoint
 (`#1 0x0038 X hits 3`), `debug_code trace` one line per control-flow event (`0x02D6 jr -> 0x02C6 x7 sp 0x5BDF`), and
 an `inspect_state` aspect without a text form of its own its fields as `key=value` (`[machine] model=PENTAGON
-ram_kb=128 ...`, the first 1500 characters). Tools that perform real multi-step work report
+ram_kb=128 ...`, the first 1500 characters); `screen_attributes` the grid as attribute bytes, one row per line;
+`audio_opl4_fm` / `audio_opl4_pcm` the channel count and the keyed ones; the status calls (`emulator_manage status`,
+`analyze_performance profile_status` / `frame_cost`, `capture_media record_status` / `screen_digest`, the mouse,
+joystick and keyboard `status`) their fields as `key=value`. `manage_symbols list` takes `from` / `to` (CPU addresses)
+and `name` (a case-insensitive substring) and writes the first `limit` (default 100) labels one per line
+(`0x09F4 PRINT_OUT rom3 code ; comment`); the whole ROM set is ~2400 labels, so filter rather than page through the
+JSON. Tools that perform real multi-step work report
 progress when the request carries a `_meta.progressToken` (see
 [Protocol details](#protocol-details)).
 
