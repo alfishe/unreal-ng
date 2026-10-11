@@ -16,6 +16,7 @@
 
 #include "common/uuid.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/execution/automationgate.h"
 #include "emulator/execution/executionarbiter.h"
 
 namespace webapi_session
@@ -67,5 +68,33 @@ inline Json::Value RevokedBody()
         "do not take control again without asking the user.";
     return body;
 }
+
+/// Who drives the machine without a session, for the automation gate (automationgate.h): the surface ("mcp" when
+/// the MCP server calls, else "webapi"), a client name (the MCP agent, or the User-Agent's product) and the peer host.
+/// One identity is one implicit session
+struct GateClient
+{
+    std::string surface;
+    std::string client;
+    std::string host;
+    std::string peer;      // host:port, what the GUI shows
+    std::string identity;
+};
+
+inline GateClient GateClientOf(const drogon::HttpRequestPtr& req)
+{
+    GateClient c;
+    const bool mcp = req->getHeader("X-Unreal-Source") == "mcp";
+    c.surface = mcp ? "mcp" : "webapi";
+    c.client = mcp ? std::string("MCP agent") : automation_gate::ClientFromUserAgent(req->getHeader("User-Agent"));
+    c.host = req->getPeerAddr().toIp();
+    c.peer = req->getPeerAddr().toIpPort();
+    c.identity = c.surface + "|" + c.host + "|" + c.client;
+    return c;
+}
+
+/// Request attributes the gate leaves for the reply (the post-handling advice)
+constexpr const char* kImplicitSessionAttribute = "unreal.implicit_session";
+constexpr const char* kImplicitOpenedAttribute = "unreal.implicit_opened";
 
 }  // namespace webapi_session

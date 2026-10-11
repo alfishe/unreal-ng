@@ -4773,7 +4773,11 @@ void MainWindow::updateRemoteControlUi()
     {
         HudToastRequest toast;
         toast.title = tr("Remote control").toStdString();
-        toast.body = tr("%1 controls the emulator. Take control back from the toolbar").arg(who).toStdString();
+        toast.body = (_remoteControl->implicit()
+                          ? tr("%1 drives it without taking control. Take control back from the toolbar")
+                          : tr("%1 controls the emulator. Take control back from the toolbar"))
+                         .arg(who)
+                         .toStdString();
         toast.icon = "remote";
         toast.dedupKey = "remote-control";
         _hudModel->notify(toast);

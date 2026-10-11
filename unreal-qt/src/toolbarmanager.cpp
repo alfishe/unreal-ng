@@ -1,4 +1,5 @@
 #include "toolbarmanager.h"
+#include "widgets/remotecontrolrow.h"
 
 #include <QMainWindow>
 #include <QApplication>
@@ -189,35 +190,11 @@ ToolBarManager::ToolBarManager(MainWindow* mainWindow, MenuManager* menuManager,
     _remoteBar->setFloatable(false);
     _remoteBar->setToolButtonStyle(Qt::ToolButtonTextOnly);
     _remoteBar->toggleViewAction()->setVisible(false);
-    // One row widget with its own layout: the icon, the line and the buttons share one vertical centre (a
-    // toolbar's own layout places each item by itself)
-    auto* row = new QWidget(_remoteBar);
-    row->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    auto* rowLayout = new QHBoxLayout(row);
-    rowLayout->setContentsMargins(6, 0, 4, 0);
-    rowLayout->setSpacing(6);
-    // The line in the system's fixed-pitch font (every platform has one): the ticking time keeps its width; 14 %
-    // above the toolbar's text, read at a glance
-    const QFont buttonFont = _remoteBar->font();  // the buttons keep the toolbar's own font
-    QFont barFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    barFont.setPointSizeF(buttonFont.pointSizeF() * 1.14);
-    _remoteIcon = new QLabel(row);
-    _remoteLabel = new QLabel(row);
-    _remoteLabel->setTextFormat(Qt::PlainText);
-    _remoteLabel->setFont(barFont);
-    rowLayout->addWidget(_remoteIcon, 0, Qt::AlignVCenter);
-    rowLayout->addWidget(_remoteLabel, 0, Qt::AlignVCenter);
-    rowLayout->addStretch(1);
-    for (QAction* action : {_takeBackAction, _allowAgainAction, _dismissAction})
-    {
-        auto* button = new QToolButton(row);
-        button->setDefaultAction(action);
-        button->setToolButtonStyle(Qt::ToolButtonTextOnly);
-        button->setFont(buttonFont);
-        rowLayout->addWidget(button, 0, Qt::AlignVCenter);
-        _remoteButtons.append({button, action});
-    }
-    _remoteBar->addWidget(row);
+    const RemoteControlRow remoteRow = BuildRemoteControlRow(_remoteBar, {_takeBackAction, _allowAgainAction,
+                                                                          _dismissAction});
+    _remoteIcon = remoteRow.icon;
+    _remoteLabel = remoteRow.label;
+    _remoteButtons = remoteRow.buttons;
     _remoteTick = new QTimer(this);
     _remoteTick->setInterval(1000);
     connect(_remoteTick, &QTimer::timeout, this, &ToolBarManager::updateRemoteElapsed);
@@ -250,28 +227,19 @@ void ToolBarManager::setRemoteControl(bool active, const QString& brief, const Q
                                       qint64 sinceMs)
 {
     _remoteSinceMs = active ? sinceMs : 0;
-    // The accent (the system's selection colour) while a session holds the machine; the plain window colour after
-    const QString buttons = QStringLiteral(
-        "QToolButton { border: 1px solid palette(mid); border-radius: 4px; background: palette(button); "
-        "color: palette(button-text); padding: 2px 12px; margin: 3px 4px; }");
     const QPalette palette = _remoteBar->palette();
     if (active)
     {
         _takenBackFrom.clear();
         _remoteDismissed = false;
-        _remoteBar->setStyleSheet(QStringLiteral("QToolBar#remoteControlBar { background: palette(highlight); "
-                                                 "border: none; padding: 2px; } "
-                                                 "QLabel { color: palette(highlighted-text); } ") +
-                                  buttons);
+        _remoteBar->setStyleSheet(RemoteControlBarStyle(true));
         _remoteIcon->setPixmap(RemoteIconPixmap(palette.color(QPalette::HighlightedText)));
         _remoteBrief = brief;
         _remoteLabel->setToolTip(details);
     }
     else if (cooldowns && !_takenBackFrom.isEmpty())
     {
-        _remoteBar->setStyleSheet(QStringLiteral("QToolBar#remoteControlBar { background: palette(window); "
-                                                 "border-bottom: 1px solid palette(mid); padding: 2px; } ") +
-                                  buttons);
+        _remoteBar->setStyleSheet(RemoteControlBarStyle(false));
         _remoteIcon->setPixmap(RemoteIconPixmap(palette.color(QPalette::WindowText)));
         _remoteBrief.clear();
         _remoteLabel->setText(tr("Control taken back from %1").arg(_takenBackFrom));

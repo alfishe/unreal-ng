@@ -36,7 +36,9 @@ drive restrictions, pause races).
   `POST $BASE/emulator/$EMU_ID/control/session` (then the returned id in the
   `X-Unreal-Session` header), CLI `session take <name>`, Lua / Python
   `take_control("<name>")`. The user sees it in the GUI and can **take control
-  back**. From then on the session's calls answer `revoked_by_user` (WebAPI 409,
+  back**. A client that changes the machine without one gets a session
+  implicitly (the automation gate): the reply says so (`automation_session`, the
+  `X-Unreal-Session*` headers, an MCP note) and advises taking it explicitly. From then on the session's calls answer `revoked_by_user` (WebAPI 409,
   `retry: false`; Python `ControlRevoked`). **Stop. Do not retry, do not take
   control again by yourself - ask the user.** A re-take by the same client is
   refused (`revoked_cooldown`) until the user allows it.

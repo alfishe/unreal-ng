@@ -356,7 +356,8 @@ public:
     // Advisory owner token: while a surface (GDB, Qt timeline, WebAPI, ...) holds the claim
     // with the target paused, other surfaces' Resume/Step/Seek/state-writes are refused.
     // Pause and read-only queries are always allowed. The claim is NOT taken automatically
-    // by Emulator::Pause() - explicit surfaces take it.
+    // by Emulator::Pause() - explicit surfaces take it, and the automation gate
+    // (EnterImplicitRunControl) takes it for a client that changes the machine without one.
     //
     // Mutex guards take/release only; never held during emulator work.
 public:
@@ -369,6 +370,7 @@ public:
         std::string peer;          // where the client connects from (host:port), empty for an in-process script
         int64_t sinceMs = 0;       // when the claim was taken (system clock, ms since the epoch)
         uint32_t leaseMs = 0;      // idle lease of an HTTP session (0: ends with its connection / explicitly)
+        bool implicit = false;     // the automation gate opened it: the client drove the machine without taking control
         /// Clients in their re-take cooldown after the user took control back: "label/client" -> seconds left
         std::vector<std::pair<std::string, int64_t>> cooldowns;
     };
@@ -377,20 +379,42 @@ public:
     /// opens explicitly. `client`: the client's name (also the key of its re-take cooldown); `lease`: an
     /// HTTP session ends after that long without a request of it (TouchRunControl), 0 = no lease; `peer`: where the
     /// client connects from ("192.168.1.5:51234"; empty for an in-process script) - the GUI shows it to the user
-    bool TakeRunControl(const UUID& owner, const std::string& surfaceLabel, std::string* errorReason,
+    bool TakeRunControl(const unreal::UUID& owner, const std::string& surfaceLabel, std::string* errorReason,
                         const std::string& client, std::chrono::milliseconds lease, const std::string& peer = {});
     /// The user takes control back at the GUI: the session ends, its direct run (if one is under way) is aborted at the
     /// next instruction, its owner is refused from now on (IsRunControlRevoked: revoked_by_user), and the same client
     /// cannot take control again for the cooldown (revoked_cooldown) unless the user allows it (AllowRunControlRetake)
     bool RevokeRunControl(const std::string& by = "gui");
     /// The owner's session was taken back by the user: its requests answer revoked_by_user (never retried)
-    bool IsRunControlRevoked(const UUID& owner) const;
+    bool IsRunControlRevoked(const unreal::UUID& owner) const;
     /// A request of this session arrived: its idle lease starts again
-    void TouchRunControl(const UUID& owner);
+    void TouchRunControl(const unreal::UUID& owner);
     /// The user allows a client (or, with an empty key, every client) to take control again before its cooldown ends
     void AllowRunControlRetake(const std::string& clientKey = {});
     /// The re-take cooldown after a take-back (tests shorten it; default 300 s)
     void SetRunControlRetakeCooldown(uint32_t seconds);
+
+    /// The automation gate's answer for a request that changes the machine without a session
+    struct ImplicitControl
+    {
+        bool allowed = false;      // go on, as `owner`
+        bool opened = false;       // this request opened the session
+        unreal::UUID owner;
+        std::string error;         // refused: "held_by_other" (someone else's session) | "revoked_by_user"
+        std::string message;
+    };
+    /// The automation gate (owner decision 2026-10-11): a client that changes the machine without having taken control
+    /// gets a session implicitly - the GUI shows it and locks, the user can take control back, as for one it took
+    /// itself. `identity` tells one client from another (surface, client, peer host): the same identity goes on in its
+    /// implicit session, renewing its lease; another is refused while it is held. A client the user took control
+    /// back from is refused (revoked_by_user) until its re-take cooldown ends. `client`, `lease`, `peer` as in
+    /// TakeRunControl
+    ImplicitControl EnterImplicitRunControl(const std::string& surfaceLabel, const std::string& identity,
+                                            const std::string& client, std::chrono::milliseconds lease,
+                                            const std::string& peer = {});
+    /// The client takes control explicitly while the gate holds an implicit session for it: that session ends
+    /// (quietly, no "released" toast) so the explicit take succeeds. Nothing when the claim is not its implicit one
+    void ReleaseImplicitRunControl(const std::string& identity);
 
     /// Attempt to take the run-control claim.
     /// @param owner UUID of the claiming surface (use UUID::Generate() at surface startup).
@@ -398,14 +422,14 @@ public:
     /// @param errorReason Optional: filled with a reason string when returning false.
     /// @return true if claim taken (or already held by the same owner - idempotent);
     ///         false if held by a different owner.
-    bool TakeRunControl(const UUID& owner, const std::string& surfaceLabel,
+    bool TakeRunControl(const unreal::UUID& owner, const std::string& surfaceLabel,
                         std::string* errorReason = nullptr);
 
     /// Release the claim. No-op if @p owner does not match the current holder.
-    void ReleaseRunControl(const UUID& owner);
+    void ReleaseRunControl(const unreal::UUID& owner);
 
     /// Identity check: does @p owner currently hold the claim? No blocking.
-    bool HasRunControl(const UUID& owner) const;
+    bool HasRunControl(const unreal::UUID& owner) const;
 
     /// Is the claim held by anyone?
     bool IsRunControlClaimed() const;
@@ -416,12 +440,13 @@ public:
 private:
     struct RunControlClaim
     {
-        UUID owner;                   // Nil UUID = unclaimed
+        unreal::UUID owner;                   // Nil UUID = unclaimed
         std::string surfaceLabel;
         std::string client;
         std::string peer;
         int64_t sinceMs = 0;
         std::chrono::milliseconds lease{0};
+        std::string implicitIdentity;  // the client the automation gate opened it for ("" = taken explicitly)
         std::chrono::steady_clock::time_point lastActivity{};
         std::vector<std::string> revokedOwners;                                         // owners taken back
         std::vector<std::pair<std::string, std::chrono::steady_clock::time_point>> cooldowns;  // client key -> until
@@ -430,6 +455,9 @@ private:
     };
     /// An HTTP session whose lease ran out ends (called from the queries; posts "expired")
     void ExpireIdleRunControl() const;
+    bool TakeRunControlAs(const unreal::UUID& owner, const std::string& surfaceLabel, std::string* errorReason,
+                          const std::string& client, std::chrono::milliseconds lease, const std::string& peer,
+                          const std::string& implicitIdentity);
     void PostRunControlChanged(const std::string& event, const std::string& label, const std::string& client,
                                const std::string& owner) const;
     RunControlClaim _runControlClaim;

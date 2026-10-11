@@ -214,6 +214,8 @@ phase; master only after the owner's review.
       - [x] MASM 1.1 / 1.3 (2026-10-11, research-sjasmplus-to-masm.md): backend, inject at its prompt as LOAD leaves a file; MASM 1.1 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
       - [ ] MASM 1.0 demo / 2.0 / 3.0 inject rules; MASM idle templates
     - [ ] Z4 48K targets: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
+      - [x] GENS4 (2026-10-11, research-sjasmplus-to-gens.md): backend (`ChainWriter`), inject at its `>` prompt; GENS4 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes; the live synchronizer reads 48K machines (page 5)
+      - [ ] GENS3M21 / 4.3t / 4B inject rules
     - [ ] Z5 sjasmplus frontend coverage of real projects (STRUCT, MODULE, DEVICE / SLOT / PAGE, SAVEBIN, DEFINE)
   - First cuts: ALASM both ways about 14 days; + TASM 4.12 about 20; + watch / push watch, hints, live labels, Qt dock about 27
 

@@ -187,8 +187,9 @@ struct LinearParams
     uint16_t prometheusEndAt = 0;
     uint16_t editorStateAt = 0;     ///< bytes of the file SAVE fills (masked by the tests)
     uint16_t editorStateLength = 0;
-    /// An inject writes the text from (startAt) and the end pointer, and sets the words from resetFrom up to resetTo
-    /// (exclusive; the cursor line, the marks: ZAsm's table) to the start, as LOAD leaves them (0 = not injectable)
+    /// An inject writes the text from (startAt) and the end pointer (injectable), and sets the words from resetFrom up
+    /// to resetTo (exclusive; the cursor line, the marks: ZAsm's table) to the start, as LOAD leaves them
+    bool injectable = false;
     uint16_t resetFrom = 0;
     uint16_t resetTo = 0;
 };

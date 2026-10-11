@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 
+#include "codecs/prometheus/prometheustable.h"
 #include "dialects/common/z80.h"
 #include "unrealasm/registry.h"
 
@@ -474,6 +475,56 @@ std::string RetroWriter::Bytes(const std::vector<std::string>& items, const std:
     for (size_t k = 0; k < items.size(); ++k)
         out += (k ? "," : "") + items[k];
     return out + CommentAfter() + instruction;
+}
+
+std::optional<std::vector<std::string>> RetroWriter::HalfRegisterBytes(const Statement& s)
+{
+    int prefix = 0;
+    std::string text = z80::Lower(s.mnemonic);
+    const Expr* immediate = nullptr;
+    for (size_t k = 0; k < s.operands.size(); ++k)
+    {
+        const Operand& o = s.operands[k];
+        std::string part;
+        if (o.kind == Operand::Kind::Register)
+        {
+            part = o.text;
+            if (part == "ixh" || part == "ixl" || part == "iyh" || part == "iyl")
+            {
+                prefix = part[1] == 'x' ? 0xDD : 0xFD;
+                part = part.substr(2, 1) == "h" ? "h" : "l";
+            }
+        }
+        else if (o.kind == Operand::Kind::Immediate)
+        {
+            part = "N";
+            immediate = &o.expr;
+        }
+        else
+            return std::nullopt;
+        text += (k == 0 ? " " : ",") + part;
+    }
+    if (!prefix)
+        return std::nullopt;
+    // the table's forms: ADD / ADC / SBC with A, SUB / AND / XOR / OR / CP without
+    const std::string m = z80::Lower(s.mnemonic);
+    if ((m == "add" || m == "adc" || m == "sbc") && s.operands.size() == 1)
+        text = m + " a," + text.substr(m.size() + 1);
+    if ((m == "sub" || m == "and" || m == "xor" || m == "or" || m == "cp") && text.rfind(m + " a,", 0) == 0)
+    {
+        if (program.dialect == "sjasmplus")
+            return std::nullopt;   // sjasmplus' SUB A,IXH is SUB A : SUB IXH (InstructionText splits it)
+        text = m + " " + text.substr(m.size() + 3);
+    }
+    for (const codecs::prometheus::Record& r : codecs::prometheus::kRecords)
+        if (r.prefix == 0 && r.line == text)
+        {
+            std::vector<std::string> items = {HexByte(prefix), HexByte(r.opcode)};
+            if (immediate)
+                items.push_back(Expression(*immediate));
+            return std::vector<std::string>{Bytes(items, z80::Upper(s.mnemonic) + " " + Operands(s.operands))};
+        }
+    return std::vector<std::string>{NotConverted("an instruction on an index register's half: " + s.mnemonic)};
 }
 
 std::vector<std::string> RetroWriter::InstructionText(const Statement& s)

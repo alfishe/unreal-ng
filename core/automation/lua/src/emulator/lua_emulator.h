@@ -788,7 +788,7 @@ public:
             "start", &Emulator::Start,
             "stop", &Emulator::Stop,
             "pause", [](Emulator& self) -> std::string {
-                execution::script::Check(self, execution::Origin::Lua);
+                execution::script::Check(self, execution::Origin::Lua, false);   // a pause opens no session
                 return execution::script::PauseStatus(
                     self.Pause(execution::script::RequesterOf(self, execution::Origin::Lua), "lua"));
             },

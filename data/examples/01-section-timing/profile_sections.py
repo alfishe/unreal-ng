@@ -371,6 +371,9 @@ def main():
     ap.add_argument("--out", default="section-report", metavar="PREFIX",
                     help="report files: PREFIX.md and PREFIX.json (default section-report)")
     ap.add_argument("--keep", action="store_true", help="keep the new instance after the run")
+    ap.add_argument("--no-take-control", action="store_true",
+                    help="do not take control (to see the automation gate: the emulator opens a session by itself "
+                         "at the first change and says so)")
     args = ap.parse_args()
 
     symbols = load_sym(args.sym) if args.sym and os.path.exists(args.sym) else {}
@@ -399,7 +402,8 @@ def main():
     # An automation session: the emulator window shows who drives it and locks its controls until we release it;
     # the user can take control back from its toolbar (then we stop)
     try:
-        emu.take_control("profile_sections")
+        if not args.no_take_control:
+            emu.take_control("profile_sections")
     except ControlHeld as e:
         if created:
             emu.remove()
@@ -434,6 +438,9 @@ def main():
         for address in events:
             breakpoints.append(emu.add_breakpoint(address, note="profile_sections", group="profile_sections"))
 
+        if emu.implicit_session:
+            print("the emulator opened a session for us by itself (the automation gate): {}".format(
+                emu.implicit_advice))
         frame, t, frame_t = emu.time()
         start_frame = frame
         end_frame = frame + args.frames
@@ -564,6 +571,9 @@ def main():
             json.dump(data, f, indent=1)
         write_markdown(args.out + ".md", run, sections, interrupt_events, frame_t, args.group_by, labels, show_regs)
         print("report: {0}.md, data: {0}.json".format(args.out))
+        if emu.implicit_session and not emu.session:
+            print("the emulator's implicit session ends 15 s after our last request: the window stays locked until "
+                  "then (take control explicitly to release it at the end)")
 
         if lost:
             print()

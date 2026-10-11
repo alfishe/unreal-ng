@@ -205,9 +205,32 @@ bool WebApiClient::TakeRevoked()
     return _revoked.exchange(false);
 }
 
+std::string WebApiClient::TakeImplicitAdvice()
+{
+    std::lock_guard<std::mutex> lock(_sessionMutex);
+    std::string advice;
+    advice.swap(_implicitAdvice);
+    return advice;
+}
+
 void WebApiClient::NoteResponse(int status, const Json::Value& body)
 {
-    if (status != 409 || !body.isObject() || body.get("error", "").asString() != "revoked_by_user")
+    if (!body.isObject())
+        return;
+    // The gate opened a session for this agent's call: tell the agent once per session
+    const Json::Value& implicit = body["automation_session"];
+    if (implicit.isObject() && implicit.get("implicit", false).asBool())
+    {
+        std::lock_guard<std::mutex> lock(_sessionMutex);
+        const std::string id = implicit.get("id", "").asString();
+        if (id != _advisedSession)
+        {
+            _advisedSession = id;
+            _implicitAdvice = "Note: session opened implicitly (you changed the emulator without take_control). For a "
+                              "job: control_execution take_control first, release_control when done.";
+        }
+    }
+    if (status != 409 || body.get("error", "").asString() != "revoked_by_user")
         return;
     SetSession({});
     _revoked = true;

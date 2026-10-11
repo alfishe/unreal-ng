@@ -6,6 +6,8 @@
 
 #include <fstream>
 #include <future>
+#include <json/json.h>
+#include <memory>
 #include <sstream>
 #include <thread>
 #include <vector>
@@ -14,6 +16,7 @@
 #include "common/session_helper.h"
 #include "emulator/coordinator/machineop.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/execution/automationgate.h"
 #include "emulator_api.h"        // Triggers auto-registration for API handlers
 #include "emulator_websocket.h"  // Triggers auto-registration for WebSocket handlers
 #include "debug-event-hub.h"
@@ -292,7 +295,49 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
                 }
                 context->TouchRunControl(*session);
             }
+            return {};
         }
+
+        // The automation gate (owner decision 2026-10-11, automationgate.h): a request that changes a machine without
+        // a session opens one implicitly - the GUI shows the remote control and locks, the user can take control back.
+        // The request then goes on as the session's (its id in the header: the handlers' own checks see the holder);
+        // the reply says so and advises taking control explicitly (the post-handling advice below)
+        static const std::string kInstancePrefix = "/api/v1/emulator/";
+        const std::string& path = req->path();
+        if (path.rfind(kInstancePrefix, 0) != 0)
+            return {};
+        const size_t idEnd = path.find('/', kInstancePrefix.size());
+        const std::string id = path.substr(kInstancePrefix.size(),
+                                           idEnd == std::string::npos ? std::string::npos : idEnd - kInstancePrefix.size());
+        const std::string subpath = idEnd == std::string::npos ? std::string() : path.substr(idEnd);
+        if (!automation_gate::ChangesMachine(req->methodString(), subpath))
+            return {};
+        std::shared_ptr<Emulator> emulator = api::v1::getEmulatorByIdOrIndex(id);
+        EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+        if (!context)
+            return {};  // not an instance ("start", "create", a wrong id): the handler answers
+        const webapi_session::GateClient client = webapi_session::GateClientOf(req);
+        const EmulatorContext::ImplicitControl gate = context->EnterImplicitRunControl(
+            client.surface, client.identity, client.client,
+            std::chrono::duration_cast<std::chrono::milliseconds>(automation_gate::kImplicitLease), client.peer);
+        if (!gate.allowed)
+        {
+            Json::Value body = gate.error == "revoked_by_user" ? webapi_session::RevokedBody() : Json::Value();
+            if (gate.error != "revoked_by_user")
+            {
+                body["error"] = gate.error;
+                body["retry"] = false;
+                body["message"] = gate.message;
+            }
+            body["advice"] = automation_gate::kAdvice;
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(body);
+            resp->setStatusCode(drogon::HttpStatusCode::k409Conflict);
+            return resp;
+        }
+        const std::string sessionId = gate.owner.toString();
+        req->addHeader(webapi_session::kHeader, sessionId);
+        req->attributes()->insert(webapi_session::kImplicitSessionAttribute, sessionId);
+        req->attributes()->insert(webapi_session::kImplicitOpenedAttribute, gate.opened);
         return {};
     });
 
@@ -307,7 +352,40 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     app.registerPostHandlingAdvice([](const drogon::HttpRequestPtr& req, const drogon::HttpResponsePtr& resp) -> void {
         resp->addHeader("Access-Control-Allow-Origin", "*");
         resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+        resp->addHeader("Access-Control-Allow-Headers",
+                        "Content-Type, Authorization, X-Requested-With, X-Unreal-Session, X-Unreal-Source");
+        resp->addHeader("Access-Control-Expose-Headers",
+                        "X-Unreal-Session, X-Unreal-Session-Implicit, X-Unreal-Session-Advice");
+
+        // The automation gate opened (or went on in) an implicit session for this request: say so and advise
+        // taking control explicitly - in headers, and in a JSON object reply as "automation_session"
+        const auto& attributes = req->attributes();
+        if (!attributes->find(webapi_session::kImplicitSessionAttribute))
+            return;
+        const std::string sessionId = attributes->get<std::string>(webapi_session::kImplicitSessionAttribute);
+        const bool opened = attributes->get<bool>(webapi_session::kImplicitOpenedAttribute);
+        resp->addHeader(webapi_session::kHeader, sessionId);
+        resp->addHeader("X-Unreal-Session-Implicit", "true");
+        resp->addHeader("X-Unreal-Session-Advice", automation_gate::kAdvice);
+        // The reply's JSON object, as sent (handlers build it in different ways: parse what goes out)
+        if (resp->contentType() != drogon::CT_APPLICATION_JSON)
+            return;
+        const std::string_view text = resp->body();
+        Json::Value body;
+        Json::CharReaderBuilder reader;
+        std::string errors;
+        const std::unique_ptr<Json::CharReader> parser(reader.newCharReader());
+        if (!parser->parse(text.data(), text.data() + text.size(), &body, &errors) || !body.isObject())
+            return;
+        Json::Value session;
+        session["id"] = sessionId;
+        session["implicit"] = true;
+        session["opened"] = opened;
+        session["advice"] = automation_gate::kAdvice;
+        body["automation_session"] = session;
+        Json::StreamWriterBuilder writer;
+        writer["indentation"] = "";
+        resp->setBody(Json::writeString(writer, body));
     });
 
     // Set max body size for file uploads (covers snapshots, disks, tapes)

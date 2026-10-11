@@ -253,11 +253,20 @@ class Emulator:
         self.id = emulator_id
         self.model = model
         self.session = None      # the automation session's id while this client holds run control
+        self.implicit_session = None   # the session the emulator opened by itself (the automation gate), if any
+        self.implicit_advice = None    # what it advised then
 
     def _call(self, method, path, body=None, raw=False):
         try:
-            return self.server.request(method, "/emulator/{}{}".format(self.id, path), body, raw=raw,
-                                       session=self.session)
+            reply = self.server.request(method, "/emulator/{}{}".format(self.id, path), body, raw=raw,
+                                        session=self.session)
+            # A change without a session of our own: the emulator opened one (the automation gate) and says so
+            if isinstance(reply, dict) and isinstance(reply.get("automation_session"), dict):
+                gate = reply["automation_session"]
+                if gate.get("opened") or self.implicit_session is None:
+                    self.implicit_session = gate.get("id")
+                    self.implicit_advice = gate.get("advice")
+            return reply
         except (ConnectionLost, ControlRevoked, ControlHeld):
             raise
         except WebApiError as e:
