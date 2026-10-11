@@ -776,7 +776,18 @@ struct LineParser
         {
             size_t i = 0;
             int repeat = -1;
-            if (!t.empty() && t[0] != ' ' && t[0] != '_')
+            // "_DB": a command in column 0; "_NAME" a label (STORM packs "_" as a label's first character)
+            bool columnZero = false;
+            if (!t.empty() && t[0] == '_')
+            {
+                size_t j = 1;
+                while (j < t.size() && t[j] != ' ' && t[j] != ':')
+                    ++j;
+                const std::string word = z80::Upper(t.substr(1, j - 1));
+                columnZero = z80::IsMnemonic(z80::Lower(word)) || word == "EXA" || word == "DB" || word == "DW" || word == "DS" || word == "DEFB" ||
+                             word == "DEFW" || word == "DEFS" || word == "ORG" || word == "EQU" || word == "INCB" || word == "INCL";
+            }
+            if (!t.empty() && t[0] != ' ' && !columnZero)
             {
                 while (i < t.size() && t[i] != ' ' && t[i] != ':')
                     ++i;

@@ -543,6 +543,39 @@ SyncDescriptor Storm(const std::string& id, const std::string& title, const std:
     d.fileImage.pointerAt = 0x00;
     d.fileImage.endSentinel = 0xFF;
     d.typing = {TypingRule::NotInText, 0, 0};
+    if (base == 0x0B)
+    {
+        // 1.3 / 1.3i: a text is written while the editor waits for a key, its cursor line written into the text (the
+        // main loop's CALL WTKPR returns to #87F5 / #87CB). As STORM's own LOAD (source XED: ABLINE, ETEXT, INIT)
+        // the inject resets the editor, here through STORM's PGUP (control key 4): from the second line with the
+        // cursor on the first screen line PGUP goes back to the text's start and redraws the screen from it (PSCR0,
+        // which sets the cursor line, ABLINE / AELINE and the line buffer). The variables by STORM 1.3's source names
+        const std::vector<int> scrp0 = {0xFD, 0x21, 0x00, 0x00, 0x22, -1, -1, 0xAF, 0x57, 0x2B, 0x5E, 0x1C, 0x28, -1, 0xCB,
+                                        0xB3, 0xFD, 0x23, 0xED, 0x52, 0x5E, 0x1C, 0xC2, -1, -1, 0xFD, 0x22, -1, -1};
+        const std::vector<int> init2 = {0xAF, 0x32, -1, -1, 0x32, -1, -1, 0x21, 0x02, 0xC0, 0x11, -1, -1, 0x01, 0x08, 0x00, 0xED, 0xB0};
+        const std::vector<int> init = {0xF3, 0xCD, -1, -1, 0xDD, 0x36, 0x00, 0x82, 0xDD, 0xCB, 0x04, 0x86, 0xAF, 0x67, 0x6F, 0x22, -1, -1};
+        const std::vector<int> start = {0xF3, 0xED, 0x73, -1, -1, 0xCD, -1, -1, 0xDD, 0x21, -1, -1};
+        const std::vector<int> inp4 = {0xCD, -1, -1, 0xAF, 0xD3, 0xFE, 0x3A, -1, -1, 0xFE, 0x14, 0xDA};
+        using From = LoadVariable::From;
+        d.fileImage.loadVariables = {
+            {scrp0, 5, From::SecondLine, 0, 2},          // ABLINE: the cursor line, the second
+            {scrp0, 27, From::Constant, 0, 2, 1},        // NLINE: its number from 0
+            {init2, 5, From::Constant, 0, 1, 0},         // MBSTAT: no block marked
+            {init2, 11, From::PageBytes, 0x02, 8},       // WNAME: the name SAVE offers, the text's (TXNAME)
+            {init, 16, From::Constant, 0, 2, 0},         // CACHEST
+            {start, 10, From::Constant, 0, 1, 1, 2},     // VAR+2 (PY): the cursor on the first screen line
+            {start, 10, From::SetBits, 0, 1, 0x02, 4},   // VAR+4 bit 1: the line buffer is in the text
+            {inp4, 7, From::Constant, 0, 1, 4},          // LASTK: PGUP
+            {start, 10, From::SetBits, 0, 1, 0x01, 0},   // VAR+0 bit 0: a key was pressed
+        };
+        d.fileImage.changedVariables = {
+            {init2, 5, From::SetBits, 0, 1, 0x10},       // MBSTAT bit 4: a line written since LOAD / SAVE
+            {start, 10, From::Constant, 0, 1, 0x02, 4},  // VAR+4 bit 1 clear: the cursor line typed in, not in the text
+        };
+        d.idleChain = {0x87F5};
+        d.idleAlternatives = {{0x87CB}};
+        d.idleWhere = "a key in its editor";
+    }
     return d;
 }
 
@@ -1008,16 +1041,21 @@ bool Idle(const MachineView& machine, const SyncDescriptor& d, std::string& why)
         why = "the stack at #" + Hex(sp, 4) + " is not in the memory copied";
         return false;
     }
-    const size_t n = d.idleChain.size();
-    for (size_t at = 0; at + 2 * n <= stack.size(); ++at)
+    std::vector<std::vector<uint16_t>> chains = {d.idleChain};
+    chains.insert(chains.end(), d.idleAlternatives.begin(), d.idleAlternatives.end());
+    for (const std::vector<uint16_t>& chain : chains)
     {
-        bool all = true;
-        for (size_t k = 0; k < n && all; ++k)
-            all = static_cast<uint16_t>(stack[at + 2 * k] | (stack[at + 2 * k + 1] << 8)) == d.idleChain[k];
-        if (all)
-            return true;
+        const size_t n = chain.size();
+        for (size_t at = 0; at + 2 * n <= stack.size(); ++at)
+        {
+            bool all = true;
+            for (size_t k = 0; k < n && all; ++k)
+                all = static_cast<uint16_t>(stack[at + 2 * k] | (stack[at + 2 * k + 1] << 8)) == chain[k];
+            if (all)
+                return true;
+        }
     }
-    why = d.title + " is not waiting for a command (assembling, saving, loading, or in its editor)";
+    why = d.title + " is not waiting for a command (" + (d.idleWhere.empty() ? "assembling, saving, loading, or in its editor" : d.idleWhere) + ")";
     return false;
 }
 
@@ -1031,6 +1069,24 @@ bool WrittenBefore(const SyncText& text, const std::vector<std::vector<uint8_t>>
         return file.size() == text.file.size() && file.size() >= headerSize &&
                std::equal(file.begin() + static_cast<std::ptrdiff_t>(headerSize), file.end(), text.file.begin() + static_cast<std::ptrdiff_t>(headerSize));
     });
+}
+}  // namespace
+
+namespace
+{
+/// The address a LoadVariable's pattern gives in the code below #C000 (with its offset); nullopt when the pattern is
+/// not there exactly once
+std::optional<uint16_t> VariableAddress(const std::vector<uint8_t>& code, const LoadVariable& v, size_t& places)
+{
+    std::vector<size_t> found;
+    for (size_t at = 0; at + v.pattern.size() <= code.size(); ++at)
+        if (std::equal(v.pattern.begin(), v.pattern.end(), code.begin() + static_cast<std::ptrdiff_t>(at),
+                       [](int want, uint8_t got) { return want < 0 || want == got; }))
+            found.push_back(at);
+    places = found.size();
+    if (found.size() != 1)
+        return std::nullopt;
+    return static_cast<uint16_t>((code[found[0] + v.at] | (code[found[0] + v.at + 1] << 8)) + v.offset);
 }
 }  // namespace
 
@@ -1050,7 +1106,28 @@ InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& d, const
     }
     const FileImageParams& p = d.fileImage;
     plan.previous = ReadText(machine, d);
-    if (plan.previous.ok && plan.previous.changed && !options.force && !WrittenBefore(plan.previous, options.written, p.headerSize))
+    // The editor's variables are found in the code the CPU sees below #C000
+    std::vector<uint8_t> code;
+    if ((!p.loadVariables.empty() || !p.changedVariables.empty()) && !machine.Read(0x4000, 0x8000, code))
+    {
+        plan.error = "the code of " + d.title + " (#4000-#BFFF) is not in memory";
+        return plan;
+    }
+    bool changed = plan.previous.changed;
+    for (const LoadVariable& v : p.changedVariables)
+    {
+        // a flag of the editor's own (STORM: a line written since LOAD / SAVE, the cursor line typed in)
+        size_t places = 0;
+        const auto address = VariableAddress(code, v, places);
+        if (!address)
+        {
+            plan.error = d.title + "'s editor variables were not found in its code (" + std::to_string(places) + " places)";
+            return plan;
+        }
+        const uint32_t bits = machine.Byte(*address).value_or(0) & v.value;
+        changed = changed || (v.from == LoadVariable::From::SetBits ? bits != 0 : bits != v.value);
+    }
+    if (plan.previous.ok && changed && !options.force && !WrittenBefore(plan.previous, options.written, p.headerSize))
     {
         plan.error = "the text " + plan.previous.name + " in " + d.title + " has changes not saved (force overwrites them)";
         return plan;
@@ -1074,46 +1151,67 @@ InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& d, const
         plan.error = "the page of " + d.title + "'s text is not in the memory copied";
         return plan;
     }
-    if (file.size() < p.headerSize || p.base + file.size() > kPage)
+    const size_t tail = p.lengthFromPointer ? 1 : 0;   // the end sentinel after the file
+    if (file.size() < p.headerSize || p.base + file.size() + tail > kPage)
     {
-        plan.error = "the text takes " + std::to_string(file.size()) + " bytes; the page holds " + std::to_string(kPage - p.base);
+        plan.error = "the text takes " + std::to_string(file.size()) + " bytes; the page holds " + std::to_string(kPage - p.base - tail);
         return plan;
     }
     plan.page = page;
     plan.bytes.assign(target->bytes.begin(), target->bytes.begin() + kPage);
     std::fill(plan.bytes.begin() + p.base, plan.bytes.end(), uint8_t{0});
     std::copy(file.begin(), file.end(), plan.bytes.begin() + p.base);
+    if (p.lengthFromPointer)
+    {
+        // STORM: the sentinel before the text, the end byte after it, the pointer one past that
+        std::copy(p.signature.begin(), p.signature.end(), plan.bytes.begin() + p.signatureAt);
+        plan.bytes[p.base + file.size()] = p.endSentinel;
+        const uint16_t end = static_cast<uint16_t>(0xC000 + p.base + file.size() + 1);
+        plan.bytes[p.pointerAt] = static_cast<uint8_t>(end & 0xFF);
+        plan.bytes[p.pointerAt + 1] = static_cast<uint8_t>(end >> 8);
+    }
     if (options.markChanged && p.changedField)
         plan.bytes[p.base + p.changedField] |= p.changedMask;
-    // The editor's variables LOAD sets: each found once in the code the CPU sees below #C000
-    std::vector<uint8_t> code;
-    if (!p.loadVariables.empty() && !machine.Read(0x4000, 0x8000, code))
-    {
-        plan.error = "the code of " + d.title + " (#4000-#BFFF) is not in the memory copied";
-        return plan;
-    }
+    // The editor's variables LOAD sets: each found once in the code
     for (const LoadVariable& v : p.loadVariables)
     {
-        std::vector<size_t> found;
-        for (size_t at = 0; at + v.pattern.size() <= code.size(); ++at)
-            if (std::equal(v.pattern.begin(), v.pattern.end(), code.begin() + static_cast<std::ptrdiff_t>(at),
-                           [](int want, uint8_t got) { return want < 0 || want == got; }))
-                found.push_back(at);
-        if (found.size() != 1)
+        size_t places = 0;
+        const auto found = VariableAddress(code, v, places);
+        if (!found)
         {
-            plan.error = d.title + "'s editor variables were not found in its code (" + std::to_string(found.size()) + " places)";
+            plan.error = d.title + "'s editor variables were not found in its code (" + std::to_string(places) + " places)";
             return plan;
         }
-        const uint16_t address = static_cast<uint16_t>(code[found[0] + v.at] | (code[found[0] + v.at + 1] << 8));
+        const uint16_t address = *found;
+        std::vector<uint8_t> bytes(v.size, 0);
         uint32_t value = 0;
-        if (v.from == LoadVariable::From::TextEnd)
+        switch (v.from)
         {
-            const auto end = std::find(file.begin() + p.textOffset, file.end(), p.endByte);
-            value = 0xC000u + p.base + static_cast<uint32_t>(end - file.begin());
+            case LoadVariable::From::TextEnd:
+            {
+                const auto end = std::find(file.begin() + p.textOffset, file.end(), p.endByte);
+                value = 0xC000u + p.base + static_cast<uint32_t>(end - file.begin());
+                break;
+            }
+            case LoadVariable::From::Header:
+                for (uint8_t k = 0; k < v.size && v.field + k < file.size(); ++k)
+                    value |= static_cast<uint32_t>(file[v.field + k]) << (8 * k);
+                break;
+            case LoadVariable::From::Constant: value = v.value; break;
+            case LoadVariable::From::SetBits: value = machine.Byte(address).value_or(0) | v.value; break;
+            case LoadVariable::From::PageBytes: break;
+            case LoadVariable::From::SecondLine:
+            {
+                // walked back from the end: the line whose body starts the file ends at its length byte
+                long at = static_cast<long>(file.size()) - 1;
+                while (at >= 0 && at - (file[static_cast<size_t>(at)] & 0x3F) > 0)
+                    at -= (file[static_cast<size_t>(at)] & 0x3F) + 1;
+                value = 0xC000u + p.base + static_cast<uint32_t>(at + 1);
+                break;
+            }
         }
-        else
-            for (uint8_t k = 0; k < v.size && v.field + k < file.size(); ++k)
-                value |= static_cast<uint32_t>(file[v.field + k]) << (8 * k);
+        for (uint8_t k = 0; k < v.size; ++k)
+            bytes[k] = v.from == LoadVariable::From::PageBytes ? plan.bytes[(v.field + k) % kPage] : static_cast<uint8_t>(value >> (8 * (k % 4)));
         for (uint8_t k = 0; k < v.size; ++k)
         {
             const uint16_t at = static_cast<uint16_t>(address + k);
@@ -1123,7 +1221,7 @@ InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& d, const
                 plan.error = d.title + "'s editor variable #" + Hex(address, 4) + " is not in RAM below #C000";
                 return plan;
             }
-            plan.pokes.push_back({window, static_cast<uint16_t>(at & (kPage - 1)), static_cast<uint8_t>(value >> (8 * k))});
+            plan.pokes.push_back({window, static_cast<uint16_t>(at & (kPage - 1)), bytes[k]});
         }
     }
     plan.ok = true;
