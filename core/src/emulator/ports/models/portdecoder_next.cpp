@@ -264,10 +264,11 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         OnPortInComplete(port, value, pc, disp);
         return value;
     }
-    if (low == 0x1F)
+    uint8_t joystick = 0;
+    if ((low == 0x1F || low == 0x37) && JoystickPortAnswers(low == 0x37, joystick))
     {
-        // Kempston joystick 1: built into the board (zxnext.vhd port_1f_lsb), 000FUDLR active high, 0 with nothing pressed
-        const uint8_t value = Default_Port_KempstonJoystick_In();
+        // The joystick ports: built into the board (zxnext.vhd port_1f_lsb / port_37_lsb), 000FUDLR active high, 0 with nothing pressed
+        const uint8_t value = joystick;
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -361,6 +362,30 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         use.last = value;
     }
     return value;
+}
+
+unsigned PortDecoder_Next::JoystickMode(bool left) const
+{
+    const uint8_t nr05 = _board->Stored(0x05);
+    constexpr unsigned kLeftBit3 = 3, kRightBit1 = 1, kLeftShift = 6, kRightShift = 4, kLow2 = 3;
+    return left ? ((((nr05 >> kLeftBit3) & 1u) << 2) | ((nr05 >> kLeftShift) & kLow2))
+                : ((((nr05 >> kRightBit1) & 1u) << 2) | ((nr05 >> kRightShift) & kLow2));
+}
+
+bool PortDecoder_Next::JoystickPortAnswers(bool port37, uint8_t& value) const
+{
+    constexpr uint8_t kPortEnable1F = 0x40, kPortEnable37 = 0x80;  // NR #82 bits 6 and 7 (internal_port_enable)
+    constexpr uint8_t kPadBits = 0xC0, kStickBits = 0x3F;           // bits 7:6 belong to an MD pad only
+    constexpr unsigned kRegPortEnable0 = 0x82;
+    const unsigned first = port37 ? kJoyKempston2 : kJoyKempston1, md = port37 ? kJoyMd2 : kJoyMd1;
+    const unsigned leftMode = JoystickMode(true), rightMode = JoystickMode(false);
+    const bool leftOn = leftMode == first || leftMode == md, rightOn = rightMode == first || rightMode == md;
+    value = 0;
+    if (!(_board->Stored(kRegPortEnable0) & (port37 ? kPortEnable37 : kPortEnable1F)) || !(leftOn || rightOn))
+        return false;
+    if (leftOn)
+        value = static_cast<uint8_t>(Default_Port_KempstonJoystick_In() & (leftMode == md ? (kPadBits | kStickBits) : kStickBits));
+    return true;  // the right connector has no host input: it adds nothing
 }
 
 void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)

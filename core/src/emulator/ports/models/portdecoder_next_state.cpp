@@ -761,9 +761,10 @@ StateNode NextInputReport(EmulatorContext* context)
     io["uart_on_joystick_port"] = (nr0b & 0x80) && (nr0b & 0x20);
     n["io_mode"] = std::move(io);
 
-    // zxnext.vhd: port #1F answers when either side is Kempston 1 or an MD pad on #1F; the emulator's joystick answers it always
-    const bool rtlAnswers = left == 1 || left == 5 || right == 1 || right == 5;
-    const uint8_t value = decoder->KempstonJoystickNow();
+    // zxnext.vhd: port #1F answers when either side is Kempston 1 or an MD pad on #1F (and NR #82 bit 6 lets it), #37 for Kempston 2 / MD 2
+    uint8_t value = decoder->KempstonJoystickNow();
+    uint8_t answered = 0;
+    const bool rtlAnswers = decoder->JoystickPortAnswers(false, answered);
     StateNode k = StateNode::Object();
     k["value"] = Hex8(value);
     StateNode bits = StateNode::Object();
@@ -774,12 +775,19 @@ StateNode NextInputReport(EmulatorContext* context)
     bits["fire"] = (value & 0x10) != 0;
     k["bits"] = std::move(bits);
     k["selected_by_nr_05"] = rtlAnswers;
-    k["answers_here"] = true;
-    k["note"] = rtlAnswers ? "" : "NR #05 selects no Kempston 1 / MD pad on #1F: the board would not drive the port; this emulator still does";
+    k["answers_here"] = rtlAnswers;
+    k["note"] = rtlAnswers ? "" : "NR #05 selects no Kempston 1 / MD pad on #1F (or NR #82 bit 6 is off): the board does not drive the port, a read gives #FF";
     n["kempston_1f"] = std::move(k);
 
+    uint8_t value37 = 0;
+    const bool answers37 = decoder->JoystickPortAnswers(true, value37);
+    StateNode k37 = StateNode::Object();
+    k37["value"] = Hex8(value37);
+    k37["answers_here"] = answers37;
+    k37["note"] = answers37 ? "" : "NR #05 selects no Kempston 2 / MD pad 2 on #37 (or NR #82 bit 7 is off): a read gives #FF";
+    n["kempston_37"] = std::move(k37);
+
     StateNode extra = StateNode::Object();
-    extra["port_37"] = false;
     extra["md_pad_buttons"] = false;
     extra["extended_keys"] = false;
     extra["nr_b0"] = Hex8(board.Stored(0xB0));

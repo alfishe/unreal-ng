@@ -4,7 +4,7 @@
 {0x02, "Reset", true, true, false, 0x00},
 {0x03, "Machine Type", true, true, false, 0x00},
 {0x04, "Config Mapping (config mode only, bootrom disabled)", false, true, true, 0x00},
-{0x05, "Peripheral 1 Setting", true, true, false, 0x00},
+{0x05, "Peripheral 1 Setting", true, true, false, 0x40},  // zxnext.vhd: nr_05_joy0 resets to "001" (Kempston 1 on the left), joy1 to "000"
 {0x06, "Peripheral 2 Setting", true, true, false, 0x00},
 {0x07, "CPU Speed", true, true, true, 0x00},
 {0x08, "Peripheral 3 Setting", true, true, false, 0x00},

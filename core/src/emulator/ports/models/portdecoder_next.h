@@ -78,6 +78,15 @@ public:
     NextAudio& Audio() { return *_audio; }
     /// What a read of port #1F returns now (the joystick's state; no side effect), for the input report
     uint8_t KempstonJoystickNow() const { return Default_Port_KempstonJoystick_In(); }
+
+    /// NR #05 joystick mode codes (zxnext.vhd nr_05_joy0 / joy1 = bit 3 or 1 & bits 7:6 or 5:4)
+    static constexpr unsigned kJoyKempston1 = 1, kJoyKempston2 = 4, kJoyMd1 = 5, kJoyMd2 = 6;
+    /// The code of the left (`left` true) or right joystick as NR #05 holds it now
+    unsigned JoystickMode(bool left) const;
+    /// Whether the board drives port #1F (`port37` false) or #37 now, and what a read gives (zxnext.vhd 2396, 2616-2617, 3436-3470): a side
+    /// that is Kempston 1 / MD 1 feeds #1F, Kempston 2 / MD 2 feeds #37, bits 7:6 only for an MD pad; the port also needs its bit in
+    /// NR #82 (6 and 7). The host joystick is the LEFT connector; nothing is on the right one. False: the read is not answered (the bus idles at #FF)
+    bool JoystickPortAnswers(bool port37, uint8_t& value) const;
     NextDma& Dma() { return _dma; }
     void BindDma();
     uint8_t ReadMemoryMapping() const override;

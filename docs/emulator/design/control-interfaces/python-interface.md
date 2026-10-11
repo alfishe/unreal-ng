@@ -248,7 +248,7 @@ class Emulator:
 
     def next_input(self) -> dict:
         """The Next's input as configured: joystick_modes (NR #05 left / right: name and the port it answers), io_mode (NR #0B), kempston_1f
-        (value, bits, selected_by_nr_05, answers_here) and not_modelled (port #37, MD pad buttons, extended keys NR #B0-#B2);
+        (value, bits, selected_by_nr_05, answers_here), kempston_37 (value, answers_here) and not_modelled (MD pad buttons, extended keys NR #B0-#B2);
         available=False elsewhere"""
 
     def next_dma(self) -> dict:

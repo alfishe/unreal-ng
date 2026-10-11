@@ -167,7 +167,7 @@ mode, the vector; pulse mode carries `#FF` on the bus and no vector. `nmi_reques
 the channel), and the four DAC channels with the left (A + B) and right (C + D) sums (`#80` is silence). `state/next/input` shows NR `#05`
 decoded for the left and right joystick (Kempston 1 / 2, MD 1 / 2, Sinclair, cursor, I/O mode) and which port each answers, the NR `#0B`
 I/O mode, and the Kempston port `#1F` now. `kempston_1f.selected_by_nr_05` false means `zxnext.vhd` would not drive `#1F` for these modes while
-this emulator still does (`answers_here`); port `#37`, the MD pad buttons and the extended keys NR `#B0`-`#B2` are not modelled. CLI
+the port idles at `#FF` (`answers_here`), as it does if NR `#82` bit 6 is off; `#37` answers for Kempston 2 / MD 2 (`kempston_37`, NR `#82` bit 7). The host joystick is the left connector. The MD pad buttons and the extended keys NR `#B0`-`#B2` are not modelled. CLI
 `state next audio` / `state next input`, Lua `next_audio()` / `next_input()`, Python `emu.next_audio()` / `emu.next_input()`, MCP aspects
 `next_audio` / `next_input`.
 
