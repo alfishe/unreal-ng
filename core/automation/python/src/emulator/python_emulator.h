@@ -103,6 +103,8 @@
 #include <debugger/ports/nextregwrite.h>
 #include <emulator/io/z80n/nextregjournal.h>
 #include <emulator/io/z80n/nextdivmmcjournal.h>
+#include <emulator/io/z80n/nextintjournal.h>
+#include <debugger/ports/nextnmi.h>
 #include <emulator/io/z80n/nextsdjournal.h>
 #include <emulator/io/z80n/nextreportquery.h>
 #include "../bindings/python_porttrace.h"
@@ -145,6 +147,50 @@ inline int PythonScriptBreakpoint(Emulator& self, BreakpointTypeEnum type, uint8
     spec.address = address;
     std::string error;
     if (!BreakpointManager::ApplyScriptOptions(spec, page, to, slotOnly, mask, hits, error))
+        return -1;
+    const uint16_t id = bpm->AddBreakpoint(spec, error);
+    return id == BRK_INVALID ? -1 : static_cast<int>(id);
+}
+
+/// bp_nextreg_write / bp_nextreg_read / bp_nextreg: a ZX Next register breakpoint (BreakpointManager::ApplyNextRegOptions).
+/// The breakpoint id, or -1 when refused
+inline int PythonScriptNextRegBreakpoint(Emulator& self, uint8_t access, uint16_t reg, int32_t to, const std::string& doors,
+                                         int32_t value, int32_t vmask, const std::string& hits)
+{
+    BreakpointManager* bpm = self.GetBreakpointManager();
+    if (!bpm)
+        return -1;
+    BreakpointSpec spec;
+    spec.type = BRK_NEXTREG;
+    spec.access = access;
+    spec.address = reg;
+    std::string error;
+    if (!BreakpointManager::ApplyNextRegOptions(spec, to, doors, value, vmask, hits, error))
+        return -1;
+    const uint16_t id = bpm->AddBreakpoint(spec, error);
+    return id == BRK_INVALID ? -1 : static_cast<int>(id);
+}
+
+/// bp_beam / bp_copper (ZX Next): a place of the beam, or a copper list instruction. The breakpoint id, or -1 when refused
+inline int PythonScriptPositionBreakpoint(Emulator& self, BreakpointTypeEnum type, uint16_t position, int32_t hc, int32_t to,
+                                          const std::string& hits)
+{
+    BreakpointManager* bpm = self.GetBreakpointManager();
+    if (!bpm)
+        return -1;
+    BreakpointSpec spec;
+    spec.type = type;
+    spec.access = BRK_IO_OUT;
+    spec.address = position;
+    if (hc > 0)
+        spec.beamHc = static_cast<uint16_t>(hc);
+    if (to >= 0)
+    {
+        spec.hasEnd = true;
+        spec.addressEnd = static_cast<uint16_t>(to);
+    }
+    std::string error;
+    if (!BreakpointManager::ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error))
         return -1;
     const uint16_t id = bpm->AddBreakpoint(spec, error);
     return id == BRK_INVALID ? -1 : static_cast<int>(id);
@@ -2001,6 +2047,38 @@ namespace PythonBindings
             }, "Add a port breakpoint (bp_port_out); mask: matches every port with (port & mask) == (port & mask); "
                "hits '5' / '>=5' / '%5'. -1 when refused",
                py::arg("port"), py::arg("mask") = -1, py::arg("hits") = "")
+            .def("bp_nextreg_write", [](Emulator& self, uint16_t reg, int32_t to, const std::string& doors, int32_t value,
+                             int32_t vmask, const std::string& hits) -> int {
+                return PythonScriptNextRegBreakpoint(self, BRK_IO_OUT, reg, to, doors, value, vmask, hits);
+            }, "Add a ZX Next register breakpoint on writes; to: register range end; doors 'nextreg,port,copper' a write "
+               "comes through (default all); value: stop only on it, vmask: the compared bits; hits '5' / '>=5' / '%5'. "
+               "-1 when refused",
+               py::arg("reg"), py::arg("to") = -1, py::arg("doors") = "", py::arg("value") = -1, py::arg("vmask") = -1,
+               py::arg("hits") = "")
+            .def("bp_nextreg_read", [](Emulator& self, uint16_t reg, int32_t to, const std::string& doors, int32_t value,
+                             int32_t vmask, const std::string& hits) -> int {
+                return PythonScriptNextRegBreakpoint(self, BRK_IO_IN, reg, to, doors, value, vmask, hits);
+            }, "Add a ZX Next register breakpoint on reads (through #253B); to: register range end; doors 'nextreg,port,copper' a write "
+               "comes through (default all); value: stop only on it, vmask: the compared bits; hits '5' / '>=5' / '%5'. "
+               "-1 when refused",
+               py::arg("reg"), py::arg("to") = -1, py::arg("doors") = "", py::arg("value") = -1, py::arg("vmask") = -1,
+               py::arg("hits") = "")
+            .def("bp_nextreg", [](Emulator& self, uint16_t reg, int32_t to, const std::string& doors, int32_t value,
+                             int32_t vmask, const std::string& hits) -> int {
+                return PythonScriptNextRegBreakpoint(self, BRK_IO_IN | BRK_IO_OUT, reg, to, doors, value, vmask, hits);
+            }, "Add a ZX Next register breakpoint on reads and writes; to: register range end; doors 'nextreg,port,copper' a write "
+               "comes through (default all); value: stop only on it, vmask: the compared bits; hits '5' / '>=5' / '%5'. "
+               "-1 when refused",
+               py::arg("reg"), py::arg("to") = -1, py::arg("doors") = "", py::arg("value") = -1, py::arg("vmask") = -1,
+               py::arg("hits") = "")
+            .def("bp_beam", [](Emulator& self, uint16_t line, int32_t hc, const std::string& hits) -> int {
+                return PythonScriptPositionBreakpoint(self, BRK_BEAM, line, hc, -1, hits);
+            }, "Add a ZX Next beam breakpoint: stops when the beam passes line 'line' of the copper's counter at pixel clock 'hc'. -1 when refused",
+               py::arg("line"), py::arg("hc") = 0, py::arg("hits") = "")
+            .def("bp_copper", [](Emulator& self, uint16_t index, int32_t to, const std::string& hits) -> int {
+                return PythonScriptPositionBreakpoint(self, BRK_COPPER, index, 0, to, hits);
+            }, "Add a ZX Next copper breakpoint: stops when the copper completes the list instruction at 'index' (to: range end). -1 when refused",
+               py::arg("index"), py::arg("to") = -1, py::arg("hits") = "")
             .def("bp_remove", [](Emulator& self, uint16_t id) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return false;
@@ -2950,6 +3028,33 @@ namespace PythonBindings
                 return StateNodeToPy(DeviceState::NextDivMmcJournalControl(self.GetContext(), enable, clear, capacity));
             }, py::arg("enabled") = py::none(), py::arg("clear") = false, py::arg("capacity") = 0,
                "Switch (enabled=True/False), clear or resize (capacity=N) the DivMMC journal")
+            .def("next_nmi", [](Emulator& self, py::object kinds, py::object since, py::object from_frame, py::object to_frame,
+                                py::object limit) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                NextIntJournalQuery query;
+                std::string error;
+                if (!NextIntJournalQueryFromStrings(text(kinds), text(since), text(from_frame), text(to_frame), text(limit), query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextNmiReport(self.GetContext(), query));
+            }, py::arg("kinds") = py::none(), py::arg("since") = py::none(), py::arg("from_frame") = py::none(),
+               py::arg("to_frame") = py::none(), py::arg("limit") = py::none(),
+               "The Next NMI sources (M1 / DRIVE button: would fire, blocked by), the NMI in service, the Multiface, NR #02 bits, the stackless NMI, "
+               "the reset bits, the interrupts pending / in service, and the interrupt / NMI / reset journal (kinds int_ack, reti, nmi_request, retn, "
+               "reset); the journal is off by default (next_nmi_journal_control(enabled=True))")
+            .def("next_nmi_journal_control", [](Emulator& self, py::object enabled, bool clear, size_t capacity) -> py::object {
+                const int enable = enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0);
+                return StateNodeToPy(DeviceState::NextNmiJournalControl(self.GetContext(), enable, clear, capacity));
+            }, py::arg("enabled") = py::none(), py::arg("clear") = false, py::arg("capacity") = 0,
+               "Switch (enabled=True/False), clear or resize (capacity=N) the interrupt / NMI / reset journal")
+            .def("next_nmi_trigger", [](Emulator& self, const std::string& source) -> py::object {
+                return StateNodeToPy(NextNmiControl::ToState(NextNmiControl::Trigger(&self, source)));
+            }, py::arg("source"),
+               "Raise an NMI as the Multiface button ('m1'), the DRIVE button ('drive') or the bare /NMI line ('pulse'); the reply says accepted "
+               "and, if the board refused, why")
             .def("next_dma", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextDma(self.GetContext())); },
                "The Next DMA as programmed and running (mode, ports A / B, direction, burst, prescaler, counters, status byte); reading it "
                "does not advance its read sequence; available=False elsewhere")

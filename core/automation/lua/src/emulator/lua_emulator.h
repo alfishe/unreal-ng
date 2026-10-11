@@ -81,6 +81,8 @@
 #include <debugger/ports/nextregwrite.h>
 #include <emulator/io/z80n/nextregjournal.h>
 #include <emulator/io/z80n/nextdivmmcjournal.h>
+#include <emulator/io/z80n/nextintjournal.h>
+#include <debugger/ports/nextnmi.h>
 #include <emulator/io/z80n/nextsdjournal.h>
 #include <emulator/io/z80n/nextreportquery.h>
 #include <emulator/video/screendigest.h>
@@ -420,6 +422,74 @@ protected:
         }
         std::string error;
         if (!BreakpointManager::ApplyScriptOptions(spec, page, to, slotOnly, mask, hits, error))
+            return -1;
+        const uint16_t id = bpm->AddBreakpoint(spec, error);
+        return id == BRK_INVALID ? -1 : static_cast<int>(id);
+    }
+
+    /// bp_nextreg_write / bp_nextreg_read / bp_nextreg: `options` is nothing or a table {to=, doors=, value=, vmask=, hits=}
+    /// (to = register range end; doors "nextreg,port,copper"; value = stop only on it, vmask = the compared bits). The id, or -1
+    int AddScriptNextRegBreakpoint(uint8_t access, uint16_t reg, const sol::optional<sol::table>& options)
+    {
+        Emulator* emulator = effectiveEmulator();
+        BreakpointManager* bpm = emulator ? emulator->GetBreakpointManager() : nullptr;
+        if (!bpm)
+            return -1;
+        BreakpointSpec spec;
+        spec.type = BRK_NEXTREG;
+        spec.access = access;
+        spec.address = reg;
+        std::string doors, hits;
+        int32_t to = -1, value = -1, vmask = -1;
+        if (options)
+        {
+            const sol::table& t = *options;
+            to = t.get<sol::optional<int32_t>>("to").value_or(-1);
+            doors = t.get<sol::optional<std::string>>("doors").value_or("");
+            value = t.get<sol::optional<int32_t>>("value").value_or(-1);
+            vmask = t.get<sol::optional<int32_t>>("vmask").value_or(-1);
+            hits = t.get<sol::optional<std::string>>("hits").value_or("");
+            if (hits.empty())
+                if (auto n = t.get<sol::optional<int64_t>>("hits"))
+                    hits = std::to_string(*n);
+        }
+        std::string error;
+        if (!BreakpointManager::ApplyNextRegOptions(spec, to, doors, value, vmask, hits, error))
+            return -1;
+        const uint16_t id = bpm->AddBreakpoint(spec, error);
+        return id == BRK_INVALID ? -1 : static_cast<int>(id);
+    }
+
+    /// bp_beam / bp_copper (ZX Next): `options` is nothing or a table {hc=, to=, hits=} (hc: the pixel clock of a beam place; to: the
+    /// range end of copper list indexes). The id, or -1
+    int AddScriptPositionBreakpoint(BreakpointTypeEnum type, uint16_t position, const sol::optional<sol::table>& options)
+    {
+        Emulator* emulator = effectiveEmulator();
+        BreakpointManager* bpm = emulator ? emulator->GetBreakpointManager() : nullptr;
+        if (!bpm)
+            return -1;
+        BreakpointSpec spec;
+        spec.type = type;
+        spec.access = BRK_IO_OUT;
+        spec.address = position;
+        std::string hits;
+        if (options)
+        {
+            const sol::table& t = *options;
+            spec.beamHc = static_cast<uint16_t>(t.get<sol::optional<int32_t>>("hc").value_or(0));
+            const int32_t to = t.get<sol::optional<int32_t>>("to").value_or(-1);
+            if (to >= 0)
+            {
+                spec.hasEnd = true;
+                spec.addressEnd = static_cast<uint16_t>(to);
+            }
+            hits = t.get<sol::optional<std::string>>("hits").value_or("");
+            if (hits.empty())
+                if (auto n = t.get<sol::optional<int64_t>>("hits"))
+                    hits = std::to_string(*n);
+        }
+        std::string error;
+        if (!BreakpointManager::ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error))
             return -1;
         const uint16_t id = bpm->AddBreakpoint(spec, error);
         return id == BRK_INVALID ? -1 : static_cast<int>(id);
@@ -2845,6 +2915,26 @@ public:
             return AddScriptBreakpoint(BRK_IO, BRK_IO_OUT, port, options);
         });
 
+        // ZX Next register breakpoints. Options: a table {to=, doors=, value=, vmask=, hits=} (to = register range end; doors
+        // "nextreg,port,copper" a write may come through; value = stop only on it, vmask = the compared bits). -1 when refused
+        lua.set_function("bp_nextreg_write", [this](uint16_t reg, sol::optional<sol::table> options) -> int {
+            return AddScriptNextRegBreakpoint(BRK_IO_OUT, reg, options);
+        });
+        lua.set_function("bp_nextreg_read", [this](uint16_t reg, sol::optional<sol::table> options) -> int {
+            return AddScriptNextRegBreakpoint(BRK_IO_IN, reg, options);
+        });
+        // bp_beam(line, {hc=}) stops when the beam passes the place (the copper's counters); bp_copper(index, {to=}) when the copper
+        // completes that list instruction. -1 when refused
+        lua.set_function("bp_beam", [this](uint16_t line, sol::optional<sol::table> options) -> int {
+            return AddScriptPositionBreakpoint(BRK_BEAM, line, options);
+        });
+        lua.set_function("bp_copper", [this](uint16_t index, sol::optional<sol::table> options) -> int {
+            return AddScriptPositionBreakpoint(BRK_COPPER, index, options);
+        });
+        lua.set_function("bp_nextreg", [this](uint16_t reg, sol::optional<sol::table> options) -> int {
+            return AddScriptNextRegBreakpoint(BRK_IO_IN | BRK_IO_OUT, reg, options);
+        });
+
         lua.set_function("bp_remove", [this](uint16_t id) -> bool {
             if (!effectiveEmulator()) return false;
             auto* ctx = effectiveEmulator()->GetContext();
@@ -3700,6 +3790,58 @@ public:
                     capacity = static_cast<size_t>(n.as<long long>());
             }
             return StateNodeToLua(s, DeviceState::NextDivMmcJournalControl(emulator->GetContext(), enable, clear, capacity));
+        });
+        // next_nmi([{kinds="int_ack,nmi_request", since=N, from=F, to=F, limit=N}]): the Next's NMI sources, Multiface, interrupts, reset and the
+        // interrupt / NMI / reset journal (DeviceState::NextNmiReport); nil + error on a bad option. The journal is off by default:
+        // next_nmi_journal_control({enabled=true}) first
+        lua.set_function("next_nmi", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options)
+                    return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number)
+                    return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string)
+                    return value.as<std::string>();
+                return std::string();
+            };
+            NextIntJournalQuery query;
+            std::string error;
+            if (!NextIntJournalQueryFromStrings(text("kinds"), text("since"), text("from"), text("to"), text("limit"), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextNmiReport(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_nmi_journal_control({enabled=true|false, clear=true, capacity=N}): switch / clear / resize the interrupt / NMI / reset journal
+        lua.set_function("next_nmi_journal_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            bool clear = false;
+            size_t capacity = 0;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+                sol::object c = (*options)["clear"];
+                if (c.get_type() == sol::type::boolean)
+                    clear = c.as<bool>();
+                sol::object n = (*options)["capacity"];
+                if (n.get_type() == sol::type::number)
+                    capacity = static_cast<size_t>(n.as<long long>());
+            }
+            return StateNodeToLua(s, DeviceState::NextNmiJournalControl(emulator->GetContext(), enable, clear, capacity));
+        });
+        // next_nmi_trigger(source): raise an NMI as the Multiface button ("m1"), the DRIVE button ("drive") or the bare /NMI line ("pulse");
+        // the reply says accepted and, if the board refused, why (NextNmiControl)
+        lua.set_function("next_nmi_trigger", [this](sol::this_state s, const std::string& source) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, NextNmiControl::ToState(NextNmiControl::Trigger(emulator, source)));
         });
         // next_dma() / next_video(): the Next's DMA and video layers (DeviceState::NextDma / NextVideo; no side effect on the machine)
         lua.set_function("next_dma", [this](sol::this_state s) -> sol::object {

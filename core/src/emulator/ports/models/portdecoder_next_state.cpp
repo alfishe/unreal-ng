@@ -11,6 +11,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/z80n/nextregjournal.h"
 #include "emulator/io/z80n/nextdivmmcjournal.h"
+#include "emulator/io/z80n/nextintjournal.h"
 #include "emulator/io/z80n/nextsdjournal.h"
 #include "emulator/io/z80n/nextregtable.h"
 #include "emulator/ports/models/portdecoder_next.h"
@@ -123,6 +124,11 @@ StateNode EventNode(const NextRegWriteEvent& e, const NextRegInfo* table, size_t
     n["frame"] = static_cast<uint64_t>(e.frame);
     n["t"] = static_cast<uint64_t>(e.t);
     n["pc"] = StringHelper::Format("0x%04X", e.pc);
+    if (e.beamLine >= 0)
+    {
+        n["beam_line"] = int(e.beamLine);
+        n["beam_hc"] = int(e.beamHc);
+    }
     n["source"] = NextRegSourceName(e.source);
     n["reg"] = Hex8(e.reg);
     for (size_t i = 0; i < count; i++)
@@ -399,6 +405,169 @@ StateNode NextDivMmcJournalControl(EmulatorContext* context, int enable, bool cl
     if (enable >= 0)
         journal.SetEnabled(enable != 0);
     return DivMmcJournalState(journal);
+}
+
+namespace
+{
+StateNode IntJournalState(const NextIntJournal& journal)
+{
+    StateNode n = StateNode::Object();
+    n["available"] = true;
+    n["enabled"] = journal.Enabled();
+    n["size"] = static_cast<uint64_t>(journal.Size());
+    n["capacity"] = static_cast<uint64_t>(journal.Capacity());
+    n["evicted"] = journal.Evicted();
+    n["last_seq"] = journal.LastSeq();
+    return n;
+}
+
+StateNode NamesNode(uint16_t mask)
+{
+    StateNode list = StateNode::Array();
+    for (const char* name : NextInterruptSource::SourceNames(mask))
+        list.push(StateNode(std::string(name)));
+    return list;
+}
+
+/// zxnext.vhd nr_02_reset_type: 100 at power on, then 010, then 001 for every reset that follows; a read of NR #02 shows bits 1:0
+const char* ResetBitsName(uint8_t bits)
+{
+    switch (bits & 3)
+    {
+        case 0: return "power_on";
+        case 2: return "first_reset_after_power_on";
+        default: return "later_reset";
+    }
+}
+}  // namespace
+
+StateNode NextNmiReport(EmulatorContext* context, const NextIntJournalQuery& query)
+{
+    PortDecoder_Next* decoder = NextDecoder(context);
+    if (!decoder)
+        return Unavailable();
+    NextBoard& board = decoder->Board();
+    NextMultiface& multiface = decoder->Multiface();
+    NextDivMmc& divmmc = decoder->DivMmc();
+    NextInterruptSource& irq = decoder->Interrupts();
+    StateNode n = IntJournalState(decoder->IntJournal());
+
+    // The NMI sources: what can raise /NMI, whether it would now, and why not
+    StateNode sources = StateNode::Array();
+    auto button = [&](const char* name, const char* via, bool enabled, const char* refusal) {
+        StateNode s = StateNode::Object();
+        s["name"] = name;
+        s["via"] = via;
+        s["modelled"] = true;
+        s["enabled"] = enabled;
+        s["would_fire"] = refusal == nullptr;
+        if (refusal)
+            s["blocked_by"] = refusal;
+        sources.push(std::move(s));
+    };
+    button("m1_button", "NR #02 bit 3 write (the M1 key); needs NR #06 bit 3", (board.Stored(0x06) & 0x08) != 0, decoder->MultifaceNmiRefusal());
+    button("drive_button", "NR #02 bit 2 write (the DRIVE key, the host's NMI action); needs NR #06 bit 4", (board.Stored(0x06) & 0x10) != 0,
+           decoder->DriveNmiRefusal());
+    StateNode trap = StateNode::Object();
+    trap["name"] = "io_trap";
+    trap["via"] = "+3 FDC ports #2FFD / #3FFD while NR #D8 bit 0 is on (NR #D9 / #DA: the write and the cause)";
+    trap["modelled"] = false;
+    trap["enabled"] = (board.Stored(0xD8) & 0x01) != 0;
+    trap["note"] = "the trap is not modelled: the registers only store their byte";
+    sources.push(std::move(trap));
+    n["sources"] = std::move(sources);
+
+    StateNode service = StateNode::Object();
+    service["any"] = multiface.NmiHold() || divmmc.NmiHold();
+    service["multiface_session"] = multiface.NmiHold();
+    service["divmmc_handler"] = divmmc.NmiHold();
+    service["divmmc_button_pending"] = divmmc.ButtonPending();
+    n["in_service"] = std::move(service);
+
+    StateNode mf = StateNode::Object();
+    const unsigned type = multiface.Type();
+    mf["enabled"] = multiface.Enabled();
+    mf["type"] = int(type);
+    mf["type_name"] = type == 0 ? "+3" : (type == 1 ? "128" : (type == 2 ? "48K" : "48K, always visible"));
+    mf["enable_port"] = Hex8(multiface.EnablePort());
+    mf["disable_port"] = Hex8(multiface.DisablePort());
+    mf["memory_in"] = multiface.MemoryIn();
+    mf["nmi_active"] = multiface.NmiHold();
+    mf["invisible"] = multiface.Invisible();
+    mf["active"] = multiface.IsActive();
+    n["multiface"] = std::move(mf);
+
+    StateNode nr02 = StateNode::Object();
+    nr02["value"] = Hex8(board.Read(NextBoard::kRegResetType));
+    nr02["bus_reset"] = (board.Read(NextBoard::kRegResetType) & 0x80) != 0;
+    nr02["m1_nmi_generated"] = (board.Read(NextBoard::kRegResetType) & 0x08) != 0;
+    nr02["drive_nmi_generated"] = (board.Read(NextBoard::kRegResetType) & 0x04) != 0;
+    n["nr_02"] = std::move(nr02);
+
+    StateNode stackless = StateNode::Object();
+    stackless["enabled"] = irq.StacklessNmi();
+    stackless["return_address"] = Hex16(irq.LoadNmiReturn());
+    n["stackless_nmi"] = std::move(stackless);
+
+    StateNode reset = StateNode::Object();
+    reset["bits"] = int(board.ResetBits());
+    reset["last"] = ResetBitsName(board.ResetBits());
+    n["reset"] = std::move(reset);
+
+    StateNode ints = StateNode::Object();
+    ints["mode"] = irq.HardwareMode() ? "hardware im2" : "pulse";
+    ints["pending"] = NamesNode(irq.PendingMask());
+    ints["in_service"] = NamesNode(irq.InServiceMask());
+    uint8_t control = 0;
+    if (irq.ReadNr(NextInterruptSource::kRegControl, control))
+        ints["vector_base"] = Hex8(control & 0xE0);
+    n["interrupts"] = std::move(ints);
+
+    StateNode events = StateNode::Array();
+    for (const NextIntEvent& e : decoder->IntJournal().Query(query))
+    {
+        StateNode ev = StateNode::Object();
+        ev["seq"] = e.seq;
+        ev["frame"] = int(e.frame);
+        ev["t"] = int(e.t);
+        ev["pc"] = Hex16(e.pc);
+        ev["kind"] = NextIntKindName(e.kind);
+        ev["source"] = e.source;
+        if (e.kind == NextIntKind::IntAck)
+        {
+            if (e.hasVector)
+                ev["vector"] = Hex8(e.vector);
+        }
+        else if (e.kind == NextIntKind::NmiRequest)
+        {
+            ev["accepted"] = e.accepted;
+            if (!e.accepted)
+                ev["reason"] = e.reason;
+        }
+        else if (e.kind == NextIntKind::Reset)
+        {
+            ev["reset_bits"] = int(e.value);
+            ev["reset_last"] = ResetBitsName(e.value);
+        }
+        events.push(std::move(ev));
+    }
+    n["events"] = std::move(events);
+    return n;
+}
+
+StateNode NextNmiJournalControl(EmulatorContext* context, int enable, bool clear, size_t capacity)
+{
+    PortDecoder_Next* decoder = NextDecoder(context);
+    if (!decoder)
+        return Unavailable();
+    NextIntJournal& journal = decoder->IntJournal();
+    if (capacity > 0)
+        journal.SetCapacity(capacity);
+    if (clear)
+        journal.Clear();
+    if (enable >= 0)
+        journal.SetEnabled(enable != 0);
+    return IntJournalState(journal);
 }
 
 StateNode Next(EmulatorContext* context)

@@ -474,6 +474,9 @@ GET  /api/v1/emulator/{id}/state/next/sd     ?kinds=command,read,write&card=0|1&
 POST /api/v1/emulator/{id}/next/sd-journal   {"enabled": true|false, "clear": true, "capacity": N} - switch (off by default), clear or resize the SD journal
 GET  /api/v1/emulator/{id}/state/next/divmmc ?kinds=map_in,esx_call&since=&from=&to=&limit= - the Next DivMMC (#E3, the automap latch, the DRIVE button), NR #B8-#BB decoded entry by entry and the DivMMC journal: what paged it in and out (fetch address, instant or delayed, #1FF8, RETN, NR #0A / #83, reset) and, for an entry at #0008, the esxDOS call (F_OPEN, F_READ ...) with the registers
 POST /api/v1/emulator/{id}/next/divmmc-journal {"enabled": true|false, "clear": true, "capacity": N} - switch (off by default), clear or resize the DivMMC journal
+GET  /api/v1/emulator/{id}/state/next/nmi ?kinds=int_ack,nmi_request&since=&from=&to=&limit= - the Next NMI sources (m1_button, drive_button: would_fire / blocked_by; io_trap: not modelled), in_service, the Multiface, NR #02 bits, the stackless NMI, the reset bits, the interrupts pending / in service by name, and the interrupt / NMI / reset journal
+POST /api/v1/emulator/{id}/next/nmi-journal {"enabled": true|false, "clear": true, "capacity": N} - switch (off by default), clear or resize the interrupt / NMI / reset journal
+POST /api/v1/emulator/{id}/next/nmi {"source": "m1"|"drive"|"pulse"} - raise an NMI as the Multiface button, the DRIVE button or the bare /NMI line, with the CPU held; a button the board refuses answers accepted false with the reason (400 bad source, 409 not a Next)
 GET  /api/v1/emulator/{id}/state/next/dma    the Next DMA as programmed and running (mode zxn|z80, ports a/b, direction, burst, prescaler, counters, src/dst + src_kind/dst_kind, holds_bus, status); no side effect on its read sequence
 GET  /api/v1/emulator/{id}/state/next/video  layer order, ULA/Layer 2/tilemap/sprites switches, clip windows, transparency, raster, timing
 GET  /api/v1/emulator/{id}/state/next/palette ?palette=selected|0-7|name|all&range=0-255 - the 9-bit palettes; no palette index moves
@@ -751,7 +754,7 @@ POST   /api/v1/emulator/{id}/breakpoints/hits/reset        Hit counters to 0 ({"
 #### Add Breakpoint Request
 ```json
 {
-  "type": "execution|read|write|rw|port_in|port_out|port",
+  "type": "execution|read|write|rw|port_in|port_out|port|nextreg_write|nextreg_read|nextreg|beam|copper",
   "address": 32768,
   "address_end": 33023,
   "page": {"kind": "ram", "page": 32},
@@ -771,6 +774,8 @@ Everything but `type` and `address` is optional (the debugger protocol's Breakpo
 | `page` | `{kind: ram \| rom \| cache, page}` (or the text `"ram32"`): a **physical** breakpoint on that page at offset `address & #3FFF`. It fires through whatever slot shows the page: TS-Conf code paged into `#C000` or `#8000`, the 128K's RAM 5 at `#4000` and `#C000`. With a range, the range stays inside the page. 400 for a page the machine does not have. |
 | `slot_only` | With `page`: only through the slot of `address` (the old "while page X is at this address"). |
 | `port_mask` | Ports: matches when `(port & port_mask) == (address & port_mask)`; `255` catches `#FE` on any high byte. |
+| `doors`, `value`, `value_mask` | ZX Next `nextreg*` only: `address` is the register (`address_end` a range); `doors` a comma separated list or array of `nextreg` (the NEXTREG instructions), `port` (OUT `#253B`), `copper` (a copper MOVE), default all (a read always comes through the port); `value` stops only on that byte, `value_mask` compares only those bits (default `255` with a value). The reply and the list carry `doors`, `value`, `value_mask`. |
+| `hc` | ZX Next `beam` only: `address` is the line of the copper's counter (NR #64 applied), `hc` the pixel clock in the row (0..511, default 0). A `copper` breakpoint takes `address` = list index (0..1023), `address_end` a range. |
 | `hits` | `"5"` stops on the 5th hit only, `">=5"` from the 5th on, `"%5"` every 5th. Every matching access is counted (`hit_count`). The same as `hit_mode` (`always` / `equal` / `at_least` / `multiple`) + `hit_target`. Stepping on from the breakpoint the machine stopped at is not counted again. |
 
 Errors (400) name the problem: a range ending before it starts, a page range leaving its page, a missing

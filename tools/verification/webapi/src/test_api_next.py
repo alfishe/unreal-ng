@@ -101,6 +101,58 @@ class TestNextReports:
     def test_divmmc_bad_parameters_are_400(self, api_client, next_emulator):
         assert get(api_client, next_emulator, "/state/next/divmmc?kinds=jump").status_code == 400
 
+    def test_nextreg_beam_and_copper_breakpoints(self, api_client, next_emulator):
+        def add(body):
+            return post(api_client, next_emulator, "/breakpoints", body)
+
+        written = add({"type": "nextreg_write", "address": "0x40", "address_end": "0x44", "doors": "copper,port", "value": 1, "value_mask": 3})
+        assert written.status_code == 201, written.text
+        info = written.json()
+        assert info["address"] == 0x40 and info["address_end"] == 0x44
+        assert info["doors"] == "port,copper" and info["value"] == 1 and info["value_mask"] == 3
+        beam = add({"type": "beam", "address": 99, "hc": 255})
+        assert beam.status_code == 201, beam.text
+        assert beam.json()["hc"] == 255
+        copper = add({"type": "copper", "address": 12, "address_end": 14})
+        assert copper.status_code == 201, copper.text
+        listed = {b["type"]: b for b in get(api_client, next_emulator, "/breakpoints").json()["breakpoints"]}
+        assert {"nextreg", "beam", "copper"} <= set(listed)
+        assert listed["nextreg"]["write"] is True and listed["nextreg"]["read"] is False
+        # a tool's write is no access of the program
+        wrote = post(api_client, next_emulator, "/next/nextreg", {"reg": "0x40", "value": "0x01"})
+        assert wrote.status_code == 200, wrote.text
+        assert get(api_client, next_emulator, "/breakpoints").json()["breakpoints"][0]["hit_count"] == 0
+        # refused: a read through the copper's door only, a register past 255, a pixel clock on another kind, an unknown door
+        assert add({"type": "nextreg_read", "address": 7, "doors": "copper"}).status_code == 400
+        assert add({"type": "nextreg_write", "address": 256}).status_code == 400
+        assert add({"type": "nextreg_write", "address": 7, "hc": 3}).status_code == 400
+        assert add({"type": "nextreg_write", "address": 7, "doors": "dma"}).status_code == 400
+        assert add({"type": "beam", "address": 512}).status_code == 400
+        assert add({"type": "copper", "address": 1024}).status_code == 400
+        api_client.session.delete(api_client._url(f"/api/v1/emulator/{next_emulator}/breakpoints"))
+
+    def test_nmi_report_journal_and_trigger(self, api_client, next_emulator):
+        report = get(api_client, next_emulator, "/state/next/nmi").json()
+        names = [source["name"] for source in report["sources"]]
+        assert names == ["m1_button", "drive_button", "io_trap"]
+        assert report["sources"][2]["modelled"] is False
+        assert {"in_service", "multiface", "nr_02", "stackless_nmi", "reset", "interrupts", "events"} <= set(report)
+        journal = post(api_client, next_emulator, "/next/nmi-journal", {"enabled": True, "clear": True}).json()
+        assert journal["enabled"] is True and journal["size"] == 0
+        # the buttons are off at power on: the board refuses, with the reason, and the journal says so
+        refused = post(api_client, next_emulator, "/next/nmi", {"source": "m1"})
+        assert refused.status_code == 200, refused.text
+        assert refused.json()["accepted"] is False and "NR #06" in refused.json()["reason"]
+        taken = post(api_client, next_emulator, "/next/nmi", {"source": "pulse"}).json()
+        assert taken["accepted"] is True
+        events = get(api_client, next_emulator, "/state/next/nmi?kinds=nmi_request").json()["events"]
+        assert [e["source"] for e in events][:2] == ["m1_button", "pulse"]
+        assert events[0]["accepted"] is False and "reason" in events[0]
+        assert post(api_client, next_emulator, "/next/nmi", {"source": "dma"}).status_code == 400
+        assert post(api_client, next_emulator, "/next/nmi", {}).status_code == 400
+        assert get(api_client, next_emulator, "/state/next/nmi?kinds=jump").status_code == 400
+        post(api_client, next_emulator, "/next/nmi-journal", {"enabled": False})
+
     def test_nextreg_write_bad_body_is_400(self, api_client, next_emulator):
         assert post(api_client, next_emulator, "/next/nextreg", {"reg": "14"}).status_code == 400
         assert post(api_client, next_emulator, "/next/nextreg", {"reg": "14", "value": "1", "door": "copper"}).status_code == 400

@@ -3,7 +3,10 @@
 #include "portdecoder_next.h"
 
 #include "common/modulelogger.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
 #include "emulator/cpu/core.h"
+#include "emulator/emulator.h"
 #include "emulator/io/z80n/nexttiming.h"
 #include <filesystem>
 
@@ -43,6 +46,18 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
             pc = z80->m1_pc;
         }
     });
+    // NextREG breakpoints: the board tells every access of the program with its door (the single choke points)
+    _board->SetAccessHook([this](bool write, uint8_t reg, uint8_t value, NextRegSource source) { NextRegAccess(write, reg, value, source); });
+    _interrupts->onEvent = [this](NextIntKind kind, const char* source, bool hasVector, uint8_t vector) {
+        if (!_intJournal.Enabled())
+            return;
+        NextIntEvent e;
+        e.kind = kind;
+        e.source = source;
+        e.hasVector = hasVector;
+        e.vector = vector;
+        RecordInt(e);
+    };
     _divMmc = std::make_unique<NextDivMmc>(&Mem(), _board.get());
     _divMmc->isBasicRomPaged = [this]() { return Mem().BasicRomVisible(); };
     _divMmc->fillClock = [this](NextDivMmcEvent& e) {
@@ -332,7 +347,7 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         if (low == kPortSpiData)
             result = SpiRead();
         else
-            result = port == kPortRegSelect ? _board->SelectedRegister() : _board->ReadSelected();
+            result = port == kPortRegSelect ? _board->SelectedRegister() : _board->ReadSelectedByProgram();
         _lastPortDecoded = true;
         OnPortInComplete(port, result, pc, disp);
         return result;
@@ -500,6 +515,93 @@ bool PortDecoder_Next::WriteDacPort(uint16_t port, uint8_t value)
 
 /// Between two instructions: a DMA that holds the bus runs until it is done or waits for its prescaler (burst mode
 /// releases the bus then); the CPU is held for two of its clocks per byte
+void PortDecoder_Next::NextRegAccess(bool write, uint8_t reg, uint8_t value, NextRegSource source)
+{
+    uint8_t door;
+    switch (source)
+    {
+        case NextRegSource::NextReg: door = BRK_NR_DOOR_NEXTREG; break;
+        case NextRegSource::Port: door = BRK_NR_DOOR_PORT; break;
+        default: return;  // the copper is watched on its own (WatchCopper); the board itself (reset, a loader) has no one to stop
+    }
+    if (_breakpointActive || !_context->pDebugManager || !_context->pEmulator)
+        return;
+    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+    const uint16_t id = brk.HandleNextReg(write ? BRK_NR_WRITE : BRK_NR_READ, reg, value, door);
+    if (id != BRK_INVALID)
+        FireBreakpoint(id, reg, write ? BreakpointHitKind::NextRegWrite : BreakpointHitKind::NextRegRead);
+}
+
+void PortDecoder_Next::FireBreakpoint(uint16_t id, uint16_t address, BreakpointHitKind kind)
+{
+    _breakpointActive = true;
+    if (_context->pDebugManager)
+        _context->pDebugManager->GetBreakpointsManager()->NoteTriggered(id);
+    _context->pEmulator->OnBreakpointHit(id, address, kind);
+    _breakpointActive = false;
+}
+
+void PortDecoder_Next::OnInstructionDone()
+{
+    if (!_context->pDebugManager) [[unlikely]]
+        return;
+    BreakpointManager& manager = *_context->pDebugManager->GetBreakpointsManager();
+    if (!manager.GetHotState()->copperWatch) [[likely]]
+    {
+        _watchValid = false;  // the next look starts from the beam of that moment
+        return;
+    }
+    WatchCopper(manager);
+}
+
+void PortDecoder_Next::WatchCopper(BreakpointManager& manager)
+{
+    NextCopper& copper = _board->Copper();
+    uint64_t now;
+    if (_breakpointActive || !_context->pEmulator || !copper.BeamNow(now))
+        return;
+    if (!_watchValid)
+    {
+        _watchValid = true;
+        _watchClock = now;
+        return;
+    }
+    const uint64_t from = _watchClock;
+    const bool wrapped = now < from;  // the frame rolled over
+    _watchClock = now;
+    // The instructions the copper completes in (from, now]: a probe from the real copper's cursor, which lags by up to a line
+    _watchSteps.clear();
+    if (copper.Mode() != 0)
+        copper.Probe(now, _watchSteps);
+    auto inSpan = [&](uint64_t at) { return wrapped ? (at > from || at <= now) : (at > from && at <= now); };
+    uint16_t found = BRK_INVALID;
+    uint16_t address = 0;
+    BreakpointHitKind kind = BreakpointHitKind::CopperInstruction;
+    auto take = [&](uint16_t id, uint16_t at, BreakpointHitKind k) {
+        if (id != BRK_INVALID && found == BRK_INVALID)
+        {
+            found = id;
+            address = at;
+            kind = k;
+        }
+    };
+    for (const NextCopper::Step& step : _watchSteps)
+    {
+        if (!inSpan(step.at))
+            continue;
+        take(manager.HandleCopperPc(step.pc), step.pc, BreakpointHitKind::CopperInstruction);
+        if (step.isMove && step.reg != 0)
+            take(manager.HandleNextReg(BRK_NR_WRITE, step.reg, step.value, BRK_NR_DOOR_COPPER), step.reg, BreakpointHitKind::NextRegWrite);
+    }
+    take(manager.HandleBeam([&](uint16_t line, uint16_t hc) {
+             const uint64_t at = copper.ClockOf(line, hc);
+             return at != UINT64_MAX && inSpan(at);
+         }),
+         0, BreakpointHitKind::Beam);
+    if (found != BRK_INVALID)
+        FireBreakpoint(found, address, kind);
+}
+
 void PortDecoder_Next::StepDma()
 {
     if (!_dma.Active())
@@ -579,6 +681,14 @@ void PortDecoder_Next::PerformReset(bool hard)
     state.p1FFD = 0x00;
     Mem().ResetMmu();
     _board->Reset(hard);  // config mode and the boot ROM first: the slot table follows them
+    if (_intJournal.Enabled())
+    {
+        NextIntEvent e;
+        e.kind = NextIntKind::Reset;
+        e.source = hard ? "hard" : "soft";
+        e.value = _board->ResetBits();
+        RecordInt(e);
+    }
     _dma.Reset();         // zxnext.vhd: the DMA's reset_i is the hard or the soft reset
     _divMmc->Reset();     // E3 and the automap latches (zxnext.vhd 4175, divmmc.vhd 108-139) and the Multiface's session are `reset` too
     _multiface->Reset();
@@ -897,12 +1007,58 @@ void PortDecoder_Next::ApplyTiming(uint8_t timing)
 
 /// endregion
 
-bool PortDecoder_Next::GenerateDriveNmi()
+void PortDecoder_Next::RecordInt(NextIntEvent event)
+{
+    event.frame = static_cast<uint32_t>(_context->emulatorState.frame_counter);
+    if (Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
+    {
+        event.t = z80->t;
+        event.pc = z80->m1_pc;
+    }
+    _intJournal.Record(event);
+}
+
+const char* PortDecoder_Next::DriveNmiRefusal() const
 {
     // zxnext.vhd: hotkey_drive / nmi_sw_gen_divmmc, and nr_06_button_drive_nmi_en (NR #06 bit 4), with no Multiface session; the
     // state machine pulses /NMI once and the DivMMC's button latch maps its ROM in at the #0066 fetch. A request while the
     // handler is in, or still on its way, is lost (nmi_activated)
-    if (!(_board->Stored(0x06) & 0x10) || _divMmc->NmiHold() || _multiface->IsActive())
+    if (!(_board->Stored(0x06) & 0x10))
+        return "the DRIVE button is off (NR #06 bit 4)";
+    if (_divMmc->NmiHold())
+        return "the DivMMC NMI handler is on its way or running";
+    if (_multiface->IsActive())
+        return "a Multiface session is open";
+    return nullptr;
+}
+
+const char* PortDecoder_Next::MultifaceNmiRefusal() const
+{
+    // zxnext.vhd nmi_assert_mf: NR #06 bit 3 (the M1 button's enable), and CONMEM off (port #E3 bit 7) and no DivMMC handler
+    if (!(_board->Stored(0x06) & 0x08))
+        return "the M1 button is off (NR #06 bit 3)";
+    if (_divMmc->ReadPort() & 0x80)
+        return "CONMEM is on (port #E3 bit 7)";
+    if (_divMmc->NmiHold())
+        return "the DivMMC NMI handler is on its way or running";
+    if (_multiface->NmiHold())
+        return "a Multiface NMI session is open";
+    return nullptr;
+}
+
+bool PortDecoder_Next::GenerateDriveNmi()
+{
+    const char* refusal = DriveNmiRefusal();
+    if (_intJournal.Enabled())
+    {
+        NextIntEvent e;
+        e.kind = NextIntKind::NmiRequest;
+        e.source = "drive_button";
+        e.accepted = refusal == nullptr;
+        e.reason = refusal ? refusal : "";
+        RecordInt(e);
+    }
+    if (refusal)
         return false;
     _divMmc->PressButton();
     _context->pCore->GetZ80()->RequestNonMaskedInterrupt();
@@ -911,18 +1067,68 @@ bool PortDecoder_Next::GenerateDriveNmi()
 
 bool PortDecoder_Next::GenerateMultifaceNmi()
 {
-    // zxnext.vhd nmi_assert_mf: NR #06 bit 3 (the M1 button's enable), and CONMEM off (port #E3 bit 7) and no DivMMC handler
-    if (!(_board->Stored(0x06) & 0x08) || (_divMmc->ReadPort() & 0x80) || _divMmc->NmiHold() || _multiface->NmiHold())
+    const char* refusal = MultifaceNmiRefusal();
+    if (_intJournal.Enabled())
+    {
+        NextIntEvent e;
+        e.kind = NextIntKind::NmiRequest;
+        e.source = "m1_button";
+        e.accepted = refusal == nullptr;
+        e.reason = refusal ? refusal : "";
+        RecordInt(e);
+    }
+    if (refusal)
         return false;
     _multiface->PressButton();
     _context->pCore->GetZ80()->RequestNonMaskedInterrupt();
     return true;
 }
 
+bool PortDecoder_Next::TriggerNmi(const std::string& source, std::string& reason)
+{
+    if (source == "m1")
+    {
+        if (GenerateMultifaceNmi())
+            return true;
+        reason = MultifaceNmiRefusal();
+        return false;
+    }
+    if (source == "drive")
+    {
+        if (GenerateDriveNmi())
+            return true;
+        reason = DriveNmiRefusal();
+        return false;
+    }
+    if (source == "pulse")
+    {
+        // The bare /NMI line: no button state machine, no Multiface or DivMMC bookkeeping
+        if (_intJournal.Enabled())
+        {
+            NextIntEvent e;
+            e.kind = NextIntKind::NmiRequest;
+            e.source = "pulse";
+            e.accepted = true;
+            RecordInt(e);
+        }
+        _context->pCore->GetZ80()->RequestNonMaskedInterrupt();
+        return true;
+    }
+    reason = "source '" + source + "': m1, drive or pulse";
+    return false;
+}
+
 void PortDecoder_Next::OnRetn()
 {
     // divmmc_retn_seen = z80_retn_seen and not mf_is_active (the Multiface's session ends first)
     const bool multifaceActive = _multiface->IsActive();
+    if (_intJournal.Enabled())
+    {
+        NextIntEvent e;
+        e.kind = NextIntKind::Retn;
+        e.source = multifaceActive ? "multiface" : (_divMmc->NmiHold() ? "divmmc" : "none");
+        RecordInt(e);
+    }
     _multiface->OnRetn();
     if (!multifaceActive)
         _divMmc->OnRetn();

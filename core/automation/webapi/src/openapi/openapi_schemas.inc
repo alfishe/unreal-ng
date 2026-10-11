@@ -257,6 +257,47 @@
     schemas["PortBreakpointInfo"]["properties"]["note"]["type"] = "string";
     schemas["PortBreakpointInfo"]["properties"]["group"]["type"] = "string";
 
+    // NextREG Breakpoint Info
+    schemas["NextRegBreakpointInfo"]["type"] = "object";
+    schemas["NextRegBreakpointInfo"]["description"] = "ZX Next register breakpoint (read through #253B / write by NEXTREG, #253B or the copper)";
+    schemas["NextRegBreakpointInfo"]["properties"]["id"]["type"] = "integer";
+    schemas["NextRegBreakpointInfo"]["properties"]["type"]["type"] = "string";
+    schemas["NextRegBreakpointInfo"]["properties"]["type"]["enum"].append("nextreg");
+    schemas["NextRegBreakpointInfo"]["properties"]["address"]["type"] = "integer";
+    schemas["NextRegBreakpointInfo"]["properties"]["address"]["description"] = "NextREG number (0-255)";
+    schemas["NextRegBreakpointInfo"]["properties"]["read"]["type"] = "boolean";
+    schemas["NextRegBreakpointInfo"]["properties"]["write"]["type"] = "boolean";
+    schemas["NextRegBreakpointInfo"]["properties"]["doors"]["type"] = "string";
+    schemas["NextRegBreakpointInfo"]["properties"]["doors"]["description"] = "Doors a write may come through: nextreg, port, copper (comma separated)";
+    schemas["NextRegBreakpointInfo"]["properties"]["value"]["type"] = "integer";
+    schemas["NextRegBreakpointInfo"]["properties"]["value_mask"]["type"] = "integer";
+    schemas["NextRegBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
+    schemas["NextRegBreakpointInfo"]["properties"]["note"]["type"] = "string";
+    schemas["NextRegBreakpointInfo"]["properties"]["group"]["type"] = "string";
+
+    // Beam and copper breakpoints (ZX Next)
+    schemas["BeamBreakpointInfo"]["type"] = "object";
+    schemas["BeamBreakpointInfo"]["description"] = "ZX Next beam breakpoint: stops when the beam passes line 'address' at pixel clock 'hc' (the copper's counters)";
+    schemas["BeamBreakpointInfo"]["properties"]["id"]["type"] = "integer";
+    schemas["BeamBreakpointInfo"]["properties"]["type"]["type"] = "string";
+    schemas["BeamBreakpointInfo"]["properties"]["type"]["enum"].append("beam");
+    schemas["BeamBreakpointInfo"]["properties"]["address"]["type"] = "integer";
+    schemas["BeamBreakpointInfo"]["properties"]["address"]["description"] = "Line counter (0-511, NR #64 applied)";
+    schemas["BeamBreakpointInfo"]["properties"]["hc"]["type"] = "integer";
+    schemas["BeamBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
+    schemas["BeamBreakpointInfo"]["properties"]["note"]["type"] = "string";
+    schemas["BeamBreakpointInfo"]["properties"]["group"]["type"] = "string";
+    schemas["CopperBreakpointInfo"]["type"] = "object";
+    schemas["CopperBreakpointInfo"]["description"] = "ZX Next copper breakpoint: stops when the copper completes the instruction at list index 'address' (a WAIT that became true, or a MOVE)";
+    schemas["CopperBreakpointInfo"]["properties"]["id"]["type"] = "integer";
+    schemas["CopperBreakpointInfo"]["properties"]["type"]["type"] = "string";
+    schemas["CopperBreakpointInfo"]["properties"]["type"]["enum"].append("copper");
+    schemas["CopperBreakpointInfo"]["properties"]["address"]["type"] = "integer";
+    schemas["CopperBreakpointInfo"]["properties"]["address"]["description"] = "Copper list index (0-1023); address_end makes a range";
+    schemas["CopperBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
+    schemas["CopperBreakpointInfo"]["properties"]["note"]["type"] = "string";
+    schemas["CopperBreakpointInfo"]["properties"]["group"]["type"] = "string";
+
     // Keyboard Breakpoint Info
     schemas["KeyboardBreakpointInfo"]["type"] = "object";
     schemas["KeyboardBreakpointInfo"]["description"] = "Keyboard breakpoint (press/release)";
@@ -274,10 +315,16 @@
     schemas["BreakpointInfo"]["oneOf"][0]["$ref"] = "#/components/schemas/MemoryBreakpointInfo";
     schemas["BreakpointInfo"]["oneOf"][1]["$ref"] = "#/components/schemas/PortBreakpointInfo";
     schemas["BreakpointInfo"]["oneOf"][2]["$ref"] = "#/components/schemas/KeyboardBreakpointInfo";
+    schemas["BreakpointInfo"]["oneOf"][3]["$ref"] = "#/components/schemas/NextRegBreakpointInfo";
+    schemas["BreakpointInfo"]["oneOf"][4]["$ref"] = "#/components/schemas/BeamBreakpointInfo";
+    schemas["BreakpointInfo"]["oneOf"][5]["$ref"] = "#/components/schemas/CopperBreakpointInfo";
     schemas["BreakpointInfo"]["discriminator"]["propertyName"] = "type";
     schemas["BreakpointInfo"]["discriminator"]["mapping"]["memory"] = "#/components/schemas/MemoryBreakpointInfo";
     schemas["BreakpointInfo"]["discriminator"]["mapping"]["port"] = "#/components/schemas/PortBreakpointInfo";
     schemas["BreakpointInfo"]["discriminator"]["mapping"]["keyboard"] = "#/components/schemas/KeyboardBreakpointInfo";
+    schemas["BreakpointInfo"]["discriminator"]["mapping"]["nextreg"] = "#/components/schemas/NextRegBreakpointInfo";
+    schemas["BreakpointInfo"]["discriminator"]["mapping"]["beam"] = "#/components/schemas/BeamBreakpointInfo";
+    schemas["BreakpointInfo"]["discriminator"]["mapping"]["copper"] = "#/components/schemas/CopperBreakpointInfo";
 
     // Breakpoint Status Response (last triggered)
     schemas["BreakpointStatusResponse"]["type"] = "object";
@@ -290,6 +337,9 @@
     schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["enum"].append("memory");
     schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["enum"].append("port");
     schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["enum"].append("keyboard");
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["enum"].append("nextreg");
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["enum"].append("beam");
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["enum"].append("copper");
     schemas["BreakpointStatusResponse"]["properties"]["last_triggered_address"]["type"] = "integer";
     schemas["BreakpointStatusResponse"]["properties"]["paused_by_breakpoint"]["type"] = "boolean";
 
@@ -307,6 +357,14 @@
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("port_out");
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("rw");
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("port");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("nextreg_write");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("nextreg_read");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("nextreg");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("beam");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("copper");
+    schemas["AddBreakpointRequest"]["properties"]["hc"]["type"] = "integer";
+    schemas["AddBreakpointRequest"]["properties"]["hc"]["description"] =
+        "Beam only: the pixel clock in the row (0-511, default 0); 'address' is the line of the copper's counter";
     schemas["AddBreakpointRequest"]["properties"]["address"]["type"] = "integer";
     schemas["AddBreakpointRequest"]["properties"]["address"]["description"] =
         "Z80 address (0-65535) or port number (0-65535); with a page, its offset in the page is address & #3FFF";
@@ -322,6 +380,16 @@
     schemas["AddBreakpointRequest"]["properties"]["port_mask"]["description"] =
         "Ports only: match when (port & port_mask) == (address & port_mask); default #FFFF (exact). #00FF catches #FE "
         "on any high byte";
+    schemas["AddBreakpointRequest"]["properties"]["doors"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["doors"]["description"] =
+        "NextREG only: the doors a write comes through - nextreg (the NEXTREG instructions), port (OUT #253B), copper (a "
+        "copper MOVE); comma separated or an array; default all. A read always comes through port #253B";
+    schemas["AddBreakpointRequest"]["properties"]["value"]["type"] = "integer";
+    schemas["AddBreakpointRequest"]["properties"]["value"]["description"] =
+        "NextREG only: stop only when the value written (or read) equals this (0-255); with value_mask, only the masked bits are compared";
+    schemas["AddBreakpointRequest"]["properties"]["value_mask"]["type"] = "integer";
+    schemas["AddBreakpointRequest"]["properties"]["value_mask"]["description"] =
+        "NextREG only: (value & value_mask) == (value_param & value_mask); default #FF with a value";
     schemas["AddBreakpointRequest"]["properties"]["hits"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["hits"]["description"] =
         "Hit policy as text: '5' (stop on the 5th hit only), '>=5' (from the 5th on), '%5' (every 5th); every "

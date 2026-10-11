@@ -78,8 +78,9 @@ Read by the scripts in `tools/build/` ([`tools/build/README.md`](../../tools/bui
 | Variable | Values (default) | What it does | Read by |
 |---|---|---|---|
 | `BUILD_DIR` | a folder (`cmake-build-agent-release` in the repository root) | Build directory to configure and build in. | `tools/build/build.sh:18`, `tools/build/test.sh:12` |
-| `UNREAL_JOBS` | number (half the logical cores, at least 1) | Parallel compile jobs (`ninja -j`) and the job count of the parallel test run. | `tools/build/build.sh:20`, `tools/build/test.sh:14` |
-| `UNREAL_NO_CONFIGURE` | `1` = skip (configure every time) | Skips the CMake configure step that `build.sh` runs before every build. Only for a tight edit-compile loop on a tree that did not change. | `tools/build/build.sh:25` |
+| `UNREAL_JOBS` | number (half the logical cores, at least 1) | Parallel compile jobs (`ninja -j`) and the job count of the parallel test run. | `tools/build/build.sh:24`, `tools/build/test.sh:14` |
+| `UNREAL_NO_CONFIGURE` | `1` = skip (configure every time) | Skips the CMake configure step that `build.sh` runs before every build. Only for a tight edit-compile loop on a tree that did not change. | `tools/build/build.sh:29` |
+| `UNREAL_NO_LINT` | `1` = skip (check every time) | Skips the source checks of the CI lint job (`tools/verification/gui-instance-reads.sh`) that `build.sh` runs before every build. They take a fraction of a second and never stop the build; a failure is printed. | `tools/build/build.sh:35` |
 | `UNREAL_NICE` | `0` = normal priority (lowered, `nice 10`) | Runs builds and tests at normal priority. For benchmarks / timing runs on a quiet machine. | `tools/build/slot.py:225` |
 | `UNREAL_SLOTS_BUILD`, `UNREAL_SLOTS_TEST`, `UNREAL_SLOTS_<POOL>` | positive number (build 2, test 1, others 1) | How many builds / test runs may run at once machine-wide. Not to be confused with the slot tests' variables (section 4). | `tools/build/slot.py:58` |
 | `UNREAL_SLOTS_DIR` | a folder (`$XDG_CACHE_HOME/unreal-ng/slots`, else `~/.cache/unreal-ng/slots`) | Where the lock files of the build / test slots live. Everything sharing a folder shares the limits. | `tools/build/slot.py:50` |
