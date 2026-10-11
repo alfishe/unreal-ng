@@ -43,4 +43,6 @@ public:
     /// Set @p slot's medium to @p version (a seek). False: the slot keeps no
     /// versions, or not that one
     virtual bool SetHead(const std::string& slot, uint64_t version) = 0;
+    /// Whether SetHead(@p slot, @p version) would go ahead; changes nothing (a timeline cut's plan)
+    virtual bool Reaches(const std::string& /*slot*/, uint64_t /*version*/) const { return false; }
 };

@@ -20,6 +20,7 @@
 #include <thread>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QPainter>
 #include <QSettings>
 #include <QStyleOptionButton>
@@ -928,8 +929,31 @@ void TtdWidget::onResumeFromHere()
     if (!_activeEmulator) return;
     EmulatorContext* context = _activeEmulator->GetContext();
     if (!context || !ttd::HasTimeTravelSession(context)) return;
-    // From exactly where the machine stands; the verb runs it again
-    (void)ttd::TTDControl(context).Execute({"resume", {}});
+    // From exactly where the machine stands; the verb runs it again. A medium that cannot go back there (another
+    // medium in the slot, a write beyond its undo log) needs the user's decision (M5, F11)
+    ttd::TTDReply reply = ttd::TTDControl(context).Execute({"resume", {{"media", "ask"}}});
+    if (const StateNode* needs = reply.body.find("needs_decision"); needs && needs->b)
+    {
+        QString list;
+        if (const StateNode* media = reply.body.find("media"))
+            for (const StateNode& item : media->items)
+                list += QString("\n- %1: %2").arg(QString::fromStdString(item.find("slot")->s),
+                                                   QString::fromStdString(item.find("reason")->s));
+        QMessageBox box(QMessageBox::Question, tr("Rec From Here"),
+                        tr("These media cannot go back to this point:%1\n\nThe recording goes on from here either "
+                           "way. What should happen to them?")
+                            .arg(list),
+                        QMessageBox::NoButton, this);
+        QPushButton* empty = box.addButton(tr("Empty the slots"), QMessageBox::AcceptRole);
+        QPushButton* keep = box.addButton(tr("Keep them as they are"), QMessageBox::AcceptRole);
+        box.addButton(QMessageBox::Cancel);
+        box.setDefaultButton(empty);
+        box.exec();
+        const QAbstractButton* clicked = box.clickedButton();
+        if (clicked != empty && clicked != keep)
+            return;   // cancelled: the machine stays where it is, nothing changed
+        reply = ttd::TTDControl(context).Execute({"resume", {{"media", clicked == empty ? "empty" : "keep"}}});
+    }
     _activeEmulator->Start();
     updateTelemetry();
 }

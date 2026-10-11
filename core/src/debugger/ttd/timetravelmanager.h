@@ -907,6 +907,8 @@ public:
     /// @return true on success. False (with a logged warning) if state is
     ///         Idle, the timeline is empty, or `from` is out of bounds.
     bool ResumeRecordingFrom(const TTDTimePoint& from);
+    /// v1 never sets a medium back: nothing to decide at a cut (the engine's PlanCut)
+    std::vector<TTDRestoreIssue> PlanCut(const TTDTimePoint&) const { return {}; }
 
     /// @brief Resume live recording from the CURRENT position, keeping history.
     ///

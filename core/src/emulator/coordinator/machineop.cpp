@@ -42,6 +42,7 @@ const char* OpKindName(OpKind kind)
         case OpKind::IdeDriveKind: return "ide-drive-kind";
         case OpKind::RzxRestore: return "rzx-restore";
         case OpKind::ModelSwitch: return "model-switch";
+        case OpKind::TimelineCut: return "timeline-cut";
         case OpKind::Count: break;
     }
     return "unknown";

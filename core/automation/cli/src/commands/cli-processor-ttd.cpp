@@ -10,7 +10,7 @@
 ///   ttd seek <frame> [tinframe] — seek to a point in the timeline
 ///   ttd step-back              — step back one frame (preserve intra-frame pos)
 ///   ttd step-forward           — step forward one frame (preserve intra-frame pos)
-///   ttd resume [frame] [tin]   — resume recording from current or specified point
+///   ttd resume [frame] [tin] [media=ask|empty|keep] — resume recording from current or specified point
 ///   ttd position               — show current TTDTimePoint (frame + tInFrame)
 ///   ttd markers                — list external-event markers (replay barriers)
 ///   ttd bookmark [add|del|list] — agent bookmarks (advisory, never barriers)
@@ -355,7 +355,10 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "  ttd seek <frame> [tinframe]      Seek to a point in the timeline" << NEWLINE;
     ss << "  ttd step-back                    Step back one frame (preserve intra-frame pos)" << NEWLINE;
     ss << "  ttd step-forward                 Step forward one frame (preserve intra-frame pos)" << NEWLINE;
-    ss << "  ttd resume [frame] [tinframe]    Resume recording from current or specified point" << NEWLINE;
+    ss << "  ttd resume [frame] [tinframe] [media=ask|empty|keep]" << NEWLINE;
+    ss << "                                   Resume recording from current or specified point; a medium that" << NEWLINE;
+    ss << "                                   cannot go back there: empty (default) takes it out, keep leaves it," << NEWLINE;
+    ss << "                                   ask lists them and resumes nothing" << NEWLINE;
     ss << "  ttd position                     Show current TTDTimePoint (frame + tInFrame)" << NEWLINE;
     ss << "  ttd markers                      List external-event markers (replay barriers)" << NEWLINE;
     ss << "  ttd bookmark [list]              List agent bookmarks (advisory, never barriers)" << NEWLINE;
@@ -922,16 +925,46 @@ void CLIProcessor::HandleTTDStepForward(const ClientSession& session, EmulatorCo
 void CLIProcessor::HandleTTDResume(const ClientSession& session, EmulatorContext* context,
                                     const std::vector<std::string>& args)
 {
+    // ttd resume [frame [tinframe]] [media=ask|empty|keep]: what happens to a medium that cannot go back there
     std::map<std::string, std::string> options;
-    if (args.size() >= 2)
+    std::vector<std::string> position;
+    for (size_t i = 1; i < args.size(); ++i)
     {
-        options["frame"] = args[1];
-        options["tinframe"] = args.size() > 2 ? args[2] : "0";
+        if (args[i].rfind("media=", 0) == 0)
+            options["media"] = args[i].substr(6);
+        else
+            position.push_back(args[i]);
+    }
+    if (!position.empty())
+    {
+        options["frame"] = position[0];
+        options["tinframe"] = position.size() > 1 ? position[1] : "0";
     }
     const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"resume", options});
     if (!reply.Ok())
     {
         session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    // The media that could not go back to the cut point, with the decision taken (or wanted)
+    auto listMedia = [&]() {
+        const StateNode* media = reply.body.find("media");
+        if (!media)
+            return;
+        for (const StateNode& item : media->items)
+        {
+            const StateNode* decision = item.find("decision");
+            const StateNode* error = item.find("error");
+            session.SendResponse("  " + item.find("slot")->s + ": " + item.find("reason")->s +
+                                 (decision ? " -> " + decision->s : std::string()) +
+                                 (error ? " (" + error->s + ")" : std::string()) + NEWLINE);
+        }
+    };
+    if (const StateNode* needs = reply.body.find("needs_decision"); needs && needs->b)
+    {
+        session.SendResponse(std::string("TTD: These media cannot go back there; resume with media=empty or "
+                                         "media=keep:") + NEWLINE);
+        listMedia();
         return;
     }
     if (reply.body.find("resumed")->b)
@@ -940,6 +973,7 @@ void CLIProcessor::HandleTTDResume(const ClientSession& session, EmulatorContext
         ss << "TTD: Resumed recording from (frame=" << reply.body.find("frame")->i
            << ", tInFrame=" << reply.body.find("tinframe")->i << ")" << NEWLINE;
         session.SendResponse(ss.str());
+        listMedia();
     }
     else
     {
