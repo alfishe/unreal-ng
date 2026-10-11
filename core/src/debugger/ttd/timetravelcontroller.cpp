@@ -155,6 +155,15 @@ bool TimeTravelController::StartRecording()
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     if (_state == TTDSessionState::Recording)
         return true;  // Idempotent
+
+    // The CPU held while the session changes (Emulator::CpuHold): invisible, the pause is left as it was. From the
+    // first write: an idle session takes no hold in SessionOperation, and the machine's thread reads these fields
+    // on every write and OUT. Paused is not idle - a direct run (run_frames on a paused machine) records too: the
+    // hold waits for it; on the machine's own thread it is free (nested)
+    Emulator* emu = _context ? _context->pEmulator : nullptr;
+    std::optional<Emulator::CpuHold> cpuHold;
+    if (emu)
+        cpuHold.emplace(*emu, "ttd");
     _lastStartError.clear();
 
     if (!_unavailableReason.empty())
@@ -204,14 +213,8 @@ bool TimeTravelController::StartRecording()
     // The kDebugMode flip swaps Z80::MemIf (read on every memory access by
     // the CPU thread), so we must not race with emulation. Pause blocks
     // until the Z80 thread has parked.
-    Emulator* emu = _context->pEmulator;
-    // On the machine's own thread (a black box around turbo tape's warp) it is not running a frame now
-    // The CPU held while the session changes (Emulator::CpuHold): invisible, the pause is left as it was. Paused is
-    // not idle - a direct run (run_frames on a paused machine) records too: the hold waits for it; on the machine's
-    // own thread it is free (nested)
-    std::optional<Emulator::CpuHold> cpuHold;
-    if (emu)
-        cpuHold.emplace(*emu, "ttd");
+    // On the machine's own thread (a black box around turbo tape's warp) it is not running a frame now; the CPU is
+    // held from the top
 
     // One time base for the session: the host's wall time now, at the
     // machine's emulated time now. Every real-time clock anchors at it (their
@@ -503,6 +506,12 @@ void TimeTravelController::InvalidateSession(const char* reason)
 
     if (_timeline.empty() && _state == TTDSessionState::Idle)
         return;  // Nothing to invalidate
+
+    // A stopped session is idle but not empty: SessionOperation took no hold, and the machine's thread reads the
+    // switches cleared below (coverage, port journal hooks) on every M1 and IN/OUT. Free when already held or nested
+    std::optional<Emulator::CpuHold> cpuHold;
+    if (_context && _context->pEmulator)
+        cpuHold.emplace(*_context->pEmulator, "ttd invalidate");
 
     MLOGINFO("TimeTravelController::InvalidateSession — reason='%s', dropping %zu checkpoints",
              reason ? reason : "(null)", _timeline.size());
@@ -966,10 +975,26 @@ TimeTravelController::SessionOperation::~SessionOperation()
         // executing a recording (an operation that resumed a recording
         // machine itself - StartRecording - published before it did)
         Emulator* emu = _manager._context ? _manager._context->pEmulator : nullptr;
-        const bool recordingMachineRuns = emu && emu->IsRunning() && !emu->IsEmulationParked() &&
-                                          _manager._state.load() == TTDSessionState::Recording;
-        if (!_locked || (_manager._operationDepth == 1 && !recordingMachineRuns))
+        if (!_locked)
             _manager.PublishSessionInfo();
+        else if (_manager._operationDepth == 1)
+        {
+            // The publish reads the live session (position, journals, coverage): with the CPU held. A hold the
+            // operation did not take (an idle session at its start, or one a function's own CpuHold already gave
+            // back) is taken for the publish: "parked" checked without one lets the loop resume while it reads
+            execution::HoldToken publishHold;
+            if (!_hold.Valid() && emu && emu->IsRunning())
+                publishHold = emu->GetArbiter().BeginHold(execution::Requester{execution::Origin::Ttd, {}},
+                                                          "ttd session publish",
+                                                          execution::Clock::now() + std::chrono::seconds(5));
+            const bool held = _hold.Valid() || publishHold.Valid();
+            const bool recordingMachineRuns = emu && emu->IsRunning() && !emu->IsEmulationParked() &&
+                                              _manager._state.load() == TTDSessionState::Recording;
+            if (held || !recordingMachineRuns)
+                _manager.PublishSessionInfo();
+            if (publishHold.Valid())
+                emu->GetArbiter().EndHold(publishHold);
+        }
     }
     if (_hold.Valid())
     {
@@ -5728,9 +5753,14 @@ TimeTravelController::ReverseContinue(const std::vector<uint16_t>& breakpoints)
 
 void TimeTravelController::ClearFrameCache()
 {
+    // Nothing to clear writes nothing: the running loop reads the capture switch on every M1 and OUT, and an
+    // operation on an idle session (InvalidateSession on a media load) does not hold the CPU. Capture is on only
+    // inside a build, which holds it
     _frameCache.reset();          // frees the entries vector
-    _capturingCache = nullptr;
-    _frameCaptureActive = false;
+    if (_capturingCache)
+        _capturingCache = nullptr;
+    if (_frameCaptureActive)
+        _frameCaptureActive = false;
 }
 
 void TimeTravelController::CaptureM1(uint16_t pc)
@@ -6009,6 +6039,9 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
 
 const TTDFrameCache* TimeTravelController::GetFrameCache(uint64_t frame)
 {
+    // A build rewrites the machine (save, replay, restore): an operation. Paused is not parked - a breakpoint's
+    // stop publishes the session (OnMachineParking) before the loop parks; the hold waits for it
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
     // Never build a cache during live recording — the accelerator is a
     // replay-scope facility only. Exception: a recording while the
     // emulator is paused (a debugger browsing its history, reverse-debugging.md §6) — the emulator thread is
