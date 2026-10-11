@@ -125,8 +125,10 @@ then reads. At a boundary it still reads the copies taken there, without holding
   both races before: 8 reports in one run of master; none with the fix).
 - [x] The ZX-Poly tests pass.
 
-## 🔵 [In Progress] #6: Two overscan switches at once both see the old video mode
+## 🟢 [Fixed] #6: Two overscan switches at once both see the old video mode
 * **Date Opened:** 2026-10-11
+* **Date Fixed:** 2026-10-11
+* **Commit ID:** c13e28bb0
 * **Found by:** ThreadSanitizer on Linux (nightly `.238`, 2026-10-11): `ExecutionArbiterMachineFuzz_Test`
   (`ConcurrentControlKeepsOneDriverAndExactSteps`), a data race on `Screen::_mode` between `Screen::SetVideoMode`
   (`screen.cpp:470`) under one thread's `Emulator::SetOverscanMode` and `Screen::GetVideoMode` (`screen.cpp:738`) from
@@ -141,8 +143,8 @@ second reallocates the framebuffer again for nothing, or its decision is based o
 The hold is taken first; the read, the decision and the switch all happen under it.
 
 ### Requirements / Acceptance Criteria
-- [ ] No `SetVideoMode` / `GetVideoMode` race in `ExecutionArbiterMachineFuzz_Test` under TSan on Linux.
-- [ ] core-tests pass.
+- [ ] No `SetVideoMode` / `GetVideoMode` race in `ExecutionArbiterMachineFuzz_Test` under TSan on Linux (next nightly).
+- [x] core-tests pass.
 
 2026-10-10
 ## 🟢 [Fixed] #1: Removing a running TS-Conf or ATM Turbo 2+ instance writes into freed memory (heap damage, a later crash elsewhere)
