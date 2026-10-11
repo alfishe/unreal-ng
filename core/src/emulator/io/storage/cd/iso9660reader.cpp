@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <unordered_map>
 #include <cstring>
 
 #include "common/unicodehelper.h"
@@ -29,6 +30,18 @@ namespace
         for (size_t i = 0; i + 1 < bytes; i += 2)
             text.push_back(static_cast<char16_t>((p[i] << 8) | p[i + 1]));
         return UnicodeHelper::EncodeUtf8(UnicodeHelper::FromUtf16(text));
+    }
+
+    /// "README.TXT;2" -> 2; none -> 0
+    uint32_t VersionOf(const std::string& name)
+    {
+        const size_t semicolon = name.find(';');
+        if (semicolon == std::string::npos)
+            return 0;
+        uint32_t version = 0;
+        for (size_t i = semicolon + 1; i < name.size() && name[i] >= '0' && name[i] <= '9' && version < 100000; i++)
+            version = version * 10 + static_cast<uint32_t>(name[i] - '0');
+        return version;
     }
 
     /// "README.TXT;1" -> "README.TXT"; "DIR." -> "DIR"
@@ -257,6 +270,7 @@ bool Iso9660Reader::List(const IsoDirEntry& directory, std::vector<IsoDirEntry>&
                 entry.hidden = (flags & 0x01) != 0;
                 entry.associated = (flags & 0x04) != 0;
                 entry.interleaved = r[26] != 0 || r[27] != 0;
+                entry.version = VersionOf(entry.isoName);
                 entry.size = bytes;
                 entry.mtimeUtc = RecordDate(r + 18);
                 entry.sections.push_back({extent, bytes});
@@ -266,6 +280,44 @@ bool Iso9660Reader::List(const IsoDirEntry& directory, std::vector<IsoDirEntry>&
         }
     }
     return true;
+}
+
+void Iso9660Reader::KeepHighestVersions(std::vector<IsoDirEntry>& entries, std::vector<IsoDirEntry>* dropped)
+{
+    // Only a directory with a versioned name twice pays for the map
+    bool versioned = false;
+    for (const IsoDirEntry& entry : entries)
+        versioned = versioned || entry.version > 1;
+    if (!versioned)
+        return;
+    std::unordered_map<std::string, size_t> at;  // upper-cased name (and associated) -> index in kept
+    std::vector<IsoDirEntry> kept;
+    kept.reserve(entries.size());
+    for (IsoDirEntry& entry : entries)
+    {
+        if (entry.isDirectory)
+        {
+            kept.push_back(std::move(entry));
+            continue;
+        }
+        std::string key = entry.name;
+        for (char& c : key)
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        if (entry.associated)
+            key.push_back('\x01');
+        auto [it, inserted] = at.try_emplace(std::move(key), kept.size());
+        if (inserted)
+        {
+            kept.push_back(std::move(entry));
+            continue;
+        }
+        IsoDirEntry& same = kept[it->second];
+        if (entry.version > same.version)
+            std::swap(same, entry);
+        if (dropped)
+            dropped->push_back(std::move(entry));
+    }
+    entries = std::move(kept);
 }
 
 bool Iso9660Reader::Stat(const std::string& path, IsoDirEntry& entry, std::string* error)
@@ -282,6 +334,7 @@ bool Iso9660Reader::Stat(const std::string& path, IsoDirEntry& entry, std::strin
         std::vector<IsoDirEntry> entries;
         if (!List(entry, entries, error))
             return false;
+        KeepHighestVersions(entries, nullptr);
         auto it = std::find_if(entries.begin(), entries.end(), [&part](const IsoDirEntry& e) {
             return EqualsIgnoringAsciiCase(e.name, part) || EqualsIgnoringAsciiCase(e.isoName, part);
         });

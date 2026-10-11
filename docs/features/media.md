@@ -371,7 +371,9 @@ writes: {save: delta}                     # what `save` does without a path, on 
 ### Which file system a slot takes
 
 A slot's file-system rule applies to folders, composites and images alike: a volume of another type is refused with
-the reason, never built or mounted silently. `fs: auto` picks the slot's default.
+the reason, never built or mounted silently. `fs: auto` picks the slot's default. An image with several FAT partitions
+is refused only when the slot reads none of them; a partition it cannot read is named in the insert report (the guest
+will not see it).
 
 | Slot | File systems | Why |
 |---|---|---|

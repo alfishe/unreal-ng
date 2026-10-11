@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <algorithm>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
@@ -464,6 +466,52 @@ TEST(MediaManager_Test, Fat32OnlySlotBuildsFoldersAsFat32AndChecksImages)
     MediaSource fat32Image;
     fat32Image.path = MakeFatImageFile("matrix-fat32-mbr.img", FatType::Fat32, true);
     ASSERT_TRUE(manager.Insert("sd.test", fat32Image).Ok()) << "FAT32 behind an MBR passes the probe";
+
+    // Several partitions: refused only when the slot reads none of them; one it cannot read is reported.
+    // Sector 0: an MBR with a FAT16 primary partition and an extended one; sector 2: its EBR, a FAT32 logical one
+    const auto vbrOf = [](const std::string& rawImage) {
+        std::vector<char> vbr(512);
+        std::ifstream(rawImage, std::ios::binary).read(vbr.data(), 512);
+        return vbr;
+    };
+    const std::vector<char> fat16Vbr = vbrOf(fat16Image.path);
+    const std::vector<char> fat32Vbr = vbrOf(MakeFatImageFile("matrix-fat32-raw.img", FatType::Fat32, false));
+    const auto table = [](std::initializer_list<std::pair<int, uint32_t>> entries) {
+        std::vector<char> sector(512, 0);
+        int i = 0;
+        for (const auto& [type, start] : entries)
+        {
+            sector[446 + i * 16 + 4] = static_cast<char>(type);
+            std::memcpy(&sector[446 + i * 16 + 8], &start, 4);
+            const uint32_t count = 1;
+            std::memcpy(&sector[446 + i * 16 + 12], &count, 4);
+            i++;
+        }
+        sector[510] = 0x55;
+        sector[511] = static_cast<char>(0xAA);
+        return sector;
+    };
+    const auto disk = [&](const char* name, const std::vector<char>& first, const std::vector<char>& logical) {
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath(name);
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        for (const std::vector<char>& sector : {table({{0x06, 1u}, {0x05, 2u}}), first, table({{0x0B, 1u}}), logical})
+            out.write(sector.data(), 512);
+        const std::vector<char> pad(60 * 512, 0);
+        out.write(pad.data(), static_cast<std::streamsize>(pad.size()));
+        return path;
+    };
+    MediaSource mixed;
+    mixed.path = disk("matrix-mixed.img", fat16Vbr, fat32Vbr);
+    const MediaResult partly = manager.Insert("sd.test", mixed);
+    ASSERT_TRUE(partly.Ok()) << partly.message;
+    EXPECT_TRUE(std::any_of(partly.report.begin(), partly.report.end(), [](const std::string& l) {
+        return l.find("the guest will not see partition 1 fat16") != std::string::npos;
+    })) << "the logical FAT32 partition (5) is read, the primary FAT16 one is reported";
+    MediaSource fat16Only;
+    fat16Only.path = disk("matrix-fat16-two.img", fat16Vbr, fat16Vbr);
+    const MediaResult none = manager.Insert("sd.test", fat16Only);
+    EXPECT_EQ(none.error, MediaError::BadRequest);
+    EXPECT_NE(none.message.find("has none (partition 1 fat16, partition 5 fat16)"), std::string::npos) << none.message;
 
     // A non-FAT image is none of the matrix's business: the guest may format it
     MediaSource raw;

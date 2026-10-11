@@ -23,8 +23,8 @@ make the rest true today. Open items are marked **open** or **unverified** in pl
 - §2, notes 1, S-2, S-11: a rebuilt FAT16 root grows past 512 slots when the root needs it; a rebuilt FAT32 volume
   starts at 4 KiB clusters, so its minimum is about 256 MiB, not 32 MiB.
 - §4: the rebuilt FAT label is the descriptor's or `UNREAL NG` (the bottom layer's is not carried); ISO associated
-  files were not filtered; **fixed 2026-10-09**: left out with a report line. Versions `;n` are still stripped, not
-  filtered (**open**).
+  files were not filtered; **fixed 2026-10-09**: left out with a report line. Versions `;n`: only the highest is
+  kept, the others are reported (**fixed 2026-10-10**).
 - §6: evidence per guest now names the tests; NedoOS FAT32 / ISO, ERS FAT32 and Wild Commander on ZX-Evo are
   **unverified** by test. The fsCompatibility rule is BUGS.md "TSConf Z-Controller FAT32 Compatibility Matrix", the
   FAT16 → FAT32 switch is BUGS.md "#2" (the text cited #2 for the matrix).
@@ -165,7 +165,7 @@ Notes:
 | Empty files | first cluster 0, no data run | extent length 0 |
 | Sparse / zero extents | `FileData::Zero` reads as zeros without touching the source | same |
 | Deleted entries, LFN orphans, volume-label entries in a FAT source | ignored (never become files) | same |
-| ISO associated files, version > 1 | ignored, reported. As built: associated files (flag bit 2) are left out with "skipped, an associated file" (fixed 2026-10-09); a `;n` version is stripped, not filtered (**open**) | same |
+| ISO associated files, version > 1 | ignored, reported. As built: associated files (flag bit 2) are left out with "skipped, an associated file" (fixed 2026-10-09); of several `;n` versions only the highest is kept, the others are reported ("skipped, an older version", fixed 2026-10-10) | same |
 
 ## 5. Combination scenarios
 
@@ -238,8 +238,10 @@ As built (review round 1):
 
 The image check of a plain insert had two gaps: it did not classify FAT12 (under 4 085 clusters), so a FAT12 image
 passed a `{Fat32}` slot, and it missed a FAT16 volume over 32 MiB (its size in the 32-bit field). **Fixed
-2026-10-09**: both are the FAT16 family (`MediaManager_Test.Fat32OnlySlotBuildsFoldersAsFat32AndChecksImages`). Still
-open: `ProbeFatType` looks at the first FAT partition of an MBR only.
+2026-10-09**: both are the FAT16 family (`MediaManager_Test.Fat32OnlySlotBuildsFoldersAsFat32AndChecksImages`). Since
+2026-10-11 (owner) the check reads every FAT partition, primary and logical (`ProbeFatVolumes`): an image is refused
+only when the slot reads none of them, and a partition it cannot read is a report line ("the guest will not see
+partition 1 fat16").
 
 **Decision tree DT-6: the target file system.** As built (review round 1): a base the slot does not read is
 refused only under `build: graft`; `auto` goes on to the rebuild branch.
