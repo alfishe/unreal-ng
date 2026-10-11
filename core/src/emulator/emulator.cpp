@@ -2129,7 +2129,7 @@ bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error, c
 
     // Store snapshot path on success
     if (result)
-        _context->coreState.snapshotFilePath = openedPath;
+        SetSnapshotFilePath(openedPath);
 
     if (_context)
     {
@@ -2176,6 +2176,19 @@ rzx::RzxSession& Emulator::RzxSessionLocked()
     if (!_rzxSession)
         _rzxSession = std::make_unique<rzx::RzxSession>(*this);
     return *_rzxSession;
+}
+
+std::string Emulator::SnapshotFilePath() const
+{
+    std::lock_guard<std::mutex> lock(_snapshotPathMutex);
+    return _context ? _context->coreState.snapshotFilePath : std::string();
+}
+
+void Emulator::SetSnapshotFilePath(const std::string& path)
+{
+    std::lock_guard<std::mutex> lock(_snapshotPathMutex);
+    if (_context)
+        _context->coreState.snapshotFilePath = path;
 }
 
 rzx::PlayResult Emulator::PlayRzx(const std::string& path, const rzx::PlayerOptions& options)
@@ -2390,7 +2403,7 @@ bool Emulator::SaveSnapshot(const std::string& path)
         for (const std::string& warning : saved.warnings)
             MLOGWARNING("%s", warning.c_str());
         // Store snapshot path on success
-        _context->coreState.snapshotFilePath = absolutePath;
+        SetSnapshotFilePath(absolutePath);
     }
     else
         MLOGERROR("%s", saved.text.c_str());

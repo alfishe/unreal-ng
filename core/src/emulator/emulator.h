@@ -151,6 +151,7 @@ protected:
                             const std::string& openedPath, const snapshot::Options& options);
     /// What the snapshot pipeline did with the last load (empty before the first one)
     snapshot::Report _lastSnapshotReport;
+    mutable std::mutex _snapshotPathMutex;   ///< guards coreState.snapshotFilePath
 
     // The machine state coordinator (docs/inprogress/2026-10-09-machine-state-coordinator/): every operation on the
     // whole machine goes through it. Created with the emulator, before every participant; WireCoordinator links it
@@ -584,6 +585,10 @@ public:
     /// The snapshot pipeline's report of the last load: the commit that ran (or the refusal and why), the verdicts that
     /// led to it, the format's per-block outcomes, warnings. Read it after the load returned
     const snapshot::Report& LastSnapshotReport() const { return _lastSnapshotReport; }
+    /// The file of the last snapshot loaded or saved (empty before the first one). A load and a save may finish on
+    /// different threads, and the status surfaces read it from theirs: a copy, under its own lock
+    std::string SnapshotFilePath() const;
+    void SetSnapshotFilePath(const std::string& path);
     /// A snapshot image already in memory (`extension`: sna, z80, szx), loaded
     /// like a file: paused, TTD rules, the frame restarted, NC_FILE_LOADED with
     /// `reportedPath`
