@@ -233,7 +233,7 @@ NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.
 - [x] P6 magic-opcode breakpoint (`bmagic`, `magic_ed_ff`/`magic_dd_01`, `bp_magic`)
 - [x] P6 DZRP for the Next: machine type ZXNEXT, eight 8K slots (NR #50-#57), `GET_TBBLUE_REG`, `SET_NEXTREGS`, `READ_BANK_MEM`/`WRITE_BANK_MEM` (8K bank, offset wraps; 0xFF the selected ROM), `READ_MEM_BLOCKS`; sprite/palette commands 16-19 not done
 - [x] P6 TTD: the NEXTREG instruction is in the TTD port-write journal as OUT #243B / OUT #253B (option a); the checkpoint still has no NextREG state (`NextState` blob, design-ttd.md section 3)
-- [ ] P6 magic output port
+- [x] P6 magic output port (`state/next/magic-port`, `POST /next/magic-port`, every plane; the console is a bounded ring, off by default)
 - [ ] Device gaps D1 (UART/ESP/Pi) and D2 (Kempston mouse, ULA+, Radastan): the reports follow the devices
 
 ## Automation coverage - what is left (2026-10-10)

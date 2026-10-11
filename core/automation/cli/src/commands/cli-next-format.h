@@ -622,6 +622,77 @@ inline std::string StateText(EmulatorContext* context, const std::vector<std::st
         out += std::string("Not modelled: port #37, MD pad buttons, extended keys (NR #B0-#B2 only store their bytes)") + newline;
         return out;
     }
+    if (sub == "magicport" || sub == "magic-port")
+    {
+        // magicport on <port> [hex|dec|ascii|line] | off | clear | [since=N] [limit=N]
+        if (args.size() >= 3 && (args[2] == "on" || args[2] == "off" || args[2] == "clear"))
+        {
+            int port = -1;
+            std::string mode;
+            if (args[2] == "on")
+            {
+                if (args.size() < 4)
+                    return std::string("Error: magicport on <port> [hex|dec|ascii|line]") + newline;
+                try
+                {
+                    const unsigned long value = std::stoul(args[3], nullptr, 0);
+                    if (value > 0xFFFF)
+                        return std::string("Error: the port is 0..65535") + newline;
+                    port = static_cast<int>(value);
+                }
+                catch (const std::exception&)
+                {
+                    return "Error: bad port '" + args[3] + "' (0x00FF or decimal)" + std::string(newline);
+                }
+                if (args.size() > 4)
+                    mode = args[4];
+            }
+            const StateNode r = DeviceState::NextMagicPortControl(context, args[2] == "clear" ? -1 : (args[2] == "on" ? 1 : 0), port, mode,
+                                                                  args[2] == "clear");
+            const std::string error = unavailable(r);
+            if (!error.empty())
+                return error;
+            if (const StateNode* refused = r.find("error"))
+                return "Error: " + refused->s + newline;
+            return "Magic port " + Field(r, "enabled") + ", port " + Field(r, "port") + ", mode " + Field(r, "mode") + ", " + Field(r, "bytes") +
+                   " byte(s)" + newline;
+        }
+        uint64_t since = 0;
+        size_t limit = 40;
+        try
+        {
+            for (size_t i = 2; i < args.size(); i++)
+            {
+                const size_t eq = args[i].find('=');
+                const std::string key = eq == std::string::npos ? args[i] : args[i].substr(0, eq);
+                if (eq == std::string::npos || (key != "since" && key != "limit"))
+                    return "Error: expected on <port> [mode] | off | clear | since=N | limit=N, got '" + args[i] + "'" + newline;
+                const uint64_t number = std::stoull(args[i].substr(eq + 1));
+                if (key == "since")
+                    since = number;
+                else
+                    limit = static_cast<size_t>(number);
+            }
+        }
+        catch (const std::exception&)
+        {
+            return std::string("Error: since and limit are numbers") + newline;
+        }
+        const StateNode report = DeviceState::NextMagicPortReport(context, since, limit);
+        const std::string unavailableText = unavailable(report);
+        if (!unavailableText.empty())
+            return unavailableText;
+        std::string out = "Magic port " + Field(report, "enabled") + ", port " + Field(report, "port") + ", mode " + Field(report, "mode") + ", " +
+                          Field(report, "bytes") + " byte(s)" + newline;
+        if (Field(report, "enabled") != "on")
+            out += std::string("  (off: state next magicport on <port> [hex|dec|ascii|line])") + newline;
+        if (const StateNode* items = report.find("items"))
+            for (const StateNode& item : items->items)
+                out += "  #" + Field(item, "seq") + " f" + Field(item, "frame") + " pc " + Field(item, "pc") + "  " + Field(item, "text") + newline;
+        if (report.find("partial") && !Field(report, "partial").empty())
+            out += "  (not ended) " + Field(report, "partial") + newline;
+        return out;
+    }
     if (sub == "nmi" || sub == "nmi-journal")
     {
         if (args.size() == 3 && (args[2] == "on" || args[2] == "off" || args[2] == "clear"))

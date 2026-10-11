@@ -22,6 +22,21 @@ def test_nmi_aspect_and_trigger(s):
     expect(bad.is_error or 'kinds' in bad.text, 'a bad kind is refused', bad.text)
 
 
+def test_magic_port_and_magic_breakpoint(s):
+    s.fresh_machine('NEXT')
+    r = s.call('inspect_state', {'aspects': ['next_magic_port']})
+    expect('[next_magic_port] OFF (POST /next/magic-port' in r.text, 'the console says it is off and how to switch it on', r.text)
+    s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/next/magic-port', 'body': {'enabled': True, 'port': 255, 'mode': 'line'}})
+    r = s.call('inspect_state', {'aspects': ['next_magic_port']})
+    expect('port 0x00FF, mode line' in r.text and 'on,' in r.text, 'the setting in the text', r.text)
+    s.call('control_execution', {'action': 'bp_clear'})
+    added = s.call('control_execution', {'action': 'bp_add', 'type': 'magic_ed_ff'})
+    expect(not added.is_error, 'a magic breakpoint needs no address', added.text)
+    listed = s.call('control_execution', {'action': 'bp_list'})
+    expect('magic ' in listed.text, 'the listing names the type', listed.text)
+    s.call('control_execution', {'action': 'bp_clear'})
+
+
 def test_next_breakpoint_types(s):
     s.fresh_machine('NEXT')
     s.call('control_execution', {'action': 'bp_clear'})

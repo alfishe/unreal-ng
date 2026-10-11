@@ -271,6 +271,11 @@ StateNode NextDivMmcJournalControl(EmulatorContext* context, int enable, bool cl
 StateNode NextNmiReport(EmulatorContext* context, const NextIntJournalQuery& query);
 /// Switch the interrupt / NMI / reset journal on / off (`enable` 1 / 0, -1 = keep), clear it and / or resize the ring; replies with its state
 StateNode NextNmiJournalControl(EmulatorContext* context, int enable, bool clear, size_t capacity = 0);
+/// The magic debug port (`next_magic_port`, /state/next/magic-port; automation-gaps-2026-10-11.md P6): off by default; when on, the bytes a program
+/// writes to one exact port come back as text in the chosen mode (hex, dec, ascii, line). Items after `since` (a seq), the newest `limit`
+StateNode NextMagicPortReport(EmulatorContext* context, uint64_t since, size_t limit);
+/// Switch the magic port on / off (`enable` 1 / 0, -1 = keep), choose its port (`port` 0..65535, -1 = keep) and mode ("" = keep), clear the output
+StateNode NextMagicPortControl(EmulatorContext* context, int enable, int port, const std::string& mode, bool clear);
 /// The Next's sound as the program configured it (`next_audio`, /state/next/audio; automation-gaps-2026-10-11.md P5): the chip model and
 /// stereo mode (NR #06 / #08 / #09 decoded), turbosound, the chip selected on #FFFD, per chip its pan, mono flag and 16 registers with the
 /// tone / noise / envelope periods and volumes, and the four DAC channels with the left / right sums. Reading changes nothing

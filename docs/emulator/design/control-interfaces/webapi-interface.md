@@ -476,6 +476,8 @@ GET  /api/v1/emulator/{id}/state/next/divmmc ?kinds=map_in,esx_call&since=&from=
 POST /api/v1/emulator/{id}/next/divmmc-journal {"enabled": true|false, "clear": true, "capacity": N} - switch (off by default), clear or resize the DivMMC journal
 GET  /api/v1/emulator/{id}/state/next/audio  the Next's sound as configured: config, selected_chip, chips (pan, mono, registers, periods, volumes), dac (a-d, left_sum, right_sum)
 GET  /api/v1/emulator/{id}/state/next/input  the Next's joystick modes (NR #05 left / right and the port each answers), the NR #0B I/O mode, the Kempston port #1F decoded (selected_by_nr_05 / answers_here) and not_modelled
+GET  /api/v1/emulator/{id}/state/next/magic-port ?since=&limit= - the magic debug port: enabled, port, mode, bytes, items (the text a program wrote to it)
+POST /api/v1/emulator/{id}/next/magic-port {"enabled": true, "port": 255, "mode": "hex|dec|ascii|line", "clear": true} - switch it, choose port and mode, clear the output (off by default)
 GET  /api/v1/emulator/{id}/state/next/nmi ?kinds=int_ack,nmi_request&since=&from=&to=&limit= - the Next NMI sources (m1_button, drive_button: would_fire / blocked_by; io_trap: not modelled), in_service, the Multiface, NR #02 bits, the stackless NMI, the reset bits, the interrupts pending / in service by name, and the interrupt / NMI / reset journal
 POST /api/v1/emulator/{id}/next/nmi-journal {"enabled": true|false, "clear": true, "capacity": N} - switch (off by default), clear or resize the interrupt / NMI / reset journal
 GET  /api/v1/emulator/{id}/state/next/dma    the Next DMA as programmed and running (mode zxn|z80, ports a/b, direction, burst, prescaler, counters, src/dst + src_kind/dst_kind, holds_bus, status); no side effect on its read sequence

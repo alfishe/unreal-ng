@@ -3060,6 +3060,22 @@ namespace PythonBindings
                 return StateNodeToPy(DeviceState::NextNmiJournalControl(self.GetContext(), enable, clear, capacity));
             }, py::arg("enabled") = py::none(), py::arg("clear") = false, py::arg("capacity") = 0,
                "Switch (enabled=True/False), clear or resize (capacity=N) the interrupt / NMI / reset journal")
+            .def("next_magic_port", [](Emulator& self, uint64_t since, size_t limit) -> py::object {
+                return StateNodeToPy(DeviceState::NextMagicPortReport(self.GetContext(), since, limit));
+            }, py::arg("since") = 0, py::arg("limit") = 200,
+               "The magic debug port: its setting and the text a program wrote to it (items after seq 'since', the newest 'limit'); "
+               "off by default (next_magic_port_control(enabled=True, port=0x00FF, mode='line'))")
+            .def("next_magic_port_control", [](Emulator& self, py::object enabled, py::object port, const std::string& mode, bool clear) -> py::object {
+                const int enable = enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0);
+                const int chosen = port.is_none() ? -1 : port.cast<int>();
+                if (chosen < -1 || chosen > 0xFFFF)
+                    throw py::value_error("port is 0..65535");
+                py::object result = StateNodeToPy(DeviceState::NextMagicPortControl(self.GetContext(), enable, chosen, mode, clear));
+                if (py::isinstance<py::dict>(result) && result.cast<py::dict>().contains("error"))
+                    throw py::value_error(result.cast<py::dict>()["error"].cast<std::string>());
+                return result;
+            }, py::arg("enabled") = py::none(), py::arg("port") = py::none(), py::arg("mode") = "", py::arg("clear") = false,
+               "Switch the magic debug port (enabled=True/False), choose its port (0..65535) and mode (hex, dec, ascii, line), clear its output")
             .def("next_dma", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextDma(self.GetContext())); },
                "The Next DMA as programmed and running (mode, ports A / B, direction, burst, prescaler, counters, status byte); reading it "
                "does not advance its read sequence; available=False elsewhere")

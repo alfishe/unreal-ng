@@ -552,6 +552,61 @@ void EmulatorAPI::postNextNmiJournal(const HttpRequestPtr& req, std::function<vo
     ReplyState(DeviceState::NextNmiJournalControl(emulator->GetContext(), enable, clear, capacity), callback);
 }
 
+/// @brief GET /api/v1/emulator/{id}/state/next/magic-port?since=&limit= - the magic debug port (DeviceState::NextMagicPortReport)
+void EmulatorAPI::getStateNextMagicPort(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                        const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    uint64_t since = 0;
+    size_t limit = 200;
+    try
+    {
+        if (!req->getParameter("since").empty())
+            since = std::stoull(req->getParameter("since"));
+        if (!req->getParameter("limit").empty())
+            limit = static_cast<size_t>(std::stoull(req->getParameter("limit")));
+    }
+    catch (const std::exception&)
+    {
+        return ReplyNotFound("since and limit are numbers", callback, HttpStatusCode::k400BadRequest);
+    }
+    ReplyState(DeviceState::NextMagicPortReport(emulator->GetContext(), since, limit), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/next/magic-port {"enabled": true|false, "port": N, "mode": "hex|dec|ascii|line", "clear": true} - switch the
+/// magic port, choose its port and mode, clear its output (DeviceState::NextMagicPortControl)
+void EmulatorAPI::postNextMagicPort(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto body = req->getJsonObject();
+    int enable = -1;
+    int port = -1;
+    bool clear = false;
+    std::string mode;
+    constexpr Json::UInt64 kMaxPort = 0xFFFF;
+    if (body && body->isMember("enabled"))
+        enable = (*body)["enabled"].asBool() ? 1 : 0;
+    if (body && body->isMember("port"))
+    {
+        if (!(*body)["port"].isIntegral() || (*body)["port"].asInt64() < 0 || static_cast<Json::UInt64>((*body)["port"].asInt64()) > kMaxPort)
+            return ReplyNotFound("port is 0..65535", callback, HttpStatusCode::k400BadRequest);
+        port = (*body)["port"].asInt();
+    }
+    if (body && body->isMember("mode"))
+        mode = (*body)["mode"].asString();
+    if (body && body->isMember("clear"))
+        clear = (*body)["clear"].asBool();
+    StateNode result = DeviceState::NextMagicPortControl(emulator->GetContext(), enable, port, mode, clear);
+    if (const StateNode* refused = result.find("error"))
+        return ReplyNotFound(refused->s, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(result, callback);
+}
+
 /// @brief GET /api/v1/emulator/{id}/state/next/pixel?x=&y=&sx= - the pixel inspector (DeviceState::NextPixel; design-layer-capture.md): which layer
 /// won the pixel (x 0-319, y 0-255, sub-pixel sx 0 / 1) of the last captured frame, its colour, per layer whether it painted and why not / why
 /// it lost, and the source addresses. 400 bad query, 409 not a Next, the layer capture off or no frame yet

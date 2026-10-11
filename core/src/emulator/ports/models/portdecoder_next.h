@@ -12,6 +12,7 @@
 #include "emulator/io/z80n/nextmultiface.h"
 #include "emulator/io/z80n/nextsdjournal.h"
 #include "emulator/io/z80n/nextintjournal.h"
+#include "emulator/io/z80n/nextmagicport.h"
 #include "emulator/io/z80n/nexti2c.h"
 #include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/io/z80n/z80nengine.h"
@@ -102,6 +103,8 @@ public:
     uint32_t SpiTooFastCount() const { return _spiTooFast; }
     /// The SD journal (automation-gaps-2026-10-11.md, P1) and the SPI engine's state for the report
     /// The interrupt, NMI and reset journal (automation-gaps-2026-10-11.md, P4)
+    NextMagicPort& MagicPort() { return _magicPort; }
+    const NextMagicPort& MagicPort() const { return _magicPort; }
     NextIntJournal& IntJournal() { return _intJournal; }
     const NextIntJournal& IntJournal() const { return _intJournal; }
     /// Why a button NMI would be refused now (nullptr: it would fire), for the report and the journal
@@ -195,6 +198,7 @@ private:
     uint32_t _spiTooFast = 0;
     NextSdJournal _sdJournal;
     NextIntJournal _intJournal;
+    NextMagicPort _magicPort;
     void RecordInt(NextIntEvent event);
     void RecordSdEvent(unsigned card, const SdTraceEvent& event);
     std::unique_ptr<NextBoard> _board;

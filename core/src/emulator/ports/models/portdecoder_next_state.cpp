@@ -12,6 +12,7 @@
 #include "emulator/io/z80n/nextregjournal.h"
 #include "emulator/io/z80n/nextdivmmcjournal.h"
 #include "emulator/io/z80n/nextintjournal.h"
+#include "emulator/io/z80n/nextmagicport.h"
 #include "emulator/io/z80n/nextsdjournal.h"
 #include "emulator/io/z80n/nextregtable.h"
 #include "emulator/ports/models/portdecoder_next.h"
@@ -568,6 +569,67 @@ StateNode NextNmiJournalControl(EmulatorContext* context, int enable, bool clear
     if (enable >= 0)
         journal.SetEnabled(enable != 0);
     return IntJournalState(journal);
+}
+
+namespace
+{
+StateNode MagicPortState(const NextMagicPort& magic)
+{
+    StateNode n = StateNode::Object();
+    n["available"] = true;
+    n["enabled"] = magic.Enabled();
+    n["port"] = StringHelper::Format("0x%04X", magic.Port());
+    n["mode"] = NextMagicPortModeName(magic.Mode());
+    n["bytes"] = magic.Bytes();
+    n["size"] = static_cast<uint64_t>(magic.Size());
+    n["evicted"] = magic.Evicted();
+    n["last_seq"] = magic.LastSeq();
+    return n;
+}
+}  // namespace
+
+StateNode NextMagicPortReport(EmulatorContext* context, uint64_t since, size_t limit)
+{
+    PortDecoder_Next* decoder = NextDecoder(context);
+    if (!decoder)
+        return Unavailable();
+    const NextMagicPort& magic = decoder->MagicPort();
+    StateNode n = MagicPortState(magic);
+    if (magic.Mode() == NextMagicPortMode::Line)
+        n["partial"] = magic.Partial();
+    StateNode items = StateNode::Array();
+    for (const NextMagicPortItem& item : magic.Query(since, limit))
+    {
+        StateNode e = StateNode::Object();
+        e["seq"] = item.seq;
+        e["frame"] = static_cast<uint64_t>(item.frame);
+        e["t"] = static_cast<uint64_t>(item.t);
+        e["pc"] = StringHelper::Format("0x%04X", item.pc);
+        e["text"] = item.text;
+        items.push(std::move(e));
+    }
+    n["items"] = std::move(items);
+    return n;
+}
+
+StateNode NextMagicPortControl(EmulatorContext* context, int enable, int port, const std::string& mode, bool clear)
+{
+    PortDecoder_Next* decoder = NextDecoder(context);
+    if (!decoder)
+        return Unavailable();
+    NextMagicPort& magic = decoder->MagicPort();
+    NextMagicPortMode chosen = magic.Mode();
+    if (!mode.empty() && !NextMagicPortModeFromString(mode, chosen))
+    {
+        StateNode n = StateNode::Object();
+        n["available"] = true;
+        n["error"] = "mode: hex, dec, ascii or line";
+        return n;
+    }
+    if (clear)
+        magic.Clear();
+    magic.Configure(enable >= 0 ? enable != 0 : magic.Enabled(), port >= 0 ? static_cast<uint16_t>(port) : magic.Port(), chosen);
+    return MagicPortState(magic);
 }
 
 namespace
