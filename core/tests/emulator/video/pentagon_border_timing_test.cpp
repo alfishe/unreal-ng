@@ -1,3 +1,4 @@
+#include "_helpers/emulatortesthelper.h"
 #include "pch.h"
 #include "stdafx.h"
 
@@ -33,11 +34,8 @@ protected:
     void TearDown() override
     {
         delete _screen;
-        delete _core;
-        delete _context;
         _screen = nullptr;
-        _core = nullptr;
-        _context = nullptr;
+        EmulatorTestHelper::ReleaseBareCore(_core, _context);
     }
 
     void SetupPentagonMode(VideoModeEnum mode)

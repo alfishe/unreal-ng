@@ -99,6 +99,11 @@ public:
     /// @param emulator Emulator to cleanup
     static void CleanupEmulator(Emulator* emulator);
 
+    /// Release a machine a fixture built without an Emulator (new Core + Init): the disk drives
+    /// WD1793 creates are the Emulator's to free (Emulator::Release), so do that part here, then
+    /// delete the core and the context. Both pointers come back null
+    static void ReleaseBareCore(Core*& core, EmulatorContext*& context);
+
     /// Run N frames as fast as possible (synchronous, no throttling)
     static void RunFramesFast(Emulator* emulator, int frameCount);
 

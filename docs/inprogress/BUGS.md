@@ -61,20 +61,26 @@ CI runner) turns one failed expectation into a lost run.
 The test's thread joins on every exit path (a joining guard), so a failed check fails one test. Check the other
 threaded tests for the same shape.
 
-## 🔴 [Open] #4: Leaks reported in the test fixtures (`definitely lost`)
+## 🔵 [In Progress] #4: Leaks reported in the test fixtures (`definitely lost`)
 * **Date Opened:** 2026-10-11
 * **Found by:** a full `core-tests` run under valgrind memcheck on Linux (gcc 14, RelWithDebInfo, 12 shards; host `.238`, 2026-10-10/11).
 
 ### Description
-Biggest records, all reached from test code:
-- `Keyboard_Test::SetUp` (`keyboard_test.cpp:10`): the `EmulatorContext` is never deleted (190 KB a test).
-- `DiskAutostart_Test::LoadImage` (`diskautostart_test.cpp:76`): the image `LoaderTRD::parse` returned (1.2 MB a test).
-- `ScorpionMachineFixture::BuildMachine` (`scorpionfixture.h`): the four `FDD`s `WD1793::WD1793` creates
-  (`wd1793.cpp:91`) when the fixture builds a core without an `Emulator`, which owns and frees them in production.
+Biggest records, all reached from test code (production frees the same objects):
+- `Keyboard_Test::SetUp` (`keyboard_test.cpp:10`): the `EmulatorContext` was never deleted (190 KB a test).
+- `DiskAutostart_Test::LoadImage`: the image `LoaderTRD::parse` returned (1.2 MB a test). The loader hands its image
+  over and does not free it; the test's comment said the opposite.
+- `ScorpionMachineFixture` and the other fixtures that build a `Core` without an `Emulator`: the four `FDD`s
+  `WD1793::WD1793` creates (`wd1793.cpp:91`). `Emulator::Release` frees them (`emulator.cpp:739`); a bare core does not.
 
-### Fix plan
-Confirm each one is the test's (production owners free them: `Emulator` deletes the drives at `emulator.cpp:739`),
-then free them in the fixtures. A leak in production code found on the way gets its own entry.
+### Fix
+`Keyboard_Test` deletes its context; `DiskAutostart_Test` owns the loaded image; `EmulatorTestHelper::ReleaseBareCore`
+frees the drives, the core and the context in the order of `Emulator::Release`, used by the Scorpion, Profi, TS-Conf,
+Sprinter, models-regression and Pentagon border fixtures. Fixtures that never delete their `Core` at all (the Z80,
+video and loader tests that build one per test) are left for the valgrind profile of PLAN.md #109.
+
+### Requirements / Acceptance Criteria
+- [ ] No `definitely lost` record from these fixtures in the next valgrind run.
 
 2026-10-10
 ## 🟢 [Fixed] #1: Removing a running TS-Conf or ATM Turbo 2+ instance writes into freed memory (heap damage, a later crash elsewhere)
