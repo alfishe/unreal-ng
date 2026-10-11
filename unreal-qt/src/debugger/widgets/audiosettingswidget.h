@@ -12,10 +12,12 @@
 #include <QToolButton>
 #include <QPushButton>
 #include <QTimer>
+#include <memory>
 #include <vector>
 
 #include "emulator/sound/soundmanager.h"
 
+class Emulator;
 class EmulatorContext;
 
 /// Row in the Sources mixer section
@@ -36,10 +38,11 @@ class AudioSettingsWidget : public QWidget
     Q_OBJECT
 
 public:
-    explicit AudioSettingsWidget(EmulatorContext* context, QWidget* parent = nullptr);
+    explicit AudioSettingsWidget(std::shared_ptr<Emulator> emulator, QWidget* parent = nullptr);
     ~AudioSettingsWidget();
 
-    void setContext(EmulatorContext* context);
+    /// The machine the controls act on; held, so a removed one stays readable until the GUI moves on (BUGS.md #11)
+    void setEmulator(std::shared_ptr<Emulator> emulator);
     void refreshFromContext();
 
 signals:
@@ -95,7 +98,9 @@ private:
     QString buildDeviceDetailText() const;  // Full breakdown for the (i) popup
     void updateGSSection(const GeneralSoundSlot& slot);
 
-    EmulatorContext* _context = nullptr;
+    std::shared_ptr<Emulator> _emulator;
+    /// The held machine's context, per call (never stored)
+    EmulatorContext* context() const;
 
     // Shown when no emulator is active
     QLabel* _statusLabel = nullptr;

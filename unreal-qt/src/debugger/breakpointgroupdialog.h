@@ -1,4 +1,6 @@
 #pragma once
+
+#include <memory>
 #ifndef BREAKPOINTGROUPDIALOG_H
 #define BREAKPOINTGROUPDIALOG_H
 
@@ -13,7 +15,7 @@ class BreakpointGroupDialog : public QDialog
 {
     Q_OBJECT
 public:
-    explicit BreakpointGroupDialog(Emulator* emulator, QWidget* parent = nullptr);
+    explicit BreakpointGroupDialog(std::shared_ptr<Emulator> emulator, QWidget* parent = nullptr);
     ~BreakpointGroupDialog();
     
 private slots:
@@ -27,7 +29,7 @@ private:
     void populateGroupList();
     void updateStatusBar();
     
-    Emulator* _emulator;
+    std::shared_ptr<Emulator> _emulator;
     QListWidget* _groupList;
     
     QPushButton* _addButton;

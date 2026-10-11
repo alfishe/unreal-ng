@@ -1,4 +1,6 @@
 #pragma once
+
+#include <memory>
 #ifndef DEBUGGERWINDOW_H
 #define DEBUGGERWINDOW_H
 
@@ -27,10 +29,10 @@ class DebuggerWindow : public QWidget, public Observer
 {
     Q_OBJECT
 public:
-    explicit DebuggerWindow(Emulator* emulator = nullptr, QWidget* parent = nullptr);
+    explicit DebuggerWindow(std::shared_ptr<Emulator> emulator = nullptr, QWidget* parent = nullptr);
     virtual ~DebuggerWindow() override;
 
-    void setEmulator(Emulator* emulator);  // Legacy - will be removed
+    void setEmulator(std::shared_ptr<Emulator> emulator);  // Legacy - will be removed
     Emulator* getEmulator();
 
     // Set the EmulatorBinding this window receives state from
@@ -54,6 +56,8 @@ protected:
     /// region <QT Helper methods>
 protected:
     void dispatchToMainThread(std::function<void()> callback);
+    /// The children that keep the machine (speed control, live source, visualization) follow _emulator
+    void propagateEmulator();
     /// endregion <QT Helper methods>
 
     /// region <Event handlers / Slots>
@@ -133,7 +137,7 @@ protected:
         "_im2_interrupt_handler";  // Group for IM2 interrupt handler breakpoints
 
     // Fields
-    Emulator* _emulator = nullptr;         // Legacy - use m_binding->emulator() instead
+    std::shared_ptr<Emulator> _emulator;         // Legacy - use m_binding->emulator() instead
     EmulatorBinding* m_binding = nullptr;  // Central state binding
     EmulatorStateEnum _emulatorState = EmulatorStateEnum::StateUnknown;
     bool _breakpointTriggered = false;

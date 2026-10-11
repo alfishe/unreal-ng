@@ -197,6 +197,26 @@ std::shared_ptr<Request> ExecutionArbiter::NewRequestLocked(bool command, const 
     return request;
 }
 
+const char* ExecutionArbiter::LifecycleRefusalLocked(const detail::Request& request) const
+{
+    if (_phase == Phase::Stopping)
+        return "stopping";
+    // A retired machine (removed, kept alive by a holder) never executes again: no intent, no command that drives
+    // the Z80. Commands that do not drive it (a reader, a save) still run, on the stopped machine
+    if (_retired && (!request.command || request.commandOptions.drivesZ80))
+        return "retired";
+    return nullptr;
+}
+
+void ExecutionArbiter::Retire()
+{
+    {
+        Lock lock(_mutex);
+        _retired = true;
+    }
+    Released();
+}
+
 Ticket ExecutionArbiter::SubmitIntent(Intent intent, const Requester& requester, IntentOptions options)
 {
     std::shared_ptr<Request> request;
@@ -205,9 +225,9 @@ Ticket ExecutionArbiter::SubmitIntent(Intent intent, const Requester& requester,
         request = NewRequestLocked(false, requester, options.reason.empty() ? IntentName(intent) : options.reason);
         request->intent = intent;
         request->intentOptions = std::move(options);
-        if (_phase == Phase::Stopping)
+        if (const char* refusal = LifecycleRefusalLocked(*request))
         {
-            CompleteLocked(request, Outcome::Refused, "stopping");
+            CompleteLocked(request, Outcome::Refused, refusal);
             LogLocked(Decision::Kind::IntentRefused, request.get(), Outcome::Refused, _intent, false);
         }
         else
@@ -229,9 +249,9 @@ Result ExecutionArbiter::Execute(const Requester& requester, std::string tag, co
         request = NewRequestLocked(true, requester, std::move(tag));
         request->body = body;
         request->commandOptions = std::move(options);
-        if (_phase == Phase::Stopping)
+        if (const char* refusal = LifecycleRefusalLocked(*request))
         {
-            CompleteLocked(request, Outcome::Refused, "stopping");
+            CompleteLocked(request, Outcome::Refused, refusal);
             return ResultOf(*request);
         }
         if (RefusedByClaimLocked(*request))
@@ -336,8 +356,8 @@ Ticket ExecutionArbiter::Post(const Requester& requester, std::string tag, Comma
         request->posted = true;
         request->body = std::move(body);
         request->commandOptions = std::move(options);
-        if (_phase == Phase::Stopping)
-            CompleteLocked(request, Outcome::Refused, "stopping");
+        if (const char* refusal = LifecycleRefusalLocked(*request))
+            CompleteLocked(request, Outcome::Refused, refusal);
         else
         {
             _queue.push_back(request);
@@ -363,9 +383,9 @@ HoldToken ExecutionArbiter::BeginHold(const Requester& requester, std::string ta
         auto request = NewRequestLocked(true, requester, std::move(tag));
         request->commandOptions = options;
         const std::thread::id self = std::this_thread::get_id();
-        if (_phase == Phase::Stopping)
+        if (const char* refusal = LifecycleRefusalLocked(*request))
         {
-            CompleteLocked(request, Outcome::Refused, "stopping");
+            CompleteLocked(request, Outcome::Refused, refusal);
             outcome = ResultOf(*request);
         }
         else if ((_serving && _servingThread == self) ||

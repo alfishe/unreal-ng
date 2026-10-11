@@ -70,7 +70,7 @@ Memory16KBWidget::Memory16KBWidget(int bankIndex, QWidget* parent) : QWidget(par
 
 Memory16KBWidget::~Memory16KBWidget() {}
 
-void Memory16KBWidget::setEmulator(Emulator* emulator)
+void Memory16KBWidget::setEmulator(std::shared_ptr<Emulator> emulator)
 {
     _emulator = emulator;
     reset();

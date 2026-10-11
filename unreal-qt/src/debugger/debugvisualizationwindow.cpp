@@ -15,7 +15,7 @@
 #include "widgets/memorywidget.h"
 #include "widgets/ulabeamwidget.h"
 
-DebugVisualizationWindow::DebugVisualizationWindow(Emulator* emulator, QWidget* parent)
+DebugVisualizationWindow::DebugVisualizationWindow(std::shared_ptr<Emulator> emulator, QWidget* parent)
     : QWidget(parent), ui(new Ui::DebugVisualizationWindow)
 {
     _emulator = emulator;
@@ -146,7 +146,7 @@ DebugVisualizationWindow::~DebugVisualizationWindow()
     delete ui;
 }
 
-void DebugVisualizationWindow::setEmulator(Emulator* emulator)
+void DebugVisualizationWindow::setEmulator(std::shared_ptr<Emulator> emulator)
 {
     _emulator = emulator;
 
@@ -206,7 +206,7 @@ void DebugVisualizationWindow::setEmulator(Emulator* emulator)
 
 Emulator* DebugVisualizationWindow::getEmulator()
 {
-    return _emulator;
+    return _emulator.get();
 }
 
 void DebugVisualizationWindow::reset()

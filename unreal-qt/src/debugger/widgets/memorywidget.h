@@ -1,4 +1,6 @@
 #pragma once
+
+#include <memory>
 #ifndef MEMORYWIDGET_H
 #define MEMORYWIDGET_H
 
@@ -17,7 +19,7 @@ public:
     explicit MemoryWidget(QWidget* parent = nullptr);
     virtual ~MemoryWidget();
 
-    void setEmulator(Emulator* emulator);
+    void setEmulator(std::shared_ptr<Emulator> emulator);
     void reset();
     void refresh();
 
@@ -33,7 +35,7 @@ public slots:
 private:
     void createUI();
 
-    Emulator* _emulator = nullptr;
+    std::shared_ptr<Emulator> _emulator;
     Memory16KBWidget* _bankWidgets[4] = {nullptr};   // Z80 hard-mapped banks
     Memory16KBWidget* _freeWidgets[2] = {nullptr};    // Freely selectable pages
 

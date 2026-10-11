@@ -84,6 +84,8 @@ std::string stateToString(EmulatorStateEnum state)
             return "running";
         case StateStopped:
             return "stopped";
+        case StateRetired:  // removed, kept alive by a holder (a request in flight) until it lets go
+            return "retired";
         default:
             return "unknown";
     }

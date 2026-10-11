@@ -42,7 +42,7 @@ int64_t Number(const StateNode& node, const char* name, int64_t otherwise = 0)
 }
 }  // namespace
 
-LiveSourceWindow::LiveSourceWindow(Emulator* emulator, QWidget* parent) : QWidget(parent, Qt::Window), _emulatorId(emulator ? emulator->GetUUID().toString() : std::string())
+LiveSourceWindow::LiveSourceWindow(std::shared_ptr<Emulator> emulator, QWidget* parent) : QWidget(parent, Qt::Window), _emulatorId(emulator ? emulator->GetUUID().toString() : std::string())
 {
     setWindowTitle(tr("Live Source"));
     setAttribute(Qt::WA_DeleteOnClose);
@@ -105,7 +105,7 @@ LiveSourceWindow::~LiveSourceWindow()
     stopOwnWatch();
 }
 
-void LiveSourceWindow::setEmulator(Emulator* emulator)
+void LiveSourceWindow::setEmulator(std::shared_ptr<Emulator> emulator)
 {
     const std::string id = emulator ? emulator->GetUUID().toString() : std::string();
     if (id == _emulatorId)

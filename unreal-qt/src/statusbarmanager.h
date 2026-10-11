@@ -123,7 +123,7 @@ private:
     QLabel* _videoMode = nullptr;         ///< the picture's mode on machines that mix modes per area (Sprinter: ScreenState::videoModeBrief)
     QLabel* _zxMode = nullptr;            ///< the Sprinter's ZX mode and launcher configuration (DeviceState::SprinterZxModeBrief)
     QLabel* _biosIssues = nullptr;        ///< the loaded Sprinter BIOS image's known issues (DeviceState::SprinterBiosKnownIssues)
-    EmulatorContext* _biosIssuesContext = nullptr;  ///< the machine the label was last checked for
+    std::string _biosIssuesEmulatorId;    ///< the machine the label was last checked for
     int _biosIssuesTicks = 0;             ///< re-checked every few seconds (it hashes the 256 KB flash)
     int _zxModeTicks = 0;                 ///< the tooltip report is rebuilt every few ticks (it reads the vROM pages)
     RzxPopover* _rzxPopover = nullptr;    ///< opened by a click on _rzx: position, seek slider, stop

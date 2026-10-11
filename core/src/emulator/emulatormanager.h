@@ -7,6 +7,8 @@
 #include <vector>
 #include <chrono>
 #include <atomic>
+#include <condition_variable>
+#include <thread>
 
 #include "emulator.h"
 
@@ -75,6 +77,37 @@ private:
     // Shutdown flag - blocks state changes during application exit
     std::atomic<bool> _isShuttingDown{false};
 
+    /// region <Retired instances (BUGS.md #11, docs/inprogress/2026-10-10-gui-instance-lifetime)>
+    /// A removal retires the instance; its last holder frees it. Tracked here so one that is never freed is seen
+    struct RetiredInstance
+    {
+        std::weak_ptr<Emulator> emulator;
+        std::string id;
+        std::chrono::steady_clock::time_point retiredAt;
+        std::chrono::steady_clock::time_point lastWarning;
+        bool warned = false;
+    };
+    std::vector<RetiredInstance> _retired;
+    /// Instances whose emulation thread did not stop (StopFor timed out): never freed, the thread may still use them
+    std::vector<std::shared_ptr<Emulator>> _stuck;
+    std::mutex _retiredMutex;
+    std::condition_variable _retiredCv;
+    std::thread _retiredWatchdog;
+    bool _retiredWatchdogStop = false;
+    std::chrono::milliseconds _retiredWarnAfter = kRetiredAliveWarnAfter;
+    std::chrono::milliseconds _retiredWarnEvery = kRetiredAliveWarnEvery;
+    std::atomic<uint64_t> _retiredWarnings{0};
+    std::atomic<int64_t> _leaseWaitTimeoutMs{kLeaseWaitTimeout.count()};
+    std::atomic<int64_t> _stopJoinTimeoutMs{kStopJoinTimeout.count()};
+    std::atomic<int64_t> _shutdownFreeTimeoutMs{kShutdownFreeTimeout.count()};
+
+    void TrackRetired(const std::shared_ptr<Emulator>& emulator);
+    void WatchRetired();
+    void StopRetiredWatchdog();
+    /// Stop (bounded), retire, track: the end of every removal
+    void RetireRemoved(const std::shared_ptr<Emulator>& emulator, const char* caller);
+    /// endregion </Retired instances>
+
     /// Recompute per-instance real-time scheduling requests from the current
     /// selection: exactly one instance - the selected one, or the sole
     /// instance when nothing is selected - keeps its emulation thread
@@ -98,6 +131,24 @@ private:
     EmulatorManager& operator=(EmulatorManager&&) = delete;
 
 public:
+    /// Every wait in a removal is bounded (owner decision 2026-10-10). A timeout is safe: the removal retires,
+    /// it frees nothing; the warning it logs is a bug report
+    static constexpr std::chrono::milliseconds kLeaseWaitTimeout{2000};       ///< live context leases
+    static constexpr std::chrono::milliseconds kStopJoinTimeout{5000};        ///< the emulation thread's exit
+    static constexpr std::chrono::milliseconds kRetiredAliveWarnAfter{10000}; ///< a retired instance still held
+    static constexpr std::chrono::milliseconds kRetiredAliveWarnEvery{60000}; ///< and again while it stays
+    static constexpr std::chrono::milliseconds kShutdownFreeTimeout{3000};    ///< exit waits for the last holders
+
+    /// Retired instances some holder still keeps alive (stuck ones included)
+    size_t RetiredAliveCount();
+    /// Warnings the retired-instance watchdog has logged (a holder that does not let go)
+    uint64_t RetiredWarningCount() const { return _retiredWarnings.load(); }
+    /// Tests: shorten the retired-instance warnings
+    void SetRetiredWarningTimes(std::chrono::milliseconds after, std::chrono::milliseconds every);
+    /// Tests: shorten the removal's bounded waits (the k* constants are the defaults)
+    void SetRemovalTimeouts(std::chrono::milliseconds leaseWait, std::chrono::milliseconds stopJoin,
+                            std::chrono::milliseconds shutdownFree);
+
     /// @brief Get the singleton instance of EmulatorManager
     /// @return Pointer to the EmulatorManager instance
     static EmulatorManager* GetInstance()

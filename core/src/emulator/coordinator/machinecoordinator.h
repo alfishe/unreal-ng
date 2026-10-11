@@ -47,6 +47,10 @@ public:
     /// nothing once Unlisten returns
     void Listen(IModeListener* listener);
     void Unlisten(IModeListener* listener);
+    /// The machine was removed (Emulator::Retire): every operation is refused from now on - a late GUI action or a
+    /// request in flight changes nothing and writes no file. One way
+    void Retire() { _retired.store(true); }
+    static constexpr const char* kRetiredReason = "the machine was removed";
 
     // Operations
     /// Runs @p op: the rules, the park, the owner's Prepare and Commit, the session effect at the commit point,
@@ -70,6 +74,7 @@ private:
 
     mutable std::shared_mutex _portsMutex;   ///< the ports, for WouldRefuse and Mode; written with _opMutex held
     std::recursive_mutex _opMutex;           ///< one operation at a time; recursive for nested operations
+    std::atomic<bool> _retired{false};
     IMachineThread* _thread = nullptr;
     IMachineClock* _clock = nullptr;
     ISessionSink* _session = nullptr;

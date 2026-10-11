@@ -23,11 +23,11 @@ class LiveSourceWindow : public QWidget
     Q_OBJECT
 
 public:
-    explicit LiveSourceWindow(Emulator* emulator, QWidget* parent = nullptr);
+    explicit LiveSourceWindow(std::shared_ptr<Emulator> emulator, QWidget* parent = nullptr);
     ~LiveSourceWindow() override;
 
     /// Another instance chosen in the debugger: the watch this window started stays with the old one
-    void setEmulator(Emulator* emulator);
+    void setEmulator(std::shared_ptr<Emulator> emulator);
 
 public slots:
     /// One look at the watch: the status every time, the text and hints when a new build is there

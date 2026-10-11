@@ -754,6 +754,7 @@ public:
                     case StateStopped: return "stopped";
                     case StateInitialized: return "initialized";
                     case StateResumed: return "resumed";
+                    case StateRetired: return "retired";
                     default: return "unknown";
                 }
             },

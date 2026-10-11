@@ -69,7 +69,7 @@ TEST_F(LiveSourceWindow_Test, TheWindowShowsTheBuiltTextAndTheCursorLine)
     options.quietMs = 0;
     _sync->Start(options);
     {
-        LiveSourceWindow window(_emulator.get());
+        LiveSourceWindow window(_emulator);
         auto* text = window.findChild<QPlainTextEdit*>();
         ASSERT_NE(text, nullptr);
         ASSERT_TRUE(TestWait::For([&] {
@@ -108,7 +108,7 @@ TEST_F(LiveSourceWindow_Test, AWatchTheWindowStartsEndsWithIt)
 {
     ASSERT_FALSE(_sync->Watching());
     {
-        LiveSourceWindow window(_emulator.get());
+        LiveSourceWindow window(_emulator);
         EXPECT_TRUE(_sync->Watching());
         QPushButton* watch = nullptr;
         for (QPushButton* b : window.findChildren<QPushButton*>())

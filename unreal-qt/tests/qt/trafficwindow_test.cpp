@@ -92,7 +92,7 @@ TEST(TrafficWindow_Test, RowsFilterDecodeAndSeekInsideTheRecording)
     emulator->RunNFrames(1);         // ... at this frame boundary
 
     EmulatorBinding binding;
-    binding.bind(emulator.get());
+    binding.bind(emulator);
     TrafficWindow window;
     window.setBinding(&binding);
     QMetaObject::invokeMethod(&window, "refresh");

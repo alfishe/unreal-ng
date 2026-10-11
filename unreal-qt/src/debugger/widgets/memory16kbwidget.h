@@ -1,4 +1,6 @@
 #pragma once
+
+#include <memory>
 #ifndef MEMORY16KBWIDGET_H
 #define MEMORY16KBWIDGET_H
 
@@ -22,7 +24,7 @@ public:
     explicit Memory16KBWidget(int bankIndex, QWidget* parent = nullptr);
     virtual ~Memory16KBWidget();
 
-    void setEmulator(Emulator* emulator);
+    void setEmulator(std::shared_ptr<Emulator> emulator);
     void setBankIndex(int bankIndex);
     void setPhysicalPage(int pageNumber);
     int getPhysicalPage() const { return _physicalPageNumber; }
@@ -53,7 +55,7 @@ private:
     int mapMouseToOffset(const QPoint& pos) const;
     static void initColorLUT();
 
-    Emulator* _emulator = nullptr;
+    std::shared_ptr<Emulator> _emulator;
 
     // Pre-computed color lookup table (256 entries as QRgb for direct scanLine writes)
     static QRgb s_colorLUT[256];

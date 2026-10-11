@@ -11,6 +11,8 @@
 #include "emulator/io/storage/fat/fatsynthvolume.h"
 #include "emulator/io/storage/hostfolder/foldersnapshot.h"
 #include "emulator/io/storage/hostfolder/hostfolderfat.h"
+#include "emulator/media/mediaformatregistry.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/sound/audio.h"
 #include "emulator/video/ulacontention.h"
 
@@ -53,10 +55,28 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     _audio->SetTimeSource([this]() { return Now(); });
     if (_context->pSoundManager)
         _context->pSoundManager->attachModelAudioSource(_audio.get());
+    for (unsigned i = 0; i < 2; i++)
+    {
+        const std::string id = Slot(i).Descriptor().id;
+        _sd[i].setWriteListener([this, id](uint64_t) {
+            if (_context->pMediaManager)
+                _context->pMediaManager->NoteWrite(id);
+        });
+    }
+    if (_context->pMediaManager)
+    {
+        _context->pMediaManager->RegisterSlot(_sdSlot0);
+        _context->pMediaManager->RegisterSlot(_sdSlot1);
+    }
 }
 
 PortDecoder_Next::~PortDecoder_Next()
 {
+    if (_context->pMediaManager)
+    {
+        _context->pMediaManager->UnregisterSlot(_sdSlot0.Descriptor().id);
+        _context->pMediaManager->UnregisterSlot(_sdSlot1.Descriptor().id);
+    }
     if (_context->pSoundManager && _audio)
     {
         _context->pSoundManager->detachModelAudioSource(_audio.get());
@@ -487,38 +507,38 @@ void PortDecoder_Next::StepDma()
 
 /// region <Reset>
 
-/// [NEXT] SdCard: a folder is presented as a FAT16 card (HostFolderFat, writes kept in the session), a file as a raw image
+namespace
+{
+    AccessMode AccessOf(SdCardSpi::WriteMode mode)
+    {
+        switch (mode)
+        {
+            case SdCardSpi::WriteMode::Persist: return AccessMode::WriteThrough;
+            case SdCardSpi::WriteMode::Off: return AccessMode::ReadOnly;
+            default: return AccessMode::Session;
+        }
+    }
+}  // namespace
+
+/// [NEXT] SdCard: the configured card on every reset while slot 0 is empty (a card the user put in stays), through the media manager's slot "sd.next0" (a folder becomes a FAT16 card with an MBR,
+/// writes kept in the session; a file is a raw image). Inserts, swaps and ejects by the user are the manager's
 void PortDecoder_Next::InsertConfiguredCard()
 {
     const std::string path = _context->config.next_sd_path;
-    if (path.empty() || _sd[0].present())
-        return;
+    if (path.empty() || _sd[0].present() || !_context->pMediaManager)
+        return;  // nothing configured, or a card is in the slot (the user's, inserted by the manager): it stays
     std::string resolved = FileHelper::NormalizePath(path);
     if (!FileHelper::FileExists(resolved) && !std::filesystem::exists(resolved))
         resolved = FileHelper::PathCombine(FileHelper::GetResourcesPath(), path);
-    std::error_code ec;
-    if (std::filesystem::is_directory(resolved, ec))
-    {
-        FolderSnapshot snapshot;
-        FolderScanOptions scan;
-        std::string error;
-        if (!FolderSnapshot::Scan(resolved, scan, snapshot, &error))
-        {
-            MLOGERROR("PortDecoder_Next: SD card folder '%s': %s", path.c_str(), error.c_str());
-            return;
-        }
-        FatVolumeOptions options;
-        std::vector<std::string> report;
-        auto card = HostFolderFat::Build(snapshot, options, &error, &report);
-        if (!card)
-        {
-            MLOGERROR("PortDecoder_Next: SD card folder '%s' does not fit a FAT16 card: %s", path.c_str(), error.c_str());
-            return;
-        }
-        _sd[0].insert(std::move(card), SdCardSpi::WriteMode::Session);
-    }
-    else if (!_sd[0].open(resolved, SdCardSpi::WriteMode::Session))
-        MLOGERROR("PortDecoder_Next: SD card image '%s' not found", path.c_str());
+    MediaSource source;
+    source.path = resolved;
+    InsertOptions options;
+    options.access = AccessMode::Session;
+    options.disposition = Disposition::Discard;
+    options.immediate = true;
+    const MediaResult result = _context->pMediaManager->Insert(_sdSlot0.Descriptor().id, source, options);
+    if (!result.Ok())
+        MLOGERROR("PortDecoder_Next: SD card '%s' not inserted: %s", path.c_str(), result.message.c_str());
 }
 
 void PortDecoder_Next::PerformReset(bool hard)
@@ -564,12 +584,72 @@ bool PortDecoder_Next::InsertSdCard(unsigned index, std::unique_ptr<IBlockDevice
 {
     // a Next's card is an SDHC one (games such as Atic Atac refuse an SDSC answer: "SDHC OR BETTER REQUIRED"); a small folder-backed image
     // would be taken for SDSC by its size alone
+    if (MediaManager* manager = _context->pMediaManager)
+    {
+        MediaSource source;
+        source.type = MediaSourceType::Blank;
+        InsertOptions options;
+        options.access = AccessOf(mode);
+        options.disposition = Disposition::Discard;
+        options.immediate = true;
+        auto medium = MediaFormatRegistry::WrapBlock(source, AccessOf(mode), "memory", std::move(media));
+        return manager->Insert(Slot(index).Descriptor().id, std::move(medium), options).Ok();
+    }
     return _sd[index & 1].insert(std::move(media), mode, SdCardSpi::Type::SDHC);
 }
 
 bool PortDecoder_Next::InsertSdCard(unsigned index, const std::string& path, SdCardSpi::WriteMode mode)
 {
+    if (MediaManager* manager = _context->pMediaManager)
+    {
+        MediaSource source;
+        source.path = path;
+        InsertOptions options;
+        options.access = AccessOf(mode);
+        options.disposition = Disposition::Discard;
+        options.immediate = true;
+        const MediaResult result = manager->Insert(Slot(index).Descriptor().id, source, options);
+        if (!result.Ok())
+            MLOGWARNING("PortDecoder_Next: SD card '%s' not inserted: %s", path.c_str(), result.message.c_str());
+        return result.Ok();
+    }
     return _sd[index & 1].open(path, mode, SdCardSpi::Type::SDHC);
+}
+
+PortDecoder_Next::SdSlot::SdSlot(PortDecoder_Next& owner, unsigned index) : _owner(owner), _index(index)
+{
+    _descriptor.id = index == 0 ? "sd.next0" : "sd.next1";
+    _descriptor.kind = MediaKind::Block;
+    _descriptor.label = index == 0 ? "SD card 0 (ZX Next)" : "SD card 1 (ZX Next)";
+    _descriptor.removable = true;
+    _descriptor.swapDelayMs = 500;
+    _descriptor.acceptsFolder = true;
+    _descriptor.defaultAccess = AccessMode::Session;
+    // NextZXOS, TBBLUE.FW and the boot ROM read FAT16 and FAT32 from an MBR partition
+    _descriptor.defaultFs = FatType::Fat16;
+    _descriptor.fsCompatibility = {FatType::Fat16, FatType::Fat32};
+    _descriptor.folderMbr = true;
+    _descriptor.tags = index == 0 ? std::vector<std::string>{"sd", "next", "primary", "boot"}
+                                  : std::vector<std::string>{"sd", "next", "secondary"};
+    if (index == 0)
+        _descriptor.aliases = {"sd"};
+}
+
+void PortDecoder_Next::SdSlot::Attach(Medium& medium)
+{
+    // a Next's card is an SDHC one (games such as Atic Atac refuse an SDSC answer: "SDHC OR BETTER REQUIRED"); a small folder-backed image
+    // would be taken for SDSC by its size alone
+    _owner._sd[_index].attach(*medium.Block(), SdCardSpi::Type::SDHC);
+}
+
+void PortDecoder_Next::SdSlot::Detach()
+{
+    _owner._sd[_index].detach();
+}
+
+bool PortDecoder_Next::SdSlot::IsBusy() const
+{
+    return _owner._sd[_index].busy();
 }
 
 void PortDecoder_Next::SpiSelect(uint8_t value)

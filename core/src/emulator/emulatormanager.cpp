@@ -1,5 +1,7 @@
 #include "emulatormanager.h"
 
+#include <algorithm>
+
 #include "emulator/machinevariants.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 
@@ -711,10 +713,12 @@ bool EmulatorManager::RemoveEmulatorInstance(const std::string& emulatorId)
             LOGWARNING("EmulatorManager::RemoveEmulator - Message queue drain timed out for '%s'; observers may race the instance free", emulatorId.c_str());
         }
     }
-    if (retiring)
-        retiring->WaitForContextLeases();
+    if (retiring && !retiring->WaitForContextLeases(std::chrono::milliseconds(_leaseWaitTimeoutMs.load())))
+        LOGWARNING("EmulatorManager::RemoveEmulator - a context lease on '%s' is still held after %lld ms; retiring "
+                   "anyway (nothing is freed while it is held)", emulatorId.c_str(),
+                   static_cast<long long>(_leaseWaitTimeoutMs.load()));
 
-    // Out of the map under the lock; stopped and released after it. Release() removes message observers, and
+    // Out of the map under the lock; stopped and retired after it. Release() removes message observers, and
     // removing one waits for a dispatch in flight - a handler that looks an instance up (the GUI's selection change,
     // posted by another thread after the drain above) waits for this lock: holding it there was a deadlock
     // (2026-10-10, WebAPI deletes while the GUI followed the selection)
@@ -752,20 +756,9 @@ bool EmulatorManager::RemoveEmulatorInstance(const std::string& emulatorId)
 
     if (removed)
     {
-        // Always go through Stop(), even when IsRunning() already reads false:
-        // Stop() is a blocking barrier (it returns only once the emulation
-        // thread has actually joined), while IsRunning() alone can go false
-        // before that join completes if another caller is concurrently
-        // stopping the same instance. Gating this on IsRunning() let Release()
-        // free Core's Screen / SoundManager / TimeTravelManager while that
-        // thread was still mid-frame (2026-10-02 crash).
-        LOGINFO("EmulatorManager::RemoveEmulator - Stopping emulator with ID '%s'", emulatorId.c_str());
-        removed->Stop();
-
-        // Release resources
-        removed->Release();
+        RetireRemoved(removed, "RemoveEmulator");
         LOGINFO("EmulatorManager::RemoveEmulator - Removed emulator with ID '%s'", emulatorId.c_str());
-
+        // The last reference frees it: here when nobody else holds it, else when the GUI or a request lets go
         return true;
     }
 
@@ -1237,11 +1230,14 @@ void EmulatorManager::ShutdownAllEmulators()
         }
     }
     for (const auto& emulator : retiring)
-        emulator->WaitForContextLeases();
+    {
+        if (!emulator->WaitForContextLeases(std::chrono::milliseconds(_leaseWaitTimeoutMs.load())))
+            LOGWARNING("EmulatorManager::ShutdownAllEmulators - a context lease on '%s' is still held after %lld ms",
+                       emulator->GetId().c_str(), static_cast<long long>(_leaseWaitTimeoutMs.load()));
+    }
     retiring.clear();
 
-    // Out of the map under the lock, stopped and released after it (see RemoveEmulatorInstance: Release() waits for a
-    // dispatch in flight whose handler may wait for this lock)
+    // Out of the map under the lock, stopped and retired after it (see RemoveEmulatorInstance)
     decltype(_emulators) all;
     {
         std::lock_guard<std::mutex> lock(_emulatorsMutex);
@@ -1249,16 +1245,138 @@ void EmulatorManager::ShutdownAllEmulators()
     }
 
     for (auto& [uuid, emulator] : all)
-    {
-        // Always go through Stop() - see RemoveEmulatorInstance() for why
-        // gating this on IsRunning() is unsafe
-        LOGINFO("EmulatorManager::ShutdownAllEmulators - Stopping emulator with UUID: %s", uuid.c_str());
-        emulator->Stop();
+        RetireRemoved(emulator, "ShutdownAllEmulators");
+    all.clear();   // the manager's references: an instance nobody else holds is freed here
 
-        // Release resources
-        emulator->Release();
+    // The last holders (the GUI's queued unbind, a request in flight) get a bounded time; survivors are logged and
+    // left to their holders - freeing under a live reader is the bug this avoids
+    const std::chrono::milliseconds shutdownFreeTimeout(_shutdownFreeTimeoutMs.load());
+    const auto deadline = std::chrono::steady_clock::now() + shutdownFreeTimeout;
+    size_t alive = RetiredAliveCount();
+    while (alive > 0 && std::chrono::steady_clock::now() < deadline)
+    {
+        std::unique_lock<std::mutex> lock(_retiredMutex);
+        _retiredCv.wait_for(lock, std::chrono::milliseconds(10));
+        lock.unlock();
+        alive = RetiredAliveCount();
     }
+    if (alive > 0)
+    {
+        std::lock_guard<std::mutex> lock(_retiredMutex);
+        for (const RetiredInstance& entry : _retired)
+        {
+            if (const long holders = entry.emulator.use_count(); holders > 0)
+                LOGWARNING("EmulatorManager::ShutdownAllEmulators - '%s' is still held (%ld references) after %lld ms; "
+                           "not freed here", entry.id.c_str(), holders,
+                           static_cast<long long>(shutdownFreeTimeout.count()));
+        }
+    }
+    StopRetiredWatchdog();
     LOGINFO("EmulatorManager::ShutdownAllEmulators - All emulators have been shut down");
+}
+
+void EmulatorManager::RetireRemoved(const std::shared_ptr<Emulator>& emulator, const char* caller)
+{
+    // Always go through Stop, even when IsRunning() already reads false: it is the barrier that returns only once
+    // the emulation thread has left (IsRunning() can go false before that when another caller is stopping the same
+    // instance; 2026-10-02 crash). Bounded: a thread that does not leave makes the instance stuck - retired and
+    // never freed, because that thread may still use it
+    LOGINFO("EmulatorManager::%s - Stopping emulator with ID '%s'", caller, emulator->GetId().c_str());
+    const std::chrono::milliseconds stopJoinTimeout(_stopJoinTimeoutMs.load());
+    if (!emulator->StopFor(stopJoinTimeout))
+    {
+        LOGERROR("EmulatorManager::%s - the emulation thread of '%s' did not stop within %lld ms; the instance is "
+                 "kept (never freed)", caller, emulator->GetId().c_str(),
+                 static_cast<long long>(stopJoinTimeout.count()));
+        std::lock_guard<std::mutex> lock(_retiredMutex);
+        _stuck.push_back(emulator);
+    }
+    emulator->Retire();
+    TrackRetired(emulator);
+}
+
+void EmulatorManager::TrackRetired(const std::shared_ptr<Emulator>& emulator)
+{
+    std::lock_guard<std::mutex> lock(_retiredMutex);
+    // Freed ones out (their holders let go)
+    _retired.erase(std::remove_if(_retired.begin(), _retired.end(),
+                                  [](const RetiredInstance& entry) { return entry.emulator.expired(); }),
+                   _retired.end());
+    const auto now = std::chrono::steady_clock::now();
+    _retired.push_back(RetiredInstance{emulator, emulator->GetId(), now, now, false});
+    if (!_retiredWatchdog.joinable() && !_retiredWatchdogStop)
+        _retiredWatchdog = std::thread([this]() { WatchRetired(); });
+    _retiredCv.notify_all();
+}
+
+void EmulatorManager::WatchRetired()
+{
+    std::unique_lock<std::mutex> lock(_retiredMutex);
+    while (!_retiredWatchdogStop)
+    {
+        // No predicate: a new retiree or new warning times (SetRetiredWarningTimes) wake it to look again
+        const auto period = std::min(_retiredWarnAfter, std::chrono::milliseconds(1000));
+        _retiredCv.wait_for(lock, period);
+        if (_retiredWatchdogStop)
+            break;
+        const auto now = std::chrono::steady_clock::now();
+        _retired.erase(std::remove_if(_retired.begin(), _retired.end(),
+                                      [](const RetiredInstance& entry) { return entry.emulator.expired(); }),
+                       _retired.end());
+        for (RetiredInstance& entry : _retired)
+        {
+            const bool due = entry.warned ? now - entry.lastWarning >= _retiredWarnEvery
+                                          : now - entry.retiredAt >= _retiredWarnAfter;
+            if (!due)
+                continue;
+            entry.warned = true;
+            entry.lastWarning = now;
+            _retiredWarnings.fetch_add(1);
+            const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - entry.retiredAt);
+            LOGWARNING("EmulatorManager - removed instance '%s' is still held %lld ms after its removal (%ld "
+                       "references): a holder does not let go", entry.id.c_str(), static_cast<long long>(age.count()),
+                       entry.emulator.use_count());
+        }
+    }
+}
+
+void EmulatorManager::StopRetiredWatchdog()
+{
+    {
+        std::lock_guard<std::mutex> lock(_retiredMutex);
+        _retiredWatchdogStop = true;
+    }
+    _retiredCv.notify_all();
+    if (_retiredWatchdog.joinable() && _retiredWatchdog.get_id() != std::this_thread::get_id())
+        _retiredWatchdog.join();
+    // A later removal (a test after a shutdown) starts it again
+    std::lock_guard<std::mutex> lock(_retiredMutex);
+    _retiredWatchdogStop = false;
+}
+
+size_t EmulatorManager::RetiredAliveCount()
+{
+    std::lock_guard<std::mutex> lock(_retiredMutex);
+    size_t alive = 0;
+    for (const RetiredInstance& entry : _retired)
+        alive += entry.emulator.expired() ? 0 : 1;
+    return alive;
+}
+
+void EmulatorManager::SetRemovalTimeouts(std::chrono::milliseconds leaseWait, std::chrono::milliseconds stopJoin,
+                                         std::chrono::milliseconds shutdownFree)
+{
+    _leaseWaitTimeoutMs = leaseWait.count();
+    _stopJoinTimeoutMs = stopJoin.count();
+    _shutdownFreeTimeoutMs = shutdownFree.count();
+}
+
+void EmulatorManager::SetRetiredWarningTimes(std::chrono::milliseconds after, std::chrono::milliseconds every)
+{
+    std::lock_guard<std::mutex> lock(_retiredMutex);
+    _retiredWarnAfter = after;
+    _retiredWarnEvery = every;
+    _retiredCv.notify_all();
 }
 
 void EmulatorManager::PrepareForShutdown()
@@ -1271,6 +1389,7 @@ EmulatorManager::~EmulatorManager()
 {
     // Ensure all emulators are properly shut down before destruction
     ShutdownAllEmulators();
+    StopRetiredWatchdog();   // ShutdownAllEmulators returns early when there is nothing to shut down
     
     // Clear the emulators map
     std::lock_guard<std::mutex> lock(_emulatorsMutex);

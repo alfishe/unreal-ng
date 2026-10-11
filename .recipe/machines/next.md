@@ -25,6 +25,9 @@ The machine boots the real chain only when the model's config names the boot ROM
 `testdata/machines/zxnext/card` is a starting point; the full NextZXOS distribution works as it is). Without them the machine
 starts in the bare personality (128K ROM, no SD).
 
+The card is the media manager's slot `sd.next0` (alias `sd`; `sd.next1` is the second socket): `[NEXT] SdCard` only names the card put into an empty slot at the power-on and at every reset, and every
+insert, swap, rescan or eject is `media {"action":"insert","slot":"sd","path":"<folder or image>"}` (`rescan` re-reads a changed folder; the machine need not be recreated).
+
 ```text
 emulator_manage {"action":"create","model":"NEXT","ram_power_on":"zero"}
 #   → {"id":"dbd6edec-...","message":"Emulator created and started"}
@@ -337,6 +340,21 @@ control_execution {"action":"step"}  ×2
 `tools/machines/next/browser-drive/suite.py --card <card>` runs every program of `tests/<area>/<test>/` the way a person does (reset,
 Browser, run) and photographs the result beside the board photograph; `tools/machines/next/realboard/run-all.py` runs them straight
 through the snapshot loader with automatic verdicts for the four programs that paint their own pass / fail.
+
+### 5b. Playing a game: the keys are the game's own
+
+The Next has **no standard set of game keys**. A game reads what its author chose and says so in its own readme or menu: the keyboard ports `#FE`, the Kempston joystick `#1F` / `#37`, Mega Drive pads, often a redefine menu. Read the readme (it is in the game's folder) before pressing keys, and do not take one game's keys for the platform's.
+
+| Game | Keys (from its readme) | Notes |
+|:--|:--|:--|
+| Aliens Neoplasma II (`games/AliensNeoplasma2/Next/ANP2_DEMO.nex`) | `W A S D` move, `B N M` actions, `P`; a Mega Drive pad works | the title and the settings menu answer SPACE / ENTER and W / S / N; "any key" is `IN A,(#FE)` with a zero high byte, the pad is `IN A,(#1F)`. Hold the grenade key to throw further; jump + down drops through platforms |
+| Vradark's Revenge (`games/VradarkRevenge/VradarkRevenge.nex`, needs `bin/` next to it) | not read yet | the mouse cursor shows on its MAP screen |
+
+`type_input {"action":"tap","key":"w","frames":6}` presses a game key as a real one; hold with `"action":"press"` / `"release"` for a movement key.
+
+**If a game "does not react to the keyboard", check `is_paused` first** (`GET /api/v1/emulator`): a click on the unreal-qt window's toolbar pauses the machine
+from the GUI (`Origin::Gui`), and a paused machine takes no keys. `POST /api/v1/emulator/{id}/resume` fixes it. Only after that look at the game's own key scheme
+and at the ports it polls.
 
 ### 6. Sound: is the DAC alive? (the DMA sample demo)
 

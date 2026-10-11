@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 #include <QDialog>
 
 class Emulator;
@@ -14,7 +16,7 @@ class PcHistoryDialog : public QDialog
     Q_OBJECT
 
 public:
-    PcHistoryDialog(Emulator* emulator, QWidget* parent = nullptr);
+    PcHistoryDialog(std::shared_ptr<Emulator> emulator, QWidget* parent = nullptr);
 
 public slots:
     void refresh();
@@ -23,7 +25,7 @@ private slots:
     void stop();
 
 private:
-    Emulator* _emulator;
+    std::shared_ptr<Emulator> _emulator;
     QLabel* _status = nullptr;
     QListWidget* _list = nullptr;
 };

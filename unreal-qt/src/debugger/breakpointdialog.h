@@ -1,4 +1,6 @@
 #pragma once
+
+#include <memory>
 #ifndef BREAKPOINTDIALOG_H
 #define BREAKPOINTDIALOG_H
 
@@ -30,7 +32,7 @@ class BreakpointDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit BreakpointDialog(Emulator* emulator, QWidget* parent = nullptr);
+    explicit BreakpointDialog(std::shared_ptr<Emulator> emulator, QWidget* parent = nullptr);
     ~BreakpointDialog();
 
 private slots:
@@ -67,7 +69,7 @@ private:
     void updateButtonStates();
     void updateStatusBar();
     
-    Emulator* _emulator;
+    std::shared_ptr<Emulator> _emulator;
     uint64_t m_breakpointObserverId = 0;  // Store the observer ID for cleanup
     QMutex m_mutex;  // For thread-safe access to the dialog
     QVBoxLayout* _mainLayout = nullptr;

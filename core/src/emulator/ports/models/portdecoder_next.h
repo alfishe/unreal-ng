@@ -14,6 +14,7 @@
 #include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/io/z80n/z80nengine.h"
 #include "emulator/io/sdcard/sdcardspi.h"
+#include "emulator/media/mediaslot.h"
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/models/portdecoder_spectrum128.h"
 
@@ -125,6 +126,25 @@ private:
     std::map<uint16_t, PortUse>* _inLog = nullptr;
     std::map<uint16_t, PortUse>* _outLog = nullptr;
     SdCardSpi _sd[2];
+
+    /// The media manager's slots "sd.next0" / "sd.next1": a card is never opened by the decoder itself, every insert goes through the manager
+    class SdSlot : public IMediaSlot
+    {
+    public:
+        SdSlot(PortDecoder_Next& owner, unsigned index);
+        const SlotDescriptor& Descriptor() const override { return _descriptor; }
+        void Attach(Medium& medium) override;
+        void Detach() override;
+        bool IsBusy() const override;
+
+    private:
+        PortDecoder_Next& _owner;
+        unsigned _index;
+        SlotDescriptor _descriptor;
+    };
+    SdSlot _sdSlot0{*this, 0};
+    SdSlot _sdSlot1{*this, 1};
+    SdSlot& Slot(unsigned index) { return index & 1 ? _sdSlot1 : _sdSlot0; }
     uint8_t _pendingTiming = 0;  ///< applied at the frame end
     int _spiSelected = -1;
     uint8_t _spiRx = 0xFF;       ///< miso_dat: the last finished byte

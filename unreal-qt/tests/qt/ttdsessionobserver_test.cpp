@@ -135,6 +135,6 @@ TEST_F(TtdSessionObserver_Test, PollWhileAutomationRemovesTheInstance)
     remover.join();
 
     EXPECT_EQ(torn, 0u);
-    EXPECT_TRUE(emulator->IsReleased());
+    EXPECT_TRUE(emulator->IsRetired());   // the test still holds it: retired, not freed (BUGS.md #11)
     EXPECT_FALSE(TtdSessionObserver::Read(emulator.get()).has_value());
 }

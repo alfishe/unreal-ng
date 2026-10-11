@@ -260,10 +260,11 @@ TEST_F(EmulatorManager_Test, RemoveEmulator)
     ASSERT_EQ(_manager->GetEmulator(emulatorId), nullptr);
 }
 
-// A UI thread holding a context lease (Emulator::LeaseContext) keeps the
-// context alive: a removal on another thread refuses new leases at once, but
-// stops and frees the instance only after the lease ends (2026-10-02 crash:
-// the Qt Machine menu read pKeyboard from a context a WebAPI DELETE had freed)
+// A UI thread holding a context lease (Emulator::LeaseContext): a removal on
+// another thread refuses new leases at once, and stops and retires the instance
+// only after the lease ends (2026-10-02 crash: the Qt Machine menu read
+// pKeyboard from a context a WebAPI DELETE had freed). The retired instance is
+// freed by its last holder, here the test (BUGS.md #11)
 TEST_F(EmulatorManager_Test, RemoveEmulatorWaitsForContextLease)
 {
     auto emulator = _manager->CreateEmulator();
@@ -293,10 +294,15 @@ TEST_F(EmulatorManager_Test, RemoveEmulatorWaitsForContextLease)
     lease.reset();
     remover.join();
     EXPECT_TRUE(removed.load());
-    EXPECT_TRUE(emulator->IsReleased());
-    EXPECT_EQ(emulator->GetContext(), nullptr);
+    EXPECT_TRUE(emulator->IsRetired());
+    EXPECT_FALSE(emulator->IsReleased()) << "the test still holds it: retired, not freed";
+    EXPECT_EQ(emulator->GetContext(), context);
     EXPECT_FALSE(emulator->LeaseContext());
     EXPECT_FALSE(_manager->HasEmulator(emulatorId));
+
+    const std::weak_ptr<Emulator> watch = emulator;
+    emulator.reset();
+    EXPECT_TRUE(watch.expired());
 }
 
 TEST_F(EmulatorManager_Test, ContextLeaseRefusedOnceReleased)

@@ -157,7 +157,9 @@ OpResult MachineCoordinator::WouldRefuseLocked(const MachineOp& op) const
     const PolicyDecision d = Decide(op, ModeLocked());
     const size_t index = static_cast<size_t>(op.kind);
     IOpOwner* owner = index < _owners.size() ? _owners[index] : nullptr;
-    if (d.refused)
+    if (_retired.load())
+        result.reason = kRetiredReason;
+    else if (d.refused)
         result.reason = d.reason;
     else if (owner == nullptr)
         result.reason = std::string("nothing on this machine does '") + OpKindName(op.kind) + "'";
@@ -192,7 +194,9 @@ OpResult MachineCoordinator::Run(MachineOp op)
         mode = ModeLocked();
         d = Decide(op, mode);
         owner = d.refused ? nullptr : _owners[static_cast<size_t>(op.kind)];   // Decide refuses a kind out of range
-        if (d.refused)
+        if (_retired.load())
+            refusal = kRetiredReason;
+        else if (d.refused)
             refusal = d.reason;
         else if (owner == nullptr)
             refusal = std::string("nothing on this machine does '") + OpKindName(op.kind) + "'";

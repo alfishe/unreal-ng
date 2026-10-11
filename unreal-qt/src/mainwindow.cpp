@@ -28,6 +28,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <utility>
+#include <vector>
 
 #include <stdio.h>
 #include <webapi/src/automation-webapi.h>
@@ -686,6 +688,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         });
     }
 
+    // UNREAL_QT_STRESS_WINDOWS (sanitizer stress, tools/sanitize/stress_round.sh --busy-gui): open the listed windows
+    // at startup so their refresh paths run while instances are created and removed. They stay open across rebinds
+    if (const QString windows = qEnvironmentVariable("UNREAL_QT_STRESS_WINDOWS"); !windows.isEmpty())
+    {
+        QPointer<MainWindow> guard(this);
+        QTimer::singleShot(500, this, [guard, windows]() {
+            if (guard)
+                guard->openStressWindows(windows);
+        });
+    }
+
 #ifdef ENABLE_AUTOMATION
 
     // Delay automation modules start, so the main thread is not blocked, and automation is fully initialized
@@ -787,9 +800,6 @@ MainWindow::~MainWindow()
 
     if (_screenWrapper != nullptr)
         delete _screenWrapper;
-
-    if (_guiContext)
-        delete _guiContext;
 
     // Clean up menu manager (must be before dockingManager)
     if (_menuManager)
@@ -3565,6 +3575,45 @@ void MainWindow::handleFt812DebugToggled(bool visible)
         _ft812DebugWindow->setVisible(visible && _emulator && Ft812DebugWindow::Offered(_emulator->GetContext()));
 }
 
+void MainWindow::releasePanelHolders()
+{
+    // The panels that keep the machine let go of it: a removed instance is freed by its last holder (BUGS.md #11)
+    if (_ttdWidget)
+        _ttdWidget->updateState(nullptr);
+    if (_toolBarManager)
+        _toolBarManager->updateState(nullptr);
+#ifdef ENABLE_RECORDING
+    if (_recordingWidget)
+        _recordingWidget->updateState(nullptr);
+#endif
+}
+
+void MainWindow::openStressWindows(const QString& list)
+{
+    const std::vector<std::pair<QString, void (MainWindow::*)(bool)>> windows = {
+        {"debugger", &MainWindow::handleDebuggerToggled},     {"ttd", &MainWindow::handleTtdToggled},
+        {"media", &MainWindow::handleMediaPanelToggled},       {"network", &MainWindow::handleNetworkWindowToggled},
+        {"slots", &MainWindow::handleSlotsWindowToggled},      {"traffic", &MainWindow::handleTrafficWindowToggled},
+        {"midi", &MainWindow::handleMidiActivityToggled},      {"tape", &MainWindow::handleTapeManagerToggled},
+        {"log", &MainWindow::handleLogWindowToggled},
+    };
+    for (const QString& rawName : list.split(',', Qt::SkipEmptyParts))
+    {
+        const QString name = rawName.trimmed().toLower();
+        bool known = false;
+        for (const auto& [windowName, toggle] : windows)
+        {
+            if (name == "all" || name == windowName)
+            {
+                (this->*toggle)(true);
+                known = true;
+            }
+        }
+        if (!known)
+            qWarning() << "UNREAL_QT_STRESS_WINDOWS: unknown window" << name;
+    }
+}
+
 void MainWindow::handleTapeManagerToggled(bool visible)
 {
     if (tapeManagerWindow)
@@ -3627,14 +3676,8 @@ void MainWindow::handleAudioSettingsRequested()
     // Open even without an active emulator: the widget shows a status
     // banner and greys out its controls when context is null, which is
     // less confusing than the menu item silently doing nothing
-    EmulatorContext* context = nullptr;
-    if (m_binding && m_binding->emulator())
-    {
-        context = m_binding->emulator()->GetContext();
-    }
-
     // Create audio settings widget as a dialog
-    _audioSettingsWidget = new AudioSettingsWidget(context, this);
+    _audioSettingsWidget = new AudioSettingsWidget(m_binding ? m_binding->emulatorShared() : nullptr, this);
     _audioSettingsWidget->setAttribute(Qt::WA_DeleteOnClose);
     // The General Sound personality is a slot change (owner decision Q10): the machine restarts with the card
     connect(_audioSettingsWidget, &AudioSettingsWidget::generalSoundCardRequested, this, [this](int kind) {
@@ -3666,13 +3709,7 @@ void MainWindow::handleTemporalEffectsRequested()
 
 void MainWindow::handleHudSettingsRequested()
 {
-    EmulatorContext* context = nullptr;
-    if (m_binding && m_binding->emulator())
-    {
-        context = m_binding->emulator()->GetContext();
-    }
-
-    auto* dialog = new HudSettingsDialog(context, this);
+    auto* dialog = new HudSettingsDialog(this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
     dialog->raise();
@@ -3999,13 +4036,7 @@ void MainWindow::openAdvancedRecordingDialog()
         return;
     }
 
-    EmulatorContext* context = nullptr;
-    if (m_binding && m_binding->emulator())
-    {
-        context = m_binding->emulator()->GetContext();
-    }
-
-    _videoRecordingWidget = new VideoRecordingWidget(context, nullptr);
+    _videoRecordingWidget = new VideoRecordingWidget(m_binding ? m_binding->emulatorShared() : nullptr, nullptr);
     _videoRecordingWidget->setAttribute(Qt::WA_DeleteOnClose);
     _videoRecordingWidget->setWindowFlags(Qt::Tool | Qt::Window);
     connect(_videoRecordingWidget, &QWidget::destroyed, this, [this]() {
@@ -4532,18 +4563,19 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
                         {
                             debuggerWindow->setEmulator(nullptr);
                         }
+                        releasePanelHolders();
 
                         _screenWrapper->detach();
 
                         // Clear context from audio/video settings widgets
                         if (_audioSettingsWidget)
                         {
-                            _audioSettingsWidget->setContext(nullptr);
+                            _audioSettingsWidget->setEmulator(nullptr);
                         }
 #ifdef ENABLE_RECORDING
                         if (_videoRecordingWidget)
                         {
-                            _videoRecordingWidget->setContext(nullptr);
+                            _videoRecordingWidget->setEmulator(nullptr);
                         }
 #endif
 
@@ -5029,7 +5061,7 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
     // This is the SOLE source of truth for DebuggerWindow state
     if (m_binding)
     {
-        m_binding->bind(_emulator.get());
+        m_binding->bind(_emulator);
     }
 
     // Note: No setEmulator() call - binding signals handle DebuggerWindow state
@@ -5053,7 +5085,7 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
     // 8. Update audio settings widget if open
     if (_audioSettingsWidget)
     {
-        _audioSettingsWidget->setContext(_emulator->GetContext());
+        _audioSettingsWidget->setEmulator(_emulator);
     }
 
     // 9. HUD Overlay binding
@@ -5179,6 +5211,7 @@ void MainWindow::unbindFromEmulator()
     {
         debuggerWindow->setEmulator(nullptr);
     }
+    releasePanelHolders();
 
     // 4. Device screen & HUD overlay
     if (_hudWrapper)
@@ -5191,7 +5224,7 @@ void MainWindow::unbindFromEmulator()
     // 5. Audio settings widget
     if (_audioSettingsWidget)
     {
-        _audioSettingsWidget->setContext(nullptr);
+        _audioSettingsWidget->setEmulator(nullptr);
     }
 
 #ifdef ENABLE_RECORDING
@@ -5201,7 +5234,7 @@ void MainWindow::unbindFromEmulator()
     // emulator instance until explicit stop or that instance is destroyed.
     if (_videoRecordingWidget)
     {
-        _videoRecordingWidget->setContext(nullptr);
+        _videoRecordingWidget->setEmulator(nullptr);
     }
 #endif
 
@@ -5419,13 +5452,10 @@ void MainWindow::onBindingStateChanged(EmulatorStateEnum state)
     // Single mechanism: rebind recording widget on any state change
     if (_videoRecordingWidget)
     {
-        EmulatorContext* context = nullptr;
-        if (state != StateStopped && state != StateUnknown &&
-            m_binding && m_binding->emulator())
-        {
-            context = m_binding->emulator()->GetContext();
-        }
-        _videoRecordingWidget->setContext(context);
+        std::shared_ptr<Emulator> emulator;
+        if (state != StateStopped && state != StateUnknown && m_binding)
+            emulator = m_binding->emulatorShared();
+        _videoRecordingWidget->setEmulator(std::move(emulator));
     }
 #endif
 }

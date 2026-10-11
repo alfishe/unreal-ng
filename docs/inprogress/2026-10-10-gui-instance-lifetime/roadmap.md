@@ -28,13 +28,9 @@ ratchet.
 Decided:
 
 - 2026-10-10: option C. Every wait in a removal is bounded ([proposal.md, Bounded waits](proposal.md#bounded-waits-owner-decision-2026-10-10)).
-
-Open (asked one at a time when the work starts):
-
-1. A retired instance's state: reuse `StateDestroying` or add `StateRetired` (visible in the WebAPI state field).
-2. What a retired instance refuses: execution only, or execution plus every machine-changing operation
-   (recommended: both).
-3. Whether phase 0's busy-GUI stress joins the regular sanitizer routine (`docs/testing/sanitizers.md`).
+- 2026-10-10: a retired instance reports a new `StateRetired` (visible in the WebAPI state field).
+- 2026-10-10: a retired instance refuses execution and every machine-changing operation; reads stay allowed.
+- 2026-10-10: the busy-GUI stress serves this work only; it does not join the regular sanitizer routine.
 
 ## Out of scope
 
