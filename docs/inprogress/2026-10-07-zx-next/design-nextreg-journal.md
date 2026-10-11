@@ -94,8 +94,11 @@ matter most (`#02` reset bits, `#07` speed, `#03` machine type) so a reader need
 The TTD I/O write journal records port cycles only, so a replay of a recording knows nothing of `NEXTREG` writes either. Two ways, to
 decide when TTD v2 is in the Next (see [design-ttd.md](design-ttd.md)): (a) the board posts every NextREG write to the TTD sink as a
 pseudo I/O write on a reserved port pair so the existing queries (`find_last`, port events) answer for it; (b) the NextREG journal
-is part of the TTD checkpoint state. This design ships the **live** journal only and keeps `source=ttd` reserved in the query so the
-surface does not change later.
+is part of the TTD checkpoint state. **Landed (option a, 2026-10-11):** the `NEXTREG n,v` instruction posts `OUT #243B,n` and `OUT #253B,v` to the TTD port-write journal
+(`Z80NEngine::NextReg`), so a query for the data port finds it; a recording and its replay make the same two calls. The copper's MOVEs
+are not posted (the copper is deterministic from the recorded state and would flood the journal). The checkpoints still carry no NextREG
+state: restoring a Next checkpoint needs the `NextState` blob of design-ttd.md section 3 (not built), so a seek on a Next does not
+rewind the register file. The live journal keeps `source=ttd` reserved in the query.
 
 ### 4.5 Cost
 

@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "_helpers/emulatortesthelper.h"
 #include "emulator/video/atm/atmfont.h"
 #include "emulator/video/atm/screenatm.h"
 #include "emulator/video/zx/screenzx.h"
@@ -30,17 +31,7 @@ protected:
 
     void TearDown() override
     {
-        if (_cpu != nullptr)
-        {
-            delete _cpu;
-            _cpu = nullptr;
-        }
-
-        if (_context != nullptr)
-        {
-            delete _context;
-            _context = nullptr;
-        }
+        EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
     }
 
     void SetATMModel()
@@ -274,8 +265,7 @@ TEST_F(ATMVideoMode_Test, PortDecoderFF77_TriggersVideoModeChange)
 {
     // Need to create a fresh context with ATM model set BEFORE Core::Init()
     // because port decoder is created during Init()
-    if (_cpu) delete _cpu;
-    if (_context) delete _context;
+    EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
 
     _context = new EmulatorContext(LoggerLevel::LogError);
     _context->config.mem_model = MM_ATM710;  // Set BEFORE Init()
@@ -316,8 +306,7 @@ TEST_F(ATMVideoMode_Test, PortDecoderFF77_TriggersVideoModeChange)
 TEST_F(ATMVideoMode_Test, PortDecoderFF77_TriggersFullModeSwitch)
 {
     // Comprehensive test: verify video mode, raster changes
-    if (_cpu) delete _cpu;
-    if (_context) delete _context;
+    EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
 
     _context = new EmulatorContext(LoggerLevel::LogError);
     _context->config.mem_model = MM_ATM710;
@@ -365,8 +354,7 @@ TEST_F(ATMVideoMode_Test, PortDecoderFF77_NotifiesOnModeChange)
     // we verify that the notification code path exists but skip execution.
     // The notification IS sent in the real app when pEmulator is available.
 
-    if (_cpu) delete _cpu;
-    if (_context) delete _context;
+    EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
 
     _context = new EmulatorContext(LoggerLevel::LogError);
     _context->config.mem_model = MM_ATM710;

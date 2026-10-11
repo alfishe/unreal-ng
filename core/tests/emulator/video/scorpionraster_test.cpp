@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "emulator/config.h"
+#include "_helpers/emulatortesthelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
@@ -31,8 +32,7 @@ protected:
     void TearDown() override
     {
         delete _screen;
-        delete _cpu;
-        delete _context;
+        EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
         _screen = nullptr;
         _cpu = nullptr;
         _context = nullptr;

@@ -28,6 +28,8 @@
 #include <emulator/platform.h>
 #include <gtest/gtest.h>
 #include <map>
+#include <memory>
+#include <vector>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
@@ -41,6 +43,7 @@ class ATM710CpmBoot_Test : public ::testing::Test
 {
 protected:
     EmulatorManager* _manager = nullptr;
+    std::vector<std::unique_ptr<DiskImage>> _disks;  // inserted images: a drive only points at its image
 
 protected:
     void SetUp() override
@@ -61,6 +64,7 @@ protected:
         {
             _manager->RemoveEmulator(id);
         }
+        _disks.clear();  // after the emulators: their release ejects the images
     }
 
     // Keys go in as a user's would: through the automation keyboard, which
@@ -256,13 +260,14 @@ protected:
         EXPECT_TRUE(loaded) << "TRD not loaded: " << trdPath;
         if (!loaded)
             return nullptr;
+        _disks.emplace_back(trdLoader.getImage());  // the loader hands its image over
         // Insert into physical drive 0 (not the currently-selected drive, since
         // the FDC drive selection changes dynamically based on Beta128 port writes)
         FDD* fdd = context->coreState.diskDrives[0];
         EXPECT_NE(fdd, nullptr);
         if (!fdd)
             return nullptr;
-        fdd->insertDisk(trdLoader.getImage());
+        fdd->insertDisk(_disks.back().get());
 
         for (int i = 0; i < menuDowns; i++)
         {
@@ -517,11 +522,12 @@ TEST_F(ATM710CpmBoot_Test, DiagnosticBootMenuAndCpmSelect)
     ASSERT_TRUE(FileHelper::FileExists(trdPath)) << "Fixture missing: " << trdPath;
     LoaderTRD trdLoader(context, trdPath);
     ASSERT_TRUE(trdLoader.loadImage()) << "TRD not loaded: " << trdPath;
+    _disks.emplace_back(trdLoader.getImage());  // the loader hands its image over
     WD1793* wd1793 = context->pBetaDisk;
     ASSERT_NE(wd1793, nullptr);
     FDD* fdd = wd1793->getDrive();
     ASSERT_NE(fdd, nullptr);
-    fdd->insertDisk(trdLoader.getImage());
+    fdd->insertDisk(_disks.back().get());
 
     for (int i = 0; i < menuDowns; i++)
     {

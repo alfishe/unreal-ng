@@ -26,6 +26,9 @@ void SoundChip_AY8910_Test::TearDown()
         delete _soundChip;
         _soundChip = nullptr;
     }
+
+    delete _context;
+    _context = nullptr;
 }
 
 /// endregion </Setup / TearDown>

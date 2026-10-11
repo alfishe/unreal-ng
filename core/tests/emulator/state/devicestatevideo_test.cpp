@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 
+#include "_helpers/emulatortesthelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -30,9 +31,19 @@ protected:
     std::unique_ptr<EmulatorContext> _context;
     std::unique_ptr<Core> _core;
 
+    void TearDown() override { Release(); }
+
+    /// The drives Core::Init created first, then the core into its own context, then the context
+    void Release()
+    {
+        EmulatorTestHelper::ReleaseDiskDrives(_context.get());
+        _core.reset();
+        _context.reset();
+    }
+
     void Build(MEM_MODEL model, uint32_t ramKB, uint32_t frame, int ff77 = -1)
     {
-        _core.reset();  // a second Build: the old core releases into its own context, before that context goes
+        Release();  // a second Build: the old machine goes before the new context replaces its own
         _context = std::make_unique<EmulatorContext>(LoggerLevel::LogError);
         _context->config.mem_model = model;
         _context->config.ramsize = ramKB;

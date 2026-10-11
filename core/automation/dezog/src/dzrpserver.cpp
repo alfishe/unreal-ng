@@ -248,6 +248,11 @@ const char* commandName(CommandId id)
         case CI::CMD_READ_MEM: return "READ_MEM";
         case CI::CMD_WRITE_MEM: return "WRITE_MEM";
         case CI::CMD_SET_SLOT: return "SET_SLOT";
+        case CI::CMD_GET_TBBLUE_REG: return "GET_TBBLUE_REG";
+        case CI::CMD_READ_BANK_MEM: return "READ_BANK_MEM";
+        case CI::CMD_WRITE_BANK_MEM: return "WRITE_BANK_MEM";
+        case CI::CMD_SET_NEXTREGS: return "SET_NEXTREGS";
+        case CI::CMD_READ_MEM_BLOCKS: return "READ_MEM_BLOCKS";
         case CI::CMD_SET_BORDER: return "SET_BORDER";
         case CI::CMD_READ_PORT: return "READ_PORT";
         case CI::CMD_WRITE_PORT: return "WRITE_PORT";
@@ -312,6 +317,16 @@ Response Server::handleCommand(const Command& cmd)
             return handleSetSlot(cmd);
         case CommandId::CMD_WRITE_BANK:
             return handleWriteBank(cmd);
+        case CommandId::CMD_READ_BANK_MEM:
+            return handleReadBankMem(cmd);
+        case CommandId::CMD_WRITE_BANK_MEM:
+            return handleWriteBankMem(cmd);
+        case CommandId::CMD_SET_NEXTREGS:
+            return handleSetNextRegs(cmd);
+        case CommandId::CMD_GET_TBBLUE_REG:
+            return handleGetTbblueReg(cmd);
+        case CommandId::CMD_READ_MEM_BLOCKS:
+            return handleReadMemBlocks(cmd);
         case CommandId::CMD_SET_BORDER:
             return handleSetBorder(cmd);
         case CommandId::CMD_READ_PORT:
@@ -677,7 +692,7 @@ Response Server::handleGetSupportedCommands(const Command& cmd)
 {
     Response resp;
     resp.seqNo = cmd.seqNo;
-    resp.payload = Protocol::buildSupportedCommandsBitfield();
+    resp.payload = Protocol::buildSupportedCommandsBitfield(m_debug->getMachineType() == MachineType::ZXNEXT);
     return resp;
 }
 
@@ -715,6 +730,70 @@ Response Server::handleWriteBank(const Command& cmd)
     resp.payload.push_back(0);  // No error
     resp.payload.push_back(0);  // Empty message
 
+    return resp;
+}
+
+/// CMD_READ_BANK_MEM: bank(1) + offset(2) + size(2) -> the bytes (a Next 8K bank; the offset wraps inside it)
+Response Server::handleReadBankMem(const Command& cmd)
+{
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+    if (cmd.payload.size() >= 5)
+    {
+        const uint16_t offset = Protocol::readU16LE(cmd.payload.data() + 1);
+        const uint16_t size = Protocol::readU16LE(cmd.payload.data() + 3);
+        resp.payload = m_debug->readBankMemory(cmd.payload[0], offset, size);
+    }
+    return resp;
+}
+
+/// CMD_WRITE_BANK_MEM: bank(1) + offset(2) + data... -> empty
+Response Server::handleWriteBankMem(const Command& cmd)
+{
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+    if (cmd.payload.size() >= 3)
+    {
+        const uint16_t offset = Protocol::readU16LE(cmd.payload.data() + 1);
+        std::vector<uint8_t> data(cmd.payload.begin() + 3, cmd.payload.end());
+        m_debug->writeBankMemory(cmd.payload[0], offset, data);
+    }
+    return resp;
+}
+
+/// CMD_SET_NEXTREGS: (register, value) pairs, in order -> empty
+Response Server::handleSetNextRegs(const Command& cmd)
+{
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+    for (size_t i = 0; i + 1 < cmd.payload.size(); i += 2)
+        m_debug->writeNextReg(cmd.payload[i], cmd.payload[i + 1]);
+    return resp;
+}
+
+/// CMD_GET_TBBLUE_REG: register(1) -> value(1)
+Response Server::handleGetTbblueReg(const Command& cmd)
+{
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+    resp.payload.push_back(cmd.payload.empty() ? 0 : m_debug->readNextReg(cmd.payload[0]));
+    return resp;
+}
+
+/// CMD_READ_MEM_BLOCKS: length(4, unused) + { addr(2) + size(2) }... -> the blocks one after the other (the 64K address space)
+Response Server::handleReadMemBlocks(const Command& cmd)
+{
+    constexpr size_t kLengthField = 4;
+    constexpr size_t kBlockEntry = 4;
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+    for (size_t i = kLengthField; i + kBlockEntry <= cmd.payload.size(); i += kBlockEntry)
+    {
+        const uint16_t addr = Protocol::readU16LE(cmd.payload.data() + i);
+        const uint16_t size = Protocol::readU16LE(cmd.payload.data() + i + 2);
+        const std::vector<uint8_t> block = m_debug->readMemory(addr, size);
+        resp.payload.insert(resp.payload.end(), block.begin(), block.end());
+    }
     return resp;
 }
 

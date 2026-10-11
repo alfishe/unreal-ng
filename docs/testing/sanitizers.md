@@ -343,8 +343,9 @@ What ASan does not see: reads of uninitialized memory (a missing ini key compare
 that failed under valgrind (timing). Exit 0 = no memcheck error. Read an `Invalid read` like an ASan report (§3);
 `Conditional jump ... uninitialised` means a branch on a value nobody wrote: `--origins` names the allocation.
 Known false positives at `-O2`: a branch on a disengaged `std::optional` whose payload gcc reads before the flag
-(`CompositeMediumFactory::Build`). The first run (2026-10-11, 40 minutes on 14 cores) found the MCP self-holding
-chains, the DSD bit byte, the duplicate-breakpoint leak and the test fixtures' leaks (BUGS.md 2026-10-11 #7-#11).
+(`CompositeMediumFactory::Build`); likely the same kind, not confirmed: `TTDDeviceTable::SameSet` (its origin is the
+padding of a `TTDDeviceEntry` copy). The first run (2026-10-11, 40 minutes on 14 cores) found the MCP self-holding
+chains, the DSD bit byte, the duplicate-breakpoint leak and the test fixtures' leaks (BUGS.md 2026-10-11 #7-#11, all fixed the same day).
 
 ## 12. Pitfalls
 

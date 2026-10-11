@@ -45,6 +45,16 @@ public:
     virtual void setSlot(uint8_t slot, uint8_t bank) = 0;
     virtual void writeBank(uint8_t bank, const std::vector<uint8_t>& data) = 0;
 
+    // ZX Next. A bank is an 8K Next bank (RAM 0..223; 0xFF the ROM, 16K that wraps), the offset wraps inside it.
+    // The defaults are for machines without them: reads give zeros, writes do nothing
+    virtual std::vector<uint8_t> readBankMemory(uint8_t /*bank*/, uint16_t /*offset*/, uint16_t size) const
+    {
+        return std::vector<uint8_t>(size, 0);
+    }
+    virtual void writeBankMemory(uint8_t /*bank*/, uint16_t /*offset*/, const std::vector<uint8_t>& /*data*/) {}
+    virtual uint8_t readNextReg(uint8_t /*reg*/) const { return 0; }
+    virtual void writeNextReg(uint8_t /*reg*/, uint8_t /*value*/) {}
+
     // Breakpoints
     // bank: wire format is bank+1 (0 = any bank, 1 = bank 0, etc.)
     // temporary=true marks breakpoint for auto-removal after next pause
@@ -197,6 +207,11 @@ private:
     Response handleGetSupportedCommands(const Command& cmd);
     Response handleSetSlot(const Command& cmd);
     Response handleWriteBank(const Command& cmd);
+    Response handleReadBankMem(const Command& cmd);
+    Response handleWriteBankMem(const Command& cmd);
+    Response handleSetNextRegs(const Command& cmd);
+    Response handleGetTbblueReg(const Command& cmd);
+    Response handleReadMemBlocks(const Command& cmd);
     Response handleSetBorder(const Command& cmd);
     Response handleReadPort(const Command& cmd);
     Response handleWritePort(const Command& cmd);
