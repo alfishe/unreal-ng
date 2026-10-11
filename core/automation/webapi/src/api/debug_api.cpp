@@ -1024,6 +1024,9 @@ void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(c
                 case BRK_COPPER:
                     bpObj["type"] = "copper";
                     break;
+                case BRK_MAGIC:
+                    bpObj["type"] = "magic";
+                    break;
                 default:
                     bpObj["type"] = "unknown";
             }
@@ -1146,14 +1149,21 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         spec.type = BRK_BEAM, spec.access = BRK_IO_OUT;
     else if (type == "copper")
         spec.type = BRK_COPPER, spec.access = BRK_IO_OUT;
+    else if (type == "magic_ed_ff" || type == "magic_dd_01")
+        spec.type = BRK_MAGIC, spec.access = BRK_IO_OUT;
     else
     {
-        badRequest("Invalid type. Use: execution, read, write, rw, port_in, port_out, port, nextreg_write, nextreg_read, nextreg, beam, copper");
+        badRequest("Invalid type. Use: execution, read, write, rw, port_in, port_out, port, nextreg_write, nextreg_read, nextreg, beam, copper, magic_ed_ff, magic_dd_01");
         return;
     }
 
     uint32_t value = 0;
-    if (!ParseJsonUInt(body["address"], 0xFFFF, value))
+    if (spec.type == BRK_MAGIC)
+    {
+        // The opcode is the type (ED FF / DD 01); no address
+        value = type == "magic_ed_ff" ? BRK_MAGIC_ED_FF : BRK_MAGIC_DD_01;
+    }
+    else if (!ParseJsonUInt(body["address"], 0xFFFF, value))
     {
         badRequest("'address' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")");
         return;
@@ -1652,8 +1662,20 @@ void EmulatorAPI::setRegister(const HttpRequestPtr& req, std::function<void(cons
         return;
     }
 
-    if (!Z80::SetRegisterValue(z80, name, value))
+    std::string refused;
+    if (!emulator->SetRegisterFromTool("webapi register", name, static_cast<uint16_t>(value), &refused))   // a tool edit
     {
+        if (!refused.empty())   // the recorded past
+        {
+            Json::Value error;
+            error["error"] = "Conflict";
+            error["message"] = refused;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k409Conflict);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
         Json::Value error;
         error["error"] = "Bad Request";
         error["message"] = std::string(regInfo->name) + " cannot hold " + std::to_string(value) + " (at most " +
@@ -1664,7 +1686,6 @@ void EmulatorAPI::setRegister(const HttpRequestPtr& req, std::function<void(cons
         callback(resp);
         return;
     }
-    emulator->NoteDebugChange();   // the debugger snapshot's seq
 
     // Read back to confirm
     uint16_t readBack;

@@ -28,6 +28,9 @@ struct OperationLogEntry
     SessionEffect effect = SessionEffect::None;   ///< the session effect applied
     std::string summary;   ///< MachineOp::summary
     std::string detail;    ///< refused / failed: the reason; a note on an owner that broke its contract
+    /// How many times it happened in a row: the same tool edit again (a script's pokes) takes the newest entry's
+    /// place with the next seq instead of a slot of its own, so the edits never push the other operations out
+    uint32_t repeats = 1;
 };
 
 class OperationLog
@@ -35,7 +38,8 @@ class OperationLog
 public:
     static constexpr size_t kCapacity = 1024;
 
-    /// Stores @p entry with the next sequence number and returns it
+    /// Stores @p entry with the next sequence number and returns it. A tool edit equal to the newest entry
+    /// (OpKind::ToolEdit: source, mode, status, summary, detail) counts there (repeats) under the new number
     uint64_t Append(OperationLogEntry entry);
     /// The entries kept, oldest first; @p since: only those with a larger seq
     std::vector<OperationLogEntry> Entries(uint64_t since = 0) const;

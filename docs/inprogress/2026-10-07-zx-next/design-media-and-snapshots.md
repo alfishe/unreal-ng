@@ -46,4 +46,4 @@ The exact layout registry entry is added in N11 (`machinestatetransferlayouts.cp
 ## 4. Pipeline notes
 
 Loading a snapshot while TTD records ends the session (the one TTD rule); the history stays browsable. NEX load
-is a `TTDLoadKind::Snapshot`. Loading media wipes TTD history per the MCP instructions.
+is a snapshot load (`OpKind::SnapshotLoad`). Loading media wipes TTD history per the MCP instructions.

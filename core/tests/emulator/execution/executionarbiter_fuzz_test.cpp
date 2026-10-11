@@ -273,9 +273,11 @@ std::vector<std::string> RunScenario(const Scenario& s)
         if (r < 4)
             std::this_thread::yield();
         else if (r == 4)
-            for (volatile int i = 0; i < 200; i = i + 1)
-            {
-            }
+        {
+            volatile int spin = 0;   // a short busy wait the optimizer keeps
+            while (spin < 200)
+                spin = spin + 1;
+        }
     });
     const Intent initial = arbiter.CurrentIntent();
 

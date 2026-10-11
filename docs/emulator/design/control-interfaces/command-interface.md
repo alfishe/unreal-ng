@@ -474,13 +474,18 @@ drive and an RZX playback's snapshot block or seek back; more operations join it
 
 Each operation: `seq` (1, 2, ... never reused), the frame and T-state when it finished, the host wall time, `kind`
 (`reset`, `autostart`, `snapshot-load`, `media-insert`, `media-eject`, `media-discard`, `disk-create`,
-`network-change`, `ide-drive-kind`, `rzx-restore`, `model-switch` - a refused model switch or state transfer), `source`
+`network-change`, `ide-drive-kind`, `rzx-restore`, `model-switch` - a refused model switch, `timeline-cut` - Rec From
+Here with the media decisions, `rom-load`, `gs-card-switch`, `speed-change`, `state-transfer`, `slot-change` and
+`cd-front-panel` - refused ones only, `tool-edit` - a memory, register, port or sector edit by a tool, `ttd-start`,
+`ttd-stop`, `ttd-discard`, `timeline-seek` - a seek, a step or a reverse run, `ttd-load`), `source`
 (the surface that asked: `qt`, `webapi`, `mcp`, `cli`, `lua`, `python`, `gdb`, `dezog`; `unknown` for the emulator's
 own threads), the machine `mode` the rules saw (`live`,
 `recording`, `black-box`, `replaying`, `detached`), `status` (`done`; `refused` - nothing happened, `detail` is the
 reason every surface shows; `failed` - the owner could not do it, `detail` is the error), `effect` on the TTD
-session (`none`, `end-keep-history`, `media-changed`, `stop-then-media-changed`), `summary` (soft / hard, the
-snapshot path, the slot and the medium) and `detail` (`no change` when there was nothing to do). The report also
+session (`none`, `end-keep-history`, `media-changed`, `stop-then-media-changed`, `machine-changed`,
+`timing-changed`), `summary` (soft / hard, the snapshot path, the slot and the medium), `detail` (`no change` when
+there was nothing to do) and `repeats`: the same tool edit again (a script's pokes) counts in the newest entry, which
+takes the new `seq` (so `seq` may skip numbers; a poller sees the entry again). The report also
 carries the current `mode`, `last_seq` and `capacity`. Every refusal is logged, also the ones a surface gets when it
 asks before preparing a change itself (an upload, a file dialog): the same sentence, under that surface's name.
 
@@ -971,6 +976,7 @@ Advanced debugging features for the selected emulator instance. The emulator sup
 | `bnextreg <reg> <type>` | | `<reg>[-<end>] <r\|w\|rw> [--via nextreg,port,copper] [--value V [--vmask M]] [--hits N\|>=N\|%N] [note]` | ZX Next only. Set a NextREG breakpoint: a read of the register (through port `#253B`) or a write by the `NEXTREG` instructions, `OUT (#253B)` or a copper `MOVE`. `--via` narrows the doors of a write (default all; a read comes through the port only), `--value` stops only on that byte (`--vmask` compares only those bits). The CPU's doors stop after the instruction that did it, before the register takes the write; the copper's stop is at the instruction boundary where the beam has done the write, before the picture's catch-up executes it. `bnextreg 0x07 w`, `bnextreg 0x40-0x44 w --via copper`. |
 | `bbeam <line>` | | `<line> [--hc N] [--hits N\|>=N\|%N] [note]` | ZX Next only. Stop when the beam passes the place: `<line>` is the copper's line counter (the `cvc` of `zxula_timing.vhd`, NR #64 applied: 0 is the paper's first line), `--hc` the pixel clock in the row (7 MHz, default 0). `bbeam 99 --hc 255` is where the line interrupt of line 100 fires. |
 | `bcopper <index>` | | `<index>[-<end>] [--hits N\|>=N\|%N] [note]` | ZX Next only. Stop when the copper completes the instruction at that list index (0..1023): a WAIT that became true, or a MOVE. |
+| `bmagic <edff\|dd01>` | | `<edff\|dd01> [--hits N\|>=N\|%N] [note]` | ZX Next only. Stop after the CPU ran the magic opcode other emulators use as a debug trap: `ED FF` (jnext, ZEsarUX) or `DD 01` (CSpect). The opcode executes as on the hardware (`ED FF` is a NOP, `DD 01` is `LD BC,nn`); the stop is after it. WebAPI types `magic_ed_ff`/`magic_dd_01` (no address), Lua `bp_magic("ed_ff")`, Python `emu.bp_magic("dd_01")`. |
 | `bphits reset [id]` | | `reset [breakpoint-id]` | Set the hit counters back to 0, of one breakpoint or of all (`bplist` shows them as "(hit Nx)"). |
 | `bplist` | `breakpoints` | | List all active breakpoints and watchpoints with their IDs, addresses/ports, types, activation status, and group membership. Shows:<br/>• Breakpoint ID<br/>• Type (exec/read/write/port)<br/>• Address/Port, a range end ("to 0x80FF"), the page ("in ram32", "(this slot only)"), a port mask<br/>• Active/Inactive<br/>• The hit policy ("hits >=5") and the hits so far ("(hit 12x)")<br/>• Optional annotation |
 | `bpclear [id\|all]` | `bc` | `[breakpoint-id \| all]` | Clear breakpoints:<br/>• No argument: clear ALL breakpoints and watchpoints<br/>• `<id>`: clear specific breakpoint by ID<br/>• `all`: explicitly clear all (same as no argument)<br/>**Warning**: This permanently deletes breakpoints. Use `bpoff` to temporarily disable instead. |

@@ -11,6 +11,7 @@
 #include "common/stringhelper.h"
 #include "debugger/analyzers/analyzermanager.h"  // Analyzer audio tap (MCP automation)
 #include "debugger/debugmanager.h"
+#include "emulator/coordinator/ports.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/ide/ata/cdaudioplayer.h"
@@ -2049,22 +2050,30 @@ bool SoundManager::switchGeneralSoundCard(GSTypeKind target)
     if (_gs->implementation() == targetImplementation)
         return true; // already the requested personality
 
-    // FR-4: the switch changes the device set under any TTD history. A user
-    // recording refuses it (the reason is also reported at request time);
-    // a stopped session or a debugger's live history is dropped, since no
-    // checkpoint could restore the outgoing card into the new one
-    if (ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks)
-    {
-        const std::string refusal = ttd->RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard);
-        if (!refusal.empty())
-        {
-            LOGWARNING("SoundManager: %s", refusal.c_str());
-            return false;
-        }
-        if (ttd->HasHistory())
-            ttd->OnConfigurationChange(ttd::TTDConfigChangeKind::GsCard, "gs-card-switch");
-    }
+    // FR-4: the switch changes the device set under any TTD history: the coordinator ends the session and drops its
+    // history (no checkpoint could restore the outgoing card into the new one); TTD v1 refuses it while a user
+    // recording runs (the reason is also reported at request time)
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::GsCardSwitch;
+    op.summary = std::string(gsImplementationLabel(_gs->implementation())) + " -> " +
+                 gsImplementationLabel(targetImplementation);
+    op.sessionReason = "gs-card-switch";
+    bool switched = false;
+    const coordinator::OpResult result =
+        coordinator::RunCommit(_context->pMachineOps, std::move(op), [&](coordinator::OpStage& stage) {
+            stage.CommitPoint();
+            switched = switchGeneralSoundCardNow(target, targetImplementation);
+            if (!switched)
+                stage.error = "the General Sound card could not be switched";
+            return switched;
+        });
+    if (result.status == coordinator::OpStatus::Refused)
+        LOGWARNING("SoundManager: %s", result.reason.c_str());
+    return switched;
+}
 
+bool SoundManager::switchGeneralSoundCardNow(GSTypeKind target, GSCardImplementation targetImplementation)
+{
     const char* from = gsImplementationLabel(_gs->implementation());
     const char* to = gsImplementationLabel(targetImplementation);
 
@@ -2203,15 +2212,16 @@ bool SoundManager::requestGeneralSoundCardSwitch(GSTypeKind target, std::string*
     if (!gsImplementationOf(target, targetImplementation))
         return false;
 
-    // A real change while a user recording runs is refused (FR-4, see switchGeneralSoundCard)
-    if (_gs && _gs->implementation() != targetImplementation && _context->pTimeTravelHooks)
+    // A real change the coordinator's rules refuse (FR-4, see switchGeneralSoundCard)
+    if (_gs && _gs->implementation() != targetImplementation && _context->pMachineOps)
     {
-        const std::string refusal =
-            _context->pTimeTravelHooks->RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard);
-        if (!refusal.empty())
+        coordinator::MachineOp op;
+        op.kind = coordinator::OpKind::GsCardSwitch;
+        const coordinator::OpResult asked = _context->pMachineOps->WouldRefuse(op);
+        if (!asked.Ok())
         {
             if (error)
-                *error = refusal;
+                *error = asked.reason;
             return false;
         }
     }

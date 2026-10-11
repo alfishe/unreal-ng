@@ -29,8 +29,20 @@ enum class OpKind : uint8_t
     RzxRestore,     ///< an RZX playback replaces the machine: its snapshot block, a seek back (D43, M2)
     ModelSwitch,    ///< another model replaces the instance, or another machine's state moves in (D26): asked only
                     ///< (IMachineOps::Ask) - the switch replaces the instance and its coordinator (Q1)
-    TimelineCut,    ///< a recording continues from a point in its past (Rec From Here, M5): noted (IMachineOps::Note)
-                    ///< with what was decided about the media that could not go back there
+    TimelineCut,    ///< a recording continues from a point in its past (Rec From Here, M5), with what was decided about
+                    ///< the media that could not go back there (M6: IMachineOps::RunOwnLocked)
+    RomLoad,        ///< the ROM set is loaded again (a ROM file, a reset's pending reload: a BIOS, a flash discard) (M6)
+    GsCardSwitch,   ///< the General Sound card changes its personality (LLE, lightweight, NeoGS) (M6)
+    SpeedChange,    ///< the host speed multiplier changes (M6)
+    StateTransfer,  ///< another machine's state moves into this one (MachineStateTransfer, D26) (M6)
+    SlotChange,     ///< a slot is plugged, removed or set up (applied by a machine restart): asked only (M6)
+    CdFrontPanel,   ///< a CD drive's play, pause, stop or volume from outside the guest: asked only (M6)
+    ToolEdit,       ///< a tool edits the machine: memory, registers, ports, sectors, device memory - any surface (M6)
+    TtdStart,       ///< a TTD recording starts (M6; TTD's own lock: IMachineOps::RunOwnLocked)
+    TtdStop,        ///< a TTD recording stops (M6)
+    TtdDiscard,     ///< the TTD session and its history are discarded (M6)
+    TimelineSeek,   ///< the machine moves to a point of the recorded history: a seek, a step, a reverse run (M6)
+    TtdLoad,        ///< a TTD session is loaded from a file (M6)
 
     Count
 };
@@ -81,7 +93,10 @@ enum class SessionEffect : uint8_t
     None,
     EndKeepHistory,        ///< D42: the session ends, the history of the same machine stays browsable
     MediaChanged,          ///< a medium changed: today's TTD rule for media (a background session ends, history goes)
-    StopThenMediaChanged   ///< the caller asked to end a protected recording instead of being refused
+    StopThenMediaChanged,  ///< the caller asked to end a protected recording instead of being refused
+    MachineChanged,        ///< the machine itself changed (ROM, General Sound card, a state transfer): the session
+                           ///< ends, its history goes (it belongs to the old machine)
+    TimingChanged          ///< the host speed changed: a history goes, the black box's stays (recorded at 1x)
 };
 
 enum class OpStatus : uint8_t

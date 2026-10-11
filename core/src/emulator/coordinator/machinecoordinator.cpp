@@ -35,6 +35,21 @@ private:
     bool _tried = false;
     bool _held = false;
 };
+
+/// How many operations this thread is inside (Run, any coordinator): a nested one (an owner's composite operation)
+/// leaves the outermost one's preparations alone
+thread_local int t_runDepth = 0;
+
+class RunDepth
+{
+public:
+    RunDepth() { ++t_runDepth; }
+    ~RunDepth() { --t_runDepth; }
+    RunDepth(const RunDepth&) = delete;
+    RunDepth& operator=(const RunDepth&) = delete;
+    /// The operation is the outermost one on its thread
+    static bool Outermost() { return t_runDepth == 1; }
+};
 }  // namespace
 
 void MachineCoordinator::SetMachine(IMachineThread* thread, IMachineClock* clock)
@@ -51,6 +66,13 @@ void MachineCoordinator::SetSession(ISessionSink* session)
     std::unique_lock<std::shared_mutex> ports(_portsMutex);
     _session = session;
     _modeSession.store(session);
+}
+
+void MachineCoordinator::SetPlayback(IPlaybackSink* playback)
+{
+    std::lock_guard<std::recursive_mutex> op(_opMutex);
+    std::unique_lock<std::shared_mutex> ports(_portsMutex);
+    _playback = playback;
 }
 
 bool MachineCoordinator::Own(OpKind kind, IOpOwner* owner)
@@ -146,6 +168,51 @@ void MachineCoordinator::Note(MachineOp op, OpStatus status, std::string detail)
     _log.Append(std::move(entry));
 }
 
+OpResult MachineCoordinator::RunOwnLocked(MachineOp op, const std::function<bool(OpStage&)>& commit)
+{
+    if (op.source == OpSource::Unknown)
+        op.source = CurrentSource();
+    MachineMode mode = MachineMode::Live;
+    std::string refusal;
+    {
+        std::shared_lock<std::shared_mutex> ports(_portsMutex);
+        mode = ModeLocked();
+        const PolicyDecision d = Decide(op, mode);
+        if (_retired.load())
+            refusal = kRetiredReason;
+        else if (d.refused)
+            refusal = d.reason;
+        else if (d.effect != SessionEffect::None || d.hold || d.atFrameBoundary || d.endsPlayback)
+            refusal = std::string("'") + OpKindName(op.kind) + "' needs the coordinator's park or session effect";
+    }
+    if (!refusal.empty())
+        return Finish(op, mode, OpStatus::Refused, std::move(refusal), SessionEffect::None);
+
+    OpStage stage;
+    bool ok = false;
+    try
+    {
+        ok = commit(stage);
+    }
+    catch (const std::exception& e)
+    {
+        stage.error = e.what();
+    }
+    catch (...)
+    {
+        stage.error = "the operation threw";
+    }
+    OpResult result;
+    if (!ok)
+        result = Finish(op, mode, OpStatus::Failed, stage.error.empty() ? std::string("the operation failed") : stage.error,
+                        SessionEffect::None);
+    else
+        result = Finish(op, mode, OpStatus::Done, stage.Unchanged() ? std::string("no change") : stage.detail,
+                        SessionEffect::None);
+    result.output = std::move(stage.output);
+    return result;
+}
+
 ModeState MachineCoordinator::Published() const
 {
     std::lock_guard<std::recursive_mutex> lock(_modeMutex);
@@ -193,10 +260,13 @@ OpResult MachineCoordinator::Run(MachineOp op)
 {
     if (op.source == OpSource::Unknown)
         op.source = CurrentSource();
+    const RunDepth depth;
     IMachineThread* thread = nullptr;
+    IPlaybackSink* playback = nullptr;
     {
         std::shared_lock<std::shared_mutex> ports(_portsMutex);
         thread = _thread;
+        playback = _playback;
     }
     const bool onMachine = thread == nullptr || thread->OnMachineThread();
 
@@ -228,6 +298,10 @@ OpResult MachineCoordinator::Run(MachineOp op)
         std::shared_lock<std::shared_mutex> ports(_portsMutex);
         assess();
     }
+    // A playback the operation ends stops first, holding the machine itself: never inside the park or the lock (its
+    // own lock may be held by a thread waiting for the machine). A nested operation leaves it to the outermost one
+    if (refusal.empty() && d.endsPlayback && playback && RunDepth::Outermost())
+        playback->EndPlayback(op);
     if (needsPark())
         lease.Take(thread, OpKindName(op.kind));
     std::unique_lock<std::recursive_mutex> lock(_opMutex);
@@ -298,6 +372,8 @@ OpResult MachineCoordinator::Run(MachineOp op)
         stage.CommitPoint();
         note = "the owner did not mark its commit point: the session effect came after the change";
     }
+    if (note.empty())
+        note = stage.detail;
     if (d.machineResetAfter && session && !stage.Unchanged())
         session->MachineReset();
 

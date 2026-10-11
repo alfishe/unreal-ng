@@ -1044,7 +1044,8 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["type"]["description"] = "Breakpoint type for bp_add: execution, read, write, port_in, port_out, nextreg_write, nextreg_read, "
         "nextreg (address = the ZX Next register number, address_end a range; see doors / value / value_mask), "
         "beam (address = line of the copper's counter, hc = pixel clock), copper (address = copper list index, address_end a range: "
-        "stops when the copper completes that instruction)";
+        "stops when the copper completes that instruction), magic_ed_ff / magic_dd_01 (ZX Next: stops after the CPU ran that magic "
+        "opcode - a NOP on the hardware, other emulators' debug trap; no address)";
     schema["properties"]["hc"]["type"] = "integer";
     schema["properties"]["hc"]["description"] = "For bp_add of beam: the pixel clock in the row (0..511, default 0)";
     schema["properties"]["address_end"]["type"] = "integer";
@@ -1221,7 +1222,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                         {
                             out << "\n#" << bp["id"].asUInt() << " "
                                 << (bp["type"].asString() == "port" ? "port " : bp["type"].asString() == "nextreg" ? "NR " : bp["type"].asString() == "beam" ? "beam line "
-                                    : bp["type"].asString() == "copper" ? "copper #" : "")
+                                    : bp["type"].asString() == "copper" ? "copper #" : bp["type"].asString() == "magic" ? "magic " : "")
                                 << Hex16(bp["address"].asUInt()) << " "
                                 << (bp["execute"].asBool() ? "X" : "") << (bp["read"].asBool() ? "R" : "")
                                 << (bp["write"].asBool() ? "W" : "")
@@ -1256,13 +1257,15 @@ void RegisterControlExecution(ToolRegistry& registry)
                 }
                 if (action == "bp_add")
                 {
-                    if (!args.isMember("address"))
+                    const bool magic = args.isMember("type") && args["type"].asString().rfind("magic_", 0) == 0;
+                    if (!magic && !args.isMember("address"))
                     {
-                        done(ToolResult::Error("bp_add requires 'address'"));
+                        done(ToolResult::Error("bp_add requires 'address' (not for magic_ed_ff / magic_dd_01)"));
                         return;
                     }
                     Json::Value body;
-                    body["address"] = args["address"];
+                    if (args.isMember("address"))
+                        body["address"] = args["address"];
                     body["type"] = args.isMember("type") ? args["type"].asString() : "execution";
                     for (const char* key : {"address_end", "page", "slot_only", "port_mask", "hits", "hit_mode", "hit_target",
                                             "note", "group", "doors", "value", "value_mask", "hc"})

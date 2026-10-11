@@ -65,6 +65,7 @@ nc localhost 8765
 | `bport <port> <in\|out>` | Set I/O breakpoint |
 | `bnextreg <reg> <r\|w\|rw>` | Set ZX Next register breakpoint (`--via`, `--value`) |
 | `bbeam <line> [--hc N]` | Stop when the beam passes the place (ZX Next) |
+| `bmagic <edff\|dd01>` | Stop after the magic opcode ED FF / DD 01 ran (ZX Next) |
 | `bcopper <index>` | Stop when the copper completes the list instruction (ZX Next) |
 | `bplist` | List all breakpoints |
 | `bpclear [id\|all]` | Remove breakpoints |

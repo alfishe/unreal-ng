@@ -135,6 +135,7 @@ private:
     void NextRegAccess(bool write, uint8_t reg, uint8_t value, NextRegSource source);
     void FireBreakpoint(uint16_t id, uint16_t address, BreakpointHitKind kind);
     void WatchCopper(BreakpointManager& manager);
+    void WatchMagic(BreakpointManager& manager);
     bool _breakpointActive = false;  // a stop is being served: nothing nests in it
     bool _watchValid = false;
     uint64_t _watchClock = 0;  // the copper clock up to which the copper was watched

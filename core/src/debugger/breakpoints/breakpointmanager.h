@@ -31,6 +31,7 @@ enum BreakpointTypeEnum : uint8_t
     BRK_NEXTREG,     // ZX Next register access (NR read through #253B, NR write by NEXTREG / #253B / the copper)
     BRK_BEAM,        // ZX Next: the beam reaches a place in the raster (line counter cvc of the copper, pixel clock hc)
     BRK_COPPER,      // ZX Next: the copper completes the instruction at a list index (a WAIT that became true, or a MOVE)
+    BRK_MAGIC,       // ZX Next: the CPU completed a magic opcode (ED FF or DD 01: a NOP on the hardware), address = the opcode word
     // BRK_INTERRUPT     // Interrupt event
 };
 
@@ -51,6 +52,10 @@ constexpr uint8_t BRK_NR_DOOR_NEXTREG = 0x01;  // the NEXTREG instructions (no b
 constexpr uint8_t BRK_NR_DOOR_PORT = 0x02;     // OUT (#253B) after OUT (#243B); also the read door of IN (#253B)
 constexpr uint8_t BRK_NR_DOOR_COPPER = 0x04;   // a copper MOVE
 constexpr uint8_t BRK_NR_DOOR_ALL = 0x07;
+// The magic opcodes other emulators (jnext, ZEsarUX: ED FF; CSpect: DD 01) stop on. The Z80N executes both as on the hardware
+// (ED FF is a NOP, DD 01 is LD BC,nn with the prefix ignored); the breakpoint only notices them after they ran
+constexpr uint16_t BRK_MAGIC_ED_FF = 0xEDFF;
+constexpr uint16_t BRK_MAGIC_DD_01 = 0xDD01;
 constexpr uint16_t BRK_BEAM_MAX_LINE = 511;    // the copper's line counter is 9 bits (copper.vhd vcount_i)
 constexpr uint16_t BRK_BEAM_MAX_HC = 511;      // and so is the pixel clock (hcount_i)
 constexpr uint16_t BRK_COPPER_LIST_MAX = 1023; // 1024 instructions (copper_list_addr_o is 10 bits)
@@ -171,6 +176,7 @@ struct BreakpointHotState
     uint8_t hasNextRegWrite = 0;  // 1 if any active NextREG write breakpoint exists
     uint8_t hasBeam = 0;          // 1 if any active beam breakpoint exists
     uint8_t hasCopperPc = 0;      // 1 if any active copper-instruction breakpoint exists
+    uint8_t hasMagic = 0;         // 1 if any active magic-opcode breakpoint exists
     // 1 if the copper's work must be watched as it happens: a beam or copper-instruction breakpoint, or a NextREG write breakpoint that
     // takes the copper's door. Off: the copper is caught up with the beam once per line, as always (no cost)
     uint8_t copperWatch = 0;
@@ -540,6 +546,11 @@ public:
     /// A NextREG access (the board's single read / write choke points): the breakpoint that stops, or BRK_INVALID.
     /// `door` is one BRK_NR_DOOR_* bit; `value` is what is written or what the read returns
     /// The copper completed the instruction at list index `pc`: the copper-instruction breakpoint that stops, or BRK_INVALID
+    /// The CPU completed an instruction whose opcode word is `opcodeWord`: the magic breakpoint that stops, or BRK_INVALID
+    uint16_t HandleMagic(uint16_t opcodeWord)
+    {
+        return _hotState.hasMagic ? ResolveMagic(opcodeWord) : BRK_INVALID;
+    }
     uint16_t HandleCopperPc(uint16_t pc)
     {
         return _hotState.hasCopperPc ? ResolveCopperPc(pc) : BRK_INVALID;
@@ -579,6 +590,7 @@ protected:
     uint16_t ResolvePort(int direction, uint16_t port);
     uint16_t ResolveNextReg(int direction, uint8_t reg, uint8_t value, uint8_t door);
     uint16_t ResolveCopperPc(uint16_t pc);
+    uint16_t ResolveMagic(uint16_t opcodeWord);
     uint16_t ResolveBeam(const std::function<bool(uint16_t line, uint16_t hc)>& crossed);
     /// Walks one candidate set: counts every candidate that matches, returns the first that stops (or
     /// BRK_INVALID); `slot` is the slot of the access for slot-only physical breakpoints (-1: not physical)

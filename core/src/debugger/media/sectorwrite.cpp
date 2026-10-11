@@ -86,10 +86,10 @@ Result Write(Emulator* emulator, uint8_t drive, int cylinder, int side, int sect
             }
             std::vector<uint8_t> data(found->data, found->data + found->dataSize);
             std::copy(bytes.begin(), bytes.end(), data.begin() + offset);
-            emulator->EditMemoryFromTool(source, [&]() {
+            result.error = emulator->EditMemoryFromTool(source, [&]() {
                 track->writeSectorData(static_cast<uint8_t>(sector - 1), data.data(), data.size());
             });
-            result.ok = true;
+            result.ok = result.error.empty();   // refused in the recorded past
         },
         500);
     if (where == Emulator::CoherentMoment::Busy)

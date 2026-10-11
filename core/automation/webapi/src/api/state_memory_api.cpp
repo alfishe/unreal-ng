@@ -698,14 +698,25 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
 
     // A tool edit (Emulator::EditMemoryFromTool): it parks a running machine and,
     // while TTD records, records the write as an event with its bytes, so a
-    // replay reproduces it (D9)
-    emulator->EditMemoryFromTool("WebAPI memory write", [&]() {
+    // replay reproduces it (D9). Refused in the recorded past (409)
+    const std::string refused = emulator->EditMemoryFromTool("WebAPI memory write", [&]() {
         for (Json::ArrayIndex i = 0; i < data.size(); i++)
         {
             memory->DirectWriteToZ80Memory(address + i, static_cast<uint8_t>(data[i].asUInt()));
             bytesWritten++;
         }
     });
+    if (!refused.empty())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refused;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
 
     Json::Value ret;
     ret["success"] = true;
@@ -1307,7 +1318,7 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
     Json::Value& data = (*body)["data"];
     size_t bytesWritten = 0;
     // A page edit behind the CPU's back: TTD must see it like any other tool write
-    emulator->EditMemoryFromTool("WebAPI page write", [&] {
+    const std::string refused = emulator->EditMemoryFromTool("WebAPI page write", [&] {
         for (Json::ArrayIndex i = 0; i < data.size() && (offset + i) < PAGE_SIZE; i++)
         {
             pagePtr[offset + i] = static_cast<uint8_t>(data[i].asUInt());
@@ -1316,6 +1327,17 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
         if (isRAM)
             memory->MarkRamPageEdited(page);
     });
+    if (!refused.empty())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refused;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
 
     Json::Value ret;
     ret["success"] = true;

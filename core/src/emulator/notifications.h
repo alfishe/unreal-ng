@@ -327,7 +327,8 @@ enum class BreakpointHitKind : uint8_t
     NextRegRead,
     NextRegWrite,
     Beam,
-    CopperInstruction
+    CopperInstruction,
+    Magic
 };
 
 /// The automation surfaces' name of a breakpoint access kind
@@ -344,6 +345,7 @@ inline const char* BreakpointHitKindName(BreakpointHitKind kind)
         case BreakpointHitKind::NextRegWrite: return "nextreg_write";
         case BreakpointHitKind::Beam: return "beam";
         case BreakpointHitKind::CopperInstruction: return "copper";
+        case BreakpointHitKind::Magic: return "magic";
     }
     return "execute";
 }

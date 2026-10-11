@@ -73,7 +73,10 @@ void CLIProcessor::HandleMemory(const ClientSession& session, const std::vector<
     {
         // A tool edit (Emulator::EditMemoryFromTool): one event per command with
         // the bytes it wrote, so a TTD replay reproduces it (D9)
-        emulator->EditMemoryFromTool("CLI memory write", [&]() { HandleMemoryWrite(session, memory, args); });
+        const std::string refused =
+            emulator->EditMemoryFromTool("CLI memory write", [&]() { HandleMemoryWrite(session, memory, args); });
+        if (!refused.empty())
+            session.SendResponse("Error: " + refused + NEWLINE);
     }
     else if (subcommand == "dump")
     {
@@ -1201,13 +1204,17 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
             }
 
             const Z80::RegisterInfo* regInfo = Z80::FindRegister(regName);
-            if (regInfo && Z80::SetRegisterValue(z80State, regName, value))
+            std::string refused;
+            if (regInfo && emulator->SetRegisterFromTool("cli register", regName, value, &refused))   // a tool edit
             {
-                emulator->NoteDebugChange();   // the debugger snapshot's seq
                 std::stringstream ss;
                 ss << "Set " << regName << " = 0x" << std::hex << std::uppercase << std::setfill('0');
                 ss << std::setw(regInfo->is16bit ? 4 : 2) << value << NEWLINE;
                 session.SendResponse(ss.str());
+            }
+            else if (!refused.empty())
+            {
+                session.SendResponse("Error: " + refused + NEWLINE);
             }
             else if (regInfo)
             {
@@ -1235,13 +1242,17 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
                     return;
                 }
 
-                if (Z80::SetRegisterValue(z80State, firstArg, value))
+                std::string refused;
+                if (emulator->SetRegisterFromTool("cli register", firstArg, value, &refused))   // a tool edit
                 {
-                    emulator->NoteDebugChange();   // the debugger snapshot's seq
                     std::stringstream ss;
                     ss << "Set " << firstArg << " = 0x" << std::hex << std::uppercase << std::setfill('0');
                     ss << std::setw(is16bit ? 4 : 2) << value << NEWLINE;
                     session.SendResponse(ss.str());
+                }
+                else if (!refused.empty())
+                {
+                    session.SendResponse("Error: " + refused + NEWLINE);
                 }
                 else
                 {
@@ -1479,7 +1490,6 @@ void CLIProcessor::HandleMemCounters(const ClientSession& session, const std::ve
         bool isROM = (bank < 2) ? (bank == 0 ? memory->IsBank0ROM() : memory->GetMemoryBankMode(bank) == BANK_ROM)
                                 : false;  // Banks 2-3 are always RAM
 
-        uint16_t page = memory->GetPageForBank(bank);
         const char* type = isROM ? "ROM" : "RAM";
         std::string bankName = memory->GetCurrentBankName(bank);
 

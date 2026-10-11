@@ -214,7 +214,7 @@ def main():
     parser.add_argument('--ram', type=int, help='RAM of the Pentagon the tool creates, in KB (ZAsm 3.2x and later: 512)')
     parser.add_argument('--list-position', help='ALASM: column,row of the source in the file list')
     parser.add_argument('--extra', nargs='*', default=[], help='STORM, ZAsm, MASM, XAS: hobeta files the source includes')
-    parser.add_argument('--wait', type=float, default=6, help='MASM: seconds the assembly takes')
+    parser.add_argument('--wait', type=float, default=6, help='MASM, TASM: seconds the assembly takes')
     parser.add_argument('--list-keys', help='XAS: comma-separated cursor keys from the first file of the list to the source')
     parser.add_argument('--at', type=lambda v: int(v, 0), default=26000, help='GENS4: where it is put and started')
     args = parser.parse_args()
@@ -237,7 +237,7 @@ def main():
         emu.tap('a')                           # Assemble: asks for the work file
         emu.type(name.lower())                 # the keyboard starts in inverted case: lower case arrives as capitals
         emu.tap('enter')
-        time.sleep(6)
+        time.sleep(args.wait)
     elif args.assembler == 'storm13':
         emu.run_trdos('STORM1.3', wait=12)
         emu.tap('break')                       # the external commands

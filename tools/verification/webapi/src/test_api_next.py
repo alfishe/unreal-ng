@@ -131,6 +131,20 @@ class TestNextReports:
         assert add({"type": "copper", "address": 1024}).status_code == 400
         api_client.session.delete(api_client._url(f"/api/v1/emulator/{next_emulator}/breakpoints"))
 
+    def test_magic_opcode_breakpoints(self, api_client, next_emulator):
+        def add(body):
+            return post(api_client, next_emulator, "/breakpoints", body)
+
+        # the opcode is the type; the listing names it
+        for kind, word in (("magic_ed_ff", 0xEDFF), ("magic_dd_01", 0xDD01)):
+            added = add({"type": kind})
+            assert added.status_code == 201, added.text
+            assert added.json()["type"] == kind and added.json()["address"] == word
+        listed = [b for b in get(api_client, next_emulator, "/breakpoints").json()["breakpoints"] if b["type"] == "magic"]
+        assert {b["address"] for b in listed} == {0xEDFF, 0xDD01}
+        assert add({"type": "magic_ed_ff", "address_end": 3}).status_code == 400
+        api_client.session.delete(api_client._url(f"/api/v1/emulator/{next_emulator}/breakpoints"))
+
     def test_nmi_report_journal_and_trigger(self, api_client, next_emulator):
         report = get(api_client, next_emulator, "/state/next/nmi").json()
         names = [source["name"] for source in report["sources"]]

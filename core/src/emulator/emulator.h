@@ -449,19 +449,26 @@ public:
     /// before the slaves. An empty function removes it
     void SetSpeedChangeInterceptor(std::function<bool(uint8_t)> interceptor);
 
-    /// @brief Why a recording-destructive action is refused right now (empty when
-    /// allowed) - TimeTravelManager::RecordingGuard. The loaders below refuse with
-    /// it themselves; surfaces ask first to report the reason.
+    /// @brief Why a recording-destructive action is refused right now (empty when allowed) -
+    /// ITimeTravelHooks::RecordingGuard: the TTD v1 backend's refusals, which the coordinator's owner of the
+    /// emulator's operations reports (goes with v1). Surfaces ask the coordinator instead (Ask*)
     std::string RecordingGuard(ttd::TTDGuardedAction action) const;
 
-    /// @brief Run a guest-memory edit made by a tool (a script, a debugger
-    /// surface) so a TTD recording stays consistent: the edit is recorded as a
-    /// debugger-edit marker (replay cannot reproduce it) and, from any thread but
-    /// the emulation one, the emulator is parked for it (the dirty-page tracker
-    /// belongs to the emulation thread). Nothing extra happens when not recording.
-    /// The edit must reach TTD itself: Memory::DirectWriteToZ80Memory for the CPU
-    /// view, Memory::MarkRamPageEdited after writing a physical RAM page.
-    void EditMemoryFromTool(const char* source, const std::function<void()>& edit);
+    /// @brief Run an edit of the machine made by a tool (a script, a debugger surface: memory, registers, ports,
+    /// sectors) as an operation of the coordinator (OpKind::ToolEdit, logged with @p source) so a TTD session stays
+    /// consistent: while one exists the edit is recorded as an event of it (a replay applies it) and, from any
+    /// thread but the emulation one, the machine is parked for it (the dirty-page tracker belongs to the emulation
+    /// thread). Live, the edit runs as it comes. The edit must reach TTD itself: Memory::DirectWriteToZ80Memory for
+    /// the CPU view, Memory::MarkRamPageEdited after writing a physical RAM page.
+    /// Refused in the recorded past (a replay, a point of a stopped session's history; owner 2026-10-11): the edit
+    /// does not run, the reason comes back (empty: done) for the surface to report
+    std::string EditMemoryFromTool(const char* source, const std::function<void()>& edit);
+    /// EditMemoryFromTool for a script: a refusal throws (std::runtime_error, the reason), so it is a script error
+    void EditMemoryFromToolOrThrow(const char* source, const std::function<void()>& edit);
+    /// A CPU register set by a tool (EditMemoryFromTool): false, with nothing changed or recorded, for an unknown
+    /// register or a value above its maximum (Z80::SetRegisterValue), or refused (@p refusal: why)
+    bool SetRegisterFromTool(const char* source, const std::string& name, uint16_t value,
+                             std::string* refusal = nullptr);
     uint8_t GetSpeedMultiplier() const;
     void EnableTurboMode(bool withAudio = false);
     void DisableTurboMode();

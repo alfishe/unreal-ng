@@ -750,6 +750,70 @@ TEST(SyncInject_Test, XasTakesAFileAndItsEditorVariablesAtItsCommandLine)
     EXPECT_NE(none.error.find("editor variables were not found"), std::string::npos) << none.error;
 }
 
+TEST(SyncInject_Test, Tasm412TakesAFileAtItsCommandLineAsLoadLeavesIt)
+{
+    Dump dump = Load("tasm412-command");
+    const SyncDescriptor* d = FindDescriptor("tasm-4.12");
+    ASSERT_NE(d, nullptr);
+    const std::vector<uint8_t> page5(0x4000, 0);
+    std::vector<uint8_t> stack = page5;
+    // its command line: the key wait returns through #9CE9, #80BC
+    const std::vector<uint16_t> words = {0x88FB, 0x8F63, 0x008C, 0x0526, 0x811A, 0x9CE9, 0x80BC, 0x2758};
+    for (size_t k = 0; k < words.size(); ++k)
+    {
+        stack[0x217C + 2 * k] = static_cast<uint8_t>(words[k]);
+        stack[0x217C + 2 * k + 1] = static_cast<uint8_t>(words[k] >> 8);
+    }
+    dump.machine.ram.push_back({5, stack});
+    dump.machine.windows[1] = 5;
+    dump.machine.sp = 0x617C;
+    std::string why;
+    ASSERT_TRUE(Idle(dump.machine, *d, why)) << why;
+
+    const WriteAsResult written = WriteAs(SourceDocument::FromText("        ORG #6200\nstart   LD A,1\n        JR start\n", "sjasmplus"), "tasm", d->version, "NEW");
+    ASSERT_TRUE(written.ok) << written.error;
+    // the dump's text was saved: not changed (#9BA6 = 0), written without force
+    const InjectPlan plan = PlanInject(dump.machine, *d, written.bytes);
+    ASSERT_TRUE(plan.ok) << plan.error;
+    EXPECT_EQ(plan.page, -1);
+    std::map<uint16_t, uint8_t> pokes;   // by CPU address (page 2 at #8000, page 6 at #C000)
+    for (const InjectPlan::Poke& p : plan.pokes)
+        pokes[static_cast<uint16_t>((p.page == 2 ? 0x8000 : 0xC000) + p.offset)] = p.value;
+    for (size_t k = 0; k < written.bytes.size(); ++k)
+        EXPECT_EQ(pokes[static_cast<uint16_t>(0xA6EE + k)], written.bytes[k]) << k;
+    for (const uint16_t at : {0x8F5B, 0x8F5D, 0x8F5F, 0x94D9, 0x94CE})
+        EXPECT_EQ(pokes.count(at) && pokes[at] == 0 && pokes[at + 1] == 0, true) << std::hex << at;
+    EXPECT_EQ(pokes[0x9BA6], 0xFF);   // changed: TASM asks before it drops the text
+    EXPECT_EQ(pokes.count(0x9C10), 0u) << "no name given: the work name stays";
+    InjectOptions named;
+    named.name = "NEW";
+    const InjectPlan withName = PlanInject(dump.machine, *d, written.bytes, named);
+    ASSERT_TRUE(withName.ok);
+    std::string work;
+    for (const InjectPlan::Poke& p : withName.pokes)
+        if (p.page == 2 && p.offset >= 0x1C10 && p.offset < 0x1C18)
+            work.push_back(static_cast<char>(p.value));
+    EXPECT_EQ(work, "NEW     ");   // the work name Assemble takes the text under
+
+    // Written: the reader takes the form LOAD leaves
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        for (const InjectPlan::Poke& p : plan.pokes)
+            if (dump.machine.ram[k].page == p.page)
+                dump.pages[k][p.offset] = p.value;
+    const SyncText back = ReadText(dump.machine, *d);
+    ASSERT_TRUE(back.ok) << back.state;
+    EXPECT_EQ(back.file, written.bytes);
+    // now changed and its own: the next write is refused without the caller's earlier file, taken with it
+    EXPECT_FALSE(PlanInject(dump.machine, *d, written.bytes).ok);
+    InjectOptions own;
+    own.written = {written.bytes};
+    EXPECT_TRUE(PlanInject(dump.machine, *d, written.bytes, own).ok);
+
+    // In the editor: refused
+    dump.machine.sp = 0x617E;
+    EXPECT_FALSE(PlanInject(dump.machine, *d, written.bytes).ok);
+}
+
 TEST(SyncInject_Test, StormTakesAFileWhileItsEditorWaitsForAKey)
 {
     Dump dump = Load("storm13-edited");

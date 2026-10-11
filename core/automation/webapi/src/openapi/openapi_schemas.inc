@@ -317,7 +317,19 @@
     schemas["BreakpointInfo"]["oneOf"][2]["$ref"] = "#/components/schemas/KeyboardBreakpointInfo";
     schemas["BreakpointInfo"]["oneOf"][3]["$ref"] = "#/components/schemas/NextRegBreakpointInfo";
     schemas["BreakpointInfo"]["oneOf"][4]["$ref"] = "#/components/schemas/BeamBreakpointInfo";
+    schemas["MagicBreakpointInfo"]["type"] = "object";
+    schemas["MagicBreakpointInfo"]["description"] = "ZX Next magic-opcode breakpoint: stops after the CPU ran ED FF (address 0xEDFF) or DD 01 (address 0xDD01); the opcode itself executes as on the hardware";
+    schemas["MagicBreakpointInfo"]["properties"]["id"]["type"] = "integer";
+    schemas["MagicBreakpointInfo"]["properties"]["type"]["type"] = "string";
+    schemas["MagicBreakpointInfo"]["properties"]["type"]["enum"].append("magic");
+    schemas["MagicBreakpointInfo"]["properties"]["address"]["type"] = "integer";
+    schemas["MagicBreakpointInfo"]["properties"]["address"]["description"] = "The opcode word: 60927 (0xEDFF) or 56577 (0xDD01)";
+    schemas["MagicBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
+    schemas["MagicBreakpointInfo"]["properties"]["note"]["type"] = "string";
+    schemas["MagicBreakpointInfo"]["properties"]["group"]["type"] = "string";
+
     schemas["BreakpointInfo"]["oneOf"][5]["$ref"] = "#/components/schemas/CopperBreakpointInfo";
+    schemas["BreakpointInfo"]["oneOf"][6]["$ref"] = "#/components/schemas/MagicBreakpointInfo";
     schemas["BreakpointInfo"]["discriminator"]["propertyName"] = "type";
     schemas["BreakpointInfo"]["discriminator"]["mapping"]["memory"] = "#/components/schemas/MemoryBreakpointInfo";
     schemas["BreakpointInfo"]["discriminator"]["mapping"]["port"] = "#/components/schemas/PortBreakpointInfo";
@@ -325,6 +337,7 @@
     schemas["BreakpointInfo"]["discriminator"]["mapping"]["nextreg"] = "#/components/schemas/NextRegBreakpointInfo";
     schemas["BreakpointInfo"]["discriminator"]["mapping"]["beam"] = "#/components/schemas/BeamBreakpointInfo";
     schemas["BreakpointInfo"]["discriminator"]["mapping"]["copper"] = "#/components/schemas/CopperBreakpointInfo";
+    schemas["BreakpointInfo"]["discriminator"]["mapping"]["magic"] = "#/components/schemas/MagicBreakpointInfo";
 
     // Breakpoint Status Response (last triggered)
     schemas["BreakpointStatusResponse"]["type"] = "object";
@@ -340,6 +353,7 @@
     schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["enum"].append("nextreg");
     schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["enum"].append("beam");
     schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["enum"].append("copper");
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["enum"].append("magic");
     schemas["BreakpointStatusResponse"]["properties"]["last_triggered_address"]["type"] = "integer";
     schemas["BreakpointStatusResponse"]["properties"]["paused_by_breakpoint"]["type"] = "boolean";
 
@@ -347,7 +361,6 @@
     schemas["AddBreakpointRequest"]["type"] = "object";
     schemas["AddBreakpointRequest"]["description"] = "Request to add a breakpoint";
     schemas["AddBreakpointRequest"]["required"].append("type");
-    schemas["AddBreakpointRequest"]["required"].append("address");
     schemas["AddBreakpointRequest"]["properties"]["type"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["type"]["description"] = "Breakpoint type";
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("execution");
@@ -362,12 +375,14 @@
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("nextreg");
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("beam");
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("copper");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("magic_ed_ff");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("magic_dd_01");
     schemas["AddBreakpointRequest"]["properties"]["hc"]["type"] = "integer";
     schemas["AddBreakpointRequest"]["properties"]["hc"]["description"] =
         "Beam only: the pixel clock in the row (0-511, default 0); 'address' is the line of the copper's counter";
     schemas["AddBreakpointRequest"]["properties"]["address"]["type"] = "integer";
     schemas["AddBreakpointRequest"]["properties"]["address"]["description"] =
-        "Z80 address (0-65535) or port number (0-65535); with a page, its offset in the page is address & #3FFF";
+        "Z80 address (0-65535) or port number (0-65535); with a page, its offset in the page is address & #3FFF. Required except for the magic_* types (the type names the opcode)";
     schemas["AddBreakpointRequest"]["properties"]["address_end"]["type"] = "integer";
     schemas["AddBreakpointRequest"]["properties"]["address_end"]["description"] =
         "Optional range end, inclusive (execution / read / write / rw). With a page the range stays inside one 16K "

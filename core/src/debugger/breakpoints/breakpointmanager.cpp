@@ -139,6 +139,7 @@ uint16_t BreakpointManager::AddBreakpoint(BreakpointDescriptor* descriptor)
         case BRK_NEXTREG:
         case BRK_BEAM:
         case BRK_COPPER:
+        case BRK_MAGIC:
             result = AddNextRegBreakpoint(descriptor);
             break;
         default:
@@ -168,12 +169,29 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
         error = "doors and a value apply to NextREG breakpoints";
         return BRK_INVALID;
     }
-    if (spec.type != BRK_BEAM && spec.beamHc != 0)
+    if (spec.type == BRK_MAGIC)
+    {
+        if (spec.hasEnd || spec.hasPage || spec.slotOnly || spec.spacePage != 0xFFFF || spec.portMask != 0xFFFF || spec.beamHc != 0)
+        {
+            error = "a magic breakpoint takes the opcode word only";
+            return BRK_INVALID;
+        }
+        if (spec.address != BRK_MAGIC_ED_FF && spec.address != BRK_MAGIC_DD_01)
+        {
+            error = "magic opcodes: ED FF (0xEDFF) or DD 01 (0xDD01)";
+            return BRK_INVALID;
+        }
+    }
+    else if (spec.type != BRK_BEAM && spec.beamHc != 0)
     {
         error = "a pixel clock applies to beam breakpoints";
         return BRK_INVALID;
     }
-    if (spec.type == BRK_BEAM || spec.type == BRK_COPPER)
+    if (spec.type == BRK_MAGIC)
+    {
+        // validated above
+    }
+    else if (spec.type == BRK_BEAM || spec.type == BRK_COPPER)
     {
         if (spec.hasEnd && spec.type == BRK_BEAM)
         {
@@ -635,6 +653,9 @@ BreakpointManager::BreakpointStatusInfo BreakpointManager::GetLastTriggeredBreak
             break;
         case BRK_COPPER:
             info.type = "copper";
+            break;
+        case BRK_MAGIC:
+            info.type = "magic";
             break;
         default:
             info.type = "unknown";
@@ -1168,6 +1189,9 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
             case BRK_COPPER:
                 typeStr = "Copper";
                 break;
+            case BRK_MAGIC:
+                typeStr = "Magic";
+                break;
             default:
                 typeStr = "Unknown";
                 break;
@@ -1179,6 +1203,8 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
             oss << std::setw(8) << std::left << ("L" + std::to_string(bp->z80address));
         else if (bp->type == BRK_COPPER)
             oss << std::setw(8) << std::left << ("#" + std::to_string(bp->z80address));
+        else if (bp->type == BRK_MAGIC)
+            oss << std::setw(8) << std::left << (bp->z80address == BRK_MAGIC_ED_FF ? "ED FF" : "DD 01");
         else if (bp->type == BRK_NEXTREG)
         {
             oss << "NR 0x" << std::hex << std::uppercase << std::right << std::setw(2) << std::setfill('0') << (bp->z80address & 0xFF)
@@ -1958,6 +1984,23 @@ uint16_t BreakpointManager::ResolveCopperPc(uint16_t pc)
     return result;
 }
 
+uint16_t BreakpointManager::ResolveMagic(uint16_t opcodeWord)
+{
+    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
+        return BRK_INVALID;
+    uint16_t result = BRK_INVALID;
+    for (const auto& [id, bp] : _breakpointMapByID)
+    {
+        if (!bp || !bp->active || bp->type != BRK_MAGIC || bp->z80address != opcodeWord)
+            continue;
+        if (HitStops(*bp) && result == BRK_INVALID)
+            result = bp->breakpointID;
+    }
+    if (result != BRK_INVALID)
+        _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);
+    return result;
+}
+
 uint16_t BreakpointManager::ResolveBeam(const std::function<bool(uint16_t line, uint16_t hc)>& crossed)
 {
     if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
@@ -2300,6 +2343,11 @@ void BreakpointManager::RebuildFilters()
                     sub = static_cast<uint16_t>((sub - free) & free);
                 } while (sub != 0);
             }
+            continue;
+        }
+        if (bp->type == BRK_MAGIC)
+        {
+            _hotState.hasMagic = 1;
             continue;
         }
         if (bp->type == BRK_BEAM || bp->type == BRK_COPPER)

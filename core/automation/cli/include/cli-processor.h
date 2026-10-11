@@ -149,6 +149,7 @@ private:
     void HandlePortBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
     void HandleNextRegBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBeamBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleMagicBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCopperBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPClear(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPGroup(const ClientSession& session, const std::vector<std::string>& args);

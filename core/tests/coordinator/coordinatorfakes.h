@@ -129,6 +129,17 @@ private:
     std::string _name;
 };
 
+/// An input playback (RZX): "playback:end:<kind>" into the shared call log
+class FakePlayback : public IPlaybackSink
+{
+public:
+    explicit FakePlayback(CallLog* log) : _log(log) {}
+    void EndPlayback(const MachineOp& op) override { _log->Add(std::string("playback:end:") + OpKindName(op.kind)); }
+
+private:
+    CallLog* _log;
+};
+
 class FakeOwner : public IOpOwner
 {
 public:
