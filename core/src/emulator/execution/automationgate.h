@@ -15,8 +15,9 @@
 
 namespace automation_gate
 {
-/// The implicit session's idle lease: as an explicit HTTP session's (owner 2026-10-11)
-constexpr std::chrono::seconds kImplicitLease{60};
+/// The implicit session's idle lease (owner 2026-10-11: 15 s; an explicit HTTP session keeps 60 s). A client that
+/// never releases it holds the window this long after its last request
+constexpr std::chrono::seconds kImplicitLease{15};
 
 /// What the gate tells a client it opened a session for
 constexpr const char* kAdvice =

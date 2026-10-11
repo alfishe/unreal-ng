@@ -258,7 +258,8 @@ Owner decisions, 2026-10-09:
   settings open none.
   - **Who.** One client is identified by its surface, its client name (the User-Agent's product, or "MCP agent") and
     its peer host. The same client goes on in its session. Another is refused (`held_by_other`).
-  - **Lease.** 60 s idle, as an explicit HTTP session's. CLI: the connection. Scripts: 60 s, renewed by each
+  - **Lease.** 15 s idle (an explicit HTTP session keeps 60 s): a client that never releases it holds the window
+    only briefly. CLI: the connection. Scripts: 15 s, renewed by each
     control call.
   - **The client is told.** The WebAPI reply gets the headers `X-Unreal-Session` (the id), `X-Unreal-Session-Implicit`
     and `X-Unreal-Session-Advice`, and a JSON object reply gets an `automation_session` field. MCP appends a note to

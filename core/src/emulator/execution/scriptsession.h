@@ -9,7 +9,7 @@
 /// by itself (a re-take by the same client is refused during its cooldown anyway).
 ///
 /// The automation gate (automationgate.h): a script that drives the machine without having taken control gets a
-/// session implicitly at its first control call (a pause opens none); each control call renews its 60 s idle lease.
+/// session implicitly at its first control call (a pause opens none); each control call renews its 15 s idle lease.
 /// The script is told once (Python: a UserWarning; otherwise the emulator's log) and advised to take control itself.
 
 #include <functional>
