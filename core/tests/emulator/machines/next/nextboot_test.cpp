@@ -255,8 +255,8 @@ TEST_F(NextBoot_Test, AFolderInsertedIntoTheSlotIsTheCardAndEjectTakesItOut)
     ASSERT_NE(manager, nullptr);
     const std::string folder = TestPathHelper::GetUniqueTestScratchPath("next-card-folder");
     std::filesystem::create_directories(folder);
-    const std::string hello = "hello next";
-    ASSERT_TRUE(FileHelper::SaveBufferToFile(folder + "/HELLO.TXT", reinterpret_cast<const uint8_t*>(hello.data()), hello.size()));
+    std::vector<uint8_t> hello = {'h', 'e', 'l', 'l', 'o'};
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(folder + "/HELLO.TXT", hello.data(), hello.size()));
 
     ASSERT_FALSE(_ports->SdCard(1).present());
     MediaSource source;
@@ -296,8 +296,8 @@ TEST_F(NextBoot_Test, TheConfiguredCardReturnsAtAResetOnlyIntoAnEmptySlot)
     ASSERT_NE(manager, nullptr);
     const std::string folder = TestPathHelper::GetUniqueTestScratchPath("next-card-configured");
     std::filesystem::create_directories(folder);
-    const std::string hello = "configured";
-    ASSERT_TRUE(FileHelper::SaveBufferToFile(folder + "/CFG.TXT", reinterpret_cast<const uint8_t*>(hello.data()), hello.size()));
+    std::vector<uint8_t> hello = {'c', 'f', 'g'};
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(folder + "/CFG.TXT", hello.data(), hello.size()));
     std::strncpy(_context->config.next_sd_path, folder.c_str(), sizeof _context->config.next_sd_path - 1);
 
     ASSERT_FALSE(_ports->SdCard(0).present());
