@@ -9,24 +9,6 @@
 ---
 
 2026-10-11
-## 🔴 [Open] #7: MCP async chains hold themselves: every request through them leaks its state
-* **Date Opened:** 2026-10-11
-* **Found by:** valgrind memcheck profile (`tools/sanitize/valgrind.sh`, `.238`, 2026-10-11): 29 `definitely lost`
-  blocks from `make_shared<std::function<...>>` in `mcp::RunSeries`, plus `inspect_state` lambdas.
-
-### Description
-Five chains of asynchronous MCP calls store their next step in a `shared_ptr<std::function>` whose lambda captures
-that same `shared_ptr`: the count never reaches 0, the closure and everything it captured (steps, the accumulated JSON,
-the `done` callback) stay allocated after the chain ends. `unreal-qt` serving MCP loses memory on each such request.
-Sites: `mcp::RunSeries` (`mcp-tool-utils.h:317`, every series tool), `inspect_state` chip details (`mcp-tools.cpp:2557`),
-the SSE keepalive `ping` (`automation-mcp.cpp:300`, one per connection), the capture `cycle` and the digest `sample`
-(`mcp-media.cpp:543`, `:615`).
-
-### Requirements / Acceptance Criteria
-- [ ] The chain holds itself only while a step is pending (the continuation keeps it alive; the closure refers to
-  itself weakly); it is freed when the chain ends.
-- [ ] No `definitely lost` from these sites in the valgrind profile; MCP unit tests pass.
-
 ## 🔴 [Open] #9: Adding a breakpoint that already exists leaks its descriptor
 * **Date Opened:** 2026-10-11
 * **Found by:** valgrind memcheck profile: `BreakpointManager::AddExecutionBreakpointInPage` in
