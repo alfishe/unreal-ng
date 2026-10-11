@@ -277,6 +277,35 @@ TEST_F(SharedMemory_Test, RapidToggleDoesNotCrash)
     EXPECT_NE(memory->ROMBase(), nullptr);
 }
 
+// A tool reader (GUI refresh, WebAPI) reads guest memory live from its own thread; the CPU hold of the migration
+// does not stop it. It may have loaded a bank pointer just before the migration: that pointer must stay readable.
+// Before the fix, disabling shared memory unmapped the old view and this read faulted
+TEST_F(SharedMemory_Test, ReaderHoldingAnOldBankPointerSurvivesTheMigration)
+{
+    FeatureManager* fm = GetFeatureManager();
+    ASSERT_NE(fm, nullptr);
+    Memory* memory = GetMemory();
+    ASSERT_NE(memory, nullptr);
+
+    // Heap -> shared: the reader is in the heap buffer
+    memory->DirectWriteToZ80Memory(0x8000, 0x5A);
+    const volatile uint8_t* heapRead = memory->MapZ80AddressToPhysicalAddress(0x8000);
+    fm->setFeature(Features::kSharedMemory, true);
+    memory->UpdateFeatureCache();
+    ASSERT_TRUE(IsSharedMemoryActive());
+    EXPECT_EQ(*heapRead, 0x5A);
+
+    // Shared -> heap: the reader is in the mapped view
+    memory->DirectWriteToZ80Memory(0x8000, 0xA5);
+    const volatile uint8_t* sharedRead = memory->MapZ80AddressToPhysicalAddress(0x8000);
+    fm->setFeature(Features::kSharedMemory, false);
+    memory->UpdateFeatureCache();
+    ASSERT_FALSE(IsSharedMemoryActive());
+    EXPECT_EQ(*sharedRead, 0xA5);
+
+    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x8000), 0xA5);
+}
+
 /// endregion </Feature Toggle Tests>
 
 /// region <Memory Base Address Consistency Tests>

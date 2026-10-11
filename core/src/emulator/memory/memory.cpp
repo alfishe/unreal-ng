@@ -190,6 +190,7 @@ Memory::Memory(EmulatorContext* context)
 Memory::~Memory()
 {
     UnmapMemory();
+    ReleaseRetiredMemory();
 
     // Clean up memory access tracker
     if (_memoryAccessTracker != nullptr)
@@ -705,53 +706,36 @@ void Memory::AllocateAndExportMemoryToMmap()
     LOGINFO("Memory mapped successfully. External tools can now access ZX-Spectrum memory in real-time.");
 }
 
+/// Unmap a shared memory view (the handle may be closed already: the view outlives it)
+static void UnmapView(uint8_t* view, [[maybe_unused]] size_t size)
+{
+#ifdef _WIN32
+    if (!UnmapViewOfFile(view))
+    {
+        DWORD error = GetLastError();
+        LOGWARNING("Failed to unmap view of file (Error %lu)", error);
+    }
+#else
+    if (munmap(view, size) == -1)
+    {
+        LOGWARNING("Failed to unmap shared memory: %s", strerror(errno));
+    }
+#endif  // _WIN32
+}
+
 void Memory::UnmapMemory()
 {
     // Check if we're using shared memory mapping (indicated by non-empty filepath)
     if (!_mappedMemoryFilepath.empty())
     {
         // Shared memory is in use - clean it up
-#ifdef _WIN32
-        // Windows shared memory cleanup
         if (_memory != nullptr)
         {
-            if (!UnmapViewOfFile(_memory))
-            {
-                DWORD error = GetLastError();
-                LOGWARNING("Failed to unmap view of file (Error %lu)", error);
-            }
+            UnmapView(_memory, _memorySize);
             _memory = nullptr;
         }
 
-        if (_mappedMemoryHandle != INVALID_HANDLE_VALUE)
-        {
-            if (!CloseHandle(_mappedMemoryHandle))
-            {
-                DWORD error = GetLastError();
-                LOGWARNING("Failed to close shared memory handle (Error %lu)", error);
-            }
-            _mappedMemoryHandle = INVALID_HANDLE_VALUE;
-        }
-#else
-        // Unix/Linux/macOS shared memory cleanup
-        if (_memory != nullptr)
-        {
-            if (munmap(_memory, _memorySize) == -1)
-            {
-                LOGWARNING("Failed to unmap shared memory: %s", strerror(errno));
-            }
-            _memory = nullptr;
-        }
-
-        if (_mappedMemoryFd != -1)
-        {
-            close(_mappedMemoryFd);
-            _mappedMemoryFd = -1;
-        }
-
-        shm_unlink(_mappedMemoryFilepath.c_str());
-#endif  // _WIN32
-        _mappedMemoryFilepath.clear();
+        CloseSharedMemory();
     }
     else
     {
@@ -762,6 +746,53 @@ void Memory::UnmapMemory()
             _memory = nullptr;
         }
     }
+}
+
+void Memory::CloseSharedMemory()
+{
+    if (_mappedMemoryFilepath.empty())
+        return;
+
+#ifdef _WIN32
+    if (_mappedMemoryHandle != INVALID_HANDLE_VALUE)
+    {
+        if (!CloseHandle(_mappedMemoryHandle))
+        {
+            DWORD error = GetLastError();
+            LOGWARNING("Failed to close shared memory handle (Error %lu)", error);
+        }
+        _mappedMemoryHandle = INVALID_HANDLE_VALUE;
+    }
+#else
+    if (_mappedMemoryFd != -1)
+    {
+        close(_mappedMemoryFd);
+        _mappedMemoryFd = -1;
+    }
+
+    shm_unlink(_mappedMemoryFilepath.c_str());
+#endif  // _WIN32
+    _mappedMemoryFilepath.clear();
+}
+
+void Memory::RetireMemory(uint8_t* memory, bool mapped)
+{
+    ReleaseRetiredMemory();
+    _retiredMemory = memory;
+    _retiredMemoryMapped = mapped;
+}
+
+void Memory::ReleaseRetiredMemory()
+{
+    if (_retiredMemory == nullptr)
+        return;
+
+    if (_retiredMemoryMapped)
+        UnmapView(_retiredMemory, _memorySize);
+    else
+        FreeZeroedRegion(_retiredMemory, _memorySize);
+    _retiredMemory = nullptr;
+    _retiredMemoryMapped = false;
 }
 
 // Sync shared memory for external viewers
@@ -2098,8 +2129,9 @@ void Memory::UpdateFeatureCache()
             }
             
             // CRITICAL: the CPU held for the migration (Emulator::CpuHold, execution arbiter): the Z80 thread would
-            // access stale bank pointers during the reallocation, and a UI refresh would read memory being
-            // reallocated. A hold never broadcasts and leaves the pause as it was
+            // access stale bank pointers during the reallocation. A hold never broadcasts and leaves the pause as
+            // it was. It does not stop the tool readers (UI refresh, WebAPI): the old buffer is retired, not
+            // freed, so a read through an old bank pointer still lands in valid memory
             Emulator* emulator = _context->pEmulator;
             LOGDEBUG("Memory::UpdateFeatureCache - SharedMemory toggle: requested=%s, current=%s, emulator=%p",
                     sharedMemoryRequested ? "ON" : "OFF",
@@ -2143,8 +2175,8 @@ void Memory::UpdateFeatureCache()
                         // See MigratePointersAfterReallocation() for full documentation
                         MigratePointersAfterReallocation(oldMemory, _memory);
 
-                        // Free the old private memory (safe now that all pointers updated)
-                        FreeZeroedRegion(oldMemory, _memorySize);
+                        // The old private memory outlives the readers still in it
+                        RetireMemory(oldMemory, false);
 
                         LOGDEBUG("Shared memory enabled - migrated %zu bytes to shared memory", _memorySize);
                     }
@@ -2176,15 +2208,16 @@ void Memory::UpdateFeatureCache()
                     // Copy content from shared memory to heap
                     memcpy(newMemory, _memory, _memorySize);
 
-                    // Unmap shared memory (this sets _memory to nullptr)
-                    UnmapMemory();
-
                     // Set new heap memory
                     _memory = newMemory;
 
                     // Migrate all cached pointers to reference new memory location
                     // See MigratePointersAfterReallocation() for full documentation
                     MigratePointersAfterReallocation(oldMemory, _memory);
+
+                    // The name and handle go now; the old view outlives the readers still in it
+                    CloseSharedMemory();
+                    RetireMemory(oldMemory, true);
 
                     LOGDEBUG("Shared memory disabled - migrated %zu bytes to heap memory", _memorySize);
                 }
