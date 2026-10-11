@@ -101,7 +101,7 @@ A refusal does not raise: the table / dict has `ok = false` and `error` = the me
 | Option | Verb | Meaning |
 |--------|------|---------|
 | `data`, `name` | import | The file itself as base64 instead of `path` (a client on another host); `name` gives its extension (the format) and the set `upload:<name>`. |
-| `format` | import, export | A codec id from `formats`. Import default: by the extension (`.map .sym .vice .s .asm .z88` as `symbols load` always did; a z80asm `.map` goes to `z88dk-map`), else detected. Export default: by the extension. |
+| `format` | import, export | A codec id from `formats`. Import default: by the extension (`.map .sym .vice .s .asm .z88` as `symbols load` always did), unless detection is sure the content is another format (a z80asm `.map` goes to `z88dk-map`, an sjasmplus `--sym` `.sym` to `sjasmplus-sym`); other extensions: detected. Export default: by the extension. |
 | `set` | import | Merge into this set (made when missing) instead of the file's own set. |
 | `space` | import | Records without a page of their own go here: `cpu:main` (default), `rom0`, `ram3`, `cache0`, `const`, `port`; another CPU's: `gs.rom0`. |
 | `base` | import | Added to every offset (decimal, `0x`, `#`, `$`, `h`). |

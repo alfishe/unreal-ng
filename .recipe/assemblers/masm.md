@@ -115,6 +115,22 @@ invoke_api {"target":"EMU_ID","method":"GET","path":"/api/v1/emulator/{id}/disk/
 
 Checked 2026-10-10: the file's sector then starts `04 58 0A 07 C9 04` (the new `X NOP` line) before the old text.
 
+## A host source into MASM 1.1 / 1.3
+
+Write the source at its `MASM128>` prompt (not in the editor); `A` then assembles it, `E` shows it:
+
+```text
+asm_source  {"action":"sync_inject","path":"/abs/main.asm","assembler":"masm-1.1"}   # sjasmplus, converted by the MASM backend
+type_input  {"action":"tap","key":"a","frames":4}                                     # Assemble
+```
+
+The source is written as MASM 1.1 text (left-to-right chains without parentheses, labels of 10 characters,
+`BEGIN` / `END`, `PHASE`, lines of at most 31 characters, macros expanded:
+[research-sjasmplus-to-masm.md](../../docs/inprogress/2026-10-05-unreal-asm/research-sjasmplus-to-masm.md)) as LOAD leaves
+a file. MASM keeps no "changed" flag: a text it holds is replaced only by force (or when it is the push watch's own).
+`tools/verification/unreal-asm/emulator/inject-oracle.py masm11 <MASM_11.SCL> <source.asm> 0x6000 --wait 20` runs the whole
+check.
+
 ## The text in memory (MASM 1.1)
 
 2.0 and 3.0 (found in their code: asm-synchronizer.md §7.12): the same gap buffer from the address their files carry
@@ -205,6 +221,9 @@ MASM's own source, 11688 bytes).
 | 3.0 MACRO | `MASM30M.SCL`, boot `TSM` | `RUN "TSM"`, any key, `G` (merge file: the list, Enter), `A`; `W` works too | the editor saves as 2.0 (sources `FF lo hi FF` + 2.0's lines, `--version 3.0`); run: `BANK n`, `BORDER n`, `CLS [a]` emit fixed code; `NAME MAC` ... `ENDM` is skipped (nothing calls it: a word in the command field is a label, so `NAME` there gives error 3); `IF` stops with "!?Unknown error?!", `ENDIF` does nothing, `ELSE` jumps into the menu: research-masm-to-sjasmplus.md §4 |
 
 ## Pitfalls
+
+- **Lines over 31 characters** (its line buffer) break MASM's editor screen; it assembles them.
+- **`LAB@3`** is the name `LAB@` to MASM: XOR after a name needs `LAB+0@3`. **`EX (SP),IY`** is refused (error 0).
 
 - **Several instances**: MCP `target:"auto"` refuses; pass the id. `assemble-in-emulator.py` without `--id`
   creates a new instance each run: pass `--id`.

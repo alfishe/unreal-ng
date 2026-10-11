@@ -54,6 +54,20 @@ def test_breakpoint_listed_and_hit(s):
     expect('0x0038' not in s.call('control_execution', {'action': 'bp_list'}).text, 'cleared')
 
 
+def test_breakpoint_on_a_label(s):
+    s.call('control_execution', {'action': 'bp_clear'})
+    s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/labels',
+                          'body': {'name': 'McpCheck.End', 'address': '0x8123'}})
+    r = s.call('control_execution', {'action': 'bp_add', 'address': 'McpCheck.End'})
+    expect(not r.is_error, 'a label names the address', r.text)
+    r = s.call('control_execution', {'action': 'bp_list'})
+    expect(re.search(r'#\d+ 0x8123 X', r.text), 'the breakpoint is at the label', r.text)
+    r = s.call('control_execution', {'action': 'bp_add', 'address': 'NoSuchLabel'}, ok=False)
+    expect(r.is_error and 'label' in r.text, 'an unknown label is refused and named as one', r.text)
+    s.call('control_execution', {'action': 'bp_clear'})
+    s.call('invoke_api', {'method': 'DELETE', 'path': '/api/v1/emulator/{id}/labels/McpCheck.End'}, ok=False)
+
+
 def test_unknown_action_is_an_error(s):
     r = s.call('control_execution', {'action': 'fly'}, ok=False)
     expect(r.is_error, 'refused', r.text)

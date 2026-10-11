@@ -1028,22 +1028,22 @@ const unrealasm::symbols::ISymbolCodec* LabelManager::CodecForFile(const std::st
     if (!extension.empty() && extension[0] == '.')
         extension.erase(0, 1);
     const ISymbolCodec* codec = registry.Find(CodecForExtension(extension));
-    // z80asm writes its map (-m) as .map too: its content says so
-    if (extension == "map")
-    {
-        const auto detected = registry.Detect(bytes, extension);
-        if (detected.chosen && detected.chosen->Info().id == "z88dk-map")
-            codec = detected.chosen;
-    }
+    const auto detected = registry.Detect(bytes, extension);
     if (codec)
     {
         Probe probe;
         probe.bytes = std::span<const uint8_t>(bytes.data(), std::min(bytes.size(), SymbolCodecRegistry::kProbeBytes));
         probe.extension = extension;
         score = codec->Detect(probe);
+        // The content outranks the extension when detection is sure of another format: z80asm writes its map (-m) as
+        // .map, sjasmplus its --sym ("NAME: EQU 0x...") as .sym
+        if (detected.chosen && detected.chosen != codec && detected.candidates.front().score > score)
+        {
+            score = detected.candidates.front().score;
+            return detected.chosen;
+        }
         return codec;
     }
-    const auto detected = registry.Detect(bytes, extension);
     if (!detected.chosen)
     {
         reason = "Unsupported label file format: " + path + " (" + detected.reason + ")";

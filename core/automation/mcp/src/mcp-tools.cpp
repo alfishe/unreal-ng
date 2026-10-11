@@ -1037,8 +1037,11 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["frames"]["description"] = "Frame count for run_frames";
     schema["properties"]["tstates"]["type"] = "integer";
     schema["properties"]["tstates"]["description"] = "T-state count for run_tstates";
-    schema["properties"]["address"]["type"] = "integer";
-    schema["properties"]["address"]["description"] = "Breakpoint address for bp_add (Z80 address or port number)";
+    schema["properties"]["address"]["oneOf"][0]["type"] = "integer";
+    schema["properties"]["address"]["oneOf"][1]["type"] = "string";
+    schema["properties"]["address"]["description"] =
+        "Breakpoint address for bp_add: a Z80 address (number, \"0x8000\", \"#8000\") or port number; for execution / read / "
+        "write also a label's name (\"Sparkles.End\")";
     schema["properties"]["type"]["type"] = "string";
     schema["properties"]["type"]["default"] = "execution";
     schema["properties"]["type"]["description"] = "Breakpoint type for bp_add: execution, read, write, port_in, port_out, nextreg_write, nextreg_read, "
@@ -1048,8 +1051,10 @@ void RegisterControlExecution(ToolRegistry& registry)
         "opcode - a NOP on the hardware, other emulators' debug trap; no address)";
     schema["properties"]["hc"]["type"] = "integer";
     schema["properties"]["hc"]["description"] = "For bp_add of beam: the pixel clock in the row (0..511, default 0)";
-    schema["properties"]["address_end"]["type"] = "integer";
-    schema["properties"]["address_end"]["description"] = "Optional for bp_add: range end, inclusive (execution / read / write)";
+    schema["properties"]["address_end"]["oneOf"][0]["type"] = "integer";
+    schema["properties"]["address_end"]["oneOf"][1]["type"] = "string";
+    schema["properties"]["address_end"]["description"] =
+        "Optional for bp_add: range end, inclusive (execution / read / write); a number or a label's name";
     schema["properties"]["slot_only"]["type"] = "boolean";
     schema["properties"]["slot_only"]["description"] = "Optional for bp_add with page: only through the slot of address";
     schema["properties"]["port_mask"]["type"] = "integer";
@@ -2733,8 +2738,11 @@ void RegisterInspectState(ToolRegistry& registry)
                                 out << "\n[snapshot] seq " << value["seq"].asUInt64() << ", " << value["state"].asString()
                                     << " (read " << value["consistency"].asString() << "), last stop "
                                     << value["pause"]["reason"].asString() << ", PC=" << pc << ", frame "
-                                    << value["time"]["frame"].asUInt64() << " t " << value["time"]["t"].asUInt64() << ", "
-                                    << value["disasm"].size() << " code line(s), " << value["memory"].size() << " memory window(s)";
+                                    << value["time"]["frame"].asUInt64() << " t " << value["time"]["t"].asUInt64() << " of "
+                                    << value["time"]["frame_t"].asUInt64() << " (global t "
+                                    << value["time"]["frame"].asUInt64() * value["time"]["frame_t"].asUInt64() +
+                                           value["time"]["t"].asUInt64()
+                                    << "), " << value["disasm"].size() << " code line(s), " << value["memory"].size() << " memory window(s)";
                             }
                             else if (aspect == "pchist" && value.isMember("entries"))
                             {
