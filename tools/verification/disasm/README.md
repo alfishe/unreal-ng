@@ -13,7 +13,7 @@ emulator instances (removed at the end).
 | `reasm` | sjasmplus assembles the mnemonic back to the same bytes: a failure for a documented opcode, a note for an undocumented one |
 | `rom` | a linear sweep of the 48K ROM with its symbols: the same boundaries and text as z88dk-dis (`jp START-NEW (#11CB)` read as `jp #11CB`), `bytes` equal to memory |
 | `wire` | `address` as decimal, `0x`, `$`, `#` or `h`; a bad address or count is a 400; `count=256` gives 256 lines |
-| `mcp` | the `debug_code disassemble` listing is in `content[0].text` and matches `structuredContent`; `inspect_state disasm` shows it too; a structured result is echoed in `content[]` |
+| `mcp` | the `debug_code disassemble` listing is in `content[0].text` and matches `structuredContent`; `inspect_state disasm` shows it too; with `response_format: "json"` a structured result is echoed in `content[]` |
 
 ## Run
 

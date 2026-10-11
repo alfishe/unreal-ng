@@ -21,8 +21,8 @@ d = +#34, e = +#34). Each slot is disassembled through the WebAPI and checked:
   wire     the WebAPI rejects a bad address / count with 400 (it used to fall back to PC);
            '$', '#', 'h' address spellings work; count 256 gives 256 lines                       hard
   mcp      debug_code disassemble carries the listing in content[0].text (one line per
-           instruction), inspect_state disasm too; every structured result is echoed in
-           content[] for clients that pass only the text to the model                            hard when --mcp-port
+           instruction), inspect_state disasm too; response_format "json" echoes the structured
+           result in content[] for clients that pass only the text to the model                  hard when --mcp-port
                                                                                                   answers
 
 The emulator's own instance (it creates one unless --target): run the build under test on ports of its own when other
@@ -464,8 +464,8 @@ def check_mcp(mcp_url, target, report):
     else:
         report.fail('mcp', f'inspect_state disasm: no listing in content[]:\n{text[:400]}')
 
-    # Any structured result reaches a text-only client: the emulator list as the sample
-    status, body = mcp_call(mcp_url, 'emulator_manage', {'action': 'list'})
+    # Any structured result reaches a text-only client on request: the emulator list as the sample
+    status, body = mcp_call(mcp_url, 'emulator_manage', {'action': 'list', 'response_format': 'json'})
     content = body.get('result', {}).get('content', []) if body else []
     echoed = None
     for item in content[1:]:
@@ -476,7 +476,7 @@ def check_mcp(mcp_url, target, report):
     if echoed is not None and echoed == body['result'].get('structuredContent'):
         report.ok('mcp')
     else:
-        report.fail('mcp', 'emulator_manage list: structuredContent is not echoed in content[]')
+        report.fail('mcp', 'emulator_manage list, response_format json: structuredContent is not echoed in content[]')
 
 
 def main():

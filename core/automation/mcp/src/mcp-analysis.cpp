@@ -121,7 +121,6 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
                         result.text = "Disassembly [target " + id + "]: " + std::to_string(body["instructions"].size()) +
                                       " instruction(s) at " + Hex16(body["address"].asUInt()) + "\n" +
                                       FormatDisasmListing(body);
-                        result.textCarriesData = true;
                         done(std::move(result));
                     });
                 });

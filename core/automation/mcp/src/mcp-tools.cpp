@@ -44,6 +44,13 @@ void ToolRegistry::Register(const std::string& name, const std::string& descript
     definition.name = name;
     definition.description = description;
     definition.inputSchema = std::move(inputSchema);
+    Json::Value& format = definition.inputSchema["properties"][kResponseFormatArg];
+    format["type"] = "string";
+    format["enum"].append("text");
+    format["enum"].append("json");
+    format["default"] = "text";
+    format["description"] = "Who the reply is for: text (default) = human-readable; json = also the full machine-readable "
+                            "result as JSON text (use it when the text summary does not carry the data you need)";
     definition.handler = std::move(handler);
     _tools[name] = std::move(definition);
 }
