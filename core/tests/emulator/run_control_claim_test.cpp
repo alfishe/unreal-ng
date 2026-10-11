@@ -238,3 +238,78 @@ TEST_F(RunControlClaim_Test, ConcurrentTakesExactlyOneWinner)
 }
 
 /// endregion </Concurrency smoke>
+
+/// region <The automation gate: implicit sessions (owner decision 2026-10-11)>
+
+namespace
+{
+constexpr std::chrono::milliseconds kLease{60000};
+}
+
+// A client that drives the machine without a session gets one, shown as implicit; its next requests go on in it
+TEST_F(RunControlClaim_Test, TheGateOpensAnImplicitSessionAndTheSameClientGoesOnInIt)
+{
+    const auto first = _ctx->EnterImplicitRunControl("webapi", "webapi|127.0.0.1|curl/8", "curl/8", kLease, "127.0.0.1:5");
+    ASSERT_TRUE(first.allowed) << first.message;
+    EXPECT_TRUE(first.opened);
+    EXPECT_TRUE(_ctx->HasRunControl(first.owner));
+    const auto state = _ctx->GetRunControlState();
+    EXPECT_TRUE(state.claimed);
+    EXPECT_TRUE(state.implicit);
+    EXPECT_EQ(state.client, "curl/8");
+    EXPECT_EQ(state.leaseMs, 60000u);
+
+    const auto again = _ctx->EnterImplicitRunControl("webapi", "webapi|127.0.0.1|curl/8", "curl/8", kLease, "127.0.0.1:6");
+    ASSERT_TRUE(again.allowed);
+    EXPECT_FALSE(again.opened);
+    EXPECT_EQ(again.owner, first.owner);
+}
+
+// Another client is refused while the session is held, implicit or explicit
+TEST_F(RunControlClaim_Test, TheGateRefusesAnotherClientWhileASessionIsHeld)
+{
+    ASSERT_TRUE(_ctx->EnterImplicitRunControl("webapi", "webapi|h|a", "a", kLease).allowed);
+    const auto other = _ctx->EnterImplicitRunControl("webapi", "webapi|h|b", "b", kLease);
+    EXPECT_FALSE(other.allowed);
+    EXPECT_EQ(other.error, "held_by_other");
+
+    RunControlClaim_Test::TearDown();
+    RunControlClaim_Test::SetUp();
+    ASSERT_TRUE(_ctx->TakeRunControl(_ownerA, "gdb", nullptr, "GDB", std::chrono::milliseconds(0)));
+    const auto refused = _ctx->EnterImplicitRunControl("webapi", "webapi|h|a", "a", kLease);
+    EXPECT_FALSE(refused.allowed);
+    EXPECT_EQ(refused.error, "held_by_other");
+    EXPECT_TRUE(_ctx->HasRunControl(_ownerA));
+    EXPECT_FALSE(_ctx->GetRunControlState().implicit);
+}
+
+// The user takes control back: the same client is refused (revoked_by_user) instead of driving on implicitly
+TEST_F(RunControlClaim_Test, AfterATakeBackTheGateRefusesThatClient)
+{
+    ASSERT_TRUE(_ctx->EnterImplicitRunControl("webapi", "webapi|h|a", "a", kLease).allowed);
+    ASSERT_TRUE(_ctx->RevokeRunControl("gui"));
+    EXPECT_FALSE(_ctx->IsRunControlClaimed());
+    const auto refused = _ctx->EnterImplicitRunControl("webapi", "webapi|h|a", "a", kLease);
+    EXPECT_FALSE(refused.allowed);
+    EXPECT_EQ(refused.error, "revoked_by_user");
+    EXPECT_FALSE(_ctx->IsRunControlClaimed());
+    // Another client is not affected; the user's allow-again lifts the refusal
+    EXPECT_TRUE(_ctx->EnterImplicitRunControl("webapi", "webapi|h|b", "b", kLease).allowed);
+}
+
+// The client takes control explicitly after driving implicitly: its implicit session gives way, nobody else's does
+TEST_F(RunControlClaim_Test, AnExplicitTakeReplacesTheClientsOwnImplicitSession)
+{
+    const auto implicitSession = _ctx->EnterImplicitRunControl("webapi", "webapi|h|a", "a", kLease);
+    ASSERT_TRUE(implicitSession.allowed);
+    _ctx->ReleaseImplicitRunControl("webapi|h|b");                  // somebody else's identity: nothing happens
+    EXPECT_TRUE(_ctx->HasRunControl(implicitSession.owner));
+    _ctx->ReleaseImplicitRunControl("webapi|h|a");
+    EXPECT_FALSE(_ctx->IsRunControlClaimed());
+    ASSERT_TRUE(_ctx->TakeRunControl(_ownerA, "webapi", nullptr, "my-script", kLease));
+    EXPECT_FALSE(_ctx->GetRunControlState().implicit);
+    _ctx->ReleaseImplicitRunControl("webapi|h|a");                  // an explicit session is never released by it
+    EXPECT_TRUE(_ctx->HasRunControl(_ownerA));
+}
+
+/// endregion </The automation gate>

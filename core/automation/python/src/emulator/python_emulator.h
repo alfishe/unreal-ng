@@ -1060,7 +1060,7 @@ namespace PythonBindings
             .def("start_async", &Emulator::StartAsync, "Start emulator asynchronously")
             .def("stop", &Emulator::Stop, "Stop emulator")
             .def("pause", [](Emulator& self) -> std::string {
-                execution::script::Check(self, execution::Origin::Python);
+                execution::script::Check(self, execution::Origin::Python, false);   // a pause opens no session
                 const execution::Result r =
                     self.Pause(execution::script::RequesterOf(self, execution::Origin::Python), "python");
                 return execution::script::PauseStatus(r);

@@ -201,6 +201,8 @@ QString RemoteControlGuard::describe() const
     if (!_active)
         return tr("No automation session");
     const QString since = QDateTime::fromMSecsSinceEpoch(_sinceMs).toString(QStringLiteral("HH:mm:ss"));
+    if (_implicit)
+        return tr("Remote control by %1 (implicit), since %2").arg(who(), since);
     return tr("Remote control by %1, since %2").arg(who(), since);
 }
 
@@ -224,6 +226,7 @@ void RemoteControlGuard::refresh()
     _client = active ? client : QString();
     _peer = active ? peer : QString();
     _sinceMs = active ? static_cast<qint64>(state.sinceMs) : 0;
+    _implicit = active && state.implicit;
     _hasCooldowns = !state.cooldowns.empty();
 
     if (_active)

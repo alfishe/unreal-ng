@@ -13,7 +13,9 @@
         paths[kPath]["post"]["summary"] = "Open an automation session (take run control)";
         paths[kPath]["post"]["tags"].append("Execution");
         paths[kPath]["post"]["description"] =
-            "Takes the emulator's run control for this client. Body (optional): client (a name, shown to the user and "
+            "Takes the emulator's run control for this client. Without it, the first request that changes the machine "
+            "opens a session implicitly (the automation gate: the reply's automation_session field and X-Unreal-Session "
+            "headers say so); taking it here replaces that one. Body (optional): client (a name, shown to the user and "
             "the key of the re-take cooldown), surface (webapi | mcp), lease_seconds (default 60; the session ends "
             "after that long without a request of it; 0 = none). Send the returned session id in the "
             "X-Unreal-Session header on every request: those requests resume and step while other surfaces' runs are "

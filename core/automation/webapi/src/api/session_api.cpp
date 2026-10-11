@@ -81,6 +81,8 @@ void EmulatorAPI::postControlSession(const HttpRequestPtr& req, std::function<vo
         peer = (*json)["peer"].asString();
 
     EmulatorContext* context = emulator->GetContext();
+    // The client drove the machine before taking control: the gate's implicit session for it gives way to this one
+    context->ReleaseImplicitRunControl(webapi_session::GateClientOf(req).identity);
     const unreal::UUID session = unreal::UUID::Generate();
     std::string reason;
     if (!context->TakeRunControl(session, surface, &reason, client, std::chrono::milliseconds(uint64_t(leaseSeconds) * 1000),

@@ -1,4 +1,5 @@
 #include "cli-processor.h"
+#include "emulator/execution/automationgate.h"
 
 #include <3rdparty/message-center/eventqueue.h>
 #include <3rdparty/message-center/messagecenter.h>
@@ -370,6 +371,8 @@ void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& com
     auto it = _commandHandlers.find(cmd);
     if (it != _commandHandlers.end())
     {
+        if (!PassAutomationGate(session, cmd, args))
+            return;
         try
         {
             // Call the member function using 'this' pointer to provide context to the handler
@@ -878,6 +881,32 @@ bool CLIProcessor::HoldsControl(EmulatorContext* context) const
     return context && !_controlSession.isNil() && context->HasRunControl(_controlSession);
 }
 
+bool CLIProcessor::PassAutomationGate(const ClientSession& session, const std::string& command,
+                                      const std::vector<std::string>& args)
+{
+    if (!automation_gate::CliCommandChangesMachine(command, args))
+        return true;
+    auto emulator = GetSelectedEmulator(session);
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    if (!context || HoldsControl(context))
+        return true;
+    const std::string peer = PeerAddressOf(session.GetSocket());
+    const EmulatorContext::ImplicitControl gate =
+        context->EnterImplicitRunControl("cli", "cli|" + peer, "cli", std::chrono::milliseconds(0), peer);
+    if (!gate.allowed)
+    {
+        session.SendResponse("Error: " + gate.error + " - " + gate.message + NEWLINE);
+        return false;
+    }
+    if (gate.opened)
+    {
+        _controlSession = gate.owner;
+        _controlEmulator = emulator;
+        session.SendResponse(std::string("Note: ") + automation_gate::kAdvice + NEWLINE);
+    }
+    return true;
+}
+
 execution::Requester CLIProcessor::CliRequester(EmulatorContext* context) const
 {
     if (HoldsControl(context))
@@ -897,6 +926,13 @@ void CLIProcessor::HandleSession(const ClientSession& session, const std::vector
     const std::string sub = args.empty() ? std::string() : args[0];
     if (sub == "take")
     {
+        // The gate's implicit session for this connection gives way to the explicit one
+        if (HoldsControl(context) && context->GetRunControlState().implicit)
+        {
+            context->ReleaseRunControl(_controlSession);
+            _controlSession = unreal::UUID();
+            _controlEmulator.reset();
+        }
         if (HoldsControl(context))
         {
             session.SendResponse(std::string("This connection already holds run control") + NEWLINE);

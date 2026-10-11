@@ -58,6 +58,8 @@ public:
     /// ... and from where: "DeZog (ZRCP) from 192.168.1.5:51234", "demo.lua via Lua (a local script)"
     QString who() const;
     qint64 sinceMs() const { return _sinceMs; }
+    /// The automation gate opened the session (the client drove the machine without taking control)
+    bool implicit() const { return _implicit; }
     /// Clients the user took control back from that may not take it again yet
     bool hasCooldowns() const { return _hasCooldowns; }
     /// "Remote control by GDB from 192.168.1.5:51234, since 12:03:04"
@@ -102,6 +104,7 @@ private:
     QString _surface;
     QString _client;
     QString _peer;
+    bool _implicit = false;   // the automation gate opened the session: the client drove without taking control
     qint64 _sinceMs = 0;
     bool _hasCooldowns = false;
 

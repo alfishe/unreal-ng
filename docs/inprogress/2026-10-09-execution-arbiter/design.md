@@ -252,6 +252,23 @@ Owner decisions, 2026-10-09:
   the human can **take back control**, and that ends the whole session.
 - **Explicit claim.** A client opens a session itself (take control), as GDB does today. One-off requests (read
   state, a single pause) open none.
+- **The automation gate (owner, 2026-10-11; supersedes "explicit only").** One gate on every automation surface:
+  a client that changes the machine without having taken control gets a session implicitly, and the GUI shows it
+  and locks as for an explicit one. Reads, a pause, profilers, captures, labels / symbols, audio mixing and display
+  settings open none.
+  - **Who.** One client is identified by its surface, its client name (the User-Agent's product, or "MCP agent") and
+    its peer host. The same client goes on in its session. Another is refused (`held_by_other`).
+  - **Lease.** 60 s idle, as an explicit HTTP session's. CLI: the connection. Scripts: 60 s, renewed by each
+    control call.
+  - **The client is told.** The WebAPI reply gets the headers `X-Unreal-Session` (the id), `X-Unreal-Session-Implicit`
+    and `X-Unreal-Session-Advice`, and a JSON object reply gets an `automation_session` field. MCP appends a note to
+    the tool result, once per session. The CLI prints a note. Python raises a `UserWarning`, Lua logs.
+  - **The advice.** Take control explicitly before a job and release it after. An explicit take by the same client
+    replaces its implicit session.
+  - **After a take-back** the client is refused `revoked_by_user` until its cooldown ends.
+  - **Code.** `EmulatorContext::EnterImplicitRunControl` / `ReleaseImplicitRunControl`; the classification in
+    `core/src/emulator/execution/automationgate.h`; the WebAPI sync advice; `CLIProcessor::PassAutomationGate`;
+    `execution::script::Check`.
 - **The GUI while a session is open.** Every control action is disabled: toolbar, menus, shortcuts, debugger
   buttons, speed control, TTD widget, media panel, file drops. Viewing works. The one active action is
   **Take back control**.
