@@ -225,6 +225,13 @@ class Emulator:
     def next_divmmc_journal_control(self, enabled=None, clear=False, capacity=0) -> dict:
         """Switch, clear or resize (capacity=N) the DivMMC journal"""
 
+    def next_magic_port(self, since=0, limit=200) -> dict:
+        """The magic debug port: its setting and the text a program wrote to it (items: seq, frame, t, pc, text). Off by default -
+        next_magic_port_control(enabled=True, port=0x00FF, mode='line') first"""
+
+    def next_magic_port_control(self, enabled=None, port=None, mode='', clear=False) -> dict:
+        """Switch the magic port, choose its port (0..65535) and mode (hex, dec, ascii, line), clear its output; ValueError on a bad one"""
+
     def next_nmi(self, kinds=None, since=None, from_frame=None, to_frame=None, limit=None) -> dict:
         """The Next NMI sources (m1_button / drive_button: would_fire, blocked_by; io_trap: not modelled), in_service, the Multiface, NR #02 bits,
         the stackless NMI, the reset bits, the interrupts pending / in service and the interrupt / NMI / reset journal: int_ack (source, vector),

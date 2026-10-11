@@ -799,6 +799,56 @@ TEST(SyncInject_Test, Zasm315TakesAFileAtItsCommandPromptAsLoadLeavesIt)
     EXPECT_TRUE(PlanInject(dump.machine, *d, written.bytes, own).ok) << "its own text: replaced without force";
 }
 
+TEST(SyncInject_Test, Masm11TakesAFileAtItsPromptAsLoadLeavesIt)
+{
+    const auto place = [](Dump& dump) {
+        // the key wait's return #85C8 on the stack (page 5)
+        for (size_t k = 0; k < dump.pages.size(); ++k)
+            if (dump.machine.ram[k].page == 5)
+            {
+                dump.pages[k][0x1FEE] = 0xC8;
+                dump.pages[k][0x1FEF] = 0x85;
+            }
+        dump.machine.sp = 0x5FEE;
+    };
+    const SyncDescriptor* d = FindDescriptor("masm-1.1");
+    ASSERT_NE(d, nullptr);
+    Dump editor = Load("masm11-edited");
+    place(editor);
+    std::string why;
+    EXPECT_FALSE(Idle(editor.machine, *d, why)) << "the line buffer says the editor";
+    Dump dump = Load("masm11-menu");
+    place(dump);
+    ASSERT_TRUE(Idle(dump.machine, *d, why)) << why;
+
+    const WriteAsResult written = WriteAs(SourceDocument::FromText("        ORG #6000\nstart   LD A,1\n        JR start\n", "sjasmplus"), "masm", d->version, "NEW");
+    ASSERT_TRUE(written.ok) << written.error;
+    // MASM keeps no "changed" flag: the text it holds is replaced by force (or when it is the caller's own) only
+    EXPECT_FALSE(PlanInject(dump.machine, *d, written.bytes).ok);
+    InjectOptions force;
+    force.force = true;
+    const InjectPlan plan = PlanInject(dump.machine, *d, written.bytes, force);
+    ASSERT_TRUE(plan.ok) << plan.error;
+    std::map<uint16_t, uint8_t> pokes;
+    for (const InjectPlan::Poke& p : plan.pokes)
+        pokes[static_cast<uint16_t>((p.page == 2 ? 0x8000 : p.page == 5 ? 0x4000 : 0xC000) + p.offset)] = p.value;
+    for (size_t k = 0; k < written.bytes.size(); ++k)
+        EXPECT_EQ(pokes[static_cast<uint16_t>(0x970B + k)], written.bytes[k]) << k;
+    EXPECT_EQ(pokes[0x96CC] | (pokes[0x96CD] << 8), 0x970B);   // the gap start at the start
+    EXPECT_EQ(pokes[0x96CE] | (pokes[0x96CF] << 8), 0xFFFF);   // the gap end at #FFFF
+
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        for (const InjectPlan::Poke& p : plan.pokes)
+            if (dump.machine.ram[k].page == p.page)
+                dump.pages[k][p.offset] = p.value;
+    const SyncText back = ReadText(dump.machine, *d);
+    ASSERT_TRUE(back.ok) << back.state;
+    EXPECT_EQ(back.file, written.bytes);
+    InjectOptions own;
+    own.written = {written.bytes};
+    EXPECT_TRUE(PlanInject(dump.machine, *d, written.bytes, own).ok) << "its own text: replaced without force";
+}
+
 TEST(SyncInject_Test, Tasm412TakesAFileAtItsCommandLineAsLoadLeavesIt)
 {
     Dump dump = Load("tasm412-command");

@@ -56,12 +56,15 @@ class TestStateInspection:
         assert "display_mode" in screen
         assert "border_color" in screen
         assert "active_screen" in screen
-        assert screen["display_mode"] == "standard"  # ZX standard after boot
+        # The real video mode since f0ff08e50 (it was the literal "standard"): the fixture's Pentagon boots into the
+        # standard ZX screen with Pentagon timing; display_mode is the legacy alias of video_mode
+        assert screen["video_mode"] == "Pentagon128K"
+        assert screen["display_mode"] == screen["video_mode"]
 
         # Mode details
         mode = api_client.get_screen_mode(emu_id)
-        assert mode["video_mode"] == "standard"
-        assert mode["resolution"] == "256\u00d7192"
+        assert mode["video_mode"] == screen["video_mode"]
+        assert mode["resolution"] == "256x192"
         assert "memory_layout" in mode
         assert mode["memory_layout"]["total_bytes"] == 6912
 

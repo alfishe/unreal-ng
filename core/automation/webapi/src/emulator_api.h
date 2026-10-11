@@ -343,6 +343,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateNextAudio, "/api/v1/emulator/{id}/state/next/audio", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateNextInput, "/api/v1/emulator/{id}/state/next/input", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNextNmiJournal, "/api/v1/emulator/{id}/next/nmi-journal", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextMagicPort, "/api/v1/emulator/{id}/state/next/magic-port", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postNextMagicPort, "/api/v1/emulator/{id}/next/magic-port", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateNextPixel, "/api/v1/emulator/{id}/state/next/pixel", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNextLayerCapture, "/api/v1/emulator/{id}/next/layer-capture", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateNextDma, "/api/v1/emulator/{id}/state/next/dma", drogon::Get);
@@ -1260,6 +1262,12 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     /// @brief POST /api/v1/emulator/{id}/next/nmi-journal {"enabled", "clear", "capacity"} — switch, clear or resize the interrupt / NMI / reset journal
     void postNextNmiJournal(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                             const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/next/magic-port?since=&limit= — the magic debug port: its setting and the text a program wrote to it
+    void getStateNextMagicPort(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/next/magic-port {"enabled", "port", "mode", "clear"} — switch the magic port, choose its port and mode, clear its output
+    void postNextMagicPort(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id) const;
     /// @brief GET /api/v1/emulator/{id}/state/next/pixel?x=&y=&sx= — the pixel inspector: winner, colour, per-layer why and source address
     void getStateNextPixel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                            const std::string& id) const;

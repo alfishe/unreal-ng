@@ -3852,6 +3852,48 @@ public:
             }
             return StateNodeToLua(s, DeviceState::NextNmiJournalControl(emulator->GetContext(), enable, clear, capacity));
         });
+        // next_magic_port([{since=N, limit=N}]): the magic debug port - its setting and the text a program wrote to it (DeviceState::NextMagicPortReport)
+        lua.set_function("next_magic_port", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            uint64_t since = 0;
+            size_t limit = 200;
+            if (options)
+            {
+                sol::object a = (*options)["since"];
+                if (a.get_type() == sol::type::number)
+                    since = static_cast<uint64_t>(a.as<long long>());
+                sol::object b = (*options)["limit"];
+                if (b.get_type() == sol::type::number)
+                    limit = static_cast<size_t>(b.as<long long>());
+            }
+            return StateNodeToLua(s, DeviceState::NextMagicPortReport(emulator->GetContext(), since, limit));
+        });
+        // next_magic_port_control({enabled=true|false, port=N, mode="hex|dec|ascii|line", clear=true}): switch the magic port, choose its port and mode
+        lua.set_function("next_magic_port_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            int port = -1;
+            bool clear = false;
+            std::string mode;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+                sol::object p = (*options)["port"];
+                if (p.get_type() == sol::type::number)
+                    port = static_cast<int>(p.as<long long>() & 0xFFFF);
+                sol::object m = (*options)["mode"];
+                if (m.get_type() == sol::type::string)
+                    mode = m.as<std::string>();
+                sol::object c = (*options)["clear"];
+                if (c.get_type() == sol::type::boolean)
+                    clear = c.as<bool>();
+            }
+            return StateNodeToLua(s, DeviceState::NextMagicPortControl(emulator->GetContext(), enable, port, mode, clear));
+        });
         // next_dma() / next_video(): the Next's DMA and video layers (DeviceState::NextDma / NextVideo; no side effect on the machine)
         lua.set_function("next_dma", [this](sol::this_state s) -> sol::object {
             Emulator* emulator = effectiveEmulator();

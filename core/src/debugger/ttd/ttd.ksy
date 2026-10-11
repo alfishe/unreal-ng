@@ -680,7 +680,14 @@ types:
           erasing, 1 writable, 2 contents modified, 3 AMD IDs), u1 DQ6 toggle, u1 DQ7 source byte, u1 sectors to
           erase (bit per 64 KB sector), u1 program value, s8 erase window end, s8 busy end (base clock t-states),
           u3 program offset, 6 reserved; the 512 KB array is the engine region EvoFlash (18), the machine's ROM
-          pages 0-31).
+          pages 0-31),
+          62 NextState (the ZX Spectrum Next, one image of NextStateCodec::Save: u1 version 1, then the board (selected
+          register, the 256 NextREG bytes, timing, reset bits), the memory map (MMU slots, paging bits, DivMMC /
+          Multiface / Layer 2 views, config mode), video registers (clip windows, 8 x 256 palette words), sprites (128 x 5
+          attribute bytes, 16 KB patterns, upload latches), the copper (2 KB list, position, mode, clock), the DMA, the CTC,
+          the interrupt controller, the I2C bus with the DS1307, the Multiface and DivMMC latches, the decoder's SD SPI
+          and timing latches; fixed length per machine; the audio chips, the SD cards' protocol state and the system-area
+          RAM are not in it yet).
           ScorpionProfROM (6) byte 5 is the Turbo+ latch (scorpion_turbo; 0 in sessions recorded before it).
           Plus3Paging (13): u1 p1FFD, u1 floating-bus byte (the gate array's last contended byte), u1 flags
           (bit 0: the byte is valid; 0 in sessions recorded before it), u1 reserved.

@@ -145,6 +145,17 @@ class TestNextReports:
         assert add({"type": "magic_ed_ff", "address_end": 3}).status_code == 400
         api_client.session.delete(api_client._url(f"/api/v1/emulator/{next_emulator}/breakpoints"))
 
+    def test_magic_port_console(self, api_client, next_emulator):
+        report = get(api_client, next_emulator, "/state/next/magic-port").json()
+        assert report["enabled"] is False and report["items"] == []
+        on = post(api_client, next_emulator, "/next/magic-port", {"enabled": True, "port": 0x00FF, "mode": "line", "clear": True})
+        assert on.status_code == 200, on.text
+        assert on.json()["port"] == "0x00FF" and on.json()["mode"] == "line"
+        assert post(api_client, next_emulator, "/next/magic-port", {"mode": "binary"}).status_code == 400
+        assert post(api_client, next_emulator, "/next/magic-port", {"port": 70000}).status_code == 400
+        assert get(api_client, next_emulator, "/state/next/magic-port?since=x").status_code == 400
+        post(api_client, next_emulator, "/next/magic-port", {"enabled": False})
+
     def test_nmi_report_journal_and_trigger(self, api_client, next_emulator):
         report = get(api_client, next_emulator, "/state/next/nmi").json()
         names = [source["name"] for source in report["sources"]]

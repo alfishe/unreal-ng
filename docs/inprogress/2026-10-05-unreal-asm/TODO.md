@@ -193,7 +193,7 @@ phase; master only after the owner's review.
       - [ ] label values for sources of other dialects (their sjasmplus conversion's layout, symbols/fromsource.h)
       - [x] idle rules for the other ALASM builds (5.08 ... 3.8c, 2026-10-10): the command line's return pair read in each at the prompt and in the editor; inject checked in each (assembled at the prompt, refused in the editor)
       - [x] the ALASM frontend took `ADD B` as ADD A,B and `"AB"` as #4142 (2026-10-10): ALASM 5.09 rejects ADD / ADC / SBC without A, (code #00) and takes "AB" as #4241, "ABC" as #4341; a 22-form probe assembled by ALASM 5.09 and converted to sjasmplus agree byte for byte
-      - [ ] the `retrobackend` core split out of the ALASM backend with the second target (Z3)
+      - [x] the `retrobackend` core (2026-10-11): `RetroWriter`, shared by the XAS, STORM, TASM, ZX-ASM and MASM backends (ALASM keeps its own: it has macros and conditions of its own)
     - [x] Z1 snapshots and disks both ways, no emulator needed (2026-10-10, asm-synchronizer.md §16.3, §19): `snapshot.h` (.sna / .z80 / .szx), disks through unreal-disk, `WriteAs`, `sync::InjectIntoSnapshot`; `zxasm probe / extract / inject`; `snapshot` + `output` on the sync verbs (WebAPI / CLI / MCP / Lua / Python); the ALASM 5.09 idle templates (`make-template.py`); checked by ALASM 5.09 assembling the injected snapshots and disk
       - [ ] templates of the other assemblers (with their idle rules, Z3) and a named template list (`templates` verb) if the surfaces need it
       - [ ] the sync verbs on a snapshot without an emulator instance in the WebAPI route (`/asm/sync/...` with no id)
@@ -201,7 +201,7 @@ phase; master only after the owner's review.
       - [ ] +3DOS (DSK) file system in unreal-disk, if sources come on +3 disks
       - [ ] unreal-ng's Z80 snapshot writer starts a run right after a single `ED` (`ED ED ED 05 00`): every reader takes it for 237 bytes of #05; reported, the fix is the writer's (`loader_z80.cpp` compress)
     - [x] Z2 push watch (host file → inject on save), Inject in the Qt dock (2026-10-11, asm-synchronizer.md §19): `sync-push-watch` on every surface, the watch's own text replaced, the user's a conflict, a busy assembler waited for; Live source window Inject... and Push; checked live in ALASM 5.09
-    - [ ] Z3 backends + writers + templates: TASM, XAS, STORM, ZX-ASM, MASM
+    - [x] Z3 backends + writers: TASM, XAS, STORM, ZX-ASM, MASM (2026-10-11; templates: below)
       - [x] XAS (2026-10-11, research-sjasmplus-to-xas.md): backend, inject at the command line with LOAD's editor variables, idle rules for 4.18-9.10; every build assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
       - [ ] XAS idle templates (snapshots at the command line) and a project into XAS (one text: its INCLUDEs onto the disk)
       - [x] the `retrobackend` core shared by the XAS and STORM backends (2026-10-11, `RetroWriter`: names, values, conditions, the walk; ALASM keeps its own)
@@ -211,6 +211,8 @@ phase; master only after the owner's review.
       - [ ] TASM 4.0 / 4.4 / 3.x inject rules; TASM idle templates
       - [x] ZX-ASM / ZAsm 3.15 (2026-10-11, research-sjasmplus-to-zxasm.md): backend, inject at its COMMAND prompt (the first `Linear` one); ZAsm 3.15 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
       - [ ] ZX-ASM 3.0 / 3.10 / ZAsm 3.2x-4.20 inject rules; the editor redrawn after an inject; ZAsm idle templates
+      - [x] MASM 1.1 / 1.3 (2026-10-11, research-sjasmplus-to-masm.md): backend, inject at its prompt as LOAD leaves a file; MASM 1.1 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
+      - [ ] MASM 1.0 demo / 2.0 / 3.0 inject rules; MASM idle templates
     - [ ] Z4 48K targets: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
     - [ ] Z5 sjasmplus frontend coverage of real projects (STRUCT, MODULE, DEVICE / SLOT / PAGE, SAVEBIN, DEFINE)
   - First cuts: ALASM both ways about 14 days; + TASM 4.12 about 20; + watch / push watch, hints, live labels, Qt dock about 27

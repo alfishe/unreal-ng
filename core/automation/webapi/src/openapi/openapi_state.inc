@@ -213,6 +213,12 @@
              "/next/nmi-journal): seq, frame, t, pc, kind (int_ack | reti | nmi_request | retn | reset), source; int_ack has the vector in "
              "hardware IM2 mode; nmi_request has accepted and, if refused, reason; reset has reset_bits and reset_last. Query: kinds (comma), "
              "since (seq), from / to (frame), limit (newest N, default 200, 0 = all). 400 on a bad parameter.", true},
+            {"/api/v1/emulator/{id}/state/next/magic-port", "Get the magic debug port: its setting and what a program wrote to it",
+             "The program's debug console (core DeviceState::NextMagicPortReport; CLI `state next magicport`, Lua next_magic_port(), Python "
+             "next_magic_port(), MCP inspect_state aspect next_magic_port). Off by default: POST /next/magic-port {enabled: true, port: N, mode}. "
+             "enabled, port, mode (hex | dec | ascii | line), bytes (written since the last clear), size, evicted, last_seq, partial (line mode: a "
+             "line not ended yet), items: seq, frame, t, pc, text (hex/dec/ascii: one item per byte; line: one per CR/LF-ended line). The port is an "
+             "exact 16-bit address (jnext --magic-port). Query: since (seq), limit (newest N, default 200, 0 = all). 400 on a bad parameter.", true},
             {"/api/v1/emulator/{id}/state/next/divmmc", "Get the Next DivMMC, its automap entries and the DivMMC journal",
              "Why the DivMMC is in (core DeviceState::NextDivMmcReport; CLI `state next divmmc`, Lua next_divmmc(), Python next_divmmc(), "
              "MCP inspect_state aspect next_divmmc). state: port_enabled, automap_armed (NR #0A bit 4), control (#E3), conmem, mapram, bank, "
@@ -717,6 +723,33 @@
             qp["schema"]["type"] = "string";
         }
         paths[kNmi]["get"]["responses"]["400"]["description"] = "Bad parameter";
+
+        const char* kMagicQuery[][2] = {{"since", "items after this seq"}, {"limit", "the newest N items (default 200, 0 = all)"}};
+        const char* kMagic = "/api/v1/emulator/{id}/state/next/magic-port";
+        for (Json::ArrayIndex i = 0; i < 2; i++)
+        {
+            Json::Value& qp = paths[kMagic]["get"]["parameters"][i + 1];
+            qp["name"] = kMagicQuery[i][0];
+            qp["in"] = "query";
+            qp["description"] = kMagicQuery[i][1];
+            qp["schema"]["type"] = "string";
+        }
+        paths[kMagic]["get"]["responses"]["400"]["description"] = "Bad parameter";
+
+        const char* kMagicCtl = "/api/v1/emulator/{id}/next/magic-port";
+        paths[kMagicCtl]["post"]["summary"] = "Switch the magic debug port, choose its port and mode, clear its output";
+        paths[kMagicCtl]["post"]["tags"].append("Machine State");
+        paths[kMagicCtl]["post"]["description"] =
+            "Body {\"enabled\": true|false, \"port\": 0..65535, \"mode\": \"hex|dec|ascii|line\", \"clear\": true}, all optional. Off by default; "
+            "off costs one branch per OUT. A write by a tool never counts, only the program's OUT. Answers the report's setting fields.";
+        paths[kMagicCtl]["post"]["parameters"][0]["name"] = "id";
+        paths[kMagicCtl]["post"]["parameters"][0]["in"] = "path";
+        paths[kMagicCtl]["post"]["parameters"][0]["required"] = true;
+        paths[kMagicCtl]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kMagicCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[kMagicCtl]["post"]["responses"]["200"]["description"] = "The setting";
+        paths[kMagicCtl]["post"]["responses"]["400"]["description"] = "Bad port or mode";
+        paths[kMagicCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Next";
 
         const char* kNmiCtl = "/api/v1/emulator/{id}/next/nmi-journal";
         paths[kNmiCtl]["post"]["summary"] = "Switch, clear or resize the interrupt / NMI / reset journal";

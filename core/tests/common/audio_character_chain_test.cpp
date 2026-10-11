@@ -288,7 +288,9 @@ TEST(AudioCharacterChain_Test, SwitchedOnAgainReplaysNothing)
         }
         for (int k = 0; k < offFrames; k++)
         {
-            frame = silence;
+            // Copied over the frame's own storage (same size): gcc 16 at -O3 warned -Wstringop-overflow on the
+            // never-taken grow branch of vector's copy assignment
+            std::copy(silence.begin(), silence.end(), frame.begin());
             chain.processInt16(frame.data(), kFrame);
         }
         chain.setPunchEnabled(true);
@@ -298,7 +300,7 @@ TEST(AudioCharacterChain_Test, SwitchedOnAgainReplaysNothing)
         // Back on over silence: the output is silence (no marker on either channel, no step)
         for (int k = 0; k < 3; k++)
         {
-            frame = silence;
+            std::copy(silence.begin(), silence.end(), frame.begin());
             chain.processInt16(frame.data(), kFrame);
             EXPECT_EQ(frame, silence) << "mode " << int(how) << ", " << offFrames << " frames off, frame " << k
                                       << " after re-enabling: old audio replayed";

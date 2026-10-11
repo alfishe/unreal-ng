@@ -205,6 +205,30 @@ SyncText ReadGapBufferFixed(const MachineView& machine, const SyncDescriptor& d)
         return Inconsistent(text, "the text pointers are out of order: #" + Hex(start, 4) + " #" + Hex(*gapStart, 4) + " #" +
                                       Hex(*gapEnd, 4) + " #" + Hex(top, 4));
     text.editor = std::any_of(flag.begin(), flag.end(), [](uint8_t b) { return b != 0; });
+    if (p.loadedForm && !text.editor && *gapStart == start && *gapEnd == 0xFFFF)
+    {
+        // as LOAD left it (MASM 1.1): the file at the start, up to its end record
+        std::vector<uint8_t> all;
+        if (!machine.Read(static_cast<uint16_t>(start), static_cast<size_t>(0x10000 - start), all))
+            return Inconsistent(text, "the text lies in a page that was not copied");
+        size_t at = 0;
+        long lines = 0;
+        while (at < all.size() && all[at] != static_cast<uint8_t>(p.end[0]))
+        {
+            const size_t n = all[at];
+            if (at + n + 1 >= all.size() || all[at + n + 1] != n)
+                return Inconsistent(text, "the text is not made of length-framed lines");
+            at += n + 2;
+            ++lines;
+        }
+        if (at + p.end.size() > all.size())
+            return Inconsistent(text, "no end record after the text");
+        text.file.assign(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(at + p.end.size()));
+        text.lines = static_cast<int>(lines);
+        text.ok = true;
+        text.state = "ok";
+        return text;
+    }
     if (p.plainTextFile && !text.editor)
     {
         std::vector<uint8_t> lower, upper;
@@ -677,7 +701,14 @@ SyncDescriptor Masm11()
     d.gapBuffer.editorFlagAt = 0x851A;
     d.gapBuffer.editorFlagLength = 31;
     d.gapBuffer.end = std::string("\xFF", 1);
+    d.gapBuffer.loadedForm = true;
     d.typing = {TypingRule::NotInText, 0, 0};
+    // A text is written at its menu prompt (MASM128>): the key wait returns through #85C8 there and in the editor; the
+    // line buffer is zeros only in the menu
+    d.idleChain = {0x85C8};
+    d.idleZeroAt = 0x851A;
+    d.idleZeroLength = 31;
+    d.idleWhere = "its MASM128> prompt";
     return d;
 }
 
@@ -1080,6 +1111,15 @@ bool Idle(const MachineView& machine, const SyncDescriptor& d, std::string& why)
         why = "the stack at #" + Hex(sp, 4) + " is not in the memory copied";
         return false;
     }
+    if (d.idleZeroLength)
+    {
+        std::vector<uint8_t> zero;
+        if (!machine.Read(d.idleZeroAt, d.idleZeroLength, zero) || std::any_of(zero.begin(), zero.end(), [](uint8_t b) { return b != 0; }))
+        {
+            why = d.title + " is not waiting for a command (" + (d.idleWhere.empty() ? "in its editor" : d.idleWhere) + ")";
+            return false;
+        }
+    }
     std::vector<std::vector<uint16_t>> chains = {d.idleChain};
     chains.insert(chains.end(), d.idleAlternatives.begin(), d.idleAlternatives.end());
     for (const std::vector<uint16_t>& chain : chains)
@@ -1144,13 +1184,16 @@ InjectPlan PlanInjectLoaded(const MachineView& machine, const SyncDescriptor& d,
     }
     const GapBufferParams& p = d.gapBuffer;
     plan.previous = ReadText(machine, d);
-    const bool changed = p.changedAt && (machine.Byte(p.changedAt).value_or(0) & p.changedMask) != 0;
+    // without a "changed" flag (MASM) a text in memory that is not empty and not the caller's own counts as changed
+    const bool changed = p.changedAt ? (machine.Byte(p.changedAt).value_or(0) & p.changedMask) != 0
+                                     : plan.previous.file.size() > p.end.size();
     if (plan.previous.ok && changed && !options.force && !WrittenBefore(plan.previous, options.written, 0))
     {
-        plan.error = "the text in " + d.title + " has changes not saved (force overwrites them)";
+        plan.error = "the text in " + d.title + (p.changedAt ? " has changes not saved" : " may have changes not saved (it keeps no flag)") +
+                     " (force overwrites them)";
         return plan;
     }
-    const auto start = machine.Word(p.start);
+    const auto start = p.fixedStart ? std::optional<uint16_t>(p.fixedStart) : machine.Word(p.start);
     if (!start)
     {
         plan.error = "the text pointers of " + d.title + " are not in memory";
@@ -1171,9 +1214,16 @@ InjectPlan PlanInjectLoaded(const MachineView& machine, const SyncDescriptor& d,
     bool ok = true;
     for (size_t k = 0; k < file.size(); ++k)
         ok = poke(*start + static_cast<uint32_t>(k), file[k]) && ok;
-    for (const uint16_t at : {p.top, p.gapStart, p.gapEnd, p.lineCount, p.cursorLine})
-        if (at)
-            ok = poke(at, 0) && poke(at + 1u, 0) && ok;
+    if (p.fixedStart)
+    {
+        // MASM: the gap start at the start, the gap end at #FFFF
+        ok = poke(p.gapStart, static_cast<uint8_t>(*start & 0xFF)) && poke(p.gapStart + 1u, static_cast<uint8_t>(*start >> 8)) && ok;
+        ok = poke(p.gapEnd, 0xFF) && poke(p.gapEnd + 1u, 0xFF) && ok;
+    }
+    else
+        for (const uint16_t at : {p.top, p.gapStart, p.gapEnd, p.lineCount, p.cursorLine})
+            if (at)
+                ok = poke(at, 0) && poke(at + 1u, 0) && ok;
     if (p.changedAt)
         ok = poke(p.changedAt, options.markChanged ? p.changedMask : 0) && ok;
     if (p.nameAt && !options.name.empty())

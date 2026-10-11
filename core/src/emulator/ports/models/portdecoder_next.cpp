@@ -4,6 +4,7 @@
 
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/ttd/next/ttdnextstate.h"
 #include "debugger/debugmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
@@ -364,6 +365,11 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    // The magic debug port: the program's console. A tool's own OUT (toolAccessActive) is not the program's
+    if (_magicPort.Enabled()) [[unlikely]]
+        if (!_context->toolAccessActive)
+            _magicPort.Write(port, value, static_cast<uint32_t>(_context->emulatorState.frame_counter),
+                             _context->pCore && _context->pCore->GetZ80() ? _context->pCore->GetZ80()->t : 0, pc);
     if (static_cast<uint8_t>(port) == _multiface->EnablePort() || static_cast<uint8_t>(port) == _multiface->DisablePort())
         _multiface->PortWrite(static_cast<uint8_t>(port));  // the other devices on the port see the write too
     PortDecodeDisposition disp;
@@ -1130,3 +1136,19 @@ bool PortDecoder_Next::RequestBoardNmi()
     GenerateDriveNmi();
     return true;
 }
+
+/// region <TTD>
+
+std::vector<ttd::PeripheralId> PortDecoder_Next::GetTTDModelStateIds() const
+{
+    return {ttd::PeripheralId::NextState};
+}
+
+std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Next::CreateTTDSerializers() const
+{
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
+    serializers.push_back(std::make_unique<ttd::TTDNextState>(*const_cast<PortDecoder_Next*>(this)));
+    return serializers;
+}
+
+/// endregion </TTD>

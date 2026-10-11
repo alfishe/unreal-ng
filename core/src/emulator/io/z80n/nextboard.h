@@ -180,6 +180,7 @@ public:
     bool SdSwap() const { return (_regs[kRegPeripheral3] & 0x20) != 0; }
 
 private:
+    friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     NextMemory* _memory;
     NextVideoRegs _video;
     NextSprites _sprites;

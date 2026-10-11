@@ -90,6 +90,7 @@ public:
     /// endregion
 
 private:
+    friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     enum class Seq : uint8_t
     {
         Idle,

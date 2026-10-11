@@ -171,6 +171,14 @@ this emulator still does (`answers_here`); port `#37`, the MD pad buttons and th
 `state next audio` / `state next input`, Lua `next_audio()` / `next_input()`, Python `emu.next_audio()` / `emu.next_input()`, MCP aspects
 `next_audio` / `next_input`.
 
+### 3a6. The program's console and the magic breakpoint (G9)
+
+A program under test can print through the **magic debug port**: `POST /next/magic-port {"enabled":true,"port":255,"mode":"line"}` and the bytes the
+program writes with `OUT (C),A` (BC = the port, an exact 16-bit address) come back from `state/next/magic-port` as text (modes hex, dec, ascii,
+line). Off by default, one branch per OUT when off; a tool's own write never counts. For the **magic breakpoint** of other emulators add a
+breakpoint of type `magic_ed_ff` (jnext, ZEsarUX) or `magic_dd_01` (CSpect): the opcode runs as on the hardware (NOP / `LD BC,nn`) and the
+machine stops after it. CLI `state next magicport`, `bmagic`; Lua `next_magic_port()`, `bp_magic()`; Python the same; MCP aspect `next_magic_port`.
+
 ### 3b. What did the program configure? (the debugger reports)
 
 Guessing from port traces and one register at a time found the DMA writing into ROM, the tilemap reading bank 7 as 16K and a card

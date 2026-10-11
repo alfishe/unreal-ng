@@ -37,6 +37,13 @@ Memory: the 2 MB array is the RAM region checkpoint (key frames + dirty XOR delt
 `MAX_RAM_PAGES`). CPU state: Z80N library boundary synchronized like the Z84C15 (`Z80State::boundary`, engine
 `InvalidateBoundary` after a restore). Restore order is ascending id; the slot table is rebuilt after all blobs.
 
+**Landed (2026-10-11): blob `NextState`, id 62** (`NextStateCodec`, `TTDNextState`): the NextREG file and select latch, reset bits, the memory map (MMU slots,
+paging bits, the DivMMC / Multiface / Layer 2 views, config mode; the slot table is rebuilt after a load), the video registers with the 8 palettes and clip
+windows, the sprites (attributes, 16 KB patterns, upload latches), the copper (list, position, mode, clock), the DMA, the CTC, the interrupt controller,
+the I2C bus with the DS1307, the Multiface and DivMMC latches and the decoder's SD SPI and timing latches. One fixed-length image (about 25 KB). **Not yet
+in it:** the audio chips and DACs, the SD cards' protocol state, the system-area RAM (DivMMC RAM, config banks), the UARTs (not built). A seek on a Next
+therefore restores the machine a program sees through the registers and the picture, not yet its sound or an SD transfer in flight.
+
 ## 4. Isolating port reads later
 
 DMA transfers memory-to-memory without `IN`. A journal for the Next would also record the DMA's port reads and be
