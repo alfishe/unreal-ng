@@ -83,3 +83,14 @@ Firmware-level execution: studied separately, not in this repository.
    (native driver) first, D3D12 or CUDA if needed (09); re-run 04 (snapshots), 04a, 04b and
    04c `check` / `time`, and 03 `scale` on a quiet machine. Watch the PCIe upload of dirty
    pages and the 3 MB readback on a discrete GPU.
+
+## Status (added 2026-10-10)
+
+**concluded (pre-guideline)** — every experiment in the "Index" above has a verdict (10, coprocessor
+timing, ends with "numbers missing" and a measurement plan for a VDAC2 board): line-parallel CPU
+rendering is bit-exact and recommended first, then a Metal backend on the per-batch hook of 04c; keep the
+distance table for AA. The final timing pass was stopped early, so several figures are single runs
+(each experiment's README says which). Summary in
+`docs/inprogress/2026-10-01-tsconf-vdac2/acceleration-experiments.md`.
+
+Serves: `docs/inprogress/2026-10-01-tsconf-vdac2/`.

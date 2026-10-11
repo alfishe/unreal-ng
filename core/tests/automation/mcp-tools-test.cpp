@@ -3971,3 +3971,173 @@ TEST_F(McpTools_Test, CaptureMedia_Screenshot_ALayerWithoutAlphaSaysItIsFlattene
     EXPECT_TRUE(_caller->Saw("GET", route));
     EXPECT_NE(result.text.find("layer tilemap of Next frame #7, flattened"), std::string::npos) << result.text;
 }
+
+/// memory_access read carries the bytes in the text (clients that hand the model only content[] see them); 'address'
+/// is an alias of 'offset' (an agent writing it read from 0 before), both at once is an error
+TEST_F(McpTools_Test, MemoryAccess_ReadBytesInTheTextAndAddressAlias)
+{
+    Json::Value dump;
+    dump["address"] = "0x5C00";
+    dump["format"] = "hexdump";
+    dump["hexdump"] = "0x5C00: FF 00 3E 07  |..>.|\n";
+    _caller->routes["GET /api/v1/emulator/emu-1/memory/read/0x5C00?length=4"] = {200, dump};
+    Json::Value args;
+    args["action"] = "read";
+    args["address"] = "0x5C00";
+    args["length"] = 4;
+    mcp::ToolResult result = RunTool(*_registry, "memory_access", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/memory/read/0x5C00?length=4")) << "address is the offset";
+    EXPECT_NE(result.text.find("0x5C00: FF 00 3E 07"), std::string::npos) << result.text;
+
+    Json::Value region;
+    region["region"] = "neogs.ram";
+    region["offset"] = "0x10000";
+    for (unsigned b : {0x01u, 0x02u, 0xA8u})
+        region["data"].append(b);
+    _caller->routes["GET /api/v1/emulator/emu-1/memory/region/neogs.ram?offset=0x10000&length=3&format=hex"] = {200, region};
+    args = Json::Value();
+    args["action"] = "read";
+    args["space"] = "neogs.ram";
+    args["offset"] = "0x10000";
+    args["length"] = 3;
+    result = RunTool(*_registry, "memory_access", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("0x010000: 01 02 A8"), std::string::npos) << "offsets past 64K keep their digits\n" << result.text;
+
+    const size_t calls = _caller->calls.size();
+    args = Json::Value();
+    args["action"] = "read";
+    args["address"] = "0x5C00";
+    args["offset"] = "0x4000";
+    result = RunTool(*_registry, "memory_access", args, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_EQ(_caller->calls.size(), calls) << "a conflicting request never reaches the WebAPI";
+}
+
+/// bp_list writes one line per breakpoint: id, address, access, hits; non-defaults (off, mode, group, note) only
+TEST_F(McpTools_Test, ControlExecution_BpListOneLinePerBreakpoint)
+{
+    Json::Value list;
+    Json::Value bp;
+    bp["id"] = 1;
+    bp["address"] = 0x38;
+    bp["type"] = "memory";
+    bp["execute"] = true;
+    bp["read"] = false;
+    bp["write"] = false;
+    bp["hit_count"] = 3;
+    bp["active"] = true;
+    bp["hit_mode"] = "always";
+    bp["group"] = "default";
+    bp["note"] = "";
+    list["breakpoints"].append(bp);
+    bp["id"] = 2;
+    bp["address"] = 0x5C3A;
+    bp["execute"] = false;
+    bp["write"] = true;
+    bp["hit_count"] = 0;
+    bp["active"] = false;
+    bp["note"] = "sysvars";
+    list["breakpoints"].append(bp);
+    list["count"] = 2;
+    _caller->routes["GET /api/v1/emulator/emu-1/breakpoints"] = {200, list};
+
+    Json::Value args;
+    args["action"] = "bp_list";
+    mcp::ToolResult result = RunTool(*_registry, "control_execution", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("\n#1 0x0038 X hits 3\n"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("\n#2 0x5C3A W hits 0 off \"sysvars\""), std::string::npos) << result.text;
+    EXPECT_EQ(result.structured["count"].asUInt(), 2u);
+}
+
+/// A small structured result as key=value text: nested keys joined with '.', scalar arrays inline, the rest counted
+TEST(McpToolUtils_Test, FlatFieldsShowsTheValues)
+{
+    Json::Value v;
+    v["model"] = "Pentagon";
+    v["ram_kb"] = 128;
+    v["port_0x7FFD"]["value_hex"] = "0x10";
+    v["pages"].append(5);
+    v["pages"].append(7);
+    v["name"] = "Screen 0 (normal)";
+    v["hz"] = 3584000.0;
+    EXPECT_EQ(mcp::FlatFields(v),
+              "hz=3584000 model=Pentagon name=\"Screen 0 (normal)\" pages=[5,7] port_0x7FFD.value_hex=0x10 ram_kb=128");
+    const std::string cut = mcp::FlatFields(v, 30);
+    EXPECT_NE(cut.find("more field(s)"), std::string::npos) << cut;
+    EXPECT_LE(cut.find(" ..."), 30u) << cut;
+}
+
+/// Calls whose text was a headline only carry their fields as key=value (AppendFields)
+TEST_F(McpTools_Test, JoystickStatus_FieldsInTheText)
+{
+    Json::Value body;
+    body["kempston"]["connected"] = true;
+    body["kempston"]["state_hex"] = "0x10";
+    _caller->routes["GET /api/v1/emulator/emu-1/joystick"] = {200, body};
+    Json::Value args;
+    args["action"] = "status";
+    mcp::ToolResult result = RunTool(*_registry, "joystick_input", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Joystick status [target emu-1]\nkempston.connected=true kempston.state_hex=0x10"),
+              std::string::npos) << result.text;
+}
+
+/// screen_attributes writes the grid as attribute bytes, one row of cells per line
+TEST_F(McpTools_Test, InspectState_ScreenAttributesGridInTheText)
+{
+    Json::Value body;
+    body["available"] = true;
+    body["model"] = "Pentagon";
+    body["cols"] = 2;
+    body["rows"] = 2;
+    Json::Value screen;
+    for (int i = 0; i < 4; ++i)
+    {
+        Json::Value cell;
+        cell["ink"] = i;
+        cell["paper"] = 7;
+        cell["bright"] = i == 1;
+        cell["flash"] = i == 3;
+        screen["cells"].append(cell);
+    }
+    body["screens"].append(screen);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/screen/attributes"] = {200, body};
+    Json::Value args;
+    args["aspects"].append("screen_attributes");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("screen 0:\n  3879\n  3ABB"), std::string::npos) << result.text;
+}
+
+/// manage_symbols list: from / to go to the WebAPI as numbers, name filters by substring, the text lists the labels
+TEST_F(McpTools_Test, ManageSymbols_ListFiltersAndWritesTheLabels)
+{
+    Json::Value body;
+    body["total"] = 3;
+    for (const auto& [name, address] : {std::pair<const char*, int>{"PRINT_OUT", 0x09F4}, {"PO_CHAR", 0x0B65}, {"CLS", 0x0D6B}})
+    {
+        Json::Value label;
+        label["name"] = name;
+        label["address"] = address;
+        label["type"] = "code";
+        body["labels"].append(label);
+    }
+    body["count"] = 3;
+    _caller->routes["GET /api/v1/emulator/emu-1/labels?from=2048&to=4095"] = {200, body};
+    Json::Value args;
+    args["action"] = "list";
+    args["from"] = "0x0800";
+    args["to"] = "$0FFF";
+    args["name"] = "print";
+    mcp::ToolResult result = RunTool(*_registry, "manage_symbols", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/labels?from=2048&to=4095"));
+    EXPECT_NE(result.text.find(": 1 of 3\n0x09F4 PRINT_OUT code"), std::string::npos) << result.text;
+    EXPECT_EQ(result.structured["count"].asUInt(), 1u);
+
+    args["from"] = "zz";
+    EXPECT_TRUE(RunTool(*_registry, "manage_symbols", args, *_caller).isError);
+}

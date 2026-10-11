@@ -327,3 +327,13 @@ Knowledge articles must include:
 4. **Delta RLE hurts** — Header overhead exceeds savings, zstd handles sparse natively
 5. **4KB pages** — 3x more efficient than 16KB due to sub-page locality
 6. **Index overhead negligible** — <1% of hot buffer for typical configs
+
+## Status (added 2026-10-10)
+
+**concluded (pre-guideline)** — the original analysis (2026-09-11, audited in `AUDIT.md`) chose
+page-granular v2 capture with zstd-1 and 4 KB pages ("Key Learnings" above; reports in `knowledge/`, e.g.
+`knowledge/v1-vs-v2-benchmark-report.md`). The Phase 1–3 experiments E1–E8 (2026-10-01 … 10-03) set the
+v2 parameters (chain limit 50, 128 B threshold, 8-page reference blocks, write journal on demand — D40);
+results in `experiments/README.md` and each `experiments/eN-*/results.md` / README.
+
+Serves: `docs/inprogress/2026-09-25-ttd-v2-migration/`.

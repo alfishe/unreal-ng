@@ -6,11 +6,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Redirect binaries to the local bin/ folder inside the POC directory
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/bin)
-
 # Fetch root dir path
 get_filename_component(ROOT_DIR ../../../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Binaries go to <repo>/scratch/poc-011/bin (git-ignored), not into the POC directory
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${ROOT_DIR}/scratch/poc-011/bin)
 
 set(GOOGLEBENCHMARK_DIR ${ROOT_DIR}/lib/benchmark)
 

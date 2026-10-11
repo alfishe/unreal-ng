@@ -86,7 +86,7 @@ Found on the way and fixed in the engine's controller:
 | `ttdbench` (`UNREAL_TTD_BENCH_ENGINE=v1/all`), `testdata/ttd/bench/v1-*.json`, `v1-ci-gate.txt` | v1 as a backend and the reference figures | drop the v1 backend; the engine baselines (`engine-phase*-full.json`) stay |
 | `tools/verification/ttd-analyzer` (Python: `ttd_format.py`, `record_port_journal_fixtures.py`) | parses v1 files; records fixtures with v1 | keep the parser for old files or retire it; record fixtures with the engine |
 | `tools/verification/zxdlss` | the v1 branch for v1 files (§1) | drop the branch, or keep v1 files readable through a converter |
-| `tools/poc/010-ttd-gui`, `01-ttd-compression`, `010-ttd-compression`, `011-ttd-v2-capture-analysis` | proofs of concept on v1 data | retire (Phase 6) |
+| `tools/poc/027-ttd-gui`, `010-ttd-compression`, `011-ttd-v2-capture-analysis` | proofs of concept on v1 data | retire (Phase 6) |
 
 ## 5. Owner decisions (2026-10-09)
 

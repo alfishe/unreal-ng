@@ -140,6 +140,64 @@ inline std::string FormatRegisters(const Json::Value& registers)
     return out.str();
 }
 
+/// A small structured result as one line of key=value fields for the text ("model=Pentagon ram_kb=128
+/// port_0x7FFD.value_hex=0x10"): clients that hand the model only content[] see the values. Nested keys are joined
+/// with '.', arrays of scalars as [a,b]; arrays of objects as key[i].field. Past `limit` characters the rest is
+/// counted, not shown
+inline std::string FlatFields(const Json::Value& value, size_t limit = 1500)
+{
+    std::string text;
+    size_t skipped = 0;
+    std::function<void(const std::string&, const Json::Value&)> walk = [&](const std::string& key, const Json::Value& v) {
+        if (v.isObject())
+        {
+            for (const std::string& name : v.getMemberNames())
+                walk(key.empty() ? name : key + "." + name, v[name]);
+            return;
+        }
+        std::string field;
+        if (v.isArray())
+        {
+            bool scalars = true;
+            for (const Json::Value& item : v)
+                scalars = scalars && !item.isObject() && !item.isArray();
+            if (!scalars)
+            {
+                for (Json::ArrayIndex i = 0; i < v.size(); ++i)
+                    walk(key + "[" + std::to_string(i) + "]", v[i]);
+                return;
+            }
+            field = key + "=[";
+            for (Json::ArrayIndex i = 0; i < v.size(); ++i)
+                field += (i ? "," : "") + v[i].asString();
+            field += "]";
+        }
+        else if (v.isNull())
+            field = key + "=null";
+        else if (v.isString())
+            field = key + "=" + (v.asString().find(' ') == std::string::npos ? v.asString() : "\"" + v.asString() + "\"");
+        else if (v.isDouble())
+        {
+            char number[32];
+            std::snprintf(number, sizeof(number), "%.10g", v.asDouble());
+            field = key + "=" + number;
+        }
+        else
+            field = key + "=" + v.asString();
+        field.erase(std::remove(field.begin(), field.end(), '\n'), field.end());
+        if (text.size() + field.size() + 1 > limit)
+        {
+            ++skipped;
+            return;
+        }
+        text += (text.empty() ? "" : " ") + field;
+    };
+    walk("", value);
+    if (skipped)
+        text += " ... " + std::to_string(skipped) + " more field(s) (response_format json)";
+    return text;
+}
+
 /// A GET /disasm body ({address, instructions[{address, bytes, mnemonic, label?, target?, targetLabel?,
 /// effectiveAddress?, effectiveAddressLabel?}]}) as a listing, one instruction per line:
 ///   "label:" line, then "7396  CD 00 74     call #7400      ; -> label"
@@ -287,6 +345,17 @@ inline std::vector<SeriesStep> ReportSeriesProgress(std::vector<SeriesStep> step
 /// endregion </Sequencing>
 
 /// region <Calls>
+
+/// Wraps a tool's done: a successful result gets its structured fields appended to the text as key=value
+/// (FlatFields), for the calls whose text is a headline only ("Joystick status")
+inline ToolCallback AppendFields(ToolCallback done)
+{
+    return [done](ToolResult result) {
+        if (!result.isError && result.structured.isObject() && !result.structured.empty())
+            result.text += "\n" + FlatFields(result.structured);
+        done(std::move(result));
+    };
+}
 
 /// Performs a WebAPI call and wraps the outcome into a ToolResult.
 /// okPrefix prefixes the text summary on success; the full body goes to structuredContent.

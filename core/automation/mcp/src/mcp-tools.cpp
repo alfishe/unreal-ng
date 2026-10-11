@@ -366,7 +366,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
             // 'status' command prints and the WebAPI serves - one source.
             if (action == "server")
             {
-                ForwardCall("GET", "/api/v1/emulator/status", nullptr, caller, "Server build fingerprint and creatable models", done);
+                ForwardCall("GET", "/api/v1/emulator/status", nullptr, caller, "Server build fingerprint and creatable models", AppendFields(done));
                 return;
             }
 
@@ -424,7 +424,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
             auto forward = [&caller, &args, action, done](const std::string& id) {
                 if (action == "status")
                 {
-                    ForwardCall("GET", Endpoint(id), nullptr, caller, "Status of " + id, done);
+                    ForwardCall("GET", Endpoint(id), nullptr, caller, "Status of " + id, AppendFields(done));
                 }
                 else if (action == "operations")
                 {
@@ -1189,7 +1189,35 @@ void RegisterControlExecution(ToolRegistry& registry)
 
                 if (action == "bp_list")
                 {
-                    ForwardCall("GET", Endpoint(id, "/breakpoints"), nullptr, caller, "Breakpoints of " + id, done);
+                    // One line per breakpoint in the text: "#1 0x0038 X hits 3"
+                    ForwardCall("GET", Endpoint(id, "/breakpoints"), nullptr, caller, "", [id, done](ToolResult result) {
+                        if (result.isError)
+                        {
+                            done(std::move(result));
+                            return;
+                        }
+                        const Json::Value& list = result.structured["breakpoints"];
+                        std::ostringstream out;
+                        out << "Breakpoints of " << id << ": " << list.size();
+                        for (const Json::Value& bp : list)
+                        {
+                            out << "\n#" << bp["id"].asUInt() << " " << (bp["type"].asString() == "port" ? "port " : "")
+                                << Hex16(bp["address"].asUInt()) << " "
+                                << (bp["execute"].asBool() ? "X" : "") << (bp["read"].asBool() ? "R" : "")
+                                << (bp["write"].asBool() ? "W" : "")
+                                << " hits " << bp["hit_count"].asUInt();
+                            if (!bp["active"].asBool())
+                                out << " off";
+                            if (bp["hit_mode"].isString() && bp["hit_mode"].asString() != "always")
+                                out << " mode " << bp["hit_mode"].asString();
+                            if (bp["group"].isString() && bp["group"].asString() != "default")
+                                out << " group " << bp["group"].asString();
+                            if (bp["note"].isString() && !bp["note"].asString().empty())
+                                out << " \"" << bp["note"].asString() << "\"";
+                        }
+                        result.text = out.str();
+                        done(std::move(result));
+                    });
                     return;
                 }
                 if (action == "bp_reset_hits")
@@ -3316,7 +3344,13 @@ void RegisterInspectState(ToolRegistry& registry)
                                 }
                                 else if (aspect == "audio_opl4_fm")
                                 {
-                                    out << "\n[audio_opl4_fm]";
+                                    unsigned keyed = 0;
+                                    for (const Json::Value& ch : value["channels"])
+                                        keyed += ch["key_on"].asBool() ? 1u : 0u;
+                                    out << "\n[audio_opl4_fm] " << value["channels"].size() << " channel(s), keyed " << keyed
+                                        << ", NEW " << (value["new_mode"].asBool() ? "on" : "off") << ", rhythm "
+                                        << (value["rhythm"].asBool() ? "on" : "off") << ", 4-op connections "
+                                        << value["four_op_connections"].asUInt() << ", status " << value["status"].asUInt();
                                     for (const Json::Value& ch : value["channels"])
                                         if (ch["key_on"].asBool())
                                             out << "\n  ch" << ch["channel"].asUInt() << ": " << ch["frequency_hz"].asDouble()
@@ -3324,7 +3358,12 @@ void RegisterInspectState(ToolRegistry& registry)
                                 }
                                 else
                                 {
-                                    out << "\n[audio_opl4_pcm]";
+                                    unsigned keyed = 0;
+                                    for (const Json::Value& slot : value["slots"])
+                                        keyed += slot["key_on"].asBool() ? 1u : 0u;
+                                    out << "\n[audio_opl4_pcm] " << value["slots"].size() << " slot(s), keyed " << keyed << ", wave "
+                                        << (value["wave_enabled"].asBool() ? "enabled" : "disabled") << ", memory address "
+                                        << value["memory_address"].asUInt();
                                     for (const Json::Value& slot : value["slots"])
                                         if (slot["key_on"].asBool())
                                             out << "\n  slot" << slot["slot"].asUInt() << ": wave " << slot["wave"].asUInt()
@@ -3571,9 +3610,32 @@ void RegisterInspectState(ToolRegistry& registry)
                                         out << " sha256:" << page["sha256"].asString().substr(0, 16) << "...";
                                 }
                             }
+                            else if (aspect == "screen_attributes" && value["screens"].isArray())
+                            {
+                                // The attribute grid as bytes, one row per line (FLASH<<7 | BRIGHT<<6 | PAPER<<3 | INK)
+                                const unsigned cols = value["cols"].asUInt();
+                                out << "\n[screen_attributes] " << value["model"].asString() << ", " << cols << "x"
+                                    << value["rows"].asUInt() << " cells, byte = FLASH<<7 | BRIGHT<<6 | PAPER<<3 | INK";
+                                for (Json::ArrayIndex n = 0; n < value["screens"].size(); ++n)
+                                {
+                                    const Json::Value& cells = value["screens"][n]["cells"];
+                                    out << "\n  screen " << n << ":";
+                                    char byte[4];
+                                    for (Json::ArrayIndex i = 0; cols && i < cells.size(); ++i)
+                                    {
+                                        const Json::Value& c = cells[i];
+                                        const unsigned attr = (c["flash"].asBool() ? 0x80u : 0u) | (c["bright"].asBool() ? 0x40u : 0u) |
+                                                              ((c["paper"].asUInt() & 7u) << 3) | (c["ink"].asUInt() & 7u);
+                                        if (i % cols == 0)
+                                            out << "\n  ";
+                                        std::snprintf(byte, sizeof(byte), "%02X", attr);
+                                        out << byte;
+                                    }
+                                }
+                            }
                             else
                             {
-                                out << "\n[" << aspect << "] (see structuredContent)";
+                                out << "\n[" << aspect << "] " << FlatFields(value);
                             }
                         }
                         done(ToolResult::Ok(out.str(), std::move(acc)));
@@ -3644,7 +3706,7 @@ void RegisterTypeInput(ToolRegistry& registry)
 
             if (action == "status")
             {
-                ResolveAndForward(args, "GET", "/keyboard/status", nullptr, caller, "Keyboard status", done);
+                ResolveAndForward(args, "GET", "/keyboard/status", nullptr, caller, "Keyboard status", AppendFields(done));
                 return;
             }
             if (action == "route")
@@ -3800,7 +3862,7 @@ void RegisterMouseInput(ToolRegistry& registry)
             {
                 const std::string device = args.isMember("device") ? args["device"].asString() : std::string();
                 ResolveAndForward(args, "GET", device.empty() ? "/mouse/status" : "/mouse/status?device=" + device,
-                                  nullptr, caller, "Mouse status", done);
+                                  nullptr, caller, "Mouse status", AppendFields(done));
                 return;
             }
             if (action == "glide")
@@ -4019,7 +4081,7 @@ void RegisterJoystickInput(ToolRegistry& registry)
 
             if (action == "status")
             {
-                ResolveAndForward(args, "GET", "/joystick", nullptr, caller, "Joystick status", done);
+                ResolveAndForward(args, "GET", "/joystick", nullptr, caller, "Joystick status", AppendFields(done));
                 return;
             }
             if (action == "press" || action == "release" || action == "tap")
@@ -5099,6 +5161,79 @@ bool ParseHexText(const std::string& text, std::vector<uint8_t>& out)
         out.push_back(static_cast<uint8_t>(std::strtoul(digits.substr(i, 2).c_str(), nullptr, 16)));
     return true;
 }
+/// Lines of a memory read the text carries (16 bytes each): 4 KB, about 20 KB of text; a longer read says how to get the rest
+constexpr size_t kMemoryTextLines = 256;
+
+/// The bytes of a memory read for the text: clients that hand the model only content[] see them. Takes every body
+/// shape the WebAPI answers - hexdump text, a hex string, a byte array, sparse segments
+std::string MemoryReadText(const Json::Value& body)
+{
+    // Region offsets go past 64K (NeoGS RAM is 2 MB)
+    auto at = [](uint64_t value) {
+        char text[16];
+        std::snprintf(text, sizeof(text), value > 0xFFFF ? "0x%06llX" : "0x%04llX", static_cast<unsigned long long>(value));
+        return std::string(text);
+    };
+    std::string lines;
+    size_t count = 0;
+    size_t total = 0;
+    auto line = [&](const std::string& text) {
+        ++total;
+        if (count < kMemoryTextLines)
+        {
+            lines += "\n" + text;
+            ++count;
+        }
+    };
+    if (body["hexdump"].isString())
+    {
+        std::istringstream dump(body["hexdump"].asString());
+        for (std::string text; std::getline(dump, text);)
+            if (!text.empty())
+                line(text);
+    }
+    else if (body["segments"].isArray())
+    {
+        for (const Json::Value& segment : body["segments"])
+        {
+            std::ostringstream text;
+            text << "+" << at(segment["offset"].asUInt64()) << " " << segment["length"].asUInt() << " byte(s): "
+                 << (segment["is_fill"].asBool() ? "fill " + segment["fill"].asString() : segment["hex"].asString());
+            line(text.str());
+        }
+    }
+    else if (body["data"].isArray() || body["hex"].isString())
+    {
+        std::vector<unsigned> bytes;
+        if (body["data"].isArray())
+            for (const Json::Value& b : body["data"])
+                bytes.push_back(b.asUInt() & 0xFFu);
+        else
+        {
+            std::istringstream hex(body["hex"].asString());
+            for (std::string byte; hex >> byte;)
+                bytes.push_back(static_cast<unsigned>(std::strtoul(byte.c_str(), nullptr, 16)) & 0xFFu);
+        }
+        uint32_t base = 0;
+        const std::string start = body.isMember("offset") ? body["offset"].asString() : body["address"].asString();
+        ParseAddressText(start, base);
+        for (size_t i = 0; i < bytes.size(); i += 16)
+        {
+            std::string text = at(base + i) + ":";
+            char hex[4];
+            for (size_t j = i; j < std::min(bytes.size(), i + 16); ++j)
+            {
+                std::snprintf(hex, sizeof(hex), " %02X", bytes[j]);
+                text += hex;
+            }
+            line(text);
+        }
+    }
+    if (total > count)
+        lines += "\n... " + std::to_string(total - count) + " more line(s): read a narrower range";
+    return lines;
+}
+
 }  // namespace
 
 /// memory_access: every memory of the machine by name (memory-spaces design, step 1): the Z80 view ("cpu") and the
@@ -5122,6 +5257,8 @@ void RegisterMemoryAccess(ToolRegistry& registry)
         "(sprinter.vram / vram, neogs.ram, gs.ram, moonsound.wave, tsconf.cram, rtc.cmos, evo.flash, ...)";
     schema["properties"]["offset"]["type"] = "string";
     schema["properties"]["offset"]["description"] = "Z80 address (cpu) or offset in the region: number, '0x..' or '#..'";
+    schema["properties"]["address"]["type"] = "string";
+    schema["properties"]["address"]["description"] = "Alias of offset (the name debug_code and inspect_state use)";
     schema["properties"]["length"]["type"] = "integer";
     schema["properties"]["length"]["default"] = 128;
     schema["properties"]["length"]["description"] = "read: bytes (max 65536); save: bytes, 0 = to the end";
@@ -5147,9 +5284,16 @@ void RegisterMemoryAccess(ToolRegistry& registry)
             const std::string action = args["action"].asString();
             const std::string space = args.isMember("space") && args["space"].isString() ? args["space"].asString() : "cpu";
             const bool cpu = space == "cpu";
+            // 'address' is what the other tools call it: an agent writing it must not read from 0 instead
+            if (args.isMember("offset") && args.isMember("address"))
+            {
+                done(ToolResult::Error("memory_access: give offset or address, not both"));
+                return;
+            }
+            const char* offsetArg = args.isMember("address") ? "address" : "offset";
             std::string offset = "0";
-            if (args.isMember("offset"))
-                offset = args["offset"].isString() ? args["offset"].asString() : std::to_string(args["offset"].asUInt());
+            if (args.isMember(offsetArg))
+                offset = args[offsetArg].isString() ? args[offsetArg].asString() : std::to_string(args[offsetArg].asUInt());
             const unsigned length = args.isMember("length") && args["length"].isIntegral() ? args["length"].asUInt() : 128u;
             if (action != "regions" && action != "read" && action != "write" && action != "save" && action != "load")
             {
@@ -5212,7 +5356,10 @@ void RegisterMemoryAccess(ToolRegistry& registry)
                                          Endpoint(id, "/memory/read/" + offset + "?length=" + std::to_string(length) +
                                                           (format == "sparse" ? "&format=sparse" : "")),
                                          nullptr, caller,
-                                         [length](const Json::Value&) { return "Read " + std::to_string(length) + " bytes of the Z80 view."; },
+                                         [length](const Json::Value& b) {
+                                             return "Read " + std::to_string(length) + " bytes of the Z80 view at " +
+                                                    b["address"].asString() + "." + MemoryReadText(b);
+                                         },
                                          done);
                         return;
                     }
@@ -5232,7 +5379,7 @@ void RegisterMemoryAccess(ToolRegistry& registry)
                                      nullptr, caller,
                                      [space, length](const Json::Value& b) {
                                          return "Read " + std::to_string(length) + " bytes of " + b["region"].asString() +
-                                                " at " + b["offset"].asString() + ".";
+                                                " at " + b["offset"].asString() + "." + MemoryReadText(b);
                                      },
                                      done);
                     return;

@@ -142,7 +142,7 @@ tests that would catch regressions.
   the checkpoint logs it instead of restoring silently.
 - **Comments**: remove the stale ones listed in current-state §10 (**done**: re-checked
   2026-09-28, the listed comments in `timetravelmanager.*`, `ttdserializable.h` and the
-  page store header were already corrected; only the PoC reader `tools/poc/010-ttd-gui`
+  page store header were already corrected; only the PoC reader `tools/poc/027-ttd-gui`
   still says the writer stores CRC 0).
 
 Exit: the bit-flip experiment catches every page-payload flip; the new tests
@@ -333,8 +333,8 @@ mechanism covers.
 
 ### Phase 6 — Cleanup
 
-- Retire or update `tools/poc/010-ttd-gui` (its reader expects schema 3);
-  delete the duplicate `tools/poc/01-ttd-compression` /
+- Retire or update `tools/poc/027-ttd-gui` (its reader expects schema 3);
+  delete the duplicate `tools/poc/01-ttd-compression` (done 2026-10-10: removed, references point to `010-ttd-compression`) /
   `010-ttd-compression` copy.
 - Truth pass over the parent TDD (`docs/emulator/design/debugger/time-travel-debug/`):
   one meaning of v1/v2, storage modes as built, integrity as built.

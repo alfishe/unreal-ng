@@ -17,8 +17,6 @@ import argparse, base64, csv, io, json, os, re, sys, time, urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from drive import Machine  # noqa: E402
 
-SAFE = re.compile(r'^[A-Za-z0-9]+')
-FULL = re.compile(r'^[A-Za-z0-9.]+$')
 
 
 def sorted_entries(folder):
@@ -53,43 +51,59 @@ def in_browser(machine):
     return black_share((64, 64, 576, 80)) > 0.5 and black_share((64, 400, 576, 416)) > 0.5
 
 
+SEARCHABLE = re.compile(r"^[A-Za-z0-9 ._-]+")
+
+
+def search_line_sig(machine):
+    """The Browser's bottom prompt line (Search: <text>) as a hash: it changes when typed text arrives"""
+    import hashlib
+    from PIL import Image
+    data = json.load(urllib.request.urlopen('%s/%s/capture/screen' % (machine.base, machine.id)))
+    im = Image.open(io.BytesIO(base64.b64decode(data['data']))).convert('RGB')
+    return hashlib.md5(im.crop((64, 418, 576, 434)).tobytes()).hexdigest()
+
+
+def type_search(machine, text):
+    """H, then the text. A typed text can fail to arrive (the Search prompt stayed empty and the next ENTER opened the wrong entry). The
+    prompt line has a blinking cursor, so "did it change" compares against BOTH blink states taken before typing; the text is typed again
+    only when the prompt still equals one of them after a settle time (typing twice leaves doubled letters: never retype on a doubt)"""
+    machine.tap('h')
+    time.sleep(0.5)
+    machine.idle(0.3)
+    before = set()
+    for _ in range(6):  # a few frames apart: both blink phases
+        before.add(search_line_sig(machine))
+        time.sleep(0.15)
+    for attempt in range(2):
+        machine.call('/%s/keyboard/type' % machine.id, {'text': text, 'delay_frames': 5})
+        time.sleep(1.0 + 0.15 * len(text))
+        machine.idle(0.3)
+        shots = {search_line_sig(machine) for _ in range(4) if time.sleep(0.12) is None}
+        if not (shots & before):
+            break
+    machine.tap('enter')  # accept the search: the cursor stays on the match
+    time.sleep(0.5)
+    machine.idle(0.5)  # the Browser has taken the search before the next ENTER opens the entry
+
+
 def reach(machine, folder, name):
-    """Put the Browser's cursor on `name` of the directory shown (host path `folder`)"""
+    """Put the Browser's cursor on `name` of the directory shown (host path `folder`): the search (H) with the shortest unique prefix of
+    the name's searchable part (letters, digits, space, dot, underscore, hyphen - the Browser's search takes spaces, which matters:
+    "Next3D Demo Cube" has no unique prefix without them); names whose searchable part is ambiguous are reached by counting down from the top"""
     entries = sorted_entries(folder)
     lower = [e.lower() for e in entries]
-    if FULL.match(name):
-        # the search takes dots as well: the whole name is unambiguous even when the card holds game.bas next to game.bak (the
-        # Browser lists what NextZXOS wrote, which the host folder does not show), and a shorter name sorts first
-        machine.tap('h')
-        time.sleep(0.3)
-        machine.call('/%s/keyboard/type' % machine.id, {'text': name, 'delay_frames': 5})
-        time.sleep(0.4 + 0.12 * len(name))
-        machine.idle(0.3)
-        machine.tap('enter')
-        time.sleep(0.5)
-        machine.idle(0.5)  # the Browser has taken the search before the next ENTER opens the entry
-        return True
-    match = SAFE.match(name)
+    match = SEARCHABLE.match(name)
     if match:
-        text = match.group(0).lower()
-        for length in range(1, len(text) + 1):
-            prefix = text[:length]
-            hits = [e for e in lower if e.startswith(prefix)]
-            if len(hits) == 1:
-                machine.tap('h')
-                time.sleep(0.3)
-                machine.call('/%s/keyboard/type' % machine.id, {'text': name[:length], 'delay_frames': 5})
-                time.sleep(0.4 + 0.12 * length)
-                machine.idle(0.3)
-                machine.tap('enter')
-                time.sleep(0.5)
-                machine.idle(0.5)
+        text = match.group(0)
+        low = text.lower()
+        for length in range(1, len(low) + 1):
+            if sum(e.startswith(low[:length]) for e in lower) == 1:
+                type_search(machine, text[:length])
                 return True
-        # ambiguous: fall through to counting
-    index = entries.index(name)
+    index = entries.index(name)  # ambiguous: count down from the top of the directory
     for _ in range(index):
         machine.tap('down', 4)
-        time.sleep(0.12)
+        time.sleep(0.15)
     return True
 
 
@@ -147,10 +161,14 @@ def main():
         for attempt in range(3):
             machine.call('/%s/reset' % machine.id, {})
             machine.idle(2.5)
-            machine.tap('space')
-            machine.idle(2)
+            # the main menu may be up at once (B opens the Browser); if the boot splash is up instead, SPACE brings the menu and B follows
             machine.tap('b')
             machine.idle(2.5)
+            if not in_browser(machine):
+                machine.tap('space')
+                machine.idle(2)
+                machine.tap('b')
+                machine.idle(2.5)
             if in_browser(machine):
                 break
             print('   (the Browser did not open, attempt %d: resetting again)' % (attempt + 1), flush=True)

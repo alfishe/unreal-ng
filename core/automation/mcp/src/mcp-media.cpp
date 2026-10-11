@@ -365,7 +365,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                 {
                     suffix += "?banks=" + args["banks"].asString();
                 }
-                ResolveAndForward(args, "GET", suffix, nullptr, caller, "Screen digest", done);
+                ResolveAndForward(args, "GET", suffix, nullptr, caller, "Screen digest", AppendFields(done));
                 return;
             }
 
@@ -373,7 +373,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
             {
                 if (action == "record_status")
                 {
-                    ResolveAndForward(args, "GET", "/video/record/status", nullptr, caller, "Recording status", done);
+                    ResolveAndForward(args, "GET", "/video/record/status", nullptr, caller, "Recording status", AppendFields(done));
                     return;
                 }
                 std::string op = action == "record_stop" ? "stop" : (action == "record_pause" ? "pause" : "resume");

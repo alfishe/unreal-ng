@@ -157,7 +157,9 @@ Z80NINLINE void Z80nRetxIff(Z80nCPU *cpu, Z80nRegs *rf)
    rf->iff1 = rf->iff2;
 }
 
-Z80NOPCODE ope_45(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // retn
+// Body of RETN and its six aliases. Only ED 45 raises the host notification: the FPGA's retn_seen
+// (im2_control.vhd) decodes ED 45 alone, so the DivMMC automap latch survives ED 55/5D/65/6D/75/7D.
+Z80NINLINE int Z80nRetnBody(Z80nCPU *cpu, int tact0, Z80nRegs *rf, bool notify) {
    Z80N_T_BEGIN(cpu);
    Z80nRetxIff(cpu, rf);
 
@@ -189,11 +191,15 @@ Z80NOPCODE ope_45(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // retn
 
    // RETN notification (Z80nCpuSetRetnFn), same shape as the RETI hook in
    // ope_4D: publish T first so the host observes the exact current T.
-   // Aliased RETN opcodes (ED 55/65/75) share this body.
+   // Aliased RETN opcodes (ED 55/5D/65/6D/75/7D) share this body without the notification.
    Z80N_T_PUBLISH(cpu);
-   if (cpu->retnCallback)
+   if (notify && cpu->retnCallback)
        cpu->retnCallback(cpu, cpu->retnData);
    Z80N_RETURN_Q(0, tact_);
+}
+
+Z80NOPCODE ope_45(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // retn
+   return Z80nRetnBody(cpu, tact0, rf, true);
 }
 
 Z80NOPCODE ope_46(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // im 0
@@ -392,7 +398,7 @@ Z80NOPCODE ope_53(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // ld (nnnn),de
 }
 
 #define ope_54 ope_44 // neg
-#define ope_55 ope_45 // retn
+Z80NOPCODE ope_55(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { return Z80nRetnBody(cpu, tact0, rf, false); } // retn alias, no host notification
 
 Z80NOPCODE ope_56(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // im 1
     rf->im = 1;
@@ -477,7 +483,7 @@ Z80NOPCODE ope_5B(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // ld de,(nnnn)
 }
 
 #define ope_5C ope_44   // neg
-#define ope_5D ope_45   // retn (the FPGA core: all seven ED x5 / x D aliases but 4D are RETN)
+Z80NOPCODE ope_5D(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { return Z80nRetnBody(cpu, tact0, rf, false); } // retn alias, no host notification
 
 Z80NOPCODE ope_5E(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // im 2
    rf->im = 2;
@@ -538,7 +544,7 @@ Z80NOPCODE ope_62(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // sbc hl,hl
 
 #define ope_63 op_22 // ld (nnnn),hl
 #define ope_64 ope_44 // neg
-#define ope_65 ope_45 // retn
+Z80NOPCODE ope_65(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { return Z80nRetnBody(cpu, tact0, rf, false); } // retn alias, no host notification
 #define ope_66 ope_46 // im 0
 
 Z80NOPCODE ope_67(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // rrd
@@ -604,7 +610,7 @@ Z80NOPCODE ope_6A(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // adc hl,hl
 
 #define ope_6B op_2A // ld hl,(nnnn)
 #define ope_6C ope_44   // neg
-#define ope_6D ope_45   // retn
+Z80NOPCODE ope_6D(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { return Z80nRetnBody(cpu, tact0, rf, false); } // retn alias, no host notification
 #define ope_6E ope_46   // im 0 (undocumented "IM 0/1" acts as IM 0; z80.info / FUSE)
 
 Z80NOPCODE ope_6F(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // rld
@@ -693,7 +699,7 @@ Z80NOPCODE ope_73(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // ld (nnnn),sp
 }
 
 #define ope_74 ope_44 // neg
-#define ope_75 ope_45 // retn
+Z80NOPCODE ope_75(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { return Z80nRetnBody(cpu, tact0, rf, false); } // retn alias, no host notification
 
 Z80NOPCODE ope_76(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // im 1
    rf->im = 1;
@@ -773,7 +779,7 @@ Z80NOPCODE ope_7B(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // ld sp,(nnnn)
 }
 
 #define ope_7C ope_44   // neg
-#define ope_7D ope_45   // retn
+Z80NOPCODE ope_7D(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { return Z80nRetnBody(cpu, tact0, rf, false); } // retn alias, no host notification
 #define ope_7E ope_5E   // im 2
 #define ope_7F op_00    // nop
 

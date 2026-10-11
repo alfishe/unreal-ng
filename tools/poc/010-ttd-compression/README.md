@@ -1,13 +1,13 @@
-# tools/poc — Proof-of-Concept research tools
+# 010 — TTD compression codec comparison
 
-This directory holds research / diagnostic / measurement tools that are
-**not** part of the shipping product. They exist to answer specific
-design questions and feed their results back into the production code.
+This POC is **not** part of the shipping product. It answers one design
+question — which codec the TTD recorder should use — and feeds the result
+back into the production code. (Index of all POCs: [`../README.md`](../README.md).)
 
 ## Layout
 
 ```
-tools/poc/
+tools/poc/010-ttd-compression/
 ├── cpp/                          # Pure C++ codec comparison (Google Benchmark)
 │   ├── CMakeLists.txt
 │   ├── extract_real_buffers.py  # Pull real codec-input buffers from a .ttd
@@ -49,9 +49,9 @@ sequences the production TTD codec hands to its compressor, drawn from
 the canonical fixture `active_demo.ttd`:
 
 ```sh
-python3 tools/poc/cpp/extract_real_buffers.py \
+python3 tools/poc/010-ttd-compression/cpp/extract_real_buffers.py \
     --ttd testdata/ttd/active_demo.ttd \
-    --out tools/poc/cpp/real_buffers.bin
+    --out tools/poc/010-ttd-compression/cpp/real_buffers.bin
 ```
 
 This produces `real_buffers.bin` containing two buffer classes:
@@ -72,7 +72,7 @@ below) are kept only as reference shapes.
 
 ```sh
 # Full real-data sweep with the recommended statistics:
-TTD_REAL_BUFFERS="$(pwd)/tools/poc/cpp/real_buffers.bin" \
+TTD_REAL_BUFFERS="$(pwd)/tools/poc/010-ttd-compression/cpp/real_buffers.bin" \
     cmake-build-release/bin/poc_codec_latency \
     --benchmark_filter='REAL_' \
     --benchmark_min_time=2s \
@@ -80,7 +80,7 @@ TTD_REAL_BUFFERS="$(pwd)/tools/poc/cpp/real_buffers.bin" \
     --benchmark_report_aggregates_only=true
 
 # Or filter to a single codec:
-TTD_REAL_BUFFERS="$(pwd)/tools/poc/cpp/real_buffers.bin" \
+TTD_REAL_BUFFERS="$(pwd)/tools/poc/010-ttd-compression/cpp/real_buffers.bin" \
     cmake-build-release/bin/poc_codec_latency \
     --benchmark_filter='REAL_xor/zstd1'
 
@@ -90,7 +90,7 @@ cmake-build-release/bin/poc_codec_latency
 
 The `TTD_REAL_BUFFERS` env var is required when running the binary from
 outside the repo root; otherwise the PoC looks for
-`tools/poc/cpp/real_buffers.bin` relative to the cwd.
+`tools/poc/010-ttd-compression/cpp/real_buffers.bin` relative to the cwd.
 
 ## Output
 
@@ -187,3 +187,13 @@ speed, and everything slower than zstd is also no smaller.
 
 Full results and entropy analysis: Section 6 of
 `docs/inprogress/2026-07-19-time-travel/phase-5-codec-poc-results.md`.
+
+## Status (added 2026-10-10)
+
+**concluded (pre-guideline)** — zstd level 1 is Pareto-optimal for TTD page buffers, re-confirmed on four
+real recordings on 2026-08-20 ("Findings" above; full results in
+`docs/inprogress/2026-07-19-time-travel/phase-5-codec-poc-results.md` §6). Production uses zstd level 1
+(`kDefaultZstdLevel` in `core/src/debugger/ttd/ttdcompression.h`). The TTD v2 migration lists this POC for
+retirement (`docs/inprogress/2026-09-25-ttd-v2-migration/phase-6-inventory.md`).
+
+Serves: `docs/inprogress/2026-07-19-time-travel/`.

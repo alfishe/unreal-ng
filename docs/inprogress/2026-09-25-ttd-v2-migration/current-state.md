@@ -208,7 +208,7 @@ Why:
 Stale documentation in code: re-checked 2026-09-28, the pre-codec format
 comment block, `_forceNextKeyFrame` "set by reset/load", "no heap allocation"
 in `ttdserializable.h` and "64 MB budget" in the page store header are all
-corrected; the PoC reader `tools/poc/010-ttd-gui` still says the writer stores
+corrected; the PoC reader `tools/poc/027-ttd-gui` still says the writer stores
 CRC 0. Dead code: the two journal offsets in `TTDCheckpoint` were removed
 2026-09-28 (never populated, not in the file). `MaterializedRamCache` is gone; `DebuggerEdit` is written
 (tool edits while recording) and `HardwareReset` is a documented reserved kind.
@@ -229,5 +229,5 @@ A format or architecture change touches all of these together:
   validator, fixture recorder), `ttd.ksy`, `testdata/ttd/` fixtures gated by
   `TTD_Corpus_Test`, `.recipe/analysis/ttd-*.md`, 49 test files in
   `core/tests/debugger/ttd/`, the benchmarks in `core/benchmarks/debugger/ttd/`.
-- **PoCs**: `tools/poc/010-ttd-gui` (its reader expects schema 3 — already
+- **PoCs**: `tools/poc/027-ttd-gui` (its reader expects schema 3 — already
   broken), `tools/poc/011-ttd-v2-capture-analysis`.

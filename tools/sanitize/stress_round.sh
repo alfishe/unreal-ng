@@ -21,7 +21,7 @@ BUILD_DIR="$ROOT/$BUILD" tools/build/build.sh unreal-qt > "$OUT/build.log" 2>&1 
 export UNREAL_WEBAPI_PORT=8190 UNREAL_MCP_PORT=8192 UNREAL_CLI_PORT=8865 UNREAL_GDB_PORT=2100 \
        UNREAL_DEZOG_PORT=12100 UNREAL_ZRCP_PORT=10100 QT_QPA_PLATFORM=offscreen
 export ASAN_OPTIONS="${ASAN_OPTIONS:-halt_on_error=1:detect_leaks=0}:log_path=$OUT/asan"
-export TSAN_OPTIONS="${TSAN_OPTIONS:-halt_on_error=1}:log_path=$OUT/tsan"
+export TSAN_OPTIONS="${TSAN_OPTIONS:-halt_on_error=1}:suppressions=$ROOT/tools/sanitize/tsan.supp:log_path=$OUT/tsan"
 "$BUILD/bin/unreal-qt.app/Contents/MacOS/unreal-qt" > "$OUT/app.log" 2>&1 &
 APP=$!
 for _ in $(seq 1 60); do curl -s -m 1 localhost:8190/api/v1/emulator > /dev/null && break; sleep 1; done

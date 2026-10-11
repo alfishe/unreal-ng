@@ -96,3 +96,11 @@ Status: **planned** · **built** (compiles; not yet measured on a Deck) · **mea
 | P-25 | `p25-reference-track` | reference TTD track on several clients | | planned |
 
 A folder is created when its experiment starts. Names in `code` are reserved.
+
+## Status (added 2026-10-10)
+
+**running (pre-guideline)** — five of 25 experiments exist (P-01, P-03, P-08, P-18, P-19), all "built", none yet measured
+on a Deck ("Index" above); the rest are planned. Verdicts go to the results table of
+`docs/inprogress/2026-10-08-steamdeck-client/poc-plan.md`.
+
+Serves: `docs/inprogress/2026-10-08-steamdeck-client/`.

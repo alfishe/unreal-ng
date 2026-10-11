@@ -113,6 +113,12 @@ protected:
 
     std::string _mappedMemoryFilepath;
 
+    // The buffer a shared memory migration replaced. Tool readers (debugger, WebAPI, GUI) read guest memory live
+    // from their own threads and the CPU hold does not stop them: one may still read through an old bank pointer.
+    // The buffer stays valid until the next migration or the destructor
+    uint8_t* _retiredMemory = nullptr;
+    bool _retiredMemoryMapped = false;
+
 protected:
     // Whole system memory
     uint8_t* _memory = nullptr;
@@ -289,6 +295,11 @@ public:
     void AllocateAndExportMemoryToMmap();
     /// Unmap the memory from the filesystem
     void UnmapMemory();
+    /// Close the shared memory handle and name; the mapped view stays valid
+    void CloseSharedMemory();
+    /// Keep a replaced buffer alive for the live readers (the previous retired one is released)
+    void RetireMemory(uint8_t* memory, bool mapped);
+    void ReleaseRetiredMemory();
     void SyncToDisk();
 
     /**

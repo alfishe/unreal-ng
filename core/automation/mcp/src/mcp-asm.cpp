@@ -94,7 +94,7 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
             const std::string action = args["action"].asString();
             if (action == "formats" || action == "dialects")
             {
-                ForwardCall("GET", "/api/v1/asm/" + action, nullptr, caller, action == "formats" ? "Assembler source formats" : "Dialects", done);
+                ForwardCall("GET", "/api/v1/asm/" + action, nullptr, caller, action == "formats" ? "Assembler source formats" : "Dialects", action == "formats" ? done : AppendFields(done));
                 return;
             }
             if (action == "files")

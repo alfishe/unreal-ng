@@ -113,6 +113,7 @@ private:
     /// What the machine type allows: 48K has no paging ports, 128K / Pentagon no #1FFD, +3 all
     bool PagingAllowed(uint16_t port) const;
     uint8_t SpiRead();
+    void SpiSettle(double now);
     void SpiWrite(uint8_t value);
     void SpiSelect(uint8_t value);
     /// Time in 3.5 MHz T-states since the machine started (the frame's own t is in CPU clocks of the current speed)
@@ -126,7 +127,9 @@ private:
     SdCardSpi _sd[2];
     uint8_t _pendingTiming = 0;  ///< applied at the frame end
     int _spiSelected = -1;
-    uint8_t _spiRx = 0xFF;
+    uint8_t _spiRx = 0xFF;       ///< miso_dat: the last finished byte
+    uint8_t _spiPending = 0xFF;  ///< the answer of the byte in flight, visible when it is done
+    bool _spiPendingValid = false;
     double _spiBusyUntil = 0;
     double _spiBusyRatio = 1.0;  ///< the CPU speed ratio the byte in flight was timed at
     uint32_t _spiTooFast = 0;

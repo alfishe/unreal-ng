@@ -541,7 +541,8 @@ struct RetxLog
     int reti = 0, retn = 0;
 };
 
-TEST(Z80nOpcodes_Test, OnlyEd4DIsRetiTheOtherAliasesAreRetn)
+// Every alias returns like RETN, but only ED 45 raises the host notification (im2_control.vhd retn_seen decodes ED 45 alone)
+TEST(Z80nOpcodes_Test, OnlyEd45ReportsRetnSeen)
 {
     for (int op : {0x45, 0x4D, 0x55, 0x5D, 0x65, 0x6D, 0x75, 0x7D})
     {
@@ -555,7 +556,7 @@ TEST(Z80nOpcodes_Test, OnlyEd4DIsRetiTheOtherAliasesAreRetn)
         f.Step();
         EXPECT_EQ(f.Reg(Z80nCpuRegPc), 0x1234);
         EXPECT_EQ(log.reti, op == 0x4D ? 1 : 0) << std::hex << op;
-        EXPECT_EQ(log.retn, op == 0x4D ? 0 : 1) << std::hex << op;
+        EXPECT_EQ(log.retn, op == 0x45 ? 1 : 0) << std::hex << op;
     }
 }
 

@@ -17,7 +17,7 @@ phase 2 (C++) moves to `tools/verification/zxdlss`.
    flickering backgrounds, full-screen moving flicker), build masks, mix with
    selectable mixers, and measure the result on real frames. Fast iteration,
    side-by-side video output, metrics.
-2. **Phase 2 - C++ prototype**, here in the POC: the same algorithm as a
+2. **Phase 2 - C++ prototype**, in `tools/verification/zxdlss` (moved out of this POC): the same algorithm as a
    standalone library, verified frame-exact against the Python reference,
    benchmarked (scalar reference, then SSE/NEON; `SIMD-CANDIDATE` tags).
 3. **Phase 3 - final design and integration** into unreal-ng as the `dlss`
