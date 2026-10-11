@@ -66,8 +66,9 @@ NSView and crashed opening the first tool window (`platform/macos/childwindow_ma
 - [x] Live source window: keeps the id, looks the instance up (already safe; tested)
 - [x] `RemovalRace_Test` (unreal-qt-tests): device memory, disk sector, disk files, PC history, live source, traffic,
       TTD panel
-- [ ] `RemovalRace` for the debugger window, the main window and the menu: their classes are not in unreal-qt-tests
-      (they pull the whole application); covered by the busy-GUI stress only
+- [ ] P3, deferred (owner 2026-10-11): `RemovalRace` for the debugger window, the main window and the menu. They are
+      not in unreal-qt-tests (it compiles 30 of the 111 GUI sources one by one); the way is a library of the GUI
+      sources linked into both the application and the tests - risky and about a day. Busy-GUI stress meanwhile
 - [ ] "Instance removed" state in the dialogs: not done. A dialog left open shows the retired machine as it was;
       changes are refused by the core
 - [x] Ratchet: 0 stored members. `getcontext` stays a non-growing count, not 0 (see proposal, "As built")
