@@ -27,7 +27,7 @@ the SSE keepalive `ping` (`automation-mcp.cpp:300`, one per connection), the cap
   itself weakly); it is freed when the chain ends.
 - [ ] No `definitely lost` from these sites in the valgrind profile; MCP unit tests pass.
 
-## 🔴 [Open] #8: DSD recording sets output bits from an uninitialized byte
+## 🔵 [In Progress] #8: DSD recording sets output bits from an uninitialized byte
 * **Date Opened:** 2026-10-11
 * **Found by:** valgrind memcheck profile: `PCMToDSDConverter::ProcessFloat` (`pcm_to_dsd_converter.cpp:252`),
   564 000 reports in `DSDEncoderE2ETest.PCMModeStillWritesDSF`; origin: a stack variable at line 184.
