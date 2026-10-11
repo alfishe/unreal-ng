@@ -191,6 +191,28 @@
              "frame, t, pc, card, kind (command | read | write); a command has command (CMD17, ACMD41), argument, r1 (the response byte, "
              "none when the card ignored it) and crc_valid; read / write have block (write: ok). Query: kinds (comma: command, read, "
              "write), card (0 | 1), since (seq), from / to (frame), limit (newest N, default 200, 0 = all). 400 on a bad parameter.", true},
+            {"/api/v1/emulator/{id}/state/next/audio", "Get the Next sound as configured",
+             "The Next's chips and DAC (core DeviceState::NextAudioReport; CLI `state next audio`, Lua next_audio(), Python next_audio(), MCP "
+             "inspect_state aspect next_audio). config: nr_06 / nr_08 / nr_09, chip_model (ym2149 | ay8910), stereo_mode (abc | acb), turbosound, "
+             "dac, beeper_excluded. selected_chip. chips (3): index, selected, pan (stereo | left | right | muted), mono (NR #09), registers "
+             "(16), tone_periods, noise_period, mixer (R7), volumes (bit 4: the envelope drives the channel), envelope_period, envelope_shape. "
+             "dac: enabled, a / b / c / d, left_sum (A + B), right_sum (C + D), silence (#80).", true},
+            {"/api/v1/emulator/{id}/state/next/input", "Get the Next joystick modes and the Kempston port",
+             "The Next's input as the program configured it (core DeviceState::NextInputReport; CLI `state next input`, Lua next_input(), Python "
+             "next_input(), MCP inspect_state aspect next_input). joystick_modes: nr_05, left and right {code, name (kempston1 | kempston2 | md1 | "
+             "md2 | sinclair1 | sinclair2 | cursor | io_mode), port (1F | 37 | keyboard | user port)}. io_mode: nr_0b, enabled, mode, bit_0, "
+             "uart_on_joystick_port. kempston_1f: value, bits, selected_by_nr_05 (zxnext.vhd drives #1F only for Kempston 1 / MD 1), answers_here "
+             "(this emulator always does), note. not_modelled: port_37, md_pad_buttons, extended_keys and the stored nr_b0 / nr_b1 / nr_b2.", true},
+            {"/api/v1/emulator/{id}/state/next/nmi", "Get the Next NMI sources, Multiface, interrupts, reset and the interrupt journal",
+             "NMI, interrupts and reset (core DeviceState::NextNmiReport; CLI `state next nmi`, Lua next_nmi(), Python next_nmi(), MCP "
+             "inspect_state aspect next_nmi). sources: m1_button, drive_button (enabled, would_fire, blocked_by) and io_trap (not modelled). "
+             "in_service: any, multiface_session, divmmc_handler, divmmc_button_pending. multiface: enabled, type, type_name, enable_port, "
+             "disable_port, memory_in, nmi_active, invisible, active. nr_02: value, bus_reset, m1_nmi_generated, drive_nmi_generated. "
+             "stackless_nmi: enabled, return_address. reset: bits (NR #02 bits 1:0), last (power_on | first_reset_after_power_on | "
+             "later_reset). interrupts: mode, pending and in_service (source names), vector_base. events (the journal, off by default: POST "
+             "/next/nmi-journal): seq, frame, t, pc, kind (int_ack | reti | nmi_request | retn | reset), source; int_ack has the vector in "
+             "hardware IM2 mode; nmi_request has accepted and, if refused, reason; reset has reset_bits and reset_last. Query: kinds (comma), "
+             "since (seq), from / to (frame), limit (newest N, default 200, 0 = all). 400 on a bad parameter.", true},
             {"/api/v1/emulator/{id}/state/next/divmmc", "Get the Next DivMMC, its automap entries and the DivMMC journal",
              "Why the DivMMC is in (core DeviceState::NextDivMmcReport; CLI `state next divmmc`, Lua next_divmmc(), Python next_divmmc(), "
              "MCP inspect_state aspect next_divmmc). state: port_enabled, automap_armed (NR #0A bit 4), control (#E3), conmem, mapram, bank, "
@@ -679,6 +701,37 @@
             qp["schema"]["type"] = "string";
         }
         paths[kDm]["get"]["responses"]["400"]["description"] = "Bad parameter";
+
+        const char* kNmiQuery[][2] = {{"kinds", "comma list: int_ack, reti, nmi_request, retn, reset; empty = all"},
+                                      {"since", "events after this seq"},
+                                      {"from", "first frame"},
+                                      {"to", "last frame"},
+                                      {"limit", "the newest N matches (default 200, 0 = all)"}};
+        const char* kNmi = "/api/v1/emulator/{id}/state/next/nmi";
+        for (Json::ArrayIndex i = 0; i < 5; i++)
+        {
+            Json::Value& qp = paths[kNmi]["get"]["parameters"][i + 1];
+            qp["name"] = kNmiQuery[i][0];
+            qp["in"] = "query";
+            qp["description"] = kNmiQuery[i][1];
+            qp["schema"]["type"] = "string";
+        }
+        paths[kNmi]["get"]["responses"]["400"]["description"] = "Bad parameter";
+
+        const char* kNmiCtl = "/api/v1/emulator/{id}/next/nmi-journal";
+        paths[kNmiCtl]["post"]["summary"] = "Switch, clear or resize the interrupt / NMI / reset journal";
+        paths[kNmiCtl]["post"]["tags"].append("Machine State");
+        paths[kNmiCtl]["post"]["description"] =
+            "Body {\"enabled\": true|false, \"clear\": true, \"capacity\": N}, all optional (capacity resizes the ring, 16384 by "
+            "default, and drops its content). Off by default; off costs one branch per interrupt, NMI request, RETN or reset. Answers "
+            "enabled, size, capacity, evicted, last_seq.";
+        paths[kNmiCtl]["post"]["parameters"][0]["name"] = "id";
+        paths[kNmiCtl]["post"]["parameters"][0]["in"] = "path";
+        paths[kNmiCtl]["post"]["parameters"][0]["required"] = true;
+        paths[kNmiCtl]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kNmiCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[kNmiCtl]["post"]["responses"]["200"]["description"] = "The journal's state";
+        paths[kNmiCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Next";
 
         const char* kDmCtl = "/api/v1/emulator/{id}/next/divmmc-journal";
         paths[kDmCtl]["post"]["summary"] = "Switch, clear or resize the DivMMC journal";

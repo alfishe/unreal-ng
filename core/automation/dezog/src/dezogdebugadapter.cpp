@@ -169,6 +169,12 @@ void DezogDebugAdapter::onBreakpointMessage(int /*id*/, Message* message)
     if (!payload->emulatorId.isNil() && !(payload->emulatorId == emulator->GetUUID()))
         return;
 
+    // A breakpoint stop parks the machine until someone resumes it; posted after the pause, the event can arrive when
+    // the stop is already over (a dropped session's cleanup resumed it) and must not reach the next session
+    // (a machine not started at all only steps directly: its stops are always current)
+    if (emulator->IsRunning() && !emulator->IsPaused())
+        return;
+
     uint16_t breakpointId = static_cast<uint16_t>(payload->_payloadNumber);
     uint16_t address = payload->address;
 

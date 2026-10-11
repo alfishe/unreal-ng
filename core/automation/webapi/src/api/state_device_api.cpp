@@ -21,6 +21,7 @@
 #include <debugger/ports/nextregwrite.h>
 #include <emulator/io/z80n/nextregjournal.h>
 #include <emulator/io/z80n/nextdivmmcjournal.h>
+#include <emulator/io/z80n/nextintjournal.h>
 #include <emulator/io/z80n/nextsdjournal.h>
 #include <emulator/io/z80n/nextreportquery.h>
 #include <json/json.h>
@@ -490,6 +491,65 @@ void EmulatorAPI::postNextDivMmcJournal(const HttpRequestPtr& req, std::function
     if (body && body->isMember("capacity"))
         capacity = static_cast<size_t>((*body)["capacity"].asUInt64());
     ReplyState(DeviceState::NextDivMmcJournalControl(emulator->GetContext(), enable, clear, capacity), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/nmi?kinds=&since=&from=&to=&limit= - the NMI sources, the Multiface, interrupts, reset and the
+/// interrupt / NMI / reset journal (DeviceState::NextNmiReport)
+void EmulatorAPI::getStateNextNmi(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextIntJournalQuery query;
+    std::string error;
+    if (!NextIntJournalQueryFromStrings(req->getParameter("kinds"), req->getParameter("since"), req->getParameter("from"),
+                                        req->getParameter("to"), req->getParameter("limit"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::NextNmiReport(emulator->GetContext(), query), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/audio - the Next's sound as configured (DeviceState::NextAudioReport)
+void EmulatorAPI::getStateNextAudio(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::NextAudioReport(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/input - the Next's joystick modes and the Kempston port (DeviceState::NextInputReport)
+void EmulatorAPI::getStateNextInput(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::NextInputReport(emulator->GetContext()), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/next/nmi-journal {"enabled": true|false, "clear": true, "capacity": N} - switch, clear or resize the
+/// interrupt / NMI / reset journal (DeviceState::NextNmiJournalControl)
+void EmulatorAPI::postNextNmiJournal(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto body = req->getJsonObject();
+    int enable = -1;
+    bool clear = false;
+    size_t capacity = 0;
+    if (body && body->isMember("enabled"))
+        enable = (*body)["enabled"].asBool() ? 1 : 0;
+    if (body && body->isMember("clear"))
+        clear = (*body)["clear"].asBool();
+    if (body && body->isMember("capacity"))
+        capacity = static_cast<size_t>((*body)["capacity"].asUInt64());
+    ReplyState(DeviceState::NextNmiJournalControl(emulator->GetContext(), enable, clear, capacity), callback);
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/next/pixel?x=&y=&sx= - the pixel inspector (DeviceState::NextPixel; design-layer-capture.md): which layer

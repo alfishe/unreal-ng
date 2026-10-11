@@ -226,6 +226,13 @@ and after, and compare the `SUMMARY:` lines (`grep "^SUMMARY: ThreadSanitizer" |
 whenever it reported anything (`ThreadSanitizer: reported N warnings`); `MessageCenterVariants_Test.FastCenter_ThroughputSanity`
 misses its time budget under TSan (expected).
 
+On Linux, `docker/linux/build.sh --tsan [--test]` builds with gcc 14 in the CI image (`scratch/linux-amd64-<type>-san-thread`).
+gcc's TSan keeps a fixed shadow layout that a kernel with high `mmap_rnd_bits` (Ubuntu 24.04 on 6.6+) breaks
+(`FATAL: ThreadSanitizer: unexpected memory mapping`): the script runs the build (gtest discovery starts the binary) and
+the tests under `setarch -R` in a container with `seccomp=unconfined`. Running the binary by hand needs the same:
+`docker run --security-opt seccomp=unconfined ... setarch -R ./core-tests`. gcc also warns that TSan does not model
+`atomic_thread_fence` (`-Wtsan`); `cmake/Sanitize.cmake` keeps that a warning.
+
 It does find what it should: a shared `std::mt19937` drawn from two threads is reported as a data race in
 `mersenne_twister_engine::operator()` - the UUID duplicate bug in its pure form.
 

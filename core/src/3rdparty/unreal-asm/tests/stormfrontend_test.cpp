@@ -159,6 +159,8 @@ TEST(StormFrontend_Test, DataAndRepetition)
     // .n repeats the line, .0 256 times; _ puts a command in column 0
     EXPECT_EQ(ToSjasmplus(".32     LDI\n.0      NOP\n_DB 5+14*2"),
               (std::vector<std::string>{"DUP 32", "LDI", "EDUP", "DUP 256", "NOP", "EDUP", "DB 5+14*2"}));
+    // _ before a name that is no command: a label (STORM packs "_" as a label's first character)
+    EXPECT_EQ(ToSjasmplus("_WORK   EQU 5\n        LD A,_WORK"), (std::vector<std::string>{"_WORK   EQU 5", "LD A,_WORK"}));
 }
 
 TEST(StormFrontend_Test, OrgAndFiles)

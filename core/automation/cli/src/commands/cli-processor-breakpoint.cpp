@@ -65,6 +65,42 @@ bool CLIProcessor::ParseBreakpointArgs(const std::vector<std::string>& args, siz
             }
             spec.portMask = mask;
         }
+        else if (a == "--hc")
+        {
+            uint16_t hc = 0;
+            if (!hasValue || !ParseAddress(args[++i], hc) || hc > BRK_BEAM_MAX_HC)
+            {
+                error = "--hc needs a pixel clock (0..511)";
+                return false;
+            }
+            spec.beamHc = hc;
+        }
+        else if (a == "--via")
+        {
+            if (!hasValue || !BreakpointManager::ParseNextRegDoors(args[++i], spec.nrDoors, error))
+            {
+                if (error.empty())
+                    error = "--via needs doors: nextreg, port, copper (comma separated)";
+                return false;
+            }
+        }
+        else if (a == "--value" || a == "--vmask")
+        {
+            uint16_t number = 0;
+            if (!hasValue || !ParseAddress(args[++i], number) || number > 0xFF)
+            {
+                error = a + " needs a byte (0..255)";
+                return false;
+            }
+            if (a == "--value")
+            {
+                spec.nrValue = static_cast<uint8_t>(number);
+                if (spec.nrMask == 0)
+                    spec.nrMask = 0xFF;
+            }
+            else
+                spec.nrMask = static_cast<uint8_t>(number);
+        }
         else if (a == "--hits")
         {
             if (!hasValue || !BreakpointManager::ParseHitSpec(args[++i], spec.hitMode, spec.hitTarget, error))
@@ -267,6 +303,132 @@ void CLIProcessor::HandlePortBreakpoint(const ClientSession& session, const std:
         return;
     }
     session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Port breakpoint"));
+}
+
+// HandleNextRegBreakpoint: bnextreg <reg>[-<end>] <r|w|rw> [--via doors] [--value V [--vmask M]] [--hits ..] [note]
+void CLIProcessor::HandleNextRegBreakpoint(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    if (args.size() < 2)
+    {
+        std::stringstream ss;
+        ss << "Usage: bnextreg <reg>[-<end>] <r|w|rw> [--via nextreg,port,copper] [--value V [--vmask M]] [--hits N|>=N|%N] [note]"
+           << NEWLINE << "Sets a ZX Next register breakpoint: a read of the register (through port #253B) or a write (by the"
+           << NEWLINE << "NEXTREG instructions, OUT #253B or a copper MOVE). It stops after the instruction that did it;"
+           << NEWLINE << "the copper's writes are caught up when the beam draws the line, so a copper stop is at the line's end." << NEWLINE
+           << "Examples:" << NEWLINE << "  bnextreg 0x07 w                  - any write of the CPU speed register" << NEWLINE
+           << "  bnextreg 0x40-0x44 w --via copper - the copper touching the palette registers" << NEWLINE
+           << "  bnextreg 0x15 w --value 0x01 --vmask 0x01 - a write that sets bit 0";
+        session.SendResponse(ss.str());
+        return;
+    }
+    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    if (!bpManager)
+    {
+        session.SendResponse("Breakpoint manager not available");
+        return;
+    }
+    const std::string& typeStr = args[1];
+    uint8_t access = BRK_IO_NONE;
+    if (typeStr.find('r') != std::string::npos)
+        access |= BRK_IO_IN;
+    if (typeStr.find('w') != std::string::npos)
+        access |= BRK_IO_OUT;
+    if (access == BRK_IO_NONE)
+    {
+        session.SendResponse("Invalid access. Use 'r', 'w' or 'rw'.");
+        return;
+    }
+    BreakpointSpec spec;
+    spec.type = BRK_NEXTREG;
+    spec.access = access;
+    std::string error;
+    if (!ParseBreakpointArgs(args, 0, 2, spec, error))
+    {
+        session.SendResponse("Error: " + error);
+        return;
+    }
+    session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "NextREG breakpoint"));
+}
+
+// HandleBeamBreakpoint: bbeam <line> [--hc N] [--hits ..] [note]
+void CLIProcessor::HandleBeamBreakpoint(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    if (args.empty())
+    {
+        std::stringstream ss;
+        ss << "Usage: bbeam <line> [--hc N] [--hits N|>=N|%N] [note]" << NEWLINE
+           << "Stops when the beam passes the place: <line> is the copper's line counter (NR #64 applied: 0 is the paper's first"
+           << NEWLINE << "line unless offset), --hc the pixel clock in the row (7 MHz, default 0). The machine stops at the end of the" << NEWLINE
+           << "instruction the beam passed it in. ZX Next only." << NEWLINE << "Examples:" << NEWLINE
+           << "  bbeam 100            - the start of line 100" << NEWLINE << "  bbeam 99 --hc 255    - where the line interrupt of line 100 fires";
+        session.SendResponse(ss.str());
+        return;
+    }
+    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    if (!bpManager)
+    {
+        session.SendResponse("Breakpoint manager not available");
+        return;
+    }
+    BreakpointSpec spec;
+    spec.type = BRK_BEAM;
+    spec.access = BRK_IO_OUT;
+    std::string error;
+    if (!ParseBreakpointArgs(args, 0, 1, spec, error))
+    {
+        session.SendResponse("Error: " + error);
+        return;
+    }
+    session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Beam breakpoint"));
+}
+
+// HandleCopperBreakpoint: bcopper <index>[-<end>] [--hits ..] [note]
+void CLIProcessor::HandleCopperBreakpoint(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    if (args.empty())
+    {
+        std::stringstream ss;
+        ss << "Usage: bcopper <index>[-<end>] [--hits N|>=N|%N] [note]" << NEWLINE
+           << "Stops when the copper completes the instruction at that list index (0..1023): a WAIT that became true, or a MOVE." << NEWLINE
+           << "ZX Next only." << NEWLINE << "Examples:" << NEWLINE << "  bcopper 12        - the 13th instruction of the list" << NEWLINE
+           << "  bcopper 0-1023    - any instruction";
+        session.SendResponse(ss.str());
+        return;
+    }
+    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    if (!bpManager)
+    {
+        session.SendResponse("Breakpoint manager not available");
+        return;
+    }
+    BreakpointSpec spec;
+    spec.type = BRK_COPPER;
+    spec.access = BRK_IO_OUT;
+    std::string error;
+    if (!ParseBreakpointArgs(args, 0, 1, spec, error))
+    {
+        session.SendResponse("Error: " + error);
+        return;
+    }
+    session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Copper breakpoint"));
 }
 
 // HandleBPHits: bphits reset [id]

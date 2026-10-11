@@ -30,6 +30,7 @@ class Emulator:
         self.id = emulator_id
         self.base = f'{self.url}/{self.id}'
         if created:
+            self._request('PUT', self.base + '/audio/mixer/master', {'muted': True})   # no key clicks from the host's speakers
             self.ensure_running()
 
     def ensure_running(self):

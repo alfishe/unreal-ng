@@ -1973,6 +1973,22 @@ ZXPolyGroup::Divergence ZXPolyGroup::CheckLockstep() const
     // after a load or a replication the slaves are copies standing where the
     // master stands, compared as they are
     const bool atBoundary = _boundaryChecked;
+
+    // Live registers: hold every member's CPU, so none is inside an instruction while it is read (a status request
+    // comes from an automation thread; a member can be stepped on its own, BUGS.md 2026-10-11 #5). The master first,
+    // as GroupHold does; on a member's own thread its hold is free
+    std::shared_ptr<void> holds[MODULES];
+    if (!atBoundary)
+    {
+        for (size_t m = 0; m < MODULES; m++)
+        {
+            if (Emulator* member = _instances[m].get())
+                holds[m] = std::make_shared<Emulator::CpuHold>(*member, "zx-poly lockstep");
+            if (m == 0)
+                WaitForSlaves();
+        }
+    }
+
     for (size_t m = 1; m < MODULES; m++)
     {
         std::string what;

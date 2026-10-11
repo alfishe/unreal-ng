@@ -1,5 +1,6 @@
 #pragma once
 
+#include "_helpers/emulatortesthelper.h"
 #include "stdafx.h"
 #include "pch.h"
 
@@ -221,17 +222,7 @@ private:
     {
         // Core::~Core() -> Release() frees every peripheral (decoder last) and
         // nulls the context back-pointers, mirroring Emulator_Test::DestroyEmulator()
-        if (_core != nullptr)
-        {
-            delete _core;
-            _core = nullptr;
-        }
-
-        if (_context != nullptr)
-        {
-            delete _context;
-            _context = nullptr;
-        }
+        EmulatorTestHelper::ReleaseBareCore(_core, _context);
 
         _memory = nullptr;
 

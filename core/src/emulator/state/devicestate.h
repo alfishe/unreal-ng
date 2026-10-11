@@ -43,6 +43,7 @@ struct Options;
 struct NextRegJournalQuery;  // emulator/io/z80n/nextregjournal.h
 struct NextSdJournalQuery;   // emulator/io/z80n/nextsdjournal.h
 struct NextDivMmcJournalQuery;  // emulator/io/z80n/nextdivmmcjournal.h
+struct NextIntJournalQuery;     // emulator/io/z80n/nextintjournal.h
 struct NextPaletteQuery;     // emulator/io/z80n/nextreportquery.h
 struct NextPortsQuery;
 struct NextPixelQuery;
@@ -262,6 +263,22 @@ StateNode NextSdJournalControl(EmulatorContext* context, int enable, bool clear,
 StateNode NextDivMmcReport(EmulatorContext* context, const NextDivMmcJournalQuery& query);
 /// Switch the DivMMC journal on / off (`enable` 1 / 0, -1 = keep), clear it and / or resize the ring; replies with its state
 StateNode NextDivMmcJournalControl(EmulatorContext* context, int enable, bool clear, size_t capacity = 0);
+/// The Next's NMI sources, interrupts and reset (`next_nmi`, /state/next/nmi; automation-gaps-2026-10-11.md P4): per NMI source (the M1 and DRIVE
+/// buttons, the +3 I/O trap which is not modelled) whether it would fire now and what blocks it; the NMI in service (Multiface session, DivMMC
+/// handler); the Multiface (type, ports, memory in, invisible); NR #02's generate bits and reset bits; the stackless NMI; the maskable
+/// interrupts pending / in service by name; and the journal: the interrupt accepted (source, vector), RETI, an NMI request (accepted or why
+/// not), RETN, the reset. Query: `kinds`, `since`, `from`, `to`, `limit`. Reading changes nothing
+StateNode NextNmiReport(EmulatorContext* context, const NextIntJournalQuery& query);
+/// Switch the interrupt / NMI / reset journal on / off (`enable` 1 / 0, -1 = keep), clear it and / or resize the ring; replies with its state
+StateNode NextNmiJournalControl(EmulatorContext* context, int enable, bool clear, size_t capacity = 0);
+/// The Next's sound as the program configured it (`next_audio`, /state/next/audio; automation-gaps-2026-10-11.md P5): the chip model and
+/// stereo mode (NR #06 / #08 / #09 decoded), turbosound, the chip selected on #FFFD, per chip its pan, mono flag and 16 registers with the
+/// tone / noise / envelope periods and volumes, and the four DAC channels with the left / right sums. Reading changes nothing
+StateNode NextAudioReport(EmulatorContext* context);
+/// The Next's input as the program configured it (`next_input`, /state/next/input; automation-gaps-2026-10-11.md P5): the joystick modes of
+/// NR #05 (left and right: Sinclair, Kempston, cursor, MD pad, I/O mode) and which port each answers, the I/O mode of NR #0B, the Kempston
+/// port #1F now decoded, and what is not modelled (port #37, the MD pad buttons, the extended keys NR #B0-#B2). Reading changes nothing
+StateNode NextInputReport(EmulatorContext* context);
 /// The Next's debugger reports (docs/inprogress/2026-10-07-zx-next/design-automation-coverage.md; built in
 /// ports/models/portdecoder_next_reports.cpp). None of them has a side effect on the machine (R3): they read the models' state,
 /// never a port - no DMA read-sequence step, no palette / copper auto-increment, no select-latch change.

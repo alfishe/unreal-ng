@@ -3823,6 +3823,11 @@ bool Emulator::SetOverscanMode(bool enable)
     if (!_context || !_context->pScreen)
         return false;
 
+    // The CPU held from the read of the mode on: no framebuffer access during the reallocation, and two callers do not
+    // both see the old mode and both switch (the second read the mode while the first wrote it; TSan, BUGS.md
+    // 2026-10-11 #6)
+    CpuHold hold(*this, "overscan");
+
     Screen* screen = _context->pScreen;
     VideoModeEnum currentMode = screen->GetVideoMode();
 
@@ -3836,9 +3841,6 @@ bool Emulator::SetOverscanMode(bool enable)
 
     if (newMode != currentMode)
     {
-        // The CPU held while the video mode changes: no framebuffer access during the reallocation
-        CpuHold hold(*this, "overscan");
-
         // Record the user's intent FIRST: InitRaster re-detects the video mode
         // from config/ports every frame and would revert a bare SetVideoMode
         // back to the model's base mode on the next frame

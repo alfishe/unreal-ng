@@ -118,6 +118,59 @@ paged, where `RST 8` is a BASIC error report and the byte an error code, not an 
 CLI, `next_divmmc{...}` in Lua, `emu.next_divmmc(...)` in Python. The text is the one
 `NextDivMmcJournalMachine_Test.TheCliPrintsTheEntriesAndTheCalls` checks.
 
+### 3a3. Stop at the write of NR x, at a beam place, at a copper instruction (breakpoints)
+
+The journal says who wrote; a breakpoint stops the machine there. NextREG, beam and copper-instruction breakpoints are ordinary
+breakpoints (`bp_add`, `POST /breakpoints`, CLI, Lua, Python), set in debug mode only; with none of them the machine pays nothing for them.
+
+```text
+control_execution {"action":"bp_add","type":"nextreg_write","address":"0x07"}                              # any door
+control_execution {"action":"bp_add","type":"nextreg_write","address":"0x40","address_end":"0x44","doors":"copper"}  # the copper touches the palette
+control_execution {"action":"bp_add","type":"nextreg_write","address":"0x15","value":1,"value_mask":1}     # a write that sets bit 0
+control_execution {"action":"bp_add","type":"beam","address":99,"hc":255}                                  # where the line interrupt of line 100 fires
+control_execution {"action":"bp_add","type":"copper","address":12}                                         # the copper completes list instruction 12
+control_execution {"action":"wait"}
+```
+
+The CPU's doors (`NEXTREG`, `OUT #253B`, `IN #253B` for reads) stop after the instruction that did it, before the register takes the write.
+The copper is watched on a copy of its state after every instruction (the picture runs the real copper lazily, a line at a time), so a
+copper write, a beam place or a copper instruction stops at the first instruction boundary after the beam has done it, and the
+real copper executes the write later without a second stop or count. The `beam` line and the `hc` are the copper's counters (NR #64
+applied); `next_reg_journal` carries `beam_line` / `beam_hc` for every write (a copper MOVE has its own beam, not the time of the picture's catch-up).
+
+### 3a4. Which interrupt did the CPU take, why did the M1 button do nothing? (the NMI report)
+
+`state/next/nmi` answers "would the M1 / DRIVE button fire now and what blocks it", the Multiface and its session, the NMI in service, the
+reset bits and, with the journal on (off by default), every interrupt the CPU accepted with its source and vector.
+
+```text
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/next/nmi-journal","body":{"enabled":true,"clear":true}}
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/next/nextreg","body":{"reg":"02","value":"08"}}   # the M1 button (NR #02 bit 3)
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/nmi","body":{"magic":true}}                      # the magic button: the DRIVE button on a Next (a plain POST /nmi is the bare line)
+inspect_state {"aspects":["next_nmi"],"nr_nmi_kinds":"int_ack,nmi_request","nr_nmi_limit":20}
+#   → [next_nmi] NMI in service: no; sources: m1_button blocked (...) drive_button ready io_trap (not modelled); multiface off +3, memory out; ...
+#       #1 f512 pc 0x3DBD int_ack ula
+#       #2 f512 pc 0x0038 nmi_request m1_button REFUSED: the M1 button is off (NR #06 bit 3)
+```
+
+`int_ack` has the source (`line`, `ula`, `ctc0`..`ctc7`, `uart0_rx` ...; `spurious` for an acknowledge nothing asked for) and, in hardware IM2
+mode, the vector; pulse mode carries `#FF` on the bus and no vector. `nmi_request.accepted` false has `reason`: the button's enable bit in NR
+`#06`, CONMEM (port `#E3` bit 7), a DivMMC handler still running, an open Multiface session. `retn.source` says which session the RETN ended
+(`multiface`, `divmmc`, `none`). `reset` is `soft` or `hard`, with NR `#02` bits 1:0 after it (`power_on`, `first_reset_after_power_on`,
+`later_reset`). The +3 FDC I/O trap (NR `#D8`-`#DA`) is listed as an NMI source but is not modelled. CLI `state next nmi`; Lua
+`next_nmi{...}`; Python `emu.next_nmi(...)`.
+
+### 3a5. Why is there no sound, why does the joystick do nothing? (audio and input)
+
+`state/next/audio` shows the chips as the program set them: the model (YM or AY), ABC or ACB, turbosound, the selected chip, each chip's pan
+(a chip panned `muted` is silent), its 16 registers with the tone, noise and envelope periods and the volumes (bit 4: the envelope drives
+the channel), and the four DAC channels with the left (A + B) and right (C + D) sums (`#80` is silence). `state/next/input` shows NR `#05`
+decoded for the left and right joystick (Kempston 1 / 2, MD 1 / 2, Sinclair, cursor, I/O mode) and which port each answers, the NR `#0B`
+I/O mode, and the Kempston port `#1F` now. `kempston_1f.selected_by_nr_05` false means `zxnext.vhd` would not drive `#1F` for these modes while
+this emulator still does (`answers_here`); port `#37`, the MD pad buttons and the extended keys NR `#B0`-`#B2` are not modelled. CLI
+`state next audio` / `state next input`, Lua `next_audio()` / `next_input()`, Python `emu.next_audio()` / `emu.next_input()`, MCP aspects
+`next_audio` / `next_input`.
+
 ### 3b. What did the program configure? (the debugger reports)
 
 Guessing from port traces and one register at a time found the DMA writing into ROM, the tilemap reading bank 7 as 16K and a card

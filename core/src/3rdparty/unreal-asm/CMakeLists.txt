@@ -76,6 +76,8 @@ add_library(unreal-asm STATIC
     src/dialects/alasm/alasmfrontend.cpp
     src/dialects/alasm/alasmbackend.cpp
     src/dialects/xas/xasbackend.cpp
+    src/dialects/storm/stormbackend.cpp
+    src/dialects/common/retrowriter.cpp
     src/dialects/sjasmplus/sjasmplusproject.cpp
     src/dialects/gens/gensfrontend.cpp
     src/dialects/asm80/asm80frontend.cpp
@@ -186,6 +188,7 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/xasfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/alasmbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/xasbackend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/stormbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/pasmobackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/z88dkbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/trdos_test.cpp

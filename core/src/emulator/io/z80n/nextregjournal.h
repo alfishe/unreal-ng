@@ -32,6 +32,8 @@ struct NextRegWriteEvent
     uint8_t reg = 0;
     uint8_t value = 0;
     uint8_t previous = 0;
+    int16_t beamLine = -1;  ///< where the beam was (line counter with NR #64 applied, pixel clock in the row); -1: not known.
+    int16_t beamHc = -1;    ///< A copper MOVE is stamped with the clock it was done on, not the CPU's time of the catch-up
 };
 
 /// "07,02" / "0x07" / "#07": register numbers; "nextreg,copper": source names. Empty = no filter
@@ -67,7 +69,8 @@ public:
     uint64_t LastSeq() const { return _seq; }
     void Clear();
 
-    void Record(uint32_t frame, uint32_t t, uint16_t pc, NextRegSource source, uint8_t reg, uint8_t value, uint8_t previous);
+    void Record(uint32_t frame, uint32_t t, uint16_t pc, NextRegSource source, uint8_t reg, uint8_t value, uint8_t previous,
+                int16_t beamLine = -1, int16_t beamHc = -1);
 
     /// The matches, oldest first, the newest `limit` of them
     std::vector<NextRegWriteEvent> Query(const NextRegJournalQuery& query) const;

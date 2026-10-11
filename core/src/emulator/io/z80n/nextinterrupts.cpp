@@ -309,20 +309,50 @@ bool NextInterruptSource::IsIntAsserted(uint32_t t)
     return (_pending & ~blocked) != 0;
 }
 
+const char* NextInterruptSource::SourceName(unsigned source)
+{
+    static const char* const kNames[kSourceCount] = {"line", "uart0_rx", "uart1_rx", "ctc0", "ctc1", "ctc2", "ctc3",
+                                                     "ctc4", "ctc5", "ctc6", "ctc7", "ula", "uart0_tx", "uart1_tx"};
+    return source < kSourceCount ? kNames[source] : "unknown";
+}
+
+std::vector<const char*> NextInterruptSource::SourceNames(uint16_t mask)
+{
+    std::vector<const char*> names;
+    for (unsigned source = 0; source < kSourceCount; source++)
+        if (mask & (1u << source))
+            names.push_back(SourceName(source));
+    return names;
+}
+
 uint8_t NextInterruptSource::AcknowledgeInterrupt(uint32_t t)
 {
     if (!HardwareMode())
+    {
+        // The classic pulse: the line interrupt's pulse if that is the one on the bus, else the frame's
+        if (onEvent)
+        {
+            const bool line = (_lineControl & 0x02) != 0 && PulseAt(BaseT(t), LineStartT());
+            onEvent(NextIntKind::IntAck, SourceName(line ? kLine : kUla), false, 0xFF);
+        }
         return 0xFF;
+    }
     Latch(BaseT(t));
     const uint16_t blocked = Blocked();
     const uint16_t ready = _pending & ~blocked;
     if (!ready)
+    {
+        if (onEvent)
+            onEvent(NextIntKind::IntAck, "spurious", true, VectorOf(kUla));
         return VectorOf(kUla);  // a spurious acknowledge reads the ULA's vector
+    }
     unsigned source = 0;
     while (!(ready & (1u << source)))
         source++;
     _pending &= static_cast<uint16_t>(~(1u << source));
     _inService |= static_cast<uint16_t>(1u << source);
+    if (onEvent)
+        onEvent(NextIntKind::IntAck, SourceName(source), true, VectorOf(static_cast<Source>(source)));
     return VectorOf(static_cast<Source>(source));
 }
 
@@ -330,6 +360,13 @@ void NextInterruptSource::OnReti()
 {
     if (!HardwareMode() || !_inService)
         return;
+    if (onEvent)
+    {
+        unsigned source = 0;
+        while (!(_inService & (1u << source)))
+            source++;
+        onEvent(NextIntKind::Reti, SourceName(source), false, 0);
+    }
     _inService &= static_cast<uint16_t>(_inService - 1);  // the highest-priority source in service is done (lowest bit)
 }
 

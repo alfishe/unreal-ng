@@ -442,6 +442,10 @@ next_sd_journal_control{enabled=true, clear=true, capacity=16384}  -- switch (of
 sd, err = next_sd{kinds="command,read", card=0, since=0, from=0, to=999, limit=50}  -- the Next SD cards (type SDSC|SDHC, state, blocks), the SPI engine and the SD journal: events {seq, frame, t, pc, card, kind, command, argument, r1, crc_valid | block, ok}
 next_divmmc_journal_control{enabled=true, clear=true, capacity=16384}  -- switch (off by default) / clear / resize the DivMMC journal
 dm, err = next_divmmc{kinds="map_in,esx_call", since=0, from=0, to=999, limit=50}  -- the Next DivMMC: state, entries (NR #B8-#BB decoded) and the journal events {seq, frame, t, pc, kind, address, entry, map | call, name, return_address, basic_rom, af, bc, de, hl}
+next_nmi_journal_control{enabled=true, clear=true, capacity=16384}  -- switch (off by default) / clear / resize the interrupt / NMI / reset journal
+nm, err = next_nmi{kinds="int_ack,nmi_request", since=0, from=0, to=999, limit=50}  -- the Next NMI sources {name, via, modelled, enabled, would_fire, blocked_by}, in_service, multiface, nr_02, stackless_nmi, reset {bits, last}, interrupts {mode, pending, in_service, vector_base} and the journal events {seq, frame, t, pc, kind, source, vector | accepted, reason | reset_bits, reset_last}
+au = next_audio()                -- the Next's sound as configured: config {chip_model, stereo_mode, turbosound, dac, nr_06, nr_08, nr_09}, selected_chip, chips[3] {pan, mono, registers[16], tone_periods, noise_period, mixer, volumes, envelope_period, envelope_shape}, dac {a, b, c, d, left_sum, right_sum}
+ip = next_input()                 -- the Next's joystick modes: joystick_modes {nr_05, left / right {code, name, port}}, io_mode {nr_0b, enabled, mode}, kempston_1f {value, bits, selected_by_nr_05, answers_here, note}, not_modelled {port_37, md_pad_buttons, extended_keys, nr_b0..b2}
 d = next_dma()                    -- the Next's DMA as programmed and running: mode (zxn|z80), enabled, waiting, burst, prescaler, a/b {address, type, step, timing}, direction, block_length, counter, src/dst (+ src_kind/dst_kind: the 8K slot they hit, 'rom' = a write into ROM), holds_bus, status; reading never advances its read sequence
 v = next_video()                  -- layer_order {value, name}, ula {mode, port_ff, scroll, clip}, layer2 {resolution, bank, scroll, clip}, tilemap {columns, map_bank, map_offset, ...}, sprites, transparency, raster {hc, vc, frame_t}, timing
 p, err = next_palette{palette="sprites_1", range="0-15"}  -- the 9-bit palettes (default: the selected one, all 256 entries; palette=0..7|name|"all"): selected, transparent, palettes[{name, entries[{index, rgb9, red, green, blue, priority}]}]; no index moves
@@ -673,6 +677,10 @@ id = bp_read(0x4000)           -- memory read; the same options
 id = bp_write(0x4000, {to=0x57FF})  -- memory write: the screen bitmap
 id = bp_port_in(0xFE, {mask=0x00FF})  -- port IN on #FE with any high byte; options {mask=, hits=}
 id = bp_port_out(0x7FFD)
+id = bp_nextreg_write(0x07)    -- ZX Next: a write of NR #07 by any door; bp_nextreg_read, bp_nextreg (both)
+id = bp_nextreg_write(0x40, {to=0x44, doors="copper", value=0x01, vmask=0x03, hits=">=2"})  -- options {to=, doors=, value=, vmask=, hits=}
+id = bp_beam(99, {hc=255})     -- ZX Next: the beam passes line 99 (the copper's counter) at pixel clock 255
+id = bp_copper(12, {to=14})    -- ZX Next: the copper completes list instruction 12..14
 bp_reset_hits(id)              -- hit counter back to 0 (no id: all)
 bp_remove(id); bp_clear()
 bp_enable(id); bp_disable(id)

@@ -34,6 +34,7 @@ PENTAGON; `test_input.py` takes a 48K for the BASIC prompt). Do not point it at 
 | `test_symbols.py` | `manage_symbols` | resolve by name and by address, list by name / range / limit, a bad range |
 | `test_capture_media.py` | `capture_media` | screenshot metadata by default, the picture as an MCP image block (real PNG / GIF, no base64 in the JSON echo), a stable digest, status calls |
 | `test_input.py` | `type_input`, `mouse_input`, `joystick_input` | a typed BASIC line reaches the screen, key names, device status in the text, wrong arguments name the right ones |
+| `test_next.py` | `inspect_state`, `invoke_api`, `control_execution` | ZX Next: the `next_nmi` aspect and its journal, the NMI trigger and its refusals, the NextREG / beam / copper breakpoint types in `bp_add` and `bp_list` |
 | `test_time_travel.py` | `time_travel` | record, stop, the range in status, seek, an out-of-range seek is reported |
 | `test_media.py` | `media`, `load_software`, `rzx_playback` | slots and formats in the text, a tape from `testdata/` loads into its slot, a missing file is named |
 | `test_router.py` | `search_api`, `invoke_api` | search by words, a GET by path, a missing path |

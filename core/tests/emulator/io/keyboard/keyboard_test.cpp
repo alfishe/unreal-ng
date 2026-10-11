@@ -18,6 +18,8 @@ void Keyboard_Test::TearDown()
         delete _keyboard;
         _keyboard = nullptr;
     }
+    delete _context;
+    _context = nullptr;
 }
 
 /// endregion </Setup / TearDown>
