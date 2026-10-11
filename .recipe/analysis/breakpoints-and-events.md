@@ -66,7 +66,7 @@ curl -s $BASE/emulator/$EMU/breakpoints | jq '.breakpoints[] | {id, address, add
 | Lua | `bp(a, {to=e})` | `bp(a, "ram32")`, `{page=, slot_only=}` | `bp_port_in(p, {mask=})` | `{hits=">=5"}`; `bp_reset_hits([id])` |
 | Python | `emu.bp(a, to=e)` | `page="ram32", slot_only=True` | `emu.bp_port_in(p, mask=)` | `hits=">=5"`; `emu.bp_reset_hits([id])` |
 | MCP | `bp_add` `address_end` | `page`, `slot_only` | `port_mask` | `hits`; action `bp_reset_hits` |
-| ZX Next | CLI `bnextreg 0x07 w --via copper`, `bbeam 99 --hc 255`, `bcopper 12`; WebAPI/MCP types `nextreg_write`/`nextreg_read`/`nextreg` (`doors`, `value`, `value_mask`), `beam` (`hc`), `copper`; Lua/Python `bp_nextreg_write`, `bp_beam`, `bp_copper` | | | |
+| ZX Next | CLI `bnextreg 0x07 w --via copper`, `bbeam 99 --hc 255`, `bcopper 12`; WebAPI/MCP types `nextreg_write`/`nextreg_read`/`nextreg` (`doors`, `value`, `value_mask`), `beam` (`hc`), `copper`; Lua/Python `bp_nextreg_write`, `bp_beam`, `bp_copper`; magic opcodes `bmagic edff|dd01`, types `magic_ed_ff`/`magic_dd_01`, `bp_magic("ed_ff")` (stops after the NOP / `LD BC,nn` ran; none armed = no cost) | | | |
 | unreal-qt | Breakpoint editor: "to", "Page", "This slot only", "Mask", "Hits" fields; the list shows them | | | |
 
 **Notes and groups.** `POST /breakpoints` takes `note` and `group` (MCP `bp_add` too); the CLI takes the

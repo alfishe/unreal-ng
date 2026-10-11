@@ -679,6 +679,7 @@ id = bp_port_in(0xFE, {mask=0x00FF})  -- port IN on #FE with any high byte; opti
 id = bp_port_out(0x7FFD)
 id = bp_nextreg_write(0x07)    -- ZX Next: a write of NR #07 by any door; bp_nextreg_read, bp_nextreg (both)
 id = bp_nextreg_write(0x40, {to=0x44, doors="copper", value=0x01, vmask=0x03, hits=">=2"})  -- options {to=, doors=, value=, vmask=, hits=}
+id = bp_magic("ed_ff")         -- ZX Next: stop after the magic opcode ED FF (or "dd_01") ran
 id = bp_beam(99, {hc=255})     -- ZX Next: the beam passes line 99 (the copper's counter) at pixel clock 255
 id = bp_copper(12, {to=14})    -- ZX Next: the copper completes list instruction 12..14
 bp_reset_hits(id)              -- hit counter back to 0 (no id: all)

@@ -2929,6 +2929,12 @@ public:
         lua.set_function("bp_copper", [this](uint16_t index, sol::optional<sol::table> options) -> int {
             return AddScriptPositionBreakpoint(BRK_COPPER, index, options);
         });
+        // bp_magic("ed_ff" | "dd_01", {hits=}) stops after the CPU ran the magic opcode (a NOP / LD BC,nn on the hardware). -1 when refused
+        lua.set_function("bp_magic", [this](const std::string& opcode, sol::optional<sol::table> options) -> int {
+            if (opcode != "ed_ff" && opcode != "dd_01")
+                return -1;
+            return AddScriptPositionBreakpoint(BRK_MAGIC, opcode == "ed_ff" ? BRK_MAGIC_ED_FF : BRK_MAGIC_DD_01, options);
+        });
         lua.set_function("bp_nextreg", [this](uint16_t reg, sol::optional<sol::table> options) -> int {
             return AddScriptNextRegBreakpoint(BRK_IO_IN | BRK_IO_OUT, reg, options);
         });

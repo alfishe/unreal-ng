@@ -2077,6 +2077,12 @@ namespace PythonBindings
                 return PythonScriptPositionBreakpoint(self, BRK_COPPER, index, 0, to, hits);
             }, "Add a ZX Next copper breakpoint: stops when the copper completes the list instruction at 'index' (to: range end). -1 when refused",
                py::arg("index"), py::arg("to") = -1, py::arg("hits") = "")
+            .def("bp_magic", [](Emulator& self, const std::string& opcode, const std::string& hits) -> int {
+                if (opcode != "ed_ff" && opcode != "dd_01")
+                    return -1;
+                return PythonScriptPositionBreakpoint(self, BRK_MAGIC, opcode == "ed_ff" ? BRK_MAGIC_ED_FF : BRK_MAGIC_DD_01, 0, -1, hits);
+            }, "Add a ZX Next magic-opcode breakpoint: stops after the CPU ran 'ed_ff' or 'dd_01' (a NOP / LD BC,nn on the hardware). -1 when refused",
+               py::arg("opcode"), py::arg("hits") = "")
             .def("bp_remove", [](Emulator& self, uint16_t id) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return false;

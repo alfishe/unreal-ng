@@ -431,6 +431,45 @@ void CLIProcessor::HandleCopperBreakpoint(const ClientSession& session, const st
     session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Copper breakpoint"));
 }
 
+// HandleMagicBreakpoint: bmagic <edff|dd01> [--hits ..] [note]
+void CLIProcessor::HandleMagicBreakpoint(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    if (args.empty() || (args[0] != "edff" && args[0] != "dd01"))
+    {
+        std::stringstream ss;
+        ss << "Usage: bmagic <edff|dd01> [--hits N|>=N|%N] [note]" << NEWLINE
+           << "Stops after the CPU ran the magic opcode other emulators use as a debug trap: ED FF (jnext, ZEsarUX) or DD 01 (CSpect)." << NEWLINE
+           << "The opcode executes as on the hardware (ED FF is a NOP, DD 01 is LD BC,nn). ZX Next only." << NEWLINE << "Examples:" << NEWLINE
+           << "  bmagic edff" << NEWLINE << "  bmagic dd01 --hits >=3";
+        session.SendResponse(ss.str());
+        return;
+    }
+    BreakpointManager* bpManager = emulator->GetBreakpointManager();
+    if (!bpManager)
+    {
+        session.SendResponse("Breakpoint manager not available");
+        return;
+    }
+    std::vector<std::string> rest = args;
+    rest[0] = args[0] == "edff" ? "0xEDFF" : "0xDD01";  // the opcode word is the breakpoint's address
+    BreakpointSpec spec;
+    spec.type = BRK_MAGIC;
+    spec.access = BRK_IO_OUT;
+    std::string error;
+    if (!ParseBreakpointArgs(rest, 0, 1, spec, error))
+    {
+        session.SendResponse("Error: " + error);
+        return;
+    }
+    session.SendResponse(AddBreakpointAndDescribe(*bpManager, spec, "Magic breakpoint"));
+}
+
 // HandleBPHits: bphits reset [id]
 void CLIProcessor::HandleBPHits(const ClientSession& session, const std::vector<std::string>& args)
 {

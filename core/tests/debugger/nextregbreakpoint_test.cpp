@@ -448,3 +448,89 @@ TEST_F(NextRegBreakpointMachine_Test, TheJournalStampsACopperWriteWithTheBeamOfT
     EXPECT_EQ(move.beamLine, kRow);
     EXPECT_EQ(move.beamHc, Raster::WaitThreshold(0)) << "the WAIT is true on the clock hc = kWaitHcBase; the MOVE follows within that pixel";
 }
+
+// Magic-opcode breakpoints (P6, G9): ED FF (jnext, ZEsarUX) and DD 01 (CSpect) are debug traps in other emulators. On the Z80N they are
+// what the opcode table says (ED FF is a NOP of two bytes, DD 01 is LD BC,nn with the prefix ignored); the breakpoint only notices them
+namespace
+{
+constexpr uint16_t kProgram = 0x8000;
+constexpr uint16_t kEdFfLength = 2;           // ED, FF
+constexpr uint16_t kDd01Length = 4;           // DD, 01, nn, nn
+constexpr uint16_t kLoadedBc = 0x1234;        // the operand of DD 01
+constexpr uint8_t kPrefixEd = 0xED, kPrefixDd = 0xDD, kOpcodeFf = 0xFF, kOpcodeLdBc = 0x01;
+}  // namespace
+
+TEST_F(NextRegBreakpointMachine_Test, AMagicOpcodeStopsAfterItRanAndExecutesAsOnTheHardware)
+{
+    Memory* memory = _context->pMemory;
+    Z80* z80 = _context->pCore->GetZ80();
+    const uint8_t program[] = {kPrefixEd, kOpcodeFf, kPrefixDd, kOpcodeLdBc, static_cast<uint8_t>(kLoadedBc & 0xFF),
+                               static_cast<uint8_t>(kLoadedBc >> 8)};
+    for (size_t i = 0; i < sizeof(program); i++)
+        memory->DirectWriteToZ80Memory(static_cast<uint16_t>(kProgram + i), program[i]);
+
+    // Without a breakpoint: the instruction runs, nothing is told
+    z80->pc = kProgram;
+    const uint32_t first = z80->tt;
+    z80->EngineStep();
+    EXPECT_EQ(z80->pc, kProgram + kEdFfLength);
+    EXPECT_EQ(Last(), BRK_INVALID);
+    const uint32_t edFfTime = z80->tt - first;
+
+    BreakpointSpec edff;
+    edff.type = BRK_MAGIC;
+    edff.access = BRK_IO_OUT;
+    edff.address = BRK_MAGIC_ED_FF;
+    const uint16_t edffId = Add(edff);
+    BreakpointSpec dd01 = edff;
+    dd01.address = BRK_MAGIC_DD_01;
+    const uint16_t dd01Id = Add(dd01);
+    EXPECT_NE(_manager->FormatBreakpointInfo(edffId).find("Magic"), std::string::npos);
+    EXPECT_NE(_manager->FormatBreakpointInfo(edffId).find("ED FF"), std::string::npos);
+
+    // The same opcode again with the breakpoint: told after it ran, with the time the table gives
+    z80->pc = kProgram;
+    const uint32_t before = z80->tt;
+    z80->EngineStep();
+    EXPECT_EQ(Last(), edffId);
+    EXPECT_EQ(z80->pc, kProgram + kEdFfLength) << "the stop is after the instruction";
+    EXPECT_EQ(z80->tt - before, edFfTime) << "an armed breakpoint costs no T-states";
+
+    _manager->ClearLastTriggeredBreakpoint();
+    z80->bc = 0;
+    z80->EngineStep();  // the CPU library runs DD 01 nn nn as one instruction
+    EXPECT_EQ(Last(), dd01Id);
+    EXPECT_EQ(z80->pc, kProgram + kEdFfLength + kDd01Length);
+    EXPECT_EQ(z80->bc, kLoadedBc) << "DD 01 is LD BC,nn on the hardware";
+
+    // A hit policy and the gate follow the usual rules; off or removed, the opcode runs unnoticed
+    ASSERT_TRUE(_manager->DeactivateBreakpoint(edffId));
+    ASSERT_TRUE(_manager->RemoveBreakpointByID(dd01Id));
+    EXPECT_FALSE(_manager->GetHotState()->hasMagic) << "no active magic breakpoint is left: one branch, no resolve";
+    _manager->ClearLastTriggeredBreakpoint();
+    z80->pc = kProgram;
+    z80->EngineStep();
+    EXPECT_EQ(Last(), BRK_INVALID);
+}
+
+TEST(NextRegBreakpointManager_Test, AMagicBreakpointTakesOnlyTheTwoOpcodeWords)
+{
+    EmulatorContext context(LoggerLevel::LogError);
+    BreakpointManager manager(&context);
+    std::string error;
+    BreakpointSpec spec;
+    spec.type = BRK_MAGIC;
+    spec.access = BRK_IO_OUT;
+    spec.address = 0x1234;
+    EXPECT_EQ(manager.AddBreakpoint(spec, error), BRK_INVALID);
+    EXPECT_NE(error.find("ED FF"), std::string::npos) << error;
+    spec.address = BRK_MAGIC_DD_01;
+    spec.hasEnd = true;
+    spec.addressEnd = BRK_MAGIC_ED_FF;
+    EXPECT_EQ(manager.AddBreakpoint(spec, error), BRK_INVALID) << "one opcode, no range";
+    spec.hasEnd = false;
+    const uint16_t id = manager.AddBreakpoint(spec, error);
+    ASSERT_NE(id, BRK_INVALID) << error;
+    EXPECT_EQ(manager.HandleMagic(BRK_MAGIC_ED_FF), BRK_INVALID);
+    EXPECT_EQ(manager.HandleMagic(BRK_MAGIC_DD_01), id);
+}

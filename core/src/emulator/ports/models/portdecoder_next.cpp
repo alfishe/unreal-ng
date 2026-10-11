@@ -546,12 +546,36 @@ void PortDecoder_Next::OnInstructionDone()
     if (!_context->pDebugManager) [[unlikely]]
         return;
     BreakpointManager& manager = *_context->pDebugManager->GetBreakpointsManager();
+    if (manager.GetHotState()->hasMagic) [[unlikely]]
+        WatchMagic(manager);
     if (!manager.GetHotState()->copperWatch) [[likely]]
     {
         _watchValid = false;  // the next look starts from the beam of that moment
         return;
     }
     WatchCopper(manager);
+}
+
+/// The instruction that just ran was a magic opcode (ED FF: a NOP of two bytes; DD 01: LD BC,nn of four bytes with the prefix ignored, the
+/// hardware does what the table says and so do we): the stop is after it, the address reported is where it stood. The CPU library reports
+/// the opcode DD 01 runs as (01, no prefix), so the opcode is read from where the instruction started (m1_pc), and only a whole
+/// instruction counts (the PC moved by its length: a lone prefix step does not)
+void PortDecoder_Next::WatchMagic(BreakpointManager& manager)
+{
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (_breakpointActive || !z80 || !_context->pEmulator || !_context->pMemory)
+        return;
+    constexpr uint16_t kLengthEdFf = 2;  // prefix + opcode
+    constexpr uint16_t kLengthDd01 = 4;  // prefix + opcode + 16-bit operand
+    const uint16_t start = z80->m1_pc;
+    const uint16_t word = static_cast<uint16_t>((_context->pMemory->DirectReadFromZ80Memory(start) << 8) |
+                                                _context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(start + 1)));
+    if ((word != BRK_MAGIC_ED_FF || z80->pc != static_cast<uint16_t>(start + kLengthEdFf)) &&
+        (word != BRK_MAGIC_DD_01 || z80->pc != static_cast<uint16_t>(start + kLengthDd01)))
+        return;
+    const uint16_t id = manager.HandleMagic(word);
+    if (id != BRK_INVALID)
+        FireBreakpoint(id, start, BreakpointHitKind::Magic);
 }
 
 void PortDecoder_Next::WatchCopper(BreakpointManager& manager)
