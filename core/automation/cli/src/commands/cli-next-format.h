@@ -35,6 +35,7 @@
 #include "debugger/ports/nextregwrite.h"
 #include "emulator/emulator.h"
 #include "emulator/io/z80n/nextregjournal.h"
+#include "emulator/io/z80n/nextsdjournal.h"
 #include "emulator/io/z80n/nextreportquery.h"
 #include "emulator/state/devicestate.h"
 
@@ -407,7 +408,85 @@ inline std::string StateText(EmulatorContext* context, const std::vector<std::st
             }
         return out;
     }
-    return "Error: unknown subcommand '" + args[1] + "'. Available: (none), regs, mmu, dma, video, palette [palette= range=], ports [port= access=], nextreg [reg= changed=], copper [from= count= raw=], sprites [from= count= all=], pixel <x> <y> [sx], layer-capture [on|off], journal [regs=.. sources=.. since=N from=F to=F limit=N | on | off | clear]" +
+    if (sub == "sd" || sub == "sd-journal" || sub == "sdjournal")
+    {
+        if (args.size() == 3 && (args[2] == "on" || args[2] == "off" || args[2] == "clear"))
+        {
+            const StateNode r = DeviceState::NextSdJournalControl(context, args[2] == "clear" ? -1 : (args[2] == "on" ? 1 : 0),
+                                                                  args[2] == "clear");
+            const std::string error = unavailable(r);
+            if (!error.empty())
+                return error;
+            return "SD journal " + Field(r, "enabled") + ", " + Field(r, "size") + " event(s) held, " + Field(r, "evicted") + " evicted" +
+                   newline;
+        }
+        std::string kinds, card, since, from, to, limit;
+        const char* keys = "kinds, card, since, from, to, limit";
+        for (size_t i = 2; i < args.size(); i++)
+        {
+            const size_t eq = args[i].find('=');
+            if (eq == std::string::npos)
+                return "Error: expected key=value, got '" + args[i] + "' (" + keys + ")" + newline;
+            const std::string key = args[i].substr(0, eq);
+            const std::string value = args[i].substr(eq + 1);
+            if (key == "kinds" || key == "kind")
+                kinds = value;
+            else if (key == "card")
+                card = value;
+            else if (key == "since")
+                since = value;
+            else if (key == "from")
+                from = value;
+            else if (key == "to")
+                to = value;
+            else if (key == "limit")
+                limit = value;
+            else
+                return "Error: unknown option '" + key + "' (" + keys + ")" + newline;
+        }
+        NextSdJournalQuery query;
+        std::string error;
+        if (!NextSdJournalQueryFromStrings(kinds, card, since, from, to, limit, query, error))
+            return "Error: " + error + newline;
+        const StateNode report = DeviceState::NextSdReport(context, query);
+        const std::string unavailableText = unavailable(report);
+        if (!unavailableText.empty())
+            return unavailableText;
+        std::string out;
+        if (const StateNode* cards = report.find("cards"))
+            for (const StateNode& c : cards->items)
+            {
+                out += "card " + Field(c, "card") + ": ";
+                if (Field(c, "present") == "on")
+                    out += Field(c, "type") + ", " + Field(c, "state") + ", " + Field(c, "size_bytes") + " bytes, read " +
+                           Field(c, "blocks_read") + " / written " + Field(c, "blocks_written") + " block(s)";
+                else
+                    out += "none";
+                out += newline;
+            }
+        if (const StateNode* spi = report.find("spi"))
+            out += "SPI: selected " + Field(*spi, "selected") + ", byte in flight " + Field(*spi, "byte_in_flight") + ", last received " +
+                   Field(*spi, "last_received") + ", too fast " + Field(*spi, "too_fast_accesses") + newline;
+        const StateNode* events = report.find("events");
+        out += "SD journal " + Field(report, "enabled") + ": " + std::to_string(events ? events->items.size() : 0) + " event(s) of " +
+               Field(report, "size") + " held, " + Field(report, "evicted") + " evicted" + newline;
+        if (Field(report, "enabled") == "off")
+            out += "  (off: `state next sd on` first)" + std::string(newline);
+        if (events)
+            for (const StateNode& e : events->items)
+            {
+                out += "#" + Field(e, "seq") + " frame " + Field(e, "frame") + " T " + Field(e, "t") + " PC " + Field(e, "pc") + " card " +
+                       Field(e, "card") + " ";
+                if (Field(e, "kind") == "command")
+                    out += Field(e, "command") + " " + Field(e, "argument") + " -> R1 " + Field(e, "r1") +
+                           (Field(e, "crc_valid") == "off" ? " (bad CRC)" : "");
+                else
+                    out += Field(e, "kind") + " block " + Field(e, "block") + (Field(e, "ok") == "off" ? " (refused)" : "");
+                out += newline;
+            }
+        return out;
+    }
+    return "Error: unknown subcommand '" + args[1] + "'. Available: (none), regs, mmu, dma, video, palette [palette= range=], ports [port= access=], nextreg [reg= changed=], copper [from= count= raw=], sprites [from= count= all=], pixel <x> <y> [sx], layer-capture [on|off], journal [regs=.. sources=.. since=N from=F to=F limit=N | on | off | clear], sd [kinds= card= since= from= to= limit= | on | off | clear]" +
            newline;
 }
 

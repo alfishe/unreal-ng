@@ -122,6 +122,7 @@ state screen verbose    + per-screen RAM page and Z80 mapping, decoded #7FFD
 state screen mode       Video mode: picture format, memory layout, #EFF7/#DFFD/#FF77
 state screen flash      FLASH phase and timing
 state next [regs|mmu|journal [regs=07,02] [sources=nextreg,port,copper,internal] [since=N] [from=F] [to=F] [limit=N] | journal on|off|clear]  ZX Spectrum Next: machine, the NextREG table, the 8K slots, the NextREG write journal (who wrote which register, when, through which door; off by default)
+state next sd [kinds=command,read,write] [card=0|1] [since=N] [from=F] [to=F] [limit=N] | sd on|off|clear  ZX Spectrum Next SD cards (type, protocol state, blocks), the SPI engine and the SD journal (every command with argument and R1, every block read / written; off by default)
 state next dma | video | palette [palette=selected|0-7|name|all] [range=0-255] | ports [port=6B] [access=r|w] | nextreg [reg=07] [changed=true] | copper [from=0] [count=64] [raw=true] | sprites [from=0] [count=128] [all=true]  ZX Spectrum Next debugger reports; none has a side effect on the machine (`next dma` etc. are aliases)
 state next pixel <x> <y> [sx]  ZX Spectrum Next pixel inspector (last captured frame; x 0-319, y 0-255, sx the sub-pixel 0|1): which layer won the pixel, its colour, per layer why it painted or not and where its byte came from
 next layer-capture [on|off|status]  ZX Spectrum Next: switch / show the per-layer record of the screen (on by default; `state next layer-capture` is the same)

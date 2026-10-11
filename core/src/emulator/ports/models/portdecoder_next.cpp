@@ -62,6 +62,7 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
             if (_context->pMediaManager)
                 _context->pMediaManager->NoteWrite(id);
         });
+        _sd[i].setTraceListener([this, i](const SdTraceEvent& event) { RecordSdEvent(i, event); });
     }
     if (_context->pMediaManager)
     {
@@ -650,6 +651,31 @@ void PortDecoder_Next::SdSlot::Detach()
 bool PortDecoder_Next::SdSlot::IsBusy() const
 {
     return _owner._sd[_index].busy();
+}
+
+void PortDecoder_Next::RecordSdEvent(unsigned card, const SdTraceEvent& event)
+{
+    if (!_sdJournal.Enabled()) [[likely]]
+        return;
+    NextSdEvent e;
+    e.frame = static_cast<uint32_t>(_context->emulatorState.frame_counter);
+    if (Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
+    {
+        e.t = z80->t;
+        e.pc = z80->m1_pc;
+    }
+    e.card = static_cast<uint8_t>(card);
+    e.kind = event.kind == SdTraceEvent::Kind::Command ? NextSdKind::Command
+             : event.kind == SdTraceEvent::Kind::ReadBlock ? NextSdKind::ReadBlock
+                                                           : NextSdKind::WriteBlock;
+    e.index = event.index;
+    e.app = event.app;
+    e.crcValid = event.crcValid;
+    e.argument = event.argument;
+    e.r1 = event.r1;
+    e.block = event.block;
+    e.ok = event.ok;
+    _sdJournal.Record(e);
 }
 
 void PortDecoder_Next::SpiSelect(uint8_t value)

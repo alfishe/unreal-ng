@@ -80,6 +80,7 @@
 #include <common/stringhelper.h>
 #include <debugger/ports/nextregwrite.h>
 #include <emulator/io/z80n/nextregjournal.h>
+#include <emulator/io/z80n/nextsdjournal.h>
 #include <emulator/io/z80n/nextreportquery.h>
 #include <emulator/video/screendigest.h>
 #include <base/featuremanager.h>
@@ -3608,6 +3609,51 @@ public:
                     capacity = static_cast<size_t>(n.as<long long>());
             }
             return StateNodeToLua(s, DeviceState::NextRegJournalControl(emulator->GetContext(), enable, clear, capacity));
+        });
+        // next_sd([{kinds="command,read,write", card=0|1, since=N, from=F, to=F, limit=N}]): the Next's SD cards, the SPI engine and the
+        // SD journal (DeviceState::NextSdReport); nil + error on a bad option. The journal is off by default: next_sd_journal_control({enabled=true}) first
+        lua.set_function("next_sd", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options)
+                    return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number)
+                    return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string)
+                    return value.as<std::string>();
+                return std::string();
+            };
+            NextSdJournalQuery query;
+            std::string error;
+            if (!NextSdJournalQueryFromStrings(text("kinds"), text("card"), text("since"), text("from"), text("to"), text("limit"), query,
+                                               error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextSdReport(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_sd_journal_control({enabled=true|false, clear=true, capacity=N}): switch / clear / resize the SD journal
+        lua.set_function("next_sd_journal_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            bool clear = false;
+            size_t capacity = 0;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+                sol::object c = (*options)["clear"];
+                if (c.get_type() == sol::type::boolean)
+                    clear = c.as<bool>();
+                sol::object n = (*options)["capacity"];
+                if (n.get_type() == sol::type::number)
+                    capacity = static_cast<size_t>(n.as<long long>());
+            }
+            return StateNodeToLua(s, DeviceState::NextSdJournalControl(emulator->GetContext(), enable, clear, capacity));
         });
         // next_dma() / next_video(): the Next's DMA and video layers (DeviceState::NextDma / NextVideo; no side effect on the machine)
         lua.set_function("next_dma", [this](sol::this_state s) -> sol::object {
