@@ -25,6 +25,14 @@ the media manager enforces two rules that keep a v1 session honest:
 |---|---|
 | insert / eject / rescan / discard / save while recording | **refused** with `recording`, unless the caller asks to end the recording first (`endRecording`; the GUI asks the user). The media set is fixed for a recording's whole length (the NeoGS branch rule, now for every slot) |
 | guest write to a medium | a replay barrier (`RecordExternalEvent(DiskWrite)`, at most one per slot per frame), from the manager's activity hook. A seek never crosses a write silently |
+
+**Status 2026-10-11 (TTD v2, the engine, default).** The two rules above hold for v1 only. On the engine: a change of
+the media set while the user's recording runs is an event of the recording at the next frame boundary (machine state
+coordinator M3); a guest write is no barrier: the media manager's undo log (`MediaUndoLog`) keeps each written sector
+and floppy track as it was, a seek sets every medium to its checkpoint's version, a replay writes again itself; a
+write-protect toggle while recording lands at the frame boundary as an event and a version of its own
+([coordinator architecture §11.5-§11.6](../2026-10-09-machine-state-coordinator/architecture.md)). The black box
+ends its session on a media change.
 | peripheral protocol state (SD card, Z-Controller, ATA registers, FDC) | in the TTD blob of the device that owns the slot |
 
 Changes this brings:

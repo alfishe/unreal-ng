@@ -352,6 +352,14 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   paused machine) and the recording goes on; a seek to before that frame
   shows the slot empty, from it on (and back live) the medium is there.
   `end_recording` ends the recording instead. v1 still refuses them (409).
+- **A seek sets every medium to what it held there** (engine). Sectors and
+  floppy tracks the guest wrote later are set back, and set forward again
+  on a later seek; a replay writes them again itself. A write-protect toggle
+  while recording lands at the next frame boundary as an event, and a seek
+  sets the switch too. The seek's `check.issues` names a medium
+  (`media_version_differs`) only for another medium in the slot or a version
+  past the slot's undo log (64 MB per slot). A write after a seek back drops
+  the old future of that medium, as the recording's own.
 - **A machine change** (ROM load, model switch, GS card switch, slot
   change) is the same rule with another machine behind it: the history is
   dropped, `last_stop_reason: "machine-change"`. v1 still refuses these while
