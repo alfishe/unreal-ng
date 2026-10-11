@@ -159,7 +159,12 @@ of `conn_err` with `instances None` is the server gone.
 
 Iterate: fix the finding (its own commit and test), rebuild, run the next round. A finding that keeps coming back in
 new places (the GUI reading a removed instance's context: about 144 call sites) is a design question - file it
-(BUGS.md 2026-10-10 #11) instead of patching sites one per round.
+(BUGS.md 2026-10-10 #11, fixed structurally) instead of patching sites one per round.
+
+Optional, not part of the routine: `stress_round.sh --busy-gui 900 <tag>` opens the debugger, TTD, media, network,
+slots, traffic, MIDI, tape and log windows (`UNREAL_QT_STRESS_WINDOWS=all`) and selects half of the instances through
+the CLI before deleting them, so the GUI is bound to what is removed. Without the selection the GUI stays on the
+first neighbour and never races a removal. Use it after a change to GUI / instance lifetime code.
 
 ## 6. Hangs and deadlocks
 

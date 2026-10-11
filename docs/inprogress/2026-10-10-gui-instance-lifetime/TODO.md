@@ -1,6 +1,6 @@
 # TODO: GUI instance lifetime (BUGS.md #11)
 
-Status: **option C chosen, every removal wait bounded** (owner, 2026-10-10). Not started.
+Status: **landed on master** (f38e72b8e, 2026-10-10). Open items below are optional follow-ups.
 
 Design: [proposal.md](proposal.md). Tests: [test-plan.md](test-plan.md). Phases and effort: [roadmap.md](roadmap.md).
 
@@ -19,7 +19,8 @@ NSView and crashed opening the first tool window (`platform/macos/childwindow_ma
 - [x] `UNREAL_QT_STRESS_WINDOWS` in unreal-qt: open the listed windows at startup, keep them across rebinds
 - [x] Row for it in `docs/emulator/environment-variables.md`
 - [x] `tools/sanitize/stress_round.sh --busy-gui`
-- [ ] Baseline ASan round on master with `--busy-gui`: expected to fail; record the report here
+- [x] Baseline ASan round on master with `--busy-gui` (with the CLI selection): hung after ~3 min, then crashed in
+      `ZXPolyGroup::AdvanceSlaves`; without the selection 15 minutes clean (the GUI never bound to a removed instance)
 - [x] `tools/verification/gui-instance-reads.sh` + `.baseline` (raw `GetContext()` outside the binding, stored
       `Emulator*` / `EmulatorContext*` members); step in `.github/workflows/cmake-ci.yml`
 
@@ -36,7 +37,8 @@ NSView and crashed opening the first tool window (`platform/macos/childwindow_ma
 - [x] Audit device destructors that own threads (network cards, NeoGS, sound) for joins and blocking posts
 - [x] ZX-Poly group: retire / free per instance
 - [x] `EmulatorLifetime_Test` (all rows of test-plan §1, timeouts included)
-- [ ] Full `core-tests`, ASan stress (not busy), gcc:16 -O3, `docker/linux/build.sh --test`
+- [x] Full `test.sh`, gcc:16 -O3 on the changed core files
+- [ ] `docker/linux/build.sh --test`: skipped by the owner
 
 ## Phase 2: binding owns the instance (~2 days)
 
@@ -77,7 +79,8 @@ NSView and crashed opening the first tool window (`platform/macos/childwindow_ma
 
 ## Phase 4: close (~0.5 day)
 
-- [ ] Rules in `docs/guidelines/` and the Qt README: instance from the binding, no stored raw pointers, leases mean
-      "live"
-- [ ] `sanitizers.md`: mention `--busy-gui` as an optional mode (not part of the routine)
-- [ ] BUGS.md #11 fixed with commit ids; move this folder's summary to `DONE.md`
+- [x] Rules in `docs/guidelines/coding-guidelines.md` (General Architecture): instance from the binding or an own
+      `shared_ptr`, no stored raw pointers, `lifetime-ok` exceptions, leases mean "live"
+- [x] `sanitizers.md`: mention `--busy-gui` as an optional mode (not part of the routine)
+- [x] BUGS.md #11 fixed with the commit id
+- [ ] `DONE.md` for this folder once the follow-ups are settled

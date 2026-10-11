@@ -195,23 +195,34 @@ Both take a `ContextLease` for their read (a removal in progress gives none), as
 ### Requirements / Acceptance Criteria
 - [x] The stress no longer reports these two (checked under ASan); no automated GUI test.
 
-## 🔴 [Open] #11: GUI code reads instance contexts without a lease (about 144 call sites)
+## 🟢 [Fixed] #11: GUI code reads instance contexts without a lease (about 144 call sites)
 * **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** f38e72b8e
 * **Found by:** the WebAPI create / delete stress: #10's two sites were the first it hit; `grep GetContext() unreal-qt/src`
   finds about 144 unleased reads (14 files lease).
 
 ### Description
 A GUI handler queued before an instance is removed runs after its context is freed. Fixing sites one by one as the
-stress finds them does not converge; a structural answer is a developer decision (lease at the binding / refresh entry
-points, or the GUI unbinding before the core frees the context).
+stress finds them does not converge.
 
-Design: [2026-10-10-gui-instance-lifetime](2026-10-10-gui-instance-lifetime/README.md) (gap analysis, proposal,
-test plan, roadmap). Decided 2026-10-10: retire at removal, free at the last owner, every wait bounded.
+### Fix
+Structural (design: [2026-10-10-gui-instance-lifetime](2026-10-10-gui-instance-lifetime/README.md)). A removal retires
+the instance (`Emulator::Retire`: stopped, detached, refuses execution and machine changes, state `StateRetired`)
+and frees nothing; the last `shared_ptr<Emulator>` holder frees it. Every removal wait is bounded. In the GUI,
+`EmulatorBinding` owns the instance and no class stores `Emulator*` / `EmulatorContext*`
+(`tools/verification/gui-instance-reads.sh`, in CI). The same change covers the WebAPI / CLI / MCP handlers.
 
 ### Repro
-ASan unreal-qt with the stress script (8 workers creating / reading / switching / deleting instances, 2 running
-neighbours) for 15 minutes.
+ASan unreal-qt: `tools/sanitize/stress_round.sh --busy-gui 900 <tag>` (windows open, half of the instances selected
+in the GUI before they are deleted). Master before the fix hung after ~3 minutes and crashed in
+`ZXPolyGroup::AdvanceSlaves`.
 
+### Requirements / Acceptance Criteria
+- [x] `EmulatorLifetime_Test` (15) and `RemovalRace_Test` (7, unreal-qt-tests) pass; full `test.sh` green
+- [x] Busy-GUI ASan stress, 15 minutes, clean (1364 cycles, 645 GUI selections of the instance being deleted)
+- [ ] TSan, Linux ASan, more ASan rounds, the manual check: skipped by the owner
+- [ ] Debugger window, main window, menu: no automated removal test (not in unreal-qt-tests); stress only
 
 ## 🟢 [Fixed] #12: A failed instance creation leaks the half-built instance
 * **Date Opened:** 2026-10-10
