@@ -41,4 +41,4 @@ folder references this POC.
 ## Files
 
 - `resources/icons/generate_icons.py` — the icon generator. Run: `python3 generate_icons.py`; it writes
-  into `resources/icons/app/` next to itself (inside the POC folder, not `scratch/`).
+  into `<repo>/scratch/poc-014-icons/`.

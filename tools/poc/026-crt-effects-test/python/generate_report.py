@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from typing import List, Tuple, Optional
 from datetime import datetime
 
+from poc_paths import REPO_ROOT
+
 try:
     from PIL import Image, ImageDraw, ImageFont
     import numpy as np
@@ -389,8 +391,8 @@ def generate_report(scratch_dir: Path, results: List[dict]) -> str:
 
 def main():
     script_dir = Path(__file__).parent
-    scratch_dir = script_dir / "scratch"
-    scratch_dir.mkdir(exist_ok=True)
+    scratch_dir = REPO_ROOT / "scratch"
+    scratch_dir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
     print("CRT Effects Test Report Generator")

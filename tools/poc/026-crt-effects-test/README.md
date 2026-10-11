@@ -48,7 +48,7 @@ Max pixel difference: 1 (rounding only)
 
 ```bash
 # GPU vs CPU parity test (recommended)
-cd python && python3 test_gpu_vs_cpu.py
+cd python && python3 test_gpu_vs_cpu.py [path/to/128k.png]
 
 # View report
 open scratch/gpu_vs_cpu_report.html
@@ -56,7 +56,8 @@ open scratch/gpu_vs_cpu_report.html
 
 ## Requirements
 - Python 3.x with PIL (pillow) and numpy
-- Source image: `/Users/dev/Downloads/128k.png` (352x288 ZX Spectrum 128K menu)
+- Source image (352x288 ZX Spectrum 128K menu screenshot, not in the repo): pass its path as the first argument,
+  or set `CRT_SOURCE_IMAGE`, or put it at `scratch/128k.png`. Reports and images go to `scratch/`.
 
 ## Fixed Issues
 - Burning white on Megatron at low resolution

@@ -45,4 +45,4 @@ folder references this POC.
 - `test_quality_presets.py` — generates the source with `ffmpeg`, encodes the five levels, extracts a
   frame per level, measures size / bitrate / luma statistics and prints the verdicts. Run:
   `python tools/poc/013-nvenc-poc/test_quality_presets.py [--h264]`. It writes its output to
-  `<system temp>/nvenc_quality_test`, not to `scratch/`.
+  `<repo>/scratch/nvenc_quality_test`.

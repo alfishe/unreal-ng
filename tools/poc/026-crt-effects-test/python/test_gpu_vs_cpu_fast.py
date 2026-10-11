@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
+from poc_paths import SCRATCH, source_image
+
 try:
     from PIL import Image
     import numpy as np
@@ -146,13 +148,14 @@ def calc_avg(arr):
 
 
 def main():
-    scratch = Path("/Volumes/TB4-4Tb/Projects/Test/unreal-ng/scratch")
-    src_path = Path("/Users/dev/Downloads/128k.png")
+    scratch = SCRATCH
+    src_path = source_image()
 
     if not src_path.exists():
         print(f"Source not found: {src_path}")
         return 1
 
+    scratch.mkdir(parents=True, exist_ok=True)
     src = np.array(Image.open(src_path).convert("RGBA"))
     print("=" * 80)
     print("GPU vs CPU CRT PARITY TEST (Fast)")
