@@ -424,16 +424,33 @@ MediaResult MediaManager::OpenForSlot(const std::string& slotId, const MediaSour
     // controller cannot read is refused. A folder cannot land here wrong - it
     // was built into an allowed flavour above; a non-FAT image is none of the
     // matrix's business (a blank disk the guest formats itself is legitimate)
+    // Every FAT partition is looked at: the image is refused only when the slot reads none of them; a partition
+    // it cannot read is a report line (the guest will not see it)
     if (!descriptor.fsCompatibility.empty() && !folder && medium->Kind() == MediaKind::Block && medium->Block())
     {
-        if (const std::optional<FatType> fs = ProbeFatType(*medium->Block());
-            fs && std::find(descriptor.fsCompatibility.begin(), descriptor.fsCompatibility.end(), *fs)
-                     == descriptor.fsCompatibility.end())
-        {
+        const std::vector<FatVolumeProbe> volumes = ProbeFatVolumes(*medium->Block());
+        const auto reads = [&descriptor](const FatVolumeProbe& v) {
+            return std::find(descriptor.fsCompatibility.begin(), descriptor.fsCompatibility.end(), v.fs) !=
+                   descriptor.fsCompatibility.end();
+        };
+        const bool none = !volumes.empty() && std::none_of(volumes.begin(), volumes.end(), reads);
+        if (none && volumes.size() == 1)
             return MediaResult::Fail(MediaError::BadRequest,
                                      "slot '" + slotId + "' reads " + FatTypeNames(descriptor.fsCompatibility) +
-                                         " volumes: '" + source.path + "' is a " + FatTypeName(*fs) + " volume");
-        }
+                                         " volumes: '" + source.path + "' is a " + FatTypeName(volumes.front().fs) +
+                                         " volume");
+        std::string list;
+        for (const FatVolumeProbe& v : volumes)
+            if (!reads(v))
+                list += (list.empty() ? "" : ", ") + std::string("partition ") + std::to_string(v.partition) + " " +
+                        FatTypeName(v.fs);
+        if (none)
+            return MediaResult::Fail(MediaError::BadRequest, "slot '" + slotId + "' reads " +
+                                                                 FatTypeNames(descriptor.fsCompatibility) + " volumes: '" +
+                                                                 source.path + "' has none (" + list + ")");
+        if (!list.empty())
+            medium->Report().push_back("slot '" + slotId + "' reads " + FatTypeNames(descriptor.fsCompatibility) +
+                                       " volumes: the guest will not see " + list);
     }
 
     // Advisory only: does sector 0 look like the layout this slot's boot path

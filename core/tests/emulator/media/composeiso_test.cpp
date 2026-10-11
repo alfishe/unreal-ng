@@ -179,6 +179,35 @@ TEST(ComposeIso_Test, InterleavedAndAssociatedFilesSkipped)
     EXPECT_FALSE(reader.Stat("/INTER.TXT", entry));
 }
 
+/// Several versions of one file ("A.TXT;1", "A.TXT;2"): the highest is the file, the others are reported (P2)
+TEST(ComposeIso_Test, OnlyTheHighestVersionIsKept)
+{
+    Sources s;
+    IsoImageBuilder iso;
+    iso.joliet = false;  // the ISO 9660 names carry the versions
+    iso.Add("/NOTE.TXT", "old");
+    iso.Add("/NOTF.TXT", "newer");
+    std::vector<uint8_t> bytes = iso.Build();
+    const std::string from = "NOTF.TXT;1";
+    const std::string to = "NOTE.TXT;2";
+    const auto at = std::search(bytes.begin(), bytes.end(), from.begin(), from.end());
+    ASSERT_NE(at, bytes.end());
+    std::copy(to.begin(), to.end(), at);
+    std::ofstream(s.root.Path() / "versions.iso", std::ios::binary)
+        .write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+
+    std::unique_ptr<IBlockDevice> volume;
+    CompositeInfo info;
+    const MediaResult result = s.Build("version: 1\ntarget: {free: 1MiB}\nlayers: [{source: {iso: versions.iso}}]\n", volume, info);
+    ASSERT_TRUE(result.Ok()) << result.message;
+    EXPECT_TRUE(std::any_of(result.report.begin(), result.report.end(), [](const std::string& l) {
+        return l.find("NOTE.TXT;1: skipped, an older version") != std::string::npos;
+    }));
+    FatVolumeReader reader;
+    ASSERT_TRUE(reader.Open(*volume));
+    EXPECT_EQ(FatRead(reader, "/NOTE.TXT"), "newer");
+}
+
 /// The slot's kind and the target's must agree; graft is for FAT images
 TEST(ComposeIso_Test, KindMismatches)
 {

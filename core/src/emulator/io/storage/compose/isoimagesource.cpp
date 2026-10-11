@@ -45,6 +45,11 @@ namespace
                     *error = path + ": " + why;
                 return false;
             }
+            std::vector<IsoDirEntry> older;
+            Iso9660Reader::KeepHighestVersions(entries, &older);
+            if (report)
+                for (const IsoDirEntry& old : older)
+                    report->push_back(path + old.isoName + ": skipped, an older version (the highest is kept)");
             for (const IsoDirEntry& entry : entries)
             {
                 if (Matches(options.exclude, entry.name))

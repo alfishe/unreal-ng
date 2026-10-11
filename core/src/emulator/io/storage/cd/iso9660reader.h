@@ -24,6 +24,7 @@ struct IsoDirEntry
     bool hidden = false;    ///< the "existence" flag
     bool associated = false;   ///< an associated file (flag bit 2: Apple resource forks and the like)
     bool interleaved = false;  ///< recorded interleaved (file unit size or gap set): its blocks are not contiguous
+    uint32_t version = 0;      ///< the ";n" of the recorded name (0: none)
     uint64_t size = 0;      ///< all sections together
     int64_t mtimeUtc = 0;   ///< the recording date, UTC
     /// Where the bytes are: (block, bytes) per section, in order (several for a multi-extent file)
@@ -69,6 +70,9 @@ public:
     /// The entries of a directory, "." and ".." left out, in recorded order
     bool List(const IsoDirEntry& directory, std::vector<IsoDirEntry>& entries, std::string* error = nullptr);
     /// "/", "/DIR/SUB": the entry at a path; parts match names ASCII case-insensitively
+    /// Several versions of one file ("A.TXT;1", "A.TXT;2"): only the highest stays, as Windows and Linux show it;
+    /// the others go to `dropped` (may be null)
+    static void KeepHighestVersions(std::vector<IsoDirEntry>& entries, std::vector<IsoDirEntry>* dropped);
     bool Stat(const std::string& path, IsoDirEntry& entry, std::string* error = nullptr);
     bool ReadFile(const std::string& path, std::vector<uint8_t>& data, std::string* error = nullptr);
     /// A whole block

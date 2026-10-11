@@ -33,7 +33,8 @@ PLAN.md row **#95**.
   - [x] D-8 in Qt (2026-10-10): `SlotInfo::onRelease` (list / info `onRelease`), `MediaManager::Unsaved()`, `NC_MEDIA_DIRTY` carries `onRelease`, new `NC_MEDIA_CLEAN`; the main window's title mark and its close question (`ask` composites: the strategy dialog; changes that would be lost: save / close without saving / cancel). Owner's check on macOS / Windows pending
   - [x] DT-16 (2026-10-09): `rescan` leaves a medium whose sources give the same content id; a dirty one over changed sources takes `save` / `export` / `discard`
   - [ ] `fixedTime` takes Unix seconds only (the schema example is an ISO 8601 string)
-  - [ ] The insert check reads the first FAT partition of an MBR only; ISO `;n` versions are stripped, not filtered
+  - [x] The insert check reads every FAT partition (2026-10-11, owner): refused only when the slot reads none, the others reported
+  - [x] ISO `;n` versions (2026-10-10, owner: as Windows and Linux): only the highest version of a file is kept, the others are reported
 - [x] Owner questions answered 2026-10-05 (D-4…D-9 in [goals-and-requirements.md](goals-and-requirements.md) §3; guest FS support researched in [fs-compatibility.md](fs-compatibility.md) §6)
 - [x] C0 baseline: `HostFolderFat` corpus hashes and read benchmark numbers on master
 - [x] C1 core + `HostFolderFat` parity refactor
