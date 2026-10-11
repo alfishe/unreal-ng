@@ -128,8 +128,8 @@ struct GapBufferParams
     uint16_t lineCount = 0;         ///< CPU address of the 16-bit line count (the current line counted)
     uint16_t cursorLine = 0;        ///< CPU address of the cursor's line number (0 = none known)
     /// TASM 4.12: LOAD leaves the file as saved (its end record included) at the text start with the other pointers and
-    /// the line count 0; the editor makes the gap buffer when it is entered. The reader takes that form, an inject
-    /// writes it
+    /// the line count 0; MASM 1.1: at its fixed start with the gap start there and the gap end at #FFFF. The editor
+    /// makes the gap buffer when it is entered. The reader takes that form, an inject writes it
     bool loadedForm = false;
     uint16_t changedAt = 0;         ///< CPU address of the editor's "changed since LOAD / SAVE" byte (0 = none)
     uint8_t changedMask = 0xFF;
@@ -227,6 +227,9 @@ struct SyncDescriptor
     uint16_t idleDepth = 64;
     /// Where the assembler waits when it is idle, for the refusal's text ("" = its command line)
     std::string idleWhere;
+    /// Bytes that are all zero while it is idle (MASM: its line buffer, blank padded in the editor; 0 = none)
+    uint16_t idleZeroAt = 0;
+    uint16_t idleZeroLength = 0;
 };
 
 /// Every built-in descriptor (asm-synchronizer.md §7), each checked with golden dumps: ALASM 3.8c, 4.42-4.46, 4.5,

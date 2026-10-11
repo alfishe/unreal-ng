@@ -387,6 +387,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | SAVE | SS+Enter in the editor (or `S` in the menu) writes the text closed up; the live file equals it in both states |
 | identification | the prompt `MASM128> ` at `#85B1` (below the text; the title `MASTER ASSEMBLER* v1.1` at `#9B49` lies where a long text goes) |
 | **Built** | descriptor `masm-1.1`; checked live. 1.3 keeps the same layout, line buffer and prompt (dumps `masm13-*`): the same descriptor reads it. The 1.0 demo: see below |
+| **Built: inject (Z3, 2026-10-11)** | MASM 1.1 / 1.3 at its `MASM128>` prompt (the key wait returns through `#85C8`, the line buffer `#851A` zeros): the file as LOAD leaves it at `#970B` with the gap start there and the gap end at `#FFFF` (the editor builds the gap buffer when entered; the reader takes that form); no "changed" flag, so a text it holds is replaced by force or when it is the caller's own. MASM 1.1 assembled the injected `oracle1.asm` and every instruction form to sjasmplus' bytes (research-sjasmplus-to-masm.md §3) |
 | **Verified: 1.0 demo** (2026-10-10, dumps `masm10-*`) | found with `memory/find` and the write journal (`find-last` on the tail at `#FFF8`: PC `#8A82`, after `LD HL,(#8665)`; `#8663` written in the same frame): 1.1's gap buffer from `#913A`, gap start `(#8663)`, gap end `(#8665)`, the end `FF` at `#FFFF`. In the editor the cursor line's record `[n] body [n]` is at the **gap start** (1.1: before the gap end); the tail of the line buffer (`#85EE`-`#8620`) is blanks in the editor and zeros in the menu (its head keeps the last line). It loads no file: the dumps type five lines; EXT `Q`, `N` + name, `S` saves (catalog length without the `FF`). Identified by `MASM128>` at `#88B5`. Descriptor `masm-1.0-demo` (codec version 1.0) |
 | **Verified: 2.0, 3.0** (2026-10-10, dumps `masm20-*`, `masm30-*`) | found by disassembling the code, not by trying keys: the gap-closing routine (2.0 `#92C6`, 3.0 `#8C24`) is `LD DE,gs` / `LD HL,linebuf` / `LD A,flag` / `OR A` / `JP NZ,flush` / `LD HL,ge` / `LDI` up to `00`, and its operands are the variables (the code rewrites them): gap start `+1`, flag `+7`, gap end `+13`. The text runs from the address its files carry (2.0 `#94DA`, 3.0 `#9123`) to the gap start, then from the gap end to `#FFFF`; lines end in `00`. While a line is typed in (flag non-zero) it is out of the text altogether, as text in the 64-byte line buffer (2.0 `#89D1`, 3.0 `#864F`), and the text goes on at the word `#929F` / `#8BFD`: the reader encodes the line buffer between the two parts. Moving the cursor puts the line back. There is no save in their editor: EXT `Q` (puts the line back), `S`, ENTER. 3.0's header `FF lo hi FF` gets the cursor line on SAVE (masked). Identified by the prompts `MASM2.0>` at `#80E0` and `MASM128>` at `#80D3`. Descriptors `masm-2.0`, `masm-3.0`; their dumps start from a file MASM itself saved (on leaving the editor MASM encodes the cursor line again, its own way) |
 
@@ -850,6 +851,14 @@ and `REPT` / `ENDR`, `PHASE`, `SAVEOBJ` for sjasmplus' `SAVEBIN` (`RetroWriter::
 for a `Linear` layout (`LinearParams::resetFrom` / `resetTo`, `PlanInjectLinear`). Checked in ZAsm 3.15: `oracle1.asm`
 and every instruction form to sjasmplus' bytes, loaded from its disk and injected. Details:
 [research-sjasmplus-to-zxasm.md](research-sjasmplus-to-zxasm.md).
+
+**Built (2026-10-11): Z3 for MASM 1.1.** The MASM backend (`dialects/masm/masmbackend.cpp`, on `RetroWriter`)
+writes XAS-style chains without parentheses (with `& | @`, and `+0` before `@` after a name), labels of 10
+characters, `BEGIN` / `END`, `PHASE`, lines of at most 31 characters (MASM's line buffer); `EX (SP),IY`, which MASM
+1.1 refuses, as bytes. The inject writes the form LOAD leaves; the idle rule also wants the editor's line buffer zero
+(`SyncDescriptor::idleZeroAt`). Checked in MASM 1.1: `oracle1.asm` and every instruction form to sjasmplus' bytes,
+loaded from its disk and injected. With it every Z3 backend is done (ALASM, XAS, STORM, TASM 4.12, ZX-ASM, MASM).
+Details: [research-sjasmplus-to-masm.md](research-sjasmplus-to-masm.md).
 
 ## 20. Effort (part B)
 

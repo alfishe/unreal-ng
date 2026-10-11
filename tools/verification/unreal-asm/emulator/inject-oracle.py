@@ -11,6 +11,7 @@ from the same source. The assembler disk is the collection's; the tool creates i
     inject-oracle.py storm <STORM disk> <source.asm> <address> [--boot STORM1.3] [--assembler storm-1.3]
     inject-oracle.py tasm412 <TASM_412 disk> <source.asm> <address> [--wait 15]
     inject-oracle.py zasm315 <ZASM315 disk with STUB.a> <source.asm> <address>
+    inject-oracle.py masm11 <MASM_11 disk> <source.asm> <address> [--wait 20]
 
 XAS (Z3): started from its disk, the first source of its list loaded (or a new text), its command line opened (EXT;
 9.x need the keys held 12 frames), the source written there and assembled with A.
@@ -27,6 +28,9 @@ ZAsm 3.15 (Z3): started from its disk (its "No Disk!" answered with drive A), a 
 (File / Load: its editor opens on it), the source written at its COMMAND prompt (CS+SS) with a SAVEOBJ of the range
 added, by force (ZAsm keeps no "changed" flag: a text it holds is not replaced otherwise), assembled with A; the bytes
 are the file it saved.
+
+MASM 1.1 (Z3): started from its disk, the source written at its MASM128> prompt as its LOAD leaves a file, assembled
+with A.
 
 With --project the source goes as a path, and each file it INCLUDEs into an ALASM text page of its own (the INCLUDE
 names the page); --template always takes the INCLUDEs (zxasm inject reads them beside the source).
@@ -215,9 +219,28 @@ def zasm315(emu, args, expected):
     return bytes(data[1]) if data else b''
 
 
+def masm11(emu, args, expected):
+    emu.insert_disk(os.path.abspath(args.disk))
+    emu.run_trdos(args.boot or 'MASM 1.1', wait=8)
+    emu.tap('enter')                                   # past the title
+    time.sleep(1)
+    with open(args.source, encoding='utf-8') as f:
+        body = {'from': args.from_, 'assembler': 'masm-1.1', 'title': 'INJECTED', 'text': f.read()}
+    reply = emu.post('/asm/sync/inject', body)
+    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
+    for d in reply.get('diagnostics', []):
+        if d.get('severity') != 'info':
+            print('  ', d)
+    emu.write(args.address, [0xAA] * len(expected))
+    emu.tap('a')                                       # Assemble
+    time.sleep(args.wait)
+    emu.screenshot(os.path.abspath(args.source) + '.masm-1.1.png')
+    return bytes(emu.read(args.address, len(expected)))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412', 'zasm315'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412', 'zasm315', 'masm11'])
     parser.add_argument('disk', help='the assembler disk, or with --template an idle template snapshot')
     parser.add_argument('--template', action='store_true', help='inject with zxasm into the template snapshot instead (Z1)')
     parser.add_argument('--zxasm', default=os.environ.get('ZXASM', 'zxasm'))
@@ -242,6 +265,8 @@ def main():
     try:
         if args.assembler == 'xas':
             built = xas(emu, args, expected)
+        elif args.assembler == 'masm11':
+            built = masm11(emu, args, expected)
         elif args.assembler == 'zasm315':
             built = zasm315(emu, args, expected)
         elif args.assembler == 'tasm412':
