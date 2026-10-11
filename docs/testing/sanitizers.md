@@ -159,7 +159,12 @@ of `conn_err` with `instances None` is the server gone.
 
 Iterate: fix the finding (its own commit and test), rebuild, run the next round. A finding that keeps coming back in
 new places (the GUI reading a removed instance's context: about 144 call sites) is a design question - file it
-(BUGS.md 2026-10-10 #11) instead of patching sites one per round.
+(BUGS.md 2026-10-10 #11, fixed structurally) instead of patching sites one per round.
+
+Optional, not part of the routine: `stress_round.sh --busy-gui 900 <tag>` opens the debugger, TTD, media, network,
+slots, traffic, MIDI, tape and log windows (`UNREAL_QT_STRESS_WINDOWS=all`) and selects half of the instances through
+the CLI before deleting them, so the GUI is bound to what is removed. Without the selection the GUI stays on the
+first neighbour and never races a removal. Use it after a change to GUI / instance lifetime code.
 
 ## 6. Hangs and deadlocks
 
@@ -201,8 +206,17 @@ reading by eye. Remove the diagnostics with `git checkout` of those files before
 tools/sanitize/configure.sh tsan
 BUILD_DIR=$PWD/cmake-build-tsan tools/build/build.sh core-tests
 cd cmake-build-tsan/bin
-TSAN_OPTIONS=halt_on_error=0 ./core-tests --gtest_filter='UUID_Test.*:EmulatorManager_Test.*'
+TSAN_OPTIONS="halt_on_error=0:suppressions=$PWD/../../tools/sanitize/tsan.supp" ./core-tests --gtest_filter='UUID_Test.*:EmulatorManager_Test.*'
 ```
+
+`tools/sanitize/tsan.supp` holds the races that are there by design: a tool reading guest memory live
+(`DirectReadFromZ80Memory`), a test reading the machine state live (the access sits in a `*_test.cpp` or
+`testwaithelper.h`), the machine time stamped on a coordinator log entry. The worst case of such a read is a value one
+step older or newer. These entries are `race_top:` (the frame that touches the memory); a `race:` entry matches any
+frame of either stack and would hide real races under `Core::CPUFrameCycle`. The only `race:` entries are anchored on
+the global `std::cout` / `std::cerr`: concurrent output to them is not a race by the standard, TSan sees libc++
+resetting the field width. Containers, pointers to storage that can be freed and read-modify-write are never
+suppressed: they are bugs.
 
 TSan and ASan cannot share a build. TSan works here, but the tree is not race-free yet: on 2026-10-10
 `EmulatorManager_Test.*:UUID_Test.*:MessageCenter*:ExecutionArbiter*` gave 55 warnings, mostly the emulation

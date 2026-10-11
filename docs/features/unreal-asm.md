@@ -153,15 +153,21 @@ source is built on the host:
   nowhere is reported in the hints.
 
 In the Qt debugger, the **Live source** button shows all of this in one window: the text with the guest's cursor line
-highlighted, the errors and warnings on their lines and in a list below it, a status line, and the Watch, Extract...
-and Convert... buttons.
+highlighted, the errors and warnings on their lines and in a list below it, a status line, and the Watch, Inject...,
+Push, Extract... and Convert... buttons.
 
 `asm sync unwatch` stops the watch.
 
-The other way works too, for ALASM 5.09 so far: `asm sync inject --path main.asm` writes a host source (sjasmplus,
-or any dialect the converter reads) into the running ALASM as its own text, while ALASM waits at its `A>` prompt.
-ALASM then assembles it as if you had typed it. `zxasm convert --to alasm` gives the same text as a file. More
-assemblers are planned ([asm-synchronizer](../inprogress/2026-10-05-unreal-asm/asm-synchronizer.md)).
+The other way works too, for ALASM (3.8c to 5.09) so far: `asm sync inject --path main.asm` writes a host source
+(sjasmplus, or any dialect the converter reads) into the running ALASM as its own text, while ALASM waits at its `A>`
+prompt. ALASM then assembles it as if you had typed it. The files main.asm INCLUDEs go into ALASM texts of their own.
+`zxasm convert --to alasm` gives the same text as a file. More assemblers are planned
+([asm-synchronizer](../inprogress/2026-10-05-unreal-asm/asm-synchronizer.md)).
+
+To edit on the host and assemble in ALASM, `asm sync push-watch main.asm` writes the file again on every save (and on
+a save of a file it INCLUDEs). While ALASM is in its editor or assembling, the write waits for its command line. If
+you changed the text inside ALASM since, the watch leaves it alone and reports a conflict (`--force` overwrites it).
+`asm sync push-unwatch` stops it; in the Live source window it is the Push button.
 
 Snapshots and disks work both ways without the emulator. `zxasm inject main.asm alasm-5.09.szx -o work.szx` puts
 the source into a snapshot of ALASM waiting at its prompt (a ready template ships with the library's test data);

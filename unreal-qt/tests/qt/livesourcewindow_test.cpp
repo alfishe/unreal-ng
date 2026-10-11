@@ -40,6 +40,14 @@ void LoadSession(EmulatorContext* context, const std::string& folder)
     context->pMemory->SetRAMPageToBank3(6);
 }
 
+QPushButton* Button(const LiveSourceWindow& window, const char* text)
+{
+    for (QPushButton* b : window.findChildren<QPushButton*>())
+        if (b->text() == QString(text))
+            return b;
+    return nullptr;
+}
+
 class LiveSourceWindow_Test : public ::testing::Test
 {
 protected:
@@ -69,7 +77,7 @@ TEST_F(LiveSourceWindow_Test, TheWindowShowsTheBuiltTextAndTheCursorLine)
     options.quietMs = 0;
     _sync->Start(options);
     {
-        LiveSourceWindow window(_emulator.get());
+        LiveSourceWindow window(_emulator);
         auto* text = window.findChild<QPlainTextEdit*>();
         ASSERT_NE(text, nullptr);
         ASSERT_TRUE(TestWait::For([&] {
@@ -93,10 +101,7 @@ TEST_F(LiveSourceWindow_Test, TheWindowShowsTheBuiltTextAndTheCursorLine)
         auto* hints = window.findChild<QListWidget*>();
         ASSERT_NE(hints, nullptr);
         EXPECT_EQ(hints->count(), 3);
-        QPushButton* watch = nullptr;
-        for (QPushButton* b : window.findChildren<QPushButton*>())
-            if (b->isCheckable())
-                watch = b;
+        QPushButton* watch = Button(window, "&Watch");
         ASSERT_NE(watch, nullptr);
         EXPECT_TRUE(watch->isChecked());
     }
@@ -108,12 +113,9 @@ TEST_F(LiveSourceWindow_Test, AWatchTheWindowStartsEndsWithIt)
 {
     ASSERT_FALSE(_sync->Watching());
     {
-        LiveSourceWindow window(_emulator.get());
+        LiveSourceWindow window(_emulator);
         EXPECT_TRUE(_sync->Watching());
-        QPushButton* watch = nullptr;
-        for (QPushButton* b : window.findChildren<QPushButton*>())
-            if (b->isCheckable())
-                watch = b;
+        QPushButton* watch = Button(window, "&Watch");
         ASSERT_NE(watch, nullptr);
         watch->setChecked(false);
         EXPECT_FALSE(_sync->Watching()) << "Watch off stops it";
@@ -121,4 +123,35 @@ TEST_F(LiveSourceWindow_Test, AWatchTheWindowStartsEndsWithIt)
         EXPECT_TRUE(_sync->Watching());
     }
     EXPECT_FALSE(_sync->Watching()) << "closed: the window's own watch ends";
+}
+
+TEST_F(LiveSourceWindow_Test, APushWatchShowsInTheStatusLineAndOutlivesTheWindow)
+{
+    // A push watch someone else started (no assembler idle in this machine: it waits): the window shows it, Push is on,
+    // and closing the window leaves it running. Waits on the worker's first look (50 ms)
+    const std::filesystem::path main = TestPathHelper::GetUniqueTestScratchPath("live-push.asm");
+    std::ofstream(main) << "        ORG #6000\n        RET\n";
+    AsmSyncService::PushOptions options;
+    options.path = main.string();
+    options.intervalMs = 50;
+    options.quietMs = 0;
+    _sync->StartPush(options);
+    {
+        LiveSourceWindow window(_emulator.get());
+        QPushButton* push = Button(window, "&Push");
+        ASSERT_NE(push, nullptr);
+        ASSERT_NE(Button(window, "&Inject..."), nullptr);
+        const auto labels = window.findChildren<QLabel*>();
+        ASSERT_FALSE(labels.isEmpty());
+        ASSERT_TRUE(TestWait::For([&] {
+            window.refresh();
+            return labels.front()->text().contains("live-push.asm: ") && !labels.front()->text().contains(": waiting,");
+        })) << labels.front()->text().toStdString();
+        EXPECT_TRUE(push->isChecked());
+        EXPECT_TRUE(labels.front()->text().contains("Pushing live-push.asm")) << labels.front()->text().toStdString();
+    }
+    EXPECT_TRUE(_sync->Pushing()) << "not the window's push watch: it stays";
+    _sync->StopPush();
+    EXPECT_FALSE(_sync->Pushing());
+    std::filesystem::remove(main);
 }

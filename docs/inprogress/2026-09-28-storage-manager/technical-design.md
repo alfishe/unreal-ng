@@ -604,6 +604,9 @@ TTD and snapshot rules (details in [integration-ttd-snapshots.md](integration-tt
 - The peripherals' protocol state is in their TTD blobs.
 - **TTD v1 does not handle media**: it works with the media present and loads and stores none; its
   sessions record at port level.
+- **Status 2026-10-11:** the first two rules are v1's. The TTD v2 engine (the default) takes a media change while
+  the user's recording runs as an event at the next frame boundary, and sets every medium to its recorded version on
+  a seek (the media undo log, `MediaUndoLog`); see [integration-ttd-snapshots.md](integration-ttd-snapshots.md).
 - **TTD v2 and the universal snapshot** restore media through the change layer's versions: a
   checkpoint or a snapshot names a version, and restoring it restores the whole disk subsystem at
   that moment ([media-history-design.md](media-history-design.md) §7; roadmap ST-6, UNS-6).

@@ -73,9 +73,12 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
     schema["properties"]["sets"]["items"]["type"] = "string";
     schema["properties"]["sets"]["description"] = "export: only these set ids (default: every enabled set)";
     schema["properties"]["from"]["type"] = "string";
-    schema["properties"]["from"]["description"] = "export: only CPU addresses from this one (decimal, 0x, #, $)";
+    schema["properties"]["from"]["description"] = "list / export: only CPU addresses from this one (decimal, 0x, #, $)";
     schema["properties"]["to"]["type"] = "string";
-    schema["properties"]["to"]["description"] = "export: only CPU addresses up to this one";
+    schema["properties"]["to"]["description"] = "list / export: only CPU addresses up to this one";
+    schema["properties"]["limit"]["type"] = "integer";
+    schema["properties"]["limit"]["default"] = 100;
+    schema["properties"]["limit"]["description"] = "list: labels written in the text (1..2000; structuredContent has every match)";
     schema["properties"]["kinds"]["type"] = "string";
     schema["properties"]["kinds"]["description"] = "export: only these kinds, a comma list (code, data, const, entry ... or a file's own type word)";
     schema["properties"]["pages"]["type"] = "string";
@@ -136,7 +139,65 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
 
             if (action == "list")
             {
-                ResolveAndForward(args, "GET", "/labels", nullptr, caller, "Labels", done);
+                // Filters: from / to by the WebAPI, name (a case-insensitive substring) here. The text lists the first
+                // `limit` labels one per line; the full ROM set is ~2400 labels, 330 KB of JSON
+                std::string query;
+                for (const char* bound : {"from", "to"})
+                {
+                    if (!args.isMember(bound))
+                        continue;
+                    const Json::Value number = NumericOrHex(args[bound]);
+                    if (!number.isIntegral() || number.asLargestInt() < 0 || number.asLargestInt() > 0xFFFF)
+                    {
+                        done(ToolResult::Error(std::string("list: '") + bound + "' is a CPU address 0..0xFFFF (decimal, 0x, $)"));
+                        return;
+                    }
+                    query += std::string(query.empty() ? "?" : "&") + bound + "=" + std::to_string(number.asUInt());
+                }
+                std::string name = args.isMember("name") && args["name"].isString() ? args["name"].asString() : "";
+                std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return std::tolower(c); });
+                const unsigned limit = args.isMember("limit") && args["limit"].isIntegral()
+                                           ? std::clamp(args["limit"].asUInt(), 1u, 2000u) : 100u;
+                ResolveAndForward(args, "GET", "/labels" + query, nullptr, caller, "Labels", [name, limit, done](ToolResult result) {
+                    if (result.isError)
+                    {
+                        done(std::move(result));
+                        return;
+                    }
+                    Json::Value& labels = result.structured["labels"];
+                    if (!name.empty() && labels.isArray())
+                    {
+                        Json::Value kept(Json::arrayValue);
+                        for (const Json::Value& label : labels)
+                        {
+                            std::string lower = label["name"].asString();
+                            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
+                            if (lower.find(name) != std::string::npos)
+                                kept.append(label);
+                        }
+                        labels = std::move(kept);
+                        result.structured["count"] = labels.size();
+                    }
+                    std::ostringstream out;
+                    out << result.text << ": " << labels.size() << " of " << result.structured["total"].asUInt();
+                    Json::ArrayIndex shown = 0;
+                    for (const Json::Value& label : labels)
+                    {
+                        if (shown++ == limit)
+                            break;
+                        out << "\n" << Hex16(label["address"].asUInt()) << " " << label["name"].asString();
+                        if (label.isMember("bank"))
+                            out << " " << label["bankType"].asString() << label["bank"].asUInt();
+                        if (label["type"].isString())
+                            out << " " << label["type"].asString();
+                        if (label["comment"].isString())
+                            out << " ; " << label["comment"].asString();
+                    }
+                    if (labels.size() > limit)
+                        out << "\n... " << labels.size() - limit << " more: narrow with name / from / to, or raise limit";
+                    result.text = out.str();
+                    done(std::move(result));
+                });
                 return;
             }
 
@@ -150,7 +211,25 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
                     return;
                 }
                 std::string query = hasName ? "?name=" + args["name"].asString() : "?address=" + AddressArg(args["address"]);
-                ResolveAndForward(args, "GET", "/labels/resolve" + query, nullptr, caller, "Label resolved", done);
+                // The answer in the text: "CLS = 0x0D6B rom3 code ; CLS command: Clear screen"
+                ResolveAndForward(args, "GET", "/labels/resolve" + query, nullptr, caller, "Label resolved", [done](ToolResult result) {
+                    const Json::Value& label = result.structured["label"];
+                    if (!result.isError && label.isObject())
+                    {
+                        std::ostringstream out;
+                        out << result.text << ": " << label["name"].asString() << " = " << Hex16(label["address"].asUInt());
+                        if (label.isMember("bank"))
+                            out << " " << label["bankType"].asString() << label["bank"].asUInt();
+                        if (label["type"].isString())
+                            out << " " << label["type"].asString();
+                        if (label["comment"].isString())
+                            out << " ; " << label["comment"].asString();
+                        result.text = out.str();
+                    }
+                    else if (!result.isError)
+                        result.text += "\n" + FlatFields(result.structured);
+                    done(std::move(result));
+                });
                 return;
             }
 

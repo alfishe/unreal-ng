@@ -9,7 +9,7 @@ Reference design: `docs/inprogress/2026-08-17-mcp/`.
 ## Endpoint & transport
 
 - `POST http://localhost:8092/mcp` — Streamable HTTP, MCP protocol
-  `2025-03-26`, stateless (no `Mcp-Session-Id`).
+  `2025-06-18` (also `2025-03-26`, `2024-11-05`; an unsupported `MCP-Protocol-Version` header is a 400), stateless (no `Mcp-Session-Id`).
 - Request → `200` + `application/json`; notification → `202` empty;
   JSON-RPC batch → `-32600`; malformed JSON → `400` + `-32700`.
 - **SSE response mode**: when the request `Accept` header includes
@@ -94,10 +94,11 @@ WebAPI's thread calls `run()`), and `stopMCP()` runs **after** `stopWebAPI()`.
 
 Every tool accepts `target` (emulator id or `auto`; `auto` creates a 128K
 machine when none exists, refuses when several exist) and answers with dual
-content: `content[]` text summary + `structuredContent` machine data; the
-structuredContent is echoed in `content[]` as JSON text for clients that pass
-only the text to the model (cut at 64 KB), unless the text already holds the
-data (the `debug_code disassemble` listing).
+content: `content[]` text summary + `structuredContent` machine data. Every
+tool also takes `response_format`: `text` (default, human-readable) or `json`,
+which adds the structuredContent to `content[]` as JSON text (cut at 64 KB) for
+clients that pass only the text to the model. A screenshot with
+`include_image` carries its pixels as an MCP `image` content block.
 Tool-level failures are `isError: true` results with remediation hints —
 never JSON-RPC errors.
 

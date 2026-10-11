@@ -4,6 +4,7 @@
 #include "cli-processor.h"
 
 #include <3rdparty/message-center/messagecenter.h>
+#include <base/featuremanager.h>
 #include <debugger/assembler/z80textassembler.h>
 #include <debugger/debugmanager.h>
 #include <debugger/disassembler/z80disasm.h>
@@ -112,7 +113,7 @@ void CLIProcessor::HandleStepIn(const ClientSession& session, const std::vector<
     uint8_t commandLen = 0;
     DecodedInstruction decodedBefore;
     std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
-    for (int i = 0; i < buffer.size(); i++)
+    for (size_t i = 0; i < buffer.size(); i++)
     {
         buffer[i] = memory->DirectReadFromZ80Memory(initialPC + i);
     }
@@ -145,7 +146,7 @@ void CLIProcessor::HandleStepIn(const ClientSession& session, const std::vector<
     uint16_t newPC = z80State->pc;
 
     // Disassemble the next instruction to be executed
-    for (int i = 0; i < Z80Disassembler::MAX_INSTRUCTION_LENGTH; i++)
+    for (size_t i = 0; i < Z80Disassembler::MAX_INSTRUCTION_LENGTH; i++)
     {
         buffer[i] = memory->DirectReadFromZ80Memory(newPC + i);
     }
@@ -227,7 +228,7 @@ void CLIProcessor::HandleStepIn(const ClientSession& session, const std::vector<
 }
 
 // HandleStepOver - lines 1035-1200
-void CLIProcessor::HandleStepOver(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleStepOver(const ClientSession& session, const std::vector<std::string>& /*args*/)
 {
     auto emulator = GetSelectedEmulator(session);
 
@@ -279,7 +280,7 @@ void CLIProcessor::HandleStepOver(const ClientSession& session, const std::vecto
     uint8_t commandLen = 0;
     DecodedInstruction decodedBefore;
     std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
-    for (int i = 0; i < buffer.size(); i++)
+    for (size_t i = 0; i < buffer.size(); i++)
     {
         buffer[i] = memory->DirectReadFromZ80Memory(initialPC + i);
     }
@@ -328,7 +329,7 @@ void CLIProcessor::HandleStepOver(const ClientSession& session, const std::vecto
     }
 
     // Disassemble the next instruction to be executed
-    for (int i = 0; i < Z80Disassembler::MAX_INSTRUCTION_LENGTH; i++)
+    for (size_t i = 0; i < Z80Disassembler::MAX_INSTRUCTION_LENGTH; i++)
     {
         buffer[i] = memory->DirectReadFromZ80Memory(newPC + i);
     }
@@ -426,20 +427,24 @@ void CLIProcessor::HandleDebugMode(const ClientSession& session, const std::vect
     }
 
     const std::string& mode = args[0];
-    Core* core = emulator->GetContext()->pCore;
     bool success = true;
     std::string response;
 
-    if (mode == "on")
+    // Through the 'debugmode' feature: its manager is the one writer of the CPU's debug mode (M4)
+    FeatureManager* features = emulator->GetFeatureManager();
+    if ((mode == "on" || mode == "off") && !features)
     {
-        core->GetZ80()->isDebugMode = true;
-        core->SelectMemoryInterface();
+        success = false;
+        response = "Error: the emulator has no feature manager" + std::string(NEWLINE);
+    }
+    else if (mode == "on")
+    {
+        features->setFeature(Features::kDebugMode, true);
         response = "Debug mode enabled (slower, with breakpoint support)" + std::string(NEWLINE);
     }
     else if (mode == "off")
     {
-        core->GetZ80()->isDebugMode = false;
-        core->SelectMemoryInterface();
+        features->setFeature(Features::kDebugMode, false);
         response = "Debug mode disabled (faster, no breakpoints)" + std::string(NEWLINE);
     }
     else
@@ -540,7 +545,7 @@ void CLIProcessor::HandleSteps(const ClientSession& session, const std::vector<s
     uint8_t commandLen = 0;
     DecodedInstruction decodedBefore;
     std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
-    for (int i = 0; i < buffer.size(); i++)
+    for (size_t i = 0; i < buffer.size(); i++)
     {
         buffer[i] = memory->DirectReadFromZ80Memory(initialPC + i);
     }
@@ -573,7 +578,7 @@ void CLIProcessor::HandleSteps(const ClientSession& session, const std::vector<s
     uint16_t newPC = z80State->pc;
 
     // Disassemble the next instruction to be executed
-    for (int i = 0; i < Z80Disassembler::MAX_INSTRUCTION_LENGTH; i++)
+    for (size_t i = 0; i < Z80Disassembler::MAX_INSTRUCTION_LENGTH; i++)
     {
         buffer[i] = memory->DirectReadFromZ80Memory(newPC + i);
     }
@@ -810,7 +815,7 @@ void CLIProcessor::HandleRunNScanlines(const ClientSession& session, const std::
     session.SendResponse(ss.str());
 }
 
-void CLIProcessor::HandleRunToPixel(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleRunToPixel(const ClientSession& session, const std::vector<std::string>& /*args*/)
 {
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
@@ -841,7 +846,7 @@ void CLIProcessor::HandleRunToPixel(const ClientSession& session, const std::vec
     session.SendResponse(ss.str());
 }
 
-void CLIProcessor::HandleRunToInterrupt(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleRunToInterrupt(const ClientSession& session, const std::vector<std::string>& /*args*/)
 {
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
@@ -873,7 +878,7 @@ void CLIProcessor::HandleRunToInterrupt(const ClientSession& session, const std:
 }
 
 // Run one complete video frame
-void CLIProcessor::HandleRunFrame(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleRunFrame(const ClientSession& session, const std::vector<std::string>& /*args*/)
 {
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)

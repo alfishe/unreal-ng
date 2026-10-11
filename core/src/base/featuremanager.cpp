@@ -85,6 +85,36 @@ bool FeatureManager::isTtdRecordingActive() const
     return false;
 }
 
+bool FeatureManager::debugModeInEffect() const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    if (_replayDebugHold)
+        return true;
+    auto debugIt = _features.find(Features::kDebugMode);
+    return debugIt != _features.end() && debugIt->second.enabled;
+}
+
+void FeatureManager::OnModeChanged(const coordinator::ModeState& /*from*/, const coordinator::ModeState& to)
+{
+    {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        if (_replayDebugHold == to.replaying)
+            return;
+        _replayDebugHold = to.replaying;
+    }
+    applyDebugMode();
+}
+
+void FeatureManager::applyDebugMode()
+{
+    if (!_context || !_context->pCore)
+        return;
+    _context->pCore->GetZ80()->isDebugMode = debugModeInEffect();
+    _context->pCore->SelectMemoryInterface();  // the debug path, contended where the machine is
+    if (Memory* memory = _context->pCore->GetMemory())
+        memory->UpdateFeatureCache();
+}
+
 bool FeatureManager::isRzxPlaying() const
 {
     return _context && _context->rzxPlayer != nullptr;
@@ -688,14 +718,8 @@ void FeatureManager::onFeatureChanged(const std::string& changedFeatureId)
     {
         _context->pCore->GetMemory()->UpdateFeatureCache();
 
-        // Synchronize master switch with feature changes
-        bool debugEnabled;
-        {
-            std::lock_guard<std::recursive_mutex> lock(_mutex);
-            auto debugIt = _features.find(Features::kDebugMode);
-            debugEnabled = debugIt != _features.end() && debugIt->second.enabled;
-        }
-        _context->pCore->GetZ80()->isDebugMode = debugEnabled;
+        // Synchronize master switch with feature changes (a replay's hold stays: debugModeInEffect)
+        _context->pCore->GetZ80()->isDebugMode = debugModeInEffect();
 
         // Switch memory interface based on debug mode and the machine's contention (with its switch)
         _context->pCore->SetContentionSwitch(isEnabled(Features::kContention));  // re-selects the interface

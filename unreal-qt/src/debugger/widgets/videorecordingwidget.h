@@ -16,8 +16,10 @@
 #include <QTimer>
 
 #include <atomic>
+#include <memory>
 #include <string>
 
+class Emulator;
 class EmulatorContext;
 
 class VideoRecordingWidget : public QWidget
@@ -25,11 +27,12 @@ class VideoRecordingWidget : public QWidget
     Q_OBJECT
 
 public:
-    explicit VideoRecordingWidget(EmulatorContext* context, QWidget* parent = nullptr);
+    explicit VideoRecordingWidget(std::shared_ptr<Emulator> emulator, QWidget* parent = nullptr);
     ~VideoRecordingWidget();
 
-    /// Update the emulator context (call when emulator instance changes)
-    void setContext(EmulatorContext* context);
+    /// The active machine (call when the emulator instance changes); held, so a removed one stays readable until
+    /// the GUI moves on (BUGS.md #11)
+    void setEmulator(std::shared_ptr<Emulator> emulator);
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -70,18 +73,18 @@ private:
     /// Check if audio-only mode is selected (Audio tab active)
     bool isAudioOnlyMode() const;
 
-    /// Verify _context still points to a live emulator; clear it if the
-    /// emulator was destroyed (raw pointer can dangle after Release()).
+    /// Drop the held machine once it was removed (retired): the controls go idle
     void validateContext();
 
     /// Refresh the audio tab's capture-rate readout (core rate = the rate
     /// audio-only recordings capture at; device native rate for reference)
     void updateAudioRateInfo();
 
-    /// Look up the RecordingManager for the emulator we started recording
-    /// with. Returns nullptr if that emulator was destroyed.
-    /// When not recording, falls back to the active _context.
-    EmulatorContext* recordingContext() const;
+    /// The emulator we started recording with (a reference of the caller's own: it stays readable for the call).
+    /// nullptr if that emulator was removed. When not recording, the active one
+    std::shared_ptr<Emulator> recordingEmulator() const;
+    /// The active machine's context, per call (never stored)
+    EmulatorContext* context() const;
 
     // Encoder capability matrix (what the selected backend can actually produce)
     QStringList containersForBackend() const;
@@ -101,8 +104,8 @@ private:
     void loadBenchmarkResults();
     void saveBenchmarkResults();
 
-    EmulatorContext* _context = nullptr;
-    std::string _contextEmulatorId;     // Emulator ID for _context (for staleness check)
+    std::shared_ptr<Emulator> _emulator;
+    std::string _contextEmulatorId;     // Emulator ID of _emulator
     std::string _recordingEmulatorId;   // Emulator ID we started recording with
     QTimer* _statsTimer = nullptr;
 

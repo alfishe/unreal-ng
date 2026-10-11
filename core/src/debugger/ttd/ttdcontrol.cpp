@@ -930,6 +930,21 @@ TTDReply TTDControlBackend<S>::Seek(const TTDRequest& request)
             return Fail(TTDControlError::BadRequest, "frame and tinframe must be non-negative integers");
         target = {frame, static_cast<uint32_t>(t)};
     }
+    // Past the history's end: out_of_range before anything moves, naming where the history ends
+    // and where the machine stands (as D12 does before the start). The session's own answer
+    // came after a pause, with arrived_at {0, 0}: "stopped at frame 0" while nothing moved
+    if (const TTDTimePoint end = _manager->SessionEndPosition(); target.frame > end.frame)
+    {
+        TTDReply reply;
+        reply.body["reached"] = false;
+        reply.body["arrived_at"] = TimePointNode(_manager->CurrentPosition());
+        reply.body["halt_reason"] = "out_of_range";
+        reply.body["session_end"] = TimePointNode(end);
+        reply.body["message"] = "frame " + std::to_string(target.frame) + " is past the history: it ends at frame " +
+                                std::to_string(end.frame) + "; the position did not move";
+        reply.body["state"] = TTDSessionStateToString(_manager->GetState());
+        return reply;
+    }
     // D13 (the engine): a frame without a T-state is the frame's end - machine
     // state and picture are then the frame's final ones
     const bool frameEnd = std::is_same<S, TimeTravelController>::value && !bookmark && !tText;

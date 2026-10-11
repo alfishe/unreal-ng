@@ -1,4 +1,4 @@
-# PoC 024: the Next's memory model and the CPU library's per-step cost (P2)
+# PoC 025: the Next's memory model and the CPU library's per-step cost (P2)
 
 Phase P2 of [the Next phases](../../../docs/inprogress/2026-10-07-zx-next/phases.md): does decision D6 (a flat 2 MB array and an
 eight-entry slot table of read / write pointers, reached through the CPU library's callbacks) cost anything against today's four
@@ -7,9 +7,9 @@ eight-entry slot table of read / write pointers, reached through the CPU library
 Self-contained: the vendored CPU libraries and Google Benchmark from `lib/`, no emulator build.
 
 ```bash
-cmake -S tools/poc/025-next-memory-model -B scratch/poc-024/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-ninja -C scratch/poc-024/build
-UNREAL_NICE=0 scratch/poc-024/build/p2-shift13 --benchmark_filter='Frame|Rebuild' --benchmark_repetitions=7 --benchmark_report_aggregates_only=true
+cmake -S tools/poc/025-next-memory-model -B scratch/poc-025/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+ninja -C scratch/poc-025/build
+UNREAL_NICE=0 scratch/poc-025/build/p2-shift13 --benchmark_filter='Frame|Rebuild' --benchmark_repetitions=7 --benchmark_report_aggregates_only=true
 ```
 
 Run from the repository root (the workload reads `data/rom/48.rom`). `p2-shift14` and `p2-shift13` differ only in the page size of

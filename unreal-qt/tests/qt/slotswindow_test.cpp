@@ -71,7 +71,7 @@ protected:
         hooks.beforeRelease = [this](Emulator&) { _binding.unbind(); };
         hooks.adopt = [this](std::shared_ptr<Emulator> emulator, bool) {
             _current = emulator;
-            _binding.bind(emulator.get());
+            _binding.bind(emulator);
         };
         hooks.ask = [this](QWidget*, const QString& title, const QString& text, const QStringList& buttons) {
             _asked << title + ": " + text;
@@ -97,7 +97,7 @@ TEST_F(SlotsWindow_Test, PreviewPlugWarnAndUndo)
 {
     _current = Create({{"ay-socket", "tsfm"}, {"zxbus.1", "gs"}});
     ASSERT_NE(_current, nullptr);
-    _binding.bind(_current.get());
+    _binding.bind(_current);
     auto controller = Controller();
     SlotsWindow window;
     window.setBinding(&_binding);
@@ -138,7 +138,7 @@ TEST_F(SlotsWindow_Test, SetOptionsAndUndoButton)
 {
     _current = Create({{"zxbus.1", "multisound"}});
     ASSERT_NE(_current, nullptr);
-    _binding.bind(_current.get());
+    _binding.bind(_current);
     auto controller = Controller();
     SlotsWindow window;
     window.setBinding(&_binding);
@@ -169,7 +169,7 @@ TEST_F(SlotsWindow_Test, MidiActivityListsTheParts)
 {
     _current = Create({{"zxbus.1", "multisound"}});
     ASSERT_NE(_current, nullptr);
-    _binding.bind(_current.get());
+    _binding.bind(_current);
     MidiActivityWindow window;
     window.setBinding(&_binding);
     window.refresh();
@@ -188,7 +188,7 @@ TEST_F(SlotsWindow_Test, NetworkCardsAreASlotChange)
 {
     _current = Create({{"zxbus.1", "zx-wifi"}});
     ASSERT_NE(_current, nullptr);
-    _binding.bind(_current.get());
+    _binding.bind(_current);
     auto controller = Controller();
     const std::string firstId = _current->GetId();
 
@@ -225,7 +225,7 @@ TEST_F(SlotsWindow_Test, SprinterIsaSlotsAndTheAdapterBus)
             SlotManager::UseSlots(slots, config);
         });
     ASSERT_NE(_current, nullptr) << error;
-    _binding.bind(_current.get());
+    _binding.bind(_current);
     auto controller = Controller();
     SlotsWindow window;
     window.setBinding(&_binding);
@@ -241,6 +241,6 @@ TEST_F(SlotsWindow_Test, SprinterIsaSlotsAndTheAdapterBus)
     _binding.unbind();
     auto pentagon = Create({{"zxbus.1", "gs"}});
     ASSERT_NE(pentagon, nullptr);
-    _binding.bind(pentagon.get());
+    _binding.bind(pentagon);
     EXPECT_FALSE(window.slotsText().contains("board ")) << window.slotsText().toStdString();
 }

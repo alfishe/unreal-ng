@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <map>
 
 #include "codecs/alasm/alasmcodec.h"
 #include "symbols/io/json.h"
@@ -515,4 +516,174 @@ TEST(SyncInject_Test, AlasmTakesAFileAtItsCommandLine)
     InjectOptions force;
     force.force = true;
     EXPECT_TRUE(PlanInject(dump.machine, *d, file, force).ok);
+}
+
+// The idle rule of every ALASM build: the stack words read in unreal-ng at the A> prompt and in the editor (ALASM
+// running from its own disk, research-sjasmplus-to-alasm.md §4). The prompt is idle, the editor is not
+TEST(SyncInject_Test, EveryAlasmBuildIsIdleAtItsPromptAndBusyInItsEditor)
+{
+    struct Sample
+    {
+        const char* id;
+        std::vector<uint16_t> prompt, editor;
+    };
+    const std::vector<Sample> samples = {
+        {"alasm-5.09", {0x5C78, 0x0042, 0x9083, 0x9043, 0x8EF2, 0xBF15, 0x7FFD, 0x9199, 0x91E3, 0x9707, 0x2D2B},
+         {0x5C78, 0x0042, 0x9083, 0x9043, 0x914A, 0xC000, 0x06FD, 0x9199, 0x914D, 0x944D, 0x9F97, 0x9733, 0x2D2B}},
+        {"alasm-5.08", {0x5C78, 0x0042, 0x9084, 0x9043, 0x8EF2, 0xBF15, 0x7FFD, 0x919E, 0x91E8, 0x970C, 0x2D2B},
+         {0x5C78, 0x0042, 0x9083, 0x9043, 0x914F, 0xC000, 0x06FD, 0x919E, 0x9152, 0x9452, 0x9F9C, 0x9738, 0x2D2B}},
+        {"alasm-5.07", {0x5C78, 0x0042, 0x9084, 0x9043, 0x8EF2, 0xBF15, 0x7FFD, 0x9190, 0x91DA, 0x96FE, 0x2D2B},
+         {0x5C78, 0x0042, 0x9083, 0x9043, 0x9141, 0xC000, 0x06FD, 0x9190, 0x9144, 0x9444, 0x9F8E, 0x972A, 0x2D2B}},
+        {"alasm-5.05", {0x5C78, 0x0042, 0x9084, 0x9043, 0x8EF2, 0xBF15, 0x7FFD, 0x9190, 0x91DA, 0x96FE, 0x2D2B},
+         {0x5C78, 0x0042, 0x9084, 0x9043, 0x9141, 0xC000, 0x06FD, 0x9190, 0x9144, 0x9444, 0x9F8D, 0x972A, 0x2D2B}},
+        {"alasm-5.00", {0x5C78, 0x0042, 0x9929, 0x98E8, 0xA0EE, 0xBF15, 0x7FFD, 0xA844, 0x99EA, 0x8B93, 0x2D2B},
+         {0x5C78, 0x0042, 0x9928, 0x98E8, 0x95D0, 0xC000, 0x06FD, 0xA844, 0x95D3, 0x9DB8, 0xA3F1, 0x8BBF, 0x2D2B}},
+        {"alasm-4.5", {0x985A, 0xA0F9, 0xBF15, 0x0F01, 0xA810, 0x998F, 0x8B6B, 0x2D2B},
+         {0x985A, 0x954A, 0xC000, 0x0101, 0xA810, 0x954D, 0x9D8B, 0xA394, 0x8B98, 0x2D2B}},
+        {"alasm-4.46", {0x98EC, 0xA15F, 0xBF15, 0x7FFD, 0xA869, 0x9A07, 0x8B92, 0x2D2B},
+         {0x98EC, 0x95BC, 0xC000, 0x06FD, 0xA869, 0x95BF, 0x9DEA, 0xA406, 0x8BBE, 0x2D2B}},
+        {"alasm-4.45", {0x98C8, 0xA147, 0xBF15, 0x7FFD, 0xA875, 0x99E1, 0x8B93, 0x2D2B},
+         {0x98C8, 0x95BE, 0xC000, 0x06FD, 0xA875, 0x95C1, 0x9DD8, 0xA3EF, 0x8BC0, 0x2D2B}},
+        {"alasm-4.44", {0x98EF, 0xA16E, 0xBF15, 0x7FFD, 0xA89E, 0x9A08, 0x8BA8, 0x2D2B},
+         {0x98EF, 0x95E2, 0xC000, 0x06FD, 0xA89E, 0x95E5, 0x9E03, 0xA418, 0x8BD5, 0x2D2B}},
+        {"alasm-4.43", {0x986F, 0xA10D, 0xBF15, 0x7FFD, 0xA81A, 0x99A4, 0x8B99, 0x2D2B},
+         {0x986F, 0x955F, 0xC000, 0x06FD, 0xA81A, 0x9562, 0x9DA0, 0xA3A8, 0x8BC6, 0x2D2B}},
+        {"alasm-4.42", {0x7FFD, 0x987D, 0xA121, 0xBA97, 0x7FFD, 0xA8A0, 0x99B2, 0x8B8F, 0x2D2B},
+         {0x987D, 0x955D, 0xC000, 0x06FD, 0xA8A0, 0x9560, 0x9DB4, 0xA3C8, 0x8BBC, 0x2D2B}},
+        {"alasm-3.8c", {0x0000, 0x9175, 0x9B9C, 0x9B74, 0x0000, 0xA1D1, 0x943A, 0x8149, 0x1B76, 0x1303},
+         {0x0600, 0x9175, 0x9883, 0xC000, 0x0600, 0xA1D1, 0x8DD9, 0x9837, 0x9DBE, 0x816D, 0x1B76}},
+    };
+    for (const Sample& sample : samples)
+    {
+        const SyncDescriptor* d = FindDescriptor(sample.id);
+        ASSERT_NE(d, nullptr) << sample.id;
+        ASSERT_FALSE(d->idleChain.empty()) << sample.id << " has an idle rule";
+        for (const bool atPrompt : {true, false})
+        {
+            const std::vector<uint16_t>& words = atPrompt ? sample.prompt : sample.editor;
+            std::vector<uint8_t> page5(0x4000, 0);
+            for (size_t k = 0; k < words.size(); ++k)
+            {
+                page5[0x1FB0 + 2 * k] = static_cast<uint8_t>(words[k]);
+                page5[0x1FB0 + 2 * k + 1] = static_cast<uint8_t>(words[k] >> 8);
+            }
+            MachineView machine;
+            machine.ram.push_back({5, page5});
+            machine.windows = {-1, 5, 2, 0};
+            machine.sp = 0x5FB0;
+            std::string why;
+            EXPECT_EQ(Idle(machine, *d, why), atPrompt) << sample.id << (atPrompt ? " at its prompt: " : " in its editor: ") << why;
+        }
+    }
+}
+
+namespace
+{
+/// A project on the host, in memory: path -> text
+DataFileReader HostFiles(const std::map<std::string, std::string>& files, std::vector<std::string>* asked = nullptr)
+{
+    return [files, asked](const std::string& path) {
+        if (asked)
+            asked->push_back(path);
+        const auto it = files.find(path);
+        return it == files.end() ? std::vector<uint8_t>() : std::vector<uint8_t>(it->second.begin(), it->second.end());
+    };
+}
+
+bool HasLine(const SourceDocument& document, const std::string& text)
+{
+    return std::any_of(document.lines.begin(), document.lines.end(), [&](const SourceLine& l) { return l.text.find(text) != std::string::npos; });
+}
+}  // namespace
+
+// The sources a host file INCLUDEs, each read relative to the folder of the file that INCLUDEs it
+TEST(SyncInject_Test, AHostProjectReadsTheIncludedSourcesFromTheirFolders)
+{
+    SourceDocument main = SourceDocument::FromText("        INCLUDE \"lib/one.asm\"\n        INCLUDE \"two.inc\"\n        INCLUDE \"gone.asm\"\n", "sjasmplus");
+    main.name = "MAIN";
+    std::vector<std::string> asked;
+    Diagnostics diagnostics;
+    const std::vector<ProjectFile> project =
+        HostProject(main, HostFiles({{"lib/one.asm", " INCLUDE \"deep.asm\"\n NOP\n"}, {"lib/deep.asm", " RET\n"}, {"two.inc", " HALT\n"}}, &asked), diagnostics);
+    ASSERT_EQ(project.size(), 4u);
+    EXPECT_EQ(project[0].name, "MAIN");
+    EXPECT_EQ(project[1].name, "lib/one");   // as the IR names it (sjasmplus: no .asm)
+    EXPECT_EQ(project[2].name, "two.inc");
+    EXPECT_EQ(project[3].name, "deep");
+    EXPECT_EQ(project[3].document.dialect, "sjasmplus");
+    EXPECT_NE(std::find(asked.begin(), asked.end(), "lib/deep.asm"), asked.end()) << "deep.asm is beside the file that INCLUDEs it";
+    ASSERT_EQ(diagnostics.size(), 1u);
+    EXPECT_NE(diagnostics[0].message.find("gone.asm"), std::string::npos) << diagnostics[0].message;
+    EXPECT_EQ(ProjectTextNames(project, "MAIN"), (std::vector<std::string>{"MAIN", "ONE", "TWO", "DEEP"}));
+}
+
+// A project into ALASM 5.09: the main source over its text, each INCLUDEd source into a page ALASM leaves free (4, 0),
+// the INCLUDEs naming those pages, so ALASM finds the texts loaded and never reads the disk
+TEST(SyncInject_Test, AProjectPutsEachIncludedSourceInAPageOfItsOwn)
+{
+    Dump dump = Load("alasm509-loaded");
+    const SyncDescriptor* d = FindDescriptor("alasm-5.09");
+    ASSERT_NE(d, nullptr);
+    std::vector<uint8_t> page5(0x4000, 0);   // the A> prompt's stack (EveryAlasmBuildIsIdleAtItsPromptAndBusyInItsEditor)
+    const std::vector<uint16_t> words = {0x9199, 0x91E3, 0x9707, 0x2D2B};
+    for (size_t k = 0; k < words.size(); ++k)
+    {
+        page5[0x1FB0 + 2 * k] = static_cast<uint8_t>(words[k]);
+        page5[0x1FB0 + 2 * k + 1] = static_cast<uint8_t>(words[k] >> 8);
+    }
+    const std::vector<uint8_t> page4(0x4000, 0), page0(0x4000, 0xFF);
+    dump.machine.ram.push_back({5, page5});
+    dump.machine.ram.push_back({4, page4});
+    dump.machine.ram.push_back({0, page0});
+    dump.machine.sp = 0x5FB0;
+
+    SourceDocument main = SourceDocument::FromText(
+        "        ORG #6000\n        LD A,1\n        INCLUDE \"lib/inc1.asm\"\n        INCLUDE \"inc2.asm\"\n        DB 9\nEND_    NOP\n", "sjasmplus");
+    main.name = "MAIN";
+    Diagnostics diagnostics;
+    const std::vector<ProjectFile> project =
+        HostProject(main, HostFiles({{"lib/inc1.asm", "        LD B,2\nL1      DW END_\n"}, {"inc2.asm", "        LD C,3\n        JP L1\n"}}), diagnostics);
+    ASSERT_EQ(project.size(), 3u);
+    const ProjectInjectPlan plan = PlanInjectProject(dump.machine, *d, project, "MAIN");
+    ASSERT_TRUE(plan.ok) << plan.error;
+    ASSERT_EQ(plan.pages.size(), 3u);
+    EXPECT_EQ(plan.pages[0].page, 6);
+    EXPECT_EQ(plan.pages[1].page, 4);
+    EXPECT_EQ(plan.pages[2].page, 0);
+    EXPECT_TRUE(HasLine(plan.texts[0].document, "INCLUDE \"INC1\",4"));
+    EXPECT_TRUE(HasLine(plan.texts[0].document, "INCLUDE \"INC2\",0"));
+    EXPECT_TRUE(HasLine(plan.texts[2].document, "JP L1"));
+
+    // Written: each page holds its text under its name, marked changed since saved
+    for (const InjectPlan& page : plan.pages)
+        for (symbols::MemoryPage& ram : dump.machine.ram)
+            if (ram.page == page.page)
+                ram.bytes = page.bytes;
+    const std::vector<SyncText> others = ReadOtherTexts(dump.machine, *d, 6);
+    ASSERT_EQ(others.size(), 2u);
+    for (const SyncText& text : others)
+    {
+        EXPECT_EQ(text.name, text.page == 4 ? "INC1" : "INC2");
+        EXPECT_EQ(text.file, plan.texts[text.page == 4 ? 1 : 2].bytes);
+        EXPECT_TRUE(text.changed);
+    }
+
+    // Those texts now have changes not saved: another write needs force
+    const ProjectInjectPlan again = PlanInjectProject(dump.machine, *d, project, "MAIN");
+    EXPECT_FALSE(again.ok);
+    InjectOptions force;
+    force.force = true;
+    EXPECT_TRUE(PlanInjectProject(dump.machine, *d, project, "MAIN", force).ok);
+
+    // More sources than free pages, or a build without project pages: refused before anything is written
+    std::vector<ProjectFile> three = project;
+    three.push_back({"inc3", three[2].document});
+    const ProjectInjectPlan tooMany = PlanInjectProject(dump.machine, *d, three, "MAIN", force);
+    EXPECT_FALSE(tooMany.ok);
+    EXPECT_NE(tooMany.error.find("keeps 2 more text(s) in memory (pages 4, 0)"), std::string::npos) << tooMany.error;
+    SyncDescriptor withoutPages = *d;
+    withoutPages.projectPages.clear();
+    const ProjectInjectPlan none = PlanInjectProject(dump.machine, withoutPages, project, "MAIN", force);
+    EXPECT_FALSE(none.ok);
+    EXPECT_NE(none.error.find("keeps no other text"), std::string::npos) << none.error;
 }

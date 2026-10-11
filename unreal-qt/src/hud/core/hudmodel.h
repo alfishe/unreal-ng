@@ -183,7 +183,7 @@ private:
     void publishLocked();
 
 private:
-    EmulatorContext* _context = nullptr;
+    EmulatorContext* _context = nullptr;  // lifetime-ok: cleared on the MessageCenter worker inside the removal's drain, before anything is retired or freed
     /// Copy of the bound instance id. Kept by value so message filtering never
     /// dereferences _context (which dangles between free and detach otherwise).
     unreal::UUID _emulatorId{};

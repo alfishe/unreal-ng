@@ -712,11 +712,13 @@ void StatusBarManager::updateBiosIssues(EmulatorContext* context)
 {
     // Checked when the machine changes and then every 25 ticks (5 s): a BIOS selected at runtime loads at the next
     // reset, so the label follows within seconds
-    if (context == _biosIssuesContext && _biosIssuesTicks++ % 25 != 0)
+    // By id, not by pointer: a new machine's context can sit at a removed one's address
+    const std::string emulatorId = context && context->pEmulator ? context->pEmulator->GetId() : std::string();
+    if (emulatorId == _biosIssuesEmulatorId && _biosIssuesTicks++ % 25 != 0)
         return;
-    if (context != _biosIssuesContext)
+    if (emulatorId != _biosIssuesEmulatorId)
         _biosIssuesTicks = 1;
-    _biosIssuesContext = context;
+    _biosIssuesEmulatorId = emulatorId;
     const std::vector<std::string> issues = DeviceState::SprinterBiosKnownIssues(context);
     if (issues.empty())
     {

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 #include <QByteArray>
 #include <QDialog>
 
@@ -17,7 +19,7 @@ class DeviceMemoryDialog : public QDialog
     Q_OBJECT
 
 public:
-    DeviceMemoryDialog(Emulator* emulator, QWidget* parent = nullptr);
+    DeviceMemoryDialog(std::shared_ptr<Emulator> emulator, QWidget* parent = nullptr);
 
 private slots:
     void regionSelected(int index);
@@ -25,7 +27,7 @@ private slots:
     void documentChanged();
 
 private:
-    Emulator* _emulator;
+    std::shared_ptr<Emulator> _emulator;
     QComboBox* _regions = nullptr;
     QLabel* _description = nullptr;
     QHexView* _hexView = nullptr;

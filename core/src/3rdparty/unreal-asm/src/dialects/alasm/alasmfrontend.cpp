@@ -27,6 +27,9 @@ struct Failure
     std::string reason;
 };
 
+/// The mnemonic of a statement ALASM rejects (ParseStatement): the line keeps its label, the statement becomes a comment
+constexpr const char* kRejected = "<rejected>";
+
 /// The characters of a quoted text starting at t[start] (a quote): "" inside is one quote (ALASM's own sources write
 /// CP """); the text may run to the end of the line. `end` is the offset after the closing quote, or t.size()
 std::string Quoted(std::string_view t, size_t start, size_t& end)
@@ -159,13 +162,14 @@ struct ExpressionParser
         }
         if (c == '"')
         {
-            // A character constant; ALASM lets it run to the end of the line ("CP ":"). Its value is a 16-bit word
-            // (the last two characters)
+            // A character constant; ALASM lets it run to the end of the line ("CP ":"). Its value is a 16-bit word: the
+            // first character in the low byte, the last in the high byte ("AB" = #4241, "ABC" = #4341: LD HL,"AB" and
+            // DW "ABC" in ALASM 5.09)
             size_t end = 0;
             const std::string chars = Quoted(t, i, end);
-            int64_t value = 0;
-            for (const char ch : chars)
-                value = ((value << 8) | static_cast<unsigned char>(ch)) & 0xFFFF;
+            int64_t value = chars.empty() ? 0 : static_cast<unsigned char>(chars.front());
+            if (chars.size() > 1)
+                value |= static_cast<int64_t>(static_cast<unsigned char>(chars.back())) << 8;
             Expr e = Expr::Number(value, ir::NumberSpelling::Character, static_cast<int>(chars.size()));
             e.text = chars;
             i = end;
@@ -464,11 +468,12 @@ Statement ParseStatement(const std::string& word, const std::string& rest, Diagn
                         s.operands.push_back(key);
                         continue;
                     }
-                    // A string (ALASM lets the last one run to the end of the line); in DW only a 1-2 character constant
+                    // A string (ALASM lets the last one run to the end of the line); in DW every quoted operand is one word,
+                    // the character constant's value (DW "ABC" puts down 41 43 in ALASM 5.09)
                     size_t close = 0;
                     if (!op.empty() && op.front() == '"')
                         Quoted(op, 0, close);
-                    if (!op.empty() && op.front() == '"' && close == op.size() && (d.kind != ir::DirectiveKind::Dw || op.size() > 4) &&
+                    if (!op.empty() && op.front() == '"' && close == op.size() && d.kind != ir::DirectiveKind::Dw &&
                         !(op.size() == 4 && op == "\"\"\"\""))
                         s.operands.push_back(StringOperand(op));
                     else
@@ -591,6 +596,17 @@ Statement ParseStatement(const std::string& word, const std::string& rest, Diagn
         }
         s.operands.push_back(ParseOperand(part, condition));
     }
+    // ADD, ADC and SBC take A, written out: ALASM 5.09 reports ADD B, ADC 5, SBC (HL) as errors (code #00) and puts
+    // nothing down. The line stays as a comment, so the converted source builds the bytes ALASM builds
+    if ((mnemonic == "add" || mnemonic == "adc" || mnemonic == "sbc") && s.operands.size() == 1)
+    {
+        diagnostics.push_back({Severity::Warning, line, 0, "ALASM rejects " + word + " " + rest + " (it wants " + word + " A,...): nothing assembled"});
+        Statement rejected;   // ParseLine keeps the line's label and turns the statement into its comment
+        rejected.kind = Statement::Kind::Raw;
+        rejected.mnemonic = kRejected;
+        rejected.text = word + " " + rest + " (an error in ALASM: nothing assembled)";
+        return rejected;
+    }
     return s;
 }
 /// One source line into IR lines (more than one when a macro call is expanded)
@@ -703,6 +719,13 @@ void ParseLine(const std::string& text, uint32_t number, std::set<std::string>& 
             while (j < t.size() && t[j] == ' ')
                 ++j;
             Statement s = ParseStatement(word, t.substr(j), result.diagnostics, number);
+            if (s.kind == Statement::Kind::Raw && s.mnemonic == kRejected)
+            {
+                line.comment = s.text + (line.hasComment ? "; " + line.comment : std::string());
+                line.hasComment = true;
+                result.program.lines.push_back(std::move(line));
+                return;
+            }
             if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Macro)
                 macros.insert(s.text);
             // Several operand groups for one instruction: one statement each; CALL A,B / JP A,B without a condition is

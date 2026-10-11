@@ -439,3 +439,34 @@ TEST_F(MachineCoordinator_Test, OperationsFromManyThreadsRunOneAtATime)
     for (size_t i = 1; i < log.size(); ++i)
         EXPECT_EQ(log[i].seq, log[i - 1].seq + 1);
 }
+
+/// M4 (architecture §5): the session reports, the coordinator reads the mode again and tells its listeners once per
+/// transition, in registration order; nothing when nothing changed; an unregistered listener hears nothing more
+TEST_F(MachineCoordinator_Test, AModeTransitionIsBroadcastOnceInRegistrationOrder)
+{
+    FakeListener first(&calls, "first");
+    FakeListener second(&calls, "second");
+    coordinator.Listen(&first);
+    coordinator.Listen(&second);
+    coordinator.Listen(&first);  // once is enough
+
+    coordinator.SessionChanged();
+    EXPECT_EQ(calls.Take(), Calls{}) << "live, as published at the start";
+
+    session.mode = MachineMode::Recording;
+    coordinator.SessionChanged();
+    coordinator.SessionChanged();
+    EXPECT_EQ(calls.Take(), (Calls{"first:live->recording", "second:live->recording"}));
+    EXPECT_EQ(coordinator.Published().mode, MachineMode::Recording);
+
+    session.replaying = true;  // a paused recording browsed: still the user's recording, now replaying
+    coordinator.SessionChanged();
+    EXPECT_EQ(calls.Take(), (Calls{"first:recording->recording:replaying", "second:recording->recording:replaying"}));
+
+    coordinator.Unlisten(&first);
+    session.mode = MachineMode::Live;
+    session.replaying = false;
+    coordinator.SessionChanged();
+    EXPECT_EQ(calls.Take(), Calls{"second:recording->live"});
+    EXPECT_FALSE(coordinator.Published().replaying);
+}

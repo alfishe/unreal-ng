@@ -17,7 +17,7 @@
 #include "emulator/emulator.h"
 #include "emulator/memory/devicememory.h"
 
-DeviceMemoryDialog::DeviceMemoryDialog(Emulator* emulator, QWidget* parent) : QDialog(parent), _emulator(emulator)
+DeviceMemoryDialog::DeviceMemoryDialog(std::shared_ptr<Emulator> emulator, QWidget* parent) : QDialog(parent), _emulator(emulator)
 {
     setWindowTitle("Device memory");
     resize(720, 480);

@@ -482,8 +482,31 @@ TEST(Dialects_Test, AlasmQuotesColonParametersAndOldSpellings)
     EXPECT_EQ(ToSjasmplus("DD      EQU 5"), std::vector<std::string>{"DD      EQU 5"});
     // DD "text": the code older versions show as DEFM
     EXPECT_EQ(ToSjasmplus("        DD    \"XY\""), std::vector<std::string>{"DB 'XY'"});
-    // DATA: is DATA; a character constant is a 16-bit word
-    EXPECT_EQ(ToSjasmplus("DATA:   DS 5\n        LD DE,DATA\n        LD HL,\"ABC\""), (std::vector<std::string>{"DATA    DS 5", "LD DE,DATA", "LD HL,16963"}));   // "BC" = #4243
+    // DATA: is DATA; a character constant is a 16-bit word, the first character low, the last high ("ABC" = #4341)
+    EXPECT_EQ(ToSjasmplus("DATA:   DS 5\n        LD DE,DATA\n        LD HL,\"ABC\""), (std::vector<std::string>{"DATA    DS 5", "LD DE,DATA", "LD HL,17217"}));
+}
+
+TEST(Dialects_Test, AlasmBuildsWhatAlasm509Builds)
+{
+    // ALASM 5.09 assembled each line in unreal-ng (research-sjasmplus-to-alasm.md §3): LD HL,"AB" = 21 41 42,
+    // DW "AB","C" = 41 42 43 00, DW "ABC" = 41 43, LD DE,"AB"+1 = 11 42 42; ADD B, ADC 5, SBC (HL) are errors (code #00)
+    // and put nothing down
+    EXPECT_EQ(ToSjasmplus("        LD HL,\"AB\""), std::vector<std::string>{"LD HL,16961"});
+    EXPECT_EQ(ToSjasmplus("        DW \"AB\",\"C\""), std::vector<std::string>{"DW 16961,'C'"});
+    EXPECT_EQ(ToSjasmplus("        DW \"ABC\""), std::vector<std::string>{"DW 17217"});
+    EXPECT_EQ(ToSjasmplus("        LD DE,\"AB\"+1"), std::vector<std::string>{"LD DE,16961+1"});
+    for (const std::string line : {"L1      ADD B", "L1      ADC 5", "L1      SBC (HL)"})
+    {
+        const ConvertResult r = Convert(SourceDocument::FromText(line, "alasm"), "sjasmplus");
+        ASSERT_EQ(r.document.lines.size(), 1u) << line;
+        const std::string& out = r.document.lines[0].text;
+        EXPECT_EQ(out.rfind("L1", 0), 0u) << "the label stays: " << out;
+        EXPECT_NE(out.find(';'), std::string::npos) << "the instruction is a comment: " << out;
+        EXPECT_EQ(out.find("ADD A") , std::string::npos) << out;
+        EXPECT_TRUE(std::any_of(r.diagnostics.begin(), r.diagnostics.end(), [](const Diagnostic& d) { return d.message.find("ALASM rejects") != std::string::npos; }))
+            << line;
+    }
+    EXPECT_EQ(ToSjasmplus("        ADD A,B"), std::vector<std::string>{"ADD A,B"});
 }
 
 TEST(Dialects_Test, SjasmplusMacroArgumentsLabelsAndAtNames)

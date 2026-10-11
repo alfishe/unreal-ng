@@ -147,7 +147,7 @@ highlighted, errors and warnings on their lines and in a list), the status, and 
 ### Writing a host source into the assembler (part B)
 
 `sync_inject` turns a host source into the assembler's own text in RAM, so the user can go on in the original tool.
-ALASM 5.09 only for now:
+ALASM (3.8c to 5.09) for now:
 
 ```text
 asm_source {"action":"sync_inject","path":"/abs/project/main.asm"}                 # sjasmplus, by default
@@ -160,6 +160,12 @@ written as its value. The result is encoded as ALASM 5.07 and written over the t
 TTD tool edit. `title` names the text (default: the name of the text it replaces). The reply gives the page, the
 bytes, the lines, the replaced text (`previous`) and the conversion's diagnostics.
 
+A `path` source brings the files it INCLUDEs (each relative to the file that INCLUDEs it). They are converted
+together with it, and each goes into an ALASM text page of its own. Its INCLUDE is written `INCLUDE "NAME",page`, so
+ALASM finds the text loaded and reads no disk. The reply lists them under `includes` (source, name, page, bytes). The
+free pages: 4 and 0 in 5.05-5.09, 0 and 3 in 4.5, 4 in 5.00, 4.42-4.46 and 3.8c. A project with more files is refused:
+put it onto the disk with `zxasm inject main.asm disk.trd --assembler alasm-5.09` (every file of the project).
+
 The write is refused (409) unless ALASM waits at its `A>` prompt: in the editor, while it assembles, saves or shows
 a catalogue. Leave the editor first (Extend, `q`, ENTER). A text with changes not saved is kept unless `force` is
 given; `backup` writes it to a host file first. After the write, `a` + ENTER assembles the new text.
@@ -170,6 +176,23 @@ CLI: `asm sync inject --path f [--from d] [--title NAME] [--force]`. Lua / Pytho
 whole check: it injects the source, lets ALASM assemble it and compares the bytes with sjasmplus' build. Sources for
 ALASM 5.09 must ORG below #8000. The conversion's rules and limits are in
 [research-sjasmplus-to-alasm.md](../../docs/inprogress/2026-10-05-unreal-asm/research-sjasmplus-to-alasm.md).
+
+#### On every save (push watch)
+
+```text
+asm_source {"action":"sync_push_watch","path":"/abs/project/main.asm"}     # interval / quiet / title / force as options
+asm_source {"action":"sync_status"}                                         # push: {state, pushes, files, last, error}
+asm_source {"action":"sync_push_unwatch"}
+```
+
+The watch looks at the file and at every file it INCLUDEs (default every 500 ms). A change that stays 300 ms is
+written as `sync_inject` writes it. The first write comes at once. States: `waiting` (no change), `pending` (the
+assembler is busy: in its editor, assembling; retried until it waits for a command), `pushed`, `conflict` (the text in
+the guest changed since the watch wrote it: left alone until the next save; `force` overwrites), `error` (the
+conversion failed, too many INCLUDEd files, an assembler without a writer). WebSocket topic `asm_sync`: `pushed`,
+`pending`, `conflict`, `push-error`. WebAPI `POST` / `DELETE /emulator/{id}/asm/sync/push-watch`, CLI
+`asm sync push-watch <file>` / `asm sync push-unwatch`, Lua `asm_sync_push_watch{path=}`, Python
+`asm_sync_push_watch(path)`; the Qt Live source window's Push button.
 
 #### Into a snapshot or a disk (no running assembler)
 

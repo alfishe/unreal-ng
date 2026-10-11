@@ -176,7 +176,7 @@ void DezogDebugAdapter::onBreakpointMessage(int /*id*/, Message* message)
     dzrp::BreakReason reason = dzrp::BreakReason::BREAKPOINT;
     if (BreakpointManager* bpManager = emulator->GetBreakpointManager())
     {
-        if (BreakpointDescriptor* desc = bpManager->GetBreakpointById(breakpointId))
+        if (BreakpointSnapshot desc = bpManager->GetBreakpointById(breakpointId))
         {
             const Z80State* z80 = emulator->GetZ80State();
             bool isExec = (desc->memoryType & BRK_MEM_EXECUTE) && z80 && z80->pc == address;

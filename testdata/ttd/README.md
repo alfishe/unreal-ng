@@ -28,8 +28,8 @@ Recorded `.ttd` sessions from real emulator runs. They are read by:
   device matches the recording byte for byte, and replays 25 frames to check
   the replay matches the recording exactly;
 - the analyzer (`tools/verification/ttd-analyzer/`);
-- the codec PoC (`tools/poc/01-ttd-compression/`) and the PoC GUI
-  (`tools/poc/010-ttd-gui/`).
+- the codec PoC (`tools/poc/010-ttd-compression/`) and the PoC GUI
+  (`tools/poc/027-ttd-gui/`).
 
 The fixtures are written by the production writer, so they are tied to the
 on-disk format: **a format change makes them stale, and `TTD_Corpus_Test`

@@ -160,6 +160,29 @@ TEST_F(McpDispatcher_Test, Initialize_EchoesSupportedClientVersion)
     EXPECT_EQ(response["result"]["protocolVersion"].asString(), "2024-11-05");
 }
 
+// 2025-06-18 (structured tool output, the MCP-Protocol-Version header) is the current revision and accepted
+TEST_F(McpDispatcher_Test, Initialize_Speaks2025_06_18)
+{
+    Json::Value params;
+    params["protocolVersion"] = "2025-06-18";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("initialize", params));
+
+    EXPECT_EQ(response["result"]["protocolVersion"].asString(), "2025-06-18");
+    EXPECT_STREQ(mcp::kProtocolVersion, "2025-06-18");
+    EXPECT_TRUE(mcp::IsSupportedProtocolVersion("2025-03-26")) << "older clients keep working";
+    EXPECT_FALSE(mcp::IsSupportedProtocolVersion("2099-01-01"));
+}
+
+// Origin check (DNS rebinding): only this machine's web origins may drive the server
+TEST(McpProtocol_Test, LocalOrigins)
+{
+    for (const char* local : {"http://localhost", "http://localhost:3000", "https://127.0.0.1:8295", "http://[::1]:5173"})
+        EXPECT_TRUE(mcp::IsLocalOrigin(local)) << local;
+    for (const char* foreign : {"http://evil.example", "http://localhost.evil.example", "http://127.0.0.1.nip.io",
+                                "null", "file://", "http://192.168.1.5:8080", "ftp://localhost"})
+        EXPECT_FALSE(mcp::IsLocalOrigin(foreign)) << foreign;
+}
+
 TEST_F(McpDispatcher_Test, Initialize_FallsBackForUnsupportedVersion)
 {
     Json::Value params;
@@ -280,13 +303,25 @@ TEST_F(McpDispatcher_Test, ToolsCall_RoutesThroughToolHandlerWithDualContent)
     EXPECT_FALSE(response["result"].isMember("isError"));
 }
 
-// A client that hands the model only content[] (claude.ai connectors) must still see the data: the structuredContent
-// comes back as JSON text in a second content block (MCP 2025-06-18, Structured Content)
-TEST_F(McpDispatcher_Test, ToolsCall_EchoesStructuredContentAsText)
+// By default content[] holds the human-readable text only; response_format "json" adds the structuredContent
+// serialized as JSON text (MCP 2025-06-18) for clients that hand the model only content[] (claude.ai connectors)
+TEST_F(McpDispatcher_Test, ToolsCall_DefaultReplyIsTextOnly)
 {
     Json::Value params;
     params["name"] = "emulator_manage";
     params["arguments"]["action"] = "list";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    ASSERT_EQ(response["result"]["content"].size(), 1u) << response.toStyledString();
+    EXPECT_TRUE(response["result"].isMember("structuredContent")) << "programs still get the structured result";
+}
+
+TEST_F(McpDispatcher_Test, ToolsCall_ResponseFormatJsonEchoesStructuredContentAsText)
+{
+    Json::Value params;
+    params["name"] = "emulator_manage";
+    params["arguments"]["action"] = "list";
+    params["arguments"]["response_format"] = "json";
     Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
 
     const Json::Value& content = response["result"]["content"];
@@ -299,6 +334,58 @@ TEST_F(McpDispatcher_Test, ToolsCall_EchoesStructuredContentAsText)
     std::unique_ptr<Json::CharReader> parser(reader.newCharReader());
     ASSERT_TRUE(parser->parse(text.data(), text.data() + text.size(), &echoed, &errors)) << errors;
     EXPECT_EQ(echoed, response["result"]["structuredContent"]);
+}
+
+TEST_F(McpDispatcher_Test, ToolsCall_BadResponseFormatIsAToolError)
+{
+    Json::Value params;
+    params["name"] = "emulator_manage";
+    params["arguments"]["action"] = "list";
+    params["arguments"]["response_format"] = "xml";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    ASSERT_TRUE(response["result"]["isError"].asBool()) << response.toStyledString();
+    EXPECT_NE(response["result"]["content"][0]["text"].asString().find("response_format"), std::string::npos);
+}
+
+TEST_F(McpDispatcher_Test, ToolsList_EveryToolTakesResponseFormat)
+{
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/list"));
+    const Json::Value& tools = response["result"]["tools"];
+    ASSERT_GT(tools.size(), 0u);
+    for (const Json::Value& tool : tools)
+        EXPECT_TRUE(tool["inputSchema"]["properties"].isMember("response_format")) << tool["name"].asString();
+}
+
+// A screenshot with include_image comes as an MCP image block (the model sees the picture); the JSON echo does not
+// repeat the base64
+TEST_F(McpDispatcher_Test, CaptureMediaScreenshot_PixelsAreAnImageBlock)
+{
+    Json::Value body;
+    body["status"] = "success";
+    body["format"] = "png";
+    body["area"] = "full";
+    body["width"] = 352;
+    body["height"] = 288;
+    body["size"] = 8;
+    body["data"] = "iVBORw0KGgo=";
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/screen"] = {200, body};
+
+    Json::Value params;
+    params["name"] = "capture_media";
+    params["arguments"]["action"] = "screenshot";
+    params["arguments"]["include_image"] = true;
+    params["arguments"]["response_format"] = "json";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    ASSERT_FALSE(response["result"].isMember("isError")) << response.toStyledString();
+    const Json::Value& content = response["result"]["content"];
+    ASSERT_EQ(content.size(), 3u) << response.toStyledString();
+    EXPECT_EQ(content[1]["type"].asString(), "image");
+    EXPECT_EQ(content[1]["mimeType"].asString(), "image/png");
+    EXPECT_EQ(content[1]["data"].asString(), "iVBORw0KGgo=");
+    EXPECT_EQ(content[2]["text"].asString().find("iVBORw0KGgo="), std::string::npos) << "no base64 in the text";
+    EXPECT_EQ(response["result"]["structuredContent"]["data"].asString(), "iVBORw0KGgo=");
 }
 
 // debug_code disassemble writes the listing into the text itself (one line per instruction, labels, targets) and

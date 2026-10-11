@@ -9,7 +9,7 @@
 #include <QRegularExpressionValidator>
 #include <QInputDialog>
 
-BreakpointEditor::BreakpointEditor(Emulator* emulator, Mode mode, QWidget* parent)
+BreakpointEditor::BreakpointEditor(std::shared_ptr<Emulator> emulator, Mode mode, QWidget* parent)
     : QDialog(parent), _emulator(emulator), _mode(mode), _breakpointId(BRK_INVALID)
 {
     setWindowTitle(_mode == Add ? "Add Breakpoint" : "Edit Breakpoint");
@@ -38,7 +38,7 @@ BreakpointEditor::BreakpointEditor(Emulator* emulator, Mode mode, QWidget* paren
     onTypeChanged(0);
 }
 
-BreakpointEditor::BreakpointEditor(Emulator* emulator, Mode mode, uint16_t breakpointId, QWidget* parent)
+BreakpointEditor::BreakpointEditor(std::shared_ptr<Emulator> emulator, Mode mode, uint16_t breakpointId, QWidget* parent)
     : QDialog(parent), _emulator(emulator), _mode(mode), _breakpointId(breakpointId)
 {
     setWindowTitle(_mode == Add ? "Add Breakpoint" : "Edit Breakpoint");
@@ -218,12 +218,10 @@ void BreakpointEditor::loadBreakpointData(uint16_t breakpointId)
     if (!bpManager)
         return;
         
-    const BreakpointMapByID& breakpoints = bpManager->GetAllBreakpoints();
-    auto it = breakpoints.find(breakpointId);
-    if (it == breakpoints.end())
+    const BreakpointSnapshot bp = bpManager->GetBreakpointById(breakpointId);
+    if (!bp)
         return;
-        
-    const BreakpointDescriptor* bp = it->second;
+
     _descriptor = *bp;
     
     // Set type

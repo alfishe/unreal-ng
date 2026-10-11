@@ -652,6 +652,8 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorydialog.h"
         # The Network traffic window (network #91 T4): rows, filter, decode, Seek here
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/trafficwindow_test.cpp"
+        # Windows against an instance automation removes while they show it (BUGS.md #11)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/removalrace_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/network/trafficwindow.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/network/trafficwindow.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/network/core/trafficpanelmodel.cpp"

@@ -696,6 +696,36 @@ injection (A7 surfaces use it already).
 | templates themselves | made once per assembler by `tools/verification/unreal-asm/emulator/make-template.py` (the disk ejected before the save), stored in unreal-asm `testdata/templates/`; the assembler binaries come from the collection's disks |
 | disks | the same source as a file of the assembler on a disk image of any format unreal-disk writes (TRD, SCL, FDI, UDI, TD0, ...: `zxasm inject main.asm disk.fdi --assembler alasm-5.09`); the way back is `zxasm extract disk.fdi --file NAME.H` |
 
+### 16.4 Projects
+
+A host source that INCLUDEs others brings them along. `HostProject` (dialect.h) reads every file the main source
+INCLUDEs, and those files' INCLUDEs, each relative to the folder of the file that INCLUDEs it. `WriteProjectAs`
+converts them together, so the labels of every file are known in each, and writes each as the assembler's own file.
+`ProjectTextNames` names them: the file name without folder and extension, upper case, 8 characters, made unique.
+
+| Target | Where the other texts go |
+|---|---|
+| a running ALASM, or its snapshot | each into a RAM page ALASM leaves free (`SyncDescriptor::projectPages`). Its INCLUDE is written `INCLUDE "NAME",page`. ALASM's INCLUDE maps that page, compares the name in its header and, when it matches, takes the text as loaded and reads no disk (`incl3` in ALASM 4.46's source: "уже загружен"). After the included text it maps the including text's page back the same way. `PlanInjectProject` writes every page at one coherent moment: the main text by `PlanInject`'s rules, each other page refused while it holds a text with changes not saved |
+| a disk image (`zxasm inject`) | each as a file of its own, its INCLUDE naming that file |
+| a hobeta file | the main source only; its INCLUDEs stay as they are |
+
+The pages are the ones none of ALASM's own uses take. Their numbers are the same on 128K and 512K machines, since
+bits 6 and 7 of the page id stay 0. The uses come from the system variables (`IX+#16` macros, `#21` debugger,
+`#27`-`#2A` post labels, `#36` pocket) and, for SYSTEM and the overlay, from the source's page table:
+
+| Build | Text | Taken | Project pages |
+|---|---|---|---|
+| 5.05-5.09 | 6 | 1 system, 3 labels / pocket, 7 debugger / macros / overlay | 4, 0 |
+| 5.00, 4.45, 4.46 | 6 | 0 macros, 1, 3, 7 | 4 |
+| 4.42-4.44 | 6 | 0 overlay (from `#EA00`), 1, 3, 7 | 4 |
+| 3.8c | 6 | 0 macros, 3, 7 | 4 |
+| 4.5 | 1 | its own driver (no source): 4 pocket, 6 post labels / labels, 5 macros, 7 debugger | 0, 3: texts there stayed intact through ASSEMBLE, a catalogue and a second ASSEMBLE |
+
+A project with more INCLUDEd sources than its build has pages is refused before anything is written, and the
+message points to the disk. Tests: `SyncInject_Test.AHostProjectReadsTheIncludedSourcesFromTheirFolders`,
+`SyncInject_Test.AProjectPutsEachIncludedSourceInAPageOfItsOwn`,
+`SyncControl_Test.InjectPutsTheSourcesAHostFileIncludesIntoPagesOfTheirOwn`.
+
 ## 17. Surfaces (part B)
 
 | Surface | Calls |
@@ -756,6 +786,24 @@ all three formats, and every instruction form (1173 bytes); `zxasm inject` onto 
 `ASSEMBLE` in ALASM gave the same 143 bytes. Found on the way: unreal-ng's Z80 writer starts a run right after a single
 `ED` (reported). Tests: `Snapshot_Test` (6), `Trdos_Test.FilesGoIntoANewImageAndBack`, `SclArchiveWritesAndReads`,
 `SyncControl_Test.InjectWritesASourceIntoAnAlasmSnapshot`.
+
+**Built (2026-10-11): Z2, the push watch and the Qt dock's Inject.** `AsmSyncService::StartPush` runs a thread of its
+own (independent of the watch): every `interval` ms (500) it reads the times and sizes of the host source and of every
+file its INCLUDEs lead to (`HostProject`, missing ones too); a change that stays `quiet` ms (300) is written by
+`SyncControl::PushInject`, which is sync-inject with the files the watch wrote last as `InjectOptions::written`. A text
+in memory whose lines are still those of one of them is the watch's own (marked changed, yet not the user's) and is
+replaced; a text the user changed in the guest is a conflict and stays until the next save (`force` overwrites it).
+While the assembler is busy (in its editor, assembling: "not waiting for a command") the write waits and is retried
+every look. States `waiting`, `pending`, `pushed`, `conflict`, `error`; NC_ASM_SYNC events `pushed`, `pending`,
+`conflict`, `push-error`. Surfaces: verbs `sync-push-watch` / `sync-push-unwatch` (WebAPI `POST` / `DELETE
+/asm/sync/push-watch`, OpenAPI, CLI `asm sync push-watch <file>`, MCP `sync_push_watch` / `sync_push_unwatch`, Lua,
+Python); `sync-status` carries `push`. Qt: the Live source window's Inject... (a host file, the report with the
+INCLUDEd texts and their pages) and Push (on: a host file; the state in the status line; stopped on close when the
+window started it). Checked in ALASM 5.09 from its disk, driven over the WebAPI: the first write of a
+three-file project assembled to sjasmplus' bytes; a save of an INCLUDEd file written and assembled; a save while ALASM
+was in its editor waited and went in after Extend `q`; a line typed in ALASM made the next save a conflict and the
+text stayed. Tests: `SyncControl_Test.ThePushWatchWritesEachSaveAndKeepsTheUsersChanges`,
+`LiveSourceWindow_Test.APushWatchShowsInTheStatusLineAndOutlivesTheWindow`.
 
 ## 20. Effort (part B)
 

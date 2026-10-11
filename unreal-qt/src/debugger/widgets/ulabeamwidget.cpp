@@ -33,7 +33,7 @@ void ULABeamWidget::createUI()
     setLayout(layout);
 }
 
-void ULABeamWidget::setEmulator(Emulator* emulator)
+void ULABeamWidget::setEmulator(std::shared_ptr<Emulator> emulator)
 {
     _emulator = emulator;
     reset();

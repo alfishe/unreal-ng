@@ -71,6 +71,7 @@
 #endif
 #include "emulator/sound/soundmanager.h"                 // SoundManager
 #include "stdafx.h"
+#include "debugger/ttd/ttdsessionport.h"
 
 // Static assertion: the .ttd v1 format assumes a little-endian host. Every
 // multi-byte field in the header / cpu_state / chipset_state is written in
@@ -167,12 +168,14 @@ bool TimeTravelController::StartRecording()
     ClearFrameCache();
     _lastStopReason.clear();
     _recordingPaused = false;
+    ttd::NoteSessionChange(_context);   // the mode may follow (M4)
     _stoppedEndValid = false;
     // The machine's ROM set: the engine's configuration and restore checks compare with it
     _replayRomSignature = ComputeRomSignature();
 
     // A background session (the black box, a debugger's history) holds no lock and refuses nothing
     _backgroundSession = BackgroundWanted();
+    ttd::NoteSessionChange(_context);   // the mode may follow (M4)
 
     // The black box keeps its window (D29): the last N minutes of frames
     if (_blackBox)
@@ -391,6 +394,7 @@ void TimeTravelController::StopRecording()
         {
             // A paused recording ends here: what it recorded stays as history
             _recordingPaused = false;
+            ttd::NoteSessionChange(_context);   // the mode may follow (M4)
             UpdateInputWorkFlag();
         }
         return;  // Idempotent
@@ -471,6 +475,7 @@ bool TimeTravelController::HoldBackgroundRecording()
     // Go on after the retained history when it is continuable (ResumeRecordingLive refuses on an unrecorded gap),
     // else a fresh session: a gapped or empty timeline is unreachable from the present anyway
     _backgroundSession = true;
+    ttd::NoteSessionChange(_context);   // the mode may follow (M4)
     bool ok = !_timeline.empty() && ResumeRecordingLive();
     if (!ok)
         ok = StartRecording();
@@ -505,6 +510,7 @@ void TimeTravelController::InvalidateSession(const char* reason)
     ResetShadow();
     _lastDropReason = reason ? reason : "";
     _recordingPaused = false;
+    ttd::NoteSessionChange(_context);   // the mode may follow (M4)
 
     _timeline = {};   // its capacity too: without a session the session's memory is zero
     _blobBytes = 0;
@@ -607,6 +613,7 @@ void TimeTravelController::SetState(TTDSessionState next)
     else if (next == TTDSessionState::Idle)
         ReleaseRecordingLock();
     SyncJournalSegment();   // a recording starts or ends a journal segment (D40)
+    ttd::NoteSessionChange(_context);   // the coordinator publishes the mode and tells its listeners (M4)
 }
 
 bool TimeTravelController::JournalLive() const
@@ -1715,6 +1722,7 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
     const PerfClock::time_point memoryStart = PerfClock::now();
     _engine->ForgetMemory();
     CheckEngineCheckpoint(size_t(engineIndex), false);
+    SetMediaToCheckpoint(size_t(engineIndex));
     const TTDRestoreResult memory = _engine->RestoreToMemory(size_t(engineIndex));
     const PerfClock::time_point devicesStart = PerfClock::now();
     const TTDRestoreResult devices =
@@ -1858,16 +1866,10 @@ void TimeTravelController::EnterReplayMode()
     // The replay observers - the access probe, the frame-cache capture, the
     // dirty marks a mid-frame resume needs - live on the debug memory path.
     // The user's debug mode may have that path switched off (a recording
-    // switches it back off on stop), so engage it for the replay only; the
-    // feature settings stay untouched.
-    if (Core* core = _context->pCore)
-    {
-        _debugModeBeforeReplay = core->GetZ80()->isDebugMode;
-        core->GetZ80()->isDebugMode = true;
-        core->SelectMemoryInterface();  // the debug path, contended where the machine is
-    }
-    if (_memory)
-        _memory->UpdateFeatureCache();
+    // switches it back off on stop): the feature manager, the one writer of
+    // debug mode, holds it on while the machine replays (the coordinator's
+    // mode broadcast, M4); the feature settings stay untouched
+    ttd::NoteSessionChange(_context);
 
     MLOGINFO("TimeTravelController::EnterReplayMode — replay mode engaged (host audio output held)");
 }
@@ -1897,13 +1899,7 @@ void TimeTravelController::ExitReplayMode()
         _replayEngine->BusVectors().Stop();
     SyncMediaReadJournal();
 
-    if (Core* core = _context->pCore)
-    {
-        core->GetZ80()->isDebugMode = _debugModeBeforeReplay;
-        core->SelectMemoryInterface();
-    }
-    if (_memory)
-        _memory->UpdateFeatureCache();
+    ttd::NoteSessionChange(_context);   // debug mode back to the feature's
 
     MLOGINFO("TimeTravelController::ExitReplayMode — replay mode disengaged (host audio output released)");
 }
@@ -2813,6 +2809,7 @@ void TimeTravelController::PauseRecordingForBrowsing()
     const TTDTimePoint here = CurrentPosition();
     StopRecording();   // everything up to here is in the engine; the machine stays parked
     _recordingPaused = true;
+    ttd::NoteSessionChange(_context);   // the mode may follow (M4)
     _pausedEnd = here;
     // The machine is in the history now, at its end: browsing moves it from
     // here, and running from here goes on recording (ServiceInput)
@@ -3580,6 +3577,7 @@ bool TimeTravelController::ContinueRecordingAt(const TTDTimePoint& from)
     EngageCaptureFeatures();
     SetState(TTDSessionState::Recording);   // the journal, if on, opens a segment at the resume point
     _recordingPaused = false;               // a paused recording goes on from here
+    ttd::NoteSessionChange(_context);   // the mode may follow (M4)
     DisarmInputPlayback();  // live input again (journaled while recording)
     // A loaded session had collection switched off; the new history is live
     _context->ttdCoverageActive = _enableCoverageIndex;
@@ -3988,9 +3986,17 @@ void TimeTravelController::CheckEngineCheckpoint(size_t index, bool forReplay)
         index, CaptureConfigFingerprint(*_context, _replayRomSignature), forReplay);
     if (!forReplay)
         return;
-    // A medium that changed since this checkpoint: set back to its recorded
-    // version, or, without versions, reported (the CPU still reads the
-    // recorded sectors; the controller's state where the replay stops may differ)
+    // The media the restore could not set to their recorded versions (SetMediaToCheckpoint)
+    for (const TTDRestoreIssue& issue : _mediaIssues)
+        _lastEngineCheck.Add(issue);
+}
+
+void TimeTravelController::SetMediaToCheckpoint(size_t index)
+{
+    // Every medium to its version at this checkpoint (its undo log: written sectors and tracks, the write-protect
+    // switch), before the devices load: a controller's transfer position points into its medium, and a replay from
+    // here reads what the recording read
+    _mediaIssues.clear();
     IMediaHistory* media = _context->pMediaManager;
     if (!media)
         return;
@@ -4005,18 +4011,16 @@ void TimeTravelController::CheckEngineCheckpoint(size_t index, bool forReplay)
         const auto it = std::find_if(live.begin(), live.end(),
                                      [&](const MediaVersionInfo& v) { return v.slot == slots[s].slot; });
         const TTDMediaVersion now = it == live.end() ? TTDMediaVersion{} : TTDMediaVersion{it->contentId, it->version};
-        if (now == recorded)
-            continue;
-        if (now.contentId == recorded.contentId && media->SetHead(slots[s].slot, recorded.version))
+        if (now.contentId == recorded.contentId && (recorded.contentId == 0 || media->SetHead(slots[s].slot, recorded.version)))
             continue;
         TTDRestoreIssue issue;
         issue.kind = TTDRestoreIssueKind::MediaVersionDiffers;
         issue.severity = TTDRestoreStatus::NotBitExact;
         issue.detail = slots[s].slot +
                        (now.contentId != recorded.contentId ? ": another medium than the recording's"
-                                                            : ": written since this point, no versions to go back to") +
+                                                            : ": written since this point beyond what its undo log keeps") +
                        " (the replay reads the recorded sectors; the controller's state where it stops may differ)";
-        _lastEngineCheck.Add(std::move(issue));
+        _mediaIssues.push_back(std::move(issue));
     }
 }
 

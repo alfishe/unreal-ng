@@ -18,6 +18,7 @@
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/coordinator/machinecoordinator.h"
 #include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/fdd.h"
@@ -462,4 +463,30 @@ TEST_F(CoordinatorEmulator_Test, BeforeTheFrameADiskCameInTheHistoryHasNoDiskThe
     // From the frame it came in on, it is there again
     ASSERT_TRUE(_ttd->SeekTo({landed + 2, 0}));
     EXPECT_EQ(context->coreState.diskDrives[0]->getDiskImage(), second);
+}
+
+/// M4, current-state §7 item 6: the feature manager is the one writer of the CPU's debug mode. A replay holds it on
+/// whatever the 'debugmode' feature says, a feature change during the replay does not drop the hold, and when the
+/// replay ends the feature has its say again
+TEST_F(CoordinatorEmulator_Test, AReplayHoldsDebugModeAndTheFeatureHasItsSayAfter)
+{
+    EmulatorContext* context = _emulator->GetContext();
+    FeatureManager* features = _emulator->GetFeatureManager();
+    Z80* z80 = context->pCore->GetZ80();
+    features->setFeature(Features::kDebugMode, false);
+    ASSERT_FALSE(z80->isDebugMode);
+
+    // A replay begins (what EnterReplayMode reports); a feature change keeps the hold
+    context->ttdReplayActive = true;
+    _emulator->MachineOps().SessionChanged();
+    EXPECT_TRUE(_emulator->MachineOps().Published().replaying);
+    EXPECT_TRUE(z80->isDebugMode) << "held for the replay";
+    features->setFeature(Features::kDebugMode, false);
+    EXPECT_TRUE(z80->isDebugMode) << "a feature change during the replay keeps the hold";
+    context->ttdReplayActive = false;
+    _emulator->MachineOps().SessionChanged();
+    EXPECT_FALSE(z80->isDebugMode);
+
+    features->setFeature(Features::kDebugMode, true);
+    EXPECT_TRUE(z80->isDebugMode);
 }

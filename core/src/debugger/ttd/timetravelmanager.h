@@ -2028,8 +2028,6 @@ private:
     /// set, released by ExitReplayMode before it clears it (and with the manager). Replay runs as fast as the
     /// host goes; the user's master mute is never touched
     SoundManager::HostOutputHold _replayHostHold;
-    /// Z80 debug mode before replay engaged the debug memory path (restored on exit)
-    bool _debugModeBeforeReplay = false;
 
     // -----------------------------------------------------------------------
     // Auto-pause at session end (Detached state)

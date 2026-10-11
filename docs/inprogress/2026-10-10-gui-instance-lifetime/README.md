@@ -1,6 +1,6 @@
 # GUI instance lifetime: removing an instance while the GUI reads it
 
-Status: **option C chosen, with bounded waits** (2026-10-10); not started. Progress: [TODO.md](TODO.md). Tracks [BUGS.md #11](../BUGS.md).
+Status: **landed on master** (f38e72b8e, 2026-10-10); BUGS.md #11 fixed. Progress: [TODO.md](TODO.md). Tracks [BUGS.md #11](../BUGS.md).
 
 The Qt frontend reads an emulator instance's context in about 160 functions (199 reads) without any
 guarantee that the context is still alive. A removal from the WebAPI, the CLI or MCP frees the context while

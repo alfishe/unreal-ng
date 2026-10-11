@@ -1935,6 +1935,11 @@ private:
     /// Settings and media of the replay engine's checkpoint @p index against
     /// this machine (into _lastEngineCheck)
     void CheckEngineCheckpoint(size_t index, bool forReplay);
+    /// Every medium to its version at the replay engine's checkpoint @p index
+    /// (the restore, before the devices load); what could not be set goes
+    /// into _mediaIssues
+    void SetMediaToCheckpoint(size_t index);
+    std::vector<TTDRestoreIssue> _mediaIssues;  ///< SetMediaToCheckpoint's, for the replay's check
     TimeTravelEngine* _replayEngine = nullptr;
     bool _inputPlaybackArmed = false;
 
@@ -2067,8 +2072,6 @@ private:
     /// set, released by ExitReplayMode before it clears it (and with the manager). Replay runs as fast as the
     /// host goes; the user's master mute is never touched
     SoundManager::HostOutputHold _replayHostHold;
-    /// Z80 debug mode before replay engaged the debug memory path (restored on exit)
-    bool _debugModeBeforeReplay = false;
 
     // -----------------------------------------------------------------------
     // Auto-pause at session end (Detached state)

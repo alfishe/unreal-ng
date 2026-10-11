@@ -15,6 +15,7 @@
 | What changed | Required checks |
 |--------------|-----------------|
 | `core/` (engine, automation, tests) | `tools/build/build.sh` (zero warnings) + `tools/build/test.sh` |
+| `core/automation/mcp/` (or a WebAPI endpoint an MCP tool forwards to) | the above + `tools/verification/mcp/run_all.py --launch <unreal-qt>` ([MCP testing](docs/guidelines/mcp-testing-guidelines.md)) |
 | Only Qt apps (`unreal-qt/`, `unreal-*-viewer/`, `unreal-videowall/`) | `tools/build/build.sh` (zero warnings). No `core-tests` needed. |
 | Documentation only (`docs/`, `.recipe/`, `*.md`) | `python3 tools/fix-absolute-paths.py --path <files>` (no build) |
 | Only `tools/` scripts | Run the script itself (its tests or a dry run) |
@@ -36,7 +37,7 @@ Report results. Wait for explicit "commit" instruction.
 | `scratch/` | Git-ignored. ALL test artifacts go here. |
 | `docs/` | Documentation. `docs/inprogress/` for active design work. |
 | `.recipe/` | AI agent recipes (MCP/WebAPI automation). |
-| `tools/` | Build scripts, verification tools. `tools/poc/` for experiments. |
+| `tools/` | Build scripts, verification tools. `tools/poc/` for numbered POCs (index in `tools/poc/README.md`). |
 | `testdata/` | Test fixtures, disk images, ROMs. |
 | `lib/` | Third-party dependencies (GTest, Google Benchmark). |
 
@@ -87,6 +88,13 @@ Use-after-free, heap corruption, races, deadlocks, leaks: [`docs/testing/sanitiz
 `leaks`, hang sampling, crash reports via `tools/sanitize/ips_stacks.py`). A crash in `free`/`malloc` is heap damage
 done earlier: reproduce under ASan, do not patch the crashing frame.
 
+## MCP Testing
+
+How and when: [`docs/guidelines/mcp-testing-guidelines.md`](docs/guidelines/mcp-testing-guidelines.md). Unit tests
+`--gtest_filter='*Mcp*'`; live scripts per block of tools in [`tools/verification/mcp/`](tools/verification/mcp/README.md)
+(`run_all.py --launch cmake-build-agent-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt`, own ports, ~5 s). An
+agent may see only the text of an answer: check `content[]` text, not just `structuredContent`.
+
 ## WebAPI Testing
 
 See [`.recipe/testing/webapi-verification.md`](.recipe/testing/webapi-verification.md).
@@ -105,6 +113,8 @@ Models list: `GET /api/v1/emulator/models`. Per-machine recipes: [`.recipe/machi
 - **Naming**: PascalCase methods, camelCase fields. No underscores except `*_test.cpp` / `ClassName_Test`
 - **Recipes**: Check `.recipe/` before building automation workflows
 - **Performance**: Hot-path changes need A/B benchmarks. See `docs/guidelines/performance-guidelines.md`
+- **New platforms**: buses, slots, cards and media go through their managers, no ad hoc integration. See `docs/guidelines/new-platform-guidelines.md`
 - **Cross-platform**: Zero warnings on gcc/clang/mingw/msvc. See `docs/guidelines/cross-platform-compatibility.md`
 - **Coding**: See `docs/guidelines/coding-guidelines.md`
+- **POCs**: every POC in `tools/poc/NNN-name/`, registered in the index of `tools/poc/README.md` (next free number), charter (goals, requirements, constraints, acceptance criteria) before measuring. See `docs/guidelines/poc-guidelines.md`
 - **Environment variables**: all of them in [`docs/emulator/environment-variables.md`](docs/emulator/environment-variables.md); a new variable gets a row there

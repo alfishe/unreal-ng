@@ -344,7 +344,15 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                                 }
                             }
                             out << " [target " << idOrError << "]";
-                            done(ToolResult::Ok(out.str(), std::move(body)));
+                            // The pixels as an MCP image block: the model looks at the picture instead of base64 text
+                            std::string imageData;
+                            if (includeImage && body.isMember("data") && body["data"].isString())
+                                imageData = body["data"].asString();
+                            const std::string mimeType = "image/" + body.get("format", "png").asString();
+                            ToolResult result = ToolResult::Ok(out.str(), std::move(body));
+                            result.imageData = std::move(imageData);
+                            result.imageMimeType = mimeType;
+                            done(std::move(result));
                         });
                     });
                 return;
@@ -357,7 +365,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                 {
                     suffix += "?banks=" + args["banks"].asString();
                 }
-                ResolveAndForward(args, "GET", suffix, nullptr, caller, "Screen digest", done);
+                ResolveAndForward(args, "GET", suffix, nullptr, caller, "Screen digest", AppendFields(done));
                 return;
             }
 
@@ -365,7 +373,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
             {
                 if (action == "record_status")
                 {
-                    ResolveAndForward(args, "GET", "/video/record/status", nullptr, caller, "Recording status", done);
+                    ResolveAndForward(args, "GET", "/video/record/status", nullptr, caller, "Recording status", AppendFields(done));
                     return;
                 }
                 std::string op = action == "record_stop" ? "stop" : (action == "record_pause" ? "pause" : "resume");

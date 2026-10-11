@@ -173,10 +173,10 @@ TEST_F(TTDAtaChannel_Test, WritesAreBarriersOncePerFrame)
     ttd->StopRecording();
 }
 
-/// A replay runs the guest's writes again: they are the recording's, not new ones. The medium's version (frames that
-/// wrote it, what the TTD media check compares) does not move, so a seek after the last write lands exactly however
-/// many earlier seeks replayed writes
-TEST_F(TTDAtaChannel_Test, ReplayedWritesDoNotMoveTheMediumsVersion)
+/// A seek sets the disk to its version there (TTD gap 11: the media manager's undo log): before the writes it holds
+/// what it held, after them what they wrote. A replay runs the guest's writes again and the version follows the
+/// history, so every seek lands exactly however many earlier seeks replayed writes
+TEST_F(TTDAtaChannel_Test, ASeekSetsTheDiskToItsVersionThere)
 {
     // Three sectors (LBA 3, 2, 1) written about three frames apart through the Nemo ports (B = 0), then a loop
     const std::vector<uint8_t> program = {
@@ -238,16 +238,43 @@ TEST_F(TTDAtaChannel_Test, ReplayedWritesDoNotMoveTheMediumsVersion)
     const uint64_t recorded = version();
     ASSERT_EQ(recorded - before, 3u) << "three frames wrote the disk";
 
-    // Into the end of every frame of the writes: each replay runs the frame's write again
+    // The second byte of a sector: n | 0x80 in the image, n once the program wrote it
+    auto marker = [this](uint64_t lba) {
+        Medium* medium = _context->pMediaManager->GetMedium("ide0.master");
+        uint8_t sector[512] = {};
+        if (!medium || !medium->ReadTap() || !medium->ReadTap()->Base().ReadSector(lba, sector))
+            return uint8_t(0xFF);
+        return sector[1];
+    };
+    ASSERT_EQ(marker(1), 0x01);
+    ASSERT_EQ(marker(3), 0x03);
+
     const uint64_t first = ttd->GetCheckpoint(0)->time.frame;
+    // The first checkpoint is at the end of the recording's first frame, which wrote LBA 3: the other two not yet
+    ASSERT_TRUE(ttd->SeekTo({first, 0}));
+    EXPECT_EQ(version(), before + 1) << "after the first write";
+    EXPECT_EQ(marker(3), 0x03);
+    EXPECT_EQ(marker(2), 0x82);
+    EXPECT_EQ(marker(1), 0x81);
+
+    // Into the end of every frame of the writes: each replay runs the frame's write again
     const uint32_t late = ttd->FrameSpan() - 1000;
-    for (uint64_t f = first; f < first + 9; f++)
+    uint64_t last = before;
+    for (uint64_t f = first; f < first + 12; f++)
+    {
         ASSERT_TRUE(ttd->SeekTo({f, late})) << "frame " << f;
-    EXPECT_EQ(version(), recorded) << "replayed writes are the recording's own";
+        EXPECT_EQ(ttd->LastEngineCheck().status, ttd::TTDRestoreStatus::Exact)
+            << "frame " << f << ": " << ttd->LastEngineCheck().message;
+        EXPECT_GE(version(), last) << "frame " << f;
+        last = version();
+    }
+    EXPECT_EQ(last, recorded) << "the replayed writes are the recording's own";
 
     ASSERT_TRUE(ttd->SeekTo({first + 12, late}));
-    EXPECT_EQ(ttd->LastEngineCheck().status, ttd::TTDRestoreStatus::Exact)
-        << "after the last write the medium is the recorded one: " << ttd->LastEngineCheck().message;
+    EXPECT_EQ(ttd->LastEngineCheck().status, ttd::TTDRestoreStatus::Exact) << ttd->LastEngineCheck().message;
+    EXPECT_EQ(version(), recorded);
+    EXPECT_EQ(marker(1), 0x01);
+    EXPECT_EQ(marker(3), 0x03);
 }
 
 /// One-channel boards keep the v1 blob size; the Sprinter's two channels append the second one, and a blob taken

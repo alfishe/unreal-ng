@@ -42,7 +42,7 @@ int64_t Number(const StateNode& node, const char* name, int64_t otherwise = 0)
 }
 }  // namespace
 
-LiveSourceWindow::LiveSourceWindow(Emulator* emulator, QWidget* parent) : QWidget(parent, Qt::Window), _emulatorId(emulator ? emulator->GetUUID().toString() : std::string())
+LiveSourceWindow::LiveSourceWindow(std::shared_ptr<Emulator> emulator, QWidget* parent) : QWidget(parent, Qt::Window), _emulatorId(emulator ? emulator->GetUUID().toString() : std::string())
 {
     setWindowTitle(tr("Live Source"));
     setAttribute(Qt::WA_DeleteOnClose);
@@ -75,8 +75,18 @@ LiveSourceWindow::LiveSourceWindow(Emulator* emulator, QWidget* parent) : QWidge
     _convert = new QPushButton(tr("&Convert..."), this);
     _convert->setToolTip(tr("Save the source in another dialect (sjasmplus, pasmo, z88dk ...)"));
 
+    _inject = new QPushButton(tr("&Inject..."), this);
+    _inject->setToolTip(tr("Write a host source (sjasmplus) into the assembler as its own text, while it waits for a "
+                           "command; the files it INCLUDEs go into texts of their own"));
+    _push = new QPushButton(tr("&Push"), this);
+    _push->setCheckable(true);
+    _push->setToolTip(tr("Follow a host source: each save is written into the assembler once it waits for a command. "
+                         "A text you changed in the assembler is left alone (a conflict)"));
+
     auto* buttons = new QHBoxLayout();
     buttons->addWidget(_watch);
+    buttons->addWidget(_inject);
+    buttons->addWidget(_push);
     buttons->addWidget(_extract);
     buttons->addWidget(_convert);
     buttons->addStretch();
@@ -87,6 +97,8 @@ LiveSourceWindow::LiveSourceWindow(Emulator* emulator, QWidget* parent) : QWidge
     layout->addLayout(buttons);
 
     connect(_watch, &QPushButton::toggled, this, &LiveSourceWindow::toggleWatch);
+    connect(_inject, &QPushButton::clicked, this, &LiveSourceWindow::inject);
+    connect(_push, &QPushButton::toggled, this, &LiveSourceWindow::togglePush);
     connect(_extract, &QPushButton::clicked, this, &LiveSourceWindow::extract);
     connect(_convert, &QPushButton::clicked, this, &LiveSourceWindow::convert);
     connect(_hints, &QListWidget::itemDoubleClicked, this, &LiveSourceWindow::goToHint);
@@ -103,14 +115,16 @@ LiveSourceWindow::LiveSourceWindow(Emulator* emulator, QWidget* parent) : QWidge
 LiveSourceWindow::~LiveSourceWindow()
 {
     stopOwnWatch();
+    stopOwnPush();
 }
 
-void LiveSourceWindow::setEmulator(Emulator* emulator)
+void LiveSourceWindow::setEmulator(std::shared_ptr<Emulator> emulator)
 {
     const std::string id = emulator ? emulator->GetUUID().toString() : std::string();
     if (id == _emulatorId)
         return;
     stopOwnWatch();
+    stopOwnPush();
     _emulatorId = id;
     _shownGeneration = 0;
     _shownCursor = -2;
@@ -153,6 +167,80 @@ void LiveSourceWindow::stopOwnWatch()
     _ownWatch = false;
 }
 
+void LiveSourceWindow::stopOwnPush()
+{
+    const std::shared_ptr<Emulator> emulator = instance();
+    if (AsmSyncService* sync = service(emulator); sync && _ownPush)
+        sync->StopPush();
+    _ownPush = false;
+}
+
+void LiveSourceWindow::inject()
+{
+    const std::shared_ptr<Emulator> emulator = instance();
+    if (!emulator)
+        return;
+    const QString path = QFileDialog::getOpenFileName(this, tr("Inject a Source"), QString(), tr("Assembler source (*.asm *.a80 *.z80 *.s *.inc);;All Files (*)"));
+    if (path.isEmpty())
+        return;
+    const AsmReply reply = AsmControl(emulator->GetContext()).Execute({"sync-inject", {{"path", path.toStdString()}}});
+    if (!reply.Ok())
+    {
+        QMessageBox::warning(this, tr("Inject"), QString::fromStdString(reply.message));
+        return;
+    }
+    QString report = tr("%1 lines written into %2 as '%3' (page %4).")
+                         .arg(Number(reply.body, "lines"))
+                         .arg(QString::fromStdString(Text(reply.body, "title")), QString::fromStdString(Text(reply.body, "name")))
+                         .arg(Number(reply.body, "page"));
+    if (const StateNode* includes = Member(reply.body, "includes"))
+        for (const StateNode& item : includes->items)
+            report += "\n" + tr("%1 as '%2' (page %3)")
+                                 .arg(QString::fromStdString(Text(item, "source")), QString::fromStdString(Text(item, "name")))
+                                 .arg(Number(item, "page"));
+    int warnings = 0;
+    if (const StateNode* list = Member(reply.body, "diagnostics"))
+        for (const StateNode& d : list->items)
+            warnings += Text(d, "severity") != "info" ? 1 : 0;
+    if (warnings > 0)
+        report += "\n" + tr("%1 warning(s) from the conversion").arg(warnings);
+    QMessageBox::information(this, tr("Inject"), report);
+}
+
+void LiveSourceWindow::togglePush(bool on)
+{
+    const std::shared_ptr<Emulator> emulator = instance();
+    AsmSyncService* sync = service(emulator);
+    if (!sync)
+        return;
+    if (on && !sync->Pushing())
+    {
+        const QString path = QFileDialog::getOpenFileName(this, tr("Push a Source on Every Save"), QString(),
+                                                          tr("Assembler source (*.asm *.a80 *.z80 *.s *.inc);;All Files (*)"));
+        if (path.isEmpty())
+        {
+            const QSignalBlocker blocker(_push);
+            _push->setChecked(false);
+            return;
+        }
+        const AsmReply reply = AsmControl(emulator->GetContext()).Execute({"sync-push-watch", {{"path", path.toStdString()}}});
+        if (!reply.Ok())
+        {
+            QMessageBox::warning(this, tr("Push"), QString::fromStdString(reply.message));
+            const QSignalBlocker blocker(_push);
+            _push->setChecked(false);
+            return;
+        }
+        _ownPush = true;
+    }
+    else if (!on && sync->Pushing())
+    {
+        sync->StopPush();
+        _ownPush = false;
+    }
+    refresh();
+}
+
 void LiveSourceWindow::toggleWatch(bool on)
 {
     const std::shared_ptr<Emulator> emulator = instance();
@@ -187,6 +275,12 @@ void LiveSourceWindow::refresh()
     {
         const QSignalBlocker blocker(_watch);
         _watch->setChecked(watching);
+    }
+    const StateNode push = sync->PushStatusValue();
+    const bool pushing = Member(push, "pushing") && Member(push, "pushing")->b;
+    {
+        const QSignalBlocker blocker(_push);
+        _push->setChecked(pushing);
     }
 
     // The text and hints of a newer build
@@ -251,6 +345,17 @@ void LiveSourceWindow::refresh()
         line += tr("  ·  two assemblers identify alike");
     if (!Text(status, "error").empty())
         line += "  ·  " + QString::fromStdString(Text(status, "error"));
+    if (pushing)
+    {
+        const StateNode* options = Member(push, "options");
+        const QString file = QFileInfo(QString::fromStdString(options ? Text(*options, "path") : std::string())).fileName();
+        const std::string pushState = Text(push, "state");
+        line += "\n" + tr("Pushing %1: %2, %3 write(s)").arg(file, QString::fromStdString(pushState)).arg(Number(push, "pushes"));
+        if (pushState == "pending")
+            line += tr(" (waiting for the assembler's command line)");
+        else if (pushState == "conflict" || pushState == "error")
+            line += "  ·  " + QString::fromStdString(Text(push, "error"));
+    }
     _status->setText(line);
     const bool haveText = generation > 0;
     _extract->setEnabled(haveText);

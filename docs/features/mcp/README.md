@@ -19,7 +19,7 @@ Design facts at a glance:
 
 | Property | Value |
 |:--|:--|
-| Protocol | MCP `2025-03-26` (JSON-RPC 2.0) |
+| Protocol | MCP `2025-06-18`, also `2025-03-26` / `2024-11-05` (JSON-RPC 2.0); the `MCP-Protocol-Version` header of later requests is checked (unsupported: HTTP 400; none: `2025-03-26`) |
 | Transport | Streamable HTTP — JSON or SSE answers, stateless |
 | Endpoint | `http://localhost:8092/mcp` (also reachable on :8090) |
 | stdio | via `unreal-mcp-bridge` (one process, no deps) |
@@ -100,12 +100,29 @@ sessions to manage.
 All tools accept `target` (emulator id or `"auto"`) and answer with dual
 content: `content[]` (human/LLM text summary) + `structuredContent`
 (machine-readable data). Some clients (claude.ai connectors) hand the model
-only `content[]`, so the server also echoes `structuredContent` there as a
-second text block of compact JSON (MCP 2025-06-18, Structured Content), cut at
-64 KB with a note. A tool whose text already carries the data skips the echo:
-`debug_code disassemble` writes the listing itself, one line per instruction
+only `content[]`, so every tool takes `response_format`: `text` (default) keeps
+`content[]` human-readable; `json` adds `structuredContent` there as a second
+text block of compact JSON (MCP 2025-06-18, Structured Content), cut at 64 KB
+with a note. Any other value is a tool error. `capture_media screenshot` with
+`include_image: true` puts the pixels in an MCP `image` content block, so the
+model sees the picture (the JSON echo does not repeat the base64). The
+listings are in the text either way: `debug_code disassemble` writes the listing itself, one line per instruction
 (`7396  CD 00 74      call #7400            ; -> draw`); `inspect_state`
-`disasm` puts the same listing under `[disasm]`. Tools that perform real multi-step work report
+`disasm` puts the same listing under `[disasm]`. The default text carries the data, not just a headline:
+`memory_access read` the bytes (hexdump, up to 256 lines), `control_execution bp_list` one line per breakpoint
+(`#1 0x0038 X hits 3`), `debug_code trace` one line per control-flow event (`0x02D6 jr -> 0x02C6 x7 sp 0x5BDF`), and
+an `inspect_state` aspect without a text form of its own its fields as `key=value` (`[machine] model=PENTAGON
+ram_kb=128 ...`, the first 1500 characters); `screen_attributes` the grid as attribute bytes, one row per line;
+`audio_opl4_fm` / `audio_opl4_pcm` the channel count and the keyed ones; the status calls (`emulator_manage status`,
+`analyze_performance profile_status` / `frame_cost`, `capture_media record_status` / `screen_digest`, the mouse,
+joystick and keyboard `status`) their fields as `key=value`. `manage_symbols list` takes `from` / `to` (CPU addresses)
+and `name` (a case-insensitive substring) and writes the first `limit` (default 100) labels one per line
+(`0x09F4 PRINT_OUT rom3 code ; comment`); the whole ROM set is ~2400 labels, so filter rather than page through the
+JSON. `inspect_state registers` writes the full set (the alternate registers, I, R, MEMPTR, IM, IFF1/2),
+`manage_symbols resolve` the answer (`CLS = 0x0D6B rom3 code ; comment`), `type_input list_keys` the key names.
+`control_execution bp_add` switches the breakpoints feature on when it is off (a breakpoint never fires without it)
+and says so; `run_frame` / `run_frames` / `run_tstates` / `run_to_interrupt` skip breakpoints: `resume` and `wait`
+stop at one. Live checks of all of this: [tools/verification/mcp](../../../tools/verification/mcp/README.md). Tools that perform real multi-step work report
 progress when the request carries a `_meta.progressToken` (see
 [Protocol details](#protocol-details)).
 
@@ -119,7 +136,7 @@ progress when the request carries a `_meta.progressToken` (see
 | `joystick_input` | Kempston joystick: press / release / set (exact `state` byte or `buttons` list) / tap (hold N frames) / status; forwards to `/joystick/*` | — |
 | `time_travel` | time-travel debugging: record, then seek / step / search backward through the recording; `.ttd` files, bookmarks, coverage index (`space` for the Sprinter's video / fast RAM); `memory_at` / `memory_diff` read any recorded memory at a past checkpoint without seeking — see [Time-travel debugging](#time-travel-debugging) | — |
 | `rzx_playback` | RZX input recordings: `play` (`path`, `desync_mode`, conventions, `switch_model`: a recording for another model switches the machine, the answer's `emulator_id` is the new target), `stop`, `status` (frame, progress, desyncs), `seek` (`frame`: back through keyframes, forward by playing on) - [recipe](../../../.recipe/media/play-rzx.md) | — |
-| `memory_access` | Every memory by name: `regions` (name, aliases, size, writable, ttd_region), `read` / `write` (`space`: `cpu` or a region name / alias - `sprinter.vram`, `neogs.ram`, `gs.ram`, `moonsound.wave`, `tsconf.cram`, `rtc.cmos`, `evo.flash` ...; `offset`, `length`, `hex`), `save` / `load` a region to / from a file (`path`) | — |
+| `memory_access` | Every memory by name: `regions` (name, aliases, size, writable, ttd_region), `read` / `write` (`space`: `cpu` or a region name / alias - `sprinter.vram`, `neogs.ram`, `gs.ram`, `moonsound.wave`, `tsconf.cram`, `rtc.cmos`, `evo.flash` ...; `offset` (or its alias `address`), `length`, `hex`), `save` / `load` a region to / from a file (`path`) | — |
 | `manage_symbols` | `load_labels`, list, resolve, `load_listing`, `source_at`, `step_line`, `run_to_line` (sjasmplus `.lst`) | — |
 | `debug_code` | disassemble, assemble (two-pass, labels), `find_bytes`, `trace` (calltrace sessions), `porttrace` | `trace`: per phase (start/run/stop/read) |
 | `analyze_performance` | coverage_* (+gaps), `frame_cost`, profiler suites, `profile_report`, `porttrace`, `vdac2_line_budget` / `vdac2_line_budget_set` (FT812 line metrics) | `profile_report` + `porttrace`: per phase |
@@ -288,17 +305,21 @@ before the marker is out of reach for that search.
 
 ```json
 → {"jsonrpc":"2.0","id":1,"method":"initialize",
-   "params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}
+   "params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}
 ← {"jsonrpc":"2.0","id":1,"result":{
-     "protocolVersion":"2025-03-26",
+     "protocolVersion":"2025-06-18",
      "capabilities":{"tools":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false}},
      "serverInfo":{"name":"unreal-ng","version":"1.0.0"},
      "instructions":"…agent-facing briefing…"}}
 ```
 
-The server echoes the client's `protocolVersion` when supported, otherwise
-answers with `2025-03-26`. `notifications/initialized` completes the
-handshake (acknowledged with `202` + empty body, like every notification).
+The server echoes the client's `protocolVersion` when supported (`2025-06-18`, `2025-03-26`, `2024-11-05`),
+otherwise answers with `2025-06-18`. `notifications/initialized` completes the
+handshake (acknowledged with `202` + empty body, like every notification). Later requests may carry
+`MCP-Protocol-Version: <revision>` (2025-06-18 clients do): an unsupported revision is refused with HTTP 400 and a
+JSON-RPC `-32600` naming the supported ones; without the header the request is served as `2025-03-26`. A request
+with an `Origin` header that is not this machine (`http(s)://localhost`, `127.0.0.1`, `[::1]`, any port) is refused
+with HTTP 403 (DNS rebinding from a web page); the stdio bridge, curl and scripts send no `Origin` and pass.
 
 ### Progress streaming
 

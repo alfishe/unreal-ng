@@ -16,6 +16,9 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/storage/memorydisk.h"
+#include "emulator/media/mediamanager.h"
+#include "common/filehelper.h"
+#include <filesystem>
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/models/portdecoder_next.h"
 
@@ -159,6 +162,54 @@ TEST_F(NextBoot_Test, SpiAccessBeforeTheByteIsDoneIsIgnored)
     EXPECT_EQ(_ports->SpiTooFastCount(), 1u);
 }
 
+// spi_master.vhd 108-132: miso_dat is latched only when the byte is done, so a read that comes early returns the old byte and starts nothing.
+// The answer of the byte in flight must not show before its 16 clocks have passed
+TEST_F(NextBoot_Test, AnEarlySpiReadReturnsTheOldByteNotTheOneInFlight)
+{
+    // Pass 1, unhurried: the sequence of bytes the card answers after CMD0 (FF ... 01 ...)
+    auto Prepare = [&]() {
+        ASSERT_TRUE(_ports->InsertSdCard(0, std::make_unique<MemoryDisk>(4096), SdCardSpi::WriteMode::Session));
+        Out(0xE7, 0xFE);
+        _z80->t += 1000;  // forward only: the busy end of the earlier pass must be over
+        for (uint8_t b : {0x40, 0x00, 0x00, 0x00, 0x00, 0x95})
+        {
+            Out(0xEB, b);
+            _z80->t += 100;
+        }
+    };
+    std::vector<uint8_t> seq;
+    Prepare();
+    for (int i = 0; i < 10; i++)
+    {
+        seq.push_back(In(0xEB));
+        _z80->t += 100;
+    }
+    int k = -1;
+    for (int i = 0; i + 1 < static_cast<int>(seq.size()); i++)
+    {
+        if (seq[i] != seq[i + 1])
+        {
+            k = i;
+            break;
+        }
+    }
+    ASSERT_GE(k, 0) << "the card never changed its answer";
+
+    // Pass 2: the read that starts the transfer with the new answer, then a read 4 clocks later
+    Out(0xE7, 0xFF);
+    Prepare();
+    for (int i = 0; i < k; i++)
+    {
+        In(0xEB);
+        _z80->t += 100;
+    }
+    EXPECT_EQ(In(0xEB), seq[k]);
+    _z80->t += 4;
+    EXPECT_EQ(In(0xEB), seq[k]) << "the old miso_dat, not the byte in flight";
+    _z80->t += 100;
+    EXPECT_EQ(In(0xEB), seq[k + 1]) << "the early read started nothing: the next one gets the byte that was in flight";
+}
+
 // spi_master.vhd counts the CPU clock (zxnext.vhd 3284): a byte is 16 CPU clocks whatever the speed, so a speed change inside it changes the
 // time that is left. The new speed is taken over at a frame start; the byte began before it. NextZXOS switches to 14 MHz in the middle of
 // a sector: with the end of the byte kept in the old clocks the next IN of an INIR came too early and returned the byte twice (a
@@ -182,6 +233,121 @@ TEST_F(NextBoot_Test, ASpiByteInFlightWhenTheSpeedChangesIsRescaled)
     _z80->t = 12;  // base + 70911: the byte is done
     In(0xEB);
     EXPECT_EQ(_ports->SpiTooFastCount(), 1u) << "the 8 clocks that were left take 2 T-states at 14 MHz, not 8";
+}
+
+// The card is never opened by the decoder: the Next has the media manager's slots "sd.next0" (alias "sd") and "sd.next1", like the other
+// machines with an SD socket. Insert, swap, eject, rescan and the session writes all go by the slot
+TEST_F(NextBoot_Test, TheSdCardsAreMediaManagerSlots)
+{
+    MediaManager* manager = _context->pMediaManager;
+    ASSERT_NE(manager, nullptr);
+    ASSERT_TRUE(manager->HasSlot("sd.next0"));
+    ASSERT_TRUE(manager->HasSlot("sd.next1"));
+    const auto info = manager->Info("sd.next0");
+    ASSERT_TRUE(info.has_value());
+    EXPECT_EQ(info->descriptor.kind, MediaKind::Block);
+    EXPECT_FALSE(info->present);
+}
+
+TEST_F(NextBoot_Test, AFolderInsertedIntoTheSlotIsTheCardAndEjectTakesItOut)
+{
+    MediaManager* manager = _context->pMediaManager;
+    ASSERT_NE(manager, nullptr);
+    const std::string folder = TestPathHelper::GetUniqueTestScratchPath("next-card-folder");
+    std::filesystem::create_directories(folder);
+    std::vector<uint8_t> hello = {'h', 'e', 'l', 'l', 'o'};
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(folder + "/HELLO.TXT", hello.data(), hello.size()));
+
+    ASSERT_FALSE(_ports->SdCard(1).present());
+    MediaSource source;
+    source.path = folder;
+    InsertOptions options;
+    options.immediate = true;
+    const MediaResult inserted = manager->Insert("sd.next1", source, options);
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+    EXPECT_TRUE(_ports->SdCard(1).present());
+    EXPECT_TRUE(_ports->SdCard(1).isSdhc()) << "a Next's card answers as SDHC whatever its size";
+
+    // the guest reads it through the port pair: select card 1 (#FD), CMD0 answers idle
+    Out(0xE7, 0xFD);
+    _z80->t = 1000;
+    for (uint8_t b : {0x40, 0x00, 0x00, 0x00, 0x00, 0x95})
+    {
+        Out(0xEB, b);
+        _z80->t += 100;
+    }
+    uint8_t r1 = 0xFF;
+    for (int i = 0; i < 8 && r1 == 0xFF; i++)
+    {
+        r1 = In(0xEB);
+        _z80->t += 100;
+    }
+    EXPECT_EQ(r1, 0x01);
+    Out(0xE7, 0xFF);
+
+    ASSERT_TRUE(manager->Eject("sd.next1").Ok());
+    EXPECT_FALSE(_ports->SdCard(1).present());
+}
+
+// [NEXT] SdCard names the card of the board: a reset puts it back into an empty slot 0, and a card the user inserted stays
+TEST_F(NextBoot_Test, TheConfiguredCardReturnsAtAResetOnlyIntoAnEmptySlot)
+{
+    MediaManager* manager = _context->pMediaManager;
+    ASSERT_NE(manager, nullptr);
+    const std::string folder = TestPathHelper::GetUniqueTestScratchPath("next-card-configured");
+    std::filesystem::create_directories(folder);
+    std::vector<uint8_t> hello = {'c', 'f', 'g'};
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(folder + "/CFG.TXT", hello.data(), hello.size()));
+    std::strncpy(_context->config.next_sd_path, folder.c_str(), sizeof _context->config.next_sd_path - 1);
+
+    ASSERT_FALSE(_ports->SdCard(0).present());
+    _ports->reset();
+    EXPECT_TRUE(_ports->SdCard(0).present()) << "the empty slot gets the configured card";
+
+    ASSERT_TRUE(manager->Eject("sd.next0").Ok());
+    ASSERT_FALSE(_ports->SdCard(0).present());
+    _ports->reset();
+    EXPECT_TRUE(_ports->SdCard(0).present()) << "an ejected slot is filled again at the next reset";
+
+    // a card the user put in stays over a reset
+    ASSERT_TRUE(_ports->InsertSdCard(0, std::make_unique<MemoryDisk>(4096), SdCardSpi::WriteMode::Session));
+    const auto before = manager->Info("sd.next0");
+    _ports->reset();
+    const auto after = manager->Info("sd.next0");
+    ASSERT_TRUE(before.has_value() && after.has_value());
+    EXPECT_TRUE(after->present);
+    EXPECT_EQ(before->source, after->source) << "the user's card is the same medium after the reset";
+    EXPECT_NE(after->source, folder);
+}
+
+// "sd" is the alias of the primary slot: `media insert sd <folder>` works on a Next as on the Evo and the TS-Conf
+TEST_F(NextBoot_Test, TheAliasSdNamesTheFirstNextSlot)
+{
+    MediaManager* manager = _context->pMediaManager;
+    ASSERT_NE(manager, nullptr);
+    bool found = false;
+    for (const auto& slot : manager->List())
+    {
+        const auto& aliases = slot.descriptor.aliases;
+        if (slot.descriptor.id == "sd.next0")
+        {
+            found = true;
+            EXPECT_NE(std::find(aliases.begin(), aliases.end(), "sd"), aliases.end());
+        }
+        if (slot.descriptor.id == "sd.next1")
+            EXPECT_EQ(std::find(aliases.begin(), aliases.end(), "sd"), aliases.end());
+    }
+    EXPECT_TRUE(found);
+}
+
+// The InsertSdCard helpers of the decoder (tests, tools) go through the same slot: the manager sees the medium
+TEST_F(NextBoot_Test, TheDecoderHelperInsertsThroughTheSlot)
+{
+    ASSERT_TRUE(_ports->InsertSdCard(0, std::make_unique<MemoryDisk>(4096), SdCardSpi::WriteMode::Session));
+    const auto info = _context->pMediaManager->Info("sd.next0");
+    ASSERT_TRUE(info.has_value());
+    EXPECT_TRUE(info->present);
+    EXPECT_TRUE(_ports->SdCard(0).present());
 }
 
 // N3: NR #07 sets the CPU clock (applied at the frame boundary, composed with the host speed), NR #03 the machine type

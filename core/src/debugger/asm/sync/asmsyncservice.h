@@ -7,6 +7,11 @@
 /// for `quiet` ms, and publishes the result: the labels as the symbol set `live:sync:<assembler>`, the hints, an
 /// optional output file, and NC_ASM_SYNC. With no watch there is no thread and no cost. Owned by DebugManager;
 /// SyncControl is the surface.
+///
+/// The push watch (part B, Z2) goes the other way: a host source and the files it INCLUDEs are looked at every
+/// `interval` ms; a change that stayed `quiet` ms is written into the assembler by sync-inject once the assembler waits
+/// for a command (retried while it is busy). A text in memory the watch itself wrote is replaced; one the user edited
+/// in the guest since is a conflict and stays, unless `force`. Its own thread, independent of the watch.
 
 #include <condition_variable>
 #include <cstdint>
@@ -48,6 +53,17 @@ public:
     AsmSyncService(const AsmSyncService&) = delete;
     AsmSyncService& operator=(const AsmSyncService&) = delete;
 
+    struct PushOptions
+    {
+        std::string path;               ///< the host source
+        std::string from = "sjasmplus"; ///< its dialect
+        std::string assembler;          ///< a descriptor id; "" = the one the probe finds
+        std::string title;              ///< the text's name ("" = the name of the text it replaces)
+        bool force = false;             ///< overwrite the user's own changes in the guest too
+        uint32_t intervalMs = 500;
+        uint32_t quietMs = 300;         ///< a change must stay this long before it is written (an editor's save in parts)
+    };
+
     /// Starts a watch, replacing a running one
     void Start(const WatchOptions& options);
     /// Stops the watch; the live symbol set stays (drop it with `symbols drop`)
@@ -61,7 +77,15 @@ public:
     /// The text of the last build that decoded (UTF-8, one line per source line) and its build number (0 = none yet)
     std::string LastText(uint64_t& generation) const;
 
+    /// Starts the push watch, replacing a running one; the first write comes as soon as the assembler is idle
+    void StartPush(const PushOptions& options);
+    void StopPush();
+    bool Pushing() const;
+    /// {pushing, options, state (off, waiting, pending, pushed, conflict, error), files, pushes, last: inject reply, error}
+    StateNode PushStatusValue() const;
+
 private:
+    void RunPush(PushOptions options);
     void Run(WatchOptions options);
     /// The rest of the project for one build: the folder's sources and file sizes, then the disk's
     void GatherProject(const WatchOptions& options, unrealasm::sync::BuildInput& input, std::string& note) const;
@@ -84,4 +108,16 @@ private:
     std::string _lastText;
     uint64_t _lastTextGeneration = 0;
     std::string _error;
+
+    // The push watch (under _mutex; _pushWake shares it)
+    std::thread _pushThread;
+    std::condition_variable _pushWake;
+    bool _pushStop = false;
+    bool _pushing = false;
+    PushOptions _push;
+    std::string _pushState = "off";
+    uint64_t _pushes = 0;
+    size_t _pushFiles = 0;
+    StateNode _pushLast = StateNode::Object();
+    std::string _pushError;
 };

@@ -27,7 +27,7 @@
 #include "breakpointgroupdialog.h"
 #include "emulator/emulator.h"
 
-BreakpointDialog::BreakpointDialog(Emulator* emulator, QWidget* parent) : QDialog(parent), _emulator(emulator)
+BreakpointDialog::BreakpointDialog(std::shared_ptr<Emulator> emulator, QWidget* parent) : QDialog(parent), _emulator(emulator)
 {
     setWindowTitle("Breakpoint Manager");
     resize(800, 500);
@@ -312,13 +312,13 @@ void BreakpointDialog::populateBreakpointTable()
     if (!bpManager)
         return;
 
-    const BreakpointMapByID& breakpoints = bpManager->GetAllBreakpoints();
+    const BreakpointListByID breakpoints = bpManager->GetAllBreakpoints();
 
     int row = 0;
     for (const auto& pair : breakpoints)
     {
         uint16_t id = pair.first;
-        const BreakpointDescriptor* bp = pair.second;
+        const BreakpointDescriptor* bp = pair.second.get();
 
         _breakpointTable->insertRow(row);
 

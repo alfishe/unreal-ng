@@ -192,6 +192,77 @@ TEST_F(SyncControl_Test, TheWatchPublishesTheLabelsAndFollowsAChange)
     EXPECT_NE(labels->GetLabelByName("KEY"), nullptr) << "the labels stay after the watch";
 }
 
+// The push watch (Z2): each save of the host file goes into ALASM while it waits for a command; a change the user made
+// in the guest is a conflict and stays; while ALASM is busy the write waits
+TEST_F(SyncControl_Test, ThePushWatchWritesEachSaveAndKeepsTheUsersChanges)
+{
+    // Worker-bound: the waits are on its writes (interval 50 ms, no quiet period)
+    LoadSession(_context, "alasm509-loaded");
+    const auto stack = [&](uint16_t loop) {
+        const std::vector<uint16_t> words = {0x9199, 0x91E3, loop, 0x2D2B};   // #9707: the A> prompt; #9733: a command runs
+        uint8_t* page5 = _context->pMemory->RAMPageAddress(5);
+        for (size_t k = 0; k < words.size(); ++k)
+        {
+            page5[0x1FBE + 2 * k] = static_cast<uint8_t>(words[k]);
+            page5[0x1FBE + 2 * k + 1] = static_cast<uint8_t>(words[k] >> 8);
+        }
+        _context->pCore->GetZ80()->sp = 0x5FBE;
+    };
+    stack(0x9707);
+    const std::filesystem::path folder = TestPathHelper::GetUniqueTestScratchPath("push");
+    std::filesystem::create_directories(folder);
+    const std::filesystem::path main = folder / "main.asm";
+    const auto save = [&](const std::string& text) { std::ofstream(main, std::ios::binary) << text; };
+    const auto guestText = [&]() {
+        const AsmReply reply = SyncRun(_context, "sync-extract");
+        return reply.Ok() ? reply.body.find("text")->s : std::string();
+    };
+    AsmSyncService* service = _context->pDebugManager->GetAsmSyncService();
+    const auto state = [&]() { return service->PushStatusValue().find("state")->s; };
+    const auto pushes = [&]() { return service->PushStatusValue().find("pushes")->i; };
+
+    EXPECT_EQ(SyncRun(_context, "sync-push-watch", {}).HttpStatus(), 400) << "no path";
+    EXPECT_EQ(SyncRun(_context, "sync-push-watch", {{"path", (folder / "missing.asm").string()}}).HttpStatus(), 404);
+
+    save("        ORG #6000\nfirst   RET\n");
+    AsmReply reply = SyncRun(_context, "sync-push-watch", {{"path", main.string()}, {"title", "MAIN"}, {"interval", "50"}, {"quiet", "0"}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_TRUE(reply.body.find("pushing")->b);
+    ASSERT_TRUE(TestWait::For([&] { return pushes() >= 1; })) << "the first write: " << state();
+    EXPECT_NE(guestText().find("first"), std::string::npos);
+
+    // A save: written again, over the watch's own text (marked changed, yet not the user's)
+    save("        ORG #6000\nsecond  RET\n        NOP\n");
+    ASSERT_TRUE(TestWait::For([&] { return pushes() >= 2; })) << "the save: " << state();
+    EXPECT_NE(guestText().find("second"), std::string::npos);
+
+    // ALASM busy: the next save waits, then goes in once it is idle again
+    stack(0x9733);
+    save("        ORG #6000\nthird   RET\n");
+    ASSERT_TRUE(TestWait::For([&] { return state() == "pending"; })) << state();
+    stack(0x9707);
+    ASSERT_TRUE(TestWait::For([&] { return pushes() >= 3; })) << "after the wait: " << state();
+    EXPECT_NE(guestText().find("third"), std::string::npos);
+
+    // The user edits the text in the guest (a label renamed): the next save is a conflict and the guest keeps its text
+    uint8_t* text = _context->pMemory->RAMPageAddress(6);
+    uint8_t* at = std::search(text + 0x40, text + 0x4000, reinterpret_cast<const uint8_t*>("third"), reinterpret_cast<const uint8_t*>("third") + 5);
+    ASSERT_NE(at, text + 0x4000);
+    at[0] = 'T';
+    save("        ORG #6000\nfourth  RET\n");
+    ASSERT_TRUE(TestWait::For([&] { return state() == "conflict"; })) << state();
+    EXPECT_NE(guestText().find("Third"), std::string::npos);
+    EXPECT_EQ(pushes(), 3);
+
+    reply = SyncRun(_context, "sync-status");
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.find("push")->find("state")->s, "conflict");
+    reply = SyncRun(_context, "sync-push-unwatch");
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_FALSE(reply.body.find("pushing")->b);
+    std::filesystem::remove_all(folder);
+}
+
 TEST_F(SyncControl_Test, TheWatchTakesTheProjectFromAHostFolder)
 {
     // Y5 (asm-synchronizer.md §5.4): a host folder joins the project of every build; a bad item is refused
@@ -262,6 +333,47 @@ TEST_F(SyncControl_Test, InjectWritesASourceIntoAlasmAtItsCommandLine)
     std::map<std::string, std::string> forced = source;
     forced["force"] = "true";
     EXPECT_TRUE(SyncRun(_context, "sync-inject", forced).Ok());
+}
+
+// A host file with INCLUDEs: each INCLUDEd source into an ALASM page of its own (4, 0), the INCLUDEs naming the pages
+TEST_F(SyncControl_Test, InjectPutsTheSourcesAHostFileIncludesIntoPagesOfTheirOwn)
+{
+    LoadSession(_context, "alasm509-loaded");
+    const std::vector<uint16_t> words = {0x9199, 0x91E3, 0x9707, 0x2D2B};   // the A> prompt
+    uint8_t* page5 = _context->pMemory->RAMPageAddress(5);
+    for (size_t k = 0; k < words.size(); ++k)
+    {
+        page5[0x1FBE + 2 * k] = static_cast<uint8_t>(words[k]);
+        page5[0x1FBE + 2 * k + 1] = static_cast<uint8_t>(words[k] >> 8);
+    }
+    _context->pCore->GetZ80()->sp = 0x5FBE;
+    const std::filesystem::path folder = TestPathHelper::GetUniqueTestScratchPath("project");
+    std::filesystem::create_directories(folder / "lib");
+    const auto write = [&](const std::filesystem::path& path, const std::string& text) { std::ofstream(path, std::ios::binary) << text; };
+    write(folder / "main.asm", "        ORG #6000\n        INCLUDE \"lib/inc1.asm\"\n        INCLUDE \"inc2.asm\"\nend_    RET\n");
+    write(folder / "lib" / "inc1.asm", "        LD HL,end_\n");
+    write(folder / "inc2.asm", "        NOP\n");
+
+    AsmReply reply = SyncRun(_context, "sync-inject", {{"path", (folder / "main.asm").string()}, {"from", "sjasmplus"}, {"title", "MAIN"}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.find("page")->i, 6);
+    const StateNode* includes = reply.body.find("includes");
+    ASSERT_NE(includes, nullptr);
+    ASSERT_EQ(includes->items.size(), 2u);
+    EXPECT_EQ(includes->items[0].find("source")->s, "lib/inc1");
+    EXPECT_EQ(includes->items[0].find("name")->s, "INC1");
+    EXPECT_EQ(includes->items[0].find("page")->i, 4);
+    EXPECT_EQ(includes->items[1].find("name")->s, "INC2");
+    EXPECT_EQ(includes->items[1].find("page")->i, 0);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(_context->pMemory->RAMPageAddress(4)), 8), "INC1    ");
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(_context->pMemory->RAMPageAddress(0)), 8), "INC2    ");
+
+    reply = SyncRun(_context, "sync-extract");
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    const std::string text = reply.body.find("text")->s;
+    EXPECT_NE(text.find("INCLUDE \"INC1\",4"), std::string::npos) << text;
+    EXPECT_NE(text.find("INCLUDE \"INC2\",0"), std::string::npos) << text;
+    std::filesystem::remove_all(folder);
 }
 
 // Part B (Z1): the same verbs on a snapshot file instead of the machine - ALASM 5.09's idle template; the machine stays untouched

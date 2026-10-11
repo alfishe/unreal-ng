@@ -153,7 +153,7 @@ public:
 
 class ISessionSink {                   // the TTD controller
 public:
-    virtual MachineMode Mode() const = 0;   // read by the coordinator until M4 broadcasts modes
+    virtual MachineMode Mode() const = 0;   // read by the rules at each decision; M4 publishes it to listeners
     virtual void Apply(SessionEffect, const std::string& reason) = 0;   // at the commit point
     virtual void MachineReset() = 0;        // after a reset: the machine leaves the recorded timeline
 };
@@ -270,6 +270,8 @@ The coordinator owns `MachineMode` {Live, Recording, RecordingBlackBox, Replayin
 transitions to the coordinator, which broadcasts `OnModeChanged`. Owners react: media hold host writes while
 Replaying, sound holds host output, FeatureManager sets debug mode and the acceleration lock, MainLoop skips render.
 `ttdReplayActive` and `FeatureManager::isTtdRecordingActive` become reads of the published mode.
+**As built (M4, §11.6):** the broadcast and `FeatureManager`'s debug mode; the media and sound holds stay direct
+(their order reverses on the way out), `ttdReplayActive` keeps TTD as its one writer.
 
 ## 6. Frame boundary
 
@@ -414,10 +416,10 @@ A few tests on real machines check what the levels below cannot:
 |---|---|---|
 | M0 | Defects of current-state §7: GDB edits as tool edits, `SetBlackBox` under the session lock, a load ends the session only after a successful insert, the controller unbinds the media read journal and vectors on destruction, debug mode writers listed for M4 | bug fixes; **done 2026-10-10** (11e394ee1, af19cac62, 4c90c418d, ad38d73b2) |
 | M1 | The `core-coordinator` library with its ports, fakes and §10.1 tests; `ParkLease`, operation log, policy table with today's cells; `Emulator::WireCoordinator`; reset, snapshot load, media ops through `Run` with their §10.2 contract tests; the links of §3.4 for these operations removed | none; the log appears. **Built 2026-10-10** (§11.1) |
-| M2 | Every refusal from the table; raw `IsRecording()` checks deleted; D43 cells (network, IDE drive kind, RZX, NeoGS SD) one at a time with the owner | the black box stops blocking (U3) |
-| M3 | Boundary phases; media, GS switch, network into phase 1; media ops during a recording become events (Q4) | U2, gap 13 |
-| M4 | Modes broadcast; one writer per setting | none |
-| M5 | Media identity (8.2), undo log (8.1), the cut (8.3) on Qt "Rec From Here", WebAPI / CLI resume; the dialog in Qt | U1 |
+| M2 | Every refusal from the table; raw `IsRecording()` checks deleted; D43 cells (network, IDE drive kind, RZX, NeoGS SD) one at a time with the owner | the black box stops blocking (U3). **Built 2026-10-10** (§11.2-§11.4) |
+| M3 | Boundary phases; media, GS switch, network into phase 1; media ops during a recording become events (Q4) | U2, gap 13. **Built 2026-10-10** (§11.5); after it the media undo log, gaps 11-12 (§11.5, last items) |
+| M4 | Modes broadcast; one writer per setting | none. **Built 2026-10-10** (§11.6) |
+| M5 | Media identity (8.2), undo log (8.1), the cut (8.3) on Qt "Rec From Here", WebAPI / CLI resume; the dialog in Qt | U1. The undo log is built (2026-10-10, `MediaUndoLog`, §11.5); open: identity, the cut, write-through to session access (F13), the dialog |
 | M6 | Remaining operations (state transfer, config, tool edits, RZX, TTD verbs) through `Run`; `OnLoad` / `OnConfigurationChange` removed from the TTD hooks | none |
 
 Each step lands alone: build, `test.sh`, docker Linux, gcc:16 -O3 of changed files; M3 and M5 with an A/B frame
@@ -445,7 +447,8 @@ operations.
   `MediaManager::Insert`, before the file is opened, logged, with the same sentence as before.
 
 Differences from the target design, on purpose for M1:
-- the mode is read from `ISessionSink::Mode()`; M4 replaces it with the broadcast;
+- the mode is read from `ISessionSink::Mode()`; M4 added the broadcast for listeners, the rules keep reading it
+  (§11.6);
 - RZX playback is still stopped by the callers of reset and snapshot load (RZX joins in M6);
 - the ROM reload inside a reset still calls `OnConfigurationChange` itself (configuration changes join in M6);
 - the log is read in core only (`Emulator::GetOperationLog`); the surfaces follow.
@@ -537,8 +540,14 @@ only** - no images in the history, no medium versions to go back to.
   refuses as before (goes with v1).
 - Boundary phases: the order in `CompleteFrame` already is phase 1 (media, GS switch in `OnFrameStart`, network
   devices), phase 2 (checkpoint), phase 3 (input, host answers, decoder); no `Boundary()` indirection was added.
-- Not in M3: written sectors and write-protect toggles as versions (gaps 11-12, the change layer H1 / H5): a seek
-  before a write on the same medium still reports `MediaVersionDiffers`.
+- After M3 (owner 2026-10-10: an undo log, not the change layer H1 / H5), gaps 11-12: while a TTD history exists
+  the media manager keeps every change of a medium in the slot's `MediaUndoLog` - a block sector (the read tap tells
+  it before the write), a floppy track (the controller, before it writes), the write-protect switch. A version is the
+  count of the medium's changes. The restore sets every medium to its checkpoint's version before the devices load
+  (`TimeTravelController::SetMediaToCheckpoint`); a replay's writes move the version along the history; a write after
+  a seek back drops the versions above. A write-protect toggle while recording lands at the next frame boundary as an
+  event and a version of its own, which a replay meets at its frame. `MediaVersionDiffers` is left for another medium
+  and for versions past the log's budget (64 MB per slot). TTD v1 reports as before and never sets a medium back.
 
 Tests: `MachinePolicy_Test` (cells, `atFrameBoundary`), `MachineCoordinator_Test`
 (`AMediaChangeWhileRecordingLandsAtTheNextFrameBoundary`), `MediaOwnerContract_Test`, `MediaManager_Test`,
@@ -555,3 +564,29 @@ non-interactive op leaves the slot empty and logs it. The way back if it is ever
 the guest's media writes (old and new content per written unit), sized by what the guest wrote.
 
 Owner decisions are recorded in [requirements.md §6](requirements.md#6-owner-decisions).
+
+### 11.6 M4 as built (2026-10-10)
+
+- **Mode broadcast.** `IModeListener::OnModeChanged(from, to)` and `ModeState {mode, replaying}` in `ports.h`;
+  `MachineCoordinator::Listen` / `Unlisten`, `SessionChanged`, `Published`. TTD reports (`ttd::NoteSessionChange`,
+  `ttdsessionport.h`): every state transition (`SetState`, v2 and v1), a replay entered or left, a recording paused
+  or resumed, the background flag. The coordinator reads the mode again, publishes it and tells the listeners once
+  per transition, in registration order, on the reporting thread; nothing when nothing changed. It does not take
+  the ports' lock (TTD reports from inside an operation's session effect too). `replaying` is
+  `ISessionSink::Replaying()`: the machine executes recorded history now, also inside a paused recording the user
+  started (whose mode stays Recording).
+- **The rules still read the mode when they decide** (`ISessionSink::Mode()` under the operation's lock): the
+  published mode is for the listeners and readers; a decision needs the mode at its own moment, which the
+  §10.1 tests pin.
+- **One writer per setting: debug mode** (current-state §7 item 6). `FeatureManager` listens; it holds debug mode
+  on while the machine replays (`debugModeInEffect`: the feature, or the hold) and is the one writer of
+  `Z80::isDebugMode`. The v2 and v1 replays no longer save and restore it; `Emulator::DebugOn` / `DebugOff` and the
+  CLI `debugmode` go through the feature. A feature change during a replay keeps the hold. A context without a
+  coordinator (a unit test's bare context) tells the feature manager directly.
+- **Not moved:** the media hold of host writes and the sound host hold stay direct calls in `EnterReplayMode` /
+  `ExitReplayMode`: their order is reversed on the way out (the hold goes first, then the flag), which a broadcast in
+  registration order cannot give. `ttdReplayActive` keeps its one writer (TTD). The TTD recording lock in
+  `FeatureManager` (`onTtdRecordingStarted` / `Stopped`) stays as it is.
+
+Tests: `MachineCoordinator_Test.AModeTransitionIsBroadcastOnceInRegistrationOrder` (fakes: `FakeListener`),
+`CoordinatorEmulator_Test.AReplayHoldsDebugModeAndTheFeatureHasItsSayAfter`.

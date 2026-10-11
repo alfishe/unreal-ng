@@ -117,7 +117,7 @@ namespace
             return out.str();
         }
         if (action == "formats")
-            return "Accepted formats per kind (structuredContent.formats)";
+            return "Accepted formats per kind\n" + FlatFields(reply["formats"]);
         if (action == "compose" || action == "layers")
         {
             const Json::Value& value = reply[action];

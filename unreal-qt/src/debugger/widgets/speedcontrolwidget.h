@@ -1,4 +1,6 @@
 #pragma once
+
+#include <memory>
 #ifndef SPEEDCONTROLWIDGET_H
 #define SPEEDCONTROLWIDGET_H
 
@@ -109,7 +111,7 @@ public:
     explicit SpeedControlWidget(QWidget* parent = nullptr);
 
     /// @brief Set the emulator instance to control
-    void setEmulator(Emulator* emulator);
+    void setEmulator(std::shared_ptr<Emulator> emulator);
 
     /// @brief Execute one step at the current granularity
     void executeStep();
@@ -145,7 +147,7 @@ private:
     unsigned getTStatesForPreset(int position) const;
     int getTimerIntervalMs(int position) const;
 
-    Emulator* _emulator = nullptr;
+    std::shared_ptr<Emulator> _emulator;
     QSlider* _slider = nullptr;
     QLabel* _label = nullptr;
     QToolButton* _stepBackButton = nullptr;

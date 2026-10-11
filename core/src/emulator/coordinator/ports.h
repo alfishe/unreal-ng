@@ -93,6 +93,29 @@ public:
     virtual void Abort(const MachineOp&, OpStage&) {}
 };
 
+/// What the machine is doing, as the coordinator publishes it to its listeners (architecture §5)
+struct ModeState
+{
+    MachineMode mode = MachineMode::Live;
+    /// The machine executes recorded history now (a seek, a step, a replay): its host side holds (writes, sound),
+    /// the instrumented memory path is on. Also inside a paused recording the user started (mode Recording)
+    bool replaying = false;
+
+    bool operator==(const ModeState& other) const { return mode == other.mode && replaying == other.replaying; }
+    bool operator!=(const ModeState& other) const { return !(*this == other); }
+};
+
+/// A participant that follows the machine's mode instead of being told by TTD (architecture §5: one writer per
+/// setting; the participant writes its own)
+class IModeListener
+{
+public:
+    virtual ~IModeListener() = default;
+    /// Once per transition, in registration order, on the thread that reported it (TTD: the machine thread or a
+    /// parked machine's caller)
+    virtual void OnModeChanged(const ModeState& from, const ModeState& to) = 0;
+};
+
 /// The TTD controller, as the rules see it
 class ISessionSink
 {
@@ -100,6 +123,8 @@ public:
     virtual ~ISessionSink() = default;
     /// What the machine is doing (any thread)
     virtual MachineMode Mode() const = 0;
+    /// The machine executes recorded history now (ModeState::replaying)
+    virtual bool Replaying() const { return false; }
     /// The policy's session effect, once per operation, at its commit point
     virtual void Apply(SessionEffect effect, const std::string& reason) = 0;
     /// The machine was reset: a machine seeked into recorded history leaves it (the timeline is kept)
@@ -120,6 +145,12 @@ public:
     /// file): a refusal is logged like Run's, so every refusal is in the log; a yes is not (Run logs the operation)
     virtual OpResult Ask(MachineOp op) = 0;
     virtual MachineMode Mode() const = 0;
+    /// The session reports that its state may have changed (TTD: a state transition, a replay entered or left, a
+    /// recording paused or resumed): the coordinator reads the mode again and tells its listeners of a change, on
+    /// the caller's thread. Cheap when nothing changed
+    virtual void SessionChanged() = 0;
+    /// The mode as last published (SessionChanged)
+    virtual ModeState Published() const = 0;
 };
 
 /// A change a subsystem makes itself, run as an operation (the network settings, an IDE unit's drive, an RZX

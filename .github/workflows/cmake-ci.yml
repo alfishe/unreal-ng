@@ -92,6 +92,10 @@ jobs:
         with:
           submodules: recursive
 
+      # The Qt frontend reads an instance only through EmulatorBinding (BUGS.md #11): no new raw reads
+      - name: GUI instance reads ratchet
+        run: tools/verification/gui-instance-reads.sh
+
       - name: Build project
         run: |
           # 2. FIX GIT PERMISSIONS

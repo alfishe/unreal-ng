@@ -15,6 +15,8 @@
 //   sync_unwatch → DELETE /asm/sync/watch
 //   sync_hints   → GET  /asm/sync/hints
 //   sync_inject  → POST /asm/sync/inject {text | path | data + name, from?, assembler?, title?, force?, backup?, snapshot?, output?}
+//   sync_push_watch   → POST /asm/sync/push-watch {path, from?, assembler?, title?, force?, interval?, quiet?}
+//   sync_push_unwatch → DELETE /asm/sync/push-watch
 //   (snapshot: a .szx / .sna / .z80 file read instead of the machine's memory; sync_inject then writes `output`)
 //
 // Drogon-free; all calls go through the loopback IApiCaller.
@@ -36,13 +38,14 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"formats", "dialects", "files", "detect", "decode", "encode", "convert", "sync_status", "sync_probe", "sync_extract",
-                               "sync_watch", "sync_unwatch", "sync_hints", "sync_inject"})
+                               "sync_watch", "sync_unwatch", "sync_hints", "sync_inject", "sync_push_watch", "sync_push_unwatch"})
         schema["properties"]["action"]["enum"].append(action);
     schema["properties"]["action"]["description"] =
         "Assembler source operation: the tokenized formats of ZX Spectrum assemblers (ALASM, TASM, ZX-ASM, STORM, MASM, GENS, ZEUS, "
         "XAS, Laser Genius, ...) and text dialects; decode to text, encode text, convert between dialects (to sjasmplus, pasmo, z88dk, alasm). sync_*: the source an "
         "assembler running in the machine holds in RAM (ALASM 5.09 / 4.44, TASM 4.12), read as its own SAVE would write it; sync_watch keeps its labels (symbol set live:sync:<assembler>) and hints up to date "
-        "while the user types; sync_inject writes a host source (sjasmplus or another dialect) into it as its own text (ALASM 5.09, at its command line). "
+        "while the user types; sync_inject writes a host source (sjasmplus or another dialect) into it as its own text (ALASM, at its command line; "
+        "the files a host path INCLUDEs into texts of their own); sync_push_watch does that on every save of the host file (sync_push_unwatch stops it). "
         "With snapshot (a .szx / .sna / .z80 file) sync_status / sync_probe / sync_extract / sync_inject work on that file's memory instead; "
         "sync_inject writes the snapshot with the text in it to output.";
     schema["properties"]["target"]["type"] = "string";
@@ -51,7 +54,8 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
         schema["properties"][name]["type"] = "string";
         schema["properties"][name]["description"] = description;
     };
-    text("path", "detect / decode / convert: a host file (a .trd / .tap / .tzx image with 'file'; a hobeta $X file) or disk:A/NAME.T");
+    text("path", "detect / decode / convert / sync_inject: a host file (a .trd / .tap / .tzx image with 'file'; a hobeta $X file) or disk:A/NAME.T; "
+                 "sync_push_watch: the host source to watch");
     text("data", "detect / decode / convert: the file as base64 instead of a path");
     text("name", "with data: the file name (its extension helps detection)");
     text("file", "NAME.T inside an image given as path");
@@ -68,16 +72,16 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
     text("assembler", "sync_*: the assembler when two identify (alasm-5.09, alasm-4.44, tasm-4.12)");
     text("as", "sync_extract / sync_watch: text (default), file (the assembler's own format) or dialect (with to)");
     schema["properties"]["interval"]["type"] = "integer";
-    schema["properties"]["interval"]["description"] = "sync_watch: ms between looks at the text (default 250)";
+    schema["properties"]["interval"]["description"] = "sync_watch: ms between looks at the text (default 250); sync_push_watch: at the files (default 500)";
     text("project", "sync_watch: where INCLUDEd sources come from: disk:A-D, none, a host folder, comma-separated (default disk:A)");
     text("title", "sync_inject: the text's name in the assembler (default: the name of the text it replaces)");
     schema["properties"]["force"]["type"] = "boolean";
-    schema["properties"]["force"]["description"] = "sync_inject: overwrite a text with changes not saved";
+    schema["properties"]["force"]["description"] = "sync_inject: overwrite a text with changes not saved; sync_push_watch: overwrite the user's own changes in the guest";
     text("backup", "sync_inject: a host file the replaced text is written to (the assembler's own format)");
     text("snapshot", "sync_status / sync_probe / sync_extract / sync_inject: a snapshot file (.szx .sna .z80) whose memory is read instead "
                      "of the machine's (an idle template made by make-template.py, or any snapshot of a session)");
     schema["properties"]["quiet"]["type"] = "integer";
-    schema["properties"]["quiet"]["description"] = "sync_watch: ms a change must stay before it is built (default 500)";
+    schema["properties"]["quiet"]["description"] = "sync_watch: ms a change must stay before it is built (default 500); sync_push_watch: before it is written (default 300)";
     schema["properties"]["start"]["type"] = "integer";
     schema["properties"]["start"]["description"] = "encode to a disk: the catalog start field (default: what the format needs)";
     schema["properties"]["z80n"]["type"] = "boolean";
@@ -94,7 +98,7 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
             const std::string action = args["action"].asString();
             if (action == "formats" || action == "dialects")
             {
-                ForwardCall("GET", "/api/v1/asm/" + action, nullptr, caller, action == "formats" ? "Assembler source formats" : "Dialects", done);
+                ForwardCall("GET", "/api/v1/asm/" + action, nullptr, caller, action == "formats" ? "Assembler source formats" : "Dialects", action == "formats" ? done : AppendFields(done));
                 return;
             }
             if (action == "files")
@@ -128,6 +132,20 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
                 ResolveAndForward(args, "DELETE", "/asm/sync/watch", nullptr, caller, "Assembler in RAM: unwatch", done);
                 return;
             }
+            if (action == "sync_push_unwatch")
+            {
+                ResolveAndForward(args, "DELETE", "/asm/sync/push-watch", nullptr, caller, "Assembler in RAM: push unwatch", done);
+                return;
+            }
+            if (action == "sync_push_watch")
+            {
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"path", "from", "assembler", "title", "force", "interval", "quiet"})
+                    if (args.isMember(name) && !args[name].isNull())
+                        body[name] = args[name].isBool() ? Json::Value(args[name].asBool() ? "true" : "false") : Json::Value(args[name].asString());
+                ResolveAndForward(args, "POST", "/asm/sync/push-watch", &body, caller, "Assembler in RAM: push watch", done);
+                return;
+            }
             if (action == "sync_hints")
             {
                 ResolveAndForward(args, "GET", "/asm/sync/hints", nullptr, caller, "Assembler in RAM: hints", done);
@@ -154,7 +172,7 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
             }
             done(ToolResult::Error("Unknown action '" + action +
                                    "'. Valid: formats, dialects, files, detect, decode, encode, convert, sync_status, sync_probe, sync_extract, sync_watch, "
-                                   "sync_unwatch, sync_hints, sync_inject"));
+                                   "sync_unwatch, sync_hints, sync_inject, sync_push_watch, sync_push_unwatch"));
         });
 }
 

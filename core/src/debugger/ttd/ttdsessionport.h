@@ -20,10 +20,17 @@ public:
     explicit TTDSessionPort(EmulatorContext* context) : _context(context) {}
 
     coordinator::MachineMode Mode() const override;
+    bool Replaying() const override;
     void Apply(coordinator::SessionEffect effect, const std::string& reason) override;
     void MachineReset() override;
 
 private:
     EmulatorContext* _context;
 };
+
+/// TTD's state changed (a transition, a replay entered or left, a recording paused or resumed): the coordinator
+/// reads the mode again and broadcasts a change (architecture §5, M4). A context without a coordinator (a unit
+/// test's bare context): the feature manager hears the replay directly, or, without one, the CPU's debug mode
+/// follows the replay
+void NoteSessionChange(EmulatorContext* context);
 }  // namespace ttd

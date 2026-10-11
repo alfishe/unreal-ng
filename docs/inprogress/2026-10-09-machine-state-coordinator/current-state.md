@@ -111,7 +111,7 @@ park and finish with `RestartFrame` (no frame end).
 ## 7. Problems found
 
 Defects (each worth fixing on its own, before any redesign). **Status 2026-10-10:** 1, 2, 3 and 5 fixed as M0
-(11e394ee1, af19cac62, 4c90c418d, ad38d73b2); 4 moves to M2 (policy cells, D43), 6 to M4 (one writer per setting).
+(11e394ee1, af19cac62, 4c90c418d, ad38d73b2); 4 moves to M2 (policy cells, D43), 6 to M4 (one writer per setting); 4 fixed in M2, 6 in M4 (2026-10-10).
 1. **GDB memory and register writes are not tool edits.** `GDBSession::handleWriteMemory` writes through
    `DirectWriteToZ80Memory` and refuses only while detached (`gdbserver.cpp:1276-1315`); register writes likewise.
    An edit made while a recording is paused is not in the history, so a replay diverges from what the user saw.
@@ -126,7 +126,8 @@ Defects (each worth fixing on its own, before any redesign). **Status 2026-10-10
 5. **The controller's destructor leaves `MediaManager::_readJournal` and `ttdVectors` pointing at it**
    (`timetravelcontroller.cpp:117-129`; the media manager is deleted later, `emulator.cpp:528-583`).
 6. **Debug mode has four writers**; the replay sets `isDebugMode` behind FeatureManager, and a feature change during
-   a replay overwrites it.
+   a replay overwrites it. **Fixed 2026-10-10 (M4):** `FeatureManager` is the one writer; a replay is a hold it
+   takes from the coordinator's mode broadcast (architecture §11.6).
 
 Structural:
 - every new machine-level operation adds another pairwise rule (the media rollback on "resume from the past" would

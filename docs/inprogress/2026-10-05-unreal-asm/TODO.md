@@ -188,10 +188,11 @@ phase; master only after the owner's review.
       - [x] other texts in memory (2026-10-10): ALASM's pages (`textsPerPage`); XAS and ZAsm hold one text
   - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):
     - [x] Z0 ALASM backend + the file image writer + inject on WebAPI / CLI / MCP / Lua / Python, checked by ALASM 5.09 assembling the injected text (2026-10-10, research-sjasmplus-to-alasm.md)
-      - [ ] a project: the INCLUDEd sources into more text pages (ALASM keeps one text per page)
+      - [x] a project: the INCLUDEd sources into more text pages (2026-10-10, asm-synchronizer.md §16.4): `HostProject`, `WriteProjectAs`, `PlanInjectProject`; `INCLUDE "NAME",page` finds the text loaded; pages 4 and 0 (5.05-5.09), 0 and 3 (4.5) or 4 (5.00, 4.42-4.46, 3.8c), each build checked live; `zxasm inject` into snapshots (pages) and disks (files)
+      - [x] ALASM 4.5's free pages (2026-10-10): 0 and 3, texts there intact through ASSEMBLE and a catalogue (no source of its driver)
       - [ ] label values for sources of other dialects (their sjasmplus conversion's layout, symbols/fromsource.h)
-      - [ ] idle rules for the other ALASM builds (5.08 ... 3.8c): the command line's return chain in each
-      - [ ] the ALASM frontend reads `ADD B` as ADD A,B and `DW "AB"` as #4142; ALASM 5.09 puts nothing / `41 42` down: check more forms (LD HL,"AB", ADC, SBC) and fix
+      - [x] idle rules for the other ALASM builds (5.08 ... 3.8c, 2026-10-10): the command line's return pair read in each at the prompt and in the editor; inject checked in each (assembled at the prompt, refused in the editor)
+      - [x] the ALASM frontend took `ADD B` as ADD A,B and `"AB"` as #4142 (2026-10-10): ALASM 5.09 rejects ADD / ADC / SBC without A, (code #00) and takes "AB" as #4241, "ABC" as #4341; a 22-form probe assembled by ALASM 5.09 and converted to sjasmplus agree byte for byte
       - [ ] the `retrobackend` core split out of the ALASM backend with the second target (Z3)
     - [x] Z1 snapshots and disks both ways, no emulator needed (2026-10-10, asm-synchronizer.md §16.3, §19): `snapshot.h` (.sna / .z80 / .szx), disks through unreal-disk, `WriteAs`, `sync::InjectIntoSnapshot`; `zxasm probe / extract / inject`; `snapshot` + `output` on the sync verbs (WebAPI / CLI / MCP / Lua / Python); the ALASM 5.09 idle templates (`make-template.py`); checked by ALASM 5.09 assembling the injected snapshots and disk
       - [ ] templates of the other assemblers (with their idle rules, Z3) and a named template list (`templates` verb) if the surfaces need it
@@ -199,7 +200,7 @@ phase; master only after the owner's review.
       - [x] every disk format through unreal-disk, the emulator's disk layer made a library (2026-10-10, ../2026-10-10-unreal-disk/README.md): zxasm / symconv read and write TRD, SCL, FDI, UDI, TD0, DSK, MGT ...; unreal-asm keeps no disk code
       - [ ] +3DOS (DSK) file system in unreal-disk, if sources come on +3 disks
       - [ ] unreal-ng's Z80 snapshot writer starts a run right after a single `ED` (`ED ED ED 05 00`): every reader takes it for 237 bytes of #05; reported, the fix is the writer's (`loader_z80.cpp` compress)
-    - [ ] Z2 push watch (host file → inject on save), Inject in the Qt dock
+    - [x] Z2 push watch (host file → inject on save), Inject in the Qt dock (2026-10-11, asm-synchronizer.md §19): `sync-push-watch` on every surface, the watch's own text replaced, the user's a conflict, a busy assembler waited for; Live source window Inject... and Push; checked live in ALASM 5.09
     - [ ] Z3 backends + writers + templates: TASM, XAS, STORM, ZX-ASM, MASM
     - [ ] Z4 48K targets: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
     - [ ] Z5 sjasmplus frontend coverage of real projects (STRUCT, MODULE, DEVICE / SLOT / PAGE, SAVEBIN, DEFINE)

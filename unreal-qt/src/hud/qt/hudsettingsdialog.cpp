@@ -114,8 +114,8 @@ void ensureInitialized()
 
 } // namespace
 
-HudSettingsDialog::HudSettingsDialog(EmulatorContext* context, QWidget* parent)
-    : QDialog(parent), _context(context)
+HudSettingsDialog::HudSettingsDialog(QWidget* parent)
+    : QDialog(parent)
 {
     ensureInitialized();
 

@@ -903,7 +903,7 @@ bool DisassemblerWidget::hasBreakpointAtAddress(uint16_t address) const
     const auto& allBreakpoints = bpManager->GetAllBreakpoints();
     for (const auto& pair : allBreakpoints)
     {
-        const BreakpointDescriptor* bp = pair.second;
+        const BreakpointDescriptor* bp = pair.second.get();
         if (bp->type == BRK_MEMORY && (bp->memoryType & BRK_MEM_EXECUTE) && bp->z80address == address && bp->active)
         {
             return true;
@@ -967,7 +967,7 @@ void DisassemblerWidget::toggleBreakpointAtAddress(uint16_t address)
         const auto& allBreakpoints = bpManager->GetAllBreakpoints();
         for (const auto& pair : allBreakpoints)
         {
-            const BreakpointDescriptor* bp = pair.second;
+            const BreakpointDescriptor* bp = pair.second.get();
             if (bp->type == BRK_MEMORY && (bp->memoryType & BRK_MEM_EXECUTE) && bp->z80address == address)
             {
                 bpManager->RemoveBreakpointByID(bp->breakpointID);

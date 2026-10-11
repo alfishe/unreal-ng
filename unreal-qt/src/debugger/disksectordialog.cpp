@@ -20,7 +20,7 @@
 #include "emulator/io/fdc/diskimage.h"
 #include "emulator/io/fdc/fdd.h"
 
-DiskSectorDialog::DiskSectorDialog(Emulator* emulator, QWidget* parent) : QDialog(parent), _emulator(emulator)
+DiskSectorDialog::DiskSectorDialog(std::shared_ptr<Emulator> emulator, QWidget* parent) : QDialog(parent), _emulator(emulator)
 {
     setWindowTitle("Disk sector");
     resize(640, 420);
@@ -123,7 +123,7 @@ void DiskSectorDialog::documentChanged()
         if (now[i] == _shown[i])
             continue;
         const SectorWrite::Result result =
-            SectorWrite::Write(_emulator, static_cast<uint8_t>(_drive->currentIndex()), _cylinder->value(),
+            SectorWrite::Write(_emulator.get(), static_cast<uint8_t>(_drive->currentIndex()), _cylinder->value(),
                                _side->value(), _sector->value(), static_cast<uint32_t>(i),
                                {static_cast<uint8_t>(now[i])}, "qt");
         if (!result.ok)

@@ -36,15 +36,26 @@ const char* const kServerInstructions =
 /// structuredContent)
 constexpr size_t kStructuredEchoLimit = 64 * 1024;
 
-/// The structuredContent as compact JSON text for content[]: MCP (2025-06-18, Structured Content) says a tool returning
-/// structured content SHOULD also return it serialized in a TextContent block. Clients that hand the model only
-/// content[] (claude.ai connectors) saw the one-line summary and never the listing / dump / body
-std::string EchoStructured(const Json::Value& structured)
+/// The structuredContent as compact JSON text for content[] (response_format "json"): MCP (2025-06-18, Structured
+/// Content) has a tool returning structured content also return it serialized in a TextContent block. Clients that hand
+/// the model only content[] (claude.ai connectors) see the text summary otherwise. A picture sent as an image block is
+/// not repeated as base64 text
+std::string EchoStructured(const Json::Value& structured, const std::string& imageData)
 {
     Json::StreamWriterBuilder builder;
     builder["indentation"] = "";
     builder["emitUTF8"] = true;
-    std::string json = Json::writeString(builder, structured);
+    std::string json;
+    if (!imageData.empty() && structured.isObject() && structured.get("data", "").asString() == imageData)
+    {
+        Json::Value copy = structured;
+        copy["data"] = "[base64 picture: see the image content block]";
+        json = Json::writeString(builder, copy);
+    }
+    else
+    {
+        json = Json::writeString(builder, structured);
+    }
     if (json.size() > kStructuredEchoLimit)
     {
         const size_t total = json.size();
@@ -56,18 +67,6 @@ std::string EchoStructured(const Json::Value& structured)
                 std::to_string(cut) + " shown; ask for a narrower range]";
     }
     return json;
-}
-
-bool IsSupportedProtocolVersion(const std::string& version)
-{
-    for (const char* supported : kSupportedProtocolVersions)
-    {
-        if (version == supported)
-        {
-            return true;
-        }
-    }
-    return false;
 }
 
 } // namespace
@@ -201,6 +200,25 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
         // copy of the arguments alive until the result callback fires so that
         // handlers may safely capture `args` by reference in callback chains.
         auto argumentsCopy = std::make_shared<Json::Value>(arguments);
+        bool replyJson = false;
+        if (argumentsCopy->isObject() && argumentsCopy->isMember(kResponseFormatArg))
+        {
+            const Json::Value format = (*argumentsCopy)[kResponseFormatArg];
+            argumentsCopy->removeMember(kResponseFormatArg);
+            if (!format.isString() || (format.asString() != "text" && format.asString() != "json"))
+            {
+                // A tool error, not a JSON-RPC one: the model reads it and corrects the call
+                Json::Value payload;
+                Json::Value text;
+                text["type"] = "text";
+                text["text"] = std::string(kResponseFormatArg) + " must be \"text\" or \"json\"";
+                payload["content"].append(text);
+                payload["isError"] = true;
+                done(MakeRpcResult(id, std::move(payload)));
+                return;
+            }
+            replyJson = format.asString() == "json";
+        }
         if (name == "control_execution" && argumentsCopy->isObject() && !argumentsCopy->isMember("_mcp_client"))
         {
             std::lock_guard<std::mutex> lock(_clientMutex);
@@ -209,7 +227,7 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
         }
         try
         {
-            tool->handler(*argumentsCopy, caller, [argumentsCopy, id, done, &caller](ToolResult result) {
+            tool->handler(*argumentsCopy, caller, [argumentsCopy, id, done, &caller, replyJson](ToolResult result) {
                 // The user took control back at the GUI during this call (execution arbiter design §6a): whatever the
                 // tool made of the 409, the agent gets the one answer - stop, do not retry, ask the user
                 if (caller.TakeRevoked())
@@ -222,13 +240,21 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
                 text["type"] = "text";
                 text["text"] = result.text;
                 payload["content"].append(text);
+                if (!result.imageData.empty() && !result.isError)
+                {
+                    Json::Value image;
+                    image["type"] = "image";
+                    image["data"] = result.imageData;
+                    image["mimeType"] = result.imageMimeType;
+                    payload["content"].append(image);
+                }
                 if (!result.structured.isNull())
                 {
-                    if (!result.textCarriesData)
+                    if (replyJson)
                     {
                         Json::Value echo;
                         echo["type"] = "text";
-                        echo["text"] = EchoStructured(result.structured);
+                        echo["text"] = EchoStructured(result.structured, result.imageData);
                         payload["content"].append(echo);
                     }
                     payload["structuredContent"] = result.structured;

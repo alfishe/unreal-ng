@@ -121,7 +121,6 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
                         result.text = "Disassembly [target " + id + "]: " + std::to_string(body["instructions"].size()) +
                                       " instruction(s) at " + Hex16(body["address"].asUInt()) + "\n" +
                                       FormatDisasmListing(body);
-                        result.textCarriesData = true;
                         done(std::move(result));
                     });
                 });
@@ -323,6 +322,18 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
                             std::ostringstream out;
                             out << "Call trace: " << entryCount << " entries over " << acc.get("frames_run", 0).asUInt()
                                 << " frames [target " << id << "]";
+                            // One line per control-flow event (Z80CFType order): "0x02D6 jr -> 0x02C6 x7 sp 0x5BDF"
+                            static const char* const kTypes[] = {"jp", "jr", "call", "rst", "ret", "reti", "djnz"};
+                            if (acc["entries"].isObject() && acc["entries"]["entries"].isArray())
+                                for (const Json::Value& e : acc["entries"]["entries"])
+                                {
+                                    const unsigned type = e["type"].asUInt();
+                                    out << "\n" << Hex16(e["from_address"].asUInt()) << " "
+                                        << (type < 7 ? kTypes[type] : "?") << " -> " << Hex16(e["to_address"].asUInt());
+                                    if (e["loop_count"].asUInt() > 1)
+                                        out << " x" << e["loop_count"].asUInt();
+                                    out << " sp " << Hex16(e["sp"].asUInt());
+                                }
                             done(ToolResult::Ok(out.str(), std::move(acc)));
                         });
                     });
@@ -494,7 +505,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
             }
             if (action == "frame_cost")
             {
-                ResolveAndForward(args, "GET", "/frame_cost", nullptr, caller, "Frame cost", done);
+                ResolveAndForward(args, "GET", "/frame_cost", nullptr, caller, "Frame cost", AppendFields(done));
                 return;
             }
             if (action == "vdac2_line_budget" || action == "vdac2_line_budget_set")
@@ -567,7 +578,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
             }
             if (action == "profile_status")
             {
-                ResolveAndForward(args, "GET", "/profiler/status", nullptr, caller, "Profiler status", done);
+                ResolveAndForward(args, "GET", "/profiler/status", nullptr, caller, "Profiler status", AppendFields(done));
                 return;
             }
 

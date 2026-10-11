@@ -48,7 +48,7 @@ void MemoryPagesVisWidget::createUI()
     setLayout(mainLayout);
 }
 
-void MemoryPagesVisWidget::setEmulator(Emulator* emulator)
+void MemoryPagesVisWidget::setEmulator(std::shared_ptr<Emulator> emulator)
 {
     _emulator = emulator;
     reset();

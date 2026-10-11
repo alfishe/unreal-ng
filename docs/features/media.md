@@ -40,6 +40,7 @@ common way to get a disk image rejected.
 | Profi | `fdd.a` … `fdd.d`, `tape`, `ide0.master`, `ide0.slave` (Profi IDE) |
 | ATM Turbo 2+ | `fdd.a` … `fdd.d`, `tape`, `ide0.master`, `ide0.slave` (ATM IDE) |
 | ZX-Evo | `fdd.a` … `fdd.d`, `tape`, `sd.zc` (`sd`), `ide0.master`, `ide0.slave` (NemoIDE) |
+| ZX Spectrum Next | `fdd.a` … `fdd.d`, `tape`, `sd.next0` (`sd`), `sd.next1`: the two SD sockets; `[NEXT] SdCard` is only the card put into an empty `sd.next0` at the power-on and at every reset |
 
 Every slot reports: id, kind, label, index, aliases, tags, whether it is removable and takes
 folders, the write-protect switch, its state (`empty`, `present`, `pending`, `detached`) and the

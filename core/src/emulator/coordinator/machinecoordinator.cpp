@@ -50,6 +50,7 @@ void MachineCoordinator::SetSession(ISessionSink* session)
     std::lock_guard<std::recursive_mutex> op(_opMutex);
     std::unique_lock<std::shared_mutex> ports(_portsMutex);
     _session = session;
+    _modeSession.store(session);
 }
 
 bool MachineCoordinator::Own(OpKind kind, IOpOwner* owner)
@@ -94,6 +95,45 @@ MachineMode MachineCoordinator::ModeLocked() const
     return _session ? _session->Mode() : MachineMode::Live;
 }
 
+void MachineCoordinator::Listen(IModeListener* listener)
+{
+    std::lock_guard<std::recursive_mutex> lock(_modeMutex);
+    if (listener && std::find(_listeners.begin(), _listeners.end(), listener) == _listeners.end())
+        _listeners.push_back(listener);
+}
+
+void MachineCoordinator::Unlisten(IModeListener* listener)
+{
+    std::lock_guard<std::recursive_mutex> lock(_modeMutex);
+    _listeners.erase(std::remove(_listeners.begin(), _listeners.end(), listener), _listeners.end());
+}
+
+void MachineCoordinator::SessionChanged()
+{
+    // Not under the ports' lock: TTD reports from inside an operation's session effect as well
+    std::lock_guard<std::recursive_mutex> lock(_modeMutex);
+    ModeState now;
+    if (ISessionSink* session = _modeSession.load())
+    {
+        now.mode = session->Mode();
+        now.replaying = session->Replaying();
+    }
+    if (now == _published)
+        return;
+    const ModeState from = _published;
+    _published = now;
+    // A copy: a listener may unregister itself (it is still told this once)
+    const std::vector<IModeListener*> listeners = _listeners;
+    for (IModeListener* listener : listeners)
+        listener->OnModeChanged(from, now);
+}
+
+ModeState MachineCoordinator::Published() const
+{
+    std::lock_guard<std::recursive_mutex> lock(_modeMutex);
+    return _published;
+}
+
 OpResult MachineCoordinator::WouldRefuse(const MachineOp& op) const
 {
     std::shared_lock<std::shared_mutex> ports(_portsMutex);
@@ -117,7 +157,9 @@ OpResult MachineCoordinator::WouldRefuseLocked(const MachineOp& op) const
     const PolicyDecision d = Decide(op, ModeLocked());
     const size_t index = static_cast<size_t>(op.kind);
     IOpOwner* owner = index < _owners.size() ? _owners[index] : nullptr;
-    if (d.refused)
+    if (_retired.load())
+        result.reason = kRetiredReason;
+    else if (d.refused)
         result.reason = d.reason;
     else if (owner == nullptr)
         result.reason = std::string("nothing on this machine does '") + OpKindName(op.kind) + "'";
@@ -152,7 +194,9 @@ OpResult MachineCoordinator::Run(MachineOp op)
         mode = ModeLocked();
         d = Decide(op, mode);
         owner = d.refused ? nullptr : _owners[static_cast<size_t>(op.kind)];   // Decide refuses a kind out of range
-        if (d.refused)
+        if (_retired.load())
+            refusal = kRetiredReason;
+        else if (d.refused)
             refusal = d.reason;
         else if (owner == nullptr)
             refusal = std::string("nothing on this machine does '") + OpKindName(op.kind) + "'";

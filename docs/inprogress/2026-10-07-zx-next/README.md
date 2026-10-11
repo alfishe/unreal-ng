@@ -56,6 +56,7 @@ something that can be shipped and checked from every automation surface.
 | [verification-program.md](verification-program.md) | the evidence grades (real board, FPGA source, other emulators), the catalog of public Next test suites, how they become one program, order of use per phase |
 | [esxdos-and-sd.md](esxdos-and-sd.md) | how esxDOS and NextZXOS read the card: DivMMC hardware and automap, the SPI / SD conversation, the API, the boot chain, the test layers |
 | [design-integration.md](design-integration.md) | where the Next's code goes: the `unreal-next-z80` library, one interface for z80 / z84c15 / z80n, the engine adapter, what stays out of shared code |
+| [research-divmmc-original-rtl.md](research-divmmc-original-rtl.md) | the original DivMMC (Mario Prato's CPLD source, schematic, programming model) against the Next's DivMMC: SPI engine, automap, `#E3`, reset, CONMEM versus MAPRAM |
 | [research-fpga-vhdl.md](research-fpga-vhdl.md) | the FPGA VHDL and the tbblue firmware read in N0: timing, contention, memory map, ports, tilemap, Layer 2, sprites, copper, DMA, interrupts, boot chain, test corpus |
 | [research-other-emulators.md](research-other-emulators.md) | MAME, jnext, ZEsarUX, CSpect: what each models and how it is built |
 | [research-cosim-first-diff.md](research-cosim-first-diff.md) | the co-simulation tools (`tools/machines/next/cosim`) and the first diff of the real boot against jnext: NR #8C AltROM missing |

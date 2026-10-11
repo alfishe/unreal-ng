@@ -63,7 +63,7 @@ What C needs from the GUI is that it **holds a `shared_ptr`, not a raw pointer**
 
 1. **`Emulator::Retire()`** (new), called by `EmulatorManager::RemoveEmulatorInstance()` and by `ShutdownAllEmulators()`
    in place of `Release()`, after `Stop()`. It contains the non-freeing part of today's `ReleaseNoGuard()`:
-   - `BeginRetirement()`; state `StateDestroying`, or a new `StateRetired` (to decide in phase 1).
+   - `BeginRetirement()`; state `StateRetired` (new; owner decision 2026-10-10).
    - `DetachHostInput()` for the keyboard and the mouse, release `_stepOverHostHold`, finish a pending step-over.
    - Unlink the coordinator session (`_coordinator->SetSession(nullptr)`) and disown the media manager's op owner.
    - Remove the instance's MessageCenter observers and clear the audio callback.
@@ -174,3 +174,29 @@ not a normal path: the warnings carry enough (instance id, which wait, how long,
 | A holder never drops: a retired machine stays in memory | Retired-alive counter and shutdown log (core §6); a test that removes 100 instances with the GUI bound and checks the counter returns to 0 |
 | ZX-Poly: the group removes slaves after the master | The same retire / free split per instance; the group's own test runs under the new order |
 | The GUI migration is large and touches many windows | Mechanical, phased per window group; the ratchet in [test-plan.md](test-plan.md) stops new raw reads during and after it |
+
+## As built (2026-10-10)
+
+What differs from the design above, and why:
+
+- **The `getcontext` ratchet is not driven to 0.** With the free at the last owner, a `GetContext()` through an
+  instance some holder keeps (`MainWindow::_emulator`, the binding, a dialog's `shared_ptr`) is safe for the
+  handler it runs in. The invariant that closes the class is: **no GUI object stores `Emulator*` /
+  `EmulatorContext*`** (ratchet `members` = 0, exceptions marked `lifetime-ok` with the reason). Rewriting the 131
+  remaining calls to `binding->context()` would change nothing about lifetime; the count stays as a ratchet so the
+  raw idiom does not spread.
+- **Dialogs have no "removed" banner.** A dialog left open on a removed instance shows it as it was; the arbiter and
+  the coordinator refuse changes, so a click does nothing. The banner is a UI nicety for later.
+- **The busy-GUI stress also selects.** With only the windows open, the GUI stayed bound to the first neighbour and
+  never to a removed instance: 15 minutes on master were clean, i.e. the stress did not reach #11.
+  `webapi_stress.py` now selects half of the instances through the CLI before deleting them
+  (`STRESS_SELECT_CLI_PORT`, set by `--busy-gui`).
+- **Found on the way** (fixed in the same change):
+  - offscreen platform: the macOS child-window docking messaged a window id that is not an `NSView` (crash on
+    the first tool window opened offscreen);
+  - the debugger's visualisation window kept the instance it was created with forever;
+  - `EmulatorBinding::m_emulator` was read on the MessageCenter and frame-end threads without synchronisation;
+  - the status bar and the FT812 window compared context addresses: a new context can reuse a removed one's
+    address.
+- **Not covered by tests:** the debugger window, the main window and the menu are not in unreal-qt-tests; the
+  busy-GUI stress covers them.

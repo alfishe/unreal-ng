@@ -26,7 +26,6 @@
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
-#include "emulator/guiemulatorcontext.h"
 #include "emulator/media/mediatargets.h"
 #include "emulator/soundmanager.h"
 #include "logviewer/logwindow.h"
@@ -250,6 +249,11 @@ protected:
     void adjust(QEvent* event, const QPoint& delta = QPoint{});
 
 private:
+    /// UNREAL_QT_STRESS_WINDOWS: a comma-separated list of debugger, ttd, media, network, slots, traffic, midi, tape,
+    /// log (or all), opened for the sanitizer stress. Unknown names are logged and skipped
+    void openStressWindows(const QString& list);
+    /// The TTD panel, the tool bar and the recording panel drop their reference to the unbound instance
+    void releasePanelHolders();
     /// A medium (floppy, tape, hard disk, card, CD) into the slot the core's plan
     /// names (media-drop-targets design §4-§6): `slot` when the user picked one,
     /// else the plan's default, else the slot chooser (the call ends there and
@@ -411,7 +415,6 @@ private:
     EmulatorManager* _emulatorManager = nullptr;
     EmulatorBinding* m_binding = nullptr;  // Central state binding for UI
     AppSoundManager* _soundManager = nullptr;
-    GUIEmulatorContext* _guiContext = nullptr;
     std::shared_ptr<Emulator> _emulator = nullptr;  // TODO: Remove after full binding migration
     /// Where the bound instance came from: the black box runs on the ones this window created
     EmulatorOrigin _emulatorOrigin = EmulatorOrigin::Adopted;

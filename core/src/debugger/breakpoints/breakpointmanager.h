@@ -1,7 +1,9 @@
 #pragma once
 #include <array>
+#include <atomic>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -116,6 +118,10 @@ typedef std::unordered_map<uint32_t, BreakpointDescriptor*> BreakpointMapByAddre
 typedef std::unordered_map<uint16_t, BreakpointDescriptor*> BreakpointMapByPort;
 typedef std::map<uint16_t, BreakpointDescriptor*> BreakpointMapByID;
 typedef std::map<uint8_t, BreakpointMapByAddress> BreakpointMapByBank;
+/// A copy of one breakpoint as it was when asked for: the manager's own descriptors change and go away on the
+/// emulation thread, so no surface ever holds them
+typedef std::shared_ptr<const BreakpointDescriptor> BreakpointSnapshot;
+typedef std::map<uint16_t, BreakpointSnapshot> BreakpointListByID;
 
 /// Hot-path state (hotpath-matching-design.md §3): per kind a gate and a one-bit-per-address filter.
 /// Read by the emulation thread without locks; written by BreakpointManager when the set changes.
@@ -170,6 +176,11 @@ struct BreakpointSpec
 
 /// endregion </Types>
 
+/// Threads: the surfaces (DeZog, ZRCP, GDB, WebAPI, CLI, Lua, Python, the GUI) call it from their own
+/// threads while the emulation thread runs the hot path (Handle*), which reads the painted tables and the
+/// descriptors without locks. So every change holds the CPU (Emulator::CpuHold: the main loop parked at an
+/// instruction boundary, no direct run elsewhere; free on the thread that drives the Z80) and then takes the
+/// manager's lock; every query takes the lock and returns copies (BreakpointSnapshot), never the descriptors
 class BreakpointManager
 {
     // region <ModuleLogger definitions for Module/Submodule>
@@ -196,8 +207,13 @@ protected:
     // Note: no breakpoint IDs reuse allowed
     uint16_t _breakpointIDSeq = 0;
 
-    // Last triggered breakpoint ID (for automation API queries)
-    uint16_t _lastTriggeredBreakpointID = BRK_INVALID;
+    // Last triggered breakpoint ID (for automation API queries): written by the hot path, read by the surfaces
+    std::atomic<uint16_t> _lastTriggeredBreakpointID{BRK_INVALID};
+
+    // The surfaces' threads against each other and against a change the emulation thread makes. The hot path
+    // never takes it: a change holds the CPU first (ChangeScope)
+    mutable std::recursive_mutex _mutex;
+    class ChangeScope;
 
     // Hot-path state for fast breakpoint checks: the gates and the filters (hotpath-matching-design.md §3)
     BreakpointHotState _hotState;
@@ -256,20 +272,21 @@ public:
     /// (range order, a physical range inside one page, the page exists, masks only on ports, a hit target
     /// for the counting modes) and adds it. BRK_INVALID with the reason in `error`
     uint16_t AddBreakpoint(const BreakpointSpec& spec, std::string& error);
-    BreakpointDescriptor* GetBreakpointById(uint16_t breakpointID);
+    /// A copy of the breakpoint, null for an unknown id
+    BreakpointSnapshot GetBreakpointById(uint16_t breakpointID) const;
     bool RemoveBreakpoint(BreakpointDescriptor* descriptor);
     bool RemoveBreakpointByID(uint16_t breakpointID);
 
-    size_t GetBreakpointsCount();
+    size_t GetBreakpointsCount() const;
 
     // Get/clear last triggered breakpoint (for automation APIs)
     uint16_t GetLastTriggeredBreakpointID() const
     {
-        return _lastTriggeredBreakpointID;
+        return _lastTriggeredBreakpointID.load(std::memory_order_relaxed);
     }
     void ClearLastTriggeredBreakpoint()
     {
-        _lastTriggeredBreakpointID = BRK_INVALID;
+        _lastTriggeredBreakpointID.store(BRK_INVALID, std::memory_order_relaxed);
     }
 
     /// Structured status info for automation APIs
@@ -365,27 +382,30 @@ public:
     }
     void DisarmExecPass() { _execPassArmed = false; }
     /// Many changes at once (an import, a script setting hundreds of breakpoints): inside a batch the hot path
-    /// is repainted and the surfaces told once, at EndBatch. Batches nest
+    /// is repainted and the surfaces told once, at EndBatch. Batches nest. Use Batch from another thread than the
+    /// emulation one: it holds the CPU for the whole batch, so the hot path never runs on tables painted before a
+    /// removal inside it
     void BeginBatch();
     void EndBatch();
     class Batch
     {
     public:
-        explicit Batch(BreakpointManager& manager) : _manager(manager) { _manager.BeginBatch(); }
-        ~Batch() { _manager.EndBatch(); }
+        explicit Batch(BreakpointManager& manager);
+        ~Batch();
         Batch(const Batch&) = delete;
         Batch& operator=(const Batch&) = delete;
 
     private:
         BreakpointManager& _manager;
+        std::unique_ptr<ChangeScope> _scope;
     };
     /// A memory breakpoint (memoryType: BRK_MEM_* bits) at the address, bound to `pageSpec` when it is not
     /// empty. BRK_INVALID with the reason in `error` for a bad or missing page
     uint16_t AddMemoryBreakpointInPageSpec(uint16_t z80address, uint8_t memoryType, const std::string& pageSpec,
                                            std::string& error);
 
-    // Breakpoint listing
-    const BreakpointMapByID& GetAllBreakpoints() const;
+    // Breakpoint listing: copies, by id
+    BreakpointListByID GetAllBreakpoints() const;
     std::string FormatBreakpointInfo(uint16_t breakpointID) const;
     std::string GetBreakpointListAsString(const std::string& newline = "\n") const;
 
@@ -471,6 +491,8 @@ public:
     // region <Helper methods>
 protected:
     uint16_t GenerateNewBreakpointID();
+    /// Removes and frees every breakpoint (the caller holds what a change holds)
+    void DeleteAllBreakpoints();
 
     uint16_t AddMemoryBreakpoint(BreakpointDescriptor* descriptor);
     uint16_t AddPortBreakpoint(BreakpointDescriptor* descriptor);

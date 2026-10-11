@@ -107,12 +107,23 @@ The same commands. 4.42 - 4.5 report `Symbols:#0005-#FF6C-#C000`; 3.8c shows a h
 send ENTER before the first command), has no `DB` (the line errs with code `#0D`: write `DEFB`) and says `System
 data mismatch` when asked to assemble with no text.
 
-### A host source into ALASM (5.09)
+### A host source into ALASM (every build, 3.8c to 5.09)
 
 At the `A>` prompt, `asm_source {"action":"sync_inject","path":"/abs/main.asm"}` writes a sjasmplus source (or any
 dialect with `from`) as ALASM's current text; `a` + ENTER then assembles it. Refused in the editor and while a
-command runs. Whether ALASM waits for a command shows on its stack: the return addresses `#91E3` (the line input)
-and `#9707` (the command loop) follow each other above SP. A command, the editor included, has `#9733` in that slot.
+command runs. Whether ALASM waits for a command shows on its stack: the return addresses of the line input and the
+command loop follow each other above SP (5.09: `#91E3`, `#9707`; the other builds in
+[research-sjasmplus-to-alasm.md](../../docs/inprogress/2026-10-05-unreal-asm/research-sjasmplus-to-alasm.md) §4). A
+command, the editor included, has another address in that slot. Read with the 64-column loaders.
+
+A `path` source brings the files it INCLUDEs (relative to the file that INCLUDEs each). Each goes into an ALASM text page
+of its own, and its INCLUDE is written `INCLUDE "NAME",page`: ALASM then finds the text loaded and reads no disk. The
+reply lists them under `includes`. 5.05-5.09 have pages 4 and 0 free, 4.5 pages 0 and 3, 5.00 / 4.42-4.46 / 3.8c page 4: a
+project with more sources is refused (put it onto the disk with `zxasm inject main.asm disk.trd --assembler ...`).
+
+`asm_source {"action":"sync_push_watch","path":"/abs/main.asm"}` does the same on every save of the file (or of a file
+it INCLUDEs). In the editor the write waits until you leave it (Extend, `q`, ENTER); a text you changed in ALASM is a
+conflict and stays unless `force`.
 Details and the oracle script:
 [asm-sources.md](../analysis/asm-sources.md#writing-a-host-source-into-the-assembler-part-b).
 
@@ -126,7 +137,8 @@ Details and the oracle script:
 zxasm inject main.asm alasm-5.09.szx -o work.szx       # main.asm (sjasmplus) as ALASM's text; load work.szx, type a + ENTER
 zxasm probe work.szx                                   # alasm-5.09  100  MAIN, 1242 bytes  idle
 zxasm extract work.szx --to sjasmplus -o back.asm      # and back
-zxasm inject main.asm disk.trd --assembler alasm-5.09  # MAIN.H on a disk (.scl .fdi .udi .td0 too): w + main + ENTER in ALASM loads it
+zxasm inject main.asm disk.trd --assembler alasm-5.09  # MAIN.H on a disk (.scl .fdi .udi .td0 too): w + main + ENTER in ALASM loads it;
+                                                       # the files main.asm INCLUDEs as files of their own beside it
 ```
 
 The same on a surface: `asm_source {"action":"sync_inject","path":"/abs/main.asm","snapshot":"/abs/alasm-5.09.szx","output":"/abs/work.szx"}`
@@ -152,9 +164,10 @@ those of [tasm.md](tasm.md#webapi) with `RUN "alasm64"` and the ALASM commands a
 - **`IF` before 5.03 is `IF0`**: the same code `#D3`, renamed in 5.03; it takes the block when the expression is 0
   (ALASM 4.2's help, checked in ALASM 5.0). `IFN` takes it when not 0.
 - **`UNTIL` (4.5 … 5.05) and `UNTIL0` (5.07 …)** are one keyword (`#D2`): `zxasm encode --version` picks the spelling.
-- **`ADD B` puts nothing down in 5.09**: write `ADD A,B` (also ADC, SBC). Seen when the instruction oracle came out one
+- **`ADD B` is an error in 5.09** (code `#00`, nothing put down): write `ADD A,B` (also ADC, SBC; `ADD 5`, `ADD (HL)`, `ADD HX` too). Seen when the instruction oracle came out one
   byte short per `ADD x` / `ADD A,x` pair.
-- **`DW "AB"` puts down `41 42`** (the characters), not the word `#4142` other assemblers make of `'AB'`.
+- **`"AB"` is `#4241`**: the first character low, the last high (`DW "AB"` = `41 42`, `LD HL,"AB"` = `21 41 42`,
+  `DW "ABC"` = `41 43`), not the `#4142` other assemblers make of `'AB'`.
 - **A template saved in the editor is refused**: the idle rule wants the `A>` prompt (`zxasm probe` says `busy`).
 - **unreal-ng's `.z80` writer** can start a run right after a single `ED`, and the page then reads wrong in every
   reader (reported). Prefer `.szx` for templates; `zxasm probe` on each format shows whether they agree.

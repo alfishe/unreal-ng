@@ -16,7 +16,7 @@ RAINBOW_COLORS = [
 BG_COLOR = (0x3A, 0x3D, 0x4A)
 BADGE_COLOR = (0x2A, 0x2D, 0x3A)
 
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), 'app')
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', '..', 'scratch', 'poc-014-icons')
 
 
 def draw_rounded_rect(draw, xy, radius, fill):

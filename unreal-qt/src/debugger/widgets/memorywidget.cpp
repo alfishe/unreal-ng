@@ -114,7 +114,7 @@ void MemoryWidget::createUI()
     setLayout(mainLayout);
 }
 
-void MemoryWidget::setEmulator(Emulator* emulator)
+void MemoryWidget::setEmulator(std::shared_ptr<Emulator> emulator)
 {
     _emulator = emulator;
 

@@ -65,7 +65,8 @@ in the emulator where marked.
 | ALASM 4.4x writes macro parameters as `:0`…`:9` (its SAVEOBJ 2.1) | read as `\0`…`\9` inside a macro |
 | The code 5.07 shows as `DD` is `DEFM` in older versions: `DD "text"` | a string |
 | A word in column 0 before `EQU` is a label even when a later version made it a keyword (`DD EQU 5`); `DATA:` is `DATA` | label |
-| A character constant is a 16-bit word: `"ABC"` is `"BC"` | its value |
+| A character constant is a 16-bit word, the first character in the low byte and the last in the high byte: `"AB"` = `#4241`, `"ABC"` = `#4341` (ALASM 5.09 in unreal-ng: `LD HL,"AB"` = `21 41 42`, `DW "ABC"` = `41 43`) | its value |
+| `ADD`, `ADC`, `SBC` without `A,` (`ADD B`, `ADC 5`, `SBC (HL)`) are errors (code `#00`): nothing is assembled (ALASM 5.09) | the line as a comment, with a warning |
 | A bare `DISPLAY` prints an empty line | `DISPLAY ' '` |
 | Macros: `\0`…`\9`; `\P` returns parameter 0 and shifts the numbering, `\R` restores it; `\C` is the symbol at the parameter pointer, `\N` moves it, `\S<c>` the text up to `<c>` (help, "MACRO") | named parameters `_arg0`…; a macro that glues a parameter to a name or uses `\P \R \C \N \S` is expanded at its calls |
 | A call may give fewer arguments than the macro uses, or more | empty arguments added; the macro declares as many parameters as its longest call (sjasmplus needs them to match) |

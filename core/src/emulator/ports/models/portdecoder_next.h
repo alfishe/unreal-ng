@@ -14,6 +14,7 @@
 #include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/io/z80n/z80nengine.h"
 #include "emulator/io/sdcard/sdcardspi.h"
+#include "emulator/media/mediaslot.h"
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/models/portdecoder_spectrum128.h"
 
@@ -113,6 +114,7 @@ private:
     /// What the machine type allows: 48K has no paging ports, 128K / Pentagon no #1FFD, +3 all
     bool PagingAllowed(uint16_t port) const;
     uint8_t SpiRead();
+    void SpiSettle(double now);
     void SpiWrite(uint8_t value);
     void SpiSelect(uint8_t value);
     /// Time in 3.5 MHz T-states since the machine started (the frame's own t is in CPU clocks of the current speed)
@@ -124,9 +126,30 @@ private:
     std::map<uint16_t, PortUse>* _inLog = nullptr;
     std::map<uint16_t, PortUse>* _outLog = nullptr;
     SdCardSpi _sd[2];
+
+    /// The media manager's slots "sd.next0" / "sd.next1": a card is never opened by the decoder itself, every insert goes through the manager
+    class SdSlot : public IMediaSlot
+    {
+    public:
+        SdSlot(PortDecoder_Next& owner, unsigned index);
+        const SlotDescriptor& Descriptor() const override { return _descriptor; }
+        void Attach(Medium& medium) override;
+        void Detach() override;
+        bool IsBusy() const override;
+
+    private:
+        PortDecoder_Next& _owner;
+        unsigned _index;
+        SlotDescriptor _descriptor;
+    };
+    SdSlot _sdSlot0{*this, 0};
+    SdSlot _sdSlot1{*this, 1};
+    SdSlot& Slot(unsigned index) { return index & 1 ? _sdSlot1 : _sdSlot0; }
     uint8_t _pendingTiming = 0;  ///< applied at the frame end
     int _spiSelected = -1;
-    uint8_t _spiRx = 0xFF;
+    uint8_t _spiRx = 0xFF;       ///< miso_dat: the last finished byte
+    uint8_t _spiPending = 0xFF;  ///< the answer of the byte in flight, visible when it is done
+    bool _spiPendingValid = false;
     double _spiBusyUntil = 0;
     double _spiBusyRatio = 1.0;  ///< the CPU speed ratio the byte in flight was timed at
     uint32_t _spiTooFast = 0;

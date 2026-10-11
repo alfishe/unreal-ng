@@ -8,6 +8,7 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "debugger/asm/diskfiles.h"
+#include "debugger/asm/sync/synccontrol.h"
 #include "debugger/asm/sync/syncshared.h"
 #include "debugger/debugmanager.h"
 #include "debugger/labels/labelmanager.h"
@@ -15,6 +16,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/notifications.h"
+#include "unrealasm/dialect.h"
 #include "unrealasm/symbols/fromsource.h"
 #include "unrealasm/sync/session.h"
 
@@ -59,6 +61,36 @@ void Post(EmulatorContext* context, const std::string& event, const std::string&
     payload->hints = static_cast<uint32_t>(hints);
     MessageCenter::DefaultMessageCenter().Post(NC_ASM_SYNC, payload, true);
 }
+/// The files of a host project as the push watch sees them: the main source and every path its INCLUDEs lead to
+/// (HostProject; a missing one too), each with its size and time. `files` counts them
+std::string ProjectSignature(const std::string& path, const std::string& from, size_t& files)
+{
+    namespace fs = std::filesystem;
+    const fs::path main(std::u8string(path.begin(), path.end()));
+    std::string signature;
+    files = 0;
+    const auto read = [&](const fs::path& file) {
+        std::error_code sizeFailed, timeFailed;
+        const uintmax_t size = fs::file_size(file, sizeFailed);
+        const fs::file_time_type time = fs::last_write_time(file, timeFailed);
+        const std::u8string name = file.u8string();
+        signature.append(name.begin(), name.end());
+        signature += sizeFailed || timeFailed ? std::string("|missing\n")
+                                              : "|" + std::to_string(size) + "|" + std::to_string(static_cast<long long>(time.time_since_epoch().count())) + "\n";
+        ++files;
+        std::ifstream in(file, std::ios::binary);
+        return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    };
+    const std::vector<uint8_t> bytes = read(main);
+    SourceDocument document = SourceDocument::FromText(std::string(bytes.begin(), bytes.end()), from);
+    for (SourceLine& line : document.lines)
+        if (!line.text.empty() && line.text.back() == '\r')
+            line.text.pop_back();
+    Diagnostics ignored;
+    HostProject(document, [&](const std::string& name) { return read(main.parent_path() / fs::path(std::u8string(name.begin(), name.end()))); },
+                ignored);
+    return signature;
+}
 }  // namespace
 
 AsmSyncService::AsmSyncService(EmulatorContext* context) : _context(context) {}
@@ -66,6 +98,151 @@ AsmSyncService::AsmSyncService(EmulatorContext* context) : _context(context) {}
 AsmSyncService::~AsmSyncService()
 {
     Stop();
+    StopPush();
+}
+
+void AsmSyncService::StartPush(const PushOptions& options)
+{
+    StopPush();
+    std::lock_guard<std::mutex> lock(_mutex);
+    _push = options;
+    _pushStop = false;
+    _pushing = true;
+    _pushState = "waiting";
+    _pushes = 0;
+    _pushFiles = 0;
+    _pushLast = StateNode::Object();
+    _pushError.clear();
+    _pushThread = std::thread([this, options]() { RunPush(options); });
+}
+
+void AsmSyncService::StopPush()
+{
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (!_pushThread.joinable())
+            return;
+        _pushStop = true;
+    }
+    _pushWake.notify_all();
+    _pushThread.join();
+    std::lock_guard<std::mutex> lock(_mutex);
+    _pushing = false;
+    _pushState = "off";
+}
+
+bool AsmSyncService::Pushing() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _pushing;
+}
+
+StateNode AsmSyncService::PushStatusValue() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    StateNode body = StateNode::Object();
+    body["pushing"] = _pushing;
+    body["state"] = _pushState;
+    StateNode options = StateNode::Object();
+    options["path"] = _push.path;
+    options["from"] = _push.from;
+    options["assembler"] = _push.assembler;
+    options["title"] = _push.title;
+    options["force"] = _push.force;
+    options["interval"] = static_cast<unsigned>(_push.intervalMs);
+    options["quiet"] = static_cast<unsigned>(_push.quietMs);
+    body["options"] = std::move(options);
+    body["files"] = static_cast<uint64_t>(_pushFiles);
+    body["pushes"] = static_cast<uint64_t>(_pushes);
+    body["last"] = _pushLast;
+    body["error"] = _pushError;
+    return body;
+}
+
+void AsmSyncService::RunPush(PushOptions options)
+{
+    std::vector<std::vector<uint8_t>> written;   // the files of the last write: the watch's own text in the guest
+    std::string seen, handled = "\x01";          // nothing handled yet: the first look is due
+    uint64_t seenAt = 0;
+    bool pendingPosted = false;
+    while (true)
+    {
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            if (_pushStop)
+                return;
+        }
+        size_t files = 0;
+        const std::string signature = ProjectSignature(options.path, options.from, files);
+        const uint64_t now = NowMs();
+        if (signature != seen)
+        {
+            seen = signature;
+            seenAt = now;
+        }
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            _pushFiles = files;
+        }
+        if (seen != handled && now - seenAt >= options.quietMs)
+        {
+            AsmRequest request;
+            request.verb = "sync-inject";
+            request.options["path"] = options.path;
+            request.options["from"] = options.from;
+            if (!options.assembler.empty())
+                request.options["assembler"] = options.assembler;
+            if (!options.title.empty())
+                request.options["title"] = options.title;
+            if (options.force)
+                request.options["force"] = "true";
+            const AsmReply reply = SyncControl(_context).PushInject(request, written);
+            // Written; refused for the user's changes in the guest (stays until the file changes again); refused
+            // while the assembler is busy (retried); or not written at all (the conversion, too many sources, an
+            // assembler without a writer or an idle rule)
+            const bool busy = reply.message.find("not waiting for a command") != std::string::npos ||
+                              reply.message.find("no coherent moment") != std::string::npos;
+            std::string state, event;
+            if (reply.Ok())
+            {
+                state = event = "pushed";
+                handled = seen;
+                pendingPosted = false;
+            }
+            else if (reply.error == AsmControlError::Refused && reply.message.find("changes not saved") != std::string::npos)
+            {
+                state = event = "conflict";
+                handled = seen;
+            }
+            else if (reply.error == AsmControlError::Refused && busy)
+            {
+                state = "pending";
+                if (!pendingPosted)
+                    event = "pending";
+                pendingPosted = true;
+            }
+            else
+            {
+                state = "error";
+                event = "push-error";
+                handled = seen;
+            }
+            const StateNode* assembler = reply.body.find("assembler");
+            {
+                std::lock_guard<std::mutex> lock(_mutex);
+                _pushState = state;
+                _pushes += reply.Ok() ? 1 : 0;
+                _pushLast = reply.body;
+                _pushLast["ok"] = reply.Ok();
+                _pushLast["message"] = reply.message;
+                _pushError = reply.Ok() ? std::string() : reply.message;
+            }
+            if (!event.empty())
+                Post(_context, event, assembler ? assembler->s : options.assembler);
+        }
+        std::unique_lock<std::mutex> lock(_mutex);
+        _pushWake.wait_for(lock, std::chrono::milliseconds(options.intervalMs), [this]() { return _pushStop; });
+    }
 }
 
 void AsmSyncService::Start(const WatchOptions& options)
