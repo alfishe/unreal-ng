@@ -39,7 +39,7 @@ Peripheral ids are `ttd::PeripheralId` (one byte, v1); region ids are `ttd::TTDR
 | ZX-Evo AVR EEPROM | ATM3, TSL | — (v1 only: not recorded) | region 15 `EvoAvrEeprom`, compared at each capture | R | 4 KB | constant after the first capture | ok in the engine | `memory/atm/evoavr.cpp` `TTDRegions` |
 | SMUC NVRAM (EEPROM contents) | Scorpion, ProfScorpion | — (v1 only: not recorded) | region 16 `SmucEeprom`, compared at each capture | R | 2 KB | constant after the first capture | ok in the engine | `io/rtc/smucnvram.cpp` `TTDRegions` |
 | ZX-Evo font RAM | ATM3 | whole blob (id 22) | blob (region candidate) | R | 2054 B | constant after the first capture | ok | |
-| Disk sectors written while recording | all with disks | barrier marker only | per [decision 25](engine-decisions.md#e-machines-and-devices): a media version per checkpoint (planned) | R | | | gap 11 | `emulator/media/mediamanager.cpp:651` |
+| Disk sectors written while recording | all with disks | barrier marker only | a media version per checkpoint; the media manager's undo log keeps each written sector / floppy track as it was, and the restore sets the medium to the checkpoint's version | R | | | ok (2026-10-10) | `emulator/media/mediaundolog.h`; `mediamanager.cpp` `SetHead`; `timetravelcontroller.cpp` `SetMediaToCheckpoint` |
 
 ## 2. CPU and machine core
 
@@ -83,7 +83,7 @@ One row per device blob; the device's memory is in section 1.
 | ZX-Evo ROM flash command state (mode, toggle, DQ7 source, erase sectors, pending program, window and busy ends in base t-states) | TSL, ATM3 | EvoFlash (id 61, 33 bytes) | blob | R | 37 B | constant after the first capture | ok | `debugger/ttd/atm/ttdevoflash.cpp`; `emulator/memory/atm/evoflash.cpp` |
 | ZX-Evo AVR volatile bytes (EEPROM window, ext type, LEDs) and the /WAIT ports' timing (`EvoAvrWait`: main-loop phase, EEPROM write end; #xxEF and #BFF7 share it) | TSL, ATM3 | EvoAvrVolatile (id 55, v2, 20 bytes) | blob | R | 24 B | every frame, 6.5 B/frame (1.00 versions/frame) | ok | `debugger/ttd/atm/ttdevoavrvolatile.cpp` |
 | IDE / ATA / ATAPI channel | any `[HDD] Scheme` | id 17 | blob | R | 4256 B–8500 B | rare, 0.2 B/frame (0.01 versions/frame) | ok | `debugger/ttd/ide/ttdatachannel.cpp:68/89` |
-| ATA write-protect switch | IDE | — | — | R | | | gap 12 | `io/ide/ata/atadevice.h:196` |
+| ATA write-protect switch | IDE | — | the slot's write-protect switch as a media version (any slot: IDE, SD, floppy) | R | | | ok (2026-10-10) | `io/ide/ata/atadevice.h:150`; `mediamanager.cpp` `ApplyProtect` |
 | DS12887 / DS1685 real-time clock (emulated time while recording) | ATM3, TSL, Profi v5, Scorpion, Sprinter | id 18 | blob | R | 340 B | rare, 0.3 B/frame (0.08 versions/frame) | ok | `rtc/ds12887.cpp:584/620` |
 | SMUC serial EEPROM link, IDE window registers | Scorpion, ProfScorpion | Smuc (id 54) | blob | R | 40 B | constant after the first capture | ok | `io/rtc/smucnvram.h` `LinkState` |
 | ZX-Evo PS/2 keyboard | ATM3, TSL | id 19 | blob | R | 60 B | constant after the first capture | ok | |
@@ -118,7 +118,7 @@ One row per device blob; the device's memory is in section 1.
 | Input events (keys, mouse, PC keys) | all | input journal | event stream | R | | | ok | `ttdinputjournal.cpp` |
 | Network payload records | network cards | input journal, renumbered on eviction | event payloads, absolute numbers, kept while a checkpoint refers to them ([decision 24](engine-decisions.md#e-machines-and-devices)) | R | | | gap 1 (v1 only) | `ttdinputjournal.cpp:110-134` |
 | Memory writes (write journal) | all | ring | derived index ([decision 17](engine-decisions.md#c-what-the-engine-provides)) | D | | | ok | |
-| Media changes, write-protect toggles, queued swaps | all with media | barrier / invalidation | events + media versions | R | | | gaps 11–13 | `mediamanager.cpp:516, 678, 959-975`; `io/fdc/floppydriveslot.cpp:13` |
+| Media changes, write-protect toggles, queued swaps | all with media | barrier / invalidation | events (`MediaChange`, at the frame boundary where they land) + media versions | R | | | ok (2026-10-10) | `mediamanager.cpp` `ApplySlot`, `NoteChangeLanded`, `FollowReplay` |
 | Clock / speed changes | all | ends the session | event ([decision 20](engine-decisions.md#e-machines-and-devices)) | R | | | ok | `emulator/emulator.cpp:650, 969, 1702, 1973, 2168` |
 
 ## 5. Telemetry
@@ -167,7 +167,7 @@ None of these is read back by emulation. Each becomes an optional frame-boundary
 |---|---|---|
 | Audio ring, render layers, DC filters (AY, Covox, beeper edges) | Muted during replay; the render layer resets on restore. One audible edge or DC step after a seek is allowed | `timetravelmanager.cpp:1705-1716` |
 | Host framebuffer | Composed by replay; the present queue is flushed after a seek | `timetravelmanager.cpp:2396-2411`; `ttddisplayparticipant.h` |
-| Disk image files, write-through raw images, host folders | Not versioned today (gap 11); planned as media versions | `io/storage/rawimage.cpp:107`; `io/storage/hostfolder/hostfolderfat.cpp:383-405` |
+| Disk image files, write-through raw images, host folders | The medium in memory is versioned (the undo log); a write-through image's file gets what the medium holds when the machine is live again (a seek's set-back too, until M5 switches it to session access at a cut) | `io/storage/rawimage.cpp:107`; `io/storage/hostfolder/hostfolderfat.cpp:383-405` |
 | Network sockets, DNS, DHCP | Through `VirtualNetwork`, recorded as events with payload; settings changes refused while recording | `io/network/networkmanager.cpp:383` |
 | Real-time clocks | Emulated time while recording | `debugger/ttd/ttdds12887.cpp:40-48` |
 | Card clocks (GS, NeoGS) | Config × speed multiplier; recording holds 1× | |
@@ -188,9 +188,9 @@ Ordered by severity. "Breaks replay" means a restore or a replay can give a stat
 | 8 | *Fixed 2026-10-02 except the contents (gap 10):* SMUC: `pFFBA` / `p7FBA`, IDE registers, NVRAM I2C state and contents not stored | RTC and IDE writes routed wrongly after a seek | breaks replay |
 | 9 | *Fixed 2026-10-02:* TS-Conf has no serializer for the ZX-Evo AVR volatile bytes | EEPROM window and ext type wrong after a seek | breaks replay |
 | 10 | *Engine: fixed 2026-10-02 (regions 15, 16); v1 only otherwise:* ZX-Evo AVR EEPROM and SMUC EEPROM not recorded | NVRAM writes survive a seek back in v1 | v1 only |
-| 11 | Sectors written while recording are only barriers; host-side image changes reach replay | A backward seek reads post-write sectors | breaks replay |
-| 12 | Write-protect toggles not recorded; ATA protect switch in no checkpoint | | breaks replay |
-| 13 | A media swap queued before recording can land mid-recording without a marker | | breaks replay |
+| 11 | *Fixed 2026-10-10:* sectors written while recording are only barriers; host-side image changes reach replay. Now the media manager's undo log keeps each written sector and floppy track, the restore sets every medium to the checkpoint's version, a replay's writes move the version along | A backward seek reads post-write sectors | breaks replay |
+| 12 | *Fixed 2026-10-10:* write-protect toggles not recorded; ATA protect switch in no checkpoint. Now a toggle while recording lands at the frame boundary as an event and a media version; a seek sets the switch, a replay meets it at its frame | | breaks replay |
+| 13 | *Fixed 2026-10-10 (M3):* a media swap queued before recording can land mid-recording without a marker | | breaks replay |
 | 14 | *Fixed 2026-10-02:* ESP module `_zxLine` not restored, reapplied stale | | breaks replay |
 | 15 | ZX-Evo F12 soft reset reads the host clock | Not sealed | fixed 2026-10-07: the hold is measured in emulated time and is part of the EvoPs2 state (layout 2, 56 bytes) |
 | 16 | Edge cases (*NMI pending and +3 floating-bus byte fixed 2026-10-02; RZX playback position 2026-10-04*): disk autostart hook (fixed 2026-10-07: its rewrite is a recorded edit, a replay never runs the hook), network state marked "incomplete" with a warning only (fixed 2026-10-08: what the fixed arrays do not hold and bytes received before the recording go into a blob tail, `netstatetail.h`) | | closed |

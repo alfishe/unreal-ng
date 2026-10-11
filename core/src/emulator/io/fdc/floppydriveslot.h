@@ -8,7 +8,9 @@
 /// image. The slots are registered for the drives the machine's active disk
 /// controller serves: four for the Beta Disk WD1793, two (A and B) on the +3,
 /// whose uPD765 takes over the same drives. Guest writes reach the manager
-/// through NoteSlotWrite (a TTD replay barrier, once per frame).
+/// through NoteSlotWrite (a TTD replay barrier, once per frame); before a
+/// controller changes a track, BeforeTrackWrite lets the manager keep it (its
+/// undo log, while a TTD history exists).
 /// Design: docs/inprogress/2026-09-28-storage-manager/integration-floppy.md §2-§3.
 
 #include <cstdint>
@@ -17,6 +19,7 @@
 #include <vector>
 
 #include "emulator/media/mediaslot.h"
+#include "unrealdisk/diskimage.h"
 
 class EmulatorContext;
 
@@ -31,6 +34,8 @@ public:
     /// A controller reports a guest write to `drive` (emulation thread):
     /// the manager's barrier when there is one, else a direct TTD marker
     static void NoteSlotWrite(EmulatorContext* context, uint8_t drive, const char* detail);
+    /// A controller is about to change `track` of `drive`'s disk (emulation thread): the manager keeps it as it is
+    static void BeforeTrackWrite(EmulatorContext* context, uint8_t drive, const unrealdisk::DiskImage::Track* track);
 
     uint8_t Drive() const { return _drive; }
 

@@ -739,10 +739,11 @@ MediaTransferReport MediaManager::AdoptMediaSet(MediaTransfer transfer)
             state.emptyFramesLeft = 0;
             state.attached = std::move(entry.medium);
             state.writeProtect = entry.writeProtect;
+            ForgetVersions(state);
             if (HostWriteHold* hold = state.attached->Hold())
                 hold->SetHolding(_holdHostWrites);
             if (MediaReadTap* tap = state.attached->ReadTap())
-                tap->Bind(&_readJournal, entry.slotId);
+                tap->Bind(&_readJournal, entry.slotId, this);
             if (CdImage* cd = state.attached->Cd())
                 cd->BindReadJournal(&_readJournal, entry.slotId);
             state.slot->Attach(*state.attached);
@@ -867,9 +868,18 @@ MediaResult MediaManager::SetWriteProtect(const std::string& slotId, bool on)
     auto it = _slots.find(slotId);
     if (it == _slots.end())
         return MediaResult::Fail(MediaError::UnknownSlot, "no slot '" + slotId + "' on this machine");
-    it->second.writeProtect = on;
-    if (it->second.attached)
-        it->second.slot->SetWriteProtectSwitch(on);
+    SlotState& state = it->second;
+    // While the user's recording runs the toggle is an event of the recording: it lands at the next frame boundary,
+    // where a replay meets it again (M3, gap 12)
+    const ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
+    if (ttd && ttd->RecordsMediaChanges() && ttd->IsRecording())
+    {
+        state.pendingProtect = on;
+        _revision++;
+        return MediaResult::Success();
+    }
+    state.pendingProtect.reset();
+    ApplyProtect(slotId, state, on);
     _revision++;
     return MediaResult::Success();
 }
@@ -1042,6 +1052,8 @@ void MediaManager::ApplyPending()
     std::vector<std::unique_ptr<Medium>> retired;
     {
         std::lock_guard<std::recursive_mutex> lock(_mutex);
+        const ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
+        _historyExists.store(ttd && ttd->HasHistory(), std::memory_order_relaxed);
         FollowReplay();   // a replay that reached the frame a medium came in: the medium is back for its device
         for (auto& [id, state] : _slots)
         {
@@ -1057,19 +1069,160 @@ void MediaManager::ApplyPending()
     _applied.notify_all();
 }
 
+/// The medium of one slot, unit by unit, for its undo log: block sectors under the read tap (a seek's change is not
+/// a read of the recording), floppy tracks, the write-protect switch
+class MediaManager::SlotUnits : public MediaUndoLog::IUnits
+{
+public:
+    explicit SlotUnits(SlotState& state) : _state(state) {}
+
+    bool Read(MediaUndoLog::Unit unit, uint64_t index, MediaUndoLog::Image& out) override
+    {
+        switch (unit)
+        {
+            case MediaUndoLog::Unit::Sector:
+            {
+                IBlockDevice* device = Device();
+                std::vector<uint8_t> bytes(IBlockDevice::kSectorSize);
+                if (!device || !device->ReadSector(index, bytes.data()))
+                    return false;
+                out = std::move(bytes);
+                return true;
+            }
+            case MediaUndoLog::Unit::Track:
+            {
+                const DiskImage::Track* track = Track(index);
+                if (!track)
+                    return false;
+                out = static_cast<const DiskImage::RawTrack&>(*track);
+                return true;
+            }
+            case MediaUndoLog::Unit::Protect:
+                out = _state.writeProtect;
+                return true;
+        }
+        return false;
+    }
+
+    bool Write(MediaUndoLog::Unit unit, uint64_t index, const MediaUndoLog::Image& image) override
+    {
+        switch (unit)
+        {
+            case MediaUndoLog::Unit::Sector:
+            {
+                IBlockDevice* device = Device();
+                const auto* bytes = std::get_if<std::vector<uint8_t>>(&image);
+                return device && bytes && bytes->size() == IBlockDevice::kSectorSize &&
+                       device->WriteSector(index, bytes->data());
+            }
+            case MediaUndoLog::Unit::Track:
+            {
+                DiskImage::Track* track = Track(index);
+                const auto* raw = std::get_if<DiskImage::RawTrack>(&image);
+                if (!track || !raw)
+                    return false;
+                static_cast<DiskImage::RawTrack&>(*track) = *raw;
+                track->reindex();  // the sector index points into the stream
+                track->markDirty();
+                return true;
+            }
+            case MediaUndoLog::Unit::Protect:
+            {
+                const auto* on = std::get_if<bool>(&image);
+                if (!on)
+                    return false;
+                _state.writeProtect = *on;
+                if (_state.attached && !_state.heldForReplay)
+                    _state.slot->SetWriteProtectSwitch(*on);
+                return true;
+            }
+        }
+        return false;
+    }
+
+private:
+    IBlockDevice* Device()
+    {
+        if (!_state.attached)
+            return nullptr;
+        if (MediaReadTap* tap = _state.attached->ReadTap())
+            return &tap->Base();
+        return _state.attached->Block();
+    }
+    DiskImage::Track* Track(uint64_t index)
+    {
+        DiskImage* disk = _state.attached ? _state.attached->Floppy() : nullptr;
+        if (!disk || index > 0x1FF)
+            return nullptr;
+        return disk->getTrackForCylinderAndSide(static_cast<uint8_t>(index >> 1), static_cast<uint8_t>(index & 1));
+    }
+
+    SlotState& _state;
+};
+
+bool MediaManager::KeepsVersions() const
+{
+    if (!_context || _context->ttdReplayActive)
+        return false;
+    const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+    return ttd && (ttd->IsRecording() || _historyExists.load(std::memory_order_relaxed));
+}
+
+void MediaManager::MarkWrite(SlotState& state)
+{
+    if (state.writeMarkedThisFrame)
+        return;
+    state.writeMarkedThisFrame = true;
+    if (_context && _context->ttdReplayActive)
+    {
+        // A replay runs the recording's writes again: from a recorded version (a seek set it) the medium follows its
+        // history; from anything else it is no recorded version any more
+        if (state.followsHistory)
+        {
+            ++state.writtenFrames;
+            ++_writeStamp;
+        }
+        else
+            state.versionLost = true;
+        return;
+    }
+    const bool keeps = KeepsVersions();
+    if (keeps && state.versionLost)
+    {
+        state.undo.Reset(state.writtenFrames);
+        state.versionLost = false;
+    }
+    if (keeps)
+        state.undo.DropAbove(state.writtenFrames);  // a change after a seek back: the history's future is gone
+    ++state.writtenFrames;
+    ++_writeStamp;
+    if (keeps)
+        state.undo.Reach(state.writtenFrames);
+    else
+        state.undo.Reset(state.writtenFrames);
+}
+
+void MediaManager::ForgetVersions(SlotState& state)
+{
+    ++state.writtenFrames;
+    ++_writeStamp;
+    state.undo.Reset(state.writtenFrames);
+    state.followsHistory = false;
+    state.versionLost = false;
+}
+
 void MediaManager::NoteWrite(const std::string& slotId, const char* detail)
 {
-    // A TTD replay runs the recording's writes again: the medium already holds them, so its version (frames that
-    // wrote it, what a seek's media check compares) stays, and a replay records nothing
-    if (_context && _context->ttdReplayActive)
-        return;
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     auto it = _slots.find(slotId);
-    if (it == _slots.end() || it->second.writeMarkedThisFrame)
+    if (it == _slots.end())
         return;
-    it->second.writeMarkedThisFrame = true;
-    ++it->second.writtenFrames;
-    ++_writeStamp;
+    SlotState& state = it->second;
+    MarkWrite(state);
+    // A replay records nothing: the writes are the recording's
+    if ((_context && _context->ttdReplayActive) || state.writeEventThisFrame)
+        return;
+    state.writeEventThisFrame = true;
 
     ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
     if (ttd && ttd->IsRecording())
@@ -1079,6 +1232,72 @@ void MediaManager::NoteWrite(const std::string& slotId, const char* detail)
             reason += std::string(": ") + detail;
         ttd->RecordExternalEvent(ttd::TTDExternalEventKind::DiskWrite, reason.c_str());
     }
+}
+
+void MediaManager::BeforeSectorWrite(const std::string& slotId, uint64_t lba, IBlockDevice& below)
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    auto it = _slots.find(slotId);
+    if (it == _slots.end())
+        return;
+    SlotState& state = it->second;
+    MarkWrite(state);
+    if (!KeepsVersions() || state.undo.Has(state.writtenFrames, MediaUndoLog::Unit::Sector, lba))
+        return;
+    std::vector<uint8_t> before(IBlockDevice::kSectorSize);
+    if (!below.ReadSector(lba, before.data()))
+    {
+        ForgetVersions(state);  // the sector cannot go back: neither can the medium
+        return;
+    }
+    const uint64_t frame = _context ? _context->emulatorState.frame_counter : 0;
+    state.undo.Keep(state.writtenFrames, frame, MediaUndoLog::Unit::Sector, lba, std::move(before));
+}
+
+void MediaManager::BeforeTrackWrite(const std::string& slotId, const DiskImage::Track& track)
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    auto it = _slots.find(slotId);
+    if (it == _slots.end())
+        return;
+    SlotState& state = it->second;
+    MarkWrite(state);
+    const uint64_t index = uint64_t(track.cylinder()) * 2 + track.side();
+    if (!KeepsVersions() || state.undo.Has(state.writtenFrames, MediaUndoLog::Unit::Track, index))
+        return;
+    const uint64_t frame = _context ? _context->emulatorState.frame_counter : 0;
+    state.undo.Keep(state.writtenFrames, frame, MediaUndoLog::Unit::Track, index,
+                    static_cast<const DiskImage::RawTrack&>(track));
+}
+
+void MediaManager::ApplyProtect(const std::string& slotId, SlotState& state, bool on)
+{
+    if (state.writeProtect == on)
+        return;
+    const bool keeps = KeepsVersions();
+    if (keeps)
+    {
+        if (state.versionLost)
+        {
+            state.undo.Reset(state.writtenFrames);
+            state.versionLost = false;
+        }
+        state.undo.DropAbove(state.writtenFrames);
+    }
+    // A version of its own: a replay meets it at its frame boundary (FollowReplay), and the frame's writes after it
+    // are the next version
+    ++state.writtenFrames;
+    ++_writeStamp;
+    const uint64_t frame = _context ? _context->emulatorState.frame_counter : 0;
+    if (keeps)
+        state.undo.Keep(state.writtenFrames, frame, MediaUndoLog::Unit::Protect, 0, state.writeProtect, on);
+    else
+        state.undo.Reset(state.writtenFrames);
+    state.writeProtect = on;
+    if (state.attached && !state.heldForReplay)
+        state.slot->SetWriteProtectSwitch(on);
+    _revision++;
+    NoteChangeLanded(slotId, on ? "write protect on" : "write protect off");
 }
 
 void MediaManager::CurrentVersions(std::vector<MediaVersionInfo>& out) const
@@ -1092,7 +1311,9 @@ void MediaManager::CurrentVersions(std::vector<MediaVersionInfo>& out) const
         if (state.attached)
         {
             info.format = state.attached->Format();
-            info.contentId = state.attached->ContentId();
+            // The volume's identity, the same whatever the guest wrote: versions are counted on top of it
+            info.contentId = state.attached->VolumeId();
+            info.hasVersions = state.attached->ReadTap() || state.attached->Floppy();
         }
         info.version = state.writtenFrames;
         out.push_back(std::move(info));
@@ -1101,11 +1322,25 @@ void MediaManager::CurrentVersions(std::vector<MediaVersionInfo>& out) const
 
 bool MediaManager::SetHead(const std::string& slotId, uint64_t version)
 {
-    // No change layer yet (storage manager H1 / H5): only the version the
-    // medium holds now can be "set"
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     auto it = _slots.find(slotId);
-    return it != _slots.end() && it->second.writtenFrames == version;
+    if (it == _slots.end())
+        return false;
+    SlotState& state = it->second;
+    // A seek: the frame starts again, its first write moves the version
+    state.writeMarkedThisFrame = false;
+    state.writeEventThisFrame = false;
+    SlotUnits units(state);
+    if (state.versionLost || !state.undo.Move(state.writtenFrames, version, units))
+    {
+        state.followsHistory = false;
+        return false;
+    }
+    if (state.writtenFrames != version)
+        ++_writeStamp;
+    state.writtenFrames = version;
+    state.followsHistory = true;
+    return true;
 }
 
 void MediaManager::GuestEject(const std::string& slotId)
@@ -1141,6 +1376,7 @@ Medium* MediaManager::GetMedium(const std::string& slotId)
 void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::vector<std::unique_ptr<Medium>>& retired)
 {
     state.writeMarkedThisFrame = false;  // a new frame: the next write marks again
+    state.writeEventThisFrame = false;
 
     if (state.ejectRequested)
     {
@@ -1152,6 +1388,7 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
         Post(NC_MEDIA_EJECTED, slotId, state.attached.get());
         retired.push_back(std::move(state.attached));
         state.ejectRequested = false;
+        ForgetVersions(state);
         if (!state.incoming)
             NoteChangeLanded(slotId, "ejected");
         state.changedUnits = 0;
@@ -1171,13 +1408,14 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
         if (HostWriteHold* hold = state.attached->Hold())
             hold->SetHolding(_holdHostWrites);
         if (MediaReadTap* tap = state.attached->ReadTap())
-            tap->Bind(&_readJournal, slotId);
+            tap->Bind(&_readJournal, slotId, this);
         if (CdImage* cd = state.attached->Cd())
             cd->BindReadJournal(&_readJournal, slotId);
         state.slot->Attach(*state.attached);
         state.slot->SetWriteProtectSwitch(state.writeProtect);
         state.changedUnits = state.attached->ChangedUnits();
         state.landedFrame = _context ? _context->emulatorState.frame_counter : 0;
+        ForgetVersions(state);
         Post(NC_MEDIA_INSERTED, slotId, state.attached.get());
         const Medium& in = *state.attached;
         NoteChangeLanded(slotId, in.Source().path.empty() ? in.Describe() : in.Source().path);
@@ -1188,7 +1426,16 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
         if (state.attached && state.attached->Session())
             state.attached->Session()->Discard();
         state.discardRequested = false;
+        ForgetVersions(state);
         NoteChangeLanded(slotId, "discarded");
+    }
+
+    // A write-protect toggle made while recording: an event of the recording at this boundary
+    if (state.pendingProtect)
+    {
+        const bool on = *state.pendingProtect;
+        state.pendingProtect.reset();
+        ApplyProtect(slotId, state, on);
     }
 
     // While a replay runs nothing reaches the host (FR-20): the disk stays
@@ -1242,7 +1489,7 @@ SlotInfo MediaManager::Describe(const std::string& slotId, const SlotState& stat
 
     info.present = state.attached != nullptr;
     info.pending = state.incoming != nullptr || state.ejectRequested || state.discardRequested;
-    info.writeProtect = state.writeProtect;
+    info.writeProtect = state.pendingProtect.value_or(state.writeProtect);  // the switch as the user set it
     if (state.attached)
     {
         info.source = state.attached->Source().path.empty() ? state.attached->Describe() : state.attached->Source().path;
@@ -1853,6 +2100,16 @@ void MediaManager::FollowReplay()
     const bool inHistory = _holdHostWrites || (ttd && ttd->GetState() == ttd::TTDSessionState::Detached);
     for (auto& [slotId, state] : _slots)
     {
+        // A replay reaching the frame boundary where the recording's write-protect toggle landed sets it again
+        if (_context && _context->ttdReplayActive && state.followsHistory)
+            if (const std::optional<bool> on = state.undo.SwitchAt(state.writtenFrames, frame))
+            {
+                state.writeProtect = *on;
+                if (state.attached && !state.heldForReplay)
+                    state.slot->SetWriteProtectSwitch(*on);
+                ++state.writtenFrames;
+                ++_writeStamp;
+            }
         const bool hold = inHistory && state.attached && frame < state.landedFrame;
         if (hold == state.heldForReplay)
             continue;
