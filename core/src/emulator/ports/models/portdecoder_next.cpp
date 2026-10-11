@@ -97,6 +97,7 @@ void PortDecoder_Next::reset()
     ApplyTiming(_board->Timing());  // a reset starts the frame: nothing to wait for
     _spiSelected = -1;
     _spiRx = 0xFF;
+    _spiPendingValid = false;
     _spiBusyUntil = 0;
     _spiBusyRatio = 1.0;
 
@@ -597,7 +598,9 @@ void PortDecoder_Next::SpiWrite(uint8_t value)
         _spiTooFast++;
         return;
     }
-    _spiRx = _spiSelected >= 0 ? _sd[_spiSelected].exchange(value) : 0xFF;
+    SpiSettle(now);
+    _spiPending = _spiSelected >= 0 ? _sd[_spiSelected].exchange(value) : 0xFF;
+    _spiPendingValid = true;
     _spiBusyRatio = SpeedRatio();
     _spiBusyUntil = now + kSpiByteClocks / _spiBusyRatio;
 }
@@ -618,17 +621,30 @@ double PortDecoder_Next::SpiBusyUntil()
     return _spiBusyUntil;
 }
 
+/// spi_master.vhd latches miso_dat only when the counter is zero: a byte in flight is invisible until it is done
+void PortDecoder_Next::SpiSettle(double now)
+{
+    if (_spiPendingValid && now >= SpiBusyUntil())
+    {
+        _spiRx = _spiPending;
+        _spiPendingValid = false;
+    }
+}
+
 uint8_t PortDecoder_Next::SpiRead()
 {
-    const uint8_t result = _spiRx;
     const double now = Now();
     if (now < SpiBusyUntil())
     {
+        // an early read gets the old miso_dat and starts nothing (spi_master.vhd 108-132)
         _spiTooFast++;
-        return result;
+        return _spiRx;
     }
+    SpiSettle(now);
+    const uint8_t result = _spiRx;
     // a read starts a transfer of #FF; its answer is what the next read returns
-    _spiRx = _spiSelected >= 0 ? _sd[_spiSelected].exchange(0xFF) : 0xFF;
+    _spiPending = _spiSelected >= 0 ? _sd[_spiSelected].exchange(0xFF) : 0xFF;
+    _spiPendingValid = true;
     _spiBusyRatio = SpeedRatio();
     _spiBusyUntil = now + kSpiByteClocks / _spiBusyRatio;
     return result;

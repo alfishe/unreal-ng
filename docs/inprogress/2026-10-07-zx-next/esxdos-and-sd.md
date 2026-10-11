@@ -81,6 +81,8 @@ When the DivMMC is *mapped* (CONMEM = 1, or the automap latch is set) and the po
 In the memory decode order of `#0000-#3FFF` the DivMMC beats Layer 2 mapping, the MMU and the ROM; only the boot ROM and
 the Multiface are above it ([research-fpga-vhdl.md](research-fpga-vhdl.md) section 3).
 
+> The table above is the Next's. The original DivMMC (Mario Prato, 2013) differs in several rules: CONMEM beats MAPRAM, `#E3` is write-only with 6 bank bits, a CPU reset clears neither MAPRAM, CONMEM nor the automap latch. See [research-divmmc-original-rtl.md](research-divmmc-original-rtl.md).
+
 ### 3.2 The automap (the trap)
 
 The entry points are data in four NextREGs, so the table in the emulator is data too:
@@ -131,6 +133,8 @@ The shipped `enNxtmmc.rom` uses `NEXTREG n,A` (`ED 92 nn`) and `PUSH nnnn` (`ED 
 | `#EB` write | starts a transfer of the written byte (MSB first), 16 CPU clocks long |
 | `#EB` read | returns the byte received by the *previous* transfer and **starts a new transfer sending `#FF`** (Z-Controller style) |
 | timing | SPI clock = CPU clock / 2 (so the card sees 1.75 / 3.5 / 7 / 14 MHz); a transfer is 16 CPU clocks at any speed. **A new access that begins before the previous byte finished is ignored** (`spi_begin` needs "idle or last state"); the CPU is *not* held for it (only the DMA waits, `dma_wait_n = z80_wait_n and spi_wait_n`). That is why the shipped code puts one 4-T instruction (`LD A,H`) between consecutive `OUT (C),A`: 12 + 4 = 16 clocks. |
+
+The original board's CPLD (`divmmc.vhd`) has the same byte engine: 16 clocks, the read data latched at the end of the byte, an early access ignored; see [research-divmmc-original-rtl.md](research-divmmc-original-rtl.md) section 2.
 
 The emulator rule (section 8): record the CPU clock of the last transfer start; an access earlier than 16 clocks after it
 does nothing (a read returns the old byte) and counts a `spiTooFast` diagnostic so a developer can see why a guest

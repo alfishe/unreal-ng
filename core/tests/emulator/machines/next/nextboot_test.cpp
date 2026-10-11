@@ -159,6 +159,54 @@ TEST_F(NextBoot_Test, SpiAccessBeforeTheByteIsDoneIsIgnored)
     EXPECT_EQ(_ports->SpiTooFastCount(), 1u);
 }
 
+// spi_master.vhd 108-132: miso_dat is latched only when the byte is done, so a read that comes early returns the old byte and starts nothing.
+// The answer of the byte in flight must not show before its 16 clocks have passed
+TEST_F(NextBoot_Test, AnEarlySpiReadReturnsTheOldByteNotTheOneInFlight)
+{
+    // Pass 1, unhurried: the sequence of bytes the card answers after CMD0 (FF ... 01 ...)
+    auto Prepare = [&]() {
+        ASSERT_TRUE(_ports->InsertSdCard(0, std::make_unique<MemoryDisk>(4096), SdCardSpi::WriteMode::Session));
+        Out(0xE7, 0xFE);
+        _z80->t += 1000;  // forward only: the busy end of the earlier pass must be over
+        for (uint8_t b : {0x40, 0x00, 0x00, 0x00, 0x00, 0x95})
+        {
+            Out(0xEB, b);
+            _z80->t += 100;
+        }
+    };
+    std::vector<uint8_t> seq;
+    Prepare();
+    for (int i = 0; i < 10; i++)
+    {
+        seq.push_back(In(0xEB));
+        _z80->t += 100;
+    }
+    int k = -1;
+    for (int i = 0; i + 1 < static_cast<int>(seq.size()); i++)
+    {
+        if (seq[i] != seq[i + 1])
+        {
+            k = i;
+            break;
+        }
+    }
+    ASSERT_GE(k, 0) << "the card never changed its answer";
+
+    // Pass 2: the read that starts the transfer with the new answer, then a read 4 clocks later
+    Out(0xE7, 0xFF);
+    Prepare();
+    for (int i = 0; i < k; i++)
+    {
+        In(0xEB);
+        _z80->t += 100;
+    }
+    EXPECT_EQ(In(0xEB), seq[k]);
+    _z80->t += 4;
+    EXPECT_EQ(In(0xEB), seq[k]) << "the old miso_dat, not the byte in flight";
+    _z80->t += 100;
+    EXPECT_EQ(In(0xEB), seq[k + 1]) << "the early read started nothing: the next one gets the byte that was in flight";
+}
+
 // spi_master.vhd counts the CPU clock (zxnext.vhd 3284): a byte is 16 CPU clocks whatever the speed, so a speed change inside it changes the
 // time that is left. The new speed is taken over at a frame start; the byte began before it. NextZXOS switches to 14 MHz in the middle of
 // a sector: with the end of the byte kept in the old clocks the next IN of an INIR came too early and returned the byte twice (a
