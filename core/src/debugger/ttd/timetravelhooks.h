@@ -143,6 +143,16 @@ public:
     virtual void OnModelTransfer(const char* reason) = 0;
     /// Something outside the guest happened (tape control, a disk write, a NeoGS card)
     virtual void RecordExternalEvent(TTDExternalEventKind kind, const char* reason) = 0;
+    /// A medium change landed in @p slot at this frame boundary (before its checkpoint): @p what is the new medium
+    /// ("<path>"), "ejected" or "discarded". A recording keeps it as an event there (M3, Q4); then ports and sectors
+    /// only. A backend that keeps no such events refuses media changes while recording instead
+    virtual void NoteMediaChange(const char* slot, const char* what)
+    {
+        (void)slot;
+        (void)what;
+    }
+    /// Whether a recording keeps media changes as events (NoteMediaChange): the engine does, TTD v1 does not
+    virtual bool RecordsMediaChanges() const { return false; }
     /// A tool's edit of the machine: Begin before it, End after it (Emulator::EditMemoryFromTool,
     /// and a fast loader's trap: what it wrote, the registers and the time it spent).
     /// End without a source: nothing was edited (a trap declined)

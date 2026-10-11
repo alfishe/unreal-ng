@@ -85,7 +85,7 @@ Drive the card with `emulator_manage` (all `gs_*` actions go to
 | `gs_read_status` / `gs_read_data` | | side-effect-free peek: `IN #BB` value (status or `#7E`) / the card-to-ZX byte (bit 7 not cleared) |
 | `gs_switch_personality` | `personality`: `z80`/`lle`, `lw`/`lightweight`, `ngs`/`neogs`; optional `replace_if_incompatible`, `dry_run` | replace the card in the GS slot: a slot change applied by a machine restart (owner decision Q10) - a new emulator id (the reply's `restart.emulatorId`), the machine state is lost; refused while TTD records |
 | `gs_dump_module` | `path` (optional, relative, no `..`; default `gs-module-dump.mod`) | write the last completed COM30..D2 module upload; 404 if none |
-| `gs_sd_insert` / `gs_sd_eject` / `gs_flash_save` | `path` (insert: raw image) | NeoGS only; insert/eject refused while TTD records |
+| `gs_sd_insert` / `gs_sd_eject` / `gs_flash_save` | `path` (insert: raw image) | NeoGS only; insert/eject while TTD records: an event of the recording at the next frame boundary |
 | `gs_stereo_mode` | `mode`: `separated` (as on the board), `gs` (50% cross-feed), `mono` | NeoGS DAC mix, applied next frame |
 
 The writes, resets and NMI are live input: applied at the next instruction

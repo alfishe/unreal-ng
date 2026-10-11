@@ -130,6 +130,7 @@ public:
     bool Commit(const MachineOp& op, OpStage& stage) override
     {
         Add("commit");
+        lastAtFrameBoundary = stage.AtFrameBoundary();
         if (inCommit.exchange(true))
             overlappingCommits++;
         if (failBeforeCommitPoint)
@@ -168,6 +169,7 @@ public:
     bool failAfterCommitPoint = false;
     bool throwAfterCommitPoint = false;
     std::function<void(const MachineOp&)> onCommit;
+    bool lastAtFrameBoundary = false;   ///< what the last Commit's stage said (OpStage::AtFrameBoundary)
     std::atomic<bool> inCommit{false};
     std::atomic<int> overlappingCommits{0};
 

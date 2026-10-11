@@ -69,11 +69,10 @@ TEST_F(MachineCoordinator_Test, TheSessionReasonDefaultsToTheKindsName)
 TEST_F(MachineCoordinator_Test, ARefusalTouchesNothing)
 {
     session.mode = MachineMode::Recording;
-    MachineOp op = Op(OpKind::MediaInsert);
-    op.media = MediaClass::Tape;
+    MachineOp op = Op(OpKind::NetworkChange);
     const OpResult r = coordinator.Run(op);
     EXPECT_EQ(r.status, OpStatus::Refused);
-    EXPECT_EQ(r.reason.rfind("Cannot insert a tape", 0), 0u);
+    EXPECT_EQ(r.reason, "a TTD recording is running: the network settings are fixed until it stops");
     EXPECT_EQ(r.sessionEffect, SessionEffect::None);
     EXPECT_TRUE(calls.Take().empty());
 
@@ -83,6 +82,21 @@ TEST_F(MachineCoordinator_Test, ARefusalTouchesNothing)
     EXPECT_EQ(log[0].mode, MachineMode::Recording);
     EXPECT_EQ(log[0].detail, r.reason);
     EXPECT_EQ(log[0].seq, r.logSeq);
+}
+
+/// M3 (Q4): a media change while a recording runs is an event of the recording: the session sees nothing at the
+/// commit, nothing is parked, and the owner is told to land it at the next frame boundary
+TEST_F(MachineCoordinator_Test, AMediaChangeWhileRecordingLandsAtTheNextFrameBoundary)
+{
+    session.mode = MachineMode::Recording;
+    EXPECT_TRUE(coordinator.Run(Op(OpKind::MediaInsert, "media-change")).Ok());
+    EXPECT_TRUE(owner.lastAtFrameBoundary);
+    EXPECT_EQ(calls.Take(), (Calls{"owner:prepare", "owner:commit", "owner:change"}));
+    EXPECT_EQ(coordinator.Log().Entries().back().effect, SessionEffect::None);
+
+    session.mode = MachineMode::Live;
+    EXPECT_TRUE(coordinator.Run(Op(OpKind::MediaInsert, "media-change")).Ok());
+    EXPECT_FALSE(owner.lastAtFrameBoundary) << "live: at once where the owner can";
 }
 
 TEST_F(MachineCoordinator_Test, EndingTheRecordingInsteadOfARefusalHoldsTheMachine)
@@ -350,10 +364,9 @@ TEST_F(MachineCoordinator_Test, AnOperationWithoutASourceTakesTheOneItsThreadAsk
 TEST_F(MachineCoordinator_Test, AskLogsARefusalWithItsSourceAndNothingElse)
 {
     SourceScope scope(OpSource::Qt);
-    MachineOp op = Op(OpKind::MediaInsert);
+    MachineOp op = Op(OpKind::NetworkChange);
     op.source = OpSource::Unknown;
-    op.summary = "tape game.tzx";
-    op.media = MediaClass::Tape;
+    op.summary = "network settings";
 
     // A yes: nothing logged, nothing parked, the owner only asked
     EXPECT_TRUE(coordinator.Ask(op).Ok());
@@ -379,7 +392,7 @@ TEST_F(MachineCoordinator_Test, AskLogsARefusalWithItsSourceAndNothingElse)
     EXPECT_EQ(log[0].status, OpStatus::Refused);
     EXPECT_EQ(log[0].source, OpSource::Qt);
     EXPECT_EQ(log[0].mode, MachineMode::Recording);
-    EXPECT_EQ(log[0].summary, "tape game.tzx");
+    EXPECT_EQ(log[0].summary, "network settings");
     EXPECT_EQ(log[0].detail, would.reason);
     EXPECT_EQ(log[0].effect, SessionEffect::None);
     EXPECT_EQ(log[1].detail, "no deck");

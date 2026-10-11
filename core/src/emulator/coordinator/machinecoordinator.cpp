@@ -184,6 +184,7 @@ OpResult MachineCoordinator::Run(MachineOp op)
     const std::string reason = op.sessionReason.empty() ? OpKindName(op.kind) : op.sessionReason;
     SessionEffect applied = SessionEffect::None;
     OpStage stage;
+    stage._atFrameBoundary = d.atFrameBoundary;
     stage._onCommitPoint = [&]() {
         if (d.effect != SessionEffect::None && session)
         {

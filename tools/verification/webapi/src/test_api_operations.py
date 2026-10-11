@@ -100,24 +100,32 @@ print("OPS_LUA_OK")
         entries = api_client.get_operations(emu_id, since=before)["entries"]
         assert [(e["kind"], e["source"]) for e in entries] == [("reset", s) for s in sources]
 
-    def test_a_tape_refused_while_recording_is_logged(self, api_client, active_emulator):
-        """tape/load during a TTD recording: 409 with the coordinator's sentence, and the refusal is in the log"""
+    def test_a_tape_while_recording_is_an_event_of_the_recording(self, api_client, active_emulator, tmp_path):
+        """tape/load during a TTD recording (M3): accepted, logged done in mode recording with no session effect - it
+        lands at the next frame boundary as an event of the recording, which goes on"""
         emu_id = active_emulator
+        tape = tmp_path / "while-recording.tap"
+        # One standard-speed header block: flag 0, type 3 (code), name, length 0, start 0x8000, checksum
+        header = bytes([0x00, 0x03]) + b"recorded  " + bytes([0x00, 0x00, 0x00, 0x80, 0x00, 0x80])
+        checksum = 0
+        for b in header:
+            checksum ^= b
+        block = header + bytes([checksum])
+        tape.write_bytes(len(block).to_bytes(2, "little") + block)
         api_client.ttd_start(emu_id)
         try:
             assert api_client.get_operations(emu_id)["mode"] == "recording"
             before = api_client.get_operations(emu_id)["last_seq"]
             resp = api_client.session.post(api_client._url(f"/api/v1/emulator/{emu_id}/tape/load"),
-                                           json={"path": "refused-while-recording.tzx"})
-            assert resp.status_code == 409, resp.text
-            message = resp.json()["message"]
+                                           json={"path": str(tape)})
+            assert resp.status_code == 200, resp.text
 
             entries = api_client.get_operations(emu_id, since=before)["entries"]
             assert len(entries) == 1, entries
             entry = entries[0]
-            assert (entry["kind"], entry["status"], entry["source"], entry["mode"]) == \
-                ("media-insert", "refused", "webapi", "recording")
-            assert entry["summary"].startswith("tape ") and entry["summary"].endswith("refused-while-recording.tzx")
-            assert entry["detail"] == message
+            assert (entry["kind"], entry["status"], entry["source"], entry["mode"], entry["effect"]) == \
+                ("media-insert", "done", "webapi", "recording", "none")
+            assert entry["summary"].startswith("tape ") and entry["summary"].endswith("while-recording.tap")
+            assert api_client.ttd_status(emu_id)["state"] == "recording"
         finally:
             api_client.ttd_stop(emu_id)

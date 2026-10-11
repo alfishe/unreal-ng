@@ -11,7 +11,8 @@ enum class Action : uint8_t
 {
     Allow,
     Refuse,
-    RefuseUnlessEnd   ///< refused, unless the caller asked to end the recording (MachineOp::endRecording)
+    RefuseUnlessEnd,   ///< refused, unless the caller asked to end the recording (MachineOp::endRecording)
+    EventUnlessEnd     ///< an event of the recording at the next frame boundary, unless the caller ends the recording
 };
 
 struct Cell
@@ -29,14 +30,16 @@ struct Row
 };
 
 constexpr Cell Allow(SessionEffect effect) { return {Action::Allow, effect}; }
-constexpr Cell kMediaRecording{Action::RefuseUnlessEnd, SessionEffect::StopThenMediaChanged};
+constexpr Cell kMediaRecording{Action::EventUnlessEnd, SessionEffect::StopThenMediaChanged};
 constexpr Cell kRefuse{Action::Refuse, SessionEffect::None};
 
 // Today's behaviour (M1), read from the code it replaces (current-state.md §2-3):
 // - reset, autostart, snapshot load: D42, the session ends and the history stays (TimeTravelController::EndSession)
 //   in every mode; the machine is held; reset and autostart then tell TTD the machine left the recorded timeline;
-// - media: refused while a recording the user started runs (RecordingGuard), unless the caller ends it; everywhere
-//   else the TTD media rule (OnLoad(Media)): a background session ends, a kept history goes.
+// - media: while a recording the user started runs, a change is an event of the recording (M3, owner 2026-10-10:
+//   the history keeps the change and then ports and sectors only): it lands at the next frame boundary and the
+//   recording goes on; a caller that asks to end the recording ends it instead; everywhere else the TTD media rule
+//   (OnLoad(Media)): a background session ends, a kept history goes.
 // D43 cells (owner 2026-10-10, M2):
 // - network settings, an IDE unit's drive: refused while a recording the user started runs and in the recorded past
 //   (replay, detached); the black box ends its session as for a medium; live: nothing for TTD (a host-side setting,
@@ -55,7 +58,7 @@ constexpr std::array<Row, static_cast<size_t>(OpKind::Count)> kTable{{
     {OpKind::SnapshotLoad, true, false, {Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep)}},
     {OpKind::MediaInsert, false, false, {Allow(kMedia), kMediaRecording, Allow(kMedia), Allow(kMedia), Allow(kMedia)}},
     {OpKind::MediaEject, false, false, {Allow(kMedia), kMediaRecording, Allow(kMedia), Allow(kMedia), Allow(kMedia)}},
-    {OpKind::MediaDiscard, false, false, {Allow(kMedia), kRefuse, Allow(kMedia), Allow(kMedia), Allow(kMedia)}},
+    {OpKind::MediaDiscard, false, false, {Allow(kMedia), kMediaRecording, Allow(kMedia), Allow(kMedia), Allow(kMedia)}},
     {OpKind::DiskCreate, false, false, {Allow(kMedia), kMediaRecording, Allow(kMedia), Allow(kMedia), Allow(kMedia)}},
     {OpKind::NetworkChange, false, false, {Allow(kNone), kRefuse, Allow(kMedia), kRefuse, kRefuse}},
     {OpKind::IdeDriveKind, true, false, {Allow(kNone), kRefuse, Allow(kMedia), kRefuse, kRefuse}},
@@ -83,21 +86,9 @@ std::string RefusalText(const MachineOp& op, MachineMode mode)
         return past ? "the machine is in recorded history (a TTD replay or a point in the past): its hardware is fixed "
                       "until it is live again"
                     : "a TTD recording runs: the machine's hardware is fixed until it stops";
-    if (op.kind == OpKind::DiskCreate)
-        return "Cannot create a disk while TTD is recording: a new medium would drop the recorded history. Create it "
-               "before starting the recording, or stop the recording first.";
-    switch (op.media)
-    {
-        case MediaClass::Tape:
-            return "Cannot insert a tape while TTD is recording: a new medium would drop the recorded history. Insert "
-                   "it before starting the recording, or stop the recording first.";
-        case MediaClass::Disk:
-            return "Cannot insert a disk while TTD is recording: a new medium would drop the recorded history. Insert "
-                   "it before starting the recording, or stop the recording first.";
-        case MediaClass::Any:
-            break;
-    }
-    return "the media set is fixed while a TTD recording runs; end the recording first";
+    // No other cell refuses today (media changes while recording are events since M3; TTD v1 refuses them as the
+    // media owner's refusal)
+    return std::string("'") + OpKindName(op.kind) + "' is not allowed while the machine is " + MachineModeName(mode);
 }
 }  // namespace
 
@@ -118,6 +109,11 @@ PolicyDecision Decide(const MachineOp& op, MachineMode mode)
     {
         d.refused = true;
         d.reason = RefusalText(op, mode);
+        return d;
+    }
+    if (cell.action == Action::EventUnlessEnd && !op.endRecording)
+    {
+        d.atFrameBoundary = true;   // the session sees nothing at the commit: the change is its event where it lands
         return d;
     }
     d.effect = cell.effect;

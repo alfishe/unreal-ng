@@ -786,6 +786,8 @@ public:
     /// @param kind   Source classification (UI / automation hint).
     /// @param reason Short human-readable description. May be nullptr.
     void RecordExternalEvent(TTDExternalEventKind kind, const char* reason) override;
+    void NoteMediaChange(const char* slot, const char* what) override;
+    bool RecordsMediaChanges() const override { return true; }
     /// The same, stamped at @p at (a tool edit's event sits where the edit began)
     void RecordExternalEventAt(TTDExternalEventKind kind, const char* reason, const TTDTimePoint& at);
 

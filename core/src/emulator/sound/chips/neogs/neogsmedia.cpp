@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 
 #include "common/filehelper.h"
 #include "debugger/ttd/timetravelmanager.h"
@@ -64,14 +65,16 @@ bool machineRunning(EmulatorContext* context)
     return emulator && emulator->IsRunning() && !emulator->IsPaused();
 }
 
-NeoGSMediaResult viaMediaManager(bool running, const MediaResult& result)
+NeoGSMediaResult viaMediaManager(MediaManager& manager, bool running, const MediaResult& result)
 {
     if (!result.Ok())
     {
         LOGWARNING("NeoGS: SD card request refused: %s", result.message.c_str());
         return result.error == MediaError::Recording ? NeoGSMediaResult::TtdRecording : NeoGSMediaResult::Failed;
     }
-    return running ? NeoGSMediaResult::Queued : NeoGSMediaResult::Done;
+    // Still waiting: the loop runs, or a recording takes the change at the next frame boundary (M3)
+    const std::optional<SlotInfo> info = manager.Info(SoundChip_NeoGS::SD_SLOT_ID);
+    return running || (info && info->pending) ? NeoGSMediaResult::Queued : NeoGSMediaResult::Done;
 }
 } // namespace
 
@@ -98,7 +101,7 @@ NeoGSMediaResult NeoGSRequestSdInsert(EmulatorContext* context, const std::strin
         options.access = SoundChip_NeoGS::configuredSdAccess(context->config.ngs);
         options.disposition = Disposition::Discard; // automation's sd_insert always replaced the card
         const bool running = machineRunning(context);
-        return viaMediaManager(running, manager->Insert(SoundChip_NeoGS::SD_SLOT_ID, source, options));
+        return viaMediaManager(*manager, running, manager->Insert(SoundChip_NeoGS::SD_SLOT_ID, source, options));
     }
     return onMachineThread(context, [resolved](GeneralSoundCard* gs) { return gs->insertSdCard(resolved); });
 }
@@ -114,7 +117,7 @@ NeoGSMediaResult NeoGSRequestSdEject(EmulatorContext* context)
         EjectOptions options;
         options.disposition = Disposition::Discard;
         const bool running = machineRunning(context);
-        return viaMediaManager(running, manager->Eject(SoundChip_NeoGS::SD_SLOT_ID, options));
+        return viaMediaManager(*manager, running, manager->Eject(SoundChip_NeoGS::SD_SLOT_ID, options));
     }
     return onMachineThread(context, [](GeneralSoundCard* gs) { return gs->ejectSdCard(); });
 }

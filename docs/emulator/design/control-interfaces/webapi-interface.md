@@ -198,8 +198,8 @@ after that seq (pass the previous answer's `last_seq` to poll); `limit`: only th
 400 when either is not a non-negative integer, 404 for an unknown emulator. Fields: [command-interface.md, Operation
 log](./command-interface.md). The same report is CLI `ops`, Lua / Python `operations()`, MCP `emulator_manage`
 `operations`. An operation asked for over the WebAPI is logged with source `webapi`; a request with the header
-`X-Unreal-Source: mcp` (the MCP server sends it) with `mcp`. A tape / disk load or blank disk refused while TTD
-records (409) is logged too.
+`X-Unreal-Source: mcp` (the MCP server sends it) with `mcp`. A tape / disk load or blank disk while TTD records is
+logged `done`, mode `recording`, effect `none` (an event of the recording at the next frame boundary).
 
 **Response**:
 ```json
@@ -209,8 +209,8 @@ records (409) is logged too.
   "capacity": 1024,
   "entries": [
     {"seq": 2, "frame": 950, "t_in_frame": 41210, "wall_ms": 1791612034211, "kind": "media-insert",
-     "source": "webapi", "mode": "recording", "status": "refused", "effect": "none",
-     "summary": "tape /games/elite.tzx", "detail": "Cannot insert a tape while TTD is recording: ..."},
+     "source": "webapi", "mode": "recording", "status": "done", "effect": "none",
+     "summary": "tape /games/elite.tzx", "detail": ""},
     {"seq": 3, "frame": 1130, "t_in_frame": 7, "wall_ms": 1791612040873, "kind": "media-insert",
      "source": "qt", "mode": "live", "status": "done", "effect": "media-changed",
      "summary": "tape /games/elite.tzx", "detail": ""}
@@ -1424,7 +1424,7 @@ Full tape transport, inspection and the offline audio bridge — one-to-one with
 | Method | Endpoint | Body | Description |
 |:-------|:---------|:-----|:------------|
 | `POST` | `/tape/load` | `{"path": "..."}` | Load a tape (.tap/.tzx/.spc/.sta/.ltp/.zxt) or a folder into the tape slot; 400 names the reason |
-| `POST` | `/tape/eject` | — | The tape leaves the tape slot; 409 while a TTD recording runs |
+| `POST` | `/tape/eject` | — | The tape leaves the tape slot; while a TTD recording runs it is an event of the recording: it lands at the next frame boundary |
 | `POST` | `/tape/play` | — | Start at consumption cursor; resumes in place when paused |
 | `POST` | `/tape/pause` | — | Freeze mid-block; next play resumes exactly there (idempotent when already paused; 400 when not playing) |
 | `POST` | `/tape/stop` | — | Terminal stop: invalidates the loaded image |
@@ -1668,7 +1668,7 @@ All TTD endpoints are scoped under `/api/v1/emulator/{id}/ttd/...` (`{id}` is th
 - States are `idle`, `recording`, `detached` (positioned in history, emulator paused).
 - `seek`, `step-back`, `step-forward`, `step-instruction`, `find-last`, `reverse-step` and `reverse-continue` while recording pause the recording (`backend: engine`, D8): state `detached`, `recording_paused: true`; `POST /ttd/resume` at the paused point continues it, running into it continues it too, `POST /ttd/stop` ends it. On `backend: v1` they return **409 Conflict** — call `POST /ttd/stop` first.
 - `start` switches the `timetravel` feature on by itself.
-- While recording (also while it is paused for browsing), tape/disk load (and disk autostart), disk create and `invalidate` return **409 Conflict** whose `message` says why and to stop the recording first. A reset, a snapshot load and a change of the machine itself (ROM load, model switch, GS `switch_personality`, a slot change) are not refused: they END the session (one rule, see [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules); a new session starts only with the `ttdrestart` feature or a black box). On a stopped session the tape / disk loads, ROM reload, a host speed change and `invalidate` drop the history; a reset and a snapshot load stop the recording and keep it. `GET /ttd/status` → `last_drop_reason` names what dropped the last history. Switching `timetravel`/`debugmode` off stops the recording cleanly instead (history kept; `last_stop_reason`: `feature-off:<feature>`); a frame the history's store does not take stops it the same way (`last_stop_reason`: `capture-failed`).
+- While recording (also while it is paused for browsing), `invalidate` returns **409 Conflict** whose `message` says why and to stop the recording first. Tape / disk load and eject (and disk autostart's insert), disk create and `/media` insert / eject / discard are accepted (on v1: 409): the change is an event of the recording and lands at the next frame boundary (on a paused machine: the next frame it runs; the slot shows `pending` meanwhile); the recording goes on. A seek to before the frame a medium came in shows that slot empty; from that frame on (and back live) the medium is there. `end_recording` still ends the recording and changes the medium at once. A reset, a snapshot load and a change of the machine itself (ROM load, model switch, GS `switch_personality`, a slot change) are not refused: they END the session (one rule, see [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules); a new session starts only with the `ttdrestart` feature or a black box). On a stopped session the tape / disk loads, ROM reload, a host speed change and `invalidate` drop the history; a reset and a snapshot load stop the recording and keep it. `GET /ttd/status` → `last_drop_reason` names what dropped the last history. Switching `timetravel`/`debugmode` off stops the recording cleanly instead (history kept; `last_stop_reason`: `feature-off:<feature>`); a frame the history's store does not take stops it the same way (`last_stop_reason`: `capture-failed`).
 - While recording (and through `detached`) the host speed is locked to 1x, turbo mode is off, and fast tape / turbo tape / fast disk read as off.
 
 Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset inside the frame in T-states at the machine's top CPU clock: plain T-states on machines without a hardware turbo; ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see [command-interface.md → Time](./command-interface.md#ttd-session-rules)).

@@ -115,7 +115,7 @@ on a +3) is `unknown-slot`, never drive A.
 | `plan` | bool | false | save, flatten with `strategy: commit` or `write-back`: what would be written, nothing written |
 | `onConflict` | `refuse`, `keep-both` | `refuse` | write-back: a host file changed since the build is a conflict; `keep-both` writes the guest's as `name (guest).ext` |
 | `on` | bool | true | protect |
-| `end_recording` | bool | false | insert, swap, eject, create: stop a TTD recording instead of refusing |
+| `end_recording` | bool | false | insert, swap, eject, discard, create: stop a TTD recording and change the medium at once (without it the change is an event of the recording: it lands at the next frame boundary) |
 | `async` | bool | false | insert, swap, eject, discard, rescan, create |
 | `immediate` | bool | false | insert, swap: no swap delay |
 | `device` | `disk`, `cdrom` | the unit's | insert, swap on an IDE unit: swap its drive first (the unit must be empty) |
@@ -431,7 +431,7 @@ Every surface returns the same fields:
 | `unknown-format` | 400 | not a format this slot takes |
 | `does-not-fit` | 400 | the folder does not fit the medium |
 | `dirty` | 409 | unsaved writes: add `save`, `export` or `discard` |
-| `recording` | 409 | a TTD recording runs: stop it, or `end_recording` |
+| `recording` | 409 | TTD v1 only: a TTD recording runs: stop it, or `end_recording` |
 | `in-use` | 409 | the same file is in another slot (only read-only media can share) |
 | `io-error` | 500 | host I/O failed |
 | `not-supported` | 501 | a valid request this build cannot do yet |

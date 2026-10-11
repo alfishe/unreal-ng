@@ -98,15 +98,17 @@ TEST_F(MediaOwnerContract_Test, TheSessionEffectLandsBeforeTheSlotSeesTheMedium)
     EXPECT_NE(slot.attached, nullptr);
 }
 
-TEST_F(MediaOwnerContract_Test, ARefusedInsertNeverReachesTheOwner)
+/// M3 (Q4): while a recording runs the change waits for the next frame boundary, also on a machine that is not
+/// running, and the session sees nothing at the commit (the change is its event where it lands)
+TEST_F(MediaOwnerContract_Test, AnInsertWhileRecordingWaitsForTheFrameBoundary)
 {
     session.mode = MachineMode::Recording;
-    const MediaResult refused = manager.Insert("sd.test", MemoryMedium(8));
-    EXPECT_EQ(refused.error, MediaError::Recording);
-    EXPECT_EQ(refused.message, "the media set is fixed while a TTD recording runs; end the recording first");
-    EXPECT_TRUE(calls.Take().empty());
-    EXPECT_EQ(slot.attached, nullptr);
-    EXPECT_EQ(coordinator.Log().Entries().back().status, OpStatus::Refused);
+    ASSERT_TRUE(manager.Insert("sd.test", MemoryMedium(8)).Ok());
+    EXPECT_EQ(slot.attached, nullptr) << "not inside the frame";
+    EXPECT_TRUE(calls.Take().empty()) << "no session effect, no park";
+    manager.ApplyPending();
+    EXPECT_NE(slot.attached, nullptr) << "landed at the boundary";
+    EXPECT_EQ(coordinator.Log().Entries().back().status, OpStatus::Done);
 }
 
 TEST_F(MediaOwnerContract_Test, EndingTheRecordingStopsItThenChangesTheMedium)

@@ -251,7 +251,7 @@ behaviour, read from the code, and pins it with a test walking every cell; later
 |---|---|---|---|
 | Reset, autostart | EndSession(keep) | EndSession(keep) | EndSession(keep) |
 | Snapshot load | EndSession(keep) | EndSession(drop) | EndSession(keep) |
-| Media insert / eject / discard | Refuse; from M3 RecordAsEvent, each op its own event (Q4) | EndSession(drop) | EndSession(drop) |
+| Media insert / eject / discard | an event of the recording at the next frame boundary (M3, Q4) | EndSession(drop) | EndSession(drop) |
 | ROM, GS card | EndSession(drop) | EndSession(drop) | EndSession(drop) |
 | Speed, turbo | Refuse (lock) | black box steps aside, restarts | Invalidate |
 | Network settings, IDE drive kind | Refuse | EndSession(drop) (D43, M2) | Refuse |
@@ -511,6 +511,40 @@ says yes, v1 refuses and the log has it). No surface asks TTD's `RecordingGuard`
 Tests: `MachineCoordinator_Test` (a source from the thread, a scope, another thread; `Ask` logs a refusal with its
 source and nothing else), `CoordinatorEmulator_Test` (a surface's question on a real machine: same sentence, logged),
 `test_api_operations.py` (sources over WebAPI / Lua / Python, a refused `tape/load` logged).
+
+### 11.5 M3 as built (2026-10-10)
+
+Owner decision (2026-10-10): **the history keeps that a medium changed and what came in, then ports and sectors
+only** - no images in the history, no medium versions to go back to.
+
+- **Policy**: while a recording the user started runs (also paused for browsing), insert, eject, discard and a blank
+  disk are allowed: `EventUnlessEnd` cells, no session effect at the commit, no park; `PolicyDecision::atFrameBoundary`
+  -> `OpStage::AtFrameBoundary()`: the media owner never applies the change inside a frame, also on a parked
+  machine - it lands in `MediaManager::ApplyPending`, at the next frame boundary the machine runs. A caller that asks
+  to end the recording ends it (`StopThenMediaChanged`), as before. The black box: unchanged (its session ends).
+- **Event**: each landing (eject, attach, discard) in `ApplySlot` calls `ITimeTravelHooks::NoteMediaChange(slot,
+  what)`; the controller keeps it as a `MediaChange` cut (0x0201) at `{frame, 0}`, payload "slot what". The landing
+  precedes the boundary's checkpoint (`CompleteFrame`: `ApplyPending`, network devices, then `OnFrameBoundary`), so
+  the checkpoint holds the devices after the change, and a replay or a run on the history that reaches the boundary
+  restores it (the existing cut path). A change queued before the recording that lands during it is recorded too
+  (gap 13). A swap delay gives two events (the eject, later the attach), each its own (Q4).
+- **The history before a medium**: each slot keeps the frame its medium came in (`landedFrame`); on the recorded
+  history (a replay, a seek, the machine detached in the past) the slot is empty for its device before that frame
+  (`MediaManager::FollowReplay`, from the replay restore and every `ApplyPending`): the CPU gets the recorded
+  exchange, and the guest's writes of that time never reach a medium that came later. Back live the medium is
+  there again; a recording resumed from the past takes it from there.
+- **TTD v1** keeps no such events: `ITimeTravelHooks::RecordsMediaChanges()` is false, and the media owner's refusal
+  refuses as before (goes with v1).
+- Boundary phases: the order in `CompleteFrame` already is phase 1 (media, GS switch in `OnFrameStart`, network
+  devices), phase 2 (checkpoint), phase 3 (input, host answers, decoder); no `Boundary()` indirection was added.
+- Not in M3: written sectors and write-protect toggles as versions (gaps 11-12, the change layer H1 / H5): a seek
+  before a write on the same medium still reports `MediaVersionDiffers`.
+
+Tests: `MachinePolicy_Test` (cells, `atFrameBoundary`), `MachineCoordinator_Test`
+(`AMediaChangeWhileRecordingLandsAtTheNextFrameBoundary`), `MediaOwnerContract_Test`, `MediaManager_Test`,
+`CoordinatorEmulator_Test` (`ADiskChangedWhileRecordingIsAnEventAtTheFrameBoundaryWhereItLands`,
+`BeforeTheFrameADiskCameInTheHistoryHasNoDiskThere`; v1 refusals), `TapeSlot_Test`, `NeoGSMedia_Test`,
+`TTD_SessionLifecycle_Test`, `TimeTravelController_Test`, `TTDAtaChannel_Test`, `ZXEvoSdCardTtd_Test`.
 
 ## 12. Postponed
 

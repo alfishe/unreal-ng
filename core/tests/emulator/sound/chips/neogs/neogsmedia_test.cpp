@@ -104,19 +104,22 @@ TEST_F(NeoGSMedia_Test, CarriedOutAtOnceWhileTheLoopIsNotRunning)
 
 /// The machine's configuration is fixed while a TTD recording runs: the SD
 /// card's contents are fixed data for the recording's whole length
-TEST_F(NeoGSMedia_Test, InsertAndEjectRefusedWhileTtdRecords)
+/// M3 (Q4): while a TTD recording runs, an SD card change is an event of the recording: queued to the next frame
+/// boundary, the recording goes on
+TEST_F(NeoGSMedia_Test, InsertAndEjectWhileTtdRecordsLandAtTheNextFrameBoundary)
 {
     fitNeoGS();
     ASSERT_TRUE(_ctx->pTimeTravelController->StartRecording());
-    const std::string path = card()->sdCardImage();
 
-    EXPECT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::TtdRecording);
-    EXPECT_EQ(NeoGSRequestSdInsert(_ctx, _other->path()), NeoGSMediaResult::TtdRecording);
-    // The card's own calls go through the same slot, whoever calls them
-    EXPECT_FALSE(card()->ejectSdCard());
-    EXPECT_FALSE(card()->insertSdCard(_other->path()));
+    EXPECT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::Queued);
+    EXPECT_TRUE(card()->sdCardPresent()) << "never inside a frame";
+    _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+    EXPECT_FALSE(card()->sdCardPresent());
+    EXPECT_EQ(NeoGSRequestSdInsert(_ctx, _other->path()), NeoGSMediaResult::Queued);
+    _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
     EXPECT_TRUE(card()->sdCardPresent());
-    EXPECT_EQ(card()->sdCardImage(), path);
+    EXPECT_EQ(card()->sdCardImage(), _other->path());
+    EXPECT_TRUE(_ctx->pTimeTravelController->IsRecording());
 
     // A flash save changes nothing in the machine: it reaches the card (which
     // saves only in persist mode - off here - so it reports Failed)
@@ -124,7 +127,7 @@ TEST_F(NeoGSMedia_Test, InsertAndEjectRefusedWhileTtdRecords)
     EXPECT_TRUE(save == NeoGSMediaResult::Done || save == NeoGSMediaResult::Failed) << NeoGSMediaResultText(save);
 
     _ctx->pTimeTravelController->StopRecording();
-    EXPECT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::Done);
+    EXPECT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::Done) << "live and paused: at once";
     EXPECT_FALSE(card()->sdCardPresent());
 }
 

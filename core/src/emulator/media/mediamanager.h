@@ -93,6 +93,14 @@ struct EjectOptions
     coordinator::OpSource origin = coordinator::OpSource::Unknown;   ///< who asked (the operation log)
     bool keepBoth = false;
     bool strict = false;
+
+    /// An eject that drops a dirty medium's writes
+    static EjectOptions Discarding()
+    {
+        EjectOptions options;
+        options.disposition = Disposition::Discard;
+        return options;
+    }
 };
 
 /// A rescan of a folder or composite (DT-16): what happens to unsaved writes when the sources changed
@@ -268,6 +276,11 @@ public:
     /// the state of that moment). Floppy write-through waits while held.
     /// Emulation thread
     void HoldHostWrites(bool hold);
+    /// On the recorded history (a replay, the machine at or running from a point in the past), a slot whose medium
+    /// came in after that point is empty for its device until the history reaches the frame it came in: the history
+    /// has the exchange with the controller (ports, sectors), and the guest's earlier writes must not reach a medium
+    /// that came later (M3). Back live, the medium is there again. The TTD restore calls it; every frame boundary too
+    void FollowReplay();
 
     /// Time travel's media read journal (null = none): every block medium's
     /// sector reads are recorded into it, or played back from it. Emulation thread
@@ -331,9 +344,13 @@ private:
         std::optional<uint32_t> swapDelayMs;  ///< config override of the slot's default
         bool writeMarkedThisFrame = false;    ///< a TTD barrier already recorded this frame
         uint64_t writtenFrames = 0;           ///< frames that wrote the medium (its version, IMediaHistory)
+        uint64_t landedFrame = 0;             ///< the frame the attached medium came in (its boundary)
+        bool heldForReplay = false;           ///< empty for its device: a replay runs before landedFrame
     };
 
     bool CanApplyNow() const;
+    /// A change landed in @p slotId (ApplySlot): tell the TTD session (NoteMediaChange)
+    void NoteChangeLanded(const std::string& slotId, const std::string& what);
     SlotInfo Describe(const std::string& slotId, const SlotState& state) const;
     /// Open `source` the way the slot takes it (its FS matrix, its session journal): Insert and Rescan
     MediaResult OpenForSlot(const std::string& slotId, const MediaSource& source, const InsertOptions& options,

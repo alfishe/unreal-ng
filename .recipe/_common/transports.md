@@ -53,7 +53,7 @@ curl -s -X PUT "$BASE/emulator/$EMU_ID/feature/porttrace" \
 Error envelope (same everywhere):
 
 ```json
-{ "error": "Conflict", "message": "Cannot insert a tape while TTD is recording: … stop the recording first." }
+{ "error": "Conflict", "message": "This action is not allowed while TTD is recording. Stop the recording first." }
 ```
 
 HTTP codes carry meaning: `400` bad body/state, `404` unknown instance,

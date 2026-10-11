@@ -36,7 +36,7 @@ extern void ReplyDeviceState(const StateNode& node, std::function<void(const Htt
 // visible here without an EmulatorAPI instance.
 
 /// @brief GET /api/v1/emulator/{id}/state/audio/ay
-void EmulatorAPI::getStateAudioAY(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getStateAudioAY(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
 {
     auto emulator = getEmulatorByIdOrIndex(id);
@@ -91,7 +91,7 @@ void EmulatorAPI::getStateAudioAY(const HttpRequestPtr& req, std::function<void(
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/audio/ay/{chip}
-void EmulatorAPI::getStateAudioAYIndex(const HttpRequestPtr& req,
+void EmulatorAPI::getStateAudioAYIndex(const HttpRequestPtr& /*req*/,
                                        std::function<void(const HttpResponsePtr&)>&& callback, const std::string& id,
                                        const std::string& chipStr) const
 {
@@ -181,7 +181,7 @@ void EmulatorAPI::getStateAudioAYIndex(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/audio/ay/register/{reg}
-void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr& req,
+void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr& /*req*/,
                                           std::function<void(const HttpResponsePtr&)>&& callback, const std::string& id,
                                           const std::string& chipStr, const std::string& regStr) const
 {
@@ -419,7 +419,7 @@ void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/audio/beeper
-void EmulatorAPI::getStateAudioBeeper(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getStateAudioBeeper(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                       const std::string& id) const
 {
     auto emulator = getEmulatorByIdOrIndex(id);
@@ -830,7 +830,7 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
     else if (action == "sd_insert" || action == "sd_eject" || action == "flash_save")
     {
         // Checked here, carried out on the machine's thread (neogsmedia.h);
-        // insert / eject are refused while a TTD recording runs
+        // insert / eject follow the media rules (while TTD records: an event at the next frame boundary)
         NeoGSMediaResult result;
         if (action == "sd_insert")
         {
@@ -1106,7 +1106,7 @@ void EmulatorAPI::getStateAudioCovox(const HttpRequestPtr& req, std::function<vo
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/audio/channels
-void EmulatorAPI::getStateAudioChannels(const HttpRequestPtr& req,
+void EmulatorAPI::getStateAudioChannels(const HttpRequestPtr& /*req*/,
                                         std::function<void(const HttpResponsePtr&)>&& callback,
                                         const std::string& id) const
 {

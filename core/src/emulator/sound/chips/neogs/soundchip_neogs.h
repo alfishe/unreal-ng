@@ -243,7 +243,7 @@ public:
 
     /// SD card slot `sd.ngs`: insert an image or a folder, eject, inspect.
     /// With a media manager these go through it (the slot's settings from
-    /// [MEDIA] / [NGS], refused while TTD records); without one (bare
+    /// [MEDIA] / [NGS], the media rules while TTD records); without one (bare
     /// contexts) the card opens the image itself
     static constexpr const char* SD_SLOT_ID = "sd.ngs";
     /// [NGS] SDWrite as the slot's access mode (session / persist / off)

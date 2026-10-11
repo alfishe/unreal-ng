@@ -300,7 +300,7 @@ void EmulatorAPI::loadTape(const HttpRequestPtr& req,
 }
 
 /// @brief POST /api/v1/emulator/:id/tape/eject
-void EmulatorAPI::ejectTape(const HttpRequestPtr& req,
+void EmulatorAPI::ejectTape(const HttpRequestPtr& /*req*/,
                             std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
 {
@@ -332,8 +332,8 @@ void EmulatorAPI::ejectTape(const HttpRequestPtr& req,
         return;
     }
     
-    // The tape slot of the media manager (pauses the emulator itself);
-    // refused while a TTD recording runs
+    // The tape slot of the media manager (pauses the emulator itself); while
+    // a TTD recording runs, an event of the recording at the next frame boundary
     std::string reason;
     if (!emulator->EjectTape(&reason)) {
         Json::Value error;
@@ -357,7 +357,7 @@ void EmulatorAPI::ejectTape(const HttpRequestPtr& req,
 }
 
 /// @brief POST /api/v1/emulator/:id/tape/play
-void EmulatorAPI::playTape(const HttpRequestPtr& req,
+void EmulatorAPI::playTape(const HttpRequestPtr& /*req*/,
                            std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id) const
 {
@@ -422,7 +422,7 @@ void EmulatorAPI::playTape(const HttpRequestPtr& req,
 }
 
 /// @brief POST /api/v1/emulator/:id/tape/stop
-void EmulatorAPI::stopTape(const HttpRequestPtr& req,
+void EmulatorAPI::stopTape(const HttpRequestPtr& /*req*/,
                            std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id) const
 {
@@ -473,7 +473,7 @@ void EmulatorAPI::stopTape(const HttpRequestPtr& req,
 }
 
 /// @brief POST /api/v1/emulator/:id/tape/rewind
-void EmulatorAPI::rewindTape(const HttpRequestPtr& req,
+void EmulatorAPI::rewindTape(const HttpRequestPtr& /*req*/,
                              std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id) const
 {
@@ -527,7 +527,7 @@ void EmulatorAPI::rewindTape(const HttpRequestPtr& req,
 
 /// @brief GET /api/v1/emulator/:id/tape
 /// Full tape snapshot: state, position, cursor, fast-load plan, catalog (design §7.2)
-void EmulatorAPI::getTape(const HttpRequestPtr& req,
+void EmulatorAPI::getTape(const HttpRequestPtr& /*req*/,
                           std::function<void(const HttpResponsePtr&)>&& callback,
                           const std::string& id) const
 {
@@ -583,7 +583,7 @@ void EmulatorAPI::getTapeInfo(const HttpRequestPtr& req,
 
 /// @brief GET /api/v1/emulator/:id/tape/blocks/:index
 /// One catalog descriptor plus a 64-byte hex preview of the raw payload
-void EmulatorAPI::getTapeBlock(const HttpRequestPtr& req,
+void EmulatorAPI::getTapeBlock(const HttpRequestPtr& /*req*/,
                                std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id,
                                const std::string& index) const
@@ -746,7 +746,7 @@ void EmulatorAPI::seekTape(const HttpRequestPtr& req,
 }
 
 /// @brief POST /api/v1/emulator/:id/tape/pause — manual pause; play resumes in place
-void EmulatorAPI::pauseTape(const HttpRequestPtr& req,
+void EmulatorAPI::pauseTape(const HttpRequestPtr& /*req*/,
                             std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
 {
@@ -1479,7 +1479,7 @@ void EmulatorAPI::createDisk(const HttpRequestPtr& req,
 }
 
 /// @brief POST /api/v1/emulator/:id/disk/:drive/eject
-void EmulatorAPI::ejectDisk(const HttpRequestPtr& req,
+void EmulatorAPI::ejectDisk(const HttpRequestPtr& /*req*/,
                             std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id,
                             const std::string& drive) const
@@ -1553,7 +1553,7 @@ void EmulatorAPI::ejectDisk(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/:id/disk/:drive/info
-void EmulatorAPI::getDiskInfo(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskInfo(const HttpRequestPtr& /*req*/,
                               std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id,
                               const std::string& drive) const
@@ -1617,7 +1617,7 @@ void EmulatorAPI::getDiskInfo(const HttpRequestPtr& req,
 // ============================================================================
 
 /// @brief GET /api/v1/emulator/:id/disk - List all drives
-void EmulatorAPI::getDiskDrives(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskDrives(const HttpRequestPtr& /*req*/,
                                 std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
 {
@@ -1704,7 +1704,7 @@ void EmulatorAPI::getDiskDrive(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/:id/disk/:drive/sector/:cyl/:side/:sec - Read logical sector
-void EmulatorAPI::getDiskSector(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskSector(const HttpRequestPtr& /*req*/,
                                 std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id,
                                 const std::string& drive,
@@ -1943,7 +1943,7 @@ void EmulatorAPI::putDiskSector(const HttpRequestPtr& req, std::function<void(co
 }
 
 /// @brief GET /api/v1/emulator/:id/disk/:drive/sector/:cyl/:side/:sec/raw - Read raw sector bytes
-void EmulatorAPI::getDiskSectorRaw(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskSectorRaw(const HttpRequestPtr& /*req*/,
                                    std::function<void(const HttpResponsePtr&)>&& callback,
                                    const std::string& id,
                                    const std::string& drive,
@@ -2057,7 +2057,7 @@ void EmulatorAPI::getDiskSectorRaw(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/:id/disk/:drive/track/:cyl/:side - Track summary
-void EmulatorAPI::getDiskTrack(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskTrack(const HttpRequestPtr& /*req*/,
                                std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id,
                                const std::string& drive,
@@ -2165,7 +2165,7 @@ void EmulatorAPI::getDiskTrack(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/:id/disk/:drive/track/:cyl/:side/raw - Raw track bytes
-void EmulatorAPI::getDiskTrackRaw(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskTrackRaw(const HttpRequestPtr& /*req*/,
                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id,
                                   const std::string& drive,
@@ -2257,7 +2257,7 @@ void EmulatorAPI::getDiskTrackRaw(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/:id/disk/:drive/image - Whole image dump
-void EmulatorAPI::getDiskImage(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskImage(const HttpRequestPtr& /*req*/,
                                std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id,
                                const std::string& drive) const
@@ -2352,7 +2352,7 @@ void EmulatorAPI::getDiskImage(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/:id/disk/:drive/sysinfo - TR-DOS system sector
-void EmulatorAPI::getDiskSysinfo(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskSysinfo(const HttpRequestPtr& /*req*/,
                                  std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id,
                                  const std::string& drive) const
@@ -2490,7 +2490,7 @@ void EmulatorAPI::getDiskSysinfo(const HttpRequestPtr& req,
 }
 
 /// @brief GET /api/v1/emulator/:id/disk/:drive/catalog - Disk catalog
-void EmulatorAPI::getDiskCatalog(const HttpRequestPtr& req,
+void EmulatorAPI::getDiskCatalog(const HttpRequestPtr& /*req*/,
                                  std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id,
                                  const std::string& drive) const

@@ -207,10 +207,14 @@ searches outside replay)`, `covers the whole session` or `covers nothing`.
 - **These wipe the history:** loading a snapshot, tape or disk (or creating a
   disk), reloading the ROM, changing the speed on a stopped session that still
   holds history, and `invalidate`. Load your software *before* `start`.
+- **A media change while recording is an event of the recording.** A tape,
+  disk or other medium inserted, ejected or created while a recording runs
+  lands at the next frame boundary and the recording goes on; seeking back to
+  before that frame shows the slot empty.
 - **Reset keeps the history.** A reset (including a disk autostart) stops the
   recording; the recorded history stays browsable.
-- **Devices TTD cannot follow end the recording.** Using the ZX-Evo SD card
-  while recording ends (and drops) the session at the next frame boundary.
+- **The ZX-Evo SD card is recorded.** Using it while recording no longer
+  ends the session.
 - **`load`** only restores into a machine of the model the session was
   recorded on (the error names both models). After a load the session is
   `idle`: `seek` to position the machine inside it. The path is resolved by

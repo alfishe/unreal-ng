@@ -22,6 +22,7 @@ struct Expected
     SessionEffect effect;
     bool hold;
     bool machineResetAfter;
+    bool atFrameBoundary = false;
 };
 
 Expected ExpectedCell(OpKind kind, MachineMode mode, bool endRecording)
@@ -34,16 +35,15 @@ Expected ExpectedCell(OpKind kind, MachineMode mode, bool endRecording)
             return {false, SessionEffect::EndKeepHistory, true, true};
         case OpKind::SnapshotLoad:
             return {false, SessionEffect::EndKeepHistory, true, false};
+        // M3 (Q4): while a recording the user started runs, a media change is an event of the recording at the next
+        // frame boundary (nothing for the session at the commit, no park), unless the caller ends the recording
         case OpKind::MediaInsert:
         case OpKind::MediaEject:
         case OpKind::DiskCreate:
-            if (mode == MachineMode::Recording)
-                return endRecording ? Expected{false, SessionEffect::StopThenMediaChanged, true, false}
-                                    : Expected{true, SessionEffect::None, false, false};
-            return {false, SessionEffect::MediaChanged, !live, false};
         case OpKind::MediaDiscard:
             if (mode == MachineMode::Recording)
-                return {true, SessionEffect::None, false, false};   // no "end the recording" for a discard today
+                return endRecording ? Expected{false, SessionEffect::StopThenMediaChanged, true, false}
+                                    : Expected{false, SessionEffect::None, false, false, true};
             return {false, SessionEffect::MediaChanged, !live, false};
         // D43 (owner 2026-10-10): fixed while a recording the user started runs and in the recorded past; the black
         // box ends its session as for a medium
@@ -90,25 +90,10 @@ TEST(MachinePolicy_Test, EveryCellIsTodaysBehaviour)
                 EXPECT_EQ(d.effect, e.effect) << where;
                 EXPECT_EQ(d.hold, e.hold) << where;
                 EXPECT_EQ(d.machineResetAfter, e.machineResetAfter) << where;
+                EXPECT_EQ(d.atFrameBoundary, e.atFrameBoundary) << where;
                 ++cells;
             }
     EXPECT_EQ(cells, static_cast<int>(OpKind::Count) * 5 * 2);
-}
-
-TEST(MachinePolicy_Test, MediaRefusalsSayWhatTheSurfacesSaidBefore)
-{
-    MachineOp op;
-    op.kind = OpKind::MediaInsert;
-    op.media = MediaClass::Tape;
-    EXPECT_EQ(Decide(op, MachineMode::Recording).reason.rfind("Cannot insert a tape while TTD is recording", 0), 0u);
-    op.media = MediaClass::Disk;
-    EXPECT_EQ(Decide(op, MachineMode::Recording).reason.rfind("Cannot insert a disk while TTD is recording", 0), 0u);
-    op.media = MediaClass::Any;
-    EXPECT_EQ(Decide(op, MachineMode::Recording).reason,
-              "the media set is fixed while a TTD recording runs; end the recording first");
-    op.kind = OpKind::DiskCreate;
-    op.media = MediaClass::Disk;
-    EXPECT_EQ(Decide(op, MachineMode::Recording).reason.rfind("Cannot create a disk while TTD is recording", 0), 0u);
 }
 
 TEST(MachinePolicy_Test, NetworkAndIdeRefusalsSayWhyAndHowLong)

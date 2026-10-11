@@ -2600,8 +2600,8 @@ bool Emulator::EjectDisk(uint8_t drive, bool force, std::string* error)
     if (!_context || !_context->pMediaManager || !_context->pMediaManager->HasSlot(slotId))
         return fail(std::string("drive ") + static_cast<char>('A' + drive) + " is not present on this machine");
 
-    // A medium leaving is a media set change: refused while a TTD recording
-    // runs (the manager answers "recording"), like a load
+    // A medium leaving is a media set change, like a load: while a TTD recording
+    // runs an event of the recording at the next frame boundary (TTD v1 refuses it)
     EjectOptions options;
     options.disposition = force ? Disposition::Discard : Disposition::None;
 

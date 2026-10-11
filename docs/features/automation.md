@@ -154,7 +154,7 @@ rzx seek <frame>        # Back (keyframes) or forward to a frame
 rzx stop                # Stop playing; the machine runs live
 # Tape transport (see command-interface.md §10 for the full tables)
 tape load <file>        # Load a tape (.tap/.tzx/.spc/.sta/.ltp/.zxt) or a folder built into a tape
-tape eject              # Eject: the tape leaves the tape slot (refused while TTD records)
+tape eject              # Eject: the tape leaves the tape slot (while TTD records: at the next frame boundary)
 tape play               # Start at cursor; resume in place when paused
 tape pause              # Freeze mid-block; next play resumes there
 tape stop               # Terminal stop (invalidates the image)
@@ -378,7 +378,7 @@ Full parity with the CLI `tape` commands, the Lua `tape_*` functions and the Pyt
 | Method | Endpoint | Description |
 |:-------|:---------|:------------|
 | POST | `/api/v1/emulator/{id}/tape/load` | Load tape image (body `path`) |
-| POST | `/api/v1/emulator/{id}/tape/eject` | Eject: the tape leaves the tape slot (409 while TTD records) |
+| POST | `/api/v1/emulator/{id}/tape/eject` | Eject: the tape leaves the tape slot (while TTD records: an event of the recording at the next frame boundary) |
 | POST | `/api/v1/emulator/{id}/tape/play` | Start / resume in place |
 | POST | `/api/v1/emulator/{id}/tape/pause` | Freeze mid-block |
 | POST | `/api/v1/emulator/{id}/tape/stop` | Terminal stop |

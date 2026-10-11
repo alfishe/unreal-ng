@@ -349,7 +349,7 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
     else if (sub == "sd_insert" || sub == "sd_eject" || sub == "flash_save")
     {
         // Checked here, carried out on the machine's thread (neogsmedia.h);
-        // insert / eject are refused while a TTD recording runs
+        // insert / eject follow the media rules (while TTD records: an event at the next frame boundary)
         const NeoGSMediaResult result = sub == "sd_insert" ? NeoGSRequestSdInsert(context, args.size() > 1 ? args[1] : std::string())
                                         : sub == "sd_eject" ? NeoGSRequestSdEject(context)
                                                             : NeoGSRequestFlashSave(context);

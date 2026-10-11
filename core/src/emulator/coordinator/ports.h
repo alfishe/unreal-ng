@@ -64,12 +64,16 @@ public:
     /// sees nothing
     void NoChange() { _noChange = true; }
     bool Unchanged() const { return _noChange && !_reached; }
+    /// The rules say the change lands at the next frame boundary (a media change while a recording runs: an event of
+    /// the recording there), not at once even on a parked machine
+    bool AtFrameBoundary() const { return _atFrameBoundary; }
 
 private:
     friend class MachineCoordinator;
     std::function<void()> _onCommitPoint;
     bool _reached = false;
     bool _noChange = false;
+    bool _atFrameBoundary = false;
 };
 
 /// The one owner of an operation kind: it implements the operation (architecture §2.1)

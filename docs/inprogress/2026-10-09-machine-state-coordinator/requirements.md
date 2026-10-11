@@ -196,7 +196,8 @@ internals; full media history (H1-H5).
 - 2026-10-09 (Q3): **RZX is a participant**; moving RZX seeking onto the TTD engine stays a separate task after v1
   is deleted.
 - 2026-10-09 (Q4): **a media change during a recording is an event** at the boundary where it lands, each insert,
-  eject, discard on its own, no pairing; logged so a later failure can be correlated. Refused until M3.
+  eject, discard on its own, no pairing; logged so a later failure can be correlated. Refused until M3. **Built
+  2026-10-10 (M3)**: the history keeps the change and what came in, then ports and sectors only (owner, same day).
 - 2026-10-09: **build the coordinator, in stages.** M0 defects first, each on its own; then the coordinator with the
   policy table and no behaviour change; operations move onto it one by one. The media cut ("Rec From Here") and media
   swaps as events are built on it, not as point fixes.

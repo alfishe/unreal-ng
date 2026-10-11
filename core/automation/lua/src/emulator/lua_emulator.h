@@ -2054,7 +2054,7 @@ public:
         });
 
         // Tape operations
-        // ok, reason: the reason is set when TTD refuses the insert (recording)
+        // ok, reason: the reason is set when the insert is refused (TTD v1 while recording)
         lua.set_function("tape_load", [this](const std::string& path) -> std::tuple<bool, std::string> {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return {false, "no emulator"};

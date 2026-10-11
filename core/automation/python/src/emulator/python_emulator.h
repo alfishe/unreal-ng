@@ -1670,9 +1670,10 @@ namespace PythonBindings
             // Tape operations
             .def("tape_load", [](Emulator& self, const std::string& path) -> bool {
                 if (std::string refusal = self.AskMediaChange(Emulator::MediaChange::LoadTape, 0, path); !refusal.empty())
-                    throw std::runtime_error(refusal);  // TTD is recording: RuntimeError with the reason
+                    throw std::runtime_error(refusal);  // refused (TTD v1 while recording): RuntimeError with the reason
                 return self.LoadTape(path);
-            }, "Load tape file (RuntimeError while TTD records)", py::arg("path"))
+            }, "Load tape file (while TTD records: an event of the recording at the next frame boundary; "
+               "RuntimeError on TTD v1)", py::arg("path"))
             .def("tape_is_inserted", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
                 return ctx && ctx->pTape && !ctx->coreState.tapeFilePath.empty();
@@ -3262,14 +3263,14 @@ namespace PythonBindings
             }, "MoonSound (OPL4) state: overview (part=''), the FM half (part='fm') or the wavetable half (part='pcm')",
                py::arg("part") = "")
             // NeoGS media: checked here, carried out on the machine's thread
-            // (neogsmedia.h); true when accepted. Insert / eject are refused
-            // while a TTD recording runs
+            // (neogsmedia.h); true when accepted. Insert / eject follow the media
+            // rules (while TTD records: an event at the next frame boundary)
             .def("gs_sd_insert", [](Emulator& self, const std::string& path) -> bool {
                 return NeoGSMediaAccepted(NeoGSRequestSdInsert(self.GetContext(), path));
-            }, "NeoGS: insert an SD card image (refused while a TTD recording runs)", py::arg("path"))
+            }, "NeoGS: insert an SD card image (while TTD records: an event at the next frame boundary)", py::arg("path"))
             .def("gs_sd_eject", [](Emulator& self) -> bool {
                 return NeoGSMediaAccepted(NeoGSRequestSdEject(self.GetContext()));
-            }, "NeoGS: remove the SD card (refused while a TTD recording runs)")
+            }, "NeoGS: remove the SD card (while TTD records: an event at the next frame boundary)")
             .def("gs_flash_save", [](Emulator& self) -> bool {
                 return NeoGSMediaAccepted(NeoGSRequestFlashSave(self.GetContext()));
             }, "NeoGS: save the reprogrammed flash (loaded in place of the shipped image with [NGS] FlashWrite=persist)")

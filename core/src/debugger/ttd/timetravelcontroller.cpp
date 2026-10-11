@@ -2328,6 +2328,9 @@ void TimeTravelController::RestoreCheckpointForReplay(const TTDCheckpoint& cp)
 {
     RestoreCheckpoint(cp);
     ArmInputPlayback();
+    // A medium that came in after this checkpoint is not there for its device until the replay reaches it (M3)
+    if (_context && _context->pMediaManager)
+        _context->pMediaManager->FollowReplay();
 
     // The CPU replays the recorded IN results from the engine's bus journals,
     // from its checkpoint's cursors; the live devices still answer, and a
@@ -3835,6 +3838,21 @@ void TimeTravelController::NoteFact(const TTDEvent& ev)
         fact.at.tInFrame %= span;
     }
     fact.ev = ev;
+    _shadowFacts.push_back(fact);
+}
+
+void TimeTravelController::NoteMediaChange(const char* slot, const char* what)
+{
+    // M3 (Q4, owner 2026-10-10): the history keeps that the medium changed and what came in, then ports and sectors
+    // only. A cut at this boundary: the change landed before the boundary's checkpoint, so the checkpoint holds the
+    // devices after it, and a replay or a run on the history that reaches the boundary restores it
+    if (_state != TTDSessionState::Recording || _inReplayMode || !_shadowEngine || !_context)
+        return;
+    const std::string text = std::string(slot ? slot : "") + " " + (what ? what : "");
+    TTDPendingFact fact;
+    fact.at = {_context->emulatorState.frame_counter, 0};
+    fact.ev.kind = TTDEventKind::MediaChange;
+    fact.ev.payload = _shadowEngine->Payloads().Store(reinterpret_cast<const uint8_t*>(text.data()), text.size());
     _shadowFacts.push_back(fact);
 }
 

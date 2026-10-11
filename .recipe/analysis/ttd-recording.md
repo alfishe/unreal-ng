@@ -344,14 +344,19 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   frame boundary; the black box always starts one. Do not look for the old
   "snapshot is part of the recording": it was removed on purpose.
 - **Other loads wipe the session.** Tape load, disk load/create and a host
-  speed change on a stopped session drop the whole history (and are refused
-  while recording, also while a recording is paused for browsing). Dump
-  first if you need the recording.
+  speed change on a stopped session drop the whole history. Dump first if you
+  need the recording.
+- **A media change while recording is an event of the recording.** Tape or
+  disk load / eject, disk create, `media` insert / eject / discard (SD cards,
+  CD too) land at the next frame boundary (`pending` meanwhile, also on a
+  paused machine) and the recording goes on; a seek to before that frame
+  shows the slot empty, from it on (and back live) the medium is there.
+  `end_recording` ends the recording instead. v1 still refuses them (409).
 - **A machine change** (ROM load, model switch, GS card switch, slot
   change) is the same rule with another machine behind it: the history is
   dropped, `last_stop_reason: "machine-change"`. v1 still refuses these while
   recording.
 - **A reset (or a disk autostart's quick reset)** ends the session and keeps
   what was captured; a machine sitting in history goes back to `idle`.
-- **ZX-Evo / ATM3 SD card** activity ends the recording (history dropped)
-  at the next frame boundary: TTD cannot follow the SD card yet.
+- **ZX-Evo / ATM3 SD card** activity is recorded (the card's state, the
+  guest's writes): it no longer ends the recording.

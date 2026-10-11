@@ -95,6 +95,23 @@ class MediaManager::MediaOpOwner : public coordinator::IOpOwner
 public:
     explicit MediaOpOwner(MediaManager& manager) : _manager(manager) {}
 
+    /// TTD v1 keeps no media change events (NoteMediaChange): while it records, a change is refused as before M3.
+    /// Goes with v1
+    std::string Refusal(const coordinator::MachineOp& op) const override
+    {
+        EmulatorContext* context = _manager._context;
+        ttd::ITimeTravelHooks* ttd = context ? context->pTimeTravelHooks : nullptr;
+        if (op.endRecording || !ttd || ttd->RecordsMediaChanges())
+            return {};
+        const ttd::TTDGuardedAction action = op.kind == coordinator::OpKind::DiskCreate ? ttd::TTDGuardedAction::CreateDisk
+                                             : op.media == coordinator::MediaClass::Tape ? ttd::TTDGuardedAction::LoadTape
+                                                                                         : ttd::TTDGuardedAction::LoadDisk;
+        std::string refusal = ttd->RecordingGuard(action);
+        if (!refusal.empty() && op.media == coordinator::MediaClass::Any && op.kind != coordinator::OpKind::DiskCreate)
+            refusal = "the media set is fixed while a TTD recording runs; end the recording first";
+        return refusal;
+    }
+
     bool Prepare(const coordinator::MachineOp& op, coordinator::OpStage& stage) override
     {
         MediaRequest& request = *std::any_cast<MediaRequest*>(op.payload);
@@ -575,7 +592,7 @@ bool MediaManager::CommitMediaOp(MediaRequest& request, coordinator::OpStage& st
                                         ? DelayFrames(state.swapDelayMs.value_or(descriptor.swapDelayMs))
                                         : 0;
 
-            if (CanApplyNow())
+            if (CanApplyNow() && !stage.AtFrameBoundary())
             {
                 std::vector<std::unique_ptr<Medium>> retired;
                 state.emptyFramesLeft = 0;  // nobody runs to see the empty slot
@@ -592,7 +609,7 @@ bool MediaManager::CommitMediaOp(MediaRequest& request, coordinator::OpStage& st
                 Retire(std::move(state.incoming));
             state.ejectRequested = state.attached != nullptr;
 
-            if (CanApplyNow())
+            if (CanApplyNow() && !stage.AtFrameBoundary())
             {
                 std::vector<std::unique_ptr<Medium>> retired;
                 ApplySlot(slotId, state, retired);
@@ -623,7 +640,7 @@ bool MediaManager::CommitMediaOp(MediaRequest& request, coordinator::OpStage& st
             }
             stage.CommitPoint();
             state.discardRequested = true;
-            if (CanApplyNow())
+            if (CanApplyNow() && !stage.AtFrameBoundary())
             {
                 std::vector<std::unique_ptr<Medium>> retired;
                 ApplySlot(slotId, state, retired);
@@ -994,11 +1011,21 @@ void MediaManager::ApplyConfiguredEntry(const MediaSetEntry& entry, std::vector<
 
 /// endregion </Operations>
 
+void MediaManager::NoteChangeLanded(const std::string& slotId, const std::string& what)
+{
+    // A change the guest's history must know: a recording keeps it as an event of this boundary (M3, Q4). A replay
+    // lands nothing of its own
+    if (!_context || _context->ttdReplayActive || !_context->pTimeTravelHooks)
+        return;
+    _context->pTimeTravelHooks->NoteMediaChange(slotId.c_str(), what.c_str());
+}
+
 void MediaManager::ApplyPending()
 {
     std::vector<std::unique_ptr<Medium>> retired;
     {
         std::lock_guard<std::recursive_mutex> lock(_mutex);
+        FollowReplay();   // a replay that reached the frame a medium came in: the medium is back for its device
         for (auto& [id, state] : _slots)
         {
             ApplySlot(id, state, retired);
@@ -1102,10 +1129,14 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
     {
         if (state.slot->IsBusy())
             return;  // a transfer in flight: next frame
-        state.slot->Detach();
+        if (!state.heldForReplay)
+            state.slot->Detach();
+        state.heldForReplay = false;
         Post(NC_MEDIA_EJECTED, slotId, state.attached.get());
         retired.push_back(std::move(state.attached));
         state.ejectRequested = false;
+        if (!state.incoming)
+            NoteChangeLanded(slotId, "ejected");
         state.changedUnits = 0;
         state.changes.clear();
     }
@@ -1129,7 +1160,10 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
         state.slot->Attach(*state.attached);
         state.slot->SetWriteProtectSwitch(state.writeProtect);
         state.changedUnits = state.attached->ChangedUnits();
+        state.landedFrame = _context ? _context->emulatorState.frame_counter : 0;
         Post(NC_MEDIA_INSERTED, slotId, state.attached.get());
+        const Medium& in = *state.attached;
+        NoteChangeLanded(slotId, in.Source().path.empty() ? in.Describe() : in.Source().path);
     }
 
     if (state.discardRequested)
@@ -1137,6 +1171,7 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
         if (state.attached && state.attached->Session())
             state.attached->Session()->Discard();
         state.discardRequested = false;
+        NoteChangeLanded(slotId, "discarded");
     }
 
     // While a replay runs nothing reaches the host (FR-20): the disk stays
@@ -1781,6 +1816,7 @@ uint32_t MediaManager::DelayFrames(uint32_t swapDelayMs) const
 
 void MediaManager::HoldHostWrites(bool hold)
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     _holdHostWrites = hold;
     for (auto& [slotId, state] : _slots)
         if (state.attached)
@@ -1788,6 +1824,33 @@ void MediaManager::HoldHostWrites(bool hold)
                 if (!h->SetHolding(hold))
                     LOGWARNING("MediaManager: %s: a sector written during a replay could not be written to its file",
                                slotId.c_str());
+    FollowReplay();
+}
+
+void MediaManager::FollowReplay()
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    const uint64_t frame = _context ? _context->emulatorState.frame_counter : 0;
+    // On the recorded history: a replay, or the machine at (or running from) a point in the past
+    const ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
+    const bool inHistory = _holdHostWrites || (ttd && ttd->GetState() == ttd::TTDSessionState::Detached);
+    for (auto& [slotId, state] : _slots)
+    {
+        const bool hold = inHistory && state.attached && frame < state.landedFrame;
+        if (hold == state.heldForReplay)
+            continue;
+        if (hold)
+            state.slot->Detach();
+        else if (state.attached)
+        {
+            state.slot->Attach(*state.attached);
+            state.slot->SetWriteProtectSwitch(state.writeProtect);
+            // Back live before the medium came in (a recording resumed from the past): it is in from here
+            if (!inHistory && frame < state.landedFrame)
+                state.landedFrame = frame;
+        }
+        state.heldForReplay = hold;
+    }
 }
 
 void MediaManager::WriteThroughFloppy(const std::string& slotId, SlotState& state)

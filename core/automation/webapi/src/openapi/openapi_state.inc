@@ -699,7 +699,8 @@
         "'gs-module-dump.mod'; 404 when no upload has completed yet). NeoGS only (409 otherwise): sd_insert "
         "(needs 'path' to a raw SD image), sd_eject, flash_save (saves the reprogrammed flash); carried out on the "
         "machine thread at the next instruction boundary ('status': 'queued' while the emulator runs, 'done' "
-        "otherwise); sd_insert/sd_eject are refused while TTD records (the configuration is fixed for a recording). "
+        "otherwise); sd_insert/sd_eject while TTD records are events of the recording at the next frame boundary "
+        "(TTD v1: refused). "
         "stereo_mode ('mode': separated | gs | mono) sets how the NeoGS DAC channels reach the two sides: separated as on "
         "the board, gs a 50% cross-feed like the classic GS, mono; kept by the emulator and applied at the next frame.";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["name"] = "id";
@@ -764,7 +765,7 @@
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["404"]["description"] =
         "Emulator or GS card not found, or (dump_module) no completed module upload captured yet";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["409"]["description"] =
-        "sd_insert / sd_eject / flash_save on a card that is not NeoGS, sd_insert / sd_eject while TTD records, "
+        "sd_insert / sd_eject / flash_save on a card that is not NeoGS, sd_insert / sd_eject while TTD v1 records, "
         "switch_personality refused by the slot plan (it would remove another card without replaceIfIncompatible) "
         "or while a TTD recording runs (the message names the session), "
         "or any of them while a TTD replay owns the machine";

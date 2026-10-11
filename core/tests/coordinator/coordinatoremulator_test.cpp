@@ -20,6 +20,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/floppydriveslot.h"
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/network/networkmanager.h"
@@ -53,9 +54,25 @@ protected:
 
     void TearDown() override
     {
+        if (_engineHooks && _emulator)
+        {
+            EmulatorContext* context = _emulator->GetContext();
+            context->pTimeTravelManager->StopRecording();
+            context->pTimeTravelHooks = _engineHooks;
+        }
         if (_emulator)
             EmulatorTestHelper::CleanupEmulator(_emulator);
     }
+
+    /// TTD v1 as the backend: it keeps no media change events, so it still refuses them while recording (goes with v1)
+    void UseV1()
+    {
+        EmulatorContext* context = _emulator->GetContext();
+        ASSERT_NE(context->pTimeTravelManager, nullptr);
+        _engineHooks = context->pTimeTravelHooks;
+        context->pTimeTravelHooks = context->pTimeTravelManager;
+    }
+    ttd::ITimeTravelHooks* _engineHooks = nullptr;
 
     /// Start counting log entries from here
     void Mark() { _since = _emulator->GetOperationLog().LastSeq(); }
@@ -94,9 +111,10 @@ TEST_F(CoordinatorEmulator_Test, AResetIsOneOperationThatEndsTheSessionAndKeepsT
     EXPECT_EQ(_emulator->MachineOps().Mode(), MachineMode::Live);
 }
 
-TEST_F(CoordinatorEmulator_Test, ATapeDuringARecordingIsRefusedAndLoggedBeforeItsFileIsOpened)
+TEST_F(CoordinatorEmulator_Test, TtdV1RefusesATapeWhileRecordingAndTheLogHasItBeforeTheFileIsOpened)
 {
-    ASSERT_TRUE(_ttd->StartRecording());
+    UseV1();
+    ASSERT_TRUE(_emulator->GetContext()->pTimeTravelManager->StartRecording());
     _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
 
     // Every surface asks the same question and gets the same sentence
@@ -110,7 +128,7 @@ TEST_F(CoordinatorEmulator_Test, ATapeDuringARecordingIsRefusedAndLoggedBeforeIt
     std::string error;
     EXPECT_FALSE(_emulator->LoadTape(Garbage("refused.tzx"), &error));
     EXPECT_EQ(error, would.reason) << "a garbage file would fail to parse: the refusal came first";
-    EXPECT_TRUE(_ttd->IsRecording());
+    EXPECT_TRUE(_emulator->GetContext()->pTimeTravelManager->IsRecording());
     const auto log = Logged();
     ASSERT_EQ(log.size(), 1u);
     EXPECT_EQ(log[0].kind, OpKind::MediaInsert);
@@ -120,7 +138,8 @@ TEST_F(CoordinatorEmulator_Test, ATapeDuringARecordingIsRefusedAndLoggedBeforeIt
 
 TEST_F(CoordinatorEmulator_Test, ASurfaceThatAsksFirstGetsTheSameRefusalAndTheLogNamesIt)
 {
-    ASSERT_TRUE(_ttd->StartRecording());
+    UseV1();   // the engine refuses no media change while recording (M3): v1 still does
+    ASSERT_TRUE(_emulator->GetContext()->pTimeTravelManager->StartRecording());
     _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
 
     // A surface asks before its own preparation (an upload, a dialog): the sentence LoadTape / LoadDisk /
@@ -147,10 +166,10 @@ TEST_F(CoordinatorEmulator_Test, ASurfaceThatAsksFirstGetsTheSameRefusalAndTheLo
     EXPECT_EQ(log[0].summary, "tape game.tzx");
     EXPECT_EQ(log[1].summary, FloppyDriveSlot::IdFor(1) + " game.trd");
     EXPECT_EQ(log[2].kind, OpKind::DiskCreate);
-    EXPECT_TRUE(_ttd->IsRecording());
+    EXPECT_TRUE(_emulator->GetContext()->pTimeTravelManager->IsRecording());
 
     // Live: nothing to refuse, nothing logged
-    _ttd->StopRecording();
+    _emulator->GetContext()->pTimeTravelManager->StopRecording();
     Mark();
     EXPECT_EQ(_emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, "game.tzx"), "");
     EXPECT_TRUE(Logged().empty());
@@ -380,4 +399,67 @@ TEST_F(CoordinatorEmulator_Test, AModelSwitchIsAskedOfTheCoordinatorAndARefusalI
     EXPECT_EQ(log[0].status, OpStatus::Refused);
     EXPECT_EQ(log[0].summary, "to TSL");
     EXPECT_EQ(log[0].detail, refusal);
+}
+
+// M3 (Q4, owner 2026-10-10): a media change while the user's recording runs is an event of the recording - the
+// history keeps that the medium changed and what came in, then ports and sectors only
+
+TEST_F(CoordinatorEmulator_Test, ADiskChangedWhileRecordingIsAnEventAtTheFrameBoundaryWhereItLands)
+{
+    EmulatorContext* context = _emulator->GetContext();
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+
+    Mark();
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(Data("loaders/trd/EyeAche.trd"), 0, &error)) << error;
+    EXPECT_EQ(context->coreState.diskDrives[0]->getDiskImage(), nullptr) << "never inside a frame";
+    _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+    const uint64_t landed = context->emulatorState.frame_counter;
+    EXPECT_NE(context->coreState.diskDrives[0]->getDiskImage(), nullptr) << "landed at the boundary";
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+
+    EXPECT_TRUE(_ttd->IsRecording()) << "the recording goes on";
+    const auto log = Logged();
+    ASSERT_EQ(log.size(), 1u);
+    EXPECT_EQ(log[0].status, OpStatus::Done);
+    EXPECT_EQ(log[0].mode, MachineMode::Recording);
+    EXPECT_EQ(log[0].effect, SessionEffect::None) << "the session sees nothing at the commit";
+
+    size_t changes = 0;
+    for (const ttd::TTDEvent& ev : _ttd->GetEngine().Events().Events())
+        changes += ev.kind == ttd::TTDEventKind::MediaChange;
+    EXPECT_EQ(changes, 1u) << "one event, where it landed (frame " << landed << ")";
+}
+
+TEST_F(CoordinatorEmulator_Test, BeforeTheFrameADiskCameInTheHistoryHasNoDiskThere)
+{
+    EmulatorContext* context = _emulator->GetContext();
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(Data("loaders/trd/atarin.trd"), 0, &error)) << error;
+    _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+    DiskImage* first = context->coreState.diskDrives[0]->getDiskImage();
+    ASSERT_NE(first, nullptr);
+
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(4, /*skipBreakpoints=*/true);
+    const uint64_t before = context->emulatorState.frame_counter;
+    ASSERT_TRUE(_emulator->LoadDisk(Data("loaders/trd/EyeAche.trd"), 0, &error)) << error;
+    _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+    const uint64_t landed = context->emulatorState.frame_counter;
+    DiskImage* second = context->coreState.diskDrives[0]->getDiskImage();
+    ASSERT_NE(second, nullptr);
+    ASSERT_NE(second, first);
+    _emulator->RunNFrames(4, /*skipBreakpoints=*/true);
+    _ttd->StopRecording();
+
+    // Back before the change: the disk that came later is not in the drive there - the guest's writes of that time
+    // never reach it; the CPU gets the recorded exchange
+    ASSERT_TRUE(_ttd->SeekTo({before, 0}));
+    EXPECT_EQ(context->coreState.diskDrives[0]->getDiskImage(), nullptr);
+    EXPECT_NE(context->pMediaManager->GetMedium("fdd.a"), nullptr) << "the slot keeps its medium";
+
+    // From the frame it came in on, it is there again
+    ASSERT_TRUE(_ttd->SeekTo({landed + 2, 0}));
+    EXPECT_EQ(context->coreState.diskDrives[0]->getDiskImage(), second);
 }

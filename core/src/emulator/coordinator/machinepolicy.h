@@ -17,6 +17,9 @@ struct PolicyDecision
     SessionEffect effect = SessionEffect::None;  ///< allowed: what the TTD session sees at the commit point
     bool hold = false;                           ///< the machine is parked for the operation
     bool machineResetAfter = false;              ///< the session hears MachineReset after a successful commit
+    /// The change lands at the next frame boundary, also on a parked machine: while a recording runs, a media change
+    /// is an event of the recording at the boundary where it lands (M3, Q4), never a change inside a frame
+    bool atFrameBoundary = false;
 };
 
 /// The cell for @p op in @p mode. Pure: no state, no side effects

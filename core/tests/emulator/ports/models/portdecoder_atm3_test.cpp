@@ -997,12 +997,6 @@ TEST(ZXEvoSdCardTtd_Test, SdCardUnderTheCommonTtdRule)
     ttd->OnFrameBoundary();
     EXPECT_TRUE(ttd->IsRecording()) << "commands no longer end a recording";
 
-    MediaSource blank;
-    blank.type = MediaSourceType::Blank;
-    auto another = MediaFormatRegistry::WrapBlock(blank, AccessMode::Session, "memory", PatternDisk(8));
-    EXPECT_EQ(context->pMediaManager->Insert("sd.zc", std::move(another)).error, MediaError::Recording)
-        << "the media set is fixed while recording";
-
     const size_t before = ttd->GetExternalEvents().Size();
     EXPECT_EQ(SdWriteBlock(decoder, 3 * 512, 0x11), 0x05);
     EXPECT_EQ(SdWriteBlock(decoder, 4 * 512, 0x22), 0x05);
@@ -1012,6 +1006,20 @@ TEST(ZXEvoSdCardTtd_Test, SdCardUnderTheCommonTtdRule)
     EXPECT_EQ(ttd->GetExternalEvents().Size(), before + 2);
     EXPECT_TRUE(ttd->IsRecording());
 
+
+    // A card change while recording is an event of the recording at the next frame boundary (M3)
+    MediaSource blank;
+    blank.type = MediaSourceType::Blank;
+    auto another = MediaFormatRegistry::WrapBlock(blank, AccessMode::Session, "memory", PatternDisk(8));
+    InsertOptions replace;
+    replace.disposition = Disposition::Discard;   // the card holds the guest's writes above
+    replace.immediate = true;                     // no swap delay: it lands at the next boundary
+    const MediaResult inserted = context->pMediaManager->Insert("sd.zc", std::move(another), replace);
+    EXPECT_TRUE(inserted.Ok()) << inserted.message;
+    EXPECT_TRUE(context->pMediaManager->Info("sd.zc")->pending);
+    context->pMediaManager->ApplyPending();
+    EXPECT_FALSE(context->pMediaManager->Info("sd.zc")->pending);
+    EXPECT_TRUE(ttd->IsRecording());
     ttd->StopRecording();
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

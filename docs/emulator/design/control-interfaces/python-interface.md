@@ -498,7 +498,7 @@ emu.init()
 
 # Load / eject
 emu.tape_load("/path/to/game.tap")   # .tap/.tzx/.spc/.sta/.ltp/.zxt, or a folder built into a tape
-emu.tape_eject()                      # the tape leaves the tape slot (False while TTD records)
+emu.tape_eject()                      # the tape leaves the tape slot (while TTD records: at the next frame boundary)
 
 # Transport (same semantics as `tape play|pause|stop|rewind|seek`)
 emu.tape_play()    # start at consumption cursor; resumes in place when paused
@@ -1137,13 +1137,13 @@ print(unreal.rzx_status(r["emulator_id"])["summary"])
 
 TTD methods live on the `Emulator` object (`emu.ttd_*`). Bindings: `core/automation/python/src/emulator/python_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
 
-**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse methods are refused by the core while recording (`ttd_seek` returns `reached: False` with `halt_reason: 'out_of_range'`, the boolean methods return `False`, `ttd_find_last` / `ttd_reverse_continue` return `None`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording (`snapshot_load` only on v1: on the engine a snapshot load is part of the recording), `tape_load`, `disk_create`, `ttd_invalidate`, `ttd_set_journal_enabled` raise `RuntimeError` with the reason (on v1 also `gs_switch_personality`, and the `slots_*` functions answer `status: 'recording'`; on the engine those end the session; `disk_load` returns `success: False` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; `feature_set` switching `timetravel` / `debugmode` off stops the recording cleanly (history kept, `last_stop_reason` in `ttd_status()`); while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
+**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse methods are refused by the core while recording (`ttd_seek` returns `reached: False` with `halt_reason: 'out_of_range'`, the boolean methods return `False`, `ttd_find_last` / `ttd_reverse_continue` return `None`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording (`snapshot_load` only on v1: on the engine a snapshot load is part of the recording), `ttd_invalidate`, `ttd_set_journal_enabled` raise `RuntimeError` with the reason (on v1 also `tape_load`, `disk_create`, `gs_switch_personality`, and the `slots_*` functions answer `status: 'recording'`; on the engine a tape / disk / media change is an event of the recording at the next frame boundary, the others end the session; `disk_load` on v1 returns `success: False` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; `feature_set` switching `timetravel` / `debugmode` off stops the recording cleanly (history kept, `last_stop_reason` in `ttd_status()`); while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
 
 ```python
 try:
     emu.tape_load('game.tap')
 except RuntimeError as refusal:
-    print(refusal)   # Cannot insert a tape while TTD is recording: ... stop the recording first.
+    print(refusal)   # v1 only: Cannot insert a tape while TTD is recording: ... stop the recording first.
 ```
 
 Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page`, which raises `ValueError`, and a refusal to protect a running recording, which raises `RuntimeError`.
