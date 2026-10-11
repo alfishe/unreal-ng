@@ -209,6 +209,8 @@ phase; master only after the owner's review.
       - [ ] STORM 1.0beta inject rule; STORM idle templates; 1.3i loses bytes of a large assembly (its own LOAD too)
       - [x] TASM 4.12 (2026-10-11, research-sjasmplus-to-tasm.md): backend (4.12 / 4.0 / 3), inject at its command line as LOAD leaves a file, its changed flag and work name; TASM 4.12 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes; `zxasm convert --to-version`
       - [ ] TASM 4.0 / 4.4 / 3.x inject rules; TASM idle templates
+      - [x] ZX-ASM / ZAsm 3.15 (2026-10-11, research-sjasmplus-to-zxasm.md): backend, inject at its COMMAND prompt (the first `Linear` one); ZAsm 3.15 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
+      - [ ] ZX-ASM 3.0 / 3.10 / ZAsm 3.2x-4.20 inject rules; the editor redrawn after an inject; ZAsm idle templates
     - [ ] Z4 48K targets: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
     - [ ] Z5 sjasmplus frontend coverage of real projects (STRUCT, MODULE, DEVICE / SLOT / PAGE, SAVEBIN, DEFINE)
   - First cuts: ALASM both ways about 14 days; + TASM 4.12 about 20; + watch / push watch, hints, live labels, Qt dock about 27

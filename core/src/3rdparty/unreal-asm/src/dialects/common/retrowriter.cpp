@@ -687,6 +687,8 @@ std::vector<std::string> RetroWriter::StatementText(const Statement& s, const st
                     diagnostics.push_back({Severity::Warning, line, 0, "a DEFINE with a value (text put in where its name stands): not converted"});
                 return {";" + s.text};
             }
+            if (auto own = OtherText(word, rest))
+                return *own;
             if (kNoBytes.count(word))
             {
                 diagnostics.push_back({Severity::Info, line, 0, word + " dropped (it makes no bytes)"});

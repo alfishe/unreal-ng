@@ -621,7 +621,13 @@ SyncDescriptor Zasm315()
     d.linear.endAt = 0x8837;
     d.linear.upperPage = 6;
     d.linear.stateLine = ";!";
+    d.linear.resetFrom = 0x882B;   // the cursor line and the marks, up to the end word
+    d.linear.resetTo = 0x8837;
     d.typing = {TypingRule::NotInText, 0, 0};
+    // A text is written at its COMMAND prompt (CS+SS in the editor): its key wait returns through #C404, #E630, #E6F0
+    // (code in the page at #C000 while ZAsm runs)
+    d.idleChain = {0xC404, 0xE630, 0xE6F0};
+    d.idleWhere = "its COMMAND prompt (CS+SS)";
     return d;
 }
 
@@ -1189,11 +1195,72 @@ InjectPlan PlanInjectLoaded(const MachineView& machine, const SyncDescriptor& d,
 }
 }  // namespace
 
+namespace
+{
+/// ZAsm: the buffer from (startAt) (its part from #C000 in upperPage), the end pointer one past it, the table's other
+/// words at the start, as LOAD leaves them. The editor has no "changed" flag: a text in memory that is not empty and
+/// not the caller's own counts as changed
+InjectPlan PlanInjectLinear(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& file, const InjectOptions& options)
+{
+    InjectPlan plan;
+    std::string why;
+    if (!Idle(machine, d, why) && !(options.force && d.idleChain.empty()))
+    {
+        plan.error = why;
+        return plan;
+    }
+    const LinearParams& p = d.linear;
+    plan.previous = ReadText(machine, d);
+    if (plan.previous.ok && !plan.previous.file.empty() && !options.force && !WrittenBefore(plan.previous, options.written, 0))
+    {
+        plan.error = "the text in " + d.title + " may have changes not saved (it keeps no flag; force overwrites it)";
+        return plan;
+    }
+    const auto start = machine.Word(p.startAt);
+    if (!start)
+    {
+        plan.error = "the text pointers of " + d.title + " are not in memory";
+        return plan;
+    }
+    const uint32_t end = *start + static_cast<uint32_t>(file.size());
+    if (end + p.end.size() > 0x10000)
+    {
+        plan.error = "the text takes " + std::to_string(file.size()) + " bytes; " + d.title + " holds " + std::to_string(0x10000 - *start - p.end.size());
+        return plan;
+    }
+    const auto poke = [&](uint32_t at, uint8_t value) {
+        const int window = at >= 0xC000 && p.upperPage >= 0 ? p.upperPage : machine.windows[(at >> 14) & 3];
+        if (window < 0 || at < 0x4000)
+            return false;
+        plan.pokes.push_back({window, static_cast<uint16_t>(at & (kPage - 1)), value});
+        return true;
+    };
+    bool ok = true;
+    for (size_t k = 0; k < file.size(); ++k)
+        ok = poke(*start + static_cast<uint32_t>(k), file[k]) && ok;
+    for (size_t k = 0; k < p.end.size(); ++k)
+        ok = poke(end + static_cast<uint32_t>(k), static_cast<uint8_t>(p.end[k])) && ok;
+    ok = poke(p.endAt, static_cast<uint8_t>(end & 0xFF)) && poke(p.endAt + 1u, static_cast<uint8_t>(end >> 8)) && ok;
+    for (uint32_t at = p.resetFrom; at + 1 < p.resetTo; at += 2)
+        ok = poke(at, static_cast<uint8_t>(*start & 0xFF)) && poke(at + 1, static_cast<uint8_t>(*start >> 8)) && ok;
+    if (!ok)
+    {
+        plan.error = "the memory of " + d.title + "'s text is not in RAM";
+        return plan;
+    }
+    plan.page = -1;
+    plan.ok = true;
+    return plan;
+}
+}  // namespace
+
 InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& file, const InjectOptions& options)
 {
     InjectPlan plan;
     if (d.family == LayoutFamily::GapBuffer && d.gapBuffer.loadedForm)
         return PlanInjectLoaded(machine, d, file, options);
+    if (d.family == LayoutFamily::Linear && d.linear.resetFrom)
+        return PlanInjectLinear(machine, d, file, options);
     if (d.family != LayoutFamily::FileImage)
     {
         plan.error = "writing a text into " + d.title + " is not supported yet";

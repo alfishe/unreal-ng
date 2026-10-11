@@ -750,6 +750,55 @@ TEST(SyncInject_Test, XasTakesAFileAndItsEditorVariablesAtItsCommandLine)
     EXPECT_NE(none.error.find("editor variables were not found"), std::string::npos) << none.error;
 }
 
+TEST(SyncInject_Test, Zasm315TakesAFileAtItsCommandPromptAsLoadLeavesIt)
+{
+    Dump dump = Load("zasm315-edited");
+    const SyncDescriptor* d = FindDescriptor("zasm-3.15");
+    ASSERT_NE(d, nullptr);
+    // its COMMAND prompt: the key wait returns through #C404, #E630, #E6F0
+    const std::vector<uint16_t> words = {0x5CDD, 0xC421, 0xC41D, 0xC404, 0xE630, 0xE6F0, 0xDFF0, 0x7A16};
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        if (dump.machine.ram[k].page == 5)
+            for (size_t w = 0; w < words.size(); ++w)
+            {
+                dump.pages[k][0x1FF0 + 2 * w] = static_cast<uint8_t>(words[w]);
+                dump.pages[k][0x1FF0 + 2 * w + 1] = static_cast<uint8_t>(words[w] >> 8);
+            }
+    dump.machine.sp = 0x5FF0;
+    std::string why;
+    ASSERT_TRUE(Idle(dump.machine, *d, why)) << why;
+
+    const WriteAsResult written = WriteAs(SourceDocument::FromText("        ORG #6000\nstart   LD A,1\n        JR start\n", "sjasmplus"), "zxasm", d->version, "NEW");
+    ASSERT_TRUE(written.ok) << written.error;
+    // ZAsm keeps no "changed" flag: a text it holds is replaced by force (or when it is the caller's own) only
+    const InjectPlan refused = PlanInject(dump.machine, *d, written.bytes);
+    EXPECT_FALSE(refused.ok);
+    InjectOptions force;
+    force.force = true;
+    const InjectPlan plan = PlanInject(dump.machine, *d, written.bytes, force);
+    ASSERT_TRUE(plan.ok) << plan.error;
+    std::map<uint16_t, uint8_t> pokes;
+    for (const InjectPlan::Poke& p : plan.pokes)
+        pokes[static_cast<uint16_t>((p.page == 2 ? 0x8000 : p.page == 5 ? 0x4000 : 0xC000) + p.offset)] = p.value;
+    for (size_t k = 0; k < written.bytes.size(); ++k)
+        EXPECT_EQ(pokes[static_cast<uint16_t>(0x884C + k)], written.bytes[k]) << k;
+    const auto word = [&](uint16_t at) { return pokes[at] | (pokes[at + 1] << 8); };
+    EXPECT_EQ(word(0x8837), static_cast<int>(0x884C + written.bytes.size()));   // the end
+    for (uint16_t at = 0x882B; at < 0x8837; at += 2)
+        EXPECT_EQ(word(at), 0x884C) << std::hex << at;   // the cursor line and the marks at the start
+
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        for (const InjectPlan::Poke& p : plan.pokes)
+            if (dump.machine.ram[k].page == p.page)
+                dump.pages[k][p.offset] = p.value;
+    const SyncText back = ReadText(dump.machine, *d);
+    ASSERT_TRUE(back.ok) << back.state;
+    EXPECT_EQ(back.file, written.bytes);
+    InjectOptions own;
+    own.written = {written.bytes};
+    EXPECT_TRUE(PlanInject(dump.machine, *d, written.bytes, own).ok) << "its own text: replaced without force";
+}
+
 TEST(SyncInject_Test, Tasm412TakesAFileAtItsCommandLineAsLoadLeavesIt)
 {
     Dump dump = Load("tasm412-command");
