@@ -25,7 +25,8 @@
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
         "#/components/schemas/AddBreakpointRequest";
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["description"] =
-        "An execution, read, write, rw, port_in, port_out or port breakpoint: one address or a range (address_end), "
+        "An execution, read, write, rw, port_in, port_out or port breakpoint: one address or a range (address_end); "
+        "a memory address can be a label's name (\"Sparkles.End\": its CPU address), "
         "physical with 'page' (fires on that page through any slot that shows it; slot_only: through one slot), a port "
         "with a mask, a hit policy (hits / hit_mode + hit_target). Errors name the field: a range ending before it "
         "starts, a page range leaving its page, a page the machine lacks, a mask on memory, a policy without a target.";

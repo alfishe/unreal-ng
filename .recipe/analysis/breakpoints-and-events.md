@@ -26,6 +26,10 @@ never fires. A memory breakpoint stops during the access, so the PC is inside or
 range is checked as fast as one address, and so are ten thousand of them (the emulator paints them
 into a per-address table when they are set).
 
+**By label.** An execution, read or write breakpoint's `address` (and `address_end`) can be a label's name:
+`{"type":"exec","address":"Sparkles.End"}` sets it at that label's CPU address (MCP `bp_add` the same). Load the
+labels first (`symbols/import`); an unknown name is refused.
+
 **On a page (physical).** A breakpoint can name a page - `{"kind":"ram","page":32}` in JSON,
 `ram32` / `rom3` / `cache0` in text. It then watches that page at offset `address & #3FFF`, through
 whatever slot shows the page: code a TS-Conf or 128K program pages into `#C000` one moment and `#8000`

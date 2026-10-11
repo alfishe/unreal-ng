@@ -1211,6 +1211,7 @@ TEST_F(McpTools_Test, InspectState_SnapshotAspect_OneRequest)
     snapshot["regs"]["special"]["pc"] = 0x8000;
     snapshot["time"]["frame"] = 100;
     snapshot["time"]["t"] = 1234;
+    snapshot["time"]["frame_t"] = 69888;
     snapshot["disasm"].append(Json::Value(Json::objectValue));
     snapshot["memory"].append(Json::Value(Json::objectValue));
     _caller->routes["GET /api/v1/emulator/emu-1/debug/snapshot?disasm=5&memory=cpu:0x8000:16&memory=ram5:0:8"] = {200, snapshot};
@@ -1226,6 +1227,8 @@ TEST_F(McpTools_Test, InspectState_SnapshotAspect_OneRequest)
     EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/debug/snapshot?disasm=5&memory=cpu:0x8000:16&memory=ram5:0:8"));
     EXPECT_NE(result.text.find("[snapshot] seq 42, paused (read paused), last stop breakpoint, PC=8000"), std::string::npos)
         << result.text;
+    // The frame length and the global time in the text: an agent that sees only the text can time code across frames
+    EXPECT_NE(result.text.find("frame 100 t 1234 of 69888 (global t 6990034)"), std::string::npos) << result.text;
     EXPECT_TRUE(result.structured.isMember("snapshot"));
 }
 

@@ -24,12 +24,11 @@ The agent gets there with these tools:
 | Step | Tool call |
 |:--|:--|
 | new machine, muted | `emulator_manage {"action":"create","model":"48K"}`, then `invoke_api {"method":"PUT","path":"/api/v1/emulator/{id}/audio/mixer/master","body":{"muted":true}}` |
-| program and labels | `load_software {"path":".../demo.sna"}`, `manage_symbols {"action":"import","path":".../demo.sym","format":"sjasmplus-sym"}` (give the format: by the extension alone a `.sym` is read as the simple format and nothing is added) |
+| program and labels | `load_software {"path":".../demo.sna"}`, `manage_symbols {"action":"import","path":".../demo.sym"}` |
 | set-up frames | `control_execution {"action":"run_frames","frames":10}` |
-| marker addresses | `manage_symbols {"action":"resolve","name":"Sparkles.End"}` → `0x80C2` (`bp_add` takes a number, not a label) |
-| markers | `control_execution {"action":"bp_add","address":"0x8071"}` and the same for `Sparkles.End` and `Isr` |
+| markers | `control_execution {"action":"bp_add","address":"Sparkles"}` and the same for `Sparkles.End` and `Isr` (a label or a number) |
 | run to the next marker | `control_execution {"action":"step_n","count":100000}` (stops at a breakpoint) |
-| the time there | `inspect_state {"aspects":["snapshot"]}`: `frame F t T` in the text; global time = F × frame length + T (69888 on a 48K, 71680 on a Pentagon; `time.frame_t` in the structured answer) |
+| the time there | `inspect_state {"aspects":["snapshot"]}`: `frame 109 t 55803 of 69888 (global t 7673595)`; a pass = the difference of two global times |
 | clean up | `control_execution {"action":"bp_clear"}`, `emulator_manage {"action":"destroy"}` |
 
 Each marker hit costs the agent two tool calls. That suits a few dozen passes. For hundreds of frames, ask the agent

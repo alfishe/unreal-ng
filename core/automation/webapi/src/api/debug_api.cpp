@@ -1158,23 +1158,39 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         return;
     }
 
+    // A memory address is a number or a label's name (its CPU address); a port or a line is a number
+    LabelManager* labels = ctx->pDebugManager->GetLabelManager();
+    auto parseAddress = [&](const Json::Value& field, uint32_t& out) {
+        if (ParseJsonUInt(field, 0xFFFF, out))
+            return true;
+        if (spec.type != BRK_MEMORY || !field.isString() || !labels)
+            return false;
+        const auto label = labels->GetLabelByName(field.asString());
+        if (!label)
+            return false;
+        out = label->address;
+        return true;
+    };
+
     uint32_t value = 0;
     if (spec.type == BRK_MAGIC)
     {
         // The opcode is the type (ED FF / DD 01); no address
         value = type == "magic_ed_ff" ? BRK_MAGIC_ED_FF : BRK_MAGIC_DD_01;
     }
-    else if (!ParseJsonUInt(body["address"], 0xFFFF, value))
+    else if (!parseAddress(body["address"], value))
     {
-        badRequest("'address' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")");
+        badRequest(spec.type == BRK_MEMORY
+                       ? "'address' must be 0..65535 (a number, a string: decimal, \"0x..\", \"#..\" or \"$..\", or a label's name)"
+                       : "'address' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")");
         return;
     }
     spec.address = static_cast<uint16_t>(value);
     if (body.isMember("address_end") && !body["address_end"].isNull())
     {
-        if (!ParseJsonUInt(body["address_end"], 0xFFFF, value))
+        if (!parseAddress(body["address_end"], value))
         {
-            badRequest("'address_end' must be 0..65535");
+            badRequest("'address_end' must be 0..65535 (or, for memory, a label's name)");
             return;
         }
         spec.hasEnd = true;
