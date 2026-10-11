@@ -35,6 +35,7 @@ this document is the instruments. Tests themselves follow [`core/tests/README.md
 | Something works alone and fails with several instances or threads | TSan on the narrowest test (§8), ASan stress (§5) | |
 | Arithmetic / shift / index oddities, compiler-dependent results | UBSan (part of the `asan` build, §2) | |
 | Memory grows over a session | `leaks --atExit` (§9) on macOS, LSan in Docker (§11) | `HeapCounter` in a test (§9) |
+| A value differs run to run, an ini key or a loader behaves oddly once in a while | valgrind memcheck (§11): uninitialized reads | |
 
 ## 2. AddressSanitizer (+ UndefinedBehaviorSanitizer)
 
@@ -318,6 +319,30 @@ nothrow forms were added. A flood of identical reports from a library frame is a
 Slower here than on macOS: `EmulatorManager_Test.EveryModelCanBeRemovedWhileRunning` takes ~90 s under ASan in the
 container (every model boots) - give it its own run or skip it in quick checks.
 
+### valgrind memcheck
+
+```bash
+tools/sanitize/valgrind.sh                       # RelWithDebInfo build + the profile, results in scratch/valgrind/<date>/
+tools/sanitize/valgrind.sh --no-build --filter 'Config_Test.*' --origins   # one suite, with the origin of a value
+```
+
+What ASan does not see: reads of uninitialized memory (a missing ini key compared an uninitialized buffer),
+`new[]` freed with `delete`, a test that never frees its machine. The script builds RelWithDebInfo through
+`docker/linux/build.sh`, adds valgrind to the CI image for the run (the image is removed at the end), and runs
+`core-tests` in gtest shards at once, one valgrind process per core. The profile keeps it under an hour on 16 cores
+(the full suite took 6 hours on 2026-10-10):
+
+- [`valgrind-exclude.txt`](../../tools/sanitize/valgrind-exclude.txt): tests that measure time or memory (they fail
+  under valgrind by design) and the boot-bound machine runs over 60 s each; the long threaded and lifetime tests stay.
+- `UNREAL_TEST_TIME_SCALE=20`: every `TestWait` timeout is 20 times longer. A native timeout under valgrind reported
+  hangs that were not there, and the machine fuzz's hang exit then stalled its process for hours.
+- `UNREAL_EXEC_FUZZ_ITERATIONS=2`, a hard limit of 90 minutes per shard.
+- [`valgrind.supp`](../../tools/sanitize/valgrind.supp): gtest printing a parameter struct's padding bytes.
+
+`summary.txt` lists the distinct errors by their first frames in our code, the leaks and, for information, the tests
+that failed under valgrind (timing). Exit 0 = no memcheck error. Read an `Invalid read` like an ASan report (§3);
+`Conditional jump ... uninitialised` means a branch on a value nobody wrote: `--origins` names the allocation.
+
 ## 12. Pitfalls
 
 - **One sanitizer per build directory**: `cmake-build-asan` (address + undefined), `cmake-build-tsan`. Build only
@@ -337,8 +362,8 @@ container (every model boots) - give it its own run or skip it in quick checks.
 
 ## 13. Findings log
 
-What these instruments found on 2026-10-10 (details in [`docs/inprogress/BUGS.md`](../inprogress/BUGS.md),
-2026-10-10 group), so a rerun can tell old from new:
+What these instruments found (the bug entries are in the git history of
+[`docs/inprogress/BUGS.md`](../inprogress/BUGS.md): fixed bugs are removed from it), so a rerun can tell old from new:
 
 | Instrument | Finding | Commit |
 |:--|:--|:--|
@@ -350,9 +375,14 @@ What these instruments found on 2026-10-10 (details in [`docs/inprogress/BUGS.md
 | ASan stress | GUI menu / FDC widget read removed contexts | `39770502f`, `ea5696507` |
 | test written while chasing a stress report | UUID duplicates from concurrent creates | `b9291e6a7` |
 | ASan stress + address diagnostics | DDCB results written into the last created CPU | `c68ea8a24` |
-| macOS `leaks`, LSan | a failed `CreateEmulatorWithModel` leaks the half-built instance | open (BUGS.md) |
+| macOS `leaks`, LSan | a failed `CreateEmulatorWithModel` leaks the half-built instance | `d5e197532` |
 | LSan | `FDD`s of a bare `Core` (tests) never freed | test-only |
-| UBSan | logger array index, `1 << 255`, float->short in TurboSound, misaligned SCL loads, null `Emulator&` | open (BUGS.md) |
+| UBSan | logger array index, `1 << 255`, float->short in TurboSound, misaligned SCL loads, null `Emulator&` | `d5e197532` |
 | Linux ASan | test `operator new` replacement missed the nothrow forms (false `alloc-dealloc-mismatch`) | this change |
 | TSan | 55 races between the emulation thread and API threads (baseline) | open |
-| ASan stress | ~144 GUI context reads without a lease | open (BUGS.md #11) |
+| ASan stress | ~144 GUI context reads without a lease | `f38e72b8e` |
+| valgrind (2026-10-11) | the `.z80` loader freed `new[]` staging pages with `delete` | `9643b9623` |
+| valgrind (2026-10-11) | a missing `RESET=` compared an uninitialized buffer (reset ROM undefined) | `202db83c2` |
+| valgrind (2026-10-11) | test fixtures leaked their `Core`, drives and context | `befe0e730` |
+| TSan on Linux (2026-10-11) | ZX-Poly status read the members' registers while they ran | `a5aa1b910` |
+| TSan on Linux (2026-10-11) | two overscan switches at once both saw the old video mode | `c13e28bb0` |
