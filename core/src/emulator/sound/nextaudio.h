@@ -79,6 +79,7 @@ public:
     /// endregion
 
 private:
+    friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     /// Run the generators up to absolute base T `t` (a tick every 16 T), recording the level of each tick
     void AdvanceTo(double t);
     void Tick();

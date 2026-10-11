@@ -2,6 +2,7 @@
 
 #include "nextstatecodec.h"
 
+#include <array>
 #include <cstring>
 #include <type_traits>
 
@@ -15,12 +16,14 @@
 #include "emulator/io/z80n/nextmultiface.h"
 #include "emulator/io/z80n/nextsprites.h"
 #include "emulator/io/z80n/nextvideoregs.h"
+#include "emulator/io/sdcard/sdcardspi.h"
 #include "emulator/memory/next/nextmemory.h"
+#include "emulator/sound/nextaudio.h"
 #include "emulator/ports/models/portdecoder_next.h"
 
 namespace
 {
-constexpr uint8_t kImageVersion = 1;
+constexpr uint8_t kImageVersion = 2;
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -40,6 +43,14 @@ public:
         const auto* bytes = reinterpret_cast<const uint8_t*>(array);
         _out.insert(_out.end(), bytes, bytes + sizeof(array));
     }
+    template <typename T, size_t N>
+    void PutArray(const std::array<T, N>& array)
+    {
+        static_assert(std::is_trivially_copyable_v<T>, "plain values only");
+        const auto* bytes = reinterpret_cast<const uint8_t*>(array.data());
+        _out.insert(_out.end(), bytes, bytes + sizeof(T) * N);
+    }
+    void PutBytes(const uint8_t* bytes, size_t n) { _out.insert(_out.end(), bytes, bytes + n); }
     std::vector<uint8_t> Take() { return std::move(_out); }
 
 private:
@@ -62,6 +73,13 @@ public:
         static_assert(std::is_trivially_copyable_v<T>, "plain values only");
         Take(reinterpret_cast<uint8_t*>(array), sizeof(array));
     }
+    template <typename T, size_t N>
+    void GetArray(std::array<T, N>& array)
+    {
+        static_assert(std::is_trivially_copyable_v<T>, "plain values only");
+        Take(reinterpret_cast<uint8_t*>(array.data()), sizeof(T) * N);
+    }
+    void GetBytes(uint8_t* dst, size_t n) { Take(dst, n); }
     bool Done() const { return _pos == _size && !_overrun; }
 
 private:
@@ -434,6 +452,59 @@ static void LoadSmall(Reader& r, NextMultiface& m, NextDivMmc& d)
     r.Get(d._buttonNmi);
 }
 
+static void SaveAudio(Writer& w, const NextAudio* a)
+{
+    // The three chips through their own TTD serializer (registers, generators, envelope, noise), then what the Next adds: pan, the selected
+    // chip, the mode bits and the four DACs. The render timing (tick clock, DC filters) is not state: it resyncs after a load
+    for (unsigned i = 0; i < NextAudio::kChips; i++)
+    {
+        std::vector<uint8_t> chip(a->_chips[i]->TTDStateSize());
+        a->_chips[i]->TTDSaveState(chip.data());
+        w.PutBytes(chip.data(), chip.size());
+    }
+    w.PutArray(a->_pan);
+    w.Put(a->_selected);
+    w.Put(a->_turboSound);
+    w.Put(a->_dacEnabled);
+    w.Put(a->_ym);
+    w.Put(a->_acb);
+    w.Put(a->_speakerExcluded);
+    w.Put(a->_monoMask);
+    w.PutArray(a->_dac);
+}
+static void LoadAudio(Reader& r, NextAudio* a)
+{
+    for (unsigned i = 0; i < NextAudio::kChips; i++)
+    {
+        std::vector<uint8_t> chip(a->_chips[i]->TTDStateSize());
+        r.GetBytes(chip.data(), chip.size());
+        a->_chips[i]->TTDLoadState(chip.data());
+    }
+    r.GetArray(a->_pan);
+    r.Get(a->_selected);
+    r.Get(a->_turboSound);
+    r.Get(a->_dacEnabled);
+    r.Get(a->_ym);
+    r.Get(a->_acb);
+    r.Get(a->_speakerExcluded);
+    r.Get(a->_monoMask);
+    r.GetArray(a->_dac);
+    a->_timeKnown = false;  // the render clock follows the machine again from the next frame
+}
+
+static void SaveSd(Writer& w, const SdCardSpi& card)
+{
+    std::vector<uint8_t> state(SdCardSpi::STATE_SIZE);
+    card.saveState(state.data());
+    w.PutBytes(state.data(), state.size());
+}
+static void LoadSd(Reader& r, SdCardSpi& card)
+{
+    std::vector<uint8_t> state(SdCardSpi::STATE_SIZE);
+    r.GetBytes(state.data(), state.size());
+    card.loadState(state.data());
+}
+
 static void SaveDecoder(Writer& w, const PortDecoder_Next& p)
 {
     w.Put(p._nr08NoContention);
@@ -477,6 +548,10 @@ std::vector<uint8_t> NextStateCodec::Save(const PortDecoder_Next& p)
     Impl::SaveI2c(w, p._i2c);
     Impl::SaveSmall(w, *p._multiface, *p._divMmc);
     Impl::SaveDecoder(w, p);
+    if (p._audio)
+        Impl::SaveAudio(w, p._audio.get());
+    Impl::SaveSd(w, p._sd[0]);
+    Impl::SaveSd(w, p._sd[1]);
     return w.Take();
 }
 
@@ -500,6 +575,10 @@ bool NextStateCodec::Load(PortDecoder_Next& p, const uint8_t* data, size_t size)
     Impl::LoadI2c(r, p._i2c);
     Impl::LoadSmall(r, *p._multiface, *p._divMmc);
     Impl::LoadDecoder(r, p);
+    if (p._audio)
+        Impl::LoadAudio(r, p._audio.get());
+    Impl::LoadSd(r, p._sd[0]);
+    Impl::LoadSd(r, p._sd[1]);
     memory.Remap();  // the slot table, the windows and the contention flags follow the image
     return r.Done();
 }
