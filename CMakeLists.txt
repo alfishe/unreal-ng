@@ -462,6 +462,9 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-qt/install/macos/unreal.icns" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.icns"
             COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-qt/install/macos/unreal.icns" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/unreal.icns"
             COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-videowall/install/macos/videowall.icns" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/videowall.icns"
+
+            # Scripts and AI-agent prompts for the WebAPI / MCP, next to the apps (the apps do not read them)
+            COMMAND ${CMAKE_COMMAND} -DDEST="${SUITE_STAGING_DIR}/examples" -P "${CMAKE_SOURCE_DIR}/cmake/CopyExamples.cmake"
             
             # Run macdeployqt to deploy Qt frameworks into each bundle
             COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/UnrealNG.app" -always-overwrite
@@ -568,6 +571,8 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -DDEST="${SUITE_STAGING_DIR}/configs" -P "${CMAKE_SOURCE_DIR}/cmake/ExtractConfigImages.cmake"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html" "${SUITE_STAGING_DIR}/resources/html"
+            # Scripts and AI-agent prompts for the WebAPI / MCP
+            COMMAND ${CMAKE_COMMAND} -DDEST="${SUITE_STAGING_DIR}/examples" -P "${CMAKE_SOURCE_DIR}/cmake/CopyExamples.cmake"
 
             # Create ZIP archive (change to parent dir to avoid nested paths)
             COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
@@ -688,6 +693,8 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -DDEST="${SUITE_STAGING_DIR}/configs" -P "${CMAKE_SOURCE_DIR}/cmake/ExtractConfigImages.cmake"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html" "${SUITE_STAGING_DIR}/resources/html"
+            # Scripts and AI-agent prompts for the WebAPI / MCP
+            COMMAND ${CMAKE_COMMAND} -DDEST="${SUITE_STAGING_DIR}/examples" -P "${CMAKE_SOURCE_DIR}/cmake/CopyExamples.cmake"
 
             # Desktop integration files in XDG layout (copy share/ into ~/.local/share or /usr/share)
             COMMAND ${CMAKE_COMMAND} -E copy
