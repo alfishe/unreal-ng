@@ -55,6 +55,7 @@ public:
     void OnMachineM1(uint16_t address) override { (void)address; }
 
 private:
+    friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     void Publish();
 
     NextMemory* _memory;

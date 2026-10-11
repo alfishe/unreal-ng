@@ -4,6 +4,7 @@
 
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/ttd/next/ttdnextstate.h"
 #include "debugger/debugmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
@@ -1135,3 +1136,19 @@ bool PortDecoder_Next::RequestBoardNmi()
     GenerateDriveNmi();
     return true;
 }
+
+/// region <TTD>
+
+std::vector<ttd::PeripheralId> PortDecoder_Next::GetTTDModelStateIds() const
+{
+    return {ttd::PeripheralId::NextState};
+}
+
+std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Next::CreateTTDSerializers() const
+{
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
+    serializers.push_back(std::make_unique<ttd::TTDNextState>(*const_cast<PortDecoder_Next*>(this)));
+    return serializers;
+}
+
+/// endregion </TTD>

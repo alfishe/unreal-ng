@@ -74,6 +74,7 @@ public:
     uint8_t PatternByte(unsigned offset) const { return _pattern[offset & (kPatternBytes - 1)]; }
 
 private:
+    friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     struct Effective
     {
         int x = 0, y = 0;
