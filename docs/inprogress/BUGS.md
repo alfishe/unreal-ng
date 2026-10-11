@@ -58,19 +58,23 @@ new descriptor. Every repeated "add the same breakpoint" from the debugger or au
 `AddBreakpoint(BreakpointDescriptor*)` frees a descriptor it did not store; `AddBreakpointAdopting` reports adoption to
 `AddBreakpoint(spec)`, which frees its own copy as before (no double free).
 
-## 🔴 [Open] #12: Step over / step out removes the user's breakpoint at the return address
+## 🔵 [In Progress] #12: Step over removes the user's breakpoint on the instruction after the CALL
 * **Date Opened:** 2026-10-11
 * **Found by:** code reading while fixing #9.
 
 ### Description
-`Emulator::StepOver` puts a temporary execution breakpoint on the next instruction; the Qt debugger's step out puts one
-on the return address. When the user already has a plain execution breakpoint there, `AddBreakpoint` returns the
-user's id, and the end of the step (`FinishStepOver`, the step-out handler) removes that id: the user's breakpoint is
-gone after one step over a `CALL` whose next line has a breakpoint.
+`Emulator::StepOver` puts a temporary execution breakpoint on the next instruction. When the user already has a plain
+execution breakpoint there, `AddBreakpoint` returns the user's id, and `FinishStepOver` removed that id at the end of
+the step: the user's breakpoint was gone after one step over a `CALL` whose next line had a breakpoint. (The Qt
+debugger's step out removes its breakpoint only when the hit one carries its own note, so it does not have the bug.)
+
+### Fix
+`BreakpointManager::AddBreakpoint(descriptor, adopted)` tells whether the new descriptor was stored; the step over
+removes the breakpoint at its end only when it was its own.
 
 ### Requirements / Acceptance Criteria
-- [ ] A step that reuses an existing breakpoint does not remove it at the end; a test steps over a `CALL` with a
-  breakpoint on the next instruction and finds it still there.
+- [ ] `EmulatorStepOverObserver_Test.StepOverKeepsTheUsersBreakpointAfterTheCall`: the step stops after the `CALL`
+  and the user's breakpoint is still there.
 
 ## 🔴 [Open] #10: Test fixtures that never free their machine
 * **Date Opened:** 2026-10-11

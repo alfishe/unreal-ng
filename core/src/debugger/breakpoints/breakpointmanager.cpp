@@ -116,6 +116,11 @@ void BreakpointManager::ClearUserBreakpoints()
 uint16_t BreakpointManager::AddBreakpoint(BreakpointDescriptor* descriptor)
 {
     bool adopted = false;
+    return AddBreakpoint(descriptor, adopted);
+}
+
+uint16_t BreakpointManager::AddBreakpoint(BreakpointDescriptor* descriptor, bool& adopted)
+{
     const uint16_t result = AddBreakpointAdopting(descriptor, adopted);
     if (!adopted)
         delete descriptor;
