@@ -9,6 +9,7 @@ from the same source. The assembler disk is the collection's; the tool creates i
     inject-oracle.py alasm <disk> <main.asm> <address> --boot NAME --assembler alasm-X --project   # with its INCLUDEs
     inject-oracle.py xas <XAS disk> <source.asm> <address> --boot XAS7.447 --assembler xas-7.447 [--combo-frames 12]
     inject-oracle.py storm <STORM disk> <source.asm> <address> [--boot STORM1.3] [--assembler storm-1.3]
+    inject-oracle.py tasm412 <TASM_412 disk> <source.asm> <address> [--wait 15]
 
 XAS (Z3): started from its disk, the first source of its list loaded (or a new text), its command line opened (EXT;
 9.x need the keys held 12 frames), the source written there and assembled with A.
@@ -16,6 +17,10 @@ XAS (Z3): started from its disk, the first source of its list loaded (or a new t
 STORM (Z3): started from its disk, the source written while its editor waits for a key (STORM's PGUP then shows it
 from the top: <source>.storm-1.3.editor.png), assembled with BREAK A, the bytes read after quitting to BASIC (STORM
 swaps its code into the 48K memory while it runs and clears it when it starts: unwritten bytes read 0).
+
+TASM 4.12 (Z3): started from its disk, the source written at its command line (TASM128>) as its LOAD leaves a file,
+the work name set to INJECTED, assembled with A. TASM's stack is at #617C: give sources from #6200 up (its overlay
+is at #8000).
 
 With --project the source goes as a path, and each file it INCLUDEs into an ALASM text page of its own (the INCLUDE
 names the page); --template always takes the INCLUDEs (zxasm inject reads them beside the source).
@@ -148,9 +153,29 @@ def storm(emu, args, expected):
     return bytes(emu.read(args.address, len(expected)))
 
 
+def tasm412(emu, args, expected):
+    emu.insert_disk(os.path.abspath(args.disk))
+    emu.run_trdos(args.boot or 'TASM4.12')
+    emu.tap('enter')                                   # past the title
+    time.sleep(1)
+    body = {'from': args.from_, 'assembler': 'tasm-4.12', 'title': 'INJECTED'}
+    with open(args.source, encoding='utf-8') as f:
+        body['text'] = f.read()
+    reply = emu.post('/asm/sync/inject', body)
+    print('inject:', {k: reply.get(k) for k in ('assembler', 'name', 'bytes', 'lines', 'previous', 'message')})
+    for d in reply.get('diagnostics', []):
+        if d.get('severity') != 'info':
+            print('  ', d)
+    emu.write(args.address, [0xAA] * len(expected))   # bytes TASM does not write stay visible
+    emu.tap('a')                                       # Assemble: the text in memory, under the work name
+    time.sleep(args.wait)
+    emu.screenshot(os.path.abspath(args.source) + '.tasm-4.12.png')
+    return bytes(emu.read(args.address, len(expected)))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412'])
     parser.add_argument('disk', help='the assembler disk, or with --template an idle template snapshot')
     parser.add_argument('--template', action='store_true', help='inject with zxasm into the template snapshot instead (Z1)')
     parser.add_argument('--zxasm', default=os.environ.get('ZXASM', 'zxasm'))
@@ -175,6 +200,8 @@ def main():
     try:
         if args.assembler == 'xas':
             built = xas(emu, args, expected)
+        elif args.assembler == 'tasm412':
+            built = tasm412(emu, args, expected)
         elif args.assembler == 'storm':
             if args.descriptor == 'alasm-5.09':
                 args.descriptor = 'storm-1.3'

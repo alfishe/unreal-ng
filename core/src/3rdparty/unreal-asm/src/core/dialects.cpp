@@ -11,6 +11,7 @@
 #include "dialects/alasm/alasmfrontend.h"
 #include "dialects/common/z80.h"
 #include "dialects/storm/stormbackend.h"
+#include "dialects/tasm/tasmbackend.h"
 #include "dialects/storm/stormfrontend.h"
 #include "dialects/zxasm/zxasmfrontend.h"
 #include "dialects/xas/xasbackend.h"
@@ -70,6 +71,7 @@ const DialectRegistry& DialectRegistry::Builtin()
         r.Add(std::make_unique<dialects::AlasmBackend>());
         r.Add(std::make_unique<dialects::XasBackend>());
         r.Add(std::make_unique<dialects::StormBackend>());
+        r.Add(std::make_unique<dialects::TasmBackend>());
         return r;
     }();
     return registry;

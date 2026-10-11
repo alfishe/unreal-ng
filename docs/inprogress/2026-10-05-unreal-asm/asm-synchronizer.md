@@ -289,6 +289,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | typing | `InLineBuffer`: in the editor the cursor's line is only in the line buffer, 128 bytes of blank-padded text at `#928A` (`#930A` holds a packed copy that lags). Whether the editor holds it: the records before and after the gap add up to `#94D9` (the command line: Quit put it back and moved the gap to the end) or to one less (the editor). The reader encodes the buffer with the `tasm` codec (4.12, CP866) and puts it at the gap. No flag in memory tells the modes apart; this count does (checked on four dumps: top, middle, typing, command line) |
 | end | the file's `FF FF` end record is added by SAVE: the reader appends it (the bytes at the gap start are no guide: after Enter on the last line they can read `FF FF` in the editor too) |
 | caveat | Edit leaves a stale copy of the file at the text start; only the pointers count |
+| **Built: inject (Z3, 2026-10-11)** | at its command line (`TASM128>`: the key wait returns through `#9CE9`, `#80BC`): the file as LOAD leaves it at `#A6EE` with the gap pointers, the line count and the cursor line 0 (the editor builds the gap buffer when it is entered; the reader takes that form), `#9BA6` (changed since LOAD / SAVE) set, the work name `#9C10` the title so Assemble takes the text in memory; refused without force when `#9BA6` says the text changed. TASM 4.12 assembled the injected `oracle1.asm` and every instruction form to sjasmplus' bytes (research-sjasmplus-to-tasm.md §3) |
 | **Work** | identification, the line buffer's exact address and length, the gap reader, golden dumps (cursor at the top, in the middle, at the end, mid-typing): **1.5 d** |
 
 ### 7.6 TASM 4.0 and 4.4
@@ -831,6 +832,16 @@ PageBytes / SecondLine; `FileImageParams::changedVariables` for the editor's own
 every instruction form at `#6000` and `#8000` to sjasmplus' bytes; STORM 1.3's first pass counts `DB "A"` as two bytes
 (found by the oracle: characters in `DB` go as numbers). Details:
 [research-sjasmplus-to-storm.md](research-sjasmplus-to-storm.md).
+
+**Built (2026-10-11): Z3 for TASM 4.12.** The TASM backend (`dialects/tasm/tasmbackend.cpp`, on `RetroWriter`) writes
+left-to-right chains with parentheses, `high` / `low` as `/256` / `&255` (4.12 has no `{ }`), conditions it cannot
+decide as `.IF` (assembled on 0, one level), `.PHASE`, `DEFB` strings; `IN F,(C)`, `SLL` and two TASM 4.12 bugs
+(`LD HX,LX` / `LD HX,HX` with two prefixes) as bytes. The inject writes the form LOAD leaves (not the gap buffer):
+`GapBufferParams::loadedForm`, `changedAt`, `nameAt`; `InjectOptions::name` (the title) for an assembler that keeps
+the name outside the file; a plan of single bytes (`InjectPlan::page` -1) for a text across two pages. `zxasm convert
+--to-version` picks the target's version (TASM 4.12's tokens, not 5.5's). Checked in TASM 4.12: `oracle1.asm` and
+every instruction form to sjasmplus' bytes, loaded from its disk and injected. Details:
+[research-sjasmplus-to-tasm.md](research-sjasmplus-to-tasm.md).
 
 ## 20. Effort (part B)
 

@@ -152,10 +152,13 @@ bool InjectProject(EmulatorContext* context, const sync::SyncDescriptor& descrip
         const auto write = [&]() {
             for (const sync::InjectPlan& page : plan.pages)
             {
-                uint8_t* bytes = memory->RAMPageAddress(static_cast<uint16_t>(page.page));
-                std::copy(page.bytes.begin(), page.bytes.end(), bytes);
-                memory->MarkRamPageEdited(static_cast<uint16_t>(page.page));
-                // the editor variables the assembler's LOAD sets (XAS)
+                if (page.page >= 0)
+                {
+                    uint8_t* bytes = memory->RAMPageAddress(static_cast<uint16_t>(page.page));
+                    std::copy(page.bytes.begin(), page.bytes.end(), bytes);
+                    memory->MarkRamPageEdited(static_cast<uint16_t>(page.page));
+                }
+                // the editor variables the assembler's LOAD sets (XAS), or the whole text byte by byte (TASM 4.12)
                 for (const sync::InjectPlan::Poke& poke : page.pokes)
                 {
                     memory->RAMPageAddress(static_cast<uint16_t>(poke.page))[poke.offset] = poke.value;
