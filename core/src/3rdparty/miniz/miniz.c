@@ -391,6 +391,9 @@ mz_ulong mz_crc32(mz_ulong crc, const mz_uint8 *ptr, size_t buf_len)
         pDecomp = (inflate_state *)pStream->zalloc(pStream->opaque, 1, sizeof(inflate_state));
         if (!pDecomp)
             return MZ_MEM_ERROR;
+        /* unreal-ng local change: a damaged stream made tinfl branch on table entries nobody wrote (valgrind,
+           BUGS.md 2026-10-11 #11); zeroed, its outcome no longer depends on what the heap held */
+        memset(pDecomp, 0, sizeof(inflate_state));
 
         pStream->state = (struct mz_internal_state *)pDecomp;
 

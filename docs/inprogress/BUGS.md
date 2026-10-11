@@ -50,7 +50,7 @@ drives its constructor creates. Test-only, but the noise hides a product leak in
 - [ ] The fixtures release what they build (`EmulatorTestHelper::ReleaseBareCore` or the context's own delete); the
   WD1793 tests free the drives; no `definitely lost` from tests in the valgrind profile.
 
-## 🔴 [Open] #11: miniz inflate branches on uninitialized state for a damaged RZX stream
+## 🔵 [In Progress] #11: miniz inflate branches on uninitialized state for a damaged RZX stream
 * **Date Opened:** 2026-10-11
 * **Found by:** valgrind memcheck profile: `tinfl_decompress` (`miniz.c:2924`) from `rzx::Inflate`
   (`rzxformat.cpp:77`) in `RzxReader_Test.FuzzedCorpusNeverCrashes`; origin: the state allocated in `mz_inflateInit2`.
@@ -61,6 +61,9 @@ code: check whether the vendored miniz has a fix upstream, or zero the state aft
 
 ### Requirements / Acceptance Criteria
 - [ ] No memcheck error in `RzxReader_Test.FuzzedCorpusNeverCrashes`.
+
+### Fix
+`mz_inflateInit2` zeroes the inflate state after allocating it (a marked local change in the vendored miniz 11.3.2).
 
 Not bugs (known false positives of this profile, gcc -O2 + valgrind): `CompositeMediumFactory::Build`
 (`compositemediumfactory.cpp:935`, a disengaged `std::optional<FatType>` whose payload gcc reads before the flag) and,
