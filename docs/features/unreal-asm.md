@@ -158,9 +158,9 @@ Push, Extract... and Convert... buttons.
 
 `asm sync unwatch` stops the watch.
 
-The other way works too, for ALASM (3.8c to 5.09) and XAS (4.18 to 9.10) so far: `asm sync inject --path main.asm` writes a host source
+The other way works too, for ALASM (3.8c to 5.09), XAS (4.18 to 9.10) and STORM (1.3, 1.3i) so far: `asm sync inject --path main.asm` writes a host source
 (sjasmplus, or any dialect the converter reads) into the running ALASM as its own text, while ALASM waits at its `A>`
-prompt (XAS: at its command line, EXT). The assembler then assembles it as if you had typed it. The files main.asm INCLUDEs go into ALASM texts of their own.
+prompt (XAS: at its command line, EXT; STORM: while its editor waits for a key). The assembler then assembles it as if you had typed it. The files main.asm INCLUDEs go into ALASM texts of their own.
 `zxasm convert --to alasm` gives the same text as a file. More assemblers are planned
 ([asm-synchronizer](../inprogress/2026-10-05-unreal-asm/asm-synchronizer.md)).
 

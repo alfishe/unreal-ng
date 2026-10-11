@@ -88,6 +88,25 @@ STORM's own `imporT` reads plain text from the disk (unknown lines are marked as
 FILE.$T ...]` runs the whole sequence (BREAK L, BREAK A, BREAK Q, the bytes read in BASIC). The calls are those of
 [tasm.md](tasm.md#webapi) with `RUN "STORM1.3"` and the keys above.
 
+## A host source into STORM (1.3, 1.3i)
+
+Write the source while STORM's editor waits for a key (nothing typed in the cursor line); BREAK `A` then assembles it:
+
+```text
+asm_source  {"action":"sync_inject","path":"/abs/main.asm","assembler":"storm-1.3"}   # sjasmplus, converted by the STORM backend
+type_input  {"action":"tap","key":"break","frames":4}
+type_input  {"action":"tap","key":"a","frames":4}                                      # Assemble
+```
+
+The source is written as STORM text (STORM's priorities and postfix operators, 7-character names, conditions decided
+while converting, macros expanded, a one-line DUP as `.n`:
+[research-sjasmplus-to-storm.md](../../docs/inprogress/2026-10-05-unreal-asm/research-sjasmplus-to-storm.md)) into page 6,
+and STORM's own PGUP is pressed through its variables: the screen shows the new text from its first line. Refused
+without force when STORM's text changed since its LOAD / SAVE (the `*` in its status) or the cursor line has typing
+not yet in the text. The push watch (`sync_push_watch`) waits the same way.
+`tools/verification/unreal-asm/emulator/inject-oracle.py storm <STORM_13.trd> <source.asm> 0x6000` runs the whole
+check (`--boot STORMimp` for 1.3i).
+
 ## The text in memory
 
 While STORM edits, the text is in RAM page 6 at `#C000`: the end pointer, the name at `#C002`, an `#FF` at `#C00A`,
@@ -100,3 +119,7 @@ bytes; the asm-synchronizer reads them without a save
 - **The code is not in memory while STORM runs**: read it after BREAK Q.
 - **The export's start field** holds the text length (82 for an 82-byte text), not an address.
 - A line of more than 40 characters cannot be stored (blue border): the format's limit.
+- **`DB "A"`**: STORM 1.3's first pass counts it as two bytes, so the labels after it come out too high (its help
+  lists it among the bugs); write the character's number.
+- **STORM 1.3i** loses bytes of a large assembly (about 500 lines and more): the code read after BREAK Q is wrong
+  after the first few bytes, whether the text came from its LOAD or an inject. STORM 1.3 builds the same text right.

@@ -73,9 +73,16 @@ struct LoadVariable
     {
         Header,                     ///< `size` bytes of the file's header from offset `field`
         TextEnd,                    ///< the CPU address of the text's end byte (lengthFromEnd layouts)
+        Constant,                   ///< `value`
+        SetBits,                    ///< the byte as it is with the bits of `value` set
+        PageBytes,                  ///< `size` bytes of the text's page as written, from offset `field` (the name field)
+        SecondLine,                 ///< the CPU address of the second line of [body][length] lines (STORM; the end
+                                    ///< sentinel's for a text of one line)
     } from = From::Header;
     uint16_t field = 0;
     uint8_t size = 2;
+    uint32_t value = 0;
+    int16_t offset = 0;             ///< added to the address the pattern gives (a field of a variable block)
 };
 
 struct FileImageParams
@@ -107,6 +114,9 @@ struct FileImageParams
     uint16_t editorStateLength = 0;
     /// What LOAD sets in the editor's own variables (XAS): an inject writes them too, or refuses when one is not found
     std::vector<LoadVariable> loadVariables;
+    /// The editor's own "changed since LOAD / SAVE" flags where the text's page has none (STORM): the byte each pattern
+    /// gives, changed when a bit of `value` is set (`from` SetBits) or clear (`from` Constant: a "written" flag)
+    std::vector<LoadVariable> changedVariables;
 };
 
 struct GapBufferParams
@@ -199,7 +209,11 @@ struct SyncDescriptor
     /// Return addresses the stack holds in this order (lowest address first, within `idleDepth` bytes above SP) only
     /// while the assembler waits for a command: a text may be written then (part B, §16.2). Empty = no rule known
     std::vector<uint16_t> idleChain;
+    /// Other chains that mean the same (builds sharing a descriptor whose code lies elsewhere: STORM 1.3 and 1.3i)
+    std::vector<std::vector<uint16_t>> idleAlternatives;
     uint16_t idleDepth = 64;
+    /// Where the assembler waits when it is idle, for the refusal's text ("" = its command line)
+    std::string idleWhere;
 };
 
 /// Every built-in descriptor (asm-synchronizer.md §7), each checked with golden dumps: ALASM 3.8c, 4.42-4.46, 4.5,

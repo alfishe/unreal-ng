@@ -324,6 +324,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | identification | the packed program unpacks its entry code at `#8000` (24 bytes, the same in 1.0beta, 1.3 and 1.3i); the address it loads at `#8027` tells them apart (`#87xx` in 1.3 / 1.3i, `#85xx` in 1.0beta) |
 | 1.0beta | the same layout without the name: the `#FF` at `#C002`, the file from `#C003` (dumps `storm10b-*`) |
 | **Built** | descriptors `storm-1.3` (1.3 and 1.3i) and `storm-1.0b`; 1.3 checked live (a watch built 13 labels) |
+| **Built: inject (Z3, 2026-10-11)** | 1.3 / 1.3i while the editor waits for a key (the main loop's return `#87F5` / `#87CB`): the page as LOAD writes it, and STORM's own PGUP pressed through its variables (`ABLINE` on the second line, `NLINE` 1, `PY` 1, `LASTK` 4), which redraws from the text's start; refused without force when the editor's flags say the text changed (`MBSTAT` bit 4, the cursor line typed in). STORM 1.3 assembled the injected `oracle1.asm` and every instruction form to sjasmplus' bytes (research-sjasmplus-to-storm.md §3) |
 
 ### 7.9 ZX-ASM 3.0 / 3.01 / 3.10, ZX ASM Lite 1.07, ZAsm 3.15-4.20
 
@@ -816,6 +817,20 @@ and 4.18's `!ASSM n` (one pass) is unrolled. Checked in all seven builds (4.18, 
 9.10): `oracle1.asm` (143 bytes) and every instruction form (1173 bytes) assembled by XAS to sjasmplus' bytes. The
 `retrobackend` core is still not split out (XAS's backend shares the ALASM backend's design, not its code). Details:
 [research-sjasmplus-to-xas.md](research-sjasmplus-to-xas.md).
+
+**Built (2026-10-11): Z3 for STORM, and the shared core.** The walk the XAS backend did (macros expanded, `WHILE` and
+the repeats a target cannot hold unrolled, conditions decided, `DEFL` names as their values, names unique for the
+target, `DB` / `DW` with `$` per item, sjasmplus' fake instructions) is `dialects/common/retrowriter.cpp`
+(`RetroWriter`); a dialect gives its expression text, instructions, directives, repeat and condition blocks and line
+layout. XAS and STORM use it; the ALASM backend keeps its own (it has macros and conditions of its own). The STORM
+backend (`dialects/storm/stormbackend.cpp`) writes STORM's priorities and postfix operators, a one-line `DUP` as `.n`,
+`DISP` as `ORG run,place`, lines of at most 40 characters. STORM has no command line: the inject goes in while its
+editor waits for a key and lets STORM's own PGUP redraw from the new text (`LoadVariable::From` Constant / SetBits /
+PageBytes / SecondLine; `FileImageParams::changedVariables` for the editor's own changed flags;
+`SyncDescriptor::idleAlternatives` for two builds under one descriptor). Checked in STORM 1.3: `oracle1.asm` and
+every instruction form at `#6000` and `#8000` to sjasmplus' bytes; STORM 1.3's first pass counts `DB "A"` as two bytes
+(found by the oracle: characters in `DB` go as numbers). Details:
+[research-sjasmplus-to-storm.md](research-sjasmplus-to-storm.md).
 
 ## 20. Effort (part B)
 
