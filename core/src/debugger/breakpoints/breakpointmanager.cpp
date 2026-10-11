@@ -110,11 +110,22 @@ void BreakpointManager::ClearUserBreakpoints()
 /// @param descriptor Pointer to a BreakpointDescriptor containing breakpoint configuration
 /// @return uint16_t The ID of the newly created breakpoint, or BRK_INVALID on failure
 ///
-/// @note The descriptor object is owned by the BreakpointManager after this call
+/// @note The descriptor object is owned by the BreakpointManager after this call: stored, or freed when it is not
+/// (a duplicate of a plain breakpoint returns the existing id; it leaked before, BUGS.md 2026-10-11 #9)
 /// @throws std::logic_error if an invalid breakpoint type is specified (debug builds only)
 uint16_t BreakpointManager::AddBreakpoint(BreakpointDescriptor* descriptor)
 {
+    bool adopted = false;
+    const uint16_t result = AddBreakpointAdopting(descriptor, adopted);
+    if (!adopted)
+        delete descriptor;
+    return result;
+}
+
+uint16_t BreakpointManager::AddBreakpointAdopting(BreakpointDescriptor* descriptor, bool& adopted)
+{
     uint16_t result = BRK_INVALID;
+    adopted = false;
     ChangeScope change(*this);
 
     /// region <Input parameter(s) validation>
@@ -153,6 +164,11 @@ uint16_t BreakpointManager::AddBreakpoint(BreakpointDescriptor* descriptor)
         break;
     }
 
+    if (result != BRK_INVALID)
+    {
+        const auto it = _breakpointMapByID.find(result);
+        adopted = it != _breakpointMapByID.end() && it->second == descriptor;
+    }
     return result;
 }
 
@@ -338,14 +354,15 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
     if (!spec.owner.empty())
         d->owner = spec.owner;
 
-    const uint16_t id = AddBreakpoint(d);
+    bool adopted = false;
+    const uint16_t id = AddBreakpointAdopting(d, adopted);
     if (id == BRK_INVALID)
     {
         delete d;
         error = "the breakpoint was not added";
         return BRK_INVALID;
     }
-    if (_breakpointMapByID[id] != d)
+    if (!adopted)
     {
         // The same plain breakpoint existed: the note and group of the request go to it
         delete d;

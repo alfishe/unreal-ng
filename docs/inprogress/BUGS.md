@@ -40,7 +40,7 @@ stream depends on what was on the stack.
 ### Requirements / Acceptance Criteria
 - [ ] The byte starts at 0 and only bit 0 is tested; no memcheck error in the DSD tests.
 
-## 🔴 [Open] #9: Adding a breakpoint that already exists leaks its descriptor
+## 🔵 [In Progress] #9: Adding a breakpoint that already exists leaks its descriptor
 * **Date Opened:** 2026-10-11
 * **Found by:** valgrind memcheck profile: `BreakpointManager::AddExecutionBreakpointInPage` in
   `BreakpointManager_test.PageSpecific_DuplicateRegistration_ReturnsExisting`.
@@ -53,6 +53,24 @@ new descriptor. Every repeated "add the same breakpoint" from the debugger or au
 ### Requirements / Acceptance Criteria
 - [ ] Every path that does not adopt the descriptor frees it (duplicates, an invalid type); the duplicate test is clean
   under valgrind.
+
+### Fix
+`AddBreakpoint(BreakpointDescriptor*)` frees a descriptor it did not store; `AddBreakpointAdopting` reports adoption to
+`AddBreakpoint(spec)`, which frees its own copy as before (no double free).
+
+## 🔴 [Open] #12: Step over / step out removes the user's breakpoint at the return address
+* **Date Opened:** 2026-10-11
+* **Found by:** code reading while fixing #9.
+
+### Description
+`Emulator::StepOver` puts a temporary execution breakpoint on the next instruction; the Qt debugger's step out puts one
+on the return address. When the user already has a plain execution breakpoint there, `AddBreakpoint` returns the
+user's id, and the end of the step (`FinishStepOver`, the step-out handler) removes that id: the user's breakpoint is
+gone after one step over a `CALL` whose next line has a breakpoint.
+
+### Requirements / Acceptance Criteria
+- [ ] A step that reuses an existing breakpoint does not remove it at the end; a test steps over a `CALL` with a
+  breakpoint on the next instruction and finds it still there.
 
 ## 🔴 [Open] #10: Test fixtures that never free their machine
 * **Date Opened:** 2026-10-11
