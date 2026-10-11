@@ -100,7 +100,8 @@ protected:
     std::string _symbolicId;                              // Optional user-provided symbolic ID
     std::chrono::system_clock::time_point _createdAt;     // When instance was created
     std::chrono::system_clock::time_point _lastActivity;  // When last operation was performed
-    EmulatorStateEnum _state = StateUnknown;
+    // Written under _stateMutex; atomic for the unlocked "being destroyed" checks of the API entry points
+    std::atomic<EmulatorStateEnum> _state{StateUnknown};
     mutable std::mutex _stateMutex;
 
     std::atomic<bool> _initialized{false};
@@ -295,7 +296,7 @@ private:
     // SoundManager / TimeTravelManager while that thread is still mid-frame.
     std::mutex _stopMutex;
     volatile bool _isDebug = false;
-    volatile bool _isReleased = false;
+    std::atomic<bool> _isReleased{false};
 
     // Context leases (LeaseContext): readers hold _leaseMutex shared; the
     // removal sets _retiring, then takes it exclusively before Stop()/Retire()
