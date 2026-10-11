@@ -10,6 +10,7 @@ from the same source. The assembler disk is the collection's; the tool creates i
     inject-oracle.py xas <XAS disk> <source.asm> <address> --boot XAS7.447 --assembler xas-7.447 [--combo-frames 12]
     inject-oracle.py storm <STORM disk> <source.asm> <address> [--boot STORM1.3] [--assembler storm-1.3]
     inject-oracle.py tasm412 <TASM_412 disk> <source.asm> <address> [--wait 15]
+    inject-oracle.py zasm315 <ZASM315 disk with STUB.a> <source.asm> <address>
 
 XAS (Z3): started from its disk, the first source of its list loaded (or a new text), its command line opened (EXT;
 9.x need the keys held 12 frames), the source written there and assembled with A.
@@ -21,6 +22,11 @@ swaps its code into the 48K memory while it runs and clears it when it starts: u
 TASM 4.12 (Z3): started from its disk, the source written at its command line (TASM128>) as its LOAD leaves a file,
 the work name set to INJECTED, assembled with A. TASM's stack is at #617C: give sources from #6200 up (its overlay
 is at #8000).
+
+ZAsm 3.15 (Z3): started from its disk (its "No Disk!" answered with drive A), a source STUB loaded from the disk
+(File / Load: its editor opens on it), the source written at its COMMAND prompt (CS+SS) with a SAVEOBJ of the range
+added, by force (ZAsm keeps no "changed" flag: a text it holds is not replaced otherwise), assembled with A; the bytes
+are the file it saved.
 
 With --project the source goes as a path, and each file it INCLUDEs into an ALASM text page of its own (the INCLUDE
 names the page); --template always takes the INCLUDEs (zxasm inject reads them beside the source).
@@ -173,9 +179,45 @@ def tasm412(emu, args, expected):
     return bytes(emu.read(args.address, len(expected)))
 
 
+def zasm315(emu, args, expected):
+    emu.insert_disk(os.path.abspath(args.disk))
+    emu.run_trdos(args.boot or 'boot', wait=15)
+    emu.tap('enter')                                   # "No Disk!" (ZAsm starts on drive D): Retry, drive A
+    emu.tap('a')
+    time.sleep(6)
+    emu.tap('enter')                                   # File
+    time.sleep(2)
+    emu.tap('enter')                                   # Load
+    time.sleep(3)
+    emu.type('STUB')
+    emu.tap('enter')                                   # the editor opens on it
+    time.sleep(3)
+    emu.post('/keyboard/combo', {'keys': ['cs', 'ss'], 'frames': 4})   # COMMAND
+    emu.idle()
+    time.sleep(0.6)
+    with open(args.source, encoding='utf-8') as f:
+        text = f.read()
+    text += f'\n        SAVEBIN "out.C",#{args.address:04X},{len(expected)}\n'   # ZAsm compiles into its own pages
+    reply = emu.post('/asm/sync/inject', {'from': args.from_, 'assembler': 'zasm-3.15', 'title': 'INJECTED', 'text': text, 'force': True})
+    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
+    for d in reply.get('diagnostics', []):
+        if d.get('severity') != 'info':
+            print('  ', d)
+    emu.tap('a')                                       # Assemble
+    time.sleep(5)
+    emu.tap('enter')                                   # "No Disk!" again: Retry, drive A
+    emu.tap('a')
+    time.sleep(args.wait)
+    emu.screenshot(os.path.abspath(args.source) + '.zasm-3.15.png')
+    emu.tap('n')                                       # "Launch?" No
+    time.sleep(2)
+    data = emu.read_disk_file('out', 'C')
+    return bytes(data[1]) if data else b''
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412', 'zasm315'])
     parser.add_argument('disk', help='the assembler disk, or with --template an idle template snapshot')
     parser.add_argument('--template', action='store_true', help='inject with zxasm into the template snapshot instead (Z1)')
     parser.add_argument('--zxasm', default=os.environ.get('ZXASM', 'zxasm'))
@@ -200,6 +242,8 @@ def main():
     try:
         if args.assembler == 'xas':
             built = xas(emu, args, expected)
+        elif args.assembler == 'zasm315':
+            built = zasm315(emu, args, expected)
         elif args.assembler == 'tasm412':
             built = tasm412(emu, args, expected)
         elif args.assembler == 'storm':
@@ -217,6 +261,9 @@ def main():
     if built == expected:
         print(f'OK: {len(expected)} bytes from #{args.address:04X} agree with sjasmplus')
         return 0
+    if len(built) < len(expected):
+        print(f'DIFFER: the assembler gave {len(built)} bytes, sjasmplus {len(expected)}')
+        return 1
     first = next(i for i in range(len(expected)) if built[i] != expected[i])
     print(f'DIFFER at #{args.address + first:04X}: assembler {built[first:first + 8].hex()} sjasmplus {expected[first:first + 8].hex()}')
     return 1

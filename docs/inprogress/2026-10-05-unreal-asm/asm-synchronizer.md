@@ -339,6 +339,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | SAVE | COMMAND (Extend) SS+`2` saves under the name. It writes the buffer after a first line `;!top,line,col,...` with the editor's position, which loading takes out again. The live file is the buffer without that line (the tests compare without it) |
 | identification | the resident code at `#8000` (24 bytes): ZAsm unpacks itself, and above the buffer there is no fixed code |
 | **Built** | descriptor `zasm-3.15`; checked live on `service.a` (18959 bytes over two pages: 160 labels; the hints name the INCLUDE not in the project, Y5). the text buffer is one, see the Knowledge row |
+| **Built: inject (Z3, 2026-10-11)** | ZAsm 3.15 at its COMMAND prompt (CS+SS: the key wait returns through `#C404`, `#E630`, `#E6F0`): the file from the start (above `#C000` into page 6), the end word, the cursor line and the marks at the start, as LOAD leaves them; no "changed" flag, so a text it holds is replaced by force or when it is the caller's own; the editor shows the new text after COMMAND `CS+6`. ZAsm 3.15 assembled the injected `oracle1.asm` and every instruction form to sjasmplus' bytes (research-sjasmplus-to-zxasm.md §3) |
 | **Verified: ZX-ASM 3.10** (2026-10-09, dumps `zasm310-*`) | the same buffer with its table at `#868F` (the start; the end at `#869E`), from `#89C4` in page 2, the part above `#C000` in page 6. SAVE writes the buffer alone (no `;!` line). Its file-name input types capitals; the dumps load the first file of the list (CS+7, CS+ENTER). Identified by 24 bytes of its program image at `#816C`. Descriptor `zasm-3.10` (codec version 3.0) |
 | **Verified: ZX-ASM 2.4, 2.5, 2.6** (2026-10-10, dumps `zasm24-*`, `zasm25-*`, `zasm26-*`) | plain text in one buffer: the start word at the program's load address + 3, the end word after it (2.4 / 2.5 `#6273` / `#6275`, text from `#A1DF` / `#A1EA`; 2.6 `#6003` / `#6005`, from `#9FFD`); the part above `#C000` in RAM page 0. 2.6 keeps its `;*` line in the buffer and saves it as text, so no mask. The menu starts on Edit: LEFT ENTER (File), DOWN ENTER (Load), the name; SS+SPACE back to the menu, `f` `s` ENTER saves. Identified by 24 bytes of each program below the text. Descriptors `zasm-2.4` / `-2.5` / `-2.6` (codec version 2) |
 | **Verified: ZX ASM 3.0** (2026-10-09, dumps `zasm30-*`) | the same buffer from `#894F` (the start its saved files carry), the table in page 5: the start at `#61C6`, the end at `#61C8`; the part above `#C000` in page 6 (`ReadMe`, 28039 bytes, runs to `#F6D6`). The line being typed stays out of the buffer. Its command menu has no save: COMMAND Q to the main menu, File / Save under the name shown; saved as type `C`, the buffer alone. Identified by 24 bytes of its code at `#8000`. Descriptor `zasm-3.0` (codec version 3.0). The 3.01 program is not in the collection (only files it saved) |
@@ -842,6 +843,13 @@ the name outside the file; a plan of single bytes (`InjectPlan::page` -1) for a 
 --to-version` picks the target's version (TASM 4.12's tokens, not 5.5's). Checked in TASM 4.12: `oracle1.asm` and
 every instruction form to sjasmplus' bytes, loaded from its disk and injected. Details:
 [research-sjasmplus-to-tasm.md](research-sjasmplus-to-tasm.md).
+
+**Built (2026-10-11): Z3 for ZX-ASM (ZAsm 3.15).** The ZX-ASM backend (`dialects/zxasm/zxasmbackend.cpp`, on
+`RetroWriter`) writes left-to-right chains with the functions `.h .b .n .c .e`, ZX-ASM's own `IF` / `ELSE` / `ENDIF`
+and `REPT` / `ENDR`, `PHASE`, `SAVEOBJ` for sjasmplus' `SAVEBIN` (`RetroWriter::OtherText`). The inject is the first
+for a `Linear` layout (`LinearParams::resetFrom` / `resetTo`, `PlanInjectLinear`). Checked in ZAsm 3.15: `oracle1.asm`
+and every instruction form to sjasmplus' bytes, loaded from its disk and injected. Details:
+[research-sjasmplus-to-zxasm.md](research-sjasmplus-to-zxasm.md).
 
 ## 20. Effort (part B)
 

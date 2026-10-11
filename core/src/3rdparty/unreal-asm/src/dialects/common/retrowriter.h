@@ -60,6 +60,8 @@ protected:
                            const std::function<void()>& flush) = 0;
     /// The instructions the target spells its own way, or cannot assemble (nullopt: the common rules)
     virtual std::optional<std::vector<std::string>> OwnInstruction(const Statement&) { return std::nullopt; }
+    /// A directive the source's frontend keeps as text (sjasmplus SAVEBIN ...) the target has its own form of
+    virtual std::optional<std::vector<std::string>> OtherText(const std::string&, const std::string&) { return std::nullopt; }
     /// The directives that depend on the target (ORG, DISP, ENT, DS, INCLUDE, INCBIN, DUP, END ...)
     virtual std::vector<std::string> DirectiveText(const Statement& s, const std::string& label) = 0;
     /// A condition left to the target (its value unknown here): the lines that open it, or nullopt when the target has

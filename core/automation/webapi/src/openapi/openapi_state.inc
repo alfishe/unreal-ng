@@ -1168,9 +1168,9 @@
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["summary"] = "Get ROM write protection status";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["description"] =
-        "Get whether ROM write protection is enabled. The flag guards writes to ROM pages through "
-        "/memory/page/rom/{page} only; /memory/write ignores it. It is one setting shared by all emulator "
-        "instances.";
+        "Get whether ROM write protection is enabled for this emulator instance (each instance has its own; a new "
+        "one starts protected). The flag guards writes to ROM pages through /memory/page/rom/{page} only; "
+        "/memory/write ignores it.";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["required"] = true;
@@ -1181,7 +1181,7 @@
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["summary"] = "Set ROM write protection";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["description"] =
-        "Enable or disable ROM write protection.";
+        "Enable or disable ROM write protection of this emulator instance only.";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["parameters"][0]["required"] = true;

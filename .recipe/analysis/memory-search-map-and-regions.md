@@ -223,9 +223,9 @@ writes go through the *device's own write path* (`write_path` says which).
   endpoints and a loop, or `memory_map` `view=ram`.
 - **`memory/write` is not CPU-accurate.** It pokes via the read pointer, so
   it **does write into a mapped ROM** and into write-protected RAM; the ROM
-  protect flag does not apply to it. The protect flag (default on, shared by
-  the whole server, not per instance) guards only `memory/page/rom/{n}`
-  (`403 Forbidden`). A poke into ROM then also persists across the page
+  protect flag does not apply to it. The protect flag (default on, one per
+  instance; an unknown instance id is a 404) guards only
+  `memory/page/rom/{n}` (`403 Forbidden`). A poke into ROM then also persists across the page
   being switched out. Re-create the instance (or reload the ROM) to undo.
 - **Writes during TTD recording** (`memory/write`) insert a debugger-edit
   marker and mark the RAM page dirty, so the edit is part of the recorded

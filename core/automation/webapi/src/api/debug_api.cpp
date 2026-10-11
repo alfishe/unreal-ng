@@ -392,7 +392,7 @@ void EmulatorAPI::stepOverNow(const HttpRequestPtr& req, std::function<void(cons
 /// @brief POST /api/v1/emulator/{id}/stepout
 /// @brief Step out of the current subroutine (SP-tracking: runs until a RET-family
 /// @brief instruction at/above the entry stack level, then executes it)
-void EmulatorAPI::stepOutNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::stepOutNow(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                           const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -701,7 +701,7 @@ void EmulatorAPI::runNScanlinesNow(const HttpRequestPtr& req, std::function<void
 
 /// @brief POST /api/v1/emulator/{id}/run_to_pixel
 /// @brief Run until next screen pixel (skip vblank/borders)
-void EmulatorAPI::runToPixelNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runToPixelNow(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -744,7 +744,8 @@ void EmulatorAPI::runToPixelNow(const HttpRequestPtr& req, std::function<void(co
 
 /// @brief POST /api/v1/emulator/{id}/run_to_interrupt
 /// @brief Run until Z80 accepts maskable interrupt
-void EmulatorAPI::runToInterruptNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runToInterruptNow(const HttpRequestPtr& /*req*/,
+                                    std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -787,7 +788,7 @@ void EmulatorAPI::runToInterruptNow(const HttpRequestPtr& req, std::function<voi
 
 /// @brief POST /api/v1/emulator/{id}/run_frame
 /// @brief Run one complete video frame
-void EmulatorAPI::runFrameNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runFrameNow(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -911,7 +912,7 @@ void EmulatorAPI::runFramesNow(const HttpRequestPtr& req, std::function<void(con
 
 /// @brief GET /api/v1/emulator/{id}/debugmode
 /// @brief Get debug mode status
-void EmulatorAPI::getDebugMode(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getDebugMode(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -1336,7 +1337,8 @@ void EmulatorAPI::resetBreakpointHits(const HttpRequestPtr& req, std::function<v
 
 /// @brief DELETE /api/v1/emulator/{id}/breakpoints
 /// @brief Clear all breakpoints
-void EmulatorAPI::clearBreakpoints(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::clearBreakpoints(const HttpRequestPtr& /*req*/,
+                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                    const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -1374,7 +1376,8 @@ void EmulatorAPI::clearBreakpoints(const HttpRequestPtr& req, std::function<void
 
 /// @brief DELETE /api/v1/emulator/{id}/breakpoints/{bp_id}
 /// @brief Remove specific breakpoint
-void EmulatorAPI::removeBreakpoint(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::removeBreakpoint(const HttpRequestPtr& /*req*/,
+                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                    const std::string& id, const std::string& bpIdStr) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -1418,7 +1421,8 @@ void EmulatorAPI::removeBreakpoint(const HttpRequestPtr& req, std::function<void
 
 /// @brief PUT /api/v1/emulator/{id}/breakpoints/{bp_id}/enable
 /// @brief Enable breakpoint
-void EmulatorAPI::enableBreakpoint(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::enableBreakpoint(const HttpRequestPtr& /*req*/,
+                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                    const std::string& id, const std::string& bpIdStr) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -1454,7 +1458,8 @@ void EmulatorAPI::enableBreakpoint(const HttpRequestPtr& req, std::function<void
 
 /// @brief PUT /api/v1/emulator/{id}/breakpoints/{bp_id}/disable
 /// @brief Disable breakpoint
-void EmulatorAPI::disableBreakpoint(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::disableBreakpoint(const HttpRequestPtr& /*req*/,
+                                    std::function<void(const HttpResponsePtr&)>&& callback,
                                     const std::string& id, const std::string& bpIdStr) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -1490,7 +1495,8 @@ void EmulatorAPI::disableBreakpoint(const HttpRequestPtr& req, std::function<voi
 
 /// @brief GET /api/v1/emulator/{id}/breakpoints/status
 /// @brief Get breakpoint status including last triggered breakpoint
-void EmulatorAPI::getBreakpointStatus(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getBreakpointStatus(const HttpRequestPtr& /*req*/,
+                                      std::function<void(const HttpResponsePtr&)>&& callback,
                                        const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -1568,7 +1574,7 @@ void EmulatorAPI::getBreakpointStatus(const HttpRequestPtr& req, std::function<v
 
 /// @brief GET /api/v1/emulator/{id}/registers
 /// @brief Get CPU registers
-void EmulatorAPI::getRegisters(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getRegisters(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -2404,7 +2410,7 @@ void EmulatorAPI::putMemoryPage(const HttpRequestPtr& req, std::function<void(co
 
 /// @brief GET /api/v1/emulator/{id}/memory/info
 /// @brief Get memory configuration
-void EmulatorAPI::getMemoryInfo(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getMemoryInfo(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -2580,7 +2586,7 @@ void EmulatorAPI::getMemoryMap(const HttpRequestPtr& req, std::function<void(con
 
 /// @brief GET /api/v1/emulator/{id}/memcounters
 /// @brief Get memory access statistics
-void EmulatorAPI::getMemCounters(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getMemCounters(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -3408,7 +3414,7 @@ void EmulatorAPI::addLabel(const HttpRequestPtr& req, std::function<void(const H
 }
 
 /// @brief GET /api/v1/emulator/{id}/labels/{name}
-void EmulatorAPI::getLabel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getLabel(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id, const std::string& name) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -3464,7 +3470,7 @@ void EmulatorAPI::getLabel(const HttpRequestPtr& req, std::function<void(const H
 }
 
 /// @brief DELETE /api/v1/emulator/{id}/labels/{name}
-void EmulatorAPI::removeLabel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::removeLabel(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id, const std::string& name) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -3563,7 +3569,7 @@ void EmulatorAPI::updateLabel(const HttpRequestPtr& req, std::function<void(cons
 }
 
 /// @brief DELETE /api/v1/emulator/{id}/labels
-void EmulatorAPI::clearLabels(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::clearLabels(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
