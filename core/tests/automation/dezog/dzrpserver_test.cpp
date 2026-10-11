@@ -861,3 +861,92 @@ TEST_F(AutomationDezog_test, StartFailsWhenPortBusy)
 }
 
 /// endregion </AutomationDezog module>
+
+/// region <ZX Next>
+
+// DeZog's ZX Next profile: machine type, eight 8K slots (the MMU registers NR #50-#57), NextREG access, 8K bank memory, memory blocks.
+// Sources: the dezogif firmware (commands.asm, message.asm), the CSpect DeZog plugin (Commands.cs)
+namespace
+{
+constexpr uint8_t kRegMmu0 = 0x50;           // NR #50-#57: slot 0-7
+constexpr unsigned kNextSlots = 8;
+constexpr uint32_t kBankSize = 0x2000;       // a Next bank
+constexpr uint8_t kBankA = 40, kBankB = 41;  // two RAM banks, the second the other half of the 16K page of the first
+constexpr uint8_t kRegScratch = 0x16;        // NR #16 stores its byte
+constexpr uint8_t kByte = 0x5A;
+constexpr uint8_t kFirstProgramByte = 0xF3;  // DI, the first byte of the fixture's program
+}  // namespace
+
+class DZRPServerNext_test : public DZRPServer_test
+{
+protected:
+    std::string ModelName() const override { return "NEXT"; }
+};
+
+TEST_F(DZRPServerNext_test, TheMachineIsANextWithEightSlotsAndItsCommandsAreAdvertised)
+{
+    auto resp = init();
+    ASSERT_TRUE(resp.valid);
+    ASSERT_GE(resp.payload.size(), 6u);
+    EXPECT_EQ(resp.payload[4], static_cast<uint8_t>(dzrp::MachineType::ZXNEXT));
+
+    auto regs = _client.command(dzrp::CommandId::CMD_GET_REGISTERS);
+    ASSERT_TRUE(regs.valid);
+    EXPECT_EQ(regs.payload[28], kNextSlots);
+    for (unsigned s = 0; s < kNextSlots; s++)
+        EXPECT_EQ(regs.payload[29 + s], _adapter->readNextReg(static_cast<uint8_t>(kRegMmu0 + s))) << "slot " << s;
+
+    auto supported = _client.command(dzrp::CommandId::CMD_GET_SUPPORTED_COMMANDS);
+    ASSERT_EQ(supported.payload.size(), 32u);
+    auto has = [&](dzrp::CommandId id) { return (supported.payload[static_cast<int>(id) / 8] >> (static_cast<int>(id) % 8)) & 1; };
+    for (auto id : {dzrp::CommandId::CMD_GET_TBBLUE_REG, dzrp::CommandId::CMD_READ_BANK_MEM, dzrp::CommandId::CMD_WRITE_BANK_MEM,
+                    dzrp::CommandId::CMD_SET_NEXTREGS, dzrp::CommandId::CMD_READ_MEM_BLOCKS})
+        EXPECT_TRUE(has(id)) << int(id);
+}
+
+TEST_F(DZRPServerNext_test, NextRegistersAndSlotsGoThroughTheBoard)
+{
+    init();
+    auto set = _client.command(dzrp::CommandId::CMD_SET_NEXTREGS, {kRegScratch, kByte, static_cast<uint8_t>(kRegMmu0 + 3), kBankA});
+    ASSERT_TRUE(set.valid);
+    auto reg = _client.command(dzrp::CommandId::CMD_GET_TBBLUE_REG, {kRegScratch});
+    ASSERT_TRUE(reg.valid);
+    ASSERT_EQ(reg.payload.size(), 1u);
+    EXPECT_EQ(reg.payload[0], kByte);
+    EXPECT_EQ(_adapter->getSlots()[3], kBankA) << "an MMU register is a slot";
+
+    // CMD_SET_SLOT is the same write
+    _client.command(dzrp::CommandId::CMD_SET_SLOT, {3, kBankB});
+    EXPECT_EQ(_adapter->readNextReg(static_cast<uint8_t>(kRegMmu0 + 3)), kBankB);
+    EXPECT_EQ(_adapter->getSlots()[3], kBankB);
+}
+
+TEST_F(DZRPServerNext_test, BankMemoryIsAnEightKilobyteBankThatWrapsAndMemoryBlocksAreConcatenated)
+{
+    init();
+    const std::vector<uint8_t> data = {1, 2, 3, 4};
+    auto wr = _client.command(dzrp::CommandId::CMD_WRITE_BANK_MEM, cat({{kBankA}, u16(kBankSize - 2), data}));
+    ASSERT_TRUE(wr.valid);
+
+    // the offset wraps inside the bank: the last two bytes, then the first two
+    auto rd = _client.command(dzrp::CommandId::CMD_READ_BANK_MEM, cat({{kBankA}, u16(kBankSize - 2), u16(4)}));
+    ASSERT_TRUE(rd.valid);
+    EXPECT_EQ(rd.payload, data);
+    auto head = _client.command(dzrp::CommandId::CMD_READ_BANK_MEM, cat({{kBankA}, u16(0), u16(2)}));
+    EXPECT_EQ(head.payload, (std::vector<uint8_t>{3, 4}));
+    // the other half of the 16K page is another bank: untouched
+    auto other = _client.command(dzrp::CommandId::CMD_READ_BANK_MEM, cat({{kBankB}, u16(0), u16(2)}));
+    EXPECT_EQ(other.payload, (std::vector<uint8_t>{0, 0}));
+    // a bank that does not exist reads zeros
+    auto none = _client.command(dzrp::CommandId::CMD_READ_BANK_MEM, cat({{0xE0}, u16(0), u16(2)}));
+    EXPECT_EQ(none.payload, (std::vector<uint8_t>{0, 0}));
+
+    // memory blocks: the 4-byte length field, then (address, size) pairs; the answer is the blocks one after the other
+    installProgram();
+    auto blocks = _client.command(dzrp::CommandId::CMD_READ_MEM_BLOCKS,
+                                  cat({{0, 0, 0, 0}, u16(PROGRAM_START), u16(1), u16(PROGRAM_START + 1), u16(2)}));
+    ASSERT_TRUE(blocks.valid);
+    EXPECT_EQ(blocks.payload, (std::vector<uint8_t>{kFirstProgramByte, 0x3E, 0x01}));
+}
+
+/// endregion </ZX Next>

@@ -230,7 +230,9 @@ NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.
 - [ ] P3 follow-ups: the picture still runs the real copper once per line (the CPU sees a copper write up to a line late); a CPU NextREG write on the same clock as a copper MOVE is not deferred by one clock as in `zxnext.vhd`
 - [x] **P4 (G4, G5)** NMI sources, Multiface and the interrupt / NMI / reset journal on every plane: `state next nmi`, `POST next/nmi-journal`, MCP `next_nmi`, Lua / Python `next_nmi()`, `next_nmi_journal_control()`; per source whether it would fire and what blocks it; the interrupt accepted with its source and vector, RETI, an NMI request (accepted or why not), RETN, the reset with NR #02 bits 1:0. The +3 I/O trap (NR #D8-#DA) is listed, not modelled
 - [x] **P5 (G6, G7, G8)** `state next audio` (chips, pan, registers, periods, the DAC), `state next input` (NR #05 / #0B decoded, the Kempston port #1F, what is not modelled), and the board block of `state next` (bus port enables NR #86-#89, debug LED NR #FF, the unmodelled +3 I/O trap) on every plane; the Kempston port #1F answers regardless of NR #05 (the report says so)
-- [ ] P6 magic breakpoint/port, DZRP extras, TTD of NEXTREG writes (owner decision)
+- [x] P6 magic-opcode breakpoint (`bmagic`, `magic_ed_ff`/`magic_dd_01`, `bp_magic`)
+- [x] P6 DZRP for the Next: machine type ZXNEXT, eight 8K slots (NR #50-#57), `GET_TBBLUE_REG`, `SET_NEXTREGS`, `READ_BANK_MEM`/`WRITE_BANK_MEM` (8K bank, offset wraps; 0xFF the selected ROM), `READ_MEM_BLOCKS`; sprite/palette commands 16-19 not done
+- [ ] P6 magic output port, TTD of NEXTREG writes (owner decision)
 - [ ] Device gaps D1 (UART/ESP/Pi) and D2 (Kempston mouse, ULA+, Radastan): the reports follow the devices
 
 ## Automation coverage - what is left (2026-10-10)

@@ -15,7 +15,11 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/mainloop.h"
+#include "debugger/ports/nextregwrite.h"
+#include "emulator/io/z80n/nextboard.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/next/nextmemory.h"
+#include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/video/screen.h"
@@ -469,6 +473,18 @@ std::vector<uint8_t> DezogDebugAdapter::getSlots() const
     if (!memory)
         return {};
 
+    if (getMachineType() == dzrp::MachineType::ZXNEXT)
+    {
+        // DeZog MemoryModelZxNext: eight 8K slots, the bank of each is its MMU register (NR #50-#57; 0xFF the ROM)
+        NextMemory* next = dynamic_cast<NextMemory*>(memory);
+        if (!next)
+            return {};
+        std::vector<uint8_t> mmu(NextMemory::kSlots);
+        for (unsigned s = 0; s < NextMemory::kSlots; s++)
+            mmu[s] = next->GetMmu(s);
+        return mmu;
+    }
+
     if (getMachineType() == dzrp::MachineType::ZX48K)
     {
         // DeZog MemoryModelZx48k: slot 0 = ROM (bank 0), slot 1 = RAM 0x4000-0xFFFF (bank 1)
@@ -494,6 +510,14 @@ void DezogDebugAdapter::setSlot(uint8_t slot, uint8_t bank)
     Memory* memory = emulator->GetMemory();
     if (!memory)
         return;
+
+    if (getMachineType() == dzrp::MachineType::ZXNEXT)
+    {
+        // The slot is an MMU register of the board (NR #50 + slot), the bank its value
+        if (slot < NextMemory::kSlots)
+            writeNextReg(static_cast<uint8_t>(NextBoard::kRegMmu0 + slot), bank);
+        return;
+    }
 
     if (slot == 0)
     {
@@ -547,6 +571,72 @@ void DezogDebugAdapter::writeBank(uint8_t bank, const std::vector<uint8_t>& data
     if (len > 0)
         editMachine(*emulator, "dezog write bank", [&]() { std::memcpy(page, data.data(), len); });
 }
+
+/// region <ZX Next>
+
+namespace
+{
+/// The byte at `offset` (wrapped) of a Next 8K bank: RAM 0..kRamPages8K-1, or the ROM selected now (16K, wraps inside it). Null: no such bank
+uint8_t* NextBankByte(NextMemory& memory, uint8_t bank, uint16_t offset)
+{
+    if (bank == NextMemory::kMmuRom)
+    {
+        constexpr uint32_t kRomSize = 0x4000;
+        return memory.ROMPageHostAddress(memory.GetRomSelect()) + (offset & (kRomSize - 1));
+    }
+    if (bank >= NextMemory::kRamPages8K)
+        return nullptr;
+    uint8_t* page = memory.RAMPageAddress(bank >> 1);
+    return page ? page + (bank & 1) * NextMemory::kSlotSize + (offset & (NextMemory::kSlotSize - 1)) : nullptr;
+}
+}  // namespace
+
+std::vector<uint8_t> DezogDebugAdapter::readBankMemory(uint8_t bank, uint16_t offset, uint16_t size) const
+{
+    std::vector<uint8_t> result(size, 0);
+    auto emulator = resolveEmulator();
+    NextMemory* memory = emulator ? dynamic_cast<NextMemory*>(emulator->GetMemory()) : nullptr;
+    if (!memory)
+        return result;
+    for (uint32_t i = 0; i < size; ++i)
+        if (const uint8_t* byte = NextBankByte(*memory, bank, static_cast<uint16_t>(offset + i)))
+            result[i] = *byte;
+    return result;
+}
+
+void DezogDebugAdapter::writeBankMemory(uint8_t bank, uint16_t offset, const std::vector<uint8_t>& data)
+{
+    auto emulator = resolveEmulator();
+    NextMemory* memory = emulator ? dynamic_cast<NextMemory*>(emulator->GetMemory()) : nullptr;
+    if (!memory || data.empty())
+        return;
+    leaveHistory(*emulator);
+    editMachine(*emulator, "dezog write bank memory", [&]() {
+        for (size_t i = 0; i < data.size(); ++i)
+            if (uint8_t* byte = NextBankByte(*memory, bank, static_cast<uint16_t>(offset + i)))
+                *byte = data[i];
+    });
+}
+
+uint8_t DezogDebugAdapter::readNextReg(uint8_t reg) const
+{
+    auto emulator = resolveEmulator();
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    PortDecoder_Next* decoder = context ? dynamic_cast<PortDecoder_Next*>(context->pPortDecoder) : nullptr;
+    return decoder ? decoder->Board().Read(reg) : 0;  // the board's own read: no breakpoint, no journal
+}
+
+void DezogDebugAdapter::writeNextReg(uint8_t reg, uint8_t value)
+{
+    auto emulator = resolveEmulator();
+    if (!emulator)
+        return;
+    leaveHistory(*emulator);
+    // The NEXTREG instruction's door, as a tool edit: the journal sees it, no breakpoint fires
+    NextRegWriteControl::Write(emulator.get(), reg, value, NextRegWriteControl::Door::NextReg, "dezog");
+}
+
+/// endregion </ZX Next>
 
 /// endregion </Banking>
 
@@ -833,6 +923,8 @@ dzrp::MachineType DezogDebugAdapter::getMachineType() const
     {
         case MM_SPECTRUM48:
             return dzrp::MachineType::ZX48K;
+        case MM_NEXT:
+            return dzrp::MachineType::ZXNEXT;
         default:
             // Pentagon / 128K / +3 / Scorpion / ATM / ... all expose a 128K-style 4-slot map
             return dzrp::MachineType::ZX128K;
