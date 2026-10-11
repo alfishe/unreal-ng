@@ -9,8 +9,10 @@
 ---
 
 2026-10-11
-## 🔵 [In Progress] #1: The .z80 loader frees its staging pages with `delete` instead of `delete[]`
+## 🟢 [Fixed] #1: The .z80 loader frees its staging pages with `delete` instead of `delete[]`
 * **Date Opened:** 2026-10-11
+* **Date Fixed:** 2026-10-11
+* **Commit ID:** 9643b9623
 * **Found by:** a full `core-tests` run under valgrind memcheck on Linux (gcc 14, RelWithDebInfo, 12 shards; host `.238`, 2026-10-10/11): `Mismatched free() / delete / delete []` and `Mismatched new/delete size value: 1` in
   `LoaderZ80::freeStagingMemory()` (`loader_z80.cpp:1552`, `:1563`), 33 times.
 
@@ -24,8 +26,10 @@ back through scalar `delete`. The default allocators hide it today; a sized or i
 ### Requirements / Acceptance Criteria
 - [ ] The `LoaderZ80` tests are clean under valgrind memcheck (no mismatched delete).
 
-## 🔵 [In Progress] #2: `RESET=` missing from the ini compares an uninitialized buffer; the reset ROM can be anything
+## 🟢 [Fixed] #2: `RESET=` missing from the ini compares an uninitialized buffer; the reset ROM can be anything
 * **Date Opened:** 2026-10-11
+* **Date Fixed:** 2026-10-11
+* **Commit ID:** 202db83c2
 * **Found by:** a full `core-tests` run under valgrind memcheck on Linux (gcc 14, RelWithDebInfo, 12 shards; host `.238`, 2026-10-10/11): `Conditional jump or move depends on uninitialised value(s)` in
   `StringHelper::CompareCaseInsensitive` from `Config::ParseConfig` (`config.cpp:257`), 74 times
   (`Config_Test.OldFmTrimDbCountsFromTheOldBaseline` and every test loading an ini without `RESET=`).
@@ -47,8 +51,10 @@ The other `line` lookups in the parser clear the buffer first; this one did not.
   (passes before the fix too unless the stack holds a ROM name: valgrind is the evidence).
 - [ ] No uninitialised-value report from `Config::ParseConfig` under valgrind.
 
-## 🔵 [In Progress] #3: A test thread left joinable after a failed check aborts the whole test process
+## 🟢 [Fixed] #3: A test thread left joinable after a failed check aborts the whole test process
 * **Date Opened:** 2026-10-11
+* **Date Fixed:** 2026-10-11
+* **Commit ID:** 131b357de
 * **Found by:** a full `core-tests` run under valgrind memcheck on Linux (gcc 14, RelWithDebInfo, 12 shards; host `.238`, 2026-10-10/11): shard 2 died with `terminate called without an active exception` in
   `TimeTravelManager_PublishedInfo_Test.AutomationReadsWhileTheLoopRecords`; the rest of the shard never ran.
 
@@ -71,8 +77,10 @@ leaves its MessageCenter observer (it captures locals by reference) registered w
 ### Requirements / Acceptance Criteria
 - [ ] The changed tests pass; the next valgrind run loses no shard to `std::terminate`.
 
-## 🔵 [In Progress] #4: Leaks reported in the test fixtures (`definitely lost`)
+## 🟢 [Fixed] #4: Leaks reported in the test fixtures (`definitely lost`)
 * **Date Opened:** 2026-10-11
+* **Date Fixed:** 2026-10-11
+* **Commit ID:** befe0e730
 * **Found by:** a full `core-tests` run under valgrind memcheck on Linux (gcc 14, RelWithDebInfo, 12 shards; host `.238`, 2026-10-10/11).
 
 ### Description
@@ -91,6 +99,52 @@ video and loader tests that build one per test) are left for the valgrind profil
 
 ### Requirements / Acceptance Criteria
 - [ ] No `definitely lost` record from these fixtures in the next valgrind run.
+
+## 🟢 [Fixed] #5: ZX-Poly status reads the members' Z80 registers while they run
+* **Date Opened:** 2026-10-11
+* **Date Fixed:** 2026-10-11
+* **Commit ID:** a5aa1b910
+* **Found by:** ThreadSanitizer on Linux (gcc 14, `docker/linux/build.sh --tsan`, host `.238`, 2026-10-11):
+  `ExecutionArbiterMachineFuzz_Test.ZXPolyGroupUnderConcurrentControl`, data races in `Z80::IncrementCPUCyclesCounter`
+  and `Z80::HandleINT` (a member stepped by `Emulator::ExecuteStep`) against `ZXPolyGroup::ReadControlState`
+  (`zxpolygroup.cpp:1879-1881`) from `GetStatus` → `CheckLockstep` on another thread.
+
+### Description
+Before the first frame boundary after a load, a replication or a TTD restore (`_boundaryChecked` false),
+`CheckLockstep` compares the members' live control state (PC, SP, I, IM, IFF1, HALT, T). It only waited for the
+pipelined slave work; a member stepped or run on its own (automation `run_frames` / `step` on that instance, the
+master's loop) could be inside an instruction. `GetStatus` serves the WebAPI, CLI, Lua and Python status, so a status
+request could report a divergence that is not there (or miss one) and is a data race by the standard.
+
+### Fix
+In that branch `CheckLockstep` takes an `Emulator::CpuHold` of every member, the master first (as `GroupHold` does),
+then reads. At a boundary it still reads the copies taken there, without holding anything.
+
+### Requirements / Acceptance Criteria
+- [x] `ExecutionArbiterMachineFuzz_Test.ZXPolyGroupUnderConcurrentControl` clean under TSan on Linux (it reported
+  both races before: 8 reports in one run of master; none with the fix).
+- [x] The ZX-Poly tests pass.
+
+## 🟢 [Fixed] #6: Two overscan switches at once both see the old video mode
+* **Date Opened:** 2026-10-11
+* **Date Fixed:** 2026-10-11
+* **Commit ID:** c13e28bb0
+* **Found by:** ThreadSanitizer on Linux (nightly `.238`, 2026-10-11): `ExecutionArbiterMachineFuzz_Test`
+  (`ConcurrentControlKeepsOneDriverAndExactSteps`), a data race on `Screen::_mode` between `Screen::SetVideoMode`
+  (`screen.cpp:470`) under one thread's `Emulator::SetOverscanMode` and `Screen::GetVideoMode` (`screen.cpp:738`) from
+  another thread's `SetOverscanMode`.
+
+### Description
+`Emulator::SetOverscanMode` read the current mode, decided, and only then took the `CpuHold` for the switch. A second
+caller read the mode while the first one was writing it, and both could decide to switch from the same old mode (the
+second reallocates the framebuffer again for nothing, or its decision is based on a torn state).
+
+### Fix
+The hold is taken first; the read, the decision and the switch all happen under it.
+
+### Requirements / Acceptance Criteria
+- [ ] No `SetVideoMode` / `GetVideoMode` race in `ExecutionArbiterMachineFuzz_Test` under TSan on Linux (next nightly).
+- [x] core-tests pass.
 
 2026-10-10
 ## 🟢 [Fixed] #1: Removing a running TS-Conf or ATM Turbo 2+ instance writes into freed memory (heap damage, a later crash elsewhere)

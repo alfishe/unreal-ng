@@ -749,3 +749,70 @@ TEST(SyncInject_Test, XasTakesAFileAndItsEditorVariablesAtItsCommandLine)
     EXPECT_FALSE(none.ok);
     EXPECT_NE(none.error.find("editor variables were not found"), std::string::npos) << none.error;
 }
+
+TEST(SyncInject_Test, StormTakesAFileWhileItsEditorWaitsForAKey)
+{
+    Dump dump = Load("storm13-edited");
+    const SyncDescriptor* d = FindDescriptor("storm-1.3");
+    ASSERT_NE(d, nullptr);
+    const std::vector<uint8_t> page5(0x4000, 0);
+    dump.machine.ram.push_back({5, page5});
+    // the editor's main loop waits for a key: WTKPR returns to INP4 (#87F5)
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        if (dump.machine.ram[k].page == 2)
+        {
+            dump.pages[k][0x3F00] = 0xF5;
+            dump.pages[k][0x3F01] = 0x87;
+        }
+    dump.machine.sp = 0xBF00;
+    std::string why;
+    ASSERT_TRUE(Idle(dump.machine, *d, why)) << why;
+
+    const WriteAsResult written = WriteAs(SourceDocument::FromText("        ORG #6000\nstart   LD A,1\n        JR start\n", "sjasmplus"), "storm", d->version, "NEW");
+    ASSERT_TRUE(written.ok) << written.error;
+    const InjectPlan refused = PlanInject(dump.machine, *d, written.bytes);
+    EXPECT_FALSE(refused.ok) << "a line was written since STORM loaded the text (MBSTAT bit 4)";
+    EXPECT_NE(refused.error.find("changes not saved"), std::string::npos) << refused.error;
+    InjectOptions force;
+    force.force = true;
+    const InjectPlan plan = PlanInject(dump.machine, *d, written.bytes, force);
+    ASSERT_TRUE(plan.ok) << plan.error;
+    EXPECT_EQ(plan.page, 6);
+    // the text from #C00B, the #FF before and after it, (#C000) one past the end
+    const size_t size = written.bytes.size();
+    EXPECT_EQ(plan.bytes[0x0A], 0xFF);
+    EXPECT_EQ(plan.bytes[0x0B + size], 0xFF);
+    EXPECT_EQ(plan.bytes[0] | (plan.bytes[1] << 8), static_cast<int>(0xC00B + size + 1));
+    // STORM 1.3's variables (its source's names): the second line under the cursor, line 1, PGUP pressed
+    std::map<uint16_t, uint8_t> pokes;
+    for (const InjectPlan::Poke& p : plan.pokes)
+    {
+        EXPECT_EQ(p.page, 2);
+        pokes[static_cast<uint16_t>(0x8000 + p.offset)] = p.value;
+    }
+    const auto word = [&](uint16_t at) { return pokes.count(at) && pokes.count(at + 1) ? pokes[at] | (pokes[at + 1] << 8) : -1; };
+    size_t second = size - 1;   // walked back from the end to the line that starts the file
+    while (second - (written.bytes[second] & 0x3F) > 0)
+        second -= (written.bytes[second] & 0x3F) + 1;
+    EXPECT_EQ(word(0xB8EF), static_cast<int>(0xC00B + second + 1));   // ABLINE
+    EXPECT_EQ(word(0xB8ED), 1);                                         // NLINE
+    EXPECT_EQ(word(0xBF94), 0);                                         // CACHEST, MBSTAT
+    EXPECT_EQ(pokes[0xB8E4], 1);                                        // PY
+    EXPECT_EQ(pokes[0xBFC2], 4);                                        // LASTK: PGUP
+    EXPECT_EQ(pokes[0xB8E2] & 1, 1);                                    // a key was pressed
+    EXPECT_EQ(pokes[0xB8E6] & 2, 2);                                    // the line buffer is in the text
+    for (int k = 0; k < 8; ++k)
+        EXPECT_EQ(pokes[static_cast<uint16_t>(0xAB35 + k)], plan.bytes[2 + k]);   // WNAME = TXNAME
+
+    // Written: the reader gives the file back
+    for (symbols::MemoryPage& page : dump.machine.ram)
+        if (page.page == 6)
+            page.bytes = plan.bytes;
+    const SyncText back = ReadText(dump.machine, *d);
+    ASSERT_TRUE(back.ok);
+    EXPECT_EQ(back.file, written.bytes);
+
+    // Not in the editor's main loop (assembling, a menu): refused
+    dump.machine.sp = 0xBF02;
+    EXPECT_FALSE(PlanInject(dump.machine, *d, written.bytes, force).ok);
+}

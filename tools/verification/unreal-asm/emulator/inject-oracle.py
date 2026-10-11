@@ -8,9 +8,14 @@ from the same source. The assembler disk is the collection's; the tool creates i
     inject-oracle.py alasm509 --template <alasm509.szx|.sna|.z80> <source.asm> <address> [--zxasm PATH] ...
     inject-oracle.py alasm <disk> <main.asm> <address> --boot NAME --assembler alasm-X --project   # with its INCLUDEs
     inject-oracle.py xas <XAS disk> <source.asm> <address> --boot XAS7.447 --assembler xas-7.447 [--combo-frames 12]
+    inject-oracle.py storm <STORM disk> <source.asm> <address> [--boot STORM1.3] [--assembler storm-1.3]
 
 XAS (Z3): started from its disk, the first source of its list loaded (or a new text), its command line opened (EXT;
 9.x need the keys held 12 frames), the source written there and assembled with A.
+
+STORM (Z3): started from its disk, the source written while its editor waits for a key (STORM's PGUP then shows it
+from the top: <source>.storm-1.3.editor.png), assembled with BREAK A, the bytes read after quitting to BASIC (STORM
+swaps its code into the 48K memory while it runs and clears it when it starts: unwritten bytes read 0).
 
 With --project the source goes as a path, and each file it INCLUDEs into an ALASM text page of its own (the INCLUDE
 names the page); --template always takes the INCLUDEs (zxasm inject reads them beside the source).
@@ -117,9 +122,35 @@ def xas(emu, args, expected):
     return bytes(emu.read(args.address, len(expected)))
 
 
+def storm(emu, args, expected):
+    emu.insert_disk(os.path.abspath(args.disk))
+    emu.run_trdos(args.boot or 'STORM1.3', wait=12)
+    body = {'from': args.from_, 'assembler': args.descriptor, 'title': 'INJECTED'}
+    with open(args.source, encoding='utf-8') as f:
+        body['text'] = f.read()
+    reply = emu.post('/asm/sync/inject', body)
+    print('inject:', {k: reply.get(k) for k in ('assembler', 'name', 'page', 'bytes', 'lines', 'previous', 'message')})
+    for d in reply.get('diagnostics', []):
+        if d.get('severity') != 'info':
+            print('  ', d)
+    time.sleep(1)                                      # PGUP redraws the editor from the text's start
+    stem = os.path.abspath(args.source) + '.' + args.descriptor
+    emu.screenshot(stem + '.editor.png')
+    emu.tap('break')
+    emu.tap('a')                                       # Assemble
+    time.sleep(args.wait)
+    emu.screenshot(stem + '.png')
+    emu.tap('space')                                   # leaves an error list
+    time.sleep(1)
+    emu.tap('break')
+    emu.tap('q')                                       # Quit to BASIC: the 48K memory holds the code again
+    time.sleep(3)
+    return bytes(emu.read(args.address, len(expected)))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm'])
     parser.add_argument('disk', help='the assembler disk, or with --template an idle template snapshot')
     parser.add_argument('--template', action='store_true', help='inject with zxasm into the template snapshot instead (Z1)')
     parser.add_argument('--zxasm', default=os.environ.get('ZXASM', 'zxasm'))
@@ -142,7 +173,14 @@ def main():
     expected = sjasmplus_bytes(args.sjasmplus, args.source, args.address)
     emu = Emulator(port=args.port)
     try:
-        built = xas(emu, args, expected) if args.assembler == 'xas' else alasm509(emu, args, expected)   # every ALASM build: the same steps
+        if args.assembler == 'xas':
+            built = xas(emu, args, expected)
+        elif args.assembler == 'storm':
+            if args.descriptor == 'alasm-5.09':
+                args.descriptor = 'storm-1.3'
+            built = storm(emu, args, expected)
+        else:
+            built = alasm509(emu, args, expected)   # every ALASM build: the same steps
     finally:
         if not args.keep:
             emu._request('DELETE', emu.base)   # the instance this run created
