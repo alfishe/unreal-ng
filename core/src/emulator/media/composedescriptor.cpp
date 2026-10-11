@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <system_error>
@@ -24,6 +25,92 @@
 
 namespace
 {
+    /// target.fixedTime: Unix seconds, or ISO 8601 "2026-01-01", "2026-01-01T12:00", "2026-01-01T12:00:00Z",
+    /// "2026-01-01 12:00:00+03:00" (fractions of a second ignored; no zone: UTC)
+    std::optional<int64_t> ParseFixedTime(const std::string& text)
+    {
+        if (!text.empty() && text.find_first_not_of("0123456789") == std::string::npos)
+        {
+            try
+            {
+                const unsigned long long seconds = std::stoull(text);
+                if (seconds <= 0x7FFFFFFFFFFFFFFFull)
+                    return static_cast<int64_t>(seconds);
+            }
+            catch (const std::exception&)
+            {
+            }
+            return std::nullopt;
+        }
+        size_t at = 0;
+        auto digits = [&text, &at](size_t count, int64_t& value) {
+            if (at + count > text.size())
+                return false;
+            value = 0;
+            for (size_t k = 0; k < count; k++)
+            {
+                const char c = text[at + k];
+                if (c < '0' || c > '9')
+                    return false;
+                value = value * 10 + (c - '0');
+            }
+            at += count;
+            return true;
+        };
+        auto expect = [&text, &at](char c) {
+            if (at < text.size() && text[at] == c)
+            {
+                at++;
+                return true;
+            }
+            return false;
+        };
+        int64_t year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
+        if (!digits(4, year) || !expect('-') || !digits(2, month) || !expect('-') || !digits(2, day))
+            return std::nullopt;
+        if (at < text.size() && (text[at] == 'T' || text[at] == 't' || text[at] == ' '))
+        {
+            at++;
+            if (!digits(2, hour) || !expect(':') || !digits(2, minute))
+                return std::nullopt;
+            if (expect(':') && !digits(2, second))
+                return std::nullopt;
+            if (expect('.') || expect(','))
+                while (at < text.size() && text[at] >= '0' && text[at] <= '9')
+                    at++;
+        }
+        int64_t offset = 0;
+        if (expect('Z') || expect('z'))
+        {
+        }
+        else if (at < text.size() && (text[at] == '+' || text[at] == '-'))
+        {
+            const int64_t sign = text[at] == '-' ? -1 : 1;
+            at++;
+            int64_t oh = 0, om = 0;
+            if (!digits(2, oh))
+                return std::nullopt;
+            expect(':');
+            if (at < text.size() && !digits(2, om))
+                return std::nullopt;
+            if (oh > 23 || om > 59)
+                return std::nullopt;
+            offset = sign * (oh * 3600 + om * 60);
+        }
+        if (at != text.size() || year < 1970 || month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 ||
+            minute > 59 || second > 60)
+            return std::nullopt;
+        // Days since 1970-01-01 (H. Hinnant's days_from_civil)
+        const int64_t y = month <= 2 ? year - 1 : year;
+        const int64_t era = y / 400;
+        const int64_t yoe = y - era * 400;
+        const int64_t doy = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5 + day - 1;
+        const int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        const int64_t days = era * 146097 + doe - 719468;
+        const int64_t utc = days * 86400 + hour * 3600 + minute * 60 + second - offset;
+        return utc < 0 ? std::nullopt : std::optional<int64_t>(utc);
+    }
+
     /// rapidyaml's default error handler aborts the process; ours throws
     [[noreturn]] void ThrowOnError(const char* message, size_t length, ryml::Location, void*)
     {
@@ -352,9 +439,12 @@ namespace
             }
             else if (key == "fixedTime")
             {
-                const auto v = Number(child, where, 0x7FFFFFFFFFFFFFFFull);
-                if (v)
-                    t.fixedTimeUtc = static_cast<int64_t>(*v);
+                const auto v = String(child, where);
+                const std::optional<int64_t> utc = v ? ParseFixedTime(*v) : std::nullopt;
+                if (utc)
+                    t.fixedTimeUtc = utc;
+                else if (v)
+                    Report(where, "expected Unix seconds or an ISO 8601 date and time (2026-01-01T12:00:00Z), got '" + *v + "'");
             }
             else if (key == "onBadName")
             {

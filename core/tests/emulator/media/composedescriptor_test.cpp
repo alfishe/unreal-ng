@@ -183,3 +183,25 @@ TEST(ComposeDescriptor_Test, IsDescriptorName)
     EXPECT_FALSE(ComposeDescriptor::IsDescriptorName("sd.yaml"));
     EXPECT_FALSE(ComposeDescriptor::IsDescriptorName(".unreal-media.yaml"));
 }
+
+// fixedTime: Unix seconds or ISO 8601 (no zone: UTC); the normalized form holds the seconds
+TEST(ComposeDescriptor_Test, FixedTimeTakesIso8601)
+{
+    const auto at = [](const std::string& value) {
+        const std::string yaml = "version: 1\ntarget: {fixedTime: '" + value + "'}\nlayers: [{source: {folder: a}}]\n";
+        const ComposeDescriptor d = ComposeDescriptor::Parse(yaml, kBase, "t.ucompose.yaml");
+        return d.target.fixedTimeUtc;
+    };
+    EXPECT_EQ(at("1767268800"), 1767268800);
+    EXPECT_EQ(at("2026-01-01T12:00:00Z"), 1767268800);
+    EXPECT_EQ(at("2026-01-01 15:00:00+03:00"), 1767268800);
+    EXPECT_EQ(at("2026-01-01T12:00"), 1767268800);
+    EXPECT_EQ(at("2026-01-01T12:00:00.250Z"), 1767268800);
+    EXPECT_EQ(at("2026-01-01"), 1767225600);
+    EXPECT_FALSE(at("2026-13-01").has_value());
+    EXPECT_FALSE(at("yesterday").has_value());
+    const ComposeDescriptor bad =
+        ComposeDescriptor::Parse("version: 1\ntarget: {fixedTime: soon}\nlayers: [{source: {folder: a}}]\n", kBase, "t.ucompose.yaml");
+    ASSERT_FALSE(bad.report.empty());
+    EXPECT_NE(bad.report.front().find("ISO 8601"), std::string::npos) << bad.report.front();
+}
