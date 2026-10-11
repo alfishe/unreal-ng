@@ -39,6 +39,7 @@ public:
     // Wiring
     void SetMachine(IMachineThread* thread, IMachineClock* clock);
     void SetSession(ISessionSink* session);
+    void SetPlayback(IPlaybackSink* playback);
     /// @p owner implements @p kind; false (and logged as a wiring error) when the kind has an owner already
     bool Own(OpKind kind, IOpOwner* owner);
     /// @p owner is never called again once this returns (a running operation finishes first)
@@ -65,6 +66,7 @@ public:
     void SessionChanged() override;
     ModeState Published() const override;
     void Note(MachineOp op, OpStatus status, std::string detail) override;
+    OpResult RunOwnLocked(MachineOp op, const std::function<bool(OpStage&)>& commit) override;
     const OperationLog& Log() const { return _log; }
 
 private:
@@ -79,6 +81,7 @@ private:
     IMachineThread* _thread = nullptr;
     IMachineClock* _clock = nullptr;
     ISessionSink* _session = nullptr;
+    IPlaybackSink* _playback = nullptr;
     std::array<IOpOwner*, static_cast<size_t>(OpKind::Count)> _owners{};
     OperationLog _log;
     /// The published mode and its listeners. Recursive: a listener may report again (the transition it causes is

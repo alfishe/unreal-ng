@@ -973,12 +973,11 @@ public:
             Emulator* emulator = effectiveEmulator();
             if (!emulator)
                 return false;
-            Z80State* z80 = emulator->GetZ80State();
-            if (!z80)
-                return false;
-            const bool set = Z80::SetRegisterValue(z80, name, value);
-            if (set)
-                emulator->NoteDebugChange();   // the debugger snapshot's seq
+            // A tool edit (TTD records it); refused in the recorded past: a script error
+            std::string refused;
+            const bool set = emulator->SetRegisterFromTool("lua register", name, value, &refused);
+            if (!refused.empty())
+                throw std::runtime_error(refused);
             return set;
         });
 
@@ -994,7 +993,7 @@ public:
             if (!effectiveEmulator()) return;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
-            effectiveEmulator()->EditMemoryFromTool("Lua memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
+            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
         });
 
         lua.set_function("mem_read_word", [this](uint16_t addr) -> uint16_t {
@@ -1008,7 +1007,7 @@ public:
             if (!effectiveEmulator()) return;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
-            effectiveEmulator()->EditMemoryFromTool("Lua memory write", [&] {
+            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua memory write", [&] {
                 mem->ToolWriteToZ80Memory(addr, value & 0xFF);
                 mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
             });
@@ -1176,7 +1175,7 @@ public:
             if (!effectiveEmulator()) return;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
-            effectiveEmulator()->EditMemoryFromTool("Lua memory write", [&] {
+            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua memory write", [&] {
                 for (auto& pair : data) {
                     int idx = pair.first.as<int>() - 1;  // Lua tables start at 1
                     uint8_t val = pair.second.as<uint8_t>();
@@ -1217,7 +1216,7 @@ public:
                 pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
             else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-            effectiveEmulator()->EditMemoryFromTool("Lua page write", [&] {
+            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua page write", [&] {
                 pagePtr[offset] = value;
                 if (type == "ram")
                     mem->MarkRamPageEdited(static_cast<uint16_t>(page));
@@ -1264,7 +1263,7 @@ public:
             else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
             int maxLen = PAGE_SIZE - offset;
-            effectiveEmulator()->EditMemoryFromTool("Lua page write", [&] {
+            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua page write", [&] {
                 int idx = 0;
                 for (auto& pair : data) {
                     if (idx >= maxLen) break;
@@ -6217,7 +6216,7 @@ public:
                 Memory* memory = emulator->GetMemory();
                 if (memory)
                 {
-                    emulator->EditMemoryFromTool("Lua assemble write", [&] {
+                    emulator->EditMemoryFromToolOrThrow("Lua assemble write", [&] {
                         uint32_t addr = asmResult.startAddress;
                         for (uint8_t b : asmResult.bytes)
                             memory->ToolWriteToZ80Memory(static_cast<uint16_t>((addr++) & 0xFFFF), b);

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <optional>
 #include <type_traits>
@@ -21,6 +22,7 @@
 #include "debugger/ttd/ttdportsearch.h"
 #include "debugger/ttd/ttdprobe.h"
 #include "debugger/ttd/ttdrecordingfolders.h"
+#include "emulator/coordinator/ports.h"
 #include "emulator/emulator.h"
 #include "emulator/memory/devicememory.h"
 #include "emulator/emulatorcontext.h"
@@ -339,6 +341,11 @@ private:
     void NotifyFrameRefresh();
     /// A verb that moved the machine through the history: its reply names how exactly that position came back
     TTDReply WithCheck(TTDReply reply) const;
+    /// A verb that changes the session or moves the machine, as an operation of the machine coordinator: its rules
+    /// and its log (IMachineOps::RunOwnLocked - TTD keeps its own lock and park). A failed reply is a failed
+    /// operation; without a coordinator (a bare context) the verb runs alone
+    TTDReply AsOperation(coordinator::OpKind kind, const std::string& verb, const TTDRequest& request,
+                         const std::function<TTDReply()>& run);
 
     EmulatorContext* _context = nullptr;
     S* _manager = nullptr;
@@ -491,12 +498,13 @@ TTDReply TTDControlBackend<S>::Execute(const std::string& verb, const TTDRequest
 template <class S>
 TTDReply TTDControlBackend<S>::Run(const std::string& verb, const TTDRequest& request)
 {
+    using coordinator::OpKind;
     if (verb == "start")
-        return Start(request);
+        return AsOperation(OpKind::TtdStart, verb, request, [&]() { return Start(request); });
     if (verb == "stop")
-        return Stop();
+        return AsOperation(OpKind::TtdStop, verb, request, [&]() { return Stop(); });
     if (verb == "invalidate")
-        return Invalidate(request);
+        return AsOperation(OpKind::TtdDiscard, verb, request, [&]() { return Invalidate(request); });
     if (verb == "history-limit")
         return HistoryLimit(request);
     if (verb == "journal")
@@ -508,15 +516,16 @@ TTDReply TTDControlBackend<S>::Run(const std::string& verb, const TTDRequest& re
     if (verb == "position")
         return Position();
     if (verb == "seek")
-        return WithCheck(Seek(request));
+        return AsOperation(OpKind::TimelineSeek, verb, request, [&]() { return WithCheck(Seek(request)); });
     if (verb == "step-back" || verb == "step-forward")
-        return WithCheck(StepFrame(verb == "step-forward"));
+        return AsOperation(OpKind::TimelineSeek, verb, request,
+                           [&]() { return WithCheck(StepFrame(verb == "step-forward")); });
     if (verb == "resume")
         return Resume(request);
     if (verb == "step-instruction")
-        return WithCheck(StepInstruction(request));
+        return AsOperation(OpKind::TimelineSeek, verb, request, [&]() { return WithCheck(StepInstruction(request)); });
     if (verb == "reverse-step")
-        return WithCheck(ReverseStep(request));
+        return AsOperation(OpKind::TimelineSeek, verb, request, [&]() { return WithCheck(ReverseStep(request)); });
     if (verb == "markers")
         return Markers();
     if (verb == "bookmarks")
@@ -530,11 +539,11 @@ TTDReply TTDControlBackend<S>::Run(const std::string& verb, const TTDRequest& re
     if (verb == "find-last")
         return FindLast(request);
     if (verb == "reverse-continue")
-        return WithCheck(ReverseContinue(request));
+        return AsOperation(OpKind::TimelineSeek, verb, request, [&]() { return WithCheck(ReverseContinue(request)); });
     if (verb == "dump")
         return Dump(request);
     if (verb == "load")
-        return Load(request);
+        return AsOperation(OpKind::TtdLoad, verb, request, [&]() { return Load(request); });
     if (verb == "export-clip")
         return ExportClip(request);
     if (verb == "memory-at")
@@ -542,6 +551,31 @@ TTDReply TTDControlBackend<S>::Run(const std::string& verb, const TTDRequest& re
     if (verb == "memory-diff")
         return MemoryDiff(request);
     return Fail(TTDControlError::Internal, "verb '" + verb + "' has no implementation");
+}
+
+template <class S>
+TTDReply TTDControlBackend<S>::AsOperation(coordinator::OpKind kind, const std::string& verb,
+                                          const TTDRequest& request, const std::function<TTDReply()>& run)
+{
+    coordinator::IMachineOps* ops = _context ? _context->pMachineOps : nullptr;
+    if (!ops)
+        return run();
+    coordinator::MachineOp op;
+    op.kind = kind;
+    op.summary = verb;
+    for (const auto& [name, value] : request.options)
+        op.summary += " " + name + "=" + value;
+    TTDReply reply;
+    const coordinator::OpResult result = ops->RunOwnLocked(std::move(op), [&](coordinator::OpStage& stage) {
+        stage.CommitPoint();
+        reply = run();
+        if (!reply.Ok())
+            stage.error = reply.message;
+        return reply.Ok();
+    });
+    if (result.status == coordinator::OpStatus::Refused)
+        return Fail(TTDControlError::Conflict, result.reason);
+    return reply;
 }
 
 template <class S>
@@ -1069,10 +1103,17 @@ TTDReply TTDControlBackend<S>::Resume(const TTDRequest& request)
         return reply;
     }
 
-    const bool ok = _manager->ResumeRecordingFrom(from);
+    // The cut: the recording goes on from the point, then each medium that cannot go back there gets the decision.
+    // One operation of the coordinator, logged with the decisions (TTD's own lock: RunOwnLocked)
+    bool ok = false;
     StateNode decided = StateNode::Array();
-    if (ok && !unproven.empty())
-    {
+    auto cut = [&](coordinator::OpStage& stage) {
+        ok = _manager->ResumeRecordingFrom(from);
+        if (!ok)
+        {
+            stage.error = "the recording could not go on from frame " + std::to_string(from.frame);
+            return false;
+        }
         MediaManager* manager = _context ? _context->pMediaManager : nullptr;
         for (const TTDRestoreIssue& issue : unproven)
         {
@@ -1095,14 +1136,23 @@ TTDReply TTDControlBackend<S>::Resume(const TTDRequest& request)
                 }
             }
             decided.push(item);
-            if (coordinator::IMachineOps* ops = _context ? _context->pMachineOps : nullptr)
-            {
-                coordinator::MachineOp op;
-                op.kind = coordinator::OpKind::TimelineCut;
-                op.summary = "frame " + std::to_string(from.frame);
-                ops->Note(std::move(op), coordinator::OpStatus::Done, std::move(detail));
-            }
+            stage.detail += (stage.detail.empty() ? "" : " | ") + detail;   // one entry per slot
         }
+        return true;
+    };
+    if (coordinator::IMachineOps* ops = _context ? _context->pMachineOps : nullptr)
+    {
+        coordinator::MachineOp op;
+        op.kind = coordinator::OpKind::TimelineCut;
+        op.summary = "frame " + std::to_string(from.frame);
+        const coordinator::OpResult result = ops->RunOwnLocked(std::move(op), cut);
+        if (result.status == coordinator::OpStatus::Refused)
+            return Fail(TTDControlError::Conflict, result.reason);
+    }
+    else
+    {
+        coordinator::OpStage stage;
+        cut(stage);
     }
 
     TTDReply reply;

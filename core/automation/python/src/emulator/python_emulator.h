@@ -1165,12 +1165,11 @@ namespace PythonBindings
                 return py::cast(value);
             }, "Get register value by name", py::arg("name"))
             .def("set_register", [](Emulator& self, const std::string& name, uint16_t value) -> bool {
-                Z80State* z80 = self.GetZ80State();
-                if (!z80)
-                    return false;
-                const bool set = Z80::SetRegisterValue(z80, name, value);
-                if (set)
-                    self.NoteDebugChange();   // the debugger snapshot's seq
+                // A tool edit (TTD records it); refused in the recorded past: a script error
+                std::string refused;
+                const bool set = self.SetRegisterFromTool("python register", name, value, &refused);
+                if (!refused.empty())
+                    throw std::runtime_error(refused);
                 return set;
             }, "Set register value by name", py::arg("name"), py::arg("value"))
 
@@ -1183,7 +1182,7 @@ namespace PythonBindings
             .def("mem_write", [](Emulator& self, uint16_t addr, uint8_t value) {
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
-                self.EditMemoryFromTool("Python memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
+                self.EditMemoryFromToolOrThrow("Python memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
             }, "Write byte to memory")
             .def("mem_read_word", [](Emulator& self, uint16_t addr) -> uint16_t {
                 Memory* mem = self.GetMemory();
@@ -1193,7 +1192,7 @@ namespace PythonBindings
             .def("mem_write_word", [](Emulator& self, uint16_t addr, uint16_t value) {
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
-                self.EditMemoryFromTool("Python memory write", [&] {
+                self.EditMemoryFromToolOrThrow("Python memory write", [&] {
                     mem->ToolWriteToZ80Memory(addr, value & 0xFF);
                     mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
                 });
@@ -1352,7 +1351,7 @@ namespace PythonBindings
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
                 std::string bytes = data;
-                self.EditMemoryFromTool("Python memory write", [&] {
+                self.EditMemoryFromToolOrThrow("Python memory write", [&] {
                     for (size_t i = 0; i < bytes.size(); i++)
                         mem->ToolWriteToZ80Memory(static_cast<uint16_t>((addr + i) & 0xFFFF), static_cast<uint8_t>(bytes[i]));
                 });
@@ -1387,7 +1386,7 @@ namespace PythonBindings
                     pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
                 else
                     pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-                self.EditMemoryFromTool("Python page write", [&] {
+                self.EditMemoryFromToolOrThrow("Python page write", [&] {
                     pagePtr[offset] = value;
                     if (type == "ram")
                         mem->MarkRamPageEdited(static_cast<uint16_t>(page));
@@ -1429,7 +1428,7 @@ namespace PythonBindings
                 // Clamp to page boundary
                 size_t maxLen = PAGE_SIZE - offset;
                 size_t writeLen = std::min(bytes.size(), maxLen);
-                self.EditMemoryFromTool("Python page write", [&] {
+                self.EditMemoryFromToolOrThrow("Python page write", [&] {
                     std::memcpy(pagePtr + offset, bytes.data(), writeLen);
                     if (type == "ram")
                         mem->MarkRamPageEdited(static_cast<uint16_t>(page));
@@ -5815,7 +5814,7 @@ namespace PythonBindings
                 Memory* memory = self.GetMemory();
                 if (memory)
                 {
-                    self.EditMemoryFromTool("Python assemble write", [&] {
+                    self.EditMemoryFromToolOrThrow("Python assemble write", [&] {
                         uint32_t addr = asmResult.startAddress;
                         for (uint8_t b : asmResult.bytes)
                             memory->ToolWriteToZ80Memory(static_cast<uint16_t>((addr++) & 0xFFFF), b);

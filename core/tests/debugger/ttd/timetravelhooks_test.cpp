@@ -66,30 +66,29 @@ TEST_F(TimeTravelHooks_Test, TheCoreSeesTheManagerThroughTheHooks)
 TEST_F(TimeTravelHooks_Test, ASnapshotLoadKeepsTheHistoryOfAStoppedSession)
 {
     RecordAndStop();
-    _hooks->OnLoad(ttd::TTDLoadKind::Snapshot, "snapshot-load");
+    _hooks->EndSession("snapshot-load");
     EXPECT_TRUE(_hooks->HasHistory());
     EXPECT_TRUE(_ttd->GetSessionInfo().lastDropReason.empty());
 }
 
-TEST_F(TimeTravelHooks_Test, LoadsConfigurationChangesAndTransfersDropAStoppedSessionWithTheirReason)
+TEST_F(TimeTravelHooks_Test, MediaMachineAndSpeedChangesDropAStoppedSessionWithTheirReason)
 {
     struct Case
     {
         const char* reason;
-        void (*call)(ttd::ITimeTravelHooks&, const char*);
+        ttd::TTDChange change;
     };
     const Case cases[] = {
-        {"tape-load", [](ttd::ITimeTravelHooks& h, const char* r) { h.OnLoad(ttd::TTDLoadKind::Tape, r); }},
-        {"media-change", [](ttd::ITimeTravelHooks& h, const char* r) { h.OnLoad(ttd::TTDLoadKind::Media, r); }},
-        {"rom-reload",
-         [](ttd::ITimeTravelHooks& h, const char* r) { h.OnConfigurationChange(ttd::TTDConfigChangeKind::RomReload, r); }},
-        {"state-transfer", [](ttd::ITimeTravelHooks& h, const char* r) { h.OnModelTransfer(r); }},
+        {"media-change", ttd::TTDChange::Media},
+        {"rom-reload", ttd::TTDChange::Machine},
+        {"state-transfer", ttd::TTDChange::Machine},
+        {"speed-multiplier-change", ttd::TTDChange::Timing},
     };
     for (const Case& c : cases)
     {
         SCOPED_TRACE(c.reason);
         RecordAndStop();
-        c.call(*_hooks, c.reason);
+        _hooks->EndSessionFor(c.change, c.reason);
         EXPECT_FALSE(_hooks->HasHistory());
         EXPECT_EQ(_ttd->GetSessionInfo().lastDropReason, c.reason);
     }

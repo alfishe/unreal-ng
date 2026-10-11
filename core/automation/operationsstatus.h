@@ -21,7 +21,8 @@
 
 namespace OperationsStatus
 {
-/// One entry as a node: seq, frame, t_in_frame, wall_ms, kind, source, mode, status, effect, summary, detail
+/// One entry as a node: seq, frame, t_in_frame, wall_ms, kind, source, mode, status, effect, summary, detail,
+/// repeats
 inline StateNode EntryNode(const coordinator::OperationLogEntry& e)
 {
     StateNode node = StateNode::Object();
@@ -36,6 +37,7 @@ inline StateNode EntryNode(const coordinator::OperationLogEntry& e)
     node["effect"] = coordinator::SessionEffectName(e.effect);
     node["summary"] = e.summary;
     node["detail"] = e.detail;
+    node["repeats"] = static_cast<uint64_t>(e.repeats);
     return node;
 }
 
@@ -81,6 +83,8 @@ inline std::string Text(Emulator* emulator, uint64_t since = 0, size_t limit = 0
             << coordinator::OpKindName(e.kind);
         if (!e.summary.empty())
             out << " " << e.summary;
+        if (e.repeats > 1)
+            out << " x" << e.repeats;
         out << "  " << coordinator::OpStatusName(e.status) << "  [" << coordinator::MachineModeName(e.mode) << ", "
             << coordinator::OpSourceName(e.source) << "]";
         if (e.effect != coordinator::SessionEffect::None)

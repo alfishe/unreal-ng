@@ -76,3 +76,32 @@ TEST(OperationLog_Test, ReadersOnOtherThreadsSeeWholeEntries)
     reader.join();
     EXPECT_EQ(bad.load(), 0);
 }
+
+// M6: a script's pokes are one tool edit after another - they count in the newest entry (under the new seq, so a
+// poller sees it), never pushing the other operations out of the ring; anything between them starts a new entry
+TEST(OperationLog_Test, TheSameToolEditAgainCountsInTheNewestEntry)
+{
+    OperationLog log;
+    OperationLogEntry reset;
+    reset.kind = OpKind::Reset;
+    log.Append(reset);
+    OperationLogEntry poke;
+    poke.kind = OpKind::ToolEdit;
+    poke.summary = "lua poke";
+    for (size_t i = 0; i < OperationLog::kCapacity * 2; ++i)
+        log.Append(poke);
+    auto entries = log.Entries();
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[0].kind, OpKind::Reset);
+    EXPECT_EQ(entries[1].repeats, OperationLog::kCapacity * 2);
+    EXPECT_EQ(entries[1].seq, log.LastSeq());
+    EXPECT_EQ(log.Entries(entries[1].seq - 1).size(), 1u) << "a poller since the previous poke sees it";
+
+    OperationLogEntry other = poke;
+    other.summary = "webapi memory";
+    log.Append(other);
+    log.Append(poke);
+    entries = log.Entries();
+    ASSERT_EQ(entries.size(), 4u);
+    EXPECT_EQ(entries[3].repeats, 1u);
+}

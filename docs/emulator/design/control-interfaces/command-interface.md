@@ -474,13 +474,18 @@ drive and an RZX playback's snapshot block or seek back; more operations join it
 
 Each operation: `seq` (1, 2, ... never reused), the frame and T-state when it finished, the host wall time, `kind`
 (`reset`, `autostart`, `snapshot-load`, `media-insert`, `media-eject`, `media-discard`, `disk-create`,
-`network-change`, `ide-drive-kind`, `rzx-restore`, `model-switch` - a refused model switch or state transfer), `source`
+`network-change`, `ide-drive-kind`, `rzx-restore`, `model-switch` - a refused model switch, `timeline-cut` - Rec From
+Here with the media decisions, `rom-load`, `gs-card-switch`, `speed-change`, `state-transfer`, `slot-change` and
+`cd-front-panel` - refused ones only, `tool-edit` - a memory, register, port or sector edit by a tool, `ttd-start`,
+`ttd-stop`, `ttd-discard`, `timeline-seek` - a seek, a step or a reverse run, `ttd-load`), `source`
 (the surface that asked: `qt`, `webapi`, `mcp`, `cli`, `lua`, `python`, `gdb`, `dezog`; `unknown` for the emulator's
 own threads), the machine `mode` the rules saw (`live`,
 `recording`, `black-box`, `replaying`, `detached`), `status` (`done`; `refused` - nothing happened, `detail` is the
 reason every surface shows; `failed` - the owner could not do it, `detail` is the error), `effect` on the TTD
-session (`none`, `end-keep-history`, `media-changed`, `stop-then-media-changed`), `summary` (soft / hard, the
-snapshot path, the slot and the medium) and `detail` (`no change` when there was nothing to do). The report also
+session (`none`, `end-keep-history`, `media-changed`, `stop-then-media-changed`, `machine-changed`,
+`timing-changed`), `summary` (soft / hard, the snapshot path, the slot and the medium), `detail` (`no change` when
+there was nothing to do) and `repeats`: the same tool edit again (a script's pokes) counts in the newest entry, which
+takes the new `seq` (so `seq` may skip numbers; a poller sees the entry again). The report also
 carries the current `mode`, `last_seq` and `capacity`. Every refusal is logged, also the ones a surface gets when it
 asks before preparing a change itself (an upload, a file dialog): the same sentence, under that surface's name.
 

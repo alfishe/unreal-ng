@@ -67,26 +67,14 @@ enum class TTDGuardedAction : uint8_t
     ChangeSlots          ///< a slot change (plug, remove, options) changes the device set (D38, ZX-bus slots R-OP-7)
 };
 
-/// What replaced the machine's state or its media (OnLoad). A snapshot load ENDS the recording session like a reset does (the
-/// one TTD rule, D42): the history stays browsable, a new session starts only by the `ttdrestart` feature; every other
-/// kind still ends the session and drops its history
-enum class TTDLoadKind : uint8_t
+/// What changed under the session, as the machine coordinator's rules say (EndSessionFor): the coordinator's
+/// session port is the one caller (a reset and a snapshot load are EndSession: the history of the same machine stays)
+enum class TTDChange : uint8_t
 {
-    Snapshot,       ///< a snapshot file
-    RzxSnapshot,    ///< the snapshot an RZX file starts from
-    RzxSeek,        ///< an RZX playback seek restored its own key frame
-    Tape,           ///< a tape image
-    Disk,           ///< a disk image
-    DiskCreate,     ///< a new blank disk
-    Media           ///< a media slot change (MediaManager)
-};
-
-/// What changed in the machine's configuration (OnConfigurationChange)
-enum class TTDConfigChangeKind : uint8_t
-{
-    SpeedMultiplier,  ///< the host speed multiplier
-    RomReload,        ///< the ROM set was loaded again
-    GsCard            ///< the General Sound card personality
+    Media,     ///< a medium changed: a background session ends, its recording kept on disk; otherwise the history goes
+    Machine,   ///< the machine itself changed (the ROM set, the General Sound card, a state transfer): the history
+               ///< belongs to the old one and goes
+    Timing     ///< the host speed changed: the history goes, except the black box's (recorded at 1x, it stays valid)
 };
 
 /// Result of ITimeTravelHooks::SubmitMachineTask
@@ -135,12 +123,9 @@ public:
     virtual void NoteReplaySource(TTDReplaySource source) = 0;
 
     // Things that happen to the machine
-    /// A load replaced the machine state or a medium; @p reason names it in status
-    virtual void OnLoad(TTDLoadKind kind, const char* reason) = 0;
-    /// The machine's configuration changed under the session
-    virtual void OnConfigurationChange(TTDConfigChangeKind kind, const char* reason) = 0;
-    /// The machine state moved to another model (D26)
-    virtual void OnModelTransfer(const char* reason) = 0;
+    /// @p change ends the session, or drops the history it left (see TTDChange); @p reason names it in status.
+    /// Nothing to end: nothing happens. Called by the coordinator's session port only (an operation's session effect)
+    virtual void EndSessionFor(TTDChange change, const char* reason) = 0;
     /// Something outside the guest happened (tape control, a disk write, a NeoGS card)
     virtual void RecordExternalEvent(TTDExternalEventKind kind, const char* reason) = 0;
     /// A medium change landed in @p slot at this frame boundary (before its checkpoint): @p what is the new medium
