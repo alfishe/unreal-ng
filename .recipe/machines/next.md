@@ -167,7 +167,7 @@ mode, the vector; pulse mode carries `#FF` on the bus and no vector. `nmi_reques
 the channel), and the four DAC channels with the left (A + B) and right (C + D) sums (`#80` is silence). `state/next/input` shows NR `#05`
 decoded for the left and right joystick (Kempston 1 / 2, MD 1 / 2, Sinclair, cursor, I/O mode) and which port each answers, the NR `#0B`
 I/O mode, and the Kempston port `#1F` now. `kempston_1f.selected_by_nr_05` false means `zxnext.vhd` would not drive `#1F` for these modes while
-the port idles at `#FF` (`answers_here`), as it does if NR `#82` bit 6 is off; `#37` answers for Kempston 2 / MD 2 (`kempston_37`, NR `#82` bit 7). The host joystick is the left connector. The MD pad buttons and the extended keys NR `#B0`-`#B2` are not modelled. CLI
+the port idles at `#FF` (`answers_here`), as it does if NR `#82` bit 6 is off; `#37` answers for Kempston 2 / MD 2 (`kempston_37`, NR `#82` bit 7). The host joystick is the left connector. The extended keys (`extended_keys`, NR `#B0` / `#B1`: EXTEND UP CAPS LOCK GRAPH TRUE/INV VIDEO BREAK EDIT ; " , . DELETE and the arrows) come from the host's physical PC keys as the Next's keyboard controller maps them (Left Alt = EXTEND, Right Alt = GRAPH, Backspace = DELETE, Esc = BREAK, ` = EDIT, Tab = TRUE VIDEO, \ = INV VIDEO); the pad's MODE X Y Z (`md_pad_extra`, NR `#B2`) from keypad 7 / 9 / 1 / 3 on the left connector. A, C and START are bits 6, 5, 7 of the Kempston byte (MD modes only). CLI
 `state next audio` / `state next input`, Lua `next_audio()` / `next_input()`, Python `emu.next_audio()` / `emu.next_input()`, MCP aspects
 `next_audio` / `next_input`.
 

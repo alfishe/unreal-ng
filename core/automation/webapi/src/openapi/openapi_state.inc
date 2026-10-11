@@ -203,7 +203,7 @@
              "md2 | sinclair1 | sinclair2 | cursor | io_mode), port (1F | 37 | keyboard | user port)}. io_mode: nr_0b, enabled, mode, bit_0, "
              "uart_on_joystick_port. kempston_1f: value, bits, selected_by_nr_05 (zxnext.vhd drives #1F only for Kempston 1 / MD 1), answers_here "
              "(false: the port idles at #FF; it also needs NR #82 bit 6), note. kempston_37: value, answers_here (Kempston 2 / MD 2, NR #82 bit 7). "
-             "The host joystick is the left connector. not_modelled: md_pad_buttons, extended_keys and the stored nr_b0 / nr_b1 / nr_b2.", true},
+             "The host joystick is the left connector. extended_keys: nr_b0, nr_b1, pressed (names: extend up caps_lock graph true_video inv_video break edit ; \" , . delete right left down; from the host's physical PC keys). md_pad_extra: nr_b2, left / right {mode x y z}, host_keys (the host's pad is the left connector; keypad 7 9 1 3 by default).", true},
             {"/api/v1/emulator/{id}/state/next/nmi", "Get the Next NMI sources, Multiface, interrupts, reset and the interrupt journal",
              "NMI, interrupts and reset (core DeviceState::NextNmiReport; CLI `state next nmi`, Lua next_nmi(), Python next_nmi(), MCP "
              "inspect_state aspect next_nmi). sources: m1_button, drive_button (enabled, would_fire, blocked_by) and io_trap (not modelled). "

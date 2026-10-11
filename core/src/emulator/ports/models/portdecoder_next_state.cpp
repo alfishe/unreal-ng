@@ -11,6 +11,8 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/z80n/nextregjournal.h"
 #include "emulator/io/z80n/nextdivmmcjournal.h"
+#include "emulator/io/keyboard/pckey.h"
+#include "emulator/io/z80n/nextextendedinput.h"
 #include "emulator/io/z80n/nextintjournal.h"
 #include "emulator/io/z80n/nextmagicport.h"
 #include "emulator/io/z80n/nextsdjournal.h"
@@ -787,13 +789,35 @@ StateNode NextInputReport(EmulatorContext* context)
     k37["note"] = answers37 ? "" : "NR #05 selects no Kempston 2 / MD pad 2 on #37 (or NR #82 bit 7 is off): a read gives #FF";
     n["kempston_37"] = std::move(k37);
 
-    StateNode extra = StateNode::Object();
-    extra["md_pad_buttons"] = false;
-    extra["extended_keys"] = false;
-    extra["nr_b0"] = Hex8(board.Stored(0xB0));
-    extra["nr_b1"] = Hex8(board.Stored(0xB1));
-    extra["nr_b2"] = Hex8(board.Stored(0xB2));
-    n["not_modelled"] = std::move(extra);
+    // NR #B0 / #B1: the keys the ZX matrix has no place for; NR #B2: the pads' MODE X Y Z (zxnext.vhd 6155-6167)
+    const NextExtendedInput& input = decoder->ExtendedInput();
+    StateNode keys = StateNode::Object();
+    keys["nr_b0"] = Hex8(board.Read(0xB0));
+    keys["nr_b1"] = Hex8(board.Read(0xB1));
+    StateNode pressed = StateNode::Array();
+    for (unsigned bit = 0; bit < NextExtendedInput::kKeyCount; bit++)
+        if (input.Keys() & (1u << bit))
+            pressed.push(NextExtendedInput::KeyName(bit));
+    keys["pressed"] = std::move(pressed);
+    n["extended_keys"] = std::move(keys);
+
+    auto pad = [&](bool leftSide) {
+        const uint8_t buttons = input.Pad(leftSide);
+        StateNode p = StateNode::Object();
+        p["mode"] = (buttons & NextExtendedInput::kPadMode) != 0;
+        p["x"] = (buttons & NextExtendedInput::kPadX) != 0;
+        p["y"] = (buttons & NextExtendedInput::kPadY) != 0;
+        p["z"] = (buttons & NextExtendedInput::kPadZ) != 0;
+        return p;
+    };
+    StateNode md = StateNode::Object();
+    md["nr_b2"] = Hex8(board.Read(0xB2));
+    md["left"] = pad(true);
+    md["right"] = pad(false);
+    // A, C and START are bits 6, 5 and 7 of the Kempston byte (an MD pad mode passes them); the host's pad is the left connector
+    md["host_keys"] = std::string("x:") + pckey::Name(input.PadKey(3)) + ",y:" + pckey::Name(input.PadKey(1)) + ",z:" +
+                      pckey::Name(input.PadKey(2)) + ",mode:" + pckey::Name(input.PadKey(0));
+    n["md_pad_extra"] = std::move(md);
     return n;
 }
 

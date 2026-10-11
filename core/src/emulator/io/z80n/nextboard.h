@@ -52,6 +52,8 @@ public:
     /// The shadow ULA screen is bit 3 of #7FFD; NR #69 bit 6 reads and writes that bit
     virtual bool ShadowScreen() const { return false; }
     virtual void SetShadowScreen(bool) {}
+    /// NR #B0 / #B1 / #B2 read: the extended keys and the MD pad's extra buttons (the keyboard and the pads are the machine's)
+    virtual uint8_t ReadExtendedInput(uint8_t reg) const { (void)reg; return 0; }
     /// NR #06 / #08 / #09 changed (the sound's AY / YM, turbosound, DAC, stereo)
     virtual void AudioConfigChanged() {}
     /// NR #2C / #2D / #2E: the DAC's NextREG mirrors

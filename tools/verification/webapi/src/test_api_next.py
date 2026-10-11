@@ -131,6 +131,21 @@ class TestNextReports:
         assert add({"type": "copper", "address": 1024}).status_code == 400
         api_client.session.delete(api_client._url(f"/api/v1/emulator/{next_emulator}/breakpoints"))
 
+    def test_extended_keys_follow_the_hosts_keys(self, api_client, next_emulator):
+        report = get(api_client, next_emulator, "/state/next/input").json()
+        assert report["extended_keys"]["pressed"] == [] and report["md_pad_extra"]["nr_b2"] == "0x00"
+        # the automation presses the ZX key "up"; the Next's keyboard controller hears the physical key too (NR #B0 bit 3)
+        assert post(api_client, next_emulator, "/keyboard/press", {"key": "up"}).status_code == 200
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            report = get(api_client, next_emulator, "/state/next/input").json()
+            if "up" in report["extended_keys"]["pressed"]:
+                break
+            time.sleep(0.1)
+        assert "up" in report["extended_keys"]["pressed"], report["extended_keys"]
+        assert int(report["extended_keys"]["nr_b0"], 16) & 0x08
+        post(api_client, next_emulator, "/keyboard/release_all", {})
+
     def test_magic_opcode_breakpoints(self, api_client, next_emulator):
         def add(body):
             return post(api_client, next_emulator, "/breakpoints", body)

@@ -145,7 +145,7 @@ TEST_F(NextAudioInput_Test, TheInputReportDecodesTheJoystickModesAndTheKempstonP
     EXPECT_TRUE(report.find("io_mode")->find("enabled")->b);
     EXPECT_EQ(report.find("io_mode")->find("mode")->s, "pin7 = UART TX");
     EXPECT_TRUE(report.find("io_mode")->find("uart_on_joystick_port")->b);
-    EXPECT_EQ(report.find("not_modelled")->find("port_37"), nullptr) << "#37 is modelled now";
+    EXPECT_EQ(report.find("not_modelled"), nullptr) << "nothing of the input is left unmodelled";
 
     auto run = [&](const std::vector<std::string>& args) { return CliNext::StateText(_context, args, "\n"); };
     const std::string text = run({"next", "input"});

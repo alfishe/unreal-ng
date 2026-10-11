@@ -621,7 +621,16 @@ inline std::string StateText(EmulatorContext* context, const std::vector<std::st
         }
         out += "Port #1F " + std::string(Field(*report.find("kempston_1f"), "answers_here") == "on" ? "answers" : "idle (#FF)") + ", port #37 " +
                (Field(*report.find("kempston_37"), "answers_here") == "on" ? "answers" : "idle (#FF)") + newline;
-        out += std::string("Not modelled: MD pad buttons, extended keys (NR #B0-#B2 only store their bytes)") + newline;
+        if (const StateNode* keys = report.find("extended_keys"))
+        {
+            std::string held;
+            if (const StateNode* pressed = keys->find("pressed"))
+                for (const StateNode& k : pressed->items)
+                    held += (held.empty() ? "" : ",") + k.s;
+            out += "Extended keys (NR #B0 " + Field(*keys, "nr_b0") + ", #B1 " + Field(*keys, "nr_b1") + "): " + (held.empty() ? std::string("none") : held) + newline;
+        }
+        if (const StateNode* pad = report.find("md_pad_extra"))
+            out += "Pad extras (NR #B2 " + Field(*pad, "nr_b2") + "): host pad keys " + Field(*pad, "host_keys") + newline;
         return out;
     }
     if (sub == "magicport" || sub == "magic-port")

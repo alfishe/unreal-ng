@@ -1755,7 +1755,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "'next_audio' = the Next's sound as configured: chip model (YM / AY), ABC / ACB, turbosound, the chip selected on #FFFD, per chip its "
         "pan, mono flag and the 16 registers with the tone / noise / envelope periods and volumes, and the four DAC channels with the left / right "
         "sums; 'next_input' = the joystick modes of NR #05 (left and right, which port each answers), the NR #0B I/O mode, the Kempston port #1F "
-        "decoded (and whether NR #05 selects it) and whether ports #1F / #37 answer, and what is not modelled (MD pad buttons, extended keys); "
+        "decoded (and whether NR #05 selects it) and whether ports #1F / #37 answer, the extended keys held (NR #B0 / #B1) and the pads' MODE X Y Z (NR #B2); "
         "'next_dma' = the DMA as programmed (mode zxn / z80, ports A / B, direction, burst, prescaler, counters, status byte; reading does not "
         "step its read sequence), 'next_video' = layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster "
         "position, 'next_palette' = the 9-bit palettes (nr_palette = '0'-'7' | name | 'all', default the selected one; nr_range = '16-31'), "
@@ -3144,7 +3144,13 @@ void RegisterInspectState(ToolRegistry& registry)
                                         << modes["right"]["name"].asString() << " (" << modes["right"]["port"].asString() << "); NR #05 " << modes["nr_05"].asString()
                                         << "; I/O mode " << (value["io_mode"]["enabled"].asBool() ? value["io_mode"]["mode"].asString() : std::string("off"))
                                         << "; port #1F " << k["value"].asString() << (k["selected_by_nr_05"].asBool() ? "" : " (not selected by NR #05)")
-                                        << "; #1F " << (value["kempston_1f"]["answers_here"].asBool() ? "answers" : "idle") << ", #37 " << (value["kempston_37"]["answers_here"].asBool() ? "answers" : "idle") << "; not modelled: MD pad buttons, extended keys";
+                                        << "; #1F " << (value["kempston_1f"]["answers_here"].asBool() ? "answers" : "idle") << ", #37 " << (value["kempston_37"]["answers_here"].asBool() ? "answers" : "idle") << "; extended keys " << (value["extended_keys"]["pressed"].empty() ? std::string("none") : [&] {
+                                               std::string held;
+                                               for (const auto& k : value["extended_keys"]["pressed"])
+                                                   held += (held.empty() ? "" : ",") + k.asString();
+                                               return held;
+                                           }())
+                                        << "; pad extras NR #B2 " << value["md_pad_extra"]["nr_b2"].asString();
                                 }
                                 else if (aspect == "next_magic_port")
                                 {

@@ -97,6 +97,10 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return _machine ? _machine->ReadMemoryMapping() : _regs[reg];
         case kRegCpuSpeed:
             return static_cast<uint8_t>((_regs[reg] & 3) | ((_regs[reg] & 3) << 4));  // programmed | actual
+        case 0xB0:
+        case 0xB1:
+        case 0xB2:
+            return _machine ? _machine->ReadExtendedInput(reg) : 0;
         default:
             break;
     }

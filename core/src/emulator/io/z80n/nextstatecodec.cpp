@@ -23,7 +23,7 @@
 
 namespace
 {
-constexpr uint8_t kImageVersion = 2;
+constexpr uint8_t kImageVersion = 3;
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -505,6 +505,24 @@ static void LoadSd(Reader& r, SdCardSpi& card)
     card.loadState(state.data());
 }
 
+static void SaveExtendedInput(Writer& w, const NextExtendedInput& e)
+{
+    w.Put(e.Keys());
+    w.Put(e.Pad(true));
+    w.Put(e.Pad(false));
+}
+static void LoadExtendedInput(Reader& r, NextExtendedInput& e)
+{
+    uint16_t keys = 0;
+    uint8_t left = 0, right = 0;
+    r.Get(keys);
+    r.Get(left);
+    r.Get(right);
+    e.SetKeys(keys);
+    e.SetPad(true, left);
+    e.SetPad(false, right);
+}
+
 static void SaveDecoder(Writer& w, const PortDecoder_Next& p)
 {
     w.Put(p._nr08NoContention);
@@ -548,6 +566,7 @@ std::vector<uint8_t> NextStateCodec::Save(const PortDecoder_Next& p)
     Impl::SaveI2c(w, p._i2c);
     Impl::SaveSmall(w, *p._multiface, *p._divMmc);
     Impl::SaveDecoder(w, p);
+    Impl::SaveExtendedInput(w, p._extendedInput);
     if (p._audio)
         Impl::SaveAudio(w, p._audio.get());
     Impl::SaveSd(w, p._sd[0]);
@@ -575,6 +594,7 @@ bool NextStateCodec::Load(PortDecoder_Next& p, const uint8_t* data, size_t size)
     Impl::LoadI2c(r, p._i2c);
     Impl::LoadSmall(r, *p._multiface, *p._divMmc);
     Impl::LoadDecoder(r, p);
+    Impl::LoadExtendedInput(r, p._extendedInput);
     if (p._audio)
         Impl::LoadAudio(r, p._audio.get());
     Impl::LoadSd(r, p._sd[0]);

@@ -12,6 +12,7 @@
 #include "emulator/io/z80n/nextmultiface.h"
 #include "emulator/io/z80n/nextsdjournal.h"
 #include "emulator/io/z80n/nextintjournal.h"
+#include "emulator/io/z80n/nextextendedinput.h"
 #include "emulator/io/z80n/nextmagicport.h"
 #include "emulator/io/z80n/nexti2c.h"
 #include "emulator/io/z80n/nextinterrupts.h"
@@ -112,6 +113,9 @@ public:
     uint32_t SpiTooFastCount() const { return _spiTooFast; }
     /// The SD journal (automation-gaps-2026-10-11.md, P1) and the SPI engine's state for the report
     /// The interrupt, NMI and reset journal (automation-gaps-2026-10-11.md, P4)
+    NextExtendedInput& ExtendedInput() { return _extendedInput; }
+    const NextExtendedInput& ExtendedInput() const { return _extendedInput; }
+    uint8_t ReadExtendedInput(uint8_t reg) const override;
     NextMagicPort& MagicPort() { return _magicPort; }
     const NextMagicPort& MagicPort() const { return _magicPort; }
     NextIntJournal& IntJournal() { return _intJournal; }
@@ -213,6 +217,7 @@ private:
     NextSdJournal _sdJournal;
     NextIntJournal _intJournal;
     NextMagicPort _magicPort;
+    NextExtendedInput _extendedInput;  ///< the keyboard's extended keys and the pads' extra buttons; the machine's PS/2 sink
     void RecordInt(NextIntEvent event);
     void RecordSdEvent(unsigned card, const SdTraceEvent& event);
     std::unique_ptr<NextBoard> _board;

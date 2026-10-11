@@ -24,6 +24,9 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
 {
     _board = std::make_unique<NextBoard>(&Mem());
     _board->SetMachine(this);
+    // The Next's keyboard controller: the physical host keys reach the extended keys and the pad's extra buttons (NR #B0-#B2)
+    if (_context->pKeyboard)
+        _context->pKeyboard->SetPs2Sink(&_extendedInput);
     // the picture follows the beam: a video register written by the program applies from the line the beam is on
     _board->SetBeforeCpuWrite([this]() {
         if (_context->pScreen)
@@ -111,6 +114,8 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
 
 PortDecoder_Next::~PortDecoder_Next()
 {
+    if (_context->pKeyboard && _context->pKeyboard->GetPs2Sink() == &_extendedInput)
+        _context->pKeyboard->SetPs2Sink(nullptr);
     if (_context->pMediaManager)
     {
         _context->pMediaManager->UnregisterSlot(_sdSlot0.Descriptor().id);
@@ -362,6 +367,17 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         use.last = value;
     }
     return value;
+}
+
+uint8_t PortDecoder_Next::ReadExtendedInput(uint8_t reg) const
+{
+    switch (reg)
+    {
+        case 0xB0: return _extendedInput.ReadB0();
+        case 0xB1: return _extendedInput.ReadB1();
+        case 0xB2: return _extendedInput.ReadB2();
+        default: return 0;
+    }
 }
 
 unsigned PortDecoder_Next::JoystickMode(bool left) const

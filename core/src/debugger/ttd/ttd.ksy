@@ -681,12 +681,12 @@ types:
           erase (bit per 64 KB sector), u1 program value, s8 erase window end, s8 busy end (base clock t-states),
           u3 program offset, 6 reserved; the 512 KB array is the engine region EvoFlash (18), the machine's ROM
           pages 0-31),
-          62 NextState (the ZX Spectrum Next, one image of NextStateCodec::Save: u1 version 2, then the board (selected
+          62 NextState (the ZX Spectrum Next, one image of NextStateCodec::Save: u1 version 3, then the board (selected
           register, the 256 NextREG bytes, timing, reset bits), the memory map (MMU slots, paging bits, DivMMC /
           Multiface / Layer 2 views, config mode), video registers (clip windows, 8 x 256 palette words), sprites (128 x 5
           attribute bytes, 16 KB patterns, upload latches), the copper (2 KB list, position, mode, clock), the DMA, the CTC,
           the interrupt controller, the I2C bus with the DS1307, the Multiface and DivMMC latches, the decoder's SD SPI
-          and timing latches; fixed length per machine; the audio chips (three AY8910 with their pan, mode and the four DACs) and the two SD
+          and timing latches, the extended keys (u2) and the two pads' extra buttons (u1 each); fixed length per machine; the audio chips (three AY8910 with their pan, mode and the four DACs) and the two SD
           cards' protocol state are in it; the DivMMC RAM is blob 63),
           63 NextDivMmcRam (the Next's DivMMC RAM, 131072 bytes, no version byte: the 16 banks of 8 KB from bank 0,
           the system-area pages 8-15).
