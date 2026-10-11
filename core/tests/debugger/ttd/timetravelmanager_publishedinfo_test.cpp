@@ -16,6 +16,7 @@
 #include <thread>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testthread.h"
 #include "_helpers/testwaithelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
@@ -183,7 +184,7 @@ TEST_F(TimeTravelManager_PublishedInfo_Test, AutomationReadsWhileTheLoopRecords)
     std::atomic<uint64_t> statusReads{0};
     std::atomic<uint64_t> queries{0};
     std::atomic<uint64_t> torn{0};
-    std::thread automation([&] {
+    TestThread automation([&] {
         uint64_t lastQueryFrame = ~uint64_t(0);
         while (!done.load(std::memory_order_acquire))
         {
@@ -208,7 +209,7 @@ TEST_F(TimeTravelManager_PublishedInfo_Test, AutomationReadsWhileTheLoopRecords)
                 queries++;
             }
         }
-    });
+    }, [&] { done = true; });  // an ASSERT below returning early stops and joins it
 
     const auto waitFrames = [this](uint64_t frames) {
         const uint64_t target = _context->emulatorState.frame_counter + frames;
@@ -228,8 +229,7 @@ TEST_F(TimeTravelManager_PublishedInfo_Test, AutomationReadsWhileTheLoopRecords)
     _ttd->SetHistoryLimit(0, 0);
 
     EXPECT_TRUE(TestWait::For([&] { return queries.load() > 0; }));
-    done = true;
-    automation.join();
+    automation.Join();
     _emulator->Stop();
 
     EXPECT_EQ(torn.load(), 0u);

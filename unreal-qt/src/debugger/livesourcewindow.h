@@ -44,9 +44,11 @@ private slots:
     void goToHint();
 
 private:
-    /// The instance (looked up by id: a destroyed one is gone, not dangling) and its watch
+    /// The instance (looked up by id: a destroyed one is gone, not dangling), its context and its watch. The context
+    /// is valid while the caller holds the shared_ptr: looked up for one handler, never kept, never across a dialog
     std::shared_ptr<Emulator> instance() const;
-    class AsmSyncService* service(const std::shared_ptr<Emulator>& emulator) const;
+    static struct EmulatorContext* context(const std::shared_ptr<Emulator>& emulator);
+    static class AsmSyncService* service(const std::shared_ptr<Emulator>& emulator);
     void startWatch();
     void stopOwnWatch();
     void stopOwnPush();

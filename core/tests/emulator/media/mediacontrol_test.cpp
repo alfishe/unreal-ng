@@ -16,6 +16,7 @@
 #include "_helpers/fatguest.h"
 #include "_helpers/scratchfolder.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testthread.h"
 #include "_helpers/testwaithelper.h"
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/filehelper.h"
@@ -323,14 +324,14 @@ TEST_F(MediaControl_Test, SyncWaitsForTheSlotAsyncDoesNot)
     std::atomic<bool> running{true};
     std::atomic<bool> framesRun{false};
     manager.SetApplyNowProbe([] { return false; });  // "the machine runs"
-    std::thread frames([&] {
+    TestThread frames([&] {
         while (running)
         {
             if (framesRun)
                 manager.ApplyPending();
             std::this_thread::yield();
         }
-    });
+    }, [&] { running = false; });
 
     MediaReply reply = Run(Request("insert", "A", scl, {{"async", ""}}));
     ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
@@ -342,8 +343,7 @@ TEST_F(MediaControl_Test, SyncWaitsForTheSlotAsyncDoesNot)
     EXPECT_FALSE(reply.pending) << "sync: the disk is in on return";
     EXPECT_EQ(manager.Info("fdd.a")->format, "trd");
 
-    running = false;
-    frames.join();
+    frames.Join();
     manager.SetApplyNowProbe(nullptr);
 }
 

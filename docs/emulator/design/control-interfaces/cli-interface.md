@@ -249,7 +249,7 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd seek <frame> [tinframe]`, `ttd seek --bookmark <label>` | `ttd goto` | Seek to a (frame, T-state) point or a bookmark. Refused while recording; the machine stays paused at the target. | ✅ Implemented |
 | `ttd step-back` | `ttd sb`, `back` | One frame back. | ✅ Implemented |
 | `ttd step-forward` | `ttd sf`, `forward` | One frame forward. | ✅ Implemented |
-| `ttd resume [frame [tinframe]]` | — | Truncate future at the current (detached) position, or the given one, and record again; the machine runs. | ✅ Implemented |
+| `ttd resume [frame [tinframe]] [media=ask\|empty\|keep]` | — | Truncate future at the current (detached) position, or the given one, and record again; the machine runs. Every medium goes back there when it can; one that cannot (another medium in the slot, a write beyond its undo log): `empty` (default) takes it out, `keep` leaves it, `ask` lists them and resumes nothing. | ✅ Implemented |
 | `ttd position` | `ttd pos` | Current time point (frame/tstate) and session bounds. | ✅ Implemented |
 | `ttd markers` | `ttd barriers` | List external-event markers in the timeline. | ✅ Implemented |
 | `ttd dump <path>` | `ttd save` | Serialize the session to a `.ttd` file. | ✅ Implemented |

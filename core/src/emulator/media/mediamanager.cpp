@@ -11,6 +11,9 @@
 #include "emulator/io/storage/compose/graftvolume.h"
 #include "emulator/io/storage/hddimageformats.h"
 #include <set>
+#include <atomic>
+#include <fstream>
+#include <random>
 
 #include <algorithm>
 #include <chrono>
@@ -362,6 +365,8 @@ MediaResult MediaManager::Insert(const std::string& slotId, const MediaSource& s
     return inserted;
 }
 
+static uint64_t ContentIdentity(const MediaSource& source);
+
 MediaResult MediaManager::OpenForSlot(const std::string& slotId, const MediaSource& source, const InsertOptions& options,
                                       std::unique_ptr<Medium>& medium)
 {
@@ -419,6 +424,7 @@ MediaResult MediaManager::OpenForSlot(const std::string& slotId, const MediaSour
     MediaResult opened = MediaFormatRegistry::Open(request, medium);
     if (!opened.Ok())
         return opened;
+    medium->SetIdentity(ContentIdentity(source));
 
     // The same matrix for an inserted image: a FAT volume of a flavour the
     // controller cannot read is refused. A folder cannot land here wrong - it
@@ -1069,6 +1075,36 @@ void MediaManager::ApplyPending()
     _applied.notify_all();
 }
 
+/// What a medium is by content (F12): its source file's bytes hashed (FNV-1a), for files up to 64 MB; 0 for anything
+/// else (Medium::Identity then falls back to the volume id)
+static uint64_t ContentIdentity(const MediaSource& source)
+{
+    constexpr uint64_t kLimit = uint64_t(64) << 20;
+    if (source.type != MediaSourceType::File || source.path.empty())
+        return 0;
+    std::error_code ec;
+    const std::filesystem::path path = FileHelper::ToFsPath(source.path);
+    const uint64_t size = std::filesystem::file_size(path, ec);
+    if (ec || size > kLimit)
+        return 0;
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+        return 0;
+    uint64_t hash = 0xcbf29ce484222325ULL ^ size;
+    std::vector<char> chunk(1 << 20);
+    while (in)
+    {
+        in.read(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        const std::streamsize got = in.gcount();
+        for (std::streamsize i = 0; i < got; ++i)
+        {
+            hash ^= static_cast<uint8_t>(chunk[static_cast<size_t>(i)]);
+            hash *= 0x100000001b3ULL;
+        }
+    }
+    return hash ? hash : 1;
+}
+
 /// The medium of one slot, unit by unit, for its undo log: block sectors under the read tap (a seek's change is not
 /// a read of the recording), floppy tracks, the write-protect switch
 class MediaManager::SlotUnits : public MediaUndoLog::IUnits
@@ -1204,9 +1240,15 @@ void MediaManager::MarkWrite(SlotState& state)
 
 void MediaManager::ForgetVersions(SlotState& state)
 {
-    ++state.writtenFrames;
+    // Unique within the run and, with the random start, across runs
+    static std::atomic<uint32_t> next{std::random_device{}()};
+    uint32_t lineage = next.fetch_add(1, std::memory_order_relaxed);
+    if (lineage == 0)
+        lineage = next.fetch_add(1, std::memory_order_relaxed);
+    state.lineage = lineage;
+    state.writtenFrames = 0;
     ++_writeStamp;
-    state.undo.Reset(state.writtenFrames);
+    state.undo.Reset(0);
     state.followsHistory = false;
     state.versionLost = false;
 }
@@ -1247,7 +1289,7 @@ void MediaManager::BeforeSectorWrite(const std::string& slotId, uint64_t lba, IB
     std::vector<uint8_t> before(IBlockDevice::kSectorSize);
     if (!below.ReadSector(lba, before.data()))
     {
-        ForgetVersions(state);  // the sector cannot go back: neither can the medium
+        state.undo.Reset(state.writtenFrames);  // the sector cannot go back: neither can the medium, before here
         return;
     }
     const uint64_t frame = _context ? _context->emulatorState.frame_counter : 0;
@@ -1268,6 +1310,35 @@ void MediaManager::BeforeTrackWrite(const std::string& slotId, const DiskImage::
     const uint64_t frame = _context ? _context->emulatorState.frame_counter : 0;
     state.undo.Keep(state.writtenFrames, frame, MediaUndoLog::Unit::Track, index,
                     static_cast<const DiskImage::RawTrack&>(track));
+}
+
+void MediaManager::ToSessionAccess(const std::string& slotId, SlotState& state)
+{
+    Medium& medium = *state.attached;
+    if (HostWriteHold* hold = medium.Hold())
+    {
+        MediaReadTap* tap = medium.ReadTap();
+        if (!tap)
+            return;
+        // The session layer goes over the hold: what the hold kept (a replay's writes) moves into it, nothing
+        // reaches the file
+        auto held = hold->TakeHeld();
+        SessionWriteMap* session = nullptr;
+        tap->WrapBase([&session](std::unique_ptr<IBlockDevice> base) {
+            auto map = std::make_unique<SessionWriteMap>(std::move(base));
+            session = map.get();
+            return std::unique_ptr<IBlockDevice>(std::move(map));
+        });
+        for (const auto& [lba, bytes] : held)
+            session->WriteSector(lba, bytes.data());
+        medium.SetSession(session);
+    }
+    else if (!medium.Floppy())
+        return;   // nothing written through: nothing to keep from the file
+    medium.SetAccess(AccessMode::Session);
+    _revision++;
+    LOGINFO("MediaManager: %s goes back in the recorded history: write-through turns to session access, the file "
+            "keeps its content until it is saved (F13)", slotId.c_str());
 }
 
 void MediaManager::ApplyProtect(const std::string& slotId, SlotState& state, bool on)
@@ -1311,13 +1382,27 @@ void MediaManager::CurrentVersions(std::vector<MediaVersionInfo>& out) const
         if (state.attached)
         {
             info.format = state.attached->Format();
-            // The volume's identity, the same whatever the guest wrote: versions are counted on top of it
-            info.contentId = state.attached->VolumeId();
+            // What the medium is by content, the same whatever the guest wrote: versions are counted on top of it
+            info.contentId = state.attached->Identity();
             info.hasVersions = state.attached->ReadTap() || state.attached->Floppy();
         }
-        info.version = state.writtenFrames;
+        info.version = VersionOf(state);
         out.push_back(std::move(info));
     }
+}
+
+bool MediaManager::Reaches(const std::string& slotId, uint64_t version) const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    auto it = _slots.find(slotId);
+    if (it == _slots.end())
+        return false;
+    const SlotState& state = it->second;
+    const uint32_t lineage = static_cast<uint32_t>(version >> 32);
+    version &= 0xFFFFFFFFull;
+    if (lineage != state.lineage && version != 0)
+        return false;
+    return !state.versionLost && state.undo.Reaches(state.writtenFrames, version);
 }
 
 bool MediaManager::SetHead(const std::string& slotId, uint64_t version)
@@ -1330,8 +1415,24 @@ bool MediaManager::SetHead(const std::string& slotId, uint64_t version)
     // A seek: the frame starts again, its first write moves the version
     state.writeMarkedThisFrame = false;
     state.writeEventThisFrame = false;
+    // Another lineage (another insert, another run): only its untouched medium is the same - the caller matched
+    // the content (Identity) - and only when this one can go back to its own start
+    const uint32_t lineage = static_cast<uint32_t>(version >> 32);
+    version &= 0xFFFFFFFFull;
+    if (lineage != state.lineage && version != 0)
+    {
+        state.followsHistory = false;
+        return false;
+    }
+    if (state.versionLost || !state.undo.Reaches(state.writtenFrames, version))
+    {
+        state.followsHistory = false;
+        return false;
+    }
+    if (state.writtenFrames != version && state.attached && state.attached->Access() == AccessMode::WriteThrough)
+        ToSessionAccess(slotId, state);
     SlotUnits units(state);
-    if (state.versionLost || !state.undo.Move(state.writtenFrames, version, units))
+    if (!state.undo.Move(state.writtenFrames, version, units))
     {
         state.followsHistory = false;
         return false;

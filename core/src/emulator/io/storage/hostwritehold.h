@@ -14,6 +14,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 #include "emulator/io/storage/iblockdevice.h"
 
@@ -64,6 +65,8 @@ public:
     }
     bool Holding() const { return _holding; }
     size_t HeldSectors() const { return _held.size(); }
+    /// The held sectors, given up: they never reach the file (a session layer on top takes them, F13)
+    std::unordered_map<uint64_t, std::array<uint8_t, kSectorSize>> TakeHeld() { return std::exchange(_held, {}); }
 
 private:
     std::unique_ptr<IBlockDevice> _base;

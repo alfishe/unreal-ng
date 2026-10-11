@@ -687,3 +687,65 @@ TEST(SyncInject_Test, AProjectPutsEachIncludedSourceInAPageOfItsOwn)
     EXPECT_FALSE(none.ok);
     EXPECT_NE(none.error.find("keeps no other text"), std::string::npos) << none.error;
 }
+
+// Part B for XAS (Z3): at its command line the file goes over the text at #C000, and the editor variables its LOAD
+// sets (the cursor line, the top line, a flag, the text end: operands in its code) are found in the code and set
+TEST(SyncInject_Test, XasTakesAFileAndItsEditorVariablesAtItsCommandLine)
+{
+    Dump dump = Load("xas7447-edited");
+    const SyncDescriptor* d = FindDescriptor("xas-7.447");
+    ASSERT_NE(d, nullptr);
+    std::vector<uint8_t> page5(0x4000, 0);
+    const std::vector<uint16_t> words = {0x8EF8, 0x090A, 0x9DDC, 0x8E5B, 0xD2F1, 0x2D2B};   // its command line (EXT)
+    for (size_t k = 0; k < words.size(); ++k)
+    {
+        page5[0x1FB0 + 2 * k] = static_cast<uint8_t>(words[k]);
+        page5[0x1FB0 + 2 * k + 1] = static_cast<uint8_t>(words[k] >> 8);
+    }
+    dump.machine.ram.push_back({5, page5});
+    dump.machine.windows[1] = 5;
+    dump.machine.sp = 0x5FB0;
+    std::string why;
+    ASSERT_TRUE(Idle(dump.machine, *d, why)) << why;
+
+    const WriteAsResult written = WriteAs(SourceDocument::FromText("        ORG #6000\nstart   LD A,1\n        JR start\n", "sjasmplus"), "xas", d->version, "NEW");
+    ASSERT_TRUE(written.ok) << written.error;
+    EXPECT_FALSE(PlanInject(dump.machine, *d, written.bytes).ok) << "the edited text has changes not saved";
+    InjectOptions force;
+    force.force = true;
+    const InjectPlan plan = PlanInject(dump.machine, *d, written.bytes, force);
+    ASSERT_TRUE(plan.ok) << plan.error;
+    EXPECT_EQ(plan.page, 3);
+    // #8097 (the cursor line) = the header's #C023, #84E0 / #8D19 from the header, #8495 = the address of the #00 end
+    std::map<uint16_t, uint8_t> pokes;
+    for (const InjectPlan::Poke& p : plan.pokes)
+    {
+        EXPECT_EQ(p.page, 2);
+        pokes[static_cast<uint16_t>(0x8000 + p.offset)] = p.value;
+    }
+    const auto word = [&](uint16_t at) { return pokes.count(at) && pokes.count(at + 1) ? pokes[at] | (pokes[at + 1] << 8) : -1; };
+    EXPECT_EQ(word(0x8097), 0xC023);
+    EXPECT_EQ(word(0x84E0), written.bytes[31] | (written.bytes[32] << 8));
+    EXPECT_EQ(pokes.count(0x8D19), 1u);
+    const size_t end = static_cast<size_t>(std::find(written.bytes.begin() + 36, written.bytes.end(), uint8_t(0)) - written.bytes.begin());
+    EXPECT_EQ(word(0x8495), static_cast<int>(0xC000 + end));
+
+    // Written: the reader gives the file back
+    for (symbols::MemoryPage& page : dump.machine.ram)
+        if (page.page == 3)
+            page.bytes = plan.bytes;
+    const SyncText back = ReadText(dump.machine, *d);
+    ASSERT_TRUE(back.ok);
+    EXPECT_EQ(std::vector<uint8_t>(back.file.begin() + 36, back.file.begin() + static_cast<std::ptrdiff_t>(end)),
+              std::vector<uint8_t>(written.bytes.begin() + 36, written.bytes.begin() + static_cast<std::ptrdiff_t>(end)));
+
+    // Code without the routines (another program at #C000): refused
+    Dump other = Load("xas7447-edited");
+    std::fill(other.pages[0].begin(), other.pages[0].end(), uint8_t{0});
+    other.machine.ram.push_back({5, page5});
+    other.machine.windows[1] = 5;
+    other.machine.sp = 0x5FB0;
+    const InjectPlan none = PlanInject(other.machine, *d, written.bytes, force);
+    EXPECT_FALSE(none.ok);
+    EXPECT_NE(none.error.find("editor variables were not found"), std::string::npos) << none.error;
+}

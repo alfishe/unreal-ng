@@ -63,6 +63,8 @@ public:
 
     /// Set the medium from @p head to @p target. False, with nothing changed: the log does not reach @p target
     bool Move(uint64_t head, uint64_t target, IUnits& units);
+    /// Whether Move(@p head, @p target) would go ahead
+    bool Reaches(uint64_t head, uint64_t target) const;
 
     /// The version after @p head, when it holds the write-protect switch alone and belongs to @p frame: a replay
     /// reaching that frame boundary sets the switch as the recording did (guest writes it runs again itself)

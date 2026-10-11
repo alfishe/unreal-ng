@@ -956,6 +956,10 @@ public:
     /// @return true on success. False (with a logged warning) if state is
     ///         Idle, the timeline is empty, or `from` is out of bounds.
     bool ResumeRecordingFrom(const TTDTimePoint& from);
+    /// The media a recording continued from @p from could not set back there (M5, F11): another medium in the
+    /// slot, or a version its undo log does not reach. One MediaVersionDiffers issue per slot, detail
+    /// "<slot>: <why>"; empty when every medium goes back. Changes nothing
+    std::vector<TTDRestoreIssue> PlanCut(const TTDTimePoint& from) const;
 
     /// @brief Resume live recording from the CURRENT position, keeping history.
     ///

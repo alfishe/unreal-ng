@@ -3803,6 +3803,46 @@ void TimeTravelController::SyncTimelineFront()
     ClearFrameCache();
 }
 
+std::vector<TTDRestoreIssue> TimeTravelController::PlanCut(const TTDTimePoint& from) const
+{
+    std::vector<TTDRestoreIssue> issues;
+    IMediaHistory* media = _context ? _context->pMediaManager : nullptr;
+    const int64_t at = TimelineIndexAtOrBefore(from);
+    if (!media || at < 0)
+        return issues;
+    const int64_t index = _engine->CheckpointIndexOf({0, _timeline[static_cast<size_t>(at)].time.frame, 0});
+    if (index < 0)
+        return issues;
+    std::vector<MediaVersionInfo> live;
+    media->CurrentVersions(live);
+    const std::vector<TTDMediaSlot>& slots = _engine->MediaSlots();
+    for (size_t s = 0; s < slots.size(); ++s)
+    {
+        TTDMediaVersion recorded;
+        if (!_engine->MediaVersionAt(size_t(index), s, recorded))
+            continue;
+        const auto it = std::find_if(live.begin(), live.end(),
+                                     [&](const MediaVersionInfo& v) { return v.slot == slots[s].slot; });
+        const uint64_t now = it == live.end() ? 0 : it->contentId;
+        std::string why;
+        if (now == 0)
+            continue;   // an empty slot is empty whatever is decided
+        if (now != recorded.contentId)
+            why = recorded.contentId == 0 ? "a medium is in the slot that was empty there"
+                                          : "another medium than the recording's is in the slot";
+        else if (recorded.contentId != 0 && !media->Reaches(slots[s].slot, recorded.version))
+            why = "written since that point beyond what its undo log keeps";
+        if (why.empty())
+            continue;
+        TTDRestoreIssue issue;
+        issue.kind = TTDRestoreIssueKind::MediaVersionDiffers;
+        issue.severity = TTDRestoreStatus::NotBitExact;
+        issue.detail = slots[s].slot + ": " + why;
+        issues.push_back(std::move(issue));
+    }
+    return issues;
+}
+
 int64_t TimeTravelController::TimelineIndexAtOrBefore(const TTDTimePoint& t) const
 {
     // Checkpoints sit at frame boundaries (tInFrame 0): the one at or before

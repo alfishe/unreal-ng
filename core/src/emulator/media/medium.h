@@ -65,6 +65,8 @@ public:
     void SetCd(CdImage* cd) { _cd = cd; }
     /// The session change layer (block media with Session access), nullptr otherwise
     SessionWriteMap* Session() { return _session; }
+    /// A write-through block medium got a session layer (MediaManager, F13)
+    void SetSession(SessionWriteMap* session) { _session = session; }
     const SessionWriteMap* Session() const { return _session; }
     /// The replay hold on a write-through block stack (FR-20), nullptr otherwise
     HostWriteHold* Hold() { return _hold; }
@@ -116,6 +118,11 @@ public:
     /// The volume's identity, the same whatever the guest wrote since the insert: a block medium's content id
     /// under its session, else a hash of SourceKey(). Notifications and slot lists carry it
     uint64_t VolumeId() const;
+    /// What the medium is, by content (F12): a hash of its source file's bytes when the manager opened it (files up
+    /// to 64 MB), else VolumeId (a large image: path and size; a folder: its snapshot). Time travel's media check
+    /// compares it
+    uint64_t Identity() const { return _identity ? _identity : VolumeId(); }
+    void SetIdentity(uint64_t identity) { _identity = identity; }
     /// The unsaved changes for people: "1 track: 3 sectors", "1 track: whole",
     /// "5 tracks: 20 sectors total", "48 sectors"; empty when clean.
     /// Emulation thread, or while the machine is not running
@@ -148,6 +155,7 @@ private:
     std::shared_ptr<const CompositeInfo> _composite;
     std::optional<uint64_t> _persistedGeneration;
     std::string _deltaConflict;
+    uint64_t _identity = 0;
 };
 
 /// Write a block device to a raw image file, sector by sector

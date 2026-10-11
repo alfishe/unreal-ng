@@ -61,6 +61,29 @@ tools/build/slot.sh [-t SECONDS] [-q] POOL -- COMMAND [ARGS...]
 - Benchmarks and A/B timing runs: use `UNREAL_NICE=0` (or no slot at all) - lowered
   priority skews the numbers, and run them on a quiet machine.
 
+## Landing on master
+
+Work happens in a worktree (`scratch/wt-<name>`), never on a branch switched in the shared main checkout. When the
+build is green, `land.sh` moves local master to the worktree's HEAD:
+
+```bash
+# in the worktree; merge master first if it moved since the worktree was made
+git merge --no-edit master
+BUILD_DIR=$PWD/cmake-build-agent-release tools/build/build.sh \
+  && tools/build/land.sh "$(git rev-parse master)" \
+  && git push github "$(git rev-parse HEAD):refs/heads/master"
+```
+
+- **Only a fast-forward, and only if master is still where you saw it.** The argument is the full SHA master is
+  expected at; `git update-ref` swaps it compare-and-swap, so a landing that raced another session fails with
+  `master moved: <sha>` and changes nothing. Merge master again and retry.
+- **The main checkout follows.** Other sessions may have it open. When it is on master with an index equal to the old
+  master, its files are fast-forwarded (`read-tree -m -u`); local edits on a path the landing changes stop the landing
+  before anything moves. On another branch, or with a different index, master still moves and the checkout is left
+  alone (the script says so).
+- **Chain the gate with `&&`.** With `;` a failed build still lands and pushes.
+- Pushing is the caller's step; `origin` is pushed by the owner.
+
 ## How it works, and why it does not get stuck
 
 `slot.py` (Python 3, standard library only; `slot.sh` just finds the interpreter) takes

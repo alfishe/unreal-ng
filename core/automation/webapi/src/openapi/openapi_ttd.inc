@@ -373,7 +373,9 @@
         "Truncates the timeline at the resume point and resumes recording. "
         "If the request body is omitted, resumes from the current position. "
         "On success the session transitions to state=\"recording\". Used "
-        "to continue past an external-event marker that blocked a seek.";
+        "to continue past an external-event marker that blocked a seek. Every medium "
+        "goes back to the resume point when it can (the media undo log); one that cannot "
+        "is decided by media (empty by default, keep, or ask).";
     paths["/api/v1/emulator/{id}/ttd/resume"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/resume"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/resume"]["post"]["parameters"][0]["required"] = true;

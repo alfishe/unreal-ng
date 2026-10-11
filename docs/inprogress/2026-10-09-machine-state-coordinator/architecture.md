@@ -419,7 +419,7 @@ A few tests on real machines check what the levels below cannot:
 | M2 | Every refusal from the table; raw `IsRecording()` checks deleted; D43 cells (network, IDE drive kind, RZX, NeoGS SD) one at a time with the owner | the black box stops blocking (U3). **Built 2026-10-10** (§11.2-§11.4) |
 | M3 | Boundary phases; media, GS switch, network into phase 1; media ops during a recording become events (Q4) | U2, gap 13. **Built 2026-10-10** (§11.5); after it the media undo log, gaps 11-12 (§11.5, last items) |
 | M4 | Modes broadcast; one writer per setting | none. **Built 2026-10-10** (§11.6) |
-| M5 | Media identity (8.2), undo log (8.1), the cut (8.3) on Qt "Rec From Here", WebAPI / CLI resume; the dialog in Qt | U1. The undo log is built (2026-10-10, `MediaUndoLog`, §11.5); open: identity, the cut, write-through to session access (F13), the dialog |
+| M5 | Media identity (8.2), undo log (8.1), the cut (8.3) on Qt "Rec From Here", WebAPI / CLI resume; the dialog in Qt | U1. **Built 2026-10-11** (§11.7; the undo log 2026-10-10, §11.5) |
 | M6 | Remaining operations (state transfer, config, tool edits, RZX, TTD verbs) through `Run`; `OnLoad` / `OnConfigurationChange` removed from the TTD hooks | none |
 
 Each step lands alone: build, `test.sh`, docker Linux, gcc:16 -O3 of changed files; M3 and M5 with an A/B frame
@@ -590,3 +590,30 @@ Owner decisions are recorded in [requirements.md §6](requirements.md#6-owner-de
 
 Tests: `MachineCoordinator_Test.AModeTransitionIsBroadcastOnceInRegistrationOrder` (fakes: `FakeListener`),
 `CoordinatorEmulator_Test.AReplayHoldsDebugModeAndTheFeatureHasItsSayAfter`.
+
+### 11.7 M5 as built (2026-10-11)
+
+- **The undo log does the rollback** (§11.5): a seek, and so "Rec From Here", sets every medium to its version at
+  that point; the first write after it drops the medium's old future. §8.3's "a plain seek changes nothing outside
+  the CPU machine" no longer holds for media: owner decision 2026-10-10 (gaps 11-12), a replay must read the disk
+  it read when recording.
+- **Identity (F12).** `Medium::Identity`: an FNV-1a hash of the source file's bytes when the manager opens it, for
+  files up to 64 MB; larger images and folders keep `VolumeId` (path and size; the folder snapshot). The background
+  hash of large images is not built. A version is `lineage << 32 | count`: the lineage is one insert of a medium
+  (random start, unique in the run and across runs), the count its changes since. Two lineages never meet, except
+  at count 0 with the same identity: the untouched medium is the same content (F11). Another run's or another
+  insert's writes are never taken for this medium's.
+- **The cut (F11).** `TimeTravelController::PlanCut(at)` lists, without side effects, the media that cannot go
+  back (`IMediaHistory::Reaches`): another medium in the slot, or a version past the undo log. `TTDControl`'s
+  `resume` takes `media`: `ask` (Qt) answers `needs_decision` with the slots and changes nothing; `empty` (the
+  default where nobody can be asked: WebAPI, CLI, scripts) ejects it, an event of the recording that goes on;
+  `keep` leaves it. A medium with unsaved writes is not ejected: the reply and the log say "kept". Each decision is
+  logged as `OpKind::TimelineCut` through `IMachineOps::Note` (the cut itself runs on TTD's path, not `Run`: TTD's
+  session lock and a park do not nest). Qt's Rec From Here asks with a dialog (empty the slots / keep them / cancel).
+- **Write-through (F13).** A write-through medium that the history sets back turns into a session one in
+  `SetHead`, before the rollback: a block medium gets a `SessionWriteMap` over its `HostWriteHold` (the held
+  sectors move into it, none reaches the file), a floppy stops being written through. The file keeps its content
+  until the user saves.
+
+Tests: `TTDMediaUndo_Test.AWriteThroughDiskSetBackKeepsItsFileUntilSaved`,
+`TheSameDiskInsertedAgainIsTheSameOnlyWhereItWasUntouched`, `TTDMediaCut_Test` (ask / keep / empty, the log).

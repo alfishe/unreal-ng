@@ -128,6 +128,24 @@ void MachineCoordinator::SessionChanged()
         listener->OnModeChanged(from, now);
 }
 
+void MachineCoordinator::Note(MachineOp op, OpStatus status, std::string detail)
+{
+    if (op.source == OpSource::Unknown)
+        op.source = CurrentSource();
+    OperationLogEntry entry;
+    {
+        std::shared_lock<std::shared_mutex> ports(_portsMutex);
+        entry.time = _clock ? _clock->Now() : MachineTime{};
+        entry.mode = ModeLocked();
+    }
+    entry.kind = op.kind;
+    entry.source = op.source;
+    entry.status = status;
+    entry.summary = std::move(op.summary);
+    entry.detail = std::move(detail);
+    _log.Append(std::move(entry));
+}
+
 ModeState MachineCoordinator::Published() const
 {
     std::lock_guard<std::recursive_mutex> lock(_modeMutex);

@@ -475,7 +475,11 @@ SyncDescriptor Alasm(const std::string& version, const std::string& codecVersion
 
 /// XAS (asm-synchronizer.md §7.11): the file as it is at #C000 of the page mapped there, edited in place; the line
 /// on the screen row is packed into the text on Enter. Identified by the title a new text gets, kept in the code
-SyncDescriptor Xas(const std::string& id, const std::string& codecVersion, uint16_t titleAt, const std::string& title)
+/// `idle`: the return chain of its command line (EXT): the line input's return, then the command handler's (an editor
+/// key has another address there). An inject sets the editor's variables as LOAD does (the routine after a load copies
+/// the header's top line, cursor line and flag into them; the editor then counts the lines from the cursor to the end)
+SyncDescriptor Xas(const std::string& id, const std::string& codecVersion, uint16_t titleAt, const std::string& title,
+                   std::vector<uint16_t> idle)
 {
     SyncDescriptor d;
     d.id = "xas-" + id;
@@ -499,8 +503,17 @@ SyncDescriptor Xas(const std::string& id, const std::string& codecVersion, uint1
     d.fileImage.wholeSectors = true;
     d.fileImage.editorStateAt = 29;
     d.fileImage.editorStateLength = 6;
+    // LD HL,(#C01F) / LD (top),HL / LD HL,(#C01D) / LD (cursor),HL / LD A,(#C021) / LD (flag),A / RET; and
+    // LD HL,(cursor) / PUSH BC / LD B,H / XOR A / CPIR / DEC HL / LD (end),HL / POP BC / RET (every version, 4.18-9.10)
+    const std::vector<int> afterLoad = {0x2A, 0x1F, 0xC0, 0x22, -1, -1, 0x2A, 0x1D, 0xC0, 0x22, -1, -1, 0x3A, 0x21, 0xC0, 0x32, -1, -1, 0xC9};
+    const std::vector<int> textEnd = {0x2A, -1, -1, 0xC5, 0x44, 0xAF, 0xED, 0xB1, 0x2B, 0x22, -1, -1, 0xC1, 0xC9};
+    d.fileImage.loadVariables = {{afterLoad, 4, LoadVariable::From::Header, 31, 2},
+                                 {afterLoad, 10, LoadVariable::From::Header, 29, 2},
+                                 {afterLoad, 16, LoadVariable::From::Header, 33, 1},
+                                 {textEnd, 10, LoadVariable::From::TextEnd, 0, 2}};
     d.typing = {TypingRule::NotInText, 0, 0};
     d.labelScanner = "xas-table";
+    d.idleChain = std::move(idle);
     return d;
 }
 
@@ -917,7 +930,15 @@ InjectPlan InjectIntoSnapshot(const containers::Snapshot& snapshot, const SyncDe
     if (!plan.ok)
         return plan;
     std::string error;
-    if (!containers::WriteSnapshot(snapshot, {{plan.page, plan.bytes}}, out, error))
+    std::map<int, std::vector<uint8_t>> changed = {{plan.page, plan.bytes}};
+    for (const InjectPlan::Poke& poke : plan.pokes)
+    {
+        auto it = changed.find(poke.page);
+        if (it == changed.end())
+            it = changed.emplace(poke.page, snapshot.pages.at(poke.page)).first;
+        it->second[poke.offset] = poke.value;
+    }
+    if (!containers::WriteSnapshot(snapshot, changed, out, error))
     {
         plan.ok = false;
         plan.error = error;
@@ -1064,6 +1085,47 @@ InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& d, const
     std::copy(file.begin(), file.end(), plan.bytes.begin() + p.base);
     if (options.markChanged && p.changedField)
         plan.bytes[p.base + p.changedField] |= p.changedMask;
+    // The editor's variables LOAD sets: each found once in the code the CPU sees below #C000
+    std::vector<uint8_t> code;
+    if (!p.loadVariables.empty() && !machine.Read(0x4000, 0x8000, code))
+    {
+        plan.error = "the code of " + d.title + " (#4000-#BFFF) is not in the memory copied";
+        return plan;
+    }
+    for (const LoadVariable& v : p.loadVariables)
+    {
+        std::vector<size_t> found;
+        for (size_t at = 0; at + v.pattern.size() <= code.size(); ++at)
+            if (std::equal(v.pattern.begin(), v.pattern.end(), code.begin() + static_cast<std::ptrdiff_t>(at),
+                           [](int want, uint8_t got) { return want < 0 || want == got; }))
+                found.push_back(at);
+        if (found.size() != 1)
+        {
+            plan.error = d.title + "'s editor variables were not found in its code (" + std::to_string(found.size()) + " places)";
+            return plan;
+        }
+        const uint16_t address = static_cast<uint16_t>(code[found[0] + v.at] | (code[found[0] + v.at + 1] << 8));
+        uint32_t value = 0;
+        if (v.from == LoadVariable::From::TextEnd)
+        {
+            const auto end = std::find(file.begin() + p.textOffset, file.end(), p.endByte);
+            value = 0xC000u + p.base + static_cast<uint32_t>(end - file.begin());
+        }
+        else
+            for (uint8_t k = 0; k < v.size && v.field + k < file.size(); ++k)
+                value |= static_cast<uint32_t>(file[v.field + k]) << (8 * k);
+        for (uint8_t k = 0; k < v.size; ++k)
+        {
+            const uint16_t at = static_cast<uint16_t>(address + k);
+            const int window = machine.windows[at >> 14];
+            if (window < 0 || at < 0x4000 || at >= 0xC000)
+            {
+                plan.error = d.title + "'s editor variable #" + Hex(address, 4) + " is not in RAM below #C000";
+                return plan;
+            }
+            plan.pokes.push_back({window, static_cast<uint16_t>(at & (kPage - 1)), static_cast<uint8_t>(value >> (8 * k))});
+        }
+    }
     plan.ok = true;
     return plan;
 }
@@ -1176,6 +1238,14 @@ ProjectInjectPlan InjectProjectIntoSnapshot(const containers::Snapshot& snapshot
     std::map<int, std::vector<uint8_t>> changed;
     for (const InjectPlan& page : plan.pages)
         changed[page.page] = page.bytes;
+    for (const InjectPlan& page : plan.pages)
+        for (const InjectPlan::Poke& poke : page.pokes)
+        {
+            auto it = changed.find(poke.page);
+            if (it == changed.end())
+                it = changed.emplace(poke.page, snapshot.pages.at(poke.page)).first;
+            it->second[poke.offset] = poke.value;
+        }
     std::string error;
     if (!containers::WriteSnapshot(snapshot, changed, out, error))
     {
@@ -1203,12 +1273,12 @@ const std::vector<SyncDescriptor>& Descriptors()
         Alasm("4.43", "4.5", 0x9E1B, "", false, {0x99A4, 0x8B99}, {4}),
         Alasm("4.42", "4.42", 0x9E2F, "", true, {0x99B2, 0x8B8F}, {4}),
         Alasm("3.8c", "3.8", 0x9951, "3.8c\r Written by", true, {0x943A, 0x8149}, {4}),
-        Xas("4.18", "4.18", 0xB51A, "XAS by Max Petrov (HPM) 3.091"),
-        Xas("5.05", "5.05", 0xB601, "XAS by Max Petrov (HPM) 5.05 "),   // 5.05 and 5.05SE alike
-        Xas("7.43c", "7.43c", 0xB961, "by Max Petrov & Creator v7.43"),
-        Xas("7.447", "7.43", 0x9B00, "by Max Petrov & Creator v7.44"),
-        Xas("9.07m", "9.07m", 0xB8EA, "XAS 9.07 ReCompiled by Mythos"),
-        Xas("9.10", "9.10", 0xB912, "XAS by Max Petrov,64sm by STS"),
+        Xas("4.18", "4.18", 0xB51A, "XAS by Max Petrov (HPM) 3.091", {0x979F, 0x8D85}),
+        Xas("5.05", "5.05", 0xB601, "XAS by Max Petrov (HPM) 5.05 ", {0x97A8, 0x8D9E}),   // 5.05 and 5.05SE alike
+        Xas("7.43c", "7.43c", 0xB961, "by Max Petrov & Creator v7.43", {0x97D8, 0x8E3B}),
+        Xas("7.447", "7.43", 0x9B00, "by Max Petrov & Creator v7.44", {0x9DDC, 0x8E5B}),
+        Xas("9.07m", "9.07m", 0xB8EA, "XAS 9.07 ReCompiled by Mythos", {0x95B5, 0x8D7B}),
+        Xas("9.10", "9.10", 0xB912, "XAS by Max Petrov,64sm by STS", {0x9552, 0x8D98}),
         Storm("storm-1.3", "STORM 1.3", "1.3", 0x0B, '\x87'),
         Storm("storm-1.0b", "STORM 1.0beta", "1.0", 0x03, '\x85'),
         Zasm315(),

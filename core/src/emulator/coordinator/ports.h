@@ -151,6 +151,9 @@ public:
     virtual void SessionChanged() = 0;
     /// The mode as last published (SessionChanged)
     virtual ModeState Published() const = 0;
+    /// An operation another part ran on its own path (TTD's timeline cut), into the log with @p status and
+    /// @p detail; no rules, no park
+    virtual void Note(MachineOp op, OpStatus status, std::string detail) = 0;
 };
 
 /// A change a subsystem makes itself, run as an operation (the network settings, an IDE unit's drive, an RZX

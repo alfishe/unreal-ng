@@ -18,6 +18,7 @@
 #include <thread>
 #include <vector>
 
+#include "_helpers/testthread.h"
 #include "_helpers/testwaithelper.h"
 #include "pch.h"
 #include "stdafx.h"
@@ -277,10 +278,10 @@ TEST_F(EmulatorManager_Test, RemoveEmulatorWaitsForContextLease)
     ASSERT_EQ(context, emulator->GetContext());
 
     std::atomic<bool> removed{false};
-    std::thread remover([&] {
+    TestThread remover([&] {
         _manager->RemoveEmulator(emulatorId);
         removed = true;
-    });
+    }, [&] { lease.reset(); });  // the removal waits for the lease
 
     ASSERT_TRUE(TestWait::For([&] { return emulator->IsRetiring(); }));
     EXPECT_FALSE(emulator->LeaseContext()) << "a lease taken after the removal began must be refused";
@@ -292,7 +293,7 @@ TEST_F(EmulatorManager_Test, RemoveEmulatorWaitsForContextLease)
     EXPECT_NE(context->pKeyboard, nullptr);
 
     lease.reset();
-    remover.join();
+    remover.Join();
     EXPECT_TRUE(removed.load());
     EXPECT_TRUE(emulator->IsRetired());
     EXPECT_FALSE(emulator->IsReleased()) << "the test still holds it: retired, not freed";
@@ -775,10 +776,10 @@ TEST_F(EmulatorManager_Test, RemovalDoesNotHoldTheLockAHandlerWaitsFor)
     });
 
     std::atomic<bool> removed{false};
-    std::thread remover([&] {
+    TestThread remover([&] {
         _manager->RemoveEmulator(id);
         removed = true;
-    });
+    }, [&] { lease.reset(); });  // the removal waits for the lease
     ASSERT_TRUE(TestWait::For([&] { return emulator->IsRetiring(); }));
     mc.WaitForOutstandingMessages();   // the removal's destroy notice is through: it waits for the lease now
     mc.Post("test_removal_lookup");
@@ -792,7 +793,7 @@ TEST_F(EmulatorManager_Test, RemovalDoesNotHoldTheLockAHandlerWaitsFor)
         std::fprintf(stderr, "RemovalDoesNotHoldTheLockAHandlerWaitsFor: the removal and the handler deadlocked\n");
         std::abort();
     }
-    remover.join();
+    remover.Join();
     mc.RemoveObserverById("test_removal_lookup", observer);
     EXPECT_FALSE(_manager->HasEmulator(id));
 }

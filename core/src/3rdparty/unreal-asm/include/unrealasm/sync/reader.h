@@ -63,6 +63,21 @@ struct Signature
     std::string bytes;
 };
 
+/// A variable of the assembler's editor its LOAD sets besides the text (XAS keeps the cursor line, the top line and
+/// the text end in instruction operands): found by a code pattern in the CPU view, written by an inject as LOAD would
+struct LoadVariable
+{
+    std::vector<int> pattern;       ///< code bytes; -1 = any byte
+    uint8_t at = 0;                 ///< offset in the pattern of the variable's 16-bit address
+    enum class From : uint8_t
+    {
+        Header,                     ///< `size` bytes of the file's header from offset `field`
+        TextEnd,                    ///< the CPU address of the text's end byte (lengthFromEnd layouts)
+    } from = From::Header;
+    uint16_t field = 0;
+    uint8_t size = 2;
+};
+
 struct FileImageParams
 {
     uint16_t pageIdAt = 0;          ///< CPU address of the page id of the current text
@@ -90,6 +105,8 @@ struct FileImageParams
     /// memory holds them, so a live file differs from the next save there and only there
     uint16_t editorStateAt = 0;
     uint16_t editorStateLength = 0;
+    /// What LOAD sets in the editor's own variables (XAS): an inject writes them too, or refuses when one is not found
+    std::vector<LoadVariable> loadVariables;
 };
 
 struct GapBufferParams
@@ -232,6 +249,13 @@ struct InjectPlan
     std::string error;
     int page = -1;                       ///< the RAM page written (FileImage)
     std::vector<uint8_t> bytes;          ///< its new contents, the whole page
+    struct Poke
+    {
+        int page = -1;
+        uint16_t offset = 0;
+        uint8_t value = 0;
+    };
+    std::vector<Poke> pokes;             ///< bytes of other pages written with it (FileImageParams::loadVariables)
     SyncText previous;                   ///< the text it replaces (previous.ok false: none read)
 };
 
