@@ -9,33 +9,6 @@
 ---
 
 2026-10-11
-## 🔴 [Open] #8: DSD recording sets output bits from an uninitialized byte
-* **Date Opened:** 2026-10-11
-* **Found by:** valgrind memcheck profile: `PCMToDSDConverter::ProcessFloat` (`pcm_to_dsd_converter.cpp:252`),
-  564 000 reports in `DSDEncoderE2ETest.PCMModeStillWritesDSF`; origin: a stack variable at line 184.
-
-### Description
-`ProcessFloat` passes `uint8_t bit;` (uninitialized) to `DeltaSigmaModulator::Process(sample, &bit, 1)`, which only sets
-or clears bit 0 of it, then tests the whole byte (`if (bit)`). Garbage in bits 1-7 turns a -1 output into a 1: the DSD
-stream depends on what was on the stack.
-
-### Requirements / Acceptance Criteria
-- [ ] The byte starts at 0 and only bit 0 is tested; no memcheck error in the DSD tests.
-
-## 🔴 [Open] #9: Adding a breakpoint that already exists leaks its descriptor
-* **Date Opened:** 2026-10-11
-* **Found by:** valgrind memcheck profile: `BreakpointManager::AddExecutionBreakpointInPage` in
-  `BreakpointManager_test.PageSpecific_DuplicateRegistration_ReturnsExisting`.
-
-### Description
-`AddBreakpoint(BreakpointDescriptor*)` takes ownership of the descriptor. For a memory or port breakpoint on a key
-that already has one, `AddMemoryBreakpoint` / `AddPortBreakpoint` return the existing id and neither store nor free the
-new descriptor. Every repeated "add the same breakpoint" from the debugger or automation loses one.
-
-### Requirements / Acceptance Criteria
-- [ ] Every path that does not adopt the descriptor frees it (duplicates, an invalid type); the duplicate test is clean
-  under valgrind.
-
 ## 🔴 [Open] #10: Test fixtures that never free their machine
 * **Date Opened:** 2026-10-11
 * **Found by:** valgrind memcheck profile: ~200 `definitely lost` records, all from tests.

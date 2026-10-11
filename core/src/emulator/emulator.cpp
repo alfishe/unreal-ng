@@ -2857,7 +2857,8 @@ void Emulator::FinishStepOver(uint16_t breakpointId, bool restoreFeatures)
 {
     if (_breakpointManager)
     {
-        _breakpointManager->RemoveBreakpointByID(breakpointId);
+        if (_stepOverOwnsBreakpoint)
+            _breakpointManager->RemoveBreakpointByID(breakpointId);
         for (uint16_t bpId : _stepOverDeactivatedBps)
         {
             _breakpointManager->ActivateBreakpoint(bpId);
@@ -3650,7 +3651,10 @@ void Emulator::StepOver()
     bpDesc->z80address = nextInstructionAddress;
     bpDesc->note = "StepOver";
     bpDesc->hidden = true;
-    uint16_t stepOverBreakpointID = bpManager->AddBreakpoint(bpDesc);
+    // A breakpoint of the user's on that instruction comes back instead: the step uses it and leaves it in place
+    // (it was removed at the end, BUGS.md 2026-10-11 #12)
+    bool ownBreakpoint = false;
+    uint16_t stepOverBreakpointID = bpManager->AddBreakpoint(bpDesc, ownBreakpoint);
 
     if (stepOverBreakpointID == BRK_INVALID)
     {
@@ -3669,6 +3673,7 @@ void Emulator::StepOver()
 
     // Tracking state: OnBreakpointHit ends the step on the emulation thread when this breakpoint fires
     _stepOverDeactivatedBps = deactivatedBreakpoints;
+    _stepOverOwnsBreakpoint = ownBreakpoint;
     _pendingStepOverBpId = stepOverBreakpointID;
 
     // Resume execution - returns immediately (non-blocking). The run to the temporary breakpoint is a step: its
