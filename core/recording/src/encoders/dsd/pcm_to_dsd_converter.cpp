@@ -243,7 +243,9 @@ size_t PCMToDSDConverter::ProcessFloat(const float* pcmInput, size_t sampleCount
         for (size_t i = 0; i < currentSampleCount; i++)
         {
             double sample = currentBuffer->at(i);
-            uint8_t bit;
+            // Process sets or clears bit 0 only: the byte starts at 0, or stack garbage in bits 1-7 made a -1 a 1
+            // (valgrind; BUGS.md 2026-10-11 #8; NativeDSDConverter::EmitBits does the same)
+            uint8_t bit = 0;
             _modulators[ch]->Process(sample, &bit, 1);
 
             // Pack bit LSB-first (DSF bitsPerSample=1: oldest sample in LSB)

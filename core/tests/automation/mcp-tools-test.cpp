@@ -20,7 +20,9 @@
 
 #include <json/json.h>
 
+#include <functional>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -4232,4 +4234,36 @@ TEST(McpToolUtils_Test, FormatRegistersFull)
     const std::string full = mcp::FormatRegisters(r, true);
     EXPECT_NE(full.find("AF'=0x0044"), std::string::npos) << full;
     EXPECT_NE(full.find("I=0x3F R=0x12 MEMPTR=0x0038 IM 1 IFF1=1 IFF2=1"), std::string::npos) << full;
+}
+
+/// RunSeries frees its chain when the series ends: the closure used to hold itself, so the steps and the `done`
+/// callback (and whatever they captured) leaked on every series tool call (BUGS.md 2026-10-11 #7)
+TEST(McpToolUtils_Test, RunSeriesFreesTheChainWhenItEnds)
+{
+    auto sentinel = std::make_shared<int>(0);
+    const std::weak_ptr<int> watch = sentinel;
+    std::function<void(bool)> pending;   // an asynchronous step: it answers later
+    bool doneCalled = false;
+    {
+        std::vector<mcp::SeriesStep> steps;
+        steps.push_back([](Json::Value& acc, std::function<void(bool)> next) {
+            acc["a"] = 1;
+            next(true);
+        });
+        steps.push_back([&pending](Json::Value& acc, std::function<void(bool)> next) {
+            acc["b"] = 2;
+            pending = std::move(next);
+        });
+        mcp::RunSeries(std::move(steps), [sentinel, &doneCalled](Json::Value acc) {
+            doneCalled = acc["a"].asInt() == 1 && acc["b"].asInt() == 2;
+        });
+    }
+    sentinel.reset();
+    ASSERT_TRUE(pending);
+    EXPECT_FALSE(watch.expired()) << "a pending step keeps the chain";
+
+    pending(true);
+    pending = nullptr;
+    EXPECT_TRUE(doneCalled);
+    EXPECT_TRUE(watch.expired()) << "the ended chain is freed";
 }

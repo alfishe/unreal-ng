@@ -298,10 +298,12 @@ void AutomationMCP::start()
                     auto streamShared = std::shared_ptr<drogon::ResponseStream>(std::move(stream));
                     streamShared->send(mcp::kSseKeepalive); // establish liveness immediately
                     auto ping = std::make_shared<std::function<void()>>();
-                    *ping = [streamShared, ping]() {
+                    // Weak self-reference, the pending timer holds it: the chain is freed when the stream closes
+                    // (a strong self-capture never was, BUGS.md 2026-10-11 #7)
+                    *ping = [streamShared, weakSelf = std::weak_ptr<std::function<void()>>(ping)]() {
                         if (streamShared->send(mcp::kSseKeepalive))
                         {
-                            drogon::app().getLoop()->runAfter(15.0, [ping]() { (*ping)(); });
+                            drogon::app().getLoop()->runAfter(15.0, [ping = weakSelf.lock()]() { (*ping)(); });
                         }
                         else
                         {
