@@ -275,7 +275,7 @@ TEST_F(DezogDebugAdapter_test, AddBreakpointRegistersWithOwner)
     ASSERT_NE(id, 0);
 
     BreakpointManager* bpManager = _emulator->GetBreakpointManager();
-    BreakpointDescriptor* desc = bpManager->GetBreakpointById(id);
+    BreakpointSnapshot desc = bpManager->GetBreakpointById(id);
     ASSERT_NE(desc, nullptr);
     EXPECT_EQ(desc->z80address, 0x8006);
     EXPECT_EQ(desc->owner, DezogDebugAdapter::BREAKPOINT_OWNER);
@@ -295,7 +295,7 @@ TEST_F(DezogDebugAdapter_test, AddBreakpointInBankUsesPageDescriptor)
     uint16_t id = _adapter->addBreakpoint(0x8010, 3);
     ASSERT_NE(id, 0);
 
-    BreakpointDescriptor* desc = _emulator->GetBreakpointManager()->GetBreakpointById(id);
+    BreakpointSnapshot desc = _emulator->GetBreakpointManager()->GetBreakpointById(id);
     ASSERT_NE(desc, nullptr);
     EXPECT_EQ(desc->z80address, 0x8010);
     _adapter->removeBreakpoint(id);

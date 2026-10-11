@@ -2752,7 +2752,7 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
     if (_context && _context->pDebugManager)
     {
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
-        const BreakpointDescriptor* bp = brk.GetBreakpointById(breakpointId);
+        const BreakpointSnapshot bp = brk.GetBreakpointById(breakpointId);
         hidden = bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints");
         // The pause belongs to whoever set the breakpoint: a DeZog breakpoint's stop is DeZog's (its session close
         // lifts it), a GDB one GDB's, an interactive one the debugger's

@@ -985,7 +985,7 @@ void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(c
         const auto& allBps = bpm->GetAllBreakpoints();
         for (const auto& pair : allBps)
         {
-            const BreakpointDescriptor* bp = pair.second;
+            const BreakpointDescriptor* bp = pair.second.get();
             if (!bp) continue;
             if (!all && !BreakpointManager::IsUserBreakpoint(*bp)) continue;
             
@@ -1194,8 +1194,10 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         return;
     }
 
-    const BreakpointDescriptor* added = bpm->GetAllBreakpoints().at(bpId);
-    Json::Value ret = BreakpointJson(*added);
+    // A copy: another client may remove it meanwhile
+    const BreakpointSnapshot added = bpm->GetBreakpointById(bpId);
+    Json::Value ret = added ? BreakpointJson(*added) : Json::Value(Json::objectValue);
+    ret["id"] = bpId;
     ret["status"] = "success";
     ret["type"] = type;
     ret["message"] = "Breakpoint added";

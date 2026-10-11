@@ -903,14 +903,12 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
         return;
     }
 
-    // Get all breakpoints and find the one with matching ID
-    const auto& allBreakpoints = bpManager->GetAllBreakpoints();
-    auto it = allBreakpoints.find(breakpointID);
-    if (it == allBreakpoints.end())
+    // A copy of the breakpoint with that ID
+    const BreakpointSnapshot breakpoint = bpManager->GetBreakpointById(breakpointID);
+    if (!breakpoint)
     {
         return;
     }
-    BreakpointDescriptor* breakpoint = it->second;
 
     // Handle interrupt breakpoints if we're waiting for an interrupt
     if (_waitingForInterrupt)

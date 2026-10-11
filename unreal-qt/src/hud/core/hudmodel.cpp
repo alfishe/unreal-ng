@@ -1055,7 +1055,7 @@ void HudModel::onBreakpoint(int, Message* message)
         auto bpMgr = _context->pDebugManager->GetBreakpointsManager();
         if (bpMgr)
         {
-            auto* bp = bpMgr->GetBreakpointById(static_cast<uint16_t>(p->_payloadNumber));
+            const BreakpointSnapshot bp = bpMgr->GetBreakpointById(static_cast<uint16_t>(p->_payloadNumber));
             if (bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints"))
             {
                 isHidden = true;

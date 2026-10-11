@@ -218,12 +218,10 @@ void BreakpointEditor::loadBreakpointData(uint16_t breakpointId)
     if (!bpManager)
         return;
         
-    const BreakpointMapByID& breakpoints = bpManager->GetAllBreakpoints();
-    auto it = breakpoints.find(breakpointId);
-    if (it == breakpoints.end())
+    const BreakpointSnapshot bp = bpManager->GetBreakpointById(breakpointId);
+    if (!bp)
         return;
-        
-    const BreakpointDescriptor* bp = it->second;
+
     _descriptor = *bp;
     
     // Set type

@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 
 #include "common/collectionhelper.h"
 #include "common/stringhelper.h"
@@ -16,6 +17,25 @@
 #include "emulator/platform.h"
 #include "3rdparty/message-center/messagecenter.h"
 #include "stdafx.h"
+
+/// Every change of the set (see the class comment): the CPU held - the main loop parked at an instruction boundary,
+/// no direct run on another thread - then the lock against the other surfaces. Both are free when nested, and the
+/// hold is free on the thread that drives the Z80 (the emulation thread, a direct run, a CpuHold) and on a machine
+/// that does not run
+class BreakpointManager::ChangeScope
+{
+public:
+    explicit ChangeScope(BreakpointManager& manager)
+    {
+        if (manager._context && manager._context->pEmulator)
+            _hold.emplace(*manager._context->pEmulator, "breakpoints");
+        _lock = std::unique_lock<std::recursive_mutex>(manager._mutex);
+    }
+
+private:
+    std::optional<Emulator::CpuHold> _hold;
+    std::unique_lock<std::recursive_mutex> _lock;  // released before the hold
+};
 
 /// region <Constructors / destructors>
 
@@ -31,7 +51,8 @@ BreakpointManager::BreakpointManager(EmulatorContext* context)
 /// @brief Destroys the Breakpoint Manager and cleans up all breakpoints
 BreakpointManager::~BreakpointManager()
 {
-    ClearBreakpoints();
+    // The emulator is going away: nothing runs the hot path, and holding its CPU now is not possible
+    DeleteAllBreakpoints();
 
     _context = nullptr;
 }
@@ -46,11 +67,23 @@ BreakpointManager::~BreakpointManager()
 /// clearing all breakpoints that were previously set.
 void BreakpointManager::ClearBreakpoints()
 {
+    ChangeScope change(*this);
+    DeleteAllBreakpoints();
+}
+
+void BreakpointManager::DeleteAllBreakpoints()
+{
+    // The hot path's tables point at the descriptors: repaint before they go
+    std::vector<BreakpointDescriptor*> descriptors;
+    for (const auto& [id, descriptor] : _breakpointMapByID)
+        descriptors.push_back(descriptor);
     _breakpointMapByAddress.clear();
     _breakpointMapByPort.clear();
     _breakpointMapByID.clear();
 
     RebuildFilters();
+    for (BreakpointDescriptor* descriptor : descriptors)
+        delete descriptor;
 }
 
 bool BreakpointManager::IsUserBreakpoint(const BreakpointDescriptor& descriptor)
@@ -60,6 +93,7 @@ bool BreakpointManager::IsUserBreakpoint(const BreakpointDescriptor& descriptor)
 
 void BreakpointManager::ClearUserBreakpoints()
 {
+    ChangeScope change(*this);
     // Collect first: removing while iterating the map is unsafe
     std::vector<uint16_t> user;
     for (const auto& [id, descriptor] : _breakpointMapByID)
@@ -81,6 +115,7 @@ void BreakpointManager::ClearUserBreakpoints()
 uint16_t BreakpointManager::AddBreakpoint(BreakpointDescriptor* descriptor)
 {
     uint16_t result = BRK_INVALID;
+    ChangeScope change(*this);
 
     /// region <Input parameter(s) validation>
     if (descriptor == nullptr)
@@ -192,6 +227,7 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
         return BRK_INVALID;
     }
 
+    ChangeScope change(*this);
     auto* d = new BreakpointDescriptor();
     d->type = spec.type;
     if (spec.type == BRK_MEMORY)
@@ -332,6 +368,7 @@ bool BreakpointManager::ApplyScriptOptions(BreakpointSpec& spec, const std::stri
 
 bool BreakpointManager::ResetHitCount(uint16_t breakpointID)
 {
+    ChangeScope change(*this);
     auto it = _breakpointMapByID.find(breakpointID);
     if (it == _breakpointMapByID.end())
         return false;
@@ -341,6 +378,7 @@ bool BreakpointManager::ResetHitCount(uint16_t breakpointID)
 
 void BreakpointManager::ResetAllHitCounts()
 {
+    ChangeScope change(*this);
     for (auto& [id, bp] : _breakpointMapByID)
         if (bp)
             bp->hitCount = 0;
@@ -373,6 +411,7 @@ bool BreakpointManager::RemoveBreakpoint(BreakpointDescriptor* descriptor)
 /// frees the associated descriptor memory.
 bool BreakpointManager::RemoveBreakpointByID(uint16_t breakpointID)
 {
+    ChangeScope change(*this);
     auto it = _breakpointMapByID.find(breakpointID);
     if (it == _breakpointMapByID.end())
         return false;
@@ -400,9 +439,8 @@ bool BreakpointManager::RemoveBreakpointByID(uint16_t breakpointID)
             break;
     }
 
-    // Remove from the ID map and delete the descriptor
+    // Remove from the ID map; the descriptor goes after the repaint (the hot path's tables point at it)
     _breakpointMapByID.erase(it);
-    delete breakpoint;
 
     // Update the next ID to be one more than the current maximum ID
     if (_breakpointMapByID.empty())
@@ -416,33 +454,38 @@ bool BreakpointManager::RemoveBreakpointByID(uint16_t breakpointID)
     }
 
     RebuildFilters();
+    delete breakpoint;
 
     return true;
 }
 
-size_t BreakpointManager::GetBreakpointsCount()
+size_t BreakpointManager::GetBreakpointsCount() const
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     return _breakpointMapByID.size();
 }
 
-BreakpointDescriptor* BreakpointManager::GetBreakpointById(uint16_t breakpointID)
+BreakpointSnapshot BreakpointManager::GetBreakpointById(uint16_t breakpointID) const
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     auto it = _breakpointMapByID.find(breakpointID);
-    if (it == _breakpointMapByID.end())
+    if (it == _breakpointMapByID.end() || !it->second)
         return nullptr;
-    return it->second;
+    return std::make_shared<const BreakpointDescriptor>(*it->second);
 }
 
 BreakpointManager::BreakpointStatusInfo BreakpointManager::GetLastTriggeredBreakpointInfo() const
 {
     BreakpointStatusInfo info;
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
 
-    if (_lastTriggeredBreakpointID == BRK_INVALID)
+    const uint16_t lastId = GetLastTriggeredBreakpointID();
+    if (lastId == BRK_INVALID)
     {
         return info;  // Returns default with valid=false
     }
 
-    auto it = _breakpointMapByID.find(_lastTriggeredBreakpointID);
+    auto it = _breakpointMapByID.find(lastId);
     if (it == _breakpointMapByID.end())
     {
         return info;  // Breakpoint was removed after triggering
@@ -451,7 +494,7 @@ BreakpointManager::BreakpointStatusInfo BreakpointManager::GetLastTriggeredBreak
     BreakpointDescriptor* bp = it->second;
 
     info.valid = true;
-    info.id = _lastTriggeredBreakpointID;
+    info.id = lastId;
     info.address = bp->z80address;
     info.active = bp->active;
     info.note = bp->note;
@@ -891,15 +934,15 @@ uint16_t BreakpointManager::AddMemoryBreakpointInPageSpec(uint16_t z80address, u
 
 // Breakpoint listing
 
-// Retrieves a reference to the map containing all breakpoints
-//
-// @return const BreakpointMapByID& Reference to the internal breakpoint map
-//
-// This method provides direct access to the internal breakpoint storage.
-// Use with caution as modifications to the map may break internal consistency.
-const BreakpointMapByID& BreakpointManager::GetAllBreakpoints() const
+// Copies of all breakpoints, by id (the descriptors themselves stay the manager's)
+BreakpointListByID BreakpointManager::GetAllBreakpoints() const
 {
-    return _breakpointMapByID;
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    BreakpointListByID result;
+    for (const auto& [id, descriptor] : _breakpointMapByID)
+        if (descriptor)
+            result.emplace(id, std::make_shared<const BreakpointDescriptor>(*descriptor));
+    return result;
 }
 
 /// @brief Formats information about a specific breakpoint as a human-readable string
@@ -917,6 +960,7 @@ const BreakpointMapByID& BreakpointManager::GetAllBreakpoints() const
 std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
 {
     std::ostringstream oss;
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
 
     if (_breakpointMapByID.find(breakpointID) != _breakpointMapByID.end())
     {
@@ -1020,6 +1064,7 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
 std::string BreakpointManager::GetBreakpointListAsString(const std::string& newline) const
 {
     std::ostringstream oss;
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
 
     if (_breakpointMapByID.empty())
     {
@@ -1050,6 +1095,7 @@ std::string BreakpointManager::GetBreakpointListAsString(const std::string& newl
 /// An active breakpoint will trigger when its conditions are met during emulation.
 bool BreakpointManager::ActivateBreakpoint(uint16_t breakpointID)
 {
+    ChangeScope change(*this);
     if (_breakpointMapByID.find(breakpointID) != _breakpointMapByID.end())
     {
         BreakpointDescriptor* bp = _breakpointMapByID[breakpointID];
@@ -1068,6 +1114,7 @@ bool BreakpointManager::ActivateBreakpoint(uint16_t breakpointID)
 /// A deactivated breakpoint will not trigger when its conditions are met during emulation.
 bool BreakpointManager::DeactivateBreakpoint(uint16_t breakpointID)
 {
+    ChangeScope change(*this);
     if (_breakpointMapByID.find(breakpointID) != _breakpointMapByID.end())
     {
         BreakpointDescriptor* bp = _breakpointMapByID[breakpointID];
@@ -1084,6 +1131,7 @@ bool BreakpointManager::DeactivateBreakpoint(uint16_t breakpointID)
 /// After this call, all breakpoints will trigger when their conditions are met.
 void BreakpointManager::ActivateAllBreakpoints()
 {
+    ChangeScope change(*this);
     for (auto& pair : _breakpointMapByID)
     {
         pair.second->active = true;
@@ -1097,6 +1145,7 @@ void BreakpointManager::ActivateAllBreakpoints()
 /// After this call, no breakpoints will trigger until they are explicitly activated.
 void BreakpointManager::DeactivateAllBreakpoints()
 {
+    ChangeScope change(*this);
     for (auto& pair : _breakpointMapByID)
     {
         pair.second->active = false;
@@ -1112,6 +1161,7 @@ void BreakpointManager::DeactivateAllBreakpoints()
 /// Other breakpoints remain in their current state.
 void BreakpointManager::ActivateBreakpointsByType(BreakpointTypeEnum type)
 {
+    ChangeScope change(*this);
     for (auto& pair : _breakpointMapByID)
     {
         if (pair.second->type == type)
@@ -1130,6 +1180,7 @@ void BreakpointManager::ActivateBreakpointsByType(BreakpointTypeEnum type)
 /// Other breakpoints remain in their current state.
 void BreakpointManager::DeactivateBreakpointsByType(BreakpointTypeEnum type)
 {
+    ChangeScope change(*this);
     for (auto& pair : _breakpointMapByID)
     {
         if (pair.second->type == type)
@@ -1148,6 +1199,7 @@ void BreakpointManager::DeactivateBreakpointsByType(BreakpointTypeEnum type)
 /// access types (read, write, execute) set in the memoryType bitmask.
 void BreakpointManager::ActivateMemoryBreakpointsByType(uint8_t memoryType)
 {
+    ChangeScope change(*this);
     for (auto& pair : _breakpointMapByID)
     {
         if (pair.second->type == BRK_MEMORY && (pair.second->memoryType & memoryType))
@@ -1166,6 +1218,7 @@ void BreakpointManager::ActivateMemoryBreakpointsByType(uint8_t memoryType)
 /// access types (read, write, execute) set in the memoryType bitmask.
 void BreakpointManager::DeactivateMemoryBreakpointsByType(uint8_t memoryType)
 {
+    ChangeScope change(*this);
     for (auto& pair : _breakpointMapByID)
     {
         if (pair.second->type == BRK_MEMORY && (pair.second->memoryType & memoryType))
@@ -1184,6 +1237,7 @@ void BreakpointManager::DeactivateMemoryBreakpointsByType(uint8_t memoryType)
 /// operation types (input, output) set in the ioType bitmask.
 void BreakpointManager::ActivatePortBreakpointsByType(uint8_t ioType)
 {
+    ChangeScope change(*this);
     for (auto& pair : _breakpointMapByID)
     {
         if (pair.second->type == BRK_IO && (pair.second->ioType & ioType))
@@ -1202,6 +1256,7 @@ void BreakpointManager::ActivatePortBreakpointsByType(uint8_t ioType)
 /// operation types (input, output) set in the ioType bitmask.
 void BreakpointManager::DeactivatePortBreakpointsByType(uint8_t ioType)
 {
+    ChangeScope change(*this);
     for (auto& pair : _breakpointMapByID)
     {
         if (pair.second->type == BRK_IO && (pair.second->ioType & ioType))
@@ -1224,6 +1279,7 @@ void BreakpointManager::DeactivatePortBreakpointsByType(uint8_t ioType)
 /// on related breakpoints. The group is created if it doesn't already exist.
 uint16_t BreakpointManager::AddBreakpointToGroup(BreakpointDescriptor* descriptor, const std::string& groupName)
 {
+    ChangeScope change(*this);
     if (descriptor == nullptr || groupName.empty() || descriptor->breakpointID == BRK_INVALID)
     {
         return BRK_INVALID;
@@ -1249,6 +1305,7 @@ uint16_t BreakpointManager::AddBreakpointToGroup(BreakpointDescriptor* descripto
 /// The group is created if it doesn't already exist.
 bool BreakpointManager::SetBreakpointGroup(uint16_t breakpointID, const std::string& groupName)
 {
+    ChangeScope change(*this);
     if (groupName.empty() || !key_exists(_breakpointMapByID, breakpointID))
     {
         return false;
@@ -1263,6 +1320,7 @@ bool BreakpointManager::SetBreakpointGroup(uint16_t breakpointID, const std::str
 
 bool BreakpointManager::SetBreakpointNote(uint16_t breakpointID, const std::string& note)
 {
+    ChangeScope change(*this);
     if (!key_exists(_breakpointMapByID, breakpointID))
         return false;
     _breakpointMapByID[breakpointID]->note = note;
@@ -1278,6 +1336,7 @@ bool BreakpointManager::SetBreakpointNote(uint16_t breakpointID, const std::stri
 /// have at least one breakpoint assigned to them.
 std::vector<std::string> BreakpointManager::GetBreakpointGroups() const
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     std::set<std::string> groups;
 
     for (const auto& [id, breakpoint] : _breakpointMapByID)
@@ -1299,6 +1358,7 @@ std::vector<std::string> BreakpointManager::GetBreakpointGroups() const
 /// If the group doesn't exist or is empty, returns an empty vector.
 std::vector<uint16_t> BreakpointManager::GetBreakpointsByGroup(const std::string& groupName) const
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     std::vector<uint16_t> breakpointIDs;
 
     if (groupName.empty())
@@ -1326,6 +1386,7 @@ std::vector<uint16_t> BreakpointManager::GetBreakpointsByGroup(const std::string
 /// breakpoints that belong to the specified group.
 std::string BreakpointManager::GetBreakpointListAsStringByGroup(const std::string& groupName) const
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     if (groupName.empty())
     {
         return "No group name specified\n";
@@ -1359,6 +1420,7 @@ std::string BreakpointManager::GetBreakpointListAsStringByGroup(const std::strin
 /// Breakpoints in other groups are not affected.
 void BreakpointManager::ActivateBreakpointGroup(const std::string& groupName)
 {
+    ChangeScope change(*this);
     if (groupName.empty())
     {
         return;
@@ -1382,6 +1444,7 @@ void BreakpointManager::ActivateBreakpointGroup(const std::string& groupName)
 /// Breakpoints in other groups are not affected.
 void BreakpointManager::DeactivateBreakpointGroup(const std::string& groupName)
 {
+    ChangeScope change(*this);
     if (groupName.empty())
     {
         return;
@@ -1406,6 +1469,7 @@ void BreakpointManager::DeactivateBreakpointGroup(const std::string& groupName)
 /// The breakpoint itself remains active and functional.
 bool BreakpointManager::RemoveBreakpointFromGroup(uint16_t breakpointID)
 {
+    ChangeScope change(*this);
     if (!key_exists(_breakpointMapByID, breakpointID))
     {
         return false;
@@ -1427,6 +1491,7 @@ bool BreakpointManager::RemoveBreakpointFromGroup(uint16_t breakpointID)
 /// The group itself is also removed from the manager.
 void BreakpointManager::RemoveBreakpointGroup(const std::string& groupName)
 {
+    ChangeScope change(*this);
     if (groupName.empty())
     {
         return;
@@ -1460,6 +1525,7 @@ void BreakpointManager::RemoveBreakpointGroup(const std::string& groupName)
 /// the specified memory address.
 bool BreakpointManager::RemoveBreakpointByAddress(uint16_t address)
 {
+    ChangeScope change(*this);
     BreakpointDescriptor* bp = FindAddressBreakpoint(address);
     if (bp != nullptr)
     {
@@ -1477,6 +1543,7 @@ bool BreakpointManager::RemoveBreakpointByAddress(uint16_t address)
 /// regardless of whether they are for input, output, or both operations.
 bool BreakpointManager::RemoveBreakpointByPort(uint16_t port)
 {
+    ChangeScope change(*this);
     BreakpointDescriptor* bp = FindPortBreakpoint(port);
     if (bp != nullptr)
     {
@@ -1493,6 +1560,7 @@ bool BreakpointManager::RemoveBreakpointByPort(uint16_t port)
 /// Use with caution as this operation cannot be undone.
 void BreakpointManager::RemoveBreakpointsByType(BreakpointTypeEnum type)
 {
+    ChangeScope change(*this);
     // Create a list of IDs to remove to avoid modifying the map during iteration
     std::vector<uint16_t> idsToRemove;
 
@@ -1519,6 +1587,7 @@ void BreakpointManager::RemoveBreakpointsByType(BreakpointTypeEnum type)
 /// access types (read, write, execute) set in the memoryType bitmask.
 void BreakpointManager::RemoveMemoryBreakpointsByType(uint8_t memoryType)
 {
+    ChangeScope change(*this);
     // Create a list of IDs to remove to avoid modifying the map during iteration
     std::vector<uint16_t> idsToRemove;
 
@@ -1545,6 +1614,7 @@ void BreakpointManager::RemoveMemoryBreakpointsByType(uint8_t memoryType)
 /// operation types (input, output) set in the ioType bitmask.
 void BreakpointManager::RemovePortBreakpointsByType(uint8_t ioType)
 {
+    ChangeScope change(*this);
     // Create a list of IDs to remove to avoid modifying the map during iteration
     std::vector<uint16_t> idsToRemove;
 
@@ -1599,7 +1669,7 @@ uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address)
     }
 
     if (result != BRK_INVALID)
-        _lastTriggeredBreakpointID = result;  // Track for automation API queries
+        _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);  // Track for automation API queries
     return result;
 }
 
@@ -1627,7 +1697,7 @@ uint16_t BreakpointManager::ResolveSpace(uint16_t spacePage, uint16_t offset, bo
             result = bp->breakpointID;
     }
     if (result != BRK_INVALID)
-        _lastTriggeredBreakpointID = result;
+        _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);
     return result;
 }
 
@@ -1639,7 +1709,7 @@ uint16_t BreakpointManager::ResolvePort(int direction, uint16_t port)
         return BRK_INVALID;
     const uint16_t result = WalkCandidates(_portHeads[direction][port], -1, BRK_INVALID);
     if (result != BRK_INVALID)
-        _lastTriggeredBreakpointID = result;
+        _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);
     return result;
 }
 
@@ -2015,13 +2085,25 @@ void BreakpointManager::RebuildFilters()
     NotifyBreakpointsChanged();
 }
 
+BreakpointManager::Batch::Batch(BreakpointManager& manager) : _manager(manager), _scope(std::make_unique<ChangeScope>(manager))
+{
+    _manager.BeginBatch();
+}
+
+BreakpointManager::Batch::~Batch()
+{
+    _manager.EndBatch();
+}
+
 void BreakpointManager::BeginBatch()
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     _batchDepth++;
 }
 
 void BreakpointManager::EndBatch()
 {
+    ChangeScope change(*this);
     if (_batchDepth > 0 && --_batchDepth == 0 && _rebuildPending)
     {
         _rebuildPending = false;
