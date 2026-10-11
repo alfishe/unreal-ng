@@ -77,6 +77,7 @@ public:
     void OnMachineM1(uint16_t address) override;
 
 private:
+    friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     enum class Hit : uint8_t { None, Delayed, Instant, MapOut };
     Hit Classify(uint16_t address) const;
     /// NR #0A bit 4 and the port enable: automap_reset is their inverse

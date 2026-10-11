@@ -94,6 +94,7 @@ public:
     uint64_t FrameClocks() const { return _frameClocks; }
 
 private:
+    friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     uint64_t LineClocks() const { return static_cast<uint64_t>(_hcPerLine) * kClocksPerPixel; }
     void RunSegment(uint64_t end);
 

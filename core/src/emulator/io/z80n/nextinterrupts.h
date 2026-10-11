@@ -109,6 +109,7 @@ public:
     /// endregion
 
 private:
+    friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     uint32_t BaseT(uint32_t t) const;
     uint32_t LineStartT() const;
     uint32_t CounterOrigin() const;

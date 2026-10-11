@@ -55,6 +55,7 @@ public:
     bool Running(unsigned channel) const { return _ch[channel].running; }
 
 private:
+    friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     struct Channel
     {
         uint8_t control = 0;

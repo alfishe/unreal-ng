@@ -75,6 +75,7 @@ public:
     /// endregion
 
 private:
+    friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     unsigned Selected() const { return (_control >> 4) & 7; }
     void Advance();
 

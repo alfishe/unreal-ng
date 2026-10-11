@@ -155,6 +155,7 @@ protected:
     bool UpdateModelBanks() override;
 
 private:
+    friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     void MapSlot(unsigned slot);
     void ApplyLayer2(unsigned slot);
     void Remap();

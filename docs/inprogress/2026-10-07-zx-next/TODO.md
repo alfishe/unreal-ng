@@ -232,7 +232,9 @@ NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.
 - [x] **P5 (G6, G7, G8)** `state next audio` (chips, pan, registers, periods, the DAC), `state next input` (NR #05 / #0B decoded, the Kempston port #1F, what is not modelled), and the board block of `state next` (bus port enables NR #86-#89, debug LED NR #FF, the unmodelled +3 I/O trap) on every plane; the Kempston port #1F answers regardless of NR #05 (the report says so)
 - [x] P6 magic-opcode breakpoint (`bmagic`, `magic_ed_ff`/`magic_dd_01`, `bp_magic`)
 - [x] P6 DZRP for the Next: machine type ZXNEXT, eight 8K slots (NR #50-#57), `GET_TBBLUE_REG`, `SET_NEXTREGS`, `READ_BANK_MEM`/`WRITE_BANK_MEM` (8K bank, offset wraps; 0xFF the selected ROM), `READ_MEM_BLOCKS`; sprite commands 16-19 (palette, clip window and NR #15, attributes, patterns) done
-- [x] P6 TTD: the NEXTREG instruction is in the TTD port-write journal as OUT #243B / OUT #253B (option a); the checkpoint still has no NextREG state (`NextState` blob, design-ttd.md section 3)
+- [x] P6 TTD: the NEXTREG instruction is in the TTD port-write journal as OUT #243B / OUT #253B (option a)
+- [x] P6 TTD `NextState` blob (id 62): the board, memory map, video, sprites, copper, DMA, CTC, interrupts, I2C, Multiface and DivMMC latches restore on a seek
+- [ ] TTD `NextState` is missing the audio chips and DACs, the SD cards' protocol state and the system-area RAM (DivMMC RAM, config banks)
 - [x] P6 magic output port (`state/next/magic-port`, `POST /next/magic-port`, every plane; the console is a bounded ring, off by default)
 - [ ] Device gaps D1 (UART/ESP/Pi) and D2 (Kempston mouse, ULA+, Radastan): the reports follow the devices
 
