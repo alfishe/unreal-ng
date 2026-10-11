@@ -17,6 +17,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <thread>
 #include <set>
 
@@ -57,7 +58,7 @@ protected:
     Z80* _z80 = nullptr;
     WD1793* _fdc = nullptr;
     std::unique_ptr<TRDOSTestHelper> _helper;
-    DiskImage* _diskImage = nullptr;
+    std::unique_ptr<DiskImage> _diskImage;  // the drive only points at it
     
     void SetUp() override
     {
@@ -101,10 +102,10 @@ protected:
             FDD* fdd = _fdc->getDrive();
             if (fdd)
             {
-                _diskImage = new DiskImage(80, 2);
+                _diskImage = std::make_unique<DiskImage>(80, 2);
                 // Format using LoaderTRD for proper TR-DOS structure
                 // For now, just create empty tracks
-                fdd->insertDisk(_diskImage);
+                fdd->insertDisk(_diskImage.get());
             }
         }
         
@@ -131,14 +132,14 @@ protected:
         _z80 = nullptr;
         _fdc = nullptr;
         
-        // Disk image is owned by FDD after insert
-        _diskImage = nullptr;
-        
         if (_emulator)
         {
             EmulatorTestHelper::CleanupEmulator(_emulator);
             _emulator = nullptr;
         }
+
+        // The FDD does not own the image: freed after the emulator has ejected it
+        _diskImage.reset();
         
         // Force complete disposal of MessageCenter
         MessageCenter::DisposeDefaultMessageCenter();
@@ -801,7 +802,7 @@ TEST_F(TRDOSIntegration_test, RealExecution_CATCommand_CollectsEvents)
     // The fixture inserted a blank disk; give it a real TR-DOS structure so CAT has a catalog to read
     ASSERT_NE(_diskImage, nullptr);
     LoaderTRDCUT loaderTrd(_context, TestPathHelper::GetTestScratchPath("cat.trd"));
-    ASSERT_TRUE(loaderTrd.format(_diskImage)) << "Failed to format TRD disk image";
+    ASSERT_TRUE(loaderTrd.format(_diskImage.get())) << "Failed to format TRD disk image";
     
     // Activate analyzer
     activateAnalyzer();
@@ -855,8 +856,8 @@ TEST_F(TRDOSIntegration_test, RealExecution_DirectFormat_CollectsEvents)
             {
                 fdd->ejectDisk();
             }
-            DiskImage* disk = new DiskImage(80, 2);
-            fdd->insertDisk(disk);
+            _diskImage = std::make_unique<DiskImage>(80, 2);
+            fdd->insertDisk(_diskImage.get());
         }
     }
     

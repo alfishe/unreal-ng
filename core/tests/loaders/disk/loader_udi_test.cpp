@@ -10,6 +10,7 @@
 #include <common/stringhelper.h>
 
 #include "_helpers/testpathhelper.h"
+#include "_helpers/wd1793testcut.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/diskimage.h"
@@ -511,7 +512,7 @@ TEST_F(LoaderUDI_Test, Save_AfterWriteTrack_ReadBackThroughController)
     ASSERT_TRUE(back.loadImage());
     DiskImage* reloaded = back.getImage();
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     fdc.getDrive()->insertDisk(reloaded);
     fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
     fdc._drive = 0;

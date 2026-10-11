@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "_helpers/emulatortesthelper.h"
 #include "emulator/video/atm/atmfont.h"
 #include "emulator/video/atm/screenatm.h"
 #include "emulator/video/zx/screenzx.h"
@@ -47,33 +48,14 @@ protected:
 
     void TearDown() override
     {
-        if (_cpu != nullptr)
-        {
-            delete _cpu;
-            _cpu = nullptr;
-        }
-
-        if (_context != nullptr)
-        {
-            delete _context;
-            _context = nullptr;
-        }
+        EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
     }
 
     /// (Re)create the whole stack with the model set BEFORE Core::Init() so
     /// the matching port decoder is installed (needed by port-semantics tests)
     void ReinitAs(MEM_MODEL model)
     {
-        if (_cpu != nullptr)
-        {
-            delete _cpu;
-            _cpu = nullptr;
-        }
-        if (_context != nullptr)
-        {
-            delete _context;
-            _context = nullptr;
-        }
+        EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
 
         _context = new EmulatorContext(LoggerLevel::LogError);
         _context->config.mem_model = model;

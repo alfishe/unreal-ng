@@ -127,6 +127,8 @@ protected:
     {
         delete _portDecoder;
         _portDecoder = nullptr;
+        delete _context;
+        _context = nullptr;
     }
 
     /// All (rulePort, claimLowByte) overlap pairs the six MoonSound claims
@@ -295,6 +297,8 @@ protected:
     {
         delete _portDecoder;
         _portDecoder = nullptr;
+        delete _context;
+        _context = nullptr;
     }
 };
 
@@ -468,6 +472,8 @@ protected:
     {
         delete _portDecoder;
         _portDecoder = nullptr;
+        delete _context;
+        _context = nullptr;
     }
 };
 

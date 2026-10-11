@@ -36,7 +36,7 @@ new descriptor. Every repeated "add the same breakpoint" from the debugger or au
 - [ ] Every path that does not adopt the descriptor frees it (duplicates, an invalid type); the duplicate test is clean
   under valgrind.
 
-## 🔴 [Open] #10: Test fixtures that never free their machine
+## 🔵 [In Progress] #10: Test fixtures that never free their machine
 * **Date Opened:** 2026-10-11
 * **Found by:** valgrind memcheck profile: ~200 `definitely lost` records, all from tests.
 
@@ -49,6 +49,18 @@ drives its constructor creates. Test-only, but the noise hides a product leak in
 ### Requirements / Acceptance Criteria
 - [ ] The fixtures release what they build (`EmulatorTestHelper::ReleaseBareCore` or the context's own delete); the
   WD1793 tests free the drives; no `definitely lost` from tests in the valgrind profile.
+
+### Fix
+Test code only. Bare-core fixtures (Z80, Z80 logic/jump, ScreenZX, screen, Scorpion raster, ATM video, INT timing, IO
+and memory contention, loader SNA / Z80 / Z80 fuzzing / TAP) release through `EmulatorTestHelper::ReleaseBareCore`; its
+drive part is now `EmulatorTestHelper::ReleaseDiskDrives(context)`, used directly by the `unique_ptr` / stack cores
+(video map service, device state video; `ScopedDiskDrivesRelease` for a `Core` on the stack). Hand-built WD1793
+controllers use `WD1793TestCUT` (`core/tests/_helpers/wd1793testcut.h`): it frees the 4 FDDs its own constructor put in
+`coreState.diskDrives` (a test may build several controllers on one context; no eject, a test-local image may be gone).
+The AY, port decoder, memory, disassembler and full-decode claim fixtures delete their context; the memory access
+tracker deletes its `DebugManager` and `CoreCUT`; loaded `DiskImage`s are held by a `std::unique_ptr` (TRD, SCL loader
+tests, disk autostart, ATM710 TR-DOS) or by the fixture until its emulator is released (TR-DOS integration, ATM450 and
+ATM710 CP/M boot, UDI Zvezdnoe boot). The breakpoint records (`breakpoints_test`, `analyzermanager_test`) are #9.
 
 ## 🔴 [Open] #11: miniz inflate branches on uninitialized state for a damaged RZX stream
 * **Date Opened:** 2026-10-11

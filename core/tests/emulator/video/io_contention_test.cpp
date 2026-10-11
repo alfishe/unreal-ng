@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "stdafx.h"
 
+#include "_helpers/emulatortesthelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
@@ -43,8 +44,7 @@ ASSERT_TRUE(_cpu->Init()) << "Core::Init() failed";
         if (_context)
             _context->pScreen = nullptr;
 
-        delete _cpu;
-        delete _context;
+        EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
     }
 
     void SetupZX48k()

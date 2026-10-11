@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "_helpers/testpathhelper.h"
+#include "_helpers/wd1793testcut.h"
 #include "common/filehelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -344,7 +345,7 @@ TEST_F(LoaderRawPcFloppy_Test, Wd1793ReadsTheDDImageAt250Kbps)
 
     for (const auto& [cylinder, side] : {std::pair<uint8_t, uint8_t>{0, 0}, std::pair<uint8_t, uint8_t>{79, 1}})
     {
-        WD1793CUT fdc(_context);
+        WD1793TestCUT fdc(_context);
         Prepare(fdc, image, cylinder, side);
         ASSERT_EQ(fdc.GetDataRate(), FdcDataRate::Rate250Kbps);
         const std::vector<uint8_t> read = ReadWholeTrack(fdc, 9 * kSector);
@@ -363,7 +364,7 @@ TEST_F(LoaderRawPcFloppy_Test, Wd1793ReadsTheHDImageOnlyAt500Kbps)
     ASSERT_NE(image, nullptr);
 
     {
-        WD1793CUT fdc(_context);
+        WD1793TestCUT fdc(_context);
         Prepare(fdc, image, 0, 0);
         uint8_t status = 0;
         const std::vector<uint8_t> read = ReadOneSector(fdc, 1, &status);
@@ -374,7 +375,7 @@ TEST_F(LoaderRawPcFloppy_Test, Wd1793ReadsTheHDImageOnlyAt500Kbps)
 
     for (const auto& [cylinder, side] : {std::pair<uint8_t, uint8_t>{0, 0}, std::pair<uint8_t, uint8_t>{79, 1}})
     {
-        WD1793CUT fdc(_context);
+        WD1793TestCUT fdc(_context);
         Prepare(fdc, image, cylinder, side);
         SetHighDensity(fdc);
         const std::vector<uint8_t> read = ReadWholeTrack(fdc, 18 * kSector);
@@ -410,7 +411,7 @@ TEST_F(LoaderRawPcFloppy_Test, Wd1793ReadsAFat12BootSector)
 
     DiskImage* image = Parse(dump);
     ASSERT_NE(image, nullptr);
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     Prepare(fdc, image, 0, 0);
     SetHighDensity(fdc);
     uint8_t status = 0;
@@ -469,7 +470,7 @@ protected:
         const uint8_t side = static_cast<uint8_t>((lba / kSectorsPerTrack) % kHeads);
         const uint8_t number = static_cast<uint8_t>(lba % kSectorsPerTrack + 1);
 
-        WD1793CUT fdc(_context);
+        WD1793TestCUT fdc(_context);
         Prepare(fdc, _image.get(), cylinder, side);
         SetHighDensity(fdc);
         std::vector<uint8_t> read = ReadOneSector(fdc, number, status);
@@ -567,7 +568,7 @@ TEST_F(LoaderRawPcFloppyDss_Test, Wd1793FindsNoRecordOnTheRealImageAt250Kbps)
     if (!LoadDssFloppy())
         GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing (see testdata/machines/sprinter/README.md)";
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     Prepare(fdc, _image.get(), 0, 0);
     ASSERT_EQ(fdc.GetDataRate(), FdcDataRate::Rate250Kbps);
     uint8_t status = 0;

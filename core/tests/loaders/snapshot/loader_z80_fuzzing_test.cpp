@@ -2,6 +2,7 @@
 
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
+#include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 
 #include <cstdint>
@@ -29,17 +30,7 @@ void LoaderZ80_Fuzzing_Test::SetUp()
 
 void LoaderZ80_Fuzzing_Test::TearDown()
 {
-    if (_cpu != nullptr)
-    {
-        delete _cpu;
-        _cpu = nullptr;
-    }
-
-    if (_context != nullptr)
-    {
-        delete _context;
-        _context = nullptr;
-    }
+    EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
 }
 
 /// endregion </Setup / TearDown>

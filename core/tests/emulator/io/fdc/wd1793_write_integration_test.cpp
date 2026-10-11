@@ -8,6 +8,7 @@
 
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testtiminghelper.h"
+#include "_helpers/wd1793testcut.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "emulator/cpu/z80.h"
@@ -160,7 +161,7 @@ protected:
 /// Test that WRITE_TRACK completes at exactly 6250 bytes (no buffer overflow)
 TEST_F(WD1793_WriteIntegration_Test, WriteTrack_Stops_At_6250_Bytes)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
     fdc.getDrive()->insertDisk(&diskImage);
 
@@ -239,7 +240,7 @@ TEST_F(WD1793_WriteIntegration_Test, TrackSize_Matches_IndexPulse_Timing)
         << "RAW_TRACK_SIZE should be exactly 6250 bytes";
     
     // Now verify the FDC respects this boundary during WRITE_TRACK
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
     fdc.getDrive()->insertDisk(&diskImage);
 
@@ -271,7 +272,7 @@ TEST_F(WD1793_WriteIntegration_Test, TrackSize_Matches_IndexPulse_Timing)
 /// Test Write → Read sector sequence (verify data integrity)
 TEST_F(WD1793_WriteIntegration_Test, WriteSector_Then_ReadSector)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
     
     // Pre-format track so sector structure exists
@@ -328,7 +329,7 @@ TEST_F(WD1793_WriteIntegration_Test, WriteSector_Then_ReadSector)
 /// Uses direct sector array access (not ordered refs) since reindexSectors uses 1:1 mapping
 TEST_F(WD1793_WriteIntegration_Test, WriteSector_Buffer_Alignment)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
     
     // Pre-format track

@@ -104,6 +104,11 @@ public:
     /// delete the core and the context. Both pointers come back null
     static void ReleaseBareCore(Core*& core, EmulatorContext*& context);
 
+    /// The disk-drive part of ReleaseBareCore: eject and delete the FDDs Core::Init (its WD1793) left in
+    /// context->coreState.diskDrives. For a bare core the test does not hold by raw pointer (stack, unique_ptr);
+    /// call it before the core goes, as Emulator::Release does
+    static void ReleaseDiskDrives(EmulatorContext* context);
+
     /// Run N frames as fast as possible (synchronous, no throttling)
     static void RunFramesFast(Emulator* emulator, int frameCount);
 
@@ -133,4 +138,19 @@ private:
 
     /// Internal handler dispatched from AnalyzerManager
     static void OnBreakpointHit(uint32_t bpId, Z80* cpu, Memory* memory);
+};
+
+/// EmulatorTestHelper::ReleaseDiskDrives on scope exit, for a bare Core built on the stack. Declare it after
+/// the Core: it then runs first, while the core still exists
+class ScopedDiskDrivesRelease
+{
+public:
+    explicit ScopedDiskDrivesRelease(EmulatorContext* context) : _context(context) {}
+    ~ScopedDiskDrivesRelease() { EmulatorTestHelper::ReleaseDiskDrives(_context); }
+
+    ScopedDiskDrivesRelease(const ScopedDiskDrivesRelease&) = delete;
+    ScopedDiskDrivesRelease& operator=(const ScopedDiskDrivesRelease&) = delete;
+
+private:
+    EmulatorContext* _context = nullptr;
 };

@@ -1,5 +1,7 @@
 #include "loaders/disk/loader_scl.h"
 
+#include <memory>
+
 #include "3rdparty/digestpp/digestpp.hpp"
 #include "_helpers/testpathhelper.h"
 #include "common/dumphelper.h"
@@ -92,8 +94,9 @@ TEST_F(LoaderSCL_Test, load)
 
     EXPECT_EQ(result, true) << "Unable to load SCL file";
 
-    // Get the loaded disk image
-    DiskImage* diskImage = loaderSCL.getImage();
+    // Get the loaded disk image (the loader hands it over)
+    const std::unique_ptr<DiskImage> loaded(loaderSCL.getImage());
+    DiskImage* diskImage = loaded.get();
     ASSERT_NE(diskImage, nullptr) << "No disk image loaded";
 
     // Check disk geometry

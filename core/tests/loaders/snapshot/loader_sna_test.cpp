@@ -70,17 +70,7 @@ void LoaderSNA_Test::SetUp()
 
 void LoaderSNA_Test::TearDown()
 {
-    if (_cpu != nullptr)
-    {
-        delete _cpu;
-        _cpu = nullptr;
-    }
-
-    if (_context != nullptr)
-    {
-        delete _context;
-        _context = nullptr;
-    }
+    EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
 }
 
 /// endregion </Setup / TearDown>
