@@ -100,8 +100,8 @@ void EmulatorAPI::getSettings(const HttpRequestPtr& req, std::function<void(cons
     // Host speed control, and whether the engine runs unthrottled right now
     // (turbo_mode, or turbo tape warping a load); both locked while TTD records
     settings["speed"]        = static_cast<unsigned>(context->pCore ? context->pCore->GetHostSpeedMultiplier() : 1);
-    settings["turbo_active"] = config.turbo_mode;
-    settings["turbo_audio"]  = config.turbo_mode_audio;
+    settings["turbo_active"] = config.turbo_mode.Get();
+    settings["turbo_audio"]  = config.turbo_mode_audio.Get();
 
     // Disk Interface settings
     Json::Value disk_if(Json::objectValue);
@@ -222,14 +222,14 @@ void EmulatorAPI::getSetting(const HttpRequestPtr& req, std::function<void(const
     else if (name == "turbo_active")
     {
         ret["name"] = "turbo_active";
-        ret["value"] = config.turbo_mode;
+        ret["value"] = config.turbo_mode.Get();
         ret["read_only"] = true;
         ret["description"] = "Whether emulation runs unthrottled right now: turbo_mode, or turbo tape warping a load";
     }
     else if (name == "turbo_audio")
     {
         ret["name"] = "turbo_audio";
-        ret["value"] = config.turbo_mode_audio;
+        ret["value"] = config.turbo_mode_audio.Get();
         ret["description"] = "Keep generating audio (at raised pitch) while in turbo mode";
     }
     else if (name == "trdos_present")

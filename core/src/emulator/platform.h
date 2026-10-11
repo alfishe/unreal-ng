@@ -356,6 +356,25 @@ inline constexpr bool IsProfiModel(MEM_MODEL model)
 
 const int RAM_48 = 48, RAM_128 = 128, RAM_256 = 256, RAM_512 = 512, RAM_1024 = 1024, RAM_2048 = 2048, RAM_4096 = 4096;
 
+/// A setting another thread switches while the machine runs (WebAPI, CLI, GUI) and the loop reads once a frame.
+/// Relaxed: the reader needs the value, not an ordering; it costs what a plain bool costs. Copyable, so CONFIG
+/// keeps its value semantics
+class LiveFlag
+{
+public:
+	LiveFlag(bool value = false) : _value(value) {}
+	LiveFlag(const LiveFlag& other) : _value(other.Get()) {}
+	LiveFlag& operator=(const LiveFlag& other) { Set(other.Get()); return *this; }
+	LiveFlag& operator=(bool value) { Set(value); return *this; }
+	operator bool() const { return Get(); }
+
+	bool Get() const { return _value.load(std::memory_order_relaxed); }
+	void Set(bool value) { _value.store(value, std::memory_order_relaxed); }
+
+private:
+	std::atomic<bool> _value;
+};
+
 struct TMemModel
 {
 	const char *FullName;
@@ -579,12 +598,12 @@ struct CONFIG
 
 	/// Turbo/Max speed mode - runs emulation as fast as possible
 	/// When enabled, disables audio synchronization for maximum performance
-	bool turbo_mode = false;
+	LiveFlag turbo_mode = false;
 
 	/// Generate audio samples even in turbo mode
 	/// Useful for video capture or when recording while in turbo mode
 	/// Audio will play at increased pitch due to faster execution
-	bool turbo_mode_audio = false;
+	LiveFlag turbo_mode_audio = false;
 
 	int modem_port; //, modem_scheme;
 	int zifi_port;
