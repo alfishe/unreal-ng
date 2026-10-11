@@ -225,6 +225,19 @@ class Emulator:
     def next_divmmc_journal_control(self, enabled=None, clear=False, capacity=0) -> dict:
         """Switch, clear or resize (capacity=N) the DivMMC journal"""
 
+    def next_nmi(self, kinds=None, since=None, from_frame=None, to_frame=None, limit=None) -> dict:
+        """The Next NMI sources (m1_button / drive_button: would_fire, blocked_by; io_trap: not modelled), in_service, the Multiface, NR #02 bits,
+        the stackless NMI, the reset bits, the interrupts pending / in service and the interrupt / NMI / reset journal: int_ack (source, vector),
+        reti, nmi_request (accepted or reason), retn, reset (kinds='int_ack,nmi_request'). Off by default -
+        next_nmi_journal_control(enabled=True) first; raises ValueError on a bad option"""
+
+    def next_nmi_journal_control(self, enabled=None, clear=False, capacity=0) -> dict:
+        """Switch, clear or resize (capacity=N) the interrupt / NMI / reset journal"""
+
+    def next_nmi_trigger(self, source) -> dict:
+        """Raise an NMI as the Multiface button ('m1'), the DRIVE button ('drive') or the bare /NMI line ('pulse'); the reply has ok, accepted,
+        source and, if the board refused, reason"""
+
     def next_dma(self) -> dict:
         """The Next DMA as programmed and running (mode zxn / z80, ports a / b, direction, burst, prescaler, counter, src / dst with
         src_kind / dst_kind, holds_bus, status byte); reading it does not advance its read sequence; available=False elsewhere"""

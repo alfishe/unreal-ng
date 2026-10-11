@@ -103,6 +103,8 @@
 #include <debugger/ports/nextregwrite.h>
 #include <emulator/io/z80n/nextregjournal.h>
 #include <emulator/io/z80n/nextdivmmcjournal.h>
+#include <emulator/io/z80n/nextintjournal.h>
+#include <debugger/ports/nextnmi.h>
 #include <emulator/io/z80n/nextsdjournal.h>
 #include <emulator/io/z80n/nextreportquery.h>
 #include "../bindings/python_porttrace.h"
@@ -3026,6 +3028,33 @@ namespace PythonBindings
                 return StateNodeToPy(DeviceState::NextDivMmcJournalControl(self.GetContext(), enable, clear, capacity));
             }, py::arg("enabled") = py::none(), py::arg("clear") = false, py::arg("capacity") = 0,
                "Switch (enabled=True/False), clear or resize (capacity=N) the DivMMC journal")
+            .def("next_nmi", [](Emulator& self, py::object kinds, py::object since, py::object from_frame, py::object to_frame,
+                                py::object limit) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                NextIntJournalQuery query;
+                std::string error;
+                if (!NextIntJournalQueryFromStrings(text(kinds), text(since), text(from_frame), text(to_frame), text(limit), query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextNmiReport(self.GetContext(), query));
+            }, py::arg("kinds") = py::none(), py::arg("since") = py::none(), py::arg("from_frame") = py::none(),
+               py::arg("to_frame") = py::none(), py::arg("limit") = py::none(),
+               "The Next NMI sources (M1 / DRIVE button: would fire, blocked by), the NMI in service, the Multiface, NR #02 bits, the stackless NMI, "
+               "the reset bits, the interrupts pending / in service, and the interrupt / NMI / reset journal (kinds int_ack, reti, nmi_request, retn, "
+               "reset); the journal is off by default (next_nmi_journal_control(enabled=True))")
+            .def("next_nmi_journal_control", [](Emulator& self, py::object enabled, bool clear, size_t capacity) -> py::object {
+                const int enable = enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0);
+                return StateNodeToPy(DeviceState::NextNmiJournalControl(self.GetContext(), enable, clear, capacity));
+            }, py::arg("enabled") = py::none(), py::arg("clear") = false, py::arg("capacity") = 0,
+               "Switch (enabled=True/False), clear or resize (capacity=N) the interrupt / NMI / reset journal")
+            .def("next_nmi_trigger", [](Emulator& self, const std::string& source) -> py::object {
+                return StateNodeToPy(NextNmiControl::ToState(NextNmiControl::Trigger(&self, source)));
+            }, py::arg("source"),
+               "Raise an NMI as the Multiface button ('m1'), the DRIVE button ('drive') or the bare /NMI line ('pulse'); the reply says accepted "
+               "and, if the board refused, why")
             .def("next_dma", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextDma(self.GetContext())); },
                "The Next DMA as programmed and running (mode, ports A / B, direction, burst, prescaler, counters, status byte); reading it "
                "does not advance its read sequence; available=False elsewhere")

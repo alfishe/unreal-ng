@@ -339,6 +339,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::postNextSdJournal, "/api/v1/emulator/{id}/next/sd-journal", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateNextDivMmc, "/api/v1/emulator/{id}/state/next/divmmc", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNextDivMmcJournal, "/api/v1/emulator/{id}/next/divmmc-journal", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextNmi, "/api/v1/emulator/{id}/state/next/nmi", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postNextNmiJournal, "/api/v1/emulator/{id}/next/nmi-journal", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::postNextNmi, "/api/v1/emulator/{id}/next/nmi", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateNextPixel, "/api/v1/emulator/{id}/state/next/pixel", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNextLayerCapture, "/api/v1/emulator/{id}/next/layer-capture", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateNextDma, "/api/v1/emulator/{id}/state/next/dma", drogon::Get);
@@ -1244,6 +1247,15 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     /// @brief POST /api/v1/emulator/{id}/next/divmmc-journal {"enabled", "clear", "capacity"} — switch, clear or resize the DivMMC journal
     void postNextDivMmcJournal(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/next/nmi?kinds=&since=&from=&to=&limit= — NMI sources, the Multiface, interrupts, reset and the journal
+    void getStateNextNmi(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/next/nmi-journal {"enabled", "clear", "capacity"} — switch, clear or resize the interrupt / NMI / reset journal
+    void postNextNmiJournal(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/next/nmi {"source": "m1"|"drive"|"pulse"} — raise an NMI as a board button or the bare /NMI line
+    void postNextNmi(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
     /// @brief GET /api/v1/emulator/{id}/state/next/pixel?x=&y=&sx= — the pixel inspector: winner, colour, per-layer why and source address
     void getStateNextPixel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                            const std::string& id) const;

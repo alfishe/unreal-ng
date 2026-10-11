@@ -138,6 +138,28 @@ copper write, a beam place or a copper instruction stops at the first instructio
 real copper executes the write later without a second stop or count. The `beam` line and the `hc` are the copper's counters (NR #64
 applied); `next_reg_journal` carries `beam_line` / `beam_hc` for every write (a copper MOVE has its own beam, not the time of the picture's catch-up).
 
+### 3a4. Which interrupt did the CPU take, why did the M1 button do nothing? (the NMI report)
+
+`state/next/nmi` answers "would the M1 / DRIVE button fire now and what blocks it", the Multiface and its session, the NMI in service, the
+reset bits and, with the journal on (off by default), every interrupt the CPU accepted with its source and vector.
+
+```text
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/next/nmi-journal","body":{"enabled":true,"clear":true}}
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/next/nmi","body":{"source":"m1"}}
+#   → {"ok":true,"accepted":false,"source":"m1","reason":"the M1 button is off (NR #06 bit 3)"}
+inspect_state {"aspects":["next_nmi"],"nr_nmi_kinds":"int_ack,nmi_request","nr_nmi_limit":20}
+#   → [next_nmi] NMI in service: no; sources: m1_button blocked (...) drive_button ready io_trap (not modelled); multiface off +3, memory out; ...
+#       #1 f512 pc 0x3DBD int_ack ula
+#       #2 f512 pc 0x0038 nmi_request m1_button REFUSED: the M1 button is off (NR #06 bit 3)
+```
+
+`int_ack` has the source (`line`, `ula`, `ctc0`..`ctc7`, `uart0_rx` ...; `spurious` for an acknowledge nothing asked for) and, in hardware IM2
+mode, the vector; pulse mode carries `#FF` on the bus and no vector. `nmi_request.accepted` false has `reason`: the button's enable bit in NR
+`#06`, CONMEM (port `#E3` bit 7), a DivMMC handler still running, an open Multiface session. `retn.source` says which session the RETN ended
+(`multiface`, `divmmc`, `none`). `reset` is `soft` or `hard`, with NR `#02` bits 1:0 after it (`power_on`, `first_reset_after_power_on`,
+`later_reset`). The +3 FDC I/O trap (NR `#D8`-`#DA`) is listed as an NMI source but is not modelled. CLI `state next nmi`, `next nmi m1`; Lua
+`next_nmi{...}`, `next_nmi_trigger("m1")`; Python `emu.next_nmi(...)`, `emu.next_nmi_trigger("m1")`.
+
 ### 3b. What did the program configure? (the debugger reports)
 
 Guessing from port traces and one register at a time found the DMA writing into ROM, the tilemap reading bank 7 as 16K and a card

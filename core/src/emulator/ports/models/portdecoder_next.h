@@ -11,6 +11,7 @@
 #include "emulator/io/z80n/nextdivmmc.h"
 #include "emulator/io/z80n/nextmultiface.h"
 #include "emulator/io/z80n/nextsdjournal.h"
+#include "emulator/io/z80n/nextintjournal.h"
 #include "emulator/io/z80n/nexti2c.h"
 #include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/io/z80n/z80nengine.h"
@@ -98,6 +99,15 @@ public:
     /// Accesses that began before the previous byte was done and were ignored, as on the board
     uint32_t SpiTooFastCount() const { return _spiTooFast; }
     /// The SD journal (automation-gaps-2026-10-11.md, P1) and the SPI engine's state for the report
+    /// The interrupt, NMI and reset journal (automation-gaps-2026-10-11.md, P4)
+    NextIntJournal& IntJournal() { return _intJournal; }
+    const NextIntJournal& IntJournal() const { return _intJournal; }
+    /// Why a button NMI would be refused now (nullptr: it would fire), for the report and the journal
+    const char* MultifaceNmiRefusal() const;
+    const char* DriveNmiRefusal() const;
+    /// A tool's request for an NMI from `source`: "m1" (the Multiface button, NR #02 bit 3), "drive" (NR #02 bit 2) or "pulse" (the
+    /// bare /NMI line). True when it was taken; else `reason` says why not. Runs where nothing else drives the machine
+    bool TriggerNmi(const std::string& source, std::string& reason);
     NextSdJournal& SdJournal() { return _sdJournal; }
     const NextSdJournal& SdJournal() const { return _sdJournal; }
     int SpiSelectedLine() const { return _spiSelected; }
@@ -184,6 +194,8 @@ private:
     double _spiBusyRatio = 1.0;  ///< the CPU speed ratio the byte in flight was timed at
     uint32_t _spiTooFast = 0;
     NextSdJournal _sdJournal;
+    NextIntJournal _intJournal;
+    void RecordInt(NextIntEvent event);
     void RecordSdEvent(unsigned card, const SdTraceEvent& event);
     std::unique_ptr<NextBoard> _board;
     std::unique_ptr<NextInterruptSource> _interrupts;

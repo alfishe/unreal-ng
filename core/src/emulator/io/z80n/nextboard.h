@@ -145,6 +145,8 @@ public:
     void SetJournalClock(std::function<void(uint32_t& frame, uint32_t& t, uint16_t& pc)> clock) { _journalClock = std::move(clock); }
     /// The raw stored byte of a register (reports, tests)
     uint8_t Stored(uint8_t reg) const { return _regs[reg]; }
+    /// NR #02 bits 1:0 as a read returns them: how the last reset happened (the VHDL's nr_02_reset_type: 0 power on, then 2, then 1)
+    uint8_t ResetBits() const { return static_cast<uint8_t>(_resetType & 3); }
 
     /// The `next_regs` report: one line per register of the table with its value and reset
     std::string DescribeRegisters() const;

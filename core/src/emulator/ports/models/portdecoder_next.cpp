@@ -48,6 +48,16 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     });
     // NextREG breakpoints: the board tells every access of the program with its door (the single choke points)
     _board->SetAccessHook([this](bool write, uint8_t reg, uint8_t value, NextRegSource source) { NextRegAccess(write, reg, value, source); });
+    _interrupts->onEvent = [this](NextIntKind kind, const char* source, bool hasVector, uint8_t vector) {
+        if (!_intJournal.Enabled())
+            return;
+        NextIntEvent e;
+        e.kind = kind;
+        e.source = source;
+        e.hasVector = hasVector;
+        e.vector = vector;
+        RecordInt(e);
+    };
     _divMmc = std::make_unique<NextDivMmc>(&Mem(), _board.get());
     _divMmc->isBasicRomPaged = [this]() { return Mem().BasicRomVisible(); };
     _divMmc->fillClock = [this](NextDivMmcEvent& e) {
@@ -671,6 +681,14 @@ void PortDecoder_Next::PerformReset(bool hard)
     state.p1FFD = 0x00;
     Mem().ResetMmu();
     _board->Reset(hard);  // config mode and the boot ROM first: the slot table follows them
+    if (_intJournal.Enabled())
+    {
+        NextIntEvent e;
+        e.kind = NextIntKind::Reset;
+        e.source = hard ? "hard" : "soft";
+        e.value = _board->ResetBits();
+        RecordInt(e);
+    }
     _dma.Reset();         // zxnext.vhd: the DMA's reset_i is the hard or the soft reset
     _divMmc->Reset();     // E3 and the automap latches (zxnext.vhd 4175, divmmc.vhd 108-139) and the Multiface's session are `reset` too
     _multiface->Reset();
@@ -989,12 +1007,58 @@ void PortDecoder_Next::ApplyTiming(uint8_t timing)
 
 /// endregion
 
-bool PortDecoder_Next::GenerateDriveNmi()
+void PortDecoder_Next::RecordInt(NextIntEvent event)
+{
+    event.frame = static_cast<uint32_t>(_context->emulatorState.frame_counter);
+    if (Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
+    {
+        event.t = z80->t;
+        event.pc = z80->m1_pc;
+    }
+    _intJournal.Record(event);
+}
+
+const char* PortDecoder_Next::DriveNmiRefusal() const
 {
     // zxnext.vhd: hotkey_drive / nmi_sw_gen_divmmc, and nr_06_button_drive_nmi_en (NR #06 bit 4), with no Multiface session; the
     // state machine pulses /NMI once and the DivMMC's button latch maps its ROM in at the #0066 fetch. A request while the
     // handler is in, or still on its way, is lost (nmi_activated)
-    if (!(_board->Stored(0x06) & 0x10) || _divMmc->NmiHold() || _multiface->IsActive())
+    if (!(_board->Stored(0x06) & 0x10))
+        return "the DRIVE button is off (NR #06 bit 4)";
+    if (_divMmc->NmiHold())
+        return "the DivMMC NMI handler is on its way or running";
+    if (_multiface->IsActive())
+        return "a Multiface session is open";
+    return nullptr;
+}
+
+const char* PortDecoder_Next::MultifaceNmiRefusal() const
+{
+    // zxnext.vhd nmi_assert_mf: NR #06 bit 3 (the M1 button's enable), and CONMEM off (port #E3 bit 7) and no DivMMC handler
+    if (!(_board->Stored(0x06) & 0x08))
+        return "the M1 button is off (NR #06 bit 3)";
+    if (_divMmc->ReadPort() & 0x80)
+        return "CONMEM is on (port #E3 bit 7)";
+    if (_divMmc->NmiHold())
+        return "the DivMMC NMI handler is on its way or running";
+    if (_multiface->NmiHold())
+        return "a Multiface NMI session is open";
+    return nullptr;
+}
+
+bool PortDecoder_Next::GenerateDriveNmi()
+{
+    const char* refusal = DriveNmiRefusal();
+    if (_intJournal.Enabled())
+    {
+        NextIntEvent e;
+        e.kind = NextIntKind::NmiRequest;
+        e.source = "drive_button";
+        e.accepted = refusal == nullptr;
+        e.reason = refusal ? refusal : "";
+        RecordInt(e);
+    }
+    if (refusal)
         return false;
     _divMmc->PressButton();
     _context->pCore->GetZ80()->RequestNonMaskedInterrupt();
@@ -1003,18 +1067,68 @@ bool PortDecoder_Next::GenerateDriveNmi()
 
 bool PortDecoder_Next::GenerateMultifaceNmi()
 {
-    // zxnext.vhd nmi_assert_mf: NR #06 bit 3 (the M1 button's enable), and CONMEM off (port #E3 bit 7) and no DivMMC handler
-    if (!(_board->Stored(0x06) & 0x08) || (_divMmc->ReadPort() & 0x80) || _divMmc->NmiHold() || _multiface->NmiHold())
+    const char* refusal = MultifaceNmiRefusal();
+    if (_intJournal.Enabled())
+    {
+        NextIntEvent e;
+        e.kind = NextIntKind::NmiRequest;
+        e.source = "m1_button";
+        e.accepted = refusal == nullptr;
+        e.reason = refusal ? refusal : "";
+        RecordInt(e);
+    }
+    if (refusal)
         return false;
     _multiface->PressButton();
     _context->pCore->GetZ80()->RequestNonMaskedInterrupt();
     return true;
 }
 
+bool PortDecoder_Next::TriggerNmi(const std::string& source, std::string& reason)
+{
+    if (source == "m1")
+    {
+        if (GenerateMultifaceNmi())
+            return true;
+        reason = MultifaceNmiRefusal();
+        return false;
+    }
+    if (source == "drive")
+    {
+        if (GenerateDriveNmi())
+            return true;
+        reason = DriveNmiRefusal();
+        return false;
+    }
+    if (source == "pulse")
+    {
+        // The bare /NMI line: no button state machine, no Multiface or DivMMC bookkeeping
+        if (_intJournal.Enabled())
+        {
+            NextIntEvent e;
+            e.kind = NextIntKind::NmiRequest;
+            e.source = "pulse";
+            e.accepted = true;
+            RecordInt(e);
+        }
+        _context->pCore->GetZ80()->RequestNonMaskedInterrupt();
+        return true;
+    }
+    reason = "source '" + source + "': m1, drive or pulse";
+    return false;
+}
+
 void PortDecoder_Next::OnRetn()
 {
     // divmmc_retn_seen = z80_retn_seen and not mf_is_active (the Multiface's session ends first)
     const bool multifaceActive = _multiface->IsActive();
+    if (_intJournal.Enabled())
+    {
+        NextIntEvent e;
+        e.kind = NextIntKind::Retn;
+        e.source = multifaceActive ? "multiface" : (_divMmc->NmiHold() ? "divmmc" : "none");
+        RecordInt(e);
+    }
     _multiface->OnRetn();
     if (!multifaceActive)
         _divMmc->OnRetn();

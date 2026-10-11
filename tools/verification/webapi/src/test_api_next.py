@@ -131,6 +131,28 @@ class TestNextReports:
         assert add({"type": "copper", "address": 1024}).status_code == 400
         api_client.session.delete(api_client._url(f"/api/v1/emulator/{next_emulator}/breakpoints"))
 
+    def test_nmi_report_journal_and_trigger(self, api_client, next_emulator):
+        report = get(api_client, next_emulator, "/state/next/nmi").json()
+        names = [source["name"] for source in report["sources"]]
+        assert names == ["m1_button", "drive_button", "io_trap"]
+        assert report["sources"][2]["modelled"] is False
+        assert {"in_service", "multiface", "nr_02", "stackless_nmi", "reset", "interrupts", "events"} <= set(report)
+        journal = post(api_client, next_emulator, "/next/nmi-journal", {"enabled": True, "clear": True}).json()
+        assert journal["enabled"] is True and journal["size"] == 0
+        # the buttons are off at power on: the board refuses, with the reason, and the journal says so
+        refused = post(api_client, next_emulator, "/next/nmi", {"source": "m1"})
+        assert refused.status_code == 200, refused.text
+        assert refused.json()["accepted"] is False and "NR #06" in refused.json()["reason"]
+        taken = post(api_client, next_emulator, "/next/nmi", {"source": "pulse"}).json()
+        assert taken["accepted"] is True
+        events = get(api_client, next_emulator, "/state/next/nmi?kinds=nmi_request").json()["events"]
+        assert [e["source"] for e in events][:2] == ["m1_button", "pulse"]
+        assert events[0]["accepted"] is False and "reason" in events[0]
+        assert post(api_client, next_emulator, "/next/nmi", {"source": "dma"}).status_code == 400
+        assert post(api_client, next_emulator, "/next/nmi", {}).status_code == 400
+        assert get(api_client, next_emulator, "/state/next/nmi?kinds=jump").status_code == 400
+        post(api_client, next_emulator, "/next/nmi-journal", {"enabled": False})
+
     def test_nextreg_write_bad_body_is_400(self, api_client, next_emulator):
         assert post(api_client, next_emulator, "/next/nextreg", {"reg": "14"}).status_code == 400
         assert post(api_client, next_emulator, "/next/nextreg", {"reg": "14", "value": "1", "door": "copper"}).status_code == 400
