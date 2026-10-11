@@ -234,9 +234,15 @@ class Emulator:
     def next_nmi_journal_control(self, enabled=None, clear=False, capacity=0) -> dict:
         """Switch, clear or resize (capacity=N) the interrupt / NMI / reset journal"""
 
-    def next_nmi_trigger(self, source) -> dict:
-        """Raise an NMI as the Multiface button ('m1'), the DRIVE button ('drive') or the bare /NMI line ('pulse'); the reply has ok, accepted,
-        source and, if the board refused, reason"""
+    def next_audio(self) -> dict:
+        """The Next's sound as configured: config (chip_model ym2149 | ay8910, stereo_mode abc | acb, turbosound, dac, NR #06 / #08 / #09),
+        selected_chip, chips (pan, mono, the 16 registers, tone_periods, noise_period, mixer, volumes, envelope_period / shape) and dac
+        (a / b / c / d, left_sum = A + B, right_sum = C + D); available=False elsewhere"""
+
+    def next_input(self) -> dict:
+        """The Next's input as configured: joystick_modes (NR #05 left / right: name and the port it answers), io_mode (NR #0B), kempston_1f
+        (value, bits, selected_by_nr_05, answers_here) and not_modelled (port #37, MD pad buttons, extended keys NR #B0-#B2);
+        available=False elsewhere"""
 
     def next_dma(self) -> dict:
         """The Next DMA as programmed and running (mode zxn / z80, ports a / b, direction, burst, prescaler, counter, src / dst with

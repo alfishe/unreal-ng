@@ -75,6 +75,8 @@ public:
     void AudioConfigChanged() override;
     void DacMirrorWrite(uint8_t reg, uint8_t value) override;
     NextAudio& Audio() { return *_audio; }
+    /// What a read of port #1F returns now (the joystick's state; no side effect), for the input report
+    uint8_t KempstonJoystickNow() const { return Default_Port_KempstonJoystick_In(); }
     NextDma& Dma() { return _dma; }
     void BindDma();
     uint8_t ReadMemoryMapping() const override;
@@ -105,9 +107,6 @@ public:
     /// Why a button NMI would be refused now (nullptr: it would fire), for the report and the journal
     const char* MultifaceNmiRefusal() const;
     const char* DriveNmiRefusal() const;
-    /// A tool's request for an NMI from `source`: "m1" (the Multiface button, NR #02 bit 3), "drive" (NR #02 bit 2) or "pulse" (the
-    /// bare /NMI line). True when it was taken; else `reason` says why not. Runs where nothing else drives the machine
-    bool TriggerNmi(const std::string& source, std::string& reason);
     NextSdJournal& SdJournal() { return _sdJournal; }
     const NextSdJournal& SdJournal() const { return _sdJournal; }
     int SpiSelectedLine() const { return _spiSelected; }

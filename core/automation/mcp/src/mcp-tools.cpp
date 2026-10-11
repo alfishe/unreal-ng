@@ -1641,7 +1641,7 @@ void RegisterInspectState(ToolRegistry& registry)
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "profi", "isa", "network", "mouse",
-                               "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_sd", "next_divmmc", "next_nmi", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel", "sprinter", "sprinter_ports", "sprinter_text",
+                               "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_sd", "next_divmmc", "next_nmi", "next_audio", "next_input", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
                                "audio_multisound", "audio_midi", "execution"})
@@ -1740,8 +1740,12 @@ void RegisterInspectState(ToolRegistry& registry)
         "now and what blocks it, the NMI in service (Multiface session, DivMMC handler), the Multiface (type, ports, memory in, invisible), "
         "NR #02's generate and reset bits, the stackless NMI, the maskable interrupts pending / in service by name, and the journal - the "
         "interrupt accepted (source, vector), RETI, an NMI request (accepted, or refused and why), RETN, the reset; off by default "
-        "(invoke_api POST /api/v1/emulator/{id}/next/nmi-journal {enabled:true, clear:true}; raise one with POST /next/nmi {source: "
-        "m1|drive|pulse}; nr_nmi_kinds = 'int_ack,nmi_request', nr_nmi_since, nr_nmi_limit); "
+        "(invoke_api POST /api/v1/emulator/{id}/next/nmi-journal {enabled:true, clear:true}; the DRIVE button is POST /api/v1/emulator/{id}/nmi {magic:true}, the M1 "
+        "button NR #02 bit 3 via POST /next/nextreg; nr_nmi_kinds = 'int_ack,nmi_request', nr_nmi_since, nr_nmi_limit); "
+        "'next_audio' = the Next's sound as configured: chip model (YM / AY), ABC / ACB, turbosound, the chip selected on #FFFD, per chip its "
+        "pan, mono flag and the 16 registers with the tone / noise / envelope periods and volumes, and the four DAC channels with the left / right "
+        "sums; 'next_input' = the joystick modes of NR #05 (left and right, which port each answers), the NR #0B I/O mode, the Kempston port #1F "
+        "decoded (and whether NR #05 selects it) and what is not modelled (port #37, MD pad buttons, extended keys); "
         "'next_dma' = the DMA as programmed (mode zxn / z80, ports A / B, direction, burst, prescaler, counters, status byte; reading does not "
         "step its read sequence), 'next_video' = layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster "
         "position, 'next_palette' = the 9-bit palettes (nr_palette = '0'-'7' | name | 'all', default the selected one; nr_range = '16-31'), "
@@ -1931,7 +1935,7 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
                     aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "profi" && aspect != "isa" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
-                    aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "next" && aspect != "next_regs" && aspect != "next_mmu" && aspect != "next_reg_journal" && aspect != "next_sd" && aspect != "next_divmmc" && aspect != "next_nmi" && aspect != "next_dma" && aspect != "next_video" && aspect != "next_palette" && aspect != "next_ports" && aspect != "next_nextreg" && aspect != "next_copper" && aspect != "next_sprites" && aspect != "next_pixel" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
+                    aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "next" && aspect != "next_regs" && aspect != "next_mmu" && aspect != "next_reg_journal" && aspect != "next_sd" && aspect != "next_divmmc" && aspect != "next_nmi" && aspect != "next_audio" && aspect != "next_input" && aspect != "next_dma" && aspect != "next_video" && aspect != "next_palette" && aspect != "next_ports" && aspect != "next_nextreg" && aspect != "next_copper" && aspect != "next_sprites" && aspect != "next_pixel" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
@@ -2376,7 +2380,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
-                        else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu" || aspect == "next_reg_journal" || aspect == "next_sd" || aspect == "next_divmmc" || aspect == "next_nmi" ||
+                        else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu" || aspect == "next_reg_journal" || aspect == "next_sd" || aspect == "next_divmmc" || aspect == "next_nmi" || aspect == "next_audio" || aspect == "next_input" ||
                                  aspect == "next_dma" || aspect == "next_video" || aspect == "next_palette" || aspect == "next_ports" ||
                                  aspect == "next_nextreg" || aspect == "next_copper" || aspect == "next_sprites" || aspect == "next_pixel")
                         {
@@ -2999,7 +3003,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                         << (value["port_map"]["extended_map"].asBool() ? "open" : "closed") << ", 8255 control #"
                                         << std::hex << value["ppi8255"]["control"].asInt() << std::dec;
                             }
-                            else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu" || aspect == "next_reg_journal" || aspect == "next_sd" || aspect == "next_divmmc" || aspect == "next_nmi" ||
+                            else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu" || aspect == "next_reg_journal" || aspect == "next_sd" || aspect == "next_divmmc" || aspect == "next_nmi" || aspect == "next_audio" || aspect == "next_input" ||
                                      aspect == "next_dma" || aspect == "next_video" || aspect == "next_palette" || aspect == "next_ports" ||
                                      aspect == "next_nextreg" || aspect == "next_copper" || aspect == "next_sprites" || aspect == "next_pixel")
                             {
@@ -3085,6 +3089,36 @@ void RegisterInspectState(ToolRegistry& registry)
                                         else
                                             out << e["kind"].asString() << " block " << e["block"].asUInt64();
                                     }
+                                }
+                                else if (aspect == "next_audio")
+                                {
+                                    const auto& cfg = value["config"];
+                                    out << "\n[next_audio] " << cfg["chip_model"].asString() << " " << cfg["stereo_mode"].asString()
+                                        << ", turbosound " << (cfg["turbosound"].asBool() ? "on" : "off") << ", DAC " << (cfg["dac"].asBool() ? "on" : "off")
+                                        << ", selected chip " << value["selected_chip"].asInt();
+                                    for (const auto& chip : value["chips"])
+                                    {
+                                        out << "\n  chip " << chip["index"].asInt() << (chip["selected"].asBool() ? "*" : "") << " pan " << chip["pan"].asString()
+                                            << (chip["mono"].asBool() ? " mono" : "") << " tones";
+                                        for (const auto& tone : chip["tone_periods"])
+                                            out << " " << tone.asInt();
+                                        out << " mixer " << chip["mixer"].asString() << " volumes";
+                                        for (const auto& volume : chip["volumes"])
+                                            out << " " << volume.asInt();
+                                    }
+                                    const auto& dac = value["dac"];
+                                    out << "\n  DAC A " << dac["a"].asString() << " B " << dac["b"].asString() << " C " << dac["c"].asString() << " D "
+                                        << dac["d"].asString() << " (left " << dac["left_sum"].asInt() << ", right " << dac["right_sum"].asInt() << ")";
+                                }
+                                else if (aspect == "next_input")
+                                {
+                                    const auto& modes = value["joystick_modes"];
+                                    const auto& k = value["kempston_1f"];
+                                    out << "\n[next_input] left " << modes["left"]["name"].asString() << " (" << modes["left"]["port"].asString() << "), right "
+                                        << modes["right"]["name"].asString() << " (" << modes["right"]["port"].asString() << "); NR #05 " << modes["nr_05"].asString()
+                                        << "; I/O mode " << (value["io_mode"]["enabled"].asBool() ? value["io_mode"]["mode"].asString() : std::string("off"))
+                                        << "; port #1F " << k["value"].asString() << (k["selected_by_nr_05"].asBool() ? "" : " (not selected by NR #05)")
+                                        << "; not modelled: port #37, MD pad buttons, extended keys";
                                 }
                                 else if (aspect == "next_nmi")
                                 {

@@ -37,7 +37,6 @@
 #include "emulator/io/z80n/nextregjournal.h"
 #include "emulator/io/z80n/nextdivmmcjournal.h"
 #include "emulator/io/z80n/nextintjournal.h"
-#include "debugger/ports/nextnmi.h"
 #include "emulator/io/z80n/nextsdjournal.h"
 #include "emulator/io/z80n/nextreportquery.h"
 #include "emulator/state/devicestate.h"
@@ -568,6 +567,61 @@ inline std::string StateText(EmulatorContext* context, const std::vector<std::st
             }
         return out;
     }
+    if (sub == "audio")
+    {
+        const StateNode report = DeviceState::NextAudioReport(context);
+        const std::string unavailableText = unavailable(report);
+        if (!unavailableText.empty())
+            return unavailableText;
+        std::string out;
+        if (const StateNode* cfg = report.find("config"))
+            out += "Sound: " + Field(*cfg, "chip_model") + " " + Field(*cfg, "stereo_mode") + ", turbosound " + Field(*cfg, "turbosound") + ", DAC " +
+                   Field(*cfg, "dac") + ", beeper excluded " + Field(*cfg, "beeper_excluded") + " (NR #06 " + Field(*cfg, "nr_06") + ", #08 " +
+                   Field(*cfg, "nr_08") + ", #09 " + Field(*cfg, "nr_09") + "), selected chip " + Field(report, "selected_chip") + newline;
+        if (const StateNode* chips = report.find("chips"))
+            for (const StateNode& chip : chips->items)
+            {
+                out += "chip " + Field(chip, "index") + (Field(chip, "selected") == "on" ? "*" : " ") + " pan " + Field(chip, "pan") +
+                       (Field(chip, "mono") == "on" ? " mono" : "") + ", tones";
+                if (const StateNode* tones = chip.find("tone_periods"))
+                    for (const StateNode& tone : tones->items)
+                        out += " " + std::to_string(tone.i);
+                out += ", noise " + Field(chip, "noise_period") + ", mixer " + Field(chip, "mixer") + ", volumes";
+                if (const StateNode* volumes = chip.find("volumes"))
+                    for (const StateNode& volume : volumes->items)
+                        out += " " + std::to_string(volume.i);
+                out += ", envelope " + Field(chip, "envelope_period") + " shape " + Field(chip, "envelope_shape") + newline;
+            }
+        if (const StateNode* dac = report.find("dac"))
+            out += "DAC " + Field(*dac, "enabled") + ": A " + Field(*dac, "a") + " B " + Field(*dac, "b") + " C " + Field(*dac, "c") + " D " +
+                   Field(*dac, "d") + " (left " + Field(*dac, "left_sum") + ", right " + Field(*dac, "right_sum") + ")" + newline;
+        return out;
+    }
+    if (sub == "input")
+    {
+        const StateNode report = DeviceState::NextInputReport(context);
+        const std::string unavailableText = unavailable(report);
+        if (!unavailableText.empty())
+            return unavailableText;
+        std::string out;
+        if (const StateNode* modes = report.find("joystick_modes"))
+        {
+            const StateNode* l = modes->find("left");
+            const StateNode* r = modes->find("right");
+            if (l && r)
+                out += "Joystick (NR #05 " + Field(*modes, "nr_05") + "): left " + Field(*l, "name") + " [" + Field(*l, "port") + "], right " +
+                       Field(*r, "name") + " [" + Field(*r, "port") + "]" + newline;
+        }
+        if (const StateNode* io = report.find("io_mode"))
+            out += "I/O mode (NR #0B " + Field(*io, "nr_0b") + "): " + (Field(*io, "enabled") == "on" ? Field(*io, "mode") : std::string("off")) + newline;
+        if (const StateNode* k = report.find("kempston_1f"))
+        {
+            out += "Kempston #1F: " + Field(*k, "value") + (Field(*k, "selected_by_nr_05") == "on" ? "" : "  (NR #05 does not select it; this emulator still answers)") +
+                   newline;
+        }
+        out += std::string("Not modelled: port #37, MD pad buttons, extended keys (NR #B0-#B2 only store their bytes)") + newline;
+        return out;
+    }
     if (sub == "nmi" || sub == "nmi-journal")
     {
         if (args.size() == 3 && (args[2] == "on" || args[2] == "off" || args[2] == "clear"))
@@ -664,25 +718,17 @@ inline std::string StateText(EmulatorContext* context, const std::vector<std::st
             }
         return out;
     }
-    return "Error: unknown subcommand '" + args[1] + "'. Available: (none), regs, mmu, dma, video, palette [palette= range=], ports [port= access=], nextreg [reg= changed=], copper [from= count= raw=], sprites [from= count= all=], pixel <x> <y> [sx], layer-capture [on|off], journal [regs=.. sources=.. since=N from=F to=F limit=N | on | off | clear], sd [kinds= card= since= from= to= limit= | on | off | clear], divmmc [kinds= since= from= to= limit= | on | off | clear], nmi [kinds= since= from= to= limit= | on | off | clear]" +
+    return "Error: unknown subcommand '" + args[1] + "'. Available: (none), regs, mmu, dma, video, palette [palette= range=], ports [port= access=], nextreg [reg= changed=], copper [from= count= raw=], sprites [from= count= all=], pixel <x> <y> [sx], layer-capture [on|off], journal [regs=.. sources=.. since=N from=F to=F limit=N | on | off | clear], sd [kinds= card= since= from= to= limit= | on | off | clear], divmmc [kinds= since= from= to= limit= | on | off | clear], nmi [kinds= since= from= to= limit= | on | off | clear], audio, input" +
            newline;
 }
 
 /// The CLI command `next ...` (args without the command word): `nextreg <reg> <value> [nextreg|port|internal]` writes a NextREG,
-/// `nmi <m1|drive|pulse>` raises an NMI; any
+/// any
 /// other word is a `state next` subcommand (`next dma`)
 inline std::string NextCommand(Emulator* emulator, const std::vector<std::string>& args, const char* newline)
 {
     if (!emulator)
         return std::string("No emulator selected.") + newline;
-    // next nmi <m1|drive|pulse>: raise an NMI as a board button or the bare line (`next nmi on|off|clear|kinds=..` are the journal's)
-    if (args.size() == 2 && args[0] == "nmi" && (args[1] == "m1" || args[1] == "drive" || args[1] == "pulse"))
-    {
-        const NextNmiControl::Result result = NextNmiControl::Trigger(emulator, args[1]);
-        if (!result.ok)
-            return "Error: " + result.reason + newline;
-        return std::string("NMI from ") + result.source + (result.accepted ? " accepted" : " refused: " + result.reason) + newline;
-    }
     const bool write = !args.empty() && args[0] == "nextreg" && args.size() >= 3 && args.size() <= 4 && args[1].find('=') == std::string::npos;
     if (!write)
     {

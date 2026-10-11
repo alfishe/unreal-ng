@@ -14,9 +14,8 @@ def test_nmi_aspect_and_trigger(s):
     expect('[next_nmi]' in r.text and 'm1_button' in r.text and 'io_trap (not modelled)' in r.text, 'the NMI sources in the text', r.text)
     expect('OFF (POST /next/nmi-journal' in r.text, 'the journal says it is off and how to switch it on', r.text)
     s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/next/nmi-journal', 'body': {'enabled': True, 'clear': True}})
-    refused = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/next/nmi', 'body': {'source': 'm1'}})
-    body = refused.structured['body']
-    expect(body.get('accepted') is False and 'NR #06' in body.get('reason', ''), 'the M1 button is refused with the reason', refused.structured)
+    # the M1 button is off at power on: NR #02 bit 3 is refused with the reason, and the journal says so
+    s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/next/nextreg', 'body': {'reg': '02', 'value': '08'}})
     r = s.call('inspect_state', {'aspects': ['next_nmi'], 'nr_nmi_kinds': 'nmi_request', 'nr_nmi_limit': 5})
     expect('nmi_request m1_button REFUSED' in r.text, 'the refusal is in the journal', r.text)
     bad = s.call('inspect_state', {'aspects': ['next_nmi'], 'nr_nmi_kinds': 'jump'}, ok=False)

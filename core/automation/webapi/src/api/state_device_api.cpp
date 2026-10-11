@@ -22,7 +22,6 @@
 #include <emulator/io/z80n/nextregjournal.h>
 #include <emulator/io/z80n/nextdivmmcjournal.h>
 #include <emulator/io/z80n/nextintjournal.h>
-#include <debugger/ports/nextnmi.h>
 #include <emulator/io/z80n/nextsdjournal.h>
 #include <emulator/io/z80n/nextreportquery.h>
 #include <json/json.h>
@@ -510,6 +509,28 @@ void EmulatorAPI::getStateNextNmi(const HttpRequestPtr& req, std::function<void(
     ReplyState(DeviceState::NextNmiReport(emulator->GetContext(), query), callback);
 }
 
+/// @brief GET /api/v1/emulator/{id}/state/next/audio - the Next's sound as configured (DeviceState::NextAudioReport)
+void EmulatorAPI::getStateNextAudio(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::NextAudioReport(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/input - the Next's joystick modes and the Kempston port (DeviceState::NextInputReport)
+void EmulatorAPI::getStateNextInput(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::NextInputReport(emulator->GetContext()), callback);
+}
+
 /// @brief POST /api/v1/emulator/{id}/next/nmi-journal {"enabled": true|false, "clear": true, "capacity": N} - switch, clear or resize the
 /// interrupt / NMI / reset journal (DeviceState::NextNmiJournalControl)
 void EmulatorAPI::postNextNmiJournal(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
@@ -529,25 +550,6 @@ void EmulatorAPI::postNextNmiJournal(const HttpRequestPtr& req, std::function<vo
     if (body && body->isMember("capacity"))
         capacity = static_cast<size_t>((*body)["capacity"].asUInt64());
     ReplyState(DeviceState::NextNmiJournalControl(emulator->GetContext(), enable, clear, capacity), callback);
-}
-
-/// @brief POST /api/v1/emulator/{id}/next/nmi {"source": "m1"|"drive"|"pulse"} - raise an NMI as the board's M1 or DRIVE button or as the bare
-/// /NMI line (NextNmiControl): 400 bad source, 409 not a Next. A button the board refuses answers accepted: false with the reason
-void EmulatorAPI::postNextNmi(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
-                              const std::string& id) const
-{
-    auto emulator = getEmulatorByIdOrIndex(id);
-    if (!emulator)
-        return ReplyNotFound("Emulator not found with ID: " + id, callback);
-    auto body = req->getJsonObject();
-    if (!body || !body->isMember("source") || !(*body)["source"].isString())
-        return ReplyNotFound("Request must contain 'source': m1, drive or pulse", callback, HttpStatusCode::k400BadRequest);
-    const NextNmiControl::Result result = NextNmiControl::Trigger(emulator.get(), (*body)["source"].asString());
-    if (result.notNext)
-        return ReplyNotFound(result.reason, callback, HttpStatusCode::k409Conflict);
-    if (result.badSource)
-        return ReplyNotFound(result.reason, callback, HttpStatusCode::k400BadRequest);
-    ReplyState(NextNmiControl::ToState(result), callback);
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/next/pixel?x=&y=&sx= - the pixel inspector (DeviceState::NextPixel; design-layer-capture.md): which layer

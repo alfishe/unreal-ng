@@ -145,8 +145,8 @@ reset bits and, with the journal on (off by default), every interrupt the CPU ac
 
 ```text
 invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/next/nmi-journal","body":{"enabled":true,"clear":true}}
-invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/next/nmi","body":{"source":"m1"}}
-#   → {"ok":true,"accepted":false,"source":"m1","reason":"the M1 button is off (NR #06 bit 3)"}
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/next/nextreg","body":{"reg":"02","value":"08"}}   # the M1 button (NR #02 bit 3)
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/nmi","body":{"magic":true}}                      # the magic button: the DRIVE button on a Next (a plain POST /nmi is the bare line)
 inspect_state {"aspects":["next_nmi"],"nr_nmi_kinds":"int_ack,nmi_request","nr_nmi_limit":20}
 #   → [next_nmi] NMI in service: no; sources: m1_button blocked (...) drive_button ready io_trap (not modelled); multiface off +3, memory out; ...
 #       #1 f512 pc 0x3DBD int_ack ula
@@ -157,8 +157,19 @@ inspect_state {"aspects":["next_nmi"],"nr_nmi_kinds":"int_ack,nmi_request","nr_n
 mode, the vector; pulse mode carries `#FF` on the bus and no vector. `nmi_request.accepted` false has `reason`: the button's enable bit in NR
 `#06`, CONMEM (port `#E3` bit 7), a DivMMC handler still running, an open Multiface session. `retn.source` says which session the RETN ended
 (`multiface`, `divmmc`, `none`). `reset` is `soft` or `hard`, with NR `#02` bits 1:0 after it (`power_on`, `first_reset_after_power_on`,
-`later_reset`). The +3 FDC I/O trap (NR `#D8`-`#DA`) is listed as an NMI source but is not modelled. CLI `state next nmi`, `next nmi m1`; Lua
-`next_nmi{...}`, `next_nmi_trigger("m1")`; Python `emu.next_nmi(...)`, `emu.next_nmi_trigger("m1")`.
+`later_reset`). The +3 FDC I/O trap (NR `#D8`-`#DA`) is listed as an NMI source but is not modelled. CLI `state next nmi`; Lua
+`next_nmi{...}`; Python `emu.next_nmi(...)`.
+
+### 3a5. Why is there no sound, why does the joystick do nothing? (audio and input)
+
+`state/next/audio` shows the chips as the program set them: the model (YM or AY), ABC or ACB, turbosound, the selected chip, each chip's pan
+(a chip panned `muted` is silent), its 16 registers with the tone, noise and envelope periods and the volumes (bit 4: the envelope drives
+the channel), and the four DAC channels with the left (A + B) and right (C + D) sums (`#80` is silence). `state/next/input` shows NR `#05`
+decoded for the left and right joystick (Kempston 1 / 2, MD 1 / 2, Sinclair, cursor, I/O mode) and which port each answers, the NR `#0B`
+I/O mode, and the Kempston port `#1F` now. `kempston_1f.selected_by_nr_05` false means `zxnext.vhd` would not drive `#1F` for these modes while
+this emulator still does (`answers_here`); port `#37`, the MD pad buttons and the extended keys NR `#B0`-`#B2` are not modelled. CLI
+`state next audio` / `state next input`, Lua `next_audio()` / `next_input()`, Python `emu.next_audio()` / `emu.next_input()`, MCP aspects
+`next_audio` / `next_input`.
 
 ### 3b. What did the program configure? (the debugger reports)
 

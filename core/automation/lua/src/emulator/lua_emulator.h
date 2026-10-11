@@ -82,7 +82,6 @@
 #include <emulator/io/z80n/nextregjournal.h>
 #include <emulator/io/z80n/nextdivmmcjournal.h>
 #include <emulator/io/z80n/nextintjournal.h>
-#include <debugger/ports/nextnmi.h>
 #include <emulator/io/z80n/nextsdjournal.h>
 #include <emulator/io/z80n/nextreportquery.h>
 #include <emulator/video/screendigest.h>
@@ -3791,6 +3790,18 @@ public:
             }
             return StateNodeToLua(s, DeviceState::NextDivMmcJournalControl(emulator->GetContext(), enable, clear, capacity));
         });
+        // next_audio() / next_input(): the Next's sound as configured (chips, pan, registers, DAC) and its joystick modes with the Kempston port
+        // (DeviceState::NextAudioReport / NextInputReport; no side effect on the machine)
+        lua.set_function("next_audio", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextAudioReport(emulator->GetContext()));
+        });
+        lua.set_function("next_input", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextInputReport(emulator->GetContext()));
+        });
         // next_nmi([{kinds="int_ack,nmi_request", since=N, from=F, to=F, limit=N}]): the Next's NMI sources, Multiface, interrupts, reset and the
         // interrupt / NMI / reset journal (DeviceState::NextNmiReport); nil + error on a bad option. The journal is off by default:
         // next_nmi_journal_control({enabled=true}) first
@@ -3835,13 +3846,6 @@ public:
                     capacity = static_cast<size_t>(n.as<long long>());
             }
             return StateNodeToLua(s, DeviceState::NextNmiJournalControl(emulator->GetContext(), enable, clear, capacity));
-        });
-        // next_nmi_trigger(source): raise an NMI as the Multiface button ("m1"), the DRIVE button ("drive") or the bare /NMI line ("pulse");
-        // the reply says accepted and, if the board refused, why (NextNmiControl)
-        lua.set_function("next_nmi_trigger", [this](sol::this_state s, const std::string& source) -> sol::object {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return sol::make_object(s, sol::lua_nil);
-            return StateNodeToLua(s, NextNmiControl::ToState(NextNmiControl::Trigger(emulator, source)));
         });
         // next_dma() / next_video(): the Next's DMA and video layers (DeviceState::NextDma / NextVideo; no side effect on the machine)
         lua.set_function("next_dma", [this](sol::this_state s) -> sol::object {
