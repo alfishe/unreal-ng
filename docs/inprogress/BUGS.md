@@ -73,6 +73,9 @@ they join before any fatal check, or their thread lives in a class that joins in
 Seen on the way, not changed here: `AudioRingBuffer_Test.SPSC_ConcurrentIntegrity` hangs at the producer's join when
 its sequence check fails (the consumer stops reading); `EmulatorManager_Test.RemovalDoesNotHoldTheLockAHandlerWaitsFor`
 leaves its MessageCenter observer (it captures locals by reference) registered when an early `ASSERT` fails.
+Both fixed afterwards (`test-fixes`): the SPSC producer stops when the stream breaks, the consumer has a deadline and
+the ring is no longer static (a broken stream injected on purpose now fails 3 / 3 repeats in 0 ms instead of hanging);
+the observer is unregistered by a guard on every exit path.
 
 ### Requirements / Acceptance Criteria
 - [ ] The changed tests pass; the next valgrind run loses no shard to `std::terminate`.
