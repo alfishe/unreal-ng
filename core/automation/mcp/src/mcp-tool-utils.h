@@ -111,7 +111,7 @@ inline std::string DescribeErrorBody(const Json::Value& body)
 }
 
 /// Compact one-line register summary
-inline std::string FormatRegisters(const Json::Value& registers)
+inline std::string FormatRegisters(const Json::Value& registers, bool full = false)
 {
     if (!registers.isObject() || registers.isNull())
     {
@@ -137,6 +137,21 @@ inline std::string FormatRegisters(const Json::Value& registers)
     }
     if (registers["interrupt"]["halted"].asBool())
         out << " HALT";
+    // The rest a debugger shows: the alternate set, I, R, the interrupt mode and flip-flops, MEMPTR
+    const Json::Value& alternate = registers["alternate"];
+    const Json::Value& interrupt = registers["interrupt"];
+    if (full && alternate.isObject())
+        out << "\nAF'=" << Hex16(alternate["af_"].asUInt()) << " BC'=" << Hex16(alternate["bc_"].asUInt())
+            << " DE'=" << Hex16(alternate["de_"].asUInt()) << " HL'=" << Hex16(alternate["hl_"].asUInt());
+    if (full && special.isObject())
+    {
+        char ir[24];
+        std::snprintf(ir, sizeof(ir), " I=0x%02X R=0x%02X", special["i"].asUInt() & 0xFFu, special["r"].asUInt() & 0xFFu);
+        out << ir << " MEMPTR=" << Hex16(special["memptr"].asUInt());
+    }
+    if (full && interrupt.isObject())
+        out << " IM " << interrupt["im"].asUInt() << " IFF1=" << interrupt["iff1"].asUInt() << " IFF2="
+            << interrupt["iff2"].asUInt();
     return out.str();
 }
 

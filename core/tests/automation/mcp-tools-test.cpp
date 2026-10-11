@@ -4141,3 +4141,95 @@ TEST_F(McpTools_Test, ManageSymbols_ListFiltersAndWritesTheLabels)
     args["from"] = "zz";
     EXPECT_TRUE(RunTool(*_registry, "manage_symbols", args, *_caller).isError);
 }
+
+/// bp_add switches the breakpoints feature on when it is off (a breakpoint never fires without it) and says so
+TEST_F(McpTools_Test, ControlExecution_BpAddSwitchesTheBreakpointsFeatureOn)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/breakpoints"] = {200, Json::Value(Json::objectValue)};
+    Json::Value off;
+    off["enabled"] = false;
+    _caller->routes["GET /api/v1/emulator/emu-1/feature/breakpoints"] = {200, off};
+    _caller->routes["PUT /api/v1/emulator/emu-1/feature/breakpoints"] = {200, Json::Value(Json::objectValue)};
+    Json::Value args;
+    args["action"] = "bp_add";
+    args["address"] = "0x0038";
+    mcp::ToolResult result = RunTool(*_registry, "control_execution", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* put = _caller->Last("PUT", "/api/v1/emulator/emu-1/feature/breakpoints");
+    ASSERT_NE(put, nullptr) << "the feature is switched on";
+    EXPECT_TRUE(put->body["enabled"].asBool());
+    EXPECT_NE(result.text.find("switched on"), std::string::npos) << result.text;
+
+    Json::Value on;
+    on["enabled"] = true;
+    _caller->routes["GET /api/v1/emulator/emu-1/feature/breakpoints"] = {200, on};
+    auto puts = [this] {
+        size_t n = 0;
+        for (const auto& call : _caller->calls)
+            n += call.method == "PUT" ? 1 : 0;
+        return n;
+    };
+    const size_t putsBefore = puts();
+    result = RunTool(*_registry, "control_execution", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(result.text.find("feature"), std::string::npos) << "nothing to say when it is on\n" << result.text;
+    EXPECT_EQ(puts(), putsBefore) << "no PUT when the feature is on";
+}
+
+/// resolve writes the answer: name, address, bank, type, comment
+TEST_F(McpTools_Test, ManageSymbols_ResolveAnswerInTheText)
+{
+    Json::Value body;
+    body["found"] = true;
+    body["label"]["name"] = "CLS";
+    body["label"]["address"] = 0x0D6B;
+    body["label"]["bank"] = 3;
+    body["label"]["bankType"] = "rom";
+    body["label"]["type"] = "code";
+    body["label"]["comment"] = "CLS command";
+    _caller->routes["GET /api/v1/emulator/emu-1/labels/resolve?name=CLS"] = {200, body};
+    Json::Value args;
+    args["action"] = "resolve";
+    args["name"] = "CLS";
+    mcp::ToolResult result = RunTool(*_registry, "manage_symbols", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("CLS = 0x0D6B rom3 code ; CLS command"), std::string::npos) << result.text;
+}
+
+/// A region read answering a hex string without spaces still lists every byte
+TEST_F(McpTools_Test, MemoryAccess_RegionHexWithoutSpaces)
+{
+    Json::Value region;
+    region["region"] = "neogs.ram";
+    region["offset"] = "0x00000";
+    region["hex"] = "FF00A8";
+    _caller->routes["GET /api/v1/emulator/emu-1/memory/region/neogs.ram?offset=0&length=3&format=hex"] = {200, region};
+    Json::Value args;
+    args["action"] = "read";
+    args["space"] = "neogs.ram";
+    args["length"] = 3;
+    mcp::ToolResult result = RunTool(*_registry, "memory_access", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("0x0000: FF 00 A8"), std::string::npos) << result.text;
+}
+
+/// inspect_state registers shows the full set: the alternate registers, I, R, MEMPTR, IM and the flip-flops
+TEST(McpToolUtils_Test, FormatRegistersFull)
+{
+    Json::Value r;
+    r["special"]["pc"] = 0x8000;
+    r["special"]["sp"] = 0x5BFF;
+    r["special"]["i"] = 0x3F;
+    r["special"]["r"] = 0x12;
+    r["special"]["memptr"] = 0x0038;
+    r["main"]["af"] = 0x1D74;
+    r["alternate"]["af_"] = 0x0044;
+    r["interrupt"]["im"] = 1;
+    r["interrupt"]["iff1"] = 1;
+    r["interrupt"]["iff2"] = 1;
+    const std::string brief = mcp::FormatRegisters(r);
+    EXPECT_EQ(brief.find("AF'"), std::string::npos) << "steps stay one line: " << brief;
+    const std::string full = mcp::FormatRegisters(r, true);
+    EXPECT_NE(full.find("AF'=0x0044"), std::string::npos) << full;
+    EXPECT_NE(full.find("I=0x3F R=0x12 MEMPTR=0x0038 IM 1 IFF1=1 IFF2=1"), std::string::npos) << full;
+}

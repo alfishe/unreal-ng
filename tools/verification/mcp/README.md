@@ -1,0 +1,64 @@
+# MCP verification
+
+Black-box checks of the emulator's MCP server as an agent sees it: JSON-RPC over HTTP to a running `unreal-qt`, one
+script per block of tools. Standard library only. How and when to run them:
+[docs/guidelines/mcp-testing-guidelines.md](../../../docs/guidelines/mcp-testing-guidelines.md).
+
+## Run
+
+```bash
+# Launch a fresh instance on ports of its own (WebAPI 8095, MCP 8295), run everything, stop it
+tools/verification/mcp/run_all.py --launch cmake-build-agent-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt
+
+# Against a running server, some scripts only, the tests whose name contains "bp"
+tools/verification/mcp/run_all.py --mcp-url http://127.0.0.1:8295/mcp test_control_execution -k bp
+
+# One script on its own
+tools/verification/mcp/test_symbols.py --mcp-url http://127.0.0.1:8295/mcp
+```
+
+Each script destroys every instance on the server it talks to and creates its own machine (`--model`, default
+PENTAGON; `test_input.py` takes a 48K for the BASIC prompt). Do not point it at an emulator someone works in: launch one
+(`--launch`, `--port-base`). Exit code 0 = every test passed. The whole set takes about 5 seconds.
+
+## Scripts
+
+| Script | Tools | What it checks |
+|--------|-------|----------------|
+| `test_protocol.py` | the server | handshake and version fallback, every tool has a description and `response_format`, text-only by default, the `json` echo equals `structuredContent`, bad arguments are tool errors (the server survives), resources |
+| `test_emulator_manage.py` | `emulator_manage` | list / status / models / server in the text, reset, unknown action, `target: auto` refuses two machines |
+| `test_inspect_state.py` | `inspect_state` | every aspect answers with its data in the text (none says "see structuredContent"), registers, memory hexdump at a `"0x…"` address, disasm listing, the attribute grid, key=value aspects |
+| `test_memory_access.py` | `memory_access` | write / read round trip with the bytes in the text, `address` = `offset`, both = error, the 256-line cut, a region read, bad hex |
+| `test_control_execution.py` | `control_execution` | step / step_n / run report PC, a breakpoint is listed, skipped by `run_frames` and hit by `resume` + `wait` (bp_add switches the breakpoints feature on) |
+| `test_debug_code.py` | `debug_code` | assemble then disassemble, find_bytes, the call trace one event per line, a bad address |
+| `test_symbols.py` | `manage_symbols` | resolve by name and by address, list by name / range / limit, a bad range |
+| `test_capture_media.py` | `capture_media` | screenshot metadata by default, the picture as an MCP image block (real PNG / GIF, no base64 in the JSON echo), a stable digest, status calls |
+| `test_input.py` | `type_input`, `mouse_input`, `joystick_input` | a typed BASIC line reaches the screen, key names, device status in the text, wrong arguments name the right ones |
+| `test_time_travel.py` | `time_travel` | record, stop, the range in status, seek, an out-of-range seek is reported |
+| `test_media.py` | `media`, `load_software`, `rzx_playback` | slots and formats in the text, a tape from `testdata/` loads into its slot, a missing file is named |
+| `test_router.py` | `search_api`, `invoke_api` | search by words, a GET by path, a missing path |
+| `test_analysis.py` | `analyze_performance` | frame cost and profiler status in the text, coverage over a run |
+| `test_asm_source.py` | `asm_source` | dialects and formats, an encode / decode round trip |
+| `test_text_coverage.py` | many | the share of the `structuredContent` values the default text carries, per call, against a floor: a call whose text falls back to a headline fails |
+
+The disassembler's quality against z88dk / sjasmplus is [`../disasm/`](../disasm/README.md) (needs those tools).
+
+## Writing a test
+
+A script is `test_*` functions taking a `Session`; `mcplib.main(globals())` runs them. An optional `setup(s)` replaces
+the default fresh machine.
+
+```python
+from mcplib import expect, main
+
+def test_registers_in_the_text(s):
+    r = s.call('inspect_state', {'aspects': ['registers']})   # a tool error fails the test (ok=False to allow it)
+    expect('PC=0x' in r.text, 'PC in the text', r.text)        # r.text, r.structured, r.blocks('image'), r.is_error
+
+if __name__ == '__main__':
+    sys.exit(main(globals()))
+```
+
+Check what the model reads, `r.text`, first: a value only in `structuredContent` is invisible to clients that pass only
+`content[]` to the model. Check `r.structured` for exact values. Make a test independent of the machine's past (write the
+code it runs, set PC), as `test_breakpoint_listed_and_hit` does.
