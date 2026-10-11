@@ -201,8 +201,15 @@ reading by eye. Remove the diagnostics with `git checkout` of those files before
 tools/sanitize/configure.sh tsan
 BUILD_DIR=$PWD/cmake-build-tsan tools/build/build.sh core-tests
 cd cmake-build-tsan/bin
-TSAN_OPTIONS=halt_on_error=0 ./core-tests --gtest_filter='UUID_Test.*:EmulatorManager_Test.*'
+TSAN_OPTIONS="halt_on_error=0:suppressions=$PWD/../../tools/sanitize/tsan.supp" ./core-tests --gtest_filter='UUID_Test.*:EmulatorManager_Test.*'
 ```
+
+`tools/sanitize/tsan.supp` holds the races that are there by design: a tool reading guest memory live
+(`DirectReadFromZ80Memory`) and a test reading the machine state live (the access sits in a `*_test.cpp` or
+`testwaithelper.h`). The worst case of such a read is a value one step older or newer. The file uses only
+`race_top:` (the frame that touches the memory); a `race:` entry matches any frame of either stack and would hide real
+races under `Core::CPUFrameCycle`. Containers, pointers to storage that can be freed and read-modify-write are never
+suppressed: they are bugs.
 
 TSan and ASan cannot share a build. TSan works here, but the tree is not race-free yet: on 2026-10-10
 `EmulatorManager_Test.*:UUID_Test.*:MessageCenter*:ExecutionArbiter*` gave 55 warnings, mostly the emulation
