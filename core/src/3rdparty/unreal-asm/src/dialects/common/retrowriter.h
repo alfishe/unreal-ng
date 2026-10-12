@@ -122,7 +122,7 @@ protected:
     std::optional<std::string> SymbolText(const Expr& u);
     std::string Expression(const Expr& e);   ///< the target's text, else the value with a note, else 0 with a warning
     std::string Known(const Expr& e);        ///< one that must be known when the line is assembled (ORG, EQU, DS ...)
-    std::string OperandText(const Operand& o);
+    virtual std::string OperandText(const Operand& o);
     std::string Operands(const std::vector<Operand>& operands);
     std::string NotConverted(const std::string& what);
     std::vector<std::string> DataLines(const std::string& keyword, const std::vector<std::string>& items, size_t width = 40) const;

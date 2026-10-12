@@ -412,6 +412,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Work** | **2 d** (six programs, two layouts expected) |
 | **Verified: 1983, 1.1, GG, v7.E** (2026-10-10, dumps `zeus1983-*`, `zeus11-*`, `zeusgg-*`, `zeus7e-*`) | `Linear`: the text where `o` put it (the dumps use `o 32768`), records `[number] tokens 00`, then `FF FF`; a start word and, right after it, the end word holding the address of the last `FF`. 1983, 1.1 and GG keep them at `#FD00` / `#FD02` (above the code at 57344), v7.E at `#FAAB` / `#FAAD`. A line typed at the prompt stays out of the text until Enter. Found with a memory search for the two values in the loaded state. Identified by 24 bytes of their code with the title (`#E028` / `#E020`). Descriptors `zeus-1983`, `zeus-1.1`, `zeus-gg`, `zeus-7e`; no save here (tape / the dumps take the loaded text and a typed line). ZEUS 2.2, 3.0, 3.1, Zeus Pro 2.01, Zeus Plus 2.16 are not covered yet |
 
+| **Built: inject (Z4, 2026-10-11)** | ZEUS 1983 at 57344 at its prompt (the line input returns through `#F6E5`, `#E0D5`): the records from the start word, the end word at the last `FF`, as `o` leaves them; no "changed" flag, so a loaded text is replaced by force or when it is the caller's own. ZEUS 1983 assembled the injected `oracle1.asm` and every instruction form to sjasmplus' bytes (research-sjasmplus-to-zeus.md §3) |
 ### 7.15 Primus Assembler 2.9
 
 | | |
@@ -868,6 +869,14 @@ the index halves through PROMETHEUS' instruction table (`RetroWriter::HalfRegist
 `Linear` one (`LinearParams::injectable`). On the way: the live synchronizer missed page 5 on a 48K machine (it copied
 pages 0-2 by number): `CopyNow` takes the mapped pages always. Checked in GENS4: `oracle1.asm` and every instruction
 form to sjasmplus' bytes, loaded from tape and injected. Details: [research-sjasmplus-to-gens.md](research-sjasmplus-to-gens.md).
+
+**Built (2026-10-11): Z4 for ZEUS 1983.** The ZEUS backend (`dialects/zeus/zeusbackend.cpp`, on `ChainWriter`) writes
+chains of `+ - & !` (v7.E `*`), values for what ZEUS cannot compute (a high byte, XOR, a product before v7.E),
+labels of letters and digits, a lone label as `EQU $`, `DISP` as ZEUS' offset from `ORG`, `DEFM` with a free
+delimiter, the undocumented instructions as bytes. `ChainWriter` now leaves out `*` / `/` forms where the target has
+no such operator. The `Linear` inject takes a file that ends with the layout's end marker (the end word at its last
+byte). Checked in ZEUS 1983: `oracle1.asm` and every instruction form to sjasmplus' bytes, from memory and injected.
+Details: [research-sjasmplus-to-zeus.md](research-sjasmplus-to-zeus.md).
 
 ## 20. Effort (part B)
 

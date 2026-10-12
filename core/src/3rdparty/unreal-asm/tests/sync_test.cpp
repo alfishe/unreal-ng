@@ -799,6 +799,49 @@ TEST(SyncInject_Test, Zasm315TakesAFileAtItsCommandPromptAsLoadLeavesIt)
     EXPECT_TRUE(PlanInject(dump.machine, *d, written.bytes, own).ok) << "its own text: replaced without force";
 }
 
+TEST(SyncInject_Test, Zeus1983TakesAFileAtItsPromptAsOLeavesIt)
+{
+    Dump dump = Load("zeus1983-loaded");
+    const SyncDescriptor* d = FindDescriptor("zeus-1983");
+    ASSERT_NE(d, nullptr);
+    // its prompt: the line input returns through #F6E5, #E0D5 (page 0 holds the stack at #FF26)
+    const std::vector<uint16_t> words = {0xF680, 0x0000, 0xE0F0, 0xF6E5, 0xE0D5, 0x0044};
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        if (dump.machine.ram[k].page == 0)
+            for (size_t w = 0; w < words.size(); ++w)
+            {
+                dump.pages[k][0x3F26 + 2 * w] = static_cast<uint8_t>(words[w]);
+                dump.pages[k][0x3F26 + 2 * w + 1] = static_cast<uint8_t>(words[w] >> 8);
+            }
+    dump.machine.sp = 0xFF26;
+    std::string why;
+    ASSERT_TRUE(Idle(dump.machine, *d, why)) << why;
+
+    const WriteAsResult written = WriteAs(SourceDocument::FromText("        ORG #6000\nstart   LD A,1\n        JR start\n", "sjasmplus"), "zeus", d->version, "NEW");
+    ASSERT_TRUE(written.ok) << written.error;
+    // no "changed" flag: the loaded text is replaced by force (or when it is the caller's own) only
+    EXPECT_FALSE(PlanInject(dump.machine, *d, written.bytes).ok);
+    InjectOptions force;
+    force.force = true;
+    const InjectPlan plan = PlanInject(dump.machine, *d, written.bytes, force);
+    ASSERT_TRUE(plan.ok) << plan.error;
+    const uint16_t start = static_cast<uint16_t>(*dump.machine.Word(0xFD00));
+    std::map<uint16_t, uint8_t> pokes;
+    for (const InjectPlan::Poke& p : plan.pokes)
+        pokes[static_cast<uint16_t>((p.page == 2 ? 0x8000 : p.page == 5 ? 0x4000 : 0xC000) + p.offset)] = p.value;
+    for (size_t k = 0; k < written.bytes.size(); ++k)
+        EXPECT_EQ(pokes[static_cast<uint16_t>(start + k)], written.bytes[k]) << k;
+    EXPECT_EQ(pokes[0xFD02] | (pokes[0xFD03] << 8), static_cast<int>(start + written.bytes.size() - 1));   // the last FF
+
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        for (const InjectPlan::Poke& p : plan.pokes)
+            if (dump.machine.ram[k].page == p.page)
+                dump.pages[k][p.offset] = p.value;
+    const SyncText back = ReadText(dump.machine, *d);
+    ASSERT_TRUE(back.ok) << back.state;
+    EXPECT_EQ(back.file, written.bytes);
+}
+
 TEST(SyncInject_Test, Gens4TakesAFileAtItsPromptAsGLeavesIt)
 {
     Dump dump = Load("gens4-loaded");

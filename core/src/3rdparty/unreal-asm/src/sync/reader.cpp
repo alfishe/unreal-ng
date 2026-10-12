@@ -951,6 +951,18 @@ SyncDescriptor Zeus(const std::string& id, const std::string& title, const std::
     return d;
 }
 
+/// ZEUS 1983 at 57344 also takes a text at its prompt: its line input returns through #F6E5, #E0D5; the records from
+/// the start word, the end word at the last FF, as "o" leaves them
+SyncDescriptor Zeus1983()
+{
+    SyncDescriptor d = Zeus("zeus-1983", "ZEUS 1983 (Crystal)", "1983", 0xE028,
+             "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x20\x20\x20\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53", 0xFD00, "C");
+    d.linear.injectable = true;
+    d.idleChain = {0xF6E5, 0xE0D5};
+    d.idleWhere = "its prompt";
+    return d;
+}
+
 /// ZX-ASM 2.4 / 2.5 / 2.6 (asm-synchronizer.md §7.9): plain text (blank runs only) in one buffer, the start word at
 /// the program's load address + 3, the end word after it; the part above #C000 in RAM page 0 (the 48K memory). 2.6
 /// keeps its ";*" line in the buffer and saves it as text
@@ -1284,7 +1296,11 @@ InjectPlan PlanInjectLinear(const MachineView& machine, const SyncDescriptor& d,
         plan.error = "the text pointers of " + d.title + " are not in memory";
         return plan;
     }
-    const uint32_t end = *start + static_cast<uint32_t>(file.size());
+    // a file that ends with the end marker (ZEUS' FF FF): the end word points at the marker's last byte
+    const bool marked = !p.end.empty() && file.size() >= p.end.size() &&
+                        std::equal(p.end.begin(), p.end.end(), file.end() - static_cast<std::ptrdiff_t>(p.end.size()),
+                                   [](char a, uint8_t b) { return static_cast<uint8_t>(a) == b; });
+    const uint32_t end = *start + static_cast<uint32_t>(file.size()) - (marked ? static_cast<uint32_t>(p.end.size()) : 0);
     if (end + p.end.size() > 0x10000)
     {
         plan.error = "the text takes " + std::to_string(file.size()) + " bytes; " + d.title + " holds " + std::to_string(0x10000 - *start - p.end.size());
@@ -1300,8 +1316,9 @@ InjectPlan PlanInjectLinear(const MachineView& machine, const SyncDescriptor& d,
     bool ok = true;
     for (size_t k = 0; k < file.size(); ++k)
         ok = poke(*start + static_cast<uint32_t>(k), file[k]) && ok;
-    for (size_t k = 0; k < p.end.size(); ++k)
-        ok = poke(end + static_cast<uint32_t>(k), static_cast<uint8_t>(p.end[k])) && ok;
+    if (!marked)
+        for (size_t k = 0; k < p.end.size(); ++k)
+            ok = poke(end + static_cast<uint32_t>(k), static_cast<uint8_t>(p.end[k])) && ok;
     ok = poke(p.endAt, static_cast<uint8_t>(end & 0xFF)) && poke(p.endAt + 1u, static_cast<uint8_t>(end >> 8)) && ok;
     for (uint32_t at = p.resetFrom; at + 1 < p.resetTo; at += 2)
         ok = poke(at, static_cast<uint8_t>(*start & 0xFF)) && poke(at + 1, static_cast<uint8_t>(*start >> 8)) && ok;
@@ -1640,8 +1657,7 @@ const std::vector<SyncDescriptor>& Descriptors()
         LaserGenius(),
         Prometheus48(),
         Pasm30(),
-        Zeus("zeus-1983", "ZEUS 1983 (Crystal)", "1983", 0xE028,
-             "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x20\x20\x20\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53", 0xFD00, "C"),
+        Zeus1983(),
         Zeus("zeus-1.1", "ZEUS 1.1 beta (PHT)", "pht", 0xE020,
              "\x5C\x3E\xF7\x21\x6A\x5C\xA6\x77\xCD\x27\xF2\x0F\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53", 0xFD00, "C"),
         Zeus("zeus-gg", "ZEUS (GG, B-disk)", "gg", 0xE028,
