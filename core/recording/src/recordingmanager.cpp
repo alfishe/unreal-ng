@@ -4,6 +4,8 @@
 #include "base/featuremanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/emulatormanager.h"
+#include "emulator/zxpoly/zxpolygroup.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/sound/audio.h"
@@ -393,16 +395,35 @@ bool RecordingManager::SetOutputProfile(const std::string& id)
     return true;
 }
 
+/// The master of a ZX-Poly group shows the group's composed frame (2x, the four modules' paper): that is what the user
+/// sees, so that is what a recording of its screen holds (the slaves, and every other machine, their own frame).
+/// The viewport region keeps the master's own frame: its crop offsets are in that frame's pixels
+bool RecordingManager::ComposedFrame(FrameSnapshot& out) const
+{
+    if (!_context || !_context->pEmulator || _captureRegion == VideoCaptureRegion::Viewport)
+        return false;
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    if (!manager)
+        return false;
+    ZXPolyGroup* group = manager->GetZXPolyGroup(_context->pEmulator->GetId());
+    if (!group || group->GetContext(0) != _context)
+        return false;
+    return group->SnapshotDisplay(out);
+}
+
 /// The picture a recording writes: the capture region's rectangle and the output size. Every start goes through
 /// here. A size set by SetVideoResolution is kept; otherwise it follows the region (and, for the screen region, the
 /// working window at this moment: the file keeps that size, and later windows are fitted into it, see CaptureFrame)
 void RecordingManager::PrepareVideoGeometry()
 {
     // MainScreen: the frame's own working window (the geometry every screenshot uses) at the start
+    FrameSnapshot composed;
+    const bool haveComposed = ComposedFrame(composed);
     _mainScreenX = _mainScreenY = _mainScreenWidth = _mainScreenHeight = 0;
     if (_captureRegion == VideoCaptureRegion::MainScreen && _context && _context->pScreen)
     {
-        const PictureRect window = _context->pScreen->DescribeCurrentFrame().screenWindow;
+        const PictureRect window =
+            haveComposed ? composed.geometry.screenWindow : _context->pScreen->DescribeCurrentFrame().screenWindow;
         _mainScreenX = window.x;
         _mainScreenY = window.y;
         _mainScreenWidth = window.width;
@@ -413,7 +434,7 @@ void RecordingManager::PrepareVideoGeometry()
     _pictureAspect = 0.0;
     if (_captureRegion == VideoCaptureRegion::MainScreen && _context && _context->pScreen)
     {
-        const PictureGeometry frame = _context->pScreen->DescribeCurrentFrame();
+        const PictureGeometry frame = haveComposed ? composed.geometry : _context->pScreen->DescribeCurrentFrame();
         _pictureAspect = DisplayGeometry::WindowAspect(frame.width, frame.height, frame.screenWindow.width, frame.screenWindow.height);
     }
 
@@ -423,6 +444,11 @@ void RecordingManager::PrepareVideoGeometry()
         if (_context && _context->pScreen)
         {
             FramebufferDescriptor fb = _context->pScreen->GetFramebufferDescriptor();
+            if (haveComposed)
+            {
+                fb.width = composed.geometry.width;
+                fb.height = composed.geometry.height;
+            }
             _videoWidth = fb.width;
             _videoHeight = fb.height;
 
@@ -870,7 +896,7 @@ void RecordingManager::ResumeRecording()
 
 /// region <Frame/Audio capture>
 
-void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
+void RecordingManager::CaptureFrame(const FramebufferDescriptor& nativeFramebuffer)
 {
     // TTD silent-replay suppression (parent TDD §8.2 + Appendix C).
     // Recording must not capture frames traversed during replay — those
@@ -892,6 +918,18 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& framebuffer)
     {
         return;
     }
+
+    // A ZX-Poly master records the group's composed frame (see ComposedFrame)
+    FramebufferDescriptor composedFramebuffer = nativeFramebuffer;
+    const bool composed = ComposedFrame(_composedSnapshot) && !_composedSnapshot.pixels.empty();
+    if (composed)
+    {
+        composedFramebuffer.width = _composedSnapshot.geometry.width;
+        composedFramebuffer.height = _composedSnapshot.geometry.height;
+        composedFramebuffer.memoryBuffer = _composedSnapshot.pixels.data();
+        composedFramebuffer.memoryBufferSize = _composedSnapshot.pixels.size();
+    }
+    const FramebufferDescriptor& framebuffer = composed ? composedFramebuffer : nativeFramebuffer;
 
     // Calculate presentation timestamp based on real wall-clock elapsed time for VideoWall/real-time capture
     // or emulated frame count for cycle-accurate single-emulator capture

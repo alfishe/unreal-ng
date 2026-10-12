@@ -11,6 +11,7 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/displaygeometry.h"
+#include "emulator/zxpoly/zxpolygroup.h"
 #include "emulator/video/screen.h"
 #include "recordingmanager.h"
 
@@ -168,4 +169,40 @@ TEST_F(RecordingPicture_Test, AModeSwitchKeepsTheFilesSize)
 
     context->pRecordingManager->StopRecording();
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// The master of a ZX-Poly group records the group's composed frame, the one the window and a screenshot show (2x)
+TEST_F(RecordingPicture_Test, AZXPolyMasterRecordsTheComposedFrame)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::string error;
+    std::shared_ptr<Emulator> master = manager->CreateZXPolyMachine("", "ZXPOLY-128K", "", &error);
+    ASSERT_NE(master, nullptr) << error;
+    EmulatorContext* context = master->GetContext();
+    ASSERT_NE(context->pRecordingManager, nullptr);
+
+    ZXPolyGroup* group = manager->GetZXPolyGroup(master->GetId());
+    ASSERT_NE(group, nullptr);
+    master->RunNFrames(3);
+    ASSERT_GT(group->GetDisplayWidth(), 352u) << "the group composed its 2x display frame";
+
+    auto sink = std::make_unique<PictureSink>();
+    PictureSink* sinkPtr = sink.get();
+    ASSERT_TRUE(context->pRecordingManager->StartRecordingWithEncoder(
+        TestPathHelper::GetUniqueTestScratchPath("picture-zxpoly") + ".mp4", std::move(sink)));
+    EXPECT_EQ(sinkPtr->startedConfig.videoWidth, group->GetDisplayWidth());
+    EXPECT_EQ(sinkPtr->startedConfig.videoHeight, group->GetDisplayHeight());
+
+    master->RunNFrames(2);
+    context->pRecordingManager->CaptureFrame(context->pScreen->GetFramebufferDescriptor());
+    EXPECT_EQ(sinkPtr->width, group->GetDisplayWidth());
+    EXPECT_EQ(sinkPtr->height, group->GetDisplayHeight());
+
+    // The same pixels the window shows
+    std::vector<uint8_t> display(static_cast<size_t>(group->GetDisplayWidth()) * group->GetDisplayHeight() * 4);
+    ASSERT_TRUE(group->CopyDisplay(display.data(), display.size()));
+    ASSERT_EQ(sinkPtr->pixels.size(), display.size());
+
+    context->pRecordingManager->StopRecording();
+    manager->RemoveEmulator(master->GetId());
 }

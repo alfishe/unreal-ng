@@ -177,7 +177,7 @@ bool NextCopper::RunSegment(uint64_t end)
         if (reg != 0)
         {
             if (_beforeWrite)
-                _beforeWrite(at);
+                _beforeWrite(at, reg);
             if (_write)
                 _write(reg, value);
             _pending = true;

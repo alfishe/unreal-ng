@@ -58,6 +58,7 @@ def main():
     parser.add_argument('--model', action='append')
     parser.add_argument('--switch', action='store_true')
     parser.add_argument('--scale', type=int, default=1)
+    parser.add_argument('--profile', help='an output profile (1080p, 1440p, 4k): the file is that fixed frame, the picture fitted into it')
     args = parser.parse_args()
 
     api = Api(args.url)
@@ -86,9 +87,7 @@ def main():
             continue
         expected = picture(frame['width'], frame['height'])
         if frame.get('source') == 'composed':
-            # A ZX-Poly master's recording is its own 1:1 frame (zxpolygroup.h: the 2x composed display is for the window and
-            # screenshots), half the composed frame's size
-            expected = picture(frame['width'] // 2, frame['height'] // 2)
+            expected = (frame['width'], frame['height'])  # a ZX-Poly master records the group's composed frame
 
         jobs = [(name, None)]
         if args.switch:
@@ -98,7 +97,8 @@ def main():
         if os.path.exists(path):
             os.remove(path)
         reply = api.call('POST', f'/emulator/{emulator}/video/record',
-                         {'action': 'start', 'format': 'h264', 'scale': args.scale, 'filename': path})
+                         dict({'action': 'start', 'format': 'h264', 'scale': args.scale, 'filename': path},
+                              **({'profile': args.profile} if args.profile else {})))
         if not reply.get('recording'):
             problems.append(f'{name}: the recording did not start: {reply}')
             api.call('DELETE', f'/emulator/{emulator}')
@@ -119,6 +119,8 @@ def main():
             problems.append(f'{name}: the file cannot be read: {error}')
             continue
         want = (expected[0] * args.scale, expected[1] * args.scale)
+        if args.profile:
+            want = {'1080p': (1920, 1080), '1440p': (2560, 1440), '4k': (3840, 2160)}[args.profile]
         verdict = 'ok'
         if (width, height) != want:
             verdict = f'WRONG SIZE, expected {want[0]}x{want[1]}'

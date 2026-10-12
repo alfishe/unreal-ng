@@ -126,11 +126,11 @@ int main(int argc, char* argv[])
 
     QTimer::singleShot(0, [useGpu, startFullscreen, &window]() {
         window = new VideoWallWindow();
-        if (useGpu)
-        {
-            window->handleGpuAccelerationToggled(true);
-        }
         window->show();
+        // --gpu: the window finishes its own initialization from a queued call of the constructor (menus, sound):
+        // the switch is queued behind it. Called straight away it found no menu action and crashed
+        if (useGpu)
+            QTimer::singleShot(0, window, [window]() { window->handleGpuAccelerationToggled(true); });
         if (startFullscreen)
         {
             // After the first paint: the window must exist on screen before it can be made fullscreen

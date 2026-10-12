@@ -308,7 +308,7 @@ void VideoWallWindow::createMenus()
     _gpuAccelerationAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_G));
     _gpuAccelerationAction->setStatusTip(tr("Use GPU for display rendering (single surface for all tiles)"));
     _gpuAccelerationAction->setCheckable(true);
-    _gpuAccelerationAction->setChecked(false);
+    _gpuAccelerationAction->setChecked(_useGPU);
     _gpuAccelerationAction->setEnabled(TileGridWrapper::isGPUAvailable());
     connect(_gpuAccelerationAction, &QAction::triggered, this, &VideoWallWindow::handleGpuAccelerationToggled);
 
@@ -1811,7 +1811,8 @@ void VideoWallWindow::handleGpuAccelerationToggled(bool enabled)
 
     if (enabled && !TileGridWrapper::isGPUAvailable())
     {
-        _gpuAccelerationAction->setChecked(false);
+        if (_gpuAccelerationAction)
+            _gpuAccelerationAction->setChecked(false);
         return;
     }
 
@@ -2011,7 +2012,14 @@ void VideoWallWindow::handleGpuAccelerationToggled(bool enabled)
         qInfo() << "Switched to software rendering";
     }
 
-    _gpuAccelerationAction->setChecked(_useGPU);
+    // The recorder grabs the grid it was pointed at: the old one is gone
+    VideowallRecorder::instance().setTargetWidget(_useGPU && _tileGridWrapper ? _tileGridWrapper->widget()
+                                                                            : static_cast<QWidget*>(_tileGrid));
+
+    // The menus are created after the event loop starts (initializeAfterEventLoopStart): a switch asked for before
+    // that (--gpu on the command line) finds no action yet, and createMenus checks it from _useGPU
+    if (_gpuAccelerationAction)
+        _gpuAccelerationAction->setChecked(_useGPU);
 }
 
 int VideoWallWindow::tileCount() const
