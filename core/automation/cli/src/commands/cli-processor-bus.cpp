@@ -4,7 +4,7 @@
  *
  * Handles the `bus` command family:
  *   bus [list]                                   every bus, its devices, trace and checks state
- *   bus <id|all> on [checks|nochecks] [capacity=N]  trace (and checks, default on)
+ *   bus <id|all> on [checks|nochecks] [protocol] [capacity=N]  trace (and checks, default on)
  *   bus <id|all> off | clear
  *   bus <id> events [kinds=] [slot=] [since=] [from=] [to=] [limit=]
  *   bus <id> findings [rules=] [since=] [limit=]
@@ -50,18 +50,20 @@ std::string Get(const std::map<std::string, std::string>& options, const char* k
 void CLIProcessor::ShowBusHelp(const ClientSession& session)
 {
     std::ostringstream out;
-    out << "bus - peripheral bus analyzer (SPI: Z-Controller zc.spi, Next next.spi, DivMMC divmmc.spi, NeoGS neogs.*)" << NEWLINE
+    out << "bus - peripheral bus analyzer (SPI: Z-Controller zc.spi, Next next.spi, DivMMC divmmc.spi, NeoGS neogs.*; ATA: ide0, ide1)"
+        << NEWLINE
         << "  bus [list]                                  every bus: devices, trace, checks" << NEWLINE
         << "  bus <id|all> on [checks|nochecks] [protocol] [capacity=N]  record events (and run the checks, default on);" << NEWLINE
         << "                                              protocol: no single bytes / data words / status reads" << NEWLINE
         << "  bus <id|all> off | clear" << NEWLINE
-        << "  bus <id> events [kinds=spi,sd,...] [slot=N] [since=SEQ] [from=F] [to=F] [limit=N]" << NEWLINE
+        << "  bus <id> events [kinds=spi,sd,ata,...] [slot=N] [since=SEQ] [from=F] [to=F] [limit=N]" << NEWLINE
         << "  bus <id> findings [rules=...] [since=SEQ] [limit=N]" << NEWLINE
         << "  bus <id> sd-timing [ideal|realistic|slow] [seed=N] [slot=N]   SD card timing profile" << NEWLINE
         << "  bus <id> export <vcd|jsonl> <file> [kinds=...] [since=SEQ] ...  VCD for GTKWave / PulseView" << NEWLINE
-        << "Kinds: select, deselect, byte, early, truncated, command, read, write (groups spi, sd)." << NEWLINE
+        << "Kinds: select, deselect, byte, early, truncated, command, read, write, reg_read, reg_write, ata_command, data" << NEWLINE
+        << "       (groups spi, sd, ata)." << NEWLINE
         << "Rules: early_access, select_mid_byte, deselect_mid_command, command_while_busy, command_drops_answer," << NEWLINE
-        << "       crc_error, dma_collision." << NEWLINE;
+        << "       crc_error, dma_collision, ata_data_without_drq, ata_command_drops_data, ata_write_while_busy." << NEWLINE;
     session.SendResponse(out.str());
 }
 

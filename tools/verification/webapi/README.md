@@ -43,7 +43,8 @@ tools/verification/webapi/
     ├── test_api_mouse.py        # Mouse + keyboard injection contract
     ├── test_api_settings.py     # Settings endpoints
     ├── test_api_state.py        # Memory / screen / audio state inspection
-    └── test_api_interpreter.py  # Embedded Python / Lua interpreters
+    ├── test_api_interpreter.py  # Embedded Python / Lua interpreters
+    └── test_api_bus.py          # Bus analyzer: WebAPI, Python, Lua, CLI
 ```
 
 ## Prerequisites
@@ -164,6 +165,7 @@ Exit codes: `0` clean · `1` missing routes (or spec-only routes with
 | `test_api_settings.py` | Settings | listing shape, boolean round-trip (`fast_tape`) with restore, unknown setting name returns 404 |
 | `test_api_state.py` | State inspection | memory overview / RAM banks / ROM pages, screen state/mode/flash phase, AY chips and registers, beeper, channel groups |
 | `test_api_interpreter.py` | Embedded interpreters | Python/Lua exec, status, stop; Kempston mouse bindings through both interpreters |
+| `test_api_bus.py` | Bus analyzer | TS-Conf (TSL): bus list, trace / checks / protocol_only switch, a program's SPI DMA collision found with its PC, `since`, SD timing profile, VCD / JSON lines export, 400s and 404s; the same finding through the Python and Lua bindings and the CLI (`UNREAL_CLI_PORT`, skipped when nothing listens) |
 
 ## Fixtures
 
