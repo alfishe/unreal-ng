@@ -203,6 +203,7 @@ set(COMMON_SOURCES
     src/api/profiler_api.cpp
     src/api/porttrace_api.cpp
     src/api/vdac2_api.cpp
+    src/api/bus_api.cpp
     src/api/keyboard_api.cpp
     src/api/mouse_api.cpp
     src/api/joystick_api.cpp

@@ -104,6 +104,9 @@ accesses inside the 16-clock byte time). A command line is `#<seq> frame <n> T <
 `R1 none` = the card ignored it (before CMD0, or while streaming). CLI `state next sd [on|off|clear]`, Lua `next_sd{...}`, Python
 `emu.next_sd(...)`. The text above is the one `NextSdJournalMachine_Test.TheCliPrintsTheCardsAndTheJournal` checks.
 
+The bus analyzer shows the same bus as `next.spi` (every select and byte too, and the checks: `early_access` is an
+access inside the 16-clock byte time, the accesses `too_fast_accesses` counts): [analysis/bus-analyzer.md](../analysis/bus-analyzer.md).
+
 ### 3a2. Why is the DivMMC in, and which esxDOS calls were made? (the DivMMC journal)
 
 `state/next` shows `divmmc.mapped` now; the DivMMC journal shows what put it there. Off by default.

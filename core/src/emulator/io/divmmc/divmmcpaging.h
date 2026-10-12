@@ -15,6 +15,7 @@
 #include <string>
 
 #include "emulator/cpu/z80.h"
+#include "emulator/bus/bustap.h"
 #include "emulator/io/sdcard/sdcardspi.h"
 #include "emulator/memory/hostbusoverlay.h"
 #include "emulator/ports/portdecoder.h"
@@ -64,6 +65,7 @@ public:
     uint8_t Control() const { return _control; }
     uint8_t* RamBank(unsigned bank) { return _ram.get() + (bank % kBanks) * kBankSize; }
     SdCardSpi& Card(unsigned index) { return _card[index & 1]; }
+    BusTap& SpiTap() { return _spiTap; }
     /// Turn the trap off (the config's "automap off": the firmware is reached through #E3 only)
     void SetAutomapEnabled(bool on) { _automapEnabled = on; if (!on) _automap = false; }
     /// endregion
@@ -83,6 +85,7 @@ public:
 private:
     uint8_t ReadMapped(uint16_t addr) const;
     void SpiSelect(uint8_t value);
+    uint8_t TapSlot() const { return _selected >= 0 ? static_cast<uint8_t>(_selected) : BusTap::kNoSlot; }
 
     EmulatorContext* _context;
     bool _attached = false;
@@ -95,5 +98,7 @@ private:
     int _selected = -1;
     std::unique_ptr<uint8_t[]> _rom;
     std::unique_ptr<uint8_t[]> _ram;
+    // The bus analyzer's view of the SPI pair (docs/inprogress/2026-10-11-bus-analyzer); registered while attached
+    BusTap _spiTap{"divmmc.spi", BusProtocol::Spi, "DivMMC SPI (#E7 chip selects, #EB data): SD cards 0 and 1"};
     SdCardSpi _card[2];
 };

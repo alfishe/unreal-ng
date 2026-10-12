@@ -112,7 +112,13 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
                 _context->pMediaManager->NoteWrite(id);
         });
         _sd[i].setTraceListener([this, i](const SdTraceEvent& event) { RecordSdEvent(i, event); });
+        _sd[i].SetBusTap(&_spiTap, static_cast<uint8_t>(i));
+        _sd[i].SetClock([this]() { return EmulatedMicroseconds(); });
+        _spiTap.SetDevice(static_cast<uint8_t>(i), i ? "sd1" : "sd0");
     }
+    // 16 CPU clocks per byte at any speed (spi_master.vhd); the export's scale is the 28 MHz one
+    _spiTap.SetByteTimeNs(16.0 * 1000.0 / 28.0);
+    _spiTap.Attach(_context);
     if (_context->pMediaManager)
     {
         _context->pMediaManager->RegisterSlot(_sdSlot0);
@@ -940,11 +946,23 @@ void PortDecoder_Next::SpiSelect(uint8_t value)
         line = _board->SdSwap() ? 0 : 1;
     if (line == _spiSelected)
         return;
+    const bool tap = _spiTap.Active();
+    // A select change with a byte still shifting: one finding, on the first line that changes
+    bool midByte = tap && _spiPendingValid && Now() < SpiBusyUntil();
     if (_spiSelected >= 0)
+    {
         _sd[_spiSelected].select(false);
+        if (tap) [[unlikely]]
+            _spiTap.SpiSelect(static_cast<uint8_t>(_spiSelected), false, midByte);
+        midByte = false;
+    }
     _spiSelected = line;
     if (line >= 0)
+    {
         _sd[line].select(true);
+        if (tap) [[unlikely]]
+            _spiTap.SpiSelect(static_cast<uint8_t>(line), true, midByte);
+    }
 }
 
 void PortDecoder_Next::SpiWrite(uint8_t value)
@@ -953,10 +971,14 @@ void PortDecoder_Next::SpiWrite(uint8_t value)
     if (now < SpiBusyUntil())
     {
         _spiTooFast++;
+        if (_spiTap.Active()) [[unlikely]]
+            _spiTap.SpiEarly(SpiTapSlot(), true, value);
         return;
     }
     SpiSettle(now);
     _spiPending = _spiSelected >= 0 ? _sd[_spiSelected].exchange(value) : 0xFF;
+    if (_spiTap.Active()) [[unlikely]]
+        _spiTap.SpiByte(SpiTapSlot(), value, _spiPending, false);
     _spiPendingValid = true;
     _spiBusyRatio = SpeedRatio();
     _spiBusyUntil = now + kSpiByteClocks / _spiBusyRatio;
@@ -995,12 +1017,16 @@ uint8_t PortDecoder_Next::SpiRead()
     {
         // an early read gets the old miso_dat and starts nothing (spi_master.vhd 108-132)
         _spiTooFast++;
+        if (_spiTap.Active()) [[unlikely]]
+            _spiTap.SpiEarly(SpiTapSlot(), false, 0xFF);
         return _spiRx;
     }
     SpiSettle(now);
     const uint8_t result = _spiRx;
     // a read starts a transfer of #FF; its answer is what the next read returns
     _spiPending = _spiSelected >= 0 ? _sd[_spiSelected].exchange(0xFF) : 0xFF;
+    if (_spiTap.Active()) [[unlikely]]
+        _spiTap.SpiByte(SpiTapSlot(), 0xFF, _spiPending, true);
     _spiPendingValid = true;
     _spiBusyRatio = SpeedRatio();
     _spiBusyUntil = now + kSpiByteClocks / _spiBusyRatio;

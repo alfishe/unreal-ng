@@ -18,6 +18,7 @@
 
 #include "mcp-analysis.h"
 #include "mcp-media.h"
+#include "mcp-bus.h"
 #include "mcp-slots.h"
 #include "mcp-router.h"
 #include "mcp-symbols.h"
@@ -5848,6 +5849,8 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterAnalyzePerformance(*registry);
     RegisterCaptureMedia(*registry);
     RegisterMediaSlots(*registry);
+    // bus_analyzer: peripheral bus traces, checks, SD card timing (docs/inprogress/2026-10-11-bus-analyzer)
+    RegisterBusAnalyzer(*registry);
 
     // Router tools (search_api + invoke_api)
     RegisterRouterTools(*registry, std::move(caller));

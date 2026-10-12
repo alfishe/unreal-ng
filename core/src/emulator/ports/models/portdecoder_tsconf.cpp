@@ -48,11 +48,26 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
     // media manager's rule)
     _zc.SetDevice(&_sdCard);
     _dma.SetSpi([this](bool read, uint8_t out) -> uint8_t {
+        // The bus analyzer sees the DMA's bytes as the DMA's
+        const bool tap = _spiTap.Active();
+        if (tap) [[unlikely]]
+            _spiTap.SetSource(BusSource::Dma);
+        uint8_t result = 0xFF;
         if (read)
-            return _zc.ReadData();
-        _zc.WriteData(out);
-        return 0xFF;
+            result = _zc.ReadData();
+        else
+            _zc.WriteData(out);
+        if (tap) [[unlikely]]
+            _spiTap.SetSource(BusSource::Cpu);
+        return result;
     });
+    // Bus analyzer: one byte is 17 fclk at 28 MHz ([V] spi.v: the start clock + a 16-clock shift)
+    _spiTap.SetDevice(0, "sd");
+    _spiTap.SetByteTimeNs(17.0 * 1000.0 / 28.0);
+    _spiTap.Attach(_context);
+    _zc.SetTap(&_spiTap);
+    _sdCard.SetBusTap(&_spiTap, 0);
+    _sdCard.SetClock([this]() { return EmulatedMicroseconds(); });
     // The VDAC2 card keeps time in raster tacts; it closes a frame once the
     // engine has accounted all of it (the DMA's last SPI bytes included)
     _engine.SetFrameEndListener([this]() {
@@ -200,12 +215,14 @@ void PortDecoder_TSConf::RefreshVdac2Card()
         _vdac2 = std::make_unique<Vdac2Card>(_context, [this]() { return _ts.budgetRaster; });
         _zc.AttachDevice(Vdac2Card::kSpiSlot, _vdac2.get(), Vdac2Card::kSpiSelectMask,
                          Vdac2Card::kSpiSelectActiveHigh);
+        _spiTap.SetDevice(Vdac2Card::kSpiSlot, "ft812");
         _interrupts.SetLineSource(&_vdac2Lines);
     }
     else if (!wanted && _vdac2)
     {
         _interrupts.SetLineSource(nullptr);
         _zc.AttachDevice(Vdac2Card::kSpiSlot, nullptr, 0, false);
+        _spiTap.SetDevice(Vdac2Card::kSpiSlot, "");
         _vdac2.reset();
     }
 #endif
@@ -563,6 +580,8 @@ uint8_t PortDecoder_TSConf::DecodePortIn(uint16_t port, uint16_t pc)
             break;
         case PortArm::SdData:
             CatchUpEngine();  // a running SPI DMA owns the master up to now
+            if (_spiTap.Checking()) [[unlikely]]
+                CheckSpiDmaCollision(false, 0xFF);
             result = _zc.ReadData();
             break;
         case PortArm::ComPort:
@@ -637,11 +656,15 @@ void PortDecoder_TSConf::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc
             break;
         case PortArm::SdData:
             CatchUpEngine();
+            if (_spiTap.Checking()) [[unlikely]]
+                CheckSpiDmaCollision(true, value);
             _zc.WriteData(value);
             break;
         case PortArm::SdConfig:
             // [1] SD /CS; [2] FT812, [3] SD2, [4] ESP chip selects are not fitted
             CatchUpEngine();
+            if (_spiTap.Checking()) [[unlikely]]
+                CheckSpiDmaCollision(true, value);
             _zc.WriteConfig(value);
             break;
         case PortArm::Joystick:
@@ -1040,6 +1063,12 @@ bool PortDecoder_TSConf::IsVideoRegister(uint8_t reg)
     return reg <= TsConfReg::PalSel || reg == TsConfReg::Border ||
            (reg >= TsConfReg::TMapPage && reg <= TsConfReg::SGPage) ||
            (reg >= TsConfReg::T0XOffsL && reg <= TsConfReg::T1YOffsH);
+}
+
+void PortDecoder_TSConf::CheckSpiDmaCollision(bool write, uint8_t value)
+{
+    if (_dma.SpiBusy())
+        _spiTap.DmaCollision(write, value);
 }
 
 void PortDecoder_TSConf::CatchUpEngine()

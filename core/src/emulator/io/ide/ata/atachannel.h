@@ -27,6 +27,8 @@
 
 #include "emulator/io/ide/ata/atadevice.h"
 
+class BusTap;
+
 class AtaChannel
 {
 public:
@@ -41,6 +43,8 @@ public:
     /// Registers 1..7 of CS0, and ata::Control for CS1 register 6
     uint8_t ReadRegister(uint8_t reg);
     void WriteRegister(uint8_t reg, uint8_t value);
+    /// A register read the analyzer does not see (the debugger's reports)
+    uint8_t ReadRegisterUntapped(uint8_t reg);
     uint16_t ReadData();
     void WriteData(uint16_t word);
 
@@ -57,6 +61,10 @@ public:
     /// The empty-bus word of a host without it: every line floats high
     static constexpr uint16_t kEmptyBusFloating = 0xFFFF;
 
+    /// The bus analyzer's tap (the owner's; nullptr: none): every register access, command and data word, and the checks
+    /// against the selected unit's status (docs/inprogress/2026-10-11-bus-analyzer)
+    void SetTap(BusTap* tap) { _tap = tap; }
+
     /// The unit the device register selects
     int Selected() const { return _selected; }
     bool AnyPresent() const;
@@ -67,6 +75,10 @@ public:
 
 private:
     AtaDevice* Present(int unit) const;
+    /// The selected unit's status without side effects (0 when absent)
+    uint8_t SelectedStatus() const;
+    void CheckWrite(uint8_t reg);
+    BusTap* _tap = nullptr;
 
     std::array<std::unique_ptr<AtaDevice>, kUnits> _units;
     uint8_t _selected = 0;

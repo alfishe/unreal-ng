@@ -54,6 +54,11 @@ bool TsConfDma::Busy() const
     return (_ts.dmaFlags & TsConfDmaFlag::Active) != 0;
 }
 
+bool TsConfDma::SpiBusy() const
+{
+    return Busy() && (_ts.dmaDevice == SpiIn || _ts.dmaDevice == SpiOut);
+}
+
 /// DMA_CTRL write: launch, or relaunch a running transfer with its counters
 /// reloaded - busy never falls, so the aborted transfer raises no INT
 /// ([V] dma.v:220-231, 309-313)

@@ -105,6 +105,7 @@
 #include <emulator/io/z80n/nextdivmmcjournal.h>
 #include <emulator/io/z80n/nextintjournal.h>
 #include <emulator/io/z80n/nextsdjournal.h>
+#include <emulator/bus/bustrace.h>
 #include <emulator/io/z80n/nextreportquery.h>
 #include "../bindings/python_porttrace.h"
 #include "../bindings/python_vdac2.h"
@@ -242,6 +243,26 @@ inline pybind11::object StateNodeToPy(const StateNode& node)
         }
         default: return py::none();
     }
+}
+
+/// None / a value as the text the shared query parsers read
+inline std::string PyText(const pybind11::object& value)
+{
+    if (value.is_none())
+        return std::string();
+    return pybind11::str(value);
+}
+
+/// A bus analyzer report; an unknown bus (available: false) raises ValueError with the ids the machine has
+inline pybind11::object BusReplyToPy(const StateNode& node)
+{
+    const StateNode* available = node.find("available");
+    if (available && available->kind == StateNode::Kind::Bool && !available->b)
+    {
+        const StateNode* description = node.find("description");
+        throw pybind11::value_error(description ? description->s : "bus not available");
+    }
+    return StateNodeToPy(node);
 }
 
 /// One time-travel verb through TTDControl, the layer every surface shares (Phase 5, Step 1)
@@ -3019,6 +3040,62 @@ namespace PythonBindings
                 return StateNodeToPy(DeviceState::NextSdJournalControl(self.GetContext(), enable, clear, capacity));
             }, py::arg("enabled") = py::none(), py::arg("clear") = false, py::arg("capacity") = 0,
                "Switch (enabled=True/False), clear or resize (capacity=N) the SD journal")
+            // Bus analyzer (docs/inprogress/2026-10-11-bus-analyzer)
+            .def("bus_list", [](Emulator& self) -> py::object {
+                return BusReplyToPy(DeviceState::BusList(self.GetContext()));
+            }, "Every peripheral bus of the machine and its cards (zc.spi, next.spi, divmmc.spi, neogs.sd, ...): devices (an SD card's "
+               "type, state and timing profile), trace and checks state")
+            .def("bus_events", [](Emulator& self, const std::string& bus, py::object kinds, py::object slot, py::object since,
+                                  py::object from_frame, py::object to_frame, py::object limit) -> py::object {
+                BusEventQuery query;
+                std::string error;
+                if (!BusEventQueryFromStrings(PyText(kinds), PyText(slot), PyText(since), PyText(from_frame), PyText(to_frame), PyText(limit),
+                                              query, error))
+                    throw py::value_error(error);
+                return BusReplyToPy(DeviceState::BusEvents(self.GetContext(), bus, query));
+            }, py::arg("bus"), py::arg("kinds") = py::none(), py::arg("slot") = py::none(), py::arg("since") = py::none(),
+               py::arg("from_frame") = py::none(), py::arg("to_frame") = py::none(), py::arg("limit") = py::none(),
+               "A bus's trace: chip selects, bytes (mosi / miso), early accesses, truncated bytes and SD protocol events (command, "
+               "argument, r1; block read / written) with seq, frame, t, pc and source (kinds='spi,sd' or names); off by default - "
+               "bus_control(bus, enabled=True) first")
+            .def("bus_findings", [](Emulator& self, const std::string& bus, py::object rules, py::object since, py::object limit) -> py::object {
+                BusFindingQuery query;
+                std::string error;
+                if (!BusFindingQueryFromStrings(PyText(rules), PyText(since), PyText(limit), query, error))
+                    throw py::value_error(error);
+                return BusReplyToPy(DeviceState::BusFindings(self.GetContext(), bus, query));
+            }, py::arg("bus"), py::arg("rules") = py::none(), py::arg("since") = py::none(), py::arg("limit") = py::none(),
+               "What the bus checks found (early_access, select_mid_byte, deselect_mid_command, command_while_busy, "
+               "command_drops_answer, crc_error, dma_collision) with severity, PC and what it means on the real hardware")
+            .def("bus_control", [](Emulator& self, const std::string& bus, py::object enabled, py::object checks, bool clear,
+                                   size_t capacity, py::object protocolOnly) -> py::object {
+                const int enable = enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0);
+                const int check = checks.is_none() ? -1 : (checks.cast<bool>() ? 1 : 0);
+                const int protocol = protocolOnly.is_none() ? -1 : (protocolOnly.cast<bool>() ? 1 : 0);
+                return BusReplyToPy(DeviceState::BusControl(self.GetContext(), bus, enable, check, clear, capacity, protocol));
+            }, py::arg("bus"), py::arg("enabled") = py::none(), py::arg("checks") = py::none(), py::arg("clear") = false,
+               py::arg("capacity") = 0, py::arg("protocol_only") = py::none(),
+               "Switch a bus's trace (enabled) and checks, clear, resize; protocol_only leaves out single bytes, data words and "
+               "status reads; bus='all' for every bus")
+            .def("bus_sd_timing", [](Emulator& self, const std::string& bus, py::object profile, int64_t seed, py::object slot) -> py::object {
+                return BusReplyToPy(DeviceState::BusSdTiming(self.GetContext(), bus, slot.is_none() ? -1 : slot.cast<int>(), PyText(profile),
+                                                             seed));
+            }, py::arg("bus"), py::arg("profile") = py::none(), py::arg("seed") = 0, py::arg("slot") = py::none(),
+               "An SD card's timing profile: ideal (default), realistic (typical delays, random by seed) or slow (the SD "
+               "specification's worst case); applied at the card's next access. No profile: report")
+            .def("bus_export", [](Emulator& self, const std::string& bus, const std::string& format, py::object kinds, py::object since,
+                                  py::object limit) -> std::string {
+                BusEventQuery query;
+                std::string error;
+                const std::string count = limit.is_none() ? std::string("0") : PyText(limit);
+                if (!BusEventQueryFromStrings(PyText(kinds), "", PyText(since), "", "", count, query, error))
+                    throw py::value_error(error);
+                const std::string text = DeviceState::BusExport(self.GetContext(), bus, format, query, error);
+                if (!error.empty())
+                    throw py::value_error(error);
+                return text;
+            }, py::arg("bus"), py::arg("format") = "vcd", py::arg("kinds") = py::none(), py::arg("since") = py::none(),
+               py::arg("limit") = py::none(), "A bus's trace as VCD (SPI wires for GTKWave / PulseView) or JSON lines")
             .def("next_divmmc", [](Emulator& self, py::object kinds, py::object since, py::object from_frame,
                                py::object to_frame, py::object limit) -> py::object {
                 auto text = [](const py::object& value) -> std::string {

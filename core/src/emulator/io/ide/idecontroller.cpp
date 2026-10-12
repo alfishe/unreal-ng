@@ -37,6 +37,15 @@ IdeController::IdeController(EmulatorContext* context) : _context(context)
     for (AtaChannel& channel : _channels)
         channel.SetEmptyBus(_scheme == IDE_SPRINTER ? AtaChannel::kEmptyBusDd7PullDown : AtaChannel::kEmptyBusFloating);
 
+    // Bus analyzer: a tap per channel the board has
+    for (int i = 0; i < ChannelCount(); i++)
+    {
+        _taps[i].SetDevice(0, "master");
+        _taps[i].SetDevice(1, "slave");
+        _taps[i].Attach(_context);
+        _channels[i].SetTap(&_taps[i]);
+    }
+
     const int units = ChannelCount() * AtaChannel::kUnits;
     for (int unit = 0; unit < units; unit++)
         BuildUnit(unit);

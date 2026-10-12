@@ -93,6 +93,8 @@ bool CliCommandChangesMachine(const std::string& command, const std::vector<std:
         return any({"inject"});
     if (command == "media" || command == "slots")
         return !any({"compose", "formats", "help", "--help", "info", "list", "targets"}) && args.size() >= 2;
+    if (command == "bus")                                   // an SD card's timing profile; tracing only observes
+        return args.size() >= 3 && (args[1] == "sd-timing" || args[1] == "sdtiming") && args[2].find('=') == std::string::npos;
     if (command == "feature" || command == "setting" || command == "settings" || command == "set" ||
         command == "rtc" || command == "cmos")
         return args.size() >= 2;

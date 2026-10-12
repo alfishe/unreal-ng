@@ -37,6 +37,7 @@
 #include <cstdint>
 #include <type_traits>
 
+class BusTap;
 class SpiDevice;
 
 class ZControllerSpi
@@ -66,6 +67,11 @@ public:
 
     void Reset();
 
+    /// The bus analyzer's tap for this bus (the owner's; nullptr: none). Every chip-select change and every
+    /// byte is reported while the tap is active; the slot of a byte is the device that drove MISO
+    /// (BusTap::kNoSlot when none was selected)
+    void SetTap(BusTap* tap) { _tap = tap; }
+
     void WriteConfig(uint8_t value);
     void WriteData(uint8_t value);
     uint8_t ReadData();
@@ -85,6 +91,8 @@ public:
 
 private:
     uint8_t Exchange(uint8_t mosi);
+    uint8_t DrivingSlot() const;
+    void Report(uint8_t mosi, uint8_t miso, bool read);
     bool SelectedBy(uint8_t slot, uint8_t config) const
     {
         const bool level = (config & _masks[slot]) != 0;
@@ -97,4 +105,5 @@ private:
     std::array<bool, kSlots> _activeHigh{false, false, false, false};
     bool _multi = false;  // a device in slot 1..3
     State _state;
+    BusTap* _tap = nullptr;
 };

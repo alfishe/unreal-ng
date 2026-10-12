@@ -83,6 +83,7 @@
 #include <emulator/io/z80n/nextdivmmcjournal.h>
 #include <emulator/io/z80n/nextintjournal.h>
 #include <emulator/io/z80n/nextsdjournal.h>
+#include <emulator/bus/bustrace.h>
 #include <emulator/io/z80n/nextreportquery.h>
 #include <emulator/video/screendigest.h>
 #include <base/featuremanager.h>
@@ -3760,6 +3761,100 @@ public:
                     capacity = static_cast<size_t>(n.as<long long>());
             }
             return StateNodeToLua(s, DeviceState::NextSdJournalControl(emulator->GetContext(), enable, clear, capacity));
+        });
+        // Bus analyzer (docs/inprogress/2026-10-11-bus-analyzer): bus_list(), bus_events(bus, {kinds=, slot=, since=, from=, to=,
+        // limit=}), bus_findings(bus, {rules=, since=, limit=}), bus_control(bus|"all", {enabled=, checks=, clear=, capacity=}),
+        // bus_sd_timing(bus, {profile="ideal|realistic|slow", seed=N, slot=N}), bus_export(bus, {format="vcd|jsonl", ...}) -> text.
+        // nil + error on a bad option or an unknown bus
+        auto busOption = [](const sol::optional<sol::table>& options, const char* key) -> std::string {
+            if (!options)
+                return std::string();
+            sol::object value = (*options)[key];
+            if (value.get_type() == sol::type::number)
+                return std::to_string(value.as<long long>());
+            if (value.get_type() == sol::type::string)
+                return value.as<std::string>();
+            return std::string();
+        };
+        auto busSwitch = [](const sol::optional<sol::table>& options, const char* key) -> int {
+            if (!options)
+                return -1;
+            sol::object value = (*options)[key];
+            return value.get_type() == sol::type::boolean ? (value.as<bool>() ? 1 : 0) : -1;
+        };
+        auto busReply = [](sol::this_state s, const StateNode& node) -> sol::variadic_results {
+            const StateNode* available = node.find("available");
+            if (available && available->kind == StateNode::Kind::Bool && !available->b)
+            {
+                const StateNode* description = node.find("description");
+                return mouseError(s, description ? description->s : "bus not available");
+            }
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, node));
+            return out;
+        };
+        lua.set_function("bus_list", [this, busReply](sol::this_state s) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            return busReply(s, DeviceState::BusList(emulator->GetContext()));
+        });
+        lua.set_function("bus_events", [this, busOption, busReply](sol::this_state s, const std::string& bus,
+                                                                   sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            BusEventQuery query;
+            std::string error;
+            if (!BusEventQueryFromStrings(busOption(options, "kinds"), busOption(options, "slot"), busOption(options, "since"),
+                                          busOption(options, "from"), busOption(options, "to"), busOption(options, "limit"), query, error))
+                return mouseError(s, error);
+            return busReply(s, DeviceState::BusEvents(emulator->GetContext(), bus, query));
+        });
+        lua.set_function("bus_findings", [this, busOption, busReply](sol::this_state s, const std::string& bus,
+                                                                     sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            BusFindingQuery query;
+            std::string error;
+            if (!BusFindingQueryFromStrings(busOption(options, "rules"), busOption(options, "since"), busOption(options, "limit"), query, error))
+                return mouseError(s, error);
+            return busReply(s, DeviceState::BusFindings(emulator->GetContext(), bus, query));
+        });
+        lua.set_function("bus_control", [this, busOption, busSwitch, busReply](sol::this_state s, const std::string& bus,
+                                                                               sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            const std::string capacity = busOption(options, "capacity");
+            return busReply(s, DeviceState::BusControl(emulator->GetContext(), bus, busSwitch(options, "enabled"), busSwitch(options, "checks"),
+                                                       busSwitch(options, "clear") == 1,
+                                                       capacity.empty() ? 0 : static_cast<size_t>(std::stoull(capacity)),
+                                                       busSwitch(options, "protocol_only")));
+        });
+        lua.set_function("bus_sd_timing", [this, busOption, busReply](sol::this_state s, const std::string& bus,
+                                                                      sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            const std::string slot = busOption(options, "slot");
+            const std::string seed = busOption(options, "seed");
+            return busReply(s, DeviceState::BusSdTiming(emulator->GetContext(), bus, slot.empty() ? -1 : std::stoi(slot),
+                                                        busOption(options, "profile"), seed.empty() ? 0 : std::stoll(seed)));
+        });
+        lua.set_function("bus_export", [this, busOption](sol::this_state s, const std::string& bus,
+                                                         sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            BusEventQuery query;
+            std::string error;
+            const std::string limit = busOption(options, "limit");
+            if (!BusEventQueryFromStrings(busOption(options, "kinds"), busOption(options, "slot"), busOption(options, "since"),
+                                          busOption(options, "from"), busOption(options, "to"), limit.empty() ? "0" : limit, query, error))
+                return mouseError(s, error);
+            const std::string format = busOption(options, "format");
+            const std::string text = DeviceState::BusExport(emulator->GetContext(), bus, format.empty() ? "vcd" : format, query, error);
+            if (!error.empty())
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(sol::make_object(s, text));
+            return out;
         });
         // next_divmmc([{kinds="map_in,esx_call", since=N, from=F, to=F, limit=N}]): the Next's DivMMC, its automap entries and the
         // DivMMC journal (DeviceState::NextDivMmcReport); nil + error on a bad option. The journal is off by default: next_divmmc_journal_control({enabled=true}) first
