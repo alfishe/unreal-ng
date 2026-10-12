@@ -158,9 +158,9 @@ Push, Extract... and Convert... buttons.
 
 `asm sync unwatch` stops the watch.
 
-The other way works too, for ALASM (3.8c to 5.09), XAS (4.18 to 9.10), STORM (1.3, 1.3i), TASM 4.12, ZAsm 3.15, MASM 1.1, GENS4, ZEUS 1983, Primus 2.9, Laser Genius 1.04 and PROMETHEUS 48K so far: `asm sync inject --path main.asm` writes a host source
+The other way works too, for ALASM (3.8c to 5.09), XAS (4.18 to 9.10), STORM (1.3, 1.3i), TASM 4.12, ZAsm 3.15, MASM 1.1, GENS4, ZEUS 1983, Primus 2.9, Laser Genius 1.04, PROMETHEUS 48K and Power Assembler 3.0 so far: `asm sync inject --path main.asm` writes a host source
 (sjasmplus, or any dialect the converter reads) into the running ALASM as its own text, while ALASM waits at its `A>`
-prompt (XAS: at its command line, EXT; STORM: while its editor waits for a key; TASM: at `TASM128>`; ZAsm: at its COMMAND prompt; MASM: at `MASM128>`; GENS4 and ZEUS: at their prompts; Laser Genius and PROMETHEUS: in their editors). The assembler then assembles it as if you had typed it. The files main.asm INCLUDEs go into ALASM texts of their own.
+prompt (XAS: at its command line, EXT; STORM: while its editor waits for a key; TASM: at `TASM128>`; ZAsm: at its COMMAND prompt; MASM: at `MASM128>`; GENS4 and ZEUS: at their prompts; Laser Genius, PROMETHEUS and PASM: in their editors). The assembler then assembles it as if you had typed it. The files main.asm INCLUDEs go into ALASM texts of their own.
 `zxasm convert --to alasm` gives the same text as a file (`--to-version` for another version: `--to tasm --to-version 4.12`). More assemblers are planned
 ([asm-synchronizer](../inprogress/2026-10-05-unreal-asm/asm-synchronizer.md)).
 

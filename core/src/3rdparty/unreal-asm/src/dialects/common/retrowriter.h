@@ -55,6 +55,10 @@ protected:
     virtual bool CharactersInData() const { return true; }          ///< a DB item may be a character constant ("A")                 ///< the characters of DB / DW items on a line
     virtual std::string CommentAfter() const { return "   ;"; }     ///< what puts a comment after a statement
     virtual std::string Dw() const { return "DW"; }
+    /// An item of DB / DW (an operand that is no string)
+    virtual std::string DataItem(const Operand& item, bool /*words*/) { return OperandText(item); }
+    /// The target's $ in EQU is the address of the line (PASM: 0, an EQU with $ is written as its value)
+    virtual bool CurrentInEqu() const { return true; }
     /// A string of DB as items (and lines of its own where the target needs them), `flush` ends the items so far
     virtual void PutString(const std::string& text, std::vector<std::string>& items, std::vector<std::string>& out,
                            const std::function<void()>& flush) = 0;
@@ -173,6 +177,7 @@ protected:
     std::map<std::string, std::vector<std::pair<size_t, std::string>>> temporaries{};   // sjasmplus "1": its definitions
     bool displaced = false;
     std::optional<int64_t> here{};                       // $ on the line being written, when its label gives it
+    std::optional<int64_t> lineAddress{};                // ... as it stands at the line's start (the statements move here)
     std::string problem{};                               // why the target cannot compute the expression being written
     bool strict = false;                                 // every label must be known when the line is assembled (ORG, DS ...)
     std::vector<Condition> conditions{};

@@ -187,6 +187,18 @@ struct LinearParams
     /// that ends at a multiple of 8), as SAVE does
     uint16_t pasmLineAt = 0;
     uint16_t pasmLineBuffer = 0;
+    /// PASM inject, as ZAP and GET leave the editor: the text's length (pasmLengthAt, without the #1A), the number of
+    /// its last line (pasmLastLineAt), the cursor line's length (pasmLineLengthAt) and the first line on the screen
+    /// (pasmTopAt, the start); the words in zeroWords and the bytes in zeroBytes to 0 (the cursor's line and column, the
+    /// block marks), the redraw flag (pasmRedrawAt) to #FF and the work name (pasmNameAt, 8 characters)
+    uint16_t pasmLengthAt = 0;
+    uint16_t pasmLastLineAt = 0;
+    uint16_t pasmLineLengthAt = 0;
+    uint16_t pasmTopAt = 0;
+    uint16_t pasmRedrawAt = 0;
+    uint16_t pasmNameAt = 0;
+    std::vector<uint16_t> zeroWords;
+    std::vector<uint16_t> zeroBytes;
     /// PROMETHEUS: SAVE writes the records from fixedStart (the access line) up to twelve bytes below the symbol table
     /// (the word at prometheusTableAt), FF XOR those bytes, FF, then the table up to the word at prometheusEndAt. An
     /// inject keeps the end below the word at limitAt (U-TOP) and sets the words in resetWords to the start

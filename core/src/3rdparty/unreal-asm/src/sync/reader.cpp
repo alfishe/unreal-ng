@@ -385,6 +385,27 @@ SyncText ReadGapBuffer(const MachineView& machine, const SyncDescriptor& d)
 
 // Linear ------------------------------------------------------------------------------------------------------------
 
+/// PASM's line buffer as it goes back into the text (the routine at #7881): the trailing blanks dropped, then right
+/// to left a run of 2..8 blanks that ends at a tab stop becomes a TAB
+void PackPasmLine(std::vector<uint8_t>& buffer)
+{
+    size_t length = buffer.size();
+    while (length > 0 && buffer[length - 1] == ' ')
+        --length;
+    buffer.resize(length);
+    for (size_t stopAt = ((length + 1) / 8) * 8; stopAt >= 8; stopAt -= 8)
+    {
+        size_t run = 0;
+        while (run < 8 && buffer[stopAt - 1 - run] == ' ')
+            ++run;
+        if (run >= 2)
+        {
+            buffer.erase(buffer.begin() + static_cast<std::ptrdiff_t>(stopAt - run), buffer.begin() + static_cast<std::ptrdiff_t>(stopAt));
+            buffer.insert(buffer.begin() + static_cast<std::ptrdiff_t>(stopAt - run), uint8_t('\t'));
+        }
+    }
+}
+
 SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
 {
     SyncText text;
@@ -410,22 +431,7 @@ SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
         size_t to = from;
         while (to + 1 < all.size() && !(all[to] == '\r' && all[to + 1] == '\n'))
             ++to;
-        size_t length = buffer.size();
-        while (length > 0 && buffer[length - 1] == ' ')
-            --length;
-        buffer.resize(length);
-        // PASM's packing, right to left: a run of 2..8 blanks that ends at a tab stop becomes a TAB
-        for (size_t stopAt = ((length + 1) / 8) * 8; stopAt >= 8; stopAt -= 8)
-        {
-            size_t run = 0;
-            while (run < 8 && buffer[stopAt - 1 - run] == ' ')
-                ++run;
-            if (run >= 2)
-            {
-                buffer.erase(buffer.begin() + static_cast<std::ptrdiff_t>(stopAt - run), buffer.begin() + static_cast<std::ptrdiff_t>(stopAt));
-                buffer.insert(buffer.begin() + static_cast<std::ptrdiff_t>(stopAt - run), uint8_t('\t'));
-            }
-        }
+        PackPasmLine(buffer);
         text.file.assign(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(from));
         text.file.insert(text.file.end(), buffer.begin(), buffer.end());
         text.file.insert(text.file.end(), all.begin() + static_cast<std::ptrdiff_t>(std::min(to, all.size())), all.end());
@@ -896,7 +902,8 @@ SyncDescriptor Prometheus48()
 }
 
 /// Power Assembler 3.0 (asm-synchronizer.md §7.18, from its code): CR LF text from #79AF to #1A; the cursor line's
-/// address at #74E9, its 64-byte line buffer at #7342, packed into TABs when it goes back (the routine at #7881)
+/// address at #74E9, its 64-byte line buffer at #7342, packed into TABs when it goes back (the routine at #7881); an
+/// inject leaves the editor as ZAP (#7301) and GET (#6E5E) do
 SyncDescriptor Pasm30()
 {
     SyncDescriptor d;
@@ -912,7 +919,20 @@ SyncDescriptor Pasm30()
     d.linear.pasmLineAt = 0x74E9;
     d.linear.pasmLineBuffer = 0x7342;
     d.linear.upperPage = -1;
+    d.linear.injectable = true;
+    d.linear.pasmLengthAt = 0x7747;
+    d.linear.pasmLastLineAt = 0x7752;
+    d.linear.pasmLineLengthAt = 0x7802;
+    d.linear.pasmTopAt = 0x76E9;
+    d.linear.pasmRedrawAt = 0x73B6;   // the operand of LD A,0 at #73B5: the editor redraws on its next entry
+    d.linear.pasmNameAt = 0x7391;
+    // what ZAP clears (#7301): the cursor's line, its column and row, the block marks; #6525 the cursor drawn last
+    d.linear.zeroWords = {0x775B, 0x7383, 0x6525, 0x63CA, 0x6C54, 0x6DFE, 0x6E00};
+    d.linear.zeroBytes = {0x6CD0, 0x6D31, 0x6B48};
     d.typing = {TypingRule::NotInText, 0, 0};
+    // its editor's key wait (CALL #65F7 at #73CC, from the editor's entry called at #61A3)
+    d.idleChain = {0x73CF, 0x61A6};
+    d.idleWhere = "its editor";
     return d;
 }
 
@@ -1385,10 +1405,111 @@ InjectPlan PlanInjectPrometheus(const MachineView& machine, const SyncDescriptor
     return plan;
 }
 
+/// PASM: the CR LF text from fixedStart and its #1A, the editor's words as ZAP and GET leave them (the cursor on the
+/// first line, which its line buffer holds with the TABs spread out); the first line goes in packed as PASM packs it
+/// when the cursor leaves it. The text stays below #C000 (what the reader reads). No "changed" flag: a text in memory
+/// that is not empty and not the caller's own counts as changed
+InjectPlan PlanInjectPasm(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& given, const InjectOptions& options)
+{
+    InjectPlan plan;
+    std::string why;
+    if (!Idle(machine, d, why))
+    {
+        plan.error = why;
+        return plan;
+    }
+    const LinearParams& p = d.linear;
+    plan.previous = ReadText(machine, d);
+    const bool empty = plan.previous.file.empty() || plan.previous.file == std::vector<uint8_t>{'\r', '\n'};
+    if (plan.previous.ok && !empty && !options.force && !WrittenBefore(plan.previous, options.written, 0))
+    {
+        plan.error = "the text in " + d.title + " may have changes not saved (it keeps no flag; force overwrites it)";
+        return plan;
+    }
+    // every line ends with CR LF (a text with LF ends too; an empty text is one empty line), up to a #1A
+    std::vector<uint8_t> file;
+    for (auto at = given.begin(); at != given.end() && *at != 0x1A; ++at)
+    {
+        if (*at == '\n' && (file.empty() || file.back() != '\r'))
+            file.push_back('\r');
+        file.push_back(*at);
+    }
+    if (file.size() < 2 || file[file.size() - 2] != '\r' || file.back() != '\n')
+        file.insert(file.end(), {'\r', '\n'});
+    size_t firstEnd = 0;
+    while (!(file[firstEnd] == '\r' && file[firstEnd + 1] == '\n'))
+        ++firstEnd;
+    // the first line in the line buffer: TABs to the next multiple of 8, blanks to 64 columns
+    std::vector<uint8_t> buffer;
+    for (size_t k = 0; k < firstEnd; ++k)
+    {
+        if (file[k] == '\t')
+            buffer.resize((buffer.size() / 8 + 1) * 8, ' ');
+        else
+            buffer.push_back(file[k]);
+    }
+    if (buffer.size() > 64)
+    {
+        plan.error = "the first line takes " + std::to_string(buffer.size()) + " columns; " + d.title + "'s line holds 64";
+        return plan;
+    }
+    std::vector<uint8_t> packed = buffer;
+    PackPasmLine(packed);
+    buffer.resize(64, ' ');
+    std::vector<uint8_t> text = packed;
+    text.insert(text.end(), file.begin() + static_cast<std::ptrdiff_t>(firstEnd), file.end());
+    const uint32_t start = p.fixedStart;
+    if (start + text.size() + 1 > 0xC000)
+    {
+        plan.error = "the text takes " + std::to_string(text.size()) + " bytes; " + d.title + " holds " + std::to_string(0xC000 - start - 1) + " (up to #C000)";
+        return plan;
+    }
+    const auto poke = [&](uint32_t at, uint8_t value) {
+        const int window = machine.windows[(at >> 14) & 3];
+        if (window < 0 || at < 0x4000 || at > 0xFFFF)
+            return false;
+        plan.pokes.push_back({window, static_cast<uint16_t>(at & (kPage - 1)), value});
+        return true;
+    };
+    const auto word = [&](uint32_t at, uint32_t value) { return poke(at, static_cast<uint8_t>(value & 0xFF)) && poke(at + 1, static_cast<uint8_t>(value >> 8)); };
+    bool ok = true;
+    uint32_t at = start;
+    for (const uint8_t b : text)
+        ok = poke(at++, b) && ok;
+    ok = poke(at, 0x1A) && ok;
+    const auto lines = static_cast<uint32_t>(std::count(text.begin(), text.end(), uint8_t('\n')));
+    ok = word(p.pasmLengthAt, static_cast<uint32_t>(text.size())) && word(p.pasmLastLineAt, lines - 1) &&
+         word(p.pasmLineLengthAt, static_cast<uint32_t>(packed.size())) && word(p.pasmLineAt, start) && word(p.pasmTopAt, start) && ok;
+    for (size_t k = 0; k < buffer.size(); ++k)
+        ok = poke(p.pasmLineBuffer + static_cast<uint32_t>(k), buffer[k]) && ok;
+    for (const uint16_t w : p.zeroWords)
+        ok = word(w, 0) && ok;
+    for (const uint16_t b : p.zeroBytes)
+        ok = poke(b, 0) && ok;
+    ok = poke(p.pasmRedrawAt, 0xFF) && ok;
+    if (p.pasmNameAt && !options.name.empty())
+    {
+        std::string name = options.name.substr(0, 8);
+        name.resize(8, ' ');
+        for (size_t k = 0; k < name.size(); ++k)
+            ok = poke(p.pasmNameAt + static_cast<uint32_t>(k), static_cast<uint8_t>(name[k])) && ok;
+    }
+    if (!ok)
+    {
+        plan.error = "the memory of " + d.title + "'s text is not in RAM";
+        return plan;
+    }
+    plan.page = -1;
+    plan.ok = true;
+    return plan;
+}
+
 InjectPlan PlanInjectLinear(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& given, const InjectOptions& options)
 {
     if (d.linear.prometheusTableAt)
         return PlanInjectPrometheus(machine, d, given, options);
+    if (d.linear.pasmLengthAt)
+        return PlanInjectPasm(machine, d, given, options);
     // Laser Genius: memory holds the paragraphs and FF FF, without the disk file's #AF header
     std::vector<uint8_t> file = given;
     if (d.linear.laserGeniusFile)
