@@ -82,6 +82,7 @@ add_library(unreal-asm STATIC
     src/dialects/masm/masmbackend.cpp
     src/dialects/gens/gensbackend.cpp
     src/dialects/zeus/zeusbackend.cpp
+    src/dialects/lasergenius/lasergeniusbackend.cpp
     src/dialects/common/chainwriter.cpp
     src/dialects/common/retrowriter.cpp
     src/dialects/sjasmplus/sjasmplusproject.cpp
@@ -200,6 +201,7 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/masmbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/gensbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/zeusbackend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/lasergeniusbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/pasmobackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/z88dkbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/trdos_test.cpp

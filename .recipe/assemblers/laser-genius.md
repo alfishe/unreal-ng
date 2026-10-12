@@ -78,7 +78,25 @@ zxasm convert tape.tzx --to sjasmplus -o out/
 zxasm decode lg.trd --file PROBEALL.C -o probe.txt   # a file SAVEd on disk (the #AF header)
 ```
 
+## A host source into Laser Genius
+
+Write the source in its editor while it waits for a sentence; `assem` then assembles it (LG keeps no "changed"
+flag: `force`):
+
+```text
+asm_source  {"action":"sync_inject","path":"/abs/main.asm","assembler":"lasergenius-1.04","force":true}
+type_input  {"action":"type","text":"assem\n"}
+WebAPI      POST /asm/sync/inject {"assembler":"lasergenius-1.04","from":"sjasmplus","text":"...","force":true}
+check       tools/verification/unreal-asm/emulator/inject-oracle.py lasergenius LG_1_04.SCL src.asm 0x6900
+```
+
+The text goes from `(#A975)`; the editor's screen lines move behind it as LOAD moves them. `zxasm convert --to
+lasergenius` gives the same text as a file (the paragraphs; the disk file adds the `#AF` header).
+
 ## Pitfalls
+
+- **`(IX-d)` / `(IY-d)` operands build `+d`** in 1.04 (`RLC (IY-4)` = `FD CB 04 06`; `LD (IY-3),A`, one token with
+  LD, is right): write `(IY+-4)`. The conversion does.
 
 - **Answer a Y/N question once, after it is printed:** the key routine clears LAST_K when it starts and the
   question prints slowly; a key pressed earlier is lost, a key held for a second repeats into the editor.
@@ -86,8 +104,9 @@ zxasm decode lg.trd --file PROBEALL.C -o probe.txt   # a file SAVEd on disk (the
   the file does not fit); N abandons. `LOAD ASCII` does not read disk files there at all: type the text, or write the
   disk file as above.
 - **"file not saved continue? (Y/N)"** before `load` when the text changed: Y drops it.
-- **The space is 10K** for the text and the screen buffer; `set space` larger fails ("space too large") with the
-  tool-kit loaded: split big sources.
+- **The text space is 8K** (`stats`: `file` to `buffer`) for the text and the screen lines; `set space 10000`
+  gives more (it moves `file` down and leaves less room for names: "no table space" when assembling ~600 labels);
+  larger fails ("space too large") with the tool-kit loaded: split big sources.
 - **No code without PUT**, and PUT only between `low` and `table` (`stats`).
 - **Division by a word of `#8000` or more is wrong** in Laser Genius (`#8000/#FFFF` = `#5555`); the conversion
   computes it right.
