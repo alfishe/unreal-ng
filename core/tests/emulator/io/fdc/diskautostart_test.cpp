@@ -566,3 +566,37 @@ TEST_F(DiskAutostart_Boot_Test, TheNameHookIsARecordedEditOfTheBlackBox)
         first++;
     EXPECT_EQ(first, live.size()) << "the replay differs from #" << std::hex << (0x4000 + first);
 }
+
+/// Owner report 2026-10-11 (Ball Quest, BQ ATM on BALLQ_GR.SCL: half of the EGA planes missing on the ATM710). The
+/// TR-DOS cold start probes RAM page 31 for a resident and leaves window 3 of the #7FFD.4 = 1 set over RAM 24-31, so the
+/// game's #7FFD pages never reach the RAM the picture comes from. The autostart boots the 128K way instead: once the
+/// cold start reaches the command loop, every #7FFD page n is RAM n in window 3, with #7FFD bit 4 either way.
+/// Boot-bound: the cold start runs to the TR-DOS command loop (a few frames, in turbo)
+TEST(DiskAutostart_Atm710, ThePagesOfThe7FFDAreTheFirst128KAfterTheColdStart)
+{
+    MessageCenter::DisposeDefaultMessageCenter();
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM710", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_GT(context->config.ramsize, 128u) << "the cold start's window 3 needs RAM above 128 KB to differ";
+    emulator->EnableTurboMode();
+
+    auto result = emulator->AutostartDisk(TestPathHelper::GetTestDataPath("loaders/trd/atarin.trd"));
+    ASSERT_TRUE(result.started) << result.message;
+    ASSERT_TRUE(context->pDiskAutostart->IsColdStartFinishPending());
+    for (int frames = 0; frames < 200 && context->pDiskAutostart->IsColdStartFinishPending(); frames++)
+        emulator->RunNFrames(1, true);
+    ASSERT_FALSE(context->pDiskAutostart->IsColdStartFinishPending()) << "the cold start never reached the command loop";
+
+    Memory* memory = context->pMemory;
+    for (uint8_t page = 0; page < 8; page++)
+    {
+        for (uint8_t rom48 : {uint8_t(0x10), uint8_t(0x00)})
+        {
+            context->pPortDecoder->DecodePortOut(0x7FFD, static_cast<uint8_t>(rom48 | page), 0x8000);
+            EXPECT_EQ(memory->MapZ80AddressToPhysicalAddress(0xC000), memory->RAMPageAddress(page))
+                << "#7FFD = #" << std::hex << int(rom48 | page);
+        }
+    }
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

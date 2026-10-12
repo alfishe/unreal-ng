@@ -92,6 +92,13 @@ on some real disks) is a TR-DOS disk and autostarts.
 no keyboard timing is needed and why this is reliable where typed
 `RANDOMIZE USR 15616` can race.
 
+When the cold start reaches the TR-DOS command loop, the model may adjust its
+paging once, before the program runs (`PortDecoder::FinishAutostartColdStart`).
+`ATM710`: the ATM2 DOS ROM's cold start leaves `#7FFD` pages at RAM 24-31
+(resident probe), so the autostart lays the windows out like the BIOS's
+"SPECTRUM 128" entry — 128K programs see pages 0-7
+([atm710.md](../machines/atm/atm710.md#tr-dos-cold-start-and-128k-programs)).
+
 ### Confirm the program is running
 
 ```bash

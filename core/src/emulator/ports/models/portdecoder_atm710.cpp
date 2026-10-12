@@ -218,6 +218,19 @@ void PortDecoder_ATM710::EnterSpectrum128Paging(uint16_t pc)
     updateMemoryBanks();
 }
 
+bool PortDecoder_ATM710::FinishAutostartColdStart(uint16_t pc)
+{
+    // The TR-DOS cold start ($0000 -> $3C50 in every ATM2 ROM: BIOS 1.06 to 1.07.13) first looks for a resident in RAM
+    // page 31 through its page select at $3CC5: #7FFD = #17, then #FFF7 = #E7 into window 3 of the #7FFD.4 = 1 set,
+    // "RAM from #7FFD" over base 24 (#7FFD gives page bits 0-2 only: ATM2PORT.TXT MX_A; UnrealSpeccy, Xpeccy, ZXMAK2
+    // and the ZX-Evo atm_pager.v agree). Only a found resident ends with page 0 selected again; without
+    // one, every #7FFD page with bit 4 set lands in RAM 24-31 on 256 KB and up, while the picture stays in RAM 5 / 7
+    // (and 1 / 3 for the ATM modes): Ball Quest's ATM version shows half of its EGA planes. The BIOS's own entry for
+    // 128K programs is "SPECTRUM 128", whose menu enters TR-DOS without the resident probe; this is its paging
+    EnterSpectrum128Paging(pc);
+    return true;
+}
+
 void PortDecoder_ATM710::UpdateModelMemoryBanks()
 {
     updateMemoryBanks();

@@ -1306,6 +1306,11 @@ public:
     /// nothing, the machine already behaves like a 128K
     virtual void EnterSpectrum128Paging(uint16_t pc) { (void)pc; }
 
+    /// A disk autostart's TR-DOS cold start (Reset(RM_DOS)) reached the TR-DOS command loop, right before it runs the
+    /// disk's program: leave the paging the way the user's own boot of a disk would. True when it changed the machine.
+    /// Default: nothing, the cold start already is that boot
+    virtual bool FinishAutostartColdStart(uint16_t pc) { (void)pc; return false; }
+
     /// Whether #7FFD paging is latched off until reset. A locked #7FFD ignores
     /// every later write, screen bit included, and keeps the value that locked
     /// it (UnrealSpeccy, Fuse, Xpeccy, ZXMAK2 and the MiSTer RTL agree), so the

@@ -183,18 +183,29 @@ void DiskAutostart::ArmCommand(const std::vector<uint8_t>& commandLine, const st
 void DiskAutostart::Disarm()
 {
     _armed = false;
+    _coldStartFinishPending = false;
     _name.clear();
     _commandLine.clear();
 }
 
 bool DiskAutostart::HandleCommandLoopHook(Z80& cpu)
 {
-    if (!_armed)
+    if (!IsHookPending())
         return false;
 
     // Only inside the TR-DOS ROM
     if (!(_context->emulatorState.flags & CF_TRDOS))
         return false;
+
+    bool changed = false;
+    if (_coldStartFinishPending)
+    {
+        _coldStartFinishPending = false;
+        changed = _context->pPortDecoder && _context->pPortDecoder->FinishAutostartColdStart(cpu.pc);
+    }
+
+    if (!_armed)
+        return changed;
 
     const uint16_t eLine = static_cast<uint16_t>(cpu.rd(SYSVAR_E_LINE) | (cpu.rd(SYSVAR_E_LINE + 1) << 8));
     for (size_t i = 0; i < sizeof(BOOT_LINE); i++)
@@ -205,7 +216,7 @@ bool DiskAutostart::HandleCommandLoopHook(Z80& cpu)
             _context->pModuleLogger->Warning(PlatformModulesEnum::MODULE_DISK, PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC,
                                               "DiskAutostart: E_LINE does not hold RUN \"boot\" - name hook skipped");
             Disarm();
-            return false;
+            return changed;
         }
     }
 
