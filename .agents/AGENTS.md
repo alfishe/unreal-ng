@@ -59,6 +59,21 @@ Benchmarks need one manual configure with `-DBENCHMARKS=ON`, then `build.sh` kee
 
 CI uses gcc (stricter than clang). After C++ changes: `docker/linux/build.sh --test`.
 
+## Landing on master
+
+Only your own commits, only from a worktree (`scratch/wt-<name>`), never a branch switched in the main checkout.
+`tools/build/land.sh` does it: compare-and-swap on master, the main checkout follows through a private index (other
+sessions' uncommitted edits stay byte for byte), `--push` publishes exactly the landed SHA.
+
+```bash
+git fetch github master && git merge --no-edit github/master   # never merge local master: it may hold others' commits
+tools/build/build.sh && tools/build/land.sh --push "$(git rev-parse master)"
+tools/build/land.sh --publish-only                              # push HEAD without moving local master
+```
+
+It refuses when a push would publish another session's unpushed commits. Do not push `master` by hand, do not
+merge or land other sessions' branches. Details: [`tools/build/README.md`](tools/build/README.md#landing-on-master).
+
 ## Writing Tests
 
 Full guide: [`core/tests/README.md`](core/tests/README.md). Non-negotiables:

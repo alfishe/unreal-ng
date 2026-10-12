@@ -73,11 +73,10 @@ Work happens in a worktree (`scratch/wt-<name>`), never on a branch switched in 
 build is green, `land.sh` moves local master to the worktree's HEAD:
 
 ```bash
-# in the worktree; merge master first if it moved since the worktree was made
-git merge --no-edit master
+# in the worktree; merge github/master first (NOT local master: it may hold other sessions' unpushed commits)
+git fetch github master && git merge --no-edit github/master
 BUILD_DIR=$PWD/cmake-build-agent-release tools/build/build.sh \
-  && tools/build/land.sh "$(git rev-parse master)" \
-  && git push github "$(git rev-parse HEAD):refs/heads/master"
+  && tools/build/land.sh --push "$(git rev-parse master)"
 ```
 
 - **Only a fast-forward, and only if master is still where you saw it.** The argument is the full SHA master is
@@ -92,7 +91,13 @@ BUILD_DIR=$PWD/cmake-build-agent-release tools/build/build.sh \
   running there) or its index has staged changes (moving master under them would show the landing reverted). On
   another branch the main checkout is not touched and master still moves (the script says so).
 - **Chain the gate with `&&`.** With `;` a failed build still lands and pushes.
-- Pushing is the caller's step; `origin` is pushed by the owner.
+- **`--push` publishes exactly the landed SHA** (`git push github <sha>:refs/heads/master`, never the `master` ref).
+  Before master moves it checks `git log github/master..master`: when local master holds commits github lacks
+  (another session's unpushed work), a push would publish them, so it refuses and changes nothing.
+- **Publishing without landing: `land.sh --publish-only`.** For a branch built on `github/master`: pushes HEAD, leaves
+  local master and the main checkout alone. Refuses when HEAD carries commits local master also holds and github lacks
+  (a merge of local master by mistake), and when github/master has commits HEAD lacks.
+- `origin` is pushed by the owner; the landing ends with the github push.
 
 ## How it works, and why it does not get stuck
 
