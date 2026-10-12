@@ -120,6 +120,9 @@ public:
     /// A 48K / 128K snapshot: the memory manager on, laid out like a Spectrum 128K (ROM pairs 128/SYS and 48K/DOS chosen
     /// by #7FFD bit 4, RAM 5 / 2 fixed, window 3 paged by #7FFD), ZX video mode. The reset leaves it off
     void EnterSpectrum128Paging(uint16_t pc) override;
+    /// The cold start is the BIOS menu's "TR-DOS 48" entry, which leaves window 3 of the #7FFD.4 = 1 set on RAM 24-31
+    /// (above 128 KB): a disk is booted the 128K way instead, "SPECTRUM 128" and then its menu's TR-DOS
+    bool FinishAutostartColdStart(uint16_t pc) override;
     void UpdateModelMemoryBanks() override;
     /// endregion </Interface methods>
 

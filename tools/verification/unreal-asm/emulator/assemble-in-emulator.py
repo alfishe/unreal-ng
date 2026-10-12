@@ -190,7 +190,7 @@ def zeus(args, stem, work):
         emu.write(args.address + k, [0xAA] * min(1024, args.length - k))
     emu.type('a')                              # assemble
     emu.tap('enter')
-    time.sleep(8)
+    time.sleep(max(8, args.wait))
     emu.screenshot(stem + '.assembled.png')
     data = emu.read(args.address, args.length)
     emu.stop_recording()
@@ -214,7 +214,7 @@ def main():
     parser.add_argument('--ram', type=int, help='RAM of the Pentagon the tool creates, in KB (ZAsm 3.2x and later: 512)')
     parser.add_argument('--list-position', help='ALASM: column,row of the source in the file list')
     parser.add_argument('--extra', nargs='*', default=[], help='STORM, ZAsm, MASM, XAS: hobeta files the source includes')
-    parser.add_argument('--wait', type=float, default=6, help='MASM, TASM: seconds the assembly takes')
+    parser.add_argument('--wait', type=float, default=6, help='MASM, TASM, ZEUS, GENS: seconds the assembly takes')
     parser.add_argument('--list-keys', help='XAS: comma-separated cursor keys from the first file of the list to the source')
     parser.add_argument('--at', type=lambda v: int(v, 0), default=26000, help='GENS4: where it is put and started')
     parser.add_argument('--table', type=int, help='GENS4: the symbol table size A takes (default: GENS chooses; a large text needs more)')
