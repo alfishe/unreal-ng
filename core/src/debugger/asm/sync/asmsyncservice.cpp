@@ -73,13 +73,20 @@ std::string ProjectSignature(const std::string& path, const std::string& from, s
         std::error_code sizeFailed, timeFailed;
         const uintmax_t size = fs::file_size(file, sizeFailed);
         const fs::file_time_type time = fs::last_write_time(file, timeFailed);
+        std::ifstream in(file, std::ios::binary);
+        std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        // The content's hash as well: a time can be whole seconds (libstdc++ on Windows, FAT), and a save
+        // of the same size within that second would leave size and time as they were
+        uint64_t hash = 14695981039346656037ull;  // FNV-1a
+        for (const uint8_t b : bytes)
+            hash = (hash ^ b) * 1099511628211ull;
         const std::u8string name = file.u8string();
         signature.append(name.begin(), name.end());
         signature += sizeFailed || timeFailed ? std::string("|missing\n")
-                                              : "|" + std::to_string(size) + "|" + std::to_string(static_cast<long long>(time.time_since_epoch().count())) + "\n";
+                                              : "|" + std::to_string(size) + "|" + std::to_string(static_cast<long long>(time.time_since_epoch().count())) +
+                                                    "|" + std::to_string(hash) + "\n";
         ++files;
-        std::ifstream in(file, std::ios::binary);
-        return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        return bytes;
     };
     const std::vector<uint8_t> bytes = read(main);
     SourceDocument document = SourceDocument::FromText(std::string(bytes.begin(), bytes.end()), from);

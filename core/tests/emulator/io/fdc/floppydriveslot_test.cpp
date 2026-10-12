@@ -8,6 +8,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/scratchfolder.h"
 #include "_helpers/testpathhelper.h"
+#include "common/filehelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/fdd.h"
@@ -20,7 +21,7 @@ namespace
     {
         const auto path = TestPathHelper::FindProjectRoot() / relative;
         const auto u8 = path.u8string();
-        return std::string(u8.begin(), u8.end());
+        return FileHelper::NormalizePath(std::string(u8.begin(), u8.end()));
     }
 
     const std::string kEyeAche = "testdata/loaders/trd/EyeAche.trd";

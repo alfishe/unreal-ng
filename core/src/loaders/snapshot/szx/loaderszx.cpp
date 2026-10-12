@@ -603,9 +603,10 @@ namespace
             candidates.push_back(Utf8(base / storedPath.filename()));
         }
         candidates.push_back(normalized);
+        // in the native form: a link taken on another platform reads as the same path as one inserted here
         for (const std::string& candidate : candidates)
             if (FileHelper::FileExists(candidate))
-                return candidate;
+                return FileHelper::NormalizePath(candidate);
         return {};
     }
 

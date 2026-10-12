@@ -113,6 +113,15 @@ namespace
                 std::error_code typeEc;
                 const bool isDirectory = entry.is_directory(typeEc);
                 const bool isFile = entry.is_regular_file(typeEc);
+                std::error_code existsEc;
+                if (typeEc && !std::filesystem::exists(entry.path(), existsEc))
+                {
+                    // Gone since the listing named it (the folder deleted mid-walk): where POSIX
+                    // fails to open the folder, Windows looks the type up again and finds nothing
+                    _ioError = true;
+                    _ioErrorMessage = "gone during the scan: " + path + ": " + typeEc.message();
+                    break;
+                }
                 if (!isDirectory && !isFile)
                 {
                     Skip(path, "not a file or folder");
