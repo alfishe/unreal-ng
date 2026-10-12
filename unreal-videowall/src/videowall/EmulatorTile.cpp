@@ -8,6 +8,7 @@
 #include <QPainter>
 #include <QTimer>
 #include <emulator/notifications.h>
+#include <emulator/video/displaygeometry.h>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator.h"
@@ -78,9 +79,27 @@ void EmulatorTile::paintEvent(QPaintEvent* event)
         // This reduces Qt scaling overhead by ~90% (qt_blend_argb32_on_argb32_neon)
         painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
 
-        // Extract central 256x192 screen from 352x288 framebuffer, scale to widget size
-        QRectF sourceRect(48, 48, 256, 192);
+        // The working picture (a Spectrum's 256x192 paper, a TS-Conf's whole frame, an ATM's 640x200),
+        // scaled to the widget
+        QRectF sourceRect = _pictureRect.isEmpty() ? QRectF(image.rect()) : QRectF(_pictureRect);
+
+        // The picture keeps the raster's own shape inside the plate: bars, not a stretch
         QRectF targetRect(rect());
+        painter.fillRect(rect(), Qt::black);
+        const double plate = targetRect.width() / targetRect.height();
+        if (_pictureAspect > 0.0 && plate > 0.0)
+        {
+            if (_pictureAspect > plate)
+            {
+                const double height = targetRect.width() / _pictureAspect;
+                targetRect = QRectF(targetRect.left(), targetRect.top() + (targetRect.height() - height) / 2.0, targetRect.width(), height);
+            }
+            else
+            {
+                const double width = targetRect.height() * _pictureAspect;
+                targetRect = QRectF(targetRect.left() + (targetRect.width() - width) / 2.0, targetRect.top(), width, targetRect.height());
+            }
+        }
         painter.drawImage(targetRect, image, sourceRect);
     }
     else
@@ -316,6 +335,8 @@ void EmulatorTile::setSynchronousMode(bool enable)
 
 QImage EmulatorTile::convertFramebuffer()
 {
+    _pictureRect = QRect();  // a frame that cannot be read is drawn whole
+    _pictureAspect = 4.0 / 3.0;
     if (!_emulator)
     {
         QImage black(TILE_WIDTH, TILE_HEIGHT, QImage::Format_RGBA8888);
@@ -350,13 +371,21 @@ QImage black(TILE_WIDTH, TILE_HEIGHT, QImage::Format_RGBA8888);
 
     // Copy from the frame-end latched snapshot (tear-free) instead of the live
     // framebuffer which the emulation thread overwrites concurrently
+    PictureGeometry geometry;
     if (!screen->CopyPresentedFramebuffer(_latchedFrame.bits(),
-                                          static_cast<size_t>(_latchedFrame.sizeInBytes())))
+                                          static_cast<size_t>(_latchedFrame.sizeInBytes()), &geometry))
     {
         QImage black(TILE_WIDTH, TILE_HEIGHT, QImage::Format_RGBA8888);
         black.fill(Qt::black);
         return black;
     }
 
+    _pictureRect = QRect(geometry.screenWindow.x, geometry.screenWindow.y, geometry.screenWindow.width,
+                         geometry.screenWindow.height)
+                       .intersected(_latchedFrame.rect());
+    const double aspect = DisplayGeometry::WindowAspect(geometry.width, geometry.height, static_cast<uint16_t>(_pictureRect.width()),
+                                                        static_cast<uint16_t>(_pictureRect.height()));
+    if (aspect > 0.0)
+        _pictureAspect = aspect;
     return _latchedFrame;
 }

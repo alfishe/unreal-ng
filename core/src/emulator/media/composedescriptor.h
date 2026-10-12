@@ -60,6 +60,9 @@ struct ComposeLayer
     std::vector<std::string> exclude;
     std::vector<std::string> opaque;
     std::vector<std::string> whiteout;
+    /// FR-14: per directory of the target (absolute path), these names first, in this order; the rest keep the
+    /// default order (directories, then files, by name). It wins over a folder manifest's `order`
+    std::vector<std::pair<std::string, std::vector<std::string>>> order;
     ConflictPolicy conflict = ConflictPolicy::Shadow;
     bool writable = false;
     DeletePolicy onDelete = DeletePolicy::Keep;

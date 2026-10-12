@@ -162,6 +162,10 @@ uint8_t NextBoard::Read(uint8_t reg) const
 
 void NextBoard::Write(uint8_t reg, uint8_t value)
 {
+    // A write of the program comes after what the copper has due: the copper runs to the beam first (and the picture follows it), so the
+    // journal and the breakpoints see the writes in the order of their time
+    if (_beforeCpuWrite && !_copperWrite)
+        _beforeCpuWrite();
     if (_journal.Enabled()) [[unlikely]]
     {
         uint32_t frame = 0, t = 0;
@@ -192,8 +196,6 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
                 board->_machine->AudioConfigChanged();
         }
     } audioNotify{this, reg};
-    if (_beforeCpuWrite && !_copperWrite)
-        _beforeCpuWrite();
     if ((reg == 0x2C || reg == 0x2D || reg == 0x2E) && _machine)
         _machine->DacMirrorWrite(reg, value);
     if (_log)
@@ -374,6 +376,8 @@ void NextBoard::RefreshLayer2Mapping()
 
 void NextBoard::AfterInstruction()
 {
+    // The copper is a bus master of the machine: it runs to the beam after every instruction, whether or not a picture is drawn
+    _copper.Poll();
     if (_machine)
     {
         _machine->OnInstructionDone();

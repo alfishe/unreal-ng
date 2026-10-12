@@ -46,6 +46,7 @@ void ScreenNext::InitFrame()
 {
     Screen::InitFrame();
     _nextLine = 0;
+    _nextX = 0;
     PrepareLayerFrame();
 }
 
@@ -106,6 +107,8 @@ void ScreenNext::SetVideoMode([[maybe_unused]] VideoModeEnum mode)
 {
     Screen::SetVideoMode(M_NEXT);
     _lastTimingClass = _state ? _state->ula_timing_class : 2;
+    if (_copperBound)
+        UpdateCopperGeometry();  // the raster of the new family
 }
 
 bool ScreenNext::FramebufferReady() const
@@ -122,57 +125,115 @@ uint32_t ScreenNext::LineEndT(unsigned y) const
 
 uint64_t ScreenNext::CopperClock(uint32_t tstate) const
 {
-    // The copper's lines count from the first paper line; its horizontal 0 is 11 pixels before the first paper pixel
+    // The copper's lines count from the first paper line; its horizontal 0 is 11 pixels before the first paper pixel. In 7 MHz counts the map
+    // is linear modulo the frame: ((2 t + B) mod frame7) * 4, B constant for a raster (cached: this runs after every instruction while the
+    // copper works)
     const uint32_t perLine = _rasterState.tstatesPerLine;
-    const uint64_t frame7 = static_cast<uint64_t>(_rasterState.maxFrameTiming) * 2;
-    const uint64_t origin7 = (static_cast<uint64_t>(_rasterState.screenAreaStart / perLine) * perLine + _rasterState.screenLineAreaStart) * 2;
-    const uint64_t t7 = (static_cast<uint64_t>(tstate) * 2 + frame7 + 11 - origin7 % frame7) % frame7;
+    if (_copperKey[0] != _rasterState.maxFrameTiming || _copperKey[1] != perLine || _copperKey[2] != _rasterState.screenAreaStart ||
+        _copperKey[3] != _rasterState.screenLineAreaStart)
+    {
+        _copperKey[0] = _rasterState.maxFrameTiming;
+        _copperKey[1] = perLine;
+        _copperKey[2] = _rasterState.screenAreaStart;
+        _copperKey[3] = _rasterState.screenLineAreaStart;
+        _copperFrame7 = static_cast<uint64_t>(_rasterState.maxFrameTiming) * 2;
+        const uint64_t origin7 = (static_cast<uint64_t>(_rasterState.screenAreaStart / perLine) * perLine + _rasterState.screenLineAreaStart) * 2;
+        _copperB = _copperFrame7 + 11 - origin7 % _copperFrame7;
+    }
+    uint64_t t7 = static_cast<uint64_t>(tstate) * 2 + _copperB;
+    while (t7 >= _copperFrame7)
+        t7 -= _copperFrame7;
     return t7 * 4;
+}
+
+void ScreenNext::UpdateCopperGeometry()
+{
+    if (PortDecoder_Next* decoder = Decoder())
+        decoder->Board().Copper().SetGeometry(_rasterState.tstatesPerLine * 2, _rasterState.maxFrameTiming / _rasterState.tstatesPerLine);
+}
+
+void ScreenNext::BindCopper(NextCopper& copper)
+{
+    copper.SetNow([this]() { return CopperClockNow(); });
+    copper.SetBeforeWrite([this](uint64_t clock) { RenderBeforeCopperClock(clock); });
+    copper.SetGeometry(_rasterState.tstatesPerLine * 2, _rasterState.maxFrameTiming / _rasterState.tstatesPerLine);
+    _copperBound = true;
+}
+
+void ScreenNext::RenderBeforeCopperClock(uint64_t clock)
+{
+    if (_turboRenderSkip || !FramebufferReady())
+        return;
+    // Where the write is in the frame: the copper clock is at most an instruction behind the beam, so the T-state is the beam's minus the
+    // difference (this works across the copper's own frame wrap, which does not fall on the frame start)
+    const uint64_t frameClocks = _copperFrame7 * 4;
+    if (frameClocks == 0)
+        return;
+    const uint64_t now = CopperClockNow();
+    const uint64_t behind = (now + frameClocks - clock) % frameClocks;
+    constexpr uint64_t kClocksPerTState = 8;  // 28 MHz clocks in a 3.5 MHz T-state
+    const uint32_t t = GetCurrentTstate();
+    if (behind / kClocksPerTState > t)
+        return;  // the previous frame's tail: that frame is drawn to its end already
+    const uint32_t at = t - static_cast<uint32_t>(behind / kClocksPerTState);
+    const uint32_t perLine = _rasterState.tstatesPerLine;
+    const uint32_t first = _rasterState.topBorderAreaStart + 16 * perLine;
+    if (at < first)
+        return;  // the vertical blank before the first visible line
+    const unsigned line = (at - first) / perLine;
+    if (line >= NextVideoRenderer::kHeight)
+    {
+        RenderUpTo(NextVideoRenderer::kHeight, 0);
+        return;
+    }
+    // x = 0 of the line in copper time, and the pixel of the write from the copper clock itself (a quarter pixel finer than the T-state)
+    const uint32_t lineStart = first + line * perLine;
+    const uint64_t lineClocks = static_cast<uint64_t>(perLine) * 8;
+    const uint64_t x0 = CopperClock(lineStart + _rasterState.screenLineAreaStart - 16);
+    const uint64_t delta = (clock + frameClocks - x0) % frameClocks;
+    const unsigned x = delta < lineClocks ? static_cast<unsigned>(std::min<uint64_t>(delta / 4, 320)) : 0;
+    RenderUpTo(line, x);
 }
 
 void ScreenNext::RenderLinesUpTo(unsigned lineExclusive)
 {
+    RenderUpTo(lineExclusive, 0);
+}
+
+void ScreenNext::RenderUpTo(unsigned lineLimit, unsigned xLimit)
+{
     PortDecoder_Next* decoder = Decoder();
     if (!decoder || !FramebufferReady())
         return;
-    lineExclusive = std::min<unsigned>(lineExclusive, NextVideoRenderer::kHeight);
-    if (_nextLine >= lineExclusive)
+    lineLimit = std::min<unsigned>(lineLimit, NextVideoRenderer::kHeight);
+    constexpr unsigned kW = NextVideoRenderer::kWidth;
+    constexpr unsigned kPixels = 320;  // the grid line: 32 border + 256 paper + 32 border
+    if (_nextLine > lineLimit || (_nextLine == lineLimit && _nextX >= xLimit))
         return;
+    if (!_copperBound)
+        BindCopper(decoder->Board().Copper());
 
     NextBoard& board = decoder->Board();
-    if (!_copperBound)
-    {
-        board.Copper().SetNow([this]() { return CopperClock(GetCurrentTstate()); });
-        _copperBound = true;
-    }
-    board.Copper().SetGeometry(_rasterState.tstatesPerLine * 2, _rasterState.maxFrameTiming / _rasterState.tstatesPerLine);
     NextVideoInputs in;
     in.ram = _context->pMemory->RAMPageAddress(0);
     in.ramPages = MAX_RAM_PAGES;
     in.regs = &board.Video();
     in.sprites = &board.Sprites();
-    for (unsigned r = 0; r < 256; r++)
-        in.nr[r] = board.Stored(static_cast<uint8_t>(r));
-    in.border = _state ? static_cast<uint8_t>(_state->pFE & 7) : 0;
-    in.portFf = board.Video().PortFf();
-    in.shadowScreen = _state && (_state->p7FFD & 0x08);
-    in.layer2Enable = board.Video().Layer2Enabled();
     in.flash = _state && (_state->frame_counter & 0x10);
     uint32_t* fb = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
     auto refresh = [&]() {
+        // what the copper or the program may have changed since the pixels before
         for (unsigned r = 0; r < 256; r++)
             in.nr[r] = board.Stored(static_cast<uint8_t>(r));
-        // what the copper (or a port write) may have changed since the line before
         in.portFf = board.Video().PortFf();
         in.shadowScreen = _state && (_state->p7FFD & 0x08);
         in.layer2Enable = board.Video().Layer2Enabled();
         in.border = _state ? static_cast<uint8_t>(_state->pFE & 7) : 0;
     };
-    uint32_t segment[NextVideoRenderer::kWidth];
-    // The layer record: a segment that covers the whole line is rendered straight into the frame's rows; a copper segment goes
-    // through a line of scratch and only its x-range is copied, exactly as the composed row is
+    uint32_t segment[kW];
+    // The layer record: a segment that covers the whole line is rendered straight into the frame's rows; a partial one goes through a
+    // line of scratch and only its x-range is copied, exactly as the composed row is
     NextLayer::Frame* record = _layerRecording ? _layerDraw.get() : nullptr;
-    constexpr unsigned kW = NextVideoRenderer::kWidth;
     NextLayer::Pixel scratchPlane[NextLayer::kPlanes][kW];
     uint8_t scratchIds[kW], scratchInfo[kW];
     NextLayer::LineSink scratchSink;
@@ -180,25 +241,18 @@ void ScreenNext::RenderLinesUpTo(unsigned lineExclusive)
         scratchSink.plane[p] = scratchPlane[p];
     scratchSink.ids = scratchIds;
     scratchSink.info = scratchInfo;
-    NextLayer::LineSink lineSink;
-    for (; _nextLine < lineExclusive; _nextLine++)
+    while (_nextLine < lineLimit || (_nextLine == lineLimit && _nextX < xLimit))
     {
+        NextLayer::LineSink lineSink;
         if (record)
             lineSink = record->Line(_nextLine);
-        uint32_t* row = fb + static_cast<size_t>(_nextLine) * 2 * NextVideoRenderer::kWidth;
-        // x = 0 of the grid line, in copper time: the paper's left edge minus the 32 pixels of border
-        const uint32_t lineStart = LineEndT(_nextLine) - _rasterState.tstatesPerLine;
-        const uint64_t t0 = CopperClock(lineStart + _rasterState.screenLineAreaStart - 16);
-        NextCopper& copper = board.Copper();
-        copper.RunTo(t0);  // everything before the line
-        // The copper writes inside the line change the picture from the pixel it reaches: the pixels before are drawn with
-        // the state before the write
-        unsigned fromX = 0;
-        auto draw = [&](unsigned toX) {
-            if (toX <= fromX)
-                return;
+        uint32_t* row = fb + static_cast<size_t>(_nextLine) * 2 * kW;
+        const unsigned toX = _nextLine < lineLimit ? kPixels : std::min(xLimit, kPixels);
+        const unsigned fromX = _nextX;
+        if (toX > fromX)
+        {
             refresh();
-            const bool whole = fromX == 0 && toX >= 320;
+            const bool whole = fromX == 0 && toX >= kPixels;
             in.layerOut = record ? (whole ? &lineSink : &scratchSink) : nullptr;
             if (record)
                 NextVideoRenderer::RecordSegment(*record, _nextLine, fromX * 2, toX * 2, in);
@@ -211,16 +265,13 @@ void ScreenNext::RenderLinesUpTo(unsigned lineExclusive)
                 std::memcpy(lineSink.ids + fromX * 2, scratchIds + fromX * 2, (toX - fromX) * 2);
                 std::memcpy(lineSink.info + fromX * 2, scratchInfo + fromX * 2, (toX - fromX) * 2);
             }
-            fromX = toX;
-        };
-        if (copper.Mode() != 0)
-        {
-            copper.SetBeforeWrite([&](uint64_t t) { draw(static_cast<unsigned>(std::min<uint64_t>((t > t0 ? t - t0 : 0) / 4, 320))); });
-            copper.RunTo(t0 + 320 * 4);
-            copper.SetBeforeWrite(nullptr);
+            _nextX = toX;
         }
-        draw(320);
-        std::memcpy(row + NextVideoRenderer::kWidth, row, NextVideoRenderer::kWidth * sizeof(uint32_t));  // every line twice
+        if (_nextX < kPixels)
+            break;  // the limit is inside this line
+        std::memcpy(row + kW, row, kW * sizeof(uint32_t));  // every line twice
+        _nextLine++;
+        _nextX = 0;
     }
     if (record && _nextLine >= NextVideoRenderer::kHeight)
         CompleteLayerFrame();

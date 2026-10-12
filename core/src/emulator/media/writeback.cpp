@@ -114,6 +114,16 @@ namespace
                         host /= FileHelper::ToFsPath(piece);
                 }
             }
+            // A file the folder manifest renamed (FR-6: files.<host name>.name) is still its own host file
+            const uint32_t node = NodeAtBuild(p);
+            const SourcePool* pool = layout ? layout->Pool() : nullptr;
+            if (node != FileTree::kNone && pool && layout->Tree().Node(node).data.storage == FileData::Storage::HostFile)
+            {
+                const fs::path built = pool->HostPath(layout->Tree().Node(node).data.hostFile);
+                std::error_code ec;
+                if (built.filename() != host.filename() && fs::equivalent(built.parent_path(), host.parent_path(), ec))
+                    return built;
+            }
             return host;
         }
 

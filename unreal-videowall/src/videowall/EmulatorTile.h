@@ -83,6 +83,8 @@ private:
     QTimer* _blinkTimer = nullptr;  // Timer for blink effect
 
     // Tear-free rendering: owned backing store filled via CopyPresentedFramebuffer
+    double _pictureAspect = 4.0 / 3.0;  // The picture's shape on the CRT (DisplayGeometry::WindowAspect), kept inside the plate
+    QRect _pictureRect;  // The working picture (paper) inside the last converted frame, as its machine placed it
     QImage _latchedFrame;
 
     // Tile size from TileLayoutManager.h: TILE_WIDTH x TILE_HEIGHT

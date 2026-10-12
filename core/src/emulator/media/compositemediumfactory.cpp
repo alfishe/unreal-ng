@@ -531,6 +531,12 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
                           bottomLayer->exclude.empty();
     std::unique_ptr<FatImageExpander> expander;
     std::vector<uint32_t> uncountedBase, uncountedUnion;  ///< C4b: unexpanded directories, counted by CompleteCounts
+    // FR-6 / FR-14: entry order per target directory, applied after the merge in this order (a later list's names
+    // come first): folder manifests, then the descriptor's layer `order` (the descriptor wins)
+    std::vector<std::pair<std::string, std::vector<std::string>>> manifestOrders;
+    // FR-6: the bottom folder layer's manifest fills what the descriptor leaves unset
+    std::optional<CodePage> manifestPage;
+    std::optional<std::string> manifestLabel;
 
     for (size_t i = 0; i < d.layers.size(); i++)
     {
@@ -649,6 +655,61 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
             for (const std::string& line : sourceReport)
                 result.report.push_back(where + ": " + line);
             sourceIdentity = snapshot.Identity();
+
+            // FR-6: the manifest's names and order are about the folder's own root, so they apply when the layer
+            // starts there; its code page and label serve the volume when this is the bottom layer
+            uint64_t manifestId = 0xcbf29ce484222325ULL;
+            const auto mixText = [&manifestId](const std::string& text) {
+                for (char c : text)
+                {
+                    manifestId ^= static_cast<uint8_t>(c);
+                    manifestId *= 0x100000001b3ULL;
+                }
+                manifestId ^= 0xFF;
+                manifestId *= 0x100000001b3ULL;
+            };
+            if (layer.from.empty() || layer.from == "/")
+            {
+                FileTree& own = trees[i];
+                for (const auto& [hostName, override] : manifest.files)
+                {
+                    if (!override.name)
+                        continue;
+                    std::vector<uint32_t>& children = own.Node(FileTree::kRoot).children;
+                    const auto it = std::find_if(children.begin(), children.end(),
+                                                 [&own, &hostName](uint32_t c) { return own.Node(c).name == hostName; });
+                    const auto taken = std::find_if(children.begin(), children.end(), [&own, &override](uint32_t c) {
+                        return UnionBuilder::FatKey(own.Node(c).name) == UnionBuilder::FatKey(*override.name);
+                    });
+                    if (it == children.end())
+                        result.report.push_back(where + ": manifest: files." + hostName + ": no such file");
+                    else if (taken != children.end() && taken != it)
+                        result.report.push_back(where + ": manifest: files." + hostName + ": '" + *override.name +
+                                                "' is another file's name, not renamed");
+                    else
+                    {
+                        own.Node(*it).name = *override.name;
+                        mixText(hostName);
+                        mixText(*override.name);
+                    }
+                }
+                if (!manifest.order.empty())
+                {
+                    manifestOrders.emplace_back(layer.mount.empty() ? std::string("/") : layer.mount, manifest.order);
+                    for (const std::string& name : manifest.order)
+                        mixText(name);
+                }
+            }
+            if (i == 0)
+            {
+                manifestPage = manifest.codePage;
+                manifestLabel = manifest.label;
+            }
+            if (manifest.codePage)
+                mixText(UnicodeHelper::CodePageName(*manifest.codePage));
+            if (manifest.label)
+                mixText(*manifest.label);
+            sourceIdentity ^= manifestId;
         }
 
         CompositeLayerInfo layerInfo;
@@ -752,6 +813,38 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
             else
                 report.push_back(path + ": in " + FileHelper::FromFsPath(d.file.filename()) + ".attributes but not on the disk any more");
         }
+        // FR-14 / FR-6: named entries first, in the lists' order (an ISO keeps its directories sorted: ISO 9660)
+        if (!optical)
+        {
+            std::vector<std::pair<std::string, std::vector<std::string>>> orders = manifestOrders;
+            for (const ComposeLayer& l : d.layers)
+                orders.insert(orders.end(), l.order.begin(), l.order.end());
+            for (const auto& [dirPath, names] : orders)
+            {
+                const uint32_t dir = dirPath == "/" || dirPath.empty() ? FileTree::kRoot : findInUnion(dirPath);
+                if (dir == FileTree::kNone || !tree->Node(dir).isDirectory)
+                {
+                    report.push_back("order: " + dirPath + ": no such directory");
+                    continue;
+                }
+                std::vector<uint32_t>& children = tree->Node(dir).children;
+                std::vector<uint32_t> first;
+                for (const std::string& name : names)
+                {
+                    const auto it = std::find_if(children.begin(), children.end(), [&](uint32_t c) {
+                        return UnionBuilder::FatKey(tree->Node(c).name) == UnionBuilder::FatKey(name);
+                    });
+                    if (it == children.end())
+                    {
+                        report.push_back("order: " + dirPath + ": no entry '" + name + "'");
+                        continue;
+                    }
+                    first.push_back(*it);
+                    children.erase(it);
+                }
+                children.insert(children.begin(), first.begin(), first.end());
+            }
+        }
         info.files = 0;
         info.bytes = 0;
         uncountedUnion.clear();
@@ -769,8 +862,8 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
         iso.joliet = d.target.joliet;
         iso.relaxDepth = d.target.relaxDepth;
         iso.fixedTimeUtc = d.target.fixedTimeUtc;
-        if (d.target.label)
-            iso.volumeId = *d.target.label;
+        if (d.target.label || manifestLabel)
+            iso.volumeId = d.target.label ? *d.target.label : *manifestLabel;
 
         // El Torito (D-6, DT-5): the boot section's list, else the bottom ISO layer's catalog
         if (!d.boot.eltorito.empty())
@@ -1033,12 +1126,14 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
         return MediaResult::Fail(MediaError::BadRequest, error);
 
     FatVolumeOptions fat;
-    fat.codePage = d.target.codePage.value_or(options.codePage.value_or(CodePage::Cp866));
+    fat.codePage = d.target.codePage ? *d.target.codePage
+                   : manifestPage    ? *manifestPage
+                                     : options.codePage.value_or(CodePage::Cp866);
     fat.replaceBadNames = d.target.onBadName == "replace";
     fat.mbr = d.target.mbr.value_or(options.mbr);
     fat.fixedTimeUtc = d.target.fixedTimeUtc;
-    if (d.target.label)
-        fat.label = *d.target.label;
+    if (d.target.label || manifestLabel)
+        fat.label = d.target.label ? *d.target.label : *manifestLabel;
     fat.freeBytes = d.target.free.value_or(options.freeBytes.value_or(kDefaultFree));
     // Boot structures (D-6, DT-5): the boot section's, else the bottom FAT image's
     if (descriptorBoot)
