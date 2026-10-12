@@ -28,6 +28,14 @@
 PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM710(context, false)
 {
     _zc.SetDevice(&_sdCard);
+    // Bus analyzer. The byte time is TS-Conf's (17 fclk at 28 MHz): the BaseConf SPI module is not in the local
+    // sources, the value only scales exports
+    _spiTap.SetDevice(0, "sd");
+    _spiTap.SetByteTimeNs(17.0 * 1000.0 / 28.0);
+    _spiTap.Attach(_context);
+    _zc.SetTap(&_spiTap);
+    _sdCard.SetBusTap(&_spiTap, 0);
+    _sdCard.SetClock([this]() { return EmulatedMicroseconds(); });
     _evoAvr.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
     _evoAvr.SetSessionWall([this]() { return SessionWallMicros(); });
 

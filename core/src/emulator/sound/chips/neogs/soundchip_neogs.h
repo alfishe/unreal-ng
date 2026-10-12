@@ -26,6 +26,8 @@
 #include "3rdparty/unreal-z80/z80cpu.h"
 #include "common/sound/filters/filterdcblocker.h"
 #include "common/modulelogger.h"
+#include "emulator/bus/bustap.h"
+#include "emulator/bus/spitapdevice.h"
 #include "emulator/io/flash/flash29f040b.h"
 #include "emulator/io/sdcard/sdcardspi.h"
 #include "emulator/media/mediaslot.h"
@@ -411,6 +413,7 @@ private:
     bool openSdImage(const std::string& path); // no media manager: the card opens the image itself
     SdCardSpi::Type sdType() const;
     void reselectSd();
+    void wireBusTaps();
     void serializeFixedState(uint8_t* dst) const;
     void serializeDeviceState(uint8_t* dst, bool machineVisibleOnly) const;
 
@@ -425,6 +428,14 @@ private:
     ttd::TTDRegionTracker _flashTracker;
     NeoGSInterrupts _irq;
     NeoGSSound _snd;
+    // The bus analyzer's view of the card's three SPI masters (docs/inprogress/2026-10-11-bus-analyzer): the taps
+    // sit in front of the devices, so the master's bytes and the DMA's are both seen
+    BusTap _sdTap{"neogs.sd", BusProtocol::Spi, "NeoGS SD card SPI (SD_SEND / SD_READ, SCTRL chip select, card DMA)"};
+    BusTap _sciTap{"neogs.mp3.sci", BusProtocol::Spi, "NeoGS MP3 decoder control SPI (SCI)"};
+    BusTap _sdiTap{"neogs.mp3.sdi", BusProtocol::Spi, "NeoGS MP3 decoder data SPI (SDI, no chip select)"};
+    SpiTapDevice _sdDevice{_sdTap, 0};
+    SpiTapDevice _sciDevice{_sciTap, 0};
+    SpiTapDevice _sdiDevice{_sdiTap, 0};
     NeoGSSpi _spi;
     std::unique_ptr<SdCardSpi> _sd;
 

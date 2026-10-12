@@ -87,18 +87,23 @@ SoundChip_NeoGS::SoundChip_NeoGS(EmulatorContext* context, const NeoGSConfig& co
         if (_context && _context->pMediaManager)
             _context->pMediaManager->NoteWrite(SD_SLOT_ID);
     });
-    _spi.attach(NeoGSSpi::SD, _sd.get());
+    _sdDevice.SetInner(_sd.get());
+    _spi.attach(NeoGSSpi::SD, &_sdDevice);
     if (_config.mp3Support != NGSMP3SupportKind::None)
     {
         _mp3 = std::make_unique<Vs10xxDecoder>(
             _config.mp3Chip == NeoGSConfig::Mp3Chip::VS1011 ? Vs10xxDecoder::Chip::VS1011 : Vs10xxDecoder::Chip::VS1001,
             _config.mp3Support == NGSMP3SupportKind::Software ? Vs10xxDecoder::Level::Software : Vs10xxDecoder::Level::Stub,
             TICKS_PER_SECOND);
-        _spi.attach(NeoGSSpi::MC, _mp3->sci());
-        _spi.attach(NeoGSSpi::MD, _mp3->sdi());
+        _sciDevice.SetInner(_mp3->sci());
+        _sdiDevice.SetInner(_mp3->sdi());
+        _spi.attach(NeoGSSpi::MC, &_sciDevice);
+        _spi.attach(NeoGSSpi::MD, &_sdiDevice);
         _dma.attachMp3(_mp3.get());
+        _dma.attachMp3Data(&_sdiDevice);
     }
-    _dma.attachSd(_sd.get());
+    _dma.attachSd(&_sdDevice);
+    wireBusTaps();
     _zx.setAvailable(_config.fpga == NeoGSConfig::Fpga::Current); // fpgaD has no DMA
     _zx.setWatchFrames(_config.zxDmaWatchFrames);
     _zx.setWatchAlways(_config.zxDmaWatch == NeoGSConfig::ZxDmaWatch::Always);
@@ -245,6 +250,49 @@ void SoundChip_NeoGS::SdSlot::SourceChanged(Medium& medium)
 }
 
 /// endregion </SD slot>
+
+void SoundChip_NeoGS::wireBusTaps()
+{
+    // Time: the host frame, and the card's position in it in host T-states; the PC is the card CPU's
+    auto stamp = [this](BusStamp& st) {
+        if (!_context || _context->ttdReplayActive)
+        {
+            st.skip = _context != nullptr;
+            return;
+        }
+        st.frame = static_cast<uint32_t>(_context->emulatorState.frame_counter);
+        const double unitsPerT = zxUnitsPerHostT();
+        const int64_t offset = _runner.now() - _frameStartTicks;
+        st.t = unitsPerT > 0 && offset > 0 ? static_cast<uint32_t>(static_cast<double>(offset) / unitsPerT) : 0;
+        if (_cpu)
+        {
+            Z80CpuRegisters regs{};
+            Z80CpuGetRegisters(_cpu, &regs);
+            st.pc = regs.pc;
+        }
+    };
+    // Byte times at the 24 MHz card clock: SD and SDI at /2 (16 clocks), SCI at its reset divider /4 (8 x 4 + 2)
+    const double nsPerClock = 1000.0 / 24.0;
+    BusTap* taps[] = {&_sdTap, &_sciTap, &_sdiTap};
+    const double clocks[] = {16, 34, 16};
+    for (int i = 0; i < 3; i++)
+    {
+        taps[i]->SetStamp(stamp);
+        taps[i]->SetSource(BusSource::CardCpu);
+        taps[i]->SetByteTimeNs(clocks[i] * nsPerClock);
+    }
+    _sdTap.SetDevice(0, "sd");
+    _sdTap.Attach(_context);
+    if (_mp3)
+    {
+        _sciTap.SetDevice(0, "vs10xx");
+        _sdiTap.SetDevice(0, "vs10xx");
+        _sciTap.Attach(_context);
+        _sdiTap.Attach(_context);
+    }
+    _sd->SetBusTap(&_sdTap, 0);
+    _sd->SetClock([this]() { return static_cast<uint64_t>(static_cast<double>(_runner.now()) / (TICKS_PER_SECOND / 1e6)); });
+}
 
 SoundChip_NeoGS::~SoundChip_NeoGS()
 {
@@ -669,7 +717,21 @@ void SoundChip_NeoGS::runEvents(int64_t now)
     }
 
     if (now >= _dma.nextEvent())
+    {
+        // The bus analyzer sees the DMA's bytes as the card DMA's
+        const bool tap = _sdTap.Active() || _sdiTap.Active();
+        if (tap) [[unlikely]]
+        {
+            _sdTap.SetSource(BusSource::CardDma);
+            _sdiTap.SetSource(BusSource::CardDma);
+        }
         _dma.run(now);
+        if (tap) [[unlikely]]
+        {
+            _sdTap.SetSource(BusSource::CardCpu);
+            _sdiTap.SetSource(BusSource::CardCpu);
+        }
+    }
     if (now >= _zx.nextEvent())
         _zx.run(now);
 

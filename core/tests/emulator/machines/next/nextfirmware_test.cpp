@@ -16,6 +16,7 @@
 #include <iterator>
 #include <vector>
 
+#include "_helpers/busreport.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "emulator/cpu/core.h"
@@ -110,6 +111,30 @@ TEST_F(NextFirmware_Test, BootRomLoadsTheFirmwareAndJumpsTo6000)
     }
     EXPECT_LT(frames, 400);
     EXPECT_GT(_ports->SdCard(0).blocksRead(), 20u);
+}
+
+// Bus analyzer, real software (mutation-tests.md R-NEXTZXOS): the boot ROM and TBBLUE.FW read the card over the Next's SPI
+// pair, traced and checked up to the jump to #6000. The one finding is a fact about the boot ROM, not the model: after each
+// block it drains the CRC with "INIR; INIR; NOP; IN A,(#EB); NOP; IN A,(#EB)" (#051D-#0525), and the second IN starts 15 CPU
+// clocks after the first (IN 11 + NOP 4) while a byte takes 16 (spi_master.vhd: a 4-bit counter on i_CLK_CPU; spi_wait_n
+// holds only the DMA). On the board that read is early too: the master returns the old byte and starts nothing. Harmless -
+// the ROM discards the CRC - so the count is pinned: one early access at #0525 per block, the existing counter agrees
+TEST_F(NextFirmware_Test, TheBootRomSdDriverOnTheBusHasOneKnownEarlyReadPerBlock)
+{
+    ASSERT_TRUE(bustest::Enable(_context, "next.spi"));
+    for (int frames = 0; frames < 400 && !(_z80->pc >= 0x6000 && _z80->pc < 0x8000); frames++)
+        _emulator->RunFrame(true);
+    ASSERT_TRUE(_z80->pc >= 0x6000 && _z80->pc < 0x8000);
+    const auto commands = bustest::Commands(_context, "next.spi");
+    EXPECT_TRUE(bustest::Has(commands, "CMD0"));
+    EXPECT_TRUE(bustest::Has(commands, "CMD17") || bustest::Has(commands, "CMD18"));
+    const auto byRule = bustest::FindingsByRule(_context, "next.spi");
+    ASSERT_EQ(byRule.size(), 1u) << bustest::Describe(byRule);
+    ASSERT_EQ(byRule.begin()->first, "early_access");
+    for (const std::string& f : bustest::Findings(_context, "next.spi"))
+        EXPECT_EQ(f, "early_access@0x0525") << "only the second CRC read";
+    EXPECT_EQ(static_cast<uint64_t>(byRule.begin()->second), _ports->SpiTooFastCount()) << "the existing counter sees the same";
+    EXPECT_GT(byRule.begin()->second, 0);
 }
 
 // The golden sequence of research-fpga-vhdl.md section 14 / design-boot-and-firmware.md section 2, as the real

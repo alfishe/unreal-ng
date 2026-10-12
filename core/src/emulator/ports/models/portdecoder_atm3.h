@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 
+#include "emulator/bus/bustap.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/io/sdcard/sdcardspi.h"
 #include "emulator/io/spi/zcontrollerspi.h"
@@ -136,6 +137,7 @@ public:
     /// reset keeps the card and its session writes, like the board's reset
     SdCardSpi& GetSdCard() { return _sdCard; }
     ZControllerSpi& GetZController() { return _zc; }
+    BusTap& SpiTap() { return _spiTap; }
     /// Insert an image file / any medium through the media manager (directly
     /// when the context has none: bare decoder unit tests)
     bool InsertSdCard(const std::string& path, SdCardSpi::WriteMode mode, bool writeProtect = false);
@@ -184,6 +186,9 @@ protected:
         SlotDescriptor _descriptor;
     };
 
+    // The bus analyzer's view of the Z-Controller bus (docs/inprogress/2026-10-11-bus-analyzer): declared
+    // before the card and the controller, which point at it
+    BusTap _spiTap{"zc.spi", BusProtocol::Spi, "Z-Controller SPI (#57 data, #77 chip select): SD card"};
     SdCardSpi _sdCard;
     ZControllerSpi _zc;
     EvoSdSlot _sdSlot{*this};

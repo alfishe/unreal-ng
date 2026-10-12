@@ -145,11 +145,11 @@ class TestMediaUpload:
         assert loaded.get("uploaded") is True
 
     def test_upload_size_limit(self, api_client, active_emulator):
-        """Verify size limit enforcement (>1MB for disk should fail)."""
+        """Verify size limit enforcement (a disk upload over 4 MB fails)."""
         emu_id = active_emulator
 
-        # Create oversized content (>1MB)
-        oversized = b'\x00' * (2 * 1024 * 1024)  # 2MB
+        # Over the 4 MB disk limit (TRD / SCL / FDI, PC floppies, HD UDI fit under it)
+        oversized = b'\x00' * (5 * 1024 * 1024)
 
         import requests
         try:

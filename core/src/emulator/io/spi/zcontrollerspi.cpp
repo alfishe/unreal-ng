@@ -2,6 +2,7 @@
 
 #include "zcontrollerspi.h"
 
+#include "emulator/bus/bustap.h"
 #include "emulator/io/spi/spidevice.h"
 
 void ZControllerSpi::SetDevice(SpiDevice* device)
@@ -34,24 +35,48 @@ void ZControllerSpi::WriteConfig(uint8_t value)
 {
     const uint8_t previous = _state.config;
     _state.config = value;
+    const bool report = _tap && _tap->Active();
     for (uint8_t slot = 0; slot < kSlots; slot++)
     {
         const bool now = SelectedBy(slot, value);
-        if (_devices[slot] && now != SelectedBy(slot, previous))
+        if (now == SelectedBy(slot, previous))
+            continue;
+        if (_devices[slot])
             _devices[slot]->select(now);
+        // Slot 0 is the SD socket, reported even when empty; the exchange is instant, never mid-byte
+        if (report && (slot == 0 || _devices[slot])) [[unlikely]]
+            _tap->SpiSelect(slot, now);
     }
 }
 
 void ZControllerSpi::WriteData(uint8_t value)
 {
     _state.rxLatch = Exchange(value);
+    if (_tap && _tap->Active()) [[unlikely]]
+        Report(value, _state.rxLatch, false);
 }
 
 uint8_t ZControllerSpi::ReadData()
 {
     const uint8_t previous = _state.rxLatch;
     _state.rxLatch = Exchange(0xFF);
+    if (_tap && _tap->Active()) [[unlikely]]
+        Report(0xFF, _state.rxLatch, true);
     return previous;
+}
+
+uint8_t ZControllerSpi::DrivingSlot() const
+{
+    // The FPGA's MISO mux: a selected device in slot 1..3 wins over the SD card (top.v:1173-1178)
+    for (uint8_t slot = kSlots - 1; slot > 0; slot--)
+        if (IsSlotSelected(slot))
+            return slot;
+    return IsSlotSelected(0) ? 0 : BusTap::kNoSlot;
+}
+
+void ZControllerSpi::Report(uint8_t mosi, uint8_t miso, bool read)
+{
+    _tap->SpiByte(DrivingSlot(), mosi, miso, read);
 }
 
 void ZControllerSpi::SetState(const State& state)

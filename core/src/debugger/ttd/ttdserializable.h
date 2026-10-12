@@ -112,7 +112,7 @@ enum class PeripheralId : uint8_t
     MultiSoundGs = 60,    // the ZX-MultiSound's General Sound (GS profile MultiSound, 1-2 MB RAM): the classic GS blob, own id next to a GS card
     EvoFlash = 61,        // the ZX-Evo's ROM chip as a flash (TS-Conf, ATM3): its command state; the array is the engine region EvoFlash
     NextState = 62,       // the ZX Spectrum Next: NextREG file, memory map, video registers and palettes, sprites, copper, DMA, CTC, interrupts, I2C RTC, Multiface, DivMMC (nextstatecodec.h)
-    NextDivMmcRam = 63,   // the Next's DivMMC RAM, 16 banks of 8 KB in the system area (esxDOS and NextZXOS keep their work there); not a RAM page, so not in the page store
+    NextSystemArea = 63,   // the Next's system area, 256 KB: the ROMs the firmware loads in config mode and the DivMMC RAM esxDOS / NextZXOS work in; not RAM pages, so not in the page store
     // Future: GS512, etc.
     Count
 };
@@ -192,7 +192,7 @@ enum class TTDDeviceType : uint16_t
     MultiSoundGs = 60,
     EvoFlash = 61,
     NextState = 62,
-    NextDivMmcRam = 63
+    NextSystemArea = 63
 };
 static_assert(static_cast<uint16_t>(TTDDeviceType::TurboSound) == static_cast<uint16_t>(PeripheralId::TurboSound), "TTDDeviceType::TurboSound must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::BetaDisk) == static_cast<uint16_t>(PeripheralId::BetaDisk), "TTDDeviceType::BetaDisk must keep its v1 number");
@@ -257,7 +257,7 @@ static_assert(static_cast<uint16_t>(TTDDeviceType::Sam2695) == static_cast<uint1
 static_assert(static_cast<uint16_t>(TTDDeviceType::MultiSoundGs) == static_cast<uint16_t>(PeripheralId::MultiSoundGs), "TTDDeviceType::MultiSoundGs must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::EvoFlash) == static_cast<uint16_t>(PeripheralId::EvoFlash), "TTDDeviceType::EvoFlash must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::NextState) == static_cast<uint16_t>(PeripheralId::NextState), "TTDDeviceType::NextState must keep its v1 number");
-static_assert(static_cast<uint16_t>(TTDDeviceType::NextDivMmcRam) == static_cast<uint16_t>(PeripheralId::NextDivMmcRam), "TTDDeviceType::NextDivMmcRam must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::NextSystemArea) == static_cast<uint16_t>(PeripheralId::NextSystemArea), "TTDDeviceType::NextSystemArea must keep its v1 number");
 
 /// A device in the engine's device table: its kind and its instance name
 /// ("betadisk", "betadisk.context", "zifi.uart"; lower case, dots, digits)

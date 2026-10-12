@@ -70,7 +70,7 @@ private:
 		{ "Quorum", "QUORUM",                    MM_QUORUM, 1024, RAM_128 | RAM_1024 },
 		{ "Orel' BK-08 (LSY)", "LSY256",         MM_LSY256, 256, RAM_256 },
 		{ "ZXM-Phoenix v1.0", "PHOENIX",         MM_PHOENIX, 1024, RAM_1024 | RAM_2048 },
-		{ "ZX Spectrum Next", "NEXT",            MM_NEXT, 2048, RAM_2048 },
+		{ "ZX Spectrum Next", "NEXT",            MM_NEXT, 2048, RAM_1024 | RAM_2048 },  // Issue 1: 1 MB, 2: 2 MB. Issue 3 (4 MB) is asked for as 4096 through the API: this core addresses 2 MB, so it is created as 2048 with a note (Config::EffectiveRamSize); not in the menus
 		{ "Sprinter 2000", "SPRINTER",           MM_SPRINTER, 4096, RAM_4096 },
 	};
 
@@ -222,6 +222,18 @@ public:
 	 * @return True when a create request for this model is expected to succeed
 	 */
 	static bool IsModelCreatable(const TMemModel& model);
+
+	/**
+	 * The RAM size a create / switch request really gets. The ZX Next of Issue 3 has 4 MB, which the core this emulator follows (3.02.03:
+	 * an 8-bit MMU page of 8 KB) cannot address: 4096 is accepted by the API and the machine is created with 2048, with a note. It is not an
+	 * offered size (no menu, not in available_ram_sizes_kb). Every other request is returned as it came.
+	 *
+	 * @param model Model of the request
+	 * @param requestedKb Size asked for (KB)
+	 * @param note Set when the size was changed: what happened and why
+	 * @return The size to create with
+	 */
+	static uint32_t EffectiveRamSize(MEM_MODEL model, uint32_t requestedKb, std::string& note);
 
 	// Helper methods
 protected:

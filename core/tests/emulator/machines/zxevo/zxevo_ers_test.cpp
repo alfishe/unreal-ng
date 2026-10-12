@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "_helpers/cdtestdisc.h"
+#include "_helpers/busreport.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/fatimagebuilder.h"
 #include "_helpers/scratchfolder.h"
@@ -778,6 +779,42 @@ TEST_F(ZXEvoErs_Test, NedoOsBootsFromAHostFolder)
     EXPECT_TRUE(inRam("M:/bin>")) << "the NedoOS shell prompt";
     EXPECT_TRUE(inRam("UNREALNGSDBOOT")) << "the shell read autoexec.bat from the folder";
     EXPECT_FALSE(_context->pMediaManager->Info("sd.zc")->dirty) << "booting writes nothing to the card";
+}
+
+/// Bus analyzer, real software (mutation-tests.md R-NEDOOS): the same NedoOS boot with the Z-Controller bus traced and
+/// checked. The kernel's SD driver initializes the card (CMD0, CMD8, ACMD41 until ready, CMD58) and reads its files with
+/// block reads; a driver that works on boards makes no finding. Boot-bound like the boot above (~300 frames)
+TEST_F(ZXEvoErs_Test, NedoOsSdDriverIsCleanOnTheBus)
+{
+    const std::filesystem::path card = TestPathHelper::FindProjectRoot() / "testdata/machines/zxevo/nedoos/sdcard";
+    ASSERT_TRUE(std::filesystem::is_directory(card)) << Utf8(card);
+    Create();
+    ASSERT_TRUE(bustest::Enable(_context, "zc.spi"));
+    MediaSource source;
+    source.path = Utf8(card);
+    InsertOptions options;
+    options.freeBytes = 16 * 1024 * 1024;
+    ASSERT_TRUE(_context->pMediaManager->Insert("sd.zc", source, options).Ok());
+    ASSERT_TRUE(RunToMainMenu());
+    auto inRam = [this](const std::string& needle) {
+        for (uint16_t page = 0; page < 256; page++)
+        {
+            const uint8_t* bytes = _context->pMemory->RAMPageAddress(page);
+            if (bytes && std::search(bytes, bytes + PAGE_SIZE, needle.begin(), needle.end()) != bytes + PAGE_SIZE)
+                return true;
+        }
+        return false;
+    };
+    Tap(ZXKEY_5);
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return inRam("M:/bin>"); }, 800, 20);
+    ASSERT_TRUE(inRam("M:/bin>"));
+
+    const auto commands = bustest::Commands(_context, "zc.spi");
+    EXPECT_TRUE(bustest::Has(commands, "CMD0"));
+    EXPECT_TRUE(bustest::Has(commands, "ACMD41"));
+    EXPECT_TRUE(bustest::Has(commands, "CMD17") || bustest::Has(commands, "CMD18")) << "the kernel reads its files";
+    const auto byRule = bustest::FindingsByRule(_context, "zc.spi");
+    EXPECT_TRUE(byRule.empty()) << bustest::Describe(byRule);
 }
 
 /// PLAN #83, real software: NedoOS's audio CD player (cdplay.com, the shipped release) on the CD drive

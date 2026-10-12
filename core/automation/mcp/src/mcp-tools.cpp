@@ -18,6 +18,7 @@
 
 #include "mcp-analysis.h"
 #include "mcp-media.h"
+#include "mcp-bus.h"
 #include "mcp-slots.h"
 #include "mcp-router.h"
 #include "mcp-symbols.h"
@@ -413,9 +414,11 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                     {
                         // the text first: argument order is unspecified, and gcc moves `response` out before reading it
                         const std::string symbolic = response.get("symbolic_id", "").asString();
+                        const std::string note = response.get("note", "").asString();  // e.g. a RAM size the core cannot address
                         const std::string text = "Created and started emulator " + response["id"].asString() + " (model " +
                                                  (model.empty() ? std::string("default") : model) +
-                                                 (symbolic.empty() ? "" : ", name " + symbolic) + ")";
+                                                 (symbolic.empty() ? "" : ", name " + symbolic) + ")" +
+                                                 (note.empty() ? "" : ". Note: " + note);
                         done(ToolResult::Ok(text, std::move(response)));
                         return;
                     }
@@ -5848,6 +5851,8 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterAnalyzePerformance(*registry);
     RegisterCaptureMedia(*registry);
     RegisterMediaSlots(*registry);
+    // bus_analyzer: peripheral bus traces, checks, SD card timing (docs/inprogress/2026-10-11-bus-analyzer)
+    RegisterBusAnalyzer(*registry);
 
     // Router tools (search_api + invoke_api)
     RegisterRouterTools(*registry, std::move(caller));

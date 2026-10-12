@@ -379,6 +379,14 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
         return nullptr;
     }
 
+    // A size the model's core cannot address (the Next's 4 MB) is created with the one it can, and logged
+    {
+        std::string note;
+        ramSize = Config::EffectiveRamSize(modelInfo->Model, ramSize, note);
+        if (!note.empty())
+            LOGWARNING("EmulatorManager::CreateEmulatorWithModelAndRAM - %s", note.c_str());
+    }
+
     // Validate RAM size for this model
     if ((ramSize & modelInfo->AvailRAMs) == 0)
     {

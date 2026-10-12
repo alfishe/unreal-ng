@@ -4,6 +4,7 @@
 #include <map>
 #include <memory>
 
+#include "emulator/bus/bustap.h"
 #include "emulator/io/z80n/nextboard.h"
 #include "emulator/io/z80n/nextdma.h"
 #include "emulator/sound/nextaudio.h"
@@ -98,6 +99,7 @@ public:
     static constexpr uint16_t kPortSpiData = 0x00EB;
     static constexpr double kSpiByteClocks = 16.0;  ///< CPU clocks per byte at any speed
     SdCardSpi& SdCard(unsigned index) { return _sd[index & 1]; }
+    BusTap& SpiTap() { return _spiTap; }
     bool InsertSdCard(unsigned index, std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode);
     bool InsertSdCard(unsigned index, const std::string& path, SdCardSpi::WriteMode mode);
     /// Ports no part of the machine answered (the bring-up list): raw port -> {count, last value}, in and out
@@ -178,6 +180,7 @@ private:
     /// What the machine type allows: 48K has no paging ports, 128K / Pentagon no #1FFD, +3 all
     bool PagingAllowed(uint16_t port) const;
     uint8_t SpiRead();
+    uint8_t SpiTapSlot() const { return _spiSelected >= 0 ? static_cast<uint8_t>(_spiSelected) : BusTap::kNoSlot; }
     void SpiSettle(double now);
     void SpiWrite(uint8_t value);
     void SpiSelect(uint8_t value);
@@ -189,6 +192,8 @@ private:
 
     std::map<uint16_t, PortUse>* _inLog = nullptr;
     std::map<uint16_t, PortUse>* _outLog = nullptr;
+    // The bus analyzer's view of the SPI port pair (docs/inprogress/2026-10-11-bus-analyzer); slot = SD line
+    BusTap _spiTap{"next.spi", BusProtocol::Spi, "Next SPI (#E7 chip selects, #EB data): SD cards 0 and 1"};
     SdCardSpi _sd[2];
 
     /// The media manager's slots "sd.next0" / "sd.next1": a card is never opened by the decoder itself, every insert goes through the manager

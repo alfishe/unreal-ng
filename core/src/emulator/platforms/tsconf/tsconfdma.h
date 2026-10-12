@@ -59,6 +59,8 @@ public:
     void Launch(uint8_t ctrl);
     void WriteAddress(uint8_t reg, uint8_t value);  ///< DMAS/DMAD AL / AH / AX: the live counters
     bool Busy() const;
+    /// A transfer to or from the SPI master is running (the bus analyzer's dma_collision check)
+    bool SpiBusy() const;
     /// endregion
 
     /// Spend up to `credit` DRAM accesses on the running transfer

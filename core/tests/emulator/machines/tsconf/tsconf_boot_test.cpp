@@ -35,6 +35,7 @@
 #include "common/filehelper.h"
 #include "emulator/media/mediamanager.h"
 
+#include "_helpers/busreport.h"
 #include "_helpers/emulatortesthelper.h"
 #include "pch.h"
 #include "stdafx.h"
@@ -352,6 +353,39 @@ TEST_F(TsConfBootSd_Test, BOOT5_DefaultSettingsBootWildCommanderFromSd)
     EmulatorTestHelper::RunUntil(_emulator.get(), wildCommander, 500);
     ASSERT_TRUE(wildCommander()) << "pc=" << std::hex << Cpu().pc << " vconf=" << int(ts.regs[TsConfReg::VConfig]);
     EXPECT_FALSE(SetupMenuShown());
+}
+
+/// Bus analyzer, real software (mutation-tests.md R-WC): TS-BIOS boots Wild Commander from the wc-improved card folder
+/// with the Z-Controller bus traced and checked. TS-BIOS and WC initialize the card and read it (block reads, the SPI DMA
+/// in WC); drivers that work on boards make no finding - in particular no CPU access during a running SPI DMA.
+/// Real-ROM boot plus Wild Commander reading the card (~200 frames): slower than 50 ms by nature
+TEST_F(TsConfBootSd_Test, WildCommanderSdDriversAreCleanOnTheBus)
+{
+    const std::filesystem::path wc = TestPathHelper::FindProjectRoot() / "testdata/machines/tsconf/wc-improved/sdcard";
+    ASSERT_TRUE(std::filesystem::exists(wc / "boot.$C")) << wc.generic_string();
+    ASSERT_TRUE(bustest::Enable(_context, "zc.spi"));
+    MediaSource source;
+    source.path = wc.generic_string();
+    InsertOptions options;
+    options.immediate = true;
+    ASSERT_TRUE(_context->pMediaManager->Insert("sd.zc", source, options).Ok());
+    _emulator->Reset();
+    const TsConfState& ts = _decoder->GetState();
+    auto wildCommander = [&] {
+        if ((ts.regs[TsConfReg::VConfig] & 0x03) != 0x03)
+            return false;
+        for (uint8_t row = 0; row < 4; row++)
+            if (TextRow(ts.regs[TsConfReg::VPage], row).find("Wild Commander") != std::string::npos)
+                return true;
+        return false;
+    };
+    EmulatorTestHelper::RunUntil(_emulator.get(), wildCommander, 600);
+    ASSERT_TRUE(wildCommander()) << "pc=" << std::hex << Cpu().pc;
+    const auto commands = bustest::Commands(_context, "zc.spi");
+    EXPECT_TRUE(bustest::Has(commands, "CMD0"));
+    EXPECT_TRUE(bustest::Has(commands, "CMD17") || bustest::Has(commands, "CMD18"));
+    const auto byRule = bustest::FindingsByRule(_context, "zc.spi");
+    EXPECT_TRUE(byRule.empty()) << bustest::Describe(byRule);
 }
 
 /// ACC-C2 (media-multisource): Wild Commander on a FAT32 composite of three folders with filters.

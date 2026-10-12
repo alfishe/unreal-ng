@@ -46,7 +46,10 @@ public:
     /// the picture only follows: before a MOVE writes, the pixels the old state made are drawn)
     void BindCopper(NextCopper& copper);
     /// Draw every pixel before copper time `clock` (a MOVE is about to write at it): the lines before its line, and its line up to its pixel
-    void RenderBeforeCopperClock(uint64_t clock);
+    void RenderBeforeCopperClock(uint64_t clock, uint8_t reg);
+    /// 28 MHz clocks from a MOVE's write of `reg` to the first changed pixel at the output (the pipeline after the register: zxnext.vhd, the
+    /// stages counted in scratch/cosim-copper/LATENCY.md). 0 for the registers not counted
+    static unsigned PixelLatencyClocks(uint8_t reg);
 
     /// The T-state (base, from the frame start) at which visible line `y` (0-255) is complete
     uint32_t LineEndT(unsigned y) const;
@@ -70,7 +73,7 @@ private:
     void CompleteLayerFrame();
     void RenderLinesUpTo(unsigned lineExclusive);
     /// Draw the pixels before (line, x): the lines before `line` whole, `line` up to x
-    void RenderUpTo(unsigned line, unsigned x);
+    void RenderUpTo(unsigned line, unsigned halfPixel);  // the line's 14 MHz pixels of the image (640 a line) before `halfPixel`
     void UpdateCopperGeometry();
     mutable uint64_t _copperB = 0, _copperFrame7 = 0;                    ///< CopperClock = ((2 t + B) mod frame7) * 4, cached per raster
     mutable uint32_t _copperKey[4] = {};
