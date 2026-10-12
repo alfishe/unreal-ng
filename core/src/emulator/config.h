@@ -70,7 +70,7 @@ private:
 		{ "Quorum", "QUORUM",                    MM_QUORUM, 1024, RAM_128 | RAM_1024 },
 		{ "Orel' BK-08 (LSY)", "LSY256",         MM_LSY256, 256, RAM_256 },
 		{ "ZXM-Phoenix v1.0", "PHOENIX",         MM_PHOENIX, 1024, RAM_1024 | RAM_2048 },
-		{ "ZX Spectrum Next", "NEXT",            MM_NEXT, 2048, RAM_2048 },
+		{ "ZX Spectrum Next", "NEXT",            MM_NEXT, 2048, RAM_512 | RAM_1024 | RAM_2048 },  // the board has 1 MB (two 512 KB modules) or 2 MB; 512 KB is for software that needs no more (less to record and to hold)
 		{ "Sprinter 2000", "SPRINTER",           MM_SPRINTER, 4096, RAM_4096 },
 	};
 
