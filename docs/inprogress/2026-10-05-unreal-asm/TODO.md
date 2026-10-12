@@ -221,6 +221,8 @@ phase; master only after the owner's review.
       - [x] Primus 2.9 (2026-10-11, research-sjasmplus-to-zeus.md §4.1): the ZEUS backend's `primus` text, inject at its prompt; Primus 2.9 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
       - [x] Laser Genius 1.04 (2026-10-12, research-sjasmplus-to-lasergenius.md): backend, inject in its editor (its screen lines moved behind the text); LG 1.04 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes; its `(IX-` / `(IY-` bug written around
       - [ ] Laser Genius with the hash extensions (end `(#ADA1)`) inject rule; LG idle templates
+      - [x] PROMETHEUS 48K (2026-10-12, research-sjasmplus-to-prometheus.md): backend (`ChainWriter`, every line through its record encoder), inject in its editor (records, table, its pointers); PROMETHEUS assembled `oracle1.asm` and every instruction form (with its 599 labels) to sjasmplus' bytes, injected and from tape; its `$` in an instruction (where the value goes) found and modelled both ways
+      - [ ] PROMETHEUS idle templates; the 128K edition and the TR-DOS adaptations (other addresses)
     - [ ] Z5 sjasmplus frontend coverage of real projects (STRUCT, MODULE, DEVICE / SLOT / PAGE, SAVEBIN, DEFINE)
   - First cuts: ALASM both ways about 14 days; + TASM 4.12 about 20; + watch / push watch, hints, live labels, Qt dock about 27
 

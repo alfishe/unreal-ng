@@ -83,7 +83,31 @@ zxasm encode probe.txt --codec prometheus -o probe.bin
 whose Param2 (bytes 15-16) is the records' length: the bytes before the pair whose first byte is `#FF` XOR the
 records and the second `#FF` (the test `AFileFromText` builds `testdata/dialects/prometheus/PROBE.tap` that way).
 
+## A host source into PROMETHEUS
+
+Write the source in its editor while it waits for a key; SS+A then assembles it (PROMETHEUS keeps no "changed" flag:
+`force`):
+
+```text
+asm_source  {"action":"sync_inject","path":"/abs/main.asm","assembler":"prometheus-48","force":true}
+WebAPI      POST /asm/sync/inject {"assembler":"prometheus-48","from":"sjasmplus","text":"...","force":true}
+            POST /keyboard/combo {"keys":["ss","a"],"frames":4}, then /keyboard/tap enter
+check       tools/verification/unreal-asm/emulator/inject-oracle.py prometheus prometheus-48.tap src.asm 60000
+```
+
+The records go from `#9C28`, its symbol table after them; the active line and the block go to the first line.
+`zxasm convert --to prometheus -o x.bin` gives the same save as a file. The source and its names lie from `#9C28` up,
+and give code addresses above them (60000).
+
 ## Pitfalls
+
+- **`$` in an instruction is the address of the byte its value goes into**, not the instruction's: `jr $` builds
+  `18 FF`, `ld hl,$` the address +1, `ld ix,$` +2, the `n` of `ld (ix+d),n` +3. The conversion writes `jr $-1` for
+  sjasmplus' `jr $`, and reads PROMETHEUS' `$` so.
+- **A save of 2 KB or more fails with "Tape error" while `fasttape` / `turbotape` are on** (emulator bug, 2026-10-12;
+  the ROM's own LOAD reads it). Turn both off (`PUT /feature/fasttape {"enabled":false}`, the same for `turbotape`)
+  before loading PROMETHEUS; the load then runs in real time.
+- **Names: 8 characters, starting with a letter**; a ninth is a syntax error. The conversion shortens and renames.
 
 - **`LOAD` without a name loads only a file with the last name** (`prometheus` after start): it skips every other
   header and waits on the tape (ROM LD-EDGE at `#05ED`). Use `LOAD :name`, or a name starting with a blank (the

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <map>
 
+#include "codecs/prometheus/prometheuscodec.h"
+
 #include "unrealasm/registry.h"
 
 namespace unrealasm::sync
@@ -865,7 +867,9 @@ SyncDescriptor Gens4Tape()
 
 /// PROMETHEUS 48K tape edition installed at 24000 (asm-synchronizer.md §7.17, from its reconstructed source): the
 /// records from sourceBufferAccessLine (#9C28) to twelve bytes below the symbol table (operand of varcSymbolTablePt at
-/// #87D7), the table up to the operand of varcCodeEndPt (#881A); the save adds FF XOR the records and FF between
+/// #87D7), the table up to the operand of varcCodeEndPt (#881A); the save adds FF XOR the records and FF between. An
+/// inject writes them so, below U-TOP (varcUTop's operand, #7946), and sets the active line (varcSourceBufferActiveLine,
+/// #826D) and the block margins (varcSelectedBlockStart / End, #80E8 / #80EB) to the start
 SyncDescriptor Prometheus48()
 {
     SyncDescriptor d;
@@ -881,7 +885,13 @@ SyncDescriptor Prometheus48()
     d.linear.prometheusTableAt = 0x87D7;
     d.linear.prometheusEndAt = 0x881A;
     d.linear.upperPage = 0;
+    d.linear.injectable = true;
+    d.linear.limitAt = 0x7946;                          // U-TOP: the text and its names stay below it
+    d.linear.resetWords = {0x826D, 0x80E8, 0x80EB};     // the active line, the block's first and last line
     d.typing = {TypingRule::NotInText, 0, 0};
+    // its editor's key wait (CALL #86AE from #8626, called from #7CFA): the word between is the key scan's own
+    d.idleChain = {0x8629, 0x7CFD};
+    d.idleWhere = "its editor";
     return d;
 }
 
@@ -1296,8 +1306,86 @@ namespace
 /// ZAsm: the buffer from (startAt) (its part from #C000 in upperPage), the end pointer one past it, the table's other
 /// words at the start, as LOAD leaves them. The editor has no "changed" flag: a text in memory that is not empty and
 /// not the caller's own counts as changed
+/// PROMETHEUS: a save's records from the access line, its six empty records, then its symbol table; the table and
+/// end words follow them, the active line and the block margins go to the start (as CLEAR leaves them), and what the
+/// old text held above the new end is cleared (as its deletion does)
+InjectPlan PlanInjectPrometheus(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& file, const InjectOptions& options)
+{
+    InjectPlan plan;
+    std::string why;
+    if (!Idle(machine, d, why))
+    {
+        plan.error = why;
+        return plan;
+    }
+    const LinearParams& p = d.linear;
+    plan.previous = ReadText(machine, d);
+    if (plan.previous.ok && !plan.previous.file.empty() && !options.force && !WrittenBefore(plan.previous, options.written, 0))
+    {
+        plan.error = "the text in " + d.title + " may have changes not saved (it keeps no flag; force overwrites it)";
+        return plan;
+    }
+    size_t length = 0;
+    if (!codecs::PrometheusCodec::FindSourceLength(file, length))
+    {
+        plan.error = "the file is no PROMETHEUS save (records, two bytes, a symbol table)";
+        return plan;
+    }
+    std::vector<uint8_t> records(file.begin(), file.begin() + static_cast<std::ptrdiff_t>(length));
+    if (records.empty())
+        records = {0x00, 0x30};   // an empty text is one empty line
+    const std::vector<uint8_t> table(file.begin() + static_cast<std::ptrdiff_t>(length + 2), file.end());
+    const uint32_t start = p.fixedStart;
+    const uint32_t tableAt = start + static_cast<uint32_t>(records.size()) + 12;
+    const uint32_t end = tableAt + static_cast<uint32_t>(table.size());
+    const auto top = machine.Word(p.limitAt);
+    const auto oldEnd = machine.Word(p.prometheusEndAt);
+    if (!top || !oldEnd)
+    {
+        plan.error = "the text pointers of " + d.title + " are not in memory";
+        return plan;
+    }
+    if (end >= *top)
+    {
+        plan.error = "the text takes " + std::to_string(end - start) + " bytes with its names; " + d.title + " holds " +
+                     std::to_string(*top > start ? *top - start - 1 : 0) + " (up to its U-TOP)";
+        return plan;
+    }
+    const auto poke = [&](uint32_t at, uint8_t value) {
+        const int window = machine.windows[(at >> 14) & 3];
+        if (window < 0 || at < 0x4000 || at > 0xFFFF)
+            return false;
+        plan.pokes.push_back({window, static_cast<uint16_t>(at & (kPage - 1)), value});
+        return true;
+    };
+    const auto word = [&](uint32_t at, uint32_t value) { return poke(at, static_cast<uint8_t>(value & 0xFF)) && poke(at + 1, static_cast<uint8_t>(value >> 8)); };
+    bool ok = true;
+    uint32_t at = start;
+    for (const uint8_t b : records)
+        ok = poke(at++, b) && ok;
+    for (int k = 0; k < 6; ++k)
+        ok = poke(at++, 0x00) && poke(at++, 0x30) && ok;
+    for (const uint8_t b : table)
+        ok = poke(at++, b) && ok;
+    for (; at < *oldEnd; ++at)
+        ok = poke(at, 0x00) && ok;
+    ok = word(p.prometheusTableAt, tableAt) && word(p.prometheusEndAt, end) && ok;
+    for (const uint16_t w : p.resetWords)
+        ok = word(w, start) && ok;
+    if (!ok)
+    {
+        plan.error = "the memory of " + d.title + "'s text is not in RAM";
+        return plan;
+    }
+    plan.page = -1;
+    plan.ok = true;
+    return plan;
+}
+
 InjectPlan PlanInjectLinear(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& given, const InjectOptions& options)
 {
+    if (d.linear.prometheusTableAt)
+        return PlanInjectPrometheus(machine, d, given, options);
     // Laser Genius: memory holds the paragraphs and FF FF, without the disk file's #AF header
     std::vector<uint8_t> file = given;
     if (d.linear.laserGeniusFile)

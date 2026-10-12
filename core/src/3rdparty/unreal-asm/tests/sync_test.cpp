@@ -9,6 +9,7 @@
 #include <map>
 
 #include "codecs/alasm/alasmcodec.h"
+#include "codecs/prometheus/prometheuscodec.h"
 #include "symbols/io/json.h"
 #include "testdata.h"
 #include "unrealasm/registry.h"
@@ -943,6 +944,74 @@ TEST(SyncInject_Test, LaserGeniusTakesItsParagraphsInItsEditor)
     const InjectPlan tooLong = PlanInject(dump.machine, *d, std::vector<uint8_t>(0x9F2E - 0x7F2E, 0x00), force);
     EXPECT_FALSE(tooLong.ok);
     EXPECT_NE(tooLong.error.find("text space"), std::string::npos) << tooLong.error;
+}
+
+TEST(SyncInject_Test, PrometheusTakesASaveInItsEditor)
+{
+    Dump dump = Load("prom48-edited");
+    const SyncDescriptor* d = FindDescriptor("prometheus-48");
+    ASSERT_NE(d, nullptr);
+    // its editor waits for a key: the ROM's key scan returns to #86B2, a word of its own, then #8629 and #7CFD (page 2
+    // holds the stack at #8B99)
+    const std::vector<uint16_t> words = {0x86B2, 0x01BA, 0x8629, 0x7CFD};
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        if (dump.machine.ram[k].page == 2)
+            for (size_t w = 0; w < words.size(); ++w)
+            {
+                dump.pages[k][0x0B99 + 2 * w] = static_cast<uint8_t>(words[w]);
+                dump.pages[k][0x0B99 + 2 * w + 1] = static_cast<uint8_t>(words[w] >> 8);
+            }
+    dump.machine.sp = 0x8B99;
+    std::string why;
+    ASSERT_TRUE(Idle(dump.machine, *d, why)) << why;
+
+    const WriteAsResult written = WriteAs(SourceDocument::FromText("        ORG 60000\nstart   LD A,1\n        JR start\n", "sjasmplus"), "prometheus", d->version, "NEW");
+    ASSERT_TRUE(written.ok) << written.error;
+    // no "changed" flag: the typed text is replaced by force (or when it is the caller's own) only
+    EXPECT_FALSE(PlanInject(dump.machine, *d, written.bytes).ok);
+    InjectOptions force;
+    force.force = true;
+    const InjectPlan plan = PlanInject(dump.machine, *d, written.bytes, force);
+    ASSERT_TRUE(plan.ok) << plan.error;
+    std::map<uint16_t, uint8_t> pokes;
+    for (const InjectPlan::Poke& p : plan.pokes)
+        pokes[static_cast<uint16_t>((p.page == 5 ? 0x4000 : p.page == 2 ? 0x8000 : 0xC000) + p.offset)] = p.value;
+    // the records from the access line (#9C28), six empty records, the symbol table; the words after them
+    size_t length = 0;
+    ASSERT_TRUE(codecs::PrometheusCodec::FindSourceLength(written.bytes, length));
+    for (size_t k = 0; k < length; ++k)
+        EXPECT_EQ(pokes[static_cast<uint16_t>(0x9C28 + k)], written.bytes[k]) << k;
+    for (size_t k = 0; k < 12; ++k)
+        EXPECT_EQ(pokes[static_cast<uint16_t>(0x9C28 + length + k)], k % 2 ? 0x30 : 0x00) << k;
+    const uint16_t table = static_cast<uint16_t>(0x9C28 + length + 12);
+    const size_t tableLength = written.bytes.size() - length - 2;
+    for (size_t k = 0; k < tableLength; ++k)
+        EXPECT_EQ(pokes[static_cast<uint16_t>(table + k)], written.bytes[length + 2 + k]) << k;
+    EXPECT_EQ(pokes[0x87D7] | (pokes[0x87D8] << 8), table);
+    EXPECT_EQ(pokes[0x881A] | (pokes[0x881B] << 8), table + tableLength);
+    // the active line and the block margins at the start, as CLEAR leaves them
+    for (const uint16_t at : {0x826D, 0x80E8, 0x80EB})
+        EXPECT_EQ(pokes[at] | (pokes[static_cast<uint16_t>(at + 1)] << 8), 0x9C28) << at;
+
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        for (const InjectPlan::Poke& p : plan.pokes)
+            if (dump.machine.ram[k].page == p.page)
+                dump.pages[k][p.offset] = p.value;
+    // read back as SAVE writes it: the file written
+    const SyncText back = ReadText(dump.machine, *d);
+    ASSERT_TRUE(back.ok) << back.state;
+    EXPECT_EQ(back.file, written.bytes);
+
+    // the text and its names stay below U-TOP (#7946)
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        if (dump.machine.ram[k].page == 5)
+        {
+            dump.pages[k][0x3946] = 0x30;
+            dump.pages[k][0x3947] = 0x9C;
+        }
+    const InjectPlan tooLong = PlanInject(dump.machine, *d, written.bytes, force);
+    EXPECT_FALSE(tooLong.ok);
+    EXPECT_NE(tooLong.error.find("U-TOP"), std::string::npos) << tooLong.error;
 }
 
 TEST(SyncInject_Test, Gens4TakesAFileAtItsPromptAsGLeavesIt)

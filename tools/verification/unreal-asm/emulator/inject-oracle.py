@@ -16,6 +16,7 @@ from the same source. The assembler disk is the collection's; the tool creates i
     inject-oracle.py zeus1983 <ZEUS.TAP> <source.asm> <address> [--wait 60]
     inject-oracle.py primus <PRIMUS29.SCL> <source.asm> <address> [--wait 30]
     inject-oracle.py lasergenius <LG_1_04.SCL> <source.asm> <address> [--wait 20]
+    inject-oracle.py prometheus <prometheus-48.tap> <source.asm> <address> [--wait 10]
 
 XAS (Z3): started from its disk, the first source of its list loaded (or a new text), its command line opened (EXT;
 9.x need the keys held 12 frames), the source written there and assembled with A.
@@ -48,6 +49,9 @@ Primus 2.9 (Z4): started from its disk (it loads its manual PRI.DOC), the source
 Laser Genius 1.04 (Z4): started from its disk (the loader's questions: tool-kit y, hash extensions n, disk d), the
 source written in its editor by force (no "changed" flag), assembled with "assem". It stores code only after a PUT
 and between #68D2 and #7F22: give sources from #6900.
+
+PROMETHEUS 48K (Z4): loaded from its tape on a 48K machine (installed at 24000), the source written in its editor
+by force (no "changed" flag), assembled with SS+A. Its source and names lie from #9C28 up: give sources from 60000.
 
 With --project the source goes as a path, and each file it INCLUDEs into an ALASM text page of its own (the INCLUDE
 names the page); --template always takes the INCLUDEs (zxasm inject reads them beside the source).
@@ -358,9 +362,37 @@ def lasergenius(emu, args, expected):
     return bytes(emu.read(args.address, len(expected)))
 
 
+def prometheus(emu, args, expected):
+    emu.post('/tape/load', {'path': os.path.abspath(args.disk)})
+    emu.post('/basic/run', {'command': 'LOAD ""'})
+    emu.post('/tape/play')
+    for _ in range(240):
+        time.sleep(0.5)
+        if emu.get('/tape/info').get('state') in ('ended', 'stopped'):
+            break
+    time.sleep(2)
+    emu.tap('enter')                                   # the installer: run the assembler
+    time.sleep(3)
+    emu.post('/tape/eject')
+    with open(args.source, encoding='utf-8') as f:
+        body = {'from': args.from_, 'assembler': 'prometheus-48', 'title': 'INJECTED', 'text': f.read(), 'force': True}
+    reply = emu.post('/asm/sync/inject', body)
+    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
+    for d in reply.get('diagnostics', []):
+        if d.get('severity') != 'info':
+            print('  ', d)
+    emu.write(args.address, [0xAA] * len(expected))
+    emu.post('/keyboard/combo', {'keys': ['ss', 'a'], 'frames': 4})
+    time.sleep(0.5)
+    emu.tap('enter')
+    time.sleep(args.wait)
+    emu.screenshot(os.path.abspath(args.source) + '.prometheus-48.png')
+    return bytes(emu.read(args.address, len(expected)))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412', 'zasm315', 'masm11', 'gens4', 'zeus1983', 'primus', 'lasergenius'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412', 'zasm315', 'masm11', 'gens4', 'zeus1983', 'primus', 'lasergenius', 'prometheus'])
     parser.add_argument('disk', help='the assembler disk, or with --template an idle template snapshot')
     parser.add_argument('--template', action='store_true', help='inject with zxasm into the template snapshot instead (Z1)')
     parser.add_argument('--zxasm', default=os.environ.get('ZXASM', 'zxasm'))
@@ -381,7 +413,7 @@ def main():
     parser.add_argument('--keep', action='store_true', help='keep the instance (default: delete it)')
     args = parser.parse_args()
     expected = sjasmplus_bytes(args.sjasmplus, args.source, args.address)
-    emu = Emulator(port=args.port, model='48K' if args.assembler in ('gens4', 'zeus1983') else 'PENTAGON')
+    emu = Emulator(port=args.port, model='48K' if args.assembler in ('gens4', 'zeus1983', 'prometheus') else 'PENTAGON')
     try:
         if args.assembler == 'xas':
             built = xas(emu, args, expected)
@@ -389,6 +421,8 @@ def main():
             built = primus(emu, args, expected)
         elif args.assembler == 'lasergenius':
             built = lasergenius(emu, args, expected)
+        elif args.assembler == 'prometheus':
+            built = prometheus(emu, args, expected)
         elif args.assembler == 'zeus1983':
             built = zeus1983(emu, args, expected)
         elif args.assembler == 'gens4':

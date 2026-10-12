@@ -441,6 +441,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | research | the text and table pointers (48K; tape loading works) |
 | **Work** | **1 d** |
 | **Verified: 48K tape edition at 24000** (2026-10-10, dumps `prom48-*`) | read from the reconstructed source (oldcompcz/prometheus `src/prometheus.asm`, SAVE): the records run from `sourceBufferAccessLine` (`#9C28`) to twelve bytes below the symbol table (the operand of `varcSymbolTablePt`, `#87D7`); the table runs to the operand of `varcCodeEndPt` (`#881A`); SAVE writes the records, `FF` XOR them, `FF`, then the table (`prometheusTableAt` / `prometheusEndAt`). A line typed is out of the text until ENTER. SAVE goes to tape only (the TR-DOS adaptation too), so the expected file is what SAVE hands the ROM: an execution breakpoint at SA-BYTES `#04C6` gives the records' `IX` / `DE` (`#9C28`, 21 bytes for four lines). `LOAD` stages the save below U-TOP before it inserts the lines (`#FF43` here: not the source). Identified by 24 bytes at `#8000`. Descriptor `prometheus-48` (installed elsewhere, the addresses move) |
+| **Built: inject (Z4, 2026-10-12)** | in its editor (the key wait leaves `#8629, #7CFD` on the stack): the records from `#9C28`, six empty records, the table; the words `#87D7` / `#881A` after them, the active line (`#826D`) and the block margins (`#80E8` / `#80EB`) at the start, as CLEAR leaves them; the end stays below U-TOP (`#7946`). No "changed" flag (force). PROMETHEUS 48K assembled `oracle1.asm` and every instruction form to sjasmplus' bytes, injected and from tape (research-sjasmplus-to-prometheus.md §4) |
 
 ### 7.18 Power Assembler (PASM 3.0)
 
@@ -889,6 +890,14 @@ writes C-like priorities with `[ ]`, comparisons that give 1, `COND`, `ORG` + `P
 inject moves the editor's screen lines behind the new text (`LinearParams::followLastAt`). Checked in Laser Genius
 1.04: `oracle1.asm` and every instruction form to sjasmplus' bytes, from disk and injected. Details:
 [research-sjasmplus-to-lasergenius.md](research-sjasmplus-to-lasergenius.md).
+
+**Built (2026-10-12): Z4 for PROMETHEUS 48K.** The PROMETHEUS backend (`dialects/prometheus/`, on `ChainWriter`)
+writes chains left to right with `+ - * / ?`, names of 8 characters, `DISP` as `org` + `put`, comments on lines of
+their own, and every line as its codec stores it. In an instruction, PROMETHEUS' `$` is the address of the byte the
+value goes into (`ld hl,$` = the address +1, `ld ix,$` +2). The backend writes `$-k`, and the frontend now reads `$+k`
+(`prometheuscurrent.h`). The inject writes the records, the table and its pointers. Checked in PROMETHEUS 48K:
+`oracle1.asm` and every instruction form to sjasmplus' bytes, injected and from tape. Details:
+[research-sjasmplus-to-prometheus.md](research-sjasmplus-to-prometheus.md).
 
 ## 20. Effort (part B)
 
