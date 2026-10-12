@@ -414,9 +414,11 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                     {
                         // the text first: argument order is unspecified, and gcc moves `response` out before reading it
                         const std::string symbolic = response.get("symbolic_id", "").asString();
+                        const std::string note = response.get("note", "").asString();  // e.g. a RAM size the core cannot address
                         const std::string text = "Created and started emulator " + response["id"].asString() + " (model " +
                                                  (model.empty() ? std::string("default") : model) +
-                                                 (symbolic.empty() ? "" : ", name " + symbolic) + ")";
+                                                 (symbolic.empty() ? "" : ", name " + symbolic) + ")" +
+                                                 (note.empty() ? "" : ". Note: " + note);
                         done(ToolResult::Ok(text, std::move(response)));
                         return;
                     }

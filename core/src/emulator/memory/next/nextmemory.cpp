@@ -347,7 +347,7 @@ unsigned NextMemory::InstalledRamPages() const
     constexpr unsigned kKbPerPage = PAGE_SIZE / 1024;
     const unsigned kb = _context ? _context->config.ramsize : 0;
     const unsigned pages = kb ? kb / kKbPerPage : MAX_RAM_PAGES;
-    return std::min<unsigned>(pages, MAX_RAM_PAGES);
+    return std::min<unsigned>({pages, kAddressableRamPages, static_cast<unsigned>(MAX_RAM_PAGES)});
 }
 
 void NextMemory::MapSlot(unsigned slot)
