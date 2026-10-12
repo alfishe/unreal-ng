@@ -141,4 +141,4 @@ only follows: the hook before a MOVE's write (`ScreenNext::RenderBeforeCopperClo
 copper-instruction or copper-door NextREG breakpoint HOLDS the instruction, the machine stops before the MOVE writes, and the MOVE writes when it
 runs on, without a second stop or count (`NextCopper::_observed`). The probe on a copy of the copper is gone. Measured: while the copper runs about
 +4 ns per instruction in a tight loop of NOPs (27.7 -> 31.6 ns), nothing while it is stopped. Limit: a MOVE reaches the registers at the end of the
-instruction it falls in (not inside it), and the 1/8-T deferral of a CPU write on the very clock of a MOVE is the order above, not a delay.
+instruction it falls in (not inside it); the picture shows a MOVE of the fallback colour / transparency 22 and of a palette value 16 28 MHz clocks after the write (`ScreenNext::PixelLatencyClocks`, counted from the RTL), the other registers at the write; and the 1/8-T deferral of a CPU write on the very clock of a MOVE is the order above, not a delay.
