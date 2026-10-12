@@ -19,25 +19,25 @@ enable_word:
       nr: 0x82
       ports: #FF
       enabled: true
-      enforced: false
+      enforced: true
     [1]
       bit: 1
       nr: 0x82
       ports: #7FFD
       enabled: true
-      enforced: false
+      enforced: true
     [2]
       bit: 2
       nr: 0x82
       ports: #DFFD
       enabled: true
-      enforced: false
+      enforced: true
     [3]
       bit: 3
       nr: 0x82
       ports: #1FFD
       enabled: true
-      enforced: false
+      enforced: true
     [4]
       bit: 4
       nr: 0x82
@@ -49,19 +49,19 @@ enable_word:
       nr: 0x82
       ports: #6B zxnDMA
       enabled: true
-      enforced: false
+      enforced: true
     [6]
       bit: 6
       nr: 0x82
       ports: #1F Kempston / MD 1
       enabled: true
-      enforced: false
+      enforced: true
     [7]
       bit: 7
       nr: 0x82
       ports: #37 Kempston / MD 2
       enabled: true
-      enforced: false
+      enforced: true
     [8]
       bit: 8
       nr: 0x83
@@ -79,7 +79,7 @@ enable_word:
       nr: 0x83
       ports: #103B, #113B I2C
       enabled: true
-      enforced: false
+      enforced: true
     [11]
       bit: 11
       nr: 0x83
@@ -103,19 +103,19 @@ enable_word:
       nr: 0x83
       ports: #57, #5B, #303B sprites
       enabled: true
-      enforced: false
+      enforced: true
     [15]
       bit: 15
       nr: 0x83
       ports: #123B Layer 2
       enabled: true
-      enforced: false
+      enforced: true
     [16]
       bit: 16
       nr: 0x84
       ports: #FFFD, #BFFD AY
       enabled: true
-      enforced: false
+      enforced: true
     [17]
       bit: 17
       nr: 0x84
@@ -169,7 +169,7 @@ enable_word:
       nr: 0x85
       ports: #0B Z80 DMA
       enabled: true
-      enforced: false
+      enforced: true
     [26]
       bit: 26
       nr: 0x85
@@ -181,5 +181,5 @@ enable_word:
       nr: 0x85
       ports: #183B-#1F3B Z80 CTC
       enabled: true
-      enforced: false
-note: enforced = the emulator gates the ports by that bit; the other ports decode regardless of the enable word
+      enforced: true
+note: enforced = the emulator gates the ports by that bit (a write is ignored, a read is the idle bus #FF; with the expansion bus on, NR #86-#89 are ANDed in). Not enforced: the +3 floating bus (bit 4), the UART (12), the Kempston mouse (13), ULA+ (24) and #EFF7 (26) - the Next does not decode those ports at all yet, so there is nothing to gate
