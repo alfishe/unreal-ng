@@ -161,60 +161,82 @@ void ScreenNext::BindCopper(NextCopper& copper)
     _copperBound = true;
 }
 
-unsigned ScreenNext::PixelLatencyClocks(uint8_t reg, uint8_t previous, uint8_t value)
+ScreenNext::PictureLatency ScreenNext::PictureLatencyOf(uint8_t reg, uint8_t previous, uint8_t value)
 {
-    // Counted against zxnext.vhd (the output of the Next is a chain of CLK_14 registers; the copper's write is E+4 after the WAIT is true;
-    // scratch/cosim-copper/LATENCY.md). The count is from the clock the copper sees the WAIT true to the first changed half pixel:
-    //  - 22 clocks, the chain fallback_rgb_0, _1a, _1, _2 and rgb_out_3..6, rgb_out_o: NR #4A fallback colour, NR #14 global transparency,
-    //    the layer enables that travel the same _0 / _1a / _1 (/ _2) chain (ula_en NR #68 bit 7, lores_en NR #15 bit 7, sprite_en NR #15
-    //    bit 0, tm_en NR #6B bit 7) and the palette selection (NR #43 bits 6:4, NR #6B bit 4: *_palette_select_0 / _1a / _1 feed the palette
-    //    lookup of stage 1, 6 clocks after a palette value's write)
-    //  - 16 clocks, the palette values (NR #41, NR #44): the lookup is at stage 1, E+4.5 + 4k for pixel k
-    //  - 24 clocks, the layer order (NR #15 bits 4:2): layer_priorities_0, _1 are CLK_7 registers (E+8, E+12), the CLK_14 _2 is the edge
-    //    after (E+14), then the same rgb_out_3..6 / o chain
-    //  - 20 clocks, ULANext (NR #43 bit 0, NR #42): ulanext_en_0 / format_0 are read where the ULA pixel is formed (falling CLK_14 edge,
-    //    13 clocks before the output)
-    // The ULA pixel itself leaves at its own hc (it is fetched 4 pixels ahead), so these are the delays against it.
-    // Not counted (0): the scroll, offset and clip registers of Layer 2, ULA, tilemap and sprites. They are consumed where a pixel's
-    // address is formed, a fetch stage whose distance to the output is not worked out (Layer 2's address is formed one pixel ahead and its
-    // data comes through the SRAM, the ULA's per 8-pixel group): they are drawn at the write
-    constexpr unsigned kChainClocks = 22, kPaletteClocks = 16, kPriorityClocks = 24, kUlaNextClocks = 20;
+    // Measured on the official RTL simulated whole (tools/poc/028-next-video-pipeline-alignment: GHDL, the zxnext core with the top level's
+    // clocks and SRAM arbiter, one register changed at a known clock, the first changed output pixel found against the line before).
+    // `clocks` is from the clock the copper sees the WAIT true (the register is written 4 clocks later) to the first changed pixel; a
+    // register read where a pixel group is fetched takes effect from the next group boundary (`quantum` clocks, the lattice anchored at
+    // the grid's x = 0).
+    //  - 22 clocks (14 MHz registers, half pixels): NR #4A, #14, the layer enables (NR #68 bit 7, NR #15 bits 7 / 0, NR #6B bit 7), the
+    //    layer order (NR #15 bits 4:2), the palette selects (NR #43 bits 3:1, NR #6B bit 4)
+    //  - 22 clocks, 4-clock pixels: the ULA clip (NR #1A), the tilemap clip (NR #1B), Layer 2's palette offset (NR #70 bits 3:0)
+    //  - 26 clocks, 4-clock pixels: Layer 2's enable (NR #69 bit 7), scroll (NR #16 / #17 / #71) and clip (NR #18): the SRAM's read adds a pixel
+    //  - 56 clocks, 32-clock cells: the ULA's scroll (NR #26 / #27); 70 for the fine scroll (NR #68 bit 2)
+    //  - 53 clocks, 32-clock cells: the tilemap's scroll (NR #2F / #30 / #31)
+    //  - 20 clocks: ULANext (NR #43 bit 0, NR #42)
+    //  - 16 clocks, half pixels: the palette values (NR #41 / #44: derived from the RTL's lookup stage, not simulated)
+    // Not measured (0, drawn at the write): the sprite registers (the sprite RAMs are coregen cores), the LoRes scroll, the tilemap's
+    // control bits and transparent index, the Layer 2 resolution
+    constexpr PictureLatency kChain{22, 2}, kPixel22{22, 4}, kLayer2{26, 4}, kUlaScroll{56, 32}, kUlaFine{70, 32}, kTilemapScroll{53, 32},
+        kUlaNext{20, 2}, kPalette{16, 2}, kNone{0, 1};
     const uint8_t changed = static_cast<uint8_t>(previous ^ value);
-    auto earliest = [](std::initializer_list<unsigned> clocks) { return *std::min_element(clocks.begin(), clocks.end()); };
+    auto earliest = [](PictureLatency a, PictureLatency b) { return a.clocks == 0 ? b : (b.clocks == 0 ? a : (b.clocks < a.clocks ? b : a)); };
     switch (reg)
     {
         case 0x4A:
         case 0x14:
-            return kChainClocks;
-        case 0x68:  // bit 7 the ULA enable, bits 6:5 blend mode, bit 0 stencil: the chain; bit 2 (fine scroll) is a fetch-stage input
-            return (changed & 0xE1) ? kChainClocks : 0;
-        case 0x6B:  // bit 7 tilemap enable, bit 4 palette select: the chain
-            return (changed & 0x90) ? kChainClocks : 0;
-        case 0x15:
+            return kChain;
+        case 0x68:
         {
-            unsigned clocks = 0;
-            if (changed & 0x81)  // lores_en, sprite_en
-                clocks = kChainClocks;
-            if (changed & 0x1C)  // layer order
-                clocks = clocks ? earliest({clocks, kPriorityClocks}) : kPriorityClocks;
-            return clocks;
+            PictureLatency l = kNone;
+            if (changed & 0xE1)  // bit 7 the ULA enable (measured); bits 6:5 blend, bit 0 stencil travel the same registers
+                l = kChain;
+            if (changed & 0x04)  // the fine scroll
+                l = earliest(l, kUlaFine);
+            return l;
         }
+        case 0x6B:  // bit 7 tilemap enable, bit 4 palette select
+            return (changed & 0x90) ? kChain : kNone;
+        case 0x15:  // bit 0 sprite_en and bit 7 lores_en (the chain of ula_en), bits 4:2 the layer order (measured)
+            return (changed & 0x9D) ? kChain : kNone;
         case 0x43:
         {
-            unsigned clocks = 0;
-            if (changed & 0x70)  // the active palettes
-                clocks = kChainClocks;
+            PictureLatency l = kNone;
+            if (changed & 0x0E)  // the active palettes (ULA bit 1, Layer 2 bit 2, sprites bit 3)
+                l = kChain;
             if (changed & 0x01)  // ULANext
-                clocks = clocks ? earliest({clocks, kUlaNextClocks}) : kUlaNextClocks;
-            return clocks;
+                l = earliest(l, kUlaNext);
+            return l;
         }
         case 0x42:
-            return kUlaNextClocks;
+            return kUlaNext;
+        case 0x1A:
+        case 0x1B:
+            return kPixel22;
+        case 0x70:
+            return (changed & 0x0F) ? kPixel22 : kNone;
+        case 0x69:
+            return (changed & 0x80) ? kLayer2 : kNone;
+        case 0x12:
+        case 0x13:
+        case 0x16:
+        case 0x17:
+        case 0x18:
+        case 0x71:
+            return kLayer2;
+        case 0x26:
+        case 0x27:
+            return kUlaScroll;
+        case 0x2F:
+        case 0x30:
+        case 0x31:
+            return kTilemapScroll;
         case 0x41:
         case 0x44:
-            return kPaletteClocks;
+            return kPalette;
         default:
-            return 0;
+            return kNone;
     }
 }
 
@@ -254,12 +276,17 @@ void ScreenNext::RenderBeforeCopperClock(uint64_t clock, uint8_t reg, uint8_t va
         RenderUpTo(line, 0);
         return;
     }
-    // the pixels before the write's effect reaches the output keep the old state: the effect is PixelLatencyClocks after the write, and the
+    // the pixels before the write's effect reaches the output keep the old state: the effect is PictureLatencyOf after the write, and the
     // image's pixels are 14 MHz (two 28 MHz clocks each)
     constexpr unsigned kClocksPerImagePixel = 2, kImagePixels = 640;
     const uint8_t previous = Decoder() ? Decoder()->Board().Stored(reg) : value;
-    const unsigned half =
-        static_cast<unsigned>(std::min<uint64_t>((delta + PixelLatencyClocks(reg, previous, value)) / kClocksPerImagePixel, kImagePixels));
+    const PictureLatency latency = PictureLatencyOf(reg, previous, value);
+    // the MOVE's clock is one after the WAIT's (the copper decodes it on the same edge's next clock): the measured count from the WAIT is
+    // one less from here. A register read where a pixel group is fetched takes effect at the next group's boundary
+    uint64_t effect = delta + latency.clocks - (latency.clocks ? 1 : 0);
+    if (latency.quantum > 1)
+        effect = (effect + latency.quantum - 1) / latency.quantum * latency.quantum;
+    const unsigned half = static_cast<unsigned>(std::min<uint64_t>(effect / kClocksPerImagePixel, kImagePixels));
     RenderUpTo(line, half);
 }
 

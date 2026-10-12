@@ -3,7 +3,8 @@
 Feature: ZX Next copper picture latency ([TODO.md](../../../docs/inprogress/2026-10-07-zx-next/TODO.md), "Copper picture latency of the
 registers that are fetch-stage inputs"; counted chains in `scratch/cosim-copper/LATENCY.md`, `ScreenNext::PixelLatencyClocks`).
 
-Status: charter only, nothing measured yet.
+Status: **concluded 2026-10-12** - [measurements](measurements-2026-10-12-register-sweep.md), [analysis](analysis.md),
+[conclusions](conclusions.md), [proposal](proposal.md). Run: `run.sh <cores/zxnext/src>` (GHDL, VHDL-2008).
 
 ## Goals
 
