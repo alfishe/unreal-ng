@@ -156,12 +156,35 @@ void ScreenNext::UpdateCopperGeometry()
 void ScreenNext::BindCopper(NextCopper& copper)
 {
     copper.SetNow([this]() { return CopperClockNow(); });
-    copper.SetBeforeWrite([this](uint64_t clock) { RenderBeforeCopperClock(clock); });
+    copper.SetBeforeWrite([this](uint64_t clock, uint8_t reg) { RenderBeforeCopperClock(clock, reg); });
     copper.SetGeometry(_rasterState.tstatesPerLine * 2, _rasterState.maxFrameTiming / _rasterState.tstatesPerLine);
     _copperBound = true;
 }
 
-void ScreenNext::RenderBeforeCopperClock(uint64_t clock)
+unsigned ScreenNext::PixelLatencyClocks(uint8_t reg)
+{
+    // Counted against zxnext.vhd (the output of the Next is a chain of CLK_14 registers; the copper's write is E+4 after the WAIT is true):
+    //  - NR #4A fallback colour, NR #14 global transparency: fallback_rgb_0 (first CLK_14 edge after the write), _1a, _1, _2, then
+    //    rgb_out_3..6 and rgb_out_o: 22 clocks from the clock the copper sees the WAIT true, i.e. 20 from the MOVE; the ULA pixel itself
+    //    leaves at its own hc (it is fetched 4 pixels ahead), so this is the delay against it
+    //  - the palette values (NR #41, NR #44): the lookup is at stage 1, E+4.5 + 4k for pixel k: 16 clocks
+    // Not counted (0): the layer / sprite enables, the scroll and offset registers, the palette selection - they land later than the
+    // write, by an amount not worked out
+    constexpr unsigned kFallbackClocks = 22, kPaletteClocks = 16;
+    switch (reg)
+    {
+        case 0x4A:
+        case 0x14:
+            return kFallbackClocks;
+        case 0x41:
+        case 0x44:
+            return kPaletteClocks;
+        default:
+            return 0;
+    }
+}
+
+void ScreenNext::RenderBeforeCopperClock(uint64_t clock, uint8_t reg)
 {
     if (_turboRenderSkip || !FramebufferReady())
         return;
@@ -192,8 +215,16 @@ void ScreenNext::RenderBeforeCopperClock(uint64_t clock)
     const uint64_t lineClocks = static_cast<uint64_t>(perLine) * 8;
     const uint64_t x0 = CopperClock(lineStart + _rasterState.screenLineAreaStart - 16);
     const uint64_t delta = (clock + frameClocks - x0) % frameClocks;
-    const unsigned x = delta < lineClocks ? static_cast<unsigned>(std::min<uint64_t>(delta / 4, 320)) : 0;
-    RenderUpTo(line, x);
+    if (delta >= lineClocks)
+    {
+        RenderUpTo(line, 0);
+        return;
+    }
+    // the pixels before the write's effect reaches the output keep the old state: the effect is PixelLatencyClocks after the write, and the
+    // image's pixels are 14 MHz (two 28 MHz clocks each)
+    constexpr unsigned kClocksPerImagePixel = 2, kImagePixels = 640;
+    const unsigned half = static_cast<unsigned>(std::min<uint64_t>((delta + PixelLatencyClocks(reg)) / kClocksPerImagePixel, kImagePixels));
+    RenderUpTo(line, half);
 }
 
 void ScreenNext::RenderLinesUpTo(unsigned lineExclusive)
@@ -208,7 +239,7 @@ void ScreenNext::RenderUpTo(unsigned lineLimit, unsigned xLimit)
         return;
     lineLimit = std::min<unsigned>(lineLimit, NextVideoRenderer::kHeight);
     constexpr unsigned kW = NextVideoRenderer::kWidth;
-    constexpr unsigned kPixels = 320;  // the grid line: 32 border + 256 paper + 32 border
+    constexpr unsigned kPixels = kW;  // the image line in 14 MHz pixels: 320 grid pixels of 32 border + 256 paper + 32 border, doubled
     if (_nextLine > lineLimit || (_nextLine == lineLimit && _nextX >= xLimit))
         return;
     if (!_copperBound)
@@ -256,15 +287,15 @@ void ScreenNext::RenderUpTo(unsigned lineLimit, unsigned xLimit)
             const bool whole = fromX == 0 && toX >= kPixels;
             in.layerOut = record ? (whole ? &lineSink : &scratchSink) : nullptr;
             if (record)
-                NextVideoRenderer::RecordSegment(*record, _nextLine, fromX * 2, toX * 2, in);
+                NextVideoRenderer::RecordSegment(*record, _nextLine, fromX, toX, in);
             NextVideoRenderer::RenderLine(in, _nextLine, segment);
-            std::memcpy(row + fromX * 2, segment + fromX * 2, (toX - fromX) * 2 * sizeof(uint32_t));
+            std::memcpy(row + fromX, segment + fromX, (toX - fromX) * sizeof(uint32_t));
             if (record && !whole)
             {
                 for (unsigned p = 0; p < NextLayer::kPlanes; p++)
-                    std::memcpy(lineSink.plane[p] + fromX * 2, scratchPlane[p] + fromX * 2, (toX - fromX) * 2 * sizeof(NextLayer::Pixel));
-                std::memcpy(lineSink.ids + fromX * 2, scratchIds + fromX * 2, (toX - fromX) * 2);
-                std::memcpy(lineSink.info + fromX * 2, scratchInfo + fromX * 2, (toX - fromX) * 2);
+                    std::memcpy(lineSink.plane[p] + fromX, scratchPlane[p] + fromX, (toX - fromX) * sizeof(NextLayer::Pixel));
+                std::memcpy(lineSink.ids + fromX, scratchIds + fromX, (toX - fromX));
+                std::memcpy(lineSink.info + fromX, scratchInfo + fromX, (toX - fromX));
             }
             _nextX = toX;
         }

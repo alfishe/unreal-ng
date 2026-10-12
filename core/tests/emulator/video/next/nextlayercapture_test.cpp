@@ -521,3 +521,44 @@ TEST_F(NextLayerCaptureMachine_Test, CopperChangesAreCapturedPerSegment)
 }
 
 // endregion
+
+// Where a copper MOVE of the fallback colour first shows on the output, counted against the RTL (zxnext.vhd: fallback_rgb_0, _1a, _1, _2,
+// rgb_out_3..6, rgb_out_o: nine CLK_14 registers behind the write; scratch/cosim-copper/LATENCY.md). The WAIT is true at the pixel clock
+// thr = hpos * 8 + 12; the ULA pixel k of the grid leaves at its own hc; the changed fallback appears at the second 14 MHz half of grid pixel
+// thr + 26, i.e. image pixel 2 * thr + 53
+TEST_F(NextLayerCaptureMachine_Test, AFallbackColourMoveShowsAtTheOutputAfterTheRtlPipeline)
+{
+    constexpr unsigned kHpos = 20, kLine = 60;
+    constexpr unsigned kWaitBase = 12, kWaitStep = 8;                     // copper.vhd: thr = (hpos << 3) + 12
+    constexpr unsigned kThr = kHpos * kWaitStep + kWaitBase;
+    constexpr unsigned kFirstChangedImagePixel = 2 * kThr + 53;           // LATENCY.md section 4
+    constexpr uint8_t kUlaOff = 0x80, kFallbackBefore = 0x00, kFallbackAfter = 0xFC;
+    Nr(0x68, kUlaOff);       // the ULA is off: every pixel is the fallback colour
+    Nr(0x4A, kFallbackBefore);
+    Nr(0x61, 0);
+    Nr(0x62, 0);
+    // every frame starts with the colour before (the register keeps the last frame's value), then the WAIT and the change
+    for (uint16_t w : {uint16_t((0x4A << 8) | kFallbackBefore), uint16_t(0x8000 | (kHpos << 9) | kLine), uint16_t((0x4A << 8) | kFallbackAfter),
+                       uint16_t(0xFFFF)})
+    {
+        Nr(0x60, static_cast<uint8_t>(w >> 8));
+        Nr(0x60, static_cast<uint8_t>(w & 0xFF));
+    }
+    Nr(0x62, 0xC0);  // run, restarting every frame
+    Frames(4);
+    const uint32_t* fb = Framebuffer();
+    constexpr unsigned kQuietRow = 40;  // after the first MOVE (copper line 0 is grid row 32) and before the WAIT line 60 (grid row 92)
+    const uint32_t before = fb[(kQuietRow * 2) * kWidth];
+    int row = -1, x = -1;
+    for (unsigned y = kQuietRow; y < kHeight && row < 0; y++)
+        for (unsigned i = 1; i < kWidth; i++)
+            if (fb[(y * 2) * kWidth + i] != before)
+            {
+                row = static_cast<int>(y);
+                x = static_cast<int>(i);
+                break;
+            }
+    ASSERT_GE(row, 0) << "the fallback colour changed inside a line";
+    EXPECT_EQ(static_cast<unsigned>(x), kFirstChangedImagePixel) << "row " << row;
+    EXPECT_NE(fb[(static_cast<unsigned>(row + 1) * 2) * kWidth], before) << "the next row is the changed colour from its start";
+}
