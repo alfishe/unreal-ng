@@ -1338,17 +1338,20 @@ InjectPlan PlanInjectPrometheus(const MachineView& machine, const SyncDescriptor
     const uint32_t start = p.fixedStart;
     const uint32_t tableAt = start + static_cast<uint32_t>(records.size()) + 12;
     const uint32_t end = tableAt + static_cast<uint32_t>(table.size());
-    const auto top = machine.Word(p.limitAt);
-    const auto oldEnd = machine.Word(p.prometheusEndAt);
-    if (!top || !oldEnd)
+    const auto topWord = machine.Word(p.limitAt);
+    const auto oldEndWord = machine.Word(p.prometheusEndAt);
+    if (!topWord || !oldEndWord)
     {
         plan.error = "the text pointers of " + d.title + " are not in memory";
         return plan;
     }
-    if (end >= *top)
+    // plain values: gcc 14 at -O3 takes *optional for maybe-uninitialized (-Werror)
+    const uint32_t top = topWord.value_or(0);
+    const uint32_t oldEnd = oldEndWord.value_or(0);
+    if (end >= top)
     {
         plan.error = "the text takes " + std::to_string(end - start) + " bytes with its names; " + d.title + " holds " +
-                     std::to_string(*top > start ? *top - start - 1 : 0) + " (up to its U-TOP)";
+                     std::to_string(top > start ? top - start - 1 : 0) + " (up to its U-TOP)";
         return plan;
     }
     const auto poke = [&](uint32_t at, uint8_t value) {
@@ -1367,7 +1370,7 @@ InjectPlan PlanInjectPrometheus(const MachineView& machine, const SyncDescriptor
         ok = poke(at++, 0x00) && poke(at++, 0x30) && ok;
     for (const uint8_t b : table)
         ok = poke(at++, b) && ok;
-    for (; at < *oldEnd; ++at)
+    for (; at < oldEnd; ++at)
         ok = poke(at, 0x00) && ok;
     ok = word(p.prometheusTableAt, tableAt) && word(p.prometheusEndAt, end) && ok;
     for (const uint16_t w : p.resetWords)
