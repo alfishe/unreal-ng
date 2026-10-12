@@ -91,6 +91,7 @@ matches; it names the recipe(s) for that action.
 | [machines/tsconf-vdac2.md](machines/tsconf-vdac2.md) | port-trace |
 | Counting/mapping memory access | [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
 | Finding where the emulator itself (the host process) spends its CPU time | [testing/host-profiling.md](testing/host-profiling.md) | analysis/* (they profile the guest) |
+| Which video mode a machine is in, putting it into another, finding where frame / window / tile / recording disagree | [testing/video-modes.md](testing/video-modes.md) | media/agent-screenshot-view.md (it only shows a frame) |
 | A Sprinter boot straight into a program (tests, benchmarks, a GUI session) | [media/sprinter-test-images.md](media/sprinter-test-images.md) | demo-runner, Flex Navigator walking |
 | Recording a video (with sound) of a run | [media/video-recording.md](media/video-recording.md) | everything else |
 | Debugging a visual/screen bug | [analysis/ttd-visual-inspection.md](analysis/ttd-visual-inspection.md) + [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | everything else until you have a reproducible frame |
@@ -223,6 +224,7 @@ call.
 |:--|:--|
 | [testing/webapi-verification.md](testing/webapi-verification.md) | Verifying a WebAPI change end to end |
 | [testing/host-profiling.md](testing/host-profiling.md) | Where the emulator spends its host CPU time (macOS xctrace): a repeatable load, record, reports per function / source line / callee / thread |
+| [testing/video-modes.md](testing/video-modes.md) | Which video mode a machine is in, how to reach the others on every platform, and `tools/verification/video/check_video_modes.py`: where the frame, the window, a video wall tile or a recording disagree with what the machine says |
 
 ### `articles/` — full workflows that combine recipes
 

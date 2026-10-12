@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDragEnterEvent>
+#include <QElapsedTimer>
 #include <QDragLeaveEvent>
 #include <QDropEvent>
 #include <QEvent>
@@ -238,6 +239,14 @@ protected:
     /// Resize the window so the emulator screen is shown at an integer scale of its
     /// native (viewport) size, plus menu / toolbar / status bar chrome
     void fitWindowToScreen(int scale);
+    /// Native size of the picture now shown (framebuffer cropped by the viewport); 352x288 before any machine
+    QSize pictureNativeSize() const;
+    /// Resizes the window to the picture at the remembered zoom factor (aspect ratio kept); no-op after a manual resize
+    void refitWindowToPicture();
+    /// Menu bar, toolbar, status bar and margins around the screen: the window minus the content frame, measured on a laid-out window
+    QSize windowChrome();
+    /// The smallest the screen may get is the picture at 1x: a pixel is never squeezed; follows every video mode
+    void updateScreenMinimumSize();
 
     /// Switch the emulator's debug instrumentation (debug memory interface, breakpoint
     /// dispatch) on or off - it follows the debugger window's visibility
@@ -402,6 +411,8 @@ private:
     bool _autostartDisks = true;      // TR-DOS disk autostart on open (persisted in settings)
     std::string _nextEmulatorModel;   // Model for the next auto-started emulator (empty = default); consumed once
     uint32_t _nextEmulatorRamKb = 128;  // Its RAM size in KB; reset with the model
+    std::string _pickedModel;         // Machine chosen in the Machine menu while none runs (empty = default); stays until changed
+    uint32_t _pickedRamKb = 128;      // Its RAM size in KB
     bool _hudOverlayVisible = false;  // Session-only HUD visibility state (default off)
     QMutex lockMutex;
     QMutex _audioMutex;              // Protects audio operations from race conditions
@@ -449,6 +460,12 @@ private:
 
     bool _inHandler = false;
     bool _initialFitDone = false;  // Window sized to the screen once, on first show
+    bool _userResizedWindow = false;  // The user dragged the window size: video mode changes no longer resize it
+    bool _refitPending = false;  // A refitWindowToPicture() is queued (video mode changes arrive in bursts)
+    double _zoomFactor = 2.0;  // Window zoom over the picture's native size, kept across video modes
+    QSize _chrome;  // Last sane windowChrome()
+    QElapsedTimer _fitClock;  // Time since our last programmatic resize: the window system animates it with resize events of its own
+    QSize _fitTarget;  // Window size of our last programmatic resize (tells it from the user's drag)
     DisplayRefreshInfo _displayRefresh;  // Last queried refresh characteristics of our display
 
     // Stores window geometry before going fullscreen / maximized

@@ -1,4 +1,5 @@
 #pragma once
+#include "emulator/video/displaygeometry.h"
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
@@ -1078,6 +1079,11 @@ public:
     /// @return true if a frame was copied
     bool CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize);
 
+    /// @brief The same, and the geometry latched with that frame (its size and the working picture's rectangle).
+    /// A consumer that shows "the screen" cuts `geometry->screenWindow` out of the pixels instead of
+    /// assuming where a machine puts its paper
+    bool CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize, PictureGeometry* geometry);
+
     /// @brief The presented frame and its geometry as one atomic pair (any thread).
     /// The geometry was latched with the frame, so a mode switch or a resize between the two reads
     /// cannot give a size that disagrees with the pixels
@@ -1160,6 +1166,9 @@ public:
     /// Get display dimensions after viewport cropping
     uint16_t GetDisplayWidth() const;
     uint16_t GetDisplayHeight() const;
+
+    /// The picture as it looks on a screen: the viewport-cropped framebuffer in square pixels (see displaygeometry.h)
+    DisplayGeometry::Size GetDisplayGeometry() const;
 
     /// The 16 ZX colors exactly as the renderer draws them (the first 16 entries of
     /// the live palette), in the framebuffer format RGBA8888 (LE uint32 0xAABBGGRR).

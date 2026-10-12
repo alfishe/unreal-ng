@@ -167,6 +167,7 @@ void DeviceScreenWrapper::init(uint16_t width, uint16_t height, void* buffer)
         _software->init(width, height, buffer);
 
     emit screenInitialized();
+    emit pictureGeometryChanged();
 }
 
 void DeviceScreenWrapper::detach()
@@ -251,6 +252,8 @@ void DeviceScreenWrapper::setDisplayViewport(const DisplayViewport& viewport)
         _gpuWindow->setDisplayViewport(viewport);
     else if (_software)
         _software->setDisplayViewport(viewport);
+
+    emit pictureGeometryChanged();
 }
 
 void DeviceScreenWrapper::setHudOverlay(HudOverlay* overlay)
@@ -271,6 +274,8 @@ void DeviceScreenWrapper::clearDisplayViewport()
         _gpuWindow->clearDisplayViewport();
     else if (_software)
         _software->clearDisplayViewport();
+
+    emit pictureGeometryChanged();
 }
 
 void DeviceScreenWrapper::prepareForShutdown()
