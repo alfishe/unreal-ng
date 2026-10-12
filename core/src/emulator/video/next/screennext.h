@@ -47,10 +47,17 @@ public:
     void BindCopper(NextCopper& copper);
     /// Draw every pixel before copper time `clock` (a MOVE is about to write at it): the lines before its line, and its line up to its pixel
     void RenderBeforeCopperClock(uint64_t clock, uint8_t reg, uint8_t value);
-    /// 28 MHz clocks from the copper seeing a WAIT true to the first changed pixel at the output, for a MOVE of `value` over `previous` in
-    /// `reg` (the pipeline after the register: zxnext.vhd, the stages counted in scratch/cosim-copper/LATENCY.md). The register's bits that
-    /// change decide (the earliest of them when they differ); 0 for the registers not counted
-    static unsigned PixelLatencyClocks(uint8_t reg, uint8_t previous, uint8_t value);
+    /// How a copper MOVE of a register reaches the output (measured on the simulated RTL, tools/poc/028-next-video-pipeline-alignment): `clocks`
+    /// 28 MHz clocks from the copper seeing a WAIT true to the first changed pixel; `quantum` the group the register is read for (4: a
+    /// pixel, 32: an 8-pixel cell), the effect starting at the next group boundary. 0 clocks: not measured, drawn at the write
+    struct PictureLatency
+    {
+        unsigned clocks;
+        unsigned quantum;
+    };
+    /// For a MOVE of `value` over `previous` in `reg`: the changed bits decide (the earliest of them when they differ). `paletteWriteSelect`
+    /// is NR #43 bits 6:4, the palette NR #41 / #44 write to (each palette's lookup is a different stage)
+    static PictureLatency PictureLatencyOf(uint8_t reg, uint8_t previous, uint8_t value, uint8_t paletteWriteSelect = 0);
 
     /// The T-state (base, from the frame start) at which visible line `y` (0-255) is complete
     uint32_t LineEndT(unsigned y) const;

@@ -7,6 +7,7 @@
 #include <cstring>
 #include <new>
 #include <mutex>
+#include <random>
 #include <thread>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -559,13 +560,17 @@ void Memory::RandomizeMemoryBlock(uint8_t* buffer, size_t size)
         return;
     }
 
+    // 32 random bits per word on every platform: rand() gives 15 on Windows (RAND_MAX 32767),
+    // which left two of every four bytes zero
+    thread_local std::mt19937 generator{std::random_device{}()};
+
     // Use 32-bit blocks to fill faster
     uint32_t* buffer32bit = (uint32_t*)buffer;
     size_t size32bit = size / 4;
 
     for (uint32_t i = 0; i < size32bit; i++)
     {
-        *(buffer32bit + i) = rand();
+        *(buffer32bit + i) = static_cast<uint32_t>(generator());
     }
 }
 

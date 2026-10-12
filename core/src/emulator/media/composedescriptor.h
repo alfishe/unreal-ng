@@ -130,6 +130,9 @@ struct ComposeWrites
 {
     AccessMode access = AccessMode::Session;
     std::string save = "delta";             ///< flat | delta | commit | write-back | discard | ask (D-7, D-8)
+    /// May the sources be written (S3 commit, S4 write-back)? none (the default): never; all: a commit writes every
+    /// change or nothing; partial: what has a place to go, the rest stays in the session (FR-45)
+    std::string commit = "none";
     std::string upper;                      ///< S4 copy-up layer
     std::filesystem::path delta;            ///< S2 file
 };

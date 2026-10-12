@@ -179,6 +179,32 @@ the port idles at `#FF` (`answers_here`), as it does if NR `#82` bit 6 is off; `
 `state next audio` / `state next input`, Lua `next_audio()` / `next_input()`, Python `emu.next_audio()` / `emu.next_input()`, MCP aspects
 `next_audio` / `next_input`.
 
+### 3a5b. The UARTs: the ESP and the Pi (D1)
+
+The Next has two UARTs on `#133B` (Tx / status), `#143B` (Rx / prescaler low), `#153B` (select + prescaler high) and `#163B` (frame),
+one per line: UART 0 is the ESP module's, UART 1 the Raspberry Pi's. Each has a 64-byte Tx FIFO, a 512-byte Rx FIFO (a byte carries its
+error flag), a 17-bit prescaler in 28 MHz clocks per bit (default 243 = 115200 baud), hardware flow control (RTS drops two bytes
+before the FIFO is full; Tx waits for CTS) and interrupts (NR `#C6`: Rx on a byte or only at 3/4 full, Tx on an empty FIFO; the
+requests are in NR `#CA`). `state/next/uart` shows all of it without clearing the sticky error bits a status read clears. What sits on
+each line is a serial peer, as on every machine with a COM port: `[NETWORK] ComPort=` is the ESP's line and `ComPort2=` the Pi's
+(`NONE | LOOPBACK | PLUG | TCP:host:port | SERIAL:device | AT | ESPNET | MODEM ...`; at run time `POST /network/config
+{"com_port": "...", "com_port2": "..."}`). With nothing on a line the Tx bytes are lost and nothing arrives. `LOOPBACK` on a line
+echoes every byte, a handy check of a program's UART code. NR `#0B`'s UART on the joystick port and NR `#A0`'s Pi GPIO routing are
+registers only.
+
+**The ESP module.** A Next ships with its ESP-12 on UART 0, so `ComPort` is `AT` unless the config says otherwise (`ComPort=NONE`
+takes the module off): an ESP8266 with Espressif's AT firmware (NonOS AT 1.7.4; `[NETWORK] EspChip=ESP8266-AT222` picks AT 2.2.2),
+115200 baud, boot banner and `ready` on the Rx FIFO at start, sockets through the virtual network. The program's baud is
+`28 MHz / prescaler`, told to the module as the nearest standard rate (243 is 115200), so `AT+UART_CUR` and a prescaler change work as on the
+board. NR `#A8` / `#A9` drive the module's GPIO0 (`#A8` bit 0 enables the output, `#A9` bit 0 is its level, reset 1): with it low the
+module's next boot (`AT+RST`) is the ROM's download mode and it stops answering AT (`state/network` and `next_uart` show the peer; the
+flasher's protocol itself is not emulated).
+
+```text
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/network/config","body":{"com_port":"loopback"}}
+inspect_state {"aspects":["next_uart"]}          # CLI: state next uart, Lua next_uart(), Python emu.next_uart()
+```
+
 ### 3a6. The program's console and the magic breakpoint (G9)
 
 A program under test can print through the **magic debug port**: `POST /next/magic-port {"enabled":true,"port":255,"mode":"line"}` and the bytes the

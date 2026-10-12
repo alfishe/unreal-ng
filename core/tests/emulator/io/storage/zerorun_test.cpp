@@ -184,6 +184,7 @@ TEST(ZeroRun_Test, ExportSkipsFreeSpaceWithoutReading)
         in.read(reinterpret_cast<char*>(b.data()), 512);
         ASSERT_EQ(a, b) << lba;
     }
+    in.close(); // Windows removes no open file
 
     // A CHD of it as well
     Counting chdCount(*volume, true);

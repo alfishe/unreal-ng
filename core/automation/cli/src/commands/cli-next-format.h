@@ -15,6 +15,7 @@
 ///   state next video                                 layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, raster
 ///   state next palette [palette=selected|0-7|name|all] [range=0-255]   the 9-bit palettes
 ///   state next ports [port=6B] [access=r|w]          the internal port enable word, and which device answers a port
+///   state next uart                                  the two UARTs (ESP, Pi): baud, frame, FIFOs, status, interrupts, what is on the line
 ///   state next nextreg [reg=07] [changed=true]       one NextREG with decoded bits, or the table (no side effect)
 ///   state next copper [from=0] [count=64] [raw=true] the copper list as a disassembly, control mode, write address, pc
 ///   state next sprites [from=0] [count=128] [all=true]  the sprite attributes decoded (visible ones), switches, flags, pattern memory
@@ -595,6 +596,42 @@ inline std::string StateText(EmulatorContext* context, const std::vector<std::st
         if (const StateNode* dac = report.find("dac"))
             out += "DAC " + Field(*dac, "enabled") + ": A " + Field(*dac, "a") + " B " + Field(*dac, "b") + " C " + Field(*dac, "c") + " D " +
                    Field(*dac, "d") + " (left " + Field(*dac, "left_sum") + ", right " + Field(*dac, "right_sum") + ")" + newline;
+        return out;
+    }
+    if (sub == "uart")
+    {
+        const StateNode report = DeviceState::NextUartReport(context);
+        const std::string unavailableText = unavailable(report);
+        if (!unavailableText.empty())
+            return unavailableText;
+        std::string out;
+        const StateNode* ports = report.find("ports");
+        out += "UART select " + Field(report, "selected_name") + " (#153B); ports " + (ports && Field(*ports, "enabled") == "on" ? "on" : "off (NR #83 bit 4)") + newline;
+        if (const StateNode* channels = report.find("channels"))
+            for (const StateNode& c : channels->items)
+            {
+                const StateNode* frame = c.find("frame");
+                const StateNode* rx = c.find("rx");
+                const StateNode* tx = c.find("tx");
+                const StateNode* status = c.find("status");
+                const StateNode* bytes = c.find("bytes");
+                const StateNode* irq = c.find("interrupts");
+                const StateNode* peer = c.find("peer");
+                out += Field(c, "name") + ": " + Field(c, "baud") + " baud, " + (frame ? Field(*frame, "data_bits") + Field(*frame, "parity") + Field(*frame, "stop_bits") : std::string()) +
+                       (frame && Field(*frame, "hardware_flow") == "on" ? ", flow control" : "") + ", RTS " + (Field(c, "rts") == "on" ? "asserted" : "dropped") + newline;
+                if (rx && tx && status)
+                    out += "  status " + Field(*status, "value") + "  rx " + Field(*rx, "count") + "/" + Field(*rx, "capacity") + (Field(*rx, "near_full") == "on" ? " (near full)" : "") +
+                           "  tx " + Field(*tx, "count") + "/" + Field(*tx, "capacity") + (Field(*tx, "busy") == "on" ? " (shifting)" : "") + newline;
+                if (rx && !Field(*rx, "preview_hex").empty())
+                    out += "  rx bytes " + Field(*rx, "preview_hex") + newline;
+                if (bytes)
+                    out += "  sent " + Field(*bytes, "sent") + ", received " + Field(*bytes, "received") + ", lost " + Field(*bytes, "lost") + newline;
+                if (irq)
+                    out += "  NR #C6 bits " + Field(*irq, "nr_c6_bits") + ": rx " + (Field(*irq, "rx_enabled") == "on" ? "enabled" : "off") + ", tx " +
+                           (Field(*irq, "tx_enabled") == "on" ? "enabled" : "off") + newline;
+                if (peer)
+                    out += "  line: " + (Field(*peer, "attached") == "on" ? Field(*peer, "kind") + " " + Field(*peer, "target") : std::string("nothing")) + newline;
+            }
         return out;
     }
     if (sub == "input")

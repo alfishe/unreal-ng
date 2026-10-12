@@ -16,6 +16,9 @@
 #include "emulator/io/z80n/nextintjournal.h"
 #include "emulator/io/z80n/nextmagicport.h"
 #include "emulator/io/z80n/nextsdjournal.h"
+#include "emulator/io/z80n/nextuart.h"
+#include "emulator/io/serial/serialpeer.h"
+#include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/io/z80n/nextregtable.h"
 #include "emulator/ports/models/portdecoder_next.h"
 
@@ -727,6 +730,144 @@ StateNode NextAudioReport(EmulatorContext* context)
     dac["right_sum"] = int(audio.Dac(2)) + int(audio.Dac(3));  // right = C + D
     dac["silence"] = Hex8(0x80);
     n["dac"] = std::move(dac);
+    return n;
+}
+
+StateNode NextUartReport(EmulatorContext* context)
+{
+    PortDecoder_Next* decoder = NextDecoder(context);
+    if (!decoder)
+        return Unavailable();
+    const NextUart& uart = decoder->Uart();
+    NextBoard& board = decoder->Board();
+    constexpr unsigned kPreview = 16;
+    StateNode n = StateNode::Object();
+    n["available"] = true;
+    n["selected"] = int(uart.Selected());
+    n["selected_name"] = uart.Selected() ? "pi" : "esp";
+
+    StateNode ports = StateNode::Object();
+    ports["tx_status"] = "#133B";
+    ports["rx_prescaler"] = "#143B";
+    ports["select"] = "#153B";
+    ports["frame"] = "#163B";
+    ports["decode"] = "A15:A11 = 00010, A10 xor (A9 and A8) = 1, A7:A0 = #3B";
+    ports["enabled"] = decoder->PortEnabledForReport(12);
+    ports["enabled_by"] = "NR #83 bit 4 (internal port enable word bit 12)";
+    n["ports"] = std::move(ports);
+
+    const uint8_t enable = decoder->Interrupts().UartEnables();
+    const uint16_t pending = decoder->Interrupts().PendingMask();
+    StateNode channels = StateNode::Array();
+    for (unsigned i = 0; i < NextUart::kChannels; i++)
+    {
+        const NextUart::View v = uart.GetView(i);
+        StateNode c = StateNode::Object();
+        c["index"] = int(i);
+        c["name"] = i ? "pi" : "esp";
+        c["selected"] = v.selected;
+        c["prescaler"] = int(v.prescaler);
+        c["baud"] = int(v.baud);
+        StateNode frame = StateNode::Object();
+        frame["value"] = Hex8(v.frame);
+        frame["data_bits"] = int(v.dataBits);
+        frame["parity"] = std::string(1, v.parity);
+        frame["stop_bits"] = int(v.stopBits);
+        frame["hardware_flow"] = v.hardwareFlow;
+        frame["break"] = v.breakOut;
+        frame["fifo_reset"] = (v.frame & NextUart::kFrameReset) != 0;
+        frame["clocks_per_byte"] = static_cast<int64_t>(uart.FrameClocks(i));
+        c["frame"] = std::move(frame);
+        c["rts"] = v.rtsAsserted;
+
+        StateNode rx = StateNode::Object();
+        rx["count"] = int(v.rxCount);
+        rx["capacity"] = int(NextUart::kRxFifo);
+        rx["near_full"] = v.rxCount >= NextUart::kNearFull;
+        rx["busy"] = v.rxBusy;
+        uint16_t bytes[kPreview];
+        const unsigned shown = uart.PeekRx(i, bytes, kPreview);
+        std::string hex;
+        bool anyError = false;
+        for (unsigned b = 0; b < shown; b++)
+        {
+            hex += StringHelper::Format("%02X", bytes[b] & 0xFF);
+            anyError = anyError || (bytes[b] & 0x100);
+        }
+        rx["preview_hex"] = hex;
+        rx["preview_has_error"] = anyError;
+        c["rx"] = std::move(rx);
+
+        StateNode tx = StateNode::Object();
+        tx["count"] = int(v.txCount);
+        tx["capacity"] = int(NextUart::kTxFifo);
+        tx["busy"] = v.txBusy;
+        tx["empty"] = (v.status & NextUart::kStatusTxEmpty) != 0;
+        uint8_t out[kPreview];
+        const unsigned shownTx = uart.PeekTx(i, out, kPreview);
+        std::string txHex;
+        for (unsigned b = 0; b < shownTx; b++)
+            txHex += StringHelper::Format("%02X", out[b]);
+        tx["preview_hex"] = txHex;
+        c["tx"] = std::move(tx);
+
+        StateNode status = StateNode::Object();
+        status["value"] = Hex8(v.status);
+        status["rx_available"] = (v.status & NextUart::kStatusRxAvail) != 0;
+        status["tx_full"] = (v.status & NextUart::kStatusTxFull) != 0;
+        status["overflow"] = (v.status & NextUart::kStatusOverflow) != 0;
+        status["rx_near_full"] = (v.status & NextUart::kStatusNearFull) != 0;
+        status["tx_empty"] = (v.status & NextUart::kStatusTxEmpty) != 0;
+        status["byte_error"] = (v.status & NextUart::kStatusByteError) != 0;
+        status["framing_error"] = (v.status & NextUart::kStatusFraming) != 0;
+        status["break"] = (v.status & NextUart::kStatusBreak) != 0;
+        status["note"] = "the sticky bits (overflow, framing) are cleared by a read of #133B; this report does not clear them";
+        c["status"] = std::move(status);
+
+        StateNode counters = StateNode::Object();
+        counters["sent"] = static_cast<int64_t>(v.sent);
+        counters["received"] = static_cast<int64_t>(v.received);
+        counters["lost"] = static_cast<int64_t>(v.lost);
+        c["bytes"] = std::move(counters);
+
+        StateNode irq = StateNode::Object();
+        const uint8_t bits = static_cast<uint8_t>((enable >> (i ? 4 : 0)) & 7);
+        irq["nr_c6_bits"] = Hex8(bits);
+        irq["rx_enabled"] = (bits & 3) != 0;
+        irq["rx_on_near_full_only"] = (bits & 2) != 0;
+        irq["tx_enabled"] = (bits & 4) != 0;
+        irq["rx_pending"] = ((pending >> (i ? NextInterruptSource::kUart1Rx : NextInterruptSource::kUart0Rx)) & 1) != 0;
+        irq["tx_pending"] = ((pending >> (i ? NextInterruptSource::kUart1Tx : NextInterruptSource::kUart0Tx)) & 1) != 0;
+        irq["vector_rx"] = int((i ? NextInterruptSource::kUart1Rx : NextInterruptSource::kUart0Rx) * 2);
+        irq["vector_tx"] = int((i ? NextInterruptSource::kUart1Tx : NextInterruptSource::kUart0Tx) * 2);
+        c["interrupts"] = std::move(irq);
+
+        StateNode peer = StateNode::Object();
+        const ISerialPeer* p = uart.Peer(i);
+        peer["attached"] = p != nullptr;
+        if (p)
+        {
+            peer["kind"] = p->Kind();
+            peer["target"] = p->Target();
+            peer["connected"] = p->Connected();
+            peer["pending_bytes"] = int(p->Pending());
+        }
+        else
+            peer["note"] = i ? "nothing on the Pi's line (ComPort2=): bytes sent are lost, nothing arrives"
+                             : "nothing on the ESP's line (ComPort=): bytes sent are lost, nothing arrives";
+        c["peer"] = std::move(peer);
+        channels.push(std::move(c));
+    }
+    n["channels"] = std::move(channels);
+
+    StateNode extra = StateNode::Object();
+    extra["nr_a0"] = Hex8(board.Read(0xA0));
+    extra["pi_uart_on_gpio"] = (board.Stored(0xA0) & 0x10) != 0;
+    extra["pi_uart_rx_tx_crossed"] = (board.Stored(0xA0) & 0x20) != 0;
+    extra["nr_0b"] = Hex8(board.Stored(0x0B));
+    extra["uart_on_joystick_port"] = (board.Stored(0x0B) & 0x80) && (board.Stored(0x0B) & 0x20);
+    extra["note"] = "the joystick connector's UART (NR #0B) and the Pi's GPIO routing (NR #A0) are registers only: nothing is wired to them yet";
+    n["routing"] = std::move(extra);
     return n;
 }
 

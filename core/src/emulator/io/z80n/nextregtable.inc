@@ -113,7 +113,7 @@
 {0xA0, "PI Peripheral Enable", true, true, false, 0x00},
 {0xA2, "PI I2S Audio Control", true, true, false, 0x00},
 {0xA8, "ESP Wifi GPIO Output Enable", true, true, true, 0x00},
-{0xA9, "ESP Wifi GPIO", true, true, false, 0x00},
+{0xA9, "ESP Wifi GPIO", true, true, false, 0x01},
 {0xB0, "Extended Keys 0", true, false, false, 0x00},
 {0xB1, "Extended Keys 1", true, false, false, 0x00},
 {0xB2, "Extended MD Pad Buttons", true, false, false, 0x00},

@@ -86,6 +86,8 @@ public:
     /// NR #64: the counter starts at this value at the paper's first line
     void SetCounterOffset(uint8_t offset) { _counterOffset = offset; }
 
+    /// NR #C6: the UARTs' interrupt enables (bits 2:0 UART 0, 6:4 UART 1: Tx, Rx on near full only, Rx on a byte)
+    uint8_t UartEnables() const { return _enableUart; }
     bool HardwareMode() const { return (_control & 1) != 0; }
     /// NR #C0 bit 3: an NMI does not push its return address (it goes to NR #C2 / #C3)
     bool StacklessNmi() const { return (_control & 0x08) != 0; }

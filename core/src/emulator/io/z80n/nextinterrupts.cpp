@@ -68,8 +68,9 @@ bool NextInterruptSource::WriteNr(uint8_t reg, uint8_t value)
             _pending &= static_cast<uint16_t>(~(static_cast<unsigned>(value) << kCtc0));
             return true;
         case kRegStatusUart:
-            _pending &= static_cast<uint16_t>(~(((value & 0x01) ? 1u << kUart0Rx : 0u) | ((value & 0x04) ? 1u << kUart1Rx : 0u) |
-                                                ((value & 0x10) ? 1u << kUart0Tx : 0u) | ((value & 0x40) ? 1u << kUart1Tx : 0u)));
+            // zxnext.vhd im2_status_clear: UART 0 Rx by bit 1 or 0, Tx by bit 2; UART 1 Rx by bit 5 or 4, Tx by bit 6
+            _pending &= static_cast<uint16_t>(~(((value & 0x03) ? 1u << kUart0Rx : 0u) | ((value & 0x30) ? 1u << kUart1Rx : 0u) |
+                                                ((value & 0x04) ? 1u << kUart0Tx : 0u) | ((value & 0x40) ? 1u << kUart1Tx : 0u)));
             return true;
         case kRegDma0:
         case kRegDma0 + 1:
@@ -105,7 +106,7 @@ bool NextInterruptSource::ReadNr(uint8_t reg, uint8_t& value) const
             value = ctcEnables ? ctcEnables() : _enableCtc;
             return true;
         case kRegEnableUart:
-            value = _enableUart;
+            value = _enableUart & 0x77;  // bits 7 and 3 read 0 (zxnext.vhd 6245)
             return true;
         case kRegStatus0:
             value = static_cast<uint8_t>((((_pending >> kLine) & 1) << 1) | ((_pending >> kUla) & 1));
@@ -114,8 +115,9 @@ bool NextInterruptSource::ReadNr(uint8_t reg, uint8_t& value) const
             value = static_cast<uint8_t>(_pending >> kCtc0);
             return true;
         case kRegStatusUart:
-            value = static_cast<uint8_t>((((_pending >> kUart0Rx) & 1) << 0) | (((_pending >> kUart1Rx) & 1) << 2) |
-                                         (((_pending >> kUart0Tx) & 1) << 4) | (((_pending >> kUart1Tx) & 1) << 6));
+            // zxnext.vhd 6254: bit 6 UART 1 Tx, bits 5:4 UART 1 Rx, bit 2 UART 0 Tx, bits 1:0 UART 0 Rx
+            value = static_cast<uint8_t>((((_pending >> kUart0Rx) & 1) * 0x03) | (((_pending >> kUart0Tx) & 1) << 2) |
+                                         (((_pending >> kUart1Rx) & 1) * 0x30) | (((_pending >> kUart1Tx) & 1) << 6));
             return true;
         case kRegDma0:
             value = _dma[0] & 0x83;  // NMI, line, ULA
@@ -155,9 +157,9 @@ bool NextInterruptSource::Enabled(Source source) const
         case kUart0Rx:
             return (_enableUart & 0x03) != 0;
         case kUart1Rx:
-            return (_enableUart & 0x0C) != 0;
+            return (_enableUart & 0x30) != 0;
         case kUart0Tx:
-            return (_enableUart & 0x10) != 0;
+            return (_enableUart & 0x04) != 0;
         case kUart1Tx:
             return (_enableUart & 0x40) != 0;
         default:

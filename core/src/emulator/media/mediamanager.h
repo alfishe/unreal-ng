@@ -138,6 +138,8 @@ struct SaveOptions
     bool strict = false;         ///< disposition: a failed strategy refuses (the medium stays) instead of the delta
     bool plan = false;           ///< commit / write-back: report what would be written, write nothing
     bool keepBoth = false;       ///< write-back: a host file changed since the build gets "name (guest).ext" next to it
+    /// commit: all | partial (FR-45); empty: the descriptor's writes.commit. A descriptor's none cannot be lifted here
+    std::string commit;
 };
 
 /// What a save did
@@ -402,6 +404,10 @@ private:
     /// S3: a graft composite's patches, grafted files and guest writes into its base image (DT-14)
     MediaResult CommitComposite(const std::string& slotId, Medium& medium, IMediaSlot* slot, const CompositeInfo& composite,
                                 const SaveOptions& options, SaveOutcome* outcome);
+    /// FR-45: a partitioned composite's commit: each passthrough partition into its image, each graft partition into
+    /// its base; `partial` leaves the rest (rebuilt partitions, the partition tables) in the session, else they refuse
+    MediaResult CommitPartitioned(const std::string& slotId, Medium& medium, const CompositeInfo& composite,
+                                  const SaveOptions& options, bool partial, SaveOutcome* outcome);
     /// S4: the guest's file changes into the composite's writable folder layers (DT-10 to DT-12), then a rebuild
     MediaResult WriteBackComposite(const std::string& slotId, Medium& medium, const CompositeInfo& composite,
                                    const SaveOptions& options, SaveOutcome* outcome);

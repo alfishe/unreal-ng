@@ -353,6 +353,10 @@ TEST_F(NeoGSAcceptance_Test, TestEmuNgsPassesWithAnSdCard)
             },
             120ull * 3'500'000ull);
     }
+    const uint64_t blocksRead = ngs->sdCard()->blocksRead();
+    // the card holds its image open: Windows removes no open file
+    EmulatorTestHelper::CleanupEmulator(_emulator);
+    _emulator = nullptr;
     std::filesystem::remove(sparse);
 
     SCOPED_TRACE(printable(screen));
@@ -360,7 +364,7 @@ TEST_F(NeoGSAcceptance_Test, TestEmuNgsPassesWithAnSdCard)
     EXPECT_NE(screen.find("Test SD card read"), std::string::npos);
     EXPECT_NE(screen.find("Test OK"), std::string::npos);
     EXPECT_EQ(screen.find("Error test"), std::string::npos);
-    EXPECT_GE(ngs->sdCard()->blocksRead(), 256u);
+    EXPECT_GE(blocksRead, 256u);
 }
 
 

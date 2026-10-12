@@ -2,6 +2,9 @@
 
 #include "portdecoder_next.h"
 
+#include "emulator/io/serial/esp/espmodule.h"
+#include "emulator/io/serial/serialpeer.h"
+
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/ttd/next/ttdnextstate.h"
@@ -50,6 +53,11 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     _ctc.onInterrupt = [this](unsigned channel) {
         _interrupts->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + channel));
     };
+    _uart.onInterrupt = [this](unsigned channel, bool tx) {
+        const unsigned source = tx ? (channel ? NextInterruptSource::kUart1Tx : NextInterruptSource::kUart0Tx)
+                                   : (channel ? NextInterruptSource::kUart1Rx : NextInterruptSource::kUart0Rx);
+        _interrupts->Raise(static_cast<NextInterruptSource::Source>(source));
+    };
     _board->SetJournalClock([this](uint32_t& frame, uint32_t& t, uint16_t& pc) {
         frame = static_cast<uint32_t>(_context->emulatorState.frame_counter);
         if (Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
@@ -97,7 +105,13 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     _multiface = std::make_unique<NextMultiface>(&Mem(), _board.get(), &_context->emulatorState);
     _m1Chain.multiface = _multiface.get();
     _m1Chain.divMmc = _divMmc.get();
-    _interrupts->SetPoller([this]() { _ctc.Advance(Now28()); });
+    _interrupts->SetPoller([this]() {
+        const uint64_t now = Now28();
+        _ctc.Advance(now);
+        if (!_uart.Idle())
+            _uart.Advance(now);
+        _uart.PollInterrupts(_interrupts->UartEnables());
+    });
     _board->SetInterrupts(_interrupts.get());
     // The Next's own sound: three AYs and the DAC, mixed by SoundManager (the Spectrum 128 TurboSound stays silent)
     _audio = std::make_unique<NextAudio>(_context);
@@ -128,6 +142,13 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
 
 PortDecoder_Next::~PortDecoder_Next()
 {
+    // The peers outlive the decoder (the network manager owns them): they must not call back into this one
+    for (unsigned i = 0; i < NextUart::kChannels; i++)
+        if (ISerialPeer* peer = _uart.Peer(i))
+        {
+            peer->onReceive = nullptr;
+            peer->SetClock(nullptr, 0);
+        }
     if (_context->pKeyboard && _context->pKeyboard->GetPs2Sink() == &_extendedInput)
         _context->pKeyboard->SetPs2Sink(nullptr);
     if (_context->pMediaManager)
@@ -162,6 +183,7 @@ void PortDecoder_Next::reset()
     InsertConfiguredCard();
     _board->Reset(true);
     _ctc.Reset();
+    _uart.Reset(true);
     _audio->Reset();
     AudioConfigChanged();
     _dma.Reset();
@@ -267,6 +289,21 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
             OnPortInComplete(port, mfValue, pc, disp);
             return mfValue;
         }
+    }
+    if (NextUart::Decodes(port))
+    {
+        if (!PortEnabled(12))
+            return IdleRead(port, pc);
+        const uint8_t value = _uart.Read(port, Now28());
+        _uart.PollInterrupts(_interrupts->UartEnables());
+        _lastPortDecoded = true;
+        PortDecodeDisposition disp;
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.decodedPort = port;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+        OnPortInComplete(port, value, pc, disp);
+        return value;
     }
     if (low == NextCtc::kPortLow && (port >> 11) == 0x03)
     {
@@ -497,7 +534,15 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     disp.wasDecoded = true;
     disp.wasHandledInline = true;
 
-    if (static_cast<uint8_t>(port) == NextCtc::kPortLow && (port >> 11) == 0x03)
+    if (NextUart::Decodes(port))
+    {
+        if (PortEnabled(12))
+        {
+            _uart.Write(port, value, Now28());
+            _uart.PollInterrupts(_interrupts->UartEnables());
+        }
+    }
+    else if (static_cast<uint8_t>(port) == NextCtc::kPortLow && (port >> 11) == 0x03)
     {
         const unsigned channel = (port >> 8) & 7;
         if (channel < NextCtc::kChannels && PortEnabled(27))
@@ -890,6 +935,7 @@ void PortDecoder_Next::PerformReset(bool hard)
         RecordInt(e);
     }
     _dma.Reset();         // zxnext.vhd: the DMA's reset_i is the hard or the soft reset
+    _uart.Reset(hard);    // the FIFOs on any reset, the prescalers and frames on the hard one (uart.vhd)
     _divMmc->Reset();     // E3 and the automap latches (zxnext.vhd 4175, divmmc.vhd 108-139) and the Multiface's session are `reset` too
     _multiface->Reset();
     Mem().ApplyClassicPaging(0, 0);
@@ -910,7 +956,9 @@ uint64_t PortDecoder_Next::Now28() const
 double PortDecoder_Next::Now() const
 {
     const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1u;
-    return static_cast<double>(_state->t_states) + static_cast<double>(_context->pCore->GetZ80()->t) / multiplier;
+    // a peer fitted while the machine is being built has no CPU to ask yet
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    return static_cast<double>(_state->t_states) + (z80 ? static_cast<double>(z80->t) / multiplier : 0.0);
 }
 
 bool PortDecoder_Next::InsertSdCard(unsigned index, std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode)
@@ -1343,3 +1391,50 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Next::CreateTTDSe
 }
 
 /// endregion </TTD>
+
+/// region <UART peers>
+
+void PortDecoder_Next::SetUartPeer(unsigned channel, ISerialPeer* peer)
+{
+    if (channel >= NextUart::kChannels)
+        return;
+    _uart.Advance(Now28());
+    if (ISerialPeer* old = _uart.Peer(channel); old && old != peer)
+    {
+        old->onReceive = nullptr;
+        old->SetClock(nullptr, 0);
+    }
+    if (peer)
+    {
+        constexpr uint32_t kBaseClockHz = 3500000;
+        peer->SetClock([this]() { return static_cast<uint64_t>(Now()); }, kBaseClockHz);
+        // Bytes from outside arrive at their emulated time: the UART catches up first
+        peer->onReceive = [this]() {
+            _uart.Advance(Now28());
+            _uart.PollInterrupts(_interrupts->UartEnables());
+        };
+    }
+    _uart.SetPeer(channel, peer);
+    if (channel == 0)
+        BoardPinsChanged();  // a module fitted now sees the pin as it is
+}
+
+void PortDecoder_Next::BoardPinsChanged()
+{
+    // zxnext.vhd: o_ESP_GPIO_0 = NR #A9 bit 0, driven while NR #A8 bit 0 enables it (else the pad floats, pulled up)
+    const bool low = (_board->Stored(0xA8) & 1) && !(_board->Stored(0xA9) & 1);
+    if (auto* esp = dynamic_cast<EspModule*>(_uart.Peer(0)))
+        esp->SetFlashPin(low);
+}
+
+PortDecoder::NetworkCapabilities PortDecoder_Next::DescribeNetwork()
+{
+    NetworkCapabilities caps;
+    caps.serialPort = NetworkCapabilities::SerialPort::NextUart;
+    caps.attachSerialPeer = [this](ISerialPeer* peer) { SetUartPeer(0, peer); };
+    caps.attachSecondSerialPeer = [this](ISerialPeer* peer) { SetUartPeer(1, peer); };
+    caps.serialBaud = [this]() { return _uart.GetView(0).baud; };
+    return caps;
+}
+
+/// endregion

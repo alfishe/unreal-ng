@@ -959,6 +959,15 @@ namespace
                     else if (v)
                         Report(at, "expected flat, delta, commit, write-back, discard or ask, got '" + *v + "'");
                 }
+                else if (key == "commit")
+                {
+                    const auto v = String(child, at);
+                    const std::string s = v ? Lower(*v) : "";
+                    if (s == "none" || s == "all" || s == "partial")
+                        _d.writes.commit = s;
+                    else if (v)
+                        Report(at, "expected none, all or partial, got '" + *v + "'");
+                }
                 else if (key == "upper")
                 {
                     if (auto v = String(child, at))

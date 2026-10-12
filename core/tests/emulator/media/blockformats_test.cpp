@@ -181,7 +181,8 @@ TEST_F(BlockFormats_Test, SaveWritesTheChdAgainWithItsCodecsAndStoredHunks)
     ASSERT_NE(source, nullptr);
     EXPECT_EQ(file->Entry(20).length, source->Entry(20).length) << "an untouched hunk keeps its stored bytes";
 
-    // compression on save: the CHD changes its codecs
+    // compression on save: the CHD changes its codecs (the test's handle closed: Windows replaces no open file)
+    file.reset();
     GuestWrite(0, 0x01);
     SaveOptions options;
     options.compression = "zstd";
@@ -303,7 +304,7 @@ TEST_F(BlockFormats_Test, MediaControlTakesCompressionAndParent)
     const std::string out = Utf8(_folder.Path() / "control.chd");
     // The verbs' option lists (MediaControl_Test.ChdOnTheSharedVerbs runs them on a machine)
     EXPECT_EQ(MediaControl::OptionsFor("export"), (std::vector<std::string>{"compression", "parent", "compact", "fs", "size", "vhd"}));
-    EXPECT_EQ(MediaControl::OptionsFor("save"), (std::vector<std::string>{"retarget", "compression", "compact", "fs", "size", "vhd", "strategy", "force", "plan", "onConflict"}));
+    EXPECT_EQ(MediaControl::OptionsFor("save"), (std::vector<std::string>{"retarget", "compression", "compact", "fs", "size", "vhd", "strategy", "force", "plan", "onConflict", "commit"}));
     BlockWriteOptions options;
     options.compression = "lzma,huff";
     ASSERT_TRUE(_manager.Export("ide0.master", out, options).Ok());

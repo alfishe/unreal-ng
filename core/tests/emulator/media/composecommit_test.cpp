@@ -93,7 +93,7 @@ namespace
         MediaResult InsertComposite(const std::string& build = "graft", const std::string& baseName = "base.img")
         {
             const auto descriptor = _folder.File("disk.ucompose.yaml", "version: 1\ntarget: {build: " + build +
-                                                                           ", free: 1MiB, fixedTime: 1767268800}\nlayers:\n"
+                                                                           ", free: 1MiB, fixedTime: 1767268800}\nwrites: {commit: all}\nlayers:\n"
                                                                            "  - {name: base, source: {image: " + baseName + "}}\n"
                                                                            "  - {name: util, source: {folder: util}, mount: /UTIL}\n");
             MediaSource source;

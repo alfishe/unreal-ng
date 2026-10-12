@@ -660,6 +660,8 @@ std::string WriteBack::Recover(const fs::path& descriptorFile)
         {
             for (std::string l; std::getline(current, l);)
             {
+                if (!l.empty() && l.back() == '\r')
+                    l.pop_back();
                 const size_t tab = l.find('\t');
                 if (tab != std::string::npos)
                     lines.emplace_back(l.substr(tab + 1), l.substr(0, tab));
@@ -673,7 +675,7 @@ std::string WriteBack::Recover(const fs::path& descriptorFile)
             else
                 lines.emplace_back(path, bits);
         }
-        std::ofstream out(list, std::ios::trunc);
+        std::ofstream out(list, std::ios::trunc | std::ios::binary);  // LF lines on every host
         for (const auto& [path, bits] : lines)
             out << bits << "\t" << path << "\n";
     }
@@ -684,8 +686,12 @@ std::string WriteBack::Recover(const fs::path& descriptorFile)
         std::vector<std::string> existing;
         if (std::ifstream current(list); current)
             for (std::string w; std::getline(current, w);)
+            {
+                if (!w.empty() && w.back() == '\r')
+                    w.pop_back();
                 existing.push_back(w);
-        std::ofstream out(list, std::ios::app);
+            }
+        std::ofstream out(list, std::ios::app | std::ios::binary);  // LF lines on every host
         for (const std::string& w : whiteouts)
             if (std::find(existing.begin(), existing.end(), w) == existing.end())
                 out << w << "\n";

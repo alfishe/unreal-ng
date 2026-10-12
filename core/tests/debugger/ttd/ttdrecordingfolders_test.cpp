@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -13,6 +14,7 @@
 
 #include "_helpers/testpathhelper.h"
 #include "common/filehelper.h"
+#include "common/filemtime.h"
 #include "debugger/ttd/ttdrecordingfolders.h"
 #include "platform/processinfo.h"
 
@@ -21,6 +23,13 @@ namespace fs = std::filesystem;
 namespace
 {
     constexpr uint32_t kNoSuchProcess = 0x7FFFFFF0u;   // above every system's pid limit
+
+    /// Dates @p path back by @p age through the OS API: libstdc++ on Windows sets no folder's time
+    void SetAge(const fs::path& path, std::chrono::hours age)
+    {
+        const int64_t seconds = static_cast<int64_t>(std::time(nullptr)) - std::chrono::seconds(age).count();
+        ASSERT_TRUE(SetMTimeUnixSeconds(path, seconds)) << FileHelper::FromFsPath(path);
+    }
 
     struct Root
     {
@@ -42,10 +51,10 @@ namespace
             std::ofstream(FileHelper::ToFsPath(segment)) << "data";
             if (pid != 0)
                 std::ofstream(FileHelper::ToFsPath(FileHelper::PathCombine(folder, ttd::kRecordingOwnerFile))) << pid;
-            const fs::file_time_type when = now - std::chrono::hours(24 * days);
+            const std::chrono::hours age(24 * days);
             for (const auto& entry : fs::directory_iterator(FileHelper::ToFsPath(folder)))
-                fs::last_write_time(entry.path(), when);
-            fs::last_write_time(FileHelper::ToFsPath(folder), when);
+                SetAge(entry.path(), age);
+            SetAge(FileHelper::ToFsPath(folder), age);
             return folder;
         }
 
@@ -78,7 +87,7 @@ TEST(TTDRecordingFolders_Test, OnlyOldCrashedRecordingsAreDeleted)
     const std::string oldButRunning = root.Folder("2026-09-01-120000-tsl", 30, platform::CurrentProcessId());
     const std::string saved = FileHelper::PathCombine(root.path, "2026-09-01-120000-pentagon.ttd");
     std::ofstream(FileHelper::ToFsPath(saved)) << "saved";
-    fs::last_write_time(FileHelper::ToFsPath(saved), root.now - std::chrono::hours(24 * 60));
+    SetAge(FileHelper::ToFsPath(saved), std::chrono::hours(24 * 60));
 
     const std::vector<std::string> removed = root.Clean();
     EXPECT_EQ(removed.size(), 2u);
@@ -96,7 +105,7 @@ TEST(TTDRecordingFolders_Test, TheNewestFileDecidesTheAge)
     const std::string folder = root.Folder("2026-09-20-120000-pentagon", 10, kNoSuchProcess);
     const std::string late = FileHelper::PathCombine(folder, "segment-0001.ttd");
     std::ofstream(FileHelper::ToFsPath(late)) << "data";
-    fs::last_write_time(FileHelper::ToFsPath(late), root.now - std::chrono::hours(24));
+    SetAge(FileHelper::ToFsPath(late), std::chrono::hours(24));
     EXPECT_TRUE(root.Clean().empty());
     EXPECT_TRUE(FileHelper::FolderExists(folder));
 }

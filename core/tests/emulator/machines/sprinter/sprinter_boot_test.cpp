@@ -851,6 +851,7 @@ TEST_F(SprinterBoot_Test, ComposeCommitBootsFromTheBase)
     std::string base = image;
     std::replace(base.begin(), base.end(), '\\', '/');
     const auto descriptor = folder.File("hd.ucompose.yaml", "version: 1\n"
+                                                            "writes: {commit: all}\n"
                                                             "layers:\n"
                                                             "  - {name: dss, source: {image: '" + base + "'}}\n"
                                                             "  - {name: util, source: {folder: util}, mount: /UTIL}\n"
