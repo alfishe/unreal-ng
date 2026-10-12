@@ -315,7 +315,14 @@ struct Writer
         // The operands keep the source's convention (1<2<3 is (1<2)<3 = 1), only this operator is sjasmplus'
         Expr top = e;
         for (Expr& a : top.args)
-            if (a.kind == Expr::Kind::Binary || a.kind == Expr::Kind::Unary)
+            if (a.kind == Expr::Kind::Group)
+            {
+                // a grouped operand ([1<2&#FFFF]<3) is already in parentheses, printed under the source's convention
+                Expr printed = Expr::Make(Expr::Kind::Raw);
+                printed.text = Print(a);
+                a = std::move(printed);
+            }
+            else if (a.kind == Expr::Kind::Binary || a.kind == Expr::Kind::Unary)
             {
                 Expr printed = Expr::Make(Expr::Kind::Raw);
                 printed.text = "(" + Print(a) + ")";

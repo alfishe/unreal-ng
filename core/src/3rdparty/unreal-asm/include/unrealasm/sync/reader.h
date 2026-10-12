@@ -165,6 +165,12 @@ struct LinearParams
     uint16_t startAt = 0;           ///< CPU address of the start pointer (0 = the text starts at fixedStart)
     uint16_t fixedStart = 0;
     uint16_t endAt = 0;             ///< CPU address of the end pointer (exclusive)
+    uint16_t limitAt = 0;           ///< CPU address of the word where the text's space ends (0 = none; Laser Genius)
+    /// A block the editor keeps right after the text, from the end pointer to the byte the word at followLastAt points
+    /// at (Laser Genius: its screen lines); an inject moves it behind the new text and the words in followPointers
+    /// (0 = unset) with it
+    uint16_t followLastAt = 0;
+    std::vector<uint16_t> followPointers;
     std::string end;                ///< the end marker the file has after the text
     int upperPage = -1;             ///< the RAM page the text's part from #C000 is in (-1 = the one mapped there)
     /// SAVE writes a first line starting with this (the editor's position, ZAsm's ";!") that the editor takes out on

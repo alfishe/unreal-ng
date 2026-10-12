@@ -876,6 +876,75 @@ TEST(SyncInject_Test, Zeus1983TakesAFileAtItsPromptAsOLeavesIt)
     EXPECT_EQ(back.file, written.bytes);
 }
 
+TEST(SyncInject_Test, LaserGeniusTakesItsParagraphsInItsEditor)
+{
+    Dump dump = Load("lg104-loaded");
+    const SyncDescriptor* d = FindDescriptor("lasergenius-1.04");
+    ASSERT_NE(d, nullptr);
+    // its editor: the key wait returns to #AB04, then the ROM's #1303 (page 5 holds the stack at #638C, an interrupt
+    // frame on top)
+    const std::vector<uint16_t> words = {0xB0A7, 0x0044, 0xB07A, 0x0000, 0x4800, 0xAB04, 0x1303};
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        if (dump.machine.ram[k].page == 5)
+            for (size_t w = 0; w < words.size(); ++w)
+            {
+                dump.pages[k][0x238C + 2 * w] = static_cast<uint8_t>(words[w]);
+                dump.pages[k][0x238C + 2 * w + 1] = static_cast<uint8_t>(words[w] >> 8);
+            }
+    dump.machine.sp = 0x638C;
+    std::string why;
+    ASSERT_TRUE(Idle(dump.machine, *d, why)) << why;
+
+    const WriteAsResult written = WriteAs(SourceDocument::FromText("        ORG #6900\nstart   LD A,1\n        JR start\n", "sjasmplus"), "lasergenius", d->version, "NEW");
+    ASSERT_TRUE(written.ok) << written.error;
+    // no "changed" flag: the loaded text is replaced by force (or when it is the caller's own) only
+    EXPECT_FALSE(PlanInject(dump.machine, *d, written.bytes).ok);
+    InjectOptions force;
+    force.force = true;
+    const InjectPlan plan = PlanInject(dump.machine, *d, written.bytes, force);
+    ASSERT_TRUE(plan.ok) << plan.error;
+    std::map<uint16_t, uint8_t> pokes;
+    for (const InjectPlan::Poke& p : plan.pokes)
+        pokes[static_cast<uint16_t>((p.page == 2 ? 0x8000 : p.page == 5 ? 0x4000 : 0xC000) + p.offset)] = p.value;
+    // memory holds the paragraphs (the codec's bytes) and FF FF from (#A975) = #7F2E; the end word after them
+    const std::vector<uint8_t>& paragraphs = written.bytes;
+    for (size_t k = 0; k < paragraphs.size(); ++k)
+        EXPECT_EQ(pokes[static_cast<uint16_t>(0x7F2E + k)], paragraphs[k]) << k;
+    EXPECT_EQ(pokes[static_cast<uint16_t>(0x7F2E + paragraphs.size())], 0xFF);
+    EXPECT_EQ(pokes[static_cast<uint16_t>(0x7F2E + paragraphs.size() + 1)], 0xFF);
+    const uint16_t end = static_cast<uint16_t>(0x7F2E + paragraphs.size() + 2);
+    EXPECT_EQ(pokes[0xA973] | (pokes[0xA974] << 8), end);
+    // its screen lines (FF, the lines, FF at (#A9DC)) move behind the new text, the pointers into them too
+    const uint16_t oldEnd = *dump.machine.Word(0xA973), oldLast = *dump.machine.Word(0xA9DC);
+    std::vector<uint8_t> screen;
+    ASSERT_TRUE(dump.machine.Read(oldEnd, static_cast<size_t>(oldLast - oldEnd + 1), screen));
+    EXPECT_EQ(screen.front(), 0xFF);
+    EXPECT_EQ(screen.back(), 0xFF);
+    for (size_t k = 0; k < screen.size(); ++k)
+        EXPECT_EQ(pokes[static_cast<uint16_t>(end + k)], screen[k]) << k;
+    EXPECT_EQ(pokes[0xA9DC] | (pokes[0xA9DD] << 8), oldLast - oldEnd + end);
+
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        for (const InjectPlan::Poke& p : plan.pokes)
+            if (dump.machine.ram[k].page == p.page)
+                dump.pages[k][p.offset] = p.value;
+    const SyncText back = ReadText(dump.machine, *d);
+    ASSERT_TRUE(back.ok) << back.state;
+    // the disk file: #AF, the length, the start, four characters of the name (blanks: SAVE gives them), the paragraphs
+    std::vector<uint8_t> expected = {0xAF, static_cast<uint8_t>(paragraphs.size()), static_cast<uint8_t>(paragraphs.size() >> 8), 0x2E, 0x7F, ' ', ' ', ' ', ' '};
+    expected.insert(expected.end(), paragraphs.begin(), paragraphs.end());
+    EXPECT_EQ(back.file, expected);
+
+    // a disk file (with its header) goes in the same way
+    const InjectPlan fromDisk = PlanInject(dump.machine, *d, expected, force);
+    ASSERT_TRUE(fromDisk.ok) << fromDisk.error;
+    EXPECT_EQ(fromDisk.pokes.size(), plan.pokes.size());
+    // its text space ends at (#A971) (#9F2E: 8K; SET SPACE changes it)
+    const InjectPlan tooLong = PlanInject(dump.machine, *d, std::vector<uint8_t>(0x9F2E - 0x7F2E, 0x00), force);
+    EXPECT_FALSE(tooLong.ok);
+    EXPECT_NE(tooLong.error.find("text space"), std::string::npos) << tooLong.error;
+}
+
 TEST(SyncInject_Test, Gens4TakesAFileAtItsPromptAsGLeavesIt)
 {
     Dump dump = Load("gens4-loaded");

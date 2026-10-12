@@ -91,6 +91,7 @@ In a Phoenix expression `[ ]` group and `( )` only call functions (the manual's 
 | `*INCLUDE "f"`; `*PRINT "text",expr` (an expression printed in hex) | LIB.MAKER prints `#3D0` | `INCLUDE`; `DISPLAY /H,…` |
 | `*LIST *LLIST *COUNT *SCREEN *PRINTER *MACLIST *FORM *REPORT *TITLE *PAUSE *PROMPTS *CODE *OPENOUT *CLOSEOUT` | | comments (`*CODE OFF` reported) |
 | division by a word of `#8000` or more is wrong in Laser Genius: `#8000/#FFFF` = `#5555`; `7/0` gives a warning and 41 | assembled probe | not reproduced (sjasmplus computes it right / refuses) |
+| the operand tokens `(IX-` / `(IY-` build a plus: `RLC (IY-4)` = `FD CB 04 06`, `LD A,(IX-4)` = `DD 7E 04`; `LD (IY-3),A` (LD and its first operand one token) and `(IY+-4)` are right | typed into LG 1.04 and assembled (2026-10-12) | the frontend writes `+d` there (a warning); the backend writes `(IX+-d)` |
 
 ## 5. In the emulator (2026-10-08)
 

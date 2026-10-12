@@ -302,6 +302,18 @@ TEST(LaserGeniusFrontend_Test, Constructs)
     EXPECT_EQ(out, expected);
 }
 
+TEST(LaserGeniusFrontend_Test, IndexedOperandsGetTheDisplacementLaserGeniusBuilds)
+{
+    // Laser Genius 1.04 builds its (IX- / (IY- operand tokens with a plus (RLC (IY-4): FD CB 04 06); LD's first operand
+    // (one token with LD) and (IY+-4) are right
+    const ConvertResult r = Convert(SourceDocument::FromText("10 RLC (IY-4)\nLD A,(IX-4)\nLD (IY-3),A\nRLC (IY+-4)\n", "lasergenius"), "sjasmplus");
+    ASSERT_TRUE(r.ok);
+    const std::vector<std::string> out = ToSjasmplus("10 RLC (IY-4)\nLD A,(IX-4)\nLD (IY-3),A\nRLC (IY+-4)\n");
+    const std::vector<std::string> expected = {"RLC (IY+4)", "LD A,(IX+4)", "LD (IY-3),A", "RLC (IY-4)"};
+    EXPECT_EQ(out, expected);
+    EXPECT_EQ(std::count_if(r.diagnostics.begin(), r.diagnostics.end(), [](const Diagnostic& d) { return d.severity == Severity::Warning; }), 2);
+}
+
 TEST(LaserGeniusFrontend_Test, PhoenixParagraphsAreReported)
 {
     const codecs::LaserGeniusCodec codec;

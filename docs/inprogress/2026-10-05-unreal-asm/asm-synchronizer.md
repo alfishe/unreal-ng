@@ -431,6 +431,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | family | `Linear`: `[#7F2E, (end))` + `FF FF`; the end pointer chosen by the hash extensions' presence (a signature) |
 | **Work** | **1 d** (the two configurations, Phoenix statements in the build) |
 | **Verified: without the hash extensions** (2026-10-10, dumps `lg104-*`) | the text in memory is the paragraphs and `FF FF` from `#7F2E` to `(#A973)`; the disk file drops the `FF FF` and adds the header `#AF`, the length, `#7F2E` and four characters of the name SAVE gives (an editor state: the reader fills blanks, the tests mask them) (`laserGeniusFile`). A paragraph typed is out of the text until ENTER. The loader's menu is a BASIC INPUT: `1` needs ENTER. Identified by 24 bytes of its code at `#AC00`. Descriptor `lasergenius-1.04`. With the hash extensions (end `(#ADA1)`, the code moved) not covered yet |
+| **Built: inject (Z4, 2026-10-12)** | in its editor (the key wait returns to `#AB04`, then the ROM's `#1303`): the paragraphs and `FF FF` from the start word `(#A975)` (`set space` moves it), the end word `(#A973)`. The editor's screen lines, which follow the text up to `(#A9DC)`, move behind it with the pointers `#A9D4`-`#A9DE`, as LOAD does; the space ends at `(#A971)`. No "changed" flag (force). Laser Genius 1.04 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes, from disk and injected (research-sjasmplus-to-lasergenius.md §3) |
 
 ### 7.17 PROMETHEUS
 
@@ -881,6 +882,13 @@ Details: [research-sjasmplus-to-zeus.md](research-sjasmplus-to-zeus.md).
 
 **Built (2026-10-11): Z4 for Primus 2.9.** The ZEUS backend writes Primus text too (`* / ?`, one `ORG`, `DISK`, `+0`
 before `?` after a name); the inject at its prompt. Checked in Primus 2.9. Details: research-sjasmplus-to-zeus.md §4.1.
+
+**Built (2026-10-12): Z4 for Laser Genius 1.04.** The Laser Genius backend (`dialects/lasergenius/`, on `RetroWriter`)
+writes C-like priorities with `[ ]`, comparisons that give 1, `COND`, `ORG` + `PUT`, `DISP` as `ORG` and back. LG
+1.04 builds its `(IX-` / `(IY-` operand tokens with a plus, so displacements below 0 are written as `(IX+-d)`. The
+inject moves the editor's screen lines behind the new text (`LinearParams::followLastAt`). Checked in Laser Genius
+1.04: `oracle1.asm` and every instruction form to sjasmplus' bytes, from disk and injected. Details:
+[research-sjasmplus-to-lasergenius.md](research-sjasmplus-to-lasergenius.md).
 
 ## 20. Effort (part B)
 
