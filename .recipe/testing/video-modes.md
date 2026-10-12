@@ -57,7 +57,7 @@ the pages first (TS-Conf V_PAGE 0: pages 0-2) when the picture is to be looked a
 | TS-Conf, TSL-VDAC2 | `TS16` / `TS256` / `TSTX` / `TSZX` | 720x288 | the graphics window of `V_CONFIG` (512x192, 640x200, 640x240, 720x288 pixels) | `OUT (#00AF)` = V_CONFIG: bits 1:0 mode (0 ZX, 1 16C, 2 256C, 3 TXT), bits 7:6 the window (0 256x192, 1 320x200, 2 320x240, 3 360x288); the first write after boot is lost to the BIOS | checked, all four modes and four windows |
 | Sprinter | `Sprinter` | 736x288 | 640x256 | per-8x8-square mode table, see [sprinter.md](../machines/sprinter.md) | boot mode checked |
 | ZX Spectrum Next | `Next` | 640x512 | 512x384 | NR registers / Timex port, `next_video` aspect | boot mode checked |
-| ZX-Poly (all three) | the module's (`ZX`, `ZX128`, `Pentagon128K`) | 704x576 (the group's composed frame, `source: composed`); a recording is the master's own 352x288 | 512x384 | the master's mode | checked |
+| ZX-Poly (all three) | the module's (`ZX`, `ZX128`, `Pentagon128K`) | 704x576 (the group's composed frame, `source: composed`); a recording is the same composed frame | 512x384 | the master's mode | checked |
 
 Reaching a mode with code (what the script does): pause, write the code at `#8000` in RAM page 2
 (`PUT /memory/ram/2/0 {"offset":0,"data":[...]}`), `PUT /registers/pc {"value":32768}`, resume, wait about a second.
@@ -119,3 +119,7 @@ the frame the recording started on, and leaves one `<model>.png` of each file to
 keep its size across the mode changes (verified 2026-10-12: all 20 models; the TS-Conf file across all eight V_CONFIG
 combinations, ATM3 across five modes). The unreal-qt binary must be built from the same tree: an older one still
 records the Profi / ATM at 352x288.
+
+Spot check of the fixed output profiles (2026-10-12, `record_all.py --profile 1080p|4k` on PENTAGON, TSL, ATM450, ZXPOLY-128K):
+every file is the profile's frame (1920x1080 / 3840x2160) with the picture fitted in, its CRT shape kept, black bars, nothing cut.
+A ZX-Poly master records the group's composed 704x576 frame, the one the window shows.
