@@ -161,6 +161,7 @@ protected:
     void Emit(const std::vector<std::string>& texts, uint32_t origin);
     void WriteLine(const ir::Line& l, size_t k, const std::string* repeatLabel = nullptr);
 
+    const ir::Program lowered;                           // sjasmplus' MODULE, STRUCT ... lowered (sjasmpluslower.h)
     const ir::Program& program;
     const BackendOptions& options;
     BackendResult& result;
@@ -168,6 +169,7 @@ protected:
     uint32_t line = 0;
     size_t lineIndex = 0;
     std::string parent{};                                // sjasmplus: the last label without a dot (".x" hangs on it)
+    std::vector<std::string> modules{};                  // sjasmplus: the MODULEs open where the walk is (their marks)
     std::map<std::string, std::string> names{};          // the source's full names -> the target's
     std::set<std::string> redefinable{};                 // names assigned with DEFL / "=": their values are written
     std::map<std::string, int64_t> deflValues{};         // ... as they stand at the line being written

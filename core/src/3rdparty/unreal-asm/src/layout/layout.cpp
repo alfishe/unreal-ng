@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 
 #include "dialects/common/z80.h"
@@ -230,6 +231,25 @@ private:
     int64_t _steps = 0;
     int _expansions = 0;
     std::string _macroScope;   // "" outside a macro; else a prefix unique to the expansion (its local labels)
+    // sjasmplus STRUCT: each structure's size and its fields' offsets (nested ones as "p.x"); the one being defined
+    struct StructDef
+    {
+        int64_t size = 0;
+        std::vector<std::pair<std::string, int64_t>> fields;
+    };
+    struct OpenStruct
+    {
+        std::string full;
+        StructDef def;
+        int64_t pc = 0, physical = 0;
+        bool displaced = false;
+        std::string lastGlobal;
+    };
+    std::map<std::string, StructDef> _structs;
+    std::optional<OpenStruct> _struct;
+    std::string _lastDefined;      // the full name Define gave last
+    std::string _lineLabel;        // the label of the line being laid out, as written, and its full name
+    std::string _lineLabelFull;
 
     // What DB / DW / DS wrote where (by the physical address), for {address} reads: -1 = not written, -2 = code (its
     // bytes are not built)
@@ -255,6 +275,8 @@ private:
         _page = -1;
         _lastGlobal.clear();
         _modules.clear();
+        _structs.clear();
+        _struct.reset();
         _definedThisPass.clear();
         _defines.clear();
         _macros.clear();
@@ -504,6 +526,13 @@ private:
 
     void Define(const std::string& written, int64_t value, LabelUse use)
     {
+        if (_struct && !written.empty() && written[0] != '@' && written[0] != '.')
+        {
+            // a field of the structure being defined: STRUCT.field = its offset
+            _struct->def.fields.push_back({written, value});
+            Define("@" + _struct->full + "." + written, value, LabelUse::Equ);
+            return;
+        }
         std::string name = written;
         std::string parent;
         bool global = false;
@@ -555,6 +584,7 @@ private:
         l.line = FileLine();
         if (use == LabelUse::Unknown)
             _pending.push_back(found->second);
+        _lastDefined = name;
     }
 
     // ---- lines ----
@@ -767,6 +797,8 @@ private:
 
     void RunLine(const ir::Line& line, int depth)
     {
+        _lineLabel.clear();
+        _lineLabelFull.clear();
         // The label: an EQU / DEFL value, a temporary label, or the address
         if (!line.label.empty())
         {
@@ -779,7 +811,11 @@ private:
             else if (line.label.find_first_not_of("0123456789") == std::string::npos)
                 _temps.emplace_back(line.label, _pc);
             else
+            {
                 Define(line.label, _pc, LabelUse::Unknown);
+                _lineLabel = line.label;
+                _lineLabelFull = _lastDefined;
+            }
         }
         for (size_t k = 0; k < line.statements.size(); ++k)
         {
@@ -999,6 +1035,8 @@ private:
 
     void Store(const std::vector<int16_t>& bytes)
     {
+        if (_struct)
+            return;   // a structure's fields take no memory
         for (size_t k = 0; k < bytes.size(); ++k)
             _memory[static_cast<size_t>((_physical + static_cast<int64_t>(k)) & 0xFFFF)] = bytes[k];
     }
@@ -1100,11 +1138,42 @@ private:
         _lineIndex = backLine;
     }
 
+    /// An instance of a structure: its size laid out, label.field defined for each field (in a structure being
+    /// defined: its fields' fields)
+    bool Instance(const Statement& s)
+    {
+        const StructDef* def = nullptr;
+        for (const std::string& c : Candidates(s.mnemonic))
+            if (const auto found = _structs.find(c); found != _structs.end())
+            {
+                def = &found->second;
+                break;
+            }
+        if (!def)
+            return false;
+        const StructDef copy = *def;
+        const int64_t base = _pc;
+        const std::string lastGlobal = _lastGlobal;   // a .local after the instance hangs on its label
+        if (!_lineLabel.empty())
+            for (const auto& [field, offset] : copy.fields)
+            {
+                if (_struct)
+                    _struct->def.fields.push_back({_lineLabel + "." + field, base + offset});
+                Define("@" + _lineLabelFull + "." + field, base + offset, _struct ? LabelUse::Equ : LabelUse::Data);
+            }
+        _lastGlobal = lastGlobal;
+        Store(std::vector<int16_t>(static_cast<size_t>(std::clamp<int64_t>(copy.size, 0, 0x10000)), -2));
+        Emit(copy.size, LabelUse::Data);
+        return true;
+    }
+
     void Expand(const Statement& s, int depth)
     {
         const auto found = _macros.find(s.mnemonic);
         if (found == _macros.end())
         {
+            if (Instance(s))
+                return;
             Report(Severity::Error, "unknown instruction or macro " + s.mnemonic);
             return;
         }
@@ -1169,6 +1238,36 @@ private:
                 _modules.pop_back();
             return;
         }
+        if (word == "STRUCT")
+        {
+            // STRUCT name[,offset]: the fields laid out from the offset, out of memory
+            const size_t comma = rest.find(',');
+            OpenStruct open;
+            open.full = ModulePrefix() + Trim(rest.substr(0, comma));
+            open.pc = _pc;
+            open.physical = _physical;
+            open.displaced = _displaced;
+            open.lastGlobal = _lastGlobal;
+            _pc = _physical = comma == std::string::npos ? 0 : Value(ParseText(rest.substr(comma + 1)));
+            _displaced = false;
+            _struct = std::move(open);
+            return;
+        }
+        if (word == "ENDS")
+        {
+            if (!_struct)
+                return;
+            OpenStruct open = std::move(*_struct);
+            _struct.reset();
+            open.def.size = _pc;
+            _pc = open.pc;
+            _physical = open.physical;
+            _displaced = open.displaced;
+            _lastGlobal = open.lastGlobal;
+            Define("@" + open.full, open.def.size, LabelUse::Equ);   // the structure's name is its size
+            _structs[open.full] = std::move(open.def);
+            return;
+        }
         if (word == "ALIGN")
         {
             const int64_t boundary = rest.empty() ? 4 : Value(ParseText(rest.substr(0, rest.find(','))));
@@ -1208,7 +1307,7 @@ private:
                 Emit(Incbin(parsed.program.lines[0].statements[0].text, parsed.program.lines[0].statements[0].args), LabelUse::Data);
             return;
         }
-        static const std::set<std::string> kSized = {"DG", "DEFG", "DH", "DEFH", "STRUCT", "INCHOB", "INCTRD", "LUA", "INCLUDELUA", "DEFARRAY",
+        static const std::set<std::string> kSized = {"DG", "DEFG", "DH", "DEFH", "INCHOB", "INCTRD", "LUA", "INCLUDELUA", "DEFARRAY",
                                                      "RELOCATE_TABLE", "SAVENEX", "FPOS"};
         if (kSized.count(word))
             Report(Severity::Error, word + " is not laid out: the labels after it may be wrong");

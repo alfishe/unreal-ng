@@ -8,6 +8,7 @@
 #include <set>
 
 #include "dialects/common/z80.h"
+#include "dialects/sjasmplus/sjasmpluslower.h"
 
 namespace unrealasm::dialects
 {
@@ -651,6 +652,17 @@ struct Writer
         const IFrontend* frontend = DialectRegistry::Builtin().Frontend(program.dialect);
         if (!frontend || text.empty())
             return text;
+        // a string stays a string (a macro's DB takes it so: "DB \0" with "TEXT")
+        {
+            const FrontendResult data = frontend->Parse(SourceDocument::FromText("        DB " + text, program.dialect));
+            if (!data.program.lines.empty() && data.program.lines[0].statements.size() == 1)
+            {
+                const Statement& d = data.program.lines[0].statements[0];
+                if (d.operands.size() == 1 && d.operands[0].kind == Operand::Kind::String && d.operands[0].text.size() >= 2 &&
+                    d.operands[0].text.find('"') == std::string::npos)
+                    return "\"" + d.operands[0].text + "\"";
+            }
+        }
         FrontendResult parsed = frontend->Parse(SourceDocument::FromText("        INC " + text, program.dialect));
         if (parsed.program.lines.empty() || parsed.program.lines[0].statements.size() != 1)
             return text;
@@ -902,6 +914,8 @@ struct Writer
                 const size_t at = s.text.find_first_not_of(" \t", word.size());
                 const std::string rest = at == std::string::npos ? std::string() : s.text.substr(at);
                 const std::string flag = rest.substr(0, rest.find_first_of(" \t"));
+                if (word == kModuleMark || word == kEndModuleMark)
+                    return {};   // the names are full already (sjasmpluslower.h)
                 // sjasmplus' DEFINE flags, tested with IFDEF in the order of the text: decided here
                 if (word == "DEFINE" || word == "DEFINE+" || word == "UNDEFINE")
                 {
@@ -910,7 +924,7 @@ struct Writer
                     else
                         defines.insert(flag);
                     if (word != "UNDEFINE" && flag.size() < rest.size())
-                        diagnostics.push_back({Severity::Warning, line, 0, "a DEFINE with a value (text put in where its name stands): not converted"});
+                        diagnostics.push_back({Severity::Info, line, 0, "a DEFINE with a value: put in where its name stands (by the frontend)"});
                     return {";" + s.text};
                 }
                 if (word == "IFDEF" || word == "IFNDEF")
@@ -954,9 +968,32 @@ bool DefinesLabels(const ir::Program& program, size_t first, ir::DirectiveKind o
 }
 }  // namespace
 
-BackendResult AlasmBackend::Write(const ir::Program& program, const BackendOptions& options) const
+namespace
+{
+/// A comment in what ALASM's CP866 holds: other characters as "?"
+std::string InCp866(const std::string& utf8)
+{
+    std::string out;
+    for (size_t p = 0; p < utf8.size();)
+    {
+        const unsigned char b = static_cast<unsigned char>(utf8[p]);
+        const size_t length = std::min(utf8.size() - p, static_cast<size_t>(b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : b >= 0xC0 ? 2 : 1));
+        const std::string one = utf8.substr(p, length);
+        std::vector<uint8_t> bytes;
+        std::string error;
+        out += encoding::FromUtf8(one, encoding::CodePage::Cp866, bytes, error) ? one : std::string("?");
+        p += length;
+    }
+    return out;
+}
+}  // namespace
+
+BackendResult AlasmBackend::Write(const ir::Program& given, const BackendOptions& options) const
 {
     BackendResult result;
+    // sjasmplus' MODULE, STRUCT ... in words ALASM has (sjasmpluslower.h)
+    const ir::Program lowered = given.dialect == "sjasmplus" ? LowerSjasmplus(given, result.diagnostics) : ir::Program{};
+    const ir::Program& program = given.dialect == "sjasmplus" ? lowered : given;
     result.document.dialect = "alasm";
     result.document.codePage = encoding::CodePage::Cp866;
     Writer w{program, options, result.diagnostics};
@@ -1192,7 +1229,7 @@ BackendResult AlasmBackend::Write(const ir::Program& program, const BackendOptio
             std::string& last = out.back();
             if (!last.empty())
                 last += last.size() < 32 ? std::string(32 - last.size(), ' ') : std::string(" ");
-            last += ";" + l.comment;
+            last += ";" + InCp866(l.comment);
         }
         for (const std::string& text : out)
         {

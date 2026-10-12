@@ -908,6 +908,15 @@ it as 0. The inject leaves the editor as ZAP and GET do. Checked in PASM 3.0: `o
 to sjasmplus' bytes, injected and loaded from disk. This completes Z4. Details:
 [research-sjasmplus-to-pasm.md](research-sjasmplus-to-pasm.md).
 
+**Built (2026-10-12): Z5, real sjasmplus projects.** Every retro backend now runs a sjasmplus program through
+`sjasmpluslower` first: MODULE as full names (a macro using a module's names gets a copy for the module), STRUCT as
+EQU of its fields and size and an instance as its data, LUA left out with a warning, ALIGN as DS, DZ / DC / D24 / DD /
+ABYTE as DB / DW, IFUSED decided, SLOT / PAGE / MMU dropped. The layout lays out STRUCT; the frontend puts DEFINE
+values in and reads EXA / EXD. A probe of all of it keeps its bytes through all eleven retro targets. On 37 real
+projects (`projectcheck.py`) the memory sjasmplus builds stays the same through ALASM for 22, TASM 16 (6 before),
+STORM 12, XAS 12; the rest meet TR-DOS file names, INCLUDEs converted apart, DEFL across files or Lua. Details:
+[research-sjasmplus-projects.md](research-sjasmplus-projects.md).
+
 ## 20. Effort (part B)
 
 | Block | Days |
