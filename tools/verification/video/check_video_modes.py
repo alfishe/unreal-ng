@@ -31,6 +31,8 @@ RASTER = {
 }
 REFERENCE = (352, 288)  # the CRT frame every picture is shown in (core/src/emulator/video/displaygeometry.h)
 
+# TS-Conf: the graphics modes show video RAM (V_PAGE 0 after boot: pages 0-2, 192 lines of 256 bytes), where the BIOS keeps text data: noise as a bitmap.
+# The script blanks those pages before it switches, so a picture is the mode's own and not the machine's leftovers
 # Modes a machine can be put into from outside: model -> [(what, Z80 code run at #8000)]. Verified by hand 2026-10-11.
 # A video mode is a machine state, not an API setting: the code writes the machine's own port
 SWITCHES = {
@@ -40,6 +42,23 @@ SWITCHES = {
         ('ATM ZX (OUT #FE)', [0xF3, 0xD3, 0xFE, 0x18, 0xFE]),
     ],
     'ATM710': [('ATM 640x200 (OUT #BE)', [0xF3, 0xD3, 0xBE, 0x18, 0xFE])],
+    'ATM3': [
+        ('ATM EGA 320x200 (#FF77 = 0)', [0xF3, 0x3E, 0x01, 0xD3, 0xBF, 0x01, 0x77, 0xFF, 0x3E, 0, 0xED, 0x79, 0x18, 0xFE]),
+        ('ATM HWMC 640x200 (#FF77 = 2)', [0xF3, 0x3E, 0x01, 0xD3, 0xBF, 0x01, 0x77, 0xFF, 0x3E, 2, 0xED, 0x79, 0x18, 0xFE]),
+        ('ATM ZX (#FF77 = 3)', [0xF3, 0x3E, 0x01, 0xD3, 0xBF, 0x01, 0x77, 0xFF, 0x3E, 3, 0xED, 0x79, 0x18, 0xFE]),
+        ('ATM text 80x25 (#FF77 = 6)', [0xF3, 0x3E, 0x01, 0xD3, 0xBF, 0x01, 0x77, 0xFF, 0x3E, 6, 0xED, 0x79, 0x18, 0xFE]),
+        ('ATM linear text (#FF77 = 7)', [0xF3, 0x3E, 0x01, 0xD3, 0xBF, 0x01, 0x77, 0xFF, 0x3E, 7, 0xED, 0x79, 0x18, 0xFE]),
+    ],
+    'TSL': [
+        ('TS-Conf ZX (V_CONFIG = #00)', [0xF3, 0x01, 0xAF, 0x00, 0x3E, 0x00, 0xED, 0x79, 0x18, 0xFE]),
+        ('TS-Conf 16C 256x192 (V_CONFIG = #01)', [0xF3, 0x01, 0xAF, 0x00, 0x3E, 0x01, 0xED, 0x79, 0x18, 0xFE]),
+        ('TS-Conf 256C 256x192 (V_CONFIG = #02)', [0xF3, 0x01, 0xAF, 0x00, 0x3E, 0x02, 0xED, 0x79, 0x18, 0xFE]),
+        ('TS-Conf TXT 256x192 (V_CONFIG = #03)', [0xF3, 0x01, 0xAF, 0x00, 0x3E, 0x03, 0xED, 0x79, 0x18, 0xFE]),
+        ('TS-Conf 256C 320x200 (V_CONFIG = #42)', [0xF3, 0x01, 0xAF, 0x00, 0x3E, 0x42, 0xED, 0x79, 0x18, 0xFE]),
+        ('TS-Conf 256C 320x240 (V_CONFIG = #82)', [0xF3, 0x01, 0xAF, 0x00, 0x3E, 0x82, 0xED, 0x79, 0x18, 0xFE]),
+        ('TS-Conf 16C 360x288 (V_CONFIG = #C1)', [0xF3, 0x01, 0xAF, 0x00, 0x3E, 0xC1, 0xED, 0x79, 0x18, 0xFE]),
+        ('TS-Conf TXT 360x288 (V_CONFIG = #C3)', [0xF3, 0x01, 0xAF, 0x00, 0x3E, 0xC3, 0xED, 0x79, 0x18, 0xFE]),
+    ],
     'PROFI': [('Profi 512x240 (#DFFD bit 7)', [0xF3, 0x01, 0xFD, 0xDF, 0x3E, 0x80, 0xED, 0x79, 0x18, 0xFE])],
 }
 
@@ -134,7 +153,11 @@ def check(api, emulator, what, problems, window_port, chrome):
         notes.append(mismatch(f'state/screen/mode says framebuffer {reported}, the frame is {size[0]}x{size[1]}'))
     resolution = mode.get('resolution')
     # A ZX-Poly master shows the group's composed frame (2x, four modules): the module's own resolution is not its size
-    if resolution and frame.get('source') == 'native' and resolution != f'{window["width"]}x{window["height"]}':
+    # TS-Conf reports its resolution in dots; a dot is two stored pixels wide in the 16C / 256C modes
+    dots = None
+    if name.startswith('TS') and name != 'TSTX' and window['width'] % 2 == 0:
+        dots = f'{window["width"] // 2}x{window["height"]}'
+    if resolution and frame.get('source') == 'native' and resolution not in (f'{window["width"]}x{window["height"]}', dots):
         notes.append(mismatch(f'state/screen/mode says resolution {resolution}, the working picture is {window["width"]}x{window["height"]}'))
     if not reported and frame.get('source') == 'native':
         notes.append('  (state/screen/mode has no "framebuffer": the frame size cannot be cross-checked there)')
@@ -160,8 +183,10 @@ def check(api, emulator, what, problems, window_port, chrome):
     return frame_shape
 
 
-def run_code(api, emulator, code):
+def run_code(api, emulator, code, blank_pages=()):
     api.call('POST', f'/emulator/{emulator}/pause')
+    for page in blank_pages:
+        api.call('PUT', f'/emulator/{emulator}/memory/ram/{page}/0', {'offset': 0, 'data': [0] * 16384})
     api.call('PUT', f'/emulator/{emulator}/memory/ram/2/0', {'offset': 0, 'data': code})
     api.call('PUT', f'/emulator/{emulator}/registers/pc', {'value': 0x8000})
     api.call('POST', f'/emulator/{emulator}/resume')
@@ -202,6 +227,10 @@ def main():
         check(api, emulator, name, problems, args.window_port, chrome)
 
         if args.switch:
+            if name.upper().startswith('TSL'):
+                time.sleep(4)  # the TS-BIOS writes V_CONFIG while it boots: let it finish
+                run_code(api, emulator, [0xF3, 0x01, 0xAF, 0x00, 0x3E, 0x03, 0xED, 0x79, 0x18, 0xFE])  # the first write after boot is lost to the BIOS; this one is the primer
+                time.sleep(1.0)
             if name.upper() == 'PENTAGON':  # the one mode with an API: overscan (384x304) and its viewports
                 for viewport in ('symmetric', 'full'):
                     api.call('PUT', f'/emulator/{emulator}/state/screen/overscan', {'enabled': True, 'viewport': viewport})
@@ -211,7 +240,7 @@ def main():
                 time.sleep(1.0)
                 check(api, emulator, f'{name} / overscan off', problems, args.window_port, chrome)
             for what, code in SWITCHES.get(name.upper(), []):
-                run_code(api, emulator, code)
+                run_code(api, emulator, code, (0, 1, 2) if name.upper().startswith('TSL') else ())
                 check(api, emulator, f'{name} / {what}', problems, args.window_port, chrome)
         api.call('DELETE', f'/emulator/{emulator}')
         time.sleep(0.3)
