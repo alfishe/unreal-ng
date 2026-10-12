@@ -48,13 +48,15 @@ public:
     }
 
 private:
-    std::string version;   // "1983", "gg", "pht" (1.1, v7.E)
+    std::string version;   // "1983", "gg", "pht" (1.1, v7.E), "primus" (Primus 2.9)
 
     bool Pht() const { return version == "pht"; }
+    bool Primus() const { return version == "primus"; }
+    int orgs = 0;          // Primus takes one ORG
 
-    std::string Title() const override { return "ZEUS"; }
-    /// labels of up to 14 characters, compared whole with case (manual 5.1.1)
-    size_t Significant() const override { return 14; }
+    std::string Title() const override { return Primus() ? "Primus" : "ZEUS"; }
+    /// labels of up to 14 characters, compared whole with case (manual 5.1.1); Primus 16 (its PRI.DOC)
+    size_t Significant() const override { return Primus() ? 16 : 14; }
     std::string Key(const std::string& name) const override { return name; }
     bool Reserved(const std::string& upper) const override { return kWords.count(upper) || z80::IsMnemonic(z80::Lower(upper)); }
     /// letters and digits, a letter first (no "_" in ZEUS)
@@ -79,16 +81,29 @@ private:
             case Op::Sub: return "-";
             case Op::And: return "&";
             case Op::Or: return "!";
-            case Op::Mul: return Pht() ? "*" : nullptr;   // v7.E (its / rounds: not used)
+            case Op::Mul: return Pht() || Primus() ? "*" : nullptr;   // v7.E (its / rounds: not used), Primus
+            case Op::Div: return Primus() ? "/" : nullptr;            // Primus: unsigned, truncating
+            case Op::Mod: return Primus() ? "?" : nullptr;
             default: return nullptr;
         }
     }
-    /// no division in ZEUS 1983 (v7.E's rounds): the high byte only as a value
-    std::string HighOf(const std::string&) const override { return {}; }
+    /// Primus reads "?" after a name as part of it (COUNT?7: an undefined label, seen in unreal-ng): +0 ends the name
+    std::string Guard(const std::string& left, const char* symbol) const override
+    {
+        if (!Primus() || symbol[0] != '?')
+            return {};
+        size_t k = left.size();
+        while (k > 0 && (std::isalnum(static_cast<unsigned char>(left[k - 1])) || std::string("_?@.$").find(left[k - 1]) != std::string::npos))
+            --k;
+        return k < left.size() && !std::isdigit(static_cast<unsigned char>(left[k])) && left[k] != '#' && left[k] != '%' ? "+0" : "";
+    }
+
+    /// no division in ZEUS 1983 (v7.E's rounds): the high byte only as a value; Primus /256
+    std::string HighOf(const std::string& chain) const override { return Primus() ? chain + "/256" : std::string(); }
 
     std::optional<std::string> Text(const Expr& e) override
     {
-        if (e.kind == Expr::Kind::Unary && e.op == Op::High)
+        if (e.kind == Expr::Kind::Unary && e.op == Op::High && !Primus())
         {
             if (const auto v = Value(e))
                 return Number(*v);
@@ -102,8 +117,8 @@ private:
     std::string NumberText(const Expr& e) const override
     {
         const int64_t v = e.value & 0xFFFF;
-        if (e.spelling == ir::NumberSpelling::Character && e.text.size() == 1 && e.text[0] > 0x20 && e.text[0] < 0x7F)
-            return "\"" + e.text;
+        if (e.spelling == ir::NumberSpelling::Character && e.text.size() == 1 && e.text[0] > 0x20 && e.text[0] < 0x7F && !Primus())
+            return "\"" + e.text;   // Primus refuses "A": the number
         if (e.spelling == ir::NumberSpelling::Binary && !Pht())
             return "#" + z80::HexDigits(static_cast<uint64_t>(v), v > 0xFF ? 4 : 2);
         if (e.spelling == ir::NumberSpelling::Character)
@@ -189,6 +204,8 @@ private:
         switch (s.directive)
         {
             case ir::DirectiveKind::Org:
+                if (Primus() && orgs++ > 0)
+                    return {NotConverted("a second ORG (Primus takes one: Duplicate ORG)")};
                 if (displaced)
                 {
                     displaced = false;
@@ -216,6 +233,8 @@ private:
             case ir::DirectiveKind::Disp:
             {
                 // DISP d puts the code at ORG + d: the run address as ORG, the offset to the place where it lies
+                if (Primus())
+                    return {NotConverted("DISP (Primus has none: its DISK includes a file)")};
                 if (displaced)
                     return {NotConverted("a DISP inside another")};
                 strict = true;
@@ -239,6 +258,13 @@ private:
                 // back to the place: DISP 0 puts the code at $ again, ORG moves on to where the displaced code ends
                 return {"DISP 0", "ORG $+" + dispOffset};
             case ir::DirectiveKind::Include:
+                if (Primus())
+                {
+                    std::string name = s.text;
+                    if (const size_t dot = name.rfind('.'); dot != std::string::npos)
+                        name = name.substr(0, dot);
+                    return {"DISK " + name};
+                }
                 if (Pht())
                 {
                     std::string name = s.text;

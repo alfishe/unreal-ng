@@ -422,6 +422,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Work** | **0.5 d** |
 | **Verified** (2026-10-10, dumps `primus29-*`) | ZEUS's pair: the start word at `#61B1` (`#8254`), the address of the last `FF` at `#61B3`. It loads `PRI.DOC` at start (the dumps put the source there); a numbered line typed at the prompt stays out of the text until Enter; `b` ENTER, `s NAME` ENTER, `q` ENTER saves (commands need ENTER). Identified by `PRIMUS ASSEMBLER Version` at `#6D17`. Descriptor `primus-2.9` |
 
+| **Built: inject (Z4, 2026-10-11)** | at its prompt (the key wait returns through `#6857` / `#6858`, then `#6836` / `#6851`): the records from `#8254`, the end word at the last `FF`; no "changed" flag (force over the manual it loads). Primus 2.9 assembled the injected `oracle1.asm` and every instruction form to sjasmplus' bytes (research-sjasmplus-to-zeus.md §4.1) |
 ### 7.16 Laser Genius 1.04 (Beta)
 
 | | |
@@ -877,6 +878,9 @@ delimiter, the undocumented instructions as bytes. `ChainWriter` now leaves out 
 no such operator. The `Linear` inject takes a file that ends with the layout's end marker (the end word at its last
 byte). Checked in ZEUS 1983: `oracle1.asm` and every instruction form to sjasmplus' bytes, from memory and injected.
 Details: [research-sjasmplus-to-zeus.md](research-sjasmplus-to-zeus.md).
+
+**Built (2026-10-11): Z4 for Primus 2.9.** The ZEUS backend writes Primus text too (`* / ?`, one `ORG`, `DISK`, `+0`
+before `?` after a name); the inject at its prompt. Checked in Primus 2.9. Details: research-sjasmplus-to-zeus.md §4.1.
 
 ## 20. Effort (part B)
 
