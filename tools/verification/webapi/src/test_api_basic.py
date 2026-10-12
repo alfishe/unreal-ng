@@ -49,7 +49,7 @@ class TestBasicControl:
         assert result["success"] is True
         assert result["command"] == "RUN"
         assert result["basic_mode"] in ["48K", "128K"]
-        assert "Executing" in result["message"]
+        assert result["outcome"] == "started", result
 
         # The machine must now be in a BASIC editor, ready for commands
         state = api_client.basic_state(emu_id)
