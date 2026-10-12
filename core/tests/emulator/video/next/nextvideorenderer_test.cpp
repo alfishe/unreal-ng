@@ -185,6 +185,50 @@ TEST_F(NextVideoRenderer_Test, Layer2In256x192WithScrollClipAndPaletteOffset)
     EXPECT_NE(Px(NextVideoRenderer::kPaperLeft + 40), Pal(1, 0x42));
 }
 
+// A Layer 2 clip window with left > right or top > bottom contains no pixel (layer2.vhd: hc >= x1 and hc <= x2 and vc >= y1 and vc <= y2)
+TEST_F(NextVideoRenderer_Test, Layer2WithAnInvertedClipWindowShowsNothing)
+{
+    _in.layer2Enable = true;
+    Page(8)[10 * 256 + 20] = 0x42;
+    Render(NextVideoRenderer::kPaperTop + 10);
+    ASSERT_EQ(Px(NextVideoRenderer::kPaperLeft + 40), Pal(1, 0x42)) << "visible without a clip";
+    _regs.WriteClip(0, 40);  // x1 > x2
+    _regs.WriteClip(0, 30);
+    _regs.WriteClip(0, 0);
+    _regs.WriteClip(0, 191);
+    Render(NextVideoRenderer::kPaperTop + 10);
+    EXPECT_NE(Px(NextVideoRenderer::kPaperLeft + 40), Pal(1, 0x42));
+    _regs.Reset();
+    _regs.WriteClip(0, 0);
+    _regs.WriteClip(0, 255);
+    _regs.WriteClip(0, 20);  // y1 > y2
+    _regs.WriteClip(0, 5);
+    Render(NextVideoRenderer::kPaperTop + 10);
+    EXPECT_NE(Px(NextVideoRenderer::kPaperLeft + 40), Pal(1, 0x42));
+    // the 320 x 256 mode is the same
+    _in.nr[0x70] = 0x10;
+    Page(8)[20 * 256 + 10] = 0x42;
+    Render(10);
+    EXPECT_NE(Px(40), Pal(1, 0x42));
+}
+
+// layer2.vhd forms the row as y(7:6) = y_pre(7:6) (+1 from 192 up) over y_pre(5:0): a scroll above 191 is not a modulo, rows 192-254 show
+TEST_F(NextVideoRenderer_Test, Layer2In256x192RowsAboveTheBottomAreTheVhdlsWrap)
+{
+    _in.layer2Enable = true;
+    uint8_t* l2 = Page(8);
+    l2[16 * 256 + 20] = 0x31;   // what a modulo 192 would show
+    l2[208 * 256 + 20] = 0x77;  // what the VHDL shows: y_pre = 150 + 250 = 400, y(7:6) = 10 + 1
+    _in.nr[0x17] = 250;
+    Render(NextVideoRenderer::kPaperTop + 150);
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 40), Pal(1, 0x77));
+    // inside the 192 rows nothing changes: 100 + 50 = 150 stays 150, 191 + 100 = 291 is 291 - 192 = 99... (256-319 maps to 64-127)
+    _in.nr[0x17] = 100;
+    l2[(291 - 192) * 256 + 20] = 0x55;
+    Render(NextVideoRenderer::kPaperTop + 191);
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 40), Pal(1, 0x55));
+}
+
 TEST_F(NextVideoRenderer_Test, Layer2In320x256IsColumnMajorAndCoversTheBorder)
 {
     _in.layer2Enable = true;

@@ -252,7 +252,9 @@ transparent: global 0xE3, sprites 0xE3, tilemap 15, fallback 0xE3
 ```
 
 **`next_ports`** - which device answers a port, and whether NR `#82`-`#85` switch it off. `enforced` tells whether the emulator gates the
-port by that bit (today the DAC ports, the Multiface, `#E3` and `#E7` / `#EB`; the other ports decode regardless of the enable word):
+port by that bit: a write to a port whose bit is off is ignored and a read is the idle bus `#FF`; with the expansion bus on (NR `#80` bit 7)
+NR `#86`-`#89` are ANDed in. Every port the Next decodes is gated (DAC, Multiface, `#E3`, `#E7` / `#EB`, `#FF`, `#7FFD` / `#DFFD` / `#1FFD`,
+DMA, joystick, I2C, sprites, `#123B`, AY, CTC); the UART, mouse, ULA+, `#EFF7` and +3 floating-bus ports are not decoded at all yet:
 
 ```text
 $ state next ports 6B w          (after NR #82 <- #DF)

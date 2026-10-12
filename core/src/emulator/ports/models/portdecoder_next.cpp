@@ -227,6 +227,29 @@ void PortDecoder_Next::Port_DFFD_Next(uint8_t value)
     Mem().ApplyClassicPaging(_state->p7FFD, _state->p1FFD);
 }
 
+bool PortDecoder_Next::PortEnabled(unsigned bit) const
+{
+    const unsigned reg = 0x82 + bit / 8;
+    const unsigned mask = 1u << (bit % 8);
+    if (!(_board->Stored(static_cast<uint8_t>(reg)) & mask))
+        return false;
+    // the expansion bus's own word (NR #86-#89) is ANDed in only while the bus is enabled
+    return !(_board->Stored(0x80) & 0x80) || (_board->Stored(static_cast<uint8_t>(reg + 4)) & mask);
+}
+
+uint8_t PortDecoder_Next::IdleRead(uint16_t port, uint16_t pc)
+{
+    constexpr uint8_t kIdleBus = 0xFF;
+    _lastPortDecoded = false;
+    PortDecodeDisposition disp;
+    disp.decodeRuleIndex = PortTraceRule::kNoTable;
+    disp.decodedPort = port;
+    disp.wasDecoded = false;
+    disp.wasHandledInline = true;
+    OnPortInComplete(port, kIdleBus, pc, disp);
+    return kIdleBus;
+}
+
 uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
 {
     const uint8_t low = static_cast<uint8_t>(port);
@@ -248,6 +271,8 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     if (low == NextCtc::kPortLow && (port >> 11) == 0x03)
     {
         // CTC: A15:A11 = 00011, A10:A8 the channel (4-7 are not implemented)
+        if (!PortEnabled(27))
+            return IdleRead(port, pc);
         const unsigned channel = (port >> 8) & 7;
         const uint8_t value = channel < NextCtc::kChannels ? _ctc.Read(channel, Now28()) : 0xFF;
         _lastPortDecoded = channel < NextCtc::kChannels;
@@ -261,6 +286,8 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     }
     if (port == 0x123B)
     {
+        if (!PortEnabled(15))
+            return IdleRead(port, pc);
         const uint8_t value = _board->Video().Port123b();
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
@@ -273,6 +300,8 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     }
     if ((port & 0xC002) == 0xC000 && !IsPort_DFFD_Next(port))  // #FFFD: the selected AY's register
     {
+        if (!PortEnabled(16))
+            return IdleRead(port, pc);
         const uint8_t value = _audio->ReadData();
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
@@ -299,6 +328,8 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     }
     if (low == 0x6B || low == 0x0B)
     {
+        if (!PortEnabled(low == 0x0B ? 25 : 5))
+            return IdleRead(port, pc);
         const uint8_t value = _dma.ReadAs(low == 0x0B);
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
@@ -311,6 +342,8 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     }
     if (port == 0x303B)
     {
+        if (!PortEnabled(14))
+            return IdleRead(port, pc);
         const uint8_t value = _board->Sprites().ReadStatus();
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
@@ -321,7 +354,8 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         OnPortInComplete(port, value, pc, disp);
         return value;
     }
-    if (low == 0xFF && (_board->Stored(NextBoard::kRegPeripheral2) & 0x04))  // NR #08 bit 2: #FF reads the Timex mode
+    // NR #08 bit 2: #FF reads the Timex mode (and only with its enable bit: port_ff_rd_dat; else the ULA's floating bus, below)
+    if (low == 0xFF && (_board->Stored(NextBoard::kRegPeripheral2) & 0x04) && PortEnabled(0))
     {
         const uint8_t value = _board->Video().PortFf();
         _lastPortDecoded = true;
@@ -347,6 +381,8 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     }
     if (port == NextI2c::kPortScl || port == NextI2c::kPortSda)
     {
+        if (!PortEnabled(10))
+            return IdleRead(port, pc);
         const uint8_t value = _i2c.Read(port);
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
@@ -464,42 +500,72 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     if (static_cast<uint8_t>(port) == NextCtc::kPortLow && (port >> 11) == 0x03)
     {
         const unsigned channel = (port >> 8) & 7;
-        if (channel < NextCtc::kChannels)
+        if (channel < NextCtc::kChannels && PortEnabled(27))
             _ctc.Write(channel, value, Now28());
     }
     else if (port == NextI2c::kPortScl || port == NextI2c::kPortSda)
-        _i2c.Write(port, value);
+    {
+        if (PortEnabled(10))
+            _i2c.Write(port, value);
+    }
     else if (static_cast<uint8_t>(port) == NextDivMmc::kPort && _divMmc->PortEnabled())
         _divMmc->WritePort(value);
     else if (static_cast<uint8_t>(port) == 0xFF)
     {
-        if (_context->pScreen)
-            _context->pScreen->UpdateScreen();
-        _board->Video().WritePortFf(value);
+        if (PortEnabled(0))
+        {
+            if (_context->pScreen)
+                _context->pScreen->UpdateScreen();
+            _board->Video().WritePortFf(value);
+        }
     }  // the Timex screen mode (NR #69 bits 5:0 alias it)
     else if (port == 0x123B)
+    {
+        if (PortEnabled(15))
         {
-        if (_context->pScreen)
-            _context->pScreen->UpdateScreen();
-        _board->Video().WritePort123b(value);
-        _board->RefreshLayer2Mapping();
+            if (_context->pScreen)
+                _context->pScreen->UpdateScreen();
+            _board->Video().WritePort123b(value);
+            _board->RefreshLayer2Mapping();
         }
+    }
     else if ((port & 0xC002) == 0xC000 && !IsPort_DFFD_Next(port))
-        _audio->WriteSelect(value);  // #FFFD
+    {
+        if (PortEnabled(16))
+            _audio->WriteSelect(value);  // #FFFD
+    }
     else if ((port & 0xC002) == 0x8000)
-        _audio->WriteData(value);    // #BFFD
+    {
+        if (PortEnabled(16))
+            _audio->WriteData(value);    // #BFFD
+    }
     else if (port == 0x303B)
-        _board->Sprites().WriteSlotSelect(value);
+    {
+        if (PortEnabled(14))
+            _board->Sprites().WriteSlotSelect(value);
+    }
     else if (WriteDacPort(port, value))
         ;
     else if (static_cast<uint8_t>(port) == 0x6B)
-        _dma.Write(value, false);
+    {
+        if (PortEnabled(5))
+            _dma.Write(value, false);
+    }
     else if (static_cast<uint8_t>(port) == 0x0B)
-        _dma.Write(value, true);
+    {
+        if (PortEnabled(25))
+            _dma.Write(value, true);
+    }
     else if (static_cast<uint8_t>(port) == 0x57)
-        _board->Sprites().WriteAttribute(value);
+    {
+        if (PortEnabled(14))
+            _board->Sprites().WriteAttribute(value);
+    }
     else if (static_cast<uint8_t>(port) == 0x5B)
-        _board->Sprites().WritePattern(value);
+    {
+        if (PortEnabled(14))
+            _board->Sprites().WritePattern(value);
+    }
     else if (static_cast<uint8_t>(port) == kPortSpiSelect && SpiPortEnabled())
         SpiSelect(value);
     else if (static_cast<uint8_t>(port) == kPortSpiData && SpiPortEnabled())
@@ -509,11 +575,20 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     else if (port == kPortRegData)
         _board->WriteSelected(value);
     else if (IsPort_7FFD_Next(port))
-        Port_7FFD_Next(port, value, pc);
+    {
+        if (PortEnabled(1))
+            Port_7FFD_Next(port, value, pc);
+    }
     else if (IsPort_1FFD_Next(port))
-        Port_1FFD_Next(value);
+    {
+        if (PortEnabled(3))
+            Port_1FFD_Next(value);
+    }
     else if (IsPort_DFFD_Next(port))
-        Port_DFFD_Next(value);
+    {
+        if (PortEnabled(2))
+            Port_DFFD_Next(value);
+    }
     else
     {
         PortDecoder_Spectrum128::DecodePortOut(port, value, pc);
