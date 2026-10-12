@@ -37,13 +37,15 @@ Memory: the 2 MB array is the RAM region checkpoint (key frames + dirty XOR delt
 `MAX_RAM_PAGES`). CPU state: Z80N library boundary synchronized like the Z84C15 (`Z80State::boundary`, engine
 `InvalidateBoundary` after a restore). Restore order is ascending id; the slot table is rebuilt after all blobs.
 
-**Landed (2026-10-11): blob `NextState`, id 62** (`NextStateCodec`, `TTDNextState`): the NextREG file and select latch, reset bits, the memory map (MMU slots,
-paging bits, the DivMMC / Multiface / Layer 2 views, config mode; the slot table is rebuilt after a load), the video registers with the 8 palettes and clip
-windows, the sprites (attributes, 16 KB patterns, upload latches), the copper (list, position, mode, clock), the DMA, the CTC, the interrupt controller,
-the I2C bus with the DS1307, the Multiface and DivMMC latches, the decoder's SD SPI and timing latches, the three AY chips with their pan and mode bits and the
-four DACs, and the protocol state of both SD cards. One fixed-length image (about 30 KB, version 2). The **DivMMC RAM** (system-area pages 8-15, 128 KB) is its
-own blob, `NextDivMmcRam` (id 63), plain bytes; it costs 128 KB per checkpoint until the Next is in the v2 engine as a region. **Not in it:** the system-area
-config banks written in config mode (the firmware's ROM load), the audio render clock (resyncs), the UARTs (not built), the media of the SD cards (the media rule).
+**Landed (2026-10-11 / 12): blob `NextState` (id 62, image version 5) and blob `NextSystemArea` (id 63).** `NextState` is one fixed-length image
+(`NextStateCodec`, about 30 KB): the NextREG file and select latch, reset bits, the memory map (MMU slots, paging bits, the DivMMC / Multiface /
+Layer 2 views, config mode; the slot table is rebuilt after a load), the video registers with the 8 palettes and clip windows, the sprites, the
+copper (list, position, mode, clock, the held instruction), the DMA, the CTC, the interrupt controller, the I2C bus with the DS1307, the Multiface
+and DivMMC latches, the decoder's SD SPI and timing latches, the three AY chips with pan and mode bits and the four DACs, both SD cards' protocol
+state, the extended keys and both joystick pads. `NextSystemArea` is the 256 KB system area as plain bytes: the ROMs the firmware loads in config
+mode (pages 0-7) and the DivMMC RAM (pages 8-15). Measured (a program writing NextREGs, 9 checkpoints): 196 KB of history in all, i.e. the engine
+keeps an unchanged 4 KB piece once, so the 256 KB blob costs next to nothing per frame while it does not change. **Not in it:** the audio render
+clock (resyncs), the UARTs (not built), the media of the SD cards (the media rule).
 
 ## 4. Isolating port reads later
 

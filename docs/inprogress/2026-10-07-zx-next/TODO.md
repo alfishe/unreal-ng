@@ -234,9 +234,10 @@ NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.
 - [x] P6 DZRP for the Next: machine type ZXNEXT, eight 8K slots (NR #50-#57), `GET_TBBLUE_REG`, `SET_NEXTREGS`, `READ_BANK_MEM`/`WRITE_BANK_MEM` (8K bank, offset wraps; 0xFF the selected ROM), `READ_MEM_BLOCKS`; sprite commands 16-19 (palette, clip window and NR #15, attributes, patterns) done
 - [x] P6 TTD: the NEXTREG instruction is in the TTD port-write journal as OUT #243B / OUT #253B (option a)
 - [x] P6 TTD `NextState` blob (id 62): the board, memory map, video, sprites, copper, DMA, CTC, interrupts, I2C, Multiface and DivMMC latches restore on a seek
-- [x] TTD `NextState` v2 carries the audio chips and DACs and the SD cards' protocol state; blob `NextDivMmcRam` (63) the DivMMC RAM (128 KB per checkpoint until the v2 engine takes it as a region)
+- [x] TTD `NextState` v2 carries the audio chips and DACs and the SD cards' protocol state; blob `NextSystemArea` (63) the DivMMC RAM (128 KB per checkpoint until the v2 engine takes it as a region)
 - [ ] TTD: PeripheralId 63 was the last id the 64-bit peripheral mask (`TTDFileInfo::peripheralMask`) can hold; the next device needs a wider mask first
-- [ ] TTD: the config-mode system-area writes (firmware ROM load) are not restored; the UARTs wait for the devices
+- [x] TTD: the system area (ROM pages 0-7 the firmware loads in config mode, DivMMC RAM) travels as blob `NextSystemArea` (63); measured cheap (unchanged pieces are stored once)
+- [ ] TTD: the UARTs wait for the devices
 - [x] P6 magic output port (`state/next/magic-port`, `POST /next/magic-port`, every plane; the console is a bounded ring, off by default)
 - [x] Joystick ports from the RTL: #1F answers for Kempston 1 / MD 1 and #37 for Kempston 2 / MD 2 by NR #05 on either side and NR #82 bits 6 / 7, bits 7:6 only for an MD pad, an unanswered port idles at #FF; the host joystick is the left connector (NR #05 reset 0x40 = joy0 Kempston 1)
 - [x] Extended keys (NR #B0 / #B1) from the host's physical PC keys as keymaps.vhd places them, and the pads' MODE X Y Z (NR #B2; host pad = left connector, keypad 7 9 1 3); the Next is the PS/2 sink of the keyboard (NextExtendedInput); the state is in the TTD image (version 3); tests post PcKeyEvents through the MessageCenter

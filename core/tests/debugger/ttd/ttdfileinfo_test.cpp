@@ -176,7 +176,7 @@ TEST(TTDFileInfo_Names, GeneralSoundOfAMask)
     EXPECT_EQ(ttd::GeneralSoundOf(bit(PeripheralId::NeoGS) | bit(PeripheralId::BetaDisk)), GSTypeKind::NGS);
     EXPECT_EQ(ttd::PeripheralIdName(static_cast<uint8_t>(PeripheralId::BetaDisk)), "betadisk");
     EXPECT_EQ(ttd::PeripheralIdName(60), "multisound-gs");
-    EXPECT_EQ(ttd::PeripheralIdName(63), "next-divmmc-ram");
+    EXPECT_EQ(ttd::PeripheralIdName(63), "next-system-area");
     EXPECT_EQ(ttd::PeripheralIdName(200), "id200");  // an id no build knows
 
     ttd::TTDRecordedMachine m;

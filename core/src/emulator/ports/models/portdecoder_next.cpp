@@ -1230,14 +1230,14 @@ bool PortDecoder_Next::RequestBoardNmi()
 
 std::vector<ttd::PeripheralId> PortDecoder_Next::GetTTDModelStateIds() const
 {
-    return {ttd::PeripheralId::NextState, ttd::PeripheralId::NextDivMmcRam};
+    return {ttd::PeripheralId::NextState, ttd::PeripheralId::NextSystemArea};
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Next::CreateTTDSerializers() const
 {
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
     serializers.push_back(std::make_unique<ttd::TTDNextState>(*const_cast<PortDecoder_Next*>(this)));
-    serializers.push_back(std::make_unique<ttd::TTDNextDivMmcRam>(*_context->pMemory));
+    serializers.push_back(std::make_unique<ttd::TTDNextSystemArea>(*_context->pMemory));
     return serializers;
 }
 
