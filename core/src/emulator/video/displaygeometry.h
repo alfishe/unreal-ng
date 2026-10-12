@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 
 /// What a framebuffer looks like on a screen, in one place.
 ///
@@ -82,5 +83,64 @@ inline double WindowAspect(uint16_t frameWidth, uint16_t frameHeight, uint16_t w
         return 0.0;
     return (static_cast<double>(windowWidth) * frameHeight * kReferenceWidth) /
            (static_cast<double>(frameWidth) * windowHeight * kReferenceHeight);
+}
+
+/// The picture a file or a snapshot of the screen holds: `width` x `height` stored pixels as the CRT shows them.
+/// `aspect` is the shape the picture has on the CRT (WindowAspect for a working window; 0 = the reference 352:288, a
+/// whole frame). When showing each stored line once or twice puts that shape within 5%, the pixels are kept exact
+/// (352x288, a TS-Conf's 720x288 doubled to 720x576, a Spectrum's 256x192 paper); otherwise the picture grows to the
+/// shape - the narrower side is stretched - so that a file never shows a hi-res mode 10% too narrow. Even sizes:
+/// video codecs want them. Every video mode of every machine goes through here, nobody keeps a table of its own
+inline Size Picture(uint16_t width, uint16_t height, double aspect = 0.0)
+{
+    Size size;
+    if (width == 0 || height == 0)
+        return size;
+    if (aspect <= 0.0)
+        aspect = static_cast<double>(kReferenceWidth) / kReferenceHeight;
+
+    auto even = [](uint32_t value) { return static_cast<uint16_t>((value + 1) & ~1u); };
+
+    // Exact: one or two copies of each stored line, the one nearer the wanted shape
+    const double single = static_cast<double>(width) / height;
+    const double doubled = single / 2.0;
+    const bool useDouble = (doubled > aspect ? doubled / aspect : aspect / doubled) < (single > aspect ? single / aspect : aspect / single);
+    const double shape = useDouble ? doubled : single;
+    if ((shape > aspect ? shape / aspect : aspect / shape) <= 1.05)
+    {
+        size.lineRepeat = useDouble ? 2 : 1;
+        size.width = even(width);
+        size.height = even(static_cast<uint32_t>(height) * size.lineRepeat);
+        return size;
+    }
+
+    // Otherwise the picture grows to the wanted shape
+    size.lineRepeat = 1;
+    if (single < aspect)
+    {
+        size.height = even(height);
+        size.width = even(static_cast<uint32_t>(height * aspect + 0.999));
+    }
+    else
+    {
+        size.width = even(width);
+        size.height = even(static_cast<uint32_t>(width / aspect + 0.999));
+    }
+    return size;
+}
+
+/// `src` (srcW x srcH RGBA) stretched by the nearest pixel into dstW x dstH (any sizes; the same size is a copy; whole
+/// line repeats come out as exact copies of each line)
+inline void StretchNearest(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint8_t* dst, uint32_t dstW, uint32_t dstH)
+{
+    if (src == nullptr || dst == nullptr || srcW == 0 || srcH == 0 || dstW == 0 || dstH == 0)
+        return;
+    for (uint32_t y = 0; y < dstH; y++)
+    {
+        const uint8_t* srcRow = src + static_cast<size_t>(static_cast<uint64_t>(y) * srcH / dstH) * srcW * 4;
+        uint8_t* dstRow = dst + static_cast<size_t>(y) * dstW * 4;
+        for (uint32_t x = 0; x < dstW; x++)
+            std::memcpy(dstRow + static_cast<size_t>(x) * 4, srcRow + static_cast<size_t>(static_cast<uint64_t>(x) * srcW / dstW) * 4, 4);
+    }
 }
 }  // namespace DisplayGeometry

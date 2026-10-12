@@ -40,6 +40,7 @@
 
 #include "3rdparty/lodepng/lodepng.h"
 #include "_helpers/scratchfolder.h"
+#include "_helpers/busreport.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "common/filehelper.h"
@@ -734,6 +735,28 @@ TEST_F(SprinterBoot_Test, Dss162_BootsFromAHardDiskImage)
     // The guest's MKDIR reached the image file (WriteThrough)
     DestroyEmulator();
     EXPECT_TRUE(RootHasDirectory(ReadAll(image), "S3B        ")) << "C:\\S3B in the root of " << image;
+    std::remove(image.c_str());
+}
+
+// Bus analyzer, real software (mutation-tests.md R-DSS): the same DSS hard disk boot with the IDE channel traced and
+// checked. The BIOS identifies the master, DSS reads its loader, the MBR, the boot sector, the root and SYSTEM.DOS with
+// READ SECTORS; drivers that work on boards make no finding (data only under DRQ, no command during a transfer, no
+// register write while BSY). Boot-bound like ACC-4 (~500 frames, turbo)
+TEST_F(SprinterBoot_Test, Dss162_IdeDriverIsCleanOnTheBus)
+{
+    const std::string image = DssHddFile("dss-bus.img", "ver\r\n");
+    if (image.empty())
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    InsertHddWriteThrough(image, "ide0.master");
+    ASSERT_TRUE(bustest::Enable(_context, "ide0"));
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenCount("C:\\>") >= 2; }, 800, 5);
+    ASSERT_GE(ScreenCount("C:\\>"), 2u) << ScreenText();
+    const auto commands = bustest::Commands(_context, "ide0", "ata_command");
+    EXPECT_TRUE(bustest::Has(commands, "IDENTIFY DEVICE (#EC)"));
+    EXPECT_TRUE(bustest::Has(commands, "READ SECTORS (#20)"));
+    const auto byRule = bustest::FindingsByRule(_context, "ide0");
+    EXPECT_TRUE(byRule.empty()) << bustest::Describe(byRule);
+    DestroyEmulator();
     std::remove(image.c_str());
 }
 

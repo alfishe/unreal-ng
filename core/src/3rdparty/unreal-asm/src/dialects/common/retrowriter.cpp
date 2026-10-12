@@ -460,7 +460,7 @@ std::vector<std::string> RetroWriter::Data(const Statement& s, bool words)
             item.expr = ShiftCurrent(o.expr, offset);
         if ((words || !CharactersInData()) && item.kind == Operand::Kind::Immediate && item.expr.kind == Expr::Kind::Number && item.expr.spelling == ir::NumberSpelling::Character)
             item.expr.spelling = ir::NumberSpelling::Decimal;
-        items.push_back(OperandText(item));
+        items.push_back(DataItem(item, words));
         offset += words ? 2 : 1;
         if (current)
             flush();   // one item a line: $ is then the item's address in both assemblers once shifted
@@ -769,6 +769,14 @@ std::vector<std::string> RetroWriter::StatementText(const Statement& s, const st
                 strict = true;
                 const auto v = Value(s.args[0]);
                 strict = false;
+                if (!v && !CurrentInEqu() && UsesCurrent(s.args[0]))
+                {
+                    // the target's EQU has no $: its uses are written as values where they are known
+                    deflValues.erase(FullName(label));
+                    deflNames.erase(FullName(label));
+                    diagnostics.push_back({Severity::Info, line, 0, label + " not written (" + Title() + " has no $ in EQU): its uses as values"});
+                    return {";" + label + "=$..."};
+                }
                 if (!v)
                 {
                     // a value the target computes ($ in it): this definition gets a name of its own
@@ -781,6 +789,21 @@ std::vector<std::string> RetroWriter::StatementText(const Statement& s, const st
                 deflValues[FullName(label)] = *v;
                 deflNames.erase(FullName(label));
                 return {";" + label + "=" + Number(*v)};
+            }
+            if (!CurrentInEqu() && UsesCurrent(s.args[0]))
+            {
+                // the name's own value (the source's layout), else the expression's where $ is known
+                std::optional<int64_t> v;
+                if (const SourceLabel* known = Lookup(label))
+                    v = known->value;
+                strict = true;
+                if (!v)
+                    v = Value(s.args[0]);
+                strict = false;
+                if (!v)
+                    return {NotConverted("EQU with $ (" + Title() + " has no $ there) where the address is not known")};
+                diagnostics.push_back({Severity::Info, line, 0, "EQU with $ written as its value " + Number(*v)});
+                return {"EQU " + Number(*v)};
             }
             return {"EQU " + Known(s.args[0])};
         case ir::DirectiveKind::Db: return Data(s, false);
@@ -1015,6 +1038,7 @@ void RetroWriter::WriteLine(const ir::Line& l, size_t k, const std::string* repe
         if (found != options.labelValues.end())
             here = found->second.value;
     }
+    lineAddress = here;
 
     assignedName.clear();
     for (const Statement& s : l.statements)

@@ -604,7 +604,15 @@ TEST(TTDSessionWriter_Test, AWriteErrorKeepsTheFileValid)
 TEST(TTDSessionWriterDeathTest, ACrashKeepsTheCompleteParts)
 {
     GTEST_FLAG_SET(death_test_style, "fast");   // forked: the child writes where the parent reads
-    const std::string path = TestPathHelper::GetUniqueTestScratchPath("crashed-session.ttd");
+    std::string path = TestPathHelper::GetUniqueTestScratchPath("crashed-session.ttd");
+#ifdef _WIN32
+    // Windows has no fork: the child runs the test again as a new process with its own scratch
+    // folder, so it takes the parent's path from the environment
+    if (const char* parent = std::getenv("UNREAL_TEST_TTD_CRASH_PATH"))
+        path = parent;
+    else
+        _putenv_s("UNREAL_TEST_TTD_CRASH_PATH", path.c_str());
+#endif
     std::error_code ec;
     std::filesystem::remove(FileHelper::ToFsPath(path), ec);
     EXPECT_DEATH(

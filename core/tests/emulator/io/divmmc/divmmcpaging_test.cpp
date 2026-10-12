@@ -11,6 +11,7 @@
 #include <set>
 #include <vector>
 
+#include "_helpers/busreport.h"
 #include "_helpers/emulatortesthelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -216,6 +217,21 @@ TEST_F(DivMmcUnoDos_Test, BootsMountsTheCardAndReachesBasic)
     EXPECT_TRUE(ready);
     EXPECT_EQ(_div->RamBank(0)[0x0D42], 0xAA) << "UnoDOS initialized";
     EXPECT_GT(_div->Card(0).blocksRead(), 0u);
+}
+
+// Bus analyzer, real software (mutation-tests.md R-UNODOS): the UnoDOS boot with the DivMMC SPI bus traced and checked:
+// the firmware initializes the card and reads the volume; a driver that works on boards makes no finding
+TEST_F(DivMmcUnoDos_Test, UnoDosSdDriverIsCleanOnTheBus)
+{
+    ASSERT_TRUE(bustest::Enable(_context, "divmmc.spi"));
+    _div->Reset();
+    _emulator->Reset();
+    ASSERT_TRUE(EmulatorTestHelper::RunUntilBASICReady(_emulator, 1500));
+    const auto commands = bustest::Commands(_context, "divmmc.spi");
+    EXPECT_TRUE(bustest::Has(commands, "CMD0"));
+    EXPECT_TRUE(bustest::Has(commands, "CMD17") || bustest::Has(commands, "CMD18")) << "the firmware reads the volume";
+    const auto byRule = bustest::FindingsByRule(_context, "divmmc.spi");
+    EXPECT_TRUE(byRule.empty()) << bustest::Describe(byRule);
 }
 
 // A guest program lists the card's root folder through the esxDOS-compatible API: RST 8 with F_OPENDIR (#A3) and

@@ -13,6 +13,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/z80n/nextregtable.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/next/nextmemory.h"
 #include "emulator/io/z80n/nextreportquery.h"
 #include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/video/next/nextlayerimage.h"
@@ -299,7 +300,7 @@ StateNode NextPixel(EmulatorContext* context, const NextPixelQuery& query)
     }
     NextLayer::InspectEnv env;
     env.ram = context->pMemory ? context->pMemory->RAMPageAddress(0) : nullptr;
-    env.ramPages = MAX_RAM_PAGES;
+    env.ramPages = context->pMemory ? static_cast<NextMemory*>(context->pMemory)->InstalledRamPages() : MAX_RAM_PAGES;
     env.regs = &decoder->Board().Video();
     env.sprites = &decoder->Board().Sprites();
     return NextLayer::InspectPixel(*frame, env, query.x, query.y, query.sub);
@@ -385,23 +386,23 @@ struct EnableBit
 };
 
 const EnableBit kEnableBits[] = {
-    {0, "#FF", false},
-    {1, "#7FFD", false},
-    {2, "#DFFD", false},
-    {3, "#1FFD", false},
+    {0, "#FF", true},
+    {1, "#7FFD", true},
+    {2, "#DFFD", true},
+    {3, "#1FFD", true},
     {4, "+3 floating bus", false},
-    {5, "#6B zxnDMA", false},
-    {6, "#1F Kempston / MD 1", false},
-    {7, "#37 Kempston / MD 2", false},
+    {5, "#6B zxnDMA", true},
+    {6, "#1F Kempston / MD 1", true},
+    {7, "#37 Kempston / MD 2", true},
     {8, "#E3 DivMMC control", true},
     {9, "Multiface (two variable ports)", true},
-    {10, "#103B, #113B I2C", false},
+    {10, "#103B, #113B I2C", true},
     {11, "#E7, #EB SPI", true},
     {12, "#133B, #143B, #153B, #163B UART", false},
     {13, "#FADF, #FBDF, #FFDF mouse", false},
-    {14, "#57, #5B, #303B sprites", false},
-    {15, "#123B Layer 2", false},
-    {16, "#FFFD, #BFFD AY", false},
+    {14, "#57, #5B, #303B sprites", true},
+    {15, "#123B Layer 2", true},
+    {16, "#FFFD, #BFFD AY", true},
     {17, "#0F, #1F, #4F, #5F DAC (Soundrive mode 1)", true},
     {18, "#F1, #F3, #F9, #FB DAC (Soundrive mode 2)", true},
     {19, "#3F, #5F DAC (Profi Covox stereo)", true},
@@ -410,9 +411,9 @@ const EnableBit kEnableBits[] = {
     {22, "#B3 DAC mono (GS Covox)", true},
     {23, "#DF DAC mono (SpecDrum), Kempston alias", true},
     {24, "#BF3B, #FF3B ULA+", false},
-    {25, "#0B Z80 DMA", false},
+    {25, "#0B Z80 DMA", true},
     {26, "#EFF7 Pentagon 1024 memory", false},
-    {27, "#183B-#1F3B Z80 CTC", false},
+    {27, "#183B-#1F3B Z80 CTC", true},
 };
 
 /// What answers a port. The order is the decoder's (PortDecoder_Next::DecodePortIn / DecodePortOut): the first rule that matches wins
@@ -596,7 +597,9 @@ StateNode NextPorts(EmulatorContext* context, const NextPortsQuery& query)
     }
     ew["bits"] = std::move(bits);
     n["enable_word"] = std::move(ew);
-    n["note"] = "enforced = the emulator gates the ports by that bit; the other ports decode regardless of the enable word";
+    n["note"] = "enforced = the emulator gates the ports by that bit (a write is ignored, a read is the idle bus #FF; with the expansion bus on, NR #86-#89 are "
+    "ANDed in). Not enforced: the +3 floating bus (bit 4), the UART (12), the Kempston mouse (13), ULA+ (24) and #EFF7 (26) - the Next does not "
+    "decode those ports at all yet, so there is nothing to gate";
     return n;
 }
 

@@ -32,6 +32,7 @@ CALLS = [
     ('asm_source', {'action': 'dialects'}, 80),
     ('emulator_manage', {'action': 'server'}, 80),
     ('media', {'action': 'formats'}, 80),
+    ('bus_analyzer', {'action': 'list'}, 80),
 ]
 
 

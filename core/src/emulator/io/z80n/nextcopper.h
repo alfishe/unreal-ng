@@ -7,8 +7,11 @@
 ///
 /// The copper's raster is paper-relative: line 0 is the first paper line, horizontal 0 is 11 pixels (7 MHz) before the
 /// first paper pixel (the ULA's counter zero). Time is kept in 28 MHz clocks from line 0 / horizontal 0 of the frame
-/// the geometry describes; the screen runs the copper up to the beam as it draws (RunTo), so the video registers a
-/// MOVE writes are in place for the lines after it.
+/// the geometry describes.
+///
+/// The copper is a bus master of the machine, not a part of the picture: the board runs it up to the beam after every CPU instruction and
+/// before every CPU NextREG write (Sync), so its MOVEs reach the registers in machine time, in order with the CPU's writes, whether or
+/// not a picture is drawn. The picture follows: the hook before a MOVE's write (SetBeforeWrite) draws the pixels the old state made.
 
 #include <cstdint>
 #include <functional>
@@ -34,12 +37,15 @@ public:
         uint8_t reg = 0;
         uint8_t value = 0;
     };
-    using StepFn = std::function<void(const Step&)>;
+    /// A watcher of the copper's steps. It sees an instruction before it takes effect; answering true HOLDS it (a breakpoint stopped the
+    /// machine): the copper stays at that instruction and carries it out, without asking again, when it is run on
+    using StepFn = std::function<bool(const Step&)>;
 
     void SetWriter(WriteFn writer) { _write = std::move(writer); }
     void SetNow(NowFn now) { _now = std::move(now); }
-    /// Called with the copper time of a MOVE just before it writes (the screen draws the pixels the old state made first)
-    void SetBeforeWrite(std::function<void(uint64_t)> hook) { _beforeWrite = std::move(hook); }
+    /// Called with the copper time, the register and the value of a MOVE just before it writes (the screen draws the pixels the old state made
+    /// first)
+    void SetBeforeWrite(std::function<void(uint64_t, uint8_t, uint8_t)> hook) { _beforeWrite = std::move(hook); }
     /// 7 MHz counts per line and lines per frame of the machine timing
     void SetGeometry(unsigned hcPerLine, unsigned linesPerFrame);
     void Reset();
@@ -49,7 +55,7 @@ public:
     void WriteAddressLow(uint8_t value);  ///< NR #61
     void WriteControl(uint8_t value);     ///< NR #62: mode (7:6), address bits 10:8 (2:0)
     void WriteWord(uint8_t value);        ///< NR #63: two writes make an instruction
-    void WriteOffset(uint8_t value) { _offset = value; }  ///< NR #64
+    void WriteOffset(uint8_t value) { _offset = value; _idleUntil = 0; }  ///< NR #64
     uint8_t ReadAddressLow() const { return static_cast<uint8_t>(_address & 0xFF); }
     uint8_t ReadControl() const { return static_cast<uint8_t>((_mode << 6) | ((_address >> 8) & 7)); }
     uint8_t ReadOffset() const { return _offset; }
@@ -59,9 +65,13 @@ public:
     void RunTo(uint64_t target);
     /// Run up to the beam
     void Sync();
-    /// What the copper would do up to copper time `target`, without doing it: a copy of its state runs and tells every instruction it
-    /// completes (the registers of the copper itself are followed). The copper and the machine are left untouched; debug use (breakpoints)
-    void Probe(uint64_t target, std::vector<Step>& steps) const;
+    /// The cheap per-instruction call: does nothing while the copper is stopped
+    void Poll()
+    {
+        if (_mode != 0)
+            Sync();
+    }
+    void SetObserver(StepFn observer) { _observer = std::move(observer); }
     /// The copper clock of the most recent MOVE, and the beam's place at a copper clock: the line counter with NR #64 applied (the cvc
     /// of zxula_timing.vhd, what a WAIT and the line interrupt compare) and the pixel clock in the row (hc)
     uint64_t LastMoveAt() const { return _lastMoveAt; }
@@ -96,7 +106,8 @@ public:
 private:
     friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     uint64_t LineClocks() const { return static_cast<uint64_t>(_hcPerLine) * kClocksPerPixel; }
-    void RunSegment(uint64_t end);
+    /// false: the observer held an instruction (the copper stands at it)
+    bool RunSegment(uint64_t end);
 
     uint16_t _code[1024] = {};
     uint16_t _pc = 0;
@@ -112,8 +123,12 @@ private:
     unsigned _lines = 312;
     uint64_t _frameClocks = 448ull * 312 * 4;
     uint64_t _lastMoveAt = 0;
+    /// Nothing can happen before this copper clock: a WAIT that is not true yet and will be at that clock. The fast path of RunTo; 0 = unknown
+    /// (any write to the list, the mode or the offset puts it back)
+    uint64_t _idleUntil = 0;
+    bool _observed = false;  ///< the instruction at the cursor was shown to the observer (and held): it is carried out next, unasked
     WriteFn _write;
     NowFn _now;
     StepFn _observer;
-    std::function<void(uint64_t)> _beforeWrite;
+    std::function<void(uint64_t, uint8_t, uint8_t)> _beforeWrite;
 };

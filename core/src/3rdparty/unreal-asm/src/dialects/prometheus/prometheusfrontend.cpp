@@ -1,10 +1,12 @@
 #include "dialects/prometheus/prometheusfrontend.h"
 
+#include <algorithm>
 #include <cctype>
 #include <set>
 #include <string_view>
 
 #include "dialects/common/z80.h"
+#include "dialects/prometheus/prometheuscurrent.h"
 
 namespace unrealasm::dialects
 {
@@ -214,7 +216,7 @@ std::vector<std::string> SplitOperands(std::string_view text)
 }
 
 /// $ in the n-th item of DEFB / DEFW is that item's address (checked in PROMETHEUS: DEFW START,$ puts the second
-/// word's own address)
+/// word's own address), in an instruction the address of the operand's field (prometheuscurrent.h)
 void ShiftCurrent(Expr& e, int64_t by)
 {
     if (e.kind == Expr::Kind::Current && by != 0)
@@ -287,6 +289,12 @@ struct LineParser
     uint32_t number = 0;
     bool put = false;   ///< a PUT is in force: the bytes go elsewhere than the addresses say
     int puts = 0;
+    int orgs = 0;
+
+    static bool UsesCurrent(const Expr& e)
+    {
+        return e.kind == Expr::Kind::Current || std::any_of(e.args.begin(), e.args.end(), [](const Expr& a) { return UsesCurrent(a); });
+    }
 
     void Add(ir::Line line) { program.lines.push_back(std::move(line)); }
 
@@ -348,35 +356,49 @@ struct LineParser
         }
         if (upper == "ORG")
         {
-            // Both the address and where the bytes go; ends a PUT
+            // Both the address and where the bytes go; ends a PUT. $ there is still the address under the PUT: an
+            // operand using it is taken before the ENT
+            Expr at = Parse(one());
             if (put)
             {
+                if (UsesCurrent(at))
+                {
+                    const std::string keep = "__PROMETHEUS_ORG" + std::to_string(++orgs);
+                    ir::Line value = Plain();
+                    value.label = keep;
+                    Statement assign = Directive(DirectiveKind::Defl);
+                    assign.args.push_back(std::move(at));
+                    value.statements.push_back(std::move(assign));
+                    Add(std::move(value));
+                    at = Expr::Symbol(keep);
+                }
                 ir::Line end = Plain();
                 end.statements.push_back(Directive(DirectiveKind::Ent));
                 Add(std::move(end));
                 put = false;
             }
             Statement s = Directive(DirectiveKind::Org);
-            s.args.push_back(Parse(one()));
+            s.args.push_back(std::move(at));
             line.statements.push_back(std::move(s));
             return;
         }
         if (upper == "PUT")
         {
             // The bytes go to the operand, the address goes on: ORG there, DISP back to the address it had
+            // (the address taken before the ENT of a PUT in force: $ is where the bytes go after it)
             const std::string keep = "__PROMETHEUS_PUT" + std::to_string(++puts);
-            if (put)
-            {
-                ir::Line end = Plain();
-                end.statements.push_back(Directive(DirectiveKind::Ent));
-                Add(std::move(end));
-            }
             ir::Line at = Plain();
             at.label = keep;
             Statement assign = Directive(DirectiveKind::Defl);
             assign.args.push_back(Expr::Make(Expr::Kind::Current));
             at.statements.push_back(std::move(assign));
             Add(std::move(at));
+            if (put)
+            {
+                ir::Line end = Plain();
+                end.statements.push_back(Directive(DirectiveKind::Ent));
+                Add(std::move(end));
+            }
             if (!line.label.empty())
             {
                 ir::Line labelled = Plain();
@@ -456,6 +478,9 @@ struct LineParser
                 o.text = "af'";
             s.operands.push_back(std::move(o));
         }
+        // $ there is where the operand's value goes
+        for (size_t n = 0; n < s.operands.size(); ++n)
+            ShiftCurrent(s.operands[n].expr, prometheus::OperandField(s, n));
         line.statements.push_back(std::move(s));
     }
 };

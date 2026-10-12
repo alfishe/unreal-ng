@@ -1196,6 +1196,17 @@ bool Config::ParseConfig(IniFile& inimanager)
 			config.network.comPort[0] = '\0';
 		}
 	}
+	config.network.comPort2[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "ComPort2", nullptr), config.network.comPort2, sizeof config.network.comPort2);
+	{
+		ComPortSpec spec;
+		std::string error;
+		if (!ComPortSpec::Parse(config.network.comPort2, spec, error))
+		{
+			MLOGWARNING("Config: [NETWORK] ComPort2=%s: %s - no second COM port", config.network.comPort2, error.c_str());
+			config.network.comPort2[0] = '\0';
+		}
+	}
 	config.network.comModemLines = (inimanager.GetLongValue(network, "ComModemLines", 0) != 0) ? 1 : 0;
 	netValue[0] = '\0';
 	CopyStringValue(inimanager.GetValue(network, "EspChip", nullptr), netValue, sizeof netValue);
@@ -1538,6 +1549,17 @@ std::string Config::GetConfigFolderForModel(MEM_MODEL model, uint32_t ramSizeKB)
 	std::transform(folder.begin(), folder.end(), folder.begin(),
 	               [](unsigned char c) { return (char)std::tolower(c); });
 	return folder;
+}
+
+uint32_t Config::EffectiveRamSize(MEM_MODEL model, uint32_t requestedKb, std::string& note)
+{
+    constexpr uint32_t kFourMegabytes = 4096, kTwoMegabytes = 2048;
+    if (model == MM_NEXT && requestedKb == kFourMegabytes)
+    {
+        note = "ZX Next with 4096 KB (Issue 3): this core addresses 2048 KB (8-bit MMU pages of 8 KB), created with 2048 KB";
+        return kTwoMegabytes;
+    }
+    return requestedKb;
 }
 
 bool Config::IsModelCreatable(const TMemModel& model)

@@ -72,6 +72,7 @@ public:
         std::optional<bool> remoteAccess;     ///< RemoteAccess=: host listeners on 0.0.0.0 (on) or 127.0.0.1 (off)
         std::optional<unsigned> connectTimeoutMs;
         std::optional<std::string> comPort;    ///< ComPort= value (ComPortSpec): the machine's own serial port
+        std::optional<std::string> comPort2;   ///< ComPort2= value (ComPortSpec): its second one (the Next's UART 1)
         std::optional<std::string> zxWifi;     ///< ZxWifi= value (ComPortSpec): the ZX-WiFi card's ESP
         std::optional<bool> comModemLines;     ///< a serial device's RTS / DTR / CTS / DSR / RI / DCD
         std::optional<uint8_t> espChip;        ///< EspModule::Firmware: 0 ESP32, 1 ESP8266 (NonOS), 2 / 3 ESP8266 AT 2.2.1 / 2.2.2
@@ -183,6 +184,7 @@ public:
         {
             std::string card;             ///< NONE | ZXNETUSB | ZXWIFI | ZXNETUSB,ZXWIFI
             std::string comPort;          ///< ComPortSpec text, NONE when empty
+            std::string comPort2;         ///< ComPortSpec text, NONE when empty: the second machine serial port
             std::string zxWifi;           ///< ComPortSpec text, AT when empty
             std::string espChip;          ///< ESP32 | ESP8266
             std::string avrFirmware;      ///< [EVO] Avr= name
@@ -284,6 +286,7 @@ private:
         std::string peer;                 ///< ComPortSpec of the serial port's peer
         bool machineSerial = false;       ///< the machine's own port is no 16550 (Atm2Kbc, Profi8251)
         std::string machinePeer;          ///< ComPortSpec of its peer
+        std::string machinePeer2;         ///< ComPortSpec of the peer of its second port (the Next's UART 1)
         bool atm2IoEsp = false;           ///< the ATM2IOESP card on the INTERNAL I/O connector
         std::string atm2IoEspPeer;        ///< ComPortSpec of its ESP
         uint8_t atm2IoEspAddress = 0xF0;  ///< its bus address
@@ -314,7 +317,8 @@ private:
         bool operator==(const Plan& o) const
         {
             return zxNetUsb == o.zxNetUsb && serial == o.serial && avr == o.avr && peer == o.peer &&
-                   machineSerial == o.machineSerial && machinePeer == o.machinePeer && atm2IoEsp == o.atm2IoEsp &&
+                   machineSerial == o.machineSerial && machinePeer == o.machinePeer && machinePeer2 == o.machinePeer2 &&
+                   atm2IoEsp == o.atm2IoEsp &&
                    atm2IoEspPeer == o.atm2IoEspPeer && atm2IoEspAddress == o.atm2IoEspAddress && zifi == o.zifi &&
                    zifiPeer == o.zifiPeer && slotCards == o.slotCards && ethernetLink == o.ethernetLink;
         }
@@ -342,6 +346,8 @@ private:
                                           const std::array<uint8_t, 6>* mac = nullptr) const;
     /// Plug `_machinePeer` into the machine's own non-16550 port
     void FitMachineSerial(const Plan& plan);
+    /// Plug `_machinePeer2` into the machine's second port (the Next's UART 1)
+    void FitMachineSerial2(const Plan& plan);
     void FitAtm2IoEsp(const Plan& plan);
     void FitSlotCards(const Plan& plan);
     /// The names the traffic tap shows for the socket adapters ("zxnetusb", "com.esp", "isa1.esp", "isa1.modem")
@@ -354,6 +360,7 @@ private:
     std::unique_ptr<ZxNetUsb> _card;
     std::unique_ptr<ComPort> _com;
     std::unique_ptr<ISerialPeer> _machinePeer;   ///< on the machine's own non-16550 port (Atm2Kbc)
+    std::unique_ptr<ISerialPeer> _machinePeer2;  ///< on its second port (the Next's UART 1)
     std::unique_ptr<Atm2IoEsp> _atm2IoEsp;       ///< the card on the ATM Turbo 2+ INTERNAL I/O connector
     std::unique_ptr<ZiFi> _zifi;                 ///< the TS AVR firmware's ZiFi block (on `_com`'s #xxEF)
     std::vector<SlotCard> _slotCards;            ///< network cards in expansion slots (they outlive a network-off refit)

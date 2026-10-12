@@ -149,6 +149,15 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return static_cast<uint8_t>(_regs[reg] & 0xBF);  // bit 6 is not stored (base_7 & '0' & base)
         case 0x10:
             return static_cast<uint8_t>((_regs[reg] & 0x1F) << 2);  // the core id; the DRIVE / M1 buttons read 0
+        case 0xA0:
+            return static_cast<uint8_t>(_regs[reg] & 0x39);  // "00" & pi peripheral bits 5:3 & "00" & bit 0 (zxnext.vhd 6189)
+        case 0xA2:
+            return static_cast<uint8_t>((_regs[reg] & 0xDD) | 0x02);  // bit 5 reads 0 and bit 1 reads 1 (6192)
+        case 0xA8:
+            return static_cast<uint8_t>(_regs[reg] & 0x01);  // the ESP's GPIO0 output enable
+        case 0xA9:
+            // the pins: GPIO2 is pulled up, GPIO0 is what the board drives while NR #A8 enables it, else pulled up (6201)
+            return static_cast<uint8_t>(0x04 | ((_regs[0xA8] & 1) ? (_regs[reg] & 1) : 1));
         case 0x08:
             return static_cast<uint8_t>((_regs[reg] & 0x7F) | ((_machine && _machine->PagingLocked()) ? 0 : 0x80));  // bit 7: port #7FFD is not locked
         default:
@@ -162,6 +171,10 @@ uint8_t NextBoard::Read(uint8_t reg) const
 
 void NextBoard::Write(uint8_t reg, uint8_t value)
 {
+    // A write of the program comes after what the copper has due: the copper runs to the beam first (and the picture follows it), so the
+    // journal and the breakpoints see the writes in the order of their time
+    if (_beforeCpuWrite && !_copperWrite)
+        _beforeCpuWrite();
     if (_journal.Enabled()) [[unlikely]]
     {
         uint32_t frame = 0, t = 0;
@@ -190,10 +203,10 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
         {
             if ((reg == 0x06 || reg == 0x08 || reg == 0x09) && board->_machine)
                 board->_machine->AudioConfigChanged();
+            else if ((reg == 0xA8 || reg == 0xA9) && board->_machine)
+                board->_machine->BoardPinsChanged();
         }
     } audioNotify{this, reg};
-    if (_beforeCpuWrite && !_copperWrite)
-        _beforeCpuWrite();
     if ((reg == 0x2C || reg == 0x2D || reg == 0x2E) && _machine)
         _machine->DacMirrorWrite(reg, value);
     if (_log)
@@ -374,6 +387,8 @@ void NextBoard::RefreshLayer2Mapping()
 
 void NextBoard::AfterInstruction()
 {
+    // The copper is a bus master of the machine: it runs to the beam after every instruction, whether or not a picture is drawn
+    _copper.Poll();
     if (_machine)
     {
         _machine->OnInstructionDone();

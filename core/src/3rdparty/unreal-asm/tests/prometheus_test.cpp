@@ -143,6 +143,13 @@ TEST(PrometheusFrontend_Test, Constructs)
     // PUT: the bytes go elsewhere, the address goes on; ORG ends it
     const std::vector<std::string> put = ToSjasmplus("         org  60000\n         put  62000\nHERE     ld   hl,HERE\n         org  60200");
     EXPECT_EQ(put, (std::vector<std::string>{"ORG 60000", "__PROMETHEUS_PUT1=$", "ORG 62000", "DISP __PROMETHEUS_PUT1", "HERE    LD HL,HERE", "ENT", "ORG 60200"}));
+    // $ in an instruction is where the operand's value goes (checked in PROMETHEUS 48K)
+    EXPECT_EQ(ToSjasmplus("         ld   hl,$\n         ld   ix,$\n         jr   $\n         ld   (ix+5),$\n         ld   bc,($)"),
+              (std::vector<std::string>{"LD HL,$+1", "LD IX,$+2", "JR $+1", "LD (IX+5),$+3", "LD BC,($+2)"}));
+    // $ in a PUT or an ORG that ends a PUT is still the address under it: taken before the ENT
+    const std::vector<std::string> again = ToSjasmplus("         put  62000\n         nop\n         put  63000\n         org  $-5");
+    EXPECT_EQ(again, (std::vector<std::string>{"__PROMETHEUS_PUT1=$", "ORG 62000", "DISP __PROMETHEUS_PUT1", "NOP", "__PROMETHEUS_PUT2=$", "ENT",
+                                               "ORG 63000", "DISP __PROMETHEUS_PUT2", "__PROMETHEUS_ORG1=$-5", "ENT", "ORG __PROMETHEUS_ORG1"}));
 }
 
 TEST(PrometheusFrontend_Test, LabelsEqualTheValuesPrometheusStored)

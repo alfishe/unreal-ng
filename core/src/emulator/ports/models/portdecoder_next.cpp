@@ -2,6 +2,9 @@
 
 #include "portdecoder_next.h"
 
+#include "emulator/io/serial/esp/espmodule.h"
+#include "emulator/io/serial/serialpeer.h"
+
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/ttd/next/ttdnextstate.h"
@@ -18,6 +21,7 @@
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/sound/audio.h"
+#include "emulator/video/next/screennext.h"
 #include "emulator/video/ulacontention.h"
 
 PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spectrum128(context)
@@ -28,10 +32,17 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     if (_context->pKeyboard)
         _context->pKeyboard->SetPs2Sink(&_extendedInput);
     // the picture follows the beam: a video register written by the program applies from the line the beam is on
+    // (the copper first: its MOVEs that are due come before the program's write, as the bus gives the copper the clock it asks for)
     _board->SetBeforeCpuWrite([this]() {
+        _board->Copper().Sync();
         if (_context->pScreen)
             _context->pScreen->UpdateScreen();
     });
+    // The copper is the machine's: it runs after every instruction, its steps are watched for breakpoints, its clock and its picture hook
+    // come from the raster
+    _board->Copper().SetObserver([this](const NextCopper::Step& step) { return OnCopperStep(step); });
+    if (ScreenNext* screen = _context->pScreen ? dynamic_cast<ScreenNext*>(_context->pScreen) : nullptr)
+        screen->BindCopper(_board->Copper());
     _interrupts = std::make_unique<NextInterruptSource>(_context);
     _interrupts->ctcEnables = [this]() { return _ctc.InterruptEnables(); };
     _interrupts->setCtcEnables = [this](uint8_t bits) { _ctc.SetInterruptEnables(bits); };
@@ -41,6 +52,11 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     };
     _ctc.onInterrupt = [this](unsigned channel) {
         _interrupts->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + channel));
+    };
+    _uart.onInterrupt = [this](unsigned channel, bool tx) {
+        const unsigned source = tx ? (channel ? NextInterruptSource::kUart1Tx : NextInterruptSource::kUart0Tx)
+                                   : (channel ? NextInterruptSource::kUart1Rx : NextInterruptSource::kUart0Rx);
+        _interrupts->Raise(static_cast<NextInterruptSource::Source>(source));
     };
     _board->SetJournalClock([this](uint32_t& frame, uint32_t& t, uint16_t& pc) {
         frame = static_cast<uint32_t>(_context->emulatorState.frame_counter);
@@ -89,7 +105,13 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     _multiface = std::make_unique<NextMultiface>(&Mem(), _board.get(), &_context->emulatorState);
     _m1Chain.multiface = _multiface.get();
     _m1Chain.divMmc = _divMmc.get();
-    _interrupts->SetPoller([this]() { _ctc.Advance(Now28()); });
+    _interrupts->SetPoller([this]() {
+        const uint64_t now = Now28();
+        _ctc.Advance(now);
+        if (!_uart.Idle())
+            _uart.Advance(now);
+        _uart.PollInterrupts(_interrupts->UartEnables());
+    });
     _board->SetInterrupts(_interrupts.get());
     // The Next's own sound: three AYs and the DAC, mixed by SoundManager (the Spectrum 128 TurboSound stays silent)
     _audio = std::make_unique<NextAudio>(_context);
@@ -104,7 +126,13 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
                 _context->pMediaManager->NoteWrite(id);
         });
         _sd[i].setTraceListener([this, i](const SdTraceEvent& event) { RecordSdEvent(i, event); });
+        _sd[i].SetBusTap(&_spiTap, static_cast<uint8_t>(i));
+        _sd[i].SetClock([this]() { return EmulatedMicroseconds(); });
+        _spiTap.SetDevice(static_cast<uint8_t>(i), i ? "sd1" : "sd0");
     }
+    // 16 CPU clocks per byte at any speed (spi_master.vhd); the export's scale is the 28 MHz one
+    _spiTap.SetByteTimeNs(16.0 * 1000.0 / 28.0);
+    _spiTap.Attach(_context);
     if (_context->pMediaManager)
     {
         _context->pMediaManager->RegisterSlot(_sdSlot0);
@@ -114,6 +142,13 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
 
 PortDecoder_Next::~PortDecoder_Next()
 {
+    // The peers outlive the decoder (the network manager owns them): they must not call back into this one
+    for (unsigned i = 0; i < NextUart::kChannels; i++)
+        if (ISerialPeer* peer = _uart.Peer(i))
+        {
+            peer->onReceive = nullptr;
+            peer->SetClock(nullptr, 0);
+        }
     if (_context->pKeyboard && _context->pKeyboard->GetPs2Sink() == &_extendedInput)
         _context->pKeyboard->SetPs2Sink(nullptr);
     if (_context->pMediaManager)
@@ -148,6 +183,7 @@ void PortDecoder_Next::reset()
     InsertConfiguredCard();
     _board->Reset(true);
     _ctc.Reset();
+    _uart.Reset(true);
     _audio->Reset();
     AudioConfigChanged();
     _dma.Reset();
@@ -213,6 +249,29 @@ void PortDecoder_Next::Port_DFFD_Next(uint8_t value)
     Mem().ApplyClassicPaging(_state->p7FFD, _state->p1FFD);
 }
 
+bool PortDecoder_Next::PortEnabled(unsigned bit) const
+{
+    const unsigned reg = 0x82 + bit / 8;
+    const unsigned mask = 1u << (bit % 8);
+    if (!(_board->Stored(static_cast<uint8_t>(reg)) & mask))
+        return false;
+    // the expansion bus's own word (NR #86-#89) is ANDed in only while the bus is enabled
+    return !(_board->Stored(0x80) & 0x80) || (_board->Stored(static_cast<uint8_t>(reg + 4)) & mask);
+}
+
+uint8_t PortDecoder_Next::IdleRead(uint16_t port, uint16_t pc)
+{
+    constexpr uint8_t kIdleBus = 0xFF;
+    _lastPortDecoded = false;
+    PortDecodeDisposition disp;
+    disp.decodeRuleIndex = PortTraceRule::kNoTable;
+    disp.decodedPort = port;
+    disp.wasDecoded = false;
+    disp.wasHandledInline = true;
+    OnPortInComplete(port, kIdleBus, pc, disp);
+    return kIdleBus;
+}
+
 uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
 {
     const uint8_t low = static_cast<uint8_t>(port);
@@ -231,9 +290,26 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
             return mfValue;
         }
     }
+    if (NextUart::Decodes(port))
+    {
+        if (!PortEnabled(12))
+            return IdleRead(port, pc);
+        const uint8_t value = _uart.Read(port, Now28());
+        _uart.PollInterrupts(_interrupts->UartEnables());
+        _lastPortDecoded = true;
+        PortDecodeDisposition disp;
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.decodedPort = port;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+        OnPortInComplete(port, value, pc, disp);
+        return value;
+    }
     if (low == NextCtc::kPortLow && (port >> 11) == 0x03)
     {
         // CTC: A15:A11 = 00011, A10:A8 the channel (4-7 are not implemented)
+        if (!PortEnabled(27))
+            return IdleRead(port, pc);
         const unsigned channel = (port >> 8) & 7;
         const uint8_t value = channel < NextCtc::kChannels ? _ctc.Read(channel, Now28()) : 0xFF;
         _lastPortDecoded = channel < NextCtc::kChannels;
@@ -247,6 +323,8 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     }
     if (port == 0x123B)
     {
+        if (!PortEnabled(15))
+            return IdleRead(port, pc);
         const uint8_t value = _board->Video().Port123b();
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
@@ -259,6 +337,8 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     }
     if ((port & 0xC002) == 0xC000 && !IsPort_DFFD_Next(port))  // #FFFD: the selected AY's register
     {
+        if (!PortEnabled(16))
+            return IdleRead(port, pc);
         const uint8_t value = _audio->ReadData();
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
@@ -285,6 +365,8 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     }
     if (low == 0x6B || low == 0x0B)
     {
+        if (!PortEnabled(low == 0x0B ? 25 : 5))
+            return IdleRead(port, pc);
         const uint8_t value = _dma.ReadAs(low == 0x0B);
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
@@ -297,6 +379,8 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     }
     if (port == 0x303B)
     {
+        if (!PortEnabled(14))
+            return IdleRead(port, pc);
         const uint8_t value = _board->Sprites().ReadStatus();
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
@@ -307,7 +391,8 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         OnPortInComplete(port, value, pc, disp);
         return value;
     }
-    if (low == 0xFF && (_board->Stored(NextBoard::kRegPeripheral2) & 0x04))  // NR #08 bit 2: #FF reads the Timex mode
+    // NR #08 bit 2: #FF reads the Timex mode (and only with its enable bit: port_ff_rd_dat; else the ULA's floating bus, below)
+    if (low == 0xFF && (_board->Stored(NextBoard::kRegPeripheral2) & 0x04) && PortEnabled(0))
     {
         const uint8_t value = _board->Video().PortFf();
         _lastPortDecoded = true;
@@ -333,6 +418,8 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     }
     if (port == NextI2c::kPortScl || port == NextI2c::kPortSda)
     {
+        if (!PortEnabled(10))
+            return IdleRead(port, pc);
         const uint8_t value = _i2c.Read(port);
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
@@ -447,45 +534,83 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     disp.wasDecoded = true;
     disp.wasHandledInline = true;
 
-    if (static_cast<uint8_t>(port) == NextCtc::kPortLow && (port >> 11) == 0x03)
+    if (NextUart::Decodes(port))
+    {
+        if (PortEnabled(12))
+        {
+            _uart.Write(port, value, Now28());
+            _uart.PollInterrupts(_interrupts->UartEnables());
+        }
+    }
+    else if (static_cast<uint8_t>(port) == NextCtc::kPortLow && (port >> 11) == 0x03)
     {
         const unsigned channel = (port >> 8) & 7;
-        if (channel < NextCtc::kChannels)
+        if (channel < NextCtc::kChannels && PortEnabled(27))
             _ctc.Write(channel, value, Now28());
     }
     else if (port == NextI2c::kPortScl || port == NextI2c::kPortSda)
-        _i2c.Write(port, value);
+    {
+        if (PortEnabled(10))
+            _i2c.Write(port, value);
+    }
     else if (static_cast<uint8_t>(port) == NextDivMmc::kPort && _divMmc->PortEnabled())
         _divMmc->WritePort(value);
     else if (static_cast<uint8_t>(port) == 0xFF)
     {
-        if (_context->pScreen)
-            _context->pScreen->UpdateScreen();
-        _board->Video().WritePortFf(value);
+        if (PortEnabled(0))
+        {
+            if (_context->pScreen)
+                _context->pScreen->UpdateScreen();
+            _board->Video().WritePortFf(value);
+        }
     }  // the Timex screen mode (NR #69 bits 5:0 alias it)
     else if (port == 0x123B)
+    {
+        if (PortEnabled(15))
         {
-        if (_context->pScreen)
-            _context->pScreen->UpdateScreen();
-        _board->Video().WritePort123b(value);
-        _board->RefreshLayer2Mapping();
+            if (_context->pScreen)
+                _context->pScreen->UpdateScreen();
+            _board->Video().WritePort123b(value);
+            _board->RefreshLayer2Mapping();
         }
+    }
     else if ((port & 0xC002) == 0xC000 && !IsPort_DFFD_Next(port))
-        _audio->WriteSelect(value);  // #FFFD
+    {
+        if (PortEnabled(16))
+            _audio->WriteSelect(value);  // #FFFD
+    }
     else if ((port & 0xC002) == 0x8000)
-        _audio->WriteData(value);    // #BFFD
+    {
+        if (PortEnabled(16))
+            _audio->WriteData(value);    // #BFFD
+    }
     else if (port == 0x303B)
-        _board->Sprites().WriteSlotSelect(value);
+    {
+        if (PortEnabled(14))
+            _board->Sprites().WriteSlotSelect(value);
+    }
     else if (WriteDacPort(port, value))
         ;
     else if (static_cast<uint8_t>(port) == 0x6B)
-        _dma.Write(value, false);
+    {
+        if (PortEnabled(5))
+            _dma.Write(value, false);
+    }
     else if (static_cast<uint8_t>(port) == 0x0B)
-        _dma.Write(value, true);
+    {
+        if (PortEnabled(25))
+            _dma.Write(value, true);
+    }
     else if (static_cast<uint8_t>(port) == 0x57)
-        _board->Sprites().WriteAttribute(value);
+    {
+        if (PortEnabled(14))
+            _board->Sprites().WriteAttribute(value);
+    }
     else if (static_cast<uint8_t>(port) == 0x5B)
-        _board->Sprites().WritePattern(value);
+    {
+        if (PortEnabled(14))
+            _board->Sprites().WritePattern(value);
+    }
     else if (static_cast<uint8_t>(port) == kPortSpiSelect && SpiPortEnabled())
         SpiSelect(value);
     else if (static_cast<uint8_t>(port) == kPortSpiData && SpiPortEnabled())
@@ -495,11 +620,20 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     else if (port == kPortRegData)
         _board->WriteSelected(value);
     else if (IsPort_7FFD_Next(port))
-        Port_7FFD_Next(port, value, pc);
+    {
+        if (PortEnabled(1))
+            Port_7FFD_Next(port, value, pc);
+    }
     else if (IsPort_1FFD_Next(port))
-        Port_1FFD_Next(value);
+    {
+        if (PortEnabled(3))
+            Port_1FFD_Next(value);
+    }
     else if (IsPort_DFFD_Next(port))
-        Port_DFFD_Next(value);
+    {
+        if (PortEnabled(2))
+            Port_DFFD_Next(value);
+    }
     else
     {
         PortDecoder_Spectrum128::DecodePortOut(port, value, pc);
@@ -598,7 +732,7 @@ void PortDecoder_Next::NextRegAccess(bool write, uint8_t reg, uint8_t value, Nex
     {
         case NextRegSource::NextReg: door = BRK_NR_DOOR_NEXTREG; break;
         case NextRegSource::Port: door = BRK_NR_DOOR_PORT; break;
-        default: return;  // the copper is watched on its own (WatchCopper); the board itself (reset, a loader) has no one to stop
+        default: return;  // the copper is watched on its own (OnCopperStep); the board itself (reset, a loader) has no one to stop
     }
     if (_breakpointActive || !_context->pDebugManager || !_context->pEmulator)
         return;
@@ -624,7 +758,7 @@ void PortDecoder_Next::OnInstructionDone()
     BreakpointManager& manager = *_context->pDebugManager->GetBreakpointsManager();
     if (manager.GetHotState()->hasMagic) [[unlikely]]
         WatchMagic(manager);
-    if (!manager.GetHotState()->copperWatch) [[likely]]
+    if (!manager.GetHotState()->hasBeam) [[likely]]
     {
         _watchValid = false;  // the next look starts from the beam of that moment
         return;
@@ -654,6 +788,41 @@ void PortDecoder_Next::WatchMagic(BreakpointManager& manager)
         FireBreakpoint(id, start, BreakpointHitKind::Magic);
 }
 
+/// The copper is about to carry out an instruction: a copper-instruction breakpoint, or a NextREG write breakpoint that takes the copper's
+/// door, stops the machine BEFORE the MOVE writes (true: the copper holds the instruction until it runs on)
+bool PortDecoder_Next::OnCopperStep(const NextCopper::Step& step)
+{
+    if (_breakpointActive || !_context->pDebugManager || !_context->pEmulator)
+        return false;
+    BreakpointManager& manager = *_context->pDebugManager->GetBreakpointsManager();
+    const BreakpointHotState* hot = manager.GetHotState();
+    if (!hot->hasCopperPc && !hot->hasNextRegWrite)
+        return false;
+    uint16_t found = BRK_INVALID;
+    uint16_t address = 0;
+    BreakpointHitKind kind = BreakpointHitKind::CopperInstruction;
+    if (hot->hasCopperPc)
+    {
+        found = manager.HandleCopperPc(step.pc);
+        address = step.pc;
+    }
+    if (step.isMove && step.reg != 0 && hot->hasNextRegWrite)
+    {
+        const uint16_t id = manager.HandleNextReg(BRK_NR_WRITE, step.reg, step.value, BRK_NR_DOOR_COPPER);  // counts its hits as well
+        if (found == BRK_INVALID && id != BRK_INVALID)
+        {
+            found = id;
+            address = step.reg;
+            kind = BreakpointHitKind::NextRegWrite;
+        }
+    }
+    if (found == BRK_INVALID)
+        return false;
+    FireBreakpoint(found, address, kind);
+    return true;
+}
+
+/// Beam breakpoints: the beam passed the place since the last look (the copper's own steps are OnCopperStep's)
 void PortDecoder_Next::WatchCopper(BreakpointManager& manager)
 {
     NextCopper& copper = _board->Copper();
@@ -669,37 +838,13 @@ void PortDecoder_Next::WatchCopper(BreakpointManager& manager)
     const uint64_t from = _watchClock;
     const bool wrapped = now < from;  // the frame rolled over
     _watchClock = now;
-    // The instructions the copper completes in (from, now]: a probe from the real copper's cursor, which lags by up to a line
-    _watchSteps.clear();
-    if (copper.Mode() != 0)
-        copper.Probe(now, _watchSteps);
     auto inSpan = [&](uint64_t at) { return wrapped ? (at > from || at <= now) : (at > from && at <= now); };
-    uint16_t found = BRK_INVALID;
-    uint16_t address = 0;
-    BreakpointHitKind kind = BreakpointHitKind::CopperInstruction;
-    auto take = [&](uint16_t id, uint16_t at, BreakpointHitKind k) {
-        if (id != BRK_INVALID && found == BRK_INVALID)
-        {
-            found = id;
-            address = at;
-            kind = k;
-        }
-    };
-    for (const NextCopper::Step& step : _watchSteps)
-    {
-        if (!inSpan(step.at))
-            continue;
-        take(manager.HandleCopperPc(step.pc), step.pc, BreakpointHitKind::CopperInstruction);
-        if (step.isMove && step.reg != 0)
-            take(manager.HandleNextReg(BRK_NR_WRITE, step.reg, step.value, BRK_NR_DOOR_COPPER), step.reg, BreakpointHitKind::NextRegWrite);
-    }
-    take(manager.HandleBeam([&](uint16_t line, uint16_t hc) {
-             const uint64_t at = copper.ClockOf(line, hc);
-             return at != UINT64_MAX && inSpan(at);
-         }),
-         0, BreakpointHitKind::Beam);
+    const uint16_t found = manager.HandleBeam([&](uint16_t line, uint16_t hc) {
+        const uint64_t at = copper.ClockOf(line, hc);
+        return at != UINT64_MAX && inSpan(at);
+    });
     if (found != BRK_INVALID)
-        FireBreakpoint(found, address, kind);
+        FireBreakpoint(found, 0, BreakpointHitKind::Beam);
 }
 
 void PortDecoder_Next::StepDma()
@@ -790,6 +935,7 @@ void PortDecoder_Next::PerformReset(bool hard)
         RecordInt(e);
     }
     _dma.Reset();         // zxnext.vhd: the DMA's reset_i is the hard or the soft reset
+    _uart.Reset(hard);    // the FIFOs on any reset, the prescalers and frames on the hard one (uart.vhd)
     _divMmc->Reset();     // E3 and the automap latches (zxnext.vhd 4175, divmmc.vhd 108-139) and the Multiface's session are `reset` too
     _multiface->Reset();
     Mem().ApplyClassicPaging(0, 0);
@@ -810,7 +956,9 @@ uint64_t PortDecoder_Next::Now28() const
 double PortDecoder_Next::Now() const
 {
     const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1u;
-    return static_cast<double>(_state->t_states) + static_cast<double>(_context->pCore->GetZ80()->t) / multiplier;
+    // a peer fitted while the machine is being built has no CPU to ask yet
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    return static_cast<double>(_state->t_states) + (z80 ? static_cast<double>(z80->t) / multiplier : 0.0);
 }
 
 bool PortDecoder_Next::InsertSdCard(unsigned index, std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode)
@@ -921,11 +1069,23 @@ void PortDecoder_Next::SpiSelect(uint8_t value)
         line = _board->SdSwap() ? 0 : 1;
     if (line == _spiSelected)
         return;
+    const bool tap = _spiTap.Active();
+    // A select change with a byte still shifting: one finding, on the first line that changes
+    bool midByte = tap && _spiPendingValid && Now() < SpiBusyUntil();
     if (_spiSelected >= 0)
+    {
         _sd[_spiSelected].select(false);
+        if (tap) [[unlikely]]
+            _spiTap.SpiSelect(static_cast<uint8_t>(_spiSelected), false, midByte);
+        midByte = false;
+    }
     _spiSelected = line;
     if (line >= 0)
+    {
         _sd[line].select(true);
+        if (tap) [[unlikely]]
+            _spiTap.SpiSelect(static_cast<uint8_t>(line), true, midByte);
+    }
 }
 
 void PortDecoder_Next::SpiWrite(uint8_t value)
@@ -934,10 +1094,14 @@ void PortDecoder_Next::SpiWrite(uint8_t value)
     if (now < SpiBusyUntil())
     {
         _spiTooFast++;
+        if (_spiTap.Active()) [[unlikely]]
+            _spiTap.SpiEarly(SpiTapSlot(), true, value);
         return;
     }
     SpiSettle(now);
     _spiPending = _spiSelected >= 0 ? _sd[_spiSelected].exchange(value) : 0xFF;
+    if (_spiTap.Active()) [[unlikely]]
+        _spiTap.SpiByte(SpiTapSlot(), value, _spiPending, false);
     _spiPendingValid = true;
     _spiBusyRatio = SpeedRatio();
     _spiBusyUntil = now + kSpiByteClocks / _spiBusyRatio;
@@ -976,12 +1140,16 @@ uint8_t PortDecoder_Next::SpiRead()
     {
         // an early read gets the old miso_dat and starts nothing (spi_master.vhd 108-132)
         _spiTooFast++;
+        if (_spiTap.Active()) [[unlikely]]
+            _spiTap.SpiEarly(SpiTapSlot(), false, 0xFF);
         return _spiRx;
     }
     SpiSettle(now);
     const uint8_t result = _spiRx;
     // a read starts a transfer of #FF; its answer is what the next read returns
     _spiPending = _spiSelected >= 0 ? _sd[_spiSelected].exchange(0xFF) : 0xFF;
+    if (_spiTap.Active()) [[unlikely]]
+        _spiTap.SpiByte(SpiTapSlot(), 0xFF, _spiPending, true);
     _spiPendingValid = true;
     _spiBusyRatio = SpeedRatio();
     _spiBusyUntil = now + kSpiByteClocks / _spiBusyRatio;
@@ -1211,15 +1379,62 @@ bool PortDecoder_Next::RequestBoardNmi()
 
 std::vector<ttd::PeripheralId> PortDecoder_Next::GetTTDModelStateIds() const
 {
-    return {ttd::PeripheralId::NextState, ttd::PeripheralId::NextDivMmcRam};
+    return {ttd::PeripheralId::NextState, ttd::PeripheralId::NextSystemArea};
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Next::CreateTTDSerializers() const
 {
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
     serializers.push_back(std::make_unique<ttd::TTDNextState>(*const_cast<PortDecoder_Next*>(this)));
-    serializers.push_back(std::make_unique<ttd::TTDNextDivMmcRam>(*_context->pMemory));
+    serializers.push_back(std::make_unique<ttd::TTDNextSystemArea>(*_context->pMemory));
     return serializers;
 }
 
 /// endregion </TTD>
+
+/// region <UART peers>
+
+void PortDecoder_Next::SetUartPeer(unsigned channel, ISerialPeer* peer)
+{
+    if (channel >= NextUart::kChannels)
+        return;
+    _uart.Advance(Now28());
+    if (ISerialPeer* old = _uart.Peer(channel); old && old != peer)
+    {
+        old->onReceive = nullptr;
+        old->SetClock(nullptr, 0);
+    }
+    if (peer)
+    {
+        constexpr uint32_t kBaseClockHz = 3500000;
+        peer->SetClock([this]() { return static_cast<uint64_t>(Now()); }, kBaseClockHz);
+        // Bytes from outside arrive at their emulated time: the UART catches up first
+        peer->onReceive = [this]() {
+            _uart.Advance(Now28());
+            _uart.PollInterrupts(_interrupts->UartEnables());
+        };
+    }
+    _uart.SetPeer(channel, peer);
+    if (channel == 0)
+        BoardPinsChanged();  // a module fitted now sees the pin as it is
+}
+
+void PortDecoder_Next::BoardPinsChanged()
+{
+    // zxnext.vhd: o_ESP_GPIO_0 = NR #A9 bit 0, driven while NR #A8 bit 0 enables it (else the pad floats, pulled up)
+    const bool low = (_board->Stored(0xA8) & 1) && !(_board->Stored(0xA9) & 1);
+    if (auto* esp = dynamic_cast<EspModule*>(_uart.Peer(0)))
+        esp->SetFlashPin(low);
+}
+
+PortDecoder::NetworkCapabilities PortDecoder_Next::DescribeNetwork()
+{
+    NetworkCapabilities caps;
+    caps.serialPort = NetworkCapabilities::SerialPort::NextUart;
+    caps.attachSerialPeer = [this](ISerialPeer* peer) { SetUartPeer(0, peer); };
+    caps.attachSecondSerialPeer = [this](ISerialPeer* peer) { SetUartPeer(1, peer); };
+    caps.serialBaud = [this]() { return _uart.GetView(0).baud; };
+    return caps;
+}
+
+/// endregion

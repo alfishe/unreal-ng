@@ -131,6 +131,24 @@ class TestNextReports:
         assert add({"type": "copper", "address": 1024}).status_code == 400
         api_client.session.delete(api_client._url(f"/api/v1/emulator/{next_emulator}/breakpoints"))
 
+    def test_uart_report_and_peers(self, api_client, next_emulator):
+        report = get(api_client, next_emulator, "/state/next/uart").json()
+        assert report["available"] is True and [c["name"] for c in report["channels"]] == ["esp", "pi"]
+        esp, pi = report["channels"]
+        assert esp["frame"]["data_bits"] == 8 and esp["frame"]["parity"] == "N" and esp["rx"]["capacity"] == 512 and esp["tx"]["capacity"] == 64
+        assert esp["peer"]["attached"] is True  # the shipped ESP module (AT firmware)
+        assert pi["peer"]["attached"] is False
+        # a loopback on the Pi's line: ComPort2=
+        changed = post(api_client, next_emulator, "/network/config", {"com_port2": "loopback"})
+        assert changed.status_code == 200, changed.text
+        deadline = time.time() + 5  # a change of the lines is taken at a frame boundary
+        while time.time() < deadline:
+            pi = get(api_client, next_emulator, "/state/next/uart").json()["channels"][1]
+            if pi["peer"]["attached"]:
+                break
+            time.sleep(0.05)
+        assert pi["peer"]["attached"] is True and pi["peer"]["kind"] == "loopback"
+
     def test_extended_keys_follow_the_hosts_keys(self, api_client, next_emulator):
         report = get(api_client, next_emulator, "/state/next/input").json()
         assert report["extended_keys"]["pressed"] == [] and report["md_pad_extra"]["nr_b2"] == "0x00"
@@ -186,6 +204,24 @@ class TestNextReports:
                 break
             time.sleep(0.1)
         assert report["right_pad"]["buttons"] == ["start"] and report["md_pad_extra"]["left"] == {"mode": False, "x": False, "y": False, "z": False}
+
+    def test_ram_sizes_a_4mb_request_is_created_as_2mb_with_a_note(self, api_client):
+        models = api_client.session.get(api_client._url("/api/v1/emulator/models")).json()["models"]
+        nxt = [m for m in models if m["name"] == "NEXT"][0]
+        assert nxt["available_ram_sizes_kb"] == [1024, 2048], "4096 is not an offered size (no menu entry)"
+        refused = api_client.session.post(api_client._url("/api/v1/emulator/start"), json={"model": "NEXT", "ram_size": 512})
+        assert refused.status_code == 400, refused.text
+        created = api_client.session.post(api_client._url("/api/v1/emulator/start"), json={"model": "NEXT", "ram_size": 4096})
+        assert created.status_code == 201, created.text
+        body = created.json()
+        assert "2048" in body["note"] and "4096" in body["note"], body
+        emulator_id = body["id"]
+        try:
+            info = api_client.session.get(api_client._url(f"/api/v1/emulator/{emulator_id}")).json()
+            assert info["ram_kb"] == 2048
+        finally:
+            api_client.stop_emulator(emulator_id)
+            api_client.delete_emulator(emulator_id)
 
     def test_magic_opcode_breakpoints(self, api_client, next_emulator):
         def add(body):

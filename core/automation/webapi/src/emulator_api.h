@@ -338,11 +338,19 @@ public:
     ADD_METHOD_TO(EmulatorAPI::postNextRegJournal, "/api/v1/emulator/{id}/next/reg-journal", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateNextSd, "/api/v1/emulator/{id}/state/next/sd", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNextSdJournal, "/api/v1/emulator/{id}/next/sd-journal", drogon::Post);
+    // Bus analyzer (implementation: api/bus_api.cpp; docs/inprogress/2026-10-11-bus-analyzer)
+    ADD_METHOD_TO(EmulatorAPI::getBuses, "/api/v1/emulator/{id}/bus", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getBusEvents, "/api/v1/emulator/{id}/bus/{bus}/events", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getBusFindings, "/api/v1/emulator/{id}/bus/{bus}/findings", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postBusTraceJournal, "/api/v1/emulator/{id}/bus/{bus}/trace-journal", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::busSdTiming, "/api/v1/emulator/{id}/bus/{bus}/sd-timing", drogon::Get, drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getBusExport, "/api/v1/emulator/{id}/bus/{bus}/export", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateNextDivMmc, "/api/v1/emulator/{id}/state/next/divmmc", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNextDivMmcJournal, "/api/v1/emulator/{id}/next/divmmc-journal", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateNextNmi, "/api/v1/emulator/{id}/state/next/nmi", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateNextAudio, "/api/v1/emulator/{id}/state/next/audio", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateNextInput, "/api/v1/emulator/{id}/state/next/input", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextUart, "/api/v1/emulator/{id}/state/next/uart", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNextNmiJournal, "/api/v1/emulator/{id}/next/nmi-journal", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateNextMagicPort, "/api/v1/emulator/{id}/state/next/magic-port", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNextMagicPort, "/api/v1/emulator/{id}/next/magic-port", drogon::Post);
@@ -1253,6 +1261,26 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     /// @brief POST /api/v1/emulator/{id}/next/sd-journal {"enabled", "clear", "capacity"} — switch, clear or resize the SD journal
     void postNextSdJournal(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                            const std::string& id) const;
+    // region Bus analyzer (implementation: api/bus_api.cpp)
+    /// @brief GET /api/v1/emulator/{id}/bus — every bus of the machine and its cards
+    void getBuses(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/bus/{bus}/events?kinds=&slot=&since=&from=&to=&limit= — the bus's trace
+    void getBusEvents(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id, const std::string& bus) const;
+    /// @brief GET /api/v1/emulator/{id}/bus/{bus}/findings?rules=&since=&limit= — what the checks found
+    void getBusFindings(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id, const std::string& bus) const;
+    /// @brief POST /api/v1/emulator/{id}/bus/{bus}/trace-journal {"enabled", "checks", "clear", "capacity"} — trace / checks on, off
+    void postBusTraceJournal(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id, const std::string& bus) const;
+    /// @brief GET / POST /api/v1/emulator/{id}/bus/{bus}/sd-timing {"slot", "profile", "seed"} — an SD card's timing profile
+    void busSdTiming(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id, const std::string& bus) const;
+    /// @brief GET /api/v1/emulator/{id}/bus/{bus}/export?format=vcd|jsonl&... — the trace as VCD or JSON lines
+    void getBusExport(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id, const std::string& bus) const;
+    // endregion
     /// @brief GET /api/v1/emulator/{id}/state/next/divmmc?kinds=&since=&from=&to=&limit= — the DivMMC, its automap entries and the DivMMC journal
     void getStateNextDivMmc(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                             const std::string& id) const;
@@ -1268,6 +1296,9 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     /// @brief GET /api/v1/emulator/{id}/state/next/input — the Next's joystick modes (NR #05 / #0B), the Kempston port, what is not modelled
     void getStateNextInput(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                            const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/next/uart — the Next's two UARTs: baud, frame, FIFOs, status, interrupts and the peers
+    void getStateNextUart(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id) const;
     /// @brief POST /api/v1/emulator/{id}/next/nmi-journal {"enabled", "clear", "capacity"} — switch, clear or resize the interrupt / NMI / reset journal
     void postNextNmiJournal(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                             const std::string& id) const;

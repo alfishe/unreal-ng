@@ -15,6 +15,9 @@ from the same source. The assembler disk is the collection's; the tool creates i
     inject-oracle.py gens4 <DEVPAC_4.TAP> <source.asm> <address> [--wait 240]
     inject-oracle.py zeus1983 <ZEUS.TAP> <source.asm> <address> [--wait 60]
     inject-oracle.py primus <PRIMUS29.SCL> <source.asm> <address> [--wait 30]
+    inject-oracle.py lasergenius <LG_1_04.SCL> <source.asm> <address> [--wait 20]
+    inject-oracle.py prometheus <prometheus-48.tap> <source.asm> <address> [--wait 10]
+    inject-oracle.py pasm <PASM3_0.SCL> <source.asm> <address> [--wait 5]
 
 XAS (Z3): started from its disk, the first source of its list loaded (or a new text), its command line opened (EXT;
 9.x need the keys held 12 frames), the source written there and assembled with A.
@@ -43,6 +46,19 @@ ZEUS 1983 (Z4): its code written at 57344 of a 48K machine and started there, th
 
 Primus 2.9 (Z4): started from its disk (it loads its manual PRI.DOC), the source written at its prompt by force (no
 "changed" flag), assembled with "a out" (the code saved as out), the bytes the file it saved.
+
+Laser Genius 1.04 (Z4): started from its disk (the loader's questions: tool-kit y, hash extensions n, disk d), the
+source written in its editor by force (no "changed" flag), assembled with "assem". It stores code only after a PUT
+and between #68D2 and #7F22: give sources from #6900.
+
+PROMETHEUS 48K (Z4): loaded from its tape on a 48K machine (installed at 24000), the source written in its editor
+by force (no "changed" flag), assembled with SS+A. Its source and names lie from #9C28 up: give sources from 60000.
+
+Power Assembler 3.0 (Z4): started from its disk on a Pentagon 128, the source written in its editor by force (no
+"changed" flag) as ZAP and GET leave it, compiled with the menu's L (SYMBOL SHIFT, then CAPS SHIFT, then L). PASM
+puts the code from #8000 up in an image of the 48K memory (#8000-#BFFF in RAM page 3, #C000-#FFFF in page 0), code
+below #8000 from #2000 of page 4 whatever the ORG (give the ORG as the address there): the bytes are read there. It
+takes one ORG (a later one forward is written as zeros). 674 lines take it about 30 s: --wait 45.
 
 With --project the source goes as a path, and each file it INCLUDEs into an ALASM text page of its own (the INCLUDE
 names the page); --template always takes the INCLUDEs (zxasm inject reads them beside the source).
@@ -327,9 +343,101 @@ def primus(emu, args, expected):
     return b''
 
 
+def lasergenius(emu, args, expected):
+    emu.insert_disk(os.path.abspath(args.disk))
+    emu.run_trdos(args.boot or 'L_G_ASS.', wait=6)
+    emu.tap('1')                                       # the loader's menu is a BASIC INPUT
+    emu.tap('enter')
+    time.sleep(4)
+    for key in ('y', 'n', 'd'):                        # tool-kit, hash extensions, from disk
+        emu.tap(key)
+        emu.tap('enter')
+        time.sleep(3)
+    time.sleep(6)
+    with open(args.source, encoding='utf-8') as f:
+        body = {'from': args.from_, 'assembler': 'lasergenius-1.04', 'title': 'INJECTED', 'text': f.read(), 'force': True}
+    reply = emu.post('/asm/sync/inject', body)
+    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
+    for d in reply.get('diagnostics', []):
+        if d.get('severity') != 'info':
+            print('  ', d)
+    emu.write(args.address, [0xAA] * len(expected))
+    emu.type('assem')
+    emu.tap('enter')
+    time.sleep(args.wait)
+    emu.screenshot(os.path.abspath(args.source) + '.lasergenius-1.04.png')
+    return bytes(emu.read(args.address, len(expected)))
+
+
+def prometheus(emu, args, expected):
+    emu.post('/tape/load', {'path': os.path.abspath(args.disk)})
+    emu.post('/basic/run', {'command': 'LOAD ""'})
+    emu.post('/tape/play')
+    for _ in range(240):
+        time.sleep(0.5)
+        if emu.get('/tape/info').get('state') in ('ended', 'stopped'):
+            break
+    time.sleep(2)
+    emu.tap('enter')                                   # the installer: run the assembler
+    time.sleep(3)
+    emu.post('/tape/eject')
+    with open(args.source, encoding='utf-8') as f:
+        body = {'from': args.from_, 'assembler': 'prometheus-48', 'title': 'INJECTED', 'text': f.read(), 'force': True}
+    reply = emu.post('/asm/sync/inject', body)
+    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
+    for d in reply.get('diagnostics', []):
+        if d.get('severity') != 'info':
+            print('  ', d)
+    emu.write(args.address, [0xAA] * len(expected))
+    emu.post('/keyboard/combo', {'keys': ['ss', 'a'], 'frames': 4})
+    time.sleep(0.5)
+    emu.tap('enter')
+    time.sleep(args.wait)
+    emu.screenshot(os.path.abspath(args.source) + '.prometheus-48.png')
+    return bytes(emu.read(args.address, len(expected)))
+
+
+def pasm(emu, args, expected):
+    emu.insert_disk(os.path.abspath(args.disk))
+    emu.run_trdos(args.boot or 'PASM3.0', wait=8)
+    with open(args.source, encoding='utf-8') as f:
+        body = {'from': args.from_, 'assembler': 'pasm-3.0', 'title': 'INJECTED', 'text': f.read(), 'force': True}
+    reply = emu.post('/asm/sync/inject', body)
+    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
+    for d in reply.get('diagnostics', []):
+        if d.get('severity') != 'info':
+            print('  ', d)
+    page, offset = pasm_object_place(args.address)
+    emu.post(f'/memory/page/ram/{page}', {'offset': offset, 'data': [0xAA] * len(expected)})
+    # the menu: SYMBOL SHIFT, then CAPS SHIFT, both released (a combined tap may type the letter), then L (compile)
+    emu.post('/keyboard/press', {'key': 'ss'})
+    time.sleep(0.1)
+    emu.post('/keyboard/press', {'key': 'cs'})
+    time.sleep(0.15)
+    emu.post('/keyboard/release', {'key': 'cs'})
+    emu.post('/keyboard/release', {'key': 'ss'})
+    time.sleep(0.6)
+    emu.tap('l')
+    time.sleep(args.wait)
+    emu.screenshot(os.path.abspath(args.source) + '.pasm-3.0.png')
+    data = emu.get(f'/memory/page/ram/{page}?offset={offset}&length={len(expected)}')['data']
+    return bytes(data)
+
+
+def pasm_object_place(address):
+    """Where PASM 3.0 puts the code it compiles (seen in unreal-ng): code from #8000 up in an image of the 48K memory
+    (#8000-#BFFF in RAM page 3, #C000-#FFFF in page 0), code below #8000 from #2000 of page 4 (#E000 there) whatever
+    its ORG; give the ORG as the address there"""
+    if address >= 0xC000:
+        return 0, address - 0xC000
+    if address >= 0x8000:
+        return 3, address - 0x8000
+    return 4, 0x2000
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412', 'zasm315', 'masm11', 'gens4', 'zeus1983', 'primus'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412', 'zasm315', 'masm11', 'gens4', 'zeus1983', 'primus', 'lasergenius', 'prometheus', 'pasm'])
     parser.add_argument('disk', help='the assembler disk, or with --template an idle template snapshot')
     parser.add_argument('--template', action='store_true', help='inject with zxasm into the template snapshot instead (Z1)')
     parser.add_argument('--zxasm', default=os.environ.get('ZXASM', 'zxasm'))
@@ -350,12 +458,18 @@ def main():
     parser.add_argument('--keep', action='store_true', help='keep the instance (default: delete it)')
     args = parser.parse_args()
     expected = sjasmplus_bytes(args.sjasmplus, args.source, args.address)
-    emu = Emulator(port=args.port, model='48K' if args.assembler in ('gens4', 'zeus1983') else 'PENTAGON')
+    emu = Emulator(port=args.port, model='48K' if args.assembler in ('gens4', 'zeus1983', 'prometheus') else 'PENTAGON')
     try:
         if args.assembler == 'xas':
             built = xas(emu, args, expected)
         elif args.assembler == 'primus':
             built = primus(emu, args, expected)
+        elif args.assembler == 'lasergenius':
+            built = lasergenius(emu, args, expected)
+        elif args.assembler == 'prometheus':
+            built = prometheus(emu, args, expected)
+        elif args.assembler == 'pasm':
+            built = pasm(emu, args, expected)
         elif args.assembler == 'zeus1983':
             built = zeus1983(emu, args, expected)
         elif args.assembler == 'gens4':

@@ -25,6 +25,11 @@ The machine boots the real chain only when the model's config names the boot ROM
 `testdata/machines/zxnext/card` is a starting point; the full NextZXOS distribution works as it is). Without them the machine
 starts in the bare personality (128K ROM, no SD).
 
+**RAM size.** `ram_size` 1024 (Issue 1) or 2048 (Issue 2, the default); they are what `GET /emulator/models` lists and the menus offer. 4096 (Issue 3)
+is accepted by the API only: the core (3.02.03) addresses 2 MB - an 8-bit MMU page of 8 KB, `#E0` and above the ROM - so the machine is created with
+2048 and the reply carries a `note` saying so (requirements.md Q4). On a 1 MB machine an MMU bank beyond the installed RAM is not wired: its slot
+reads as `unmapped` (`state/next/mmu`), a write to it goes nowhere. `POST /emulator/start {"model":"NEXT","ram_size":1024}`.
+
 The card is the media manager's slot `sd.next0` (alias `sd`; `sd.next1` is the second socket): `[NEXT] SdCard` only names the card put into an empty slot at the power-on and at every reset, and every
 insert, swap, rescan or eject is `media {"action":"insert","slot":"sd","path":"<folder or image>"}` (`rescan` re-reads a changed folder; the machine need not be recreated).
 
@@ -99,6 +104,9 @@ accesses inside the 16-clock byte time). A command line is `#<seq> frame <n> T <
 `R1 none` = the card ignored it (before CMD0, or while streaming). CLI `state next sd [on|off|clear]`, Lua `next_sd{...}`, Python
 `emu.next_sd(...)`. The text above is the one `NextSdJournalMachine_Test.TheCliPrintsTheCardsAndTheJournal` checks.
 
+The bus analyzer shows the same bus as `next.spi` (every select and byte too, and the checks: `early_access` is an
+access inside the 16-clock byte time, the accesses `too_fast_accesses` counts): [analysis/bus-analyzer.md](../analysis/bus-analyzer.md).
+
 ### 3a2. Why is the DivMMC in, and which esxDOS calls were made? (the DivMMC journal)
 
 `state/next` shows `divmmc.mapped` now; the DivMMC journal shows what put it there. Off by default.
@@ -133,10 +141,10 @@ control_execution {"action":"wait"}
 ```
 
 The CPU's doors (`NEXTREG`, `OUT #253B`, `IN #253B` for reads) stop after the instruction that did it, before the register takes the write.
-The copper is watched on a copy of its state after every instruction (the picture runs the real copper lazily, a line at a time), so a
-copper write, a beam place or a copper instruction stops at the first instruction boundary after the beam has done it, and the
-real copper executes the write later without a second stop or count. The `beam` line and the `hc` are the copper's counters (NR #64
-applied); `next_reg_journal` carries `beam_line` / `beam_hc` for every write (a copper MOVE has its own beam, not the time of the picture's catch-up).
+The copper runs with the machine (after every instruction, and before every CPU NextREG write), whether or not a picture is drawn. A copper
+instruction or a copper write under a breakpoint stops the machine BEFORE the MOVE writes (the copper holds it; it writes when the machine runs
+on, without a second stop or count); a beam place stops at the first instruction boundary after the beam passed it. The `beam` line and the
+`hc` are the copper's counters (NR #64 applied); `next_reg_journal` carries `beam_line` / `beam_hc` for every write, in the order of time.
 
 ### 3a4. Which interrupt did the CPU take, why did the M1 button do nothing? (the NMI report)
 
@@ -170,6 +178,32 @@ I/O mode, and the Kempston port `#1F` now. `kempston_1f.selected_by_nr_05` false
 the port idles at `#FF` (`answers_here`), as it does if NR `#82` bit 6 is off; `#37` answers for Kempston 2 / MD 2 (`kempston_37`, NR `#82` bit 7). The host joystick is the left connector. The extended keys (`extended_keys`, NR `#B0` / `#B1`: EXTEND UP CAPS LOCK GRAPH TRUE/INV VIDEO BREAK EDIT ; " , . DELETE and the arrows) come from the host's physical PC keys as the Next's keyboard controller maps them (Left Alt = EXTEND, Right Alt = GRAPH, Backspace = DELETE, Esc = BREAK, ` = EDIT, Tab = TRUE VIDEO, \ = INV VIDEO); the pad's MODE X Y Z (`md_pad_extra`, NR `#B2`) from keypad 7 / 9 / 1 / 3 on the left connector. Both are injectable from every plane through the keyboard API with the PC key names (`keyboard/press {"key":"kp_3"}`, `backspace`, `lalt`; `GET /keyboard/keys` lists them): journaled like a host key. The right connector has no input source. A, C and START are bits 6, 5, 7 of the Kempston byte (MD modes only). CLI
 `state next audio` / `state next input`, Lua `next_audio()` / `next_input()`, Python `emu.next_audio()` / `emu.next_input()`, MCP aspects
 `next_audio` / `next_input`.
+
+### 3a5b. The UARTs: the ESP and the Pi (D1)
+
+The Next has two UARTs on `#133B` (Tx / status), `#143B` (Rx / prescaler low), `#153B` (select + prescaler high) and `#163B` (frame),
+one per line: UART 0 is the ESP module's, UART 1 the Raspberry Pi's. Each has a 64-byte Tx FIFO, a 512-byte Rx FIFO (a byte carries its
+error flag), a 17-bit prescaler in 28 MHz clocks per bit (default 243 = 115200 baud), hardware flow control (RTS drops two bytes
+before the FIFO is full; Tx waits for CTS) and interrupts (NR `#C6`: Rx on a byte or only at 3/4 full, Tx on an empty FIFO; the
+requests are in NR `#CA`). `state/next/uart` shows all of it without clearing the sticky error bits a status read clears. What sits on
+each line is a serial peer, as on every machine with a COM port: `[NETWORK] ComPort=` is the ESP's line and `ComPort2=` the Pi's
+(`NONE | LOOPBACK | PLUG | TCP:host:port | SERIAL:device | AT | ESPNET | MODEM ...`; at run time `POST /network/config
+{"com_port": "...", "com_port2": "..."}`). With nothing on a line the Tx bytes are lost and nothing arrives. `LOOPBACK` on a line
+echoes every byte, a handy check of a program's UART code. NR `#0B`'s UART on the joystick port and NR `#A0`'s Pi GPIO routing are
+registers only.
+
+**The ESP module.** A Next ships with its ESP-12 on UART 0, so `ComPort` is `AT` unless the config says otherwise (`ComPort=NONE`
+takes the module off): an ESP8266 with Espressif's AT firmware (NonOS AT 1.7.4; `[NETWORK] EspChip=ESP8266-AT222` picks AT 2.2.2),
+115200 baud, boot banner and `ready` on the Rx FIFO at start, sockets through the virtual network. The program's baud is
+`28 MHz / prescaler`, told to the module as the nearest standard rate (243 is 115200), so `AT+UART_CUR` and a prescaler change work as on the
+board. NR `#A8` / `#A9` drive the module's GPIO0 (`#A8` bit 0 enables the output, `#A9` bit 0 is its level, reset 1): with it low the
+module's next boot (`AT+RST`) is the ROM's download mode and it stops answering AT (`state/network` and `next_uart` show the peer; the
+flasher's protocol itself is not emulated).
+
+```text
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/network/config","body":{"com_port":"loopback"}}
+inspect_state {"aspects":["next_uart"]}          # CLI: state next uart, Lua next_uart(), Python emu.next_uart()
+```
 
 ### 3a6. The program's console and the magic breakpoint (G9)
 
@@ -244,7 +278,9 @@ transparent: global 0xE3, sprites 0xE3, tilemap 15, fallback 0xE3
 ```
 
 **`next_ports`** - which device answers a port, and whether NR `#82`-`#85` switch it off. `enforced` tells whether the emulator gates the
-port by that bit (today the DAC ports, the Multiface, `#E3` and `#E7` / `#EB`; the other ports decode regardless of the enable word):
+port by that bit: a write to a port whose bit is off is ignored and a read is the idle bus `#FF`; with the expansion bus on (NR `#80` bit 7)
+NR `#86`-`#89` are ANDed in. Every port the Next decodes is gated (DAC, Multiface, `#E3`, `#E7` / `#EB`, `#FF`, `#7FFD` / `#DFFD` / `#1FFD`,
+DMA, joystick, I2C, sprites, `#123B`, AY, CTC); the UART, mouse, ULA+, `#EFF7` and +3 floating-bus ports are not decoded at all yet:
 
 ```text
 $ state next ports 6B w          (after NR #82 <- #DF)

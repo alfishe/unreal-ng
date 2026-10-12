@@ -9,6 +9,7 @@
 #include <map>
 
 #include "codecs/alasm/alasmcodec.h"
+#include "codecs/prometheus/prometheuscodec.h"
 #include "symbols/io/json.h"
 #include "testdata.h"
 #include "unrealasm/registry.h"
@@ -874,6 +875,218 @@ TEST(SyncInject_Test, Zeus1983TakesAFileAtItsPromptAsOLeavesIt)
     const SyncText back = ReadText(dump.machine, *d);
     ASSERT_TRUE(back.ok) << back.state;
     EXPECT_EQ(back.file, written.bytes);
+}
+
+TEST(SyncInject_Test, LaserGeniusTakesItsParagraphsInItsEditor)
+{
+    Dump dump = Load("lg104-loaded");
+    const SyncDescriptor* d = FindDescriptor("lasergenius-1.04");
+    ASSERT_NE(d, nullptr);
+    // its editor: the key wait returns to #AB04, then the ROM's #1303 (page 5 holds the stack at #638C, an interrupt
+    // frame on top)
+    const std::vector<uint16_t> words = {0xB0A7, 0x0044, 0xB07A, 0x0000, 0x4800, 0xAB04, 0x1303};
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        if (dump.machine.ram[k].page == 5)
+            for (size_t w = 0; w < words.size(); ++w)
+            {
+                dump.pages[k][0x238C + 2 * w] = static_cast<uint8_t>(words[w]);
+                dump.pages[k][0x238C + 2 * w + 1] = static_cast<uint8_t>(words[w] >> 8);
+            }
+    dump.machine.sp = 0x638C;
+    std::string why;
+    ASSERT_TRUE(Idle(dump.machine, *d, why)) << why;
+
+    const WriteAsResult written = WriteAs(SourceDocument::FromText("        ORG #6900\nstart   LD A,1\n        JR start\n", "sjasmplus"), "lasergenius", d->version, "NEW");
+    ASSERT_TRUE(written.ok) << written.error;
+    // no "changed" flag: the loaded text is replaced by force (or when it is the caller's own) only
+    EXPECT_FALSE(PlanInject(dump.machine, *d, written.bytes).ok);
+    InjectOptions force;
+    force.force = true;
+    const InjectPlan plan = PlanInject(dump.machine, *d, written.bytes, force);
+    ASSERT_TRUE(plan.ok) << plan.error;
+    std::map<uint16_t, uint8_t> pokes;
+    for (const InjectPlan::Poke& p : plan.pokes)
+        pokes[static_cast<uint16_t>((p.page == 2 ? 0x8000 : p.page == 5 ? 0x4000 : 0xC000) + p.offset)] = p.value;
+    // memory holds the paragraphs (the codec's bytes) and FF FF from (#A975) = #7F2E; the end word after them
+    const std::vector<uint8_t>& paragraphs = written.bytes;
+    for (size_t k = 0; k < paragraphs.size(); ++k)
+        EXPECT_EQ(pokes[static_cast<uint16_t>(0x7F2E + k)], paragraphs[k]) << k;
+    EXPECT_EQ(pokes[static_cast<uint16_t>(0x7F2E + paragraphs.size())], 0xFF);
+    EXPECT_EQ(pokes[static_cast<uint16_t>(0x7F2E + paragraphs.size() + 1)], 0xFF);
+    const uint16_t end = static_cast<uint16_t>(0x7F2E + paragraphs.size() + 2);
+    EXPECT_EQ(pokes[0xA973] | (pokes[0xA974] << 8), end);
+    // its screen lines (FF, the lines, FF at (#A9DC)) move behind the new text, the pointers into them too
+    const uint16_t oldEnd = *dump.machine.Word(0xA973), oldLast = *dump.machine.Word(0xA9DC);
+    std::vector<uint8_t> screen;
+    ASSERT_TRUE(dump.machine.Read(oldEnd, static_cast<size_t>(oldLast - oldEnd + 1), screen));
+    EXPECT_EQ(screen.front(), 0xFF);
+    EXPECT_EQ(screen.back(), 0xFF);
+    for (size_t k = 0; k < screen.size(); ++k)
+        EXPECT_EQ(pokes[static_cast<uint16_t>(end + k)], screen[k]) << k;
+    EXPECT_EQ(pokes[0xA9DC] | (pokes[0xA9DD] << 8), oldLast - oldEnd + end);
+
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        for (const InjectPlan::Poke& p : plan.pokes)
+            if (dump.machine.ram[k].page == p.page)
+                dump.pages[k][p.offset] = p.value;
+    const SyncText back = ReadText(dump.machine, *d);
+    ASSERT_TRUE(back.ok) << back.state;
+    // the disk file: #AF, the length, the start, four characters of the name (blanks: SAVE gives them), the paragraphs
+    std::vector<uint8_t> expected = {0xAF, static_cast<uint8_t>(paragraphs.size()), static_cast<uint8_t>(paragraphs.size() >> 8), 0x2E, 0x7F, ' ', ' ', ' ', ' '};
+    expected.insert(expected.end(), paragraphs.begin(), paragraphs.end());
+    EXPECT_EQ(back.file, expected);
+
+    // a disk file (with its header) goes in the same way
+    const InjectPlan fromDisk = PlanInject(dump.machine, *d, expected, force);
+    ASSERT_TRUE(fromDisk.ok) << fromDisk.error;
+    EXPECT_EQ(fromDisk.pokes.size(), plan.pokes.size());
+    // its text space ends at (#A971) (#9F2E: 8K; SET SPACE changes it)
+    const InjectPlan tooLong = PlanInject(dump.machine, *d, std::vector<uint8_t>(0x9F2E - 0x7F2E, 0x00), force);
+    EXPECT_FALSE(tooLong.ok);
+    EXPECT_NE(tooLong.error.find("text space"), std::string::npos) << tooLong.error;
+}
+
+TEST(SyncInject_Test, PrometheusTakesASaveInItsEditor)
+{
+    Dump dump = Load("prom48-edited");
+    const SyncDescriptor* d = FindDescriptor("prometheus-48");
+    ASSERT_NE(d, nullptr);
+    // its editor waits for a key: the ROM's key scan returns to #86B2, a word of its own, then #8629 and #7CFD (page 2
+    // holds the stack at #8B99)
+    const std::vector<uint16_t> words = {0x86B2, 0x01BA, 0x8629, 0x7CFD};
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        if (dump.machine.ram[k].page == 2)
+            for (size_t w = 0; w < words.size(); ++w)
+            {
+                dump.pages[k][0x0B99 + 2 * w] = static_cast<uint8_t>(words[w]);
+                dump.pages[k][0x0B99 + 2 * w + 1] = static_cast<uint8_t>(words[w] >> 8);
+            }
+    dump.machine.sp = 0x8B99;
+    std::string why;
+    ASSERT_TRUE(Idle(dump.machine, *d, why)) << why;
+
+    const WriteAsResult written = WriteAs(SourceDocument::FromText("        ORG 60000\nstart   LD A,1\n        JR start\n", "sjasmplus"), "prometheus", d->version, "NEW");
+    ASSERT_TRUE(written.ok) << written.error;
+    // no "changed" flag: the typed text is replaced by force (or when it is the caller's own) only
+    EXPECT_FALSE(PlanInject(dump.machine, *d, written.bytes).ok);
+    InjectOptions force;
+    force.force = true;
+    const InjectPlan plan = PlanInject(dump.machine, *d, written.bytes, force);
+    ASSERT_TRUE(plan.ok) << plan.error;
+    std::map<uint16_t, uint8_t> pokes;
+    for (const InjectPlan::Poke& p : plan.pokes)
+        pokes[static_cast<uint16_t>((p.page == 5 ? 0x4000 : p.page == 2 ? 0x8000 : 0xC000) + p.offset)] = p.value;
+    // the records from the access line (#9C28), six empty records, the symbol table; the words after them
+    size_t length = 0;
+    ASSERT_TRUE(codecs::PrometheusCodec::FindSourceLength(written.bytes, length));
+    for (size_t k = 0; k < length; ++k)
+        EXPECT_EQ(pokes[static_cast<uint16_t>(0x9C28 + k)], written.bytes[k]) << k;
+    for (size_t k = 0; k < 12; ++k)
+        EXPECT_EQ(pokes[static_cast<uint16_t>(0x9C28 + length + k)], k % 2 ? 0x30 : 0x00) << k;
+    const uint16_t table = static_cast<uint16_t>(0x9C28 + length + 12);
+    const size_t tableLength = written.bytes.size() - length - 2;
+    for (size_t k = 0; k < tableLength; ++k)
+        EXPECT_EQ(pokes[static_cast<uint16_t>(table + k)], written.bytes[length + 2 + k]) << k;
+    EXPECT_EQ(pokes[0x87D7] | (pokes[0x87D8] << 8), table);
+    EXPECT_EQ(pokes[0x881A] | (pokes[0x881B] << 8), table + tableLength);
+    // the active line and the block margins at the start, as CLEAR leaves them
+    for (const uint16_t at : {0x826D, 0x80E8, 0x80EB})
+        EXPECT_EQ(pokes[at] | (pokes[static_cast<uint16_t>(at + 1)] << 8), 0x9C28) << at;
+
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        for (const InjectPlan::Poke& p : plan.pokes)
+            if (dump.machine.ram[k].page == p.page)
+                dump.pages[k][p.offset] = p.value;
+    // read back as SAVE writes it: the file written
+    const SyncText back = ReadText(dump.machine, *d);
+    ASSERT_TRUE(back.ok) << back.state;
+    EXPECT_EQ(back.file, written.bytes);
+
+    // the text and its names stay below U-TOP (#7946)
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        if (dump.machine.ram[k].page == 5)
+        {
+            dump.pages[k][0x3946] = 0x30;
+            dump.pages[k][0x3947] = 0x9C;
+        }
+    const InjectPlan tooLong = PlanInject(dump.machine, *d, written.bytes, force);
+    EXPECT_FALSE(tooLong.ok);
+    EXPECT_NE(tooLong.error.find("U-TOP"), std::string::npos) << tooLong.error;
+}
+
+TEST(SyncInject_Test, PasmTakesATextInItsEditorAsGetLeavesIt)
+{
+    Dump dump = Load("pasm30-edited");
+    const Dump loaded = Load("pasm30-loaded");
+    const SyncDescriptor* d = FindDescriptor("pasm-3.0");
+    ASSERT_NE(d, nullptr);
+    // its editor waits for a key: the ROM's key scan, then #73CF (the key wait called at #73CC) and #61A6 (page 5 holds
+    // the stack at #5FD3)
+    const std::vector<uint16_t> words = {0x0E6A, 0x6E5C, 0x6635, 0x660D, 0x69B9, 0x5800, 0x0000, 0x0007, 0x73CF, 0x61A6};
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        if (dump.machine.ram[k].page == 5)
+            for (size_t w = 0; w < words.size(); ++w)
+            {
+                dump.pages[k][0x1FD3 + 2 * w] = static_cast<uint8_t>(words[w]);
+                dump.pages[k][0x1FD3 + 2 * w + 1] = static_cast<uint8_t>(words[w] >> 8);
+            }
+    dump.machine.sp = 0x5FD3;
+    std::string why;
+    ASSERT_TRUE(Idle(dump.machine, *d, why)) << why;
+
+    // the text PASM saved after loading TEST: its first line packed into TABs
+    const std::vector<uint8_t>& file = loaded.expected;
+    // no "changed" flag: the edited text is replaced by force (or when it is the caller's own) only
+    EXPECT_FALSE(PlanInject(dump.machine, *d, file).ok);
+    InjectOptions force;
+    force.force = true;
+    force.name = "INJECTED";
+    const InjectPlan plan = PlanInject(dump.machine, *d, file, force);
+    ASSERT_TRUE(plan.ok) << plan.error;
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        for (const InjectPlan::Poke& p : plan.pokes)
+            if (dump.machine.ram[k].page == p.page)
+                dump.pages[k][p.offset] = p.value;
+    const auto byte = [](const Dump& from, uint16_t at) {
+        std::vector<uint8_t> b;
+        EXPECT_TRUE(from.machine.Read(at, 1, b));
+        return b.empty() ? 0 : b[0];
+    };
+    const auto word = [&](const Dump& from, uint16_t at) { return byte(from, at) | (byte(from, static_cast<uint16_t>(at + 1)) << 8); };
+    // the text and its #1A from #79AF
+    for (size_t k = 0; k < file.size(); ++k)
+        EXPECT_EQ(byte(dump, static_cast<uint16_t>(0x79AF + k)), file[k]) << k;
+    EXPECT_EQ(byte(dump, static_cast<uint16_t>(0x79AF + file.size())), 0x1A);
+    EXPECT_EQ(word(dump, 0x7747), static_cast<int>(file.size()));   // its length
+    EXPECT_EQ(word(dump, 0x7802), 10);                              // the cursor line's: "\tORG #6000"
+    // as GET left the editor: the last line's number, the cursor on the first line, its line buffer, the marks
+    for (const uint16_t at : {0x7752, 0x775B, 0x7383, 0x6525, 0x63CA, 0x6C54, 0x6DFE, 0x6E00, 0x74E9, 0x76E9})
+        EXPECT_EQ(word(dump, at), word(loaded, at)) << std::hex << at;
+    for (uint16_t at = 0x7342; at < 0x7342 + 64; ++at)
+        EXPECT_EQ(byte(dump, at), byte(loaded, at)) << std::hex << at;
+    for (const uint16_t at : {0x6CD0, 0x6D31, 0x6B48})
+        EXPECT_EQ(byte(dump, at), 0) << std::hex << at;
+    EXPECT_EQ(byte(dump, 0x73B6), 0xFF);   // redrawn on the editor's next entry
+    std::vector<uint8_t> name;
+    ASSERT_TRUE(dump.machine.Read(0x7391, 8, name));
+    EXPECT_EQ(std::string(name.begin(), name.end()), "INJECTED");
+    // read back as SAVE writes it: the file written
+    const SyncText back = ReadText(dump.machine, *d);
+    ASSERT_TRUE(back.ok) << back.state;
+    EXPECT_EQ(back.file, file);
+    // now the caller's own: replaced without force
+    InjectOptions own;
+    own.written = {file};
+    EXPECT_TRUE(PlanInject(dump.machine, *d, file, own).ok);
+
+    // the text stays below #C000
+    const std::string line = "        NOP\r\n";
+    std::vector<uint8_t> large;
+    while (large.size() < 0xC000 - 0x79AF + 16)
+        large.insert(large.end(), line.begin(), line.end());
+    const InjectPlan tooLong = PlanInject(dump.machine, *d, large, force);
+    EXPECT_FALSE(tooLong.ok);
+    EXPECT_NE(tooLong.error.find("#C000"), std::string::npos) << tooLong.error;
 }
 
 TEST(SyncInject_Test, Gens4TakesAFileAtItsPromptAsGLeavesIt)

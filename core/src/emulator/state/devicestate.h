@@ -6,6 +6,8 @@
 #include "emulator/state/statenode.h"
 
 class EmulatorContext;
+struct BusEventQuery;
+struct BusFindingQuery;
 class GeneralSoundCard;
 class SoundChip_AY8910;
 class SoundManager;
@@ -284,6 +286,10 @@ StateNode NextAudioReport(EmulatorContext* context);
 /// NR #05 (left and right: Sinclair, Kempston, cursor, MD pad, I/O mode) and which port each answers, the I/O mode of NR #0B, the Kempston
 /// port #1F now decoded, and whether #1F and #37 are driven (NR #05 / #82) the extended keys held (NR #B0 / #B1) and the pads' MODE X Y Z (NR #B2). Reading changes nothing
 StateNode NextInputReport(EmulatorContext* context);
+/// The Next's two UARTs (`next_uart`, /state/next/uart; D1 of automation-gaps-2026-10-11.md): per channel (ESP, Pi) the prescaler and
+/// baud, the frame, RTS, the Rx / Tx FIFOs (counts, a preview of the bytes), the status byte as a read would give it, the byte counters,
+/// the interrupt enables and requests (NR #C6), and what is on the line (the peer). No side effect: the status read's sticky bits stay
+StateNode NextUartReport(EmulatorContext* context);
 /// The Next's debugger reports (docs/inprogress/2026-10-07-zx-next/design-automation-coverage.md; built in
 /// ports/models/portdecoder_next_reports.cpp). None of them has a side effect on the machine (R3): they read the models' state,
 /// never a port - no DMA read-sequence step, no palette / copper auto-increment, no select-latch change.
@@ -480,6 +486,33 @@ StateNode VideoText(EmulatorContext* context, unsigned layer = 0);
 /// while the debugger is on - contended accesses and wait T-states per kind (fetch / read / write / io) for
 /// the current frame, the last frame and in total.
 StateNode Contention(EmulatorContext* context);
+
+/// The bus analyzer (devicestatebus.cpp; docs/inprogress/2026-10-11-bus-analyzer): every peripheral bus of the
+/// machine and its cards, each with its devices (an SD card's presence, protocol state and timing profile), the
+/// trace (enabled, size, capacity, evicted, rewound, last_seq) and the checks (enabled, findings, by_rule).
+/// - `BusList()`: `buses[]` of those headers.
+/// - `BusEvents(bus, query)`: the header and `events[]` (`seq`, `frame`, `t`, `pc`, `source`, `slot`, `kind`; a
+///   byte `mosi` / `miso` / `read`; an early access `write` / `value`; an SD command `command` / `argument` / `r1` /
+///   `crc_valid`; a block `block` / `ok`). Query: `kinds`, `slot`, `since`, `from`, `to`, `limit`.
+/// - `BusFindings(bus, query)`: the header and `findings[]` (`seq`, `event_seq`, `frame`, `t`, `pc`, `source`,
+///   `slot`, `rule`, `severity`, `value`, `detail`). Query: `rules`, `since`, `limit`.
+/// - `BusControl(bus, enable, checks, clear, capacity, protocolOnly)`: tracing / checks on (1), off (0), kept (-1); `bus`
+///   "all" applies to every bus and replies with the list; `protocolOnly` 1 leaves out single bytes, data words and
+///   status reads (a whole boot fits the ring). Observes only: no machine change.
+/// - `BusSdTiming(bus, slot, profile, seed)`: an SD card's timing profile (ideal, realistic, slow; empty: report
+///   only), applied by the emulation thread at the card's next access. Changes the machine.
+/// - `BusExport(bus, format, query, error)`: "jsonl" or "vcd" text of the matching events.
+/// Reads change nothing; an unknown bus answers `available: false` with the ids the machine has.
+StateNode BusList(EmulatorContext* context);
+StateNode BusEvents(EmulatorContext* context, const std::string& bus, const BusEventQuery& query);
+StateNode BusFindings(EmulatorContext* context, const std::string& bus, const BusFindingQuery& query);
+StateNode BusControl(EmulatorContext* context, const std::string& bus, int enable, int checks, bool clear, size_t capacity = 0,
+                     int protocolOnly = -1);
+StateNode BusSdTiming(EmulatorContext* context, const std::string& bus, int slot, const std::string& profile, int64_t seed);
+std::string BusExport(EmulatorContext* context, const std::string& bus, const std::string& format, const BusEventQuery& query,
+                      std::string& error);
+/// One line per bus / event / finding (the CLI; the MCP tool renders the same lines)
+std::string BusText(const StateNode& report);
 
 /// Human-readable rendering (CLI): "key: value" lines, nested by indentation,
 /// arrays as "[index]" blocks

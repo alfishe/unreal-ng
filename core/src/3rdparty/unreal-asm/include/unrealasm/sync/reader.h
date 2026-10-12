@@ -165,6 +165,12 @@ struct LinearParams
     uint16_t startAt = 0;           ///< CPU address of the start pointer (0 = the text starts at fixedStart)
     uint16_t fixedStart = 0;
     uint16_t endAt = 0;             ///< CPU address of the end pointer (exclusive)
+    uint16_t limitAt = 0;           ///< CPU address of the word where the text's space ends (0 = none; Laser Genius)
+    /// A block the editor keeps right after the text, from the end pointer to the byte the word at followLastAt points
+    /// at (Laser Genius: its screen lines); an inject moves it behind the new text and the words in followPointers
+    /// (0 = unset) with it
+    uint16_t followLastAt = 0;
+    std::vector<uint16_t> followPointers;
     std::string end;                ///< the end marker the file has after the text
     int upperPage = -1;             ///< the RAM page the text's part from #C000 is in (-1 = the one mapped there)
     /// SAVE writes a first line starting with this (the editor's position, ZAsm's ";!") that the editor takes out on
@@ -176,15 +182,29 @@ struct LinearParams
     /// Laser Genius: the text ends with FF FF in memory; its disk file is #AF, the length, the start, four characters
     /// of the name (filled with blanks: SAVE names it, an editor state), then the paragraphs without the FF FF
     bool laserGeniusFile = false;
-    /// PROMETHEUS: SAVE writes the records from fixedStart (the access line) up to twelve bytes below the symbol table
-    /// (the word at prometheusTableAt), FF XOR those bytes, FF, then the table up to the word at prometheusEndAt
     /// PASM: the text runs from fixedStart to its #1A end; the cursor line (the address at pasmLineAt) lives in a
     /// 64-byte line buffer (pasmLineBuffer) and goes back with its blank runs packed into TABs (a run of 2-8 blanks
     /// that ends at a multiple of 8), as SAVE does
     uint16_t pasmLineAt = 0;
     uint16_t pasmLineBuffer = 0;
+    /// PASM inject, as ZAP and GET leave the editor: the text's length (pasmLengthAt, without the #1A), the number of
+    /// its last line (pasmLastLineAt), the cursor line's length (pasmLineLengthAt) and the first line on the screen
+    /// (pasmTopAt, the start); the words in zeroWords and the bytes in zeroBytes to 0 (the cursor's line and column, the
+    /// block marks), the redraw flag (pasmRedrawAt) to #FF and the work name (pasmNameAt, 8 characters)
+    uint16_t pasmLengthAt = 0;
+    uint16_t pasmLastLineAt = 0;
+    uint16_t pasmLineLengthAt = 0;
+    uint16_t pasmTopAt = 0;
+    uint16_t pasmRedrawAt = 0;
+    uint16_t pasmNameAt = 0;
+    std::vector<uint16_t> zeroWords;
+    std::vector<uint16_t> zeroBytes;
+    /// PROMETHEUS: SAVE writes the records from fixedStart (the access line) up to twelve bytes below the symbol table
+    /// (the word at prometheusTableAt), FF XOR those bytes, FF, then the table up to the word at prometheusEndAt. An
+    /// inject keeps the end below the word at limitAt (U-TOP) and sets the words in resetWords to the start
     uint16_t prometheusTableAt = 0;
     uint16_t prometheusEndAt = 0;
+    std::vector<uint16_t> resetWords;
     uint16_t editorStateAt = 0;     ///< bytes of the file SAVE fills (masked by the tests)
     uint16_t editorStateLength = 0;
     /// An inject writes the text from (startAt) and the end pointer (injectable), and sets the words from resetFrom up

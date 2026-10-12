@@ -4,10 +4,12 @@
 #include <map>
 #include <memory>
 
+#include "emulator/bus/bustap.h"
 #include "emulator/io/z80n/nextboard.h"
 #include "emulator/io/z80n/nextdma.h"
 #include "emulator/sound/nextaudio.h"
 #include "emulator/io/z80n/nextctc.h"
+#include "emulator/io/z80n/nextuart.h"
 #include "emulator/io/z80n/nextdivmmc.h"
 #include "emulator/io/z80n/nextmultiface.h"
 #include "emulator/io/z80n/nextsdjournal.h"
@@ -98,6 +100,7 @@ public:
     static constexpr uint16_t kPortSpiData = 0x00EB;
     static constexpr double kSpiByteClocks = 16.0;  ///< CPU clocks per byte at any speed
     SdCardSpi& SdCard(unsigned index) { return _sd[index & 1]; }
+    BusTap& SpiTap() { return _spiTap; }
     bool InsertSdCard(unsigned index, std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode);
     bool InsertSdCard(unsigned index, const std::string& path, SdCardSpi::WriteMode mode);
     /// Ports no part of the machine answered (the bring-up list): raw port -> {count, last value}, in and out
@@ -135,6 +138,16 @@ public:
     NextBoard& Board() { return *_board; }
     NextInterruptSource& Interrupts() { return *_interrupts; }
     NextCtc& Ctc() { return _ctc; }
+    /// Bit `bit` of the internal port enable word (reports)
+    bool PortEnabledForReport(unsigned bit) const { return PortEnabled(bit); }
+    /// A line's other end (the network manager owns the peer); nullptr takes it off. The peer's clock is the machine's base clock
+    void SetUartPeer(unsigned channel, ISerialPeer* peer);
+    /// NR #A8 / #A9: the ESP's GPIO0 pin (low while the board drives it low): an ESP module reboots into its ROM's download mode with it low
+    void BoardPinsChanged() override;
+    NetworkCapabilities DescribeNetwork() override;
+    /// The two UARTs (#133B-#163B): ESP (0) and Pi (1)
+    NextUart& Uart() { return _uart; }
+    const NextUart& Uart() const { return _uart; }
     NextDivMmc& DivMmc() { return *_divMmc; }
     NextMultiface& Multiface() { return *_multiface; }
     NextI2c& I2c() { return _i2c; }
@@ -159,11 +172,11 @@ private:
     void NextRegAccess(bool write, uint8_t reg, uint8_t value, NextRegSource source);
     void FireBreakpoint(uint16_t id, uint16_t address, BreakpointHitKind kind);
     void WatchCopper(BreakpointManager& manager);
+    bool OnCopperStep(const NextCopper::Step& step);
     void WatchMagic(BreakpointManager& manager);
     bool _breakpointActive = false;  // a stop is being served: nothing nests in it
     bool _watchValid = false;
     uint64_t _watchClock = 0;  // the copper clock up to which the copper was watched
-    std::vector<NextCopper::Step> _watchSteps;
     NextMemory& Mem() const { return *static_cast<NextMemory*>(_context->pMemory); }
     void Port_7FFD_Next(uint16_t port, uint8_t value, uint16_t pc);
     void Port_1FFD_Next(uint8_t value);
@@ -178,17 +191,24 @@ private:
     /// What the machine type allows: 48K has no paging ports, 128K / Pentagon no #1FFD, +3 all
     bool PagingAllowed(uint16_t port) const;
     uint8_t SpiRead();
+    uint8_t SpiTapSlot() const { return _spiSelected >= 0 ? static_cast<uint8_t>(_spiSelected) : BusTap::kNoSlot; }
     void SpiSettle(double now);
     void SpiWrite(uint8_t value);
     void SpiSelect(uint8_t value);
     /// Time in 3.5 MHz T-states since the machine started (the frame's own t is in CPU clocks of the current speed)
     double Now() const;
+    /// Bit `bit` (0-27) of internal_port_enable (zxnext.vhd 2392): NR #82-#85, and with the expansion bus on (NR #80 bit 7) also NR #86-#89
+    bool PortEnabled(unsigned bit) const;
+    /// A read of a port whose enable bit is off: nothing on the board answers, the bus is idle
+    uint8_t IdleRead(uint16_t port, uint16_t pc);
     /// NR #83 bit 3: ports #E7 / #EB are decoded (port_spi_io_en)
     bool SpiPortEnabled() const { return (_board->Stored(0x83) & 0x08) != 0; }
     double SpeedRatio() const { return _state->hw_turbo_ratio_applied ? _state->hw_turbo_ratio_applied : 1.0; }
 
     std::map<uint16_t, PortUse>* _inLog = nullptr;
     std::map<uint16_t, PortUse>* _outLog = nullptr;
+    // The bus analyzer's view of the SPI port pair (docs/inprogress/2026-10-11-bus-analyzer); slot = SD line
+    BusTap _spiTap{"next.spi", BusProtocol::Spi, "Next SPI (#E7 chip selects, #EB data): SD cards 0 and 1"};
     SdCardSpi _sd[2];
 
     /// The media manager's slots "sd.next0" / "sd.next1": a card is never opened by the decoder itself, every insert goes through the manager
@@ -244,6 +264,7 @@ private:
         }
     } _m1Chain;
     NextCtc _ctc;
+    NextUart _uart;
     NextDma _dma;
     std::unique_ptr<NextAudio> _audio;
     bool WriteDacPort(uint16_t port, uint8_t value);

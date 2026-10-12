@@ -326,3 +326,18 @@ bool EspModule::LoadState(const netstate::EspModuleState& in, const netstate::Ta
     LoadFirmware(in);
     return _stack->LoadState(in.stack, tail, bytes);
 }
+
+bool EspModule::RestartIntoDownloadIfStrapped()
+{
+    if (!_gpio0Low)
+        return false;
+    ++_hardwareResets;
+    _out.clear();
+    _rx.clear();
+    _pendingBaud = 0;
+    _baud = _factoryBaud;
+    OnLineSettings(_zxLine);
+    _downloadMode = true;
+    Leave();
+    return true;
+}

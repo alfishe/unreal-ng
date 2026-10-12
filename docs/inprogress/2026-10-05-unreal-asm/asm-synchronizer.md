@@ -158,7 +158,7 @@ physical RAM page of the current machine:
 |---|---|---|---|
 | `FileImage` | the page holds the file as the assembler saves it: header + lines; the length in a header field | copy `[base, base + header + length)` | ALASM 4.4x / 5.x (verified), XAS (from its research), STORM (from its source) |
 | `GapBuffer` | the text before the cursor from the start to the gap start, the text after it from the gap end to the top; the line being edited in a line buffer | copy both parts, encode the current line with the codec from the line buffer, join; add the end record the file has | TASM 4.12 (verified) |
-| `Linear` | one contiguous buffer from a start to an end pointer, with or without an end marker | copy `[start, end)` + the file's end marker | ZX-ASM (file = buffer), MASM (catalog start = text address), GENS (text + `00 00`), Laser Genius (`#7F2E` to `(#A973)` + `FF FF`), ZEUS / Primus, Prometheus, PASM (to be confirmed) |
+| `Linear` | one contiguous buffer from a start to an end pointer, with or without an end marker | copy `[start, end)` + the file's end marker | ZX-ASM (file = buffer), MASM (catalog start = text address), GENS (text + `00 00`), Laser Genius (`#7F2E` to `(#A973)` + `FF FF`), ZEUS / Primus, Prometheus, PASM (to `#1A`) |
 
 The live file is exactly what the codec reads. So `Decode` works unchanged. The byte-exact check (live file ==
 the file the assembler writes on SAVE) is the acceptance test of every descriptor (§10).
@@ -431,6 +431,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | family | `Linear`: `[#7F2E, (end))` + `FF FF`; the end pointer chosen by the hash extensions' presence (a signature) |
 | **Work** | **1 d** (the two configurations, Phoenix statements in the build) |
 | **Verified: without the hash extensions** (2026-10-10, dumps `lg104-*`) | the text in memory is the paragraphs and `FF FF` from `#7F2E` to `(#A973)`; the disk file drops the `FF FF` and adds the header `#AF`, the length, `#7F2E` and four characters of the name SAVE gives (an editor state: the reader fills blanks, the tests mask them) (`laserGeniusFile`). A paragraph typed is out of the text until ENTER. The loader's menu is a BASIC INPUT: `1` needs ENTER. Identified by 24 bytes of its code at `#AC00`. Descriptor `lasergenius-1.04`. With the hash extensions (end `(#ADA1)`, the code moved) not covered yet |
+| **Built: inject (Z4, 2026-10-12)** | in its editor (the key wait returns to `#AB04`, then the ROM's `#1303`): the paragraphs and `FF FF` from the start word `(#A975)` (`set space` moves it), the end word `(#A973)`. The editor's screen lines, which follow the text up to `(#A9DC)`, move behind it with the pointers `#A9D4`-`#A9DE`, as LOAD does; the space ends at `(#A971)`. No "changed" flag (force). Laser Genius 1.04 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes, from disk and injected (research-sjasmplus-to-lasergenius.md §3) |
 
 ### 7.17 PROMETHEUS
 
@@ -440,15 +441,17 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | research | the text and table pointers (48K; tape loading works) |
 | **Work** | **1 d** |
 | **Verified: 48K tape edition at 24000** (2026-10-10, dumps `prom48-*`) | read from the reconstructed source (oldcompcz/prometheus `src/prometheus.asm`, SAVE): the records run from `sourceBufferAccessLine` (`#9C28`) to twelve bytes below the symbol table (the operand of `varcSymbolTablePt`, `#87D7`); the table runs to the operand of `varcCodeEndPt` (`#881A`); SAVE writes the records, `FF` XOR them, `FF`, then the table (`prometheusTableAt` / `prometheusEndAt`). A line typed is out of the text until ENTER. SAVE goes to tape only (the TR-DOS adaptation too), so the expected file is what SAVE hands the ROM: an execution breakpoint at SA-BYTES `#04C6` gives the records' `IX` / `DE` (`#9C28`, 21 bytes for four lines). `LOAD` stages the save below U-TOP before it inserts the lines (`#FF43` here: not the source). Identified by 24 bytes at `#8000`. Descriptor `prometheus-48` (installed elsewhere, the addresses move) |
+| **Built: inject (Z4, 2026-10-12)** | in its editor (the key wait leaves `#8629, #7CFD` on the stack): the records from `#9C28`, six empty records, the table; the words `#87D7` / `#881A` after them, the active line (`#826D`) and the block margins (`#80E8` / `#80EB`) at the start, as CLEAR leaves them; the end stays below U-TOP (`#7946`). No "changed" flag (force). PROMETHEUS 48K assembled `oracle1.asm` and every instruction form to sjasmplus' bytes, injected and from tape (research-sjasmplus-to-prometheus.md §4) |
 
 ### 7.18 Power Assembler (PASM 3.0)
 
 | | |
 |---|---|
-| **Knowledge** | a text format; the object code goes to page 4 at `#E000` while PASM runs; the text's place is unknown |
+| **Knowledge** | a text format; the object code goes to other RAM pages while PASM runs (page 4 from `#E000` below `#8000`, pages 3 and 0 from `#8000` up: 2026-10-12); the text's place is unknown |
 | research | the text pointers (ZAP / ITXT behavior known from A6) |
 | **Work** | **1 d** |
 | **Verified** (2026-10-10, dumps `pasm30-*`) | found in its code: the CR LF text runs from `#79AF` (an address its code holds) to a `#1A` end (no end pointer: the editor scans for it); the cursor line's address is at `#74E9`, its text in the 64-byte line buffer `#7342`. When the cursor leaves a line, and on SAVE, the routine at `#7881` writes the buffer back with blank runs packed into TABs: right to left over the tab stops, a run of 2-8 blanks that ends at a multiple of 8 becomes one TAB (a single blank stays). The reader replaces the cursor line with the packed buffer (`pasmLineAt`), so even the loaded state's file has its first line packed, as SAVE writes it. Each dump's expected file is a `P` (SAVE) made in that state. Identified by the packing routine's bytes at `#7881`. Descriptor `pasm-3.0` |
+| **Built: inject (Z4, 2026-10-12)** | in its editor (the key wait leaves `#73CF, #61A6` on the stack): the text and its `#1A` from `#79AF`, the editor's words as ZAP (`#7301`) and GET (`#6E5E`) leave them (length `#7747`, last line `#7752`, the cursor line `#74E9` / `#76E9` / `#7802` and its buffer, ZAP's zeros), the redraw flag `#73B6` and the work name `#7391`; the first line packed as PASM packs it; the text below `#C000`. No "changed" flag (force). PASM 3.0 compiled `oracle1.asm` and every instruction form to sjasmplus' bytes, injected and loaded with GET (research-sjasmplus-to-pasm.md §3) |
 
 ### 7.19 Not covered
 
@@ -881,6 +884,29 @@ Details: [research-sjasmplus-to-zeus.md](research-sjasmplus-to-zeus.md).
 
 **Built (2026-10-11): Z4 for Primus 2.9.** The ZEUS backend writes Primus text too (`* / ?`, one `ORG`, `DISK`, `+0`
 before `?` after a name); the inject at its prompt. Checked in Primus 2.9. Details: research-sjasmplus-to-zeus.md §4.1.
+
+**Built (2026-10-12): Z4 for Laser Genius 1.04.** The Laser Genius backend (`dialects/lasergenius/`, on `RetroWriter`)
+writes C-like priorities with `[ ]`, comparisons that give 1, `COND`, `ORG` + `PUT`, `DISP` as `ORG` and back. LG
+1.04 builds its `(IX-` / `(IY-` operand tokens with a plus, so displacements below 0 are written as `(IX+-d)`. The
+inject moves the editor's screen lines behind the new text (`LinearParams::followLastAt`). Checked in Laser Genius
+1.04: `oracle1.asm` and every instruction form to sjasmplus' bytes, from disk and injected. Details:
+[research-sjasmplus-to-lasergenius.md](research-sjasmplus-to-lasergenius.md).
+
+**Built (2026-10-12): Z4 for PROMETHEUS 48K.** The PROMETHEUS backend (`dialects/prometheus/`, on `ChainWriter`)
+writes chains left to right with `+ - * / ?`, names of 8 characters, `DISP` as `org` + `put`, comments on lines of
+their own, and every line as its codec stores it. In an instruction, PROMETHEUS' `$` is the address of the byte the
+value goes into (`ld hl,$` = the address +1, `ld ix,$` +2). The backend writes `$-k`, and the frontend now reads `$+k`
+(`prometheuscurrent.h`). The inject writes the records, the table and its pointers. Checked in PROMETHEUS 48K:
+`oracle1.asm` and every instruction form to sjasmplus' bytes, injected and from tape. Details:
+[research-sjasmplus-to-prometheus.md](research-sjasmplus-to-prometheus.md).
+
+**Built (2026-10-12): Z4 for Power Assembler 3.0.** The PASM backend (`dialects/pasm/`, on `ChainWriter`) writes
+chains left to right with `+ - * /`, capitals, names of 14 characters, bytes in 0..255, `DUP` fills, one ORG (a later
+one forward as zeros), `DISP` blocks with their labels as EQU of the run addresses, and lines of at most 64 columns.
+PASM's `$` in EQU is 0, so EQU with `$` is written as its value (`RetroWriter::CurrentInEqu`); the frontend now reads
+it as 0. The inject leaves the editor as ZAP and GET do. Checked in PASM 3.0: `oracle1.asm` and every instruction form
+to sjasmplus' bytes, injected and loaded from disk. This completes Z4. Details:
+[research-sjasmplus-to-pasm.md](research-sjasmplus-to-pasm.md).
 
 ## 20. Effort (part B)
 

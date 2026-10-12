@@ -72,6 +72,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_profiler.inc"
 #include "openapi/openapi_porttrace.inc"
 #include "openapi/openapi_vdac2.inc"
+#include "openapi/openapi_bus.inc"
 #include "openapi/openapi_ttd.inc"
 #include "openapi/openapi_ttdfile.inc"
 }

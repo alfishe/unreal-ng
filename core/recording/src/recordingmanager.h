@@ -6,6 +6,7 @@
 
 #include "3rdparty/message-center/eventqueue.h"
 #include "emulator/notifications.h"
+#include "emulator/video/screen.h"
 #include "emulator/platform.h"
 #include "emulator/sound/soundmanager.h"  // AudioSourceType lives here now
 #include "common/encoder_base.h"
@@ -164,6 +165,9 @@ public:
 
     /// `src` (srcW x srcH RGBA) scaled by the nearest pixel into a dstW x dstH picture, centered, its aspect kept,
     /// the rest opaque black. Same size: a plain copy
+    /// The ZX-Poly group's composed frame when this recording's screen is a group master (and the region takes it)
+    bool ComposedFrame(FrameSnapshot& out) const;
+
     static void FitPicture(const uint8_t* src, uint32_t srcW, uint32_t srcH, uint32_t dstW, uint32_t dstH,
                            std::vector<uint8_t>& out);
 
@@ -460,6 +464,8 @@ protected:
     FrameScaler::Scaler _outputScaler;  ///< Reused per frame: the picture scaled into the fixed frame
     std::vector<uint8_t> _cropBuffer;  // Reused per-frame when cropping
     std::vector<uint8_t> _fitBuffer;  // Reused per-frame: the screen region's current window fitted into the file's size
+    FrameSnapshot _composedSnapshot;  // a ZX-Poly master's composed frame (reused per frame)
+    double _pictureAspect = 0.0;  // CRT shape of a MainScreen recording's window (0: the whole frame's 352:288)
     std::vector<uint8_t> _aspectBuffer;  // Reused per-frame: the half-height TS-Conf lines doubled
     // Size of the first encoded frame: the encoders take one size per file, so a
     // picture of another size (an external picture source switched on or off,

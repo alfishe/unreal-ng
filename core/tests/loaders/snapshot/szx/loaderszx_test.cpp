@@ -374,7 +374,7 @@ namespace
 {
     std::string TestFile(const std::string& relative)
     {
-        return (TestPathHelper::FindProjectRoot() / "testdata" / relative).string();
+        return FileHelper::NormalizePath((TestPathHelper::FindProjectRoot() / "testdata" / relative).string());
     }
 
     MediaResult InsertFile(EmulatorContext* context, const std::string& slot, const std::string& path)

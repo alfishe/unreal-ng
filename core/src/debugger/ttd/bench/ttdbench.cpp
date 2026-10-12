@@ -113,9 +113,8 @@ public:
         // config hook (core-tests' sound-card policy) is set aside while the
         // machine is created, and the peripheral set goes on top of the
         // model's config as this instance's override. The override also
-        // zeroes power-on RAM ([MISC] RAMPowerOn): the default noise comes
-        // from the process-global rand(), so the machine would depend on
-        // every case that ran before it in the process
+        // zeroes power-on RAM ([MISC] RAMPowerOn): the default noise is
+        // random, so the machine would differ from run to run
         const Config::ConfigLoadedHook previous = Config::GetConfigLoadedHook();
         Config::SetConfigLoadedHook({});
         const PeripheralSet set = config.peripherals;

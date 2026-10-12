@@ -2,6 +2,7 @@
 
 #include "nextstatecodec.h"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <type_traits>
@@ -15,6 +16,7 @@
 #include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/io/z80n/nextmultiface.h"
 #include "emulator/io/z80n/nextsprites.h"
+#include "emulator/io/z80n/nextuart.h"
 #include "emulator/io/z80n/nextvideoregs.h"
 #include "emulator/io/sdcard/sdcardspi.h"
 #include "emulator/memory/next/nextmemory.h"
@@ -23,7 +25,7 @@
 
 namespace
 {
-constexpr uint8_t kImageVersion = 4;
+constexpr uint8_t kImageVersion = 6;  // 6: the UARTs
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -176,6 +178,7 @@ static void SaveCopper(Writer& w, const NextCopper& c)
     w.Put(c._lines);
     w.Put(c._frameClocks);
     w.Put(c._lastMoveAt);
+    w.Put(c._observed);
 }
 static void LoadCopper(Reader& r, NextCopper& c)
 {
@@ -193,6 +196,8 @@ static void LoadCopper(Reader& r, NextCopper& c)
     r.Get(c._lines);
     r.Get(c._frameClocks);
     r.Get(c._lastMoveAt);
+    r.Get(c._observed);
+    c._idleUntil = 0;  // derived: the next run works it out again
 }
 
 static void SaveBoard(Writer& w, const NextBoard& b)
@@ -355,6 +360,85 @@ static void LoadCtc(Reader& r, NextCtc& c)
     }
     r.Get(c._vector);
     r.Get(c._now);
+}
+
+/// The UARTs: registers, FIFOs, shifters and the line timing; not the peers (an ESP module's own state is the machine serial peer's blob)
+static void SaveUart(Writer& w, const NextUart& u)
+{
+    for (const NextUart::Channel& c : u._ch)
+    {
+        w.Put(c.prescalerMsb);
+        w.Put(c.prescalerLsb);
+        w.Put(c.frame);
+        w.PutArray(c.rx);
+        w.Put(c.rxHead);
+        w.Put(c.rxCount);
+        w.PutArray(c.tx);
+        w.Put(c.txHead);
+        w.Put(c.txCount);
+        w.Put(c.txBusy);
+        w.Put(c.txByte);
+        w.Put(c.txDone);
+        w.Put(c.rxBusy);
+        w.Put(c.rxByte);
+        w.Put(c.rxDone);
+        w.Put(c.rxFreeAt);
+        w.Put(c.txFreeAt);
+        w.Put(c.txReadyAt);
+        w.Put(c.lastLook);
+        w.Put(c.errOverflow);
+        w.Put(c.errFraming);
+        w.Put(c.rtsOut);
+        w.Put(c.rxLevel);
+        w.Put(c.txLevel);
+        w.Put(c.sent);
+        w.Put(c.received);
+        w.Put(c.lost);
+    }
+    w.Put(u._selected);
+    w.Put(u._now);
+}
+static void LoadUart(Reader& r, NextUart& u)
+{
+    for (NextUart::Channel& c : u._ch)
+    {
+        r.Get(c.prescalerMsb);
+        r.Get(c.prescalerLsb);
+        r.Get(c.frame);
+        r.GetArray(c.rx);
+        r.Get(c.rxHead);
+        r.Get(c.rxCount);
+        r.GetArray(c.tx);
+        r.Get(c.txHead);
+        r.Get(c.txCount);
+        r.Get(c.txBusy);
+        r.Get(c.txByte);
+        r.Get(c.txDone);
+        r.Get(c.rxBusy);
+        r.Get(c.rxByte);
+        r.Get(c.rxDone);
+        r.Get(c.rxFreeAt);
+        r.Get(c.txFreeAt);
+        r.Get(c.txReadyAt);
+        r.Get(c.lastLook);
+        r.Get(c.errOverflow);
+        r.Get(c.errFraming);
+        r.Get(c.rtsOut);
+        r.Get(c.rxLevel);
+        r.Get(c.txLevel);
+        r.Get(c.sent);
+        r.Get(c.received);
+        r.Get(c.lost);
+        c.toldValid = false;  // the peer is told the line again at the next change
+        // a restored ring that is out of range would index outside the arrays
+        c.rxHead %= NextUart::kRxFifo;
+        c.rxCount = std::min<uint16_t>(c.rxCount, NextUart::kRxFifo);
+        c.txHead %= NextUart::kTxFifo;
+        c.txCount = std::min<uint8_t>(c.txCount, NextUart::kTxFifo);
+    }
+    r.Get(u._selected);
+    u._selected &= 1;
+    r.Get(u._now);
 }
 
 static void SaveInterrupts(Writer& w, const NextInterruptSource& i)
@@ -571,6 +655,7 @@ std::vector<uint8_t> NextStateCodec::Save(const PortDecoder_Next& p)
         Impl::SaveAudio(w, p._audio.get());
     Impl::SaveSd(w, p._sd[0]);
     Impl::SaveSd(w, p._sd[1]);
+    Impl::SaveUart(w, p._uart);
     return w.Take();
 }
 
@@ -599,6 +684,7 @@ bool NextStateCodec::Load(PortDecoder_Next& p, const uint8_t* data, size_t size)
         Impl::LoadAudio(r, p._audio.get());
     Impl::LoadSd(r, p._sd[0]);
     Impl::LoadSd(r, p._sd[1]);
+    Impl::LoadUart(r, p._uart);
     memory.Remap();  // the slot table, the windows and the contention flags follow the image
     return r.Done();
 }

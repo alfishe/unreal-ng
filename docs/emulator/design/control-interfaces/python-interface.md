@@ -216,6 +216,31 @@ class Emulator:
     def next_sd_journal_control(self, enabled=None, clear=False, capacity=0) -> dict:
         """Switch, clear or resize (capacity=N) the SD journal"""
 
+    def bus_list(self) -> dict:
+        """The bus analyzer's buses (zc.spi, next.spi, divmmc.spi, neogs.sd, neogs.mp3.sci, neogs.mp3.sdi, ATA ide0 / ide1): devices (an SD card's
+        type, state, timing profile), trace and checks state"""
+
+    def bus_events(self, bus, kinds=None, slot=None, since=None, from_frame=None, to_frame=None, limit=None) -> dict:
+        """A bus's trace: chip selects, bytes (mosi / miso), early accesses, truncated bytes, SD commands (argument, r1) and blocks,
+        ATA register reads / writes, commands and data words, each with seq, frame, t, pc, source, slot (kinds='spi,sd,ata' or
+        names). Off by default - bus_control(bus, enabled=True) first;
+        raises ValueError on a bad option or an unknown bus (the message lists the machine's buses)"""
+
+    def bus_findings(self, bus, rules=None, since=None, limit=None) -> dict:
+        """The checks' findings (early_access, select_mid_byte, deselect_mid_command, command_while_busy, command_drops_answer,
+        crc_error, dma_collision, ata_data_without_drq, ata_command_drops_data, ata_write_while_busy) with severity, pc, event_seq and what each means on the real hardware"""
+
+    def bus_control(self, bus, enabled=None, checks=None, clear=False, capacity=0, protocol_only=None) -> dict:
+        """Switch a bus's trace and checks, clear, resize; protocol_only leaves out single bytes, data words and status reads;
+        bus='all' for every bus. Observes only"""
+
+    def bus_sd_timing(self, bus, profile=None, seed=0, slot=None) -> dict:
+        """An SD card's timing profile: ideal, realistic (seeded) or slow (worst case); applied at the card's next access. No profile:
+        report"""
+
+    def bus_export(self, bus, format="vcd", kinds=None, since=None, limit=None) -> str:
+        """The trace as VCD (SPI wires for GTKWave / PulseView) or JSON lines"""
+
     def next_divmmc(self, kinds=None, since=None, from_frame=None, to_frame=None, limit=None) -> dict:
         """The Next DivMMC: state (port #E3, the automap latch, the DRIVE button's NMI entry), entries (NR #B8-#BB decoded) and the
         DivMMC journal: map_in / map_out (fetch address, entry, instant or delayed), retn, disabled, reset, port and, for an entry
@@ -250,6 +275,11 @@ class Emulator:
         """The Next's input as configured: joystick_modes (NR #05 left / right: name and the port it answers), io_mode (NR #0B), kempston_1f
         (value, bits, selected_by_nr_05, answers_here), kempston_37 (value, answers_here) extended_keys (NR #B0 / #B1: nr_b0, nr_b1, pressed) and md_pad_extra (NR #B2: left / right {mode x y z});
         available=False elsewhere"""
+
+    def next_uart(self) -> dict:
+        """The Next's two UARTs (ESP, Pi): channels (name, prescaler, baud, frame {data_bits, parity, stop_bits, hardware_flow, break}, rts, rx / tx
+        {count, capacity, busy, preview_hex}, status, bytes {sent, received, lost}, interrupts {rx / tx enabled and pending}, peer {attached, kind,
+        target}); available=False elsewhere"""
 
     def next_dma(self) -> dict:
         """The Next DMA as programmed and running (mode zxn / z80, ports a / b, direction, burst, prescaler, counter, src / dst with

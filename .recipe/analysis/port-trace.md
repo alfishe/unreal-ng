@@ -5,6 +5,9 @@ buffer, server-side saves, and offline analysis.
 
 The recorder is gated by the runtime feature `"porttrace"` (alias `"pt"`).
 
+For SD / SPI traffic the [bus analyzer](bus-analyzer.md) is the better instrument: it decodes the SD protocol
+(commands with R1, blocks), covers the DMA's bytes and the cards' own CPUs, and checks the driver.
+
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred — the
 > `analyze_performance` one-shot answers quick questions, `invoke_api` drives
 > full sessions. Use [WebAPI](#webapi) only inside host-side Python/bash

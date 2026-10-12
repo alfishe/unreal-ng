@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <map>
 
+#include "codecs/prometheus/prometheuscodec.h"
+
 #include "unrealasm/registry.h"
 
 namespace unrealasm::sync
@@ -383,6 +385,27 @@ SyncText ReadGapBuffer(const MachineView& machine, const SyncDescriptor& d)
 
 // Linear ------------------------------------------------------------------------------------------------------------
 
+/// PASM's line buffer as it goes back into the text (the routine at #7881): the trailing blanks dropped, then right
+/// to left a run of 2..8 blanks that ends at a tab stop becomes a TAB
+void PackPasmLine(std::vector<uint8_t>& buffer)
+{
+    size_t length = buffer.size();
+    while (length > 0 && buffer[length - 1] == ' ')
+        --length;
+    buffer.resize(length);
+    for (size_t stopAt = ((length + 1) / 8) * 8; stopAt >= 8; stopAt -= 8)
+    {
+        size_t run = 0;
+        while (run < 8 && buffer[stopAt - 1 - run] == ' ')
+            ++run;
+        if (run >= 2)
+        {
+            buffer.erase(buffer.begin() + static_cast<std::ptrdiff_t>(stopAt - run), buffer.begin() + static_cast<std::ptrdiff_t>(stopAt));
+            buffer.insert(buffer.begin() + static_cast<std::ptrdiff_t>(stopAt - run), uint8_t('\t'));
+        }
+    }
+}
+
 SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
 {
     SyncText text;
@@ -408,22 +431,7 @@ SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
         size_t to = from;
         while (to + 1 < all.size() && !(all[to] == '\r' && all[to + 1] == '\n'))
             ++to;
-        size_t length = buffer.size();
-        while (length > 0 && buffer[length - 1] == ' ')
-            --length;
-        buffer.resize(length);
-        // PASM's packing, right to left: a run of 2..8 blanks that ends at a tab stop becomes a TAB
-        for (size_t stopAt = ((length + 1) / 8) * 8; stopAt >= 8; stopAt -= 8)
-        {
-            size_t run = 0;
-            while (run < 8 && buffer[stopAt - 1 - run] == ' ')
-                ++run;
-            if (run >= 2)
-            {
-                buffer.erase(buffer.begin() + static_cast<std::ptrdiff_t>(stopAt - run), buffer.begin() + static_cast<std::ptrdiff_t>(stopAt));
-                buffer.insert(buffer.begin() + static_cast<std::ptrdiff_t>(stopAt - run), uint8_t('\t'));
-            }
-        }
+        PackPasmLine(buffer);
         text.file.assign(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(from));
         text.file.insert(text.file.end(), buffer.begin(), buffer.end());
         text.file.insert(text.file.end(), all.begin() + static_cast<std::ptrdiff_t>(std::min(to, all.size())), all.end());
@@ -865,7 +873,9 @@ SyncDescriptor Gens4Tape()
 
 /// PROMETHEUS 48K tape edition installed at 24000 (asm-synchronizer.md §7.17, from its reconstructed source): the
 /// records from sourceBufferAccessLine (#9C28) to twelve bytes below the symbol table (operand of varcSymbolTablePt at
-/// #87D7), the table up to the operand of varcCodeEndPt (#881A); the save adds FF XOR the records and FF between
+/// #87D7), the table up to the operand of varcCodeEndPt (#881A); the save adds FF XOR the records and FF between. An
+/// inject writes them so, below U-TOP (varcUTop's operand, #7946), and sets the active line (varcSourceBufferActiveLine,
+/// #826D) and the block margins (varcSelectedBlockStart / End, #80E8 / #80EB) to the start
 SyncDescriptor Prometheus48()
 {
     SyncDescriptor d;
@@ -881,12 +891,19 @@ SyncDescriptor Prometheus48()
     d.linear.prometheusTableAt = 0x87D7;
     d.linear.prometheusEndAt = 0x881A;
     d.linear.upperPage = 0;
+    d.linear.injectable = true;
+    d.linear.limitAt = 0x7946;                          // U-TOP: the text and its names stay below it
+    d.linear.resetWords = {0x826D, 0x80E8, 0x80EB};     // the active line, the block's first and last line
     d.typing = {TypingRule::NotInText, 0, 0};
+    // its editor's key wait (CALL #86AE from #8626, called from #7CFA): the word between is the key scan's own
+    d.idleChain = {0x8629, 0x7CFD};
+    d.idleWhere = "its editor";
     return d;
 }
 
 /// Power Assembler 3.0 (asm-synchronizer.md §7.18, from its code): CR LF text from #79AF to #1A; the cursor line's
-/// address at #74E9, its 64-byte line buffer at #7342, packed into TABs when it goes back (the routine at #7881)
+/// address at #74E9, its 64-byte line buffer at #7342, packed into TABs when it goes back (the routine at #7881); an
+/// inject leaves the editor as ZAP (#7301) and GET (#6E5E) do
 SyncDescriptor Pasm30()
 {
     SyncDescriptor d;
@@ -902,12 +919,26 @@ SyncDescriptor Pasm30()
     d.linear.pasmLineAt = 0x74E9;
     d.linear.pasmLineBuffer = 0x7342;
     d.linear.upperPage = -1;
+    d.linear.injectable = true;
+    d.linear.pasmLengthAt = 0x7747;
+    d.linear.pasmLastLineAt = 0x7752;
+    d.linear.pasmLineLengthAt = 0x7802;
+    d.linear.pasmTopAt = 0x76E9;
+    d.linear.pasmRedrawAt = 0x73B6;   // the operand of LD A,0 at #73B5: the editor redraws on its next entry
+    d.linear.pasmNameAt = 0x7391;
+    // what ZAP clears (#7301): the cursor's line, its column and row, the block marks; #6525 the cursor drawn last
+    d.linear.zeroWords = {0x775B, 0x7383, 0x6525, 0x63CA, 0x6C54, 0x6DFE, 0x6E00};
+    d.linear.zeroBytes = {0x6CD0, 0x6D31, 0x6B48};
     d.typing = {TypingRule::NotInText, 0, 0};
+    // its editor's key wait (CALL #65F7 at #73CC, from the editor's entry called at #61A3)
+    d.idleChain = {0x73CF, 0x61A6};
+    d.idleWhere = "its editor";
     return d;
 }
 
-/// Laser Genius 1.04 Beta (asm-synchronizer.md §7.16): paragraphs from #7F2E to (#A973) (without the hash
-/// extensions; (#ADA1) with them), then FF FF; the disk file adds its #AF header. Identified by its title
+/// Laser Genius 1.04 Beta (asm-synchronizer.md §7.16): paragraphs from (#A975) to (#A973) (without the hash
+/// extensions; (#ADA1) with them), then FF FF; the disk file adds its #AF header. Identified by its code at #AC00;
+/// an inject writes the paragraphs and FF FF from (#A975) and the end word, up to (#A971) (no "changed" flag)
 SyncDescriptor LaserGenius()
 {
     SyncDescriptor d;
@@ -919,12 +950,21 @@ SyncDescriptor LaserGenius()
     d.identify = {{0xAC00, std::string("\xA9\xCD\x79\xAF\xE5\x2A\xDA\xA9\x06\x2A\xCB\x7E\x23\x20\x02\x10\xF9\x22\xDA\xA9\xE1\xE5\x2A\x32", 24)}};
     d.pages = PageIdRule::Fixed;
     d.family = LayoutFamily::Linear;
-    d.linear.fixedStart = 0x7F2E;
+    d.linear.startAt = 0xA975;   // #7F2E; SET SPACE moves it
     d.linear.endAt = 0xA973;
+    d.linear.limitAt = 0xA971;
+    // its screen lines follow the text (FF, the lines, FF at (#A9DC)); #A9D4-#A9DE point into them (LOAD moves them)
+    d.linear.followLastAt = 0xA9DC;
+    d.linear.followPointers = {0xA9D4, 0xA9D6, 0xA9D8, 0xA9DA, 0xA9DC, 0xA9DE};
     d.linear.upperPage = 0;
     d.linear.laserGeniusFile = true;
     d.linear.editorStateAt = 5;
     d.linear.editorStateLength = 4;
+    d.linear.injectable = true;
+    // its editor: the key wait (CALL #B071) returns to #AB04, the loop to the ROM's #1303 (an assembler error waits
+    // under #AB0C); a paragraph being typed stays out of the text until ENTER
+    d.idleChain = {0xAB04, 0x1303};
+    d.idleWhere = "its editor";
     d.typing = {TypingRule::NotInText, 0, 0};
     return d;
 }
@@ -1286,8 +1326,199 @@ namespace
 /// ZAsm: the buffer from (startAt) (its part from #C000 in upperPage), the end pointer one past it, the table's other
 /// words at the start, as LOAD leaves them. The editor has no "changed" flag: a text in memory that is not empty and
 /// not the caller's own counts as changed
-InjectPlan PlanInjectLinear(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& file, const InjectOptions& options)
+/// PROMETHEUS: a save's records from the access line, its six empty records, then its symbol table; the table and
+/// end words follow them, the active line and the block margins go to the start (as CLEAR leaves them), and what the
+/// old text held above the new end is cleared (as its deletion does)
+InjectPlan PlanInjectPrometheus(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& file, const InjectOptions& options)
 {
+    InjectPlan plan;
+    std::string why;
+    if (!Idle(machine, d, why))
+    {
+        plan.error = why;
+        return plan;
+    }
+    const LinearParams& p = d.linear;
+    plan.previous = ReadText(machine, d);
+    if (plan.previous.ok && !plan.previous.file.empty() && !options.force && !WrittenBefore(plan.previous, options.written, 0))
+    {
+        plan.error = "the text in " + d.title + " may have changes not saved (it keeps no flag; force overwrites it)";
+        return plan;
+    }
+    size_t length = 0;
+    if (!codecs::PrometheusCodec::FindSourceLength(file, length))
+    {
+        plan.error = "the file is no PROMETHEUS save (records, two bytes, a symbol table)";
+        return plan;
+    }
+    std::vector<uint8_t> records(file.begin(), file.begin() + static_cast<std::ptrdiff_t>(length));
+    if (records.empty())
+        records = {0x00, 0x30};   // an empty text is one empty line
+    const std::vector<uint8_t> table(file.begin() + static_cast<std::ptrdiff_t>(length + 2), file.end());
+    const uint32_t start = p.fixedStart;
+    const uint32_t tableAt = start + static_cast<uint32_t>(records.size()) + 12;
+    const uint32_t end = tableAt + static_cast<uint32_t>(table.size());
+    const auto topWord = machine.Word(p.limitAt);
+    const auto oldEndWord = machine.Word(p.prometheusEndAt);
+    if (!topWord || !oldEndWord)
+    {
+        plan.error = "the text pointers of " + d.title + " are not in memory";
+        return plan;
+    }
+    // plain values: gcc 14 at -O3 takes *optional for maybe-uninitialized (-Werror)
+    const uint32_t top = topWord.value_or(0);
+    const uint32_t oldEnd = oldEndWord.value_or(0);
+    if (end >= top)
+    {
+        plan.error = "the text takes " + std::to_string(end - start) + " bytes with its names; " + d.title + " holds " +
+                     std::to_string(top > start ? top - start - 1 : 0) + " (up to its U-TOP)";
+        return plan;
+    }
+    const auto poke = [&](uint32_t at, uint8_t value) {
+        const int window = machine.windows[(at >> 14) & 3];
+        if (window < 0 || at < 0x4000 || at > 0xFFFF)
+            return false;
+        plan.pokes.push_back({window, static_cast<uint16_t>(at & (kPage - 1)), value});
+        return true;
+    };
+    const auto word = [&](uint32_t at, uint32_t value) { return poke(at, static_cast<uint8_t>(value & 0xFF)) && poke(at + 1, static_cast<uint8_t>(value >> 8)); };
+    bool ok = true;
+    uint32_t at = start;
+    for (const uint8_t b : records)
+        ok = poke(at++, b) && ok;
+    for (int k = 0; k < 6; ++k)
+        ok = poke(at++, 0x00) && poke(at++, 0x30) && ok;
+    for (const uint8_t b : table)
+        ok = poke(at++, b) && ok;
+    for (; at < oldEnd; ++at)
+        ok = poke(at, 0x00) && ok;
+    ok = word(p.prometheusTableAt, tableAt) && word(p.prometheusEndAt, end) && ok;
+    for (const uint16_t w : p.resetWords)
+        ok = word(w, start) && ok;
+    if (!ok)
+    {
+        plan.error = "the memory of " + d.title + "'s text is not in RAM";
+        return plan;
+    }
+    plan.page = -1;
+    plan.ok = true;
+    return plan;
+}
+
+/// PASM: the CR LF text from fixedStart and its #1A, the editor's words as ZAP and GET leave them (the cursor on the
+/// first line, which its line buffer holds with the TABs spread out); the first line goes in packed as PASM packs it
+/// when the cursor leaves it. The text stays below #C000 (what the reader reads). No "changed" flag: a text in memory
+/// that is not empty and not the caller's own counts as changed
+InjectPlan PlanInjectPasm(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& given, const InjectOptions& options)
+{
+    InjectPlan plan;
+    std::string why;
+    if (!Idle(machine, d, why))
+    {
+        plan.error = why;
+        return plan;
+    }
+    const LinearParams& p = d.linear;
+    plan.previous = ReadText(machine, d);
+    const bool empty = plan.previous.file.empty() || plan.previous.file == std::vector<uint8_t>{'\r', '\n'};
+    if (plan.previous.ok && !empty && !options.force && !WrittenBefore(plan.previous, options.written, 0))
+    {
+        plan.error = "the text in " + d.title + " may have changes not saved (it keeps no flag; force overwrites it)";
+        return plan;
+    }
+    // every line ends with CR LF (a text with LF ends too; an empty text is one empty line), up to a #1A
+    std::vector<uint8_t> file;
+    for (auto at = given.begin(); at != given.end() && *at != 0x1A; ++at)
+    {
+        if (*at == '\n' && (file.empty() || file.back() != '\r'))
+            file.push_back('\r');
+        file.push_back(*at);
+    }
+    if (file.size() < 2 || file[file.size() - 2] != '\r' || file.back() != '\n')
+        file.insert(file.end(), {'\r', '\n'});
+    size_t firstEnd = 0;
+    while (!(file[firstEnd] == '\r' && file[firstEnd + 1] == '\n'))
+        ++firstEnd;
+    // the first line in the line buffer: TABs to the next multiple of 8, blanks to 64 columns
+    std::vector<uint8_t> buffer;
+    for (size_t k = 0; k < firstEnd; ++k)
+    {
+        if (file[k] == '\t')
+            buffer.resize((buffer.size() / 8 + 1) * 8, ' ');
+        else
+            buffer.push_back(file[k]);
+    }
+    if (buffer.size() > 64)
+    {
+        plan.error = "the first line takes " + std::to_string(buffer.size()) + " columns; " + d.title + "'s line holds 64";
+        return plan;
+    }
+    std::vector<uint8_t> packed = buffer;
+    PackPasmLine(packed);
+    buffer.resize(64, ' ');
+    std::vector<uint8_t> text = packed;
+    text.insert(text.end(), file.begin() + static_cast<std::ptrdiff_t>(firstEnd), file.end());
+    const uint32_t start = p.fixedStart;
+    if (start + text.size() + 1 > 0xC000)
+    {
+        plan.error = "the text takes " + std::to_string(text.size()) + " bytes; " + d.title + " holds " + std::to_string(0xC000 - start - 1) + " (up to #C000)";
+        return plan;
+    }
+    const auto poke = [&](uint32_t at, uint8_t value) {
+        const int window = machine.windows[(at >> 14) & 3];
+        if (window < 0 || at < 0x4000 || at > 0xFFFF)
+            return false;
+        plan.pokes.push_back({window, static_cast<uint16_t>(at & (kPage - 1)), value});
+        return true;
+    };
+    const auto word = [&](uint32_t at, uint32_t value) { return poke(at, static_cast<uint8_t>(value & 0xFF)) && poke(at + 1, static_cast<uint8_t>(value >> 8)); };
+    bool ok = true;
+    uint32_t at = start;
+    for (const uint8_t b : text)
+        ok = poke(at++, b) && ok;
+    ok = poke(at, 0x1A) && ok;
+    const auto lines = static_cast<uint32_t>(std::count(text.begin(), text.end(), uint8_t('\n')));
+    ok = word(p.pasmLengthAt, static_cast<uint32_t>(text.size())) && word(p.pasmLastLineAt, lines - 1) &&
+         word(p.pasmLineLengthAt, static_cast<uint32_t>(packed.size())) && word(p.pasmLineAt, start) && word(p.pasmTopAt, start) && ok;
+    for (size_t k = 0; k < buffer.size(); ++k)
+        ok = poke(p.pasmLineBuffer + static_cast<uint32_t>(k), buffer[k]) && ok;
+    for (const uint16_t w : p.zeroWords)
+        ok = word(w, 0) && ok;
+    for (const uint16_t b : p.zeroBytes)
+        ok = poke(b, 0) && ok;
+    ok = poke(p.pasmRedrawAt, 0xFF) && ok;
+    if (p.pasmNameAt && !options.name.empty())
+    {
+        std::string name = options.name.substr(0, 8);
+        name.resize(8, ' ');
+        for (size_t k = 0; k < name.size(); ++k)
+            ok = poke(p.pasmNameAt + static_cast<uint32_t>(k), static_cast<uint8_t>(name[k])) && ok;
+    }
+    if (!ok)
+    {
+        plan.error = "the memory of " + d.title + "'s text is not in RAM";
+        return plan;
+    }
+    plan.page = -1;
+    plan.ok = true;
+    return plan;
+}
+
+InjectPlan PlanInjectLinear(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& given, const InjectOptions& options)
+{
+    if (d.linear.prometheusTableAt)
+        return PlanInjectPrometheus(machine, d, given, options);
+    if (d.linear.pasmLengthAt)
+        return PlanInjectPasm(machine, d, given, options);
+    // Laser Genius: memory holds the paragraphs and FF FF, without the disk file's #AF header
+    std::vector<uint8_t> file = given;
+    if (d.linear.laserGeniusFile)
+    {
+        if (file.size() >= 9 && file[0] == 0xAF && (file[1] | file[2] << 8) == static_cast<int>(file.size() - 9))
+            file.erase(file.begin(), file.begin() + 9);
+        if (file.size() < 2 || file[file.size() - 1] != 0xFF || file[file.size() - 2] != 0xFF)
+            file.insert(file.end(), {0xFF, 0xFF});
+    }
     InjectPlan plan;
     std::string why;
     if (!Idle(machine, d, why) && !(options.force && d.idleChain.empty()))
@@ -1302,7 +1533,7 @@ InjectPlan PlanInjectLinear(const MachineView& machine, const SyncDescriptor& d,
         plan.error = "the text in " + d.title + " may have changes not saved (it keeps no flag; force overwrites it)";
         return plan;
     }
-    const auto start = machine.Word(p.startAt);
+    const auto start = p.startAt ? machine.Word(p.startAt) : std::optional<uint16_t>(p.fixedStart);
     if (!start)
     {
         plan.error = "the text pointers of " + d.title + " are not in memory";
@@ -1313,6 +1544,35 @@ InjectPlan PlanInjectLinear(const MachineView& machine, const SyncDescriptor& d,
                         std::equal(p.end.begin(), p.end.end(), file.end() - static_cast<std::ptrdiff_t>(p.end.size()),
                                    [](char a, uint8_t b) { return static_cast<uint8_t>(a) == b; });
     const uint32_t end = *start + static_cast<uint32_t>(file.size()) - (marked ? static_cast<uint32_t>(p.end.size()) : 0);
+    const auto limitWord = p.limitAt ? machine.Word(p.limitAt) : std::optional<uint16_t>();
+    if (p.limitAt && !limitWord)
+    {
+        plan.error = "the text pointers of " + d.title + " are not in memory";
+        return plan;
+    }
+    // a plain value: gcc 14 at -O3 takes *optional here for maybe-uninitialized (-Werror)
+    const bool limited = limitWord.has_value();
+    const uint32_t limit = limitWord.value_or(0);
+    // the block after the text (Laser Genius' screen lines) moves behind the new one
+    std::vector<uint8_t> follow;
+    uint32_t oldEnd = 0;
+    if (p.followLastAt)
+    {
+        const auto was = machine.Word(p.endAt);
+        const auto last = machine.Word(p.followLastAt);
+        if (!was || !last || *last < *was || *last - *was > 0x400 || !machine.Read(*was, static_cast<size_t>(*last - *was + 1), follow))
+        {
+            plan.error = "the editor's lines after the text of " + d.title + " are not where its pointers say";
+            return plan;
+        }
+        oldEnd = *was;
+    }
+    if (limited && end + p.end.size() + follow.size() > limit)
+    {
+        plan.error = "the text takes " + std::to_string(file.size()) + " bytes; " + d.title + " holds " +
+                     std::to_string(limit > *start ? limit - *start : 0) + " (its text space)";
+        return plan;
+    }
     if (end + p.end.size() > 0x10000)
     {
         plan.error = "the text takes " + std::to_string(file.size()) + " bytes; " + d.title + " holds " + std::to_string(0x10000 - *start - p.end.size());
@@ -1332,6 +1592,17 @@ InjectPlan PlanInjectLinear(const MachineView& machine, const SyncDescriptor& d,
         for (size_t k = 0; k < p.end.size(); ++k)
             ok = poke(end + static_cast<uint32_t>(k), static_cast<uint8_t>(p.end[k])) && ok;
     ok = poke(p.endAt, static_cast<uint8_t>(end & 0xFF)) && poke(p.endAt + 1u, static_cast<uint8_t>(end >> 8)) && ok;
+    if (p.followLastAt)
+    {
+        for (size_t k = 0; k < follow.size(); ++k)
+            ok = poke(end + static_cast<uint32_t>(k), follow[k]) && ok;
+        for (const uint16_t at : p.followPointers)
+            if (const auto v = machine.Word(at); v && *v)
+            {
+                const auto moved = static_cast<uint16_t>(*v - oldEnd + end);
+                ok = poke(at, static_cast<uint8_t>(moved & 0xFF)) && poke(at + 1u, static_cast<uint8_t>(moved >> 8)) && ok;
+            }
+    }
     for (uint32_t at = p.resetFrom; at + 1 < p.resetTo; at += 2)
         ok = poke(at, static_cast<uint8_t>(*start & 0xFF)) && poke(at + 1, static_cast<uint8_t>(*start >> 8)) && ok;
     if (!ok)

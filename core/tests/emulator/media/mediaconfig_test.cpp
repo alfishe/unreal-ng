@@ -116,11 +116,17 @@ TEST(MediaConfig_Test, LegacyKeysFillOnlyWhatMediaLeavesUnset)
     EXPECT_EQ(master->access.value_or(AccessMode::Session), AccessMode::ReadOnly) << "HD0RO=1";
     EXPECT_EQ(Find(legacyOnly, "ide0.slave"), nullptr) << "an empty Image1 sets nothing";
 
+    // absolute on this platform: on Windows a path without a drive is relative to the config folder
+#ifdef _WIN32
+    const std::string card = "C:/new/card.img";
+#else
+    const std::string card = "/new/card.img";
+#endif
     IniFile both;
-    both.LoadData("[MEDIA]\nsd.zc = /new/card.img\n[ZC]\nSDCARD=wc.img\n");
+    both.LoadData("[MEDIA]\nsd.zc = " + card + "\n[ZC]\nSDCARD=wc.img\n");
     const auto set = MediaConfig::FromIni(both, "/configs/atm3");
     ASSERT_NE(Find(set, "sd.zc"), nullptr);
-    EXPECT_EQ(Find(set, "sd.zc")->source.path, FileHelper::LexicallyNormalPath("/new/card.img")) << "[MEDIA] wins";
+    EXPECT_EQ(Find(set, "sd.zc")->source.path, FileHelper::LexicallyNormalPath(card)) << "[MEDIA] wins";
     EXPECT_FALSE(Find(set, "sd.zc")->legacy);
 }
 

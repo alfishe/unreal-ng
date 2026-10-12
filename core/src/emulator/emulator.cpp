@@ -4,6 +4,7 @@
 
 #include "emulator/io/fdc/floppydriveslot.h"
 #include "emulator/io/tape/tapeslot.h"
+#include "emulator/bus/busmanager.h"
 #include "emulator/media/floppyformats.h"
 #include "emulator/media/mediamanager.h"
 #include <loaders/snapshot/loader_z80.h>
@@ -346,6 +347,9 @@ bool Emulator::Init()
         // Peripherals register their media slots while Core initializes
         if (_context->pMediaManager == nullptr)
             _context->pMediaManager = new MediaManager(_context);
+        // Bus owners register their buses while Core initializes, the same way
+        if (_context->pBusManager == nullptr)
+            _context->pBusManager = new BusManager();
         WireCoordinator();
 
         _core = new Core(_context);
@@ -783,6 +787,10 @@ void Emulator::ReleaseNoGuard()
         delete _context->pMediaManager;
         _context->pMediaManager = nullptr;
     }
+
+    // After Core: its bus owners have unregistered
+    delete _context->pBusManager;
+    _context->pBusManager = nullptr;
 
     // Release Config
     if (_config != nullptr)
@@ -1328,6 +1336,9 @@ void Emulator::ResetNow(bool hardReset, coordinator::OpStage& stage)
     }
 
     _core->Reset();
+    // The frame counter restarts: bus traces start a new epoch (their time order is per epoch)
+    if (_context && _context->pBusManager)
+        _context->pBusManager->NextEpoch();
 
     if (!hardReset)
     {

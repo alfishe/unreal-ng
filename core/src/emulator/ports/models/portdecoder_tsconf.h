@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 
+#include "emulator/bus/bustap.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/io/sdcard/sdcardspi.h"
 #include "emulator/io/spi/zcontrollerspi.h"
@@ -125,6 +126,7 @@ public:
     /// BaseConf; it outlives Core::Reset() like the board's
     SdCardSpi& GetSdCard() { return _sdCard; }
     ZControllerSpi& GetZController() { return _zc; }
+    BusTap& SpiTap() { return _spiTap; }
     /// The VDAC2 card (FT812) on the IDE connector: present in the VDAC2
     /// build ([MISC] TS_VDAC2=1) of a binary with ENABLE_VDAC2, else nullptr
     /// (vdac2-integration-design.md §5)
@@ -169,6 +171,9 @@ public:
     TsConfDma& GetDma() { return _dma; }
     /// Bring the engine (line starts, DRAM budget, DMA) up to the current CPU T-state
     void CatchUpEngine();
+    /// The CPU on #57 / #77 while an SPI DMA still runs after the catch-up: the two interleave on the board's one
+    /// SPI master (the bus analyzer's dma_collision finding)
+    void CheckSpiDmaCollision(bool write, uint8_t value);
 
     /// Registers the picture depends on (hardware-spec §3.2): a write first
     /// brings the engine and the screen up to the write
@@ -304,6 +309,9 @@ private:
         SlotDescriptor _descriptor;
     };
 
+    // The bus analyzer's view of the Z-Controller bus (docs/inprogress/2026-10-11-bus-analyzer): declared
+    // before the card and the controller, which point at it
+    BusTap _spiTap{"zc.spi", BusProtocol::Spi, "Z-Controller SPI (#57 data, #77 chip selects): SD card, VDAC2 FT812"};
     SdCardSpi _sdCard;
     ZControllerSpi _zc;
     SdSlot _sdSlot{*this};

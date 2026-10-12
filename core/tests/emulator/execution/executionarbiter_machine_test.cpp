@@ -655,24 +655,24 @@ TEST_F(ExecutionArbiterMachine_Test, ALongDirectRunLetsAHoldInBetweenFrames)
 /// (two runs never interleave: the second one starts when the first has ended)
 TEST_F(ExecutionArbiterMachine_Test, ALongDirectRunLendsToNeitherAPauseNorAnotherRun)
 {
-    std::atomic<bool> firstDone{false};
-    TestThread first([&]() {
-        _emulator->RunNFrames(200, true);
-        firstDone = true;
-    });
+    TestThread first([&]() { _emulator->RunNFrames(200, true); });
     ASSERT_TRUE(TestWait::For([&]() { return _emulator->IsDirectStepping(); }));
 
     const execution::Result pause = _emulator->Pause(execution::Requester{execution::Origin::WebApi, {}});
     EXPECT_EQ(pause.outcome, execution::Outcome::Pending) << "queued behind the run, not lent to";
 
-    bool secondAfterFirst = false;
+    // The frame the second run ended on, not a flag the first thread sets after its run returned: a second run that
+    // starts when the first has ended can be over before that thread is scheduled again (seen on gcc in CI)
+    uint64_t secondEnd = 0;
     std::thread second([&]() {
         _emulator->RunNFrames(1, true);
-        secondAfterFirst = firstDone.load();
+        secondEnd = Frame(_emulator);
     });
     first.Join();
     second.join();
-    EXPECT_TRUE(secondAfterFirst) << "the second direct run interleaved with the first";
+    // After the first run the queued pause holds the machine: only the second run adds a frame, so it ended on the
+    // last one; interleaved, the first run would have gone on past it
+    EXPECT_EQ(secondEnd, Frame(_emulator)) << "the second direct run interleaved with the first";
     EXPECT_TRUE(_emulator->IsPaused());
 }
 

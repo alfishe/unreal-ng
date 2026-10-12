@@ -36,7 +36,7 @@ uint64_t TTDNextState::TTDHashState() const
     return h;
 }
 
-void TTDNextDivMmcRam::TTDSaveState(uint8_t* dst) const
+void TTDNextSystemArea::TTDSaveState(uint8_t* dst) const
 {
     if (!dst)
         return;
@@ -45,7 +45,7 @@ void TTDNextDivMmcRam::TTDSaveState(uint8_t* dst) const
         std::memcpy(dst + i * 16384, memory->ROMPageHostAddress(static_cast<uint8_t>(kFirstPage + i)), 16384);
 }
 
-void TTDNextDivMmcRam::TTDLoadState(const uint8_t* src)
+void TTDNextSystemArea::TTDLoadState(const uint8_t* src)
 {
     if (!src)
         return;
@@ -54,16 +54,19 @@ void TTDNextDivMmcRam::TTDLoadState(const uint8_t* src)
         std::memcpy(memory->ROMPageHostAddress(static_cast<uint8_t>(kFirstPage + i)), src + i * 16384, 16384);
 }
 
-uint64_t TTDNextDivMmcRam::TTDHashState() const
+uint64_t TTDNextSystemArea::TTDHashState() const
 {
-    uint64_t h = 0xcbf29ce484222325ULL;  // FNV-1a offset basis
-    Memory* memory = &_memory;
+    // FNV-1a over 64-bit words (a byte at a time over 256 KB would be a fifth of a millisecond per frame)
+    uint64_t h = 0xcbf29ce484222325ULL;
+    constexpr size_t kPageBytes = 16384;
     for (unsigned i = 0; i < kPages; i++)
     {
-        const uint8_t* page = memory->ROMPageHostAddress(static_cast<uint8_t>(kFirstPage + i));
-        for (size_t b = 0; b < 16384; b++)
+        const uint8_t* page = _memory.ROMPageHostAddress(static_cast<uint8_t>(kFirstPage + i));
+        for (size_t offset = 0; offset < kPageBytes; offset += sizeof(uint64_t))
         {
-            h ^= page[b];
+            uint64_t word;
+            std::memcpy(&word, page + offset, sizeof(word));
+            h ^= word;
             h *= 0x100000001b3ULL;  // FNV-1a prime
         }
     }

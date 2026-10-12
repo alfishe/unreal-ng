@@ -188,6 +188,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 
                         // TS-Conf VDAC2 card (FT812): bus capture
                         {"vdac2", &CLIProcessor::HandleVdac2},
+                        {"bus", &CLIProcessor::HandleBus},
 
                         // General Sound coprocessor triage (activity counters + port/DAC trace)
                         {"gsporttrace", &CLIProcessor::HandleGSPortTrace},
@@ -718,6 +719,11 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "                                 kbc_firmware=none|v22-7..v41 (ATM Turbo 2+ keyboard controller, RS-232 from v31)" << NEWLINE;
     oss << "                                 atm2ioesp=at|espnet|... atm2ioesp_address=0xF0|0xF8 (ATM2IOESP on the ATM Turbo 2+ INTERNAL I/O)" << NEWLINE;
     oss << "                                 zifi=none|at[,firmware]|zifi-native[,s3|esp01s]|loopback|tcp:..|serial:.. (TS-Conf / ZX-Evo TS firmware: the ZiFi board's ESP)" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Bus analyzer (SPI buses: zc.spi, next.spi, divmmc.spi, neogs.*):" << NEWLINE;
+    oss << "  bus [list] | bus <id|all> on [checks|nochecks]|off|clear | bus <id> events|findings [...]" << NEWLINE;
+    oss << "  bus <id> sd-timing [ideal|realistic|slow] [seed=N] | bus <id> export <vcd|jsonl> <file>" << NEWLINE;
+    oss << "                                - transactions, SD protocol events, driver checks, SD card timing ('bus help')" << NEWLINE;
     oss << NEWLINE;
     oss << "TS-Conf VDAC2 card (FT812):" << NEWLINE;
     oss << "  vdac2 capture <start <path>|stop|status>" << NEWLINE;

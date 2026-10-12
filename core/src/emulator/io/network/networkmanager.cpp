@@ -61,7 +61,10 @@ NetworkManager::Plan NetworkManager::MakePlan() const
             ComPortSpec::Parse(fallback, spec, error);
         return spec.kind == ComPortSpec::Kind::None ? std::string() : spec.ToString();
     };
-    const std::string comPeer = peerOf(net.comPort, "NONE");
+    // The Next ships with its ESP module on UART 0 (the AT firmware); every other machine's port is empty until configured
+    const char* comDefault = caps.serialPort == SerialPort::NextUart ? "AT" : "NONE";
+    const std::string comPeer = peerOf(net.comPort, comDefault);
+    const std::string comPeer2 = peerOf(net.comPort2, "NONE");
 
     // The machine's own serial port: mainboard hardware, there with the network off
     const std::string zifiPeer = peerOf(net.zifi, "NONE");
@@ -76,12 +79,16 @@ NetworkManager::Plan NetworkManager::MakePlan() const
         if (caps.zifi && networkOn)
             plan.zifiPeer = zifiPeer;
     }
-    else if (caps.serialPort == SerialPort::Atm2Kbc || caps.serialPort == SerialPort::Profi8251)
+    else if (caps.serialPort == SerialPort::Atm2Kbc || caps.serialPort == SerialPort::Profi8251 || caps.serialPort == SerialPort::NextUart)
     {
         // Not on #xxEF: a ZX-WiFi card fits beside it
         plan.machineSerial = true;
         if (networkOn)
+        {
             plan.machinePeer = comPeer;
+            if (caps.attachSecondSerialPeer)
+                plan.machinePeer2 = comPeer2;
+        }
     }
     else if (caps.serialPort == SerialPort::None && !comPeer.empty())
     {
@@ -246,11 +253,28 @@ void NetworkManager::FitMachineSerial(const Plan& plan)
     const PortDecoder::NetworkCapabilities caps = decoder ? decoder->DescribeNetwork() : PortDecoder::NetworkCapabilities();
     if (!caps.attachSerialPeer)
         return;
-    _machinePeer = MakePeer(plan.machinePeer, caps.espBaud);
+    // The Next's module is an ESP-12 (ESP8266): an ESP8266 build from [NETWORK] EspChip, else NonOS AT 1.7.4 as on the ZiFi board
+    std::optional<EspModule::Firmware> firmware;
+    if (caps.serialPort == PortDecoder::NetworkCapabilities::SerialPort::NextUart)
+    {
+        const auto chipBuild = static_cast<EspModule::Firmware>(_context->config.network.espChip);
+        firmware = EspModule::ChipOf(chipBuild) == EspModule::Chip::Esp8266 ? chipBuild : EspModule::Firmware::Esp8266NonOs174;
+    }
+    _machinePeer = MakePeer(plan.machinePeer, caps.espBaud, firmware);
     if (!_machinePeer)
         return;   // nothing on the line: the firmware's UART still runs
     caps.attachSerialPeer(_machinePeer.get());
     _context->pMachineSerialPeer = _machinePeer.get();
+}
+
+void NetworkManager::FitMachineSerial2(const Plan& plan)
+{
+    PortDecoder* decoder = _context->pPortDecoder;
+    const PortDecoder::NetworkCapabilities caps = decoder ? decoder->DescribeNetwork() : PortDecoder::NetworkCapabilities();
+    if (!caps.attachSecondSerialPeer)
+        return;
+    _machinePeer2 = MakePeer(plan.machinePeer2, caps.espBaud);
+    caps.attachSecondSerialPeer(_machinePeer2.get());   // nullptr: nothing on the line
 }
 
 void NetworkManager::FitAtm2IoEsp(const Plan& plan)
@@ -366,6 +390,8 @@ void NetworkManager::Refit()
             net.connectTimeoutMs = *change->connectTimeoutMs;
         if (change->comPort)
             copy(net.comPort, sizeof(net.comPort), *change->comPort);
+        if (change->comPort2)
+            copy(net.comPort2, sizeof(net.comPort2), *change->comPort2);
         if (change->zxWifi)
             copy(net.zxWifi, sizeof(net.zxWifi), *change->zxWifi);
         if (change->comModemLines)
@@ -524,7 +550,10 @@ void NetworkManager::Refit()
     if (plan.serial != Plan::Serial::None)
         FitCom(plan, keep ? &*keep : nullptr);
     if (plan.machineSerial)
+    {
         FitMachineSerial(plan);
+        FitMachineSerial2(plan);
+    }
     if (plan.atm2IoEsp)
         FitAtm2IoEsp(plan);
     FitSlotCards(plan);
@@ -552,6 +581,7 @@ void NetworkManager::NameTrafficGuests()
     if (_com)
         name(_com->Peer(), "com");
     name(_machinePeer.get(), "machine");
+    name(_machinePeer2.get(), "machine2");
     if (_atm2IoEsp)
         name(_atm2IoEsp->Com().Peer(), "atm2ioesp");
     if (_zifi)
@@ -742,11 +772,13 @@ void NetworkManager::Unplug(bool keepSlotCards)
 {
     if (_context)
     {
-        if ((_machinePeer || _atm2IoEsp) && _context->pPortDecoder)
+        if ((_machinePeer || _machinePeer2 || _atm2IoEsp) && _context->pPortDecoder)
         {
             const PortDecoder::NetworkCapabilities caps = _context->pPortDecoder->DescribeNetwork();
             if (_machinePeer && caps.attachSerialPeer)
                 caps.attachSerialPeer(nullptr);
+            if (_machinePeer2 && caps.attachSecondSerialPeer)
+                caps.attachSecondSerialPeer(nullptr);
             if (_atm2IoEsp && caps.internalIo)
                 caps.internalIo(_atm2IoEsp.get(), false);
         }
@@ -804,6 +836,7 @@ void NetworkManager::Unplug(bool keepSlotCards)
         _slotCards = std::move(kept);
     }
     _machinePeer.reset();
+    _machinePeer2.reset();
     _atm2IoEsp.reset();
     if (_com)
         _com->SetZiFi(nullptr);
@@ -816,7 +849,7 @@ void NetworkManager::Unplug(bool keepSlotCards)
 
 bool NetworkManager::Change::Empty() const
 {
-    return !card && !hostAccess && !dnsPass && !hosts && !forwards && !remoteAccess && !connectTimeoutMs && !comPort &&
+    return !card && !hostAccess && !dnsPass && !hosts && !forwards && !remoteAccess && !connectTimeoutMs && !comPort && !comPort2 &&
            !zxWifi && !comModemLines && !espChip && !avrFirmware && !kbcFirmware && !atm2IoEsp && !atm2IoEspAddress &&
            !zifi && !modemPhonebook && !ethernetMode && !bridgeAdapter && slotPeers.empty();
 }
@@ -897,6 +930,20 @@ bool NetworkManager::ValidateChange(const Change& change, std::string& error)
         if (change.comPort->size() >= sizeof(Net::comPort))
         {
             error = "com_port: too long";
+            return false;
+        }
+    }
+    if (change.comPort2)
+    {
+        ComPortSpec spec;
+        if (!ComPortSpec::Parse(*change.comPort2, spec, error))
+        {
+            error = "com_port2: " + error;
+            return false;
+        }
+        if (change.comPort2->size() >= sizeof(Net::comPort2))
+        {
+            error = "com_port2: too long";
             return false;
         }
     }
@@ -1009,6 +1056,8 @@ void NetworkManager::OnFrameDevices()
             _com->OnFrame();
         if (_machinePeer)
             _machinePeer->OnFrame();
+        if (_machinePeer2)
+            _machinePeer2->OnFrame();
         if (_atm2IoEsp)
             _atm2IoEsp->OnFrame();
         if (_zifi)
@@ -1082,7 +1131,12 @@ void NetworkManager::UpdateStatus()
         const auto& net = _context->config.network;
         auto& s = st.settings;
         s.card = networkspec::CardsToString(net.card);
-        s.comPort = net.comPort[0] ? std::string(net.comPort) : std::string("NONE");
+        {
+            const bool nextEsp = _context->pPortDecoder && _context->pPortDecoder->DescribeNetwork().serialPort ==
+                                                               PortDecoder::NetworkCapabilities::SerialPort::NextUart;
+            s.comPort = net.comPort[0] ? std::string(net.comPort) : std::string(nextEsp ? "AT" : "NONE");
+        }
+        s.comPort2 = net.comPort2[0] ? std::string(net.comPort2) : std::string("NONE");
         s.zxWifi = net.zxWifi[0] ? std::string(net.zxWifi) : std::string("AT");
         s.atm2IoEsp = net.atm2IoEsp[0] ? std::string(net.atm2IoEsp) : std::string("AT");
         s.atm2IoEspAddress = net.atm2IoEspAddress;
@@ -1121,7 +1175,19 @@ void NetworkManager::UpdateStatus()
                         : caps.serialPort == SerialPort::ZiFi      ? "zifi"
                         : caps.serialPort == SerialPort::Atm2Kbc   ? "atm2-kbc"
                         : caps.serialPort == SerialPort::Profi8251 ? "profi-8251"
+                        : caps.serialPort == SerialPort::NextUart  ? "next-uart"
                                                                    : "none";
+        if (caps.serialPort == SerialPort::NextUart)
+        {
+            // The Next's UART 0 (the ESP's line); UART 1's peer is listed by the next_uart report
+            auto& m = st.machineSerial;
+            m.fitted = true;
+            m.flavor = "nextuart";
+            m.baud = caps.serialBaud ? caps.serialBaud() : 0;
+            m.frameBits = 10;
+            m.modemLines = false;
+            FillPeerStatus(_machinePeer.get(), m);
+        }
         if (caps.serialPort == SerialPort::Atm2Kbc)
         {
             auto& m = st.machineSerial;
@@ -1421,6 +1487,17 @@ bool NetworkManager::ParseChange(const std::vector<std::pair<std::string, std::s
                 return false;
             }
             out.comPort = spec.ToString();
+        }
+        else if (key == "com_port2" || key == "comport2" || key == "com2")
+        {
+            ComPortSpec spec;
+            std::string why;
+            if (!ComPortSpec::Parse(value, spec, why))
+            {
+                error = "com_port2: " + why;
+                return false;
+            }
+            out.comPort2 = spec.ToString();
         }
         else if (key == "esp_chip" || key == "espchip")
         {

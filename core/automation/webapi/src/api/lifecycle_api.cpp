@@ -41,6 +41,17 @@ extern std::string stateToString(EmulatorStateEnum state);
 
 namespace
 {
+/// The note a create / start / switch reply carries when the RAM size asked for is not what the machine got (Config::EffectiveRamSize);
+/// empty otherwise. The manager does the change, this only says it
+std::string RamSizeNote(const std::string& modelName, uint32_t requestedKb)
+{
+    const TMemModel* model = Config::FindModelByShortName(modelName);
+    std::string note;
+    if (model && requestedKb > 0)
+        (void)Config::EffectiveRamSize(model->Model, requestedKb, note);
+    return note;
+}
+
 /// Optional "ram_power_on": "random" | "zero" of a create / start / model
 /// switch body. True when absent or valid (mode set only when present);
 /// false with a 400 already sent when the value is not one of the two
@@ -589,6 +600,8 @@ void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
         ret["state"] = stateToString(emulator->GetState());
         ret["symbolic_id"] = emulator->GetSymbolicId();
         AddIdentityFields(ret, *emulator);
+        if (const std::string note = RamSizeNote(modelName, ramSize); !note.empty())
+            ret["note"] = note;  // a size the core cannot address was created with the one it can
 
         auto resp = HttpResponse::newHttpJsonResponse(ret);
         resp->setStatusCode(HttpStatusCode::k201Created);
@@ -823,6 +836,8 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
         ret["state"] = stateToString(emulator->GetState());
         ret["started"] = started;
         ret["message"] = started ? "Emulator created and started" : "Emulator created but failed to start";
+        if (const std::string note = RamSizeNote(modelName, ramSize); !note.empty())
+            ret["note"] = note;  // a size the core cannot address was created with the one it can
         if (ZXPolyGroup* group = manager->GetZXPolyGroup(emulatorId))
             ret["zxpoly"] = ZXPolyStatusJson(group->GetStatus());
 
@@ -1414,6 +1429,12 @@ void EmulatorAPI::switchModel(const HttpRequestPtr& req, std::function<void(cons
         return;
     }
 
+    const std::string ramNote = RamSizeNote(modelName, ramSize);
+    if (!ramNote.empty())
+    {
+        std::string ignored;
+        ramSize = Config::EffectiveRamSize(requestedModel->Model, ramSize, ignored);
+    }
     if (ramSize > 0 && (ramSize & requestedModel->AvailRAMs) == 0)
     {
         Json::Value error;
@@ -1521,6 +1542,8 @@ void EmulatorAPI::switchModel(const HttpRequestPtr& req, std::function<void(cons
         Json::Value ret;
         ret["status"] = "success";
         ret["message"] = "Model switched successfully";
+        if (!ramNote.empty())
+            ret["note"] = ramNote;
         ret["old_emulator_id"] = id;
         ret["new_emulator_id"] = newEmulator->GetId();
         ret["state"] = stateToString(newEmulator->GetState());

@@ -4,7 +4,7 @@ OperationsStatus report: CLI `ops`, Lua / Python operations(), MCP emulator_mana
 import pytest
 
 ENTRY_FIELDS = {"seq", "frame", "t_in_frame", "wall_ms", "kind", "source", "mode", "status", "effect", "summary",
-                "detail"}
+                "detail", "repeats"}
 
 
 class TestOperationLog:
@@ -25,6 +25,7 @@ class TestOperationLog:
         assert entry["seq"] == before + 1
         assert entry["kind"] == "reset"
         assert entry["status"] == "done"
+        assert entry["repeats"] == 1
 
     def test_since_and_limit(self, api_client, active_emulator):
         emu_id = active_emulator

@@ -18,6 +18,7 @@
 
 #include "mcp-analysis.h"
 #include "mcp-media.h"
+#include "mcp-bus.h"
 #include "mcp-slots.h"
 #include "mcp-router.h"
 #include "mcp-symbols.h"
@@ -413,9 +414,11 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                     {
                         // the text first: argument order is unspecified, and gcc moves `response` out before reading it
                         const std::string symbolic = response.get("symbolic_id", "").asString();
+                        const std::string note = response.get("note", "").asString();  // e.g. a RAM size the core cannot address
                         const std::string text = "Created and started emulator " + response["id"].asString() + " (model " +
                                                  (model.empty() ? std::string("default") : model) +
-                                                 (symbolic.empty() ? "" : ", name " + symbolic) + ")";
+                                                 (symbolic.empty() ? "" : ", name " + symbolic) + ")" +
+                                                 (note.empty() ? "" : ". Note: " + note);
                         done(ToolResult::Ok(text, std::move(response)));
                         return;
                     }
@@ -1649,7 +1652,7 @@ void RegisterInspectState(ToolRegistry& registry)
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "profi", "isa", "network", "mouse",
-                               "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_sd", "next_divmmc", "next_nmi", "next_magic_port", "next_audio", "next_input", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel", "sprinter", "sprinter_ports", "sprinter_text",
+                               "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_sd", "next_divmmc", "next_nmi", "next_magic_port", "next_audio", "next_input", "next_uart", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
                                "audio_multisound", "audio_midi", "execution"})
@@ -1756,6 +1759,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "pan, mono flag and the 16 registers with the tone / noise / envelope periods and volumes, and the four DAC channels with the left / right "
         "sums; 'next_input' = the joystick modes of NR #05 (left and right, which port each answers), the NR #0B I/O mode, the Kempston port #1F "
         "decoded (and whether NR #05 selects it) and whether ports #1F / #37 answer, the extended keys held (NR #B0 / #B1) and the pads' MODE X Y Z (NR #B2); "
+        "'next_uart' = the two UARTs (ESP and Pi): prescaler / baud, frame, RTS, the Rx and Tx FIFOs, the status byte as a read gives it, "
+        "the byte counters, the NR #C6 interrupt enables and requests and what is on the line (ComPort= / ComPort2=); "
         "'next_dma' = the DMA as programmed (mode zxn / z80, ports A / B, direction, burst, prescaler, counters, status byte; reading does not "
         "step its read sequence), 'next_video' = layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster "
         "position, 'next_palette' = the 9-bit palettes (nr_palette = '0'-'7' | name | 'all', default the selected one; nr_range = '16-31'), "
@@ -1950,7 +1955,7 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
                     aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "profi" && aspect != "isa" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
-                    aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "next" && aspect != "next_regs" && aspect != "next_mmu" && aspect != "next_reg_journal" && aspect != "next_sd" && aspect != "next_divmmc" && aspect != "next_nmi" && aspect != "next_magic_port" && aspect != "next_audio" && aspect != "next_input" && aspect != "next_dma" && aspect != "next_video" && aspect != "next_palette" && aspect != "next_ports" && aspect != "next_nextreg" && aspect != "next_copper" && aspect != "next_sprites" && aspect != "next_pixel" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
+                    aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "next" && aspect != "next_regs" && aspect != "next_mmu" && aspect != "next_reg_journal" && aspect != "next_sd" && aspect != "next_divmmc" && aspect != "next_nmi" && aspect != "next_magic_port" && aspect != "next_audio" && aspect != "next_input" && aspect != "next_uart" && aspect != "next_dma" && aspect != "next_video" && aspect != "next_palette" && aspect != "next_ports" && aspect != "next_nextreg" && aspect != "next_copper" && aspect != "next_sprites" && aspect != "next_pixel" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
@@ -2399,7 +2404,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
-                        else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu" || aspect == "next_reg_journal" || aspect == "next_sd" || aspect == "next_divmmc" || aspect == "next_nmi" || aspect == "next_magic_port" || aspect == "next_audio" || aspect == "next_input" ||
+                        else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu" || aspect == "next_reg_journal" || aspect == "next_sd" || aspect == "next_divmmc" || aspect == "next_nmi" || aspect == "next_magic_port" || aspect == "next_audio" || aspect == "next_input" || aspect == "next_uart" ||
                                  aspect == "next_dma" || aspect == "next_video" || aspect == "next_palette" || aspect == "next_ports" ||
                                  aspect == "next_nextreg" || aspect == "next_copper" || aspect == "next_sprites" || aspect == "next_pixel")
                         {
@@ -3029,7 +3034,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                         << (value["port_map"]["extended_map"].asBool() ? "open" : "closed") << ", 8255 control #"
                                         << std::hex << value["ppi8255"]["control"].asInt() << std::dec;
                             }
-                            else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu" || aspect == "next_reg_journal" || aspect == "next_sd" || aspect == "next_divmmc" || aspect == "next_nmi" || aspect == "next_magic_port" || aspect == "next_audio" || aspect == "next_input" ||
+                            else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu" || aspect == "next_reg_journal" || aspect == "next_sd" || aspect == "next_divmmc" || aspect == "next_nmi" || aspect == "next_magic_port" || aspect == "next_audio" || aspect == "next_input" || aspect == "next_uart" ||
                                      aspect == "next_dma" || aspect == "next_video" || aspect == "next_palette" || aspect == "next_ports" ||
                                      aspect == "next_nextreg" || aspect == "next_copper" || aspect == "next_sprites" || aspect == "next_pixel")
                             {
@@ -3135,6 +3140,22 @@ void RegisterInspectState(ToolRegistry& registry)
                                     const auto& dac = value["dac"];
                                     out << "\n  DAC A " << dac["a"].asString() << " B " << dac["b"].asString() << " C " << dac["c"].asString() << " D "
                                         << dac["d"].asString() << " (left " << dac["left_sum"].asInt() << ", right " << dac["right_sum"].asInt() << ")";
+                                }
+                                else if (aspect == "next_uart")
+                                {
+                                    out << "\n[next_uart] selected " << value["selected_name"].asString() << (value["ports"]["enabled"].asBool() ? "" : " (ports off: NR #83 bit 4)");
+                                    for (const auto& c : value["channels"])
+                                    {
+                                        const auto& rx = c["rx"];
+                                        const auto& tx = c["tx"];
+                                        const auto& peer = c["peer"];
+                                        out << "\n  " << c["name"].asString() << ": " << c["baud"].asInt() << " baud " << c["frame"]["data_bits"].asInt()
+                                            << c["frame"]["parity"].asString() << c["frame"]["stop_bits"].asInt() << (c["frame"]["hardware_flow"].asBool() ? " flow" : "")
+                                            << ", status " << c["status"]["value"].asString() << ", rx " << rx["count"].asInt() << "/" << rx["capacity"].asInt()
+                                            << ", tx " << tx["count"].asInt() << "/" << tx["capacity"].asInt() << (tx["busy"].asBool() ? " busy" : "")
+                                            << ", sent " << c["bytes"]["sent"].asInt64() << " received " << c["bytes"]["received"].asInt64() << " lost "
+                                            << c["bytes"]["lost"].asInt64() << ", peer " << (peer["attached"].asBool() ? peer["kind"].asString() : std::string("none"));
+                                    }
                                 }
                                 else if (aspect == "next_input")
                                 {
@@ -5848,6 +5869,8 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterAnalyzePerformance(*registry);
     RegisterCaptureMedia(*registry);
     RegisterMediaSlots(*registry);
+    // bus_analyzer: peripheral bus traces, checks, SD card timing (docs/inprogress/2026-10-11-bus-analyzer)
+    RegisterBusAnalyzer(*registry);
 
     // Router tools (search_api + invoke_api)
     RegisterRouterTools(*registry, std::move(caller));

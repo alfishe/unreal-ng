@@ -521,3 +521,156 @@ TEST_F(NextLayerCaptureMachine_Test, CopperChangesAreCapturedPerSegment)
 }
 
 // endregion
+
+// Where a copper MOVE of the fallback colour first shows on the output, counted against the RTL (zxnext.vhd: fallback_rgb_0, _1a, _1, _2,
+// rgb_out_3..6, rgb_out_o: nine CLK_14 registers behind the write; scratch/cosim-copper/LATENCY.md). The WAIT is true at the pixel clock
+// thr = hpos * 8 + 12; the ULA pixel k of the grid leaves at its own hc; the changed fallback appears at the second 14 MHz half of grid pixel
+// thr + 26, i.e. image pixel 2 * thr + 53
+TEST_F(NextLayerCaptureMachine_Test, AFallbackColourMoveShowsAtTheOutputAfterTheRtlPipeline)
+{
+    constexpr unsigned kHpos = 20, kLine = 60;
+    constexpr unsigned kWaitBase = 12, kWaitStep = 8;                     // copper.vhd: thr = (hpos << 3) + 12
+    constexpr unsigned kThr = kHpos * kWaitStep + kWaitBase;
+    constexpr unsigned kFirstChangedImagePixel = 2 * kThr + 53;           // LATENCY.md section 4
+    constexpr uint8_t kUlaOff = 0x80, kFallbackBefore = 0x00, kFallbackAfter = 0xFC;
+    Nr(0x68, kUlaOff);       // the ULA is off: every pixel is the fallback colour
+    Nr(0x4A, kFallbackBefore);
+    Nr(0x61, 0);
+    Nr(0x62, 0);
+    // every frame starts with the colour before (the register keeps the last frame's value), then the WAIT and the change
+    for (uint16_t w : {uint16_t((0x4A << 8) | kFallbackBefore), uint16_t(0x8000 | (kHpos << 9) | kLine), uint16_t((0x4A << 8) | kFallbackAfter),
+                       uint16_t(0xFFFF)})
+    {
+        Nr(0x60, static_cast<uint8_t>(w >> 8));
+        Nr(0x60, static_cast<uint8_t>(w & 0xFF));
+    }
+    Nr(0x62, 0xC0);  // run, restarting every frame
+    Frames(4);
+    const uint32_t* fb = Framebuffer();
+    constexpr unsigned kQuietRow = 40;  // after the first MOVE (copper line 0 is grid row 32) and before the WAIT line 60 (grid row 92)
+    const uint32_t before = fb[(kQuietRow * 2) * kWidth];
+    int row = -1, x = -1;
+    for (unsigned y = kQuietRow; y < kHeight && row < 0; y++)
+        for (unsigned i = 1; i < kWidth; i++)
+            if (fb[(y * 2) * kWidth + i] != before)
+            {
+                row = static_cast<int>(y);
+                x = static_cast<int>(i);
+                break;
+            }
+    ASSERT_GE(row, 0) << "the fallback colour changed inside a line";
+    EXPECT_EQ(static_cast<unsigned>(x), kFirstChangedImagePixel) << "row " << row;
+    EXPECT_NE(fb[(static_cast<unsigned>(row + 1) * 2) * kWidth], before) << "the next row is the changed colour from its start";
+}
+
+// The ULA enable (NR #68 bit 7) travels the same registers as the fallback colour (ula_en_0, _1a, _1, _2, then the output chain): a MOVE
+// that switches the ULA off shows at the same image pixel as a fallback colour change
+TEST_F(NextLayerCaptureMachine_Test, AUlaEnableMoveShowsAtTheOutputAfterTheRtlPipeline)
+{
+    constexpr unsigned kHpos = 20, kLine = 60;
+    constexpr unsigned kThr = kHpos * 8 + 12;
+    constexpr unsigned kFirstChangedImagePixel = 2 * kThr + 53;
+    Nr(0x68, 0x00);
+    Nr(0x4A, 0xFC);  // the colour the ULA's absence shows
+    Nr(0x61, 0);
+    Nr(0x62, 0);
+    for (uint16_t w : {uint16_t((0x68 << 8) | 0x00), uint16_t(0x8000 | (kHpos << 9) | kLine), uint16_t((0x68 << 8) | 0x80), uint16_t(0xFFFF)})
+    {
+        Nr(0x60, static_cast<uint8_t>(w >> 8));
+        Nr(0x60, static_cast<uint8_t>(w & 0xFF));
+    }
+    Nr(0x62, 0xC0);
+    Frames(4);
+    const uint32_t* fb = Framebuffer();
+    constexpr unsigned kQuietRow = 40;
+    int row = -1, x = -1;
+    for (unsigned y = kQuietRow + 1; y < kHeight && row < 0; y++)
+        for (unsigned i = 0; i < kWidth; i++)
+            if (fb[(y * 2) * kWidth + i] != fb[(kQuietRow * 2) * kWidth + i])
+            {
+                row = static_cast<int>(y);
+                x = static_cast<int>(i);
+                break;
+            }
+    ASSERT_GE(row, 0) << "the ULA's absence shows inside a line";
+    EXPECT_EQ(static_cast<unsigned>(x), kFirstChangedImagePixel) << "row " << row;
+}
+
+// The latency table, as measured on the simulated RTL (POC 028): the chains, the pixel groups and the cells; unmeasured registers give 0
+TEST(ScreenNextLatency_Test, TheLatencyFollowsTheChangedBitsOfTheRegister)
+{
+    auto of = [](uint8_t reg, uint8_t prev, uint8_t value, uint8_t select = 0) { return ScreenNext::PictureLatencyOf(reg, prev, value, select); };
+    EXPECT_EQ(of(0x4A, 0x00, 0xFF).clocks, 22u);
+    EXPECT_EQ(of(0x14, 0x00, 0xFF).clocks, 22u);
+    EXPECT_EQ(of(0x41, 0x00, 0xFF, 0).clocks, 18u);  // palette values: the lookup of the palette the write select names (POC 028)
+    EXPECT_EQ(of(0x44, 0x00, 0xFF, 4).clocks, 18u);  // the ULA's second palette
+    EXPECT_EQ(of(0x41, 0x00, 0xFF, 1).clocks, 18u);  // Layer 2
+    EXPECT_EQ(of(0x41, 0x00, 0xFF, 2).clocks, 16u);  // sprites
+    EXPECT_EQ(of(0x41, 0x00, 0xFF, 3).clocks, 17u);  // tilemap
+    EXPECT_EQ(of(0x19, 0x00, 0x80).clocks, 22u);     // the sprite clip: per pixel
+    EXPECT_EQ(of(0x19, 0x00, 0x80).quantum, 4u);
+    EXPECT_EQ(of(0x6B, 0x00, 0x02).clocks, 53u);     // the tilemap's 512-tile mode: latched with the cell
+    EXPECT_EQ(of(0x6B, 0x00, 0x40).clocks, 24u);     // 80 columns
+    EXPECT_EQ(of(0x4C, 0x0F, 0x00).clocks, 20u);     // the tilemap's transparent index
+    EXPECT_EQ(of(0x68, 0x00, 0x80).clocks, 22u);    // the ULA enable
+    EXPECT_EQ(of(0x68, 0x00, 0x04).clocks, 70u);    // the fine scroll: a cell
+    EXPECT_EQ(of(0x68, 0x00, 0x04).quantum, 32u);
+    EXPECT_EQ(of(0x15, 0x00, 0x01).clocks, 22u);    // sprites on
+    EXPECT_EQ(of(0x15, 0x00, 0x08).clocks, 22u);    // the layer order (measured: the same registers as the enables)
+    EXPECT_EQ(of(0x15, 0x00, 0x02).clocks, 0u);     // sprites over the border: a sprite-stage input
+    EXPECT_EQ(of(0x43, 0x00, 0x02).clocks, 22u);    // the ULA's second palette (bit 1)
+    EXPECT_EQ(of(0x43, 0x00, 0x10).clocks, 0u);     // the palette write select (bits 6:4) is no picture input
+    EXPECT_EQ(of(0x43, 0x00, 0x01).clocks, 20u);    // ULANext
+    EXPECT_EQ(of(0x6B, 0x00, 0x80).clocks, 22u);    // the tilemap enable
+    EXPECT_EQ(of(0x1A, 0x00, 0x80).clocks, 22u);    // the ULA clip: per pixel
+    EXPECT_EQ(of(0x1A, 0x00, 0x80).quantum, 4u);
+    EXPECT_EQ(of(0x16, 0x00, 0x10).clocks, 26u);    // Layer 2 scroll: the SRAM read adds a pixel
+    EXPECT_EQ(of(0x16, 0x00, 0x10).quantum, 4u);
+    EXPECT_EQ(of(0x18, 0x00, 0x80).clocks, 26u);
+    EXPECT_EQ(of(0x69, 0x00, 0x80).clocks, 26u);    // Layer 2 enable
+    EXPECT_EQ(of(0x26, 0x00, 0x08).clocks, 56u);    // the ULA scroll: per 8-pixel cell
+    EXPECT_EQ(of(0x26, 0x00, 0x08).quantum, 32u);
+    EXPECT_EQ(of(0x30, 0x00, 0x01).clocks, 53u);    // the tilemap scroll
+    EXPECT_EQ(of(0x32, 0x00, 0x01).clocks, 22u);    // the LoRes scroll: per pixel
+    EXPECT_EQ(of(0x32, 0x00, 0x01).quantum, 4u);
+    EXPECT_EQ(of(0x6A, 0x00, 0x01).clocks, 0u);     // the LoRes / Radastan control: not measured
+}
+
+// The ULA reads its scroll where an 8-pixel cell is fetched: a MOVE of NR #26 lands 56 clocks after the WAIT and takes effect at the next
+// cell boundary (32-clock cells from the grid's x = 0; POC 028, measured on the simulated RTL)
+TEST_F(NextLayerCaptureMachine_Test, AUlaScrollMoveTakesEffectAtTheNextCell)
+{
+    constexpr unsigned kHpos = 20, kLine = 60;
+    constexpr unsigned kThr = kHpos * 8 + 12;
+    constexpr unsigned kDelta = 4 * kThr + 84;          // the write's clock from the grid's x = 0 (the fallback test's 2 * thr + 53 is (delta + 22) / 2)
+    constexpr unsigned kCell = 32, kLatency = 56;
+    constexpr unsigned kExpectedImagePixel = ((kDelta + kLatency + kCell - 1) / kCell * kCell) / 2;
+    uint8_t* screen = Page(5);
+    std::memset(screen, 0xFF, 0x1800);                  // every pixel ink
+    for (unsigned row = 0; row < 24; row++)
+        for (unsigned col = 0; col < 32; col++)
+            screen[0x1800 + row * 32 + col] = static_cast<uint8_t>(col & 7);  // the ink changes from cell to cell
+    Nr(0x26, 0x00);
+    Nr(0x61, 0);
+    Nr(0x62, 0);
+    for (uint16_t w : {uint16_t((0x26 << 8) | 0x00), uint16_t(0x8000 | (kHpos << 9) | kLine), uint16_t((0x26 << 8) | 0x08), uint16_t(0xFFFF)})
+    {
+        Nr(0x60, static_cast<uint8_t>(w >> 8));
+        Nr(0x60, static_cast<uint8_t>(w & 0xFF));
+    }
+    Nr(0x62, 0xC0);
+    Frames(4);
+    const uint32_t* fb = Framebuffer();
+    constexpr unsigned kQuietRow = 40;
+    int row = -1, x = -1;
+    for (unsigned y = kQuietRow + 1; y < kHeight && row < 0; y++)
+        for (unsigned i = 0; i < kWidth; i++)
+            if (fb[(y * 2) * kWidth + i] != fb[(kQuietRow * 2) * kWidth + i])
+            {
+                row = static_cast<int>(y);
+                x = static_cast<int>(i);
+                break;
+            }
+    ASSERT_GE(row, 0) << "the scroll changed the picture inside a line";
+    EXPECT_EQ(static_cast<unsigned>(x), kExpectedImagePixel) << "row " << row;
+}

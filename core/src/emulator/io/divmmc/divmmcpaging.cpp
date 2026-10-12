@@ -18,6 +18,14 @@ DivMmcPaging::DivMmcPaging(EmulatorContext* context) : _context(context)
     _rom = std::make_unique<uint8_t[]>(kRomSize);
     _ram = std::make_unique<uint8_t[]>(kBanks * kBankSize);
     std::memset(_rom.get(), 0xFF, kRomSize);
+    // The exchange is instant here; the byte time (16 T at 3.5 MHz) only scales exports
+    _spiTap.SetByteTimeNs(16.0 * 1000.0 / 3.5);
+    for (unsigned i = 0; i < 2; i++)
+    {
+        _spiTap.SetDevice(static_cast<uint8_t>(i), i ? "sd1" : "sd0");
+        _card[i].SetBusTap(&_spiTap, static_cast<uint8_t>(i));
+        _card[i].SetClock([this]() { return _context && _context->pPortDecoder ? _context->pPortDecoder->EmulatedMicroseconds() : 0; });
+    }
 }
 
 DivMmcPaging::~DivMmcPaging()
@@ -57,6 +65,7 @@ bool DivMmcPaging::Attach()
         return false;
     }
     z80->machineM1Hook = this;
+    _spiTap.Attach(_context);
     _attached = true;
     return true;
 }
@@ -66,6 +75,7 @@ void DivMmcPaging::Detach()
     if (!_attached)
         return;
     _attached = false;
+    _spiTap.Detach();
     Core* core = _context->pCore;
     Z80* z80 = core->GetZ80();
     if (z80->machineM1Hook == this)
@@ -118,6 +128,8 @@ uint8_t DivMmcPaging::portDeviceInMethod(uint16_t port)
         // A read clocks a transfer of #FF; the byte of the previous one is what the CPU gets
         const uint8_t result = _spiRx;
         _spiRx = _selected >= 0 ? _card[_selected].exchange(0xFF) : 0xFF;
+        if (_spiTap.Active()) [[unlikely]]
+            _spiTap.SpiByte(TapSlot(), 0xFF, _spiRx, true);
         return result;
     }
     return 0xFF;  // #E3 and #E7 are write-only
@@ -137,6 +149,8 @@ void DivMmcPaging::portDeviceOutMethod(uint16_t port, uint8_t value)
             break;
         case kPortSpiData:
             _spiRx = _selected >= 0 ? _card[_selected].exchange(value) : 0xFF;
+            if (_spiTap.Active()) [[unlikely]]
+                _spiTap.SpiByte(TapSlot(), value, _spiRx, false);
             break;
         default:
             break;
@@ -153,11 +167,20 @@ void DivMmcPaging::SpiSelect(uint8_t value)
         line = 1;
     if (line == _selected)
         return;
+    const bool tap = _spiTap.Active();
     if (_selected >= 0)
+    {
         _card[_selected].select(false);
+        if (tap) [[unlikely]]
+            _spiTap.SpiSelect(static_cast<uint8_t>(_selected), false);
+    }
     _selected = line;
     if (line >= 0)
+    {
         _card[line].select(true);
+        if (tap) [[unlikely]]
+            _spiTap.SpiSelect(static_cast<uint8_t>(line), true);
+    }
 }
 
 /// endregion
