@@ -50,6 +50,11 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     _ctc.onInterrupt = [this](unsigned channel) {
         _interrupts->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + channel));
     };
+    _uart.onInterrupt = [this](unsigned channel, bool tx) {
+        const unsigned source = tx ? (channel ? NextInterruptSource::kUart1Tx : NextInterruptSource::kUart0Tx)
+                                   : (channel ? NextInterruptSource::kUart1Rx : NextInterruptSource::kUart0Rx);
+        _interrupts->Raise(static_cast<NextInterruptSource::Source>(source));
+    };
     _board->SetJournalClock([this](uint32_t& frame, uint32_t& t, uint16_t& pc) {
         frame = static_cast<uint32_t>(_context->emulatorState.frame_counter);
         if (Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
@@ -97,7 +102,13 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     _multiface = std::make_unique<NextMultiface>(&Mem(), _board.get(), &_context->emulatorState);
     _m1Chain.multiface = _multiface.get();
     _m1Chain.divMmc = _divMmc.get();
-    _interrupts->SetPoller([this]() { _ctc.Advance(Now28()); });
+    _interrupts->SetPoller([this]() {
+        const uint64_t now = Now28();
+        _ctc.Advance(now);
+        if (!_uart.Idle())
+            _uart.Advance(now);
+        _uart.PollInterrupts(_interrupts->UartEnables());
+    });
     _board->SetInterrupts(_interrupts.get());
     // The Next's own sound: three AYs and the DAC, mixed by SoundManager (the Spectrum 128 TurboSound stays silent)
     _audio = std::make_unique<NextAudio>(_context);
@@ -162,6 +173,7 @@ void PortDecoder_Next::reset()
     InsertConfiguredCard();
     _board->Reset(true);
     _ctc.Reset();
+    _uart.Reset(true);
     _audio->Reset();
     AudioConfigChanged();
     _dma.Reset();
@@ -267,6 +279,21 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
             OnPortInComplete(port, mfValue, pc, disp);
             return mfValue;
         }
+    }
+    if (NextUart::Decodes(port))
+    {
+        if (!PortEnabled(12))
+            return IdleRead(port, pc);
+        const uint8_t value = _uart.Read(port, Now28());
+        _uart.PollInterrupts(_interrupts->UartEnables());
+        _lastPortDecoded = true;
+        PortDecodeDisposition disp;
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.decodedPort = port;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+        OnPortInComplete(port, value, pc, disp);
+        return value;
     }
     if (low == NextCtc::kPortLow && (port >> 11) == 0x03)
     {
@@ -497,7 +524,15 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     disp.wasDecoded = true;
     disp.wasHandledInline = true;
 
-    if (static_cast<uint8_t>(port) == NextCtc::kPortLow && (port >> 11) == 0x03)
+    if (NextUart::Decodes(port))
+    {
+        if (PortEnabled(12))
+        {
+            _uart.Write(port, value, Now28());
+            _uart.PollInterrupts(_interrupts->UartEnables());
+        }
+    }
+    else if (static_cast<uint8_t>(port) == NextCtc::kPortLow && (port >> 11) == 0x03)
     {
         const unsigned channel = (port >> 8) & 7;
         if (channel < NextCtc::kChannels && PortEnabled(27))
@@ -890,6 +925,7 @@ void PortDecoder_Next::PerformReset(bool hard)
         RecordInt(e);
     }
     _dma.Reset();         // zxnext.vhd: the DMA's reset_i is the hard or the soft reset
+    _uart.Reset(hard);    // the FIFOs on any reset, the prescalers and frames on the hard one (uart.vhd)
     _divMmc->Reset();     // E3 and the automap latches (zxnext.vhd 4175, divmmc.vhd 108-139) and the Multiface's session are `reset` too
     _multiface->Reset();
     Mem().ApplyClassicPaging(0, 0);

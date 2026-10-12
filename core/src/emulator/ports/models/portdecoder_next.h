@@ -9,6 +9,7 @@
 #include "emulator/io/z80n/nextdma.h"
 #include "emulator/sound/nextaudio.h"
 #include "emulator/io/z80n/nextctc.h"
+#include "emulator/io/z80n/nextuart.h"
 #include "emulator/io/z80n/nextdivmmc.h"
 #include "emulator/io/z80n/nextmultiface.h"
 #include "emulator/io/z80n/nextsdjournal.h"
@@ -137,6 +138,9 @@ public:
     NextBoard& Board() { return *_board; }
     NextInterruptSource& Interrupts() { return *_interrupts; }
     NextCtc& Ctc() { return _ctc; }
+    /// The two UARTs (#133B-#163B): ESP (0) and Pi (1)
+    NextUart& Uart() { return _uart; }
+    const NextUart& Uart() const { return _uart; }
     NextDivMmc& DivMmc() { return *_divMmc; }
     NextMultiface& Multiface() { return *_multiface; }
     NextI2c& I2c() { return _i2c; }
@@ -253,6 +257,7 @@ private:
         }
     } _m1Chain;
     NextCtc _ctc;
+    NextUart _uart;
     NextDma _dma;
     std::unique_ptr<NextAudio> _audio;
     bool WriteDacPort(uint16_t port, uint8_t value);
