@@ -2,6 +2,8 @@
 
 #include "portdecoder_next.h"
 
+#include "emulator/io/serial/serialpeer.h"
+
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/ttd/next/ttdnextstate.h"
@@ -139,6 +141,13 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
 
 PortDecoder_Next::~PortDecoder_Next()
 {
+    // The peers outlive the decoder (the network manager owns them): they must not call back into this one
+    for (unsigned i = 0; i < NextUart::kChannels; i++)
+        if (ISerialPeer* peer = _uart.Peer(i))
+        {
+            peer->onReceive = nullptr;
+            peer->SetClock(nullptr, 0);
+        }
     if (_context->pKeyboard && _context->pKeyboard->GetPs2Sink() == &_extendedInput)
         _context->pKeyboard->SetPs2Sink(nullptr);
     if (_context->pMediaManager)
@@ -946,7 +955,9 @@ uint64_t PortDecoder_Next::Now28() const
 double PortDecoder_Next::Now() const
 {
     const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1u;
-    return static_cast<double>(_state->t_states) + static_cast<double>(_context->pCore->GetZ80()->t) / multiplier;
+    // a peer fitted while the machine is being built has no CPU to ask yet
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    return static_cast<double>(_state->t_states) + (z80 ? static_cast<double>(z80->t) / multiplier : 0.0);
 }
 
 bool PortDecoder_Next::InsertSdCard(unsigned index, std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode)
@@ -1379,3 +1390,40 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Next::CreateTTDSe
 }
 
 /// endregion </TTD>
+
+/// region <UART peers>
+
+void PortDecoder_Next::SetUartPeer(unsigned channel, ISerialPeer* peer)
+{
+    if (channel >= NextUart::kChannels)
+        return;
+    _uart.Advance(Now28());
+    if (ISerialPeer* old = _uart.Peer(channel); old && old != peer)
+    {
+        old->onReceive = nullptr;
+        old->SetClock(nullptr, 0);
+    }
+    if (peer)
+    {
+        constexpr uint32_t kBaseClockHz = 3500000;
+        peer->SetClock([this]() { return static_cast<uint64_t>(Now()); }, kBaseClockHz);
+        // Bytes from outside arrive at their emulated time: the UART catches up first
+        peer->onReceive = [this]() {
+            _uart.Advance(Now28());
+            _uart.PollInterrupts(_interrupts->UartEnables());
+        };
+    }
+    _uart.SetPeer(channel, peer);
+}
+
+PortDecoder::NetworkCapabilities PortDecoder_Next::DescribeNetwork()
+{
+    NetworkCapabilities caps;
+    caps.serialPort = NetworkCapabilities::SerialPort::NextUart;
+    caps.attachSerialPeer = [this](ISerialPeer* peer) { SetUartPeer(0, peer); };
+    caps.attachSecondSerialPeer = [this](ISerialPeer* peer) { SetUartPeer(1, peer); };
+    caps.serialBaud = [this]() { return _uart.GetView(0).baud; };
+    return caps;
+}
+
+/// endregion

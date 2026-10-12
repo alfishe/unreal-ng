@@ -149,6 +149,15 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return static_cast<uint8_t>(_regs[reg] & 0xBF);  // bit 6 is not stored (base_7 & '0' & base)
         case 0x10:
             return static_cast<uint8_t>((_regs[reg] & 0x1F) << 2);  // the core id; the DRIVE / M1 buttons read 0
+        case 0xA0:
+            return static_cast<uint8_t>(_regs[reg] & 0x39);  // "00" & pi peripheral bits 5:3 & "00" & bit 0 (zxnext.vhd 6189)
+        case 0xA2:
+            return static_cast<uint8_t>((_regs[reg] & 0xDD) | 0x02);  // bit 5 reads 0 and bit 1 reads 1 (6192)
+        case 0xA8:
+            return static_cast<uint8_t>(_regs[reg] & 0x01);  // the ESP's GPIO0 output enable
+        case 0xA9:
+            // the pins: GPIO2 is pulled up, GPIO0 is what the board drives while NR #A8 enables it, else pulled up (6201)
+            return static_cast<uint8_t>(0x04 | ((_regs[0xA8] & 1) ? (_regs[reg] & 1) : 1));
         case 0x08:
             return static_cast<uint8_t>((_regs[reg] & 0x7F) | ((_machine && _machine->PagingLocked()) ? 0 : 0x80));  // bit 7: port #7FFD is not locked
         default:

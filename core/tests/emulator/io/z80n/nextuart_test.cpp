@@ -14,6 +14,7 @@
 #include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/io/z80n/nextuart.h"
 #include "emulator/ports/models/portdecoder_next.h"
+#include "emulator/state/devicestate.h"
 
 namespace
 {
@@ -103,7 +104,7 @@ TEST(NextUart_Test, TheFrameFormatSetsTheFrameTimeAndTheLineSettings)
     EXPECT_EQ(peer.settings.dataBits, 7);
     EXPECT_EQ(peer.settings.parity, 'O');
     EXPECT_EQ(peer.settings.stopBits, 2);
-    EXPECT_EQ(peer.settings.baud, 28000000u / NextUart::kDefaultPrescaler);
+    EXPECT_EQ(peer.settings.baud, 115200u) << "28 MHz / 243 = 115226 is told as the standard rate";
 }
 
 TEST(NextUart_Test, ReceivedBytesFillTheFifoAtTheLineRateAndAReadTakesThem)
@@ -238,6 +239,7 @@ protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
     PortDecoder_Next* _ports = nullptr;
+    LoopbackPeer _echo;  // outlives the emulator (TearDown runs first): the decoder detaches from its peers when it goes
     void SetUp() override
     {
         _emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
@@ -255,8 +257,7 @@ protected:
 
 TEST_F(NextUartMachine_Test, ThePortsReachTheDeviceAndNR0x82To0x85Gate)
 {
-    LoopbackPeer echo;
-    _ports->Uart().SetPeer(0, &echo);
+    _ports->Uart().SetPeer(0, &_echo);
     _ports->DecodePortOut(kTx, 0x7E, 0x8000);
     EXPECT_EQ(_ports->Uart().GetView(0).txCount + (_ports->Uart().GetView(0).txBusy ? 1u : 0u), 1u);
     EXPECT_EQ(_ports->DecodePortIn(kFrame, 0x8000), NextUart::kDefaultFrame);
@@ -281,4 +282,74 @@ TEST_F(NextUartMachine_Test, TheEnableAndStatusBitsOfNR0xC6AndNR0xCAAreTheVhdlsP
     EXPECT_EQ(_ports->Board().Read(0xCA), 0x30);
     _ports->Board().WriteNextReg(0xCA, 0x10);
     EXPECT_EQ(_ports->Board().Read(0xCA), 0x00) << "either of bits 5:4 clears UART 1 Rx";
+}
+
+TEST(NextUartConfigured_Test, ThePeersComeFromComPortAndComPort2)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero, [](CONFIG& config) {
+        std::snprintf(config.network.comPort, sizeof config.network.comPort, "LOOPBACK");
+        std::snprintf(config.network.comPort2, sizeof config.network.comPort2, "LOOPBACK");
+    });
+    ASSERT_NE(emulator, nullptr);
+    auto* ports = dynamic_cast<PortDecoder_Next*>(emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    ASSERT_NE(ports->Uart().Peer(0), nullptr) << "ComPort= is UART 0, the ESP's line";
+    ASSERT_NE(ports->Uart().Peer(1), nullptr) << "ComPort2= is UART 1, the Pi's";
+    // a byte out of UART 1 comes back on UART 1 only
+    ports->DecodePortOut(kSelect, kSelectPi, 0x8000);
+    ports->DecodePortOut(kTx, 0x5A, 0x8000);
+    EmulatorTestHelper::RunFramesFast(emulator, 2);
+    EXPECT_NE(ports->DecodePortIn(kTx, 0x8000) & NextUart::kStatusRxAvail, 0);
+    EXPECT_EQ(ports->DecodePortIn(kRx, 0x8000), 0x5A);
+    ports->DecodePortOut(kSelect, 0x00, 0x8000);
+    EXPECT_EQ(ports->DecodePortIn(kTx, 0x8000) & NextUart::kStatusRxAvail, 0) << "UART 0 saw nothing";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST_F(NextUartMachine_Test, TheReportShowsTheChannelsTheStatusAndTheLine)
+{
+    _ports->Uart().SetPeer(1, &_echo);
+    _ports->DecodePortOut(kFrame, 0x1C, 0x8000);  // 8 data bits, parity enabled, even
+    _ports->DecodePortOut(kSelect, kSelectPi | kPrescalerFollows | 0x01, 0x8000);
+    _ports->DecodePortOut(kTx, 0x41, 0x8000);
+    const StateNode report = DeviceState::NextUartReport(_context);
+    ASSERT_TRUE(report.find("available")->b);
+    EXPECT_EQ(report.find("selected_name")->s, "pi");
+    const StateNode* channels = report.find("channels");
+    ASSERT_NE(channels, nullptr);
+    ASSERT_EQ(channels->items.size(), 2u);
+    const StateNode& esp = channels->items[0];
+    const StateNode& pi = channels->items[1];
+    EXPECT_EQ(esp.find("name")->s, "esp");
+    EXPECT_EQ(esp.find("frame")->find("parity")->s, "E") << "NR frame #1C: parity on, even";
+    EXPECT_TRUE(esp.find("peer")->find("attached")->b) << "the board ships with its ESP module on UART 0";
+    EXPECT_TRUE(pi.find("peer")->find("attached")->b);
+    EXPECT_EQ(pi.find("peer")->find("kind")->s, "loopback");
+    EXPECT_EQ(pi.find("prescaler")->i, (1 << 14) | NextUart::kDefaultPrescaler);
+    EXPECT_TRUE(pi.find("tx")->find("busy")->b);
+    EXPECT_FALSE(pi.find("status")->find("tx_empty")->b);
+    // the report does not take the sticky bits: a second look is the same
+    EXPECT_EQ(DeviceState::NextUartReport(_context).find("channels")->items[1].find("status")->find("value")->s, pi.find("status")->find("value")->s);
+}
+
+// The board ships with its ESP-12 module on UART 0: nothing is configured, "AT" gets "OK" (the default ComPort of a Next is AT)
+TEST(NextUartConfigured_Test, TheShippedEspAnswersAtOnUart0)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    auto* ports = dynamic_cast<PortDecoder_Next*>(emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    ASSERT_NE(ports->Uart().Peer(0), nullptr);
+    EXPECT_STREQ(ports->Uart().Peer(0)->Kind(), "at") << "an ESP8266 with Espressif's AT firmware";
+    for (char c : std::string("AT\r\n"))
+        ports->DecodePortOut(kTx, static_cast<uint8_t>(c), 0x8000);
+    std::string answer;
+    for (int frame = 0; frame < 20 && answer.find("OK") == std::string::npos; frame++)
+    {
+        EmulatorTestHelper::RunFramesFast(emulator, 1);
+        while (ports->DecodePortIn(kTx, 0x8000) & NextUart::kStatusRxAvail)
+            answer += static_cast<char>(ports->DecodePortIn(kRx, 0x8000));
+    }
+    EXPECT_NE(answer.find("OK"), std::string::npos) << "got: " << answer;
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }

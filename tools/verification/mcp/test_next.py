@@ -37,6 +37,18 @@ def test_magic_port_and_magic_breakpoint(s):
     s.call('control_execution', {'action': 'bp_clear'})
 
 
+def test_uart_aspect_and_the_peers(s):
+    s.fresh_machine('NEXT')
+    r = s.call('inspect_state', {'aspects': ['next_uart']})
+    expect('[next_uart] selected esp' in r.text and 'baud' in r.text, 'the UARTs in the text', r.text)
+    expect('esp:' in r.text and 'pi:' in r.text, 'both channels', r.text)
+    # UART 1 on a loopback: a byte sent comes back; UART 0 keeps its ESP
+    s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/network/config', 'body': {'com_port2': 'loopback'}})
+    s.call('control_execution', {'action': 'run_frames', 'frames': 2})   # the machine thread refits the lines at a frame boundary
+    r = s.call('inspect_state', {'aspects': ['next_uart']})
+    expect('pi:' in r.text and 'loopback' in r.text, 'the Pi line has the loopback', r.text)
+
+
 def test_next_breakpoint_types(s):
     s.fresh_machine('NEXT')
     s.call('control_execution', {'action': 'bp_clear'})

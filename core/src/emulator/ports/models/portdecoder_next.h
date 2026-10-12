@@ -138,6 +138,11 @@ public:
     NextBoard& Board() { return *_board; }
     NextInterruptSource& Interrupts() { return *_interrupts; }
     NextCtc& Ctc() { return _ctc; }
+    /// Bit `bit` of the internal port enable word (reports)
+    bool PortEnabledForReport(unsigned bit) const { return PortEnabled(bit); }
+    /// A line's other end (the network manager owns the peer); nullptr takes it off. The peer's clock is the machine's base clock
+    void SetUartPeer(unsigned channel, ISerialPeer* peer);
+    NetworkCapabilities DescribeNetwork() override;
     /// The two UARTs (#133B-#163B): ESP (0) and Pi (1)
     NextUart& Uart() { return _uart; }
     const NextUart& Uart() const { return _uart; }

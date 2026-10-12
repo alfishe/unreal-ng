@@ -179,6 +179,24 @@ the port idles at `#FF` (`answers_here`), as it does if NR `#82` bit 6 is off; `
 `state next audio` / `state next input`, Lua `next_audio()` / `next_input()`, Python `emu.next_audio()` / `emu.next_input()`, MCP aspects
 `next_audio` / `next_input`.
 
+### 3a5b. The UARTs: the ESP and the Pi (D1)
+
+The Next has two UARTs on `#133B` (Tx / status), `#143B` (Rx / prescaler low), `#153B` (select + prescaler high) and `#163B` (frame),
+one per line: UART 0 is the ESP module's, UART 1 the Raspberry Pi's. Each has a 64-byte Tx FIFO, a 512-byte Rx FIFO (a byte carries its
+error flag), a 17-bit prescaler in 28 MHz clocks per bit (default 243 = 115200 baud), hardware flow control (RTS drops two bytes
+before the FIFO is full; Tx waits for CTS) and interrupts (NR `#C6`: Rx on a byte or only at 3/4 full, Tx on an empty FIFO; the
+requests are in NR `#CA`). `state/next/uart` shows all of it without clearing the sticky error bits a status read clears. What sits on
+each line is a serial peer, as on every machine with a COM port: `[NETWORK] ComPort=` is the ESP's line and `ComPort2=` the Pi's
+(`NONE | LOOPBACK | PLUG | TCP:host:port | SERIAL:device | AT | ESPNET | MODEM ...`; at run time `POST /network/config
+{"com_port": "...", "com_port2": "..."}`). With nothing on a line the Tx bytes are lost and nothing arrives. `LOOPBACK` on a line
+echoes every byte, a handy check of a program's UART code. NR `#0B`'s UART on the joystick port and NR `#A0`'s Pi GPIO routing are
+registers only.
+
+```text
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/network/config","body":{"com_port":"loopback"}}
+inspect_state {"aspects":["next_uart"]}          # CLI: state next uart, Lua next_uart(), Python emu.next_uart()
+```
+
 ### 3a6. The program's console and the magic breakpoint (G9)
 
 A program under test can print through the **magic debug port**: `POST /next/magic-port {"enabled":true,"port":255,"mode":"line"}` and the bytes the

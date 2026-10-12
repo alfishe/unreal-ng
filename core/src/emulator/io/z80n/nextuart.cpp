@@ -73,7 +73,21 @@ void NextUart::TellPeer(Channel& c)
     if (!c.peer)
         return;
     SerialLine line;
-    line.baud = static_cast<uint32_t>(kSystemClockHz / Prescaler(c));
+    // 28 MHz / prescaler is never exactly a standard rate (243 gives 115226): the line is told the nearest standard one
+    // within 3 %, which is what a module's own tolerance accepts
+    static const uint32_t kStandard[] = {300,   600,    1200,   2400,   4800,    9600,    14400,   19200,   28800,   31250,   38400,  57600,
+                                         76800, 115200, 230400, 250000, 460800,  500000,  921600,  1000000, 1500000, 2000000, 3000000};
+    const uint32_t raw = static_cast<uint32_t>(kSystemClockHz / Prescaler(c));
+    line.baud = raw;
+    for (uint32_t standard : kStandard)
+    {
+        const uint32_t diff = raw > standard ? raw - standard : standard - raw;
+        if (diff * 100 <= standard * 3)
+        {
+            line.baud = standard;
+            break;
+        }
+    }
     line.dataBits = static_cast<uint8_t>(DataBits(c));
     line.parity = (c.frame & kFrameParity) ? ((c.frame & kFrameOdd) ? 'O' : 'E') : 'N';
     line.stopBits = (c.frame & kFrameTwoStops) ? 2 : 1;
