@@ -151,3 +151,94 @@ TEST_F(NextExtendedInput_Test, TheStateTravelsInTheTtdImageAndTheReportNamesTheK
     EXPECT_EQ(_ports->Board().Read(kRegExtended0), kB0Left) << "a seek puts the held keys back";
     EXPECT_EQ(_ports->Board().Read(kRegPads), NextExtendedInput::kPadY);
 }
+
+// The joystick automation (DebugJoystickManager, every plane's joystick verbs) reaches the pads: the right connector, a, c, start, x, y, z, mode.
+// Every change is a journaled input event (TTDInputKind::NextPad), applied by the machine
+#include "debugger/joystick/debugjoystickmanager.h"
+#include "debugger/ttd/ttdinputapply.h"
+#include "emulator/io/joystick/joystick.h"
+
+namespace
+{
+constexpr unsigned kLeftConnector = 0, kRightConnector = 1;
+constexpr uint16_t kPadRight = 1u << 0, kPadUp = 1u << 3, kPadFire = 1u << 4, kPadC = 1u << 5, kPadA = 1u << 6, kPadStart = 1u << 7;
+constexpr uint16_t kPadY = 1u << 8, kPadMode = 1u << 11;
+constexpr unsigned kRegJoystickModes = 0x05;
+constexpr uint8_t RightMode(unsigned code) { return static_cast<uint8_t>(((code & 4) >> 1) | ((code & 3) << 4)); }
+constexpr uint8_t LeftMode(unsigned code) { return static_cast<uint8_t>(((code & 4) << 1) | ((code & 3) << 6)); }
+constexpr unsigned kKempston1 = 1, kMd1 = 5, kSinclair2 = 0;
+constexpr uint16_t kPortKempston1 = 0x001F;
+}  // namespace
+
+TEST_F(NextExtendedInput_Test, TheJoystickVerbsPressTheRightConnectorAndThePadButtons)
+{
+    DebugJoystickManager manager(_context);
+    ASSERT_EQ(manager.GetState().hasPads, true);
+
+    // The left pad: a / c / start are b6 / b5 / b7 of the Kempston byte, x y z mode the extras
+    ASSERT_TRUE(manager.Press("a+start+y").ok());
+    EXPECT_EQ(_ports->PadState(kLeftConnector), kPadA | kPadStart | kPadY);
+    EXPECT_EQ(_context->pJoystick->State(), kPadA | kPadStart) << "the Kempston byte holds A and START";
+    ASSERT_TRUE(manager.Release("a").ok());
+    EXPECT_EQ(_ports->PadState(kLeftConnector), kPadStart | kPadY);
+
+    // The right connector: every button, set by a tool; MODE X Y Z show in NR #B2's high nibble
+    ASSERT_TRUE(manager.Press("right.up+right.fire+right.mode").ok());
+    EXPECT_EQ(_ports->PadState(kRightConnector), kPadUp | kPadFire | kPadMode);
+    EXPECT_EQ(_ports->Board().Read(kRegPads) >> kRightShift, NextExtendedInput::kPadMode);
+    EXPECT_EQ(_ports->PadState(kLeftConnector), kPadStart | kPadY) << "the left pad is untouched";
+
+    // Port #1F: the right side is Kempston 1 (and the left is not): the right pad's stick answers, bits 7:6 only for an MD pad
+    _ports->Board().WriteNextReg(kRegJoystickModes, LeftMode(kSinclair2) | RightMode(kKempston1));
+    EXPECT_EQ(_ports->DecodePortIn(kPortKempston1, 0), kPadUp | kPadFire);
+    ASSERT_TRUE(manager.Press("right.start").ok());
+    EXPECT_EQ(_ports->DecodePortIn(kPortKempston1, 0), kPadUp | kPadFire) << "a Kempston stick has no START";
+    _ports->Board().WriteNextReg(kRegJoystickModes, LeftMode(kSinclair2) | RightMode(kMd1));
+    EXPECT_EQ(_ports->DecodePortIn(kPortKempston1, 0), kPadUp | kPadFire | kPadStart);
+
+    // set = exactly these, both connectors; release_all clears both
+    ASSERT_TRUE(manager.SetNames("right.right+x").ok());
+    EXPECT_EQ(_ports->PadState(kRightConnector), kPadRight);
+    EXPECT_EQ(_ports->PadState(kLeftConnector), 1u << 10);
+    ASSERT_TRUE(manager.ReleaseAll().ok());
+    EXPECT_EQ(_ports->PadState(kLeftConnector), 0);
+    EXPECT_EQ(_ports->PadState(kRightConnector), 0);
+
+    // a timed tap on the right connector releases it again
+    ASSERT_TRUE(manager.Tap("right.c", 1).ok());
+    EXPECT_EQ(_ports->PadState(kRightConnector), kPadC);
+    manager.OnFrame();
+    EXPECT_EQ(_ports->PadState(kRightConnector), 0);
+
+    // the report and the state snapshot name them
+    ASSERT_TRUE(manager.Press("right.down").ok());
+    EXPECT_EQ(manager.GetState().rightButtons, (std::vector<std::string>{"down"}));
+    const StateNode report = DeviceState::NextInputReport(_context);
+    ASSERT_EQ(report.find("right_pad")->find("buttons")->items.size(), 1u);
+    EXPECT_EQ(report.find("right_pad")->find("buttons")->items[0].s, "down");
+
+    // an unknown name is refused with the list
+    const JoystickInjectResult bad = manager.Press("right.turbo");
+    EXPECT_FALSE(bad.ok());
+    EXPECT_NE(bad.message.find("right.<button>"), std::string::npos) << bad.message;
+}
+
+TEST_F(NextExtendedInput_Test, ThePadEventIsAJournaledInputAndAppliesByItself)
+{
+    // The event the automation submits (TTDInputKind::NextPad): applying it sets the connector, as a replay does
+    ttd::TTDInputEvent ev;
+    ev.kind = ttd::TTDInputKind::NextPad;
+    ev.key = kRightConnector;
+    ev.dx = static_cast<int16_t>(kPadUp | kPadMode);
+    ttd::TTDInputDevices devices = ttd::InputDevicesOf(_context);
+    ASSERT_TRUE(ttd::ApplyInputEvent(ev, devices));
+    EXPECT_EQ(_ports->PadState(kRightConnector), kPadUp | kPadMode);
+    ev.key = 7;  // no such connector
+    EXPECT_FALSE(ttd::ApplyInputEvent(ev, devices));
+
+    // the image carries the right pad
+    const std::vector<uint8_t> held = NextStateCodec::Save(*_ports);
+    _ports->ExtendedInput().SetRight(0);
+    ASSERT_TRUE(NextStateCodec::Load(*_ports, held.data(), held.size()));
+    EXPECT_EQ(_ports->PadState(kRightConnector), kPadUp | kPadMode);
+}

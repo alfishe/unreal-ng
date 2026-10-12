@@ -161,6 +161,32 @@ class TestNextReports:
         assert int(pad["nr_b2"], 16) == 0x09
         post(api_client, next_emulator, "/keyboard/release_all", {})
 
+    def test_the_joystick_verbs_reach_the_right_connector_and_the_pads_buttons(self, api_client, next_emulator):
+        pressed = post(api_client, next_emulator, "/joystick/press", {"buttons": "right.up+right.fire+x+mode"})
+        assert pressed.status_code == 200, pressed.text
+        # the input is applied on the machine's thread: read the report until the buttons are there
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            report = get(api_client, next_emulator, "/state/next/input").json()
+            if sorted(report["right_pad"]["buttons"]) == ["fire", "up"] and report["md_pad_extra"]["left"]["x"]:
+                break
+            time.sleep(0.1)
+        assert sorted(report["right_pad"]["buttons"]) == ["fire", "up"], report["right_pad"]
+        assert report["md_pad_extra"]["left"]["x"] and report["md_pad_extra"]["left"]["mode"]
+        status = get(api_client, next_emulator, "/joystick").json()
+        assert sorted(status["left_extras"]) == ["mode", "x"] and sorted(status["right_pad"]["buttons"]) == ["fire", "up"]
+        assert int(report["md_pad_extra"]["nr_b2"], 16) == 0x09  # the left pad's X (bit 3) and MODE (bit 0); the right pad has no extras
+        assert post(api_client, next_emulator, "/joystick/press", {"buttons": "right.turbo"}).status_code == 400
+        cleared = post(api_client, next_emulator, "/joystick/set", {"buttons": "right.start"})
+        assert cleared.status_code == 200, cleared.text
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            report = get(api_client, next_emulator, "/state/next/input").json()
+            if report["right_pad"]["buttons"] == ["start"]:
+                break
+            time.sleep(0.1)
+        assert report["right_pad"]["buttons"] == ["start"] and report["md_pad_extra"]["left"] == {"mode": False, "x": False, "y": False, "z": False}
+
     def test_magic_opcode_breakpoints(self, api_client, next_emulator):
         def add(body):
             return post(api_client, next_emulator, "/breakpoints", body)

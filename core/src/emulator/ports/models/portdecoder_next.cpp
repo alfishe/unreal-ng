@@ -380,6 +380,33 @@ uint8_t PortDecoder_Next::ReadExtendedInput(uint8_t reg) const
     }
 }
 
+uint16_t PortDecoder_Next::PadState(unsigned connector) const
+{
+    if (connector == 0)
+    {
+        // the left connector: the Kempston device is its low byte, the extras are the keyboard controller's
+        const uint8_t stick = _context->pJoystick ? _context->pJoystick->State() : 0;
+        return static_cast<uint16_t>(stick | NextExtendedInput::ExtrasToPadBits(_extendedInput.Pad(true)));
+    }
+    return connector == 1 ? _extendedInput.Right() : 0;
+}
+
+bool PortDecoder_Next::ApplyPadState(unsigned connector, uint16_t state)
+{
+    state &= kPadMask;
+    if (connector == 0)
+    {
+        if (_context->pJoystick)
+            _context->pJoystick->SetState(static_cast<uint8_t>(state & 0xFF));
+        _extendedInput.SetPad(true, NextExtendedInput::PadBitsToExtras(state));
+        return true;
+    }
+    if (connector != 1)
+        return false;
+    _extendedInput.SetRight(state);
+    return true;
+}
+
 unsigned PortDecoder_Next::JoystickMode(bool left) const
 {
     const uint8_t nr05 = _board->Stored(0x05);
@@ -401,7 +428,9 @@ bool PortDecoder_Next::JoystickPortAnswers(bool port37, uint8_t& value) const
         return false;
     if (leftOn)
         value = static_cast<uint8_t>(Default_Port_KempstonJoystick_In() & (leftMode == md ? (kPadBits | kStickBits) : kStickBits));
-    return true;  // the right connector has no host input: it adds nothing
+    if (rightOn)  // the right connector: whatever a tool put on it (it has no host keys); the two sides are ORed (port_1f_dat <= joyL_1f or joyR_1f)
+        value |= static_cast<uint8_t>(_extendedInput.Right() & (rightMode == md ? (kPadBits | kStickBits) : kStickBits));
+    return true;
 }
 
 void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)

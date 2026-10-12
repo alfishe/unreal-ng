@@ -3437,7 +3437,7 @@ Other machines accept the input with a warning, because the program cannot see i
 
 Out-of-range values are rejected, not clamped, with the same wording everywhere
 (`state=300 out of range 0..255`, `frames=0 out of range 1..65535`, `unknown joystick button
-'jump' (up, down, left, right, fire, b5, b6, b7)`).
+'jump' (up, down, left, right, fire, b5, b6, b7)`; on a ZX Next the list adds `a, c, start, x, y, z, mode and right.<button>`: the pads' extra buttons and the right connector).
 
 **Timing.** The machine's own thread owns the input while the emulator loop lives, so the change
 is queued and applied at that thread's next instruction: at once on a running machine, and on the

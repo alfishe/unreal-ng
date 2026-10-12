@@ -801,6 +801,16 @@ public:
     /// automation does not offer it as a device (docs/inprogress/2026-10-03-mouse-api-routing/design.md)
     virtual bool HasMachineMouse() const { return false; }
 
+    /// Pads beyond the Kempston byte: the ZX Next's two joystick connectors, 12 buttons each. A connector's state: bit 0 right, 1 left, 2 down,
+    /// 3 up, 4 B (fire), 5 C, 6 A, 7 START, 8 Y, 9 Z, 10 X, 11 MODE (zxnext.vhd i_JOY_LEFT / i_JOY_RIGHT). Connector 0 is the left one (the
+    /// host's pad: its low byte is the Kempston device), 1 the right one. Default: no pads
+    static constexpr unsigned kPadConnectors = 2;
+    static constexpr uint16_t kPadMask = 0x0FFF;
+    virtual bool HasPads() const { return false; }
+    virtual uint16_t PadState(unsigned connector) const { (void)connector; return 0; }
+    /// Set the whole state of a connector (the journaled input event TTDInputKind::NextPad lands here); false when there is no such pad
+    virtual bool ApplyPadState(unsigned connector, uint16_t state) { (void)connector; (void)state; return false; }
+
 
     /// region <TTD model-specific state (parent TDD 6.4)>
     ///

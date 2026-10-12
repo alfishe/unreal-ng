@@ -720,6 +720,20 @@ protected:
         t["pressed"] = pressed;
         t["button_names"] = names;
         t["keys"] = state.keys;
+        if (state.hasPads)
+        {
+            sol::table extras = lua.create_table();
+            for (size_t i = 0; i < state.leftExtraButtons.size(); i++)
+                extras[i + 1] = state.leftExtraButtons[i];
+            t["left_extras"] = extras;
+            sol::table rightPad = lua.create_table();
+            rightPad["state"] = static_cast<int>(state.rightPad);
+            sol::table rightButtons = lua.create_table();
+            for (size_t i = 0; i < state.rightButtons.size(); i++)
+                rightButtons[i + 1] = state.rightButtons[i];
+            rightPad["buttons"] = rightButtons;
+            t["right_pad"] = rightPad;
+        }
         if (state.pendingTapMask != 0)
         {
             sol::table pending = lua.create_table();
@@ -2666,10 +2680,7 @@ public:
                 return mouseError(s, "state must be an integer, a string or a table of button names");
             if (names.empty())
                 return joystickResult(s, *mgr, mgr->ReleaseAll());
-            const uint8_t mask = DebugJoystickManager::ResolveButtonNames(names);
-            if (mask == 0)  // the manager words the unknown-name error
-                return joystickResult(s, *mgr, mgr->Press(names));
-            return joystickResult(s, *mgr, mgr->SetStateChecked(mask));
+            return joystickResult(s, *mgr, mgr->SetNames(names));
         });
 
         lua.set_function("joystick_tap", [this](sol::this_state s, sol::object buttonsArg, sol::object framesArg) {
