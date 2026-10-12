@@ -73,8 +73,9 @@ no flags (PROMETHEUS recomputes them when it assembles).
 | Strictly left to right, `+ - * / ?` (`/` and `?` unsigned), 16-bit; a sign before any atom | probe: `7*3+1/2` = 11, `-1/2` = `#7FFF`, `100?7` = 2 | `expressionBits = 16`, unsigned: the backend masks for division |
 | `#` hex, `%` binary, `"A"` one byte, `"AB"` two (`"A"` the high byte), `""""` the quote | probe: `"AB"` = `#4142`; `cp """"` in `-input` | numbers, character constants |
 | `$` in a `DEFB` / `DEFW` item is that item's address | probe: `DEFW START,$` gave `#EA71` at `#EA6F` | `$+2`, `$+4` … per item |
+| `$` in an instruction is the address of the byte its value goes into (2026-10-12) | probe: `ld hl,$` = the address +1, `ld ix,$` +2, `jr $` = `18 FF`, the `n` of `ld (ix+5),n` +3 | `$+1`, `$+2`, `$+3` per operand (`prometheuscurrent.h`; read as the instruction's address before 2026-10-12) |
 | `DEFS n` reserves a hole: nothing written | probe: the three bytes kept `#AA` | `ORG $+n` (zeros under a `PUT`, with a note) |
-| `ORG e` sets both the address and where the bytes go; `PUT e` only where they go | probe: `PUT 62000` put `LD HL,HERE` there with `HERE` = 60041 | `PUT`: `__PROMETHEUS_PUTn=$`, `ORG e`, `DISP __PROMETHEUS_PUTn`; `ORG` ends it (`ENT`) |
+| `ORG e` sets both the address and where the bytes go; `PUT e` only where they go | probe: `PUT 62000` put `LD HL,HERE` there with `HERE` = 60041 | `PUT`: `__PROMETHEUS_PUTn=$`, `ORG e`, `DISP __PROMETHEUS_PUTn`; `ORG` ends it (`ENT`); a `$` in that `ORG`, and the address of a `PUT` after a `PUT`, are taken before the `ENT` (fixed 2026-10-12) |
 | `ENT e`: the address `RUN` jumps to | — | a comment |
 | `EQU` evaluated in pass 1 (only earlier names or locked ones) | book ch. 27 | `EQU` |
 | `HX LX HY LY`, `SLIA` | probe: `DD 26 05`, `FD 7D`, `CB 30` | `IXH IXL IYH IYL`, `SLI` |

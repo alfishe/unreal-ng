@@ -46,10 +46,11 @@ public:
     /// the picture only follows: before a MOVE writes, the pixels the old state made are drawn)
     void BindCopper(NextCopper& copper);
     /// Draw every pixel before copper time `clock` (a MOVE is about to write at it): the lines before its line, and its line up to its pixel
-    void RenderBeforeCopperClock(uint64_t clock, uint8_t reg);
-    /// 28 MHz clocks from a MOVE's write of `reg` to the first changed pixel at the output (the pipeline after the register: zxnext.vhd, the
-    /// stages counted in scratch/cosim-copper/LATENCY.md). 0 for the registers not counted
-    static unsigned PixelLatencyClocks(uint8_t reg);
+    void RenderBeforeCopperClock(uint64_t clock, uint8_t reg, uint8_t value);
+    /// 28 MHz clocks from the copper seeing a WAIT true to the first changed pixel at the output, for a MOVE of `value` over `previous` in
+    /// `reg` (the pipeline after the register: zxnext.vhd, the stages counted in scratch/cosim-copper/LATENCY.md). The register's bits that
+    /// change decide (the earliest of them when they differ); 0 for the registers not counted
+    static unsigned PixelLatencyClocks(uint8_t reg, uint8_t previous, uint8_t value);
 
     /// The T-state (base, from the frame start) at which visible line `y` (0-255) is complete
     uint32_t LineEndT(unsigned y) const;

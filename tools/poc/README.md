@@ -43,7 +43,9 @@ registry: a POC gets the next free number here before work starts. Numbers are n
 | 026 | [crt-effects-test](026-crt-effects-test/) | CRT shader effects GPU / CPU parity (was 001, renumbered 2026-10-10: 001 belongs to the debugger widget series) | concluded (pre-guideline) | 30 / 30 profile x resolution cases within 1 LSB, on Python models of the shader and CPU filter |
 | 027 | [ttd-gui](027-ttd-gui/) | TTD scrubber/timeline GUI (was 010, renumbered 2026-10-10: 010 is ttd-compression) | abandoned (pre-guideline) | Build disabled since 2026-09-11, reader stuck on TTD schema 3; listed for retirement in the TTD v2 migration |
 
-Next free number: **028**. Local folders not in the repository (`012-calltrace-viz`, `015-ios-remote-control`, `016-ios-videocube`) are not registered; give them a free number when they are committed.
+| 028 | [next-video-pipeline-alignment](028-next-video-pipeline-alignment/README.md) | ZX Next: clocks from a copper MOVE of a fetch-stage register (Layer 2 / ULA / tilemap / sprite scroll, clip, bank) to the first changed output pixel, and the Layer 2 vs ULA pixel alignment, from an RTL simulation of the video path; feature `docs/inprogress/2026-10-07-zx-next` | chartered | Charter only (2026-10-12) |
+
+Next free number: **029**. Local folders not in the repository (`012-calltrace-viz`, `015-ios-remote-control`, `016-ios-videocube`) are not registered; give them a free number when they are committed.
 ---
 
 ## Building POCs

@@ -151,8 +151,9 @@ public:
     /// Live display frame at double resolution: the master's framebuffer
     /// (border included) scaled 2x with the composed 512 x 384 paper on top,
     /// so mode 5 shows its full resolution. Updated at every rendered master
-    /// frame; the master's own framebuffer keeps a 1:1 picture for
-    /// screenshots and recording
+    /// frame. Screenshots and recording take this composed frame too
+    /// (SnapshotDisplay / CopyDisplay); the master's own framebuffer stays
+    /// the 1:1 picture of the master's screen (Viewport regions crop it)
     unsigned GetDisplayWidth() const { return _displayWidth; }
     unsigned GetDisplayHeight() const { return _displayHeight; }
     const uint32_t* GetDisplayBuffer() const { return _displayFront.data(); }

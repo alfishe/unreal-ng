@@ -17,6 +17,8 @@
 #include "dialects/gens/gensbackend.h"
 #include "dialects/zeus/zeusbackend.h"
 #include "dialects/lasergenius/lasergeniusbackend.h"
+#include "dialects/prometheus/prometheusbackend.h"
+#include "dialects/pasm/pasmbackend.h"
 #include "dialects/storm/stormfrontend.h"
 #include "dialects/zxasm/zxasmfrontend.h"
 #include "dialects/xas/xasbackend.h"
@@ -82,6 +84,8 @@ const DialectRegistry& DialectRegistry::Builtin()
         r.Add(std::make_unique<dialects::GensBackend>());
         r.Add(std::make_unique<dialects::ZeusBackend>());
         r.Add(std::make_unique<dialects::LaserGeniusBackend>());
+        r.Add(std::make_unique<dialects::PrometheusBackend>());
+        r.Add(std::make_unique<dialects::PasmBackend>());
         return r;
     }();
     return registry;

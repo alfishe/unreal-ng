@@ -186,6 +186,10 @@ private:
     void SpiSelect(uint8_t value);
     /// Time in 3.5 MHz T-states since the machine started (the frame's own t is in CPU clocks of the current speed)
     double Now() const;
+    /// Bit `bit` (0-27) of internal_port_enable (zxnext.vhd 2392): NR #82-#85, and with the expansion bus on (NR #80 bit 7) also NR #86-#89
+    bool PortEnabled(unsigned bit) const;
+    /// A read of a port whose enable bit is off: nothing on the board answers, the bus is idle
+    uint8_t IdleRead(uint16_t port, uint16_t pc);
     /// NR #83 bit 3: ports #E7 / #EB are decoded (port_spi_io_en)
     bool SpiPortEnabled() const { return (_board->Stored(0x83) & 0x08) != 0; }
     double SpeedRatio() const { return _state->hw_turbo_ratio_applied ? _state->hw_turbo_ratio_applied : 1.0; }
