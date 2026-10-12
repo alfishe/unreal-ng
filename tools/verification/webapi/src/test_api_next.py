@@ -146,6 +146,21 @@ class TestNextReports:
         assert int(report["extended_keys"]["nr_b0"], 16) & 0x08
         post(api_client, next_emulator, "/keyboard/release_all", {})
 
+    def test_the_pads_extra_buttons_come_from_the_physical_keys_the_keyboard_api_presses(self, api_client, next_emulator):
+        # the keyboard API takes PC key names too (journaled like a host key): keypad 3 / 9 / 1 / 7 are the host pad's MODE / Y / Z / X
+        for key in ("kp_3", "kp_7"):
+            assert post(api_client, next_emulator, "/keyboard/press", {"key": key}).status_code == 200
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            pad = get(api_client, next_emulator, "/state/next/input").json()["md_pad_extra"]
+            if pad["left"]["mode"] and pad["left"]["x"]:
+                break
+            time.sleep(0.1)
+        assert pad["left"] == {"mode": True, "x": True, "y": False, "z": False}, pad
+        assert pad["right"] == {"mode": False, "x": False, "y": False, "z": False}, "the right connector has no host input"
+        assert int(pad["nr_b2"], 16) == 0x09
+        post(api_client, next_emulator, "/keyboard/release_all", {})
+
     def test_magic_opcode_breakpoints(self, api_client, next_emulator):
         def add(body):
             return post(api_client, next_emulator, "/breakpoints", body)
