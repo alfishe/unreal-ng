@@ -101,7 +101,7 @@ def gens4(args, stem):
     emu.type('C')                              # buffers: the include one as it is, 2000 bytes for macros
     emu.tap('enter')
     emu.tap('enter')
-    emu.type('2000')
+    emu.type(str(args.macro_buffer))
     emu.tap('enter')
     emu.write(args.address, [0xAA] * args.length)
     emu.post('/tape/load', {'path': os.path.abspath(tape)})
@@ -113,9 +113,9 @@ def gens4(args, stem):
         if emu.get('/tape/info').get('state') in ('ended', 'stopped'):
             break
     time.sleep(1)
-    emu.type('A')                              # assemble: default options (no listing), code where ORG says
+    emu.type('A' + (f',{args.table}' if args.table else ''))   # assemble: no listing, code where ORG says (A,n: a symbol table of n bytes)
     emu.tap('enter')
-    time.sleep(3 + len(text) / 400)
+    time.sleep(max(args.wait, 3 + len(text) / 400))
     emu.screenshot(stem + '.assembled.png')
     data = emu.read(args.address, args.length)
     open(args.out, 'wb').write(data)
@@ -190,7 +190,7 @@ def zeus(args, stem, work):
         emu.write(args.address + k, [0xAA] * min(1024, args.length - k))
     emu.type('a')                              # assemble
     emu.tap('enter')
-    time.sleep(8)
+    time.sleep(max(8, args.wait))
     emu.screenshot(stem + '.assembled.png')
     data = emu.read(args.address, args.length)
     emu.stop_recording()
@@ -214,9 +214,11 @@ def main():
     parser.add_argument('--ram', type=int, help='RAM of the Pentagon the tool creates, in KB (ZAsm 3.2x and later: 512)')
     parser.add_argument('--list-position', help='ALASM: column,row of the source in the file list')
     parser.add_argument('--extra', nargs='*', default=[], help='STORM, ZAsm, MASM, XAS: hobeta files the source includes')
-    parser.add_argument('--wait', type=float, default=6, help='MASM: seconds the assembly takes')
+    parser.add_argument('--wait', type=float, default=6, help='MASM, TASM, ZEUS, GENS: seconds the assembly takes')
     parser.add_argument('--list-keys', help='XAS: comma-separated cursor keys from the first file of the list to the source')
     parser.add_argument('--at', type=lambda v: int(v, 0), default=26000, help='GENS4: where it is put and started')
+    parser.add_argument('--table', type=int, help='GENS4: the symbol table size A takes (default: GENS chooses; a large text needs more)')
+    parser.add_argument('--macro-buffer', type=int, default=2000, help='GENS4: the macro buffer (C); less leaves more room for the symbol table')
     args = parser.parse_args()
 
     work = os.path.dirname(os.path.abspath(args.out))
@@ -237,7 +239,7 @@ def main():
         emu.tap('a')                           # Assemble: asks for the work file
         emu.type(name.lower())                 # the keyboard starts in inverted case: lower case arrives as capitals
         emu.tap('enter')
-        time.sleep(6)
+        time.sleep(args.wait)
     elif args.assembler == 'storm13':
         emu.run_trdos('STORM1.3', wait=12)
         emu.tap('break')                       # the external commands

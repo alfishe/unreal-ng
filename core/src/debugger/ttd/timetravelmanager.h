@@ -141,18 +141,10 @@ public:
     /// The reason is logged and kept as TTDSessionInfo::lastDropReason.
     void InvalidateSession(const char* reason);
 
-    /// ITimeTravelHooks: a load, a configuration change and a model transfer all end
-    /// the session in v1, with the reason kept for status (Phase 5, Step 2 makes them events)
-    void OnLoad(TTDLoadKind kind, const char* reason) override   // a snapshot load ends the recording (D42), history kept; a medium drops it
-    {
-        if (kind == TTDLoadKind::Snapshot && !IsDebuggerLive())   // a debugger's rolling history is dropped by any outside change
-            StopRecording();
-        else
-            InvalidateSession(reason);
-    }
+    /// ITimeTravelHooks: a medium, a change of the machine and a speed change all drop the session in v1, with the
+    /// reason kept for status
+    void EndSessionFor(TTDChange, const char* reason) override { InvalidateSession(reason); }
     void EndSession(const char*) override { StopRecording(); }   // v1: the recording ends, no restart
-    void OnConfigurationChange(TTDConfigChangeKind, const char* reason) override { InvalidateSession(reason); }
-    void OnModelTransfer(const char* reason) override { InvalidateSession(reason); }
     bool HasHistory() const override { return !_timeline.empty(); }
     const TTDInputJournal& InputJournal() const override { return _inputJournal; }
 
@@ -907,6 +899,8 @@ public:
     /// @return true on success. False (with a logged warning) if state is
     ///         Idle, the timeline is empty, or `from` is out of bounds.
     bool ResumeRecordingFrom(const TTDTimePoint& from);
+    /// v1 never sets a medium back: nothing to decide at a cut (the engine's PlanCut)
+    std::vector<TTDRestoreIssue> PlanCut(const TTDTimePoint&) const { return {}; }
 
     /// @brief Resume live recording from the CURRENT position, keeping history.
     ///

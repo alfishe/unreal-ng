@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <functional>
 #include <atomic>
 #include <map>
 #include <memory>
@@ -27,6 +28,10 @@ enum BreakpointTypeEnum : uint8_t
     BRK_MEMORY = 0,  // Memory access (Read | Write | Execution)
     BRK_IO,          // I/O port access (Read | Write)
     BRK_KEYBOARD,    // Key press event
+    BRK_NEXTREG,     // ZX Next register access (NR read through #253B, NR write by NEXTREG / #253B / the copper)
+    BRK_BEAM,        // ZX Next: the beam reaches a place in the raster (line counter cvc of the copper, pixel clock hc)
+    BRK_COPPER,      // ZX Next: the copper completes the instruction at a list index (a WAIT that became true, or a MOVE)
+    BRK_MAGIC,       // ZX Next: the CPU completed a magic opcode (ED FF or DD 01: a NOP on the hardware), address = the opcode word
     // BRK_INTERRUPT     // Interrupt event
 };
 
@@ -40,6 +45,22 @@ constexpr uint8_t BRK_IO_NONE = 0x00;
 constexpr uint8_t BRK_IO_IN = 0x01;
 constexpr uint8_t BRK_IO_OUT = 0x02;
 constexpr uint8_t BRK_IO_ALL = 0xFF;
+
+/// NextREG breakpoint: ioType IN = a read of the register (port #253B), OUT = a write. The doors a write comes through
+/// (zxnext.vhd nr_wr_en: cpu_req or copper_req; the CPU side is NEXTREG n,v / NEXTREG n,A or OUT #253B)
+constexpr uint8_t BRK_NR_DOOR_NEXTREG = 0x01;  // the NEXTREG instructions (no bus cycle)
+constexpr uint8_t BRK_NR_DOOR_PORT = 0x02;     // OUT (#253B) after OUT (#243B); also the read door of IN (#253B)
+constexpr uint8_t BRK_NR_DOOR_COPPER = 0x04;   // a copper MOVE
+constexpr uint8_t BRK_NR_DOOR_ALL = 0x07;
+// The magic opcodes other emulators (jnext, ZEsarUX: ED FF; CSpect: DD 01) stop on. The Z80N executes both as on the hardware
+// (ED FF is a NOP, DD 01 is LD BC,nn with the prefix ignored); the breakpoint only notices them after they ran
+constexpr uint16_t BRK_MAGIC_ED_FF = 0xEDFF;
+constexpr uint16_t BRK_MAGIC_DD_01 = 0xDD01;
+constexpr uint16_t BRK_BEAM_MAX_LINE = 511;    // the copper's line counter is 9 bits (copper.vhd vcount_i)
+constexpr uint16_t BRK_BEAM_MAX_HC = 511;      // and so is the pixel clock (hcount_i)
+constexpr uint16_t BRK_COPPER_LIST_MAX = 1023; // 1024 instructions (copper_list_addr_o is 10 bits)
+constexpr int BRK_NR_READ = 0;
+constexpr int BRK_NR_WRITE = 1;
 
 constexpr uint8_t BRK_KEY_NONE = 0x00;
 constexpr uint8_t BRK_KEY_PRESS = 0x01;
@@ -91,6 +112,17 @@ struct BreakpointDescriptor
     // Port breakpoint: matches when (port & portMask) == (z80address & portMask) (design F7)
     uint16_t portMask = 0xFFFF;
 
+    // NextREG breakpoint: the register is z80address..EndAddress() (0..255), the access is ioType (IN read, OUT write),
+    // the doors (BRK_NR_DOOR_*) a write may come through, and the value written / read must satisfy
+    // (value & nrMask) == (nrValue & nrMask); a zero mask accepts every value
+    uint8_t nrDoors = BRK_NR_DOOR_ALL;
+    uint8_t nrValue = 0;
+    uint8_t nrMask = 0;
+
+    // Beam breakpoint: the line is z80address (0..BRK_BEAM_MAX_LINE), the pixel clock in the row is beamHc. A copper breakpoint takes the
+    // list index z80address..EndAddress() (0..BRK_COPPER_LIST_MAX)
+    uint16_t beamHc = 0;
+
     // Hit counting (design F5)
     BreakpointHitModeEnum hitMode = BRK_HIT_ALWAYS;
     uint32_t hitTarget = 0;
@@ -140,7 +172,14 @@ struct BreakpointHotState
     uint8_t hasPortIn = 0;   // 1 if any active port-in breakpoint exists
     uint8_t hasPortOut = 0;  // 1 if any active port-out breakpoint exists
     uint8_t hasSpace = 0;    // 1 if any active watchpoint on another memory space exists (the Sprinter's video RAM)
-    uint8_t _padding[2] = {0, 0};
+    uint8_t hasNextRegRead = 0;   // 1 if any active NextREG read breakpoint exists
+    uint8_t hasNextRegWrite = 0;  // 1 if any active NextREG write breakpoint exists
+    uint8_t hasBeam = 0;          // 1 if any active beam breakpoint exists
+    uint8_t hasCopperPc = 0;      // 1 if any active copper-instruction breakpoint exists
+    uint8_t hasMagic = 0;         // 1 if any active magic-opcode breakpoint exists
+    // 1 if the copper's work must be watched as it happens: a beam or copper-instruction breakpoint, or a NextREG write breakpoint that
+    // takes the copper's door. Off: the copper is caught up with the beam once per line, as always (no cost)
+    uint8_t copperWatch = 0;
 
     // "There may be a breakpoint here": one bit per CPU address per kind (8 KB each, L1-sized). A physical
     // breakpoint marks its offsets in all four slots (globalbits, design §6): a set bit can be a false
@@ -148,9 +187,12 @@ struct BreakpointHotState
     uint64_t memoryFilter[3][1024] = {};
     // One bit per port per direction, masks expanded
     uint64_t portFilter[2][1024] = {};
+    // One bit per NextREG per direction (BRK_NR_READ, BRK_NR_WRITE)
+    uint64_t nextRegFilter[2][4] = {};
 
     bool MemoryBit(int kind, uint16_t address) const { return (memoryFilter[kind][address >> 6] >> (address & 63)) & 1u; }
     bool PortBit(int direction, uint16_t port) const { return (portFilter[direction][port >> 6] >> (port & 63)) & 1u; }
+    bool NextRegBit(int direction, uint8_t reg) const { return (nextRegFilter[direction][reg >> 6] >> (reg & 63)) & 1u; }
 };
 
 /// What every surface can ask for: the debugger protocol's Breakpoint fields this manager supports
@@ -167,6 +209,10 @@ struct BreakpointSpec
     bool slotOnly = false;             // physical, only through the slot of `address`
     uint16_t spacePage = 0xFFFF;       // a page of another memory space ("vram5"); `address` & #3FFF is the offset
     uint16_t portMask = 0xFFFF;        // ports only
+    uint8_t nrDoors = BRK_NR_DOOR_ALL; // NextREG only: the doors a write comes through
+    uint8_t nrValue = 0;               // NextREG only: (value & nrMask) == (nrValue & nrMask)
+    uint8_t nrMask = 0;                //   0: any value
+    uint16_t beamHc = 0;               // BRK_BEAM only: the pixel clock in the row
     BreakpointHitModeEnum hitMode = BRK_HIT_ALWAYS;
     uint32_t hitTarget = 0;
     std::string note;
@@ -267,7 +313,11 @@ public:
     /// Removes the user breakpoints only (IsUserBreakpoint); the owned ones stay
     void ClearUserBreakpoints();
 
+    /// Takes ownership of @p descriptor: it is stored, or freed when it is not (a plain breakpoint with the same
+    /// address or port exists - its id is returned -, an invalid type)
     uint16_t AddBreakpoint(BreakpointDescriptor* descriptor);
+    /// The same; @p adopted false when an existing breakpoint's id came back (the caller must not remove it as its own)
+    uint16_t AddBreakpoint(BreakpointDescriptor* descriptor, bool& adopted);
     /// The one entry every surface uses (debugger protocol fields): validates the spec against this machine
     /// (range order, a physical range inside one page, the page exists, masks only on ports, a hit target
     /// for the counting modes) and adds it. BRK_INVALID with the reason in `error`
@@ -284,6 +334,8 @@ public:
     {
         return _lastTriggeredBreakpointID.load(std::memory_order_relaxed);
     }
+    /// A stop that was found earlier than it is served (a copper write caught up inside the picture) says which breakpoint it was
+    void NoteTriggered(uint16_t breakpointID) { _lastTriggeredBreakpointID.store(breakpointID, std::memory_order_relaxed); }
     void ClearLastTriggeredBreakpoint()
     {
         _lastTriggeredBreakpointID.store(BRK_INVALID, std::memory_order_relaxed);
@@ -361,6 +413,11 @@ public:
     /// A hit policy as the text surfaces write it: "5" (the 5th hit only), ">=5" (from the 5th on), "%5"
     /// (every 5th), "" or "always" (every hit). JSON carries the same as hit_mode + hit_target
     static bool ParseHitSpec(const std::string& text, BreakpointHitModeEnum& mode, uint32_t& target, std::string& error);
+    /// NextREG doors as the text surfaces write them: "nextreg", "port", "copper", joined by ',' or '+'; "" or "all" = every door.
+    /// False with the reason in `error` for anything else
+    static bool ParseNextRegDoors(const std::string& text, uint8_t& doors, std::string& error);
+    /// "nextreg,port,copper" for a door mask (the reverse of ParseNextRegDoors)
+    static std::string NextRegDoorsName(uint8_t doors);
     /// "5", ">=5", "%5" or "" (always): the text form of a breakpoint's policy
     static std::string HitSpecName(const BreakpointDescriptor& breakpoint);
     /// "always", "equal", "at_least", "multiple": the protocol's hit_mode names (ParseHitModeName reverses it)
@@ -370,6 +427,10 @@ public:
     /// end `to` (-1: none), slot_only, port mask (-1: none), hits "5" / ">=5" / "%5" (empty: always)
     static bool ApplyScriptOptions(BreakpointSpec& spec, const std::string& page, int32_t to, bool slotOnly, int32_t mask,
                                    const std::string& hits, std::string& error);
+    /// The options the script surfaces take for a NextREG breakpoint, applied to a spec: the range end `to` (-1: none), doors
+    /// "nextreg,port,copper" (empty: all), `value` (-1: any), `valueMask` (-1: #FF with a value), hits as in ApplyScriptOptions
+    static bool ApplyNextRegOptions(BreakpointSpec& spec, int32_t to, const std::string& doors, int32_t value, int32_t valueMask,
+                                    const std::string& hits, std::string& error);
     /// Hit counters back to 0: one breakpoint (false for an unknown id) or all
     bool ResetHitCount(uint16_t breakpointID);
     void ResetAllHitCounts();
@@ -486,6 +547,30 @@ public:
             return BRK_INVALID;
         return ResolvePort(BRK_PORT_OUT, portAddress);
     }
+    /// A NextREG access (the board's single read / write choke points): the breakpoint that stops, or BRK_INVALID.
+    /// `door` is one BRK_NR_DOOR_* bit; `value` is what is written or what the read returns
+    /// The copper completed the instruction at list index `pc`: the copper-instruction breakpoint that stops, or BRK_INVALID
+    /// The CPU completed an instruction whose opcode word is `opcodeWord`: the magic breakpoint that stops, or BRK_INVALID
+    uint16_t HandleMagic(uint16_t opcodeWord)
+    {
+        return _hotState.hasMagic ? ResolveMagic(opcodeWord) : BRK_INVALID;
+    }
+    uint16_t HandleCopperPc(uint16_t pc)
+    {
+        return _hotState.hasCopperPc ? ResolveCopperPc(pc) : BRK_INVALID;
+    }
+    /// The beam moved: `crossed(line, hc)` says whether the place was passed since the last look. The beam breakpoint that stops
+    uint16_t HandleBeam(const std::function<bool(uint16_t line, uint16_t hc)>& crossed)
+    {
+        return _hotState.hasBeam ? ResolveBeam(crossed) : BRK_INVALID;
+    }
+    uint16_t HandleNextReg(int direction, uint8_t reg, uint8_t value, uint8_t door)
+    {
+        if (!(direction == BRK_NR_READ ? _hotState.hasNextRegRead : _hotState.hasNextRegWrite) ||
+            !_hotState.NextRegBit(direction, reg))
+            return BRK_INVALID;
+        return ResolveNextReg(direction, reg, value, door);
+    }
     // endregion </Runtime methods>
 
     // region <Helper methods>
@@ -494,8 +579,11 @@ protected:
     /// Removes and frees every breakpoint (the caller holds what a change holds)
     void DeleteAllBreakpoints();
 
+    /// AddBreakpoint without freeing: @p adopted tells whether @p descriptor was stored
+    uint16_t AddBreakpointAdopting(BreakpointDescriptor* descriptor, bool& adopted);
     uint16_t AddMemoryBreakpoint(BreakpointDescriptor* descriptor);
     uint16_t AddPortBreakpoint(BreakpointDescriptor* descriptor);
+    uint16_t AddNextRegBreakpoint(BreakpointDescriptor* descriptor);
 
     BreakpointDescriptor* FindAddressBreakpoint(uint16_t address);
     BreakpointDescriptor* FindAddressBreakpoint(uint16_t address, const MemoryPageDescriptor& pageInfo);
@@ -506,6 +594,10 @@ protected:
     uint16_t ResolveSpace(uint16_t spacePage, uint16_t offset, bool write);
     uint16_t ResolveMemory(int kind, uint16_t address);
     uint16_t ResolvePort(int direction, uint16_t port);
+    uint16_t ResolveNextReg(int direction, uint8_t reg, uint8_t value, uint8_t door);
+    uint16_t ResolveCopperPc(uint16_t pc);
+    uint16_t ResolveMagic(uint16_t opcodeWord);
+    uint16_t ResolveBeam(const std::function<bool(uint16_t line, uint16_t hc)>& crossed);
     /// Walks one candidate set: counts every candidate that matches, returns the first that stops (or
     /// BRK_INVALID); `slot` is the slot of the access for slot-only physical breakpoints (-1: not physical)
     uint16_t WalkCandidates(uint32_t set, int slot, uint16_t first);

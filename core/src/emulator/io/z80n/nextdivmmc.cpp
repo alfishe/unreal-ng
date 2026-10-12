@@ -4,12 +4,35 @@
 
 #include "emulator/io/z80n/nextboard.h"
 
+void NextDivMmc::Note(NextDivMmcKind kind, uint16_t address, bool instant)
+{
+    if (!_journal.Enabled()) [[likely]]
+        return;
+    NextDivMmcEvent e;
+    if (fillClock)
+        fillClock(e);
+    e.kind = kind;
+    e.address = address;
+    e.instant = instant;
+    e.mapped = Mapped();
+    e.control = ReadPort();
+    _journal.Record(e);
+    if (kind == NextDivMmcKind::MapIn && address == 0x0008 && fillCall)
+    {
+        NextDivMmcEvent call = e;
+        call.kind = NextDivMmcKind::EsxCall;
+        fillCall(call);
+        _journal.Record(call);
+    }
+}
+
 void NextDivMmc::Reset()
 {
     _control = 0;
     _automap = false;
     _buttonNmi = false;
     Publish();
+    Note(NextDivMmcKind::Reset);
 }
 
 bool NextDivMmc::PortEnabled() const
@@ -26,8 +49,13 @@ void NextDivMmc::OnEnableChanged()
 {
     if (!AutomapEnabled())
     {
+        const bool was = _automap;
         _automap = false;  // divmmc.vhd 108-148: hold, held, button_nmi cleared, the combinational automap forced low
         _buttonNmi = false;
+        Publish();
+        if (was)
+            Note(NextDivMmcKind::Disabled);
+        return;
     }
     Publish();
 }
@@ -38,12 +66,16 @@ void NextDivMmc::ReleaseForProgramStart()
     _buttonNmi = false;
     _control = static_cast<uint8_t>(_control & ~0x80);
     Publish();
+    Note(NextDivMmcKind::ProgramStart);
 }
 
 void NextDivMmc::PressButton()
 {
     if (AutomapEnabled())
+    {
         _buttonNmi = true;
+        Note(NextDivMmcKind::Button);
+    }
 }
 
 void NextDivMmc::OnRetn()
@@ -53,6 +85,7 @@ void NextDivMmc::OnRetn()
     {
         _automap = false;
         Publish();
+        Note(NextDivMmcKind::Retn);
     }
 }
 
@@ -71,12 +104,14 @@ void NextDivMmc::WritePort(uint8_t value)
         return;  // zxnext.vhd 2608: port_e3 = lsb and port_divmmc_io_en
     _control = static_cast<uint8_t>((value & 0x8F) | (value & 0x40) | (_control & 0x40));  // MAPRAM only sets
     Publish();
+    Note(NextDivMmcKind::Port);
 }
 
 void NextDivMmc::ClearMapram()
 {
     _control = static_cast<uint8_t>(_control & ~0x40);
     Publish();
+    Note(NextDivMmcKind::MapramClear);
 }
 
 NextDivMmc::Hit NextDivMmc::Classify(uint16_t address) const
@@ -129,6 +164,7 @@ void NextDivMmc::BeforeMachineM1(uint16_t address)
     {
         _automap = true;  // the opcode of this fetch already comes from the DivMMC
         Publish();
+        Note(NextDivMmcKind::MapIn, address, true);
     }
 }
 
@@ -144,6 +180,7 @@ void NextDivMmc::OnMachineM1(uint16_t address)
             {
                 _automap = true;
                 Publish();
+                Note(NextDivMmcKind::MapIn, address, false);
             }
             break;
         case Hit::MapOut:
@@ -151,6 +188,7 @@ void NextDivMmc::OnMachineM1(uint16_t address)
             {
                 _automap = false;
                 Publish();
+                Note(NextDivMmcKind::MapOut, address);
             }
             break;
         default:

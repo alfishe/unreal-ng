@@ -3,7 +3,11 @@
 #include "portdecoder_next.h"
 
 #include "common/modulelogger.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/ttd/next/ttdnextstate.h"
+#include "debugger/debugmanager.h"
 #include "emulator/cpu/core.h"
+#include "emulator/emulator.h"
 #include "emulator/io/z80n/nexttiming.h"
 #include <filesystem>
 
@@ -20,6 +24,9 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
 {
     _board = std::make_unique<NextBoard>(&Mem());
     _board->SetMachine(this);
+    // The Next's keyboard controller: the physical host keys reach the extended keys and the pad's extra buttons (NR #B0-#B2)
+    if (_context->pKeyboard)
+        _context->pKeyboard->SetPs2Sink(&_extendedInput);
     // the picture follows the beam: a video register written by the program applies from the line the beam is on
     _board->SetBeforeCpuWrite([this]() {
         if (_context->pScreen)
@@ -43,8 +50,42 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
             pc = z80->m1_pc;
         }
     });
+    // NextREG breakpoints: the board tells every access of the program with its door (the single choke points)
+    _board->SetAccessHook([this](bool write, uint8_t reg, uint8_t value, NextRegSource source) { NextRegAccess(write, reg, value, source); });
+    _interrupts->onEvent = [this](NextIntKind kind, const char* source, bool hasVector, uint8_t vector) {
+        if (!_intJournal.Enabled())
+            return;
+        NextIntEvent e;
+        e.kind = kind;
+        e.source = source;
+        e.hasVector = hasVector;
+        e.vector = vector;
+        RecordInt(e);
+    };
     _divMmc = std::make_unique<NextDivMmc>(&Mem(), _board.get());
     _divMmc->isBasicRomPaged = [this]() { return Mem().BasicRomVisible(); };
+    _divMmc->fillClock = [this](NextDivMmcEvent& e) {
+        e.frame = static_cast<uint32_t>(_context->emulatorState.frame_counter);
+        if (Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
+        {
+            e.t = z80->t;
+            e.pc = z80->m1_pc;
+        }
+    };
+    // An entry at #0008: the RST has pushed its return address, the call number is the byte there (esxDOS: RST $08 / DEFB call)
+    _divMmc->fillCall = [this](NextDivMmcEvent& e) {
+        Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+        if (!z80)
+            return;
+        e.af = z80->af;
+        e.bc = z80->bc;
+        e.de = z80->de;
+        e.hl = z80->hl;
+        const uint16_t sp = z80->sp;
+        e.returnAddress = static_cast<uint16_t>(Mem().DirectReadFromZ80Memory(sp) | (Mem().DirectReadFromZ80Memory(static_cast<uint16_t>(sp + 1)) << 8));
+        e.call = Mem().DirectReadFromZ80Memory(e.returnAddress);
+        e.basicRom = Mem().BasicRomVisible();
+    };
     _multiface = std::make_unique<NextMultiface>(&Mem(), _board.get(), &_context->emulatorState);
     _m1Chain.multiface = _multiface.get();
     _m1Chain.divMmc = _divMmc.get();
@@ -73,6 +114,8 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
 
 PortDecoder_Next::~PortDecoder_Next()
 {
+    if (_context->pKeyboard && _context->pKeyboard->GetPs2Sink() == &_extendedInput)
+        _context->pKeyboard->SetPs2Sink(nullptr);
     if (_context->pMediaManager)
     {
         _context->pMediaManager->UnregisterSlot(_sdSlot0.Descriptor().id);
@@ -226,10 +269,11 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         OnPortInComplete(port, value, pc, disp);
         return value;
     }
-    if (low == 0x1F)
+    uint8_t joystick = 0;
+    if ((low == 0x1F || low == 0x37) && JoystickPortAnswers(low == 0x37, joystick))
     {
-        // Kempston joystick 1: built into the board (zxnext.vhd port_1f_lsb), 000FUDLR active high, 0 with nothing pressed
-        const uint8_t value = Default_Port_KempstonJoystick_In();
+        // The joystick ports: built into the board (zxnext.vhd port_1f_lsb / port_37_lsb), 000FUDLR active high, 0 with nothing pressed
+        const uint8_t value = joystick;
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -310,7 +354,7 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         if (low == kPortSpiData)
             result = SpiRead();
         else
-            result = port == kPortRegSelect ? _board->SelectedRegister() : _board->ReadSelected();
+            result = port == kPortRegSelect ? _board->SelectedRegister() : _board->ReadSelectedByProgram();
         _lastPortDecoded = true;
         OnPortInComplete(port, result, pc, disp);
         return result;
@@ -325,8 +369,77 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     return value;
 }
 
+uint8_t PortDecoder_Next::ReadExtendedInput(uint8_t reg) const
+{
+    switch (reg)
+    {
+        case 0xB0: return _extendedInput.ReadB0();
+        case 0xB1: return _extendedInput.ReadB1();
+        case 0xB2: return _extendedInput.ReadB2();
+        default: return 0;
+    }
+}
+
+uint16_t PortDecoder_Next::PadState(unsigned connector) const
+{
+    if (connector == 0)
+    {
+        // the left connector: the Kempston device is its low byte, the extras are the keyboard controller's
+        const uint8_t stick = _context->pJoystick ? _context->pJoystick->State() : 0;
+        return static_cast<uint16_t>(stick | NextExtendedInput::ExtrasToPadBits(_extendedInput.Pad(true)));
+    }
+    return connector == 1 ? _extendedInput.Right() : 0;
+}
+
+bool PortDecoder_Next::ApplyPadState(unsigned connector, uint16_t state)
+{
+    state &= kPadMask;
+    if (connector == 0)
+    {
+        if (_context->pJoystick)
+            _context->pJoystick->SetState(static_cast<uint8_t>(state & 0xFF));
+        _extendedInput.SetPad(true, NextExtendedInput::PadBitsToExtras(state));
+        return true;
+    }
+    if (connector != 1)
+        return false;
+    _extendedInput.SetRight(state);
+    return true;
+}
+
+unsigned PortDecoder_Next::JoystickMode(bool left) const
+{
+    const uint8_t nr05 = _board->Stored(0x05);
+    constexpr unsigned kLeftBit3 = 3, kRightBit1 = 1, kLeftShift = 6, kRightShift = 4, kLow2 = 3;
+    return left ? ((((nr05 >> kLeftBit3) & 1u) << 2) | ((nr05 >> kLeftShift) & kLow2))
+                : ((((nr05 >> kRightBit1) & 1u) << 2) | ((nr05 >> kRightShift) & kLow2));
+}
+
+bool PortDecoder_Next::JoystickPortAnswers(bool port37, uint8_t& value) const
+{
+    constexpr uint8_t kPortEnable1F = 0x40, kPortEnable37 = 0x80;  // NR #82 bits 6 and 7 (internal_port_enable)
+    constexpr uint8_t kPadBits = 0xC0, kStickBits = 0x3F;           // bits 7:6 belong to an MD pad only
+    constexpr unsigned kRegPortEnable0 = 0x82;
+    const unsigned first = port37 ? kJoyKempston2 : kJoyKempston1, md = port37 ? kJoyMd2 : kJoyMd1;
+    const unsigned leftMode = JoystickMode(true), rightMode = JoystickMode(false);
+    const bool leftOn = leftMode == first || leftMode == md, rightOn = rightMode == first || rightMode == md;
+    value = 0;
+    if (!(_board->Stored(kRegPortEnable0) & (port37 ? kPortEnable37 : kPortEnable1F)) || !(leftOn || rightOn))
+        return false;
+    if (leftOn)
+        value = static_cast<uint8_t>(Default_Port_KempstonJoystick_In() & (leftMode == md ? (kPadBits | kStickBits) : kStickBits));
+    if (rightOn)  // the right connector: whatever a tool put on it (it has no host keys); the two sides are ORed (port_1f_dat <= joyL_1f or joyR_1f)
+        value |= static_cast<uint8_t>(_extendedInput.Right() & (rightMode == md ? (kPadBits | kStickBits) : kStickBits));
+    return true;
+}
+
 void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    // The magic debug port: the program's console. A tool's own OUT (toolAccessActive) is not the program's
+    if (_magicPort.Enabled()) [[unlikely]]
+        if (!_context->toolAccessActive)
+            _magicPort.Write(port, value, static_cast<uint32_t>(_context->emulatorState.frame_counter),
+                             _context->pCore && _context->pCore->GetZ80() ? _context->pCore->GetZ80()->t : 0, pc);
     if (static_cast<uint8_t>(port) == _multiface->EnablePort() || static_cast<uint8_t>(port) == _multiface->DisablePort())
         _multiface->PortWrite(static_cast<uint8_t>(port));  // the other devices on the port see the write too
     PortDecodeDisposition disp;
@@ -478,6 +591,117 @@ bool PortDecoder_Next::WriteDacPort(uint16_t port, uint8_t value)
 
 /// Between two instructions: a DMA that holds the bus runs until it is done or waits for its prescaler (burst mode
 /// releases the bus then); the CPU is held for two of its clocks per byte
+void PortDecoder_Next::NextRegAccess(bool write, uint8_t reg, uint8_t value, NextRegSource source)
+{
+    uint8_t door;
+    switch (source)
+    {
+        case NextRegSource::NextReg: door = BRK_NR_DOOR_NEXTREG; break;
+        case NextRegSource::Port: door = BRK_NR_DOOR_PORT; break;
+        default: return;  // the copper is watched on its own (WatchCopper); the board itself (reset, a loader) has no one to stop
+    }
+    if (_breakpointActive || !_context->pDebugManager || !_context->pEmulator)
+        return;
+    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+    const uint16_t id = brk.HandleNextReg(write ? BRK_NR_WRITE : BRK_NR_READ, reg, value, door);
+    if (id != BRK_INVALID)
+        FireBreakpoint(id, reg, write ? BreakpointHitKind::NextRegWrite : BreakpointHitKind::NextRegRead);
+}
+
+void PortDecoder_Next::FireBreakpoint(uint16_t id, uint16_t address, BreakpointHitKind kind)
+{
+    _breakpointActive = true;
+    if (_context->pDebugManager)
+        _context->pDebugManager->GetBreakpointsManager()->NoteTriggered(id);
+    _context->pEmulator->OnBreakpointHit(id, address, kind);
+    _breakpointActive = false;
+}
+
+void PortDecoder_Next::OnInstructionDone()
+{
+    if (!_context->pDebugManager) [[unlikely]]
+        return;
+    BreakpointManager& manager = *_context->pDebugManager->GetBreakpointsManager();
+    if (manager.GetHotState()->hasMagic) [[unlikely]]
+        WatchMagic(manager);
+    if (!manager.GetHotState()->copperWatch) [[likely]]
+    {
+        _watchValid = false;  // the next look starts from the beam of that moment
+        return;
+    }
+    WatchCopper(manager);
+}
+
+/// The instruction that just ran was a magic opcode (ED FF: a NOP of two bytes; DD 01: LD BC,nn of four bytes with the prefix ignored, the
+/// hardware does what the table says and so do we): the stop is after it, the address reported is where it stood. The CPU library reports
+/// the opcode DD 01 runs as (01, no prefix), so the opcode is read from where the instruction started (m1_pc), and only a whole
+/// instruction counts (the PC moved by its length: a lone prefix step does not)
+void PortDecoder_Next::WatchMagic(BreakpointManager& manager)
+{
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (_breakpointActive || !z80 || !_context->pEmulator || !_context->pMemory)
+        return;
+    constexpr uint16_t kLengthEdFf = 2;  // prefix + opcode
+    constexpr uint16_t kLengthDd01 = 4;  // prefix + opcode + 16-bit operand
+    const uint16_t start = z80->m1_pc;
+    const uint16_t word = static_cast<uint16_t>((_context->pMemory->DirectReadFromZ80Memory(start) << 8) |
+                                                _context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(start + 1)));
+    if ((word != BRK_MAGIC_ED_FF || z80->pc != static_cast<uint16_t>(start + kLengthEdFf)) &&
+        (word != BRK_MAGIC_DD_01 || z80->pc != static_cast<uint16_t>(start + kLengthDd01)))
+        return;
+    const uint16_t id = manager.HandleMagic(word);
+    if (id != BRK_INVALID)
+        FireBreakpoint(id, start, BreakpointHitKind::Magic);
+}
+
+void PortDecoder_Next::WatchCopper(BreakpointManager& manager)
+{
+    NextCopper& copper = _board->Copper();
+    uint64_t now;
+    if (_breakpointActive || !_context->pEmulator || !copper.BeamNow(now))
+        return;
+    if (!_watchValid)
+    {
+        _watchValid = true;
+        _watchClock = now;
+        return;
+    }
+    const uint64_t from = _watchClock;
+    const bool wrapped = now < from;  // the frame rolled over
+    _watchClock = now;
+    // The instructions the copper completes in (from, now]: a probe from the real copper's cursor, which lags by up to a line
+    _watchSteps.clear();
+    if (copper.Mode() != 0)
+        copper.Probe(now, _watchSteps);
+    auto inSpan = [&](uint64_t at) { return wrapped ? (at > from || at <= now) : (at > from && at <= now); };
+    uint16_t found = BRK_INVALID;
+    uint16_t address = 0;
+    BreakpointHitKind kind = BreakpointHitKind::CopperInstruction;
+    auto take = [&](uint16_t id, uint16_t at, BreakpointHitKind k) {
+        if (id != BRK_INVALID && found == BRK_INVALID)
+        {
+            found = id;
+            address = at;
+            kind = k;
+        }
+    };
+    for (const NextCopper::Step& step : _watchSteps)
+    {
+        if (!inSpan(step.at))
+            continue;
+        take(manager.HandleCopperPc(step.pc), step.pc, BreakpointHitKind::CopperInstruction);
+        if (step.isMove && step.reg != 0)
+            take(manager.HandleNextReg(BRK_NR_WRITE, step.reg, step.value, BRK_NR_DOOR_COPPER), step.reg, BreakpointHitKind::NextRegWrite);
+    }
+    take(manager.HandleBeam([&](uint16_t line, uint16_t hc) {
+             const uint64_t at = copper.ClockOf(line, hc);
+             return at != UINT64_MAX && inSpan(at);
+         }),
+         0, BreakpointHitKind::Beam);
+    if (found != BRK_INVALID)
+        FireBreakpoint(found, address, kind);
+}
+
 void PortDecoder_Next::StepDma()
 {
     if (!_dma.Active())
@@ -557,6 +781,14 @@ void PortDecoder_Next::PerformReset(bool hard)
     state.p1FFD = 0x00;
     Mem().ResetMmu();
     _board->Reset(hard);  // config mode and the boot ROM first: the slot table follows them
+    if (_intJournal.Enabled())
+    {
+        NextIntEvent e;
+        e.kind = NextIntKind::Reset;
+        e.source = hard ? "hard" : "soft";
+        e.value = _board->ResetBits();
+        RecordInt(e);
+    }
     _dma.Reset();         // zxnext.vhd: the DMA's reset_i is the hard or the soft reset
     _divMmc->Reset();     // E3 and the automap latches (zxnext.vhd 4175, divmmc.vhd 108-139) and the Multiface's session are `reset` too
     _multiface->Reset();
@@ -875,12 +1107,58 @@ void PortDecoder_Next::ApplyTiming(uint8_t timing)
 
 /// endregion
 
-bool PortDecoder_Next::GenerateDriveNmi()
+void PortDecoder_Next::RecordInt(NextIntEvent event)
+{
+    event.frame = static_cast<uint32_t>(_context->emulatorState.frame_counter);
+    if (Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
+    {
+        event.t = z80->t;
+        event.pc = z80->m1_pc;
+    }
+    _intJournal.Record(event);
+}
+
+const char* PortDecoder_Next::DriveNmiRefusal() const
 {
     // zxnext.vhd: hotkey_drive / nmi_sw_gen_divmmc, and nr_06_button_drive_nmi_en (NR #06 bit 4), with no Multiface session; the
     // state machine pulses /NMI once and the DivMMC's button latch maps its ROM in at the #0066 fetch. A request while the
     // handler is in, or still on its way, is lost (nmi_activated)
-    if (!(_board->Stored(0x06) & 0x10) || _divMmc->NmiHold() || _multiface->IsActive())
+    if (!(_board->Stored(0x06) & 0x10))
+        return "the DRIVE button is off (NR #06 bit 4)";
+    if (_divMmc->NmiHold())
+        return "the DivMMC NMI handler is on its way or running";
+    if (_multiface->IsActive())
+        return "a Multiface session is open";
+    return nullptr;
+}
+
+const char* PortDecoder_Next::MultifaceNmiRefusal() const
+{
+    // zxnext.vhd nmi_assert_mf: NR #06 bit 3 (the M1 button's enable), and CONMEM off (port #E3 bit 7) and no DivMMC handler
+    if (!(_board->Stored(0x06) & 0x08))
+        return "the M1 button is off (NR #06 bit 3)";
+    if (_divMmc->ReadPort() & 0x80)
+        return "CONMEM is on (port #E3 bit 7)";
+    if (_divMmc->NmiHold())
+        return "the DivMMC NMI handler is on its way or running";
+    if (_multiface->NmiHold())
+        return "a Multiface NMI session is open";
+    return nullptr;
+}
+
+bool PortDecoder_Next::GenerateDriveNmi()
+{
+    const char* refusal = DriveNmiRefusal();
+    if (_intJournal.Enabled())
+    {
+        NextIntEvent e;
+        e.kind = NextIntKind::NmiRequest;
+        e.source = "drive_button";
+        e.accepted = refusal == nullptr;
+        e.reason = refusal ? refusal : "";
+        RecordInt(e);
+    }
+    if (refusal)
         return false;
     _divMmc->PressButton();
     _context->pCore->GetZ80()->RequestNonMaskedInterrupt();
@@ -889,8 +1167,17 @@ bool PortDecoder_Next::GenerateDriveNmi()
 
 bool PortDecoder_Next::GenerateMultifaceNmi()
 {
-    // zxnext.vhd nmi_assert_mf: NR #06 bit 3 (the M1 button's enable), and CONMEM off (port #E3 bit 7) and no DivMMC handler
-    if (!(_board->Stored(0x06) & 0x08) || (_divMmc->ReadPort() & 0x80) || _divMmc->NmiHold() || _multiface->NmiHold())
+    const char* refusal = MultifaceNmiRefusal();
+    if (_intJournal.Enabled())
+    {
+        NextIntEvent e;
+        e.kind = NextIntKind::NmiRequest;
+        e.source = "m1_button";
+        e.accepted = refusal == nullptr;
+        e.reason = refusal ? refusal : "";
+        RecordInt(e);
+    }
+    if (refusal)
         return false;
     _multiface->PressButton();
     _context->pCore->GetZ80()->RequestNonMaskedInterrupt();
@@ -901,6 +1188,13 @@ void PortDecoder_Next::OnRetn()
 {
     // divmmc_retn_seen = z80_retn_seen and not mf_is_active (the Multiface's session ends first)
     const bool multifaceActive = _multiface->IsActive();
+    if (_intJournal.Enabled())
+    {
+        NextIntEvent e;
+        e.kind = NextIntKind::Retn;
+        e.source = multifaceActive ? "multiface" : (_divMmc->NmiHold() ? "divmmc" : "none");
+        RecordInt(e);
+    }
     _multiface->OnRetn();
     if (!multifaceActive)
         _divMmc->OnRetn();
@@ -912,3 +1206,20 @@ bool PortDecoder_Next::RequestBoardNmi()
     GenerateDriveNmi();
     return true;
 }
+
+/// region <TTD>
+
+std::vector<ttd::PeripheralId> PortDecoder_Next::GetTTDModelStateIds() const
+{
+    return {ttd::PeripheralId::NextState, ttd::PeripheralId::NextDivMmcRam};
+}
+
+std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Next::CreateTTDSerializers() const
+{
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
+    serializers.push_back(std::make_unique<ttd::TTDNextState>(*const_cast<PortDecoder_Next*>(this)));
+    serializers.push_back(std::make_unique<ttd::TTDNextDivMmcRam>(*_context->pMemory));
+    return serializers;
+}
+
+/// endregion </TTD>

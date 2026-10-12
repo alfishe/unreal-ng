@@ -5,8 +5,8 @@
 /// mode and the policy's session effects, mapped onto ITimeTravelHooks (architecture.md §3).
 ///
 /// Works with whichever implementation is behind EmulatorContext::pTimeTravelHooks (the engine's controller, or
-/// v1 where a test selects it), read at each call. M1 maps each effect onto the hook call its callers made
-/// before (EndSession, OnLoad(Media), StopRecording, OnMachineReset), so the session behaves as it did.
+/// v1 where a test selects it), read at each call. Each effect maps onto the hooks (EndSession, EndSessionFor,
+/// StopRecording, OnMachineReset); this port is the only caller of EndSessionFor (M6).
 
 #include "emulator/coordinator/ports.h"
 

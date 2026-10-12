@@ -26,6 +26,10 @@ never fires. A memory breakpoint stops during the access, so the PC is inside or
 range is checked as fast as one address, and so are ten thousand of them (the emulator paints them
 into a per-address table when they are set).
 
+**By label.** An execution, read or write breakpoint's `address` (and `address_end`) can be a label's name:
+`{"type":"exec","address":"Sparkles.End"}` sets it at that label's CPU address (MCP `bp_add` the same). Load the
+labels first (`symbols/import`); an unknown name is refused.
+
 **On a page (physical).** A breakpoint can name a page - `{"kind":"ram","page":32}` in JSON,
 `ram32` / `rom3` / `cache0` in text. It then watches that page at offset `address & #3FFF`, through
 whatever slot shows the page: code a TS-Conf or 128K program pages into `#C000` one moment and `#8000`
@@ -66,6 +70,7 @@ curl -s $BASE/emulator/$EMU/breakpoints | jq '.breakpoints[] | {id, address, add
 | Lua | `bp(a, {to=e})` | `bp(a, "ram32")`, `{page=, slot_only=}` | `bp_port_in(p, {mask=})` | `{hits=">=5"}`; `bp_reset_hits([id])` |
 | Python | `emu.bp(a, to=e)` | `page="ram32", slot_only=True` | `emu.bp_port_in(p, mask=)` | `hits=">=5"`; `emu.bp_reset_hits([id])` |
 | MCP | `bp_add` `address_end` | `page`, `slot_only` | `port_mask` | `hits`; action `bp_reset_hits` |
+| ZX Next | CLI `bnextreg 0x07 w --via copper`, `bbeam 99 --hc 255`, `bcopper 12`; WebAPI/MCP types `nextreg_write`/`nextreg_read`/`nextreg` (`doors`, `value`, `value_mask`), `beam` (`hc`), `copper`; Lua/Python `bp_nextreg_write`, `bp_beam`, `bp_copper`; magic opcodes `bmagic edff|dd01`, types `magic_ed_ff`/`magic_dd_01`, `bp_magic("ed_ff")` (stops after the NOP / `LD BC,nn` ran; none armed = no cost) | | | |
 | unreal-qt | Breakpoint editor: "to", "Page", "This slot only", "Mask", "Hits" fields; the list shows them | | | |
 
 **Notes and groups.** `POST /breakpoints` takes `note` and `group` (MCP `bp_add` too); the CLI takes the

@@ -36,6 +36,12 @@ configure output goes to `<build dir>/configure.log` and is shown only if it fai
 `AGENTS.md`, section "Why `build.sh` configures every time". Benchmarks (`-DBENCHMARKS=ON`) still need one manual
 configure, which later runs keep.
 
+`build.sh` also runs the **source checks of the CI `lint` job** first
+(`tools/verification/gui-instance-reads.sh`, a fraction of a second). A failure is printed as
+`== lint FAILED` above the build output and does not stop the build: the CI `lint` job fails on it alone, without
+holding up the Linux build and tests, but an agent sees it before the commit rather than an hour later. A count below
+its baseline prints a reminder to lower the baseline in the same change. `UNREAL_NO_LINT=1` skips the checks.
+
 ### How an agent should call them
 
 Run the command and **wait for it to finish** - the slot is held exactly as long as the
@@ -60,6 +66,33 @@ tools/build/slot.sh [-t SECONDS] [-q] POOL -- COMMAND [ARGS...]
 - The exit status is the command's; `128+N` if it died from signal `N`.
 - Benchmarks and A/B timing runs: use `UNREAL_NICE=0` (or no slot at all) - lowered
   priority skews the numbers, and run them on a quiet machine.
+
+## Landing on master
+
+Work happens in a worktree (`scratch/wt-<name>`), never on a branch switched in the shared main checkout. When the
+build is green, `land.sh` moves local master to the worktree's HEAD:
+
+```bash
+# in the worktree; merge master first if it moved since the worktree was made
+git merge --no-edit master
+BUILD_DIR=$PWD/cmake-build-agent-release tools/build/build.sh \
+  && tools/build/land.sh "$(git rev-parse master)" \
+  && git push github "$(git rev-parse HEAD):refs/heads/master"
+```
+
+- **Only a fast-forward, and only if master is still where you saw it.** The argument is the full SHA master is
+  expected at; `git update-ref` swaps it compare-and-swap, so a landing that raced another session fails with
+  `master moved: <sha>` and changes nothing. Merge master again and retry.
+- **The main checkout follows, through a private index.** Other sessions work in it, often with uncommitted edits on
+  the very files a landing brings. The new master's index is built in a file of its own and swapped in under
+  `index.lock` (git's own lock), and files are written only on landed paths with no edits there. A file someone is
+  editing stays byte for byte as it is; its edits show as uncommitted changes on top of the new master, and the script
+  lists those files. Nothing is merged into someone's working file, so no conflict markers appear in it.
+- **When it refuses** (nothing moves): the main checkout is on master and its `index.lock` is held (a git command is
+  running there) or its index has staged changes (moving master under them would show the landing reverted). On
+  another branch the main checkout is not touched and master still moves (the script says so).
+- **Chain the gate with `&&`.** With `;` a failed build still lands and pushes.
+- Pushing is the caller's step; `origin` is pushed by the owner.
 
 ## How it works, and why it does not get stuck
 

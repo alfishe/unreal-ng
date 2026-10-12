@@ -240,10 +240,10 @@ bool Write(EmulatorContext* context, const std::string& name, uint32_t offset, c
             region->Write(static_cast<uint32_t>(offset + i), bytes[i]);
     };
     if (context->pEmulator)
-        context->pEmulator->EditMemoryFromTool(source, edit);
+        error = context->pEmulator->EditMemoryFromTool(source, edit);   // refused in the recorded past
     else
         edit();
-    return true;
+    return error.empty();
 }
 
 bool Save(EmulatorContext* context, const std::string& name, const std::string& path, uint32_t offset, uint32_t length,

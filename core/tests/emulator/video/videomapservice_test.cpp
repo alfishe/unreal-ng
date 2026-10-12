@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "_helpers/emulatortesthelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -69,6 +70,14 @@ protected:
     std::unique_ptr<EmulatorContext> _context;
     std::unique_ptr<Core> _core;
     ScreenZX* _screen = nullptr;
+
+    void TearDown() override
+    {
+        // The drives Core::Init created go before the core, as in Emulator::Release
+        EmulatorTestHelper::ReleaseDiskDrives(_context.get());
+        _core.reset();
+        _context.reset();
+    }
 
     void SetUp() override
     {
@@ -278,6 +287,7 @@ TEST(VideoMapServiceText_Test, AtmTextGridMatchesTheSources)
     context.config.frame = 69888;
     context.config.t_line = 224;
     Core core(&context);
+    ScopedDiskDrivesRelease releaseDrives(&context);  // the drives Init creates
     ASSERT_TRUE(core.Init());
     context.emulatorState.pFF77 = FF77_TX | 0x20;
     context.emulatorState.atm.aFF77 = 0x0100;
@@ -311,6 +321,7 @@ TEST(VideoMapServiceZ80_Test, Spectrum48ScreenAddresses)
     context.config.frame = 69888;
     context.config.t_line = 224;
     Core core(&context);
+    ScopedDiskDrivesRelease releaseDrives(&context);  // the drives Init creates
     ASSERT_TRUE(core.Init());
     context.pScreen->InitRaster();
 
@@ -363,6 +374,7 @@ TEST(VideoMapServiceHistory_Test, MidFrameModeSwitchAnswersEachMomentInItsMode)
     context.config.frame = 69888;
     context.config.t_line = 224;
     Core core(&context);
+    ScopedDiskDrivesRelease releaseDrives(&context);  // the drives Init creates
     ASSERT_TRUE(core.Init());
     Z80* cpu = core.GetZ80();
 
@@ -405,6 +417,7 @@ TEST(VideoMapServiceHistory_Test, BorderColourFollowsTheWriteLog)
     context.config.frame = 69888;
     context.config.t_line = 224;
     Core core(&context);
+    ScopedDiskDrivesRelease releaseDrives(&context);  // the drives Init creates
     ASSERT_TRUE(core.Init());
     Z80* cpu = core.GetZ80();
     context.pScreen->InitRaster();

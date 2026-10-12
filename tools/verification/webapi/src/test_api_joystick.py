@@ -183,7 +183,7 @@ class TestJoystickErrors:
 class TestJoystickWarnings:
 
     def test_unwired_machine_warns(self, api_client):
-        response = api_client.create_and_start_emulator(model="PENTAGON")
+        response = api_client.create_and_start_emulator(model="48K")
         emu_id = response["id"]
         try:
             api_client.pause_emulator(emu_id)

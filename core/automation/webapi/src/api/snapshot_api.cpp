@@ -243,10 +243,9 @@ void EmulatorAPI::getSnapshotInfo(const HttpRequestPtr& req, std::function<void(
         return;
     }
 
-    auto context = emulator->GetContext();
     Json::Value ret;
 
-    std::string snapshotPath = context->coreState.snapshotFilePath;
+    std::string snapshotPath = emulator->SnapshotFilePath();
     bool isLoaded = !snapshotPath.empty();
 
     ret["status"] = isLoaded ? "loaded" : "empty";

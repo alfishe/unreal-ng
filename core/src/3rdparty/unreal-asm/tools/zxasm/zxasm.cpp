@@ -72,7 +72,7 @@ int Usage()
                  "       decode <file> [-o out] [--codec id] [--version v] [--codepage cp] |\n"
                  "       encode <file> --codec id [--version v] [-o out] [--codepage cp] [--line-end lf|crlf|cr] |\n"
                  "       check <file> [--codec id] [--version v] |\n"
-                 "       convert <file|dir|image> --to dialect [--from dialect] [--z80n] [--out-codepage cp] [-o out]   (--z80n: ZX Spectrum Next sources)\n"
+                 "       convert <file|dir|image> --to dialect [--to-version v] [--from dialect] [--z80n] [--out-codepage cp] [-o out]   (--z80n: ZX Spectrum Next sources)\n"
                  "       files <image.trd|.scl|.fdi|.udi|.td0|.tap|.tzx ...> (decode/detect/encoding/check take --file NAME[.T] for a file in an image) |\n"
                  "       probe <snapshot.sna|.z80|.szx> | extract <snapshot> [--assembler id] [--as text|file] [--to dialect] [-o out] |\n"
                  "       inject <source> <snapshot|disk image|file.$X> [-o out] [--assembler id | --codec id [--version v]]\n"
@@ -113,6 +113,7 @@ void PrintDiagnostics(const Diagnostics& diagnostics)
 struct Args
 {
     std::string command, file, output, codec, codePage, outCodePage, lineEnd, inner, version, to, from;
+    std::string toVersion;   // convert: the target's version (its codec's version names: TASM "4.12", XAS "7.447")
     std::string target, assembler, title, name, as;   // inject / extract
     bool show = false;
     bool force = false;
@@ -161,9 +162,10 @@ bool Parse(int argc, char** argv, Args& args)
                                           : a == "--file" ? !value(args.inner)
                                           : a == "--version" ? !value(args.version)
                                           : a == "--to" ? !value(args.to)
+                                          : a == "--to-version" ? !value(args.toVersion)
                                           : a == "--from" ? !value(args.from) : false)
             return false;
-        if (a != "-o" && a != "--codec" && a != "--codepage" && a != "--out-codepage" && a != "--line-end" && a != "--file" && a != "--version" && a != "--to" && a != "--from")
+        if (a != "-o" && a != "--codec" && a != "--codepage" && a != "--out-codepage" && a != "--line-end" && a != "--file" && a != "--version" && a != "--to" && a != "--to-version" && a != "--from")
         {
             if (args.file.empty())
                 args.file = a;
@@ -1083,11 +1085,13 @@ int main(int argc, char** argv)
             decoded.document.dialect = args.from;
         BackendOptions convertOptions;
         convertOptions.z80n = args.z80n;
+        convertOptions.targetVersion = args.toVersion;
         const ConvertResult converted = Convert(decoded.document, args.to, convertOptions);
         PrintDiagnostics(converted.diagnostics);
         EncodeOptions encodeOptions;
         if (!OutputEncodeOptions(args, encodeOptions))
             return 2;
+        encodeOptions.subversion = args.toVersion;
         WarnCodeNotAscii({decoded.document.name, converted.document}, encodeOptions);
         // Written with the target's text codec when there is one (sjasmplus keeps the Spectrum code page for strings,
         // unless --out-codepage says otherwise)

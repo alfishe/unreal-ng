@@ -205,6 +205,30 @@ SyncText ReadGapBufferFixed(const MachineView& machine, const SyncDescriptor& d)
         return Inconsistent(text, "the text pointers are out of order: #" + Hex(start, 4) + " #" + Hex(*gapStart, 4) + " #" +
                                       Hex(*gapEnd, 4) + " #" + Hex(top, 4));
     text.editor = std::any_of(flag.begin(), flag.end(), [](uint8_t b) { return b != 0; });
+    if (p.loadedForm && !text.editor && *gapStart == start && *gapEnd == 0xFFFF)
+    {
+        // as LOAD left it (MASM 1.1): the file at the start, up to its end record
+        std::vector<uint8_t> all;
+        if (!machine.Read(static_cast<uint16_t>(start), static_cast<size_t>(0x10000 - start), all))
+            return Inconsistent(text, "the text lies in a page that was not copied");
+        size_t at = 0;
+        long lines = 0;
+        while (at < all.size() && all[at] != static_cast<uint8_t>(p.end[0]))
+        {
+            const size_t n = all[at];
+            if (at + n + 1 >= all.size() || all[at + n + 1] != n)
+                return Inconsistent(text, "the text is not made of length-framed lines");
+            at += n + 2;
+            ++lines;
+        }
+        if (at + p.end.size() > all.size())
+            return Inconsistent(text, "no end record after the text");
+        text.file.assign(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(at + p.end.size()));
+        text.lines = static_cast<int>(lines);
+        text.ok = true;
+        text.state = "ok";
+        return text;
+    }
     if (p.plainTextFile && !text.editor)
     {
         std::vector<uint8_t> lower, upper;
@@ -295,6 +319,30 @@ SyncText ReadGapBuffer(const MachineView& machine, const SyncDescriptor& d)
     const auto gapStart = machine.Word(p.gapStart), gapEnd = machine.Word(p.gapEnd), total = machine.Word(p.lineCount);
     if (!start || !top || !gapStart || !gapEnd || !total)
         return Inconsistent(text, "the text pointers are not in the memory copied");
+    if (p.loadedForm && *top == 0 && *gapStart == 0 && *gapEnd == 0 && *total == 0)
+    {
+        // as LOAD left it: the file at the start, up to its end record
+        std::vector<uint8_t> all;
+        if (!machine.Read(*start, static_cast<size_t>(0x10000 - *start), all))
+            return Inconsistent(text, "the text lies in a page that was not copied");
+        size_t at = 0;
+        long lines = 0;
+        while (at < all.size() && all[at] != static_cast<uint8_t>(p.end[0]))
+        {
+            const size_t n = all[at];
+            if (at + n + 1 >= all.size() || all[at + n + 1] != n)
+                return Inconsistent(text, "the text is not made of length-framed lines");
+            at += n + 2;
+            ++lines;
+        }
+        if (at + p.end.size() > all.size())
+            return Inconsistent(text, "no end record after the text");
+        text.file.assign(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(at + p.end.size()));
+        text.lines = static_cast<int>(lines);
+        text.ok = true;
+        text.state = "ok";
+        return text;
+    }
     if (!(*start <= *gapStart && *gapStart <= *gapEnd && *gapEnd <= *top))
         return Inconsistent(text, "the text pointers are out of order: #" + Hex(*start, 4) + " #" + Hex(*gapStart, 4) + " #" +
                                       Hex(*gapEnd, 4) + " #" + Hex(*top, 4));
@@ -475,7 +523,11 @@ SyncDescriptor Alasm(const std::string& version, const std::string& codecVersion
 
 /// XAS (asm-synchronizer.md §7.11): the file as it is at #C000 of the page mapped there, edited in place; the line
 /// on the screen row is packed into the text on Enter. Identified by the title a new text gets, kept in the code
-SyncDescriptor Xas(const std::string& id, const std::string& codecVersion, uint16_t titleAt, const std::string& title)
+/// `idle`: the return chain of its command line (EXT): the line input's return, then the command handler's (an editor
+/// key has another address there). An inject sets the editor's variables as LOAD does (the routine after a load copies
+/// the header's top line, cursor line and flag into them; the editor then counts the lines from the cursor to the end)
+SyncDescriptor Xas(const std::string& id, const std::string& codecVersion, uint16_t titleAt, const std::string& title,
+                   std::vector<uint16_t> idle)
 {
     SyncDescriptor d;
     d.id = "xas-" + id;
@@ -499,8 +551,17 @@ SyncDescriptor Xas(const std::string& id, const std::string& codecVersion, uint1
     d.fileImage.wholeSectors = true;
     d.fileImage.editorStateAt = 29;
     d.fileImage.editorStateLength = 6;
+    // LD HL,(#C01F) / LD (top),HL / LD HL,(#C01D) / LD (cursor),HL / LD A,(#C021) / LD (flag),A / RET; and
+    // LD HL,(cursor) / PUSH BC / LD B,H / XOR A / CPIR / DEC HL / LD (end),HL / POP BC / RET (every version, 4.18-9.10)
+    const std::vector<int> afterLoad = {0x2A, 0x1F, 0xC0, 0x22, -1, -1, 0x2A, 0x1D, 0xC0, 0x22, -1, -1, 0x3A, 0x21, 0xC0, 0x32, -1, -1, 0xC9};
+    const std::vector<int> textEnd = {0x2A, -1, -1, 0xC5, 0x44, 0xAF, 0xED, 0xB1, 0x2B, 0x22, -1, -1, 0xC1, 0xC9};
+    d.fileImage.loadVariables = {{afterLoad, 4, LoadVariable::From::Header, 31, 2},
+                                 {afterLoad, 10, LoadVariable::From::Header, 29, 2},
+                                 {afterLoad, 16, LoadVariable::From::Header, 33, 1},
+                                 {textEnd, 10, LoadVariable::From::TextEnd, 0, 2}};
     d.typing = {TypingRule::NotInText, 0, 0};
     d.labelScanner = "xas-table";
+    d.idleChain = std::move(idle);
     return d;
 }
 
@@ -530,6 +591,39 @@ SyncDescriptor Storm(const std::string& id, const std::string& title, const std:
     d.fileImage.pointerAt = 0x00;
     d.fileImage.endSentinel = 0xFF;
     d.typing = {TypingRule::NotInText, 0, 0};
+    if (base == 0x0B)
+    {
+        // 1.3 / 1.3i: a text is written while the editor waits for a key, its cursor line written into the text (the
+        // main loop's CALL WTKPR returns to #87F5 / #87CB). As STORM's own LOAD (source XED: ABLINE, ETEXT, INIT)
+        // the inject resets the editor, here through STORM's PGUP (control key 4): from the second line with the
+        // cursor on the first screen line PGUP goes back to the text's start and redraws the screen from it (PSCR0,
+        // which sets the cursor line, ABLINE / AELINE and the line buffer). The variables by STORM 1.3's source names
+        const std::vector<int> scrp0 = {0xFD, 0x21, 0x00, 0x00, 0x22, -1, -1, 0xAF, 0x57, 0x2B, 0x5E, 0x1C, 0x28, -1, 0xCB,
+                                        0xB3, 0xFD, 0x23, 0xED, 0x52, 0x5E, 0x1C, 0xC2, -1, -1, 0xFD, 0x22, -1, -1};
+        const std::vector<int> init2 = {0xAF, 0x32, -1, -1, 0x32, -1, -1, 0x21, 0x02, 0xC0, 0x11, -1, -1, 0x01, 0x08, 0x00, 0xED, 0xB0};
+        const std::vector<int> init = {0xF3, 0xCD, -1, -1, 0xDD, 0x36, 0x00, 0x82, 0xDD, 0xCB, 0x04, 0x86, 0xAF, 0x67, 0x6F, 0x22, -1, -1};
+        const std::vector<int> start = {0xF3, 0xED, 0x73, -1, -1, 0xCD, -1, -1, 0xDD, 0x21, -1, -1};
+        const std::vector<int> inp4 = {0xCD, -1, -1, 0xAF, 0xD3, 0xFE, 0x3A, -1, -1, 0xFE, 0x14, 0xDA};
+        using From = LoadVariable::From;
+        d.fileImage.loadVariables = {
+            {scrp0, 5, From::SecondLine, 0, 2},          // ABLINE: the cursor line, the second
+            {scrp0, 27, From::Constant, 0, 2, 1},        // NLINE: its number from 0
+            {init2, 5, From::Constant, 0, 1, 0},         // MBSTAT: no block marked
+            {init2, 11, From::PageBytes, 0x02, 8},       // WNAME: the name SAVE offers, the text's (TXNAME)
+            {init, 16, From::Constant, 0, 2, 0},         // CACHEST
+            {start, 10, From::Constant, 0, 1, 1, 2},     // VAR+2 (PY): the cursor on the first screen line
+            {start, 10, From::SetBits, 0, 1, 0x02, 4},   // VAR+4 bit 1: the line buffer is in the text
+            {inp4, 7, From::Constant, 0, 1, 4},          // LASTK: PGUP
+            {start, 10, From::SetBits, 0, 1, 0x01, 0},   // VAR+0 bit 0: a key was pressed
+        };
+        d.fileImage.changedVariables = {
+            {init2, 5, From::SetBits, 0, 1, 0x10},       // MBSTAT bit 4: a line written since LOAD / SAVE
+            {start, 10, From::Constant, 0, 1, 0x02, 4},  // VAR+4 bit 1 clear: the cursor line typed in, not in the text
+        };
+        d.idleChain = {0x87F5};
+        d.idleAlternatives = {{0x87CB}};
+        d.idleWhere = "a key in its editor";
+    }
     return d;
 }
 
@@ -551,7 +645,14 @@ SyncDescriptor Zasm315()
     d.linear.endAt = 0x8837;
     d.linear.upperPage = 6;
     d.linear.stateLine = ";!";
+    d.linear.injectable = true;
+    d.linear.resetFrom = 0x882B;   // the cursor line and the marks, up to the end word
+    d.linear.resetTo = 0x8837;
     d.typing = {TypingRule::NotInText, 0, 0};
+    // A text is written at its COMMAND prompt (CS+SS in the editor): its key wait returns through #C404, #E630, #E6F0
+    // (code in the page at #C000 while ZAsm runs)
+    d.idleChain = {0xC404, 0xE630, 0xE6F0};
+    d.idleWhere = "its COMMAND prompt (CS+SS)";
     return d;
 }
 
@@ -601,7 +702,14 @@ SyncDescriptor Masm11()
     d.gapBuffer.editorFlagAt = 0x851A;
     d.gapBuffer.editorFlagLength = 31;
     d.gapBuffer.end = std::string("\xFF", 1);
+    d.gapBuffer.loadedForm = true;
     d.typing = {TypingRule::NotInText, 0, 0};
+    // A text is written at its menu prompt (MASM128>): the key wait returns through #85C8 there and in the editor; the
+    // line buffer is zeros only in the menu
+    d.idleChain = {0x85C8};
+    d.idleZeroAt = 0x851A;
+    d.idleZeroLength = 31;
+    d.idleWhere = "its MASM128> prompt";
     return d;
 }
 
@@ -744,6 +852,17 @@ SyncDescriptor Gens(const std::string& id, const std::string& title, Signature i
     return d;
 }
 
+/// GENS4 at 26000 also takes a text at its command prompt (>): its key wait returns through #685D, #68DD, #67D9 (the
+/// line input of I: #685D, #69C6); the text from the start word, the end word one past it, as G leaves them
+SyncDescriptor Gens4Tape()
+{
+    SyncDescriptor d = Gens("gens-4", "GENS4 (HiSoft Devpac 4, tape, at 26000)", {0x88F0, "Copyright (C) HiSoft 1987"}, 0x67A8, 0x65C6);
+    d.linear.injectable = true;
+    d.idleChain = {0x685D, 0x68DD, 0x67D9};
+    d.idleWhere = "its > prompt";
+    return d;
+}
+
 /// PROMETHEUS 48K tape edition installed at 24000 (asm-synchronizer.md §7.17, from its reconstructed source): the
 /// records from sourceBufferAccessLine (#9C28) to twelve bytes below the symbol table (operand of varcSymbolTablePt at
 /// #87D7), the table up to the operand of varcCodeEndPt (#881A); the save adds FF XOR the records and FF between
@@ -832,6 +951,30 @@ SyncDescriptor Zeus(const std::string& id, const std::string& title, const std::
     return d;
 }
 
+/// ZEUS 1983 at 57344 also takes a text at its prompt: its line input returns through #F6E5, #E0D5; the records from
+/// the start word, the end word at the last FF, as "o" leaves them
+SyncDescriptor Zeus1983()
+{
+    SyncDescriptor d = Zeus("zeus-1983", "ZEUS 1983 (Crystal)", "1983", 0xE028,
+             "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x20\x20\x20\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53", 0xFD00, "C");
+    d.linear.injectable = true;
+    d.idleChain = {0xF6E5, 0xE0D5};
+    d.idleWhere = "its prompt";
+    return d;
+}
+
+/// Primus 2.9 also takes a text at its prompt (or its BETA-UNIT menu): its key wait returns through #6857 / #6858,
+/// then #6836 / #6851 (not while it assembles); the records from the start word, the end word at the last FF
+SyncDescriptor Primus29()
+{
+    SyncDescriptor d = Zeus("primus-2.9", "Primus Assembler 2.9 (Trunov)", "primus", 0x6D17, "PRIMUS ASSEMBLER Version", 0x61B1, "C");
+    d.linear.injectable = true;
+    d.idleChain = {0x6857, 0x6836};
+    d.idleAlternatives = {{0x6858, 0x6836}, {0x6857, 0x6851}, {0x6858, 0x6851}};
+    d.idleWhere = "its prompt";
+    return d;
+}
+
 /// ZX-ASM 2.4 / 2.5 / 2.6 (asm-synchronizer.md §7.9): plain text (blank runs only) in one buffer, the start word at
 /// the program's load address + 3, the end word after it; the part above #C000 in RAM page 0 (the 48K memory). 2.6
 /// keeps its ";*" line in the buffer and saves it as text
@@ -890,11 +1033,18 @@ SyncDescriptor Tasm412()
     d.gapBuffer.gapStart = 0x8F5D;
     d.gapBuffer.gapEnd = 0x8F5F;
     d.gapBuffer.lineCount = 0x94D9;
+    d.gapBuffer.cursorLine = 0x94CE;
+    d.gapBuffer.loadedForm = true;
+    d.gapBuffer.changedAt = 0x9BA6;   // #FF after an edit, 0 after LOAD / SAVE (TASM asks to save before it drops the text)
+    d.gapBuffer.nameAt = 0x9C10;      // the work name, in the menu's "Work name:" text: Assemble takes the text in memory under it
     d.gapBuffer.lineBuffer = 0x928A;
     d.gapBuffer.lineBufferLength = 128;
     d.gapBuffer.lineCodePage = encoding::CodePage::Cp866;
     d.gapBuffer.end = std::string("\xFF\xFF", 2);
     d.typing = {TypingRule::InLineBuffer, 0, 0};
+    // A text is written at its command line (TASM128>): its key wait returns there through #9CE9, #80BC (the editor's
+    // #9EA8, #80BC)
+    d.idleChain = {0x9CE9, 0x80BC};
     return d;
 }
 }  // namespace
@@ -917,7 +1067,17 @@ InjectPlan InjectIntoSnapshot(const containers::Snapshot& snapshot, const SyncDe
     if (!plan.ok)
         return plan;
     std::string error;
-    if (!containers::WriteSnapshot(snapshot, {{plan.page, plan.bytes}}, out, error))
+    std::map<int, std::vector<uint8_t>> changed;
+    if (plan.page >= 0)
+        changed[plan.page] = plan.bytes;
+    for (const InjectPlan::Poke& poke : plan.pokes)
+    {
+        auto it = changed.find(poke.page);
+        if (it == changed.end())
+            it = changed.emplace(poke.page, snapshot.pages.at(poke.page)).first;
+        it->second[poke.offset] = poke.value;
+    }
+    if (!containers::WriteSnapshot(snapshot, changed, out, error))
     {
         plan.ok = false;
         plan.error = error;
@@ -987,16 +1147,30 @@ bool Idle(const MachineView& machine, const SyncDescriptor& d, std::string& why)
         why = "the stack at #" + Hex(sp, 4) + " is not in the memory copied";
         return false;
     }
-    const size_t n = d.idleChain.size();
-    for (size_t at = 0; at + 2 * n <= stack.size(); ++at)
+    if (d.idleZeroLength)
     {
-        bool all = true;
-        for (size_t k = 0; k < n && all; ++k)
-            all = static_cast<uint16_t>(stack[at + 2 * k] | (stack[at + 2 * k + 1] << 8)) == d.idleChain[k];
-        if (all)
-            return true;
+        std::vector<uint8_t> zero;
+        if (!machine.Read(d.idleZeroAt, d.idleZeroLength, zero) || std::any_of(zero.begin(), zero.end(), [](uint8_t b) { return b != 0; }))
+        {
+            why = d.title + " is not waiting for a command (" + (d.idleWhere.empty() ? "in its editor" : d.idleWhere) + ")";
+            return false;
+        }
     }
-    why = d.title + " is not waiting for a command (assembling, saving, loading, or in its editor)";
+    std::vector<std::vector<uint16_t>> chains = {d.idleChain};
+    chains.insert(chains.end(), d.idleAlternatives.begin(), d.idleAlternatives.end());
+    for (const std::vector<uint16_t>& chain : chains)
+    {
+        const size_t n = chain.size();
+        for (size_t at = 0; at + 2 * n <= stack.size(); ++at)
+        {
+            bool all = true;
+            for (size_t k = 0; k < n && all; ++k)
+                all = static_cast<uint16_t>(stack[at + 2 * k] | (stack[at + 2 * k + 1] << 8)) == chain[k];
+            if (all)
+                return true;
+        }
+    }
+    why = d.title + " is not waiting for a command (" + (d.idleWhere.empty() ? "assembling, saving, loading, or in its editor" : d.idleWhere) + ")";
     return false;
 }
 
@@ -1013,9 +1187,171 @@ bool WrittenBefore(const SyncText& text, const std::vector<std::vector<uint8_t>>
 }
 }  // namespace
 
+namespace
+{
+/// The address a LoadVariable's pattern gives in the code below #C000 (with its offset); nullopt when the pattern is
+/// not there exactly once
+std::optional<uint16_t> VariableAddress(const std::vector<uint8_t>& code, const LoadVariable& v, size_t& places)
+{
+    std::vector<size_t> found;
+    for (size_t at = 0; at + v.pattern.size() <= code.size(); ++at)
+        if (std::equal(v.pattern.begin(), v.pattern.end(), code.begin() + static_cast<std::ptrdiff_t>(at),
+                       [](int want, uint8_t got) { return want < 0 || want == got; }))
+            found.push_back(at);
+    places = found.size();
+    if (found.size() != 1)
+        return std::nullopt;
+    return static_cast<uint16_t>((code[found[0] + v.at] | (code[found[0] + v.at + 1] << 8)) + v.offset);
+}
+}  // namespace
+
+namespace
+{
+/// TASM 4.12: the file as LOAD leaves it at the text start, the gap pointers, the line count and the cursor line 0,
+/// all as single bytes at their CPU addresses (the text runs from the #8000 window into the page at #C000)
+InjectPlan PlanInjectLoaded(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& file, const InjectOptions& options)
+{
+    InjectPlan plan;
+    std::string why;
+    if (!Idle(machine, d, why) && !(options.force && d.idleChain.empty()))
+    {
+        plan.error = why;
+        return plan;
+    }
+    const GapBufferParams& p = d.gapBuffer;
+    plan.previous = ReadText(machine, d);
+    // without a "changed" flag (MASM) a text in memory that is not empty and not the caller's own counts as changed
+    const bool changed = p.changedAt ? (machine.Byte(p.changedAt).value_or(0) & p.changedMask) != 0
+                                     : plan.previous.file.size() > p.end.size();
+    if (plan.previous.ok && changed && !options.force && !WrittenBefore(plan.previous, options.written, 0))
+    {
+        plan.error = "the text in " + d.title + (p.changedAt ? " has changes not saved" : " may have changes not saved (it keeps no flag)") +
+                     " (force overwrites them)";
+        return plan;
+    }
+    const auto start = p.fixedStart ? std::optional<uint16_t>(p.fixedStart) : machine.Word(p.start);
+    if (!start)
+    {
+        plan.error = "the text pointers of " + d.title + " are not in memory";
+        return plan;
+    }
+    if (*start + file.size() > 0xFFFF)
+    {
+        plan.error = "the text takes " + std::to_string(file.size()) + " bytes; " + d.title + " holds " + std::to_string(0xFFFF - *start);
+        return plan;
+    }
+    const auto poke = [&](uint32_t at, uint8_t value) {
+        const int window = machine.windows[(at >> 14) & 3];
+        if (window < 0 || at < 0x4000)
+            return false;
+        plan.pokes.push_back({window, static_cast<uint16_t>(at & (kPage - 1)), value});
+        return true;
+    };
+    bool ok = true;
+    for (size_t k = 0; k < file.size(); ++k)
+        ok = poke(*start + static_cast<uint32_t>(k), file[k]) && ok;
+    if (p.fixedStart)
+    {
+        // MASM: the gap start at the start, the gap end at #FFFF
+        ok = poke(p.gapStart, static_cast<uint8_t>(*start & 0xFF)) && poke(p.gapStart + 1u, static_cast<uint8_t>(*start >> 8)) && ok;
+        ok = poke(p.gapEnd, 0xFF) && poke(p.gapEnd + 1u, 0xFF) && ok;
+    }
+    else
+        for (const uint16_t at : {p.top, p.gapStart, p.gapEnd, p.lineCount, p.cursorLine})
+            if (at)
+                ok = poke(at, 0) && poke(at + 1u, 0) && ok;
+    if (p.changedAt)
+        ok = poke(p.changedAt, options.markChanged ? p.changedMask : 0) && ok;
+    if (p.nameAt && !options.name.empty())
+    {
+        // the work name: what Assemble takes the text in memory under (and Save writes)
+        std::string name = options.name.substr(0, p.nameLength);
+        name.resize(p.nameLength, ' ');
+        for (size_t k = 0; k < name.size(); ++k)
+            ok = poke(p.nameAt + static_cast<uint32_t>(k), static_cast<uint8_t>(name[k])) && ok;
+    }
+    if (!ok)
+    {
+        plan.error = "the memory of " + d.title + "'s text is not in RAM";
+        return plan;
+    }
+    plan.page = -1;
+    plan.ok = true;
+    return plan;
+}
+}  // namespace
+
+namespace
+{
+/// ZAsm: the buffer from (startAt) (its part from #C000 in upperPage), the end pointer one past it, the table's other
+/// words at the start, as LOAD leaves them. The editor has no "changed" flag: a text in memory that is not empty and
+/// not the caller's own counts as changed
+InjectPlan PlanInjectLinear(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& file, const InjectOptions& options)
+{
+    InjectPlan plan;
+    std::string why;
+    if (!Idle(machine, d, why) && !(options.force && d.idleChain.empty()))
+    {
+        plan.error = why;
+        return plan;
+    }
+    const LinearParams& p = d.linear;
+    plan.previous = ReadText(machine, d);
+    if (plan.previous.ok && !plan.previous.file.empty() && !options.force && !WrittenBefore(plan.previous, options.written, 0))
+    {
+        plan.error = "the text in " + d.title + " may have changes not saved (it keeps no flag; force overwrites it)";
+        return plan;
+    }
+    const auto start = machine.Word(p.startAt);
+    if (!start)
+    {
+        plan.error = "the text pointers of " + d.title + " are not in memory";
+        return plan;
+    }
+    // a file that ends with the end marker (ZEUS' FF FF): the end word points at the marker's last byte
+    const bool marked = !p.end.empty() && file.size() >= p.end.size() &&
+                        std::equal(p.end.begin(), p.end.end(), file.end() - static_cast<std::ptrdiff_t>(p.end.size()),
+                                   [](char a, uint8_t b) { return static_cast<uint8_t>(a) == b; });
+    const uint32_t end = *start + static_cast<uint32_t>(file.size()) - (marked ? static_cast<uint32_t>(p.end.size()) : 0);
+    if (end + p.end.size() > 0x10000)
+    {
+        plan.error = "the text takes " + std::to_string(file.size()) + " bytes; " + d.title + " holds " + std::to_string(0x10000 - *start - p.end.size());
+        return plan;
+    }
+    const auto poke = [&](uint32_t at, uint8_t value) {
+        const int window = at >= 0xC000 && p.upperPage >= 0 ? p.upperPage : machine.windows[(at >> 14) & 3];
+        if (window < 0 || at < 0x4000)
+            return false;
+        plan.pokes.push_back({window, static_cast<uint16_t>(at & (kPage - 1)), value});
+        return true;
+    };
+    bool ok = true;
+    for (size_t k = 0; k < file.size(); ++k)
+        ok = poke(*start + static_cast<uint32_t>(k), file[k]) && ok;
+    if (!marked)
+        for (size_t k = 0; k < p.end.size(); ++k)
+            ok = poke(end + static_cast<uint32_t>(k), static_cast<uint8_t>(p.end[k])) && ok;
+    ok = poke(p.endAt, static_cast<uint8_t>(end & 0xFF)) && poke(p.endAt + 1u, static_cast<uint8_t>(end >> 8)) && ok;
+    for (uint32_t at = p.resetFrom; at + 1 < p.resetTo; at += 2)
+        ok = poke(at, static_cast<uint8_t>(*start & 0xFF)) && poke(at + 1, static_cast<uint8_t>(*start >> 8)) && ok;
+    if (!ok)
+    {
+        plan.error = "the memory of " + d.title + "'s text is not in RAM";
+        return plan;
+    }
+    plan.page = -1;
+    plan.ok = true;
+    return plan;
+}
+}  // namespace
+
 InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& file, const InjectOptions& options)
 {
     InjectPlan plan;
+    if (d.family == LayoutFamily::GapBuffer && d.gapBuffer.loadedForm)
+        return PlanInjectLoaded(machine, d, file, options);
+    if (d.family == LayoutFamily::Linear && d.linear.injectable)
+        return PlanInjectLinear(machine, d, file, options);
     if (d.family != LayoutFamily::FileImage)
     {
         plan.error = "writing a text into " + d.title + " is not supported yet";
@@ -1029,7 +1365,28 @@ InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& d, const
     }
     const FileImageParams& p = d.fileImage;
     plan.previous = ReadText(machine, d);
-    if (plan.previous.ok && plan.previous.changed && !options.force && !WrittenBefore(plan.previous, options.written, p.headerSize))
+    // The editor's variables are found in the code the CPU sees below #C000
+    std::vector<uint8_t> code;
+    if ((!p.loadVariables.empty() || !p.changedVariables.empty()) && !machine.Read(0x4000, 0x8000, code))
+    {
+        plan.error = "the code of " + d.title + " (#4000-#BFFF) is not in memory";
+        return plan;
+    }
+    bool changed = plan.previous.changed;
+    for (const LoadVariable& v : p.changedVariables)
+    {
+        // a flag of the editor's own (STORM: a line written since LOAD / SAVE, the cursor line typed in)
+        size_t places = 0;
+        const auto address = VariableAddress(code, v, places);
+        if (!address)
+        {
+            plan.error = d.title + "'s editor variables were not found in its code (" + std::to_string(places) + " places)";
+            return plan;
+        }
+        const uint32_t bits = machine.Byte(*address).value_or(0) & v.value;
+        changed = changed || (v.from == LoadVariable::From::SetBits ? bits != 0 : bits != v.value);
+    }
+    if (plan.previous.ok && changed && !options.force && !WrittenBefore(plan.previous, options.written, p.headerSize))
     {
         plan.error = "the text " + plan.previous.name + " in " + d.title + " has changes not saved (force overwrites them)";
         return plan;
@@ -1053,17 +1410,79 @@ InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& d, const
         plan.error = "the page of " + d.title + "'s text is not in the memory copied";
         return plan;
     }
-    if (file.size() < p.headerSize || p.base + file.size() > kPage)
+    const size_t tail = p.lengthFromPointer ? 1 : 0;   // the end sentinel after the file
+    if (file.size() < p.headerSize || p.base + file.size() + tail > kPage)
     {
-        plan.error = "the text takes " + std::to_string(file.size()) + " bytes; the page holds " + std::to_string(kPage - p.base);
+        plan.error = "the text takes " + std::to_string(file.size()) + " bytes; the page holds " + std::to_string(kPage - p.base - tail);
         return plan;
     }
     plan.page = page;
     plan.bytes.assign(target->bytes.begin(), target->bytes.begin() + kPage);
     std::fill(plan.bytes.begin() + p.base, plan.bytes.end(), uint8_t{0});
     std::copy(file.begin(), file.end(), plan.bytes.begin() + p.base);
+    if (p.lengthFromPointer)
+    {
+        // STORM: the sentinel before the text, the end byte after it, the pointer one past that
+        std::copy(p.signature.begin(), p.signature.end(), plan.bytes.begin() + p.signatureAt);
+        plan.bytes[p.base + file.size()] = p.endSentinel;
+        const uint16_t end = static_cast<uint16_t>(0xC000 + p.base + file.size() + 1);
+        plan.bytes[p.pointerAt] = static_cast<uint8_t>(end & 0xFF);
+        plan.bytes[p.pointerAt + 1] = static_cast<uint8_t>(end >> 8);
+    }
     if (options.markChanged && p.changedField)
         plan.bytes[p.base + p.changedField] |= p.changedMask;
+    // The editor's variables LOAD sets: each found once in the code
+    for (const LoadVariable& v : p.loadVariables)
+    {
+        size_t places = 0;
+        const auto found = VariableAddress(code, v, places);
+        if (!found)
+        {
+            plan.error = d.title + "'s editor variables were not found in its code (" + std::to_string(places) + " places)";
+            return plan;
+        }
+        const uint16_t address = *found;
+        std::vector<uint8_t> bytes(v.size, 0);
+        uint32_t value = 0;
+        switch (v.from)
+        {
+            case LoadVariable::From::TextEnd:
+            {
+                const auto end = std::find(file.begin() + p.textOffset, file.end(), p.endByte);
+                value = 0xC000u + p.base + static_cast<uint32_t>(end - file.begin());
+                break;
+            }
+            case LoadVariable::From::Header:
+                for (uint8_t k = 0; k < v.size && v.field + k < file.size(); ++k)
+                    value |= static_cast<uint32_t>(file[v.field + k]) << (8 * k);
+                break;
+            case LoadVariable::From::Constant: value = v.value; break;
+            case LoadVariable::From::SetBits: value = machine.Byte(address).value_or(0) | v.value; break;
+            case LoadVariable::From::PageBytes: break;
+            case LoadVariable::From::SecondLine:
+            {
+                // walked back from the end: the line whose body starts the file ends at its length byte
+                long at = static_cast<long>(file.size()) - 1;
+                while (at >= 0 && at - (file[static_cast<size_t>(at)] & 0x3F) > 0)
+                    at -= (file[static_cast<size_t>(at)] & 0x3F) + 1;
+                value = 0xC000u + p.base + static_cast<uint32_t>(at + 1);
+                break;
+            }
+        }
+        for (uint8_t k = 0; k < v.size; ++k)
+            bytes[k] = v.from == LoadVariable::From::PageBytes ? plan.bytes[(v.field + k) % kPage] : static_cast<uint8_t>(value >> (8 * (k % 4)));
+        for (uint8_t k = 0; k < v.size; ++k)
+        {
+            const uint16_t at = static_cast<uint16_t>(address + k);
+            const int window = machine.windows[at >> 14];
+            if (window < 0 || at < 0x4000 || at >= 0xC000)
+            {
+                plan.error = d.title + "'s editor variable #" + Hex(address, 4) + " is not in RAM below #C000";
+                return plan;
+            }
+            plan.pokes.push_back({window, static_cast<uint16_t>(at & (kPage - 1)), bytes[k]});
+        }
+    }
     plan.ok = true;
     return plan;
 }
@@ -1087,7 +1506,10 @@ ProjectInjectPlan PlanInjectProject(const MachineView& machine, const SyncDescri
             return result;
         }
         result.texts.push_back(written);
-        result.pages.push_back(PlanInject(machine, d, written.bytes, options));
+        InjectOptions named = options;
+        if (named.name.empty())
+            named.name = title;
+        result.pages.push_back(PlanInject(machine, d, written.bytes, named));
         result.ok = result.pages[0].ok;
         result.error = result.pages[0].error;
         return result;
@@ -1176,6 +1598,14 @@ ProjectInjectPlan InjectProjectIntoSnapshot(const containers::Snapshot& snapshot
     std::map<int, std::vector<uint8_t>> changed;
     for (const InjectPlan& page : plan.pages)
         changed[page.page] = page.bytes;
+    for (const InjectPlan& page : plan.pages)
+        for (const InjectPlan::Poke& poke : page.pokes)
+        {
+            auto it = changed.find(poke.page);
+            if (it == changed.end())
+                it = changed.emplace(poke.page, snapshot.pages.at(poke.page)).first;
+            it->second[poke.offset] = poke.value;
+        }
     std::string error;
     if (!containers::WriteSnapshot(snapshot, changed, out, error))
     {
@@ -1203,12 +1633,12 @@ const std::vector<SyncDescriptor>& Descriptors()
         Alasm("4.43", "4.5", 0x9E1B, "", false, {0x99A4, 0x8B99}, {4}),
         Alasm("4.42", "4.42", 0x9E2F, "", true, {0x99B2, 0x8B8F}, {4}),
         Alasm("3.8c", "3.8", 0x9951, "3.8c\r Written by", true, {0x943A, 0x8149}, {4}),
-        Xas("4.18", "4.18", 0xB51A, "XAS by Max Petrov (HPM) 3.091"),
-        Xas("5.05", "5.05", 0xB601, "XAS by Max Petrov (HPM) 5.05 "),   // 5.05 and 5.05SE alike
-        Xas("7.43c", "7.43c", 0xB961, "by Max Petrov & Creator v7.43"),
-        Xas("7.447", "7.43", 0x9B00, "by Max Petrov & Creator v7.44"),
-        Xas("9.07m", "9.07m", 0xB8EA, "XAS 9.07 ReCompiled by Mythos"),
-        Xas("9.10", "9.10", 0xB912, "XAS by Max Petrov,64sm by STS"),
+        Xas("4.18", "4.18", 0xB51A, "XAS by Max Petrov (HPM) 3.091", {0x979F, 0x8D85}),
+        Xas("5.05", "5.05", 0xB601, "XAS by Max Petrov (HPM) 5.05 ", {0x97A8, 0x8D9E}),   // 5.05 and 5.05SE alike
+        Xas("7.43c", "7.43c", 0xB961, "by Max Petrov & Creator v7.43", {0x97D8, 0x8E3B}),
+        Xas("7.447", "7.43", 0x9B00, "by Max Petrov & Creator v7.44", {0x9DDC, 0x8E5B}),
+        Xas("9.07m", "9.07m", 0xB8EA, "XAS 9.07 ReCompiled by Mythos", {0x95B5, 0x8D7B}),
+        Xas("9.10", "9.10", 0xB912, "XAS by Max Petrov,64sm by STS", {0x9552, 0x8D98}),
         Storm("storm-1.3", "STORM 1.3", "1.3", 0x0B, '\x87'),
         Storm("storm-1.0b", "STORM 1.0beta", "1.0", 0x03, '\x85'),
         Zasm315(),
@@ -1239,16 +1669,15 @@ const std::vector<SyncDescriptor>& Descriptors()
         LaserGenius(),
         Prometheus48(),
         Pasm30(),
-        Zeus("zeus-1983", "ZEUS 1983 (Crystal)", "1983", 0xE028,
-             "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x20\x20\x20\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53", 0xFD00, "C"),
+        Zeus1983(),
         Zeus("zeus-1.1", "ZEUS 1.1 beta (PHT)", "pht", 0xE020,
              "\x5C\x3E\xF7\x21\x6A\x5C\xA6\x77\xCD\x27\xF2\x0F\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53", 0xFD00, "C"),
         Zeus("zeus-gg", "ZEUS (GG, B-disk)", "gg", 0xE028,
              "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x5A\x45\x55\x53\x20\x77\x69\x74\x68\x20\x42\x2D\x64\x69\x73", 0xFD00, "C"),
         Zeus("zeus-7e", "ZEUS v7.E (ZKSoft)", "pht", 0xE020,
              "\x5C\x3E\xF7\x21\x6A\x5C\xA6\x77\xCD\x27\xF2\x0F\x00\x18\x1B\xCD\xC0\xDA\xDA\x12\xE1\xC3\xC5\xE0", 0xFAAB, "Z"),
-        Zeus("primus-2.9", "Primus Assembler 2.9 (Trunov)", "primus", 0x6D17, "PRIMUS ASSEMBLER Version", 0x61B1, "C"),
-        Gens("gens-4", "GENS4 (HiSoft Devpac 4, tape, at 26000)", {0x88F0, "Copyright (C) HiSoft 1987"}, 0x67A8, 0x65C6),
+        Primus29(),
+        Gens4Tape(),
         Gens("gens-3m21", "GENS3M21 (HiSoft Devpac 3, tape, at 49000)", {0xE001, "HISOFT GENS3M2 ASSEMBLER"}, 0xDE54, 0xBF9E),
         Gens("gens-4b", "GENS4B 4.1 (MOA B-Disk, at 30000)", {0x9A70, "MOA B-Disk version."}, 0x7928, 0x7566),
         Gens("gens-4.3t", "GENS 4.3t (Aysoft, TR-DOS)", {0x8A9F, "BETA DISK VERSION 4.3t"}, 0x689C, 0x61FB),

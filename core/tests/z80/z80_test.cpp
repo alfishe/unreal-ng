@@ -1,5 +1,6 @@
 #include "z80_test.h"
 
+#include "_helpers/emulatortesthelper.h"
 #include "common/dumphelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
@@ -35,17 +36,7 @@ void Z80_Test::TearDown()
         _opcode = nullptr;
     }
 
-    if (_cpu != nullptr)
-    {
-        delete _cpu;
-        _cpu = nullptr;
-    }
-
-    if (_context != nullptr)
-    {
-        delete _context;
-        _context = nullptr;
-    }
+    EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
 }
 
 /// endregion </Setup / TearDown>
@@ -1006,8 +997,7 @@ TEST_F(Z80_Test, DdcbResultRegisterBelongsToTheCpuRunningIt)
     EXPECT_EQ(z80.rd(0x8000), 0x01);
 
     // The other CPU gone: the plain form (memory only) must not write anywhere else (ASan: no use-after-free)
-    delete otherCore;
-    delete otherContext;
+    EmulatorTestHelper::ReleaseBareCore(otherCore, otherContext);
     ResetCPUAndMemory();
     const uint8_t setBit1Iy[] = {0xFD, 0xCB, 0x00, 0xCE};    // SET 1,(IY+0)
     std::copy(std::begin(setBit1Iy), std::end(setBit1Iy), rom);

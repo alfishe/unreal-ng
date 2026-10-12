@@ -1,5 +1,6 @@
 #pragma once
 
+#include "_helpers/emulatortesthelper.h"
 #include "stdafx.h"
 #include "pch.h"
 
@@ -128,10 +129,7 @@ private:
 
     void DestroyMachine()
     {
-        delete _core;
-        _core = nullptr;
-        delete _context;
-        _context = nullptr;
+        EmulatorTestHelper::ReleaseBareCore(_core, _context);
         _memory = nullptr;
         _z80 = nullptr;
         _decoder = nullptr;

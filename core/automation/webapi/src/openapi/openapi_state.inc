@@ -191,6 +191,45 @@
              "frame, t, pc, card, kind (command | read | write); a command has command (CMD17, ACMD41), argument, r1 (the response byte, "
              "none when the card ignored it) and crc_valid; read / write have block (write: ok). Query: kinds (comma: command, read, "
              "write), card (0 | 1), since (seq), from / to (frame), limit (newest N, default 200, 0 = all). 400 on a bad parameter.", true},
+            {"/api/v1/emulator/{id}/state/next/audio", "Get the Next sound as configured",
+             "The Next's chips and DAC (core DeviceState::NextAudioReport; CLI `state next audio`, Lua next_audio(), Python next_audio(), MCP "
+             "inspect_state aspect next_audio). config: nr_06 / nr_08 / nr_09, chip_model (ym2149 | ay8910), stereo_mode (abc | acb), turbosound, "
+             "dac, beeper_excluded. selected_chip. chips (3): index, selected, pan (stereo | left | right | muted), mono (NR #09), registers "
+             "(16), tone_periods, noise_period, mixer (R7), volumes (bit 4: the envelope drives the channel), envelope_period, envelope_shape. "
+             "dac: enabled, a / b / c / d, left_sum (A + B), right_sum (C + D), silence (#80).", true},
+            {"/api/v1/emulator/{id}/state/next/input", "Get the Next joystick modes and the Kempston port",
+             "The Next's input as the program configured it (core DeviceState::NextInputReport; CLI `state next input`, Lua next_input(), Python "
+             "next_input(), MCP inspect_state aspect next_input). joystick_modes: nr_05, left and right {code, name (kempston1 | kempston2 | md1 | "
+             "md2 | sinclair1 | sinclair2 | cursor | io_mode), port (1F | 37 | keyboard | user port)}. io_mode: nr_0b, enabled, mode, bit_0, "
+             "uart_on_joystick_port. kempston_1f: value, bits, selected_by_nr_05 (zxnext.vhd drives #1F only for Kempston 1 / MD 1), answers_here "
+             "(false: the port idles at #FF; it also needs NR #82 bit 6), note. kempston_37: value, answers_here (Kempston 2 / MD 2, NR #82 bit 7). "
+             "The host joystick is the left connector. extended_keys: nr_b0, nr_b1, pressed (names: extend up caps_lock graph true_video inv_video break edit ; \" , . delete right left down; from the host's physical PC keys). md_pad_extra: nr_b2, left / right {mode x y z}, host_keys (the host's pad is the left connector; keypad 7 9 1 3 by default).", true},
+            {"/api/v1/emulator/{id}/state/next/nmi", "Get the Next NMI sources, Multiface, interrupts, reset and the interrupt journal",
+             "NMI, interrupts and reset (core DeviceState::NextNmiReport; CLI `state next nmi`, Lua next_nmi(), Python next_nmi(), MCP "
+             "inspect_state aspect next_nmi). sources: m1_button, drive_button (enabled, would_fire, blocked_by) and io_trap (not modelled). "
+             "in_service: any, multiface_session, divmmc_handler, divmmc_button_pending. multiface: enabled, type, type_name, enable_port, "
+             "disable_port, memory_in, nmi_active, invisible, active. nr_02: value, bus_reset, m1_nmi_generated, drive_nmi_generated. "
+             "stackless_nmi: enabled, return_address. reset: bits (NR #02 bits 1:0), last (power_on | first_reset_after_power_on | "
+             "later_reset). interrupts: mode, pending and in_service (source names), vector_base. events (the journal, off by default: POST "
+             "/next/nmi-journal): seq, frame, t, pc, kind (int_ack | reti | nmi_request | retn | reset), source; int_ack has the vector in "
+             "hardware IM2 mode; nmi_request has accepted and, if refused, reason; reset has reset_bits and reset_last. Query: kinds (comma), "
+             "since (seq), from / to (frame), limit (newest N, default 200, 0 = all). 400 on a bad parameter.", true},
+            {"/api/v1/emulator/{id}/state/next/magic-port", "Get the magic debug port: its setting and what a program wrote to it",
+             "The program's debug console (core DeviceState::NextMagicPortReport; CLI `state next magicport`, Lua next_magic_port(), Python "
+             "next_magic_port(), MCP inspect_state aspect next_magic_port). Off by default: POST /next/magic-port {enabled: true, port: N, mode}. "
+             "enabled, port, mode (hex | dec | ascii | line), bytes (written since the last clear), size, evicted, last_seq, partial (line mode: a "
+             "line not ended yet), items: seq, frame, t, pc, text (hex/dec/ascii: one item per byte; line: one per CR/LF-ended line). The port is an "
+             "exact 16-bit address (jnext --magic-port). Query: since (seq), limit (newest N, default 200, 0 = all). 400 on a bad parameter.", true},
+            {"/api/v1/emulator/{id}/state/next/divmmc", "Get the Next DivMMC, its automap entries and the DivMMC journal",
+             "Why the DivMMC is in (core DeviceState::NextDivMmcReport; CLI `state next divmmc`, Lua next_divmmc(), Python next_divmmc(), "
+             "MCP inspect_state aspect next_divmmc). state: port_enabled, automap_armed (NR #0A bit 4), control (#E3), conmem, mapram, bank, "
+             "automap_latch, mapped, button_pending, nmi_hold. entries: NR #B8-#BB decoded (address, enabled, when = always | rom3_only, "
+             "map = instant | delayed). events (the journal, off by default: POST /next/divmmc-journal): seq, frame, t, pc, kind "
+             "(map_in | map_out | retn | disabled | reset | program_start | port | mapram_clear | button | esx_call); map_in / map_out "
+             "have the fetch address (map_in: entry rst | nmi | 3dxx | rom3_routine, map instant | delayed); esx_call (an entry at #0008) has "
+             "call, name (F_OPEN, F_READ ...), return_address, basic_rom (true: RST 8 is a BASIC error report and call an error code) and "
+             "af / bc / de / hl. Query: kinds (comma), since (seq), from / to (frame), limit (newest N, default 200, 0 = all). 400 on a bad "
+             "parameter.", true},
         };
         for (const NextRoute& r : routes)
         {
@@ -653,6 +692,95 @@
         paths[kSdCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
         paths[kSdCtl]["post"]["responses"]["200"]["description"] = "The journal's state";
         paths[kSdCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Next";
+
+        const char* kDmQuery[][2] = {{"kinds", "comma list: map_in, map_out, retn, disabled, reset, program_start, port, mapram_clear, button, esx_call; empty = all"},
+                                     {"since", "events after this seq"},
+                                     {"from", "first frame"},
+                                     {"to", "last frame"},
+                                     {"limit", "the newest N matches (default 200, 0 = all)"}};
+        const char* kDm = "/api/v1/emulator/{id}/state/next/divmmc";
+        for (Json::ArrayIndex i = 0; i < 5; i++)
+        {
+            Json::Value& qp = paths[kDm]["get"]["parameters"][i + 1];
+            qp["name"] = kDmQuery[i][0];
+            qp["in"] = "query";
+            qp["description"] = kDmQuery[i][1];
+            qp["schema"]["type"] = "string";
+        }
+        paths[kDm]["get"]["responses"]["400"]["description"] = "Bad parameter";
+
+        const char* kNmiQuery[][2] = {{"kinds", "comma list: int_ack, reti, nmi_request, retn, reset; empty = all"},
+                                      {"since", "events after this seq"},
+                                      {"from", "first frame"},
+                                      {"to", "last frame"},
+                                      {"limit", "the newest N matches (default 200, 0 = all)"}};
+        const char* kNmi = "/api/v1/emulator/{id}/state/next/nmi";
+        for (Json::ArrayIndex i = 0; i < 5; i++)
+        {
+            Json::Value& qp = paths[kNmi]["get"]["parameters"][i + 1];
+            qp["name"] = kNmiQuery[i][0];
+            qp["in"] = "query";
+            qp["description"] = kNmiQuery[i][1];
+            qp["schema"]["type"] = "string";
+        }
+        paths[kNmi]["get"]["responses"]["400"]["description"] = "Bad parameter";
+
+        const char* kMagicQuery[][2] = {{"since", "items after this seq"}, {"limit", "the newest N items (default 200, 0 = all)"}};
+        const char* kMagic = "/api/v1/emulator/{id}/state/next/magic-port";
+        for (Json::ArrayIndex i = 0; i < 2; i++)
+        {
+            Json::Value& qp = paths[kMagic]["get"]["parameters"][i + 1];
+            qp["name"] = kMagicQuery[i][0];
+            qp["in"] = "query";
+            qp["description"] = kMagicQuery[i][1];
+            qp["schema"]["type"] = "string";
+        }
+        paths[kMagic]["get"]["responses"]["400"]["description"] = "Bad parameter";
+
+        const char* kMagicCtl = "/api/v1/emulator/{id}/next/magic-port";
+        paths[kMagicCtl]["post"]["summary"] = "Switch the magic debug port, choose its port and mode, clear its output";
+        paths[kMagicCtl]["post"]["tags"].append("Machine State");
+        paths[kMagicCtl]["post"]["description"] =
+            "Body {\"enabled\": true|false, \"port\": 0..65535, \"mode\": \"hex|dec|ascii|line\", \"clear\": true}, all optional. Off by default; "
+            "off costs one branch per OUT. A write by a tool never counts, only the program's OUT. Answers the report's setting fields.";
+        paths[kMagicCtl]["post"]["parameters"][0]["name"] = "id";
+        paths[kMagicCtl]["post"]["parameters"][0]["in"] = "path";
+        paths[kMagicCtl]["post"]["parameters"][0]["required"] = true;
+        paths[kMagicCtl]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kMagicCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[kMagicCtl]["post"]["responses"]["200"]["description"] = "The setting";
+        paths[kMagicCtl]["post"]["responses"]["400"]["description"] = "Bad port or mode";
+        paths[kMagicCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Next";
+
+        const char* kNmiCtl = "/api/v1/emulator/{id}/next/nmi-journal";
+        paths[kNmiCtl]["post"]["summary"] = "Switch, clear or resize the interrupt / NMI / reset journal";
+        paths[kNmiCtl]["post"]["tags"].append("Machine State");
+        paths[kNmiCtl]["post"]["description"] =
+            "Body {\"enabled\": true|false, \"clear\": true, \"capacity\": N}, all optional (capacity resizes the ring, 16384 by "
+            "default, and drops its content). Off by default; off costs one branch per interrupt, NMI request, RETN or reset. Answers "
+            "enabled, size, capacity, evicted, last_seq.";
+        paths[kNmiCtl]["post"]["parameters"][0]["name"] = "id";
+        paths[kNmiCtl]["post"]["parameters"][0]["in"] = "path";
+        paths[kNmiCtl]["post"]["parameters"][0]["required"] = true;
+        paths[kNmiCtl]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kNmiCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[kNmiCtl]["post"]["responses"]["200"]["description"] = "The journal's state";
+        paths[kNmiCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Next";
+
+        const char* kDmCtl = "/api/v1/emulator/{id}/next/divmmc-journal";
+        paths[kDmCtl]["post"]["summary"] = "Switch, clear or resize the DivMMC journal";
+        paths[kDmCtl]["post"]["tags"].append("Machine State");
+        paths[kDmCtl]["post"]["description"] =
+            "Body {\"enabled\": true|false, \"clear\": true, \"capacity\": N}, all optional (capacity resizes the ring, 16384 by "
+            "default, and drops its content). Off by default; off costs one branch per DivMMC event. Answers enabled, size, capacity, "
+            "evicted, last_seq.";
+        paths[kDmCtl]["post"]["parameters"][0]["name"] = "id";
+        paths[kDmCtl]["post"]["parameters"][0]["in"] = "path";
+        paths[kDmCtl]["post"]["parameters"][0]["required"] = true;
+        paths[kDmCtl]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kDmCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[kDmCtl]["post"]["responses"]["200"]["description"] = "The journal's state";
+        paths[kDmCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Next";
     }
 
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["summary"] = "Get memory contention state";
@@ -1041,9 +1169,9 @@
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["summary"] = "Get ROM write protection status";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["description"] =
-        "Get whether ROM write protection is enabled. The flag guards writes to ROM pages through "
-        "/memory/page/rom/{page} only; /memory/write ignores it. It is one setting shared by all emulator "
-        "instances.";
+        "Get whether ROM write protection is enabled for this emulator instance (each instance has its own; a new "
+        "one starts protected). The flag guards writes to ROM pages through /memory/page/rom/{page} only; "
+        "/memory/write ignores it.";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["get"]["parameters"][0]["required"] = true;
@@ -1054,7 +1182,7 @@
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["summary"] = "Set ROM write protection";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["tags"].append("Memory State");
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["description"] =
-        "Enable or disable ROM write protection.";
+        "Enable or disable ROM write protection of this emulator instance only.";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["parameters"][0]["required"] = true;

@@ -314,13 +314,16 @@ inline void RunSeries(std::vector<SeriesStep> steps, std::function<void(Json::Va
 
     auto acc = std::make_shared<Json::Value>(Json::objectValue);
     auto stepsHolder = std::make_shared<std::vector<SeriesStep>>(std::move(steps));
+    // The chain refers to itself weakly; a pending step's continuation holds it. A strong self-capture is a cycle:
+    // the closure and all it captured were never freed (BUGS.md 2026-10-11 #7)
     auto runNext = std::make_shared<std::function<void(size_t)>>();
-    *runNext = [stepsHolder, acc, done, runNext](size_t index) {
+    *runNext = [stepsHolder, acc, done, weakSelf = std::weak_ptr<std::function<void(size_t)>>(runNext)](size_t index) {
         if (index >= stepsHolder->size())
         {
             done(*acc);
             return;
         }
+        const auto runNext = weakSelf.lock();
         (*stepsHolder)[index](*acc, [stepsHolder, acc, done, runNext, index](bool ok) {
             if (!ok)
             {

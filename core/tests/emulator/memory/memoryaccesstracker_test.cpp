@@ -68,6 +68,15 @@ void MemoryAccessTracker_Test::SetUp()
 
 void MemoryAccessTracker_Test::TearDown()
 {
+    // The debug manager first: its analyzers release their breakpoints while memory still exists
+    if (_debugManager != nullptr)
+    {
+        _context->pDebugManager = nullptr;
+        delete _debugManager;
+        _debugManager = nullptr;
+        _breakpointManager = nullptr;
+    }
+
     if (_memory != nullptr)
     {
         delete _memory;
@@ -78,6 +87,14 @@ void MemoryAccessTracker_Test::TearDown()
     {
         delete _featureManager;
         _featureManager = nullptr;
+    }
+
+    // The core owns the Z80 (Core::Release deletes it)
+    if (_core != nullptr)
+    {
+        delete _core;
+        _core = nullptr;
+        _z80 = nullptr;
     }
 
     if (_context != nullptr)

@@ -152,6 +152,17 @@ Json::Value BreakpointJson(const BreakpointDescriptor& bp)
     }
     if (bp.type == BRK_IO && bp.portMask != 0xFFFF)
         j["port_mask"] = bp.portMask;
+    if (bp.type == BRK_BEAM)
+        j["hc"] = bp.beamHc;
+    if (bp.type == BRK_NEXTREG)
+    {
+        j["doors"] = BreakpointManager::NextRegDoorsName(bp.nrDoors);
+        if (bp.nrMask)
+        {
+            j["value"] = bp.nrValue & bp.nrMask;
+            j["value_mask"] = bp.nrMask;
+        }
+    }
     j["hit_mode"] = BreakpointManager::HitModeName(bp.hitMode);
     if (bp.hitMode != BRK_HIT_ALWAYS)
         j["hit_target"] = static_cast<Json::UInt>(bp.hitTarget);
@@ -381,7 +392,7 @@ void EmulatorAPI::stepOverNow(const HttpRequestPtr& req, std::function<void(cons
 /// @brief POST /api/v1/emulator/{id}/stepout
 /// @brief Step out of the current subroutine (SP-tracking: runs until a RET-family
 /// @brief instruction at/above the entry stack level, then executes it)
-void EmulatorAPI::stepOutNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::stepOutNow(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                           const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -690,7 +701,7 @@ void EmulatorAPI::runNScanlinesNow(const HttpRequestPtr& req, std::function<void
 
 /// @brief POST /api/v1/emulator/{id}/run_to_pixel
 /// @brief Run until next screen pixel (skip vblank/borders)
-void EmulatorAPI::runToPixelNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runToPixelNow(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -733,7 +744,8 @@ void EmulatorAPI::runToPixelNow(const HttpRequestPtr& req, std::function<void(co
 
 /// @brief POST /api/v1/emulator/{id}/run_to_interrupt
 /// @brief Run until Z80 accepts maskable interrupt
-void EmulatorAPI::runToInterruptNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runToInterruptNow(const HttpRequestPtr& /*req*/,
+                                    std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -776,7 +788,7 @@ void EmulatorAPI::runToInterruptNow(const HttpRequestPtr& req, std::function<voi
 
 /// @brief POST /api/v1/emulator/{id}/run_frame
 /// @brief Run one complete video frame
-void EmulatorAPI::runFrameNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runFrameNow(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -900,7 +912,7 @@ void EmulatorAPI::runFramesNow(const HttpRequestPtr& req, std::function<void(con
 
 /// @brief GET /api/v1/emulator/{id}/debugmode
 /// @brief Get debug mode status
-void EmulatorAPI::getDebugMode(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getDebugMode(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -1004,6 +1016,18 @@ void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(c
                 case BRK_KEYBOARD:
                     bpObj["type"] = "keyboard";
                     break;
+                case BRK_NEXTREG:
+                    bpObj["type"] = "nextreg";
+                    break;
+                case BRK_BEAM:
+                    bpObj["type"] = "beam";
+                    break;
+                case BRK_COPPER:
+                    bpObj["type"] = "copper";
+                    break;
+                case BRK_MAGIC:
+                    bpObj["type"] = "magic";
+                    break;
                 default:
                     bpObj["type"] = "unknown";
             }
@@ -1024,6 +1048,10 @@ void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(c
                 case BRK_IO:
                     bpObj["in"] = (bp->ioType & BRK_IO_IN) != 0;
                     bpObj["out"] = (bp->ioType & BRK_IO_OUT) != 0;
+                    break;
+                case BRK_NEXTREG:
+                    bpObj["read"] = (bp->ioType & BRK_IO_IN) != 0;
+                    bpObj["write"] = (bp->ioType & BRK_IO_OUT) != 0;
                     break;
                 case BRK_KEYBOARD:
                     bpObj["press"] = (bp->keyType & BRK_KEY_PRESS) != 0;
@@ -1112,24 +1140,57 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         spec.type = BRK_IO, spec.access = BRK_IO_OUT;
     else if (type == "port" || type == "io")
         spec.type = BRK_IO, spec.access = BRK_IO_IN | BRK_IO_OUT;
+    else if (type == "nextreg_write")
+        spec.type = BRK_NEXTREG, spec.access = BRK_IO_OUT;
+    else if (type == "nextreg_read")
+        spec.type = BRK_NEXTREG, spec.access = BRK_IO_IN;
+    else if (type == "nextreg")
+        spec.type = BRK_NEXTREG, spec.access = BRK_IO_IN | BRK_IO_OUT;
+    else if (type == "beam")
+        spec.type = BRK_BEAM, spec.access = BRK_IO_OUT;
+    else if (type == "copper")
+        spec.type = BRK_COPPER, spec.access = BRK_IO_OUT;
+    else if (type == "magic_ed_ff" || type == "magic_dd_01")
+        spec.type = BRK_MAGIC, spec.access = BRK_IO_OUT;
     else
     {
-        badRequest("Invalid type. Use: execution, read, write, rw, port_in, port_out, port");
+        badRequest("Invalid type. Use: execution, read, write, rw, port_in, port_out, port, nextreg_write, nextreg_read, nextreg, beam, copper, magic_ed_ff, magic_dd_01");
         return;
     }
 
+    // A memory address is a number or a label's name (its CPU address); a port or a line is a number
+    LabelManager* labels = ctx->pDebugManager->GetLabelManager();
+    auto parseAddress = [&](const Json::Value& field, uint32_t& out) {
+        if (ParseJsonUInt(field, 0xFFFF, out))
+            return true;
+        if (spec.type != BRK_MEMORY || !field.isString() || !labels)
+            return false;
+        const auto label = labels->GetLabelByName(field.asString());
+        if (!label)
+            return false;
+        out = label->address;
+        return true;
+    };
+
     uint32_t value = 0;
-    if (!ParseJsonUInt(body["address"], 0xFFFF, value))
+    if (spec.type == BRK_MAGIC)
     {
-        badRequest("'address' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")");
+        // The opcode is the type (ED FF / DD 01); no address
+        value = type == "magic_ed_ff" ? BRK_MAGIC_ED_FF : BRK_MAGIC_DD_01;
+    }
+    else if (!parseAddress(body["address"], value))
+    {
+        badRequest(spec.type == BRK_MEMORY
+                       ? "'address' must be 0..65535 (a number, a string: decimal, \"0x..\", \"#..\" or \"$..\", or a label's name)"
+                       : "'address' must be 0..65535 (a number, or a string: decimal, \"0x..\", \"#..\" or \"$..\")");
         return;
     }
     spec.address = static_cast<uint16_t>(value);
     if (body.isMember("address_end") && !body["address_end"].isNull())
     {
-        if (!ParseJsonUInt(body["address_end"], 0xFFFF, value))
+        if (!parseAddress(body["address_end"], value))
         {
-            badRequest("'address_end' must be 0..65535");
+            badRequest("'address_end' must be 0..65535 (or, for memory, a label's name)");
             return;
         }
         spec.hasEnd = true;
@@ -1155,6 +1216,51 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
             return;
         }
         spec.portMask = static_cast<uint16_t>(value);
+    }
+    // Beam: 'address' is the line (the copper's counter, NR #64 applied), 'hc' the pixel clock in the row (default 0)
+    if (body.isMember("hc") && !body["hc"].isNull())
+    {
+        if (!ParseJsonUInt(body["hc"], BRK_BEAM_MAX_HC, value))
+        {
+            badRequest("'hc' must be 0..511");
+            return;
+        }
+        spec.beamHc = static_cast<uint16_t>(value);
+    }
+    // NextREG: the doors a write comes through, the value written (value alone: exactly; with value_mask: masked)
+    if (body.isMember("doors") && !body["doors"].isNull())
+    {
+        std::string doorsText;
+        if (body["doors"].isArray())
+            for (const auto& door : body["doors"])
+                doorsText += door.asString() + ",";
+        else
+            doorsText = body["doors"].asString();
+        std::string doorsError;
+        if (!BreakpointManager::ParseNextRegDoors(doorsText, spec.nrDoors, doorsError))
+        {
+            badRequest(doorsError);
+            return;
+        }
+    }
+    if (body.isMember("value") && !body["value"].isNull())
+    {
+        if (!ParseJsonUInt(body["value"], 0xFF, value))
+        {
+            badRequest("'value' must be 0..255");
+            return;
+        }
+        spec.nrValue = static_cast<uint8_t>(value);
+        spec.nrMask = 0xFF;
+    }
+    if (body.isMember("value_mask") && !body["value_mask"].isNull())
+    {
+        if (!ParseJsonUInt(body["value_mask"], 0xFF, value))
+        {
+            badRequest("'value_mask' must be 0..255");
+            return;
+        }
+        spec.nrMask = static_cast<uint8_t>(value);
     }
     // Hits: hit_mode + hit_target (protocol), or the text form "hits": "5" | ">=5" | "%5"
     if (body.isMember("hits"))
@@ -1247,7 +1353,8 @@ void EmulatorAPI::resetBreakpointHits(const HttpRequestPtr& req, std::function<v
 
 /// @brief DELETE /api/v1/emulator/{id}/breakpoints
 /// @brief Clear all breakpoints
-void EmulatorAPI::clearBreakpoints(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::clearBreakpoints(const HttpRequestPtr& /*req*/,
+                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                    const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -1285,7 +1392,8 @@ void EmulatorAPI::clearBreakpoints(const HttpRequestPtr& req, std::function<void
 
 /// @brief DELETE /api/v1/emulator/{id}/breakpoints/{bp_id}
 /// @brief Remove specific breakpoint
-void EmulatorAPI::removeBreakpoint(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::removeBreakpoint(const HttpRequestPtr& /*req*/,
+                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                    const std::string& id, const std::string& bpIdStr) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -1329,7 +1437,8 @@ void EmulatorAPI::removeBreakpoint(const HttpRequestPtr& req, std::function<void
 
 /// @brief PUT /api/v1/emulator/{id}/breakpoints/{bp_id}/enable
 /// @brief Enable breakpoint
-void EmulatorAPI::enableBreakpoint(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::enableBreakpoint(const HttpRequestPtr& /*req*/,
+                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                    const std::string& id, const std::string& bpIdStr) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -1365,7 +1474,8 @@ void EmulatorAPI::enableBreakpoint(const HttpRequestPtr& req, std::function<void
 
 /// @brief PUT /api/v1/emulator/{id}/breakpoints/{bp_id}/disable
 /// @brief Disable breakpoint
-void EmulatorAPI::disableBreakpoint(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::disableBreakpoint(const HttpRequestPtr& /*req*/,
+                                    std::function<void(const HttpResponsePtr&)>&& callback,
                                     const std::string& id, const std::string& bpIdStr) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -1401,7 +1511,8 @@ void EmulatorAPI::disableBreakpoint(const HttpRequestPtr& req, std::function<voi
 
 /// @brief GET /api/v1/emulator/{id}/breakpoints/status
 /// @brief Get breakpoint status including last triggered breakpoint
-void EmulatorAPI::getBreakpointStatus(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getBreakpointStatus(const HttpRequestPtr& /*req*/,
+                                      std::function<void(const HttpResponsePtr&)>&& callback,
                                        const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -1479,7 +1590,7 @@ void EmulatorAPI::getBreakpointStatus(const HttpRequestPtr& req, std::function<v
 
 /// @brief GET /api/v1/emulator/{id}/registers
 /// @brief Get CPU registers
-void EmulatorAPI::getRegisters(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getRegisters(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -1573,8 +1684,20 @@ void EmulatorAPI::setRegister(const HttpRequestPtr& req, std::function<void(cons
         return;
     }
 
-    if (!Z80::SetRegisterValue(z80, name, value))
+    std::string refused;
+    if (!emulator->SetRegisterFromTool("webapi register", name, static_cast<uint16_t>(value), &refused))   // a tool edit
     {
+        if (!refused.empty())   // the recorded past
+        {
+            Json::Value error;
+            error["error"] = "Conflict";
+            error["message"] = refused;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k409Conflict);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
         Json::Value error;
         error["error"] = "Bad Request";
         error["message"] = std::string(regInfo->name) + " cannot hold " + std::to_string(value) + " (at most " +
@@ -1585,7 +1708,6 @@ void EmulatorAPI::setRegister(const HttpRequestPtr& req, std::function<void(cons
         callback(resp);
         return;
     }
-    emulator->NoteDebugChange();   // the debugger snapshot's seq
 
     // Read back to confirm
     uint16_t readBack;
@@ -2304,7 +2426,7 @@ void EmulatorAPI::putMemoryPage(const HttpRequestPtr& req, std::function<void(co
 
 /// @brief GET /api/v1/emulator/{id}/memory/info
 /// @brief Get memory configuration
-void EmulatorAPI::getMemoryInfo(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getMemoryInfo(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -2480,7 +2602,7 @@ void EmulatorAPI::getMemoryMap(const HttpRequestPtr& req, std::function<void(con
 
 /// @brief GET /api/v1/emulator/{id}/memcounters
 /// @brief Get memory access statistics
-void EmulatorAPI::getMemCounters(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getMemCounters(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -3308,7 +3430,7 @@ void EmulatorAPI::addLabel(const HttpRequestPtr& req, std::function<void(const H
 }
 
 /// @brief GET /api/v1/emulator/{id}/labels/{name}
-void EmulatorAPI::getLabel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getLabel(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id, const std::string& name) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -3364,7 +3486,7 @@ void EmulatorAPI::getLabel(const HttpRequestPtr& req, std::function<void(const H
 }
 
 /// @brief DELETE /api/v1/emulator/{id}/labels/{name}
-void EmulatorAPI::removeLabel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::removeLabel(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id, const std::string& name) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -3463,7 +3585,7 @@ void EmulatorAPI::updateLabel(const HttpRequestPtr& req, std::function<void(cons
 }
 
 /// @brief DELETE /api/v1/emulator/{id}/labels
-void EmulatorAPI::clearLabels(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::clearLabels(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);

@@ -20,6 +20,8 @@ struct PolicyDecision
     /// The change lands at the next frame boundary, also on a parked machine: while a recording runs, a media change
     /// is an event of the recording at the boundary where it lands (M3, Q4), never a change inside a frame
     bool atFrameBoundary = false;
+    /// The operation takes the machine off a recorded input path: a playback (RZX) ends first, before the park (M6)
+    bool endsPlayback = false;
 };
 
 /// The cell for @p op in @p mode. Pure: no state, no side effects

@@ -1549,7 +1549,7 @@ void LoaderZ80::freeStagingMemory()
         uint8_t* ptr = _stagingROMPages[idx];
         if (ptr != nullptr)
         {
-            delete ptr;
+            delete[] ptr;
             _stagingROMPages[idx] = nullptr;
         }
     }
@@ -1560,7 +1560,7 @@ void LoaderZ80::freeStagingMemory()
         uint8_t* ptr = _stagingRAMPages[idx];
         if (ptr != nullptr)
         {
-            delete ptr;
+            delete[] ptr;
             _stagingRAMPages[idx] = nullptr;
         }
     }

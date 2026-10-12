@@ -36,6 +36,8 @@ public:
 
     // Update machine model selection based on active emulator's model
     void updateMachineModelSelection(std::shared_ptr<Emulator> activeEmulator);
+    /// The "MODEL:RAM" entry now checked (a pick made while no machine runs)
+    void setCurrentModelKey(const QString& key) { _currentModelShortName = key; }
 
     // Set the current active emulator instance
     void setActiveEmulator(std::shared_ptr<Emulator> emulator);

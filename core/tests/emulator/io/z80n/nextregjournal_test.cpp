@@ -9,7 +9,11 @@
 #include "_helpers/emulatortesthelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "debugger/ttd/ttdportjournal.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/io/z80n/nextregjournal.h"
+#include "emulator/memory/memory.h"
 #include "emulator/state/devicestate.h"
 #include "emulator/ports/models/portdecoder_next.h"
 
@@ -111,5 +115,41 @@ TEST(NextRegJournal_Test, TheReportDecodesTheRegistersThatMatterAndTheControlSwi
     state = DeviceState::NextRegJournalControl(context, 0, true, 0);
     EXPECT_FALSE(state.find("enabled")->b);
     EXPECT_EQ(state.find("size")->i, 0);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// The NEXTREG instruction has no bus cycle; the TTD port-write journal sees it as the pair of writes the register interface is
+// (OUT #243B,reg then OUT #253B,value), so a query for the data port finds it (design-nextreg-journal.md 4.4, option a)
+TEST(NextRegJournal_Test, TheNextRegInstructionIsInTheTtdPortWriteJournalAsThePairOfPortWrites)
+{
+    constexpr uint16_t kPortRegSelect = PortDecoder_Next::kPortRegSelect;
+    constexpr uint16_t kPortRegData = PortDecoder_Next::kPortRegData;
+    constexpr uint16_t kProgram = 0x8000;
+    constexpr uint8_t kPrefixEd = 0xED, kNextRegImmediate = 0x91;  // NEXTREG n,v
+    constexpr uint8_t kReg = 0x16, kValue = 0x5A;                  // NR #16 stores its byte
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    Z80* z80 = context->pCore->GetZ80();
+    const uint8_t program[] = {kPrefixEd, kNextRegImmediate, kReg, kValue};
+    for (size_t i = 0; i < sizeof(program); i++)
+        context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(kProgram + i), program[i]);
+
+    ttd::TTDPortJournal journal(ttd::TTDPortJournal::Direction::Write);
+    journal.StartRecording();
+    context->ttdPortWrites = &journal;
+    z80->pc = kProgram;
+    z80->EngineStep();
+    context->ttdPortWrites = nullptr;
+
+    ASSERT_EQ(journal.Size(), 2u);
+    ttd::TTDPortRecord select, data;
+    ASSERT_TRUE(journal.Get(0, select));
+    ASSERT_TRUE(journal.Get(1, data));
+    EXPECT_EQ(select.port, kPortRegSelect);
+    EXPECT_EQ(select.value, kReg);
+    EXPECT_EQ(data.port, kPortRegData);
+    EXPECT_EQ(data.value, kValue);
+    EXPECT_EQ(data.pc, kProgram) << "the address of the NEXTREG instruction";
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

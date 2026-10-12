@@ -142,10 +142,15 @@ std::shared_ptr<Emulator> LiveSourceWindow::instance() const
     return _emulatorId.empty() ? nullptr : EmulatorManager::GetInstance()->GetEmulator(_emulatorId);
 }
 
-AsmSyncService* LiveSourceWindow::service(const std::shared_ptr<Emulator>& emulator) const
+EmulatorContext* LiveSourceWindow::context(const std::shared_ptr<Emulator>& emulator)
 {
-    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
-    return context && context->pDebugManager ? context->pDebugManager->GetAsmSyncService() : nullptr;
+    return emulator ? emulator->GetContext() : nullptr;
+}
+
+AsmSyncService* LiveSourceWindow::service(const std::shared_ptr<Emulator>& emulator)
+{
+    EmulatorContext* machine = context(emulator);
+    return machine && machine->pDebugManager ? machine->pDebugManager->GetAsmSyncService() : nullptr;
 }
 
 void LiveSourceWindow::startWatch()
@@ -177,13 +182,16 @@ void LiveSourceWindow::stopOwnPush()
 
 void LiveSourceWindow::inject()
 {
-    const std::shared_ptr<Emulator> emulator = instance();
-    if (!emulator)
+    if (!instance())
         return;
     const QString path = QFileDialog::getOpenFileName(this, tr("Inject a Source"), QString(), tr("Assembler source (*.asm *.a80 *.z80 *.s *.inc);;All Files (*)"));
     if (path.isEmpty())
         return;
-    const AsmReply reply = AsmControl(emulator->GetContext()).Execute({"sync-inject", {{"path", path.toStdString()}}});
+    // Looked up again after the dialog: the instance may have been removed while it was open
+    const std::shared_ptr<Emulator> emulator = instance();
+    if (!emulator)
+        return;
+    const AsmReply reply = AsmControl(context(emulator)).Execute({"sync-inject", {{"path", path.toStdString()}}});
     if (!reply.Ok())
     {
         QMessageBox::warning(this, tr("Inject"), QString::fromStdString(reply.message));
@@ -209,21 +217,24 @@ void LiveSourceWindow::inject()
 
 void LiveSourceWindow::togglePush(bool on)
 {
-    const std::shared_ptr<Emulator> emulator = instance();
+    std::shared_ptr<Emulator> emulator = instance();
     AsmSyncService* sync = service(emulator);
     if (!sync)
         return;
     if (on && !sync->Pushing())
     {
+        // Not held across the dialog: looked up again after it, the instance may have been removed meanwhile
+        emulator.reset();
         const QString path = QFileDialog::getOpenFileName(this, tr("Push a Source on Every Save"), QString(),
                                                           tr("Assembler source (*.asm *.a80 *.z80 *.s *.inc);;All Files (*)"));
-        if (path.isEmpty())
+        emulator = path.isEmpty() ? nullptr : instance();
+        if (!emulator)
         {
             const QSignalBlocker blocker(_push);
             _push->setChecked(false);
             return;
         }
-        const AsmReply reply = AsmControl(emulator->GetContext()).Execute({"sync-push-watch", {{"path", path.toStdString()}}});
+        const AsmReply reply = AsmControl(context(emulator)).Execute({"sync-push-watch", {{"path", path.toStdString()}}});
         if (!reply.Ok())
         {
             QMessageBox::warning(this, tr("Push"), QString::fromStdString(reply.message));
@@ -406,10 +417,11 @@ void LiveSourceWindow::goToHint()
 
 void LiveSourceWindow::extract()
 {
-    const std::shared_ptr<Emulator> emulator = instance();
+    std::shared_ptr<Emulator> emulator = instance();
     if (!emulator)
         return;
-    const AsmReply status = AsmControl(emulator->GetContext()).Execute({"sync-status", {}});
+    const AsmReply status = AsmControl(context(emulator)).Execute({"sync-status", {}});
+    emulator.reset();  // not held across the dialog
     if (!status.Ok())
     {
         QMessageBox::warning(this, tr("Extract"), QString::fromStdString(status.message));
@@ -423,7 +435,10 @@ void LiveSourceWindow::extract()
         return;
     const QString suffix = QFileInfo(output).suffix().toUpper();
     const bool asFile = suffix == type || suffix == "$" + type;
-    const AsmReply reply = AsmControl(emulator->GetContext())
+    emulator = instance();
+    if (!emulator)
+        return;
+    const AsmReply reply = AsmControl(context(emulator))
                                .Execute({"sync-extract", {{"as", asFile ? "file" : "text"}, {"output", output.toStdString()}}});
     if (!reply.Ok())
         QMessageBox::warning(this, tr("Extract"), QString::fromStdString(reply.message));
@@ -431,8 +446,7 @@ void LiveSourceWindow::extract()
 
 void LiveSourceWindow::convert()
 {
-    const std::shared_ptr<Emulator> emulator = instance();
-    if (!emulator)
+    if (!instance())
         return;
     const AsmReply list = AsmControl(nullptr).Execute({"dialects", {}});
     QStringList dialects;
@@ -445,9 +459,10 @@ void LiveSourceWindow::convert()
     if (!ok || to.isEmpty())
         return;
     const QString output = QFileDialog::getSaveFileName(this, tr("Save the Conversion"), "live.asm", tr("Assembler source (*.asm *.s *.z80);;All Files (*)"));
-    if (output.isEmpty())
+    const std::shared_ptr<Emulator> emulator = output.isEmpty() ? nullptr : instance();
+    if (!emulator)
         return;
-    const AsmReply reply = AsmControl(emulator->GetContext())
+    const AsmReply reply = AsmControl(context(emulator))
                                .Execute({"sync-extract", {{"as", "dialect"}, {"to", to.toStdString()}, {"output", output.toStdString()}}});
     if (!reply.Ok())
         QMessageBox::warning(this, tr("Convert"), QString::fromStdString(reply.message));

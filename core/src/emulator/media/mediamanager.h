@@ -310,6 +310,7 @@ public:
     uint64_t VersionStamp() const override { return _revision.load() + _writeStamp.load(); }
     void CurrentVersions(std::vector<MediaVersionInfo>& out) const override;
     bool SetHead(const std::string& slotId, uint64_t version) override;
+    bool Reaches(const std::string& slotId, uint64_t version) const override;
     /// A slot's peripheral reports that the GUEST took its medium out (a CD drive's START STOP UNIT
     /// eject; emulation thread, inside the command). The normal eject runs at the next frame
     /// boundary (ApplyPending: Detach, NC_MEDIA_EJECTED, revision): the slot is empty for every
@@ -355,7 +356,8 @@ private:
         std::optional<uint32_t> swapDelayMs;  ///< config override of the slot's default
         bool writeMarkedThisFrame = false;    ///< the medium's version moved for this frame's writes
         bool writeEventThisFrame = false;     ///< a TTD marker already recorded this frame
-        uint64_t writtenFrames = 0;           ///< the medium's changes (its version, IMediaHistory)
+        uint64_t writtenFrames = 0;           ///< the medium's changes since it came in (its version's count)
+        uint32_t lineage = 0;                 ///< this insert of the medium (a version names it: VersionOf)
         MediaUndoLog undo;                    ///< the units before each change while a TTD history exists
         bool followsHistory = false;          ///< a seek set it to a recorded version: a replay's writes move it along
         bool versionLost = false;             ///< a replay changed it from no recorded version: it is none any more
@@ -370,8 +372,15 @@ private:
     /// The guest changes the medium in this frame: its version moves once per frame (a replay's writes move it only
     /// along its history)
     void MarkWrite(SlotState& state);
-    /// The medium changed outside the undo log (an insert, a discard): no version before this one is reachable
+    /// A medium came in, or went back to its source (a discard): a new lineage, its count from 0, nothing to go
+    /// back to
     void ForgetVersions(SlotState& state);
+    /// IMediaHistory's version: the lineage in the high 32 bits, the count of changes in the low ones. Versions of
+    /// two lineages never meet: another insert, or another run, is another history (F11)
+    static uint64_t VersionOf(const SlotState& state) { return (uint64_t(state.lineage) << 32) | state.writtenFrames; }
+    /// A write-through medium the history sets back becomes a session one (F13): the rollback and every later write
+    /// stay in memory, its host file keeps its content until the user saves
+    void ToSessionAccess(const std::string& slotId, SlotState& state);
     /// The write-protect switch to @p on now: a version of its own, an event of a recording
     void ApplyProtect(const std::string& slotId, SlotState& state, bool on);
     class SlotUnits;

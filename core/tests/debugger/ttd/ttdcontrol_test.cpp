@@ -891,7 +891,7 @@ TEST_P(TTDControl_Test, ARestartedBlackBoxLeavesItsRecordingToLoad)
     EXPECT_FALSE(kept->Segments().empty());
 
     // A machine change the same way: the session ends, its folder stays
-    _controller->OnConfigurationChange(ttd::TTDConfigChangeKind::RomReload, "test: ROM reload");
+    _controller->EndSessionFor(ttd::TTDChange::Machine, "test: ROM reload");
     _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
     ASSERT_TRUE(_controller->IsRecording()) << "the black box records again after the change";
     EXPECT_NE(ttd::TTDRecordingFolder::Open(afterTurbo), nullptr) << "the recording before the change stays";

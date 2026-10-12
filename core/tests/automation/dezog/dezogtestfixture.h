@@ -51,17 +51,25 @@ protected:
         uint8_t bank;
     };
 
+    /// The machine model to test on (empty: the default 128K-style machine)
+    virtual std::string ModelName() const { return {}; }
+
     void SetUp() override
     {
         EmulatorManager* manager = EmulatorManager::GetInstance();
         ASSERT_NE(manager, nullptr);
 
-        _emulator = manager->CreateEmulator("dezog-test", LoggerLevel::LogError);
+        const std::string model = ModelName();
+        _emulator = model.empty() ? manager->CreateEmulator("dezog-test", LoggerLevel::LogError)
+                                  : manager->CreateEmulatorWithModel("dezog-test", model, LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr);
 
-        // Deterministic boot into 48K BASIC ROM regardless of staged unreal.ini
-        _emulator->GetContext()->config.reset_rom = RM_SOS;
-        _emulator->Reset();
+        // Deterministic boot into 48K BASIC ROM regardless of staged unreal.ini (the default machine only)
+        if (model.empty())
+        {
+            _emulator->GetContext()->config.reset_rom = RM_SOS;
+            _emulator->Reset();
+        }
 
         _emulator->StartAsync();
         ASSERT_TRUE(TestWait::For([this] { return _emulator->GetState() == StateRun; },

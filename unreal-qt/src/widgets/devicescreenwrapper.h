@@ -24,6 +24,8 @@ class DeviceScreenWrapper : public QObject
 
 signals:
     void screenInitialized();
+    /// The native picture size changed: a new framebuffer (video mode) or another crop
+    void pictureGeometryChanged();
     void filesDropped(const QStringList& paths);
     void dragEntered(const QString& filePath);
     void dragLeft();

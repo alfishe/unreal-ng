@@ -336,12 +336,13 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
         }
     }
 
-    // TR-DOS disk autostart: one-shot rewrite of the cold-start RUN "boot" line into RUN "<name>".
-    // Only armed for a single-BASIC-program autostart; one compare per instruction otherwise. While
-    // TTD records (a black box restarted after the autostart's reset) the rewrite is an edit with
-    // its bytes, so a replay repeats it; a replay never runs the hook itself (state-registry gap 16)
+    // TR-DOS disk autostart: one-shot finish of the cold start for the model (its paging), then the rewrite of the
+    // cold-start RUN "boot" line into RUN "<name>" (armed for a single-BASIC-program autostart only); one compare
+    // per instruction otherwise. While TTD records (a black box restarted after the autostart's reset) the hook's
+    // work is an edit with its bytes and device state, so a replay repeats it; a replay never runs the hook itself
+    // (state-registry gap 16)
     if (pc == DiskAutostart::COMMAND_LOOP_ENTRY && _context->pDiskAutostart != nullptr &&
-        _context->pDiskAutostart->IsArmed())
+        _context->pDiskAutostart->IsHookPending())
     {
         ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
         if (!ttd || !ttd->IsReplayActive())

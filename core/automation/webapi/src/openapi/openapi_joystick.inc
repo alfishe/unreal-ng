@@ -2,7 +2,7 @@
     // Design: docs/inprogress/2026-09-15-atm-baseconf-highres-ports/tdd-kempston-joystick.md §5
     {
         static const char* kJoystickUnits =
-            " Buttons: up, down, left, right, fire, b5, b6, b7 (case-insensitive); several as one string "
+            " Buttons: up, down, left, right, fire, b5, b6, b7 (case-insensitive); the ZX Next's 12-button pads add a, c, start (= b6, b5, b7), x, y, z, mode and the right connector as right.<button> (right.up, right.fire, right.x ...); several as one string "
             "('up+fire', 'up,fire') or as an array. The device byte is active high: right=0x01 left=0x02 "
             "down=0x04 up=0x08 fire=0x10; the guest reads it at IN #1F (ATM3 outside shadow mode, Scorpion "
             "#FF1F, TS-Conf). Out-of-range values are rejected (400), never clamped. A running machine applies the "

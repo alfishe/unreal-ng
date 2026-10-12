@@ -323,7 +323,12 @@ enum class BreakpointHitKind : uint8_t
     MemoryRead,
     MemoryWrite,
     PortIn,
-    PortOut
+    PortOut,
+    NextRegRead,
+    NextRegWrite,
+    Beam,
+    CopperInstruction,
+    Magic
 };
 
 /// The automation surfaces' name of a breakpoint access kind
@@ -336,6 +341,11 @@ inline const char* BreakpointHitKindName(BreakpointHitKind kind)
         case BreakpointHitKind::MemoryWrite: return "write";
         case BreakpointHitKind::PortIn: return "port_in";
         case BreakpointHitKind::PortOut: return "port_out";
+        case BreakpointHitKind::NextRegRead: return "nextreg_read";
+        case BreakpointHitKind::NextRegWrite: return "nextreg_write";
+        case BreakpointHitKind::Beam: return "beam";
+        case BreakpointHitKind::CopperInstruction: return "copper";
+        case BreakpointHitKind::Magic: return "magic";
     }
     return "execute";
 }

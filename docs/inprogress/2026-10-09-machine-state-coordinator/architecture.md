@@ -419,8 +419,8 @@ A few tests on real machines check what the levels below cannot:
 | M2 | Every refusal from the table; raw `IsRecording()` checks deleted; D43 cells (network, IDE drive kind, RZX, NeoGS SD) one at a time with the owner | the black box stops blocking (U3). **Built 2026-10-10** (§11.2-§11.4) |
 | M3 | Boundary phases; media, GS switch, network into phase 1; media ops during a recording become events (Q4) | U2, gap 13. **Built 2026-10-10** (§11.5); after it the media undo log, gaps 11-12 (§11.5, last items) |
 | M4 | Modes broadcast; one writer per setting | none. **Built 2026-10-10** (§11.6) |
-| M5 | Media identity (8.2), undo log (8.1), the cut (8.3) on Qt "Rec From Here", WebAPI / CLI resume; the dialog in Qt | U1. The undo log is built (2026-10-10, `MediaUndoLog`, §11.5); open: identity, the cut, write-through to session access (F13), the dialog |
-| M6 | Remaining operations (state transfer, config, tool edits, RZX, TTD verbs) through `Run`; `OnLoad` / `OnConfigurationChange` removed from the TTD hooks | none |
+| M5 | Media identity (8.2), undo log (8.1), the cut (8.3) on Qt "Rec From Here", WebAPI / CLI resume; the dialog in Qt | U1. **Built 2026-10-11** (§11.7; the undo log 2026-10-10, §11.5) |
+| M6 | Remaining operations (state transfer, config, tool edits, RZX, TTD verbs) through `Run`; `OnLoad` / `OnConfigurationChange` removed from the TTD hooks | none. **Built 2026-10-11** (§11.8) |
 
 Each step lands alone: build, `test.sh`, docker Linux, gcc:16 -O3 of changed files; M3 and M5 with an A/B frame
 benchmark (N1). M1 needs none: it touches no per-frame or per-instruction code, only reset, snapshot load and media
@@ -590,3 +590,95 @@ Owner decisions are recorded in [requirements.md §6](requirements.md#6-owner-de
 
 Tests: `MachineCoordinator_Test.AModeTransitionIsBroadcastOnceInRegistrationOrder` (fakes: `FakeListener`),
 `CoordinatorEmulator_Test.AReplayHoldsDebugModeAndTheFeatureHasItsSayAfter`.
+
+### 11.7 M5 as built (2026-10-11)
+
+- **The undo log does the rollback** (§11.5): a seek, and so "Rec From Here", sets every medium to its version at
+  that point; the first write after it drops the medium's old future. §8.3's "a plain seek changes nothing outside
+  the CPU machine" no longer holds for media: owner decision 2026-10-10 (gaps 11-12), a replay must read the disk
+  it read when recording.
+- **Identity (F12).** `Medium::Identity`: an FNV-1a hash of the source file's bytes when the manager opens it, for
+  files up to 64 MB; larger images and folders keep `VolumeId` (path and size; the folder snapshot). The background
+  hash of large images is not built. A version is `lineage << 32 | count`: the lineage is one insert of a medium
+  (random start, unique in the run and across runs), the count its changes since. Two lineages never meet, except
+  at count 0 with the same identity: the untouched medium is the same content (F11). Another run's or another
+  insert's writes are never taken for this medium's.
+- **The cut (F11).** `TimeTravelController::PlanCut(at)` lists, without side effects, the media that cannot go
+  back (`IMediaHistory::Reaches`): another medium in the slot, or a version past the undo log. `TTDControl`'s
+  `resume` takes `media`: `ask` (Qt) answers `needs_decision` with the slots and changes nothing; `empty` (the
+  default where nobody can be asked: WebAPI, CLI, scripts) ejects it, an event of the recording that goes on;
+  `keep` leaves it. A medium with unsaved writes is not ejected: the reply and the log say "kept". Each decision is
+  logged as `OpKind::TimelineCut` through `IMachineOps::Note` (the cut itself runs on TTD's path, not `Run`: TTD's
+  session lock and a park do not nest). Qt's Rec From Here asks with a dialog (empty the slots / keep them / cancel).
+- **Write-through (F13).** A write-through medium that the history sets back turns into a session one in
+  `SetHead`, before the rollback: a block medium gets a `SessionWriteMap` over its `HostWriteHold` (the held
+  sectors move into it, none reaches the file), a floppy stops being written through. The file keeps its content
+  until the user saves.
+
+Tests: `TTDMediaUndo_Test.AWriteThroughDiskSetBackKeepsItsFileUntilSaved`,
+`TheSameDiskInsertedAgainIsTheSameOnlyWhereItWasUntouched`, `TTDMediaCut_Test` (ask / keep / empty, the log).
+
+### 11.8 M6 as built (2026-10-11)
+
+Four phases, each with an A/B frame benchmark against the base (§11.8, last item).
+
+- **Changes of the machine itself (phase 1).** New kinds `RomLoad` (`Emulator::LoadROM`; a reset's pending ROM reload
+  is a `RomLoad` nested in the reset), `GsCardSwitch` (`SoundManager::switchGeneralSoundCard`, on the machine thread
+  at a frame boundary), `SpeedChange` (`Emulator::SetSpeedMultiplier`), `StateTransfer`
+  (`MachineStateTransfer::Transfer`, the target's coordinator, inside the two CPU holds). New session effects
+  `MachineChanged` (the session ends, its history goes; a black box starts again) and `TimingChanged` (a history goes
+  except the black box's). `SlotChange` and `CdFrontPanel` are asked only (`WouldRefuse` from the slot plan and the
+  General Sound requests, `Ask` from the CD control): the CD front panel is refused while a recording the user started
+  runs, the text the guard had. TTD v1's refusals of these changes are the emulator's owner refusal, as for model
+  switches (goes with v1).
+- **The TTD hooks.** `OnLoad`, `OnConfigurationChange` and `OnModelTransfer` are gone, with `TTDLoadKind` and
+  `TTDConfigChangeKind`; one `EndSessionFor(TTDChange{Media, Machine, Timing}, reason)` replaces them, and its only
+  caller is the coordinator's session port. Nothing to end (no history, no recording): nothing happens - before, a
+  ROM load or a state transfer with no session wrote `machine-change` into `last_stop_reason`.
+- **Tool edits (phase 2).** `Emulator::EditMemoryFromTool` is `OpKind::ToolEdit` (logged with its source: "lua
+  register", a WebAPI path, ...). No session effect; parked while a recording runs (a new per-cell `park` in the
+  table): the edit is its event (`BeginToolEdit` / `EndToolEdit`); live, the edit runs as it comes. **Refused in the
+  recorded past** (replaying, detached; owner 2026-10-11, the §4 cell): nothing would keep the edit - the next seek
+  sets the point back, a replay goes off its recording - so "Rec From Here" first. `EditMemoryFromTool` returns the
+  reason (empty: done) and every surface reports it: WebAPI 409 (memory, page, register writes), the CLI's error line,
+  a Lua / Python error (`EditMemoryFromToolOrThrow`), GDB `E0D`, the port, Next register, sector, device memory, RTC,
+  ISA, network frame and assembler inject helpers their `error`. DeZog leaves the history before its edits. Register writes from the CLI, WebAPI, Lua and Python were bare `Z80::SetRegisterValue` calls,
+  not recorded: they go through `Emulator::SetRegisterFromTool` now (a fix, the GDB and DeZog register writes were
+  tool edits already). Not moved: the fast tape, fast disk and autostart traps in `Z80` keep calling
+  `BeginToolEdit` / `EndToolEdit` themselves - they are recording data on the per-instruction path (§3.4, links that
+  stay), not operations.
+- **RZX (phase 3).** `IPlaybackSink` (ports.h): the policy row says an operation ends an input playback
+  (`endsPlayback`: reset, autostart, snapshot load); `Run` calls `EndPlayback` before the park and outside the lock
+  (the RZX stop holds the machine itself, and its own lock may be held by a thread waiting for the machine), for the
+  outermost operation on the thread only. `Emulator::Reset` and `LoadSnapshotStaged` no longer stop RZX themselves.
+  The autostart joined: before, its reset left an RZX playback running on a reset machine.
+- **TTD verbs (phase 4).** `TTDControl`'s start, stop, invalidate, seek, step-back / step-forward,
+  step-instruction, reverse-step, reverse-continue, load and resume run as `TtdStart`, `TtdStop`, `TtdDiscard`,
+  `TimelineSeek`, `TtdLoad` and `TimelineCut` through `IMachineOps::RunOwnLocked`: the rules and the log, the verb on
+  the caller's thread without the coordinator's lock or park. TTD keeps its own order (its session lock, then the
+  CPU); `Run`'s order (the CPU, then the coordinator) around it would invert that against every TTD read that holds
+  the session lock and waits for the CPU. A kind with a park or a session effect is refused there (a contract error).
+  The cut's media decisions are the `detail` of its one `timeline-cut` entry (M5 noted one entry per slot). Not moved:
+  the debugger's and Qt's direct controller calls (DeZog's background recording, Qt's black-box switch), and the
+  verbs that read or tune the session (status, markers, bookmarks, journal, memory-at, ...).
+- **Performance (N1).** A/B against the base (`ad899e9b0`), Release, interleaved rounds, CPU time per frame:
+  `BM_HostFrame_*` (48K, Pentagon, TS-Conf, fast and debug) and `BM_Frame_*` (no TTD, TTD gaming and development).
+  Phase 1: every frame benchmark within ±1.4 % on the minima, paired medians within ±0.7 % (the A/A noise of the same
+  run: ±1.5 %). Phases 2-4 (one run, they add nothing to the per-frame or per-instruction paths), against phase 1:
+  `BM_HostFrame_*` within ±0.5 %; `BM_Frame_*` 20 interleaved rounds within ±0.5 % on the minima and the paired
+  medians (a first 8-round run against the base read +1-2 % under a changing load; it did not repeat).
+  A tool edit outside a session (`BM_ToolEdit_LivePoke`, a script's poke): 15 ns -> 215 ns (the rules and the log);
+  64 K pokes cost 13 ms more.
+- **The log keeps the other operations** (`OperationLog::Append`): the same tool edit again (source, mode, status,
+  summary) counts in the newest entry (`repeats`) under the next seq instead of taking a slot - a script's pokes
+  would push the resets and loads out of the ring of 1024 otherwise. `seq` may skip numbers now.
+
+Tests: `MachinePolicy_Test` (every cell, playback ends), `MachineCoordinator_Test`
+(`APlaybackEndsBeforeTheParkOfTheOutermostOperationOnly`, `AnOperationOnItsOwnLockIsLoggedWithoutAParkOrTheSession`),
+`CoordinatorEmulator_Test` (`AChangeOfTheMachineItselfEndsTheSessionAndDropsItsHistory`,
+`ASpeedChangeIsLoggedAndDropsAHistory`, `TtdV1RefusesARomLoadWhileRecordingAndTheLogHasIt`), `TimeTravelHooks_Test`
+(`MediaMachineAndSpeedChangesDropAStoppedSessionWithTheirReason`), `OperationLog_Test`
+(`TheSameToolEditAgainCountsInTheNewestEntry`); `CoordinatorEmulator_Test` also `AResetEndsAnRzxPlaybackFirst`,
+`AToolsEditIsLoggedAndARegisterWriteIsOneToo`, `AToolsEditInTheRecordedPastIsRefused`, `TtdVerbsAreLogged`. Benchmark: `BM_ToolEdit_LivePoke`
+(`core/benchmarks/emulator/coordinator/tooledit_benchmark.cpp`).
+

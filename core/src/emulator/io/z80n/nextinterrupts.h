@@ -12,10 +12,12 @@
 
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 #include "emulator/cpu/z80.h"
 #include "emulator/io/z80n/z80nengine.h"
 #include "emulator/io/z80n/nexttiming.h"
+#include "emulator/io/z80n/nextintjournal.h"
 
 class EmulatorContext;
 
@@ -24,6 +26,8 @@ class NextInterruptSource final : public IInterruptSource, public INmiReturnStor
 public:
     /// NR #C0 bit 3 changed (also at a reset: off): the engine switches the stackless NMI
     std::function<void(bool)> onStacklessNmi;
+    /// An interrupt accepted / ended (the journal of PortDecoder_Next): kind IntAck or Reti, the source's name and, in hardware IM2 mode, the vector
+    std::function<void(NextIntKind kind, const char* source, bool hasVector, uint8_t vector)> onEvent;
     /// The CTC channels' own interrupt enables (control bit 7): they ARE the enables of the CTC sources, NR #C5 reads and writes them.
     /// Not set (the controller alone, tests): NR #C5 keeps its own byte
     std::function<uint8_t()> ctcEnables;
@@ -83,6 +87,12 @@ public:
     void SetCounterOffset(uint8_t offset) { _counterOffset = offset; }
 
     bool HardwareMode() const { return (_control & 1) != 0; }
+    /// NR #C0 bit 3: an NMI does not push its return address (it goes to NR #C2 / #C3)
+    bool StacklessNmi() const { return (_control & 0x08) != 0; }
+    /// The interrupt sources' names ("line", "uart0_rx", "ctc0".."ctc7", "ula", "uart0_tx", "uart1_tx"), by Source number
+    static const char* SourceName(unsigned source);
+    /// A mask of sources as names (bit 0 first)
+    static std::vector<const char*> SourceNames(uint16_t mask);
     uint16_t PendingMask() const { return _pending; }
     uint16_t InServiceMask() const { return _inService; }
     uint8_t VectorOf(Source source) const { return static_cast<uint8_t>((_control & 0xE0) | (static_cast<unsigned>(source) << 1)); }
@@ -99,6 +109,7 @@ public:
     /// endregion
 
 private:
+    friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     uint32_t BaseT(uint32_t t) const;
     uint32_t LineStartT() const;
     uint32_t CounterOrigin() const;

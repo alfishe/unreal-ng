@@ -97,6 +97,7 @@ private:
     static uint16_t NmiLoad(Z80nCPU* cpu, void* user);
     static void NextReg(Z80nCPU* cpu, uint8_t reg, uint8_t value, void* user);
 
+    EmulatorContext* _context = nullptr;
     Z80* _z80 = nullptr;
     Memory* _memory = nullptr;
     Z80nCPU* _cpu = nullptr;

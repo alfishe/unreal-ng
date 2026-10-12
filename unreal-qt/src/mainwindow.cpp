@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include <emulator/video/displaygeometry.h>
 #include "loaders/snapshot/snapshotlauncher.h"
 #include "loaders/snapshot/snapshotpipeline.h"
 #include "emulator/savesnapshotchoices.h"
@@ -202,6 +203,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_screenWrapper, &DeviceScreenWrapper::refreshed, this, [this]() {
         if (_ft812DebugWindow && _ft812DebugWindow->isVisible())
             _ft812DebugWindow->refresh();
+    });
+
+    // A new video mode (or crop) resizes the window to it at the same zoom, until the user sizes it by hand
+    connect(_screenWrapper, &DeviceScreenWrapper::pictureGeometryChanged, this, [this]() {
+        updateScreenMinimumSize();  // at once: even a window sized by hand must not drop below 1x of the new mode
+        if (_refitPending)
+            return;
+        _refitPending = true;
+        QTimer::singleShot(0, this, [this]() {
+            _refitPending = false;
+            refitWindowToPicture();
+        });
     });
 
     // Forward drag/drop from GPU window to main window
@@ -862,27 +875,108 @@ void MainWindow::applyDisplayRefreshRate()
              << "Hz, VRR" << _displayRefresh.variable << "(" << _displayRefresh.source << ")";
 }
 
+QSize MainWindow::pictureNativeSize() const
+{
+    // The screen always draws in the CRT frame's 352:288 shape (wide framebuffers - TS-Conf 720x288, Profi 608x288 -
+    // are stretched into it): the window is sized for that frame, as DisplayGeometry defines it
+    QSize source(DisplayGeometry::kReferenceWidth, DisplayGeometry::kReferenceHeight);
+    if (_screenWrapper)
+    {
+        const QSize shown = _screenWrapper->pictureSourceRect().size().toSize();
+        if (shown.width() > 0 && shown.height() > 0)
+            source = shown;
+    }
+
+    const DisplayGeometry::Size frame = DisplayGeometry::DisplayFrame(static_cast<uint16_t>(source.width()),
+                                                                      static_cast<uint16_t>(source.height()));
+    return QSize(frame.width, frame.height);
+}
+
+void MainWindow::updateScreenMinimumSize()
+{
+    if (!ui->contentFrame)
+        return;
+
+    QSize minimum = pictureNativeSize();
+    if (QScreen* scr = screen())
+        minimum = minimum.boundedTo(scr->availableGeometry().size() - windowChrome());  // never beyond the display
+    ui->contentFrame->setMinimumSize(minimum);
+}
+
+QSize MainWindow::windowChrome()
+{
+    // Right after a resize() the content frame still has its old size until the layout runs: measure after it did
+    if (QLayout* mainLayout = layout())
+        mainLayout->activate();
+    if (QWidget* central = centralWidget())
+    {
+        if (QLayout* centralLayout = central->layout())
+            centralLayout->activate();
+    }
+
+    const QSize measured = size() - ui->contentFrame->size();
+    if (measured.width() >= 0 && measured.height() >= 0)
+        _chrome = measured;
+    return _chrome;  // a window not laid out yet gives nonsense: the last sane one stands
+}
+
 void MainWindow::fitWindowToScreen(int scale)
 {
     if (!_screenWrapper || !ui->contentFrame || isFullScreen() || isMaximized())
         return;
 
-    const QSize native = _screenWrapper->sizeHint();  // Viewport-cropped native size (352x288 by default)
-    const QSize chrome = size() - ui->contentFrame->size();  // Menu bar, toolbar, status bar, margins
-    const QSize target = native * scale + chrome;
+    const QSize native = pictureNativeSize();
+    const QSize chrome = windowChrome();
 
-    // Keep the window on screen: fall back to 1x if 2x does not fit
+    // Keep the window on screen: the zoom drops to the largest whole one that fits
+    int fitted = scale;
     if (QScreen* scr = screen())
     {
-        const QSize available = scr->availableGeometry().size();
-        if (scale > 1 && (target.width() > available.width() || target.height() > available.height()))
-        {
-            fitWindowToScreen(scale - 1);
-            return;
-        }
+        const QSize available = scr->availableGeometry().size() - chrome;
+        while (fitted > 1 && (native.width() * fitted > available.width() || native.height() * fitted > available.height()))
+            --fitted;
     }
 
-    resize(target);
+    _zoomFactor = fitted;
+    _fitTarget = native * fitted + chrome;
+    _fitClock.start();
+    resize(_fitTarget);
+}
+
+void MainWindow::refitWindowToPicture()
+{
+    if (_userResizedWindow || !_initialFitDone || !_screenWrapper || !ui->contentFrame || isFullScreen() ||
+        isMaximized())
+        return;
+
+    const QSize native = pictureNativeSize();
+
+    // The window cannot go below the width its toolbar needs, and the toolbar wraps (changing the chrome's height)
+    // at the width we pick: two passes, the second with the chrome the first one produced
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        const QSize chrome = windowChrome();
+        QSizeF picture(native.width() * _zoomFactor, native.height() * _zoomFactor);
+
+        // Larger than the display: shrink; smaller than the window's minimum: grow - the aspect ratio kept
+        if (QScreen* scr = screen())
+        {
+            const QSizeF available = QSizeF(scr->availableGeometry().size() - chrome);
+            if (picture.width() > available.width() || picture.height() > available.height())
+                picture.scale(available, Qt::KeepAspectRatio);
+        }
+        const QSizeF smallest = QSizeF(minimumSize() - chrome).expandedTo(QSizeF(1, 1));
+        if (picture.width() < smallest.width() || picture.height() < smallest.height())
+            picture.scale(smallest, Qt::KeepAspectRatioByExpanding);
+
+        const QSize target = picture.toSize() + chrome;
+        if (target == size())
+            return;
+
+        _fitTarget = target;
+        _fitClock.start();
+        resize(target);
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
@@ -1055,6 +1149,13 @@ void MainWindow::resizeEvent(QResizeEvent* event)
         if (!looksLikeMaximized)
         {
             _normalGeometry = currentGeom;
+
+            // A window-system resize we did not ask for is the user dragging the edge
+            // (not the window system's own steps towards our size: it animates a resize on some platforms)
+            constexpr qint64 kAnimationMs = 1500;
+            const bool ours = _fitClock.isValid() && _fitClock.elapsed() < kAnimationMs;
+            if (_initialFitDone && event->spontaneous() && !ours && event->size() != _fitTarget)
+                _userResizedWindow = true;
         }
     }
 
@@ -1540,9 +1641,15 @@ void MainWindow::toggleEmulatorStartStop()
         // manager, in log lines, and it is what TTD stores as emulator_id in a
         // session dump. It used to be "test", which is what every recording made
         // from this app was labelled with.
-        auto newEmulator = _nextEmulatorModel.empty()
+        // A one-shot request (a file that names its machine) wins over the Machine menu's choice
+        const bool oneShot = !_nextEmulatorModel.empty();
+        const std::string& startModel = oneShot ? _nextEmulatorModel : _pickedModel;
+        const uint32_t startRamKb = oneShot ? _nextEmulatorRamKb : _pickedRamKb;
+        auto newEmulator = startModel.empty()
             ? _emulatorManager->CreateEmulator("unreal-qt", LoggerLevel::LogInfo)
-            : _emulatorManager->CreateEmulatorWithModelAndRAM("unreal-qt", _nextEmulatorModel, _nextEmulatorRamKb, LoggerLevel::LogInfo);
+            : _emulatorManager->CreateEmulatorWithModelAndRAM("unreal-qt", startModel, startRamKb, LoggerLevel::LogInfo);
+        _pickedModel.clear();  // the menu follows the running machine from here
+        _pickedRamKb = 128;
 
         // Initialize emulator instance
         if (newEmulator)
@@ -3836,6 +3943,17 @@ void MainWindow::handleMachineModelChangeRequested(const QString& modelSpec)
     if (const MachineVariant* variant = MachineVariants::Find(modelName))
         displayName = QString::fromUtf8(variant->title);
 
+    // Nothing runs: nothing to destroy and nothing to confirm. The choice waits for Start
+    if (!_emulator)
+    {
+        _pickedModel = modelName;
+        _pickedRamKb = ramSize;
+        if (_menuManager)
+            _menuManager->setCurrentModelKey(modelSpec);
+        qInfo() << "Machine chosen for the next start:" << displayName;
+        return;
+    }
+
     // Confirm with user
     QMessageBox::StandardButton reply = QMessageBox::question(
         this,
@@ -4773,7 +4891,11 @@ void MainWindow::updateRemoteControlUi()
     {
         HudToastRequest toast;
         toast.title = tr("Remote control").toStdString();
-        toast.body = tr("%1 controls the emulator. Take control back from the toolbar").arg(who).toStdString();
+        toast.body = (_remoteControl->implicit()
+                          ? tr("%1 drives it without taking control. Take control back from the toolbar")
+                          : tr("%1 controls the emulator. Take control back from the toolbar"))
+                         .arg(who)
+                         .toStdString();
         toast.icon = "remote";
         toast.dedupKey = "remote-control";
         _hudModel->notify(toast);

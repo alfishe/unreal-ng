@@ -248,6 +248,7 @@ public:
     // region Screen State (implementation: api/state_screen_api.cpp)
     ADD_METHOD_TO(EmulatorAPI::getStateScreen, "/api/v1/emulator/{id}/state/screen", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateScreenMode, "/api/v1/emulator/{id}/state/screen/mode", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::putStateScreenOverscan, "/api/v1/emulator/{id}/state/screen/overscan", drogon::Put, drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateScreenFlash, "/api/v1/emulator/{id}/state/screen/flash", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateScreenAttributes, "/api/v1/emulator/{id}/state/screen/attributes", drogon::Get);
 
@@ -337,6 +338,14 @@ public:
     ADD_METHOD_TO(EmulatorAPI::postNextRegJournal, "/api/v1/emulator/{id}/next/reg-journal", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateNextSd, "/api/v1/emulator/{id}/state/next/sd", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNextSdJournal, "/api/v1/emulator/{id}/next/sd-journal", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextDivMmc, "/api/v1/emulator/{id}/state/next/divmmc", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postNextDivMmcJournal, "/api/v1/emulator/{id}/next/divmmc-journal", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextNmi, "/api/v1/emulator/{id}/state/next/nmi", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextAudio, "/api/v1/emulator/{id}/state/next/audio", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextInput, "/api/v1/emulator/{id}/state/next/input", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postNextNmiJournal, "/api/v1/emulator/{id}/next/nmi-journal", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextMagicPort, "/api/v1/emulator/{id}/state/next/magic-port", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postNextMagicPort, "/api/v1/emulator/{id}/next/magic-port", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateNextPixel, "/api/v1/emulator/{id}/state/next/pixel", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNextLayerCapture, "/api/v1/emulator/{id}/next/layer-capture", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateNextDma, "/api/v1/emulator/{id}/state/next/dma", drogon::Get);
@@ -1057,6 +1066,14 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                              std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                              const std::string& id) const;
 
+    /// @brief PUT/POST /api/v1/emulator/{id}/state/screen/overscan {"enabled": bool, "viewport": "..."} - the Pentagon's
+    /// 384x304 overscan frame on or off (the GUI's View > Overscan), with the viewport that crops it (symmetric |
+    /// standard | screen_only | full). A video mode is the machine's own state, so this is the one mode that
+    /// automation sets by an API rather than by a port
+    void putStateScreenOverscan(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                const std::string& id) const;
+
     /// @brief GET /api/v1/emulator/{id}/state/screen/attributes — per-cell
     /// ink/paper/bright/flash decoded from screen attribute memory
     void getStateScreenAttributes(const drogon::HttpRequestPtr& req,
@@ -1235,6 +1252,30 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                         const std::string& id) const;
     /// @brief POST /api/v1/emulator/{id}/next/sd-journal {"enabled", "clear", "capacity"} — switch, clear or resize the SD journal
     void postNextSdJournal(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/next/divmmc?kinds=&since=&from=&to=&limit= — the DivMMC, its automap entries and the DivMMC journal
+    void getStateNextDivMmc(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/next/divmmc-journal {"enabled", "clear", "capacity"} — switch, clear or resize the DivMMC journal
+    void postNextDivMmcJournal(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/next/nmi?kinds=&since=&from=&to=&limit= — NMI sources, the Multiface, interrupts, reset and the journal
+    void getStateNextNmi(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/next/audio — the Next's chips (pan, registers), stereo mode, turbosound and the DAC
+    void getStateNextAudio(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/next/input — the Next's joystick modes (NR #05 / #0B), the Kempston port, what is not modelled
+    void getStateNextInput(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/next/nmi-journal {"enabled", "clear", "capacity"} — switch, clear or resize the interrupt / NMI / reset journal
+    void postNextNmiJournal(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/next/magic-port?since=&limit= — the magic debug port: its setting and the text a program wrote to it
+    void getStateNextMagicPort(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/next/magic-port {"enabled", "port", "mode", "clear"} — switch the magic port, choose its port and mode, clear its output
+    void postNextMagicPort(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                            const std::string& id) const;
     /// @brief GET /api/v1/emulator/{id}/state/next/pixel?x=&y=&sx= — the pixel inspector: winner, colour, per-layer why and source address
     void getStateNextPixel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,

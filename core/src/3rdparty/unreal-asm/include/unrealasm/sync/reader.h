@@ -63,6 +63,28 @@ struct Signature
     std::string bytes;
 };
 
+/// A variable of the assembler's editor its LOAD sets besides the text (XAS keeps the cursor line, the top line and
+/// the text end in instruction operands): found by a code pattern in the CPU view, written by an inject as LOAD would
+struct LoadVariable
+{
+    std::vector<int> pattern;       ///< code bytes; -1 = any byte
+    uint8_t at = 0;                 ///< offset in the pattern of the variable's 16-bit address
+    enum class From : uint8_t
+    {
+        Header,                     ///< `size` bytes of the file's header from offset `field`
+        TextEnd,                    ///< the CPU address of the text's end byte (lengthFromEnd layouts)
+        Constant,                   ///< `value`
+        SetBits,                    ///< the byte as it is with the bits of `value` set
+        PageBytes,                  ///< `size` bytes of the text's page as written, from offset `field` (the name field)
+        SecondLine,                 ///< the CPU address of the second line of [body][length] lines (STORM; the end
+                                    ///< sentinel's for a text of one line)
+    } from = From::Header;
+    uint16_t field = 0;
+    uint8_t size = 2;
+    uint32_t value = 0;
+    int16_t offset = 0;             ///< added to the address the pattern gives (a field of a variable block)
+};
+
 struct FileImageParams
 {
     uint16_t pageIdAt = 0;          ///< CPU address of the page id of the current text
@@ -90,6 +112,11 @@ struct FileImageParams
     /// memory holds them, so a live file differs from the next save there and only there
     uint16_t editorStateAt = 0;
     uint16_t editorStateLength = 0;
+    /// What LOAD sets in the editor's own variables (XAS): an inject writes them too, or refuses when one is not found
+    std::vector<LoadVariable> loadVariables;
+    /// The editor's own "changed since LOAD / SAVE" flags where the text's page has none (STORM): the byte each pattern
+    /// gives, changed when a bit of `value` is set (`from` SetBits) or clear (`from` Constant: a "written" flag)
+    std::vector<LoadVariable> changedVariables;
 };
 
 struct GapBufferParams
@@ -99,6 +126,15 @@ struct GapBufferParams
     uint16_t gapStart = 0;          ///< the gap start (end of the text before the cursor),
     uint16_t gapEnd = 0;            ///< the gap end (start of the text after the cursor)
     uint16_t lineCount = 0;         ///< CPU address of the 16-bit line count (the current line counted)
+    uint16_t cursorLine = 0;        ///< CPU address of the cursor's line number (0 = none known)
+    /// TASM 4.12: LOAD leaves the file as saved (its end record included) at the text start with the other pointers and
+    /// the line count 0; MASM 1.1: at its fixed start with the gap start there and the gap end at #FFFF. The editor
+    /// makes the gap buffer when it is entered. The reader takes that form, an inject writes it
+    bool loadedForm = false;
+    uint16_t changedAt = 0;         ///< CPU address of the editor's "changed since LOAD / SAVE" byte (0 = none)
+    uint8_t changedMask = 0xFF;
+    uint16_t nameAt = 0;            ///< CPU address of the work name, blank padded (0 = none)
+    uint8_t nameLength = 8;
     uint16_t lineBuffer = 0;        ///< CPU address of the current line as text, blank padded
     uint16_t lineBufferLength = 0;
     encoding::CodePage lineCodePage = encoding::CodePage::Cp866;
@@ -151,6 +187,11 @@ struct LinearParams
     uint16_t prometheusEndAt = 0;
     uint16_t editorStateAt = 0;     ///< bytes of the file SAVE fills (masked by the tests)
     uint16_t editorStateLength = 0;
+    /// An inject writes the text from (startAt) and the end pointer (injectable), and sets the words from resetFrom up
+    /// to resetTo (exclusive; the cursor line, the marks: ZAsm's table) to the start, as LOAD leaves them
+    bool injectable = false;
+    uint16_t resetFrom = 0;
+    uint16_t resetTo = 0;
 };
 
 struct TypingParams
@@ -182,7 +223,14 @@ struct SyncDescriptor
     /// Return addresses the stack holds in this order (lowest address first, within `idleDepth` bytes above SP) only
     /// while the assembler waits for a command: a text may be written then (part B, §16.2). Empty = no rule known
     std::vector<uint16_t> idleChain;
+    /// Other chains that mean the same (builds sharing a descriptor whose code lies elsewhere: STORM 1.3 and 1.3i)
+    std::vector<std::vector<uint16_t>> idleAlternatives;
     uint16_t idleDepth = 64;
+    /// Where the assembler waits when it is idle, for the refusal's text ("" = its command line)
+    std::string idleWhere;
+    /// Bytes that are all zero while it is idle (MASM: its line buffer, blank padded in the editor; 0 = none)
+    uint16_t idleZeroAt = 0;
+    uint16_t idleZeroLength = 0;
 };
 
 /// Every built-in descriptor (asm-synchronizer.md §7), each checked with golden dumps: ALASM 3.8c, 4.42-4.46, 4.5,
@@ -223,6 +271,9 @@ struct InjectOptions
     /// Files this caller wrote before (the push watch, Z2): a text in memory whose lines are still those of one of them
     /// is the caller's own and is replaced without force, though it is marked changed
     std::vector<std::vector<uint8_t>> written;
+    /// The text's name where the assembler keeps it outside the file (TASM 4.12's work name); PlanInjectProject gives
+    /// its title. Empty: the name in memory stays
+    std::string name;
 };
 
 /// The writes that make `file` (the assembler's own file, as its codec encodes it) the live text
@@ -232,6 +283,13 @@ struct InjectPlan
     std::string error;
     int page = -1;                       ///< the RAM page written (FileImage)
     std::vector<uint8_t> bytes;          ///< its new contents, the whole page
+    struct Poke
+    {
+        int page = -1;
+        uint16_t offset = 0;
+        uint8_t value = 0;
+    };
+    std::vector<Poke> pokes;             ///< bytes of other pages written with it (FileImageParams::loadVariables)
     SyncText previous;                   ///< the text it replaces (previous.ok false: none read)
 };
 

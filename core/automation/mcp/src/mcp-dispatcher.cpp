@@ -235,6 +235,9 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
                         "revoked_by_user: the user took control of the emulator back at its GUI; your automation "
                         "session has ended. Stop. Do not retry this call and do not take control again "
                         "(control_execution take_control) without asking the user first.");
+                // The gate opened a session for this call: advise the agent to take control explicitly (once)
+                if (const std::string advice = caller.TakeImplicitAdvice(); !advice.empty())
+                    result.text += "\n\n" + advice;
                 Json::Value payload;
                 Json::Value text;
                 text["type"] = "text";

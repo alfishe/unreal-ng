@@ -70,10 +70,16 @@ void TTDSessionPort::Apply(SessionEffect effect, const std::string& reason)
             break;
         case SessionEffect::StopThenMediaChanged:
             ttd->StopRecording();
-            ttd->OnLoad(TTDLoadKind::Media, reason.c_str());
+            ttd->EndSessionFor(TTDChange::Media, reason.c_str());
             break;
         case SessionEffect::MediaChanged:
-            ttd->OnLoad(TTDLoadKind::Media, reason.c_str());
+            ttd->EndSessionFor(TTDChange::Media, reason.c_str());
+            break;
+        case SessionEffect::MachineChanged:
+            ttd->EndSessionFor(TTDChange::Machine, reason.c_str());
+            break;
+        case SessionEffect::TimingChanged:
+            ttd->EndSessionFor(TTDChange::Timing, reason.c_str());
             break;
     }
 }

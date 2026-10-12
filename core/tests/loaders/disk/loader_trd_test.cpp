@@ -4,6 +4,8 @@
 #include <common/stringhelper.h>
 #include <gtest/gtest.h>
 
+#include <memory>
+
 #include "_helpers/testpathhelper.h"
 #include "emulator/cpu/core.h"
 
@@ -103,6 +105,7 @@ TEST_F(LoaderTRD_Test, Load)
     std::string filepath = TestPathHelper::GetTestDataPath("loaders/trd/EyeAche.trd");
     LoaderTRDCUT loaderTrd(_context, filepath);
     bool result = loaderTrd.loadImage();
+    const std::unique_ptr<DiskImage> loaded(loaderTrd._diskImage);  // the loader hands its image over
 
     ASSERT_EQ(result, true) << StringHelper::Format("File '%s' was not loaded", filepath.c_str()) << std::endl;
     ASSERT_NE(loaderTrd._diskImage, nullptr) << "Disk image not created";
@@ -117,6 +120,7 @@ TEST_F(LoaderTRD_Test, Sector9)
     std::string filepath = TestPathHelper::GetTestDataPath("loaders/trd/EyeAche.trd");
     LoaderTRDCUT loaderTrd(_context, filepath);
     bool result = loaderTrd.loadImage();
+    const std::unique_ptr<DiskImage> loaded(loaderTrd._diskImage);  // the loader hands its image over
 
     ASSERT_EQ(result, true) << StringHelper::Format("File '%s' was not loaded", filepath.c_str()) << std::endl;
     ASSERT_NE(loaderTrd._diskImage, nullptr) << "Disk image not created";

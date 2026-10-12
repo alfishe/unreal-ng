@@ -11,17 +11,25 @@
 #include "emulator/io/z80n/nextdivmmc.h"
 #include "emulator/io/z80n/nextmultiface.h"
 #include "emulator/io/z80n/nextsdjournal.h"
+#include "emulator/io/z80n/nextintjournal.h"
+#include "emulator/io/z80n/nextextendedinput.h"
+#include "emulator/io/z80n/nextmagicport.h"
 #include "emulator/io/z80n/nexti2c.h"
 #include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/io/z80n/z80nengine.h"
 #include "emulator/io/sdcard/sdcardspi.h"
 #include "emulator/media/mediaslot.h"
 #include "emulator/memory/next/nextmemory.h"
+#include <vector>
+
 #include "emulator/ports/models/portdecoder_spectrum128.h"
 
 /// ZX Spectrum Next, skeleton personality: the 128K board's ports (ULA #FE, AY, #7FFD) with the Next's wider
 /// decode of the paging ports - #7FFD, #1FFD, #DFFD rewrite the MMU slot table - and the NEXTREG pair #243B /
 /// #253B. Owns the board (register file) and installs the Z80N CPU engine.
+class BreakpointManager;
+enum class BreakpointHitKind : uint8_t;
+
 class PortDecoder_Next : public PortDecoder_Spectrum128, public INextMachine
 {
 public:
@@ -50,6 +58,9 @@ public:
     void ClearDivMmcMapram() override { _divMmc->ClearMapram(); }
     void DivMmcEnableChanged() override { _divMmc->OnEnableChanged(); }
     void StepDma() override;
+    /// INextMachine: with a beam, copper-instruction or copper-door NextREG breakpoint set, the copper is watched here, at the
+    /// instruction boundary (WatchCopper); otherwise one load and one test
+    void OnInstructionDone() override;
     void OnRetn() override;
     bool GenerateMultifaceNmi() override;
     /// The DRIVE button (F10 on the board; the host's NMI action): NR #06 bit 4 enables it, one NMI at a time
@@ -66,6 +77,17 @@ public:
     void AudioConfigChanged() override;
     void DacMirrorWrite(uint8_t reg, uint8_t value) override;
     NextAudio& Audio() { return *_audio; }
+    /// What a read of port #1F returns now (the joystick's state; no side effect), for the input report
+    uint8_t KempstonJoystickNow() const { return Default_Port_KempstonJoystick_In(); }
+
+    /// NR #05 joystick mode codes (zxnext.vhd nr_05_joy0 / joy1 = bit 3 or 1 & bits 7:6 or 5:4)
+    static constexpr unsigned kJoyKempston1 = 1, kJoyKempston2 = 4, kJoyMd1 = 5, kJoyMd2 = 6;
+    /// The code of the left (`left` true) or right joystick as NR #05 holds it now
+    unsigned JoystickMode(bool left) const;
+    /// Whether the board drives port #1F (`port37` false) or #37 now, and what a read gives (zxnext.vhd 2396, 2616-2617, 3436-3470): a side
+    /// that is Kempston 1 / MD 1 feeds #1F, Kempston 2 / MD 2 feeds #37, bits 7:6 only for an MD pad; the port also needs its bit in
+    /// NR #82 (6 and 7). The host joystick is the LEFT connector; the right one is set by a tool (NextExtendedInput::Right). False: the read is not answered (the bus idles at #FF)
+    bool JoystickPortAnswers(bool port37, uint8_t& value) const;
     NextDma& Dma() { return _dma; }
     void BindDma();
     uint8_t ReadMemoryMapping() const override;
@@ -90,6 +112,20 @@ public:
     /// Accesses that began before the previous byte was done and were ignored, as on the board
     uint32_t SpiTooFastCount() const { return _spiTooFast; }
     /// The SD journal (automation-gaps-2026-10-11.md, P1) and the SPI engine's state for the report
+    /// The interrupt, NMI and reset journal (automation-gaps-2026-10-11.md, P4)
+    NextExtendedInput& ExtendedInput() { return _extendedInput; }
+    const NextExtendedInput& ExtendedInput() const { return _extendedInput; }
+    uint8_t ReadExtendedInput(uint8_t reg) const override;
+    bool HasPads() const override { return true; }
+    uint16_t PadState(unsigned connector) const override;
+    bool ApplyPadState(unsigned connector, uint16_t state) override;
+    NextMagicPort& MagicPort() { return _magicPort; }
+    const NextMagicPort& MagicPort() const { return _magicPort; }
+    NextIntJournal& IntJournal() { return _intJournal; }
+    const NextIntJournal& IntJournal() const { return _intJournal; }
+    /// Why a button NMI would be refused now (nullptr: it would fire), for the report and the journal
+    const char* MultifaceNmiRefusal() const;
+    const char* DriveNmiRefusal() const;
     NextSdJournal& SdJournal() { return _sdJournal; }
     const NextSdJournal& SdJournal() const { return _sdJournal; }
     int SpiSelectedLine() const { return _spiSelected; }
@@ -106,7 +142,28 @@ public:
     uint64_t Now28() const;
     Z80NEngine* Engine() { return _engine.get(); }
 
+    /// The TTD state of the Next (PeripheralId::NextState, nextstatecodec.h)
+    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
+
 private:
+    friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
+    /// NextREG breakpoints (BreakpointManager::HandleNextReg). A hit of the CPU's doors stops the machine where it happens (as a port
+    /// breakpoint does), before the register takes the write.
+    ///
+    /// The copper is another matter: the picture runs it lazily, a line at a time, in the middle of drawing, where the machine must not
+    /// park and the CPU is up to a line ahead of the copper's time. With a breakpoint on the copper (its door, its instructions, the beam)
+    /// WatchCopper looks at what the copper does up to the beam *now* on a copy (NextCopper::Probe) after every instruction, and stops
+    /// at the first instruction boundary after the beam has done it, before the real copper's catch-up executes the write. The real
+    /// catch-up then neither checks nor counts them again
+    void NextRegAccess(bool write, uint8_t reg, uint8_t value, NextRegSource source);
+    void FireBreakpoint(uint16_t id, uint16_t address, BreakpointHitKind kind);
+    void WatchCopper(BreakpointManager& manager);
+    void WatchMagic(BreakpointManager& manager);
+    bool _breakpointActive = false;  // a stop is being served: nothing nests in it
+    bool _watchValid = false;
+    uint64_t _watchClock = 0;  // the copper clock up to which the copper was watched
+    std::vector<NextCopper::Step> _watchSteps;
     NextMemory& Mem() const { return *static_cast<NextMemory*>(_context->pMemory); }
     void Port_7FFD_Next(uint16_t port, uint8_t value, uint16_t pc);
     void Port_1FFD_Next(uint8_t value);
@@ -161,6 +218,10 @@ private:
     double _spiBusyRatio = 1.0;  ///< the CPU speed ratio the byte in flight was timed at
     uint32_t _spiTooFast = 0;
     NextSdJournal _sdJournal;
+    NextIntJournal _intJournal;
+    NextMagicPort _magicPort;
+    NextExtendedInput _extendedInput;  ///< the keyboard's extended keys and the pads' extra buttons; the machine's PS/2 sink
+    void RecordInt(NextIntEvent event);
     void RecordSdEvent(unsigned card, const SdTraceEvent& event);
     std::unique_ptr<NextBoard> _board;
     std::unique_ptr<NextInterruptSource> _interrupts;

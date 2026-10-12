@@ -80,6 +80,8 @@
 #include <common/stringhelper.h>
 #include <debugger/ports/nextregwrite.h>
 #include <emulator/io/z80n/nextregjournal.h>
+#include <emulator/io/z80n/nextdivmmcjournal.h>
+#include <emulator/io/z80n/nextintjournal.h>
 #include <emulator/io/z80n/nextsdjournal.h>
 #include <emulator/io/z80n/nextreportquery.h>
 #include <emulator/video/screendigest.h>
@@ -424,6 +426,74 @@ protected:
         return id == BRK_INVALID ? -1 : static_cast<int>(id);
     }
 
+    /// bp_nextreg_write / bp_nextreg_read / bp_nextreg: `options` is nothing or a table {to=, doors=, value=, vmask=, hits=}
+    /// (to = register range end; doors "nextreg,port,copper"; value = stop only on it, vmask = the compared bits). The id, or -1
+    int AddScriptNextRegBreakpoint(uint8_t access, uint16_t reg, const sol::optional<sol::table>& options)
+    {
+        Emulator* emulator = effectiveEmulator();
+        BreakpointManager* bpm = emulator ? emulator->GetBreakpointManager() : nullptr;
+        if (!bpm)
+            return -1;
+        BreakpointSpec spec;
+        spec.type = BRK_NEXTREG;
+        spec.access = access;
+        spec.address = reg;
+        std::string doors, hits;
+        int32_t to = -1, value = -1, vmask = -1;
+        if (options)
+        {
+            const sol::table& t = *options;
+            to = t.get<sol::optional<int32_t>>("to").value_or(-1);
+            doors = t.get<sol::optional<std::string>>("doors").value_or("");
+            value = t.get<sol::optional<int32_t>>("value").value_or(-1);
+            vmask = t.get<sol::optional<int32_t>>("vmask").value_or(-1);
+            hits = t.get<sol::optional<std::string>>("hits").value_or("");
+            if (hits.empty())
+                if (auto n = t.get<sol::optional<int64_t>>("hits"))
+                    hits = std::to_string(*n);
+        }
+        std::string error;
+        if (!BreakpointManager::ApplyNextRegOptions(spec, to, doors, value, vmask, hits, error))
+            return -1;
+        const uint16_t id = bpm->AddBreakpoint(spec, error);
+        return id == BRK_INVALID ? -1 : static_cast<int>(id);
+    }
+
+    /// bp_beam / bp_copper (ZX Next): `options` is nothing or a table {hc=, to=, hits=} (hc: the pixel clock of a beam place; to: the
+    /// range end of copper list indexes). The id, or -1
+    int AddScriptPositionBreakpoint(BreakpointTypeEnum type, uint16_t position, const sol::optional<sol::table>& options)
+    {
+        Emulator* emulator = effectiveEmulator();
+        BreakpointManager* bpm = emulator ? emulator->GetBreakpointManager() : nullptr;
+        if (!bpm)
+            return -1;
+        BreakpointSpec spec;
+        spec.type = type;
+        spec.access = BRK_IO_OUT;
+        spec.address = position;
+        std::string hits;
+        if (options)
+        {
+            const sol::table& t = *options;
+            spec.beamHc = static_cast<uint16_t>(t.get<sol::optional<int32_t>>("hc").value_or(0));
+            const int32_t to = t.get<sol::optional<int32_t>>("to").value_or(-1);
+            if (to >= 0)
+            {
+                spec.hasEnd = true;
+                spec.addressEnd = static_cast<uint16_t>(to);
+            }
+            hits = t.get<sol::optional<std::string>>("hits").value_or("");
+            if (hits.empty())
+                if (auto n = t.get<sol::optional<int64_t>>("hits"))
+                    hits = std::to_string(*n);
+        }
+        std::string error;
+        if (!BreakpointManager::ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error))
+            return -1;
+        const uint16_t id = bpm->AddBreakpoint(spec, error);
+        return id == BRK_INVALID ? -1 : static_cast<int>(id);
+    }
+
     /// region <Kempston Mouse helpers (automation-interfaces §4.7)>
 protected:
     DebugMouseManager* mouseManager() const
@@ -650,6 +720,20 @@ protected:
         t["pressed"] = pressed;
         t["button_names"] = names;
         t["keys"] = state.keys;
+        if (state.hasPads)
+        {
+            sol::table extras = lua.create_table();
+            for (size_t i = 0; i < state.leftExtraButtons.size(); i++)
+                extras[i + 1] = state.leftExtraButtons[i];
+            t["left_extras"] = extras;
+            sol::table rightPad = lua.create_table();
+            rightPad["state"] = static_cast<int>(state.rightPad);
+            sol::table rightButtons = lua.create_table();
+            for (size_t i = 0; i < state.rightButtons.size(); i++)
+                rightButtons[i + 1] = state.rightButtons[i];
+            rightPad["buttons"] = rightButtons;
+            t["right_pad"] = rightPad;
+        }
         if (state.pendingTapMask != 0)
         {
             sol::table pending = lua.create_table();
@@ -718,7 +802,7 @@ public:
             "start", &Emulator::Start,
             "stop", &Emulator::Stop,
             "pause", [](Emulator& self) -> std::string {
-                execution::script::Check(self, execution::Origin::Lua);
+                execution::script::Check(self, execution::Origin::Lua, false);   // a pause opens no session
                 return execution::script::PauseStatus(
                     self.Pause(execution::script::RequesterOf(self, execution::Origin::Lua), "lua"));
             },
@@ -972,12 +1056,11 @@ public:
             Emulator* emulator = effectiveEmulator();
             if (!emulator)
                 return false;
-            Z80State* z80 = emulator->GetZ80State();
-            if (!z80)
-                return false;
-            const bool set = Z80::SetRegisterValue(z80, name, value);
-            if (set)
-                emulator->NoteDebugChange();   // the debugger snapshot's seq
+            // A tool edit (TTD records it); refused in the recorded past: a script error
+            std::string refused;
+            const bool set = emulator->SetRegisterFromTool("lua register", name, value, &refused);
+            if (!refused.empty())
+                throw std::runtime_error(refused);
             return set;
         });
 
@@ -993,7 +1076,7 @@ public:
             if (!effectiveEmulator()) return;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
-            effectiveEmulator()->EditMemoryFromTool("Lua memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
+            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
         });
 
         lua.set_function("mem_read_word", [this](uint16_t addr) -> uint16_t {
@@ -1007,7 +1090,7 @@ public:
             if (!effectiveEmulator()) return;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
-            effectiveEmulator()->EditMemoryFromTool("Lua memory write", [&] {
+            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua memory write", [&] {
                 mem->ToolWriteToZ80Memory(addr, value & 0xFF);
                 mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
             });
@@ -1175,7 +1258,7 @@ public:
             if (!effectiveEmulator()) return;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
-            effectiveEmulator()->EditMemoryFromTool("Lua memory write", [&] {
+            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua memory write", [&] {
                 for (auto& pair : data) {
                     int idx = pair.first.as<int>() - 1;  // Lua tables start at 1
                     uint8_t val = pair.second.as<uint8_t>();
@@ -1216,7 +1299,7 @@ public:
                 pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
             else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-            effectiveEmulator()->EditMemoryFromTool("Lua page write", [&] {
+            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua page write", [&] {
                 pagePtr[offset] = value;
                 if (type == "ram")
                     mem->MarkRamPageEdited(static_cast<uint16_t>(page));
@@ -1263,7 +1346,7 @@ public:
             else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
             int maxLen = PAGE_SIZE - offset;
-            effectiveEmulator()->EditMemoryFromTool("Lua page write", [&] {
+            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua page write", [&] {
                 int idx = 0;
                 for (auto& pair : data) {
                     if (idx >= maxLen) break;
@@ -2597,10 +2680,7 @@ public:
                 return mouseError(s, "state must be an integer, a string or a table of button names");
             if (names.empty())
                 return joystickResult(s, *mgr, mgr->ReleaseAll());
-            const uint8_t mask = DebugJoystickManager::ResolveButtonNames(names);
-            if (mask == 0)  // the manager words the unknown-name error
-                return joystickResult(s, *mgr, mgr->Press(names));
-            return joystickResult(s, *mgr, mgr->SetStateChecked(mask));
+            return joystickResult(s, *mgr, mgr->SetNames(names));
         });
 
         lua.set_function("joystick_tap", [this](sol::this_state s, sol::object buttonsArg, sol::object framesArg) {
@@ -2842,6 +2922,32 @@ public:
         // Options: a table {mask=, hits=} (mask: (port & mask) == (port & mask) matches)
         lua.set_function("bp_port_out", [this](uint16_t port, sol::optional<sol::object> options) -> int {
             return AddScriptBreakpoint(BRK_IO, BRK_IO_OUT, port, options);
+        });
+
+        // ZX Next register breakpoints. Options: a table {to=, doors=, value=, vmask=, hits=} (to = register range end; doors
+        // "nextreg,port,copper" a write may come through; value = stop only on it, vmask = the compared bits). -1 when refused
+        lua.set_function("bp_nextreg_write", [this](uint16_t reg, sol::optional<sol::table> options) -> int {
+            return AddScriptNextRegBreakpoint(BRK_IO_OUT, reg, options);
+        });
+        lua.set_function("bp_nextreg_read", [this](uint16_t reg, sol::optional<sol::table> options) -> int {
+            return AddScriptNextRegBreakpoint(BRK_IO_IN, reg, options);
+        });
+        // bp_beam(line, {hc=}) stops when the beam passes the place (the copper's counters); bp_copper(index, {to=}) when the copper
+        // completes that list instruction. -1 when refused
+        lua.set_function("bp_beam", [this](uint16_t line, sol::optional<sol::table> options) -> int {
+            return AddScriptPositionBreakpoint(BRK_BEAM, line, options);
+        });
+        lua.set_function("bp_copper", [this](uint16_t index, sol::optional<sol::table> options) -> int {
+            return AddScriptPositionBreakpoint(BRK_COPPER, index, options);
+        });
+        // bp_magic("ed_ff" | "dd_01", {hits=}) stops after the CPU ran the magic opcode (a NOP / LD BC,nn on the hardware). -1 when refused
+        lua.set_function("bp_magic", [this](const std::string& opcode, sol::optional<sol::table> options) -> int {
+            if (opcode != "ed_ff" && opcode != "dd_01")
+                return -1;
+            return AddScriptPositionBreakpoint(BRK_MAGIC, opcode == "ed_ff" ? BRK_MAGIC_ED_FF : BRK_MAGIC_DD_01, options);
+        });
+        lua.set_function("bp_nextreg", [this](uint16_t reg, sol::optional<sol::table> options) -> int {
+            return AddScriptNextRegBreakpoint(BRK_IO_IN | BRK_IO_OUT, reg, options);
         });
 
         lua.set_function("bp_remove", [this](uint16_t id) -> bool {
@@ -3654,6 +3760,150 @@ public:
                     capacity = static_cast<size_t>(n.as<long long>());
             }
             return StateNodeToLua(s, DeviceState::NextSdJournalControl(emulator->GetContext(), enable, clear, capacity));
+        });
+        // next_divmmc([{kinds="map_in,esx_call", since=N, from=F, to=F, limit=N}]): the Next's DivMMC, its automap entries and the
+        // DivMMC journal (DeviceState::NextDivMmcReport); nil + error on a bad option. The journal is off by default: next_divmmc_journal_control({enabled=true}) first
+        lua.set_function("next_divmmc", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options)
+                    return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number)
+                    return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string)
+                    return value.as<std::string>();
+                return std::string();
+            };
+            NextDivMmcJournalQuery query;
+            std::string error;
+            if (!NextDivMmcJournalQueryFromStrings(text("kinds"), text("since"), text("from"), text("to"), text("limit"), query,
+                                               error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextDivMmcReport(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_divmmc_journal_control({enabled=true|false, clear=true, capacity=N}): switch / clear / resize the DivMMC journal
+        lua.set_function("next_divmmc_journal_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            bool clear = false;
+            size_t capacity = 0;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+                sol::object c = (*options)["clear"];
+                if (c.get_type() == sol::type::boolean)
+                    clear = c.as<bool>();
+                sol::object n = (*options)["capacity"];
+                if (n.get_type() == sol::type::number)
+                    capacity = static_cast<size_t>(n.as<long long>());
+            }
+            return StateNodeToLua(s, DeviceState::NextDivMmcJournalControl(emulator->GetContext(), enable, clear, capacity));
+        });
+        // next_audio() / next_input(): the Next's sound as configured (chips, pan, registers, DAC) and its joystick modes with the Kempston port
+        // (DeviceState::NextAudioReport / NextInputReport; no side effect on the machine)
+        lua.set_function("next_audio", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextAudioReport(emulator->GetContext()));
+        });
+        lua.set_function("next_input", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextInputReport(emulator->GetContext()));
+        });
+        // next_nmi([{kinds="int_ack,nmi_request", since=N, from=F, to=F, limit=N}]): the Next's NMI sources, Multiface, interrupts, reset and the
+        // interrupt / NMI / reset journal (DeviceState::NextNmiReport); nil + error on a bad option. The journal is off by default:
+        // next_nmi_journal_control({enabled=true}) first
+        lua.set_function("next_nmi", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options)
+                    return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number)
+                    return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string)
+                    return value.as<std::string>();
+                return std::string();
+            };
+            NextIntJournalQuery query;
+            std::string error;
+            if (!NextIntJournalQueryFromStrings(text("kinds"), text("since"), text("from"), text("to"), text("limit"), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextNmiReport(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_nmi_journal_control({enabled=true|false, clear=true, capacity=N}): switch / clear / resize the interrupt / NMI / reset journal
+        lua.set_function("next_nmi_journal_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            bool clear = false;
+            size_t capacity = 0;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+                sol::object c = (*options)["clear"];
+                if (c.get_type() == sol::type::boolean)
+                    clear = c.as<bool>();
+                sol::object n = (*options)["capacity"];
+                if (n.get_type() == sol::type::number)
+                    capacity = static_cast<size_t>(n.as<long long>());
+            }
+            return StateNodeToLua(s, DeviceState::NextNmiJournalControl(emulator->GetContext(), enable, clear, capacity));
+        });
+        // next_magic_port([{since=N, limit=N}]): the magic debug port - its setting and the text a program wrote to it (DeviceState::NextMagicPortReport)
+        lua.set_function("next_magic_port", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            uint64_t since = 0;
+            size_t limit = 200;
+            if (options)
+            {
+                sol::object a = (*options)["since"];
+                if (a.get_type() == sol::type::number)
+                    since = static_cast<uint64_t>(a.as<long long>());
+                sol::object b = (*options)["limit"];
+                if (b.get_type() == sol::type::number)
+                    limit = static_cast<size_t>(b.as<long long>());
+            }
+            return StateNodeToLua(s, DeviceState::NextMagicPortReport(emulator->GetContext(), since, limit));
+        });
+        // next_magic_port_control({enabled=true|false, port=N, mode="hex|dec|ascii|line", clear=true}): switch the magic port, choose its port and mode
+        lua.set_function("next_magic_port_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            int port = -1;
+            bool clear = false;
+            std::string mode;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+                sol::object p = (*options)["port"];
+                if (p.get_type() == sol::type::number)
+                    port = static_cast<int>(p.as<long long>() & 0xFFFF);
+                sol::object m = (*options)["mode"];
+                if (m.get_type() == sol::type::string)
+                    mode = m.as<std::string>();
+                sol::object c = (*options)["clear"];
+                if (c.get_type() == sol::type::boolean)
+                    clear = c.as<bool>();
+            }
+            return StateNodeToLua(s, DeviceState::NextMagicPortControl(emulator->GetContext(), enable, port, mode, clear));
         });
         // next_dma() / next_video(): the Next's DMA and video layers (DeviceState::NextDma / NextVideo; no side effect on the machine)
         lua.set_function("next_dma", [this](sol::this_state s) -> sol::object {
@@ -6171,7 +6421,7 @@ public:
                 Memory* memory = emulator->GetMemory();
                 if (memory)
                 {
-                    emulator->EditMemoryFromTool("Lua assemble write", [&] {
+                    emulator->EditMemoryFromToolOrThrow("Lua assemble write", [&] {
                         uint32_t addr = asmResult.startAddress;
                         for (uint8_t b : asmResult.bytes)
                             memory->ToolWriteToZ80Memory(static_cast<uint16_t>((addr++) & 0xFFFF), b);

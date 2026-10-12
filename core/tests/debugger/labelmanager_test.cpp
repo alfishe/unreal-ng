@@ -12,6 +12,7 @@
 #include "common/stringhelper.h"
 #include "debugger/debugmanager.h"
 #include "debugger/labels/labelmanager.h"
+#include "debugger/labels/symbolfiles.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/memory/memory.h"
@@ -303,6 +304,32 @@ TEST_F(LabelManager_test, AutoDetectFileFormat)
 
     // Clean up
     std::filesystem::remove(symFilePath);
+}
+
+// sjasmplus --sym writes "NAME: EQU 0x00008000" as .sym: the content says so, the extension alone would read it as
+// the simple format and add nothing
+TEST_F(LabelManager_test, ImportReadsAnSjasmplusSymByItsContent)
+{
+    ScopedTestFile sjasmplus(TestPathHelper::GetUniqueTestScratchPath("sjasmplus.sym"));
+    {
+        std::ofstream out(sjasmplus);
+        out << "Frame: EQU 0x00008012\nFrame.End: EQU 0x00008018\nPlasma: EQU 0x0000801A\n";
+    }
+    const SymbolImportResult result = _labelManager->ImportSymbols(sjasmplus, SymbolImportRequest{});
+    EXPECT_TRUE(result.ok) << result.message;
+    EXPECT_EQ(result.format, "sjasmplus-sym");
+    EXPECT_EQ(result.records, 3u);
+    auto label = _labelManager->GetLabelByName("Frame.End");
+    ASSERT_NE(label, nullptr);
+    EXPECT_EQ(label->address, 0x8018);
+
+    // A simple .sym still goes to the simple format
+    ScopedTestFile simple(TestPathHelper::GetUniqueTestScratchPath("simple.sym"));
+    {
+        std::ofstream out(simple);
+        out << _testSymFile.str();
+    }
+    EXPECT_EQ(_labelManager->ImportSymbols(simple, SymbolImportRequest{}).format, "simple-sym");
 }
 
 TEST_F(LabelManager_test, SaveLabels)

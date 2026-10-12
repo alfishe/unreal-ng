@@ -8,6 +8,7 @@
 #include "debugger/debugmanager.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/io/fdc/fdd.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
 #include "_helpers/soundcardscope.h"
@@ -268,6 +269,32 @@ void EmulatorTestHelper::RemoveBreakpoint(Emulator* emulator, uint32_t breakpoin
 
     // Remove stored callback
     _breakpointCallbacks.erase(breakpointId);
+}
+
+void EmulatorTestHelper::ReleaseBareCore(Core*& core, EmulatorContext*& context)
+{
+    // The order of Emulator::Release: the drives first (WD1793's destructor skips the null ones), then the core
+    ReleaseDiskDrives(context);
+    delete core;
+    core = nullptr;
+    delete context;
+    context = nullptr;
+}
+
+void EmulatorTestHelper::ReleaseDiskDrives(EmulatorContext* context)
+{
+    if (context == nullptr)
+        return;
+
+    for (FDD*& drive : context->coreState.diskDrives)
+    {
+        if (drive != nullptr)
+        {
+            drive->ejectDisk();
+            delete drive;
+            drive = nullptr;
+        }
+    }
 }
 
 void EmulatorTestHelper::CleanupEmulator(Emulator* emulator)

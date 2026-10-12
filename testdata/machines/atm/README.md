@@ -17,3 +17,16 @@ the ATM board's ports (`#FEEF` ... `#FF0F`).
 Source: https://github.com/alfishe/NedoOS, revision `44049473`, folder `release/`.
 The release floppy itself has no room for another file, so this one carries
 only what the player needs.
+
+## `ballq_gr.scl`: Ball Quest (Alone Coder, Shiru; 2006-2007)
+
+A floppy (SCL, 32 files, 107 KB) with the game's two ZX builds: `BQ   ATM` for the ATM Turbo 2(+) (EGA 320x200,
+`#FF77` mode 0) and `BQ   16C` for the Pentagon 1024SL (16 colours), plus the levels, pictures, music and the
+readmes (`readme`, `readmezx`). Several BASIC programs and no `boot`: the autostart shows the commander.
+
+`DiskAutostart_Atm710.BallQuestShowsAllFourEgaPlanes` runs `BQ   ATM` on the ATM710: a 128K program that pages with
+`#7FFD = #1n`, which the TR-DOS cold start would send to RAM 24-31
+([docs/inprogress/2026-10-11-atm-autostart-128k-paging](../../../docs/inprogress/2026-10-11-atm-autostart-128k-paging/README.md)).
+The game does not support the ATM450 (no `#FF77` there).
+
+Source: the owner's copy (file name lowered).

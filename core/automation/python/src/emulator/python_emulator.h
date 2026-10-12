@@ -102,6 +102,8 @@
 #include <common/stringhelper.h>
 #include <debugger/ports/nextregwrite.h>
 #include <emulator/io/z80n/nextregjournal.h>
+#include <emulator/io/z80n/nextdivmmcjournal.h>
+#include <emulator/io/z80n/nextintjournal.h>
 #include <emulator/io/z80n/nextsdjournal.h>
 #include <emulator/io/z80n/nextreportquery.h>
 #include "../bindings/python_porttrace.h"
@@ -144,6 +146,50 @@ inline int PythonScriptBreakpoint(Emulator& self, BreakpointTypeEnum type, uint8
     spec.address = address;
     std::string error;
     if (!BreakpointManager::ApplyScriptOptions(spec, page, to, slotOnly, mask, hits, error))
+        return -1;
+    const uint16_t id = bpm->AddBreakpoint(spec, error);
+    return id == BRK_INVALID ? -1 : static_cast<int>(id);
+}
+
+/// bp_nextreg_write / bp_nextreg_read / bp_nextreg: a ZX Next register breakpoint (BreakpointManager::ApplyNextRegOptions).
+/// The breakpoint id, or -1 when refused
+inline int PythonScriptNextRegBreakpoint(Emulator& self, uint8_t access, uint16_t reg, int32_t to, const std::string& doors,
+                                         int32_t value, int32_t vmask, const std::string& hits)
+{
+    BreakpointManager* bpm = self.GetBreakpointManager();
+    if (!bpm)
+        return -1;
+    BreakpointSpec spec;
+    spec.type = BRK_NEXTREG;
+    spec.access = access;
+    spec.address = reg;
+    std::string error;
+    if (!BreakpointManager::ApplyNextRegOptions(spec, to, doors, value, vmask, hits, error))
+        return -1;
+    const uint16_t id = bpm->AddBreakpoint(spec, error);
+    return id == BRK_INVALID ? -1 : static_cast<int>(id);
+}
+
+/// bp_beam / bp_copper (ZX Next): a place of the beam, or a copper list instruction. The breakpoint id, or -1 when refused
+inline int PythonScriptPositionBreakpoint(Emulator& self, BreakpointTypeEnum type, uint16_t position, int32_t hc, int32_t to,
+                                          const std::string& hits)
+{
+    BreakpointManager* bpm = self.GetBreakpointManager();
+    if (!bpm)
+        return -1;
+    BreakpointSpec spec;
+    spec.type = type;
+    spec.access = BRK_IO_OUT;
+    spec.address = position;
+    if (hc > 0)
+        spec.beamHc = static_cast<uint16_t>(hc);
+    if (to >= 0)
+    {
+        spec.hasEnd = true;
+        spec.addressEnd = static_cast<uint16_t>(to);
+    }
+    std::string error;
+    if (!BreakpointManager::ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error))
         return -1;
     const uint16_t id = bpm->AddBreakpoint(spec, error);
     return id == BRK_INVALID ? -1 : static_cast<int>(id);
@@ -653,6 +699,14 @@ namespace PythonBindings
         d["pressed"] = pressed;
         d["button_names"] = DebugJoystickManager::GetAllButtonNames();
         d["keys"] = state.keys;
+        if (state.hasPads)
+        {
+            d["left_extras"] = state.leftExtraButtons;
+            py::dict rightPad;
+            rightPad["state"] = static_cast<int>(state.rightPad);
+            rightPad["buttons"] = state.rightButtons;
+            d["right_pad"] = rightPad;
+        }
         if (state.pendingTapMask != 0)
         {
             py::dict pending;
@@ -1014,7 +1068,7 @@ namespace PythonBindings
             .def("start_async", &Emulator::StartAsync, "Start emulator asynchronously")
             .def("stop", &Emulator::Stop, "Stop emulator")
             .def("pause", [](Emulator& self) -> std::string {
-                execution::script::Check(self, execution::Origin::Python);
+                execution::script::Check(self, execution::Origin::Python, false);   // a pause opens no session
                 const execution::Result r =
                     self.Pause(execution::script::RequesterOf(self, execution::Origin::Python), "python");
                 return execution::script::PauseStatus(r);
@@ -1164,12 +1218,11 @@ namespace PythonBindings
                 return py::cast(value);
             }, "Get register value by name", py::arg("name"))
             .def("set_register", [](Emulator& self, const std::string& name, uint16_t value) -> bool {
-                Z80State* z80 = self.GetZ80State();
-                if (!z80)
-                    return false;
-                const bool set = Z80::SetRegisterValue(z80, name, value);
-                if (set)
-                    self.NoteDebugChange();   // the debugger snapshot's seq
+                // A tool edit (TTD records it); refused in the recorded past: a script error
+                std::string refused;
+                const bool set = self.SetRegisterFromTool("python register", name, value, &refused);
+                if (!refused.empty())
+                    throw std::runtime_error(refused);
                 return set;
             }, "Set register value by name", py::arg("name"), py::arg("value"))
 
@@ -1182,7 +1235,7 @@ namespace PythonBindings
             .def("mem_write", [](Emulator& self, uint16_t addr, uint8_t value) {
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
-                self.EditMemoryFromTool("Python memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
+                self.EditMemoryFromToolOrThrow("Python memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
             }, "Write byte to memory")
             .def("mem_read_word", [](Emulator& self, uint16_t addr) -> uint16_t {
                 Memory* mem = self.GetMemory();
@@ -1192,7 +1245,7 @@ namespace PythonBindings
             .def("mem_write_word", [](Emulator& self, uint16_t addr, uint16_t value) {
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
-                self.EditMemoryFromTool("Python memory write", [&] {
+                self.EditMemoryFromToolOrThrow("Python memory write", [&] {
                     mem->ToolWriteToZ80Memory(addr, value & 0xFF);
                     mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
                 });
@@ -1351,7 +1404,7 @@ namespace PythonBindings
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
                 std::string bytes = data;
-                self.EditMemoryFromTool("Python memory write", [&] {
+                self.EditMemoryFromToolOrThrow("Python memory write", [&] {
                     for (size_t i = 0; i < bytes.size(); i++)
                         mem->ToolWriteToZ80Memory(static_cast<uint16_t>((addr + i) & 0xFFFF), static_cast<uint8_t>(bytes[i]));
                 });
@@ -1386,7 +1439,7 @@ namespace PythonBindings
                     pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
                 else
                     pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-                self.EditMemoryFromTool("Python page write", [&] {
+                self.EditMemoryFromToolOrThrow("Python page write", [&] {
                     pagePtr[offset] = value;
                     if (type == "ram")
                         mem->MarkRamPageEdited(static_cast<uint16_t>(page));
@@ -1428,7 +1481,7 @@ namespace PythonBindings
                 // Clamp to page boundary
                 size_t maxLen = PAGE_SIZE - offset;
                 size_t writeLen = std::min(bytes.size(), maxLen);
-                self.EditMemoryFromTool("Python page write", [&] {
+                self.EditMemoryFromToolOrThrow("Python page write", [&] {
                     std::memcpy(pagePtr + offset, bytes.data(), writeLen);
                     if (type == "ram")
                         mem->MarkRamPageEdited(static_cast<uint16_t>(page));
@@ -2000,6 +2053,44 @@ namespace PythonBindings
             }, "Add a port breakpoint (bp_port_out); mask: matches every port with (port & mask) == (port & mask); "
                "hits '5' / '>=5' / '%5'. -1 when refused",
                py::arg("port"), py::arg("mask") = -1, py::arg("hits") = "")
+            .def("bp_nextreg_write", [](Emulator& self, uint16_t reg, int32_t to, const std::string& doors, int32_t value,
+                             int32_t vmask, const std::string& hits) -> int {
+                return PythonScriptNextRegBreakpoint(self, BRK_IO_OUT, reg, to, doors, value, vmask, hits);
+            }, "Add a ZX Next register breakpoint on writes; to: register range end; doors 'nextreg,port,copper' a write "
+               "comes through (default all); value: stop only on it, vmask: the compared bits; hits '5' / '>=5' / '%5'. "
+               "-1 when refused",
+               py::arg("reg"), py::arg("to") = -1, py::arg("doors") = "", py::arg("value") = -1, py::arg("vmask") = -1,
+               py::arg("hits") = "")
+            .def("bp_nextreg_read", [](Emulator& self, uint16_t reg, int32_t to, const std::string& doors, int32_t value,
+                             int32_t vmask, const std::string& hits) -> int {
+                return PythonScriptNextRegBreakpoint(self, BRK_IO_IN, reg, to, doors, value, vmask, hits);
+            }, "Add a ZX Next register breakpoint on reads (through #253B); to: register range end; doors 'nextreg,port,copper' a write "
+               "comes through (default all); value: stop only on it, vmask: the compared bits; hits '5' / '>=5' / '%5'. "
+               "-1 when refused",
+               py::arg("reg"), py::arg("to") = -1, py::arg("doors") = "", py::arg("value") = -1, py::arg("vmask") = -1,
+               py::arg("hits") = "")
+            .def("bp_nextreg", [](Emulator& self, uint16_t reg, int32_t to, const std::string& doors, int32_t value,
+                             int32_t vmask, const std::string& hits) -> int {
+                return PythonScriptNextRegBreakpoint(self, BRK_IO_IN | BRK_IO_OUT, reg, to, doors, value, vmask, hits);
+            }, "Add a ZX Next register breakpoint on reads and writes; to: register range end; doors 'nextreg,port,copper' a write "
+               "comes through (default all); value: stop only on it, vmask: the compared bits; hits '5' / '>=5' / '%5'. "
+               "-1 when refused",
+               py::arg("reg"), py::arg("to") = -1, py::arg("doors") = "", py::arg("value") = -1, py::arg("vmask") = -1,
+               py::arg("hits") = "")
+            .def("bp_beam", [](Emulator& self, uint16_t line, int32_t hc, const std::string& hits) -> int {
+                return PythonScriptPositionBreakpoint(self, BRK_BEAM, line, hc, -1, hits);
+            }, "Add a ZX Next beam breakpoint: stops when the beam passes line 'line' of the copper's counter at pixel clock 'hc'. -1 when refused",
+               py::arg("line"), py::arg("hc") = 0, py::arg("hits") = "")
+            .def("bp_copper", [](Emulator& self, uint16_t index, int32_t to, const std::string& hits) -> int {
+                return PythonScriptPositionBreakpoint(self, BRK_COPPER, index, 0, to, hits);
+            }, "Add a ZX Next copper breakpoint: stops when the copper completes the list instruction at 'index' (to: range end). -1 when refused",
+               py::arg("index"), py::arg("to") = -1, py::arg("hits") = "")
+            .def("bp_magic", [](Emulator& self, const std::string& opcode, const std::string& hits) -> int {
+                if (opcode != "ed_ff" && opcode != "dd_01")
+                    return -1;
+                return PythonScriptPositionBreakpoint(self, BRK_MAGIC, opcode == "ed_ff" ? BRK_MAGIC_ED_FF : BRK_MAGIC_DD_01, 0, -1, hits);
+            }, "Add a ZX Next magic-opcode breakpoint: stops after the CPU ran 'ed_ff' or 'dd_01' (a NOP / LD BC,nn on the hardware). -1 when refused",
+               py::arg("opcode"), py::arg("hits") = "")
             .def("bp_remove", [](Emulator& self, uint16_t id) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return false;
@@ -2928,6 +3019,71 @@ namespace PythonBindings
                 return StateNodeToPy(DeviceState::NextSdJournalControl(self.GetContext(), enable, clear, capacity));
             }, py::arg("enabled") = py::none(), py::arg("clear") = false, py::arg("capacity") = 0,
                "Switch (enabled=True/False), clear or resize (capacity=N) the SD journal")
+            .def("next_divmmc", [](Emulator& self, py::object kinds, py::object since, py::object from_frame,
+                               py::object to_frame, py::object limit) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                NextDivMmcJournalQuery query;
+                std::string error;
+                if (!NextDivMmcJournalQueryFromStrings(text(kinds), text(since), text(from_frame), text(to_frame), text(limit),
+                                                   query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextDivMmcReport(self.GetContext(), query));
+            }, py::arg("kinds") = py::none(), py::arg("since") = py::none(),
+               py::arg("from_frame") = py::none(), py::arg("to_frame") = py::none(), py::arg("limit") = py::none(),
+               "The Next DivMMC (port #E3, the automap latch, NR #B8-#BB entries) and the DivMMC journal: what paged it in and out (map_in / map_out with the fetch address, retn, disabled, reset, port) and, for an entry at #0008, the esxDOS call (esx_call: name, return_address, af, bc, de, hl), with seq, frame, t, pc (kinds='map_in,esx_call'); the journal is off by default - next_divmmc_journal_control(enabled=True) first")
+            .def("next_divmmc_journal_control", [](Emulator& self, py::object enabled, bool clear, size_t capacity) -> py::object {
+                const int enable = enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0);
+                return StateNodeToPy(DeviceState::NextDivMmcJournalControl(self.GetContext(), enable, clear, capacity));
+            }, py::arg("enabled") = py::none(), py::arg("clear") = false, py::arg("capacity") = 0,
+               "Switch (enabled=True/False), clear or resize (capacity=N) the DivMMC journal")
+            .def("next_audio", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextAudioReport(self.GetContext())); },
+               "The Next's sound as configured: chip model, ABC / ACB, turbosound, the selected chip, per chip its pan, mono flag, registers and "
+               "periods / volumes, and the four DAC channels with the left / right sums; available=False elsewhere")
+            .def("next_input", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextInputReport(self.GetContext())); },
+               "The Next's joystick modes (NR #05 left / right and the port each answers), the NR #0B I/O mode, the Kempston port #1F decoded and "
+               "the answer of ports #1F and #37 by NR #05 / #82, the extended keys (NR #B0 / #B1) and the pads' MODE X Y Z (NR #B2); available=False elsewhere")
+            .def("next_nmi", [](Emulator& self, py::object kinds, py::object since, py::object from_frame, py::object to_frame,
+                                py::object limit) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                NextIntJournalQuery query;
+                std::string error;
+                if (!NextIntJournalQueryFromStrings(text(kinds), text(since), text(from_frame), text(to_frame), text(limit), query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextNmiReport(self.GetContext(), query));
+            }, py::arg("kinds") = py::none(), py::arg("since") = py::none(), py::arg("from_frame") = py::none(),
+               py::arg("to_frame") = py::none(), py::arg("limit") = py::none(),
+               "The Next NMI sources (M1 / DRIVE button: would fire, blocked by), the NMI in service, the Multiface, NR #02 bits, the stackless NMI, "
+               "the reset bits, the interrupts pending / in service, and the interrupt / NMI / reset journal (kinds int_ack, reti, nmi_request, retn, "
+               "reset); the journal is off by default (next_nmi_journal_control(enabled=True))")
+            .def("next_nmi_journal_control", [](Emulator& self, py::object enabled, bool clear, size_t capacity) -> py::object {
+                const int enable = enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0);
+                return StateNodeToPy(DeviceState::NextNmiJournalControl(self.GetContext(), enable, clear, capacity));
+            }, py::arg("enabled") = py::none(), py::arg("clear") = false, py::arg("capacity") = 0,
+               "Switch (enabled=True/False), clear or resize (capacity=N) the interrupt / NMI / reset journal")
+            .def("next_magic_port", [](Emulator& self, uint64_t since, size_t limit) -> py::object {
+                return StateNodeToPy(DeviceState::NextMagicPortReport(self.GetContext(), since, limit));
+            }, py::arg("since") = 0, py::arg("limit") = 200,
+               "The magic debug port: its setting and the text a program wrote to it (items after seq 'since', the newest 'limit'); "
+               "off by default (next_magic_port_control(enabled=True, port=0x00FF, mode='line'))")
+            .def("next_magic_port_control", [](Emulator& self, py::object enabled, py::object port, const std::string& mode, bool clear) -> py::object {
+                const int enable = enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0);
+                const int chosen = port.is_none() ? -1 : port.cast<int>();
+                if (chosen < -1 || chosen > 0xFFFF)
+                    throw py::value_error("port is 0..65535");
+                py::object result = StateNodeToPy(DeviceState::NextMagicPortControl(self.GetContext(), enable, chosen, mode, clear));
+                if (py::isinstance<py::dict>(result) && result.cast<py::dict>().contains("error"))
+                    throw py::value_error(result.cast<py::dict>()["error"].cast<std::string>());
+                return result;
+            }, py::arg("enabled") = py::none(), py::arg("port") = py::none(), py::arg("mode") = "", py::arg("clear") = false,
+               "Switch the magic debug port (enabled=True/False), choose its port (0..65535) and mode (hex, dec, ascii, line), clear its output")
             .def("next_dma", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextDma(self.GetContext())); },
                "The Next DMA as programmed and running (mode, ports A / B, direction, burst, prescaler, counters, status byte); reading it "
                "does not advance its read sequence; available=False elsewhere")
@@ -4225,10 +4381,7 @@ namespace PythonBindings
                 const std::string names = JoystickNamesOrThrow(state);
                 if (names.empty())
                     return JoystickResultOrThrow(mgr, mgr.ReleaseAll());
-                const uint8_t mask = DebugJoystickManager::ResolveButtonNames(names);
-                if (mask == 0)  // the manager words the unknown-name error
-                    return JoystickResultOrThrow(mgr, mgr.Press(names));
-                return JoystickResultOrThrow(mgr, mgr.SetStateChecked(mask));
+                return JoystickResultOrThrow(mgr, mgr.SetNames(names));
             }, "Set exactly the held joystick buttons: a byte 0..255 or a list / string of names ([] = none)",
                py::arg("state"))
             .def("joystick_tap", [](Emulator& self, const py::object& buttons, const py::object& frames) -> py::dict {
@@ -5793,7 +5946,7 @@ namespace PythonBindings
                 Memory* memory = self.GetMemory();
                 if (memory)
                 {
-                    self.EditMemoryFromTool("Python assemble write", [&] {
+                    self.EditMemoryFromToolOrThrow("Python assemble write", [&] {
                         uint32_t addr = asmResult.startAddress;
                         for (uint8_t b : asmResult.bytes)
                             memory->ToolWriteToZ80Memory(static_cast<uint16_t>((addr++) & 0xFFFF), b);

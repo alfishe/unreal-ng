@@ -38,6 +38,9 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     # portdecoder.cpp); clang, MSVC and CI's gcc 15 compile the same code clean
     if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 14)
         add_compile_options(-Wno-free-nonheap-object -Wno-stringop-overflow)
+        # Same family at -O2 (RelWithDebInfo; Release's -O3 is clean): -Warray-bounds on
+        # std::string concatenation and std::copy inside libstdc++ (char_traits::copy, __copy_move)
+        add_compile_options(-Wno-error=array-bounds)
     endif ()
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "AppleClang" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # Clang-specific flags

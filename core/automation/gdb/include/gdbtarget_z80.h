@@ -79,7 +79,8 @@ public:
 
 private:
     /// Runs @p edit as one tool edit of the emulator (directly without one)
-    static void editCPU(EmulatorContext* ctx, const char* source, const std::function<void()>& edit);
+    /// False: refused (the machine is in the recorded past), nothing changed
+    static bool editCPU(EmulatorContext* ctx, const char* source, const std::function<void()>& edit);
     static uint16_t readCPURegister(EmulatorContext* ctx, int regnum);
     static void writeCPURegister(EmulatorContext* ctx, int regnum, uint16_t value);
 };

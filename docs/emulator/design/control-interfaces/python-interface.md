@@ -216,6 +216,41 @@ class Emulator:
     def next_sd_journal_control(self, enabled=None, clear=False, capacity=0) -> dict:
         """Switch, clear or resize (capacity=N) the SD journal"""
 
+    def next_divmmc(self, kinds=None, since=None, from_frame=None, to_frame=None, limit=None) -> dict:
+        """The Next DivMMC: state (port #E3, the automap latch, the DRIVE button's NMI entry), entries (NR #B8-#BB decoded) and the
+        DivMMC journal: map_in / map_out (fetch address, entry, instant or delayed), retn, disabled, reset, port and, for an entry
+        at #0008, esx_call (name F_OPEN / F_READ ..., return_address, af, bc, de, hl), with seq, frame, t, pc (kinds='map_in,esx_call').
+        Off by default - next_divmmc_journal_control(enabled=True) first; raises ValueError on a bad option"""
+
+    def next_divmmc_journal_control(self, enabled=None, clear=False, capacity=0) -> dict:
+        """Switch, clear or resize (capacity=N) the DivMMC journal"""
+
+    def next_magic_port(self, since=0, limit=200) -> dict:
+        """The magic debug port: its setting and the text a program wrote to it (items: seq, frame, t, pc, text). Off by default -
+        next_magic_port_control(enabled=True, port=0x00FF, mode='line') first"""
+
+    def next_magic_port_control(self, enabled=None, port=None, mode='', clear=False) -> dict:
+        """Switch the magic port, choose its port (0..65535) and mode (hex, dec, ascii, line), clear its output; ValueError on a bad one"""
+
+    def next_nmi(self, kinds=None, since=None, from_frame=None, to_frame=None, limit=None) -> dict:
+        """The Next NMI sources (m1_button / drive_button: would_fire, blocked_by; io_trap: not modelled), in_service, the Multiface, NR #02 bits,
+        the stackless NMI, the reset bits, the interrupts pending / in service and the interrupt / NMI / reset journal: int_ack (source, vector),
+        reti, nmi_request (accepted or reason), retn, reset (kinds='int_ack,nmi_request'). Off by default -
+        next_nmi_journal_control(enabled=True) first; raises ValueError on a bad option"""
+
+    def next_nmi_journal_control(self, enabled=None, clear=False, capacity=0) -> dict:
+        """Switch, clear or resize (capacity=N) the interrupt / NMI / reset journal"""
+
+    def next_audio(self) -> dict:
+        """The Next's sound as configured: config (chip_model ym2149 | ay8910, stereo_mode abc | acb, turbosound, dac, NR #06 / #08 / #09),
+        selected_chip, chips (pan, mono, the 16 registers, tone_periods, noise_period, mixer, volumes, envelope_period / shape) and dac
+        (a / b / c / d, left_sum = A + B, right_sum = C + D); available=False elsewhere"""
+
+    def next_input(self) -> dict:
+        """The Next's input as configured: joystick_modes (NR #05 left / right: name and the port it answers), io_mode (NR #0B), kempston_1f
+        (value, bits, selected_by_nr_05, answers_here), kempston_37 (value, answers_here) extended_keys (NR #B0 / #B1: nr_b0, nr_b1, pressed) and md_pad_extra (NR #B2: left / right {mode x y z});
+        available=False elsewhere"""
+
     def next_dma(self) -> dict:
         """The Next DMA as programmed and running (mode zxn / z80, ports a / b, direction, burst, prescaler, counter, src / dst with
         src_kind / dst_kind, holds_bus, status byte); reading it does not advance its read sequence; available=False elsewhere"""
@@ -909,6 +944,11 @@ id = emu.bp_read(0x4000)            # memory read; the same keyword arguments
 id = emu.bp_write(0x4000, to=0x57FF)  # memory write: the screen bitmap
 id = emu.bp_port_in(0xFE, mask=0x00FF)  # port IN on #FE with any high byte; mask= and hits=
 id = emu.bp_port_out(0x7FFD)
+id = emu.bp_nextreg_write(0x07)     # ZX Next: a write of NR #07 by any door; bp_nextreg_read, bp_nextreg (both)
+id = emu.bp_nextreg_write(0x40, to=0x44, doors="copper", value=0x01, vmask=0x03, hits=">=2")
+id = emu.bp_magic("ed_ff")         # ZX Next: stop after the magic opcode ED FF (or "dd_01") ran
+id = emu.bp_beam(99, hc=255)        # ZX Next: the beam passes line 99 (the copper's counter) at pixel clock 255
+id = emu.bp_copper(12, to=14)       # ZX Next: the copper completes list instruction 12..14
 emu.bp_reset_hits(id)               # hit counter back to 0 (no id: all)
 emu.bp_remove(id); emu.bp_clear()
 emu.bp_enable(id); emu.bp_disable(id)

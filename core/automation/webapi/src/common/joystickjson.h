@@ -61,6 +61,17 @@ inline Json::Value StateToJson(const JoystickStateSnapshot& state)
         json["button_names"].append(name);
 
     json["keys"] = state.keys;
+    if (state.hasPads)
+    {
+        // A machine with 12-button pads (the ZX Next): the left connector's extras and the whole right connector
+        json["left_extras"] = Json::Value(Json::arrayValue);
+        for (const std::string& name : state.leftExtraButtons)
+            json["left_extras"].append(name);
+        json["right_pad"]["state"] = state.rightPad;
+        json["right_pad"]["buttons"] = Json::Value(Json::arrayValue);
+        for (const std::string& name : state.rightButtons)
+            json["right_pad"]["buttons"].append(name);
+    }
     if (state.pendingTapMask != 0)
     {
         json["pending_tap"]["mask"] = state.pendingTapMask;
@@ -210,12 +221,7 @@ inline Reply Handle(DebugJoystickManager& manager, const std::string& verb, cons
             if (!ReadButtons(json, names, error))
                 return BadRequest(error);
             if (!names.empty())
-            {
-                const uint8_t mask = DebugJoystickManager::ResolveButtonNames(names);
-                if (mask == 0)  // the manager words the unknown-name error
-                    return ResultReply(manager, manager.Press(names), echo);
-                state = mask;
-            }
+                return ResultReply(manager, manager.SetNames(names), echo);  // buttons of both connectors, exactly these
         }
         echo["requested_state"] = static_cast<Json::Int64>(state);  // "state" is the resulting-state object
         return ResultReply(manager, manager.SetStateChecked(state), echo);

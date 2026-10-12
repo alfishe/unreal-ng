@@ -147,6 +147,10 @@ private:
     void HandleWatchpoint(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPHits(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePortBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleNextRegBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBeamBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleMagicBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleCopperBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPClear(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPGroup(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPActivate(const ClientSession& session, const std::vector<std::string>& args);
@@ -461,6 +465,10 @@ private:
     std::shared_ptr<Emulator> _controlEmulator;
     /// The session holds this machine's run control
     bool HoldsControl(EmulatorContext* context) const;
+    /// The automation gate (automationgate.h): a command that changes the machine without a session opens one
+    /// implicitly for this connection (it ends with the connection). False: refused, the answer is sent
+    bool PassAutomationGate(const ClientSession& session, const std::string& command,
+                            const std::vector<std::string>& args);
     /// Who asks, for the execution arbiter: this connection's session when it holds control, else the CLI
     execution::Requester CliRequester(EmulatorContext* context) const;
 

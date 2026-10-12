@@ -44,6 +44,29 @@ The text in memory: where `o` put it (`o 32768` in the host tools), records `[nu
 `FF FF`. ZEUS 1983, 1.1 and GG keep the start at `#FD00` and the address of the last `FF` at `#FD02`; v7.E at
 `#FAAB` / `#FAAD`. A line typed at the prompt is not in the text until Enter. The asm-synchronizer reads it live
 (descriptors `zeus-1983`, `zeus-1.1`, `zeus-gg`, `zeus-7e`; asm-synchronizer.md §7.14).
+
+## A host source into Primus 2.9
+
+At its prompt: `asm_source {"action":"sync_inject","path":"/abs/main.asm","assembler":"primus-2.9","force":true}`, then
+`a out` ENTER assembles and saves the code as `out` (one `ORG` only, no `DISP`; `inject-oracle.py primus
+<PRIMUS29.SCL> <source.asm> 0x6000`).
+
+## A host source into ZEUS 1983 (at 57344)
+
+Write the source at its prompt (CAPS LOCK on); `A` then assembles it:
+
+```text
+asm_source  {"action":"sync_inject","path":"/abs/main.asm","assembler":"zeus-1983","force":true}
+type_input  {"action":"type","text":"a\n"}
+```
+
+The source is written as ZEUS 1983 text (chains of `+ - & !`, values where ZEUS has no operator, labels of letters and
+digits, `DISP` as an offset, the undocumented instructions as bytes:
+[research-sjasmplus-to-zeus.md](../../docs/inprogress/2026-10-05-unreal-asm/research-sjasmplus-to-zeus.md)) as `o` leaves a
+text. ZEUS keeps no "changed" flag: a loaded text is replaced only by force (or when it is the push watch's own).
+`tools/verification/unreal-asm/emulator/inject-oracle.py zeus1983 <ZEUS.TAP> <source.asm> 0x6000 --wait 60` runs the whole
+check (a 48K machine).
+
 ## Memory
 
 ZEUS 1983 / 1.1 / GG run at 57344-65535 (v7.E's help: ZEUS at 56000, its label buffer below 55999). The source

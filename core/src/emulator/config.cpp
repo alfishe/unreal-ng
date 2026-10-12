@@ -251,6 +251,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 	};
 
 	config.reset_rom = RM_SOS;
+	line[0] = '\0';  // CopyStringValue leaves the buffer as it is when the key is missing (BUGS.md 2026-10-11 #2)
 	CopyStringValue(inimanager.GetValue(misc, "RESET", nullptr), line, sizeof line); // What ROM bank to set active during reset
 	for (const auto& mapping : resetMappings)
 	{

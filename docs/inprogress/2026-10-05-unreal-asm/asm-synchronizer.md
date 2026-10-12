@@ -289,6 +289,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | typing | `InLineBuffer`: in the editor the cursor's line is only in the line buffer, 128 bytes of blank-padded text at `#928A` (`#930A` holds a packed copy that lags). Whether the editor holds it: the records before and after the gap add up to `#94D9` (the command line: Quit put it back and moved the gap to the end) or to one less (the editor). The reader encodes the buffer with the `tasm` codec (4.12, CP866) and puts it at the gap. No flag in memory tells the modes apart; this count does (checked on four dumps: top, middle, typing, command line) |
 | end | the file's `FF FF` end record is added by SAVE: the reader appends it (the bytes at the gap start are no guide: after Enter on the last line they can read `FF FF` in the editor too) |
 | caveat | Edit leaves a stale copy of the file at the text start; only the pointers count |
+| **Built: inject (Z3, 2026-10-11)** | at its command line (`TASM128>`: the key wait returns through `#9CE9`, `#80BC`): the file as LOAD leaves it at `#A6EE` with the gap pointers, the line count and the cursor line 0 (the editor builds the gap buffer when it is entered; the reader takes that form), `#9BA6` (changed since LOAD / SAVE) set, the work name `#9C10` the title so Assemble takes the text in memory; refused without force when `#9BA6` says the text changed. TASM 4.12 assembled the injected `oracle1.asm` and every instruction form to sjasmplus' bytes (research-sjasmplus-to-tasm.md §3) |
 | **Work** | identification, the line buffer's exact address and length, the gap reader, golden dumps (cursor at the top, in the middle, at the end, mid-typing): **1.5 d** |
 
 ### 7.6 TASM 4.0 and 4.4
@@ -324,6 +325,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | identification | the packed program unpacks its entry code at `#8000` (24 bytes, the same in 1.0beta, 1.3 and 1.3i); the address it loads at `#8027` tells them apart (`#87xx` in 1.3 / 1.3i, `#85xx` in 1.0beta) |
 | 1.0beta | the same layout without the name: the `#FF` at `#C002`, the file from `#C003` (dumps `storm10b-*`) |
 | **Built** | descriptors `storm-1.3` (1.3 and 1.3i) and `storm-1.0b`; 1.3 checked live (a watch built 13 labels) |
+| **Built: inject (Z3, 2026-10-11)** | 1.3 / 1.3i while the editor waits for a key (the main loop's return `#87F5` / `#87CB`): the page as LOAD writes it, and STORM's own PGUP pressed through its variables (`ABLINE` on the second line, `NLINE` 1, `PY` 1, `LASTK` 4), which redraws from the text's start; refused without force when the editor's flags say the text changed (`MBSTAT` bit 4, the cursor line typed in). STORM 1.3 assembled the injected `oracle1.asm` and every instruction form to sjasmplus' bytes (research-sjasmplus-to-storm.md §3) |
 
 ### 7.9 ZX-ASM 3.0 / 3.01 / 3.10, ZX ASM Lite 1.07, ZAsm 3.15-4.20
 
@@ -337,6 +339,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | SAVE | COMMAND (Extend) SS+`2` saves under the name. It writes the buffer after a first line `;!top,line,col,...` with the editor's position, which loading takes out again. The live file is the buffer without that line (the tests compare without it) |
 | identification | the resident code at `#8000` (24 bytes): ZAsm unpacks itself, and above the buffer there is no fixed code |
 | **Built** | descriptor `zasm-3.15`; checked live on `service.a` (18959 bytes over two pages: 160 labels; the hints name the INCLUDE not in the project, Y5). the text buffer is one, see the Knowledge row |
+| **Built: inject (Z3, 2026-10-11)** | ZAsm 3.15 at its COMMAND prompt (CS+SS: the key wait returns through `#C404`, `#E630`, `#E6F0`): the file from the start (above `#C000` into page 6), the end word, the cursor line and the marks at the start, as LOAD leaves them; no "changed" flag, so a text it holds is replaced by force or when it is the caller's own; the editor shows the new text after COMMAND `CS+6`. ZAsm 3.15 assembled the injected `oracle1.asm` and every instruction form to sjasmplus' bytes (research-sjasmplus-to-zxasm.md §3) |
 | **Verified: ZX-ASM 3.10** (2026-10-09, dumps `zasm310-*`) | the same buffer with its table at `#868F` (the start; the end at `#869E`), from `#89C4` in page 2, the part above `#C000` in page 6. SAVE writes the buffer alone (no `;!` line). Its file-name input types capitals; the dumps load the first file of the list (CS+7, CS+ENTER). Identified by 24 bytes of its program image at `#816C`. Descriptor `zasm-3.10` (codec version 3.0) |
 | **Verified: ZX-ASM 2.4, 2.5, 2.6** (2026-10-10, dumps `zasm24-*`, `zasm25-*`, `zasm26-*`) | plain text in one buffer: the start word at the program's load address + 3, the end word after it (2.4 / 2.5 `#6273` / `#6275`, text from `#A1DF` / `#A1EA`; 2.6 `#6003` / `#6005`, from `#9FFD`); the part above `#C000` in RAM page 0. 2.6 keeps its `;*` line in the buffer and saves it as text, so no mask. The menu starts on Edit: LEFT ENTER (File), DOWN ENTER (Load), the name; SS+SPACE back to the menu, `f` `s` ENTER saves. Identified by 24 bytes of each program below the text. Descriptors `zasm-2.4` / `-2.5` / `-2.6` (codec version 2) |
 | **Verified: ZX ASM 3.0** (2026-10-09, dumps `zasm30-*`) | the same buffer from `#894F` (the start its saved files carry), the table in page 5: the start at `#61C6`, the end at `#61C8`; the part above `#C000` in page 6 (`ReadMe`, 28039 bytes, runs to `#F6D6`). The line being typed stays out of the buffer. Its command menu has no save: COMMAND Q to the main menu, File / Save under the name shown; saved as type `C`, the buffer alone. Identified by 24 bytes of its code at `#8000`. Descriptor `zasm-3.0` (codec version 3.0). The 3.01 program is not in the collection (only files it saved) |
@@ -368,6 +371,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | editor state | SAVE also rewrites header bytes 29-34 from the editor's variables (the cursor line address, 7.447: the operand of `LD HL,nn` at `#8097`; the column and row). The reader leaves those six bytes as the memory holds them: a live file differs from the next save there and only there, and the codec keeps them as they are |
 | identification | the title a new text gets, in the code: 4.18 `XAS by Max Petrov (HPM) 3.091` at `#B51A`; 5.05 / 5.05SE `XAS by Max Petrov (HPM) 5.05` at `#B601`; 7.43c `by Max Petrov & Creator v7.43` at `#B961`; 7.447 `... v7.44` at `#9B00`; 9.07m `XAS 9.07 ReCompiled by Mythos` at `#B8EA`; 9.10 `XAS by Max Petrov,64sm by STS` at `#B912` |
 | **Built** | descriptors `xas-4.18`, `-5.05`, `-7.43c`, `-7.447`, `-9.07m`, `-9.10`; checked live on 7.447 (a watch built the labels, a typed label joined them) |
+| **Built: inject (Z3, 2026-10-11)** | at the command line (EXT), the idle rule its return chain in each build; the file over `#C000` of page 3, and the editor's variables (cursor line, top line, flag, text end) set as LOAD sets them, found by its two routines in the code (`FileImageParams::loadVariables`, research-sjasmplus-to-xas.md §3); every build assembled the injected `oracle1.asm` and every instruction form to sjasmplus' bytes |
 | done | 9.07m and 9.10 SAVE wrote nothing to the disk in unreal-ng. Cause on the emulator's side: a status read erased the WD1793's Type II error bits, so the catalog read that missed its sector (XAS's STEP `#20` after each operation leaves the head one cylinder past the track register) read as status `#00` and XAS skipped its READ ADDRESS recovery. Fixed 2026-10-09: both versions save the edited text (TODO) Since then 9.07m and 9.10 have edited dumps with their saved files too (`xas907m-edited`, `xas910-edited`, 2026-10-10) |
 
 ### 7.12 MASM 1.0 demo, 1.1, 1.3, 2.0, 3.0
@@ -383,6 +387,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | SAVE | SS+Enter in the editor (or `S` in the menu) writes the text closed up; the live file equals it in both states |
 | identification | the prompt `MASM128> ` at `#85B1` (below the text; the title `MASTER ASSEMBLER* v1.1` at `#9B49` lies where a long text goes) |
 | **Built** | descriptor `masm-1.1`; checked live. 1.3 keeps the same layout, line buffer and prompt (dumps `masm13-*`): the same descriptor reads it. The 1.0 demo: see below |
+| **Built: inject (Z3, 2026-10-11)** | MASM 1.1 / 1.3 at its `MASM128>` prompt (the key wait returns through `#85C8`, the line buffer `#851A` zeros): the file as LOAD leaves it at `#970B` with the gap start there and the gap end at `#FFFF` (the editor builds the gap buffer when entered; the reader takes that form); no "changed" flag, so a text it holds is replaced by force or when it is the caller's own. MASM 1.1 assembled the injected `oracle1.asm` and every instruction form to sjasmplus' bytes (research-sjasmplus-to-masm.md §3) |
 | **Verified: 1.0 demo** (2026-10-10, dumps `masm10-*`) | found with `memory/find` and the write journal (`find-last` on the tail at `#FFF8`: PC `#8A82`, after `LD HL,(#8665)`; `#8663` written in the same frame): 1.1's gap buffer from `#913A`, gap start `(#8663)`, gap end `(#8665)`, the end `FF` at `#FFFF`. In the editor the cursor line's record `[n] body [n]` is at the **gap start** (1.1: before the gap end); the tail of the line buffer (`#85EE`-`#8620`) is blanks in the editor and zeros in the menu (its head keeps the last line). It loads no file: the dumps type five lines; EXT `Q`, `N` + name, `S` saves (catalog length without the `FF`). Identified by `MASM128>` at `#88B5`. Descriptor `masm-1.0-demo` (codec version 1.0) |
 | **Verified: 2.0, 3.0** (2026-10-10, dumps `masm20-*`, `masm30-*`) | found by disassembling the code, not by trying keys: the gap-closing routine (2.0 `#92C6`, 3.0 `#8C24`) is `LD DE,gs` / `LD HL,linebuf` / `LD A,flag` / `OR A` / `JP NZ,flush` / `LD HL,ge` / `LDI` up to `00`, and its operands are the variables (the code rewrites them): gap start `+1`, flag `+7`, gap end `+13`. The text runs from the address its files carry (2.0 `#94DA`, 3.0 `#9123`) to the gap start, then from the gap end to `#FFFF`; lines end in `00`. While a line is typed in (flag non-zero) it is out of the text altogether, as text in the 64-byte line buffer (2.0 `#89D1`, 3.0 `#864F`), and the text goes on at the word `#929F` / `#8BFD`: the reader encodes the line buffer between the two parts. Moving the cursor puts the line back. There is no save in their editor: EXT `Q` (puts the line back), `S`, ENTER. 3.0's header `FF lo hi FF` gets the cursor line on SAVE (masked). Identified by the prompts `MASM2.0>` at `#80E0` and `MASM128>` at `#80D3`. Descriptors `masm-2.0`, `masm-3.0`; their dumps start from a file MASM itself saved (on leaving the editor MASM encodes the cursor line again, its own way) |
 
@@ -396,6 +401,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Work** | **1.5 d** |
 | **Verified: GENS4, GENS3M21, GENS 4.3t** (2026-10-10, dumps `gens4-*`, `gens3m21-*`, `gens43t-*`) | `Linear`: the text follows the code, records `[number lo] [number hi] text #0D`, from a start word to an end word (exclusive) that is an operand the code rewrites, `+#36` from the load address in the tape builds. GENS4 (tape, at 26000): text `#8AED`, start `(#67A8)`, end `(#65C6)`. GENS3M21 (Devpac 3 M21 tape, at 49000): text `#E20A` (above `#C000`, page 0), start `(#DE54)`, end `(#BF9E)`. GENS 4.3t (Aysoft, TR-DOS, `GENS4tf`): text `#8F2E`, start `(#689C)`, end `(#61FB)`. While a line is inserted (`I`) the editor sets bit 7 of the high byte of the number of the line it goes before (numbers stay below 32768): the reader clears it (`clearLineMark`). Identified by their copyright / version strings. The tape builds have no save here: their dumps are the loaded text and a line being typed; 4.3t saves with `P`, so it has an edited case. GENS4B (MOA B-Disk, at 30000): text `#A06A`, start `(#7928)`, end `(#7566)` (`+#36` again); it needs TR-DOS's variables, so it is started from 48K BASIC through `RANDOMIZE USR 15616`, `LOAD "gens4b" CODE 30000`, `RETURN`, `RANDOMIZE USR 30000` (docs/disasm/software/gens4b, dumps `gens4b-*`). Descriptors `gens-4`, `gens-3m21`, `gens-4.3t`, `gens-4b`; each a build at its usual address (GENS is relocatable) |
 
+| **Built: inject (Z4, 2026-10-11)** | GENS4 (tape, at 26000) at its `>` prompt (the key wait returns through `#685D`, `#68DD`, `#67D9`): the file from the start word, the end word one past it, as `G` leaves them; no "changed" flag, so a loaded text is replaced by force or when it is the caller's own. GENS4 assembled the injected `oracle1.asm` and every instruction form to sjasmplus' bytes (research-sjasmplus-to-gens.md §3) |
 ### 7.14 ZEUS 1983, GG, 1.1 (PHT), v7.E; Zeus Plus 2.16, Zeus Pro 2.01
 
 | | |
@@ -406,6 +412,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Work** | **2 d** (six programs, two layouts expected) |
 | **Verified: 1983, 1.1, GG, v7.E** (2026-10-10, dumps `zeus1983-*`, `zeus11-*`, `zeusgg-*`, `zeus7e-*`) | `Linear`: the text where `o` put it (the dumps use `o 32768`), records `[number] tokens 00`, then `FF FF`; a start word and, right after it, the end word holding the address of the last `FF`. 1983, 1.1 and GG keep them at `#FD00` / `#FD02` (above the code at 57344), v7.E at `#FAAB` / `#FAAD`. A line typed at the prompt stays out of the text until Enter. Found with a memory search for the two values in the loaded state. Identified by 24 bytes of their code with the title (`#E028` / `#E020`). Descriptors `zeus-1983`, `zeus-1.1`, `zeus-gg`, `zeus-7e`; no save here (tape / the dumps take the loaded text and a typed line). ZEUS 2.2, 3.0, 3.1, Zeus Pro 2.01, Zeus Plus 2.16 are not covered yet |
 
+| **Built: inject (Z4, 2026-10-11)** | ZEUS 1983 at 57344 at its prompt (the line input returns through `#F6E5`, `#E0D5`): the records from the start word, the end word at the last `FF`, as `o` leaves them; no "changed" flag, so a loaded text is replaced by force or when it is the caller's own. ZEUS 1983 assembled the injected `oracle1.asm` and every instruction form to sjasmplus' bytes (research-sjasmplus-to-zeus.md §3) |
 ### 7.15 Primus Assembler 2.9
 
 | | |
@@ -415,6 +422,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Work** | **0.5 d** |
 | **Verified** (2026-10-10, dumps `primus29-*`) | ZEUS's pair: the start word at `#61B1` (`#8254`), the address of the last `FF` at `#61B3`. It loads `PRI.DOC` at start (the dumps put the source there); a numbered line typed at the prompt stays out of the text until Enter; `b` ENTER, `s NAME` ENTER, `q` ENTER saves (commands need ENTER). Identified by `PRIMUS ASSEMBLER Version` at `#6D17`. Descriptor `primus-2.9` |
 
+| **Built: inject (Z4, 2026-10-11)** | at its prompt (the key wait returns through `#6857` / `#6858`, then `#6836` / `#6851`): the records from `#8254`, the end word at the last `FF`; no "changed" flag (force over the manual it loads). Primus 2.9 assembled the injected `oracle1.asm` and every instruction form to sjasmplus' bytes (research-sjasmplus-to-zeus.md §4.1) |
 ### 7.16 Laser Genius 1.04 (Beta)
 
 | | |
@@ -804,6 +812,75 @@ three-file project assembled to sjasmplus' bytes; a save of an INCLUDEd file wri
 was in its editor waited and went in after Extend `q`; a line typed in ALASM made the next save a conflict and the
 text stayed. Tests: `SyncControl_Test.ThePushWatchWritesEachSaveAndKeepsTheUsersChanges`,
 `LiveSourceWindow_Test.APushWatchShowsInTheStatusLineAndOutlivesTheWindow`.
+
+**Built (2026-10-11): Z3 for XAS.** The XAS backend (`dialects/xas/xasbackend.cpp`) writes the IR as XAS 4.18-9.10
+text: expressions as left-to-right chains of atoms (regrouped where `+ - * !` allow, high / low bytes and negation by
+arithmetic, the rest as values from the layout), names unique in 7 characters, conditions decided while converting
+(`IFNZ` / `IFZ` for the others in 7.x), `DUP` as `!ASSM` or unrolled, `WHILE` unrolled, macros expanded, a name
+assigned with `=` written as its values. The inject writes XAS's editor variables too (its LOAD's, found in its code:
+`InjectPlan::pokes`). Two XAS bugs the oracle found are written as bytes (4.18 / 5.05 `LD IY,(nn)`, 4.18 `LD LY,n`),
+and 4.18's `!ASSM n` (one pass) is unrolled. Checked in all seven builds (4.18, 5.05, 5.05SE, 7.43c, 7.447, 9.07m,
+9.10): `oracle1.asm` (143 bytes) and every instruction form (1173 bytes) assembled by XAS to sjasmplus' bytes. The
+`retrobackend` core is still not split out (XAS's backend shares the ALASM backend's design, not its code). Details:
+[research-sjasmplus-to-xas.md](research-sjasmplus-to-xas.md).
+
+**Built (2026-10-11): Z3 for STORM, and the shared core.** The walk the XAS backend did (macros expanded, `WHILE` and
+the repeats a target cannot hold unrolled, conditions decided, `DEFL` names as their values, names unique for the
+target, `DB` / `DW` with `$` per item, sjasmplus' fake instructions) is `dialects/common/retrowriter.cpp`
+(`RetroWriter`); a dialect gives its expression text, instructions, directives, repeat and condition blocks and line
+layout. XAS and STORM use it; the ALASM backend keeps its own (it has macros and conditions of its own). The STORM
+backend (`dialects/storm/stormbackend.cpp`) writes STORM's priorities and postfix operators, a one-line `DUP` as `.n`,
+`DISP` as `ORG run,place`, lines of at most 40 characters. STORM has no command line: the inject goes in while its
+editor waits for a key and lets STORM's own PGUP redraw from the new text (`LoadVariable::From` Constant / SetBits /
+PageBytes / SecondLine; `FileImageParams::changedVariables` for the editor's own changed flags;
+`SyncDescriptor::idleAlternatives` for two builds under one descriptor). Checked in STORM 1.3: `oracle1.asm` and
+every instruction form at `#6000` and `#8000` to sjasmplus' bytes; STORM 1.3's first pass counts `DB "A"` as two bytes
+(found by the oracle: characters in `DB` go as numbers). Details:
+[research-sjasmplus-to-storm.md](research-sjasmplus-to-storm.md).
+
+**Built (2026-10-11): Z3 for TASM 4.12.** The TASM backend (`dialects/tasm/tasmbackend.cpp`, on `RetroWriter`) writes
+left-to-right chains with parentheses, `high` / `low` as `/256` / `&255` (4.12 has no `{ }`), conditions it cannot
+decide as `.IF` (assembled on 0, one level), `.PHASE`, `DEFB` strings; `IN F,(C)`, `SLL` and two TASM 4.12 bugs
+(`LD HX,LX` / `LD HX,HX` with two prefixes) as bytes. The inject writes the form LOAD leaves (not the gap buffer):
+`GapBufferParams::loadedForm`, `changedAt`, `nameAt`; `InjectOptions::name` (the title) for an assembler that keeps
+the name outside the file; a plan of single bytes (`InjectPlan::page` -1) for a text across two pages. `zxasm convert
+--to-version` picks the target's version (TASM 4.12's tokens, not 5.5's). Checked in TASM 4.12: `oracle1.asm` and
+every instruction form to sjasmplus' bytes, loaded from its disk and injected. Details:
+[research-sjasmplus-to-tasm.md](research-sjasmplus-to-tasm.md).
+
+**Built (2026-10-11): Z3 for ZX-ASM (ZAsm 3.15).** The ZX-ASM backend (`dialects/zxasm/zxasmbackend.cpp`, on
+`RetroWriter`) writes left-to-right chains with the functions `.h .b .n .c .e`, ZX-ASM's own `IF` / `ELSE` / `ENDIF`
+and `REPT` / `ENDR`, `PHASE`, `SAVEOBJ` for sjasmplus' `SAVEBIN` (`RetroWriter::OtherText`). The inject is the first
+for a `Linear` layout (`LinearParams::resetFrom` / `resetTo`, `PlanInjectLinear`). Checked in ZAsm 3.15: `oracle1.asm`
+and every instruction form to sjasmplus' bytes, loaded from its disk and injected. Details:
+[research-sjasmplus-to-zxasm.md](research-sjasmplus-to-zxasm.md).
+
+**Built (2026-10-11): Z3 for MASM 1.1.** The MASM backend (`dialects/masm/masmbackend.cpp`, on `RetroWriter`)
+writes XAS-style chains without parentheses (with `& | @`, and `+0` before `@` after a name), labels of 10
+characters, `BEGIN` / `END`, `PHASE`, lines of at most 31 characters (MASM's line buffer); `EX (SP),IY`, which MASM
+1.1 refuses, as bytes. The inject writes the form LOAD leaves; the idle rule also wants the editor's line buffer zero
+(`SyncDescriptor::idleZeroAt`). Checked in MASM 1.1: `oracle1.asm` and every instruction form to sjasmplus' bytes,
+loaded from its disk and injected. With it every Z3 backend is done (ALASM, XAS, STORM, TASM 4.12, ZX-ASM, MASM).
+Details: [research-sjasmplus-to-masm.md](research-sjasmplus-to-masm.md).
+
+**Built (2026-10-11): Z4 for GENS4.** The GENS backend (`dialects/gens/gensbackend.cpp`) writes left-to-right chains
+(`ChainWriter`, now shared with the MASM backend) with GENS' signed division taken care of (`high` as
+`&#FF00/256&255`), names unique in 6 characters, `IF` / `END`, `DEFM`, `*F`; the undocumented instructions as bytes,
+the index halves through PROMETHEUS' instruction table (`RetroWriter::HalfRegisterBytes`). The inject is the second
+`Linear` one (`LinearParams::injectable`). On the way: the live synchronizer missed page 5 on a 48K machine (it copied
+pages 0-2 by number): `CopyNow` takes the mapped pages always. Checked in GENS4: `oracle1.asm` and every instruction
+form to sjasmplus' bytes, loaded from tape and injected. Details: [research-sjasmplus-to-gens.md](research-sjasmplus-to-gens.md).
+
+**Built (2026-10-11): Z4 for ZEUS 1983.** The ZEUS backend (`dialects/zeus/zeusbackend.cpp`, on `ChainWriter`) writes
+chains of `+ - & !` (v7.E `*`), values for what ZEUS cannot compute (a high byte, XOR, a product before v7.E),
+labels of letters and digits, a lone label as `EQU $`, `DISP` as ZEUS' offset from `ORG`, `DEFM` with a free
+delimiter, the undocumented instructions as bytes. `ChainWriter` now leaves out `*` / `/` forms where the target has
+no such operator. The `Linear` inject takes a file that ends with the layout's end marker (the end word at its last
+byte). Checked in ZEUS 1983: `oracle1.asm` and every instruction form to sjasmplus' bytes, from memory and injected.
+Details: [research-sjasmplus-to-zeus.md](research-sjasmplus-to-zeus.md).
+
+**Built (2026-10-11): Z4 for Primus 2.9.** The ZEUS backend writes Primus text too (`* / ?`, one `ORG`, `DISK`, `+0`
+before `?` after a name); the inject at its prompt. Checked in Primus 2.9. Details: research-sjasmplus-to-zeus.md §4.1.
 
 ## 20. Effort (part B)
 

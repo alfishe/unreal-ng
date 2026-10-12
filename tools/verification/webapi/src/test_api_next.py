@@ -91,6 +91,147 @@ class TestNextReports:
         assert get(api_client, next_emulator, "/state/next/sd?kinds=jump").status_code == 400
         assert get(api_client, next_emulator, "/state/next/sd?card=2").status_code == 400
 
+    def test_divmmc_report_and_journal_switch(self, api_client, next_emulator):
+        report = get(api_client, next_emulator, "/state/next/divmmc").json()
+        assert len(report["entries"]) == 15 and "automap_latch" in report["state"]
+        assert post(api_client, next_emulator, "/next/divmmc-journal", {"enabled": True, "clear": True}).json()["enabled"] is True
+        assert get(api_client, next_emulator, "/state/next/divmmc?kinds=esx_call&limit=5").json()["enabled"] is True
+        assert post(api_client, next_emulator, "/next/divmmc-journal", {"enabled": False}).json()["enabled"] is False
+
+    def test_divmmc_bad_parameters_are_400(self, api_client, next_emulator):
+        assert get(api_client, next_emulator, "/state/next/divmmc?kinds=jump").status_code == 400
+
+    def test_nextreg_beam_and_copper_breakpoints(self, api_client, next_emulator):
+        def add(body):
+            return post(api_client, next_emulator, "/breakpoints", body)
+
+        written = add({"type": "nextreg_write", "address": "0x40", "address_end": "0x44", "doors": "copper,port", "value": 1, "value_mask": 3})
+        assert written.status_code == 201, written.text
+        info = written.json()
+        assert info["address"] == 0x40 and info["address_end"] == 0x44
+        assert info["doors"] == "port,copper" and info["value"] == 1 and info["value_mask"] == 3
+        beam = add({"type": "beam", "address": 99, "hc": 255})
+        assert beam.status_code == 201, beam.text
+        assert beam.json()["hc"] == 255
+        copper = add({"type": "copper", "address": 12, "address_end": 14})
+        assert copper.status_code == 201, copper.text
+        listed = {b["type"]: b for b in get(api_client, next_emulator, "/breakpoints").json()["breakpoints"]}
+        assert {"nextreg", "beam", "copper"} <= set(listed)
+        assert listed["nextreg"]["write"] is True and listed["nextreg"]["read"] is False
+        # a tool's write is no access of the program
+        wrote = post(api_client, next_emulator, "/next/nextreg", {"reg": "0x40", "value": "0x01"})
+        assert wrote.status_code == 200, wrote.text
+        assert get(api_client, next_emulator, "/breakpoints").json()["breakpoints"][0]["hit_count"] == 0
+        # refused: a read through the copper's door only, a register past 255, a pixel clock on another kind, an unknown door
+        assert add({"type": "nextreg_read", "address": 7, "doors": "copper"}).status_code == 400
+        assert add({"type": "nextreg_write", "address": 256}).status_code == 400
+        assert add({"type": "nextreg_write", "address": 7, "hc": 3}).status_code == 400
+        assert add({"type": "nextreg_write", "address": 7, "doors": "dma"}).status_code == 400
+        assert add({"type": "beam", "address": 512}).status_code == 400
+        assert add({"type": "copper", "address": 1024}).status_code == 400
+        api_client.session.delete(api_client._url(f"/api/v1/emulator/{next_emulator}/breakpoints"))
+
+    def test_extended_keys_follow_the_hosts_keys(self, api_client, next_emulator):
+        report = get(api_client, next_emulator, "/state/next/input").json()
+        assert report["extended_keys"]["pressed"] == [] and report["md_pad_extra"]["nr_b2"] == "0x00"
+        # the automation presses the ZX key "up"; the Next's keyboard controller hears the physical key too (NR #B0 bit 3)
+        assert post(api_client, next_emulator, "/keyboard/press", {"key": "up"}).status_code == 200
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            report = get(api_client, next_emulator, "/state/next/input").json()
+            if "up" in report["extended_keys"]["pressed"]:
+                break
+            time.sleep(0.1)
+        assert "up" in report["extended_keys"]["pressed"], report["extended_keys"]
+        assert int(report["extended_keys"]["nr_b0"], 16) & 0x08
+        post(api_client, next_emulator, "/keyboard/release_all", {})
+
+    def test_the_pads_extra_buttons_come_from_the_physical_keys_the_keyboard_api_presses(self, api_client, next_emulator):
+        # the keyboard API takes PC key names too (journaled like a host key): keypad 3 / 9 / 1 / 7 are the host pad's MODE / Y / Z / X
+        for key in ("kp_3", "kp_7"):
+            assert post(api_client, next_emulator, "/keyboard/press", {"key": key}).status_code == 200
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            pad = get(api_client, next_emulator, "/state/next/input").json()["md_pad_extra"]
+            if pad["left"]["mode"] and pad["left"]["x"]:
+                break
+            time.sleep(0.1)
+        assert pad["left"] == {"mode": True, "x": True, "y": False, "z": False}, pad
+        assert pad["right"] == {"mode": False, "x": False, "y": False, "z": False}, "the right connector has no host input"
+        assert int(pad["nr_b2"], 16) == 0x09
+        post(api_client, next_emulator, "/keyboard/release_all", {})
+
+    def test_the_joystick_verbs_reach_the_right_connector_and_the_pads_buttons(self, api_client, next_emulator):
+        pressed = post(api_client, next_emulator, "/joystick/press", {"buttons": "right.up+right.fire+x+mode"})
+        assert pressed.status_code == 200, pressed.text
+        # the input is applied on the machine's thread: read the report until the buttons are there
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            report = get(api_client, next_emulator, "/state/next/input").json()
+            if sorted(report["right_pad"]["buttons"]) == ["fire", "up"] and report["md_pad_extra"]["left"]["x"]:
+                break
+            time.sleep(0.1)
+        assert sorted(report["right_pad"]["buttons"]) == ["fire", "up"], report["right_pad"]
+        assert report["md_pad_extra"]["left"]["x"] and report["md_pad_extra"]["left"]["mode"]
+        status = get(api_client, next_emulator, "/joystick").json()
+        assert sorted(status["left_extras"]) == ["mode", "x"] and sorted(status["right_pad"]["buttons"]) == ["fire", "up"]
+        assert int(report["md_pad_extra"]["nr_b2"], 16) == 0x09  # the left pad's X (bit 3) and MODE (bit 0); the right pad has no extras
+        assert post(api_client, next_emulator, "/joystick/press", {"buttons": "right.turbo"}).status_code == 400
+        cleared = post(api_client, next_emulator, "/joystick/set", {"buttons": "right.start"})
+        assert cleared.status_code == 200, cleared.text
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            report = get(api_client, next_emulator, "/state/next/input").json()
+            if report["right_pad"]["buttons"] == ["start"]:
+                break
+            time.sleep(0.1)
+        assert report["right_pad"]["buttons"] == ["start"] and report["md_pad_extra"]["left"] == {"mode": False, "x": False, "y": False, "z": False}
+
+    def test_magic_opcode_breakpoints(self, api_client, next_emulator):
+        def add(body):
+            return post(api_client, next_emulator, "/breakpoints", body)
+
+        # the opcode is the type; the listing names it
+        for kind, word in (("magic_ed_ff", 0xEDFF), ("magic_dd_01", 0xDD01)):
+            added = add({"type": kind})
+            assert added.status_code == 201, added.text
+            assert added.json()["type"] == kind and added.json()["address"] == word
+        listed = [b for b in get(api_client, next_emulator, "/breakpoints").json()["breakpoints"] if b["type"] == "magic"]
+        assert {b["address"] for b in listed} == {0xEDFF, 0xDD01}
+        assert add({"type": "magic_ed_ff", "address_end": 3}).status_code == 400
+        api_client.session.delete(api_client._url(f"/api/v1/emulator/{next_emulator}/breakpoints"))
+
+    def test_magic_port_console(self, api_client, next_emulator):
+        report = get(api_client, next_emulator, "/state/next/magic-port").json()
+        assert report["enabled"] is False and report["items"] == []
+        on = post(api_client, next_emulator, "/next/magic-port", {"enabled": True, "port": 0x00FF, "mode": "line", "clear": True})
+        assert on.status_code == 200, on.text
+        assert on.json()["port"] == "0x00FF" and on.json()["mode"] == "line"
+        assert post(api_client, next_emulator, "/next/magic-port", {"mode": "binary"}).status_code == 400
+        assert post(api_client, next_emulator, "/next/magic-port", {"port": 70000}).status_code == 400
+        assert get(api_client, next_emulator, "/state/next/magic-port?since=x").status_code == 400
+        post(api_client, next_emulator, "/next/magic-port", {"enabled": False})
+
+    def test_nmi_report_journal_and_trigger(self, api_client, next_emulator):
+        report = get(api_client, next_emulator, "/state/next/nmi").json()
+        names = [source["name"] for source in report["sources"]]
+        assert names == ["m1_button", "drive_button", "io_trap"]
+        assert report["sources"][2]["modelled"] is False
+        assert {"in_service", "multiface", "nr_02", "stackless_nmi", "reset", "interrupts", "events"} <= set(report)
+        journal = post(api_client, next_emulator, "/next/nmi-journal", {"enabled": True, "clear": True}).json()
+        assert journal["enabled"] is True and journal["size"] == 0
+        # the M1 button is off at power on (NR #06 bit 3): a write of NR #02 bit 3 is refused, with the reason, and the journal says so
+        wrote = post(api_client, next_emulator, "/next/nextreg", {"reg": "02", "value": "08"})
+        assert wrote.status_code == 200, wrote.text
+        # the machine's "magic button" (POST /nmi {"magic": true}) is the DRIVE button on a Next; a plain POST /nmi is the bare /NMI line
+        nmi = post(api_client, next_emulator, "/nmi", {"magic": True})
+        assert nmi.status_code == 200, nmi.text
+        events = get(api_client, next_emulator, "/state/next/nmi?kinds=nmi_request").json()["events"]
+        assert [e["source"] for e in events][:2] == ["m1_button", "drive_button"], events
+        assert events[0]["accepted"] is False and "NR #06" in events[0]["reason"]
+        assert get(api_client, next_emulator, "/state/next/nmi?kinds=jump").status_code == 400
+        post(api_client, next_emulator, "/next/nmi-journal", {"enabled": False})
+
     def test_nextreg_write_bad_body_is_400(self, api_client, next_emulator):
         assert post(api_client, next_emulator, "/next/nextreg", {"reg": "14"}).status_code == 400
         assert post(api_client, next_emulator, "/next/nextreg", {"reg": "14", "value": "1", "door": "copper"}).status_code == 400

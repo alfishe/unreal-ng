@@ -39,6 +39,11 @@ enum class CommandId : uint8_t
     CMD_EXEC_ASM = 22,
     CMD_INTERRUPT_ON_OFF = 23,
     CMD_GET_SUPPORTED_COMMANDS = 24,
+    // ZX Next (DeZog 3.x; dezogif, the CSpect plugin): a bank is a Next 8K bank
+    CMD_READ_BANK_MEM = 25,
+    CMD_WRITE_BANK_MEM = 26,
+    CMD_SET_NEXTREGS = 27,
+    CMD_READ_MEM_BLOCKS = 28,
     CMD_ADD_BREAKPOINT = 40,
     CMD_REMOVE_BREAKPOINT = 41,
     CMD_ADD_WATCHPOINT = 42,

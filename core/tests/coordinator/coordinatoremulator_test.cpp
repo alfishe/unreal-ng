@@ -12,10 +12,13 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/gsslot.h"
+#include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdcontrol.h"
 #include "emulator/coordinator/machinecoordinator.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -489,4 +492,199 @@ TEST_F(CoordinatorEmulator_Test, AReplayHoldsDebugModeAndTheFeatureHasItsSayAfte
 
     features->setFeature(Features::kDebugMode, true);
     EXPECT_TRUE(z80->isDebugMode);
+}
+
+// M6: a change of the machine itself is an operation of its own - the General Sound card here, the ROM a reset reads
+// again (nested in the reset) - and ends the session with its history: it belongs to the machine before the change
+TEST_F(CoordinatorEmulator_Test, AChangeOfTheMachineItselfEndsTheSessionAndDropsItsHistory)
+{
+    // Its own machine, with a General Sound card (the runner leaves the sound cards out)
+    EmulatorTestHelper::CleanupEmulator(_emulator);
+    {
+        SoundCardScope cards{TestSound::GeneralSound};
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    }
+    ASSERT_NE(_emulator, nullptr);
+    _emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    _emulator->GetContext()->pMemory->UpdateFeatureCache();
+    _ttd = _emulator->GetContext()->pTimeTravelController;
+    SoundManager* sound = _emulator->GetContext()->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+    ASSERT_TRUE(FitGeneralSoundCard(sound, GSTypeKind::Z80));
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+
+    Mark();
+    ASSERT_TRUE(sound->switchGeneralSoundCard(GSTypeKind::LW));
+    auto log = Logged();
+    ASSERT_EQ(log.size(), 1u);
+    EXPECT_EQ(log[0].kind, OpKind::GsCardSwitch);
+    EXPECT_EQ(log[0].status, OpStatus::Done);
+    EXPECT_EQ(log[0].mode, MachineMode::Recording);
+    EXPECT_EQ(log[0].effect, SessionEffect::MachineChanged);
+    EXPECT_EQ(log[0].detail, "");
+    EXPECT_FALSE(_ttd->IsRecording());
+    EXPECT_FALSE(_ttd->HasHistory());
+    EXPECT_EQ(_ttd->GetSessionInfo().lastDropReason, "gs-card-switch");
+
+    // The ROM reload a reset carries out: inside the reset, logged before it (it finishes first)
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    Mark();
+    _emulator->RequestRomReload();
+    _emulator->Reset();
+    log = Logged();
+    ASSERT_EQ(log.size(), 2u);
+    EXPECT_EQ(log[0].kind, OpKind::RomLoad);
+    EXPECT_EQ(log[0].effect, SessionEffect::MachineChanged);
+    EXPECT_EQ(log[0].mode, MachineMode::Live) << "the reset ended the recording before";
+    EXPECT_EQ(log[1].kind, OpKind::Reset);
+    EXPECT_FALSE(_ttd->HasHistory()) << "the history relied on the old ROM";
+    EXPECT_EQ(_ttd->GetSessionInfo().lastDropReason, "rom-reload");
+    EXPECT_FALSE(_emulator->RomReloadPending());
+}
+
+// M6: a speed change drops a stopped session's history (frame timing is part of the determinism contract)
+TEST_F(CoordinatorEmulator_Test, ASpeedChangeIsLoggedAndDropsAHistory)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    _ttd->StopRecording();
+    ASSERT_TRUE(_ttd->HasHistory());
+
+    Mark();
+    ASSERT_TRUE(_emulator->SetSpeedMultiplier(2));
+    ASSERT_TRUE(_emulator->SetSpeedMultiplier(1));
+    const auto log = Logged();
+    ASSERT_EQ(log.size(), 2u);
+    EXPECT_EQ(log[0].kind, OpKind::SpeedChange);
+    EXPECT_EQ(log[0].summary, "2x");
+    EXPECT_EQ(log[0].effect, SessionEffect::TimingChanged);
+    EXPECT_EQ(log[1].summary, "1x");
+    EXPECT_FALSE(_ttd->HasHistory());
+    EXPECT_EQ(_ttd->GetSessionInfo().lastDropReason, "speed-multiplier-change");
+}
+
+// M6: TTD v1 refuses a change of the machine itself while recording (D26), as the emulator's owner refusal, logged;
+// the ROM is not touched and the machine is not paused
+TEST_F(CoordinatorEmulator_Test, TtdV1RefusesARomLoadWhileRecordingAndTheLogHasIt)
+{
+    UseV1();
+    ASSERT_TRUE(_emulator->GetContext()->pTimeTravelManager->StartRecording());
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+
+    Mark();
+    EXPECT_FALSE(_emulator->LoadROM("any.rom"));
+    const auto log = Logged();
+    ASSERT_EQ(log.size(), 1u);
+    EXPECT_EQ(log[0].kind, OpKind::RomLoad);
+    EXPECT_EQ(log[0].status, OpStatus::Refused);
+    EXPECT_EQ(log[0].summary, "any.rom");
+    EXPECT_NE(log[0].detail.find("ROM"), std::string::npos) << log[0].detail;
+    EXPECT_TRUE(_emulator->GetContext()->pTimeTravelManager->IsRecording());
+}
+
+// M6: a reset leaves the path an RZX playback drives - the coordinator ends the playback first, the caller does not
+TEST_F(CoordinatorEmulator_Test, AResetEndsAnRzxPlaybackFirst)
+{
+    EmulatorTestHelper::CleanupEmulator(_emulator);
+    _emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+    ASSERT_NE(_emulator, nullptr);
+    const rzx::PlayResult played = _emulator->PlayRzx(Data("loaders/rzx/archive/ericfloaters.rzx"));
+    ASSERT_TRUE(played.Ok()) << played.message;
+    _emulator->RunNFrames(5, /*skipBreakpoints=*/true);
+    ASSERT_TRUE(_emulator->IsRzxPlaying());
+
+    Mark();
+    _emulator->Reset();
+    EXPECT_FALSE(_emulator->IsRzxPlaying());
+    const auto log = Logged();
+    ASSERT_EQ(log.size(), 1u);
+    EXPECT_EQ(log[0].kind, OpKind::Reset);
+    EXPECT_EQ(log[0].status, OpStatus::Done);
+}
+
+// M6: a tool's edit is an operation: logged with its source, recorded by a session (the register writes of the
+// scripts and the WebAPI were not before); live it is written as it comes
+TEST_F(CoordinatorEmulator_Test, AToolsEditIsLoggedAndARegisterWriteIsOneToo)
+{
+    Mark();
+    ASSERT_TRUE(_emulator->SetRegisterFromTool("test register", "BC", 0x1234));
+    EXPECT_EQ(_emulator->GetZ80State()->bc, 0x1234);
+    EXPECT_FALSE(_emulator->SetRegisterFromTool("test register", "IM", 3)) << "IM 3 is no mode";
+    EXPECT_FALSE(_emulator->SetRegisterFromTool("test register", "nonsense", 1));
+    auto log = Logged();
+    ASSERT_EQ(log.size(), 1u) << "a refused value changes nothing and is no operation";
+    EXPECT_EQ(log[0].kind, OpKind::ToolEdit);
+    EXPECT_EQ(log[0].summary, "test register");
+    EXPECT_EQ(log[0].mode, MachineMode::Live);
+
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+    const size_t eventsBefore = _ttd->GetExternalEvents().Size();
+    Mark();
+    ASSERT_TRUE(_emulator->SetRegisterFromTool("test register", "DE", 0x4321));
+    log = Logged();
+    ASSERT_EQ(log.size(), 1u);
+    EXPECT_EQ(log[0].mode, MachineMode::Recording);
+    EXPECT_EQ(log[0].status, OpStatus::Done);
+    EXPECT_GT(_ttd->GetExternalEvents().Size(), eventsBefore) << "the recording keeps the edit";
+    EXPECT_TRUE(_ttd->IsRecording());
+}
+
+// M6: TTD's verbs are operations of the coordinator on TTD's own lock: each in the log, a failure with its reason
+TEST_F(CoordinatorEmulator_Test, TtdVerbsAreLogged)
+{
+    ttd::TTDControl control(_emulator->GetContext());
+    Mark();
+    ASSERT_TRUE(control.Execute({"start", {}}).Ok());
+    _emulator->RunNFrames(4, /*skipBreakpoints=*/true);
+    ASSERT_TRUE(control.Execute({"stop", {}}).Ok());
+    ASSERT_TRUE(control.Execute({"seek", {{"frame", std::to_string(_ttd->CurrentFrame() - 2)}}}).Ok());
+    const ttd::TTDReply bad = control.Execute({"seek", {{"bookmark", "nowhere"}}});
+    EXPECT_FALSE(bad.Ok());
+    ASSERT_TRUE(control.Execute({"status", {}}).Ok());
+
+    const auto log = Logged();
+    ASSERT_EQ(log.size(), 4u) << "status reads, it is no operation";
+    EXPECT_EQ(log[0].kind, OpKind::TtdStart);
+    EXPECT_EQ(log[0].mode, MachineMode::Live);
+    EXPECT_EQ(log[1].kind, OpKind::TtdStop);
+    EXPECT_EQ(log[1].mode, MachineMode::Recording);
+    EXPECT_EQ(log[2].kind, OpKind::TimelineSeek);
+    EXPECT_EQ(log[2].status, OpStatus::Done);
+    EXPECT_EQ(log[3].kind, OpKind::TimelineSeek);
+    EXPECT_EQ(log[3].status, OpStatus::Failed);
+    EXPECT_EQ(log[3].detail, bad.message);
+    EXPECT_EQ(log[3].summary, "seek bookmark=nowhere");
+}
+
+// M6 (owner 2026-10-11): in the recorded past a tool's edit is refused - nothing would keep it (the next seek sets the
+// point back); the surface gets the reason, the memory stays, the log has the refusal
+TEST_F(CoordinatorEmulator_Test, AToolsEditInTheRecordedPastIsRefused)
+{
+    ttd::TTDControl control(_emulator->GetContext());
+    ASSERT_TRUE(control.Execute({"start", {}}).Ok());
+    _emulator->RunNFrames(4, /*skipBreakpoints=*/true);
+    ASSERT_TRUE(control.Execute({"stop", {}}).Ok());
+    ASSERT_TRUE(control.Execute({"seek", {{"frame", std::to_string(_ttd->CurrentFrame() - 2)}}}).Ok());
+    ASSERT_EQ(_emulator->MachineOps().Mode(), MachineMode::Detached);
+
+    Memory* memory = _emulator->GetMemory();
+    const uint8_t before = memory->DirectReadFromZ80Memory(0x8000);
+    Mark();
+    const std::string refused = _emulator->EditMemoryFromTool(
+        "test poke", [&]() { memory->DirectWriteToZ80Memory(0x8000, static_cast<uint8_t>(before ^ 0xFF)); });
+    EXPECT_NE(refused.find("recorded history"), std::string::npos) << refused;
+    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x8000), before);
+    std::string registerRefusal;
+    EXPECT_FALSE(_emulator->SetRegisterFromTool("test register", "BC", 0x1234, &registerRefusal));
+    EXPECT_EQ(registerRefusal, refused);
+    const auto log = Logged();
+    ASSERT_EQ(log.size(), 2u);
+    EXPECT_EQ(log[0].kind, OpKind::ToolEdit);
+    EXPECT_EQ(log[0].status, OpStatus::Refused);
+    EXPECT_EQ(log[0].mode, MachineMode::Detached);
+    EXPECT_EQ(log[0].detail, refused);
 }

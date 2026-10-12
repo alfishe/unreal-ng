@@ -10,6 +10,8 @@
 #include "../common/statenode_json.h"
 
 #include <drogon/HttpResponse.h>
+#include <mutex>
+#include <unordered_set>
 #include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -93,7 +95,7 @@ Json::Value RenderMemoryWindowFormat(const uint8_t* data, size_t size, uint32_t 
 
 /// @brief GET /api/v1/emulator/{id}/state/memory
 /// @brief Get complete memory configuration
-void EmulatorAPI::getStateMemory(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getStateMemory(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id) const
 {
     auto manager = EmulatorManager::GetInstance();
@@ -223,7 +225,8 @@ void EmulatorAPI::getStateMemory(const HttpRequestPtr& req, std::function<void(c
 
 /// @brief GET /api/v1/emulator/{id}/state/memory/ram
 /// @brief Get RAM banking details
-void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& /*req*/,
+                                    std::function<void(const HttpResponsePtr&)>&& callback,
                                     const std::string& id) const
 {
     auto manager = EmulatorManager::GetInstance();
@@ -338,7 +341,7 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<voi
 
 /// @brief GET /api/v1/emulator/{id}/state/memory/rom
 /// @brief Get ROM configuration with signatures
-void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
+void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& /*req*/,
                                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                                     const std::string& id) const
 {
@@ -497,8 +500,39 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
     callback(resp);
 }
 
-// Static flag for ROM write protection (default: protected)
-static bool s_romWriteProtected = true;
+// ROM write protection of the WebAPI's page writes, per emulator instance (by its id; default: protected). It was one
+// flag for the process: unprotecting one instance unprotected them all
+namespace
+{
+std::mutex s_romProtectMutex;
+std::unordered_set<std::string> s_romUnprotected;   ///< instances whose ROM pages the page write may change
+
+bool RomWriteProtected(const Emulator& emulator)
+{
+    std::lock_guard<std::mutex> lock(s_romProtectMutex);
+    return s_romUnprotected.count(emulator.GetId()) == 0;
+}
+
+void SetRomWriteProtected(const Emulator& emulator, bool on)
+{
+    std::lock_guard<std::mutex> lock(s_romProtectMutex);
+    if (on)
+        s_romUnprotected.erase(emulator.GetId());
+    else
+        s_romUnprotected.insert(emulator.GetId());
+}
+
+void ReplyEmulatorNotFound(std::function<void(const HttpResponsePtr&)>& callback)
+{
+    Json::Value error;
+    error["error"] = "Not Found";
+    error["message"] = "Emulator with specified ID not found";
+    auto resp = HttpResponse::newHttpJsonResponse(error);
+    resp->setStatusCode(HttpStatusCode::k404NotFound);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+}  // namespace
 
 /// @brief GET /api/v1/emulator/{id}/memory/read/{address}
 /// @brief Read memory at Z80 address
@@ -698,14 +732,25 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
 
     // A tool edit (Emulator::EditMemoryFromTool): it parks a running machine and,
     // while TTD records, records the write as an event with its bytes, so a
-    // replay reproduces it (D9)
-    emulator->EditMemoryFromTool("WebAPI memory write", [&]() {
+    // replay reproduces it (D9). Refused in the recorded past (409)
+    const std::string refused = emulator->EditMemoryFromTool("WebAPI memory write", [&]() {
         for (Json::ArrayIndex i = 0; i < data.size(); i++)
         {
             memory->DirectWriteToZ80Memory(address + i, static_cast<uint8_t>(data[i].asUInt()));
             bytesWritten++;
         }
     });
+    if (!refused.empty())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refused;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
 
     Json::Value ret;
     ret["success"] = true;
@@ -1213,7 +1258,7 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
         return;
     }
 
-    if (isROM && s_romWriteProtected)
+    if (isROM && RomWriteProtected(*emulator))
     {
         Json::Value error;
         error["error"] = "Forbidden";
@@ -1307,7 +1352,7 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
     Json::Value& data = (*body)["data"];
     size_t bytesWritten = 0;
     // A page edit behind the CPU's back: TTD must see it like any other tool write
-    emulator->EditMemoryFromTool("WebAPI page write", [&] {
+    const std::string refused = emulator->EditMemoryFromTool("WebAPI page write", [&] {
         for (Json::ArrayIndex i = 0; i < data.size() && (offset + i) < PAGE_SIZE; i++)
         {
             pagePtr[offset + i] = static_cast<uint8_t>(data[i].asUInt());
@@ -1316,6 +1361,17 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
         if (isRAM)
             memory->MarkRamPageEdited(page);
     });
+    if (!refused.empty())
+    {
+        Json::Value error;
+        error["error"] = "Conflict";
+        error["message"] = refused;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k409Conflict);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
 
     Json::Value ret;
     ret["success"] = true;
@@ -1331,12 +1387,19 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
 
 /// @brief GET /api/v1/emulator/{id}/memory/rom/protect
 /// @brief Get ROM write protection status
-void EmulatorAPI::getROMProtect(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getROMProtect(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
 {
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator)
+    {
+        ReplyEmulatorNotFound(callback);
+        return;
+    }
+    const bool on = RomWriteProtected(*emulator);
     Json::Value ret;
-    ret["protected"] = s_romWriteProtected;
-    ret["message"] = s_romWriteProtected ? "ROM pages are write-protected" : "ROM pages are writable";
+    ret["protected"] = on;
+    ret["message"] = on ? "ROM pages are write-protected" : "ROM pages are writable";
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -1348,6 +1411,12 @@ void EmulatorAPI::getROMProtect(const HttpRequestPtr& req, std::function<void(co
 void EmulatorAPI::setROMProtect(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
 {
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator)
+    {
+        ReplyEmulatorNotFound(callback);
+        return;
+    }
     auto body = req->getJsonObject();
     if (!body || !body->isMember("protected"))
     {
@@ -1362,12 +1431,13 @@ void EmulatorAPI::setROMProtect(const HttpRequestPtr& req, std::function<void(co
         return;
     }
 
-    s_romWriteProtected = (*body)["protected"].asBool();
+    const bool on = (*body)["protected"].asBool();
+    SetRomWriteProtected(*emulator, on);
 
     Json::Value ret;
     ret["success"] = true;
-    ret["protected"] = s_romWriteProtected;
-    ret["message"] = s_romWriteProtected ? "ROM write protection enabled" : "ROM write protection disabled - ROM pages are now writable";
+    ret["protected"] = on;
+    ret["message"] = on ? "ROM write protection enabled" : "ROM write protection disabled - ROM pages are now writable";
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -1510,7 +1580,7 @@ Json::Value DecodeLatchValue(PagingLatch latch, uint32_t value, MEM_MODEL model,
 
 /// @brief GET /api/v1/emulator/{id}/state/paging
 /// @brief Get unified paging state assembled from the tagged port registry (P1-2)
-void EmulatorAPI::getStatePaging(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getStatePaging(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id) const
 {
     auto manager = EmulatorManager::GetInstance();

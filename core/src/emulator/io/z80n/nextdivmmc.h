@@ -17,6 +17,7 @@
 #include <functional>
 
 #include "emulator/cpu/z80.h"
+#include "emulator/io/z80n/nextdivmmcjournal.h"
 #include "emulator/memory/next/nextmemory.h"
 
 class NextBoard;
@@ -34,6 +35,15 @@ public:
 
     /// Is the 48K BASIC ROM the one paged at #0000 (the ROM-3-only entries need it)
     std::function<bool()> isBasicRomPaged;
+
+    /// The journal (automation-gaps-2026-10-11.md, P2). `fillClock` sets frame, T and PC of an event, `fillCall` the esxDOS call of an entry at
+    /// #0008 (the byte after the RST and the registers; the DivMMC does not know the CPU)
+    NextDivMmcJournal& Journal() { return _journal; }
+    const NextDivMmcJournal& Journal() const { return _journal; }
+    std::function<void(NextDivMmcEvent&)> fillClock;
+    std::function<void(NextDivMmcEvent&)> fillCall;
+    /// NR #0A bit 4 and the port enable: is the automap armed at all
+    bool AutomapArmed() const { return AutomapEnabled(); }
 
     /// A reset (the power-on one and NR #02's): E3 = 0, the latches cleared (zxnext.vhd 4175, divmmc.vhd 108-139)
     void Reset();
@@ -67,12 +77,15 @@ public:
     void OnMachineM1(uint16_t address) override;
 
 private:
+    friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     enum class Hit : uint8_t { None, Delayed, Instant, MapOut };
     Hit Classify(uint16_t address) const;
     /// NR #0A bit 4 and the port enable: automap_reset is their inverse
     bool AutomapEnabled() const;
     void Publish();
+    void Note(NextDivMmcKind kind, uint16_t address = 0, bool instant = false);
 
+    NextDivMmcJournal _journal;
     NextMemory* _memory;
     NextBoard* _board;
     uint8_t _control = 0;

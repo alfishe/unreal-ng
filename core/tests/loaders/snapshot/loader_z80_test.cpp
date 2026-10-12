@@ -8,6 +8,7 @@
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
+#include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "loader_z80_fuzzing_test.h"  // Includes LoaderZ80CUT
 #include "emulator/sound/chips/soundchip_ay8910.h"
@@ -70,17 +71,7 @@ void LoaderZ80_Test::SetUp()
 
 void LoaderZ80_Test::TearDown()
 {
-    if (_cpu != nullptr)
-    {
-        delete _cpu;
-        _cpu = nullptr;
-    }
-
-    if (_context != nullptr)
-    {
-        delete _context;
-        _context = nullptr;
-    }
+    EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
 }
 
 /// endregion </Setup / TearDown>

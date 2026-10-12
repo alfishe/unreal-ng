@@ -97,6 +97,10 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return _machine ? _machine->ReadMemoryMapping() : _regs[reg];
         case kRegCpuSpeed:
             return static_cast<uint8_t>((_regs[reg] & 3) | ((_regs[reg] & 3) << 4));  // programmed | actual
+        case 0xB0:
+        case 0xB1:
+        case 0xB2:
+            return _machine ? _machine->ReadExtendedInput(reg) : 0;
         default:
             break;
     }
@@ -164,8 +168,19 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
         uint16_t pc = 0;
         if (_journalClock)
             _journalClock(frame, t, pc);
-        _journal.Record(frame, t, pc, _copperWrite ? NextRegSource::Copper : _source, reg, value, _regs[reg]);
+        int16_t beamLine = -1, beamHc = -1;
+        uint64_t clock = 0;
+        if (_copperWrite || _copper.BeamNow(clock))
+        {
+            if (_copperWrite)
+                clock = _copper.LastMoveAt();  // the copper's own time, not the CPU's when the picture caught it up
+            beamLine = static_cast<int16_t>(_copper.BeamLine(clock));
+            beamHc = static_cast<int16_t>(_copper.BeamHc(clock));
+        }
+        _journal.Record(frame, t, pc, _copperWrite ? NextRegSource::Copper : _source, reg, value, _regs[reg], beamLine, beamHc);
     }
+    if (_accessHook) [[unlikely]]
+        _accessHook(true, reg, value, _copperWrite ? NextRegSource::Copper : _source);
     // the sound follows NR #06 / #08 / #09 once their value is stored, whichever path stores it
     struct AudioNotify
     {
@@ -360,7 +375,10 @@ void NextBoard::RefreshLayer2Mapping()
 void NextBoard::AfterInstruction()
 {
     if (_machine)
+    {
+        _machine->OnInstructionDone();
         _machine->StepDma();
+    }
     if (!_resetPending)
         return;
     _resetPending = false;

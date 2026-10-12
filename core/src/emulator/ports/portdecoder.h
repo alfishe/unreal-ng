@@ -801,6 +801,16 @@ public:
     /// automation does not offer it as a device (docs/inprogress/2026-10-03-mouse-api-routing/design.md)
     virtual bool HasMachineMouse() const { return false; }
 
+    /// Pads beyond the Kempston byte: the ZX Next's two joystick connectors, 12 buttons each. A connector's state: bit 0 right, 1 left, 2 down,
+    /// 3 up, 4 B (fire), 5 C, 6 A, 7 START, 8 Y, 9 Z, 10 X, 11 MODE (zxnext.vhd i_JOY_LEFT / i_JOY_RIGHT). Connector 0 is the left one (the
+    /// host's pad: its low byte is the Kempston device), 1 the right one. Default: no pads
+    static constexpr unsigned kPadConnectors = 2;
+    static constexpr uint16_t kPadMask = 0x0FFF;
+    virtual bool HasPads() const { return false; }
+    virtual uint16_t PadState(unsigned connector) const { (void)connector; return 0; }
+    /// Set the whole state of a connector (the journaled input event TTDInputKind::NextPad lands here); false when there is no such pad
+    virtual bool ApplyPadState(unsigned connector, uint16_t state) { (void)connector; (void)state; return false; }
+
 
     /// region <TTD model-specific state (parent TDD 6.4)>
     ///
@@ -1305,6 +1315,11 @@ public:
     /// own form (the Pentagon 1024's #EFF7 enables 1 MB paging, where #7FFD bit 5 is a page bit, not the lock). Default:
     /// nothing, the machine already behaves like a 128K
     virtual void EnterSpectrum128Paging(uint16_t pc) { (void)pc; }
+
+    /// A disk autostart's TR-DOS cold start (Reset(RM_DOS)) reached the TR-DOS command loop, right before it runs the
+    /// disk's program: leave the paging the way the user's own boot of a disk would. True when it changed the machine.
+    /// Default: nothing, the cold start already is that boot
+    virtual bool FinishAutostartColdStart(uint16_t pc) { (void)pc; return false; }
 
     /// Whether #7FFD paging is latched off until reset. A locked #7FFD ignores
     /// every later write, screen bit included, and keeps the value that locked

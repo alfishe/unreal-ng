@@ -11,6 +11,7 @@
 #include <common/stringhelper.h>
 
 #include "_helpers/testpathhelper.h"
+#include "_helpers/wd1793testcut.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/diskimage.h"
@@ -744,7 +745,7 @@ TEST_F(LoaderDSK_Test, Wd1793_ReadSector_512)
     for (size_t i = 0; i < 512; i++) pattern[i] = static_cast<uint8_t>((i * 7) ^ 0x5A);
     track->writeSectorData(4, pattern.data(), pattern.size());
 
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     fdc.getDrive()->insertDisk(image);
     fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;  // MFM (the DENSITY bit selects FM)
     fdc._drive = 0;

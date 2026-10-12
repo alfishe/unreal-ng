@@ -9,6 +9,7 @@
 #include "debugger/ttd/timetravelhooks.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "debugger/ttd/ttdserializable.h"
+#include "emulator/coordinator/ports.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/slots/card.h"
@@ -403,9 +404,12 @@ bool SlotManager::TtdSessionMatches(const TtdDeviceSet& recorded,
 
 std::string SlotManager::ChangeRefusal() const
 {
-    if (_context == nullptr || _context->pTimeTravelHooks == nullptr)
+    // The coordinator's rules (OpKind::SlotChange: TTD v1 refuses while a user recording runs)
+    if (_context == nullptr || _context->pMachineOps == nullptr)
     {
         return {};
     }
-    return _context->pTimeTravelHooks->RecordingGuard(ttd::TTDGuardedAction::ChangeSlots);
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::SlotChange;
+    return _context->pMachineOps->WouldRefuse(op).reason;
 }

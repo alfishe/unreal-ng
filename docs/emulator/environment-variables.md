@@ -51,6 +51,8 @@ automation servers live inside it).
 | Variable | Values (default) | What it does | Read by |
 |---|---|---|---|
 | `UNREAL_WEBAPI_PORT` | 1-65535 (8090) | Port of the WebAPI (HTTP/REST) server. Invalid values are ignored. The MCP server's internal client follows it too. | WebAPI server, `core/automation/webapi/src/automation-webapi.cpp:204`; MCP's client `core/automation/mcp/src/webapi-client.cpp:39` |
+| `UNREAL_WEBAPI_PORTS` | `8090-8099` or `8090,8190` (8090-8099) | Where the example scripts look for a running emulator (after `UNREAL_WEBAPI_PORT`). The emulator itself does not read it. | `data/examples/lib/unreal_webapi.py` |
+| `UNREAL_WEBAPI_URL` | a WebAPI base URL (none) | The example scripts talk to this one emulator only, e.g. on another host: `http://192.168.1.5:8090/api/v1`. The emulator itself does not read it. | `data/examples/lib/unreal_webapi.py` |
 | `UNREAL_MCP_PORT` | 1-65535 (8092) | Port of the MCP server (for AI agents). | `core/automation/mcp/src/automation-mcp.cpp:111` |
 | `UNREAL_CLI_PORT` | 1-65535 (8765, the CLI module's default) | Port of the text command-line (telnet-style) server. | `core/automation/cli/src/automation-cli.cpp:81` |
 | `UNREAL_GDB_PORT` | 1-65535 (2000) | Port of the GDB remote debugging server. | `core/automation/gdb/src/automation-gdb.cpp:26` |
@@ -78,8 +80,9 @@ Read by the scripts in `tools/build/` ([`tools/build/README.md`](../../tools/bui
 | Variable | Values (default) | What it does | Read by |
 |---|---|---|---|
 | `BUILD_DIR` | a folder (`cmake-build-agent-release` in the repository root) | Build directory to configure and build in. | `tools/build/build.sh:18`, `tools/build/test.sh:12` |
-| `UNREAL_JOBS` | number (half the logical cores, at least 1) | Parallel compile jobs (`ninja -j`) and the job count of the parallel test run. | `tools/build/build.sh:20`, `tools/build/test.sh:14` |
-| `UNREAL_NO_CONFIGURE` | `1` = skip (configure every time) | Skips the CMake configure step that `build.sh` runs before every build. Only for a tight edit-compile loop on a tree that did not change. | `tools/build/build.sh:25` |
+| `UNREAL_JOBS` | number (half the logical cores, at least 1) | Parallel compile jobs (`ninja -j`) and the job count of the parallel test run. | `tools/build/build.sh:24`, `tools/build/test.sh:14` |
+| `UNREAL_NO_CONFIGURE` | `1` = skip (configure every time) | Skips the CMake configure step that `build.sh` runs before every build. Only for a tight edit-compile loop on a tree that did not change. | `tools/build/build.sh:29` |
+| `UNREAL_NO_LINT` | `1` = skip (check every time) | Skips the source checks of the CI lint job (`tools/verification/gui-instance-reads.sh`) that `build.sh` runs before every build. They take a fraction of a second and never stop the build; a failure is printed. | `tools/build/build.sh:35` |
 | `UNREAL_NICE` | `0` = normal priority (lowered, `nice 10`) | Runs builds and tests at normal priority. For benchmarks / timing runs on a quiet machine. | `tools/build/slot.py:225` |
 | `UNREAL_SLOTS_BUILD`, `UNREAL_SLOTS_TEST`, `UNREAL_SLOTS_<POOL>` | positive number (build 2, test 1, others 1) | How many builds / test runs may run at once machine-wide. Not to be confused with the slot tests' variables (section 4). | `tools/build/slot.py:58` |
 | `UNREAL_SLOTS_DIR` | a folder (`$XDG_CACHE_HOME/unreal-ng/slots`, else `~/.cache/unreal-ng/slots`) | Where the lock files of the build / test slots live. Everything sharing a folder shares the limits. | `tools/build/slot.py:50` |
@@ -99,6 +102,7 @@ CMake reads a few standard variables while configuring: `VCPKG_ROOT` (Windows de
 |---|---|---|---|
 | `UNREAL_TEST_SCRATCH_DIR` | a folder (`scratch/` in the repository root) | Moves the tests' scratch folder off the project tree. The Linux Docker build sets it (`docker/linux/build.sh:92`) because some file operations fail on a macOS shared folder. | `core/tests/_helpers/testpathhelper.h:277` ([`docker/linux/README.md`](../../docker/linux/README.md)) |
 | `UNREAL_TEST_KEEP_SCRATCH` | set / unset (deleted) | Keeps each run's per-process scratch folder at exit, to look at what the tests wrote. | `core/tests/_helpers/testpathhelper.h:56` ([`core/tests/README.md`](../../core/tests/README.md)) |
+| `UNREAL_TEST_TIME_SCALE` | a factor ≥ 1 (1) | Multiplies the timeout of every `TestWait` wait (and the deadlines built with `TestWait::Scaled`), for runs many times slower than native: valgrind (`tools/sanitize/valgrind.sh` sets 20). A passing wait still returns as soon as its condition holds. | `core/tests/_helpers/testwaithelper.h` ([sanitizers.md](../testing/sanitizers.md)) |
 | `UNREAL_TIMING_SUITES` | set / unset (off) | Turns on the long timing suites (contention probe sweeps, the full 128K timing suite, ctprobe / snowtest machine sweeps). Seconds to minutes. | `core/tests/emulator/video/contentionprobe_test.cpp:247`, `ctprobe_test.cpp:839`, `snowtest_test.cpp:349` |
 | `UNREAL_TAPE_SWEEP` | set / unset (off) | Creates the tape loading sweep cases (every tape on 48K and Pentagon). Normally run through `tools/verification/tape/tape-sweep.sh`. | `core/tests/emulator/io/tape/tapeloadingsweep_integration_test.cpp:68` |
 | `MOONSOUND_FULL_SWEEP` | set / unset (fast subset) | Runs the full 11-patch MoonSound sweep with long windows instead of the fast subset. | `core/tests/emulator/sound/chips/soundchip_moonsound_test.cpp:1657` |

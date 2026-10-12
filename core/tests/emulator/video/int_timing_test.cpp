@@ -7,6 +7,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/video/zx/screenzx.h"
 #include "emulator/config.h"
+#include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 
 /// Test fixture for INT timing verification per model
@@ -28,8 +29,7 @@ ASSERT_TRUE(_cpu->Init()) << "Core::Init() failed";
     void TearDown() override
     {
         delete _screen;
-        delete _cpu;
-        delete _context;
+        EmulatorTestHelper::ReleaseBareCore(_cpu, _context);
     }
 
     /// Set model and apply config defaults manually (without INI file)

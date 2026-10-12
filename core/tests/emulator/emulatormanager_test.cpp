@@ -18,6 +18,7 @@
 #include <thread>
 #include <vector>
 
+#include "_helpers/testthread.h"
 #include "_helpers/testwaithelper.h"
 #include "pch.h"
 #include "stdafx.h"
@@ -277,10 +278,10 @@ TEST_F(EmulatorManager_Test, RemoveEmulatorWaitsForContextLease)
     ASSERT_EQ(context, emulator->GetContext());
 
     std::atomic<bool> removed{false};
-    std::thread remover([&] {
+    TestThread remover([&] {
         _manager->RemoveEmulator(emulatorId);
         removed = true;
-    });
+    }, [&] { lease.reset(); });  // the removal waits for the lease
 
     ASSERT_TRUE(TestWait::For([&] { return emulator->IsRetiring(); }));
     EXPECT_FALSE(emulator->LeaseContext()) << "a lease taken after the removal began must be refused";
@@ -292,7 +293,7 @@ TEST_F(EmulatorManager_Test, RemoveEmulatorWaitsForContextLease)
     EXPECT_NE(context->pKeyboard, nullptr);
 
     lease.reset();
-    remover.join();
+    remover.Join();
     EXPECT_TRUE(removed.load());
     EXPECT_TRUE(emulator->IsRetired());
     EXPECT_FALSE(emulator->IsReleased()) << "the test still holds it: retired, not freed";
@@ -773,12 +774,24 @@ TEST_F(EmulatorManager_Test, RemovalDoesNotHoldTheLockAHandlerWaitsFor)
         _manager->GetEmulator(id);   // waited forever for the lock the removal held while releasing
         answered = true;
     });
+    // Unregistered on every exit path (an ASSERT below returns early): after the remover is joined (declared later,
+    // destroyed first) and the handler, which refers to this frame, is through
+    struct ObserverGuard
+    {
+        MessageCenter& mc;
+        uint64_t id;
+        ~ObserverGuard()
+        {
+            mc.WaitForOutstandingMessages();
+            mc.RemoveObserverById("test_removal_lookup", id);
+        }
+    } observerGuard{mc, observer};
 
     std::atomic<bool> removed{false};
-    std::thread remover([&] {
+    TestThread remover([&] {
         _manager->RemoveEmulator(id);
         removed = true;
-    });
+    }, [&] { lease.reset(); });  // the removal waits for the lease
     ASSERT_TRUE(TestWait::For([&] { return emulator->IsRetiring(); }));
     mc.WaitForOutstandingMessages();   // the removal's destroy notice is through: it waits for the lease now
     mc.Post("test_removal_lookup");
@@ -792,8 +805,7 @@ TEST_F(EmulatorManager_Test, RemovalDoesNotHoldTheLockAHandlerWaitsFor)
         std::fprintf(stderr, "RemovalDoesNotHoldTheLockAHandlerWaitsFor: the removal and the handler deadlocked\n");
         std::abort();
     }
-    remover.join();
-    mc.RemoveObserverById("test_removal_lookup", observer);
+    remover.Join();
     EXPECT_FALSE(_manager->HasEmulator(id));
 }
 

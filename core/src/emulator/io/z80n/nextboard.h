@@ -52,10 +52,14 @@ public:
     /// The shadow ULA screen is bit 3 of #7FFD; NR #69 bit 6 reads and writes that bit
     virtual bool ShadowScreen() const { return false; }
     virtual void SetShadowScreen(bool) {}
+    /// NR #B0 / #B1 / #B2 read: the extended keys and the MD pad's extra buttons (the keyboard and the pads are the machine's)
+    virtual uint8_t ReadExtendedInput(uint8_t reg) const { (void)reg; return 0; }
     /// NR #06 / #08 / #09 changed (the sound's AY / YM, turbosound, DAC, stereo)
     virtual void AudioConfigChanged() {}
     /// NR #2C / #2D / #2E: the DAC's NextREG mirrors
     virtual void DacMirrorWrite(uint8_t, uint8_t) {}
+    /// An instruction ended (a safe place to stop the machine: not inside the picture's catch-up of the copper)
+    virtual void OnInstructionDone() {}
     /// A RETN completed: the DivMMC drops its automap and the button latch
     virtual void OnRetn() {}
     /// NR #02 bit 2 written 1 (by the CPU or the copper): the DRIVE button's NMI. True when the board took it (NR #06 bit 4 on, no
@@ -101,6 +105,18 @@ public:
     /// Called before a NextREG write of the CPU (not of the copper): the screen draws the lines the beam has passed with the old state
     void SetBeforeCpuWrite(std::function<void()> hook) { _beforeCpuWrite = std::move(hook); }
     void SetInterrupts(NextInterruptSource* interrupts) { _interrupts = interrupts; }
+    /// Every NextREG access of the program (a read through #253B, a write by NEXTREG, #253B or the copper) is told to the hook with the
+    /// door it came through, before the register takes the write (the breakpoints; a tool's write and the board's own never are)
+    using AccessHook = std::function<void(bool write, uint8_t reg, uint8_t value, NextRegSource source)>;
+    void SetAccessHook(AccessHook hook) { _accessHook = std::move(hook); }
+    /// The program's read of a register through port #253B (the select latch's register), told to the access hook
+    uint8_t ReadSelectedByProgram() const
+    {
+        const uint8_t value = ReadSelected();
+        if (_accessHook) [[unlikely]]
+            _accessHook(false, _selected, value, NextRegSource::Port);
+        return value;
+    }
 
     /// Power-on (hard) or reset (soft) state of the registers, config mode and boot ROM
     void Reset(bool hard);
@@ -131,6 +147,8 @@ public:
     void SetJournalClock(std::function<void(uint32_t& frame, uint32_t& t, uint16_t& pc)> clock) { _journalClock = std::move(clock); }
     /// The raw stored byte of a register (reports, tests)
     uint8_t Stored(uint8_t reg) const { return _regs[reg]; }
+    /// NR #02 bits 1:0 as a read returns them: how the last reset happened (the VHDL's nr_02_reset_type: 0 power on, then 2, then 1)
+    uint8_t ResetBits() const { return static_cast<uint8_t>(_resetType & 3); }
 
     /// The `next_regs` report: one line per register of the table with its value and reset
     std::string DescribeRegisters() const;
@@ -164,6 +182,7 @@ public:
     bool SdSwap() const { return (_regs[kRegPeripheral3] & 0x20) != 0; }
 
 private:
+    friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     NextMemory* _memory;
     NextVideoRegs _video;
     NextSprites _sprites;
@@ -185,6 +204,7 @@ private:
     std::map<uint8_t, uint32_t>* _readCounts = nullptr;
     std::vector<NextRegWrite>* _log = nullptr;
     std::function<void()> _beforeCpuWrite;
+    AccessHook _accessHook;
     bool _copperWrite = false;
     const uint16_t* _pc = nullptr;
     uint8_t _timing = 2;

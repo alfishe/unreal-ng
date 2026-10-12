@@ -35,6 +35,8 @@
 #include "debugger/ports/nextregwrite.h"
 #include "emulator/emulator.h"
 #include "emulator/io/z80n/nextregjournal.h"
+#include "emulator/io/z80n/nextdivmmcjournal.h"
+#include "emulator/io/z80n/nextintjournal.h"
 #include "emulator/io/z80n/nextsdjournal.h"
 #include "emulator/io/z80n/nextreportquery.h"
 #include "emulator/state/devicestate.h"
@@ -399,6 +401,7 @@ inline std::string StateText(EmulatorContext* context, const std::vector<std::st
             for (const StateNode& e : events->items)
             {
                 out += "#" + Field(e, "seq") + " frame " + Field(e, "frame") + " T " + Field(e, "t") + " PC " + Field(e, "pc") + " " +
+                       (Field(e, "beam_line").empty() ? std::string() : "beam " + Field(e, "beam_line") + ":" + Field(e, "beam_hc") + " ") +
                        Field(e, "source") + " NR" + Field(e, "reg") + " " + Field(e, "previous") + " -> " + Field(e, "value");
                 if (!Field(e, "name").empty())
                     out += "  " + Field(e, "name");
@@ -486,11 +489,323 @@ inline std::string StateText(EmulatorContext* context, const std::vector<std::st
             }
         return out;
     }
-    return "Error: unknown subcommand '" + args[1] + "'. Available: (none), regs, mmu, dma, video, palette [palette= range=], ports [port= access=], nextreg [reg= changed=], copper [from= count= raw=], sprites [from= count= all=], pixel <x> <y> [sx], layer-capture [on|off], journal [regs=.. sources=.. since=N from=F to=F limit=N | on | off | clear], sd [kinds= card= since= from= to= limit= | on | off | clear]" +
+    if (sub == "divmmc" || sub == "divmmc-journal")
+    {
+        if (args.size() == 3 && (args[2] == "on" || args[2] == "off" || args[2] == "clear"))
+        {
+            const StateNode r = DeviceState::NextDivMmcJournalControl(context, args[2] == "clear" ? -1 : (args[2] == "on" ? 1 : 0),
+                                                                      args[2] == "clear");
+            const std::string error = unavailable(r);
+            if (!error.empty())
+                return error;
+            return "DivMMC journal " + Field(r, "enabled") + ", " + Field(r, "size") + " event(s) held, " + Field(r, "evicted") + " evicted" +
+                   newline;
+        }
+        std::string kinds, since, from, to, limit;
+        const char* keys = "kinds, since, from, to, limit";
+        for (size_t i = 2; i < args.size(); i++)
+        {
+            const size_t eq = args[i].find('=');
+            if (eq == std::string::npos)
+                return "Error: expected key=value, got '" + args[i] + "' (" + keys + ")" + newline;
+            const std::string key = args[i].substr(0, eq);
+            const std::string value = args[i].substr(eq + 1);
+            if (key == "kinds" || key == "kind")
+                kinds = value;
+            else if (key == "since")
+                since = value;
+            else if (key == "from")
+                from = value;
+            else if (key == "to")
+                to = value;
+            else if (key == "limit")
+                limit = value;
+            else
+                return "Error: unknown option '" + key + "' (" + keys + ")" + newline;
+        }
+        NextDivMmcJournalQuery query;
+        std::string error;
+        if (!NextDivMmcJournalQueryFromStrings(kinds, since, from, to, limit, query, error))
+            return "Error: " + error + newline;
+        const StateNode report = DeviceState::NextDivMmcReport(context, query);
+        const std::string unavailableText = unavailable(report);
+        if (!unavailableText.empty())
+            return unavailableText;
+        std::string out;
+        if (const StateNode* st = report.find("state"))
+            out += std::string("DivMMC: ") + (Field(*st, "mapped") == "on" ? "in" : "out") + ", #E3 " + Field(*st, "control") + " (conmem " +
+                   Field(*st, "conmem") + ", mapram " + Field(*st, "mapram") + ", bank " + Field(*st, "bank") + "), automap " +
+                   (Field(*st, "automap_armed") == "on" ? "armed" : "off") + ", latch " + Field(*st, "automap_latch") + ", button NMI pending " +
+                   Field(*st, "button_pending") + newline;
+        if (const StateNode* entries = report.find("entries"))
+            for (const StateNode& e : entries->items)
+                if (Field(e, "enabled") == "on")
+                    out += "  entry " + Field(e, "address") + " " + Field(e, "when") + ", " + Field(e, "map") +
+                           (Field(e, "what").empty() ? std::string() : "  (" + Field(e, "what") + ")") + newline;
+        const StateNode* events = report.find("events");
+        out += "DivMMC journal " + Field(report, "enabled") + ": " + std::to_string(events ? events->items.size() : 0) + " event(s) of " +
+               Field(report, "size") + " held, " + Field(report, "evicted") + " evicted" + newline;
+        if (Field(report, "enabled") == "off")
+            out += "  (off: `state next divmmc on` first)" + std::string(newline);
+        if (events)
+            for (const StateNode& e : events->items)
+            {
+                out += "#" + Field(e, "seq") + " frame " + Field(e, "frame") + " T " + Field(e, "t") + " PC " + Field(e, "pc") + " " +
+                       Field(e, "kind");
+                if (!Field(e, "address").empty())
+                    out += " " + Field(e, "address");
+                if (Field(e, "kind") == "map_in")
+                    out += " (" + Field(e, "entry") + ", " + Field(e, "map") + ")";
+                if (Field(e, "kind") == "esx_call")
+                {
+                    out += " " + (Field(e, "name").empty() ? Field(e, "call") : Field(e, "name")) + " return " + Field(e, "return_address") +
+                           " AF " + Field(e, "af") + " BC " + Field(e, "bc") + " DE " + Field(e, "de") + " HL " + Field(e, "hl");
+                    if (Field(e, "basic_rom") == "on")
+                        out += " (BASIC ROM: an error report, not an esxDOS call)";
+                }
+                out += newline;
+            }
+        return out;
+    }
+    if (sub == "audio")
+    {
+        const StateNode report = DeviceState::NextAudioReport(context);
+        const std::string unavailableText = unavailable(report);
+        if (!unavailableText.empty())
+            return unavailableText;
+        std::string out;
+        if (const StateNode* cfg = report.find("config"))
+            out += "Sound: " + Field(*cfg, "chip_model") + " " + Field(*cfg, "stereo_mode") + ", turbosound " + Field(*cfg, "turbosound") + ", DAC " +
+                   Field(*cfg, "dac") + ", beeper excluded " + Field(*cfg, "beeper_excluded") + " (NR #06 " + Field(*cfg, "nr_06") + ", #08 " +
+                   Field(*cfg, "nr_08") + ", #09 " + Field(*cfg, "nr_09") + "), selected chip " + Field(report, "selected_chip") + newline;
+        if (const StateNode* chips = report.find("chips"))
+            for (const StateNode& chip : chips->items)
+            {
+                out += "chip " + Field(chip, "index") + (Field(chip, "selected") == "on" ? "*" : " ") + " pan " + Field(chip, "pan") +
+                       (Field(chip, "mono") == "on" ? " mono" : "") + ", tones";
+                if (const StateNode* tones = chip.find("tone_periods"))
+                    for (const StateNode& tone : tones->items)
+                        out += " " + std::to_string(tone.i);
+                out += ", noise " + Field(chip, "noise_period") + ", mixer " + Field(chip, "mixer") + ", volumes";
+                if (const StateNode* volumes = chip.find("volumes"))
+                    for (const StateNode& volume : volumes->items)
+                        out += " " + std::to_string(volume.i);
+                out += ", envelope " + Field(chip, "envelope_period") + " shape " + Field(chip, "envelope_shape") + newline;
+            }
+        if (const StateNode* dac = report.find("dac"))
+            out += "DAC " + Field(*dac, "enabled") + ": A " + Field(*dac, "a") + " B " + Field(*dac, "b") + " C " + Field(*dac, "c") + " D " +
+                   Field(*dac, "d") + " (left " + Field(*dac, "left_sum") + ", right " + Field(*dac, "right_sum") + ")" + newline;
+        return out;
+    }
+    if (sub == "input")
+    {
+        const StateNode report = DeviceState::NextInputReport(context);
+        const std::string unavailableText = unavailable(report);
+        if (!unavailableText.empty())
+            return unavailableText;
+        std::string out;
+        if (const StateNode* modes = report.find("joystick_modes"))
+        {
+            const StateNode* l = modes->find("left");
+            const StateNode* r = modes->find("right");
+            if (l && r)
+                out += "Joystick (NR #05 " + Field(*modes, "nr_05") + "): left " + Field(*l, "name") + " [" + Field(*l, "port") + "], right " +
+                       Field(*r, "name") + " [" + Field(*r, "port") + "]" + newline;
+        }
+        if (const StateNode* io = report.find("io_mode"))
+            out += "I/O mode (NR #0B " + Field(*io, "nr_0b") + "): " + (Field(*io, "enabled") == "on" ? Field(*io, "mode") : std::string("off")) + newline;
+        if (const StateNode* k = report.find("kempston_1f"))
+        {
+            out += "Kempston #1F: " + Field(*k, "value") + (Field(*k, "selected_by_nr_05") == "on" ? "" : "  (NR #05 does not select it; this emulator still answers)") +
+                   newline;
+        }
+        out += "Port #1F " + std::string(Field(*report.find("kempston_1f"), "answers_here") == "on" ? "answers" : "idle (#FF)") + ", port #37 " +
+               (Field(*report.find("kempston_37"), "answers_here") == "on" ? "answers" : "idle (#FF)") + newline;
+        if (const StateNode* keys = report.find("extended_keys"))
+        {
+            std::string held;
+            if (const StateNode* pressed = keys->find("pressed"))
+                for (const StateNode& k : pressed->items)
+                    held += (held.empty() ? "" : ",") + k.s;
+            out += "Extended keys (NR #B0 " + Field(*keys, "nr_b0") + ", #B1 " + Field(*keys, "nr_b1") + "): " + (held.empty() ? std::string("none") : held) + newline;
+        }
+        if (const StateNode* pad = report.find("md_pad_extra"))
+            out += "Pad extras (NR #B2 " + Field(*pad, "nr_b2") + "): host pad keys " + Field(*pad, "host_keys") + newline;
+        return out;
+    }
+    if (sub == "magicport" || sub == "magic-port")
+    {
+        // magicport on <port> [hex|dec|ascii|line] | off | clear | [since=N] [limit=N]
+        if (args.size() >= 3 && (args[2] == "on" || args[2] == "off" || args[2] == "clear"))
+        {
+            int port = -1;
+            std::string mode;
+            if (args[2] == "on")
+            {
+                if (args.size() < 4)
+                    return std::string("Error: magicport on <port> [hex|dec|ascii|line]") + newline;
+                try
+                {
+                    const unsigned long value = std::stoul(args[3], nullptr, 0);
+                    if (value > 0xFFFF)
+                        return std::string("Error: the port is 0..65535") + newline;
+                    port = static_cast<int>(value);
+                }
+                catch (const std::exception&)
+                {
+                    return "Error: bad port '" + args[3] + "' (0x00FF or decimal)" + std::string(newline);
+                }
+                if (args.size() > 4)
+                    mode = args[4];
+            }
+            const StateNode r = DeviceState::NextMagicPortControl(context, args[2] == "clear" ? -1 : (args[2] == "on" ? 1 : 0), port, mode,
+                                                                  args[2] == "clear");
+            const std::string error = unavailable(r);
+            if (!error.empty())
+                return error;
+            if (const StateNode* refused = r.find("error"))
+                return "Error: " + refused->s + newline;
+            return "Magic port " + Field(r, "enabled") + ", port " + Field(r, "port") + ", mode " + Field(r, "mode") + ", " + Field(r, "bytes") +
+                   " byte(s)" + newline;
+        }
+        uint64_t since = 0;
+        size_t limit = 40;
+        try
+        {
+            for (size_t i = 2; i < args.size(); i++)
+            {
+                const size_t eq = args[i].find('=');
+                const std::string key = eq == std::string::npos ? args[i] : args[i].substr(0, eq);
+                if (eq == std::string::npos || (key != "since" && key != "limit"))
+                    return "Error: expected on <port> [mode] | off | clear | since=N | limit=N, got '" + args[i] + "'" + newline;
+                const uint64_t number = std::stoull(args[i].substr(eq + 1));
+                if (key == "since")
+                    since = number;
+                else
+                    limit = static_cast<size_t>(number);
+            }
+        }
+        catch (const std::exception&)
+        {
+            return std::string("Error: since and limit are numbers") + newline;
+        }
+        const StateNode report = DeviceState::NextMagicPortReport(context, since, limit);
+        const std::string unavailableText = unavailable(report);
+        if (!unavailableText.empty())
+            return unavailableText;
+        std::string out = "Magic port " + Field(report, "enabled") + ", port " + Field(report, "port") + ", mode " + Field(report, "mode") + ", " +
+                          Field(report, "bytes") + " byte(s)" + newline;
+        if (Field(report, "enabled") != "on")
+            out += std::string("  (off: state next magicport on <port> [hex|dec|ascii|line])") + newline;
+        if (const StateNode* items = report.find("items"))
+            for (const StateNode& item : items->items)
+                out += "  #" + Field(item, "seq") + " f" + Field(item, "frame") + " pc " + Field(item, "pc") + "  " + Field(item, "text") + newline;
+        if (report.find("partial") && !Field(report, "partial").empty())
+            out += "  (not ended) " + Field(report, "partial") + newline;
+        return out;
+    }
+    if (sub == "nmi" || sub == "nmi-journal")
+    {
+        if (args.size() == 3 && (args[2] == "on" || args[2] == "off" || args[2] == "clear"))
+        {
+            const StateNode r = DeviceState::NextNmiJournalControl(context, args[2] == "clear" ? -1 : (args[2] == "on" ? 1 : 0),
+                                                                   args[2] == "clear");
+            const std::string error = unavailable(r);
+            if (!error.empty())
+                return error;
+            return "NMI journal " + Field(r, "enabled") + ", " + Field(r, "size") + " event(s) held, " + Field(r, "evicted") + " evicted" +
+                   newline;
+        }
+        std::string kinds, since, from, to, limit;
+        const char* keys = "kinds, since, from, to, limit";
+        for (size_t i = 2; i < args.size(); i++)
+        {
+            const size_t eq = args[i].find('=');
+            if (eq == std::string::npos)
+                return "Error: expected key=value, got '" + args[i] + "' (" + keys + ")" + newline;
+            const std::string key = args[i].substr(0, eq);
+            const std::string value = args[i].substr(eq + 1);
+            if (key == "kinds" || key == "kind")
+                kinds = value;
+            else if (key == "since")
+                since = value;
+            else if (key == "from")
+                from = value;
+            else if (key == "to")
+                to = value;
+            else if (key == "limit")
+                limit = value;
+            else
+                return "Error: unknown option '" + key + "' (" + keys + ")" + newline;
+        }
+        NextIntJournalQuery query;
+        std::string error;
+        if (!NextIntJournalQueryFromStrings(kinds, since, from, to, limit, query, error))
+            return "Error: " + error + newline;
+        const StateNode report = DeviceState::NextNmiReport(context, query);
+        const std::string unavailableText = unavailable(report);
+        if (!unavailableText.empty())
+            return unavailableText;
+        std::string out;
+        if (const StateNode* sources = report.find("sources"))
+            for (const StateNode& src : sources->items)
+            {
+                out += "NMI source " + Field(src, "name") + ": ";
+                if (Field(src, "modelled") != "on")
+                    out += "not modelled";
+                else if (Field(src, "would_fire") == "on")
+                    out += "ready";
+                else
+                    out += "blocked - " + Field(src, "blocked_by");
+                out += newline;
+            }
+        if (const StateNode* service = report.find("in_service"))
+            out += std::string("NMI in service: ") + (Field(*service, "any") == "on" ? "yes" : "no") + " (multiface session " +
+                   Field(*service, "multiface_session") + ", divmmc handler " + Field(*service, "divmmc_handler") + ")" + newline;
+        if (const StateNode* mf = report.find("multiface"))
+            out += "Multiface " + Field(*mf, "enabled") + " type " + Field(*mf, "type_name") + ", ports " + Field(*mf, "enable_port") + " / " +
+                   Field(*mf, "disable_port") + ", memory " + (Field(*mf, "memory_in") == "on" ? "in" : "out") + ", invisible " +
+                   Field(*mf, "invisible") + newline;
+        if (const StateNode* reset = report.find("reset"))
+            out += "Last reset: " + Field(*reset, "last") + " (NR #02 bits 1:0 = " + Field(*reset, "bits") + ")" + newline;
+        if (const StateNode* ints = report.find("interrupts"))
+        {
+            out += "Interrupts: " + Field(*ints, "mode");
+            auto names = [&](const char* key) {
+                std::string list;
+                if (const StateNode* items = ints->find(key))
+                    for (const StateNode& item : items->items)
+                        list += (list.empty() ? "" : ",") + item.s;
+                return list.empty() ? std::string("none") : list;
+            };
+            out += ", pending " + names("pending") + ", in service " + names("in_service") + newline;
+        }
+        const StateNode* events = report.find("events");
+        out += "NMI journal " + Field(report, "enabled") + ": " + std::to_string(events ? events->items.size() : 0) + " event(s) of " +
+               Field(report, "size") + " held, " + Field(report, "evicted") + " evicted" + newline;
+        if (Field(report, "enabled") == "off")
+            out += "  (off: `state next nmi on` first)" + std::string(newline);
+        if (events)
+            for (const StateNode& e : events->items)
+            {
+                out += "#" + Field(e, "seq") + " frame " + Field(e, "frame") + " T " + Field(e, "t") + " PC " + Field(e, "pc") + " " +
+                       Field(e, "kind") + " " + Field(e, "source");
+                if (!Field(e, "vector").empty())
+                    out += " vector " + Field(e, "vector");
+                if (Field(e, "kind") == "nmi_request")
+                    out += Field(e, "accepted") == "on" ? " accepted" : " REFUSED: " + Field(e, "reason");
+                if (!Field(e, "reset_last").empty())
+                    out += " (" + Field(e, "reset_last") + ")";
+                out += newline;
+            }
+        return out;
+    }
+    return "Error: unknown subcommand '" + args[1] + "'. Available: (none), regs, mmu, dma, video, palette [palette= range=], ports [port= access=], nextreg [reg= changed=], copper [from= count= raw=], sprites [from= count= all=], pixel <x> <y> [sx], layer-capture [on|off], journal [regs=.. sources=.. since=N from=F to=F limit=N | on | off | clear], sd [kinds= card= since= from= to= limit= | on | off | clear], divmmc [kinds= since= from= to= limit= | on | off | clear], nmi [kinds= since= from= to= limit= | on | off | clear], audio, input" +
            newline;
 }
 
-/// The CLI command `next ...` (args without the command word): `nextreg <reg> <value> [nextreg|port|internal]` writes a NextREG; any
+/// The CLI command `next ...` (args without the command word): `nextreg <reg> <value> [nextreg|port|internal]` writes a NextREG,
+/// any
 /// other word is a `state next` subcommand (`next dma`)
 inline std::string NextCommand(Emulator* emulator, const std::vector<std::string>& args, const char* newline)
 {

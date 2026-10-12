@@ -11,6 +11,7 @@
 #include <chrono>
 #include <functional>
 #include <iomanip>
+#include <stdexcept>
 #include <thread>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -68,15 +69,25 @@ struct Emulator::AutostartRequest
     bool started = false;
 };
 
-/// The emulator's side of the coordinator: the machine thread (the execution arbiter's CPU hold), the clock, and
-/// the owner of the operations that replace the machine state (reset, autostart, snapshot load) and of those a
-/// subsystem carries out itself (network settings, an IDE unit's drive, an RZX restore: coordinator::RunCommit)
+/// The emulator's side of the coordinator: the machine thread (the execution arbiter's CPU hold), the clock, the RZX
+/// playback, and the owner of the operations that replace the machine state (reset, autostart, snapshot load) and of
+/// those a subsystem carries out itself (network settings, an IDE unit's drive, an RZX restore, the ROM, the General
+/// Sound card, the speed, a state transfer, a tool's edit: coordinator::RunCommit)
 class Emulator::CoordinatorPorts : public coordinator::IMachineThread,
                                    public coordinator::IMachineClock,
+                                   public coordinator::IPlaybackSink,
                                    public coordinator::IOpOwner
 {
 public:
     explicit CoordinatorPorts(Emulator& emulator) : _emulator(emulator) {}
+
+    /// A reset or a snapshot leaves the path an RZX playback drives: it ends first (the playback's own start
+    /// snapshot loads with the player out)
+    void EndPlayback(const coordinator::MachineOp&) override
+    {
+        if (_emulator.IsRzxPlaying())
+            _emulator.StopRzx();
+    }
 
     bool OnMachineThread() const override { return _emulator._arbiter.IsLoopThread(); }
 
@@ -116,13 +127,21 @@ public:
         return time;
     }
 
-    /// A model switch or a state transfer: the TTD v1 backend refuses it while recording (D26); the engine never
-    /// does (a change of the machine itself ends the session). Goes with v1
+    /// A change of the machine itself (a model switch, a state transfer, a ROM load, a General Sound card switch, a
+    /// slot change): the TTD v1 backend refuses it while recording (D26); the engine never does (the change ends the
+    /// session). Goes with v1
     std::string Refusal(const coordinator::MachineOp& op) const override
     {
-        if (op.kind == coordinator::OpKind::ModelSwitch)
-            return _emulator.RecordingGuard(ttd::TTDGuardedAction::SwitchModel);
-        return {};
+        switch (op.kind)
+        {
+            case coordinator::OpKind::ModelSwitch:
+            case coordinator::OpKind::StateTransfer:
+                return _emulator.RecordingGuard(ttd::TTDGuardedAction::SwitchModel);
+            case coordinator::OpKind::RomLoad: return _emulator.RecordingGuard(ttd::TTDGuardedAction::LoadRom);
+            case coordinator::OpKind::GsCardSwitch: return _emulator.RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard);
+            case coordinator::OpKind::SlotChange: return _emulator.RecordingGuard(ttd::TTDGuardedAction::ChangeSlots);
+            default: return {};
+        }
     }
 
     bool Commit(const coordinator::MachineOp& op, coordinator::OpStage& stage) override
@@ -139,8 +158,14 @@ public:
             case coordinator::OpKind::NetworkChange:
             case coordinator::OpKind::IdeDriveKind:
             case coordinator::OpKind::RzxRestore:
+            case coordinator::OpKind::RomLoad:
+            case coordinator::OpKind::GsCardSwitch:
+            case coordinator::OpKind::SpeedChange:
+            case coordinator::OpKind::StateTransfer:
+            case coordinator::OpKind::ToolEdit:
                 // The subsystem's own change (coordinator::RunCommit): the network manager, the IDE controller, the
-                // RZX session; they have no owner of their own, the rules and the log are the coordinator's
+                // RZX session, the ROM, the sound manager, the core's speed, the state transfer; they have no owner
+                // of their own, the rules and the log are the coordinator's
                 if (const coordinator::OpCommit* commit = std::any_cast<coordinator::OpCommit>(&op.payload))
                     return (*commit)(stage);
                 stage.error = std::string("no change given for '") + coordinator::OpKindName(op.kind) + "'";
@@ -858,19 +883,26 @@ bool Emulator::SetSpeedMultiplier(uint8_t multiplier)
     if (!_core->CanSetSpeedMultiplier(multiplier))
         return false;
 
-    // TTD v1 (P1.6): speed change invalidates the recording because frame
-    // timing is part of the determinism contract (parent TDD §4.2 + §5 row 13).
-    // Simpler to invalidate than to model; revisit if it proves annoying.
-    // A black box stops before the machine runs faster and starts again at 1x (D29)
+    // A speed change drops a TTD history, frame timing being part of the determinism contract (parent TDD §4.2 +
+    // §5 row 13), except the black box's: it stops before the machine runs faster and starts again at 1x (D29)
     ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
-    if (ttd && multiplier != 1)
-        ttd->OnAccelerationChanging(true);
-    if (ttd)
-        ttd->OnConfigurationChange(ttd::TTDConfigChangeKind::SpeedMultiplier, "speed-multiplier-change");
-
-    const bool changed = _core->SetSpeedMultiplier(multiplier);
-    if (ttd && multiplier == 1)
-        ttd->OnAccelerationChanging(false);
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::SpeedChange;
+    op.summary = std::to_string(multiplier) + "x";
+    op.sessionReason = "speed-multiplier-change";
+    bool changed = false;
+    const coordinator::OpResult result =
+        coordinator::RunCommit(_coordinator.get(), std::move(op), [&](coordinator::OpStage& stage) {
+            if (ttd && multiplier != 1)
+                ttd->OnAccelerationChanging(true);
+            stage.CommitPoint();
+            changed = _core->SetSpeedMultiplier(multiplier);
+            if (ttd && multiplier == 1)
+                ttd->OnAccelerationChanging(false);
+            return true;
+        });
+    if (!result.Ok())
+        LOGWARNING("%s", result.reason.c_str());
     return changed;
 }
 
@@ -886,38 +918,53 @@ std::string Emulator::RecordingGuard(ttd::TTDGuardedAction action) const
     return ttd ? ttd->RecordingGuard(action) : std::string();
 }
 
-/// Refuse an action that would drop or corrupt the recording in progress
-/// (logged; copied to `error` when the caller takes one)
-static bool RecordingAllows(const Emulator& emulator, ttd::TTDGuardedAction action, std::string* error = nullptr)
-{
-    const std::string reason = emulator.RecordingGuard(action);
-    if (reason.empty())
-        return true;
-    if (error)
-        *error = reason;
-    LOGWARNING("%s", reason.c_str());
-    return false;
-}
-
-void Emulator::EditMemoryFromTool(const char* source, const std::function<void()>& edit)
+std::string Emulator::EditMemoryFromTool(const char* source, const std::function<void()>& edit)
 {
     NoteDebugChange();
     ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
-    // Recording, or a session being browsed: the engine continues a recording
-    // paused at this point and records the edit (D9)
-    const bool session = ttd && ttd->GetState() != ttd::TTDSessionState::Idle;
-    const bool onEmulationThread = _mainloop && _mainloop->IsRunThread();
-    // The CPU held for the edit (nothing executes meanwhile; nested in a hold the caller has it is free)
-    std::optional<CpuHold> hold;
-    if (session && !onEmulationThread)
-        hold.emplace(*this, "memory edit");
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::ToolEdit;
+    op.summary = source ? source : "";
+    const coordinator::OpResult result =
+        coordinator::RunCommit(_coordinator.get(), std::move(op), [&](coordinator::OpStage& stage) {
+        // Recording, or a session being browsed: the engine continues a recording paused at this point and records
+        // the edit (D9). The coordinator parked the machine for it (a mode with a session); the hold here is free
+        // then, and covers a session the mode does not show
+        const bool session = ttd && ttd->GetState() != ttd::TTDSessionState::Idle;
+        const bool onEmulationThread = _mainloop && _mainloop->IsRunThread();
+        std::optional<CpuHold> hold;
+        if (session && !onEmulationThread)
+            hold.emplace(*this, "memory edit");
+        stage.CommitPoint();
+        // v1 keeps a marker; the edit's bytes go with it, so the engine's replay applies it
+        if (session)
+            ttd->BeginToolEdit();
+        edit();
+        if (session)
+            ttd->EndToolEdit(source);
+        return true;
+    });
+    return result.Ok() ? std::string() : result.reason;
+}
 
-    // v1 keeps a marker; the edit's bytes go with it, so the engine's replay applies it
-    if (session)
-        ttd->BeginToolEdit();
-    edit();
-    if (session)
-        ttd->EndToolEdit(source);
+void Emulator::EditMemoryFromToolOrThrow(const char* source, const std::function<void()>& edit)
+{
+    const std::string refused = EditMemoryFromTool(source, edit);
+    if (!refused.empty())
+        throw std::runtime_error(refused);
+}
+
+bool Emulator::SetRegisterFromTool(const char* source, const std::string& name, uint16_t value, std::string* refusal)
+{
+    const Z80::RegisterInfo* info = Z80::FindRegister(name);
+    Z80State* z80 = GetZ80State();
+    if (!info || !z80 || (info->maxValue && value > info->maxValue))
+        return false;
+    bool set = false;
+    const std::string refused = EditMemoryFromTool(source, [&]() { set = Z80::SetRegisterValue(z80, name, value); });
+    if (refusal)
+        *refusal = refused;
+    return set;
 }
 
 uint8_t Emulator::GetSpeedMultiplier() const
@@ -1157,6 +1204,7 @@ bool Emulator::AutostartNow(AutostartRequest& request, coordinator::OpStage& sta
     request.autostart->Disarm();
     _core->Reset(RM_DOS);  // Quick reset straight into TR-DOS: PC = 0 with the DOS ROM active
     RestartFrame();        // Frame 0 starts at the reset state (see Reset())
+    request.autostart->ArmColdStartFinish();  // the model's paging for the disk's program (ATM710: the 128K way)
     if (action == DiskAutostart::Action::BootNamed)
         request.autostart->Arm(request.plan.bootName);
     return true;
@@ -1171,12 +1219,15 @@ void Emulator::WireCoordinator()
     using coordinator::OpKind;
     _coordinator->SetMachine(_coordinatorPorts.get(), _coordinatorPorts.get());
     _coordinator->SetSession(_ttdSessionPort.get());
+    _coordinator->SetPlayback(_coordinatorPorts.get());
     _context->pMachineOps = _coordinator.get();
     // Mode listeners (architecture §5): each writes its own setting from the published mode
     if (_featureManager)
         _coordinator->Listen(_featureManager);
     for (OpKind kind : {OpKind::Reset, OpKind::Autostart, OpKind::SnapshotLoad, OpKind::NetworkChange,
-                        OpKind::IdeDriveKind, OpKind::RzxRestore, OpKind::ModelSwitch})
+                        OpKind::IdeDriveKind, OpKind::RzxRestore, OpKind::ModelSwitch, OpKind::RomLoad,
+                        OpKind::GsCardSwitch, OpKind::SpeedChange, OpKind::StateTransfer, OpKind::SlotChange,
+                        OpKind::CdFrontPanel, OpKind::ToolEdit})
         _coordinator->Own(kind, _coordinatorPorts.get());
     if (MediaManager* media = _context ? _context->pMediaManager : nullptr)
     {
@@ -1219,12 +1270,9 @@ std::string Emulator::AskMediaChange(MediaChange change, uint8_t drive, const st
 
 void Emulator::Reset(bool hardReset)
 {
-    // A reset leaves the recorded path: an RZX playback ends first
-    if (IsRzxPlaying())
-        StopRzx();
-
-    // The coordinator holds the CPU (a Z80 thread executing ROM code during the reset would leave an inconsistent
-    // state), ends the TTD session at the commit point (D42) and tells it the machine left the recorded timeline
+    // The coordinator ends an RZX playback first (a reset leaves the recorded path), holds the CPU (a Z80 thread
+    // executing ROM code during the reset would leave an inconsistent state), ends the TTD session at the commit point
+    // (D42) and tells it the machine left the recorded timeline
     coordinator::MachineOp op;
     op.kind = coordinator::OpKind::Reset;
     op.summary = hardReset ? "hard" : "soft";
@@ -1255,20 +1303,28 @@ void Emulator::ResetNow(bool hardReset, coordinator::OpStage& stage)
         ? _context->pKeyboard->CaptureInputState()
         : Keyboard::InputState{};
 
-    // A ROM selected at runtime (RequestRomReload: the Sprinter's BIOS) is read now, with the
-    // machine paused and TTD recording stopped; the session that relied on the old ROM is invalid
+    // A ROM selected at runtime (RequestRomReload: the Sprinter's BIOS) is read now, with the machine held and the
+    // recording session ended: an operation of its own, nested in the reset (the session that relied on the old ROM
+    // goes with its history)
     if (_romReloadPending.exchange(false))
     {
-        ROM& rom = *_core->GetROM();
-        if (rom.LoadROM())
-        {
-            rom.CalculateSignatures();
-            ApplySymbolBundles();
-        }
-        else
-            MLOGERROR("Emulator::Reset - the selected ROM could not be loaded");
-        if (_context && _context->pTimeTravelHooks)
-            _context->pTimeTravelHooks->OnConfigurationChange(ttd::TTDConfigChangeKind::RomReload, "rom-reload");
+        coordinator::MachineOp romOp;
+        romOp.kind = coordinator::OpKind::RomLoad;
+        romOp.summary = "the selected ROM, at the reset";
+        romOp.sessionReason = "rom-reload";
+        coordinator::RunCommit(_context ? _context->pMachineOps : nullptr, std::move(romOp),
+                               [this](coordinator::OpStage& romStage) {
+                                   romStage.CommitPoint();
+                                   ROM& rom = *_core->GetROM();
+                                   if (rom.LoadROM())
+                                   {
+                                       rom.CalculateSignatures();
+                                       ApplySymbolBundles();
+                                   }
+                                   else
+                                       MLOGERROR("Emulator::Reset - the selected ROM could not be loaded");
+                                   return true;
+                               });
     }
 
     _core->Reset();
@@ -2107,12 +2163,8 @@ bool Emulator::ApplySnapshotData(const std::vector<uint8_t>& data, const std::st
 bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error, const snapshot::Options& planned)>& load,
                                   const std::string& openedPath, const snapshot::Options& options)
 {
-    // Another snapshot replaces the machine an RZX playback runs on: it ends
-    // first (the playback's own start snapshot loads with the player out)
-    if (IsRzxPlaying())
-        StopRzx();
-
-    // The coordinator holds the CPU for the load and ends the TTD session at the commit point (LoadSnapshotNow)
+    // The coordinator ends an RZX playback first (another snapshot replaces the machine it runs on), holds the CPU
+    // for the load and ends the TTD session at the commit point (LoadSnapshotNow)
     SnapshotRequest request;
     request.load = &load;
     request.options = &options;
@@ -2129,7 +2181,7 @@ bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error, c
 
     // Store snapshot path on success
     if (result)
-        _context->coreState.snapshotFilePath = openedPath;
+        SetSnapshotFilePath(openedPath);
 
     if (_context)
     {
@@ -2176,6 +2228,19 @@ rzx::RzxSession& Emulator::RzxSessionLocked()
     if (!_rzxSession)
         _rzxSession = std::make_unique<rzx::RzxSession>(*this);
     return *_rzxSession;
+}
+
+std::string Emulator::SnapshotFilePath() const
+{
+    std::lock_guard<std::mutex> lock(_snapshotPathMutex);
+    return _context ? _context->coreState.snapshotFilePath : std::string();
+}
+
+void Emulator::SetSnapshotFilePath(const std::string& path)
+{
+    std::lock_guard<std::mutex> lock(_snapshotPathMutex);
+    if (_context)
+        _context->coreState.snapshotFilePath = path;
 }
 
 rzx::PlayResult Emulator::PlayRzx(const std::string& path, const rzx::PlayerOptions& options)
@@ -2390,7 +2455,7 @@ bool Emulator::SaveSnapshot(const std::string& path)
         for (const std::string& warning : saved.warnings)
             MLOGWARNING("%s", warning.c_str());
         // Store snapshot path on success
-        _context->coreState.snapshotFilePath = absolutePath;
+        SetSnapshotFilePath(absolutePath);
     }
     else
         MLOGERROR("%s", saved.text.c_str());
@@ -2793,7 +2858,8 @@ void Emulator::FinishStepOver(uint16_t breakpointId, bool restoreFeatures)
 {
     if (_breakpointManager)
     {
-        _breakpointManager->RemoveBreakpointByID(breakpointId);
+        if (_stepOverOwnsBreakpoint)
+            _breakpointManager->RemoveBreakpointByID(breakpointId);
         for (uint16_t bpId : _stepOverDeactivatedBps)
         {
             _breakpointManager->ActivateBreakpoint(bpId);
@@ -3586,7 +3652,10 @@ void Emulator::StepOver()
     bpDesc->z80address = nextInstructionAddress;
     bpDesc->note = "StepOver";
     bpDesc->hidden = true;
-    uint16_t stepOverBreakpointID = bpManager->AddBreakpoint(bpDesc);
+    // A breakpoint of the user's on that instruction comes back instead: the step uses it and leaves it in place
+    // (it was removed at the end, BUGS.md 2026-10-11 #12)
+    bool ownBreakpoint = false;
+    uint16_t stepOverBreakpointID = bpManager->AddBreakpoint(bpDesc, ownBreakpoint);
 
     if (stepOverBreakpointID == BRK_INVALID)
     {
@@ -3605,6 +3674,7 @@ void Emulator::StepOver()
 
     // Tracking state: OnBreakpointHit ends the step on the emulation thread when this breakpoint fires
     _stepOverDeactivatedBps = deactivatedBreakpoints;
+    _stepOverOwnsBreakpoint = ownBreakpoint;
     _pendingStepOverBpId = stepOverBreakpointID;
 
     // Resume execution - returns immediately (non-blocking). The run to the temporary breakpoint is a step: its
@@ -3709,24 +3779,29 @@ void Emulator::StepOut()
 /// \param path File path to ROM file
 bool Emulator::LoadROM(std::string path)
 {
-    // Checked before pausing: a refusal leaves the machine as it was
-    if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadRom))
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::RomLoad;
+    op.summary = path;
+    op.sessionReason = "rom-reload";
+
+    // Asked before pausing: a refusal (TTD v1 while recording) leaves the machine as it was
+    const coordinator::OpResult asked = _coordinator->Ask(op);
+    if (!asked.Ok())
+    {
+        LOGWARNING("%s", asked.reason.c_str());
         return false;
+    }
 
-    // A ROM load leaves the machine paused (its caller resets it); the ROM pages are written with the CPU held
+    // A ROM load leaves the machine paused (its caller resets it); the ROM pages are written with the CPU held and
+    // the session ended (every checkpoint relies on the ROM: its history goes)
     Pause();
-    CpuHold hold(*this, "rom load");
-
-    // TTD v1 (P1.6): ROM reload changes immutable code/data backing every
-    // checkpoint relies on (parent TDD §4.2 — "ROM reload" is listed
-    // explicitly as a session invalidator).
-    if (_context && _context->pTimeTravelHooks)
-        _context->pTimeTravelHooks->OnConfigurationChange(ttd::TTDConfigChangeKind::RomReload, "rom-reload");
-
-    ROM& rom = *_core->GetROM();
-
-    bool result = rom.LoadROM(path, _memory->ROMBase(), MAX_ROM_PAGES);
-
+    bool result = false;
+    coordinator::RunCommit(_coordinator.get(), std::move(op), [&](coordinator::OpStage& stage) {
+        CpuHold hold(*this, "rom load");
+        stage.CommitPoint();
+        result = _core->GetROM()->LoadROM(path, _memory->ROMBase(), MAX_ROM_PAGES);
+        return true;
+    });
     return result;
 }
 
@@ -3754,6 +3829,11 @@ bool Emulator::SetOverscanMode(bool enable)
     if (!_context || !_context->pScreen)
         return false;
 
+    // The CPU held from the read of the mode on: no framebuffer access during the reallocation, and two callers do not
+    // both see the old mode and both switch (the second read the mode while the first wrote it; TSan, BUGS.md
+    // 2026-10-11 #6)
+    CpuHold hold(*this, "overscan");
+
     Screen* screen = _context->pScreen;
     VideoModeEnum currentMode = screen->GetVideoMode();
 
@@ -3767,9 +3847,6 @@ bool Emulator::SetOverscanMode(bool enable)
 
     if (newMode != currentMode)
     {
-        // The CPU held while the video mode changes: no framebuffer access during the reallocation
-        CpuHold hold(*this, "overscan");
-
         // Record the user's intent FIRST: InitRaster re-detects the video mode
         // from config/ports every frame and would revert a bare SetVideoMode
         // back to the model's base mode on the next frame

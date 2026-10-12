@@ -23,6 +23,7 @@ public:
     void Reset();
 
 private:
+    friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     enum class State : uint8_t { Idle, Address, Ack, RegisterPointer, WriteData, ReadData, MasterAck };
 
     uint8_t _reg[64] = {};
@@ -51,6 +52,7 @@ public:
     bool Sda() const { return _sda && _slaveSda; }
 
 private:
+    friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     bool _scl = true;
     bool _sda = true;
     bool _slaveSda = true;

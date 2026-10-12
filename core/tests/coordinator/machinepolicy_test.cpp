@@ -25,6 +25,12 @@ struct Expected
     bool atFrameBoundary = false;
 };
 
+/// M6: a reset, an autostart's reset and a snapshot load end an RZX playback first
+bool EndsPlayback(OpKind kind)
+{
+    return kind == OpKind::Reset || kind == OpKind::Autostart || kind == OpKind::SnapshotLoad;
+}
+
 Expected ExpectedCell(OpKind kind, MachineMode mode, bool endRecording)
 {
     const bool live = mode == MachineMode::Live;
@@ -63,6 +69,35 @@ Expected ExpectedCell(OpKind kind, MachineMode mode, bool endRecording)
         // A change of the machine itself ends the session (owner rule 2026-10-05): the rules never refuse it
         case OpKind::ModelSwitch:
             return {false, SessionEffect::None, false, false};
+        // M5, M6: TTD's own operations; TTD decides, the rules add nothing (they run on TTD's lock)
+        case OpKind::TimelineCut:
+        case OpKind::TtdStart:
+        case OpKind::TtdStop:
+        case OpKind::TtdDiscard:
+        case OpKind::TimelineSeek:
+        case OpKind::TtdLoad:
+            return {false, SessionEffect::None, false, false};
+        // M6: a change of the machine itself ends the session and drops its history in every mode (TTD v1's refusal
+        // is the owner's); held where the machine state is written from another thread
+        case OpKind::RomLoad:
+        case OpKind::StateTransfer:
+            return {false, SessionEffect::MachineChanged, true, false};
+        case OpKind::GsCardSwitch:   // on the machine thread, at a frame boundary
+            return {false, SessionEffect::MachineChanged, !live, false};
+        // M6: a speed change drops a history (the engine keeps the black box's), always held
+        case OpKind::SpeedChange:
+            return {false, SessionEffect::TimingChanged, true, false};
+        // M6: asked only; a slot change is applied by a restart
+        case OpKind::SlotChange:
+            return {false, SessionEffect::None, false, false};
+        // M6: a replay would not repeat a CD front panel action from outside the guest
+        case OpKind::CdFrontPanel:
+            return {mode == MachineMode::Recording, SessionEffect::None, false, false};
+        // M6: held while a recording runs (the edit is its event); refused in the recorded past (owner 2026-10-11)
+        case OpKind::ToolEdit:
+            if (mode == MachineMode::Replaying || mode == MachineMode::Detached)
+                return {true, SessionEffect::None, false, false};
+            return {false, SessionEffect::None, !live, false};
         case OpKind::Count:
             break;
     }
@@ -91,6 +126,7 @@ TEST(MachinePolicy_Test, EveryCellIsTodaysBehaviour)
                 EXPECT_EQ(d.hold, e.hold) << where;
                 EXPECT_EQ(d.machineResetAfter, e.machineResetAfter) << where;
                 EXPECT_EQ(d.atFrameBoundary, e.atFrameBoundary) << where;
+                EXPECT_EQ(d.endsPlayback, !d.refused && EndsPlayback(op.kind)) << where;
                 ++cells;
             }
     EXPECT_EQ(cells, static_cast<int>(OpKind::Count) * 5 * 2);

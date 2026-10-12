@@ -42,6 +42,19 @@ const char* OpKindName(OpKind kind)
         case OpKind::IdeDriveKind: return "ide-drive-kind";
         case OpKind::RzxRestore: return "rzx-restore";
         case OpKind::ModelSwitch: return "model-switch";
+        case OpKind::TimelineCut: return "timeline-cut";
+        case OpKind::RomLoad: return "rom-load";
+        case OpKind::GsCardSwitch: return "gs-card-switch";
+        case OpKind::SpeedChange: return "speed-change";
+        case OpKind::StateTransfer: return "state-transfer";
+        case OpKind::SlotChange: return "slot-change";
+        case OpKind::CdFrontPanel: return "cd-front-panel";
+        case OpKind::ToolEdit: return "tool-edit";
+        case OpKind::TtdStart: return "ttd-start";
+        case OpKind::TtdStop: return "ttd-stop";
+        case OpKind::TtdDiscard: return "ttd-discard";
+        case OpKind::TimelineSeek: return "timeline-seek";
+        case OpKind::TtdLoad: return "ttd-load";
         case OpKind::Count: break;
     }
     return "unknown";
@@ -90,6 +103,8 @@ const char* SessionEffectName(SessionEffect effect)
         case SessionEffect::EndKeepHistory: return "end-keep-history";
         case SessionEffect::MediaChanged: return "media-changed";
         case SessionEffect::StopThenMediaChanged: return "stop-then-media-changed";
+        case SessionEffect::MachineChanged: return "machine-changed";
+        case SessionEffect::TimingChanged: return "timing-changed";
     }
     return "unknown";
 }

@@ -9,6 +9,19 @@ uint64_t OperationLog::Append(OperationLogEntry entry)
     std::lock_guard<std::mutex> lock(_mutex);
     entry.seq = ++_seq;
     const uint64_t seq = entry.seq;
+    if (entry.kind == OpKind::ToolEdit && !_ring.empty())
+    {
+        OperationLogEntry& newest = _ring[(_next + kCapacity - 1) % kCapacity % _ring.size()];
+        if (newest.kind == entry.kind && newest.source == entry.source && newest.mode == entry.mode &&
+            newest.status == entry.status && newest.effect == entry.effect && newest.summary == entry.summary &&
+            newest.detail == entry.detail)
+        {
+            newest.seq = seq;
+            newest.time = entry.time;
+            ++newest.repeats;
+            return seq;
+        }
+    }
     if (_ring.size() < kCapacity)
         _ring.push_back(std::move(entry));
     else

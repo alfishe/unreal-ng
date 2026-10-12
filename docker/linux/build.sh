@@ -85,6 +85,12 @@ SANITIZER_ARGS=()
 if [ -n "$SANITIZE" ]; then
   BUILDDIR="$BUILDDIR-san-${SANITIZE//,/-}"
   SANITIZER_ARGS=(--cap-add SYS_PTRACE -e SANITIZE="$SANITIZE")
+  case "$SANITIZE" in
+    # TSan's fixed shadow layout dies on a high mmap_rnd_bits kernel ("FATAL: ThreadSanitizer:
+    # unexpected memory mapping", Ubuntu 24.04 with kernel 6.6+): no ASLR for the build (gtest
+    # discovery runs the binary) and the tests; seccomp=unconfined lets personality() through
+    *thread*) SANITIZER_ARGS+=(--security-opt seccomp=unconfined -e NOASLR=1) ;;
+  esac
   for v in ASAN_OPTIONS LSAN_OPTIONS UBSAN_OPTIONS TSAN_OPTIONS; do
     [ -n "${!v:-}" ] && SANITIZER_ARGS+=(-e "$v=${!v}")
   done
@@ -118,11 +124,13 @@ docker run --rm --platform "linux/$PLATFORM" --cpus "$CPUS" \
       SAN=("-DSANITIZE=$SANITIZE")
     fi
     cmake -S . -B "$BUILDDIR" -G Ninja -DCMAKE_BUILD_TYPE="$TYPE" -DTESTS=ON ${SAN[@]+"${SAN[@]}"}
-    cmake --build "$BUILDDIR" --target "$TARGET" -j "$JOBS"
+    RUN=()
+    [ "${NOASLR:-}" = 1 ] && RUN=(setarch "$(uname -m)" -R)
+    ${RUN[@]+"${RUN[@]}"} cmake --build "$BUILDDIR" --target "$TARGET" -j "$JOBS"
     if [ "$RUNTESTS" = 1 ]; then
       # From the binary directory: the tests open testdata/ and rom/ relative to it (the
       # copies CMake puts next to core-tests), and the scratch helper expects the same layout
       cd "$BUILDDIR/bin"
-      ./core-tests --gtest_filter="$FILTER" --gtest_color=no
+      ${RUN[@]+"${RUN[@]}"} ./core-tests --gtest_filter="$FILTER" --gtest_color=no
     fi
   '
