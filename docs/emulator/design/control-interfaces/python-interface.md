@@ -217,20 +217,22 @@ class Emulator:
         """Switch, clear or resize (capacity=N) the SD journal"""
 
     def bus_list(self) -> dict:
-        """The bus analyzer's buses (zc.spi, next.spi, divmmc.spi, neogs.sd, neogs.mp3.sci, neogs.mp3.sdi): devices (an SD card's
+        """The bus analyzer's buses (zc.spi, next.spi, divmmc.spi, neogs.sd, neogs.mp3.sci, neogs.mp3.sdi, ATA ide0 / ide1): devices (an SD card's
         type, state, timing profile), trace and checks state"""
 
     def bus_events(self, bus, kinds=None, slot=None, since=None, from_frame=None, to_frame=None, limit=None) -> dict:
         """A bus's trace: chip selects, bytes (mosi / miso), early accesses, truncated bytes, SD commands (argument, r1) and blocks,
-        each with seq, frame, t, pc, source, slot (kinds='spi,sd' or names). Off by default - bus_control(bus, enabled=True) first;
+        ATA register reads / writes, commands and data words, each with seq, frame, t, pc, source, slot (kinds='spi,sd,ata' or
+        names). Off by default - bus_control(bus, enabled=True) first;
         raises ValueError on a bad option or an unknown bus (the message lists the machine's buses)"""
 
     def bus_findings(self, bus, rules=None, since=None, limit=None) -> dict:
         """The checks' findings (early_access, select_mid_byte, deselect_mid_command, command_while_busy, command_drops_answer,
-        crc_error, dma_collision) with severity, pc, event_seq and what each means on the real hardware"""
+        crc_error, dma_collision, ata_data_without_drq, ata_command_drops_data, ata_write_while_busy) with severity, pc, event_seq and what each means on the real hardware"""
 
-    def bus_control(self, bus, enabled=None, checks=None, clear=False, capacity=0) -> dict:
-        """Switch a bus's trace and checks, clear, resize; bus='all' for every bus. Observes only"""
+    def bus_control(self, bus, enabled=None, checks=None, clear=False, capacity=0, protocol_only=None) -> dict:
+        """Switch a bus's trace and checks, clear, resize; protocol_only leaves out single bytes, data words and status reads;
+        bus='all' for every bus. Observes only"""
 
     def bus_sd_timing(self, bus, profile=None, seed=0, slot=None) -> dict:
         """An SD card's timing profile: ideal, realistic (seeded) or slow (worst case); applied at the card's next access. No profile:

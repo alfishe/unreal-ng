@@ -3043,7 +3043,7 @@ namespace PythonBindings
             // Bus analyzer (docs/inprogress/2026-10-11-bus-analyzer)
             .def("bus_list", [](Emulator& self) -> py::object {
                 return BusReplyToPy(DeviceState::BusList(self.GetContext()));
-            }, "Every peripheral bus of the machine and its cards (zc.spi, next.spi, divmmc.spi, neogs.sd, ...): devices (an SD card's "
+            }, "Every peripheral bus of the machine and its cards (zc.spi, next.spi, divmmc.spi, neogs.sd, ..., ATA ide0 / ide1): devices (an SD card's "
                "type, state and timing profile), trace and checks state")
             .def("bus_events", [](Emulator& self, const std::string& bus, py::object kinds, py::object slot, py::object since,
                                   py::object from_frame, py::object to_frame, py::object limit) -> py::object {
@@ -3056,7 +3056,8 @@ namespace PythonBindings
             }, py::arg("bus"), py::arg("kinds") = py::none(), py::arg("slot") = py::none(), py::arg("since") = py::none(),
                py::arg("from_frame") = py::none(), py::arg("to_frame") = py::none(), py::arg("limit") = py::none(),
                "A bus's trace: chip selects, bytes (mosi / miso), early accesses, truncated bytes and SD protocol events (command, "
-               "argument, r1; block read / written) with seq, frame, t, pc and source (kinds='spi,sd' or names); off by default - "
+               "argument, r1; block read / written), ATA register reads / writes, commands and data words, with seq, frame, t, pc and "
+               "source (kinds='spi,sd,ata' or names); off by default - "
                "bus_control(bus, enabled=True) first")
             .def("bus_findings", [](Emulator& self, const std::string& bus, py::object rules, py::object since, py::object limit) -> py::object {
                 BusFindingQuery query;
@@ -3066,7 +3067,8 @@ namespace PythonBindings
                 return BusReplyToPy(DeviceState::BusFindings(self.GetContext(), bus, query));
             }, py::arg("bus"), py::arg("rules") = py::none(), py::arg("since") = py::none(), py::arg("limit") = py::none(),
                "What the bus checks found (early_access, select_mid_byte, deselect_mid_command, command_while_busy, "
-               "command_drops_answer, crc_error, dma_collision) with severity, PC and what it means on the real hardware")
+               "command_drops_answer, crc_error, dma_collision, ata_data_without_drq, ata_command_drops_data, ata_write_while_busy) "
+               "with severity, PC and what it means on the real hardware")
             .def("bus_control", [](Emulator& self, const std::string& bus, py::object enabled, py::object checks, bool clear,
                                    size_t capacity, py::object protocolOnly) -> py::object {
                 const int enable = enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0);

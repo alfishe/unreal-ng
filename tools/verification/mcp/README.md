@@ -19,7 +19,8 @@ tools/verification/mcp/test_symbols.py --mcp-url http://127.0.0.1:8295/mcp
 
 Each script destroys every instance on the server it talks to and creates its own machine (`--model`, default
 PENTAGON; `test_input.py` takes a 48K for the BASIC prompt). Do not point it at an emulator someone works in: launch one
-(`--launch`, `--port-base`). Exit code 0 = every test passed. The whole set takes about 5 seconds.
+(`--launch`, `--port-base`; a port another process holds is refused, so the scripts never talk to someone else's
+build). Exit code 0 = every test passed. The whole set takes about 5 seconds.
 
 ## Scripts
 

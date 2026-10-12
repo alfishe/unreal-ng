@@ -18,6 +18,7 @@ Off by default: switching it on observes only (no machine change, allowed while 
 ```text
 bus_analyzer {"action":"list"}                                   # the buses, devices, trace / checks state
 bus_analyzer {"action":"enable","bus":"zc.spi"}                  # trace + checks (bus omitted: every bus)
+bus_analyzer {"action":"enable","bus":"zc.spi","protocol_only":true}   # no single bytes / data words / status reads: a whole boot fits
 ... run the program (control_execution run_frames / step) ...
 bus_analyzer {"action":"findings","bus":"zc.spi"}                # what the checks found
 bus_analyzer {"action":"events","bus":"zc.spi","kinds":"sd","limit":40}      # the SD protocol
