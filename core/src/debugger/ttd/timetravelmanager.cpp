@@ -1655,6 +1655,10 @@ uint16_t TimeTravelManager::ResolveModelRamPages() const
     if (cfg.mem_model == MM_SPECTRUM48)
         return 6;  // pages {0, 2, 5} in use → highest index 5
 
+    // The Next addresses 2 MB whatever its board holds (a 4 MB Issue 3 is the same to the core): the pages above 128 are not reachable
+    if (cfg.mem_model == MM_NEXT)
+        return static_cast<uint16_t>(std::min<uint32_t>(cfg.ramsize / (PAGE_SIZE / 1024), 128));
+
     // config.ramsize is in KB; each page is PAGE_SIZE = 16 KB.
     if (cfg.ramsize == 0 || cfg.ramsize > MAX_RAM_PAGES * (PAGE_SIZE / 1024))
     {

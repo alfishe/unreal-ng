@@ -25,10 +25,10 @@ The machine boots the real chain only when the model's config names the boot ROM
 `testdata/machines/zxnext/card` is a starting point; the full NextZXOS distribution works as it is). Without them the machine
 starts in the bare personality (128K ROM, no SD).
 
-**RAM size.** The default is 2048 KB (the expanded board); `ram_size` 512 or 1024 makes a smaller machine (the real board has 1 MB, 512 KB is for
-software that needs no more: less to hold and to record in TTD). An MMU bank beyond the installed RAM is not wired: its slot reads as
-`unmapped` (`state/next/mmu`), a write to it goes nowhere. `POST /emulator/start {"model":"NEXT","ram_size":512}`; `GET /emulator/models` lists
-`available_ram_sizes_kb`.
+**RAM size.** `ram_size` 1024 (Issue 1) or 2048 (Issue 2, the default); they are what `GET /emulator/models` lists and the menus offer. 4096 (Issue 3)
+is accepted by the API only: the core (3.02.03) addresses 2 MB - an 8-bit MMU page of 8 KB, `#E0` and above the ROM - so the machine is created with
+2048 and the reply carries a `note` saying so (requirements.md Q4). On a 1 MB machine an MMU bank beyond the installed RAM is not wired: its slot
+reads as `unmapped` (`state/next/mmu`), a write to it goes nowhere. `POST /emulator/start {"model":"NEXT","ram_size":1024}`.
 
 The card is the media manager's slot `sd.next0` (alias `sd`; `sd.next1` is the second socket): `[NEXT] SdCard` only names the card put into an empty slot at the power-on and at every reset, and every
 insert, swap, rescan or eject is `media {"action":"insert","slot":"sd","path":"<folder or image>"}` (`rescan` re-reads a changed folder; the machine need not be recreated).

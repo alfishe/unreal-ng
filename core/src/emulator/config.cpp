@@ -1540,6 +1540,17 @@ std::string Config::GetConfigFolderForModel(MEM_MODEL model, uint32_t ramSizeKB)
 	return folder;
 }
 
+uint32_t Config::EffectiveRamSize(MEM_MODEL model, uint32_t requestedKb, std::string& note)
+{
+    constexpr uint32_t kFourMegabytes = 4096, kTwoMegabytes = 2048;
+    if (model == MM_NEXT && requestedKb == kFourMegabytes)
+    {
+        note = "ZX Next with 4096 KB (Issue 3): this core addresses 2048 KB (8-bit MMU pages of 8 KB), created with 2048 KB";
+        return kTwoMegabytes;
+    }
+    return requestedKb;
+}
+
 bool Config::IsModelCreatable(const TMemModel& model)
 {
 	// Hard prerequisite: the build must know how to decode the model's ports.

@@ -121,6 +121,10 @@
         "ZXPOLY-PENTAGON) starts the bare ZX-Poly machine; combine it with `zxpoly` to load a file";
     paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["ram_size"]["type"] = "integer";
+    paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["ram_size"]["description"] =
+        "Optional RAM size in KB (a size of available_ram_sizes_kb of the model). ZX Next also takes 4096 (Issue 3): this core "
+        "addresses 2048, the machine is created with 2048 and the reply carries a `note`";
     {
         Json::Value& ramPowerOn = paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]
                                        ["schema"]["properties"]["ram_power_on"];
@@ -369,7 +373,9 @@
     paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
          ["ram_size"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
-         ["ram_size"]["description"] = "Optional RAM size in KB";
+         ["ram_size"]["description"] =
+        "Optional RAM size in KB (a size of available_ram_sizes_kb). ZX Next also takes 4096 (Issue 3): this core addresses 2048, "
+        "the machine is created with 2048 and the reply carries a `note`";
     {
         Json::Value& ramPowerOn = paths["/api/v1/emulator/{id}/model"]["post"]["requestBody"]["content"]
                                        ["application/json"]["schema"]["properties"]["ram_power_on"];

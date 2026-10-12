@@ -187,6 +187,24 @@ class TestNextReports:
             time.sleep(0.1)
         assert report["right_pad"]["buttons"] == ["start"] and report["md_pad_extra"]["left"] == {"mode": False, "x": False, "y": False, "z": False}
 
+    def test_ram_sizes_a_4mb_request_is_created_as_2mb_with_a_note(self, api_client):
+        models = api_client.session.get(api_client._url("/api/v1/emulator/models")).json()["models"]
+        nxt = [m for m in models if m["name"] == "NEXT"][0]
+        assert nxt["available_ram_sizes_kb"] == [1024, 2048], "4096 is not an offered size (no menu entry)"
+        refused = api_client.session.post(api_client._url("/api/v1/emulator/start"), json={"model": "NEXT", "ram_size": 512})
+        assert refused.status_code == 400, refused.text
+        created = api_client.session.post(api_client._url("/api/v1/emulator/start"), json={"model": "NEXT", "ram_size": 4096})
+        assert created.status_code == 201, created.text
+        body = created.json()
+        assert "2048" in body["note"] and "4096" in body["note"], body
+        emulator_id = body["id"]
+        try:
+            info = api_client.session.get(api_client._url(f"/api/v1/emulator/{emulator_id}")).json()
+            assert info["ram_kb"] == 2048
+        finally:
+            api_client.stop_emulator(emulator_id)
+            api_client.delete_emulator(emulator_id)
+
     def test_magic_opcode_breakpoints(self, api_client, next_emulator):
         def add(body):
             return post(api_client, next_emulator, "/breakpoints", body)

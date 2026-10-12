@@ -242,7 +242,7 @@ NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.
 - [x] Joystick ports from the RTL: #1F answers for Kempston 1 / MD 1 and #37 for Kempston 2 / MD 2 by NR #05 on either side and NR #82 bits 6 / 7, bits 7:6 only for an MD pad, an unanswered port idles at #FF; the host joystick is the left connector (NR #05 reset 0x40 = joy0 Kempston 1)
 - [x] Extended keys (NR #B0 / #B1) from the host's physical PC keys as keymaps.vhd places them, and the pads' MODE X Y Z (NR #B2; host pad = left connector, keypad 7 9 1 3); the Next is the PS/2 sink of the keyboard (NextExtendedInput); the state is in the TTD image (version 3); tests post PcKeyEvents through the MessageCenter
 - [x] The right joystick connector and the 12-button pads: joystick verbs on every plane take a, c, start, x, y, z, mode and right.<button>; each change is a journaled TTDInputKind::NextPad event; the right pad answers #1F / #37 by NR #05 and shows in NR #B2; the TTD image (version 4) carries it
-- [x] Next with 512 / 1024 KB RAM (`ram_size`): MMU banks beyond the installed RAM are unmapped; the video, the pixel inspector, TTD follow config.ramsize
+- [x] Next RAM sizes 1024 / 2048 KB (`ram_size`): MMU banks beyond the installed RAM are unmapped on a 1 MB machine; 4096 is accepted by the API only and created as 2048 with a `note` (the core addresses 2 MB; not in the menus or `available_ram_sizes_kb`, requirements Q4); the video, the pixel inspector, TTD follow it (TTD capped at the 128 addressable pages)
 - [ ] Device gaps D1 (UART/ESP/Pi) and D2 (Kempston mouse, ULA+, Radastan): the reports follow the devices
 
 ## Automation coverage - what is left (2026-10-10)
