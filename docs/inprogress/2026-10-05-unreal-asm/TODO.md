@@ -218,6 +218,7 @@ phase; master only after the owner's review.
       - [ ] GENS3M21 / 4.3t / 4B inject rules
       - [x] ZEUS 1983 (2026-10-11, research-sjasmplus-to-zeus.md): backend (1983 / GG / PHT texts), inject at its prompt; ZEUS 1983 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
       - [ ] ZEUS GG / 1.1 / v7.E inject rules and emulator checks of their texts
+      - [x] Primus 2.9 (2026-10-11, research-sjasmplus-to-zeus.md §4.1): the ZEUS backend's `primus` text, inject at its prompt; Primus 2.9 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
     - [ ] Z5 sjasmplus frontend coverage of real projects (STRUCT, MODULE, DEVICE / SLOT / PAGE, SAVEBIN, DEFINE)
   - First cuts: ALASM both ways about 14 days; + TASM 4.12 about 20; + watch / push watch, hints, live labels, Qt dock about 27
 
