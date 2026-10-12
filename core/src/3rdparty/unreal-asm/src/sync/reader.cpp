@@ -1332,12 +1332,15 @@ InjectPlan PlanInjectLinear(const MachineView& machine, const SyncDescriptor& d,
                         std::equal(p.end.begin(), p.end.end(), file.end() - static_cast<std::ptrdiff_t>(p.end.size()),
                                    [](char a, uint8_t b) { return static_cast<uint8_t>(a) == b; });
     const uint32_t end = *start + static_cast<uint32_t>(file.size()) - (marked ? static_cast<uint32_t>(p.end.size()) : 0);
-    const auto limit = p.limitAt ? machine.Word(p.limitAt) : std::optional<uint16_t>();
-    if (p.limitAt && !limit)
+    const auto limitWord = p.limitAt ? machine.Word(p.limitAt) : std::optional<uint16_t>();
+    if (p.limitAt && !limitWord)
     {
         plan.error = "the text pointers of " + d.title + " are not in memory";
         return plan;
     }
+    // a plain value: gcc 14 at -O3 takes *optional here for maybe-uninitialized (-Werror)
+    const bool limited = limitWord.has_value();
+    const uint32_t limit = limitWord.value_or(0);
     // the block after the text (Laser Genius' screen lines) moves behind the new one
     std::vector<uint8_t> follow;
     uint32_t oldEnd = 0;
@@ -1352,10 +1355,10 @@ InjectPlan PlanInjectLinear(const MachineView& machine, const SyncDescriptor& d,
         }
         oldEnd = *was;
     }
-    if (limit && end + p.end.size() + follow.size() > *limit)
+    if (limited && end + p.end.size() + follow.size() > limit)
     {
         plan.error = "the text takes " + std::to_string(file.size()) + " bytes; " + d.title + " holds " +
-                     std::to_string(*limit > *start ? *limit - *start : 0) + " (its text space)";
+                     std::to_string(limit > *start ? limit - *start : 0) + " (its text space)";
         return plan;
     }
     if (end + p.end.size() > 0x10000)
