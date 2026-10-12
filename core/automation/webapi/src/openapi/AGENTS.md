@@ -32,6 +32,7 @@ openapi/
 ├── openapi_operations.inc # Operation log (machine state coordinator) + openapi_operations_schemas.inc
 ├── openapi_porttrace.inc  # I/O port tracing
 ├── openapi_vdac2.inc      # TS-Conf VDAC2 card (FT812): bus capture
+├── openapi_bus.inc        # Bus analyzer: buses, trace, findings, SD card timing, VCD / JSONL export
 ├── openapi_profiler.inc   # Opcode/memory profiling
 ├── openapi_schemas.inc    # Shared JSON schemas
 ├── openapi_settings.inc   # Configuration settings

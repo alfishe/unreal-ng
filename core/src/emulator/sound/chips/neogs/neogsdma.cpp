@@ -225,7 +225,7 @@ void NeoGSDma::runMp3(int64_t now)
             t += 60 * byteTime; // ~50 us at 20 MHz
             continue;
         }
-        _mp3->sdi()->exchange(_mp3Buffer[_mp3Sent++]);
+        (_mp3Data ? _mp3Data : _mp3->sdi())->exchange(_mp3Buffer[_mp3Sent++]);
         _bytesMoved++;
         t += byteTime;
     }

@@ -50,6 +50,7 @@ class DebugManager;
 class Z80Disassembler;
 class FeatureManager;
 class MediaManager;
+class BusManager;
 class EthernetGateway;
 namespace coordinator  // emulator/coordinator/ports.h
 {
@@ -247,6 +248,10 @@ public:
     // Emulator; created before Core so peripherals can register their slots,
     // destroyed after Core so they can unregister)
     MediaManager* pMediaManager = nullptr;
+
+    // Bus analyzer: every peripheral bus of the machine and its cards (owned by Emulator; created before Core
+    // so bus owners can register, destroyed after Core; docs/inprogress/2026-10-11-bus-analyzer)
+    BusManager* pBusManager = nullptr;
 
     // The machine state coordinator (owned by Emulator, set by Emulator::WireCoordinator): a subsystem whose change is
     // a machine operation runs it here (coordinator::RunCommit: the rules, the TTD session effect, the log). Null in a

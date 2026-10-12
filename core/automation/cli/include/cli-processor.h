@@ -234,6 +234,9 @@ private:
 
     // TS-Conf VDAC2 card (FT812) command handlers: bus capture
     void HandleVdac2(const ClientSession& session, const std::vector<std::string>& args);
+    // Bus analyzer (cli-processor-bus.cpp)
+    void HandleBus(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowBusHelp(const ClientSession& session);
     void HandleVdac2Metrics(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void ShowVdac2Help(const ClientSession& session);
 

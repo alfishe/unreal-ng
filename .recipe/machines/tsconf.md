@@ -83,6 +83,13 @@ CLI: `state tsconf`, `state tsconf tsu`, `snapshot load x.spg [--no-switch]`; Lu
 `tsconf_state()`, `tsconf_tsu()`, `snapshot_load` / `unreal.snapshot_load`. unreal-qt: Machine
 menu → TS-Conf; opening or dropping an `.spg` switches to TS-Conf.
 
+### SD / SPI traffic and driver checks
+
+The Z-Controller bus is the bus analyzer's `zc.spi` (slot 0 the SD card, slot 1 the FT812 on the VDAC2 build):
+`bus_analyzer {"action":"enable","bus":"zc.spi"}`, then `events` / `findings`. On TS-Conf the check that matters is
+`dma_collision` (the CPU on `#57` / `#77` while an SPI DMA runs); `sd_timing` `slow` makes the card answer as a slow
+real one. [analysis/bus-analyzer.md](../analysis/bus-analyzer.md), [analysis/sd-driver-debugging.md](../analysis/sd-driver-debugging.md).
+
 ### Wild Commander (the TS-Conf shell) from the SD card
 
 **Out of the box:** the shipped `ts-conf` config (`TSL` and `TSL-VDAC2` both use it) starts with a ready SD card in

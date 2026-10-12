@@ -123,6 +123,12 @@ state screen mode       Video mode: picture format, memory layout, #EFF7/#DFFD/#
 state screen flash      FLASH phase and timing
 state next [regs|mmu|journal [regs=07,02] [sources=nextreg,port,copper,internal] [since=N] [from=F] [to=F] [limit=N] | journal on|off|clear]  ZX Spectrum Next: machine, the NextREG table, the 8K slots, the NextREG write journal (who wrote which register, when, through which door; off by default)
 state next sd [kinds=command,read,write] [card=0|1] [since=N] [from=F] [to=F] [limit=N] | sd on|off|clear  ZX Spectrum Next SD cards (type, protocol state, blocks), the SPI engine and the SD journal (every command with argument and R1, every block read / written; off by default)
+bus [list]                       Bus analyzer: every bus (zc.spi, next.spi, divmmc.spi, neogs.*), its devices, trace and checks state
+bus <id|all> on [checks|nochecks] [capacity=N] | off | clear   trace / checks on (off by default; observes only)
+bus <id> events [kinds=spi,sd,...] [slot=N] [since=N] [from=F] [to=F] [limit=N]   the trace, one line per event (seq, frame, T, PC, source, slot, kind, data)
+bus <id> findings [rules=...] [since=N] [limit=N]   the checks' findings with severity, PC and what each means on the hardware
+bus <id> sd-timing [ideal|realistic|slow] [seed=N] [slot=N]   an SD card's timing profile (changes the machine)
+bus <id> export <vcd|jsonl> <file> [kinds=] [since=] ...   VCD (SPI wires for GTKWave / PulseView) or JSON lines
 state next divmmc [kinds=map_in,esx_call] [since=N] [from=F] [to=F] [limit=N] | divmmc on|off|clear  ZX Spectrum Next DivMMC: #E3, the automap latch and entries (NR #B8-#BB decoded), and the DivMMC journal (what paged it in and out; the esxDOS calls with their registers; off by default)
 state next nmi [kinds=int_ack,nmi_request] [since=N] [from=F] [to=F] [limit=N] | nmi on|off|clear  ZX Spectrum Next NMI sources (would fire / blocked by), NMI in service, Multiface, reset bits, interrupts pending / in service, and the interrupt / NMI / reset journal (the interrupt accepted with its source and vector, RETI, an NMI request accepted or refused with the reason, RETN, the reset; off by default). `nmi` is the bare /NMI pulse, `mni` the magic button (the DRIVE button on a Next); the M1 button is `next nextreg 02 08`
 state next audio | input  ZX Spectrum Next sound as configured (chip model, ABC / ACB, turbosound, per chip pan / registers / periods / volumes, the DAC) and joystick modes (NR #05 / #0B, which port each answers, the Kempston port #1F decoded, what is not modelled)

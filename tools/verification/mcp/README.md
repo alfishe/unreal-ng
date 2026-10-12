@@ -35,6 +35,7 @@ PENTAGON; `test_input.py` takes a 48K for the BASIC prompt). Do not point it at 
 | `test_capture_media.py` | `capture_media` | screenshot metadata by default, the picture as an MCP image block (real PNG / GIF, no base64 in the JSON echo), a stable digest, status calls |
 | `test_input.py` | `type_input`, `mouse_input`, `joystick_input` | a typed BASIC line reaches the screen, key names, device status in the text, wrong arguments name the right ones |
 | `test_next.py` | `inspect_state`, `invoke_api`, `control_execution` | ZX Next: the `next_nmi` aspect and its journal, the NMI trigger and its refusals, the NextREG / beam / copper breakpoint types in `bp_add` and `bp_list` |
+| `test_bus.py` | `bus_analyzer`, `memory_access`, `invoke_api`, `control_execution` | Bus analyzer on TS-Conf: the bus list, enable with checks, a program that reads `#57` during its own SPI DMA (a `dma_collision` finding with the PC of the IN, the DMA's bytes as the DMA's), the SD timing profile, the VCD export, the refusals (unknown bus, profile, kind) |
 | `test_time_travel.py` | `time_travel` | record, stop, the range in status, seek, an out-of-range seek is reported |
 | `test_media.py` | `media`, `load_software`, `rzx_playback` | slots and formats in the text, a tape from `testdata/` loads into its slot, a missing file is named |
 | `test_router.py` | `search_api`, `invoke_api` | search by words, a GET by path, a missing path |

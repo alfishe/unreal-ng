@@ -440,6 +440,12 @@ next_reg_journal_control{enabled=true, clear=true, capacity=65536}  -- switch (o
 j, err = next_reg_journal{regs="07,02", sources="nextreg,copper", since=0, from=0, to=999, limit=50}  -- who wrote which NextREG: events {seq, frame, t, pc, source, reg, name, value, previous, decoded}; the NEXTREG instruction and the copper make no port cycle, so the port trace never sees them
 next_sd_journal_control{enabled=true, clear=true, capacity=16384}  -- switch (off by default) / clear / resize the SD journal
 sd, err = next_sd{kinds="command,read", card=0, since=0, from=0, to=999, limit=50}  -- the Next SD cards (type SDSC|SDHC, state, blocks), the SPI engine and the SD journal: events {seq, frame, t, pc, card, kind, command, argument, r1, crc_valid | block, ok}
+buses, err = bus_list()                                      -- the bus analyzer: buses (zc.spi, next.spi, divmmc.spi, neogs.*), devices, trace / checks state
+bus_control("all", {enabled=true, checks=true, clear=true, capacity=65536})  -- trace / checks on (off by default); observes only
+ev, err = bus_events("zc.spi", {kinds="sd", slot=0, since=0, from=0, to=999, limit=50})  -- events {seq, frame, t, pc, source, slot, kind, mosi, miso, read | command, argument, r1, crc_valid | block, ok}
+f, err = bus_findings("zc.spi", {rules="dma_collision,command_while_busy", since=0, limit=50})  -- findings {seq, event_seq, frame, t, pc, source, slot, rule, severity, value, detail}
+bus_sd_timing("zc.spi", {profile="slow", seed=1, slot=0})       -- SD card timing: ideal | realistic | slow (changes the machine)
+vcd, err = bus_export("zc.spi", {format="vcd", since=0})         -- the trace as VCD (SPI wires) or JSON lines (format="jsonl")
 next_divmmc_journal_control{enabled=true, clear=true, capacity=16384}  -- switch (off by default) / clear / resize the DivMMC journal
 dm, err = next_divmmc{kinds="map_in,esx_call", since=0, from=0, to=999, limit=50}  -- the Next DivMMC: state, entries (NR #B8-#BB decoded) and the journal events {seq, frame, t, pc, kind, address, entry, map | call, name, return_address, basic_rom, af, bc, de, hl}
 mp = next_magic_port{since=0, limit=50}; next_magic_port_control{enabled=true, port=0x00FF, mode="line", clear=true}  -- the program's debug console (jnext --magic-port): items {seq, frame, t, pc, text}; off by default
