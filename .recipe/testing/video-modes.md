@@ -19,7 +19,7 @@ the ZX family. Whoever shows or records a frame asks `DisplayGeometry`; nobody d
 |----------|---------|---------|
 | `DisplayFrame(w, h)` | the smallest 352:288 frame holding a `w` x `h` picture, no pixel squeezed (720x288 -> 720x590) | the unreal-qt window and its minimum size |
 | `WindowAspect(frame, window)` | the shape of a rectangle of the frame (the working picture) on the CRT: a 256x192 paper 4:3, the ATM's 640x200 of 640x288 1.76 | video wall tiles (fit inside the 4:3 plate, bars left over) |
-| `Compute(w, h)` | the square-pixel picture: each stored line shown once or twice (`lineRepeat`), whichever is nearer 352:288 | `Screen::GetDisplayGeometry()`; recording (to be moved onto it, see below) |
+| `Compute(w, h)` | the square-pixel picture: each stored line shown once or twice (`lineRepeat`), whichever is nearer 352:288 | `Screen::GetDisplayGeometry()`; recording |
 
 ## What each surface says
 
@@ -105,5 +105,7 @@ Without the script, the manual comparison for one machine is three reads: `state
   *Save Tile Screenshot As...* (the focused tile), *Save Screenshots of All Emulators...* (one PNG each),
   *Save Wall Screenshot As...* (the wall as it is on the screen). The first three are the core `Screenshotter`, the same
   frame the WebAPI / MCP / CLI return.
-- **Recording.** Still sizes its own picture (`recordingmanager.cpp`: half-height rule for TS-Conf / Sprinter, a Profi
-  window special case). Moving it onto `DisplayGeometry` is the next step, with a recording of every model and mode.
+- **Recording.** The file's picture is `DisplayGeometry::Picture` of the frame the recording started on (every video mode
+  of every machine, the same rule as the window): exact pixels where the CRT shape allows (352x288, a TS-Conf's 720x288
+  doubled to 720x576), the shape itself where it does not (ATM / Profi hi-res grow to 352:288). A later mode switch is fitted
+  into the file's size with the aspect kept (`RecordingPicture_Test`).
