@@ -350,6 +350,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateNextNmi, "/api/v1/emulator/{id}/state/next/nmi", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateNextAudio, "/api/v1/emulator/{id}/state/next/audio", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateNextInput, "/api/v1/emulator/{id}/state/next/input", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextUart, "/api/v1/emulator/{id}/state/next/uart", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNextNmiJournal, "/api/v1/emulator/{id}/next/nmi-journal", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateNextMagicPort, "/api/v1/emulator/{id}/state/next/magic-port", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNextMagicPort, "/api/v1/emulator/{id}/next/magic-port", drogon::Post);
@@ -1295,6 +1296,9 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     /// @brief GET /api/v1/emulator/{id}/state/next/input — the Next's joystick modes (NR #05 / #0B), the Kempston port, what is not modelled
     void getStateNextInput(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                            const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/next/uart — the Next's two UARTs: baud, frame, FIFOs, status, interrupts and the peers
+    void getStateNextUart(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id) const;
     /// @brief POST /api/v1/emulator/{id}/next/nmi-journal {"enabled", "clear", "capacity"} — switch, clear or resize the interrupt / NMI / reset journal
     void postNextNmiJournal(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                             const std::string& id) const;

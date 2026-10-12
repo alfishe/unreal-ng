@@ -276,6 +276,11 @@ class Emulator:
         (value, bits, selected_by_nr_05, answers_here), kempston_37 (value, answers_here) extended_keys (NR #B0 / #B1: nr_b0, nr_b1, pressed) and md_pad_extra (NR #B2: left / right {mode x y z});
         available=False elsewhere"""
 
+    def next_uart(self) -> dict:
+        """The Next's two UARTs (ESP, Pi): channels (name, prescaler, baud, frame {data_bits, parity, stop_bits, hardware_flow, break}, rts, rx / tx
+        {count, capacity, busy, preview_hex}, status, bytes {sent, received, lost}, interrupts {rx / tx enabled and pending}, peer {attached, kind,
+        target}); available=False elsewhere"""
+
     def next_dma(self) -> dict:
         """The Next DMA as programmed and running (mode zxn / z80, ports a / b, direction, burst, prescaler, counter, src / dst with
         src_kind / dst_kind, holds_bus, status byte); reading it does not advance its read sequence; available=False elsewhere"""

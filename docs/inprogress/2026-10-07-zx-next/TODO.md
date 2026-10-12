@@ -44,7 +44,7 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
 - [x] `NextDivMmc`: #E3, automap by NR #B8-#BB and #0A bit 4 on the M1 hook, the memory view in `NextMemory` (DivMMC ROM = system page 4, RAM banks = pages 8-15)
 - [ ] NR table from `registers.txt` (distribution docs, `documents/nextzxos-distribution-docs/extra-hw/io-port-system/`) as data: the rest of the registers, alt ROM NR #8C, mapping modes NR #8F
 - [ ] The personality ROM with the full card (TBBLUE.FW + nextzxos + sys + dot): runs through palette, layer clip and esxDOS calls (`RST 8`), then loops: first diff against a reference emulator from the co-simulation tooling (agent task, tools/machines/next/cosim)
-- [ ] UART skeleton (no peers), DMA, NMI button / stackless NMI, Multiface
+- [ ] (UART: done, see D1 below), DMA, NMI button / stackless NMI, Multiface
 
 ## A4 reached (2026-10-09): the NextZXOS main menu
 - [x] The real chain (boot ROM -> TBBLUE.FW -> personality ROM -> NextZXOS) on `testdata/machines/zxnext/card` reaches the
@@ -252,7 +252,10 @@ NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.
 - [x] Layer 2 256x192: the row is `y(7:6) = y_pre(7:6)` (+1 from 192 up) over `y_pre(5:0)`, not a modulo 192: a scroll above 191 shows rows 192-254 of the bank (`NextVideoRenderer_Test.Layer2In256x192RowsAboveTheBottomAreTheVhdlsWrap`); inverted clip windows (left > right, top > bottom) show nothing (test)
 - [x] DMA: WR3 with bit 6 starts a transfer - already so in `NextDma` (dma.vhd 576-580)
 - [x] The NEX loader into a running machine keeps the previous program's NextREGs: that is NEXLOAD's own behaviour (nexload.asm "Reset All registers" resets the list `LoaderNex::ResetRegisters` has, not the whole file; NextZXOS leaves its own state before it); a clean start is a machine reset before the load. No change
-- [ ] Device gaps D1 (UART/ESP/Pi) and D2 (Kempston mouse, ULA+, Radastan): the reports follow the devices
+- [x] D1 UARTs: `NextUart` (uart.vhd: FIFOs 64 / 512, prescaler, frame, hardware flow, status, interrupts as rising edges of the im2_int_req levels), peers by `[NETWORK] ComPort=` (ESP, UART 0) and `ComPort2=` (Pi, UART 1), `state/next/uart` on every plane, the UART state in the TTD NextState image (version 6; the peers' own state is the machine serial peer's blob, UART 1's peer is not saved). NR #C6 / #CA had UART 0 Tx / UART 1 Rx bits in the wrong places (fixed)
+- [x] D1 ESP: the ESP-12 on UART 0 is fitted by default (ComPort AT, ESP8266 NonOS AT 1.7.4), the line told the nearest standard baud, NR #A8 / #A9 drive its GPIO0 (low at a boot = download mode), NR #A0 / #A2 / #A8 / #A9 read back as the VHDL has them
+- [ ] D1 left: the joystick-port UART (NR #0B bits), the Pi's GPIO routing (NR #A0 / #9x), the ESP flasher's protocol (the ROM's SLIP), a UART break received from a peer
+- [ ] D2 (Kempston mouse, ULA+, Radastan): the reports follow the devices
 
 ## Automation coverage - what is left (2026-10-10)
 

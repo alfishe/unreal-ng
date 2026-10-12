@@ -768,6 +768,8 @@ struct CONFIG
 		/// the AVR's 16550): NONE | LOOPBACK | PLUG | TCP:<host>:<port> |
 		/// SERIAL:<device>[,<baud>] | ESPNET | AT (ComPortSpec::Parse). Empty = NONE
 		char comPort[256];
+		/// The machine's second serial port (the Next's UART 1, the Raspberry Pi's): ComPortSpec like comPort; empty = NONE
+		char comPort2[256];
 		/// What the ZX-WiFi card's 16550 is wired to: its ESP module's firmware
 		/// (AT | ESPNET), or another ComPortSpec value. Empty = AT
 		char zxWifi[256];

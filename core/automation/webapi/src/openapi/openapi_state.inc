@@ -204,6 +204,16 @@
              "uart_on_joystick_port. kempston_1f: value, bits, selected_by_nr_05 (zxnext.vhd drives #1F only for Kempston 1 / MD 1), answers_here "
              "(false: the port idles at #FF; it also needs NR #82 bit 6), note. kempston_37: value, answers_here (Kempston 2 / MD 2, NR #82 bit 7). "
              "The host joystick is the left connector. extended_keys: nr_b0, nr_b1, pressed (names: extend up caps_lock graph true_video inv_video break edit ; \" , . delete right left down; from the host's physical PC keys). md_pad_extra: nr_b2, left / right {mode x y z}, host_keys (the host's pad is the left connector; keypad 7 9 1 3 by default).", true},
+            {"/api/v1/emulator/{id}/state/next/uart", "Get the Next UARTs (ESP and Pi): baud, frame, FIFOs, status, interrupts and the peers",
+             "The Next's two UARTs at #133B-#163B (core DeviceState::NextUartReport; CLI `state next uart`, Lua next_uart(), Python next_uart(), "
+             "MCP inspect_state aspect next_uart). selected (0 ESP | 1 Pi), ports: decode, enabled (NR #83 bit 4). channels (2): index, name, "
+             "selected, prescaler (28 MHz clocks per bit), baud, frame {value, data_bits, parity, stop_bits, hardware_flow, break, fifo_reset, "
+             "clocks_per_byte}, rts, rx {count, capacity (512), near_full (3/4), busy, preview_hex (the next 16 bytes), preview_has_error}, "
+             "tx {count, capacity (64), busy, empty, preview_hex}, status (the byte a read of #133B gives, without clearing the sticky bits: "
+             "rx_available, tx_full, overflow, rx_near_full, tx_empty, byte_error, framing_error, break), bytes {sent, received, lost}, "
+             "interrupts {nr_c6_bits, rx_enabled, rx_on_near_full_only, tx_enabled, rx_pending, tx_pending, vector_rx, vector_tx}, peer "
+             "{attached, kind, target, connected, pending_bytes}. routing: NR #A0 / #0B bits that would route a UART to the Pi's GPIO or the "
+             "joystick port (registers only). The ESP's line is [NETWORK] ComPort=, the Pi's ComPort2=.", true},
             {"/api/v1/emulator/{id}/state/next/nmi", "Get the Next NMI sources, Multiface, interrupts, reset and the interrupt journal",
              "NMI, interrupts and reset (core DeviceState::NextNmiReport; CLI `state next nmi`, Lua next_nmi(), Python next_nmi(), MCP "
              "inspect_state aspect next_nmi). sources: m1_button, drive_button (enabled, would_fire, blocked_by) and io_trap (not modelled). "

@@ -3125,6 +3125,9 @@ namespace PythonBindings
             .def("next_input", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextInputReport(self.GetContext())); },
                "The Next's joystick modes (NR #05 left / right and the port each answers), the NR #0B I/O mode, the Kempston port #1F decoded and "
                "the answer of ports #1F and #37 by NR #05 / #82, the extended keys (NR #B0 / #B1) and the pads' MODE X Y Z (NR #B2); available=False elsewhere")
+            .def("next_uart", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextUartReport(self.GetContext())); },
+               "The Next's two UARTs (ESP and Pi): prescaler / baud, frame, RTS, the Rx / Tx FIFOs, the status byte as a read gives it, byte "
+               "counters, NR #C6 interrupt enables and requests, and what is on each line; available=False elsewhere")
             .def("next_nmi", [](Emulator& self, py::object kinds, py::object since, py::object from_frame, py::object to_frame,
                                 py::object limit) -> py::object {
                 auto text = [](const py::object& value) -> std::string {

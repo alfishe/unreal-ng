@@ -531,6 +531,17 @@ void EmulatorAPI::getStateNextInput(const HttpRequestPtr& req, std::function<voi
     ReplyState(DeviceState::NextInputReport(emulator->GetContext()), callback);
 }
 
+/// @brief GET /api/v1/emulator/{id}/state/next/uart - the Next's two UARTs (DeviceState::NextUartReport)
+void EmulatorAPI::getStateNextUart(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::NextUartReport(emulator->GetContext()), callback);
+}
+
 /// @brief POST /api/v1/emulator/{id}/next/nmi-journal {"enabled": true|false, "clear": true, "capacity": N} - switch, clear or resize the
 /// interrupt / NMI / reset journal (DeviceState::NextNmiJournalControl)
 void EmulatorAPI::postNextNmiJournal(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,

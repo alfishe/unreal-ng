@@ -2073,6 +2073,7 @@ StateNode Network(EmulatorContext* context)
     StateNode& set = ret["settings"];
     set["card"] = st.settings.card;
     set["com_port"] = st.settings.comPort;
+    set["com_port2"] = st.settings.comPort2;
     set["zx_wifi"] = st.settings.zxWifi;
     set["esp_chip"] = st.settings.espChip;
     set["com_modem_lines"] = st.settings.comModemLines;

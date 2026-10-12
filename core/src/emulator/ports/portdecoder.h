@@ -1020,6 +1020,7 @@ public:
             ZiFi,     ///< TS-Conf: the TS AVR firmware's 16550 and ZiFi on #xxEF
             Atm2Kbc,  ///< ATM Turbo 2+: the keyboard controller's RS-232 (its MCU's UART, not on #xxEF)
             Profi8251,   ///< ZX Profi v5: the board's 8251 USART at #D3 / #F3 (extended port map), clocked by its 8253
+            NextUart,    ///< ZX Next: the two UARTs at #133B-#163B (ESP = UART 0 = attachSerialPeer, Pi = UART 1 = attachSecondSerialPeer)
         } serialPort = SerialPort::None;
 
         /// The serial port's firmware by config name (EvoAvr: [EVO] Avr=, Atm2Kbc: [ATM] Kbc=)
@@ -1031,6 +1032,8 @@ public:
 
         /// A port that is no 16550 on #xxEF (Atm2Kbc, Profi8251) takes its peer here; nullptr detaches
         std::function<void(ISerialPeer* peer)> attachSerialPeer;
+        /// A machine's second serial port (the Next's UART 1); empty = none
+        std::function<void(ISerialPeer* peer)> attachSecondSerialPeer;
 
         /// The ATM Turbo 2+ INTERNAL I/O connector (cards on the #FB / #FA bus):
         /// plug a device in (true) or pull it (false); empty = no such connector

@@ -1196,6 +1196,17 @@ bool Config::ParseConfig(IniFile& inimanager)
 			config.network.comPort[0] = '\0';
 		}
 	}
+	config.network.comPort2[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "ComPort2", nullptr), config.network.comPort2, sizeof config.network.comPort2);
+	{
+		ComPortSpec spec;
+		std::string error;
+		if (!ComPortSpec::Parse(config.network.comPort2, spec, error))
+		{
+			MLOGWARNING("Config: [NETWORK] ComPort2=%s: %s - no second COM port", config.network.comPort2, error.c_str());
+			config.network.comPort2[0] = '\0';
+		}
+	}
 	config.network.comModemLines = (inimanager.GetLongValue(network, "ComModemLines", 0) != 0) ? 1 : 0;
 	netValue[0] = '\0';
 	CopyStringValue(inimanager.GetValue(network, "EspChip", nullptr), netValue, sizeof netValue);

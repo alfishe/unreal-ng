@@ -9,6 +9,7 @@
 #include "emulator/io/z80n/nextdma.h"
 #include "emulator/sound/nextaudio.h"
 #include "emulator/io/z80n/nextctc.h"
+#include "emulator/io/z80n/nextuart.h"
 #include "emulator/io/z80n/nextdivmmc.h"
 #include "emulator/io/z80n/nextmultiface.h"
 #include "emulator/io/z80n/nextsdjournal.h"
@@ -137,6 +138,16 @@ public:
     NextBoard& Board() { return *_board; }
     NextInterruptSource& Interrupts() { return *_interrupts; }
     NextCtc& Ctc() { return _ctc; }
+    /// Bit `bit` of the internal port enable word (reports)
+    bool PortEnabledForReport(unsigned bit) const { return PortEnabled(bit); }
+    /// A line's other end (the network manager owns the peer); nullptr takes it off. The peer's clock is the machine's base clock
+    void SetUartPeer(unsigned channel, ISerialPeer* peer);
+    /// NR #A8 / #A9: the ESP's GPIO0 pin (low while the board drives it low): an ESP module reboots into its ROM's download mode with it low
+    void BoardPinsChanged() override;
+    NetworkCapabilities DescribeNetwork() override;
+    /// The two UARTs (#133B-#163B): ESP (0) and Pi (1)
+    NextUart& Uart() { return _uart; }
+    const NextUart& Uart() const { return _uart; }
     NextDivMmc& DivMmc() { return *_divMmc; }
     NextMultiface& Multiface() { return *_multiface; }
     NextI2c& I2c() { return _i2c; }
@@ -253,6 +264,7 @@ private:
         }
     } _m1Chain;
     NextCtc _ctc;
+    NextUart _uart;
     NextDma _dma;
     std::unique_ptr<NextAudio> _audio;
     bool WriteDacPort(uint16_t port, uint8_t value);

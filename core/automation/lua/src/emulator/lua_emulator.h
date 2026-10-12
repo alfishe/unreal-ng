@@ -3913,6 +3913,12 @@ public:
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::NextInputReport(emulator->GetContext()));
         });
+        // next_uart(): the Next's two UARTs (ESP, Pi) - baud, frame, FIFOs, status, interrupts, peers (DeviceState::NextUartReport; no side effect)
+        lua.set_function("next_uart", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextUartReport(emulator->GetContext()));
+        });
         // next_nmi([{kinds="int_ack,nmi_request", since=N, from=F, to=F, limit=N}]): the Next's NMI sources, Multiface, interrupts, reset and the
         // interrupt / NMI / reset journal (DeviceState::NextNmiReport); nil + error on a bad option. The journal is off by default:
         // next_nmi_journal_control({enabled=true}) first
