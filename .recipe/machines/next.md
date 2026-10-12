@@ -133,10 +133,10 @@ control_execution {"action":"wait"}
 ```
 
 The CPU's doors (`NEXTREG`, `OUT #253B`, `IN #253B` for reads) stop after the instruction that did it, before the register takes the write.
-The copper is watched on a copy of its state after every instruction (the picture runs the real copper lazily, a line at a time), so a
-copper write, a beam place or a copper instruction stops at the first instruction boundary after the beam has done it, and the
-real copper executes the write later without a second stop or count. The `beam` line and the `hc` are the copper's counters (NR #64
-applied); `next_reg_journal` carries `beam_line` / `beam_hc` for every write (a copper MOVE has its own beam, not the time of the picture's catch-up).
+The copper runs with the machine (after every instruction, and before every CPU NextREG write), whether or not a picture is drawn. A copper
+instruction or a copper write under a breakpoint stops the machine BEFORE the MOVE writes (the copper holds it; it writes when the machine runs
+on, without a second stop or count); a beam place stops at the first instruction boundary after the beam passed it. The `beam` line and the
+`hc` are the copper's counters (NR #64 applied); `next_reg_journal` carries `beam_line` / `beam_hc` for every write, in the order of time.
 
 ### 3a4. Which interrupt did the CPU take, why did the M1 button do nothing? (the NMI report)
 

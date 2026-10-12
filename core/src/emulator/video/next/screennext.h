@@ -9,6 +9,7 @@
 #include "emulator/video/screen.h"
 
 class PortDecoder_Next;
+class NextCopper;
 
 /// The ZX Spectrum Next picture (design-video-timing.md): one mode, M_NEXT, one 640 x 256 framebuffer drawn line by
 /// line by NextVideoRenderer (every line twice: the 640 x 512 frame has the 4:3 picture of the 320 x 256 grid) from the register and memory state of the moment the beam leaves the line. The beam
@@ -38,6 +39,14 @@ public:
 
     /// Copper time (28 MHz clocks from the first paper line) of a T-state of the frame
     uint64_t CopperClock(uint32_t tstate) const;
+    /// The beam now as copper time
+    uint64_t CopperClockNow() { return CopperClock(GetCurrentTstate()); }
+
+    /// The board's copper takes its clock, its geometry and its picture hook from the raster (the machine owns the copper and runs it;
+    /// the picture only follows: before a MOVE writes, the pixels the old state made are drawn)
+    void BindCopper(NextCopper& copper);
+    /// Draw every pixel before copper time `clock` (a MOVE is about to write at it): the lines before its line, and its line up to its pixel
+    void RenderBeforeCopperClock(uint64_t clock);
 
     /// The T-state (base, from the frame start) at which visible line `y` (0-255) is complete
     uint32_t LineEndT(unsigned y) const;
@@ -60,10 +69,16 @@ private:
     void PrepareLayerFrame();
     void CompleteLayerFrame();
     void RenderLinesUpTo(unsigned lineExclusive);
+    /// Draw the pixels before (line, x): the lines before `line` whole, `line` up to x
+    void RenderUpTo(unsigned line, unsigned x);
+    void UpdateCopperGeometry();
+    mutable uint64_t _copperB = 0, _copperFrame7 = 0;                    ///< CopperClock = ((2 t + B) mod frame7) * 4, cached per raster
+    mutable uint32_t _copperKey[4] = {};
     bool FramebufferReady() const;
 
     mutable PortDecoder_Next* _decoder = nullptr;
     unsigned _nextLine = 0;
+    unsigned _nextX = 0;  ///< the pixels of _nextLine already drawn (a MOVE of the copper drew up to its pixel)
     uint8_t _lastTimingClass = 2;
     bool _copperBound = false;
 
