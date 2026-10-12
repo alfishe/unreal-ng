@@ -341,13 +341,13 @@ TEST(TimeTravelManager_FrameTable_Test, EmulatedMicrosecondsFollowEveryFrameLeng
         ASSERT_NO_FATAL_FAILURE(frame());
     // A frame ends at an instruction boundary, a few T-states past its end:
     // each step is its frame's duration within a few microseconds
-    const auto near = [](uint64_t step, uint64_t us) { return step + 8 >= us && step <= us + 8; };
+    const auto within = [](uint64_t step, uint64_t us) { return step + 8 >= us && step <= us + 8; };
     ASSERT_EQ(steps.size(), 11u);
     for (size_t i = 0; i < steps.size(); ++i)
     {
         // The line count is latched at the next frame start: frames 4-7 are 312 lines
         const uint64_t want = (i >= 4 && i < 8) ? 19968 : 20480;
-        EXPECT_TRUE(near(steps[i], want)) << "frame " << i << ": " << steps[i] << " us, want " << want;
+        EXPECT_TRUE(within(steps[i], want)) << "frame " << i << ": " << steps[i] << " us, want " << want;
     }
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
