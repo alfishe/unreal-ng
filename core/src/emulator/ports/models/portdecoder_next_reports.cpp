@@ -13,6 +13,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/z80n/nextregtable.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/next/nextmemory.h"
 #include "emulator/io/z80n/nextreportquery.h"
 #include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/video/next/nextlayerimage.h"
@@ -299,7 +300,7 @@ StateNode NextPixel(EmulatorContext* context, const NextPixelQuery& query)
     }
     NextLayer::InspectEnv env;
     env.ram = context->pMemory ? context->pMemory->RAMPageAddress(0) : nullptr;
-    env.ramPages = MAX_RAM_PAGES;
+    env.ramPages = context->pMemory ? static_cast<NextMemory*>(context->pMemory)->InstalledRamPages() : MAX_RAM_PAGES;
     env.regs = &decoder->Board().Video();
     env.sprites = &decoder->Board().Sprites();
     return NextLayer::InspectPixel(*frame, env, query.x, query.y, query.sub);

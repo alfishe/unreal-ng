@@ -9,6 +9,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/z80n/nextboard.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/models/portdecoder_next.h"
 
 ScreenNext::ScreenNext(EmulatorContext* context) : Screen(context)
@@ -216,7 +217,7 @@ void ScreenNext::RenderUpTo(unsigned lineLimit, unsigned xLimit)
     NextBoard& board = decoder->Board();
     NextVideoInputs in;
     in.ram = _context->pMemory->RAMPageAddress(0);
-    in.ramPages = MAX_RAM_PAGES;
+    in.ramPages = static_cast<NextMemory*>(_context->pMemory)->InstalledRamPages();
     in.regs = &board.Video();
     in.sprites = &board.Sprites();
     in.flash = _state && (_state->frame_counter & 0x10);

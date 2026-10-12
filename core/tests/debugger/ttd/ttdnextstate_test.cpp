@@ -64,7 +64,7 @@ TEST(TTDNextState_Test, TheImageRoundTripsOnItsOwn)
     EXPECT_FALSE(NextStateCodec::Load(*decoder, before.data(), before.size() - 1)) << "another length is refused";
 }
 
-TEST(TTDNextState_Test, TheSoundAndTheDivMmcRamTravelToo)
+TEST(TTDNextState_Test, TheSoundAndTheSystemAreaTravelToo)
 {
     constexpr uint16_t kPortAyRegister = 0xFFFD, kPortAyData = 0xBFFD;
     constexpr uint8_t kAyRegVolumeA = 8, kVolume = 0x0B;
@@ -90,16 +90,21 @@ TEST(TTDNextState_Test, TheSoundAndTheDivMmcRamTravelToo)
     ASSERT_TRUE(NextStateCodec::Load(*decoder, before.data(), before.size()));
     EXPECT_EQ(NextStateCodec::Save(*decoder), before);
 
-    // the DivMMC RAM has its own blob: plain bytes of the system-area pages 8-15
-    ttd::TTDNextDivMmcRam ram(*context->pMemory);
-    std::vector<uint8_t> image(ram.TTDStateSize());
-    ram.TTDSaveState(image.data());
-    uint8_t* bank0 = context->pMemory->ROMPageHostAddress(ttd::TTDNextDivMmcRam::kFirstPage);
-    const uint8_t original = bank0[0x10];
-    bank0[0x10] = static_cast<uint8_t>(original ^ kByte);
-    ram.TTDLoadState(image.data());
-    EXPECT_EQ(bank0[0x10], original) << "the load put the DivMMC RAM back";
-    EXPECT_EQ(ram.TTDStateSize(), ttd::TTDNextDivMmcRam::kBytes);
+    // the system area has its own blob, plain bytes: a ROM page the firmware loads in config mode and the DivMMC RAM both travel
+    ttd::TTDNextSystemArea area(*context->pMemory);
+    std::vector<uint8_t> image(area.TTDStateSize());
+    area.TTDSaveState(image.data());
+    uint8_t* romPage = context->pMemory->ROMPageHostAddress(0);
+    uint8_t* divMmcRam = context->pMemory->ROMPageHostAddress(ttd::TTDNextSystemArea::kDivMmcRamPage);
+    const uint8_t romOriginal = romPage[0x10], ramOriginal = divMmcRam[0x10];
+    romPage[0x10] = static_cast<uint8_t>(romOriginal ^ kByte);
+    divMmcRam[0x10] = static_cast<uint8_t>(ramOriginal ^ kByte);
+    const uint64_t changedHash = area.TTDHashState();
+    area.TTDLoadState(image.data());
+    EXPECT_EQ(romPage[0x10], romOriginal) << "the load put the ROM page back (a config-mode load of the firmware)";
+    EXPECT_EQ(divMmcRam[0x10], ramOriginal) << "and the DivMMC RAM";
+    EXPECT_NE(area.TTDHashState(), changedHash) << "the divergence hash sees the area";
+    EXPECT_EQ(area.TTDStateSize(), ttd::TTDNextSystemArea::kBytes);
 }
 
 TEST(TTDNextState_Test, SeeksRestoreTheNextRegisterFileAndTheMemoryMap)

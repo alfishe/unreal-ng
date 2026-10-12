@@ -342,6 +342,14 @@ void NextMemory::OnRomLoaded([[maybe_unused]] uint16_t imageBanks)
 
 /// region <Slot table>
 
+unsigned NextMemory::InstalledRamPages() const
+{
+    constexpr unsigned kKbPerPage = PAGE_SIZE / 1024;
+    const unsigned kb = _context ? _context->config.ramsize : 0;
+    const unsigned pages = kb ? kb / kKbPerPage : MAX_RAM_PAGES;
+    return std::min<unsigned>({pages, kAddressableRamPages, static_cast<unsigned>(MAX_RAM_PAGES)});
+}
+
 void NextMemory::MapSlot(unsigned slot)
 {
     const uint8_t value = _mmu[slot];
@@ -413,7 +421,7 @@ void NextMemory::MapSlot(unsigned slot)
             }
         }
     }
-    else if (value < kRamPages8K && (value >> 1) < MAX_RAM_PAGES)
+    else if (value < kRamPages8K && (value >> 1) < InstalledRamPages())
     {
         const uint8_t* ram = RAMPageAddress(value >> 1) + (value & 1) * kSlotSize;
         _readOff[slot] = _writeOff[slot] = static_cast<uint32_t>(ram - _memory);
@@ -443,7 +451,7 @@ void NextMemory::ApplyLayer2(unsigned slot)
     if (!(slot < 2 || (all && slot < 6)))
         return;
     const unsigned bank16 = static_cast<unsigned>(_l2View.bank) + (all ? (slot >> 1) : _l2View.segment) + _l2View.offset;
-    if (bank16 >= MAX_RAM_PAGES)
+    if (bank16 >= InstalledRamPages())
         return;
     const uint32_t off = static_cast<uint32_t>(RAMPageAddress(static_cast<uint16_t>(bank16)) + (slot & 1) * kSlotSize - _memory);
     if (_l2View.read)
