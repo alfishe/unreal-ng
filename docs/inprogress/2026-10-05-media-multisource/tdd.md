@@ -21,14 +21,14 @@ numbers are unchanged.
 What changed in this review:
 
 - **§1** `ComposeDescriptor` as built: the `boot` section, `partitions`, the S4 sidecars (`deleted`, `attributes`),
-  `error` / `Ok()`. `order` is parsed but not built. Paths are `lexically_normal`, and
+  `error` / `Ok()`, a layer's `order` (FR-14, built 2026-10-11). Paths are `lexically_normal`, and
   `Normalized()` leaves out `writes`.
 - **§2** No `IFileTreeSource` interface: three source classes, each with a static `Enumerate` into a `FileTree`.
   `FatImageExpander` reads a graft base lazily (C4b). `SourcePool` keeps a host file as its folder's index plus its
   name (C11). Devices are keyed by canonical path.
 - **§3** `UnionTree` / `UnionNode` became `FileTree` / `TreeNode`: 112 bytes, names as strings, no name pool, no
-  `layerMask`, with `unexpanded` / `baseCluster` added (C4b). The merge keeps one key per node (C11). There is no
-  per-directory `order`.
+  `layerMask`, with `unexpanded` / `baseCluster` added (C4b). The merge keeps one key per node (C11). The per-directory `order`
+  is applied after the merge (2026-10-11).
 - **§4** `FatSynthVolume` has no last-hit run cache (`GraftVolume` and `IsoSynthVolume` do). §4.3 (bulk reads) was
   dropped (C9). `IBlockDevice::ZeroRun` (C10a) landed instead.
 - **§5** The volume label comes from the descriptor or the builder's default, not from the bottom layer.
@@ -98,7 +98,7 @@ layers:                         # bottom first
     from: /                     # subfolder of the source (default /)
     include: ["*.com", "*.$c"]  # wildcards on file names, case-insensitive
     exclude: ["*.bak"]
-    order: {/: [boot.$c]}       # per-directory entry order (target paths): parsed, not built
+    order: {/: [boot.$c]}       # per-directory entry order (target paths): these first
     conflict: shadow            # shadow | keep-lower | error
     opaque: [/BIN/OLD]          # upper directory hides the lower one's contents
     whiteout: [/BIN/broken.com] # hide lower entries
@@ -178,7 +178,8 @@ struct ComposeLayer
     bool writable = false;
     DeletePolicy onDelete = DeletePolicy::Keep;   ///< Keep, Trash, Move, Delete, Ignore
     std::filesystem::path deletedFolder;          ///< Move: default <descriptor dir>/.deleted
-};                                                // no `order` member: the key is accepted and ignored
+    std::vector<std::pair<std::string, std::vector<std::string>>> order;  ///< FR-14: target dir -> names first
+};
 
 struct ComposeTarget                              // kind, fs, build, size, free, label, codePage, mbr,
 {                                                 // fixedTimeUtc, onBadName, isoLevel, joliet, relaxDepth
@@ -451,8 +452,9 @@ flowchart TD
 
 Designed: the layer's `order` list for that target path first, then directories, then files, each byte-wise by
 target long name. **As built:** `UnionBuilder::SortChildren` puts directories first, then files, each byte-wise by
-name (a stable sort). This is the same rule as `FolderSnapshot` and keeps NFR-S1. The `order` key is parsed and
-ignored; no phase built it.
+name (a stable sort). This is the same rule as `FolderSnapshot` and keeps NFR-S1. Since 2026-10-11 the factory then
+puts the named entries first: the folder manifests' `order` lists, then the descriptor's (so its names lead). A graft
+keeps the base's own entries where they are; an ISO target stays sorted.
 
 ## 4. Extents and the read hot path
 

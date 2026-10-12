@@ -248,6 +248,7 @@ public:
     // region Screen State (implementation: api/state_screen_api.cpp)
     ADD_METHOD_TO(EmulatorAPI::getStateScreen, "/api/v1/emulator/{id}/state/screen", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateScreenMode, "/api/v1/emulator/{id}/state/screen/mode", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::putStateScreenOverscan, "/api/v1/emulator/{id}/state/screen/overscan", drogon::Put, drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateScreenFlash, "/api/v1/emulator/{id}/state/screen/flash", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateScreenAttributes, "/api/v1/emulator/{id}/state/screen/attributes", drogon::Get);
 
@@ -1071,6 +1072,14 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getStateScreenFlash(const drogon::HttpRequestPtr& req,
                              std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                              const std::string& id) const;
+
+    /// @brief PUT/POST /api/v1/emulator/{id}/state/screen/overscan {"enabled": bool, "viewport": "..."} - the Pentagon's
+    /// 384x304 overscan frame on or off (the GUI's View > Overscan), with the viewport that crops it (symmetric |
+    /// standard | screen_only | full). A video mode is the machine's own state, so this is the one mode that
+    /// automation sets by an API rather than by a port
+    void putStateScreenOverscan(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                const std::string& id) const;
 
     /// @brief GET /api/v1/emulator/{id}/state/screen/attributes — per-cell
     /// ink/paper/bright/flash decoded from screen attribute memory

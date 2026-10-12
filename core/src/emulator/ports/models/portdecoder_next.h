@@ -87,7 +87,7 @@ public:
     unsigned JoystickMode(bool left) const;
     /// Whether the board drives port #1F (`port37` false) or #37 now, and what a read gives (zxnext.vhd 2396, 2616-2617, 3436-3470): a side
     /// that is Kempston 1 / MD 1 feeds #1F, Kempston 2 / MD 2 feeds #37, bits 7:6 only for an MD pad; the port also needs its bit in
-    /// NR #82 (6 and 7). The host joystick is the LEFT connector; nothing is on the right one. False: the read is not answered (the bus idles at #FF)
+    /// NR #82 (6 and 7). The host joystick is the LEFT connector; the right one is set by a tool (NextExtendedInput::Right). False: the read is not answered (the bus idles at #FF)
     bool JoystickPortAnswers(bool port37, uint8_t& value) const;
     NextDma& Dma() { return _dma; }
     void BindDma();
@@ -118,6 +118,9 @@ public:
     NextExtendedInput& ExtendedInput() { return _extendedInput; }
     const NextExtendedInput& ExtendedInput() const { return _extendedInput; }
     uint8_t ReadExtendedInput(uint8_t reg) const override;
+    bool HasPads() const override { return true; }
+    uint16_t PadState(unsigned connector) const override;
+    bool ApplyPadState(unsigned connector, uint16_t state) override;
     NextMagicPort& MagicPort() { return _magicPort; }
     const NextMagicPort& MagicPort() const { return _magicPort; }
     NextIntJournal& IntJournal() { return _intJournal; }
@@ -158,11 +161,11 @@ private:
     void NextRegAccess(bool write, uint8_t reg, uint8_t value, NextRegSource source);
     void FireBreakpoint(uint16_t id, uint16_t address, BreakpointHitKind kind);
     void WatchCopper(BreakpointManager& manager);
+    bool OnCopperStep(const NextCopper::Step& step);
     void WatchMagic(BreakpointManager& manager);
     bool _breakpointActive = false;  // a stop is being served: nothing nests in it
     bool _watchValid = false;
     uint64_t _watchClock = 0;  // the copper clock up to which the copper was watched
-    std::vector<NextCopper::Step> _watchSteps;
     NextMemory& Mem() const { return *static_cast<NextMemory*>(_context->pMemory); }
     void Port_7FFD_Next(uint16_t port, uint8_t value, uint16_t pc);
     void Port_1FFD_Next(uint8_t value);

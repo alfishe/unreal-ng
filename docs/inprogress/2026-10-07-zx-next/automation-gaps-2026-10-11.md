@@ -131,6 +131,14 @@ planes with the same name, has no side effect on the machine, and is described i
 The test builds the raster from `NextTiming` (frame, line length, the interrupt's place) and the RTL formulas (`(h << 3) + 12`, `hc_ula = 255`), with no
 literal geometry, and puts the WAITs on both sides of the interrupt's pixel clock.
 
-Known limit that the beam and copper breakpoints work around: the picture runs the real copper once per line while it draws, so the CPU and the
-reports see a copper write up to a line late (`reg-journal` now stamps it with the copper's beam). The watch makes the *stop* exact; the *effect*
-of the write on the CPU's view stays lazy.
+**Copper architecture (landed 2026-10-11, "variant B").** The first version ran the real copper inside the picture, a line at a time, so the CPU
+saw a copper write up to a line late and the copper did not run at all while no picture was drawn (turbo, render off). Now the copper is a bus
+master of the machine: `NextBoard::AfterInstruction` runs it to the beam after every instruction (`NextCopper::Poll`, one compare while it
+waits, none while it is stopped), and the board runs it first before every CPU NextREG write, so a MOVE that is due comes before the program's
+write of the same register (the bus gives the copper the clock it asks for; the journal and the breakpoints see the order of time). The picture
+only follows: the hook before a MOVE's write (`ScreenNext::RenderBeforeCopperClock`) draws the pixels the old state made, up to the MOVE's pixel
+(`RenderUpTo(line, x)`); the lines in between are drawn as before. The copper steps are watched live (`PortDecoder_Next::OnCopperStep`): a
+copper-instruction or copper-door NextREG breakpoint HOLDS the instruction, the machine stops before the MOVE writes, and the MOVE writes when it
+runs on, without a second stop or count (`NextCopper::_observed`). The probe on a copy of the copper is gone. Measured: while the copper runs about
++4 ns per instruction in a tight loop of NOPs (27.7 -> 31.6 ns), nothing while it is stopped. Limit: a MOVE reaches the registers at the end of the
+instruction it falls in (not inside it), and the 1/8-T deferral of a CPU write on the very clock of a MOVE is the order above, not a delay.

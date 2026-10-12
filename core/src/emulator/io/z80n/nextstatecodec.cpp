@@ -23,7 +23,7 @@
 
 namespace
 {
-constexpr uint8_t kImageVersion = 3;
+constexpr uint8_t kImageVersion = 5;
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -176,6 +176,7 @@ static void SaveCopper(Writer& w, const NextCopper& c)
     w.Put(c._lines);
     w.Put(c._frameClocks);
     w.Put(c._lastMoveAt);
+    w.Put(c._observed);
 }
 static void LoadCopper(Reader& r, NextCopper& c)
 {
@@ -193,6 +194,8 @@ static void LoadCopper(Reader& r, NextCopper& c)
     r.Get(c._lines);
     r.Get(c._frameClocks);
     r.Get(c._lastMoveAt);
+    r.Get(c._observed);
+    c._idleUntil = 0;  // derived: the next run works it out again
 }
 
 static void SaveBoard(Writer& w, const NextBoard& b)
@@ -509,18 +512,18 @@ static void SaveExtendedInput(Writer& w, const NextExtendedInput& e)
 {
     w.Put(e.Keys());
     w.Put(e.Pad(true));
-    w.Put(e.Pad(false));
+    w.Put(e.Right());
 }
 static void LoadExtendedInput(Reader& r, NextExtendedInput& e)
 {
-    uint16_t keys = 0;
-    uint8_t left = 0, right = 0;
+    uint16_t keys = 0, right = 0;
+    uint8_t left = 0;
     r.Get(keys);
     r.Get(left);
     r.Get(right);
     e.SetKeys(keys);
     e.SetPad(true, left);
-    e.SetPad(false, right);
+    e.SetRight(right);
 }
 
 static void SaveDecoder(Writer& w, const PortDecoder_Next& p)

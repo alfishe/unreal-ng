@@ -45,6 +45,12 @@ The text in memory: where `o` put it (`o 32768` in the host tools), records `[nu
 `#FAAB` / `#FAAD`. A line typed at the prompt is not in the text until Enter. The asm-synchronizer reads it live
 (descriptors `zeus-1983`, `zeus-1.1`, `zeus-gg`, `zeus-7e`; asm-synchronizer.md §7.14).
 
+## A host source into Primus 2.9
+
+At its prompt: `asm_source {"action":"sync_inject","path":"/abs/main.asm","assembler":"primus-2.9","force":true}`, then
+`a out` ENTER assembles and saves the code as `out` (one `ORG` only, no `DISP`; `inject-oracle.py primus
+<PRIMUS29.SCL> <source.asm> 0x6000`).
+
 ## A host source into ZEUS 1983 (at 57344)
 
 Write the source at its prompt (CAPS LOCK on); `A` then assembles it:

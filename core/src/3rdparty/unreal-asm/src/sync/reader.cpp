@@ -963,6 +963,18 @@ SyncDescriptor Zeus1983()
     return d;
 }
 
+/// Primus 2.9 also takes a text at its prompt (or its BETA-UNIT menu): its key wait returns through #6857 / #6858,
+/// then #6836 / #6851 (not while it assembles); the records from the start word, the end word at the last FF
+SyncDescriptor Primus29()
+{
+    SyncDescriptor d = Zeus("primus-2.9", "Primus Assembler 2.9 (Trunov)", "primus", 0x6D17, "PRIMUS ASSEMBLER Version", 0x61B1, "C");
+    d.linear.injectable = true;
+    d.idleChain = {0x6857, 0x6836};
+    d.idleAlternatives = {{0x6858, 0x6836}, {0x6857, 0x6851}, {0x6858, 0x6851}};
+    d.idleWhere = "its prompt";
+    return d;
+}
+
 /// ZX-ASM 2.4 / 2.5 / 2.6 (asm-synchronizer.md §7.9): plain text (blank runs only) in one buffer, the start word at
 /// the program's load address + 3, the end word after it; the part above #C000 in RAM page 0 (the 48K memory). 2.6
 /// keeps its ";*" line in the buffer and saves it as text
@@ -1664,7 +1676,7 @@ const std::vector<SyncDescriptor>& Descriptors()
              "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x5A\x45\x55\x53\x20\x77\x69\x74\x68\x20\x42\x2D\x64\x69\x73", 0xFD00, "C"),
         Zeus("zeus-7e", "ZEUS v7.E (ZKSoft)", "pht", 0xE020,
              "\x5C\x3E\xF7\x21\x6A\x5C\xA6\x77\xCD\x27\xF2\x0F\x00\x18\x1B\xCD\xC0\xDA\xDA\x12\xE1\xC3\xC5\xE0", 0xFAAB, "Z"),
-        Zeus("primus-2.9", "Primus Assembler 2.9 (Trunov)", "primus", 0x6D17, "PRIMUS ASSEMBLER Version", 0x61B1, "C"),
+        Primus29(),
         Gens4Tape(),
         Gens("gens-3m21", "GENS3M21 (HiSoft Devpac 3, tape, at 49000)", {0xE001, "HISOFT GENS3M2 ASSEMBLER"}, 0xDE54, 0xBF9E),
         Gens("gens-4b", "GENS4B 4.1 (MOA B-Disk, at 30000)", {0x9A70, "MOA B-Disk version."}, 0x7928, 0x7566),

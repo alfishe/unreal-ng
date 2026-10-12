@@ -52,6 +52,18 @@ of the text. ZEUS keeps no "changed" flag: a loaded text is replaced by force or
 | ZEUS 1983 in unreal-ng, the converted files at 32768 (`o 32768`): `oracle1.asm` and every instruction form at `#6000` | 143 / 1173 bytes = sjasmplus' |
 | `inject-oracle.py zeus1983`: the same written at its prompt, assembled with `A` | 143 / 1173 bytes = sjasmplus' |
 
+## 4.1 Primus Assembler 2.9 (2026-10-11)
+
+The same backend writes Primus 2.9 text (`--to-version primus`, codec version `primus`): `+ - * / ? & !` left to
+right (`/` unsigned and truncating, so `high` is `/256`; `?` the remainder, `!` OR), characters as numbers (Primus
+refuses `"A"`), labels of up to 16 characters, `DISK name` for an include. `?` after a name is part of the name to
+Primus (`COUNT?7`: an undefined label, seen in unreal-ng): `+0` ends the name first. Primus takes one `ORG` (a second
+is "Duplicate ORG": not converted) and has no `DISP`. It keeps its text from `#8254` with the start word at `#61B1`
+and the end word at the last `FF` at `#61B3` (asm-synchronizer.md §7.15); the inject goes in at its prompt (its key
+wait returns through `#6857` / `#6858`, then `#6836` / `#6851`; not while it assembles), by force over the manual it
+loads at start (no "changed" flag). `A out` assembles and saves the code as `out`: Primus 2.9 built `oracle1.asm` and
+every instruction form to sjasmplus' bytes (`inject-oracle.py primus`).
+
 ## 5. Limits
 
 - Only ZEUS 1983 has an inject rule (GG, 1.1, v7.E and Primus are read; the backend writes their text by

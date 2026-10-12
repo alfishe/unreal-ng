@@ -893,7 +893,16 @@ namespace
                             layer.deletedFolder = Resolve(*v, _d.baseDir);
                     }
                     else if (key == "order")
-                        ;  // per-directory order: phase C2b
+                    {
+                        if (!child.is_map())
+                            Report(at, "expected a map of target directories to name lists ({/: [boot.$c]})");
+                        else
+                            for (ryml::ConstNodeRef dir : child.children())
+                            {
+                                const std::string path = Text(dir.key());
+                                layer.order.emplace_back(path, StringList(dir, at + "." + path));
+                            }
+                    }
                     else
                         Report(at, "unknown key, ignored");
                 }
@@ -913,6 +922,8 @@ namespace
                     p = NormalizeTargetPath(p);
                 for (std::string& p : layer.whiteout)
                     p = NormalizeTargetPath(p);
+                for (auto& [dir, names] : layer.order)
+                    dir = NormalizeTargetPath(dir);
                 if (layer.deletedFolder.empty())
                     layer.deletedFolder = (_d.baseDir / ".deleted").lexically_normal();
                 _d.layers.push_back(std::move(layer));
@@ -1185,6 +1196,13 @@ std::string ComposeDescriptor::Normalized() const
         o << "},\"mount\":" << JsonString(l.mount) << ",\"from\":" << JsonString(l.from);
         o << ",\"include\":" << JsonList(l.include) << ",\"exclude\":" << JsonList(l.exclude);
         o << ",\"opaque\":" << JsonList(l.opaque) << ",\"whiteout\":" << JsonList(l.whiteout);
+        if (!l.order.empty())
+        {
+            o << ",\"order\":{";
+            for (size_t k = 0; k < l.order.size(); k++)
+                o << (k ? "," : "") << JsonString(l.order[k].first) << ":" << JsonList(l.order[k].second);
+            o << "}";
+        }
         o << ",\"conflict\":\"" << conflictName(l.conflict) << "\"}";
     }
     o << "]";

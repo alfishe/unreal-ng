@@ -151,7 +151,7 @@ types:
           gone; their network fields live in the bit-10 section, 14 Joystick - a
           Kempston joystick state write, u1 buttonMask = the state byte, 15 FrontPanelSwitch, 16 NetFrame - an
           Ethernet frame from the host LAN for the bridged gateway, its network record and bytes in the bit-10
-          section like a NetEvent's, 17 MidiPanic - every slot card's MIDI synthesizer stops all its voices, no fields), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
+          section like a NetEvent's, 17 MidiPanic - every slot card's MIDI synthesizer stops all its voices, no fields, 18 NextPad - the whole state of one joystick connector of the ZX Next: key = connector 0 left / 1 right, s2 dx = the 12 buttons R L D U B C A START Y Z X MODE from bit 0), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
           u1 buttonMask, s1 wheelSteps, u1 value; ascending time. Bit 7 = an
           external-event section follows: u32 count, then per marker u64
           frame, u32 tInFrame, u8 kind (TTDExternalEventKind; unknown values
@@ -681,12 +681,12 @@ types:
           erase (bit per 64 KB sector), u1 program value, s8 erase window end, s8 busy end (base clock t-states),
           u3 program offset, 6 reserved; the 512 KB array is the engine region EvoFlash (18), the machine's ROM
           pages 0-31),
-          62 NextState (the ZX Spectrum Next, one image of NextStateCodec::Save: u1 version 3, then the board (selected
+          62 NextState (the ZX Spectrum Next, one image of NextStateCodec::Save: u1 version 5, then the board (selected
           register, the 256 NextREG bytes, timing, reset bits), the memory map (MMU slots, paging bits, DivMMC /
           Multiface / Layer 2 views, config mode), video registers (clip windows, 8 x 256 palette words), sprites (128 x 5
           attribute bytes, 16 KB patterns, upload latches), the copper (2 KB list, position, mode, clock), the DMA, the CTC,
           the interrupt controller, the I2C bus with the DS1307, the Multiface and DivMMC latches, the decoder's SD SPI
-          and timing latches, the extended keys (u2) and the two pads' extra buttons (u1 each); fixed length per machine; the audio chips (three AY8910 with their pan, mode and the four DACs) and the two SD
+          and timing latches, the extended keys (u2), the left pad's extra buttons (u1) and the right pad (u2, 12 buttons); fixed length per machine; the audio chips (three AY8910 with their pan, mode and the four DACs) and the two SD
           cards' protocol state are in it; the DivMMC RAM is blob 63),
           63 NextDivMmcRam (the Next's DivMMC RAM, 131072 bytes, no version byte: the 16 banks of 8 KB from bank 0,
           the system-area pages 8-15).

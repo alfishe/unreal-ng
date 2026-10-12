@@ -112,7 +112,7 @@ std::vector<uint8_t> ReadBytes(const std::filesystem::path& path)
 
 /// A source of any dialect as sjasmplus, then as ZEUS 1983 through the codec and back: the ZEUS text read back from
 /// the bytes ZEUS would hold (checked to be the text written, up to the editor's layout)
-SourceDocument ZeusRoundTrip(const SourceDocument& source, const std::string& label)
+SourceDocument ZeusRoundTrip(const SourceDocument& source, const std::string& label, const std::string& version = "1983")
 {
     SourceDocument sjasmplus = source;
     if (source.dialect != "sjasmplus")
@@ -122,7 +122,7 @@ SourceDocument ZeusRoundTrip(const SourceDocument& source, const std::string& la
         sjasmplus = SourceDocument::FromText(r.document.Text(), "sjasmplus");
     }
     BackendOptions options;
-    options.targetVersion = "1983";
+    options.targetVersion = version;
     const ConvertResult written = Convert(sjasmplus, "zeus", options);
     EXPECT_TRUE(written.ok) << label;
     for (const Diagnostic& d : written.diagnostics)
@@ -130,14 +130,14 @@ SourceDocument ZeusRoundTrip(const SourceDocument& source, const std::string& la
             ADD_FAILURE() << label << " line " << d.line << ": " << d.message;
     const codecs::ZeusCodec codec;
     EncodeOptions encode;
-    encode.subversion = "1983";
+    encode.subversion = version;
     const EncodeResult bytes = codec.Encode(written.document, encode);
     EXPECT_TRUE(bytes.ok) << label;
     for (const Diagnostic& d : bytes.diagnostics)
         if (d.severity != Severity::Info)
             ADD_FAILURE() << label << " (codec) line " << d.line << ": " << d.message;
     DecodeOptions decode;
-    decode.subversion = "1983";
+    decode.subversion = version;
     const DecodeResult back = codec.Decode(bytes.bytes, decode);
     EXPECT_EQ(back.document.lines.size(), written.document.lines.size()) << label;
     for (size_t k = 0; k < std::min(back.document.lines.size(), written.document.lines.size()); ++k)
@@ -263,4 +263,31 @@ TEST(ZeusBackend_Test, ProgramsKeepTheirBytesThroughZeus)
         EXPECT_EQ(AssembleZeus(sjasmplus, ZeusRoundTrip(Decoded(tasm, Hobeta("tasm/T50PROG.$A")), "T50PROG"), "#7000", std::to_string(expected.size())),
                   expected);
     }
+}
+
+TEST(ZeusBackend_Test, PrimusTakesItsOwnOperatorsAndOneOrg)
+{
+    Diagnostics diagnostics;
+    const std::vector<std::string> lines = ToZeus(
+        "        ORG #6000\n"
+        "lab     LD A,high lab\n"
+        "        LD HL,lab*2/3\n"
+        "        LD A,lab%7\n"
+        "        LD A,\"A\"\n"
+        "        INCLUDE \"lib.asm\"\n"
+        "        ORG #7000\n",
+        &diagnostics, "primus");
+    const std::string text = Joined(lines);
+    EXPECT_TRUE(Contains(lines, "LAB LD A,LAB/256")) << text;
+    EXPECT_TRUE(Contains(lines, "LD HL,LAB*2/3")) << text;
+    EXPECT_TRUE(Contains(lines, "LD A,LAB+0?7")) << text;   // Primus reads LAB?7 as the name LAB?7
+    EXPECT_TRUE(Contains(lines, "LD A,65")) << text;   // Primus refuses "A
+    EXPECT_TRUE(Contains(lines, "DISK lib")) << text;
+    EXPECT_TRUE(std::any_of(diagnostics.begin(), diagnostics.end(), [](const Diagnostic& d) { return d.message.find("a second ORG") != std::string::npos; }));
+    const char* sjasmplus = std::getenv("UNREAL_ASM_SJASMPLUS");
+    if (!sjasmplus)
+        return;
+    const SourceDocument source = SourceDocument::FromText(ReadTestText("symbols/fromsource/instructions.asm"), "sjasmplus");
+    const std::vector<uint8_t> original = Assemble(sjasmplus, {{"PROG.asm", Bytes(source)}}, "PROG.asm", "#8000", "$-#8000");
+    EXPECT_EQ(AssembleZeus(sjasmplus, ZeusRoundTrip(source, "instructions primus", "primus"), "#8000", "$-#8000"), original);
 }

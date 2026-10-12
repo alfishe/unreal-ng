@@ -818,6 +818,19 @@ StateNode NextInputReport(EmulatorContext* context)
     md["host_keys"] = std::string("x:") + pckey::Name(input.PadKey(3)) + ",y:" + pckey::Name(input.PadKey(1)) + ",z:" +
                       pckey::Name(input.PadKey(2)) + ",mode:" + pckey::Name(input.PadKey(0));
     n["md_pad_extra"] = std::move(md);
+
+    // The right connector: every button (the left one's Kempston byte is the joystick device); a tool puts them there
+    StateNode rightPad = StateNode::Object();
+    const uint16_t rightState = input.Right();
+    rightPad["state"] = Hex8(static_cast<uint8_t>(rightState & 0xFF));
+    rightPad["extras"] = Hex8(static_cast<uint8_t>(rightState >> 8));
+    StateNode rightButtons = StateNode::Array();
+    constexpr const char* kPadNames[12] = {"right", "left", "down", "up", "fire", "c", "a", "start", "y", "z", "x", "mode"};
+    for (unsigned bit = 0; bit < 12; bit++)
+        if (rightState & (1u << bit))
+            rightButtons.push(kPadNames[bit]);
+    rightPad["buttons"] = std::move(rightButtons);
+    n["right_pad"] = std::move(rightPad);
     return n;
 }
 

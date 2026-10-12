@@ -18,6 +18,7 @@
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/sound/audio.h"
+#include "emulator/video/next/screennext.h"
 #include "emulator/video/ulacontention.h"
 
 PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spectrum128(context)
@@ -28,10 +29,17 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     if (_context->pKeyboard)
         _context->pKeyboard->SetPs2Sink(&_extendedInput);
     // the picture follows the beam: a video register written by the program applies from the line the beam is on
+    // (the copper first: its MOVEs that are due come before the program's write, as the bus gives the copper the clock it asks for)
     _board->SetBeforeCpuWrite([this]() {
+        _board->Copper().Sync();
         if (_context->pScreen)
             _context->pScreen->UpdateScreen();
     });
+    // The copper is the machine's: it runs after every instruction, its steps are watched for breakpoints, its clock and its picture hook
+    // come from the raster
+    _board->Copper().SetObserver([this](const NextCopper::Step& step) { return OnCopperStep(step); });
+    if (ScreenNext* screen = _context->pScreen ? dynamic_cast<ScreenNext*>(_context->pScreen) : nullptr)
+        screen->BindCopper(_board->Copper());
     _interrupts = std::make_unique<NextInterruptSource>(_context);
     _interrupts->ctcEnables = [this]() { return _ctc.InterruptEnables(); };
     _interrupts->setCtcEnables = [this](uint8_t bits) { _ctc.SetInterruptEnables(bits); };
@@ -386,6 +394,33 @@ uint8_t PortDecoder_Next::ReadExtendedInput(uint8_t reg) const
     }
 }
 
+uint16_t PortDecoder_Next::PadState(unsigned connector) const
+{
+    if (connector == 0)
+    {
+        // the left connector: the Kempston device is its low byte, the extras are the keyboard controller's
+        const uint8_t stick = _context->pJoystick ? _context->pJoystick->State() : 0;
+        return static_cast<uint16_t>(stick | NextExtendedInput::ExtrasToPadBits(_extendedInput.Pad(true)));
+    }
+    return connector == 1 ? _extendedInput.Right() : 0;
+}
+
+bool PortDecoder_Next::ApplyPadState(unsigned connector, uint16_t state)
+{
+    state &= kPadMask;
+    if (connector == 0)
+    {
+        if (_context->pJoystick)
+            _context->pJoystick->SetState(static_cast<uint8_t>(state & 0xFF));
+        _extendedInput.SetPad(true, NextExtendedInput::PadBitsToExtras(state));
+        return true;
+    }
+    if (connector != 1)
+        return false;
+    _extendedInput.SetRight(state);
+    return true;
+}
+
 unsigned PortDecoder_Next::JoystickMode(bool left) const
 {
     const uint8_t nr05 = _board->Stored(0x05);
@@ -407,7 +442,9 @@ bool PortDecoder_Next::JoystickPortAnswers(bool port37, uint8_t& value) const
         return false;
     if (leftOn)
         value = static_cast<uint8_t>(Default_Port_KempstonJoystick_In() & (leftMode == md ? (kPadBits | kStickBits) : kStickBits));
-    return true;  // the right connector has no host input: it adds nothing
+    if (rightOn)  // the right connector: whatever a tool put on it (it has no host keys); the two sides are ORed (port_1f_dat <= joyL_1f or joyR_1f)
+        value |= static_cast<uint8_t>(_extendedInput.Right() & (rightMode == md ? (kPadBits | kStickBits) : kStickBits));
+    return true;
 }
 
 void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
@@ -575,7 +612,7 @@ void PortDecoder_Next::NextRegAccess(bool write, uint8_t reg, uint8_t value, Nex
     {
         case NextRegSource::NextReg: door = BRK_NR_DOOR_NEXTREG; break;
         case NextRegSource::Port: door = BRK_NR_DOOR_PORT; break;
-        default: return;  // the copper is watched on its own (WatchCopper); the board itself (reset, a loader) has no one to stop
+        default: return;  // the copper is watched on its own (OnCopperStep); the board itself (reset, a loader) has no one to stop
     }
     if (_breakpointActive || !_context->pDebugManager || !_context->pEmulator)
         return;
@@ -601,7 +638,7 @@ void PortDecoder_Next::OnInstructionDone()
     BreakpointManager& manager = *_context->pDebugManager->GetBreakpointsManager();
     if (manager.GetHotState()->hasMagic) [[unlikely]]
         WatchMagic(manager);
-    if (!manager.GetHotState()->copperWatch) [[likely]]
+    if (!manager.GetHotState()->hasBeam) [[likely]]
     {
         _watchValid = false;  // the next look starts from the beam of that moment
         return;
@@ -631,6 +668,41 @@ void PortDecoder_Next::WatchMagic(BreakpointManager& manager)
         FireBreakpoint(id, start, BreakpointHitKind::Magic);
 }
 
+/// The copper is about to carry out an instruction: a copper-instruction breakpoint, or a NextREG write breakpoint that takes the copper's
+/// door, stops the machine BEFORE the MOVE writes (true: the copper holds the instruction until it runs on)
+bool PortDecoder_Next::OnCopperStep(const NextCopper::Step& step)
+{
+    if (_breakpointActive || !_context->pDebugManager || !_context->pEmulator)
+        return false;
+    BreakpointManager& manager = *_context->pDebugManager->GetBreakpointsManager();
+    const BreakpointHotState* hot = manager.GetHotState();
+    if (!hot->hasCopperPc && !hot->hasNextRegWrite)
+        return false;
+    uint16_t found = BRK_INVALID;
+    uint16_t address = 0;
+    BreakpointHitKind kind = BreakpointHitKind::CopperInstruction;
+    if (hot->hasCopperPc)
+    {
+        found = manager.HandleCopperPc(step.pc);
+        address = step.pc;
+    }
+    if (step.isMove && step.reg != 0 && hot->hasNextRegWrite)
+    {
+        const uint16_t id = manager.HandleNextReg(BRK_NR_WRITE, step.reg, step.value, BRK_NR_DOOR_COPPER);  // counts its hits as well
+        if (found == BRK_INVALID && id != BRK_INVALID)
+        {
+            found = id;
+            address = step.reg;
+            kind = BreakpointHitKind::NextRegWrite;
+        }
+    }
+    if (found == BRK_INVALID)
+        return false;
+    FireBreakpoint(found, address, kind);
+    return true;
+}
+
+/// Beam breakpoints: the beam passed the place since the last look (the copper's own steps are OnCopperStep's)
 void PortDecoder_Next::WatchCopper(BreakpointManager& manager)
 {
     NextCopper& copper = _board->Copper();
@@ -646,37 +718,13 @@ void PortDecoder_Next::WatchCopper(BreakpointManager& manager)
     const uint64_t from = _watchClock;
     const bool wrapped = now < from;  // the frame rolled over
     _watchClock = now;
-    // The instructions the copper completes in (from, now]: a probe from the real copper's cursor, which lags by up to a line
-    _watchSteps.clear();
-    if (copper.Mode() != 0)
-        copper.Probe(now, _watchSteps);
     auto inSpan = [&](uint64_t at) { return wrapped ? (at > from || at <= now) : (at > from && at <= now); };
-    uint16_t found = BRK_INVALID;
-    uint16_t address = 0;
-    BreakpointHitKind kind = BreakpointHitKind::CopperInstruction;
-    auto take = [&](uint16_t id, uint16_t at, BreakpointHitKind k) {
-        if (id != BRK_INVALID && found == BRK_INVALID)
-        {
-            found = id;
-            address = at;
-            kind = k;
-        }
-    };
-    for (const NextCopper::Step& step : _watchSteps)
-    {
-        if (!inSpan(step.at))
-            continue;
-        take(manager.HandleCopperPc(step.pc), step.pc, BreakpointHitKind::CopperInstruction);
-        if (step.isMove && step.reg != 0)
-            take(manager.HandleNextReg(BRK_NR_WRITE, step.reg, step.value, BRK_NR_DOOR_COPPER), step.reg, BreakpointHitKind::NextRegWrite);
-    }
-    take(manager.HandleBeam([&](uint16_t line, uint16_t hc) {
-             const uint64_t at = copper.ClockOf(line, hc);
-             return at != UINT64_MAX && inSpan(at);
-         }),
-         0, BreakpointHitKind::Beam);
+    const uint16_t found = manager.HandleBeam([&](uint16_t line, uint16_t hc) {
+        const uint64_t at = copper.ClockOf(line, hc);
+        return at != UINT64_MAX && inSpan(at);
+    });
     if (found != BRK_INVALID)
-        FireBreakpoint(found, address, kind);
+        FireBreakpoint(found, 0, BreakpointHitKind::Beam);
 }
 
 void PortDecoder_Next::StepDma()

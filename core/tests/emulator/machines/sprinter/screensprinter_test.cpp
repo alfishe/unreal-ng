@@ -151,7 +151,7 @@ TEST_F(ScreenSprinter_Test, Geometry_736x288_320Lines)
     EXPECT_EQ(rd.screenHeight, 256);
     EXPECT_EQ(rd.screenOffsetLeft, 48);
     EXPECT_EQ(rd.screenOffsetTop, 16);
-    EXPECT_TRUE(StoresHalfHeightLines(M_SPRINTER));
+    EXPECT_EQ(DisplayGeometry::Picture(736, 288).lineRepeat, 2) << "recordings double the stored lines";
 
     // The frame's own geometry names the same picture, and it is the square grid the renderer draws: square
     // (0, 0) sits at its top-left corner (SquareX / SquareY are measured by the pixel tests below)

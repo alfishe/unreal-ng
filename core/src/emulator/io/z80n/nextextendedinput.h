@@ -50,8 +50,35 @@ public:
     uint16_t Keys() const { return _keys.load(std::memory_order_relaxed); }
     void SetKeys(uint16_t keys) { _keys.store(keys, std::memory_order_relaxed); }
     /// The extra buttons of a side (kPad* bits)
-    uint8_t Pad(bool left) const { return (left ? _padLeft : _padRight).load(std::memory_order_relaxed); }
-    void SetPad(bool left, uint8_t buttons) { (left ? _padLeft : _padRight).store(buttons & kPadMask, std::memory_order_relaxed); }
+    uint8_t Pad(bool left) const
+    {
+        return left ? _padLeft.load(std::memory_order_relaxed) : PadBitsToExtras(_right.load(std::memory_order_relaxed));
+    }
+    void SetPad(bool left, uint8_t buttons)
+    {
+        if (left)
+            _padLeft.store(buttons & kPadMask, std::memory_order_relaxed);
+        else
+            _right.store(static_cast<uint16_t>((_right.load(std::memory_order_relaxed) & ~kPadExtraBits) | ExtrasToPadBits(buttons)),
+                         std::memory_order_relaxed);
+    }
+
+    /// The 12-bit pad state of the RIGHT connector (the left one's low byte is the Kempston device): bit 0 R, 1 L, 2 D, 3 U, 4 B, 5 C, 6 A,
+    /// 7 START, 8 Y, 9 Z, 10 X, 11 MODE. The right connector has no host keys: a tool sets it
+    uint16_t Right() const { return _right.load(std::memory_order_relaxed); }
+    void SetRight(uint16_t state) { _right.store(state & 0x0FFF, std::memory_order_relaxed); }
+    /// bits 11..8 of a pad state <-> the kPad* extras
+    static constexpr uint16_t kPadExtraBits = 0x0F00;
+    static constexpr uint16_t ExtrasToPadBits(uint8_t extras)
+    {
+        return static_cast<uint16_t>(((extras & kPadMode) ? 0x0800 : 0) | ((extras & kPadX) ? 0x0400 : 0) | ((extras & kPadZ) ? 0x0200 : 0) |
+                                     ((extras & kPadY) ? 0x0100 : 0));
+    }
+    static constexpr uint8_t PadBitsToExtras(uint16_t pad)
+    {
+        return static_cast<uint8_t>(((pad & 0x0800) ? kPadMode : 0) | ((pad & 0x0400) ? kPadX : 0) | ((pad & 0x0200) ? kPadZ : 0) |
+                                    ((pad & 0x0100) ? kPadY : 0));
+    }
 
     /// The PC key that presses an extra pad button of the host's pad (the left connector): keypad 7 / 9 / 1 / 3 by default, away from the
     /// Kempston directions (keypad 8 2 4 6) and fire (keypad 0)
@@ -64,6 +91,6 @@ public:
 private:
     std::atomic<uint16_t> _keys{0};
     std::atomic<uint8_t> _padLeft{0};
-    std::atomic<uint8_t> _padRight{0};
+    std::atomic<uint16_t> _right{0};  ///< the whole right pad; its extras are bits 11..8
     std::array<std::atomic<uint8_t>, kPadButtons> _padKeys{};  ///< index = the button's bit number; a PcKey, 0 unbound
 };

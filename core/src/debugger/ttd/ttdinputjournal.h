@@ -106,12 +106,15 @@ enum class TTDInputKind : uint8_t
     NetFrame,           ///< an Ethernet frame from the host LAN for the bridged gateway (network SN6): a network
                         ///< record like NetEvent's (netIndex), the frame bytes in the payload store
 
-    MidiPanic           ///< MIDI panic from automation / the GUI (ZX-MultiSound MS-6): every slot card's MIDI
+    MidiPanic,          ///< MIDI panic from automation / the GUI (ZX-MultiSound MS-6): every slot card's MIDI
                         ///< synthesizer stops all its voices (sam2695::Synth::Panic); no fields
+
+    NextPad             ///< the whole state of one joystick connector of a machine with 12-button pads (the ZX Next):
+                        ///< key = connector (0 left, 1 right), dx = the 12 buttons (PortDecoder::PadState layout)
 };
 
 /// Last valid kind: the file reader refuses anything above it
-constexpr TTDInputKind kLastTTDInputKind = TTDInputKind::MidiPanic;
+constexpr TTDInputKind kLastTTDInputKind = TTDInputKind::NextPad;
 
 /// The kinds that carry a network record (netIndex) and payload bytes
 constexpr bool HasNetRecord(TTDInputKind kind)

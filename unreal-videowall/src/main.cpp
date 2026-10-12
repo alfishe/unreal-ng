@@ -109,23 +109,33 @@ int main(int argc, char* argv[])
     // text rendering occurs.
 
     bool useGpu = false;
+    bool startFullscreen = false;
     for (int i = 1; i < argc; ++i)
     {
         if (std::string(argv[i]) == "--gpu")
         {
             useGpu = true;
         }
+        else if (std::string(argv[i]) == "--fullscreen")
+        {
+            startFullscreen = true;  // the wall fills the screen at once (verification, exhibitions)
+        }
     }
 
     VideoWallWindow* window = nullptr;
 
-    QTimer::singleShot(0, [useGpu, &window]() {
+    QTimer::singleShot(0, [useGpu, startFullscreen, &window]() {
         window = new VideoWallWindow();
         if (useGpu)
         {
             window->handleGpuAccelerationToggled(true);
         }
         window->show();
+        if (startFullscreen)
+        {
+            // After the first paint: the window must exist on screen before it can be made fullscreen
+            QTimer::singleShot(500, window, [window]() { window->toggleFullscreenMode(); });
+        }
     });
 
     int result = app.exec();

@@ -10,4 +10,6 @@ file(COPY "${_examples}/" DESTINATION "${DEST}"
      PATTERN "__pycache__" EXCLUDE
      PATTERN "*.pyc" EXCLUDE
      PATTERN "section-report*" EXCLUDE
+     PATTERN "*-report.md" EXCLUDE
+     PATTERN "*-report.json" EXCLUDE
      PATTERN ".gitignore" EXCLUDE)

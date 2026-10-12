@@ -1355,6 +1355,11 @@ void Screen::FlushAndPresentFramebuffer()
 
 bool Screen::CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize)
 {
+    return CopyPresentedFramebuffer(dst, dstSize, nullptr);
+}
+
+bool Screen::CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize, PictureGeometry* geometry)
+{
     if (dst == nullptr)
         return false;
 
@@ -1365,10 +1370,13 @@ bool Screen::CopyPresentedFramebuffer(uint8_t* dst, size_t dstSize)
     std::lock_guard<std::mutex> lock(_presentMutex);
     if (dstSize < _presentBufferSize)
         return false;
-    const uint8_t* slot = PresentedSlotLocked(nullptr);
+    size_t index = 0;
+    const uint8_t* slot = PresentedSlotLocked(&index);
     if (!slot)
         return false;
     VideoUtils::CopyFrameBuffer(dst, slot, _presentBufferSize);
+    if (geometry != nullptr)
+        *geometry = _presentSlotGeometry[index];
     return true;
 }
 
@@ -1612,6 +1620,11 @@ uint16_t Screen::GetDisplayWidth() const
 uint16_t Screen::GetDisplayHeight() const
 {
     return _displayViewport.GetDisplayHeight(_framebuffer.height);
+}
+
+DisplayGeometry::Size Screen::GetDisplayGeometry() const
+{
+    return DisplayGeometry::Compute(GetDisplayWidth(), GetDisplayHeight());
 }
 
 /// endregion </Display viewport>

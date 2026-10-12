@@ -205,3 +205,18 @@ TEST(ComposeDescriptor_Test, FixedTimeTakesIso8601)
     ASSERT_FALSE(bad.report.empty());
     EXPECT_NE(bad.report.front().find("ISO 8601"), std::string::npos) << bad.report.front();
 }
+
+// FR-14: a layer's `order` maps target directories to names; the normalized form (and so the content id) holds it
+TEST(ComposeDescriptor_Test, LayerOrderIsParsed)
+{
+    const ComposeDescriptor d = ComposeDescriptor::Parse(
+        "version: 1\nlayers: [{source: {folder: a}, order: {/: [boot.$c, x.txt], GAMES/: [elite.trd]}}]\n", kBase,
+        "t.ucompose.yaml");
+    ASSERT_TRUE(d.Ok()) << d.error;
+    ASSERT_EQ(d.layers.size(), 1u);
+    ASSERT_EQ(d.layers[0].order.size(), 2u);
+    EXPECT_EQ(d.layers[0].order[0].first, "/");
+    EXPECT_EQ(d.layers[0].order[0].second, (std::vector<std::string>{"boot.$c", "x.txt"}));
+    EXPECT_EQ(d.layers[0].order[1].first, "/GAMES");
+    EXPECT_NE(d.Normalized().find("\"order\":{\"/\":[\"boot.$c\",\"x.txt\"]"), std::string::npos) << d.Normalized();
+}

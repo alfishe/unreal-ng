@@ -54,6 +54,8 @@ releases everything); `tap` presses and releases on its own after `frames` (defa
 Errors are `isError` results carrying the shared wording, for example
 `state=300 out of range 0..255` or `unknown joystick button 'jump' (up, down, left, right, fire, b5, b6, b7)`.
 
+**ZX Next pads.** The Next has two connectors with 12 buttons each (R L D U B C A START Y Z X MODE). The Kempston byte is the left connector's low eight bits. On a Next the same verbs take `a`, `c`, `start` (= `b6`, `b5`, `b7`), `x`, `y`, `z`, `mode` and the right connector as `right.<button>` (`joystick press right.up+right.fire`, `joystick set right.start+x`); the right connector answers ports `#1F` / `#37` when NR `#05` selects it, and MODE X Y Z of both sides are NR `#B2`. Each change is a journaled input (`TTDInputKind::NextPad`). `state next input` shows the connectors (`right_pad`, `md_pad_extra`); the status of `joystick` lists `left_extras` and `right_pad`.
+
 ## WebAPI
 
 ```bash
