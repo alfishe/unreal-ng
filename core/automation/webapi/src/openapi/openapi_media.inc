@@ -134,6 +134,11 @@
             "flat (a new image at path; the default with one), commit or write-back; left out: the descriptor's "
             "writes.save. With save on insert / swap / eject / create / rescan also discard (drop the writes) or ask "
             "(a delta here; the GUI asks)";
+        body["properties"]["commit"]["type"] = "string";
+        body["properties"]["commit"]["description"] =
+            "save / flatten with strategy commit, where the descriptor's writes.commit allows it: all (everything or "
+            "nothing) or partial (what has a source; the rest stays in the session). writes.commit: none (the default) "
+            "refuses commit and write-back";
         body["properties"]["strict"]["type"] = "boolean";
         body["properties"]["strict"]["description"] =
             "save of a composite leaving its slot: a commit / write-back that fails refuses (the medium stays) instead of "

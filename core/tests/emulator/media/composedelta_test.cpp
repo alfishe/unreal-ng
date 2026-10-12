@@ -213,7 +213,7 @@ TEST_P(ComposeDelta_Test, StrategyFollowsDt9)
     EXPECT_EQ(_manager.Save("sd.zc", odd).error, MediaError::BadRequest);
     ASSERT_TRUE(Eject(Disposition::Discard).Ok());
 
-    Descriptor("writes: {save: commit}\n");
+    Descriptor("writes: {save: commit, commit: all}\n");
     ASSERT_TRUE(Insert().Ok());
     GuestWrites("/NEW.TXT");
     const MediaResult commit = _manager.Save("sd.zc", {});

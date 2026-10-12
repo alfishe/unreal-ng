@@ -10,6 +10,8 @@
 #include "emulator/io/storage/commitjournal.h"
 #include "emulator/io/storage/compose/graftvolume.h"
 #include "emulator/io/storage/hddimageformats.h"
+#include "emulator/io/storage/partitioneddisk.h"
+#include "emulator/io/storage/fat/fatvolumereader.h"
 #include <set>
 #include <atomic>
 #include <fstream>
@@ -57,6 +59,66 @@ namespace
         }
         return names.empty() ? "no folder volume" : names;
     }
+
+    /// FR-45: writes.commit none (the default) keeps the sources read-only; a request may choose all / partial only
+    /// where the descriptor allows a commit at all
+    std::optional<std::string> CommitRefusal(const CompositeInfo& composite)
+    {
+        if (composite.writesCommit != "none")
+            return std::nullopt;
+        return "writes.commit is none (the default): the sources of this composite are never written; set writes.commit: "
+               "all or partial in its descriptor, or save a delta or a flat image";
+    }
+
+    /// The sectors one volume of a commit writes, as LBAs of that volume, in order: a graft's re-encoded sectors and
+    /// grafted files, and the guest's writes in [start, start + sectors) of the session (C8d: walked, not listed)
+    struct CommitWalk
+    {
+        std::vector<uint64_t> patches;
+        std::vector<std::pair<uint64_t, uint64_t>> runs;
+        const SessionWriteMap* session = nullptr;
+        uint64_t start = 0;
+        uint64_t sectors = 0;
+
+        std::function<std::optional<uint64_t>()> Make() const
+        {
+            const auto guestAt = [this](uint64_t from) -> std::optional<uint64_t> {
+                const std::optional<uint64_t> lba = session->NextChanged(start + from);
+                if (!lba || *lba >= start + sectors)
+                    return std::nullopt;
+                return *lba - start;
+            };
+            return [this, guestAt, p = size_t(0), r = size_t(0), offset = uint64_t(0), guest = guestAt(0),
+                    last = std::optional<uint64_t>()]() mutable -> std::optional<uint64_t> {
+                for (;;)
+                {
+                    std::optional<uint64_t> next;
+                    auto offer = [&next](uint64_t lba) { next = next ? std::min(*next, lba) : lba; };
+                    if (p < patches.size())
+                        offer(patches[p]);
+                    if (r < runs.size())
+                        offer(runs[r].first + offset);
+                    if (guest)
+                        offer(*guest);
+                    if (!next)
+                        return std::nullopt;
+                    if (p < patches.size() && patches[p] == *next)
+                        p++;
+                    if (r < runs.size() && runs[r].first + offset == *next && ++offset == runs[r].second)
+                    {
+                        r++;
+                        offset = 0;
+                    }
+                    if (guest && *guest == *next)
+                        guest = guestAt(*guest + 1);
+                    if (last && *last == *next)
+                        continue;
+                    last = next;
+                    return next;
+                }
+            };
+        }
+    };
 
     /// The save a disposition runs: the policy with the D-8 fallback (SaveOptions::disposition)
     SaveOptions DispositionSave(const std::string& strategy, bool keepBoth, bool strict)
@@ -1896,6 +1958,8 @@ MediaResult MediaManager::SaveDelta(const std::string& slotId, Medium& medium, c
 MediaResult MediaManager::WriteBackComposite(const std::string& slotId, Medium& medium, const CompositeInfo& composite,
                                              const SaveOptions& options, SaveOutcome* outcome)
 {
+    if (const std::optional<std::string> refused = CommitRefusal(composite))
+        return MediaResult::Fail(MediaError::BadRequest, *refused);
     if (composite.descriptor == ComposeDescriptor::kInlineName)
         return MediaResult::Fail(MediaError::BadRequest, "an inline descriptor cannot take write-back: write it to a file");
     const ComposeDescriptor d = ComposeDescriptor::Load(FileHelper::ToFsPath(composite.descriptor));
@@ -1984,8 +2048,15 @@ bool MediaManager::UsedElsewhere(const Medium& self, const std::string& path) co
 MediaResult MediaManager::CommitComposite(const std::string& slotId, Medium& medium, IMediaSlot* slot, const CompositeInfo& composite,
                                           const SaveOptions& options, SaveOutcome* outcome)
 {
+    if (const std::optional<std::string> refused = CommitRefusal(composite))
+        return MediaResult::Fail(MediaError::BadRequest, *refused);
+    const std::string policy = options.commit.empty() ? composite.writesCommit : options.commit;
+    if (policy != "all" && policy != "partial")
+        return MediaResult::Fail(MediaError::BadRequest, "commit '" + policy + "': expected all or partial");
     // DT-14: a graft over a writable image, used nowhere else, with a consistent guest file system
     SessionWriteMap* session = medium.Session();
+    if (session && dynamic_cast<const PartitionedDisk*>(&session->Base()))
+        return CommitPartitioned(slotId, medium, composite, options, policy == "partial", outcome);
     const auto* graft = session ? dynamic_cast<const GraftVolume*>(&session->Base()) : nullptr;
     if (!graft || composite.layers.empty())
         return MediaResult::Fail(MediaError::BadRequest, "commit needs a graft composite (a FAT image at the bottom, build: graft): "
@@ -2136,6 +2207,290 @@ MediaResult MediaManager::CommitComposite(const std::string& slotId, Medium& med
         outcome->note = result.report.front();
     }
     Post(NC_MEDIA_SAVED, slotId, &medium, base);
+    return result;
+}
+
+MediaResult MediaManager::CommitPartitioned(const std::string& slotId, Medium& medium, const CompositeInfo& composite,
+                                            const SaveOptions& options, bool partial, SaveOutcome* outcome)
+{
+    SessionWriteMap* session = medium.Session();
+    const auto* disk = dynamic_cast<const PartitionedDisk*>(&session->Base());
+    if (composite.descriptor == ComposeDescriptor::kInlineName)
+        return MediaResult::Fail(MediaError::BadRequest, "an inline descriptor cannot be committed: write it to a file");
+    const ComposeDescriptor d = ComposeDescriptor::Load(FileHelper::ToFsPath(composite.descriptor));
+    if (!d.Ok())
+        return MediaResult::Fail(MediaError::BadRequest, d.error);
+    const std::vector<PartitionedDisk::Part>& parts = disk->Parts();
+    if (d.partitions.size() != parts.size())
+        return MediaResult::Fail(MediaError::BadRequest, "the descriptor's partitions changed since the build: rescan first");
+    MediumChanges changes;
+    if (ListMediumChanges(medium, changes).Ok() && !options.force)
+    {
+        for (const std::string& w : changes.warnings)
+            if (w.find("lost clusters") != std::string::npos || w.find("cross-linked") != std::string::npos)
+                return MediaResult::Fail(MediaError::Dirty, "the guest's file system is inconsistent (" + w +
+                                                                "): commit with force, or flatten to an image");
+    }
+
+    // Where each partition goes: a passthrough into its image (at its partition's place), a graft into its base
+    struct Target
+    {
+        size_t part = 0;
+        std::string file;
+        std::string format;
+        uint64_t offset = 0;      ///< the volume's first sector in the file
+        uint64_t fileSectors = 0;
+        CommitWalk walk;
+    };
+    std::vector<Target> targets;
+    targets.reserve(parts.size());  // the walks are referred to by address
+    std::vector<std::string> blocked;
+    const auto guestWrites = [session](uint64_t start, uint64_t sectors) {
+        const std::optional<uint64_t> lba = session->NextChanged(start);
+        return lba && *lba < start + sectors;
+    };
+    for (size_t i = 0; i < parts.size(); i++)
+    {
+        const PartitionedDisk::Part& part = parts[i];
+        const ComposePartition& p = d.partitions[i];
+        const std::string what = "partition '" + part.name + "'";
+        std::optional<ComposeSource> source = p.source;
+        const auto* graft = dynamic_cast<const GraftVolume*>(part.device.get());
+        if (!source && graft && p.compose && !p.compose->layers.empty())
+            source = p.compose->layers.front().source;
+        if (!source || (!p.source && !graft))
+        {
+            if (guestWrites(part.start, part.sectors))
+                blocked.push_back(what + " is rebuilt from folders: its changes have no image to go to (write them back, "
+                                         "or flatten to an image)");
+            continue;
+        }
+        Target t;
+        t.part = i;
+        t.file = FileHelper::FromFsPath(source->path);
+        std::string error;
+        t.format = HddImageFormats::Probe(t.file, &error);
+        if (t.format != "raw" && t.format != "hdf" && t.format != "hdi" && t.format != "vhd")
+            return MediaResult::Fail(MediaError::NotSupported, what + ": " + t.file + " is " +
+                                                                   (t.format.empty() ? error : "a " + t.format + " image") +
+                                                                   ": it cannot be written in place");
+        auto image = HddImageFormats::OpenBlock(t.file, t.format, RawImage::Access::ReadOnly, &error);
+        if (!image)
+            return MediaResult::Fail(MediaError::IoError, what + ": cannot open " + t.file + ": " + error);
+        t.fileSectors = image->SectorCount();
+        if (source->partition)
+        {
+            FatPartition found;
+            if (!FatVolumeReader::FindPartition(*image, *source->partition, found, &error))
+                return MediaResult::Fail(MediaError::BadRequest, what + ": " + t.file + ": " + error);
+            t.offset = found.first;
+        }
+        if (UsedElsewhere(medium, t.file))
+            return MediaResult::Fail(MediaError::InUse, what + ": " + t.file + " is in use in another slot: a commit needs it alone");
+        t.walk.session = session;
+        t.walk.start = part.start;
+        t.walk.sectors = part.sectors;
+        if (graft)
+        {
+            t.walk.patches = graft->PatchLbas();
+            std::sort(t.walk.patches.begin(), t.walk.patches.end());
+            t.walk.runs = graft->GraftedSectorRuns();
+            std::sort(t.walk.runs.begin(), t.walk.runs.end());
+        }
+        targets.push_back(std::move(t));
+    }
+    // The partition tables (the MBR, the EBRs) and the gaps between partitions belong to no source
+    {
+        std::optional<uint64_t> lba = session->NextChanged(0);
+        while (lba)
+        {
+            const bool inside = std::any_of(parts.begin(), parts.end(), [&lba](const PartitionedDisk::Part& part) {
+                return *lba >= part.start && *lba < part.start + part.sectors;
+            });
+            if (!inside)
+            {
+                blocked.push_back("sector " + std::to_string(*lba) + " (the partition table or a gap) was written: it has no source");
+                break;
+            }
+            lba = session->NextChanged(*lba + 1);
+        }
+    }
+
+    MediaResult result = MediaResult::Success();
+    std::vector<uint64_t> counts(targets.size(), 0);
+    for (size_t k = 0; k < targets.size(); k++)
+    {
+        const Target& t = targets[k];
+        uint64_t last = 0;
+        auto next = t.walk.Make();
+        for (std::optional<uint64_t> lba = next(); lba; lba = next())
+        {
+            counts[k]++;
+            last = *lba;
+        }
+        if (counts[k] && t.offset + last >= t.fileSectors)
+            return MediaResult::Fail(MediaError::NotSupported, "partition '" + parts[t.part].name + "': " + t.file +
+                                                                   " ends before its volume does: a partitioned commit does not grow images");
+        if (counts[k])
+            result.report.push_back("partition '" + parts[t.part].name + "' into " + t.file + ": " + std::to_string(counts[k]) +
+                                    " sectors" + (t.offset ? " at sector " + std::to_string(t.offset) : std::string()));
+    }
+    if (!blocked.empty() && !partial)
+    {
+        std::string why;
+        for (const std::string& b : blocked)
+            why += (why.empty() ? "" : "; ") + b;
+        return MediaResult::Fail(MediaError::BadRequest, "commit (writes.commit: all) writes everything or nothing: " + why +
+                                                             ". Nothing was written (commit partial leaves these in the session)");
+    }
+    for (const std::string& b : blocked)
+        result.report.push_back("left in the session: " + b);
+    const bool anything = std::any_of(counts.begin(), counts.end(), [](uint64_t c) { return c > 0; });
+    if (!anything)
+        return MediaResult::Fail(MediaError::BadRequest, "nothing to commit: no partition with a source holds changes");
+    if (options.plan)
+    {
+        result.report.push_back("plan only: nothing was written");
+        return result;
+    }
+
+    // Every journal first (one per file, its sectors in order), then the sectors, then the journals go: a commit cut
+    // short is undone in every file at its next open
+    std::vector<std::string> files;
+    for (const Target& t : targets)
+        if (std::find(files.begin(), files.end(), t.file) == files.end())
+            files.push_back(t.file);
+    std::vector<size_t> order(targets.size());
+    for (size_t k = 0; k < order.size(); k++)
+        order[k] = k;
+    std::sort(order.begin(), order.end(), [&targets](size_t a, size_t b) { return targets[a].offset < targets[b].offset; });
+    std::vector<std::filesystem::path> journaled;
+    const auto undo = [](const std::string& why) {
+        return MediaResult::Fail(MediaError::IoError, why + ": the journals restore the images at their next open");
+    };
+    for (const std::string& file : files)
+    {
+        std::string error;
+        const std::string format = HddImageFormats::Probe(file, &error);
+        auto device = HddImageFormats::OpenBlock(file, format, RawImage::Access::ReadWrite, &error);
+        if (!device)
+        {
+            for (const std::filesystem::path& j : journaled)
+                CommitJournal::Remove(j);
+            return MediaResult::Fail(MediaError::IoError, "cannot open " + file + " for writing: " + error);
+        }
+        // This file's targets, in file order: their walks one after another give its sectors in order
+        size_t k = 0;
+        std::function<std::optional<uint64_t>()> walk;
+        uint64_t offset = 0;
+        std::function<std::optional<uint64_t>()> fileWalk = [&]() -> std::optional<uint64_t> {
+            for (;;)
+            {
+                if (walk)
+                    if (const std::optional<uint64_t> lba = walk())
+                        return offset + *lba;
+                while (k < order.size() && targets[order[k]].file != file)
+                    k++;
+                if (k == order.size())
+                    return std::nullopt;
+                walk = targets[order[k]].walk.Make();
+                offset = targets[order[k]].offset;
+                k++;
+            }
+        };
+        const std::filesystem::path path = FileHelper::ToFsPath(file);
+        if (!CommitJournal::Write(path, *device, fileWalk, &error))
+        {
+            for (const std::filesystem::path& j : journaled)
+                CommitJournal::Remove(j);
+            return MediaResult::Fail(MediaError::IoError, error);
+        }
+        journaled.push_back(path);
+    }
+    uint8_t sector[IBlockDevice::kSectorSize];
+    for (const std::string& file : files)
+    {
+        std::string error;
+        const std::string format = HddImageFormats::Probe(file, &error);
+        auto device = HddImageFormats::OpenBlock(file, format, RawImage::Access::ReadWrite, &error);
+        if (!device)
+            return undo("cannot open " + file + " for writing");
+        for (const Target& t : targets)
+        {
+            if (t.file != file)
+                continue;
+            auto next = t.walk.Make();
+            for (std::optional<uint64_t> lba = next(); lba; lba = next())
+                if (!session->ReadSector(t.walk.start + *lba, sector) || !device->WriteSector(t.offset + *lba, sector))
+                    return undo("writing sector " + std::to_string(t.offset + *lba) + " of " + file + " failed");
+        }
+        device.reset();
+        if (!CommitJournal::Sync(FileHelper::ToFsPath(file)))
+            return undo("cannot sync " + file);
+    }
+    for (const std::filesystem::path& j : journaled)
+        CommitJournal::Remove(j);
+
+    // The slot is built again from the descriptor over the committed sources; what had no source (partial) goes
+    // into the new session sector by sector, at the same places (the layout does not move)
+    InsertOptions again;
+    again.access = medium.Access();
+    again.fs = medium.Options().fs;
+    again.codePage = medium.Options().codePage;
+    again.freeBytes = medium.Options().freeBytes;
+    std::unique_ptr<Medium> fresh;
+    MediaResult opened = OpenForSlot(slotId, medium.Source(), again, fresh);
+    if (!opened.Ok())
+        return MediaResult::Fail(opened.error, "committed, but the composite cannot be built again: " + opened.message);
+    uint64_t kept = 0;
+    if (!blocked.empty() && fresh->Session())
+    {
+        for (std::optional<uint64_t> lba = session->NextChanged(0); lba; lba = session->NextChanged(*lba + 1))
+        {
+            const bool committed = std::any_of(targets.begin(), targets.end(), [&lba, &parts](const Target& t) {
+                return *lba >= parts[t.part].start && *lba < parts[t.part].start + parts[t.part].sectors;
+            });
+            if (committed)
+                continue;
+            if (!session->ReadSector(*lba, sector) || !fresh->Session()->WriteSector(*lba, sector))
+                return MediaResult::Fail(MediaError::IoError, "committed, but sector " + std::to_string(*lba) +
+                                                                  " left in the session could not be carried over");
+            kept++;
+        }
+    }
+    const std::filesystem::path delta = composite.delta;
+    const std::string descriptor = composite.descriptor;
+    again.disposition = Disposition::Discard;
+    again.immediate = true;
+    MediaResult inserted = Insert(slotId, std::move(fresh), again);  // `medium` and `composite` are gone after this
+    if (!inserted.Ok())
+        return MediaResult::Fail(inserted.error, "committed, but the slot could not take the new build: " + inserted.message);
+    result.report.push_back(kept ? std::to_string(kept) + " sector(s) without a source stay in the session"
+                                 : "the slot was built again over the committed sources");
+    std::error_code removeError;
+    if (!kept && !delta.empty() && std::filesystem::remove(delta, removeError))
+        result.report.push_back(FileHelper::FromFsPath(delta.filename()) + " removed: the sources hold its changes now");
+    if (outcome)
+    {
+        outcome->savedPath = descriptor;
+        outcome->retargeted = false;
+        outcome->note = result.report.front();
+    }
+    SlotState* state = nullptr;
+    if (Medium* now = FindMedium(slotId, &state))
+    {
+        // A medium that leaves keeps what had no source as its session delta (D-8)
+        if (kept && options.disposition && now->Composite())
+        {
+            SaveOptions deltaOnly;
+            deltaOnly.disposition = true;
+            MediaResult saved = SaveDelta(slotId, *now, *now->Composite(), deltaOnly, {}, nullptr);
+            result.report.insert(result.report.end(), saved.report.begin(), saved.report.end());
+            if (!saved.Ok())
+                return MediaResult::Fail(saved.error, "committed; the changes left in the session could not be kept: " + saved.message);
+        }
+        Post(NC_MEDIA_SAVED, slotId, now, descriptor);
+    }
     return result;
 }
 

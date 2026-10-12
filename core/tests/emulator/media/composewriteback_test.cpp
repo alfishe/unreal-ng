@@ -91,7 +91,7 @@ namespace
         void Insert(const std::string& onDelete = "delete")
         {
             _descriptor = _folder.File("card.ucompose.yaml",
-                                       "version: 1\ntarget: {free: 1MiB}\nwrites: {upper: up}\nlayers:\n"
+                                       "version: 1\ntarget: {free: 1MiB}\nwrites: {upper: up, commit: all}\nlayers:\n"
                                        "  - {name: base, source: {folder: base}}\n"
                                        "  - {name: work, source: {folder: work}, mount: /WORK, writable: true, onDelete: " + onDelete +
                                            ", deletedFolder: deleted}\n"
