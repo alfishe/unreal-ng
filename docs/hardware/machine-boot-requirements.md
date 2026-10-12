@@ -207,7 +207,9 @@ per-machine recipe — read it before automating anything ATM-specific).
 - **128K programs from a floppy (`ATM710`)**: the TR-DOS cold start (the BIOS menu's "TR-DOS 48") leaves
   `#7FFD` pages at RAM 24-31 on 256 KB and up, so such programs need the "SPECTRUM 128" way in. The disk
   autostart does that; a hand boot through "TR-DOS 48" does not
-  ([atm710.md](../../.recipe/machines/atm/atm710.md#tr-dos-cold-start-and-128k-programs)).
+  ([atm710.md](../../.recipe/machines/atm/atm710.md#tr-dos-cold-start-and-128k-programs)). The `ATM450`'s cold
+  start does the same through `#FDFD = 3`, and its autostart clears it
+  ([atm450.md](../../.recipe/machines/atm/atm450.md#software-for-the-atm-turbo-2-and-the-tr-dos-cold-start)).
 
 ## TS-Conf (`TSL`, alias `TSCONF`)
 

@@ -98,6 +98,8 @@ paging once, before the program runs (`PortDecoder::FinishAutostartColdStart`).
 (resident probe), so the autostart lays the windows out like the BIOS's
 "SPECTRUM 128" entry — 128K programs see pages 0-7
 ([atm710.md](../machines/atm/atm710.md#tr-dos-cold-start-and-128k-programs)).
+`ATM450`: the same probe leaves `#FDFD = 3`; the autostart clears it
+([atm450.md](../machines/atm/atm450.md#software-for-the-atm-turbo-2-and-the-tr-dos-cold-start)).
 
 ### Confirm the program is running
 

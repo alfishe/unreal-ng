@@ -1,10 +1,10 @@
-# ATM: disk autostart boots the 128K way (Ball Quest, BALLQ_GR.SCL)
+# ATM: disk autostart boots the 128K way (Ball Quest, ballq_gr.scl)
 
-Status: fixed for `ATM710` (2026-10-11). `ATM450`: same paging trap, not changed (see below).
+Status: fixed for `ATM710` and `ATM450` (2026-10-11).
 
 ## Report
 
-`testdata/machines/atm/BALLQ_GR.SCL` (Ball Quest, Alone Coder / Shiru 2006-2007), `BQ ATM` on the ATM710 (1024 KB):
+`testdata/machines/atm/ballq_gr.scl` (Ball Quest, Alone Coder / Shiru 2006-2007), `BQ ATM` on the ATM710 (1024 KB):
 garbage instead of the EGA picture. `BQ 16C` on the Pentagon 1024 from the same disk: fine.
 
 ## What the picture showed
@@ -56,7 +56,9 @@ Under TTD the hook is one tool edit, device state included.
 
 Only the autostart changes. The BIOS menu path still behaves like the ROM.
 
-Test: `DiskAutostart_Atm710.ThePagesOfThe7FFDAreTheFirst128KAfterTheColdStart`. Checked live: 1024 KB and 512 KB,
+Tests: `DiskAutostart_Atm_Test.ThePagesOfThe7FFDAreTheFirst128KAfterTheColdStart` (ATM710, ATM450),
+`DiskAutostart_Atm710.BallQuestShowsAllFourEgaPlanes` (the game from `ballq_gr.scl`; fails without the fix:
+RAM 25 full, RAM 1 / 3 empty). Checked live: 1024 KB and 512 KB,
 title and level 1 (both screen buffers), original SCL through the commander.
 
 ## ATM450
@@ -67,5 +69,6 @@ such write, the mode stays ZX. The readme names "ATM Turbo 2(+)" = boards 6.xx /
 `ATM710`); boards 4.xx are ATM Turbo 1.
 
 The 4.50's DOS ROM has the same resident probe: its page select (`#3CC5`) writes `A >> 3 & 3` to `#FDFD`, so the
-cold start leaves `#FDFD = 3` and `#7FFD` pages at 24-31 on 512 KB. Not changed: no program needs it yet. The fix
-would be an `ATM450` override of `FinishAutostartColdStart` (its `EnterSpectrum128Paging` clears `#FDFD`).
+cold start leaves `#FDFD = 3` and `#7FFD` pages at 24-31 on 512 KB. `PortDecoder_ATM450::FinishAutostartColdStart`
+runs its `EnterSpectrum128Paging` (`#FDFD = 0`; the rest equals the `RM_DOS` reset). The game still shows garbage
+there (no EGA without `#FF77`), 128K programs written for the 4.50 get pages 0-7.
