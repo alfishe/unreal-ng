@@ -13,6 +13,8 @@ from the same source. The assembler disk is the collection's; the tool creates i
     inject-oracle.py zasm315 <ZASM315 disk with STUB.a> <source.asm> <address>
     inject-oracle.py masm11 <MASM_11 disk> <source.asm> <address> [--wait 20]
     inject-oracle.py gens4 <DEVPAC_4.TAP> <source.asm> <address> [--wait 240]
+    inject-oracle.py zeus1983 <ZEUS.TAP> <source.asm> <address> [--wait 60]
+    inject-oracle.py primus <PRIMUS29.SCL> <source.asm> <address> [--wait 30]
 
 XAS (Z3): started from its disk, the first source of its list loaded (or a new text), its command line opened (EXT;
 9.x need the keys held 12 frames), the source written there and assembled with A.
@@ -35,6 +37,12 @@ with A.
 
 GENS4 (Z4): its tape block written at 26000 of a 48K machine and started there, the source written at its > prompt
 as G leaves a text, assembled with A,8000 (a symbol table of 8000 bytes). Give sources below 26000 or above its text.
+
+ZEUS 1983 (Z4): its code written at 57344 of a 48K machine and started there, the source written at its prompt as
+"o" leaves a text, assembled with A.
+
+Primus 2.9 (Z4): started from its disk (it loads its manual PRI.DOC), the source written at its prompt by force (no
+"changed" flag), assembled with "a out" (the code saved as out), the bytes the file it saved.
 
 With --project the source goes as a path, and each file it INCLUDEs into an ALASM text page of its own (the INCLUDE
 names the page); --template always takes the INCLUDEs (zxasm inject reads them beside the source).
@@ -268,9 +276,60 @@ def gens4(emu, args, expected):
     return bytes(emu.read(args.address, len(expected)))
 
 
+def zeus1983(emu, args, expected):
+    spec = importlib.util.spec_from_file_location('aie', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assemble-in-emulator.py'))
+    aie = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(aie)
+    code = aie.tap_code(args.disk)
+    emu.post('/reset')
+    time.sleep(3)
+    for k in range(0, len(code), 1024):
+        emu.write(57344 + k, code[k:k + 1024])
+    emu.post('/basic/run', {'command': 'RANDOMIZE USR 57344'})
+    time.sleep(5)
+    emu.post('/keyboard/combo', {'keys': ['cs', '2'], 'frames': 6})   # CAPS LOCK: ZEUS takes capitals
+    emu.idle()
+    time.sleep(0.5)
+    with open(args.source, encoding='utf-8') as f:
+        body = {'from': args.from_, 'assembler': 'zeus-1983', 'title': 'INJECTED', 'text': f.read()}
+    reply = emu.post('/asm/sync/inject', body)
+    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
+    for d in reply.get('diagnostics', []):
+        if d.get('severity') != 'info':
+            print('  ', d)
+    emu.write(args.address, [0xAA] * len(expected))
+    emu.type('a')                                      # Assemble
+    emu.tap('enter')
+    time.sleep(args.wait)
+    emu.screenshot(os.path.abspath(args.source) + '.zeus-1983.png')
+    return bytes(emu.read(args.address, len(expected)))
+
+
+def primus(emu, args, expected):
+    emu.insert_disk(os.path.abspath(args.disk))
+    emu.run_trdos(args.boot or 'P_AS_2.9', wait=12)
+    with open(args.source, encoding='utf-8') as f:
+        body = {'from': args.from_, 'assembler': 'primus-2.9', 'title': 'INJECTED', 'text': f.read(), 'force': True}
+    reply = emu.post('/asm/sync/inject', body)
+    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
+    for d in reply.get('diagnostics', []):
+        if d.get('severity') != 'info':
+            print('  ', d)
+    emu.type('a out')                                  # Assemble, the code saved as "out" (caps lock: capitals)
+    emu.tap('enter')
+    time.sleep(args.wait)
+    emu.screenshot(os.path.abspath(args.source) + '.primus-2.9.png')
+    for name in ('OUT', 'out'):
+        for kind in ('C', 'c'):
+            data = emu.read_disk_file(name, kind)
+            if data:
+                return bytes(data[1])
+    return b''
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412', 'zasm315', 'masm11', 'gens4'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412', 'zasm315', 'masm11', 'gens4', 'zeus1983', 'primus'])
     parser.add_argument('disk', help='the assembler disk, or with --template an idle template snapshot')
     parser.add_argument('--template', action='store_true', help='inject with zxasm into the template snapshot instead (Z1)')
     parser.add_argument('--zxasm', default=os.environ.get('ZXASM', 'zxasm'))
@@ -291,10 +350,14 @@ def main():
     parser.add_argument('--keep', action='store_true', help='keep the instance (default: delete it)')
     args = parser.parse_args()
     expected = sjasmplus_bytes(args.sjasmplus, args.source, args.address)
-    emu = Emulator(port=args.port, model='48K' if args.assembler == 'gens4' else 'PENTAGON')
+    emu = Emulator(port=args.port, model='48K' if args.assembler in ('gens4', 'zeus1983') else 'PENTAGON')
     try:
         if args.assembler == 'xas':
             built = xas(emu, args, expected)
+        elif args.assembler == 'primus':
+            built = primus(emu, args, expected)
+        elif args.assembler == 'zeus1983':
+            built = zeus1983(emu, args, expected)
         elif args.assembler == 'gens4':
             built = gens4(emu, args, expected)
         elif args.assembler == 'masm11':

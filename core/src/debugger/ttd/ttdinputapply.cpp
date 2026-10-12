@@ -116,6 +116,11 @@ bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices, co
             joystick->SetState(ev.buttonMask);
             break;
 
+        case TTDInputKind::NextPad:
+            if (!devices.portDecoder)
+                return false;
+            return devices.portDecoder->ApplyPadState(ev.key, static_cast<uint16_t>(ev.dx));
+
         case TTDInputKind::FrontPanelSwitch:
             if (!devices.portDecoder)
                 return false;

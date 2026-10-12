@@ -62,19 +62,19 @@ std::optional<std::string> ChainWriter::Text(const Expr& e)
                     if (IsAtom(e.args[0]))
                         if (const auto a = Atom(e.args[0]))
                             return "0-" + *a;
-                    return inner ? std::optional<std::string>(*inner + "*#FFFF") : std::nullopt;   // -x = x*#FFFF in 16 bits
+                    return inner && OperatorSymbol(Op::Mul) ? std::optional<std::string>(*inner + "*#FFFF") : std::nullopt;   // -x = x*#FFFF in 16 bits
                 case Op::Not:
                     if (IsAtom(e.args[0]))
                         if (const auto a = Atom(e.args[0]))
                             return "#FFFF-" + *a;   // ~x = #FFFF-x
                     if (const char* x = OperatorSymbol(Op::Xor); x && inner)
                         return *inner + Guard(*inner, x) + x + "#FFFF";
-                    return inner ? std::optional<std::string>(*inner + "*#FFFF+#FFFF") : std::nullopt;   // ~x = -x-1
+                    return inner && OperatorSymbol(Op::Mul) ? std::optional<std::string>(*inner + "*#FFFF+#FFFF") : std::nullopt;   // ~x = -x-1
                 case Op::High: return inner ? std::optional<std::string>(HighOf(*inner)) : std::nullopt;
                 case Op::Low:
                     if (const char* a = OperatorSymbol(Op::And); a && inner)
                         return *inner + Guard(*inner, a) + a + "255";
-                    return inner ? std::optional<std::string>(*inner + "*256/256") : std::nullopt;
+                    return inner && OperatorSymbol(Op::Mul) && OperatorSymbol(Op::Div) ? std::optional<std::string>(*inner + "*256/256") : std::nullopt;
                 default: return std::nullopt;
             }
         }
@@ -127,7 +127,7 @@ std::optional<std::string> ChainWriter::Chained(const Expr& e)
             {
                 const auto r = Text(b);
                 const auto l = Atom(a);
-                if (r && l)
+                if (r && l && OperatorSymbol(Op::Mul))
                     return *r + "*#FFFF+" + *l;   // a-b = (b*#FFFF)+a
             }
             return join(symbol, a, b);   // the right side folded to its value, if known
@@ -141,7 +141,7 @@ std::optional<std::string> ChainWriter::Chained(const Expr& e)
         case Op::Shl: case Op::Shr: case Op::ShrUnsigned:
         {
             const auto shift = Value(b);
-            if (!shift || *shift < 0 || *shift > 15)
+            if (!shift || *shift < 0 || *shift > 15 || !OperatorSymbol(e.op == Op::Shl ? Op::Mul : Op::Div))
                 return std::nullopt;
             if (e.op != Op::Shl && !ShiftAgrees(a))
                 Problem("a right shift " + Title() + " would make as a division");

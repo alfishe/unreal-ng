@@ -699,6 +699,14 @@ namespace PythonBindings
         d["pressed"] = pressed;
         d["button_names"] = DebugJoystickManager::GetAllButtonNames();
         d["keys"] = state.keys;
+        if (state.hasPads)
+        {
+            d["left_extras"] = state.leftExtraButtons;
+            py::dict rightPad;
+            rightPad["state"] = static_cast<int>(state.rightPad);
+            rightPad["buttons"] = state.rightButtons;
+            d["right_pad"] = rightPad;
+        }
         if (state.pendingTapMask != 0)
         {
             py::dict pending;
@@ -4373,10 +4381,7 @@ namespace PythonBindings
                 const std::string names = JoystickNamesOrThrow(state);
                 if (names.empty())
                     return JoystickResultOrThrow(mgr, mgr.ReleaseAll());
-                const uint8_t mask = DebugJoystickManager::ResolveButtonNames(names);
-                if (mask == 0)  // the manager words the unknown-name error
-                    return JoystickResultOrThrow(mgr, mgr.Press(names));
-                return JoystickResultOrThrow(mgr, mgr.SetStateChecked(mask));
+                return JoystickResultOrThrow(mgr, mgr.SetNames(names));
             }, "Set exactly the held joystick buttons: a byte 0..255 or a list / string of names ([] = none)",
                py::arg("state"))
             .def("joystick_tap", [](Emulator& self, const py::object& buttons, const py::object& frames) -> py::dict {

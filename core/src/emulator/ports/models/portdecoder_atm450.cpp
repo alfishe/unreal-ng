@@ -67,6 +67,17 @@ void PortDecoder_ATM450::EnterSpectrum128Paging([[maybe_unused]] uint16_t pc)
         _memory->UpdateZ80Banks();
 }
 
+bool PortDecoder_ATM450::FinishAutostartColdStart(uint16_t pc)
+{
+    // The 4.50 DOS ROM has the ATM2 resident probe too ($0000 -> $3C50): its page select at $3CC5 writes A >> 3 & 3 to
+    // #FDFD and A & 7 | #10 to #7FFD, called with A = #1F. Without a resident in pages 27-31 nothing selects page 0
+    // again, and every #7FFD page is 24 + n on 512 KB while the picture stays in RAM 5 / 7. RM_DOS already set up the
+    // rest of what EnterSpectrum128Paging lays out (ROM at #0000, the ZX picture, CPSYS off)
+    // (docs/inprogress/2026-10-11-atm-autostart-128k-paging)
+    EnterSpectrum128Paging(pc);
+    return true;
+}
+
 IdeAdapter::Gate PortDecoder_ATM450::IdeGate()
 {
     IdeAdapter::Gate gate = PortDecoder::IdeGate();

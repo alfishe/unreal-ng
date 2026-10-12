@@ -13,6 +13,7 @@
 #include "emulator/io/fdc/trdoscatalog.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/memory.h"
+#include "emulator/video/screen.h"
 #include "loaders/disk/loader_trd.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
@@ -565,4 +566,84 @@ TEST_F(DiskAutostart_Boot_Test, TheNameHookIsARecordedEditOfTheBlackBox)
            _context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(0x4000 + first)) == live[first])
         first++;
     EXPECT_EQ(first, live.size()) << "the replay differs from #" << std::hex << (0x4000 + first);
+}
+
+/// Owner report 2026-10-11 (Ball Quest, BQ ATM on BALLQ_GR.SCL: half of the EGA planes missing on the ATM710). The
+/// TR-DOS cold start probes RAM page 31 for a resident and leaves window 3 of the #7FFD.4 = 1 set over RAM 24-31 (the
+/// ATM710's #FFF7 = #E7, the ATM450's #FDFD = 3), so a program's #7FFD pages never reach the RAM the picture comes
+/// from. The autostart boots the 128K way instead: once the cold start reaches the command loop, every #7FFD page n
+/// is RAM n in window 3, with #7FFD bit 4 either way. Boot-bound: the cold start runs to the TR-DOS command loop (a
+/// few frames, in turbo)
+class DiskAutostart_Atm_Test : public ::testing::TestWithParam<const char*>
+{
+};
+
+TEST_P(DiskAutostart_Atm_Test, ThePagesOfThe7FFDAreTheFirst128KAfterTheColdStart)
+{
+    MessageCenter::DisposeDefaultMessageCenter();
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(GetParam(), LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_GT(context->config.ramsize, 128u) << "the cold start's window 3 needs RAM above 128 KB to differ";
+    emulator->EnableTurboMode();
+
+    auto result = emulator->AutostartDisk(TestPathHelper::GetTestDataPath("loaders/trd/atarin.trd"));
+    ASSERT_TRUE(result.started) << result.message;
+    ASSERT_TRUE(context->pDiskAutostart->IsColdStartFinishPending());
+    for (int frames = 0; frames < 200 && context->pDiskAutostart->IsColdStartFinishPending(); frames++)
+        emulator->RunNFrames(1, true);
+    ASSERT_FALSE(context->pDiskAutostart->IsColdStartFinishPending()) << "the cold start never reached the command loop";
+
+    Memory* memory = context->pMemory;
+    for (uint8_t page = 0; page < 8; page++)
+    {
+        for (uint8_t rom48 : {uint8_t(0x10), uint8_t(0x00)})
+        {
+            context->pPortDecoder->DecodePortOut(0x7FFD, static_cast<uint8_t>(rom48 | page), 0x8000);
+            EXPECT_EQ(memory->MapZ80AddressToPhysicalAddress(0xC000), memory->RAMPageAddress(page))
+                << GetParam() << ": #7FFD = #" << std::hex << int(rom48 | page);
+        }
+    }
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+INSTANTIATE_TEST_SUITE_P(Models, DiskAutostart_Atm_Test, ::testing::Values("ATM710", "ATM450"));
+
+/// The owner's disk end to end: BQ ATM from testdata/machines/atm/ballq_gr.scl runs through the autostart on the
+/// ATM710 and its title is in the EGA mode with all four planes in the video pages: RAM 1 / 3 carry its planes, RAM
+/// 25 / 27 (where the cold start's #7FFD pages were) stay empty. Boot-bound: TR-DOS loads the game (about 13 s of
+/// machine time, in turbo)
+TEST(DiskAutostart_Atm710, BallQuestShowsAllFourEgaPlanes)
+{
+    MessageCenter::DisposeDefaultMessageCenter();
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM710", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    emulator->EnableTurboMode();
+    ASSERT_TRUE(emulator->LoadDisk(TestPathHelper::GetTestDataPath("machines/atm/ballq_gr.scl")));
+
+    // What the autostart does for a disk with one BASIC program, with the ATM program of the two
+    DiskAutostart* autostart = context->pDiskAutostart;
+    autostart->Disarm();
+    context->pCore->Reset(RM_DOS);
+    autostart->ArmColdStartFinish();
+    autostart->Arm("BQ   ATM");  // the catalog name, its three spaces included
+
+    auto nonZero = [&](uint16_t page) {
+        const uint8_t* p = context->pMemory->RAMPageAddress(page);
+        size_t n = 0;
+        for (uint32_t i = 0; i < 0x4000; i++)
+            n += p[i] != 0;
+        return n;
+    };
+    bool shown = false;
+    for (int frames = 0; frames < 1500 && !shown; frames += 10)
+    {
+        emulator->RunNFrames(10, true);
+        shown = context->pScreen->GetVideoMode() == M_ATM16 && nonZero(1) > 4000 && nonZero(3) > 4000;
+    }
+    EXPECT_TRUE(shown) << "mode=" << int(context->pScreen->GetVideoMode()) << " RAM 1: " << nonZero(1)
+                       << " RAM 3: " << nonZero(3) << " RAM 25: " << nonZero(25);
+    EXPECT_EQ(nonZero(25), 0u) << "a #7FFD page went past 128 KB";
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
