@@ -29,10 +29,10 @@ namespace api
 namespace v1
 {
 
-#ifdef ENABLE_RECORDING
-
-// Helper function declared in emulator_api.cpp
+// Helper function declared in emulator_api.cpp (the stubs below use it too)
 extern void addCorsHeaders(HttpResponsePtr& resp);
+
+#ifdef ENABLE_RECORDING
 
 /// Helper: Get emulator or return 404
 static std::shared_ptr<Emulator> getEmulatorOrError(const std::string& id,
