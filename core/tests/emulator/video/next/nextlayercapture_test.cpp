@@ -562,3 +562,55 @@ TEST_F(NextLayerCaptureMachine_Test, AFallbackColourMoveShowsAtTheOutputAfterThe
     EXPECT_EQ(static_cast<unsigned>(x), kFirstChangedImagePixel) << "row " << row;
     EXPECT_NE(fb[(static_cast<unsigned>(row + 1) * 2) * kWidth], before) << "the next row is the changed colour from its start";
 }
+
+// The ULA enable (NR #68 bit 7) travels the same registers as the fallback colour (ula_en_0, _1a, _1, _2, then the output chain): a MOVE
+// that switches the ULA off shows at the same image pixel as a fallback colour change
+TEST_F(NextLayerCaptureMachine_Test, AUlaEnableMoveShowsAtTheOutputAfterTheRtlPipeline)
+{
+    constexpr unsigned kHpos = 20, kLine = 60;
+    constexpr unsigned kThr = kHpos * 8 + 12;
+    constexpr unsigned kFirstChangedImagePixel = 2 * kThr + 53;
+    Nr(0x68, 0x00);
+    Nr(0x4A, 0xFC);  // the colour the ULA's absence shows
+    Nr(0x61, 0);
+    Nr(0x62, 0);
+    for (uint16_t w : {uint16_t((0x68 << 8) | 0x00), uint16_t(0x8000 | (kHpos << 9) | kLine), uint16_t((0x68 << 8) | 0x80), uint16_t(0xFFFF)})
+    {
+        Nr(0x60, static_cast<uint8_t>(w >> 8));
+        Nr(0x60, static_cast<uint8_t>(w & 0xFF));
+    }
+    Nr(0x62, 0xC0);
+    Frames(4);
+    const uint32_t* fb = Framebuffer();
+    constexpr unsigned kQuietRow = 40;
+    int row = -1, x = -1;
+    for (unsigned y = kQuietRow + 1; y < kHeight && row < 0; y++)
+        for (unsigned i = 0; i < kWidth; i++)
+            if (fb[(y * 2) * kWidth + i] != fb[(kQuietRow * 2) * kWidth + i])
+            {
+                row = static_cast<int>(y);
+                x = static_cast<int>(i);
+                break;
+            }
+    ASSERT_GE(row, 0) << "the ULA's absence shows inside a line";
+    EXPECT_EQ(static_cast<unsigned>(x), kFirstChangedImagePixel) << "row " << row;
+}
+
+// The latency table: the chain registers, the palette values, the layer order and ULANext; the bits that do not travel a counted stage give 0
+TEST(ScreenNextLatency_Test, TheLatencyFollowsTheChangedBitsOfTheRegister)
+{
+    EXPECT_EQ(ScreenNext::PixelLatencyClocks(0x4A, 0x00, 0xFF), 22u);
+    EXPECT_EQ(ScreenNext::PixelLatencyClocks(0x14, 0x00, 0xFF), 22u);
+    EXPECT_EQ(ScreenNext::PixelLatencyClocks(0x41, 0x00, 0xFF), 16u);
+    EXPECT_EQ(ScreenNext::PixelLatencyClocks(0x44, 0x00, 0xFF), 16u);
+    EXPECT_EQ(ScreenNext::PixelLatencyClocks(0x68, 0x00, 0x80), 22u);   // the ULA enable
+    EXPECT_EQ(ScreenNext::PixelLatencyClocks(0x68, 0x00, 0x04), 0u);    // the fine scroll is a fetch input
+    EXPECT_EQ(ScreenNext::PixelLatencyClocks(0x15, 0x00, 0x01), 22u);   // sprites on
+    EXPECT_EQ(ScreenNext::PixelLatencyClocks(0x15, 0x00, 0x08), 24u);   // the layer order
+    EXPECT_EQ(ScreenNext::PixelLatencyClocks(0x15, 0x00, 0x09), 22u);   // both: the earlier
+    EXPECT_EQ(ScreenNext::PixelLatencyClocks(0x15, 0x00, 0x02), 0u);    // sprites over the border: a sprite-stage input
+    EXPECT_EQ(ScreenNext::PixelLatencyClocks(0x43, 0x00, 0x10), 22u);   // the ULA's second palette
+    EXPECT_EQ(ScreenNext::PixelLatencyClocks(0x43, 0x00, 0x01), 20u);   // ULANext
+    EXPECT_EQ(ScreenNext::PixelLatencyClocks(0x6B, 0x00, 0x80), 22u);   // the tilemap enable
+    EXPECT_EQ(ScreenNext::PixelLatencyClocks(0x16, 0x00, 0x10), 0u);    // Layer 2 scroll: not counted
+}
