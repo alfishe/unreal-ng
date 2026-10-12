@@ -131,7 +131,7 @@ The 35 programs of `ZXSpectrumNextTests/release` (48K snapshots, results checked
 - [x] **Phase B** - `next_copper` (disassembly, control mode, pc, write address, `around_pc`, `raw`) and `next_sprites` (128 attributes decoded, relative sprites resolved against their anchor, flags that a report does not clear, pattern memory summary) on every plane; tests `NextReportsB_Test`, CLI / MCP / OpenAPI additions; goldens `copper.txt`, `sprites.txt`, `cli-copper.txt`, `cli-sprites.txt`
 - [x] **Per-layer capture** (`capture/screen?layer=`, `capture/next-layers`, `POST next/layer-capture`) and the pixel inspector (`state/next/pixel`) on every plane - done 2026-10-10, see [design-layer-capture.md](design-layer-capture.md) (the record is made while the frame is drawn, per line segment, so copper effects are exact; on by default, +4 % of a frame measured; L4, the Qt per-layer view and the pixel inspector under the mouse, is left)
 - [ ] `ports.enforced`: only the DAC ports (NR #84), the Multiface (NR #83 bit 1), #E3 (bit 0) and #E7 / #EB (bit 3) are gated by the internal port enable word NR #82-#85; the report says which. Gating the rest (and the expansion-bus word NR #86-#89, `#8A` propagate) is a decoder change with its own tests
-- [ ] The state reports are read from the HTTP thread without a coherent moment (like every `state/*` report); only the write control runs at one. A report that must be exact on a running machine could use `Emulator::RunAtCoherentMoment` the way the debugger snapshot does
+- [x] The state reports are read from the caller's thread without a coherent moment (like every `state/*` report); decided to leave it: a torn read of a few registers in a best-effort report is not worth a frame-boundary wait (up to a frame of latency, and a deadlock risk from the emulation thread's own CLI / Lua callers) on ~20 entry points; the exact reads are the debugger snapshot and the paused machine, which run at one
 - [ ] Phase C of the design: Qt panels, breakpoints on NextREG writes, DeZog / GDB wiring, TTD of NEXTREG writes
 
 ## Running the board's programs the way a person does (2026-10-09)
@@ -251,7 +251,7 @@ NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.
 - [x] NR read-back against `port_253b_dat`: #09 (bit 3 reads 0), #34, #41, #44, #8E were already RTL-exact; a test now holds them (`NextReadBack_Test`)
 - [x] Layer 2 256x192: the row is `y(7:6) = y_pre(7:6)` (+1 from 192 up) over `y_pre(5:0)`, not a modulo 192: a scroll above 191 shows rows 192-254 of the bank (`NextVideoRenderer_Test.Layer2In256x192RowsAboveTheBottomAreTheVhdlsWrap`); inverted clip windows (left > right, top > bottom) show nothing (test)
 - [x] DMA: WR3 with bit 6 starts a transfer - already so in `NextDma` (dma.vhd 576-580)
-- [ ] The NEX loader into a running machine keeps the previous program's NextREGs (a fresh machine is right)
+- [x] The NEX loader into a running machine keeps the previous program's NextREGs: that is NEXLOAD's own behaviour (nexload.asm "Reset All registers" resets the list `LoaderNex::ResetRegisters` has, not the whole file; NextZXOS leaves its own state before it); a clean start is a machine reset before the load. No change
 - [ ] Device gaps D1 (UART/ESP/Pi) and D2 (Kempston mouse, ULA+, Radastan): the reports follow the devices
 
 ## Automation coverage - what is left (2026-10-10)
