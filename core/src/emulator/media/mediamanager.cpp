@@ -912,7 +912,7 @@ MediaResult MediaManager::Rescan(const std::string& slotId, const RescanOptions&
     const SessionWriteMap* session = current.Session();
     const uint64_t built = session ? session->Base().ContentId() : current.ContentId();
     const SessionWriteMap* freshSession = fresh->Session();  // it may have restored a session delta
-    if (built != 0 && (freshSession ? freshSession->Base().ContentId() : fresh->ContentId()) == built)
+    if (!options.force && built != 0 && (freshSession ? freshSession->Base().ContentId() : fresh->ContentId()) == built)
     {
         Retire(std::move(fresh));
         MediaResult unchanged = MediaResult::Success();
@@ -1851,7 +1851,9 @@ MediaResult MediaManager::WriteBackComposite(const std::string& slotId, Medium& 
     Post(NC_MEDIA_SAVED, slotId, &medium, composite.descriptor);
     if (auto it = _slots.find(slotId); it != _slots.end() && it->second.attached.get() == &medium)
     {
-        const MediaResult rebuilt = Rescan(slotId);
+        RescanOptions again;
+        again.force = true;  // the host files changed in place: the id may not show it
+        const MediaResult rebuilt = Rescan(slotId, again);
         result.report.push_back(rebuilt.Ok() ? "rebuilt from the layers" : "rebuild: " + rebuilt.message);
     }
     return result;

@@ -113,6 +113,9 @@ struct RescanOptions
     std::string strategy;                         ///< Disposition::Save of a composite (D-8), as InsertOptions
     bool keepBoth = false;
     bool strict = false;
+    /// Build again even when the content id is the same (a write-back changed host files in place: the same size and
+    /// time give the same id)
+    bool force = false;
 };
 
 struct SaveOptions

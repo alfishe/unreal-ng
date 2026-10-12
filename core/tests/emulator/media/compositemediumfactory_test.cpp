@@ -269,3 +269,53 @@ TEST(CompositeMediumFactory_Test, OnBadNameSkipsOrReplaces)
     EXPECT_NE(skipped->ContentId(), replaced->ContentId());
 }
 #endif
+
+// FR-6 / FR-14: a folder layer's manifest renames files, orders its root, and gives the volume its label and code
+// page; the descriptor wins wherever it says the same (its layer `order`, target.label)
+TEST(CompositeMediumFactory_Test, ManifestAndDescriptorOrderAndNames)
+{
+    Fixture f;
+    f.root.File("files/aa.txt", "a");
+    f.root.File("files/loader.bin", "loader");
+    f.root.File("files/zz.txt", "z");
+    f.root.File("files/.unreal-media.yaml",
+                "label: MANIFEST\norder: [zz.txt]\nfiles:\n  loader.bin: {name: loader}\n  missing.bin: {name: gone}\n");
+    const auto build = [&f](const std::string& yaml, std::vector<std::string>& report) {
+        std::unique_ptr<IBlockDevice> volume;
+        CompositeInfo info;
+        const MediaResult built = CompositeMediumFactory::Build(f.Descriptor(yaml), {}, volume, info);
+        EXPECT_TRUE(built.Ok()) << built.message;
+        report = built.report;
+        return volume;
+    };
+    const auto has = [](const std::vector<std::string>& lines, const std::string& text) {
+        return std::any_of(lines.begin(), lines.end(), [&text](const std::string& l) { return l.find(text) != std::string::npos; });
+    };
+
+    std::vector<std::string> report;
+    std::unique_ptr<IBlockDevice> manifestOnly = build("version: 1\ntarget: {free: 1MiB}\nlayers: [{source: {folder: files}}]\n", report);
+    ASSERT_NE(manifestOnly, nullptr);
+    EXPECT_TRUE(has(report, "manifest: files.missing.bin: no such file"));
+    FatVolumeReader reader;
+    ASSERT_TRUE(reader.Open(*manifestOnly));
+    EXPECT_EQ(reader.Label(), "MANIFEST");
+    std::vector<std::string> names = Names(reader, "/");
+    ASSERT_FALSE(names.empty());
+    EXPECT_EQ(names.front(), "zz.txt") << "the manifest's order";
+    EXPECT_EQ(Read(reader, "/loader"), "loader") << "the manifest's name";
+    EXPECT_TRUE(std::find(names.begin(), names.end(), "loader.bin") == names.end());
+
+    std::unique_ptr<IBlockDevice> descriptor = build(
+        "version: 1\ntarget: {free: 1MiB, label: DESCRIPTOR}\n"
+        "layers: [{source: {folder: files}, order: {/: [aa.txt, nothere.txt]}}]\n",
+        report);
+    ASSERT_NE(descriptor, nullptr);
+    EXPECT_TRUE(has(report, "order: /: no entry 'nothere.txt'"));
+    ASSERT_TRUE(reader.Open(*descriptor));
+    EXPECT_EQ(reader.Label(), "DESCRIPTOR");
+    names = Names(reader, "/");
+    ASSERT_GE(names.size(), 2u);
+    EXPECT_EQ(names[0], "aa.txt") << "the descriptor's order comes first";
+    EXPECT_EQ(names[1], "zz.txt") << "then the manifest's";
+    EXPECT_NE(manifestOnly->ContentId(), descriptor->ContentId());
+}
