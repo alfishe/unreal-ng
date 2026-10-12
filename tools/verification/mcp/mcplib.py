@@ -20,6 +20,7 @@ the end; `--model` of the machine the tests create (default PENTAGON); `-k` to r
 import argparse
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -109,6 +110,11 @@ class Session:
 
 def launch(binary, port_base):
     """Starts unreal-qt offscreen on ports of its own; returns the process once the MCP endpoint answers"""
+    # Another instance on these ports would answer instead of the launched one (its binary, not this build): refuse
+    for offset in (0, 200):
+        with socket.socket() as probe:
+            if probe.connect_ex(('127.0.0.1', port_base + offset)) == 0:
+                raise SystemExit(f'port {port_base + offset} is taken by another process: pick other ports with --port-base')
     env = dict(os.environ)
     for name, offset in (('UNREAL_WEBAPI_PORT', 0), ('UNREAL_CLI_PORT', 100), ('UNREAL_MCP_PORT', 200),
                          ('UNREAL_GDB_PORT', 300), ('UNREAL_DEZOG_PORT', 400), ('UNREAL_ZRCP_PORT', 500)):

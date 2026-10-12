@@ -41,8 +41,7 @@ def test_list_enable_and_the_dma_collision(s):
 
     r = s.call('bus_analyzer', {'action': 'events', 'bus': 'zc.spi', 'kinds': 'byte', 'limit': 5})
     expect(' dma slot=0 byte mosi=0xFF' in r.text, "the DMA's bytes are the DMA's", r.text)
-    r = s.call('bus_analyzer', {'action': 'events', 'bus': 'zc.spi', 'kinds': 'select', 'limit': 5})
-    expect(' cpu slot=0 select' in r.text, 'the chip select by the CPU', r.text)
+    # no select check: a select event is a change of the chip selects, and the BIOS may have left the card selected
 
 
 def test_sd_timing_export_and_refusals(s):

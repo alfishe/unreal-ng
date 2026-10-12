@@ -3763,7 +3763,7 @@ public:
             return StateNodeToLua(s, DeviceState::NextSdJournalControl(emulator->GetContext(), enable, clear, capacity));
         });
         // Bus analyzer (docs/inprogress/2026-10-11-bus-analyzer): bus_list(), bus_events(bus, {kinds=, slot=, since=, from=, to=,
-        // limit=}), bus_findings(bus, {rules=, since=, limit=}), bus_control(bus|"all", {enabled=, checks=, clear=, capacity=}),
+        // limit=}), bus_findings(bus, {rules=, since=, limit=}), bus_control(bus|"all", {enabled=, checks=, clear=, capacity=, protocol_only=}),
         // bus_sd_timing(bus, {profile="ideal|realistic|slow", seed=N, slot=N}), bus_export(bus, {format="vcd|jsonl", ...}) -> text.
         // nil + error on a bad option or an unknown bus
         auto busOption = [](const sol::optional<sol::table>& options, const char* key) -> std::string {
