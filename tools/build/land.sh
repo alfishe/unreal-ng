@@ -129,6 +129,8 @@ if [ $SYNC = 1 ] && onMaster && indexIsOld && edits | cmp -s - "$TMP/edits"; the
     # index.lock is git's own lock: a git command in the main checkout waits or fails instead of racing the swap
     if ! (set -o noclobber; : > "$GD/index.lock") 2>/dev/null; then
         echo "main checkout NOT synced: $GD/index.lock is held (a git command is running there); master has moved"
+        # The landing itself is done: with --push the push is not held back by the main checkout's lock
+        if [ $PUSH = 1 ]; then publish "$NEW" || true; fi
         exit 1
     fi
     trap 'rm -f "$GD/index.lock"; rm -rf "$TMP"' EXIT
