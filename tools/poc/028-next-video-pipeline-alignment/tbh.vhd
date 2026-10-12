@@ -7,5 +7,8 @@ package tbh is
    signal t_hold  : std_logic := '0';
    signal p_hc    : std_logic_vector(8 downto 0);
    signal p_vc    : std_logic_vector(8 downto 0);
+   signal t_pal_we  : std_logic := '0';                        -- a palette write (NR #41 / #44 path)
+   signal t_pal_val : std_logic_vector(8 downto 0) := (others => '0');
+   signal t_pal_idx : std_logic_vector(7 downto 0) := (others => '0');
    signal p_dbg   : std_logic_vector(15 downto 0);
 end package;

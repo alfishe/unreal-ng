@@ -8,6 +8,8 @@ use work.tbh.all;
 entity tb_zxnext is
    generic (
       g_scenario : natural := 0;   -- 0 = nothing forced, otherwise the register under test (see the case below)
+      g_ref      : natural := 0;   -- 1 = the reference run: the same sequence, the value never changed (analyze.py diff)
+      g_l2const  : natural := 0;   -- Layer 2 SRAM returns this byte everywhere (0 = the x pattern)
       g_h0       : natural := 200; -- the pixel counter value the sweep's clock offsets start from
       g_log      : string  := "dump.txt";
       g_events   : string  := "events.txt"
@@ -192,6 +194,10 @@ begin
          lo(7) := not lo(7);
          hi(7) := not hi(7);
       end if;
+      if g_l2const /= 0 then
+         lo := to_unsigned(g_l2const, 8);
+         hi := to_unsigned(g_l2const, 8);
+      end if;
       ram_data <= std_logic_vector(hi) & std_logic_vector(lo);
    end process;
 
@@ -205,6 +211,17 @@ begin
       variable line_no : natural;
       variable r_idx : natural := 0;
       variable r_base, r_new : std_logic_vector(7 downto 0) := x"00";
+      variable pal : boolean := false;
+      variable pal_idx : natural := 0;
+      variable pal_base, pal_new : natural := 0;
+      procedure pal_write(idx : natural; v : natural) is
+      begin
+         t_pal_idx <= std_logic_vector(to_unsigned(idx, 8));
+         t_pal_val <= std_logic_vector(to_unsigned(v, 9));
+         t_pal_we <= '1';
+         wait for T28;
+         t_pal_we <= '0';
+      end procedure;
       procedure set_reg(idx : natural; v : std_logic_vector(7 downto 0)) is
       begin
          t_en(idx) <= '1';
@@ -252,8 +269,26 @@ begin
          when 25 => r_idx := 36; r_base := x"07"; r_new := x"0F"; set_reg(35, x"01");       -- ULANext format
          when 26 => r_idx := 37; r_base := x"0F"; r_new := x"00"; set_reg(3, x"01");        -- tilemap transparent index
          when 27 => r_idx := 20; r_base := x"00"; r_new := x"FF";                          -- ULA clip y1 (rows below are visible only)
+         -- the second set of POC 028 (the differential runs, analyze.py diff)
+         when 28 => r_idx := 33; r_base := x"00"; r_new := x"02"; set_reg(2, x"01");       -- LoRes scroll X (1 LoRes pixel)
+         when 29 => r_idx := 34; r_base := x"00"; r_new := x"02"; set_reg(2, x"01");       -- LoRes scroll Y
+         when 30 => r_idx := 1;  r_base := x"00"; r_new := x"01";                          -- sprite enable
+         when 31 => r_idx := 38; r_base := x"00"; r_new := x"80"; set_reg(1, x"01");       -- sprite clip x1
+         when 32 => r_idx := 39; r_base := x"FF"; r_new := x"80"; set_reg(1, x"01");       -- sprite clip x2
+         when 33 => r_idx := 40; r_base := x"00"; r_new := x"FF"; set_reg(1, x"01");       -- sprite clip y1
+         when 34 => r_idx := 41; r_base := x"BF"; r_new := x"00"; set_reg(1, x"01");       -- sprite clip y2
+         when 35 => pal := true; pal_idx := 2;   pal_base := 2;   pal_new := 511;          -- ULA palette value
+         when 36 => pal := true; pal_idx := 5;   pal_base := 5;   pal_new := 511; set_reg(4, x"01"); set_reg(42, x"01");  -- Layer 2 palette value (the SRAM returns 5)
+         when 37 => pal := true; pal_idx := 161; pal_base := 161; pal_new := 511; set_reg(1, x"01"); set_reg(42, x"02");  -- sprite palette value (#21 + offset 8)
+         when 38 => pal := true; pal_idx := 0;   pal_base := 0;   pal_new := 511; set_reg(3, x"01"); set_reg(42, x"03");  -- tilemap palette value
+         when 39 => r_idx := 37; r_base := x"0F"; r_new := x"00"; set_reg(3, x"01");       -- tilemap transparent index (again, diff)
+         when 40 => r_idx := 32; r_base := x"00"; r_new := x"01"; set_reg(3, x"01");       -- tilemap: force over the ULA (NR #6B bit 0)
+         when 41 => r_idx := 32; r_base := x"00"; r_new := x"02"; set_reg(3, x"01");       -- tilemap: 512 tiles (NR #6B bit 1)
+         when 42 => r_idx := 32; r_base := x"00"; r_new := x"40"; set_reg(3, x"01");       -- tilemap: 80 columns (NR #6B bit 6)
+         when 43 => r_idx := 32; r_base := x"00"; r_new := x"20"; set_reg(3, x"01");       -- tilemap: no attribute byte (NR #6B bit 5)
          when others => null;
       end case;
+      if g_ref = 1 then r_new := r_base; pal_new := pal_base; end if;
       if g_scenario = 0 then wait; end if;
       wait until unsigned(p_vc) = to_unsigned(10, 9);
       wait until unsigned(p_vc) = to_unsigned(11, 9);   -- one frame to settle
@@ -272,9 +307,9 @@ begin
          write(l, string'(" "));
          write(l, count28);
          writeline(ev, l);
-         set_reg(r_idx, r_new);
+         if pal then pal_write(pal_idx, pal_new); else set_reg(r_idx, r_new); end if;
          wait until unsigned(p_vc) = to_unsigned(line_no + 2, 9) and unsigned(p_hc) = to_unsigned(0, 9);
-         set_reg(r_idx, r_base);
+         if pal then pal_write(pal_idx, pal_base); else set_reg(r_idx, r_base); end if;
          k := k + 1;
       end loop;
       assert false report "sweep done" severity failure;

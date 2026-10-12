@@ -60,9 +60,44 @@ emulator is `minimum - 1 + 4`.
 Layer 2 and the ULA leave at the same position: pixel 0 of Layer 2 and of the ULA's paper both at line position 64 (the sweep's
 unchanged lines).
 
+## Second set: sprites, LoRes, palette values, tilemap control bits (`run-diff.sh`, scenarios 28-43)
+
+The first set diffed a changed line against the clean line two above; sprites are different on every line, so this set runs each
+scenario twice (`g_ref`: the same sequence, the value never changed) and takes the first sample at or after the force that differs
+between the runs. The coregen RAMs the first set left out are modelled now (`patch_rtl.py`): `spram_320_9` (sprite line buffers,
+asynchronous read), `sdpbram_16k_8` (pattern RAM, one solid colour #21) and five attribute RAMs (128 sprites in a 16 x 8 grid, palette
+offset 8). A palette value is written through a hook at the NR #41 / #44 write strobe (`t_pal_we`), so it takes the dpram's write edge
+a register would take. Three bank 5 patterns (`POC_PATTERN`): std (the first set's), `lores` (every byte differs: LoRes reads 128 bytes
+a row), `dense` (one ULA attribute, tilemap entries alternating tile 0 / 1 and attribute bit 0, a second tile). Same calibration:
+from the WAIT = minimum - 1 + 4.
+
+| scenario | register | min / max (clocks after the force) | from the WAIT | granularity |
+|---|---|---|---|---|
+| 28 | NR #32, LoRes scroll X | 19 / 22 | 22 | pixel |
+| 29 | NR #33, LoRes scroll Y | 19 / 22 | 22 | pixel |
+| 30 | NR #15 bit 0, sprite enable | 19 / 20 | 22 | half pixel |
+| 31-34 | NR #19, sprite clip x1 / x2 / y1 / y2 | 19 / 22 | 22 | pixel |
+| 35 | NR #41 / #44 into the ULA palette | 15 / 32 | 18 | half pixel |
+| 36 | ... into Layer 2's palette (the SRAM returns one byte) | 15 / 16 | 18 | half pixel |
+| 37 | ... into the sprite palette | 13 / 15 | 16 | half pixel |
+| 38 | ... into the tilemap palette | 14 / 37 | 17 | half pixel |
+| 39 | NR #4C, tilemap transparent index | 17 / 33 | 20 | half pixel |
+| 40 | NR #6B bit 0, tilemap over the ULA | 54 / 85 (first run), 71 / 101 (dense) | 57 | cell |
+| 41 | NR #6B bit 1, 512 tiles | 50 / 149 | 53 | cell |
+| 42 | NR #6B bit 6, 80 columns | 21 / 66 | 24 (an upper bound) | 32 clocks |
+| 43 | NR #6B bit 5, no attribute byte | 50 / 85 | 53 | cell |
+
+Reading of the table:
+- The sprite clip is applied where the sprite line buffer is read, not where it is filled: the change shows in the same line, 22 clocks
+  after the WAIT, like the ULA clip.
+- Where a pattern is sparse the minimum rises (it is the distance to the next differing pixel): the minima over every run of a
+  register are the values; 40 and 43 are the tilemap scroll's cell 53 / 57 and the 80-column bit is latched every 32 clocks
+  (`tm_mode` at `hcount(4:0) = "11111"`) and read by the output side directly, so it is the earliest of them (24; the output shows the
+  change from the first latch).
+- The four palettes' lookup stages differ by a clock or two: sprites 16 (the line buffer is read first), tilemap 17, ULA and Layer 2 18.
+
 ## Not measured
 
-Sprites (their line buffers and pattern RAM are coregen cores the model does not replace: `spram_320_9`, `sdpbram_16k_8`), the LoRes
-scroll, the tilemap control bits and its transparent index (no visible change), the Layer 2 resolution, the palette value writes (they
-do not pass a register: the 16 clocks of the emulator are the derived lookup stage), NR #15 bit 0 (sprite enable) and bit 7 (LoRes enable)
-on the assumption that they travel the chain of the other enables (`sprite_en_0 .. _1`, `lores_en_0 .. _1`).
+The sprite attribute / pattern writes (a RAM write through ports #57 / #5B / #303B and NR #34-#39, not a register of the picture), the
+sprite transparent index NR #4B, the Layer 2 resolution, the LoRes / Radastan control NR #6A, the tilemap text-mode bit (NR #6B bit 3;
+latched with the cell like bits 0 / 1 / 5, by reading `tilemap.vhd`).

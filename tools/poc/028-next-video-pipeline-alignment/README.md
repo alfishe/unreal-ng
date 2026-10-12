@@ -4,7 +4,7 @@ Feature: ZX Next copper picture latency ([TODO.md](../../../docs/inprogress/2026
 registers that are fetch-stage inputs"; counted chains in `scratch/cosim-copper/LATENCY.md`, `ScreenNext::PixelLatencyClocks`).
 
 Status: **concluded 2026-10-12** - [measurements](measurements-2026-10-12-register-sweep.md), [analysis](analysis.md),
-[conclusions](conclusions.md), [proposal](proposal.md). Run: `run.sh <cores/zxnext/src>` (GHDL, VHDL-2008).
+[conclusions](conclusions.md), [proposal](proposal.md). Run: `run.sh <cores/zxnext/src>` (GHDL, VHDL-2008), the differential second set (sprites, LoRes, palette values, tilemap bits): `run-diff.sh <cores/zxnext/src>`.
 
 ## Goals
 

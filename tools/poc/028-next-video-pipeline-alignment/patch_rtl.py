@@ -11,7 +11,8 @@ Changes (all listed in the measurement report):
   - layer2: layer2_req_t initial value (the FPGA powers up with 0)
   - every other signal gets a zero initial value (the FPGA's registers power up zero; GHDL starts them U)
   - models of the coregen RAMs sdpram_16_9 / sdpram_64_9 / sdpram_128_8 (tilemap line buffer, UART FIFOs, sprite attributes)
-  - zxnext: test hooks (package tbh): forced registers at the end of the NextREG process, the Z80 held in WAIT, probes of hc / vc
+  - sprites: the attribute RAMs (sdpram_128_8_n), the line buffers (spram_320_9) and the pattern RAM (sdpbram_16k_8) modelled
+  - zxnext: test hooks (palette write too), (package tbh): forced registers at the end of the NextREG process, the Z80 held in WAIT, probes of hc / vc
 """
 import os
 import re
@@ -69,6 +70,25 @@ PATTERN = """      if RamFileName = "init/none.bin.txt" then
          end if;
          return RAM_0;"""
 
+if os.environ.get("POC_PATTERN") == "lores":
+    # LoRes reads bank 5 as 128 bytes a row: make every byte differ from its neighbours (the ULA picture changes with it)
+    PATTERN = PATTERN.replace("               if I < 6144 then\n",
+                              "               if I < 6144 then\n                  RAM(I) := to_bitvector(std_logic_vector(to_unsigned(((I mod 128) * 5 + (I / 128) * 29) mod 256, data_width_g)));\n               elsif I < 6144 then\n", 1)
+    assert "mod 128" in PATTERN
+
+if os.environ.get("POC_PATTERN") == "dense":
+    # every ULA attribute the same (ink 2, paper 0: dense palette index 2 / 16), a tilemap whose entries alternate tile 0 / 1 and attribute bit 0 every second entry, and a
+    # second tile (#77), so that the tilemap control bits and the palette value writes have pixels to change
+    a = "to_unsigned(((I mod 32) mod 8) + 8 * (((I mod 32) + 3) mod 8), data_width_g)"
+    assert a in PATTERN
+    PATTERN = PATTERN.replace(a, "to_unsigned(2, data_width_g)", 1)
+    b = "                  elsif ((I / 256) mod 2) = 0 then\n"
+    assert b in PATTERN
+    PATTERN = PATTERN.replace(b, "                  elsif I >= 3104 and I < 3136 then\n                     RAM(I) := to_bitvector(std_logic_vector(to_unsigned(119, data_width_g)));\n" + b, 1)
+    c = "               else\n                  RAM(I) := to_bitvector(std_logic_vector(to_unsigned(0, data_width_g)));\n"
+    assert c in PATTERN
+    PATTERN = PATTERN.replace(c, "               elsif I >= 11264 then\n                  RAM(I) := to_bitvector(std_logic_vector(to_unsigned((((I - 11264) / 2) mod 2) * (1 - (I mod 2)) + (((I - 11264) / 4) mod 2) * (I mod 2), data_width_g)));\n" + c, 1)
+
 # (signal, value byte index, high bit): the byte index is the t_en / t_val slot of tbh
 OVERRIDES = [("nr_68_ula_en", 0, 0), ("nr_15_sprite_en", 1, 0), ("nr_15_lores_en", 2, 0), ("nr_6b_tm_en", 3, 0),
              ("nr_26_ula_scrollx", 5, 7), ("nr_27_ula_scrolly", 6, 7), ("nr_16_layer2_scrollx", 7, 7),
@@ -80,7 +100,9 @@ OVERRIDES = [("nr_68_ula_en", 0, 0), ("nr_15_sprite_en", 1, 0), ("nr_15_lores_en
              ("nr_1b_tm_clip_y1", 27, 7), ("nr_1b_tm_clip_y2", 28, 7), ("nr_68_ula_fine_scroll_x", 29, 0),
              ("nr_43_active_ula_palette", 30, 0), ("nr_43_active_layer2_palette", 31, 0), ("nr_6b_tm_control", 32, 6),
              ("nr_32_lores_scrollx", 33, 7), ("nr_33_lores_scrolly", 34, 7), ("nr_43_ulanext_en", 35, 0),
-             ("nr_42_ulanext_format", 36, 7), ("nr_4c_tm_transparent_index", 37, 3)]
+             ("nr_42_ulanext_format", 36, 7), ("nr_4c_tm_transparent_index", 37, 3),
+             ("nr_19_sprite_clip_x1", 38, 7), ("nr_19_sprite_clip_x2", 39, 7), ("nr_19_sprite_clip_y1", 40, 7),
+             ("nr_19_sprite_clip_y2", 41, 7), ("nr_43_palette_write_select", 42, 2)]
 
 
 def ram_model(name, aw, dw):
@@ -113,6 +135,107 @@ begin
 end architecture;
 """
 
+
+def sprite_ram_model(name, attr):
+    # sprite attribute RAM: every one of the 128 sprites visible, 16x16 tiles of a 16 x 8 grid, one pattern, palette offset 8
+    init = {0: "std_logic_vector(to_unsigned(32 + (i mod 16) * 16, 8))",
+            1: "std_logic_vector(to_unsigned(32 + (i / 16) * 16, 8))",
+            2: "x\"80\"", 3: "x\"80\"", 4: "x\"00\""}[attr]
+    return f"""library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+entity {name} is
+   port (
+      DPRA : in std_logic_vector(6 downto 0) := (others => '0');
+      CLK  : in std_logic;
+      WE   : in std_logic;
+      DPO  : out std_logic_vector(7 downto 0);
+      A    : in std_logic_vector(6 downto 0) := (others => '0');
+      D    : in std_logic_vector(7 downto 0) := (others => '0')
+   );
+end entity;
+architecture sim of {name} is
+   type ram_t is array (0 to 127) of std_logic_vector(7 downto 0);
+   function init_f return ram_t is
+      variable r : ram_t;
+   begin
+      for i in r'range loop
+         r(i) := {init};
+      end loop;
+      return r;
+   end function;
+   signal ram : ram_t := init_f;
+begin
+   process (CLK)
+   begin
+      if rising_edge(CLK) then
+         if WE = '1' then ram(to_integer(unsigned(A))) <= D; end if;
+      end if;
+   end process;
+   DPO <= ram(to_integer(unsigned(DPRA)));
+end architecture;
+"""
+
+
+SPRITE_MODELS = """library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+entity spram_320_9 is
+   port (
+      CLK : in std_logic;
+      WE  : in std_logic;
+      SPO : out std_logic_vector(8 downto 0);
+      A   : in std_logic_vector(8 downto 0) := (others => '0');
+      D   : in std_logic_vector(8 downto 0) := (others => '0')
+   );
+end entity;
+architecture sim of spram_320_9 is
+   type ram_t is array (0 to 511) of std_logic_vector(8 downto 0);
+   signal ram : ram_t := (others => (others => '0'));
+begin
+   process (CLK)
+   begin
+      if rising_edge(CLK) then
+         if WE = '1' then ram(to_integer(unsigned(A))) <= D; end if;
+      end if;
+   end process;
+   SPO <= ram(to_integer(unsigned(A)));
+end architecture;
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+entity sdpbram_16k_8 is
+   port (
+      WEA   : in std_logic_vector(0 downto 0);
+      ADDRA : in std_logic_vector(13 downto 0);
+      DINA  : in std_logic_vector(7 downto 0);
+      CLKA  : in std_logic;
+      ENB   : in std_logic;
+      ADDRB : in std_logic_vector(13 downto 0);
+      DOUTB : out std_logic_vector(7 downto 0);
+      CLKB  : in std_logic
+   );
+end entity;
+architecture sim of sdpbram_16k_8 is
+   type ram_t is array (0 to 16383) of std_logic_vector(7 downto 0);
+   -- one solid colour (index #21: not the transparent #E3) in every pattern
+   signal ram : ram_t := (others => x"21");
+begin
+   process (CLKA)
+   begin
+      if rising_edge(CLKA) then
+         if WEA(0) = '1' then ram(to_integer(unsigned(ADDRA))) <= DINA; end if;
+      end if;
+   end process;
+   process (CLKB)
+   begin
+      if rising_edge(CLKB) then
+         if ENB = '1' then DOUTB <= ram(to_integer(unsigned(ADDRB))); end if;
+      end if;
+   end process;
+end architecture;
+"""
 
 listing = []
 for f in sorted(files):
@@ -162,6 +285,14 @@ for f in sorted(files):
       end if;
    end process;
 """, 1)
+        for old, new in (
+                ("nr_palette_we <= '1' when nr_41_we = '1' or", "nr_palette_we <= '1' when t_pal_we = '1' or nr_41_we = '1' or"),
+                ("nr_palette_value <= (nr_wr_dat &", "nr_palette_value <= t_pal_val when t_pal_we = '1' else (nr_wr_dat &"),
+                ("nr_palette_index <= nr_43_palette_write_select(1) & nr_43_palette_write_select(2) & nr_palette_idx;",
+                 "nr_palette_index <= nr_43_palette_write_select(1) & nr_43_palette_write_select(2) & nr_palette_idx when t_pal_we = '0'\n"
+                 "      else nr_43_palette_write_select(1) & nr_43_palette_write_select(2) & t_pal_idx;")):
+            assert text.count(old) == 1, old
+            text = text.replace(old, new, 1)
         old = """         elsif nr_69_we = '1' then
             port_123b_layer2_en <= nr_wr_dat(7);
          end if;"""
@@ -172,6 +303,12 @@ for f in sorted(files):
         text = text[:j] + ("\nbegin\n   p_hc <= std_logic_vector(hc);\n   p_vc <= std_logic_vector(vc);\n"
                            "   p_dbg(0) <= tm_pixel_en; p_dbg(1) <= tm_pixel_en_1; p_dbg(2) <= tm_en_1; p_dbg(15 downto 8) <= tm_pixel;\n") \
                + text[j + len("\nbegin\n"):]
+    elif base == "sprites.vhd":
+        text = init_signals(text)
+        for n in range(5):
+            old = f"   attr{n} : sdpram_128_8\n"
+            assert old in text
+            text = text.replace(old, f"   attr{n} : entity work.sdpram_128_8_{n}\n", 1)
     elif base in ("tdpram.vhd", "sdpram.vhd", "dpram.vhd"):
         pass
     else:
@@ -183,6 +320,9 @@ for f in sorted(files):
 shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), "tbh.vhd"), os.path.join(out, "tbh.vhd"))
 with open(os.path.join(out, "models.vhd"), "w") as fh:
     fh.write(ram_model("sdpram_16_9", 4, 9) + ram_model("sdpram_64_9", 6, 9) + ram_model("sdpram_128_8", 7, 8))
+    for n in range(5):
+        fh.write(sprite_ram_model(f"sdpram_128_8_{n}", n))
+    fh.write(SPRITE_MODELS)
 shutil.copytree(os.path.join(src, "ram", "init"), os.path.join(out, "init"), dirs_exist_ok=True)
 with open(os.path.join(out, "files.txt"), "w") as fh:
     fh.write(os.path.join(out, "tbh.vhd") + "\n")

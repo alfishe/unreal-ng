@@ -55,8 +55,9 @@ public:
         unsigned clocks;
         unsigned quantum;
     };
-    /// For a MOVE of `value` over `previous` in `reg`: the changed bits decide (the earliest of them when they differ)
-    static PictureLatency PictureLatencyOf(uint8_t reg, uint8_t previous, uint8_t value);
+    /// For a MOVE of `value` over `previous` in `reg`: the changed bits decide (the earliest of them when they differ). `paletteWriteSelect`
+    /// is NR #43 bits 6:4, the palette NR #41 / #44 write to (each palette's lookup is a different stage)
+    static PictureLatency PictureLatencyOf(uint8_t reg, uint8_t previous, uint8_t value, uint8_t paletteWriteSelect = 0);
 
     /// The T-state (base, from the frame start) at which visible line `y` (0-255) is complete
     uint32_t LineEndT(unsigned y) const;
