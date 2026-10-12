@@ -31,10 +31,12 @@ text codec). A disk's PASM files are taken into a project (`zxasm convert image.
 
 | Rule | Checked | Conversion |
 |---|---|---|
-| A label in column 0 (up to 14 characters), then the mnemonic and operands; `;` comment | the help | labels; sjasmplus renames what it cannot take |
+| A label in column 0 (up to 14 characters), then the mnemonic and operands; `;` comment | the help; a 15-character label is "Bad label" (2026-10-12) | labels; sjasmplus renames what it cannot take |
+| Mnemonics in capitals (`ld a,1` is a syntax error); names keep their case (`lab` and `LAB` are two); a name starts with a letter (`_X` refused); `_ . ? @` in names | probes (2026-10-12) | — |
+| A line is read to column 64 (a longer one goes on as if it were another line: "Value missing" at column 63) | probe (2026-10-12) | the backend keeps lines within 64 columns |
 | `+ - * /` strictly left to right, 16-bit, the division truncating: `7*3+1/2` = 11, `1+2*255` = 765, `100/7` = 14 | probe | grouped as built; unsigned 16-bit |
-| `#` hex, `%` binary, `'c'` characters (no `"`); a leading minus refused by the help ("LD A,#FF, not LD A,-1"), `0-8` fine | probe | numbers, character constants |
-| `DB` items: numbers, `'text'`, an open `'text` to the line's end; `DB` / `DW` `value DUP count` | `DB #AA DUP 3`, `DW #A0ED DUP 2` | runs as `DB` / `DW`, a fill as `DS n,v` or `DUP n` / `DB lo,hi` / `EDUP` |
+| `#` hex, `%` binary, `'c'` characters (no `"`); a leading minus refused by the help ("LD A,#FF, not LD A,-1"), `0-8` fine | probe; `LD A,-1`, `DB -1`, `LD A,0-1` and `LD A,#FFFF` are "Value out of range" (a byte only in 0..255), `LD BC,'AB'` a syntax error (2026-10-12) | numbers, character constants |
+| `DB` items: numbers, `'text'`, an open `'text` to the line's end; `DB` / `DW` `value DUP count` | `DB #AA DUP 3`, `DW #A0ED DUP 2`, `DB 9 DUP 300`; `DB 1,2 DUP 2,3` is a syntax error (DUP alone on its line), `DB 'it''s'` too (2026-10-12) | runs as `DB` / `DW`, a fill as `DS n,v` or `DUP n` / `DB lo,hi` / `EDUP` |
 | `$` in a `DB` / `DW` item is the item's address | `DW #1234,LAB,$` | `$+offset` per item |
 | `$` in an instruction is what PASM has put when it reads the operand: the first of two operands is read before the opcode (`LD ($),A`, `LD ($),HL`, `LD ($),DE`: the instruction's address), the others after it (`JP $`, `JR $`, `DJNZ $`, `CALL $`, `LD HL,$`, `LD HL,($)`: +1; `LD BC,($)` (ED) and `LD IX,$` (DD): +2). The help's examples rely on it (`JR Z,$+3` skips a two-byte instruction) | probe (CURRENT) | `$+1` / `$+2` where PASM's `$` is ahead |
 | a byte operand out of range is an error ("Value out of range"), the compilation stops | `LD (IX+1),$` | sjasmplus refuses it too |
@@ -42,6 +44,7 @@ text codec). A disk's PASM files are taken into a project (`zxasm convert image.
 | a byte operand computed from `$` by subtraction is refused ("Value out of range": `LD A,$-#6000`, even `LD A,$-#5FF0`), as if the range were checked before `$` has its value; `$/256` passes (`#60`), 16-bit operands work (`LD HL,$-#6000` = 1) | probes PG, PJ, PI | such lines cannot be in a PASM source |
 | `ORG` once, at the start ("Bad ORG" after other lines); without `ORG` the code goes to 24576 | the help, probe | `IF $==0` / `ORG 24576` / `ENDIF` in a text without `ORG` (an ITXT text goes on from its includer) |
 | `ENT` (no operand): the run address; `EQU` | the help | a comment; `EQU` |
+| `EQU` takes names defined above it only (`K EQU L+1` before `L` fails); `$` in EQU is 0 (`K EQU $` after code gave 0) and `$+1` there is refused | probes (2026-10-12) | `$` in EQU read as 0, with a warning (read as the line's address before 2026-10-12) |
 | `ITXT name` / `IBIN name`: a text / code file of the current drive read while compiling, the name the first 8 characters after the blank | `ITXT LIB1` + `IBIN DAT` | `INCLUDE "name.asm"` / `INCBIN "name"` |
 | `SLI` (undocumented, the "SLA with 1") | `SLI B` = `CB 30` | `SLI` |
 | `(IY)` without an offset refused (the help) | | — |
@@ -54,7 +57,7 @@ PASM 3.0 on a Pentagon 128 (`RUN "PASM3.0"` from the TR-DOS disk made from `PASM
 | Finding | How it showed | What decides it |
 |---|---|---|
 | The help is protected ("PROTECTED BY PETE ABRAMOVICH… DON'T EVEN THINK ABOUT IT!") | the BASIC file is encrypted | run it: the decrypted text (KOI-7, 39K) sits in memory from `#6578` |
-| The object code is in page 4 at `#E000` (offset `#2000`), not at the ORG address, while PASM runs | the memory at `#6000` stayed `#AA` | read RAM page 4 (`/memory/page/ram/4`) |
+| The object code is in other RAM pages, not at the ORG address, while PASM runs: below `#8000` from `#2000` of page 4 whatever the ORG (`#6000`, `#5010`), from `#8000` up in an image of the 48K memory (`#8000-#BFFF` in page 3, `#C000-#FFFF` in page 0; 2026-10-12) | the memory at `#6000` stayed `#AA` | read RAM page 4 (`/memory/page/ram/4`), 3 or 0 |
 | CAPS LOCK is on: lower-case letters arrive as capitals | `probe` loaded the file `PROBE` | type file names in lower case |
 | The menu (CAPS SHIFT + SYMBOL SHIFT) does not always open with a combined tap; then the letter goes into the text | an `S` in the first line | press SYMBOL SHIFT, then CAPS SHIFT, release both |
 | `ZAP` asks "Sure? (Y/N)"; GET into a text merges | the next probe merged, "Bad ORG" | answer Y (held a little), check that the work file is UNTITLED |
@@ -65,3 +68,4 @@ PASM 3.0 on a Pentagon 128 (`RUN "PASM3.0"` from the TR-DOS disk made from `PASM
 |---|---|
 | `$` in `LD (IX+d),n` | not measurable: a byte operand made from `$` is refused unless it is `$/256` (which gives `#60` for both the displacement and `n`) |
 | PASM 2.5 (48K) | not found |
+| Writing PASM text (part B) | done 2026-10-12: research-sjasmplus-to-pasm.md |

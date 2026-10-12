@@ -44,11 +44,14 @@ Write it to the TRD as a CODE file (`zxdisk.py add`, any start), insert the disk
 
 ## Compile and read the code
 
-Fill the target with `#AA` if holes matter, then menu `L` ("Successful", `Executes:` with the run address). While
-PASM runs the object code is in RAM page 4 from offset `#2000` (`#E000` there), not at the ORG address:
+Fill the target with `#AA` if holes matter, then menu `L` ("Successful", `Executes:` with the run address; 674 lines
+take about 30 s). While PASM runs the object code is in other RAM pages, not at the ORG address: code below `#8000`
+from offset `#2000` of page 4 (`#E000` there) whatever its ORG, code from `#8000` up in an image of the 48K memory
+(`#8000-#BFFF` in page 3, `#C000-#FFFF` in page 0):
 
 ```text
-GET /api/v1/emulator/{id}/memory/page/ram/4?offset=8192&length=64
+GET /api/v1/emulator/{id}/memory/page/ram/4?offset=8192&length=64     # ORG #6000
+GET /api/v1/emulator/{id}/memory/page/ram/3?offset=0&length=64        # ORG #8000
 ```
 
 `J` (PUT OBJ) writes it to the disk with the ORG address as its start (its help; not run here).
@@ -69,6 +72,25 @@ zxasm convert pasm.trd --to sjasmplus -o out/     # ITXT / IBIN files of the dis
 zxasm convert probe.txt --from pasm --to sjasmplus -o probe.asm   # a text without PASM's words
 ```
 
+## A host source into PASM
+
+Write the source in its editor while it waits for a key (not with the menu line open); the menu's `L` then compiles
+it. PASM keeps no "changed" flag: `force`.
+
+```text
+asm_source  {"action":"sync_inject","path":"/abs/main.asm","assembler":"pasm-3.0","force":true}
+WebAPI      POST /asm/sync/inject {"assembler":"pasm-3.0","from":"sjasmplus","text":"...","title":"MAIN","force":true}
+check       tools/verification/unreal-asm/emulator/inject-oracle.py pasm PASM3_0.SCL src.asm 0x8000 --wait 45
+```
+
+The inject leaves the editor as ZAP and GET do (the cursor on the first line, the title as the work file's name). The
+screen shows the new text after the next menu command (or the menu opened and closed with BREAK).
+`zxasm convert --to pasm -o x.txt` gives the same text as a file; put it on the disk as a CODE file and GET it.
+
+What the conversion has to respect: one ORG (a later one forward becomes zeros), mnemonics in capitals, names of 14
+characters starting with a letter, bytes in 0..255, no `DISP` (written as EQU of the run addresses), 64 columns a
+line (research-sjasmplus-to-pasm.md).
+
 ## Pitfalls
 
 - **CAPS LOCK is on**: type lower case to get capitals (file names, text).
@@ -78,4 +100,6 @@ zxasm convert probe.txt --from pasm --to sjasmplus -o probe.asm   # a text witho
 - **ORG only once and first** ("Bad ORG"); without ORG the code goes to 24576.
 - **`$` is ahead in instructions** (`JP $` jumps to the next byte, `DJNZ $` is `10 FF`): what PASM has put when it
   reads the operand; the first of two operands is read before the opcode.
-- **A byte operand out of range stops the compilation** ("Value out of range").
+- **A byte operand out of range stops the compilation** ("Value out of range"): `LD A,-1` too (write 255).
+- **`$` in EQU is 0** (`K EQU $` after code gives 0; `$+1` there is refused).
+- **The code is not at the ORG address**: page 4 from `#2000` below `#8000`, pages 3 and 0 from `#8000` up.

@@ -17,6 +17,7 @@ from the same source. The assembler disk is the collection's; the tool creates i
     inject-oracle.py primus <PRIMUS29.SCL> <source.asm> <address> [--wait 30]
     inject-oracle.py lasergenius <LG_1_04.SCL> <source.asm> <address> [--wait 20]
     inject-oracle.py prometheus <prometheus-48.tap> <source.asm> <address> [--wait 10]
+    inject-oracle.py pasm <PASM3_0.SCL> <source.asm> <address> [--wait 5]
 
 XAS (Z3): started from its disk, the first source of its list loaded (or a new text), its command line opened (EXT;
 9.x need the keys held 12 frames), the source written there and assembled with A.
@@ -52,6 +53,12 @@ and between #68D2 and #7F22: give sources from #6900.
 
 PROMETHEUS 48K (Z4): loaded from its tape on a 48K machine (installed at 24000), the source written in its editor
 by force (no "changed" flag), assembled with SS+A. Its source and names lie from #9C28 up: give sources from 60000.
+
+Power Assembler 3.0 (Z4): started from its disk on a Pentagon 128, the source written in its editor by force (no
+"changed" flag) as ZAP and GET leave it, compiled with the menu's L (SYMBOL SHIFT, then CAPS SHIFT, then L). PASM
+puts the code from #8000 up in an image of the 48K memory (#8000-#BFFF in RAM page 3, #C000-#FFFF in page 0), code
+below #8000 from #2000 of page 4 whatever the ORG (give the ORG as the address there): the bytes are read there. It
+takes one ORG (a later one forward is written as zeros). 674 lines take it about 30 s: --wait 45.
 
 With --project the source goes as a path, and each file it INCLUDEs into an ALASM text page of its own (the INCLUDE
 names the page); --template always takes the INCLUDEs (zxasm inject reads them beside the source).
@@ -390,9 +397,47 @@ def prometheus(emu, args, expected):
     return bytes(emu.read(args.address, len(expected)))
 
 
+def pasm(emu, args, expected):
+    emu.insert_disk(os.path.abspath(args.disk))
+    emu.run_trdos(args.boot or 'PASM3.0', wait=8)
+    with open(args.source, encoding='utf-8') as f:
+        body = {'from': args.from_, 'assembler': 'pasm-3.0', 'title': 'INJECTED', 'text': f.read(), 'force': True}
+    reply = emu.post('/asm/sync/inject', body)
+    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
+    for d in reply.get('diagnostics', []):
+        if d.get('severity') != 'info':
+            print('  ', d)
+    page, offset = pasm_object_place(args.address)
+    emu.post(f'/memory/page/ram/{page}', {'offset': offset, 'data': [0xAA] * len(expected)})
+    # the menu: SYMBOL SHIFT, then CAPS SHIFT, both released (a combined tap may type the letter), then L (compile)
+    emu.post('/keyboard/press', {'key': 'ss'})
+    time.sleep(0.1)
+    emu.post('/keyboard/press', {'key': 'cs'})
+    time.sleep(0.15)
+    emu.post('/keyboard/release', {'key': 'cs'})
+    emu.post('/keyboard/release', {'key': 'ss'})
+    time.sleep(0.6)
+    emu.tap('l')
+    time.sleep(args.wait)
+    emu.screenshot(os.path.abspath(args.source) + '.pasm-3.0.png')
+    data = emu.get(f'/memory/page/ram/{page}?offset={offset}&length={len(expected)}')['data']
+    return bytes(data)
+
+
+def pasm_object_place(address):
+    """Where PASM 3.0 puts the code it compiles (seen in unreal-ng): code from #8000 up in an image of the 48K memory
+    (#8000-#BFFF in RAM page 3, #C000-#FFFF in page 0), code below #8000 from #2000 of page 4 (#E000 there) whatever
+    its ORG; give the ORG as the address there"""
+    if address >= 0xC000:
+        return 0, address - 0xC000
+    if address >= 0x8000:
+        return 3, address - 0x8000
+    return 4, 0x2000
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412', 'zasm315', 'masm11', 'gens4', 'zeus1983', 'primus', 'lasergenius', 'prometheus'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412', 'zasm315', 'masm11', 'gens4', 'zeus1983', 'primus', 'lasergenius', 'prometheus', 'pasm'])
     parser.add_argument('disk', help='the assembler disk, or with --template an idle template snapshot')
     parser.add_argument('--template', action='store_true', help='inject with zxasm into the template snapshot instead (Z1)')
     parser.add_argument('--zxasm', default=os.environ.get('ZXASM', 'zxasm'))
@@ -423,6 +468,8 @@ def main():
             built = lasergenius(emu, args, expected)
         elif args.assembler == 'prometheus':
             built = prometheus(emu, args, expected)
+        elif args.assembler == 'pasm':
+            built = pasm(emu, args, expected)
         elif args.assembler == 'zeus1983':
             built = zeus1983(emu, args, expected)
         elif args.assembler == 'gens4':

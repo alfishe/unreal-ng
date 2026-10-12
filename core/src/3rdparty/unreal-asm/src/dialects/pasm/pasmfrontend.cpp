@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "dialects/common/z80.h"
+#include "dialects/pasm/pasmcurrent.h"
 
 namespace unrealasm::dialects
 {
@@ -223,6 +224,17 @@ void ShiftCurrent(Expr& e, int64_t by)
         ShiftCurrent(a, by);
 }
 
+void ZeroCurrent(Expr& e)
+{
+    if (e.kind == Expr::Kind::Current)
+    {
+        e = Expr::Number(0);
+        return;
+    }
+    for (Expr& a : e.args)
+        ZeroCurrent(a);
+}
+
 bool HasCurrent(const Expr& e)
 {
     if (e.kind == Expr::Kind::Current)
@@ -231,32 +243,6 @@ bool HasCurrent(const Expr& e)
         if (HasCurrent(a))
             return true;
     return false;
-}
-
-/// What $ is in an instruction's operand: the bytes PASM has put when it reads that operand (checked in PASM 3.0).
-/// The first of two operands is read before the opcode (LD ($),A: $ is the instruction's address); the others after
-/// the prefix and opcode (JP $, LD HL,$, JR $: +1; LD BC,($) with ED, LD IX,$ with DD: +2)
-int64_t CurrentShift(const Statement& s, size_t operand)
-{
-    if (s.operands.size() == 2 && operand == 0)
-        return 0;
-    int64_t bytes = 1;
-    bool ed = false;
-    for (const Operand& o : s.operands)
-    {
-        if ((o.kind == Operand::Kind::Register && (o.text == "ix" || o.text == "iy")) || o.kind == Operand::Kind::Indexed ||
-            (o.kind == Operand::Kind::Indirect && (o.text == "ix" || o.text == "iy")))
-            bytes = 2;
-    }
-    // LD rr,(nn) / LD (nn),rr with BC, DE or SP: ED 4B / ED 43 ...
-    if (s.mnemonic == "ld" && s.operands.size() == 2)
-    {
-        const Operand& a = s.operands[0];
-        const Operand& b = s.operands[1];
-        auto pair = [](const Operand& o) { return o.kind == Operand::Kind::Register && (o.text == "bc" || o.text == "de" || o.text == "sp"); };
-        ed = (pair(a) && b.kind == Operand::Kind::Memory) || (a.kind == Operand::Kind::Memory && pair(b));
-    }
-    return ed ? 2 : bytes;
 }
 
 Statement Directive(DirectiveKind kind)
@@ -462,6 +448,12 @@ struct LineParser
                 throw Failure{"EQU without a label"};
             Statement s = Directive(DirectiveKind::Equ);
             s.args.push_back(Parse(one()));
+            if (HasCurrent(s.args[0]))
+            {
+                // PASM 3.0 takes $ in EQU as 0 (K EQU $ after code gave 0) and refuses $+1 there
+                ZeroCurrent(s.args[0]);
+                diagnostics.push_back({Severity::Warning, number, 0, "$ in EQU is 0 in PASM: " + text});
+            }
             line.statements.push_back(std::move(s));
             return;
         }
@@ -501,7 +493,7 @@ struct LineParser
         }
         for (size_t n = 0; n < s.operands.size(); ++n)
             if (HasCurrent(s.operands[n].expr))
-                ShiftCurrent(s.operands[n].expr, CurrentShift(s, n));
+                ShiftCurrent(s.operands[n].expr, pasm::CurrentShift(s, n));
         line.statements.push_back(std::move(s));
     }
 };

@@ -133,6 +133,8 @@ TEST(PasmFrontend_Test, Constructs)
     // $ in an instruction: the bytes put before the operand is read (the first of two operands: before the opcode)
     EXPECT_EQ(ToSjasmplus("        ORG 0\n        JP $\n        LD ($),A\n        LD BC,($)\n        DJNZ $\n"),
               (Lines{"ORG 0", "JP +($+1)", "LD ($),A", "LD BC,(($+2))", "DJNZ +($+1)"}));
+    // $ in EQU is 0 (PASM 3.0: K EQU $ after code gave 0)
+    EXPECT_EQ(ToSjasmplus("        ORG #6000\n        NOP\nK       EQU $\n"), (Lines{"ORG #6000", "NOP", "K EQU 0"}));
     // Without ORG the code goes to 24576 (in the main text only)
     EXPECT_EQ(ToSjasmplus("        NOP\n"), (Lines{"IF $==0", "ORG 24576", "ENDIF", "NOP"}));
 }

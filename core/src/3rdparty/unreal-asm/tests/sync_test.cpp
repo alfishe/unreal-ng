@@ -1014,6 +1014,81 @@ TEST(SyncInject_Test, PrometheusTakesASaveInItsEditor)
     EXPECT_NE(tooLong.error.find("U-TOP"), std::string::npos) << tooLong.error;
 }
 
+TEST(SyncInject_Test, PasmTakesATextInItsEditorAsGetLeavesIt)
+{
+    Dump dump = Load("pasm30-edited");
+    const Dump loaded = Load("pasm30-loaded");
+    const SyncDescriptor* d = FindDescriptor("pasm-3.0");
+    ASSERT_NE(d, nullptr);
+    // its editor waits for a key: the ROM's key scan, then #73CF (the key wait called at #73CC) and #61A6 (page 5 holds
+    // the stack at #5FD3)
+    const std::vector<uint16_t> words = {0x0E6A, 0x6E5C, 0x6635, 0x660D, 0x69B9, 0x5800, 0x0000, 0x0007, 0x73CF, 0x61A6};
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        if (dump.machine.ram[k].page == 5)
+            for (size_t w = 0; w < words.size(); ++w)
+            {
+                dump.pages[k][0x1FD3 + 2 * w] = static_cast<uint8_t>(words[w]);
+                dump.pages[k][0x1FD3 + 2 * w + 1] = static_cast<uint8_t>(words[w] >> 8);
+            }
+    dump.machine.sp = 0x5FD3;
+    std::string why;
+    ASSERT_TRUE(Idle(dump.machine, *d, why)) << why;
+
+    // the text PASM saved after loading TEST: its first line packed into TABs
+    const std::vector<uint8_t>& file = loaded.expected;
+    // no "changed" flag: the edited text is replaced by force (or when it is the caller's own) only
+    EXPECT_FALSE(PlanInject(dump.machine, *d, file).ok);
+    InjectOptions force;
+    force.force = true;
+    force.name = "INJECTED";
+    const InjectPlan plan = PlanInject(dump.machine, *d, file, force);
+    ASSERT_TRUE(plan.ok) << plan.error;
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        for (const InjectPlan::Poke& p : plan.pokes)
+            if (dump.machine.ram[k].page == p.page)
+                dump.pages[k][p.offset] = p.value;
+    const auto byte = [](const Dump& from, uint16_t at) {
+        std::vector<uint8_t> b;
+        EXPECT_TRUE(from.machine.Read(at, 1, b));
+        return b.empty() ? 0 : b[0];
+    };
+    const auto word = [&](const Dump& from, uint16_t at) { return byte(from, at) | (byte(from, static_cast<uint16_t>(at + 1)) << 8); };
+    // the text and its #1A from #79AF
+    for (size_t k = 0; k < file.size(); ++k)
+        EXPECT_EQ(byte(dump, static_cast<uint16_t>(0x79AF + k)), file[k]) << k;
+    EXPECT_EQ(byte(dump, static_cast<uint16_t>(0x79AF + file.size())), 0x1A);
+    EXPECT_EQ(word(dump, 0x7747), static_cast<int>(file.size()));   // its length
+    EXPECT_EQ(word(dump, 0x7802), 10);                              // the cursor line's: "\tORG #6000"
+    // as GET left the editor: the last line's number, the cursor on the first line, its line buffer, the marks
+    for (const uint16_t at : {0x7752, 0x775B, 0x7383, 0x6525, 0x63CA, 0x6C54, 0x6DFE, 0x6E00, 0x74E9, 0x76E9})
+        EXPECT_EQ(word(dump, at), word(loaded, at)) << std::hex << at;
+    for (uint16_t at = 0x7342; at < 0x7342 + 64; ++at)
+        EXPECT_EQ(byte(dump, at), byte(loaded, at)) << std::hex << at;
+    for (const uint16_t at : {0x6CD0, 0x6D31, 0x6B48})
+        EXPECT_EQ(byte(dump, at), 0) << std::hex << at;
+    EXPECT_EQ(byte(dump, 0x73B6), 0xFF);   // redrawn on the editor's next entry
+    std::vector<uint8_t> name;
+    ASSERT_TRUE(dump.machine.Read(0x7391, 8, name));
+    EXPECT_EQ(std::string(name.begin(), name.end()), "INJECTED");
+    // read back as SAVE writes it: the file written
+    const SyncText back = ReadText(dump.machine, *d);
+    ASSERT_TRUE(back.ok) << back.state;
+    EXPECT_EQ(back.file, file);
+    // now the caller's own: replaced without force
+    InjectOptions own;
+    own.written = {file};
+    EXPECT_TRUE(PlanInject(dump.machine, *d, file, own).ok);
+
+    // the text stays below #C000
+    const std::string line = "        NOP\r\n";
+    std::vector<uint8_t> large;
+    while (large.size() < 0xC000 - 0x79AF + 16)
+        large.insert(large.end(), line.begin(), line.end());
+    const InjectPlan tooLong = PlanInject(dump.machine, *d, large, force);
+    EXPECT_FALSE(tooLong.ok);
+    EXPECT_NE(tooLong.error.find("#C000"), std::string::npos) << tooLong.error;
+}
+
 TEST(SyncInject_Test, Gens4TakesAFileAtItsPromptAsGLeavesIt)
 {
     Dump dump = Load("gens4-loaded");

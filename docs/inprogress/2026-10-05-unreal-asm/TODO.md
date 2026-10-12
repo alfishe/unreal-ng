@@ -213,7 +213,7 @@ phase; master only after the owner's review.
       - [ ] ZX-ASM 3.0 / 3.10 / ZAsm 3.2x-4.20 inject rules; the editor redrawn after an inject; ZAsm idle templates
       - [x] MASM 1.1 / 1.3 (2026-10-11, research-sjasmplus-to-masm.md): backend, inject at its prompt as LOAD leaves a file; MASM 1.1 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
       - [ ] MASM 1.0 demo / 2.0 / 3.0 inject rules; MASM idle templates
-    - [ ] Z4 48K targets: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
+    - [x] Z4 48K targets: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM (2026-10-12; other builds' rules and templates below)
       - [x] GENS4 (2026-10-11, research-sjasmplus-to-gens.md): backend (`ChainWriter`), inject at its `>` prompt; GENS4 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes; the live synchronizer reads 48K machines (page 5)
       - [ ] GENS3M21 / 4.3t / 4B inject rules
       - [x] ZEUS 1983 (2026-10-11, research-sjasmplus-to-zeus.md): backend (1983 / GG / PHT texts), inject at its prompt; ZEUS 1983 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
@@ -223,6 +223,8 @@ phase; master only after the owner's review.
       - [ ] Laser Genius with the hash extensions (end `(#ADA1)`) inject rule; LG idle templates
       - [x] PROMETHEUS 48K (2026-10-12, research-sjasmplus-to-prometheus.md): backend (`ChainWriter`, every line through its record encoder), inject in its editor (records, table, its pointers); PROMETHEUS assembled `oracle1.asm` and every instruction form (with its 599 labels) to sjasmplus' bytes, injected and from tape; its `$` in an instruction (where the value goes) found and modelled both ways
       - [ ] PROMETHEUS idle templates; the 128K edition and the TR-DOS adaptations (other addresses)
+      - [x] Power Assembler 3.0 (2026-10-12, research-sjasmplus-to-pasm.md): backend (`ChainWriter`; one ORG, DISP blocks as EQU of their run addresses, 64 columns a line), inject in its editor as ZAP and GET leave it; PASM 3.0 compiled `oracle1.asm` and every instruction form to sjasmplus' bytes, injected and loaded with GET; its `$` in EQU (0) found, the frontend fixed
+      - [ ] PASM idle templates
     - [ ] Z5 sjasmplus frontend coverage of real projects (STRUCT, MODULE, DEVICE / SLOT / PAGE, SAVEBIN, DEFINE)
   - First cuts: ALASM both ways about 14 days; + TASM 4.12 about 20; + watch / push watch, hints, live labels, Qt dock about 27
 

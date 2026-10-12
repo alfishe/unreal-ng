@@ -59,6 +59,14 @@ SWITCHES = {
         ('TS-Conf 16C 360x288 (V_CONFIG = #C1)', [0xF3, 0x01, 0xAF, 0x00, 0x3E, 0xC1, 0xED, 0x79, 0x18, 0xFE]),
         ('TS-Conf TXT 360x288 (V_CONFIG = #C3)', [0xF3, 0x01, 0xAF, 0x00, 0x3E, 0xC3, 0xED, 0x79, 0x18, 0xFE]),
     ],
+    # Pentagon-1024 (started with ram_size 1024): the #EFF7 feature register; the AlCo bits are exclusive
+    'PENTAGON-1024': [
+        ('Pentagon 16c (#EFF7 = #01)', [0xF3, 0x01, 0xF7, 0xEF, 0x3E, 0x01, 0xED, 0x79, 0x18, 0xFE]),
+        ('Pentagon HiRes 512 (#EFF7 = #02)', [0xF3, 0x01, 0xF7, 0xEF, 0x3E, 0x02, 0xED, 0x79, 0x18, 0xFE]),
+        ('Pentagon multicolor (#EFF7 = #20)', [0xF3, 0x01, 0xF7, 0xEF, 0x3E, 0x20, 0xED, 0x79, 0x18, 0xFE]),
+        ('Pentagon 384x304 (#EFF7 = #40)', [0xF3, 0x01, 0xF7, 0xEF, 0x3E, 0x40, 0xED, 0x79, 0x18, 0xFE]),
+        ('Pentagon ZX (#EFF7 = #00)', [0xF3, 0x01, 0xF7, 0xEF, 0x3E, 0x00, 0xED, 0x79, 0x18, 0xFE]),
+    ],
     'PROFI': [('Profi 512x240 (#DFFD bit 7)', [0xF3, 0x01, 0xFD, 0xDF, 0x3E, 0x80, 0xED, 0x79, 0x18, 0xFE])],
 }
 
@@ -206,13 +214,17 @@ def main():
     if not models:
         sys.exit(f'no answer from {args.url}: is the emulator running?')
     names = [m['name'] for m in models if m.get('creatable')]
+    if 'PENTAGON' in names and args.switch:
+        names.append('PENTAGON-1024')
     if args.model:
         names = [n for n in names if n.lower() in {m.lower() for m in args.model}]
 
     problems = []
     chrome = None
     for name in names:
-        started = api.call('POST', '/emulator/start', {'model': name})
+        # "PENTAGON-1024" is PENTAGON with 1024 KB of RAM: the model whose port decoder owns #EFF7
+        body = {'model': 'PENTAGON', 'ram_size': 1024} if name == 'PENTAGON-1024' else {'model': name}
+        started = api.call('POST', '/emulator/start', body)
         emulator = started.get('id')
         if not emulator:
             problems.append(f'{name}: could not start: {started}')
