@@ -24,8 +24,8 @@ PLAN.md row **#95**.
   check; interleaved and associated ISO files read as ordinary ones; `keep-both` not protecting a host-changed file
   from a guest delete; a guest `rmdir` taking a host folder with host-only files under `trash` / `move`; a commit
   leaving `<descriptor>.delta` behind. Open points it found (designed, not built):
-  - [ ] FR-6: a folder layer applies only `manifest.exclude`; the manifest's `order`, `files` names, `codepage` and `label` are ignored
-  - [ ] FR-14: the descriptor's per-directory `order` is parsed and ignored
+  - [x] FR-6 (2026-10-11, owner: the descriptor wins): the manifest's `order`, `files` names, and the bottom layer's `codepage` / `label`
+  - [x] FR-14 (2026-10-11): a layer's `order` per target directory
   - [x] FR-21: `onBadName: replace` (2026-10-11, owner: `_`); a long name with `\ / : * ? " < > |` or a control character is no longer stored as it is (skipped by default)
   - [ ] NFR-M5: no extent budget (extents are only coalesced)
   - [ ] FR-45: commit of a partitioned composite (refused: the base must be a graft)

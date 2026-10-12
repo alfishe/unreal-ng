@@ -332,6 +332,22 @@ TEST_P(ComposeWriteBack_Test, TrashMovesToTheHostTrash)
 #endif
 }
 
+/// FR-6: a file the folder manifest renamed is written back into its own host file, not a new one under its name
+TEST_P(ComposeWriteBack_Test, RenamedByTheManifestGoesBackToItsHostFile)
+{
+    _folder.File("work/.unreal-media.yaml", "files:\n  TOOL.TXT: {name: T.TXT}\n");
+    Insert();
+    {
+        FatGuest g = Guest();
+        ASSERT_TRUE(g.Write("/WORK/T.TXT", std::vector<uint8_t>{'t', 'o', 'o', 'l', ' ', 'v', '2'}));
+    }
+    const MediaResult result = WriteBack();
+    ASSERT_TRUE(result.Ok()) << result.message << "\n" << Join(result.report);
+    EXPECT_EQ(Text(_folder.Path() / "work/TOOL.TXT"), "tool v2");
+    EXPECT_FALSE(std::filesystem::exists(_folder.Path() / "work/T.TXT"));
+    EXPECT_EQ(Read("/WORK/T.TXT"), "tool v2");
+}
+
 /// C8d: attribute changes go to <descriptor>.attributes and come back on the next build; the host files are untouched
 TEST_P(ComposeWriteBack_Test, AttributesGoToTheSidecar)
 {

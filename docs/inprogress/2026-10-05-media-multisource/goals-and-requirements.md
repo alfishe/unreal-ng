@@ -12,7 +12,7 @@
 
 **Status:** every goal is met. 7 requirements are met only in part:
 
-- FR-6 and FR-14 each lack one option (FR-21's `onBadName: replace` was built 2026-10-11);
+- FR-6, FR-14 and FR-21 were completed 2026-10-11 (manifest, `order`, `onBadName: replace`);
 - FR-45 cannot commit a partitioned disk;
 - FR-54 takes no disposition;
 - NFR-M5 has no extent budget;
@@ -42,7 +42,6 @@ What changed in this document:
   - D-4: a trash failure surfaces at apply, not in the plan.
   - D-8: a plain `save`, an eject with `save` and the emulator closing follow `writes.save` (2026-10-09).
 - Gaps found, not in [TODO.md](TODO.md) before:
-  - the descriptor's per-directory `order` (FR-14) is parsed but not applied;
   - a folder layer takes only `exclude` from its manifest (FR-6);
   - there is no extent budget (NFR-M5);
   - a partitioned composite cannot be committed (FR-45).
@@ -158,7 +157,7 @@ conflicts, delta, commit, eject, rescan) is drawn as a decision tree; the map of
 | FR-3 | **Layers** are listed bottom first. Each has a source (`folder`, `image` with an optional `partition`, `iso`), an optional `from` subpath inside the source, a `mount` path in the target, `include` / `exclude` wildcards, a `conflict` policy, `whiteout` paths and an `opaque` directory list. | met (C2, C3, C5). `partition` is an MBR primary entry 1-4. `iso` takes ISO, CUE / BIN or a CD CHD (the first data track). S4 adds `writable`, `onDelete` and `deletedFolder` (C8) |
 | FR-4 | Paths in a descriptor are relative to the descriptor file. `~` expands to the home folder. Absolute paths are allowed. Nothing in the descriptor is machine specific unless the user writes it. | met (C2) |
 | FR-5 | **Partitions** mode lists partitions instead of layers. Each partition is a passthrough of an image's partition or a nested composition. | met (C7) |
-| FR-6 | A folder layer honors the folder's own `.unreal-media.yaml` manifest (`exclude`, `order`, per-file names). The descriptor's settings win over the manifest's. | **partly**: only the manifest's `exclude` is applied, added to the layer's (`CompositeMediumFactory::Build`). Its `order` and `files` names are not used, and neither are its `codepage` and `label`. The manifest's report lines are passed on |
+| FR-6 | A folder layer honors the folder's own `.unreal-media.yaml` manifest (`exclude`, `order`, per-file names). The descriptor's settings win over the manifest's. | met 2026-10-11 (owner: the descriptor wins). A folder layer applies its manifest's `exclude`, `files.<name>.name` (renames, written back to the right host file) and `order` (for the folder's root, when the layer starts there); the bottom folder layer's `label` and `codepage` serve the volume when the target sets none. The manifest is part of the content id |
 | FR-7 | Inline descriptors: the WebAPI, MCP and scripting surfaces accept the descriptor body as JSON instead of a file path. | met (C2: `MediaControl` takes `{...}` text in place of a path; WebAPI insert takes a `descriptor` object). An inline descriptor has no default `.delta` and cannot take write-back |
 
 ### 5.2 Union semantics
@@ -169,7 +168,7 @@ conflicts, delta, commit, eject, rescan) is drawn as a decision tree; the map of
 | FR-11 | Paths are compared under the **target file system's equivalence**. FAT compares case-insensitively, after long-name and 8.3 mapping. ISO compares the Joliet name case-sensitively and the ISO name in upper case. `Readme.txt` in one layer and `README.TXT` in another are the same target entry. | met: the FAT key (C1, ACC-C1) and `UnionBuilder::ExactKey` for ISO (C5) |
 | FR-12 | Every shadowing, whiteout, filter exclusion, name change and skip is listed in the medium's **build report**, grouped per layer. | met: each line names its layer (`layer 'x': ...`). Lines are in build order, not grouped |
 | FR-13 | The `conflict` policy per layer: `shadow` (default) means the upper entry wins. `keep-lower` means the lower entry wins. `error` means any shadowing fails the build. | met (C1) |
-| FR-14 | Entry order inside a directory is deterministic: the descriptor's `order` for that directory first, then directories, then files, byte-wise by UTF-8 name. Two hosts give the same bytes. | **partly**: directories first, then files, byte-wise. The layer key `order` is parsed and ignored: `composedescriptor.cpp` marks it "phase C2b", and there is no such phase. Not in [TODO.md](TODO.md) |
+| FR-14 | Entry order inside a directory is deterministic: the descriptor's `order` for that directory first, then directories, then files, byte-wise by UTF-8 name. Two hosts give the same bytes. | met 2026-10-11: directories first, then files, byte-wise; a layer's `order` (`{/: [boot.$c], /GAMES: [...]}`, target paths) puts the named entries first, after a folder manifest's `order` (the descriptor wins). ISO targets keep ISO 9660's sorted order |
 
 ### 5.3 Validation and compatibility
 

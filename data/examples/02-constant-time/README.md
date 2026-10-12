@@ -39,7 +39,7 @@ python3 ../01-section-timing/profile_sections.py --model PENTAGON \
 | Option | Here |
 |:--|:--|
 | `--section Dispatch` | Entry at label `Dispatch`, exit at `Dispatch.End`. For other labels: `--section name=ENTRY:EXIT`. |
-| `--expect Dispatch=354` | Every pass must take 354 T-states. The report lists the passes that do not. |
+| `--expect Dispatch=354` | Every pass must take 354 T-states, interrupts left out (net). The report lists the passes that do not. |
 | `--group-by iy` | Notes IY at every entry, i.e. which handler runs, and groups the passes by it. Values that match a label show its name. |
 | `--show-regs a_,b` | Notes A' and B at the entry and shows them next to every pass that is off. These are the data the JR C depends on. |
 | `--break-on-mismatch` | Pauses at the exit of the first pass that is off. The registers in the debugger are then those of that pass. |
@@ -72,5 +72,7 @@ Dispatch: 228 pass(es) did not take 354 T-states (-5: 187, -2: 24, +3: 17)
 
 - **Speed.** Two HTTP requests per marker, so the example measures about 400 passes in a few seconds. For code that
   runs thousands of times per frame, measure a sample of passes (`--passes`), not every one.
-- **Interrupts.** An interrupt that comes in during a pass makes it longer. The pass list counts them in the
-  *Interrupts* column. Constant-time code usually runs with interrupts off, as it does here.
+- **Interrupts.** This program runs the timed code with interrupts off. With them on, an interrupt that lands in a
+  pass makes it longer, and the *Interrupts* column counts it; `--expect` compares the net time, from which the
+  interrupt is taken out exactly (acknowledge, vector, handler, `RETI`), so an interrupted pass of correct code is
+  still 354 and is not reported.

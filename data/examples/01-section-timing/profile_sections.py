@@ -3,9 +3,10 @@
 
 A section is a piece of code with an entry address and one or more exit addresses. Every entry pushes the
 global T-state count (frame * frame length + T in the frame, so it runs on across frames) on a stack, every
-exit pops it: count, min, max and sum per section. An interrupt section (the frame interrupt's handler)
-taken while other sections are open is counted in them: how many interrupts came in and how many T-states
-they took ("net" = without them).
+exit pops it: count, min, max and sum per section. A maskable interrupt accepted while sections are open is
+counted in them with its exact cost: from the instruction boundary where it was accepted to the CPU's return to
+the interrupted instruction (acknowledge, a JP in the vector table, the handler, RETI). "Net" is a pass without
+them; --expect checks the net time, so constant-time code can also be checked with interrupts on.
 
     python3 profile_sections.py                                  # demo.sna on a new 48K, 100 frames
     python3 profile_sections.py --model PENTAGON --frames 200
@@ -54,7 +55,7 @@ class Section:
                             "key": key, "regs": regs})
 
     def mismatches(self):
-        return [p for p in self.passes if self.expected is not None and p["elapsed"] != self.expected]
+        return [p for p in self.passes if self.expected is not None and p["net"] != self.expected]
 
     def stats(self):
         n = len(self.passes)
@@ -97,6 +98,41 @@ class Open:
         self.regs = regs
         self.interrupts = 0
         self.interrupt_t = 0
+
+
+ACKNOWLEDGE = {0: 13, 1: 13, 2: 19}   # T-states of the INT acknowledge with the PC push (IM 2: + the vector read)
+
+
+class Interrupt:
+    """An accepted interrupt the CPU has not come back from yet."""
+
+    def __init__(self, ret, sp, start, inside, event):
+        self.ret = ret           # the interrupted instruction: the CPU comes back there
+        self.sp = sp             # SP once the handler has returned (tells a return from a later call there)
+        self.start = start       # global T of the boundary where the interrupt was accepted
+        self.inside = inside     # the passes open at that moment
+        self.event = event
+
+
+def interrupt_entry(emu, snap, choice, symbols, by_name):
+    """Where an accepted maskable interrupt lands. auto: #0038 in IM 1, in IM 2 the vector-table word at
+    I * 256 + #FF (the data bus floats to #FF on a Spectrum); a section name (its entry), a label or an address;
+    none: interrupts are not followed."""
+    if choice == "none":
+        return None
+    if choice in by_name:
+        return by_name[choice].entry
+    if choice != "auto":
+        return resolve(choice, symbols)
+    im = snap["regs"]["interrupt"]["im"]
+    if im == 1:
+        return 0x0038
+    if im == 2:
+        vector = register_value(snap["regs"], "i") * 256 + 0xFF
+        low, high = bytearray(emu.read_memory(vector, 2))
+        return low | high << 8
+    print("IM 0: interrupts are not followed (give --interrupt ADDR)")
+    return None
 
 
 def percentile(values, p):
@@ -200,7 +236,8 @@ def write_markdown(path, run, sections, interrupt_events, frame_t, group_by, lab
         lines += ["> **Stopped:** {}".format(run["stop"]), ""]
 
     lines += ["## Summary", "",
-              "T-states per pass. *Net* leaves out the interrupts that came in during the pass; "
+              "T-states per pass. *Net* leaves out the interrupts that came in during the pass, each from the "
+              "boundary where it was accepted to the return; "
               "*% frame* is the average against one frame of {} T-states.".format(frame_t), "",
               "| Section | Entry | Exit | Passes | Min | Avg | P95 | Max | Net max | % frame | Load | Interrupted |",
               "|:--|:--|:--|--:|--:|--:|--:|--:|--:|--:|:--|--:|"]
@@ -226,7 +263,7 @@ def write_markdown(path, run, sections, interrupt_events, frame_t, group_by, lab
         lines += ["## Expected time", "",
                   "| Section | Expected | Passes | As expected | Different | Seen |", "|:--|--:|--:|--:|--:|:--|"]
         for s in checked:
-            seen = sorted({p["elapsed"] for p in s.passes})
+            seen = sorted({p["net"] for p in s.passes})
             lines.append("| {} | {} | {} | {} | {} | {} |".format(
                 s.name, s.expected, len(s.passes), len(s.passes) - len(s.mismatches()), len(s.mismatches()),
                 ", ".join(str(v) for v in seen[:8]) + (" ..." if len(seen) > 8 else "")))
@@ -238,18 +275,18 @@ def write_markdown(path, run, sections, interrupt_events, frame_t, group_by, lab
                 continue
             offs = {}
             for p in wrong:
-                offs[p["elapsed"] - s.expected] = offs.get(p["elapsed"] - s.expected, 0) + 1
+                offs[p["net"] - s.expected] = offs.get(p["net"] - s.expected, 0) + 1
             lines += ["{}: {} pass(es) did not take {} T-states ({}){}.".format(
                           s.name, len(wrong), s.expected,
                           ", ".join("{:+d}: {}".format(o, n) for o, n in sorted(offs.items())),
                           ", the first 50 below" if len(wrong) > 50 else ""), "",
-                      "| Frame | T at entry | {} | T-states | Off by | Interrupts |{}".format(
+                      "| Frame | T at entry | {} | T-states | Net | Off by | Interrupts |{}".format(
                           group_by.upper() if group_by else "Key",
                           "".join(" {} |".format(reg_title(r)) for r in show_regs)),
-                      "|--:|--:|:--|--:|--:|--:|" + "--:|" * len(show_regs)]
+                      "|--:|--:|:--|--:|--:|--:|--:|" + "--:|" * len(show_regs)]
             for p in wrong[:50]:
-                lines.append("| {} | {} | {} | {} | {:+d} | {} |{}".format(
-                    p["frame"], p["t"], key_name(p["key"], labels), p["elapsed"], p["elapsed"] - s.expected,
+                lines.append("| {} | {} | {} | {} | {} | {:+d} | {} |{}".format(
+                    p["frame"], p["t"], key_name(p["key"], labels), p["elapsed"], p["net"], p["net"] - s.expected,
                     p["interrupts"], "".join(" {} |".format(reg_text(p["regs"].get(r), r)) for r in show_regs)))
             lines.append("")
 
@@ -260,12 +297,12 @@ def write_markdown(path, run, sections, interrupt_events, frame_t, group_by, lab
             if not groups:
                 continue
             lines += ["### {}".format(s.name), "",
-                      "| {} | Passes | Min | Max | {}".format(group_by.upper(),
+                      "| {} | Passes | Net min | Net max | {}".format(group_by.upper(),
                                                             "Different |" if s.expected is not None else "|"),
                       "|:--|--:|--:|--:|" + ("--:|" if s.expected is not None else "")]
             for key in sorted(groups, key=lambda k: (k is None, k)):
                 passes = groups[key]
-                elapsed = [p["elapsed"] for p in passes]
+                elapsed = [p["net"] for p in passes]
                 row = "| {} | {} | {} | {} |".format(key_name(key, labels), len(passes), min(elapsed), max(elapsed))
                 if s.expected is not None:
                     row += " {} |".format(sum(1 for v in elapsed if v != s.expected))
@@ -296,9 +333,10 @@ def write_markdown(path, run, sections, interrupt_events, frame_t, group_by, lab
                   "{} interrupt(s) came in while a section was open{}.".format(
                       len(interrupt_events), ", the first {} below".format(len(shown)) if len(shown) < len(
                           interrupt_events) else ""), "",
-                  "| Frame | T | Inside | T-states into it |", "|--:|--:|:--|--:|"]
+                  "| Frame | T | Interrupted at | Inside | T-states into it | Cost |", "|--:|--:|:--|:--|--:|--:|"]
         for e in shown:
-            lines.append("| {} | {} | {} | {} |".format(e["frame"], e["t"], e["section"], e["into"]))
+            lines.append("| {} | {} | {} | {} | {} | {} |".format(e["frame"], e["t"], key_name(e["at"], labels),
+                                                                e["section"], e["into"], e.get("cost", "-")))
         lines.append("")
 
     with open(path, "w") as f:
@@ -326,7 +364,7 @@ def dashboard(title, done, frames, hits, started, sections, frame_t, events):
         avg = sum(elapsed_list) / float(n)
         note = ""
         if s.expected is not None:
-            off = sum(1 for v in elapsed_list if v != s.expected)
+            off = sum(1 for p in s.passes if p["net"] != s.expected)
             note = tui.red("{} off {}".format(off, s.expected)) if off else tui.green("all {}".format(s.expected))
         interrupted = sum(1 for p in s.passes if p["interrupts"])
         if interrupted:
@@ -352,13 +390,19 @@ def main():
     ap.add_argument("--sym", default=os.path.join(HERE, "demo.sym"), help="sjasmplus --sym labels")
     ap.add_argument("--section", action="append", metavar="SPEC",
                     help="NAME (labels NAME / NAME.End) or NAME=ENTRY:EXIT[,EXIT]; repeat. Default: every NAME.End")
-    ap.add_argument("--interrupt", default="Isr", help="the section that is the frame interrupt (default Isr)")
+    ap.add_argument("--interrupt", default="auto", metavar="auto|none|ADDR",
+                    help="where an accepted interrupt lands: auto (IM 1 #0038, IM 2 from I and the vector table), "
+                         "a section name, a label or an address; none: not followed")
+    ap.add_argument("--recursive", action="store_true",
+                    help="a section may be entered again before it is left (recursion); by default a second entry "
+                         "means the first one was left without its exit, and that pass is dropped")
     ap.add_argument("--frames", type=int, default=100, help="how long to measure")
     ap.add_argument("--warmup", type=int, default=10, help="frames run before measuring (the demo sets up for ~4)")
     ap.add_argument("--break-if", action="append", default=[], metavar="NAME>T",
                     help="pause when one pass of NAME takes more than T t-states")
     ap.add_argument("--expect", action="append", default=[], metavar="NAME=T",
-                    help="every pass of NAME must take exactly T t-states: the report lists the ones that do not")
+                    help="every pass of NAME must take exactly T t-states, interrupts left out (net): the report "
+                         "lists the ones that do not")
     ap.add_argument("--break-on-mismatch", action="store_true", help="pause at the first pass off its --expect")
     ap.add_argument("--group-by", metavar="REG",
                     help="note a register at every entry (iy, hl, a, ...): the report groups the passes by its value")
@@ -392,7 +436,6 @@ def main():
     for name in thresholds:
         if name not in by_name:
             raise SystemExit("--break-if: no section {}".format(name))
-    interrupt = by_name.get(args.interrupt)
     show_regs = [r.strip().lower() for r in args.show_regs.split(",")] if args.show_regs else []
     stop_at = resolve(args.stop_at, symbols) if args.stop_at else None
 
@@ -415,6 +458,7 @@ def main():
     interrupted = False
     exit_code = 0
     breakpoints = []
+    returns = {}             # interrupted address -> [breakpoint id, uses]: where the CPU comes back
     try:
         emu.mute()
         emu.pause()
@@ -435,8 +479,14 @@ def main():
             events.setdefault(s.entry, []).append(("entry", s))
         if stop_at is not None:
             events.setdefault(stop_at, []).append(("stop", None))
+        landing = interrupt_entry(emu, emu.snapshot(), args.interrupt, symbols, by_name)
+        if landing is not None:
+            events.setdefault(landing, [])
         for address in events:
             breakpoints.append(emu.add_breakpoint(address, note="profile_sections", group="profile_sections"))
+        pending = []             # accepted interrupts not returned from yet, innermost last
+        print("interrupts: {}".format("land at " + key_name(landing, labels) if landing is not None
+                                      else "not followed"))
 
         if emu.implicit_session:
             print("the emulator opened a session for us by itself (the automation gate): {}".format(
@@ -477,17 +527,51 @@ def main():
                 hits += 1
                 panel.draw(dashboard(title, frame - start_frame, args.frames, hits, started, sections, frame_t,
                                      recent))
-                for kind, s in events.get(stop.get("address"), []):
+                pc = stop.get("address")
+
+                # back from an interrupt: its whole cost goes to the passes that were open when it came
+                while pending and pending[-1].ret == pc and pending[-1].sp == register_value(snap["regs"], "sp"):
+                    p = pending.pop()
+                    cost = now - p.start
+                    for o in p.inside:
+                        o.interrupt_t += cost
+                    p.event["cost"] = cost
+                    returns[pc][1] -= 1
+                    if not returns[pc][1]:
+                        emu.remove_breakpoint(returns.pop(pc)[0])
+
+                # an accepted interrupt lands here: it was accepted one acknowledge earlier, at the return address
+                if pc == landing:
+                    sp = register_value(snap["regs"], "sp")
+                    low, high = bytearray(emu.read_memory(sp, 2))
+                    ret = low | high << 8
+                    boundary = now - ACKNOWLEDGE[snap["regs"]["interrupt"]["im"]]
+                    ev = {"frame": frame, "t": t, "at": ret,
+                          "section": ", ".join(o.section.name for o in stack),
+                          "into": boundary - stack[-1].start if stack else 0}
+                    for o in stack:
+                        o.interrupts += 1
+                    if stack:
+                        interrupt_events.append(ev)
+                        event("frame {:>5} t {:>5}: interrupt at {} inside {} (+{} t-states into it)".format(
+                            frame, t, key_name(ret, labels), ev["section"], ev["into"]))
+                    pending.append(Interrupt(ret, sp + 2, boundary, list(stack), ev))
+                    if ret in returns:
+                        returns[ret][1] += 1
+                    else:
+                        returns[ret] = [emu.add_breakpoint(ret, note="profile_sections", group="profile_sections"), 1]
+
+                for kind, s in events.get(pc, []):
                     if kind == "stop":
                         stop_reason = "stopped at {} (frame {}, t {})".format(args.stop_at, frame, t)
                     elif kind == "entry":
-                        if s is interrupt:
-                            for o in stack:
-                                o.interrupts += 1
-                                interrupt_events.append({"frame": frame, "t": t, "section": o.section.name,
-                                                         "into": now - o.start})
-                                event("frame {:>5} t {:>5}: interrupt inside {} (+{} t-states into it)".format(
-                                    frame, t, o.section.name, now - o.start))
+                        # entered again while still open: the open pass left without its exit (a JR elsewhere),
+                        # so it and whatever opened inside it are dropped, unless the code really recurses
+                        if not args.recursive:
+                            depth = next((i for i, o in enumerate(stack) if o.section is s), None)
+                            if depth is not None:
+                                dropped += len(stack) - depth
+                                del stack[depth:]
                         key = register_value(snap["regs"], args.group_by) if args.group_by else None
                         noted = {r: register_value(snap["regs"], r) for r in show_regs}
                         stack.append(Open(s, now, frame, t, key, noted))
@@ -506,22 +590,20 @@ def main():
                         s.add(o.frame, o.t, elapsed, elapsed - o.interrupt_t, o.interrupts, o.key, o.regs)
                         if args.passes and sum(len(x.passes) for x in sections) >= args.passes:
                             end_frame = frame
-                        if s is interrupt:
-                            for outer in stack:
-                                outer.interrupt_t += elapsed
                         where = "frame {}{}{}".format(o.frame, ", {} = {}".format(
                             args.group_by.upper(), key_name(o.key, labels)) if args.group_by else "",
                             "".join(", {} = {}".format(reg_title(r), reg_text(v, r)) for r, v in o.regs.items()))
-                        if s.expected is not None and elapsed != s.expected:
-                            event("frame {:>5}: {} took {} ({:+d}; {})".format(
-                                o.frame, s.name, elapsed, elapsed - s.expected, where))
+                        net = elapsed - o.interrupt_t
+                        if s.expected is not None and net != s.expected:
+                            event("frame {:>5}: {} took {} net ({:+d}; {})".format(
+                                o.frame, s.name, net, net - s.expected, where))
                         limit = thresholds.get(s.name)
                         if limit is not None and elapsed > limit:
                             stop_reason = "{} took {} t-states > {} ({}, {} interrupt(s) inside, {} net)".format(
                                 s.name, elapsed, limit, where, o.interrupts, elapsed - o.interrupt_t)
-                        if args.break_on_mismatch and s.expected is not None and elapsed != s.expected:
-                            stop_reason = "{} took {} t-states, expected {} ({:+d}; {})".format(
-                                s.name, elapsed, s.expected, elapsed - s.expected, where)
+                        if args.break_on_mismatch and s.expected is not None and net != s.expected:
+                            stop_reason = "{} took {} t-states, {} net, expected {} ({:+d}; {})".format(
+                                s.name, elapsed, net, s.expected, net - s.expected, where)
         except (ConnectionLost, InstanceGone) as e:
             lost = str(e)
             stop_reason = "lost the emulator at frame {}: {}".format(frame - start_frame, e)
@@ -548,6 +630,7 @@ def main():
                 s.name, st["count"], st["min"], st["avg"], st["max"], 100.0 * st["avg"] / frame_t, st["net_min"],
                 st["net_max"], st["interrupted_passes"], st["count"], st["interrupts"],
                 "   expected {}: {} off".format(s.expected, st["mismatches"]) if s.expected is not None else ""))
+        dropped += len(stack)    # still open at the end
         print("{} marker hits; {} exits without an entry, {} entries never left".format(hits, orphan_exits, dropped))
 
         run = {
@@ -557,6 +640,7 @@ def main():
             "emulator": emu.server.describe(),
             "program": os.path.basename(args.snapshot) if created else None,
             "frame_t": frame_t,
+            "interrupt_entry": key_name(landing, labels) if landing is not None else "not followed",
             "frames": "{} (frames {} .. {})".format(frame - start_frame, start_frame, frame),
             "marker_hits": hits,
             "exits_without_entry": orphan_exits,
@@ -609,7 +693,7 @@ def main():
     finally:
         if not lost:
             try:
-                for b in breakpoints:
+                for b in breakpoints + [r[0] for r in returns.values()]:
                     emu.remove_breakpoint(b)
                 if created and not args.keep and not paused_for_user:
                     emu.remove()

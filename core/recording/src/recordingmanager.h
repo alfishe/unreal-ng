@@ -460,6 +460,7 @@ protected:
     FrameScaler::Scaler _outputScaler;  ///< Reused per frame: the picture scaled into the fixed frame
     std::vector<uint8_t> _cropBuffer;  // Reused per-frame when cropping
     std::vector<uint8_t> _fitBuffer;  // Reused per-frame: the screen region's current window fitted into the file's size
+    double _pictureAspect = 0.0;  // CRT shape of a MainScreen recording's window (0: the whole frame's 352:288)
     std::vector<uint8_t> _aspectBuffer;  // Reused per-frame: the half-height TS-Conf lines doubled
     // Size of the first encoded frame: the encoders take one size per file, so a
     // picture of another size (an external picture source switched on or off,
