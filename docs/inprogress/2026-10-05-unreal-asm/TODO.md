@@ -219,6 +219,8 @@ phase; master only after the owner's review.
       - [x] ZEUS 1983 (2026-10-11, research-sjasmplus-to-zeus.md): backend (1983 / GG / PHT texts), inject at its prompt; ZEUS 1983 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
       - [ ] ZEUS GG / 1.1 / v7.E inject rules and emulator checks of their texts
       - [x] Primus 2.9 (2026-10-11, research-sjasmplus-to-zeus.md §4.1): the ZEUS backend's `primus` text, inject at its prompt; Primus 2.9 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
+      - [x] Laser Genius 1.04 (2026-10-12, research-sjasmplus-to-lasergenius.md): backend, inject in its editor (its screen lines moved behind the text); LG 1.04 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes; its `(IX-` / `(IY-` bug written around
+      - [ ] Laser Genius with the hash extensions (end `(#ADA1)`) inject rule; LG idle templates
     - [ ] Z5 sjasmplus frontend coverage of real projects (STRUCT, MODULE, DEVICE / SLOT / PAGE, SAVEBIN, DEFINE)
   - First cuts: ALASM both ways about 14 days; + TASM 4.12 about 20; + watch / push watch, hints, live labels, Qt dock about 27
 

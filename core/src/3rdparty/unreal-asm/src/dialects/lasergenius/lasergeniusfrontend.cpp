@@ -1,6 +1,8 @@
 #include "dialects/lasergenius/lasergeniusfrontend.h"
 
+#include <algorithm>
 #include <cctype>
+#include <functional>
 #include <set>
 #include <string_view>
 
@@ -346,6 +348,7 @@ struct LineParser
     uint32_t number = 0;
     bool put = false;   ///< a PUT in force: the bytes go elsewhere than the addresses say
     int puts = 0;
+    int orgs = 0;
 
     Expr Parse(std::string_view text) const
     {
@@ -395,8 +398,9 @@ struct LineParser
                 {
                     o.kind = Operand::Kind::Indexed;
                     o.text = z80::Lower(upperInner.substr(0, 2));
-                    o.expr = displacement[0] == '+' ? Parse(std::string_view(displacement).substr(1))
-                                                    : Expr::Unary(Op::Negate, Grouped(Parse(std::string_view(displacement).substr(1))));
+                    Expr d = Parse(std::string_view(displacement).substr(1));
+                    const bool atom = d.kind == Expr::Kind::Number || d.kind == Expr::Kind::Symbol;
+                    o.expr = displacement[0] == '+' ? std::move(d) : Expr::Unary(Op::Negate, atom ? std::move(d) : Grouped(std::move(d)));
                     return o;
                 }
             }
@@ -563,11 +567,27 @@ struct LineParser
             // The address; under a PUT the bytes keep their place: a new displacement
             if (put)
             {
+                // ORG $-run+place takes $ before the displacement ends: kept in a name first
+                Expr address = Parse(one());
+                const std::function<bool(const Expr&)> current = [&](const Expr& e) {
+                    return e.kind == Expr::Kind::Current || std::any_of(e.args.begin(), e.args.end(), current);
+                };
+                if (current(address))
+                {
+                    const std::string keep = "__LG_ORG" + std::to_string(++orgs);
+                    ir::Line at = Plain();
+                    at.label = keep;
+                    Statement assign = Directive(DirectiveKind::Defl);
+                    assign.args.push_back(std::move(address));
+                    at.statements.push_back(std::move(assign));
+                    Add(std::move(at));
+                    address = Expr::Symbol(keep);
+                }
                 ir::Line end = Plain();
                 end.statements.push_back(Directive(DirectiveKind::Ent));
                 Add(std::move(end));
                 Statement disp = Directive(DirectiveKind::Disp);
-                disp.args.push_back(Parse(one()));
+                disp.args.push_back(std::move(address));
                 line.statements.push_back(std::move(disp));
                 return;
             }
@@ -579,14 +599,15 @@ struct LineParser
         if (upper == "PUT")
         {
             // The bytes go to the operand, the address goes on: ORG there, DISP back to the address it had
+            // the address is taken before an earlier PUT ends (after it, $ is where the bytes went)
             const std::string keep = "__LG_PUT" + std::to_string(++puts);
-            EndPut();
             ir::Line at = Plain();
             at.label = keep;
             Statement assign = Directive(DirectiveKind::Defl);
             assign.args.push_back(Expr::Make(Expr::Kind::Current));
             at.statements.push_back(std::move(assign));
             Add(std::move(at));
+            EndPut();
             if (!line.label.empty())
             {
                 ir::Line labelled = Plain();
@@ -676,6 +697,20 @@ struct LineParser
             Operand o = InstructionOperand(ops[n], condition);
             if (upper == "EX" && n == 1 && o.kind == Operand::Kind::Register && o.text == "af")
                 o.text = "af'";
+            const std::string spaced = z80::Upper(ops[n]);
+            std::string written;
+            for (const char c : spaced)
+                if (c != ' ' && c != '\t')
+                    written.push_back(c);
+            const bool minus = written.rfind("(IX-", 0) == 0 || written.rfind("(IY-", 0) == 0;
+            if (o.kind == Operand::Kind::Indexed && minus && o.expr.kind == Expr::Kind::Unary && o.expr.op == Op::Negate && !(upper == "LD" && n == 0))
+            {
+                // Laser Genius 1.04 builds its (IX- / (IY- operand tokens with a plus: RLC (IY-4) and LD A,(IY-4) take
+                // +4 (LD (IY-4),A, one token with LD, and (IY+-4) are right): the bytes it builds
+                Expr d = o.expr.args[0];
+                o.expr = d.kind == Expr::Kind::Group ? d.args[0] : d;
+                diagnostics.push_back({Severity::Warning, number, 0, "(" + z80::Upper(o.text) + "-d): Laser Genius builds +d here (written as +d)"});
+            }
             s.operands.push_back(std::move(o));
         }
         line.statements.push_back(std::move(s));

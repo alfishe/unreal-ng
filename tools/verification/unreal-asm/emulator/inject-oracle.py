@@ -15,6 +15,7 @@ from the same source. The assembler disk is the collection's; the tool creates i
     inject-oracle.py gens4 <DEVPAC_4.TAP> <source.asm> <address> [--wait 240]
     inject-oracle.py zeus1983 <ZEUS.TAP> <source.asm> <address> [--wait 60]
     inject-oracle.py primus <PRIMUS29.SCL> <source.asm> <address> [--wait 30]
+    inject-oracle.py lasergenius <LG_1_04.SCL> <source.asm> <address> [--wait 20]
 
 XAS (Z3): started from its disk, the first source of its list loaded (or a new text), its command line opened (EXT;
 9.x need the keys held 12 frames), the source written there and assembled with A.
@@ -43,6 +44,10 @@ ZEUS 1983 (Z4): its code written at 57344 of a 48K machine and started there, th
 
 Primus 2.9 (Z4): started from its disk (it loads its manual PRI.DOC), the source written at its prompt by force (no
 "changed" flag), assembled with "a out" (the code saved as out), the bytes the file it saved.
+
+Laser Genius 1.04 (Z4): started from its disk (the loader's questions: tool-kit y, hash extensions n, disk d), the
+source written in its editor by force (no "changed" flag), assembled with "assem". It stores code only after a PUT
+and between #68D2 and #7F22: give sources from #6900.
 
 With --project the source goes as a path, and each file it INCLUDEs into an ALASM text page of its own (the INCLUDE
 names the page); --template always takes the INCLUDEs (zxasm inject reads them beside the source).
@@ -327,9 +332,35 @@ def primus(emu, args, expected):
     return b''
 
 
+def lasergenius(emu, args, expected):
+    emu.insert_disk(os.path.abspath(args.disk))
+    emu.run_trdos(args.boot or 'L_G_ASS.', wait=6)
+    emu.tap('1')                                       # the loader's menu is a BASIC INPUT
+    emu.tap('enter')
+    time.sleep(4)
+    for key in ('y', 'n', 'd'):                        # tool-kit, hash extensions, from disk
+        emu.tap(key)
+        emu.tap('enter')
+        time.sleep(3)
+    time.sleep(6)
+    with open(args.source, encoding='utf-8') as f:
+        body = {'from': args.from_, 'assembler': 'lasergenius-1.04', 'title': 'INJECTED', 'text': f.read(), 'force': True}
+    reply = emu.post('/asm/sync/inject', body)
+    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
+    for d in reply.get('diagnostics', []):
+        if d.get('severity') != 'info':
+            print('  ', d)
+    emu.write(args.address, [0xAA] * len(expected))
+    emu.type('assem')
+    emu.tap('enter')
+    time.sleep(args.wait)
+    emu.screenshot(os.path.abspath(args.source) + '.lasergenius-1.04.png')
+    return bytes(emu.read(args.address, len(expected)))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412', 'zasm315', 'masm11', 'gens4', 'zeus1983', 'primus'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412', 'zasm315', 'masm11', 'gens4', 'zeus1983', 'primus', 'lasergenius'])
     parser.add_argument('disk', help='the assembler disk, or with --template an idle template snapshot')
     parser.add_argument('--template', action='store_true', help='inject with zxasm into the template snapshot instead (Z1)')
     parser.add_argument('--zxasm', default=os.environ.get('ZXASM', 'zxasm'))
@@ -356,6 +387,8 @@ def main():
             built = xas(emu, args, expected)
         elif args.assembler == 'primus':
             built = primus(emu, args, expected)
+        elif args.assembler == 'lasergenius':
+            built = lasergenius(emu, args, expected)
         elif args.assembler == 'zeus1983':
             built = zeus1983(emu, args, expected)
         elif args.assembler == 'gens4':
