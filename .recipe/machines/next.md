@@ -192,6 +192,14 @@ each line is a serial peer, as on every machine with a COM port: `[NETWORK] ComP
 echoes every byte, a handy check of a program's UART code. NR `#0B`'s UART on the joystick port and NR `#A0`'s Pi GPIO routing are
 registers only.
 
+**The ESP module.** A Next ships with its ESP-12 on UART 0, so `ComPort` is `AT` unless the config says otherwise (`ComPort=NONE`
+takes the module off): an ESP8266 with Espressif's AT firmware (NonOS AT 1.7.4; `[NETWORK] EspChip=ESP8266-AT222` picks AT 2.2.2),
+115200 baud, boot banner and `ready` on the Rx FIFO at start, sockets through the virtual network. The program's baud is
+`28 MHz / prescaler`, told to the module as the nearest standard rate (243 is 115200), so `AT+UART_CUR` and a prescaler change work as on the
+board. NR `#A8` / `#A9` drive the module's GPIO0 (`#A8` bit 0 enables the output, `#A9` bit 0 is its level, reset 1): with it low the
+module's next boot (`AT+RST`) is the ROM's download mode and it stops answering AT (`state/network` and `next_uart` show the peer; the
+flasher's protocol itself is not emulated).
+
 ```text
 invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/network/config","body":{"com_port":"loopback"}}
 inspect_state {"aspects":["next_uart"]}          # CLI: state next uart, Lua next_uart(), Python emu.next_uart()

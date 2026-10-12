@@ -10,6 +10,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/serial/esp/espmodule.h"
 #include "emulator/io/serial/serialpeer.h"
 #include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/io/z80n/nextuart.h"
@@ -351,5 +352,32 @@ TEST(NextUartConfigured_Test, TheShippedEspAnswersAtOnUart0)
             answer += static_cast<char>(ports->DecodePortIn(kRx, 0x8000));
     }
     EXPECT_NE(answer.find("OK"), std::string::npos) << "got: " << answer;
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// NR #A8 / #A9 drive the ESP's GPIO0: low when the module boots (AT+RST) it enters its ROM's download mode and stops answering AT
+TEST(NextUartConfigured_Test, GpioZeroLowAtAResetPutsTheEspInDownloadMode)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    auto* ports = dynamic_cast<PortDecoder_Next*>(emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    auto* esp = dynamic_cast<EspModule*>(ports->Uart().Peer(0));
+    ASSERT_NE(esp, nullptr);
+    EXPECT_FALSE(esp->FlashPinLow());
+    // the pin as the registers read: pulled up until NR #A8 enables the output
+    EXPECT_EQ(ports->Board().Read(0xA9) & 0x05, 0x05);
+    ports->Board().WriteNextReg(0xA9, 0x00);
+    EXPECT_FALSE(esp->FlashPinLow()) << "the output is not enabled yet";
+    ports->Board().WriteNextReg(0xA8, 0x01);
+    EXPECT_TRUE(esp->FlashPinLow());
+    EXPECT_EQ(ports->Board().Read(0xA9) & 0x01, 0x00) << "the pad now follows the output";
+    for (char c : std::string("AT+RST\r\n"))
+        ports->DecodePortOut(kTx, static_cast<uint8_t>(c), 0x8000);
+    for (int frame = 0; frame < 30 && !esp->DownloadMode(); frame++)
+        EmulatorTestHelper::RunFramesFast(emulator, 1);
+    EXPECT_TRUE(esp->DownloadMode());
+    ports->Board().WriteNextReg(0xA9, 0x01);
+    EXPECT_FALSE(esp->FlashPinLow());
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

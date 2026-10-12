@@ -253,7 +253,8 @@ NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.
 - [x] DMA: WR3 with bit 6 starts a transfer - already so in `NextDma` (dma.vhd 576-580)
 - [x] The NEX loader into a running machine keeps the previous program's NextREGs: that is NEXLOAD's own behaviour (nexload.asm "Reset All registers" resets the list `LoaderNex::ResetRegisters` has, not the whole file; NextZXOS leaves its own state before it); a clean start is a machine reset before the load. No change
 - [x] D1 UARTs: `NextUart` (uart.vhd: FIFOs 64 / 512, prescaler, frame, hardware flow, status, interrupts as rising edges of the im2_int_req levels), peers by `[NETWORK] ComPort=` (ESP, UART 0) and `ComPort2=` (Pi, UART 1), `state/next/uart` on every plane, the UART state in the TTD NextState image (version 6; the peers' own state is the machine serial peer's blob, UART 1's peer is not saved). NR #C6 / #CA had UART 0 Tx / UART 1 Rx bits in the wrong places (fixed)
-- [ ] D1 ESP: the ESP module on UART 0 as the board has it (AT firmware, NR #A8 / #A9 GPIO0 / boot pin), the joystick-port UART (NR #0B), the Pi's GPIO routing (NR #A0)
+- [x] D1 ESP: the ESP-12 on UART 0 is fitted by default (ComPort AT, ESP8266 NonOS AT 1.7.4), the line told the nearest standard baud, NR #A8 / #A9 drive its GPIO0 (low at a boot = download mode), NR #A0 / #A2 / #A8 / #A9 read back as the VHDL has them
+- [ ] D1 left: the joystick-port UART (NR #0B bits), the Pi's GPIO routing (NR #A0 / #9x), the ESP flasher's protocol (the ROM's SLIP), a UART break received from a peer
 - [ ] D2 (Kempston mouse, ULA+, Radastan): the reports follow the devices
 
 ## Automation coverage - what is left (2026-10-10)

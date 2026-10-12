@@ -142,6 +142,8 @@ public:
     bool PortEnabledForReport(unsigned bit) const { return PortEnabled(bit); }
     /// A line's other end (the network manager owns the peer); nullptr takes it off. The peer's clock is the machine's base clock
     void SetUartPeer(unsigned channel, ISerialPeer* peer);
+    /// NR #A8 / #A9: the ESP's GPIO0 pin (low while the board drives it low): an ESP module reboots into its ROM's download mode with it low
+    void BoardPinsChanged() override;
     NetworkCapabilities DescribeNetwork() override;
     /// The two UARTs (#133B-#163B): ESP (0) and Pi (1)
     NextUart& Uart() { return _uart; }

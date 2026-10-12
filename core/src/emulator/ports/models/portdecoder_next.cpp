@@ -2,6 +2,7 @@
 
 #include "portdecoder_next.h"
 
+#include "emulator/io/serial/esp/espmodule.h"
 #include "emulator/io/serial/serialpeer.h"
 
 #include "common/modulelogger.h"
@@ -1414,6 +1415,16 @@ void PortDecoder_Next::SetUartPeer(unsigned channel, ISerialPeer* peer)
         };
     }
     _uart.SetPeer(channel, peer);
+    if (channel == 0)
+        BoardPinsChanged();  // a module fitted now sees the pin as it is
+}
+
+void PortDecoder_Next::BoardPinsChanged()
+{
+    // zxnext.vhd: o_ESP_GPIO_0 = NR #A9 bit 0, driven while NR #A8 bit 0 enables it (else the pad floats, pulled up)
+    const bool low = (_board->Stored(0xA8) & 1) && !(_board->Stored(0xA9) & 1);
+    if (auto* esp = dynamic_cast<EspModule*>(_uart.Peer(0)))
+        esp->SetFlashPin(low);
 }
 
 PortDecoder::NetworkCapabilities PortDecoder_Next::DescribeNetwork()

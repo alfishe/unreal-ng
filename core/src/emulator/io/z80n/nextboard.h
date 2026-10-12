@@ -56,6 +56,8 @@ public:
     virtual uint8_t ReadExtendedInput(uint8_t reg) const { (void)reg; return 0; }
     /// NR #06 / #08 / #09 changed (the sound's AY / YM, turbosound, DAC, stereo)
     virtual void AudioConfigChanged() {}
+    /// NR #A8 / #A9 changed: the pins the board drives (the ESP's GPIO0)
+    virtual void BoardPinsChanged() {}
     /// NR #2C / #2D / #2E: the DAC's NextREG mirrors
     virtual void DacMirrorWrite(uint8_t, uint8_t) {}
     /// An instruction ended (a safe place to stop the machine: not inside the picture's catch-up of the copper)
