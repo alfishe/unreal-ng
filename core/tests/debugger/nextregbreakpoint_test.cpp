@@ -243,6 +243,8 @@ protected:
     /// The copper list from instruction 0 through NR #60 and the mode in NR #62 (via the board: no port trace, no breakpoint of ours)
     void CopperList(const std::vector<uint16_t>& words, uint8_t mode)
     {
+        _beamClock = 0;  // the copper follows the test's beam from the first write (the machine's own clock would run it to a moment of its own)
+        BindBeam();
         Board().Copper().Reset();
         Board().Copper().SetGeometry(_raster.hcPerLine, _raster.lines);
         Board().Copper().WriteAddressLow(0);
@@ -259,14 +261,18 @@ protected:
     static uint16_t Wait(unsigned line, unsigned h) { return static_cast<uint16_t>(0x8000 | (h << 9) | line); }
     static uint16_t Move(unsigned reg, unsigned value) { return static_cast<uint16_t>((reg << 8) | value); }
     uint64_t At(unsigned line, unsigned hc) const { return _raster.At(line, hc); }
-    /// The beam the copper watch looks at (the screen binds the real one while it draws)
+    /// The beam the copper follows (the machine binds the raster's own); the picture is not drawn in these tests
     uint64_t _beamClock = 0;
-    void BindBeam() { Board().Copper().SetNow([this]() { return _beamClock; }); }
-    /// The machine runs an instruction ending with the beam at (line, hc): the copper watch looks
+    void BindBeam()
+    {
+        Board().Copper().SetNow([this]() { return _beamClock; });
+        Board().Copper().SetBeforeWrite(nullptr);
+    }
+    /// The machine runs an instruction ending with the beam at (line, hc): the board runs the copper to it, then the watchers look
     void BeamAt(unsigned line, unsigned hc)
     {
         _beamClock = At(line, hc);
-        _ports->OnInstructionDone();
+        Board().AfterInstruction();
     }
 };
 
@@ -292,8 +298,8 @@ TEST_F(NextRegBreakpointMachine_Test, EachDoorOfAWriteAndTheReadDoorAreTold)
     Board().WriteNextReg(kRegGlobalTransparency, kByteA);
     EXPECT_EQ(Last(), BRK_INVALID) << "the CPU's door is not watched";
 
-    // WAIT line 5, horizontal 0 (true from hc = kWaitHcBase), then a MOVE. The copper is watched on a copy: the stop comes at the
-    // first instruction boundary after the beam did the write, before the real copper (the picture's catch-up) executes it
+    // WAIT line 5, horizontal 0 (true from hc = kWaitHcBase), then a MOVE. The copper runs with the machine: the stop comes at the first
+    // instruction boundary after the beam reached the MOVE, and the MOVE is held back until the machine runs on
     constexpr unsigned kWaitLine = 5;
     CopperList({Wait(kWaitLine, 0), Move(kRegGlobalTransparency, kByteB)}, 1);
     BindBeam();
@@ -303,7 +309,7 @@ TEST_F(NextRegBreakpointMachine_Test, EachDoorOfAWriteAndTheReadDoorAreTold)
     EXPECT_EQ(Last(), copper);
     EXPECT_EQ(Board().Stored(kRegGlobalTransparency), kByteA) << "stopped before the write";
     EXPECT_EQ(_manager->GetBreakpointById(copper)->hitCount, 1u);
-    Board().Copper().RunTo(_beamClock);  // the picture's catch-up executes the MOVE and does not count or stop it again
+    Board().AfterInstruction();  // the machine runs on: the held MOVE writes, and is not counted or stopped again
     EXPECT_EQ(Board().Stored(kRegGlobalTransparency), kByteB);
     EXPECT_EQ(_manager->GetBreakpointById(copper)->hitCount, 1u);
 
@@ -366,18 +372,18 @@ TEST_F(NextRegBreakpointMachine_Test, ALineInterruptAndACopperWaitAtTheSamePlace
     CopperList({Wait(kRow, before), Move(kRegGlobalTransparency, kByteA), Wait(kRow, after), Move(kRegFallbackColour, kByteB)}, 1);
 
     BindBeam();
-    // The beam moves; after each instruction the copper is watched, and the picture catches the real copper up
-    auto beam = [&](unsigned hc) {
-        BeamAt(kRow, hc);
-        Board().Copper().RunTo(_beamClock);
-    };
+    // The beam moves; the board runs the copper to it after each instruction. A MOVE under a breakpoint stops the machine before it writes
+    // (the copper holds it), and writes when the machine runs on
+    auto beam = [&](unsigned hc) { BeamAt(kRow, hc); };
     beam(Raster::WaitThreshold(before) - 1);
     EXPECT_EQ(Board().Stored(kRegGlobalTransparency), _transparencyAtStart) << "one clock before the first WAIT is true";
     EXPECT_EQ(Last(), BRK_INVALID);
     beam(kLineInterruptHc);
-    EXPECT_EQ(Board().Stored(kRegGlobalTransparency), kByteA) << "the first MOVE, before the interrupt's pixel clock";
+    EXPECT_EQ(Last(), beforeBp) << "the first MOVE, before the interrupt's pixel clock: the breakpoint holds it";
+    EXPECT_EQ(Board().Stored(kRegGlobalTransparency), _transparencyAtStart);
+    beam(kLineInterruptHc);
+    EXPECT_EQ(Board().Stored(kRegGlobalTransparency), kByteA) << "run on: the MOVE writes";
     EXPECT_EQ(Board().Stored(kRegFallbackColour), _fallbackAtStart);
-    EXPECT_EQ(Last(), beforeBp);
 
     // The CPU takes the interrupt now (acknowledge, a handler writing a register), the copper goes on
     z80.t = interruptT;
@@ -388,8 +394,10 @@ TEST_F(NextRegBreakpointMachine_Test, ALineInterruptAndACopperWaitAtTheSamePlace
     EXPECT_EQ(Board().Stored(kRegFallbackColour), _fallbackAtStart) << "one clock before the second WAIT is true";
     EXPECT_EQ(Last(), beforeBp);
     beam(Raster::WaitThreshold(after) + 1);
-    EXPECT_EQ(Board().Stored(kRegFallbackColour), kByteB) << "the second MOVE, after the interrupt's place";
-    EXPECT_EQ(Last(), afterBp);
+    EXPECT_EQ(Last(), afterBp) << "the second MOVE, after the interrupt's place";
+    EXPECT_EQ(Board().Stored(kRegFallbackColour), _fallbackAtStart) << "held";
+    beam(Raster::WaitThreshold(after) + 1);
+    EXPECT_EQ(Board().Stored(kRegFallbackColour), kByteB);
     EXPECT_EQ(_manager->GetBreakpointById(beforeBp)->hitCount, 1u);
     EXPECT_EQ(_manager->GetBreakpointById(afterBp)->hitCount, 1u);
 }
@@ -414,7 +422,7 @@ TEST_F(NextRegBreakpointMachine_Test, ABeamBreakpointStopsWhenTheBeamPassesThePl
     EXPECT_EQ(Last(), BRK_INVALID);
     BeamAt(kRow, Raster::WaitThreshold(0) + 1);  // the WAIT is true from hc = kWaitHcBase and the MOVE (index 1) follows at once
     EXPECT_EQ(Last(), copperBp) << "the copper completed the instruction at index 1";
-    EXPECT_EQ(Board().Stored(kRegGlobalTransparency), _transparencyAtStart) << "before the real copper's catch-up";
+    EXPECT_EQ(Board().Stored(kRegGlobalTransparency), _transparencyAtStart) << "held before the MOVE writes";
     _manager->ClearLastTriggeredBreakpoint();
     BeamAt(kRow, kHc - 1);
     EXPECT_EQ(Last(), BRK_INVALID);
@@ -533,4 +541,77 @@ TEST(NextRegBreakpointManager_Test, AMagicBreakpointTakesOnlyTheTwoOpcodeWords)
     ASSERT_NE(id, BRK_INVALID) << error;
     EXPECT_EQ(manager.HandleMagic(BRK_MAGIC_ED_FF), BRK_INVALID);
     EXPECT_EQ(manager.HandleMagic(BRK_MAGIC_DD_01), id);
+}
+
+// The copper is a bus master of the machine (the design of automation-gaps-2026-10-11 section "copper"): the board runs it after every
+// instruction, so what its MOVE writes is in place in machine time, with no picture involved and in order with the program's own writes
+#include "emulator/memory/memory.h"
+#include "emulator/memory/next/nextmemory.h"
+#include "emulator/video/next/screennext.h"
+
+namespace
+{
+constexpr uint8_t kRegMmuSlot2 = NextBoard::kRegMmu0 + 2;  // NR #52: the 8K slot at #4000
+constexpr uint8_t kMmuBankWritten = 0x2F;                  // any RAM bank
+constexpr uint8_t kRegJoystickScratch = 0x16;              // NR #16 stores its byte
+constexpr uint8_t kByteFromCopper = 0xC1, kByteFromCpu = 0x5E;
+constexpr uint16_t kJrSelf = 0xFE18;                       // JR $ (18 FE): 12 T-states, never leaves
+constexpr uint32_t kJrSelfStates = 12;
+}  // namespace
+
+TEST_F(NextRegBreakpointMachine_Test, TheCopperRunsWithTheInstructionsNotWithThePicture)
+{
+    ScreenNext* screen = dynamic_cast<ScreenNext*>(_context->pScreen);
+    ASSERT_NE(screen, nullptr);
+    Z80& z80 = *_context->pCore->GetZ80();
+    constexpr unsigned kLine = kPaperLines / 3;
+    CopperList({Wait(kLine, 0), Move(kRegMmuSlot2, kMmuBankWritten)}, 1);
+    screen->BindCopper(Board().Copper());  // the machine's own clock and picture hook instead of the test's beam
+    Board().Copper().SetGeometry(_raster.hcPerLine, _raster.lines);
+
+    // The first T-state of the frame at which the beam is at the WAIT's place (the map is linear inside the frame)
+    const uint64_t due = At(kLine, Raster::WaitThreshold(0));
+    uint32_t dueT = 0;
+    for (uint32_t t = 1; t < _raster.timing.frame && dueT == 0; t++)  // the copper's frame wraps inside the CPU's: take the upward crossing
+        if (screen->CopperClock(t - 1) < due && screen->CopperClock(t) >= due)
+            dueT = t;
+    ASSERT_GT(dueT, 10 * kJrSelfStates);
+
+    Memory* memory = _context->pMemory;
+    memory->DirectWriteToZ80Memory(kProgram, kJrSelf & 0xFF);
+    memory->DirectWriteToZ80Memory(kProgram + 1, kJrSelf >> 8);
+    z80.pc = kProgram;
+    z80.iff1 = z80.iff2 = 0;
+    const uint8_t before = static_cast<NextMemory*>(memory)->GetMmu(2);
+    ASSERT_NE(before, kMmuBankWritten);
+
+    // Instruction by instruction through the real engine, from well before the beam gets there: nothing draws, nothing asks the screen
+    z80.t = dueT - 10 * kJrSelfStates;
+    unsigned steps = 0;
+    while (z80.t < dueT && steps++ < 100)
+    {
+        EXPECT_EQ(static_cast<NextMemory*>(memory)->GetMmu(2), before) << "T " << z80.t << ": the WAIT is not true yet";
+        z80.EngineStep();
+    }
+    // The instruction that ran past the due time has finished: the copper has done its MOVE, in this instruction's boundary
+    EXPECT_EQ(static_cast<NextMemory*>(memory)->GetMmu(2), kMmuBankWritten) << "the MOVE reached the MMU register with the instruction that crossed T " << dueT;
+    EXPECT_LE(z80.t, dueT + kJrSelfStates);
+}
+
+TEST_F(NextRegBreakpointMachine_Test, AMoveThatIsDueComesBeforeTheProgramsOwnWriteOfTheSameRegister)
+{
+    Board().Journal().SetEnabled(true);
+    constexpr unsigned kLine = kPaperLines / 5;
+    CopperList({Wait(kLine, 0), Move(kRegJoystickScratch, kByteFromCopper)}, 1);
+    _beamClock = At(kLine, Raster::WaitThreshold(0) + 1);  // the beam is past the WAIT; no instruction boundary has come since
+    // The program writes the register now: the board gives the copper its clock first (the bus gives the copper priority), the program's
+    // value is the last
+    Board().WriteNextReg(kRegJoystickScratch, kByteFromCpu);
+    EXPECT_EQ(Board().Stored(kRegJoystickScratch), kByteFromCpu) << "the program's write came after the copper's";
+    const std::vector<NextRegWriteEvent> events = Board().Journal().Query(NextRegJournalQuery{});
+    ASSERT_GE(events.size(), 2u);
+    EXPECT_EQ(events[events.size() - 2].source, NextRegSource::Copper);
+    EXPECT_EQ(events[events.size() - 2].value, kByteFromCopper);
+    EXPECT_EQ(events.back().source, NextRegSource::NextReg);
+    EXPECT_EQ(events.back().value, kByteFromCpu);
 }

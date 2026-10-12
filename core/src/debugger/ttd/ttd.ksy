@@ -681,7 +681,7 @@ types:
           erase (bit per 64 KB sector), u1 program value, s8 erase window end, s8 busy end (base clock t-states),
           u3 program offset, 6 reserved; the 512 KB array is the engine region EvoFlash (18), the machine's ROM
           pages 0-31),
-          62 NextState (the ZX Spectrum Next, one image of NextStateCodec::Save: u1 version 4, then the board (selected
+          62 NextState (the ZX Spectrum Next, one image of NextStateCodec::Save: u1 version 5, then the board (selected
           register, the 256 NextREG bytes, timing, reset bits), the memory map (MMU slots, paging bits, DivMMC /
           Multiface / Layer 2 views, config mode), video registers (clip windows, 8 x 256 palette words), sprites (128 x 5
           attribute bytes, 16 KB patterns, upload latches), the copper (2 KB list, position, mode, clock), the DMA, the CTC,
