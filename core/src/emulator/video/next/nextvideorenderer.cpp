@@ -230,7 +230,11 @@ void NextVideoRenderer::Layer2Line(const NextVideoInputs& in, unsigned y, Pixel*
         const unsigned py = y - kPaperTop;
         if (py < y1 || py > y2)
             return;
-        const unsigned sy = (py + scrollY) % 192;
+        // layer2.vhd: y_pre = vc + scroll_y (9 bits); y(7:6) is y_pre(7:6), +1 once y_pre reaches 192 (that wraps 192-255 to 0-63,
+        // 256-319 to 64-127, 320-383 to 128-191 and 384 on to rows 192-254 of the bank: not a modulo for a scroll above 191)
+        const unsigned yPre = py + scrollY;
+        const unsigned yHigh = ((yPre & 0x100) == 0 && ((yPre >> 6) & 3) != 3) ? ((yPre >> 6) & 3) : (((yPre >> 6) & 3) + 1) & 3;
+        const unsigned sy = (yHigh << 6) | (yPre & 0x3F);
         for (unsigned px = x1; px <= x2 && px < 256; px++)
         {
             const unsigned sx = (px + scrollX) & 255;
