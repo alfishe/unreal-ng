@@ -269,6 +269,9 @@ bool MainLoop::Park(Emulator* emulator, execution::ExecutionArbiter* arbiter)
     // parked
     if (_context->pTimeTravelHooks)
         _context->pTimeTravelHooks->OnMachineParking();
+    // Observers of a parked machine read the device cores in step with the CPU
+    if (_soundManager)
+        _soundManager->catchUpDeferredCores();
     if (emulator->IsPaused())
     {
         emulator->NoteDebugChange();  // a stop the debugger snapshot's seq counts

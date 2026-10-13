@@ -157,6 +157,9 @@ std::map<std::string, SourceLabel> LabelValues(const std::vector<ProjectFile>& f
         const SourceLabel value = {l.value, files.size() == 1 ? std::string() : l.file, l.line, l.use == layout::LabelUse::Defl};
         values[l.name] = value;
     }
+    // the RELOCATE_TABLE words: __UNREALASM_RELOC_<k>
+    for (size_t k = 0; k < laid.relocations.size(); ++k)
+        values["__UNREALASM_RELOC_" + std::to_string(k)] = {laid.relocations[k], std::string(), 0, false};
     // each line's address, for $ there: __UNREALASM_L<file>_<line> (the file named only in a project)
     for (const layout::LineAddress& a : laid.lines)
     {

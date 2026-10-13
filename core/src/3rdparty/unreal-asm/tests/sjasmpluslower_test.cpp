@@ -296,3 +296,47 @@ TEST(SjasmplusLower_Test, DiskNamesAreShortAndUniqueInLettersAndDigits)
     EXPECT_EQ(names.at("_spg/menu.tga.pal"), "menu");
     EXPECT_EQ(names.at("_spg/menu.tga.pix"), "menu2");
 }
+
+TEST(SjasmplusLower_Test, TheRelocationTableAsSjasmplusBuildsIt)
+{
+    // RELOCATE_START ... RELOCATE_END: the words that move with the block (a label of it, $), not a difference of two
+    // of them, not norel; RELOCATE_TABLE their addresses, relocate_count their number (checked against sjasmplus'
+    // tests/relocate: the same tables)
+    const std::string source = "        ORG #8000\n"
+                               "        RELOCATE_START\n"
+                               "start   ld hl,data\n"
+                               "        jp start\n"
+                               "        ld de,data-start\n"
+                               "        ld bc,norel data\n"
+                               "data    dw start\n"
+                               "        RELOCATE_END\n"
+                               "        RELOCATE_TABLE\n"
+                               "        dw relocate_count\n";
+    const std::vector<std::string> lines = Lines(source, "tasm", nullptr, "4.12");
+    EXPECT_TRUE(Contains(lines, "DEFW #8001,#8004,#800C")) << Joined(lines);
+    EXPECT_TRUE(Contains(lines, "DEFW 3")) << Joined(lines);
+    EXPECT_TRUE(Contains(lines, "LD BC,DATA")) << Joined(lines);
+}
+
+TEST(SjasmplusLower_Test, ALasmGetsAMacroOfLocalAndGlobalLabelsPutInAtItsCalls)
+{
+    // ALASM's LOCAL block would make VORG local too (its @name is another name): the macro put in at each call, its
+    // .label named for each expansion, its temporary label one per line, VORG the one global name
+    const std::string source = "        ORG #8000\n"
+                               "VORG = #8100\n"
+                               "        MACRO TRAP addr\n"
+                               "        JP VORG\n"
+                               "1       DJNZ 1b\n"
+                               ".l      JR .l\n"
+                               "VORG = $\n"
+                               "        ENDM\n"
+                               "        TRAP 1\n"
+                               "        TRAP 2\n"
+                               "        JP VORG\n";
+    const std::vector<std::string> lines = Lines(source, "alasm");
+    const std::string text = Joined(lines);
+    EXPECT_EQ(text.find("LOCAL"), std::string::npos) << text;
+    EXPECT_EQ(std::count(lines.begin(), lines.end(), std::string("VORG=$")), 2) << text;
+    EXPECT_TRUE(Contains(lines, "__M1_l JR __M1_l")) << text;
+    EXPECT_TRUE(Contains(lines, "__M2_l JR __M2_l")) << text;
+}

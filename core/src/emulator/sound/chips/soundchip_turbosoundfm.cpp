@@ -62,6 +62,7 @@ void SoundChip_TurboSoundFM::reset()
     _decimationPhase = 0.0;
     _renderReanchor = false;
     _outputFlushPending = false;
+    _syncDeferred = false;
 }
 
 /// endregion </Methods>
@@ -154,7 +155,14 @@ void SoundChip_TurboSoundFM::handleStep()
 {
     // §6.1: the core advances in every mode (turbo, sound feature off) -
     // SoundManager reaches this call unconditionally. Rendering is gated
-    // on synthesis suppression; the core never is.
+    // on synthesis suppression; the core never is. With its synthesis
+    // skipped the core only notes the position (deferred sync, header)
+    if (_pair.coreSynthesisSkipped() && _pair.synthesisSuppressed() && _deferAllowed)
+    {
+        _deferredT = nowT();
+        _syncDeferred = true;
+        return;
+    }
     syncTo(nowT());
 
     if (_pair.synthesisSuppressed())
@@ -184,6 +192,10 @@ void SoundChip_TurboSoundFM::handleStep()
         // Native-rate recording tap: active only during DSD capture.
         // Checked once per handleStep batch; per-tick cost is a plain bool.
         const bool tapActive = _nativeTap->isActive();
+        auto feedSsg = [](FilterDecimator& d, double v, size_t& zeroRun) {
+            d.feedSample(v);
+            zeroRun = v == 0.0 ? zeroRun + 1 : 0;
+        };
         const bool hqEnabled = _pair.hqEnabled();
         TsfmChip& chip0 = *_pair.chip(0);
         TsfmChip& chip1 = *_pair.chip(1);
@@ -220,10 +232,10 @@ void SoundChip_TurboSoundFM::handleStep()
                         }
 
                         // Feed mixed output to decimators
-                        c0.ssg.decimatorLeft().feedSample(c0.ssg.mixedLeft());
-                        c0.ssg.decimatorRight().feedSample(c0.ssg.mixedRight());
-                        c1.ssg.decimatorLeft().feedSample(c1.ssg.mixedLeft());
-                        c1.ssg.decimatorRight().feedSample(c1.ssg.mixedRight());
+                        feedSsg(c0.ssg.decimatorLeft(), c0.ssg.mixedLeft(), _ssgZeroRun[0]);
+                        feedSsg(c0.ssg.decimatorRight(), c0.ssg.mixedRight(), _ssgZeroRun[1]);
+                        feedSsg(c1.ssg.decimatorLeft(), c1.ssg.mixedLeft(), _ssgZeroRun[2]);
+                        feedSsg(c1.ssg.decimatorRight(), c1.ssg.mixedRight(), _ssgZeroRun[3]);
                     });
                 }
 
@@ -231,11 +243,14 @@ void SoundChip_TurboSoundFM::handleStep()
                 // follow the master's cadence, gain-scaled, §7.1)
                 // One pass per design (FilterDecimator::getOutputs): the four SSG decimators are fed in lockstep
                 // and share their rows, the two FM slaves theirs; the same order as one getOutput() each
+                // A silent stream skips its FIR (FilterDecimator::getOutputsSkippingSilent): the same +0.0
                 FilterDecimator* decimators[6] = {&chip0.ssg.decimatorLeft(), &chip0.ssg.decimatorRight(),
                                                   &chip1.ssg.decimatorLeft(), &chip1.ssg.decimatorRight(),
                                                   &chip0.out.decimator,       &chip1.out.decimator};
+                const size_t zeroRuns[6] = {_ssgZeroRun[0], _ssgZeroRun[1], _ssgZeroRun[2], _ssgZeroRun[3],
+                                            chip0.out.zeroRun, chip1.out.zeroRun};
                 double values[6];
-                FilterDecimator::getOutputs(decimators, 6, values);
+                FilterDecimator::getOutputsSkippingSilent(decimators, zeroRuns, 6, values);
                 float c0L = static_cast<float>(values[0]);
                 float c0R = static_cast<float>(values[1]);
                 float c1L = static_cast<float>(values[2]);
@@ -355,6 +370,10 @@ void SoundChip_TurboSoundFM::handleStep()
 
 void SoundChip_TurboSoundFM::handleFrameEnd()
 {
+    // The frame's deferred clocks, to the last instruction's end: z80->t is already rebased here, so the noted
+    // position is the frame end the per-step sync reached, and the next frame start rebases from it
+    catchUp();
+
     // HUD activity (AY/TS and FM): SoundManager (AudioActivityIndicators),
     // from the audio-settings LEDs computed on the chip / FM buffers
 
@@ -615,6 +634,7 @@ void SoundChip_TurboSoundFM::TTDSaveState(uint8_t* dst) const
 
 void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
 {
+    _syncDeferred = false;  // the restored chips stand at the restored position
     const uint8_t* cur = src;
     ++_renderEpoch;   // the host's character chains restart (ITurboSoundDevice::renderEpoch)
 

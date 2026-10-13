@@ -147,6 +147,7 @@ Useful benchmarks:
 |:--|:--|:--|
 | `BM_HostFrame_{48K,Pentagon,Scorpion}_{Fast,Debug}` | `core/benchmarks/emulator/memory/hostbusoverlay_benchmark.cpp` | one host frame of a classic machine: the per-instruction and per-access paths |
 | `BM_HostFrame_Pentagon_Overlay_*`, `BM_HostFrame_NeoGS_*` | same | the overlay path |
+| `BM_Prof_<machine>_<profile>` | `core/benchmarks/emulator/profiles/frame_profile_benchmark.cpp` | one frame of a machine as shipped (its cards, HQ, HUD) per run profile: 1x, turbo, debugging, TTD worst case, each card alone ([guide](../../core/benchmarks/emulator/profiles/README.md)) |
 | `BM_SprinterDemo_<demo>_{Bare,Shipped}` | `core/benchmarks/emulator/machines/sprinter_demo_benchmark.cpp` | the Sprinter under a real heavy load: demos from the system disk (needs `UNREAL_SPRINTER_HDD`; [its README](../../core/benchmarks/emulator/machines/README.md)) |
 | `z80_overhead_attribution.cpp` | `core/benchmarks/emulator/` | isolated costs: member-pointer calls, `std::function` tests, dereferences |
 | `turbo_frame_benchmark.cpp`, `contention_benchmark.cpp` | `core/benchmarks/emulator/` | turbo mode, ULA contention |

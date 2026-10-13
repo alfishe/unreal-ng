@@ -18,6 +18,13 @@ cmake --build . -j8
 ./build/bin/core-benchmarks --benchmark_filter="BM_Frame"  # Filter by name
 ```
 
+## Frame Profiles
+
+Located in `emulator/profiles/`. `BM_Prof_<machine>_<profile>` measures one whole frame of a machine built from its
+shipped config, in several run profiles: 1x, turbo, turbo with the host-side switches off, debugging, the TTD worst
+case, and the shipped cards removed or fitted one at a time. Guide (running, comparing two commits, profiling a row
+with callgrind / perf / xctrace) and recorded results: [emulator/profiles/README.md](emulator/profiles/README.md).
+
 ## TTD Benchmark Matrix
 
 Located in `debugger/ttd/`. `ttd_matrix_benchmark.cpp` registers one benchmark per TTD engine, configuration and workload: `TTDMatrix/<engine>/<configuration>/<workload>`, with the metrics BM-1 to BM-8 as counters. The environment variables `UNREAL_TTD_BENCH_*` pick the set (`ci`, `turbo` or `full`) and the engines. Running, comparing and baselines: [`tools/verification/ttd-bench/`](../../tools/verification/ttd-bench/README.md).

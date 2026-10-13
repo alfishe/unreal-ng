@@ -54,6 +54,7 @@ private:
     std::vector<double> _histL, _histR;   // input history ring
     std::vector<double> _orderedL, _orderedR; // scratch (allocation-free path)
     size_t _histPos = 0;
+    size_t _zeroRun = 0; // consecutive zero input frames, capped at _taps: the whole history is zero
 };
 
 // YAC513 + LF347 board analog model (§8.3): 1st-order RC low-pass at

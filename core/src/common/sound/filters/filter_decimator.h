@@ -313,6 +313,40 @@ public:
         }
     }
 
+    /// getOutputs() for decimators whose callers count the newest consecutive zeros they fed (`zeroRuns`): one with
+    /// its whole window zero outputs exactly +0.0 (window()), so its FIR is skipped and its phase moves as getOutput
+    /// moves it (skipOutput); the rest share one pass. Each row's sum is its own (DecimatorDot), so the outputs are
+    /// the plain getOutputs' bit for bit
+    static void getOutputsSkippingSilent(FilterDecimator* const* decimators, const size_t* zeroRuns, size_t count,
+                                         double* out)
+    {
+        constexpr size_t kMax = 16;
+        FilterDecimator* live[kMax];
+        size_t liveIndex[kMax];
+        double liveOut[kMax];
+        size_t liveCount = 0;
+        for (size_t k = 0; k < count; k++)
+        {
+            if (zeroRuns[k] >= decimators[k]->window())
+            {
+                decimators[k]->skipOutput();
+                out[k] = 0.0;
+                continue;
+            }
+            if (liveCount == kMax)
+            {
+                // More than the scratch holds: the plain pass for this one
+                getOutputs(&decimators[k], 1, &out[k]);
+                continue;
+            }
+            live[liveCount] = decimators[k];
+            liveIndex[liveCount++] = k;
+        }
+        getOutputs(live, liveCount, liveOut);
+        for (size_t j = 0; j < liveCount; j++)
+            out[liveIndex[j]] = liveOut[j];
+    }
+
     /// Consume the output instant due now without evaluating the FIR (a caller that knows the output already: a
     /// window of zeros gives exactly +0.0, see window()). A master's phase moves exactly as getOutput() moves it
     void skipOutput()

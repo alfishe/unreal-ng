@@ -157,6 +157,29 @@ void Ym2203Pair::advanceChip(Ym2203Chip& c, int32_t delta, int64_t t0)
             c.fmClockPhase = period - 1;
         const int32_t toClock = period - c.fmClockPhase;
         const int32_t toTimer = c.intf.clocksToNextExpiry();  // INT32_MAX when both stopped
+
+        // An idle FM half (nothing sounding, nothing keyed; ymfm patch 6): every sample clock up to the next timer
+        // expiry at once - each a zero word at its own clock, as clockFmOnce() would give. The clock of the expiry
+        // itself goes the normal way: the expiry comes first there and may key on (CSM)
+        if (_fmIdleFastPath && toTimer > 1 && c.fm.fmIdle())
+        {
+            const int32_t n = std::min(delta, toTimer - 1);
+            if (n >= toClock)
+            {
+                c.intf.advance(n);
+                const int32_t samples = (c.fmClockPhase + n) / period;
+                int64_t t = t0 + toClock;
+                for (int32_t s = 0; s < samples; s++, t += period)
+                    c.words.push(uint64_t(t), 0);
+                c.fm.clockFmIdle(uint32_t(samples));
+                _fmIdleSamples += uint64_t(samples);
+                c.fmClockPhase = (c.fmClockPhase + n) % period;
+                delta -= n;
+                t0 += n;
+                continue;
+            }
+        }
+
         const int32_t n = std::min({delta, toClock, toTimer});
 
         c.intf.advance(n);  // counts down busy; fires expired timers exactly on their clock

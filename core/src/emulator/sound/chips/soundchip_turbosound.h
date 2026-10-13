@@ -48,6 +48,9 @@ protected:
     // one of the two: the manager pushes its frame-start phase at every
     // frame start (followSamplePhase), equal at 1x.
     uint64_t _samplePhase = 0;
+    // HQ: newest consecutive zeros fed to each decimator (chip 0 L, R, chip 1 L, R); a silent one skips its FIR.
+    // Render-side, not TTD state (a reset or clear of a decimator only zeroes its history: the counts stay true)
+    size_t _ssgZeroRun[4] = {};
     size_t _ayBufferIndex = 0;
     uint32_t _lastTStates = 0;
 

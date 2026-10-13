@@ -151,13 +151,13 @@ if (WIN32 AND MINGW)
     target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         core
-        recording
+        $<$<TARGET_EXISTS:recording>:recording>
     )
 else()
     target_link_libraries(${PROJECT_NAME} PRIVATE
         ${common_libraries}
         core
-        recording
+        $<$<TARGET_EXISTS:recording>:recording>
         benchmark::benchmark_main
     )
 endif()
