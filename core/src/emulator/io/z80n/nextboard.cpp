@@ -46,7 +46,7 @@ void NextBoard::Reset(bool hard)
         _regs[0x06] |= 0xA0;                         // the CPU speed and 50 / 60 Hz hotkeys on
         _regs[0x08] &= static_cast<uint8_t>(~0x40);  // contention on
         _regs[0x09] &= static_cast<uint8_t>(~0x10);  // the sprite number is not tied to port #303B
-        for (uint8_t r : {0x15, 0x68, 0x6A, 0x6B, 0x6C, 0x70, 0x71, 0xA0, 0xA2, 0xD8})
+        for (uint8_t r : {0x15, 0x68, 0x6A, 0x6B, 0x6C, 0x70, 0x71, 0xA0, 0xA2, 0xD8, 0xD9, 0xDA})
             _regs[r] = 0;
         // NR #80 (2186): the high nibble takes the low one
         _regs[0x80] = static_cast<uint8_t>((_regs[0x80] & 0x0F) | ((_regs[0x80] & 0x0F) << 4));
@@ -121,7 +121,7 @@ uint8_t NextBoard::Read(uint8_t reg) const
         case kRegResetType:
             // bit 7 the expansion bus reset, bits 3:2 the NMI requests as written, bits 1:0 how the last reset happened (the VHDL's
             // nr_02_reset_type: 0 power on, then 2, then 1 for the soft resets that follow)
-            return static_cast<uint8_t>((_regs[reg] & 0x8C) | (_resetType & 3));
+            return static_cast<uint8_t>((_regs[reg] & 0x8C) | ((_regs[0xDA] & 3) ? 0x10 : 0) | (_resetType & 3));  // bit 4 the I/O trap flag (5891)
         case kRegAltRom:
             return _memory->AltRomRegister();
         case kRegMemoryMapping:
@@ -187,6 +187,8 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return static_cast<uint8_t>(_regs[reg] & 0xBF);  // bit 6 is not stored (base_7 & '0' & base)
         case 0x10:
             return static_cast<uint8_t>((_regs[reg] & 0x1F) << 2);  // the core id; the DRIVE / M1 buttons read 0
+        case 0xDA:
+            return static_cast<uint8_t>(_regs[reg] & 3);  // the cause: 01 read of #2FFD, 10 read of #3FFD, 11 write of #3FFD (6272)
         case 0x90:
             return static_cast<uint8_t>(_regs[reg] & 0xFC);  // the output enables of GPIO 0-7 keep bits 1:0 clear (zxnext.vhd 5536)
         case 0x93:
@@ -358,6 +360,8 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
                 if ((value & 0x08) && _machine && _machine->GenerateMultifaceNmi())
                     generated |= 0x08;
                 _regs[reg] = static_cast<uint8_t>((value & 0x80) | generated);
+                if (!(value & 0x10))
+                    _regs[0xDA] = 0;  // writing bit 4 as 0 clears the trap cause (3880)
             }
             return;
         case kRegMachineType:

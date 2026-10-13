@@ -36,10 +36,20 @@ void NextVideoRegs::Reset(bool palettes)
     _first = 0;  // nr_stored_palette_value
     if (!palettes)
         return;
-    // power-on palettes: the ULA's own colours (ink and paper), the others colour = index
+    // The RTL's palette RAMs power on at zero (dpram2 has no init); the state the program sees is what the boot ROM + TBBLUE.FW leave,
+    // measured by running the real firmware from zeroed palettes (2026-10-13): the ULA palettes (0, 4) hold the 16 ULA colours repeated
+    // through all 256 entries, the Layer 2 and sprite palettes (1, 2, 5, 6) colour = index, and the tilemap palettes (3, 7) are never
+    // written by it: still zero
     for (unsigned p = 0; p < kPalettes; p++)
         for (unsigned i = 0; i < 256; i++)
-            _palette[p][i] = ((p & 3) == 0 && i < 32) ? Nine(kUlaColours[i & 15]) : Nine(static_cast<uint8_t>(i));
+        {
+            if ((p & 3) == 0)
+                _palette[p][i] = Nine(kUlaColours[i & 15]);
+            else if ((p & 3) == 3)
+                _palette[p][i] = 0;
+            else
+                _palette[p][i] = Nine(static_cast<uint8_t>(i));
+        }
 }
 
 void NextVideoRegs::WriteClip(unsigned window, uint8_t value)

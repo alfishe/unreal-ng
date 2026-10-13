@@ -252,7 +252,7 @@ class TestNextReports:
         report = get(api_client, next_emulator, "/state/next/nmi").json()
         names = [source["name"] for source in report["sources"]]
         assert names == ["m1_button", "drive_button", "io_trap"]
-        assert report["sources"][2]["modelled"] is False
+        assert report["sources"][2]["modelled"] is True and report["sources"][2]["cause"] == "none"
         assert {"in_service", "multiface", "nr_02", "stackless_nmi", "reset", "interrupts", "events"} <= set(report)
         journal = post(api_client, next_emulator, "/next/nmi-journal", {"enabled": True, "clear": True}).json()
         assert journal["enabled"] is True and journal["size"] == 0

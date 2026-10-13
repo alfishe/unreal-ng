@@ -130,6 +130,12 @@ uint8_t NextAudio::ReadData()
     return _chips[_selected]->readCurrentRegister();
 }
 
+uint8_t NextAudio::ReadIdentity() const
+{
+    const unsigned id = 3 - _selected;  // AY_ID of psg0 / psg1 / psg2 in turbosound.vhd: "11", "10", "01"
+    return static_cast<uint8_t>((id << 6) | (_addr[_selected] & 0x1F));
+}
+
 void NextAudio::WriteDac(unsigned channel, uint8_t value)
 {
     if (!_dacEnabled)

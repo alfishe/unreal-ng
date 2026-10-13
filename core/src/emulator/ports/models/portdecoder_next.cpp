@@ -324,6 +324,7 @@ uint8_t PortDecoder_Next::IdleRead(uint16_t port, uint16_t pc)
 
 uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    IoTrap(port, false, 0);
     const uint8_t low = static_cast<uint8_t>(port);
     if (low == _multiface->EnablePort() || low == _multiface->DisablePort())
     {
@@ -387,11 +388,15 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         OnPortInComplete(port, value, pc, disp);
         return value;
     }
-    if ((port & 0xC002) == 0xC000 && !IsPort_DFFD_Next(port))  // #FFFD: the selected AY's register
+    // The AY ports (zxnext.vhd 2646-2649, 2771): #FFFD = A15:A14 = 11, A2 = 1 and the +3 family's A1:A0 = 01; #BFFD the same with
+    // A15:A14 = 10, readable like #FFFD on +3 timing; #BFF5 (#BFFD with A3 = 0) reads the chip's identity and register address
+    const bool ayFfFd = (port & 0xC007) == 0xC005 && !IsPort_DFFD_Next(port);
+    const bool ayBfFd = (port & 0xC007) == 0x8005;
+    if (ayFfFd || (ayBfFd && (_board->Timing() == 3 || (port & 0x08) == 0)))  // #BFF5 on any timing, #BFFD on +3
     {
         if (!PortEnabled(16))
             return IdleRead(port, pc);
-        const uint8_t value = _audio->ReadData();
+        const uint8_t value = (ayBfFd && (port & 0x08) == 0) ? _audio->ReadIdentity() : _audio->ReadData();
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -606,6 +611,7 @@ bool PortDecoder_Next::JoystickPortAnswers(bool port37, uint8_t& value) const
 
 void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    IoTrap(port, true, value);
     // The magic debug port: the program's console. A tool's own OUT (toolAccessActive) is not the program's
     if (_magicPort.Enabled()) [[unlikely]]
         if (!_context->toolAccessActive)
@@ -659,12 +665,12 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
             _board->RefreshLayer2Mapping();
         }
     }
-    else if ((port & 0xC002) == 0xC000 && !IsPort_DFFD_Next(port))
+    else if ((port & 0xC007) == 0xC005 && !IsPort_DFFD_Next(port))
     {
         if (PortEnabled(16))
             _audio->WriteSelect(value);  // #FFFD
     }
-    else if ((port & 0xC002) == 0x8000)
+    else if ((port & 0xC007) == 0x8005)
     {
         if (PortEnabled(16))
             _audio->WriteData(value);    // #BFFD
@@ -752,7 +758,7 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     else
     {
         PortDecoder_Spectrum128::DecodePortOut(port, value, pc);
-        if (_outLog && !IsPort_FE(port) && !IsPort_7FFD(port) && (port & 0xC002) != 0xC000 && (port & 0xC002) != 0x8000)
+        if (_outLog && !IsPort_FE(port) && !IsPort_7FFD(port) && (port & 0xC007) != 0xC005 && (port & 0xC007) != 0x8005)
         {
             PortUse& use = (*_outLog)[port];
             use.count++;
@@ -1470,12 +1476,40 @@ bool PortDecoder_Next::GenerateDriveNmi()
 
 bool PortDecoder_Next::GenerateMultifaceNmi()
 {
+    return RaiseMultifaceNmi("m1_button");
+}
+
+void PortDecoder_Next::IoTrap(uint16_t port, bool write, uint8_t value)
+{
+    // zxnext.vhd 2578-2602, 2723-2725: port_fd = A1:A0 = 01, port_xffd adds A15:A14 = 00; #2FFD (A13:A12 = 10) read, #3FFD (11) read
+    // and write; not a write the DAC's #F1 / #F9 owns (port_fd_conflict_wr). NR #D8 bit 0 qualifies it all
+    if (!(_board->Stored(0xD8) & 0x01) || (port & 3) != 1 || (port >> 14) != 0)
+        return;
+    const unsigned select = (port >> 12) & 3;
+    uint8_t cause;
+    if (select == 2 && !write)
+        cause = 1;
+    else if (select == 3)
+        cause = write ? 3 : 2;
+    else
+        return;
+    const uint8_t low = static_cast<uint8_t>(port);
+    if (write && (low == 0xF1 || low == 0xF9) && PortEnabled(18))
+        return;
+    // the cause and the byte are taken while no NMI is on its way (nmi_accept_cause: the state machine idle or fetching)
+    if (!_multiface->NmiHold() && !_divMmc->NmiHold())
+        _board->LatchIoTrap(cause, write, value);
+    RaiseMultifaceNmi("io_trap");  // nmi_sw_gen_mf: the same assertion as the M1 button, behind NR #06 bit 3
+}
+
+bool PortDecoder_Next::RaiseMultifaceNmi(const char* source)
+{
     const char* refusal = MultifaceNmiRefusal();
     if (_intJournal.Enabled())
     {
         NextIntEvent e;
         e.kind = NextIntKind::NmiRequest;
-        e.source = "m1_button";
+        e.source = source;
         e.accepted = refusal == nullptr;
         e.reason = refusal ? refusal : "";
         RecordInt(e);

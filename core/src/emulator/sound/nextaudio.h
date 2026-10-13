@@ -39,6 +39,9 @@ public:
     void WriteSelect(uint8_t value);  ///< #FFFD
     void WriteData(uint8_t value);    ///< #BFFD
     uint8_t ReadData();               ///< #FFFD read
+    /// #BFF5 read (psg_d_o_reg_i, ym2149.vhd 220-221): the selected chip's identity and register address, `AY_ID & '0' & addr`
+    /// (the chips answer "11", "10" and "01" for chip 0, 1 and 2)
+    uint8_t ReadIdentity() const;
     /// endregion
 
     /// region <Configuration (NextREG)>
