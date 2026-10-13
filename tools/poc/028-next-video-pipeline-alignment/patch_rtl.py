@@ -293,6 +293,20 @@ for f in sorted(files):
                  "      else nr_43_palette_write_select(1) & nr_43_palette_write_select(2) & t_pal_idx;")):
             assert text.count(old) == 1, old
             text = text.replace(old, new, 1)
+        for old, new in (
+                ("nr_wr_en <= copper_req or cpu_req;", "nr_wr_en <= copper_req or cpu_req or t_nr_we;"),
+                ("nr_wr_reg <= copper_nr_reg when copper_req = '1' else cpu_nr_reg;",
+                 "nr_wr_reg <= t_nr_reg when t_nr_we = '1' else copper_nr_reg when copper_req = '1' else cpu_nr_reg;"),
+                ("nr_wr_dat <= copper_nr_dat when copper_req = '1' else cpu_nr_dat;",
+                 "nr_wr_dat <= t_nr_dat when t_nr_we = '1' else copper_nr_dat when copper_req = '1' else cpu_nr_dat;"),
+                ("port_57_wr <= iowr and port_57;", "port_57_wr <= (iowr and port_57) or t_p57_we;"),
+                ("port_5b_wr <= iowr and port_5b;", "port_5b_wr <= (iowr and port_5b) or t_p5b_we;"),
+                ("port_303b_wr <= iowr and port_303b;", "port_303b_wr <= (iowr and port_303b) or t_p303b_we;"),
+                ("      port5B_w_en_s     => port_5b_wr,\n      port303b_r_en_s   => port_303b_rd,\n      port303b_w_en_s   => port_303b_wr,\n      cpu_d_i           => cpu_do,",
+                 "      port5B_w_en_s     => port_5b_wr,\n      port303b_r_en_s   => port_303b_rd,\n      port303b_w_en_s   => port_303b_wr,\n"
+                 "      cpu_d_i           => spr_cpu_d,")):
+            assert text.count(old) == 1, old
+            text = text.replace(old, new, 1)
         old = """         elsif nr_69_we = '1' then
             port_123b_layer2_en <= nr_wr_dat(7);
          end if;"""
@@ -300,7 +314,9 @@ for f in sorted(files):
         text = text.replace(old, old + "\n         if t_en(4) = '1' then port_123b_layer2_en <= t_val(32); end if;", 1)
         i = text.index("architecture rtl of zxnext is")
         j = text.index("\nbegin\n", i)
-        text = text[:j] + ("\nbegin\n   p_hc <= std_logic_vector(hc);\n   p_vc <= std_logic_vector(vc);\n"
+        text = text[:j] + ("\n   signal spr_cpu_d : std_logic_vector(7 downto 0);\nbegin\n"
+                           "   spr_cpu_d <= t_p_dat when (t_p57_we or t_p5b_we or t_p303b_we) = '1' else cpu_do;\n"
+                           "   p_hc <= std_logic_vector(hc);\n   p_vc <= std_logic_vector(vc);\n"
                            "   p_dbg(0) <= tm_pixel_en; p_dbg(1) <= tm_pixel_en_1; p_dbg(2) <= tm_en_1; p_dbg(15 downto 8) <= tm_pixel;\n") \
                + text[j + len("\nbegin\n"):]
     elif base == "sprites.vhd":

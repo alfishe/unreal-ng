@@ -181,10 +181,12 @@ ScreenNext::PictureLatency ScreenNext::PictureLatencyOf(uint8_t reg, uint8_t pre
     //    (read at the output stage, latched every 32 clocks); 20 for the transparent index (NR #4C)
     //  - the palette values (NR #41 / #44): the lookup stage of the palette the write select (NR #43 bits 6:4) names: ULA 18, Layer 2 18,
     //    tilemap 17, sprites 16, half pixels
-    // Not measured (0, drawn at the write): the sprite pattern / attribute writes (they are a RAM write, not a register), the sprite
-    // transparent index (NR #4B), the Layer 2 resolution, the LoRes / Radastan control (NR #6A)
+    //  - 23 clocks, 4-clock pixels: the LoRes palette offset and the Radastan bits (NR #6A); 27 for the Layer 2 resolution (NR #70 bits 5:4)
+    // Not here (a different mechanism, open): what the sprite fill consumes (pattern bytes, attributes, NR #4B): the engine fills the next
+    // line's buffer from the end of the line before, so a write shows a line or two later, not at a pixel (see the POC 028 reports)
     constexpr PictureLatency kChain{22, 2}, kPixel22{22, 4}, kLayer2{26, 4}, kUlaScroll{56, 32}, kUlaFine{70, 32}, kTilemapScroll{53, 32},
-        kUlaNext{20, 2}, kTilemapControl{53, 32}, kTilemap80{24, 32}, kTilemapTransparent{20, 2}, kNone{0, 1};
+        kUlaNext{20, 2}, kTilemapControl{53, 32}, kTilemap80{24, 32}, kTilemapTransparent{20, 2}, kLayer2Resolution{27, 4},
+        kLoRes{23, 4}, kNone{0, 1};
     const uint8_t changed = static_cast<uint8_t>(previous ^ value);
     auto earliest = [](PictureLatency a, PictureLatency b) { return a.clocks == 0 ? b : (b.clocks == 0 ? a : (b.clocks < a.clocks ? b : a)); };
     switch (reg)
@@ -233,7 +235,14 @@ ScreenNext::PictureLatency ScreenNext::PictureLatencyOf(uint8_t reg, uint8_t pre
         case 0x1B:
             return kPixel22;
         case 0x70:
-            return (changed & 0x0F) ? kPixel22 : kNone;
+        {
+            PictureLatency l = (changed & 0x0F) ? kPixel22 : kNone;
+            if (changed & 0x30)  // the Layer 2 resolution: one stage after the other Layer 2 inputs
+                l = earliest(l, kLayer2Resolution);
+            return l;
+        }
+        case 0x6A:  // the LoRes palette offset (bits 3:0) and the Radastan mode / XOR (bits 5:4)
+            return (changed & 0x3F) ? kLoRes : kNone;
         case 0x69:
             return (changed & 0x80) ? kLayer2 : kNone;
         case 0x12:

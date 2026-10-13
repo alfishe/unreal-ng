@@ -633,7 +633,11 @@ TEST(ScreenNextLatency_Test, TheLatencyFollowsTheChangedBitsOfTheRegister)
     EXPECT_EQ(of(0x30, 0x00, 0x01).clocks, 53u);    // the tilemap scroll
     EXPECT_EQ(of(0x32, 0x00, 0x01).clocks, 22u);    // the LoRes scroll: per pixel
     EXPECT_EQ(of(0x32, 0x00, 0x01).quantum, 4u);
-    EXPECT_EQ(of(0x6A, 0x00, 0x01).clocks, 0u);     // the LoRes / Radastan control: not measured
+    EXPECT_EQ(of(0x6A, 0x00, 0x20).clocks, 23u);    // Radastan
+    EXPECT_EQ(of(0x6A, 0x00, 0x05).clocks, 23u);    // the LoRes palette offset
+    EXPECT_EQ(of(0x70, 0x00, 0x10).clocks, 27u);    // the Layer 2 resolution
+    EXPECT_EQ(of(0x70, 0x00, 0x01).clocks, 22u);    // its palette offset
+    EXPECT_EQ(of(0x4B, 0x00, 0x21).clocks, 0u);     // the sprite transparent index: a fill-stage input, not a pixel one
 }
 
 // The ULA reads its scroll where an 8-pixel cell is fetched: a MOVE of NR #26 lands 56 clocks after the WAIT and takes effect at the next
