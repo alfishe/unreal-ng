@@ -683,8 +683,9 @@ void PortDecoder_Next::BindDma()
 void PortDecoder_Next::AudioConfigChanged()
 {
     const uint8_t nr06 = _board->Stored(0x06), nr08 = _board->Stored(0x08), nr09 = _board->Stored(0x09);
-    _audio->Configure((nr06 & 3) == 0, (nr08 & 0x02) != 0, (nr08 & 0x08) != 0, (nr08 & 0x20) != 0, static_cast<uint8_t>((nr09 >> 5) & 7),
-                      (nr06 & 0x40) && (nr08 & 0x10));
+    // zxnext.vhd 6379-6392: aymode_i is NR #06 bit 0 (modes 00 and 10 are the YM, 01 and 11 the AY), mode 11 holds the chips in reset
+    _audio->Configure((nr06 & 1) == 0, (nr08 & 0x02) != 0, (nr08 & 0x08) != 0, (nr08 & 0x20) != 0, static_cast<uint8_t>((nr09 >> 5) & 7),
+                      (nr06 & 0x40) && (nr08 & 0x10), (nr06 & 3) == 3);
 }
 
 /// NR #2C (B, left), #2D (A and D, mono), #2E (C, right): the DAC's NextREG mirrors
@@ -926,6 +927,8 @@ void PortDecoder_Next::PerformReset(bool hard)
     state.p1FFD = 0x00;
     Mem().ResetMmu();
     _board->Reset(hard);  // config mode and the boot ROM first: the slot table follows them
+    _audio->Reset();      // turbosound.vhd / soundrive.vhd: reset_i is `reset` (the chips, the pan, the selected chip, the DACs)
+    AudioConfigChanged();
     if (_intJournal.Enabled())
     {
         NextIntEvent e;

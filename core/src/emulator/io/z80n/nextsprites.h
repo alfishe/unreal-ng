@@ -30,7 +30,8 @@ public:
         bool opaque = false;
     };
 
-    void Reset();
+    void Reset();       ///< a hard reset: the configuration load clears the attribute and pattern RAMs too
+    void SoftReset();   ///< `reset` of sprites.vhd: the indices, the mirror and the status flags; the RAMs stay
 
     /// region <Ports>
     uint8_t ReadStatus();                  ///< #303B: bit 1 too many sprites, bit 0 collision; clears both
@@ -41,7 +42,12 @@ public:
 
     /// region <NextREG>
     void WriteMirrorSprite(uint8_t value, bool tied);   ///< NR #34
+    /// NR #34: with NR #09 bit 4 (tie) the mirror is the port's sprite number (sprites.vhd 607-610: it follows every #303B write and every
+    /// #57 write that completes a sprite), else what NR #34 / NR #75-#79 left
+    uint8_t ReadMirrorSprite(bool tied) const { return static_cast<uint8_t>((tied ? _slot : _mirror) & 0x7F); }
     uint8_t ReadMirrorSprite() const { return _mirror & 0x7F; }
+    /// The tie went off: the mirror keeps the sprite number it had followed
+    void ReleaseMirror() { _mirror = static_cast<uint8_t>((_mirror & 0x80) | _slot); }
     void WriteMirrorAttribute(unsigned byte, uint8_t value, bool increment, bool tied);  ///< NR #35-#39 / #75-#79
     /// endregion
 

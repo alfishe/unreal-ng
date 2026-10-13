@@ -25,7 +25,7 @@
 
 namespace
 {
-constexpr uint8_t kImageVersion = 6;  // 6: the UARTs
+constexpr uint8_t kImageVersion = 7;  // 7: the AY register address of each chip and the PSG hold (NR #06 = 11); 6: the UARTs
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -555,6 +555,8 @@ static void SaveAudio(Writer& w, const NextAudio* a)
     w.Put(a->_speakerExcluded);
     w.Put(a->_monoMask);
     w.PutArray(a->_dac);
+    w.PutArray(a->_addr);
+    w.Put(a->_held);
 }
 static void LoadAudio(Reader& r, NextAudio* a)
 {
@@ -573,6 +575,8 @@ static void LoadAudio(Reader& r, NextAudio* a)
     r.Get(a->_speakerExcluded);
     r.Get(a->_monoMask);
     r.GetArray(a->_dac);
+    r.GetArray(a->_addr);
+    r.Get(a->_held);
     a->_timeKnown = false;  // the render clock follows the machine again from the next frame
 }
 

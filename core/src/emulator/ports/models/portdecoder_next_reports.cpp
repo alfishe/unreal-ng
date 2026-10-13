@@ -775,7 +775,7 @@ StateNode NextSprites(EmulatorContext* context, const NextSpritesQuery& query)
     flags["too_many"] = sprites.TooManyFlag();
     n["flags"] = std::move(flags);
     n["upload_slot"] = int(sprites.UploadSlot());
-    n["mirror_index"] = int(sprites.ReadMirrorSprite());
+    n["mirror_index"] = int(sprites.ReadMirrorSprite((board.Stored(0x09) & 0x10) != 0));
 
     ::NextSprites::Info info[::NextSprites::kSprites];
     sprites.Describe(info);

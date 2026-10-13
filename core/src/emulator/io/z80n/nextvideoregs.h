@@ -13,7 +13,9 @@ public:
     static constexpr unsigned kClipWindows = 4;  ///< Layer 2, sprites, ULA/LoRes, tilemap (NR #18-#1B)
     static constexpr unsigned kPalettes = 8;     ///< NR #43 bits 6:4 select: 0 ULA, 1 Layer 2, 2 sprites, 3 tilemap; bit 6 the second palette of each
 
-    void Reset();
+    /// A hard reset (the FPGA configuration is loaded again) restores the power-on colours too; a soft one keeps the palette
+    /// memory: zxnext.vhd resets the palette index, control and stored byte, never the palette RAMs (the dpram2 entities have no reset)
+    void Reset(bool palettes = true);
 
     /// region <Clip windows>
     /// A write stores at the window's index and advances it; reads do not advance. NR #1C reads the four indices,
@@ -68,10 +70,13 @@ public:
     void WriteUlaNextFormat(uint8_t value) { _ulaNext = value; }
     uint8_t ReadPaletteValue8() const;
     uint8_t ReadPaletteValue9() const;  ///< the second byte only
+    /// NR #28 reads back the byte the last first write of NR #44 stored (nr_stored_palette_value, zxnext.vhd 6004), not what was written to NR #28
+    uint8_t StoredPaletteValue() const { return _first; }
     uint8_t PaletteControl() const { return _control; }
     uint8_t UlaNextFormat() const { return _ulaNext; }
-    /// The 9-bit colour (bit 8 = Layer 2 priority is kept in bit 9)
-    uint16_t PaletteEntry(unsigned palette, unsigned index) const { return _palette[palette & 7][index & 255]; }
+    /// The 9-bit colour (bit 8 = Layer 2 priority is kept in bit 9). Bits 11:10 are the two priority bits of the second byte of NR #44
+    /// as stored (every palette keeps them and reads them back, only Layer 2's bit 9 reaches the picture): not part of the colour
+    uint16_t PaletteEntry(unsigned palette, unsigned index) const { return _palette[palette & 7][index & 255] & 0x3FF; }
     /// endregion
 
 private:

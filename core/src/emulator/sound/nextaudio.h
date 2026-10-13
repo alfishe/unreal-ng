@@ -42,9 +42,11 @@ public:
     /// endregion
 
     /// region <Configuration (NextREG)>
-    /// NR #06 bits 1:0: 00 YM, 01 AY; NR #08 bit 1 turbosound, bit 3 DAC, bit 5 ACB; NR #09 bits 7:5 mono per chip
+    /// NR #06 bits 1:0: the chip type is bit 0 (0 YM, 1 AY: aymode_i is nr_06_psg_mode(0)), 11 holds all three chips in reset
+    /// (audio_ay_reset, zxnext.vhd 6379); NR #08 bit 1 turbosound, bit 3 DAC, bit 5 ACB; NR #09 bits 7:5 mono per chip
     /// speakerExcluded: NR #06 bit 6 with NR #08 bit 4 - the beeper leaves the line mix (it only goes to the internal speaker)
-    void Configure(bool ymMode, bool turboSound, bool dacEnabled, bool acb, uint8_t monoMask, bool speakerExcluded);
+    void Configure(bool ymMode, bool turboSound, bool dacEnabled, bool acb, uint8_t monoMask, bool speakerExcluded, bool held = false);
+    bool Held() const { return _held; }
     /// The ULA beeper at the Next's levels: EAR 2048, MIC 512 (of 32768, audio_mixer.vhd); the standard beeper's circuit levels come back with it gone
     void ApplyBeeperLevels();
     void ReleaseBeeperLevels();
@@ -82,6 +84,7 @@ private:
     friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     /// Run the generators up to absolute base T `t` (a tick every 16 T), recording the level of each tick
     void AdvanceTo(double t);
+    void ResetChips();
     void Tick();
 
     EmulatorContext* _context;
@@ -93,6 +96,8 @@ private:
     bool _ym = true;
     bool _acb = false;
     bool _speakerExcluded = false;
+    bool _held = false;  ///< NR #06 bits 1:0 = 11: the chips are in reset
+    std::array<uint8_t, kChips> _addr{{0, 0, 0}};  ///< the selected register of each chip, five bits (ym2149.vhd `addr`)
     uint8_t _monoMask = 0;
     std::array<uint8_t, 4> _dac{{0x80, 0x80, 0x80, 0x80}};
 
