@@ -54,6 +54,11 @@ public:
     /// A host write in the window, after the normal write
     virtual void onWrite(uint16_t addr, uint8_t value, bool romPaged) = 0;
 
+    /// true: onBeforeWrite is called for a write in the window before the normal write stores the byte (a screen that draws only
+    /// when its inputs change draws what the old byte showed first: TS-Conf). Fixed while installed
+    bool observesWriteStart = false;
+    virtual void onBeforeWrite(uint16_t addr) { (void)addr; }
+
     /// The Z80 accepted an interrupt (its acknowledge is an I/O cycle). Called while the overlay is installed,
     /// whatever its window; default: nothing
     virtual void onInterruptAcknowledge() {}
@@ -89,6 +94,7 @@ public:
     uint8_t onRead(uint16_t addr, uint8_t normal, bool isExecution, bool romPaged) override;
     uint8_t onReadM1(uint16_t addr, uint8_t normal, bool romPaged) override;
     void onWrite(uint16_t addr, uint8_t value, bool romPaged) override;
+    void onBeforeWrite(uint16_t addr) override;
     void onInterruptAcknowledge() override;
     /// Every member that sees the fetch is pure; the period is their least common multiple
     bool RepeatFetchIsPure(uint16_t addr, uint32_t& period) const override;

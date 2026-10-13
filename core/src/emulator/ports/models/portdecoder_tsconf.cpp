@@ -342,6 +342,7 @@ void PortDecoder_TSConf::ApplyState()
     _dma.SetBlt2Built(TsConfDma::kBuildHasBlt2 || _context->config.ts_vdac != 0);
     InstallInterrupts();
     _engine.RebuildLineTable();
+    _engine.NoteStateApplied();
     UpdateBanks();
     RefreshM1Hook();
     RefreshFmWindow();
@@ -1107,6 +1108,7 @@ void PortDecoder_TSConf::InstallInterrupts()
         if (auto* screen = dynamic_cast<ScreenTSConf*>(_context->pScreen))
             screen->DrawTo(raster);
     });
+    _engine.SetVideoCatchUp([this]() { VideoCatchUpToStepEnd(); });
 }
 
 void PortDecoder_TSConf::RefreshFmWindow()
@@ -1175,6 +1177,24 @@ void PortDecoder_TSConf::CollectMemoryRegions(std::vector<IDeviceMemoryRegion*>&
     }
     out.push_back(_cramRegion.get());
     out.push_back(_sfileRegion.get());
+}
+
+void PortDecoder_TSConf::DramWriteWait::onBeforeWrite([[maybe_unused]] uint16_t addr)
+{
+    _owner.VideoCatchUpToStepEnd();
+}
+
+void PortDecoder_TSConf::VideoCatchUpToStepEnd()
+{
+    // The screen is created with the machine and replaced with it: looked up again only when the pointer changed
+    Screen* screen = _context->pScreen;
+    if (screen != _catchUpScreenBase) [[unlikely]]
+    {
+        _catchUpScreenBase = screen;
+        _catchUpScreen = dynamic_cast<ScreenTSConf*>(screen);
+    }
+    if (_catchUpScreen)
+        _catchUpScreen->CatchUpToStepEnd();
 }
 
 void PortDecoder_TSConf::DramWriteWait::onWrite(uint16_t addr, [[maybe_unused]] uint8_t value,
