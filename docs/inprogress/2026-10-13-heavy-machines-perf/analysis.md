@@ -508,6 +508,84 @@ between a normal session and a per-step one under TTD, unchanged.
 | Pentagon_ShipNormal | 778 | 723 | 0.93 |
 | Pentagon_WorstNormal (TTD recording) | 890 | 844 | 0.95 |
 
+### Third round (2026-10-13)
+
+**R4. Sprinter: the text unit.** `SymbolUnit` drew each pixel of a character cell through the font-latch test and
+a palette lookup. A unit the latch does not touch now takes its two colours once and picks by the font bit.
+`BM_SprinterRender_Logo` 273 -> 205 µs (-25 %), Sprinter_ShipNormal (a text screen) 1,855 -> 1,672 µs (-10 %); the
+Sprinter render goldens are unchanged.
+
+**Tried and taken back (no measurable gain, interleaved A/B):**
+
+- Next: `NextUart::Quiet()` with its own part kept between changes, the CTC's quiet test inline, an early exit of
+  the DivMMC automap test for fetches at #3E00 and above. `Quiet` is 5-8 % of a Next frame by the profile, but that
+  is its two virtual calls into the peer (`HasByte`, `BreakHeld`) per instruction, which the cache does not remove.
+  Removing them needs the peers to tell the UART when they have something, and the ESP model's answer depends on
+  time (`Now() >= _outReadyAt`), so it is not a small change.
+- Next: the tilemap line working out a 40-column pixel once for its two sub-pixels.
+- TSFM: reading the clock once in `handleStep`.
+
+**Measured, not switched on: link-time optimisation.** The build has no LTO, and the per-instruction paths cross
+translation units (the Z80N / Z84 library calls of `Enter` / `Leave`, the device hooks). A build with
+`-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON` (clang, `-flto`), same sources, interleaved:
+
+| Row | regular | LTO | x |
+|:--|--:|--:|--:|
+| Next_ShipTurbo | 424 | 379 | 0.89 |
+| Next_Spectron_ShipTurbo | 2,822 | 2,503 | 0.89 |
+| Next_Spectron_ShipNormal | 3,813 | 3,649 | 0.96 |
+| Sprinter_ShipTurbo | 1,175 | 1,060 | 0.90 |
+| Sprinter_ShipNormal | 1,672 | 1,589 | 0.95 |
+| TSConf_ShipNormal | 3,345 | 3,144 | 0.94 |
+| TSConf_Sprites_ShipTurbo | 2,438 | 2,317 | 0.95 |
+| Pentagon_ShipTurbo | 154 | 147 | 0.95 |
+| Pentagon_ShipNormal | 731 | 738 | 1.01 |
+
+It is a build decision, not a code change: link time, the gcc / MSVC / MinGW builds of CI, and warnings that only
+appear across units have to be checked first. Left to the owner.
+
+**What the profiles show now** (after three rounds, the per-instruction cost is spread thin; no single item above
+~8 % on TS-Conf or the Next):
+
+- Pentagon and the other classic machines at 1x: `ScreenZX::DrawRangeZXImpl` is 16 % of the frame. The classic
+  screen is still drawn after every instruction; the event rule that TS-Conf got (P6) fits it, with the same
+  catch-up before a write to memory. It touches every classic machine and their screen variants.
+- TS-Conf: a halted CPU step by step (5 % in Wild Commander, P8), the arbiter with the TSU active.
+- Next: the peer calls of the UART poll (above), the sprite engine's fill (`FillClocks`, `UpdateAnchor`: 7 % in a
+  sprite scroller).
+- Everywhere: a silent AY / SSG still ticks its generators (the closed-form advance, P10's note).
+
+### Regression check against the build before the cycle (2026-10-13)
+
+Asked by the owner: no lost lines or pixels. Besides the per-change tests, the tree of this cycle was compared with
+the commit before it (`4ad1b6d05`, built in its own worktree) frame by frame: a throwaway test ran whole machines
+with the picture drawn along the beam (ScreenHQ on), RAM zeroed at power-on, and wrote for every frame a hash of the
+frame buffer and the CPU's PC, SP, AF and T.
+
+| Scenario | Frames | Distinct pictures | Picture differs | CPU state differs |
+|:--|--:|--:|--:|--:|
+| TS-Conf sprites (two starts) | 150 + 150 | 129 / 132 | 0 | 0 |
+| TS-Conf slide show (two starts) | 200 + 400 | 5 / 8 | 0 | 0 |
+| TS-Conf VDAC2 SDK tests 1 and 5 | 80 + 80 | 1 / 1 | 0 | 0 |
+| Next Spectron 2084 (two starts) | 250 + 300 | 141 / 191 | 0 | 0 |
+| Next copper wobble | 120 | 120 | 0 | 0 |
+| Next ScrollNutter | 250 | 28 | 0 | 0 |
+| Next tilemap, show512, Daybreak | 200 + 200 + 100 | 4 / 4 / 2 | 0 | 0 |
+| Next boot (128 menu) | 100 | 14 | 0 | 0 |
+| Pentagon boot | 400 | 13 | 0 | 0 |
+| 48K, Scorpion, Profi boot | 120 each | 14-15 | 0 | 0 |
+| ATM3 boot | 120 | 14 | 0 | 0 |
+| TS-Conf boot | 150 | 29 | 0 up to frame 80 | 0 |
+| Sprinter BIOS screen | 450 | 135 | 0 up to frame 337 | 0 |
+
+The two rows with a limit show a clock: from that frame on a build differs from its own second run in the same
+frames (the firmware prints the time of the host). For the Sprinter the frame buffers of both builds were compared
+pixel by pixel instead: frame 330 (the text is on the screen, 4,454 lit pixels) has no differing pixel; frame 449
+(11,184 lit pixels) differs in 31 pixels inside a 14 x 7 box, the seconds of the clock.
+
+The LTO build was put through the same: all of `core-tests` passes in it (12 shards), and its frames equal the
+regular build's in every scenario above that was run on it (the same Sprinter clock aside).
+
 ### Where the cycle stands
 
 | Row | start of the cycle | now | x |

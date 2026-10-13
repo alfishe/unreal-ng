@@ -290,6 +290,15 @@ inline void SymbolUnit(const SprinterVideoInputs& in, const uint8_t* line1, uint
                            (in.flash ? 0x200u : 0u);
     const uint8_t font = in.vram[SprinterVideoRenderer::FontAddress(in, mode, row)];
     const uint32_t shift = (m0 >> 5) & 1;
+    if (!latch) [[likely]]
+    {
+        // No latched byte in this unit: the two colours of the cell, picked by the font bit
+        const uint32_t paperColor = pens[paper & kPenMask];
+        const uint32_t inkColor = pens[(paper + 0x100u) & kPenMask];
+        for (uint32_t i = 0; i < count; i++, sub++)
+            *out++ = (font & (0x80u >> ((sub >> shift) & 7))) ? inkColor : paperColor;
+        return;
+    }
     const SprinterVideoInputs::FontLatch& fl = in.fontLatch;
     for (uint32_t i = 0; i < count; i++, sub++, x++)
     {
