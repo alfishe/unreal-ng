@@ -372,6 +372,9 @@ struct Writer
         {
             case Expr::Kind::Number: return NumberText(e);
             case Expr::Kind::Symbol:
+                if (program.dialect == "sjasmplus" && (e.text == "relocate_count" || e.text == "relocate_size"))
+                    if (const auto v = Value(e))
+                        return Number(*v);   // sjasmplus' built-in names: ALASM has none
                 if ((strict || !linear) && Later(e.text))
                     Problem("the label " + e.text + " is defined further down");
                 return Name(e.text);
@@ -971,6 +974,39 @@ struct Writer
                     const bool taken = defines.count(flag) == (word == "IFDEF" ? 1u : 0u);
                     return {std::string("IFN ") + (taken ? "1" : "0") + "   ;" + s.text};
                 }
+                if (word == "RELOCATE_START" || word == "RELOCATE_END")
+                    return {";" + s.text};   // the table comes from the layout
+                if (word == "RELOCATE_TABLE")
+                {
+                    // sjasmplus' relocation data: the addresses the layout found, each minus the offset given
+                    int64_t subtract = 0;
+                    if (!rest.empty())
+                    {
+                        const FrontendResult parsed = SjasmplusFrontend().Parse(SourceDocument::FromText("        DW " + rest, "sjasmplus"));
+                        if (!parsed.program.lines.empty() && !parsed.program.lines[0].statements.empty() &&
+                            !parsed.program.lines[0].statements[0].operands.empty())
+                        {
+                            const auto v = Value(parsed.program.lines[0].statements[0].operands[0].expr);
+                            if (!v)
+                                return {NotConverted("RELOCATE_TABLE with an offset known only when assembling")};
+                            subtract = *v;
+                        }
+                    }
+                    std::vector<Operand> items;
+                    for (size_t k = 0;; ++k)
+                    {
+                        const auto found = options.labelValues.find("__UNREALASM_RELOC_" + std::to_string(k));
+                        if (found == options.labelValues.end())
+                            break;
+                        Operand o;
+                        o.kind = Operand::Kind::Immediate;
+                        o.expr = Expr::Number((found->second.value - subtract) & 0xFFFF, ir::NumberSpelling::Hex, 4);
+                        items.push_back(std::move(o));
+                    }
+                    if (items.empty())
+                        return {";" + s.text + " (no relocation data)"};
+                    return DataLines(Dw(), items);
+                }
                 if (kNoBytes.count(word))
                 {
                     diagnostics.push_back({Severity::Info, line, 0, word + " dropped (it makes no bytes)"});
@@ -1035,7 +1071,7 @@ BackendResult AlasmBackend::Write(const ir::Program& given, const BackendOptions
 {
     BackendResult result;
     // sjasmplus' MODULE, STRUCT ... in words ALASM has (sjasmpluslower.h)
-    const ir::Program lowered = given.dialect == "sjasmplus" ? LowerSjasmplus(given, result.diagnostics) : ir::Program{};
+    const ir::Program lowered = given.dialect == "sjasmplus" ? LowerSjasmplus(given, result.diagnostics, true) : ir::Program{};
     const ir::Program& program = given.dialect == "sjasmplus" ? lowered : given;
     result.document.dialect = "alasm";
     result.document.codePage = encoding::CodePage::Cp866;

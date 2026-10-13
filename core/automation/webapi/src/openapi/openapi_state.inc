@@ -210,13 +210,14 @@
              "selected, prescaler (28 MHz clocks per bit), baud, frame {value, data_bits, parity, stop_bits, hardware_flow, break, fifo_reset, "
              "clocks_per_byte}, rts, rx {count, capacity (512), near_full (3/4), busy, preview_hex (the next 16 bytes), preview_has_error}, "
              "tx {count, capacity (64), busy, empty, preview_hex}, status (the byte a read of #133B gives, without clearing the sticky bits: "
-             "rx_available, tx_full, overflow, rx_near_full, tx_empty, byte_error, framing_error, break), bytes {sent, received, lost}, "
+             "rx_available, tx_full, overflow, rx_near_full, tx_empty, byte_error, framing_error, break (held while a peer's line is low), rx_line_low), bytes {sent, received, lost}, "
              "interrupts {nr_c6_bits, rx_enabled, rx_on_near_full_only, tx_enabled, rx_pending, tx_pending, vector_rx, vector_tx}, peer "
-             "{attached, kind, target, connected, pending_bytes}. routing: NR #A0 / #0B bits that would route a UART to the Pi's GPIO or the "
-             "joystick port (registers only). The ESP's line is [NETWORK] ComPort=, the Pi's ComPort2=.", true},
+             "{attached, via_joystick_connector, kind, target, connected, pending_bytes}. routing: nr_a0 bits (the Pi's GPIO routing: a register "
+             "only) and nr_0b (uart_on_joystick_port, joystick_port_uart = the UART the connector carries or -1, joystick_port_peer). The ESP's "
+             "line is [NETWORK] ComPort=, the Pi's ComPort2=, the joystick connector's ComPortJoy=.", true},
             {"/api/v1/emulator/{id}/state/next/nmi", "Get the Next NMI sources, Multiface, interrupts, reset and the interrupt journal",
              "NMI, interrupts and reset (core DeviceState::NextNmiReport; CLI `state next nmi`, Lua next_nmi(), Python next_nmi(), MCP "
-             "inspect_state aspect next_nmi). sources: m1_button, drive_button (enabled, would_fire, blocked_by) and io_trap (not modelled). "
+             "inspect_state aspect next_nmi). sources: m1_button, drive_button (enabled, would_fire, blocked_by) and io_trap (+3 FDC ports #2FFD / #3FFD with NR #D8 bit 0: cause NR #DA, write NR #D9). "
              "in_service: any, multiface_session, divmmc_handler, divmmc_button_pending. multiface: enabled, type, type_name, enable_port, "
              "disable_port, memory_in, nmi_active, invisible, active. nr_02: value, bus_reset, m1_nmi_generated, drive_nmi_generated. "
              "stackless_nmi: enabled, return_address. reset: bits (NR #02 bits 1:0), last (power_on | first_reset_after_power_on | "

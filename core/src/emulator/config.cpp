@@ -1207,6 +1207,17 @@ bool Config::ParseConfig(IniFile& inimanager)
 			config.network.comPort2[0] = '\0';
 		}
 	}
+	config.network.comPortJoy[0] = '\0';
+	CopyStringValue(inimanager.GetValue(network, "ComPortJoy", nullptr), config.network.comPortJoy, sizeof config.network.comPortJoy);
+	{
+		ComPortSpec spec;
+		std::string error;
+		if (!ComPortSpec::Parse(config.network.comPortJoy, spec, error))
+		{
+			MLOGWARNING("Config: [NETWORK] ComPortJoy=%s: %s - nothing on the joystick connector", config.network.comPortJoy, error.c_str());
+			config.network.comPortJoy[0] = '\0';
+		}
+	}
 	config.network.comModemLines = (inimanager.GetLongValue(network, "ComModemLines", 0) != 0) ? 1 : 0;
 	netValue[0] = '\0';
 	CopyStringValue(inimanager.GetValue(network, "EspChip", nullptr), netValue, sizeof netValue);

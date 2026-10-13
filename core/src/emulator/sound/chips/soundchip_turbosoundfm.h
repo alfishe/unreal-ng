@@ -23,6 +23,10 @@
 /// The core is advanced in T-states (syncTo) so it is in step with the CPU
 /// at every instruction boundary - the invariant TTD checkpointing relies on
 /// (§5.2). The pair runs at 1 : 1 here (YM master clock = audio T-state).
+/// With the core's synthesis skipped (turbo or sound off, no TTD) nothing but
+/// a port access can observe the chips, and advancing them by a + b clocks
+/// equals a, then b: the step only notes the CPU's position and the chips
+/// catch up at the next port access, the frame end or a TTD recording start.
 
 /// The logic chip's three latches, clocked by a control word
 /// (OUT #FFFD with value 0xF8..0xFF, design §5.1 / hardware-reference §3.2)
@@ -103,6 +107,16 @@ protected:
     // LQ -> HQ switch or synthesis resumed: the output stage holds audio from
     // before the gap; flushed at the next frame start (emulation thread)
     bool _outputFlushPending = false;
+
+    // Deferred core sync (file comment): the CPU position the last step noted, and whether the chips still have
+    // to catch up to it. Allowed while the core's synthesis is skipped, until a TTD recording starts mid-frame
+    uint64_t _deferredT = 0;
+
+    // HQ output stage: newest consecutive zeros fed to each SSG decimator (chip 0 L, R, chip 1 L, R); a silent one
+    // skips its FIR (handleStep). Render-side, not TTD state
+    size_t _ssgZeroRun[4] = {};
+    bool _syncDeferred = false;
+    bool _deferAllowed = true;
 
     // FM gain = kFmBaseGain * 10^(trim/20) (§7.1); [SOUND] TSFM_FmLevelDb
     double _fmGain = kFmBaseGain;
@@ -186,7 +200,19 @@ public:
     /// construction/reset adopts t without advancing (nothing to simulate).
     void syncTo(uint64_t t)
     {
+        catchUp();
         _pair.syncTo(t);
+    }
+
+    /// The chips to the CPU position the last step noted (a no-op unless the
+    /// step deferred it, see the file comment)
+    void catchUp() override
+    {
+        if (_syncDeferred)
+        {
+            _syncDeferred = false;
+            _pair.syncTo(_deferredT);
+        }
     }
 
     /// Frame-relative T-state of the CPU right now (the port callbacks see
@@ -232,7 +258,9 @@ public:
 
     void setCoreSynthesisSkipped(bool skipped) override
     {
+        catchUp();  // the deferred clocks run with the flag they were noted under
         _pair.setCoreSynthesisSkipped(skipped);
+        _deferAllowed = true;
     }
     bool isCoreSynthesisSkipped() const { return _pair.coreSynthesisSkipped(); }
 
@@ -447,6 +475,14 @@ public:
     std::string TTDDeviceName() const override
     {
         return "TSFM";
+    }
+
+    /// The recording's first capture sees the chips at the CPU: no deferred
+    /// sync from here to the frame start that re-reads the TTD state
+    void TTDRecordingStarted() override
+    {
+        catchUp();
+        _deferAllowed = false;
     }
     /// endregion </TTDSerializable interface>
 };

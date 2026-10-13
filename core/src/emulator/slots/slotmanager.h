@@ -45,6 +45,7 @@
 #include "emulator/slots/slotconfig.h"
 #include "debugger/ttd/ttdserializable.h"   // TTDDeviceKey, TTDDeviceStates
 #include "emulator/slots/slotplanner.h"
+#include "debugger/ttd/ttdperipheralmask.h"
 
 struct CONFIG;
 enum class GSTypeKind : uint8_t;

@@ -70,7 +70,7 @@ bool ReadAll(std::istream& in, std::vector<uint8_t>& bytes, std::string& err)
 bool IsV1File(const std::vector<uint8_t>& bytes)
 {
     return bytes.size() >= 6 && std::memcmp(bytes.data(), dump::kMagic, 4) == 0 &&
-           (bytes[4] | (bytes[5] << 8)) == dump::kSchemaVersion;
+           dump::IsReadableSchema(static_cast<uint16_t>(bytes[4] | (bytes[5] << 8)));
 }
 
 constexpr const char* kV1Refused =

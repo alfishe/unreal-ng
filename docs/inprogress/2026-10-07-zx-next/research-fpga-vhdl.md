@@ -221,8 +221,7 @@ board's concern, not a decode rule).
   (double buffer). The engine has a finite per-line time budget; when it is still busy at the line change
   (`sprites_overtime`), status bit 1 of port `#303B` ("max sprites per line") is set; bit 0 is "collision" (a
   non-transparent write onto an already non-transparent pixel). A read of `#303B` returns the status and clears it.
-  **Open (N7):** the exact cost per sprite pixel / per sprite and the budget in 28 MHz clocks are needed to set the
-  overtime flag the same way; until then a software estimate with a documented constant is acceptable.
+  The clock budget, the cost per sprite and the collision rules are measured: section 25 and POC 029.
 
 ## 11. Copper (`device/copper.vhd`)
 
@@ -498,3 +497,79 @@ are the entries that change observable behavior; "from" is the core that has it.
 
 So **core 3.02.03 is the reference and the only emulated core for now** (owner decision 2026-10-08, Q2): older cores are kept in
 mind but not built; the table is the list of what older boards did differently. The hardware probe programs print the core version on their second row so results are filed per core.
+
+## 25. Video details re-read for the renderer (2026-10-12; `layer2.vhd`, `zxula.vhd`, `lores.vhd`, `tilemap.vhd`, `sprites.vhd`, `zxnext.vhd`)
+
+Each point is what the RTL does and where; the code that follows it is `NextVideoRenderer` / `NextSprites`, the tests are in
+`nextvideorenderer_test.cpp` (`NextVhdlDetails_Test`, `NextTilemap_Test.EightyColumn...`, `NextSprites_Test`).
+
+**Counters.** `phc` (practical, the 256 x 192 paper at 0..255), `whc` (the 320 x 256 grid at 0..319) and `wvc` all start negative per
+line: `whc = -16` at `wide_hactive`, `phc = whc - 32` (`zxula_timing.vhd` 480-520), `wvc = -2` at `c_min_vactive - 34`; `vc` (ULA) is
+0 at the first paper line and keeps counting through the lower border and the top border of the next frame (its top-border values are
+248..311). A 9-bit counter value with bit 8 set is "outside" for every consumer below.
+
+**Layer 2** (`layer2.vhd`).
+- The address is generated one pixel ahead: `hc_eff = hc + 1` (the pixel being displayed is `hc_eff`). 256 x 192 uses `phc` / `vc`, the
+  wide modes `whc` / `wvc` (640 x 256 reads the same 320 positions, two nibbles per byte, high nibble in the first half of the pixel).
+- Valid area: narrow `hc_eff < 256` and `vc_eff < 192` (`vc_valid` needs `vc(8) = 0` and `vc(7:6) /= 11`), so **no Layer 2 pixel in
+  the border in the 256 x 192 mode whatever the clip window says**; wide `hc_eff < 320` (`hc(8) = 0` or `hc(7:6) = 00`) and `vc_eff < 256`:
+  the whole 320 x 256 grid including the border.
+- Clip: `hc_eff >= x1 and hc_eff <= x2 and vc_eff >= y1 and vc_eff <= y2`, 9-bit compares; in the wide modes `x1 * 2 .. x2 * 2 + 1`
+  (a unit is two 7 MHz pixels: four sub-pixels in 640 mode), `y1 .. y2` on `wvc` (grid line, 0..255). **left > right or top > bottom
+  contains no pixel**, nothing special happens (the compare just fails). With the default window (y2 = 191) the lower 64 lines of the
+  320 x 256 / 640 x 256 picture are clipped: the window has to be opened to 255.
+- Scroll Y folds as `y(7:6) = y_pre(7:6) (+1 from y_pre >= 192 in the narrow mode)`, wide mode `y_pre(7:0)`, i.e. mod 256. Scroll X in
+  the wide modes: `x(8:6) = x_pre(8:6)` below 320, `+3` from there on (10-bit `x_pre = hc_eff + scroll`): a modulo 320 up to
+  `x_pre = 639`; a scroll of 320..511 gives `x_pre` up to 830 and **reads the columns 320..510, the memory after the bitmap** (the
+  banks beyond the 5 of the picture). `NextVideoRenderer::Layer2WideColumn`.
+
+**ULA** (`zxula.vhd`).
+- `screen_mode = port #FF bits 2:0`, **forced to 000 while the shadow screen (bank 7) is shown** (an 8K BRAM). Fetch addresses
+  (`vram_a`): bitmap `mode(0) & addr_p`, attribute `1 & addr_p` when `mode(1)` else `mode(0) & 110 & row & col` - so mode 011 reads the
+  bitmap AND the attribute at +#2000 (the same byte), and the modes 100 / 101 / 111 (not only 110) are "hi-res": the second 8 pixels
+  of each column come from that attribute address (100: attribute area of screen 0, 101: of screen 1 at #3800, 110: bitmap of screen 1,
+  111: bitmap of screen 1 twice). `NextVideoRenderer::UlaFetchAt`.
+- The shift register is 2 columns wide and is moved left by `2 * scroll_x(2:0) + fine` clocks (`shift_scroll = px(2:0) & px(8)`); a
+  normal pixel is two clocks wide (each bit is doubled), a hi-res pixel one. So fine scroll (NR #68 bit 2) shows pixel
+  `scroll + (sub + 1) / 2` at sub-pixel `sub`, and in hi-res the stream position is `sub + 2 * scroll + fine` (scroll NR #26 is in
+  low-res pixels, 2 hi-res pixels per unit). The attribute follows the pixel's column (`attr_scroll_r` flips to the second attribute
+  byte when the shift count reaches 16).
+- Hi-res attribute (`border_clr_tmx = 01 & not ink & ink`): bright, paper = 7 - ink; **the hi-res border uses that attribute too**, so it
+  is the *bright* paper colour (ULA palette 24 + paper, ULANext 128 + paper). The old note "without the bright bit" was wrong.
+- `py_s = vc + scroll_y` (9 bits) folds 192..255 to 0..63, 256..383 to 64..191 and 384..446 to 0..62: always `(vc + scroll) mod 192`.
+- **The border is never clipped by the ULA clip window**: `o_ula_clipped = '0' when (phc >= x1 and phc <= x2 and vc >= y1 and vc <=
+  y2) or border_active = '1'`. y2 values >= 192 are read as 191 (`zxnext.vhd` 6777).
+- LoRes (`lores.vhd`): reads **bank 5 always** (`lores_vram_di <= vram_bank5_do0`; no shadow bank), the same clip window, whose
+  outside leaves the (clipped) ULA pixel. `y_pre = vc + NR #33` (9 bits), `y(7:6) = y_pre(7:6) + 1` from 192, `addr(13:11) + 1`
+  (3 bits) from `y >= 96`: a scroll Y above 191 is not a modulo 192 (rows 192..254 follow, the address wraps in 3 bits).
+
+**Tilemap** (`tilemap.vhd`). 80 columns count in 14 MHz pixels (`hcount(10:1)`): a tile pixel is one sub-pixel, scroll X (NR #2F bits
+1:0 : NR #30, 10 bits) is in those, wraps at 640 (40 columns: 320, in 7 MHz pixels). The `tm_x_correction` thresholds are exactly the
+multiples of 320 (40 col) / 640 (80 col) of a 10-bit sum, so a scroll above the width is the modulo. The clip is `x1 * 2 .. x2 * 2 + 1`
+on `hcounter` (0..319), `y1 .. y2` on `vcounter`. Y is `scroll_y + vcounter(7:0)` mod 256.
+
+**Sprites** (`sprites.vhd`; measured in POC 029).
+- The engine runs once per line, from the line change, in index order, one 28 MHz clock per step: 1 for `S_START`, 1 per sprite for
+  `S_QUALIFY`, 1 per pixel in `S_PROCESS` (`16 << x scale`, ends at `hcount >= 320` unless the position is in the last `16 << scale`
+  of the 512: `(hcount(8:4) and x_wrap) = x_wrap`, checked on the incremented count - 1 clock for a sprite at 320..494, the full width for
+  495..511 with the wrapped part at x = 0..). It always uses all its time (3.02.02: no early termination).
+- `sprites_overtime` = engine not idle when the next line starts: total >= 4 * line pixels (1792 on the 48K / Pentagon timing, 1824 on
+  the 128K / +3). The clocks after the line period are lost: a sprite is drawn up to the last clock.
+- Collision: a write of a non-transparent pixel with x < 320 onto an occupied buffer position, **whatever the clip window, the 224-line
+  limit or zero-on-top** (the clip, over-border and line-224 rules act where the buffer is read: `pixel_en_o`).
+- The sprite enable (NR #15 bit 0) only gates the output (`sprite_en_1`): the engine and both flags run with the sprites off.
+- Over-border off: clip window `((x1(7:5) + 1) << 5) | x1(4:0)` etc. (paper coordinates + 32 in the 9-bit grid) and `vc < 224`;
+  over-border on: the full 320 x 256 grid, or `x1 * 2 .. x2 * 2 + 1` / `y1 .. y2` with NR #15 bit 5.
+
+**Layer order, sprites in the border.** In the orders LUS / USL / ULS the ULA is not drawn where `ula_border and tilemap transparent
+and sprite opaque` (`zxnext.vhd` 7256-7278): a sprite in the border shows through the border colour; in the paper the ULA wins.
+
+**3.0.x "ULA overlay", "overscroll" and "layer 2 banking conflicts": not in the 3.02.03 RTL.** The head repository (changelog
+3.00.XX .. 3.02.03, `src/*`) has: the ULA fetches only from bank 5 and the 8K BRAM of bank 7 (`vram_bank_a1`, `zxnext.vhd`
+6635-6700; MMU pages #0A / #0B for bank 5, #0E for bank 7 only - writes to page #0F do not reach the video side), no register
+or bank for a ULA overlay in banks 10, 11 or 14, and no 320 x 256 / 640 x 256 / 256 x 192 "overscroll" ULA mode (the ULA
+paper is 256 x 192 with `phc` / `vc`; the only 320 x 256 surfaces are Layer 2, the tilemap, the sprites and LoRes' border). NR #69 =
+display control (layer 2, shadow, port #FF alias), NR #12 / #13 the Layer 2 banks (7 bits), NR #70 the Layer 2 resolution. The
+"layer 2 banking" in `zxnext.vhd` is the CPU mapping of port #123B (`layer2_active_bank_offset`, `layer2_A21_A13`, 2960-2975, 3077-3102),
+not a video conflict. These behaviours belong to a later core than the one the emulator follows; nothing to implement or document
+further until its VHDL or notes are available.

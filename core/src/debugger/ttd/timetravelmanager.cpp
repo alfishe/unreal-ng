@@ -801,10 +801,10 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
         info.machine.modelId = info.modelId;
         info.machine.ramPageBound = _modelRamPages;
         info.machine.romSignature = _loadedFromFile ? _loadedRomSignature : _liveRomSignature;
-        uint64_t peripheralMask = 0;
+        ttd::PeripheralMask peripheralMask;
         for (const auto& blob : _timeline.front().peripheralBlobs)
-            if (blob.first < 64)
-                peripheralMask |= uint64_t(1) << blob.first;
+            if (blob.first != static_cast<uint8_t>(PeripheralId::None))
+                peripheralMask.Set(blob.first);
         info.machine.devices = DevicesOfV1Mask(peripheralMask);
         for (const TTDDeviceKey& key : NotRecorded())
             info.machine.notRecordedDevices.push_back({key, PeripheralId::None});
@@ -4333,6 +4333,46 @@ bool ReadPod(std::istream& in, Pod& value, std::string& err)
     return true;
 }
 
+/// @brief A header mask (schema 3): u8 word count (1..4), then the u64 words.
+bool WriteMask(std::ostream& out, const ttd::PeripheralMask& mask, std::string& err)
+{
+    const uint8_t words = static_cast<uint8_t>(mask.WordCount());
+    if (!WritePod(out, words, err)) return false;
+    for (uint8_t w = 0; w < words; ++w)
+    {
+        const uint64_t value = mask.Word(w);
+        if (!WritePod(out, value, err)) return false;
+    }
+    return true;
+}
+
+/// @brief A header mask: one u64 before schema 3, a word list from it.
+bool ReadMask(std::istream& in, uint16_t schemaVersion, ttd::PeripheralMask& mask, std::string& err)
+{
+    mask = ttd::PeripheralMask{};
+    if (schemaVersion < ttd::dump::kSchemaVersionWideMask)
+    {
+        uint64_t low = 0;
+        if (!ReadPod(in, low, err)) return false;
+        mask = ttd::PeripheralMask::FromLow(low);
+        return true;
+    }
+    uint8_t words = 0;
+    if (!ReadPod(in, words, err)) return false;
+    if (words == 0 || words > ttd::PeripheralMask::kWords)
+    {
+        err = "implausible peripheral mask word count " + std::to_string(words);
+        return false;
+    }
+    for (uint8_t w = 0; w < words; ++w)
+    {
+        uint64_t value = 0;
+        if (!ReadPod(in, value, err)) return false;
+        mask.SetWord(w, value);
+    }
+    return true;
+}
+
 /// @brief Write a length-prefixed byte vector (size as u32, then raw bytes).
 /// Refuses a blob over the reader's cap: a file that saves must load.
 bool WriteBlob(std::ostream& out, const std::vector<uint8_t>& blob, std::string& err)
@@ -4787,12 +4827,12 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     // The recorded device set, in the header: readers provision a matching
     // machine before the load (ttdfileinfo.h). The baseline checkpoint's blob
     // ids speak for the whole session, as the loader's slot checks assume.
-    uint64_t peripheralMask = 0;
+    ttd::PeripheralMask peripheralMask;
     if (!_timeline.empty())
     {
         for (const auto& blob : _timeline.front().peripheralBlobs)
-            if (blob.first < 64)
-                peripheralMask |= uint64_t(1) << blob.first;
+            if (blob.first != static_cast<uint8_t>(ttd::PeripheralId::None))
+                peripheralMask.Set(blob.first);
     }
     flags |= ttd::dump::kFlagsHasPeripheralMask;
     // Network inputs only when the session has them: sessions without a
@@ -4801,8 +4841,8 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
         flags |= ttd::dump::kFlagsHasNetInputs;
     // Devices fitted but deliberately not recorded (the lightweight GS): named
     // in the header, only when there are any
-    const uint64_t notRecordedMask = TTDPeripheralRegistry::V1MaskOf(NotRecorded());
-    if (notRecordedMask != 0)
+    const ttd::PeripheralMask notRecordedMask = TTDPeripheralRegistry::V1MaskOf(NotRecorded());
+    if (notRecordedMask.Any())
         flags |= ttd::dump::kFlagsHasNotRecordedMask;
     if (!WritePod(out, flags, err)) return false;
 
@@ -4843,8 +4883,9 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     static_assert(ttd::dump::kSubPageSize == TTDCodecPageStore::kPageSize,
                   "sub-page size mismatch between format and codec page store");
     // Formerly 8 reserved bytes: the peripheral mask (kFlagsHasPeripheralMask)
-    if (!WritePod(out, peripheralMask, err)) return false;
-    if (notRecordedMask != 0 && !WritePod(out, notRecordedMask, err)) return false;
+    // From schema 3 the masks are word lists: u8 word count, the u64 words (ttddumpformat.h)
+    if (!WriteMask(out, peripheralMask, err)) return false;
+    if (notRecordedMask.Any() && !WriteMask(out, notRecordedMask, err)) return false;
 
     // --- Write page store (only live slots, in remapped order) ---
     //
@@ -5131,11 +5172,11 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
 
     uint16_t schemaVersion = 0;
     if (!ReadPod(in, schemaVersion, err)) return false;
-    if (schemaVersion != ttd::dump::kSchemaVersion)
+    if (!ttd::dump::IsReadableSchema(schemaVersion))
     {
         err = "unsupported schema v" + std::to_string(schemaVersion) +
-              " (this reader requires v" + std::to_string(ttd::dump::kSchemaVersion) +
-              "; re-capture the session)";
+              " (this reader requires v" + std::to_string(ttd::dump::kSchemaVersionFirst) + " or v" +
+              std::to_string(ttd::dump::kSchemaVersion) + "; re-capture the session)";
         return false;
     }
 
@@ -5245,11 +5286,11 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
     // The peripheral mask (kFlagsHasPeripheralMask; zero in older files). The
     // loader does not need it: it checks the devices against the baseline
     // checkpoint's blobs below, and GetSessionInfo reads them from there too.
-    uint64_t peripheralMask = 0;
-    if (!ReadPod(in, peripheralMask, err)) return false;
-    (void)peripheralMask;
-    uint64_t notRecordedMask = 0;
-    if ((flags & ttd::dump::kFlagsHasNotRecordedMask) && !ReadPod(in, notRecordedMask, err)) return false;
+    ttd::PeripheralMask peripheralMask;
+    if (!ReadMask(in, schemaVersion, peripheralMask, err)) return false;
+    ttd::PeripheralMask notRecordedMask;
+    if ((flags & ttd::dump::kFlagsHasNotRecordedMask) && !ReadMask(in, schemaVersion, notRecordedMask, err))
+        return false;
 
     // --- Staging ---
     // The file replaces the current session only once it has been read in

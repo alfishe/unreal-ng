@@ -368,6 +368,15 @@ public:
     /// devices() directly (audiosettingswidget) sees it immediately, and
     /// ends every HUD nudge (AudioActivityIndicators::stop).
     void onEmulatorPaused();
+
+    /// Device cores whose per-step sync is deferred catch up with the CPU
+    /// (ITurboSoundDevice::catchUp): called on the driving thread when the
+    /// machine stops being driven - the main loop parks, a direct run ends
+    void catchUpDeferredCores()
+    {
+        if (_turboSound)
+            _turboSound->catchUp();
+    }
     /// A time-travel replay re-runs recorded history: the GS activity counters (session totals the automation
     /// reports, not machine state) are kept as they stand before it and put back after, so replayed spans do not
     /// count again

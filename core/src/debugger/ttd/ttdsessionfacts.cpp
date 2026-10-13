@@ -4,15 +4,44 @@
 #include "debugger/ttd/engine/ttdcontainer.h"
 #include "debugger/ttd/ttdbookmarks.h"
 #include "debugger/ttd/ttdfileinfo.h"
+#include "debugger/ttd/ttdperipheralmask.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
 
 namespace ttd
 {
 
 namespace
 {
-/// 2 (D23): the not-recorded devices as keys; 1 kept two masks of v1 ids (the recorded devices, read and dropped:
-/// the device table lists them; the not-recorded ones)
-constexpr uint16_t kFactsVersion = 2;
+/// 3 (D23): the not-recorded devices as keys, no mask of the recorded ones (the session's device table lists them);
+/// 2: two masks of v1 ids as word lists (u8 count, u64 words: any u8 id); 1: one u64 each (ids 0..63). The masks of
+/// versions 1 and 2 are read: the recorded one dropped, the not-recorded one as keys {type of the id, ""}
+constexpr uint16_t kFactsVersion = 3;
+constexpr uint16_t kFactsVersionFirst = 1;
+constexpr uint16_t kFactsVersionKeys = 3;
+
+bool ReadMask(TTDByteReader& r, uint16_t version, PeripheralMask& mask)
+{
+    mask = PeripheralMask{};
+    if (version < 2)
+    {
+        uint64_t low = 0;
+        if (!r.U64(low))
+            return false;
+        mask = PeripheralMask::FromLow(low);
+        return true;
+    }
+    uint8_t words = 0;
+    if (!r.U8(words) || words == 0 || words > PeripheralMask::kWords)
+        return false;
+    for (uint8_t i = 0; i < words; ++i)
+    {
+        uint64_t value = 0;
+        if (!r.U64(value))
+            return false;
+        mask.SetWord(i, value);
+    }
+    return true;
+}
 constexpr uint16_t kBookmarksVersion = 1;
 }  // namespace
 
@@ -42,20 +71,18 @@ bool DecodeSessionFacts(const std::vector<uint8_t>& bytes, TTDSessionFacts& fact
     TTDByteReader r(bytes);
     uint16_t version = 0;
     uint8_t input = 0, port = 0;
-    if (!r.U16(version) || (version != 1 && version != kFactsVersion))
+    if (!r.U16(version) || version < kFactsVersionFirst || version > kFactsVersion)
         return false;
     TTDSessionFacts f;
     if (!r.U8(f.modelId) || !r.U16(f.modelRamPages) || !r.U64(f.romSignature) || !r.U64(f.capturedAtUnixMs) ||
         !r.Str(f.recordedBy))
         return false;
-    if (version == 1)
+    if (version < kFactsVersionKeys)
     {
-        uint64_t recordedMask = 0, notRecordedMask = 0;
-        if (!r.U64(recordedMask) || !r.U64(notRecordedMask))
+        PeripheralMask recorded, notRecorded;
+        if (!ReadMask(r, version, recorded) || !ReadMask(r, version, notRecorded))
             return false;
-        for (uint8_t id = 0; id < 64; ++id)
-            if ((notRecordedMask >> id) & 1u)
-                f.notRecorded.push_back({static_cast<TTDDeviceType>(id), {}});
+        f.notRecorded = TTDPeripheralRegistry::KeysOfV1Mask(notRecorded);
     }
     else
     {

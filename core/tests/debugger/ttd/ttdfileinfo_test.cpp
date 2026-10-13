@@ -178,13 +178,17 @@ TEST_F(TTDFileInfo_Test, GeneralSoundCardOfTheRecordingIsNamed)
 TEST(TTDFileInfo_Names, GeneralSoundOfAMachine)
 {
     using ttd::PeripheralId;
-    auto bit = [](PeripheralId id) { return uint64_t(1) << static_cast<uint8_t>(id); };
-    auto machineOf = [](uint64_t mask) {
+    auto bit = [](PeripheralId id) {
+        ttd::PeripheralMask mask;
+        mask.Set(static_cast<uint8_t>(id));
+        return mask;
+    };
+    auto machineOf = [](const ttd::PeripheralMask& mask) {
         ttd::TTDRecordedMachine m;
         m.devices = ttd::DevicesOfV1Mask(mask);
         return m;
     };
-    EXPECT_EQ(ttd::GeneralSoundOf(machineOf(0)), GSTypeKind::NONE);
+    EXPECT_EQ(ttd::GeneralSoundOf(machineOf(ttd::PeripheralMask{})), GSTypeKind::NONE);
     EXPECT_EQ(ttd::GeneralSoundOf(machineOf(bit(PeripheralId::GeneralSound))), GSTypeKind::Z80);
     EXPECT_EQ(ttd::GeneralSoundOf(machineOf(bit(PeripheralId::GeneralSoundLightweight))), GSTypeKind::LW);
     EXPECT_EQ(ttd::GeneralSoundOf(machineOf(bit(PeripheralId::NeoGS) | bit(PeripheralId::BetaDisk))), GSTypeKind::NGS);

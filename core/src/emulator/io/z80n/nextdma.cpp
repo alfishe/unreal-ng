@@ -27,6 +27,8 @@ void NextDma::Write(uint8_t value, bool z80Compatible)
     {
         switch (_seq)
         {
+            case Seq::Stuck:  // nothing leaves this state but a reset (dma.vhd "when others => null")
+                break;
             case Seq::R0b0:
                 _portAAddress = static_cast<uint16_t>((_portAAddress & 0xFF00) | value);
                 _seq = (_regTemp & 0x10) ? Seq::R0b1 : (_regTemp & 0x20) ? Seq::R0b2 : (_regTemp & 0x40) ? Seq::R0b3 : Seq::Idle;
@@ -89,7 +91,9 @@ void NextDma::Write(uint8_t value, bool z80Compatible)
     {
         _regTemp = value;
         _mode = (value >> 5) & 3;
-        _seq = (value & 0x04) ? Seq::R4b0 : (value & 0x08) ? Seq::R4b1 : Seq::Idle;
+        // dma.vhd: bit 2 -> low byte, bit 3 -> high byte, bit 4 -> R4_BYTE_2, a state the register sequencer has no branch for: the
+        // register interface of the DMA is dead until the next reset
+        _seq = (value & 0x04) ? Seq::R4b0 : (value & 0x08) ? Seq::R4b1 : (value & 0x10) ? Seq::Stuck : Seq::Idle;
     }
     else if ((value & 0x83) == 0x80)  // WR3
     {

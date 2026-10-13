@@ -58,6 +58,8 @@ public:
     virtual void AudioConfigChanged() {}
     /// NR #A8 / #A9 changed: the pins the board drives (the ESP's GPIO0)
     virtual void BoardPinsChanged() {}
+    /// The Pi's I2S audio as the mixer takes it (zxnext.vhd pi_audio_L / pi_audio_R, 10 bit unsigned, #200 silence)
+    virtual void PiAudioChanged(unsigned left, unsigned right) { (void)left; (void)right; }
     /// NR #2C / #2D / #2E: the DAC's NextREG mirrors
     virtual void DacMirrorWrite(uint8_t, uint8_t) {}
     /// An instruction ended (a safe place to stop the machine: not inside the picture's catch-up of the copper)
@@ -105,6 +107,18 @@ public:
     }
     void SetMachine(INextMachine* machine) { _machine = machine; }
     /// Called before a NextREG write of the CPU (not of the copper): the screen draws the lines the beam has passed with the old state
+    /// What the header's other end drives on GPIO bank 0-3 (pins 0-7, 8-15, 16-23, 24-27) as bits; unset: low
+    void SetGpioInput(std::function<uint8_t(unsigned bank)> input) { _gpioInput = std::move(input); }
+    /// The 28 pins of the Pi header as the FPGA reads them (i_GPIO): an enabled output shows its value, the peripherals (SPI, UART, I2S)
+    /// own their pins when NR #A0 / #A2 enable them (zxnext.vhd 2292-2350), the others what the header gives (the peer, else low; GPIO 2
+    /// and 3, the I2C pair, are pulled up as on a Pi)
+    uint32_t GpioPins() const;
+    /// The I2S sample the Pi sends (pi_i2s_audio_L / R, 10 bit unsigned, #200 silence): what NR #A2 turns into the mixer's input, NR #2C-#2E
+    /// and the EAR of port #FE
+    void SetI2sSample(unsigned left, unsigned right);
+    unsigned PiAudioLeft() const;
+    unsigned PiAudioRight() const;
+    bool PiEar() const { return _piEar; }
     void SetBeforeCpuWrite(std::function<void()> hook) { _beforeCpuWrite = std::move(hook); }
     void SetInterrupts(NextInterruptSource* interrupts) { _interrupts = interrupts; }
     /// Every NextREG access of the program (a read through #253B, a write by NEXTREG, #253B or the copper) is told to the hook with the
@@ -147,6 +161,21 @@ public:
     NextRegJournal& Journal() { return _journal; }
     const NextRegJournal& Journal() const { return _journal; }
     void SetJournalClock(std::function<void(uint32_t& frame, uint32_t& t, uint16_t& pc)> clock) { _journalClock = std::move(clock); }
+    /// The +3 FDC I/O trap latched its cause (NR #DA: 1 read of #2FFD, 2 read of #3FFD, 3 write of #3FFD) and, for a write, the byte
+    /// (NR #D9): zxnext.vhd 3869-3896
+    void LatchIoTrap(uint8_t cause, bool write, uint8_t value)
+    {
+        _regs[0xDA] = cause & 3;
+        if (write)
+            _regs[0xD9] = value;
+    }
+    /// The video frame sync (zxnext.vhd 6700-6710): the 50 / 60 Hz and scandoubler bits of NR #05 and the scanlines of NR #09 are read back
+    /// as they were taken at the last sync, not as written
+    void LatchVideoFrameSync()
+    {
+        _eff05 = _regs[0x05] & 0x05;
+        _eff09 = _regs[0x09] & 0x03;
+    }
     /// The raw stored byte of a register (reports, tests)
     uint8_t Stored(uint8_t reg) const { return _regs[reg]; }
     /// Change bits of a stored register without the write's side effects: the one flop two paths drive (ULA+ enable: NR #68 bit 3 and #FF3B)
@@ -208,11 +237,17 @@ private:
     std::map<uint8_t, uint32_t>* _readCounts = nullptr;
     std::vector<NextRegWrite>* _log = nullptr;
     std::function<void()> _beforeCpuWrite;
+    std::function<uint8_t(unsigned)> _gpioInput;
+    unsigned _i2sLeft = 0x200, _i2sRight = 0x200;
+    bool _piEar = false;
+    mutable uint8_t _i2sLow = 0;  ///< nr_2d_i2s_sample: the low bits of the sample NR #2C / #2E read last
+    void UpdatePiEar();
     AccessHook _accessHook;
     bool _copperWrite = false;
     const uint16_t* _pc = nullptr;
     uint8_t _timing = 2;
     bool _resetPending = false;
+    uint8_t _eff05 = 0, _eff09 = 0;  ///< NR #05 bits 2 / 0 and NR #09 bits 1:0 as the video logic took them at the last frame sync
     uint8_t _resetType = 4;  ///< zxnext.vhd nr_02_reset_type, power on '100'
     bool _resetHard = false;
 };

@@ -222,21 +222,21 @@ TTDDeviceStates TTDPeripheralRegistry::StatesOfV1Blobs(const std::unordered_map<
     return states;
 }
 
-std::vector<TTDDeviceKey> TTDPeripheralRegistry::KeysOfV1Mask(uint64_t mask)
+std::vector<TTDDeviceKey> TTDPeripheralRegistry::KeysOfV1Mask(const PeripheralMask& mask)
 {
     std::vector<TTDDeviceKey> keys;
-    for (uint8_t id = 0; id < 64; ++id)
-        if ((mask >> id) & 1u)
+    for (unsigned id = 0; id < static_cast<unsigned>(PeripheralId::None); ++id)   // every u8 id a file may name
+        if (mask.Test(static_cast<uint8_t>(id)))
             keys.push_back({static_cast<TTDDeviceType>(id), {}});
     return keys;
 }
 
-uint64_t TTDPeripheralRegistry::V1MaskOf(const std::vector<TTDDeviceKey>& keys)
+PeripheralMask TTDPeripheralRegistry::V1MaskOf(const std::vector<TTDDeviceKey>& keys)
 {
-    uint64_t mask = 0;
+    PeripheralMask mask;
     for (const TTDDeviceKey& key : keys)
-        if (static_cast<uint16_t>(key.type) < 64)
-            mask |= uint64_t(1) << static_cast<uint16_t>(key.type);
+        if (static_cast<uint16_t>(key.type) < static_cast<uint16_t>(PeripheralId::None))
+            mask.Set(static_cast<uint8_t>(key.type));
     return mask;
 }
 

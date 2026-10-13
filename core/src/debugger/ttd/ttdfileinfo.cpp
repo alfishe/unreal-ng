@@ -44,12 +44,43 @@ bool Skip(std::istream& in, uint64_t bytes, const char* what, std::string& err)
     return true;
 }
 
+/// A mask field of the header: one u64 up to schema 2 (ids 0..63), from schema
+/// 3 a u8 word count (1..4) and that many u64 words (ids 64 * word + bit).
+bool ReadMask(std::istream& in, uint16_t schema, PeripheralMask& mask, const char* what, std::string& err)
+{
+    mask = PeripheralMask{};
+    if (schema < dump::kSchemaVersionWideMask)
+    {
+        uint64_t low = 0;
+        if (!Read(in, low, what, err))
+            return false;
+        mask = PeripheralMask::FromLow(low);
+        return true;
+    }
+    uint8_t words = 0;
+    if (!Read(in, words, what, err))
+        return false;
+    if (words == 0 || words > PeripheralMask::kWords)
+    {
+        err = std::string("implausible ") + what + " word count " + std::to_string(words);
+        return false;
+    }
+    for (uint8_t w = 0; w < words; ++w)
+    {
+        uint64_t value = 0;
+        if (!Read(in, value, what, err))
+            return false;
+        mask.SetWord(w, value);
+    }
+    return true;
+}
+
 /// The device set of a file written before the header mask: walk the page
 /// store's slot headers (payloads skipped) to the first checkpoint and read
 /// its peripheral blob ids. The stream is positioned right after the header.
-bool ScanPeripherals(std::istream& in, const TTDFileInfo& info, uint64_t& mask, std::string& err)   // v1 ids < 64
+bool ScanPeripherals(std::istream& in, const TTDFileInfo& info, PeripheralMask& mask, std::string& err)
 {
-    mask = 0;
+    mask = PeripheralMask{};
     if (info.checkpointCount == 0)
         return true;   // an empty session records no device
     for (uint32_t i = 0; i < info.pageStoreCount; ++i)
@@ -93,8 +124,7 @@ bool ScanPeripherals(std::istream& in, const TTDFileInfo& info, uint64_t& mask, 
             err = "implausible peripheral blob size " + std::to_string(size);
             return false;
         }
-        if (id < 64)
-            mask |= uint64_t(1) << id;
+        mask.Set(id);
         if (!Skip(in, size, "peripheral blob", err))
             return false;
     }
@@ -171,6 +201,8 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::EvoFlash: return "evo-flash";
         case PeripheralId::NextState: return "next-state";
         case PeripheralId::NextSystemArea: return "next-system-area";
+        case PeripheralId::MachineSerialPeer2: return "machine-serial-peer-2";
+        case PeripheralId::JoystickSerialPeer: return "joystick-serial-peer";
         case PeripheralId::Count:
         case PeripheralId::None: break;
     }
@@ -184,6 +216,15 @@ bool TTDRecordedMachine::Fits(TTDDeviceType type) const
            std::any_of(notRecordedDevices.begin(), notRecordedDevices.end(), ofType);
 }
 
+PeripheralMask TTDRecordedMachine::V1Mask() const
+{
+    PeripheralMask mask;
+    for (const TTDRecordedDevice& d : devices)
+        if (d.legacyId != PeripheralId::None)
+            mask.Set(static_cast<uint8_t>(d.legacyId));
+    return mask;
+}
+
 std::string DeviceDisplayName(const TTDRecordedDevice& device)
 {
     if (device.legacyId != PeripheralId::None)
@@ -194,12 +235,13 @@ std::string DeviceDisplayName(const TTDRecordedDevice& device)
                                        : device.key.instance;
 }
 
-std::vector<TTDRecordedDevice> DevicesOfV1Mask(uint64_t mask)
+std::vector<TTDRecordedDevice> DevicesOfV1Mask(const PeripheralMask& mask)
 {
     std::vector<TTDRecordedDevice> devices;
-    for (uint8_t id = 0; id < 64; ++id)
-        if ((mask >> id) & 1u)
-            devices.push_back({{static_cast<TTDDeviceType>(id), PeripheralIdName(id)}, static_cast<PeripheralId>(id)});
+    for (unsigned id = 0; id < static_cast<unsigned>(PeripheralId::None); ++id)   // every u8 id a file may name
+        if (mask.Test(static_cast<uint8_t>(id)))
+            devices.push_back({{static_cast<TTDDeviceType>(id), PeripheralIdName(static_cast<uint8_t>(id))},
+                               static_cast<PeripheralId>(id)});
     return devices;
 }
 
@@ -275,10 +317,10 @@ bool ReadTTDFileInfo(std::istream& in, TTDFileInfo& info, std::string& err)
         const TTDMemorySource source(std::vector<uint8_t>(std::istreambuf_iterator<char>(in), {}));
         return ReadEngineFileInfo(source, info, err);
     }
-    if (info.schemaVersion != dump::kSchemaVersion)
+    if (!dump::IsReadableSchema(info.schemaVersion))
     {
         err = "unsupported .ttd schema v" + std::to_string(info.schemaVersion) + " (this build reads v" +
-              std::to_string(dump::kSchemaVersion) + ")";
+              std::to_string(dump::kSchemaVersionFirst) + " and v" + std::to_string(dump::kSchemaVersion) + ")";
         return false;
     }
     if (!Read(in, info.flags, "flags", err) || !Read(in, info.machine.modelId, "model", err) ||
@@ -301,13 +343,15 @@ bool ReadTTDFileInfo(std::istream& in, TTDFileInfo& info, std::string& err)
             return false;
         }
     }
-    uint64_t reserved = 0;
+    PeripheralMask headerMask;
     if (!Read(in, info.sessionState, "session state", err) || !Read(in, info.startFrame, "start frame", err) ||
         !Read(in, info.endFrame, "end frame", err) || !Read(in, info.pageStoreCount, "page store count", err) ||
-        !Read(in, info.checkpointCount, "checkpoint count", err) || !Read(in, reserved, "peripheral mask", err))
+        !Read(in, info.checkpointCount, "checkpoint count", err) ||
+        !ReadMask(in, info.schemaVersion, headerMask, "peripheral mask", err))
         return false;
-    uint64_t notRecordedMask = 0;
-    if ((info.flags & dump::kFlagsHasNotRecordedMask) && !Read(in, notRecordedMask, "not-recorded mask", err))
+    PeripheralMask notRecordedMask;
+    if ((info.flags & dump::kFlagsHasNotRecordedMask) &&
+        !ReadMask(in, info.schemaVersion, notRecordedMask, "not-recorded mask", err))
         return false;
     info.machine.notRecordedDevices = DevicesOfV1Mask(notRecordedMask);
 
@@ -321,10 +365,10 @@ bool ReadTTDFileInfo(std::istream& in, TTDFileInfo& info, std::string& err)
     info.hasPortJournals = f & dump::kFlagsHasPortJournals;
     info.topClockTime = f & dump::kFlagsTopClockTime;
 
-    uint64_t peripheralMask = 0;
+    PeripheralMask peripheralMask;
     if (f & dump::kFlagsHasPeripheralMask)
     {
-        peripheralMask = reserved;
+        peripheralMask = headerMask;
         info.peripheralsFromHeader = true;
     }
     else if (!ScanPeripherals(in, info, peripheralMask, err))

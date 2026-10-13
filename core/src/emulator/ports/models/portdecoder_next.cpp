@@ -57,6 +57,12 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     _ctc.onInterrupt = [this](unsigned channel) {
         _interrupts->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + channel));
     };
+    _ctc.onZeroCount = [this](unsigned channel) {
+        // joy_iomode_pin7, mode 01: ZC/TO(3) toggles the pin; with NR #0B bit 0 clear it only goes from 0 to 1 and stays
+        const uint8_t nr0b = _board->Stored(0x0B);
+        if (channel == 3 && (nr0b & 0x30) == 0x10 && ((nr0b & 0x01) || !_joyPin7))
+            _joyPin7 = !_joyPin7;
+    };
     _uart.onInterrupt = [this](unsigned channel, bool tx) {
         const unsigned source = tx ? (channel ? NextInterruptSource::kUart1Tx : NextInterruptSource::kUart0Tx)
                                    : (channel ? NextInterruptSource::kUart1Rx : NextInterruptSource::kUart0Rx);
@@ -107,13 +113,17 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         e.basicRom = Mem().BasicRomVisible();
     };
     _multiface = std::make_unique<NextMultiface>(&Mem(), _board.get(), &_context->emulatorState);
+    _m1Chain.owner = this;
     _m1Chain.multiface = _multiface.get();
     _m1Chain.divMmc = _divMmc.get();
     _interrupts->SetPoller([this]() {
         const uint64_t now = Now28();
         _ctc.Advance(now);
         if (!_uart.Idle())
+        {
+            SyncPiLine();
             _uart.Advance(now);
+        }
         _uart.PollInterrupts(_interrupts->UartEnables());
     });
     _board->SetInterrupts(_interrupts.get());
@@ -153,6 +163,11 @@ PortDecoder_Next::~PortDecoder_Next()
             peer->onReceive = nullptr;
             peer->SetClock(nullptr, 0);
         }
+    if (ISerialPeer* peer = _uart.JoystickPeer())
+    {
+        peer->onReceive = nullptr;
+        peer->SetClock(nullptr, 0);
+    }
     if (_context->pKeyboard && _context->pKeyboard->GetPs2Sink() == &_extendedInput)
         _context->pKeyboard->SetPs2Sink(nullptr);
     if (_context->pMediaManager)
@@ -204,6 +219,8 @@ void PortDecoder_Next::reset()
     _spiPendingValid = false;
     _spiBusyUntil = 0;
     _spiBusyRatio = 1.0;
+    _speedPending = false;
+    _speedChangedAt = 0;
 
     _screen->SetBorderColor(COLOR_WHITE);
     _screen->SetActiveScreen(SCREEN_NORMAL);
@@ -265,6 +282,12 @@ bool PortDecoder_Next::PortEnabled(unsigned bit) const
 
 /// The mouse registers as zxnext.vhd gives them: X, Y, and {wheel, 1, not middle, not left, not right}; with no mouse the inputs idle
 /// (zero counts, buttons released). NR #0A bit 3 swaps the buttons (the PS/2 mouse module's control); its DPI bits are the host's
+/// UART 1's pins reach the Pi header only with NR #A0 bit 4 (`pi_uart_en`) and in the Pi orientation, bit 5 (`pi_uart_rxtx`): zxnext.vhd 2319-2334
+void PortDecoder_Next::SyncPiLine()
+{
+    _uart.SetLineConnected(1, (_board->Stored(0xA0) & 0x30) == 0x30);
+}
+
 /// NR #0A bits 1:0 into the PS/2 module's scaling (ps2_mouse.v xydelta): 00 x2, 01 x1, 10 half, 11 a quarter
 void PortDecoder_Next::ApplyMouseDpi(uint8_t nr0a)
 {
@@ -309,6 +332,7 @@ uint8_t PortDecoder_Next::IdleRead(uint16_t port, uint16_t pc)
 
 uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    IoTrap(port, false, 0);
     const uint8_t low = static_cast<uint8_t>(port);
     if (low == _multiface->EnablePort() || low == _multiface->DisablePort())
     {
@@ -329,6 +353,7 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     {
         if (!PortEnabled(12))
             return IdleRead(port, pc);
+        SyncPiLine();
         const uint8_t value = _uart.Read(port, Now28());
         _uart.PollInterrupts(_interrupts->UartEnables());
         _lastPortDecoded = true;
@@ -342,12 +367,13 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     }
     if (low == NextCtc::kPortLow && (port >> 11) == 0x03)
     {
-        // CTC: A15:A11 = 00011, A10:A8 the channel (4-7 are not implemented)
+        // CTC: A15:A11 = 00011, A10:A8 the channel. Channels 4-7 select no channel (zxnext.vhd ctc_mod NUM_CTC = 4) but the
+        // port is decoded (port_ctc ignores A10:A8): the read answers 0 from the empty wired-or, not the floating bus
         if (!PortEnabled(27))
             return IdleRead(port, pc);
         const unsigned channel = (port >> 8) & 7;
-        const uint8_t value = channel < NextCtc::kChannels ? _ctc.Read(channel, Now28()) : 0xFF;
-        _lastPortDecoded = channel < NextCtc::kChannels;
+        const uint8_t value = channel < NextCtc::kChannels ? _ctc.Read(channel, Now28()) : 0x00;
+        _lastPortDecoded = true;
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
         disp.decodedPort = port;
@@ -370,11 +396,15 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         OnPortInComplete(port, value, pc, disp);
         return value;
     }
-    if ((port & 0xC002) == 0xC000 && !IsPort_DFFD_Next(port))  // #FFFD: the selected AY's register
+    // The AY ports (zxnext.vhd 2646-2649, 2771): #FFFD = A15:A14 = 11, A2 = 1 and the +3 family's A1:A0 = 01; #BFFD the same with
+    // A15:A14 = 10, readable like #FFFD on +3 timing; #BFF5 (#BFFD with A3 = 0) reads the chip's identity and register address
+    const bool ayFfFd = (port & 0xC007) == 0xC005 && !IsPort_DFFD_Next(port);
+    const bool ayBfFd = (port & 0xC007) == 0x8005;
+    if (ayFfFd || (ayBfFd && (_board->Timing() == 3 || (port & 0x08) == 0)))  // #BFF5 on any timing, #BFFD on +3
     {
         if (!PortEnabled(16))
             return IdleRead(port, pc);
-        const uint8_t value = _audio->ReadData();
+        const uint8_t value = (ayBfFd && (port & 0x08) == 0) ? _audio->ReadIdentity() : _audio->ReadData();
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -487,7 +517,10 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     {
         if (!PortEnabled(10))
             return IdleRead(port, pc);
-        const uint8_t value = _i2c.Read(port);
+        uint8_t value = _i2c.Read(port);
+        if (_board->Stored(0xA0) & 0x08)  // pi_i2c1_sda / scl = i_GPIO(2 / 3), ANDed into the read (zxnext.vhd 2317-2318)
+            if (!((_board->GpioPins() >> (port == NextI2c::kPortScl ? 3 : 2)) & 1))
+                value = static_cast<uint8_t>(value & 0xFE);
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -513,7 +546,10 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         OnPortInComplete(port, result, pc, disp);
         return result;
     }
-    const uint8_t value = PortDecoder_Spectrum128::DecodePortIn(port, pc);
+    uint8_t value = PortDecoder_Spectrum128::DecodePortIn(port, pc);
+    // port #FE's EAR bit is the tape input or the Pi's I2S audio thresholded into it (zxnext.vhd 3459, NR #A2 bit 0)
+    if (_board->PiEar() && IsPort_FE(port))
+        value |= 0x40;
     if (_inLog && !_lastPortDecoded)
     {
         PortUse& use = (*_inLog)[port];
@@ -589,6 +625,7 @@ bool PortDecoder_Next::JoystickPortAnswers(bool port37, uint8_t& value) const
 
 void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    IoTrap(port, true, value);
     // The magic debug port: the program's console. A tool's own OUT (toolAccessActive) is not the program's
     if (_magicPort.Enabled()) [[unlikely]]
         if (!_context->toolAccessActive)
@@ -605,6 +642,7 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     {
         if (PortEnabled(12))
         {
+            SyncPiLine();
             _uart.Write(port, value, Now28());
             _uart.PollInterrupts(_interrupts->UartEnables());
         }
@@ -641,12 +679,12 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
             _board->RefreshLayer2Mapping();
         }
     }
-    else if ((port & 0xC002) == 0xC000 && !IsPort_DFFD_Next(port))
+    else if ((port & 0xC007) == 0xC005 && !IsPort_DFFD_Next(port))
     {
         if (PortEnabled(16))
             _audio->WriteSelect(value);  // #FFFD
     }
-    else if ((port & 0xC002) == 0x8000)
+    else if ((port & 0xC007) == 0x8005)
     {
         if (PortEnabled(16))
             _audio->WriteData(value);    // #BFFD
@@ -734,7 +772,7 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     else
     {
         PortDecoder_Spectrum128::DecodePortOut(port, value, pc);
-        if (_outLog && !IsPort_FE(port) && !IsPort_7FFD(port) && (port & 0xC002) != 0xC000 && (port & 0xC002) != 0x8000)
+        if (_outLog && !IsPort_FE(port) && !IsPort_7FFD(port) && (port & 0xC007) != 0xC005 && (port & 0xC007) != 0x8005)
         {
             PortUse& use = (*_outLog)[port];
             use.count++;
@@ -780,11 +818,17 @@ void PortDecoder_Next::BindDma()
 void PortDecoder_Next::AudioConfigChanged()
 {
     const uint8_t nr06 = _board->Stored(0x06), nr08 = _board->Stored(0x08), nr09 = _board->Stored(0x09);
-    _audio->Configure((nr06 & 3) == 0, (nr08 & 0x02) != 0, (nr08 & 0x08) != 0, (nr08 & 0x20) != 0, static_cast<uint8_t>((nr09 >> 5) & 7),
-                      (nr06 & 0x40) && (nr08 & 0x10));
+    // zxnext.vhd 6379-6392: aymode_i is NR #06 bit 0 (modes 00 and 10 are the YM, 01 and 11 the AY), mode 11 holds the chips in reset
+    _audio->Configure((nr06 & 1) == 0, (nr08 & 0x02) != 0, (nr08 & 0x08) != 0, (nr08 & 0x20) != 0, static_cast<uint8_t>((nr09 >> 5) & 7),
+                      (nr06 & 0x40) && (nr08 & 0x10), (nr06 & 3) == 3);
 }
 
-/// NR #2C (B, left), #2D (A and D, mono), #2E (C, right): the DAC's NextREG mirrors
+void PortDecoder_Next::PiAudioChanged(unsigned left, unsigned right)
+{
+    _audio->SetPiAudio(left, right);
+}
+
+/// NR #2C (B, left), #2D (A and D, mono), #2E (C, right): the DAC's NextREG mirrors (writes; a read is the Pi's I2S sample)
 void PortDecoder_Next::DacMirrorWrite(uint8_t reg, uint8_t value)
 {
     if (reg == 0x2C)
@@ -826,6 +870,8 @@ void PortDecoder_Next::NextRegAccess(bool write, uint8_t reg, uint8_t value, Nex
 {
     if (write && reg == 0x0A)
         ApplyMouseDpi(value);
+    if (write && reg == 0x0B)
+        UpdateJoystickPin7(value);
     uint8_t door;
     switch (source)
     {
@@ -1010,8 +1056,20 @@ void PortDecoder_Next::InsertConfiguredCard()
         MLOGERROR("PortDecoder_Next: SD card '%s' not inserted: %s", path.c_str(), result.message.c_str());
 }
 
+/// joy_iomode_pin7 follows NR #0B bit 0 in mode 00 and the UART's TX (idle high) in modes 1x every clock; in mode 01 it keeps what it had
+void PortDecoder_Next::UpdateJoystickPin7(uint8_t nr0b)
+{
+    switch ((nr0b >> 4) & 3)
+    {
+        case 0: _joyPin7 = (nr0b & 0x01) != 0; break;
+        case 1: break;
+        default: _joyPin7 = true; break;
+    }
+}
+
 void PortDecoder_Next::PerformReset(bool hard)
 {
+    _joyPin7 = true;  // joy_iomode_pin7 resets to 1; NR #0B resets to 0, so mode 00 then follows its bit 0 = 0 at once
     Z80* z80 = _context->pCore->GetZ80();
     // The reset restarts the CPU, not the frame: the video and interrupt timing keep running
     const auto t = z80->t;
@@ -1025,6 +1083,17 @@ void PortDecoder_Next::PerformReset(bool hard)
     state.p1FFD = 0x00;
     Mem().ResetMmu();
     _board->Reset(hard);  // config mode and the boot ROM first: the slot table follows them
+    // the same net pulses on a hard reset, and on a soft one while the expansion bus is enabled (zxnext_top bus_rst_n_io: reset_hard or
+    // reset_soft and zxn_bus_en): the ESP restarts with it
+    if (hard || (_board->Stored(0x80) & 0x80))
+        if (auto* esp = dynamic_cast<EspModule*>(_uart.Peer(0)))
+        {
+            esp->SetResetPin(true);
+            esp->SetResetPin((_board->Stored(0x02) & 0x80) != 0);
+        }
+    UpdateJoystickPin7(_board->Stored(0x0B));
+    _audio->Reset();      // turbosound.vhd / soundrive.vhd: reset_i is `reset` (the chips, the pan, the selected chip, the DACs)
+    AudioConfigChanged();
     if (_intJournal.Enabled())
     {
         NextIntEvent e;
@@ -1035,6 +1104,7 @@ void PortDecoder_Next::PerformReset(bool hard)
     }
     _dma.Reset();         // zxnext.vhd: the DMA's reset_i is the hard or the soft reset
     _uart.Reset(hard);    // the FIFOs on any reset, the prescalers and frames on the hard one (uart.vhd)
+    UpdateUartRoute(false);  // NR #0B went back to its reset value: the connector carries no UART
     _divMmc->Reset();     // E3 and the automap latches (zxnext.vhd 4175, divmmc.vhd 108-139) and the Multiface's session are `reset` too
     _multiface->Reset();
     Mem().ApplyClassicPaging(0, 0);
@@ -1211,10 +1281,10 @@ double PortDecoder_Next::SpiBusyUntil()
     const double ratio = SpeedRatio();
     if (ratio != _spiBusyRatio)
     {
-        // spi_master.vhd counts the CPU clock: the byte is 16 clocks whatever the speed. The new speed was taken over at the start of this
-        // frame (Z80::BeginFrame), so what was left of the byte then is counted in the new clocks. A change older than the byte would have
-        // left nothing in flight
-        const double boundary = static_cast<double>(_state->t_states);
+        // spi_master.vhd counts the CPU clock: the byte is 16 clocks whatever the speed. The new speed was taken over at the instant of
+        // the switch (ApplyPendingSpeed) or at the start of this frame (Z80::BeginFrame), so what was left of the byte then is counted in
+        // the new clocks. A change older than the byte would have left nothing in flight
+        const double boundary = std::max(static_cast<double>(_state->t_states), _speedChangedAt);
         if (_spiBusyUntil > boundary)
             _spiBusyUntil = boundary + (_spiBusyUntil - boundary) * _spiBusyRatio / ratio;
         _spiBusyRatio = ratio;
@@ -1275,10 +1345,24 @@ bool PortDecoder_Next::PagingAllowed(uint16_t port) const
 
 void PortDecoder_Next::SetCpuSpeed(uint8_t ratio)
 {
-    // Applied at the frame boundary by Z80::ApplyQueuedFrequencyMultiplier (composed with the host speed control)
+    // zxnext.vhd 5810-5818: cpu_speed takes nr_07_cpu_speed at the first clock without MREQ / IORQ / M1 after the write, inside the
+    // writing instruction. The emulator switches before the next instruction's fetch (ApplyPendingSpeed); a frame start that comes first
+    // takes it over the same way (Z80::ApplyQueuedFrequencyMultiplier composes it with the host speed control)
     _state->hw_turbo_ratio = ratio;
     _ratio = ratio;
+    _speedPending = ratio != _state->hw_turbo_ratio_applied;
     UpdateContention();
+}
+
+void PortDecoder_Next::ApplyPendingSpeed()
+{
+    _speedPending = false;
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (!z80 || _state->hw_turbo_ratio == _state->hw_turbo_ratio_applied)
+        return;
+    _speedChangedAt = Now();
+    z80->ApplyHardwareTurboNow();
+    SpiBusyUntil();  // a byte in flight keeps its 16 clocks: the rest is counted in the new ones now, not lazily after a second switch
 }
 
 void PortDecoder_Next::SetMachineTiming(uint8_t timing)
@@ -1350,6 +1434,7 @@ void PortDecoder_Next::UpdateContention()
 
 void PortDecoder_Next::OnFrameEnd()
 {
+    _board->LatchVideoFrameSync();  // video_frame_sync: eff_nr_05_5060, eff_nr_05_scandouble_en, eff_nr_09_scanlines
     _board->Copper().Sync();  // a frame no line was drawn for (turbo) still runs the copper
     if (_pendingTiming && _pendingTiming != _state->ula_timing_class)
         ApplyTiming(_pendingTiming);
@@ -1434,12 +1519,40 @@ bool PortDecoder_Next::GenerateDriveNmi()
 
 bool PortDecoder_Next::GenerateMultifaceNmi()
 {
+    return RaiseMultifaceNmi("m1_button");
+}
+
+void PortDecoder_Next::IoTrap(uint16_t port, bool write, uint8_t value)
+{
+    // zxnext.vhd 2578-2602, 2723-2725: port_fd = A1:A0 = 01, port_xffd adds A15:A14 = 00; #2FFD (A13:A12 = 10) read, #3FFD (11) read
+    // and write; not a write the DAC's #F1 / #F9 owns (port_fd_conflict_wr). NR #D8 bit 0 qualifies it all
+    if (!(_board->Stored(0xD8) & 0x01) || (port & 3) != 1 || (port >> 14) != 0)
+        return;
+    const unsigned select = (port >> 12) & 3;
+    uint8_t cause;
+    if (select == 2 && !write)
+        cause = 1;
+    else if (select == 3)
+        cause = write ? 3 : 2;
+    else
+        return;
+    const uint8_t low = static_cast<uint8_t>(port);
+    if (write && (low == 0xF1 || low == 0xF9) && PortEnabled(18))
+        return;
+    // the cause and the byte are taken while no NMI is on its way (nmi_accept_cause: the state machine idle or fetching)
+    if (!_multiface->NmiHold() && !_divMmc->NmiHold())
+        _board->LatchIoTrap(cause, write, value);
+    RaiseMultifaceNmi("io_trap");  // nmi_sw_gen_mf: the same assertion as the M1 button, behind NR #06 bit 3
+}
+
+bool PortDecoder_Next::RaiseMultifaceNmi(const char* source)
+{
     const char* refusal = MultifaceNmiRefusal();
     if (_intJournal.Enabled())
     {
         NextIntEvent e;
         e.kind = NextIntKind::NmiRequest;
-        e.source = "m1_button";
+        e.source = source;
         e.accepted = refusal == nullptr;
         e.reason = refusal ? refusal : "";
         RecordInt(e);
@@ -1497,6 +1610,7 @@ void PortDecoder_Next::SetUartPeer(unsigned channel, ISerialPeer* peer)
 {
     if (channel >= NextUart::kChannels)
         return;
+    SyncPiLine();
     _uart.Advance(Now28());
     if (ISerialPeer* old = _uart.Peer(channel); old && old != peer)
     {
@@ -1509,6 +1623,7 @@ void PortDecoder_Next::SetUartPeer(unsigned channel, ISerialPeer* peer)
         peer->SetClock([this]() { return static_cast<uint64_t>(Now()); }, kBaseClockHz);
         // Bytes from outside arrive at their emulated time: the UART catches up first
         peer->onReceive = [this]() {
+            SyncPiLine();
             _uart.Advance(Now28());
             _uart.PollInterrupts(_interrupts->UartEnables());
         };
@@ -1518,12 +1633,48 @@ void PortDecoder_Next::SetUartPeer(unsigned channel, ISerialPeer* peer)
         BoardPinsChanged();  // a module fitted now sees the pin as it is
 }
 
+void PortDecoder_Next::SetJoystickUartPeer(ISerialPeer* peer)
+{
+    _uart.Advance(Now28());
+    if (ISerialPeer* old = _uart.JoystickPeer(); old && old != peer)
+    {
+        old->onReceive = nullptr;
+        old->SetClock(nullptr, 0);
+    }
+    if (peer)
+    {
+        constexpr uint32_t kBaseClockHz = 3500000;
+        peer->SetClock([this]() { return static_cast<uint64_t>(Now()); }, kBaseClockHz);
+        peer->onReceive = [this]() {
+            _uart.Advance(Now28());
+            _uart.PollInterrupts(_interrupts->UartEnables());
+        };
+    }
+    _uart.SetJoystickPeer(peer);
+}
+
+void PortDecoder_Next::UpdateUartRoute(bool advance)
+{
+    // zxnext.vhd: joy_iomode_uart_en = NR #0B bit 7 and bit 5; nr_0b_joy_iomode_0 (bit 0) picks the UART whose line the connector takes
+    const uint8_t nr0b = _board->Stored(0x0B);
+    const bool on = (nr0b & 0x80) && (nr0b & 0x20);
+    if (advance)
+        _uart.Advance(Now28());
+    _uart.SetJoystickRoute(on, nr0b & 1);
+}
+
 void PortDecoder_Next::BoardPinsChanged()
 {
+    UpdateUartRoute();
     // zxnext.vhd: o_ESP_GPIO_0 = NR #A9 bit 0, driven while NR #A8 bit 0 enables it (else the pad floats, pulled up)
     const bool low = (_board->Stored(0xA8) & 1) && !(_board->Stored(0xA9) & 1);
     if (auto* esp = dynamic_cast<EspModule*>(_uart.Peer(0)))
+    {
         esp->SetFlashPin(low);
+        // NR #02 bit 7 asserts and holds the expansion bus /RESET net (zxnext_top bus_rst_n_io), the one the ESP's reset is on too
+        // (registers.txt: "reset to the expansion bus and the esp wifi"); the chip stops while it is held and boots at the release
+        esp->SetResetPin((_board->Stored(0x02) & 0x80) != 0);
+    }
 }
 
 PortDecoder::NetworkCapabilities PortDecoder_Next::DescribeNetwork()
@@ -1532,6 +1683,7 @@ PortDecoder::NetworkCapabilities PortDecoder_Next::DescribeNetwork()
     caps.serialPort = NetworkCapabilities::SerialPort::NextUart;
     caps.attachSerialPeer = [this](ISerialPeer* peer) { SetUartPeer(0, peer); };
     caps.attachSecondSerialPeer = [this](ISerialPeer* peer) { SetUartPeer(1, peer); };
+    caps.attachJoystickSerialPeer = [this](ISerialPeer* peer) { SetJoystickUartPeer(peer); };
     caps.serialBaud = [this]() { return _uart.GetView(0).baud; };
     return caps;
 }

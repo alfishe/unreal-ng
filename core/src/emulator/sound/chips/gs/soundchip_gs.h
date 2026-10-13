@@ -201,6 +201,14 @@ public:
     /// old value; the sink is not told (the board already has the write)
     void sharedVolumeWrite(int channel, uint8_t volume);
 
+    /// The firmware's idle poll loop is slept through (default on; off steps every instruction: comparison tests)
+    void setIdleSleep(bool on) { _runner.setSleepOn(on); }
+    /// Card CPU steps the sleeps stood for (tests, diagnosis)
+    uint64_t stepsSlept() const { return _runner.stepsSlept(); }
+    /// Card time in profile units, and a run of the card by itself (tests)
+    int64_t cardUnits() const { return totalGsCycles(); }
+    void runFor(int64_t units) { runTo(totalGsCycles() + units); }
+
     /// The board's bus trace (MultiSound profile only): every GS port cycle and DAC fetch, nullptr = off
     void setBusObserver(IGSBusObserver* observer) { _busObserver = observer; }
 
@@ -315,6 +323,18 @@ private:
     int64_t unitsPerCycle() const { return _unitsPerCycle; }
     static constexpr bool kCanStall = false; // no DMA on the classic card
     void onStep() { _activityCounters.cpuSteps++; }
+    // Sleeping through the firmware's idle poll loop (GSCardRunner): after boot the firmware polls FLAGS with
+    // interrupts off (COMINT_ at #026E: IN A,(4) / RRCA / JR C / LD A,(PROCESS) / OR A / JR Z). Every bus access
+    // except a plain memory read outside the DAC window and the FLAGS / COMRG reads counts as a side effect; the
+    // period boundary is the only event and is quiet while the CPU cannot take the INT
+    uint32_t busEffects() const { return _busEffects; }
+    bool sleepAllowed() const
+    {
+        return !_nmiPending && !_portTrace.isCapturing() && !_busObserver && !Z80CpuIntPossible(_cpu);
+    }
+    static int64_t sleepHardStop() { return std::numeric_limits<int64_t>::max(); }
+    void onStepsSkipped(uint64_t steps) { _activityCounters.cpuSteps += steps; }
+    bool sleepQuietEventsBefore(int64_t end);
 
     // GSModuleReplay hooks
     void replayRunFor(int64_t cycles) { runTo(totalGsCycles() + cycles); }
@@ -453,6 +473,7 @@ private:
     uint64_t _frameStartZxTacts = 0;
     int64_t _frameGsCycles = 0;
     bool _nmiPending = false;
+    uint32_t _busEffects = 0;  // GSCardRunner::busEffects
 
     // Level-held 37.5 kHz INT request (design §2.4): asserted at each quantum
     // boundary, cleared only by acceptance - the request survives firmware

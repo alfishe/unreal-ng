@@ -196,7 +196,7 @@ TEST_F(NextIntJournalMachine_Test, AResetIsLoggedWithItsBitsAndTheReportShowsThe
     const StateNode* sources = report.find("sources");
     ASSERT_EQ(sources->items.size(), 3u);
     EXPECT_EQ(sources->items[2].find("name")->s, "io_trap");
-    EXPECT_FALSE(sources->items[2].find("modelled")->b) << "the +3 FDC trap (NR #D8-#DA) is not modelled";
+    EXPECT_TRUE(sources->items[2].find("modelled")->b) << "the +3 FDC trap (NR #D8-#DA)";
     const StateNode* mf = report.find("multiface");
     EXPECT_EQ(mf->find("enable_port")->s.size(), 4u);
     EXPECT_FALSE(mf->find("active")->b);
@@ -213,7 +213,7 @@ TEST_F(NextIntJournalMachine_Test, TheCliPrintsTheReportAndTheJournal)
     EXPECT_FALSE(Press(kPressDrive)) << "the DRIVE button is off in NR #06";
     const std::string text = run({"next", "nmi"});
     EXPECT_NE(text.find("NMI source m1_button:"), std::string::npos) << text;
-    EXPECT_NE(text.find("NMI source io_trap: not modelled"), std::string::npos) << text;
+    EXPECT_NE(text.find("NMI source io_trap: blocked - the trap is off (NR #D8 bit 0)"), std::string::npos) << text;
     EXPECT_NE(text.find("Last reset: "), std::string::npos) << text;
     EXPECT_NE(text.find("nmi_request m1_button accepted"), std::string::npos) << text;
     EXPECT_NE(text.find("nmi_request drive_button REFUSED: "), std::string::npos) << text;

@@ -39,8 +39,8 @@
 namespace ttd {
 
 /// @brief TTD v1's blob id: the key of a v1 checkpoint's device blobs and of the
-/// v1 file's blob headers (EncodeBlob / DecodeBlob). FROZEN: no value is added
-/// (D23 completed, d23-device-keys.md). A device is identified by its
+/// v1 file's blob headers (EncodeBlob / DecodeBlob). FROZEN at 65: no value is
+/// added (D23 completed, d23-device-keys.md). A device is identified by its
 /// TTDDeviceKey (type + instance); a new device declares a TTDDeviceType only
 /// (TTDSerializable::TTDType) and keeps PeripheralId::None, which v1 cannot
 /// record. The values here never change: v1 files and checkpoints use them, and
@@ -116,6 +116,9 @@ enum class PeripheralId : uint8_t
     EvoFlash = 61,        // the ZX-Evo's ROM chip as a flash (TS-Conf, ATM3): its command state; the array is the engine region EvoFlash
     NextState = 62,       // the ZX Spectrum Next: NextREG file, memory map, video registers and palettes, sprites, copper, DMA, CTC, interrupts, I2C RTC, Multiface, DivMMC (nextstatecodec.h)
     NextSystemArea = 63,   // the Next's system area, 256 KB: the ROMs the firmware loads in config mode and the DivMMC RAM esxDOS / NextZXOS work in; not RAM pages, so not in the page store
+    // Ids from 64 on need the wide peripheral mask of v1's session files (ttdperipheralmask.h; file schema 3)
+    MachineSerialPeer2 = 64, // the peer on a machine's second serial port (the Next's UART 1, the Pi's line): same blob as MachineSerialPeer
+    JoystickSerialPeer = 65, // the peer plugged into the Next's joystick connector (NR #0B UART mode): same blob as MachineSerialPeer
     Count,                // one past the last v1 id (v1's tables)
     None = 0xFF           // no v1 id: a device v1 cannot record (every device added after the freeze)
 };
@@ -123,9 +126,9 @@ enum class PeripheralId : uint8_t
 
 /// region <Device descriptor (TTD v2 engine, Phase 2)>
 
-/// Stable device kind, stored in the engine's files. Values 0-63 are
+/// Stable device kind, stored in the engine's files. Values 0-65 are
 /// PeripheralId's, unchanged, so a v1 blob id maps to a type by value. A new
-/// device takes the next value here and no PeripheralId (frozen at 63, D23).
+/// device takes the next value here and no PeripheralId (frozen at 65, D23).
 /// Slot personalities stay separate types (TSFM is not a TurboSound): a state
 /// never crosses kinds. Several instances of one kind (the UARTs) share a type
 /// and differ by instance name (TTDDeviceDescriptor::instance): a second
@@ -196,7 +199,9 @@ enum class TTDDeviceType : uint16_t
     EvoFlash = 61,
     NextState = 62,
     NextSystemArea = 63,
-    // New kinds from 64 on: no PeripheralId
+    MachineSerialPeer2 = 64,
+    JoystickSerialPeer = 65,
+    // New kinds from 66 on: no PeripheralId
 };
 static_assert(static_cast<uint16_t>(TTDDeviceType::TurboSound) == static_cast<uint16_t>(PeripheralId::TurboSound), "TTDDeviceType::TurboSound must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::BetaDisk) == static_cast<uint16_t>(PeripheralId::BetaDisk), "TTDDeviceType::BetaDisk must keep its v1 number");
@@ -262,6 +267,8 @@ static_assert(static_cast<uint16_t>(TTDDeviceType::MultiSoundGs) == static_cast<
 static_assert(static_cast<uint16_t>(TTDDeviceType::EvoFlash) == static_cast<uint16_t>(PeripheralId::EvoFlash), "TTDDeviceType::EvoFlash must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::NextState) == static_cast<uint16_t>(PeripheralId::NextState), "TTDDeviceType::NextState must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::NextSystemArea) == static_cast<uint16_t>(PeripheralId::NextSystemArea), "TTDDeviceType::NextSystemArea must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::MachineSerialPeer2) == static_cast<uint16_t>(PeripheralId::MachineSerialPeer2), "TTDDeviceType::MachineSerialPeer2 must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::JoystickSerialPeer) == static_cast<uint16_t>(PeripheralId::JoystickSerialPeer), "TTDDeviceType::JoystickSerialPeer must keep its v1 number");
 
 /// A device in the engine's device table: its kind and its instance name
 /// ("betadisk", "betadisk.context", "zifi.uart"; lower case, dots, digits)

@@ -47,6 +47,16 @@ public:
     virtual bool Dcd() const { return true; }
     virtual bool Ri() const { return false; }
 
+    /// A break on the line the peer drives: its Tx pin held low for longer than a frame. The Next's UART (uart_rx.vhd) takes no
+    /// byte from the peer while it is held, a frame error is seen once the stop bit time passes with the line low, and the break
+    /// condition (status bit 7) eight bit times after that, for as long as the line stays low. A line released earlier is a byte
+    /// with zero bits in it
+    virtual bool BreakHeld() const { return false; }
+
+    /// The ZX holds its Tx line low (a break: the Next's frame register bit 6), told on each change. A plug wires it back to
+    /// the peer's own Tx
+    virtual void OnBreak(bool held) { (void)held; }
+
     /// A loopback test plug: the UART reads its own RTS on CTS and its own DTR on DSR / DCD instead of the
     /// lines above (they are wires of the plug, so they need no state of their own: MCR is the UART's)
     virtual bool MirrorsModemLines() const { return false; }
@@ -121,9 +131,25 @@ public:
         _queue.pop_front();
         return b;
     }
-    void Reset() override { _queue.clear(); }
+    void Reset() override
+    {
+        _queue.clear();
+        _zxBreak = _forcedBreak = false;
+    }
     const char* Kind() const override { return _plug ? "plug" : "loopback"; }
     size_t Pending() const override { return _queue.size(); }
+
+    /// A plug's wire carries the ZX's break back; a break can also be held from outside (SetBreak: tests, automation)
+    bool BreakHeld() const override { return _forcedBreak || (_plug && _zxBreak); }
+    void OnBreak(bool held) override { _zxBreak = held; }
+    void SetBreak(bool held) { _forcedBreak = held; }
+    bool ZxBreak() const { return _zxBreak; }
+    bool ForcedBreak() const { return _forcedBreak; }
+    void SetBreakState(bool zxBreak, bool forced)
+    {
+        _zxBreak = zxBreak;
+        _forcedBreak = forced;
+    }
 
     /// TTD state: the echo queue holds bytes the ZX wrote, stored as they are
     const std::deque<uint8_t>& Queue() const { return _queue; }
@@ -131,6 +157,8 @@ public:
 
 private:
     bool _plug = false;
+    bool _zxBreak = false;      ///< the ZX holds its Tx low (the plug returns it)
+    bool _forcedBreak = false;  ///< held from outside
     std::deque<uint8_t> _queue;
 };
 

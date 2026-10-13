@@ -24,17 +24,27 @@ NextAudio::NextAudio(EmulatorContext* context) : _context(context)
 
 void NextAudio::Reset()
 {
-    for (unsigned i = 0; i < kChips; i++)
-    {
-        _chips[i]->reset();
-        _pan[i] = 3;
-    }
-    _selected = 0;
+    ResetChips();
     _dac = {0x80, 0x80, 0x80, 0x80};
     _timeKnown = false;
     _tickLeft.clear();
     _tickRight.clear();
-    Configure(_ym, _turboSound, _dacEnabled, _acb, _monoMask, _speakerExcluded);
+    Configure(_ym, _turboSound, _dacEnabled, _acb, _monoMask, _speakerExcluded, _held);
+}
+
+/// reset_i of turbosound.vhd (a soft or hard reset, or NR #06 bits 1:0 = 11): chip 0 selected, both pan bits of every chip on, the
+/// register files zero with R7 = #FF (ym2149.vhd 101-109)
+void NextAudio::ResetChips()
+{
+    for (unsigned i = 0; i < kChips; i++)
+    {
+        _chips[i]->reset();
+        _chips[i]->writeRegister(7, 0xFF);
+        _chips[i]->setRegister(0);
+        _pan[i] = 3;
+        _addr[i] = 0;
+    }
+    _selected = 0;
 }
 
 void NextAudio::ApplyBeeperLevels()
@@ -52,11 +62,17 @@ void NextAudio::ReleaseBeeperLevels()
         _context->pSoundManager->getBeeper().clearDacLevels();
 }
 
-void NextAudio::Configure(bool ymMode, bool turboSound, bool dacEnabled, bool acb, uint8_t monoMask, bool speakerExcluded)
+void NextAudio::Configure(bool ymMode, bool turboSound, bool dacEnabled, bool acb, uint8_t monoMask, bool speakerExcluded, bool held)
 {
     // levels up to now were made with the old settings
     if (_now && _timeKnown)
         AdvanceTo(_now());
+    _held = held;
+    if (_held)
+        ResetChips();  // every configuration write of the mode finds the chips in reset: nothing a program writes stays
+    // soundrive.vhd: reset_i is `reset or not nr_08_dac_en`: the four levels sit at #80 whenever the DAC is off
+    if (!dacEnabled)
+        _dac = {0x80, 0x80, 0x80, 0x80};
     _ym = ymMode;
     _turboSound = turboSound;
     _dacEnabled = dacEnabled;
@@ -69,14 +85,15 @@ void NextAudio::Configure(bool ymMode, bool turboSound, bool dacEnabled, bool ac
         _chips[i]->setChipModel(_ym ? AYChipModel::YM2149 : AYChipModel::AY8910);
         _chips[i]->setStereoMode((_monoMask >> i) & 1 ? AYStereoMode::Mono : (_acb ? AYStereoMode::ACB : AYStereoMode::ABC));
     }
-    if (!_turboSound)
-        _selected = 0;
+    // turbosound_en does not move ay_select: a chip chosen while it was on stays the one that is heard and written after it goes off
 }
 
 void NextAudio::WriteSelect(uint8_t value)
 {
     if (_now && _timeKnown)
         AdvanceTo(_now());
+    if (_held)
+        return;  // audio_ay_reset has priority over every write
     // bit 7 and bits 4:2 all set: the chip select (bits 1:0: 11 = AY 0, 10 = AY 1, 01 = AY 2) and the pan (6 left, 5 right)
     if ((value & 0x9C) == 0x9C)
     {
@@ -88,6 +105,11 @@ void NextAudio::WriteSelect(uint8_t value)
         }
         return;
     }
+    // psg_addr (turbosound.vhd 190): only bytes whose bits 7:5 are 0 are a register address; the chip keeps five bits and a register
+    // above #0F is not writable
+    if (value & 0xE0)
+        return;
+    _addr[_selected] = value & 0x1F;
     _chips[_selected]->setRegister(value & 0x0F);
 }
 
@@ -95,12 +117,31 @@ void NextAudio::WriteData(uint8_t value)
 {
     if (_now && _timeKnown)
         AdvanceTo(_now());
+    if (_held || (_addr[_selected] & 0x10))
+        return;  // ym2149.vhd 123: `addr(4) = '0'`
     _chips[_selected]->writeCurrentRegister(value);
 }
 
 uint8_t NextAudio::ReadData()
 {
+    // ym2149.vhd 159-160: a YM answers #FF for a register above #0F; an AY mirrors the low four bits
+    if ((_addr[_selected] & 0x10) && _ym)
+        return 0xFF;
     return _chips[_selected]->readCurrentRegister();
+}
+
+void NextAudio::SetPiAudio(unsigned left, unsigned right)
+{
+    if (_now && _timeKnown)
+        AdvanceTo(_now());
+    _piLeft = left & 0x3FF;
+    _piRight = right & 0x3FF;
+}
+
+uint8_t NextAudio::ReadIdentity() const
+{
+    const unsigned id = 3 - _selected;  // AY_ID of psg0 / psg1 / psg2 in turbosound.vhd: "11", "10", "01"
+    return static_cast<uint8_t>((id << 6) | (_addr[_selected] & 0x1F));
 }
 
 void NextAudio::WriteDac(unsigned channel, uint8_t value)
@@ -122,8 +163,8 @@ void NextAudio::Tick()
     {
         SoundChip_AY8910& chip = *_chips[i];
         chip.updateState(true);
-        if (!_turboSound && i > 0)
-            continue;
+        if (!_turboSound && i != _selected)
+            continue;  // turbosound.vhd: `ay_select = i or turbosound_en`
         const double a = chip.left()[0] * 255.0, b = chip.left()[1] * 255.0, c = chip.left()[2] * 255.0;
         double l, r;
         if ((_monoMask >> i) & 1)
@@ -156,6 +197,9 @@ void NextAudio::Tick()
         left += ((_dac[0] - 128) + (_dac[1] - 128)) * 16.0;
         right += ((_dac[2] - 128) + (_dac[3] - 128)) * 16.0;
     }
+    // the Pi's I2S: 10 bits unsigned in the 13-bit PCM (audio_mixer.vhd 89-100), x4 here; #200 is silence
+    left += (static_cast<double>(_piLeft) - 512.0) * 4.0;
+    right += (static_cast<double>(_piRight) - 512.0) * 4.0;
     _tickLeft.push_back(static_cast<float>(left / 32768.0));
     _tickRight.push_back(static_cast<float>(right / 32768.0));
 }

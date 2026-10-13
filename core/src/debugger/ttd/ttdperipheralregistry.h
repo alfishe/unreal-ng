@@ -28,6 +28,7 @@
 #include <string>
 
 #include "ttdserializable.h"
+#include "ttdperipheralmask.h"
 
 namespace ttd {
 
@@ -147,8 +148,8 @@ public:
     /// registered machine's names), else {type of the id, ""}; a blob that does not decode is left out
     TTDDeviceStates StatesOfV1Blobs(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs) const;
     /// v1's not-recorded mask (a bit per v1 id) and the keys it stands for ({type of the id, ""})
-    static std::vector<TTDDeviceKey> KeysOfV1Mask(uint64_t mask);
-    static uint64_t V1MaskOf(const std::vector<TTDDeviceKey>& keys);   ///< keys of a type past the v1 ids: left out
+    static std::vector<TTDDeviceKey> KeysOfV1Mask(const PeripheralMask& mask);
+    static PeripheralMask V1MaskOf(const std::vector<TTDDeviceKey>& keys);   ///< keys of a type past the v1 ids: left out
 
     /// Every device's whole state, by entry: a live snapshot the same registry loads back (LoadLive) while the
     /// device set stays as it is

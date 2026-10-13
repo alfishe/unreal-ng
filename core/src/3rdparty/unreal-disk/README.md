@@ -13,6 +13,7 @@ controllers use it, and so do the unreal-asm tools (`zxasm`, `symconv`). Design:
 | format drivers | `unrealdisk/loaders/loader_*.h` | TRD, SCL, FDI, UDI, TD0, DSK / EDSK, MGT (+D), raw PC floppy (720K / 1.44M), HFE, SCP, hobeta: `loadImage` / `writeImage(path)`, and `parse` / `serialize` on bytes where the format has them |
 | registry | `unrealdisk/floppyformats.h` | `Probe` / `ProbeData` (marks, then sizes, then the extension), `Load` / `LoadData`, `Save` (the format the path names, with a lossless UDI fallback), `CreateBlank` |
 | TR-DOS | `unrealdisk/trdoscatalog.h`, `trdosfs.h` | `TrdosCatalog` reads the catalog; `TrdosFileSystem` lists, reads, writes and deletes files on any image with TR-DOS tracks |
+| +3DOS | `unrealdisk/plus3fs.h` | `Plus3FileSystem` lists, reads, writes and deletes files on a +3DOS (CP/M 2.2 layout) disk: the geometry from the disk's first sector, else the +3 standard; the +3DOS header read and written |
 | host settings | `unrealdisk/options.h` | `LoaderOptions` (the TR-DOS sector interleave) |
 
 ## Example

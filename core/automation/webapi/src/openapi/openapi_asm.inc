@@ -177,6 +177,41 @@ paths["/api/v1/emulator/{id}/asm/sync"]["get"]["responses"]["200"]["description"
 paths["/api/v1/emulator/{id}/asm/sync"]["get"]["responses"]["404"]["description"] = "No known assembler in RAM {state: none, candidates}";
 paths["/api/v1/emulator/{id}/asm/sync"]["get"]["responses"]["400"]["description"] = "Two identify alike {state: ambiguous, candidates}: give assembler";
 
+// The same verbs on a snapshot file with no emulator instance (asm-synchronizer.md Z1)
+paths["/api/v1/asm/sync"]["get"]["summary"] = "The assembler in a snapshot file (no emulator instance)";
+paths["/api/v1/asm/sync"]["get"]["description"] = "As GET /emulator/{id}/asm/sync on the memory of a snapshot file; no emulator instance is needed. snapshot is required.";
+paths["/api/v1/asm/sync"]["get"]["tags"].append("Assembler Sources");
+paths["/api/v1/asm/sync"]["get"]["parameters"][0]["name"] = "snapshot";
+paths["/api/v1/asm/sync"]["get"]["parameters"][0]["in"] = "query";
+paths["/api/v1/asm/sync"]["get"]["parameters"][0]["required"] = true;
+paths["/api/v1/asm/sync"]["get"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/asm/sync"]["get"]["parameters"][0]["description"] = "A snapshot file (.szx, .sna, .z80)";
+paths["/api/v1/asm/sync"]["get"]["parameters"][1]["name"] = "assembler";
+paths["/api/v1/asm/sync"]["get"]["parameters"][1]["in"] = "query";
+paths["/api/v1/asm/sync"]["get"]["parameters"][1]["required"] = false;
+paths["/api/v1/asm/sync"]["get"]["parameters"][1]["schema"]["type"] = "string";
+paths["/api/v1/asm/sync"]["get"]["responses"]["200"]["description"] = "{assembler, title, format, version, family, state, name, page, bytes, lines, snapshot, ...}";
+paths["/api/v1/asm/sync"]["get"]["responses"]["400"]["description"] = "No snapshot given, or two identify alike: give assembler";
+paths["/api/v1/asm/sync"]["get"]["responses"]["404"]["description"] = "The snapshot cannot be read, or no known assembler in it";
+
+paths["/api/v1/asm/sync/{action}"]["post"]["summary"] = "Probe, extract or inject on a snapshot file (no emulator instance)";
+paths["/api/v1/asm/sync/{action}"]["post"]["description"] = "As POST /emulator/{id}/asm/sync/{action} for probe, extract and inject, on the memory of the snapshot file the body names; inject writes the snapshot with the text in it to output. The other actions need an instance (400). A disk:A/NAME.T path needs one too.";
+paths["/api/v1/asm/sync/{action}"]["post"]["tags"].append("Assembler Sources");
+paths["/api/v1/asm/sync/{action}"]["post"]["parameters"][0]["name"] = "action";
+paths["/api/v1/asm/sync/{action}"]["post"]["parameters"][0]["in"] = "path";
+paths["/api/v1/asm/sync/{action}"]["post"]["parameters"][0]["required"] = true;
+paths["/api/v1/asm/sync/{action}"]["post"]["parameters"][0]["schema"]["type"] = "string";
+for (const char* action : {"probe", "extract", "inject", "status"})
+    paths["/api/v1/asm/sync/{action}"]["post"]["parameters"][0]["schema"]["enum"].append(action);
+paths["/api/v1/asm/sync/{action}"]["post"]["requestBody"]["required"] = true;
+paths["/api/v1/asm/sync/{action}"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+paths["/api/v1/asm/sync/{action}"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("snapshot");
+paths["/api/v1/asm/sync/{action}"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["snapshot"]["type"] = "string";
+paths["/api/v1/asm/sync/{action}"]["post"]["requestBody"]["content"]["application/json"]["schema"]["description"] = "The action's options as for the instance route; snapshot required";
+paths["/api/v1/asm/sync/{action}"]["post"]["responses"]["200"]["description"] = "The action's answer";
+paths["/api/v1/asm/sync/{action}"]["post"]["responses"]["400"]["description"] = "No snapshot, an action that needs an instance, an unknown option";
+paths["/api/v1/asm/sync/{action}"]["post"]["responses"]["404"]["description"] = "The snapshot cannot be read, or no known assembler in it";
+
 // The route registered for the POST entries below (probe, extract, watch): verb sync-<action> with the JSON body's
 // scalar members as its options
 paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["summary"] = "Run an assembler-in-RAM action";

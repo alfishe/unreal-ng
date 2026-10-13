@@ -41,10 +41,14 @@ public:
     bool Cts() const override { return cts; }
     void OnLineSettings(const SerialLine& line) override { settings = line; }
     void OnModemLines(bool rts, bool) override { rtsFromZx = rts; }
+    bool BreakHeld() const override { return breakHeld; }
+    void OnBreak(bool held) override { breakFromZx = held; }
     const char* Kind() const override { return "scripted"; }
     size_t Pending() const override { return toZx.size(); }
     SerialLine settings;
     bool rtsFromZx = true;
+    bool breakHeld = false;     ///< the peer holds its line low
+    bool breakFromZx = false;   ///< the ZX holds its Tx low
 };
 }  // namespace
 
@@ -296,7 +300,8 @@ TEST(NextUartConfigured_Test, ThePeersComeFromComPortAndComPort2)
     ASSERT_NE(ports, nullptr);
     ASSERT_NE(ports->Uart().Peer(0), nullptr) << "ComPort= is UART 0, the ESP's line";
     ASSERT_NE(ports->Uart().Peer(1), nullptr) << "ComPort2= is UART 1, the Pi's";
-    // a byte out of UART 1 comes back on UART 1 only
+    // a byte out of UART 1 comes back on UART 1 only (once NR #A0 connects its pins: bit 4 the UART, bit 5 the Pi orientation)
+    ports->Board().WriteNextReg(0xA0, 0x30);
     ports->DecodePortOut(kSelect, kSelectPi, 0x8000);
     ports->DecodePortOut(kTx, 0x5A, 0x8000);
     EmulatorTestHelper::RunFramesFast(emulator, 2);
@@ -379,5 +384,233 @@ TEST(NextUartConfigured_Test, GpioZeroLowAtAResetPutsTheEspInDownloadMode)
     EXPECT_TRUE(esp->DownloadMode());
     ports->Board().WriteNextReg(0xA9, 0x01);
     EXPECT_FALSE(esp->FlashPinLow());
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// ---- a break from a peer (serial/uart_rx.vhd: S_ERROR with the shift register at zero, o_err_break) ----
+
+namespace
+{
+// 8N1 at the default prescaler: half a bit, then 8 data bits, then the stop bit (9 bit times); the break condition eight bit times later
+constexpr uint64_t kBit = NextUart::kDefaultPrescaler;
+constexpr uint64_t kStopSample = kBit / 2 + 9 * kBit;
+constexpr uint64_t kBreakAt = kStopSample + 8 * kBit;
+}  // namespace
+
+TEST(NextUart_Test, ABreakFromAPeerIsAFramingErrorThenTheBreakCondition)
+{
+    NextUart uart;
+    ScriptedPeer peer;
+    uart.SetPeer(0, &peer);
+    peer.toZx = {0x55};   // waits behind the break: a held line starts no byte
+    peer.breakHeld = true;
+    uart.Advance(1000);   // the receiver sees the line low from here
+    uart.Advance(1000 + kStopSample - 1);
+    EXPECT_EQ(uart.GetView(0).status & (NextUart::kStatusFraming | NextUart::kStatusBreak), 0) << "before the stop bit's sample point";
+    uart.Advance(1000 + kStopSample);
+    EXPECT_NE(uart.GetView(0).status & NextUart::kStatusFraming, 0) << "the stop bit is low: a framing error";
+    EXPECT_EQ(uart.GetView(0).status & NextUart::kStatusBreak, 0);
+    EXPECT_EQ(uart.GetView(0).rxCount, 0u) << "the byte with the error is thrown away";
+    uart.Advance(1000 + kBreakAt - 1);
+    EXPECT_EQ(uart.GetView(0).status & NextUart::kStatusBreak, 0) << "eight bit times of zeros are not through";
+    // the status read: both flags, then the sticky one is gone and the held one stays
+    const uint8_t status = uart.Read(kTx, 1000 + kBreakAt);
+    EXPECT_NE(status & NextUart::kStatusBreak, 0);
+    EXPECT_NE(status & NextUart::kStatusFraming, 0);
+    EXPECT_NE(uart.Read(kTx, 1000 + kBreakAt + 10) & NextUart::kStatusBreak, 0) << "held while the line is low";
+    EXPECT_EQ(uart.GetView(0).status & NextUart::kStatusFraming, 0);
+    EXPECT_EQ(peer.toZx.size(), 1u) << "no byte was taken from the peer meanwhile";
+    // the line rises: the condition goes, the waiting byte arrives
+    peer.breakHeld = false;
+    uart.Advance(20000);
+    EXPECT_EQ(uart.GetView(0).status & NextUart::kStatusBreak, 0);
+    uart.Advance(20000 + 2 * kFrame8N1);
+    EXPECT_EQ(uart.GetView(0).rxCount, 1u);
+    EXPECT_EQ(uart.Read(kRx, 20000 + 2 * kFrame8N1), 0x55);
+}
+
+TEST(NextUart_Test, ALinePulseShorterThanAFrameIsAByteWithZeroBits)
+{
+    NextUart uart;
+    ScriptedPeer peer;
+    uart.SetPeer(0, &peer);
+    peer.breakHeld = true;
+    uart.Advance(500);
+    // the data bits are sampled at half a bit + n bits: 4 are inside 1300 clocks, so the low nibble is 0 and the rest 1
+    peer.breakHeld = false;
+    uart.Advance(500 + 1300);
+    EXPECT_EQ(uart.GetView(0).rxCount, 0u) << "the frame ends at the stop bit";
+    uart.Advance(500 + kStopSample);
+    ASSERT_EQ(uart.GetView(0).rxCount, 1u);
+    EXPECT_EQ(uart.GetView(0).status & (NextUart::kStatusFraming | NextUart::kStatusBreak), 0);
+    EXPECT_EQ(uart.Read(kRx, 500 + kStopSample), 0xF0);
+    // a glitch under half a bit is no start bit
+    peer.breakHeld = true;
+    uart.Advance(100000);
+    peer.breakHeld = false;
+    uart.Advance(100000 + kBit / 2 - 1);
+    uart.Advance(200000);
+    EXPECT_EQ(uart.GetView(0).rxCount, 0u);
+}
+
+TEST(NextUart_Test, ALowLineWithTheWrongParityIsAParityErrorCountedWithTheFramingErrors)
+{
+    NextUart uart;
+    ScriptedPeer peer;
+    uart.SetPeer(0, &peer);
+    uart.Write(kFrame, NextUart::kDefaultFrame | NextUart::kFrameParity, 0);   // 8E1
+    peer.breakHeld = true;
+    uart.Advance(500);
+    peer.breakHeld = false;
+    uart.Advance(500 + 1300);   // the data bits read 0xF0 (even parity) and the parity bit was sampled after the pulse: high
+    uart.Advance(500 + 4000);
+    EXPECT_EQ(uart.GetView(0).rxCount, 0u);
+    EXPECT_NE(uart.GetView(0).status & NextUart::kStatusFraming, 0);
+}
+
+TEST(NextUart_Test, AFifoResetPausesTheReceiverUntilTheLineRises)
+{
+    NextUart uart;
+    ScriptedPeer peer;
+    uart.SetPeer(0, &peer);
+    peer.breakHeld = true;
+    uart.Write(kFrame, NextUart::kDefaultFrame | NextUart::kFrameReset, 0);
+    uart.Write(kFrame, NextUart::kDefaultFrame, 100);   // the reset is released with the line still low
+    uart.Advance(100 + 3 * kBreakAt);
+    EXPECT_EQ(uart.GetView(0).status & (NextUart::kStatusFraming | NextUart::kStatusBreak), 0) << "S_PAUSE waits for the line to rise";
+    peer.breakHeld = false;
+    peer.toZx = {0x21};
+    uart.Advance(100 + 3 * kBreakAt + 5);
+    uart.Advance(100 + 3 * kBreakAt + 5 + 2 * kFrame8N1);
+    EXPECT_EQ(uart.GetView(0).rxCount, 1u);
+}
+
+TEST(NextUart_Test, TheTransmittersBreakHoldsTxLowAndTheTransmitterBusy)
+{
+    NextUart uart;
+    ScriptedPeer peer;
+    uart.SetPeer(0, &peer);
+    EXPECT_NE(uart.GetView(0).status & NextUart::kStatusTxEmpty, 0);
+    uart.Write(kFrame, NextUart::kDefaultFrame | NextUart::kFrameBreak, 0);
+    EXPECT_TRUE(peer.breakFromZx) << "the peer is told the Tx pin is held low";
+    EXPECT_EQ(uart.GetView(0).status & NextUart::kStatusTxEmpty, 0) << "uart_tx.vhd o_busy holds in break";
+    uart.Write(kTx, 0x33, 10);
+    uart.Advance(10 + 2 * kFrame8N1);
+    EXPECT_TRUE(peer.sent.empty()) << "nothing is sent in the break state";
+    uart.Write(kFrame, NextUart::kDefaultFrame, 10 + 2 * kFrame8N1);
+    EXPECT_FALSE(peer.breakFromZx);
+    uart.Advance(10 + 4 * kFrame8N1);
+    ASSERT_EQ(peer.sent.size(), 1u);
+    EXPECT_EQ(peer.sent[0], 0x33);
+}
+
+TEST(NextUart_Test, ATestPlugReturnsTheTransmittersBreakAsAReceivedBreak)
+{
+    NextUart uart;
+    LoopbackPeer plug(true);
+    uart.SetPeer(0, &plug);
+    uart.Write(kFrame, NextUart::kDefaultFrame | NextUart::kFrameBreak, 0);
+    uart.Advance(kBreakAt);
+    EXPECT_NE(uart.GetView(0).status & NextUart::kStatusBreak, 0) << "the wire loops Tx to Rx";
+    uart.Write(kFrame, NextUart::kDefaultFrame, kBreakAt + 100);
+    uart.Advance(kBreakAt + 200);
+    EXPECT_EQ(uart.GetView(0).status & NextUart::kStatusBreak, 0);
+}
+
+// ---- the joystick connector's UART (zxnext.vhd 3340-3350: NR #0B bits 7, 5 and 0) ----
+
+TEST(NextUart_Test, TheJoystickConnectorTakesTheSelectedUartAwayFromItsModule)
+{
+    NextUart uart;
+    ScriptedPeer esp, pi, joy;
+    uart.SetPeer(0, &esp);
+    uart.SetPeer(1, &pi);
+    uart.SetJoystickPeer(&joy);
+    EXPECT_EQ(uart.Wire(0), &esp) << "the connector carries no UART until NR #0B says so";
+
+    uart.SetJoystickRoute(true, 0);
+    EXPECT_EQ(uart.Wire(0), &joy);
+    EXPECT_EQ(uart.Wire(1), &pi) << "the other UART keeps its module";
+    EXPECT_FALSE(esp.rtsFromZx) << "the module's ready-to-receive pin is forced not ready";
+    EXPECT_TRUE(uart.GetView(0).joystick);
+
+    esp.toZx = {0x99};
+    joy.toZx = {0x07};
+    uart.Write(kTx, 0x42, 0);
+    uart.Advance(3 * kFrame8N1);
+    ASSERT_EQ(joy.sent.size(), 1u);
+    EXPECT_EQ(joy.sent[0], 0x42);
+    EXPECT_TRUE(esp.sent.empty()) << "Tx idle for the module (uart0_tx_esp forced 1)";
+    EXPECT_EQ(uart.GetView(0).rxCount, 1u);
+    EXPECT_EQ(uart.Read(kRx, 3 * kFrame8N1), 0x07) << "only the connector's device is heard";
+    EXPECT_EQ(esp.toZx.size(), 1u);
+
+    // the connector lets go: the module is back with the line as it was
+    uart.SetJoystickRoute(false, 0);
+    EXPECT_EQ(uart.Wire(0), &esp);
+    EXPECT_TRUE(esp.rtsFromZx);
+    uart.Advance(10 * kFrame8N1);   // the module's byte starts here
+    uart.Advance(12 * kFrame8N1);
+    EXPECT_EQ(uart.GetView(0).rxCount, 1u);
+    EXPECT_EQ(uart.Read(kRx, 12 * kFrame8N1), 0x99);
+
+    // UART 1 on the connector (bit 0 of NR #0B)
+    uart.SetJoystickRoute(true, 1);
+    EXPECT_EQ(uart.Wire(1), &joy);
+    EXPECT_EQ(uart.Wire(0), &esp);
+    EXPECT_FALSE(pi.rtsFromZx);
+}
+
+TEST(NextUart_Test, TheJoystickConnectorHasNoReadyToReceivePinSoAFullFifoCannotHoldItsDeviceOff)
+{
+    NextUart uart;
+    ScriptedPeer joy;
+    joy.toZx.assign(NextUart::kAlmostFull + 8, 0xA5);
+    uart.SetJoystickPeer(&joy);
+    uart.SetJoystickRoute(true, 0);
+    uart.Write(kFrame, NextUart::kDefaultFrame | NextUart::kFrameFlow, 0);
+    uart.Advance((NextUart::kRxFifo + 10) * kFrame8N1);
+    EXPECT_GE(uart.GetView(0).rxCount, NextUart::kAlmostFull + 1) << "a module would have been held at 510 by RTR";
+}
+
+TEST_F(NextUartMachine_Test, NR0x0BBitsSevenAndFiveRouteAUartToTheConnectorAndAResetLetsGo)
+{
+    _ports->Uart().SetJoystickPeer(&_echo);
+    EXPECT_FALSE(_ports->Uart().JoystickRouted());
+    _ports->Board().WriteNextReg(0x0B, 0x80);   // the connector's I/O mode on, UART mode (bit 5) off
+    EXPECT_FALSE(_ports->Uart().JoystickRouted()) << "bit 5 chooses the UART mode";
+    _ports->Board().WriteNextReg(0x0B, 0xA0);   // UART mode, UART 0
+    ASSERT_TRUE(_ports->Uart().JoystickRouted());
+    EXPECT_EQ(_ports->Uart().JoystickChannel(), 0u);
+    _ports->Board().WriteNextReg(0x0B, 0xA1);   // UART 1
+    EXPECT_EQ(_ports->Uart().JoystickChannel(), 1u);
+    // a byte out of UART 1 goes to the connector's device and comes back
+    _ports->DecodePortOut(kSelect, kSelectPi, 0x8000);
+    _ports->DecodePortOut(kTx, 0x6D, 0x8000);
+    bool back = false;
+    for (int frame = 0; frame < 4 && !back; frame++)
+    {
+        EmulatorTestHelper::RunFramesFast(_emulator, 1);
+        back = (_ports->DecodePortIn(kTx, 0x8000) & NextUart::kStatusRxAvail) != 0;
+    }
+    ASSERT_TRUE(back);
+    EXPECT_EQ(_ports->DecodePortIn(kRx, 0x8000), 0x6D);
+    // NR #0B goes back to its reset value on a reset
+    _ports->PerformReset(true);
+    EXPECT_FALSE(_ports->Uart().JoystickRouted());
+}
+
+TEST(NextUartConfigured_Test, ComPortJoyPlugsADeviceIntoTheConnector)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero, [](CONFIG& config) {
+        std::snprintf(config.network.comPortJoy, sizeof config.network.comPortJoy, "LOOPBACK");
+    });
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* ports = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    ASSERT_NE(ports->Uart().JoystickPeer(), nullptr) << "ComPortJoy= is the connector's device";
+    EXPECT_EQ(ports->Uart().JoystickPeer(), context->pJoystickSerialPeer);
+    EXPECT_STREQ(ports->Uart().JoystickPeer()->Kind(), "loopback");
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

@@ -51,6 +51,23 @@ const char* StatusName(Status status);
 bool ParseImageFormat(const std::string& text, bool& rgba, std::string& message);
 bool ParseAlpha(const std::string& text, bool& alpha, std::string& message);
 
+/// The size of a layer image: `screen` 640 x 512 (the screenshot's geometry, the default), `grid` 640 x 256 (the grid's sub-pixels, every line once)
+/// or `pixel` 320 x 256 (one sample per Next pixel: the first sub-pixel; a mode that draws the second one differently - Layer 2 640,
+/// Timex hi-res - loses it, use grid there). The smaller sizes cost the reader less to move and to encode
+enum class Scale
+{
+    Screen,
+    Grid,
+    Pixel
+};
+/// An empty word keeps `screen`; any other than screen / grid / pixel is false with `message`
+bool ParseScale(const std::string& text, Scale& scale, std::string& message);
+const char* ScaleName(Scale scale);
+/// The width and height of an image of this scale
+void ScaleSize(Scale scale, unsigned& width, unsigned& height);
+/// Reduce a screen-size RGBA image (640 x 512) to `scale`
+void Reduce(const std::vector<uint8_t>& screen, Scale scale, std::vector<uint8_t>& out);
+
 struct Image
 {
     Status status = Status::Ok;
@@ -74,7 +91,7 @@ Status LastFrame(EmulatorContext* context, std::shared_ptr<const Frame>& frame, 
 void Render(const Frame& frame, Kind kind, bool alpha, std::vector<uint8_t>& rgba);
 
 /// LastFrame + Render
-Image Capture(EmulatorContext* context, Kind kind, bool alpha);
+Image Capture(EmulatorContext* context, Kind kind, bool alpha, Scale scale = Scale::Screen);
 
 /// A PNG of an RGBA image (empty on an encoder failure)
 std::vector<uint8_t> EncodePng(const std::vector<uint8_t>& rgba, unsigned width, unsigned height);
@@ -92,6 +109,7 @@ struct Result
     Kind kind = Kind::Ula;
     bool rgba = false;
     bool alpha = true;
+    Scale scale = Scale::Screen;
     unsigned width = 0, height = 0;
     std::vector<uint8_t> bytes;  ///< PNG or raw RGBA
     size_t size = 0;             ///< bytes of the encoded image, saved or not
@@ -99,7 +117,8 @@ struct Result
     uint64_t sequence = 0;
     uint64_t frameCounter = 0;
 };
-Result Request(EmulatorContext* context, const std::string& layer, const std::string& format, const std::string& alpha, const std::string& path);
+Result Request(EmulatorContext* context, const std::string& layer, const std::string& format, const std::string& alpha, const std::string& path,
+               const std::string& size = std::string());
 
 /// base64 of bytes
 std::string Base64(const std::vector<uint8_t>& bytes);

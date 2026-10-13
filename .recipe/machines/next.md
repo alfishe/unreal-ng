@@ -156,7 +156,7 @@ invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/next/nmi-journal","bod
 invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/next/nextreg","body":{"reg":"02","value":"08"}}   # the M1 button (NR #02 bit 3)
 invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/nmi","body":{"magic":true}}                      # the magic button: the DRIVE button on a Next (a plain POST /nmi is the bare line)
 inspect_state {"aspects":["next_nmi"],"nr_nmi_kinds":"int_ack,nmi_request","nr_nmi_limit":20}
-#   → [next_nmi] NMI in service: no; sources: m1_button blocked (...) drive_button ready io_trap (not modelled); multiface off +3, memory out; ...
+#   → [next_nmi] NMI in service: no; sources: m1_button blocked (...) drive_button ready io_trap blocked (the trap is off (NR #D8 bit 0)); multiface off +3, memory out; ...
 #       #1 f512 pc 0x3DBD int_ack ula
 #       #2 f512 pc 0x0038 nmi_request m1_button REFUSED: the M1 button is off (NR #06 bit 3)
 ```
@@ -189,8 +189,20 @@ requests are in NR `#CA`). `state/next/uart` shows all of it without clearing th
 each line is a serial peer, as on every machine with a COM port: `[NETWORK] ComPort=` is the ESP's line and `ComPort2=` the Pi's
 (`NONE | LOOPBACK | PLUG | TCP:host:port | SERIAL:device | AT | ESPNET | MODEM ...`; at run time `POST /network/config
 {"com_port": "...", "com_port2": "..."}`). With nothing on a line the Tx bytes are lost and nothing arrives. `LOOPBACK` on a line
-echoes every byte, a handy check of a program's UART code. NR `#0B`'s UART on the joystick port and NR `#A0`'s Pi GPIO routing are
-registers only.
+echoes every byte, a handy check of a program's UART code. NR `#A0`'s Pi GPIO routing is a register only (UART 1 talks to its peer
+whatever NR `#A0` says).
+
+**The UART on the joystick connector.** NR `#0B` bit 7 (I/O mode on) with bit 5 (UART mode) takes a UART to the connector: bit 0
+picks UART 0 (the ESP's) or UART 1 (the Pi's), bit 4 the connector. What is plugged in is `[NETWORK] ComPortJoy=` (same values as
+`ComPort=`; `{"com_port_joy": "loopback"}` at run time). The UART's own module is cut off (nothing reaches it, its ready-to-receive pin
+reads not ready) until NR `#0B` lets go or a reset; the connector has no RTS pin, so a joystick device is never held off by a full
+FIFO. `next_uart` shows `via_joystick_connector` per channel and `routing.joystick_port_uart` / `joystick_port_peer`.
+
+**Break.** A peer holding its line low (`LoopbackPeer` after `SetBreak`, a PLUG that echoes the program's own break, set with frame
+bit 6) is seen as the VHDL's receiver sees it: the byte is dropped and status bit 6 (framing, sticky) is set when the stop bit's
+sample point passes, status bit 7 (break, held, not sticky) eight bit times after that until the line rises; a pulse that ends
+before the stop sample is a byte of zero bits (`$F0` for a pulse of four bit times), a FIFO reset pauses the receiver until the line
+is high. Status bit 4 (Tx empty) reads 0 while frame bit 6 (transmitter break) or 7 (reset) is set.
 
 **The ESP module.** A Next ships with its ESP-12 on UART 0, so `ComPort` is `AT` unless the config says otherwise (`ComPort=NONE`
 takes the module off): an ESP8266 with Espressif's AT firmware (NonOS AT 1.7.4; `[NETWORK] EspChip=ESP8266-AT222` picks AT 2.2.2),

@@ -132,7 +132,16 @@ protected:
         std::memcpy(&pageStoreCount, s.data() + p, sizeof pageStoreCount);
         skip(4);
         skip(4);   // checkpoint count
-        skip(8);   // reserved
+        // the peripheral mask (schema 3: u8 word count + u64 words; schema 1: one u64), then the not-recorded mask with flag bit 11
+        uint16_t schema = 0, flags = 0;
+        std::memcpy(&schema, s.data() + 4, 2);
+        std::memcpy(&flags, s.data() + 6, 2);
+        for (int mask = 0; mask < ((flags & 0x0800) ? 2 : 1); ++mask)
+        {
+            if (p >= s.size())
+                return false;
+            skip(schema >= 3 ? 1 + 8 * static_cast<size_t>(static_cast<uint8_t>(s[p])) : 8);
+        }
 
         if (p > s.size())
             return false;

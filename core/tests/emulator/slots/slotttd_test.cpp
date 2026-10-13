@@ -79,7 +79,7 @@ std::vector<std::string> DiffFields(const ttd::TTDConfigFingerprint& a, const tt
     return names;
 }
 
-SlotManager::TtdDeviceSet Devices(std::initializer_list<PeripheralId> ids, uint64_t notRecorded = 0)
+SlotManager::TtdDeviceSet Devices(std::initializer_list<PeripheralId> ids, ttd::PeripheralMask notRecorded = {})
 {
     SlotManager::TtdDeviceSet set;
     for (PeripheralId id : ids)
@@ -88,9 +88,11 @@ SlotManager::TtdDeviceSet Devices(std::initializer_list<PeripheralId> ids, uint6
     return set;
 }
 
-uint64_t Bit(PeripheralId id)
+ttd::PeripheralMask Bit(PeripheralId id)
 {
-    return uint64_t(1) << static_cast<uint8_t>(id);
+    ttd::PeripheralMask mask;
+    mask.Set(static_cast<uint8_t>(id));
+    return mask;
 }
 
 /// A shipped config's machine with its [SLOTS] replaced, every sound card as configured, time travel available
@@ -397,14 +399,15 @@ TEST(TtdSlots_Test, MigratedCardsKeepBlobIds)
     ttd::TTDFileInfo info;
     std::string err;
     ASSERT_TRUE(ttd::ReadTTDFileInfo(fixture.string(), info, err)) << err;
-    uint64_t mask = 0;
+    ttd::PeripheralMask mask;
     for (const ttd::TTDRecordedDevice& d : info.machine.devices)
-        mask |= Bit(d.legacyId);
-    ASSERT_TRUE(mask & Bit(PeripheralId::TSFM)) << "the fixture records the TurboSound FM under id 4";
-    ASSERT_TRUE(mask & Bit(PeripheralId::GeneralSound)) << "the fixture records the classic GS under id 5";
+        if (d.legacyId != PeripheralId::None)
+            mask.Set(static_cast<uint8_t>(d.legacyId));
+    ASSERT_TRUE(mask.Test(static_cast<uint8_t>(PeripheralId::TSFM))) << "the fixture records the TurboSound FM under id 4";
+    ASSERT_TRUE(mask.Test(static_cast<uint8_t>(PeripheralId::GeneralSound))) << "the fixture records the classic GS under id 5";
 
     std::string slots = "ay-socket = tsfm\nzxbus.1 = gs";
-    if (mask & Bit(PeripheralId::MoonSound))
+    if (mask.Test(static_cast<uint8_t>(PeripheralId::MoonSound)))
         slots += "\nzxbus.2 = moonsound";
     StagedMachine machine("pentagon128k", slots);
     ASSERT_TRUE(machine.Ok());
@@ -427,7 +430,7 @@ TEST(TtdSlots_Test, MigratedCardsKeepBlobIds)
     };
     std::vector<Card> cards = {{PeripheralId::TSFM, SlotCardGroup::Socket, "tsfm"},
                                {PeripheralId::GeneralSound, SlotCardGroup::GeneralSound, "generalsound"}};
-    if (mask & Bit(PeripheralId::MoonSound))
+    if (mask.Test(static_cast<uint8_t>(PeripheralId::MoonSound)))
         cards.push_back({PeripheralId::MoonSound, SlotCardGroup::MoonSound, "moonsound"});
     const std::vector<ttd::TTDDeviceEntry> entries = registry.DeviceEntries();
     for (const Card& card : cards)

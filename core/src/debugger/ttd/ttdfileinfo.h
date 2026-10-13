@@ -28,6 +28,7 @@
 
 #include "debugger/ttd/ttdserializable.h"   // TTDDeviceKey, PeripheralId
 #include "emulator/platform.h"   // GSTypeKind, MEM_MODEL
+#include "ttdperipheralmask.h"
 
 namespace ttd
 {
@@ -58,6 +59,9 @@ struct TTDRecordedMachine
 
     /// A device of @p type is fitted (recorded or not)
     bool Fits(TTDDeviceType type) const;
+    /// The recorded devices that have a v1 id, as the set of those ids (what a v1 file's header names; the
+    /// `peripheral_mask` of the automation surfaces). A device without a v1 id is not in it
+    PeripheralMask V1Mask() const;
 
     /// General Sound slot: NONE, Z80 (GS with its Z80), LW (lightweight), NGS (NeoGS)
     GSTypeKind generalSound = GSTypeKind::NONE;
@@ -109,8 +113,8 @@ std::string PeripheralIdName(uint8_t id);
 /// type's, any other by its instance
 std::string DeviceDisplayName(const TTDRecordedDevice& device);
 
-/// The devices of a v1 file's mask: bit i = v1 id i (type i, its name as instance)
-std::vector<TTDRecordedDevice> DevicesOfV1Mask(uint64_t mask);
+/// The devices of a v1 file's mask: id i set = v1 id i (type i, its name as instance)
+std::vector<TTDRecordedDevice> DevicesOfV1Mask(const PeripheralMask& mask);
 
 /// The General Sound personality a recorded machine has fitted (NONE when no
 /// General Sound card was fitted).
