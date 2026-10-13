@@ -103,6 +103,7 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         e.basicRom = Mem().BasicRomVisible();
     };
     _multiface = std::make_unique<NextMultiface>(&Mem(), _board.get(), &_context->emulatorState);
+    _m1Chain.owner = this;
     _m1Chain.multiface = _multiface.get();
     _m1Chain.divMmc = _divMmc.get();
     _interrupts->SetPoller([this]() {
@@ -200,6 +201,8 @@ void PortDecoder_Next::reset()
     _spiPendingValid = false;
     _spiBusyUntil = 0;
     _spiBusyRatio = 1.0;
+    _speedPending = false;
+    _speedChangedAt = 0;
 
     _screen->SetBorderColor(COLOR_WHITE);
     _screen->SetActiveScreen(SCREEN_NORMAL);
@@ -307,12 +310,13 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     }
     if (low == NextCtc::kPortLow && (port >> 11) == 0x03)
     {
-        // CTC: A15:A11 = 00011, A10:A8 the channel (4-7 are not implemented)
+        // CTC: A15:A11 = 00011, A10:A8 the channel. Channels 4-7 select no channel (zxnext.vhd ctc_mod NUM_CTC = 4) but the
+        // port is decoded (port_ctc ignores A10:A8): the read answers 0 from the empty wired-or, not the floating bus
         if (!PortEnabled(27))
             return IdleRead(port, pc);
         const unsigned channel = (port >> 8) & 7;
-        const uint8_t value = channel < NextCtc::kChannels ? _ctc.Read(channel, Now28()) : 0xFF;
-        _lastPortDecoded = channel < NextCtc::kChannels;
+        const uint8_t value = channel < NextCtc::kChannels ? _ctc.Read(channel, Now28()) : 0x00;
+        _lastPortDecoded = true;
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
         disp.decodedPort = port;
@@ -1112,10 +1116,10 @@ double PortDecoder_Next::SpiBusyUntil()
     const double ratio = SpeedRatio();
     if (ratio != _spiBusyRatio)
     {
-        // spi_master.vhd counts the CPU clock: the byte is 16 clocks whatever the speed. The new speed was taken over at the start of this
-        // frame (Z80::BeginFrame), so what was left of the byte then is counted in the new clocks. A change older than the byte would have
-        // left nothing in flight
-        const double boundary = static_cast<double>(_state->t_states);
+        // spi_master.vhd counts the CPU clock: the byte is 16 clocks whatever the speed. The new speed was taken over at the instant of
+        // the switch (ApplyPendingSpeed) or at the start of this frame (Z80::BeginFrame), so what was left of the byte then is counted in
+        // the new clocks. A change older than the byte would have left nothing in flight
+        const double boundary = std::max(static_cast<double>(_state->t_states), _speedChangedAt);
         if (_spiBusyUntil > boundary)
             _spiBusyUntil = boundary + (_spiBusyUntil - boundary) * _spiBusyRatio / ratio;
         _spiBusyRatio = ratio;
@@ -1176,10 +1180,24 @@ bool PortDecoder_Next::PagingAllowed(uint16_t port) const
 
 void PortDecoder_Next::SetCpuSpeed(uint8_t ratio)
 {
-    // Applied at the frame boundary by Z80::ApplyQueuedFrequencyMultiplier (composed with the host speed control)
+    // zxnext.vhd 5810-5818: cpu_speed takes nr_07_cpu_speed at the first clock without MREQ / IORQ / M1 after the write, inside the
+    // writing instruction. The emulator switches before the next instruction's fetch (ApplyPendingSpeed); a frame start that comes first
+    // takes it over the same way (Z80::ApplyQueuedFrequencyMultiplier composes it with the host speed control)
     _state->hw_turbo_ratio = ratio;
     _ratio = ratio;
+    _speedPending = ratio != _state->hw_turbo_ratio_applied;
     UpdateContention();
+}
+
+void PortDecoder_Next::ApplyPendingSpeed()
+{
+    _speedPending = false;
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (!z80 || _state->hw_turbo_ratio == _state->hw_turbo_ratio_applied)
+        return;
+    _speedChangedAt = Now();
+    z80->ApplyHardwareTurboNow();
+    SpiBusyUntil();  // a byte in flight keeps its 16 clocks: the rest is counted in the new ones now, not lazily after a second switch
 }
 
 void PortDecoder_Next::SetMachineTiming(uint8_t timing)

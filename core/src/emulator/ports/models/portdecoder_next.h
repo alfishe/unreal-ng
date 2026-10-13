@@ -236,6 +236,11 @@ private:
     bool _spiPendingValid = false;
     double _spiBusyUntil = 0;
     double _spiBusyRatio = 1.0;  ///< the CPU speed ratio the byte in flight was timed at
+    /// NR #07 was written and the clock is not switched yet: zxnext.vhd takes it over at the first idle bus clock after the write,
+    /// the emulator does it at the next instruction fetch (the instruction boundary)
+    bool _speedPending = false;
+    double _speedChangedAt = 0;  ///< Now() of the last mid-frame switch (the boundary the SPI byte in flight is rescaled at)
+    void ApplyPendingSpeed();
     uint32_t _spiTooFast = 0;
     NextSdJournal _sdJournal;
     NextIntJournal _intJournal;
@@ -252,8 +257,11 @@ private:
     {
         NextMultiface* multiface = nullptr;
         NextDivMmc* divMmc = nullptr;
+        PortDecoder_Next* owner = nullptr;
         void BeforeMachineM1(uint16_t address) override
         {
+            if (owner->_speedPending) [[unlikely]]
+                owner->ApplyPendingSpeed();
             multiface->BeforeMachineM1(address);
             divMmc->BeforeMachineM1(address);
         }

@@ -48,7 +48,9 @@ public:
 struct RecordingNextRegHost : INextRegHost
 {
     void WriteNextReg(uint8_t reg, uint8_t value) override { writes.emplace_back(reg, value); }
+    void OnRetn() override { ++retns; }
     std::vector<std::pair<uint8_t, uint8_t>> writes;
+    int retns = 0;
 };
 
 struct InterruptSourceGuard
@@ -232,6 +234,32 @@ TEST_F(Z80NEngine_Test, InterruptAcknowledgeGoesThroughTheEngine)
     EXPECT_EQ(_z80->sp, 0xBFFE);
     EXPECT_EQ(_memory->DirectReadFromZ80Memory(0xBFFF), 0x80);
     EXPECT_EQ(_z80->iff1, 0);
+}
+
+// im2_control.vhd o_retn_seen decodes ED 45 alone: the DivMMC and the Multiface leave their sessions on it, the six aliases of
+// RETN (ED 55 / 5D / 65 / 6D / 75 / 7D) return like a RETN but the machine is not told
+TEST_F(Z80NEngine_Test, OnlyEd45IsSeenAsRetnByTheMachine)
+{
+    RecordingNextRegHost host;
+    _engine->SetNextRegHost(&host);
+    Load(0x8000, {0xED, 0x55, 0xED, 0x5D, 0xED, 0x65, 0xED, 0x6D, 0xED, 0x75, 0xED, 0x7D, 0xED, 0x45});
+    _memory->DirectWriteToZ80Memory(0xBFFE, 0x00);
+    _memory->DirectWriteToZ80Memory(0xBFFF, 0x80);
+    _z80->sp = 0xBFFE;
+    for (unsigned i = 0; i < 6; i++)
+    {
+        _z80->pc = static_cast<uint16_t>(0x8000 + 2 * i);
+        _z80->sp = 0xBFFE;
+        _z80->t = 1000;
+        _z80->EngineStep();
+        EXPECT_EQ(_z80->sp, 0xC000);
+    }
+    EXPECT_EQ(host.retns, 0) << "the aliases are not retn_seen";
+    _z80->pc = 0x800C;
+    _z80->sp = 0xBFFE;
+    _z80->t = 1000;
+    _z80->EngineStep();
+    EXPECT_EQ(host.retns, 1);
 }
 
 // NEXTREG n,nn and NEXTREG n,A call the machine and make no port cycle; the instruction takes its table time (20 and 17 T)
