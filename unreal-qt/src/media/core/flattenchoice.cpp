@@ -47,6 +47,11 @@ std::vector<FlattenOption> FlattenOptionsFor(const StateNode& layersReply)
                 if (const StateNode* w = layer.find("writable"); w && w->kind == StateNode::Kind::Bool && w->b)
                     writable = true;
     const bool inlineDescriptor = descriptor == "(inline)";
+    // FR-45: writes.commit none (the default; an older emulator sends nothing) keeps the sources read-only
+    const std::string commitPolicy = composite ? Text(*composite, "writesCommit") : std::string();
+    const bool sourcesWritable = commitPolicy == "all" || commitPolicy == "partial";
+    const char* readOnlySources = "the descriptor's writes.commit is none: its sources are never written";
+    const bool commitBuild = build == "graft" || build == "partitions";
 
     std::vector<FlattenOption> options(4);
     options[0] = {FlattenStrategy::Flat, Name(FlattenStrategy::Flat), "One image file (S1)",
@@ -56,13 +61,17 @@ std::vector<FlattenOption> FlattenOptionsFor(const StateNode& layersReply)
                   !inlineDescriptor, inlineDescriptor ? "an inline descriptor has no file to keep them next to" : ""};
     options[2] = {FlattenStrategy::Commit, Name(FlattenStrategy::Commit), "Commit into the base image (S3)",
                   "Write the grafted files and the guest's writes into the bottom image (journaled); the slot then holds it",
-                  build == "graft", build == "graft" ? "" : "only a graft (a FAT image at the bottom) has a base image"};
+                  commitBuild && sourcesWritable,
+                  !commitBuild       ? "only a graft (a FAT image at the bottom) or a partitioned disk has images to commit into"
+                  : !sourcesWritable ? readOnlySources
+                                     : ""};
     options[3] = {FlattenStrategy::WriteBack, Name(FlattenStrategy::WriteBack), "Write back into the folders (S4)",
                   "Carry the guest's file changes into the layers marked writable; changed host files are conflicts",
-                  writable && !inlineDescriptor,
-                  inlineDescriptor ? "an inline descriptor cannot take write-back"
-                  : !writable      ? "no layer is marked writable: true"
-                                   : ""};
+                  writable && !inlineDescriptor && sourcesWritable,
+                  inlineDescriptor  ? "an inline descriptor cannot take write-back"
+                  : !sourcesWritable ? readOnlySources
+                  : !writable        ? "no layer is marked writable: true"
+                                     : ""};
     return options;
 }
 

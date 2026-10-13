@@ -75,6 +75,7 @@ namespace
         value["fileBytes"] = info.bytes;
         value["sourceDevices"] = static_cast<uint64_t>(info.sourceDevices);
         value["writesSave"] = info.writesSave;  // what `save` runs without a path (D-7): the GUI preselects it
+        value["writesCommit"] = info.writesCommit;  // none: commit and write-back are refused (FR-45)
         StateNode layers = StateNode::Array();
         for (const CompositeLayerInfo& layer : info.layers)
         {
@@ -311,7 +312,7 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"insert", kInsertOptions},
         {"swap", kInsertOptions},
         {"eject", {"save", "export", "discard", "strategy", "onConflict", "strict", "end_recording", "async"}},
-        {"save", {"retarget", "compression", "compact", "fs", "size", "vhd", "strategy", "force", "plan", "onConflict"}},
+        {"save", {"retarget", "compression", "compact", "fs", "size", "vhd", "strategy", "force", "plan", "onConflict", "commit"}},
         {"export", {"compression", "parent", "compact", "fs", "size", "vhd"}},
         {"discard", {"async"}},
         {"rescan", {"save", "export", "discard", "strategy", "onConflict", "strict", "async"}},
@@ -321,7 +322,7 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"compose", {"fs", "codepage", "free"}},
         {"layers", {}},
         {"changes", {}},
-        {"flatten", {"strategy", "plan", "force", "onConflict", "compression", "compact", "fs", "size", "vhd"}},
+        {"flatten", {"strategy", "plan", "force", "onConflict", "commit", "compression", "compact", "fs", "size", "vhd"}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -1137,6 +1138,12 @@ MediaReply MediaControl::Save(const MediaRequest& request)
         if (v != "refuse" && v != "keep-both")
             return Fail(MediaError::BadRequest, "onConflict '" + conflict->second + "': expected refuse or keep-both");
         options.keepBoth = v == "keep-both";
+    }
+    if (auto commit = request.options.find("commit"); commit != request.options.end())
+    {
+        options.commit = Lower(Trim(commit->second));
+        if (options.commit != "all" && options.commit != "partial")
+            return Fail(MediaError::BadRequest, "commit '" + commit->second + "': expected all or partial");
     }
     if (request.verb == "flatten")
     {

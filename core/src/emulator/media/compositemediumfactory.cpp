@@ -242,6 +242,7 @@ MediaResult CompositeMediumFactory::BuildPartitioned(const ComposeDescriptor& d,
     info.normalized = d.Normalized();
     info.delta = d.writes.delta;
     info.writesSave = d.writes.save;
+    info.writesCommit = d.writes.commit;
     info.build = "partitions";
     info.fsName = "mbr";
 
@@ -498,6 +499,7 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
     info.normalized = d.Normalized();
     info.delta = d.writes.delta;
     info.writesSave = d.writes.save;
+    info.writesCommit = d.writes.commit;
     uint64_t identity = 0xcbf29ce484222325ULL;
     auto mix = [&identity](uint64_t v) {
         for (int i = 0; i < 8; i++)

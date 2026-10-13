@@ -31,7 +31,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"insert", insertOptions},
         {"eject", {"save", "export", "discard", "strategy", "onConflict", "strict", "end_recording", "async"}},
         {"swap", insertOptions},
-        {"save", {"retarget", "compression", "compact", "fs", "size", "vhd", "strategy", "force", "plan", "onConflict"}},
+        {"save", {"retarget", "compression", "compact", "fs", "size", "vhd", "strategy", "force", "plan", "onConflict", "commit"}},
         {"export", {"compression", "parent", "compact", "fs", "size", "vhd"}},
         {"discard", {"async"}},
         {"rescan", {"save", "export", "discard", "strategy", "onConflict", "strict", "async"}},
@@ -41,7 +41,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"compose", {"fs", "codepage", "free"}},
         {"layers", {}},
         {"changes", {}},
-        {"flatten", {"strategy", "plan", "force", "onConflict", "compression", "compact", "fs", "size", "vhd"}},
+        {"flatten", {"strategy", "plan", "force", "onConflict", "commit", "compression", "compact", "fs", "size", "vhd"}},
     };
     return actions;
 }
@@ -223,6 +223,10 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "next insert), flat (a new image at path; the default with one), commit, write-back; left out: the "
         "descriptor's writes.save. With save:true on insert / swap / eject / create / rescan also discard (drop the "
         "writes) or ask (a delta here; the GUI asks)";
+    schema["properties"]["commit"]["description"] =
+        "save / flatten with strategy commit of a composite whose writes.commit allows it: all (every change or none: a "
+        "partition with no source to go to refuses the commit) or partial (what has a source; the rest stays in the "
+        "session). A descriptor's writes.commit: none (the default) refuses commit and write-back";
     schema["properties"]["strict"]["description"] =
         "save:true of a composite leaving its slot: a commit / write-back that fails refuses (the medium stays) instead "
         "of keeping the writes as a session delta";

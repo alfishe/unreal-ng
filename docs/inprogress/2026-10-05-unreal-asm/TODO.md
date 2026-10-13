@@ -225,7 +225,9 @@ phase; master only after the owner's review.
       - [ ] PROMETHEUS idle templates; the 128K edition and the TR-DOS adaptations (other addresses)
       - [x] Power Assembler 3.0 (2026-10-12, research-sjasmplus-to-pasm.md): backend (`ChainWriter`; one ORG, DISP blocks as EQU of their run addresses, 64 columns a line), inject in its editor as ZAP and GET leave it; PASM 3.0 compiled `oracle1.asm` and every instruction form to sjasmplus' bytes, injected and loaded with GET; its `$` in EQU (0) found, the frontend fixed
       - [ ] PASM idle templates
-    - [ ] Z5 sjasmplus frontend coverage of real projects (STRUCT, MODULE, DEVICE / SLOT / PAGE, SAVEBIN, DEFINE)
+    - [x] Z5 sjasmplus frontend coverage of real projects (STRUCT, MODULE, DEVICE / SLOT / PAGE, SAVEBIN, DEFINE) (2026-10-12, research-sjasmplus-projects.md): `sjasmpluslower` for every retro backend (MODULE names, STRUCT as EQU and data, LUA left out, ALIGN, DZ / DC / D24 / DD / ABYTE, IFUSED decided, SLOT / PAGE / MMU dropped), STRUCT in the layout, DEFINE values and EXA / EXD in the frontend; a probe of all of it through all eleven retro targets and back; `projectcheck.py` on 37 real projects (ALASM 22 equal, TASM 16 (6 before), STORM 12, XAS 12); eight bugs fixed on the way (macro temporary labels and string arguments, TASM keywords in strings, TASM comments dropped silently ...)
+      - [ ] a project's files lowered together (MODULE, STRUCT, DEFL across INCLUDEs)
+      - [ ] a host project's file names onto TR-DOS names for targets that INCLUDE by disk name
   - First cuts: ALASM both ways about 14 days; + TASM 4.12 about 20; + watch / push watch, hints, live labels, Qt dock about 27
 
 ## Findings from The Link (2026-10-10)

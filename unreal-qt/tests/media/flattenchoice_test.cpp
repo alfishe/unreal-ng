@@ -8,12 +8,14 @@
 
 namespace
 {
-    StateNode Layers(const char* build, const char* writesSave, bool writableLayer, const char* descriptor = "/zx/disk.ucompose.yaml")
+    StateNode Layers(const char* build, const char* writesSave, bool writableLayer, const char* descriptor = "/zx/disk.ucompose.yaml",
+                     const char* writesCommit = "all")
     {
         StateNode composite = StateNode::Object();
         composite["descriptor"] = descriptor;
         composite["build"] = build;
         composite["writesSave"] = writesSave;
+        composite["writesCommit"] = writesCommit;
         StateNode layers = StateNode::Array();
         StateNode layer = StateNode::Object();
         layer["name"] = "work";
@@ -50,10 +52,17 @@ TEST(FlattenChoice_Test, WhatACompositeCanTake)
     EXPECT_FALSE(Option(inlined, FlattenStrategy::Delta).available);
     EXPECT_FALSE(Option(inlined, FlattenStrategy::WriteBack).available);
 
-    // C8d: a partitioned disk writes back per partition
+    // C8d: a partitioned disk writes back per partition; FR-45: and commits per partition
     const auto partitions = FlattenOptionsFor(Layers("partitions", "delta", true));
     EXPECT_TRUE(Option(partitions, FlattenStrategy::WriteBack).available);
-    EXPECT_FALSE(Option(partitions, FlattenStrategy::Commit).available);
+    EXPECT_TRUE(Option(partitions, FlattenStrategy::Commit).available);
+
+    // FR-45: writes.commit none (the default) never writes the sources
+    const auto readOnly = FlattenOptionsFor(Layers("graft", "delta", true, "/zx/disk.ucompose.yaml", "none"));
+    EXPECT_FALSE(Option(readOnly, FlattenStrategy::Commit).available);
+    EXPECT_FALSE(Option(readOnly, FlattenStrategy::WriteBack).available);
+    EXPECT_NE(Option(readOnly, FlattenStrategy::Commit).reason.find("writes.commit is none"), std::string::npos);
+    EXPECT_TRUE(Option(readOnly, FlattenStrategy::Delta).available);
 }
 
 TEST(FlattenChoice_Test, PreselectionFollowsWritesSave)

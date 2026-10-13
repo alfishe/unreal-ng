@@ -109,6 +109,7 @@ add_library(unreal-asm STATIC
     src/dialects/pasmo/pasmobackend.cpp
     src/dialects/z88dk/z88dkbackend.cpp
     src/dialects/sjasmplus/sjasmplusfrontend.cpp
+    src/dialects/sjasmplus/sjasmpluslower.cpp
     src/dialects/zeus/zeusfrontend.cpp
     src/containers/trdos.cpp
     src/containers/tape.cpp
@@ -184,6 +185,7 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/registry_test.cpp
         ${UNREAL_ASM_DIR}/tests/textcodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/sjasmpluscodec_test.cpp
+        ${UNREAL_ASM_DIR}/tests/sjasmpluslower_test.cpp
         ${UNREAL_ASM_DIR}/tests/tasmcodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/alasmcodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/zxasmcodec_test.cpp

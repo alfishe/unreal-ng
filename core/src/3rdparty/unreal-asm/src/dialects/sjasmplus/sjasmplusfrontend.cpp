@@ -1,6 +1,7 @@
 #include "dialects/sjasmplus/sjasmplusfrontend.h"
 
 #include <cctype>
+#include <map>
 #include <set>
 
 #include "dialects/common/z80.h"
@@ -690,6 +691,18 @@ Statement ParseStatement(const std::string& text, std::string& label, const Cont
         return s;
     }
 
+    // sjasmplus' short forms: EXA = EX AF,AF', EXD = EX DE,HL
+    if ((upper == "EXA" || upper == "EXD") && rest.empty())
+    {
+        s.kind = Statement::Kind::Instruction;
+        s.mnemonic = "ex";
+        Operand first, second;
+        first.kind = second.kind = Operand::Kind::Register;
+        first.text = upper == "EXA" ? "af" : "de";
+        second.text = upper == "EXA" ? "af'" : "hl";
+        s.operands = {first, second};
+        return s;
+    }
     const std::string mnemonic = z80::Lower(word);
     if (z80::IsMnemonic(mnemonic) || (c.z80n && z80::IsZ80nMnemonic(mnemonic)))
     {
@@ -712,12 +725,63 @@ Statement ParseStatement(const std::string& text, std::string& label, const Cont
 }
 }  // namespace
 
+namespace
+{
+/// The DEFINEs' values in a line where their names stand as whole words (outside strings)
+std::string Substitute(const std::string& text, const std::map<std::string, std::string>& defines)
+{
+    std::string out;
+    char quote = 0;
+    for (size_t k = 0; k < text.size();)
+    {
+        const char c = text[k];
+        if (quote)
+        {
+            out.push_back(c);
+            if (c == '\\' && quote == '"' && k + 1 < text.size())
+                out.push_back(text[++k]);
+            else if (c == quote)
+                quote = 0;
+            ++k;
+            continue;
+        }
+        if (c == '"' || (c == '\'' && !(k >= 2 && std::toupper(static_cast<unsigned char>(text[k - 1])) == 'F' &&
+                                         std::toupper(static_cast<unsigned char>(text[k - 2])) == 'A')))
+        {
+            quote = c;
+            out.push_back(c);
+            ++k;
+            continue;
+        }
+        const bool wordStart = (std::isalpha(static_cast<unsigned char>(c)) || c == '_') &&
+                               (k == 0 || !(std::isalnum(static_cast<unsigned char>(text[k - 1])) || text[k - 1] == '_' || text[k - 1] == '.' ||
+                                            text[k - 1] == '@' || text[k - 1] == '$' || text[k - 1] == '#'));
+        if (wordStart)
+        {
+            size_t end = k;
+            while (end < text.size() && (std::isalnum(static_cast<unsigned char>(text[end])) || text[end] == '_'))
+                ++end;
+            const std::string word = text.substr(k, end - k);
+            const auto found = defines.find(word);
+            const bool partOfName = end < text.size() && (text[end] == '.' || text[end] == '?' || text[end] == '!');
+            out += found != defines.end() && !partOfName ? found->second : word;
+            k = end;
+            continue;
+        }
+        out.push_back(c);
+        ++k;
+    }
+    return out;
+}
+}  // namespace
+
 FrontendResult SjasmplusFrontend::Parse(const SourceDocument& source) const
 {
     FrontendResult result;
     result.program.dialect = "sjasmplus";
     result.program.trueValue = -1;   // sjasmplus' comparisons give -1
     std::set<std::string> macros;
+    std::map<std::string, std::string> defines;   // DEFINE name value
     bool z80n = source.z80n;   // the Next mode: the project enables it, or DEVICE ZXSPECTRUMNEXT / OPT --zxnext below
     bool inBlock = false;   // inside /* ... */
     uint32_t number = 0;
@@ -797,7 +861,30 @@ FrontendResult SjasmplusFrontend::Parse(const SourceDocument& source) const
             if (k < text.size() && text[k] == ':')
                 ++k;
         }
-        const std::string rest = Trim(std::string_view(text).substr(k));
+        std::string rest = Trim(std::string_view(text).substr(k));
+        {
+            // DEFINE name value: the value put in where the name stands as a word in the lines below (the DEFINE
+            // line stays: IFDEF asks for it)
+            const size_t blank = rest.find_first_of(" \t");
+            std::string word = z80::Upper(rest.substr(0, blank));
+            if (word.size() > 1 && word[0] == '.')
+                word.erase(0, 1);
+            const std::string after = blank == std::string::npos ? std::string() : Trim(std::string_view(rest).substr(blank));
+            if (word == "DEFINE" || word == "DEFINE+")
+            {
+                const size_t nameEnd = after.find_first_of(" \t");
+                const std::string name = after.substr(0, nameEnd);
+                const std::string value = nameEnd == std::string::npos ? std::string() : Trim(std::string_view(after).substr(nameEnd));
+                if (!value.empty())
+                    defines[name] = Substitute(value, defines);
+                else
+                    defines.erase(name);
+            }
+            else if (word == "UNDEFINE")
+                defines.erase(after);
+            else if (word != "IFDEF" && word != "IFNDEF" && !defines.empty())
+                rest = Substitute(rest, defines);
+        }
         Context c{number, result.diagnostics, macros, z80n};
         if (!rest.empty())
         {

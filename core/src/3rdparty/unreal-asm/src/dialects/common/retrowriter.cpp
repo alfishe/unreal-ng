@@ -5,6 +5,7 @@
 
 #include "codecs/prometheus/prometheustable.h"
 #include "dialects/common/z80.h"
+#include "dialects/sjasmplus/sjasmpluslower.h"
 #include "unrealasm/registry.h"
 
 namespace unrealasm::dialects
@@ -20,7 +21,8 @@ const std::set<std::string> kNoBytes = {
 }  // namespace
 
 RetroWriter::RetroWriter(const ir::Program& p, const BackendOptions& o, BackendResult& r)
-    : program(p), options(o), result(r), diagnostics(r.diagnostics)
+    : lowered(p.dialect == "sjasmplus" ? LowerSjasmplus(p, r.diagnostics) : ir::Program{}), program(p.dialect == "sjasmplus" ? lowered : p), options(o),
+      result(r), diagnostics(r.diagnostics)
 {
 }
 
@@ -85,6 +87,16 @@ std::string RetroWriter::FullName(const std::string& text) const
         return text.substr(1);
     if (!text.empty() && text[0] == '.')
         return parent + text;
+    // a name a macro uses, expanded inside a MODULE: the most specific module's that exists
+    for (size_t k = modules.size(); k > 0; --k)
+    {
+        std::string candidate;
+        for (size_t m = 0; m < k; ++m)
+            candidate += modules[m] + ".";
+        candidate += text;
+        if (names.count(candidate) || options.labelValues.count(candidate))
+            return candidate;
+    }
     return text;
 }
 
@@ -717,6 +729,14 @@ std::vector<std::string> RetroWriter::StatementText(const Statement& s, const st
             const size_t at = s.text.find_first_not_of(" \t", word.size());
             const std::string rest = at == std::string::npos ? std::string() : s.text.substr(at);
             const std::string flag = rest.substr(0, rest.find_first_of(" \t"));
+            if (word == kModuleMark || word == kEndModuleMark)
+            {
+                if (word == kModuleMark)
+                    modules.push_back(rest);
+                else if (!modules.empty())
+                    modules.pop_back();
+                return {};
+            }
             if (word == "IFDEF" || word == "IFNDEF")
             {
                 // sjasmplus' DEFINE flags, tested in the order of the text: decided here
@@ -735,7 +755,7 @@ std::vector<std::string> RetroWriter::StatementText(const Statement& s, const st
                 else
                     defines.insert(flag);
                 if (word != "UNDEFINE" && flag.size() < rest.size())
-                    diagnostics.push_back({Severity::Warning, line, 0, "a DEFINE with a value (text put in where its name stands): not converted"});
+                    diagnostics.push_back({Severity::Info, line, 0, "a DEFINE with a value: put in where its name stands (by the frontend)"});
                 return {";" + s.text};
             }
             if (auto own = OtherText(word, rest))
@@ -956,21 +976,85 @@ ir::Operand Substituted(const ir::Operand& o, const std::map<std::string, ir::Op
 void RetroWriter::Expand(const MacroDef& def, const Statement& call, size_t index, uint32_t callLine)
 {
     std::map<std::string, Operand> args;
+    std::map<std::string, Operand> strings;   // the arguments that are strings: so in DB / DW ("DB name" with "TEXT")
+    const IFrontend* frontend = DialectRegistry::Builtin().Frontend(program.dialect);
     for (size_t k = 0; k < def.params.size(); ++k)
-        args[def.params[k]] = Argument(k < call.params.size() ? call.params[k] : std::string());
+    {
+        const std::string text = k < call.params.size() ? call.params[k] : std::string();
+        args[def.params[k]] = Argument(text);
+        if (frontend && !text.empty())
+        {
+            const FrontendResult parsed = frontend->Parse(SourceDocument::FromText("        DB " + text, program.dialect));
+            if (!parsed.program.lines.empty() && parsed.program.lines[0].statements.size() == 1 &&
+                parsed.program.lines[0].statements[0].operands.size() == 1 &&
+                parsed.program.lines[0].statements[0].operands[0].kind == Operand::Kind::String)
+                strings[def.params[k]] = parsed.program.lines[0].statements[0].operands[0];
+        }
+    }
     // The body with the arguments in, its labels one name per expansion
     ++expansions;
     std::map<std::string, std::string> scope;
     std::vector<ir::Line> body;
+    // the body's temporary labels ("1" ... JR 1b): a name of each one's own, the references by their place in the body
+    std::map<std::string, std::vector<size_t>> temporaryAt;
+    for (size_t n = def.begin + 1; n < def.end; ++n)
+        if (IsTemporary(program.lines[n].label))
+            temporaryAt[program.lines[n].label].push_back(n);
+    const auto temporaryName = [](const std::string& label, size_t n) { return "__t" + label + "_" + std::to_string(n); };
+    const std::function<void(Expr&, size_t)> resolveTemporary = [&](Expr& e, size_t n) {
+        if ((e.kind == Expr::Kind::Symbol || e.kind == Expr::Kind::Raw) && e.text.size() >= 2)
+        {
+            const char way = static_cast<char>(std::tolower(static_cast<unsigned char>(e.text.back())));
+            const std::string label = e.text.substr(0, e.text.size() - 1);
+            if ((way == 'b' || way == 'f') && IsTemporary(label))
+                if (const auto found = temporaryAt.find(label); found != temporaryAt.end())
+                {
+                    std::optional<size_t> pick;
+                    for (const size_t at : found->second)
+                    {
+                        if (way == 'b' && at <= n)
+                            pick = at;
+                        if (way == 'f' && at > n && !pick)
+                            pick = at;
+                    }
+                    if (pick)
+                    {
+                        e.kind = Expr::Kind::Symbol;
+                        e.text = temporaryName(label, *pick);
+                    }
+                }
+        }
+        for (Expr& a : e.args)
+            resolveTemporary(a, n);
+    };
     for (size_t n = def.begin + 1; n < def.end; ++n)
     {
         ir::Line copy = program.lines[n];
-        if (!copy.label.empty() && !scope.count(copy.label))
-            scope[copy.label] = Give("M" + std::to_string(expansions) + (copy.label[0] == '.' ? copy.label.substr(1) : copy.label));
+        if (IsTemporary(copy.label))
+            copy.label = temporaryName(copy.label, n);
         for (Statement& s : copy.statements)
         {
             for (Operand& o : s.operands)
-                o = Substituted(o, args);
+                resolveTemporary(o.expr, n);
+            for (Expr& a : s.args)
+                resolveTemporary(a, n);
+        }
+        // a name of the expansion's own; in sjasmplus only a .label (and a temporary one) is the expansion's, a label
+        // without a dot is global (VORG = $ in a macro moves the one VORG)
+        const bool own = program.dialect != "sjasmplus" || copy.label[0] == '.' || copy.label.rfind("__t", 0) == 0;
+        if (!copy.label.empty() && own && !scope.count(copy.label))
+            scope[copy.label] = Give("M" + std::to_string(expansions) + (copy.label[0] == '.' ? copy.label.substr(1) : copy.label));
+        for (Statement& s : copy.statements)
+        {
+            const bool data = IsDirective(s, ir::DirectiveKind::Db) || IsDirective(s, ir::DirectiveKind::Dw);
+            for (Operand& o : s.operands)
+            {
+                const bool name = o.kind == Operand::Kind::Immediate && o.expr.kind == Expr::Kind::Symbol;
+                if (data && name && strings.count(o.expr.text))
+                    o = strings.at(o.expr.text);
+                else
+                    o = Substituted(o, args);
+            }
             for (Expr& a : s.args)
                 a = Substituted(a, args);
         }
