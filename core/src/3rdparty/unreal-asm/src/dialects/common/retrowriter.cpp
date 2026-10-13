@@ -314,6 +314,9 @@ std::optional<std::string> RetroWriter::SymbolText(const Expr& u)
     switch (u.kind)
     {
         case Expr::Kind::Symbol:
+            if (program.dialect == "sjasmplus" && (u.text == "relocate_count" || u.text == "relocate_size"))
+                if (const auto v = Value(u))
+                    return Number(*v);   // sjasmplus' built-in names: the target has none
             if (redefinable.count(FullName(u.text)) && !InScope(u.text))
             {
                 // the target defines a name once: a name assigned again and again stands for its value here, or for
@@ -792,6 +795,37 @@ std::vector<std::string> RetroWriter::StatementText(const Statement& s, const st
                 if (word != "UNDEFINE" && flag.size() < rest.size())
                     diagnostics.push_back({Severity::Info, line, 0, "a DEFINE with a value: put in where its name stands (by the frontend)"});
                 return {";" + Blanked(s.text)};
+            }
+            if (program.dialect == "sjasmplus" && (word == "RELOCATE_START" || word == "RELOCATE_END"))
+                return {";" + Blanked(s.text)};   // the table comes from the layout
+            if (program.dialect == "sjasmplus" && word == "RELOCATE_TABLE")
+            {
+                // sjasmplus' relocation data: the addresses the layout found, each minus the offset given
+                int64_t subtract = 0;
+                if (!rest.empty())
+                {
+                    const FrontendResult parsed = SjasmplusFrontend().Parse(SourceDocument::FromText("        DW " + rest, "sjasmplus"));
+                    if (!parsed.program.lines.empty() && !parsed.program.lines[0].statements.empty() &&
+                        !parsed.program.lines[0].statements[0].operands.empty())
+                    {
+                        const auto v = Value(parsed.program.lines[0].statements[0].operands[0].expr);
+                        if (!v)
+                            return {NotConverted("RELOCATE_TABLE with an offset known only when assembling")};
+                        subtract = *v;
+                    }
+                }
+                std::vector<std::string> items;
+                for (size_t k = 0;; ++k)
+                {
+                    const auto found = options.labelValues.find("__UNREALASM_RELOC_" + std::to_string(k));
+                    if (found == options.labelValues.end())
+                        break;
+                    items.push_back(Number((found->second.value - subtract) & 0xFFFF));
+                }
+                diagnostics.push_back({Severity::Info, line, 0, "RELOCATE_TABLE written as its " + std::to_string(items.size()) + " word(s)"});
+                if (items.empty())
+                    return {";" + Blanked(s.text) + " (no relocation data)"};
+                return DataLines(Dw(), items, DataWidth());
             }
             if (auto own = OtherText(word, rest))
                 return *own;

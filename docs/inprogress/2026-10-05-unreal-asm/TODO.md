@@ -229,9 +229,9 @@ phase; master only after the owner's review.
       - [x] a project's files lowered together (MODULE, STRUCT, DEFL across INCLUDEs) (2026-10-12): `ConvertProject` joins a sjasmplus project for the retro backends and cuts it back into its files; long files cut into INCLUDEd parts (`splitLines`, ALASM's 64K)
       - [x] a host project's file names onto TR-DOS names for targets that INCLUDE by disk name (2026-10-12): `zxasm convert --project`, `ProjectDiskNames`, `BackendOptions::fileNames`
       - [x] the projects' failures run down one by one (2026-10-12, research-sjasmplus-projects.md §5-§6): TASM 30 of 37, ALASM 29, STORM 32, XAS 32; twenty more bugs fixed (sjasmplus syntax the frontend did not read, DISP in DISP, STRUCT fields without values, Z80N written by name, XAS spelling across files ...)
-      - [ ] Lua blocks: a Lua interpreter with sjasmplus' `sj.*` API in the converter (3color, fire, BasicLib)
-      - [ ] RELOCATE_START / RELOCATE_TABLE (sjasmplus' relocation example)
-      - [ ] ALASM: a macro mixing LOCAL labels and global ones expanded at its calls (Wild Commander's `emutrap.asm`)
+      - Lua blocks stay left out with a warning (owner, 2026-10-12: not in scope)
+      - [x] RELOCATE_START / RELOCATE_TABLE (2026-10-13, research-sjasmplus-projects.md §7): the layout builds sjasmplus' table (24 of its 30 relocation tests equal, the rest use syntax the layout does not read), the writers put it as DW; DG / DH laid out
+      - [x] ALASM: a macro mixing LOCAL labels and global ones expanded at its calls (2026-10-13): Wild Commander's `emu.asm` equal; real projects now TASM 31 / ALASM 33 / STORM 33 / XAS 33 of 37 (the rest: Lua, TASM's sector slack)
   - First cuts: ALASM both ways about 14 days; + TASM 4.12 about 20; + watch / push watch, hints, live labels, Qt dock about 27
 
 ## Findings from The Link (2026-10-10)

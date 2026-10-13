@@ -486,7 +486,9 @@ private:
             first = false;
             if (!t.empty() && t[0] == ';')
             {
-                out.push_back(text.empty() ? t : text + " " + t);
+                // a text written as a comment (a directive XAS has not): in characters XAS's font has
+                const std::string comment = ";" + CommentText(t.substr(1));
+                out.push_back(text.empty() ? comment : text + " " + comment);
                 continue;
             }
             text.append(text.size() < 8 ? 8 - text.size() : 1, ' ');

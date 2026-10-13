@@ -239,12 +239,18 @@ struct ExpressionParser
         if (c == '{')
         {
             ++i;
+            Blanks();
+            // {b address}: the byte there, the low byte of the word {address}
+            const bool byte = (Peek() == 'b' || Peek() == 'B') && (Peek(1) == ' ' || Peek(1) == '\t');
+            if (byte)
+                ++i;
             Expr inner = Parse(0);
             Blanks();
             if (Peek() != '}')
                 throw Failure{"{ without }"};
             ++i;
-            return Wrap(Expr::Kind::Memory, std::move(inner));
+            Expr read = Wrap(Expr::Kind::Memory, std::move(inner));
+            return byte ? Wrap(Expr::Kind::Group, Expr::Binary(Op::And, std::move(read), Expr::Number(255))) : read;
         }
         if (c == '$')
         {
@@ -326,7 +332,16 @@ struct ExpressionParser
             const Op op = w == "high" ? Op::High : w == "low" ? Op::Low : w == "not" ? Op::LogicalNot : Op::Exists;
             return Expr::Unary(op, Unary());
         }
-        if (w == "abs" || w == "norel" || w == "sizeof")
+        if (w == "norel" && t.find_first_not_of(" \t", i + w.size()) != std::string_view::npos &&
+            std::string(",)").find(t[t.find_first_not_of(" \t", i + w.size())]) == std::string::npos)
+        {
+            // the value as it is, not relocatable (RELOCATE_START): a group the layout knows by its text
+            i += w.size();
+            Expr e = Wrap(Expr::Kind::Group, Unary());
+            e.text = "norel";
+            return e;
+        }
+        if (w == "abs" || w == "sizeof")
             throw Failure{"operator " + w + " has no counterpart"};
         return Primary();
     }
@@ -855,6 +870,56 @@ std::string Substitute(const std::string& text, const std::map<std::string, std:
     return out;
 }
 }  // namespace
+
+std::optional<std::vector<uint8_t>> SjasmplusBitBytes(const std::string& word, const std::string& operands)
+{
+    std::vector<uint8_t> out;
+    if (word == "DG" || word == "DEFG")
+    {
+        int bits = 0, value = 0;
+        for (const char c : operands)
+        {
+            if (c == ' ' || c == '\t')
+                continue;
+            value = (value << 1) | (c == '-' || c == '.' || c == '_' ? 0 : 1);
+            if (++bits == 8)
+            {
+                out.push_back(static_cast<uint8_t>(value));
+                bits = value = 0;
+            }
+        }
+        if (bits != 0 || out.empty())
+            return std::nullopt;
+        return out;
+    }
+    if (word == "DH" || word == "DEFH")
+    {
+        bool quoted = false;
+        std::string digits;
+        for (const char c : operands)
+        {
+            if (c == '"')
+            {
+                quoted = !quoted;
+                continue;
+            }
+            if (!quoted || c == ' ' || c == '\t')
+                continue;
+            if (!std::isxdigit(static_cast<unsigned char>(c)))
+                return std::nullopt;
+            digits += c;
+            if (digits.size() == 2)
+            {
+                out.push_back(static_cast<uint8_t>(std::stoi(digits, nullptr, 16)));
+                digits.clear();
+            }
+        }
+        if (!digits.empty() || out.empty())
+            return std::nullopt;
+        return out;
+    }
+    return std::nullopt;
+}
 
 std::vector<ir::Statement> SjasmplusRepeated(const ir::Statement& s)
 {

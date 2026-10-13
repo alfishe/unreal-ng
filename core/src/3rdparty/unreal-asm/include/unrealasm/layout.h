@@ -70,6 +70,9 @@ struct LayoutResult
     /// Each line of the files assembled once at one address (a line in a repeated block, a file INCLUDEd twice at
     /// two addresses, a line skipped by IF: none), and each line of a macro a file's line expands
     std::vector<LineAddress> lines;
+    /// RELOCATE_START ... RELOCATE_END: the addresses RELOCATE_TABLE lists (the words, or with HIGH the high bytes, a
+    /// relocation adjusts), in the order the source puts them down
+    std::vector<int64_t> relocations;
     std::vector<WideByteOperand> wideBytes;
     Diagnostics diagnostics;
     int passes = 0;
