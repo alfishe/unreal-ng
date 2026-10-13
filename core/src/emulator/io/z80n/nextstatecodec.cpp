@@ -221,6 +221,7 @@ static void LoadBoard(Reader& r, NextBoard& b)
     r.Get(b._timing);
     r.Get(b._resetPending);
     r.Get(b._resetType);
+    b.LatchVideoFrameSync();  // the effective video bits are not in the image: they follow the registers
     r.Get(b._resetHard);
 }
 

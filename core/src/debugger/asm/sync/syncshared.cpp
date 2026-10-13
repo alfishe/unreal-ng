@@ -43,6 +43,11 @@ bool WriteBytes(EmulatorContext* context, const std::string& output, char type, 
     std::string error;
     if (DiskFileRef ref; ParseDiskFileRef(output, ref))
     {
+        if (!context)
+        {
+            failure = Fail(AsmControlError::BadRequest, "a disk file needs an emulator instance: " + output);
+            return false;
+        }
         if (ref.type != type)
             error = "the assembler saves type " + std::string(1, type) + ", not " + std::string(1, ref.type);
         else if (WriteDiskFile(context, ref, 0, bytes, error))

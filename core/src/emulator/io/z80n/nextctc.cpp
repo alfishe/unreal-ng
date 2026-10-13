@@ -51,6 +51,8 @@ void NextCtc::ZeroCount(unsigned channel, uint64_t when)
     c.phase = when;
     if ((c.control & kInterrupt) && onInterrupt)
         onInterrupt(channel);
+    if (onZeroCount)
+        onZeroCount(channel);
     // ZC/TO feeds the next channel's trigger (channel 3 feeds channel 0); the pulse is registered (ctc_chan.vhd zc_to_d) and
     // the edge detector sees it one clock later on the rising edge, two on the falling edge (control bit 4 of the target)
     Channel& t = _ch[(channel + 1) % kChannels];

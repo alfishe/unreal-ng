@@ -15,10 +15,12 @@ namespace unrealasm::tools
 bool IsImage(const std::string& extension);
 
 /// The live files of the image `name` (its bytes in `bytes`): a disk image's TR-DOS catalog with each file's data and
-/// the rest of its last sector, or a tape's files; false with the reason
+/// the rest of its last sector, a +3DOS disk's files (the data after the header, the type as `extension`), or a tape's
+/// files; false with the reason
 bool ReadImageFiles(const std::string& name, const std::vector<uint8_t>& bytes, std::vector<containers::TrdosFile>& out, std::string& error);
 
-/// `file` written onto the disk image at `path` (an older NAME.T deleted first, as TR-DOS does) and the image saved to
-/// `output` in the format its extension names; a missing `path` starts from a blank 80-track double-sided TR-DOS disk
+/// `file` written onto the disk image at `path` (an older NAME.T deleted first, as TR-DOS does; on a +3DOS disk NAME.TYP
+/// with a +3DOS header) and the image saved to `output` in the format its extension names; a missing `path` starts from
+/// a blank 80-track double-sided TR-DOS disk
 bool PutImageFile(const std::string& path, const std::string& output, const containers::TrdosFile& file, std::string& error);
 }  // namespace unrealasm::tools

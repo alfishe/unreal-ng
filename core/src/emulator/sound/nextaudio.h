@@ -39,6 +39,11 @@ public:
     void WriteSelect(uint8_t value);  ///< #FFFD
     void WriteData(uint8_t value);    ///< #BFFD
     uint8_t ReadData();               ///< #FFFD read
+    /// #BFF5 read (psg_d_o_reg_i, ym2149.vhd 220-221): the selected chip's identity and register address, `AY_ID & '0' & addr`
+    /// (the chips answer "11", "10" and "01" for chip 0, 1 and 2)
+    uint8_t ReadIdentity() const;
+    /// The Pi's I2S audio as audio_mixer.vhd adds it (10 bit unsigned, #200 silence)
+    void SetPiAudio(unsigned left, unsigned right);
     /// endregion
 
     /// region <Configuration (NextREG)>
@@ -97,6 +102,7 @@ private:
     bool _acb = false;
     bool _speakerExcluded = false;
     bool _held = false;  ///< NR #06 bits 1:0 = 11: the chips are in reset
+    unsigned _piLeft = 0x200, _piRight = 0x200;
     std::array<uint8_t, kChips> _addr{{0, 0, 0}};  ///< the selected register of each chip, five bits (ym2149.vhd `addr`)
     uint8_t _monoMask = 0;
     std::array<uint8_t, 4> _dac{{0x80, 0x80, 0x80, 0x80}};

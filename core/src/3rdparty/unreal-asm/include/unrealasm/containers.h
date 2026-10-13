@@ -24,11 +24,15 @@ struct TrdosFile
     uint8_t sectors = 0;
     std::vector<uint8_t> data;  ///< `length` bytes (the catalog's length field; fewer when it claims more than the sectors)
     std::vector<uint8_t> tail;  ///< the bytes after `length` up to the end of the last sector (kept for exact copies)
+    /// a file of another file system (+3DOS: NAME.TYP): its type as a host extension, in lower case; `type` then 0
+    std::string extension;
 
     /// Catalog hints for codec detection
     CatalogHints Hints() const;
     /// The name without trailing blanks
     std::string TrimmedName() const;
+    /// NAME.T (TR-DOS), NAME.typ (+3DOS: the extension)
+    std::string FullName() const;
 };
 
 /// A hobeta file: name(8) type(1) start(2) length(2) zero(1) sectors(1) checksum(2), then sectors x 256 bytes

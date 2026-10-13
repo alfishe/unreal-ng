@@ -248,3 +248,30 @@ TEST_F(NextAudio_Test, TheDacLevelsGoBackToMiddleWhenTheDacIsSwitchedOff)
     _ports->Board().Write(0x08, 0x02);
     EXPECT_EQ(_ports->Audio().Dac(0), 0x80);
 }
+
+// #BFF5 (zxnext.vhd 2649, 2771, 6395; ym2149.vhd 220): a read returns AY_ID & 0 & register address of the selected chip ("11", "10" and
+// "01" for chips 0, 1, 2); #BFFD reads like #FFFD on +3 timing only; the AY ports need A2 = 1 and A1:A0 = 01 (port_fffd, port_bffd)
+TEST(NextAudioPorts_Test, TheIdentityPortAndTheExactAyDecode)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    auto* ports = dynamic_cast<PortDecoder_Next*>(emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    constexpr uint16_t kPc = 0x8000;
+    ports->Board().WriteNextReg(0x08, 0x12);  // NR #08 bit 1: turbosound
+    ports->DecodePortOut(0xFFFD, 0xFF, kPc);  // chip 0 (turbosound pattern: bits 7:5 = 111 ... select the chip)
+    ports->DecodePortOut(0xFFFD, 0x07, kPc);  // register 7
+    EXPECT_EQ(ports->DecodePortIn(0xBFF5, kPc), (3u << 6) | 7u) << "chip 0, register 7";
+    ports->DecodePortOut(0xFFFD, 0xFE, kPc);  // chip 1
+    ports->DecodePortOut(0xFFFD, 0x03, kPc);
+    EXPECT_EQ(ports->DecodePortIn(0xBFF5, kPc), (2u << 6) | 3u) << "chip 1, register 3";
+    ports->DecodePortOut(0xFFFD, 0xFD, kPc);  // chip 2
+    ports->DecodePortOut(0xFFFD, 0x0A, kPc);
+    EXPECT_EQ(ports->DecodePortIn(0xBFF5, kPc), (1u << 6) | 0x0Au) << "chip 2, register 10";
+    // an address that is not xxFD with A2 = 1 does not select a register
+    ports->DecodePortOut(0xFFFD, 0xFF, kPc);
+    ports->DecodePortOut(0xFFFC, 0x05, kPc);  // A0 = 0: not the AY
+    ports->DecodePortOut(0xFFFD, 0x01, kPc);
+    EXPECT_EQ(ports->DecodePortIn(0xBFF5, kPc) & 0x1F, 0x01u);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
