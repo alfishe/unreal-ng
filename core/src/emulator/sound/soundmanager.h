@@ -120,9 +120,10 @@ protected:
     IModelAudioSource* _modelAudio = nullptr;
     std::optional<GSActivityCounters> _gsCountersBeforeReplay;   ///< beginReplayTelemetry .. endReplayTelemetry
     GeneralSoundCard* _gs = nullptr;  // General Sound slot ([SOUND] GSType=Z80|LW - any personality, GS design §5.1)
-#ifdef UNREALNG_HAVE_OPL4
+    // Not under UNREALNG_HAVE_OPL4: the class must have one layout in every translation unit. Targets that read these
+    // headers without the core library's compile definitions (recording, the automation libraries) saw the class without
+    // this field, and every member below it 8 bytes off (found by gcc -flto, -Wodr)
     SoundChip_Moonsound* _moonsound = nullptr;
-#endif
     // SoundChip_SAA1099;
 
     // Pending GS personality switch request (gs_lightweight feature,
