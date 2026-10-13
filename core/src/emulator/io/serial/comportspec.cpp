@@ -103,6 +103,11 @@ bool ComPortSpec::Parse(const std::string& text, ComPortSpec& out, std::string& 
         out.kind = Kind::Plug;
         return true;
     }
+    if (upper == "NEXTPI" || upper == "PI")
+    {
+        out.kind = Kind::NextPi;
+        return true;
+    }
     // ESPNET / AT / ZIFI-NATIVE, optionally with the module's rate (ESPNET,38400); AT and ZIFI-NATIVE also take the
     // module's firmware, before or after the rate (AT,ESP8266-AT222 / ZIFI-NATIVE,ESP01S,115200)
     {
@@ -222,7 +227,7 @@ bool ComPortSpec::Parse(const std::string& text, ComPortSpec& out, std::string& 
         out.kind = Kind::Serial;
         return true;
     }
-    error = "unknown value (NONE | LOOPBACK | PLUG | TCP:<host>:<port> | SERIAL:<device>[,<baud>] | ESPNET[,<baud>] | "
+    error = "unknown value (NONE | LOOPBACK | PLUG | NEXTPI | TCP:<host>:<port> | SERIAL:<device>[,<baud>] | ESPNET[,<baud>] | "
             "AT[,<firmware>][,<baud>] | ZIFI-NATIVE[,<variant>][,<baud>] | MODEM[,<guest port>])";
     return false;
 }
@@ -233,6 +238,7 @@ std::string ComPortSpec::ToString() const
     {
         case Kind::Loopback: return "LOOPBACK";
         case Kind::Plug: return "PLUG";
+        case Kind::NextPi: return "NEXTPI";
         case Kind::Tcp:
             return "TCP:" + host + ":" + std::to_string(port);
         case Kind::Serial: return "SERIAL:" + device + "," + std::to_string(baud);
