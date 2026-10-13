@@ -157,6 +157,13 @@ public:
         if (write)
             _regs[0xD9] = value;
     }
+    /// The video frame sync (zxnext.vhd 6700-6710): the 50 / 60 Hz and scandoubler bits of NR #05 and the scanlines of NR #09 are read back
+    /// as they were taken at the last sync, not as written
+    void LatchVideoFrameSync()
+    {
+        _eff05 = _regs[0x05] & 0x05;
+        _eff09 = _regs[0x09] & 0x03;
+    }
     /// The raw stored byte of a register (reports, tests)
     uint8_t Stored(uint8_t reg) const { return _regs[reg]; }
     /// Change bits of a stored register without the write's side effects: the one flop two paths drive (ULA+ enable: NR #68 bit 3 and #FF3B)
@@ -224,6 +231,7 @@ private:
     const uint16_t* _pc = nullptr;
     uint8_t _timing = 2;
     bool _resetPending = false;
+    uint8_t _eff05 = 0, _eff09 = 0;  ///< NR #05 bits 2 / 0 and NR #09 bits 1:0 as the video logic took them at the last frame sync
     uint8_t _resetType = 4;  ///< zxnext.vhd nr_02_reset_type, power on '100'
     bool _resetHard = false;
 };

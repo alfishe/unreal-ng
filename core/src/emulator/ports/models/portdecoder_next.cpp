@@ -1392,6 +1392,7 @@ void PortDecoder_Next::UpdateContention()
 
 void PortDecoder_Next::OnFrameEnd()
 {
+    _board->LatchVideoFrameSync();  // video_frame_sync: eff_nr_05_5060, eff_nr_05_scandouble_en, eff_nr_09_scanlines
     _board->Copper().Sync();  // a frame no line was drawn for (turbo) still runs the copper
     if (_pendingTiming && _pendingTiming != _state->ula_timing_class)
         ApplyTiming(_pendingTiming);

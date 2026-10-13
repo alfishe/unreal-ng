@@ -67,6 +67,8 @@ void NextBoard::Reset(bool hard)
     _regs[0x6F] = 0x0C;
     _regs[0xA9] = 0x01;  // nr_a9_esp_gpio0 (5085)
     _regs[kRegMachineType] = type;
+    if (hard)
+        LatchVideoFrameSync();
     // the whole-byte reset values of the table (registers.txt); the registers with devices behind them reset those on their own
     size_t count;
     for (const NextRegInfo* r = NextRegTable(count); r != NextRegTable(count) + count; r++)
@@ -173,8 +175,13 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return _interrupts ? static_cast<uint8_t>(_interrupts->CurrentLine() >> 8) : 0;
         case 0x1F:
             return _interrupts ? static_cast<uint8_t>(_interrupts->CurrentLine() & 0xFF) : 0;
+        case 0x05:
+            return static_cast<uint8_t>((_regs[reg] & 0xFA) | _eff05);  // 5896: bits 2 and 0 are eff_nr_05_5060 / eff_nr_05_scandouble_en
         case 0x09:
-            return static_cast<uint8_t>(_regs[reg] & ~0x08);  // bit 3 reads 0 (zxnext.vhd: mono & tie & '0' & hdmi & scanlines)
+            // 5909: mono & tie & '0' & hdmi & eff_nr_09_scanlines (bit 3 reads 0, bits 1:0 as the last frame sync took them)
+            return static_cast<uint8_t>((_regs[reg] & 0xF4) | _eff09);
+        case 0x81:
+            return static_cast<uint8_t>((_regs[reg] & 0x78) | 0x80);  // 6126: ROMCS_n (idle high) & bits 6:3, bit 2 = 0, the speed bits 00
         case 0x28:
             return _video.StoredPaletteValue();  // 6004: nr_stored_palette_value, not the keymap address that was written
         case 0x85:
