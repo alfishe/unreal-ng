@@ -8,6 +8,17 @@
 #include <cstdio>
 #include "emulator/memory/next/nextmemory.h"
 
+namespace
+{
+/// A soft reset (`reset` of zxnext.vhd without the configuration load) leaves these registers of the whole-byte table alone: NR #04 (no
+/// reset at all, 5717-5732), NR #7F, NR #81, NR #8F (power-on values only), NR #80 (the high nibble takes the low one, 2186) and
+/// NR #82-#89 (restored only by their reset-type bit, handled in Reset)
+bool SoftResetKeeps(uint8_t number)
+{
+    return number == 0x04 || number == 0x7F || number == 0x80 || number == 0x81 || (number >= 0x82 && number <= 0x89) || number == 0x8F;
+}
+}  // namespace
+
 void NextBoard::Reset(bool hard)
 {
     // A soft reset keeps the machine type (and with it config mode or not); a hard one is the power-on state
@@ -15,6 +26,8 @@ void NextBoard::Reset(bool hard)
     const uint8_t type = hard ? (_memory->HasBootRom() ? 0 : 2) : MachineType();
     if (hard)
     {
+        // NR #02 bit 1 loads the FPGA configuration again (zxnext_top_issue5.vhd 1095, flashboot of core 1): every signal takes its
+        // declared value
         _resetType = 4;  // power on
         for (uint8_t& r : _regs)
             r = 0;
@@ -25,25 +38,39 @@ void NextBoard::Reset(bool hard)
         _regs[0x0A] = 0x01;
         _regs[0x10] = 0x01;  // core id 1 (zxnext.vhd nr_10_coreid)
     }
-    // the tilemap base addresses reset to #2C / #0C (the VHDL's signals; the register table has no reset value for them)
-    if (hard)
-    {
-        _regs[0x6E] = 0x2C;
-        _regs[0x6F] = 0x0C;
-    }
     else
     {
-        // a soft reset keeps what the software and the firmware set (peripheral settings, ...) and resets the fields the
-        // VHDL's reset block names
-        _regs[0x06] |= 0xA0;
-        _regs[0x08] &= static_cast<uint8_t>(~0x40);
-        _regs[0x09] &= static_cast<uint8_t>(~0x10);
+        // zxnext.vhd 4930-5090: the block `if reset = '1'` names these (soft and hard alike); everything else the program or the
+        // firmware set stays: NR #05 (joysticks, 50 / 60 Hz, scandoubler), NR #0A, NR #11, NR #7F, NR #81, NR #8A, NR #8F, ...
+        _regs[0x02] &= static_cast<uint8_t>(~0x0C);  // the generated-NMI flags (3844-3861); the bus reset bit 7 is not reset
+        _regs[0x06] |= 0xA0;                         // the CPU speed and 50 / 60 Hz hotkeys on
+        _regs[0x08] &= static_cast<uint8_t>(~0x40);  // contention on
+        _regs[0x09] &= static_cast<uint8_t>(~0x10);  // the sprite number is not tied to port #303B
+        for (uint8_t r : {0x15, 0x68, 0x6A, 0x6B, 0x6C, 0x70, 0x71, 0xA0, 0xA2, 0xD8})
+            _regs[r] = 0;
+        // NR #80 (2186): the high nibble takes the low one
+        _regs[0x80] = static_cast<uint8_t>((_regs[0x80] & 0x0F) | ((_regs[0x80] & 0x0F) << 4));
+        // NR #82-#85 come back to #FF when their reset-type bit (7 of NR #85) is 1, NR #86-#89 when bit 7 of NR #89 is 0 (5052-5068)
+        if (_regs[0x85] & 0x80)
+        {
+            _regs[0x82] = _regs[0x83] = _regs[0x84] = 0xFF;
+            _regs[0x85] = 0xFF;
+        }
+        if (!(_regs[0x89] & 0x80))
+        {
+            _regs[0x86] = _regs[0x87] = _regs[0x88] = 0xFF;
+            _regs[0x89] = 0x7F;
+        }
     }
+    // the tilemap base addresses reset to #2C / #0C (the VHDL's signals; the register table has no reset value for them)
+    _regs[0x6E] = 0x2C;
+    _regs[0x6F] = 0x0C;
+    _regs[0xA9] = 0x01;  // nr_a9_esp_gpio0 (5085)
     _regs[kRegMachineType] = type;
     // the whole-byte reset values of the table (registers.txt); the registers with devices behind them reset those on their own
     size_t count;
     for (const NextRegInfo* r = NextRegTable(count); r != NextRegTable(count) + count; r++)
-        if (r->hasReset && r->number != kRegMachineType)
+        if (r->hasReset && r->number != kRegMachineType && (hard || !SoftResetKeeps(r->number)))
             _regs[r->number] = r->reset;
     // NR #8C: a soft reset copies the after-reset bits 3:0 into 7:4
     const uint8_t alt = _memory->AltRomRegister();
@@ -59,19 +86,23 @@ void NextBoard::Reset(bool hard)
         _machine->SetContentionDisabled(false);
         _machine->SetMachineTiming(_timing);
     }
-    _selected = 0;
+    // nr_register <= X"24" (4603): "protection against legacy programs accidentally hitting ports 0x243B, 0x253B"
+    _selected = 0x24;
     _resetPending = false;
-    _video.Reset();
+    _video.Reset(hard);  // the palette index and control; the palette memory only with the configuration load
     RefreshLayer2Mapping();
     if (hard)
-    {
         _sprites.Reset();
-        _copper.Reset();
-    }
+    else
+        _sprites.SoftReset();  // sprites.vhd reset_i: the indices, the mirror and the status; the attribute and pattern RAMs stay
+    _copper.Reset(hard);       // zxnext.vhd: mode, address, stored byte and offset; copper.vhd: the list counter; the list RAM on a hard one
     if (_interrupts)
+    {
         _interrupts->Reset();
+        _interrupts->SetCounterOffset(0);  // nr_64_copper_offset is reset: the line counter the interrupts see follows it
+    }
     const bool config = type == 0;
-    _memory->SetConfigBank(0);
+    _memory->SetConfigBank(_regs[kRegConfigMapping]);  // NR #04 is not reset: zero at power on, the program's value after a soft reset
     _memory->SetConfigMode(config);
     // "switched on by a reset in config mode"
     _memory->SetBootRomEnabled(config && _memory->HasBootRom());
@@ -113,7 +144,7 @@ uint8_t NextBoard::Read(uint8_t reg) const
         case 0x1C:
             return _video.ReadClipControl();
         case 0x34:
-            return _sprites.ReadMirrorSprite();
+            return _sprites.ReadMirrorSprite((_regs[0x09] & 0x10) != 0);
         case 0x61:
             return _copper.ReadAddressLow();
         case 0x62:
@@ -144,6 +175,13 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return _interrupts ? static_cast<uint8_t>(_interrupts->CurrentLine() & 0xFF) : 0;
         case 0x09:
             return static_cast<uint8_t>(_regs[reg] & ~0x08);  // bit 3 reads 0 (zxnext.vhd: mono & tie & '0' & hdmi & scanlines)
+        case 0x28:
+            return _video.StoredPaletteValue();  // 6004: nr_stored_palette_value, not the keymap address that was written
+        case 0x85:
+        case 0x89:
+            return static_cast<uint8_t>(_regs[reg] & 0x8F);  // 6139 / 6151: reset type & "000" & the four port enables
+        case 0x8A:
+            return static_cast<uint8_t>(_regs[reg] & 0x3F);  // "00" & nr_8a_bus_port_propagate
         case 0x6E:
         case 0x6F:
             return static_cast<uint8_t>(_regs[reg] & 0xBF);  // bit 6 is not stored (base_7 & '0' & base)
@@ -346,6 +384,8 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             return;
         }
         case kRegPeripheral4:
+            if ((_regs[reg] & 0x10) && !(value & 0x10))
+                _sprites.ReleaseMirror();  // the mirror stops following the port: it keeps the sprite number it had
             _regs[reg] = value;
             if ((value & 0x08) && _machine)
                 _machine->ClearDivMmcMapram();

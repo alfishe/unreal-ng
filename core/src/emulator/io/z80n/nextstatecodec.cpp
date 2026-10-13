@@ -25,7 +25,7 @@
 
 namespace
 {
-constexpr uint8_t kImageVersion = 9;  // 9: both of 8 (the CTC's run start and pending ZC/TO pulses, the UARTs' break state); 7: ULA+ select; 6: the UARTs
+constexpr uint8_t kImageVersion = 10;  // 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -580,6 +580,8 @@ static void SaveAudio(Writer& w, const NextAudio* a)
     w.Put(a->_speakerExcluded);
     w.Put(a->_monoMask);
     w.PutArray(a->_dac);
+    w.PutArray(a->_addr);
+    w.Put(a->_held);
 }
 static void LoadAudio(Reader& r, NextAudio* a)
 {
@@ -598,6 +600,8 @@ static void LoadAudio(Reader& r, NextAudio* a)
     r.Get(a->_speakerExcluded);
     r.Get(a->_monoMask);
     r.GetArray(a->_dac);
+    r.GetArray(a->_addr);
+    r.Get(a->_held);
     a->_timeKnown = false;  // the render clock follows the machine again from the next frame
 }
 

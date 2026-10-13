@@ -13,7 +13,7 @@ uint16_t Nine(uint8_t rrrgggbb)
 }
 }  // namespace
 
-void NextVideoRegs::Reset()
+void NextVideoRegs::Reset(bool palettes)
 {
     for (unsigned w = 0; w < kClipWindows; w++)
     {
@@ -33,6 +33,9 @@ void NextVideoRegs::Reset()
     _l2Offset = 0;
     _shadowAlias = false;
     _haveFirst = false;
+    _first = 0;  // nr_stored_palette_value
+    if (!palettes)
+        return;
     // power-on palettes: the ULA's own colours (ink and paper), the others colour = index
     for (unsigned p = 0; p < kPalettes; p++)
         for (unsigned i = 0; i < 256; i++)
@@ -93,8 +96,11 @@ void NextVideoRegs::WritePaletteValue9(uint8_t value)
     }
     const bool layer2 = (Selected() & 3) == 1;
     uint16_t entry = static_cast<uint16_t>((_first << 1) | (value & 1));
-    if (layer2 && (value & 0x80))
-        entry |= 0x200;
+    // zxnext.vhd 4920: the priority bits (7:6) of the second byte are stored with every palette entry; only Layer 2 uses bit 7
+    if (value & 0x80)
+        entry |= layer2 ? 0xA00 : 0x800;
+    if (value & 0x40)
+        entry |= 0x400;
     _palette[Selected()][_index] = entry;
     _haveFirst = false;
     Advance();
@@ -121,6 +127,7 @@ uint8_t NextVideoRegs::ReadPaletteValue8() const
 
 uint8_t NextVideoRegs::ReadPaletteValue9() const
 {
+    // zxnext.vhd 6048: nr_palette_dat(10:9) & "00000" & nr_palette_dat(0): the stored priority bits 7:6 and the low blue bit
     const uint16_t entry = _palette[Selected()][_index];
-    return static_cast<uint8_t>((entry & 1) | ((entry & 0x200) ? 0x80 : 0));
+    return static_cast<uint8_t>((entry & 1) | ((entry & 0x800) ? 0x80 : 0) | ((entry & 0x400) ? 0x40 : 0));
 }

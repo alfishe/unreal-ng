@@ -18,6 +18,13 @@ void NextSprites::Reset()
     _collision = _tooMany = false;
 }
 
+void NextSprites::SoftReset()
+{
+    _slot = _byte = _patternHalf = _mirror = 0;
+    _patternOffset = 0;
+    _collision = _tooMany = false;
+}
+
 uint8_t NextSprites::ReadStatus()
 {
     const uint8_t value = static_cast<uint8_t>((_tooMany ? 2 : 0) | (_collision ? 1 : 0));
