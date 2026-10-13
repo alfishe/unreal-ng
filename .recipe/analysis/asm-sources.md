@@ -205,8 +205,12 @@ asm_source {"action":"sync_inject","path":"/abs/main.asm","snapshot":"/abs/alasm
 asm_source {"action":"sync_extract","snapshot":"/abs/scratch/work.szx","as":"dialect","to":"sjasmplus"}
 ```
 
+The WebAPI does it with no emulator instance at all: `GET /api/v1/asm/sync?snapshot=/abs/work.szx`,
+`POST /api/v1/asm/sync/probe`, `/extract`, `/inject` with `snapshot` in the body (the actions that need the machine,
+and a `disk:A/...` path, answer 400 there).
+
 The standalone `zxasm` does the same on files, and also writes the source as a file of the assembler onto a TR-DOS
-image of any format (TRD, SCL, FDI, UDI, TD0 ...): `zxasm inject main.asm work.szx`, `zxasm inject main.asm disk.trd --assembler alasm-5.09`,
+image of any format (TRD, SCL, FDI, UDI, TD0 ...) or a +3DOS disk (DSK: NAME.TYP with a +3DOS header): `zxasm inject main.asm work.szx`, `zxasm inject main.asm disk.trd --assembler alasm-5.09`,
 `zxasm probe work.szx`, `zxasm extract work.szx --to sjasmplus`, `zxasm extract disk.scl --file MAIN.H`.
 `inject-oracle.py alasm509 --template <template> <source.asm> 0x6000` is the check: zxasm injects, the snapshot is
 loaded and ALASM assembles it.

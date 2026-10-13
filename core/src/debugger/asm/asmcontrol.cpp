@@ -383,8 +383,11 @@ AsmReply AsmControl::Execute(const AsmRequest& request)
         return Encode(normalized);
     if (verb.rfind("sync-", 0) == 0)
     {
-        if (!_context)
-            return Fail(AsmControlError::BadRequest, "'" + verb + "' needs an emulator instance");
+        // without an instance: the verbs that read or write a snapshot file (option `snapshot`), not the machine
+        const bool onSnapshot = normalized.options.count("snapshot") > 0 &&
+                                (verb == "sync-status" || verb == "sync-probe" || verb == "sync-extract" || verb == "sync-inject");
+        if (!_context && !onSnapshot)
+            return Fail(AsmControlError::BadRequest, "'" + verb + "' needs an emulator instance (or 'snapshot': a snapshot file instead of the machine)");
         return SyncControl(_context).Execute(verb.substr(5), normalized);
     }
     return Convert(normalized);

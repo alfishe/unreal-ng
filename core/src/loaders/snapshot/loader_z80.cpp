@@ -1291,10 +1291,16 @@ size_t LoaderZ80::compressPage(uint8_t* src, size_t srcLen, uint8_t* dst, size_t
             }
             else
             {
-                // Single ED: write as-is
+                // Single ED: write as-is, and the byte after it too. A run starting right after a single ED would read
+                // as ED ED ED nn: the start of a block of nn EDs (the format: no block begins directly after an ED)
                 if (dstPos + 1 > dstLen) break;
                 dst[dstPos++] = byte;
                 srcPos++;
+                if (srcPos < srcLen && src[srcPos] != 0xED)
+                {
+                    if (dstPos + 1 > dstLen) break;
+                    dst[dstPos++] = src[srcPos++];
+                }
             }
         }
         else if (runLen >= 5)

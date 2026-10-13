@@ -247,8 +247,9 @@ bool Unwrap(const Args& args, std::vector<uint8_t>& bytes, CatalogHints& hints)
         const size_t dot = args.inner.find_last_of('.');
         const std::string name = dot == std::string::npos ? args.inner : args.inner.substr(0, dot);
         const char type = dot == std::string::npos ? 0 : args.inner[dot + 1];
+        const std::string extension = dot == std::string::npos ? std::string() : Lower(args.inner.substr(dot + 1));   // +3DOS: NAME.TYP
         for (const auto& f : files)
-            if (f.TrimmedName() == name && (type == 0 || f.type == type))
+            if (f.TrimmedName() == name && (type == 0 || (f.extension.empty() ? f.type == type : f.extension == extension)))
             {
                 bytes = f.data;
                 hints = f.Hints();
@@ -1204,7 +1205,7 @@ int main(int argc, char** argv)
         for (const auto& f : files)
         {
             const DetectResult detected = registry.Detect(f.data, f.Hints());
-            std::cout << f.TrimmedName() << "." << f.type << "\t" << f.start << "\t" << f.length << "\t"
+            std::cout << f.FullName() << "\t" << f.start << "\t" << f.length << "\t"
                       << (detected.chosen ? detected.chosen->Info().id : "-") << "\n";
         }
         return 0;
