@@ -54,6 +54,7 @@ class AudioSettingsWidget;
 class MidiActivityWindow;
 class SlotChangeController;
 class SlotsWindow;
+class NextLayersWindow;
 class HudOverlayWrapper;
 class HudModel;
 class TtdWidget;
@@ -178,6 +179,7 @@ private slots:
     void handleMediaPanelToggled(bool visible);
     void handleNetworkWindowToggled(bool visible);
     void handleSlotsWindowToggled(bool visible);
+    void handleNextLayersToggled(bool visible);
     void handleMidiActivityToggled(bool visible);
     void handleTrafficWindowToggled(bool visible);
     void handleFt812DebugToggled(bool visible);
@@ -400,6 +402,7 @@ private:
     TapeManagerWindow* tapeManagerWindow = nullptr;
     MediaPanelWindow* mediaPanelWindow = nullptr;
     NetworkWindow* networkWindow = nullptr;
+    NextLayersWindow* _nextLayersWindow = nullptr;          // View -> Next Layers (per-layer capture view)
     SlotsWindow* _slotsWindow = nullptr;                   // Machine -> Slots (ZX-bus slots)
     MidiActivityWindow* _midiActivityWindow = nullptr;     // Tools -> MIDI Activity
     SlotChangeController* _slotChangeController = nullptr;   // plan, confirm, restart, Undo (every slot change)

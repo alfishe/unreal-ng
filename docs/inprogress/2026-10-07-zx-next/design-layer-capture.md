@@ -128,7 +128,7 @@ recomputed by the inspector from the pixel position and the register state the l
 | L1 | the real sink with `ids`, `info`, the line table; oracle, copper, transparency, swap, off-cost tests | core tests; no regression in the renderer suite |
 | L2 | the settings (ini + runtime), the surfaces: `capture/screen?layer=`, `capture/next-layers`, `next/layer-capture`, OpenAPI, MCP, CLI, Lua, Python, the `video` report field; armed mode if the default is off; docs and recipe | verification pytest green against a live app; full `core-tests`; gcc-16 -O3 clean; `environment-variables.md` row if an env switch is added |
 | L3 | `next_pixel` with `why` and source addresses | tests above |
-| L4 | Qt: per-layer view and layer toggles (the jnext per-layer screenshots are the model), a pixel inspector under the mouse, the machine-menu switch | later (N12) |
+| L4 | Qt: per-layer view and layer toggles (the jnext per-layer screenshots are the model), a pixel inspector under the mouse, the machine-menu switch | **done 2026-10-13**: View -> Next Layers |
 
 ## 6. Open questions
 
@@ -222,3 +222,7 @@ recomputed from the record (`ComposedColour`, including the blend and stencil fo
 the CLI commands, MCP `capture_media` / `inspect_state` / `invoke_api`, and the Lua bindings (`tools/verification/webapi/src/test_api_next.py`: 16 passed). The Python bindings compile (syntax-only
 against pybind11 and Python 3.12) but could not run: this build has no Python interpreter (`ENABLE_PYTHON_AUTOMATION` is off), so the Python half of `TestNextInterpreters` skips; it is the one
 unverified surface. Not built: L4, the Qt panels.
+
+## 9. Image size (2026-10-13)
+
+Open question 2 is answered: `size=screen` (default, 640x512, the screenshot's geometry), `size=grid` (640x256: the grid's sub-pixels, every line once) and `size=pixel` (320x256: one sample, the first sub-pixel, per Next pixel; Layer 2 640 and Timex hi-res lose their second sub-pixel, use grid there). The record itself is unchanged (640 sub-pixels a line); the sizes are cut from the rendered image (`NextLayer::Reduce`), so the saving is in the transfer and the encode.

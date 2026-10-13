@@ -340,3 +340,13 @@ TEST(SjasmplusLower_Test, ALasmGetsAMacroOfLocalAndGlobalLabelsPutInAtItsCalls)
     EXPECT_TRUE(Contains(lines, "__M1_l JR __M1_l")) << text;
     EXPECT_TRUE(Contains(lines, "__M2_l JR __M2_l")) << text;
 }
+
+TEST(SjasmplusLower_Test, ASourceOfAnotherDialectGivesItsLabelValuesToo)
+{
+    // a TASM source into PASM, whose EQU sees only the names above it: LBL's value from the TASM source's layout (its
+    // sjasmplus conversion), as for a sjasmplus source
+    const SourceDocument source = SourceDocument::FromText("        ORG     #8000\nX       EQU     LBL+1\n        LD      HL,X\n        NOP\nLBL     NOP\n", "tasm");
+    const ConvertResult r = Convert(source, "pasm");
+    ASSERT_TRUE(r.ok);
+    EXPECT_NE(r.document.Text().find("X\tEQU #8004+1"), std::string::npos) << r.document.Text();
+}

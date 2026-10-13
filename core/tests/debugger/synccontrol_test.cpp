@@ -408,3 +408,27 @@ TEST_F(SyncControl_Test, InjectWritesASourceIntoAnAlasmSnapshot)
     EXPECT_EQ(SyncRun(_context, "sync-status", {{"snapshot", output + ".missing"}}).error, AsmControlError::NotFound);
     std::filesystem::remove(output);
 }
+
+// The same verbs with no emulator instance (the WebAPI's /asm/sync routes): only on a snapshot file
+TEST(SyncControlNoInstance_Test, SnapshotVerbsNeedNoEmulator)
+{
+    const std::filesystem::path templates = TestPathHelper::FindProjectRoot() / "core" / "src" / "3rdparty" / "unreal-asm" / "testdata" / "templates";
+    const std::string snapshot = (templates / "alasm-5.09.szx").string();
+    const std::string output = TestPathHelper::GetUniqueTestScratchPath("injected-noinstance.szx");
+
+    AsmReply reply = SyncRun(nullptr, "sync-probe", {{"snapshot", snapshot}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    ASSERT_FALSE(reply.body.find("candidates")->items.empty());
+
+    reply = SyncRun(nullptr, "sync-inject",
+                    {{"text", "        ORG #6000\n        nop\n"}, {"from", "sjasmplus"}, {"snapshot", snapshot}, {"assembler", "alasm-5.09"}, {"output", output}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    reply = SyncRun(nullptr, "sync-extract", {{"snapshot", output}, {"assembler", "alasm-5.09"}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_NE(reply.body.find("text")->s.find("NOP"), std::string::npos);
+    EXPECT_TRUE(SyncRun(nullptr, "sync-status", {{"snapshot", output}}).Ok());
+
+    EXPECT_EQ(SyncRun(nullptr, "sync-probe").error, AsmControlError::BadRequest);          // the machine: needs one
+    EXPECT_EQ(SyncRun(nullptr, "sync-watch", {{"snapshot", snapshot}}).error, AsmControlError::BadRequest);
+    std::filesystem::remove(output);
+}

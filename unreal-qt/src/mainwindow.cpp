@@ -71,6 +71,7 @@
 #include "cardslots/midiactivitywindow.h"
 #include "cardslots/slotchangecontroller.h"
 #include "cardslots/slotswindow.h"
+#include "nextlayers/nextlayerswindow.h"
 #include "ui/temporaleffectsdialog.h"
 #include "hud/qt/hudoverlaywrapper.h"
 #include "hud/qt/hudsettingsdialog.h"
@@ -378,6 +379,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _slotsWindow->setController(_slotChangeController);
     _dockingManager->addDockableWindow(_slotsWindow, Qt::RightEdge);
 
+    // Next layers: hidden by default, View -> Next Layers
+    _nextLayersWindow = new NextLayersWindow();
+    _nextLayersWindow->setBinding(m_binding);
+    _dockingManager->addDockableWindow(_nextLayersWindow, Qt::RightEdge);
+
     // MIDI activity: hidden by default, Tools -> MIDI Activity
     _midiActivityWindow = new MidiActivityWindow();
     _midiActivityWindow->setBinding(m_binding);
@@ -474,6 +480,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::networkWindowToggled, this, &MainWindow::handleNetworkWindowToggled);
     connect(networkWindow, &NetworkWindow::visibilityChanged, _menuManager, &MenuManager::setNetworkWindowChecked);
     connect(_menuManager, &MenuManager::slotsWindowToggled, this, &MainWindow::handleSlotsWindowToggled);
+    connect(_menuManager, &MenuManager::nextLayersToggled, this, &MainWindow::handleNextLayersToggled);
+    connect(_nextLayersWindow, &NextLayersWindow::visibilityChanged, _menuManager, &MenuManager::setNextLayersChecked);
     connect(_slotsWindow, &SlotsWindow::visibilityChanged, _menuManager, &MenuManager::setSlotsWindowChecked);
     connect(_menuManager, &MenuManager::midiActivityToggled, this, &MainWindow::handleMidiActivityToggled);
     connect(_midiActivityWindow, &MidiActivityWindow::visibilityChanged, _menuManager, &MenuManager::setMidiActivityChecked);
@@ -3639,6 +3647,12 @@ void MainWindow::handleNetworkWindowToggled(bool visible)
         networkWindow->setVisible(visible);
 }
 
+void MainWindow::handleNextLayersToggled(bool visible)
+{
+    if (_nextLayersWindow)
+        _nextLayersWindow->setVisible(visible);
+}
+
 void MainWindow::handleSlotsWindowToggled(bool visible)
 {
     if (_slotsWindow)
@@ -3700,7 +3714,7 @@ void MainWindow::openStressWindows(const QString& list)
     const std::vector<std::pair<QString, void (MainWindow::*)(bool)>> windows = {
         {"debugger", &MainWindow::handleDebuggerToggled},     {"ttd", &MainWindow::handleTtdToggled},
         {"media", &MainWindow::handleMediaPanelToggled},       {"network", &MainWindow::handleNetworkWindowToggled},
-        {"slots", &MainWindow::handleSlotsWindowToggled},      {"traffic", &MainWindow::handleTrafficWindowToggled},
+        {"slots", &MainWindow::handleSlotsWindowToggled},      {"nextlayers", &MainWindow::handleNextLayersToggled},      {"traffic", &MainWindow::handleTrafficWindowToggled},
         {"midi", &MainWindow::handleMidiActivityToggled},      {"tape", &MainWindow::handleTapeManagerToggled},
         {"log", &MainWindow::handleLogWindowToggled},
     };

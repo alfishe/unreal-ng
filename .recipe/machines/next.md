@@ -156,7 +156,7 @@ invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/next/nmi-journal","bod
 invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/next/nextreg","body":{"reg":"02","value":"08"}}   # the M1 button (NR #02 bit 3)
 invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/nmi","body":{"magic":true}}                      # the magic button: the DRIVE button on a Next (a plain POST /nmi is the bare line)
 inspect_state {"aspects":["next_nmi"],"nr_nmi_kinds":"int_ack,nmi_request","nr_nmi_limit":20}
-#   → [next_nmi] NMI in service: no; sources: m1_button blocked (...) drive_button ready io_trap (not modelled); multiface off +3, memory out; ...
+#   → [next_nmi] NMI in service: no; sources: m1_button blocked (...) drive_button ready io_trap blocked (the trap is off (NR #D8 bit 0)); multiface off +3, memory out; ...
 #       #1 f512 pc 0x3DBD int_ack ula
 #       #2 f512 pc 0x0038 nmi_request m1_button REFUSED: the M1 button is off (NR #06 bit 3)
 ```
