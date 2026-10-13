@@ -1081,6 +1081,14 @@ void PortDecoder_Next::PerformReset(bool hard)
     state.p1FFD = 0x00;
     Mem().ResetMmu();
     _board->Reset(hard);  // config mode and the boot ROM first: the slot table follows them
+    // the same net pulses on a hard reset, and on a soft one while the expansion bus is enabled (zxnext_top bus_rst_n_io: reset_hard or
+    // reset_soft and zxn_bus_en): the ESP restarts with it
+    if (hard || (_board->Stored(0x80) & 0x80))
+        if (auto* esp = dynamic_cast<EspModule*>(_uart.Peer(0)))
+        {
+            esp->SetResetPin(true);
+            esp->SetResetPin((_board->Stored(0x02) & 0x80) != 0);
+        }
     UpdateJoystickPin7(_board->Stored(0x0B));
     _audio->Reset();      // turbosound.vhd / soundrive.vhd: reset_i is `reset` (the chips, the pan, the selected chip, the DACs)
     AudioConfigChanged();
@@ -1659,7 +1667,12 @@ void PortDecoder_Next::BoardPinsChanged()
     // zxnext.vhd: o_ESP_GPIO_0 = NR #A9 bit 0, driven while NR #A8 bit 0 enables it (else the pad floats, pulled up)
     const bool low = (_board->Stored(0xA8) & 1) && !(_board->Stored(0xA9) & 1);
     if (auto* esp = dynamic_cast<EspModule*>(_uart.Peer(0)))
+    {
         esp->SetFlashPin(low);
+        // NR #02 bit 7 asserts and holds the expansion bus /RESET net (zxnext_top bus_rst_n_io), the one the ESP's reset is on too
+        // (registers.txt: "reset to the expansion bus and the esp wifi"); the chip stops while it is held and boots at the release
+        esp->SetResetPin((_board->Stored(0x02) & 0x80) != 0);
+    }
 }
 
 PortDecoder::NetworkCapabilities PortDecoder_Next::DescribeNetwork()

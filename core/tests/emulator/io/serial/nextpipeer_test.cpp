@@ -263,3 +263,25 @@ TEST_F(NextPiMachine_Test, ThePiI2cPinsAreAndedIntoTheRtcReadWhenNrA0Bit3IsOn)
     Nr(0xA0, 0x00);
     EXPECT_EQ(_ports->DecodePortIn(0x113B, 0) & 1, 1) << "the mirror is off";
 }
+
+#include "emulator/io/serial/esp/espmodule.h"
+
+// zxnext_top bus_rst_n_io: NR #02 bit 7 holds the expansion bus /RESET net, the ESP's reset is on it ("reset to the expansion bus and the esp wifi",
+// registers.txt); a hard reset pulses it, a soft one only with the expansion bus enabled (NR #80 bit 7)
+TEST_F(NextPiMachine_Test, TheEspIsResetByNrA02Bit7AndTheResets)
+{
+    auto* esp = dynamic_cast<EspModule*>(_ports->Uart().Peer(0));
+    ASSERT_NE(esp, nullptr) << "the shipped ESP on UART 0";
+    const unsigned before = esp->HardwareResets();
+    Nr(0x02, 0x80);
+    EXPECT_EQ(esp->HardwareResets(), before + 1) << "held: the chip stopped";
+    Nr(0x02, 0x00);
+    EXPECT_EQ(esp->HardwareResets(), before + 1) << "the release boots it, no second reset";
+    _ports->PerformReset(false);
+    EXPECT_EQ(esp->HardwareResets(), before + 1) << "a soft reset with the expansion bus off leaves it";
+    _ports->PerformReset(true);
+    EXPECT_EQ(esp->HardwareResets(), before + 2) << "a hard reset pulses the net";
+    Nr(0x80, 0x88);  // enabled now (bit 7) and after a reset (bit 3: a reset copies the low nibble up)
+    _ports->PerformReset(false);
+    EXPECT_EQ(esp->HardwareResets(), before + 3) << "a soft reset with the expansion bus on";
+}

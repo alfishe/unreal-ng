@@ -356,7 +356,7 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
         {
             if ((reg == 0x06 || reg == 0x08 || reg == 0x09) && board->_machine)
                 board->_machine->AudioConfigChanged();
-            else if ((reg == 0xA8 || reg == 0xA9 || reg == 0x0B) && board->_machine)
+            else if ((reg == 0xA8 || reg == 0xA9 || reg == 0x0B || reg == kRegResetType) && board->_machine)
                 board->_machine->BoardPinsChanged();
             else if (reg == 0xA2)
             {
