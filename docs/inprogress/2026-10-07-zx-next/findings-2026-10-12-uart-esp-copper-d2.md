@@ -15,7 +15,7 @@ that change how the emulator behaves or how the RTL reads. The RTL (`cores/zxnex
   NR #A8 / #A9 drive ESP GPIO 0: low at restart is the download mode (`EspModule::RestartIntoDownloadIfStrapped`).
 - State: TTD image version 6 saved the UARTs (the peers' state is the machine serial peer's blob; the UART 1 peer is not saved);
   version 7 adds the ULA+ select. Reports: `next_uart` on WebAPI, MCP, CLI, Lua, Python.
-- Open: the joystick-port UART (NR #0B), the Pi GPIO routing (NR #A0 / #9x), the ESP flasher's SLIP protocol, a break from a peer.
+- Open: the joystick-port UART (NR #0B), a GPIO peer for the Pi, the ESP flasher's SLIP protocol, a break from a peer.
 
 ## 2. Port gating (ports.enforced)
 
@@ -67,6 +67,16 @@ Full table, method and calibration: [copper-picture-latency-2026-10-12.md](coppe
 - Radastan (NR #6A bit 5, LoRes on): 128 x 96 at 4 bits, 64-byte rows, display file = port #FF bit 0 xor NR #6A bit 4, high nibble
   first, index high nibble NR #6A 3:0 (`11` + bits 1:0 with ULA+). The LoRes / Radastan row runs on past 192 (y(7:6) + 1), 14-bit
   address wrap, instead of wrapping at 192.
+
+## 4b. The Pi (Tier A of research-pi-accelerator.md)
+
+- `ComPort2=NEXTPI` (or `PI`): `NextPiPeer`, the NextPi supervisor at the level the Next's tools use: prompt `SUP> `, tty echo, ^C / ^D,
+  `nextpi-admin_version` (1.93D), `nextpi-file_receive -nbn` and `nextpi-file_transmit -nbn` over an in-memory card (NBN: 16 KB blocks,
+  8-bit sum, `!` / `?`), `bash: x: command not found` for the rest. Real NextPi under QEMU is reachable with `ComPort2=TCP:...`.
+- UART 1's pins reach the header only with NR #A0 bit 4 (`pi_uart_en`) and bit 5 (`pi_uart_rxtx`, the Pi orientation): with either clear
+  the peer's bytes are lost and the transmitter reaches nobody (`NextUart::SetLineConnected`, synced from NR #A0 at each UART access).
+- NR #90-#93: bits 1:0 of #90 and 7:4 of #93 read 0; NR #98-#9B read the PIN state (enabled output: its latch, otherwise the input the
+  header gives, low for now; `NextBoard::SetGpioInput` is the hook for a peer); reset values #98 = #FF, #99 = #01, any reset.
 
 ## 5. Still open (not done)
 

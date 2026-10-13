@@ -49,7 +49,8 @@ struct ComPortSpec
         Espnet,
         At,
         Modem,
-        ZiFiNative
+        ZiFiNative,
+        NextPi   ///< the Raspberry Pi accelerator's NextPi supervisor (NextPiPeer)
     };
     static constexpr uint8_t kDefaultFirmware = 0xFF;
     Kind kind = Kind::None;

@@ -205,6 +205,7 @@ private:
     uint8_t IdleRead(uint16_t port, uint16_t pc);
     uint8_t ReadMouse(uint8_t reg);
     void ApplyMouseDpi(uint8_t nr0a);
+    void SyncPiLine();
     ScreenNext* _screenNext = nullptr;  ///< the picture, told before the program changes what the sprite engine fills from
     /// #FADF / #FBDF / #FFDF: A7-A0 = #DF and A11-A8 = A / B / F (zxnext.vhd), the register 0 buttons, 1 X, 2 Y
     static bool MouseRegisterOf(uint16_t port, uint8_t& reg)
