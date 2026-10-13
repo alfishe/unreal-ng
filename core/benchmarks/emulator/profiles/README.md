@@ -37,7 +37,13 @@ Pacing, the GUI and MessageCenter consumers are not included.
 | `Only<Card>_Turbo` | `NoCardsTurbo` + one card: `NeoGS`, `GS`, `MoonSound`, `SounDrive` in `zxbus.1`, or `TSFM` in the AY socket | yes | what one fitted, silent card costs |
 | `MaxTurbo` | `NoCardsTurbo` + everything `BareTurbo` switches off | yes | the floor: the CPU, memory, ports and the screen |
 
-Machines: Pentagon (all rows), 48K, 128K, Scorpion, TS-Conf (`TSL`), ATM3 (BaseConf), ATM710, Profi.
+Machines: Pentagon (all rows), 48K, 128K, Scorpion, TS-Conf (`TSL`), ATM3 (BaseConf), ATM710, Profi, Sprinter, ZX
+Next.
+
+A row named `<Machine>_<Program>_<Profile>` loads a program after the boot frames and runs a few more before the timed
+loop (`FRAME_PROFILE_WORKLOAD`): `TSConf_Sprites_*` is the TS-Conf SDK sprite example (`testdata/machines/tsconf/spg/
+sprites.spg`). The snapshot path is a testdata path or an absolute one, so a program that is not in the repository
+can be measured by a local row (not committed).
 
 The counter `fps` is frames per second of host CPU time on one thread: `1e6 / cpu_time_us`.
 
@@ -166,6 +172,17 @@ tools/profiling/xctrace/record.sh -o scratch/profile/pent-turbo -- \
 python3 tools/profiling/xctrace/xctrace_profile.py scratch/profile/pent-turbo.xml --under RunFramePublic top -n 30
 ```
 
+### Turbo rows: the boot frames are in the profile
+
+Every run of a row boots its machine for 300 frames at 1x, and Google Benchmark runs a row several times (1, 10,
+100 ... iterations) before the timed one. In a turbo row of a slow machine those 1x frames can be most of the
+samples, and they show work the turbo frame does not do (synthesis, rendering of every frame). Filtering by function
+does not help on macOS: xctrace attributes the frames of a small non-inlined helper to its neighbour. Profile the
+timed loop alone by attaching to the process during its last run instead: raise the row's `MinTime` locally (say
+`MinTime(40.0)`), start the benchmark, wait until the last run has started (print `state.max_iterations` before the
+loop and wait until no new line comes for ~10 s), then `record.sh -p <pid> -t 15`. Found on 2026-10-13
+([heavy-machines analysis](../../../../docs/inprogress/2026-10-13-heavy-machines-perf/analysis.md), section 2).
+
 ### The app itself
 
 The rows measure the core frame only. When the app is slower than its row predicts, profile the app at max
@@ -248,3 +265,8 @@ The idle cards now advance in closed form, exactly as the stepped card: Pentagon
 Pentagon_ShipNormal 1555 -> 1038 µs, OnlyGS 447 -> 164, OnlyMoonSound 470 -> 158 (dev Mac, interleaved A/B).
 What changed per card, the exactness tests and the full table:
 [docs/inprogress/2026-10-12-peripheral-standby/results.md](../../../../docs/inprogress/2026-10-12-peripheral-standby/results.md).
+
+### 2026-10-13: Sprinter, ZX Next, TS-Conf
+
+New rows for the Sprinter, the Next and TS-Conf at 1x and with a program, where the time goes on each, and the
+proposals: [docs/inprogress/2026-10-13-heavy-machines-perf/analysis.md](../../../../docs/inprogress/2026-10-13-heavy-machines-perf/analysis.md).

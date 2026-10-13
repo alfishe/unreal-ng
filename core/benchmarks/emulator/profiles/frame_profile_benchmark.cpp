@@ -14,6 +14,7 @@
 ///   NoCardsTurbo       AY in the AY socket, no bus cards, turbo                           (slot trees only)
 ///   Only<Card>Turbo    NoCardsTurbo + one card (neogs, gs, moonsound, soundrive; tsfm in the AY socket)
 ///   MaxTurbo           NoCardsTurbo + everything BareTurbo switches off
+///   <Machine>_<Program>_<Profile>   one of the above with a program loaded after the boot (FRAME_PROFILE_WORKLOAD)
 ///
 /// The file also builds in trees from before the ZX-bus slots (2026-10-03): the slot rows are left out there, so
 /// one source measures an old and a new commit (README.md, "Comparing two commits").
@@ -38,6 +39,7 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/mainloop.h"
 #include "emulator/memory/memory.h"
+#include "loaders/benchmark_path_helper.h"
 
 #if __has_include("emulator/slots/slotconfig.h")
 #define FRAME_PROFILE_HAS_SLOTS 1
@@ -78,7 +80,16 @@ void SetFeature(EmulatorContext* context, const char* feature, bool on)
     context->pFeatureManager->setFeature(feature, on);
 }
 
-void RunFrameProfile(benchmark::State& state, const char* model, RunProfile profile, const char* onlyCard = nullptr)
+/// A program running instead of the idle ROM: loaded after the boot frames, then `settleFrames` more run before the
+/// timed loop
+struct Workload
+{
+    const char* snapshot = nullptr;  ///< loaded after the boot frames (.spg, .nex, .sna ...): testdata path or absolute
+    int settleFrames = 0;
+};
+
+void RunFrameProfile(benchmark::State& state, const char* model, RunProfile profile, const char* onlyCard = nullptr,
+                     const Workload& workload = {})
 {
     EmulatorManager* manager = EmulatorManager::GetInstance();
     std::shared_ptr<Emulator> emulator;
@@ -148,6 +159,18 @@ void RunFrameProfile(benchmark::State& state, const char* model, RunProfile prof
     for (int i = 0; i < 300; i++)
         mainLoop->RunFramePublic();
 
+    if (workload.snapshot)
+    {
+        const std::string path = workload.snapshot[0] == '/' ? std::string(workload.snapshot)
+                                                             : BenchmarkPathHelper::RequireTestDataFile(workload.snapshot);
+        if (!emulator->LoadSnapshot(path))
+            BenchmarkPathHelper::FailSetup("snapshot load failed: " + path);
+        if (emulator->IsPaused())
+            emulator->Resume();  // a load leaves the machine paused
+    }
+    for (int i = 0; i < workload.settleFrames; i++)
+        mainLoop->RunFramePublic();
+
     if (profile == RunProfile::WorstNormal)
     {
         SetFeature(context, Features::kDebugMode, true);
@@ -200,6 +223,10 @@ void RunFrameProfile(benchmark::State& state, const char* model, RunProfile prof
     static void BM_Prof_##name(benchmark::State& s) { RunFrameProfile(s, model, profile); }   \
     BENCHMARK(BM_Prof_##name)->Unit(benchmark::kMicrosecond)->MinTime(1.0)
 
+#define FRAME_PROFILE_WORKLOAD(name, model, profile, ...)                                                              \
+    static void BM_Prof_##name(benchmark::State& s) { RunFrameProfile(s, model, profile, nullptr, Workload{__VA_ARGS__}); } \
+    BENCHMARK(BM_Prof_##name)->Unit(benchmark::kMicrosecond)->MinTime(1.0)
+
 #define FRAME_PROFILE_CARD(name, model, card)                                                                  \
     static void BM_Prof_##name(benchmark::State& s) { RunFrameProfile(s, model, RunProfile::OnlyCardTurbo, card); } \
     BENCHMARK(BM_Prof_##name)->Unit(benchmark::kMicrosecond)->MinTime(1.0)
@@ -232,4 +259,16 @@ FRAME_PROFILE(ATM3_ShipTurbo, "ATM3", RunProfile::ShipTurbo);
 FRAME_PROFILE(ATM3_MaxTurbo, "ATM3", RunProfile::MaxTurbo);
 FRAME_PROFILE(ATM710_ShipTurbo, "ATM710", RunProfile::ShipTurbo);
 FRAME_PROFILE(Profi_ShipTurbo, "PROFI", RunProfile::ShipTurbo);
+FRAME_PROFILE(TSConf_ShipNormal, "TSL", RunProfile::ShipNormal);
+FRAME_PROFILE(TSConf_BareTurbo, "TSL", RunProfile::BareTurbo);
+FRAME_PROFILE(Sprinter_ShipNormal, "SPRINTER", RunProfile::ShipNormal);
+FRAME_PROFILE(Sprinter_ShipTurbo, "SPRINTER", RunProfile::ShipTurbo);
+FRAME_PROFILE(Sprinter_BareTurbo, "SPRINTER", RunProfile::BareTurbo);
+FRAME_PROFILE(Next_ShipNormal, "NEXT", RunProfile::ShipNormal);
+FRAME_PROFILE(Next_ShipTurbo, "NEXT", RunProfile::ShipTurbo);
+FRAME_PROFILE(Next_BareTurbo, "NEXT", RunProfile::BareTurbo);
+
+// Heavy machines running a program: TSU sprites over tiles (the TS-Conf SDK example)
+FRAME_PROFILE_WORKLOAD(TSConf_Sprites_ShipNormal, "TSL", RunProfile::ShipNormal, "machines/tsconf/spg/sprites.spg", 50);
+FRAME_PROFILE_WORKLOAD(TSConf_Sprites_ShipTurbo, "TSL", RunProfile::ShipTurbo, "machines/tsconf/spg/sprites.spg", 50);
 #endif
