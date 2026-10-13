@@ -133,7 +133,10 @@ TEST_F(NextExtendedInput_Test, TheStateTravelsInTheTtdImageAndTheReportNamesTheK
 {
     Post(PcKey::Left, true);
     Post(PcKey::Keypad9, true);
+    // Both keys before the image is taken: the message center delivers them one by one on its own thread, and under
+    // load the second (the pad's Y) could still be on its way when only the first was waited for
     ASSERT_TRUE(WaitFor(kRegExtended0, kB0Left));
+    ASSERT_TRUE(WaitFor(kRegPads, NextExtendedInput::kPadY));
     const std::vector<uint8_t> held = NextStateCodec::Save(*_ports);
 
     const StateNode report = DeviceState::NextInputReport(_context);
