@@ -308,7 +308,7 @@ TEST(TtdAtmPaging_Test, RegistryCaptureAllRestoresMemoryMap)
 
     ttd::TTDPeripheralRegistry registry;
     ttd::TTDAtmPaging serializer(context);
-    registry.Register(ttd::PeripheralId::AtmPaging, &serializer);
+    registry.Register(&serializer);
 
     state.atm.pFFF7[0] = 0x12345678u;
     state.atm.memSwapped = true;
@@ -342,8 +342,8 @@ TEST(TtdAtmPaging_Test, AtmDecodersDeclareAndProvideTheSerializer)
         EmulatorContext* context = emulator->GetContext();
         ASSERT_NE(context->pPortDecoder, nullptr) << model;
 
-        const auto declared = context->pPortDecoder->GetTTDModelStateIds();
-        EXPECT_NE(std::find(declared.begin(), declared.end(), ttd::PeripheralId::AtmPaging),
+        const auto declared = context->pPortDecoder->GetTTDModelStateTypes();
+        EXPECT_NE(std::find(declared.begin(), declared.end(), ttd::TTDDeviceType::AtmPaging),
                   declared.end())
             << model << " must declare AtmPaging state";
 
@@ -352,7 +352,7 @@ TEST(TtdAtmPaging_Test, AtmDecodersDeclareAndProvideTheSerializer)
         EXPECT_TRUE(context->pTimeTravelController->StartRecording())
             << model << ": declared state has no serializer";
         EXPECT_TRUE(context->pTimeTravelController->GetPeripheralRegistry()
-                        .IsRegistered(ttd::PeripheralId::AtmPaging))
+                        .IsRegistered(ttd::TTDDeviceType::AtmPaging))
             << model << ": AtmPaging not registered for the session";
         context->pTimeTravelController->StopRecording();
 

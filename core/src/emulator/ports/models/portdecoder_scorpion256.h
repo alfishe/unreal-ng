@@ -90,8 +90,8 @@ public:
     /// #1FFD, the DD50.1 trigger and (PROFSCORP) the ProfROM plane / #7EFD latch:
     /// paging inputs the model-agnostic TTDChipsetState does not carry, on both
     /// Scorpion variants. Declared here because this decoder owns
-    /// those latches (see PortDecoder::GetTTDModelStateIds).
-    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    /// those latches (see PortDecoder::GetTTDModelStateTypes).
+    std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const override;
 
     /// Turbo+ runs the CPU at 3.5 or 7 MHz
     uint8_t TtdClockUnits() const override { return 2; }

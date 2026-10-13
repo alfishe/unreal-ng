@@ -121,7 +121,7 @@ TEST_F(TTDStreamOverheadTest, NonConnectedPeripheralsZeroBytes)
 {
     // Session A: TurboSound only (simulating 48K with minimal peripherals)
     TTDPeripheralRegistry registryA;
-    registryA.Register(PeripheralId::TurboSound, _turboSound.get());
+    registryA.Register(_turboSound.get());
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobsA;
     registryA.CaptureAll(blobsA);
@@ -129,10 +129,10 @@ TEST_F(TTDStreamOverheadTest, NonConnectedPeripheralsZeroBytes)
 
     // Session B: TurboSound + BDI + Tape + Covox (simulating 128K with peripherals)
     TTDPeripheralRegistry registryB;
-    registryB.Register(PeripheralId::TurboSound, _turboSound.get());
-    registryB.Register(PeripheralId::BetaDisk, _betaDisk.get());
-    registryB.Register(PeripheralId::Tape, _tape.get());
-    registryB.Register(PeripheralId::Covox, _covox.get());
+    registryB.Register(_turboSound.get());
+    registryB.Register(_betaDisk.get());
+    registryB.Register(_tape.get());
+    registryB.Register(_covox.get());
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobsB;
     registryB.CaptureAll(blobsB);
@@ -159,8 +159,8 @@ TEST_F(TTDStreamOverheadTest, NonConnectedPeripheralsZeroBytes)
 TEST_F(TTDStreamOverheadTest, UnregisterRemovesFromOutput)
 {
     TTDPeripheralRegistry registry;
-    registry.Register(PeripheralId::TurboSound, _turboSound.get());
-    registry.Register(PeripheralId::BetaDisk, _betaDisk.get());
+    registry.Register(_turboSound.get());
+    registry.Register(_betaDisk.get());
 
     // Capture with both
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobsBoth;
@@ -190,12 +190,12 @@ TEST_F(TTDStreamOverheadTest, PresenceSetPerCheckpoint)
     TTDPeripheralRegistry registry;
 
     // Checkpoint 1: Only TurboSound
-    registry.Register(PeripheralId::TurboSound, _turboSound.get());
+    registry.Register(_turboSound.get());
     std::unordered_map<uint8_t, std::vector<uint8_t>> cp1;
     registry.CaptureAll(cp1);
 
     // Checkpoint 2: TurboSound + BetaDisk
-    registry.Register(PeripheralId::BetaDisk, _betaDisk.get());
+    registry.Register(_betaDisk.get());
     std::unordered_map<uint8_t, std::vector<uint8_t>> cp2;
     registry.CaptureAll(cp2);
 
@@ -223,7 +223,7 @@ TEST_F(TTDStreamOverheadTest, LargePeripheralIsolation)
 {
     // Config A: Just TurboSound (typical 48K setup)
     TTDPeripheralRegistry registryA;
-    registryA.Register(PeripheralId::TurboSound, _turboSound.get());
+    registryA.Register(_turboSound.get());
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobsA;
     registryA.CaptureAll(blobsA);
@@ -231,8 +231,8 @@ TEST_F(TTDStreamOverheadTest, LargePeripheralIsolation)
 
     // Config B: TurboSound + GeneralSound (512KB)
     TTDPeripheralRegistry registryB;
-    registryB.Register(PeripheralId::TurboSound, _turboSound.get());
-    registryB.Register(PeripheralId::GeneralSound, _generalSound.get());
+    registryB.Register(_turboSound.get());
+    registryB.Register(_generalSound.get());
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobsB;
     registryB.CaptureAll(blobsB);
@@ -260,8 +260,8 @@ TEST_F(TTDStreamOverheadTest, LargePeripheralIsolation)
 TEST_F(TTDStreamOverheadTest, RestoreMissingPeripheralUnmodified)
 {
     TTDPeripheralRegistry registry;
-    registry.Register(PeripheralId::TurboSound, _turboSound.get());
-    registry.Register(PeripheralId::BetaDisk, _betaDisk.get());
+    registry.Register(_turboSound.get());
+    registry.Register(_betaDisk.get());
 
     // Capture both
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
@@ -294,7 +294,7 @@ TEST_F(TTDStreamOverheadTest, OverheadConstantRegardlessOfUnconnected)
 
     // Scenario: 5 possible peripherals, only 1 connected
     TTDPeripheralRegistry registryMin;
-    registryMin.Register(PeripheralId::TurboSound, _turboSound.get());
+    registryMin.Register(_turboSound.get());
 
     // Scenario: Same peripheral connected, but we could have had 5
     // The blob output should be identical
@@ -320,9 +320,9 @@ TEST_F(TTDStreamOverheadTest, OverheadConstantRegardlessOfUnconnected)
 TEST_F(TTDStreamOverheadTest, RoundTripVaryingPeripheralSets)
 {
     TTDPeripheralRegistry registry;
-    registry.Register(PeripheralId::TurboSound, _turboSound.get());
-    registry.Register(PeripheralId::BetaDisk, _betaDisk.get());
-    registry.Register(PeripheralId::Tape, _tape.get());
+    registry.Register(_turboSound.get());
+    registry.Register(_betaDisk.get());
+    registry.Register(_tape.get());
 
     // Set known states
     std::vector<uint8_t> tsOriginal(64);

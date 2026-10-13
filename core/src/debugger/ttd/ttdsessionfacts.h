@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "debugger/ttd/engine/ttdsessionfile.h"
+#include "debugger/ttd/ttdserializable.h"
 
 namespace ttd
 {
@@ -38,8 +39,9 @@ struct TTDSessionFacts
     uint64_t romSignature = 0;        ///< 0: unknown (not checked)
     uint64_t capturedAtUnixMs = 0;
     std::string recordedBy;           ///< the recording instance's symbolic id
-    uint64_t peripheralMask = 0;      ///< the recorded devices (PeripheralId bits)
-    uint64_t notRecordedMask = 0;     ///< fitted, not recorded by design
+    /// Fitted, not recorded by design (the lightweight General Sound). The recorded devices are the session's
+    /// device table (version 1 also kept them as a mask of v1 ids; read, not kept)
+    std::vector<TTDDeviceKey> notRecorded;
     bool inputHistoryComplete = false;
     bool portJournalValid = false;    ///< the bus journals hold every IN of the history
     std::string portJournalOffReason;

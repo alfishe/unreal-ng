@@ -364,8 +364,8 @@ TEST_F(CovoxBlasterMachine_Test, TtdBlob_RoundTrip)
     blob.TTDLoadState(saved.data());
     EXPECT_EQ(std::memcmp(&before, &Cbl().State(), sizeof(CovoxBlasterState)), 0);
     EXPECT_EQ(blob.TTDHashState(), hash);
-    const std::vector<ttd::PeripheralId> ids = _decoder->GetTTDModelStateIds();
-    EXPECT_NE(std::find(ids.begin(), ids.end(), ttd::PeripheralId::SprinterCovoxBlaster), ids.end());
+    const std::vector<ttd::TTDDeviceType> ids = _decoder->GetTTDModelStateTypes();
+    EXPECT_NE(std::find(ids.begin(), ids.end(), ttd::TTDDeviceType::SprinterCovoxBlaster), ids.end());
 }
 
 /// The sound at 21 MHz, through the whole frame loop (Emulator::RunFrame): the AY's pitch and the

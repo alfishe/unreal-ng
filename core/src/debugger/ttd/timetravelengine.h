@@ -246,9 +246,15 @@ public:
 
     /// The recorded machine's devices (Phase 2), in restore order
     const TTDDeviceTable& Devices() const { return _devices; }
-    /// The state of the device with v1 id @p id at checkpoint @p index; false
-    /// when the device is not in the table or had no state there
-    bool DeviceState(size_t index, uint8_t id, std::vector<uint8_t>& out) const;
+    /// The state of device @p key at checkpoint @p index; false when the
+    /// device is not in the table or had no state there
+    bool DeviceState(size_t index, const TTDDeviceKey& key, std::vector<uint8_t>& out) const;
+    /// The same for the device v1 saves under @p v1Id (the oracles that compare with v1)
+    bool DeviceStateOfV1Id(size_t index, uint8_t v1Id, std::vector<uint8_t>& out) const;
+    /// The device table index of @p key, or -1
+    int32_t DeviceIndex(const TTDDeviceKey& key) const;
+    /// The device table index of the device v1 saves under @p v1Id, or -1
+    int32_t DeviceIndexOfV1Id(uint8_t v1Id) const;
     /// Whether region @p region holds a device's state (not memory)
     bool IsDeviceStateRegion(uint32_t region) const
     {
@@ -488,12 +494,13 @@ public:
     /// issues are listed; the message counts the rest
     TTDRestoreResult CheckSession() const;
 
-    /// The state device @p id (its v1 id) holds at checkpoint @p index, without
-    /// restoring anything (a load's guards read the baseline's); false when the
-    /// checkpoint holds none or it fails its integrity check
-    bool DeviceStateAt(size_t index, uint8_t id, std::vector<uint8_t>& out) const
+    /// The state device @p device (its index in Devices()) holds at checkpoint
+    /// @p index, without restoring anything (a load's guards read the
+    /// baseline's); false when the checkpoint holds none or it fails its
+    /// integrity check
+    bool DeviceStateAt(size_t index, uint32_t device, std::vector<uint8_t>& out) const
     {
-        return ReadDeviceState(index, id, out) == DeviceStateRead::Ok;
+        return ReadDeviceState(index, device, out) == DeviceStateRead::Ok;
     }
 
     /// Tests only: damage the stored version of @p piece of @p region at
@@ -573,7 +580,7 @@ private:
         Missing,   ///< no state in this checkpoint (length 0), or no such device
         Damaged,   ///< a piece failed its integrity check: *damagedPiece
     };
-    DeviceStateRead ReadDeviceState(size_t index, uint8_t id, std::vector<uint8_t>& out,
+    DeviceStateRead ReadDeviceState(size_t index, uint32_t device, std::vector<uint8_t>& out,
                                     uint32_t* damagedPiece = nullptr) const;
     /// Checkpoint @p index's entry for @p region, or null when it has none
     const TTDEngineCheckpoint::RegionRefs* RefsOf(size_t index, uint32_t region) const
@@ -597,7 +604,7 @@ private:
     std::vector<std::vector<uint32_t>> _sinceSnapshot;
     std::vector<std::vector<uint8_t>> _sinceSnapshotFlag;
     std::vector<TTDRefTables::Table*> _lastSnapshot;
-    std::array<int32_t, 256> _deviceRegionOf{};          ///< v1 id -> region index, -1 = none
+    std::vector<int32_t> _deviceRegion;                 ///< device table index -> its state region
     std::vector<std::vector<uint8_t>> _deviceScratch;   ///< per region: the state laid out for capture
     /// Per region: where the last laid-out state ended (4 + its length); kExtentUnknown: the whole region
     std::vector<uint32_t> _deviceExtent;

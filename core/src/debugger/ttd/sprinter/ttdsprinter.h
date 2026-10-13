@@ -139,7 +139,7 @@ public:
     /// Time-travel engine region (compared at each capture; restore rebuilds the palette and the INT list)
     void TTDRegions(std::vector<TTDDeviceRegion>& out) override;
     void TTDArmRegions(bool) override {}
-    bool TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const override;
+    bool TTDStateWithoutRegions(std::vector<uint8_t>& state) const override;
     bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size) override;
 
 private:
@@ -166,7 +166,7 @@ public:
     /// Time-travel engine region (compared at each capture: written through the generic CPU path)
     void TTDRegions(std::vector<TTDDeviceRegion>& out) override;
     void TTDArmRegions(bool) override {}
-    bool TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const override;
+    bool TTDStateWithoutRegions(std::vector<uint8_t>& state) const override;
     bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size) override;
 
 private:

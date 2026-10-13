@@ -104,7 +104,7 @@ TEST_F(TTDAtaChannel_Test, RegisteredOnMachinesWithABoard)
 {
     ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_TRUE(ttd->StartRecording());
-    EXPECT_TRUE(ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::AtaChannel));
+    EXPECT_TRUE(ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::AtaChannel));
     ttd->StopRecording();
 
     Emulator* spectrum = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
@@ -112,7 +112,7 @@ TEST_F(TTDAtaChannel_Test, RegisteredOnMachinesWithABoard)
     spectrum->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
     ttd::TimeTravelController* other = spectrum->GetContext()->pTimeTravelController;
     ASSERT_TRUE(other->StartRecording());
-    EXPECT_FALSE(other->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::AtaChannel)) << "no IDE board";
+    EXPECT_FALSE(other->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::AtaChannel)) << "no IDE board";
     other->StopRecording();
     EmulatorTestHelper::CleanupEmulator(spectrum);
 }

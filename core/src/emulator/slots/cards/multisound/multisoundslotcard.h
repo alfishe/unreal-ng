@@ -69,8 +69,7 @@ public:
     /// `slots.<slot>.bank`: the MIDI bank's SHA-256 folded to 64 bits (0: no bank)
     void TtdFingerprint(std::vector<std::pair<std::string, uint64_t>>& out) const override;
     /// A session recorded with another MIDI bank is refused (the synthesizer's blob names its bank)
-    bool TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs,
-                           std::string& why) const override;
+    bool TtdSessionMatches(const ttd::TTDDeviceStates& states, std::string& why) const override;
     /// endregion </ICard>
 
     MultiSoundCard& Card()

@@ -638,15 +638,15 @@ TEST_F(TimeTravelManager_Test, StartRecording_RegistersConnectedCoreDevices)
     // Registration mirrors what the machine actually has: a device the model
     // does not provide must leave no entry at all, which is the whole point of
     // a registry over fixed per-device slots.
-    EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::Tape),
+    EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::Tape),
               ctx->pTape != nullptr);
-    EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::BetaDisk),
+    EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::BetaDisk),
               ctx->pBetaDisk != nullptr);
     if (ctx->pSoundManager)
     {
-        EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::TurboSound),
+        EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::TurboSound),
                   ctx->pSoundManager->getTurboSound() != nullptr);
-        EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::Covox),
+        EXPECT_EQ(_ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::Covox),
                   ctx->pSoundManager->getCovox() != nullptr);
     }
 }
@@ -668,14 +668,14 @@ TEST_F(TimeTravelManager_Test, Checkpoints_CarryABlobPerRegisteredDevice)
     for (uint8_t id = 0; id < static_cast<uint8_t>(ttd::PeripheralId::Count); ++id)
     {
         const auto pid = static_cast<ttd::PeripheralId>(id);
-        if (!registry.IsRegistered(pid))
+        if (registry.FindLegacy(pid) == nullptr)
         {
             EXPECT_EQ(cp->peripheralBlobs.count(id), 0u)
                 << "unregistered device " << +id << " must not occupy a blob";
             continue;
         }
 
-        ttd::TTDSerializable* device = registry.GetDevice(pid);
+        ttd::TTDSerializable* device = registry.FindLegacy(pid);
         ASSERT_NE(device, nullptr);
         if (device->TTDStateSize() == 0)
             continue;   // stateless device contributes nothing by design

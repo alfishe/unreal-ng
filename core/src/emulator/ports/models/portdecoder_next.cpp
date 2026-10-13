@@ -1476,9 +1476,9 @@ bool PortDecoder_Next::RequestBoardNmi()
 
 /// region <TTD>
 
-std::vector<ttd::PeripheralId> PortDecoder_Next::GetTTDModelStateIds() const
+std::vector<ttd::TTDDeviceType> PortDecoder_Next::GetTTDModelStateTypes() const
 {
-    return {ttd::PeripheralId::NextState, ttd::PeripheralId::NextSystemArea};
+    return {ttd::TTDDeviceType::NextState, ttd::TTDDeviceType::NextSystemArea};
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Next::CreateTTDSerializers() const

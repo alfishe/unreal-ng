@@ -2,6 +2,7 @@
 
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "debugger/ttd/ttdserializable.h"
+#include "debugger/ttd/engine/ttdregiontracker.h"
 
 #include <chrono>
 #include <cstring>
@@ -16,7 +17,7 @@ namespace {
 class MockPeripheral : public TTDSerializable
 {
 public:
-    explicit MockPeripheral(size_t stateSize, PeripheralId id = PeripheralId::Count)
+    explicit MockPeripheral(size_t stateSize, PeripheralId id = PeripheralId::None)
         : _stateSize(stateSize), _id(id)
     {
         _state.resize(stateSize, 0);
@@ -75,7 +76,7 @@ TEST_F(TTDPeripheralRegistryTest, EmptyRegistryCapture)
 TEST_F(TTDPeripheralRegistryTest, RegisterAndCapture)
 {
     MockPeripheral mock(64, PeripheralId::TurboSound);
-    registry.Register(PeripheralId::TurboSound, &mock);
+    registry.Register(&mock);
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
     registry.CaptureAll(blobs);
@@ -89,7 +90,7 @@ TEST_F(TTDPeripheralRegistryTest, UnregisteredPeripheralNoBytes)
     MockPeripheral mock1(64, PeripheralId::TurboSound);
     MockPeripheral mock2(128, PeripheralId::GeneralSound);
 
-    registry.Register(PeripheralId::TurboSound, &mock1);
+    registry.Register(&mock1);
     // mock2 not registered - should not appear in output
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
@@ -108,7 +109,7 @@ TEST_F(TTDPeripheralRegistryTest, CaptureRestoreRoundTrip)
     std::iota(originalState.begin(), originalState.end(), 1);
     mock.SetState(originalState);
 
-    registry.Register(PeripheralId::BetaDisk, &mock);
+    registry.Register(&mock);
 
     // Capture
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
@@ -133,7 +134,7 @@ TEST_F(TTDPeripheralRegistryTest, CompressiblePayloadIsStoredCompressed)
     // Highly compressible content — the encoder should choose the compressed
     // representation, so the blob lands well under the raw state size.
     mock.SetState(std::vector<uint8_t>(kStateSize, 0x5A));
-    registry.Register(PeripheralId::GeneralSound, &mock);
+    registry.Register(&mock);
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
     registry.CaptureAll(blobs);
@@ -155,7 +156,7 @@ TEST_F(TTDPeripheralRegistryTest, IncompressiblePayloadRoundTrips)
     for (auto& b : noise)
         b = static_cast<uint8_t>(dist(gen));
     mock.SetState(noise);
-    registry.Register(PeripheralId::GeneralSound, &mock);
+    registry.Register(&mock);
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
     registry.CaptureAll(blobs);
@@ -180,8 +181,8 @@ TEST_F(TTDPeripheralRegistryTest, BlobFiledUnderTheWrongDeviceIsRejected)
     ay.SetState(std::vector<uint8_t>(32, 0xAA));
     tape.SetState(std::vector<uint8_t>(32, 0xBB));
 
-    registry.Register(PeripheralId::TurboSound, &ay);
-    registry.Register(PeripheralId::Tape, &tape);
+    registry.Register(&ay);
+    registry.Register(&tape);
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
     registry.CaptureAll(blobs);
@@ -205,8 +206,8 @@ TEST_F(TTDPeripheralRegistryTest, MissingBlobForRegisteredDeviceIsReported)
 {
     MockPeripheral ay(32, PeripheralId::TurboSound);
     MockPeripheral tape(32, PeripheralId::Tape);
-    registry.Register(PeripheralId::TurboSound, &ay);
-    registry.Register(PeripheralId::Tape, &tape);
+    registry.Register(&ay);
+    registry.Register(&tape);
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
     registry.CaptureAll(blobs);
@@ -224,7 +225,7 @@ TEST_F(TTDPeripheralRegistryTest, MissingBlobForRegisteredDeviceIsReported)
 TEST_F(TTDPeripheralRegistryTest, UnclaimedBlobIsCountedNotFatal)
 {
     MockPeripheral ay(32, PeripheralId::TurboSound);
-    registry.Register(PeripheralId::TurboSound, &ay);
+    registry.Register(&ay);
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
     registry.CaptureAll(blobs);
@@ -252,9 +253,9 @@ TEST_F(TTDPeripheralRegistryTest, MultiplePeripheralsIndependent)
     fdc.SetState(fdcState);
     tape.SetState(tapeState);
 
-    registry.Register(PeripheralId::TurboSound, &ay);
-    registry.Register(PeripheralId::BetaDisk, &fdc);
-    registry.Register(PeripheralId::Tape, &tape);
+    registry.Register(&ay);
+    registry.Register(&fdc);
+    registry.Register(&tape);
 
     // Capture all
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
@@ -279,13 +280,13 @@ TEST_F(TTDPeripheralRegistryTest, MultiplePeripheralsIndependent)
 TEST_F(TTDPeripheralRegistryTest, UnregisterRemovesFromCapture)
 {
     MockPeripheral mock(64, PeripheralId::Covox);
-    registry.Register(PeripheralId::Covox, &mock);
+    registry.Register(&mock);
 
-    EXPECT_TRUE(registry.IsRegistered(PeripheralId::Covox));
+    EXPECT_TRUE(registry.IsRegistered(TTDDeviceType::Covox));
 
-    registry.Unregister(PeripheralId::Covox);
+    registry.Unregister(mock.TTDDescribe().Key());
 
-    EXPECT_FALSE(registry.IsRegistered(PeripheralId::Covox));
+    EXPECT_FALSE(registry.IsRegistered(TTDDeviceType::Covox));
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
     registry.CaptureAll(blobs);
@@ -298,9 +299,9 @@ TEST_F(TTDPeripheralRegistryTest, TotalStateSizeAccurate)
     MockPeripheral medium(256, PeripheralId::BetaDisk);
     MockPeripheral large(4096, PeripheralId::GeneralSound);
 
-    registry.Register(PeripheralId::TurboSound, &small);
-    registry.Register(PeripheralId::BetaDisk, &medium);
-    registry.Register(PeripheralId::GeneralSound, &large);
+    registry.Register(&small);
+    registry.Register(&medium);
+    registry.Register(&large);
 
     EXPECT_EQ(registry.TotalStateSize(), 32 + 256 + 4096);
 }
@@ -311,7 +312,7 @@ TEST_F(TTDPeripheralRegistryTest, EmptyBlobNotRestored)
     std::vector<uint8_t> originalState(64, 0x42);
     mock.SetState(originalState);
 
-    registry.Register(PeripheralId::TSFM, &mock);
+    registry.Register(&mock);
 
     // Empty blob map
     std::unordered_map<uint8_t, std::vector<uint8_t>> emptyBlobs;
@@ -355,7 +356,7 @@ TEST_F(TTDPeripheralRegistryTest, PerformanceBudget)
         b = static_cast<uint8_t>(dist(gen));
     large.SetState(randomState);
 
-    registry.Register(PeripheralId::GeneralSound, &large);
+    registry.Register(&large);
 
     // Measure capture time
     auto captureStart = std::chrono::high_resolution_clock::now();
@@ -404,7 +405,7 @@ TEST_F(TTDPeripheralRegistryTest, CompressionEfficiency)
     // Highly compressible data (all zeros)
     std::vector<uint8_t> zeros(kStateSize, 0);
     mock.SetState(zeros);
-    registry.Register(PeripheralId::GeneralSound, &mock);
+    registry.Register(&mock);
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
     registry.CaptureAll(blobs);
@@ -452,25 +453,25 @@ TEST(TTDPeripheralHashTest, IdZeroRotatesByZeroInsteadOfShiftingBy64)
 
     TTDPeripheralRegistry registry;
     HashingPeripheral device(PeripheralId::TurboSound, kHash);   // TurboSound == id 0
-    registry.Register(PeripheralId::TurboSound, &device);
+    registry.Register(&device);
 
     EXPECT_EQ(registry.ComputePeripheralHash(), kHash)
         << "a lone id-0 device must contribute its hash unrotated";
 }
 
-/// _devices is an unordered_map, so registration order must not reach the hash.
+/// Registration order must not reach the hash.
 TEST(TTDPeripheralHashTest, HashIsIndependentOfRegistrationOrder)
 {
     HashingPeripheral a(PeripheralId::TurboSound, 0x1111222233334444ull);
     HashingPeripheral b(PeripheralId::ScorpionProfROM, 0x5555666677778888ull);
 
     TTDPeripheralRegistry forward;
-    forward.Register(PeripheralId::TurboSound, &a);
-    forward.Register(PeripheralId::ScorpionProfROM, &b);
+    forward.Register(&a);
+    forward.Register(&b);
 
     TTDPeripheralRegistry reverse;
-    reverse.Register(PeripheralId::ScorpionProfROM, &b);
-    reverse.Register(PeripheralId::TurboSound, &a);
+    reverse.Register(&b);
+    reverse.Register(&a);
 
     EXPECT_EQ(forward.ComputePeripheralHash(), reverse.ComputePeripheralHash());
 }
@@ -485,8 +486,8 @@ TEST(TTDPeripheralHashTest, IdenticalStateOnDifferentIdsDoesNotCancel)
     HashingPeripheral b(PeripheralId::ScorpionProfROM, kSame);
 
     TTDPeripheralRegistry registry;
-    registry.Register(PeripheralId::TurboSound, &a);
-    registry.Register(PeripheralId::ScorpionProfROM, &b);
+    registry.Register(&a);
+    registry.Register(&b);
 
     EXPECT_NE(registry.ComputePeripheralHash(), 0u);
 }
@@ -498,7 +499,7 @@ TEST(TTDPeripheralHashTest, HashTracksDeviceStateChanges)
     HashingPeripheral device(PeripheralId::ScorpionProfROM, 0x1000ull);
 
     TTDPeripheralRegistry registry;
-    registry.Register(PeripheralId::ScorpionProfROM, &device);
+    registry.Register(&device);
 
     const uint64_t before = registry.ComputePeripheralHash();
     device.SetHash(0x2000ull);
@@ -512,3 +513,172 @@ TEST(TTDPeripheralHashTest, EmptyRegistryContributesZero)
     TTDPeripheralRegistry registry;
     EXPECT_EQ(registry.ComputePeripheralHash(), 0u);
 }
+
+// region <D23: devices are keys (d23-device-keys.md)>
+
+namespace
+{
+/// A device added after the v1 ids froze: a type past them, no v1 id, its instance given
+class KeyedPeripheral : public TTDSerializable
+{
+public:
+    KeyedPeripheral(TTDDeviceType type, std::string instance, size_t size, uint8_t fill)
+        : _state(size, fill), _type(type), _instance(std::move(instance))
+    {
+    }
+    size_t TTDStateSize() const override { return _state.size(); }
+    void TTDSaveState(uint8_t* dst) const override { std::memcpy(dst, _state.data(), _state.size()); }
+    void TTDLoadState(const uint8_t* src) override { std::memcpy(_state.data(), src, _state.size()); }
+    std::string TTDDeviceName() const override { return _instance; }
+    TTDDeviceType TTDType() const override { return _type; }
+
+    std::vector<uint8_t> _state;
+
+private:
+    TTDDeviceType _type;
+    std::string _instance;
+};
+
+constexpr auto kNewType = static_cast<TTDDeviceType>(64);   // the first type without a v1 id
+
+/// A device whose state carries memory it offers as engine regions: the registry pairs the two by object
+class RegionPeripheral : public MockPeripheral, public ITTDRegionSource
+{
+public:
+    RegionPeripheral() : MockPeripheral(16, PeripheralId::GeneralSound) {}
+    void TTDRegions(std::vector<TTDDeviceRegion>&) override {}
+    void TTDArmRegions(bool) override {}
+    bool TTDStateWithoutRegions(std::vector<uint8_t>& state) const override
+    {
+        state.assign(2, 0x5A);
+        return true;
+    }
+};
+}  // namespace
+
+/// The first device past the v1 ids records through the engine's capture: its state is kept per entry, v1 cannot
+/// take it and says which device
+TEST_F(TTDPeripheralRegistryTest, DeviceWithoutV1IdIsCapturedAndRefusedByV1)
+{
+    MockPeripheral ay(32, PeripheralId::TurboSound);
+    KeyedPeripheral next(kNewType, "next.uart0", 40, 0x77);
+    ASSERT_TRUE(registry.Register(&ay));
+    ASSERT_TRUE(registry.Register(&next));
+
+    std::string error;
+    EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
+    const std::vector<TTDDeviceEntry> entries = registry.DeviceEntries();
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[1].descriptor.type, kNewType);
+    EXPECT_EQ(entries[1].descriptor.legacyId, PeripheralId::None);
+
+    registry.CaptureStates();
+    EXPECT_EQ(registry.LastCaptureState(1), next._state);
+    EXPECT_EQ(registry.LastCaptureStateBytes(), 32u + 40u);
+
+    std::string why;
+    EXPECT_FALSE(registry.V1Recordable(why));
+    EXPECT_NE(why.find("next.uart0"), std::string::npos) << why;
+
+    std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
+    registry.CaptureAll(blobs);
+    EXPECT_EQ(blobs.size(), 1u) << "v1's blobs hold only the devices with a v1 id";
+}
+
+/// Two instances of one type sit side by side under their instance names; one key twice is refused
+TEST_F(TTDPeripheralRegistryTest, TwoInstancesOfOneTypeAreTwoDevices)
+{
+    KeyedPeripheral a(TTDDeviceType::SerialPort, "next.uart0", 8, 0x11);
+    KeyedPeripheral b(TTDDeviceType::SerialPort, "next.uart1", 8, 0x22);
+    KeyedPeripheral again(TTDDeviceType::SerialPort, "next.uart0", 8, 0x33);
+    ASSERT_TRUE(registry.Register(&a));
+    ASSERT_TRUE(registry.Register(&b));
+    EXPECT_FALSE(registry.Register(&again)) << "a key is held once";
+
+    EXPECT_EQ(registry.Find({TTDDeviceType::SerialPort, "next.uart1"}), &b);
+    EXPECT_EQ(registry.FindType(TTDDeviceType::SerialPort), &a);
+    std::string error;
+    EXPECT_FALSE(registry.CheckDeviceTable(error));
+    EXPECT_NE(error.find("next.uart0"), std::string::npos) << error;
+
+    registry.Clear();
+    ASSERT_TRUE(registry.Register(&a));
+    ASSERT_TRUE(registry.Register(&b));
+    EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
+    registry.CaptureStates();
+    EXPECT_EQ(registry.LastCaptureState(0), a._state);
+    EXPECT_EQ(registry.LastCaptureState(1), b._state);
+}
+
+/// The instance given at registration names the device (a slot card's device by its slot)
+TEST_F(TTDPeripheralRegistryTest, InstanceGivenAtRegistrationNamesTheDevice)
+{
+    MockPeripheral gs(16, PeripheralId::NeoGS);
+    ASSERT_TRUE(registry.Register(&gs, "zxbus.1.neogs"));
+    EXPECT_EQ(registry.InstanceOf(TTDDeviceType::NeoGS), "zxbus.1.neogs");
+    EXPECT_EQ(registry.DeviceEntries().at(0).descriptor.instance, "zxbus.1.neogs");
+    EXPECT_EQ(registry.FindLegacy(static_cast<uint8_t>(PeripheralId::NeoGS)), &gs);
+}
+
+/// Not recorded and the type switch (the General Sound personality)
+TEST_F(TTDPeripheralRegistryTest, NotRecordedAndUnregisterType)
+{
+    MockPeripheral gs(16, PeripheralId::GeneralSound);
+    ASSERT_TRUE(registry.Register(&gs));
+    registry.UnregisterType(TTDDeviceType::GeneralSound);
+    EXPECT_FALSE(registry.IsRegistered(TTDDeviceType::GeneralSound));
+    registry.MarkNotRecorded({TTDDeviceType::GeneralSoundLightweight, "gs-lw"});
+    ASSERT_EQ(registry.NotRecorded().size(), 1u);
+    EXPECT_EQ(registry.NotRecorded()[0].type, TTDDeviceType::GeneralSoundLightweight);
+    registry.UnregisterType(TTDDeviceType::GeneralSoundLightweight);
+    EXPECT_TRUE(registry.NotRecorded().empty());
+}
+
+/// A live snapshot carries every device, those without a v1 id too
+TEST_F(TTDPeripheralRegistryTest, LiveSnapshotCarriesDevicesWithoutV1Id)
+{
+    MockPeripheral tape(8, PeripheralId::Tape);
+    KeyedPeripheral next(kNewType, "next.thing", 8, 0x42);
+    ASSERT_TRUE(registry.Register(&tape));
+    ASSERT_TRUE(registry.Register(&next));
+    std::vector<std::vector<uint8_t>> snapshot;
+    registry.SaveLive(snapshot);
+    tape.SetState(std::vector<uint8_t>(8, 0x99));
+    next._state.assign(8, 0);
+    registry.LoadLive(snapshot);
+    EXPECT_EQ(tape.GetState(), std::vector<uint8_t>(8, 0));
+    EXPECT_EQ(next._state, std::vector<uint8_t>(8, 0x42));
+}
+
+/// A region source that is the registered device itself gives the engine its state without the region memory
+TEST_F(TTDPeripheralRegistryTest, RegionSourcePairsWithItsDevice)
+{
+    RegionPeripheral gs;
+    ASSERT_TRUE(registry.Register(&gs));
+    registry.RegisterRegionSource(&gs);
+    const std::vector<TTDDeviceEntry> entries = registry.DeviceEntries();
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(entries[0].withoutRegions, &gs);
+    EXPECT_EQ(entries[0].descriptor.stateSize, 2u);
+    registry.CaptureStates();
+    EXPECT_EQ(registry.LastCaptureState(0), std::vector<uint8_t>(2, 0x5A));
+}
+
+/// v1 blobs as device states: under the live device's key
+TEST_F(TTDPeripheralRegistryTest, V1BlobsBecomeStatesByLiveKey)
+{
+    MockPeripheral gs(16, PeripheralId::NeoGS);
+    ASSERT_TRUE(registry.Register(&gs, "zxbus.2.neogs"));
+    std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
+    registry.CaptureAll(blobs);
+    const std::vector<uint8_t> tape(4, 1);
+    blobs[static_cast<uint8_t>(PeripheralId::Tape)] =
+        TTDPeripheralRegistry::EncodeBlob(static_cast<uint8_t>(PeripheralId::Tape), tape.data(), tape.size());
+    const TTDDeviceStates states = registry.StatesOfV1Blobs(blobs);
+    ASSERT_EQ(states.size(), 2u);
+    EXPECT_EQ(states.count({TTDDeviceType::NeoGS, "zxbus.2.neogs"}), 1u);
+    EXPECT_EQ(states.at({TTDDeviceType::Tape, ""}), tape);
+    EXPECT_EQ(TTDPeripheralRegistry::V1MaskOf(TTDPeripheralRegistry::KeysOfV1Mask(0x801)), 0x801u);
+}
+
+// endregion </D23>

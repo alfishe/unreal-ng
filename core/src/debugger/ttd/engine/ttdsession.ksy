@@ -145,6 +145,9 @@ types:
     seq:
       - id: id
         type: u2
+        doc: |
+          TTDRegionId: a kind's memory (0x00-0x3FFF); a further instance of that kind 0x4000 + n x 0x100 + the
+          kind's id (D23); device states from 0x8000 (one per device-table entry)
       - id: name
         type: str_vlq
       - id: owner_type
@@ -169,7 +172,7 @@ types:
         type: str_vlq
       - id: legacy_id
         type: u1
-        doc: the schema-1 peripheral id (PeripheralId)
+        doc: the schema-1 peripheral id (PeripheralId, frozen at 0-63); 0xFF = none (a device added after the freeze, D23)
       - id: layout_version
         type: u2
       - id: state_size

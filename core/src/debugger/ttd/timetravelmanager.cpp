@@ -344,7 +344,7 @@ bool TimeTravelManager::StartRecording()
     _sourcePath.clear();
     _capturedAtUnixMs = 0;
     _loadedRomSignature = 0;
-    _loadedNotRecordedMask = 0;
+    _loadedNotRecorded.clear();
     _loadedRecordedBy.clear();
     _liveRomSignature = ComputeRomSignature();  // the ROM this session relies on
 
@@ -534,7 +534,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     _capturedAtUnixMs = 0;
     _sessionModelId = 0;
     _loadedRomSignature = 0;
-    _loadedNotRecordedMask = 0;
+    _loadedNotRecorded.clear();
     _loadedRecordedBy.clear();
     _coverageIndex.Clear();
     if (_context)
@@ -801,10 +801,13 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
         info.machine.modelId = info.modelId;
         info.machine.ramPageBound = _modelRamPages;
         info.machine.romSignature = _loadedFromFile ? _loadedRomSignature : _liveRomSignature;
+        uint64_t peripheralMask = 0;
         for (const auto& blob : _timeline.front().peripheralBlobs)
             if (blob.first < 64)
-                info.machine.peripheralMask |= uint64_t(1) << blob.first;
-        info.machine.notRecordedMask = NotRecordedMask();
+                peripheralMask |= uint64_t(1) << blob.first;
+        info.machine.devices = DevicesOfV1Mask(peripheralMask);
+        for (const TTDDeviceKey& key : NotRecorded())
+            info.machine.notRecordedDevices.push_back({key, PeripheralId::None});
         ttd::DescribeRecordedMachine(info.machine);
     }
     info.recordedBy = _loadedFromFile ? _loadedRecordedBy : std::string();
@@ -1725,7 +1728,21 @@ bool TimeTravelManager::RegisterModelPeripherals(std::string* err)
 {
     // The device set is enumerated in one place (ttdmachineperipherals.cpp),
     // shared with MachineStateTransfer. On failure the registry is left empty.
-    return RegisterMachinePeripherals(_context, _peripherals, _ownedPeripherals, err);
+    if (!RegisterMachinePeripherals(_context, _peripherals, _ownedPeripherals, err))
+        return false;
+    // v1 keeps one blob per v1 id: a device added after the freeze (no v1 id) or two devices under one id cannot be
+    // recorded here (D23): the engine records them
+    std::string why;
+    if (!_peripherals.V1Recordable(why))
+    {
+        MLOGERROR("TimeTravelManager::RegisterModelPeripherals - %s", why.c_str());
+        if (err)
+            *err = why;
+        _peripherals.Clear();
+        _ownedPeripherals.clear();
+        return false;
+    }
+    return true;
 }
 
 void TimeTravelManager::ReleaseModelPeripherals()
@@ -2598,9 +2615,9 @@ void TimeTravelManager::BeginToolEdit()
     _toolEditOpen = _state == TTDSessionState::Recording;
     if (!_toolEditOpen)
         return;
-    for (const auto& [id, device] : _peripherals.Devices())
-        if (device && device->TTDStateSize() != 0)
-            device->TTDSaveStateTo(_toolEditBefore[id]);
+    for (const TTDRegistryEntry& e : _peripherals.Entries())
+        if (e.device && e.legacyId != PeripheralId::None && e.device->TTDStateSize() != 0)
+            e.device->TTDSaveStateTo(_toolEditBefore[static_cast<uint8_t>(e.legacyId)]);
 }
 
 void TimeTravelManager::EndToolEdit(const char* source)
@@ -2622,8 +2639,7 @@ void TimeTravelManager::EndToolEdit(const char* source)
             if (_dirtyTracker->IsDirty(page))
                 PutEditRecord(payload, kEditRamPage, 0, page, _memory->RAMPageAddress(page), 0x4000);
     std::vector<TTDDeviceRegion> regions;
-    for (ITTDRegionSource* src : _peripherals.RegionSources())
-        src->TTDRegions(regions);
+    _peripherals.CollectRegions(regions);
     for (const TTDDeviceRegion& r : regions)
     {
         if (!r.desc.memory)
@@ -2638,10 +2654,12 @@ void TimeTravelManager::EndToolEdit(const char* source)
         }
     }
     std::vector<uint8_t> after;
-    for (const auto& [id, device] : _peripherals.Devices())
+    for (const TTDRegistryEntry& e : _peripherals.Entries())
     {
-        if (!device || device->TTDStateSize() == 0)
+        TTDSerializable* device = e.device;
+        if (!device || e.legacyId == PeripheralId::None || device->TTDStateSize() == 0)
             continue;
+        const auto id = static_cast<uint8_t>(e.legacyId);
         device->TTDSaveStateTo(after);
         const auto it = _toolEditBefore.find(id);
         if (it == _toolEditBefore.end() || it->second != after)
@@ -2681,10 +2699,9 @@ void TimeTravelManager::ApplyToolEdit(const std::vector<uint8_t>& payload)
         }
         else if (kind == kEditDeviceState)
         {
-            const auto it = _peripherals.Devices().find(static_cast<uint8_t>(id));
-            if (it != _peripherals.Devices().end() && it->second &&
-                (it->second->TTDStateSize() == length || it->second->TTDVariableSize()))
-                it->second->TTDLoadState(bytes);
+            TTDSerializable* device = id <= 0xFF ? _peripherals.FindLegacy(static_cast<uint8_t>(id)) : nullptr;
+            if (device && (device->TTDStateSize() == length || device->TTDVariableSize()))
+                device->TTDLoadState(bytes);
         }
     }
     if (_memory)
@@ -3919,8 +3936,7 @@ std::vector<TTDRegionDesc> TimeTravelManager::LiveRegions() const
     ram.memory = _memory ? _memory->RAMPageAddress(0) : nullptr;
     regions.push_back(ram);
     std::vector<TTDDeviceRegion> device;
-    for (ITTDRegionSource* source : _peripherals.RegionSources())
-        source->TTDRegions(device);
+    _peripherals.CollectRegions(device);
     for (const TTDDeviceRegion& r : device)
         regions.push_back(r.desc);
     return regions;
@@ -3994,8 +4010,7 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
         // Device memory as further regions (NeoGS RAM and flash, ...)
         ArmShadowRegions(false);
         _shadowDeviceRegions.clear();
-        for (ITTDRegionSource* source : _peripherals.RegionSources())
-            source->TTDRegions(_shadowDeviceRegions);
+        _peripherals.CollectRegions(_shadowDeviceRegions);
         std::vector<TTDRegionDesc> regions = {ram};
         for (const TTDDeviceRegion& r : _shadowDeviceRegions)
             regions.push_back(r.desc);
@@ -4070,24 +4085,24 @@ void TimeTravelManager::FeedShadow(const TTDCheckpoint& out, bool baseline)
     // its state without that memory
     std::deque<std::vector<uint8_t>> stripped;   // stable addresses while it grows
     in.deviceStateBytes = _peripherals.LastCaptureStateBytes();
-    std::array<const std::vector<uint8_t>*, 256> without{};
-    for (ITTDRegionSource* source : _peripherals.RegionSources())
+    const std::vector<TTDRegistryEntry>& entries = _peripherals.Entries();
+    for (size_t i = 0; i < entries.size(); ++i)
     {
-        uint8_t id = 0;
-        stripped.emplace_back();
-        if (!source->TTDStateWithoutRegions(id, stripped.back()) || !out.peripheralBlobs.count(id))
-        {
-            stripped.pop_back();
+        const TTDRegistryEntry& e = entries[i];
+        if (e.legacyId == PeripheralId::None || !out.peripheralBlobs.count(static_cast<uint8_t>(e.legacyId)))
             continue;
+        const int32_t device = engine.DeviceIndex(e.key);
+        if (device < 0)
+            continue;
+        const std::vector<uint8_t>* raw = &_peripherals.LastCaptureState(i);
+        stripped.emplace_back();
+        if (e.regions && e.regions->TTDStateWithoutRegions(stripped.back()))
+        {
+            // The engine serializes the state without the region memory
+            in.deviceStateBytes = in.deviceStateBytes - raw->size() + stripped.back().size();
+            raw = &stripped.back();
         }
-        without[id] = &stripped.back();
-        // The engine serializes the state without the region memory
-        in.deviceStateBytes = in.deviceStateBytes - _peripherals.LastCaptureStateBytes(id) + stripped.back().size();
-    }
-    for (const auto& [id, blob] : out.peripheralBlobs)
-    {
-        const std::vector<uint8_t>& raw = without[id] ? *without[id] : _peripherals.LastCaptureState(id);
-        in.deviceStates.push_back({id, raw.data(), raw.size()});
+        in.deviceStates.push_back({static_cast<uint32_t>(device), raw->data(), raw->size()});
     }
     auto addPage = [&](uint16_t page) {
         const uint8_t* bytes = _memory->RAMPageAddress(page);
@@ -4786,7 +4801,7 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
         flags |= ttd::dump::kFlagsHasNetInputs;
     // Devices fitted but deliberately not recorded (the lightweight GS): named
     // in the header, only when there are any
-    const uint64_t notRecordedMask = NotRecordedMask();
+    const uint64_t notRecordedMask = TTDPeripheralRegistry::V1MaskOf(NotRecorded());
     if (notRecordedMask != 0)
         flags |= ttd::dump::kFlagsHasNotRecordedMask;
     if (!WritePod(out, flags, err)) return false;
@@ -5430,14 +5445,15 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
     // session (D38)
     if (!journalsOnly && !stagedTimeline.empty() && _context)
     {
-        const auto& blobs = stagedTimeline.front().peripheralBlobs;
+        const TTDDeviceStates states = _peripherals.StatesOfV1Blobs(stagedTimeline.front().peripheralBlobs);
+        const SlotManager::TtdDeviceSet recorded =
+            SlotManager::TtdDeviceSet::Of(states, TTDPeripheralRegistry::KeysOfV1Mask(notRecordedMask));
         std::string why;
         bool matches = true;
         if (_context->pSlotManager)
-            matches = _context->pSlotManager->TtdSessionMatches(blobs, notRecordedMask, _peripherals, why);
+            matches = _context->pSlotManager->TtdSessionMatches(recorded, states, _peripherals, why);
         else
-            matches = SlotManager::TtdSessionMatchesWithoutSlots(
-                _context, SlotManager::TtdDeviceSet::Of(blobs, notRecordedMask), blobs, _peripherals, why);
+            matches = SlotManager::TtdSessionMatchesWithoutSlots(_context, recorded, states, _peripherals, why);
         if (!matches)
         {
             err = why;
@@ -5715,7 +5731,7 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
     _capturedAtUnixMs = capturedAtMs;
     _sessionModelId   = modelId;
     _loadedRomSignature = romSignature;
-    _loadedNotRecordedMask = notRecordedMask;
+    _loadedNotRecorded = TTDPeripheralRegistry::KeysOfV1Mask(notRecordedMask);
     _loadedRecordedBy = emulatorId;
 
     // --- Finalize state ---

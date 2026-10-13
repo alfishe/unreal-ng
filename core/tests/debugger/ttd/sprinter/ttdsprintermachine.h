@@ -211,8 +211,7 @@ protected:
     static std::vector<uint8_t> LiveDeviceState(ttd::TTDSerializable* device)
     {
         std::vector<uint8_t> state;
-        uint8_t id = 0;
-        if (auto* source = dynamic_cast<ttd::ITTDRegionSource*>(device); source && source->TTDStateWithoutRegions(id, state))
+        if (auto* source = dynamic_cast<ttd::ITTDRegionSource*>(device); source && source->TTDStateWithoutRegions(state))
             return state;
         device->TTDSaveStateTo(state);
         return state;
@@ -243,9 +242,9 @@ protected:
         {
             const uint8_t id = static_cast<uint8_t>(entry.descriptor.legacyId);
             std::vector<uint8_t> recorded;
-            if (!engine.DeviceState(index, id, recorded))
+            if (!engine.DeviceStateOfV1Id(index, id, recorded))
                 continue;
-            ttd::TTDSerializable* device = _ttd->GetPeripheralRegistry().GetDevice(static_cast<ttd::PeripheralId>(id));
+            ttd::TTDSerializable* device = _ttd->GetPeripheralRegistry().FindLegacy(static_cast<ttd::PeripheralId>(id));
             ASSERT_NE(device, nullptr) << where << ": device " << int(id) << " missing";
             const std::vector<uint8_t> live = LiveDeviceState(device);
             ASSERT_EQ(live.size(), recorded.size()) << where << ": device " << int(id);

@@ -158,7 +158,7 @@ public:
     Z80NEngine* Engine() { return _engine.get(); }
 
     /// The TTD state of the Next (PeripheralId::NextState, nextstatecodec.h)
-    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
 
 private:

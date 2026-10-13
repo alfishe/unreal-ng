@@ -127,7 +127,7 @@ protected:
             for (const auto& [id, blob] : want->peripheralBlobs)
             {
                 std::vector<uint8_t> rebuilt;
-                ASSERT_TRUE(_engine.DeviceState(i, id, rebuilt)) << "device " << int(id) << ", checkpoint " << i;
+                ASSERT_TRUE(_engine.DeviceStateOfV1Id(i, id, rebuilt)) << "device " << int(id) << ", checkpoint " << i;
                 std::vector<uint8_t> full = ttd::TTDPeripheralRegistry::DecodeBlob(id, blob);
                 if (rebuilt == full)
                     continue;
@@ -205,9 +205,9 @@ TEST_P(TimeTravelManager_ShadowModels_Test, EngineRestoresEveryDeviceAsV1)
     const ttd::TTDPeripheralRegistry& registry = _v1->GetPeripheralRegistry();
     auto states = [&]() {
         std::map<uint8_t, std::vector<uint8_t>> out;
-        for (const auto& [id, device] : registry.Devices())
-            if (device && device->TTDStateSize() != 0)
-                device->TTDSaveStateTo(out[id]);
+        for (const ttd::TTDRegistryEntry& e : registry.Entries())
+            if (e.device && e.device->TTDStateSize() != 0)
+                e.device->TTDSaveStateTo(out[static_cast<uint8_t>(e.legacyId)]);
         return out;
     };
     for (size_t i : {size_t(5), size_t(20), _engine.CheckpointCount() - 1})

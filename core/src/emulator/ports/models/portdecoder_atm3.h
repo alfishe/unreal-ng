@@ -145,7 +145,7 @@ public:
     void EjectSdCard();
 
     /// ATM paging + the SD card's protocol state
-    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const override;
     /// The mouse ports read the AVR's PS/2 mouse registers
     bool PeekMouseRegister(uint8_t reg, uint8_t& value) const override
     {

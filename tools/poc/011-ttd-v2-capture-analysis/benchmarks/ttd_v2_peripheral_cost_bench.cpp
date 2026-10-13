@@ -170,7 +170,7 @@ static void BM_TTD_Registry_CaptureAll_Full(benchmark::State& state)
     BenchmarkPeripheral peripheral(stateSize, ttd::PeripheralId::GeneralSound);
     peripheral.FillRandom(42);
 
-    registry.Register(ttd::PeripheralId::GeneralSound, &peripheral);
+    registry.Register(&peripheral);
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
 
@@ -221,7 +221,7 @@ static void BM_TTD_Registry_CaptureAll_SmallChange(benchmark::State& state)
     BenchmarkPeripheral peripheral(stateSize, ttd::PeripheralId::GeneralSound);
     peripheral.FillRandom(42);
 
-    registry.Register(ttd::PeripheralId::GeneralSound, &peripheral);
+    registry.Register(&peripheral);
 
     // Capture the untouched baseline (full_bytes reference)
     std::unordered_map<uint8_t, std::vector<uint8_t>> prevBlobs;
@@ -289,7 +289,7 @@ static void BM_TTD_Registry_RestoreAll_Full(benchmark::State& state)
     BenchmarkPeripheral peripheral(stateSize, ttd::PeripheralId::GeneralSound);
     peripheral.FillRandom(42);
 
-    registry.Register(ttd::PeripheralId::GeneralSound, &peripheral);
+    registry.Register(&peripheral);
 
     // Capture state
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
@@ -332,7 +332,7 @@ static void BM_TTD_Registry_RestoreAll_SmallChange(benchmark::State& state)
     BenchmarkPeripheral peripheral(stateSize, ttd::PeripheralId::GeneralSound);
     peripheral.FillRandom(42);
 
-    registry.Register(ttd::PeripheralId::GeneralSound, &peripheral);
+    registry.Register(&peripheral);
 
     // Mutate and capture
     peripheral.MutatePercent(changePct, 123);
@@ -381,10 +381,10 @@ static void BM_TTD_Registry_MultiPeripheral(benchmark::State& state)
     tape.FillRandom(3);
     covox.FillRandom(4);
 
-    registry.Register(ttd::PeripheralId::TurboSound, &turboSound);
-    registry.Register(ttd::PeripheralId::BetaDisk, &betaDisk);
-    registry.Register(ttd::PeripheralId::Tape, &tape);
-    registry.Register(ttd::PeripheralId::Covox, &covox);
+    registry.Register(&turboSound);
+    registry.Register(&betaDisk);
+    registry.Register(&tape);
+    registry.Register(&covox);
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
 
@@ -425,7 +425,7 @@ static void BM_TTD_GeneralSound_CompressionEffectiveness(benchmark::State& state
     BenchmarkPeripheral gs(kGSSramSize, ttd::PeripheralId::GeneralSound);
     gs.FillRandom(42);
 
-    registry.Register(ttd::PeripheralId::GeneralSound, &gs);
+    registry.Register(&gs);
 
     // Capture full baseline
     std::unordered_map<uint8_t, std::vector<uint8_t>> fullBlobs;

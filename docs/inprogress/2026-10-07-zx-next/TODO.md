@@ -235,7 +235,7 @@ NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.
 - [x] P6 TTD: the NEXTREG instruction is in the TTD port-write journal as OUT #243B / OUT #253B (option a)
 - [x] P6 TTD `NextState` blob (id 62): the board, memory map, video, sprites, copper, DMA, CTC, interrupts, I2C, Multiface and DivMMC latches restore on a seek
 - [x] TTD `NextState` v2 carries the audio chips and DACs and the SD cards' protocol state; blob `NextSystemArea` (63) the DivMMC RAM (128 KB per checkpoint until the v2 engine takes it as a region)
-- [ ] TTD: PeripheralId 63 was the last id the 64-bit peripheral mask (`TTDFileInfo::peripheralMask`) can hold; the next device needs a wider mask first
+- [x] TTD: PeripheralId 63 was the last id the 64-bit peripheral mask (`TTDFileInfo::peripheralMask`) could hold. Resolved by D23 carried through (2026-10-13, [d23-device-keys.md](../2026-09-25-ttd-v2-migration/d23-device-keys.md)): `PeripheralId` is frozen, a new device declares a `TTDDeviceType` (64 and on) only, a second instance of a kind takes only an instance name (the UARTs: `SerialPort` with `next.uart0` / `next.uart1`); v1 cannot record such a device
 - [x] TTD: the system area (ROM pages 0-7 the firmware loads in config mode, DivMMC RAM) travels as blob `NextSystemArea` (63); measured cheap (unchanged pieces are stored once)
 - [ ] TTD: the UARTs wait for the devices
 - [x] P6 magic output port (`state/next/magic-port`, `POST /next/magic-port`, every plane; the console is a bounded ring, off by default)

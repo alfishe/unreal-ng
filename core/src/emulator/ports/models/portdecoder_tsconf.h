@@ -106,7 +106,7 @@ public:
     /// (docs/inprogress/2026-10-02-tsconf-zifi/tdd.md)
     NetworkCapabilities DescribeNetwork() override;
 
-    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const override;
     /// The mouse ports read the AVR's PS/2 mouse registers
     bool PeekMouseRegister(uint8_t reg, uint8_t& value) const override
     {

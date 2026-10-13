@@ -1251,17 +1251,17 @@ PortDecoder::NetworkCapabilities PortDecoder_TSConf::DescribeNetwork()
     return caps;
 }
 
-std::vector<ttd::PeripheralId> PortDecoder_TSConf::GetTTDModelStateIds() const
+std::vector<ttd::TTDDeviceType> PortDecoder_TSConf::GetTTDModelStateTypes() const
 {
-    std::vector<ttd::PeripheralId> ids = {ttd::PeripheralId::TsConfPaging, ttd::PeripheralId::EvoSdCard,
-                                          ttd::PeripheralId::Ds12887, ttd::PeripheralId::EvoPs2,
-                                          ttd::PeripheralId::EvoMouse, ttd::PeripheralId::EvoAvrVolatile,
-                                          ttd::PeripheralId::EvoFlash};
+    std::vector<ttd::TTDDeviceType> ids = {ttd::TTDDeviceType::TsConfPaging, ttd::TTDDeviceType::EvoSdCard,
+                                          ttd::TTDDeviceType::Ds12887, ttd::TTDDeviceType::EvoPs2,
+                                          ttd::TTDDeviceType::EvoMouse, ttd::TTDDeviceType::EvoAvrVolatile,
+                                          ttd::TTDDeviceType::EvoFlash};
     // The VDAC2 card's FT812: its memory first, then the card and chip state (restore order = id order)
     if (_vdac2 && _vdac2->IsReady())
     {
-        ids.push_back(ttd::PeripheralId::Vdac2Memory);
-        ids.push_back(ttd::PeripheralId::Vdac2);
+        ids.push_back(ttd::TTDDeviceType::Vdac2Memory);
+        ids.push_back(ttd::TTDDeviceType::Vdac2);
     }
     return ids;
 }

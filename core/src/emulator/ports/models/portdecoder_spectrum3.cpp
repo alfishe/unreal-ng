@@ -461,12 +461,12 @@ void PortDecoder_Spectrum3::UpdateModelMemoryBanks()
     memory.SetRAMPageToBank3(state.p7FFD & 0b0000'0111);
 }
 
-std::vector<ttd::PeripheralId> PortDecoder_Spectrum3::GetTTDModelStateIds() const
+std::vector<ttd::TTDDeviceType> PortDecoder_Spectrum3::GetTTDModelStateTypes() const
 {
     // #1FFD is +2A/+3-specific: not in the model-agnostic TTDChipsetState
     if (_context->pUPD765 != nullptr)
-        return { ttd::PeripheralId::Plus3Paging, ttd::PeripheralId::Upd765 };
-    return { ttd::PeripheralId::Plus3Paging };
+        return { ttd::TTDDeviceType::Plus3Paging, ttd::TTDDeviceType::Upd765 };
+    return { ttd::TTDDeviceType::Plus3Paging };
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Spectrum3::CreateTTDSerializers() const

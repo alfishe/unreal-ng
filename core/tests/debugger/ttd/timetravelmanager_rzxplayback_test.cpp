@@ -137,7 +137,7 @@ TEST(TimeTravelManager_RzxPlayback_Test, SeekBackLandsOnTheStraightPlay)
     ASSERT_NE(m.emulator, nullptr);
     m.Frames(20);   // into the recording
     ASSERT_TRUE(m.ttd->StartRecording());
-    ASSERT_TRUE(m.ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::RzxPlayback));
+    ASSERT_TRUE(m.ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::RzxPlayback));
 
     std::vector<std::pair<ttd::TTDTimePoint, MachineState>> straight;
     for (unsigned i = 0; i < 120; ++i)
