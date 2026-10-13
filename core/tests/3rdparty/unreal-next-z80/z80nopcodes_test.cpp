@@ -10,6 +10,7 @@
 
 #include <gtest/gtest.h>
 
+#include <bit>
 #include <string>
 #include <vector>
 
@@ -265,7 +266,7 @@ TEST(Z80nOpcodes_Test, TestSetsTheFlagsOfAndAndKeepsA)
         EXPECT_EQ(f.A(), c.a);
         const uint8_t r = c.a & c.n;
         uint8_t expect = static_cast<uint8_t>((r & (kS | kY | kX)) | kH | (r == 0 ? kZ : 0));
-        int bits = __builtin_popcount(r);
+        const int bits = std::popcount(r);
         if ((bits & 1) == 0)
             expect |= kPv;
         EXPECT_EQ(f.F(), expect) << std::hex << +c.a << " & " << +c.n;

@@ -583,10 +583,10 @@ SymbolEncodeResult SjasmplusLstCodec::Encode(const SymbolFile& source, const Sym
             folded += IsPaged(s);
             std::string n = std::to_string(++number);
             n.insert(0, width - n.size(), ' ');
-            std::string source = s.kind == SymbolKind::Const ? s.name + " EQU #" + Hex(*v, *v > 0xFFFF ? 8 : 4) : s.name + ":";
+            std::string entry = s.kind == SymbolKind::Const ? s.name + " EQU #" + Hex(*v, *v > 0xFFFF ? 8 : 4) : s.name + ":";
             if (!s.comment.empty())
-                source += " ; " + s.comment;
-            out += n + "    " + (s.kind == SymbolKind::Const ? std::string("0000") : Hex(*v, 4)) + std::string(14, ' ') + source + nl;
+                entry += " ; " + s.comment;
+            out += n + "    " + (s.kind == SymbolKind::Const ? std::string("0000") : Hex(*v, 4)) + std::string(14, ' ') + entry + nl;
             ++result.written;
         }
     out += "# file closed: symbols.asm" + nl;

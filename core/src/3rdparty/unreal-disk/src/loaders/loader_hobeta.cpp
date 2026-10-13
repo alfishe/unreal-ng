@@ -202,7 +202,7 @@ bool LoaderHobeta::addFile(DiskImage* diskImage, const TRDOSDirectoryEntryBase& 
     }
 
     const uint16_t firstLocator = static_cast<uint16_t>(volumeInfo->firstFreeTrack * TRD_SECTORS_PER_TRACK + volumeInfo->firstFreeSector);
-    const uint32_t endLocator = static_cast<uint32_t>(firstLocator) + sectors;
+    const uint32_t endLocator = static_cast<uint32_t>(firstLocator + sectors);
     if (endLocator > 0xFFFF)
     {
         warnings.push_back("Hobeta inject refused: first free sector in the volume sector is out of range");
@@ -286,7 +286,7 @@ bool LoaderHobeta::exportFile(DiskImage* diskImage, const TRDOSDirectoryEntry& e
     // Validate the chain before writing anything
     for (size_t n = 0; n < sectors; n++)
     {
-        const uint32_t locator = static_cast<uint32_t>(firstLocator) + n;
+        const uint32_t locator = static_cast<uint32_t>(firstLocator + n);
         if (locator > 0xFFFF || !sectorForLocator(diskImage, static_cast<uint16_t>(locator)))
         {
             warnings.push_back(StringHelper::Format("Hobeta export refused: file '%s' sector chain leaves the TR-DOS geometry at track %u sector %u",

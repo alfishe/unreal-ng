@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "_helpers/fatsourceimage.h"
+#include "_helpers/sparsefile.h"
 #include "_helpers/scratchfolder.h"
 #include "emulator/io/storage/chd/chdwriter.h"
 #include "emulator/io/storage/fat/fatsynthvolume.h"
@@ -130,9 +131,7 @@ TEST(ComposeFat_Test, IntoFat16TooBigFails)
     Sources s;
     s.Make();
     const auto big = s.root.File("work/big.bin", "");
-    std::error_code ec;
-    std::filesystem::resize_file(big, 2200ull * 1024 * 1024, ec);  // sparse: nothing is written
-    ASSERT_FALSE(ec) << ec.message();
+    ASSERT_TRUE(testfiles::ResizeSparse(big, 2200ull * 1024 * 1024));  // sparse: nothing is written
     std::unique_ptr<IBlockDevice> volume;
     CompositeInfo info;
     const MediaResult result = CompositeMediumFactory::Build(s.Descriptor(WithFs("fat16")), {}, volume, info);

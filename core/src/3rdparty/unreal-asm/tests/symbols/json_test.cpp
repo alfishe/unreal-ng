@@ -20,7 +20,8 @@ json::Value Parsed(const std::string& text)
 
 TEST(Json_Test, ValuesRoundTrip)
 {
-    const std::string text = R"({"b":true,"n":null,"i":-9007199254740993,"r":1.5,"s":"a\"\\\n\u0001","a":[1,[],{}],"o":{"z":1,"a":2}})";
+    // The \u0001 outside the raw literal: MSVC 2019 expands \u inside one
+    const std::string text = R"({"b":true,"n":null,"i":-9007199254740993,"r":1.5,"s":"a\"\\\n)" "\\u0001" R"(","a":[1,[],{}],"o":{"z":1,"a":2}})";
     const json::Value v = Parsed(text);
     EXPECT_EQ(v.Get("i")->integer, -9007199254740993LL);   // exact past a double's 53 bits
     EXPECT_DOUBLE_EQ(v.Get("r")->real, 1.5);
@@ -31,8 +32,9 @@ TEST(Json_Test, ValuesRoundTrip)
 
 TEST(Json_Test, UnicodeEscapes)
 {
-    EXPECT_EQ(Parsed(R"("\u0410\u00e9")").string, "\xD0\x90\xC3\xA9");
-    EXPECT_EQ(Parsed(R"("\ud83d\ude00")").string, "\xF0\x9F\x98\x80");   // a surrogate pair
+    // Escaped, not raw: MSVC 2019 expands \u inside a raw literal (and refuses a lone surrogate there)
+    EXPECT_EQ(Parsed("\"\\u0410\\u00e9\"").string, "\xD0\x90\xC3\xA9");
+    EXPECT_EQ(Parsed("\"\\ud83d\\ude00\"").string, "\xF0\x9F\x98\x80");   // a surrogate pair
     EXPECT_EQ(Parsed("\"\xD0\x90\"").string, "\xD0\x90");                 // raw UTF-8 passes through
     EXPECT_EQ(json::Quote("\xD0\x90"), "\"\xD0\x90\"");
 }

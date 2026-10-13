@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/sparsefile.h"
 #include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/neogstestsdcard.h"
@@ -331,7 +332,7 @@ TEST_F(NeoGSAcceptance_Test, TestEmuNgsPassesWithAnSdCard)
     {
         std::ofstream create(sparse, std::ios::binary);
     }
-    std::filesystem::resize_file(sparse, 17ull * 1024 * 1024 * 1024);
+    ASSERT_TRUE(testfiles::ResizeSparse(sparse, 17ull * 1024 * 1024 * 1024));
     ASSERT_TRUE(createMachineWithSdPath(4096, sparse));
     auto* ngs = dynamic_cast<SoundChip_NeoGS*>(_emulator->GetContext()->pSoundManager->getGeneralSound());
     ASSERT_NE(ngs, nullptr);
