@@ -102,7 +102,7 @@ protected:
             FDD* fdd = _fdc->getDrive();
             if (fdd)
             {
-                _diskImage = std::make_unique<DiskImage>(80, 2);
+                _diskImage = std::make_unique<DiskImage>(uint8_t{80}, uint8_t{2});
                 // Format using LoaderTRD for proper TR-DOS structure
                 // For now, just create empty tracks
                 fdd->insertDisk(_diskImage.get());
@@ -856,7 +856,7 @@ TEST_F(TRDOSIntegration_test, RealExecution_DirectFormat_CollectsEvents)
             {
                 fdd->ejectDisk();
             }
-            _diskImage = std::make_unique<DiskImage>(80, 2);
+            _diskImage = std::make_unique<DiskImage>(uint8_t{80}, uint8_t{2});
             fdd->insertDisk(_diskImage.get());
         }
     }

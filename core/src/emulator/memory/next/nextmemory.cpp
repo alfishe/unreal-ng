@@ -221,7 +221,7 @@ uint8_t NextMemory::EffectiveRom() const
         case 1:
             return 0;
         case 3:
-            return (lock1 || lock0) ? static_cast<uint8_t>((lock1 << 1) | lock0) : _rom;
+            return (lock1 || lock0) ? static_cast<uint8_t>((static_cast<int>(lock1) << 1) | static_cast<int>(lock0)) : _rom;
         default:
             return (lock1 || lock0) ? static_cast<uint8_t>(lock1) : static_cast<uint8_t>(_rom & 1);
     }

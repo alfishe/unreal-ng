@@ -71,10 +71,12 @@ namespace
         const size_t sizes[] = {0, 1, 511, 512, 513, 4095, 4096, 4097, 65536, 200000};
         for (size_t size : sizes)
             f.File("size-" + std::to_string(size) + ".bin", Pattern(size, static_cast<uint8_t>(size)));
+        // The name with a tail first: NTFS gives "read me.txt" the 8.3 alias README~1.TXT, and a file created under
+        // that name afterwards would be the same file (the folder one file short, every hash of this corpus off)
+        f.File("rEaDmE~1.TXT", "tilde");
         f.File("README.TXT", "upper");
         f.File("ReadMe.txt.bak", "mixed");
         f.File("read me.txt", "space");
-        f.File("rEaDmE~1.TXT", "tilde");
         f.File("x+y=z;[1].txt", "illegal short-name characters");
         f.File("Ünïcödé.dat", "latin");
     }

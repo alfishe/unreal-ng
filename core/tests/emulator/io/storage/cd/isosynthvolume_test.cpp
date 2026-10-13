@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "_helpers/scratchfolder.h"
+#include "_helpers/sparsefile.h"
 #include "emulator/io/storage/cd/cdimage.h"
 #include "emulator/io/storage/cd/iso9660reader.h"
 #include "emulator/io/storage/cd/isosynthvolume.h"
@@ -218,9 +219,7 @@ TEST(IsoSynthVolume_Test, MultiExtentFile)
 {
     IsoCase c;
     const auto big = c.folder.File("big.bin", "");
-    std::error_code ec;
-    std::filesystem::resize_file(big, 4400ull * 1024 * 1024, ec);  // sparse: nothing is written
-    ASSERT_FALSE(ec) << ec.message();
+    ASSERT_TRUE(testfiles::ResizeSparse(big, 4400ull * 1024 * 1024));  // sparse: nothing is written
     ASSERT_TRUE(c.Build());
     Iso9660Reader joliet;
     ASSERT_TRUE(joliet.Open(*c.disc));

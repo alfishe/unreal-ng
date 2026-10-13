@@ -257,9 +257,9 @@ TEST(MachineStateHash_Test, Snapshot_HostSideFieldsExcluded)
     Z80State z2 = z1;
 
     // Mutate everything host-side. These should be invisible to CaptureSnapshot.
-    z2.FastMemIf = reinterpret_cast<const MemoryInterface*>(0xDEADBEEF);
-    z2.DbgMemIf  = reinterpret_cast<const MemoryInterface*>(0xCAFEBABE);
-    z2.MemIf     = reinterpret_cast<const MemoryInterface*>(0x0000BEEF);
+    z2.FastMemIf = reinterpret_cast<const MemoryInterface*>(static_cast<uintptr_t>(0xDEADBEEF));
+    z2.DbgMemIf  = reinterpret_cast<const MemoryInterface*>(static_cast<uintptr_t>(0xCAFEBABE));
+    z2.MemIf     = reinterpret_cast<const MemoryInterface*>(static_cast<uintptr_t>(0x0000BEEF));
     z2.trace_curs = 99999;
     z2.trace_top = 88888;
     z2.trace_mode = 7;

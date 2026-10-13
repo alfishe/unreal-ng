@@ -91,7 +91,7 @@ bool PutImageFile(const std::string& path, const std::string& output, const cont
     }
     else
     {
-        disk = std::make_unique<unrealdisk::DiskImage>(80, 2);
+        disk = std::make_unique<unrealdisk::DiskImage>(uint8_t{80}, uint8_t{2});
         unrealdisk::LoaderTRD trd({}, path);
         if (!trd.format(disk.get()))
         {

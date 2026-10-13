@@ -1217,8 +1217,8 @@ private:
             if (left->kind == Expr::Kind::Number && left->spelling == ir::NumberSpelling::Character && TextBytes(left->text).size() > 1)
             {
                 const std::vector<uint8_t> chars = TextBytes(left->text);
-                for (size_t k = 0; k + 1 < chars.size(); ++k)
-                    bytes.push_back(chars[k]);
+                for (size_t c = 0; c + 1 < chars.size(); ++c)
+                    bytes.push_back(chars[c]);
                 bytes.push_back(static_cast<int16_t>(Value(o.expr) & 0xFF));
             }
             else

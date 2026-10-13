@@ -207,7 +207,8 @@ bool DiskAutostart::HandleCommandLoopHook(Z80& cpu)
     if (!_armed)
         return changed;
 
-    const uint16_t eLine = static_cast<uint16_t>(cpu.rd(SYSVAR_E_LINE) | (cpu.rd(SYSVAR_E_LINE + 1) << 8));
+    const uint8_t eLineLow = cpu.rd(SYSVAR_E_LINE);   // one read per statement: the order is the CPU's
+    const uint16_t eLine = static_cast<uint16_t>(eLineLow | (cpu.rd(SYSVAR_E_LINE + 1) << 8));
     for (size_t i = 0; i < sizeof(BOOT_LINE); i++)
     {
         if (cpu.rd(static_cast<uint16_t>(eLine + i)) != BOOT_LINE[i])

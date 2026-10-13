@@ -15,7 +15,7 @@ namespace
 {
 std::unique_ptr<DiskImage> Blank()
 {
-    auto disk = std::make_unique<DiskImage>(80, 2);
+    auto disk = std::make_unique<DiskImage>(uint8_t{80}, uint8_t{2});
     LoaderTRD trd({}, "");
     EXPECT_TRUE(trd.format(disk.get()));
     return disk;

@@ -767,15 +767,15 @@ private:
             copy += "_";
         macroNames.insert(copy);
         moduleMacros[key] = copy;
-        ir::Line open = in.lines[begin];
-        for (Statement& s : open.statements)
+        ir::Line openLine = in.lines[begin];
+        for (Statement& s : openLine.statements)
             if (s.kind == Statement::Kind::Directive && s.directive == DirectiveKind::Macro)
                 s.text = copy;
-        open.label.clear();
-        open.sourceLine = sourceLine;
-        open.comment = name + " for MODULE " + Prefix().substr(0, Prefix().size() - 1);
-        open.hasComment = true;
-        out.push_back(std::move(open));
+        openLine.label.clear();
+        openLine.sourceLine = sourceLine;
+        openLine.comment = name + " for MODULE " + Prefix().substr(0, Prefix().size() - 1);
+        openLine.hasComment = true;
+        out.push_back(std::move(openLine));
         for (ir::Line& b : body)
         {
             b.sourceLine = sourceLine;
