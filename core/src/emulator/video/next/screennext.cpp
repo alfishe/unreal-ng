@@ -48,6 +48,11 @@ void ScreenNext::InitFrame()
     Screen::InitFrame();
     _nextLine = 0;
     _nextX = 0;
+    _fillNext = 0;
+    _fillNextEndRow = ~0u;
+    _fillSnap.reset();
+    for (auto& row : _rowFill)
+        row.reset();
     PrepareLayerFrame();
 }
 
@@ -147,6 +152,48 @@ uint64_t ScreenNext::CopperClock(uint32_t tstate) const
     return t7 * 4;
 }
 
+int64_t ScreenNext::SpriteFillEnd(unsigned y)
+{
+    PortDecoder_Next* decoder = Decoder();
+    const NextSprites& sprites = decoder->Board().Sprites();
+    if (_fillNextEndRow != y || _fillNextEndEpoch != sprites.Epoch())
+    {
+        // paper row y is filled during row y - 1, from about raw hc -21 of it (28 MHz clocks 1 a sprite, 17 more for a drawn one); raw hc 0
+        // is 16 T-states before the grid's x = 0
+        const int64_t perLine = _rasterState.tstatesPerLine;
+        const int64_t first = static_cast<int64_t>(_rasterState.topBorderAreaStart) + 16 * perLine;
+        const int64_t gridX0 = first + (static_cast<int64_t>(y) - 1) * perLine + static_cast<int64_t>(_rasterState.screenLineAreaStart) - 16;
+        const int64_t clocks = sprites.FillClocks(y);
+        _fillNextEnd = gridX0 - 16 + (clocks - 84) / 8;
+        _fillNextEndRow = y;
+        _fillNextEndEpoch = sprites.Epoch();
+    }
+    return _fillNextEnd;
+}
+
+void ScreenNext::FillSpriteRow(unsigned y)
+{
+    PortDecoder_Next* decoder = Decoder();
+    NextSprites& live = decoder->Board().Sprites();
+    if (!_fillSnap || _fillSnapEpoch != live.Epoch())
+    {
+        _fillSnap = std::make_shared<NextSprites>(live);
+        _fillSnap->ClearFlags();
+        _fillSnapEpoch = live.Epoch();
+    }
+    _rowFill[y] = _fillSnap;
+    _rowTransparent[y] = decoder->Board().Stored(0x4B);
+}
+
+void ScreenNext::SpriteStateWillChange(int64_t tstate)
+{
+    if (!Decoder() || _rasterState.tstatesPerLine == 0)
+        return;
+    const int64_t now = tstate >= 0 ? tstate : static_cast<int64_t>(GetCurrentTstate());
+    while (_fillNext < NextVideoRenderer::kHeight && SpriteFillEnd(_fillNext) <= now)
+        FillSpriteRow(_fillNext++);
+}
+
 void ScreenNext::UpdateCopperGeometry()
 {
     if (PortDecoder_Next* decoder = Decoder())
@@ -181,10 +228,12 @@ ScreenNext::PictureLatency ScreenNext::PictureLatencyOf(uint8_t reg, uint8_t pre
     //    (read at the output stage, latched every 32 clocks); 20 for the transparent index (NR #4C)
     //  - the palette values (NR #41 / #44): the lookup stage of the palette the write select (NR #43 bits 6:4) names: ULA 18, Layer 2 18,
     //    tilemap 17, sprites 16, half pixels
-    // Not measured (0, drawn at the write): the sprite pattern / attribute writes (they are a RAM write, not a register), the sprite
-    // transparent index (NR #4B), the Layer 2 resolution, the LoRes / Radastan control (NR #6A)
+    //  - 23 clocks, 4-clock pixels: the LoRes palette offset and the Radastan bits (NR #6A); 27 for the Layer 2 resolution (NR #70 bits 5:4)
+    // Not here (a different mechanism, open): what the sprite fill consumes (pattern bytes, attributes, NR #4B): the engine fills the next
+    // line's buffer from the end of the line before, so a write shows a line or two later, not at a pixel (see the POC 028 reports)
     constexpr PictureLatency kChain{22, 2}, kPixel22{22, 4}, kLayer2{26, 4}, kUlaScroll{56, 32}, kUlaFine{70, 32}, kTilemapScroll{53, 32},
-        kUlaNext{20, 2}, kTilemapControl{53, 32}, kTilemap80{24, 32}, kTilemapTransparent{20, 2}, kNone{0, 1};
+        kUlaNext{20, 2}, kTilemapControl{53, 32}, kTilemap80{24, 32}, kTilemapTransparent{20, 2}, kLayer2Resolution{27, 4},
+        kLoRes{23, 4}, kNone{0, 1};
     const uint8_t changed = static_cast<uint8_t>(previous ^ value);
     auto earliest = [](PictureLatency a, PictureLatency b) { return a.clocks == 0 ? b : (b.clocks == 0 ? a : (b.clocks < a.clocks ? b : a)); };
     switch (reg)
@@ -195,7 +244,7 @@ ScreenNext::PictureLatency ScreenNext::PictureLatencyOf(uint8_t reg, uint8_t pre
         case 0x68:
         {
             PictureLatency l = kNone;
-            if (changed & 0xE1)  // bit 7 the ULA enable (measured); bits 6:5 blend, bit 0 stencil travel the same registers
+            if (changed & 0xE9)  // bit 7 the ULA enable (measured); bits 6:5 blend, bit 3 ULA+ (ulap_en_0), bit 0 stencil travel the same registers
                 l = kChain;
             if (changed & 0x04)  // the fine scroll
                 l = earliest(l, kUlaFine);
@@ -233,7 +282,14 @@ ScreenNext::PictureLatency ScreenNext::PictureLatencyOf(uint8_t reg, uint8_t pre
         case 0x1B:
             return kPixel22;
         case 0x70:
-            return (changed & 0x0F) ? kPixel22 : kNone;
+        {
+            PictureLatency l = (changed & 0x0F) ? kPixel22 : kNone;
+            if (changed & 0x30)  // the Layer 2 resolution: one stage after the other Layer 2 inputs
+                l = earliest(l, kLayer2Resolution);
+            return l;
+        }
+        case 0x6A:  // the LoRes palette offset (bits 3:0) and the Radastan mode / XOR (bits 5:4)
+            return (changed & 0x3F) ? kLoRes : kNone;
         case 0x69:
             return (changed & 0x80) ? kLayer2 : kNone;
         case 0x12:
@@ -287,6 +343,7 @@ void ScreenNext::RenderBeforeCopperClock(uint64_t clock, uint8_t reg, uint8_t va
     if (behind / kClocksPerTState > t)
         return;  // the previous frame's tail: that frame is drawn to its end already
     const uint32_t at = t - static_cast<uint32_t>(behind / kClocksPerTState);
+    SpriteStateWillChange(at);  // a MOVE of a sprite register: the rows filled before it keep the old state
     const uint32_t perLine = _rasterState.tstatesPerLine;
     const uint32_t first = _rasterState.topBorderAreaStart + 16 * perLine;
     if (at < first)
@@ -378,6 +435,11 @@ void ScreenNext::RenderUpTo(unsigned lineLimit, unsigned xLimit)
         if (toX > fromX)
         {
             refresh();
+            // the sprite state this row was filled from: rows not yet filled by the clock are filled now, with the state as it is
+            while (_fillNext <= _nextLine)
+                FillSpriteRow(_fillNext++);
+            in.spriteFill = _rowFill[_nextLine].get();
+            in.spriteTransparent = _rowTransparent[_nextLine];
             const bool whole = fromX == 0 && toX >= kPixels;
             in.layerOut = record ? (whole ? &lineSink : &scratchSink) : nullptr;
             if (record)

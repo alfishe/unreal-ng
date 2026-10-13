@@ -16,8 +16,8 @@ Internal port enable word 0xFFFFFFDF (NR #82-#85; restored by soft reset)
   bit 9  NR0x83  on  Multiface (two variable ports)
   bit 10 NR0x83  on  #103B, #113B I2C
   bit 11 NR0x83  on  #E7, #EB SPI
-  bit 12 NR0x83  on  #133B, #143B, #153B, #163B UART  (not gated)
-  bit 13 NR0x83  on  #FADF, #FBDF, #FFDF mouse  (not gated)
+  bit 12 NR0x83  on  #133B, #143B, #153B, #163B UART
+  bit 13 NR0x83  on  #FADF, #FBDF, #FFDF mouse
   bit 14 NR0x83  on  #57, #5B, #303B sprites
   bit 15 NR0x83  on  #123B Layer 2
   bit 16 NR0x84  on  #FFFD, #BFFD AY
@@ -28,7 +28,7 @@ Internal port enable word 0xFFFFFFDF (NR #82-#85; restored by soft reset)
   bit 21 NR0x84  on  #FB DAC mono (Pentagon / ATM)
   bit 22 NR0x84  on  #B3 DAC mono (GS Covox)
   bit 23 NR0x84  on  #DF DAC mono (SpecDrum), Kempston alias
-  bit 24 NR0x85  on  #BF3B, #FF3B ULA+  (not gated)
+  bit 24 NR0x85  on  #BF3B, #FF3B ULA+
   bit 25 NR0x85  on  #0B Z80 DMA
   bit 26 NR0x85  on  #EFF7 Pentagon 1024 memory  (not gated)
   bit 27 NR0x85  on  #183B-#1F3B Z80 CTC

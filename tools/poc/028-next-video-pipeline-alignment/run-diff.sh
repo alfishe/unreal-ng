@@ -1,5 +1,5 @@
 #!/bin/bash
-# POC 028, second set: the differential scenarios 28-43 (LoRes scroll, sprites, palette values, tilemap control bits).
+# POC 028, second set: the differential scenarios 28-53 (LoRes scroll, sprites, palette values, tilemap control bits).
 # Each scenario is run twice, the second time with the value never changed (g_ref=1): the first output sample that differs after the
 # force is the register's latency (analyze.py diff). Scenarios 28-29 need a bank 5 whose bytes all differ (POC_PATTERN=lores), 35 and 38-43 a dense one (POC_PATTERN=dense).
 # Usage: run-diff.sh <cores/zxnext/src> [out dir (default scratch/2026-10-12-poc-028-diff)]
@@ -35,15 +35,15 @@ run() {   # run <variant> <scenario>
   ./tb_zxnext -gg_scenario=$s -gg_h0=$h -gg_l2const=$c -gg_ref=0 -gg_log=d$s.txt -gg_events=de$s.txt >/dev/null 2>&1 &
   ./tb_zxnext -gg_scenario=$s -gg_h0=$h -gg_l2const=$c -gg_ref=1 -gg_log=r$s.txt -gg_events=re$s.txt >/dev/null 2>&1 &
 }
-variant() { case $1 in 28|29) echo lores;; 35|38|39|40|41|42|43) echo dense;; *) echo std;; esac; }
+variant() { case $1 in 28|29|49|50|51) echo lores;; 35|38|39|40|41|42|43|53) echo dense;; *) echo std;; esac; }
 n=0
-for s in $(seq 28 43); do
+for s in $(seq ${FIRST:-28} ${LAST:-53}); do
   v=$(variant $s)
   run $v $s
   n=$((n+1)); if (( n % 4 == 0 )); then wait; fi
 done
 wait
-for s in $(seq 28 43); do
+for s in $(seq ${FIRST:-28} ${LAST:-53}); do
   v=$(variant $s)
   (cd "$OUT/$v" && python3 - <<PY
 import analyze

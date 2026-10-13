@@ -7,4 +7,5 @@
 - The Layer 2 / ULA alignment is explained: they are aligned (the hand count was wrong).
 - Second set (`run-diff.sh`, differential runs, the sprite RAMs modelled): the LoRes scroll 22 clocks per pixel, the sprite clip 22 per
   pixel, the palette value writes 16 (sprites) / 17 (tilemap) / 18 (ULA, Layer 2), the tilemap control bits 53 per cell, 80 columns 24,
-  the tilemap transparent index 20. Not measured: RAM writes of sprite attributes / patterns, NR #4B, the Layer 2 resolution, NR #6A.
+  the tilemap transparent index 20, NR #6A 23, the Layer 2 resolution 27. The sprite fill (attribute / pattern / NR #4B writes) shows a line
+  or two later: the rule and its numbers are in the third set of the measurements; modelled in the emulator since (ScreenNext sprite fill snapshots).

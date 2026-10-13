@@ -105,3 +105,5 @@ something that can be shipped and checked from every automation surface.
 | **Personality** | a ROM set and machine type chosen by `TBBLUE.FW`'s menu (`menu.def`) |
 | **NEX** | the Next's executable format: a header, optional loading screen and 16K banks |
 | **SNX** | a 128K `.sna` that NextZXOS loads keeping a file handle open |
+
+- [findings-2026-10-12-uart-esp-copper-d2.md](findings-2026-10-12-uart-esp-copper-d2.md): UART / ESP, port gating, copper picture latency (POC 028), the mouse, ULA+ and Radastan: the facts and where they live

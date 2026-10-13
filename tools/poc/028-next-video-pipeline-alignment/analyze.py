@@ -49,7 +49,7 @@ def diff(sfile, efile, rfile):
     res = []
     for k, line, hc, cf in load(sfile, efile)[1]:
         first = None
-        for c in range(cf, cf + 4000):
+        for c in range(cf, cf + 6000):
             a, b = run.get(c), ref.get(c)
             if a is None or b is None:
                 continue

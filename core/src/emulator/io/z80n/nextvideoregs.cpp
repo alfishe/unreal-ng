@@ -25,6 +25,8 @@ void NextVideoRegs::Reset()
     }
     _index = 0;
     _control = 0;
+    _ulapMode = 0;
+    _ulapIndex = 0;
     _ulaNext = 0x07;
     _portFf = 0;
     _port123b = 0;
@@ -96,6 +98,20 @@ void NextVideoRegs::WritePaletteValue9(uint8_t value)
     _palette[Selected()][_index] = entry;
     _haveFirst = false;
     Advance();
+}
+
+void NextVideoRegs::WriteUlaPlusPalette(uint8_t value)
+{
+    // cpu_requester_dat of zxnext.vhd: GGGRRRBB -> the palette's RRRGGGBB
+    const uint8_t rrrgggbb = static_cast<uint8_t>(((value >> 2) & 7) << 5 | ((value >> 5) & 7) << 2 | (value & 3));
+    _palette[(_control & 0x40) ? 4 : 0][192 + _ulapIndex] = Nine(rrrgggbb);
+}
+
+uint8_t NextVideoRegs::ReadUlaPlusPalette() const
+{
+    // nr_ulatm_palette_dat(5:3) & (8:6) & (2:1): G, R, the top two blue bits
+    const uint16_t e = _palette[(_control & 0x40) ? 4 : 0][192 + _ulapIndex];
+    return static_cast<uint8_t>(((e >> 3) & 7) << 5 | ((e >> 6) & 7) << 2 | ((e >> 1) & 3));
 }
 
 uint8_t NextVideoRegs::ReadPaletteValue8() const

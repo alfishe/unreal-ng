@@ -280,7 +280,7 @@ transparent: global 0xE3, sprites 0xE3, tilemap 15, fallback 0xE3
 **`next_ports`** - which device answers a port, and whether NR `#82`-`#85` switch it off. `enforced` tells whether the emulator gates the
 port by that bit: a write to a port whose bit is off is ignored and a read is the idle bus `#FF`; with the expansion bus on (NR `#80` bit 7)
 NR `#86`-`#89` are ANDed in. Every port the Next decodes is gated (DAC, Multiface, `#E3`, `#E7` / `#EB`, `#FF`, `#7FFD` / `#DFFD` / `#1FFD`,
-DMA, joystick, I2C, sprites, `#123B`, AY, CTC); the UART, mouse, ULA+, `#EFF7` and +3 floating-bus ports are not decoded at all yet:
+DMA, joystick, I2C, sprites, `#123B`, AY, CTC, the UARTs, the Kempston mouse `#FADF` / `#FBDF` / `#FFDF`, ULA+ `#BF3B` / `#FF3B`); `#EFF7` and the +3 floating bus are not decoded at all yet:
 
 ```text
 $ state next ports 6B w          (after NR #82 <- #DF)
@@ -530,3 +530,18 @@ curl -s "$BASE/$ID/capture/screen" | jq -r .data | base64 -d > screen.png
   MMU slot**). `NR #06` bit 4 is the DRIVE button's NMI, not the automap (the NEXLOAD source's comment is from older cores); NR #0A bits 7:5 stick unless in config mode.
 - A black screen after starting a snapshot is almost always the NMI chain of section 4: check the journal for the `NR #02`
   write, the DivMMC mapping (`state/next` `divmmc.mapped`) and where `NR #C2/#C3` point.
+
+
+### 3a5c. Kempston mouse, ULA+, Radastan (zxnext.vhd, D2)
+
+- **Mouse**: `#FADF` buttons and wheel (`{wheel[3:0], 1, not middle, not left, not right}`: D1 is the left button, D0 the right one: the
+  reverse of the ZX Evo's order), `#FBDF` X, `#FFDF` Y; decoded at A7-A0 = `#DF` and A11-A8 = A / B / F, enabled by NR `#83` bit 5. NR `#0A`
+  bit 3 swaps the buttons. The device is the generic `Mouse` (`GET /api/v1/emulator/{id}/mouse`, MCP `mouse_input`): the wheel nibble is
+  always on; with no mouse fitted the board's inputs idle (X = Y = 0, `#FADF` = `#0F`). NR `#0A` bits 1:0 scale the motion as the board's PS/2 module does (`ps2_mouse.v`):
+  00 x2, 01 x1, 10 half, 11 a quarter.
+- **ULA+**: `#BF3B` selects (bits 7:6 mode, 5:0 index in mode 0), `#FF3B` reads / writes the CLUT entry (GGGRRRBB, entries 192-255 of the ULA
+  palette, the second one when NR `#43` bit 6 is set) in mode 0 and the enable bit in mode 1; the enable is NR `#68` bit 3's flop. In ULA+
+  the pixel index is `11` flash bright half colour (no flashing), the border the paper half; ULANext wins over it; NR `#85` bit 0 gates the
+  ports. `state next video` shows `ula.ulaplus`.
+- **Radastan** (NR `#6A` bit 5 with LoRes on): 128 x 96 at 4 bits, 64-byte rows from the display file of port `#FF` bit 0 xor NR `#6A` bit 4,
+  high nibble first; palette index high nibble NR `#6A` bits 3:0 (`11` and bits 1:0 with ULA+ on).
