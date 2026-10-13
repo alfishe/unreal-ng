@@ -114,8 +114,10 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         const uint64_t now = Now28();
         _ctc.Advance(now);
         if (!_uart.Idle())
+        {
             SyncPiLine();
             _uart.Advance(now);
+        }
         _uart.PollInterrupts(_interrupts->UartEnables());
     });
     _board->SetInterrupts(_interrupts.get());

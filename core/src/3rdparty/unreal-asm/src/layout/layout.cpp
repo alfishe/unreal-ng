@@ -607,7 +607,7 @@ private:
             return Moves::Word;
         if (by == (kRelocShift >> 8))
             return Moves::HighInLow;
-        if (((moved >> 8) - (base >> 8) & 0xFF) == (kRelocShift >> 8) && (moved & 0xFF) == (base & 0xFF))
+        if ((((moved >> 8) - (base >> 8)) & 0xFF) == (kRelocShift >> 8) && (moved & 0xFF) == (base & 0xFF))
             return Moves::High;
         return Moves::Otherwise;
     }
