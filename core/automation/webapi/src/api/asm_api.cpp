@@ -17,6 +17,8 @@
 ///   DELETE /emulator/{id}/asm/sync/push-watch                                                    stop it
 ///   POST /emulator/{id}/asm/sync/inject  {text | path | data + name, from?, assembler?, title?, force?, backup?, snapshot?, output?}
 ///                                        a host source as the assembler's text
+///   GET  /api/v1/asm/sync?snapshot=&assembler=          the same verbs on a snapshot file, no emulator instance needed
+///   POST /api/v1/asm/sync/{probe|extract|inject}  {snapshot, ...}
 /// snapshot: a .szx / .sna / .z80 file whose memory the sync verbs read instead of the machine's; inject then writes the
 /// snapshot with the text in it to `output` (the machine is not touched)
 /// A path is a host file or disk:A/NAME.T. Every route turns its request into an AsmControl verb, shared with the CLI,
@@ -153,6 +155,24 @@ void EmulatorAPI::asmSync(const HttpRequestPtr& req, std::function<void(const Ht
     if (!OptionsFromJson(req, options, callback))
         return;
     RespondAsm(id, "sync-" + action, std::move(options), callback);
+}
+
+void EmulatorAPI::asmSnapshotSyncStatus(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    std::map<std::string, std::string> options;
+    for (const char* name : {"assembler", "snapshot"})
+        if (!req->getParameter(name).empty())
+            options[name] = req->getParameter(name);
+    Respond(AsmControl(nullptr).Execute({"sync-status", std::move(options)}), callback);
+}
+
+void EmulatorAPI::asmSnapshotSync(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& action) const
+{
+    std::map<std::string, std::string> options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    Respond(AsmControl(nullptr).Execute({"sync-" + action, std::move(options)}), callback);
 }
 
 void EmulatorAPI::asmSyncHints(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,

@@ -650,6 +650,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::asmSyncHints, "/api/v1/emulator/{id}/asm/sync/hints", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::asmSyncUnwatch, "/api/v1/emulator/{id}/asm/sync/watch", drogon::Delete);
     ADD_METHOD_TO(EmulatorAPI::asmSyncPushUnwatch, "/api/v1/emulator/{id}/asm/sync/push-watch", drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::asmSnapshotSyncStatus, "/api/v1/asm/sync", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::asmSnapshotSync, "/api/v1/asm/sync/{action}", drogon::Post);
     // endregion Labels/Symbols
 
     // region Source Listing (implementation: api/debug_api.cpp)
@@ -1618,6 +1620,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                         const std::string& id) const;
     void asmSyncPushUnwatch(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                             const std::string& id) const;
+    /// The sync verbs on a snapshot file with no emulator instance: GET status, POST probe / extract / inject (snapshot required)
+    void asmSnapshotSyncStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void asmSnapshotSync(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& action) const;
     void resolveLabel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                       const std::string& id) const;
 
