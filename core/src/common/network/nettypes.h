@@ -115,7 +115,7 @@ public:
 /// The serial ports' peers on the network (an ESP module's stack, a TCP or
 /// serial-device link): the #xxEF port's (a ZX-Evo AVR UART or a ZX-WiFi
 /// card), the machine's own (ATM Turbo 2+ keyboard controller) and the
-/// ATM2IOESP card's. In the TTD tables they are guests 2, 3 and 4; the
+/// ATM2IOESP card's (the second port's and the joystick connector's: guests 11, 12). In the TTD tables they are guests 2, 3 and 4; the
 /// ZXNETUSB card's chip is guest 1
 struct SerialGuests
 {
@@ -128,4 +128,6 @@ struct SerialGuests
     INetGuest* slotUart[2] = {nullptr, nullptr};
     /// The second UART of a two-channel card in expansion slot 1 / 2 (SprinterSerial's COM2; guests 9 / 10)
     INetGuest* slotUartB[2] = {nullptr, nullptr};
+    INetGuest* machine2 = nullptr;   ///< the machine's second port's peer (the Next's UART 1; guest 11)
+    INetGuest* joystick = nullptr;   ///< the Next's joystick connector's peer (NR #0B UART mode; guest 12)
 };

@@ -132,7 +132,7 @@ std::string DescribeFittedDevices(EmulatorContext* context)
         }
         out << " " << id << ":" << size;
     }
-    out << " notRecorded " << registry.NotRecordedMask() << "\n";
+    out << " notRecorded " << registry.NotRecordedMask().Low() << "\n";
     return out.str();
 }
 

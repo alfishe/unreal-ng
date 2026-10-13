@@ -153,6 +153,11 @@ PortDecoder_Next::~PortDecoder_Next()
             peer->onReceive = nullptr;
             peer->SetClock(nullptr, 0);
         }
+    if (ISerialPeer* peer = _uart.JoystickPeer())
+    {
+        peer->onReceive = nullptr;
+        peer->SetClock(nullptr, 0);
+    }
     if (_context->pKeyboard && _context->pKeyboard->GetPs2Sink() == &_extendedInput)
         _context->pKeyboard->SetPs2Sink(nullptr);
     if (_context->pMediaManager)
@@ -1035,6 +1040,7 @@ void PortDecoder_Next::PerformReset(bool hard)
     }
     _dma.Reset();         // zxnext.vhd: the DMA's reset_i is the hard or the soft reset
     _uart.Reset(hard);    // the FIFOs on any reset, the prescalers and frames on the hard one (uart.vhd)
+    UpdateUartRoute(false);  // NR #0B went back to its reset value: the connector carries no UART
     _divMmc->Reset();     // E3 and the automap latches (zxnext.vhd 4175, divmmc.vhd 108-139) and the Multiface's session are `reset` too
     _multiface->Reset();
     Mem().ApplyClassicPaging(0, 0);
@@ -1518,8 +1524,39 @@ void PortDecoder_Next::SetUartPeer(unsigned channel, ISerialPeer* peer)
         BoardPinsChanged();  // a module fitted now sees the pin as it is
 }
 
+void PortDecoder_Next::SetJoystickUartPeer(ISerialPeer* peer)
+{
+    _uart.Advance(Now28());
+    if (ISerialPeer* old = _uart.JoystickPeer(); old && old != peer)
+    {
+        old->onReceive = nullptr;
+        old->SetClock(nullptr, 0);
+    }
+    if (peer)
+    {
+        constexpr uint32_t kBaseClockHz = 3500000;
+        peer->SetClock([this]() { return static_cast<uint64_t>(Now()); }, kBaseClockHz);
+        peer->onReceive = [this]() {
+            _uart.Advance(Now28());
+            _uart.PollInterrupts(_interrupts->UartEnables());
+        };
+    }
+    _uart.SetJoystickPeer(peer);
+}
+
+void PortDecoder_Next::UpdateUartRoute(bool advance)
+{
+    // zxnext.vhd: joy_iomode_uart_en = NR #0B bit 7 and bit 5; nr_0b_joy_iomode_0 (bit 0) picks the UART whose line the connector takes
+    const uint8_t nr0b = _board->Stored(0x0B);
+    const bool on = (nr0b & 0x80) && (nr0b & 0x20);
+    if (advance)
+        _uart.Advance(Now28());
+    _uart.SetJoystickRoute(on, nr0b & 1);
+}
+
 void PortDecoder_Next::BoardPinsChanged()
 {
+    UpdateUartRoute();
     // zxnext.vhd: o_ESP_GPIO_0 = NR #A9 bit 0, driven while NR #A8 bit 0 enables it (else the pad floats, pulled up)
     const bool low = (_board->Stored(0xA8) & 1) && !(_board->Stored(0xA9) & 1);
     if (auto* esp = dynamic_cast<EspModule*>(_uart.Peer(0)))
@@ -1532,6 +1569,7 @@ PortDecoder::NetworkCapabilities PortDecoder_Next::DescribeNetwork()
     caps.serialPort = NetworkCapabilities::SerialPort::NextUart;
     caps.attachSerialPeer = [this](ISerialPeer* peer) { SetUartPeer(0, peer); };
     caps.attachSecondSerialPeer = [this](ISerialPeer* peer) { SetUartPeer(1, peer); };
+    caps.attachJoystickSerialPeer = [this](ISerialPeer* peer) { SetJoystickUartPeer(peer); };
     caps.serialBaud = [this]() { return _uart.GetView(0).baud; };
     return caps;
 }

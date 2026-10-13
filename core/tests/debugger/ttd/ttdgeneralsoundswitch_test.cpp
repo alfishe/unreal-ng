@@ -149,7 +149,7 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchUnderLiveHistoryRepointsRegistry)
     ASSERT_EQ(afterId, ttd::PeripheralId::GeneralSoundLightweight);
     const ttd::TTDPeripheralRegistry& registry = context->pTimeTravelController->GetPeripheralRegistry();
     EXPECT_EQ(registry.GetDevice(afterId), nullptr) << "the LW card has no TTD state";
-    EXPECT_NE(registry.NotRecordedMask() & (uint64_t(1) << static_cast<uint8_t>(afterId)), 0u)
+    EXPECT_TRUE(registry.NotRecordedMask().Test(static_cast<uint8_t>(afterId)))
         << "it is marked as fitted, not recorded";
     EXPECT_EQ(registry.GetDevice(beforeId), nullptr)
         << "the outgoing personality's slot must be vacated, not left pointing at the freed card";

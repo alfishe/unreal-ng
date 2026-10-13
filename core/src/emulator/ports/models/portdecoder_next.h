@@ -144,6 +144,12 @@ public:
     bool PortEnabledForReport(unsigned bit) const { return PortEnabled(bit); }
     /// A line's other end (the network manager owns the peer); nullptr takes it off. The peer's clock is the machine's base clock
     void SetUartPeer(unsigned channel, ISerialPeer* peer);
+    /// The device plugged into the joystick connector (nullptr: nothing); it is the other end of the UART NR #0B bit 0 selects while
+    /// the register's UART mode (bits 7 and 5) is on
+    void SetJoystickUartPeer(ISerialPeer* peer);
+    /// NR #0B -> the connector's UART route (zxnext.vhd: joy_iomode_uart_en, nr_0b_joy_iomode_0); `advance` brings the UARTs up to the
+    /// clock first
+    void UpdateUartRoute(bool advance = true);
     /// NR #A8 / #A9: the ESP's GPIO0 pin (low while the board drives it low): an ESP module reboots into its ROM's download mode with it low
     void BoardPinsChanged() override;
     NetworkCapabilities DescribeNetwork() override;

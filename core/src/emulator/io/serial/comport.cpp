@@ -117,6 +117,8 @@ SerialGuests ComPort::SerialNetGuests(const EmulatorContext* context)
     if (context->pComPort)
         guests.com = context->pComPort->NetGuest();
     guests.machine = NetGuestOf(context->pMachineSerialPeer);
+    guests.machine2 = NetGuestOf(context->pMachineSerialPeer2);
+    guests.joystick = NetGuestOf(context->pJoystickSerialPeer);
     if (context->pAtm2IoEsp)
         guests.atmIo = context->pAtm2IoEsp->Com().NetGuest();
     if (context->pZiFi)
@@ -213,6 +215,8 @@ void ComPort::SavePeer(const ISerialPeer* peer, netstate::Com& out, netstate::Ta
         out.peerKind = 1;
         out.loopbackLength = SaveBytes(loop->Queue(), out.loopback, netstate::kMaxComBytes, tail,
                                        netstate::Tail::List::ComLoopback);
+        // reserved[1]: bit 0 the ZX holds its Tx low (a plug returns it), bit 1 a break held from outside
+        out.reserved[1] = static_cast<uint8_t>((loop->ZxBreak() ? 1 : 0) | (loop->ForcedBreak() ? 2 : 0));
     }
     else if (const auto* esp = dynamic_cast<const EspModule*>(peer))
     {
@@ -241,6 +245,7 @@ bool ComPort::LoadPeer(ISerialPeer* peer, const netstate::Com& in, const netstat
         const std::vector<uint8_t> queue =
             LoadBytes(in.loopback, in.loopbackLength, netstate::kMaxComBytes, tail, netstate::Tail::List::ComLoopback);
         loop->SetQueue(queue.data(), static_cast<uint32_t>(queue.size()));
+        loop->SetBreakState((in.reserved[1] & 1) != 0, (in.reserved[1] & 2) != 0);
     }
     else if (auto* esp = dynamic_cast<EspModule*>(peer))
     {

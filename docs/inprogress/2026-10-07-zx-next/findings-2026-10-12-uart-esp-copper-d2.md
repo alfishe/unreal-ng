@@ -14,8 +14,19 @@ that change how the emulator behaves or how the RTL reads. The RTL (`cores/zxnex
 - Peers: UART 0 is the ESP (`ComPort=`, default AT, ESP-12; ESP8266 NonOS AT 1.7.4 unless `EspChip`), UART 1 the Pi (`ComPort2=`).
   NR #A8 / #A9 drive ESP GPIO 0: low at restart is the download mode (`EspModule::RestartIntoDownloadIfStrapped`).
 - State: TTD image version 6 saved the UARTs (the peers' state is the machine serial peer's blob; the UART 1 peer is not saved);
-  version 7 adds the ULA+ select. Reports: `next_uart` on WebAPI, MCP, CLI, Lua, Python.
-- Open: the joystick-port UART (NR #0B), the Pi GPIO routing (NR #A0 / #9x), the ESP flasher's SLIP protocol, a break from a peer.
+  version 7 adds the ULA+ select; version 8 (cluster D) the receiver's break state. UART 1's peer is blob `MachineSerialPeer2`
+  (id 64) and the joystick connector's device `JoystickSerialPeer` (id 65): the ids that needed the wide peripheral mask (file schema 3,
+  controller facts 2). Reports: `next_uart` on WebAPI, MCP, CLI, Lua, Python.
+- Joystick-port UART (zxnext.vhd 3340-3350, 3516-3539): NR #0B bit 7 and bit 5 select the UART mode, bit 0 the UART (0 replaces the ESP,
+  1 the Pi), bit 4 the connector; Rx is the pad's C line (not JOY(5)), CTS_n its B line, Tx is pin 7 (`joy_iomode_pin7`). The cut-off
+  module sees Tx forced 1 and RTR forced not ready; the connector has no RTR, so a device there is never held off. Modelled as an
+  `ISerialPeer` (`[NETWORK] ComPortJoy=`); the pad's own button bits are not read as lines.
+- Break (uart_rx.vhd): the line low through start + data + parity + stop sample (half a bit + (bits + parity + 1) bit times) is a
+  framing error (the byte is dropped, status bit 6 sticky); in S_ERROR the line is shifted into a register set to ones, so eight bit times
+  later `o_err_break` holds (status bit 7, not sticky) until the line rises; a FIFO reset puts the receiver in S_PAUSE until the line is
+  high. `uart.vhd` status bit 4 (Tx empty) is FIFO empty and not `o_busy`, and `o_busy` holds for frame bit 6 (break) and 7.
+- Open: the Pi GPIO routing (NR #A0 / #9x), the ESP flasher's SLIP protocol (design note
+  [design-esp-flasher-2026-10-12.md](design-esp-flasher-2026-10-12.md)), NR #02 bit 7 (`o_RESET_PERIPHERAL`) as the module's reset.
 
 ## 2. Port gating (ports.enforced)
 

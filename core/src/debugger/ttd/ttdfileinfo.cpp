@@ -43,12 +43,43 @@ bool Skip(std::istream& in, uint64_t bytes, const char* what, std::string& err)
     return true;
 }
 
+/// A mask field of the header: one u64 up to schema 2 (ids 0..63), from schema
+/// 3 a u8 word count (1..4) and that many u64 words (ids 64 * word + bit).
+bool ReadMask(std::istream& in, uint16_t schema, PeripheralMask& mask, const char* what, std::string& err)
+{
+    mask = PeripheralMask{};
+    if (schema < dump::kSchemaVersionWideMask)
+    {
+        uint64_t low = 0;
+        if (!Read(in, low, what, err))
+            return false;
+        mask = PeripheralMask::FromLow(low);
+        return true;
+    }
+    uint8_t words = 0;
+    if (!Read(in, words, what, err))
+        return false;
+    if (words == 0 || words > PeripheralMask::kWords)
+    {
+        err = std::string("implausible ") + what + " word count " + std::to_string(words);
+        return false;
+    }
+    for (uint8_t w = 0; w < words; ++w)
+    {
+        uint64_t value = 0;
+        if (!Read(in, value, what, err))
+            return false;
+        mask.SetWord(w, value);
+    }
+    return true;
+}
+
 /// The device set of a file written before the header mask: walk the page
 /// store's slot headers (payloads skipped) to the first checkpoint and read
 /// its peripheral blob ids. The stream is positioned right after the header.
-bool ScanPeripherals(std::istream& in, const TTDFileInfo& info, uint64_t& mask, std::string& err)
+bool ScanPeripherals(std::istream& in, const TTDFileInfo& info, PeripheralMask& mask, std::string& err)
 {
-    mask = 0;
+    mask = PeripheralMask{};
     if (info.checkpointCount == 0)
         return true;   // an empty session records no device
     for (uint32_t i = 0; i < info.pageStoreCount; ++i)
@@ -92,8 +123,7 @@ bool ScanPeripherals(std::istream& in, const TTDFileInfo& info, uint64_t& mask, 
             err = "implausible peripheral blob size " + std::to_string(size);
             return false;
         }
-        if (id < 64)
-            mask |= uint64_t(1) << id;
+        mask.Set(id);
         if (!Skip(in, size, "peripheral blob", err))
             return false;
     }
@@ -170,14 +200,16 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::EvoFlash: return "evo-flash";
         case PeripheralId::NextState: return "next-state";
         case PeripheralId::NextSystemArea: return "next-system-area";
+        case PeripheralId::MachineSerialPeer2: return "machine-serial-peer-2";
+        case PeripheralId::JoystickSerialPeer: return "joystick-serial-peer";
         case PeripheralId::Count: break;
     }
     return "id" + std::to_string(id);
 }
 
-GSTypeKind GeneralSoundOf(uint64_t peripheralMask)
+GSTypeKind GeneralSoundOf(const PeripheralMask& peripheralMask)
 {
-    auto has = [peripheralMask](PeripheralId id) { return (peripheralMask >> static_cast<uint8_t>(id)) & 1u; };
+    auto has = [&peripheralMask](PeripheralId id) { return peripheralMask.Test(static_cast<uint8_t>(id)); };
     if (has(PeripheralId::GeneralSound))
         return GSTypeKind::Z80;
     if (has(PeripheralId::GeneralSoundLightweight))
@@ -207,16 +239,16 @@ void DescribeRecordedMachine(TTDRecordedMachine& machine)
         if (const TMemModel* m = Config::FindModelByEnum(static_cast<MEM_MODEL>(machine.modelId)))
             machine.model = m->ShortName ? m->ShortName : "";
     machine.peripherals.clear();
-    for (uint8_t id = 0; id < 64; ++id)
-        if ((machine.peripheralMask >> id) & 1u)
-            machine.peripherals.push_back(PeripheralIdName(id));
+    for (unsigned id = 0; id < PeripheralMask::kIds; ++id)
+        if (machine.peripheralMask.Test(static_cast<uint8_t>(id)))
+            machine.peripherals.push_back(PeripheralIdName(static_cast<uint8_t>(id)));
     machine.notRecorded.clear();
-    for (uint8_t id = 0; id < 64; ++id)
-        if ((machine.notRecordedMask >> id) & 1u)
-            machine.notRecorded.push_back(PeripheralIdName(id));
+    for (unsigned id = 0; id < PeripheralMask::kIds; ++id)
+        if (machine.notRecordedMask.Test(static_cast<uint8_t>(id)))
+            machine.notRecorded.push_back(PeripheralIdName(static_cast<uint8_t>(id)));
     // The General Sound slot counts a card fitted but not recorded too
     machine.generalSound = GeneralSoundOf(machine.peripheralMask | machine.notRecordedMask);
-    auto has = [&](PeripheralId id) { return (machine.peripheralMask >> static_cast<uint8_t>(id)) & 1u; };
+    auto has = [&](PeripheralId id) { return machine.peripheralMask.Test(static_cast<uint8_t>(id)); };
     machine.turboSound = has(PeripheralId::TSFM) ? "tsfm" : has(PeripheralId::TurboSound) ? "turbosound" : "none";
 }
 
@@ -240,10 +272,10 @@ bool ReadTTDFileInfo(std::istream& in, TTDFileInfo& info, std::string& err)
         const TTDMemorySource source(std::vector<uint8_t>(std::istreambuf_iterator<char>(in), {}));
         return ReadEngineFileInfo(source, info, err);
     }
-    if (info.schemaVersion != dump::kSchemaVersion)
+    if (!dump::IsReadableSchema(info.schemaVersion))
     {
         err = "unsupported .ttd schema v" + std::to_string(info.schemaVersion) + " (this build reads v" +
-              std::to_string(dump::kSchemaVersion) + ")";
+              std::to_string(dump::kSchemaVersionFirst) + " and v" + std::to_string(dump::kSchemaVersion) + ")";
         return false;
     }
     if (!Read(in, info.flags, "flags", err) || !Read(in, info.machine.modelId, "model", err) ||
@@ -266,12 +298,14 @@ bool ReadTTDFileInfo(std::istream& in, TTDFileInfo& info, std::string& err)
             return false;
         }
     }
-    uint64_t reserved = 0;
+    PeripheralMask headerMask;
     if (!Read(in, info.sessionState, "session state", err) || !Read(in, info.startFrame, "start frame", err) ||
         !Read(in, info.endFrame, "end frame", err) || !Read(in, info.pageStoreCount, "page store count", err) ||
-        !Read(in, info.checkpointCount, "checkpoint count", err) || !Read(in, reserved, "peripheral mask", err))
+        !Read(in, info.checkpointCount, "checkpoint count", err) ||
+        !ReadMask(in, info.schemaVersion, headerMask, "peripheral mask", err))
         return false;
-    if ((info.flags & dump::kFlagsHasNotRecordedMask) && !Read(in, info.machine.notRecordedMask, "not-recorded mask", err))
+    if ((info.flags & dump::kFlagsHasNotRecordedMask) &&
+        !ReadMask(in, info.schemaVersion, info.machine.notRecordedMask, "not-recorded mask", err))
         return false;
 
     const uint16_t f = info.flags;
@@ -286,7 +320,7 @@ bool ReadTTDFileInfo(std::istream& in, TTDFileInfo& info, std::string& err)
 
     if (f & dump::kFlagsHasPeripheralMask)
     {
-        info.machine.peripheralMask = reserved;
+        info.machine.peripheralMask = headerMask;
         info.peripheralsFromHeader = true;
     }
     else if (!ScanPeripherals(in, info, info.machine.peripheralMask, err))

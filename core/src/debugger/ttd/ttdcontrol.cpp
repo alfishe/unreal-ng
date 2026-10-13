@@ -159,7 +159,12 @@ StateNode RecordedMachineNodeImpl(const TTDRecordedMachine& m)
     v["ram_page_bound"] = static_cast<unsigned>(m.ramPageBound);
     // A string: a 64-bit hash does not survive a JSON number (doubles)
     v["rom_signature"] = m.romSignature == 0 ? StateNode() : StateNode("0x" + HashToString(m.romSignature));
-    v["peripheral_mask"] = static_cast<uint64_t>(m.peripheralMask);
+    // ids 0..63 as one number (as before); `peripheral_mask_words` holds every 64-id word, ids 64.. in words 1..3
+    v["peripheral_mask"] = static_cast<uint64_t>(m.peripheralMask.Low());
+    StateNode words = StateNode::Array();
+    for (size_t w = 0; w < m.peripheralMask.WordCount(); ++w)
+        words.push(static_cast<uint64_t>(m.peripheralMask.Word(w)));
+    v["peripheral_mask_words"] = words;
     StateNode list = StateNode::Array();
     for (const std::string& name : m.peripherals)
         list.push(name);

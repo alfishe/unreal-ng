@@ -103,7 +103,7 @@ void TTDPeripheralRegistry::Unregister(PeripheralId id)
 {
     _devices.erase(static_cast<uint8_t>(id));
     _instances.erase(static_cast<uint8_t>(id));
-    _notRecorded &= ~(uint64_t(1) << static_cast<uint8_t>(id));
+    _notRecorded.Clear(static_cast<uint8_t>(id));
 }
 
 void TTDPeripheralRegistry::Clear()
@@ -112,7 +112,7 @@ void TTDPeripheralRegistry::Clear()
     _instances.clear();
     _duplicates.clear();
     _regionSources.clear();
-    _notRecorded = 0;
+    _notRecorded = PeripheralMask{};
 }
 
 bool TTDPeripheralRegistry::IsRegistered(PeripheralId id) const

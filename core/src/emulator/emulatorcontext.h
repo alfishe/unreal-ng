@@ -141,6 +141,8 @@ public:
 	// The peer on the machine's own serial port when that port is no 16550 on
 	// #xxEF (ATM Turbo 2+ keyboard controller's RS-232), when fitted
 	ISerialPeer* pMachineSerialPeer = nullptr;
+	ISerialPeer* pMachineSerialPeer2 = nullptr;   ///< the peer on the machine's second serial port (the Next's UART 1)
+	ISerialPeer* pJoystickSerialPeer = nullptr;   ///< the peer on the Next's joystick connector (NR #0B UART mode)
 	// The ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector, when fitted (NetworkManager owns it)
 	Atm2IoEsp* pAtm2IoEsp = nullptr;
 	// The TS AVR firmware's ZiFi block beside the #xxEF COM port (TS-Conf, ZX-Evo + TS firmware); NetworkManager owns it

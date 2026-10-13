@@ -17,6 +17,19 @@
 /// bits. A byte's error flag (bit 8 of its FIFO entry) is the sticky error state when it was stored.
 /// Interrupts (NR #C6, im2_int_req): Rx = near full or (a byte waiting and bit 1 of the channel's enable is clear), enabled by bits 1:0;
 /// Tx = Tx FIFO empty, enabled by bit 2; every request is a rising edge of that level.
+///
+/// A break from the peer (uart_rx.vhd): the peer holds its line low (ISerialPeer::BreakHeld). The receiver starts a frame, samples
+/// zero bits, and at the stop bit's sample point (half a bit + data bits + parity + one bit after the line fell) sees a framing
+/// error: the byte is thrown away and the sticky framing status (bit 6) is set. It stays in the error state while the line is low,
+/// shifting the line into an 8-bit register that the error entry set to ones; eight bit times later the register is zero and the
+/// break condition (status bit 7, held, not sticky) shows until the line rises. A line that rises before the stop sample is an
+/// ordinary byte with zero bits in it (or a parity error). Held in FIFO reset (frame bit 7) the receiver pauses until the line is high.
+/// The transmitter's break (frame bit 6) holds Tx low and the transmitter busy: status bit 4 (Tx empty) reads 0 then (uart_tx.vhd o_busy).
+///
+/// The joystick connector (zxnext.vhd 3340-3350, 3516-3539): NR #0B bit 7 with bit 5 set routes one UART to the connector, bit 0 says
+/// which (0: UART 0, replacing the ESP; 1: UART 1, replacing the Pi), bit 4 which connector. Pin 7 carries Tx, the pad's C line is Rx and
+/// B is CTS. The module a UART leaves sees its Rx idle and its ready-to-receive pin not ready; the connector has no RTR pin, so the
+/// joystick peer gets no RTS (it is another ISerialPeer: SetJoystickPeer).
 
 #include <array>
 #include <cstdint>
@@ -66,7 +79,18 @@ public:
     void PollInterrupts(uint8_t enable);
     /// The other end of a channel (nullptr: nothing on the line: Tx bytes are lost, nothing arrives)
     void SetPeer(unsigned channel, ISerialPeer* peer);
+    /// The module a channel is fitted with (the ESP, the Pi), also while the joystick connector has taken the channel's line
     ISerialPeer* Peer(unsigned channel) const { return _ch[channel].peer; }
+    /// The device plugged into the joystick connector (nullptr: nothing)
+    void SetJoystickPeer(ISerialPeer* peer);
+    ISerialPeer* JoystickPeer() const { return _joyPeer; }
+    /// NR #0B: the connector carries a UART (`on`) and which one (`channel`). The channel's own module is cut off: it sees no data
+    /// and its ready-to-receive pin not ready
+    void SetJoystickRoute(bool on, unsigned channel);
+    bool JoystickRouted() const { return _joyOn; }
+    unsigned JoystickChannel() const { return _joyChannel; }
+    /// The other end a channel talks to now: the joystick peer while the connector has the channel, else its module
+    ISerialPeer* Wire(unsigned channel) const { return _joyOn && _joyChannel == channel ? _joyPeer : _ch[channel].peer; }
 
     /// Bytes for the peer that the transmitter finished, and bytes lost by a missing peer, since the last Reset (statistics)
     uint64_t BytesSent(unsigned channel) const { return _ch[channel].sent; }
@@ -86,6 +110,9 @@ public:
         unsigned rxCount = 0, txCount = 0;
         bool txBusy = false, rxBusy = false;
         bool overflow = false, framingError = false;
+        bool breakIn = false;      ///< the break condition: the peer's line held low long enough (status bit 7)
+        bool rxLineLow = false;    ///< the peer's line is low now
+        bool joystick = false;     ///< the channel talks to the joystick connector's peer
         uint8_t status = 0;  ///< what a read of #133B returns now, without its side effect
         uint64_t sent = 0, received = 0, lost = 0;
         bool hasPeer = false;
@@ -95,9 +122,9 @@ public:
     bool Idle() const
     {
         for (const Channel& c : _ch)
-            if (c.peer || c.txBusy || c.rxBusy || c.txCount)
+            if (c.peer || c.txBusy || c.rxBusy || c.txCount || c.rxLow || c.breakIn)
                 return false;
-        return true;
+        return !(_joyOn && _joyPeer);
     }
     /// The state of a channel without side effects
     View GetView(unsigned channel) const;
@@ -137,6 +164,13 @@ private:
         ISerialPeer* peer = nullptr;
         SerialLine told{};
         bool toldValid = false;
+        // a break on the peer's line (see the class comment)
+        bool rxLow = false;        ///< the peer's line has been low since lowSince
+        uint64_t lowSince = 0;
+        bool lowFramed = false;    ///< the stop sample passed with the line low: the frame error is counted
+        bool lowPaused = false;    ///< a FIFO reset saw the line low: the receiver waits for it to rise
+        bool breakIn = false;      ///< the break condition (status bit 7)
+        bool breakTold = false;    ///< what the peer was last told of our Tx break
     };
 
     uint32_t Prescaler(const Channel& c) const
@@ -153,8 +187,19 @@ private:
     void StartTx(Channel& c, uint64_t at);
     void TellPeer(Channel& c);
     uint8_t Status(const Channel& c) const;
+    unsigned IndexOf(const Channel& c) const { return static_cast<unsigned>(&c - _ch.data()); }
+    ISerialPeer* WireOf(const Channel& c) const { return Wire(IndexOf(c)); }
+    /// Clocks from the line falling to the stop bit's sample point, and to the break condition (uart_rx.vhd)
+    uint64_t StopSampleClocks(const Channel& c) const;
+    uint64_t BreakClocks(const Channel& c) const;
+    /// The receiver's view of a low line: the frame error and the break condition as time passes, a short pulse as a byte
+    void StepLine(Channel& c, ISerialPeer* peer, uint64_t now);
+    void TellBreak(Channel& c);
 
     std::array<Channel, kChannels> _ch;
     unsigned _selected = 0;
     uint64_t _now = 0;
+    ISerialPeer* _joyPeer = nullptr;
+    bool _joyOn = false;
+    unsigned _joyChannel = 0;
 };

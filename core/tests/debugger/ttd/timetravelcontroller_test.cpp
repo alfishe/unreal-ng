@@ -522,7 +522,7 @@ TEST_F(TimeTravelController_Test, StatusDescribesTheSessionAsV1)
     EXPECT_EQ(a.sessionStartFrame, b.sessionStartFrame);
     EXPECT_EQ(a.currentEndFrame, b.currentEndFrame);
     EXPECT_EQ(a.machine.peripheralMask, b.machine.peripheralMask) << "the same devices recorded";
-    EXPECT_NE(b.machine.peripheralMask, 0u);
+    EXPECT_TRUE(b.machine.peripheralMask.Any());
     EXPECT_EQ(a.inputEventCount, b.inputEventCount);
 
     const ttd::TimeTravelEngine& engine = _controller->GetEngine();

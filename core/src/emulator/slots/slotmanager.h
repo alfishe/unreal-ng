@@ -44,6 +44,7 @@
 
 #include "emulator/slots/slotconfig.h"
 #include "emulator/slots/slotplanner.h"
+#include "debugger/ttd/ttdperipheralmask.h"
 
 struct CONFIG;
 enum class GSTypeKind : uint8_t;
@@ -332,14 +333,14 @@ public:
     struct TtdDeviceSet
     {
         std::vector<uint8_t> ids;
-        uint64_t notRecorded = 0;   ///< bit per PeripheralId
+        ttd::PeripheralMask notRecorded;   ///< per PeripheralId
         std::string socketCard;     ///< "ay" / "ts" / "tsfm" from the socket device's instance; "" when not known
 
-        static TtdDeviceSet Of(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs, uint64_t notRecorded);
+        static TtdDeviceSet Of(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs, const ttd::PeripheralMask& notRecorded);
         static TtdDeviceSet Of(const ttd::TTDPeripheralRegistry& registry);
         /// A session file of the engine: every device of its device table (each a key {type, instance} with its v1
         /// id), the not-recorded mask from the controller's facts
-        static TtdDeviceSet Of(const ttd::TTDDeviceTable& devices, uint64_t notRecorded);
+        static TtdDeviceSet Of(const ttd::TTDDeviceTable& devices, const ttd::PeripheralMask& notRecorded);
     };
 
     /// The slot set as configuration fingerprint fields (R-NF-2), `affectsRestore` (a checkpoint holds the devices of
@@ -376,7 +377,7 @@ public:
     /// The same for this machine, then each slot-built card's own check (the MultiSound's MIDI bank), then its
     /// machine slots (the Sprinter's ISA population, the port decoder's TtdSessionMatches). `blobs` as stored (the
     /// baseline checkpoint's)
-    bool TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs, uint64_t notRecordedMask,
+    bool TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs, const ttd::PeripheralMask& notRecordedMask,
                            const ttd::TTDPeripheralRegistry& live, std::string& why) const;
     /// The same with the recorded device set given (a session file of the engine names its devices in its device
     /// table, the socket's board included); `blobs` = the baseline's device states as blobs for the card checks

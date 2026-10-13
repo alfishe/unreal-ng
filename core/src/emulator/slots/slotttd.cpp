@@ -99,7 +99,7 @@ std::string SocketCardOf(const std::string& instance)
 bool Holds(const SlotManager::TtdDeviceSet& set, PeripheralId id)
 {
     const auto raw = static_cast<uint8_t>(id);
-    return std::find(set.ids.begin(), set.ids.end(), raw) != set.ids.end() || ((set.notRecorded >> raw) & 1u) != 0;
+    return std::find(set.ids.begin(), set.ids.end(), raw) != set.ids.end() || set.notRecorded.Test(raw);
 }
 
 /// The cards of a position a device set holds, as their names ("none" when none, "a + b" when a broken writer
@@ -172,7 +172,7 @@ std::string Lower(std::string text)
 }  // namespace
 
 SlotManager::TtdDeviceSet SlotManager::TtdDeviceSet::Of(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs,
-                                                        uint64_t notRecorded)
+                                                        const ttd::PeripheralMask& notRecorded)
 {
     TtdDeviceSet set;
     for (const auto& [id, blob] : blobs)
@@ -205,7 +205,7 @@ SlotManager::TtdDeviceSet SlotManager::TtdDeviceSet::Of(const ttd::TTDPeripheral
     return set;
 }
 
-SlotManager::TtdDeviceSet SlotManager::TtdDeviceSet::Of(const ttd::TTDDeviceTable& devices, uint64_t notRecorded)
+SlotManager::TtdDeviceSet SlotManager::TtdDeviceSet::Of(const ttd::TTDDeviceTable& devices, const ttd::PeripheralMask& notRecorded)
 {
     TtdDeviceSet set;
     for (const ttd::TTDDeviceEntry& entry : devices.Entries())
@@ -364,7 +364,7 @@ bool SlotManager::TtdSlotSetMatches(const Result& result, const TtdDeviceSet& re
 }
 
 bool SlotManager::TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs,
-                                    uint64_t notRecordedMask, const ttd::TTDPeripheralRegistry& live,
+                                    const ttd::PeripheralMask& notRecordedMask, const ttd::TTDPeripheralRegistry& live,
                                     std::string& why) const
 {
     return TtdSessionMatches(TtdDeviceSet::Of(blobs, notRecordedMask), blobs, live, why);
