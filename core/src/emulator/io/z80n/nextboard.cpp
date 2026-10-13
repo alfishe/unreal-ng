@@ -149,6 +149,23 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return static_cast<uint8_t>(_regs[reg] & 0xBF);  // bit 6 is not stored (base_7 & '0' & base)
         case 0x10:
             return static_cast<uint8_t>((_regs[reg] & 0x1F) << 2);  // the core id; the DRIVE / M1 buttons read 0
+        case 0x90:
+            return static_cast<uint8_t>(_regs[reg] & 0xFC);  // the output enables of GPIO 0-7 keep bits 1:0 clear (zxnext.vhd 5536)
+        case 0x93:
+            return static_cast<uint8_t>(_regs[reg] & 0x0F);
+        case 0x98:
+        case 0x99:
+        case 0x9A:
+        case 0x9B:
+        {
+            // a read is the PIN state (i_GPIO), not the output latch: an enabled output shows its value, the others what the Pi drives
+            // (nothing is wired to the header here yet: low)
+            const unsigned bank = reg - 0x98;
+            uint8_t level = _gpioInput ? _gpioInput(bank) : 0;
+            const uint8_t enable = Read(static_cast<uint8_t>(0x90 + bank));
+            const uint8_t value = static_cast<uint8_t>(_regs[reg] & (bank == 3 ? 0x0F : 0xFF));
+            return static_cast<uint8_t>((value & enable) | (level & ~enable));
+        }
         case 0xA0:
             return static_cast<uint8_t>(_regs[reg] & 0x39);  // "00" & pi peripheral bits 5:3 & "00" & bit 0 (zxnext.vhd 6189)
         case 0xA2:

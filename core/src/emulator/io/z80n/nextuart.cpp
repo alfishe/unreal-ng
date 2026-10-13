@@ -42,7 +42,7 @@ void NextUart::Reset(bool hard)
         c.toldValid = false;
         c.rxFreeAt = c.txFreeAt = c.lastLook = 0;
         c.lowPaused = false;
-        if (c.peer && WireOf(c) == c.peer)
+        if (c.Live() && WireOf(c) == c.peer)
             c.peer->OnModemLines(true, true);
         TellBreak(c);
     }
@@ -84,15 +84,15 @@ void NextUart::SetPeer(unsigned channel, ISerialPeer* peer)
     c.breakTold = false;
     if (!peer)
         return;
-    if (Wire(channel) == peer)
+    if (_joyOn && _joyChannel == channel)
+    {
+        peer->OnModemLines(false, true);  // the joystick connector has the channel: the module's ready-to-receive pin is forced not ready
+    }
+    else if (c.Live())
     {
         peer->OnModemLines(c.rtsOut, true);
         TellPeer(c);
         TellBreak(c);
-    }
-    else
-    {
-        peer->OnModemLines(false, true);  // the joystick connector has the channel: the module's ready-to-receive pin is forced not ready
     }
 }
 
@@ -144,7 +144,7 @@ void NextUart::SetJoystickRoute(bool on, unsigned channel)
                 TellBreak(c);
             }
         }
-        else if (c.peer)
+        else if (c.Live())
         {
             c.peer->OnModemLines(c.rtsOut, true);
             TellPeer(c);
@@ -283,6 +283,12 @@ void NextUart::Step(Channel& c, uint64_t now)
 {
     ISerialPeer* const peer = WireOf(c);
     const bool viaJoystick = peer && peer == _joyPeer;
+    // pins not connected: what the module sends reaches nobody (the connector's device, when it has the channel, is another matter)
+    while (!c.connected && c.peer && !(_joyOn && _joyChannel == IndexOf(c)) && c.peer->HasByte())
+    {
+        c.peer->TakeByte();
+        c.lost++;
+    }
     if (FifoReset(c))
     {
         // held in reset: the FIFOs and the shifters stay empty; a byte the peer offers is taken and lost

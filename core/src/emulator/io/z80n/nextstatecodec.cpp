@@ -703,6 +703,7 @@ bool NextStateCodec::Load(PortDecoder_Next& p, const uint8_t* data, size_t size)
     Impl::LoadSd(r, p._sd[1]);
     Impl::LoadUart(r, p._uart);
     p.UpdateUartRoute(false);  // the joystick connector's UART follows NR #0B, which the image holds
+    p.SyncPiLine();            // and UART 1's pins NR #A0
     memory.Remap();  // the slot table, the windows and the contention flags follow the image
     return r.Done();
 }

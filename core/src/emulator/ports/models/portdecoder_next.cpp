@@ -113,6 +113,7 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         const uint64_t now = Now28();
         _ctc.Advance(now);
         if (!_uart.Idle())
+            SyncPiLine();
             _uart.Advance(now);
         _uart.PollInterrupts(_interrupts->UartEnables());
     });
@@ -270,6 +271,12 @@ bool PortDecoder_Next::PortEnabled(unsigned bit) const
 
 /// The mouse registers as zxnext.vhd gives them: X, Y, and {wheel, 1, not middle, not left, not right}; with no mouse the inputs idle
 /// (zero counts, buttons released). NR #0A bit 3 swaps the buttons (the PS/2 mouse module's control); its DPI bits are the host's
+/// UART 1's pins reach the Pi header only with NR #A0 bit 4 (`pi_uart_en`) and in the Pi orientation, bit 5 (`pi_uart_rxtx`): zxnext.vhd 2319-2334
+void PortDecoder_Next::SyncPiLine()
+{
+    _uart.SetLineConnected(1, (_board->Stored(0xA0) & 0x30) == 0x30);
+}
+
 /// NR #0A bits 1:0 into the PS/2 module's scaling (ps2_mouse.v xydelta): 00 x2, 01 x1, 10 half, 11 a quarter
 void PortDecoder_Next::ApplyMouseDpi(uint8_t nr0a)
 {
@@ -334,6 +341,7 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     {
         if (!PortEnabled(12))
             return IdleRead(port, pc);
+        SyncPiLine();
         const uint8_t value = _uart.Read(port, Now28());
         _uart.PollInterrupts(_interrupts->UartEnables());
         _lastPortDecoded = true;
@@ -610,6 +618,7 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     {
         if (PortEnabled(12))
         {
+            SyncPiLine();
             _uart.Write(port, value, Now28());
             _uart.PollInterrupts(_interrupts->UartEnables());
         }
@@ -1503,6 +1512,7 @@ void PortDecoder_Next::SetUartPeer(unsigned channel, ISerialPeer* peer)
 {
     if (channel >= NextUart::kChannels)
         return;
+    SyncPiLine();
     _uart.Advance(Now28());
     if (ISerialPeer* old = _uart.Peer(channel); old && old != peer)
     {
@@ -1515,6 +1525,7 @@ void PortDecoder_Next::SetUartPeer(unsigned channel, ISerialPeer* peer)
         peer->SetClock([this]() { return static_cast<uint64_t>(Now()); }, kBaseClockHz);
         // Bytes from outside arrive at their emulated time: the UART catches up first
         peer->onReceive = [this]() {
+            SyncPiLine();
             _uart.Advance(Now28());
             _uart.PollInterrupts(_interrupts->UartEnables());
         };

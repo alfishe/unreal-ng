@@ -1,3 +1,4 @@
+#include "emulator/io/serial/nextpipeer.h"
 #include "emulator/io/network/networkmanager.h"
 
 #include <algorithm>
@@ -219,6 +220,8 @@ std::unique_ptr<ISerialPeer> NetworkManager::MakePeer(const std::string& specTex
             return std::make_unique<LoopbackPeer>();
         case ComPortSpec::Kind::Plug:
             return std::make_unique<LoopbackPeer>(true);
+        case ComPortSpec::Kind::NextPi:
+            return std::make_unique<NextPiPeer>();
         case ComPortSpec::Kind::Tcp:
         case ComPortSpec::Kind::Serial:
             return std::make_unique<StreamPeer>(_network.get(), spec, _context->config.network.comModemLines != 0);

@@ -25,7 +25,7 @@ that change how the emulator behaves or how the RTL reads. The RTL (`cores/zxnex
   framing error (the byte is dropped, status bit 6 sticky); in S_ERROR the line is shifted into a register set to ones, so eight bit times
   later `o_err_break` holds (status bit 7, not sticky) until the line rises; a FIFO reset puts the receiver in S_PAUSE until the line is
   high. `uart.vhd` status bit 4 (Tx empty) is FIFO empty and not `o_busy`, and `o_busy` holds for frame bit 6 (break) and 7.
-- Open: the Pi GPIO routing (NR #A0 / #9x), the ESP flasher's SLIP protocol (design note
+- Open: a GPIO peer for the Pi, the ESP flasher's SLIP protocol (design note
   [design-esp-flasher-2026-10-12.md](design-esp-flasher-2026-10-12.md)), NR #02 bit 7 (`o_RESET_PERIPHERAL`) as the module's reset.
 
 ## 2. Port gating (ports.enforced)
@@ -78,6 +78,16 @@ Full table, method and calibration: [copper-picture-latency-2026-10-12.md](coppe
 - Radastan (NR #6A bit 5, LoRes on): 128 x 96 at 4 bits, 64-byte rows, display file = port #FF bit 0 xor NR #6A bit 4, high nibble
   first, index high nibble NR #6A 3:0 (`11` + bits 1:0 with ULA+). The LoRes / Radastan row runs on past 192 (y(7:6) + 1), 14-bit
   address wrap, instead of wrapping at 192.
+
+## 4b. The Pi (Tier A of research-pi-accelerator.md)
+
+- `ComPort2=NEXTPI` (or `PI`): `NextPiPeer`, the NextPi supervisor at the level the Next's tools use: prompt `SUP> `, tty echo, ^C / ^D,
+  `nextpi-admin_version` (1.93D), `nextpi-file_receive -nbn` and `nextpi-file_transmit -nbn` over an in-memory card (NBN: 16 KB blocks,
+  8-bit sum, `!` / `?`), `bash: x: command not found` for the rest. Real NextPi under QEMU is reachable with `ComPort2=TCP:...`.
+- UART 1's pins reach the header only with NR #A0 bit 4 (`pi_uart_en`) and bit 5 (`pi_uart_rxtx`, the Pi orientation): with either clear
+  the peer's bytes are lost and the transmitter reaches nobody (`NextUart::SetLineConnected`, synced from NR #A0 at each UART access).
+- NR #90-#93: bits 1:0 of #90 and 7:4 of #93 read 0; NR #98-#9B read the PIN state (enabled output: its latch, otherwise the input the
+  header gives, low for now; `NextBoard::SetGpioInput` is the hook for a peer); reset values #98 = #FF, #99 = #01, any reset.
 
 ## 5. Still open (not done)
 

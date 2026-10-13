@@ -89,8 +89,13 @@ public:
     void SetJoystickRoute(bool on, unsigned channel);
     bool JoystickRouted() const { return _joyOn; }
     unsigned JoystickChannel() const { return _joyChannel; }
-    /// The other end a channel talks to now: the joystick peer while the connector has the channel, else its module
-    ISerialPeer* Wire(unsigned channel) const { return _joyOn && _joyChannel == channel ? _joyPeer : _ch[channel].peer; }
+    /// The other end a channel talks to now: the joystick peer while the connector has the channel (zxnext.vhd 3340: the connector's
+    /// pins come before the Pi's GPIO mux, so NR #A0 does not gate them), else its module when its pins are connected
+    ISerialPeer* Wire(unsigned channel) const { return _joyOn && _joyChannel == channel ? _joyPeer : _ch[channel].Live(); }
+    /// The pins of the line are connected to the peer (UART 1: NR #A0 bits 4 and 5, zxnext.vhd 2333: with `pi_uart_en` clear the receiver
+    /// idles high and the transmitter reaches no pin): disconnected, Tx bytes are lost and the peer's bytes are not taken
+    void SetLineConnected(unsigned channel, bool connected) { _ch[channel].connected = connected; }
+    bool LineConnected(unsigned channel) const { return _ch[channel].connected; }
 
     /// Bytes for the peer that the transmitter finished, and bytes lost by a missing peer, since the last Reset (statistics)
     uint64_t BytesSent(unsigned channel) const { return _ch[channel].sent; }
@@ -122,7 +127,7 @@ public:
     bool Idle() const
     {
         for (const Channel& c : _ch)
-            if (c.peer || c.txBusy || c.rxBusy || c.txCount || c.rxLow || c.breakIn)
+            if (c.Live() || c.txBusy || c.rxBusy || c.txCount || c.rxLow || c.breakIn)
                 return false;
         return !(_joyOn && _joyPeer);
     }
@@ -162,6 +167,8 @@ private:
         bool rxLevel = false, txLevel = false;
         uint64_t sent = 0, received = 0, lost = 0;
         ISerialPeer* peer = nullptr;
+        bool connected = true;
+        ISerialPeer* Live() const { return connected ? peer : nullptr; }
         SerialLine told{};
         bool toldValid = false;
         // a break on the peer's line (see the class comment)
