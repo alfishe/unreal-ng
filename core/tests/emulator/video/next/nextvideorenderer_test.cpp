@@ -385,6 +385,14 @@ protected:
         _in.nr[0x6F] = 0x20;
         _in.nr[0x4C] = 0x0F;  // transparent index
         _in.nr[0x68] = 0x80;  // no ULA, so the tilemap is the only layer
+        // the tilemap palettes power on at zero and the firmware leaves them so: a program writes them (colour = index here)
+        _regs.WritePaletteControl(0x30);
+        for (unsigned i = 0; i < 256; i++)
+        {
+            _regs.WritePaletteIndex(static_cast<uint8_t>(i));
+            _regs.WritePaletteValue8(static_cast<uint8_t>(i));
+        }
+        _regs.WritePaletteControl(0x00);
     }
     uint8_t* Map() { return Page(5) + 0x1000; }
     uint8_t* Defs() { return Page(5) + 0x2000; }

@@ -89,6 +89,13 @@ Full table, method and calibration: [copper-picture-latency-2026-10-12.md](coppe
 - NR #90-#93: bits 1:0 of #90 and 7:4 of #93 read 0; NR #98-#9B read the PIN state (enabled output: its latch, otherwise the input the
   header gives, low for now; `NextBoard::SetGpioInput` is the hook for a peer); reset values #98 = #FF, #99 = #01, any reset.
 
+## 4c. Power-on palettes (measured 2026-10-13)
+
+- The RTL's palette RAMs (`dpram2`, init `none.bin.txt`) power on at zero. The real boot ROM + TBBLUE.FW run in the emulator from zeroed
+  palettes write: ULA palettes (0, 4) the 16 ULA colours repeated through all 256 entries; Layer 2 and sprite palettes (1, 2, 5, 6)
+  colour = index; **the tilemap palettes (3, 7) are never written: zero**. The emulator's hard reset now holds exactly that state
+  (it had identity for ULA entries 32-255 and for the tilemap palettes). A program that uses the tilemap writes its palette.
+
 ## 5. Still open (not done)
 
 See the `[ ]` items of [TODO.md](TODO.md); the ones from this stretch: the UART items in 1; a per-sprite fill time instead of one
