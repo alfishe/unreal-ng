@@ -17,9 +17,11 @@ public:
     static constexpr unsigned kSprites = 128;
     static constexpr unsigned kPatternBytes = 16384;
     static constexpr unsigned kGridWidth = 320;
-    /// The per-line time budget as a count of cycles: one per sprite plus one per drawn pixel of a sprite on the line.
-    /// An estimate (the 28 MHz cost per sprite is not read from the VHDL yet): 3.02.02 and later draw at least 100
-    /// sprites a line
+    /// The engine's time per line in 28 MHz clocks (sprites.vhd, measured on the RTL in GHDL: tools/poc/029-next-sprite-engine-timing): 4 per
+    /// 7 MHz pixel of the line, 448 pixels on the 48K / Pentagon timing (1792), 456 on the 128K / +3 (1824). One clock for S_START,
+    /// one per sprite for S_QUALIFY and one per pixel of a sprite on the line for S_PROCESS (16 << x scale; a sprite starting at
+    /// 320..494 costs one, one starting at 320 - w..319 stops at the edge). "Too many" is set when the engine is not idle at the next
+    /// line (the clocks used >= the line's), and a pixel after the line's last clock is not drawn
     static constexpr unsigned kLineBudget = 1792;
 
     /// What DrawLine writes for each grid pixel
@@ -45,16 +47,18 @@ public:
     void WriteMirrorAttribute(unsigned byte, uint8_t value, bool increment, bool tied);  ///< NR #35-#39 / #75-#79
     /// endregion
 
-    /// Draw grid line `y` (0..255). `control` is NR #15; the clip window is the sprites' (NR #19)
-    void DrawLine(unsigned y, uint8_t control, const NextVideoRegs& regs, Pixel* out, uint8_t transparentIndex);
+    /// Run the engine for grid line `y` (0..255) and paint what is inside the clip window (NR #19) into `out` (not touched when the
+    /// sprites are off: NR #15 bit 0 gates the output, the engine and its flags run). `control` is NR #15, `lineClocks` the
+    /// line period in 28 MHz clocks (kLineBudget)
+    void DrawLine(unsigned y, uint8_t control, const NextVideoRegs& regs, Pixel* out, uint8_t transparentIndex, unsigned lineClocks = kLineBudget);
 
     /// region <Const view for the next_sprites report: nothing here clears a flag or steps an upload index (design-automation-coverage.md R3)>
     /// The state the sprite engine fills a line's buffer from changes with every write: a snapshot taken at the fill is valid while the
     /// epoch is the same (ScreenNext, POC 028: the engine fills paper row R during row R - 1, in index order)
     uint32_t Epoch() const { return _epoch; }
     void Touch() { _epoch++; }
-    /// The 28 MHz clocks the engine needs for row y: one per sprite to qualify, 17 more for each one drawn (zxnext sprites.vhd S_QUALIFY /
-    /// S_PROCESS; the last drawn sprite ends the visible fill)
+    /// The 28 MHz clocks the engine needs for row y: one per sprite to qualify and the process clocks (16 << x scale, fewer at the right
+    /// edge) of each one drawn (sprites.vhd S_QUALIFY / S_PROCESS; the last drawn sprite ends the visible fill)
     unsigned FillClocks(unsigned y) const;
     /// The flags a drawing of a snapshot set go to this (live) object, the snapshot's are cleared
     void MergeFlags(NextSprites& from)
@@ -111,8 +115,7 @@ private:
     Effective Decode(unsigned s) const;
     void Resolve(unsigned s, const Anchor& anchor, Effective& out) const;
     void UpdateAnchor(unsigned s, Anchor& anchor) const;
-    void DrawSprite(unsigned number, const Effective& sprite, unsigned y, const int clip[4], bool overBorder, Pixel* out, bool* occupied,
-                    uint8_t transparentIndex);
+    bool PatternPixel(const Effective& sprite, int patternCol, int rowIndex, uint8_t transparentIndex, uint8_t& index) const;
     void SetAttribute(unsigned sprite, unsigned byte, uint8_t value) { _attr[sprite & 127][byte] = value; }
 
     uint8_t _attr[kSprites][5] = {};
