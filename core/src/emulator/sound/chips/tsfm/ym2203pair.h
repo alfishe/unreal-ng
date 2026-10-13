@@ -88,6 +88,8 @@ struct Ym2203OutputState
     double lastFed = 0.0;                 // newest coupled half-tick value (LQ sample with no half-tick)
     bool couplingSettlePending = false;   // after a flush: settle the coupling on the first live word
     FilterDecimator decimator;            // 437.5 kHz -> core rate, HQ path
+    size_t zeroRun = 0;                   // newest consecutive zeros fed to the decimator (a reset or a clear only
+                                          // zeroes its history, so the count stays true)
     double lqSum = 0.0;                   // LQ boxcar: sum of gated half-tick values
     uint32_t lqCount = 0;                 // LQ boxcar: half-ticks summed for this output sample
     std::shared_ptr<NativeAudioTap> nativeTap = std::make_shared<NativeAudioTap>();
@@ -305,6 +307,11 @@ public:
     }
 
     /// FM operator clocking frozen (sound off, no TTD); everything CPU-observable stays exact
+    /// Idle FM halves (nothing sounding or keyed, ymfm patch 6) advance in one go per stretch between timer
+    /// expiries (on by default; off clocks every sample: comparison tests), and the samples that stood for so far
+    void setFmIdleFastPath(bool on) { _fmIdleFastPath = on; }
+    uint64_t fmIdleSamples() const { return _fmIdleSamples; }
+
     void setCoreSynthesisSkipped(bool skipped)
     {
         _coreSynthesisSkipped = skipped;
@@ -398,7 +405,10 @@ public:
         const double sample = o.coupling.filter(gated);
         o.lastFed = sample;
         if (_hqEnabled)
+        {
             o.decimator.feedSample(sample);
+            o.zeroRun = sample == 0.0 ? o.zeroRun + 1 : 0;
+        }
         else
         {
             o.lqSum += sample;
@@ -545,6 +555,8 @@ private:
     int64_t _chipT = 0;          // master clock the chips were advanced to (== _syncedT at 1 : 1)
     uint64_t _ratioPhase = 0;    // ratio accumulator remainder, in host ticks x masterClockHz (TTD state)
     bool _adoptCpuClock = true;  // set by reset: the next sync adopts the host's position without advancing
+    bool _fmIdleFastPath = true;     // idle FM halves clocked in one go (advanceChip); off: the comparison tests
+    uint64_t _fmIdleSamples = 0;     // FM sample clocks the fast path stood for (diagnostics, not state)
 
     bool _hqEnabled = true;
     bool _synthesisSuppressed = false;

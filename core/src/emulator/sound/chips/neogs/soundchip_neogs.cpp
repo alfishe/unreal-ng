@@ -738,6 +738,51 @@ void SoundChip_NeoGS::runEvents(int64_t now)
     reschedule();
 }
 
+// Inside an idle-loop sleep (GSCardRunner): the timer ticks and mixer sides before `end` at once. Quiet only while
+// each mixer side recomputes the level it already holds and the output already carries it (the samples and volumes
+// cannot change while the CPU sleeps); the CPU cannot take the timer INT, so a tick only counts and keeps the
+// request raised. Anything else due before `end` (a reset, the TIM_FREQ edge, DMA, ZX-DMA): one by one
+bool SoundChip_NeoGS::sleepQuietEventsBefore(int64_t end)
+{
+    if (_resetRequest != ResetKind::None || _extraStrobeAt < end || _dma.nextEvent() < end || _zx.nextEvent() < end)
+        return false;
+    if (mixerLevel(false) != _outL || mixerLevel(true) != _outR)
+        return false;
+    if (_frameTicks > 0)
+    {
+        int32_t left = 0;
+        int32_t right = 0;
+        listeningMix(left, right);
+        if (left != _audio.lastLeft() || right != _audio.lastRight())
+            return false;
+    }
+
+    constexpr int64_t dacSideTicks = CRYSTAL_PER_DAC_SIDE * TICKS_PER_CRYSTAL;
+    const int64_t firstDac = crystalToTicks(_nextDacCrystal);
+    if (firstDac < end)
+        _nextDacCrystal += ((end - 1 - firstDac) / dacSideTicks + 1) * CRYSTAL_PER_DAC_SIDE;
+
+    if (_timerStrobeAt < end)
+    {
+        // The first tick may follow a TIM_FREQ change off the period grid; the rest are on it
+        _activityCounters.interruptPeriods++;
+        if (_irq.readRequest() & NeoGSInterrupts::REQ_TIMER)
+            _activityCounters.interruptsCoalesced++;
+        _irq.raise(NeoGSInterrupts::REQ_TIMER);
+        scheduleTimer(NeoGSInterrupts::nextTickCrystal(_irq.timFreq(), _nextTimerCrystal));
+        if (_timerStrobeAt < end)
+        {
+            const int64_t periodCrystal = NeoGSInterrupts::tickPeriodCrystal(_irq.timFreq());
+            const int64_t ticks = (end - 1 - _timerStrobeAt) / (periodCrystal * TICKS_PER_CRYSTAL) + 1;
+            _activityCounters.interruptPeriods += static_cast<uint64_t>(ticks);
+            _activityCounters.interruptsCoalesced += static_cast<uint64_t>(ticks);
+            scheduleTimer(_nextTimerCrystal + ticks * periodCrystal);
+        }
+    }
+    reschedule();
+    return true;
+}
+
 void SoundChip_NeoGS::onNmiAccepted()
 {
     _nmiPending = false;
@@ -763,8 +808,7 @@ void SoundChip_NeoGS::dacSideEvent(int64_t crystal)
     // The mixer computes one side per 320 crystal clocks, alternately; the
     // side whose turn starts on a timer boundary (multiple of 640) is right
     const bool right = ((crystal / CRYSTAL_PER_DAC_SIDE) & 1) == 0;
-    const int32_t raw = _snd.mix(right, _gscfg0);
-    const int32_t level = raw * static_cast<int32_t>(_config.volume) / 16384;
+    const int32_t level = mixerLevel(right);
     if (right)
         _outR = level;
     else
@@ -774,22 +818,29 @@ void SoundChip_NeoGS::dacSideEvent(int64_t crystal)
         return;
     const int64_t eventTicks = crystalToTicks(crystal);
     const int64_t position = eventTicks / TICKS_PER_CRYSTAL - _frameStartTicks / TICKS_PER_CRYSTAL;
+    int32_t left = 0;
+    int32_t right_ = 0;
+    listeningMix(left, right_);
+    if (_audio.set(position, blipFrameLength(), left, right_, !_synthesisSuppressed))
+        _frameHadActivity = true;
+}
+
+void SoundChip_NeoGS::listeningMix(int32_t& left, int32_t& right) const
+{
     // The listening choice: as on the board, the classic GS's 50% cross-feed
     // (the opposite side at half level, scaled so both sides full stays full)
     // or mono
-    int32_t left = _outL;
-    int32_t right_ = _outR;
+    left = _outL;
+    right = _outR;
     if (_stereoMode == NeoGSConfig::StereoMode::GS)
     {
         left = (2 * _outL + _outR) / 3;
-        right_ = (2 * _outR + _outL) / 3;
+        right = (2 * _outR + _outL) / 3;
     }
     else if (_stereoMode == NeoGSConfig::StereoMode::Mono)
     {
-        left = right_ = (_outL + _outR) / 2;
+        left = right = (_outL + _outR) / 2;
     }
-    if (_audio.set(position, blipFrameLength(), left, right_, !_synthesisSuppressed))
-        _frameHadActivity = true;
 }
 
 void SoundChip_NeoGS::dacCapture(uint16_t addr, uint8_t value)

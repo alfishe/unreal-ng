@@ -313,6 +313,7 @@ private:
     }
     int64_t sleepHardStop() const { return std::min(_dma.nextEvent(), _zx.nextEvent()); }
     void onStepsSkipped(uint64_t steps) { _activityCounters.cpuSteps += steps; }
+    bool sleepQuietEventsBefore(int64_t end);
     void onStep()
     {
         _activityCounters.cpuSteps++;
@@ -397,6 +398,13 @@ private:
 
     // Audio
     void dacSideEvent(int64_t crystal);
+    /// One mixer side as the board's DAC gets it
+    int32_t mixerLevel(bool right) const
+    {
+        return _snd.mix(right, _gscfg0) * static_cast<int32_t>(_config.volume) / 16384;
+    }
+    /// Both sides after the listening choice (stereo mode): what the output stage is given
+    void listeningMix(int32_t& left, int32_t& right) const;
     int64_t blipPosition() const { return _runner.now() / TICKS_PER_CRYSTAL - _frameStartTicks / TICKS_PER_CRYSTAL; }
     int64_t blipFrameLength() const
     {

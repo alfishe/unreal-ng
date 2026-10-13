@@ -299,6 +299,10 @@ void SoundChip_TurboSound::handleStep()
                 // Generators tick at _psgClock / 8 = 218.75 kHz by default
                 // FIR decimates to 44.1 kHz (~4.96:1 ratio)
 
+                auto feedSsg = [](FilterDecimator& d, double v, size_t& zeroRun) {
+                    d.feedSample(v);
+                    zeroRun = v == 0.0 ? zeroRun + 1 : 0;
+                };
                 // Feed generator samples to decimator until we have an output
                 while (!_chip0->decimatorLeft().hasOutput())
                 {
@@ -316,18 +320,19 @@ void SoundChip_TurboSound::handleStep()
                     }
 
                     // Feed mixed output to decimators
-                    _chip0->decimatorLeft().feedSample(_chip0->mixedLeft());
-                    _chip0->decimatorRight().feedSample(_chip0->mixedRight());
-                    _chip1->decimatorLeft().feedSample(_chip1->mixedLeft());
-                    _chip1->decimatorRight().feedSample(_chip1->mixedRight());
+                    feedSsg(_chip0->decimatorLeft(), _chip0->mixedLeft(), _ssgZeroRun[0]);
+                    feedSsg(_chip0->decimatorRight(), _chip0->mixedRight(), _ssgZeroRun[1]);
+                    feedSsg(_chip1->decimatorLeft(), _chip1->mixedLeft(), _ssgZeroRun[2]);
+                    feedSsg(_chip1->decimatorRight(), _chip1->mixedRight(), _ssgZeroRun[3]);
                 }
 
                 // Get decimated output per chip
                 // One pass over the taps for the four decimators fed in lockstep (FilterDecimator::getOutputs)
                 FilterDecimator* decimators[4] = {&_chip0->decimatorLeft(), &_chip0->decimatorRight(),
                                                   &_chip1->decimatorLeft(), &_chip1->decimatorRight()};
+                // A silent chip side skips its FIR (FilterDecimator::getOutputsSkippingSilent): the same +0.0
                 double values[4];
-                FilterDecimator::getOutputs(decimators, 4, values);
+                FilterDecimator::getOutputsSkippingSilent(decimators, _ssgZeroRun, 4, values);
                 float c0L = static_cast<float>(values[0]);
                 float c0R = static_cast<float>(values[1]);
                 float c1L = static_cast<float>(values[2]);
