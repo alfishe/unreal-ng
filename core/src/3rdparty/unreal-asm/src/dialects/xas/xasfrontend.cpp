@@ -812,12 +812,18 @@ void StringsAsXas910(FrontendResult& result)
 
 FrontendResult XasFrontend::Parse(const SourceDocument& source) const
 {
+    return ParseInProject(source, {});
+}
+
+FrontendResult XasFrontend::ParseInProject(const SourceDocument& source, const std::vector<const SourceDocument*>& project) const
+{
     FrontendResult result;
     result.program.dialect = "xas";
     result.program.expressionBits = 16;   // unsigned 16-bit words (0-7/2 is #7FFC, 65535+2 is 1)
     result.program.unsignedArithmetic = true;
 
-    // Labels: the first definition's spelling stands for every name with the same first 7 characters
+    // Labels: the first definition's spelling stands for every name with the same first 7 characters (the file's own,
+    // then the other files' of the project: a field of a structure defined in an INCLUDEd file)
     std::map<std::string, std::string> names;
     for (const SourceLine& l : source.lines)
     {
@@ -825,6 +831,14 @@ FrontendResult XasFrontend::Parse(const SourceDocument& source) const
         if (!f.label.empty())
             names.emplace(Key(f.label), f.label);
     }
+    for (const SourceDocument* other : project)
+        if (other && other->dialect == source.dialect)
+            for (const SourceLine& l : other->lines)
+            {
+                const Fields f = Split(l.text);
+                if (!f.label.empty())
+                    names.emplace(Key(f.label), f.label);
+            }
     LineParser parser{names, result};
     uint32_t number = 0;
     for (const SourceLine& l : source.lines)

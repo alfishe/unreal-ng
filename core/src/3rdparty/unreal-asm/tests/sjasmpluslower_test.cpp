@@ -177,3 +177,122 @@ TEST(SjasmplusLower_Test, TheProbeKeepsItsBytesThroughEveryRetroTarget)
         EXPECT_EQ(Assemble(sjasmplus, SourceDocument::FromText(again.document.Text(), "sjasmplus"), expected.size()), expected) << target;
     }
 }
+
+TEST(SjasmplusLower_Test, SjasmplusSyntaxTheTargetsSpellOut)
+{
+    // an instruction repeated for its operands, label+N / label+* (smart SMC), !label (not a parent), OUT n,A, 1000b
+    // outside a jump, a macro on one line, a Z80N instruction as bytes, a jump to a label named like a register, ALIGN in
+    // a displacement (the displaced address aligned)
+    const std::string source = "        DEVICE ZXSPECTRUMNEXT\n"
+                               "        ORG #8000\n"
+                               "start   ld a,1,b,2\n"
+                               "        push af,bc\n"
+                               ".v+1    ld a,0\n"
+                               ".w+*    ld hl,0\n"
+                               "!keep   nop\n"
+                               ".loc    jr .loc\n"
+                               "        out #FE,a\n"
+                               "X       EQU 1000b\n"
+                               "ESX     MACRO s? : rst 8 : db s? : ENDM\n"
+                               "        ESX 5\n"
+                               "        nextreg $57,18\n"
+                               "        djnz de\n"
+                               "de      nop\n"
+                               "        DISP #9001\n"
+                               "        nop\n"
+                               "        ALIGN 4\n"
+                               "        ENT\n";
+    Diagnostics diagnostics;
+    const std::vector<std::string> lines = Lines(source, "tasm", &diagnostics, "4.12");
+    const std::string text = Joined(lines);
+    for (const char* expected : {"START LD A,1", "LD B,2", "PUSH AF", "PUSH BC", "START_V EQU $+1", "START_W EQU $+1", "KEEP NOP",
+                                 "START_LOC JR START_LOC", "OUT (#FE),A", "X EQU %1000", "RST 8", "DEFB 5", "DEFB #ED,#91,87,18 ;NEXTREG #57,18",
+                                 "DJNZ DE1", "DE1 NOP", "DEFS 2"})
+        EXPECT_TRUE(Contains(lines, expected)) << expected << "\n" << text;
+    for (const Diagnostic& d : diagnostics)
+        EXPECT_EQ(d.severity, Severity::Info) << d.line << ": " << d.message;
+}
+
+namespace
+{
+ProjectFile Sjasmplus(const std::string& name, const std::string& text)
+{
+    SourceDocument d = SourceDocument::FromText(text, "sjasmplus");
+    d.name = name;
+    return {name, d};
+}
+
+std::string FileText(const ProjectResult& r, const std::string& name)
+{
+    for (const ProjectFile& f : r.files)
+        if (f.name == name)
+            return f.document.Text();
+    return "(no " + name + ")";
+}
+}  // namespace
+
+TEST(SjasmplusLower_Test, AProjectIsWrittenAsSjasmplusReadsIt)
+{
+    // the INCLUDEd file's macro reassigns a name the main file assigned (DEFL across files), a module's names are used
+    // in the other file: the project written as one text and cut into its files again
+    const std::vector<ProjectFile> project = {
+        Sjasmplus("main", "        ORG #8000\nVORG = #8010\n        INCLUDE \"traps.asm\"\n        JP VORG\n        JP tools.go\n"),
+        Sjasmplus("traps", "        MACRO T\n        JP VORG\nVORG = $\n        ENDM\n        T\n        T\n        MODULE tools\ngo      RET\n        ENDMODULE\n"),
+    };
+    BackendOptions options;
+    options.targetVersion = "4.12";
+    const ProjectResult r = ConvertProject(project, "tasm", options);
+    ASSERT_TRUE(r.ok);
+    ASSERT_EQ(r.files.size(), 2u);
+    const std::string main = FileText(r, "main"), traps = FileText(r, "traps");
+    EXPECT_NE(main.find(".INCLUDE traps"), std::string::npos) << main;
+    // VORG's values one after another: the main file's, then each expansion's own (a name per definition), the last one
+    // back in the main file
+    EXPECT_NE(traps.find("JP      #8010\nVORG    EQU     $\n        JP      VORG\nVORG1   EQU     $"), std::string::npos) << traps;
+    EXPECT_NE(main.find("JP      VORG1"), std::string::npos) << main;
+    EXPECT_NE(main.find("JP      TOOLS_GO"), std::string::npos) << main;
+    EXPECT_NE(traps.find("TOOLS_GO RET"), std::string::npos) << traps;
+    EXPECT_EQ((main + traps).find("UNREALASM@"), std::string::npos);
+}
+
+TEST(SjasmplusLower_Test, ALongFileIsCutIntoIncludedParts)
+{
+    // splitLines: the parts at lines outside any block, each INCLUDEd where it stood, named for the disk
+    std::string text = "        ORG #8000\n";
+    for (int k = 0; k < 6; ++k)
+        text += "        NOP\n";
+    text += "        DUP 2\n        NOP\n        NOP\n        EDUP\n";
+    for (int k = 0; k < 6; ++k)
+        text += "        NOP\n";
+    const std::vector<ProjectFile> project = {Sjasmplus("big", text)};
+    BackendOptions options;
+    options.targetVersion = "4.12";
+    options.fileNames = ProjectDiskNames(project, {});
+    options.splitLines = 4;
+    const ProjectResult r = ConvertProject(project, "tasm", options);
+    ASSERT_TRUE(r.ok);
+    ASSERT_GE(r.files.size(), 3u);
+    const std::string head = FileText(r, "big");
+    EXPECT_NE(head.find(".INCLUDE big2"), std::string::npos) << head;
+    EXPECT_NE(head.find(".INCLUDE big3"), std::string::npos) << head;
+    size_t nops = 0;
+    for (const ProjectFile& f : r.files)
+        for (const SourceLine& l : f.document.lines)
+        {
+            nops += l.text.find("NOP") != std::string::npos;
+            // the repeat is unrolled by TASM's writer: no cut fell inside it, so no part begins with its second NOP
+        }
+    EXPECT_EQ(nops, 16u);
+}
+
+TEST(SjasmplusLower_Test, DiskNamesAreShortAndUniqueInLettersAndDigits)
+{
+    const std::vector<ProjectFile> project = {Sjasmplus("zifi_sts", ""), Sjasmplus("dss.inc", ""), Sjasmplus("_spg/dss", "")};
+    const std::map<std::string, std::string> names = ProjectDiskNames(project, {"_spg/download.tga.pix", "_spg/menu.tga.pal", "_spg/menu.tga.pix"});
+    EXPECT_EQ(names.at("zifi_sts"), "zifi_sts");
+    EXPECT_EQ(names.at("dss.inc"), "dss");
+    EXPECT_EQ(names.at("_spg/dss"), "dss2");
+    EXPECT_EQ(names.at("_spg/download.tga.pix"), "download");
+    EXPECT_EQ(names.at("_spg/menu.tga.pal"), "menu");
+    EXPECT_EQ(names.at("_spg/menu.tga.pix"), "menu2");
+}

@@ -67,6 +67,10 @@ public:
     /// The other end of a channel (nullptr: nothing on the line: Tx bytes are lost, nothing arrives)
     void SetPeer(unsigned channel, ISerialPeer* peer);
     ISerialPeer* Peer(unsigned channel) const { return _ch[channel].peer; }
+    /// The pins of the line are connected to the peer (UART 1: NR #A0 bits 4 and 5, zxnext.vhd 2333: with `pi_uart_en` clear the receiver
+    /// idles high and the transmitter reaches no pin): disconnected, Tx bytes are lost and the peer's bytes are not taken
+    void SetLineConnected(unsigned channel, bool connected) { _ch[channel].connected = connected; }
+    bool LineConnected(unsigned channel) const { return _ch[channel].connected; }
 
     /// Bytes for the peer that the transmitter finished, and bytes lost by a missing peer, since the last Reset (statistics)
     uint64_t BytesSent(unsigned channel) const { return _ch[channel].sent; }
@@ -95,7 +99,7 @@ public:
     bool Idle() const
     {
         for (const Channel& c : _ch)
-            if (c.peer || c.txBusy || c.rxBusy || c.txCount)
+            if (c.Live() || c.txBusy || c.rxBusy || c.txCount)
                 return false;
         return true;
     }
@@ -135,6 +139,8 @@ private:
         bool rxLevel = false, txLevel = false;
         uint64_t sent = 0, received = 0, lost = 0;
         ISerialPeer* peer = nullptr;
+        bool connected = true;
+        ISerialPeer* Live() const { return connected ? peer : nullptr; }
         SerialLine told{};
         bool toldValid = false;
     };

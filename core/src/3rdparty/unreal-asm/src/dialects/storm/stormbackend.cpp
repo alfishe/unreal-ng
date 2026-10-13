@@ -6,6 +6,7 @@
 #include <set>
 
 #include "codecs/storm/stormcodec.h"
+#include "dialects/common/diskname.h"
 #include "dialects/common/retrowriter.h"
 #include "dialects/common/z80.h"
 
@@ -359,7 +360,11 @@ private:
                 items.push_back(std::to_string(u));
             }
             else
+            {
+                if (run.size() + 2 >= DataWidth())
+                    flush();   // a quoted run fits a line of its own
                 run.push_back(c);
+            }
         }
         flush();
     }
@@ -399,8 +404,9 @@ private:
     std::string RepeatedLabel(int64_t count) const override { return "." + std::to_string(count == 256 ? 0 : count); }
 
     /// A TR-DOS name for INCL / INCB: 8 characters, the type as the 9th ("NAME.B" -> "NAME    B")
-    std::string FileName(const std::string& name)
+    std::string FileName(const std::string& given)
     {
+        const std::string name = DiskName(options, given);
         std::string base = name, type;
         if (const size_t dot = name.rfind('.'); dot != std::string::npos && name.size() - dot == 2)
         {

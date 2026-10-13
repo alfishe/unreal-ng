@@ -48,6 +48,11 @@ void ScreenNext::InitFrame()
     Screen::InitFrame();
     _nextLine = 0;
     _nextX = 0;
+    _fillNext = 0;
+    _fillNextEndRow = ~0u;
+    _fillSnap.reset();
+    for (auto& row : _rowFill)
+        row.reset();
     PrepareLayerFrame();
 }
 
@@ -147,6 +152,48 @@ uint64_t ScreenNext::CopperClock(uint32_t tstate) const
     return t7 * 4;
 }
 
+int64_t ScreenNext::SpriteFillEnd(unsigned y)
+{
+    PortDecoder_Next* decoder = Decoder();
+    const NextSprites& sprites = decoder->Board().Sprites();
+    if (_fillNextEndRow != y || _fillNextEndEpoch != sprites.Epoch())
+    {
+        // paper row y is filled during row y - 1, from about raw hc -21 of it (28 MHz clocks 1 a sprite, 17 more for a drawn one); raw hc 0
+        // is 16 T-states before the grid's x = 0
+        const int64_t perLine = _rasterState.tstatesPerLine;
+        const int64_t first = static_cast<int64_t>(_rasterState.topBorderAreaStart) + 16 * perLine;
+        const int64_t gridX0 = first + (static_cast<int64_t>(y) - 1) * perLine + static_cast<int64_t>(_rasterState.screenLineAreaStart) - 16;
+        const int64_t clocks = sprites.FillClocks(y);
+        _fillNextEnd = gridX0 - 16 + (clocks - 84) / 8;
+        _fillNextEndRow = y;
+        _fillNextEndEpoch = sprites.Epoch();
+    }
+    return _fillNextEnd;
+}
+
+void ScreenNext::FillSpriteRow(unsigned y)
+{
+    PortDecoder_Next* decoder = Decoder();
+    NextSprites& live = decoder->Board().Sprites();
+    if (!_fillSnap || _fillSnapEpoch != live.Epoch())
+    {
+        _fillSnap = std::make_shared<NextSprites>(live);
+        _fillSnap->ClearFlags();
+        _fillSnapEpoch = live.Epoch();
+    }
+    _rowFill[y] = _fillSnap;
+    _rowTransparent[y] = decoder->Board().Stored(0x4B);
+}
+
+void ScreenNext::SpriteStateWillChange(int64_t tstate)
+{
+    if (!Decoder() || _rasterState.tstatesPerLine == 0)
+        return;
+    const int64_t now = tstate >= 0 ? tstate : static_cast<int64_t>(GetCurrentTstate());
+    while (_fillNext < NextVideoRenderer::kHeight && SpriteFillEnd(_fillNext) <= now)
+        FillSpriteRow(_fillNext++);
+}
+
 void ScreenNext::UpdateCopperGeometry()
 {
     if (PortDecoder_Next* decoder = Decoder())
@@ -197,7 +244,7 @@ ScreenNext::PictureLatency ScreenNext::PictureLatencyOf(uint8_t reg, uint8_t pre
         case 0x68:
         {
             PictureLatency l = kNone;
-            if (changed & 0xE1)  // bit 7 the ULA enable (measured); bits 6:5 blend, bit 0 stencil travel the same registers
+            if (changed & 0xE9)  // bit 7 the ULA enable (measured); bits 6:5 blend, bit 3 ULA+ (ulap_en_0), bit 0 stencil travel the same registers
                 l = kChain;
             if (changed & 0x04)  // the fine scroll
                 l = earliest(l, kUlaFine);
@@ -296,6 +343,7 @@ void ScreenNext::RenderBeforeCopperClock(uint64_t clock, uint8_t reg, uint8_t va
     if (behind / kClocksPerTState > t)
         return;  // the previous frame's tail: that frame is drawn to its end already
     const uint32_t at = t - static_cast<uint32_t>(behind / kClocksPerTState);
+    SpriteStateWillChange(at);  // a MOVE of a sprite register: the rows filled before it keep the old state
     const uint32_t perLine = _rasterState.tstatesPerLine;
     const uint32_t first = _rasterState.topBorderAreaStart + 16 * perLine;
     if (at < first)
@@ -389,6 +437,11 @@ void ScreenNext::RenderUpTo(unsigned lineLimit, unsigned xLimit)
         if (toX > fromX)
         {
             refresh();
+            // the sprite state this row was filled from: rows not yet filled by the clock are filled now, with the state as it is
+            while (_fillNext <= _nextLine)
+                FillSpriteRow(_fillNext++);
+            in.spriteFill = _rowFill[_nextLine].get();
+            in.spriteTransparent = _rowTransparent[_nextLine];
             const bool whole = fromX == 0 && toX >= kPixels;
             in.layerOut = record ? (whole ? &lineSink : &scratchSink) : nullptr;
             if (record)

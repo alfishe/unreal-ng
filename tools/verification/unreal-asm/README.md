@@ -47,7 +47,8 @@ unreal-asm/
                                 each assembled, the bytes compared
     projectcheck.py             real sjasmplus projects (Z5) through a retro target (--to tasm / alasm / storm ...) and
                                 back: the 64K memory sjasmplus builds from each must stay the same (--project: the main
-                                file and its INCLUDEs as one project)
+                                file with what it INCLUDEs and INCBINs, by `zxasm convert --project`, named for a
+                                TR-DOS disk; back through `zxasm convert <dir>`)
     pasmocheck.py               pasmo's own sources through the pasmo frontend: pasmo against sjasmplus / pasmo / z80asm builds
     z80asmcheck.py              the cases of z88dk's z80asm test suite (z80asmcases.py) through the z80asm frontend
     zasmcheck.py                zasm's Test and Examples folders against zasm

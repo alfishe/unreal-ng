@@ -10,6 +10,7 @@
 
 void NextSprites::Reset()
 {
+    _epoch++;
     std::memset(_attr, 0, sizeof _attr);
     std::memset(_pattern, 0, sizeof _pattern);
     _slot = _byte = _patternHalf = _mirror = 0;
@@ -34,6 +35,7 @@ void NextSprites::WriteSlotSelect(uint8_t value)
 
 void NextSprites::WriteAttribute(uint8_t value)
 {
+    _epoch++;
     SetAttribute(_slot, _byte, value);
     switch (_byte)
     {
@@ -55,6 +57,7 @@ void NextSprites::WriteAttribute(uint8_t value)
 
 void NextSprites::WritePattern(uint8_t value)
 {
+    _epoch++;
     _pattern[_patternOffset & (kPatternBytes - 1)] = value;
     _patternOffset = (_patternOffset + 1) & (kPatternBytes - 1);
 }
@@ -73,6 +76,7 @@ void NextSprites::WriteMirrorSprite(uint8_t value, bool tied)
 
 void NextSprites::WriteMirrorAttribute(unsigned byte, uint8_t value, bool increment, bool tied)
 {
+    _epoch++;
     if (byte > 4)
         return;
     SetAttribute(_mirror & 0x7F, byte, value);
@@ -175,6 +179,27 @@ void NextSprites::Resolve(unsigned s, const Anchor& anchor, Effective& out) cons
     out.visible = anchor.visible && (a[3] & 0x80);
     out.fourBit = anchor.h4bit;
 }
+
+namespace
+{
+/// S_PROCESS clocks of a sprite starting at x (9 bits): one per pixel up to `16 << scale`, but it ends when the position reaches 320
+/// unless it is in the last `16 << scale` of the 512 (sprites.vhd: (hcount(8:4) and x_wrap) = x_wrap on the incremented count)
+unsigned ProcessTicksOf(int x, unsigned xScale)
+{
+    static const unsigned kWrapMask[4] = {0x1F, 0x1E, 0x1C, 0x18};
+    const int width = 16 << xScale;
+    int k = 0;
+    for (;; k++)
+    {
+        if (k + 1 == width)
+            break;
+        const unsigned next = static_cast<unsigned>(x + k + 1) & 0x1FF;
+        if (next >= 320 && (((next >> 4) & kWrapMask[xScale]) != kWrapMask[xScale]))
+            break;
+    }
+    return static_cast<unsigned>(k + 1);
+}
+}  // namespace
 
 /// The pixel of a sprite pattern: `column` / `row` are the pattern's coordinates after scaling, mirror and rotation are applied here.
 /// Returns false when it is transparent (NR #4B compares the raw pattern byte, or the nibble of a 4-bit pattern)
@@ -322,6 +347,40 @@ void NextSprites::DrawLine(unsigned y, uint8_t control, const NextVideoRegs& reg
             out[x].sprite = lineSprite[x];
             out[x].opaque = true;
         }
+}
+
+unsigned NextSprites::FillClocks(unsigned y) const
+{
+    Effective effective[kSprites];
+    Anchor anchor;
+    for (unsigned i = 0; i < kSprites; i++)
+    {
+        if (Relative(i))
+            Resolve(i, anchor, effective[i]);
+        else
+        {
+            effective[i] = Decode(i);
+            UpdateAnchor(i, anchor);
+        }
+    }
+    unsigned last = 0, drawn = 0, processed = 0;
+    for (unsigned i = 0; i < kSprites; i++)
+    {
+        const Effective& e = effective[i];
+        if (!e.visible)
+            continue;
+        int dy = static_cast<int>(y) - e.y;
+        if (dy < 0)
+            dy += 512;
+        if (dy < (16 << e.yScale))
+        {
+            last = i;
+            drawn++;
+            processed += ProcessTicksOf(e.x, e.xScale);
+        }
+    }
+    // one clock per sprite up to the last drawn one to qualify it, and the process clocks of the drawn ones
+    return drawn ? (last + 1) + processed : kSprites;
 }
 
 void NextSprites::Describe(Info (&out)[kSprites]) const
