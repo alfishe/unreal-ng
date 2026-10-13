@@ -142,6 +142,9 @@ public:
     NextBoard& Board() { return *_board; }
     NextInterruptSource& Interrupts() { return *_interrupts; }
     NextCtc& Ctc() { return _ctc; }
+    /// The level on pin 7 of the joystick connector in its I/O mode (NR #0B bits 7:4, zxnext.vhd 3507-3534): bit 0 in mode 00, toggled
+    /// by CTC channel 3's ZC/TO in mode 01, the UART's TX (idle high; the waveform is not modelled) in modes 1x
+    bool JoystickPin7() const { return _joyPin7; }
     /// Bit `bit` of the internal port enable word (reports)
     bool PortEnabledForReport(unsigned bit) const { return PortEnabled(bit); }
     /// A line's other end (the network manager owns the peer); nullptr takes it off. The peer's clock is the machine's base clock
@@ -213,6 +216,8 @@ private:
     uint8_t IdleRead(uint16_t port, uint16_t pc);
     uint8_t ReadMouse(uint8_t reg);
     void ApplyMouseDpi(uint8_t nr0a);
+    bool _joyPin7 = true;  ///< zxnext.vhd joy_iomode_pin7 (reset 1)
+    void UpdateJoystickPin7(uint8_t nr0b);
     bool RaiseMultifaceNmi(const char* source);
     void SyncPiLine();
     ScreenNext* _screenNext = nullptr;  ///< the picture, told before the program changes what the sprite engine fills from

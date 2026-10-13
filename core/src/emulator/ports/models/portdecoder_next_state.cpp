@@ -925,6 +925,7 @@ StateNode NextInputReport(EmulatorContext* context)
     io["enabled"] = (nr0b & 0x80) != 0;
     io["mode"] = (nr0b & 0x30) == 0x00 ? "pin7 = bit 0" : ((nr0b & 0x30) == 0x10 ? "pin7 toggled by CTC channel 3" : "pin7 = UART TX");
     io["bit_0"] = (nr0b & 0x01) != 0;  // pin 7 level, or which UART: 0 the ESP's, 1 the Pi's
+    io["pin7"] = decoder->JoystickPin7();  // the level on the connector now (mode 01: toggled by CTC channel 3's ZC/TO)
     io["uart_on_joystick_port"] = (nr0b & 0x80) && (nr0b & 0x20);
     n["io_mode"] = std::move(io);
 

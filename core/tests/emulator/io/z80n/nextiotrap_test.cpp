@@ -98,3 +98,33 @@ TEST_F(NextIoTrap_Test, AResetClearsTheEnableTheByteAndTheCause)
     EXPECT_EQ(Rd(kRegTrapCause), 0);
     EXPECT_EQ(Rd(kRegTrapWrite), 0);
 }
+
+// zxnext.vhd 3507-3534: the joystick connector's pin 7 in the I/O mode: NR #0B bit 0 in mode 00, CTC channel 3's ZC/TO toggles it in mode
+// 01 (with bit 0 clear only 0 -> 1), the UART's TX in modes 1x; it resets to 1
+TEST_F(NextIoTrap_Test, TheJoystickPin7FollowsNr0bAndCtcChannel3)
+{
+    EXPECT_TRUE(_ports->JoystickPin7()) << "reset: 1";
+    Nr(0x0B, 0x80);  // mode 00, bit 0 = 0
+    EXPECT_FALSE(_ports->JoystickPin7());
+    Nr(0x0B, 0x81);
+    EXPECT_TRUE(_ports->JoystickPin7());
+    Nr(0x0B, 0x90);  // mode 01, bit 0 = 0: the pin keeps 1 and cannot toggle off
+    _ports->Ctc().onZeroCount(3);
+    EXPECT_TRUE(_ports->JoystickPin7());
+    Nr(0x0B, 0x80);
+    EXPECT_FALSE(_ports->JoystickPin7());
+    Nr(0x0B, 0x90);
+    _ports->Ctc().onZeroCount(2);
+    EXPECT_FALSE(_ports->JoystickPin7()) << "only channel 3 counts";
+    _ports->Ctc().onZeroCount(3);
+    EXPECT_TRUE(_ports->JoystickPin7()) << "0 -> 1 with bit 0 clear";
+    _ports->Ctc().onZeroCount(3);
+    EXPECT_TRUE(_ports->JoystickPin7()) << "and it stays";
+    Nr(0x0B, 0x91);  // bit 0 set: a square wave
+    _ports->Ctc().onZeroCount(3);
+    EXPECT_FALSE(_ports->JoystickPin7());
+    _ports->Ctc().onZeroCount(3);
+    EXPECT_TRUE(_ports->JoystickPin7());
+    Nr(0x0B, 0xA0);  // mode 10: the UART's TX, idle high
+    EXPECT_TRUE(_ports->JoystickPin7());
+}

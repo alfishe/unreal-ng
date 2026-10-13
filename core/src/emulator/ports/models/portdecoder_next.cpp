@@ -57,6 +57,12 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     _ctc.onInterrupt = [this](unsigned channel) {
         _interrupts->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + channel));
     };
+    _ctc.onZeroCount = [this](unsigned channel) {
+        // joy_iomode_pin7, mode 01: ZC/TO(3) toggles the pin; with NR #0B bit 0 clear it only goes from 0 to 1 and stays
+        const uint8_t nr0b = _board->Stored(0x0B);
+        if (channel == 3 && (nr0b & 0x30) == 0x10 && ((nr0b & 0x01) || !_joyPin7))
+            _joyPin7 = !_joyPin7;
+    };
     _uart.onInterrupt = [this](unsigned channel, bool tx) {
         const unsigned source = tx ? (channel ? NextInterruptSource::kUart1Tx : NextInterruptSource::kUart0Tx)
                                    : (channel ? NextInterruptSource::kUart1Rx : NextInterruptSource::kUart0Rx);
@@ -851,6 +857,8 @@ void PortDecoder_Next::NextRegAccess(bool write, uint8_t reg, uint8_t value, Nex
 {
     if (write && reg == 0x0A)
         ApplyMouseDpi(value);
+    if (write && reg == 0x0B)
+        UpdateJoystickPin7(value);
     uint8_t door;
     switch (source)
     {
@@ -1035,8 +1043,20 @@ void PortDecoder_Next::InsertConfiguredCard()
         MLOGERROR("PortDecoder_Next: SD card '%s' not inserted: %s", path.c_str(), result.message.c_str());
 }
 
+/// joy_iomode_pin7 follows NR #0B bit 0 in mode 00 and the UART's TX (idle high) in modes 1x every clock; in mode 01 it keeps what it had
+void PortDecoder_Next::UpdateJoystickPin7(uint8_t nr0b)
+{
+    switch ((nr0b >> 4) & 3)
+    {
+        case 0: _joyPin7 = (nr0b & 0x01) != 0; break;
+        case 1: break;
+        default: _joyPin7 = true; break;
+    }
+}
+
 void PortDecoder_Next::PerformReset(bool hard)
 {
+    _joyPin7 = true;  // joy_iomode_pin7 resets to 1; NR #0B resets to 0, so mode 00 then follows its bit 0 = 0 at once
     Z80* z80 = _context->pCore->GetZ80();
     // The reset restarts the CPU, not the frame: the video and interrupt timing keep running
     const auto t = z80->t;
@@ -1050,6 +1070,7 @@ void PortDecoder_Next::PerformReset(bool hard)
     state.p1FFD = 0x00;
     Mem().ResetMmu();
     _board->Reset(hard);  // config mode and the boot ROM first: the slot table follows them
+    UpdateJoystickPin7(_board->Stored(0x0B));
     _audio->Reset();      // turbosound.vhd / soundrive.vhd: reset_i is `reset` (the chips, the pan, the selected chip, the DACs)
     AudioConfigChanged();
     if (_intJournal.Enabled())
