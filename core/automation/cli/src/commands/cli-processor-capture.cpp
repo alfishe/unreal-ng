@@ -125,7 +125,7 @@ void CLIProcessor::HandleCaptureScreen(const ClientSession& session,
         return;
     }
 
-    // capture screen --layer=ula|layer2|tilemap|sprites|ids [--format=png|rgba] [--alpha=false] [file]: one layer of the last Next frame
+    // capture screen --layer=ula|layer2|tilemap|sprites|ids [--format=png|rgba] [--alpha=false] [--size=screen|grid|pixel] [file]: one layer of the last Next frame
     // (design-layer-capture.md): a PNG with alpha 0 where the layer does not paint, or the raw RGBA bytes; ids = the winner of each pixel
     for (size_t i = 1; i < args.size(); i++)
     {
@@ -133,6 +133,7 @@ void CLIProcessor::HandleCaptureScreen(const ClientSession& session,
             continue;
         NextLayer::Kind kind = NextLayer::Kind::Composed;
         bool rgba = false, alpha = true;
+        NextLayer::Scale scale = NextLayer::Scale::Screen;
         std::string message, path;
         if (!NextLayer::ParseKind(args[i].substr(8), kind))
         {
@@ -154,6 +155,11 @@ void CLIProcessor::HandleCaptureScreen(const ClientSession& session,
                 session.SendResponse("Error: " + message + NEWLINE);
                 return;
             }
+            else if (arg.rfind("--size=", 0) == 0 && !NextLayer::ParseScale(arg.substr(7), scale, message))
+            {
+                session.SendResponse("Error: " + message + NEWLINE);
+                return;
+            }
             else if (arg.rfind("--", 0) != 0)
                 path = arg;
         }
@@ -162,7 +168,7 @@ void CLIProcessor::HandleCaptureScreen(const ClientSession& session,
             session.SendResponse(std::string("Error: layer=composed is the ordinary screenshot: capture screen [file]") + NEWLINE);
             return;
         }
-        const NextLayer::Image image = NextLayer::Capture(context, kind, alpha);
+        const NextLayer::Image image = NextLayer::Capture(context, kind, alpha, scale);
         if (image.status != NextLayer::Status::Ok)
         {
             session.SendResponse("Error: " + image.message + NEWLINE);
@@ -312,7 +318,7 @@ void CLIProcessor::ShowCaptureHelp(const ClientSession& session)
     ss << "                                  Screenshot: the whole frame (default) or the working picture;" << NEWLINE;
     ss << "                                  PNG (default) or GIF; the presented frame (default) or the live" << NEWLINE;
     ss << "                                  one as drawn now; to a file or printed as a data URI" << NEWLINE;
-    ss << "  capture screen --layer=ula|layer2|tilemap|sprites|ids [--format=png|rgba] [--alpha=false] [file]" << NEWLINE;
+    ss << "  capture screen --layer=ula|layer2|tilemap|sprites|ids [--format=png|rgba] [--alpha=false] [--size=screen|grid|pixel] [file]" << NEWLINE;
     ss << "                                  ZX Spectrum Next: ONE LAYER of the last completed frame (PNG with alpha 0 where the layer" << NEWLINE;
     ss << "                                  does not paint; ids = the winner of every pixel); `next layer-capture on|off` switches the record" << NEWLINE;
     ss << "  capture romtext                 Capture ROM print output (TODO)" << NEWLINE;

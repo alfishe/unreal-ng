@@ -222,3 +222,7 @@ recomputed from the record (`ComposedColour`, including the blend and stencil fo
 the CLI commands, MCP `capture_media` / `inspect_state` / `invoke_api`, and the Lua bindings (`tools/verification/webapi/src/test_api_next.py`: 16 passed). The Python bindings compile (syntax-only
 against pybind11 and Python 3.12) but could not run: this build has no Python interpreter (`ENABLE_PYTHON_AUTOMATION` is off), so the Python half of `TestNextInterpreters` skips; it is the one
 unverified surface. Not built: L4, the Qt panels.
+
+## 9. Image size (2026-10-13)
+
+Open question 2 is answered: `size=screen` (default, 640x512, the screenshot's geometry), `size=grid` (640x256: the grid's sub-pixels, every line once) and `size=pixel` (320x256: one sample, the first sub-pixel, per Next pixel; Layer 2 640 and Timex hi-res lose their second sub-pixel, use grid there). The record itself is unchanged (640 sub-pixels a line); the sizes are cut from the rendered image (`NextLayer::Reduce`), so the saving is in the transfer and the encode.
