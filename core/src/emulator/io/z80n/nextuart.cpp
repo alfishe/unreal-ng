@@ -374,6 +374,35 @@ void NextUart::Step(Channel& c, uint64_t now)
     }
 }
 
+bool NextUart::Quiet() const
+{
+    for (unsigned i = 0; i < kChannels; i++)
+    {
+        const Channel& c = _ch[i];
+        // everything Step acts on, in its order: the reset, the transmitter, the line, the receiver, RTS
+        if (FifoReset(c) || c.txBusy || c.txCount || c.rxBusy || c.rxLow || c.lowPaused || c.breakIn)
+            return false;
+        if (c.rtsOut != !((c.frame & kFrameFlow) && c.rxCount >= kAlmostFull))
+            return false;
+        const bool joystick = _joyOn && _joyChannel == i;
+        if (!c.connected && c.peer && !joystick && c.peer->HasByte())
+            return false;  // a module cut off from the pins: its bytes are taken and lost
+        if (const ISerialPeer* peer = Wire(i))
+            if (peer->BreakHeld() || peer->HasByte())
+                return false;
+    }
+    return true;
+}
+
+void NextUart::Look(uint64_t now)
+{
+    if (now < _now)
+        now = _now;  // the clock does not go back
+    _now = now;
+    for (Channel& c : _ch)
+        c.lastLook = now;
+}
+
 void NextUart::Advance(uint64_t now)
 {
     if (now < _now)

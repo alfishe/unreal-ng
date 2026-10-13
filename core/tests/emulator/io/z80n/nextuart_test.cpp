@@ -614,3 +614,124 @@ TEST(NextUartConfigured_Test, ComPortJoyPlugsADeviceIntoTheConnector)
     EXPECT_STREQ(ports->Uart().JoystickPeer()->Kind(), "loopback");
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+
+// The per-instruction poll of the machine calls Look instead of Advance while the UART is quiet (NextUart::Quiet). Two UARTs get the
+// same random traffic - bytes from the peers, bytes to send, frame changes, flow control, breaks, a cut line - and the same clock;
+// one always advances, the other takes the quiet path when it may. Everything the machine and the peers can see is compared after
+// every poll
+TEST(NextUart_Test, QuietLookMatchesAdvanceOnEveryPoll)
+{
+    struct Side
+    {
+        NextUart uart;
+        ScriptedPeer peer[2];
+        std::vector<unsigned> interrupts;
+        unsigned looks = 0;
+    };
+    Side reference, quiet;
+    for (Side* side : {&reference, &quiet})
+    {
+        side->uart.SetPeer(0, &side->peer[0]);
+        side->uart.SetPeer(1, &side->peer[1]);
+        side->uart.onInterrupt = [side](unsigned channel, bool tx) { side->interrupts.push_back(channel * 2 + (tx ? 1 : 0)); };
+    }
+    uint32_t seed = 0x0A47B10Cu;
+    auto next = [&]() {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        return seed;
+    };
+    uint64_t now = 0;
+    uint8_t enable = 0x77;
+    for (unsigned step = 0; step < 40000; step++)
+    {
+        now += 32 + next() % 160;
+        const unsigned action = next() % 3000;
+        const unsigned channel = next() & 1;
+        const uint8_t value = static_cast<uint8_t>(next());
+        const unsigned burst = 1 + next() % 5;
+        const bool settle = step % 1500 == 1499;  // now and then everything goes back to a working line, so the UART falls quiet again
+        for (Side* side : {&reference, &quiet})
+        {
+            NextUart& uart = side->uart;
+            if (settle)
+            {
+                for (unsigned c = 0; c < 2; c++)
+                {
+                    uart.Write(kSelect, static_cast<uint8_t>(c ? kSelectPi : 0), now);
+                    uart.Write(kFrame, NextUart::kDefaultFrame, now);
+                    side->peer[c].breakHeld = false;
+                    side->peer[c].cts = true;
+                }
+                uart.SetLineConnected(1, true);
+            }
+            else if (action < 20)
+                for (unsigned i = 0; i < burst; i++)
+                    side->peer[channel].toZx.push_back(static_cast<uint8_t>(value + i));  // the peer has something to say
+            else if (action < 30)
+                uart.Write(kTx, value, now);
+            else if (action < 55)
+                (void)uart.Read(kRx, now);
+            else if (action < 65)
+                (void)uart.Read(kTx, now);  // the status: clears the sticky errors
+            else if (action < 70)
+                uart.Write(kSelect, static_cast<uint8_t>(channel ? kSelectPi : 0), now);
+            else if (action < 74)
+                uart.Write(kFrame, static_cast<uint8_t>((value & 0x3F) | (value % 7 == 0 ? NextUart::kFrameReset : 0) |
+                                                        (value % 5 == 0 ? NextUart::kFrameBreak : 0)), now);
+            else if (action < 77)
+                uart.Write(kFrame, NextUart::kDefaultFrame, now);
+            else if (action < 80)
+                side->peer[channel].breakHeld = !side->peer[channel].breakHeld;
+            else if (action < 82)
+                side->peer[channel].breakHeld = false;
+            else if (action < 84)
+                side->peer[channel].cts = (value & 1) != 0;
+            else if (action < 86)
+                uart.SetLineConnected(1, (value & 1) != 0);
+            else if (action == 86)
+                uart.Write(kRx, static_cast<uint8_t>(0x20 + (value & 0x5F)), now);  // the prescaler's low bits: a faster or slower line
+        }
+        if (action == 87)
+            enable = static_cast<uint8_t>(next() & 0x77);
+        // the machine's poll
+        reference.uart.Advance(now);
+        if (quiet.uart.Quiet())
+        {
+            quiet.uart.Look(now);
+            quiet.looks++;
+        }
+        else
+            quiet.uart.Advance(now);
+        reference.uart.PollInterrupts(enable);
+        quiet.uart.PollInterrupts(enable);
+        for (unsigned c = 0; c < 2; c++)
+        {
+            const NextUart::View a = reference.uart.GetView(c), b = quiet.uart.GetView(c);
+            ASSERT_EQ(b.status, a.status) << "step " << step << " channel " << c;
+            ASSERT_EQ(b.rxCount, a.rxCount) << "step " << step << " channel " << c;
+            ASSERT_EQ(b.txCount, a.txCount) << "step " << step << " channel " << c;
+            ASSERT_EQ(b.txBusy, a.txBusy) << "step " << step << " channel " << c;
+            ASSERT_EQ(b.rxBusy, a.rxBusy) << "step " << step << " channel " << c;
+            ASSERT_EQ(b.breakIn, a.breakIn) << "step " << step << " channel " << c;
+            ASSERT_EQ(b.rxLineLow, a.rxLineLow) << "step " << step << " channel " << c;
+            ASSERT_EQ(b.rtsAsserted, a.rtsAsserted) << "step " << step << " channel " << c;
+            ASSERT_EQ(b.sent, a.sent) << "step " << step << " channel " << c;
+            ASSERT_EQ(b.received, a.received) << "step " << step << " channel " << c;
+            ASSERT_EQ(b.lost, a.lost) << "step " << step << " channel " << c;
+            ASSERT_EQ(quiet.peer[c].toZx.size(), reference.peer[c].toZx.size()) << "step " << step << " channel " << c;
+            ASSERT_EQ(quiet.peer[c].sent.size(), reference.peer[c].sent.size()) << "step " << step << " channel " << c;
+            ASSERT_EQ(quiet.peer[c].rtsFromZx, reference.peer[c].rtsFromZx) << "step " << step << " channel " << c;
+        }
+        ASSERT_EQ(quiet.interrupts.size(), reference.interrupts.size()) << "step " << step;
+    }
+    EXPECT_EQ(quiet.interrupts, reference.interrupts);
+    for (unsigned c = 0; c < 2; c++)
+        EXPECT_EQ(quiet.peer[c].sent, reference.peer[c].sent);
+    EXPECT_GT(reference.uart.GetView(0).received, 100u) << "bytes arrived";
+    EXPECT_GT(reference.uart.GetView(0).sent, 20u) << "bytes left";
+    EXPECT_GT(quiet.looks, 10000u) << "the quiet path was taken";
+    EXPECT_LT(quiet.looks, 39000u) << "and so was Advance";
+}

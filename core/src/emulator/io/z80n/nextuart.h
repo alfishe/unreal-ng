@@ -131,6 +131,11 @@ public:
                 return false;
         return !(_joyOn && _joyPeer);
     }
+    /// A look now would change nothing but the time of the last look: no frame in a shifter, no byte queued, the lines steady, and
+    /// each peer silent (asked here: a peer's byte or break ends it). The per-instruction poll then calls Look instead of Advance
+    bool Quiet() const;
+    /// What Advance does to a quiet UART: the clock and the channels' last look move to `now`
+    void Look(uint64_t now);
     /// The state of a channel without side effects
     View GetView(unsigned channel) const;
     unsigned Selected() const { return _selected; }

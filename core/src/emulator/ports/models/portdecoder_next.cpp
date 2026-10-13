@@ -122,7 +122,11 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         if (!_uart.Idle())
         {
             SyncPiLine();
-            _uart.Advance(now);
+            // a UART with a silent peer (the ESP module is always fitted) only notes the look
+            if (_uart.Quiet())
+                _uart.Look(now);
+            else
+                _uart.Advance(now);
         }
         _uart.PollInterrupts(_interrupts->UartEnables());
     });

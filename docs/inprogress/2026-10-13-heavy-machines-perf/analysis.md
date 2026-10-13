@@ -213,6 +213,8 @@ longer walk the operators.
   at 1x gains.
 - Effort: one line; the existing `Ym2203Pair_Test.IdleFmFastPathMatchesTheClockedPair` and the TSFM goldens cover
   it.
+- **Done 2026-10-13.** Measured again with the landed change (same procedure): TS-Conf 1x 8,498 -> 6,236 µs,
+  TS-Conf sprites 1x 5,515 -> 4,370 µs, Pentagon 1x 949 -> 780 µs.
 
 ### P1b. TSFM: remember that the FM half is idle
 
@@ -221,6 +223,8 @@ it: an FM register write, a CSM key-on from timer A, a state load or a reset. Ca
 it on those events. The engine-level part of `idle()` that depends on the envelope counter's sub-count must stay
 live (or be folded into the cached state).
 
+- **Dropped after P1 (2026-10-13):** the check now runs ~2,000 times a frame instead of ~70,000 (TS-Conf); what is left
+  is below the noise.
 - Gain: the rest of `fmIdle` at 1x; a few per cent on TS-Conf / Pentagon after P1.
 - Effort: small, in the ymfm patch 6 area (`PATCHES.md` §6 gets a line).
 
@@ -241,7 +245,37 @@ before. **Measured** with `SyncPiLine(); if (!Idle()) Advance();`: no change in 
 UART 0 is never idle (P3). It still matters for a correct reading of the code and for configurations without the
 network.
 
+**Done by its author:** the braces are in `master` since the merge of 2026-10-13 (`SyncPiLine()` and `Advance`
+both inside `if (!_uart.Idle())`).
+
 ### P3. Next: an interrupt poll that does nothing until something is due
+
+**Done 2026-10-13** (the CTC and the UART step; `PollInterrupts` is unchanged):
+
+- `NextCtc` keeps `_quietUntil`, the earliest zero count or ZC/TO pulse of its channels, worked out at the end of
+  an `Advance` and cleared by everything that changes a channel (`Write`, `Trigger`, `Reset`, a state load).
+  `Advance` returns at once below it.
+- `NextUart::Quiet()`: no frame in a shifter, no byte queued, no reset, the lines steady, RTS as the peer was told,
+  and each peer silent (`HasByte()` / `BreakHeld()` asked on every poll). The poll then calls `Look(now)`, which does
+  what `Advance` does to such a UART: the clock and the channels' last look move to `now`. The state is the same
+  byte for byte, so nothing is deferred and a TTD capture needs no flush.
+- Tests: `NextCtc_Test.EventGateMatchesTheChannelWalkOnEveryAdvance` (60,000 steps of random programming against a
+  CTC with the gate off: counts, zero counts, the order of interrupts and pulses) and
+  `NextUart_Test.QuietLookMatchesAdvanceOnEveryPoll` (40,000 polls of random traffic, frame changes, flow control,
+  breaks and a cut line against a UART that always advances).
+
+| Row (P1 and P3 together; the Next rows are P3) | before | after | x |
+|:--|--:|--:|--:|
+| Next_ShipNormal | 1,425 | 1,357 | 0.95 |
+| Next_ShipTurbo | 513 | 447 | 0.87 |
+| Next_Spectron_ShipNormal | 4,545 | 4,175 | 0.92 |
+| Next_Spectron_ShipTurbo | 3,227 | 2,916 | 0.90 |
+| Next_Copper_ShipNormal | 6,910 | 6,481 | 0.94 |
+| Next_Show512_ShipNormal | 5,770 | 5,297 | 0.92 |
+| Next_Tilemap_ShipNormal | 6,538 | 6,022 | 0.92 |
+| Next_Scroll_ShipNormal | 7,454 | 6,873 | 0.92 |
+
+The original proposal:
 
 Today, before every instruction: `NextCtc::Advance(now)` walks the four channels, and the UART steps both channels
 and polls its interrupts. That is 11-25 % of a Next frame with a program (turbo: the largest item).
@@ -353,6 +387,11 @@ TS-Conf the run ends at the next event: the engine's line start / `ts_start`, an
   `nowT()` for `_lastSeenT` (3 % of a Sprinter turbo frame). `_lastSeenT` is read at the frame rebase only; it can
   be taken there.
 - Gain: 3-5 % in turbo on all three machines (and the Pentagon). Effort: small.
+- **Checked 2026-10-13: not as small as written.** Both devices use the noted position across the frame boundary,
+  after the CPU's `t` is rebased: the AY's frame start takes `_lastSeenT - now` as the rebase delta and its TTD
+  capture uses `_lastSeenT`; the TSFM's frame end catches up to `_deferredT`, "the frame end the per-step sync
+  reached". Reading the CPU at that moment gives the rebased value. It needs a hook before the frame rebase that
+  notes the position once. Left for after the larger items.
 
 ### P10. AY at 1x: render between register writes
 

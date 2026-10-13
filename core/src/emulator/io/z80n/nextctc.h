@@ -59,6 +59,12 @@ public:
     uint8_t Control(unsigned channel) const { return _ch[channel].control; }
     uint16_t TimeConstant(unsigned channel) const { return _ch[channel].tc; }
     uint32_t Zeros(unsigned channel) const { return _ch[channel].zeros; }
+    /// Tests: off = every Advance walks the channels (the reference the gated one is compared with)
+    void SetEventGate(bool on)
+    {
+        _eventGate = on;
+        _quietUntil = 0;
+    }
     bool Running(unsigned channel) const { return _ch[channel].running; }
 
 private:
@@ -93,4 +99,8 @@ private:
     Channel _ch[kChannels];
     uint8_t _vector = 0;
     uint64_t _now = 0;
+    /// No zero count and no ZC/TO pulse is due before this clock (derived from the channels, not state): Advance returns at once
+    /// below it. 0: not known, the next Advance works it out. Everything that changes a channel clears it
+    uint64_t _quietUntil = 0;
+    bool _eventGate = true;
 };
