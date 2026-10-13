@@ -21,7 +21,7 @@ Not only a display mask. On master `235552be7`:
 - **Identity is `TTDDeviceKey` = {`TTDDeviceType` (u16), instance name}.** Registry, engine, controller, session
   facts, file-info, slot checks, machine state transfer and ZX-Poly name devices by key (or by type, where a
   machine has one device of a kind).
-- **`PeripheralId` is v1's blob id, frozen.** Values 0-63 stay what they are (v1 files and checkpoints use them);
+- **`PeripheralId` is v1's blob id, frozen** (at 63 when this was written; at 65 after the merge of section 7). Values 0-63 stay what they are (v1 files and checkpoints use them);
   no new value is added. `PeripheralId::None = 0xFF` marks a device v1 cannot record. Only v1
   (`TimeTravelManager`, its file format `ttddumpformat.h`, its checkpoint blobs) and the v1 file reader
   (`ttdv1feeder`, `ttdfileinfo` for v1 files) read it.
@@ -67,8 +67,7 @@ Not only a display mask. On master `235552be7`:
 - `TTDSessionFacts` version 2: no `peripheralMask` (the session's device table lists the devices); `notRecorded`
   as keys. Version 1 still reads (mask bits → types).
 - `TTDRecordedMachine`: `devices` and `notRecorded` as keys; `peripherals` / `not_recorded` names from them;
-  General Sound / TurboSound from types. `peripheral_mask` leaves the WebAPI / MCP answer and the OpenAPI schema
-  (`peripherals` already carries the same as names).
+  General Sound / TurboSound from types. `peripheral_mask` was to leave the WebAPI / MCP answer; it stays (section 7).
 - `UpdatePeripheral` (the General Sound switch) takes types.
 
 ### 3.5 Slots, cards, port decoders, transfer, ZX-Poly
@@ -86,7 +85,7 @@ Not only a display mask. On master `235552be7`:
 |---|---|
 | Engine session files (schema 2) | unchanged bytes for every existing device; facts version 2 written, version 1 read |
 | v1 files | unchanged; read by the v1 reader as before |
-| WebAPI / MCP `file-info` / status | `peripheral_mask` removed; `peripherals`, `not_recorded` unchanged |
+| WebAPI / MCP `file-info` / status | unchanged: `peripheral_mask` (+ `peripheral_mask_words`) name the devices that have a v1 id, `peripherals` every device (section 7) |
 
 ## 5. Tests
 - Every existing TTD test, on the engine and v1.
@@ -124,3 +123,21 @@ snapshot, region pairing, v1 blobs by live key); the engine (two type-64 instanc
 restore); file-info names; facts versions 1 and 2; two MultiSound cards recorded and restored side by side.
 
 Not built by default: the POC 011 benchmarks (`-DBUILD_POC=ON`) had their registrations updated, not compiled.
+
+## 7. Merged with the wide mask (2026-10-13)
+
+While this branch was built, master took another answer to the same limit (`c616568a6`): `ttd::PeripheralMask` (any
+u8 id), v1's file schema 3 (the header's masks as word lists), `peripheral_mask_words` on the automation surfaces, and
+two new ids, `MachineSerialPeer2` = 64 and `JoystickSerialPeer` = 65 (the Next's second UART peer and the joystick
+connector's). Both stand; the merge:
+
+- **The freeze is at 65**, not 63: ids 64 and 65 are v1 ids and device types as landed (sessions may hold them). A
+  new device takes a type from 66 on and no v1 id. (By D23 the two peers would have been instances of
+  `MachineSerialPeer`; they keep their own types, as the files say.)
+- **`PeripheralMask` is v1's**: the v1 file header (schema 3, schema 1 read), `TTDPeripheralRegistry::V1MaskOf` /
+  `KeysOfV1Mask`, `TTDRecordedMachine::V1Mask()`. Nothing between the live devices and the engine is keyed by it.
+- **Facts are version 3** (keys). Version 2 (master's word-list masks) and version 1 (u64 masks) still read: the
+  recorded mask is dropped (the device table lists the devices), the not-recorded one becomes keys.
+- **`peripheral_mask` and `peripheral_mask_words` stay** on the automation surfaces (section 3.4 above said the
+  first would go): the set of v1 ids of the recorded devices, as master documents them. A device without a v1 id is
+  only in `peripherals`.

@@ -246,7 +246,7 @@ TEST_F(TTDFileInfo_Test, ReadsFromAPath)
 TEST(TTDFileInfo_Names, DeviceWithoutV1IdIsNamedByItsInstance)
 {
     ttd::TTDRecordedMachine m;
-    m.devices.push_back({{static_cast<ttd::TTDDeviceType>(64), "next.uart0"}, ttd::PeripheralId::None});
+    m.devices.push_back({{static_cast<ttd::TTDDeviceType>(66), "next.uart0"}, ttd::PeripheralId::None});
     m.devices.push_back({{ttd::TTDDeviceType::BetaDisk, "betadisk"}, ttd::PeripheralId::BetaDisk});
     m.devices.push_back({{ttd::TTDDeviceType::SerialPort, "atm2ioesp.uart"}, ttd::PeripheralId::Atm2IoEsp});
     ttd::DescribeRecordedMachine(m);

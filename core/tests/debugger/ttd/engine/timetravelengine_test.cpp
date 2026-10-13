@@ -1171,7 +1171,7 @@ TEST(TimeTravelEngine_Test, AMostlyUniformRegionCostsTheDeltaBaseItsContentOnly)
 
 namespace
 {
-/// A device added after the v1 ids froze (type 64 and on, no v1 id), one instance of several
+/// A device added after the v1 ids froze (type 66 and on, no v1 id), one instance of several
 class KeyedDevice : public TTDSerializable
 {
 public:
@@ -1189,7 +1189,7 @@ private:
 };
 }  // namespace
 
-/// Two instances of a type past the v1 ids record side by side, each under its key: read back by key, through a
+/// Two instances of a type past the v1 ids (66) record side by side, each under its key: read back by key, through a
 /// session file (the device table names both, v1 id none), and restored each into its own device
 TEST(TimeTravelEngine_DeviceKeys_Test, DevicesWithoutV1IdRecordSaveLoadAndRestoreByKey)
 {
@@ -1199,8 +1199,8 @@ TEST(TimeTravelEngine_DeviceKeys_Test, DevicesWithoutV1IdRecordSaveLoadAndRestor
     r.memory = ram.data();
     r.pieces = 1;
     r.bytes = kTTDPieceSize;
-    KeyedDevice a(64, "next.uart0");
-    KeyedDevice b(64, "next.uart1");
+    KeyedDevice a(66, "next.uart0");
+    KeyedDevice b(66, "next.uart1");
     TimeTravelEngine engine;
     std::string err;
     ASSERT_TRUE(engine.BeginSession({r}, {{a.TTDDescribe(), &a, nullptr}, {b.TTDDescribe(), &b, nullptr}}, err)) << err;
@@ -1215,8 +1215,8 @@ TEST(TimeTravelEngine_DeviceKeys_Test, DevicesWithoutV1IdRecordSaveLoadAndRestor
         in.deviceStates.push_back({1, b.state, sizeof(b.state)});
         ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
     }
-    const TTDDeviceKey keyA{static_cast<TTDDeviceType>(64), "next.uart0"};
-    const TTDDeviceKey keyB{static_cast<TTDDeviceType>(64), "next.uart1"};
+    const TTDDeviceKey keyA{static_cast<TTDDeviceType>(66), "next.uart0"};
+    const TTDDeviceKey keyB{static_cast<TTDDeviceType>(66), "next.uart1"};
     std::vector<uint8_t> got;
     ASSERT_TRUE(engine.DeviceState(1, keyB, got));
     EXPECT_EQ(got, std::vector<uint8_t>(40, 0x81));
@@ -1237,8 +1237,8 @@ TEST(TimeTravelEngine_DeviceKeys_Test, DevicesWithoutV1IdRecordSaveLoadAndRestor
     ASSERT_TRUE(loaded.DeviceState(2, keyA, got));
     EXPECT_EQ(got, std::vector<uint8_t>(40, 0x12));
     // Bound to two live devices of the same keys, a restore loads each its own state
-    KeyedDevice liveA(64, "next.uart0");
-    KeyedDevice liveB(64, "next.uart1");
+    KeyedDevice liveA(66, "next.uart0");
+    KeyedDevice liveB(66, "next.uart1");
     EXPECT_EQ(loaded.BindLive({r}, {{liveA.TTDDescribe(), &liveA, nullptr}, {liveB.TTDDescribe(), &liveB, nullptr}}), 0u);
     EXPECT_EQ(loaded.RestoreDevices(1, {}).status, TTDRestoreStatus::Exact);
     EXPECT_EQ(std::vector<uint8_t>(liveA.state, liveA.state + 40), std::vector<uint8_t>(40, 0x11));

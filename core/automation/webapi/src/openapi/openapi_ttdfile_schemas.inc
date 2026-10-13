@@ -17,6 +17,11 @@
         m["properties"]["rom_signature"]["description"] =
             "FNV-1a fingerprint of the ROM set, hex string 0x... (a 64-bit value does not survive a JSON number); "
             "null = unknown, not checked on load";
+        m["properties"]["peripheral_mask"]["type"] = "integer";
+        m["properties"]["peripheral_mask"]["format"] = "uint64";
+        m["properties"]["peripheral_mask"]["description"] =
+            "Bit i set: the device with TTD v1 peripheral id i was fitted (ids 0..63; a device without a v1 id is only "
+            "in `peripherals`)";
         m["properties"]["peripherals"]["type"] = "array";
         m["properties"]["peripherals"]["items"]["type"] = "string";
         m["properties"]["peripherals"]["description"] =

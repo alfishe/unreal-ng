@@ -539,7 +539,7 @@ private:
     std::string _instance;
 };
 
-constexpr auto kNewType = static_cast<TTDDeviceType>(64);   // the first type without a v1 id
+constexpr auto kNewType = static_cast<TTDDeviceType>(66);   // the first type without a v1 id
 
 /// A device whose state carries memory it offers as engine regions: the registry pairs the two by object
 class RegionPeripheral : public MockPeripheral, public ITTDRegionSource
@@ -678,7 +678,9 @@ TEST_F(TTDPeripheralRegistryTest, V1BlobsBecomeStatesByLiveKey)
     ASSERT_EQ(states.size(), 2u);
     EXPECT_EQ(states.count({TTDDeviceType::NeoGS, "zxbus.2.neogs"}), 1u);
     EXPECT_EQ(states.at({TTDDeviceType::Tape, ""}), tape);
-    EXPECT_EQ(TTDPeripheralRegistry::V1MaskOf(TTDPeripheralRegistry::KeysOfV1Mask(0x801)), 0x801u);
+    PeripheralMask mask = PeripheralMask::FromLow(0x801);
+    mask.Set(static_cast<uint8_t>(PeripheralId::JoystickSerialPeer));   // an id past 63: the mask's second word
+    EXPECT_EQ(TTDPeripheralRegistry::V1MaskOf(TTDPeripheralRegistry::KeysOfV1Mask(mask)), mask);
 }
 
 // endregion </D23>
