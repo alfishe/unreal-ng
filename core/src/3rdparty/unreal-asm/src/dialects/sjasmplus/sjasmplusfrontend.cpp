@@ -1,10 +1,13 @@
 #include "dialects/sjasmplus/sjasmplusfrontend.h"
 
+#include <algorithm>
 #include <cctype>
 #include <map>
+#include <optional>
 #include <set>
 
 #include "dialects/common/z80.h"
+#include "layout/z80size.h"
 
 namespace unrealasm::dialects
 {
@@ -558,7 +561,8 @@ constexpr Directive kDirectives[] = {
     {"BYTE", ir::DirectiveKind::Db},           {"DM", ir::DirectiveKind::Db},            {"DEFM", ir::DirectiveKind::Db},
     {"DW", ir::DirectiveKind::Dw},             {"DEFW", ir::DirectiveKind::Dw},          {"WORD", ir::DirectiveKind::Dw},
     {"DS", ir::DirectiveKind::Ds},             {"DEFS", ir::DirectiveKind::Ds},          {"BLOCK", ir::DirectiveKind::Ds},
-    {"INCLUDE", ir::DirectiveKind::Include},   {"INCBIN", ir::DirectiveKind::Incbin},    {"IF", ir::DirectiveKind::If},
+    {"INCLUDE", ir::DirectiveKind::Include},   {"INCBIN", ir::DirectiveKind::Incbin},    {"INSERT", ir::DirectiveKind::Incbin},
+    {"BINARY", ir::DirectiveKind::Incbin},     {"IF", ir::DirectiveKind::If},
     {"IFN", ir::DirectiveKind::If},            {"ELSE", ir::DirectiveKind::Else},        {"ENDIF", ir::DirectiveKind::EndIf},
     {"MACRO", ir::DirectiveKind::Macro},       {"ENDM", ir::DirectiveKind::EndMacro},    {"DUP", ir::DirectiveKind::Repeat},
     {"REPT", ir::DirectiveKind::Repeat},       {"EDUP", ir::DirectiveKind::EndRepeat},   {"ENDR", ir::DirectiveKind::EndRepeat},
@@ -574,7 +578,7 @@ const std::set<std::string> kOtherDirectives = {
     "SAVECPCSNA", "SAVECDT", "SAVEDEV",   "EMPTYTAP", "EMPTYTRD",  "MODULE",    "ENDMODULE", "DEFINE",  "DEFINE+",    "UNDEFINE",
     "IFDEF",    "IFNDEF",    "IFUSED",    "IFNUSED",  "ELSEIF",    "ALIGN",     "ASSERT",   "OUTPUT",   "OUTEND",     "LUA",
     "ENDLUA",   "STRUCT",    "ENDS",      "OPT",      "LABELSLIST", "CSPECTMAP", "SIZE",    "DEFARRAY", "DEFARRAY+",  "RELOCATE_START",
-    "RELOCATE_END", "RELOCATE_TABLE", "INCHOB", "INCTRD", "INSERT", "BINARY",   "DG",       "DEFG",     "DH",         "DEFH",
+    "RELOCATE_END", "RELOCATE_TABLE", "INCHOB", "INCTRD", "DG",       "DEFG",     "DH",         "DEFH",
     "DZ",       "DC",        "D24",       "DWORD",    "DD",        "ABYTE",     "ABYTEC",   "ABYTEZ",   "FPOS",       "SHELLEXEC",
     "BPLIST",   "SETBP",     "SETBREAKPOINT", "EXPORT", "TAPOUT",  "TAPEND",    "ENCODING", "DEFDEVICE", "INCLUDELUA",
 };
@@ -727,6 +731,83 @@ Statement ParseStatement(const std::string& text, std::string& label, const Cont
 
 namespace
 {
+/// 101b: sjasmplus reads a temporary label backwards only in a jump's operand (JR 1B); anywhere else digits 0 and 1
+/// before b are a binary number
+void BinaryRaw(Expr& e)
+{
+    for (Expr& a : e.args)
+        BinaryRaw(a);
+    if (e.kind != Expr::Kind::Raw || e.text.size() < 2)
+        return;
+    const char last = e.text.back();
+    const std::string body = e.text.substr(0, e.text.size() - 1);
+    if ((last == 'b' || last == 'B') && body.find_first_not_of("01") == std::string::npos)
+        e = Expr::Number(std::stoll(body, nullptr, 2), ir::NumberSpelling::Binary, static_cast<int>(body.size()));
+}
+
+void BinaryOutsideJumps(Statement& s)
+{
+    if (s.kind == Statement::Kind::Instruction)
+    {
+        const std::string m = z80::Upper(s.mnemonic);
+        if (m == "JR" || m == "JP" || m == "DJNZ" || m == "CALL")
+        {
+            // a jump's target named like a register is a label (DJNZ de: the label de)
+            for (Operand& o : s.operands)
+                if (o.kind == Operand::Kind::Register)
+                {
+                    o.kind = Operand::Kind::Immediate;
+                    o.expr = Expr::Symbol(o.text);
+                    o.text.clear();
+                }
+            return;
+        }
+    }
+    if (s.kind == Statement::Kind::MacroCall)
+        return;   // its arguments are text
+    if (s.kind == Statement::Kind::Instruction && s.operands.size() == 2)
+    {
+        // OUT n,A and IN A,n: the port without parentheses, as OUT (n),A
+        const std::string m = z80::Lower(s.mnemonic);
+        Operand& port = m == "out" ? s.operands[0] : s.operands[1];
+        const Operand& other = m == "out" ? s.operands[1] : s.operands[0];
+        if ((m == "out" || m == "in") && port.kind == Operand::Kind::Immediate && other.kind == Operand::Kind::Register && other.text == "a")
+            port.kind = Operand::Kind::Memory;
+    }
+    for (Operand& o : s.operands)
+        BinaryRaw(o.expr);
+    for (Expr& a : s.args)
+        BinaryRaw(a);
+}
+
+/// Where an instruction's value field starts (label+*, sjasmplus' smart SMC): the immediate value or the address in
+/// (nn), a word for (nn), JP, CALL and LD rr,nn, else a byte (JR's offset too); none for an index's displacement, a port
+std::optional<int64_t> ValueField(const Statement& s)
+{
+    if (s.kind != Statement::Kind::Instruction)
+        return std::nullopt;
+    const std::string m = z80::Lower(s.mnemonic);
+    if (m == "in" || m == "out" || m == "rst" || m == "im")
+        return std::nullopt;
+    bool immediate = false, memory = false;
+    for (const Operand& o : s.operands)
+    {
+        immediate = immediate || o.kind == Operand::Kind::Immediate;
+        memory = memory || o.kind == Operand::Kind::Memory;
+    }
+    if (!immediate && !memory)
+        return std::nullopt;
+    const bool pair = !s.operands.empty() && s.operands[0].kind == Operand::Kind::Register &&
+                      (s.operands[0].text == "bc" || s.operands[0].text == "de" || s.operands[0].text == "hl" || s.operands[0].text == "sp" ||
+                       s.operands[0].text == "ix" || s.operands[0].text == "iy");
+    const int width = memory || m == "jp" || m == "call" || (m == "ld" && pair) ? 2 : 1;
+    std::string error;
+    const int size = layout::InstructionSize(s, error);
+    if (size <= width)
+        return std::nullopt;
+    return size - width;
+}
+
 /// The DEFINEs' values in a line where their names stand as whole words (outside strings)
 std::string Substitute(const std::string& text, const std::map<std::string, std::string>& defines)
 {
@@ -774,6 +855,64 @@ std::string Substitute(const std::string& text, const std::map<std::string, std:
     return out;
 }
 }  // namespace
+
+std::vector<ir::Statement> SjasmplusRepeated(const ir::Statement& s)
+{
+    const std::vector<Operand>& ops = s.operands;
+    if (s.kind != Statement::Kind::Instruction || ops.size() < 2)
+        return {s};
+    const std::string m = z80::Lower(s.mnemonic);
+    const auto reg = [&](size_t k, std::initializer_list<const char*> names) {
+        return ops[k].kind == Operand::Kind::Register && std::any_of(names.begin(), names.end(), [&](const char* n) { return ops[k].text == n; });
+    };
+    const auto split = [&](size_t width, std::optional<Operand> first) {
+        std::vector<Statement> out;
+        for (size_t k = first ? 1 : 0; k + width <= ops.size(); k += width)
+        {
+            Statement one = s;
+            one.operands.clear();
+            if (first)
+                one.operands.push_back(*first);
+            one.operands.insert(one.operands.end(), ops.begin() + static_cast<std::ptrdiff_t>(k), ops.begin() + static_cast<std::ptrdiff_t>(k + width));
+            out.push_back(std::move(one));
+        }
+        return out;
+    };
+    if (m == "jp" || m == "jr" || m == "call")
+    {
+        if (ops[0].kind != Operand::Kind::Condition)
+            return split(1, std::nullopt);
+        if (ops.size() <= 2 || ops.size() % 2 != 0)
+            return {s};
+        // the first operand of each pair a condition (the frontend takes only the first for one)
+        std::vector<Statement> out = split(2, std::nullopt);
+        for (Statement& one : out)
+        {
+            Operand& c = one.operands[0];
+            if (c.kind == Operand::Kind::Immediate && c.expr.kind == Expr::Kind::Symbol && z80::IsCondition(z80::Lower(c.expr.text)))
+            {
+                c.kind = Operand::Kind::Condition;
+                c.text = z80::Lower(c.expr.text);
+                c.expr = Expr();
+            }
+        }
+        return out;
+    }
+    if (m == "push" || m == "pop" || m == "inc" || m == "dec" || m == "djnz" || m == "rst")
+        return split(1, std::nullopt);
+    if (m == "sub" || m == "and" || m == "or" || m == "xor" || m == "cp")
+        return reg(0, {"hl", "ix", "iy", "bc", "de"}) ? std::vector<Statement>{s} : split(1, std::nullopt);   // SUB HL,DE: a fake instruction
+    if (m == "rl" || m == "rr" || m == "rlc" || m == "rrc" || m == "sla" || m == "sra" || m == "sli" || m == "sll" || m == "srl")
+        return ops[0].kind == Operand::Kind::Indexed || reg(0, {"bc", "de", "hl"}) ? std::vector<Statement>{s} : split(1, std::nullopt);
+    if ((m == "add" || m == "adc" || m == "sbc") && reg(0, {"a"}) && ops.size() > 2)
+        return split(1, ops[0]);
+    if ((m == "set" || m == "res") && ops.size() == 3 && ops[1].kind == Operand::Kind::Indexed)
+        return {s};   // RES 0,(IX+1),A: the undocumented copy
+    if ((m == "ld" || m == "ex" || m == "add" || m == "adc" || m == "sbc" || m == "in" || m == "out" || m == "bit" || m == "set" || m == "res") &&
+        ops.size() > 2 && ops.size() % 2 == 0)
+        return split(2, std::nullopt);
+    return {s};
+}
 
 FrontendResult SjasmplusFrontend::Parse(const SourceDocument& source) const
 {
@@ -886,6 +1025,7 @@ FrontendResult SjasmplusFrontend::Parse(const SourceDocument& source) const
                 rest = Substitute(rest, defines);
         }
         Context c{number, result.diagnostics, macros, z80n};
+        std::vector<std::string> partTexts;   // each statement's text
         if (!rest.empty())
         {
             // "label=expr" and "label = expr": one statement, the ':' inside belongs to nothing else
@@ -894,10 +1034,70 @@ FrontendResult SjasmplusFrontend::Parse(const SourceDocument& source) const
                 if (!part.empty())
                 {
                     line.statements.push_back(ParseStatement(part, line.label, c));
+                    partTexts.push_back(part);
                     const Statement& parsed = line.statements.back();
                     if (parsed.kind == Statement::Kind::Directive && z80::EnablesZ80n(parsed.text))
                         z80n = true;
                 }
+        }
+        for (Statement& st : line.statements)
+            BinaryOutsideJumps(st);
+        // A macro on one line (NAME MACRO p : PUSH HL : ... : ENDM): its lines one by one, as written over several
+        for (size_t m = 0; m + 1 < line.statements.size(); ++m)
+            if (line.statements[m].kind == Statement::Kind::Directive && line.statements[m].directive == ir::DirectiveKind::Macro)
+            {
+                ir::Line head = line;
+                head.statements.assign(line.statements.begin(), line.statements.begin() + static_cast<std::ptrdiff_t>(m + 1));
+                head.hasComment = false;
+                head.comment.clear();
+                std::string headText = line.label;
+                for (size_t k = 0; k <= m; ++k)
+                    headText += (k ? " : " : "\t") + partTexts[k];
+                head.ownText = headText;
+                result.program.lines.push_back(std::move(head));
+                for (size_t k = m + 1; k < line.statements.size(); ++k)
+                {
+                    ir::Line part;
+                    part.sourceLine = number;
+                    part.statements.push_back(line.statements[k]);
+                    part.ownText = "\t" + partTexts[k];
+                    if (k + 1 == line.statements.size())
+                    {
+                        part.comment = line.comment;
+                        part.hasComment = line.hasComment;
+                    }
+                    result.program.lines.push_back(std::move(part));
+                }
+                line.statements.clear();
+                line.label.clear();
+                break;
+            }
+        if (line.statements.empty() && line.label.empty() && !result.program.lines.empty() && result.program.lines.back().sourceLine == number)
+            continue;
+        // label+N: the label is $+N (self-modifying code names the operand of its instruction); label+*: the
+        // instruction's value field (sjasmplus' smart SMC). A line of its own first, the label assigned so
+        if (const size_t plus = line.label.find('+'); plus != std::string::npos && plus > 0 && plus + 2 == line.label.size() && line.label.back() == '*')
+        {
+            const std::optional<int64_t> field = line.statements.empty() ? std::nullopt : ValueField(line.statements[0]);
+            if (!field)
+                result.diagnostics.push_back({Severity::Error, number, 0, line.label + ": the instruction has no value field (sjasmplus: no significant target)"});
+            line.label = line.label.substr(0, plus) + "+" + std::to_string(field.value_or(0));
+        }
+        if (const size_t plus = line.label.find('+'); plus != std::string::npos && plus > 0 && plus + 1 < line.label.size() &&
+                                                      line.label.find_first_not_of("0123456789", plus + 1) == std::string::npos)
+        {
+            ir::Line named;
+            named.sourceLine = number;
+            named.label = line.label.substr(0, plus);
+            Statement assign;
+            assign.kind = Statement::Kind::Directive;
+            assign.directive = ir::DirectiveKind::Equ;
+            assign.args.push_back(Expr::Binary(ir::Op::Add, Expr::Make(Expr::Kind::Current), Expr::Number(std::stoll(line.label.substr(plus + 1)))));
+            named.statements.push_back(std::move(assign));
+            named.ownText = named.label + "\tEQU $+" + line.label.substr(plus + 1);
+            result.program.lines.push_back(std::move(named));
+            line.label.clear();
+            line.ownText = "\t" + rest;
         }
         result.program.lines.push_back(std::move(line));
     }

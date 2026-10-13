@@ -6,6 +6,7 @@
 #include <map>
 #include <set>
 
+#include "dialects/common/diskname.h"
 #include "dialects/common/chainwriter.h"
 #include "dialects/common/z80.h"
 
@@ -187,8 +188,9 @@ private:
     }
 
     /// A TR-DOS name for INCLUDE / INCBIN (bare, 8 characters)
-    std::string FileName(const std::string& name)
+    std::string FileName(const std::string& given)
     {
+        const std::string name = DiskName(options, given);
         std::string base = name;
         if (const size_t dot = name.rfind('.'); dot != std::string::npos && name.size() - dot == 2)
             base = name.substr(0, dot);

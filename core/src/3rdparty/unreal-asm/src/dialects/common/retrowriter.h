@@ -116,6 +116,8 @@ protected:
     const SourceLabel* Lookup(const std::string& text) const;
     std::optional<int64_t> Value(const Expr& e) const;
     std::string LineLabel(bool withFile) const;
+    static std::string Blanked(std::string text);   // a source text in a comment: its tabs as blanks
+    std::string BodyLineLabel(bool withFile) const;   // ... of a line of a macro expanded on the line
     bool Later(const std::string& text) const;   ///< defined further down: unknown when a one-pass target reaches the line
     bool InWord(const Expr& e) const;            ///< in 0..#FFFF, where a 16-bit unsigned target agrees
 
@@ -156,6 +158,9 @@ protected:
     };
     static size_t Matching(const std::vector<ir::Line>& lines, size_t from, ir::DirectiveKind open, ir::DirectiveKind close);
     void Range(const std::vector<ir::Line>& lines, size_t begin, size_t end, size_t index);
+    /// The lines between `begin` and `end` (a repeated block's body) once more, its temporary labels ("1" ... JR 1b) of
+    /// this pass's own (the references by their place in the body)
+    void RepeatPass(const std::vector<ir::Line>& lines, size_t begin, size_t end, size_t index);
     Operand Argument(const std::string& text) const;
     void Expand(const MacroDef& def, const Statement& call, size_t index, uint32_t callLine);
     void Emit(const std::vector<std::string>& texts, uint32_t origin);
@@ -187,6 +192,7 @@ protected:
     std::map<std::string, MacroDef> macros{};
     int expansions = 0;                                  // macro expansions written (their labels' names count it)
     int nesting = 0;                                     // expansions open (a limit against a macro calling itself)
+    uint32_t bodyLine = 0;                               // in an expansion of a macro called on a line: the body's line (1-based)
     std::set<std::string> taken{};                       // the keys of the names given out
     std::vector<bool> repeats{};
     std::set<std::string> defines{};

@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <map>
+#include <optional>
+#include <set>
 
 #include "unrealasm/layout.h"
 #include "unrealasm/registry.h"
@@ -148,42 +151,23 @@ std::map<std::string, SourceLabel> LabelValues(const std::vector<ProjectFile>& f
             const std::vector<uint8_t> bytes = options.dataFiles(name);
             return bytes.empty() ? std::nullopt : std::optional<uint64_t>(bytes.size());
         };
-    // Every line without a label gets one (local, so sjasmplus' .labels keep their parent): its address is $ there
-    std::vector<ProjectFile> labelled = files;
-    const IFrontend* frontend = DialectRegistry::Builtin().Frontend("sjasmplus");
-    for (ProjectFile& f : labelled)
+    const layout::LayoutResult laid = layout::Layout(files, main, layoutOptions);
+    for (const layout::Label& l : laid.labels)
+    {
+        const SourceLabel value = {l.value, files.size() == 1 ? std::string() : l.file, l.line, l.use == layout::LabelUse::Defl};
+        values[l.name] = value;
+    }
+    // each line's address, for $ there: __UNREALASM_L<file>_<line> (the file named only in a project)
+    for (const layout::LineAddress& a : laid.lines)
     {
         std::string file;
         if (files.size() > 1)
-            for (const char c : f.name)
+            for (const char c : a.file)
                 file.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
-        const ir::Program program = frontend->Parse(f.document).program;
-        int depth = 0;   // inside MACRO, DUP / REPT, WHILE: $ is not one address
-        bool parent = false;   // a label without a dot came: before it a .label would itself become the parent
-        for (const ir::Line& l : program.lines)
-        {
-            if (!l.label.empty() && l.label[0] != '.')
-                parent = true;
-            int opens = 0, closes = 0;
-            for (const ir::Statement& s : l.statements)
-                if (s.kind == ir::Statement::Kind::Directive)
-                {
-                    opens += s.directive == ir::DirectiveKind::Macro || s.directive == ir::DirectiveKind::Repeat || s.directive == ir::DirectiveKind::While;
-                    closes += s.directive == ir::DirectiveKind::EndMacro || s.directive == ir::DirectiveKind::EndRepeat || s.directive == ir::DirectiveKind::EndWhile;
-                }
-            const size_t index = l.sourceLine - 1;
-            if (parent && depth == 0 && opens == 0 && l.label.empty() && !l.statements.empty() && index < f.document.lines.size())
-            {
-                std::string& text = f.document.lines[index].text;
-                if (!text.empty() && (text[0] == ' ' || text[0] == '\t'))
-                    text = ".__UNREALASM_L" + file + "_" + std::to_string(l.sourceLine) + text;
-            }
-            depth += opens - closes;
-        }
+        const std::string key = a.bodyLine ? "__UNREALASM_M" + file + "_" + std::to_string(a.line) + "_" + std::to_string(a.bodyLine)
+                                           : "__UNREALASM_L" + file + "_" + std::to_string(a.line);
+        values[key] = {a.address, files.size() == 1 ? std::string() : a.file, a.line, false};
     }
-    const layout::LayoutResult laid = layout::Layout(labelled, main, layoutOptions);
-    for (const layout::Label& l : laid.labels)
-        values[l.name] = {l.value, files.size() == 1 ? std::string() : l.file, l.line, l.use == layout::LabelUse::Defl};
     return values;
 }
 }  // namespace
@@ -289,8 +273,418 @@ bool Matches(std::string_view pattern, std::string_view name)
 }
 }  // namespace
 
+namespace
+{
+constexpr std::string_view kFileMark = "UNREALASM@FILE:";   // a comment line opening the text of an INCLUDEd file
+constexpr std::string_view kEndMark = "UNREALASM@END:";     // ... and closing it
+
+std::string Trimmed(const std::string& text)
+{
+    const size_t first = text.find_first_not_of(" \t");
+    return first == std::string::npos ? std::string() : text.substr(first);
+}
+
+std::string LowerText(std::string text)
+{
+    for (char& c : text)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return text;
+}
+
+/// A file name without its folders and its last extension
+std::string Stem(const std::string& name)
+{
+    const size_t slash = name.find_last_of("/\\");
+    std::string base = slash == std::string::npos ? name : name.substr(slash + 1);
+    const size_t dot = base.rfind('.');
+    return dot == std::string::npos || dot == 0 ? base : base.substr(0, dot);
+}
+
+/// The project file an INCLUDE names: the name as it is given, else the same in another case, else the same file name
+/// without folders and extension (a folder converted as a project names its files so)
+std::optional<size_t> IncludedFile(const std::vector<ProjectFile>& files, const std::string& text)
+{
+    for (size_t k = 0; k < files.size(); ++k)
+        if (files[k].name == text)
+            return k;
+    for (size_t k = 0; k < files.size(); ++k)
+        if (LowerText(files[k].name) == LowerText(text))
+            return k;
+    for (size_t k = 0; k < files.size(); ++k)
+        if (LowerText(Stem(files[k].name)) == LowerText(Stem(text)))
+            return k;
+    return std::nullopt;
+}
+
+/// A sjasmplus project as its assembler reads it: every main source (one no other file INCLUDEs) with the text of each
+/// file it INCLUDEs put in after the INCLUDE line, between marks; converted as one source, then cut into its files
+class ProjectJoiner
+{
+public:
+    ProjectJoiner(const std::vector<ProjectFile>& files, const IBackend& backend, const BackendOptions& options)
+        : _files(files), _backend(backend), _options(options)
+    {
+    }
+
+    ProjectResult Run()
+    {
+        const IFrontend* frontend = DialectRegistry::Builtin().Frontend("sjasmplus");
+        // the INCLUDE lines of each file (outside macro bodies, which sjasmplus reads where they are expanded)
+        _includes.resize(_files.size());
+        _safe.resize(_files.size());
+        std::vector<bool> included(_files.size(), false);
+        for (size_t k = 0; k < _files.size(); ++k)
+        {
+            int depth = 0;
+            int blocks = 0;   // any block open (MACRO, DUP, WHILE, IF..., STRUCT, LUA, DISP): no cut inside one
+            for (const ir::Line& l : frontend->Parse(_files[k].document).program.lines)
+            {
+                for (const ir::Statement& s : l.statements)
+                {
+                    const std::string word = s.kind == ir::Statement::Kind::Directive && s.directive == ir::DirectiveKind::Other
+                                                 ? dialects::z80::Upper(Trimmed(s.text).substr(0, Trimmed(s.text).find_first_of(" \t")))
+                                                 : std::string();
+                    if (s.kind == ir::Statement::Kind::Directive)
+                    {
+                        const auto d = s.directive;
+                        blocks += d == ir::DirectiveKind::Macro || d == ir::DirectiveKind::Repeat || d == ir::DirectiveKind::While ||
+                                  d == ir::DirectiveKind::If || d == ir::DirectiveKind::Disp || word == "IFDEF" || word == "IFNDEF" ||
+                                  word == "IFUSED" || word == "IFNUSED" || word == "STRUCT" || word == "LUA";
+                        blocks -= d == ir::DirectiveKind::EndMacro || d == ir::DirectiveKind::EndRepeat || d == ir::DirectiveKind::EndWhile ||
+                                  d == ir::DirectiveKind::EndIf || d == ir::DirectiveKind::Ent || word == "ENDS" || word == "ENDLUA";
+                    }
+                    if (s.kind != ir::Statement::Kind::Directive)
+                        continue;
+                    depth += s.directive == ir::DirectiveKind::Macro;
+                    depth -= s.directive == ir::DirectiveKind::EndMacro;
+                    if (s.directive != ir::DirectiveKind::Include || depth > 0)
+                        continue;
+                    if (const auto n = IncludedFile(_files, s.text); n && *n != k)
+                    {
+                        _includes[k][l.sourceLine] = *n;
+                        included[*n] = true;
+                    }
+                }
+                if (blocks <= 0)
+                    _safe[k].insert(l.sourceLine);
+                blocks = std::max(0, blocks);
+            }
+        }
+        _written.resize(_files.size());
+        _labels.resize(_files.size());
+        for (size_t main = 0; main < _files.size(); ++main)
+            if (!included[main])
+                Program(main);
+        // files only a cycle of INCLUDEs reaches: each as a main of its own
+        for (size_t k = 0; k < _files.size(); ++k)
+            if (!_written[k])
+                Program(k);
+        for (size_t k = 0; k < _files.size(); ++k)
+        {
+            _result.files.push_back({_files[k].name, std::move(*_written[k])});
+            _result.labels.push_back(std::move(_labels[k]));
+        }
+        for (Copy& c : _copies)
+        {
+            _result.files.push_back({c.name, std::move(c.document)});
+            _result.labels.push_back(std::move(c.labels));
+        }
+        _result.ok = !HasErrors(_result.diagnostics);
+        return std::move(_result);
+    }
+
+private:
+    struct Region
+    {
+        size_t file = 0;
+        uint32_t includeLine = 0;   // the joined text's line of the INCLUDE that brings it in (0: the main source)
+        std::string name;           // the name its INCLUDE is written with (a copy: name~2)
+        bool part = false;          // a part a long file was cut into (BackendOptions::splitLines)
+    };
+    struct Copy
+    {
+        size_t file = 0;
+        std::string name;
+        SourceDocument document;
+        std::vector<LabelName> labels;
+    };
+
+    void Join(size_t k, std::vector<size_t>& stack)
+    {
+        const SourceDocument& d = _files[k].document;
+        size_t since = 0;                // lines since the file's last cut
+        std::optional<size_t> part;      // the part being written (a region of the file's own)
+        for (size_t i = 0; i < d.lines.size(); ++i)
+        {
+            _joined.lines.push_back(d.lines[i]);
+            _origin.push_back({k, static_cast<uint32_t>(i + 1)});
+            ++since;
+            const auto found = _includes[k].find(static_cast<uint32_t>(i + 1));
+            if (found != _includes[k].end() && std::find(stack.begin(), stack.end(), found->second) == stack.end())
+            {
+                const size_t id = _regions.size();
+                _regions.push_back({found->second, static_cast<uint32_t>(_joined.lines.size()), _files[found->second].name});
+                Mark(std::string(kFileMark) + std::to_string(id), found->second);
+                stack.push_back(found->second);
+                Join(found->second, stack);
+                stack.pop_back();
+                Mark(std::string(kEndMark) + std::to_string(id), k);
+            }
+            // a long file cut at a line outside any block: the rest goes on in a part INCLUDEd from the file
+            if (_writing && _writing->splitLines > 0 && since >= _writing->splitLines && i + 1 < d.lines.size() && _safe[k].count(static_cast<uint32_t>(i + 1)))
+            {
+                if (part)
+                    Mark(std::string(kEndMark) + std::to_string(*part), k);
+                const std::string name = CopyName(k, *_writing);
+                SourceLine include;
+                include.text = "\tINCLUDE \"" + name + "\"";
+                _joined.lines.push_back(include);
+                _origin.push_back({k, static_cast<uint32_t>(i + 1)});
+                part = _regions.size();
+                _regions.push_back({k, static_cast<uint32_t>(_joined.lines.size()), name, true});
+                Mark(std::string(kFileMark) + std::to_string(*part), k);
+                since = 0;
+            }
+        }
+        if (part)
+            Mark(std::string(kEndMark) + std::to_string(*part), k);
+    }
+
+    /// The INCLUDE that brings a region in names it as the region is named
+    static void Rename(ir::Program& program, const Region& region)
+    {
+        for (ir::Line& l : program.lines)
+            if (l.sourceLine == region.includeLine)
+                for (ir::Statement& s : l.statements)
+                    if (s.kind == ir::Statement::Kind::Directive && s.directive == ir::DirectiveKind::Include)
+                        s.text = region.name;
+    }
+
+    void Mark(const std::string& text, size_t file)
+    {
+        SourceLine line;
+        line.text = ";" + text;
+        _joined.lines.push_back(line);
+        _origin.push_back({file, 0});
+    }
+
+    /// The region a mark line opens or closes (-1: none)
+    static int MarkOf(const std::string& text, std::string_view mark)
+    {
+        const size_t at = text.find(mark);
+        if (at == std::string::npos)
+            return -1;
+        size_t end = at + mark.size();
+        int id = 0;
+        bool digits = false;
+        while (end < text.size() && std::isdigit(static_cast<unsigned char>(text[end])))
+        {
+            id = id * 10 + (text[end++] - '0');
+            digits = true;
+        }
+        return digits ? id : -1;
+    }
+
+    void Program(size_t main)
+    {
+        _joined = SourceDocument();
+        _joined.name = _files[main].name;
+        _joined.dialect = "sjasmplus";
+        _joined.z80n = _files[main].document.z80n;
+        _origin.clear();
+        _regions = {{main, 0, _files[main].name}};
+        BackendOptions options = _options;
+        options.fileName.clear();
+        _writing = &options;   // the parts' names go into its fileNames
+        std::vector<size_t> stack = {main};
+        Join(main, stack);
+        for (const auto& f : _files)
+            _joined.z80n = _joined.z80n || f.document.z80n;
+
+        const IFrontend* frontend = DialectRegistry::Builtin().Frontend("sjasmplus");
+        FrontendResult parsed = frontend->ParseWithData(_joined, {}, _options.dataFiles);
+        // each INCLUDE joined names its file as the project does (fileNames knows it so)
+        for (size_t r = 1; r < _regions.size(); ++r)
+            Rename(parsed.program, _regions[r]);
+        if (_backend.WantsLabelValues() && options.labelValues.empty())
+        {
+            // laid out as one source (the INCLUDE lines left out: their text follows them)
+            SourceDocument laid = _joined;
+            for (size_t r = 1; r < _regions.size(); ++r)
+                laid.lines[_regions[r].includeLine - 1].text = ";" + laid.lines[_regions[r].includeLine - 1].text;
+            options.labelValues = LabelValues({{_joined.name, laid}}, 0, options);
+        }
+        BackendResult written = _backend.Write(parsed.program, options);
+        std::vector<std::vector<SourceLine>> texts;
+        std::vector<std::vector<LabelName>> labels;
+        Cut(written, texts, labels);
+        // a file brought in twice and written otherwise the second time (another module): a copy of its own, its
+        // INCLUDE naming the copy
+        bool renamed = false;
+        for (size_t r = 1; r < _regions.size(); ++r)
+        {
+            if (_regions[r].part)
+                continue;
+            const size_t file = _regions[r].file;
+            std::vector<std::pair<std::string, const std::vector<SourceLine>*>> versions;   // the names it has, their texts
+            if (_written[file])
+                versions.push_back({_files[file].name, &_written[file]->lines});
+            for (const Copy& c : _copies)
+                if (c.file == file)
+                    versions.push_back({c.name, &c.document.lines});
+            for (size_t e = 1; e < r; ++e)
+                if (_regions[e].file == file && !_regions[e].part)
+                    versions.push_back({_regions[e].name, &texts[e]});
+            if (versions.empty())
+                continue;
+            const auto same = std::find_if(versions.begin(), versions.end(), [&](const auto& v) { return SameLines(*v.second, texts[r]); });
+            if (same != versions.end())
+                _regions[r].name = same->first;
+            else
+                _regions[r].name = CopyName(file, options);
+            if (_regions[r].name == _files[file].name)
+                continue;
+            Rename(parsed.program, _regions[r]);
+            renamed = true;
+        }
+        if (renamed)
+        {
+            written = _backend.Write(parsed.program, options);
+            texts.clear();
+            labels.clear();
+            Cut(written, texts, labels);
+        }
+        for (const Diagnostic& d : parsed.diagnostics)
+            Note(d);
+        for (const Diagnostic& d : written.diagnostics)
+            Note(d);
+        for (size_t r = 0; r < _regions.size(); ++r)
+        {
+            const size_t file = _regions[r].file;
+            SourceDocument document;
+            document.name = _regions[r].name;
+            document.dialect = written.document.dialect;
+            document.format = written.document.format;
+            document.subversion = written.document.subversion;
+            document.codePage = written.document.codePage;
+            document.lineEnd = written.document.lineEnd;
+            document.attrs = written.document.attrs;
+            document.lines = std::move(texts[r]);
+            if (_regions[r].name != _files[file].name)
+            {
+                if (std::none_of(_copies.begin(), _copies.end(), [&](const Copy& c) { return c.name == _regions[r].name; }))
+                    _copies.push_back({file, _regions[r].name, std::move(document), std::move(labels[r])});
+            }
+            else if (!_written[file])
+            {
+                _written[file] = std::move(document);
+                _labels[file] = std::move(labels[r]);
+            }
+        }
+    }
+
+    /// A new name for another text of a file: NAME~2, NAME~3 ... (NAME2, NAME3 on the disk, when the project's files are
+    /// renamed for one: the copy's name is its disk name)
+    std::string CopyName(size_t file, BackendOptions& options) const
+    {
+        const auto disk = options.fileNames.find(_files[file].name);
+        const std::string base = disk != options.fileNames.end() ? disk->second : _files[file].name;
+        std::set<std::string> taken;
+        for (const auto& [from, to] : options.fileNames)
+            taken.insert(LowerText(to));
+        for (const ProjectFile& f : _files)
+            taken.insert(LowerText(f.name));
+        for (const Copy& c : _copies)
+            taken.insert(LowerText(c.name));
+        for (const Region& r : _regions)
+            taken.insert(LowerText(r.name));
+        std::string name;
+        for (int n = 2; name.empty() || taken.count(LowerText(name)); ++n)
+            name = disk != options.fileNames.end() ? base.substr(0, 8 - std::to_string(n).size()) + std::to_string(n)
+                                                   : base + "~" + std::to_string(n);
+        if (disk != options.fileNames.end())
+            options.fileNames[name] = name;
+        return name;
+    }
+
+    static bool SameLines(const std::vector<SourceLine>& a, const std::vector<SourceLine>& b)
+    {
+        return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](const SourceLine& x, const SourceLine& y) { return x.text == y.text; });
+    }
+
+    /// The written text cut at the marks into the regions' texts, each line's origin a line of its own file
+    void Cut(const BackendResult& written, std::vector<std::vector<SourceLine>>& texts, std::vector<std::vector<LabelName>>& labels) const
+    {
+        texts.assign(_regions.size(), {});
+        labels.assign(_regions.size(), {});
+        std::vector<size_t> open = {0};
+        for (const SourceLine& line : written.document.lines)
+        {
+            if (const int id = MarkOf(line.text, kFileMark); id >= 0 && static_cast<size_t>(id) < _regions.size())
+            {
+                open.push_back(static_cast<size_t>(id));
+                continue;
+            }
+            if (const int id = MarkOf(line.text, kEndMark); id >= 0 && open.size() > 1)
+            {
+                open.pop_back();
+                continue;
+            }
+            SourceLine kept = line;
+            kept.origin = line.origin > 0 && line.origin <= _origin.size() ? _origin[line.origin - 1].second : 0;
+            texts[open.back()].push_back(std::move(kept));
+        }
+        for (LabelName l : written.labels)
+        {
+            if (l.line == 0 || l.line > _origin.size())
+                continue;
+            const auto [file, line] = _origin[l.line - 1];
+            l.line = line;
+            for (size_t r = 0; r < _regions.size(); ++r)
+                if (_regions[r].file == file)
+                {
+                    labels[r].push_back(l);
+                    break;
+                }
+        }
+    }
+
+    /// A diagnostic of the joined text, told by its file and line
+    void Note(Diagnostic d)
+    {
+        size_t file = _regions[0].file;
+        if (d.line > 0 && d.line <= _origin.size())
+        {
+            file = _origin[d.line - 1].first;
+            d.line = _origin[d.line - 1].second;
+        }
+        d.message = _files[file].name + ": " + d.message;
+        if (std::none_of(_result.diagnostics.begin(), _result.diagnostics.end(),
+                         [&](const Diagnostic& e) { return e.line == d.line && e.message == d.message; }))
+            _result.diagnostics.push_back(std::move(d));
+    }
+
+    const std::vector<ProjectFile>& _files;
+    const IBackend& _backend;
+    const BackendOptions& _options;
+    std::vector<std::map<uint32_t, size_t>> _includes;   // per file: the line of an INCLUDE -> the file it brings in
+    std::vector<std::set<uint32_t>> _safe;               // per file: the lines after which no block is open (a cut may go there)
+    BackendOptions* _writing = nullptr;                  // the options of the program being written
+    SourceDocument _joined;
+    std::vector<std::pair<size_t, uint32_t>> _origin;    // per joined line: its file and line (0: a mark)
+    std::vector<Region> _regions;
+    std::vector<std::optional<SourceDocument>> _written;
+    std::vector<std::vector<LabelName>> _labels;
+    std::vector<Copy> _copies;
+    ProjectResult _result;
+};
+}  // namespace
+
 ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_view targetDialect, const BackendOptions& options)
 {
+    if (const IBackend* backend = DialectRegistry::Builtin().Backend(targetDialect); backend && backend->JoinsSjasmplusProject() && !files.empty() &&
+        std::all_of(files.begin(), files.end(), [](const ProjectFile& f) { return f.document.dialect == "sjasmplus"; }))
+        return ProjectJoiner(files, *backend, options).Run();
     ProjectResult result;
     const DialectRegistry& registry = DialectRegistry::Builtin();
     const IBackend* backend = registry.Backend(targetDialect);
@@ -488,7 +882,8 @@ std::vector<ProjectFile> ImageProject(const std::vector<containers::TrdosFile>& 
     return project;
 }
 
-std::vector<ProjectFile> HostProject(const SourceDocument& main, const DataFileReader& read, Diagnostics& diagnostics)
+std::vector<ProjectFile> HostProject(const SourceDocument& main, const DataFileReader& read, Diagnostics& diagnostics,
+                                     std::vector<std::string>* foldersOut)
 {
     std::vector<ProjectFile> project = {{main.name, main}};
     std::vector<std::string> folders = {""};   // each file's folder, relative to main's
@@ -497,6 +892,8 @@ std::vector<ProjectFile> HostProject(const SourceDocument& main, const DataFileR
     if (!codec || codec->Info().family != CodecFamily::Text)
         codec = registry.Find("text");
     const IFrontend* frontend = DialectRegistry::Builtin().Frontend(main.dialect);
+    if (foldersOut)
+        *foldersOut = folders;
     if (!frontend || !codec)
         return project;
     for (size_t k = 0; k < project.size(); ++k)
@@ -527,6 +924,8 @@ std::vector<ProjectFile> HostProject(const SourceDocument& main, const DataFileR
                 project.push_back({s.text, std::move(decoded.document)});
             }
     }
+    if (foldersOut)
+        *foldersOut = folders;
     return project;
 }
 
@@ -555,6 +954,35 @@ std::vector<std::string> ProjectTextNames(const std::vector<ProjectFile>& files,
             name = base.substr(0, 7 - std::to_string(n).size()) + "~" + std::to_string(n);
         names.push_back(name);
     }
+    return names;
+}
+
+std::map<std::string, std::string> ProjectDiskNames(const std::vector<ProjectFile>& files, const std::vector<std::string>& dataFiles)
+{
+    std::map<std::string, std::string> names;
+    std::set<std::string> taken;   // in lower case: TR-DOS tells the case, a host's file system may not
+    const auto give = [&](const std::string& name) {
+        if (names.count(name))
+            return;
+        const size_t slash = name.find_last_of("/\\");
+        std::string base = name.substr(slash == std::string::npos ? 0 : slash + 1);
+        base = base.substr(0, base.find('.'));
+        std::string clean;
+        for (const char c : base)
+            if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-')
+                clean.push_back(c);
+        clean = clean.empty() ? std::string("FILE") : clean.substr(0, 8);
+        // made unique with a number (letters and digits only: some targets' fonts lack ~)
+        std::string chosen = clean;
+        for (int n = 2; taken.count(LowerText(chosen)); ++n)
+            chosen = clean.substr(0, 8 - std::to_string(n).size()) + std::to_string(n);
+        taken.insert(LowerText(chosen));
+        names[name] = chosen;
+    };
+    for (const ProjectFile& f : files)
+        give(f.name);
+    for (const std::string& d : dataFiles)
+        give(d);
     return names;
 }
 
