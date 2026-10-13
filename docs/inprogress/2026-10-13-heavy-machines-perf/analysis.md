@@ -272,6 +272,24 @@ which layers are on. Proposals, in order of size:
 3. Do not fill the arrays of layers that are off (`DrawLayers`), and compose at 320 grid pixels when no layer on
    the line is hi-res (each pixel twice), which halves the loop for most screens.
 
+**Done 2026-10-13, steps 1 and 2** (`ComposeOrder<kRecord, kOrder>`: one instance per layer order with the order
+folded in; a table for the 9-bit colour to RGBA; the layer functions report whether they may have painted, and a
+line with nothing above the ULA takes `ComposeUlaOnly`). Exactness: `NextVideoRenderer_Test.
+RandomStatesDigestIsUnchanged`, a digest of 864 random lines (every order, blend, stencil, with and without the
+layer capture) recorded on the old compositor. Measured (interleaved A B B A x 2, minimum µs per frame):
+
+| Row | before | after | x |
+|:--|--:|--:|--:|
+| Next_ShipNormal (128 menu) | 2,192 | 1,414 | 0.65 |
+| Next_ShipTurbo | 538 | 505 | 0.94 |
+| Next_Spectron_ShipNormal | 5,121 | 4,493 | 0.88 |
+| Next_Copper_ShipNormal | 7,538 | 6,853 | 0.91 |
+| Next_Show512_ShipNormal | 6,138 | 5,690 | 0.93 |
+| Next_Tilemap_ShipNormal | 6,913 | 6,473 | 0.94 |
+| Next_Scroll_ShipNormal | 8,147 | 7,449 | 0.91 |
+
+Step 3 (compose at 320 grid pixels, skip filling rows of layers that are off) is not done.
+
 - Gain: `ComposeLine` is 39 % of a 1x frame on the 128 menu and 12-18 % with demos; a 3-5x faster compositor takes
   most of that. The layer capture (`ComposeLine<true>`, on by default) must keep its ids and info for each pixel:
   the fast paths fill them too (or the record keeps the general loop).
