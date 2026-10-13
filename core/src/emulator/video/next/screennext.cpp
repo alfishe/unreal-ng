@@ -197,7 +197,7 @@ ScreenNext::PictureLatency ScreenNext::PictureLatencyOf(uint8_t reg, uint8_t pre
         case 0x68:
         {
             PictureLatency l = kNone;
-            if (changed & 0xE1)  // bit 7 the ULA enable (measured); bits 6:5 blend, bit 0 stencil travel the same registers
+            if (changed & 0xE9)  // bit 7 the ULA enable (measured); bits 6:5 blend, bit 3 ULA+ (ulap_en_0), bit 0 stencil travel the same registers
                 l = kChain;
             if (changed & 0x04)  // the fine scroll
                 l = earliest(l, kUlaFine);

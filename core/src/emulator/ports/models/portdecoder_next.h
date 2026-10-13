@@ -201,6 +201,21 @@ private:
     bool PortEnabled(unsigned bit) const;
     /// A read of a port whose enable bit is off: nothing on the board answers, the bus is idle
     uint8_t IdleRead(uint16_t port, uint16_t pc);
+    uint8_t ReadMouse(uint8_t reg);
+    /// #FADF / #FBDF / #FFDF: A7-A0 = #DF and A11-A8 = A / B / F (zxnext.vhd), the register 0 buttons, 1 X, 2 Y
+    static bool MouseRegisterOf(uint16_t port, uint8_t& reg)
+    {
+        if ((port & 0xFF) != 0xDF)
+            return false;
+        switch ((port >> 8) & 0x0F)
+        {
+            case 0x0A: reg = 0; return true;
+            case 0x0B: reg = 1; return true;
+            case 0x0F: reg = 2; return true;
+            default: return false;
+        }
+    }
+    bool IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const override;
     /// NR #83 bit 3: ports #E7 / #EB are decoded (port_spi_io_en)
     bool SpiPortEnabled() const { return (_board->Stored(0x83) & 0x08) != 0; }
     double SpeedRatio() const { return _state->hw_turbo_ratio_applied ? _state->hw_turbo_ratio_applied : 1.0; }

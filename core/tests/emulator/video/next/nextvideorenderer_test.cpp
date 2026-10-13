@@ -150,6 +150,64 @@ TEST_F(NextVideoRenderer_Test, LoResIsTwoByTwoUlaPixelsInTwoHalves)
     EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Pal(0, 0x44 + 0x20));
 }
 
+// Radastan (NR #6A bit 5, lores.vhd mode 1): 128 x 96 at 4 bits, a 64-byte row, the high nibble first, two pixels a nibble
+TEST_F(NextVideoRenderer_Test, RadastanIsFourBitPixelsInA64ByteRow)
+{
+    _in.nr[0x15] = 0x80;
+    _in.nr[0x6A] = 0x20;
+    Page(5)[2] = 0x5A;                 // row 0, bytes of four pixels: x 8-9 the high nibble, 10-11 the low one
+    Page(5)[0x2000 + 50 * 64] = 0x3C;  // the second display file: row 50
+    Render(NextVideoRenderer::kPaperTop);
+    const unsigned left = NextVideoRenderer::kPaperLeft;
+    EXPECT_EQ(Px(left + 8 * 2), Pal(0, 0x5)) << "the high nibble";
+    EXPECT_EQ(Px(left + 9 * 2 + 1), Pal(0, 0x5)) << "two pixels wide";
+    EXPECT_EQ(Px(left + 10 * 2), Pal(0, 0xA)) << "the low nibble";
+    _in.nr[0x6A] = 0x23;               // palette offset 3: the index's high nibble
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(left + 8 * 2), Pal(0, 0x35));
+    _in.nr[0x6A] = 0x30;               // the XOR bit: the second display file
+    Render(NextVideoRenderer::kPaperTop + 100);
+    EXPECT_EQ(Px(left), Pal(0, 0x3)) << "port #FF bit 0 xor NR #6A bit 4 picks the file";
+    _in.nr[0x6A] = 0x20;
+    _in.portFf = 1;
+    Render(NextVideoRenderer::kPaperTop + 100);
+    EXPECT_EQ(Px(left), Pal(0, 0x3));
+    _in.portFf = 0;
+    _in.nr[0x6A] = 0x20;
+    Render(NextVideoRenderer::kPaperTop + 100);
+    EXPECT_NE(Px(left), Pal(0, 0x3)) << "file 0 has nothing at that address";
+}
+
+// ULA+ (NR #68 bit 3): the CLUT is entries 192-255 of the ULA palette: "11" flash bright half colour, flashing off
+TEST_F(NextVideoRenderer_Test, UlaPlusIndexesTheClutWithFlashBrightAndTheHalf)
+{
+    _in.nr[0x68] = 0x08;
+    _in.border = 3;
+    Page(5)[0] = 0x80;
+    Page(5)[0x1800] = 0xC2;            // flash, bright, paper 0, ink 2
+    _in.flash = true;                  // would swap ink and paper on the standard ULA
+    Render(NextVideoRenderer::kPaperTop);
+    const unsigned left = NextVideoRenderer::kPaperLeft;
+    EXPECT_EQ(Px(left), Pal(0, 0xC0 | 0x30 | 2)) << "ink: 11 1 1 0 010";
+    EXPECT_EQ(Px(left + 2), Pal(0, 0xC0 | 0x30 | 8 | 0)) << "paper: the half bit set";
+    Render(0);
+    EXPECT_EQ(Px(0), Pal(0, 0xC8 + 3)) << "the border is the paper half of the first row";
+    _in.nr[0x68] = 0x00;
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(left), Pal(0, 16 + 0 + 8)) << "off: the standard ULA (flash swapped, bright paper)";
+}
+
+TEST_F(NextVideoRenderer_Test, UlaPlusGivesWayToUlaNext)
+{
+    _in.nr[0x68] = 0x08;
+    _regs.WritePaletteControl(0x01);   // ULANext on
+    _regs.WriteUlaNextFormat(0xFF);
+    Page(5)[0] = 0x80;
+    Page(5)[0x1800] = 0x42;
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Pal(0, 0x42)) << "ULANext's attribute is the index: not the CLUT";
+}
+
 TEST_F(NextVideoRenderer_Test, Layer2In256x192WithScrollClipAndPaletteOffset)
 {
     _in.layer2Enable = true;

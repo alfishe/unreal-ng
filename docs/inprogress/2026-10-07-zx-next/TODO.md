@@ -55,7 +55,7 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
 
 ## N6a (2026-10-09): the Next picture
 - [x] `NextVideoRenderer` (ULA standard / Timex hi-colour / hi-res / ULANext, LoRes, Layer 2 at 256x192 / 320x256 / 640x256 with scroll, clip and palette offset, 9-bit palettes, global transparency, layer order SLU...ULS, Layer 2 priority colours, fallback colour) and `ScreenNext` (mode `M_NEXT`, a 640x512 frame = the 320x256 grid at two sub-pixels with every line twice, drawn line by line; the beam is the ZX family of NR #03); `[NEXT] SdCard` (folder or image) and `[ROM] NEXTBOOT` make the machine boot the real chain in the app; Qt machine menu entry
-- [ ] N6b: sprites, tilemap, copper, blend modes (N7); border stripes inside a line; ULA+; Radastan; the Layer 2 CPU mapping of port #123B (read / write windows, shadow bank); ULA half-pixel scroll
+- [ ] N6b: sprites, tilemap, copper, blend modes (N7); border stripes inside a line; ULA+ and Radastan (done, D2); the Layer 2 CPU mapping of port #123B (read / write windows, shadow bank); ULA half-pixel scroll
 - [ ] The Next border colour of the welcome screen (grey = the palette's paper entry of the border) is drawn; the bright-border and flash details are not compared with a reference yet
 
 ## NEX loader (2026-10-09)
@@ -255,7 +255,7 @@ NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.
 - [x] D1 UARTs: `NextUart` (uart.vhd: FIFOs 64 / 512, prescaler, frame, hardware flow, status, interrupts as rising edges of the im2_int_req levels), peers by `[NETWORK] ComPort=` (ESP, UART 0) and `ComPort2=` (Pi, UART 1), `state/next/uart` on every plane, the UART state in the TTD NextState image (version 6; the peers' own state is the machine serial peer's blob, UART 1's peer is not saved). NR #C6 / #CA had UART 0 Tx / UART 1 Rx bits in the wrong places (fixed)
 - [x] D1 ESP: the ESP-12 on UART 0 is fitted by default (ComPort AT, ESP8266 NonOS AT 1.7.4), the line told the nearest standard baud, NR #A8 / #A9 drive its GPIO0 (low at a boot = download mode), NR #A0 / #A2 / #A8 / #A9 read back as the VHDL has them
 - [ ] D1 left: the joystick-port UART (NR #0B bits), the Pi's GPIO routing (NR #A0 / #9x), the ESP flasher's protocol (the ROM's SLIP), a UART break received from a peer
-- [ ] D2 (Kempston mouse, ULA+, Radastan): the reports follow the devices
+- [x] D2 (2026-10-12): the Kempston mouse on `#FADF` / `#FBDF` / `#FFDF` (buttons in the board's order, NR #0A bit 3 reverse, idle without a mouse, NR #83 bit 5 gate), ULA+ (`#BF3B` / `#FF3B`: the CLUT in ULA palette entries 192-255, enable = NR #68 bit 3, flash off, border = paper half, ULANext wins, NR #85 bit 0 gate; image version 7), Radastan (NR #6A bit 5: 4-bit pixels, display file of #FF bit 0 xor NR #6A bit 4, ULA+ index); the `ports` report enforces bits 12 / 13 / 24 and lists the UART, mouse and ULA+ rules; tests `NextMouseUlaPlus_Test`, `NextVideoRenderer_Test` (Radastan, ULA+). Open: the mouse DPI scaling (NR #0A bits 1:0, a host-side module), ULA+ read wait states, Radastan scroll Y wrap against hardware
 
 ## Automation coverage - what is left (2026-10-10)
 

@@ -70,6 +70,20 @@ public:
     uint8_t ReadPaletteValue9() const;  ///< the second byte only
     uint8_t PaletteControl() const { return _control; }
     uint8_t UlaNextFormat() const { return _ulaNext; }
+    /// region <ULA+> ports #BF3B (select) / #FF3B (data): mode 0 = a CLUT entry (entries 192-255 of the ULA palette the NR #43 write select
+    /// names: bit 6 the second one), mode 1 = the enable bit (shared with NR #68 bit 3, kept by the board). The byte is GGGRRRBB
+    void WriteUlaPlusSelect(uint8_t value)
+    {
+        _ulapMode = static_cast<uint8_t>(value >> 6);
+        if (_ulapMode == 0)
+            _ulapIndex = value & 0x3F;
+    }
+    uint8_t UlaPlusMode() const { return _ulapMode; }
+    uint8_t UlaPlusIndex() const { return _ulapIndex; }
+    void WriteUlaPlusPalette(uint8_t value);
+    uint8_t ReadUlaPlusPalette() const;
+    /// endregion
+
     /// The 9-bit colour (bit 8 = Layer 2 priority is kept in bit 9)
     uint16_t PaletteEntry(unsigned palette, unsigned index) const { return _palette[palette & 7][index & 255]; }
     /// endregion
@@ -84,6 +98,8 @@ private:
     uint16_t _palette[kPalettes][256] = {};
     uint8_t _index = 0;
     uint8_t _control = 0;
+    uint8_t _ulapMode = 0;
+    uint8_t _ulapIndex = 0;
     uint8_t _ulaNext = 0x07;
     uint8_t _portFf = 0;
     uint8_t _port123b = 0;

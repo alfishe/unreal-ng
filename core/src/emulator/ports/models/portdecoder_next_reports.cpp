@@ -398,8 +398,8 @@ const EnableBit kEnableBits[] = {
     {9, "Multiface (two variable ports)", true},
     {10, "#103B, #113B I2C", true},
     {11, "#E7, #EB SPI", true},
-    {12, "#133B, #143B, #153B, #163B UART", false},
-    {13, "#FADF, #FBDF, #FFDF mouse", false},
+    {12, "#133B, #143B, #153B, #163B UART", true},
+    {13, "#FADF, #FBDF, #FFDF mouse", true},
     {14, "#57, #5B, #303B sprites", true},
     {15, "#123B Layer 2", true},
     {16, "#FFFD, #BFFD AY", true},
@@ -410,7 +410,7 @@ const EnableBit kEnableBits[] = {
     {21, "#FB DAC mono (Pentagon / ATM)", true},
     {22, "#B3 DAC mono (GS Covox)", true},
     {23, "#DF DAC mono (SpecDrum), Kempston alias", true},
-    {24, "#BF3B, #FF3B ULA+", false},
+    {24, "#BF3B, #FF3B ULA+", true},
     {25, "#0B Z80 DMA", true},
     {26, "#EFF7 Pentagon 1024 memory", false},
     {27, "#183B-#1F3B Z80 CTC", true},
@@ -468,6 +468,20 @@ const PortRule kRules[] = {
      "the control register", "CONMEM, MAPRAM, bank", nullptr},
     {"I2C", [](uint16_t p, const PortDecoder_Next&, const NextBoard&) { return p == 0x103B || p == 0x113B; }, true, true, "#103B SCL, #113B SDA", 10, -1,
      "the line state", "drives the line", nullptr},
+    {"UART", [](uint16_t p, const PortDecoder_Next&, const NextBoard&) { return NextUart::Decodes(p); }, true, true,
+     "A15:A11 = 00010, A10 xor (A9 and A8) = 1, A7:A0 = #3B", 12, -1, "#133B status, #143B the received byte, #153B / #163B the select and frame",
+     "#133B the byte to send, #143B the prescaler low, #153B the select and prescaler high, #163B the frame", nullptr},
+    {"Kempston mouse",
+     [](uint16_t p, const PortDecoder_Next&, const NextBoard&) {
+         const unsigned high = (p >> 8) & 0x0F;
+         return Low(p) == 0xDF && (high == 0x0A || high == 0x0B || high == 0x0F);
+     },
+     true, false, "A7:A0 = #DF, A11:A8 = A / B / F", 13, -1, "#FADF buttons and wheel, #FBDF X, #FFDF Y (no mouse: zero counts, buttons released)", "", nullptr},
+    {"ULA+ select", [](uint16_t p, const PortDecoder_Next&, const NextBoard&) { return p == 0xBF3B; }, false, true, "A15:A0 = #BF3B", 24, -1, "",
+     "bits 7:6 the mode (0 CLUT entry, 1 enable), bits 5:0 the entry index in mode 0", nullptr},
+    {"ULA+ data", [](uint16_t p, const PortDecoder_Next&, const NextBoard&) { return p == 0xFF3B; }, true, true, "A15:A0 = #FF3B", 24, -1,
+     "the CLUT entry (GGGRRRBB) in mode 0, the enable bit in mode 1", "the CLUT entry into ULA palette 192 + index; in mode 1 bit 0 is the enable (NR #68 bit 3)",
+     nullptr},
     {"NextREG select", [](uint16_t p, const PortDecoder_Next&, const NextBoard&) { return p == 0x243B; }, true, true, "A15:A0 = #243B", -1, -1,
      "the selected register number", "selects the register #253B reads and writes", nullptr},
     {"NextREG data", [](uint16_t p, const PortDecoder_Next&, const NextBoard&) { return p == 0x253B; }, true, true, "A15:A0 = #253B", -1, -1,
@@ -598,7 +612,7 @@ StateNode NextPorts(EmulatorContext* context, const NextPortsQuery& query)
     ew["bits"] = std::move(bits);
     n["enable_word"] = std::move(ew);
     n["note"] = "enforced = the emulator gates the ports by that bit (a write is ignored, a read is the idle bus #FF; with the expansion bus on, NR #86-#89 are "
-    "ANDed in). Not enforced: the +3 floating bus (bit 4), the UART (12), the Kempston mouse (13), ULA+ (24) and #EFF7 (26) - the Next does not "
+    "ANDed in). Not enforced: the +3 floating bus (bit 4) and #EFF7 (26) - the Next does not "
     "decode those ports at all yet, so there is nothing to gate";
     return n;
 }

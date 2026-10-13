@@ -149,6 +149,8 @@ public:
     void SetJournalClock(std::function<void(uint32_t& frame, uint32_t& t, uint16_t& pc)> clock) { _journalClock = std::move(clock); }
     /// The raw stored byte of a register (reports, tests)
     uint8_t Stored(uint8_t reg) const { return _regs[reg]; }
+    /// Change bits of a stored register without the write's side effects: the one flop two paths drive (ULA+ enable: NR #68 bit 3 and #FF3B)
+    void SetStoredBits(uint8_t reg, uint8_t mask, uint8_t value) { _regs[reg] = static_cast<uint8_t>((_regs[reg] & ~mask) | (value & mask)); }
     /// NR #02 bits 1:0 as a read returns them: how the last reset happened (the VHDL's nr_02_reset_type: 0 power on, then 2, then 1)
     uint8_t ResetBits() const { return static_cast<uint8_t>(_resetType & 3); }
 
