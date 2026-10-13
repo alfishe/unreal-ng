@@ -141,6 +141,9 @@ struct Line
     std::string comment;           ///< without the comment character
     bool hasComment = false;
     uint32_t sourceLine = 0;       ///< 1-based line of the source document
+    /// A line the frontend made from a part of its source line (a macro on one line, sjasmplus' label+N): the part's
+    /// text as a line of its own ("" = the source line is the line's text)
+    std::string ownText;
 };
 
 struct Program

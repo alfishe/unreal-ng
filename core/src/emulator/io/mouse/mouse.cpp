@@ -124,6 +124,16 @@ uint8_t Mouse::PeekRegister(uint8_t selectRegister) const
 
 void Mouse::Move(int dx, int dy)
 {
+    if (const int shift = _deltaShift.load(std::memory_order_relaxed); shift > 0)
+    {
+        dx *= 1 << shift;
+        dy *= 1 << shift;
+    }
+    else if (shift < 0)
+    {
+        dx >>= -shift;  // arithmetic: ps2_mouse.v xydelta keeps the sign
+        dy >>= -shift;
+    }
     // Compare-and-swap: concurrent host and automation moves must both land
     uint8_t old = _x.load(std::memory_order_relaxed);
     while (!_x.compare_exchange_weak(old, static_cast<uint8_t>(old + dx), std::memory_order_relaxed))

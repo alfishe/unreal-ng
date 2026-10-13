@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <tuple>
 
 #include "dialects/common/z80.h"
 #include "dialects/sjasmplus/sjasmplusfrontend.h"
@@ -158,8 +159,11 @@ public:
             chunk.lines = std::move(parsed.program.lines);
             for (size_t k = 0; k < chunk.lines.size(); ++k)
             {
-                chunk.raw.push_back(k < f.document.lines.size() ? f.document.lines[k].text : std::string());
-                chunk.fileLines.push_back(chunk.lines[k].sourceLine);
+                const ir::Line& l = chunk.lines[k];
+                chunk.raw.push_back(!l.ownText.empty() ? l.ownText
+                                    : l.sourceLine >= 1 && l.sourceLine <= f.document.lines.size() ? f.document.lines[l.sourceLine - 1].text
+                                                                                                   : std::string());
+                chunk.fileLines.push_back(l.sourceLine);
             }
             _byName[BaseName(f.name)] = _files.size();
             _files.push_back(std::move(chunk));
@@ -200,6 +204,9 @@ public:
         RunChunk(_files[main], 0);
         stable = stable && _symbols == last;
         result.labels = std::move(_labels);
+        for (const auto& [key, address] : _lineAddresses)
+            if (!_lineAmbiguous.count(key))
+                result.lines.push_back({std::get<0>(key), std::get<1>(key), std::get<2>(key), address});
         result.diagnostics = std::move(_diagnostics);
         result.wideBytes = std::move(_wideBytes);
         if (!stable)
@@ -211,6 +218,15 @@ public:
 private:
     const LayoutOptions& _options;
     std::vector<Chunk> _files;
+    std::map<std::tuple<std::string, uint32_t, uint32_t>, int64_t> _lineAddresses;   // the last pass: each line's $ (LineAddress)
+    std::set<std::tuple<std::string, uint32_t, uint32_t>> _lineAmbiguous;            // ... met at two addresses
+    const Chunk* _expansionChunk = nullptr;                                          // the macro expanded on a file's line
+    std::optional<std::pair<std::string, uint32_t>> _expansionCall;                  // ... that line
+
+    bool IsFile(const Chunk& chunk) const
+    {
+        return std::any_of(_files.begin(), _files.end(), [&](const Chunk& f) { return &f == &chunk; });
+    }
     std::map<std::string, size_t> _byName;
 
     int _pass = 0;
@@ -536,6 +552,12 @@ private:
         std::string name = written;
         std::string parent;
         bool global = false;
+        bool keepsParent = false;   // !label: not the parent of the .labels after it
+        if (!name.empty() && name[0] == '!')
+        {
+            name.erase(0, 1);
+            keepsParent = true;
+        }
         if (!name.empty() && name[0] == '@')
         {
             name.erase(0, 1);
@@ -555,7 +577,8 @@ private:
         {
             if (!global)
                 name = ModulePrefix() + name;
-            _lastGlobal = name;
+            if (!keepsParent)
+                _lastGlobal = name;
         }
         const bool redefinable = use == LabelUse::Defl;
         const bool again = !_definedThisPass.insert(name).second;
@@ -697,6 +720,20 @@ private:
             }
             if (!active)
                 continue;
+            if (_final)
+            {
+                std::optional<std::tuple<std::string, uint32_t, uint32_t>> key;
+                if (k < chunk.fileLines.size() && IsFile(chunk))
+                    key = std::make_tuple(chunk.file, chunk.fileLines[k], 0u);
+                else if (&chunk == _expansionChunk && _expansionCall)
+                    key = std::make_tuple(_expansionCall->first, _expansionCall->second, static_cast<uint32_t>(k + 1));
+                if (key)
+                {
+                    const auto [at, added] = _lineAddresses.insert({*key, _pc});
+                    if (!added && at->second != _pc)
+                        _lineAmbiguous.insert(*key);
+                }
+            }
 
             // Blocks: MACRO, DUP, WHILE take the lines up to their end
             const Statement* block = nullptr;
@@ -875,11 +912,17 @@ private:
                     Expand(*call, depth);   // sjasmplus looks for a macro first (ALASM's "push" macros)
                     return;
                 }
-                std::string error;
-                const int size = InstructionSize(s, error);
-                if (size == 0)
-                    Report(Severity::Error, error);
-                Operands(s);
+                // sjasmplus repeats an instruction for its operands (PUSH AF,BC; LD A,1,B,2)
+                int size = 0;
+                for (const Statement& one : dialects::SjasmplusRepeated(s))
+                {
+                    std::string error;
+                    const int part = InstructionSize(one, error);
+                    if (part == 0)
+                        Report(Severity::Error, error);
+                    Operands(one);
+                    size += part;
+                }
                 Store(std::vector<int16_t>(static_cast<size_t>(size), -2));
                 Emit(size, LabelUse::Code);
                 return;
@@ -902,6 +945,19 @@ private:
                 return;
             case DirectiveKind::Equ:
             case DirectiveKind::Defl: return;   // with the label
+            case DirectiveKind::Db:
+            case DirectiveKind::Dw:
+                if (_struct && s.operands.empty())
+                {
+                    // a field BYTE / WORD without a value: one of them
+                    Emit(s.directive == DirectiveKind::Db ? 1 : 2, LabelUse::Data);
+                    return;
+                }
+                break;
+            default: break;
+        }
+        switch (s.directive)
+        {
             case DirectiveKind::Db:
             {
                 const std::vector<int16_t> bytes = DataBytes(s, true);
@@ -936,8 +992,9 @@ private:
             case DirectiveKind::Include: Include(s, depth); return;
             case DirectiveKind::Incbin: Emit(Incbin(s.text, s.args), LabelUse::Data); return;
             case DirectiveKind::Disp:
-                if (!_displaced)
-                    _physical = _pc;
+                if (_displaced)
+                    return;   // sjasmplus ignores a DISP inside a DISP block
+                _physical = _pc;
                 _displaced = true;
                 _pc = s.args.empty() ? _pc : Value(s.args[0]);
                 return;
@@ -1197,14 +1254,24 @@ private:
         expansion->lines = frontend.Parse(document).program.lines;
         for (size_t k = 0; k < expansion->lines.size(); ++k)
         {
-            expansion->raw.push_back(k < document.lines.size() ? document.lines[k].text : std::string());
-            expansion->fileLines.push_back(k < m.bodyLines.size() ? m.bodyLines[k] : 0);
+            const ir::Line& l = expansion->lines[k];
+            const size_t at = l.sourceLine >= 1 ? l.sourceLine - 1 : k;   // the body's line it was made from
+            expansion->raw.push_back(!l.ownText.empty() ? l.ownText : at < document.lines.size() ? document.lines[at].text : std::string());
+            expansion->fileLines.push_back(at < m.bodyLines.size() ? m.bodyLines[at] : 0);
         }
         const std::string scope = _macroScope;
         _macroScope = ">" + s.mnemonic + std::to_string(++_expansions);
         const Chunk* back = _chunk;
         const size_t backLine = _lineIndex;
+        const Chunk* backExpansion = _expansionChunk;
+        const auto backCall = _expansionCall;
+        _expansionChunk = expansion.get();
+        _expansionCall.reset();
+        if (_chunk && IsFile(*_chunk) && _lineIndex < _chunk->fileLines.size())
+            _expansionCall = std::make_pair(_chunk->file, _chunk->fileLines[_lineIndex]);
         RunChunk(*expansion, depth + 1);
+        _expansionChunk = backExpansion;
+        _expansionCall = backCall;
         _chunk = back;
         _lineIndex = backLine;
         _macroScope = scope;

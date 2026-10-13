@@ -15,4 +15,9 @@ public:
     std::string_view Dialect() const override { return "sjasmplus"; }
     FrontendResult Parse(const SourceDocument& source) const override;
 };
+
+/// An instruction sjasmplus repeats for its operands: one each (PUSH AF,BC; INC A,B; RST 0,8; JR $,$; SUB A,1 is SUB A
+/// : SUB 1), a pair each (LD A,1,B,2; OUT (C),A,(C),B; JR NZ,$,Z,$), A with each (ADD A,1,B). None (the statement
+/// alone): a form of its own (a fake SUB HL,DE, an undocumented RLC (IX+1),B or RES 0,(IX+1),A)
+std::vector<ir::Statement> SjasmplusRepeated(const ir::Statement& s);
 }  // namespace unrealasm::dialects

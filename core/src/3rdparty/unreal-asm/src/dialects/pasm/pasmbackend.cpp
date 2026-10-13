@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <set>
 
+#include "dialects/common/diskname.h"
 #include "dialects/common/chainwriter.h"
 #include "dialects/common/z80.h"
 #include "dialects/pasm/pasmcurrent.h"
@@ -337,7 +338,7 @@ private:
             case ir::DirectiveKind::Incbin:
             {
                 // the file's name on the disk: 8 characters, without the folder and the extension
-                std::string name = s.text.substr(s.text.find_last_of("/\\") + 1);
+                std::string name = DiskName(options, s.text);
                 if (const size_t dot = name.rfind('.'); dot != std::string::npos && dot > 0)
                     name.resize(dot);
                 return {(s.directive == ir::DirectiveKind::Include ? "ITXT " : "IBIN ") + name.substr(0, 8)};

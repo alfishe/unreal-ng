@@ -296,7 +296,8 @@ TEST(NextUartConfigured_Test, ThePeersComeFromComPortAndComPort2)
     ASSERT_NE(ports, nullptr);
     ASSERT_NE(ports->Uart().Peer(0), nullptr) << "ComPort= is UART 0, the ESP's line";
     ASSERT_NE(ports->Uart().Peer(1), nullptr) << "ComPort2= is UART 1, the Pi's";
-    // a byte out of UART 1 comes back on UART 1 only
+    // a byte out of UART 1 comes back on UART 1 only (once NR #A0 connects its pins: bit 4 the UART, bit 5 the Pi orientation)
+    ports->Board().WriteNextReg(0xA0, 0x30);
     ports->DecodePortOut(kSelect, kSelectPi, 0x8000);
     ports->DecodePortOut(kTx, 0x5A, 0x8000);
     EmulatorTestHelper::RunFramesFast(emulator, 2);

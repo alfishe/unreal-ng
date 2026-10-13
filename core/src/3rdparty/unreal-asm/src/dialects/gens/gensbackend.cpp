@@ -6,6 +6,7 @@
 #include <map>
 #include <set>
 
+#include "dialects/common/diskname.h"
 #include "dialects/common/chainwriter.h"
 #include "dialects/common/z80.h"
 
@@ -203,7 +204,7 @@ private:
             case ir::DirectiveKind::Ent: return {};
             case ir::DirectiveKind::Include:
             {
-                std::string name = s.text;
+                std::string name = DiskName(options, s.text);
                 if (const size_t dot = name.rfind('.'); dot != std::string::npos && name.size() - dot == 2)
                     name = name.substr(0, dot);
                 return {"*F " + name};
