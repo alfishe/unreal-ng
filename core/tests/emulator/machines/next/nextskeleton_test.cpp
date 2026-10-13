@@ -6,6 +6,7 @@
 #include "pch.h"
 
 #include <gtest/gtest.h>
+#include <vector>
 
 #include <algorithm>
 
@@ -311,16 +312,25 @@ TEST_F(NextSkeleton_Test, Only48KBank5AndNothingAbove3_5MHz)
     Out(0x243B, 0x07);
     Out(0x253B, 0x01);  // 7 MHz
     EXPECT_EQ(WaitingStarts(_z80, 0x4000), 0u) << "no contention above 3.5 MHz";
-    // zxnext.vhd 4481: i_contention_en needs cpu_speed = 00; the effective speed, whatever the host does with it
+    // zxnext.vhd 4481: i_contention_en needs cpu_speed = 00. At 14 / 28 MHz bank 5 has waits of its own (28 MHz: the video RAM
+    // scheduling of cpu_bank5_sched, 3175), so contention is judged by what NR #08 bit 6 changes: nothing
     for (uint8_t speed : {0x02, 0x03})
     {
+        Out(0x243B, 0x07);
         Out(0x253B, speed);  // 14 MHz, 28 MHz
-        // against an uncontended RAM bank: at 28 MHz every SRAM read has its own wait (zxnext.vhd 3175), which is not contention
+        Out(0x243B, 0x08);
+        Out(0x253B, 0x00);
+        std::vector<uint32_t> with;
+        for (uint32_t t0 = 16300; t0 < 17300; t0++)
+            with.push_back(ReadTime(_z80, 0x4000, t0));
+        Out(0x253B, 0x40);  // contention disabled outright
         unsigned differing = 0;
         for (uint32_t t0 = 16300; t0 < 17300; t0++)
-            differing += ReadTime(_z80, 0x4000, t0) != ReadTime(_z80, 0xC000, t0) ? 1 : 0;
-        EXPECT_EQ(differing, 0u) << "no contention at NR #07 = " << int(speed);
+            differing += ReadTime(_z80, 0x4000, t0) != with[t0 - 16300] ? 1 : 0;
+        EXPECT_EQ(differing, 0u) << "contention disable changes nothing at NR #07 = " << int(speed);
+        Out(0x253B, 0x00);
     }
+    Out(0x243B, 0x07);
     Out(0x253B, 0x00);
     EXPECT_GT(WaitingStarts(_z80, 0x4000), 100u);
     Out(0x243B, 0x08);
