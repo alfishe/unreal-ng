@@ -67,6 +67,8 @@ public:
     void OnInstructionDone() override;
     void OnRetn() override;
     bool GenerateMultifaceNmi() override;
+    /// An access of the +3 FDC ports #2FFD / #3FFD with NR #D8 bit 0 on: the cause and the byte are latched and the M1 NMI path is taken
+    void IoTrap(uint16_t port, bool write, uint8_t value);
     /// The DRIVE button (F10 on the board; the host's NMI action): NR #06 bit 4 enables it, one NMI at a time
     bool RequestBoardNmi() override;
     bool GenerateDriveNmi() override;
@@ -211,6 +213,7 @@ private:
     uint8_t IdleRead(uint16_t port, uint16_t pc);
     uint8_t ReadMouse(uint8_t reg);
     void ApplyMouseDpi(uint8_t nr0a);
+    bool RaiseMultifaceNmi(const char* source);
     void SyncPiLine();
     ScreenNext* _screenNext = nullptr;  ///< the picture, told before the program changes what the sprite engine fills from
     /// #FADF / #FBDF / #FFDF: A7-A0 = #DF and A11-A8 = A / B / F (zxnext.vhd), the register 0 buttons, 1 X, 2 Y

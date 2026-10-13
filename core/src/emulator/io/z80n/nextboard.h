@@ -149,6 +149,14 @@ public:
     NextRegJournal& Journal() { return _journal; }
     const NextRegJournal& Journal() const { return _journal; }
     void SetJournalClock(std::function<void(uint32_t& frame, uint32_t& t, uint16_t& pc)> clock) { _journalClock = std::move(clock); }
+    /// The +3 FDC I/O trap latched its cause (NR #DA: 1 read of #2FFD, 2 read of #3FFD, 3 write of #3FFD) and, for a write, the byte
+    /// (NR #D9): zxnext.vhd 3869-3896
+    void LatchIoTrap(uint8_t cause, bool write, uint8_t value)
+    {
+        _regs[0xDA] = cause & 3;
+        if (write)
+            _regs[0xD9] = value;
+    }
     /// The raw stored byte of a register (reports, tests)
     uint8_t Stored(uint8_t reg) const { return _regs[reg]; }
     /// Change bits of a stored register without the write's side effects: the one flop two paths drive (ULA+ enable: NR #68 bit 3 and #FF3B)

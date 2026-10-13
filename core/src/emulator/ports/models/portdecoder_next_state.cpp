@@ -474,13 +474,25 @@ StateNode NextNmiReport(EmulatorContext* context, const NextIntJournalQuery& que
     button("m1_button", "NR #02 bit 3 write (the M1 key); needs NR #06 bit 3", (board.Stored(0x06) & 0x08) != 0, decoder->MultifaceNmiRefusal());
     button("drive_button", "NR #02 bit 2 write (the DRIVE key, the host's NMI action); needs NR #06 bit 4", (board.Stored(0x06) & 0x10) != 0,
            decoder->DriveNmiRefusal());
-    StateNode trap = StateNode::Object();
-    trap["name"] = "io_trap";
-    trap["via"] = "+3 FDC ports #2FFD / #3FFD while NR #D8 bit 0 is on (NR #D9 / #DA: the write and the cause)";
-    trap["modelled"] = false;
-    trap["enabled"] = (board.Stored(0xD8) & 0x01) != 0;
-    trap["note"] = "the trap is not modelled: the registers only store their byte";
-    sources.push(std::move(trap));
+    {
+        StateNode trap = StateNode::Object();
+        trap["name"] = "io_trap";
+        trap["via"] = "+3 FDC ports #2FFD read, #3FFD read / write while NR #D8 bit 0 is on; the M1 NMI path (needs NR #06 bit 3)";
+        trap["modelled"] = true;
+        const bool enabled = (board.Stored(0xD8) & 0x01) != 0;
+        trap["enabled"] = enabled;
+        const char* refusal = decoder->MultifaceNmiRefusal();
+        trap["would_fire"] = enabled && refusal == nullptr;
+        if (!enabled)
+            trap["blocked_by"] = "the trap is off (NR #D8 bit 0)";
+        else if (refusal)
+            trap["blocked_by"] = refusal;
+        const uint8_t cause = board.Stored(0xDA) & 3;
+        trap["cause"] = cause == 0 ? "none" : (cause == 1 ? "read_2ffd" : (cause == 2 ? "read_3ffd" : "write_3ffd"));
+        trap["cause_nr_da"] = int(cause);
+        trap["write_nr_d9"] = Hex8(board.Stored(0xD9));
+        sources.push(std::move(trap));
+    }
     n["sources"] = std::move(sources);
 
     StateNode service = StateNode::Object();
@@ -1013,7 +1025,7 @@ StateNode Next(EmulatorContext* context)
     n["mmu"] = NextMmu(context);
 
     // The board's small registers (G8): the expansion bus port enables NR #86-#89 (the internal ones are NR #82-#85 in `ports`), the debug
-    // LED NR #FF, and the +3 FDC I/O trap NR #D8-#DA, which only store their bytes
+    // LED NR #FF, and the +3 FDC I/O trap NR #D8-#DA (the enable, the written byte and the cause)
     StateNode boardBlock = StateNode::Object();
     const uint32_t busWord = static_cast<uint32_t>(board.Stored(0x86)) | (static_cast<uint32_t>(board.Stored(0x87)) << 8) |
                              (static_cast<uint32_t>(board.Stored(0x88)) << 16) | (static_cast<uint32_t>(board.Stored(0x89)) << 24);
@@ -1024,7 +1036,7 @@ StateNode Next(EmulatorContext* context)
     boardBlock["bus_port_enable"] = std::move(bus);
     boardBlock["debug_led"] = Hex8(board.Stored(0xFF));
     StateNode trap = StateNode::Object();
-    trap["modelled"] = false;
+    trap["modelled"] = true;
     trap["enabled"] = (board.Stored(0xD8) & 0x01) != 0;
     trap["nr_d8"] = Hex8(board.Stored(0xD8));
     trap["nr_d9"] = Hex8(board.Stored(0xD9));
