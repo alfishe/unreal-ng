@@ -38,8 +38,8 @@ void NextUart::Reset(bool hard)
         c.sent = c.received = c.lost = 0;
         c.toldValid = false;
         c.rxFreeAt = c.txFreeAt = c.lastLook = 0;
-        if (c.peer)
-            c.peer->OnModemLines(true, true);
+        if (c.Live())
+            c.Live()->OnModemLines(true, true);
     }
     _selected = 0;
     _now = 0;
@@ -70,7 +70,7 @@ void NextUart::SetPeer(unsigned channel, ISerialPeer* peer)
 
 void NextUart::TellPeer(Channel& c)
 {
-    if (!c.peer)
+    if (!c.Live())
         return;
     SerialLine line;
     // 28 MHz / prescaler is never exactly a standard rate (243 gives 115226): the line is told the nearest standard one
@@ -95,7 +95,7 @@ void NextUart::TellPeer(Channel& c)
         return;
     c.told = line;
     c.toldValid = true;
-    c.peer->OnLineSettings(line);
+    c.Live()->OnLineSettings(line);
 }
 
 void NextUart::StartTx(Channel& c, uint64_t at)
@@ -109,13 +109,19 @@ void NextUart::StartTx(Channel& c, uint64_t at)
 
 void NextUart::Step(Channel& c, uint64_t now)
 {
+    // pins not connected: what the peer sends reaches nobody
+    while (!c.connected && c.peer && c.peer->HasByte())
+    {
+        c.peer->TakeByte();
+        c.lost++;
+    }
     if (FifoReset(c))
     {
         // held in reset: the FIFOs and the shifters stay empty; a byte the peer offers is taken and lost
         ResetFifos(c);
-        while (c.peer && c.peer->HasByte())
+        while (c.Live() && c.Live()->HasByte())
         {
-            c.peer->TakeByte();
+            c.Live()->TakeByte();
             c.lost++;
         }
         c.lastLook = now;
@@ -129,8 +135,8 @@ void NextUart::Step(Channel& c, uint64_t now)
         {
             if (c.txDone > now)
                 break;
-            if (c.peer)
-                c.peer->Transmit(c.txByte);
+            if (c.Live())
+                c.Live()->Transmit(c.txByte);
             else
                 c.lost++;
             c.sent++;
@@ -141,7 +147,7 @@ void NextUart::Step(Channel& c, uint64_t now)
             break;  // the line is held low: nothing is sent
         if (c.txCount == 0)
             break;
-        if (flow && c.peer && !c.peer->Cts())
+        if (flow && c.Live() && !c.Live()->Cts())
             break;  // S_RTR: waits for the receiver; it goes on at the next look
         // the byte was queued at txReadyAt; the shifter was free from txFreeAt: the frame starts at the later of the two
         StartTx(c, std::min<uint64_t>(std::max(c.txFreeAt, c.txReadyAt), now));
@@ -168,12 +174,12 @@ void NextUart::Step(Channel& c, uint64_t now)
             c.rxBusy = false;
             c.rxFreeAt = c.rxDone;
         }
-        if (!c.peer || !c.peer->HasByte())
+        if (!c.Live() || !c.Live()->HasByte())
             break;
         const bool rtr = flow && c.rxCount >= kAlmostFull;
-        if (rtr && c.peer->HonorsRts())
+        if (rtr && c.Live()->HonorsRts())
             break;
-        c.rxByte = c.peer->TakeByte();
+        c.rxByte = c.Live()->TakeByte();
         c.rxBusy = true;
         // a byte the peer had waiting while the receiver was finishing the last one starts when that ended; one that came after the
         // receiver was idle starts at this look
@@ -186,8 +192,8 @@ void NextUart::Step(Channel& c, uint64_t now)
     if (rts != c.rtsOut)
     {
         c.rtsOut = rts;
-        if (c.peer)
-            c.peer->OnModemLines(rts, true);
+        if (c.Live())
+            c.Live()->OnModemLines(rts, true);
     }
 }
 

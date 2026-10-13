@@ -55,6 +55,22 @@ public:
     void DrawLine(unsigned y, uint8_t control, const NextVideoRegs& regs, Pixel* out, uint8_t transparentIndex);
 
     /// region <Const view for the next_sprites report: nothing here clears a flag or steps an upload index (design-automation-coverage.md R3)>
+    /// The state the sprite engine fills a line's buffer from changes with every write: a snapshot taken at the fill is valid while the
+    /// epoch is the same (ScreenNext, POC 028: the engine fills paper row R during row R - 1, in index order)
+    uint32_t Epoch() const { return _epoch; }
+    void Touch() { _epoch++; }
+    /// The 28 MHz clocks the engine needs for row y: one per sprite to qualify, 17 more for each one drawn (zxnext sprites.vhd S_QUALIFY /
+    /// S_PROCESS; the last drawn sprite ends the visible fill)
+    unsigned FillClocks(unsigned y) const;
+    /// The flags a drawing of a snapshot set go to this (live) object, the snapshot's are cleared
+    void MergeFlags(NextSprites& from)
+    {
+        _collision = _collision || from._collision;
+        _tooMany = _tooMany || from._tooMany;
+        from._collision = from._tooMany = false;
+    }
+    void ClearFlags() { _collision = _tooMany = false; }
+
     bool CollisionFlag() const { return _collision; }
     bool TooManyFlag() const { return _tooMany; }
     uint8_t UploadSlot() const { return _slot; }
@@ -114,4 +130,5 @@ private:
     uint8_t _mirror = 0;
     bool _collision = false;
     bool _tooMany = false;
+    uint32_t _epoch = 0;
 };

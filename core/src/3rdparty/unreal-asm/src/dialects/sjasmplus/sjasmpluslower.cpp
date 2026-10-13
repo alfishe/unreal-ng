@@ -253,6 +253,16 @@ private:
     std::optional<std::pair<std::string, StructDef>> open;   // the structure being defined
     int64_t position = 0;
     bool collecting = false;   // the first walk: the names (its diagnostics come with the second)
+    // The displacement as sjasmplus has it (a DISP inside a DISP block is ignored): followed through IF blocks, not
+    // known after one whose branches leave it otherwise
+    struct Branches
+    {
+        std::optional<bool> before;                // as the block opened
+        std::vector<std::optional<bool>> ends;     // as each branch ended
+        bool hasElse = false;
+    };
+    std::optional<bool> displaced = false;
+    std::vector<Branches> branches;
 
     void Reset()
     {
@@ -262,6 +272,47 @@ private:
         inLua = false;
         open.reset();
         position = 0;
+        displaced = false;
+        branches.clear();
+    }
+
+    /// The displacement followed through a statement outside macros; false: sjasmplus ignores it (a DISP inside a
+    /// DISP block)
+    bool Displacement(const Statement& s, uint32_t sourceLine)
+    {
+        const std::string word = IsOther(s) ? WordRest(s).first : std::string();
+        if ((s.kind == Statement::Kind::Directive && s.directive == DirectiveKind::If) || word == "IFDEF" || word == "IFNDEF" ||
+            word == "IFUSED" || word == "IFNUSED")
+            branches.push_back({displaced, {}, false});
+        else if (!branches.empty() && ((s.kind == Statement::Kind::Directive && s.directive == DirectiveKind::Else) || word == "ELSEIF"))
+        {
+            branches.back().ends.push_back(displaced);
+            branches.back().hasElse = branches.back().hasElse || word.empty();
+            displaced = branches.back().before;
+        }
+        else if (!branches.empty() && s.kind == Statement::Kind::Directive && s.directive == DirectiveKind::EndIf)
+        {
+            Branches b = std::move(branches.back());
+            branches.pop_back();
+            b.ends.push_back(displaced);
+            if (!b.hasElse)
+                b.ends.push_back(b.before);
+            displaced = std::all_of(b.ends.begin(), b.ends.end(), [&](const std::optional<bool>& e) { return e == b.ends[0]; })
+                            ? b.ends[0]
+                            : std::nullopt;
+        }
+        else if (s.kind == Statement::Kind::Directive && s.directive == DirectiveKind::Disp)
+        {
+            if (displaced == true)
+            {
+                diagnostics.push_back({Severity::Info, sourceLine, 0, "DISP inside a DISP block left out (sjasmplus ignores it)"});
+                return false;
+            }
+            displaced = true;
+        }
+        else if (s.kind == Statement::Kind::Directive && s.directive == DirectiveKind::Ent)
+            displaced = false;
+        return true;
     }
 
     std::string Prefix() const
@@ -275,6 +326,8 @@ private:
     /// The full name a label defines
     std::string FullOf(const std::string& label) const
     {
+        if (label[0] == '!')
+            return FullOf(label.substr(1));   // !label: a label that leaves the parent of .labels as it is
         if (label[0] == '@')
             return label.substr(1);
         if (label[0] == '.')
@@ -343,6 +396,24 @@ private:
         {
             report.push_back({Severity::Warning, l.sourceLine, 0, "an instruction in STRUCT " + open->first});
             return;
+        }
+        switch (s.directive)
+        {
+            case DirectiveKind::Db:
+            case DirectiveKind::Dw:
+                if (s.operands.empty())
+                {
+                    // BYTE / WORD without a value: one of them, 0 unless an instance gives one
+                    Statement zero = s;
+                    Operand o;
+                    o.kind = Operand::Kind::Immediate;
+                    o.expr = Expr::Number(0);
+                    zero.operands.push_back(std::move(o));
+                    Field(l, zero, named);
+                    return;
+                }
+                break;
+            default: break;
         }
         switch (s.directive)
         {
@@ -501,7 +572,7 @@ private:
             {
                 const std::string full = FullOf(l.label);
                 defined.insert(full);
-                if (l.label[0] != '.')
+                if (l.label[0] != '.' && l.label[0] != '!')
                     parent = full;
                 for (const Statement& s : l.statements)
                     if (s.kind == Statement::Kind::MacroCall)
@@ -537,16 +608,17 @@ private:
                 }
                 return true;
             }
+            // (a macro may open and close on one line: NAME MACRO p : ... : ENDM)
             if (s.kind == Statement::Kind::Directive && s.directive == DirectiveKind::Macro)
             {
                 ++inMacro;
                 macroNames.insert(s.text);
-                return false;
+                continue;
             }
             if (s.kind == Statement::Kind::Directive && s.directive == DirectiveKind::EndMacro)
             {
                 inMacro = std::max(0, inMacro - 1);
-                return false;
+                continue;
             }
             if (!IsOther(s) || inMacro)
                 continue;
@@ -842,7 +914,9 @@ private:
         if (!label.empty())
         {
             full = FullOf(label);
-            if (label[0] != '.')
+            if (label[0] == '!')
+                label = modules.empty() ? label : "!@" + full;
+            else if (label[0] != '.')
             {
                 parent = full;
                 if (!modules.empty() && label[0] != '@')
@@ -894,7 +968,9 @@ private:
         if (!line.label.empty() && !IsTemporary(line.label) && !inMacro)
         {
             const std::string full = FullOf(line.label);
-            if (line.label[0] != '.')
+            if (line.label[0] == '!')
+                line.label = modules.empty() ? line.label : "!@" + full;
+            else if (line.label[0] != '.')
             {
                 parent = full;
                 if (!modules.empty() && line.label[0] != '@')
@@ -904,6 +980,12 @@ private:
         line.statements.clear();
         for (const Statement& s : l.statements)
         {
+            if (!inMacro && !Displacement(s, l.sourceLine))
+            {
+                line.comment = "DISP" + (line.hasComment ? " ;" + line.comment : std::string());
+                line.hasComment = true;
+                continue;
+            }
             std::vector<Statement> replaced;
             if (IsOther(s))
             {
@@ -921,6 +1003,7 @@ private:
                         Statement fill;
                         fill.kind = Statement::Kind::Directive;
                         fill.directive = DirectiveKind::Ds;
+                        fill.params = {"align"};
                         fill.args.push_back(Expr::Binary(Op::Mod, Grouped(Expr::Binary(Op::Sub, n, Grouped(Expr::Binary(Op::Mod, Expr::Make(Expr::Kind::Current), n)))), n));
                         if (comma != std::string::npos)
                             if (const Statement value = Parsed("DW", rest.substr(comma + 1)); !value.operands.empty())

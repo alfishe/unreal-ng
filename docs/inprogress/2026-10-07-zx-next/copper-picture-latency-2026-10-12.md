@@ -31,7 +31,7 @@ anchored at the grid's x = 0; a "pixel" is 4 clocks, a "half pixel" 2.
 | Layer 2 resolution NR #70 b5:4 | 27 | pixel |
 | ULA scroll NR #26 / #27 | 56 | next cell |
 | ULA fine scroll NR #68 b2 | 70 | next cell |
-| tilemap scroll NR #2F / #30 / #31, control bits NR #6B b0 / b1 / b5 (b3 by reading) | 53 | next cell |
+| tilemap scroll NR #2F / #30 / #31, control bits NR #6B b0 / b1 / b3 / b5 | 53 | next cell |
 | tilemap 80 columns NR #6B b6 | 24 (upper bound) | 32 clocks |
 | palette value NR #41 / #44 into the sprite palette | 16 | half pixel |
 | ... into the tilemap palette | 17 | half pixel |
@@ -46,22 +46,36 @@ When one write changes bits with different latencies the earliest decides.
 - Sprites: NR #4B compares the raw pattern byte before the palette offset (4-bit patterns: the nibble); the sprite clip (NR #19) is
   applied where the line buffer is read, so it shows in the same line.
 - Sprites: a fill-stage input (attribute, pattern byte, NR #4B) written in line N shows in line N + 1 or N + 2, depending on the
-  position of the write against the engine's progress through the sprites. See below.
+  position of the write against the engine's progress through the sprites: modelled, see below.
 
-## Sprite fill (open: the emulator draws a line from the live state)
+## Sprite fill (implemented 2026-10-12)
 
-The engine fills the next line's buffer from the end of the line before (sprite qualification at hc ~437), going through the
-sprites in index order, so what a sprite of line N + 1 sees is the state at (line N, ~hc 435 + a few clocks per sprite). A write
-before that point shows in line N + 1, after it in line N + 2. Measured (injected port #57 / #5B and NextREG writes): NR #4B at hc 20
--> N + 1, at hc >= 100 -> N + 2; attributes mostly N + 2 even at hc 20 for sprites 64-127 (late in the order); pattern bytes N + 2.
-`NextSprites::DrawLine` draws from the state at the time the line is rendered, so a program that rewrites sprites in the line
-before sees the change one line early, and a copper change of the pattern or the attributes in the middle of a line lands on the
-wrong line. Implementing it needs the sprite state snapshot per line at the fill start (or a timestamped write queue); the table
-above and `tools/poc/028-next-video-pipeline-alignment/measurements-2026-10-12-register-sweep.md` hold the numbers.
+The engine fills paper row R's buffer during row R - 1: it starts at about raw hc -21 (sprite qualification at hc 437 of row R - 2) and
+goes through the sprites in index order, one 28 MHz clock for each and 17 more for a drawn one (`S_QUALIFY` / `S_PROCESS`), so the fill
+of a row ends at raw hc `(last drawn index + 1 + 17 x drawn) / 4 - 21` of row R - 1. What a sprite sees is the state at that moment:
+a write before it shows in row R, after it in row R + 1 (measured with injected port #57 / #5B and NextREG writes: NR #4B at hc 20 ->
+next row, hc >= 100 -> the row after; the row's later sprites see a write that lands inside the fill).
+
+`ScreenNext` keeps one snapshot of the sprite state per epoch of writes (`NextSprites::Epoch`) and the row's snapshot is taken when the
+beam passes the fill end, or before a write to the fill inputs (`SpriteStateWillChange`: CPU NextREG writes through the board's
+before-write hook, ports #57 / #5B / #303B, copper MOVEs). A row draws from its snapshot with the enable, the clip and the palette of
+the output stage (those are 22 / 16..18 clocks, above). Approximation: one instant per row (the end of the fill), not a time per sprite:
+a write inside the ~60 hc window reaches the sprites drawn before it too. Tests `NextSpriteFill_Test`.
+
+## Other items closed with it
+
+- **Mouse DPI** (NR #0A bits 1:0): not in `zxnext.vhd` but in `input/ps2_mouse.v` of the same repository: the PS/2 deltas are scaled
+  as the counters take them: 00 x2, 01 x1, 10 half, 11 a quarter (arithmetic shifts). `Mouse::SetDeltaShift`, applied by the Next's
+  decoder; the buttons reverse (NR #0A bit 3) is `{third, left, right}` swapped at the same place.
+- **ULA+ read wait state**: `ulap_wait_n` is low for `port_ff3b_rd` in mode 0 until `ulap_palette_rd_done` (set one 28 MHz clock after the
+  read starts, held while a copper palette write is in the way). At 3.5 / 7 / 14 MHz the CPU samples WAIT after that clock: no wait. At
+  28 MHz one T-state at most. Not modelled (the 28 MHz case is not verified on a running CPU).
+- **Radastan / LoRes Y wrap**: `lores.vhd` increments y(7:6) from y_pre = 192, so the row runs on to 254 (rows 96-127 read the memory
+  behind the 96 rows, 14-bit address wrap) instead of wrapping at 192 as the emulator did; fixed for both modes.
+- **Tilemap text mode** (NR #6B bit 3): measured with the register forced: 53 clocks, the cell, like bits 0 / 1 / 5.
 
 ## Not measured
 
-- The tilemap text mode (NR #6B b3): no visible change in the test pattern; by reading `tilemap.vhd` it is latched with the cell.
 - Sprite state written by real CPU instructions at the beam (only injected writes: the same RAM, so the same fill rule).
 - UART, joystick-port UART and other non-video registers: out of this POC.
 

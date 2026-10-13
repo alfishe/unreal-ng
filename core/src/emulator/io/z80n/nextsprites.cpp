@@ -8,6 +8,7 @@
 
 void NextSprites::Reset()
 {
+    _epoch++;
     std::memset(_attr, 0, sizeof _attr);
     std::memset(_pattern, 0, sizeof _pattern);
     _slot = _byte = _patternHalf = _mirror = 0;
@@ -39,6 +40,7 @@ void NextSprites::WriteSlotSelect(uint8_t value)
 
 void NextSprites::WriteAttribute(uint8_t value)
 {
+    _epoch++;
     SetAttribute(_slot, _byte, value);
     switch (_byte)
     {
@@ -60,6 +62,7 @@ void NextSprites::WriteAttribute(uint8_t value)
 
 void NextSprites::WritePattern(uint8_t value)
 {
+    _epoch++;
     _pattern[_patternOffset & (kPatternBytes - 1)] = value;
     _patternOffset = (_patternOffset + 1) & (kPatternBytes - 1);
 }
@@ -78,6 +81,7 @@ void NextSprites::WriteMirrorSprite(uint8_t value, bool tied)
 
 void NextSprites::WriteMirrorAttribute(unsigned byte, uint8_t value, bool increment, bool tied)
 {
+    _epoch++;
     if (byte > 4)
         return;
     SetAttribute(_mirror & 0x7F, byte, value);
@@ -303,6 +307,38 @@ void NextSprites::DrawLine(unsigned y, uint8_t control, const NextVideoRegs& reg
     else
         for (unsigned i = 0; i < kSprites; i++)
             DrawSprite(i, effective[i], y, clip, overBorder, out, occupied, transparentIndex);
+}
+
+unsigned NextSprites::FillClocks(unsigned y) const
+{
+    Effective effective[kSprites];
+    Anchor anchor;
+    for (unsigned i = 0; i < kSprites; i++)
+    {
+        if (Relative(i))
+            Resolve(i, anchor, effective[i]);
+        else
+        {
+            effective[i] = Decode(i);
+            UpdateAnchor(i, anchor);
+        }
+    }
+    unsigned last = 0, drawn = 0;
+    for (unsigned i = 0; i < kSprites; i++)
+    {
+        const Effective& e = effective[i];
+        if (!e.visible)
+            continue;
+        int dy = static_cast<int>(y) - e.y;
+        if (dy < 0)
+            dy += 512;
+        if (dy < (16 << e.yScale))
+        {
+            last = i;
+            drawn++;
+        }
+    }
+    return drawn ? (last + 1) + 17 * drawn : kSprites;
 }
 
 void NextSprites::Describe(Info (&out)[kSprites]) const

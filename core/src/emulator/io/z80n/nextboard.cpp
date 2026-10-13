@@ -46,10 +46,8 @@ void NextBoard::Reset(bool hard)
         _regs[0x06] |= 0xA0;                         // the CPU speed and 50 / 60 Hz hotkeys on
         _regs[0x08] &= static_cast<uint8_t>(~0x40);  // contention on
         _regs[0x09] &= static_cast<uint8_t>(~0x10);  // the sprite number is not tied to port #303B
-        for (uint8_t r : {0x15, 0x68, 0x6A, 0x6B, 0x6C, 0x70, 0x71, 0x90, 0x91, 0x92, 0x93, 0x9A, 0x9B, 0xA0, 0xA2, 0xD8})
+        for (uint8_t r : {0x15, 0x68, 0x6A, 0x6B, 0x6C, 0x70, 0x71, 0xA0, 0xA2, 0xD8})
             _regs[r] = 0;
-        _regs[0x98] = 0xFF;  // the Pi output latches (5070-5073)
-        _regs[0x99] = 0x01;
         // NR #80 (2186): the high nibble takes the low one
         _regs[0x80] = static_cast<uint8_t>((_regs[0x80] & 0x0F) | ((_regs[0x80] & 0x0F) << 4));
         // NR #82-#85 come back to #FF when their reset-type bit (7 of NR #85) is 1, NR #86-#89 when bit 7 of NR #89 is 0 (5052-5068)
@@ -184,15 +182,28 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return static_cast<uint8_t>(_regs[reg] & 0x8F);  // 6139 / 6151: reset type & "000" & the four port enables
         case 0x8A:
             return static_cast<uint8_t>(_regs[reg] & 0x3F);  // "00" & nr_8a_bus_port_propagate
-        case 0x90:
-            return static_cast<uint8_t>(_regs[reg] & 0xFC);  // nr_90_pi_gpio_o_en(7:2) & "00": GPIO 1:0 are never outputs (5532)
-        case 0x93:
-            return static_cast<uint8_t>(_regs[reg] & 0x0F);
         case 0x6E:
         case 0x6F:
             return static_cast<uint8_t>(_regs[reg] & 0xBF);  // bit 6 is not stored (base_7 & '0' & base)
         case 0x10:
             return static_cast<uint8_t>((_regs[reg] & 0x1F) << 2);  // the core id; the DRIVE / M1 buttons read 0
+        case 0x90:
+            return static_cast<uint8_t>(_regs[reg] & 0xFC);  // the output enables of GPIO 0-7 keep bits 1:0 clear (zxnext.vhd 5536)
+        case 0x93:
+            return static_cast<uint8_t>(_regs[reg] & 0x0F);
+        case 0x98:
+        case 0x99:
+        case 0x9A:
+        case 0x9B:
+        {
+            // a read is the PIN state (i_GPIO), not the output latch: an enabled output shows its value, the others what the Pi drives
+            // (nothing is wired to the header here yet: low)
+            const unsigned bank = reg - 0x98;
+            uint8_t level = _gpioInput ? _gpioInput(bank) : 0;
+            const uint8_t enable = Read(static_cast<uint8_t>(0x90 + bank));
+            const uint8_t value = static_cast<uint8_t>(_regs[reg] & (bank == 3 ? 0x0F : 0xFF));
+            return static_cast<uint8_t>((value & enable) | (level & ~enable));
+        }
         case 0xA0:
             return static_cast<uint8_t>(_regs[reg] & 0x39);  // "00" & pi peripheral bits 5:3 & "00" & bit 0 (zxnext.vhd 6189)
         case 0xA2:

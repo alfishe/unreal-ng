@@ -105,6 +105,8 @@ public:
     }
     void SetMachine(INextMachine* machine) { _machine = machine; }
     /// Called before a NextREG write of the CPU (not of the copper): the screen draws the lines the beam has passed with the old state
+    /// What the header's other end drives on GPIO bank 0-3 (pins 0-7, 8-15, 16-23, 24-27) as bits; unset: low
+    void SetGpioInput(std::function<uint8_t(unsigned bank)> input) { _gpioInput = std::move(input); }
     void SetBeforeCpuWrite(std::function<void()> hook) { _beforeCpuWrite = std::move(hook); }
     void SetInterrupts(NextInterruptSource* interrupts) { _interrupts = interrupts; }
     /// Every NextREG access of the program (a read through #253B, a write by NEXTREG, #253B or the copper) is told to the hook with the
@@ -149,6 +151,8 @@ public:
     void SetJournalClock(std::function<void(uint32_t& frame, uint32_t& t, uint16_t& pc)> clock) { _journalClock = std::move(clock); }
     /// The raw stored byte of a register (reports, tests)
     uint8_t Stored(uint8_t reg) const { return _regs[reg]; }
+    /// Change bits of a stored register without the write's side effects: the one flop two paths drive (ULA+ enable: NR #68 bit 3 and #FF3B)
+    void SetStoredBits(uint8_t reg, uint8_t mask, uint8_t value) { _regs[reg] = static_cast<uint8_t>((_regs[reg] & ~mask) | (value & mask)); }
     /// NR #02 bits 1:0 as a read returns them: how the last reset happened (the VHDL's nr_02_reset_type: 0 power on, then 2, then 1)
     uint8_t ResetBits() const { return static_cast<uint8_t>(_resetType & 3); }
 
@@ -206,6 +210,7 @@ private:
     std::map<uint8_t, uint32_t>* _readCounts = nullptr;
     std::vector<NextRegWrite>* _log = nullptr;
     std::function<void()> _beforeCpuWrite;
+    std::function<uint8_t(unsigned)> _gpioInput;
     AccessHook _accessHook;
     bool _copperWrite = false;
     const uint16_t* _pc = nullptr;

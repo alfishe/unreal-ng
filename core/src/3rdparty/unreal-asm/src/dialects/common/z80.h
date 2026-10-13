@@ -4,8 +4,11 @@
 // names, how many operands an instruction takes (to split ALASM / STORM multi-operand lines).
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
+
+#include "unrealasm/ir.h"
 
 namespace unrealasm::dialects::z80
 {
@@ -28,4 +31,14 @@ std::string Lower(std::string_view text);
 std::string Upper(std::string_view text);
 /// Upper-case hex digits of a value, at least `digits` of them (zero-padded)
 std::string HexDigits(uint64_t value, int digits);
+
+/// A Z80N instruction's bytes: ED, `code`, then `layout`: 'n' nothing, 'b' a byte (operand 0), 'B' two bytes (operands 0
+/// and 1), 'w' a word low byte first (the last operand), 'W' a word high byte first (PUSH nn)
+struct Z80nForm
+{
+    int code = 0;
+    char layout = 'n';
+};
+/// The Z80N form of an instruction (NEXTREG r,n; SWAPNIB; ADD HL,A; PUSH nn ...); none for a Z80 one
+std::optional<Z80nForm> Z80nEncoding(const ir::Statement& s);
 }  // namespace unrealasm::dialects::z80

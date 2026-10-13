@@ -26,8 +26,8 @@ REPO = os.path.abspath(os.path.join(HERE, '..', '..', '..', '..'))
 def device_of(folder, main):
     """The DEVICE the source picks (None: none)"""
     with open(os.path.join(folder, main), encoding='latin-1') as f:
-        found = re.search(r'^\s*DEVICE\s+(\w+)', f.read(), re.I | re.M)
-    return found.group(1) if found else None
+        found = re.search(r'^\s*DEVICE\s+([^;\n]+)', f.read(), re.I | re.M)
+    return found.group(1).strip() if found else None   # with its arguments (ZXSPECTRUM48, $5D00: the stack's top)
 
 
 def assemble(sjasmplus, folder, main, out, device=None):
@@ -119,32 +119,29 @@ def check(path, args):
     return result
 
 
+def disk_name(main):
+    """The TR-DOS name `zxasm convert --project` gives the main source (ProjectDiskNames)"""
+    base = re.sub(r'[^A-Za-z0-9_-]', '', os.path.basename(main).split('.')[0])
+    return (base or 'FILE')[:8]
+
+
 def check_project(path, args, folder, original, main, reference, device):
-    """The main file's folder as one project there and back (zxasm convert <dir>): its INCLUDEs converted with it"""
-    # the project: the main file, what it INCLUDEs (again and again), and the data files beside them
-    sources = os.path.join(folder, 'sources')
-    os.makedirs(sources)
-    wanted, seen = [main], set()
-    while wanted:
-        name = wanted.pop()
-        if name.lower() in seen or not os.path.exists(os.path.join(original, name)):
-            continue
-        seen.add(name.lower())
-        shutil.copyfile(os.path.join(original, name), os.path.join(sources, os.path.basename(name)))
-        with open(os.path.join(original, name), encoding='latin-1') as f:
-            wanted += re.findall(r'^[^;]*?\bINCLUDE\s+"?([^"\s;]+)', f.read(), re.I | re.M)
-    for name in os.listdir(original):
-        if os.path.isfile(os.path.join(original, name)) and not re.search(r'\.(asm|a80|z80|inc|s|bat|cmd|sh|txt|md|diff|lst|sym|map)$', name, re.I):
-            shutil.copyfile(os.path.join(original, name), os.path.join(sources, name))
+    """The main source as a project there and back: `zxasm convert --project` takes it with every file it INCLUDEs and
+    INCBINs (each relative to its own folder; for a retro target renamed onto TR-DOS names), the target's folder comes
+    back as one project (`zxasm convert <dir>`)"""
     there = os.path.join(folder, 'there')
-    code, warnings = convert(args.zxasm, sources, args, there)
-    if code != 0 or not os.path.isdir(there):
-        return {'project': path, 'state': 'conversion failed', 'warnings': warnings}
+    command = [args.zxasm, 'convert', os.path.join(original, main), '--project', '--codec', 'sjasmplus', '--to', args.to, '-o', there]
+    if args.to_version:
+        command += ['--to-version', args.to_version]
+    run = subprocess.run(command, capture_output=True, text=True, errors='replace')
+    warnings = [l for l in (run.stdout + run.stderr).splitlines() if l.startswith(('warning', 'error'))]
+    if run.returncode != 0 or not os.path.isdir(there):
+        return {'project': path, 'state': 'conversion failed', 'warnings': warnings, 'log': (run.stdout + run.stderr)[-600:]}
     back = os.path.join(folder, 'back')
     code, backWarnings = convert(args.zxasm, there, args, back, back=True)
     if code != 0 or not os.path.isdir(back):
         return {'project': path, 'state': 'back conversion failed', 'warnings': warnings + backWarnings}
-    stem = os.path.splitext(main)[0].lower() + '.asm'
+    stem = disk_name(main).lower() + '.asm'
     if not os.path.exists(os.path.join(back, stem)):
         return {'project': path, 'state': 'no ' + stem + ' came back', 'warnings': warnings}
     memory, log = assemble(args.sjasmplus, back, stem, '__memory.bin', device)
@@ -169,7 +166,7 @@ def main():
     parser.add_argument('--zxasm', default=os.environ.get('ZXASM', os.path.join(REPO, 'cmake-build-agent-release', 'bin', 'zxasm')))
     parser.add_argument('--keep', help='keep the work folders under this folder')
     parser.add_argument('--summary', action='store_true')
-    parser.add_argument('--project', action='store_true', help='convert the main file\'s folder as one project (its INCLUDEs too)')
+    parser.add_argument('--project', action='store_true', help='convert the main file with what it INCLUDEs and INCBINs as one project (zxasm convert --project)')
     args = parser.parse_args()
     if args.keep:
         os.makedirs(args.keep, exist_ok=True)
