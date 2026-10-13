@@ -198,6 +198,13 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "gives the raw bytes; alpha=false flattens transparent pixels onto the fallback colour. 409 when the machine is not a Next, the "
         "capture is off (invoke_api POST /api/v1/emulator/{id}/next/layer-capture {enabled:true}) or no frame was completed yet; all layers of one frame at once: "
         "invoke_api GET /api/v1/emulator/{id}/capture/next-layers";
+    schema["properties"]["size"]["type"] = "string";
+    schema["properties"]["size"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* size : {"screen", "grid", "pixel"})
+        schema["properties"]["size"]["enum"].append(size);
+    schema["properties"]["size"]["description"] =
+        "screenshot with layer: screen (default, 640x512), grid (640x256: every line once) or pixel (320x256: one sample per Next pixel; "
+        "loses the second sub-pixel of Layer 2 640 / Timex hi-res)";
     schema["properties"]["alpha"]["type"] = "boolean";
     schema["properties"]["alpha"]["description"] = "screenshot with layer: false flattens the pixels the layer does not paint onto the fallback colour (default true: alpha 0)";
     schema["properties"]["frames"]["type"] = "integer";
@@ -270,6 +277,10 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                         if (args.isMember("layer") && args["layer"].isString() && !args["layer"].asString().empty())
                         {
                             query += "layer=" + UrlEncodeSegment(args["layer"].asString()) + "&";
+                        }
+                        if (args.isMember("size") && args["size"].isString() && !args["size"].asString().empty())
+                        {
+                            query += "size=" + UrlEncodeSegment(args["size"].asString()) + "&";
                         }
                         if (args.isMember("alpha") && args["alpha"].isBool())
                         {

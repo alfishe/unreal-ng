@@ -1108,25 +1108,25 @@ FrontendResult SjasmplusFrontend::Parse(const SourceDocument& source) const
         for (Statement& st : line.statements)
             BinaryOutsideJumps(st);
         // A macro on one line (NAME MACRO p : PUSH HL : ... : ENDM): its lines one by one, as written over several
-        for (size_t m = 0; m + 1 < line.statements.size(); ++m)
-            if (line.statements[m].kind == Statement::Kind::Directive && line.statements[m].directive == ir::DirectiveKind::Macro)
+        for (size_t macroAt = 0; macroAt + 1 < line.statements.size(); ++macroAt)
+            if (line.statements[macroAt].kind == Statement::Kind::Directive && line.statements[macroAt].directive == ir::DirectiveKind::Macro)
             {
                 ir::Line head = line;
-                head.statements.assign(line.statements.begin(), line.statements.begin() + static_cast<std::ptrdiff_t>(m + 1));
+                head.statements.assign(line.statements.begin(), line.statements.begin() + static_cast<std::ptrdiff_t>(macroAt + 1));
                 head.hasComment = false;
                 head.comment.clear();
                 std::string headText = line.label;
-                for (size_t k = 0; k <= m; ++k)
-                    headText += (k ? " : " : "\t") + partTexts[k];
+                for (size_t i = 0; i <= macroAt; ++i)
+                    headText += (i ? " : " : "\t") + partTexts[i];
                 head.ownText = headText;
                 result.program.lines.push_back(std::move(head));
-                for (size_t k = m + 1; k < line.statements.size(); ++k)
+                for (size_t i = macroAt + 1; i < line.statements.size(); ++i)
                 {
                     ir::Line part;
                     part.sourceLine = number;
-                    part.statements.push_back(line.statements[k]);
-                    part.ownText = "\t" + partTexts[k];
-                    if (k + 1 == line.statements.size())
+                    part.statements.push_back(line.statements[i]);
+                    part.ownText = "\t" + partTexts[i];
+                    if (i + 1 == line.statements.size())
                     {
                         part.comment = line.comment;
                         part.hasComment = line.hasComment;

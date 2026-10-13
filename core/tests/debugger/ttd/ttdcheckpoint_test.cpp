@@ -67,9 +67,9 @@ Z80State MakeCanonicalZ80()
     z.halt_cycle = 0xDEADBEEF;
 
     // Host-side fields — sentinel values to verify preservation
-    z.FastMemIf = reinterpret_cast<const MemoryInterface*>(0xDEAD0001);
-    z.DbgMemIf = reinterpret_cast<const MemoryInterface*>(0xDEAD0002);
-    z.MemIf = reinterpret_cast<const MemoryInterface*>(0xDEAD0003);
+    z.FastMemIf = reinterpret_cast<const MemoryInterface*>(static_cast<uintptr_t>(0xDEAD0001));
+    z.DbgMemIf = reinterpret_cast<const MemoryInterface*>(static_cast<uintptr_t>(0xDEAD0002));
+    z.MemIf = reinterpret_cast<const MemoryInterface*>(static_cast<uintptr_t>(0xDEAD0003));
     z.isDebugMode = true;
     z.trace_curs = 0x1111;
     z.trace_top = 0x2222;
@@ -184,9 +184,9 @@ TEST(TTDCpuStateTest, Restore_PreservesHostSideFields)
     // Simulate that by starting from a different host-side state.
     Z80State live{};
     std::memset(&live, 0, sizeof(live));
-    live.FastMemIf = reinterpret_cast<const MemoryInterface*>(0xCAFE0001);
-    live.DbgMemIf = reinterpret_cast<const MemoryInterface*>(0xCAFE0002);
-    live.MemIf = reinterpret_cast<const MemoryInterface*>(0xCAFE0003);
+    live.FastMemIf = reinterpret_cast<const MemoryInterface*>(static_cast<uintptr_t>(0xCAFE0001));
+    live.DbgMemIf = reinterpret_cast<const MemoryInterface*>(static_cast<uintptr_t>(0xCAFE0002));
+    live.MemIf = reinterpret_cast<const MemoryInterface*>(static_cast<uintptr_t>(0xCAFE0003));
     live.isDebugMode = true;
     live.trace_curs = 0xDEAD;
     live.trace_top = 0xBEEF;
@@ -214,9 +214,9 @@ TEST(TTDCpuStateTest, Restore_PreservesHostSideFields)
     EXPECT_EQ(live.q, original.q);
 
     // Host-side fields are unchanged
-    EXPECT_EQ(live.FastMemIf, reinterpret_cast<const MemoryInterface*>(0xCAFE0001));
-    EXPECT_EQ(live.DbgMemIf, reinterpret_cast<const MemoryInterface*>(0xCAFE0002));
-    EXPECT_EQ(live.MemIf, reinterpret_cast<const MemoryInterface*>(0xCAFE0003));
+    EXPECT_EQ(live.FastMemIf, reinterpret_cast<const MemoryInterface*>(static_cast<uintptr_t>(0xCAFE0001)));
+    EXPECT_EQ(live.DbgMemIf, reinterpret_cast<const MemoryInterface*>(static_cast<uintptr_t>(0xCAFE0002)));
+    EXPECT_EQ(live.MemIf, reinterpret_cast<const MemoryInterface*>(static_cast<uintptr_t>(0xCAFE0003)));
     EXPECT_TRUE(live.isDebugMode);
     EXPECT_EQ(live.trace_curs, 0xDEADu);
     EXPECT_EQ(live.trace_top, 0xBEEFu);

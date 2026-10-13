@@ -338,6 +338,17 @@ class TestNextLayerCapture:
         pixels = base64.b64decode(flat["data"])
         assert all(pixels[i] == 255 for i in range(3, len(pixels), 4 * 997)), "alpha=false: every pixel opaque"
 
+    def test_smaller_sizes(self, api_client, next_emulator):
+        assert wait_for_layer_frame(api_client, next_emulator).status_code == 200
+        for size, (w, h) in (("grid", (640, 256)), ("pixel", (320, 256)), ("screen", (640, 512))):
+            body = get(api_client, next_emulator, f"/capture/screen?layer=ula&format=rgba&size={size}").json()
+            assert (body["width"], body["height"], body["scale"]) == (w, h, size)
+            assert len(base64.b64decode(body["data"])) == w * h * 4
+        assert get(api_client, next_emulator, "/capture/screen?layer=ula&size=raw").status_code == 400
+        every = get(api_client, next_emulator, "/capture/next-layers?format=rgba&size=pixel").json()
+        assert (every["width"], every["height"]) == (320, 256)
+        assert len(base64.b64decode(every["layers"]["sprites"]["data"])) == 320 * 256 * 4
+
     def test_all_layers_of_one_frame(self, api_client, next_emulator):
         assert wait_for_layer_frame(api_client, next_emulator).status_code == 200
         response = get(api_client, next_emulator, "/capture/next-layers")

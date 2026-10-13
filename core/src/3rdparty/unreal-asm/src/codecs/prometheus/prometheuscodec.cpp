@@ -547,11 +547,11 @@ bool PrometheusCodec::EncodeLine(const std::string& text, std::vector<Symbol>& s
         start(0x00, kPseudo);
         return Terminate(out, error);
     }
-    static const std::map<std::string, uint8_t> kPseudoOps = {{"ent", 2}, {"equ", 3}, {"org", 4}, {"put", 5}, {"defb", 6}, {"defm", 7}, {"defs", 8}, {"defw", 9}};
+    static const std::map<std::string, int> kPseudoOps = {{"ent", 2}, {"equ", 3}, {"org", 4}, {"put", 5}, {"defb", 6}, {"defm", 7}, {"defs", 8}, {"defw", 9}};
     const auto pseudo = kPseudoOps.find(mnemonic);
     if (pseudo != kPseudoOps.end())
     {
-        start(pseudo->second, 0x37);
+        start(static_cast<uint8_t>(pseudo->second), 0x37);
         if (!EncodeExpression(operands, symbols, out, error))
             return false;
         return Terminate(out, error);

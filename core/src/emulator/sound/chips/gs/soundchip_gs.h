@@ -201,6 +201,11 @@ public:
     /// old value; the sink is not told (the board already has the write)
     void sharedVolumeWrite(int channel, uint8_t volume);
 
+    /// What the runner may do with this card (GSCardRunner reads these, not the private hooks themselves: a
+    /// requires-expression on a befriended private member is false under MSVC 2019, which compiled the sleep out)
+    static constexpr bool kRunnerIdleSleep = true;          ///< sleepAllowed() and the rest: the idle loop is slept through
+    static constexpr bool kRunnerBatchQuietEvents = true;   ///< sleepQuietEventsBefore()
+
     /// The firmware's idle poll loop is slept through (default on; off steps every instruction: comparison tests)
     void setIdleSleep(bool on) { _runner.setSleepOn(on); }
     /// Card CPU steps the sleeps stood for (tests, diagnosis)
