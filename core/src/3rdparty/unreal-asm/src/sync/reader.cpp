@@ -1868,7 +1868,8 @@ ProjectInjectPlan InjectProjectIntoSnapshot(const containers::Snapshot& snapshot
         return plan;
     std::map<int, std::vector<uint8_t>> changed;
     for (const InjectPlan& page : plan.pages)
-        changed[page.page] = page.bytes;
+        if (page.page >= 0)   // a whole page (ALASM); a linear text comes as pokes (TASM, MASM, GENS ...)
+            changed[page.page] = page.bytes;
     for (const InjectPlan& page : plan.pages)
         for (const InjectPlan::Poke& poke : page.pokes)
         {

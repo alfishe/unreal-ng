@@ -5,6 +5,7 @@
 
 #include "testdata.h"
 #include "unrealasm/dialect.h"
+#include "unrealasm/registry.h"
 #include "unrealasm/snapshot.h"
 #include "unrealasm/sync/reader.h"
 
@@ -160,4 +161,49 @@ TEST(Snapshot_Test, BrokenFilesSayWhy)
     const Snapshot good = Template("z80");
     EXPECT_FALSE(WriteSnapshot(good, {{9, std::vector<uint8_t>(16384)}}, szx, error));
     EXPECT_NE(error.find("no RAM page 9"), std::string::npos) << error;
+}
+
+TEST(Snapshot_Test, EveryAssemblerTemplateTakesASourceWithoutAnEmulator)
+{
+    // The idle templates of make-template.py (each assembler at its prompt): probed idle, oracle1.asm written into
+    // it by the inject (a page of its own, or the text byte by byte where the assembler keeps it in the 48K memory),
+    // the written snapshot read back with the text there. Each one also assembled the text to sjasmplus' bytes in
+    // unreal-ng (inject-oracle.py <profile> --template)
+    const std::vector<std::pair<std::string, bool>> templates = {   // descriptor, force (no "changed" flag)
+        {"alasm-5.09", false}, {"tasm-4.12", false}, {"xas-7.447", false}, {"storm-1.3", false}, {"masm-1.1", false},
+        {"zasm-3.15", true},   {"gens-4", false},    {"zeus-1983", false}, {"primus-2.9", true}, {"lasergenius-1.04", true},
+        {"prometheus-48", true}, {"pasm-3.0", true},
+    };
+    SourceDocument source = SourceDocument::FromText(ReadTestText("dialects/alasm-backend/oracle1.asm"), "sjasmplus");
+    source.name = "oracle1";
+    for (const auto& [id, force] : templates)
+    {
+        Snapshot snapshot;
+        std::string error;
+        ASSERT_TRUE(ReadSnapshot(ReadTestData("templates/" + id + ".szx"), "szx", snapshot, error)) << id << ": " << error;
+        const sync::SyncDescriptor* descriptor = sync::FindDescriptor(id);
+        ASSERT_NE(descriptor, nullptr) << id;
+        std::string why;
+        EXPECT_TRUE(sync::Idle(sync::ViewOf(snapshot), *descriptor, why)) << id << ": " << why;
+
+        sync::InjectOptions options;
+        options.force = force;
+        std::vector<uint8_t> out;
+        const sync::ProjectInjectPlan plan = sync::InjectProjectIntoSnapshot(snapshot, *descriptor, {{"oracle1", source}}, "INJECTED", options, out);
+        ASSERT_TRUE(plan.ok) << id << ": " << plan.error;
+        Snapshot written;
+        ASSERT_TRUE(ReadSnapshot(out, "szx", written, error)) << id << ": " << error;
+        const sync::SyncText text = sync::ReadText(sync::ViewOf(written), *descriptor);
+        ASSERT_TRUE(text.ok) << id << ": " << text.state;
+        // the text in memory as the assembler's codec reads it (some keep a header of their own there): oracle1's lines
+        const ISourceCodec* codec = CodecRegistry::Builtin().Find(descriptor->codec);
+        ASSERT_NE(codec, nullptr) << id;
+        DecodeOptions decode;
+        decode.subversion = descriptor->version;
+        std::string back = codec->Decode(text.file, decode).document.Text();
+        for (char& c : back)
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        EXPECT_NE(back.find("COUNT"), std::string::npos) << id << ":\n" << back.substr(0, 400);
+        EXPECT_NE(back.find("DJNZ"), std::string::npos) << id;
+    }
 }

@@ -15,6 +15,8 @@ unreal-asm/
   README.md                     this file
   lib/                          modules the scripts import (also usable alone)
     emulator.py                 WebAPI client: own instance, disk swap with TTD recording, keys, screenshots, memory
+    assemblers.py               the part B assemblers as profiles: how each starts until its prompt, how a text there
+                                is assembled and its bytes read (inject-oracle.py, make-template.py)
     zxdisk.py                   TR-DOS images: list a TRD / SCL catalog, extract a file as hobeta, add hobeta files to
                                 a TRD, SCL to TRD, a file as hobeta (also a command line tool)
   emulator/                     the original assembler running in unreal-ng
@@ -30,9 +32,9 @@ unreal-asm/
                                 assembled by it, its bytes compared with sjasmplus' build (part B's oracle); with
                                 --template the source goes into an idle template snapshot by `zxasm inject` and the
                                 snapshot is loaded and assembled (Z1)
-    make-template.py            profile alasm509: the assembler started from its disk and saved at its prompt with no
-                                text as .szx (--also sna,z80), checked idle by `zxasm probe`: the templates of
-                                unreal-asm testdata/templates
+    make-template.py            every inject-oracle profile: the assembler started from its disk or tape and saved at
+                                its prompt as .szx (--also sna,z80), checked idle by `zxasm probe`: the templates of
+                                unreal-asm testdata/templates (inject-oracle.py --template checks each)
   oracles/                      original assemblers built or run on the host
     build-asm80.py              ASM80 / Asm80Win 2.02 (PC cross assembler) from its own C++ source: the same bytes as
                                 asm80win.exe (which also runs under wine: .recipe/assemblers/asm80.md)

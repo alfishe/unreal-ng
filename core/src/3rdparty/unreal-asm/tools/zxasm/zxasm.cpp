@@ -1054,8 +1054,9 @@ int Inject(const Args& args, const std::vector<uint8_t>& bytes, const CatalogHin
         }
         for (size_t k = 0; k < plan.pages.size(); ++k)
             std::cerr << d->id << ": " << plan.texts[k].document.name << ", " << plan.texts[k].document.lines.size() << " line(s), "
-                      << plan.texts[k].bytes.size() << " bytes into page " << plan.pages[k].page
-                      << (plan.pages[k].previous.ok ? " (replaced " + plan.pages[k].previous.name + ")" : std::string())
+                      << plan.texts[k].bytes.size() << " bytes "
+                      << (plan.pages[k].page >= 0 ? "into page " + std::to_string(plan.pages[k].page) : std::string("into its memory"))
+                      << (plan.pages[k].previous.ok && !plan.pages[k].previous.name.empty() ? " (replaced " + plan.pages[k].previous.name + ")" : std::string())
                       << (k == 0 ? " -> " + output : " (INCLUDE " + project[k].name + ")") << "\n";
         return 0;
     }
