@@ -2,7 +2,9 @@
 
 #include "nextsprites.h"
 
+#include <algorithm>
 #include <cstring>
+#include <utility>
 
 #include "nextvideoregs.h"
 
@@ -174,63 +176,41 @@ void NextSprites::Resolve(unsigned s, const Anchor& anchor, Effective& out) cons
     out.fourBit = anchor.h4bit;
 }
 
-void NextSprites::DrawSprite(unsigned number, const Effective& s, unsigned y, const int clip[4], bool overBorder, Pixel* out, bool* occupied,
-                             uint8_t transparentIndex)
+/// The pixel of a sprite pattern: `column` / `row` are the pattern's coordinates after scaling, mirror and rotation are applied here.
+/// Returns false when it is transparent (NR #4B compares the raw pattern byte, or the nibble of a 4-bit pattern)
+bool NextSprites::PatternPixel(const Effective& s, int patternCol, int rowIndex, uint8_t transparentIndex, uint8_t& index) const
 {
-    if (!s.visible)
-        return;
-    const int height = 16 << s.yScale, width = 16 << s.xScale;
-    int dy = static_cast<int>(y) - s.y;
-    if (dy < 0)
-        dy += 512;
-    if (dy >= height)
-        return;
-    if (static_cast<int>(y) < clip[2] || static_cast<int>(y) > clip[3])
-        return;
-    if (!overBorder && y >= 224)
-        return;
-    const int row = dy >> s.yScale;
-    const int rowIndex = s.yMirror ? 15 - row : row;
     const bool columnMirror = s.xMirror ^ s.rotate;
-    for (int col = 0; col < width; col++)
+    int px = columnMirror ? 15 - patternCol : patternCol;
+    int py = rowIndex;
+    if (s.rotate)
+        std::swap(px, py);
+    if (!s.fourBit)
     {
-        const int x = (s.x + col) & 0x1FF;
-        if (x >= static_cast<int>(kGridWidth) || x < clip[0] || x > clip[1])
-            continue;
-        const int patternCol = col >> s.xScale;
-        int px = columnMirror ? 15 - patternCol : patternCol;
-        int py = rowIndex;
-        if (s.rotate)
-            std::swap(px, py);
-        uint8_t index;
-        if (!s.fourBit)
-        {
-            const uint8_t raw = _pattern[(((s.pattern >> 1) << 8) | (py << 4) | px) & (kPatternBytes - 1)];
-            if (raw == transparentIndex)
-                continue;
-            index = static_cast<uint8_t>((((raw >> 4) + s.palette) << 4) | (raw & 0x0F));
-        }
-        else
-        {
-            const uint8_t raw = _pattern[(((s.pattern >> 1) << 8) | ((s.pattern & 1) << 7) | (py << 3) | (px >> 1)) & (kPatternBytes - 1)];
-            const uint8_t nibble = (px & 1) ? (raw & 0x0F) : (raw >> 4);
-            if (nibble == (transparentIndex & 0x0F))
-                continue;
-            index = static_cast<uint8_t>((s.palette << 4) | nibble);
-        }
-        if (occupied[x])
-            _collision = true;
-        occupied[x] = true;
-        out[x].index = index;
-        out[x].sprite = static_cast<uint8_t>(number);
-        out[x].opaque = true;
+        const uint8_t raw = _pattern[(((s.pattern >> 1) << 8) | (py << 4) | px) & (kPatternBytes - 1)];
+        if (raw == transparentIndex)
+            return false;
+        index = static_cast<uint8_t>((((raw >> 4) + s.palette) << 4) | (raw & 0x0F));
+        return true;
     }
+    const uint8_t raw = _pattern[(((s.pattern >> 1) << 8) | ((s.pattern & 1) << 7) | (py << 3) | (px >> 1)) & (kPatternBytes - 1)];
+    const uint8_t nibble = (px & 1) ? (raw & 0x0F) : (raw >> 4);
+    if (nibble == (transparentIndex & 0x0F))
+        return false;
+    index = static_cast<uint8_t>((s.palette << 4) | nibble);
+    return true;
 }
 
-void NextSprites::DrawLine(unsigned y, uint8_t control, const NextVideoRegs& regs, Pixel* out, uint8_t transparentIndex)
+void NextSprites::DrawLine(unsigned y, uint8_t control, const NextVideoRegs& regs, Pixel* out, uint8_t transparentIndex, unsigned lineClocks)
 {
-    if (!(control & 0x01))
+    // sprites.vhd runs whatever NR #15 bit 0 says (the bit only gates the output in zxnext.vhd), so the collision and "too many" flags
+    // are set with the sprites disabled too. A line with no visible sprite costs the engine 129 clocks and sets nothing
+    bool anyVisible = false;
+    for (unsigned i = 0; i < kSprites && !anyVisible; i++)
+        anyVisible = (_attr[i][3] & 0x80) != 0;
+    if (!anyVisible)
         return;
+    const bool enabled = (control & 0x01) != 0;
     const bool overBorder = (control & 0x02) != 0;
     const bool zeroOnTop = (control & 0x40) != 0;
     const bool borderClip = (control & 0x20) != 0;
@@ -273,29 +253,75 @@ void NextSprites::DrawLine(unsigned y, uint8_t control, const NextVideoRegs& reg
             UpdateAnchor(i, anchor);
         }
     }
-    unsigned cycles = 0;
-    for (unsigned i = 0; i < kSprites; i++)
+
+    // The engine, one 28 MHz clock per step (sprites.vhd states S_START, S_QUALIFY, S_PROCESS): it fills the line buffer in index order,
+    // writes every opaque pixel with an x of 0..319 whatever the clip window says (the window and the 224-line limit act at the output),
+    // flags a collision when it writes onto a pixel already there and, when the line period `lineClocks` is used up before it is idle,
+    // flags "too many" and is cut off: what it has not reached is not on the line
+    uint8_t lineIndex[kGridWidth];
+    uint8_t lineSprite[kGridWidth];
+    bool occupied[kGridWidth] = {};
+    unsigned tick = 1;  // S_START
+    bool overtime = false;
+    for (unsigned i = 0; i < kSprites && !overtime; i++)
     {
-        cycles++;
+        tick++;  // S_QUALIFY
         const Effective& e = effective[i];
         if (!e.visible)
             continue;
+        const int height = 16 << e.yScale;
         int dy = static_cast<int>(y) - e.y;
         if (dy < 0)
             dy += 512;
-        if (dy < (16 << e.yScale))
-            cycles += 16u << e.xScale;
+        if (dy >= height)
+            continue;
+        const int rowIndex = e.yMirror ? 15 - (dy >> e.yScale) : (dy >> e.yScale);
+        const int width = 16 << e.xScale;
+        // spr_cur_x_wrap: a position of 320 or more ends the sprite unless it is in the last 16 << scale of the 512 (it wraps to 0)
+        static const unsigned kWrapMask[4] = {0x1F, 0x1E, 0x1C, 0x18};
+        const unsigned wrapMask = kWrapMask[e.xScale];
+        for (int k = 0;; k++)
+        {
+            if (++tick > lineClocks)
+            {
+                overtime = true;
+                break;
+            }
+            const unsigned hc = static_cast<unsigned>(e.x + k) & 0x1FF;
+            uint8_t index;
+            if (hc < kGridWidth && PatternPixel(e, k >> e.xScale, rowIndex, transparentIndex, index))
+            {
+                if (occupied[hc])
+                    _collision = true;
+                if (!zeroOnTop || !occupied[hc])
+                {
+                    lineIndex[hc] = index;
+                    lineSprite[hc] = static_cast<uint8_t>(i);
+                }
+                occupied[hc] = true;
+            }
+            if (k + 1 == width)
+                break;
+            const unsigned next = static_cast<unsigned>(e.x + k + 1) & 0x1FF;
+            if (next >= kGridWidth && (((next >> 4) & wrapMask) != wrapMask))
+                break;
+        }
     }
-    if (cycles > kLineBudget)
+    if (overtime || tick >= lineClocks)  // still busy when the next line starts (the last clock of the line is a busy one too)
         _tooMany = true;
 
-    bool occupied[kGridWidth] = {};
-    if (zeroOnTop)
-        for (int i = kSprites - 1; i >= 0; i--)
-            DrawSprite(i, effective[i], y, clip, overBorder, out, occupied, transparentIndex);
-    else
-        for (unsigned i = 0; i < kSprites; i++)
-            DrawSprite(i, effective[i], y, clip, overBorder, out, occupied, transparentIndex);
+    if (!enabled)
+        return;
+    if (static_cast<int>(y) < clip[2] || static_cast<int>(y) > clip[3] || (!overBorder && y >= 224))
+        return;
+    const int from = std::max(clip[0], 0), to = std::min(clip[1], static_cast<int>(kGridWidth) - 1);
+    for (int x = from; x <= to; x++)
+        if (occupied[x])
+        {
+            out[x].index = lineIndex[x];
+            out[x].sprite = lineSprite[x];
+            out[x].opaque = true;
+        }
 }
 
 void NextSprites::Describe(Info (&out)[kSprites]) const

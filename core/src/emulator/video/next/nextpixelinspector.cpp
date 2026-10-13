@@ -94,25 +94,18 @@ private:
     bool _tileBelow = false;
 };
 
-/// The ULA clip window (NR #1A) as ApplyUlaClip applies it: is this sub-pixel cleared by it
+/// The ULA clip window (NR #1A) as ApplyUlaClip applies it: is this sub-pixel cleared by it (only the paper: the border is never clipped)
 bool Inspector::UlaClipped() const
 {
     const unsigned x1 = Window(2, 0), x2 = Window(2, 1), y1 = Window(2, 2), y2 = Window(2, 3);
     if (x1 == 0 && x2 >= 255 && y1 == 0 && y2 >= 191)
         return false;
     const bool inRows = _y >= kPaperTop && _y < kPaperTop + 192;
-    if (!inRows)
-    {
-        const bool above = _y < kPaperTop;
-        return above ? (y1 > 0) : (y2 < 191 || y1 > y2 || y1 >= 192);
-    }
+    if (!inRows || _sub < kPaperLeft || _sub >= kPaperLeft + 512)
+        return false;
     const unsigned py = _y - kPaperTop;
     if (py < y1 || py > y2)
         return true;
-    if (_sub < kPaperLeft)
-        return x1 > 0;
-    if (_sub >= kPaperLeft + 512)
-        return x2 < 255 || x1 > x2;
     const unsigned px = (_sub - kPaperLeft) / 2;
     return px < x1 || px > x2;
 }
@@ -127,7 +120,8 @@ StateNode Inspector::UlaLayer(Pixel pixel, bool& clipped)
     const uint8_t mask = _segment->ulaNextFormat;
     const bool fullInk = ulaNext && mask == 0xFF;
     const bool inPaper = _y >= kPaperTop && _y < kPaperTop + 192 && _sub >= kPaperLeft && _sub < kPaperLeft + 512;
-    const unsigned timexMode = _segment->portFf & 7;
+    const unsigned timexMode = Shadow() ? 0 : (_segment->portFf & 7);  // no Timex modes on the shadow screen
+    const bool hiRes = (timexMode & 4) != 0;
     if (Nr(0x68) & 0x80)
     {
         source["kind"] = "disabled";
@@ -137,14 +131,14 @@ StateNode Inspector::UlaLayer(Pixel pixel, bool& clipped)
     if (!inPaper)
     {
         source["kind"] = "border";
-        const unsigned colour = timexMode == 6 ? 7 - ((_segment->portFf >> 3) & 7) : _segment->border;
+        const unsigned colour = hiRes ? 7 - ((_segment->portFf >> 3) & 7) : _segment->border;
         source["colour"] = int(colour);
-        source["palette_index"] = int((ulaNext ? 128 : 16) + colour);
+        source["palette_index"] = int(ulaNext ? 128 + colour : 16 + (hiRes ? 8 : 0) + colour);
         source["palette"] = int(palette);
         if (fullInk)
             source["note"] = "ULANext full-ink mode: paper and border come from the fallback colour";
-        else if (timexMode == 6)
-            source["note"] = "Timex hi-res: the border takes the paper colour of port #FF";
+        else if (hiRes)
+            source["note"] = "Timex hi-res: the border takes the (bright) paper colour of port #FF";
         else
             source["note"] = "port #FE bits 2:0";
         return source;
@@ -153,53 +147,38 @@ StateNode Inspector::UlaLayer(Pixel pixel, bool& clipped)
     if (lores)
     {
         const unsigned px = (_sub - kPaperLeft) / 2;
-        const unsigned sy = (py + Nr(0x33)) % 192;
-        const unsigned row = sy / 2;
-        const unsigned scrollX = Nr(0x32);
-        const unsigned column = ((px + scrollX) & 255) / 2;
-        const unsigned address = (row < 48 ? 0x0000 : 0x2000) + (row % 48) * 128 + column;
-        const unsigned offset = Shadow() ? (address & 0x1FFF) : address;
+        // lores.vhd, always bank 5: y_pre = vc + NR #33, +1 on y(7:6) from 192 up, +1 on addr(13:11) from y = 96
+        const unsigned yPre = py + Nr(0x33);
+        const unsigned yy = (yPre >= 192) ? (((((yPre >> 6) & 3) + 1) & 3) << 6) | (yPre & 0x3F) : (yPre & 0xFF);
+        const unsigned rowAddress = (yy >> 1) << 7;
+        const unsigned high = (yy >= 96) ? ((((rowAddress >> 11) & 7) + 1) & 7) : ((rowAddress >> 11) & 7);
+        const unsigned column = ((px + Nr(0x32)) & 255) >> 1;
+        const unsigned offset = (((high << 11) | (rowAddress & 0x7FF)) | column) & 0x3FFF;
         bool inRam;
-        const size_t base = static_cast<size_t>(Shadow() ? 7 : 5) * 0x4000;
+        const size_t base = static_cast<size_t>(5) * 0x4000;
         const uint8_t byte = Ram(base + offset, inRam);
         source["kind"] = "lores";
-        source["ram_page"] = Shadow() ? 7 : 5;
+        source["ram_page"] = 5;
         source["offset"] = Hex(offset, 4);
         source["byte"] = Hex(byte, 2);
         source["palette_index"] = int((byte + ((Nr(0x6A) & 0x0F) << 4)) & 0xFF);
         source["palette"] = int(palette);
         return source;
     }
-    const unsigned sy = (py + Nr(0x27)) % 192;
-    const unsigned scrollX = Nr(0x26);
-    const unsigned bitmapRow = ((sy & 0xC0) << 5) | ((sy & 7) << 8) | ((sy & 0x38) << 2);
-    const unsigned attrRow = 0x1800 + (sy >> 3) * 32;
     const size_t base = static_cast<size_t>(Shadow() ? 7 : 5) * 0x4000;
     bool inRam;
-    unsigned bitmapOffset, attrOffset;
-    unsigned bit;
+    const NextVideoRenderer::UlaFetch fetch = NextVideoRenderer::UlaFetchAt(_segment->portFf, Shadow(), Nr(0x26), Nr(0x27), (Nr(0x68) & 0x04) != 0, py, _sub - kPaperLeft);
+    const unsigned bitmapOffset = fetch.bitmapOffset;
+    const unsigned bit = fetch.bit;
+    const unsigned attrOffset = fetch.synthesised ? 0xFFFF : fetch.attrOffset;  // hi-res: synthesised from port #FF, no byte
     uint8_t attr;
-    if (timexMode == 6)
+    if (fetch.synthesised)
     {
-        const unsigned s = _sub - kPaperLeft;  // 0-511
-        const unsigned xb = s / 16, half = (s / 8) & 1;
-        bit = s & 7;
-        bitmapOffset = half * 0x2000 + bitmapRow + ((xb + (scrollX >> 3)) & 31);
         const unsigned ink = (_segment->portFf >> 3) & 7;
         attr = static_cast<uint8_t>(0x40 | ((7 - ink) << 3) | ink);
-        attrOffset = 0xFFFF;  // synthesised from port #FF, no byte
     }
     else
-    {
-        const unsigned px = (_sub - kPaperLeft) / 2;
-        const unsigned sx = (px + scrollX) & 255;
-        const unsigned col = sx >> 3;
-        bit = sx & 7;
-        const unsigned bitmapBase = (timexMode & 1) ? 0x2000 : 0;
-        bitmapOffset = (timexMode == 2 ? 0 : bitmapBase) + bitmapRow + col;
-        attrOffset = timexMode == 2 ? 0x2000 + bitmapRow + col : bitmapBase + attrRow + col;
         attr = Ram(base + attrOffset, inRam);
-    }
     const uint8_t byte = Ram(base + bitmapOffset, inRam);
     const bool ink = ((byte >> (7 - bit)) & 1) != 0;
     // the palette index as UlaLine's index() decides it
@@ -223,7 +202,7 @@ StateNode Inspector::UlaLayer(Pixel pixel, bool& clipped)
     }
     else
         index = inkPixel ? static_cast<int>((attr & 7) + 8 * bright) : static_cast<int>(16 + ((attr >> 3) & 7) + 8 * bright);
-    source["kind"] = timexMode == 6 ? "paper_hires" : (timexMode == 2 ? "paper_hicolour" : "paper");
+    source["kind"] = hiRes ? "paper_hires" : ((timexMode & 2) ? "paper_hicolour" : "paper");
     source["ram_page"] = Shadow() ? 7 : 5;
     source["bitmap_offset"] = Hex(bitmapOffset, 4);
     source["bitmap_byte"] = Hex(byte, 2);
@@ -287,7 +266,10 @@ StateNode Inspector::Layer2Layer(Pixel pixel, bool& clipped)
             source["kind"] = "clipped";
             return source;
         }
-        const unsigned sy = (py + scrollY) % 192, sx = (px + scrollX) & 255;
+        // layer2.vhd: y(7:6) = y_pre(7:6), + 1 once y_pre reaches 192 (the rows 192-254 follow the 192 rows: not a modulo)
+        const unsigned yPre = py + scrollY;
+        const unsigned yHigh = ((yPre & 0x100) == 0 && ((yPre >> 6) & 3) != 3) ? ((yPre >> 6) & 3) : (((yPre >> 6) & 3) + 1) & 3;
+        const unsigned sy = (yHigh << 6) | (yPre & 0x3F), sx = (px + scrollX) & 255;
         address = static_cast<long long>(sy) * 256 + sx;
     }
     else if (resolution == 1)
@@ -299,7 +281,7 @@ StateNode Inspector::Layer2Layer(Pixel pixel, bool& clipped)
             source["kind"] = "clipped";
             return source;
         }
-        const unsigned sy = (_y + scrollY) & 255, sx = (px + scrollX) % 320;
+        const unsigned sy = (_y + scrollY) & 255, sx = NextVideoRenderer::Layer2WideColumn(px, scrollX);
         address = static_cast<long long>(sx) * 256 + sy;
     }
     else
@@ -310,8 +292,8 @@ StateNode Inspector::Layer2Layer(Pixel pixel, bool& clipped)
             source["kind"] = "clipped";
             return source;
         }
-        const unsigned sy = (_y + scrollY) & 255, sx = (_sub + scrollX * 2) % 640;
-        address = static_cast<long long>(sx / 2) * 256 + sy;
+        const unsigned sy = (_y + scrollY) & 255, sx = NextVideoRenderer::Layer2WideColumn(_sub >> 1, scrollX);
+        address = static_cast<long long>(sx) * 256 + sy;
     }
     bool inRam;
     const uint8_t byte = Ram(static_cast<size_t>(bank) * 0x4000 + static_cast<size_t>(address), inRam);
@@ -323,9 +305,8 @@ StateNode Inspector::Layer2Layer(Pixel pixel, bool& clipped)
     source["byte"] = Hex(byte, 2);
     if (resolution == 2)
     {
-        const unsigned sx = (_sub + scrollX * 2) % 640;
-        const unsigned nibble = (sx & 1) ? (byte & 0x0F) : (byte >> 4);
-        source["nibble"] = (sx & 1) ? "low" : "high";
+        const unsigned nibble = (_sub & 1) ? (byte & 0x0F) : (byte >> 4);
+        source["nibble"] = (_sub & 1) ? "low" : "high";
         index = static_cast<int>(((offset & 0xF0) | nibble) & 0xFF);
     }
     else

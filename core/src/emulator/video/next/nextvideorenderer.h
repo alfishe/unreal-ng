@@ -29,6 +29,7 @@ struct NextVideoInputs
     bool shadowScreen = false;            ///< the ULA reads bank 7 instead of 5 (#7FFD bit 3 / NR #69 bit 6)
     bool layer2Enable = false;            ///< port #123B bit 1 / NR #69 bit 7
     bool flash = false;                   ///< the FLASH attribute phase
+    unsigned lineClocks = 1792;           ///< the line period in 28 MHz clocks (4 per 7 MHz pixel: 1792 for 448 pixels, 1824 for 456): the sprite engine's time
     /// When non-null RenderLine also stores the four layer rows, the winner and the sprite number of each pixel here
     /// (design-layer-capture.md); null: nothing is recorded and the line is drawn as before
     const NextLayer::LineSink* layerOut = nullptr;
@@ -51,6 +52,24 @@ public:
 
     /// A 9-bit colour (RRRGGGBBb) as RGBA bytes
     static uint32_t Rgba(uint16_t colour9);
+
+    /// Where the ULA's paper sub-pixel `sub` (0..511, 14 MHz) of paper row `py` (0..191) takes its bitmap bit and its attribute from
+    /// (zxula.vhd: the screen mode of port #FF bits 2:0 - 000 while the shadow screen is shown - the Y scroll NR #27, the X scroll NR #26
+    /// and the half-pixel fine scroll NR #68 bit 2). Offsets are inside the 16K page of the screen (bank 5, or 7 for the shadow screen)
+    struct UlaFetch
+    {
+        unsigned mode = 0;          ///< the screen mode in force (port #FF bits 2:0, 0 for the shadow screen)
+        unsigned bitmapOffset = 0;  ///< the byte holding the pixel
+        unsigned bit = 0;           ///< its bit number counted from the left (0 = bit 7)
+        unsigned attrOffset = 0;    ///< the attribute byte (the second bitmap byte of the hi-res modes 100 / 101 / 110 / 111 for the odd bytes)
+        bool synthesised = false;   ///< hi-res: no attribute byte, it is bright | paper (7 - ink) << 3 | ink of port #FF bits 5:3
+    };
+    static UlaFetch UlaFetchAt(unsigned portFf, bool shadowScreen, unsigned scrollX, unsigned scrollY, bool fineScroll, unsigned py, unsigned sub);
+
+    /// layer2.vhd for the 320 x 256 and 640 x 256 modes: the column (0..511, the address's x field) the pixel at 320-grid position `hc`
+    /// (0..319) reads with the 9-bit scroll `scrollX` (NR #71 bit 0 : NR #16). Below 320 it is the plain sum, from 320 on the VHDL's
+    /// +3 on bits 8:6 (a modulo 320 as long as hc + scroll < 640; a scroll above 319 reads the columns 320..510, the banks after the bitmap)
+    static unsigned Layer2WideColumn(unsigned hc, unsigned scrollX);
 
 private:
     using Pixel = NextLayer::Pixel;

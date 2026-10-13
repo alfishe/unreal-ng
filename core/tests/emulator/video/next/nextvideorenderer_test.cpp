@@ -104,7 +104,7 @@ TEST_F(NextVideoRenderer_Test, TimexHiColourAndHiRes)
     EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 2), Pal(0, 16 + 1));
 
     // hi-res: 512 pixels, screen 0 then screen 1 byte per column; ink = bits 5:3 (here 5), paper 7 - ink, both bright (the attribute
-    // is %01010101: LayersMixingHiRes.txt) - and the border is the paper colour
+    // is %01010101: zxula.vhd border_clr_tmx = "01" & not ink & ink) - and the border is the bright paper colour
     _in.portFf = 6 | (5 << 3);
     Page(5)[0] = 0x80;       // pixel 0
     Page(5)[0x2000] = 0x01;  // pixel 15
@@ -113,7 +113,7 @@ TEST_F(NextVideoRenderer_Test, TimexHiColourAndHiRes)
     EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 1), Pal(0, 16 + 2 + 8));
     EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 15), Pal(0, 5 + 8));
     Render(0);
-    EXPECT_EQ(Px(0), Pal(0, 16 + 2)) << "the border of hi-res is the paper colour without bright";
+    EXPECT_EQ(Px(0), Pal(0, 16 + 2 + 8)) << "the border of hi-res is the paper colour with the bright bit (border_clr_tmx = 01 PPP III)";
 }
 
 TEST_F(NextVideoRenderer_Test, UlaNextTakesInkAndPaperFromTheMask)
@@ -558,7 +558,8 @@ protected:
     }
 };
 
-TEST_F(NextCompose_Test, UlaClipWindowMakesWhatItExcludesTransparentIncludingTheBorderBesideIt)
+// zxula.vhd: o_ula_clipped = '0' when the pixel is inside the window "or border_active = '1'": the border is never clipped
+TEST_F(NextCompose_Test, UlaClipWindowMakesWhatItExcludesOfThePaperTransparentAndLeavesTheBorder)
 {
     _in.nr[0x4A] = 0x1C;  // green fallback
     _in.border = 2;
@@ -571,8 +572,17 @@ TEST_F(NextCompose_Test, UlaClipWindowMakesWhatItExcludesTransparentIncludingThe
     const uint32_t fallback = NextVideoRenderer::Rgba(static_cast<uint16_t>((0x1C << 1) | 0));
     EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 2 * 50), fallback) << "left of the window: transparent";
     EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 2 * 150), Pal(0, 16)) << "inside: the paper (black, the attribute is 0)";
-    EXPECT_EQ(Px(10), fallback) << "the left border goes with the clipped left side";
-    EXPECT_EQ(Px(630), fallback) << "and the right one";
+    EXPECT_EQ(Px(10), Pal(0, 16 + 2)) << "the left border stays: it is never clipped";
+    EXPECT_EQ(Px(630), Pal(0, 16 + 2)) << "and the right one";
+    Render(5);
+    EXPECT_EQ(Px(300), Pal(0, 16 + 2)) << "and the rows above the paper (a window starting at row 0 or not)";
+    // a window that leaves out a row: the paper row is transparent, the border beside it is not
+    _regs.WriteClipControl(0x02);
+    for (uint8_t v : {uint8_t(0), uint8_t(255), uint8_t(20), uint8_t(191)})
+        _regs.WriteClip(2, v);
+    Render(NextVideoRenderer::kPaperTop + 3);
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 100), fallback);
+    EXPECT_EQ(Px(10), Pal(0, 16 + 2));
 }
 
 TEST_F(NextCompose_Test, StencilAndsTheUlaAndTheTilemapChannels)
@@ -614,6 +624,350 @@ TEST_F(NextCompose_Test, AdditiveBlendMixesLayer2WithTheUlaAndClamps)
     const uint32_t want = NextVideoRenderer::Rgba(static_cast<uint16_t>((expected << 6) | (std::min(7u, ((ula >> 3) & 7u) + ((l2 >> 3) & 7u)) << 3) |
                                                   (std::min(3u, ((ula >> 1) & 3u) + ((l2 >> 1) & 3u)) << 1) | 0));
     EXPECT_EQ(px & 0x0000FFFF, want & 0x0000FFFF) << "red and green channels add";
+}
+
+// endregion
+
+// region <The VHDL's details: Timex modes, scrolls, Layer 2 areas, tilemap 80 columns, the sprite engine's flags (2026-10-12)>
+
+class NextVhdlDetails_Test : public NextCompose_Test
+{
+protected:
+    /// The Layer 2 palette entry `index` set to a colour no other layer has here, returned as the painted pixel
+    uint32_t Layer2Colour(unsigned index, uint8_t rrrgggbb = 0x24)
+    {
+        WritePalette(0x10, index, rrrgggbb);
+        return Pal(1, index);
+    }
+    void ClipLayer2(uint8_t x1, uint8_t x2, uint8_t y1, uint8_t y2)
+    {
+        for (uint8_t v : {x1, x2, y1, y2})
+            _regs.WriteClip(0, v);
+    }
+};
+
+// zxula.vhd: the bitmap fetch is mode(0) & addr_p, the attribute fetch is '1' & addr_p when mode(1) (hi-colour) and mode(0) & "110" &
+// addr_a otherwise; hi-res (mode(2)) loads that "attribute" byte as the second 8 pixels of the column
+TEST_F(NextVhdlDetails_Test, TimexModesFetchWhatTheVhdlAddressesSay)
+{
+    const unsigned left = NextVideoRenderer::kPaperLeft;
+    // mode 3: hi-colour with screen 1: the bitmap AND the attribute are both read at #2000 (the same byte)
+    Page(5)[0] = 0x80;
+    Page(5)[0x1800] = 0x07;
+    Page(5)[0x2000] = 0x4A;  // bitmap 0100 1010: pixel 1 set; attribute: bright, paper 1, ink 2
+    _in.portFf = 3;
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(left), Pal(0, 16 + 1 + 8)) << "pixel 0 of byte #4A is paper (bright blue)";
+    EXPECT_EQ(Px(left + 2), Pal(0, 2 + 8)) << "pixel 1 is ink (bright red): the attribute comes from the bitmap's own offset";
+
+    // mode 4: the second byte of the column is read from the attribute area (screen 0)
+    Page(5)[0x1800] = 0xA5;     // 1010 0101
+    _in.portFf = 4 | (5 << 3);  // ink 5, paper 2
+    Render(NextVideoRenderer::kPaperTop);
+    const uint32_t ink = Pal(0, 5 + 8), paper = Pal(0, 16 + 2 + 8);
+    EXPECT_EQ(Px(left), ink) << "bitmap byte #80: pixel 0";
+    EXPECT_EQ(Px(left + 1), paper);
+    EXPECT_EQ(Px(left + 8), ink) << "the attribute byte #A5 as pixels: bit 7";
+    EXPECT_EQ(Px(left + 9), paper);
+    EXPECT_EQ(Px(left + 10), ink);
+
+    // mode 5: bitmap from screen 1, the "attribute" from screen 1's attribute area (#3800)
+    Page(5)[0x2000] = 0x80;
+    Page(5)[0x3800] = 0x01;
+    _in.portFf = 5 | (5 << 3);
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(left), ink);
+    EXPECT_EQ(Px(left + 8), paper);
+    EXPECT_EQ(Px(left + 15), ink);
+
+    // mode 7: both bytes from screen 1's bitmap, the same byte twice
+    _in.portFf = 7 | (5 << 3);
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(left), ink);
+    EXPECT_EQ(Px(left + 8), ink) << "#80 again";
+    EXPECT_EQ(Px(left + 9), paper);
+
+    // the shadow screen has no Timex modes (an 8K BRAM): a hi-res port #FF draws the standard screen of bank 7
+    Page(7)[0] = 0x80;
+    Page(7)[0x1800] = 0x07;
+    _in.shadowScreen = true;
+    _in.portFf = 6 | (5 << 3);
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(left), Pal(0, 7)) << "pixel 0: ink 7";
+    EXPECT_EQ(Px(left + 2), Pal(0, 16)) << "a pixel is two sub-pixels again";
+    Render(0);
+    EXPECT_EQ(Px(0), Pal(0, 16)) << "the border is the port #FE colour (0), not hi-res's paper";
+}
+
+// ULANext in hi-res: the attribute is the same synthesised byte, the border takes 128 + paper
+TEST_F(NextVhdlDetails_Test, HiResWithUlaNextTakesTheIndexesFromTheSynthesisedAttribute)
+{
+    _regs.WritePaletteControl(0x01);
+    _regs.WriteUlaNextFormat(0x07);
+    _in.portFf = 6 | (2 << 3);  // ink 2, paper 5: attribute 0x40 | 5 << 3 | 2
+    Page(5)[0] = 0x80;
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Pal(0, 2)) << "ink: attribute & 7";
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 1), Pal(0, 128 + (0x6A >> 3))) << "paper: 128 + attribute >> 3";
+    Render(0);
+    EXPECT_EQ(Px(0), Pal(0, 128 + 5)) << "the border: 128 + paper";
+}
+
+// zxula.vhd px = fine & (hc(7:3) + scroll_x(7:3)) & scroll_x(2:0): the shift register is moved by 2 * scroll(2:0) + fine bits
+TEST_F(NextVhdlDetails_Test, UlaFineScrollMovesByHalfAPixelAndHiResByScrollTimesTwo)
+{
+    const unsigned left = NextVideoRenderer::kPaperLeft;
+    Page(5)[0] = 0x80;
+    Page(5)[0x1800] = 0x07;
+    _in.nr[0x68] = 0x04;
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(left), Pal(0, 7)) << "sub-pixel 0 shows pixel 0";
+    EXPECT_EQ(Px(left + 1), Pal(0, 16)) << "and sub-pixel 1 already pixel 1: the picture moved left by half a pixel";
+    EXPECT_EQ(Px(left + 511), Pal(0, 7)) << "the last sub-pixel is pixel 256 = column 0 again";
+    _in.nr[0x68] = 0;
+    // hi-res: pixel 2 of the stream set; scroll 1 moves it to sub-pixel 0, the fine scroll adds one more
+    Page(5)[0] = 0x20;
+    _in.portFf = 6 | (5 << 3);
+    _in.nr[0x26] = 1;
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(left), Pal(0, 5 + 8));
+    EXPECT_EQ(Px(left + 1), Pal(0, 16 + 2 + 8));
+    _in.nr[0x68] = 0x04;
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(left), Pal(0, 16 + 2 + 8));
+    EXPECT_EQ(Px(left + 511), Pal(0, 5 + 8)) << "moved by one more clock: it wrapped to the last sub-pixel";
+}
+
+// zxula.vhd py: 192-255 fold to 0-63, 256-383 to 64-191, 384-446 to 0-62: always scroll + line modulo 192
+TEST_F(NextVhdlDetails_Test, UlaYScrollAbove191IsAModulo192)
+{
+    Page(5)[0x40] = 0x80;  // row 16 of the bitmap
+    Page(5)[0x1840] = 0x07;
+    _in.nr[0x27] = 250;
+    Render(NextVideoRenderer::kPaperTop + 150);  // 150 + 250 = 400: 400 - 384 = 16
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Pal(0, 7));
+    Render(NextVideoRenderer::kPaperTop + 191);  // 441 - 384 = 57: the last scroll value's folded row
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Pal(0, 16)) << "row 57 is empty";
+}
+
+// lores.vhd reads bank 5 whatever the shadow screen bit says, and its Y has no modulo: y(7:6) + 1 from 192, rows 192-254 follow
+TEST_F(NextVhdlDetails_Test, LoResReadsBank5AndItsYScrollRunsOnPast191)
+{
+    _in.nr[0x15] = 0x80;
+    Page(5)[5] = 0x33;
+    Page(7)[5] = 0x77;
+    _in.shadowScreen = true;
+    Render(NextVideoRenderer::kPaperTop);
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 5 * 4), Pal(0, 0x33)) << "bank 5 with the shadow screen on";
+    _in.shadowScreen = false;
+    _in.nr[0x33] = 250;
+    Page(5)[8 * 128] = 0x44;  // what a modulo 192 would show (y = 400 % 192 = 16, row 8)
+    Page(5)[0x3C00] = 0x55;   // y_pre 400: y(7:6) = 10 + 1, y = 208, row 104, addr 13:11 = 6 + 1
+    Render(NextVideoRenderer::kPaperTop + 150);
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Pal(0, 0x55));
+}
+
+// layer2.vhd: hc_valid / vc_valid decide the pixel, the clip is hc_eff >= x1 and <= x2 and vc_eff >= y1 and <= y2 in 640 mode as well
+TEST_F(NextVhdlDetails_Test, Layer2In640ModeFollowsTheClipInTheLowerScreen)
+{
+    _in.layer2Enable = true;
+    _in.nr[0x70] = 0x20;  // 640 x 256 x 4
+    const uint32_t colour = Layer2Colour(0x0A);
+    Page(8)[5 * 256 + 200] = 0xA3;  // x = 10, 11 at y = 200
+    Render(200);
+    EXPECT_NE(Px(10), colour) << "the default clip window ends at row 191";
+    ClipLayer2(0, 159, 0, 255);
+    Render(200);
+    EXPECT_EQ(Px(10), colour) << "opened to 255: row 200 shows";
+    ClipLayer2(0, 159, 0, 199);
+    Render(200);
+    EXPECT_NE(Px(10), colour) << "y2 = 199 excludes it again, y2 is inclusive below";
+    ClipLayer2(0, 159, 200, 255);
+    Render(200);
+    EXPECT_EQ(Px(10), colour);
+    ClipLayer2(3, 2, 0, 255);  // x1 > x2: nothing
+    Render(200);
+    EXPECT_NE(Px(10), colour);
+}
+
+// the 256 x 192 mode: hc_valid needs hc_eff(8) = 0, vc_valid vc_eff < 192: no pixel in the border, whatever the window
+TEST_F(NextVhdlDetails_Test, Layer2In256x192NeverDrawsInTheBorderAndThe320ModeDoes)
+{
+    _in.layer2Enable = true;
+    const uint32_t colour = Layer2Colour(0x55);
+    for (unsigned i = 0; i < 3 * 0x4000; i++)
+        Page(8)[i] = 0x55;
+    ClipLayer2(0, 255, 0, 255);
+    Render(NextVideoRenderer::kPaperTop - 1);
+    EXPECT_NE(Px(NextVideoRenderer::kPaperLeft + 10), colour) << "above the paper";
+    Render(NextVideoRenderer::kPaperTop + 192);
+    EXPECT_NE(Px(NextVideoRenderer::kPaperLeft + 10), colour) << "below the paper";
+    Render(NextVideoRenderer::kPaperTop + 10);
+    EXPECT_NE(Px(NextVideoRenderer::kPaperLeft - 2), colour) << "left of the paper";
+    EXPECT_NE(Px(NextVideoRenderer::kPaperLeft + 512), colour) << "right of the paper";
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 10), colour);
+    // 320 x 256: the border is part of the picture (the default clip window is 0-255 x 0-191, widen it)
+    _in.nr[0x70] = 0x10;
+    for (unsigned i = 0; i < 5 * 0x4000; i++)
+        Page(8)[i] = 0x55;
+    ClipLayer2(0, 159, 0, 255);
+    Render(3);
+    EXPECT_EQ(Px(10), colour);
+    Render(255);
+    EXPECT_EQ(Px(NextVideoRenderer::kWidth - 1), colour);
+}
+
+// layer2.vhd x(8:6) + 3 from 320 on: a scroll of 400 at hc 300 (x_pre 700 = 0x2BC) reads column 380, not 60
+TEST_F(NextVhdlDetails_Test, Layer2In320ModeScrollAbove319ReadsTheColumnsAfterTheBitmap)
+{
+    _in.layer2Enable = true;
+    _in.nr[0x70] = 0x10;
+    const uint32_t colour = Layer2Colour(0x66);
+    Layer2Colour(0x77, 0x1C);
+    ClipLayer2(0, 159, 0, 255);
+    _in.nr[0x16] = 400 & 0xFF;
+    _in.nr[0x71] = 1;
+    Page(8)[380 * 256 + 7] = 0x66;
+    Page(8)[60 * 256 + 7] = 0x77;  // what a modulo 320 would show
+    Render(7);
+    EXPECT_EQ(Px(300 * 2), colour);
+    // a scroll in the valid range stays a modulo 320: 100 + 250 = 350 -> column 30
+    _in.nr[0x16] = 100;
+    _in.nr[0x71] = 0;
+    Page(8)[30 * 256 + 7] = 0x66;
+    Render(7);
+    EXPECT_EQ(Px(250 * 2), colour);
+}
+
+// tilemap.vhd: 80 columns count in 14 MHz pixels (hcount(10:1)), so a scroll unit is half a 7 MHz pixel, and it wraps at 640
+TEST_F(NextTilemap_Test, EightyColumnScrollIsInHalfPixelsAndWrapsAt640)
+{
+    _in.nr[0x6B] = 0xC0;  // on, 80 columns
+    Map()[0] = 1;         // column 0: tile 1
+    Defs()[32] = 0x12;    // row 0: pixel 0 = 1, pixel 1 = 2
+    Render(0);
+    EXPECT_EQ(Px(0), Pal(3, 1)) << "a tile pixel is one sub-pixel in 80 columns";
+    EXPECT_EQ(Px(1), Pal(3, 2));
+    _in.nr[0x30] = 1;
+    Render(0);
+    EXPECT_EQ(Px(0), Pal(3, 2)) << "scroll 1 = one 14 MHz pixel";
+    // scroll 639: the last pixel of column 79 comes first
+    Map()[79 * 2] = 2;
+    Defs()[64 + 3] = 0x0C;  // tile 2, row 0, pixels 6 / 7 = 0 / 12
+    _in.nr[0x2F] = 2;
+    _in.nr[0x30] = 0x7F;
+    Render(0);
+    EXPECT_EQ(Px(0), Pal(3, 12));
+    // 40 columns: one unit is a whole 7 MHz pixel (two sub-pixels), wrapping at 320
+    _in.nr[0x6B] = 0x80;
+    _in.nr[0x2F] = 0;
+    _in.nr[0x30] = 1;
+    Render(0);
+    EXPECT_EQ(Px(0), Pal(3, 2));
+    EXPECT_EQ(Px(1), Pal(3, 2));
+}
+
+// sprites.vhd: the engine writes the whole line buffer (x 0-319) and the collision compares there; the clip window and the 224-line limit
+// are applied where the buffer is read, so overlaps outside them still flag; and NR #15 bit 0 only gates the output
+TEST_F(NextSprites_Test, CollisionIgnoresTheClipWindowTheLowerBorderAndTheEnableBit)
+{
+    _sprites.WriteSlotSelect(0);
+    _sprites.WritePattern(1);
+    Sprite(0, 100, 230, 0);
+    Sprite(1, 100, 230, 0);
+    Render(230);  // the paper ends at 224: invisible without the over-border bit, but the engine ran
+    EXPECT_EQ(_sprites.ReadStatus(), 1);
+    EXPECT_NE(Px(200), SpritePal(1)) << "and nothing is drawn there";
+    Sprite(0, 100, 50, 0);
+    Sprite(1, 100, 50, 0);
+    _regs.WriteClip(1, 0);  // sprite clip: a window of x 0-10, rows 0-191 (paper coordinates)
+    _regs.WriteClip(1, 10);
+    _regs.WriteClip(1, 0);
+    _regs.WriteClip(1, 191);
+    Render(50);
+    EXPECT_EQ(_sprites.ReadStatus(), 1) << "overlap outside the window";
+    EXPECT_NE(Px(200), SpritePal(1));
+    _in.nr[0x15] = 0x00;  // sprites off
+    Render(50);
+    EXPECT_EQ(_sprites.ReadStatus(), 1) << "the engine runs with the sprites off";
+    // a lone pair of sprites at x >= 320 never writes the buffer
+    Sprite(0, 330, 50, 0);
+    Sprite(1, 335, 50, 0);
+    Render(50);
+    EXPECT_EQ(_sprites.ReadStatus(), 0);
+}
+
+// sprites.vhd: a sprite continues past 320 only from x = 496 (unscaled), and then wraps to 0 (the 512 space)
+TEST_F(NextSprites_Test, SpritesWrapAroundThe512Space)
+{
+    _in.nr[0x15] = 0x03;  // on, over the border, no clip: the whole 320 x 256 grid
+    _sprites.WriteSlotSelect(0);
+    for (int i = 0; i < 256; i++)
+        _sprites.WritePattern(9);
+    Sprite(0, 500, 50, 0);  // 500 + 12 = 512 = 0
+    Render(50);
+    EXPECT_EQ(Px(0), SpritePal(9)) << "pixel 12 of the sprite lands on x = 0";
+    EXPECT_EQ(Px(7), SpritePal(9)) << "up to x = 3";
+    EXPECT_NE(Px(8), SpritePal(9));
+    Sprite(0, 490, 50, 0);  // 480-494 stop at once: nothing wraps
+    Render(50);
+    EXPECT_NE(Px(0), SpritePal(9));
+    // a vertical wrap: y = 500 shows its rows 12-15 on the lines 0..3 (the 9th Y bit is in the fifth attribute byte)
+    Sprite(0, 100, 500, 0, 0, 0, true);
+    Render(2);
+    EXPECT_EQ(Px(200 + 10), SpritePal(9));
+    Render(4 + 16);
+    EXPECT_NE(Px(200 + 10), SpritePal(9));
+}
+
+// sprites.vhd: 1 clock S_START + 1 per sprite + 1 per pixel of a sprite on the line; "too many" when the line period is used up
+// (>= 4 * 448 = 1792, or 1824 on the 128K timing), and the pixels after the last clock are not drawn
+TEST_F(NextSprites_Test, TooManyFlagAndTheCutOffFollowTheLineClocks)
+{
+    _sprites.WriteSlotSelect(0);
+    for (int i = 0; i < 16; i++)
+        _sprites.WritePattern(5);
+    // 103 sprites of 16 pixels: 129 + 103 * 16 = 1777 clocks
+    for (unsigned i = 0; i < 103; i++)
+        Sprite(i, 40, 50, 0);
+    Render(50);
+    EXPECT_EQ(_sprites.ReadStatus(), 1) << "1777 < 1792: no \"too many\" (the stacked sprites collide)";
+    // the 104th, the last in the order: 1793; its last pixel is the clock 1793 (> 1792) and is lost
+    Sprite(127, 100, 50, 0);
+    Render(50);
+    EXPECT_EQ(Px(2 * 114), SpritePal(5)) << "pixel 14 is the clock 1792";
+    EXPECT_NE(Px(2 * 115), SpritePal(5)) << "pixel 15 would be the clock 1793";
+    EXPECT_EQ(_sprites.ReadStatus(), 3);
+    // 128K timing: 1824 clocks
+    _in.lineClocks = 1824;
+    Render(50);
+    EXPECT_EQ(Px(2 * 115), SpritePal(5));
+    EXPECT_EQ(_sprites.ReadStatus(), 1);
+    // 106 sprites: 129 + 106 * 16 = 1825 >= 1824
+    Sprite(125, 200, 50, 0);
+    Sprite(126, 200, 50, 0);
+    Render(50);
+    EXPECT_EQ(_sprites.ReadStatus(), 3);
+}
+
+// zxnext.vhd: when the ULA is the border and the tilemap pixel is transparent a sprite is not hidden by the ULA in the orders LUS / USL / ULS
+// (the weird border exception); in the paper the ULA wins
+TEST_F(NextSprites_Test, SpriteInTheBorderShowsThroughTheUlaInTheOrdersWithTheUlaBeforeIt)
+{
+    _in.nr[0x68] = 0x00;
+    _in.nr[0x15] = 0x03 | (3 << 2);  // sprites on, over the border, LUS
+    _in.border = 2;
+    _sprites.WriteSlotSelect(0);
+    _sprites.WritePattern(5);
+    Sprite(0, 10, 10, 0);   // the grid border (paper starts at 32)
+    Sprite(1, 100, 80, 0);  // in the paper
+    Render(10);
+    EXPECT_EQ(Px(20), SpritePal(5)) << "border: the sprite shows";
+    Render(80);
+    EXPECT_NE(Px(200), SpritePal(5)) << "paper: the opaque ULA is above the sprite in LUS";
+    _in.nr[0x15] = 0x03 | (0 << 2);  // SLU
+    Render(80);
+    EXPECT_EQ(Px(200), SpritePal(5));
 }
 
 // endregion
