@@ -51,6 +51,9 @@
 ///   bool     sleepAllowed() const;     // no NMI, no INT the CPU could take, no DMA, reset, clock change, trace
 ///   int64_t  sleepHardStop() const;    // the earliest event that is not quiet
 ///   void     onStepsSkipped(uint64_t); // the steps the sleep stood for (counters)
+/// and optionally, so a long sleep does not walk its quiet events one by one:
+///   bool     sleepQuietEventsBefore(int64_t end); // run every quiet event due before `end` at once and leave
+///                                                 // nextEvent >= end; false: not now (the runner steps one)
 
 #include <algorithm>
 #include <cstdint>
@@ -211,6 +214,7 @@ public:
 
 private:
     static constexpr bool kCanSleep = requires(Card& c) { c.sleepAllowed(); };
+    static constexpr bool kCanBatchQuietEvents = requires(Card& c) { c.sleepQuietEventsBefore(int64_t{}); };
     static constexpr uint32_t kMaxLoopSteps = 32;
     static constexpr uint16_t kMaxLoopBytes = 64;
 
@@ -275,6 +279,13 @@ private:
         const int64_t* offsets = _idle.offsets;
         while (_nextEvent < end)
         {
+            // A card that can run its quiet events before `end` at once does so (none of them reads the time it
+            // runs at, nor changes what the loop reads); false: one by one, at its boundary, from here
+            if constexpr (kCanBatchQuietEvents)
+            {
+                if (card->sleepQuietEventsBefore(end))
+                    break;
+            }
             // The first instruction boundary at or after the event (a head counts: offset 0)
             int64_t boundary = start;
             if (_nextEvent > start)

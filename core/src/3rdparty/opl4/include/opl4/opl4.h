@@ -218,11 +218,16 @@ public:
     // output boundaries processed so far.
     uint64_t DebugFmTicks() const;
     uint64_t DebugOutSteps() const;
+    // The silent-chip fast path (on by default; off steps every tick: the
+    // comparison tests), and the FM ticks it stood for so far
+    void SetIdleFastPath(bool on);
+    uint64_t IdleFmTicks() const;
 
 private:
     void SyncTo(uint64_t time); // lazy advance of both grids (§3.2)
     void AdvanceOutputStep();   // one 44100 Hz chip output sample
     void AdvanceFmToOutput();   // reducer consumption (§4.3)
+    bool AdvanceIdle(uint64_t fmTicks, uint64_t outSteps); // both grids at once while silent
 
     struct Impl;
     Impl* _impl;

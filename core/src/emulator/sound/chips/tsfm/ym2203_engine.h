@@ -129,6 +129,18 @@ public:
         m_fm.skip_clocks(count);
     }
 
+    /// Idle FM half (ymfm patch 6, PATCHES.md §6): nothing sounds and nothing starts without a write or a CSM
+    /// key-on, so clockFmOnce() would only turn counters and return 0
+    bool fmIdle() const
+    {
+        return fm_idle();
+    }
+    /// @p count clockFmOnce() calls of an idle FM half at once (each would have returned 0)
+    void clockFmIdle(uint32_t count)
+    {
+        clock_fm_idle(count);
+    }
+
     uint32_t fmClockPrescale() const
     {
         return m_fm.clock_prescale();  // 6 / 3 / 2

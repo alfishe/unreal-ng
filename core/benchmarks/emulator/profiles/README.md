@@ -241,3 +241,10 @@ What it says:
 
 The rows to watch after a fix: `Only<Card>_Turbo` should approach `NoCardsTurbo`, and `ShipTurbo` should approach
 `MaxTurbo`.
+
+### 2026-10-12: peripheral standby
+
+The idle cards now advance in closed form, exactly as the stepped card: Pentagon_ShipTurbo 548 -> 170 µs,
+Pentagon_ShipNormal 1555 -> 1038 µs, OnlyGS 447 -> 164, OnlyMoonSound 470 -> 158 (dev Mac, interleaved A/B).
+What changed per card, the exactness tests and the full table:
+[docs/inprogress/2026-10-12-peripheral-standby/results.md](../../../../docs/inprogress/2026-10-12-peripheral-standby/results.md).

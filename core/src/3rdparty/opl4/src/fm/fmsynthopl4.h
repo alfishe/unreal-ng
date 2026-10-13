@@ -96,6 +96,13 @@ public:
     // values; mixL/mixR stay zero (the bus routes and mutes).
     void Advance(FmOutput& out) override;
 
+    // Idle fast path: when every operator is silent and holds still (envelope
+    // off at full attenuation, no key edge pending) every output is 0 and only
+    // counters move. Then `ticks` Advance calls at once, the state exactly as
+    // theirs, and true; otherwise nothing changes and false
+    bool AdvanceIdle(uint64_t ticks);
+    bool Idle() const;
+
     FmCaps Caps() const override
     {
         return {true, true, "opl4"}; // per-channel taps; exact, cheap save
@@ -116,6 +123,7 @@ private:
     void KeyOn(FmOperator& op, bool on);
     void ClockKeyState(FmOperator& op) const;
     uint32_t PhaseStep(const FmOperator& op); // reads LFO/regs for vibrato
+    uint32_t PhaseStepAt(const FmOperator& op, uint32_t pmSegment) const;
     static uint32_t KslIndex(const FmOperator& op);
     uint8_t EgRate(const FmOperator& op, uint8_t regRate) const;
     int32_t WaveSample(const FmOperator& op, uint16_t ph) const;

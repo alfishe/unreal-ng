@@ -3130,6 +3130,9 @@ Emulator::DirectStepScope::~DirectStepScope()
             }
             if (scope._driver)
             {
+                // Observers after a direct run read the device cores in step with the CPU (still the driver here)
+                if (scope._emulator._context && scope._emulator._context->pSoundManager)
+                    scope._emulator._context->pSoundManager->catchUpDeferredCores();
                 if (scope._emulator._arbiter.ServingAborted())
                     scope._emulator._lastDirectRunAborted = true;
                 scope._emulator.DriverLeave();
