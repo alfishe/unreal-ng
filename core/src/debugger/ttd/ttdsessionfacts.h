@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "debugger/ttd/engine/ttdsessionfile.h"
+#include "debugger/ttd/ttdperipheralmask.h"
 
 namespace ttd
 {
@@ -38,8 +39,8 @@ struct TTDSessionFacts
     uint64_t romSignature = 0;        ///< 0: unknown (not checked)
     uint64_t capturedAtUnixMs = 0;
     std::string recordedBy;           ///< the recording instance's symbolic id
-    uint64_t peripheralMask = 0;      ///< the recorded devices (PeripheralId bits)
-    uint64_t notRecordedMask = 0;     ///< fitted, not recorded by design
+    PeripheralMask peripheralMask;    ///< the recorded devices (PeripheralId set)
+    PeripheralMask notRecordedMask;   ///< fitted, not recorded by design
     bool inputHistoryComplete = false;
     bool portJournalValid = false;    ///< the bus journals hold every IN of the history
     std::string portJournalOffReason;

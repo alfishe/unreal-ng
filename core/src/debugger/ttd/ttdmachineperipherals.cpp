@@ -257,6 +257,20 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
         registry.Register(PeripheralId::MachineSerialPeer, peer.get());
         ownedSerializers.push_back(std::move(peer));
     }
+    // The second port's peer (the Next's UART 1, the Pi's line) and the joystick connector's (NR #0B UART mode) have
+    // blobs of their own: ids 64 and 65, which the session file's wide peripheral mask names
+    if (context->pMachineSerialPeer2)
+    {
+        auto peer = std::make_unique<TTDMachineSerialPeer>(context, TTDMachineSerialPeer::Port::Second);
+        registry.Register(PeripheralId::MachineSerialPeer2, peer.get());
+        ownedSerializers.push_back(std::move(peer));
+    }
+    if (context->pJoystickSerialPeer)
+    {
+        auto peer = std::make_unique<TTDMachineSerialPeer>(context, TTDMachineSerialPeer::Port::Joystick);
+        registry.Register(PeripheralId::JoystickSerialPeer, peer.get());
+        ownedSerializers.push_back(std::move(peer));
+    }
 
     // --- Model-specific state (TDD 6.4) ---
     // The framework names no machine. The port decoder owns the model's

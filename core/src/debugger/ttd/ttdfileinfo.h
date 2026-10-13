@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "emulator/platform.h"   // GSTypeKind, MEM_MODEL
+#include "ttdperipheralmask.h"
 
 namespace ttd
 {
@@ -39,13 +40,13 @@ struct TTDRecordedMachine
     uint16_t ramPageBound = 0;        ///< Exclusive RAM page-index bound of the model
     uint64_t romSignature = 0;        ///< FNV-1a of the ROM region; 0 = unknown (not checked)
 
-    /// Bit i set: peripheral id i (PeripheralId) was fitted - its state is in
+    /// Peripheral id i (PeripheralId, any u8 value) was fitted - its state is in
     /// every checkpoint. The set the loader checks the live machine against.
-    uint64_t peripheralMask = 0;
+    PeripheralMask peripheralMask;
     std::vector<std::string> peripherals;  ///< Names of the fitted peripherals, ascending id
-    /// Bit i set: peripheral id i was fitted but is not recorded by design
+    /// Peripheral id i was fitted but is not recorded by design
     /// (the lightweight General Sound; header flag kFlagsHasNotRecordedMask)
-    uint64_t notRecordedMask = 0;
+    PeripheralMask notRecordedMask;
     std::vector<std::string> notRecorded;  ///< Their names, ascending id
 
     /// General Sound slot: NONE, Z80 (GS with its Z80), LW (lightweight), NGS (NeoGS)
@@ -95,7 +96,7 @@ std::string PeripheralIdName(uint8_t id);
 
 /// The General Sound personality a fitted-peripheral mask records (NONE when
 /// no General Sound card was fitted).
-GSTypeKind GeneralSoundOf(uint64_t peripheralMask);
+GSTypeKind GeneralSoundOf(const PeripheralMask& peripheralMask);
 
 /// Short name of a GSTypeKind as used on the automation surfaces: "none",
 /// "z80", "lw", "ngs" ("bass" for the unused BASS kind).

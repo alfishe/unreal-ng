@@ -272,6 +272,8 @@ TEST(TTDPeripheralIdTable_Test, NumbersAreStableAndDocumentedInTheFormat)
         {ttd::PeripheralId::EvoFlash, 61, "EvoFlash"},
         {ttd::PeripheralId::NextState, 62, "NextState"},
         {ttd::PeripheralId::NextSystemArea, 63, "NextSystemArea"},
+        {ttd::PeripheralId::MachineSerialPeer2, 64, "MachineSerialPeer2"},
+        {ttd::PeripheralId::JoystickSerialPeer, 65, "JoystickSerialPeer"},
     };
     EXPECT_EQ(static_cast<size_t>(ttd::PeripheralId::Count), std::size(rows)) << "a new id needs a row here and in ttd.ksy";
 

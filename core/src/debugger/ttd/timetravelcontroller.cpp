@@ -364,7 +364,7 @@ bool TimeTravelController::StartRecording()
     _sourcePath.clear();
     _capturedAtUnixMs = 0;
     _loadedRomSignature = 0;
-    _loadedNotRecordedMask = 0;
+    _loadedNotRecordedMask = ttd::PeripheralMask{};
     _loadedRecordedBy.clear();
     _liveRomSignature = ComputeRomSignature();  // the ROM this session relies on
 
@@ -542,7 +542,7 @@ void TimeTravelController::InvalidateSession(const char* reason)
     _capturedAtUnixMs = 0;
     _sessionModelId = 0;
     _loadedRomSignature = 0;
-    _loadedNotRecordedMask = 0;
+    _loadedNotRecordedMask = ttd::PeripheralMask{};
     _loadedRecordedBy.clear();
     _coverageIndex.Clear();
     if (_context)
@@ -832,8 +832,8 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
         info.machine.ramPageBound = _modelRamPages;
         info.machine.romSignature = _loadedFromFile ? _loadedRomSignature : _liveRomSignature;
         for (const TTDDeviceEntry& device : _engine->Devices().Entries())
-            if (const uint8_t id = static_cast<uint8_t>(device.descriptor.legacyId); id < 64)
-                info.machine.peripheralMask |= uint64_t(1) << id;
+            if (device.descriptor.legacyId != PeripheralId::Count)   // a device without a v1 id is not named by the mask
+                info.machine.peripheralMask.Set(static_cast<uint8_t>(device.descriptor.legacyId));
         info.machine.notRecordedMask = NotRecordedMask();
         ttd::DescribeRecordedMachine(info.machine);
     }

@@ -1361,7 +1361,7 @@ public:
 
     /// Devices fitted but deliberately not recorded (bit = PeripheralId): the
     /// loaded file's when the session came from one, else the live registry's
-    uint64_t NotRecordedMask() const { return _loadedFromFile ? _loadedNotRecordedMask : _peripherals.NotRecordedMask(); }
+    ttd::PeripheralMask NotRecordedMask() const { return _loadedFromFile ? _loadedNotRecordedMask : _peripherals.NotRecordedMask(); }
 
 private:
     // -----------------------------------------------------------------------
@@ -1851,7 +1851,7 @@ private:
     uint8_t     _sessionModelId = 0;
     uint32_t    _recordingNumber = 0;   ///< recordings this instance started (RecordingSessionLabel)
     uint64_t    _loadedRomSignature = 0;  ///< The loaded file's rom_signature
-    uint64_t    _loadedNotRecordedMask = 0;  ///< The loaded file's not-recorded mask (kFlagsHasNotRecordedMask)
+    ttd::PeripheralMask _loadedNotRecordedMask;  ///< The loaded file's not-recorded mask (kFlagsHasNotRecordedMask)
     std::string _loadedRecordedBy;        ///< The loaded file's emulator_id
 
     /// Per-frame coverage sets backing reverse-search frame skipping.

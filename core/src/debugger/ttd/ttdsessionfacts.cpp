@@ -10,7 +10,41 @@ namespace ttd
 
 namespace
 {
-constexpr uint16_t kFactsVersion = 1;
+/// 2: the device masks are word lists (u8 count, u64 words: any u8 id); 1: one u64 each (ids 0..63)
+constexpr uint16_t kFactsVersion = 2;
+constexpr uint16_t kFactsVersionFirst = 1;
+
+void WriteMask(TTDByteWriter& w, const PeripheralMask& mask)
+{
+    const size_t words = mask.WordCount();
+    w.U8(static_cast<uint8_t>(words));
+    for (size_t i = 0; i < words; ++i)
+        w.U64(mask.Word(i));
+}
+
+bool ReadMask(TTDByteReader& r, uint16_t version, PeripheralMask& mask)
+{
+    mask = PeripheralMask{};
+    if (version < 2)
+    {
+        uint64_t low = 0;
+        if (!r.U64(low))
+            return false;
+        mask = PeripheralMask::FromLow(low);
+        return true;
+    }
+    uint8_t words = 0;
+    if (!r.U8(words) || words == 0 || words > PeripheralMask::kWords)
+        return false;
+    for (uint8_t i = 0; i < words; ++i)
+    {
+        uint64_t value = 0;
+        if (!r.U64(value))
+            return false;
+        mask.SetWord(i, value);
+    }
+    return true;
+}
 constexpr uint16_t kBookmarksVersion = 1;
 }  // namespace
 
@@ -23,8 +57,8 @@ std::vector<uint8_t> EncodeSessionFacts(const TTDSessionFacts& facts)
     w.U64(facts.romSignature);
     w.U64(facts.capturedAtUnixMs);
     w.Str(facts.recordedBy);
-    w.U64(facts.peripheralMask);
-    w.U64(facts.notRecordedMask);
+    WriteMask(w, facts.peripheralMask);
+    WriteMask(w, facts.notRecordedMask);
     w.U8(facts.inputHistoryComplete ? 1 : 0);
     w.U8(facts.portJournalValid ? 1 : 0);
     w.Str(facts.portJournalOffReason);
@@ -36,12 +70,13 @@ bool DecodeSessionFacts(const std::vector<uint8_t>& bytes, TTDSessionFacts& fact
     TTDByteReader r(bytes);
     uint16_t version = 0;
     uint8_t input = 0, port = 0;
-    if (!r.U16(version) || version != kFactsVersion)
+    if (!r.U16(version) || version < kFactsVersionFirst || version > kFactsVersion)
         return false;
     TTDSessionFacts f;
     if (!r.U8(f.modelId) || !r.U16(f.modelRamPages) || !r.U64(f.romSignature) || !r.U64(f.capturedAtUnixMs) ||
-        !r.Str(f.recordedBy) || !r.U64(f.peripheralMask) || !r.U64(f.notRecordedMask) || !r.U8(input) ||
-        !r.U8(port) || !r.Str(f.portJournalOffReason))
+        !r.Str(f.recordedBy) || !ReadMask(r, version, f.peripheralMask) ||
+        !ReadMask(r, version, f.notRecordedMask) || !r.U8(input) || !r.U8(port) ||
+        !r.Str(f.portJournalOffReason))
         return false;
     f.inputHistoryComplete = input != 0;
     f.portJournalValid = port != 0;

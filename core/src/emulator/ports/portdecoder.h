@@ -1034,6 +1034,8 @@ public:
         std::function<void(ISerialPeer* peer)> attachSerialPeer;
         /// A machine's second serial port (the Next's UART 1); empty = none
         std::function<void(ISerialPeer* peer)> attachSecondSerialPeer;
+        /// The Next's joystick connector (NR #0B UART mode): a device plugged into it takes the UART the register selects
+        std::function<void(ISerialPeer* peer)> attachJoystickSerialPeer;
 
         /// The ATM Turbo 2+ INTERNAL I/O connector (cards on the #FB / #FA bus):
         /// plug a device in (true) or pull it (false); empty = no such connector

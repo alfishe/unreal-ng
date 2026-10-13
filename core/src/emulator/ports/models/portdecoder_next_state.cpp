@@ -821,6 +821,7 @@ StateNode NextUartReport(EmulatorContext* context)
         status["byte_error"] = (v.status & NextUart::kStatusByteError) != 0;
         status["framing_error"] = (v.status & NextUart::kStatusFraming) != 0;
         status["break"] = (v.status & NextUart::kStatusBreak) != 0;
+        status["rx_line_low"] = v.rxLineLow;
         status["note"] = "the sticky bits (overflow, framing) are cleared by a read of #133B; this report does not clear them";
         c["status"] = std::move(status);
 
@@ -843,8 +844,16 @@ StateNode NextUartReport(EmulatorContext* context)
         c["interrupts"] = std::move(irq);
 
         StateNode peer = StateNode::Object();
-        const ISerialPeer* p = uart.Peer(i);
+        // the device the line goes to now: the joystick connector's while NR #0B has taken the UART
+        const ISerialPeer* p = v.joystick ? uart.Wire(i) : uart.Peer(i);
         peer["attached"] = p != nullptr;
+        peer["via_joystick_connector"] = v.joystick;
+        if (v.joystick)
+        {
+            peer["module_cut_off"] = i ? "the Pi" : "the ESP";
+            peer["note"] = p ? "the joystick connector's device (ComPortJoy=); the module of this UART sees no data" :
+                               "nothing on the joystick connector (ComPortJoy=): bytes sent are lost, nothing arrives";
+        }
         if (p)
         {
             peer["kind"] = p->Kind();
@@ -852,7 +861,7 @@ StateNode NextUartReport(EmulatorContext* context)
             peer["connected"] = p->Connected();
             peer["pending_bytes"] = int(p->Pending());
         }
-        else
+        else if (!v.joystick)
             peer["note"] = i ? "nothing on the Pi's line (ComPort2=): bytes sent are lost, nothing arrives"
                              : "nothing on the ESP's line (ComPort=): bytes sent are lost, nothing arrives";
         c["peer"] = std::move(peer);
@@ -866,7 +875,10 @@ StateNode NextUartReport(EmulatorContext* context)
     extra["pi_uart_rx_tx_crossed"] = (board.Stored(0xA0) & 0x20) != 0;
     extra["nr_0b"] = Hex8(board.Stored(0x0B));
     extra["uart_on_joystick_port"] = (board.Stored(0x0B) & 0x80) && (board.Stored(0x0B) & 0x20);
-    extra["note"] = "the joystick connector's UART (NR #0B) and the Pi's GPIO routing (NR #A0) are registers only: nothing is wired to them yet";
+    extra["joystick_port_uart"] = uart.JoystickRouted() ? int(uart.JoystickChannel()) : -1;
+    extra["joystick_port_peer"] = uart.JoystickPeer() ? uart.JoystickPeer()->Kind() : "none";
+    extra["note"] = "NR #0B bits 7 and 5 take the UART bit 0 selects to the joystick connector (its device: ComPortJoy=); the Pi's GPIO routing "
+                    "(NR #A0) is a register only: the Pi's peer is on UART 1 whatever it says";
     n["routing"] = std::move(extra);
     return n;
 }

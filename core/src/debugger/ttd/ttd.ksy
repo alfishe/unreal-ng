@@ -44,6 +44,13 @@
 # This file previously declared schema-version 2 while the C++ writer emitted 1.
 # They are both 1 now.
 #
+# Schema 3 (this file): the header's peripheral_mask and not_recorded_mask
+# are word lists (u1 count, u8 words; id N is bit N % 64 of word N / 64) so
+# any u1 peripheral id can be named - id 63 was the last a single u8 could.
+# Everything else is schema 1's layout. A reader takes schema 1 and 3 (2 is
+# the engine's container format, not described here). Files of schema 1 are
+# still valid input: their masks are one u8 each (the `*_v1` fields below).
+#
 # License: MIT — re-publishable, vendorable, forkable.
 
 meta:
@@ -54,7 +61,7 @@ meta:
   application: unreal-ng
   license: MIT
   ks-version: 0.10
-  schema-version: 1
+  schema-version: 3
   doc: |
     A binary serialization of an Unreal-NG Time-Travel Debugging recording
     session: the complete timeline of per-frame checkpoints plus the
@@ -116,8 +123,9 @@ types:
       - id: schema_version
         type: u2
         doc: |
-          Schema version. MUST be 1. Readers refuse unknown versions with a
-          clear error.
+          Schema version: 3 (written); 1 (older files, read). Readers
+          refuse other versions with a clear error. From 3 the header's
+          masks are word lists (`wide_mask`).
       - id: flags
         type: u2
         doc: |
@@ -271,21 +279,49 @@ types:
       - id: checkpoint_count
         type: u4
         doc: Number of checkpoint records following the page store.
+      - id: peripheral_mask_v1
+        type: u8
+        if: schema_version < 3
+        doc: |
+          Schema 1. With flags bit 9: bit N set = TTD peripheral id N
+          (TurboSound 0, Beta Disk 1, ..., General Sound 5, GS LW 11,
+          NeoGS 12, ...) has a state blob in the first checkpoint - the
+          recorded machine's device set, readable without walking to the
+          checkpoints. Without bit 9: zero (formerly reserved). Ids above
+          63 cannot be named here.
       - id: peripheral_mask
-        type: u8
+        type: wide_mask
+        if: schema_version >= 3
         doc: |
-          With flags bit 9: bit N set = TTD peripheral id N (TurboSound 0,
-          Beta Disk 1, ..., General Sound 5, GS LW 11, NeoGS 12, ...) has a
-          state blob in the first checkpoint - the recorded machine's device
-          set, readable without walking to the checkpoints. Without bit 9:
-          zero (formerly reserved).
+          Schema 3: the same set as a word list; id N is bit N % 64 of
+          words[N / 64]. Only the words up to the highest non-zero one are
+          stored (at least one).
+      - id: not_recorded_mask_v1
+        type: u8
+        if: schema_version < 3 and (flags & 0x0800) != 0
+        doc: |
+          Schema 1. Bit N set = peripheral id N was fitted but time travel
+          does not record it (no blob in any checkpoint; it runs live
+          through seeks): the lightweight General Sound (11). A loader
+          fits the same card.
       - id: not_recorded_mask
+        type: wide_mask
+        if: schema_version >= 3 and (flags & 0x0800) != 0
+        doc: Schema 3: the not-recorded set as a word list, as peripheral_mask.
+  wide_mask:
+    doc: |
+      A set of peripheral ids (PeripheralId is a u1: 0..255) as 64-bit
+      words, word w holding ids 64*w .. 64*w+63.
+    seq:
+      - id: word_count
+        type: u1
+        valid:
+          min: 1
+          max: 4
+      - id: words
         type: u8
-        if: (flags & 0x0800) != 0
-        doc: |
-          Bit N set = peripheral id N was fitted but time travel does not
-          record it (no blob in any checkpoint; it runs live through seeks):
-          the lightweight General Sound (11). A loader fits the same card.
+        repeat: expr
+        repeat-expr: word_count
   page_slot:
     doc: |
       One entry in the v2 codec page store. Encoded layout per slot:
@@ -681,7 +717,7 @@ types:
           erase (bit per 64 KB sector), u1 program value, s8 erase window end, s8 busy end (base clock t-states),
           u3 program offset, 6 reserved; the 512 KB array is the engine region EvoFlash (18), the machine's ROM
           pages 0-31),
-          62 NextState (the ZX Spectrum Next, one image of NextStateCodec::Save: u1 version 5, then the board (selected
+          62 NextState (the ZX Spectrum Next, one image of NextStateCodec::Save: u1 version (8 now; the reader takes its own only), then the board (selected
           register, the 256 NextREG bytes, timing, reset bits), the memory map (MMU slots, paging bits, DivMMC /
           Multiface / Layer 2 views, config mode), video registers (clip windows, 8 x 256 palette words), sprites (128 x 5
           attribute bytes, 16 KB patterns, upload latches), the copper (2 KB list, position, mode, clock), the DMA, the CTC,
@@ -689,7 +725,11 @@ types:
           and timing latches, the extended keys (u2), the left pad's extra buttons (u1) and the right pad (u2, 12 buttons); fixed length per machine; the audio chips (three AY8910 with their pan, mode and the four DACs) and the two SD
           cards' protocol state are in it; the system area (ROMs, DivMMC RAM) is blob 63),
           63 NextSystemArea (the Next's system area, 262144 bytes, no version byte: the 16 pages of 16 KB from page 0 -
-          the ROMs the firmware loads in config mode (pages 0-7) and the DivMMC RAM (pages 8-15, 16 banks of 8 KB)).
+          the ROMs the firmware loads in config mode (pages 0-7) and the DivMMC RAM (pages 8-15, 16 banks of 8 KB)),
+          64 MachineSerialPeer2 (the peer on a machine's second serial port, the Next's UART 1 / the Pi's line: the
+          blob of MachineSerialPeer (27), a netstate::Com with its tail; needs the wide peripheral mask of schema 3),
+          65 JoystickSerialPeer (the peer plugged into the Next's joystick connector while NR #0B selects the UART
+          mode: the same blob).
           ScorpionProfROM (6) byte 5 is the Turbo+ latch (scorpion_turbo; 0 in sessions recorded before it).
           Plus3Paging (13): u1 p1FFD, u1 floating-bus byte (the gate array's last contended byte), u1 flags
           (bit 0: the byte is valid; 0 in sessions recorded before it), u1 reserved.

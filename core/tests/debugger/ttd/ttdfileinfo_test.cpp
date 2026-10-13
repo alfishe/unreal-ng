@@ -87,12 +87,12 @@ protected:
     }
 
     /// The recorded devices: the engine's device table, as the session file's facts state them
-    uint64_t BaselineMask() const
+    ttd::PeripheralMask BaselineMask() const
     {
-        uint64_t mask = 0;
+        ttd::PeripheralMask mask;
         for (const ttd::TTDDeviceEntry& device : ttdm->GetEngine().Devices().Entries())
-            if (const uint8_t id = static_cast<uint8_t>(device.descriptor.legacyId); id < 64)
-                mask |= uint64_t(1) << id;
+            if (device.descriptor.legacyId != ttd::PeripheralId::Count)
+                mask.Set(static_cast<uint8_t>(device.descriptor.legacyId));
         return mask;
     }
 };
@@ -109,7 +109,7 @@ TEST_F(TTDFileInfo_Test, HeaderMaskAndFieldsMatchTheRecording)
 
     EXPECT_EQ(info.schemaVersion, ttd::kContainerSchema) << "the engine's session file";
     EXPECT_EQ(info.machine.peripheralMask, BaselineMask());
-    EXPECT_NE(info.machine.peripheralMask, 0u) << "every model fits at least the Kempston mouse";
+    EXPECT_TRUE(info.machine.peripheralMask.Any()) << "every model fits at least the Kempston mouse";
     EXPECT_EQ(info.machine.modelId, static_cast<uint8_t>(context->config.mem_model));
     EXPECT_EQ(info.machine.model, "ATM710");
     EXPECT_EQ(info.machine.ramPageBound, session.modelRamPages);
@@ -118,7 +118,7 @@ TEST_F(TTDFileInfo_Test, HeaderMaskAndFieldsMatchTheRecording)
     EXPECT_EQ(info.checkpointCount, session.checkpointCount);
     EXPECT_TRUE(info.hasInputJournal);
     EXPECT_TRUE(info.hasExternalEvents);
-    EXPECT_EQ(info.machine.peripherals.size(), static_cast<size_t>(std::popcount(info.machine.peripheralMask)));
+    EXPECT_EQ(info.machine.peripherals.size(), static_cast<size_t>(info.machine.peripheralMask.Count()));
 }
 
 TEST_F(TTDFileInfo_Test, SessionMachineIsTheSameLiveInTheFileAndLoaded)
@@ -169,8 +169,12 @@ TEST_F(TTDFileInfo_Test, GeneralSoundCardOfTheRecordingIsNamed)
 TEST(TTDFileInfo_Names, GeneralSoundOfAMask)
 {
     using ttd::PeripheralId;
-    auto bit = [](PeripheralId id) { return uint64_t(1) << static_cast<uint8_t>(id); };
-    EXPECT_EQ(ttd::GeneralSoundOf(0), GSTypeKind::NONE);
+    auto bit = [](PeripheralId id) {
+        ttd::PeripheralMask mask;
+        mask.Set(static_cast<uint8_t>(id));
+        return mask;
+    };
+    EXPECT_EQ(ttd::GeneralSoundOf(ttd::PeripheralMask{}), GSTypeKind::NONE);
     EXPECT_EQ(ttd::GeneralSoundOf(bit(PeripheralId::GeneralSound)), GSTypeKind::Z80);
     EXPECT_EQ(ttd::GeneralSoundOf(bit(PeripheralId::GeneralSoundLightweight)), GSTypeKind::LW);
     EXPECT_EQ(ttd::GeneralSoundOf(bit(PeripheralId::NeoGS) | bit(PeripheralId::BetaDisk)), GSTypeKind::NGS);

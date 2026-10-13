@@ -32,7 +32,7 @@ namespace ttdtest
 inline std::vector<std::pair<std::string, std::string>> SlotCardsOf(const ttd::TTDRecordedMachine& machine)
 {
     std::vector<std::pair<std::string, std::string>> slots;
-    if ((machine.peripheralMask >> static_cast<uint8_t>(ttd::PeripheralId::MultiSound)) & 1u)
+    if (machine.peripheralMask.Test(static_cast<uint8_t>(ttd::PeripheralId::MultiSound)))
         slots.emplace_back("zxbus.1", MultiSoundCard::kCardId);
     return slots;
 }

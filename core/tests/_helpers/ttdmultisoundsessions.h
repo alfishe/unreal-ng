@@ -75,7 +75,7 @@ inline bool RecordMultiSoundSession(const std::string& model, SessionRecorder re
     // every sound device as configured (the corpus tests hold a SoundCardScope for all of them)
     ttd::TTDRecordedMachine machine;
     machine.model = model;
-    machine.peripheralMask = uint64_t{1} << static_cast<uint8_t>(ttd::PeripheralId::MultiSound);
+    machine.peripheralMask.Set(static_cast<uint8_t>(ttd::PeripheralId::MultiSound));
     SoundCardScope everySound;
 
     const Emulator::TimeTravelBackend previous = Emulator::DefaultTimeTravelBackend();

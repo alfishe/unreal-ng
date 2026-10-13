@@ -82,7 +82,7 @@ struct W5300Socket
 struct NetSocket
 {
     uint16_t id, hostId;
-    uint8_t proto, connected, hasGuest, reserved;   ///< hasGuest: 0 none, 1 the card, 2 the #xxEF port peer, 3 the machine serial port peer, 4 the ATM2IOESP peer, 5 the ZiFi peer, 6 the Ethernet gateway, 7 / 8 the UART card in expansion slot 1 / 2, 9 / 10 its second UART (SprinterSerial)
+    uint8_t proto, connected, hasGuest, reserved;   ///< hasGuest: 0 none, 1 the card, 2 the #xxEF port peer, 3 the machine serial port peer, 4 the ATM2IOESP peer, 5 the ZiFi peer, 6 the Ethernet gateway, 7 / 8 the UART card in expansion slot 1 / 2, 9 / 10 its second UART (SprinterSerial), 11 the machine's second serial port peer (the Next's UART 1), 12 the Next's joystick connector peer
     uint32_t cookie;
     uint32_t remoteAddr;
     uint16_t remotePort, listenPort;
@@ -237,7 +237,7 @@ struct Com
 {
     uint8_t present;        ///< a COM port was fitted at capture
     uint8_t peerKind;       ///< 1 loopback, 2 tcp, 3 serial, 4 ESPNET module, 5 AT module, 6 Hayes modem
-    uint8_t reserved[2];
+    uint8_t reserved[2];    ///< [0] a machine serial peer's blob: kHasTail (TTDMachineSerialPeer); [1] a loopback peer: bit 0 Tx break held by the ZX, bit 1 break held from outside
     StreamLink link;        ///< stream peers
     Uart16550::State uart;
     uint32_t loopbackLength;

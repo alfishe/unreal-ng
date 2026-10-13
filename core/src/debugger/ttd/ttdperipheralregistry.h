@@ -27,6 +27,7 @@
 #include <string>
 
 #include "ttdserializable.h"
+#include "ttdperipheralmask.h"
 
 namespace ttd {
 
@@ -156,9 +157,9 @@ public:
     void MarkNotRecorded(PeripheralId id)
     {
         Unregister(id);
-        _notRecorded |= uint64_t(1) << static_cast<uint8_t>(id);
+        _notRecorded.Set(static_cast<uint8_t>(id));
     }
-    uint64_t NotRecordedMask() const { return _notRecorded; }
+    PeripheralMask NotRecordedMask() const { return _notRecorded; }
 
     /// Raw device-state bytes the last CaptureAll serialized, in all and for
     /// one device (before compression: the work of reading the state)
@@ -202,9 +203,9 @@ private:
     std::unordered_map<uint8_t, std::string> _instances;   ///< instance names given at registration, by id
     std::vector<std::string> _duplicates;                  ///< devices refused for an id already held
     std::vector<ITTDRegionSource*> _regionSources;
-    uint64_t _notRecorded = 0;
-    mutable std::array<uint32_t, 64> _lastStateBytes{};   ///< raw state bytes of the last CaptureAll, by id
-    mutable std::array<std::vector<uint8_t>, 64> _lastStates;   ///< the raw states of the last CaptureAll, by id
+    PeripheralMask _notRecorded;
+    mutable std::array<uint32_t, 256> _lastStateBytes{};   ///< raw state bytes of the last CaptureAll, by id
+    mutable std::array<std::vector<uint8_t>, 256> _lastStates;   ///< the raw states of the last CaptureAll, by id
     mutable uint64_t _lastStateTotal = 0;
 
 
