@@ -17,6 +17,7 @@ constexpr unsigned kHalfBits = 7;
 
 void NextUart::ResetFifos(Channel& c)
 {
+    _pollClean = false;
     c.rxHead = c.rxCount = 0;
     c.txHead = c.txCount = 0;
     c.txBusy = c.rxBusy = false;
@@ -27,6 +28,7 @@ void NextUart::ResetFifos(Channel& c)
 
 void NextUart::Reset(bool hard)
 {
+    _pollClean = false;
     for (Channel& c : _ch)
     {
         ResetFifos(c);
@@ -281,6 +283,7 @@ void NextUart::StepLine(Channel& c, ISerialPeer* peer, uint64_t now)
 
 void NextUart::Step(Channel& c, uint64_t now)
 {
+    _pollClean = false;
     ISerialPeer* const peer = WireOf(c);
     const bool viaJoystick = peer && peer == _joyPeer;
     // pins not connected: what the module sends reaches nobody (the connector's device, when it has the channel, is another matter)
@@ -438,6 +441,7 @@ uint8_t NextUart::Status(const Channel& c) const
 uint8_t NextUart::Read(uint16_t port, uint64_t now)
 {
     Advance(now);
+    _pollClean = false;
     Channel& c = _ch[_selected];
     switch ((port >> 8) & 3)
     {
@@ -467,6 +471,7 @@ uint8_t NextUart::Read(uint16_t port, uint64_t now)
 void NextUart::Write(uint16_t port, uint8_t value, uint64_t now)
 {
     Advance(now);
+    _pollClean = false;
     Channel& c = _ch[_selected];
     switch ((port >> 8) & 3)
     {
@@ -504,6 +509,11 @@ void NextUart::Write(uint16_t port, uint8_t value, uint64_t now)
 
 void NextUart::PollInterrupts(uint8_t enable)
 {
+    // The per-instruction call of a UART nothing happened to: the levels are what the last look stored, no edge
+    if (_pollClean && enable == _polledEnable)
+        return;
+    _pollClean = true;
+    _polledEnable = enable;
     for (unsigned i = 0; i < kChannels; i++)
     {
         Channel& c = _ch[i];

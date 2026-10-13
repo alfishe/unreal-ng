@@ -157,16 +157,18 @@ void SoundChip_TurboSoundFM::handleStep()
     // SoundManager reaches this call unconditionally. Rendering is gated
     // on synthesis suppression; the core never is. With its synthesis
     // skipped the core only notes the position (deferred sync, header)
-    if (_pair.coreSynthesisSkipped() && _pair.synthesisSuppressed() && _deferAllowed)
+    if (_pair.coreSynthesisSkipped() && _pair.synthesisSuppressed() && _deferAllowed && !_pair.adoptsCpuClock())
     {
         _deferredT = nowT();
         _syncDeferred = true;
         return;
     }
-    syncTo(nowT());
-
+    const uint64_t now = nowT();
     if (_pair.synthesisSuppressed())
+    {
+        syncTo(now);
         return;
+    }
 
     // Hardware turbo descaled: the YM2203 has its own clock, so under the
     // Scorpion 7 MHz flip-flop the chip must see the real-time position
@@ -186,6 +188,23 @@ void SoundChip_TurboSoundFM::handleStep()
         scaledCurrentTStates = frameTStates;
 
     int32_t diff = int32_t(scaledCurrentTStates) - int32_t(_lastTStates);
+
+    // A step that completes no output sample renders nothing: the chips need not stand at the CPU yet. The step only moves
+    // the sample phase and notes the position; the chips catch up when a sample is due, at a port access, at the frame end and
+    // wherever else the deferred sync does (header). Ym2203Pair::syncTo gives the same state and the same words for one long
+    // span as for the steps it is made of
+    if (_lazySync && _deferAllowed && !_pair.adoptsCpuClock() &&
+        (diff <= 0 || _samplePhase + uint64_t(diff) * _coreRate < CPU_CLOCK_RATE ||
+         _ayBufferIndex >= MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS))
+    {
+        if (diff > 0)
+            _samplePhase += uint64_t(diff) * _coreRate;
+        _lastTStates = scaledCurrentTStates;
+        _deferredT = now;
+        _syncDeferred = true;
+        return;
+    }
+    syncTo(now);
 
     if (diff > 0)
     {
@@ -604,6 +623,9 @@ size_t SoundChip_TurboSoundFM::TTDStateSize() const
 
 void SoundChip_TurboSoundFM::TTDSaveState(uint8_t* dst) const
 {
+    // A capture reads the chips where the CPU is: a sync still deferred runs first (it changes nothing a later sync would not)
+    const_cast<SoundChip_TurboSoundFM*>(this)->catchUp();
+
     uint8_t* cur = dst;
 
     put_u8(cur, kTsfmStateVersion);

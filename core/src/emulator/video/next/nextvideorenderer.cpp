@@ -2,6 +2,7 @@
 
 #include "nextvideorenderer.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace
@@ -88,42 +89,65 @@ uint32_t NextVideoRenderer::Rgba(uint16_t colour9)
     return kRgba.value[colour9 & 0x1FF];
 }
 
+namespace
+{
+/// UlaFetchAt for one paper row: what does not depend on the sub-pixel is worked out once (the renderer asks for all 512 of a row)
+struct UlaRowFetch
+{
+    unsigned mode;
+    unsigned bitmapRow, attrRow, pixelBase;
+    unsigned scrollX, fine;
+
+    UlaRowFetch(unsigned portFf, bool shadowScreen, unsigned scrollX_, unsigned scrollY, bool fineScroll, unsigned py)
+    {
+        // zxula.vhd: screen_mode_s = port #FF bits 2:0 unless the shadow screen is shown (bank 7 is an 8K BRAM: no Timex modes there)
+        mode = shadowScreen ? 0 : (portFf & 7);
+        // py_s = vc + scroll_y (9 bits), folded into 0..191 by +1 on y(7:6) from 192 up, and from 384 on 0..62 again: a modulo 192
+        const unsigned sy = (py + scrollY) % 192;
+        bitmapRow = ((sy & 0xC0) << 5) | ((sy & 7) << 8) | ((sy & 0x38) << 2);
+        attrRow = 0x1800 + (sy >> 3) * 32;
+        pixelBase = (mode & 1) ? 0x2000 : 0;
+        scrollX = scrollX_;
+        fine = fineScroll ? 1 : 0;
+    }
+
+    // mode bit 1 (hi-colour) reads the attribute at the bitmap's offset in screen 1, otherwise from the attribute area of screen `bit 0`
+    unsigned AttrAt(unsigned column) const { return (mode & 2) ? 0x2000 + bitmapRow + column : pixelBase + attrRow + column; }
+
+    NextVideoRenderer::UlaFetch At(unsigned sub) const
+    {
+        NextVideoRenderer::UlaFetch f;
+        f.mode = mode;
+        if (mode & 4)
+        {
+            // hi-res: the shift register holds [bitmap byte][second byte] of two columns, one bit per 14 MHz clock, shifted by 2 * scroll(2:0)
+            // + fine: so the stream position is 2 * scroll + fine + sub, 16 bits per column, modulo the 32 columns
+            const unsigned h = (sub + 2 * scrollX + fine) & 511;
+            const unsigned column = h >> 4;
+            f.bit = h & 7;
+            if ((h >> 3) & 1)
+                f.bitmapOffset = AttrAt(column);  // the second byte is the "attribute" fetch
+            else
+                f.bitmapOffset = pixelBase + bitmapRow + column;
+            f.attrOffset = f.bitmapOffset;
+            f.synthesised = true;
+            return f;
+        }
+        // each bit is two clocks wide: the half-pixel fine scroll moves the picture by one clock, so sub-pixel `sub` shows pixel
+        // scroll + (sub + fine) / 2 (the column wraps at 32: mod 256)
+        const unsigned sx = (scrollX + ((sub + fine) >> 1)) & 255;
+        f.bitmapOffset = pixelBase + bitmapRow + (sx >> 3);
+        f.attrOffset = AttrAt(sx >> 3);
+        f.bit = sx & 7;
+        return f;
+    }
+};
+}  // namespace
+
 NextVideoRenderer::UlaFetch NextVideoRenderer::UlaFetchAt(unsigned portFf, bool shadowScreen, unsigned scrollX, unsigned scrollY, bool fineScroll,
                                                           unsigned py, unsigned sub)
 {
-    UlaFetch f;
-    // zxula.vhd: screen_mode_s = port #FF bits 2:0 unless the shadow screen is shown (bank 7 is an 8K BRAM: no Timex modes there)
-    f.mode = shadowScreen ? 0 : (portFf & 7);
-    // py_s = vc + scroll_y (9 bits), folded into 0..191 by +1 on y(7:6) from 192 up, and from 384 on 0..62 again: a modulo 192
-    const unsigned sy = (py + scrollY) % 192;
-    const unsigned bitmapRow = ((sy & 0xC0) << 5) | ((sy & 7) << 8) | ((sy & 0x38) << 2);
-    const unsigned attrRow = 0x1800 + (sy >> 3) * 32;
-    const unsigned pixelBase = (f.mode & 1) ? 0x2000 : 0;
-    // mode bit 1 (hi-colour) reads the attribute at the bitmap's offset in screen 1, otherwise from the attribute area of screen `bit 0`
-    auto attrAt = [&](unsigned column) { return (f.mode & 2) ? 0x2000 + bitmapRow + column : pixelBase + attrRow + column; };
-    const unsigned fine = fineScroll ? 1 : 0;
-    if (f.mode & 4)
-    {
-        // hi-res: the shift register holds [bitmap byte][second byte] of two columns, one bit per 14 MHz clock, shifted by 2 * scroll(2:0)
-        // + fine: so the stream position is 2 * scroll + fine + sub, 16 bits per column, modulo the 32 columns
-        const unsigned h = (sub + 2 * scrollX + fine) & 511;
-        const unsigned column = h >> 4;
-        f.bit = h & 7;
-        if ((h >> 3) & 1)
-            f.bitmapOffset = attrAt(column);  // the second byte is the "attribute" fetch
-        else
-            f.bitmapOffset = pixelBase + bitmapRow + column;
-        f.attrOffset = f.bitmapOffset;
-        f.synthesised = true;
-        return f;
-    }
-    // each bit is two clocks wide: the half-pixel fine scroll moves the picture by one clock, so sub-pixel `sub` shows pixel
-    // scroll + (sub + fine) / 2 (the column wraps at 32: mod 256)
-    const unsigned sx = (scrollX + ((sub + fine) >> 1)) & 255;
-    f.bitmapOffset = pixelBase + bitmapRow + (sx >> 3);
-    f.attrOffset = attrAt(sx >> 3);
-    f.bit = sx & 7;
-    return f;
+    return UlaRowFetch(portFf, shadowScreen, scrollX, scrollY, fineScroll, py).At(sub);
 }
 
 unsigned NextVideoRenderer::Layer2WideColumn(unsigned hc, unsigned scrollX)
@@ -162,17 +186,22 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
         const unsigned c = regs.PaletteEntry(palette, ulaPlus ? (hiRes ? 0xD8 : 0xC8) + colour : (ulaNext ? 128 + colour : 16 + (hiRes ? 8 : 0) + colour)) & 0x1FF;
         p = NextLayer::MakePixel(c, !GlobalTransparent(c, transparent), true);
     };
+    // The border pixel is the same along the line: worked out once (with ULANext's full-ink format the row stays as it came)
     const bool inPaperRows = y >= kPaperTop && y < kPaperTop + 192;
-    if (!inPaperRows)
+    if (!fullInk)
     {
-        for (unsigned x = 0; x < kW; x++)
-            border(line[x]);
-        return;
+        Pixel borderPixel;
+        border(borderPixel);
+        if (!inPaperRows)
+        {
+            std::fill(line, line + kW, borderPixel);
+            return;
+        }
+        std::fill(line, line + kPaperLeft, borderPixel);
+        std::fill(line + kPaperLeft + 512, line + kW, borderPixel);
     }
-    for (unsigned x = 0; x < kPaperLeft; x++)
-        border(line[x]);
-    for (unsigned x = kPaperLeft + 512; x < kW; x++)
-        border(line[x]);
+    else if (!inPaperRows)
+        return;
 
     const unsigned py = y - kPaperTop;
     const unsigned base = in.shadowScreen ? 7 : 5;
@@ -206,30 +235,35 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
         return inkPixel ? static_cast<int>((attr & 7) + 8 * bright) : static_cast<int>(16 + ((attr >> 3) & 7) + 8 * bright);
     };
     // The line arrives zeroed: an index of -1 (nothing to paint) leaves the pixel transparent
-    auto put = [&](unsigned sub, int idx) {
-        if (idx < 0)
-            return;
-        const unsigned c = static_cast<unsigned>(regs.PaletteEntry(palette, static_cast<unsigned>(idx)) & 0x1FF);
-        line[kPaperLeft + sub] = NextLayer::MakePixel(c, !GlobalTransparent(c, transparent));
-    };
 
     // hi-res attribute the ULA makes of port #FF: bright | paper (7 - ink) << 3 | ink, run through the same decoding as any attribute
     const unsigned ink = (in.portFf >> 3) & 7;
     const uint8_t tmxAttr = static_cast<uint8_t>(0x40 | ((7 - ink) << 3) | ink);
     unsigned lastBitmap = ~0u, lastBit = ~0u, lastAttr = ~0u;
-    int idx = -1;
+    const UlaRowFetch row(in.portFf, in.shadowScreen, in.nr[0x26], in.nr[0x27], fine, py);
+    // the pixel of the fetch in force: looked up in the palette when the fetch changes, not for every sub-pixel
+    Pixel pixel;
+    bool paint = false;
+    Pixel* const paper = line + kPaperLeft;
     for (unsigned sub = 0; sub < 512; sub++)
     {
-        const UlaFetch f = UlaFetchAt(in.portFf, in.shadowScreen, in.nr[0x26], in.nr[0x27], fine, py, sub);
+        const UlaFetch f = row.At(sub);
         if (f.bitmapOffset != lastBitmap || f.bit != lastBit || f.attrOffset != lastAttr)
         {
             lastBitmap = f.bitmapOffset;
             lastBit = f.bit;
             lastAttr = f.attrOffset;
             const bool inkPixel = ((screen[f.bitmapOffset] >> (7 - f.bit)) & 1) != 0;
-            idx = index(inkPixel, f.synthesised ? tmxAttr : screen[f.attrOffset]);
+            const int idx = index(inkPixel, f.synthesised ? tmxAttr : screen[f.attrOffset]);
+            paint = idx >= 0;
+            if (paint)
+            {
+                const unsigned c = static_cast<unsigned>(regs.PaletteEntry(palette, static_cast<unsigned>(idx)) & 0x1FF);
+                pixel = NextLayer::MakePixel(c, !GlobalTransparent(c, transparent));
+            }
         }
-        put(sub, idx);
+        if (paint)
+            paper[sub] = pixel;
     }
 }
 

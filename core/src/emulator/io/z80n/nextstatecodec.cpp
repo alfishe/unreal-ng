@@ -466,6 +466,7 @@ static void LoadUart(Reader& r, NextUart& u)
     r.Get(u._selected);
     u._selected &= 1;
     r.Get(u._now);
+    u._pollClean = false;  // the levels and the counts were replaced
 }
 
 static void SaveInterrupts(Writer& w, const NextInterruptSource& i)

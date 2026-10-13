@@ -117,6 +117,9 @@ protected:
     size_t _ssgZeroRun[4] = {};
     bool _syncDeferred = false;
     bool _deferAllowed = true;
+    // With audio on: a step that completes no output sample defers its sync as well (handleStep). Off: every such step
+    // syncs, as before (comparison tests)
+    bool _lazySync = true;
 
     // FM gain = kFmBaseGain * 10^(trim/20) (§7.1); [SOUND] TSFM_FmLevelDb
     double _fmGain = kFmBaseGain;
@@ -263,6 +266,12 @@ public:
         _deferAllowed = true;
     }
     bool isCoreSynthesisSkipped() const { return _pair.coreSynthesisSkipped(); }
+    /// Tests: off = the chips are brought to the CPU after every instruction while audio renders
+    void setLazySync(bool on)
+    {
+        catchUp();
+        _lazySync = on;
+    }
 
     /// Redesigns all six decimators for the rate (§6.3): four SSG ones at
     /// the generator rate (identical to the legacy device — bit-identity,

@@ -211,6 +211,10 @@ private:
     std::array<Channel, kChannels> _ch;
     unsigned _selected = 0;
     uint64_t _now = 0;
+    /// PollInterrupts has nothing new to look at: the FIFO counts and the level memory are as it left them and it was asked with
+    /// `_polledEnable`. Everything that can change them clears it (derived, not state)
+    bool _pollClean = false;
+    uint8_t _polledEnable = 0;
     ISerialPeer* _joyPeer = nullptr;
     bool _joyOn = false;
     unsigned _joyChannel = 0;

@@ -439,6 +439,10 @@ register writes depends only on the registers and the generator state, so render
 write and at the frame end gives the same samples. This is the AY counterpart of the TSFM "lazy sync" in the
 standby results ([results.md §5](../2026-10-12-peripheral-standby/results.md#5-not-done)).
 
+- **Checked 2026-10-13: dropped as written.** By source line, the AY's time on the Sprinter is the synthesis itself
+  (the generator ticks and the decimator, inlined into `handleStep`); the per-step overhead around it is ~2 % (`nowT`,
+  `AudioTstate`). Rendering later would move the work, not remove it. What would remove it is a closed-form advance of
+  a silent chip (tone counters, the noise LFSR, the envelope), as the standby work did for the cards.
 - Gain: up to 12 % at 1x on the Sprinter, similar on any AY machine. Effort: medium (the HQ decimator path and the
   native tap must see the same sample stream). Exactness: the audio goldens (`SoundChip_*Golden*`) and a
   byte-for-byte comparison of the rendered buffers.
@@ -458,6 +462,67 @@ On every machine `Z80::StepInstructionWithWork` -> `RunInstructionStartHooks` ->
 analyzer gate). After P3, P6, P9 most of these calls do nothing. A per-frame list of the step clients that are
 actually active (built at frame start, as the `stepWork` gate already does for the whole set) would make the empty
 ones cost nothing. Gain: 3-8 %, measured after the others. Effort: medium.
+
+### Second round (2026-10-13, from profiles taken after P1-P7)
+
+**R1. Next: the ULA layer line.** `UlaLine` + `UlaFetchAt` were 9-15 % of a Next frame: the fetch was worked out for
+each of the 512 sub-pixels of a row from the registers, the palette entry looked up for each, and the border pixel
+computed 640 times a line. Now the row's part of the fetch is worked out once (`UlaRowFetch`, which `UlaFetchAt` is
+made of), the palette is asked when the fetch changes, and the border pixel is computed once and filled. The
+compositor digest (`RandomStatesDigestIsUnchanged`) is unchanged.
+
+**R2. Next: the UART interrupt levels.** `NextUart::PollInterrupts` returns at once when nothing it reads changed
+since its last look (`_pollClean`, cleared by `Step`, `Read`, `Write`, the resets and a state load) and it is asked
+with the same enables.
+
+| Row (R1 + R2) | before | after | x |
+|:--|--:|--:|--:|
+| Next_ShipNormal | 1,345 | 1,084 | 0.81 |
+| Next_Spectron_ShipNormal | 4,129 | 3,806 | 0.92 |
+| Next_Spectron_ShipTurbo | 2,894 | 2,759 | 0.95 |
+| Next_Copper_ShipNormal | 6,379 | 5,820 | 0.91 |
+| Next_Show512_ShipNormal | 5,263 | 4,860 | 0.92 |
+| Next_Tilemap_ShipNormal | 6,005 | 5,450 | 0.91 |
+| Next_Scroll_ShipNormal | 6,823 | 6,473 | 0.95 |
+
+**R3. TSFM with audio on: the sync waits for a sample.** After P1 and P6 the TSFM's per-instruction `syncTo` was the
+largest item of a TS-Conf 1x frame again (25 %: `advanceChip`, the timer interface, the call itself). A step that
+completes no output sample renders nothing, so it now only moves the sample phase and notes the position; the chips
+catch up when a sample is due (882 times a frame instead of ~70,000), at a port access, at the frame end, at a
+pause and before a TTD capture (`TTDSaveState` catches up first). This is the "lazy sync" left open by the standby
+work. Two things it needed:
+
+- `Ym2203Pair::syncTo` takes the host position without advancing on its first call after a reset. A deferred sync
+  must not be that first call, or the chips start from a later moment (found by `TsfmPlayer_Test.
+  FullCoreHashSameInSoundOffUnderTtd`: the timers stood 1087 clocks apart). No sync is deferred while
+  `adoptsCpuClock()`; the turbo deferral of the standby work had the same hole and has the same guard now.
+- `setLazySync(false)` gives the per-instruction sync back.
+
+Exactness: the TSFM goldens (digests of the audio and of the core's trajectory) and the full-core-hash comparison
+between a normal session and a per-step one under TTD, unchanged.
+
+| Row (R3) | before | after | x |
+|:--|--:|--:|--:|
+| TSConf_ShipNormal | 4,021 | 3,347 | 0.83 |
+| TSConf_Sprites_ShipNormal | 3,393 | 3,048 | 0.90 |
+| Pentagon_ShipNormal | 778 | 723 | 0.93 |
+| Pentagon_WorstNormal (TTD recording) | 890 | 844 | 0.95 |
+
+### Where the cycle stands
+
+| Row | start of the cycle | now | x |
+|:--|--:|--:|--:|
+| TSConf_ShipNormal | 8,297 | 3,347 | 0.40 |
+| TSConf_Sprites_ShipNormal | 5,575 | 3,048 | 0.55 |
+| TSConf_Sprites_ShipTurbo | 2,828 | 2,414 | 0.85 |
+| Next_ShipNormal | 2,210 | 1,084 | 0.49 |
+| Next_Spectron_ShipNormal | 5,104 | 3,806 | 0.75 |
+| Next_Spectron_ShipTurbo | 3,397 | 2,759 | 0.81 |
+| Next_Copper_ShipNormal | 7,698 | 5,820 | 0.76 |
+| Next_Scroll_ShipNormal | 8,255 | 6,473 | 0.78 |
+| Pentagon_ShipNormal | 955 | 723 | 0.76 |
+
+(Different runs on a shared machine: the ratios are within a few per cent.)
 
 ### Not proposed
 
