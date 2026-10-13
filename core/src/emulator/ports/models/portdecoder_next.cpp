@@ -388,11 +388,15 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         OnPortInComplete(port, value, pc, disp);
         return value;
     }
-    if ((port & 0xC002) == 0xC000 && !IsPort_DFFD_Next(port))  // #FFFD: the selected AY's register
+    // The AY ports (zxnext.vhd 2646-2649, 2771): #FFFD = A15:A14 = 11, A2 = 1 and the +3 family's A1:A0 = 01; #BFFD the same with
+    // A15:A14 = 10, readable like #FFFD on +3 timing; #BFF5 (#BFFD with A3 = 0) reads the chip's identity and register address
+    const bool ayFfFd = (port & 0xC007) == 0xC005 && !IsPort_DFFD_Next(port);
+    const bool ayBfFd = (port & 0xC007) == 0x8005;
+    if (ayFfFd || (ayBfFd && (_board->Timing() == 3 || (port & 0x08) == 0)))  // #BFF5 on any timing, #BFFD on +3
     {
         if (!PortEnabled(16))
             return IdleRead(port, pc);
-        const uint8_t value = _audio->ReadData();
+        const uint8_t value = (ayBfFd && (port & 0x08) == 0) ? _audio->ReadIdentity() : _audio->ReadData();
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -661,12 +665,12 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
             _board->RefreshLayer2Mapping();
         }
     }
-    else if ((port & 0xC002) == 0xC000 && !IsPort_DFFD_Next(port))
+    else if ((port & 0xC007) == 0xC005 && !IsPort_DFFD_Next(port))
     {
         if (PortEnabled(16))
             _audio->WriteSelect(value);  // #FFFD
     }
-    else if ((port & 0xC002) == 0x8000)
+    else if ((port & 0xC007) == 0x8005)
     {
         if (PortEnabled(16))
             _audio->WriteData(value);    // #BFFD
@@ -754,7 +758,7 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     else
     {
         PortDecoder_Spectrum128::DecodePortOut(port, value, pc);
-        if (_outLog && !IsPort_FE(port) && !IsPort_7FFD(port) && (port & 0xC002) != 0xC000 && (port & 0xC002) != 0x8000)
+        if (_outLog && !IsPort_FE(port) && !IsPort_7FFD(port) && (port & 0xC007) != 0xC005 && (port & 0xC007) != 0x8005)
         {
             PortUse& use = (*_outLog)[port];
             use.count++;
