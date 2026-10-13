@@ -49,20 +49,30 @@ jobs:
           set -eu
           interval=$(( MIN_INTERVAL * 60 ))
           if [ "$interval" -le 0 ]; then echo "throttle off"; exit 0; fi
-          # Find the most recent run where build-linux actually started (any conclusion — even
-          # cancelled runs count if the build job began). Fix type mismatch: .id is a number,
-          # $GITHUB_RUN_ID is a string — tonumber makes jq compare correctly.
+          # At most 3 GitHub API requests: the newest 3 master push runs (this run is among them), then build-linux
+          # start times of at most 2 other runs, newest first; the first run whose build-linux started decides (any
+          # conclusion, a cancelled run counts if the build job began). Each request is retried twice. A GitHub API
+          # error is no reason to block the build: after the retries give up, build at once.
+          api() {
+            for attempt in 1 2 3; do
+              if gh api "$@"; then return 0; fi
+              [ "$attempt" -lt 3 ] && sleep $(( attempt * 5 ))
+            done
+            return 1
+          }
+          no_throttle() { echo "::warning::GitHub API unavailable ($1), building without the throttle"; exit 0; }
+
+          runs=$(api "repos/$GITHUB_REPOSITORY/actions/workflows/cmake-ci.yml/runs?branch=master&event=push&per_page=3" \
+                   --jq ".workflow_runs[] | select(.id != ($GITHUB_RUN_ID | tonumber)) | .id") || no_throttle "run list"
           last=0
-          for run in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/cmake-ci.yml/runs?per_page=50" \
-                         --jq ".workflow_runs[] | select(.id != ($GITHUB_RUN_ID | tonumber) and .head_branch == \"master\" and .event == \"push\") | .id"); do
-            started=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \
-                        --jq '[.jobs[] | select(.name == "build-linux" and .started_at != null) | .started_at][0] // empty')
+          for run in $runs; do
+            started=$(api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \
+                        --jq '[.jobs[] | select(.name == "build-linux" and .started_at != null) | .started_at][0] // empty') \
+              || no_throttle "jobs of run $run"
             [ -n "$started" ] || continue
-            t=$(date -u -d "$started" +%s)
-            if [ "$t" -gt "$last" ]; then
-              last=$t
-              echo "Found build-linux in run $run started at $started (epoch $t)"
-            fi
+            last=$(date -u -d "$started" +%s)
+            echo "Found build-linux in run $run started at $started (epoch $last)"
+            break
           done
           now=$(date -u +%s)
           wait=$(( last + interval - now ))
