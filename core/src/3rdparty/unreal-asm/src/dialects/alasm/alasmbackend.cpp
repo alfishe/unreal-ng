@@ -7,7 +7,10 @@
 #include <optional>
 #include <set>
 
+#include "dialects/common/diskname.h"
 #include "dialects/common/z80.h"
+#include "dialects/sjasmplus/sjasmplusfrontend.h"
+#include "dialects/sjasmplus/sjasmpluslower.h"
 
 namespace unrealasm::dialects
 {
@@ -282,14 +285,14 @@ struct Writer
         }
     }
 
-    /// The label LabelValues gives a line without one (its address, for $): a local label of the line's parent
+    /// The label LabelValues gives a line without one (its address, for $), by its file and line
     std::string LineLabel(bool withFile) const
     {
         std::string file;
         if (withFile)
             for (const char c : options.fileName)
                 file.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
-        return parent + ".__UNREALASM_L" + file + "_" + std::to_string(line);
+        return "__UNREALASM_L" + file + "_" + std::to_string(line);
     }
 
     /// A label defined further down (or in another file): ALASM knows it only for + and -, after the pass
@@ -651,6 +654,17 @@ struct Writer
         const IFrontend* frontend = DialectRegistry::Builtin().Frontend(program.dialect);
         if (!frontend || text.empty())
             return text;
+        // a string stays a string (a macro's DB takes it so: "DB \0" with "TEXT")
+        {
+            const FrontendResult data = frontend->Parse(SourceDocument::FromText("        DB " + text, program.dialect));
+            if (!data.program.lines.empty() && data.program.lines[0].statements.size() == 1)
+            {
+                const Statement& d = data.program.lines[0].statements[0];
+                if (d.operands.size() == 1 && d.operands[0].kind == Operand::Kind::String && d.operands[0].text.size() >= 2 &&
+                    d.operands[0].text.find('"') == std::string::npos)
+                    return "\"" + d.operands[0].text + "\"";
+            }
+        }
         FrontendResult parsed = frontend->Parse(SourceDocument::FromText("        INC " + text, program.dialect));
         if (parsed.program.lines.empty() || parsed.program.lines[0].statements.size() != 1)
             return text;
@@ -669,6 +683,30 @@ struct Writer
             return {"EXA"};
         if (m == "in" && (reg(0, "f") || (ops.size() == 1 && ops[0].kind == Operand::Kind::Indirect)))
             return {"INF"};
+        // A Z80N instruction (a source for the ZX Spectrum Next): ALASM has none, so its bytes
+        if (program.z80n)
+            if (const auto next = z80::Z80nEncoding(s))
+            {
+                std::string items = "#ED," + Number(next->code);
+                const auto byte = [&](const Expr& e) {
+                    const auto v = Value(e);
+                    return v ? Number(*v & 0xFF) : Expression(e);
+                };
+                if (next->layout == 'b' || next->layout == 'B')
+                {
+                    items += "," + byte(ops[0].expr);
+                    if (next->layout == 'B')
+                        items += "," + byte(ops[1].expr);
+                }
+                else if (next->layout == 'w' || next->layout == 'W')
+                {
+                    const auto v = Value(ops.back().expr);
+                    if (!v)
+                        return {NotConverted("a Z80N word known only when assembling: " + z80::Upper(m))};
+                    items += "," + Number(next->layout == 'w' ? *v & 0xFF : (*v >> 8) & 0xFF) + "," + Number(next->layout == 'w' ? (*v >> 8) & 0xFF : *v & 0xFF);
+                }
+                return {Db() + " " + items + "   ;" + z80::Upper(m) + (ops.empty() ? std::string() : " " + Operands(ops, true))};
+            }
         // The undocumented copies (RLC (IX+d),B; SET 3,(IY+d),A): ALASM reads the register as a second instruction,
         // so their bytes go as data
         {
@@ -699,14 +737,13 @@ struct Writer
             return {"SLI " + Operands(ops, true)};
         if (program.dialect == "sjasmplus")
         {
-            // sjasmplus repeats these for each operand (PUSH AF,BC; SUB A,B is SUB A : SUB B)
-            const bool pairFirst = !ops.empty() && ops[0].kind == Operand::Kind::Register && (ops[0].text == "hl" || ops[0].text == "ix" || ops[0].text == "iy");
-            if (ops.size() > 1 && (m == "push" || m == "pop" || m == "inc" || m == "dec" ||
-                                   ((m == "sub" || m == "and" || m == "xor" || m == "or" || m == "cp") && !pairFirst)))
+            // sjasmplus repeats an instruction for its operands (PUSH AF,BC; SUB A,B is SUB A : SUB B; LD A,1,B,2)
+            if (const std::vector<Statement> parts = SjasmplusRepeated(s); parts.size() > 1)
             {
                 std::vector<std::string> out;
-                for (const Operand& o : ops)
-                    out.push_back(z80::Upper(m) + " " + OperandText(o, true));
+                for (const Statement& one : parts)
+                    for (const std::string& t : InstructionText(one))
+                        out.push_back(t);
                 return out;
             }
             // and its fake instructions, written out as it assembles them
@@ -811,6 +848,20 @@ struct Writer
             }
             case ir::DirectiveKind::Ds:
             {
+                if (std::find(s.params.begin(), s.params.end(), "align") != s.params.end() && here && displaced && !s.args.empty())
+                {
+                    // sjasmplus' ALIGN in a displacement: its count from the displaced address the line has there
+                    displaced = false;
+                    const auto count = Value(s.args[0]);
+                    displaced = true;
+                    if (count)
+                    {
+                        Statement counted = s;
+                        counted.args[0] = Expr::Number(*count);
+                        counted.params.clear();
+                        return StatementText(counted, label);
+                    }
+                }
                 // ALASM's DS n,a,b repeats the pattern a,b n times; STORM's cyclic fill cuts it at n bytes
                 if (s.operands.size() > 1 && !s.params.empty() && s.params[0] == "cyclic")
                 {
@@ -833,7 +884,7 @@ struct Writer
             {
                 if (const auto as = options.includeAs.find(s.text); as != options.includeAs.end())
                     return {"INCLUDE " + as->second};
-                std::string name = s.text;
+                std::string name = DiskName(options, s.text);
                 const size_t colon = name.find(':');
                 const std::string drive = colon == std::string::npos ? std::string() : name.substr(0, colon + 1);
                 if (colon != std::string::npos)
@@ -849,7 +900,7 @@ struct Writer
             {
                 if (!s.args.empty() && !(s.args[0].kind == Expr::Kind::Number && s.args[0].value == 0))
                     return {NotConverted("INCBIN from an offset (ALASM takes a length only): " + s.text)};
-                return {"INCBIN \"" + s.text + "\"" + (s.args.size() > 1 ? "," + Known(s.args[1]) : std::string())};
+                return {"INCBIN \"" + DiskName(options, s.text) + "\"" + (s.args.size() > 1 ? "," + Known(s.args[1]) : std::string())};
             }
             case ir::DirectiveKind::If: return {IfText(Condition(s.args[0]))};
             case ir::DirectiveKind::Else: return {"ELSE"};
@@ -902,6 +953,8 @@ struct Writer
                 const size_t at = s.text.find_first_not_of(" \t", word.size());
                 const std::string rest = at == std::string::npos ? std::string() : s.text.substr(at);
                 const std::string flag = rest.substr(0, rest.find_first_of(" \t"));
+                if (word == kModuleMark || word == kEndModuleMark)
+                    return {};   // the names are full already (sjasmpluslower.h)
                 // sjasmplus' DEFINE flags, tested with IFDEF in the order of the text: decided here
                 if (word == "DEFINE" || word == "DEFINE+" || word == "UNDEFINE")
                 {
@@ -910,7 +963,7 @@ struct Writer
                     else
                         defines.insert(flag);
                     if (word != "UNDEFINE" && flag.size() < rest.size())
-                        diagnostics.push_back({Severity::Warning, line, 0, "a DEFINE with a value (text put in where its name stands): not converted"});
+                        diagnostics.push_back({Severity::Info, line, 0, "a DEFINE with a value: put in where its name stands (by the frontend)"});
                     return {";" + s.text};
                 }
                 if (word == "IFDEF" || word == "IFNDEF")
@@ -933,14 +986,18 @@ struct Writer
     std::set<std::string> defines{};
 };
 
-/// Whether the block opened at `first` (MACRO or DUP) defines labels before its end: written inside LOCAL ... ENDL
-bool DefinesLabels(const ir::Program& program, size_t first, ir::DirectiveKind open, ir::DirectiveKind close)
+/// Whether the block opened at `first` (MACRO or DUP) defines labels before its end: written inside LOCAL ... ENDL.
+/// `addresses`: only labels of addresses count (a name assigned with = / EQU in a DUP is the one global name)
+bool DefinesLabels(const ir::Program& program, size_t first, ir::DirectiveKind open, ir::DirectiveKind close, bool addresses = false)
 {
     int depth = 0;
     for (size_t k = first; k < program.lines.size(); ++k)
     {
         const ir::Line& l = program.lines[k];
-        if (k > first && !l.label.empty())
+        const bool assigns = std::any_of(l.statements.begin(), l.statements.end(), [](const Statement& s) {
+            return IsDirective(s, ir::DirectiveKind::Equ) || IsDirective(s, ir::DirectiveKind::Defl);
+        });
+        if (k > first && !l.label.empty() && !(addresses && assigns))
             return true;
         for (const Statement& s : l.statements)
         {
@@ -954,9 +1011,32 @@ bool DefinesLabels(const ir::Program& program, size_t first, ir::DirectiveKind o
 }
 }  // namespace
 
-BackendResult AlasmBackend::Write(const ir::Program& program, const BackendOptions& options) const
+namespace
+{
+/// A comment in what ALASM's CP866 holds: other characters as "?"
+std::string InCp866(const std::string& utf8)
+{
+    std::string out;
+    for (size_t p = 0; p < utf8.size();)
+    {
+        const unsigned char b = static_cast<unsigned char>(utf8[p]);
+        const size_t length = std::min(utf8.size() - p, static_cast<size_t>(b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : b >= 0xC0 ? 2 : 1));
+        const std::string one = utf8.substr(p, length);
+        std::vector<uint8_t> bytes;
+        std::string error;
+        out += encoding::FromUtf8(one, encoding::CodePage::Cp866, bytes, error) ? one : std::string("?");
+        p += length;
+    }
+    return out;
+}
+}  // namespace
+
+BackendResult AlasmBackend::Write(const ir::Program& given, const BackendOptions& options) const
 {
     BackendResult result;
+    // sjasmplus' MODULE, STRUCT ... in words ALASM has (sjasmpluslower.h)
+    const ir::Program lowered = given.dialect == "sjasmplus" ? LowerSjasmplus(given, result.diagnostics) : ir::Program{};
+    const ir::Program& program = given.dialect == "sjasmplus" ? lowered : given;
     result.document.dialect = "alasm";
     result.document.codePage = encoding::CodePage::Cp866;
     Writer w{program, options, result.diagnostics};
@@ -991,8 +1071,10 @@ BackendResult AlasmBackend::Write(const ir::Program& program, const BackendOptio
                 }
                 else if (!(inMacro && l.label[0] == '.'))
                 {
-                    std::string full = l.label[0] == '@' ? l.label.substr(1) : l.label[0] == '.' ? parent + l.label : l.label;
-                    if (l.label[0] != '.')
+                    const bool keeps = l.label[0] == '!';   // sjasmplus' !label: not the parent of the .labels after it
+                    const std::string own = keeps ? l.label.substr(1) : l.label;
+                    std::string full = own[0] == '@' ? own.substr(1) : own[0] == '.' ? parent + own : own;
+                    if (own[0] != '.' && !keeps)
                         parent = full;
                     if (!w.names.count(full))
                     {
@@ -1027,38 +1109,40 @@ BackendResult AlasmBackend::Write(const ir::Program& program, const BackendOptio
         std::vector<std::string> texts;
         std::vector<std::string> before;   // lines written ahead of this one (name=$ of a redefinable label)
 
-        // The label and the parent of sjasmplus' local labels
+        // The label and the parent of sjasmplus' local labels (its !label leaves the parent as it is)
+        const bool keepsParent = !w.sameDialect && !l.label.empty() && l.label[0] == '!';
+        const std::string own = keepsParent ? l.label.substr(1) : l.label;
         std::string label;
         bool defines = false;
         for (const Statement& s : l.statements)
             defines = defines || IsDirective(s, ir::DirectiveKind::Equ) || IsDirective(s, ir::DirectiveKind::Defl);
-        if (!l.label.empty())
+        if (!own.empty())
         {
-            if (!w.sameDialect && IsTemporary(l.label))
+            if (!w.sameDialect && IsTemporary(own))
             {
-                for (const auto& [at, name] : w.temporaries[l.label])
+                for (const auto& [at, name] : w.temporaries[own])
                     if (at == k)
                         label = name;
             }
-            else if (!w.sameDialect && w.inMacro && l.label[0] == '.')
-                label = w.Name(l.label);
+            else if (!w.sameDialect && w.inMacro && own[0] == '.')
+                label = w.Name(own);
             else
             {
-                if (!w.sameDialect && l.label[0] != '.' && l.label[0] != '@')
-                    w.parent = l.label;
-                else if (!w.sameDialect && l.label[0] == '@')
-                    w.parent = l.label.substr(1);
-                label = w.Name(l.label);
+                if (!w.sameDialect && !keepsParent && own[0] != '.' && own[0] != '@')
+                    w.parent = own;
+                else if (!w.sameDialect && !keepsParent && own[0] == '@')
+                    w.parent = own.substr(1);
+                label = w.Name(own);
             }
             result.labels.push_back({l.sourceLine, l.label, label, !w.scopes.empty(), w.inMacro});
         }
         w.here.reset();
-        if (!l.label.empty() && !defines && !w.inMacro)
+        if (!own.empty() && !defines && !w.inMacro)
         {
-            if (const SourceLabel* known = w.Lookup(l.label))
+            if (const SourceLabel* known = w.Lookup(own))
                 w.here = known->value;
         }
-        else if (l.label.empty() && !w.inMacro && !w.sameDialect)
+        else if (own.empty() && !w.inMacro && !w.sameDialect)
         {
             // the project's labels name the file; a single source's do not
             auto found = options.labelValues.find(w.LineLabel(true));
@@ -1067,7 +1151,7 @@ BackendResult AlasmBackend::Write(const ir::Program& program, const BackendOptio
             if (found != options.labelValues.end())
                 w.here = found->second.value;
         }
-        if (!label.empty() && !defines && w.redefinable.count(w.FullName(l.label)))
+        if (!label.empty() && !defines && w.redefinable.count(w.FullName(own)))
         {
             before.push_back(label + "=$");   // an address label of a name assigned with "=" elsewhere
             label.clear();
@@ -1121,10 +1205,10 @@ BackendResult AlasmBackend::Write(const ir::Program& program, const BackendOptio
             }
             if (IsDirective(s, ir::DirectiveKind::Repeat))
             {
-                for (std::string& t : w.StatementText(s, l.label))
+                for (std::string& t : w.StatementText(s, own))
                     texts.push_back(t);
                 // Labels in a repeated block (sjasmplus' temporary ones) are defined on every pass: LOCAL keeps them apart
-                const bool local = !w.sameDialect && DefinesLabels(program, k, ir::DirectiveKind::Repeat, ir::DirectiveKind::EndRepeat);
+                const bool local = !w.sameDialect && DefinesLabels(program, k, ir::DirectiveKind::Repeat, ir::DirectiveKind::EndRepeat, true);
                 localForBlock.push_back(local ? 1 : 0);
                 if (local)
                 {
@@ -1146,7 +1230,7 @@ BackendResult AlasmBackend::Write(const ir::Program& program, const BackendOptio
                 texts.push_back("EDUP");
                 continue;
             }
-            for (std::string& t : w.StatementText(s, l.label))
+            for (std::string& t : w.StatementText(s, own))
                 texts.push_back(t);
             // $ moves past what the statement puts down (sjasmplus: several statements a line)
             if (s.kind != Statement::Kind::Directive || IsDirective(s, ir::DirectiveKind::Db) || IsDirective(s, ir::DirectiveKind::Dw) ||
@@ -1192,7 +1276,7 @@ BackendResult AlasmBackend::Write(const ir::Program& program, const BackendOptio
             std::string& last = out.back();
             if (!last.empty())
                 last += last.size() < 32 ? std::string(32 - last.size(), ' ') : std::string(" ");
-            last += ";" + l.comment;
+            last += ";" + InCp866(l.comment);
         }
         for (const std::string& text : out)
         {

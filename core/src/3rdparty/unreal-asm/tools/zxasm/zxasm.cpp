@@ -15,6 +15,11 @@
 //                                                   cross assembler's: ASM80): its files are named in lower case without
 //                                                   extension (INCLUDE names them so), the other files are copied for INCBIN;
 //                                                   --codec takes the files of the usual extensions detection is not sure of
+//   zxasm convert  <main source> --project --to dialect -o dir  a host project: the main source, every file it
+//                                                   INCLUDEs (and they in turn, each relative to its own folder) converted
+//                                                   together, the files its INCBINs name copied beside them; for a retro
+//                                                   target (TASM, ALASM, STORM ...) every file gets a TR-DOS name of 8
+//                                                   characters, the INCLUDEs and INCBINs naming it so (listed)
 //   zxasm convert  ... --out-codepage cp             write the converted sources in that code page (utf-8: readable
 //                                                   comments); a line whose code, not its comment, has a non-ASCII byte
 //                                                   is warned about, since its string would build other bytes
@@ -72,7 +77,7 @@ int Usage()
                  "       decode <file> [-o out] [--codec id] [--version v] [--codepage cp] |\n"
                  "       encode <file> --codec id [--version v] [-o out] [--codepage cp] [--line-end lf|crlf|cr] |\n"
                  "       check <file> [--codec id] [--version v] |\n"
-                 "       convert <file|dir|image> --to dialect [--to-version v] [--from dialect] [--z80n] [--out-codepage cp] [-o out]   (--z80n: ZX Spectrum Next sources)\n"
+                 "       convert <file|dir|image> --to dialect [--to-version v] [--from dialect] [--z80n] [--project] [--out-codepage cp] [-o out]   (--z80n: ZX Spectrum Next sources; --project: a main source with its INCLUDEs and INCBINs into the directory -o)\n"
                  "       files <image.trd|.scl|.fdi|.udi|.td0|.tap|.tzx ...> (decode/detect/encoding/check take --file NAME[.T] for a file in an image) |\n"
                  "       probe <snapshot.sna|.z80|.szx> | extract <snapshot> [--assembler id] [--as text|file] [--to dialect] [-o out] |\n"
                  "       inject <source> <snapshot|disk image|file.$X> [-o out] [--assembler id | --codec id [--version v]]\n"
@@ -118,6 +123,7 @@ struct Args
     bool show = false;
     bool force = false;
     bool z80n = false;   // convert: the sources are for the ZX Spectrum Next (sjasmplus --zxnext)
+    bool project = false;   // convert: the main source with what it INCLUDEs and INCBINs, into a directory
 };
 
 bool Parse(int argc, char** argv, Args& args)
@@ -137,6 +143,11 @@ bool Parse(int argc, char** argv, Args& args)
         if (a == "--z80n")
         {
             args.z80n = true;
+            continue;
+        }
+        if (a == "--project")
+        {
+            args.project = true;
             continue;
         }
         if (a == "--show")
@@ -598,8 +609,10 @@ int ConvertDirectory(const Args& args, const CodecRegistry& registry)
     }
     std::error_code made;
     std::filesystem::create_directories(std::filesystem::path(std::u8string(args.output.begin(), args.output.end())), made);
+    encodeOptions.subversion = args.toVersion;
     BackendOptions options;
     options.z80n = args.z80n;
+    options.targetVersion = args.toVersion;
     options.dataFiles = [&binaries](const std::string& name) {
         const auto found = binaries.find(Lower(name));
         return found == binaries.end() ? std::vector<uint8_t>{} : found->second;
@@ -607,10 +620,36 @@ int ConvertDirectory(const Args& args, const CodecRegistry& registry)
     const ProjectResult converted = ConvertProject(project, args.to, options);
     PrintDiagnostics(converted.diagnostics);
     const ISourceCodec* target = registry.Find(args.to) ? registry.Find(args.to) : registry.Find("text");
-    for (const ProjectFile& f : converted.files)
+    for (ProjectFile f : converted.files)
     {
+        // A sector slack INCBIN (TASM's INCBIN copies whole sectors): a host file stands for one on a fresh disk, the
+        // rest of its last sector zeros; none when it ends on a sector's end
+        for (SourceLine& line : f.document.lines)
+        {
+            const size_t slackAt = line.text.find(".slack\"");
+            if (slackAt == std::string::npos || line.text.find("INCBIN \"") == std::string::npos || line.text.find(',', slackAt) != std::string::npos)
+                continue;
+            const size_t open = line.text.find('"');
+            const std::string base = line.text.substr(open + 1, slackAt - open - 1);
+            const auto found = binaries.find(Lower(base));
+            const size_t length = found == binaries.end() ? 0 : (256 - found->second.size() % 256) % 256;
+            if (length == 0)
+                line.text = "; " + line.text.substr(line.text.find_first_not_of(' ')) + " (no sector slack)";
+            else
+            {
+                if (args.to == "sjasmplus")
+                    line.text += ",0,(#10000-__UNREALASM_INCBIN_P)<?" + std::to_string(length);
+                binaries[Lower(base) + ".slack"] = std::vector<uint8_t>(length, 0);
+            }
+        }
         WarnCodeNotAscii(f, encodeOptions);
-        if (!WriteFile(args.output + "/" + f.name + ".asm", target->Encode(f.document, encodeOptions).bytes))
+        const EncodeResult encoded = target->Encode(f.document, encodeOptions);
+        for (Diagnostic d : encoded.diagnostics)
+        {
+            d.message = f.name + ": " + d.message;
+            PrintDiagnostics({d});
+        }
+        if (!WriteFile(args.output + "/" + f.name + ".asm", encoded.bytes))
         {
             std::cerr << "zxasm: cannot write " << args.output << "/" << f.name << ".asm\n";
             return 1;
@@ -632,6 +671,146 @@ int ConvertDirectory(const Args& args, const CodecRegistry& registry)
     }
     std::cerr << converted.files.size() << " source(s) converted to " << args.output << "\n";
     return converted.ok ? 0 : 1;
+}
+
+/// zxasm convert <main source> --project --to dialect -o dir: the main source and every file it INCLUDEs (HostProject:
+/// each relative to the folder of the file that INCLUDEs it) converted together, the files their INCBINs name written
+/// beside them. A retro target's disk has no folders and names of 8 characters: every file is renamed for it
+/// (ProjectDiskNames), the INCLUDEs and INCBINs written with the new names, the renaming listed
+int ConvertHostProject(const Args& args, const std::vector<uint8_t>& bytes, const CatalogHints& hints, const CodecRegistry& registry)
+{
+    if (args.output.empty() || args.to.empty())
+    {
+        std::cerr << "zxasm: convert --project needs --to and -o <directory>\n";
+        return 2;
+    }
+    EncodeOptions encodeOptions;
+    if (!OutputEncodeOptions(args, encodeOptions))
+        return 2;
+    encodeOptions.subversion = args.toVersion;
+    const ISourceCodec* codec = args.codec.empty() ? registry.Detect(bytes, hints).chosen : registry.Find(args.codec);
+    if (!codec)
+    {
+        std::cerr << "zxasm: convert needs a recognized source (or --codec)\n";
+        return 2;
+    }
+    DecodeOptions decodeOptions;
+    decodeOptions.catalog = hints;
+    decodeOptions.subversion = args.version;
+    DecodeResult decoded = codec->Decode(bytes, decodeOptions);
+    if (!args.from.empty())
+        decoded.document.dialect = args.from;
+    const std::filesystem::path main(std::u8string(args.file.begin(), args.file.end()));
+    const std::u8string mainName = main.stem().u8string();
+    decoded.document.name = std::string(mainName.begin(), mainName.end());
+    const std::filesystem::path folder = main.parent_path();
+    const auto read = [&folder](std::string name) {
+        std::vector<uint8_t> data;
+        std::replace(name.begin(), name.end(), '\\', '/');   // sjasmplus takes \ for a folder separator on every system
+        const std::u8string text = (folder / std::filesystem::path(std::u8string(name.begin(), name.end()))).u8string();
+        ReadFile(std::string(text.begin(), text.end()), data);
+        return data;
+    };
+    Diagnostics found;
+    std::vector<std::string> folders;
+    const std::vector<ProjectFile> project = HostProject(decoded.document, read, found, &folders);
+    PrintDiagnostics(found);
+    // the data files: each INCBIN's name relative to the folder of its file
+    std::vector<std::string> dataNames;
+    std::map<std::string, std::vector<uint8_t>> data;
+    for (size_t k = 0; k < project.size(); ++k)
+    {
+        const ProjectFile& f = project[k];
+        const IFrontend* frontend = DialectRegistry::Builtin().Frontend(f.document.dialect);
+        if (!frontend)
+            continue;
+        for (const ir::Line& line : frontend->Parse(f.document).program.lines)
+            for (const ir::Statement& s : line.statements)
+                if (s.kind == ir::Statement::Kind::Directive && s.directive == ir::DirectiveKind::Incbin && !s.text.empty() && !data.count(s.text))
+                {
+                    std::vector<uint8_t> bytesOf = read((k < folders.size() ? folders[k] : std::string()) + s.text);
+                    if (bytesOf.empty())
+                    {
+                        std::cerr << "warning line " << line.sourceLine << ": " << f.name << ": INCBIN \"" << s.text << "\" is not on the host\n";
+                        continue;
+                    }
+                    dataNames.push_back(s.text);
+                    data[s.text] = std::move(bytesOf);
+                }
+    }
+    BackendOptions options;
+    options.z80n = args.z80n;
+    options.targetVersion = args.toVersion;
+    options.dataFiles = [&data](const std::string& name) {
+        const auto at = data.find(name);
+        return at == data.end() ? std::vector<uint8_t>{} : at->second;
+    };
+    const IBackend* backend = DialectRegistry::Builtin().Backend(args.to);
+    const bool disk = backend && backend->JoinsSjasmplusProject();
+    if (disk)
+        options.fileNames = ProjectDiskNames(project, dataNames);
+    // A file the target's format cannot hold whole (ALASM: 64K): the project written again with its long files cut
+    // into INCLUDEd parts, smaller until every one fits
+    const ISourceCodec* target = registry.Find(args.to) ? registry.Find(args.to) : registry.Find("text");
+    ProjectResult converted;
+    for (const size_t lines : {size_t(0), size_t(4000), size_t(2000), size_t(1000), size_t(500)})
+    {
+        options.splitLines = lines;
+        converted = ConvertProject(project, args.to, options);
+        bool fits = true;
+        for (const ProjectFile& f : converted.files)
+            for (const Diagnostic& d : target->Encode(f.document, encodeOptions).diagnostics)
+                fits = fits && d.message.find("longer than") == std::string::npos;
+        if (fits || !disk)
+            break;
+        std::cerr << "info: a file is longer than " << target->Info().title << "'s format holds: cut into parts of " << (lines ? lines / 2 : 4000) << " lines\n";
+    }
+    PrintDiagnostics(converted.diagnostics);
+    const auto named = [&](const std::string& name) {
+        const auto at = options.fileNames.find(name);
+        return HostName(at == options.fileNames.end() ? name : at->second);
+    };
+    std::error_code made;
+    const std::filesystem::path out(std::u8string(args.output.begin(), args.output.end()));
+    std::filesystem::create_directories(out, made);
+    const auto write = [&](const std::string& name, const std::vector<uint8_t>& content) {
+        const std::filesystem::path path = out / std::filesystem::path(std::u8string(name.begin(), name.end()));
+        std::filesystem::create_directories(path.parent_path(), made);
+        const std::u8string text = path.u8string();
+        if (WriteFile(std::string(text.begin(), text.end()), content))
+            return true;
+        std::cerr << "zxasm: cannot write " << std::string(text.begin(), text.end()) << "\n";
+        return false;
+    };
+    bool failed = false;   // a codec could not hold a line (it is left out: an error)
+    for (const ProjectFile& f : converted.files)
+    {
+        WarnCodeNotAscii(f, encodeOptions);
+        // a project file keeps its folder where the target has folders (its INCLUDE names it so)
+        std::string name = named(f.name);
+        if (!disk)
+            name = f.name + (Extension(f.name).empty() ? ".asm" : "");
+        else
+            name += ".asm";
+        const EncodeResult encoded = target->Encode(f.document, encodeOptions);
+        for (Diagnostic d : encoded.diagnostics)
+        {
+            d.message = f.name + ": " + d.message;
+            PrintDiagnostics({d});
+        }
+        failed = failed || !encoded.ok || HasErrors(encoded.diagnostics);
+        if (!write(name, encoded.bytes))
+            return 1;
+    }
+    for (const std::string& d : dataNames)
+        if (!write(disk ? named(d) : d, data[d]))
+            return 1;
+    if (disk)
+        for (const auto& [from, to] : options.fileNames)
+            if (from != to)
+                std::cerr << "  " << from << " -> " << to << "\n";
+    std::cerr << converted.files.size() << " source(s) and " << dataNames.size() << " data file(s) converted to " << args.output << "\n";
+    return converted.ok && !failed ? 0 : 1;
 }
 
 // Snapshots and part B ---------------------------------------------------------------------------------------------
@@ -1032,6 +1211,8 @@ int main(int argc, char** argv)
     }
     if (args.command == "convert" && IsImage(Lower(Extension(args.file))) && args.inner.empty())
         return ConvertImage(args, bytes, registry);
+    if (args.command == "convert" && args.project)
+        return ConvertHostProject(args, bytes, hints, registry);
     if (args.command != "encode" && !Unwrap(args, bytes, hints))
         return 1;
 
@@ -1096,8 +1277,15 @@ int main(int argc, char** argv)
         // Written with the target's text codec when there is one (sjasmplus keeps the Spectrum code page for strings,
         // unless --out-codepage says otherwise)
         std::vector<uint8_t> out;
+        bool encoded = true;
         if (const ISourceCodec* target = registry.Find(args.to) ? registry.Find(args.to) : registry.Find("text"))
-            out = target->Encode(converted.document, encodeOptions).bytes;
+        {
+            // what the target's file cannot hold (a line left out) is said, and fails the run
+            const EncodeResult written = target->Encode(converted.document, encodeOptions);
+            PrintDiagnostics(written.diagnostics);
+            encoded = !HasErrors(written.diagnostics);
+            out = written.bytes;
+        }
         else
         {
             const std::string text = converted.document.Text() + "\n";
@@ -1110,7 +1298,7 @@ int main(int argc, char** argv)
             std::cerr << "zxasm: cannot write " << args.output << "\n";
             return 1;
         }
-        return converted.ok ? 0 : 1;
+        return converted.ok && encoded ? 0 : 1;
     }
     if (args.command == "decode" || args.command == "check")
     {

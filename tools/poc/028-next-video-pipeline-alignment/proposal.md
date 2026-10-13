@@ -4,5 +4,4 @@ Adopt into `ScreenNext::PictureLatencyOf` (done): per register the latency and t
 (ULA scroll, tilemap scroll) now takes effect at the next 8-pixel cell; the pixel-group registers at the next 4-clock pixel.
 
 Done (second set): the sprite RAMs are modelled, the sprite clip / enable, the LoRes scroll, the palette values and the tilemap control
-bits are measured and in `ScreenNext::PictureLatencyOf`. Left: sprite attribute / pattern writes at the beam, NR #4B, NR #6A, the Layer 2
-resolution.
+bits are measured and in `ScreenNext::PictureLatencyOf`. Done after it: the emulator's sprite fill (snapshots at the fill end), the tilemap text mode (53). Left: a per-sprite fill time instead of one instant per row.

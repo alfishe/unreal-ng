@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <set>
 
+#include "dialects/common/diskname.h"
 #include "dialects/common/retrowriter.h"
 #include "dialects/common/z80.h"
 
@@ -329,11 +330,11 @@ private:
                     return {};
                 displaced = false;
                 return {"UNPHASE"};
-            case ir::DirectiveKind::Include: return {"INCLUDE \"" + s.text + "\""};
+            case ir::DirectiveKind::Include: return {"INCLUDE \"" + DiskName(options, s.text) + "\""};
             case ir::DirectiveKind::Incbin:
                 if (s.args.size() > 1 || (!s.args.empty() && !(s.args[0].kind == Expr::Kind::Number && s.args[0].value == 0)))
                     return {NotConverted("INCBIN of a part of a file (INSERT takes it all): " + s.text)};
-                return {"INSERT \"" + s.text + "\""};
+                return {"INSERT \"" + DiskName(options, s.text) + "\""};
             case ir::DirectiveKind::SaveBinary:
                 if (s.args.size() >= 2)
                     return {"SAVEOBJ \"" + s.text + "\"," + Known(s.args[0]) + "," + Known(s.args[1])};

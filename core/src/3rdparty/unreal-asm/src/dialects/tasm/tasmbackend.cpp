@@ -6,6 +6,8 @@
 #include <map>
 #include <set>
 
+#include "codecs/tasm/tasmtokens.h"
+#include "dialects/common/diskname.h"
 #include "dialects/common/retrowriter.h"
 #include "dialects/common/z80.h"
 
@@ -26,7 +28,8 @@ const std::set<std::string> kWords = {
     "IY", "HX", "LX", "HY", "LY", "NZ", "Z", "NC", "PO", "PE", "P", "M", "NV", "V",
 };
 
-/// A comment in characters TASM keeps (CP866): ASCII, Russian letters; others as "?", control characters as blanks
+/// A comment in characters TASM keeps: ASCII (its bytes #80-#F0 are its keywords' tokens, so a Russian letter is no
+/// character of a TASM 3 / 4 line: the codec refuses it); others as "?", control characters as blanks
 std::string CommentText(const std::string& utf8)
 {
     std::string out;
@@ -39,15 +42,8 @@ std::string CommentText(const std::string& utf8)
             ++p;
             continue;
         }
-        const size_t length = b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : b >= 0xC0 ? 2 : 1;
-        char32_t c = length == 1 ? b : b & (0x7F >> length);
-        for (size_t k = 1; k < length && p + k < utf8.size(); ++k)
-            c = (c << 6) | (static_cast<unsigned char>(utf8[p + k]) & 0x3F);
-        if ((c >= U'А' && c <= U'я') || c == U'Ё' || c == U'ё')
-            out.append(utf8, p, length);
-        else
-            out.push_back('?');
-        p += length;
+        out.push_back('?');
+        p += b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : b >= 0xC0 ? 2 : 1;
     }
     return out;
 }
@@ -239,10 +235,12 @@ private:
                     items.push_back(std::to_string(static_cast<unsigned char>(c)));
             run.clear();
         };
-        for (const char c : text)
+        const std::vector<bool> keyword = KeywordLetters(text);
+        for (size_t k = 0; k < text.size(); ++k)
         {
+            const char c = text[k];
             const unsigned char u = static_cast<unsigned char>(c);
-            if (u < 0x20 || u >= 0x7F || c == '"')
+            if (u < 0x20 || u >= 0x7F || c == '"' || keyword[k])
             {
                 end();
                 items.push_back(std::to_string(u));
@@ -251,6 +249,42 @@ private:
                 run.push_back(c);
         }
         end();
+    }
+
+    /// The letters of the words in a string TASM's editor would store as its keywords' tokens (research-tasm.md §4:
+    /// every whole keyword word, in strings too, shown and assembled in capitals): those not already in capitals
+    std::vector<bool> KeywordLetters(const std::string& text) const
+    {
+        const codecs::tasm::TokenTable& table = version == "3" ? codecs::tasm::Tasm3Tokens() : V40() ? codecs::tasm::Tasm40Tokens() : codecs::tasm::Tasm412Tokens();
+        std::vector<bool> out(text.size(), false);
+        auto wordChar = [](char c) {
+            return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '@' || c == '$' || c == '#' || c == '\\';
+        };
+        for (size_t k = 0; k < text.size();)
+        {
+            if (!std::isalpha(static_cast<unsigned char>(text[k])) || (k > 0 && wordChar(text[k - 1])))
+            {
+                ++k;
+                continue;
+            }
+            size_t end = k;
+            while (end < text.size() && std::isalpha(static_cast<unsigned char>(text[end])))
+                ++end;
+            const std::string word = text.substr(k, end - k);
+            if ((end == text.size() || !wordChar(text[end])) && word != z80::Upper(word))
+            {
+                const std::string upper = z80::Upper(word);
+                const bool isKeyword = std::any_of(table.begin(), table.end(), [&](std::string_view t) {
+                    while (!t.empty() && t.back() == ' ')
+                        t.remove_suffix(1);
+                    return t == upper;
+                });
+                if (isKeyword)
+                    std::fill(out.begin() + static_cast<std::ptrdiff_t>(k), out.begin() + static_cast<std::ptrdiff_t>(end), true);
+            }
+            k = end;
+        }
+        return out;
     }
 
     std::optional<std::vector<std::string>> OwnInstruction(const Statement& s) override
@@ -326,8 +360,9 @@ private:
     RepeatForm Repeat(const std::vector<ir::Line>&, size_t, size_t) const override { return RepeatForm::Unrolled; }
 
     /// A TR-DOS name for .INCLUDE / .INCBIN (no quotes; 8 characters)
-    std::string FileName(const std::string& name)
+    std::string FileName(const std::string& given)
     {
+        const std::string name = DiskName(options, given);
         std::string base = name;
         if (const size_t dot = name.rfind('.'); dot != std::string::npos && name.size() - dot == 2)
             base = name.substr(0, dot);
@@ -428,6 +463,9 @@ BackendResult TasmBackend::Write(const ir::Program& program, const BackendOption
 {
     BackendResult result;
     result.document.dialect = "tasm";
+    // the version written, for its codec (without it the codec takes its newest, whose tokens differ)
+    result.document.format = "tasm";
+    result.document.subversion = options.targetVersion.empty() ? "4.12" : options.targetVersion;
     TasmWriter w{program, options, result, options.targetVersion};
     w.Run();
     return result;

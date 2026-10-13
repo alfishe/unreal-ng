@@ -20,5 +20,7 @@ class XasFrontend : public IFrontend
 public:
     std::string_view Dialect() const override { return "xas"; }
     FrontendResult Parse(const SourceDocument& source) const override;
+    /// As Parse; a name the file uses but another file of the project defines takes that definition's spelling
+    FrontendResult ParseInProject(const SourceDocument& source, const std::vector<const SourceDocument*>& project) const override;
 };
 }  // namespace unrealasm::dialects

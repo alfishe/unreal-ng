@@ -10,6 +10,7 @@ entity tb_zxnext is
       g_scenario : natural := 0;   -- 0 = nothing forced, otherwise the register under test (see the case below)
       g_ref      : natural := 0;   -- 1 = the reference run: the same sequence, the value never changed (analyze.py diff)
       g_l2const  : natural := 0;   -- Layer 2 SRAM returns this byte everywhere (0 = the x pattern)
+      g_ahead    : natural := 2;   -- sprite scenarios: the row / sprite chosen is the one shown this many lines after the force
       g_h0       : natural := 200; -- the pixel counter value the sweep's clock offsets start from
       g_log      : string  := "dump.txt";
       g_events   : string  := "events.txt"
@@ -212,6 +213,40 @@ begin
       variable r_idx : natural := 0;
       variable r_base, r_new : std_logic_vector(7 downto 0) := x"00";
       variable pal : boolean := false;
+      variable kind : natural := 0;          -- 2 = an injected NextREG write, 3 = a sprite pattern byte through port #5B
+      variable n_reg : std_logic_vector(7 downto 0) := x"00";
+      variable n_base, n_new : std_logic_vector(7 downto 0) := x"00";
+      variable n_sel : boolean := false;     -- select the sprite that covers the line (NR #34) before the write
+      variable pat_n : natural := 0;
+      variable spr : natural := 0;
+      procedure nr_write(r, v : std_logic_vector(7 downto 0)) is
+      begin
+         t_nr_reg <= r; t_nr_dat <= v; t_nr_we <= '1';
+         wait for T28;
+         t_nr_we <= '0';
+         wait for T28;
+      end procedure;
+      procedure p57_write(v : std_logic_vector(7 downto 0)) is
+      begin
+         t_p_dat <= v; t_p57_we <= '1';
+         wait for T28;
+         t_p57_we <= '0';
+         wait for T28;
+      end procedure;
+      procedure p303b_write(v : natural) is
+      begin
+         t_p_dat <= std_logic_vector(to_unsigned(v, 8)); t_p303b_we <= '1';
+         wait for T28;
+         t_p303b_we <= '0';
+         wait for T28;
+      end procedure;
+      procedure p5b_write(v : std_logic_vector(7 downto 0)) is
+      begin
+         t_p_dat <= v; t_p5b_we <= '1';
+         wait for T28;
+         t_p5b_we <= '0';
+         wait for T28;
+      end procedure;
       variable pal_idx : natural := 0;
       variable pal_base, pal_new : natural := 0;
       procedure pal_write(idx : natural; v : natural) is
@@ -286,9 +321,22 @@ begin
          when 41 => r_idx := 32; r_base := x"00"; r_new := x"02"; set_reg(3, x"01");       -- tilemap: 512 tiles (NR #6B bit 1)
          when 42 => r_idx := 32; r_base := x"00"; r_new := x"40"; set_reg(3, x"01");       -- tilemap: 80 columns (NR #6B bit 6)
          when 43 => r_idx := 32; r_base := x"00"; r_new := x"20"; set_reg(3, x"01");       -- tilemap: no attribute byte (NR #6B bit 5)
+         -- the third set: injected NextREG writes and sprite RAM writes (the sprite grid: sprite 16 r + c at display row 16 r, column 16 c,
+         -- rows 0-3 visible from line 64)
+         when 44 => kind := 4; n_base := x"70"; n_new := x"30"; set_reg(1, x"01");                                 -- sprite attribute 0 (X), port #57
+         when 45 => kind := 4; n_base := x"80"; n_new := x"00"; set_reg(1, x"01");                                 -- sprite attribute 3 (visible), port #57
+         when 46 => kind := 3; n_base := x"21"; n_new := x"5A"; set_reg(1, x"01");                                 -- pattern byte, port #5B
+         when 47 => kind := 2; n_reg := x"4B"; n_base := x"E3"; n_new := x"21"; set_reg(1, x"01");                 -- sprite transparent index (pattern byte)
+         when 48 => kind := 2; n_reg := x"4B"; n_base := x"E3"; n_new := x"A1"; set_reg(1, x"01");                 -- ... the byte with the palette offset
+         when 49 => kind := 2; n_reg := x"6A"; n_base := x"00"; n_new := x"20"; set_reg(2, x"01");                 -- LoRes: Radastan mode
+         when 50 => kind := 2; n_reg := x"6A"; n_base := x"20"; n_new := x"30"; set_reg(2, x"01");                 -- Radastan: the XOR bit
+         when 51 => kind := 2; n_reg := x"6A"; n_base := x"00"; n_new := x"05"; set_reg(2, x"01");                 -- LoRes palette offset
+         when 52 => kind := 2; n_reg := x"70"; n_base := x"00"; n_new := x"10"; set_reg(4, x"01");                 -- Layer 2 resolution 320x256
+         when 53 => r_idx := 32; r_base := x"00"; r_new := x"08"; set_reg(3, x"01"); set_reg(0, x"00");  -- tilemap text mode (NR #6B bit 3)
          when others => null;
       end case;
-      if g_ref = 1 then r_new := r_base; pal_new := pal_base; end if;
+      if g_scenario = 50 then nr_write(x"6A", x"20"); end if;
+      if g_ref = 1 then r_new := r_base; pal_new := pal_base; n_new := n_base; end if;
       if g_scenario = 0 then wait; end if;
       wait until unsigned(p_vc) = to_unsigned(10, 9);
       wait until unsigned(p_vc) = to_unsigned(11, 9);   -- one frame to settle
@@ -296,6 +344,28 @@ begin
       while k < 32 loop
          line_no := first_line + 4 * k;
          off := k;
+         if kind /= 0 then
+            -- the preparation in the line before: select the sprite that covers the line / walk the pattern pointer to the row
+            wait until unsigned(p_vc) = to_unsigned(line_no - 1, 9) and unsigned(p_hc) = to_unsigned(100, 9);
+            if kind = 2 and n_sel then
+               spr := 64 + ((line_no + g_ahead - 64) / 16) * 16 + 5;   -- sprites 64-127 are the rows the lines 64-127 show (the engine's vertical counter is 33 ahead)
+               if spr > 127 then spr := 127; end if;
+               nr_write(x"34", std_logic_vector(to_unsigned(spr, 8)));
+            elsif kind = 3 then
+               pat_n := ((line_no + g_ahead - 64) mod 16) * 16;   -- the sprite fill is a line ahead: the row shown two lines later (grid origin: line 64)
+               p303b_write(0);
+               for i in 1 to pat_n loop p5b_write(n_base); end loop;
+            elsif kind = 4 then
+               spr := 64 + ((line_no + g_ahead - 64) / 16) * 16 + 5;   -- sprites 64-127 are the rows the lines 64-127 show (the engine's vertical counter is 33 ahead)
+               if spr > 127 then spr := 127; end if;
+               p303b_write(spr);
+               if g_scenario = 45 then
+                  p57_write(std_logic_vector(to_unsigned(32 + (spr mod 16) * 16, 8)));
+                  p57_write(std_logic_vector(to_unsigned(32 + (spr / 16) * 16, 8)));
+                  p57_write(x"80");
+               end if;
+            end if;
+         end if;
          wait until unsigned(p_vc) = to_unsigned(line_no, 9) and unsigned(p_hc) = to_unsigned(g_h0, 9);
          wait for off * T28;
          write(l, string'("force "));
@@ -307,9 +377,25 @@ begin
          write(l, string'(" "));
          write(l, count28);
          writeline(ev, l);
-         if pal then pal_write(pal_idx, pal_new); else set_reg(r_idx, r_new); end if;
+         if kind = 2 then nr_write(n_reg, n_new);
+         elsif kind = 4 then p57_write(n_new);
+         elsif kind = 3 then p5b_write(n_new);
+         elsif pal then pal_write(pal_idx, pal_new); else set_reg(r_idx, r_new); end if;
          wait until unsigned(p_vc) = to_unsigned(line_no + 2, 9) and unsigned(p_hc) = to_unsigned(0, 9);
-         if pal then pal_write(pal_idx, pal_base); else set_reg(r_idx, r_base); end if;
+         if kind = 2 then
+            nr_write(n_reg, n_base);
+         elsif kind = 4 then
+            p303b_write(spr);
+            if g_scenario = 45 then
+               p57_write(std_logic_vector(to_unsigned(32 + (spr mod 16) * 16, 8)));
+               p57_write(std_logic_vector(to_unsigned(32 + (spr / 16) * 16, 8)));
+               p57_write(x"80");
+            end if;
+            p57_write(n_base);
+         elsif kind = 3 then
+            p303b_write(0);
+            for i in 0 to pat_n loop p5b_write(n_base); end loop;
+         elsif pal then pal_write(pal_idx, pal_base); else set_reg(r_idx, r_base); end if;
          k := k + 1;
       end loop;
       assert false report "sweep done" severity failure;

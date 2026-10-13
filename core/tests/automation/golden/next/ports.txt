@@ -91,13 +91,13 @@ enable_word:
       nr: 0x83
       ports: #133B, #143B, #153B, #163B UART
       enabled: true
-      enforced: false
+      enforced: true
     [13]
       bit: 13
       nr: 0x83
       ports: #FADF, #FBDF, #FFDF mouse
       enabled: true
-      enforced: false
+      enforced: true
     [14]
       bit: 14
       nr: 0x83
@@ -163,7 +163,7 @@ enable_word:
       nr: 0x85
       ports: #BF3B, #FF3B ULA+
       enabled: true
-      enforced: false
+      enforced: true
     [25]
       bit: 25
       nr: 0x85
@@ -182,4 +182,4 @@ enable_word:
       ports: #183B-#1F3B Z80 CTC
       enabled: true
       enforced: true
-note: enforced = the emulator gates the ports by that bit (a write is ignored, a read is the idle bus #FF; with the expansion bus on, NR #86-#89 are ANDed in). Not enforced: the +3 floating bus (bit 4), the UART (12), the Kempston mouse (13), ULA+ (24) and #EFF7 (26) - the Next does not decode those ports at all yet, so there is nothing to gate
+note: enforced = the emulator gates the ports by that bit (a write is ignored, a read is the idle bus #FF; with the expansion bus on, NR #86-#89 are ANDed in). Not enforced: the +3 floating bus (bit 4) and #EFF7 (26) - the Next does not decode those ports at all yet, so there is nothing to gate

@@ -5,6 +5,8 @@
 
 #include "codecs/prometheus/prometheustable.h"
 #include "dialects/common/z80.h"
+#include "dialects/sjasmplus/sjasmplusfrontend.h"
+#include "dialects/sjasmplus/sjasmpluslower.h"
 #include "unrealasm/registry.h"
 
 namespace unrealasm::dialects
@@ -20,7 +22,8 @@ const std::set<std::string> kNoBytes = {
 }  // namespace
 
 RetroWriter::RetroWriter(const ir::Program& p, const BackendOptions& o, BackendResult& r)
-    : program(p), options(o), result(r), diagnostics(r.diagnostics)
+    : lowered(p.dialect == "sjasmplus" ? LowerSjasmplus(p, r.diagnostics) : ir::Program{}), program(p.dialect == "sjasmplus" ? lowered : p), options(o),
+      result(r), diagnostics(r.diagnostics)
 {
 }
 
@@ -85,6 +88,16 @@ std::string RetroWriter::FullName(const std::string& text) const
         return text.substr(1);
     if (!text.empty() && text[0] == '.')
         return parent + text;
+    // a name a macro uses, expanded inside a MODULE: the most specific module's that exists
+    for (size_t k = modules.size(); k > 0; --k)
+    {
+        std::string candidate;
+        for (size_t m = 0; m < k; ++m)
+            candidate += modules[m] + ".";
+        candidate += text;
+        if (names.count(candidate) || options.labelValues.count(candidate))
+            return candidate;
+    }
     return text;
 }
 
@@ -168,9 +181,9 @@ std::optional<int64_t> RetroWriter::Value(const Expr& e) const
                 return v == deflValues.end() ? std::nullopt : std::optional<int64_t>(v->second);
             }
             const SourceLabel* l = Lookup(e.text);
-            if (!l || l->redefinable)
+            if (!l)
                 return std::nullopt;
-            return l->value;
+            return l->value;   // (assigned with DEFL once: a constant)
         }
         case Expr::Kind::Current: return displaced ? std::nullopt : here;
         case Expr::Kind::Group: return Value(e.args[0]);
@@ -246,13 +259,22 @@ std::string RetroWriter::LineLabel(bool withFile) const
     if (withFile)
         for (const char c : options.fileName)
             file.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
-    return parent + ".__UNREALASM_L" + file + "_" + std::to_string(line);
+    return "__UNREALASM_L" + file + "_" + std::to_string(line);
+}
+
+std::string RetroWriter::BodyLineLabel(bool withFile) const
+{
+    std::string file;
+    if (withFile)
+        for (const char c : options.fileName)
+            file.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
+    return "__UNREALASM_M" + file + "_" + std::to_string(line) + "_" + std::to_string(bodyLine);
 }
 
 bool RetroWriter::Later(const std::string& text) const
 {
     const SourceLabel* l = Lookup(text);
-    if (!l || l->redefinable)
+    if (!l || redefinable.count(FullName(text)))
         return false;
     if (!l->file.empty() && !options.fileName.empty() && l->file != options.fileName)
         return true;
@@ -396,7 +418,13 @@ std::string RetroWriter::Operands(const std::vector<Operand>& operands)
 std::string RetroWriter::NotConverted(const std::string& what)
 {
     diagnostics.push_back({Severity::Warning, line, 0, "not converted: " + what});
-    return ";unreal-asm: not converted: " + what;
+    return ";unreal-asm: not converted: " + Blanked(what);
+}
+
+std::string RetroWriter::Blanked(std::string text)
+{
+    std::replace(text.begin(), text.end(), '\t', ' ');   // a tab in a comment moves to the next field in some editors (XAS)
+    return text;
 }
 
 std::vector<std::string> RetroWriter::DataLines(const std::string& keyword, const std::vector<std::string>& items, size_t width) const
@@ -531,6 +559,31 @@ std::vector<std::string> RetroWriter::InstructionText(const Statement& s)
 {
     if (auto own = OwnInstruction(s))
         return *own;
+    // A Z80N instruction (a source for the ZX Spectrum Next): the retro assemblers have none, so its bytes
+    if (program.z80n)
+        if (const auto next = z80::Z80nEncoding(s))
+        {
+            std::vector<std::string> items = {HexByte(0xED), HexByte(next->code)};
+            const auto byte = [&](const Expr& e) {
+                const auto v = Value(e);
+                return v ? Number(*v & 0xFF) : Expression(e);
+            };
+            if (next->layout == 'b' || next->layout == 'B')
+            {
+                items.push_back(byte(s.operands[0].expr));
+                if (next->layout == 'B')
+                    items.push_back(byte(s.operands[1].expr));
+            }
+            else if (next->layout == 'w' || next->layout == 'W')
+            {
+                const auto v = Value(s.operands.back().expr);
+                if (!v)
+                    return {NotConverted("a Z80N word known only when assembling: " + z80::Upper(s.mnemonic))};
+                items.push_back(Number(next->layout == 'w' ? *v & 0xFF : (*v >> 8) & 0xFF));
+                items.push_back(Number(next->layout == 'w' ? (*v >> 8) & 0xFF : *v & 0xFF));
+            }
+            return {Bytes(items, z80::Upper(s.mnemonic) + (s.operands.empty() ? std::string() : " " + Operands(s.operands)))};
+        }
     const std::string& m = s.mnemonic;
     const auto& ops = s.operands;
     auto reg = [&](size_t k, const char* name) { return k < ops.size() && ops[k].kind == Operand::Kind::Register && ops[k].text == name; };
@@ -561,19 +614,13 @@ std::vector<std::string> RetroWriter::InstructionText(const Statement& s)
     }
     if (program.dialect == "sjasmplus")
     {
-        // sjasmplus repeats these for each operand (PUSH AF,BC; SUB A,B is SUB A : SUB B)
-        const bool pairFirst = !ops.empty() && ops[0].kind == Operand::Kind::Register && (ops[0].text == "hl" || ops[0].text == "ix" || ops[0].text == "iy");
-        if (ops.size() > 1 && (m == "push" || m == "pop" || m == "inc" || m == "dec" ||
-                               ((m == "sub" || m == "and" || m == "xor" || m == "or" || m == "cp") && !pairFirst)))
+        // sjasmplus repeats an instruction for its operands (PUSH AF,BC; SUB A,B is SUB A : SUB B; LD A,1,B,2)
+        if (const std::vector<Statement> parts = SjasmplusRepeated(s); parts.size() > 1)
         {
             std::vector<std::string> out;
-            for (const Operand& o : ops)
-            {
-                Statement one = s;
-                one.operands.assign(1, o);
+            for (const Statement& one : parts)
                 for (const std::string& t : InstructionText(one))
                     out.push_back(t);
-            }
             return out;
         }
         // and its fake instructions, written out as it assembles them
@@ -717,6 +764,14 @@ std::vector<std::string> RetroWriter::StatementText(const Statement& s, const st
             const size_t at = s.text.find_first_not_of(" \t", word.size());
             const std::string rest = at == std::string::npos ? std::string() : s.text.substr(at);
             const std::string flag = rest.substr(0, rest.find_first_of(" \t"));
+            if (word == kModuleMark || word == kEndModuleMark)
+            {
+                if (word == kModuleMark)
+                    modules.push_back(rest);
+                else if (!modules.empty())
+                    modules.pop_back();
+                return {};
+            }
             if (word == "IFDEF" || word == "IFNDEF")
             {
                 // sjasmplus' DEFINE flags, tested in the order of the text: decided here
@@ -735,15 +790,15 @@ std::vector<std::string> RetroWriter::StatementText(const Statement& s, const st
                 else
                     defines.insert(flag);
                 if (word != "UNDEFINE" && flag.size() < rest.size())
-                    diagnostics.push_back({Severity::Warning, line, 0, "a DEFINE with a value (text put in where its name stands): not converted"});
-                return {";" + s.text};
+                    diagnostics.push_back({Severity::Info, line, 0, "a DEFINE with a value: put in where its name stands (by the frontend)"});
+                return {";" + Blanked(s.text)};
             }
             if (auto own = OtherText(word, rest))
                 return *own;
             if (kNoBytes.count(word))
             {
                 diagnostics.push_back({Severity::Info, line, 0, word + " dropped (it makes no bytes)"});
-                return {";" + s.text};
+                return {";" + Blanked(s.text)};
             }
             return {NotConverted(s.text)};
         }
@@ -763,6 +818,8 @@ std::vector<std::string> RetroWriter::StatementText(const Statement& s, const st
         case ir::DirectiveKind::Defl:
             if (label.empty())
                 return {NotConverted("an assignment without a name")};
+            if (s.args.empty())
+                return {NotConverted("an assignment without a value")};
             if (redefinable.count(FullName(label)) && !InScope(label))
             {
                 // its uses get the value it has then
@@ -809,6 +866,27 @@ std::vector<std::string> RetroWriter::StatementText(const Statement& s, const st
         case ir::DirectiveKind::Db: return Data(s, false);
         case ir::DirectiveKind::Dw: return Data(s, true);
         case ir::DirectiveKind::Display: return {};
+        case ir::DirectiveKind::Ds:
+            if (std::find(s.params.begin(), s.params.end(), "align") != s.params.end() && lineAddress && !s.args.empty())
+            {
+                // sjasmplus' ALIGN: its count from the address the line has there (in a displacement too: the
+                // address sjasmplus aligns is the displaced one)
+                const bool wasDisplaced = displaced;
+                const std::optional<int64_t> wasHere = here;
+                displaced = false;
+                here = lineAddress;
+                const auto count = Value(s.args[0]);
+                displaced = wasDisplaced;
+                here = wasHere;
+                if (count)
+                {
+                    Statement counted = s;
+                    counted.args[0] = Expr::Number(*count);
+                    counted.params.clear();
+                    return DirectiveText(counted, label);
+                }
+            }
+            return DirectiveText(s, label);
         default: return DirectiveText(s, label);
     }
 }
@@ -835,6 +913,7 @@ void RetroWriter::Range(const std::vector<ir::Line>& lines, size_t begin, size_t
     {
         const ir::Line& l = lines[k];
         const size_t at = index == SIZE_MAX ? k : index;
+        bodyLine = nesting == 1 ? static_cast<uint32_t>(k + 1) : 0;
         const Statement* first = l.statements.empty() ? nullptr : &l.statements.front();
         if (first && IsDirective(*first, ir::DirectiveKind::Macro))
         {
@@ -858,7 +937,7 @@ void RetroWriter::Range(const std::vector<ir::Line>& lines, size_t begin, size_t
                 }
                 if (*go == 0)
                     break;
-                Range(lines, k + 1, e, at);
+                RepeatPass(lines, k, e, at);
             }
             k = e;
             continue;
@@ -883,7 +962,7 @@ void RetroWriter::Range(const std::vector<ir::Line>& lines, size_t begin, size_t
                 }
                 else
                     for (int64_t pass = 0; pass < *count; ++pass)
-                        Range(lines, k + 1, e, at);
+                        RepeatPass(lines, k, e, at);
                 k = e;
                 continue;
             }
@@ -905,6 +984,69 @@ void RetroWriter::Range(const std::vector<ir::Line>& lines, size_t begin, size_t
         }
         WriteLine(l, at);
     }
+}
+
+void RetroWriter::RepeatPass(const std::vector<ir::Line>& lines, size_t begin, size_t end, size_t index)
+{
+    std::map<std::string, std::vector<size_t>> temporaryAt;
+    for (size_t n = begin + 1; n < end; ++n)
+        if (IsTemporary(lines[n].label))
+            temporaryAt[lines[n].label].push_back(n);
+    if (temporaryAt.empty())
+    {
+        Range(lines, begin + 1, end, index);
+        return;
+    }
+    ++expansions;
+    const auto temporaryName = [this](const std::string& label, size_t n) { return "__t" + label + "_" + std::to_string(expansions) + "_" + std::to_string(n); };
+    const std::function<void(Expr&, size_t)> resolve = [&](Expr& e, size_t n) {
+        if ((e.kind == Expr::Kind::Symbol || e.kind == Expr::Kind::Raw) && e.text.size() >= 2)
+        {
+            const char way = static_cast<char>(std::tolower(static_cast<unsigned char>(e.text.back())));
+            const std::string label = e.text.substr(0, e.text.size() - 1);
+            if ((way == 'b' || way == 'f') && IsTemporary(label))
+                if (const auto found = temporaryAt.find(label); found != temporaryAt.end())
+                {
+                    std::optional<size_t> pick;
+                    for (const size_t at : found->second)
+                    {
+                        if (way == 'b' && at <= n)
+                            pick = at;
+                        if (way == 'f' && at > n && !pick)
+                            pick = at;
+                    }
+                    if (pick)
+                    {
+                        e.kind = Expr::Kind::Symbol;
+                        e.text = temporaryName(label, *pick);
+                    }
+                }
+        }
+        for (Expr& a : e.args)
+            resolve(a, n);
+    };
+    std::vector<ir::Line> body;
+    std::map<std::string, std::string> scope;
+    for (size_t n = begin + 1; n < end; ++n)
+    {
+        ir::Line copy = lines[n];
+        if (IsTemporary(copy.label))
+        {
+            copy.label = temporaryName(copy.label, n);
+            scope[copy.label] = Give("T" + copy.label.substr(3));
+        }
+        for (Statement& s : copy.statements)
+        {
+            for (Operand& o : s.operands)
+                resolve(o.expr, n);
+            for (Expr& a : s.args)
+                resolve(a, n);
+        }
+        body.push_back(std::move(copy));
+    }
+    scopes.push_back(std::move(scope));
+    Range(body, 0, body.size(), index);
+    scopes.pop_back();
 }
 
 RetroWriter::Operand RetroWriter::Argument(const std::string& text) const
@@ -956,21 +1098,85 @@ ir::Operand Substituted(const ir::Operand& o, const std::map<std::string, ir::Op
 void RetroWriter::Expand(const MacroDef& def, const Statement& call, size_t index, uint32_t callLine)
 {
     std::map<std::string, Operand> args;
+    std::map<std::string, Operand> strings;   // the arguments that are strings: so in DB / DW ("DB name" with "TEXT")
+    const IFrontend* frontend = DialectRegistry::Builtin().Frontend(program.dialect);
     for (size_t k = 0; k < def.params.size(); ++k)
-        args[def.params[k]] = Argument(k < call.params.size() ? call.params[k] : std::string());
+    {
+        const std::string text = k < call.params.size() ? call.params[k] : std::string();
+        args[def.params[k]] = Argument(text);
+        if (frontend && !text.empty())
+        {
+            const FrontendResult parsed = frontend->Parse(SourceDocument::FromText("        DB " + text, program.dialect));
+            if (!parsed.program.lines.empty() && parsed.program.lines[0].statements.size() == 1 &&
+                parsed.program.lines[0].statements[0].operands.size() == 1 &&
+                parsed.program.lines[0].statements[0].operands[0].kind == Operand::Kind::String)
+                strings[def.params[k]] = parsed.program.lines[0].statements[0].operands[0];
+        }
+    }
     // The body with the arguments in, its labels one name per expansion
     ++expansions;
     std::map<std::string, std::string> scope;
     std::vector<ir::Line> body;
+    // the body's temporary labels ("1" ... JR 1b): a name of each one's own, the references by their place in the body
+    std::map<std::string, std::vector<size_t>> temporaryAt;
+    for (size_t n = def.begin + 1; n < def.end; ++n)
+        if (IsTemporary(program.lines[n].label))
+            temporaryAt[program.lines[n].label].push_back(n);
+    const auto temporaryName = [](const std::string& label, size_t n) { return "__t" + label + "_" + std::to_string(n); };
+    const std::function<void(Expr&, size_t)> resolveTemporary = [&](Expr& e, size_t n) {
+        if ((e.kind == Expr::Kind::Symbol || e.kind == Expr::Kind::Raw) && e.text.size() >= 2)
+        {
+            const char way = static_cast<char>(std::tolower(static_cast<unsigned char>(e.text.back())));
+            const std::string label = e.text.substr(0, e.text.size() - 1);
+            if ((way == 'b' || way == 'f') && IsTemporary(label))
+                if (const auto found = temporaryAt.find(label); found != temporaryAt.end())
+                {
+                    std::optional<size_t> pick;
+                    for (const size_t at : found->second)
+                    {
+                        if (way == 'b' && at <= n)
+                            pick = at;
+                        if (way == 'f' && at > n && !pick)
+                            pick = at;
+                    }
+                    if (pick)
+                    {
+                        e.kind = Expr::Kind::Symbol;
+                        e.text = temporaryName(label, *pick);
+                    }
+                }
+        }
+        for (Expr& a : e.args)
+            resolveTemporary(a, n);
+    };
     for (size_t n = def.begin + 1; n < def.end; ++n)
     {
         ir::Line copy = program.lines[n];
-        if (!copy.label.empty() && !scope.count(copy.label))
-            scope[copy.label] = Give("M" + std::to_string(expansions) + (copy.label[0] == '.' ? copy.label.substr(1) : copy.label));
+        if (IsTemporary(copy.label))
+            copy.label = temporaryName(copy.label, n);
         for (Statement& s : copy.statements)
         {
             for (Operand& o : s.operands)
-                o = Substituted(o, args);
+                resolveTemporary(o.expr, n);
+            for (Expr& a : s.args)
+                resolveTemporary(a, n);
+        }
+        // a name of the expansion's own; in sjasmplus only a .label (and a temporary one) is the expansion's, a label
+        // without a dot is global (VORG = $ in a macro moves the one VORG)
+        const bool own = program.dialect != "sjasmplus" || copy.label[0] == '.' || copy.label.rfind("__t", 0) == 0;
+        if (!copy.label.empty() && own && !scope.count(copy.label))
+            scope[copy.label] = Give("M" + std::to_string(expansions) + (copy.label[0] == '.' ? copy.label.substr(1) : copy.label));
+        for (Statement& s : copy.statements)
+        {
+            const bool data = IsDirective(s, ir::DirectiveKind::Db) || IsDirective(s, ir::DirectiveKind::Dw);
+            for (Operand& o : s.operands)
+            {
+                const bool name = o.kind == Operand::Kind::Immediate && o.expr.kind == Expr::Kind::Symbol;
+                if (data && name && strings.count(o.expr.text))
+                    o = strings.at(o.expr.text);
+                else
+                    o = Substituted(o, args);
+            }
             for (Expr& a : s.args)
                 a = Substituted(a, args);
         }
@@ -1005,29 +1211,32 @@ void RetroWriter::WriteLine(const ir::Line& l, size_t k, const std::string* repe
     bool assigns = false;
     for (const Statement& s : l.statements)
         assigns = assigns || IsDirective(s, ir::DirectiveKind::Equ) || IsDirective(s, ir::DirectiveKind::Defl);
-    if (!l.label.empty())
+    // sjasmplus' !label leaves the parent of the .labels after it as it is
+    const bool keepsParent = !l.label.empty() && l.label[0] == '!' && program.dialect == "sjasmplus";
+    const std::string own = keepsParent ? l.label.substr(1) : l.label;
+    if (!own.empty())
     {
-        if (IsTemporary(l.label))
+        if (IsTemporary(own))
         {
-            for (const auto& [at, name] : temporaries[l.label])
+            for (const auto& [at, name] : temporaries[own])
                 if (at == k)
                     label = Shown(name);
         }
         else
         {
-            if (scopes.empty() && l.label[0] != '.' && l.label[0] != '@')
-                parent = l.label;
-            else if (scopes.empty() && l.label[0] == '@')
-                parent = l.label.substr(1);
-            label = Name(l.label);
+            if (scopes.empty() && !keepsParent && own[0] != '.' && own[0] != '@')
+                parent = own;
+            else if (scopes.empty() && !keepsParent && own[0] == '@')
+                parent = own.substr(1);
+            label = Name(own);
         }
         if (scopes.empty())
             result.labels.push_back({l.sourceLine, l.label, label, false, false});
     }
     here.reset();
-    if (scopes.empty() && !l.label.empty() && !assigns)
+    if (scopes.empty() && !own.empty() && !assigns)
     {
-        if (const SourceLabel* known = Lookup(l.label))
+        if (const SourceLabel* known = Lookup(own))
             here = known->value;
     }
     else if (scopes.empty() && l.label.empty())
@@ -1038,12 +1247,20 @@ void RetroWriter::WriteLine(const ir::Line& l, size_t k, const std::string* repe
         if (found != options.labelValues.end())
             here = found->second.value;
     }
+    else if (nesting == 1 && bodyLine && !assigns)
+    {
+        auto found = options.labelValues.find(BodyLineLabel(true));
+        if (found == options.labelValues.end())
+            found = options.labelValues.find(BodyLineLabel(false));
+        if (found != options.labelValues.end())
+            here = found->second.value;
+    }
     lineAddress = here;
 
     assignedName.clear();
     for (const Statement& s : l.statements)
     {
-        for (std::string& t : StatementText(s, l.label))
+        for (std::string& t : StatementText(s, own))
             texts.push_back(t);
         // $ moves past what the statement puts down (sjasmplus: several statements a line)
         if (s.kind != Statement::Kind::Directive || IsDirective(s, ir::DirectiveKind::Db) || IsDirective(s, ir::DirectiveKind::Dw) ||
@@ -1052,7 +1269,7 @@ void RetroWriter::WriteLine(const ir::Line& l, size_t k, const std::string* repe
     }
     if (!emittingBefore && !Emitting())
         return;   // inside a block not taken: nothing of the line exists
-    if (!emittingBefore || (!l.label.empty() && redefinable.count(FullName(l.label)) && !InScope(l.label)))
+    if (!emittingBefore || (!own.empty() && redefinable.count(FullName(own)) && !InScope(own)))
         label = Shown(assignedName);   // a name assigned with = / DEFL is no label of the target, or one per definition
     if (repeatLabel)
         label = *repeatLabel;
@@ -1063,9 +1280,14 @@ void RetroWriter::WriteLine(const ir::Line& l, size_t k, const std::string* repe
 
 void RetroWriter::Run()
 {
-    // The macros, and the names assigned more than once (DEFL / "="): those are written as their values
+    // The macros, and the names assigned more than once (DEFL / "=", or once in a block that repeats: a macro, DUP,
+    // WHILE): those are written as their values. A name assigned once is a constant (sjasmplus gives a use above it
+    // the value of the pass before)
     {
         std::string parentName;
+        std::map<std::string, int> definitions;
+        std::set<std::string> assigned;
+        int blocks = 0;
         for (size_t k = 0; k < program.lines.size(); ++k)
         {
             const ir::Line& l = program.lines[k];
@@ -1078,15 +1300,32 @@ void RetroWriter::Run()
                     def.params = s.params;
                     macros[z80::Lower(s.text)] = def;
                 }
+            for (const Statement& s : l.statements)
+                blocks += IsDirective(s, ir::DirectiveKind::Macro) || IsDirective(s, ir::DirectiveKind::Repeat) || IsDirective(s, ir::DirectiveKind::While);
+            const int closing = static_cast<int>(std::count_if(l.statements.begin(), l.statements.end(), [](const Statement& s) {
+                return IsDirective(s, ir::DirectiveKind::EndMacro) || IsDirective(s, ir::DirectiveKind::EndRepeat) || IsDirective(s, ir::DirectiveKind::EndWhile);
+            }));
+            const int inBlock = blocks;
+            blocks = std::max(0, blocks - closing);
             if (l.label.empty() || IsTemporary(l.label))
                 continue;
-            const std::string full = l.label[0] == '@' ? l.label.substr(1) : l.label[0] == '.' ? parentName + l.label : l.label;
-            if (l.label[0] != '.')
+            const bool keeps = l.label[0] == '!';   // sjasmplus' !label: not the parent of the .labels after it
+            const std::string own = keeps ? l.label.substr(1) : l.label;
+            const std::string full = own[0] == '@' ? own.substr(1) : own[0] == '.' ? parentName + own : own;
+            if (own[0] != '.' && !keeps)
                 parentName = full;
+            ++definitions[full];
             for (const Statement& s : l.statements)
                 if (IsDirective(s, ir::DirectiveKind::Defl))
-                    redefinable.insert(full);
+                {
+                    assigned.insert(full);
+                    if (inBlock > 0 || program.dialect != "sjasmplus")
+                        redefinable.insert(full);
+                }
         }
+        for (const std::string& name : assigned)
+            if (definitions[name] > 1)
+                redefinable.insert(name);
     }
 
     // Names: every label under a name the target keeps apart (sjasmplus' main.loop -> MAIN_LO, a keyword renamed);
@@ -1100,14 +1339,18 @@ void RetroWriter::Run()
             const ir::Line& l = program.lines[k];
             for (const Statement& s : l.statements)
                 inMacro = inMacro || IsDirective(s, ir::DirectiveKind::Macro);
-            if (!l.label.empty() && !inMacro)
+            // (a label without a dot in a sjasmplus macro body is global: one name for every expansion)
+            const bool globalInMacro = inMacro && program.dialect == "sjasmplus" && !l.label.empty() && l.label[0] != '.' && !IsTemporary(l.label);
+            if (!l.label.empty() && (!inMacro || globalInMacro))
             {
                 if (IsTemporary(l.label))
                     temporaries[l.label].push_back({k, Give("T" + l.label + "_" + std::to_string(++temporaryCount[l.label]))});
                 else
                 {
-                    const std::string full = l.label[0] == '@' ? l.label.substr(1) : l.label[0] == '.' ? parentName + l.label : l.label;
-                    if (l.label[0] != '.')
+                    const bool keeps = l.label[0] == '!' || globalInMacro;
+                    const std::string own = l.label[0] == '!' ? l.label.substr(1) : l.label;
+                    const std::string full = own[0] == '@' ? own.substr(1) : own[0] == '.' ? parentName + own : own;
+                    if (own[0] != '.' && !keeps)
                         parentName = full;
                     if (!names.count(full) && !redefinable.count(full))
                     {

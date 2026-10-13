@@ -6,6 +6,7 @@
 #include <map>
 #include <set>
 
+#include "dialects/common/diskname.h"
 #include "dialects/common/retrowriter.h"
 #include "dialects/common/z80.h"
 
@@ -338,7 +339,7 @@ private:
                     items.push_back(Number(pattern[static_cast<size_t>(k) % pattern.size()]));
                 return DataLines(Db(), items);
             }
-            case ir::DirectiveKind::Include: return {"*INCLUDE \"" + s.text + "\""};
+            case ir::DirectiveKind::Include: return {"*INCLUDE \"" + DiskName(options, s.text) + "\""};
             case ir::DirectiveKind::Incbin: return {NotConverted("INCBIN (Laser Genius has none): " + s.text)};
             case ir::DirectiveKind::End:
                 diagnostics.push_back({Severity::Info, line, 0, "END dropped (Laser Genius assembles the whole text)"});

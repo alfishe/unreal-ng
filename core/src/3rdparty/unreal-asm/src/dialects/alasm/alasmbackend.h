@@ -15,5 +15,6 @@ public:
     std::string_view Dialect() const override { return "alasm"; }
     BackendResult Write(const ir::Program& program, const BackendOptions& options) const override;
     bool WantsLabelValues() const override { return true; }
+    bool JoinsSjasmplusProject() const override { return true; }
 };
 }  // namespace unrealasm::dialects
