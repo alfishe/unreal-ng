@@ -4,13 +4,44 @@
 #include "debugger/ttd/engine/ttdcontainer.h"
 #include "debugger/ttd/ttdbookmarks.h"
 #include "debugger/ttd/ttdfileinfo.h"
+#include "debugger/ttd/ttdperipheralmask.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
 
 namespace ttd
 {
 
 namespace
 {
-constexpr uint16_t kFactsVersion = 1;
+/// 3 (D23): the not-recorded devices as keys, no mask of the recorded ones (the session's device table lists them);
+/// 2: two masks of v1 ids as word lists (u8 count, u64 words: any u8 id); 1: one u64 each (ids 0..63). The masks of
+/// versions 1 and 2 are read: the recorded one dropped, the not-recorded one as keys {type of the id, ""}
+constexpr uint16_t kFactsVersion = 3;
+constexpr uint16_t kFactsVersionFirst = 1;
+constexpr uint16_t kFactsVersionKeys = 3;
+
+bool ReadMask(TTDByteReader& r, uint16_t version, PeripheralMask& mask)
+{
+    mask = PeripheralMask{};
+    if (version < 2)
+    {
+        uint64_t low = 0;
+        if (!r.U64(low))
+            return false;
+        mask = PeripheralMask::FromLow(low);
+        return true;
+    }
+    uint8_t words = 0;
+    if (!r.U8(words) || words == 0 || words > PeripheralMask::kWords)
+        return false;
+    for (uint8_t i = 0; i < words; ++i)
+    {
+        uint64_t value = 0;
+        if (!r.U64(value))
+            return false;
+        mask.SetWord(i, value);
+    }
+    return true;
+}
 constexpr uint16_t kBookmarksVersion = 1;
 }  // namespace
 
@@ -23,8 +54,12 @@ std::vector<uint8_t> EncodeSessionFacts(const TTDSessionFacts& facts)
     w.U64(facts.romSignature);
     w.U64(facts.capturedAtUnixMs);
     w.Str(facts.recordedBy);
-    w.U64(facts.peripheralMask);
-    w.U64(facts.notRecordedMask);
+    w.Varint(facts.notRecorded.size());
+    for (const TTDDeviceKey& key : facts.notRecorded)
+    {
+        w.U16(static_cast<uint16_t>(key.type));
+        w.Str(key.instance);
+    }
     w.U8(facts.inputHistoryComplete ? 1 : 0);
     w.U8(facts.portJournalValid ? 1 : 0);
     w.Str(facts.portJournalOffReason);
@@ -36,12 +71,35 @@ bool DecodeSessionFacts(const std::vector<uint8_t>& bytes, TTDSessionFacts& fact
     TTDByteReader r(bytes);
     uint16_t version = 0;
     uint8_t input = 0, port = 0;
-    if (!r.U16(version) || version != kFactsVersion)
+    if (!r.U16(version) || version < kFactsVersionFirst || version > kFactsVersion)
         return false;
     TTDSessionFacts f;
     if (!r.U8(f.modelId) || !r.U16(f.modelRamPages) || !r.U64(f.romSignature) || !r.U64(f.capturedAtUnixMs) ||
-        !r.Str(f.recordedBy) || !r.U64(f.peripheralMask) || !r.U64(f.notRecordedMask) || !r.U8(input) ||
-        !r.U8(port) || !r.Str(f.portJournalOffReason))
+        !r.Str(f.recordedBy))
+        return false;
+    if (version < kFactsVersionKeys)
+    {
+        PeripheralMask recorded, notRecorded;
+        if (!ReadMask(r, version, recorded) || !ReadMask(r, version, notRecorded))
+            return false;
+        f.notRecorded = TTDPeripheralRegistry::KeysOfV1Mask(notRecorded);
+    }
+    else
+    {
+        uint64_t count = 0;
+        if (!r.Varint(count) || count > r.Left())
+            return false;
+        for (uint64_t i = 0; i < count; ++i)
+        {
+            uint16_t type = 0;
+            TTDDeviceKey key;
+            if (!r.U16(type) || !r.Str(key.instance))
+                return false;
+            key.type = static_cast<TTDDeviceType>(type);
+            f.notRecorded.push_back(std::move(key));
+        }
+    }
+    if (!r.U8(input) || !r.U8(port) || !r.Str(f.portJournalOffReason))
         return false;
     f.inputHistoryComplete = input != 0;
     f.portJournalValid = port != 0;
@@ -148,8 +206,13 @@ bool ReadEngineFileInfo(const ITTDByteSource& source, TTDFileInfo& info, std::st
     info.machine.modelId = facts.modelId;
     info.machine.ramPageBound = facts.modelRamPages;
     info.machine.romSignature = facts.romSignature;
-    info.machine.peripheralMask = facts.peripheralMask;
-    info.machine.notRecordedMask = facts.notRecordedMask;
+    std::vector<TTDDeviceDescriptor> devices;
+    if (!TTDSessionFile::ReadDevices(source, devices, error))
+        return false;
+    for (const TTDDeviceDescriptor& d : devices)
+        info.machine.devices.push_back({d.Key(), d.legacyId});
+    for (const TTDDeviceKey& key : facts.notRecorded)
+        info.machine.notRecordedDevices.push_back({key, PeripheralId::None});
     DescribeRecordedMachine(info.machine);
     return true;
 }

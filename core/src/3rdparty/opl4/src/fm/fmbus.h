@@ -54,6 +54,10 @@ public:
     // taps, otherwise the engine's pre-mixed pair through unchanged.
     void Advance(std::array<int32_t, kChannelCount>& taps, int32_t& outL, int32_t& outR);
 
+    // The timers of `ticks` FM steps at once, exactly as `ticks` AdvanceTimers
+    // calls (the owner's idle fast path: the engine advanced on its own)
+    void AdvanceTimersIdle(uint64_t ticks);
+
     uint8_t Status() const { return _status; }
     uint8_t ReadStatus() const { return static_cast<uint8_t>(_status | 0x80); } // bit 7 reads as 1
     bool NewMode() const { return _newMode; }

@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "_helpers/fatsourceimage.h"
+#include "_helpers/sparsefile.h"
 #include "_helpers/scratchfolder.h"
 #include "emulator/io/storage/compose/graftvolume.h"
 #include "emulator/io/storage/fat/fatsynthvolume.h"
@@ -147,7 +148,7 @@ TEST(ZeroRun_Test, EveryDeviceClaimsOnlyZeros)
         std::ofstream out(sparse, std::ios::binary);
         out << "data";
     }
-    std::filesystem::resize_file(sparse, 64ull * 1024 * 1024);
+    ASSERT_TRUE(testfiles::ResizeSparse(sparse, 64ull * 1024 * 1024));
     std::shared_ptr<IBlockDevice> raw(RawImage::Open(FileHelper::FromFsPath(sparse), RawImage::Access::ReadOnly));
     ASSERT_NE(raw, nullptr);
     CheckRuns(*raw);

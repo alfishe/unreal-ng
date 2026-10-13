@@ -63,7 +63,6 @@ private:
     void BeginTransmit();
     void FinishReceive();
     void SendBlock(unsigned index);
-    unsigned BlocksTotal() const { return _blocks + (_remainder ? 1 : 0); }
     unsigned BlockLength(unsigned index) const { return index < _blocks ? kBlockSize : _remainder; }
 
     std::deque<uint8_t> _out;
@@ -77,6 +76,8 @@ private:
     std::string _name;
     uint32_t _size = 0, _blocks = 0, _remainder = 0;
     unsigned _index = 0;              ///< the block in progress
-    unsigned _lastSent = 0;
-    bool _pathTerminated = false;
+    bool _pathTerminated = false;   ///< the partition byte of nextpi-file_transmit has come
+    bool _awaitingFirst = false;    ///< transmit: the Next's one byte after the header
+    uint8_t _partition = 0;
+    unsigned _checksumModulus = 256;
 };

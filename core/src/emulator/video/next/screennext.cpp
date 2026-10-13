@@ -403,6 +403,8 @@ void ScreenNext::RenderUpTo(unsigned lineLimit, unsigned xLimit)
     in.regs = &board.Video();
     in.sprites = &board.Sprites();
     in.flash = _state && (_state->frame_counter & 0x10);
+    if (_rasterState.tstatesPerLine >= 100)  // 7 MHz pixels per line = 2 per T-state, 4 clocks of 28 MHz each
+        in.lineClocks = _rasterState.tstatesPerLine * 8;
     uint32_t* fb = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
     auto refresh = [&]() {
         // what the copper or the program may have changed since the pixels before

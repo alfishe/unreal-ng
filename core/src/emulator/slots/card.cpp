@@ -7,12 +7,12 @@ namespace
 
 /// The ZX-MultiSound's devices: the card (its time base, CPLD, YM2203 pair, MIDI line, DACs), its SAA1099, its
 /// SAM2695 and its General Sound
-constexpr ttd::PeripheralId kMultiSoundTtdIds[] = { ttd::PeripheralId::MultiSound, ttd::PeripheralId::Saa1099,
-                                                    ttd::PeripheralId::Sam2695, ttd::PeripheralId::MultiSoundGs };
+constexpr ttd::TTDDeviceType kMultiSoundTtdTypes[] = { ttd::TTDDeviceType::MultiSound, ttd::TTDDeviceType::Saa1099,
+                                                      ttd::TTDDeviceType::Sam2695, ttd::TTDDeviceType::MultiSoundGs };
 
 /// One entry per card the slots build themselves (the others keep their legacy owners, slotmanager.h)
 constexpr CardType kCardTypes[] = {
-    { MultiSoundCard::kCardId, &MultiSoundSlotCard::Create, kMultiSoundTtdIds },
+    { MultiSoundCard::kCardId, &MultiSoundSlotCard::Create, kMultiSoundTtdTypes },
 };
 
 } // namespace

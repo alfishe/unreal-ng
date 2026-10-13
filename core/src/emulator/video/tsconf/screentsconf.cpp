@@ -229,6 +229,21 @@ ScreenState ScreenTSConf::DescribeScreenState() const
     return s;
 }
 
+void ScreenTSConf::CatchUpToStepEnd()
+{
+    if (_catchUpOnEvents && State() && _engine)
+        DrawTo(_engine->StepEndRaster());
+}
+
+void ScreenTSConf::InitFrame()
+{
+    Screen::InitFrame();
+    // The draw cursor of the frame before stands at its end; the first catch-up of this one must not take it for "drawn already"
+    // (the per-instruction draw wraps it on its first call)
+    if (_catchUpOnEvents)
+        _prevTstate = 0;
+}
+
 void ScreenTSConf::DrawTo(uint32_t raster)
 {
     if (raster <= _prevTstate)

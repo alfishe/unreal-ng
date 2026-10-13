@@ -17,9 +17,18 @@ CatalogHints TrdosFile::Hints() const
     hints.start = start;
     hints.length = length;
     hints.name = TrimmedName();
-    hints.extension = std::string("$") + type;
+    hints.extension = extension.empty() ? std::string("$") + type : extension;
+    if (!extension.empty())
+        hints.type = 0;
     hints.slack = tail;
     return hints;
+}
+
+std::string TrdosFile::FullName() const
+{
+    if (extension.empty() && type == 0)
+        return TrimmedName();
+    return TrimmedName() + "." + (extension.empty() ? std::string(1, type) : extension);
 }
 
 std::string TrdosFile::TrimmedName() const

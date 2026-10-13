@@ -61,6 +61,10 @@
              {"composed", "ula", "layer2", "tilemap", "sprites", "ids"}},
             {"alpha", "query", false, "with layer: false flattens the pixels the layer does not paint onto the fallback colour (default true: alpha 0)",
              {"true", "false"}},
+            {"size", "query", false,
+             "with layer: screen (default) 640x512, the screenshot's geometry; grid 640x256, every line once; pixel 320x256, one sample per Next pixel "
+             "(loses the second sub-pixel of Layer 2 640 and Timex hi-res)",
+             {"screen", "grid", "pixel"}},
             {"source", "query", false,
              "presented (default): the finished, tear-free frame the window shows, a couple of frames behind. live: "
              "the frame as drawn right now, no delay and no ZX DLSS: a running machine's emulation thread copies it at "
@@ -436,6 +440,13 @@
         op["parameters"][2]["schema"]["type"] = "string";
         op["parameters"][2]["schema"]["enum"].append("true");
         op["parameters"][2]["schema"]["enum"].append("false");
+        op["parameters"][3]["name"] = "size";
+        op["parameters"][3]["in"] = "query";
+        op["parameters"][3]["description"] = "screen (default) 640x512, grid 640x256, pixel 320x256";
+        op["parameters"][3]["schema"]["type"] = "string";
+        op["parameters"][3]["schema"]["enum"].append("screen");
+        op["parameters"][3]["schema"]["enum"].append("grid");
+        op["parameters"][3]["schema"]["enum"].append("pixel");
         op["responses"]["200"]["description"] = "The layers of one frame";
         op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/NextLayers";
         op["responses"]["400"]["description"] = "Bad format or alpha";

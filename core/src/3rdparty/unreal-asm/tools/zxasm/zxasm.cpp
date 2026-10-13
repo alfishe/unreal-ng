@@ -247,8 +247,9 @@ bool Unwrap(const Args& args, std::vector<uint8_t>& bytes, CatalogHints& hints)
         const size_t dot = args.inner.find_last_of('.');
         const std::string name = dot == std::string::npos ? args.inner : args.inner.substr(0, dot);
         const char type = dot == std::string::npos ? 0 : args.inner[dot + 1];
+        const std::string innerExtension = dot == std::string::npos ? std::string() : Lower(args.inner.substr(dot + 1));   // +3DOS: NAME.TYP
         for (const auto& f : files)
-            if (f.TrimmedName() == name && (type == 0 || f.type == type))
+            if (f.TrimmedName() == name && (type == 0 || (f.extension.empty() ? f.type == type : f.extension == innerExtension)))
             {
                 bytes = f.data;
                 hints = f.Hints();
@@ -305,7 +306,7 @@ const containers::TrdosFile* FindBinary(const std::vector<containers::TrdosFile>
     const size_t dot = spec.rfind('.');
     if (dot != std::string::npos && dot + 2 == spec.size())
         candidates.push_back({spec.substr(0, dot), spec[dot + 1]});
-    candidates.push_back({spec, 0});
+    candidates.push_back({spec, '\0'});
     // ZAsm shows a name with the type letter and the two bytes of the catalog's start as its extension ("FONT.fn1")
     if (dot != std::string::npos && dot > 0 && dot + 4 == spec.size())
         candidates.push_back({spec.substr(0, dot), spec[dot + 1]});
@@ -1053,8 +1054,9 @@ int Inject(const Args& args, const std::vector<uint8_t>& bytes, const CatalogHin
         }
         for (size_t k = 0; k < plan.pages.size(); ++k)
             std::cerr << d->id << ": " << plan.texts[k].document.name << ", " << plan.texts[k].document.lines.size() << " line(s), "
-                      << plan.texts[k].bytes.size() << " bytes into page " << plan.pages[k].page
-                      << (plan.pages[k].previous.ok ? " (replaced " + plan.pages[k].previous.name + ")" : std::string())
+                      << plan.texts[k].bytes.size() << " bytes "
+                      << (plan.pages[k].page >= 0 ? "into page " + std::to_string(plan.pages[k].page) : std::string("into its memory"))
+                      << (plan.pages[k].previous.ok && !plan.pages[k].previous.name.empty() ? " (replaced " + plan.pages[k].previous.name + ")" : std::string())
                       << (k == 0 ? " -> " + output : " (INCLUDE " + project[k].name + ")") << "\n";
         return 0;
     }
@@ -1204,7 +1206,7 @@ int main(int argc, char** argv)
         for (const auto& f : files)
         {
             const DetectResult detected = registry.Detect(f.data, f.Hints());
-            std::cout << f.TrimmedName() << "." << f.type << "\t" << f.start << "\t" << f.length << "\t"
+            std::cout << f.FullName() << "\t" << f.start << "\t" << f.length << "\t"
                       << (detected.chosen ? detected.chosen->Info().id : "-") << "\n";
         }
         return 0;

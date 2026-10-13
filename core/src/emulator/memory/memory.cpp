@@ -259,8 +259,12 @@ uint8_t Memory::MemoryReadOverlayM1(uint16_t addr, bool isExecution)
 template <MemoryWriteCallback Inner>
 void Memory::MemoryWriteOverlay(uint16_t addr, uint8_t value)
 {
-    (this->*Inner)(addr, value);
     HostBusOverlay* overlay = _busOverlay;
+    const bool inWindow = addr >= overlay->windowStart && addr < overlay->windowEnd;
+    if (overlay->observesWriteStart && inWindow) [[unlikely]]
+        overlay->onBeforeWrite(addr);
+    (this->*Inner)(addr, value);
+    overlay = _busOverlay;  // the write may have changed the installed set (a port-like window)
     if (addr >= overlay->windowStart && addr < overlay->windowEnd)
         overlay->onWrite(addr, value, _bank_mode[0] == BANK_ROM);
 }

@@ -63,9 +63,9 @@ MachineState CaptureState(EmulatorContext* context, Session& session)
     s.t = z80->t;
     const size_t pages = session.GetModelRamPages();
     s.ram.assign(context->pMemory->RAMPageAddress(0), context->pMemory->RAMPageAddress(0) + pages * 0x4000);
-    for (const auto& [id, device] : session.GetPeripheralRegistry().Devices())
-        if (device && device->TTDStateSize() != 0)
-            device->TTDSaveStateTo(s.devices[id]);
+    for (const ttd::TTDRegistryEntry& e : session.GetPeripheralRegistry().Entries())
+        if (e.device && e.device->TTDStateSize() != 0)
+            e.device->TTDSaveStateTo(s.devices[static_cast<uint8_t>(e.legacyId)]);
     return s;
 }
 }  // namespace
@@ -521,8 +521,8 @@ TEST_F(TimeTravelController_Test, StatusDescribesTheSessionAsV1)
     EXPECT_EQ(a.checkpointCount, b.checkpointCount);
     EXPECT_EQ(a.sessionStartFrame, b.sessionStartFrame);
     EXPECT_EQ(a.currentEndFrame, b.currentEndFrame);
-    EXPECT_EQ(a.machine.peripheralMask, b.machine.peripheralMask) << "the same devices recorded";
-    EXPECT_NE(b.machine.peripheralMask, 0u);
+    EXPECT_EQ(a.machine.peripherals, b.machine.peripherals) << "the same devices recorded";
+    EXPECT_FALSE(b.machine.peripherals.empty());
     EXPECT_EQ(a.inputEventCount, b.inputEventCount);
 
     const ttd::TimeTravelEngine& engine = _controller->GetEngine();
@@ -627,7 +627,6 @@ TEST_F(TimeTravelController_Test, FileInfoAndPortSearchReadTheEngineFile)
     EXPECT_EQ(b.schemaVersion, 2u);
     EXPECT_EQ(a.machine.modelId, b.machine.modelId);
     EXPECT_EQ(a.machine.model, b.machine.model);
-    EXPECT_EQ(a.machine.peripheralMask, b.machine.peripheralMask);
     EXPECT_EQ(a.machine.peripherals, b.machine.peripherals);
     EXPECT_EQ(a.machine.romSignature, b.machine.romSignature);
     EXPECT_EQ(a.machine.generalSound, b.machine.generalSound);

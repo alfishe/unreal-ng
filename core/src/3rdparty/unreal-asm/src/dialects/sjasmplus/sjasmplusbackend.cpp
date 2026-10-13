@@ -218,7 +218,7 @@ struct Writer
             case Expr::Kind::Current: return "$";
             case Expr::Kind::CurrentPage: return "$$";
             case Expr::Kind::CurrentPhysical: return "$$$";
-            case Expr::Kind::Group: return "(" + Print(e.args[0]) + ")";
+            case Expr::Kind::Group: return (e.text == "norel" ? "norel (" : "(") + Print(e.args[0]) + ")";
             case Expr::Kind::Memory: return "{" + Print(e.args[0]) + "}";
             case Expr::Kind::Raw: return e.text;
             case Expr::Kind::Defined:

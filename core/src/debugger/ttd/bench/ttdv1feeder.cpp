@@ -283,8 +283,8 @@ bool ConvertV1Session(const TimeTravelManager& v1, ITTDByteSink& sink, std::stri
     facts.romSignature = info.machine.romSignature;
     facts.capturedAtUnixMs = info.capturedAtUnixMs;
     facts.recordedBy = info.recordedBy;
-    facts.peripheralMask = info.machine.peripheralMask;
-    facts.notRecordedMask = info.machine.notRecordedMask;
+    for (const TTDRecordedDevice& d : info.machine.notRecordedDevices)
+        facts.notRecorded.push_back(d.key);
     facts.inputHistoryComplete = info.inputHistoryComplete;
     facts.portJournalValid = info.portJournalActive;
     facts.portJournalOffReason = info.portJournalOffReason;

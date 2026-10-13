@@ -1,5 +1,6 @@
 #include "emulator/io/serial/nextpipeer.h"
 
+#include <cstdlib>
 #include <cstring>
 
 namespace
@@ -88,10 +89,18 @@ void NextPiPeer::Transmit(uint8_t byte)
                 _data.reserve(_size);
                 _index = 0;
                 _block.clear();
-                if (_size == 0 || BlocksTotal() == 0)
-                    FinishReceive();
+                // nextpi-file_receive: (blocks * 16384) + remainder must be the size; then a second OK
+                if (static_cast<uint64_t>(_blocks) * kBlockSize + _remainder != _size)
+                {
+                    Out("Size mismatch ERROR\n");
+                    _mode = Mode::Shell;
+                    Prompt();
+                }
                 else
-                    _mode = Mode::RecvBlock;
+                {
+                    Out("OK\n");
+                    _mode = BlockLength(0) == 0 ? Mode::RecvChecksum : Mode::RecvBlock;
+                }
             }
             break;
         }
@@ -102,31 +111,32 @@ void NextPiPeer::Transmit(uint8_t byte)
             break;
         case Mode::RecvChecksum:
         {
-            if (byte == Sum(_block))
+            if (byte == static_cast<uint8_t>(Sum(_block) % _checksumModulus))
             {
                 _data.insert(_data.end(), _block.begin(), _block.end());
                 Out(kBlockOk);
                 _index++;
                 _block.clear();
-                if (_index >= BlocksTotal())
+                if (_index > _blocks)  // the remainder block follows the full ones, even when it is empty
                     FinishReceive();
                 else
-                    _mode = Mode::RecvBlock;
+                    _mode = BlockLength(_index) == 0 ? Mode::RecvChecksum : Mode::RecvBlock;
             }
             else
             {
                 Out(kBlockFail);  // the Next resends the block
                 _block.clear();
-                _mode = Mode::RecvBlock;
+                _mode = BlockLength(_index) == 0 ? Mode::RecvChecksum : Mode::RecvBlock;
             }
             break;
         }
         case Mode::SendPath:
         {
-            // a 0, the path, a 0
-            if (_name.empty() && byte == 0 && !_pathTerminated)
+            // the partition (0 "/", 1 "/ram/", 2 "/NextPi/"), then the name and a 0 (nextpi-file_transmit: dirs[partition] + filename)
+            if (!_pathTerminated)
             {
-                _pathTerminated = true;  // the opening 0
+                _partition = byte;
+                _pathTerminated = true;
                 break;
             }
             if (byte != 0)
@@ -134,9 +144,19 @@ void NextPiPeer::Transmit(uint8_t byte)
                 _name.push_back(static_cast<char>(byte));
                 break;
             }
-            const auto found = _files.find(_name);
+            static const char* const kDirs[3] = {"/", "/ram/", "/NextPi/"};
+            const auto found = _partition < 3 ? _files.find(std::string(kDirs[_partition]) + _name) : _files.end();
             _data = found != _files.end() ? found->second : std::vector<uint8_t>();
             _size = static_cast<uint32_t>(_data.size());
+            if (_size == 0)
+            {
+                // a missing or empty file: four zero bytes end the transfer (the script exits; the prompt follows)
+                for (int i = 0; i < 4; i++)
+                    Out(uint8_t(0));
+                _mode = Mode::Shell;
+                Prompt();
+                break;
+            }
             _blocks = _size / kBlockSize;
             _remainder = _size % kBlockSize;
             const uint8_t header[10] = {uint8_t(_size >> 24), uint8_t(_size >> 16), uint8_t(_size >> 8), uint8_t(_size),
@@ -145,30 +165,32 @@ void NextPiPeer::Transmit(uint8_t byte)
             for (uint8_t b : header)
                 Out(b);
             _index = 0;
-            if (_size == 0)
+            _awaitingFirst = true;  // one byte from the Next (its header check), then the blocks
+            _mode = Mode::SendBlocks;
+            break;
+        }
+        case Mode::SendBlocks:
+        {
+            if (_awaitingFirst)
+            {
+                _awaitingFirst = false;
+                SendBlock(_index);  // the first block
+                break;
+            }
+            // the answer to the block just sent: '!' goes on, anything else sends it again
+            if (byte != kBlockOk)
+            {
+                SendBlock(_index);
+                break;
+            }
+            _index++;
+            if (_index > _blocks)  // the remainder block (even an empty one) was the last
             {
                 _mode = Mode::Shell;
                 Prompt();
             }
             else
-                _mode = Mode::SendBlocks;
-            break;
-        }
-        case Mode::SendBlocks:
-        {
-            // the status of the previous block ('!' ok, '?' send it again), or the first request
-            if (byte == kBlockFail && _index > 0)
-                SendBlock(_lastSent);
-            else if (_index < BlocksTotal())
-            {
                 SendBlock(_index);
-                _lastSent = _index++;
-            }
-            else
-            {
-                _mode = Mode::Shell;  // the status of the last block
-                Prompt();
-            }
             break;
         }
     }
@@ -190,7 +212,7 @@ void NextPiPeer::SendBlock(unsigned index)
 
 void NextPiPeer::FinishReceive()
 {
-    _files[_name] = _data;
+    _files["/ram/" + _name] = _data;
     _mode = Mode::Shell;
     Prompt();
 }
@@ -215,7 +237,14 @@ void NextPiPeer::Execute(const std::string& text)
         Prompt();
     }
     else if (command == "nextpi-file_receive" && nbn)
+    {
+        _checksumModulus = 256;
+        const size_t at = line.find("-nbn");
+        const unsigned value = static_cast<unsigned>(std::atoi(line.c_str() + at + 4));
+        if (value >= 1 && value <= 256)
+            _checksumModulus = value;
         BeginReceive();
+    }
     else if (command == "nextpi-file_transmit" && nbn)
         BeginTransmit();
     else if (command.rfind("nextpi-", 0) == 0)
@@ -234,14 +263,14 @@ void NextPiPeer::Execute(const std::string& text)
 
 void NextPiPeer::BeginReceive()
 {
-    Out("OK\r\n");
+    Out("OK\n");  // the script runs the terminal raw: no CR
     _header.clear();
     _mode = Mode::RecvHeader;
 }
 
 void NextPiPeer::BeginTransmit()
 {
-    Out("OK\r\n");
+    Out("OK\n");
     _name.clear();
     _pathTerminated = false;
     _mode = Mode::SendPath;

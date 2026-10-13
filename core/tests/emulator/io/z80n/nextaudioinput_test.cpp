@@ -164,7 +164,7 @@ TEST_F(NextAudioInput_Test, TheBoardBlockShowsTheBusEnablesTheDebugLedAndTheUnmo
     EXPECT_EQ(board->find("bus_port_enable")->find("nr_89")->s, "0x80");
     EXPECT_EQ(board->find("bus_port_enable")->find("restored_by")->s, "soft reset");
     EXPECT_NE(board->find("debug_led"), nullptr);
-    EXPECT_FALSE(board->find("io_trap")->find("modelled")->b);
+    EXPECT_TRUE(board->find("io_trap")->find("modelled")->b);
 }
 
 // zxnext.vhd 2396, 2616-2617, 3436-3470: the board drives #1F for Kempston 1 / an MD pad on #1F and #37 for Kempston 2 / an MD pad on #37,

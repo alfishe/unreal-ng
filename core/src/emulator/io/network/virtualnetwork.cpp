@@ -711,7 +711,8 @@ void VirtualNetwork::Reset(const SerialGuests& keep)
     {
         if (s.guest && (s.guest == keep.com || s.guest == keep.machine || s.guest == keep.atmIo || s.guest == keep.zifi ||
                         s.guest == keep.ethernet || s.guest == keep.slotUart[0] || s.guest == keep.slotUart[1] ||
-                        s.guest == keep.slotUartB[0] || s.guest == keep.slotUartB[1]))
+                        s.guest == keep.slotUartB[0] || s.guest == keep.slotUartB[1] || s.guest == keep.machine2 ||
+                        s.guest == keep.joystick))
             kept[id] = s;
     }
     if (_host)
@@ -993,6 +994,8 @@ void VirtualNetwork::SaveState(netstate::VirtualNetwork& out, netstate::Tail& ta
                      : s.guest == serial.slotUart[1] ? 8
                      : s.guest == serial.slotUartB[0] ? 9
                      : s.guest == serial.slotUartB[1] ? 10
+                     : s.guest == serial.machine2 ? 11
+                     : s.guest == serial.joystick ? 12
                                                  : 1;
         o.cookie = s.cookie;
         o.remoteAddr = s.remote.addr;
@@ -1092,6 +1095,8 @@ void VirtualNetwork::LoadState(const netstate::VirtualNetwork& in, const netstat
                   : o.hasGuest == 8 ? serial.slotUart[1]
                   : o.hasGuest == 9 ? serial.slotUartB[0]
                   : o.hasGuest == 10 ? serial.slotUartB[1]
+                  : o.hasGuest == 11 ? serial.machine2
+                  : o.hasGuest == 12 ? serial.joystick
                   : o.hasGuest      ? guest
                                     : nullptr;
         s.cookie = o.cookie;

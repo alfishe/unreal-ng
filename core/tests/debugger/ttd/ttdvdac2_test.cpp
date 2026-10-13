@@ -158,9 +158,9 @@ protected:
 /// The FT812 is in the checkpoints: its blobs are registered and sized
 TEST_F(TTDVdac2_Test, ChipBlobsAreRecorded)
 {
-    const auto ids = _context->pPortDecoder->GetTTDModelStateIds();
-    EXPECT_NE(std::find(ids.begin(), ids.end(), ttd::PeripheralId::Vdac2Memory), ids.end());
-    EXPECT_NE(std::find(ids.begin(), ids.end(), ttd::PeripheralId::Vdac2), ids.end());
+    const auto ids = _context->pPortDecoder->GetTTDModelStateTypes();
+    EXPECT_NE(std::find(ids.begin(), ids.end(), ttd::TTDDeviceType::Vdac2Memory), ids.end());
+    EXPECT_NE(std::find(ids.begin(), ids.end(), ttd::TTDDeviceType::Vdac2), ids.end());
     EXPECT_GT(_card->TtdMemorySize(), 1024u * 1024u) << "RAM_G and the other regions, whole";
     EXPECT_GT(_card->TtdStateSize(), 0u);
 }

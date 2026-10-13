@@ -327,6 +327,22 @@ void SoundChip_GeneralSound::runEvents(int64_t /*now*/)
     scheduleNextPeriod();
 }
 
+// Inside an idle-loop sleep (GSCardRunner): every period boundary before `end` at once. The CPU cannot take the
+// INT, so each boundary only counts and keeps the request asserted, exactly as runEvents one by one
+bool SoundChip_GeneralSound::sleepQuietEventsBefore(int64_t end)
+{
+    const int64_t next = _runner.nextEvent();
+    if (next >= end)
+        return true;
+    const int64_t periods = (end - 1 - next) / _intPeriodUnits + 1;
+    _activityCounters.interruptPeriods += static_cast<uint64_t>(periods);
+    _activityCounters.interruptsCoalesced += static_cast<uint64_t>(_intPending ? periods : periods - 1);
+    _intPending = true;
+    _gsCyclesAbs += periods * _intPeriodUnits;
+    scheduleNextPeriod();
+    return true;
+}
+
 /// endregion </Lazy sync core>
 
 /// region <Diagnostics>
@@ -682,6 +698,9 @@ void SoundChip_GeneralSound::replayModuleUpload(const std::vector<uint8_t>& byte
 uint8_t SoundChip_GeneralSound::gsIn(uint16_t port)
 {
     traceEvent(GSTraceSide::GsInternal, port & 0x00FF, 0, false);
+    // FLAGS and COMRG reads change nothing: the only reads an idle loop may repeat
+    if ((port & 0x00FF) != 0x04 && (port & 0x00FF) != 0x01)
+        _busEffects++;
     switch (port & 0x00FF)
     {
         // Exact original semantics (Unreal gsz80.cpp z80gs::in / ZXMAK2):
@@ -700,6 +719,7 @@ uint8_t SoundChip_GeneralSound::gsIn(uint16_t port)
 void SoundChip_GeneralSound::gsOut(uint16_t port, uint8_t value)
 {
     traceEvent(GSTraceSide::GsInternal, port & 0x00FF, value, true);
+    _busEffects++;
     switch (port & 0x00FF)
     {
         case 0x00: // MPAG - firmware/Xpeccy encoding (design §2.3)
@@ -728,6 +748,8 @@ void SoundChip_GeneralSound::gsOut(uint16_t port, uint8_t value)
 uint8_t SoundChip_GeneralSound::gsInMultiSound(uint16_t port)
 {
     traceEvent(GSTraceSide::GsInternal, port & 0x00FF, 0, false);
+    if ((port & 0x0F) != 0x04 && (port & 0x0F) != 0x01)
+        _busEffects++;
     const uint8_t value = gsInMultiSoundDecode(port);
     if (_busObserver) [[unlikely]]
         _busObserver->GsPortCycle(hostTimeNow(), static_cast<uint8_t>(port), value, false);
@@ -753,6 +775,7 @@ uint8_t SoundChip_GeneralSound::gsInMultiSoundDecode(uint16_t port)
 void SoundChip_GeneralSound::gsOutMultiSound(uint16_t port, uint8_t value)
 {
     traceEvent(GSTraceSide::GsInternal, port & 0x00FF, value, true);
+    _busEffects++;
     if (_busObserver) [[unlikely]]
         _busObserver->GsPortCycle(hostTimeNow(), static_cast<uint8_t>(port), value, true);
     switch (port & 0x0F)
@@ -886,6 +909,7 @@ uint8_t SoundChip_GeneralSound::readMem(uint16_t addr)
 
 void SoundChip_GeneralSound::writeMem(uint16_t addr, uint8_t value)
 {
+    _busEffects++;
     uint8_t* bank = _bankW[(addr >> 14) & 3];
     if (bank) // nullptr = ROM window: write goes nowhere
     {
@@ -901,6 +925,7 @@ void SoundChip_GeneralSound::dacFetch(uint16_t addr, uint8_t value)
     // address bits 9-8 (design §2.1) - including opcode fetches, matching
     // Unreal's rm() hook. readMem has already tested the window.
     int channel = (addr >> 8) & 3;
+    _busEffects++;
     _activityCounters.dacFetches++;
     _activityCounters.lastDacFetchGsCycle = totalGsCycles();
     _activityCounters.lastDacFetchFrame = currentFrameNumber();
@@ -1217,9 +1242,8 @@ void SoundChip_GeneralSound::TTDRegions(std::vector<ttd::TTDDeviceRegion>& out)
     out.push_back(ram);
 }
 
-bool SoundChip_GeneralSound::TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const
+bool SoundChip_GeneralSound::TTDStateWithoutRegions(std::vector<uint8_t>& state) const
 {
-    peripheralId = _profile.ttdPeripheralId;
     state.resize(TTD_FIXED_STATE_SIZE);
     serializeFixedState(state.data());
     return true;

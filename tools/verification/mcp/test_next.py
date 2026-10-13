@@ -11,7 +11,7 @@ from mcplib import main, expect
 def test_nmi_aspect_and_trigger(s):
     s.fresh_machine('NEXT')
     r = s.call('inspect_state', {'aspects': ['next_nmi']})
-    expect('[next_nmi]' in r.text and 'm1_button' in r.text and 'io_trap (not modelled)' in r.text, 'the NMI sources in the text', r.text)
+    expect('[next_nmi]' in r.text and 'm1_button' in r.text and 'io_trap blocked (the trap is off' in r.text, 'the NMI sources in the text', r.text)
     expect('OFF (POST /next/nmi-journal' in r.text, 'the journal says it is off and how to switch it on', r.text)
     s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/next/nmi-journal', 'body': {'enabled': True, 'clear': True}})
     # the M1 button is off at power on: NR #02 bit 3 is refused with the reason, and the journal says so

@@ -947,6 +947,25 @@ void ym2203::update_prescale(uint8_t prescale)
 
 
 //-------------------------------------------------
+//  [unreal-ng patch 6] fm_idle / clock_fm_idle -
+//  the idle fast path, see PATCHES.md §6
+//-------------------------------------------------
+
+bool ym2203::fm_idle() const
+{
+	return m_fm.idle();
+}
+
+void ym2203::clock_fm_idle(uint32_t count)
+{
+	if (count == 0)
+		return;
+	m_fm.clock_idle(count);
+	m_last_fm.clear();
+}
+
+
+//-------------------------------------------------
 //  clock_fm - clock FM state
 //-------------------------------------------------
 

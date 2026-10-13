@@ -822,7 +822,7 @@ public:
     /// The decoder owns those latches, so the decoder declares them. The
     /// declaration is deliberately split from the implementation:
     ///
-    ///   GetTTDModelStateIds()   - "I have state beyond the standard ports"
+    ///   GetTTDModelStateTypes()   - "I have state beyond the standard ports"
     ///   CreateTTDSerializers()  - "...and here is how to capture it"
     ///
     /// Declaring without implementing is a HARD ERROR at StartRecording: a
@@ -832,7 +832,7 @@ public:
     /// answer for any machine fully described by the standard 128K ports.
 
     /// Model-specific state this machine carries beyond TTDChipsetState.
-    virtual std::vector<ttd::PeripheralId> GetTTDModelStateIds() const { return {}; }
+    virtual std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const { return {}; }
 
     /// The TTD port journals isolate a replay when every outside input reaches the CPU through IN
     /// (ttd-port-read-journal.md §2). Two machine traits make TTD refuse the journals by default: an
@@ -844,12 +844,12 @@ public:
     /// and `/ttd/port-events` answers on the machine's recordings
     virtual bool TtdEnginesSealed() const { return false; }
 
-    /// A TTD session's baseline blobs against this machine's fixed population (expansion slots): false with
-    /// `why` refuses the session at load, as a General Sound personality mismatch does. Blobs are as stored
-    /// (TTDPeripheralRegistry::DecodeBlob opens one). Default: no slots, nothing to compare
-    virtual bool TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs, std::string& why) const
+    /// A TTD session's baseline device states (raw, by device) against this machine's fixed population
+    /// (expansion slots): false with `why` refuses the session at load, as a General Sound personality mismatch
+    /// does. Default: no slots, nothing to compare
+    virtual bool TtdSessionMatches(const ttd::TTDDeviceStates& states, std::string& why) const
     {
-        (void)blobs;
+        (void)states;
         (void)why;
         return true;
     }
@@ -904,7 +904,7 @@ public:
     int64_t SessionWallMicros() const;
 
     /// Serializers for the ids above. Ownership transfers to the caller.
-    /// Every id from GetTTDModelStateIds() must be covered.
+    /// Every type from GetTTDModelStateTypes() must be covered.
     virtual std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const
     {
         return {};
@@ -1034,6 +1034,8 @@ public:
         std::function<void(ISerialPeer* peer)> attachSerialPeer;
         /// A machine's second serial port (the Next's UART 1); empty = none
         std::function<void(ISerialPeer* peer)> attachSecondSerialPeer;
+        /// The Next's joystick connector (NR #0B UART mode): a device plugged into it takes the UART the register selects
+        std::function<void(ISerialPeer* peer)> attachJoystickSerialPeer;
 
         /// The ATM Turbo 2+ INTERNAL I/O connector (cards on the #FB / #FA bus):
         /// plug a device in (true) or pull it (false); empty = no such connector

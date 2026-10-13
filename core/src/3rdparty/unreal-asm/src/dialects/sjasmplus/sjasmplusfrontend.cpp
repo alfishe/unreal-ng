@@ -239,12 +239,18 @@ struct ExpressionParser
         if (c == '{')
         {
             ++i;
+            Blanks();
+            // {b address}: the byte there, the low byte of the word {address}
+            const bool byte = (Peek() == 'b' || Peek() == 'B') && (Peek(1) == ' ' || Peek(1) == '\t');
+            if (byte)
+                ++i;
             Expr inner = Parse(0);
             Blanks();
             if (Peek() != '}')
                 throw Failure{"{ without }"};
             ++i;
-            return Wrap(Expr::Kind::Memory, std::move(inner));
+            Expr read = Wrap(Expr::Kind::Memory, std::move(inner));
+            return byte ? Wrap(Expr::Kind::Group, Expr::Binary(Op::And, std::move(read), Expr::Number(255))) : read;
         }
         if (c == '$')
         {
@@ -326,7 +332,16 @@ struct ExpressionParser
             const Op op = w == "high" ? Op::High : w == "low" ? Op::Low : w == "not" ? Op::LogicalNot : Op::Exists;
             return Expr::Unary(op, Unary());
         }
-        if (w == "abs" || w == "norel" || w == "sizeof")
+        if (w == "norel" && t.find_first_not_of(" \t", i + w.size()) != std::string_view::npos &&
+            std::string(",)").find(t[t.find_first_not_of(" \t", i + w.size())]) == std::string::npos)
+        {
+            // the value as it is, not relocatable (RELOCATE_START): a group the layout knows by its text
+            i += w.size();
+            Expr e = Wrap(Expr::Kind::Group, Unary());
+            e.text = "norel";
+            return e;
+        }
+        if (w == "abs" || w == "sizeof")
             throw Failure{"operator " + w + " has no counterpart"};
         return Primary();
     }
@@ -856,6 +871,56 @@ std::string Substitute(const std::string& text, const std::map<std::string, std:
 }
 }  // namespace
 
+std::optional<std::vector<uint8_t>> SjasmplusBitBytes(const std::string& word, const std::string& operands)
+{
+    std::vector<uint8_t> out;
+    if (word == "DG" || word == "DEFG")
+    {
+        int bits = 0, value = 0;
+        for (const char c : operands)
+        {
+            if (c == ' ' || c == '\t')
+                continue;
+            value = (value << 1) | (c == '-' || c == '.' || c == '_' ? 0 : 1);
+            if (++bits == 8)
+            {
+                out.push_back(static_cast<uint8_t>(value));
+                bits = value = 0;
+            }
+        }
+        if (bits != 0 || out.empty())
+            return std::nullopt;
+        return out;
+    }
+    if (word == "DH" || word == "DEFH")
+    {
+        bool quoted = false;
+        std::string digits;
+        for (const char c : operands)
+        {
+            if (c == '"')
+            {
+                quoted = !quoted;
+                continue;
+            }
+            if (!quoted || c == ' ' || c == '\t')
+                continue;
+            if (!std::isxdigit(static_cast<unsigned char>(c)))
+                return std::nullopt;
+            digits += c;
+            if (digits.size() == 2)
+            {
+                out.push_back(static_cast<uint8_t>(std::stoi(digits, nullptr, 16)));
+                digits.clear();
+            }
+        }
+        if (!digits.empty() || out.empty())
+            return std::nullopt;
+        return out;
+    }
+    return std::nullopt;
+}
+
 std::vector<ir::Statement> SjasmplusRepeated(const ir::Statement& s)
 {
     const std::vector<Operand>& ops = s.operands;
@@ -1043,25 +1108,25 @@ FrontendResult SjasmplusFrontend::Parse(const SourceDocument& source) const
         for (Statement& st : line.statements)
             BinaryOutsideJumps(st);
         // A macro on one line (NAME MACRO p : PUSH HL : ... : ENDM): its lines one by one, as written over several
-        for (size_t m = 0; m + 1 < line.statements.size(); ++m)
-            if (line.statements[m].kind == Statement::Kind::Directive && line.statements[m].directive == ir::DirectiveKind::Macro)
+        for (size_t macroAt = 0; macroAt + 1 < line.statements.size(); ++macroAt)
+            if (line.statements[macroAt].kind == Statement::Kind::Directive && line.statements[macroAt].directive == ir::DirectiveKind::Macro)
             {
                 ir::Line head = line;
-                head.statements.assign(line.statements.begin(), line.statements.begin() + static_cast<std::ptrdiff_t>(m + 1));
+                head.statements.assign(line.statements.begin(), line.statements.begin() + static_cast<std::ptrdiff_t>(macroAt + 1));
                 head.hasComment = false;
                 head.comment.clear();
                 std::string headText = line.label;
-                for (size_t k = 0; k <= m; ++k)
-                    headText += (k ? " : " : "\t") + partTexts[k];
+                for (size_t i = 0; i <= macroAt; ++i)
+                    headText += (i ? " : " : "\t") + partTexts[i];
                 head.ownText = headText;
                 result.program.lines.push_back(std::move(head));
-                for (size_t k = m + 1; k < line.statements.size(); ++k)
+                for (size_t i = macroAt + 1; i < line.statements.size(); ++i)
                 {
                     ir::Line part;
                     part.sourceLine = number;
-                    part.statements.push_back(line.statements[k]);
-                    part.ownText = "\t" + partTexts[k];
-                    if (k + 1 == line.statements.size())
+                    part.statements.push_back(line.statements[i]);
+                    part.ownText = "\t" + partTexts[i];
+                    if (i + 1 == line.statements.size())
                     {
                         part.comment = line.comment;
                         part.hasComment = line.hasComment;

@@ -1452,19 +1452,19 @@ PortDecoder::RtcBinding PortDecoder_ATM3::GetRtcBinding()
     return binding;
 }
 
-std::vector<ttd::PeripheralId> PortDecoder_ATM3::GetTTDModelStateIds() const
+std::vector<ttd::TTDDeviceType> PortDecoder_ATM3::GetTTDModelStateTypes() const
 {
-    std::vector<ttd::PeripheralId> ids = PortDecoder_ATM710::GetTTDModelStateIds();
-    ids.push_back(ttd::PeripheralId::EvoSdCard);
-    ids.push_back(ttd::PeripheralId::Ds12887);
-    ids.push_back(ttd::PeripheralId::EvoPs2);
-    ids.push_back(ttd::PeripheralId::EvoMouse);
-    ids.push_back(ttd::PeripheralId::EvoTurboCache);
-    ids.push_back(ttd::PeripheralId::EvoFontRam);
+    std::vector<ttd::TTDDeviceType> ids = PortDecoder_ATM710::GetTTDModelStateTypes();
+    ids.push_back(ttd::TTDDeviceType::EvoSdCard);
+    ids.push_back(ttd::TTDDeviceType::Ds12887);
+    ids.push_back(ttd::TTDDeviceType::EvoPs2);
+    ids.push_back(ttd::TTDDeviceType::EvoMouse);
+    ids.push_back(ttd::TTDDeviceType::EvoTurboCache);
+    ids.push_back(ttd::TTDDeviceType::EvoFontRam);
     // The AVR's /WAIT timing (main-loop phase, EEPROM write) rides in EvoAvrVolatile; its first bytes repeat what
     // AtmPaging carries for the ATM3 (restored after it, the same values)
-    ids.push_back(ttd::PeripheralId::EvoAvrVolatile);
-    ids.push_back(ttd::PeripheralId::EvoFlash);
+    ids.push_back(ttd::TTDDeviceType::EvoAvrVolatile);
+    ids.push_back(ttd::TTDDeviceType::EvoFlash);
     return ids;
 }
 

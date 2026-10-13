@@ -85,7 +85,7 @@ protected:
             for (const auto& [id, blob] : want->peripheralBlobs)
             {
                 std::vector<uint8_t> state;
-                ASSERT_TRUE(_engine.DeviceState(i, id, state)) << "device " << int(id) << ", frame " << got->position.frame;
+                ASSERT_TRUE(_engine.DeviceStateOfV1Id(i, id, state)) << "device " << int(id) << ", frame " << got->position.frame;
                 EXPECT_TRUE(state == ttd::TTDPeripheralRegistry::DecodeBlob(id, blob))
                     << "device " << int(id) << ", frame " << got->position.frame;
             }

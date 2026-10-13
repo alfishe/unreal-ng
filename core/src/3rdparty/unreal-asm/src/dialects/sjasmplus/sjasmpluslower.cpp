@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -106,6 +107,14 @@ std::vector<Expr> DwordWords(const Expr& e)
 /// The data words with no IR kind as DB / DW (nullopt: not one of them)
 std::optional<std::vector<Statement>> LowerData(const std::string& word, const std::string& rest)
 {
+    if (const auto bits = SjasmplusBitBytes(word, rest))
+    {
+        // DG / DH: their bytes
+        std::vector<Expr> items;
+        for (const uint8_t b : *bits)
+            items.push_back(Expr::Number(b, ir::NumberSpelling::Hex, 2));
+        return std::vector<Statement>{Data(DirectiveKind::Db, items)};
+    }
     if (word == "DZ" || word == "DC")
     {
         Statement s = Parsed("DB", rest);
@@ -758,15 +767,15 @@ private:
             copy += "_";
         macroNames.insert(copy);
         moduleMacros[key] = copy;
-        ir::Line open = in.lines[begin];
-        for (Statement& s : open.statements)
+        ir::Line openLine = in.lines[begin];
+        for (Statement& s : openLine.statements)
             if (s.kind == Statement::Kind::Directive && s.directive == DirectiveKind::Macro)
                 s.text = copy;
-        open.label.clear();
-        open.sourceLine = sourceLine;
-        open.comment = name + " for MODULE " + Prefix().substr(0, Prefix().size() - 1);
-        open.hasComment = true;
-        out.push_back(std::move(open));
+        openLine.label.clear();
+        openLine.sourceLine = sourceLine;
+        openLine.comment = name + " for MODULE " + Prefix().substr(0, Prefix().size() - 1);
+        openLine.hasComment = true;
+        out.push_back(std::move(openLine));
         for (ir::Line& b : body)
         {
             b.sourceLine = sourceLine;
@@ -1059,8 +1068,206 @@ private:
 };
 }  // namespace
 
-ir::Program LowerSjasmplus(const ir::Program& program, Diagnostics& diagnostics)
+namespace
 {
+/// A macro argument as an operand (a register, an indirection, an expression), as the frontend reads it after INC
+ir::Operand Argument(const std::string& text)
+{
+    ir::Operand o;
+    o.kind = ir::Operand::Kind::Immediate;
+    o.expr = Expr::Make(Expr::Kind::Raw);
+    o.expr.text = text;
+    if (text.empty())
+        return o;
+    const FrontendResult parsed = SjasmplusFrontend().Parse(SourceDocument::FromText("        INC " + text, "sjasmplus"));
+    if (parsed.program.lines.size() == 1 && parsed.program.lines[0].statements.size() == 1 &&
+        parsed.program.lines[0].statements[0].kind == Statement::Kind::Instruction && parsed.program.lines[0].statements[0].operands.size() == 1)
+        return parsed.program.lines[0].statements[0].operands[0];
+    return o;
+}
+
+Expr Substituted(const Expr& e, const std::map<std::string, ir::Operand>& args)
+{
+    if (e.kind == Expr::Kind::Symbol)
+        if (const auto a = args.find(e.text); a != args.end())
+        {
+            Expr g = Expr::Make(Expr::Kind::Group);
+            g.args.push_back(a->second.expr);
+            return g;
+        }
+    Expr out = e;
+    for (Expr& a : out.args)
+        a = Substituted(a, args);
+    return out;
+}
+
+/// A word of a text with the arguments put in (a macro call inside the body passes them on)
+std::string SubstitutedText(const std::string& text, const std::map<std::string, std::string>& args)
+{
+    std::string out;
+    for (size_t i = 0; i < text.size();)
+    {
+        const auto word = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '?' || c == '.'; };
+        if (word(text[i]) && (i == 0 || !word(text[i - 1])))
+        {
+            size_t j = i;
+            while (j < text.size() && word(text[j]))
+                ++j;
+            const std::string w = text.substr(i, j - i);
+            const auto a = args.find(w);
+            out += a != args.end() ? a->second : w;
+            i = j;
+            continue;
+        }
+        out += text[i++];
+    }
+    return out;
+}
+
+/// ALASM's LOCAL block makes every label of a macro local, sjasmplus only its .labels (and temporary ones): a macro
+/// with both kinds is put in at each of its calls instead, its .labels named for each expansion (`!` keeps the parent
+/// of the .labels after it as it is), its global labels and assignments as they are
+ir::Program ExpandMixedMacros(const ir::Program& program, Diagnostics& diagnostics)
+{
+    struct Def
+    {
+        size_t begin = 0, end = 0;
+        std::vector<std::string> params;
+    };
+    std::map<std::string, Def> mixed;
+    for (size_t k = 0; k < program.lines.size(); ++k)
+        for (const Statement& s : program.lines[k].statements)
+            if (s.kind == Statement::Kind::Directive && s.directive == DirectiveKind::Macro)
+            {
+                size_t end = k + 1;
+                for (int depth = 1; end < program.lines.size(); ++end)
+                {
+                    for (const Statement& b : program.lines[end].statements)
+                        if (b.kind == Statement::Kind::Directive)
+                            depth += (b.directive == DirectiveKind::Macro) - (b.directive == DirectiveKind::EndMacro);
+                    if (depth == 0)
+                        break;
+                }
+                bool local = false, global = false;
+                for (size_t n = k + 1; n < end && n < program.lines.size(); ++n)
+                {
+                    const std::string& label = program.lines[n].label;
+                    if (label.empty())
+                        continue;
+                    if (label[0] == '.' || IsTemporary(label))
+                        local = true;
+                    else
+                        global = true;
+                }
+                if (local && global && end < program.lines.size())
+                    mixed[s.text] = {k, end, s.params};
+            }
+    if (mixed.empty())
+        return program;
+    ir::Program out = program;
+    out.lines.clear();
+    int expansions = 0;
+    for (size_t k = 0; k < program.lines.size(); ++k)
+    {
+        const ir::Line& l = program.lines[k];
+        // the definition itself: left out (every call is put in)
+        bool definition = false;
+        for (const Statement& s : l.statements)
+            if (s.kind == Statement::Kind::Directive && s.directive == DirectiveKind::Macro && mixed.count(s.text) && mixed.at(s.text).begin == k)
+            {
+                ir::Line note;
+                note.sourceLine = l.sourceLine;
+                note.comment = "MACRO " + s.text + " (put in at its calls: local and global labels)";
+                note.hasComment = true;
+                out.lines.push_back(std::move(note));
+                k = mixed.at(s.text).end;
+                definition = true;
+            }
+        if (definition)
+            continue;
+        const Statement* call = l.statements.size() == 1 && l.statements[0].kind == Statement::Kind::MacroCall ? &l.statements[0] : nullptr;
+        const auto def = call ? mixed.find(call->mnemonic) : mixed.end();
+        if (def == mixed.end())
+        {
+            out.lines.push_back(l);
+            continue;
+        }
+        if (!l.label.empty())
+        {
+            ir::Line alone = l;
+            alone.statements.clear();
+            out.lines.push_back(std::move(alone));
+        }
+        ++expansions;
+        std::map<std::string, ir::Operand> args;
+        std::map<std::string, ir::Operand> strings;   // the arguments that are strings: so in DB ("DB name" with "TEXT")
+        std::map<std::string, std::string> texts;
+        for (size_t p = 0; p < def->second.params.size(); ++p)
+        {
+            const std::string text = p < call->params.size() ? call->params[p] : std::string();
+            args[def->second.params[p]] = Argument(text);
+            texts[def->second.params[p]] = text;
+            const FrontendResult parsed = SjasmplusFrontend().Parse(SourceDocument::FromText("        DB " + text, "sjasmplus"));
+            if (!text.empty() && parsed.program.lines.size() == 1 && parsed.program.lines[0].statements.size() == 1 &&
+                parsed.program.lines[0].statements[0].operands.size() == 1 && parsed.program.lines[0].statements[0].operands[0].kind == ir::Operand::Kind::String)
+                strings[def->second.params[p]] = parsed.program.lines[0].statements[0].operands[0];
+        }
+        std::map<std::string, std::string> locals;   // .label -> its name in this expansion
+        for (size_t n = def->second.begin + 1; n < def->second.end; ++n)
+            if (const std::string& label = program.lines[n].label; !label.empty() && label[0] == '.')
+                locals[label] = "__M" + std::to_string(expansions) + "_" + label.substr(1);
+        const std::function<void(Expr&)> rename = [&](Expr& e) {
+            if (e.kind == Expr::Kind::Symbol)
+                if (const auto found = locals.find(e.text); found != locals.end())
+                    e.text = found->second;
+            for (Expr& a : e.args)
+                rename(a);
+        };
+        for (size_t n = def->second.begin + 1; n < def->second.end; ++n)
+        {
+            ir::Line copy = program.lines[n];
+            copy.sourceLine = l.sourceLine;
+            if (const auto found = locals.find(copy.label); found != locals.end())
+                copy.label = "!" + found->second;
+            for (Statement& s : copy.statements)
+            {
+                const bool data = s.kind == Statement::Kind::Directive && (s.directive == DirectiveKind::Db || s.directive == DirectiveKind::Dw);
+                for (ir::Operand& o : s.operands)
+                {
+                    if (data && o.kind == ir::Operand::Kind::Immediate && o.expr.kind == Expr::Kind::Symbol && strings.count(o.expr.text))
+                        o = strings.at(o.expr.text);
+                    else if (o.kind == ir::Operand::Kind::Immediate && o.expr.kind == Expr::Kind::Symbol && args.count(o.expr.text))
+                        o = args.at(o.expr.text);   // a register, an indirection ... as the call gives it
+                    else
+                        o.expr = Substituted(o.expr, args);
+                    rename(o.expr);
+                }
+                for (Expr& a : s.args)
+                {
+                    a = Substituted(a, args);
+                    rename(a);
+                }
+                for (std::string& p : s.params)
+                    p = SubstitutedText(p, texts);
+                if (s.kind == Statement::Kind::Directive && s.directive == DirectiveKind::Other)
+                    s.text = SubstitutedText(s.text, texts);
+            }
+            out.lines.push_back(std::move(copy));
+        }
+    }
+    diagnostics.push_back({Severity::Info, 0, 0, std::to_string(expansions) + " call(s) of macros with local and global labels put in where they stand"});
+    return out;
+}
+}  // namespace
+
+ir::Program LowerSjasmplus(const ir::Program& program, Diagnostics& diagnostics, bool expandMixedMacros)
+{
+    if (expandMixedMacros)
+    {
+        const ir::Program expanded = ExpandMixedMacros(program, diagnostics);
+        Lowering lowering(expanded, diagnostics);
+        return lowering.Run();
+    }
     Lowering lowering(program, diagnostics);
     return lowering.Run();
 }

@@ -108,7 +108,7 @@ public:
     /// (s7-ttd-outcome.md): the port journals record on the Sprinter
     bool TtdEnginesSealed() const override { return true; }
     /// A session recorded with another ISA slot population is refused (blob 33's kinds against the fitted cards)
-    bool TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs, std::string& why) const override;
+    bool TtdSessionMatches(const ttd::TTDDeviceStates& states, std::string& why) const override;
     /// A ZX-bus only through an ISA ZX-bus adapter ([ISA] SlotN=ZXBUS; 2026-10-02-sprinter-isa/tdd.md §6, phase I2):
     /// the General Sound / NeoGS of [SOUND] GSType is fitted only then. The adapter passes I/O cycles only, so
     /// no ZX-bus card sees the Sprinter's memory cycles (the NeoGS ZX-DMA cannot install)
@@ -128,7 +128,7 @@ public:
     /// Code #15 (port #FF in TR-DOS, #1F / #0F outside it) carries the Kempston bits
     bool HasKempstonJoystick() const override { return true; }
 
-    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const override;
     /// Port code #58 reads the board mouse (SprinterInput::ReadMouseView; this debug read: PeekMouseView)
     bool PeekMouseRegister(uint8_t reg, uint8_t& value) const override
     {

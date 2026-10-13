@@ -25,7 +25,7 @@
 
 namespace
 {
-constexpr uint8_t kImageVersion = 7;  // 7: ULA+ select; 6: the UARTs
+constexpr uint8_t kImageVersion = 10;  // 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -221,6 +221,7 @@ static void LoadBoard(Reader& r, NextBoard& b)
     r.Get(b._timing);
     r.Get(b._resetPending);
     r.Get(b._resetType);
+    b.LatchVideoFrameSync();  // the effective video bits are not in the image: they follow the registers
     r.Get(b._resetHard);
 }
 
@@ -344,8 +345,12 @@ static void SaveCtc(Writer& w, const NextCtc& c)
         w.Put(ch.waitTc);
         w.Put(ch.running);
         w.Put(ch.waitTrigger);
+        w.Put(ch.runStart);
         w.Put(ch.phase);
         w.Put(ch.zeros);
+        for (uint64_t at : ch.pending)
+            w.Put(at);
+        w.Put(ch.pendingCount);
     }
     w.Put(c._vector);
     w.Put(c._now);
@@ -360,14 +365,20 @@ static void LoadCtc(Reader& r, NextCtc& c)
         r.Get(ch.waitTc);
         r.Get(ch.running);
         r.Get(ch.waitTrigger);
+        r.Get(ch.runStart);
         r.Get(ch.phase);
         r.Get(ch.zeros);
+        for (uint64_t& at : ch.pending)
+            r.Get(at);
+        r.Get(ch.pendingCount);
     }
     r.Get(c._vector);
     r.Get(c._now);
+    c._quietUntil = 0;  // derived from the channels just loaded
 }
 
-/// The UARTs: registers, FIFOs, shifters and the line timing; not the peers (an ESP module's own state is the machine serial peer's blob)
+/// The UARTs: registers, FIFOs, shifters, the line timing and the break state; not the peers (an ESP module's own state is the machine
+/// serial peer's blob, the Pi's the second one's, a joystick connector device's the joystick peer's); the connector's route is NR #0B
 static void SaveUart(Writer& w, const NextUart& u)
 {
     for (const NextUart::Channel& c : u._ch)
@@ -399,6 +410,11 @@ static void SaveUart(Writer& w, const NextUart& u)
         w.Put(c.sent);
         w.Put(c.received);
         w.Put(c.lost);
+        w.Put(c.rxLow);
+        w.Put(c.lowSince);
+        w.Put(c.lowFramed);
+        w.Put(c.lowPaused);
+        w.Put(c.breakIn);
     }
     w.Put(u._selected);
     w.Put(u._now);
@@ -434,7 +450,13 @@ static void LoadUart(Reader& r, NextUart& u)
         r.Get(c.sent);
         r.Get(c.received);
         r.Get(c.lost);
+        r.Get(c.rxLow);
+        r.Get(c.lowSince);
+        r.Get(c.lowFramed);
+        r.Get(c.lowPaused);
+        r.Get(c.breakIn);
         c.toldValid = false;  // the peer is told the line again at the next change
+        c.breakTold = (c.frame & NextUart::kFrameBreak) != 0;  // the peer's own state (its blob) says what it was told
         // a restored ring that is out of range would index outside the arrays
         c.rxHead %= NextUart::kRxFifo;
         c.rxCount = std::min<uint16_t>(c.rxCount, NextUart::kRxFifo);
@@ -560,6 +582,8 @@ static void SaveAudio(Writer& w, const NextAudio* a)
     w.Put(a->_speakerExcluded);
     w.Put(a->_monoMask);
     w.PutArray(a->_dac);
+    w.PutArray(a->_addr);
+    w.Put(a->_held);
 }
 static void LoadAudio(Reader& r, NextAudio* a)
 {
@@ -578,6 +602,8 @@ static void LoadAudio(Reader& r, NextAudio* a)
     r.Get(a->_speakerExcluded);
     r.Get(a->_monoMask);
     r.GetArray(a->_dac);
+    r.GetArray(a->_addr);
+    r.Get(a->_held);
     a->_timeKnown = false;  // the render clock follows the machine again from the next frame
 }
 
@@ -690,6 +716,8 @@ bool NextStateCodec::Load(PortDecoder_Next& p, const uint8_t* data, size_t size)
     Impl::LoadSd(r, p._sd[0]);
     Impl::LoadSd(r, p._sd[1]);
     Impl::LoadUart(r, p._uart);
+    p.UpdateUartRoute(false);  // the joystick connector's UART follows NR #0B, which the image holds
+    p.SyncPiLine();            // and UART 1's pins NR #A0
     memory.Remap();  // the slot table, the windows and the contention flags follow the image
     return r.Done();
 }

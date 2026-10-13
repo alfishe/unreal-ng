@@ -48,7 +48,9 @@ public:
     void SetBeforeWrite(std::function<void(uint64_t, uint8_t, uint8_t)> hook) { _beforeWrite = std::move(hook); }
     /// 7 MHz counts per line and lines per frame of the machine timing
     void SetGeometry(unsigned hcPerLine, unsigned linesPerFrame);
-    void Reset();
+    /// Any reset: the mode, the write address, the stored byte, the line offset and the list counter (zxnext.vhd 5011-5020 `reset`); the
+    /// instruction RAM is a block RAM that only the configuration load (a hard reset) clears
+    void Reset(bool clearCode = true);
 
     /// region <NextREG>
     void WriteData(uint8_t value);        ///< NR #60: one byte at the write address (auto increment)

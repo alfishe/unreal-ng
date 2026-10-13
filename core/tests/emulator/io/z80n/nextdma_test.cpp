@@ -268,3 +268,37 @@ TEST_F(NextDma_Test, AReadThroughEitherPortSetsTheModeLatch)
     _dma.Run(1, 0);      // the block ends, the auto-restart reloads
     EXPECT_EQ(_dma.Counter(), 0) << "zxn mode counts from 0, not from #FFFF";
 }
+
+// dma.vhd 495-503: a WR3 byte with the enable bit (bit 6) starts the transfer by itself, without the "enable DMA" WR6 command
+TEST_F(NextDma_Test, AWr3WithTheEnableBitStartsTheTransfer)
+{
+    for (unsigned i = 0; i < 4; i++)
+        _memory[0x8000 + i] = static_cast<uint8_t>(0x20 + i);
+    Send({0x7D, 0x00, 0x80, 0x04, 0x00});
+    Send({0x14, 0x10});
+    Send({0xAD, 0x00, 0x90});
+    Send({0xCF});
+    EXPECT_FALSE(_dma.Active());
+    Send({0x80});  // WR3 without the enable bit
+    EXPECT_FALSE(_dma.Active());
+    Send({0xC0});  // WR3 with it
+    ASSERT_TRUE(_dma.Active());
+    EXPECT_EQ(_dma.Run(256, 0), 4u);
+    for (unsigned i = 0; i < 4; i++)
+        EXPECT_EQ(_memory[0x9000 + i], 0x20 + i);
+}
+
+// dma.vhd 777-790: WR4 with only bit 4 set expects an interrupt control byte, a register sequencer state with no branch in the case
+// statement: every later write is lost until a reset
+TEST_F(NextDma_Test, AWr4WithOnlyBit4SetLocksTheRegisterInterfaceUntilReset)
+{
+    Send({0x7D, 0x00, 0x80, 0x04, 0x00});
+    Send({0x14, 0x10});
+    Send({0x91});  // WR4: byte mode, interrupt control follows
+    Send({0x00, 0x90, 0xCF, 0x87, 0x7D});
+    EXPECT_FALSE(_dma.Active()) << "nothing after the WR4 reaches the registers";
+    EXPECT_EQ(_dma.PortB().address, 0u);
+    _dma.Reset();
+    MemoryCopy(0x8000, 0x9000, 4);
+    EXPECT_TRUE(_dma.Active());
+}

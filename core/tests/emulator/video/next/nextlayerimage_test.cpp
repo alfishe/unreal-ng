@@ -273,3 +273,44 @@ TEST_F(NextLayerImageMachine_Test, TheSwitchReportsAndTheVideoReportCarriesTheFi
 }
 
 // endregion
+
+// size=grid keeps the 640 sub-pixels with every line once; size=pixel keeps the first sub-pixel of each Next pixel: 320 x 256
+TEST(NextLayerImage_Test, TheSmallerSizesAreTheGridAndThePixelsOfTheScreenImage)
+{
+    Scale scale;
+    std::string message;
+    ASSERT_TRUE(ParseScale("", scale, message));
+    EXPECT_EQ(scale, Scale::Screen);
+    ASSERT_TRUE(ParseScale("Grid", scale, message));
+    EXPECT_EQ(scale, Scale::Grid);
+    ASSERT_TRUE(ParseScale("pixel", scale, message));
+    EXPECT_EQ(scale, Scale::Pixel);
+    EXPECT_FALSE(ParseScale("raw", scale, message));
+    EXPECT_NE(message.find("screen (640x512)"), std::string::npos);
+
+    unsigned w, h;
+    ScaleSize(Scale::Screen, w, h);
+    EXPECT_EQ(w * h, 640u * 512u);
+    ScaleSize(Scale::Grid, w, h);
+    EXPECT_EQ(w * h, 640u * 256u);
+    ScaleSize(Scale::Pixel, w, h);
+    EXPECT_EQ(w * h, 320u * 256u);
+
+    // a screen image whose pixel (x, row) carries x + 1000 * (row / 2)
+    std::vector<uint8_t> screen(static_cast<size_t>(kWidth) * kHeight * 2 * 4);
+    uint32_t* p = reinterpret_cast<uint32_t*>(screen.data());
+    for (unsigned row = 0; row < kHeight * 2; row++)
+        for (unsigned x = 0; x < kWidth; x++)
+            p[static_cast<size_t>(row) * kWidth + x] = x + 1000u * (row / 2);
+    std::vector<uint8_t> out;
+    Reduce(screen, Scale::Grid, out);
+    ASSERT_EQ(out.size(), static_cast<size_t>(640) * 256 * 4);
+    const uint32_t* g = reinterpret_cast<const uint32_t*>(out.data());
+    EXPECT_EQ(g[7 * 640 + 301], 301u + 7000u);
+    Reduce(screen, Scale::Pixel, out);
+    ASSERT_EQ(out.size(), static_cast<size_t>(320) * 256 * 4);
+    const uint32_t* q = reinterpret_cast<const uint32_t*>(out.data());
+    EXPECT_EQ(q[7 * 320 + 150], 300u + 7000u) << "pixel 150 is sub-pixel 300";
+    Reduce(screen, Scale::Screen, out);
+    EXPECT_EQ(out, screen);
+}

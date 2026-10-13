@@ -447,8 +447,8 @@ const PortRule kRules[] = {
     {"Layer 2 control", [](uint16_t p, const PortDecoder_Next&, const NextBoard&) { return p == 0x123B; }, true, true, "A15:A0 = #123B", 15, -1,
      "the control byte as written", "bit 4 = 0: enable / mapping / segment; bit 4 = 1: bank offset; remaps the CPU's view of Layer 2", nullptr},
     {"AY register select",
-     [](uint16_t p, const PortDecoder_Next&, const NextBoard&) { return (p & 0xC002) == 0xC000 && (p & 0xF002) != 0xD000; }, true, true,
-     "A15 = 1, A14 = 1, A1 = 0 (not #DFFD)", 16, -1, "reads the selected AY register (a read of #FFFD returns the data)",
+     [](uint16_t p, const PortDecoder_Next&, const NextBoard&) { return (p & 0xC007) == 0xC005 && (p & 0xF002) != 0xD000; }, true, true,
+     "A15 = 1, A14 = 1, A2 = 1, A1:A0 = 01 (not #DFFD)", 16, -1, "reads the selected AY register (a read of #FFFD returns the data)",
      "selects the AY register; with the turbosound pattern #9C+ also the chip", nullptr},
     {"Kempston joystick 1", [](uint16_t p, const PortDecoder_Next&, const NextBoard&) { return Low(p) == 0x1F; }, true, false,
      "A7:A0 = #1F", 6, 23, "000FUDLR, active high; no side effect", "", nullptr},
@@ -491,8 +491,11 @@ const PortRule kRules[] = {
      "selects the SD card (or none)", nullptr},
     {"SPI data", [](uint16_t p, const PortDecoder_Next&, const NextBoard&) { return Low(p) == 0xEB; }, true, true, "A7:A0 = #EB", 11, -1,
      "the byte the card answered; starts the next exchange", "starts a byte exchange with the selected card (16 clocks)", nullptr},
-    {"AY register data", [](uint16_t p, const PortDecoder_Next&, const NextBoard&) { return (p & 0xC002) == 0x8000; }, false, true,
-     "A15 = 1, A14 = 0, A1 = 0", 16, -1, "", "writes the selected AY register", nullptr},
+    {"AY identity", [](uint16_t p, const PortDecoder_Next&, const NextBoard&) { return (p & 0xC00F) == 0x8005; }, true, false,
+     "A15 = 1, A14 = 0, A3 = 0, A2 = 1, A1:A0 = 01 (#BFF5)", 16, -1,
+     "the selected chip's AY_ID (bits 7:6: chip 0 = 11, 1 = 10, 2 = 01) and its register address (bits 4:0)", "", nullptr},
+    {"AY register data", [](uint16_t p, const PortDecoder_Next&, const NextBoard&) { return (p & 0xC007) == 0x8005; }, true, true,
+     "A15 = 1, A14 = 0, A2 = 1, A1:A0 = 01", 16, -1, "reads like #FFFD on +3 timing only", "writes the selected AY register", nullptr},
     {"DAC", [](uint16_t p, const PortDecoder_Next&, const NextBoard&) { return Low(p) == 0x1F; }, false, true, "A7:A0 = #1F", 17, -1, "",
      "sets the DAC channel", "A (Soundrive 1)"},
     {"DAC", [](uint16_t p, const PortDecoder_Next&, const NextBoard&) { return Low(p) == 0x0F; }, false, true, "A7:A0 = #0F", 17, 20, "",
@@ -789,7 +792,7 @@ StateNode NextSprites(EmulatorContext* context, const NextSpritesQuery& query)
     flags["too_many"] = sprites.TooManyFlag();
     n["flags"] = std::move(flags);
     n["upload_slot"] = int(sprites.UploadSlot());
-    n["mirror_index"] = int(sprites.ReadMirrorSprite());
+    n["mirror_index"] = int(sprites.ReadMirrorSprite((board.Stored(0x09) & 0x10) != 0));
 
     ::NextSprites::Info info[::NextSprites::kSprites];
     sprites.Describe(info);

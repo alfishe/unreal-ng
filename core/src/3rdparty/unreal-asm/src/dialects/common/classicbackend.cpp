@@ -703,8 +703,8 @@ struct Writer
         // target's physical address
         if (displaced && (m == "jr" || m == "djnz") && !ops.empty() && ops.back().kind == Operand::Kind::Immediate)
         {
-            Expr target = Expr::Binary(Op::Sub, Grouped(ops.back().expr), Expr::Symbol(kDelta));
-            ops.back().expr = std::move(target);
+            Expr shifted = Expr::Binary(Op::Sub, Grouped(ops.back().expr), Expr::Symbol(kDelta));
+            ops.back().expr = std::move(shifted);
         }
         const std::string text = Operands(ops, true);
         return Checked({mnemonic + (text.empty() ? "" : " " + text)}, mnemonic);

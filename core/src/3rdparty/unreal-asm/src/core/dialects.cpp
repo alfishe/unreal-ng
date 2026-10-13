@@ -7,6 +7,7 @@
 #include <set>
 
 #include "unrealasm/layout.h"
+#include "unrealasm/symbols/fromsource.h"
 #include "unrealasm/registry.h"
 #include "dialects/sjasmplus/sjasmplusproject.h"
 
@@ -142,9 +143,25 @@ namespace
 std::map<std::string, SourceLabel> LabelValues(const std::vector<ProjectFile>& files, size_t main, const BackendOptions& options)
 {
     std::map<std::string, SourceLabel> values;
-    for (const ProjectFile& f : files)
-        if (f.document.dialect != "sjasmplus")
-            return values;   // another dialect's layout goes through its conversion (symbols/fromsource.h): not here yet
+    if (std::any_of(files.begin(), files.end(), [](const ProjectFile& f) { return f.document.dialect != "sjasmplus"; }))
+    {
+        // another dialect: its labels through its sjasmplus conversion's layout, under their names in the source (the
+        // global ones; a block's local labels and the lines' addresses are not given)
+        if (std::any_of(files.begin(), files.end(), [&](const ProjectFile& f) { return f.document.dialect != files[main].document.dialect; }))
+            return values;
+        symbols::SourceSymbolsOptions symbolOptions;
+        if (options.dataFiles)
+            symbolOptions.layout.fileSize = [&options](const std::string& name) -> std::optional<uint64_t> {
+                const std::vector<uint8_t> bytes = options.dataFiles(name);
+                return bytes.empty() ? std::nullopt : std::optional<uint64_t>(bytes.size());
+            };
+        const symbols::SourceSymbolsResult found = symbols::SymbolsFromProject(files, main, symbolOptions);
+        for (const symbols::Symbol& symbol : found.set.symbols)
+            if (symbol.parent.empty() && symbol.kind != symbols::SymbolKind::Local && !values.count(symbol.name))
+                values[symbol.name] = {static_cast<int64_t>(symbol.location.offset), files.size() == 1 ? std::string() : symbol.source.file,
+                                       symbol.source.line, false};
+        return values;
+    }
     layout::LayoutOptions layoutOptions;
     if (options.dataFiles)
         layoutOptions.fileSize = [&options](const std::string& name) -> std::optional<uint64_t> {
@@ -157,6 +174,9 @@ std::map<std::string, SourceLabel> LabelValues(const std::vector<ProjectFile>& f
         const SourceLabel value = {l.value, files.size() == 1 ? std::string() : l.file, l.line, l.use == layout::LabelUse::Defl};
         values[l.name] = value;
     }
+    // the RELOCATE_TABLE words: __UNREALASM_RELOC_<k>
+    for (size_t k = 0; k < laid.relocations.size(); ++k)
+        values["__UNREALASM_RELOC_" + std::to_string(k)] = {laid.relocations[k], std::string(), 0, false};
     // each line's address, for $ there: __UNREALASM_L<file>_<line> (the file named only in a project)
     for (const layout::LineAddress& a : laid.lines)
     {

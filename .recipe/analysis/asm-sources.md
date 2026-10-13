@@ -197,16 +197,22 @@ conversion failed, too many INCLUDEd files, an assembler without a writer). WebS
 #### Into a snapshot or a disk (no running assembler)
 
 With `snapshot` the sync verbs read a snapshot file (.szx, .sna, .z80) instead of the machine, and `sync_inject`
-writes the snapshot with the text in it to `output`; the machine is not touched. An idle template is ALASM at its
-prompt with no text (`core/src/3rdparty/unreal-asm/testdata/templates/alasm-5.09.szx`):
+writes the snapshot with the text in it to `output`; the machine is not touched. An idle template is an assembler at
+its prompt (`core/src/3rdparty/unreal-asm/testdata/templates/`: alasm-5.09, tasm-4.12, xas-7.447, storm-1.3, masm-1.1,
+zasm-3.15, gens-4, zeus-1983, primus-2.9, lasergenius-1.04, prometheus-48, pasm-3.0 .szx; `make-template.py` makes
+more):
 
 ```text
 asm_source {"action":"sync_inject","path":"/abs/main.asm","snapshot":"/abs/alasm-5.09.szx","output":"/abs/scratch/work.szx"}
 asm_source {"action":"sync_extract","snapshot":"/abs/scratch/work.szx","as":"dialect","to":"sjasmplus"}
 ```
 
+The WebAPI does it with no emulator instance at all: `GET /api/v1/asm/sync?snapshot=/abs/work.szx`,
+`POST /api/v1/asm/sync/probe`, `/extract`, `/inject` with `snapshot` in the body (the actions that need the machine,
+and a `disk:A/...` path, answer 400 there).
+
 The standalone `zxasm` does the same on files, and also writes the source as a file of the assembler onto a TR-DOS
-image of any format (TRD, SCL, FDI, UDI, TD0 ...): `zxasm inject main.asm work.szx`, `zxasm inject main.asm disk.trd --assembler alasm-5.09`,
+image of any format (TRD, SCL, FDI, UDI, TD0 ...) or a +3DOS disk (DSK: NAME.TYP with a +3DOS header): `zxasm inject main.asm work.szx`, `zxasm inject main.asm disk.trd --assembler alasm-5.09`,
 `zxasm probe work.szx`, `zxasm extract work.szx --to sjasmplus`, `zxasm extract disk.scl --file MAIN.H`.
 `inject-oracle.py alasm509 --template <template> <source.asm> 0x6000` is the check: zxasm injects, the snapshot is
 loaded and ALASM assembles it.

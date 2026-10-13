@@ -204,10 +204,12 @@ TEST_F(NextLayerCapture_Test, OffCostsNothing)
 }
 
 // The renderer's frames are what they were before the sink existed: the digest of every configuration and line of the fixed scene,
-// taken with the renderer as of commit deb0ec112 (without the layer record)
+// taken with the renderer as of commit deb0ec112 (without the layer record). Re-taken 2026-10-12 after the VHDL re-read of the ULA
+// (Timex mode fetch, hi-res bright border, fine scroll, the border never clipped), LoRes (bank 5, Y scroll) and the sprite engine
+// (collision / budget before the clip window); the sink-versus-no-sink identity above is the check that the record changes nothing
 TEST_F(NextLayerCapture_Test, FramesAreByteIdenticalToTheRendererBeforeTheSink)
 {
-    EXPECT_EQ(_scene.Digest(), 0x7D2AC2740EF11BB9ull);
+    EXPECT_EQ(_scene.Digest(), 0x839B1F5D8CF2B7FBull);
 }
 
 TEST_F(NextLayerCapture_Test, TransparencyIsAlpha)

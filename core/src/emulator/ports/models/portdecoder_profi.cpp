@@ -850,18 +850,18 @@ PortDecoder::RtcBinding PortDecoder_Profi::GetRtcBinding()
     return binding;
 }
 
-std::vector<ttd::PeripheralId> PortDecoder_Profi::GetTTDModelStateIds() const
+std::vector<ttd::TTDDeviceType> PortDecoder_Profi::GetTTDModelStateTypes() const
 {
     // The clock is on the v5 board only; the PROFI-XT controller when fitted
-    std::vector<ttd::PeripheralId> ids{ttd::PeripheralId::ProfiPaging, ttd::PeripheralId::Ppi8255};
+    std::vector<ttd::TTDDeviceType> ids{ttd::TTDDeviceType::ProfiPaging, ttd::TTDDeviceType::Ppi8255};
     if (_board.extendedPorts)
     {
-        ids.push_back(ttd::PeripheralId::Ds12887);
-        ids.push_back(ttd::PeripheralId::Pit8253);     // the COM port's baud timer
-        ids.push_back(ttd::PeripheralId::Usart8251);   // the COM port (its peer: MachineSerialPeer)
+        ids.push_back(ttd::TTDDeviceType::Ds12887);
+        ids.push_back(ttd::TTDDeviceType::Pit8253);     // the COM port's baud timer
+        ids.push_back(ttd::TTDDeviceType::Usart8251);   // the COM port (its peer: MachineSerialPeer)
     }
     if (_xtKbc)
-        ids.push_back(ttd::PeripheralId::ProfiXtKbc);
+        ids.push_back(ttd::TTDDeviceType::ProfiXtKbc);
     return ids;
 }
 

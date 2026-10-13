@@ -172,7 +172,55 @@ void Render(const Frame& frame, Kind kind, bool alpha, std::vector<uint8_t>& rgb
     }
 }
 
-Image Capture(EmulatorContext* context, Kind kind, bool alpha)
+bool ParseScale(const std::string& text, Scale& scale, std::string& message)
+{
+    std::string lower;
+    for (char c : text)
+        lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    if (lower.empty() || lower == "screen")
+        scale = Scale::Screen;
+    else if (lower == "grid")
+        scale = Scale::Grid;
+    else if (lower == "pixel")
+        scale = Scale::Pixel;
+    else
+    {
+        message = "Unknown size '" + text + "': use screen (640x512), grid (640x256) or pixel (320x256)";
+        return false;
+    }
+    return true;
+}
+
+const char* ScaleName(Scale scale)
+{
+    return scale == Scale::Grid ? "grid" : (scale == Scale::Pixel ? "pixel" : "screen");
+}
+
+void ScaleSize(Scale scale, unsigned& width, unsigned& height)
+{
+    width = scale == Scale::Pixel ? kWidth / 2 : kWidth;
+    height = scale == Scale::Screen ? kHeight * 2 : kHeight;
+}
+
+void Reduce(const std::vector<uint8_t>& screen, Scale scale, std::vector<uint8_t>& out)
+{
+    if (scale == Scale::Screen)
+    {
+        out = screen;
+        return;
+    }
+    unsigned width, height;
+    ScaleSize(scale, width, height);
+    out.assign(static_cast<size_t>(width) * height * 4, 0);
+    const uint32_t* in = reinterpret_cast<const uint32_t*>(screen.data());
+    uint32_t* dst = reinterpret_cast<uint32_t*>(out.data());
+    const unsigned step = scale == Scale::Pixel ? 2 : 1;
+    for (unsigned y = 0; y < height; y++)
+        for (unsigned x = 0; x < width; x++)
+            dst[static_cast<size_t>(y) * width + x] = in[static_cast<size_t>(y) * 2 * kWidth + x * step];  // the first of the doubled lines
+}
+
+Image Capture(EmulatorContext* context, Kind kind, bool alpha, Scale scale)
 {
     Image image;
     image.status = LastFrame(context, image.frame, image.message);
@@ -184,11 +232,17 @@ Image Capture(EmulatorContext* context, Kind kind, bool alpha)
         image.message = "The composed picture is the screenshot of the presented frame (capture/screen without layer)";
         return image;
     }
-    image.width = kWidth;
-    image.height = kHeight * 2;
+    ScaleSize(scale, image.width, image.height);
     image.sequence = image.frame->sequence;
     image.frameCounter = image.frame->frameCounter;
-    Render(*image.frame, kind, alpha, image.rgba);
+    if (scale == Scale::Screen)
+        Render(*image.frame, kind, alpha, image.rgba);
+    else
+    {
+        std::vector<uint8_t> full;
+        Render(*image.frame, kind, alpha, full);
+        Reduce(full, scale, image.rgba);
+    }
     return image;
 }
 
@@ -200,7 +254,8 @@ std::vector<uint8_t> EncodePng(const std::vector<uint8_t>& rgba, unsigned width,
     return out;
 }
 
-Result Request(EmulatorContext* context, const std::string& layer, const std::string& format, const std::string& alpha, const std::string& path)
+Result Request(EmulatorContext* context, const std::string& layer, const std::string& format, const std::string& alpha, const std::string& path,
+               const std::string& size)
 {
     Result result;
     auto fail = [&](Status status, const std::string& message) {
@@ -211,9 +266,9 @@ Result Request(EmulatorContext* context, const std::string& layer, const std::st
     if (!ParseKind(layer, result.kind))
         return fail(Status::BadParameter, "Unknown layer '" + layer + "': use " + KindWords());
     std::string message;
-    if (!ParseImageFormat(format, result.rgba, message) || !ParseAlpha(alpha, result.alpha, message))
+    if (!ParseImageFormat(format, result.rgba, message) || !ParseAlpha(alpha, result.alpha, message) || !ParseScale(size, result.scale, message))
         return fail(Status::BadParameter, message);
-    const Image image = Capture(context, result.kind, result.alpha);
+    const Image image = Capture(context, result.kind, result.alpha, result.scale);
     if (image.status != Status::Ok)
         return fail(image.status, image.message);
     result.width = image.width;

@@ -43,7 +43,9 @@
 #include <vector>
 
 #include "emulator/slots/slotconfig.h"
+#include "debugger/ttd/ttdserializable.h"   // TTDDeviceKey, TTDDeviceStates
 #include "emulator/slots/slotplanner.h"
+#include "debugger/ttd/ttdperipheralmask.h"
 
 struct CONFIG;
 enum class GSTypeKind : uint8_t;
@@ -324,22 +326,26 @@ public:
 
     // region <TTD (SL-5, slotttd.cpp; architecture.md §8)>
 
-    /// The devices of a TTD checkpoint: the blob ids it holds and the devices fitted but deliberately not recorded
-    /// (TTDPeripheralRegistry::MarkNotRecorded, the lightweight General Sound). Ids are ttd::PeripheralId values.
-    /// The AY socket's `ay` and `ts` boards share one id (TurboSound); `socketCard` tells them apart where the
-    /// device's engine instance names the socket's card (`ay-socket.ts`): the live registry and the engine's device
-    /// table do, a v1 file does not ("" = not known, either board)
+    /// The devices of a TTD checkpoint: the devices it holds a state for and the devices fitted but deliberately not
+    /// recorded (TTDPeripheralRegistry::MarkNotRecorded, the lightweight General Sound). The AY socket's `ay` and
+    /// `ts` boards are one type (TurboSound); `socketCard` tells them apart where the device's engine instance names
+    /// the socket's card (`ay-socket.ts`): the live registry and the engine's device table do, a v1 file does not
+    /// ("" = not known, either board)
     struct TtdDeviceSet
     {
-        std::vector<uint8_t> ids;
-        uint64_t notRecorded = 0;   ///< bit per PeripheralId
+        std::vector<ttd::TTDDeviceKey> devices;
+        std::vector<ttd::TTDDeviceKey> notRecorded;
         std::string socketCard;     ///< "ay" / "ts" / "tsfm" from the socket device's instance; "" when not known
 
-        static TtdDeviceSet Of(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs, uint64_t notRecorded);
+        /// A device of @p type held or fitted
+        bool Holds(ttd::TTDDeviceType type) const;
+
+        /// Device states (a v1 file's baseline, by the keys the live registry gives its v1 ids)
+        static TtdDeviceSet Of(const ttd::TTDDeviceStates& states, const std::vector<ttd::TTDDeviceKey>& notRecorded);
         static TtdDeviceSet Of(const ttd::TTDPeripheralRegistry& registry);
-        /// A session file of the engine: every device of its device table (each a key {type, instance} with its v1
-        /// id), the not-recorded mask from the controller's facts
-        static TtdDeviceSet Of(const ttd::TTDDeviceTable& devices, uint64_t notRecorded);
+        /// A session file of the engine: every device of its device table, the not-recorded devices from the
+        /// controller's facts
+        static TtdDeviceSet Of(const ttd::TTDDeviceTable& devices, const std::vector<ttd::TTDDeviceKey>& notRecorded);
     };
 
     /// The slot set as configuration fingerprint fields (R-NF-2), `affectsRestore` (a checkpoint holds the devices of
@@ -370,22 +376,19 @@ public:
     /// The slot-set guard on a session load: the cards the recording held (its baseline checkpoint) against the
     /// cards of this machine, per slot (AY socket, General Sound card, MoonSound card). False with every difference
     /// listed in `why` ("ay-socket: recorded tsfm, this machine ay / ts; zxbus.1: ..."). The AY socket's `ay` and
-    /// `ts` share one blob id: a v1 file cannot tell them apart (the configuration fingerprint can)
+    /// `ts` share one type: a v1 file cannot tell them apart (the configuration fingerprint can)
     static bool TtdSlotSetMatches(const Result& result, const TtdDeviceSet& recorded, const TtdDeviceSet& live,
                                   std::string& why);
     /// The same for this machine, then each slot-built card's own check (the MultiSound's MIDI bank), then its
-    /// machine slots (the Sprinter's ISA population, the port decoder's TtdSessionMatches). `blobs` as stored (the
-    /// baseline checkpoint's)
-    bool TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs, uint64_t notRecordedMask,
-                           const ttd::TTDPeripheralRegistry& live, std::string& why) const;
-    /// The same with the recorded device set given (a session file of the engine names its devices in its device
-    /// table, the socket's board included); `blobs` = the baseline's device states as blobs for the card checks
-    bool TtdSessionMatches(const TtdDeviceSet& recorded, const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs,
+    /// machine slots (the Sprinter's ISA population, the port decoder's TtdSessionMatches). `recorded`: the
+    /// session's device set (an engine file names its devices in its device table, the socket's board included);
+    /// `states`: the baseline checkpoint's device states, raw
+    bool TtdSessionMatches(const TtdDeviceSet& recorded, const ttd::TTDDeviceStates& states,
                            const ttd::TTDPeripheralRegistry& live, std::string& why) const;
     /// The guard for a machine without a slot manager (no plan: the positions keep their names), then its port
     /// decoder's own check
     static bool TtdSessionMatchesWithoutSlots(EmulatorContext* context, const TtdDeviceSet& recorded,
-                                              const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs,
+                                              const ttd::TTDDeviceStates& states,
                                               const ttd::TTDPeripheralRegistry& live, std::string& why);
 
     /// R-OP-7: why a slot change is refused now, naming the recording session; "" when allowed. The device set is

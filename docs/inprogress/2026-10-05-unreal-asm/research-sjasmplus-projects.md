@@ -99,23 +99,19 @@ them assemble alone with sjasmplus. Each went to the target as a project (`zxasm
 
 | Target | Memory equal | Before this work | What differs |
 |---|---|---|---|
-| TASM 4.12 | 30 of 37 | 6 | the Lua ones (4), RELOCATE (1), TASM's INCBIN sector slack (2) |
-| ALASM 5.09 | 29 | 22 | the Lua ones (4), RELOCATE (1), a macro mixing local and global labels (3) |
-| STORM 1.3 | 32 | 12 | the Lua ones (4), RELOCATE (1) |
-| XAS 7.447 | 32 | 12 | the Lua ones (4), RELOCATE (1) |
+| TASM 4.12 | 31 of 37 | 6 | the Lua ones (4), TASM's INCBIN sector slack (2) |
+| ALASM 5.09 | 33 | 22 | the Lua ones (4) |
+| STORM 1.3 | 33 | 12 | the Lua ones (4) |
+| XAS 7.447 | 33 | 12 | the Lua ones (4) |
 
 What is left, by cause:
 - **Lua** (`3color.asm`, `fire.asm`, both BasicLib examples): the bytes come from Lua scripts sjasmplus runs (BasicLib's
-  `LINE` / `LEND` / `NUM` macros are Lua). Left out with a warning: converting them needs a Lua interpreter with
-  sjasmplus' `sj.*` API in the converter.
-- **RELOCATE_START / RELOCATE_TABLE** (`relocation_main.asm`): sjasmplus builds the relocation table itself; not
-  emulated yet (the layout would have to tell which word values depend on a label inside the block).
+  `LINE` / `LEND` / `NUM` macros are Lua). Left out with a warning (not in scope: no Lua in the converter).
 - **TASM's INCBIN** loads whole TR-DOS sectors: the rest of the last sector lands after the file (Flex Navigator
   includes several files at one ORG, a shorter one after a longer: TASM overwrites the longer one's tail, sjasmplus
   does not). A property of TASM on a disk, not of the conversion.
-- **ALASM, a macro with local and global labels** (Wild Commander's `emutrap.asm`: a temporary label and `VORG = $`
-  in one macro): ALASM's LOCAL block, which the local ones need, makes the global one local too, and ALASM's `@name`
-  is another name (`JP shared` does not find `@shared`). Needs the macro expanded at its calls.
+
+Two more are done (§7): sjasmplus' relocation table, and ALASM's macros with local and global labels.
 
 ## 6. Bugs the projects showed (fixed)
 
@@ -141,11 +137,36 @@ What is left, by cause:
 | `zxasm convert <dir>` | `--to-version` was not passed on; the codec's errors were not printed; INCBIN of a host file got no sector slack | the check |
 | backends | the folder of an INCLUDE / INCBIN was kept in its TR-DOS name (`_spg/dow`) | ZiFi |
 
-## 7. Open
+## 7. The relocation table and ALASM's mixed macros
 
-- Lua blocks (a Lua interpreter with sjasmplus' API in the converter).
-- RELOCATE_START / RELOCATE_TABLE.
-- ALASM: a macro mixing LOCAL labels and global ones, expanded at its calls.
+**RELOCATE_START [HIGH] ... RELOCATE_END, RELOCATE_TABLE [offset]** (sjasmplus builds the table itself). The layout
+does it as sjasmplus does: a regular label defined in a block is relocatable, an EQU of a relocatable value too; a
+value is relocatable when moving every relocatable label (and `$` in the block) by #1700 moves it by as much (`norel`
+keeps a label still). Each instruction's value field (a word: JP / CALL nn, LD rr,nn, LD (nn),r, Z80N's ADD rr,nn) and
+each DW item in a block that moves is recorded at its address (physical; displaced when the block began inside a DISP;
+a DISP opened in the block makes its own labels and `$` absolute); with HIGH, a word's high byte or a byte holding a
+high byte. A STRUCT's BYTE / WORD fields keep their default values, so an instance's fields (the defaults or the
+values it gives) are recorded too. `relocate_count` / `relocate_size` are the table's size; RELOCATE_TABLE puts the
+words down (minus the offset). The writers put the table as DW of its addresses and `relocate_count` /
+`relocate_size` as numbers. DG / DEFG (bits) and DH / DEFH (hex pairs) are laid out and written as DB.
+
+Checked against sjasmplus' own `tests/relocate`: 24 of 30 tables equal; the other six use the `--syntax=abfw`
+`,,` argument separator (`relocation_multiarg`), temporary labels written `2_B` (`relocation_temporary_labels_exp`),
+STRUCT aliases `name STRUCT = address` (`relocation_struct`, `relocation_nested_struct`, `relocation_high_2`) and a
+STRUCT of D24 / TEXT fields (`relocation_high_1`), none of which the layout reads yet.
+
+**ALASM, a macro with local and global labels** (Wild Commander's `emutrap.asm`: a temporary label and `VORG = $` in
+one macro). ALASM's LOCAL block, which the local labels need, makes the global one local too, and ALASM's `@name` is
+another name (`JP shared` does not find `@shared`, emulator). The lowering puts such a macro in at each of its calls
+for ALASM (`LowerSjasmplus(..., expandMixedMacros)`): its arguments put in (a string one in DB as a string), its
+.labels named for each expansion (`__M1_l`, `!` keeping the parent of the .labels after it), its temporary labels one
+per line, its global labels and assignments as they are.
+
+## 8. Open
+
+- Lua blocks stay left out with a warning (not in scope).
+- STRUCT aliases (`name STRUCT = address`), the `--syntax` options of sjasmplus (`,,` between arguments, `2_B`
+  temporary labels).
 - Macro parameters named like registers (`MACRO T a` ... `LD A,a`): the frontend keeps registers in lower case,
   so `a` cannot be told from `A`.
 - A real editor holds less than the format: TASM, STORM and XAS take the 10000-line NextPlayer as one file here (their

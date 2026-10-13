@@ -778,7 +778,7 @@ public:
         /// Replace the clock bitmap (bit i == byte i carries a missing-clock mark) and rebuild the index
         void setClockBitmap(const uint8_t* bitmap, size_t len)
         {
-            std::fill(_clock.begin(), _clock.end(), 0);
+            std::fill(_clock.begin(), _clock.end(), uint8_t{0});
             std::memcpy(_clock.data(), bitmap, std::min(len, _clock.size()));
             reindex();
         }
@@ -1161,8 +1161,8 @@ public:
 
         if (cylinder < _cylinders && side < _sides)
         {
-            size_t trackNumber = cylinder * _sides + side;
-            result = getTrack(trackNumber);
+            const size_t trackNumber = cylinder * _sides + side;
+            result = getTrack(static_cast<uint8_t>(trackNumber));
         }
 
         return result;

@@ -2760,10 +2760,10 @@ namespace PythonBindings
                py::arg("source") = "")
             
             .def("capture_screen_layer", [](Emulator& self, const std::string& layer, const std::string& format, py::object alpha,
-                                             const std::string& path) -> py::dict {
+                                             const std::string& path, const std::string& size) -> py::dict {
                 py::dict result;
                 const NextLayer::Result shot = NextLayer::Request(self.GetContext(), layer, format,
-                                                                  alpha.is_none() ? std::string() : (alpha.cast<bool>() ? "true" : "false"), path);
+                                                                  alpha.is_none() ? std::string() : (alpha.cast<bool>() ? "true" : "false"), path, size);
                 if (shot.status != NextLayer::Status::Ok)
                 {
                     result["success"] = false;
@@ -2775,6 +2775,7 @@ namespace PythonBindings
                 result["layer"] = NextLayer::KindName(shot.kind);
                 result["format"] = shot.rgba ? "rgba" : "png";
                 result["alpha"] = shot.alpha;
+                result["scale"] = NextLayer::ScaleName(shot.scale);
                 result["width"] = shot.width;
                 result["height"] = shot.height;
                 result["size"] = shot.size;
@@ -2803,7 +2804,7 @@ namespace PythonBindings
                 else
                     result["data"] = NextLayer::Base64(shot.bytes);
                 return result;
-            }, py::arg("layer"), py::arg("format") = "png", py::arg("alpha") = py::none(), py::arg("path") = "",
+            }, py::arg("layer"), py::arg("format") = "png", py::arg("alpha") = py::none(), py::arg("path") = "", py::arg("size") = "",
                "ONE LAYER of the last completed frame of a ZX Spectrum Next (design-layer-capture.md): 'ula' (with the border and LoRes), "
                "'layer2', 'tilemap', 'sprites' - a PNG with alpha 0 where the layer does not paint (format='rgba': the raw bytes; "
                "alpha=False: flattened onto the fallback colour) - or 'ids' (each pixel coloured by the layer that won it, legend in "

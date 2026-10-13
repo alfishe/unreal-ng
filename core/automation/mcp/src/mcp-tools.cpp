@@ -1749,7 +1749,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "nr_dm_limit); "
         "'next_magic_port' = the magic debug port (jnext --magic-port): the bytes a program writes to one chosen port, as text in hex / dec / ascii / line mode "
         "- the program's console; off by default (invoke_api POST /api/v1/emulator/{id}/next/magic-port {enabled:true, port:N, mode:'line'}; nr_magic_since, nr_magic_limit); "
-        "'next_nmi' = NMI, interrupts and reset: per NMI source (M1 button, DRIVE button, the +3 I/O trap - not modelled) whether it would fire "
+        "'next_nmi' = NMI, interrupts and reset: per NMI source (M1 button, DRIVE button, the +3 FDC I/O trap with its NR #DA cause) whether it would fire "
         "now and what blocks it, the NMI in service (Multiface session, DivMMC handler), the Multiface (type, ports, memory in, invisible), "
         "NR #02's generate and reset bits, the stackless NMI, the maskable interrupts pending / in service by name, and the journal - the "
         "interrupt accepted (source, vector), RETI, an NMI request (accepted, or refused and why), RETN, the reset; off by default "

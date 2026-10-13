@@ -450,7 +450,7 @@ TEST_F(SoundChip_GeneralSound_Profile_Test, MultiSound_MatchesTheEngineDescripto
         // Its own ids next to a GS card's (MS-5): device MultiSoundGs, region MultiSoundGsRam
         EXPECT_EQ(card->TTDPeripheralId(), ttd::PeripheralId::MultiSoundGs);
         ttd::TTDPeripheralRegistry registry;
-        registry.Register(ttd::PeripheralId::MultiSoundGs, card.get());
+        registry.Register(card.get());
         std::string error;
         EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
 
@@ -462,10 +462,9 @@ TEST_F(SoundChip_GeneralSound_Profile_Test, MultiSound_MatchesTheEngineDescripto
         EXPECT_EQ(regions[0].desc.bytes, ramKB * 1024);
         EXPECT_EQ(regions[0].desc.pieces, ramKB * 1024 / ttd::kTTDPieceSize);
 
-        uint8_t id = 0;
         std::vector<uint8_t> state;
-        ASSERT_TRUE(card->TTDStateWithoutRegions(id, state));
-        EXPECT_EQ(id, static_cast<uint8_t>(ttd::PeripheralId::MultiSoundGs));
+        ASSERT_TRUE(card->TTDStateWithoutRegions(state));
+        EXPECT_EQ(card->TTDType(), ttd::TTDDeviceType::MultiSoundGs);
         EXPECT_EQ(state.size(), kFixed);
 
         runFrames(*card, 1);
@@ -510,9 +509,8 @@ TEST_F(SoundChip_GeneralSound_Profile_Test, MultiSound_RegionTrackingMarksEveryC
                   0)
             << "a marked piece holds a write (piece " << piece << ")";
 
-    uint8_t id = 0;
     std::vector<uint8_t> fixed;
-    ASSERT_TRUE(a->TTDStateWithoutRegions(id, fixed));
+    ASSERT_TRUE(a->TTDStateWithoutRegions(fixed));
     const std::vector<uint8_t> ram(regions[0].desc.memory, regions[0].desc.memory + regions[0].desc.bytes);
     const std::vector<uint8_t> whole = save(*a);
     a->TTDArmRegions(false);

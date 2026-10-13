@@ -153,7 +153,7 @@ TEST_F(TTDV1Feeder_Test, EngineRestoresEveryCheckpointAsV1)
             for (const auto& [id, blob] : want->peripheralBlobs)
             {
                 std::vector<uint8_t> state;
-                ASSERT_TRUE(engine.DeviceState(i, id, state)) << "device " << int(id) << " at checkpoint " << i;
+                ASSERT_TRUE(engine.DeviceStateOfV1Id(i, id, state)) << "device " << int(id) << " at checkpoint " << i;
                 if (id != gsId)
                 {
                     EXPECT_TRUE(state == ttd::TTDPeripheralRegistry::DecodeBlob(id, blob))

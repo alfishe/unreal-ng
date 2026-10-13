@@ -57,6 +57,10 @@ public:
     /// (design §6.1): drain to the device's own end-of-frame position,
     /// never to AudioTstate(z80->t), which already reads into the new frame
     virtual void handleFrameEnd() = 0;
+    /// A core whose per-step sync is deferred (TSFM with its synthesis
+    /// skipped) catches up with the CPU: the machine stops being driven (a
+    /// park, the end of a direct run), so observers read it in step
+    virtual void catchUp() {}
 
     /// Output stage on/off; core unaffected. Pushed once per frame by the
     /// manager (sound feature off counts as suppressed)

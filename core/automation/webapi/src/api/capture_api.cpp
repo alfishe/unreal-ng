@@ -267,22 +267,24 @@ std::vector<uint8_t> LayerBytes(const NextLayer::Image& image, bool rgba)
 }
 }  // namespace
 
-/// @brief GET /api/v1/emulator/:id/capture/screen?layer=ula|layer2|tilemap|sprites|ids[&format=png|rgba][&alpha=false][&path=]
+/// @brief GET /api/v1/emulator/:id/capture/screen?layer=ula|layer2|tilemap|sprites|ids[&format=png|rgba][&alpha=false][&size=screen|grid|pixel][&path=]
 /// One layer of the last completed Next frame (design-layer-capture.md): a PNG with alpha 0 where the layer does not paint, or the raw
-/// RGBA bytes; `ids` colours every pixel by the layer that won it (the legend is in the answer). The geometry is the screenshot's (640 x 512).
+/// RGBA bytes; `ids` colours every pixel by the layer that won it (the legend is in the answer). The geometry is the screenshot's (640 x 512) unless size=grid (640 x 256) or size=pixel (320 x 256).
 /// 409: not a Next, the capture is off (POST next/layer-capture), or no frame completed yet
 static void ReplyLayerScreen(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>& callback, const std::shared_ptr<Emulator>& emulator,
                              NextLayer::Kind kind)
 {
     bool rgba = false, alpha = true;
+    NextLayer::Scale scale = NextLayer::Scale::Screen;
     std::string message;
-    if (!NextLayer::ParseImageFormat(req->getParameter("format"), rgba, message) || !NextLayer::ParseAlpha(req->getParameter("alpha"), alpha, message))
+    if (!NextLayer::ParseImageFormat(req->getParameter("format"), rgba, message) || !NextLayer::ParseAlpha(req->getParameter("alpha"), alpha, message) ||
+        !NextLayer::ParseScale(req->getParameter("size"), scale, message))
         return callback(ScreenshotErrorResponse(HttpStatusCode::k400BadRequest, "Bad Request", message, "bad-parameter"));
     const std::string area = req->getParameter("area").empty() ? req->getParameter("mode") : req->getParameter("area");
     if (!area.empty() && area != "full")
         return callback(ScreenshotErrorResponse(HttpStatusCode::k400BadRequest, "Bad Request",
                                                 "A layer image is always the whole frame: area '" + area + "' is not allowed with layer", "bad-parameter"));
-    const NextLayer::Image image = NextLayer::Capture(emulator->GetContext(), kind, alpha);
+    const NextLayer::Image image = NextLayer::Capture(emulator->GetContext(), kind, alpha, scale);
     if (image.status != NextLayer::Status::Ok)
         return callback(ScreenshotErrorResponse(LayerStatusCode(image.status), image.status == NextLayer::Status::BadParameter ? "Bad Request" : "Conflict",
                                                 image.message, NextLayer::StatusName(image.status)));
@@ -294,6 +296,7 @@ static void ReplyLayerScreen(const HttpRequestPtr& req, std::function<void(const
     ret["layer"] = NextLayer::KindName(kind);
     ret["format"] = rgba ? "rgba" : "png";
     ret["alpha"] = alpha;
+    ret["scale"] = NextLayer::ScaleName(scale);
     ret["width"] = image.width;
     ret["height"] = image.height;
     ret["size"] = static_cast<Json::UInt64>(bytes.size());
@@ -329,9 +332,13 @@ void EmulatorAPI::captureNextLayers(const HttpRequestPtr& req, std::function<voi
     if (emulator->IsDestroying())
         return callback(ScreenshotErrorResponse(HttpStatusCode::k503ServiceUnavailable, "Service Unavailable", "Emulator is shutting down", "shutting-down"));
     bool rgba = false, alpha = true;
+    NextLayer::Scale scale = NextLayer::Scale::Screen;
     std::string message;
-    if (!NextLayer::ParseImageFormat(req->getParameter("format"), rgba, message) || !NextLayer::ParseAlpha(req->getParameter("alpha"), alpha, message))
+    if (!NextLayer::ParseImageFormat(req->getParameter("format"), rgba, message) || !NextLayer::ParseAlpha(req->getParameter("alpha"), alpha, message) ||
+        !NextLayer::ParseScale(req->getParameter("size"), scale, message))
         return callback(ScreenshotErrorResponse(HttpStatusCode::k400BadRequest, "Bad Request", message, "bad-parameter"));
+    unsigned width = 0, height = 0;
+    NextLayer::ScaleSize(scale, width, height);
     std::shared_ptr<const NextLayer::Frame> frame;
     const NextLayer::Status status = NextLayer::LastFrame(emulator->GetContext(), frame, message);
     if (status != NextLayer::Status::Ok)
@@ -340,17 +347,20 @@ void EmulatorAPI::captureNextLayers(const HttpRequestPtr& req, std::function<voi
     ret["status"] = "success";
     ret["format"] = rgba ? "rgba" : "png";
     ret["alpha"] = alpha;
-    ret["width"] = NextLayer::kWidth;
-    ret["height"] = NextLayer::kHeight * 2;
+    ret["scale"] = NextLayer::ScaleName(scale);
+    ret["width"] = width;
+    ret["height"] = height;
     ret["frame"] = LayerFrameJson(*frame);
     Json::Value layers;
     static const NextLayer::Kind kinds[] = {NextLayer::Kind::Ula, NextLayer::Kind::Layer2, NextLayer::Kind::Tilemap, NextLayer::Kind::Sprites, NextLayer::Kind::Ids};
     for (NextLayer::Kind kind : kinds)
     {
         NextLayer::Image image;
-        image.width = NextLayer::kWidth;
-        image.height = NextLayer::kHeight * 2;
-        NextLayer::Render(*frame, kind, alpha, image.rgba);
+        image.width = width;
+        image.height = height;
+        std::vector<uint8_t> full;
+        NextLayer::Render(*frame, kind, alpha, full);
+        NextLayer::Reduce(full, scale, image.rgba);
         const std::vector<uint8_t> bytes = LayerBytes(image, rgba);
         Json::Value entry;
         entry["size"] = static_cast<Json::UInt64>(bytes.size());

@@ -493,7 +493,7 @@ TEST_F(Ym2203Pair_Test, TsfmDescriptorTimeFieldsAreMastersThroughThePair)
     EXPECT_EQ(d.stateSize, 2008u);
 
     ttd::TTDPeripheralRegistry registry;
-    registry.Register(ttd::PeripheralId::TSFM, &tsfm);
+    registry.Register(&tsfm);
     std::string error;
     EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
 }
@@ -531,7 +531,7 @@ TEST_F(Ym2203Pair_Test, PairBlobMatchesItsDescriptorAndItsTimeFieldsAdvance)
     Ym2203Pair pair(_context, RatioConfig());
     PairDevice device(pair);
     ttd::TTDPeripheralRegistry registry;
-    registry.Register(ttd::PeripheralId::TSFM, &device);
+    registry.Register(&device);
     std::string error;
     EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
 
@@ -1273,4 +1273,108 @@ TEST_F(Ym2203Pair_Test, TtdRestoreDerivesTheKeyOnMirror)
     EXPECT_EQ(b.chip(0)->fmKeyOn[0], 0);
     b.TTDLoadState(off.data(), 10000);
     EXPECT_EQ(b.chip(0)->fmKeyOn[2], 0) << "released where the second blob was taken";
+}
+
+// Idle FM fast path (ymfm patch 6, Ym2203Pair::advanceChip): a released FM half is clocked in one go between timer
+// expiries. Two pairs in lockstep, one with the fast path and one clocking every sample, get the same random FM
+// traffic - notes keyed and released into silence, timers A/B with CSM key-ons, prescaler changes - and syncs of
+// random length: the TTD blobs and the FM words (time and value) must stay equal after every action
+TEST_F(Ym2203Pair_Test, IdleFmFastPathMatchesTheClockedPair)
+{
+    Ym2203Pair fast(_context);
+    Ym2203Pair clocked(_context);
+    clocked.setFmIdleFastPath(false);
+    uint64_t t = 1000;
+    fast.syncTo(t);
+    clocked.syncTo(t);
+
+    uint32_t seed = 20261012;
+    auto rnd = [&seed]() {
+        seed = seed * 1664525u + 1013904223u;
+        return seed >> 8;
+    };
+    std::vector<FmWord> wordsFast;
+    std::vector<FmWord> wordsClocked;
+    auto drain = [](Ym2203Pair& p, std::vector<FmWord>& out) {
+        for (int i = 0; i < 2; i++)
+        {
+            Ym2203Chip& c = *p.chip(i);
+            while (c.words.size() > 0)
+            {
+                out.push_back(c.words.front());
+                c.words.pop();
+            }
+        }
+    };
+    for (int action = 0; action < 3000; action++)
+    {
+        const int chip = int(rnd() % 2);
+        const uint32_t kind = rnd() % 16;
+        uint8_t reg = 0;
+        uint8_t data = uint8_t(rnd());
+        bool write = true;
+        switch (kind)
+        {
+            case 0: reg = uint8_t(0x30 + rnd() % 16); break;                     // DT / MUL
+            case 1: reg = uint8_t(0x40 + rnd() % 16); data &= 0x3F; break;       // TL
+            case 2: reg = uint8_t(0x50 + rnd() % 16); data |= 0x10; break;       // KS / AR (fast)
+            case 3: reg = uint8_t(0x60 + rnd() % 16); break;                     // D1R
+            case 4: reg = uint8_t(0x80 + rnd() % 16); data |= 0x0C; break;       // SL / RR (releases end)
+            case 5: reg = uint8_t(0xA0 + rnd() % 3); break;                      // F-number low
+            case 6: reg = uint8_t(0xA4 + rnd() % 3); data &= 0x3F; break;        // block / F-number high
+            case 7: reg = uint8_t(0xB0 + rnd() % 3); break;                      // FB / algorithm
+            case 8: reg = 0x28; data = uint8_t((rnd() % 2 ? 0xF0 : 0x00) | (rnd() % 3)); break;  // key on / off
+            case 9: reg = uint8_t(0x24 + rnd() % 3); break;                      // timer A / B loads
+            case 10: reg = 0x27; data = uint8_t(data & 0xBF) | ((rnd() % 4 == 0) ? 0x80 : 0x00); break;  // timers, CSM
+            case 11: reg = uint8_t(0x2D + rnd() % 3); break;                     // prescaler
+            case 12:  // everything released
+                for (int ch = 0; ch < 3; ch++)
+                {
+                    for (Ym2203Pair* p : {&fast, &clocked})
+                        Reg(*p, chip, 0x28, uint8_t(ch));
+                }
+                write = false;
+                break;
+            default:
+            {
+                const uint64_t clocks = (rnd() % 4 == 0) ? 1 + rnd() % 200 : 1 + rnd() % 150000;
+                t += clocks;
+                fast.syncTo(t);
+                clocked.syncTo(t);
+                write = false;
+                break;
+            }
+        }
+        if (write)
+        {
+            Reg(fast, chip, reg, data);
+            Reg(clocked, chip, reg, data);
+        }
+        if (t > 3'000'000)
+        {
+            // Keep the frame-relative axis small, as the TSFM's frame rollover does
+            fast.rebaseFrame(t - 70000);
+            clocked.rebaseFrame(t - 70000);
+            t -= 70000;
+        }
+        drain(fast, wordsFast);
+        drain(clocked, wordsClocked);
+        ASSERT_EQ(wordsFast.size(), wordsClocked.size()) << "action " << action;
+        for (size_t i = 0; i < wordsFast.size(); i++)
+        {
+            ASSERT_EQ(wordsFast[i].t, wordsClocked[i].t) << "action " << action;
+            ASSERT_EQ(wordsFast[i].word, wordsClocked[i].word) << "action " << action;
+        }
+        wordsFast.clear();
+        wordsClocked.clear();
+        std::vector<uint8_t> a(fast.TTDStateSize());
+        std::vector<uint8_t> b(clocked.TTDStateSize());
+        fast.TTDSaveState(a.data());
+        clocked.TTDSaveState(b.data());
+        ASSERT_EQ(a, b) << "pair state differs after action " << action;
+        ASSERT_EQ(fast.readStatus(0), clocked.readStatus(0));
+        ASSERT_EQ(fast.readStatus(1), clocked.readStatus(1));
+    }
+    EXPECT_GT(fast.fmIdleSamples(), 0u) << "the released stretches took the fast path";
+    EXPECT_EQ(clocked.fmIdleSamples(), 0u);
 }

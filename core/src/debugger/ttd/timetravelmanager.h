@@ -1309,59 +1309,25 @@ public:
     /// the hash code knowing which machine is running.
     inline const TTDPeripheralRegistry& GetPeripheralRegistry() const { return _peripherals; }
 
-    /// @brief Re-point a peripheral slot at a new object, for an owner that
-    /// replaces its own device instance at runtime.
-    ///
-    /// Currently: General Sound personality switching. SoundManager::
-    /// switchGeneralSoundCard deletes the outgoing card and installs a new
-    /// one under the same GeneralSoundCard* the SoundManager exposes.
-    /// RegisterModelPeripherals only runs at StartRecording/session load, so
-    /// a switch that happens while a recording is already active would
-    /// otherwise leave the registry holding a dangling pointer to the
-    /// just-deleted card - the next checkpoint's TTDSaveState call would be a
-    /// use-after-free. The owner calls this immediately after the swap
-    /// (whether or not TTD is currently recording - the registry array
-    /// persists after StopRecording too, ready for the next
-    /// StartRecording/seek, so a stale pointer left uncorrected here would
-    /// resurface later even outside an active recording).
-    ///
-    /// @p newId is the slot to (re-)register @p device under - the device's
-    /// own `TTDPeripheralId()`, not necessarily the slot the previous device
-    /// occupied: the GS personalities register under different ids
-    /// (GeneralSound for LLE, GeneralSoundLightweight for LW - same pattern
-    /// as the TurboSound/TSFM slot split in RegisterModelPeripherals), so a
-    /// personality switch moves the registration to a different slot rather
-    /// than reusing the old one. @p oldId, if different from @p newId, is
-    /// unregistered first - leaving it registered would keep offering a
-    /// blob-less capture for a slot nothing occupies anymore, and would leave
-    /// a stale pointer in that slot exactly as bad as the use-after-free this
-    /// method exists to prevent had @p device simply been registered under
-    /// the wrong slot instead. Pass the same value for both when the device
-    /// keeps its slot (the common case for every other peripheral type).
-    ///
-    /// A null TimeTravelManager pointer (TTD unavailable) is a caller error
-    /// to guard against, not this method's job. An @p oldId with no existing
-    /// registration (e.g. no GS card was fitted at RegisterModelPeripherals
-    /// time) is harmless - Unregister on an absent id is a no-op.
-    inline void UpdatePeripheral(PeripheralId oldId, PeripheralId newId, TTDSerializable* device) override
+    /// @brief A device was swapped for another one (the General Sound card's personality switch): the registry
+    /// drops every device of @p oldType and takes @p device under its own key (the lightweight GS: marked not
+    /// recorded). Keeps the registry free of a stale pointer to the outgoing device (whether or not TTD is
+    /// recording: the registry persists for the next StartRecording / seek). See SwitchMachinePeripheral
+    inline void UpdatePeripheral(TTDDeviceType oldType, TTDSerializable* device) override
     {
-        // The outgoing device leaves its id, also when the new one takes the same id (the registry refuses a
-        // second device under a held id)
-        _peripherals.Unregister(oldId);
-        // The lightweight GS is fitted but not recorded (state registry)
-        if (newId == PeripheralId::GeneralSoundLightweight)
-            _peripherals.MarkNotRecorded(newId);
-        else
-            _peripherals.Register(newId, device, SlotCardInstance(_context, device));
+        SwitchMachinePeripheral(_context, _peripherals, oldType, device);
     }
 
     /// @brief Number of model-RAM pages (set at StartRecording from the
     /// active model's RAM size).
     inline uint16_t GetModelRamPages() const { return _modelRamPages; }
 
-    /// Devices fitted but deliberately not recorded (bit = PeripheralId): the
-    /// loaded file's when the session came from one, else the live registry's
-    uint64_t NotRecordedMask() const { return _loadedFromFile ? _loadedNotRecordedMask : _peripherals.NotRecordedMask(); }
+    /// Devices fitted but deliberately not recorded: the loaded file's when the
+    /// session came from one, else the live registry's
+    const std::vector<TTDDeviceKey>& NotRecorded() const
+    {
+        return _loadedFromFile ? _loadedNotRecorded : _peripherals.NotRecorded();
+    }
 
 private:
     // -----------------------------------------------------------------------
@@ -1851,7 +1817,7 @@ private:
     uint8_t     _sessionModelId = 0;
     uint32_t    _recordingNumber = 0;   ///< recordings this instance started (RecordingSessionLabel)
     uint64_t    _loadedRomSignature = 0;  ///< The loaded file's rom_signature
-    uint64_t    _loadedNotRecordedMask = 0;  ///< The loaded file's not-recorded mask (kFlagsHasNotRecordedMask)
+    std::vector<TTDDeviceKey> _loadedNotRecorded;   ///< The loaded file's devices fitted but not recorded
     std::string _loadedRecordedBy;        ///< The loaded file's emulator_id
 
     /// Per-frame coverage sets backing reverse-search frame skipping.

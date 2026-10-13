@@ -99,7 +99,8 @@ private:
         R2b0, R2b1,
         R3b0, R3b1,
         R4b0, R4b1,
-        R6Mask
+        R6Mask,
+        Stuck  ///< dma.vhd R4_BYTE_2: WR4 with only bit 4 set waits for an interrupt control byte the case statement does not handle
     };
     static unsigned Cycles(uint8_t timing);
     void Command(uint8_t value);

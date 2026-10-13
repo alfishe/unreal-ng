@@ -228,6 +228,11 @@ public:
     const NeoGSConfig& config() const { return _config; }
     const std::string& flashTitle() const { return _flashTitle; }
     uint8_t peek(uint16_t addr) const { return _mem.peek(addr); }
+    /// What the runner may do with this card (GSCardRunner reads these, not the private hooks themselves: a
+    /// requires-expression on a befriended private member is false under MSVC 2019, which compiled the sleep out)
+    static constexpr bool kRunnerIdleSleep = true;          ///< sleepAllowed() and the rest: the idle loop is slept through
+    static constexpr bool kRunnerBatchQuietEvents = true;   ///< sleepQuietEventsBefore()
+
     /// The firmware's idle poll loop slept through (on by default; off steps it: comparison tests, diagnosis)
     void setIdleSleep(bool on) { _runner.setSleepOn(on); }
     /// Card CPU steps the sleeps stood for (tests, diagnosis)
@@ -313,6 +318,7 @@ private:
     }
     int64_t sleepHardStop() const { return std::min(_dma.nextEvent(), _zx.nextEvent()); }
     void onStepsSkipped(uint64_t steps) { _activityCounters.cpuSteps += steps; }
+    bool sleepQuietEventsBefore(int64_t end);
     void onStep()
     {
         _activityCounters.cpuSteps++;
@@ -397,6 +403,13 @@ private:
 
     // Audio
     void dacSideEvent(int64_t crystal);
+    /// One mixer side as the board's DAC gets it
+    int32_t mixerLevel(bool right) const
+    {
+        return _snd.mix(right, _gscfg0) * static_cast<int32_t>(_config.volume) / 16384;
+    }
+    /// Both sides after the listening choice (stereo mode): what the output stage is given
+    void listeningMix(int32_t& left, int32_t& right) const;
     int64_t blipPosition() const { return _runner.now() / TICKS_PER_CRYSTAL - _frameStartTicks / TICKS_PER_CRYSTAL; }
     int64_t blipFrameLength() const
     {

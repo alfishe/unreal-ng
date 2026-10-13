@@ -19,6 +19,7 @@
 #include "debugger/ttd/ttdbookmarks.h"
 #include "debugger/ttd/ttdexternalevents.h"
 #include "debugger/ttd/ttdfileinfo.h"
+#include "debugger/ttd/ttdperipheralmask.h"
 #include "debugger/ttd/ttdportsearch.h"
 #include "debugger/ttd/ttdprobe.h"
 #include "debugger/ttd/ttdrecordingfolders.h"
@@ -159,7 +160,14 @@ StateNode RecordedMachineNodeImpl(const TTDRecordedMachine& m)
     v["ram_page_bound"] = static_cast<unsigned>(m.ramPageBound);
     // A string: a 64-bit hash does not survive a JSON number (doubles)
     v["rom_signature"] = m.romSignature == 0 ? StateNode() : StateNode("0x" + HashToString(m.romSignature));
-    v["peripheral_mask"] = static_cast<uint64_t>(m.peripheralMask);
+    // The devices with a v1 id as that id's set, as before D23 (`peripherals` names every device): ids 0..63 as one
+    // number, `peripheral_mask_words` every 64-id word (ids 64.. in words 1..3)
+    const PeripheralMask mask = m.V1Mask();
+    v["peripheral_mask"] = static_cast<uint64_t>(mask.Low());
+    StateNode words = StateNode::Array();
+    for (size_t w = 0; w < mask.WordCount(); ++w)
+        words.push(static_cast<uint64_t>(mask.Word(w)));
+    v["peripheral_mask_words"] = words;
     StateNode list = StateNode::Array();
     for (const std::string& name : m.peripherals)
         list.push(name);

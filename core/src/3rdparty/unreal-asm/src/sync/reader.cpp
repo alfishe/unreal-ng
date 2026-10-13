@@ -197,7 +197,7 @@ SyncText ReadGapBufferFixed(const MachineView& machine, const SyncDescriptor& d)
     const GapBufferParams& p = d.gapBuffer;
     const auto gapStart = machine.Word(p.gapStart), gapEnd = machine.Word(p.gapEnd);
     const std::optional<uint16_t> startWord = p.fixedStart ? std::optional<uint16_t>(p.fixedStart) : machine.Word(p.start);
-    const std::optional<uint16_t> topWord = p.endInText ? std::optional<uint16_t>(0) : machine.Word(p.top);
+    const std::optional<uint16_t> topWord = p.endInText ? std::optional<uint16_t>(uint16_t{0}) : machine.Word(p.top);
     std::vector<uint8_t> flag;
     if (!gapStart || !gapEnd || !startWord || !topWord || !machine.Read(p.editorFlagAt, p.editorFlagLength, flag))
         return Inconsistent(text, "the text pointers are not in the memory copied");
@@ -1868,7 +1868,8 @@ ProjectInjectPlan InjectProjectIntoSnapshot(const containers::Snapshot& snapshot
         return plan;
     std::map<int, std::vector<uint8_t>> changed;
     for (const InjectPlan& page : plan.pages)
-        changed[page.page] = page.bytes;
+        if (page.page >= 0)   // a whole page (ALASM); a linear text comes as pokes (TASM, MASM, GENS ...)
+            changed[page.page] = page.bytes;
     for (const InjectPlan& page : plan.pages)
         for (const InjectPlan::Poke& poke : page.pokes)
         {

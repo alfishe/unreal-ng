@@ -265,7 +265,7 @@ TEST_F(EvoFlashTsConf_Test, TtdRegistersTheBlobAndTheRegion)
     std::vector<std::unique_ptr<ttd::TTDSerializable>> owned;
     std::string error;
     ASSERT_TRUE(ttd::RegisterMachinePeripherals(_context, registry, owned, &error)) << error;
-    EXPECT_TRUE(registry.IsRegistered(ttd::PeripheralId::EvoFlash));
+    EXPECT_TRUE(registry.IsRegistered(ttd::TTDDeviceType::EvoFlash));
 
     std::vector<ttd::TTDDeviceRegion> regions;
     for (ttd::ITTDRegionSource* source : registry.RegionSources())

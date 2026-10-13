@@ -606,7 +606,7 @@ TEST_P(IdeControllerCd_Test, PlaysAudioOnTheBoard)
 
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
     ASSERT_TRUE(context->pTimeTravelController->StartRecording());
-    EXPECT_TRUE(context->pTimeTravelController->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::CdDrive)) << board;
+    EXPECT_TRUE(context->pTimeTravelController->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::CdDrive)) << board;
     context->pTimeTravelController->StopRecording();
 
     // The guest ejects (START STOP UNIT LoEj): the play stops and, at the frame boundary, the slot is

@@ -32,16 +32,19 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <map>
 #include <string>
 #include <vector>
 
 namespace ttd {
 
-/// @brief Peripheral identifier for registry and checkpoint indexing.
-/// New peripherals append entries here - never renumber existing values:
-/// the id is the checkpoint blob-map key and is persisted in v2 session
-/// dump blob headers (EncodeBlob/DecodeBlob), so a session recorded with
-/// one numbering must load under the same numbering.
+/// @brief TTD v1's blob id: the key of a v1 checkpoint's device blobs and of the
+/// v1 file's blob headers (EncodeBlob / DecodeBlob). FROZEN at 65: no value is
+/// added (D23 completed, d23-device-keys.md). A device is identified by its
+/// TTDDeviceKey (type + instance); a new device declares a TTDDeviceType only
+/// (TTDSerializable::TTDType) and keeps PeripheralId::None, which v1 cannot
+/// record. The values here never change: v1 files and checkpoints use them, and
+/// TTDDeviceType keeps the same numbers for the same devices.
 enum class PeripheralId : uint8_t
 {
     TurboSound = 0,
@@ -113,20 +116,23 @@ enum class PeripheralId : uint8_t
     EvoFlash = 61,        // the ZX-Evo's ROM chip as a flash (TS-Conf, ATM3): its command state; the array is the engine region EvoFlash
     NextState = 62,       // the ZX Spectrum Next: NextREG file, memory map, video registers and palettes, sprites, copper, DMA, CTC, interrupts, I2C RTC, Multiface, DivMMC (nextstatecodec.h)
     NextSystemArea = 63,   // the Next's system area, 256 KB: the ROMs the firmware loads in config mode and the DivMMC RAM esxDOS / NextZXOS work in; not RAM pages, so not in the page store
-    // Future: GS512, etc.
-    Count
+    // Ids from 64 on need the wide peripheral mask of v1's session files (ttdperipheralmask.h; file schema 3)
+    MachineSerialPeer2 = 64, // the peer on a machine's second serial port (the Next's UART 1, the Pi's line): same blob as MachineSerialPeer
+    JoystickSerialPeer = 65, // the peer plugged into the Next's joystick connector (NR #0B UART mode): same blob as MachineSerialPeer
+    Count,                // one past the last v1 id (v1's tables)
+    None = 0xFF           // no v1 id: a device v1 cannot record (every device added after the freeze)
 };
 
 
 /// region <Device descriptor (TTD v2 engine, Phase 2)>
 
-/// Stable device kind, stored in the engine's files. The values are
-/// PeripheralId's, unchanged, so a v1 blob id maps to a type by value. Until
-/// the engine replaces v1 (Phase 5) a new device takes the next PeripheralId
-/// and the same number here; after that only a type. Slot personalities stay
-/// separate types (TSFM is not a TurboSound): a state never crosses kinds.
-/// Several instances of one kind (the UARTs) share a type and differ by
-/// instance name (TTDDeviceDescriptor::instance).
+/// Stable device kind, stored in the engine's files. Values 0-65 are
+/// PeripheralId's, unchanged, so a v1 blob id maps to a type by value. A new
+/// device takes the next value here and no PeripheralId (frozen at 65, D23).
+/// Slot personalities stay separate types (TSFM is not a TurboSound): a state
+/// never crosses kinds. Several instances of one kind (the UARTs) share a type
+/// and differ by instance name (TTDDeviceDescriptor::instance): a second
+/// instance takes no number at all.
 enum class TTDDeviceType : uint16_t
 {
     TurboSound = 0,
@@ -192,7 +198,10 @@ enum class TTDDeviceType : uint16_t
     MultiSoundGs = 60,
     EvoFlash = 61,
     NextState = 62,
-    NextSystemArea = 63
+    NextSystemArea = 63,
+    MachineSerialPeer2 = 64,
+    JoystickSerialPeer = 65,
+    // New kinds from 66 on: no PeripheralId
 };
 static_assert(static_cast<uint16_t>(TTDDeviceType::TurboSound) == static_cast<uint16_t>(PeripheralId::TurboSound), "TTDDeviceType::TurboSound must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::BetaDisk) == static_cast<uint16_t>(PeripheralId::BetaDisk), "TTDDeviceType::BetaDisk must keep its v1 number");
@@ -258,6 +267,8 @@ static_assert(static_cast<uint16_t>(TTDDeviceType::MultiSoundGs) == static_cast<
 static_assert(static_cast<uint16_t>(TTDDeviceType::EvoFlash) == static_cast<uint16_t>(PeripheralId::EvoFlash), "TTDDeviceType::EvoFlash must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::NextState) == static_cast<uint16_t>(PeripheralId::NextState), "TTDDeviceType::NextState must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::NextSystemArea) == static_cast<uint16_t>(PeripheralId::NextSystemArea), "TTDDeviceType::NextSystemArea must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::MachineSerialPeer2) == static_cast<uint16_t>(PeripheralId::MachineSerialPeer2), "TTDDeviceType::MachineSerialPeer2 must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::JoystickSerialPeer) == static_cast<uint16_t>(PeripheralId::JoystickSerialPeer), "TTDDeviceType::JoystickSerialPeer must keep its v1 number");
 
 /// A device in the engine's device table: its kind and its instance name
 /// ("betadisk", "betadisk.context", "zifi.uart"; lower case, dots, digits)
@@ -272,6 +283,18 @@ struct TTDDeviceKey
         return type != o.type ? static_cast<uint16_t>(type) < static_cast<uint16_t>(o.type) : instance < o.instance;
     }
 };
+
+/// Raw device states by device (a session's baseline for the load guards)
+using TTDDeviceStates = std::map<TTDDeviceKey, std::vector<uint8_t>>;
+
+/// The state of the first device of @p type in @p states (a machine with one device of that kind); nullptr when none
+inline const std::vector<uint8_t>* FindStateOfType(const TTDDeviceStates& states, TTDDeviceType type)
+{
+    for (const auto& [key, state] : states)
+        if (key.type == type)
+            return &state;
+    return nullptr;
+}
 
 /// A counter in the state that advances with time (a clock, a position): the
 /// engine stores it as its difference from a straight line through an anchor
@@ -303,7 +326,8 @@ struct TTDDeviceDescriptor
 {
     TTDDeviceType type = TTDDeviceType::TurboSound;
     std::string instance;                     ///< default: TTDDeviceName() in lower case
-    PeripheralId legacyId = PeripheralId::Count;   ///< the v1 blob id (restore order ties follow v1)
+    PeripheralId legacyId = PeripheralId::None;    ///< the v1 blob id, None for a device v1 cannot record (restore
+                                                   ///< order ties follow v1)
     uint16_t layoutVersion = 1;               ///< bumped when the device's bytes change meaning
     uint32_t stateSize = 0;                   ///< TTDStateSize(): exact, or the largest when variableSize
     bool variableSize = false;
@@ -361,8 +385,13 @@ public:
     /// Human-readable device name for logging/debugging.
     virtual std::string TTDDeviceName() const { return "unknown"; }
 
-    /// Peripheral identifier for checkpoint indexing.
-    virtual PeripheralId TTDPeripheralId() const { return PeripheralId::Count; }
+    /// The device's v1 blob id (frozen, D23): a device added after the freeze
+    /// keeps None and declares TTDType only
+    virtual PeripheralId TTDPeripheralId() const { return PeripheralId::None; }
+
+    /// The device's kind: what identifies it, with its instance name
+    /// (TTDDescribe). Default: the kind of its v1 id, the same number
+    virtual TTDDeviceType TTDType() const { return static_cast<TTDDeviceType>(TTDPeripheralId()); }
 
     /// Compute a hash contribution for divergence detection.
     /// The framework mixes this with the common chipset hash so model-specific
@@ -395,12 +424,12 @@ public:
 
     /// The device's descriptor for the engine's device table (Phase 2, Step 1).
     /// The default fits a single-instance device whose bytes never changed
-    /// meaning: its type is its PeripheralId, its instance its name in lower case
+    /// meaning: its type is TTDType, its instance its name in lower case
     virtual TTDDeviceDescriptor TTDDescribe() const
     {
         TTDDeviceDescriptor d;
         d.legacyId = TTDPeripheralId();
-        d.type = static_cast<TTDDeviceType>(d.legacyId);
+        d.type = TTDType();
         d.instance = TTDDeviceName();
         for (char& c : d.instance)
             if (c >= 'A' && c <= 'Z')

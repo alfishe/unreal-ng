@@ -190,6 +190,7 @@ public:
             const bool same = _symbols == last;
             last = _symbols;
             _previousTemps = _temps;
+            _previousTempsRelocatable = _tempsRelocatable;
             if (same && !_unresolved && _pass > 1)
             {
                 stable = true;
@@ -204,6 +205,17 @@ public:
         RunChunk(_files[main], 0);
         stable = stable && _symbols == last;
         result.labels = std::move(_labels);
+        result.relocations = _relocations;
+        if (!_relocations.empty() || !_previousRelocations.empty())
+            for (const char* name : {"relocate_count", "relocate_size"})
+            {
+                Label l;
+                l.name = name;
+                l.value = _symbols[name];
+                l.use = LabelUse::Equ;
+                l.page = -1;
+                result.labels.push_back(l);
+            }
         for (const auto& [key, address] : _lineAddresses)
             if (!_lineAmbiguous.count(key))
                 result.lines.push_back({std::get<0>(key), std::get<1>(key), std::get<2>(key), address});
@@ -221,6 +233,15 @@ private:
     std::map<std::tuple<std::string, uint32_t, uint32_t>, int64_t> _lineAddresses;   // the last pass: each line's $ (LineAddress)
     std::set<std::tuple<std::string, uint32_t, uint32_t>> _lineAmbiguous;            // ... met at two addresses
     const Chunk* _expansionChunk = nullptr;                                          // the macro expanded on a file's line
+    // RELOCATE_START ... RELOCATE_END (sjasmplus' relocation data): a value is relocatable when moving every
+    // relocatable label (and $ in the block) by kRelocShift moves it by as much
+    static constexpr int64_t kRelocShift = 0x1700;   // a multiple of 256: HIGH keeps the low byte
+    bool _relocating = false;
+    bool _relocHigh = false;
+    bool _relocDisplaced = false;                     // the block began inside a DISP
+    int64_t _relocShift = 0;                          // during the second evaluation
+    std::set<std::string> _relocatable;               // labels defined in a block, EQUs of their values
+    std::vector<int64_t> _relocations, _previousRelocations;
     std::optional<std::pair<std::string, uint32_t>> _expansionCall;                  // ... that line
 
     bool IsFile(const Chunk& chunk) const
@@ -242,6 +263,7 @@ private:
     std::set<std::string> _defines;
     std::map<std::string, Macro> _macros;
     std::vector<std::pair<std::string, int64_t>> _temps, _previousTemps;
+    std::vector<bool> _tempsRelocatable, _previousTempsRelocatable;   // ... defined in a RELOCATE block
     bool _unresolved = false;
     bool _stopped = false;
     int64_t _steps = 0;
@@ -252,6 +274,14 @@ private:
     {
         int64_t size = 0;
         std::vector<std::pair<std::string, int64_t>> fields;
+        /// the values a BYTE / WORD field puts down (its default; an instance gives its own in this order)
+        struct Leaf
+        {
+            int64_t offset = 0;
+            int size = 1;
+            Expr value;
+        };
+        std::vector<Leaf> leaves;
     };
     struct OpenStruct
     {
@@ -297,6 +327,7 @@ private:
         _defines.clear();
         _macros.clear();
         _temps.clear();
+        _tempsRelocatable.clear();
         _unresolved = false;
         _stopped = false;
         _steps = 0;
@@ -305,6 +336,13 @@ private:
         _pending.clear();
         _diagnostics.clear();
         _reported.clear();
+        _relocating = _relocHigh = false;
+        _relocShift = 0;
+        _previousRelocations = std::move(_relocations);
+        _relocations.clear();
+        // sjasmplus' built-in names: the table's size as the pass before found it
+        _symbols["relocate_count"] = static_cast<int64_t>(_previousRelocations.size());
+        _symbols["relocate_size"] = 2 * static_cast<int64_t>(_previousRelocations.size());
     }
 
     uint32_t FileLine() const { return _chunk && _lineIndex < _chunk->fileLines.size() ? _chunk->fileLines[_lineIndex] : 0; }
@@ -363,7 +401,7 @@ private:
             if (const auto found = _symbols.find(c); found != _symbols.end())
             {
                 _used.insert(c);
-                return found->second;
+                return found->second + (_relocShift && _relocatable.count(c) ? _relocShift : 0);
             }
         if (!candidates.empty())
             _used.insert(candidates.back());
@@ -389,13 +427,14 @@ private:
         {
             for (size_t k = _temps.size(); k > 0; --k)
                 if (_temps[k - 1].first == number)
-                    return _temps[k - 1].second;
+                    return _temps[k - 1].second + (_relocShift && _tempsRelocatable[k - 1] ? _relocShift : 0);
         }
         else
         {
             for (size_t k = _temps.size(); k < _previousTemps.size(); ++k)
                 if (_previousTemps[k].first == number)
-                    return _previousTemps[k].second;
+                    return _previousTemps[k].second +
+                           (_relocShift && k < _previousTempsRelocatable.size() && _previousTempsRelocatable[k] ? _relocShift : 0);
         }
         _unresolved = true;
         if (direction == 'b' || _pass > 1)
@@ -411,15 +450,29 @@ private:
         {
             case Expr::Kind::Number: return Wrap32(e.value);
             case Expr::Kind::Symbol: return Lookup(e.text);
-            case Expr::Kind::Current: return _pc;
+            case Expr::Kind::Current: return _pc + (RelocatableHere() ? _relocShift : 0);
             case Expr::Kind::CurrentPage: return _page < 0 ? 0 : _page;
             case Expr::Kind::CurrentPhysical: return _physical;
-            case Expr::Kind::Group: return e.args.empty() ? std::nullopt : Eval(e.args[0]);
+            case Expr::Kind::Group:
+            {
+                if (e.args.empty())
+                    return std::nullopt;
+                if (e.text != "norel")
+                    return Eval(e.args[0]);
+                const int64_t shift = _relocShift;   // norel: the value as it stands, never moved
+                _relocShift = 0;
+                const auto v = Eval(e.args[0]);
+                _relocShift = shift;
+                return v;
+            }
             case Expr::Kind::Memory:
             {
                 if (e.args.empty())
                     return std::nullopt;
+                const int64_t shift = _relocShift;   // the bytes there, read where they are (a relocation moves no memory)
+                _relocShift = 0;
                 const auto at = Eval(e.args[0]);
+                _relocShift = shift;
                 if (!at)
                     return std::nullopt;
                 const int16_t low = _memory[static_cast<size_t>(*at & 0xFFFF)];
@@ -529,6 +582,48 @@ private:
         return v ? *v : 0;
     }
 
+    /// Labels and $ here are relocatable: in a RELOCATE block, not in a DISP opened inside it (its code runs at its own
+    /// fixed address)
+    bool RelocatableHere() const { return _relocating && (!_displaced || _relocDisplaced); }
+
+    /// Where a value put down here is recorded: its physical address, or the displaced one when the block began inside
+    /// a DISP
+    int64_t RelocationAt(int64_t offset) const { return ((_relocDisplaced ? _pc : _physical) + offset) & 0xFFFF; }
+
+    /// How a value moves with the relocatable labels: by as much (a word to relocate), by its high byte (HIGH), not at all
+    enum class Moves { No, Word, High, HighInLow, Otherwise };   // HighInLow: the value is a high byte (HIGH label)
+    Moves Relocation(const Expr& e)
+    {
+        if (_relocatable.empty() && !_relocating)
+            return Moves::No;
+        const int64_t base = Value(e);
+        _relocShift = kRelocShift;
+        const int64_t moved = Value(e);
+        _relocShift = 0;
+        const int64_t by = (moved - base) & 0xFFFF;
+        if (by == 0)
+            return Moves::No;
+        if (by == kRelocShift)
+            return Moves::Word;
+        if (by == (kRelocShift >> 8))
+            return Moves::HighInLow;
+        if ((((moved >> 8) - (base >> 8)) & 0xFF) == (kRelocShift >> 8) && (moved & 0xFF) == (base & 0xFF))
+            return Moves::High;
+        return Moves::Otherwise;
+    }
+
+    /// An instruction's or a DW's value at `at` (a word unless `byte`) recorded for RELOCATE_TABLE when it moves
+    void Relocate(const Expr& e, int64_t at, bool byte)
+    {
+        if (!_relocating || _struct)
+            return;
+        const Moves m = Relocation(e);
+        if (m == Moves::Word && !byte)
+            _relocations.push_back((_relocHigh ? at + 1 : at) & 0xFFFF);
+        else if (_relocHigh && (m == Moves::HighInLow || (byte && (m == Moves::High || m == Moves::Word))))
+            _relocations.push_back(at & 0xFFFF);   // HIGH: a byte holding a high byte (LD A,HIGH label; DW HIGH label)
+    }
+
     // ---- output ----
 
     void Emit(int64_t bytes, LabelUse use)
@@ -596,6 +691,8 @@ private:
             found = _labelIndex.emplace(name, _labels.size()).first;
             _labels.emplace_back();
         }
+        if (RelocatableHere() && !_struct && use != LabelUse::Equ && use != LabelUse::Defl)
+            _relocatable.insert(name);   // a regular label of a RELOCATE block
         Label& l = _labels[found->second];
         l.name = name;
         l.value = value;
@@ -844,9 +941,17 @@ private:
                 if (s.kind == Statement::Kind::Directive && (s.directive == DirectiveKind::Equ || s.directive == DirectiveKind::Defl))
                     value = &s;
             if (value)
+            {
                 Define(line.label, value->args.empty() ? 0 : Value(value->args[0]), value->directive == DirectiveKind::Equ ? LabelUse::Equ : LabelUse::Defl);
+                // an EQU of a relocatable value is relocatable too (sjasmplus: transitive)
+                if (!value->args.empty() && !_lastDefined.empty() && Relocation(value->args[0]) == Moves::Word)
+                    _relocatable.insert(_lastDefined);
+            }
             else if (line.label.find_first_not_of("0123456789") == std::string::npos)
+            {
                 _temps.emplace_back(line.label, _pc);
+                _tempsRelocatable.push_back(RelocatableHere());
+            }
             else
             {
                 Define(line.label, _pc, LabelUse::Unknown);
@@ -901,6 +1006,31 @@ private:
         return false;
     }
 
+    /// An instruction of a RELOCATE block: its value field (a word: JP nn, LD rr,nn, LD (nn),r; else a byte) recorded
+    /// when it moves with the block
+    void RelocateInstruction(const Statement& s, int64_t at, int size)
+    {
+        const std::string m = z80::Lower(s.mnemonic);
+        if (m == "in" || m == "out" || m == "rst" || m == "im" || m == "jr" || m == "djnz")
+            return;   // a port, a vector, a relative jump: nothing moves
+        const ir::Operand* field = nullptr;
+        bool word = false;
+        for (const ir::Operand& o : s.operands)
+            if (o.kind == ir::Operand::Kind::Memory || o.kind == ir::Operand::Kind::Immediate)
+            {
+                field = &o;
+                word = o.kind == ir::Operand::Kind::Memory;
+            }
+        if (!field)
+            return;
+        const bool pair = !s.operands.empty() && s.operands[0].kind == ir::Operand::Kind::Register &&
+                          (s.operands[0].text == "bc" || s.operands[0].text == "de" || s.operands[0].text == "hl" || s.operands[0].text == "sp" ||
+                           s.operands[0].text == "ix" || s.operands[0].text == "iy");
+        word = word || m == "jp" || m == "call" || ((m == "ld" || m == "add") && pair);   // ADD rr,nn: Z80N
+        if (size > (word ? 2 : 1))
+            Relocate(field->expr, at + size - (word ? 2 : 1), !word);
+    }
+
     void RunStatement(const Statement& s, int depth)
     {
         switch (s.kind)
@@ -921,6 +1051,8 @@ private:
                     if (part == 0)
                         Report(Severity::Error, error);
                     Operands(one);
+                    if (_relocating)
+                        RelocateInstruction(one, RelocationAt(size), part);
                     size += part;
                 }
                 Store(std::vector<int16_t>(static_cast<size_t>(size), -2));
@@ -950,6 +1082,7 @@ private:
                 if (_struct && s.operands.empty())
                 {
                     // a field BYTE / WORD without a value: one of them
+                    _struct->def.leaves.push_back({_pc, s.directive == DirectiveKind::Db ? 1 : 2, Expr::Number(0)});
                     Emit(s.directive == DirectiveKind::Db ? 1 : 2, LabelUse::Data);
                     return;
                 }
@@ -960,6 +1093,10 @@ private:
         {
             case DirectiveKind::Db:
             {
+                if (_struct)
+                    for (size_t k = 0; k < s.operands.size(); ++k)
+                        if (s.operands[k].kind != ir::Operand::Kind::String)
+                            _struct->def.leaves.push_back({_pc + static_cast<int64_t>(k), 1, s.operands[k].expr});
                 const std::vector<int16_t> bytes = DataBytes(s, true);
                 Store(bytes);
                 Emit(static_cast<int64_t>(bytes.size()), LabelUse::Data);
@@ -968,9 +1105,14 @@ private:
             case DirectiveKind::Dw:
             {
                 std::vector<int16_t> bytes;
+                if (_struct)
+                    for (size_t k = 0; k < s.operands.size(); ++k)
+                        _struct->def.leaves.push_back({_pc + 2 * static_cast<int64_t>(k), 2, s.operands[k].expr});
                 for (const ir::Operand& o : s.operands)
                 {
                     const int64_t v = o.kind == ir::Operand::Kind::String ? 0 : Value(o.expr);
+                    if (o.kind != ir::Operand::Kind::String)
+                        Relocate(o.expr, RelocationAt(static_cast<int64_t>(bytes.size())), false);
                     bytes.push_back(static_cast<int16_t>(v & 0xFF));
                     bytes.push_back(static_cast<int16_t>((v >> 8) & 0xFF));
                 }
@@ -1075,8 +1217,8 @@ private:
             if (left->kind == Expr::Kind::Number && left->spelling == ir::NumberSpelling::Character && TextBytes(left->text).size() > 1)
             {
                 const std::vector<uint8_t> chars = TextBytes(left->text);
-                for (size_t k = 0; k + 1 < chars.size(); ++k)
-                    bytes.push_back(chars[k]);
+                for (size_t c = 0; c + 1 < chars.size(); ++c)
+                    bytes.push_back(chars[c]);
                 bytes.push_back(static_cast<int16_t>(Value(o.expr) & 0xFF));
             }
             else
@@ -1219,6 +1361,53 @@ private:
                 Define("@" + _lineLabelFull + "." + field, base + offset, _struct ? LabelUse::Equ : LabelUse::Data);
             }
         _lastGlobal = lastGlobal;
+        // its values: the instance's own in order ({} flattened, an empty one keeps the default), else the defaults
+        std::vector<std::string> given;
+        {
+            std::string all;
+            for (size_t k = 0; k < s.params.size(); ++k)
+                all += (k ? "," : "") + s.params[k];
+            std::string item;
+            int depth = 0;
+            char quote = 0;
+            for (const char c : all)
+            {
+                if (quote)
+                {
+                    item += c;
+                    quote = c == quote ? 0 : quote;
+                    continue;
+                }
+                if (c == '"' || c == '\'')
+                    quote = c;
+                if (c == '{' || c == '}')
+                    continue;
+                depth += c == '(';
+                depth -= c == ')';
+                if (c == ',' && depth == 0)
+                {
+                    given.push_back(Trim(item));
+                    item.clear();
+                    continue;
+                }
+                item += c;
+            }
+            if (!Trim(item).empty() || !given.empty())
+                given.push_back(Trim(item));
+        }
+        for (size_t k = 0; k < copy.leaves.size(); ++k)
+        {
+            StructDef::Leaf leaf = copy.leaves[k];
+            if (k < given.size() && !given[k].empty())
+                leaf.value = ParseText(given[k]);
+            if (_struct)
+            {
+                leaf.offset += base;   // a structure inside the one being defined
+                _struct->def.leaves.push_back(std::move(leaf));
+            }
+            else if (_relocating)
+                Relocate(leaf.value, RelocationAt(leaf.offset), leaf.size == 1);
+        }
         Store(std::vector<int16_t>(static_cast<size_t>(std::clamp<int64_t>(copy.size, 0, 0x10000)), -2));
         Emit(copy.size, LabelUse::Data);
         return true;
@@ -1286,6 +1475,43 @@ private:
         if (word == "DEFINE" || word == "DEFINE+")
         {
             _defines.insert(Trim(rest.substr(0, rest.find_first_of(" \t"))));
+            return;
+        }
+        if (const auto bits = dialects::SjasmplusBitBytes(word, rest))
+        {
+            Store(std::vector<int16_t>(bits->begin(), bits->end()));
+            Emit(static_cast<int64_t>(bits->size()), LabelUse::Data);
+            return;
+        }
+        if (word == "RELOCATE_START")
+        {
+            _relocating = true;
+            _relocDisplaced = _displaced;
+            _relocHigh = z80::Upper(rest) == "HIGH";
+            return;
+        }
+        if (word == "RELOCATE_END")
+        {
+            if (_displaced && !_relocDisplaced)
+            {
+                Report(Severity::Error, "RELOCATE_END inside a DISP the block opened: ignored (sjasmplus)");
+                return;
+            }
+            _relocating = false;
+            return;
+        }
+        if (word == "RELOCATE_TABLE")
+        {
+            // the table the pass before gathered (words, each minus the offset given)
+            const int64_t subtract = rest.empty() ? 0 : Value(ParseText(rest));
+            std::vector<int16_t> bytes;
+            for (const int64_t a : _previousRelocations)
+            {
+                bytes.push_back(static_cast<int16_t>((a - subtract) & 0xFF));
+                bytes.push_back(static_cast<int16_t>(((a - subtract) >> 8) & 0xFF));
+            }
+            Store(bytes);
+            Emit(static_cast<int64_t>(bytes.size()), LabelUse::Data);
             return;
         }
         if (word == "UNDEFINE")
@@ -1375,7 +1601,7 @@ private:
             return;
         }
         static const std::set<std::string> kSized = {"DG", "DEFG", "DH", "DEFH", "INCHOB", "INCTRD", "LUA", "INCLUDELUA", "DEFARRAY",
-                                                     "RELOCATE_TABLE", "SAVENEX", "FPOS"};
+                                                     "SAVENEX", "FPOS"};
         if (kSized.count(word))
             Report(Severity::Error, word + " is not laid out: the labels after it may be wrong");
     }

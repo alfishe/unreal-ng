@@ -51,7 +51,7 @@ TEST(TTDEvoPs2_Test, JournaledKeyReplaysIntoTheSameLog)
     ttd::TimeTravelController* ttd = context->pTimeTravelController;
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
     ASSERT_TRUE(ttd->StartRecording());
-    EXPECT_TRUE(ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::EvoPs2));
+    EXPECT_TRUE(ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::EvoPs2));
 
     emulator->RunNFrames(2);
     emulator->RunTStates(20000);  // the key goes in the middle of a frame

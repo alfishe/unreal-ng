@@ -474,13 +474,25 @@ StateNode NextNmiReport(EmulatorContext* context, const NextIntJournalQuery& que
     button("m1_button", "NR #02 bit 3 write (the M1 key); needs NR #06 bit 3", (board.Stored(0x06) & 0x08) != 0, decoder->MultifaceNmiRefusal());
     button("drive_button", "NR #02 bit 2 write (the DRIVE key, the host's NMI action); needs NR #06 bit 4", (board.Stored(0x06) & 0x10) != 0,
            decoder->DriveNmiRefusal());
-    StateNode trap = StateNode::Object();
-    trap["name"] = "io_trap";
-    trap["via"] = "+3 FDC ports #2FFD / #3FFD while NR #D8 bit 0 is on (NR #D9 / #DA: the write and the cause)";
-    trap["modelled"] = false;
-    trap["enabled"] = (board.Stored(0xD8) & 0x01) != 0;
-    trap["note"] = "the trap is not modelled: the registers only store their byte";
-    sources.push(std::move(trap));
+    {
+        StateNode trap = StateNode::Object();
+        trap["name"] = "io_trap";
+        trap["via"] = "+3 FDC ports #2FFD read, #3FFD read / write while NR #D8 bit 0 is on; the M1 NMI path (needs NR #06 bit 3)";
+        trap["modelled"] = true;
+        const bool enabled = (board.Stored(0xD8) & 0x01) != 0;
+        trap["enabled"] = enabled;
+        const char* refusal = decoder->MultifaceNmiRefusal();
+        trap["would_fire"] = enabled && refusal == nullptr;
+        if (!enabled)
+            trap["blocked_by"] = "the trap is off (NR #D8 bit 0)";
+        else if (refusal)
+            trap["blocked_by"] = refusal;
+        const uint8_t cause = board.Stored(0xDA) & 3;
+        trap["cause"] = cause == 0 ? "none" : (cause == 1 ? "read_2ffd" : (cause == 2 ? "read_3ffd" : "write_3ffd"));
+        trap["cause_nr_da"] = int(cause);
+        trap["write_nr_d9"] = Hex8(board.Stored(0xD9));
+        sources.push(std::move(trap));
+    }
     n["sources"] = std::move(sources);
 
     StateNode service = StateNode::Object();
@@ -821,6 +833,7 @@ StateNode NextUartReport(EmulatorContext* context)
         status["byte_error"] = (v.status & NextUart::kStatusByteError) != 0;
         status["framing_error"] = (v.status & NextUart::kStatusFraming) != 0;
         status["break"] = (v.status & NextUart::kStatusBreak) != 0;
+        status["rx_line_low"] = v.rxLineLow;
         status["note"] = "the sticky bits (overflow, framing) are cleared by a read of #133B; this report does not clear them";
         c["status"] = std::move(status);
 
@@ -843,8 +856,16 @@ StateNode NextUartReport(EmulatorContext* context)
         c["interrupts"] = std::move(irq);
 
         StateNode peer = StateNode::Object();
-        const ISerialPeer* p = uart.Peer(i);
+        // the device the line goes to now: the joystick connector's while NR #0B has taken the UART
+        const ISerialPeer* p = v.joystick ? uart.Wire(i) : uart.Peer(i);
         peer["attached"] = p != nullptr;
+        peer["via_joystick_connector"] = v.joystick;
+        if (v.joystick)
+        {
+            peer["module_cut_off"] = i ? "the Pi" : "the ESP";
+            peer["note"] = p ? "the joystick connector's device (ComPortJoy=); the module of this UART sees no data" :
+                               "nothing on the joystick connector (ComPortJoy=): bytes sent are lost, nothing arrives";
+        }
         if (p)
         {
             peer["kind"] = p->Kind();
@@ -852,7 +873,7 @@ StateNode NextUartReport(EmulatorContext* context)
             peer["connected"] = p->Connected();
             peer["pending_bytes"] = int(p->Pending());
         }
-        else
+        else if (!v.joystick)
             peer["note"] = i ? "nothing on the Pi's line (ComPort2=): bytes sent are lost, nothing arrives"
                              : "nothing on the ESP's line (ComPort=): bytes sent are lost, nothing arrives";
         c["peer"] = std::move(peer);
@@ -866,7 +887,10 @@ StateNode NextUartReport(EmulatorContext* context)
     extra["pi_uart_rx_tx_crossed"] = (board.Stored(0xA0) & 0x20) != 0;
     extra["nr_0b"] = Hex8(board.Stored(0x0B));
     extra["uart_on_joystick_port"] = (board.Stored(0x0B) & 0x80) && (board.Stored(0x0B) & 0x20);
-    extra["note"] = "the joystick connector's UART (NR #0B) and the Pi's GPIO routing (NR #A0) are registers only: nothing is wired to them yet";
+    extra["joystick_port_uart"] = uart.JoystickRouted() ? int(uart.JoystickChannel()) : -1;
+    extra["joystick_port_peer"] = uart.JoystickPeer() ? uart.JoystickPeer()->Kind() : "none";
+    extra["note"] = "NR #0B bits 7 and 5 take the UART bit 0 selects to the joystick connector (its device: ComPortJoy=); the Pi's GPIO routing "
+                    "(NR #A0) is a register only: the Pi's peer is on UART 1 whatever it says";
     n["routing"] = std::move(extra);
     return n;
 }
@@ -901,6 +925,7 @@ StateNode NextInputReport(EmulatorContext* context)
     io["enabled"] = (nr0b & 0x80) != 0;
     io["mode"] = (nr0b & 0x30) == 0x00 ? "pin7 = bit 0" : ((nr0b & 0x30) == 0x10 ? "pin7 toggled by CTC channel 3" : "pin7 = UART TX");
     io["bit_0"] = (nr0b & 0x01) != 0;  // pin 7 level, or which UART: 0 the ESP's, 1 the Pi's
+    io["pin7"] = decoder->JoystickPin7();  // the level on the connector now (mode 01: toggled by CTC channel 3's ZC/TO)
     io["uart_on_joystick_port"] = (nr0b & 0x80) && (nr0b & 0x20);
     n["io_mode"] = std::move(io);
 
@@ -1001,7 +1026,7 @@ StateNode Next(EmulatorContext* context)
     n["mmu"] = NextMmu(context);
 
     // The board's small registers (G8): the expansion bus port enables NR #86-#89 (the internal ones are NR #82-#85 in `ports`), the debug
-    // LED NR #FF, and the +3 FDC I/O trap NR #D8-#DA, which only store their bytes
+    // LED NR #FF, and the +3 FDC I/O trap NR #D8-#DA (the enable, the written byte and the cause)
     StateNode boardBlock = StateNode::Object();
     const uint32_t busWord = static_cast<uint32_t>(board.Stored(0x86)) | (static_cast<uint32_t>(board.Stored(0x87)) << 8) |
                              (static_cast<uint32_t>(board.Stored(0x88)) << 16) | (static_cast<uint32_t>(board.Stored(0x89)) << 24);
@@ -1012,7 +1037,7 @@ StateNode Next(EmulatorContext* context)
     boardBlock["bus_port_enable"] = std::move(bus);
     boardBlock["debug_led"] = Hex8(board.Stored(0xFF));
     StateNode trap = StateNode::Object();
-    trap["modelled"] = false;
+    trap["modelled"] = true;
     trap["enabled"] = (board.Stored(0xD8) & 0x01) != 0;
     trap["nr_d8"] = Hex8(board.Stored(0xD8));
     trap["nr_d9"] = Hex8(board.Stored(0xD9));

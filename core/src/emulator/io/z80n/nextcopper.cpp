@@ -2,6 +2,9 @@
 
 #include "nextcopper.h"
 
+#include <algorithm>
+#include <iterator>
+
 void NextCopper::SetGeometry(unsigned hcPerLine, unsigned linesPerFrame)
 {
     _hcPerLine = hcPerLine;
@@ -12,8 +15,10 @@ void NextCopper::SetGeometry(unsigned hcPerLine, unsigned linesPerFrame)
         _t = 0;
 }
 
-void NextCopper::Reset()
+void NextCopper::Reset(bool clearCode)
 {
+    if (clearCode)
+        std::fill(std::begin(_code), std::end(_code), uint16_t(0));
     _pc = 0;
     _address = 0;
     _stored = 0;

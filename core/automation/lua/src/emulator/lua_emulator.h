@@ -1466,22 +1466,24 @@ public:
         lua.set_function("capture_screen_layer", [this](sol::this_state s, const std::string& layer, sol::optional<sol::table> opts) -> sol::variadic_results {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return mouseError(s, "No emulator selected");
-            std::string format, alpha, path;
+            std::string format, alpha, path, size;
             if (opts)
             {
                 format = opts->get_or<std::string>("format", "");
+                size = opts->get_or<std::string>("size", "");
                 path = opts->get_or<std::string>("path", "");
                 sol::object a = (*opts)["alpha"];
                 if (a.get_type() == sol::type::boolean)
                     alpha = a.as<bool>() ? "true" : "false";
             }
-            const NextLayer::Result shot = NextLayer::Request(emulator->GetContext(), layer, format, alpha, path);
+            const NextLayer::Result shot = NextLayer::Request(emulator->GetContext(), layer, format, alpha, path, size);
             if (shot.status != NextLayer::Status::Ok) return mouseError(s, shot.message);
             sol::state_view view(s);
             sol::table t = view.create_table();
             t["layer"] = NextLayer::KindName(shot.kind);
             t["format"] = shot.rgba ? "rgba" : "png";
             t["alpha"] = shot.alpha;
+            t["size_name"] = NextLayer::ScaleName(shot.scale);
             t["width"] = shot.width;
             t["height"] = shot.height;
             t["size"] = shot.size;

@@ -114,10 +114,10 @@ TEST_F(Spectrum3Paging_Test, Port1FFDRidesItsOwnTtdBlob)
     EXPECT_EQ(_context->emulatorState.p1FFD, 0x05);
 
     // The decoder declares the latch and the floppy controller, so recording on a +3 must be allowed
-    const std::vector<ttd::PeripheralId> ids = _context->pPortDecoder->GetTTDModelStateIds();
+    const std::vector<ttd::TTDDeviceType> ids = _context->pPortDecoder->GetTTDModelStateTypes();
     ASSERT_EQ(ids.size(), 2u);
-    EXPECT_EQ(ids[0], ttd::PeripheralId::Plus3Paging);
-    EXPECT_EQ(ids[1], ttd::PeripheralId::Upd765);
+    EXPECT_EQ(ids[0], ttd::TTDDeviceType::Plus3Paging);
+    EXPECT_EQ(ids[1], ttd::TTDDeviceType::Upd765);
     ASSERT_NE(_context->pTimeTravelController, nullptr);
     EXPECT_TRUE(_context->pTimeTravelController->StartRecording());
 }

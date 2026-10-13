@@ -770,6 +770,8 @@ struct CONFIG
 		char comPort[256];
 		/// The machine's second serial port (the Next's UART 1, the Raspberry Pi's): ComPortSpec like comPort; empty = NONE
 		char comPort2[256];
+		/// What is plugged into the Next's joystick connector for its UART mode (NR #0B): ComPortSpec like comPort; empty = NONE
+		char comPortJoy[256];
 		/// What the ZX-WiFi card's 16550 is wired to: its ESP module's firmware
 		/// (AT | ESPNET), or another ComPortSpec value. Empty = AT
 		char zxWifi[256];

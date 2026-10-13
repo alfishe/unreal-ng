@@ -1,5 +1,7 @@
 #include "stdafx.h"
+#include <algorithm>
 #include "pch.h"
+#include <algorithm>
 
 #include <gtest/gtest.h>
 
@@ -133,7 +135,7 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchUnderLiveHistoryRepointsRegistry)
     GeneralSoundCard* before = sm->getGeneralSound();
     const ttd::PeripheralId beforeId = before->TTDPeripheralId();
     ASSERT_EQ(beforeId, ttd::PeripheralId::GeneralSound) << "the fixture fits the classic card";
-    ASSERT_EQ(context->pTimeTravelController->GetPeripheralRegistry().GetDevice(beforeId),
+    ASSERT_EQ(context->pTimeTravelController->GetPeripheralRegistry().FindLegacy(beforeId),
               static_cast<ttd::TTDSerializable*>(before))
         << "registry must have picked up the boot-time card at StartRecording";
 
@@ -148,10 +150,11 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchUnderLiveHistoryRepointsRegistry)
     const ttd::PeripheralId afterId = after->TTDPeripheralId();
     ASSERT_EQ(afterId, ttd::PeripheralId::GeneralSoundLightweight);
     const ttd::TTDPeripheralRegistry& registry = context->pTimeTravelController->GetPeripheralRegistry();
-    EXPECT_EQ(registry.GetDevice(afterId), nullptr) << "the LW card has no TTD state";
-    EXPECT_NE(registry.NotRecordedMask() & (uint64_t(1) << static_cast<uint8_t>(afterId)), 0u)
+    EXPECT_EQ(registry.FindLegacy(afterId), nullptr) << "the LW card has no TTD state";
+    EXPECT_TRUE(std::any_of(registry.NotRecorded().begin(), registry.NotRecorded().end(),
+                            [](const ttd::TTDDeviceKey& k) { return k.type == ttd::TTDDeviceType::GeneralSoundLightweight; }))
         << "it is marked as fitted, not recorded";
-    EXPECT_EQ(registry.GetDevice(beforeId), nullptr)
+    EXPECT_EQ(registry.FindLegacy(beforeId), nullptr)
         << "the outgoing personality's slot must be vacated, not left pointing at the freed card";
     EXPECT_EQ(context->pTimeTravelController->GetSessionInfo().lastDropReason, "gs-card-switch");
 
@@ -222,9 +225,9 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchToNeoGSEndsARecordingAndRepointsUnderLi
     ASSERT_TRUE(context->pTimeTravelController->HoldBackgroundRecording());
     ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::NGS));
     GeneralSoundCard* after = sm->getGeneralSound();
-    EXPECT_EQ(context->pTimeTravelController->GetPeripheralRegistry().GetDevice(ttd::PeripheralId::NeoGS),
+    EXPECT_EQ(context->pTimeTravelController->GetPeripheralRegistry().FindType(ttd::TTDDeviceType::NeoGS),
               static_cast<ttd::TTDSerializable*>(after));
-    EXPECT_EQ(context->pTimeTravelController->GetPeripheralRegistry().GetDevice(ttd::PeripheralId::GeneralSound), nullptr);
+    EXPECT_EQ(context->pTimeTravelController->GetPeripheralRegistry().FindType(ttd::TTDDeviceType::GeneralSound), nullptr);
     EXPECT_EQ(context->pTimeTravelController->GetSessionInfo().lastDropReason, "gs-card-switch");
     EmulatorTestHelper::RunFramesFast(emulator, 2); // checkpoints save through the new card
     context->pTimeTravelController->ReleaseBackgroundRecording();

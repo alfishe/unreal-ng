@@ -6,11 +6,24 @@ void HostBusOverlayChain::Assign(HostBusOverlay* const* overlays, size_t count)
 {
     _count = count < kMaxOverlays ? count : kMaxOverlays;
     observesReads = false;
+    observesWriteStart = false;
     for (size_t i = 0; i < kMaxOverlays; i++)
     {
         _members[i] = i < _count ? overlays[i] : nullptr;
         if (_members[i] && _members[i]->observesReads)
             observesReads = true;
+        if (_members[i] && _members[i]->observesWriteStart)
+            observesWriteStart = true;
+    }
+}
+
+void HostBusOverlayChain::onBeforeWrite(uint16_t addr)
+{
+    for (size_t i = 0; i < _count; i++)
+    {
+        HostBusOverlay* overlay = _members[i];
+        if (overlay->observesWriteStart && addr >= overlay->windowStart && addr < overlay->windowEnd)
+            overlay->onBeforeWrite(addr);
     }
 }
 
