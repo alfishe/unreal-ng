@@ -82,6 +82,7 @@ public:
     void UnlockPaging() override { _context->emulatorState.p7FFD &= static_cast<uint8_t>(~0x20); }
     void AudioConfigChanged() override;
     void DacMirrorWrite(uint8_t reg, uint8_t value) override;
+    void PiAudioChanged(unsigned left, unsigned right) override;
     NextAudio& Audio() { return *_audio; }
     /// What a read of port #1F returns now (the joystick's state; no side effect), for the input report
     uint8_t KempstonJoystickNow() const { return Default_Port_KempstonJoystick_In(); }

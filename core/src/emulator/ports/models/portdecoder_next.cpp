@@ -515,7 +515,10 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     {
         if (!PortEnabled(10))
             return IdleRead(port, pc);
-        const uint8_t value = _i2c.Read(port);
+        uint8_t value = _i2c.Read(port);
+        if (_board->Stored(0xA0) & 0x08)  // pi_i2c1_sda / scl = i_GPIO(2 / 3), ANDed into the read (zxnext.vhd 2317-2318)
+            if (!((_board->GpioPins() >> (port == NextI2c::kPortScl ? 3 : 2)) & 1))
+                value = static_cast<uint8_t>(value & 0xFE);
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -541,7 +544,10 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         OnPortInComplete(port, result, pc, disp);
         return result;
     }
-    const uint8_t value = PortDecoder_Spectrum128::DecodePortIn(port, pc);
+    uint8_t value = PortDecoder_Spectrum128::DecodePortIn(port, pc);
+    // port #FE's EAR bit is the tape input or the Pi's I2S audio thresholded into it (zxnext.vhd 3459, NR #A2 bit 0)
+    if (_board->PiEar() && IsPort_FE(port))
+        value |= 0x40;
     if (_inLog && !_lastPortDecoded)
     {
         PortUse& use = (*_inLog)[port];
@@ -815,7 +821,12 @@ void PortDecoder_Next::AudioConfigChanged()
                       (nr06 & 0x40) && (nr08 & 0x10), (nr06 & 3) == 3);
 }
 
-/// NR #2C (B, left), #2D (A and D, mono), #2E (C, right): the DAC's NextREG mirrors
+void PortDecoder_Next::PiAudioChanged(unsigned left, unsigned right)
+{
+    _audio->SetPiAudio(left, right);
+}
+
+/// NR #2C (B, left), #2D (A and D, mono), #2E (C, right): the DAC's NextREG mirrors (writes; a read is the Pi's I2S sample)
 void PortDecoder_Next::DacMirrorWrite(uint8_t reg, uint8_t value)
 {
     if (reg == 0x2C)

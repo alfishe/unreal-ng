@@ -130,6 +130,14 @@ uint8_t NextAudio::ReadData()
     return _chips[_selected]->readCurrentRegister();
 }
 
+void NextAudio::SetPiAudio(unsigned left, unsigned right)
+{
+    if (_now && _timeKnown)
+        AdvanceTo(_now());
+    _piLeft = left & 0x3FF;
+    _piRight = right & 0x3FF;
+}
+
 uint8_t NextAudio::ReadIdentity() const
 {
     const unsigned id = 3 - _selected;  // AY_ID of psg0 / psg1 / psg2 in turbosound.vhd: "11", "10", "01"
@@ -189,6 +197,9 @@ void NextAudio::Tick()
         left += ((_dac[0] - 128) + (_dac[1] - 128)) * 16.0;
         right += ((_dac[2] - 128) + (_dac[3] - 128)) * 16.0;
     }
+    // the Pi's I2S: 10 bits unsigned in the 13-bit PCM (audio_mixer.vhd 89-100), x4 here; #200 is silence
+    left += (static_cast<double>(_piLeft) - 512.0) * 4.0;
+    right += (static_cast<double>(_piRight) - 512.0) * 4.0;
     _tickLeft.push_back(static_cast<float>(left / 32768.0));
     _tickRight.push_back(static_cast<float>(right / 32768.0));
 }

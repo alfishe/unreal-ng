@@ -58,6 +58,8 @@ public:
     virtual void AudioConfigChanged() {}
     /// NR #A8 / #A9 changed: the pins the board drives (the ESP's GPIO0)
     virtual void BoardPinsChanged() {}
+    /// The Pi's I2S audio as the mixer takes it (zxnext.vhd pi_audio_L / pi_audio_R, 10 bit unsigned, #200 silence)
+    virtual void PiAudioChanged(unsigned left, unsigned right) { (void)left; (void)right; }
     /// NR #2C / #2D / #2E: the DAC's NextREG mirrors
     virtual void DacMirrorWrite(uint8_t, uint8_t) {}
     /// An instruction ended (a safe place to stop the machine: not inside the picture's catch-up of the copper)
@@ -107,6 +109,16 @@ public:
     /// Called before a NextREG write of the CPU (not of the copper): the screen draws the lines the beam has passed with the old state
     /// What the header's other end drives on GPIO bank 0-3 (pins 0-7, 8-15, 16-23, 24-27) as bits; unset: low
     void SetGpioInput(std::function<uint8_t(unsigned bank)> input) { _gpioInput = std::move(input); }
+    /// The 28 pins of the Pi header as the FPGA reads them (i_GPIO): an enabled output shows its value, the peripherals (SPI, UART, I2S)
+    /// own their pins when NR #A0 / #A2 enable them (zxnext.vhd 2292-2350), the others what the header gives (the peer, else low; GPIO 2
+    /// and 3, the I2C pair, are pulled up as on a Pi)
+    uint32_t GpioPins() const;
+    /// The I2S sample the Pi sends (pi_i2s_audio_L / R, 10 bit unsigned, #200 silence): what NR #A2 turns into the mixer's input, NR #2C-#2E
+    /// and the EAR of port #FE
+    void SetI2sSample(unsigned left, unsigned right);
+    unsigned PiAudioLeft() const;
+    unsigned PiAudioRight() const;
+    bool PiEar() const { return _piEar; }
     void SetBeforeCpuWrite(std::function<void()> hook) { _beforeCpuWrite = std::move(hook); }
     void SetInterrupts(NextInterruptSource* interrupts) { _interrupts = interrupts; }
     /// Every NextREG access of the program (a read through #253B, a write by NEXTREG, #253B or the copper) is told to the hook with the
@@ -226,6 +238,10 @@ private:
     std::vector<NextRegWrite>* _log = nullptr;
     std::function<void()> _beforeCpuWrite;
     std::function<uint8_t(unsigned)> _gpioInput;
+    unsigned _i2sLeft = 0x200, _i2sRight = 0x200;
+    bool _piEar = false;
+    mutable uint8_t _i2sLow = 0;  ///< nr_2d_i2s_sample: the low bits of the sample NR #2C / #2E read last
+    void UpdatePiEar();
     AccessHook _accessHook;
     bool _copperWrite = false;
     const uint16_t* _pc = nullptr;
