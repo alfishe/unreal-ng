@@ -1096,8 +1096,15 @@ int main(int argc, char** argv)
         // Written with the target's text codec when there is one (sjasmplus keeps the Spectrum code page for strings,
         // unless --out-codepage says otherwise)
         std::vector<uint8_t> out;
+        bool encoded = true;
         if (const ISourceCodec* target = registry.Find(args.to) ? registry.Find(args.to) : registry.Find("text"))
-            out = target->Encode(converted.document, encodeOptions).bytes;
+        {
+            // what the target's file cannot hold (a line left out) is said, and fails the run
+            const EncodeResult written = target->Encode(converted.document, encodeOptions);
+            PrintDiagnostics(written.diagnostics);
+            encoded = !HasErrors(written.diagnostics);
+            out = written.bytes;
+        }
         else
         {
             const std::string text = converted.document.Text() + "\n";
@@ -1110,7 +1117,7 @@ int main(int argc, char** argv)
             std::cerr << "zxasm: cannot write " << args.output << "\n";
             return 1;
         }
-        return converted.ok ? 0 : 1;
+        return converted.ok && encoded ? 0 : 1;
     }
     if (args.command == "decode" || args.command == "check")
     {

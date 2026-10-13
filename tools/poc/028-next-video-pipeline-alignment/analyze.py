@@ -33,3 +33,28 @@ def analyze(sfile,efile,verbose=False):
 if __name__=='__main__':
     for k,hc,cf,first in analyze(sys.argv[1],sys.argv[2]):
         print(k,hc,cf, None if first is None else (first[0]-cf, first[1]))
+
+
+def diff(sfile, efile, rfile):
+    """Differential: the first sample at or after each force whose output differs from the reference run's (the same sequence, the
+    value never changed). Returns (k, line, hc, force clock, clocks to the first change, its line, its hc)."""
+    def table(f):
+        d = {}
+        for l in open(f):
+            p = l.split()
+            if len(p) == 5:
+                d[int(p[0])] = (int(p[3]), int(p[4]), int(p[1]), int(p[2]))
+        return d
+    run, ref = table(sfile), table(rfile)
+    res = []
+    for k, line, hc, cf in load(sfile, efile)[1]:
+        first = None
+        for c in range(cf, cf + 6000):
+            a, b = run.get(c), ref.get(c)
+            if a is None or b is None:
+                continue
+            if a[:2] != b[:2] and a[1] == 1 and b[1] == 1:
+                first = (c - cf, a[2], a[3])
+                break
+        res.append((k, line, hc, cf, first))
+    return res

@@ -77,6 +77,7 @@ struct CompositeInfo
     std::vector<CompositePartitionInfo> partitions;  ///< a partitioned composite (build "partitions")
     std::filesystem::path delta;   ///< S2: the session delta file (writes.delta, or <descriptor>.delta); empty: none
     std::string writesSave = "delta";  ///< writes.save: the strategy a save runs (DT-9)
+    std::string writesCommit = "none"; ///< writes.commit: none | all | partial (FR-45)
 
     /// C4b: a graft reads only the base directories its upper layers reach; the files under the others are
     /// counted from the image's directory listings here, at the first call (the `layers` reply), not at build.

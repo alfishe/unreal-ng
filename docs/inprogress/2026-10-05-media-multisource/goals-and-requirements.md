@@ -13,7 +13,6 @@
 **Status:** every goal is met. 7 requirements are met only in part:
 
 - FR-6, FR-14 and FR-21 were completed 2026-10-11 (manifest, `order`, `onBadName: replace`);
-- FR-45 cannot commit a partitioned disk;
 - FR-54 takes no disposition;
 - NFR-M5 has no extent budget;
 - ACC-C5 lacks its NedoOS half.
@@ -44,7 +43,6 @@ What changed in this document:
 - Gaps found, not in [TODO.md](TODO.md) before:
   - a folder layer takes only `exclude` from its manifest (FR-6);
   - there is no extent budget (NFR-M5);
-  - a partitioned composite cannot be committed (FR-45).
 
 ## 0. Problem
 
@@ -199,7 +197,7 @@ conflicts, delta, commit, eject, rescan) is drawn as a decision tree; the map of
 | FR-42 | **Change attribution**: the medium answers which files were created, modified, deleted or renamed, and in which layer each lives. It works from the changed sectors and a re-read of the merged volume. Available read-only at any time (`media changes <slot>`). | met (C6b); also `mkdir`, `rmdir`, `attributes`; per partition on a partitioned disk (C7) |
 | FR-43 | **Flatten to a flat image** (mandatory, S1): export sources plus changes as one raw `.img`, fixed `.vhd` or `.chd`. Optional `--compact` re-synthesizes a defragmented volume from the merged tree. | met (C6a: sparse raw, fixed VHD, `compact` with `fs` / `size`). C10a skips known-zero runs; C10b adds `vhd: dynamic`. 125 % of a raw copy (C11) |
 | FR-44 | **Persisted session** (S2): the change layer is saved next to the descriptor and restored on the next insert when the composite's content id matches. Otherwise the user is told why it cannot be applied. | met (C6c): `<descriptor>.delta`, or `writes.delta`. A damaged one becomes `*.delta.bad`; one over other sources is kept and its layers are named, and saving over it needs `force`. With a journal, the journal is replayed instead of the delta (C10e §4) |
-| FR-45 | **Commit into the graft base** (S3): when the base is opened writable, the patched metadata, the changed sectors and the grafted file data are written into the base image. Every overwritten sector is journaled first. | met (C8a, C8d §4). The base is a raw, HDF, HDI or VHD image, not a CHD. The old sectors go to `<base>.ujournal`, synced, and the next open rolls back an interrupted commit. The sectors are streamed, with no list in memory. Afterwards the slot holds the base; the descriptor is not rewritten. **Not done:** a partitioned composite cannot be committed ("commit needs a graft composite") |
+| FR-45 | **Commit into the graft base** (S3): when the base is opened writable, the patched metadata, the changed sectors and the grafted file data are written into the base image. Every overwritten sector is journaled first. | met (C8a, C8d §4). The base is a raw, HDF, HDI or VHD image, not a CHD. The old sectors go to `<base>.ujournal`, synced, and the next open rolls back an interrupted commit. The sectors are streamed, with no list in memory. Afterwards the slot holds the base; the descriptor is not rewritten. 2026-10-11 (owner): the sources are written only under `writes.commit` (`none`, the default, refuses commit and write-back; `all`: every change or nothing; `partial`: what has a source, the rest stays in the session). A partitioned composite commits each passthrough partition into its image and each graft partition into its base, one journal per file written before any sector; a rebuilt partition or the partition tables have no source (`all` refuses, `partial` keeps them). Then the slot is built again over the committed sources |
 | FR-46 | **File-level write-back** (S4, opt-in, folder layers only): file operations are routed to layers by the policy in [flatten-strategies.md](flatten-strategies.md). There is always a dry-run plan first. A host file that changed since the snapshot is a conflict, never overwritten. | met (C8b, C8d). It writes into layers marked `writable: true`; the upper layer is `writes.upper`, else the topmost writable one. `plan` comes first, and `onConflict` is `refuse` or `keep-both`. Files are staged as `.unreal-staging-<n>`, then journaled in `<descriptor>.writeback`. Whiteouts go to `<descriptor>.whiteout`, attributes to `<descriptor>.attributes`, `trash` goes through `HostTrash`. Composed partitions write back each into its own layers |
 | FR-47 | Eject and insert dispositions (`save` / `export` / `discard`) work on composites as on any block medium. `save` picks its strategy per D-7: the policy (request `strategy` → `writes.save` → S2) for automation, a strategy dialog for interactive use. | met (C6c, C8c); a disposition follows `writes.save`, S3 / S4 included, with the S2 fallback (D-8) |
 

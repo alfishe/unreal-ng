@@ -14,7 +14,9 @@
 #include "_helpers/fatguest.h"
 #include "_helpers/fatsourceimage.h"
 #include "_helpers/scratchfolder.h"
+#include "common/filehelper.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
+#include "emulator/io/storage/hddimageformats.h"
 #include "emulator/io/storage/partitioneddisk.h"
 #include "emulator/io/storage/subrangedevice.h"
 #include "emulator/media/compositemediumfactory.h"
@@ -312,7 +314,7 @@ TEST(ComposePartitions_Test, WriteBackPerPartition)
     d.root.File("games/ELITE.TXT", "elite v1");
     d.root.File("work/NOTES.TXT", "notes");
     d.root.File("disk.ucompose.yaml",
-                "version: 1\ntarget: {fixedTime: 1767268800}\npartitions:\n"
+                "version: 1\ntarget: {fixedTime: 1767268800}\nwrites: {commit: all}\npartitions:\n"
                 "  - {name: dos, source: {image: dos.img, partition: 1}}\n"
                 "  - {name: games, fs: fat16, compose: {free: 1MiB, layers: [{name: g, source: {folder: games}, writable: true}]}}\n"
                 "  - {name: work, fs: fat16, compose: {free: 1MiB, layers: [{name: w, source: {folder: work}, writable: true, onDelete: delete}]}}\n");
@@ -368,6 +370,122 @@ TEST(ComposePartitions_Test, WriteBackPerPartition)
 
     EjectOptions discard;
     discard.disposition = Disposition::Discard;
+    manager.Eject("ide0.master", discard);
+    manager.UnregisterSlot("ide0.master");
+}
+
+// FR-45: a partitioned disk is committed by its writes.commit policy: none (the default) refuses; all writes every
+// change or nothing; partial writes what has a source (a passthrough partition into its image, a graft partition
+// into its base) and keeps the rest in the session
+TEST(ComposePartitions_Test, CommitFollowsItsPolicy)
+{
+    class Slot : public IMediaSlot
+    {
+    public:
+        Slot()
+        {
+            _d.id = "ide0.master";
+            _d.kind = MediaKind::Block;
+            _d.label = "disk";
+            _d.tags = {"ide", "hdd"};
+        }
+        const SlotDescriptor& Descriptor() const override { return _d; }
+        void Attach(Medium& m) override { attached = &m; }
+        void Detach() override { attached = nullptr; }
+        void SourceChanged(Medium&) override {}
+        Medium* attached = nullptr;
+
+    private:
+        SlotDescriptor _d;
+    };
+    Disk d;
+    d.MakeImage();
+    {
+        ScratchFolder files("compose-partitions-base2");
+        files.File("SYS.TXT", "base two");
+        const FatSourceImage image = FolderToFatDisk(files.Path(), FatType::Fat16, CodePage::Cp866, /*mbr*/ false);
+        ASSERT_TRUE(image.ok()) << image.error;
+        ASSERT_TRUE(SaveSparse(image, d.root.Path() / "base2.img"));
+    }
+    d.root.File("util/TOOL.COM", "tool");
+    d.root.File("data/DATA.TXT", "data");
+    const auto descriptor = [&d](const std::string& commit) {
+        d.root.File("disk.ucompose.yaml",
+                    "version: 1\ntarget: {fixedTime: 1767268800}\n" + commit + "partitions:\n"
+                    "  - {name: dos, source: {image: dos.img, partition: 1}}\n"
+                    "  - {name: sys, fs: fat16, compose: {build: graft, layers: [{source: {image: base2.img}}, "
+                    "{source: {folder: util}, mount: /UTIL}]}}\n"
+                    "  - {name: data, fs: fat16, compose: {free: 1MiB, layers: [{source: {folder: data}}]}}\n");
+    };
+    const auto imageHas = [&d](const char* image, uint32_t partition, const std::string& path) {
+        std::shared_ptr<IBlockDevice> file = HddImageFormats::OpenBlock(FileHelper::FromFsPath(d.root.Path() / image), "raw",
+                                                                         RawImage::Access::ReadOnly, nullptr);
+        if (!file)
+            return false;
+        std::shared_ptr<IBlockDevice> volume = partition ? PartitionOf(file, partition) : file;
+        FatVolumeReader reader;
+        FatDirEntryInfo entry;
+        return volume && reader.Open(*volume) && reader.Stat(path, entry);
+    };
+    MediaManager manager(nullptr);
+    Slot slot;
+    manager.RegisterSlot(slot);
+    MediaSource source;
+    source.path = FileHelper::FromFsPath(d.root.Path() / "disk.ucompose.yaml");
+    const auto insertAndWrite = [&](const std::string& commit) {
+        descriptor(commit);
+        ASSERT_TRUE(manager.Insert("ide0.master", source, {}).Ok());
+        std::shared_ptr<IBlockDevice> stack(slot.attached->Block(), [](IBlockDevice*) {});
+        // The guests write through the partitions' windows: they must outlive the guests
+        const auto one = PartitionOf(stack, 1);
+        const auto two = PartitionOf(stack, 2);
+        const auto three = PartitionOf(stack, 3);
+        ASSERT_TRUE(one && two && three);
+        FatGuest dos(*one);
+        ASSERT_TRUE(dos.Create("/NEW.TXT", std::vector<uint8_t>(10, 'n')));
+        FatGuest sys(*two);
+        ASSERT_TRUE(sys.Create("/GUEST.TXT", std::vector<uint8_t>(6, 'g')));
+        FatGuest data(*three);
+        ASSERT_TRUE(data.Create("/X.TXT", std::vector<uint8_t>(3, 'x')));
+        manager.ApplyPending();
+    };
+    SaveOptions commit;
+    commit.strategy = "commit";
+    EjectOptions discard;
+    discard.disposition = Disposition::Discard;
+
+    insertAndWrite("");
+    const MediaResult none = manager.Save("ide0.master", commit);
+    EXPECT_EQ(none.error, MediaError::BadRequest);
+    EXPECT_NE(none.message.find("writes.commit is none"), std::string::npos) << none.message;
+    ASSERT_TRUE(manager.Eject("ide0.master", discard).Ok());
+
+    insertAndWrite("writes: {commit: all}\n");
+    const MediaResult all = manager.Save("ide0.master", commit);
+    EXPECT_EQ(all.error, MediaError::BadRequest) << "the data partition has no image to go to";
+    EXPECT_NE(all.message.find("everything or nothing"), std::string::npos) << all.message;
+    EXPECT_FALSE(imageHas("dos.img", 1, "/NEW.TXT")) << "nothing written";
+
+    SaveOptions partial = commit;
+    partial.commit = "partial";
+    const MediaResult done = manager.Save("ide0.master", partial);
+    ASSERT_TRUE(done.Ok()) << done.message;
+    EXPECT_TRUE(imageHas("dos.img", 1, "/NEW.TXT")) << "the passthrough partition into its image";
+    EXPECT_TRUE(imageHas("base2.img", 0, "/GUEST.TXT")) << "the graft partition into its base";
+    EXPECT_TRUE(imageHas("base2.img", 0, "/UTIL/TOOL.COM")) << "with the grafted files";
+    EXPECT_TRUE(std::any_of(done.report.begin(), done.report.end(), [](const std::string& l) {
+        return l.find("left in the session: partition 'data'") != std::string::npos;
+    }));
+    ASSERT_NE(slot.attached, nullptr);
+    EXPECT_TRUE(manager.Info("ide0.master")->dirty) << "the data partition's change stays";
+    std::shared_ptr<IBlockDevice> stack(slot.attached->Block(), [](IBlockDevice*) {});
+    const auto dataPartition = PartitionOf(stack, 3);
+    ASSERT_NE(dataPartition, nullptr);
+    FatVolumeReader data;
+    FatDirEntryInfo entry;
+    ASSERT_TRUE(data.Open(*dataPartition));
+    EXPECT_TRUE(data.Stat("/X.TXT", entry));
+
     manager.Eject("ide0.master", discard);
     manager.UnregisterSlot("ide0.master");
 }

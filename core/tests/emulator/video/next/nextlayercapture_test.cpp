@@ -599,11 +599,19 @@ TEST_F(NextLayerCaptureMachine_Test, AUlaEnableMoveShowsAtTheOutputAfterTheRtlPi
 // The latency table, as measured on the simulated RTL (POC 028): the chains, the pixel groups and the cells; unmeasured registers give 0
 TEST(ScreenNextLatency_Test, TheLatencyFollowsTheChangedBitsOfTheRegister)
 {
-    auto of = [](uint8_t reg, uint8_t prev, uint8_t value) { return ScreenNext::PictureLatencyOf(reg, prev, value); };
+    auto of = [](uint8_t reg, uint8_t prev, uint8_t value, uint8_t select = 0) { return ScreenNext::PictureLatencyOf(reg, prev, value, select); };
     EXPECT_EQ(of(0x4A, 0x00, 0xFF).clocks, 22u);
     EXPECT_EQ(of(0x14, 0x00, 0xFF).clocks, 22u);
-    EXPECT_EQ(of(0x41, 0x00, 0xFF).clocks, 16u);
-    EXPECT_EQ(of(0x44, 0x00, 0xFF).clocks, 16u);
+    EXPECT_EQ(of(0x41, 0x00, 0xFF, 0).clocks, 18u);  // palette values: the lookup of the palette the write select names (POC 028)
+    EXPECT_EQ(of(0x44, 0x00, 0xFF, 4).clocks, 18u);  // the ULA's second palette
+    EXPECT_EQ(of(0x41, 0x00, 0xFF, 1).clocks, 18u);  // Layer 2
+    EXPECT_EQ(of(0x41, 0x00, 0xFF, 2).clocks, 16u);  // sprites
+    EXPECT_EQ(of(0x41, 0x00, 0xFF, 3).clocks, 17u);  // tilemap
+    EXPECT_EQ(of(0x19, 0x00, 0x80).clocks, 22u);     // the sprite clip: per pixel
+    EXPECT_EQ(of(0x19, 0x00, 0x80).quantum, 4u);
+    EXPECT_EQ(of(0x6B, 0x00, 0x02).clocks, 53u);     // the tilemap's 512-tile mode: latched with the cell
+    EXPECT_EQ(of(0x6B, 0x00, 0x40).clocks, 24u);     // 80 columns
+    EXPECT_EQ(of(0x4C, 0x0F, 0x00).clocks, 20u);     // the tilemap's transparent index
     EXPECT_EQ(of(0x68, 0x00, 0x80).clocks, 22u);    // the ULA enable
     EXPECT_EQ(of(0x68, 0x00, 0x04).clocks, 70u);    // the fine scroll: a cell
     EXPECT_EQ(of(0x68, 0x00, 0x04).quantum, 32u);
@@ -623,7 +631,13 @@ TEST(ScreenNextLatency_Test, TheLatencyFollowsTheChangedBitsOfTheRegister)
     EXPECT_EQ(of(0x26, 0x00, 0x08).clocks, 56u);    // the ULA scroll: per 8-pixel cell
     EXPECT_EQ(of(0x26, 0x00, 0x08).quantum, 32u);
     EXPECT_EQ(of(0x30, 0x00, 0x01).clocks, 53u);    // the tilemap scroll
-    EXPECT_EQ(of(0x32, 0x00, 0x01).clocks, 0u);     // the LoRes scroll: not measured
+    EXPECT_EQ(of(0x32, 0x00, 0x01).clocks, 22u);    // the LoRes scroll: per pixel
+    EXPECT_EQ(of(0x32, 0x00, 0x01).quantum, 4u);
+    EXPECT_EQ(of(0x6A, 0x00, 0x20).clocks, 23u);    // Radastan
+    EXPECT_EQ(of(0x6A, 0x00, 0x05).clocks, 23u);    // the LoRes palette offset
+    EXPECT_EQ(of(0x70, 0x00, 0x10).clocks, 27u);    // the Layer 2 resolution
+    EXPECT_EQ(of(0x70, 0x00, 0x01).clocks, 22u);    // its palette offset
+    EXPECT_EQ(of(0x4B, 0x00, 0x21).clocks, 0u);     // the sprite transparent index: a fill-stage input, not a pixel one
 }
 
 // The ULA reads its scroll where an 8-pixel cell is fetched: a MOVE of NR #26 lands 56 clocks after the WAIT and takes effect at the next
