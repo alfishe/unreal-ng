@@ -82,9 +82,12 @@ bool IsValidLabel(const std::string& name)
     const size_t first = !name.empty() && name[0] == '.' ? 1 : 0;
     if (name.size() <= first || !(std::isalpha(static_cast<unsigned char>(name[first])) || name[first] == '_'))
         return false;
-    for (const char c : name)
+    for (size_t k = first; k < name.size(); ++k)
+    {
+        const char c = name[k];
         if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '?' || c == '!'))
             return false;
+    }
     return true;
 }
 
@@ -124,6 +127,9 @@ struct Writer
     const std::set<std::string>* redefinable = nullptr;   // names some line assigns with "="
     int trueValue = 0;   // what the source's comparisons give when true (ir::Program::trueValue); sjasmplus gives -1
     std::set<std::string> ifUsedNames{};   // labels some file tests with IFUSED: their definitions set a DEFINE
+    // A LOCAL block in a DUP: its labels are sjasmplus' temporary ones, "\x01" + number in localScopes; a reference is
+    // number+B once the definition is written, number+F before
+    std::set<std::string> temporariesWritten{};
 
     std::string Name(const std::string& name) const
     {
@@ -133,7 +139,11 @@ struct Writer
         {
             const auto found = it->find(name);
             if (found != it->end())
+            {
+                if (!found->second.empty() && found->second[0] == '\x01')
+                    return found->second.substr(1) + (temporariesWritten.count(found->second) ? "B" : "F");
                 return found->second;
+            }
         }
         const auto found = renames.find(name);
         if (found != renames.end())
@@ -802,6 +812,8 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
 
     std::vector<size_t> blockOrder;   // block index by opening order
     size_t nextBlock = 0;
+    int repeats = 0;          // DUP blocks open
+    int temporaryNames = 0;   // temporary labels given to LOCAL blocks in a DUP
     for (const ir::Line& l : program.lines)
     {
         const size_t firstWritten = result.document.lines.size();
@@ -822,6 +834,10 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
             }
             else if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::EndMacro)
                 closeMacro = true;
+            else if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Repeat)
+                ++repeats;
+            else if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::EndRepeat)
+                repeats = std::max(0, repeats - 1);
         }
         if (openMacro)
             w.inMacro = true;   // a LOCAL block opened on the macro's own line belongs to the macro (TASM's DEFMAC)
@@ -831,10 +847,25 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
             if (w.inMacro)
                 for (auto& [name, renamed] : scope)
                     renamed = "." + (!name.empty() && name[0] == '@' ? name.substr(1) : name);   // inside a macro: sjasmplus' local labels, unique for every expansion
+            else if (repeats > 0)
+                for (auto& [name, renamed] : scope)
+                    renamed = "\x01" + std::to_string(100 + ++temporaryNames);   // inside a DUP: defined on every pass, temporary labels
             w.localScopes.push_back(std::move(scope));
             ++nextBlock;
         }
-        std::string label = l.label.empty() ? std::string() : w.Name(l.label);
+        std::string label;
+        if (!l.label.empty())
+        {
+            // a temporary label of a LOCAL block in a DUP: its number (its references B from here on)
+            for (auto it = w.localScopes.rbegin(); it != w.localScopes.rend() && label.empty(); ++it)
+                if (const auto found = it->find(l.label); found != it->end() && !found->second.empty() && found->second[0] == '\x01')
+                {
+                    label = found->second.substr(1);
+                    w.temporariesWritten.insert(found->second);
+                }
+            if (label.empty())
+                label = w.Name(l.label);
+        }
         if (w.sameDialect && !l.label.empty() && l.label.find_first_not_of("0123456789") == std::string::npos)
             label = l.label;   // a sjasmplus temporary label (1, referred to as 1B / 1F)
         if (!l.label.empty())

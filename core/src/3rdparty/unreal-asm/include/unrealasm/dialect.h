@@ -71,6 +71,14 @@ struct BackendOptions
     /// An INCLUDE of a project file (the IR's name for it) written with these operands instead: the name and the place
     /// the target finds the text in (ALASM `"NAME",4`: the text already in RAM page 4, WriteProjectAs)
     std::map<std::string, std::string> includeAs;
+    /// The name each file an INCLUDE / INCBIN names gets on the target's disk (the IR's name to a TR-DOS name of up to 8
+    /// characters): a host project's files renamed for a TR-DOS disk (ProjectDiskNames). A name not in it is written
+    /// without its folders
+    std::map<std::string, std::string> fileNames;
+    /// A sjasmplus project written for a retro target: a file of more lines than this is cut into parts of about as
+    /// many, each INCLUDEd where it stood (at a line outside any block); 0 = files as they are. For a target whose file
+    /// cannot hold the whole text (ALASM's 64K)
+    size_t splitLines = 0;
 };
 
 /// A label of the source and the name the backend wrote it under (a reserved word renamed, a LOCAL block's label made
@@ -124,6 +132,10 @@ public:
     virtual BackendResult Write(const ir::Program& program, const BackendOptions& options) const = 0;
     /// The backend folds expressions with the source's label values (BackendOptions::labelValues)
     virtual bool WantsLabelValues() const { return false; }
+    /// The backend lowers sjasmplus' structure words (MODULE, STRUCT, DEFL, macros expanded at their calls): a sjasmplus
+    /// project is written as sjasmplus assembles it, its INCLUDEs joined into one text, and cut into its files again
+    /// (ConvertProject)
+    virtual bool JoinsSjasmplusProject() const { return false; }
 };
 
 class DialectRegistry
@@ -196,12 +208,19 @@ std::vector<ProjectFile> ImageProject(const std::vector<containers::TrdosFile>& 
 /// A project on the host: `main` first, then every source it INCLUDEs and they in turn, each named as its INCLUDE
 /// gives it in the IR (sjasmplus: without .asm) and decoded as text in main's dialect. `read` gets the path to open:
 /// the name relative to the folder of the file that INCLUDEs it, with .asm back where the IR dropped it ("" = the
-/// file is not there: a warning, the INCLUDE stays for the assembler's own disk)
-std::vector<ProjectFile> HostProject(const SourceDocument& main, const DataFileReader& read, Diagnostics& diagnostics);
+/// file is not there: a warning, the INCLUDE stays for the assembler's own disk). `folders` (when given) gets each file's
+/// folder relative to main's ("" the same, else ending with '/'), where the names its INCBINs give are found
+std::vector<ProjectFile> HostProject(const SourceDocument& main, const DataFileReader& read, Diagnostics& diagnostics,
+                                     std::vector<std::string>* folders = nullptr);
 
 /// The names a project's texts get in an assembler's headers and on a TR-DOS disk: files[0] `title`, each other its
 /// file name without folder and extension, in upper case, 8 characters, made unique with ~2, ~3 ...
 std::vector<std::string> ProjectTextNames(const std::vector<ProjectFile>& files, const std::string& title);
+
+/// The names a host project's files get on a TR-DOS disk (BackendOptions::fileNames): each source (by its name in the
+/// project, files[0] the main one) and each data file (as its INCBIN names it) by its file name without folders and
+/// extensions, up to 8 characters, unique in any case (NAME~2, NAME~3 ...)
+std::map<std::string, std::string> ProjectDiskNames(const std::vector<ProjectFile>& files, const std::vector<std::string>& dataFiles);
 
 struct WriteProjectResult
 {

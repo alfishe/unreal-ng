@@ -25,7 +25,7 @@
 
 namespace
 {
-constexpr uint8_t kImageVersion = 6;  // 6: the UARTs
+constexpr uint8_t kImageVersion = 7;  // 7: ULA+ select; 6: the UARTs
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -113,6 +113,8 @@ static void SaveVideo(Writer& w, const NextVideoRegs& v)
     w.PutArray(v._palette);
     w.Put(v._index);
     w.Put(v._control);
+    w.Put(v._ulapMode);
+    w.Put(v._ulapIndex);
     w.Put(v._ulaNext);
     w.Put(v._portFf);
     w.Put(v._port123b);
@@ -128,6 +130,8 @@ static void LoadVideo(Reader& r, NextVideoRegs& v)
     r.GetArray(v._palette);
     r.Get(v._index);
     r.Get(v._control);
+    r.Get(v._ulapMode);
+    r.Get(v._ulapIndex);
     r.Get(v._ulaNext);
     r.Get(v._portFf);
     r.Get(v._port123b);
@@ -151,6 +155,7 @@ static void SaveSprites(Writer& w, const NextSprites& s)
 }
 static void LoadSprites(Reader& r, NextSprites& s)
 {
+    s.Touch();
     r.GetArray(s._attr);
     r.GetArray(s._pattern);
     r.Get(s._slot);

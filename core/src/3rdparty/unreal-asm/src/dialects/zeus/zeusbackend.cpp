@@ -6,6 +6,7 @@
 #include <map>
 #include <set>
 
+#include "dialects/common/diskname.h"
 #include "dialects/common/chainwriter.h"
 #include "dialects/common/z80.h"
 
@@ -260,14 +261,14 @@ private:
             case ir::DirectiveKind::Include:
                 if (Primus())
                 {
-                    std::string name = s.text;
+                    std::string name = DiskName(options, s.text);
                     if (const size_t dot = name.rfind('.'); dot != std::string::npos)
                         name = name.substr(0, dot);
                     return {"DISK " + name};
                 }
                 if (Pht())
                 {
-                    std::string name = s.text;
+                    std::string name = DiskName(options, s.text);
                     if (const size_t dot = name.rfind('.'); dot != std::string::npos && name.size() - dot == 2)
                         name = name.substr(0, dot);
                     return {"INCLUDE " + name};
@@ -277,9 +278,9 @@ private:
                 if (s.args.size() > 1 || (!s.args.empty() && !(s.args[0].kind == Expr::Kind::Number && s.args[0].value == 0)))
                     return {NotConverted("INCBIN of a part of a file: " + s.text)};
                 if (version == "gg")
-                    return {"INCBIN \"" + s.text + "\""};
+                    return {"INCBIN \"" + DiskName(options, s.text) + "\""};
                 if (Pht())
-                    return {"PLACE " + s.text};
+                    return {"PLACE " + DiskName(options, s.text)};
                 return {NotConverted("INCBIN (ZEUS 1983 has none): " + s.text)};
             case ir::DirectiveKind::End:
                 diagnostics.push_back({Severity::Info, line, 0, "END dropped (ZEUS assembles the whole text)"});

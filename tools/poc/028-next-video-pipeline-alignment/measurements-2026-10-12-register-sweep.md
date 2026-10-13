@@ -107,7 +107,7 @@ ports with `t_p_dat` on the data bus. Same calibration (from the WAIT = minimum 
 | 50 | NR #6A bit 4, Radastan XOR | 20 / 34 | 23 | pixel |
 | 51 | NR #6A bits 3:0, LoRes palette offset | 20 / 23 | 23 | pixel |
 | 52 | NR #70 bits 5:4, Layer 2 resolution | 24 / 27 | 27 | pixel |
-| 53 | NR #6B bit 3, tilemap text mode | no visible change in the pattern | - | - |
+| 53 | NR #6B bit 3, tilemap text mode (the register forced; a NextREG write of NR #6B showed no change in this bench) | 50 / 81 | 53 | cell |
 | 48 | NR #4B = #A1 (the pattern byte + palette offset) | no change | - | - |
 
 NR #4B is compared with the pattern byte before the palette offset is added (47: #21 turns the sprites transparent, 48: #A1 does
@@ -135,5 +135,4 @@ order, not a latency: the state the sprites of line N + 1 see is the state at (l
 ## Not measured
 
 The sprite attribute / pattern writes by a CPU instruction (the fill rule above is measured with injected writes), the sprite palette
-select / NR #43 bit 3 at the fill (the output stage: 22), the tilemap text mode (NR #6B bit 3: no visible change in the dense pattern;
-the RTL latches it with the cell like bits 0 / 1 / 5).
+select / NR #43 bit 3 at the fill (the output stage: 22), 

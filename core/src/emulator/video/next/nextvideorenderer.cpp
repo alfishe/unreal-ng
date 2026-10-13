@@ -81,6 +81,8 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
     const bool ulaNext = (regs.PaletteControl() & 0x01) != 0;
     const uint8_t mask = regs.UlaNextFormat();
     const bool fullInk = ulaNext && mask == 0xFF;
+    // ULA+ (NR #68 bit 3 / port #FF3B): the 64-entry CLUT sits in entries 192-255 of the ULA palette; ULANext wins over it
+    const bool ulaPlus = (in.nr[0x68] & 0x08) != 0 && !ulaNext;
     const unsigned transparent = in.nr[0x14];  // a pixel in this colour is transparent: opaque stays clear
 
     auto border = [&](Pixel& p) {
@@ -88,7 +90,8 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
             return;  // paper and border come from the fallback colour: transparent here
         // Timex hi-res: the border takes the paper colour of port #FF (7 - ink), without the bright bit
         const unsigned colour = (in.portFf & 7) == 6 ? 7 - ((in.portFf >> 3) & 7) : in.border;
-        const unsigned c = regs.PaletteEntry(palette, (ulaNext ? 128 : 16) + colour) & 0x1FF;
+        // ULA+: the border is paper half of the CLUT's first row (zxula.vhd: attribute = border << 3 | border, no flash / bright)
+        const unsigned c = regs.PaletteEntry(palette, ulaPlus ? 0xC8 + colour : (ulaNext ? 128 : 16) + colour) & 0x1FF;
         p = NextLayer::MakePixel(c, !GlobalTransparent(c, transparent), true);
     };
     const bool inPaperRows = y >= kPaperTop && y < kPaperTop + 192;
@@ -115,7 +118,7 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
     auto index = [&](bool ink, uint8_t attr) -> int {
         unsigned bright = (attr >> 6) & 1;
         bool inkPixel = ink;
-        if ((attr & 0x80) && in.flash && !ulaNext)  // ULANext: the attribute is all colour index, no flashing
+        if ((attr & 0x80) && in.flash && !ulaNext && !ulaPlus)  // ULANext: the attribute is all colour index, no flashing; ULA+ none either
             inkPixel = !inkPixel;
         if (ulaNext)
         {
@@ -128,6 +131,13 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
             if (!solidMask)
                 return inkPixel ? (attr & mask) : -1;
             return inkPixel ? (attr & mask) : 128 + (attr >> bits);
+        }
+        if (ulaPlus)
+        {
+            // "11" & flash & bright & (hi-res or paper) & colour (zxula.vhd): the Timex hi-res ink takes the paper half too
+            const unsigned half = (timexMode == 6 || !inkPixel) ? 8 : 0;
+            const unsigned colour = inkPixel ? (attr & 7) : ((attr >> 3) & 7);
+            return static_cast<int>(0xC0 | ((attr & 0xC0) >> 2) | half | colour);
         }
         return inkPixel ? static_cast<int>((attr & 7) + 8 * bright) : static_cast<int>(16 + ((attr >> 3) & 7) + 8 * bright);
     };
@@ -176,7 +186,8 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
     }
 }
 
-/// LoRes (NR #15 bit 7): 128 x 96 at 256 colours of the ULA palette, in the two halves of the ULA screen
+/// LoRes (NR #15 bit 7): 128 x 96 at 256 colours of the ULA palette, in the two halves of the ULA screen; with NR #6A bit 5 the Radastan
+/// mode: 128 x 96 at 4 bits, a 64-byte row of two nibbles per four pixels, the display file of port #FF bit 0 xor NR #6A bit 4 (lores.vhd)
 void NextVideoRenderer::LoResLine(const NextVideoInputs& in, unsigned y, Pixel* line)
 {
     const NextVideoRegs& regs = *in.regs;
@@ -185,17 +196,36 @@ void NextVideoRenderer::LoResLine(const NextVideoInputs& in, unsigned y, Pixel* 
     const unsigned palette = (regs.PaletteControl() & 0x02) ? 4 : 0;
     const unsigned offset = (in.nr[0x6A] & 0x0F) << 4;
     const unsigned transparent = in.nr[0x14];
-    const unsigned py = y - kPaperTop;
-    const unsigned sy = (py + in.nr[0x33]) % 192;  // NR #33: LoRes Y scroll
-    const unsigned row = sy / 2;                       // 96 rows
+    // lores.vhd: y_pre = vc + scroll_y (9 bits); from 192 on y(7:6) is incremented, so the row runs on into the memory behind the
+    // 96 rows (up to y = 254) instead of wrapping at 192
+    const unsigned yPre = (y - kPaperTop) + in.nr[0x33];
+    const unsigned sy = yPre >= 192 ? ((yPre & 0x3F) | ((((yPre >> 6) + 1) & 3) << 6)) : yPre;
+    const unsigned row = sy / 2;  // y(7:1): 0-127
     const unsigned base = in.shadowScreen ? 7 : 5;
     const uint8_t* screen = in.ram + static_cast<size_t>(base) * 0x4000;
     const unsigned scrollX = in.nr[0x32];  // NR #32: LoRes X scroll, in LoRes pixels doubled
+    const bool radastan = (in.nr[0x6A] & 0x20) != 0;
+    const bool ulaPlus = (in.nr[0x68] & 0x08) != 0 && (regs.PaletteControl() & 0x01) == 0;
+    const unsigned dfile = ((in.portFf & 1) ^ ((in.nr[0x6A] >> 4) & 1)) != 0 ? 0x2000 : 0;
     for (unsigned px = 0; px < 256; px++)
     {
-        const unsigned sx = ((px + scrollX) & 255) / 2;  // 128 columns
-        const unsigned address = (row < 48 ? 0x0000 : 0x2000) + (row % 48) * 128 + sx;
-        const unsigned idx = (screen[in.shadowScreen ? (address & 0x1FFF) : address] + offset) & 0xFF;  // bank 7 is the 8K BRAM
+        const unsigned x = (px + scrollX) & 255;
+        unsigned idx;
+        if (radastan)
+        {
+            const unsigned address = (dfile + row * 64 + (x >> 2)) & 0x3FFF;
+            const uint8_t byte = screen[in.shadowScreen ? (address & 0x1FFF) : address];
+            const unsigned nibble = (x & 2) == 0 ? (byte >> 4) : (byte & 0x0F);
+            // the high nibble of the palette index: the offset, or "11" & offset(1:0) when ULA+ is on (the CLUT)
+            idx = ((ulaPlus ? (0x0C | (offset >> 4 & 3)) : (offset >> 4)) << 4) | nibble;
+        }
+        else
+        {
+            const unsigned sx = x / 2;  // 128 columns
+            // y(7:1) & x(7:1), bits 13:11 + 1 from y = 96, 14 bits
+            const unsigned address = (row * 128 + sx + (sy >= 96 ? 0x800 : 0)) & 0x3FFF;
+            idx = (screen[in.shadowScreen ? (address & 0x1FFF) : address] + offset) & 0xFF;  // bank 7 is the 8K BRAM
+        }
         Pixel& a = line[kPaperLeft + px * 2];
         const unsigned c = regs.PaletteEntry(palette, idx) & 0x1FF;
         a = NextLayer::MakePixel(c, !GlobalTransparent(c, transparent));
@@ -401,7 +431,15 @@ void NextVideoRenderer::SpriteLine(const NextVideoInputs& in, unsigned y, Pixel*
     if (!in.sprites)
         return;
     NextSprites::Pixel grid[NextSprites::kGridWidth];
-    in.sprites->DrawLine(y, in.nr[0x15], *in.regs, grid, in.nr[0x4B]);
+    if (in.spriteFill)
+    {
+        // the attributes, the patterns and the transparent index are what the engine saw when it filled this row; the enable, the clip
+        // and the palette are the output stage's, as they are now
+        in.spriteFill->DrawLine(y, in.nr[0x15], *in.regs, grid, static_cast<uint8_t>(in.spriteTransparent >= 0 ? in.spriteTransparent : in.nr[0x4B]));
+        in.sprites->MergeFlags(*in.spriteFill);
+    }
+    else
+        in.sprites->DrawLine(y, in.nr[0x15], *in.regs, grid, in.nr[0x4B]);
     const unsigned palette = (in.regs->PaletteControl() & 0x08) ? 6 : 2;
     for (unsigned x = 0; x < NextSprites::kGridWidth; x++)
     {

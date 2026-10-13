@@ -1,3 +1,4 @@
+#include "emulator/io/mouse/mouse.h"
 #include "stdafx.h"
 
 #include "portdecoder_next.h"
@@ -37,12 +38,15 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         _board->Copper().Sync();
         if (_context->pScreen)
             _context->pScreen->UpdateScreen();
+        if (_screenNext)
+            _screenNext->SpriteStateWillChange();  // the rows the sprite engine has filled keep what they saw
     });
     // The copper is the machine's: it runs after every instruction, its steps are watched for breakpoints, its clock and its picture hook
     // come from the raster
     _board->Copper().SetObserver([this](const NextCopper::Step& step) { return OnCopperStep(step); });
     if (ScreenNext* screen = _context->pScreen ? dynamic_cast<ScreenNext*>(_context->pScreen) : nullptr)
         screen->BindCopper(_board->Copper());
+    _screenNext = _context->pScreen ? dynamic_cast<ScreenNext*>(_context->pScreen) : nullptr;
     _interrupts = std::make_unique<NextInterruptSource>(_context);
     _interrupts->ctcEnables = [this]() { return _ctc.InterruptEnables(); };
     _interrupts->setCtcEnables = [this](uint8_t bits) { _ctc.SetInterruptEnables(bits); };
@@ -259,6 +263,37 @@ bool PortDecoder_Next::PortEnabled(unsigned bit) const
     return !(_board->Stored(0x80) & 0x80) || (_board->Stored(static_cast<uint8_t>(reg + 4)) & mask);
 }
 
+/// The mouse registers as zxnext.vhd gives them: X, Y, and {wheel, 1, not middle, not left, not right}; with no mouse the inputs idle
+/// (zero counts, buttons released). NR #0A bit 3 swaps the buttons (the PS/2 mouse module's control); its DPI bits are the host's
+/// NR #0A bits 1:0 into the PS/2 module's scaling (ps2_mouse.v xydelta): 00 x2, 01 x1, 10 half, 11 a quarter
+void PortDecoder_Next::ApplyMouseDpi(uint8_t nr0a)
+{
+    if (!_mouse)
+        return;
+    static constexpr int kShift[4] = {1, 0, -1, -2};
+    _mouse->SetDeltaShift(kShift[nr0a & 3]);
+}
+
+uint8_t PortDecoder_Next::ReadMouse(uint8_t reg)
+{
+    if (!_mouse || !_mouse->IsPresent())
+        return reg == 0 ? 0x0F : 0x00;
+    ApplyMouseDpi(_board->Stored(0x0A));  // follows a reset or a loaded image
+    const uint8_t counted = _mouse->ReadRegister(reg);  // the device keeps its read bookkeeping
+    if (reg != 0)
+        return counted;
+    const uint8_t buttons = _mouse->GetButtons() & 0x07;  // active low: D2 middle, D1 right, D0 left
+    const bool left = (buttons & 1) != 0, right = (buttons & 2) != 0;
+    const bool reverse = (_board->Stored(0x0A) & 0x08) != 0;
+    const uint8_t port = static_cast<uint8_t>((buttons & 4) | ((reverse ? right : left) ? 2 : 0) | ((reverse ? left : right) ? 1 : 0));
+    return static_cast<uint8_t>(((_mouse->GetWheel() & 0x0F) << 4) | 0x08 | port);
+}
+
+bool PortDecoder_Next::IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister) const
+{
+    return MouseRegisterOf(port, outRegister) && PortEnabled(13) && _mouse && _mouse->IsPresent();
+}
+
 uint8_t PortDecoder_Next::IdleRead(uint16_t port, uint16_t pc)
 {
     constexpr uint8_t kIdleBus = 0xFF;
@@ -382,6 +417,38 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         if (!PortEnabled(14))
             return IdleRead(port, pc);
         const uint8_t value = _board->Sprites().ReadStatus();
+        _lastPortDecoded = true;
+        PortDecodeDisposition disp;
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.decodedPort = port;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+        OnPortInComplete(port, value, pc, disp);
+        return value;
+    }
+    // Kempston mouse (zxnext.vhd port_fadf / fbdf / ffdf), gated by NR #83 bit 5
+    if (uint8_t mouseRegister = 0; MouseRegisterOf(port, mouseRegister))
+    {
+        if (!PortEnabled(13))
+            return IdleRead(port, pc);  // not decoded: the base class's partial Kempston decode must not answer
+        const uint8_t value = ReadMouse(mouseRegister);
+        _lastPortDecoded = true;
+        PortDecodeDisposition disp;
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.decodedPort = port;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+        OnPortInComplete(port, value, pc, disp);
+        return value;
+    }
+    // ULA+: #BF3B selects, #FF3B reads the CLUT entry (mode 0) or the enable bit; gated by NR #85 bit 0
+    if (port == 0xBF3B || port == 0xFF3B)
+    {
+        if (!PortEnabled(24) || port == 0xBF3B)
+            return IdleRead(port, pc);  // #BF3B is write only
+        const NextVideoRegs& video = _board->Video();
+        const uint8_t value = video.UlaPlusMode() == 0 ? video.ReadUlaPlusPalette()
+                                                         : static_cast<uint8_t>((_board->Stored(0x68) >> 3) & 1);
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -587,7 +654,29 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     else if (port == 0x303B)
     {
         if (PortEnabled(14))
+        {
+            if (_screenNext)
+                _screenNext->SpriteStateWillChange();
             _board->Sprites().WriteSlotSelect(value);
+        }
+    }
+    else if (port == 0xBF3B)
+    {
+        if (PortEnabled(24))
+            _board->Video().WriteUlaPlusSelect(value);
+    }
+    else if (port == 0xFF3B)
+    {
+        if (PortEnabled(24))
+        {
+            const uint8_t mode = _board->Video().UlaPlusMode();
+            if (mode <= 1 && _context->pScreen)
+                _context->pScreen->UpdateScreen();
+            if (mode == 0)
+                _board->Video().WriteUlaPlusPalette(value);
+            else if (mode == 1)
+                _board->SetStoredBits(0x68, 0x08, static_cast<uint8_t>((value & 1) << 3));  // the enable is NR #68 bit 3's flop
+        }
     }
     else if (WriteDacPort(port, value))
         ;
@@ -604,12 +693,20 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     else if (static_cast<uint8_t>(port) == 0x57)
     {
         if (PortEnabled(14))
+        {
+            if (_screenNext)
+                _screenNext->SpriteStateWillChange();
             _board->Sprites().WriteAttribute(value);
+        }
     }
     else if (static_cast<uint8_t>(port) == 0x5B)
     {
         if (PortEnabled(14))
+        {
+            if (_screenNext)
+                _screenNext->SpriteStateWillChange();
             _board->Sprites().WritePattern(value);
+        }
     }
     else if (static_cast<uint8_t>(port) == kPortSpiSelect && SpiPortEnabled())
         SpiSelect(value);
@@ -727,6 +824,8 @@ bool PortDecoder_Next::WriteDacPort(uint16_t port, uint8_t value)
 /// releases the bus then); the CPU is held for two of its clocks per byte
 void PortDecoder_Next::NextRegAccess(bool write, uint8_t reg, uint8_t value, NextRegSource source)
 {
+    if (write && reg == 0x0A)
+        ApplyMouseDpi(value);
     uint8_t door;
     switch (source)
     {

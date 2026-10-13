@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <set>
 
+#include "dialects/common/diskname.h"
 #include "dialects/common/retrowriter.h"
 #include "dialects/common/z80.h"
 
@@ -433,7 +434,7 @@ private:
             {
                 if (const auto as = options.includeAs.find(s.text); as != options.includeAs.end())
                     return {Ltext() + " " + as->second};
-                std::string name = s.text;
+                std::string name = DiskName(options, s.text);
                 if (name.size() > 8)
                 {
                     diagnostics.push_back({Severity::Warning, line, 0, Ltext() + " \"" + name + "\": a TR-DOS name has 8 characters"});
@@ -444,7 +445,7 @@ private:
             case ir::DirectiveKind::Incbin:
                 if (s.args.size() > 1 || (!s.args.empty() && !(s.args[0].kind == Expr::Kind::Number && s.args[0].value == 0)))
                     return {NotConverted("INCBIN of a part of a file (" + Lcode() + " loads it all): " + s.text)};
-                return {Lcode() + " \"" + s.text + "\""};
+                return {Lcode() + " \"" + DiskName(options, s.text) + "\""};
             case ir::DirectiveKind::Repeat:
                 if (nativeBlock)
                     return {NotConverted("a repeat inside an XAS block (XAS keeps one)")};

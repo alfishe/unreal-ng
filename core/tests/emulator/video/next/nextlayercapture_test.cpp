@@ -678,3 +678,54 @@ TEST_F(NextLayerCaptureMachine_Test, AUlaScrollMoveTakesEffectAtTheNextCell)
     ASSERT_GE(row, 0) << "the scroll changed the picture inside a line";
     EXPECT_EQ(static_cast<unsigned>(x), kExpectedImagePixel) << "row " << row;
 }
+
+// The sprite engine fills paper row R during row R - 1 (POC 028): a copper MOVE of NR #4B (the transparent index, read where a sprite's
+// pixel is drawn) in the first part of row N reaches row N + 1, a MOVE later in row N reaches row N + 2
+class NextSpriteFill_Test : public NextLayerCaptureMachine_Test
+{
+protected:
+    static constexpr unsigned kSpriteTop = 40, kSpriteX = 200, kLine = 45;  // paper rows 40-55; the copper's line; a framebuffer column
+    uint32_t RowPixel(unsigned paperRow) const { return Framebuffer()[((32 + paperRow) * 2) * kWidth + kSpriteX]; }
+    void Run(unsigned hpos, unsigned sprites)
+    {
+        // one pattern of solid #21, `sprites` sprites on top of each other above the ULA at paper row 40, x = 64: the engine's fill of a
+        // row takes a clock a sprite and 17 more for each drawn one, so many sprites make it end late in the line
+        Out(0x303B, 0);
+        for (unsigned i = 0; i < 256; i++)
+            Out(0x5B, 0x21);
+        Out(0x303B, 0);
+        for (unsigned s = 0; s < sprites; s++)
+            for (uint8_t b : {uint8_t(96), uint8_t(32 + kSpriteTop), uint8_t(0), uint8_t(0x80)})
+                Out(0x57, b);
+        Nr(0x15, 0x01);
+        Nr(0x4B, 0xE3);
+        std::memset(Page(5), 0, 0x1800);                  // the ULA paper everywhere
+        Nr(0x61, 0);
+        Nr(0x62, 0);
+        for (uint16_t w : {uint16_t((0x4B << 8) | 0xE3), uint16_t(0x8000 | (hpos << 9) | kLine), uint16_t((0x4B << 8) | 0x21), uint16_t(0xFFFF)})
+        {
+            Nr(0x60, static_cast<uint8_t>(w >> 8));
+            Nr(0x60, static_cast<uint8_t>(w & 0xFF));
+        }
+        Nr(0x62, 0xC0);
+        Frames(4);
+    }
+};
+
+TEST_F(NextSpriteFill_Test, AMoveEarlyInTheLineReachesTheNextRow)
+{
+    Run(1, 90);  // 90 drawn sprites: the fill of row N + 1 ends at about hc 384 of row N
+    const uint32_t sprite = RowPixel(kSpriteTop + 2);
+    ASSERT_NE(sprite, RowPixel(kSpriteTop - 4)) << "the sprite is on the picture";
+    EXPECT_EQ(RowPixel(kLine), sprite) << "row N: its fill was before the MOVE";
+    EXPECT_NE(RowPixel(kLine + 1), sprite) << "row N + 1: filled after it";
+}
+
+TEST_F(NextSpriteFill_Test, AMoveLateInTheLineReachesTheRowAfter)
+{
+    Run(24, 1);  // one sprite: the fill of a row is done before the line starts
+    const uint32_t sprite = RowPixel(kSpriteTop + 2);
+    ASSERT_NE(sprite, RowPixel(kSpriteTop - 4));
+    EXPECT_EQ(RowPixel(kLine + 1), sprite) << "row N + 1 was filled before the MOVE";
+    EXPECT_NE(RowPixel(kLine + 2), sprite) << "row N + 2: filled after it";
+}
