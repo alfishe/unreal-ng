@@ -41,18 +41,20 @@ TEST(NextPiPeer_Test, ANewlineGivesThePromptAndTheLineIsEchoed)
     EXPECT_EQ(Drain(pi), "abc^C\r\nSUP> ");
 }
 
+// The script nextpi-file_receive of NextPi 1.93D (opt/nextpi/bin, Python 2): OK, the header, a second OK, every block with its sum
+// (modulo the -nbn argument) answered '!' or '?', and a final block of `remainder` bytes that has its sum byte even when it is empty
 TEST(NextPiPeer_Test, FileReceiveTakesNbnBlocksWithTheirSums)
 {
     NextPiPeer pi;
     Send(pi, "nextpi-file_receive -nbn 256\n");
-    EXPECT_EQ(Drain(pi), "nextpi-file_receive -nbn 256\r\nOK\r\n");
-    // 16384 + 3 bytes: size, blocks, remainder, the name
+    EXPECT_EQ(Drain(pi), "nextpi-file_receive -nbn 256\r\nOK\n");
     const uint32_t size = 16384 + 3;
     const uint8_t header[10] = {0, 0, uint8_t(size >> 8), uint8_t(size), 0, 0, 0, 1, 0, 3};
     for (uint8_t b : header)
         pi.Transmit(b);
     Send(pi, "x.bin");
     pi.Transmit(0);
+    EXPECT_EQ(Drain(pi), "OK\n") << "the header is valid";
     uint8_t sum = 0;
     for (unsigned i = 0; i < 16384; i++)
     {
@@ -62,50 +64,68 @@ TEST(NextPiPeer_Test, FileReceiveTakesNbnBlocksWithTheirSums)
     }
     pi.Transmit(static_cast<uint8_t>(sum + 1));  // a wrong sum: '?'
     EXPECT_EQ(Drain(pi), "?");
-    sum = 0;
     for (unsigned i = 0; i < 16384; i++)
-    {
-        const uint8_t b = static_cast<uint8_t>(i * 7);
-        pi.Transmit(b);
-        sum = static_cast<uint8_t>(sum + b);
-    }
+        pi.Transmit(static_cast<uint8_t>(i * 7));
     pi.Transmit(sum);
     EXPECT_EQ(Drain(pi), "!");
     for (uint8_t b : {uint8_t(1), uint8_t(2), uint8_t(3), uint8_t(6)})
         pi.Transmit(b);
     EXPECT_EQ(Drain(pi), "!SUP> ");
-    ASSERT_EQ(pi.Files().count("x.bin"), 1u);
-    EXPECT_EQ(pi.Files().at("x.bin").size(), size);
-    EXPECT_EQ(pi.Files().at("x.bin")[16384 + 2], 3);
+    ASSERT_EQ(pi.Files().count("/ram/x.bin"), 1u) << "dirs[1] is /ram/";
+    EXPECT_EQ(pi.Files().at("/ram/x.bin").size(), size);
+    EXPECT_EQ(pi.Files().at("/ram/x.bin")[16384 + 2], 3);
 }
 
+TEST(NextPiPeer_Test, AFileThatIsWholeBlocksStillEndsWithAnEmptyBlockAndItsSum)
+{
+    NextPiPeer pi;
+    Send(pi, "nextpi-file_receive -nbn 256\n");
+    Drain(pi);
+    const uint8_t header[10] = {0, 0, 0x40, 0, 0, 0, 0, 1, 0, 0};  // 16384 bytes, one block, remainder 0
+    for (uint8_t b : header)
+        pi.Transmit(b);
+    Send(pi, "w");
+    pi.Transmit(0);
+    Drain(pi);
+    for (unsigned i = 0; i < 16384; i++)
+        pi.Transmit(1);
+    pi.Transmit(static_cast<uint8_t>(16384 % 256));  // 0
+    EXPECT_EQ(Drain(pi), "!");
+    pi.Transmit(0);  // the empty block's sum
+    EXPECT_EQ(Drain(pi), "!SUP> ");
+    EXPECT_EQ(pi.Files().at("/ram/w").size(), 16384u);
+}
+
+// nextpi-file_transmit: OK, a partition byte (0 "/", 1 "/ram/", 2 "/NextPi/"), the name and 0; size (4), blocks (4), remainder (2) or four
+// zero bytes; one byte from the Next; each block with its sum, '!' to go on, a final remainder block even when empty
 TEST(NextPiPeer_Test, FileTransmitSendsTheHeaderAndTheBlocksOnRequest)
 {
     NextPiPeer pi;
-    pi.PutFile("/n/a.txt", {'h', 'e', 'l', 'l', 'o'});
+    pi.PutFile("/ram/a.txt", {'h', 'e', 'l', 'l', 'o'});
     Send(pi, "nextpi-file_transmit -nbn\n");
-    Drain(pi);
-    pi.Transmit(0);
-    Send(pi, "/n/a.txt");
+    EXPECT_EQ(Drain(pi), "nextpi-file_transmit -nbn\r\nOK\n");
+    pi.Transmit(1);  // /ram/
+    Send(pi, "a.txt");
     pi.Transmit(0);
     const std::string header = Drain(pi);
     ASSERT_EQ(header.size(), 10u);
     EXPECT_EQ(static_cast<uint8_t>(header[3]), 5) << "the size";
+    EXPECT_EQ(static_cast<uint8_t>(header[7]), 0) << "no whole block";
     EXPECT_EQ(static_cast<uint8_t>(header[9]), 5) << "the remainder";
-    pi.Transmit('!');  // ready for the first block
+    pi.Transmit('!');  // the Next's check of the header: the first block follows
     const std::string block = Drain(pi);
     ASSERT_EQ(block.size(), 6u);
     EXPECT_EQ(block.substr(0, 5), "hello");
     EXPECT_EQ(static_cast<uint8_t>(block[5]), static_cast<uint8_t>('h' + 'e' + 'l' + 'l' + 'o'));
     pi.Transmit('!');
     EXPECT_EQ(Drain(pi), "SUP> ");
-    // a missing file: a zero header and the prompt
+    // a missing file: four zero bytes
     Send(pi, "nextpi-file_transmit -nbn\n");
     Drain(pi);
     pi.Transmit(0);
     Send(pi, "nope");
     pi.Transmit(0);
-    EXPECT_EQ(Drain(pi), std::string(10, '\0') + "SUP> ");
+    EXPECT_EQ(Drain(pi), std::string(4, '\0') + "SUP> ");
 }
 
 TEST(NextPiPeer_Test, TheSpecAcceptsNextPi)
