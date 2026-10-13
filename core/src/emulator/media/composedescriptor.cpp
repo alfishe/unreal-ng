@@ -446,6 +446,11 @@ namespace
                 else if (v)
                     Report(where, "expected Unix seconds or an ISO 8601 date and time (2026-01-01T12:00:00Z), got '" + *v + "'");
             }
+            else if (key == "extentBudget")
+            {
+                if (const auto v = Number(child, where, UINT64_MAX))
+                    t.extentBudget = *v;
+            }
             else if (key == "onBadName")
             {
                 const auto v = String(child, where);

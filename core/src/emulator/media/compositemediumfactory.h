@@ -14,6 +14,7 @@
 /// Design: docs/inprogress/2026-10-05-media-multisource/architecture.md §4,
 /// tdd.md §11; target file system: fs-compatibility.md §6 (DT-6).
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -107,6 +108,12 @@ struct CompositeBuildOptions
 class CompositeMediumFactory
 {
 public:
+    /// NFR-M5: extents a composite may hold when its descriptor names no target.extentBudget ([MEDIA] ExtentBudget);
+    /// 4 M extents are 64 MiB. 0: no limit
+    static constexpr uint64_t kDefaultExtentBudget = 4ull * 1024 * 1024;
+    static void SetDefaultExtentBudget(uint64_t extents) { _defaultExtentBudget = extents; }
+    static uint64_t DefaultExtentBudget() { return _defaultExtentBudget; }
+
     /// Build the volume a descriptor describes. On success `volume` and `info`
     /// are set; `result.report` lists everything left out, shadowed or chosen
     static MediaResult Build(const ComposeDescriptor& descriptor, const CompositeBuildOptions& options,
@@ -127,4 +134,7 @@ public:
     /// explicit choice is one the slot cannot read
     static std::vector<FatType> FsCandidates(std::optional<FatType> want, const std::vector<FatType>& allowed,
                                              FatType defaultFs, std::string* error);
+
+private:
+    static inline std::atomic<uint64_t> _defaultExtentBudget{kDefaultExtentBudget};
 };

@@ -14,7 +14,6 @@
 
 - FR-6, FR-14 and FR-21 were completed 2026-10-11 (manifest, `order`, `onBadName: replace`);
 - FR-54 takes no disposition;
-- NFR-M5 has no extent budget;
 - ACC-C5 lacks its NedoOS half.
 
 5 are changed by later decisions: FR-23, FR-32, NFR-S2, D-4 and D-8. The NFR numbers are from C11
@@ -42,7 +41,6 @@ What changed in this document:
   - D-8: a plain `save`, an eject with `save` and the emulator closing follow `writes.save` (2026-10-09).
 - Gaps found, not in [TODO.md](TODO.md) before:
   - a folder layer takes only `exclude` from its manifest (FR-6);
-  - there is no extent budget (NFR-M5);
 
 ## 0. Problem
 
@@ -240,7 +238,7 @@ gcc 13, medians of 3) unless named otherwise.
 | NFR-M2 | Per entry ≤ 128 bytes of tree and layout state plus its name bytes. Per extent 16 bytes. Directory clusters as the target needs them (32 bytes per FAT entry and long-name slot). 100 000 entries in ≤ 32 MiB in total. | met: 16.6 MiB for 100 000 entries (rebuild; ISO 19.6, graft 0.2). C11 cut `SourcePool`'s host-file records from 47.6 to 17.4 MiB. 64 layers of the same 100 K entries hold 42 MiB, because each layer brings its own 1 000 folders |
 | NFR-M3 | One opened instance per source, shared by every layer and partition that names it (`SourcePool`), so CHD hunk caches and file handles are not duplicated. | met (C3: `ComposeFat_Test.ChdSourceReadsThroughSharedCache`; two partitions of one image are two windows over one device) |
 | NFR-M4 | At most `kMaxOpenFiles` (8 today) host files open per composite, shared across all its folder layers. | met: `SourcePool::kMaxOpenFiles = 8`, an LRU |
-| NFR-M5 | Fragmented FAT sources: extents are coalesced. A per-composite extent budget (default 4 M extents = 64 MiB) fails the build with `DoesNotFit` and names the most fragmented files rather than exhausting memory. | **partly**: extents are coalesced (`ChainExtents`, C3 §3). **Not done:** there is no extent budget in the code, and it is not in [TODO.md](TODO.md). The workaround is `compact` (S1) on the source |
+| NFR-M5 | Fragmented FAT sources: extents are coalesced. A per-composite extent budget (default 4 M extents = 64 MiB) fails the build with `DoesNotFit` and names the most fragmented files rather than exhausting memory. | met 2026-10-12 (owner: a build that does not fit fails; no fallback copy): extents are coalesced (`ChainExtents`, C3 §3); `target.extentBudget`, else `[MEDIA] ExtentBudget` (4 M; 0: no limit), checked after each layer and after the merge; over it `DoesNotFit` names the ten files holding the most extents. A partition inherits the disk's budget |
 
 ### 6.3 Determinism, safety, portability
 

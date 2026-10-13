@@ -61,7 +61,7 @@ namespace
     {
         return key == "sessionmemorylimit" || key == "sessionarenakib" || key == "sessionflushseconds" ||
                key == "sessionsyncseconds" || key == "sessionjournal" || key == "sessioniothreads" ||
-               key == "spillfolder";
+               key == "spillfolder" || key == "extentbudget";
     }
 
     MediaSetEntry& EntryFor(std::vector<MediaSetEntry>& entries, const std::string& slotId)
@@ -257,6 +257,13 @@ MediaSettings MediaConfig::SettingsFromIni(const IniFile& ini, const std::string
                 settings.sessionIoThreads = static_cast<uint32_t>(number);
             else
                 bad("threads, 1 to 4 (0: a quarter of the cores)");
+        }
+        else if (key == "extentbudget")
+        {
+            if (ParseUnsigned(value, number))
+                settings.extentBudget = number;
+            else
+                bad("a number of extents (0: no limit)");
         }
         else if (key == "spillfolder" && !value.empty())
         {

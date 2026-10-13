@@ -94,6 +94,9 @@ struct ComposeTarget
     std::optional<bool> mbr;                ///< partition: mbr | none; unset: the slot's default
     std::optional<int64_t> fixedTimeUtc;    ///< reproducible builds: every timestamp this value
     std::string onBadName = "skip";         ///< skip | replace
+    /// NFR-M5: the most extents (16 bytes each) the build may hold; over it the build fails and names the most
+    /// fragmented files. Unset: [MEDIA] ExtentBudget (4 M); 0: no limit. Not part of the content id
+    std::optional<uint64_t> extentBudget;
     int isoLevel = 1;                       ///< optical: 1 (8.3 names) or 2 (31 characters)
     bool joliet = true;                     ///< optical: add a Joliet tree (long names)
     bool relaxDepth = false;                ///< optical: allow more than 8 directory levels

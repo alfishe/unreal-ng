@@ -216,6 +216,7 @@ Not relevant to us (CSpect UI / plugin API / esxDOS emulation / assembler / DeZo
 - [ ] N0 remainder: the unread parts listed in research-fpga-vhdl.md section 16 (Multiface internals, Pi / I2S, expansion bus, membrane scan, keymap RAM format, NextREG read-back table, `ym2149` volume table), ZEsarUX `tbblue.c` diff, the wiki pages and the manual; Q1-Q4, Q8-Q12 ([requirements.md](requirements.md))
 - [ ] N1-N12 as in [phases.md](phases.md)
 - [x] PLAN.md row #106
+- [ ] Fragile golden: `testdata/slots/fitted-devices.txt` pins the size of the captured `NextState` blob (`62:<size>` in the `next` block), so any change of the Next's TTD state fails `Configs/SlotManagerShipped_Test.FitsTheDevicesOfMaster/next` until the golden is regenerated (`UNREAL_SLOTS_FITTED_UPDATE=1`); CI broke on it 2026-10-13 (`fced9a3da`). Until decided: regenerate in the same commit as the state change. To decide: compare presence only (`62:var`, as for `EthernetNics`) ([design-ttd.md](design-ttd.md) section 3)
 
 ## Open questions added in design
 Q12: which NMOS/CMOS behaviors the Next's T80-based CPU shows (design-cpu section 1). Q1-Q12: requirements.md section 6.
