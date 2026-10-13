@@ -56,6 +56,8 @@ struct NextWithPeers
         decoder = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder);
         pi = dynamic_cast<LoopbackPeer*>(context->pMachineSerialPeer2);
         joystick = dynamic_cast<LoopbackPeer*>(context->pJoystickSerialPeer);
+        if (decoder)
+            decoder->Board().WriteNextReg(0xA0, 0x30);   // UART 1's pins reach the Pi header (NR #A0 bits 5:4), else its line is cut
         emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
         emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
         context->pMemory->UpdateFeatureCache();

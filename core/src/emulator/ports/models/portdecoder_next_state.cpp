@@ -845,7 +845,7 @@ StateNode NextUartReport(EmulatorContext* context)
 
         StateNode peer = StateNode::Object();
         // the device the line goes to now: the joystick connector's while NR #0B has taken the UART
-        const ISerialPeer* p = uart.Wire(i);
+        const ISerialPeer* p = v.joystick ? uart.Wire(i) : uart.Peer(i);
         peer["attached"] = p != nullptr;
         peer["via_joystick_connector"] = v.joystick;
         if (v.joystick)
