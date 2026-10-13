@@ -21,6 +21,8 @@
 #include "emulator/ports/portdecoder.h"
 
 class TsConfMemory;
+class Screen;
+class ScreenTSConf;
 class Vdac2Card;
 
 /// TS-Conf (ZX-Evo with the TS-Labs FPGA configuration) port decoder.
@@ -180,6 +182,9 @@ public:
     static bool IsVideoRegister(uint8_t reg);
     /// Engine line starts, then the screen, up to the current CPU T-state
     void FlushVideo();
+    /// The screen draws what it has not drawn yet up to the end of the instruction before this one: before a write
+    /// to memory and before a DMA transfer, whose moment inside the instruction the picture does not model
+    void VideoCatchUpToStepEnd();
 
     /// Classify one I/O cycle
     PortArm ClassifyPort(uint16_t port) const;
@@ -231,9 +236,15 @@ private:
     class DramWriteWait : public HostBusOverlay
     {
     public:
-        explicit DramWriteWait(PortDecoder_TSConf& owner) : _owner(owner) { observesReads = false; }
+        explicit DramWriteWait(PortDecoder_TSConf& owner) : _owner(owner)
+        {
+            observesReads = false;
+            observesWriteStart = true;
+        }
         uint8_t onRead(uint16_t, uint8_t normal, bool, bool) override { return normal; }
         void onWrite(uint16_t addr, uint8_t value, bool romPaged) override;
+        /// The picture not drawn yet shows the byte the write replaces (ScreenTSConf::CatchUpToStepEnd)
+        void onBeforeWrite(uint16_t addr) override;
 
     private:
         PortDecoder_TSConf& _owner;
@@ -282,6 +293,8 @@ private:
     std::unique_ptr<IDeviceMemoryRegion> _cramRegion;
     std::unique_ptr<IDeviceMemoryRegion> _sfileRegion;
     DramWriteWait _dramWriteWait{*this};
+    Screen* _catchUpScreenBase = nullptr;
+    ScreenTSConf* _catchUpScreen = nullptr;
 
     // The board's AVR behind the Gluk CMOS ports (clock, NVRAM, extension
     // registers F0-FF), shared with ATM3: lives with the decoder so the

@@ -347,6 +347,37 @@ The TS-Conf screen is drawn after every instruction. The Sprinter screen catches
 video mode or the palette, and the frame tail. TS-Conf needs the same: a write watch on the displayed pages
 (graphics, tiles and sprites go through the TSU at line starts already), the video registers, CRAM, the border.
 
+**Done 2026-10-13** (`ScreenTSConf::CatchesUpOnEvents`, on by default; `SetCatchUpOnEvents(false)` gives the
+per-instruction draw back for comparison). It turned out smaller than a page-level write watch, because the frame is
+kept the same pixel for pixel instead of made more exact:
+
+- The moments the picture already modelled exactly stay as they were: a video register, CRAM, the border and a DMA
+  CRAM write flush the screen to the write's own T-state (`FlushVideo`, `SetVideoFlush`).
+- Everything else took effect "from the end of the instruction before", simply because the screen was drawn after
+  every instruction. Those inputs now draw up to exactly that place first: a CPU write to memory (a new
+  `HostBusOverlay::onBeforeWrite`, called before the byte is stored when the overlay asks for it) and a DMA
+  transfer (`TsConfEngine::SetVideoCatchUp`, before the DMA moves anything in a catch-up). The engine notes the
+  raster tact each instruction ended at (`StepEndRaster`); it runs every step anyway.
+- The frame's last step and a pause draw the rest (the existing `CatchesUpOnEvents` rule of `MainLoop`).
+- Line latches and TSU rows are the engine's and are final for a line before its first dot.
+
+Exactness: `TsConfScreenEvents_Test`, two machines per program, one in each mode, every frame compared byte for
+byte: the sprite example, the slide show, the firmware boot, and a DMA copy into the shown page started at a moving
+place in the frame (300 frames each by hand, 12-70 in the suite). Each of the two new catch-ups was switched off
+once to see the test fail (the boot catches the memory one, the DMA program the DMA one). The event machine draws
+~28x fewer spans.
+
+| Row | before | after | x |
+|:--|--:|--:|--:|
+| TSConf_ShipNormal (Wild Commander) | 5,934 | 4,045 | 0.68 |
+| TSConf_Sprites_ShipNormal | 4,041 | 3,374 | 0.84 |
+| TSConf_ShipTurbo | 2,924 | 2,757 | 0.94 |
+| TSConf_Sprites_ShipTurbo | 2,454 | 2,414 | 0.98 |
+
+With P1, P7 and this, a TS-Conf 1x frame went 8.4 -> 4.0 ms in this cycle.
+
+The original proposal:
+
 - Gain: up to 25 % of a 1x idle frame and 14 % with sprites (`ScreenZX::UpdateScreen` share); in turbo 5-11 % (the
   one rendered frame in N). Already in the TS-Conf backlog
   ([implementation-plan.md](../2026-09-27-tsconf/implementation-plan.md), speed backlog).
@@ -363,6 +394,13 @@ With the TSU active, every CPU memory read goes through `TsConfMemory::DramWait`
 - The arbiter: the free DRAM slots of a line are fixed once the line's TSU and DMA load is known (the engine
   computes the TSU cost at line start). A per-line slot map answers "the next free slot after t" with a lookup
   instead of stepping the arbiter.
+- **Done 2026-10-13, the two cheap parts.** `TsConfInterrupts::OnWait`: when no frame pulse is latched and the frame
+  event is not in the rasters the stall evaluates, one catch-up to the stall's end replaces the two (they latch the
+  same line end; checked by running both and comparing on every call through the TS-Conf tests and the sprite
+  demo). `TsConfArbiter::FetchAt`: the line's fetch schedule is kept while the line, V_CONFIG and G_X_OFFS stay the
+  same. Measured: TS-Conf sprites turbo 2,768 -> 2,430 µs (-12 %), sprites 1x 4,334 -> 4,062 µs (-6 %), idle rows
+  unchanged. The per-line slot map is not done: the arbiter's refused-cycle model is validated against the RTL
+  simulation fclk by fclk, and what is left of it in the profile does not pay for a second model.
 - Gain: up to a third of a TS-Conf frame with sprites in turbo. Effort: medium. Exactness: the CPU wait states and
   the DMA / TSU budget per line must be identical: the arbiter's own tests plus a lockstep run of a TSU demo.
 

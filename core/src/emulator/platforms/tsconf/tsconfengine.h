@@ -106,6 +106,15 @@ public:
     /// Draw the picture up to raster tact `raster` (the screen's hook): a DMA
     /// CRAM write draws the dots before it with the old colour (TIM-5)
     void SetVideoFlush(std::function<void(uint32_t raster)> flush) { _videoFlush = std::move(flush); }
+    /// Called before the DMA moves anything in this catch-up: a screen that draws only when its inputs change draws
+    /// what it has not drawn yet first (ScreenTSConf::CatchUpToStepEnd)
+    void SetVideoCatchUp(std::function<void()> catchUp) { _videoCatchUp = std::move(catchUp); }
+    /// The raster tact the last finished instruction ended at (0 at the frame start): up to here a screen drawn
+    /// after every instruction has drawn
+    uint32_t StepEndRaster() const { return _stepEndRaster; }
+    /// A reset or a loaded state replaced TsConfState: the step end is where the engine's accounting stands (a state is taken
+    /// between instructions, where the two are the same)
+    void NoteStateApplied();
     /// Called at the end of the frame rollover, once the old frame is fully
     /// accounted (its DMA and its interrupt events included): a device that
     /// keeps time in raster tacts (the VDAC2 card) closes its frame here
@@ -151,6 +160,8 @@ private:
     TsConfDma& _dma;
     uint32_t _cpuLineRunning = 0;  ///< CPU DRAM reads on the current line so far
     std::function<void(uint32_t)> _videoFlush;
+    std::function<void()> _videoCatchUp;
+    uint32_t _stepEndRaster = 0;  // derived from the CPU's clock at the step, not state
     std::function<void()> _frameEnd;
     TsConfLine _lines[kLines];
     uint8_t _tsu[kLines][360] = {};  ///< TSU line buffers of the frame (TsConfTsu::kMaxWidth)
