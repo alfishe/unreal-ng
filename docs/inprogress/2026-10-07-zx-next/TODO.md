@@ -76,7 +76,7 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
 
 ## N8 (2026-10-09): DMA
 - [x] `NextDma`: WR0-WR6 sequencer, ports #6B (zxnDMA) and #0B (Z80-DMA compatible), memory / I/O ports with increment / decrement / fixed, continuous and burst modes, prescaler (875 kHz steps in 28 MHz clocks), auto restart, read mask and read sequence; `PortDecoder_Next::StepDma` runs between instructions and holds the CPU (two clocks per byte) until the block is done or a prescaler wait releases the bus
-- [ ] Not yet: the exact per-byte timing (2-4 clocks by the port timing bytes, contention on the read), DMA-on-interrupt (`dma_delay`), NR #82 / #85 port gates, the pulse of the DMA interrupt, bus arbitration with the expansion bus
+- [ ] Not yet: the exact per-byte timing (2-4 clocks by the port timing bytes, contention on the read), DMA-on-interrupt (done: `NextInterruptSource::DmaDelay`, checked 2026-10-13 against im2_device.vhd `o_dma_int = state /= S_0 and enable` and the NR #CC-#CE bit map of zxnext.vhd 1957; only the few-clock tail through the RETI's ED prefix (`dma_delay`, im2_control.vhd 238) is not modelled), NR #82 / #85 port gates (done), the pulse of the DMA interrupt, bus arbitration with the expansion bus
 - jnext comparison: DMAFill, zxnext_dma_sample, test03sprite identical; DMACopy / LDIRCopy 6932 px (a timing screen)
 
 ## N7c (2026-10-09): ULA clip, stencil, blend modes
