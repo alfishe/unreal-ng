@@ -38,12 +38,15 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         _board->Copper().Sync();
         if (_context->pScreen)
             _context->pScreen->UpdateScreen();
+        if (_screenNext)
+            _screenNext->SpriteStateWillChange();  // the rows the sprite engine has filled keep what they saw
     });
     // The copper is the machine's: it runs after every instruction, its steps are watched for breakpoints, its clock and its picture hook
     // come from the raster
     _board->Copper().SetObserver([this](const NextCopper::Step& step) { return OnCopperStep(step); });
     if (ScreenNext* screen = _context->pScreen ? dynamic_cast<ScreenNext*>(_context->pScreen) : nullptr)
         screen->BindCopper(_board->Copper());
+    _screenNext = _context->pScreen ? dynamic_cast<ScreenNext*>(_context->pScreen) : nullptr;
     _interrupts = std::make_unique<NextInterruptSource>(_context);
     _interrupts->ctcEnables = [this]() { return _ctc.InterruptEnables(); };
     _interrupts->setCtcEnables = [this](uint8_t bits) { _ctc.SetInterruptEnables(bits); };
@@ -262,10 +265,20 @@ bool PortDecoder_Next::PortEnabled(unsigned bit) const
 
 /// The mouse registers as zxnext.vhd gives them: X, Y, and {wheel, 1, not middle, not left, not right}; with no mouse the inputs idle
 /// (zero counts, buttons released). NR #0A bit 3 swaps the buttons (the PS/2 mouse module's control); its DPI bits are the host's
+/// NR #0A bits 1:0 into the PS/2 module's scaling (ps2_mouse.v xydelta): 00 x2, 01 x1, 10 half, 11 a quarter
+void PortDecoder_Next::ApplyMouseDpi(uint8_t nr0a)
+{
+    if (!_mouse)
+        return;
+    static constexpr int kShift[4] = {1, 0, -1, -2};
+    _mouse->SetDeltaShift(kShift[nr0a & 3]);
+}
+
 uint8_t PortDecoder_Next::ReadMouse(uint8_t reg)
 {
     if (!_mouse || !_mouse->IsPresent())
         return reg == 0 ? 0x0F : 0x00;
+    ApplyMouseDpi(_board->Stored(0x0A));  // follows a reset or a loaded image
     const uint8_t counted = _mouse->ReadRegister(reg);  // the device keeps its read bookkeeping
     if (reg != 0)
         return counted;
@@ -641,7 +654,11 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     else if (port == 0x303B)
     {
         if (PortEnabled(14))
+        {
+            if (_screenNext)
+                _screenNext->SpriteStateWillChange();
             _board->Sprites().WriteSlotSelect(value);
+        }
     }
     else if (port == 0xBF3B)
     {
@@ -676,12 +693,20 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     else if (static_cast<uint8_t>(port) == 0x57)
     {
         if (PortEnabled(14))
+        {
+            if (_screenNext)
+                _screenNext->SpriteStateWillChange();
             _board->Sprites().WriteAttribute(value);
+        }
     }
     else if (static_cast<uint8_t>(port) == 0x5B)
     {
         if (PortEnabled(14))
+        {
+            if (_screenNext)
+                _screenNext->SpriteStateWillChange();
             _board->Sprites().WritePattern(value);
+        }
     }
     else if (static_cast<uint8_t>(port) == kPortSpiSelect && SpiPortEnabled())
         SpiSelect(value);
@@ -799,6 +824,8 @@ bool PortDecoder_Next::WriteDacPort(uint16_t port, uint8_t value)
 /// releases the bus then); the CPU is held for two of its clocks per byte
 void PortDecoder_Next::NextRegAccess(bool write, uint8_t reg, uint8_t value, NextRegSource source)
 {
+    if (write && reg == 0x0A)
+        ApplyMouseDpi(value);
     uint8_t door;
     switch (source)
     {

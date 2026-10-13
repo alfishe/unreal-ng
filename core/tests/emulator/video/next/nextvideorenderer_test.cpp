@@ -150,6 +150,28 @@ TEST_F(NextVideoRenderer_Test, LoResIsTwoByTwoUlaPixelsInTwoHalves)
     EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Pal(0, 0x44 + 0x20));
 }
 
+// lores.vhd: y_pre = vc + scroll_y runs on from 192 with y(7:6) + 1, so a Y scroll that takes the row past 384 reads the memory behind the
+// 96 rows (row 104 here: 104 * 128 + 0x800) instead of wrapping to the top
+TEST_F(NextVideoRenderer_Test, LoResYScrollRunsOnIntoTheMemoryBehindTheRows)
+{
+    _in.nr[0x15] = 0x80;
+    _in.nr[0x33] = 250;
+    Page(5)[0x3C00] = 0x77;   // y = 208: row 104, +0x800 from row 48 on
+    Page(5)[8 * 128] = 0x11;  // where a wrap at 192 would read (row 8)
+    Render(NextVideoRenderer::kPaperTop + 150);  // 150 + 250 = 400
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Pal(0, 0x77));
+}
+
+TEST_F(NextVideoRenderer_Test, RadastanYScrollRunsOnToo)
+{
+    _in.nr[0x15] = 0x80;
+    _in.nr[0x6A] = 0x20;
+    _in.nr[0x33] = 250;
+    Page(5)[104 * 64] = 0x90;  // row 104 of the first display file, the high nibble
+    Render(NextVideoRenderer::kPaperTop + 150);
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Pal(0, 0x9));
+}
+
 // Radastan (NR #6A bit 5, lores.vhd mode 1): 128 x 96 at 4 bits, a 64-byte row, the high nibble first, two pixels a nibble
 TEST_F(NextVideoRenderer_Test, RadastanIsFourBitPixelsInA64ByteRow)
 {

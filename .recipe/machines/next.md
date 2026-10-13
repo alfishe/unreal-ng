@@ -537,8 +537,8 @@ curl -s "$BASE/$ID/capture/screen" | jq -r .data | base64 -d > screen.png
 - **Mouse**: `#FADF` buttons and wheel (`{wheel[3:0], 1, not middle, not left, not right}`: D1 is the left button, D0 the right one: the
   reverse of the ZX Evo's order), `#FBDF` X, `#FFDF` Y; decoded at A7-A0 = `#DF` and A11-A8 = A / B / F, enabled by NR `#83` bit 5. NR `#0A`
   bit 3 swaps the buttons. The device is the generic `Mouse` (`GET /api/v1/emulator/{id}/mouse`, MCP `mouse_input`): the wheel nibble is
-  always on; with no mouse fitted the board's inputs idle (X = Y = 0, `#FADF` = `#0F`). The DPI bits (NR `#0A` 1:0) belong to the host's PS/2
-  mouse module and are not modelled.
+  always on; with no mouse fitted the board's inputs idle (X = Y = 0, `#FADF` = `#0F`). NR `#0A` bits 1:0 scale the motion as the board's PS/2 module does (`ps2_mouse.v`):
+  00 x2, 01 x1, 10 half, 11 a quarter.
 - **ULA+**: `#BF3B` selects (bits 7:6 mode, 5:0 index in mode 0), `#FF3B` reads / writes the CLUT entry (GGGRRRBB, entries 192-255 of the ULA
   palette, the second one when NR `#43` bit 6 is set) in mode 0 and the enable bit in mode 1; the enable is NR `#68` bit 3's flop. In ULA+
   the pixel index is `11` flash bright half colour (no flashing), the border the paper half; ULANext wins over it; NR `#85` bit 0 gates the

@@ -155,6 +155,7 @@ static void SaveSprites(Writer& w, const NextSprites& s)
 }
 static void LoadSprites(Reader& r, NextSprites& s)
 {
+    s.Touch();
     r.GetArray(s._attr);
     r.GetArray(s._pattern);
     r.Get(s._slot);

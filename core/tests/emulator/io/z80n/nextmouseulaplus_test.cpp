@@ -135,3 +135,28 @@ TEST_F(NextMouseUlaPlus_Test, TheUlaPlusPortsFollowTheirEnableBit)
     EXPECT_EQ(In(kPortUlaPlusData), 0xAA) << "the write while it was off was ignored";
     (void)kRegPeripheral1;
 }
+
+// ps2_mouse.v xydelta: NR #0A bits 1:0 scale the motion as the counters take it: 00 twice, 01 as is, 10 half, 11 a quarter
+// (arithmetic shifts, the sign kept)
+TEST_F(NextMouseUlaPlus_Test, TheDpiBitsScaleTheMotion)
+{
+    Mouse* mouse = _context->pMouse;
+    ASSERT_NE(mouse, nullptr);
+    mouse->SetPresent(true);
+    mouse->SetCounters(0, 0);
+    Nr(kRegMouseControl, 0x00);
+    mouse->Move(3, -2);
+    EXPECT_EQ(mouse->GetX(), 6);
+    EXPECT_EQ(mouse->GetY(), 0xFC);
+    Nr(kRegMouseControl, 0x02);
+    mouse->Move(-5, 6);  // -5 >> 1 = -3, 6 >> 1 = 3
+    EXPECT_EQ(mouse->GetX(), 3);
+    EXPECT_EQ(mouse->GetY(), 0xFF);
+    Nr(kRegMouseControl, 0x03);
+    mouse->Move(9, -9);  // 9 >> 2 = 2, -9 >> 2 = -3
+    EXPECT_EQ(mouse->GetX(), 5);
+    EXPECT_EQ(mouse->GetY(), 0xFC);
+    Nr(kRegMouseControl, 0x01);
+    mouse->Move(1, 1);
+    EXPECT_EQ(mouse->GetX(), 6) << "01 is the default: one for one";
+}

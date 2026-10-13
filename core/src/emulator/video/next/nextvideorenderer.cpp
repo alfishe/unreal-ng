@@ -196,9 +196,11 @@ void NextVideoRenderer::LoResLine(const NextVideoInputs& in, unsigned y, Pixel* 
     const unsigned palette = (regs.PaletteControl() & 0x02) ? 4 : 0;
     const unsigned offset = (in.nr[0x6A] & 0x0F) << 4;
     const unsigned transparent = in.nr[0x14];
-    const unsigned py = y - kPaperTop;
-    const unsigned sy = (py + in.nr[0x33]) % 192;  // NR #33: LoRes Y scroll
-    const unsigned row = sy / 2;                       // 96 rows
+    // lores.vhd: y_pre = vc + scroll_y (9 bits); from 192 on y(7:6) is incremented, so the row runs on into the memory behind the
+    // 96 rows (up to y = 254) instead of wrapping at 192
+    const unsigned yPre = (y - kPaperTop) + in.nr[0x33];
+    const unsigned sy = yPre >= 192 ? ((yPre & 0x3F) | ((((yPre >> 6) + 1) & 3) << 6)) : yPre;
+    const unsigned row = sy / 2;  // y(7:1): 0-127
     const unsigned base = in.shadowScreen ? 7 : 5;
     const uint8_t* screen = in.ram + static_cast<size_t>(base) * 0x4000;
     const unsigned scrollX = in.nr[0x32];  // NR #32: LoRes X scroll, in LoRes pixels doubled
@@ -211,7 +213,7 @@ void NextVideoRenderer::LoResLine(const NextVideoInputs& in, unsigned y, Pixel* 
         unsigned idx;
         if (radastan)
         {
-            const unsigned address = dfile + row * 64 + (x >> 2);
+            const unsigned address = (dfile + row * 64 + (x >> 2)) & 0x3FFF;
             const uint8_t byte = screen[in.shadowScreen ? (address & 0x1FFF) : address];
             const unsigned nibble = (x & 2) == 0 ? (byte >> 4) : (byte & 0x0F);
             // the high nibble of the palette index: the offset, or "11" & offset(1:0) when ULA+ is on (the CLUT)
@@ -220,7 +222,8 @@ void NextVideoRenderer::LoResLine(const NextVideoInputs& in, unsigned y, Pixel* 
         else
         {
             const unsigned sx = x / 2;  // 128 columns
-            const unsigned address = (row < 48 ? 0x0000 : 0x2000) + (row % 48) * 128 + sx;
+            // y(7:1) & x(7:1), bits 13:11 + 1 from y = 96, 14 bits
+            const unsigned address = (row * 128 + sx + (sy >= 96 ? 0x800 : 0)) & 0x3FFF;
             idx = (screen[in.shadowScreen ? (address & 0x1FFF) : address] + offset) & 0xFF;  // bank 7 is the 8K BRAM
         }
         Pixel& a = line[kPaperLeft + px * 2];
@@ -428,7 +431,15 @@ void NextVideoRenderer::SpriteLine(const NextVideoInputs& in, unsigned y, Pixel*
     if (!in.sprites)
         return;
     NextSprites::Pixel grid[NextSprites::kGridWidth];
-    in.sprites->DrawLine(y, in.nr[0x15], *in.regs, grid, in.nr[0x4B]);
+    if (in.spriteFill)
+    {
+        // the attributes, the patterns and the transparent index are what the engine saw when it filled this row; the enable, the clip
+        // and the palette are the output stage's, as they are now
+        in.spriteFill->DrawLine(y, in.nr[0x15], *in.regs, grid, static_cast<uint8_t>(in.spriteTransparent >= 0 ? in.spriteTransparent : in.nr[0x4B]));
+        in.sprites->MergeFlags(*in.spriteFill);
+    }
+    else
+        in.sprites->DrawLine(y, in.nr[0x15], *in.regs, grid, in.nr[0x4B]);
     const unsigned palette = (in.regs->PaletteControl() & 0x08) ? 6 : 2;
     for (unsigned x = 0; x < NextSprites::kGridWidth; x++)
     {

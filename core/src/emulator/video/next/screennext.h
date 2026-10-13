@@ -59,6 +59,11 @@ public:
     /// is NR #43 bits 6:4, the palette NR #41 / #44 write to (each palette's lookup is a different stage)
     static PictureLatency PictureLatencyOf(uint8_t reg, uint8_t previous, uint8_t value, uint8_t paletteWriteSelect = 0);
 
+    /// A write to the sprite engine's fill inputs (attributes, patterns, NR #34-#39 / #75-#79, NR #4B) is about to be applied at `tstate` (the
+    /// frame's T-state; negative: now): the rows the engine has filled by then keep the state they saw (POC 028: it fills paper row R
+    /// during row R - 1 from about hc -21, in index order, one clock a sprite and 17 more for a drawn one)
+    void SpriteStateWillChange(int64_t tstate = -1);
+
     /// The T-state (base, from the frame start) at which visible line `y` (0-255) is complete
     uint32_t LineEndT(unsigned y) const;
 
@@ -88,6 +93,17 @@ private:
     bool FramebufferReady() const;
 
     mutable PortDecoder_Next* _decoder = nullptr;
+    // the sprite engine's fill: what each row saw (shared snapshots of the sprite state, one per epoch of writes)
+    std::shared_ptr<NextSprites> _fillSnap;
+    uint32_t _fillSnapEpoch = 0;
+    std::shared_ptr<NextSprites> _rowFill[NextVideoRenderer::kHeight];
+    uint8_t _rowTransparent[NextVideoRenderer::kHeight] = {};
+    unsigned _fillNext = 0;                ///< the next row to fill
+    int64_t _fillNextEnd = 0;              ///< when its fill ends (valid for _fillNextEndEpoch / _fillNextEndRow)
+    uint32_t _fillNextEndEpoch = ~0u;
+    unsigned _fillNextEndRow = ~0u;
+    int64_t SpriteFillEnd(unsigned y);
+    void FillSpriteRow(unsigned y);
     unsigned _nextLine = 0;
     unsigned _nextX = 0;  ///< the pixels of _nextLine already drawn (a MOVE of the copper drew up to its pixel)
     uint8_t _lastTimingClass = 2;

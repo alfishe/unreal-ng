@@ -332,7 +332,7 @@ begin
          when 50 => kind := 2; n_reg := x"6A"; n_base := x"20"; n_new := x"30"; set_reg(2, x"01");                 -- Radastan: the XOR bit
          when 51 => kind := 2; n_reg := x"6A"; n_base := x"00"; n_new := x"05"; set_reg(2, x"01");                 -- LoRes palette offset
          when 52 => kind := 2; n_reg := x"70"; n_base := x"00"; n_new := x"10"; set_reg(4, x"01");                 -- Layer 2 resolution 320x256
-         when 53 => kind := 2; n_reg := x"6B"; n_base := x"80"; n_new := x"88"; set_reg(3, x"01");                 -- tilemap text mode (bit 3)
+         when 53 => r_idx := 32; r_base := x"00"; r_new := x"08"; set_reg(3, x"01"); set_reg(0, x"00");  -- tilemap text mode (NR #6B bit 3)
          when others => null;
       end case;
       if g_scenario = 50 then nr_write(x"6A", x"20"); end if;

@@ -26,6 +26,8 @@
 
 #include "emulator/ports/models/portdecoder_spectrum128.h"
 
+class ScreenNext;
+
 /// ZX Spectrum Next, skeleton personality: the 128K board's ports (ULA #FE, AY, #7FFD) with the Next's wider
 /// decode of the paging ports - #7FFD, #1FFD, #DFFD rewrite the MMU slot table - and the NEXTREG pair #243B /
 /// #253B. Owns the board (register file) and installs the Z80N CPU engine.
@@ -202,6 +204,8 @@ private:
     /// A read of a port whose enable bit is off: nothing on the board answers, the bus is idle
     uint8_t IdleRead(uint16_t port, uint16_t pc);
     uint8_t ReadMouse(uint8_t reg);
+    void ApplyMouseDpi(uint8_t nr0a);
+    ScreenNext* _screenNext = nullptr;  ///< the picture, told before the program changes what the sprite engine fills from
     /// #FADF / #FBDF / #FFDF: A7-A0 = #DF and A11-A8 = A / B / F (zxnext.vhd), the register 0 buttons, 1 X, 2 Y
     static bool MouseRegisterOf(uint16_t port, uint8_t& reg)
     {
