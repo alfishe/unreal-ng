@@ -111,4 +111,44 @@ bool TakesCondition(std::string_view m)
 {
     return m == "jp" || m == "jr" || m == "call" || m == "ret";
 }
+
+std::optional<Z80nForm> Z80nEncoding(const ir::Statement& s)
+{
+    if (s.kind != ir::Statement::Kind::Instruction)
+        return std::nullopt;
+    const std::string m = Lower(s.mnemonic);
+    const auto& ops = s.operands;
+    const auto reg = [&](size_t k, const char* name) { return k < ops.size() && ops[k].kind == ir::Operand::Kind::Register && ops[k].text == name; };
+    const auto value = [&](size_t k) { return k < ops.size() && ops[k].kind == ir::Operand::Kind::Immediate; };
+    const auto form = [](int code, char layout = 'n') { return std::optional<Z80nForm>(Z80nForm{code, layout}); };
+    if (m == "swapnib") return form(0x23);
+    if (m == "mirror") return form(0x24);
+    if (m == "test" && value(0)) return form(0x27, 'b');
+    if (m == "bsla") return form(0x28);
+    if (m == "bsra") return form(0x29);
+    if (m == "bsrl") return form(0x2A);
+    if (m == "bsrf") return form(0x2B);
+    if (m == "brlc") return form(0x2C);
+    if (m == "mul") return form(0x30);
+    if (m == "add" && ops.size() == 2 && reg(1, "a") && (reg(0, "hl") || reg(0, "de") || reg(0, "bc")))
+        return form(reg(0, "hl") ? 0x31 : reg(0, "de") ? 0x32 : 0x33);
+    if (m == "add" && ops.size() == 2 && value(1) && (reg(0, "hl") || reg(0, "de") || reg(0, "bc")))
+        return form(reg(0, "hl") ? 0x34 : reg(0, "de") ? 0x35 : 0x36, 'w');
+    if (m == "push" && ops.size() == 1 && value(0)) return form(0x8A, 'W');
+    if (m == "outinb") return form(0x90);
+    if (m == "nextreg" && ops.size() == 2 && value(0) && value(1)) return form(0x91, 'B');
+    if (m == "nextreg" && ops.size() == 2 && value(0) && reg(1, "a")) return form(0x92, 'b');
+    if (m == "pixeldn") return form(0x93);
+    if (m == "pixelad") return form(0x94);
+    if (m == "setae") return form(0x95);
+    if (m == "jp" && ops.size() == 1 && ops[0].kind == ir::Operand::Kind::Indirect && ops[0].text == "c") return form(0x98);
+    if (m == "ldix") return form(0xA4);
+    if (m == "ldws") return form(0xA5);
+    if (m == "lddx") return form(0xAC);
+    if (m == "ldirx") return form(0xB4);
+    if (m == "ldirscale") return form(0xB6);
+    if (m == "ldpirx") return form(0xB7);
+    if (m == "lddrx") return form(0xBC);
+    return std::nullopt;
+}
 }  // namespace unrealasm::dialects::z80

@@ -55,9 +55,21 @@ struct WideByteOperand
     int64_t value = 0;       ///< the first value found out of range
 };
 
+/// The address ($) a line of a project file starts at, as sjasmplus assembles it
+struct LineAddress
+{
+    std::string file;
+    uint32_t line = 0;           ///< 1-based
+    uint32_t bodyLine = 0;       ///< a line of a macro expanded on that line: its line in the body (1-based; 0: the line)
+    int64_t address = 0;
+};
+
 struct LayoutResult
 {
     std::vector<Label> labels;   ///< each name once, in the order the source defines them
+    /// Each line of the files assembled once at one address (a line in a repeated block, a file INCLUDEd twice at
+    /// two addresses, a line skipped by IF: none), and each line of a macro a file's line expands
+    std::vector<LineAddress> lines;
     std::vector<WideByteOperand> wideBytes;
     Diagnostics diagnostics;
     int passes = 0;
