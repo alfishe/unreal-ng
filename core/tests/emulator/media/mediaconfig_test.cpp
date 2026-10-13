@@ -242,3 +242,20 @@ TEST(MediaConfig_Test, SessionJournalSettings)
     EXPECT_FALSE(kept.sessionIoThreads.has_value()) << "at most 4";
     EXPECT_EQ(badReport.size(), 4u);
 }
+
+/// NFR-M5: [MEDIA] ExtentBudget is a setting (0: no limit), not a slot; a bad value is reported
+TEST(MediaConfig_Test, ExtentBudget)
+{
+    IniFile ini;
+    ini.LoadData("[MEDIA]\nExtentBudget = 1000\n");
+    std::vector<std::string> report;
+    EXPECT_EQ(MediaConfig::SettingsFromIni(ini, "", &report).extentBudget, std::optional<uint64_t>(1000));
+    EXPECT_TRUE(report.empty());
+    EXPECT_TRUE(MediaConfig::FromIni(ini, "", &report).empty()) << "not a slot";
+
+    IniFile bad;
+    bad.LoadData("[MEDIA]\nExtentBudget = lots\n");
+    std::vector<std::string> badReport;
+    EXPECT_FALSE(MediaConfig::SettingsFromIni(bad, "", &badReport).extentBudget.has_value());
+    EXPECT_EQ(badReport.size(), 1u);
+}

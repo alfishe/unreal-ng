@@ -21,6 +21,7 @@
 /// SessionJournal      = off            ; on: media keep a journal next to them, replayed after a crash
 /// SessionIoThreads    = 1              ; threads writing journals (0: a quarter of the cores, 1 to 4)
 /// SpillFolder         = /var/tmp       ; journals of media without a place of their own (default: the temp folder)
+/// ExtentBudget        = 4194304        ; extents (16 bytes each) a composite may hold; over it the build fails (0: no limit)
 /// ```
 ///
 /// The Session* keys and SpillFolder are settings, not slots (multi-source phases/c10e-session-journal.md §5).
@@ -71,6 +72,7 @@ struct MediaSettings
     std::optional<uint32_t> sessionSyncSeconds;
     std::optional<bool> sessionJournal;
     std::optional<uint32_t> sessionIoThreads;
+    std::optional<uint64_t> extentBudget;  ///< NFR-M5: composites' default target.extentBudget
     std::optional<std::string> spillFolder;
 };
 

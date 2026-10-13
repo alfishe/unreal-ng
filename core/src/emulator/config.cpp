@@ -20,6 +20,7 @@
 #include "emulator/io/serial/esp/espmodule.h"
 #include "emulator/io/sprinter/isa/isaslotconfig.h"
 #include "emulator/io/storage/sessionwritemap.h"
+#include "emulator/media/compositemediumfactory.h"
 #include "emulator/slots/slotmanager.h"
 #include <cassert>
 #include <array>
@@ -1080,6 +1081,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 		session.ioThreads = settings.sessionIoThreads.value_or(session.ioThreads);
 		session.spillFolder = settings.spillFolder.value_or(std::string());
 		SessionWriteMap::SetDefaults(session);
+		CompositeMediumFactory::SetDefaultExtentBudget(settings.extentBudget.value_or(CompositeMediumFactory::kDefaultExtentBudget));
 	}
 
 	// Emulated model

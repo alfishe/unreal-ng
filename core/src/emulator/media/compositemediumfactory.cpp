@@ -192,6 +192,36 @@ namespace
         return true;
     }
 
+
+    /// NFR-M5: the extents the trees hold stay within the budget (0: none). Over it: why, with the files that hold the
+    /// most of them (fragmented sources: `compact` them, or leave those files out)
+    std::optional<std::string> OverExtentBudget(const std::vector<const FileTree*>& trees, uint64_t budget)
+    {
+        if (budget == 0)
+            return std::nullopt;
+        uint64_t total = 0;
+        for (const FileTree* t : trees)
+            total += t->Extents().size();
+        if (total <= budget)
+            return std::nullopt;
+        std::vector<std::pair<uint32_t, std::string>> worst;
+        for (const FileTree* t : trees)
+            for (uint32_t n = 0; n < t->NodeCount(); n++)
+            {
+                const TreeNode& node = t->Node(n);
+                if (!node.isDirectory && node.data.storage == FileData::Storage::DeviceExtents && node.data.extentCount > 0)
+                    worst.emplace_back(node.data.extentCount, t->PathOf(n));
+            }
+        const size_t shown = std::min<size_t>(worst.size(), 10);
+        std::partial_sort(worst.begin(), worst.begin() + static_cast<std::ptrdiff_t>(shown), worst.end(),
+                          [](const auto& a, const auto& b) { return a.first > b.first; });
+        std::string list;
+        for (size_t k = 0; k < shown; k++)
+            list += (k ? ", " : "") + worst[k].second + " (" + std::to_string(worst[k].first) + ")";
+        return "the sources are too fragmented: " + std::to_string(total) + " extents, the budget is " + std::to_string(budget) +
+               " (target.extentBudget, [MEDIA] ExtentBudget; 16 bytes each). The most fragmented files: " + list +
+               ". Compact the source image (save with compact), or leave those files out";
+    }
 }  // namespace
 
 std::vector<FatType> CompositeMediumFactory::FsCandidates(std::optional<FatType> want, const std::vector<FatType>& allowed,
@@ -366,6 +396,8 @@ MediaResult CompositeMediumFactory::BuildPartitioned(const ComposeDescriptor& d,
                 child.target.codePage = d.target.codePage;
             if (d.target.onBadName == "replace")
                 child.target.onBadName = "replace";
+            if (!child.target.extentBudget)
+                child.target.extentBudget = d.target.extentBudget;
             child.file = d.file;
             CompositeBuildOptions childOptions = options;
             childOptions.mbr = false;
@@ -533,6 +565,7 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
                           bottomLayer->exclude.empty();
     std::unique_ptr<FatImageExpander> expander;
     std::vector<uint32_t> uncountedBase, uncountedUnion;  ///< C4b: unexpanded directories, counted by CompleteCounts
+    const uint64_t extentBudget = d.target.extentBudget.value_or(DefaultExtentBudget());
     // FR-6 / FR-14: entry order per target directory, applied after the merge in this order (a later list's names
     // come first): folder manifests, then the descriptor's layer `order` (the descriptor wins)
     std::vector<std::pair<std::string, std::vector<std::string>>> manifestOrders;
@@ -725,6 +758,13 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
         Count(trees[i], FileTree::kRoot, layerInfo.files, layerInfo.bytes, i == 0 && expander ? &uncountedBase : nullptr);
         info.layers.push_back(layerInfo);
         mix(sourceIdentity);
+        {
+            std::vector<const FileTree*> sofar;
+            for (size_t k = 0; k <= i; k++)
+                sofar.push_back(&trees[k]);
+            if (const std::optional<std::string> over = OverExtentBudget(sofar, extentBudget))
+                return MediaResult::Fail(MediaError::DoesNotFit, *over);
+        }
 
         UnionLayer u;
         u.tree = &trees[i];
@@ -855,6 +895,8 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
     };
     if (!unite(result.report))
         return MediaResult::Fail(MediaError::BadRequest, error);
+    if (const std::optional<std::string> over = OverExtentBudget({tree.get()}, extentBudget))
+        return MediaResult::Fail(MediaError::DoesNotFit, *over);
 
     // --- An ISO 9660 CD ---
     if (optical)

@@ -27,7 +27,7 @@ PLAN.md row **#95**.
   - [x] FR-6 (2026-10-11, owner: the descriptor wins): the manifest's `order`, `files` names, and the bottom layer's `codepage` / `label`
   - [x] FR-14 (2026-10-11): a layer's `order` per target directory
   - [x] FR-21: `onBadName: replace` (2026-10-11, owner: `_`); a long name with `\ / : * ? " < > |` or a control character is no longer stored as it is (skipped by default)
-  - [ ] NFR-M5: no extent budget (extents are only coalesced)
+  - [x] NFR-M5 (2026-10-12, owner: fail, no fallback): `target.extentBudget` / `[MEDIA] ExtentBudget`, default 4 M extents
   - [x] FR-45 (2026-10-11, owner): `writes.commit: none | all | partial`, default none; a partitioned composite commits per partition
   - [x] D-8 (owner, 2026-10-09: a medium that leaves follows the policy): dispositions and the emulator closing run `writes.save` (`discard`, `ask` added), a failed commit / write-back falls back to S2 unless `strict`; eject / swap / insert / create / rescan take `strategy`, `onConflict`, `strict`
   - [x] D-8 in Qt (2026-10-10): `SlotInfo::onRelease` (list / info `onRelease`), `MediaManager::Unsaved()`, `NC_MEDIA_DIRTY` carries `onRelease`, new `NC_MEDIA_CLEAN`; the main window's title mark and its close question (`ask` composites: the strategy dialog; changes that would be lost: save / close without saving / cancel). Owner's check on macOS / Windows pending
