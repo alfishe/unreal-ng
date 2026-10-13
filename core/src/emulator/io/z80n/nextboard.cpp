@@ -67,6 +67,8 @@ void NextBoard::Reset(bool hard)
     _regs[0x6F] = 0x0C;
     _regs[0xA9] = 0x01;  // nr_a9_esp_gpio0 (5085)
     _regs[kRegMachineType] = type;
+    if (hard)
+        LatchVideoFrameSync();
     // the whole-byte reset values of the table (registers.txt); the registers with devices behind them reset those on their own
     size_t count;
     for (const NextRegInfo* r = NextRegTable(count); r != NextRegTable(count) + count; r++)
@@ -173,8 +175,13 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return _interrupts ? static_cast<uint8_t>(_interrupts->CurrentLine() >> 8) : 0;
         case 0x1F:
             return _interrupts ? static_cast<uint8_t>(_interrupts->CurrentLine() & 0xFF) : 0;
+        case 0x05:
+            return static_cast<uint8_t>((_regs[reg] & 0xFA) | _eff05);  // 5896: bits 2 and 0 are eff_nr_05_5060 / eff_nr_05_scandouble_en
         case 0x09:
-            return static_cast<uint8_t>(_regs[reg] & ~0x08);  // bit 3 reads 0 (zxnext.vhd: mono & tie & '0' & hdmi & scanlines)
+            // 5909: mono & tie & '0' & hdmi & eff_nr_09_scanlines (bit 3 reads 0, bits 1:0 as the last frame sync took them)
+            return static_cast<uint8_t>((_regs[reg] & 0xF4) | _eff09);
+        case 0x81:
+            return static_cast<uint8_t>((_regs[reg] & 0x78) | 0x80);  // 6126: ROMCS_n (idle high) & bits 6:3, bit 2 = 0, the speed bits 00
         case 0x28:
             return _video.StoredPaletteValue();  // 6004: nr_stored_palette_value, not the keymap address that was written
         case 0x85:
@@ -197,15 +204,16 @@ uint8_t NextBoard::Read(uint8_t reg) const
         case 0x99:
         case 0x9A:
         case 0x9B:
-        {
-            // a read is the PIN state (i_GPIO), not the output latch: an enabled output shows its value, the others what the Pi drives
-            // (nothing is wired to the header here yet: low)
-            const unsigned bank = reg - 0x98;
-            uint8_t level = _gpioInput ? _gpioInput(bank) : 0;
-            const uint8_t enable = Read(static_cast<uint8_t>(0x90 + bank));
-            const uint8_t value = static_cast<uint8_t>(_regs[reg] & (bank == 3 ? 0x0F : 0xFF));
-            return static_cast<uint8_t>((value & enable) | (level & ~enable));
-        }
+            // a read is the PIN state (i_GPIO), not the output latch (6176-6189)
+            return static_cast<uint8_t>((GpioPins() >> (8 * (reg - 0x98))) & (reg == 0x9B ? 0x0F : 0xFF));
+        case 0x2C:
+            _i2sLow = static_cast<uint8_t>(PiAudioLeft() & 3);
+            return static_cast<uint8_t>(PiAudioLeft() >> 2);  // 6007: the Pi's I2S sample, not what the DAC mirror was written
+        case 0x2D:
+            return static_cast<uint8_t>(_i2sLow << 6);
+        case 0x2E:
+            _i2sLow = static_cast<uint8_t>(PiAudioRight() & 3);
+            return static_cast<uint8_t>(PiAudioRight() >> 2);
         case 0xA0:
             return static_cast<uint8_t>(_regs[reg] & 0x39);  // "00" & pi peripheral bits 5:3 & "00" & bit 0 (zxnext.vhd 6189)
         case 0xA2:
@@ -224,6 +232,94 @@ uint8_t NextBoard::Read(uint8_t reg) const
     if (_interrupts && _interrupts->ReadNr(reg, value))
         return value;
     return _regs[reg];
+}
+
+uint32_t NextBoard::GpioPins() const
+{
+    uint32_t enable = (static_cast<uint32_t>(_regs[0x90] & 0xFC)) | (static_cast<uint32_t>(_regs[0x91]) << 8) |
+                      (static_cast<uint32_t>(_regs[0x92]) << 16) | (static_cast<uint32_t>(_regs[0x93] & 0x0F) << 24);
+    uint32_t out = static_cast<uint32_t>(_regs[0x98]) | (static_cast<uint32_t>(_regs[0x99]) << 8) | (static_cast<uint32_t>(_regs[0x9A]) << 16) |
+                   (static_cast<uint32_t>(_regs[0x9B] & 0x0F) << 24);
+    uint32_t in = 0x0C;  // GPIO 2 and 3: the Pi pulls its I2C pair up
+    if (_gpioInput)
+    {
+        in = 0;
+        for (unsigned bank = 0; bank < 4; bank++)
+            in |= static_cast<uint32_t>(_gpioInput(bank)) << (8 * bank);
+    }
+    auto own = [&](unsigned pin, bool driven, bool level) {
+        const uint32_t bit = 1u << pin;
+        enable = driven ? (enable | bit) : (enable & ~bit);
+        out = level ? (out | bit) : (out & ~bit);
+    };
+    const uint8_t a0 = _regs[0xA0], a2 = _regs[0xA2];
+    if (a0 & 0x01)  // SPI0: chip selects 7 / 8 idle high, MOSI 10 and SCK 11 idle low, MISO 9 an input
+    {
+        own(7, true, true);
+        own(8, true, true);
+        own(10, true, false);
+        own(11, true, false);
+        own(9, false, false);
+    }
+    if (a0 & 0x10)  // UART 1: TX on GPIO15 (the Pi orientation, bit 5) or 14, idle high; the other pin is RX (idle high)
+    {
+        const bool rxtx = (a0 & 0x20) != 0;
+        own(rxtx ? 15 : 14, true, true);
+        own(rxtx ? 14 : 15, false, false);
+        if (!_gpioInput)
+            in |= 1u << (rxtx ? 14 : 15);
+    }
+    if (a2 & 0xC0)  // I2S: SCK and WS are the Pi's, the data pin of the direction is the Next's (level not modelled: 0)
+    {
+        own(18, false, false);
+        own(19, false, false);
+        const bool inout = (a2 & 0x10) != 0;
+        own(20, inout, false);
+        own(21, !inout, false);
+    }
+    return (out & enable) | (in & ~enable);
+}
+
+void NextBoard::SetI2sSample(unsigned left, unsigned right)
+{
+    _i2sLeft = left & 0x3FF;
+    _i2sRight = right & 0x3FF;
+    UpdatePiEar();
+    if (_machine)
+        _machine->PiAudioChanged(PiAudioLeft(), PiAudioRight());
+}
+
+unsigned NextBoard::PiAudioLeft() const
+{
+    // 2358: silence when the I2S is off, the left is muted or the EAR mode takes the audio; the left sample (or the right one on a right-only setup)
+    const uint8_t a2 = _regs[0xA2];
+    if (!(a2 & 0xC0) || (a2 & 0x08) || (a2 & 0x01))
+        return 0x200;
+    return (a2 & 0x80) ? _i2sLeft : _i2sRight;
+}
+
+unsigned NextBoard::PiAudioRight() const
+{
+    const uint8_t a2 = _regs[0xA2];
+    if (!(a2 & 0xC0) || (a2 & 0x04) || (a2 & 0x01))
+        return 0x200;
+    return (a2 & 0x40) ? _i2sRight : _i2sLeft;
+}
+
+void NextBoard::UpdatePiEar()
+{
+    // 2361-2373: a Schmitt trigger on the top two bits of the raw samples, only with the I2S on and bit 0 of NR #A2 set
+    const uint8_t a2 = _regs[0xA2];
+    if (!(a2 & 0xC0) || !(a2 & 0x01))
+    {
+        _piEar = false;
+        return;
+    }
+    const unsigned threshold = ((_i2sLeft >> 8) | (_i2sRight >> 8)) & 3;
+    if (_piEar && threshold == 0)
+        _piEar = false;
+    else if (!_piEar && threshold == 3)
+        _piEar = true;
 }
 
 void NextBoard::Write(uint8_t reg, uint8_t value)
@@ -262,6 +358,12 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
                 board->_machine->AudioConfigChanged();
             else if ((reg == 0xA8 || reg == 0xA9 || reg == 0x0B) && board->_machine)
                 board->_machine->BoardPinsChanged();
+            else if (reg == 0xA2)
+            {
+                board->UpdatePiEar();  // NR #A2 turns the Pi's I2S into the mixer's input and the EAR
+                if (board->_machine)
+                    board->_machine->PiAudioChanged(board->PiAudioLeft(), board->PiAudioRight());
+            }
         }
     } audioNotify{this, reg};
     if ((reg == 0x2C || reg == 0x2D || reg == 0x2E) && _machine)

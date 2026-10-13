@@ -197,8 +197,10 @@ conversion failed, too many INCLUDEd files, an assembler without a writer). WebS
 #### Into a snapshot or a disk (no running assembler)
 
 With `snapshot` the sync verbs read a snapshot file (.szx, .sna, .z80) instead of the machine, and `sync_inject`
-writes the snapshot with the text in it to `output`; the machine is not touched. An idle template is ALASM at its
-prompt with no text (`core/src/3rdparty/unreal-asm/testdata/templates/alasm-5.09.szx`):
+writes the snapshot with the text in it to `output`; the machine is not touched. An idle template is an assembler at
+its prompt (`core/src/3rdparty/unreal-asm/testdata/templates/`: alasm-5.09, tasm-4.12, xas-7.447, storm-1.3, masm-1.1,
+zasm-3.15, gens-4, zeus-1983, primus-2.9, lasergenius-1.04, prometheus-48, pasm-3.0 .szx; `make-template.py` makes
+more):
 
 ```text
 asm_source {"action":"sync_inject","path":"/abs/main.asm","snapshot":"/abs/alasm-5.09.szx","output":"/abs/scratch/work.szx"}

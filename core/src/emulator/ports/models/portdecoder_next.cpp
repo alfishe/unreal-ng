@@ -57,6 +57,12 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     _ctc.onInterrupt = [this](unsigned channel) {
         _interrupts->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + channel));
     };
+    _ctc.onZeroCount = [this](unsigned channel) {
+        // joy_iomode_pin7, mode 01: ZC/TO(3) toggles the pin; with NR #0B bit 0 clear it only goes from 0 to 1 and stays
+        const uint8_t nr0b = _board->Stored(0x0B);
+        if (channel == 3 && (nr0b & 0x30) == 0x10 && ((nr0b & 0x01) || !_joyPin7))
+            _joyPin7 = !_joyPin7;
+    };
     _uart.onInterrupt = [this](unsigned channel, bool tx) {
         const unsigned source = tx ? (channel ? NextInterruptSource::kUart1Tx : NextInterruptSource::kUart0Tx)
                                    : (channel ? NextInterruptSource::kUart1Rx : NextInterruptSource::kUart0Rx);
@@ -390,11 +396,15 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         OnPortInComplete(port, value, pc, disp);
         return value;
     }
-    if ((port & 0xC002) == 0xC000 && !IsPort_DFFD_Next(port))  // #FFFD: the selected AY's register
+    // The AY ports (zxnext.vhd 2646-2649, 2771): #FFFD = A15:A14 = 11, A2 = 1 and the +3 family's A1:A0 = 01; #BFFD the same with
+    // A15:A14 = 10, readable like #FFFD on +3 timing; #BFF5 (#BFFD with A3 = 0) reads the chip's identity and register address
+    const bool ayFfFd = (port & 0xC007) == 0xC005 && !IsPort_DFFD_Next(port);
+    const bool ayBfFd = (port & 0xC007) == 0x8005;
+    if (ayFfFd || (ayBfFd && (_board->Timing() == 3 || (port & 0x08) == 0)))  // #BFF5 on any timing, #BFFD on +3
     {
         if (!PortEnabled(16))
             return IdleRead(port, pc);
-        const uint8_t value = _audio->ReadData();
+        const uint8_t value = (ayBfFd && (port & 0x08) == 0) ? _audio->ReadIdentity() : _audio->ReadData();
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -507,7 +517,10 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     {
         if (!PortEnabled(10))
             return IdleRead(port, pc);
-        const uint8_t value = _i2c.Read(port);
+        uint8_t value = _i2c.Read(port);
+        if (_board->Stored(0xA0) & 0x08)  // pi_i2c1_sda / scl = i_GPIO(2 / 3), ANDed into the read (zxnext.vhd 2317-2318)
+            if (!((_board->GpioPins() >> (port == NextI2c::kPortScl ? 3 : 2)) & 1))
+                value = static_cast<uint8_t>(value & 0xFE);
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -533,7 +546,10 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         OnPortInComplete(port, result, pc, disp);
         return result;
     }
-    const uint8_t value = PortDecoder_Spectrum128::DecodePortIn(port, pc);
+    uint8_t value = PortDecoder_Spectrum128::DecodePortIn(port, pc);
+    // port #FE's EAR bit is the tape input or the Pi's I2S audio thresholded into it (zxnext.vhd 3459, NR #A2 bit 0)
+    if (_board->PiEar() && IsPort_FE(port))
+        value |= 0x40;
     if (_inLog && !_lastPortDecoded)
     {
         PortUse& use = (*_inLog)[port];
@@ -663,12 +679,12 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
             _board->RefreshLayer2Mapping();
         }
     }
-    else if ((port & 0xC002) == 0xC000 && !IsPort_DFFD_Next(port))
+    else if ((port & 0xC007) == 0xC005 && !IsPort_DFFD_Next(port))
     {
         if (PortEnabled(16))
             _audio->WriteSelect(value);  // #FFFD
     }
-    else if ((port & 0xC002) == 0x8000)
+    else if ((port & 0xC007) == 0x8005)
     {
         if (PortEnabled(16))
             _audio->WriteData(value);    // #BFFD
@@ -756,7 +772,7 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     else
     {
         PortDecoder_Spectrum128::DecodePortOut(port, value, pc);
-        if (_outLog && !IsPort_FE(port) && !IsPort_7FFD(port) && (port & 0xC002) != 0xC000 && (port & 0xC002) != 0x8000)
+        if (_outLog && !IsPort_FE(port) && !IsPort_7FFD(port) && (port & 0xC007) != 0xC005 && (port & 0xC007) != 0x8005)
         {
             PortUse& use = (*_outLog)[port];
             use.count++;
@@ -807,7 +823,12 @@ void PortDecoder_Next::AudioConfigChanged()
                       (nr06 & 0x40) && (nr08 & 0x10), (nr06 & 3) == 3);
 }
 
-/// NR #2C (B, left), #2D (A and D, mono), #2E (C, right): the DAC's NextREG mirrors
+void PortDecoder_Next::PiAudioChanged(unsigned left, unsigned right)
+{
+    _audio->SetPiAudio(left, right);
+}
+
+/// NR #2C (B, left), #2D (A and D, mono), #2E (C, right): the DAC's NextREG mirrors (writes; a read is the Pi's I2S sample)
 void PortDecoder_Next::DacMirrorWrite(uint8_t reg, uint8_t value)
 {
     if (reg == 0x2C)
@@ -849,6 +870,8 @@ void PortDecoder_Next::NextRegAccess(bool write, uint8_t reg, uint8_t value, Nex
 {
     if (write && reg == 0x0A)
         ApplyMouseDpi(value);
+    if (write && reg == 0x0B)
+        UpdateJoystickPin7(value);
     uint8_t door;
     switch (source)
     {
@@ -1033,8 +1056,20 @@ void PortDecoder_Next::InsertConfiguredCard()
         MLOGERROR("PortDecoder_Next: SD card '%s' not inserted: %s", path.c_str(), result.message.c_str());
 }
 
+/// joy_iomode_pin7 follows NR #0B bit 0 in mode 00 and the UART's TX (idle high) in modes 1x every clock; in mode 01 it keeps what it had
+void PortDecoder_Next::UpdateJoystickPin7(uint8_t nr0b)
+{
+    switch ((nr0b >> 4) & 3)
+    {
+        case 0: _joyPin7 = (nr0b & 0x01) != 0; break;
+        case 1: break;
+        default: _joyPin7 = true; break;
+    }
+}
+
 void PortDecoder_Next::PerformReset(bool hard)
 {
+    _joyPin7 = true;  // joy_iomode_pin7 resets to 1; NR #0B resets to 0, so mode 00 then follows its bit 0 = 0 at once
     Z80* z80 = _context->pCore->GetZ80();
     // The reset restarts the CPU, not the frame: the video and interrupt timing keep running
     const auto t = z80->t;
@@ -1048,6 +1083,7 @@ void PortDecoder_Next::PerformReset(bool hard)
     state.p1FFD = 0x00;
     Mem().ResetMmu();
     _board->Reset(hard);  // config mode and the boot ROM first: the slot table follows them
+    UpdateJoystickPin7(_board->Stored(0x0B));
     _audio->Reset();      // turbosound.vhd / soundrive.vhd: reset_i is `reset` (the chips, the pan, the selected chip, the DACs)
     AudioConfigChanged();
     if (_intJournal.Enabled())
@@ -1390,6 +1426,7 @@ void PortDecoder_Next::UpdateContention()
 
 void PortDecoder_Next::OnFrameEnd()
 {
+    _board->LatchVideoFrameSync();  // video_frame_sync: eff_nr_05_5060, eff_nr_05_scandouble_en, eff_nr_09_scanlines
     _board->Copper().Sync();  // a frame no line was drawn for (turbo) still runs the copper
     if (_pendingTiming && _pendingTiming != _state->ula_timing_class)
         ApplyTiming(_pendingTiming);

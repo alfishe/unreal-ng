@@ -32,6 +32,8 @@ public:
 
     /// A channel reached zero with its interrupt enabled
     std::function<void(unsigned channel)> onInterrupt;
+    /// A channel's ZC/TO pulse, whatever its interrupt enable (the joystick connector's pin 7 follows channel 3's)
+    std::function<void(unsigned channel)> onZeroCount;
 
     void Reset();
     /// Bring the counters up to the 28 MHz system clock value `now`

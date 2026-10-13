@@ -64,26 +64,29 @@ With --project the source goes as a path, and each file it INCLUDEs into an ALAS
 names the page); --template always takes the INCLUDEs (zxasm inject reads them beside the source).
 
 With --template (Z1) the source goes into the template snapshot with `zxasm inject` instead, without an emulator; the
-snapshot written is then loaded into a fresh instance and assembled there (make-template.py makes templates).
+snapshot written is then loaded into a fresh instance and assembled there (make-template.py makes templates, every
+profile). An assembler that saves its code to its disk (ZAsm, Primus) gets that disk back with --media <disk>.
+
+The profiles (how each assembler starts, assembles and gives its bytes) are in ../lib/assemblers.py.
 
 The source is sjasmplus (any dialect with a frontend works with --from). ALASM 5.09 assembles #8000-#BFFF into its
 system page: give sources that ORG below #8000. Exit 0 when the bytes agree; a screenshot of the assembler's report
 is saved next to the source as <source>.<assembler>.png.
 """
 import argparse
-import importlib.util
 import os
 import subprocess
 import sys
-import tempfile
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib'))
+from assemblers import PROFILES  # noqa: E402
 from emulator import DEFAULT_PORT, Emulator  # noqa: E402
 
 
 def sjasmplus_bytes(sjasmplus, source, address):
     """What sjasmplus builds from `source`, from `address` to the end"""
+    import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         harness = os.path.join(tmp, 'harness.asm')
         out = os.path.join(tmp, 'out.bin')
@@ -97,17 +100,29 @@ def sjasmplus_bytes(sjasmplus, source, address):
             return f.read()
 
 
-def alasm509(emu, args, expected):
-    if args.assembler == 'alasm':
-        args.boot = args.boot or 'alasm64'
-    else:
-        args.boot, args.descriptor = 'alasm64', 'alasm-5.09'
+def report(reply):
+    print('inject:', {k: reply.get(k) for k in ('assembler', 'name', 'page', 'bytes', 'lines', 'previous', 'includes', 'message')})
+    for d in reply.get('diagnostics', []):
+        if d.get('severity') != 'info':
+            print('  ', d)
 
+
+def inject(emu, args, profile, expected):
+    """The source into the assembler: live (the profile's boot, then POST /asm/sync/inject) or, with --template, by
+    zxasm into the template snapshot, which is then loaded"""
+    with open(args.source, encoding='utf-8') as f:
+        text = f.read()
+    extra = profile.extra(args, expected) if profile.extra else ''
     if args.template:
-        # zxasm writes the source into the template; the snapshot it writes is loaded as it is
+        source = args.source
+        if extra:
+            source = os.path.abspath(args.source) + '.extra' + os.path.splitext(args.source)[1]   # beside it: its INCLUDEs resolve
+            with open(source, 'w', encoding='utf-8') as f:
+                f.write(text + extra)
         injected = os.path.abspath(args.source) + '.injected' + os.path.splitext(args.disk)[1]
-        run = subprocess.run([args.zxasm, 'inject', args.source, args.disk, '-o', injected, '--from', args.from_,
-                              '--title', 'INJECTED', '--assembler', args.descriptor], capture_output=True, text=True)
+        command = [args.zxasm, 'inject', source, args.disk, '-o', injected, '--from', args.from_, '--title', 'INJECTED',
+                   '--assembler', args.descriptor] + (['--force'] if profile.force else [])
+        run = subprocess.run(command, capture_output=True, text=True)
         print('zxasm inject:', run.stderr.strip().splitlines()[-1] if run.stderr.strip() else run.returncode)
         if run.returncode != 0:
             raise SystemExit(run.stderr)
@@ -115,334 +130,33 @@ def alasm509(emu, args, expected):
         reply = emu.post('/snapshot/load', {'path': injected})
         if not reply.get('ok', True) or reply.get('error'):
             raise SystemExit(f'snapshot load: {reply}')
+        if profile.disk_at_finish:
+            if not args.media:
+                raise SystemExit(f'{args.assembler} saves its code to its disk: give the disk with --media')
+            emu.insert_disk(os.path.abspath(args.media))
         emu.ensure_running()
         time.sleep(1)
+        return
+    profile.boot(emu, args)
+    body = {'from': args.from_, 'assembler': args.descriptor, 'title': 'INJECTED'}
+    if profile.force:
+        body['force'] = True
+    if args.project and not extra:
+        body['path'] = os.path.abspath(args.source)    # the emulator reads the sources it INCLUDEs beside it
     else:
-        emu.insert_disk(os.path.abspath(args.disk))
-        emu.run_trdos(args.boot)
-        time.sleep(3)                                  # the memory test, then the A> prompt
-        if args.help_key:
-            emu.tap('enter')                           # 3.8c shows its help screen first
-            time.sleep(1)
-        body = {'from': args.from_, 'assembler': args.descriptor, 'title': 'INJECTED'}
-        if args.project:
-            body['path'] = os.path.abspath(args.source)    # the emulator reads the sources it INCLUDEs beside it
-        else:
-            with open(args.source, encoding='utf-8') as f:
-                body['text'] = f.read()
-        reply = emu.post('/asm/sync/inject', body)
-        print('inject:', {k: reply.get(k) for k in ('assembler', 'name', 'page', 'bytes', 'lines', 'previous', 'includes', 'message')})
-        for d in reply.get('diagnostics', []):
-            if d.get('severity') != 'info':
-                print('  ', d)
-    emu.type('a')                                  # ASSEMBLE
-    emu.tap('enter')
-    time.sleep(args.wait)
-    emu.screenshot(os.path.abspath(args.source) + '.' + args.descriptor + '.png')
-    return bytes(emu.read(args.address, len(expected)))
-
-
-def xas(emu, args, expected):
-    emu.insert_disk(os.path.abspath(args.disk))
-    emu.run_trdos(args.boot)
-    time.sleep(4)                                      # the file list
-    for _ in range(args.right):
-        emu.tap('right')                               # past XMACROS (4.x / 5.05SE list the macro file first)
-    emu.tap('enter')                                   # the first source (or a new text) into the editor
-    time.sleep(3)
-    emu.post('/keyboard/combo', {'keys': ['cs', 'ss'], 'frames': args.combo_frames})   # EXT: the command line
-    time.sleep(1)
-    body = {'from': args.from_, 'assembler': args.descriptor, 'title': 'INJECTED'}
-    with open(args.source, encoding='utf-8') as f:
-        body['text'] = f.read()
-    reply = emu.post('/asm/sync/inject', body)
-    print('inject:', {k: reply.get(k) for k in ('assembler', 'name', 'page', 'bytes', 'lines', 'previous', 'message')})
-    for d in reply.get('diagnostics', []):
-        if d.get('severity') != 'info':
-            print('  ', d)
-    emu.tap('a')                                       # ASSEMBLE
-    time.sleep(args.wait)
-    emu.screenshot(os.path.abspath(args.source) + '.' + args.descriptor + '.png')
-    return bytes(emu.read(args.address, len(expected)))
-
-
-def storm(emu, args, expected):
-    emu.insert_disk(os.path.abspath(args.disk))
-    emu.run_trdos(args.boot or 'STORM1.3', wait=12)
-    body = {'from': args.from_, 'assembler': args.descriptor, 'title': 'INJECTED'}
-    with open(args.source, encoding='utf-8') as f:
-        body['text'] = f.read()
-    reply = emu.post('/asm/sync/inject', body)
-    print('inject:', {k: reply.get(k) for k in ('assembler', 'name', 'page', 'bytes', 'lines', 'previous', 'message')})
-    for d in reply.get('diagnostics', []):
-        if d.get('severity') != 'info':
-            print('  ', d)
-    time.sleep(1)                                      # PGUP redraws the editor from the text's start
-    stem = os.path.abspath(args.source) + '.' + args.descriptor
-    emu.screenshot(stem + '.editor.png')
-    emu.tap('break')
-    emu.tap('a')                                       # Assemble
-    time.sleep(args.wait)
-    emu.screenshot(stem + '.png')
-    emu.tap('space')                                   # leaves an error list
-    time.sleep(1)
-    emu.tap('break')
-    emu.tap('q')                                       # Quit to BASIC: the 48K memory holds the code again
-    time.sleep(3)
-    return bytes(emu.read(args.address, len(expected)))
-
-
-def tasm412(emu, args, expected):
-    emu.insert_disk(os.path.abspath(args.disk))
-    emu.run_trdos(args.boot or 'TASM4.12')
-    emu.tap('enter')                                   # past the title
-    time.sleep(1)
-    body = {'from': args.from_, 'assembler': 'tasm-4.12', 'title': 'INJECTED'}
-    with open(args.source, encoding='utf-8') as f:
-        body['text'] = f.read()
-    reply = emu.post('/asm/sync/inject', body)
-    print('inject:', {k: reply.get(k) for k in ('assembler', 'name', 'bytes', 'lines', 'previous', 'message')})
-    for d in reply.get('diagnostics', []):
-        if d.get('severity') != 'info':
-            print('  ', d)
-    emu.write(args.address, [0xAA] * len(expected))   # bytes TASM does not write stay visible
-    emu.tap('a')                                       # Assemble: the text in memory, under the work name
-    time.sleep(args.wait)
-    emu.screenshot(os.path.abspath(args.source) + '.tasm-4.12.png')
-    return bytes(emu.read(args.address, len(expected)))
-
-
-def zasm315(emu, args, expected):
-    emu.insert_disk(os.path.abspath(args.disk))
-    emu.run_trdos(args.boot or 'boot', wait=15)
-    emu.tap('enter')                                   # "No Disk!" (ZAsm starts on drive D): Retry, drive A
-    emu.tap('a')
-    time.sleep(6)
-    emu.tap('enter')                                   # File
-    time.sleep(2)
-    emu.tap('enter')                                   # Load
-    time.sleep(3)
-    emu.type('STUB')
-    emu.tap('enter')                                   # the editor opens on it
-    time.sleep(3)
-    emu.post('/keyboard/combo', {'keys': ['cs', 'ss'], 'frames': 4})   # COMMAND
-    emu.idle()
-    time.sleep(0.6)
-    with open(args.source, encoding='utf-8') as f:
-        text = f.read()
-    text += f'\n        SAVEBIN "out.C",#{args.address:04X},{len(expected)}\n'   # ZAsm compiles into its own pages
-    reply = emu.post('/asm/sync/inject', {'from': args.from_, 'assembler': 'zasm-3.15', 'title': 'INJECTED', 'text': text, 'force': True})
-    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
-    for d in reply.get('diagnostics', []):
-        if d.get('severity') != 'info':
-            print('  ', d)
-    emu.tap('a')                                       # Assemble
-    time.sleep(5)
-    emu.tap('enter')                                   # "No Disk!" again: Retry, drive A
-    emu.tap('a')
-    time.sleep(args.wait)
-    emu.screenshot(os.path.abspath(args.source) + '.zasm-3.15.png')
-    emu.tap('n')                                       # "Launch?" No
-    time.sleep(2)
-    data = emu.read_disk_file('out', 'C')
-    return bytes(data[1]) if data else b''
-
-
-def masm11(emu, args, expected):
-    emu.insert_disk(os.path.abspath(args.disk))
-    emu.run_trdos(args.boot or 'MASM 1.1', wait=8)
-    emu.tap('enter')                                   # past the title
-    time.sleep(1)
-    with open(args.source, encoding='utf-8') as f:
-        body = {'from': args.from_, 'assembler': 'masm-1.1', 'title': 'INJECTED', 'text': f.read()}
-    reply = emu.post('/asm/sync/inject', body)
-    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
-    for d in reply.get('diagnostics', []):
-        if d.get('severity') != 'info':
-            print('  ', d)
-    emu.write(args.address, [0xAA] * len(expected))
-    emu.tap('a')                                       # Assemble
-    time.sleep(args.wait)
-    emu.screenshot(os.path.abspath(args.source) + '.masm-1.1.png')
-    return bytes(emu.read(args.address, len(expected)))
-
-
-def gens4(emu, args, expected):
-    spec = importlib.util.spec_from_file_location('aie', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assemble-in-emulator.py'))
-    aie = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(aie)
-    code = [b for b in aie.tape_blocks(open(args.disk, 'rb').read()) if len(b) == 10882][0][1:-1]   # the 'gens4' block
-    emu.post('/reset')
-    time.sleep(3)
-    emu.write(26000, code)
-    emu.post('/basic/run', {'command': 'RANDOMIZE USR 26000'})
-    time.sleep(2)
-    with open(args.source, encoding='utf-8') as f:
-        body = {'from': args.from_, 'assembler': 'gens-4', 'title': 'INJECTED', 'text': f.read()}
-    reply = emu.post('/asm/sync/inject', body)
-    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
-    for d in reply.get('diagnostics', []):
-        if d.get('severity') != 'info':
-            print('  ', d)
-    emu.write(args.address, [0xAA] * len(expected))
-    emu.type('A,8000')                                 # Assemble with a symbol table of 8000 bytes
-    emu.tap('enter')
-    time.sleep(args.wait)
-    emu.screenshot(os.path.abspath(args.source) + '.gens-4.png')
-    return bytes(emu.read(args.address, len(expected)))
-
-
-def zeus1983(emu, args, expected):
-    spec = importlib.util.spec_from_file_location('aie', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assemble-in-emulator.py'))
-    aie = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(aie)
-    code = aie.tap_code(args.disk)
-    emu.post('/reset')
-    time.sleep(3)
-    for k in range(0, len(code), 1024):
-        emu.write(57344 + k, code[k:k + 1024])
-    emu.post('/basic/run', {'command': 'RANDOMIZE USR 57344'})
-    time.sleep(5)
-    emu.post('/keyboard/combo', {'keys': ['cs', '2'], 'frames': 6})   # CAPS LOCK: ZEUS takes capitals
-    emu.idle()
-    time.sleep(0.5)
-    with open(args.source, encoding='utf-8') as f:
-        body = {'from': args.from_, 'assembler': 'zeus-1983', 'title': 'INJECTED', 'text': f.read()}
-    reply = emu.post('/asm/sync/inject', body)
-    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
-    for d in reply.get('diagnostics', []):
-        if d.get('severity') != 'info':
-            print('  ', d)
-    emu.write(args.address, [0xAA] * len(expected))
-    emu.type('a')                                      # Assemble
-    emu.tap('enter')
-    time.sleep(args.wait)
-    emu.screenshot(os.path.abspath(args.source) + '.zeus-1983.png')
-    return bytes(emu.read(args.address, len(expected)))
-
-
-def primus(emu, args, expected):
-    emu.insert_disk(os.path.abspath(args.disk))
-    emu.run_trdos(args.boot or 'P_AS_2.9', wait=12)
-    with open(args.source, encoding='utf-8') as f:
-        body = {'from': args.from_, 'assembler': 'primus-2.9', 'title': 'INJECTED', 'text': f.read(), 'force': True}
-    reply = emu.post('/asm/sync/inject', body)
-    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
-    for d in reply.get('diagnostics', []):
-        if d.get('severity') != 'info':
-            print('  ', d)
-    emu.type('a out')                                  # Assemble, the code saved as "out" (caps lock: capitals)
-    emu.tap('enter')
-    time.sleep(args.wait)
-    emu.screenshot(os.path.abspath(args.source) + '.primus-2.9.png')
-    for name in ('OUT', 'out'):
-        for kind in ('C', 'c'):
-            data = emu.read_disk_file(name, kind)
-            if data:
-                return bytes(data[1])
-    return b''
-
-
-def lasergenius(emu, args, expected):
-    emu.insert_disk(os.path.abspath(args.disk))
-    emu.run_trdos(args.boot or 'L_G_ASS.', wait=6)
-    emu.tap('1')                                       # the loader's menu is a BASIC INPUT
-    emu.tap('enter')
-    time.sleep(4)
-    for key in ('y', 'n', 'd'):                        # tool-kit, hash extensions, from disk
-        emu.tap(key)
-        emu.tap('enter')
-        time.sleep(3)
-    time.sleep(6)
-    with open(args.source, encoding='utf-8') as f:
-        body = {'from': args.from_, 'assembler': 'lasergenius-1.04', 'title': 'INJECTED', 'text': f.read(), 'force': True}
-    reply = emu.post('/asm/sync/inject', body)
-    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
-    for d in reply.get('diagnostics', []):
-        if d.get('severity') != 'info':
-            print('  ', d)
-    emu.write(args.address, [0xAA] * len(expected))
-    emu.type('assem')
-    emu.tap('enter')
-    time.sleep(args.wait)
-    emu.screenshot(os.path.abspath(args.source) + '.lasergenius-1.04.png')
-    return bytes(emu.read(args.address, len(expected)))
-
-
-def prometheus(emu, args, expected):
-    emu.post('/tape/load', {'path': os.path.abspath(args.disk)})
-    emu.post('/basic/run', {'command': 'LOAD ""'})
-    emu.post('/tape/play')
-    for _ in range(240):
-        time.sleep(0.5)
-        if emu.get('/tape/info').get('state') in ('ended', 'stopped'):
-            break
-    time.sleep(2)
-    emu.tap('enter')                                   # the installer: run the assembler
-    time.sleep(3)
-    emu.post('/tape/eject')
-    with open(args.source, encoding='utf-8') as f:
-        body = {'from': args.from_, 'assembler': 'prometheus-48', 'title': 'INJECTED', 'text': f.read(), 'force': True}
-    reply = emu.post('/asm/sync/inject', body)
-    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
-    for d in reply.get('diagnostics', []):
-        if d.get('severity') != 'info':
-            print('  ', d)
-    emu.write(args.address, [0xAA] * len(expected))
-    emu.post('/keyboard/combo', {'keys': ['ss', 'a'], 'frames': 4})
-    time.sleep(0.5)
-    emu.tap('enter')
-    time.sleep(args.wait)
-    emu.screenshot(os.path.abspath(args.source) + '.prometheus-48.png')
-    return bytes(emu.read(args.address, len(expected)))
-
-
-def pasm(emu, args, expected):
-    emu.insert_disk(os.path.abspath(args.disk))
-    emu.run_trdos(args.boot or 'PASM3.0', wait=8)
-    with open(args.source, encoding='utf-8') as f:
-        body = {'from': args.from_, 'assembler': 'pasm-3.0', 'title': 'INJECTED', 'text': f.read(), 'force': True}
-    reply = emu.post('/asm/sync/inject', body)
-    print('inject:', {k: reply.get(k) for k in ('assembler', 'bytes', 'lines', 'previous', 'message')})
-    for d in reply.get('diagnostics', []):
-        if d.get('severity') != 'info':
-            print('  ', d)
-    page, offset = pasm_object_place(args.address)
-    emu.post(f'/memory/page/ram/{page}', {'offset': offset, 'data': [0xAA] * len(expected)})
-    # the menu: SYMBOL SHIFT, then CAPS SHIFT, both released (a combined tap may type the letter), then L (compile)
-    emu.post('/keyboard/press', {'key': 'ss'})
-    time.sleep(0.1)
-    emu.post('/keyboard/press', {'key': 'cs'})
-    time.sleep(0.15)
-    emu.post('/keyboard/release', {'key': 'cs'})
-    emu.post('/keyboard/release', {'key': 'ss'})
-    time.sleep(0.6)
-    emu.tap('l')
-    time.sleep(args.wait)
-    emu.screenshot(os.path.abspath(args.source) + '.pasm-3.0.png')
-    data = emu.get(f'/memory/page/ram/{page}?offset={offset}&length={len(expected)}')['data']
-    return bytes(data)
-
-
-def pasm_object_place(address):
-    """Where PASM 3.0 puts the code it compiles (seen in unreal-ng): code from #8000 up in an image of the 48K memory
-    (#8000-#BFFF in RAM page 3, #C000-#FFFF in page 0), code below #8000 from #2000 of page 4 (#E000 there) whatever
-    its ORG; give the ORG as the address there"""
-    if address >= 0xC000:
-        return 0, address - 0xC000
-    if address >= 0x8000:
-        return 3, address - 0x8000
-    return 4, 0x2000
+        body['text'] = text + extra
+    report(emu.post('/asm/sync/inject', body))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm', 'xas', 'storm', 'tasm412', 'zasm315', 'masm11', 'gens4', 'zeus1983', 'primus', 'lasergenius', 'prometheus', 'pasm'])
-    parser.add_argument('disk', help='the assembler disk, or with --template an idle template snapshot')
+    parser.add_argument('assembler', choices=sorted(PROFILES))
+    parser.add_argument('disk', help='the assembler disk or tape, or with --template an idle template snapshot')
     parser.add_argument('--template', action='store_true', help='inject with zxasm into the template snapshot instead (Z1)')
+    parser.add_argument('--media', help='--template: the assembler disk put back in after the load (ZAsm, Primus save to it)')
     parser.add_argument('--zxasm', default=os.environ.get('ZXASM', 'zxasm'))
-    parser.add_argument('--boot', help='alasm: the BASIC program that starts it (default alasm64)')
-    parser.add_argument('--assembler', dest='descriptor', default='alasm-5.09', help='alasm: the descriptor (alasm-4.44 ...)')
+    parser.add_argument('--boot', help='the BASIC program that starts it (alasm default alasm64, xas: XAS7.447 ...)')
+    parser.add_argument('--assembler', dest='descriptor', help='the descriptor (alasm-4.44, xas-4.18 ...; default the profile\'s)')
     parser.add_argument('--project', action='store_true',
                         help='give the source as a path: the files it INCLUDEs go into texts of their own (ALASM pages)')
     parser.add_argument('--combo-frames', type=int, default=4, help='xas: frames EXT is held (9.x: 12)')
@@ -457,35 +171,13 @@ def main():
     parser.add_argument('--save', help='write the bytes the assembler built to this file')
     parser.add_argument('--keep', action='store_true', help='keep the instance (default: delete it)')
     args = parser.parse_args()
+    profile = PROFILES[args.assembler]
+    args.descriptor = args.descriptor or profile.descriptor
     expected = sjasmplus_bytes(args.sjasmplus, args.source, args.address)
-    emu = Emulator(port=args.port, model='48K' if args.assembler in ('gens4', 'zeus1983', 'prometheus') else 'PENTAGON')
+    emu = Emulator(port=args.port, model=profile.model)
     try:
-        if args.assembler == 'xas':
-            built = xas(emu, args, expected)
-        elif args.assembler == 'primus':
-            built = primus(emu, args, expected)
-        elif args.assembler == 'lasergenius':
-            built = lasergenius(emu, args, expected)
-        elif args.assembler == 'prometheus':
-            built = prometheus(emu, args, expected)
-        elif args.assembler == 'pasm':
-            built = pasm(emu, args, expected)
-        elif args.assembler == 'zeus1983':
-            built = zeus1983(emu, args, expected)
-        elif args.assembler == 'gens4':
-            built = gens4(emu, args, expected)
-        elif args.assembler == 'masm11':
-            built = masm11(emu, args, expected)
-        elif args.assembler == 'zasm315':
-            built = zasm315(emu, args, expected)
-        elif args.assembler == 'tasm412':
-            built = tasm412(emu, args, expected)
-        elif args.assembler == 'storm':
-            if args.descriptor == 'alasm-5.09':
-                args.descriptor = 'storm-1.3'
-            built = storm(emu, args, expected)
-        else:
-            built = alasm509(emu, args, expected)   # every ALASM build: the same steps
+        inject(emu, args, profile, expected)
+        built = profile.finish(emu, args, expected)
     finally:
         if not args.keep:
             emu._request('DELETE', emu.base)   # the instance this run created
