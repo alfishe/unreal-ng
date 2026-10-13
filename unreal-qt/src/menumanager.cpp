@@ -245,6 +245,13 @@ void MenuManager::createViewMenu()
     _logWindowAction->setChecked(true);
     connect(_logWindowAction, &QAction::triggered, this, &MenuManager::logWindowToggled);
 
+    // ZX Next: the layers of the last frame one by one, with a pixel inspector (design-layer-capture.md L4)
+    _nextLayersAction = _viewMenu->addAction(tr("&Next Layers"));
+    _nextLayersAction->setStatusTip(tr("ZX Spectrum Next: show/hide the per-layer view and the pixel inspector"));
+    _nextLayersAction->setCheckable(true);
+    _nextLayersAction->setChecked(false);
+    connect(_nextLayersAction, &QAction::triggered, this, &MenuManager::nextLayersToggled);
+
     _viewMenu->addSeparator();
 
     // Toolbar (transport toolbar under the menu bar)
@@ -527,6 +534,12 @@ void MenuManager::setMediaPanelChecked(bool checked)
     // Sync from the panel's own close box; setChecked never re-emits triggered
     if (_mediaPanelAction)
         _mediaPanelAction->setChecked(checked);
+}
+
+void MenuManager::setNextLayersChecked(bool checked)
+{
+    if (_nextLayersAction)
+        _nextLayersAction->setChecked(checked);
 }
 
 void MenuManager::setSlotsWindowChecked(bool checked)

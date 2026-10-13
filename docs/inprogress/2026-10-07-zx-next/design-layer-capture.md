@@ -128,7 +128,7 @@ recomputed by the inspector from the pixel position and the register state the l
 | L1 | the real sink with `ids`, `info`, the line table; oracle, copper, transparency, swap, off-cost tests | core tests; no regression in the renderer suite |
 | L2 | the settings (ini + runtime), the surfaces: `capture/screen?layer=`, `capture/next-layers`, `next/layer-capture`, OpenAPI, MCP, CLI, Lua, Python, the `video` report field; armed mode if the default is off; docs and recipe | verification pytest green against a live app; full `core-tests`; gcc-16 -O3 clean; `environment-variables.md` row if an env switch is added |
 | L3 | `next_pixel` with `why` and source addresses | tests above |
-| L4 | Qt: per-layer view and layer toggles (the jnext per-layer screenshots are the model), a pixel inspector under the mouse, the machine-menu switch | later (N12) |
+| L4 | Qt: per-layer view and layer toggles (the jnext per-layer screenshots are the model), a pixel inspector under the mouse, the machine-menu switch | **done 2026-10-13**: View -> Next Layers |
 
 ## 6. Open questions
 
