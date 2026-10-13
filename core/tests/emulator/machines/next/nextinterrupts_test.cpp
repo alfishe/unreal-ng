@@ -209,10 +209,107 @@ TEST(NextCtc_Test, ZeroCountOfOneChannelClocksTheNextOne)
     ctc.Write(1, 3, 0);  // counter mode: three pulses
     ctc.Write(0, NextCtc::kTimeConstantFollows | NextCtc::kControl, 0);
     ctc.Write(0, 2, 0);  // channel 0 reaches zero every 32 clocks
-    ctc.Advance(32 * 2);
+    ctc.Advance(32 * 2 + 2);
     EXPECT_EQ(fired, 0u);
-    ctc.Advance(32 * 3);
+    ctc.Advance(32 * 3 + 1);
+    EXPECT_EQ(fired, 0u) << "the pulse reaches the falling-edge detector two clocks after the zero count (zc_to_d, clk_trg_d)";
+    ctc.Advance(32 * 3 + 2);
     EXPECT_EQ(fired, 2u) << "channel 1 saw its third pulse";
+}
+
+// ctc_chan.vhd iowr_tc: in RUN_TC only the time constant register is written; the count goes on and the new constant is
+// taken at the next reload (the Z80 CTC datasheet)
+TEST(NextCtc_Test, ATimeConstantWrittenWhileRunningWaitsForTheNextReload)
+{
+    NextCtc ctc;
+    ctc.Write(0, NextCtc::kTimeConstantFollows | NextCtc::kControl, 0);
+    ctc.Write(0, 10, 0);  // zero count at 160
+    ctc.Write(0, NextCtc::kTimeConstantFollows | NextCtc::kControl, 80);
+    ctc.Write(0, 4, 80);
+    EXPECT_EQ(ctc.Read(0, 80), 5) << "the count is not touched";
+    EXPECT_EQ(ctc.Read(0, 159), 1);
+    ctc.Advance(160);
+    EXPECT_EQ(ctc.Zeros(0), 1u);
+    EXPECT_EQ(ctc.Read(0, 160), 4) << "reloaded with the new constant";
+    ctc.Advance(160 + 64);
+    EXPECT_EQ(ctc.Zeros(0), 2u);
+}
+
+// ctc_chan.vhd: a soft reset (control bit 1) stops the channel and the counter takes the time constant register again
+TEST(NextCtc_Test, ASoftResetStopsTheTimerAndReloadsTheCounter)
+{
+    NextCtc ctc;
+    ctc.Write(0, NextCtc::kTimeConstantFollows | NextCtc::kControl, 0);
+    ctc.Write(0, 10, 0);
+    ctc.Write(0, NextCtc::kSoftReset | NextCtc::kControl, 80);
+    EXPECT_EQ(ctc.Read(0, 80), 10);
+    EXPECT_FALSE(ctc.Running(0));
+    ctc.Advance(1000);
+    EXPECT_EQ(ctc.Zeros(0), 0u);
+    // with bit 2 as well the channel takes the next time constant and runs from it
+    ctc.Write(0, NextCtc::kSoftReset | NextCtc::kTimeConstantFollows | NextCtc::kControl, 1000);
+    ctc.Write(0, 2, 1000);
+    ctc.Advance(1031);
+    EXPECT_EQ(ctc.Zeros(0), 0u);
+    ctc.Advance(1032);
+    EXPECT_EQ(ctc.Zeros(0), 1u);
+}
+
+// ctc_chan.vhd clk_edge_change: writing a control word that changes the trigger edge (bit 4) is a clock edge
+TEST(NextCtc_Test, ChangingTheTriggerEdgeCountsAsAClockEdge)
+{
+    NextCtc ctc;
+    // counter mode: three counts
+    ctc.Write(1, NextCtc::kCounterMode | NextCtc::kTimeConstantFollows | NextCtc::kControl, 0);
+    ctc.Write(1, 3, 0);
+    ctc.Write(1, NextCtc::kCounterMode | NextCtc::kRisingEdge | NextCtc::kControl, 10);
+    EXPECT_EQ(ctc.Read(1, 10), 2);
+    ctc.Write(1, NextCtc::kCounterMode | NextCtc::kControl, 11);
+    EXPECT_EQ(ctc.Read(1, 11), 1);
+    ctc.Write(1, NextCtc::kCounterMode | NextCtc::kControl, 12);
+    EXPECT_EQ(ctc.Read(1, 12), 1) << "the same edge selection is not an edge";
+    // a timer waiting for its trigger is started by it
+    ctc.Write(2, NextCtc::kTriggerClk | NextCtc::kTimeConstantFollows | NextCtc::kControl, 100);
+    ctc.Write(2, 2, 100);
+    ctc.Advance(1000);
+    EXPECT_EQ(ctc.Zeros(2), 0u) << "waits for the trigger";
+    ctc.Write(2, NextCtc::kTriggerClk | NextCtc::kRisingEdge | NextCtc::kControl, 1000);
+    EXPECT_TRUE(ctc.Running(2));
+    ctc.Advance(1031);
+    EXPECT_EQ(ctc.Zeros(2), 0u);
+    ctc.Advance(1032);
+    EXPECT_EQ(ctc.Zeros(2), 1u);
+}
+
+// The prescaler is free running: switching /16 to /256 under a running timer keeps the grid of the run start
+TEST(NextCtc_Test, ChangingThePrescalerKeepsTheCountAndTheTickGrid)
+{
+    NextCtc ctc;
+    ctc.Write(0, NextCtc::kTimeConstantFollows | NextCtc::kControl, 0);
+    ctc.Write(0, 3, 0);  // /16: ticks at 16, 32, 48
+    ctc.Write(0, NextCtc::kPrescale256 | NextCtc::kControl, 20);
+    EXPECT_EQ(ctc.Read(0, 20), 2) << "one tick (16) happened";
+    EXPECT_EQ(ctc.Read(0, 300), 1) << "the next tick is at 256";
+    ctc.Advance(511);
+    EXPECT_EQ(ctc.Zeros(0), 0u);
+    ctc.Advance(512);
+    EXPECT_EQ(ctc.Zeros(0), 1u);
+}
+
+// ZC/TO pulses cross the chain with a latency: a ring of counters never recurses
+TEST(NextCtc_Test, ARingOfCountersAdvancesInTimeNotInTheStack)
+{
+    NextCtc ctc;
+    for (unsigned ch = 0; ch < 4; ch++)
+    {
+        ctc.Write(ch, NextCtc::kCounterMode | NextCtc::kTimeConstantFollows | NextCtc::kControl, 0);
+        ctc.Write(ch, 1, 0);
+    }
+    ctc.Trigger(0, 10);
+    EXPECT_EQ(ctc.Zeros(0), 1u);
+    EXPECT_EQ(ctc.Zeros(1), 0u) << "the pulse is still on its way";
+    ctc.Advance(10 + 2 * 4 * 100);
+    EXPECT_EQ(ctc.Zeros(0), 101u) << "one lap = 4 hops of 2 clocks";
 }
 
 TEST_F(NextInterrupts_Test, CtcPortsRaiseTheHardwareInterrupt)
@@ -227,8 +324,48 @@ TEST_F(NextInterrupts_Test, CtcPortsRaiseTheHardwareInterrupt)
     EXPECT_TRUE(_int->IsIntAsserted(40));
     EXPECT_EQ(ReadReg(0xC9) & 1, 1);
     EXPECT_EQ(_int->AcknowledgeInterrupt(40), NextInterruptSource::kCtc0 << 1);
-    // channels 4-7 do not exist
-    EXPECT_EQ(_ports->DecodePortIn(0x1C3B, 0), 0xFF);
+    // channels 4-7 do not exist: port_ctc is decoded without A10:A8, the wired-or of the (absent) channels answers 0
+    EXPECT_EQ(_ports->DecodePortIn(0x1C3B, 0), 0x00);
+}
+
+// zxnext.vhd 5810-5818: cpu_speed takes nr_07_cpu_speed at the first clock without MREQ / IORQ / M1 after the write, inside the writing
+// instruction; the machine does not wait for the next frame. The in-frame position is rescaled, not lost
+TEST_F(NextInterrupts_Test, TheCpuSpeedChangeIsTakenOverAtTheInstructionBoundaryNotTheNextFrame)
+{
+    const uint8_t code[] = {0xED, 0x91, 0x07, 0x03,  // NEXTREG 7,3
+                            0x00, 0x00};             // NOP, NOP
+    for (size_t i = 0; i < sizeof code; i++)
+        _memory->PokeSlot(static_cast<uint16_t>(0x8000 + i), code[i]);
+    _z80->pc = 0x8000;
+    _z80->sp = 0xBF00;
+    _z80->t = 20000;
+    const uint64_t frame = _context->emulatorState.frame_counter;
+    ASSERT_EQ(_context->emulatorState.current_z80_frequency_multiplier, 1);
+    _z80->EngineStep();  // NEXTREG 7,3
+    EXPECT_EQ(_context->emulatorState.hw_turbo_ratio, 8);
+    const uint32_t tAfterWrite = _z80->t;
+    _z80->EngineStep();  // NOP: its fetch is the first at 28 MHz
+    EXPECT_EQ(_context->emulatorState.current_z80_frequency_multiplier, 8);
+    EXPECT_EQ(_context->emulatorState.hw_turbo_ratio_applied, 8);
+    EXPECT_EQ(_context->emulatorState.frame_counter, frame) << "inside the frame";
+    EXPECT_GE(_z80->t, tAfterWrite * 8u) << "the position in the frame is the same instant, in the new clocks";
+    EXPECT_LT(_z80->t, tAfterWrite * 8u + 64u);
+    EXPECT_EQ(ReadReg(0x07), 0x33);
+}
+
+// zxnext.vhd: the CTC is clocked by i_CLK_28 whatever the CPU speed: 4 x 16 clocks of 28 MHz are 64 CPU clocks at 28 MHz
+TEST_F(NextInterrupts_Test, CtcCountsThe28MhzClockWhateverTheCpuSpeed)
+{
+    NextReg(0xC0, 0x01);
+    NextReg(0xC5, 0x01);
+    _context->emulatorState.current_z80_frequency_multiplier = 8;  // 28 MHz
+    _z80->t = 0;
+    _ports->DecodePortOut(0x183B, 0x85, 0);
+    _ports->DecodePortOut(0x183B, 0x04, 0);
+    _z80->t = 63;
+    EXPECT_FALSE(_int->IsIntAsserted(63));
+    _z80->t = 64;
+    EXPECT_TRUE(_int->IsIntAsserted(64));
 }
 
 namespace

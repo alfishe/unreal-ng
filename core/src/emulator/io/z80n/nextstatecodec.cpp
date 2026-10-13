@@ -25,7 +25,7 @@
 
 namespace
 {
-constexpr uint8_t kImageVersion = 7;  // 7: ULA+ select; 6: the UARTs
+constexpr uint8_t kImageVersion = 8;  // 8: the CTC's run start and pending ZC/TO pulses; 7: ULA+ select; 6: the UARTs
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -344,8 +344,12 @@ static void SaveCtc(Writer& w, const NextCtc& c)
         w.Put(ch.waitTc);
         w.Put(ch.running);
         w.Put(ch.waitTrigger);
+        w.Put(ch.runStart);
         w.Put(ch.phase);
         w.Put(ch.zeros);
+        for (uint64_t at : ch.pending)
+            w.Put(at);
+        w.Put(ch.pendingCount);
     }
     w.Put(c._vector);
     w.Put(c._now);
@@ -360,8 +364,12 @@ static void LoadCtc(Reader& r, NextCtc& c)
         r.Get(ch.waitTc);
         r.Get(ch.running);
         r.Get(ch.waitTrigger);
+        r.Get(ch.runStart);
         r.Get(ch.phase);
         r.Get(ch.zeros);
+        for (uint64_t& at : ch.pending)
+            r.Get(at);
+        r.Get(ch.pendingCount);
     }
     r.Get(c._vector);
     r.Get(c._now);
