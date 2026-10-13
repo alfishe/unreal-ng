@@ -27,6 +27,7 @@
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdconfigcapture.h"
+#include "_helpers/ttdrecordedstate.h"
 #include "debugger/ttd/ttdmachineperipherals.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/cpu/core.h"
@@ -365,7 +366,7 @@ TEST(TtdMultiSound_Test, DevicesRegisteredBySlot)
                                Expected{ PeripheralId::Sam2695, "zxbus.1.multisound.sam2695" },
                                Expected{ PeripheralId::MultiSoundGs, "zxbus.1.multisound.gs" } })
     {
-        EXPECT_TRUE(registry.IsRegistered(e.id)) << e.instance;
+        EXPECT_NE(registry.FindLegacy(e.id), nullptr) << e.instance;
         const auto entry = std::find_if(entries.begin(), entries.end(),
                                         [&](const ttd::TTDDeviceEntry& x) { return x.descriptor.legacyId == e.id; });
         ASSERT_NE(entry, entries.end()) << e.instance;
@@ -656,7 +657,7 @@ TEST(TtdMultiSound_Test, RecordingRefusedWhenACardDeviceIsMissing)
     auto devices = [](std::initializer_list<PeripheralId> ids) {
         SlotManager::TtdDeviceSet set;
         for (PeripheralId id : ids)
-            set.ids.push_back(static_cast<uint8_t>(id));
+            set.devices.push_back({static_cast<ttd::TTDDeviceType>(id), {}});
         return set;
     };
     std::string why;
@@ -668,53 +669,20 @@ TEST(TtdMultiSound_Test, RecordingRefusedWhenACardDeviceIsMissing)
 
     why.clear();
     EXPECT_FALSE(SlotManager::TtdDevicesMatchPlan(plan, devices({}), why));
-    EXPECT_NE(why.find("zxbus.1: multisound did not register its device 58"), std::string::npos) << why;
+    EXPECT_NE(why.find("zxbus.1: multisound did not register its device of type 58"), std::string::npos) << why;
     EXPECT_NE(why.find("zxbus.1: the plan fits multisound, the device is none"), std::string::npos) << why;
 
     why.clear();
     EXPECT_FALSE(SlotManager::TtdDevicesMatchPlan(
         plan, devices({ PeripheralId::MultiSound, PeripheralId::Saa1099, PeripheralId::Sam2695 }), why));
-    EXPECT_NE(why.find("zxbus.1: multisound did not register its device 60"), std::string::npos) << why;
+    EXPECT_NE(why.find("zxbus.1: multisound did not register its device of type 60"), std::string::npos) << why;
 }
 
-/// Two instances of one module cannot both be recorded (a v1 checkpoint keeps one blob per id), so the planner
-/// refuses them up front: a second MultiSound's SAA, a GS card next to the card's GS. With the card's GS switched off
-/// by its DIP a GS card may stay: the card's GS records under its own id, the GS card under its own. Pure plans, then
-/// one Pentagon with both GS (~30 ms)
-TEST(TtdMultiSound_Test, TwoInstancesOfOneModuleRefusedByThePlanner)
-{
-    SlotManager::Result plan = PlanOf(MM_PENTAGON, { { "zxbus.1", "multisound" }, { "zxbus.1.dip", "saa" },
-                                                     { "zxbus.2", "multisound" }, { "zxbus.2.dip", "saa" } });
-    ASSERT_EQ(plan.conflicts.size(), 1u) << plan.Refusal();
-    EXPECT_NE(plan.Refusal().find("`saa`"), std::string::npos) << plan.Refusal();
-
-    plan = PlanOf(MM_PENTAGON, { { "zxbus.1", "multisound" }, { "zxbus.2", "gs" } });
-    ASSERT_EQ(plan.conflicts.size(), 1u) << plan.Refusal();
-    EXPECT_NE(plan.Refusal().find("`gs`"), std::string::npos) << plan.Refusal();
-
-    plan = PlanOf(MM_PENTAGON, { { "zxbus.1", "multisound" }, { "zxbus.1.dip", "ym,saa,sd" }, { "zxbus.2", "gs" } });
-    EXPECT_TRUE(plan.conflicts.empty()) << plan.Refusal();
-
-    StagedMachine m("pentagon128k", "zxbus.1 = multisound\nzxbus.1.dip = ym,saa,sd\nzxbus.2 = gs");
-    ASSERT_TRUE(m.Ok()) << m.Machine().GetInitError();
-    ASSERT_NE(m.Card(), nullptr);
-    ASSERT_NE(m.Context()->pSoundManager->getGeneralSound(), nullptr);
-    ttd::TTDPeripheralRegistry registry;
-    std::vector<std::unique_ptr<ttd::TTDSerializable>> owned;
-    std::string error;
-    ASSERT_TRUE(ttd::RegisterMachinePeripherals(m.Context(), registry, owned, &error)) << error;
-    EXPECT_TRUE(registry.IsRegistered(PeripheralId::GeneralSound));
-    EXPECT_TRUE(registry.IsRegistered(PeripheralId::MultiSoundGs));
-    EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
-}
-
-/// Two MultiSound cards with disjoint DIP switches share no function and no port, so the planner fits both: each
-/// card hands out all four of its devices, under the same four ids. A checkpoint of either backend keeps one state per
-/// id (v1: one blob per id; the engine: its per-checkpoint device states, the device state regions and the binding of
-/// a loaded session are keyed by the v1 id although its device table is keyed by {type, instance}), so the second
-/// card's devices are refused at registration and named with the first's: recording is refused instead of losing one
-/// card's state (slots TODO, item "two instances of one module"). One Pentagon with both cards (~30 ms)
-TEST(TtdMultiSound_Test, TwoCardsWithDisjointDipsRefuseRecordingNamingBoth)
+/// Two cards of one kind are two sets of devices: the planner hands out all four of the card's devices under the
+/// same four types, and the slot names each card's instances ("zxbus.1.multisound.saa1099", "zxbus.2..."), so the
+/// engine records both cards side by side (D23). v1 keeps one blob per id and refuses that machine, naming both. One
+/// Pentagon with both cards, 3 frames (~40 ms)
+TEST(TtdMultiSound_Test, TwoCardsWithDisjointDipsAreRecordedSideBySide)
 {
     const SlotManager::Result plan = PlanOf(MM_PENTAGON, { { "zxbus.1", "multisound" }, { "zxbus.1.dip", "ym" },
                                                            { "zxbus.2", "multisound" }, { "zxbus.2.dip", "saa" } });
@@ -727,8 +695,37 @@ TEST(TtdMultiSound_Test, TwoCardsWithDisjointDipsRefuseRecordingNamingBoth)
     ttd::TTDPeripheralRegistry registry;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> owned;
     std::string error;
-    EXPECT_FALSE(ttd::RegisterMachinePeripherals(m.Context(), registry, owned, &error));
-    EXPECT_NE(error.find("two devices under id 58: zxbus.1.multisound and zxbus.2.multisound"), std::string::npos)
-        << error;
-    EXPECT_FALSE(m.Ttd()->StartRecording()) << "both cards' state cannot be kept";
+    ASSERT_TRUE(ttd::RegisterMachinePeripherals(m.Context(), registry, owned, &error)) << error;
+    for (const char* slot : { "zxbus.1", "zxbus.2" })
+        for (const auto& [type, suffix] : { std::pair{ ttd::TTDDeviceType::MultiSound, "" },
+                                            std::pair{ ttd::TTDDeviceType::Saa1099, ".saa1099" },
+                                            std::pair{ ttd::TTDDeviceType::Sam2695, ".sam2695" },
+                                            std::pair{ ttd::TTDDeviceType::MultiSoundGs, ".gs" } })
+            EXPECT_NE(registry.Find({ type, std::string(slot) + ".multisound" + suffix }), nullptr) << slot << suffix;
+    EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
+    EXPECT_FALSE(registry.V1Recordable(error));
+    EXPECT_NE(error.find("zxbus.1.multisound"), std::string::npos) << error;
+    EXPECT_NE(error.find("zxbus.2.multisound"), std::string::npos) << error;
+
+    ASSERT_TRUE(m.Ttd()->StartRecording()) << "the engine keeps both cards' state: " << m.Ttd()->LastStartError();
+    m.Machine().RunNFrames(3);
+    m.Ttd()->StopRecording();
+    m.Machine().RunNFrames(2);   // the live cards move on
+
+    // A seek back restores each card from its own state
+    ASSERT_TRUE(m.Ttd()->SeekTo({ m.Ttd()->GetCheckpoint(1)->time.frame, 0 }));
+    for (const char* slot : { "zxbus.1", "zxbus.2" })
+        for (const auto& [type, suffix] : { std::pair{ ttd::TTDDeviceType::MultiSound, "" },
+                                            std::pair{ ttd::TTDDeviceType::Saa1099, ".saa1099" },
+                                            std::pair{ ttd::TTDDeviceType::Sam2695, ".sam2695" } })
+        {
+            const ttd::TTDDeviceKey key{ type, std::string(slot) + ".multisound" + suffix };
+            const std::vector<uint8_t> recorded = ttdtest::RecordedDeviceState(*m.Ttd(), 1, key);
+            ttd::TTDSerializable* device = m.Ttd()->GetPeripheralRegistry().Find(key);
+            ASSERT_NE(device, nullptr) << key.instance;
+            std::vector<uint8_t> live;
+            device->TTDSaveStateTo(live);
+            EXPECT_FALSE(recorded.empty()) << key.instance;
+            EXPECT_EQ(live, recorded) << key.instance;
+        }
 }

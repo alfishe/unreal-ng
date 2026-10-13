@@ -83,8 +83,8 @@ namespace
 TEST_F(TTDCdDrive_Test, RegisteredOnlyWithACdDrive)
 {
     ASSERT_TRUE(_ttd->StartRecording());
-    EXPECT_TRUE(_ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::CdDrive));
-    EXPECT_TRUE(_ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::AtaChannel));
+    EXPECT_TRUE(_ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::CdDrive));
+    EXPECT_TRUE(_ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::AtaChannel));
     _ttd->StopRecording();
     EXPECT_EQ(ttd::TTDCdDrive(_context).TTDStateSize(), 8u + 2 * (sizeof(CdAudioState) + sizeof(AtapiStage) + 8));
 
@@ -94,8 +94,8 @@ TEST_F(TTDCdDrive_Test, RegisteredOnlyWithACdDrive)
     pentagon->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
     ttd::TimeTravelController* other = pentagon->GetContext()->pTimeTravelController;
     ASSERT_TRUE(other->StartRecording());
-    EXPECT_TRUE(other->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::AtaChannel));
-    EXPECT_FALSE(other->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::CdDrive));
+    EXPECT_TRUE(other->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::AtaChannel));
+    EXPECT_FALSE(other->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::CdDrive));
     other->StopRecording();
     EmulatorTestHelper::CleanupEmulator(pentagon);
 }

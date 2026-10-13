@@ -62,7 +62,7 @@ public:
     void UpdateModelMemoryBanks() override;
 
     /// #1FFD and the floppy controller ride TTD blobs of their own (TTDPlus3Paging, TTDPlus3Fdc)
-    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const override;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
 
 protected:

@@ -354,14 +354,14 @@ protected:
             {
                 const uint8_t id = static_cast<uint8_t>(entry.descriptor.legacyId);
                 std::vector<uint8_t> recorded;
-                if (!engine.DeviceState(engine.FirstCheckpoint() + idx, id, recorded))
+                if (!engine.DeviceStateOfV1Id(engine.FirstCheckpoint() + idx, id, recorded))
                     continue;
-                ttd::TTDSerializable* device = ttd->GetPeripheralRegistry().GetDevice(static_cast<ttd::PeripheralId>(id));
+                ttd::TTDSerializable* device = ttd->GetPeripheralRegistry().FindLegacy(static_cast<ttd::PeripheralId>(id));
                 if (!device)
                     continue;
                 std::vector<uint8_t> live;
                 uint8_t region = 0;
-                if (auto* source = dynamic_cast<ttd::ITTDRegionSource*>(device); !(source && source->TTDStateWithoutRegions(region, live)))
+                if (auto* source = dynamic_cast<ttd::ITTDRegionSource*>(device); !(source && source->TTDStateWithoutRegions(live)))
                     device->TTDSaveStateTo(live);
                 if (live != recorded)
                 {

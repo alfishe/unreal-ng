@@ -258,7 +258,7 @@ TEST_P(TTD_DeviceReplay_Test, CovoxIdleDecayReplaysOnTheRecordedFrame)
     {
         const ttd::TimeTravelEngine& engine = _ttd->GetEngine();
         std::vector<uint8_t> state;
-        EXPECT_TRUE(engine.DeviceState(engine.FirstCheckpoint() + idx, kCovox, state)) << "checkpoint " << idx;
+        EXPECT_TRUE(engine.DeviceStateOfV1Id(engine.FirstCheckpoint() + idx, kCovox, state)) << "checkpoint " << idx;
         return state;
     };
 

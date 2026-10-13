@@ -6,7 +6,7 @@
 /// A slot-built card (one SlotManager builds itself, an ICard: the ZX-MultiSound) is in no shipped config, so a test
 /// that loads a session recorded with one builds its machine with the slot set the recorder created it with
 /// (`"slots": {"zxbus.1": "multisound"}`; the corpus's ZX-MultiSound sessions: ttdmultisoundsessions.h). A session
-/// names its devices by id (TTDRecordedMachine::peripheralMask), not by slot: the corpus records every such card in
+/// names its devices by type (TTDRecordedMachine::devices); the corpus records every such card in
 /// ZX-bus slot 1, and the session guard refuses a load into another slot with the reason. The cards a config
 /// translates into its slots (General Sound, MoonSound) are not listed: the shipped configs carry them.
 ///
@@ -32,7 +32,7 @@ namespace ttdtest
 inline std::vector<std::pair<std::string, std::string>> SlotCardsOf(const ttd::TTDRecordedMachine& machine)
 {
     std::vector<std::pair<std::string, std::string>> slots;
-    if (machine.peripheralMask.Test(static_cast<uint8_t>(ttd::PeripheralId::MultiSound)))
+    if (machine.Fits(ttd::TTDDeviceType::MultiSound))
         slots.emplace_back("zxbus.1", MultiSoundCard::kCardId);
     return slots;
 }

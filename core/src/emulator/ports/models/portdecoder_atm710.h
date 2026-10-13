@@ -132,7 +132,7 @@ public:
     /// The ATM memory map (pFFF7), the address-swap flag and the ATM/ATM3 port
     /// latches that the model-agnostic TTDChipsetState does not carry. Declared
     /// here because this decoder owns them; PortDecoder_ATM3 inherits both.
-    std::vector<ttd::PeripheralId> GetTTDModelStateIds() const override;
+    std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const override;
 
     /// #FF77 turbo: 3.5 or 7 MHz
     uint8_t TtdClockUnits() const override { return 2; }

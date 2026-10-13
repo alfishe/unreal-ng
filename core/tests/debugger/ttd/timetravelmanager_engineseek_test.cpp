@@ -106,9 +106,9 @@ protected:
         s.t = z80->t;
         const size_t pages = _v1->GetModelRamPages();
         s.ram.assign(_context->pMemory->RAMPageAddress(0), _context->pMemory->RAMPageAddress(0) + pages * 0x4000);
-        for (const auto& [id, device] : _v1->GetPeripheralRegistry().Devices())
-            if (device && device->TTDStateSize() != 0)
-                device->TTDSaveStateTo(s.devices[id]);
+        for (const ttd::TTDRegistryEntry& e : _v1->GetPeripheralRegistry().Entries())
+            if (e.device && e.device->TTDStateSize() != 0)
+                e.device->TTDSaveStateTo(s.devices[static_cast<uint8_t>(e.legacyId)]);
         return s;
     }
 

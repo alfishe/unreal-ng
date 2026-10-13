@@ -42,7 +42,7 @@ TEST_F(TtdScorpionPaging_Test, PlainScorpionRecordingCarriesModelState)
 
     ttd::TimeTravelController ttd(_context);
     ASSERT_TRUE(ttd.StartRecording());
-    EXPECT_TRUE(ttd.GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::ScorpionProfROM))
+    EXPECT_TRUE(ttd.GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::ScorpionProfROM))
         << "MM_SCORP recording has no serializer for #1FFD / the magic-button trigger";
     ttd.StopRecording();
 }

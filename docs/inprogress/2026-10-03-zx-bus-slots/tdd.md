@@ -1019,6 +1019,12 @@ places above keyed by the device key (or the table index), region ids per instan
 It changes no file format (the regions are per table entry already) but the engine corpus would have to be re-recorded
 if region ids moved.
 
+*Done 2026-10-13* ([d23-device-keys.md](../2026-09-25-ttd-v2-migration/d23-device-keys.md)): the six places are keyed by
+the device key or the table index; a second card's memory region takes `InstanceRegionFirst + n x 0x100 + the kind's
+id` (the first keeps its id, so the corpus loads unchanged); v1 refuses, naming both cards. Two MultiSounds with
+disjoint DIP switches record and restore each card's own state
+(`TtdMultiSound_Test.TwoCardsWithDisjointDipsAreRecordedSideBySide`).
+
 ### 17.3 The AY socket's `ay` and `ts` boards; the slot-set guard on the engine
 
 The two boards are one module (`TurboSound`, blob id 0); v1 files cannot tell them apart. The engine names devices,

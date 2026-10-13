@@ -812,7 +812,7 @@ PortDecoder::RtcBinding PortDecoder_Scorpion256::GetRtcBinding()
     return binding;
 }
 
-std::vector<ttd::PeripheralId> PortDecoder_Scorpion256::GetTTDModelStateIds() const
+std::vector<ttd::TTDDeviceType> PortDecoder_Scorpion256::GetTTDModelStateTypes() const
 {
     // Both variants: #1FFD (RAM at #0000, service monitor, high #C000 bank
     // bits) and the DD50.1 magic-button trigger drive the paging chain and are
@@ -821,7 +821,7 @@ std::vector<ttd::PeripheralId> PortDecoder_Scorpion256::GetTTDModelStateIds() co
     // clock is captured even with the board absent: 336 bytes, and a test
     // that fits the board records it like any other
     // The SMUC latches and serial link likewise, board fitted or not (36 bytes)
-    return {ttd::PeripheralId::ScorpionProfROM, ttd::PeripheralId::Ds12887, ttd::PeripheralId::Smuc};
+    return {ttd::TTDDeviceType::ScorpionProfROM, ttd::TTDDeviceType::Ds12887, ttd::TTDDeviceType::Smuc};
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_Scorpion256::CreateTTDSerializers() const

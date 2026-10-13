@@ -91,10 +91,7 @@ std::vector<TTDHolderStream> TimeTravelController::SessionHolderStreams(bool dec
                                                                          .count());
     facts.recordedBy = _loadedFromFile ? _loadedRecordedBy
                                        : (_context && _context->pEmulator ? _context->pEmulator->GetId() : std::string());
-    for (const TTDDeviceEntry& device : _engine->Devices().Entries())
-        if (device.descriptor.legacyId != PeripheralId::Count)   // a device without a v1 id is not named by the mask
-            facts.peripheralMask.Set(static_cast<uint8_t>(device.descriptor.legacyId));
-    facts.notRecordedMask = NotRecordedMask();
+    facts.notRecorded = NotRecorded();
     facts.inputHistoryComplete = _inputHistoryComplete;
     facts.portJournalValid = _portJournalValid;
     facts.portJournalOffReason = _portJournalOffReason;
@@ -204,17 +201,18 @@ std::unique_ptr<TimeTravelEngine> TimeTravelController::LoadEngineSession(const 
     // MIDI bank, the Sprinter's ISA population) read the baseline checkpoint's device states
     if (_context && loaded->CheckpointCount() > loaded->FirstCheckpoint())
     {
-        const SlotManager::TtdDeviceSet recorded = SlotManager::TtdDeviceSet::Of(loaded->Devices(), facts.notRecordedMask);
-        std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
+        const SlotManager::TtdDeviceSet recorded = SlotManager::TtdDeviceSet::Of(loaded->Devices(), facts.notRecorded);
+        TTDDeviceStates states;
         std::vector<uint8_t> state;
-        for (const uint8_t id : recorded.ids)
-            if (loaded->DeviceStateAt(loaded->FirstCheckpoint(), id, state))
-                blobs.emplace(id, TTDPeripheralRegistry::EncodeBlob(id, state.data(), state.size()));
+        const std::vector<TTDDeviceEntry>& devices = loaded->Devices().Entries();
+        for (size_t k = 0; k < devices.size(); ++k)
+            if (loaded->DeviceStateAt(loaded->FirstCheckpoint(), static_cast<uint32_t>(k), state))
+                states.emplace(devices[k].descriptor.Key(), state);
         std::string why;
         const bool matches =
             _context->pSlotManager
-                ? _context->pSlotManager->TtdSessionMatches(recorded, blobs, _peripherals, why)
-                : SlotManager::TtdSessionMatchesWithoutSlots(_context, recorded, blobs, _peripherals, why);
+                ? _context->pSlotManager->TtdSessionMatches(recorded, states, _peripherals, why)
+                : SlotManager::TtdSessionMatchesWithoutSlots(_context, recorded, states, _peripherals, why);
         if (!matches)
         {
             err = why;
@@ -357,7 +355,7 @@ void TimeTravelController::CommitLoadedSession(std::unique_ptr<TimeTravelEngine>
     _capturedAtUnixMs = facts.capturedAtUnixMs;
     _sessionModelId = facts.modelId;
     _loadedRomSignature = facts.romSignature;
-    _loadedNotRecordedMask = facts.notRecordedMask;
+    _loadedNotRecorded = facts.notRecorded;
     _loadedRecordedBy = facts.recordedBy;
     SetState(TTDSessionState::Idle);
 

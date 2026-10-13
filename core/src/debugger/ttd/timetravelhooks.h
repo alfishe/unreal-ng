@@ -31,6 +31,7 @@ class TTDSerializable;
 enum class TTDReplaySource : uint8_t;
 enum class TTDExternalEventKind : uint8_t;
 enum class PeripheralId : uint8_t;
+enum class TTDDeviceType : uint16_t;
 
 /// @brief Session state machine values (TDD §4.2).
 enum class TTDSessionState : uint8_t
@@ -143,8 +144,9 @@ public:
     /// End without a source: nothing was edited (a trap declined)
     virtual void BeginToolEdit() = 0;
     virtual void EndToolEdit(const char* source) = 0;
-    /// A device was swapped for another one (the General Sound card)
-    virtual void UpdatePeripheral(PeripheralId oldId, PeripheralId newId, TTDSerializable* device) = 0;
+    /// A device was swapped for another one (the General Sound card): every device of @p oldType leaves, @p device
+    /// comes in under its own key
+    virtual void UpdatePeripheral(TTDDeviceType oldType, TTDSerializable* device) = 0;
 
     // Input
     /// The one entry point for live input (any thread); false while OwnsInput()

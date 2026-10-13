@@ -102,11 +102,11 @@ public:
     virtual void TTDBeforeCapture() {}
     /// A device whose state blob also carries the memory it offers as regions
     /// (General Sound: registers + RAM) gives the engine its state without
-    /// that memory: fills @p state, names the blob's @p peripheralId and
-    /// returns true. False: the blob carries no region memory
-    virtual bool TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const
+    /// that memory: fills @p state and returns true. False: the state carries
+    /// no region memory. The source is the registered device itself (the
+    /// registry pairs them by object)
+    virtual bool TTDStateWithoutRegions(std::vector<uint8_t>& state) const
     {
-        (void)peripheralId;
         (void)state;
         return false;
     }

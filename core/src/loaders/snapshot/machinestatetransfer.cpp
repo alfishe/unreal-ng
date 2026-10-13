@@ -35,7 +35,7 @@
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "stdafx.h"
 
-using ttd::PeripheralId;
+using ttd::TTDDeviceType;
 
 namespace
 {
@@ -401,26 +401,26 @@ namespace
     };
 
     /// Devices whose state does not depend on the machine they are plugged into
-    bool IsPortable(PeripheralId id)
+    bool IsPortable(TTDDeviceType id)
     {
         switch (id)
         {
-            case PeripheralId::TurboSound:
-            case PeripheralId::TSFM:
-            case PeripheralId::Covox:
-            case PeripheralId::GeneralSound:
-            case PeripheralId::GeneralSoundLightweight:
-            case PeripheralId::NeoGS:
-            case PeripheralId::MoonSound:
-            case PeripheralId::KempstonMouse:
-            case PeripheralId::KempstonJoystick:
+            case TTDDeviceType::TurboSound:
+            case TTDDeviceType::TSFM:
+            case TTDDeviceType::Covox:
+            case TTDDeviceType::GeneralSound:
+            case TTDDeviceType::GeneralSoundLightweight:
+            case TTDDeviceType::NeoGS:
+            case TTDDeviceType::MoonSound:
+            case TTDDeviceType::KempstonMouse:
+            case TTDDeviceType::KempstonJoystick:
                 return true;
             default:
                 return false;
         }
     }
 
-    std::string DeviceLabel(PeripheralId id, const ttd::TTDSerializable* device)
+    std::string DeviceLabel(TTDDeviceType id, const ttd::TTDSerializable* device)
     {
         std::string name = device ? device->TTDDeviceName() : std::string();
         if (name.empty() || name == "unknown")
@@ -430,12 +430,12 @@ namespace
 
     /// Memory a device's TTD blob does not carry. Checked (and, when apply is true, copied) before the blob loads
     /// @return false when the target's memory cannot hold the source's (the device is then not transferred)
-    bool CopyDeviceMemory(PeripheralId id, EmulatorContext& source, EmulatorContext& target, bool apply,
+    bool CopyDeviceMemory(TTDDeviceType id, EmulatorContext& source, EmulatorContext& target, bool apply,
                           std::vector<MachineStateTransfer::Item>& items)
     {
         using Status = MachineStateTransfer::ItemStatus;
 
-        if (id == PeripheralId::NeoGS)
+        if (id == TTDDeviceType::NeoGS)
         {
             auto* src = dynamic_cast<SoundChip_NeoGS*>(source.pSoundManager->getGeneralSound());
             auto* dst = dynamic_cast<SoundChip_NeoGS*>(target.pSoundManager->getGeneralSound());
@@ -461,7 +461,7 @@ namespace
         }
 
 #ifdef UNREALNG_HAVE_OPL4
-        if (id == PeripheralId::MoonSound)
+        if (id == TTDDeviceType::MoonSound)
         {
             SoundChip_Moonsound* src = source.pSoundManager->getMoonSound();
             SoundChip_Moonsound* dst = target.pSoundManager->getMoonSound();
@@ -691,18 +691,18 @@ namespace
         Storage,   ///< SD / HDD / CD controllers: never (their media are not moved)
     };
 
-    Binding BindingOf(PeripheralId id)
+    Binding BindingOf(TTDDeviceType id)
     {
         switch (id)
         {
-            case PeripheralId::BetaDisk:
-            case PeripheralId::Upd765:
+            case TTDDeviceType::BetaDisk:
+            case TTDDeviceType::Upd765:
                 return Binding::Floppy;
-            case PeripheralId::Tape:
+            case TTDDeviceType::Tape:
                 return Binding::Tape;
-            case PeripheralId::AtaChannel:
-            case PeripheralId::CdDrive:
-            case PeripheralId::EvoSdCard:
+            case TTDDeviceType::AtaChannel:
+            case TTDDeviceType::CdDrive:
+            case TTDDeviceType::EvoSdCard:
                 return Binding::Storage;
             default:
                 return IsPortable(id) ? Binding::Portable : Binding::Machine;
@@ -724,12 +724,31 @@ namespace
         }
 
         std::vector<uint8_t> buffer;
-        for (uint8_t raw = 0; raw < static_cast<uint8_t>(PeripheralId::Count); raw++)
+        // In ascending v1 id (a device that completes another one's state follows it: Wd1793Context after
+        // BetaDisk), the devices without one last
+        std::vector<const ttd::TTDRegistryEntry*> ordered;
+        for (const ttd::TTDRegistryEntry& e : src.registry.Entries())
+            ordered.push_back(&e);
+        std::stable_sort(ordered.begin(), ordered.end(), [](const auto* a, const auto* b) {
+            return static_cast<uint16_t>(a->legacyId) < static_cast<uint16_t>(b->legacyId);
+        });
+        // The target's device for a source key: the same key, else the one device of that type both have (a card in
+        // another slot of the other machine)
+        auto counterpart = [&](const ttd::TTDDeviceKey& key) -> ttd::TTDSerializable* {
+            if (ttd::TTDSerializable* same = dst.registry.Find(key))
+                return same;
+            auto count = [&key](const ttd::TTDPeripheralRegistry& r) {
+                return std::count_if(r.Entries().begin(), r.Entries().end(),
+                                     [&key](const ttd::TTDRegistryEntry& e) { return e.key.type == key.type; });
+            };
+            return count(src.registry) == 1 && count(dst.registry) == 1 ? dst.registry.FindType(key.type) : nullptr;
+        };
+        for (const ttd::TTDRegistryEntry* entry : ordered)
         {
-            const auto id = static_cast<PeripheralId>(raw);
-            ttd::TTDSerializable* from = src.registry.GetDevice(id);
+            const TTDDeviceType id = entry->key.type;
+            ttd::TTDSerializable* from = entry->device;
             // The RZX playback position is time travel's, not the machine's: a playback stays on its machine
-            if (!from || id == PeripheralId::RzxPlayback)
+            if (!from || id == TTDDeviceType::RzxPlayback)
                 continue;
 
             const std::string name = DeviceLabel(id, from);
@@ -751,7 +770,7 @@ namespace
                 continue;
             }
 
-            ttd::TTDSerializable* to = dst.registry.GetDevice(id);
+            ttd::TTDSerializable* to = counterpart(entry->key);
             if (!to)
             {
                 items.push_back({name, Status::Dropped, "the target has no such device (or another kind in its slot)"});
@@ -776,14 +795,14 @@ namespace
             if (apply)
             {
                 // The FDC clock policy is the machine's (Pentagon fixed 1 MHz, ZX-Evo latched, ...): the target keeps it
-                const bool betaDisk = id == PeripheralId::BetaDisk && target.pBetaDisk;
+                const bool betaDisk = id == TTDDeviceType::BetaDisk && target.pBetaDisk;
                 const FdcClockPolicy policy = betaDisk ? target.pBetaDisk->GetClockPolicy() : FdcClockPolicy::Fixed1MHz;
                 buffer.resize(size);
                 from->TTDSaveState(buffer.data());
                 to->TTDLoadState(buffer.data());
                 if (betaDisk && target.pBetaDisk->GetClockPolicy() != policy)
                     target.pBetaDisk->SetClockPolicy(policy);
-                if (id == PeripheralId::BetaDisk)
+                if (id == TTDDeviceType::BetaDisk)
                     std::memcpy(target.emulatorState.wd_shadow, source.emulatorState.wd_shadow,
                                 sizeof(target.emulatorState.wd_shadow));
             }
@@ -791,13 +810,12 @@ namespace
         }
 
         // Devices the target has and the source lacks keep the target's (reset) state
-        for (uint8_t raw = 0; raw < static_cast<uint8_t>(PeripheralId::Count); raw++)
+        for (const ttd::TTDRegistryEntry& e : dst.registry.Entries())
         {
-            const auto id = static_cast<PeripheralId>(raw);
-            ttd::TTDSerializable* to = dst.registry.GetDevice(id);
-            if (to && id != PeripheralId::RzxPlayback && !src.registry.GetDevice(id) &&
-                (clone || BindingOf(id) != Binding::Machine))
-                items.push_back({DeviceLabel(id, to), Status::Note, "only the target has it; it starts from reset"});
+            const TTDDeviceType id = e.key.type;
+            if (e.device && id != TTDDeviceType::RzxPlayback && !src.registry.Find(e.key) &&
+                !src.registry.IsRegistered(id) && (clone || BindingOf(id) != Binding::Machine))
+                items.push_back({DeviceLabel(id, e.device), Status::Note, "only the target has it; it starts from reset"});
         }
     }
 

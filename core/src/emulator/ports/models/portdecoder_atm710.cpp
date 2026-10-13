@@ -1158,13 +1158,13 @@ std::string PortDecoder_ATM710::Dump_EFF7_value(uint8_t value)
 
 /// endregion </Debug methods>
 
-std::vector<ttd::PeripheralId> PortDecoder_ATM710::GetTTDModelStateIds() const
+std::vector<ttd::TTDDeviceType> PortDecoder_ATM710::GetTTDModelStateTypes() const
 {
-    std::vector<ttd::PeripheralId> ids = {ttd::PeripheralId::AtmPaging};
+    std::vector<ttd::TTDDeviceType> ids = {ttd::TTDDeviceType::AtmPaging};
     if (GetKeyboardController())
-        ids.push_back(ttd::PeripheralId::Atm2Kbc);   // the v7.xx keyboard controller, when fitted
+        ids.push_back(ttd::TTDDeviceType::Atm2Kbc);   // the v7.xx keyboard controller, when fitted
     if (_v710Board)
-        ids.push_back(ttd::PeripheralId::AtmIoBus);  // the INTERNAL I/O connector's #FB latch
+        ids.push_back(ttd::TTDDeviceType::AtmIoBus);  // the INTERNAL I/O connector's #FB latch
     return ids;
 }
 

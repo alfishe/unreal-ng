@@ -128,7 +128,7 @@ protected:
         std::vector<std::unique_ptr<ttd::TTDSerializable>> owned;
         ttd::RegisterMachinePeripherals(&ctx, registry, owned);
         std::vector<uint8_t> blob;
-        if (ttd::TTDSerializable* device = registry.GetDevice(id))
+        if (ttd::TTDSerializable* device = registry.FindLegacy(id))
         {
             blob.resize(device->TTDStateSize());
             device->TTDSaveState(blob.data());

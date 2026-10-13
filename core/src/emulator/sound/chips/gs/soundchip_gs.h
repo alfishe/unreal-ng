@@ -299,7 +299,7 @@ public:
     /// the engine's blob is the fixed state only
     void TTDRegions(std::vector<ttd::TTDDeviceRegion>& out) override;
     void TTDArmRegions(bool on) override { _ramTrackerArmed = on ? &_ramTracker : nullptr; }
-    bool TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const override;
+    bool TTDStateWithoutRegions(std::vector<uint8_t>& state) const override;
     bool TTDLoadStateWithoutRegions(const uint8_t* state, size_t size) override;
 
 private:

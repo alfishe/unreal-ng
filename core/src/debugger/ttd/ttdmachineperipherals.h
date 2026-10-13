@@ -42,4 +42,15 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
 ///        declaration: the device keeps its own name
 std::string SlotCardInstance(const EmulatorContext* context, const TTDSerializable* device);
 
+/// The key a machine's device is registered under: its own (TTDDescribe), its instance named by its slot when it is
+/// a slot card's device (SlotCardInstance)
+TTDDeviceKey MachineDeviceKey(const EmulatorContext* context, const TTDSerializable* device);
+
+/// A device swapped for another one (the General Sound card's personality switch): every device of @p oldType leaves
+/// @p registry, @p device comes in under MachineDeviceKey (the lightweight General Sound: marked not recorded, it runs
+/// live through seeks). Also when the new device has the outgoing one's type: the registry refuses a second device
+/// under a held key. Null @p device: only the outgoing one leaves
+void SwitchMachinePeripheral(const EmulatorContext* context, TTDPeripheralRegistry& registry, TTDDeviceType oldType,
+                             TTDSerializable* device);
+
 } // namespace ttd

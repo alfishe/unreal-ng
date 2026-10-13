@@ -48,6 +48,8 @@
 #include <vector>
 
 #include "debugger/ttd/engine/ttdcontainer.h"
+#include "debugger/ttd/engine/ttddevicetable.h"
+#include "debugger/ttd/engine/ttdregion.h"
 
 namespace ttd
 {
@@ -235,12 +237,18 @@ public:
 
     /// The stream ids this version reads
     static bool KnownStream(uint16_t id);
+    /// The recorded machine's devices (the session's device table), without loading the session (file-info)
+    static bool ReadDevices(const ITTDByteSource& source, std::vector<TTDDeviceDescriptor>& out, std::string& error);
 
     /// The copy frame-boundary stream @p stream (the engine's id) took at
     /// @p frame, from a session file; false with the reason when the stream
     /// was off then ("not recorded") or the file lacks it
     static bool ReadFrameStream(const ITTDByteSource& source, uint32_t stream, uint64_t frame,
                                 std::vector<uint8_t>& out, std::string& error);
+
+private:
+    static bool ReadTables(const std::vector<uint8_t>& tables, uint32_t& interval, std::vector<TTDRegionDesc>& regions,
+                           std::vector<TTDDeviceEntry>& devices, std::string& error);
 };
 
 }  // namespace ttd
