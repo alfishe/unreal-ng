@@ -122,6 +122,9 @@ public:
 
 public:
     EvoAvr();
+    /// Defined in the .cpp: with the destructor implicit, every file that destroys one emits it and its thunks (two bases),
+    /// and MinGW's linker rejects those copies under -flto ("multiple definition of non-virtual thunk")
+    ~EvoAvr() override;
 
     /// region <Host side>
     void SetSdStatus(bool present, bool writeProtected);

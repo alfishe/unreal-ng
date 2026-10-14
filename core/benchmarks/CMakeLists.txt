@@ -131,7 +131,7 @@ endif (WIN32 AND MSVC)
 
 if (WIN32 AND MINGW)
     # Link all as static
-    set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -liconv -Wl,--no-whole-archive")
+    set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive -liconv")
     set(common_libraries shlwapi ws2_32)
 endif (WIN32 AND MINGW)
 

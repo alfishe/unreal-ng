@@ -185,8 +185,8 @@ struct ExpressionParser
                     e = Grouped(Expr::Binary(Op::And, Grouped(std::move(rotated)), Hex(0xFF, 2)));
                     break;
                 }
-                case 'L': e = Grouped(Expr::Binary(Op::RotateLeft16, std::move(e), Expr::Number(1))); break;
-                case 'R': e = Grouped(Expr::Binary(Op::RotateRight16, std::move(e), Expr::Number(1))); break;
+                case 'L': e = Grouped(Expr::Binary(Op::CyclicLeft16, std::move(e), Expr::Number(1))); break;
+                case 'R': e = Grouped(Expr::Binary(Op::CyclicRight16, std::move(e), Expr::Number(1))); break;
                 case 'c': e = Grouped(Expr::Binary(Op::Xor, std::move(e), Hex(0xFFFF, 4))); break;
                 case 'n': e = Grouped(Expr::Binary(Op::And, Expr::Unary(Op::Negate, std::move(e)), Hex(0xFFFF, 4))); break;
                 case 's': e = Grouped(Expr::Binary(Op::Or, std::move(e), Hex(0x80, 2))); break;

@@ -159,7 +159,7 @@ private:
                     {Op::Xor, "^", 2, false}, {Op::Equal, "?=", 3, true}, {Op::NotEqual, "!=", 3, true}, {Op::Less, "<", 4, true},
                     {Op::Greater, ">", 4, true}, {Op::LessEqual, "<=", 4, true}, {Op::GreaterEqual, ">=", 4, true},
                     {Op::Shl, "<<", 5, false}, {Op::Shr, ">>", 5, false}, {Op::ShrUnsigned, ">>", 5, false},
-                    {Op::RotateLeft16, "@<", 5, false}, {Op::RotateRight16, "@>", 5, false}, {Op::Add, "+", 6, false},
+                    {Op::CyclicLeft16, "@<", 5, false}, {Op::CyclicRight16, "@>", 5, false}, {Op::Add, "+", 6, false},
                     {Op::Sub, "-", 6, false}, {Op::Mul, "*", 7, false}, {Op::Div, "/", 7, false}, {Op::Mod, "%", 7, false},
                 };
                 const Expr& a = e.args[0];

@@ -219,8 +219,8 @@ struct ExpressionParser
             case '&': op = Op::And; return true;
             case '|': op = Op::Or; return true;
             case '!': op = Op::Xor; return true;
-            case '>': op = Op::RotateRight16; return true;
-            case '<': op = Op::RotateLeft16; return true;
+            case '>': op = Op::CyclicRight16; return true;
+            case '<': op = Op::CyclicLeft16; return true;
             default: return false;
         }
     }

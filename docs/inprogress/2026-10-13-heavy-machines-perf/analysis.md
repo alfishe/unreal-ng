@@ -541,8 +541,34 @@ translation units (the Z80N / Z84 library calls of `Enter` / `Leave`, the device
 | Pentagon_ShipTurbo | 154 | 147 | 0.95 |
 | Pentagon_ShipNormal | 731 | 738 | 1.01 |
 
-It is a build decision, not a code change: link time, the gcc / MSVC / MinGW builds of CI, and warnings that only
-appear across units have to be checked first. Left to the owner.
+**Switched on 2026-10-14** (`cmake/Lto.cmake`, `ENABLE_LTO`, Release only, not in sanitizer builds, off by default on
+MinGW), after a check on every toolchain:
+
+| Toolchain | Build | Warnings | core-tests |
+|:--|:--|:--|:--|
+| clang, macOS (the whole tree) | yes | none | all pass (9,407), asm and Qt tests too, MCP live suite 17 / 17; frames equal the regular build's |
+| gcc 13.3, Linux (Docker, the whole tree) | yes | none | all pass (9,371) |
+| MSVC 2019 (`/GL`, `/LTCG`) | yes | none | all pass (9,385) |
+| MinGW gcc 15.2 with LTO | yes | none | all pass (9,384), but the link takes over 40 minutes: off by default there |
+| MinGW gcc 15.2 without LTO (the default) | yes | none | all pass (9,384) |
+
+What the check found and what was fixed on the way (gcc reports some of these only across units):
+
+- `SoundManager` had two layouts (`-Wodr`): `_moonsound` sat under `UNREALNG_HAVE_OPL4`, which recording and the
+  automation libraries do not define; they saw every later member 8 bytes off. The field is unconditional now.
+- `unrealasm::ir::Op` had two sets of names (`-Wodr`, MinGW): winnt.h defines `RotateLeft16` / `RotateRight16` as
+  macros, so files that had windows.h before `ir.h` saw `_rotl16`. The enumerators are `CyclicLeft16` /
+  `CyclicRight16` now.
+- MinGW with LTO rejected the implicit destructors of `Ne2000Board` and `EvoAvr` (two bases each: "multiple
+  definition of non-virtual thunk"). They are defined in their .cpp files now.
+- gcc repeats flow-based warnings over the whole program at link time and reports false ones there
+  (`-Wstringop-overflow` in sam2695's state archive and inside `std::string`, `-Wfree-nonheap-object` in the tests'
+  counting `operator delete`, `-Wattributes` for visibility on PE): switched off for the LTO link only.
+- Not LTO, but found while checking MinGW: the Release `core-tests.exe` was 2.6 GB with full `-g` and Windows
+  refused to start it; MinGW Release now has line tables only (`-g1`, 626 MB). The tests' static link forced
+  `libiconv` with `--whole-archive` next to `libwinpthread`, two VERSION resources ("`.rsrc` merge failure"); it is
+  linked plainly now. gcc 15's `-Wsubobject-linkage` for every `TEST_P` with a parameter type in an anonymous
+  namespace (a googletest pattern) is off for the test binary.
 
 **What the profiles show now** (after three rounds, the per-instruction cost is spread thin; no single item above
 ~8 % on TS-Conf or the Next):

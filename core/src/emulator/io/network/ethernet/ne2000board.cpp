@@ -70,6 +70,8 @@ const char* Ne2000Board::VariantName(Variant v)
     return "RTL8019AS";
 }
 
+Ne2000Board::~Ne2000Board() = default;
+
 Ne2000Board::Ne2000Board(const Settings& settings, std::function<uint64_t()> clock)
     : _settings(settings), _clock(std::move(clock)), _chip(*this), _ram(kRamSize, 0)
 {

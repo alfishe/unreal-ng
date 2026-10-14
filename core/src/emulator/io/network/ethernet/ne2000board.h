@@ -58,6 +58,9 @@ public:
 
     /// `clock`: the machine's time in base T-states (3.5 MHz units)
     Ne2000Board(const Settings& settings, std::function<uint64_t()> clock);
+    /// Defined in the .cpp: with the destructor implicit, every file that destroys one emits it and its thunks (two bases),
+    /// and MinGW's linker rejects those copies under -flto ("multiple definition of non-virtual thunk")
+    ~Ne2000Board() override;
 
     const Settings& GetSettings() const { return _settings; }
     Dp8390& Chip() { return _chip; }
