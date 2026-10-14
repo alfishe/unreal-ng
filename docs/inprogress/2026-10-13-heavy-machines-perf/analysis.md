@@ -612,6 +612,46 @@ pixel by pixel instead: frame 330 (the text is on the screen, 4,454 lit pixels) 
 The LTO build was put through the same: all of `core-tests` passes in it (12 shards), and its frames equal the
 regular build's in every scenario above that was run on it (the same Sprinter clock aside).
 
+### The cycle on every platform (2026-10-14)
+
+`4ad1b6d05` (before the cycle) against `09500dde7` (after it, LTO in its default per toolchain), the same
+`frame_profile_benchmark.cpp` in both trees, interleaved A B B A x 2, minimum µs per frame. The old tree needed two
+gcc `-Werror` fixes that master got later (the braces in the Next poller, parentheses in `unreal-asm`'s
+`layout.cpp`) and, on Windows, the benchmark build fixes below; none of them is on a measured path.
+
+| Row | macOS clang (LTO) | Linux gcc 14 (LTO) | Windows MSVC 2019 (LTO) | Windows MinGW gcc 15 (no LTO) |
+|:--|--:|--:|--:|--:|
+| TSConf_ShipNormal | 8,281 -> 3,113 (0.38) | 8,389 -> 3,692 (0.44) | 13,750 -> 5,522 (0.40) | 11,579 -> 5,397 (0.47) |
+| TSConf_Sprites_ShipNormal | 5,384 -> 2,868 (0.53) | 5,985 -> 3,356 (0.56) | 10,000 -> 5,227 (0.52) | 8,044 -> 4,855 (0.60) |
+| TSConf_ShipTurbo | 2,870 -> 2,516 (0.88) | 2,892 -> 2,802 (0.97) | 5,515 -> 4,121 (0.75) | 4,330 -> 4,283 (0.99) |
+| TSConf_Sprites_ShipTurbo | 2,758 -> 2,287 (0.83) | 3,050 -> 2,455 (0.81) | 5,445 -> 4,094 (0.75) | 4,167 -> 3,797 (0.91) |
+| Next_ShipNormal | 2,124 -> 1,024 (0.48) | 2,887 -> 1,604 (0.56) | 4,599 -> 2,064 (0.45) | 3,293 -> 1,820 (0.55) |
+| Next_ShipTurbo | 526 -> 372 (0.71) | 600 -> 410 (0.68) | 876 -> 599 (0.68) | 745 -> 587 (0.79) |
+| Sprinter_ShipNormal | 1,709 -> 1,522 (0.89) | 1,843 -> 1,604 (0.87) | 3,812 -> 2,726 (0.72) | 2,616 -> 2,546 (0.97) |
+| Sprinter_ShipTurbo | 1,153 -> 1,048 (0.91) | 1,114 -> 973 (0.87) | 2,744 -> 1,676 (0.61) | 1,660 -> 1,636 (0.99) |
+| Pentagon_ShipNormal | 920 -> 716 (0.78) | 1,045 -> 854 (0.82) | 2,277 -> 1,200 (0.53) | 1,412 -> 1,111 (0.79) |
+| Pentagon_ShipTurbo | 154 -> 143 (0.93) | 156 -> 160 (1.03) | 1,013 -> 273 (0.27) | 243 -> 232 (0.95) |
+
+macOS only (the files are local or need the Sprinter HDD image):
+
+| Row | before | after | x |
+|:--|--:|--:|--:|
+| Next_Spectron_ShipNormal / ShipTurbo | 4,940 / 3,290 | 3,533 / 2,496 | 0.72 / 0.76 |
+| Next_Copper / Show512 / Tilemap / Scroll (1x) | 7,441 / 5,985 / 6,870 / 7,902 | 5,463 / 4,548 / 5,234 / 5,945 | 0.73-0.76 |
+| SprinterDemo DontBlink / Rotozoom / Plasma2 / BadApple (shipped) | 1,406 / 2,635 / 774 / 1,105 | 1,196 / 2,390 / 732 / 1,024 | 0.85-0.95 |
+
+Machines: macOS on the Apple Silicon dev Mac; Linux in the CI image under Docker on the same Mac (arm64); Windows on
+the i7-8700K host (12 threads). Read across: the code changes give the same picture everywhere (TS-Conf and the Next
+at 1x about twice as fast, the Next in turbo -20..-32 %); the toolchain adds on top. MSVC gains the most from LTO -
+without `/GL` it inlines nothing across files, so its Pentagon turbo frame was 4x slower than clang's and is now
+within 2x. MinGW, with LTO off by default, shows the code changes alone: the Sprinter and the turbo rows barely move
+there, which is about what LTO is worth on them elsewhere.
+
+Fixes the Windows benchmark build needed (it did not build on master): `memory_interface_microbenchmark.cpp` used
+`std::aligned_alloc`, which the Windows C runtime does not have (`_aligned_malloc` there); `unreal-asm`'s deferred
+benchmark target called `add_subdirectory` when the build had no Google Benchmark target (MinGW compiles it into
+`core-benchmarks`), which CMake refuses during deferred execution.
+
 ### Where the cycle stands
 
 | Row | start of the cycle | now | x |

@@ -272,6 +272,13 @@ function(unrealasm_add_benchmarks)
     if (TARGET unreal-asm-benchmarks)
         return()
     endif()
+    # Deferred (inside the emulator build) a subdirectory cannot be added any more ("Subdirectories may not be created
+    # during deferred execution"): without a Google Benchmark target of the emulator's - the MinGW build compiles its
+    # sources into core-benchmarks directly - there is nothing to link against, so the target is left out
+    if (NOT TARGET benchmark AND NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_FUNCTION_LIST_DIR)
+        message(STATUS "unreal-asm-benchmarks: no Google Benchmark target in this build, not defined")
+        return()
+    endif()
     if (NOT TARGET benchmark)
         set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
         set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
