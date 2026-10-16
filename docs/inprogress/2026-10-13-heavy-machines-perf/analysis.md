@@ -703,6 +703,38 @@ were each caught by at least one of them.
 The remaining classic-screen cost is the per-T loop itself (`DrawRangeZXImpl`); a cell-at-a-time loop for long spans
 is what is left there.
 
+**R6. The ZX range renderer a cell at a time** (`f5ac00cd3`): a range that covers a character cell's four T draws
+its eight pixels at once; the T-state LUT carries each T's run, so a blank run is one step and a border run one fill
+once the border latch holds the range's colour. Pentagon 1x 611 -> 573 (-6 %). `ZxScreenCells_Test`: a frame in one
+range equals the frame drawn one T at a time, picture and plane B.
+
+**R7. The TSFM's quiet ticks.** With R5 and R6 the classic screen was ~7 % of a Pentagon 1x frame and the TurboSound
+FM ~53 % - in the BASIC idle, two silent chips rendered tick by tick (218.75 kHz: two SSG mixers and output filters,
+four FM half-ticks with their coupling filters, six decimator feeds). `Ym2203Pair::quietTick` replaces `renderTick`
+while the pair is quiet at rest: no SSG write due, both SSGs at amplitude 0 (volume 0, no envelope; the DAC gives 0
+for amplitudes 0 and 1 on both chips) with their output filters at rest on 0, each FM output stage's coupling at rest
+on the gated hold, every FM word due the level held, all six decimator histories zeros (HQ only; LQ is untouched).
+Then the full tick would change no filter state and feed zeros everywhere: the quiet tick advances the generators
+(their phase is heard when the sound comes back), consumes the words and moves the decimator positions. The output
+filters settle to exactly 0 some seconds after a sound stops (the SSG's ~2 s, the FM coupling's ~8 s), so a playing
+tune never takes the path.
+
+| Row | before | after | x |
+|:--|--:|--:|--:|
+| Pentagon_ShipNormal | 570 | 476 | 0.84 |
+| Pentagon_WorstNormal | 678 | 579 | 0.85 |
+| TSConf_ShipNormal | 3,183 | 3,094 | 0.97 |
+| turbo rows, Sprinter | | | 1.00 |
+
+Exactness: `TsfmQuietTicks_Test` - two machines (CPU parked, the test writes the chips), one with the quiet ticks off,
+the host sound compared sample for sample through silence, an SSG tone, noise and an envelope on chip 1, an FM note,
+each followed by silence until the quiet ticks take over again, and a tone after that; HQ and LQ. Freezing the tone
+counters in the quiet tick fails it at once; not advancing the decimator phase never reaches an output. The audio of
+eleven snapshots (tech_support on the TSFM, 7th Reality, Eye Ache, Vibrations, Earshaver, Binary Love II, Crazy Love,
+others), HQ and LQ, 300-500 frames each, hashed in a throwaway harness: the same bytes before and after. The TSFM
+golden digests are unchanged. (An AY mixer cache - the sums kept while the three amplitudes stay - was exact too but
+measured nothing and was dropped.)
+
 **Tried and dropped: the Next UART's peer promise.** A peer (the ESP module, a wired device) told the UART until when
 it stays silent (`QuietUntil` plus an activity counter), so the poll skipped the two virtual peer calls per
 instruction. Exact (lockstep twins with and without the promise, every Next frame / CPU / RAM hash equal at 3.5 and

@@ -259,6 +259,18 @@ public:
 
     /// Check if enough samples for one output (fractional). A slave
     /// delegates: it outputs exactly when its master does.
+    /// Samples the history holds: after this many zeros in a row it is all zeros
+    static constexpr size_t history() { return HISTORY; }
+
+    /// feedSample(0.0) into a history that is all zeros already (the caller counted history() zeros in a row): the
+    /// same index and phase, no stores
+    void feedZeroIntoSilence()
+    {
+        _bufferIndex = (_bufferIndex == 0) ? HISTORY - 1 : _bufferIndex - 1;
+        if (!_master)
+            _phase += 1.0;
+    }
+
     bool hasOutput() const
     {
         return _master ? _master->hasOutput() : _phase >= _samplesPerOutput;

@@ -241,6 +241,20 @@ void SoundChip_TurboSoundFM::handleStep()
                 // 2/2; the cursor advances one SSG tick
                 while (!chip0.ssg.decimatorLeft().hasOutput())
                 {
+                    // The pair quiet at rest (Ym2203Pair::quietTick) and the four SSG streams all zeros: the tick
+                    // feeds a zero to each, which moves only their positions
+                    if (!tapActive && _ssgZeroRun[0] >= FilterDecimator::history() &&
+                        _ssgZeroRun[1] >= FilterDecimator::history() && _ssgZeroRun[2] >= FilterDecimator::history() &&
+                        _ssgZeroRun[3] >= FilterDecimator::history() && _pair.quietTick(_board.fmEnabled))
+                    {
+                        chip0.ssg.decimatorLeft().feedZeroIntoSilence();
+                        chip0.ssg.decimatorRight().feedZeroIntoSilence();
+                        chip1.ssg.decimatorLeft().feedZeroIntoSilence();
+                        chip1.ssg.decimatorRight().feedZeroIntoSilence();
+                        for (size_t& zeroRun : _ssgZeroRun)
+                            zeroRun++;
+                        continue;
+                    }
                     _pair.renderTick(_board.fmEnabled, [&](TsfmChip& c0, TsfmChip& c1)
                     {
                         // Native-rate tap for DSD capture (pre-decimation, both SSGs summed)

@@ -168,6 +168,8 @@ protected:
         0.63517204547200, 0.75800717174000,
         0.87992675669500, 1.0
     };
+    // silentAtRest: amplitude 0 and 1 (volume 0 with the gate open) are the same DAC level, 0
+    static_assert(AY_DAC_TABLE[0] == 0.0 && AY_DAC_TABLE[1] == 0.0 && YM_DAC_TABLE[0] == 0.0 && YM_DAC_TABLE[1] == 0.0);
 
     const double* _volumeDACTablePtr = (double*)&AY_DAC_TABLE;
 
@@ -464,6 +466,29 @@ public:
     void reset() override;
     void updateState(bool bypassPrescaler = false);
     void updateMixer();
+
+    /// Every channel at amplitude 0 (volume 0, no envelope: the DAC gives 0 whatever the tone and noise gates do) and
+    /// both output filters at rest on 0: updateMixer would leave every output and filter state as it is
+    bool silentAtRest() const
+    {
+        for (const ToneGenerator& tone : _toneGenerators)
+        {
+            if (tone._envelopeEnabled || tone._volume != 0)
+                return false;
+        }
+        return _filterDCLeft.restsAt(0.0) && _filterDCRight.restsAt(0.0);
+    }
+    /// updateState(true) of a chip that is silentAtRest: the generators advance, the mixer is not run (it would
+    /// change nothing)
+    void updateStateSilent()
+    {
+        _tick++;
+        _noiseGenerator.updateState();
+        _envelopeGenerator.updateState();
+        _toneGenerators[AY_CHANNEL_A].updateState();
+        _toneGenerators[AY_CHANNEL_B].updateState();
+        _toneGenerators[AY_CHANNEL_C].updateState();
+    }
 
     void setMixer(uint8_t mixerValue);
     void setVolume(uint8_t volume, uint8_t channel);

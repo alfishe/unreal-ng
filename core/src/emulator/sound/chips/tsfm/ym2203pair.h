@@ -465,6 +465,60 @@ public:
         _renderT += 16;
     }
 
+    /// renderTick when the pair is quiet at rest, and true; false (nothing done) otherwise. Quiet at rest: no SSG
+    /// write due at this tick, both SSGs silentAtRest, the HQ output stage of each chip with its coupling at rest on
+    /// the gated hold, its decimator history all zeros, no native tap, and every FM word due by the tick's second
+    /// half the level the hold has. renderTick would then feed zeros everywhere and change no filter state: only
+    /// the generators, the words consumed and the decimator positions move, and so they do here. The caller feeds
+    /// the SSG decimators (their history all zeros too)
+    bool quietTick(bool fmEnabled)
+    {
+        if (!_quietTicksEnabled)
+            return false;
+        const int64_t secondHalf = _renderT + 8;
+        for (const auto& c : _chips)
+        {
+            if (!c->ssgWrites.empty() && c->ssgWrites.front().t <= _renderT)
+                return false;
+            if (!c->ssg.silentAtRest())
+                return false;
+            const Ym2203OutputState& o = c->out;
+            if (!_hqEnabled || o.nativeTap->isActive() || o.zeroRun < FilterDecimator::history())
+                return false;
+            if (!o.coupling.restsAt(fmEnabled ? o.hold : 0.0))
+                return false;
+            for (size_t i = 0; i < c->words.size() && int64_t(c->words.at(i).t) <= secondHalf; i++)
+            {
+                if (static_cast<double>(c->words.at(i).word) / 32768.0 != o.hold)
+                    return false;
+            }
+        }
+        for (auto& c : _chips)
+        {
+            Ym2203OutputState& o = c->out;
+            bool consumed = false;
+            while (!c->words.empty() && int64_t(c->words.front().t) <= secondHalf)
+            {
+                c->words.pop();
+                consumed = true;
+            }
+            if (consumed)
+                o.couplingSettlePending = false;  // settling on the level it rests at changes nothing
+            o.lastFed = 0.0;
+            o.decimator.feedZeroIntoSilence();
+            o.decimator.feedZeroIntoSilence();
+            o.zeroRun += 2;
+            c->ssg.updateStateSilent();
+        }
+        _renderT += 16;
+        _quietTicks++;
+        return true;
+    }
+
+    /// Off: every tick through renderTick (comparisons); the count of the ticks quietTick took
+    void setQuietTicksEnabled(bool enabled) { _quietTicksEnabled = enabled; }
+    uint64_t quietTicks() const { return _quietTicks; }
+
     /// Silence the output-stage audio content - hold, coupling, LQ boxcar, decimator histories - keeping every
     /// tick-gating phase (determinism)
     void flushOutputStage();
@@ -565,6 +619,8 @@ private:
     uint64_t _fmIdleSamples = 0;     // FM sample clocks the fast path stood for (diagnostics, not state)
 
     bool _hqEnabled = true;
+    bool _quietTicksEnabled = true;
+    uint64_t _quietTicks = 0;
     bool _synthesisSuppressed = false;
     bool _coreSynthesisSkipped = false;
 
