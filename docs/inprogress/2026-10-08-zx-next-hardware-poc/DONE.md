@@ -1,4 +1,8 @@
-# Status: TODO
+# Status: DONE (closed unrun, 2026-10-16)
+
+Closed by the owner's decision together with the ZX Next program ([../2026-10-07-zx-next/DONE.md](../2026-10-07-zx-next/DONE.md)): the programs
+were written and assembled but **never run**, on a board or anywhere; the steps below stay as they were for whoever gets a board. The RTL
+simulation of POC 028 / 029 answered the timing questions instead.
 
 Hardware probe programs for the ZX Spectrum Next. Written 2026-10-08; assembled; **not run anywhere**.
 

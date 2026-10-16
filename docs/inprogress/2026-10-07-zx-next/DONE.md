@@ -1,4 +1,20 @@
-# Status: TODO
+# Status: DONE (closed 2026-10-16)
+
+**The ZX Spectrum Next program is closed by the owner's decision of 2026-10-16.** `NEXT` is a creatable machine that boots the real firmware
+chain (boot ROM, `TBBLUE.FW`, NextZXOS) and runs NEX programs; the Z80N, memory and MMU, the five video layers with the copper, the DMA, the
+sound, the UARTs with the ESP and the NextPi supervisor peers, the DivMMC, Multiface, I2C, the mouse, ULA+, Radastan and the Pi header are
+modelled from the RTL (core 3.02.03), with TTD, the debugger and every automation surface, and the pixel-level copper timing measured on the
+RTL simulated whole (POC 028 / 029). The index of what was found and measured: [findings-2026-10-12-uart-esp-copper-d2.md](findings-2026-10-12-uart-esp-copper-d2.md),
+[copper-picture-latency-2026-10-12.md](copper-picture-latency-2026-10-12.md).
+
+**Closed without doing, on purpose** (the `[ ]` items below that remain open are of these kinds and are not planned): the ESP ROM-bootloader /
+SLIP flasher and an I2S player for the Pi (physical protocols with nothing to talk to: if real players appear they are emulated by what they
+do, not by their wire protocol), recording the layer planes at 320 (measured worse, design-layer-capture.md section 10), hardware probe
+programs that need a board ([2026-10-08-zx-next-hardware-poc](../2026-10-08-zx-next-hardware-poc/README.md): written, never run), and the
+older N-series wish-list items nobody asked for. Reopen by a new folder, not by editing this one.
+
+---
+
 
 ZX Spectrum Next (`NEXT`): designed 2026-10-07; N1, N2 (skeleton), P1-P4 done 2026-10-08 on branch `zx-next`. Plan:
 [phases.md](phases.md) (N0-N12, P1-P4). `NEXT` is creatable as the bare personality (128K board, user ROMs) and boots the
