@@ -165,12 +165,12 @@ bool LoaderSCL::writeImage(const std::string& path)
     // Write file data
     for (const auto& desc : fileDescriptors)
     {
-        uint16_t fileSectorLocator = desc.StartTrack * TRD_SECTORS_PER_TRACK + desc.StartSector;
+        uint16_t fileSectorLocator = static_cast<uint16_t>(desc.StartTrack * TRD_SECTORS_PER_TRACK + desc.StartSector);
 
         for (size_t i = 0; i < desc.SizeInSectors; i++, fileSectorLocator++)
         {
-            uint8_t fileTrackNo = fileSectorLocator / TRD_SECTORS_PER_TRACK;
-            uint8_t fileSectorNo = fileSectorLocator % TRD_SECTORS_PER_TRACK;
+            uint8_t fileTrackNo = static_cast<uint8_t>(fileSectorLocator / TRD_SECTORS_PER_TRACK);
+            uint8_t fileSectorNo = static_cast<uint8_t>(fileSectorLocator % TRD_SECTORS_PER_TRACK);
 
             DiskImage::Track* fileTrack = _diskImage->getTrack(fileTrackNo);
             if (!fileTrack)
@@ -319,13 +319,14 @@ bool LoaderSCL::addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileDa
             /// endregion </Create new file descriptor>
 
             /// region <Recalculate free TR-DOS disk values>
-            uint16_t freeSectorLocator = volumeInfo->firstFreeTrack * TRD_SECTORS_PER_TRACK + volumeInfo->firstFreeSector;
-            uint16_t newFreeSectorLocator = freeSectorLocator + fileLengthSectors;
+            uint16_t freeSectorLocator =
+                static_cast<uint16_t>(volumeInfo->firstFreeTrack * TRD_SECTORS_PER_TRACK + volumeInfo->firstFreeSector);
+            uint16_t newFreeSectorLocator = static_cast<uint16_t>(freeSectorLocator + fileLengthSectors);
 
-            volumeInfo->firstFreeSector = newFreeSectorLocator & 0x0F;
-            volumeInfo->firstFreeTrack = newFreeSectorLocator >> 4;
+            volumeInfo->firstFreeSector = static_cast<uint8_t>(newFreeSectorLocator & 0x0F);
+            volumeInfo->firstFreeTrack = static_cast<uint8_t>(newFreeSectorLocator >> 4);
             volumeInfo->fileCount++;
-            volumeInfo->freeSectorCount -= fileLengthSectors;
+            volumeInfo->freeSectorCount = static_cast<uint16_t>(volumeInfo->freeSectorCount - fileLengthSectors);
 
             // Update sector CRC
             systemSector->recalculateDataCRC();
@@ -336,8 +337,8 @@ bool LoaderSCL::addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileDa
 
             for (size_t i = 0; i < fileLengthSectors; i++, fileSectorLocator++)
             {
-                uint8_t fileTrackNo = fileSectorLocator / TRD_SECTORS_PER_TRACK;
-                uint8_t fileSectorNo = (fileSectorLocator % TRD_SECTORS_PER_TRACK);
+                uint8_t fileTrackNo = static_cast<uint8_t>(fileSectorLocator / TRD_SECTORS_PER_TRACK);
+                uint8_t fileSectorNo = static_cast<uint8_t>(fileSectorLocator % TRD_SECTORS_PER_TRACK);
 
                 DiskImage::Track* fileTrack = _diskImage->getTrack(fileTrackNo);
                 DiskImage::Sector* fileSector = fileTrack->getSector(fileSectorNo);

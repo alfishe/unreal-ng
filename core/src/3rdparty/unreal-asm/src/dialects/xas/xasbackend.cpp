@@ -264,7 +264,7 @@ private:
                 const auto l = Text(a);
                 return l ? std::optional<std::string>(*l + (e.op == Op::Shl ? "*" : "/") + Number(int64_t{1} << *shift)) : std::nullopt;
             }
-            case Op::RotateLeft16: case Op::RotateRight16:
+            case Op::CyclicLeft16: case Op::CyclicRight16:
             {
                 // 'L / 'R rotate by one bit (7.x)
                 const auto count = Value(b);
@@ -274,7 +274,7 @@ private:
                 if (!l)
                     return std::nullopt;
                 for (int64_t k = 0; k < (*count & 15); ++k)
-                    *l += e.op == Op::RotateLeft16 ? "'L" : "'R";
+                    *l += e.op == Op::CyclicLeft16 ? "'L" : "'R";
                 return l;
             }
             default: return std::nullopt;
@@ -487,8 +487,8 @@ private:
             if (!t.empty() && t[0] == ';')
             {
                 // a text written as a comment (a directive XAS has not): in characters XAS's font has
-                const std::string comment = ";" + CommentText(t.substr(1));
-                out.push_back(text.empty() ? comment : text + " " + comment);
+                const std::string asComment = ";" + CommentText(t.substr(1));
+                out.push_back(text.empty() ? asComment : text + " " + asComment);
                 continue;
             }
             text.append(text.size() < 8 ? 8 - text.size() : 1, ' ');

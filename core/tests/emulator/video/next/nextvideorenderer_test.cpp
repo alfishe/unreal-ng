@@ -1059,3 +1059,127 @@ TEST_F(NextSprites_Test, SpriteInTheBorderShowsThroughTheUlaInTheOrdersWithTheUl
 }
 
 // endregion
+
+// region <Compositor digest>
+
+// Random machine states through the whole line renderer, with and without the layer capture: every layer order (NR #15 bits 4:2,
+// blend modes 110 / 111), the stencil and blend bits (NR #68), the tilemap, LoRes, the Timex modes, palettes with Layer 2 priority
+// colours, clip windows and sprites. The digest of the output pixels, the captured planes, winner ids and sprite numbers is pinned:
+// a change to the compositor or a layer function that moves one pixel changes it. Recorded on the per-pixel string-walk compositor
+// before its order was resolved per line (2026-10-13)
+TEST_F(NextVideoRenderer_Test, RandomStatesDigestIsUnchanged)
+{
+    uint64_t digest = 1469598103934665603ull;
+    auto mix = [&](const void* data, size_t bytes) {
+        const uint8_t* p = static_cast<const uint8_t*>(data);
+        for (size_t i = 0; i < bytes; i++)
+            digest = (digest ^ p[i]) * 1099511628211ull;
+    };
+    uint32_t seed = 0x5EED1234u;
+    auto next = [&]() {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        return seed;
+    };
+    NextSprites sprites;
+    std::vector<NextLayer::Pixel> planes(NextLayer::kPlanes * NextVideoRenderer::kWidth);
+    std::vector<uint8_t> ids(NextVideoRenderer::kWidth), info(NextVideoRenderer::kWidth);
+    for (unsigned state = 0; state < 72; state++)
+    {
+        // The second half: lines with nothing above the ULA (Layer 2, the tilemap and the sprites off, alone or together), which the
+        // compositor draws by its ULA-only path. Its digest was recorded with that path switched off
+        const bool quiet = state >= 48;
+        if (state == 48)
+            EXPECT_EQ(digest, 0xD15149A1F677E1AEull) << "the general compositor";
+        // (the quiet half keeps the last memory and palettes: filling them is most of the test's time)
+        for (uint8_t& b : _ram)
+        {
+            if (quiet)
+                break;
+            b = static_cast<uint8_t>(next());
+        }
+        for (unsigned palette = 0; palette < 8 && !quiet; palette++)
+        {
+            _regs.WritePaletteControl(static_cast<uint8_t>(palette << 4));
+            _regs.WritePaletteIndex(0);
+            for (unsigned i = 0; i < 256; i++)
+            {
+                const uint32_t r = next();
+                _regs.WritePaletteValue9(static_cast<uint8_t>(r));
+                _regs.WritePaletteValue9(static_cast<uint8_t>((r >> 8) & ((r >> 16) % 5 == 0 ? 0x81 : 0x01)));
+            }
+        }
+        _regs.WritePaletteControl(static_cast<uint8_t>(next() & 0x0F));
+        _regs.WritePortFf(static_cast<uint8_t>(next()));
+        _regs.WriteUlaNextFormat(static_cast<uint8_t>(next()));
+        for (unsigned w = 0; w < NextVideoRegs::kClipWindows; w++)
+        {
+            _regs.WriteClipControl(static_cast<uint8_t>(1u << w));
+            for (unsigned c = 0; c < 4; c++)
+                _regs.WriteClip(w, static_cast<uint8_t>(next() % 3 == 0 ? next() : (c & 1 ? 0xFF : 0x00)));
+        }
+        for (unsigned r = 0; r < 256; r++)
+            _in.nr[r] = static_cast<uint8_t>(next());
+        _in.nr[0x12] = static_cast<uint8_t>(next() % 10);  // Layer 2 banks inside the 16 pages
+        _in.nr[0x13] = static_cast<uint8_t>(next() % 10);
+        _in.nr[0x15] = static_cast<uint8_t>((next() & 0x9F) | ((state % 8) << 2));  // every order and blend mode in turn
+        _in.nr[0x6E] = static_cast<uint8_t>(next() & 0x3F);
+        _in.nr[0x6F] = static_cast<uint8_t>(next() & 0x3F);
+        _in.border = static_cast<uint8_t>(next() & 7);
+        _in.portFf = static_cast<uint8_t>(next() & 0x3F);
+        _in.shadowScreen = (next() & 3) == 0;
+        _in.layer2Enable = (next() & 1) != 0;
+        _in.flash = (next() & 1) != 0;
+        if (quiet)
+        {
+            const unsigned off = state % 4 == 0 ? 7 : (next() & 7);  // which of Layer 2 / tilemap / sprites are off: all three every 4th state
+            if (off & 1)
+                _in.layer2Enable = false;
+            if (off & 2)
+                _in.nr[0x6B] &= 0x7F;
+            if (state % 3 == 0)
+                _in.nr[0x68] &= 0x7E;  // the ULA on, no stencil
+        }
+        sprites.Reset();
+        for (unsigned s = 0; s < 128; s++)
+        {
+            // through the attribute port: four bytes, a fifth when byte 3 bit 6 says so; two sprites in three are visible
+            sprites.WriteSlotSelect(static_cast<uint8_t>(s));
+            uint8_t bytes[5];
+            for (uint8_t& v : bytes)
+                v = static_cast<uint8_t>(next());
+            if (next() % 3 == 0 || (quiet && state % 2 == 0))
+                bytes[3] &= 0x7F;
+            for (unsigned i = 0; i < ((bytes[3] & 0x40) ? 5u : 4u); i++)
+                sprites.WriteAttribute(bytes[i]);
+        }
+        sprites.WriteSlotSelect(0);
+        for (unsigned i = 0; i < 0x4000; i++)
+            sprites.WritePattern(static_cast<uint8_t>(next() % 4 == 0 ? 0xE3 : next()));
+        _in.sprites = quiet && state % 8 == 4 ? nullptr : &sprites;
+        for (unsigned k = 0; k < 12; k++)
+        {
+            const unsigned y = next() % NextVideoRenderer::kHeight;
+            const bool record = (k & 1) != 0;
+            NextLayer::LineSink sink;
+            for (unsigned p = 0; p < NextLayer::kPlanes; p++)
+                sink.plane[p] = planes.data() + p * NextVideoRenderer::kWidth;
+            sink.ids = ids.data();
+            sink.info = info.data();
+            _in.layerOut = record ? &sink : nullptr;
+            Render(y);
+            mix(_line.data(), _line.size() * sizeof(uint32_t));
+            if (record)
+            {
+                mix(planes.data(), planes.size() * sizeof(NextLayer::Pixel));
+                mix(ids.data(), ids.size());
+                mix(info.data(), info.size());
+            }
+        }
+        _in.layerOut = nullptr;
+    }
+    EXPECT_EQ(digest, 0x9E17D7C1D3AC0ADAull);
+}
+
+// endregion

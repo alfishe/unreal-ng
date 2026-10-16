@@ -48,6 +48,10 @@
 #include <random>
 #include <vector>
 
+#ifdef _WIN32
+#include <malloc.h>  // _aligned_malloc
+#endif
+
 namespace
 {
 
@@ -62,18 +66,36 @@ struct FlatMemory
 
     uint8_t* banks[kNumBanks];
 
+    // std::aligned_alloc is not in the Windows C runtime (MSVC, MinGW): _aligned_malloc there, freed with _aligned_free
+    static void* AlignedAlloc(size_t alignment, size_t size)
+    {
+#ifdef _WIN32
+        return _aligned_malloc(size, alignment);
+#else
+        return std::aligned_alloc(alignment, size);
+#endif
+    }
+    static void AlignedFree(void* p)
+    {
+#ifdef _WIN32
+        _aligned_free(p);
+#else
+        std::free(p);
+#endif
+    }
+
     FlatMemory()
     {
         for (size_t i = 0; i < kNumBanks; ++i)
         {
-            banks[i] = static_cast<uint8_t*>(std::aligned_alloc(64, kBankSize));
+            banks[i] = static_cast<uint8_t*>(AlignedAlloc(64, kBankSize));
             std::memset(banks[i], 0, kBankSize);
         }
     }
 
     ~FlatMemory()
     {
-        for (size_t i = 0; i < kNumBanks; ++i) std::free(banks[i]);
+        for (size_t i = 0; i < kNumBanks; ++i) AlignedFree(banks[i]);
     }
 
     FlatMemory(const FlatMemory&) = delete;

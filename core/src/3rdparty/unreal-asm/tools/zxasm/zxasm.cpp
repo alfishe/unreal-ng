@@ -247,9 +247,9 @@ bool Unwrap(const Args& args, std::vector<uint8_t>& bytes, CatalogHints& hints)
         const size_t dot = args.inner.find_last_of('.');
         const std::string name = dot == std::string::npos ? args.inner : args.inner.substr(0, dot);
         const char type = dot == std::string::npos ? 0 : args.inner[dot + 1];
-        const std::string extension = dot == std::string::npos ? std::string() : Lower(args.inner.substr(dot + 1));   // +3DOS: NAME.TYP
+        const std::string innerExtension = dot == std::string::npos ? std::string() : Lower(args.inner.substr(dot + 1));   // +3DOS: NAME.TYP
         for (const auto& f : files)
-            if (f.TrimmedName() == name && (type == 0 || (f.extension.empty() ? f.type == type : f.extension == extension)))
+            if (f.TrimmedName() == name && (type == 0 || (f.extension.empty() ? f.type == type : f.extension == innerExtension)))
             {
                 bytes = f.data;
                 hints = f.Hints();
@@ -306,7 +306,7 @@ const containers::TrdosFile* FindBinary(const std::vector<containers::TrdosFile>
     const size_t dot = spec.rfind('.');
     if (dot != std::string::npos && dot + 2 == spec.size())
         candidates.push_back({spec.substr(0, dot), spec[dot + 1]});
-    candidates.push_back({spec, 0});
+    candidates.push_back({spec, '\0'});
     // ZAsm shows a name with the type letter and the two bytes of the catalog's start as its extension ("FONT.fn1")
     if (dot != std::string::npos && dot > 0 && dot + 4 == spec.size())
         candidates.push_back({spec.substr(0, dot), spec[dot + 1]});

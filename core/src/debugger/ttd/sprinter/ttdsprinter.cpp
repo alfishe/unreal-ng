@@ -437,9 +437,8 @@ void TTDSprinterVideoRam::TTDRegions(std::vector<TTDDeviceRegion>& out)
     out.push_back(r);
 }
 
-bool TTDSprinterVideoRam::TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const
+bool TTDSprinterVideoRam::TTDStateWithoutRegions(std::vector<uint8_t>& state) const
 {
-    peripheralId = static_cast<uint8_t>(PeripheralId::SprinterVideoRam);
     state.assign(1, kVersion);
     return true;
 }
@@ -498,9 +497,8 @@ void TTDSprinterFastRam::TTDRegions(std::vector<TTDDeviceRegion>& out)
     out.push_back(r);
 }
 
-bool TTDSprinterFastRam::TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const
+bool TTDSprinterFastRam::TTDStateWithoutRegions(std::vector<uint8_t>& state) const
 {
-    peripheralId = static_cast<uint8_t>(PeripheralId::SprinterFastRam);
     state.assign(1, kVersion);
     return true;
 }

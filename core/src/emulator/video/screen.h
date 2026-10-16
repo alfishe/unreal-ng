@@ -628,6 +628,11 @@ protected:
     uint32_t _prevTstate = 0;  // Previous Draw call t-state value (since emulation is not concurrent as in hardware -
                                // we need to know what time period to replay)
 
+    // A screen that catches up on its own events (CatchesUpOnEvents): the CPU clock at the end of the last step
+    // (NoteStepEnd), where the per-step draw would stand; a step to be drawn at its end all the same
+    uint32_t _stepEndCpuT = 0;
+    bool _drawAtStepEnd = false;
+
 bool _turboRenderSkip = false;  // Turbo render decimation: set only for the CPU cycle of a skipped turbo frame
 
     /// region <Obsolete>
@@ -774,6 +779,18 @@ public:
     /// the tail) and where something looks mid-frame (the end of a direct run, a pause). MainLoop reads it at the
     /// frame start. Default false: the classic screens draw from the per-step call
     virtual bool CatchesUpOnEvents() const { return false; }
+    /// MainLoop, after every step but the frame's last on a screen that catches up on its events: the CPU clock the
+    /// step ended at, which a catch-up before a change in the next step draws to (CatchUpToStepStart). A step
+    /// marked for it (_drawAtStepEnd) is drawn here as the per-step call would have drawn it
+    void NoteStepEnd(uint32_t cpuT)
+    {
+        _stepEndCpuT = cpuT;
+        if (_drawAtStepEnd) [[unlikely]]
+            UpdateScreen();
+    }
+    /// Before a change of what the picture shows lands in the middle of a step (a write to video RAM, a port write):
+    /// draw up to where the step began, as the per-step draw had. No-op on the screens without the event rule
+    virtual void CatchUpToStepStart() {}
     virtual void DrawPeriod(uint32_t fromTstate, uint32_t toTstate);
     virtual void Draw(uint32_t tstate);
 
@@ -785,9 +802,10 @@ public:
     /// Must be called after AdjustFrameCounters() wraps z80.t to prevent
     /// DrawPeriod from seeing fromTstate > toTstate across the frame boundary
     void ResetPrevTstate() { _prevTstate = 0; }
-    /// Draw cursor save/restore for TTD live-state snapshots taken mid-frame
+    /// Draw cursor save/restore for TTD live-state snapshots taken mid-frame. Restored after the CPU: a snapshot
+    /// is taken between steps, so the CPU clock is also the step end of the event rule
     uint32_t GetPrevTstate() const { return _prevTstate; }
-    void SetPrevTstate(uint32_t tstate) { _prevTstate = tstate; }
+    void SetPrevTstate(uint32_t tstate);
 
     /// @brief Suspend contingent per-t-state rendering for the current CPU
     /// frame cycle (turbo render decimation - see MainLoop::RunFrame).

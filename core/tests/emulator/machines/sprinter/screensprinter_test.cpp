@@ -585,6 +585,9 @@ TEST_F(ScreenSprinter_Test, SpectrumScreen_MulticolorRace_SameAttributesAsPentag
     Z80* pz = pc->pCore->GetZ80();
     Memory* pm = pc->pMemory;
     Screen* ps = pc->pScreen;
+    // Drawn by hand below, outside the step loop: the per-step draw, not the event rule (ScreenZX::CatchesUpOnEvents)
+    ASSERT_NE(dynamic_cast<ScreenZX*>(ps), nullptr);
+    dynamic_cast<ScreenZX*>(ps)->SetCatchUpOnEvents(false);
     auto pentagonWrite = [&](uint16_t addr, uint8_t value) { (pm->*(pz->MemIf->MemoryWrite))(addr, value); };
     for (int j = 0; j < 8; j++)
         pentagonWrite(static_cast<uint16_t>(0x5801 + j), RefAttr(j));

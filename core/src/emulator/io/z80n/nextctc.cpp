@@ -2,11 +2,14 @@
 
 #include "nextctc.h"
 
+#include <algorithm>
+
 void NextCtc::Reset()
 {
     for (Channel& c : _ch)
         c = Channel();
     _vector = 0;
+    _quietUntil = 0;
 }
 
 uint64_t NextCtc::Ticks(const Channel& c, uint64_t from, uint64_t to) const
@@ -51,6 +54,8 @@ void NextCtc::ZeroCount(unsigned channel, uint64_t when)
     c.phase = when;
     if ((c.control & kInterrupt) && onInterrupt)
         onInterrupt(channel);
+    if (onZeroCount)
+        onZeroCount(channel);
     // ZC/TO feeds the next channel's trigger (channel 3 feeds channel 0); the pulse is registered (ctc_chan.vhd zc_to_d) and
     // the edge detector sees it one clock later on the rising edge, two on the falling edge (control bit 4 of the target)
     Channel& t = _ch[(channel + 1) % kChannels];
@@ -72,6 +77,11 @@ void NextCtc::Advance(uint64_t now)
     if (now < _now)
     {
         _now = now;  // the clock was restarted (reset): nothing to catch up
+        return;
+    }
+    if (now < _quietUntil)
+    {
+        _now = now;  // the per-instruction call between two events
         return;
     }
     // Process the zero counts and the ZC/TO pulses in time order across the channels
@@ -114,10 +124,21 @@ void NextCtc::Advance(uint64_t now)
             ZeroCount(static_cast<unsigned>(next), nextAt);
     }
     _now = now;
+    // the earliest thing the loop above would act on from here: nothing was left at or before `now`
+    uint64_t quietUntil = UINT64_MAX;
+    for (const Channel& c : _ch)
+    {
+        if (c.running && !(c.control & kCounterMode))
+            quietUntil = std::min(quietUntil, NextZero(c));
+        if (c.pendingCount)
+            quietUntil = std::min(quietUntil, c.pending[0]);
+    }
+    _quietUntil = _eventGate ? quietUntil : 0;
 }
 
 void NextCtc::Trigger(unsigned channel, uint64_t now)
 {
+    _quietUntil = 0;
     Channel& c = _ch[channel];
     if (c.control & kCounterMode)
         CountEdge(channel, now);
@@ -128,6 +149,7 @@ void NextCtc::Trigger(unsigned channel, uint64_t now)
 void NextCtc::Write(unsigned channel, uint8_t value, uint64_t now)
 {
     Advance(now);
+    _quietUntil = 0;
     const unsigned index = channel % kChannels;
     Channel& c = _ch[index];
     if (c.waitTc)

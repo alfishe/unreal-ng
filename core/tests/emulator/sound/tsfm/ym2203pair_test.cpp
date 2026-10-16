@@ -493,7 +493,7 @@ TEST_F(Ym2203Pair_Test, TsfmDescriptorTimeFieldsAreMastersThroughThePair)
     EXPECT_EQ(d.stateSize, 2008u);
 
     ttd::TTDPeripheralRegistry registry;
-    registry.Register(ttd::PeripheralId::TSFM, &tsfm);
+    registry.Register(&tsfm);
     std::string error;
     EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
 }
@@ -531,7 +531,7 @@ TEST_F(Ym2203Pair_Test, PairBlobMatchesItsDescriptorAndItsTimeFieldsAdvance)
     Ym2203Pair pair(_context, RatioConfig());
     PairDevice device(pair);
     ttd::TTDPeripheralRegistry registry;
-    registry.Register(ttd::PeripheralId::TSFM, &device);
+    registry.Register(&device);
     std::string error;
     EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
 

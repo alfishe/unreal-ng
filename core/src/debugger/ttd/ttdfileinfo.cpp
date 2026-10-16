@@ -1,5 +1,6 @@
 #include "ttdfileinfo.h"
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -202,19 +203,55 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::NextSystemArea: return "next-system-area";
         case PeripheralId::MachineSerialPeer2: return "machine-serial-peer-2";
         case PeripheralId::JoystickSerialPeer: return "joystick-serial-peer";
-        case PeripheralId::Count: break;
+        case PeripheralId::Count:
+        case PeripheralId::None: break;
     }
     return "id" + std::to_string(id);
 }
 
-GSTypeKind GeneralSoundOf(const PeripheralMask& peripheralMask)
+bool TTDRecordedMachine::Fits(TTDDeviceType type) const
 {
-    auto has = [&peripheralMask](PeripheralId id) { return peripheralMask.Test(static_cast<uint8_t>(id)); };
-    if (has(PeripheralId::GeneralSound))
+    auto ofType = [type](const TTDRecordedDevice& d) { return d.key.type == type; };
+    return std::any_of(devices.begin(), devices.end(), ofType) ||
+           std::any_of(notRecordedDevices.begin(), notRecordedDevices.end(), ofType);
+}
+
+PeripheralMask TTDRecordedMachine::V1Mask() const
+{
+    PeripheralMask mask;
+    for (const TTDRecordedDevice& d : devices)
+        if (d.legacyId != PeripheralId::None)
+            mask.Set(static_cast<uint8_t>(d.legacyId));
+    return mask;
+}
+
+std::string DeviceDisplayName(const TTDRecordedDevice& device)
+{
+    if (device.legacyId != PeripheralId::None)
+        return PeripheralIdName(static_cast<uint8_t>(device.legacyId));
+    if (static_cast<uint16_t>(device.key.type) < static_cast<uint16_t>(PeripheralId::Count))
+        return PeripheralIdName(static_cast<uint8_t>(device.key.type));
+    return device.key.instance.empty() ? "type" + std::to_string(static_cast<uint16_t>(device.key.type))
+                                       : device.key.instance;
+}
+
+std::vector<TTDRecordedDevice> DevicesOfV1Mask(const PeripheralMask& mask)
+{
+    std::vector<TTDRecordedDevice> devices;
+    for (unsigned id = 0; id < static_cast<unsigned>(PeripheralId::None); ++id)   // every u8 id a file may name
+        if (mask.Test(static_cast<uint8_t>(id)))
+            devices.push_back({{static_cast<TTDDeviceType>(id), PeripheralIdName(static_cast<uint8_t>(id))},
+                               static_cast<PeripheralId>(id)});
+    return devices;
+}
+
+GSTypeKind GeneralSoundOf(const TTDRecordedMachine& machine)
+{
+    if (machine.Fits(TTDDeviceType::GeneralSound))
         return GSTypeKind::Z80;
-    if (has(PeripheralId::GeneralSoundLightweight))
+    if (machine.Fits(TTDDeviceType::GeneralSoundLightweight))
         return GSTypeKind::LW;
-    if (has(PeripheralId::NeoGS))
+    if (machine.Fits(TTDDeviceType::NeoGS))
         return GSTypeKind::NGS;
     return GSTypeKind::NONE;
 }
@@ -238,18 +275,26 @@ void DescribeRecordedMachine(TTDRecordedMachine& machine)
     if (machine.modelId < N_MM_MODELS)
         if (const TMemModel* m = Config::FindModelByEnum(static_cast<MEM_MODEL>(machine.modelId)))
             machine.model = m->ShortName ? m->ShortName : "";
+    // Ascending v1 id (the order sessions always listed), then type, then instance
+    auto order = [](const TTDRecordedDevice& a, const TTDRecordedDevice& b) {
+        const auto la = static_cast<uint16_t>(a.legacyId), lb = static_cast<uint16_t>(b.legacyId);
+        return la != lb ? la < lb : a.key < b.key;
+    };
+    std::sort(machine.devices.begin(), machine.devices.end(), order);
+    std::sort(machine.notRecordedDevices.begin(), machine.notRecordedDevices.end(), order);
     machine.peripherals.clear();
-    for (unsigned id = 0; id < PeripheralMask::kIds; ++id)
-        if (machine.peripheralMask.Test(static_cast<uint8_t>(id)))
-            machine.peripherals.push_back(PeripheralIdName(static_cast<uint8_t>(id)));
+    for (const TTDRecordedDevice& d : machine.devices)
+        machine.peripherals.push_back(DeviceDisplayName(d));
     machine.notRecorded.clear();
-    for (unsigned id = 0; id < PeripheralMask::kIds; ++id)
-        if (machine.notRecordedMask.Test(static_cast<uint8_t>(id)))
-            machine.notRecorded.push_back(PeripheralIdName(static_cast<uint8_t>(id)));
+    for (const TTDRecordedDevice& d : machine.notRecordedDevices)
+        machine.notRecorded.push_back(DeviceDisplayName(d));
     // The General Sound slot counts a card fitted but not recorded too
-    machine.generalSound = GeneralSoundOf(machine.peripheralMask | machine.notRecordedMask);
-    auto has = [&](PeripheralId id) { return machine.peripheralMask.Test(static_cast<uint8_t>(id)); };
-    machine.turboSound = has(PeripheralId::TSFM) ? "tsfm" : has(PeripheralId::TurboSound) ? "turbosound" : "none";
+    machine.generalSound = GeneralSoundOf(machine);
+    auto has = [&](TTDDeviceType type) {
+        return std::any_of(machine.devices.begin(), machine.devices.end(),
+                           [type](const TTDRecordedDevice& d) { return d.key.type == type; });
+    };
+    machine.turboSound = has(TTDDeviceType::TSFM) ? "tsfm" : has(TTDDeviceType::TurboSound) ? "turbosound" : "none";
 }
 
 bool ReadTTDFileInfo(std::istream& in, TTDFileInfo& info, std::string& err)
@@ -304,9 +349,11 @@ bool ReadTTDFileInfo(std::istream& in, TTDFileInfo& info, std::string& err)
         !Read(in, info.checkpointCount, "checkpoint count", err) ||
         !ReadMask(in, info.schemaVersion, headerMask, "peripheral mask", err))
         return false;
+    PeripheralMask notRecordedMask;
     if ((info.flags & dump::kFlagsHasNotRecordedMask) &&
-        !ReadMask(in, info.schemaVersion, info.machine.notRecordedMask, "not-recorded mask", err))
+        !ReadMask(in, info.schemaVersion, notRecordedMask, "not-recorded mask", err))
         return false;
+    info.machine.notRecordedDevices = DevicesOfV1Mask(notRecordedMask);
 
     const uint16_t f = info.flags;
     info.hasWriteJournal = f & dump::kFlagsHasWriteJournal;
@@ -318,13 +365,15 @@ bool ReadTTDFileInfo(std::istream& in, TTDFileInfo& info, std::string& err)
     info.hasPortJournals = f & dump::kFlagsHasPortJournals;
     info.topClockTime = f & dump::kFlagsTopClockTime;
 
+    PeripheralMask peripheralMask;
     if (f & dump::kFlagsHasPeripheralMask)
     {
-        info.machine.peripheralMask = headerMask;
+        peripheralMask = headerMask;
         info.peripheralsFromHeader = true;
     }
-    else if (!ScanPeripherals(in, info, info.machine.peripheralMask, err))
+    else if (!ScanPeripherals(in, info, peripheralMask, err))
         return false;
+    info.machine.devices = DevicesOfV1Mask(peripheralMask);
     DescribeRecordedMachine(info.machine);
     return true;
 }

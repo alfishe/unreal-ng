@@ -212,7 +212,7 @@ struct ExpressionParser
             if ((c == '[' || c == ']') && !(c == ']' && memoryDepth > 0))
             {
                 ++i;
-                acc = Expr::Binary(c == '[' ? Op::RotateLeft16 : Op::RotateRight16, std::move(acc), Expr::Number(1));
+                acc = Expr::Binary(c == '[' ? Op::CyclicLeft16 : Op::CyclicRight16, std::move(acc), Expr::Number(1));
                 continue;
             }
             Op op;

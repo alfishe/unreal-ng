@@ -46,6 +46,7 @@ project(unreal VERSION 1.0.0)
 
 # -DSANITIZE=address,undefined | thread: before any target (docs/testing/sanitizers.md)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Sanitize.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Lto.cmake)
 
 # Validate toolchain/dependency compatibility (MSVC+vcpkg OR MinGW+pacman)
 validate_toolchain_dependencies()
@@ -161,9 +162,10 @@ if (RELEASE_WITH_DEBUG_SYMBOLS AND CMAKE_BUILD_TYPE STREQUAL "Release")
         set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /DEBUG:FULL /OPT:REF /OPT:ICF")
         message(STATUS "MSVC Release with PDB symbols: ENABLED")
     elseif (MINGW)
-        # MinGW: Generate DWARF debug info, will be separated later
-        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -g")
-        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -g")
+        # MinGW: DWARF line tables (-g1: functions and lines for backtraces, no variables). Full -g made core-tests.exe
+        # 2.6 GB, past what Windows loads ("not a valid application for this OS platform"), 2026-10-13
+        set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -g1")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -g1")
         message(STATUS "MinGW Release with DWARF symbols: ENABLED")
     elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         # GCC/Clang on Linux/macOS: Generate debug info

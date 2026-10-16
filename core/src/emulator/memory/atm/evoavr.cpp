@@ -19,6 +19,8 @@ namespace
     constexpr uint64_t kF12PowerOffMicros = 5'000'000;
 }  // namespace
 
+EvoAvr::~EvoAvr() = default;
+
 EvoAvr::EvoAvr() : Ds12887(256)
 {
     // An erased AVR EEPROM reads #FF: no user PS/2 keymap ('K','B' signature

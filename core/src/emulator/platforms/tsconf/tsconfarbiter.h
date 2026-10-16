@@ -121,6 +121,9 @@ private:
     };
 
     bool CpuNext() const { return !(_blkRem > 0 && _vidRem == _blkRem); }
+    /// FetchOf for a line of the engine, kept while the line and what it is computed from (V_CONFIG, G_X_OFFS as the line latched
+    /// them) stay the same: blocks of 2 cycles ask for it every other cycle
+    const Fetch& FetchAt(uint32_t line);
     /// The decision at c3 of cycle _cycle (owner of the next one)
     void Step(bool cpuRequest);
     /// The state at `cycle` when nobody asked since a block boundary
@@ -145,4 +148,9 @@ private:
     uint8_t _blkRem = 0;
     uint8_t _vidRem = 0;
     Refused _refused;
+    // FetchAt's memo (derived, not state)
+    Fetch _fetch;
+    uint32_t _fetchLine = UINT32_MAX;
+    uint16_t _fetchOffs = 0;
+    uint8_t _fetchConfig = 0;
 };

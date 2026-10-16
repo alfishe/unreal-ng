@@ -134,8 +134,8 @@ TEST(TTDNextUartPeers_Test, TheSecondPortAndTheConnectorPeersHaveBlobsOfTheirOwn
 
     ASSERT_TRUE(controller->StartRecording());
     const ttd::TTDRecordedMachine machine = controller->GetSessionInfo().machine;
-    EXPECT_TRUE(machine.peripheralMask.Test(kIdPeer2)) << "UART 1's peer is a device of the session";
-    EXPECT_TRUE(machine.peripheralMask.Test(kIdJoystick)) << "and the connector's";
+    EXPECT_TRUE(machine.V1Mask().Test(kIdPeer2)) << "UART 1's peer is a device of the session";
+    EXPECT_TRUE(machine.V1Mask().Test(kIdJoystick)) << "and the connector's";
     EXPECT_TRUE(Has(machine, "machine-serial-peer-2"));
     EXPECT_TRUE(Has(machine, "joystick-serial-peer"));
 
@@ -185,8 +185,8 @@ TEST(TTDNextUartPeers_Test, TheSecondPortAndTheConnectorPeersHaveBlobsOfTheirOwn
     ttd::TTDFileInfo info;
     std::istringstream in(out.str(), std::ios::binary);
     ASSERT_TRUE(ttd::ReadTTDFileInfo(in, info, err)) << err;
-    EXPECT_TRUE(info.machine.peripheralMask.Test(kIdPeer2));
-    EXPECT_TRUE(info.machine.peripheralMask.Test(kIdJoystick));
+    EXPECT_TRUE(info.machine.V1Mask().Test(kIdPeer2));
+    EXPECT_TRUE(info.machine.V1Mask().Test(kIdJoystick));
     EXPECT_TRUE(Has(info.machine, "machine-serial-peer-2"));
 }
 
@@ -209,9 +209,9 @@ TEST(TTDNextUartPeers_Test, TheV1DumpNamesDevicesAboveSixtyThreeAndOlderFilesSti
         ASSERT_TRUE(ttd::ReadTTDFileInfo(in, info, err)) << err;
     }
     EXPECT_EQ(info.schemaVersion, ttd::dump::kSchemaVersion) << "the dump writes the schema with word-list masks";
-    EXPECT_TRUE(info.machine.peripheralMask.Test(kIdPeer2)) << "id 64 is named in the header";
-    EXPECT_TRUE(info.machine.peripheralMask.Test(kIdJoystick));
-    EXPECT_TRUE(info.machine.peripheralMask.Test(static_cast<uint8_t>(ttd::PeripheralId::NextState)));
+    EXPECT_TRUE(info.machine.V1Mask().Test(kIdPeer2)) << "id 64 is named in the header";
+    EXPECT_TRUE(info.machine.V1Mask().Test(kIdJoystick));
+    EXPECT_TRUE(info.machine.V1Mask().Test(static_cast<uint8_t>(ttd::PeripheralId::NextState)));
     EXPECT_TRUE(info.peripheralsFromHeader);
     EXPECT_TRUE(Has(info.machine, "joystick-serial-peer"));
     manager->StopRecording();
@@ -257,8 +257,8 @@ TEST(TTDNextUartPeers_Test, TheV1DumpNamesDevicesAboveSixtyThreeAndOlderFilesSti
         ASSERT_TRUE(ttd::ReadTTDFileInfo(in, old, err)) << err;
     }
     EXPECT_EQ(old.schemaVersion, 1u);
-    EXPECT_TRUE(old.machine.peripheralMask.Test(static_cast<uint8_t>(ttd::PeripheralId::NextState)));
-    EXPECT_FALSE(old.machine.peripheralMask.Test(kIdPeer2)) << "a schema 1 header cannot name it";
+    EXPECT_TRUE(old.machine.V1Mask().Test(static_cast<uint8_t>(ttd::PeripheralId::NextState)));
+    EXPECT_FALSE(old.machine.V1Mask().Test(kIdPeer2)) << "a schema 1 header cannot name it";
     {
         std::istringstream in(v1, std::ios::binary);
         EXPECT_TRUE(manager->DeserializeSession(in, err)) << "an older file still loads: " << err;

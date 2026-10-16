@@ -143,7 +143,7 @@ TEST_F(Tape_Test, getPilotSample)
 
     for (size_t tState = 0; tState < maxValue; tState++)
     {
-        uint8_t value = _tape->getPilotSample(tState);
+        const bool value = _tape->getPilotSample(tState);
 
         bool referenceValue = (tState % PILOT_PERIOD) < PILOT_HALF_PERIOD;
 

@@ -364,7 +364,7 @@ bool TimeTravelController::StartRecording()
     _sourcePath.clear();
     _capturedAtUnixMs = 0;
     _loadedRomSignature = 0;
-    _loadedNotRecordedMask = ttd::PeripheralMask{};
+    _loadedNotRecorded.clear();
     _loadedRecordedBy.clear();
     _liveRomSignature = ComputeRomSignature();  // the ROM this session relies on
 
@@ -542,7 +542,7 @@ void TimeTravelController::InvalidateSession(const char* reason)
     _capturedAtUnixMs = 0;
     _sessionModelId = 0;
     _loadedRomSignature = 0;
-    _loadedNotRecordedMask = ttd::PeripheralMask{};
+    _loadedNotRecorded.clear();
     _loadedRecordedBy.clear();
     _coverageIndex.Clear();
     if (_context)
@@ -832,9 +832,9 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
         info.machine.ramPageBound = _modelRamPages;
         info.machine.romSignature = _loadedFromFile ? _loadedRomSignature : _liveRomSignature;
         for (const TTDDeviceEntry& device : _engine->Devices().Entries())
-            if (device.descriptor.legacyId != PeripheralId::Count)   // a device without a v1 id is not named by the mask
-                info.machine.peripheralMask.Set(static_cast<uint8_t>(device.descriptor.legacyId));
-        info.machine.notRecordedMask = NotRecordedMask();
+            info.machine.devices.push_back({device.descriptor.Key(), device.descriptor.legacyId});
+        for (const TTDDeviceKey& key : NotRecorded())
+            info.machine.notRecordedDevices.push_back({key, PeripheralId::None});
         ttd::DescribeRecordedMachine(info.machine);
     }
     info.recordedBy = _loadedFromFile ? _loadedRecordedBy : std::string();
@@ -1562,22 +1562,8 @@ bool TimeTravelController::CaptureNow(TTDCheckpoint& out)
     // --- Device state, through the registry (TDD §6.4): raw, as the engine takes it. A
     // device whose state also carries the memory it offers as regions (General Sound)
     // gives its state without that memory; the registry does not serialize it whole ---
-    _withoutRegions.clear();
-    std::array<bool, 256> external{};
-    for (ITTDRegionSource* source : _peripherals.RegionSources())
-    {
-        uint8_t id = 0;
-        std::vector<uint8_t> state;
-        if (source->TTDStateWithoutRegions(id, state))
-        {
-            external[id] = true;
-            _withoutRegions.emplace_back(id, std::move(state));
-        }
-    }
-    _peripherals.CaptureStates(_capturedDevices, external);
+    _peripherals.CaptureStates();
     _captureWork.deviceStateBytes += _peripherals.LastCaptureStateBytes();
-    for (const auto& [id, state] : _withoutRegions)
-        _captureWork.deviceStateBytes += state.size();
 
     // (The port journals' positions are the engine checkpoint's bus cursors)
 
@@ -2469,6 +2455,7 @@ enum : uint8_t
     kEditChipset = 5,
     kEditClock = 6,
     kEditBanks = 7,
+    kEditDeviceStateAt = 8,   ///< a device state by its index in the session's device table (D23; kind 3: by v1 id)
 };
 void PutEditRecord(std::vector<uint8_t>& out, uint8_t kind, uint16_t id, uint32_t index, const uint8_t* bytes,
                    uint32_t length)
@@ -2507,9 +2494,10 @@ void TimeTravelController::BeginToolEdit()
     Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
     _toolEditAt = {_context->emulatorState.frame_counter, TInFrameNow()};
     _toolEditTt = z80 ? z80->tt : 0;
-    for (const auto& [id, device] : _peripherals.Devices())
-        if (device && device->TTDStateSize() != 0)
-            device->TTDSaveStateTo(_toolEditBefore[id]);
+    const std::vector<TTDRegistryEntry>& entries = _peripherals.Entries();
+    for (size_t i = 0; i < entries.size(); ++i)
+        if (entries[i].device && entries[i].device->TTDStateSize() != 0)
+            entries[i].device->TTDSaveStateTo(_toolEditBefore[i]);
 }
 
 void TimeTravelController::EndToolEdit(const char* source)
@@ -2533,8 +2521,7 @@ void TimeTravelController::EndToolEdit(const char* source)
             if (_dirtyTracker->IsDirty(page))
                 PutEditRecord(payload, kEditRamPage, 0, page, _memory->RAMPageAddress(page), 0x4000);
     std::vector<TTDDeviceRegion> regions;
-    for (ITTDRegionSource* src : _peripherals.RegionSources())
-        src->TTDRegions(regions);
+    _peripherals.CollectRegions(regions);
     for (const TTDDeviceRegion& r : regions)
     {
         if (!r.desc.memory)
@@ -2549,14 +2536,18 @@ void TimeTravelController::EndToolEdit(const char* source)
         }
     }
     std::vector<uint8_t> after;
-    for (const auto& [id, device] : _peripherals.Devices())
+    const std::vector<TTDRegistryEntry>& entries = _peripherals.Entries();
+    MapShadowEntries();
+    for (size_t i = 0; i < entries.size(); ++i)
     {
-        if (!device || device->TTDStateSize() == 0)
+        TTDSerializable* device = entries[i].device;
+        if (!device || device->TTDStateSize() == 0 || _shadowEntryDevice[i] < 0)
             continue;
         device->TTDSaveStateTo(after);
-        const auto it = _toolEditBefore.find(id);
+        const auto it = _toolEditBefore.find(i);
         if (it == _toolEditBefore.end() || it->second != after)
-            PutEditRecord(payload, kEditDeviceState, id, 0, after.data(), static_cast<uint32_t>(after.size()));
+            PutEditRecord(payload, kEditDeviceStateAt, static_cast<uint16_t>(_shadowEntryDevice[i]), 0, after.data(),
+                          static_cast<uint32_t>(after.size()));
     }
     _toolEditBefore.clear();
     // The CPU and the chipset latches as the edit left them (a debugger sets registers and paging)
@@ -2609,12 +2600,17 @@ void TimeTravelController::ApplyToolEdit(const std::vector<uint8_t>& payload)
                 if (static_cast<uint16_t>(r.id) == id && r.memory && size_t(index) * kTTDPieceSize + length <= r.bytes)
                     std::memcpy(r.memory + size_t(index) * kTTDPieceSize, bytes, length);
         }
-        else if (kind == kEditDeviceState)
+        else if (kind == kEditDeviceState || kind == kEditDeviceStateAt)
         {
-            const auto it = _peripherals.Devices().find(static_cast<uint8_t>(id));
-            if (it != _peripherals.Devices().end() && it->second &&
-                (it->second->TTDStateSize() == length || it->second->TTDVariableSize()))
-                it->second->TTDLoadState(bytes);
+            // Kind 3 (sessions before D23) names the device by its v1 id; kind 8 by its index in the session's
+            // device table, bound to this machine's device
+            TTDSerializable* device = nullptr;
+            if (kind == kEditDeviceState)
+                device = id <= 0xFF ? _peripherals.FindLegacy(static_cast<uint8_t>(id)) : nullptr;
+            else if (_replayEngine && id < _replayEngine->Devices().Entries().size())
+                device = _replayEngine->Devices().Entries()[id].device;
+            if (device && (device->TTDStateSize() == length || device->TTDVariableSize()))
+                device->TTDLoadState(bytes);
         }
         else if (kind == kEditCpu && length == sizeof(TTDCpuState) && _context && _context->pCore)
         {
@@ -4039,8 +4035,7 @@ std::vector<TTDRegionDesc> TimeTravelController::LiveRegions() const
     ram.memory = _memory ? _memory->RAMPageAddress(0) : nullptr;
     regions.push_back(ram);
     std::vector<TTDDeviceRegion> device;
-    for (ITTDRegionSource* source : _peripherals.RegionSources())
-        source->TTDRegions(device);
+    _peripherals.CollectRegions(device);
     for (const TTDDeviceRegion& r : device)
         regions.push_back(r.desc);
     return regions;
@@ -4124,8 +4119,7 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
         // Device memory as further regions (NeoGS RAM and flash, ...)
         ArmShadowRegions(false);
         _shadowDeviceRegions.clear();
-        for (ITTDRegionSource* source : _peripherals.RegionSources())
-            source->TTDRegions(_shadowDeviceRegions);
+        _peripherals.CollectRegions(_shadowDeviceRegions);
         std::vector<TTDRegionDesc> regions = {ram};
         for (const TTDDeviceRegion& r : _shadowDeviceRegions)
             regions.push_back(r.desc);
@@ -4196,14 +4190,12 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
     // state also carries its region memory (General Sound) gives the engine
     // its state without that memory (CaptureNow took both)
     in.deviceStateBytes = _captureWork.deviceStateBytes;
-    std::array<const std::vector<uint8_t>*, 256> without{};
-    for (const auto& [id, state] : _withoutRegions)
-        without[id] = &state;
-    for (const uint8_t id : _capturedDevices)
+    MapShadowEntries();
+    for (size_t i = 0; i < _shadowEntryDevice.size(); ++i)
     {
-        const std::vector<uint8_t>& raw = without[id] ? *without[id] : _peripherals.LastCaptureState(id);
-        if (!raw.empty())
-            in.deviceStates.push_back({id, raw.data(), raw.size()});
+        const std::vector<uint8_t>& raw = _peripherals.LastCaptureState(i);
+        if (!raw.empty() && _shadowEntryDevice[i] >= 0)
+            in.deviceStates.push_back({static_cast<uint32_t>(_shadowEntryDevice[i]), raw.data(), raw.size()});
     }
     auto addPage = [&](uint16_t page) {
         const uint8_t* bytes = _memory->RAMPageAddress(page);
@@ -4374,8 +4366,7 @@ void TimeTravelController::TruncateTimelineAfter(const TTDTimePoint& from, const
         if (!_shadowArmed)
         {
             _shadowDeviceRegions.clear();
-            for (ITTDRegionSource* source : _peripherals.RegionSources())
-                source->TTDRegions(_shadowDeviceRegions);
+            _peripherals.CollectRegions(_shadowDeviceRegions);
             ArmShadowRegions(true);
             _shadowRescan = true;
             _shadowRomSignature = ComputeRomSignature();
@@ -5926,9 +5917,8 @@ void TimeTravelController::SaveLiveState(LiveStateSnapshot& out)
     // (checkpoints carry it in TTDChipsetState::cpu_t_in_frame).
     out.z80TInFrame = z80 ? z80->t : 0;
 
-    // Peripherals — the same registry, and therefore the same blobs, the
-    // checkpoints carry.
-    _peripherals.CaptureAll(out.peripheralBlobs);
+    // Peripherals — the same registry the checkpoints are captured through
+    _peripherals.SaveLive(out.deviceStates);
     out.inputCursor = _inputCursor;
     out.inputPlaybackArmed = _inputPlaybackArmed;
     if (_replayEngine)
@@ -6012,7 +6002,7 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
         z80->t = snap.z80TInFrame;
         z80->RecomputeFrameTiming();  // geometry follows the restored multiplier
     }
-    _peripherals.RestoreAll(snap.peripheralBlobs);
+    _peripherals.LoadLive(snap.deviceStates);
     if (_memory)
     {
         _memory->UpdateZ80Banks();

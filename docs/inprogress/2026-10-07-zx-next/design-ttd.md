@@ -47,6 +47,21 @@ mode (pages 0-7) and the DivMMC RAM (pages 8-15). Measured (a program writing Ne
 keeps an unchanged 4 KB piece once, so the 256 KB blob costs next to nothing per frame while it does not change. **Not in it:** the audio render
 clock (resyncs), the UARTs (not built), the media of the SD cards (the media rule).
 
+**Fragile golden (2026-10-13).** `testdata/slots/fitted-devices.txt` pins, per machine folder, the size of every blob the TTD
+registry captures (`ttd id:size ...`, written by `DescribeFittedDevices` in `core/tests/emulator/slots/slotmanager_test.cpp`). For the Next
+that is `62:<size>` of the captured `NextState` blob, so every change of the Next's recorded state (a new field, an image version bump, a
+different reset value) changes the number and fails `Configs/SlotManagerShipped_Test.FitsTheDevicesOfMaster/next`, also when the change
+itself is correct and its own tests pass. That broke CI on 2026-10-13 (fixed by `fced9a3da`). Rule: a commit that touches `NextStateCodec`
+or anything it saves regenerates the golden in the same commit:
+
+```bash
+UNREAL_SLOTS_FITTED_UPDATE=1 tools/build/test.sh --gtest_filter='*SlotManagerShipped_Test.FitsTheDevicesOfMaster/next*'
+git diff testdata/slots/fitted-devices.txt   # only the `62:` number of the next block may differ
+```
+
+Open: compare only the presence of id 62, as the test already does for `EthernetNics` (`:var`), since the layout of `NextState` is guarded
+by its own image version and codec tests; see [DONE.md](DONE.md), "Remaining".
+
 ## 4. Isolating port reads later
 
 DMA transfers memory-to-memory without `IN`. A journal for the Next would also record the DMA's port reads and be

@@ -50,6 +50,8 @@ TEST_F(NextReadBack_Test, TheRegistersReadBackWhatTheVhdlReturns)
 {
     NextBoard& board = _ports->Board();
     board.WriteNextReg(kRegAudio, kAudioWritten);
+    EXPECT_EQ(board.Read(kRegAudio), kAudioRead & 0xFC) << "the scanline bits 1:0 are the effective copy, from the last frame sync";
+    _ports->OnFrameEnd();
     EXPECT_EQ(board.Read(kRegAudio), kAudioRead);
 
     board.WriteNextReg(kRegMirrorSprite, kSprite);
@@ -123,4 +125,26 @@ TEST_F(NextReadBack_Test, TheEnableWordsReadTheirNarrowFields)
     EXPECT_EQ(board.Read(0x8A), 0x3F);
     EXPECT_EQ(board.Read(0x90), 0xFC) << "GPIO 1:0 are never outputs";
     EXPECT_EQ(board.Read(0x93), 0x0F);
+}
+
+// zxnext.vhd 5896, 5909, 6126, 6700-6710: NR #05 bits 2 / 0 and NR #09 bits 1:0 read the effective copies the video logic took at the
+// last frame sync; NR #81 reads ROMCS_n (high with nothing on the bus) in bit 7, the stored bits 6:3, bit 2 = 0 and the speed bits 00
+TEST_F(NextReadBack_Test, TheVideoBitsAreTheOnesTheLastFrameSyncTookAndNr81HasItsFixedBits)
+{
+    NextBoard& board = _ports->Board();
+    board.Reset(true);
+    const uint8_t before = board.Read(0x05) & 0x05;
+    board.WriteNextReg(0x05, static_cast<uint8_t>(board.Stored(0x05) ^ 0x05));  // 50 / 60 Hz and the scandoubler flipped
+    EXPECT_EQ(board.Read(0x05) & 0x05, before) << "bits 2 and 0 are the effective copies: unchanged until the frame sync";
+    EXPECT_EQ(board.Read(0x05) & 0xFA, board.Stored(0x05) & 0xFA) << "the joystick bits are not delayed";
+    board.WriteNextReg(0x09, 0x03);
+    EXPECT_EQ(board.Read(0x09) & 0x03, 0x00);
+    _ports->OnFrameEnd();
+    EXPECT_EQ(board.Read(0x05) & 0x05, board.Stored(0x05) & 0x05);
+    EXPECT_EQ(board.Read(0x09) & 0x03, 0x03);
+
+    board.WriteNextReg(0x81, 0xFF);
+    EXPECT_EQ(board.Read(0x81), 0xF8) << "bit 7 the idle ROMCS_n, bits 6:3 stored, bit 2 and the speed 00";
+    board.WriteNextReg(0x81, 0x00);
+    EXPECT_EQ(board.Read(0x81), 0x80);
 }

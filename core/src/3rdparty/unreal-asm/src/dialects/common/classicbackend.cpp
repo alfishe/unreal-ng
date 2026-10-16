@@ -422,10 +422,10 @@ struct Writer
                 }
             case Expr::Kind::Binary:
             {
-                if (e.op == Op::RotateLeft16 || e.op == Op::RotateRight16)
+                if (e.op == Op::CyclicLeft16 || e.op == Op::CyclicRight16)
                 {
                     // 16-bit words: (a SHL b) OR (a SHR (16-b))
-                    const bool right = e.op == Op::RotateRight16;
+                    const bool right = e.op == Op::CyclicRight16;
                     const Expr a = Grouped(e.args[0]);
                     const Expr b = Grouped(e.args[1]);
                     Expr rotated = Grouped(Expr::Binary(Op::Or, Expr::Binary(right ? Op::Shr : Op::Shl, Z80asm() ? Masked16(e.args[0]) : a, b),
@@ -703,8 +703,8 @@ struct Writer
         // target's physical address
         if (displaced && (m == "jr" || m == "djnz") && !ops.empty() && ops.back().kind == Operand::Kind::Immediate)
         {
-            Expr target = Expr::Binary(Op::Sub, Grouped(ops.back().expr), Expr::Symbol(kDelta));
-            ops.back().expr = std::move(target);
+            Expr shifted = Expr::Binary(Op::Sub, Grouped(ops.back().expr), Expr::Symbol(kDelta));
+            ops.back().expr = std::move(shifted);
         }
         const std::string text = Operands(ops, true);
         return Checked({mnemonic + (text.empty() ? "" : " " + text)}, mnemonic);

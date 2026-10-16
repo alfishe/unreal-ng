@@ -330,10 +330,10 @@ TEST_F(TTDSprinter_Test, Registry_EveryDeclaredIdTravels)
     ttd::TTDPeripheralRegistry registry;
     std::vector<std::unique_ptr<ttd::TTDSerializable>> owned = _decoder->CreateTTDSerializers();
     for (const auto& s : owned)
-        registry.Register(s->TTDPeripheralId(), s.get());
+        registry.Register(s.get());
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
     registry.CaptureAll(blobs);
-    for (ttd::PeripheralId id : _decoder->GetTTDModelStateIds())
+    for (ttd::TTDDeviceType id : _decoder->GetTTDModelStateTypes())
         EXPECT_EQ(blobs.count(static_cast<uint8_t>(id)), 1u) << "id " << int(id);
     const ttd::TTDRestoreReport report = registry.RestoreAll(blobs);
     EXPECT_TRUE(report.Complete());

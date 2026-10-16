@@ -64,8 +64,7 @@ struct CardMixerRow
 /// One time-travel device of a card (a card may carry several modules, each with its own blob)
 struct CardTtdDevice
 {
-    ttd::PeripheralId id = ttd::PeripheralId::Count;
-    ttd::TTDSerializable* device = nullptr;          ///< owned by the card
+    ttd::TTDSerializable* device = nullptr;          ///< owned by the card; its type is its own (TTDDescribe)
     std::string instance;                            ///< the engine's instance name: "<slot>.<card>[.<module>]"
     ttd::ITTDRegionSource* regions = nullptr;        ///< memory the engine records as regions (a GS RAM); may be null
 };
@@ -175,7 +174,7 @@ public:
     /// endregion </Frames and audio (SoundManager)>
 
     /// region <Time travel (ZX-bus slots architecture.md §8; MultiSound MS-5)>
-    /// Every device the card's state is in, each under the id its CardType declares (CardType::ttdIds), named by
+    /// Every device the card's state is in, each of a type its CardType declares (CardType::ttdTypes), named by
     /// slot. A card registers all of them or recording is refused naming its slot (SlotManager::TtdDevicesMatchPlan)
     virtual void CollectTtdDevices(std::vector<CardTtdDevice>& out)
     {
@@ -187,12 +186,11 @@ public:
     {
         (void)out;
     }
-    /// The session-load guard's part for this card: the session's baseline blobs (by id) against this card. False
-    /// with the reason, naming the slot
-    virtual bool TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs,
-                                   std::string& why) const
+    /// The session-load guard's part for this card: the session's baseline device states (by device) against this
+    /// card. False with the reason, naming the slot
+    virtual bool TtdSessionMatches(const ttd::TTDDeviceStates& states, std::string& why) const
     {
-        (void)blobs;
+        (void)states;
         (void)why;
         return true;
     }
@@ -209,9 +207,9 @@ struct CardType
 {
     const char* id = "";
     std::unique_ptr<ICard> (*create)(const CardContext& context) = nullptr;
-    /// The time-travel ids the card's devices register under (CollectTtdDevices), the card's own first. Empty: the
-    /// card has no time-travel state yet - recording on a machine with it is refused, naming the slot
-    std::span<const ttd::PeripheralId> ttdIds{};
+    /// The time-travel types of the card's devices (CollectTtdDevices), the card's own first. Empty: the card has no
+    /// time-travel state yet - recording on a machine with it is refused, naming the slot
+    std::span<const ttd::TTDDeviceType> ttdTypes{};
 };
 
 /// Every registered card type

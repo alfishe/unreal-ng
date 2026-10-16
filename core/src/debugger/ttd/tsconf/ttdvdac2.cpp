@@ -101,11 +101,10 @@ void TTDVdac2Memory::TTDBeforeCapture() {}
 
 #endif  // ENABLE_VDAC2
 
-bool TTDVdac2Memory::TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const
+bool TTDVdac2Memory::TTDStateWithoutRegions(std::vector<uint8_t>& state) const
 {
     if (_regionCount == 0)
         return false;   // no chip: the blob stays as it is
-    peripheralId = static_cast<uint8_t>(PeripheralId::Vdac2Memory);
     state.resize(8);
     _card.TtdSaveMemoryHeader(state.data());
     return true;

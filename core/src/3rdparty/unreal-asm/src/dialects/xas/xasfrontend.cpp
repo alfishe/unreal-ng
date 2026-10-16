@@ -156,7 +156,7 @@ struct ExpressionParser
                 if (c == '&')
                     acc = Expr::Unary(next == 'L' ? Op::Low : Op::High, std::move(acc));
                 else
-                    acc = Expr::Binary(next == 'L' ? Op::RotateLeft16 : Op::RotateRight16, std::move(acc), Expr::Number(1));
+                    acc = Expr::Binary(next == 'L' ? Op::CyclicLeft16 : Op::CyclicRight16, std::move(acc), Expr::Number(1));
                 continue;
             }
             Op op;

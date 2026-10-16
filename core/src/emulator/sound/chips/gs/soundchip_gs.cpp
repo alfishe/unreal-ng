@@ -1242,9 +1242,8 @@ void SoundChip_GeneralSound::TTDRegions(std::vector<ttd::TTDDeviceRegion>& out)
     out.push_back(ram);
 }
 
-bool SoundChip_GeneralSound::TTDStateWithoutRegions(uint8_t& peripheralId, std::vector<uint8_t>& state) const
+bool SoundChip_GeneralSound::TTDStateWithoutRegions(std::vector<uint8_t>& state) const
 {
-    peripheralId = _profile.ttdPeripheralId;
     state.resize(TTD_FIXED_STATE_SIZE);
     serializeFixedState(state.data());
     return true;

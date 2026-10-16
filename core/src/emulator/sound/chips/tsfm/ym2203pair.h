@@ -320,6 +320,12 @@ public:
     {
         return _coreSynthesisSkipped;
     }
+    /// The next syncTo takes the host position as it is, without advancing (after a reset): a sync must not be put off
+    /// past that first one, or the chips would start from a later moment
+    bool adoptsCpuClock() const
+    {
+        return _adoptCpuClock;
+    }
     /// endregion </Render switches>
 
     /// region <Stereo output stage (the TSFM's render loop)>

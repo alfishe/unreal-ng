@@ -249,10 +249,10 @@ struct Writer
                 }
             case Expr::Kind::Binary:
             {
-                if (e.op == Op::RotateLeft16 || e.op == Op::RotateRight16)
+                if (e.op == Op::CyclicLeft16 || e.op == Op::CyclicRight16)
                 {
                     // ALASM's cyclic shifts of a 16-bit word, spelled out: ((a&#FFFF)<<b|(a&#FFFF)>>>(16-b))&#FFFF
-                    const bool right = e.op == Op::RotateRight16;
+                    const bool right = e.op == Op::CyclicRight16;
                     const Expr a = Masked16(e.args[0]);
                     const Expr b = e.args[1].kind == Expr::Kind::Binary ? Grouped(e.args[1]) : e.args[1];
                     Expr back = Grouped(Expr::Binary(Op::Sub, Expr::Number(16), b));

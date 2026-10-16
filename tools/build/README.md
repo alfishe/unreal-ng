@@ -36,6 +36,13 @@ configure output goes to `<build dir>/configure.log` and is shown only if it fai
 `AGENTS.md`, section "Why `build.sh` configures every time". Benchmarks (`-DBENCHMARKS=ON`) still need one manual
 configure, which later runs keep.
 
+**Release builds link with LTO** ([`cmake/Lto.cmake`](../../cmake/Lto.cmake), `ENABLE_LTO`): the emulator's
+per-instruction paths cross translation units, and with LTO a frame of the heavy machines costs 4-11 % less. The
+price is the link: the final link of `core-tests` or `unreal-qt` takes noticeably longer. For a quick edit-build
+loop configure once with `-DENABLE_LTO=OFF` (the next `build.sh` runs keep it). It is off by default on MinGW (the
+link takes over 40 minutes there) and in sanitizer builds. gcc's cross-unit warnings (`-Wodr`) only appear with it:
+a class or an enum that differs between two files is reported at link time.
+
 `build.sh` also runs the **source checks of the CI `lint` job** first
 (`tools/verification/gui-instance-reads.sh`, a fraction of a second). A failure is printed as
 `== lint FAILED` above the build output and does not stop the build: the CI `lint` job fails on it alone, without

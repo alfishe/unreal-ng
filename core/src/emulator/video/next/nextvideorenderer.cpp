@@ -2,6 +2,7 @@
 
 #include "nextvideorenderer.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace
@@ -33,10 +34,30 @@ bool GlobalTransparent(unsigned colour, unsigned transparent)
     return ((colour >> 1) & 0xFF) == transparent;
 }
 
-uint8_t Expand3(unsigned v)
+constexpr uint8_t Expand3(unsigned v)
 {
     return static_cast<uint8_t>((v << 5) | (v << 2) | (v >> 1));
 }
+
+/// Every 9-bit colour as RGBA bytes: the compositor converts one per sub-pixel
+struct RgbaTable
+{
+    uint32_t value[512];
+    constexpr RgbaTable() : value()
+    {
+        for (unsigned c = 0; c < 512; c++)
+        {
+            const unsigned r = (c >> 6) & 7;
+            const unsigned g = (c >> 3) & 7;
+            const unsigned b = c & 7;
+            value[c] = 0xFF000000u | (static_cast<uint32_t>(Expand3(b)) << 16) | (static_cast<uint32_t>(Expand3(g)) << 8) | Expand3(r);
+        }
+    }
+};
+constexpr RgbaTable kRgba;
+
+/// The three layers in the order of NR #15 bits 4:2, top first: 'S' sprites, 'L' Layer 2, 'U' ULA + tilemap
+constexpr char kOrders[6][4] = {"SLU", "LSU", "SUL", "LUS", "USL", "ULS"};
 }  // namespace
 
 void NextVideoRenderer::RecordSegment(NextLayer::Frame& frame, unsigned y, unsigned fromX, unsigned toX, const NextVideoInputs& in)
@@ -65,48 +86,68 @@ void NextVideoRenderer::RecordSegment(NextLayer::Frame& frame, unsigned y, unsig
 
 uint32_t NextVideoRenderer::Rgba(uint16_t colour9)
 {
-    const unsigned r = (colour9 >> 6) & 7;
-    const unsigned g = (colour9 >> 3) & 7;
-    const unsigned b = colour9 & 7;
-    return 0xFF000000u | (static_cast<uint32_t>(Expand3(b)) << 16) | (static_cast<uint32_t>(Expand3(g)) << 8) | Expand3(r);
+    return kRgba.value[colour9 & 0x1FF];
 }
+
+namespace
+{
+/// UlaFetchAt for one paper row: what does not depend on the sub-pixel is worked out once (the renderer asks for all 512 of a row)
+struct UlaRowFetch
+{
+    unsigned mode;
+    unsigned bitmapRow, attrRow, pixelBase;
+    unsigned scrollX, fine;
+
+    UlaRowFetch(unsigned portFf, bool shadowScreen, unsigned scrollX_, unsigned scrollY, bool fineScroll, unsigned py)
+    {
+        // zxula.vhd: screen_mode_s = port #FF bits 2:0 unless the shadow screen is shown (bank 7 is an 8K BRAM: no Timex modes there)
+        mode = shadowScreen ? 0 : (portFf & 7);
+        // py_s = vc + scroll_y (9 bits), folded into 0..191 by +1 on y(7:6) from 192 up, and from 384 on 0..62 again: a modulo 192
+        const unsigned sy = (py + scrollY) % 192;
+        bitmapRow = ((sy & 0xC0) << 5) | ((sy & 7) << 8) | ((sy & 0x38) << 2);
+        attrRow = 0x1800 + (sy >> 3) * 32;
+        pixelBase = (mode & 1) ? 0x2000 : 0;
+        scrollX = scrollX_;
+        fine = fineScroll ? 1 : 0;
+    }
+
+    // mode bit 1 (hi-colour) reads the attribute at the bitmap's offset in screen 1, otherwise from the attribute area of screen `bit 0`
+    unsigned AttrAt(unsigned column) const { return (mode & 2) ? 0x2000 + bitmapRow + column : pixelBase + attrRow + column; }
+
+    NextVideoRenderer::UlaFetch At(unsigned sub) const
+    {
+        NextVideoRenderer::UlaFetch f;
+        f.mode = mode;
+        if (mode & 4)
+        {
+            // hi-res: the shift register holds [bitmap byte][second byte] of two columns, one bit per 14 MHz clock, shifted by 2 * scroll(2:0)
+            // + fine: so the stream position is 2 * scroll + fine + sub, 16 bits per column, modulo the 32 columns
+            const unsigned h = (sub + 2 * scrollX + fine) & 511;
+            const unsigned column = h >> 4;
+            f.bit = h & 7;
+            if ((h >> 3) & 1)
+                f.bitmapOffset = AttrAt(column);  // the second byte is the "attribute" fetch
+            else
+                f.bitmapOffset = pixelBase + bitmapRow + column;
+            f.attrOffset = f.bitmapOffset;
+            f.synthesised = true;
+            return f;
+        }
+        // each bit is two clocks wide: the half-pixel fine scroll moves the picture by one clock, so sub-pixel `sub` shows pixel
+        // scroll + (sub + fine) / 2 (the column wraps at 32: mod 256)
+        const unsigned sx = (scrollX + ((sub + fine) >> 1)) & 255;
+        f.bitmapOffset = pixelBase + bitmapRow + (sx >> 3);
+        f.attrOffset = AttrAt(sx >> 3);
+        f.bit = sx & 7;
+        return f;
+    }
+};
+}  // namespace
 
 NextVideoRenderer::UlaFetch NextVideoRenderer::UlaFetchAt(unsigned portFf, bool shadowScreen, unsigned scrollX, unsigned scrollY, bool fineScroll,
                                                           unsigned py, unsigned sub)
 {
-    UlaFetch f;
-    // zxula.vhd: screen_mode_s = port #FF bits 2:0 unless the shadow screen is shown (bank 7 is an 8K BRAM: no Timex modes there)
-    f.mode = shadowScreen ? 0 : (portFf & 7);
-    // py_s = vc + scroll_y (9 bits), folded into 0..191 by +1 on y(7:6) from 192 up, and from 384 on 0..62 again: a modulo 192
-    const unsigned sy = (py + scrollY) % 192;
-    const unsigned bitmapRow = ((sy & 0xC0) << 5) | ((sy & 7) << 8) | ((sy & 0x38) << 2);
-    const unsigned attrRow = 0x1800 + (sy >> 3) * 32;
-    const unsigned pixelBase = (f.mode & 1) ? 0x2000 : 0;
-    // mode bit 1 (hi-colour) reads the attribute at the bitmap's offset in screen 1, otherwise from the attribute area of screen `bit 0`
-    auto attrAt = [&](unsigned column) { return (f.mode & 2) ? 0x2000 + bitmapRow + column : pixelBase + attrRow + column; };
-    const unsigned fine = fineScroll ? 1 : 0;
-    if (f.mode & 4)
-    {
-        // hi-res: the shift register holds [bitmap byte][second byte] of two columns, one bit per 14 MHz clock, shifted by 2 * scroll(2:0)
-        // + fine: so the stream position is 2 * scroll + fine + sub, 16 bits per column, modulo the 32 columns
-        const unsigned h = (sub + 2 * scrollX + fine) & 511;
-        const unsigned column = h >> 4;
-        f.bit = h & 7;
-        if ((h >> 3) & 1)
-            f.bitmapOffset = attrAt(column);  // the second byte is the "attribute" fetch
-        else
-            f.bitmapOffset = pixelBase + bitmapRow + column;
-        f.attrOffset = f.bitmapOffset;
-        f.synthesised = true;
-        return f;
-    }
-    // each bit is two clocks wide: the half-pixel fine scroll moves the picture by one clock, so sub-pixel `sub` shows pixel
-    // scroll + (sub + fine) / 2 (the column wraps at 32: mod 256)
-    const unsigned sx = (scrollX + ((sub + fine) >> 1)) & 255;
-    f.bitmapOffset = pixelBase + bitmapRow + (sx >> 3);
-    f.attrOffset = attrAt(sx >> 3);
-    f.bit = sx & 7;
-    return f;
+    return UlaRowFetch(portFf, shadowScreen, scrollX, scrollY, fineScroll, py).At(sub);
 }
 
 unsigned NextVideoRenderer::Layer2WideColumn(unsigned hc, unsigned scrollX)
@@ -145,17 +186,22 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
         const unsigned c = regs.PaletteEntry(palette, ulaPlus ? (hiRes ? 0xD8 : 0xC8) + colour : (ulaNext ? 128 + colour : 16 + (hiRes ? 8 : 0) + colour)) & 0x1FF;
         p = NextLayer::MakePixel(c, !GlobalTransparent(c, transparent), true);
     };
+    // The border pixel is the same along the line: worked out once (with ULANext's full-ink format the row stays as it came)
     const bool inPaperRows = y >= kPaperTop && y < kPaperTop + 192;
-    if (!inPaperRows)
+    if (!fullInk)
     {
-        for (unsigned x = 0; x < kW; x++)
-            border(line[x]);
-        return;
+        Pixel borderPixel;
+        border(borderPixel);
+        if (!inPaperRows)
+        {
+            std::fill(line, line + kW, borderPixel);
+            return;
+        }
+        std::fill(line, line + kPaperLeft, borderPixel);
+        std::fill(line + kPaperLeft + 512, line + kW, borderPixel);
     }
-    for (unsigned x = 0; x < kPaperLeft; x++)
-        border(line[x]);
-    for (unsigned x = kPaperLeft + 512; x < kW; x++)
-        border(line[x]);
+    else if (!inPaperRows)
+        return;
 
     const unsigned py = y - kPaperTop;
     const unsigned base = in.shadowScreen ? 7 : 5;
@@ -189,30 +235,35 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
         return inkPixel ? static_cast<int>((attr & 7) + 8 * bright) : static_cast<int>(16 + ((attr >> 3) & 7) + 8 * bright);
     };
     // The line arrives zeroed: an index of -1 (nothing to paint) leaves the pixel transparent
-    auto put = [&](unsigned sub, int idx) {
-        if (idx < 0)
-            return;
-        const unsigned c = static_cast<unsigned>(regs.PaletteEntry(palette, static_cast<unsigned>(idx)) & 0x1FF);
-        line[kPaperLeft + sub] = NextLayer::MakePixel(c, !GlobalTransparent(c, transparent));
-    };
 
     // hi-res attribute the ULA makes of port #FF: bright | paper (7 - ink) << 3 | ink, run through the same decoding as any attribute
     const unsigned ink = (in.portFf >> 3) & 7;
     const uint8_t tmxAttr = static_cast<uint8_t>(0x40 | ((7 - ink) << 3) | ink);
     unsigned lastBitmap = ~0u, lastBit = ~0u, lastAttr = ~0u;
-    int idx = -1;
+    const UlaRowFetch row(in.portFf, in.shadowScreen, in.nr[0x26], in.nr[0x27], fine, py);
+    // the pixel of the fetch in force: looked up in the palette when the fetch changes, not for every sub-pixel
+    Pixel pixel;
+    bool paint = false;
+    Pixel* const paper = line + kPaperLeft;
     for (unsigned sub = 0; sub < 512; sub++)
     {
-        const UlaFetch f = UlaFetchAt(in.portFf, in.shadowScreen, in.nr[0x26], in.nr[0x27], fine, py, sub);
+        const UlaFetch f = row.At(sub);
         if (f.bitmapOffset != lastBitmap || f.bit != lastBit || f.attrOffset != lastAttr)
         {
             lastBitmap = f.bitmapOffset;
             lastBit = f.bit;
             lastAttr = f.attrOffset;
             const bool inkPixel = ((screen[f.bitmapOffset] >> (7 - f.bit)) & 1) != 0;
-            idx = index(inkPixel, f.synthesised ? tmxAttr : screen[f.attrOffset]);
+            const int idx = index(inkPixel, f.synthesised ? tmxAttr : screen[f.attrOffset]);
+            paint = idx >= 0;
+            if (paint)
+            {
+                const unsigned c = static_cast<unsigned>(regs.PaletteEntry(palette, static_cast<unsigned>(idx)) & 0x1FF);
+                pixel = NextLayer::MakePixel(c, !GlobalTransparent(c, transparent));
+            }
         }
-        put(sub, idx);
+        if (paint)
+            paper[sub] = pixel;
     }
 }
 
@@ -263,10 +314,10 @@ void NextVideoRenderer::LoResLine(const NextVideoInputs& in, unsigned y, Pixel* 
 }
 
 /// Layer 2: 256 x 192 x 8 (row-major), 320 x 256 x 8 and 640 x 256 x 4 (column-major), from NR #12's bank
-void NextVideoRenderer::Layer2Line(const NextVideoInputs& in, unsigned y, Pixel* line)
+bool NextVideoRenderer::Layer2Line(const NextVideoInputs& in, unsigned y, Pixel* line)
 {
     if (!in.layer2Enable)
-        return;
+        return false;
     const NextVideoRegs& regs = *in.regs;
     const unsigned resolution = (in.nr[0x70] >> 4) & 3;
     const unsigned palette = (regs.PaletteControl() & 0x04) ? 5 : 1;  // NR #43 bit 2: the second Layer 2 palette
@@ -278,17 +329,17 @@ void NextVideoRenderer::Layer2Line(const NextVideoInputs& in, unsigned y, Pixel*
     const uint8_t* base = in.ram + static_cast<size_t>(bank) * 0x4000;
     const size_t limit = static_cast<size_t>(in.ramPages) * 0x4000;
     if (static_cast<size_t>(bank) * 0x4000 >= limit)
-        return;
+        return true;
     const unsigned x1 = regs.Clip(0, 0), x2 = regs.Clip(0, 1), y1 = regs.Clip(0, 2), y2 = regs.Clip(0, 3);
     auto available = [&](size_t address) { return static_cast<size_t>(bank) * 0x4000 + address < limit; };
 
     if (resolution == 0)
     {
         if (y < kPaperTop || y >= kPaperTop + 192)
-            return;
+            return true;
         const unsigned py = y - kPaperTop;
         if (py < y1 || py > y2)
-            return;
+            return true;
         // layer2.vhd: y_pre = vc + scroll_y (9 bits); y(7:6) is y_pre(7:6), +1 once y_pre reaches 192 (that wraps 192-255 to 0-63,
         // 256-319 to 64-127, 320-383 to 128-191 and 384 on to rows 192-254 of the bank: not a modulo for a scroll above 191)
         const unsigned yPre = py + scrollY;
@@ -308,11 +359,11 @@ void NextVideoRenderer::Layer2Line(const NextVideoInputs& in, unsigned y, Pixel*
                 p = NextLayer::MakePixel(colour, !GlobalTransparent(colour, transparent));
             }
         }
-        return;
+        return true;
     }
     // the whole 320 x 256 grid; the clip's X units are two pixels, its Y the line
     if (y < y1 || y > y2)
-        return;
+        return true;
     const unsigned sy = (y + scrollY) & 255;
     if (resolution == 1)
     {
@@ -330,7 +381,7 @@ void NextVideoRenderer::Layer2Line(const NextVideoInputs& in, unsigned y, Pixel*
                 p = NextLayer::MakePixel(colour, !GlobalTransparent(colour, transparent));
             }
         }
-        return;
+        return true;
     }
     // 640 x 256 x 4: two nibbles per byte, the high nibble on the left
     for (unsigned px = x1 * 4; px <= x2 * 4 + 3 && px < 640; px++)
@@ -345,18 +396,19 @@ void NextVideoRenderer::Layer2Line(const NextVideoInputs& in, unsigned y, Pixel*
         const unsigned c = regs.PaletteEntry(palette, idx);
         p = NextLayer::MakePixel(c, !GlobalTransparent(c, transparent));
     }
+    return true;
 }
 
 /// The tilemap (NR #6B-#6F, #2F-#31, #4C): 40 or 80 columns of 8 x 8 tiles of 4-bit pixels (or 1-bit text tiles) read
 /// from bank 5 / 7 at 256-byte offsets, scrolled and wrapped, with mirror / rotate / palette offset per tile
-void NextVideoRenderer::TilemapLine(const NextVideoInputs& in, unsigned y, Pixel* line)
+bool NextVideoRenderer::TilemapLine(const NextVideoInputs& in, unsigned y, Pixel* line)
 {
     const uint8_t control = in.nr[0x6B];
     if (!(control & 0x80))
-        return;
+        return false;
     const NextVideoRegs& regs = *in.regs;
     if (y < regs.Clip(3, 2) || y > regs.Clip(3, 3))
-        return;
+        return true;
     const bool wide = (control & 0x40) != 0;  // 80 columns
     const bool noFlags = (control & 0x20) != 0;
     const bool text = (control & 0x08) != 0;
@@ -452,13 +504,14 @@ void NextVideoRenderer::TilemapLine(const NextVideoInputs& in, unsigned y, Pixel
         // a text-mode pixel in the global colour is transparent
         p = NextLayer::MakePixel(c, !(text && GlobalTransparent(c, transparent)), false, below, text);
     }
+    return true;
 }
 
 /// Sprites: one grid line from the engine, two sub-pixels per pixel, the sprite palette (NR #43 bit 3 picks the second)
-void NextVideoRenderer::SpriteLine(const NextVideoInputs& in, unsigned y, Pixel* line, uint8_t* numbers)
+bool NextVideoRenderer::SpriteLine(const NextVideoInputs& in, unsigned y, Pixel* line, uint8_t* numbers)
 {
     if (!in.sprites)
-        return;
+        return false;
     NextSprites::Pixel grid[NextSprites::kGridWidth];
     if (in.spriteFill)
     {
@@ -471,10 +524,12 @@ void NextVideoRenderer::SpriteLine(const NextVideoInputs& in, unsigned y, Pixel*
     else
         in.sprites->DrawLine(y, in.nr[0x15], *in.regs, grid, in.nr[0x4B], in.lineClocks);
     const unsigned palette = (in.regs->PaletteControl() & 0x08) ? 6 : 2;
+    bool painted = false;
     for (unsigned x = 0; x < NextSprites::kGridWidth; x++)
     {
         if (!grid[x].opaque)
             continue;
+        painted = true;
         for (unsigned s = 0; s < 2; s++)
         {
             Pixel& p = line[x * 2 + s];
@@ -483,6 +538,7 @@ void NextVideoRenderer::SpriteLine(const NextVideoInputs& in, unsigned y, Pixel*
                 numbers[x * 2 + s] = grid[x].sprite;
         }
     }
+    return painted;
 }
 
 /// The ULA clip window (NR #1A, in paper pixels): what it excludes of the paper is transparent. The border is never clipped:
@@ -511,17 +567,22 @@ void NextVideoRenderer::ApplyUlaClip(const NextVideoInputs& in, unsigned y, Pixe
         }
 }
 
-void NextVideoRenderer::DrawLayers(const NextVideoInputs& in, unsigned y, Pixel* ula, Pixel* layer2, Pixel* tiles, Pixel* sprites,
-                                   uint8_t* spriteNumbers)
+unsigned NextVideoRenderer::DrawLayers(const NextVideoInputs& in, unsigned y, Pixel* ula, Pixel* layer2, Pixel* tiles, Pixel* sprites,
+                                       uint8_t* spriteNumbers)
 {
     // LoRes replaces the paper of the ULA, whose border stays
     UlaLine(in, y, ula);
     if (in.nr[0x15] & 0x80)
         LoResLine(in, y, ula);
     ApplyUlaClip(in, y, ula);
-    Layer2Line(in, y, layer2);
-    TilemapLine(in, y, tiles);
-    SpriteLine(in, y, sprites, spriteNumbers);
+    unsigned above = 0;
+    if (Layer2Line(in, y, layer2))
+        above |= kAboveLayer2;
+    if (TilemapLine(in, y, tiles))
+        above |= kAboveTilemap;
+    if (SpriteLine(in, y, sprites, spriteNumbers))  // always run: the sprite engine sets its collision and overtime flags by drawing
+        above |= kAboveSprites;
+    return above;
 }
 
 void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32_t* out)
@@ -532,9 +593,9 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
         for (Pixel* row : sink->plane)
             std::memset(static_cast<void*>(row), 0, kW * sizeof(Pixel));
         uint8_t spriteNumbers[kW];
-        DrawLayers(in, y, sink->plane[NextLayer::kUla], sink->plane[NextLayer::kLayer2], sink->plane[NextLayer::kTilemap],
-                   sink->plane[NextLayer::kSprites], spriteNumbers);
-        ComposeLine<true>(in, sink->plane[NextLayer::kUla], sink->plane[NextLayer::kLayer2], sink->plane[NextLayer::kTilemap],
+        const unsigned above = DrawLayers(in, y, sink->plane[NextLayer::kUla], sink->plane[NextLayer::kLayer2],
+                                          sink->plane[NextLayer::kTilemap], sink->plane[NextLayer::kSprites], spriteNumbers);
+        ComposeLine<true>(in, above, sink->plane[NextLayer::kUla], sink->plane[NextLayer::kLayer2], sink->plane[NextLayer::kTilemap],
                           sink->plane[NextLayer::kSprites], spriteNumbers, out);
         return;
     }
@@ -542,22 +603,66 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
     Pixel layer2[kW];
     Pixel tiles[kW];
     Pixel sprites[kW];
-    DrawLayers(in, y, ula, layer2, tiles, sprites, nullptr);
-    ComposeLine<false>(in, ula, layer2, tiles, sprites, nullptr, out);
+    const unsigned above = DrawLayers(in, y, ula, layer2, tiles, sprites, nullptr);
+    ComposeLine<false>(in, above, ula, layer2, tiles, sprites, nullptr, out);
 }
 
 template <bool kRecord>
-void NextVideoRenderer::ComposeLine(const NextVideoInputs& in, const Pixel* ula, const Pixel* layer2, const Pixel* tiles, const Pixel* sprites,
-                                    const uint8_t* spriteNumbers, uint32_t* out)
+void NextVideoRenderer::ComposeUlaOnly(const NextVideoInputs& in, const Pixel* ula, uint32_t* out)
+{
+    [[maybe_unused]] const NextLayer::LineSink* sink = in.layerOut;
+    const uint32_t fallback = kRgba.value[Nine(in.nr[0x4A]) & 0x1FF];
+    for (unsigned x = 0; x < kW; x++)
+    {
+        const Pixel p = ula[x];
+        out[x] = p.opaque ? kRgba.value[p.colour & 0x1FF] : fallback;
+        if constexpr (kRecord)
+        {
+            sink->ids[x] = p.opaque ? (p.border ? NextLayer::kIdBorder : NextLayer::kIdUla) : NextLayer::kFallback;
+            sink->info[x] = 0;
+        }
+    }
+}
+
+template <bool kRecord>
+void NextVideoRenderer::ComposeLine(const NextVideoInputs& in, unsigned above, const Pixel* ula, const Pixel* layer2, const Pixel* tiles,
+                                    const Pixel* sprites, const uint8_t* spriteNumbers, uint32_t* out)
+{
+    // NR #15 bits 4:2, top layer first: 000 SLU, 001 LSU, 010 SUL, 011 LUS, 100 USL, 101 ULS; modes 110 / 111 blend
+    // Layer 2 with the ULA / tilemap
+    const unsigned order = (in.nr[0x15] >> 2) & 7;
+    // Nothing above the ULA on this line (the common screen: Layer 2, the tilemap and the sprites off or not on this line). The blend
+    // orders and the stencil combine the ULA with the empty layers in their own way: they take the general loop
+    const bool stencil = (in.nr[0x68] & 0x01) && (in.nr[0x6B] & 0x80) && !(in.nr[0x68] & 0x80);
+    if (above == 0 && order < 6 && !stencil)
+    {
+        ComposeUlaOnly<kRecord>(in, ula, out);
+        return;
+    }
+    switch (order)
+    {
+        case 0: ComposeOrder<kRecord, 0>(in, ula, layer2, tiles, sprites, spriteNumbers, out); break;
+        case 1: ComposeOrder<kRecord, 1>(in, ula, layer2, tiles, sprites, spriteNumbers, out); break;
+        case 2: ComposeOrder<kRecord, 2>(in, ula, layer2, tiles, sprites, spriteNumbers, out); break;
+        case 3: ComposeOrder<kRecord, 3>(in, ula, layer2, tiles, sprites, spriteNumbers, out); break;
+        case 4: ComposeOrder<kRecord, 4>(in, ula, layer2, tiles, sprites, spriteNumbers, out); break;
+        case 5: ComposeOrder<kRecord, 5>(in, ula, layer2, tiles, sprites, spriteNumbers, out); break;
+        case 6: ComposeOrder<kRecord, 6>(in, ula, layer2, tiles, sprites, spriteNumbers, out); break;
+        default: ComposeOrder<kRecord, 7>(in, ula, layer2, tiles, sprites, spriteNumbers, out); break;
+    }
+}
+
+template <bool kRecord, unsigned kOrder>
+void NextVideoRenderer::ComposeOrder(const NextVideoInputs& in, const Pixel* ula, const Pixel* layer2, const Pixel* tiles, const Pixel* sprites,
+                                     const uint8_t* spriteNumbers, uint32_t* out)
 {
     [[maybe_unused]] const NextLayer::LineSink* sink = in.layerOut;
     // A pixel the layer paints is transparent when its 8 MSBs equal the global transparency colour (NR #14): the layer functions
     // leave `opaque` clear for those, so a pixel is visible when it is opaque
     auto visible = [](const Pixel& p) { return p.opaque != 0; };
 
-    // NR #15 bits 4:2, top layer first: 000 SLU, 001 LSU, 010 SUL, 011 LUS, 100 USL, 101 ULS; modes 110 / 111 blend
-    // Layer 2 with the ULA / tilemap. In LUS / USL / ULS the ULA border over a transparent tilemap does not hide a sprite
-    const unsigned order = (in.nr[0x15] >> 2) & 7;
+    // In LUS / USL / ULS the ULA border over a transparent tilemap does not hide a sprite
+    constexpr unsigned order = kOrder;
     const uint16_t fallback = Nine(in.nr[0x4A]);
     // NR #68 bit 0: stencil (the ULA and tilemap pixels AND together), bits 6:5: the blend of modes 110 / 111
     const bool stencilMode = (in.nr[0x68] & 0x01) && (in.nr[0x6B] & 0x80) && !(in.nr[0x68] & 0x80);
@@ -600,7 +705,7 @@ void NextVideoRenderer::ComposeLine(const NextVideoInputs& in, const Pixel* ula,
         uint16_t colour = fallback;
         WinnerId<kRecord> id = NextLayer::kFallback;
         const bool l2Priority = lv && (l.colour & 0x200);
-        if (order >= 6)
+        if constexpr (kOrder >= 6)
         {
             // Layer 2 added to / subtracted from the "mix" layer (the ULA, the tilemap or the stencil, by the blend
             // bits), with the tile or the ULA above or below it
@@ -655,7 +760,7 @@ void NextVideoRenderer::ComposeLine(const NextVideoInputs& in, const Pixel* ula,
                            mb = mixRgb.opaque ? b2(mixRgb.colour) : 0;
             unsigned rs = lr + mr, gs = lg + mg, bs = lb + mb;
             uint16_t mixer;
-            if (order == 6)
+            if constexpr (kOrder == 6)
                 mixer = pack(rs > 7 ? 7 : rs, gs > 7 ? 7 : gs, bs > 3 ? 3 : bs);
             else
             {
@@ -707,21 +812,21 @@ void NextVideoRenderer::ComposeLine(const NextVideoInputs& in, const Pixel* ula,
         }
         else
         {
-            // the three layers in the order of NR #15, top first: 'S' sprites, 'L' Layer 2, 'U' ULA + tilemap
-            static const char* const kOrders[6] = {"SLU", "LSU", "SUL", "LUS", "USL", "ULS"};
-            for (const char* layer = kOrders[order]; *layer; layer++)
+            // the three layers in the order of NR #15, top first (a constant here: the walk folds into three tests)
+            for (unsigned i = 0; i < 3; i++)
             {
-                if (*layer == 'S' && sv)
+                const char layer = kOrders[order < 6 ? order : 0][i];
+                if (layer == 'S' && sv)
                 {
                     colour = sp.colour;
                     id = NextLayer::kIdSprite;
                 }
-                else if (*layer == 'L' && lv)
+                else if (layer == 'L' && lv)
                 {
                     colour = l.colour;
                     id = NextLayer::kIdLayer2;
                 }
-                else if (*layer == 'U' && ue)
+                else if (layer == 'U' && ue)
                 {
                     colour = u.colour;
                     id = uId.value;
@@ -731,7 +836,7 @@ void NextVideoRenderer::ComposeLine(const NextVideoInputs& in, const Pixel* ula,
                 break;
             }
         }
-        out[x] = Rgba(colour & 0x1FF);
+        out[x] = kRgba.value[colour & 0x1FF];
         if constexpr (kRecord)
         {
             sink->ids[x] = id.value;

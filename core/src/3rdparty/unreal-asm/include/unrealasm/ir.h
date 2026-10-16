@@ -24,7 +24,9 @@ enum class Op : uint8_t
     // binary
     Add, Sub, Mul, Div, Mod, And, Or, Xor, Shl, Shr,
     ShrUnsigned,                   ///< sjasmplus ">>>": shift right filling with zeros
-    RotateLeft16, RotateRight16,   ///< ALASM's "<" / ">": cyclic shifts of a 16-bit word
+    // Not RotateLeft16 / RotateRight16: winnt.h defines those as macros (_rotl16 / _rotr16), so a file that had windows.h
+    // before this header saw other enumerator names than one that had not (gcc -flto, -Wodr)
+    CyclicLeft16, CyclicRight16,   ///< ALASM's "<" / ">": cyclic shifts of a 16-bit word
     Equal, NotEqual, Less, Greater, LessEqual, GreaterEqual, LogicalAnd, LogicalOr,
     // unary
     Negate, Plus, Not, High, Low,

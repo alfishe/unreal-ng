@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "_helpers/fatsourceimage.h"
+#include "_helpers/sparsefile.h"
 #include "_helpers/scratchfolder.h"
 #include "emulator/io/storage/chd/chdwriter.h"
 #include "emulator/io/storage/fat/fatsynthvolume.h"
@@ -130,9 +131,7 @@ TEST(ComposeFat_Test, IntoFat16TooBigFails)
     Sources s;
     s.Make();
     const auto big = s.root.File("work/big.bin", "");
-    std::error_code ec;
-    std::filesystem::resize_file(big, 2200ull * 1024 * 1024, ec);  // sparse: nothing is written
-    ASSERT_FALSE(ec) << ec.message();
+    ASSERT_TRUE(testfiles::ResizeSparse(big, 2200ull * 1024 * 1024));  // sparse: nothing is written
     std::unique_ptr<IBlockDevice> volume;
     CompositeInfo info;
     const MediaResult result = CompositeMediumFactory::Build(s.Descriptor(WithFs("fat16")), {}, volume, info);
@@ -187,4 +186,31 @@ TEST(ComposeFat_Test, ImageLayerErrors)
         EXPECT_EQ(r.error, MediaError::UnreadableSource) << yaml << " -> " << r.message;
         EXPECT_NE(r.message.find("layer 'x'"), std::string::npos) << r.message;
     }
+}
+
+/// NFR-M5: an image layer's extents count against the budget (the descriptor's, else [MEDIA] ExtentBudget); over it
+/// the build fails with DoesNotFit and names the files that hold the most; 0 is no limit
+TEST(ComposeFat_Test, ExtentBudget)
+{
+    Sources s;
+    s.Make();
+    const auto build = [&s](const std::string& budget) {
+        std::unique_ptr<IBlockDevice> volume;
+        CompositeInfo info;
+        return CompositeMediumFactory::Build(
+            s.Descriptor("version: 1\ntarget: {build: rebuild, fs: fat32, free: 1MiB" + budget +
+                         "}\nlayers: [{source: {image: fat16.img}}, {source: {image: fat32.img}}]\n"),
+            {}, volume, info);
+    };
+    const MediaResult over = build(", extentBudget: 2");
+    EXPECT_EQ(over.error, MediaError::DoesNotFit);
+    EXPECT_NE(over.message.find("too fragmented"), std::string::npos) << over.message;
+    EXPECT_NE(over.message.find("/DSS/command.com (1)"), std::string::npos) << over.message;
+    EXPECT_TRUE(build(", extentBudget: 0").Ok()) << "no limit";
+    EXPECT_TRUE(build("").Ok()) << "the default budget";
+
+    CompositeMediumFactory::SetDefaultExtentBudget(2);
+    const MediaResult configured = build("");
+    CompositeMediumFactory::SetDefaultExtentBudget(CompositeMediumFactory::kDefaultExtentBudget);
+    EXPECT_EQ(configured.error, MediaError::DoesNotFit) << "[MEDIA] ExtentBudget";
 }

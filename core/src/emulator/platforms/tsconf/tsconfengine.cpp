@@ -224,6 +224,10 @@ void TsConfEngine::AccountBudget(uint32_t raster)
         return;
     }
 
+    // The DMA is about to write: the picture not drawn yet shows what was there before
+    if (_videoCatchUp)
+        _videoCatchUp();
+
     // The SPI / IDE device phase is time: 8 fclk per raster tact, whatever the DRAM load
     if (raster > _ts.budgetRaster)
         _ts.dmaDeviceFclk += (raster - _ts.budgetRaster) * kFclkPerTact;
@@ -416,10 +420,16 @@ void TsConfEngine::SetLiveVideoPage(uint8_t vPage)
     _lines[current].vPage = vPage;
 }
 
+void TsConfEngine::NoteStateApplied()
+{
+    _stepEndRaster = _ts.budgetRaster;
+}
+
 void TsConfEngine::OnMachineStep(uint32_t t)
 {
     _interrupts.OnMachineStep(t);
     CatchUp(t);
+    _stepEndRaster = RasterAt(t);
 }
 
 void TsConfEngine::OnMachineFrameRollover(uint32_t frameLength)
@@ -430,6 +440,7 @@ void TsConfEngine::OnMachineFrameRollover(uint32_t frameLength)
     AccountBudget(kFrameTacts);
     _ts.engNextLine = 0;
     _ts.budgetRaster = 0;
+    _stepEndRaster = 0;
     _cpuLineRunning = 0;
     _passLine = kLines;
     _interrupts.OnMachineFrameRollover(frameLength);

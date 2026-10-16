@@ -160,11 +160,12 @@ void Ym2203Pair::advanceChip(Ym2203Chip& c, int32_t delta, int64_t t0)
 
         // An idle FM half (nothing sounding, nothing keyed; ymfm patch 6): every sample clock up to the next timer
         // expiry at once - each a zero word at its own clock, as clockFmOnce() would give. The clock of the expiry
-        // itself goes the normal way: the expiry comes first there and may key on (CSM)
-        if (_fmIdleFastPath && toTimer > 1 && c.fm.fmIdle())
+        // itself goes the normal way: the expiry comes first there and may key on (CSM).
+        // The idle test walks every operator, so it comes last: most steps do not reach a sample clock at all
+        if (_fmIdleFastPath && toTimer > 1)
         {
             const int32_t n = std::min(delta, toTimer - 1);
-            if (n >= toClock)
+            if (n >= toClock && c.fm.fmIdle())
             {
                 c.intf.advance(n);
                 const int32_t samples = (c.fmClockPhase + n) / period;

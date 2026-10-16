@@ -47,29 +47,27 @@ namespace
     constexpr size_t OVERLAY_SIZE = 8 * PAGE_SIZE;   // one 128K module
 
     /// The devices whose runtime state makes up a machine besides CPU and RAM:
-    /// the same set a TTD checkpoint carries (TimeTravelManager::
-    /// RegisterModelPeripherals), keyed by peripheral id. Model latches come
-    /// from serializers the port decoder creates; they are kept in `owned`
-    std::map<ttd::PeripheralId, ttd::TTDSerializable*> CollectDevices(
+    /// the same set a TTD checkpoint carries (RegisterMachinePeripherals),
+    /// keyed by device type. Model latches come from serializers the port
+    /// decoder creates; they are kept in `owned`
+    std::map<ttd::TTDDeviceType, ttd::TTDSerializable*> CollectDevices(
         EmulatorContext* context, std::vector<std::unique_ptr<ttd::TTDSerializable>>& owned)
     {
-        std::map<ttd::PeripheralId, ttd::TTDSerializable*> devices;
-        auto add = [&](ttd::PeripheralId id, ttd::TTDSerializable* device) {
+        std::map<ttd::TTDDeviceType, ttd::TTDSerializable*> devices;
+        auto add = [&](ttd::TTDSerializable* device) {
             if (device)
-                devices[id] = device;
+                devices[device->TTDType()] = device;
         };
 
         if (SoundManager* sound = context->pSoundManager)
         {
-            if (ITurboSoundDevice* turboSound = sound->getTurboSound())
-                add(turboSound->TTDPeripheralId(), turboSound);
-            add(ttd::PeripheralId::Covox, sound->getCovox());
-            if (GeneralSoundCard* gs = sound->getGeneralSound())
-                add(gs->TTDPeripheralId(), gs);
+            add(sound->getTurboSound());
+            add(sound->getCovox());
+            add(sound->getGeneralSound());
         }
-        add(ttd::PeripheralId::Tape, context->pTape);
-        add(ttd::PeripheralId::KempstonMouse, context->pMouse);
-        add(ttd::PeripheralId::BetaDisk, context->pBetaDisk);
+        add(context->pTape);
+        add(context->pMouse);
+        add(context->pBetaDisk);
 
         if (context->pPortDecoder)
         {
@@ -77,7 +75,7 @@ namespace
             {
                 if (!serializer)
                     continue;
-                add(serializer->TTDPeripheralId(), serializer.get());
+                add(serializer.get());
                 owned.push_back(std::move(serializer));
             }
         }

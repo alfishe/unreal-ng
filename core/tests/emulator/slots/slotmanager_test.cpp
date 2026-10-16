@@ -132,7 +132,7 @@ std::string DescribeFittedDevices(EmulatorContext* context)
         }
         out << " " << id << ":" << size;
     }
-    out << " notRecorded " << registry.NotRecordedMask().Low() << "\n";
+    out << " notRecorded " << ttd::TTDPeripheralRegistry::V1MaskOf(registry.NotRecorded()).Low() << "\n";
     return out.str();
 }
 

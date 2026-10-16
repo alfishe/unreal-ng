@@ -243,7 +243,7 @@ struct ExpressionParser
         static const Entry kTable[] = {
             {"&&", Op::LogicalAnd, 0}, {"||", Op::LogicalOr, 0}, {"?=", Op::Equal, 2},    {"!=", Op::NotEqual, 2},
             {"<=", Op::LessEqual, 3},  {">=", Op::GreaterEqual, 3}, {"<<", Op::Shl, 4},   {">>", Op::Shr, 4},
-            {"@<", Op::RotateLeft16, 4}, {"@>", Op::RotateRight16, 4}, {"&", Op::And, 1}, {"|", Op::Or, 1},
+            {"@<", Op::CyclicLeft16, 4}, {"@>", Op::CyclicRight16, 4}, {"&", Op::And, 1}, {"|", Op::Or, 1},
             {"^", Op::Xor, 1},         {"<", Op::Less, 3},       {">", Op::Greater, 3},   {"+", Op::Add, 5},
             {"-", Op::Sub, 5},         {"*", Op::Mul, 6},        {"/", Op::Div, 6},       {"%", Op::Mod, 6},
         };

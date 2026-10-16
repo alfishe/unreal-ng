@@ -77,15 +77,31 @@ public:
 
 private:
     using Pixel = NextLayer::Pixel;
-    static void DrawLayers(const NextVideoInputs& in, unsigned y, Pixel* ula, Pixel* layer2, Pixel* tiles, Pixel* sprites,
-                           uint8_t* spriteNumbers);
+    /// Which of the layers above the ULA may have an opaque pixel on the line (bits of Above); a layer that is off leaves its row as
+    /// the caller cleared it
+    enum Above : unsigned
+    {
+        kAboveLayer2 = 1,
+        kAboveTilemap = 2,
+        kAboveSprites = 4
+    };
+    static unsigned DrawLayers(const NextVideoInputs& in, unsigned y, Pixel* ula, Pixel* layer2, Pixel* tiles, Pixel* sprites,
+                               uint8_t* spriteNumbers);
     static void UlaLine(const NextVideoInputs& in, unsigned y, Pixel* line);
     static void LoResLine(const NextVideoInputs& in, unsigned y, Pixel* line);
     static void ApplyUlaClip(const NextVideoInputs& in, unsigned y, Pixel* line);
-    static void SpriteLine(const NextVideoInputs& in, unsigned y, Pixel* line, uint8_t* numbers);
+    static bool SpriteLine(const NextVideoInputs& in, unsigned y, Pixel* line, uint8_t* numbers);
     template <bool kRecord>
-    static void ComposeLine(const NextVideoInputs& in, const Pixel* ula, const Pixel* layer2, const Pixel* tiles, const Pixel* sprites,
-                            const uint8_t* spriteNumbers, uint32_t* out);
-    static void TilemapLine(const NextVideoInputs& in, unsigned y, Pixel* line);
-    static void Layer2Line(const NextVideoInputs& in, unsigned y, Pixel* line);
+    static void ComposeLine(const NextVideoInputs& in, unsigned above, const Pixel* ula, const Pixel* layer2, const Pixel* tiles,
+                            const Pixel* sprites, const uint8_t* spriteNumbers, uint32_t* out);
+    /// A line where only the ULA layer has pixels, in a plain layer order without the stencil: the ULA pixel or the fallback colour
+    template <bool kRecord>
+    static void ComposeUlaOnly(const NextVideoInputs& in, const Pixel* ula, uint32_t* out);
+    /// The compositor's loop for one layer order (NR #15 bits 4:2): the order is the same for the whole line, so each instance has it
+    /// folded in
+    template <bool kRecord, unsigned kOrder>
+    static void ComposeOrder(const NextVideoInputs& in, const Pixel* ula, const Pixel* layer2, const Pixel* tiles, const Pixel* sprites,
+                             const uint8_t* spriteNumbers, uint32_t* out);
+    static bool TilemapLine(const NextVideoInputs& in, unsigned y, Pixel* line);
+    static bool Layer2Line(const NextVideoInputs& in, unsigned y, Pixel* line);
 };

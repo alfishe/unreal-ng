@@ -263,11 +263,11 @@ struct Writer
                     case Op::Shr: return *b < 0 || *b > 63 ? (*a < 0 && !unsignedWords ? -1 : 0) : Wrap(*a >> *b);
                     case Op::ShrUnsigned:
                         return *b < 0 || *b > 31 ? 0 : Wrap(static_cast<int64_t>((static_cast<uint64_t>(*a) & 0xFFFFFFFF) >> *b));
-                    case Op::RotateLeft16: case Op::RotateRight16:
+                    case Op::CyclicLeft16: case Op::CyclicRight16:
                     {
                         const uint32_t v = static_cast<uint32_t>(*a & 0xFFFF);
                         const int n = static_cast<int>(*b & 15);
-                        const uint32_t r = e.op == Op::RotateLeft16 ? (v << n) | (v >> (16 - n)) : (v >> n) | (v << (16 - n));
+                        const uint32_t r = e.op == Op::CyclicLeft16 ? (v << n) | (v >> (16 - n)) : (v >> n) | (v << (16 - n));
                         return r & 0xFFFF;
                     }
                     case Op::Equal: return *a == *b ? True() : 0;
@@ -434,8 +434,8 @@ struct Writer
             case Op::And: return joined("&", false);
             case Op::Or: return joined("|", false);
             case Op::Xor: return joined("!", false);
-            case Op::RotateLeft16: return joined("<", false);
-            case Op::RotateRight16: return joined(">", false);
+            case Op::CyclicLeft16: return joined("<", false);
+            case Op::CyclicRight16: return joined(">", false);
             case Op::Div:
                 if (!InWord(a) || !InWord(b) || Value(b) == 0)
                     Problem("a division ALASM makes in 16-bit unsigned words");

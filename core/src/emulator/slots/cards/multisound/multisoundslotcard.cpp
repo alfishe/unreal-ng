@@ -269,11 +269,11 @@ const int16_t* MultiSoundSlotCard::MixerBuffer(AudioSourceType type) const
 void MultiSoundSlotCard::CollectTtdDevices(std::vector<CardTtdDevice>& out)
 {
     const std::string base = SlotId() + "." + MultiSoundCard::kCardId;
-    out.push_back({ ttd::PeripheralId::MultiSound, _cardTtd.get(), base, nullptr });
-    out.push_back({ ttd::PeripheralId::Saa1099, &_card.Saa(), base + ".saa1099", nullptr });
-    out.push_back({ ttd::PeripheralId::Sam2695, _synthTtd.get(), base + ".sam2695", nullptr });
+    out.push_back({ _cardTtd.get(), base, nullptr });
+    out.push_back({ &_card.Saa(), base + ".saa1099", nullptr });
+    out.push_back({ _synthTtd.get(), base + ".sam2695", nullptr });
     SoundChip_GeneralSound& gs = _card.Gs();
-    out.push_back({ gs.TTDPeripheralId(), &gs, base + ".gs", &gs });
+    out.push_back({ &gs, base + ".gs", &gs });
 }
 
 void MultiSoundSlotCard::TtdFingerprint(std::vector<std::pair<std::string, uint64_t>>& out) const
@@ -281,14 +281,16 @@ void MultiSoundSlotCard::TtdFingerprint(std::vector<std::pair<std::string, uint6
     out.emplace_back("slots." + SlotId() + ".bank", Sam2695Ttd::BankFingerprint(_card.Synth()));
 }
 
-bool MultiSoundSlotCard::TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs,
-                                           std::string& why) const
+bool MultiSoundSlotCard::TtdSessionMatches(const ttd::TTDDeviceStates& states, std::string& why) const
 {
-    const auto id = static_cast<uint8_t>(ttd::PeripheralId::Sam2695);
-    const auto found = blobs.find(id);
-    if (found == blobs.end() || found->second.empty())
+    // This card's synthesizer, by the instance its slot names (a v1 file names none: the one there is)
+    const ttd::TTDDeviceKey key{ttd::TTDDeviceType::Sam2695, SlotId() + "." + MultiSoundCard::kCardId + ".sam2695"};
+    const auto found = states.find(key);
+    const std::vector<uint8_t>* recordedState =
+        found != states.end() ? &found->second : ttd::FindStateOfType(states, ttd::TTDDeviceType::Sam2695);
+    if (recordedState == nullptr || recordedState->empty())
         return true;   // a session without the card: the slot-set guard names that
-    const std::vector<uint8_t> state = ttd::TTDPeripheralRegistry::DecodeBlob(id, found->second);
+    const std::vector<uint8_t>& state = *recordedState;
     sam2695::BankDigest recorded{};
     if (!sam2695::Synth::StateBank(state.data(), state.size(), recorded))
     {

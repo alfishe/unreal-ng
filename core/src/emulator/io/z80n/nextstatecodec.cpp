@@ -221,6 +221,7 @@ static void LoadBoard(Reader& r, NextBoard& b)
     r.Get(b._timing);
     r.Get(b._resetPending);
     r.Get(b._resetType);
+    b.LatchVideoFrameSync();  // the effective video bits are not in the image: they follow the registers
     r.Get(b._resetHard);
 }
 
@@ -373,6 +374,7 @@ static void LoadCtc(Reader& r, NextCtc& c)
     }
     r.Get(c._vector);
     r.Get(c._now);
+    c._quietUntil = 0;  // derived from the channels just loaded
 }
 
 /// The UARTs: registers, FIFOs, shifters, the line timing and the break state; not the peers (an ESP module's own state is the machine
@@ -464,6 +466,7 @@ static void LoadUart(Reader& r, NextUart& u)
     r.Get(u._selected);
     u._selected &= 1;
     r.Get(u._now);
+    u._pollClean = false;  // the levels and the counts were replaced
 }
 
 static void SaveInterrupts(Writer& w, const NextInterruptSource& i)

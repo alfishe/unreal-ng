@@ -70,7 +70,7 @@ TEST_F(TtdScorpionProfRom_Test, StateHashDistinguishesQuadrants)
 
     ttd::TTDPeripheralRegistry registry;
     ttd::TTDScorpionProfROM profromSerializer(_context);
-    registry.Register(ttd::PeripheralId::ScorpionProfROM, &profromSerializer);
+    registry.Register(&profromSerializer);
 
     Z80* z80 = _core->GetZ80();
     auto hashOfCurrentState = [&]() -> uint64_t
@@ -258,7 +258,7 @@ TEST_F(TtdScorpionProfRom_Test, RegistryCaptureAllRestoresPlaneAndLatches)
 
     ttd::TTDPeripheralRegistry registry;
     ttd::TTDScorpionProfROM serializer(_context);
-    registry.Register(ttd::PeripheralId::ScorpionProfROM, &serializer);
+    registry.Register(&serializer);
 
     WritePort(0x7EFD, 0x10);
     FastRead(0x0104);
@@ -308,14 +308,14 @@ TEST_F(TtdScorpionProfRom_Test, RecordingRegistersTheScorpionSerializer)
     SetUpProf(4);
 
     ttd::TimeTravelController ttd(_context);
-    EXPECT_FALSE(ttd.GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::ScorpionProfROM))
+    EXPECT_FALSE(ttd.GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::ScorpionProfROM))
         << "serializers must be session-scoped, not constructed eagerly";
 
     ASSERT_TRUE(ttd.StartRecording());
-    EXPECT_TRUE(ttd.GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::ScorpionProfROM));
+    EXPECT_TRUE(ttd.GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::ScorpionProfROM));
 
     ttd::TTDSerializable* device =
-        ttd.GetPeripheralRegistry().GetDevice(ttd::PeripheralId::ScorpionProfROM);
+        ttd.GetPeripheralRegistry().FindType(ttd::TTDDeviceType::ScorpionProfROM);
     ASSERT_NE(device, nullptr);
     EXPECT_EQ(device->TTDDeviceName(), "ScorpionProfROM");
     EXPECT_EQ(device->TTDStateSize(), sizeof(ttd::ScorpionProfROMState));

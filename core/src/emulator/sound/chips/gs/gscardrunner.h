@@ -38,8 +38,8 @@
 ///   int64_t  unitsPerCycle() const;    void onStep();
 ///   static constexpr bool kCanStall;   // false compiles the stall check out
 ///
-/// A card may also let the runner sleep through its firmware's idle poll loop (sleepAllowed() and the rest below;
-/// without them the code is compiled out). The loop is found by the CPU coming back to the head of a short
+/// A card may also let the runner sleep through its firmware's idle poll loop (a public
+/// `static constexpr bool kRunnerIdleSleep = true` and the hooks below; without the mark the code is compiled out). The loop is found by the CPU coming back to the head of a short
 /// backward jump with every register as before except R and no bus side effect since (busEffects() did not move):
 /// from then on every iteration is that one, until something outside the CPU changes. Sleeping, the runner adds whole iterations to the time, R and the card's step count, and runs
 /// the card's quiet events (sleepHardStop: the ones that cannot change what the loop reads) at the instruction
@@ -51,7 +51,7 @@
 ///   bool     sleepAllowed() const;     // no NMI, no INT the CPU could take, no DMA, reset, clock change, trace
 ///   int64_t  sleepHardStop() const;    // the earliest event that is not quiet
 ///   void     onStepsSkipped(uint64_t); // the steps the sleep stood for (counters)
-/// and optionally, so a long sleep does not walk its quiet events one by one:
+/// and optionally (`kRunnerBatchQuietEvents = true`), so a long sleep does not walk its quiet events one by one:
 ///   bool     sleepQuietEventsBefore(int64_t end); // run every quiet event due before `end` at once and leave
 ///                                                 // nextEvent >= end; false: not now (the runner steps one)
 
@@ -213,8 +213,10 @@ public:
     uint64_t stepsSlept() const { return _stepsSlept; }
 
 private:
-    static constexpr bool kCanSleep = requires(Card& c) { c.sleepAllowed(); };
-    static constexpr bool kCanBatchQuietEvents = requires(Card& c) { c.sleepQuietEventsBefore(int64_t{}); };
+    // The card's public marks, not `requires(Card& c) { c.sleepAllowed(); }`: the hooks are private with this class a
+    // friend, and MSVC 2019 answers such a requires-expression false (the sleep was compiled out there)
+    static constexpr bool kCanSleep = requires { requires Card::kRunnerIdleSleep; };
+    static constexpr bool kCanBatchQuietEvents = requires { requires Card::kRunnerBatchQuietEvents; };
     static constexpr uint32_t kMaxLoopSteps = 32;
     static constexpr uint16_t kMaxLoopBytes = 64;
 

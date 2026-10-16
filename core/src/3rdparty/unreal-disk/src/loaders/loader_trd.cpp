@@ -139,7 +139,7 @@ bool LoaderTRD::writeImage(const std::string& path)
             size_t trackCount = _diskImage->getCylinders() * _diskImage->getSides();
             for (size_t tracks = 0; tracks < trackCount; tracks++)
             {
-                DiskImage::Track *track = _diskImage->getTrack(tracks);
+                DiskImage::Track *track = _diskImage->getTrack(static_cast<uint8_t>(tracks));
 
                 for (uint8_t sectors = 0; sectors < TRD_SECTORS_PER_TRACK; sectors++)
                 {
@@ -592,7 +592,7 @@ bool LoaderTRD::writeImage(const std::string& path)
 /// region <Helper methods>
 uint8_t LoaderTRD::getTrackNoFromImageSize(size_t filesize)
 {
-    uint8_t result = filesize / TRD_FULL_TRACK_SIZE;     // Full cylinders (both sides)
+    uint8_t result = static_cast<uint8_t>(filesize / TRD_FULL_TRACK_SIZE);     // Full cylinders (both sides)
     result += filesize % (TRD_FULL_TRACK_SIZE) ? 1 : 0;  // Partially filled cylinders
 
     return result;
@@ -698,8 +698,8 @@ void LoaderTRD::populateEmptyVolumeInfo(DiskImage* diskImage, TRDDiskType diskTy
     volumeInfo->deletedFileCount = 0;
 
     // Similar to: volumeInfo->label = "        ";
-    std::fill(std::begin(volumeInfo->label), std::end(volumeInfo->label), 0x20);
-    std::fill(std::begin(volumeInfo->reserved2), std::end(volumeInfo->reserved2), 0x20);
+    std::fill(std::begin(volumeInfo->label), std::end(volumeInfo->label), uint8_t{0x20});
+    std::fill(std::begin(volumeInfo->reserved2), std::end(volumeInfo->reserved2), uint8_t{0x20});
 
     // Update sector data CRC
     sector->recalculateDataCRC();

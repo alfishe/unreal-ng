@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <initializer_list>
 #include <map>
 
 #include "codecs/alasm/alasmcodec.h"
@@ -990,7 +991,7 @@ TEST(SyncInject_Test, PrometheusTakesASaveInItsEditor)
     EXPECT_EQ(pokes[0x87D7] | (pokes[0x87D8] << 8), table);
     EXPECT_EQ(pokes[0x881A] | (pokes[0x881B] << 8), table + tableLength);
     // the active line and the block margins at the start, as CLEAR leaves them
-    for (const uint16_t at : {0x826D, 0x80E8, 0x80EB})
+    for (const uint16_t at : std::initializer_list<uint16_t>{0x826D, 0x80E8, 0x80EB})
         EXPECT_EQ(pokes[at] | (pokes[static_cast<uint16_t>(at + 1)] << 8), 0x9C28) << at;
 
     for (size_t k = 0; k < dump.pages.size(); ++k)
@@ -1060,11 +1061,11 @@ TEST(SyncInject_Test, PasmTakesATextInItsEditorAsGetLeavesIt)
     EXPECT_EQ(word(dump, 0x7747), static_cast<int>(file.size()));   // its length
     EXPECT_EQ(word(dump, 0x7802), 10);                              // the cursor line's: "\tORG #6000"
     // as GET left the editor: the last line's number, the cursor on the first line, its line buffer, the marks
-    for (const uint16_t at : {0x7752, 0x775B, 0x7383, 0x6525, 0x63CA, 0x6C54, 0x6DFE, 0x6E00, 0x74E9, 0x76E9})
+    for (const uint16_t at : std::initializer_list<uint16_t>{0x7752, 0x775B, 0x7383, 0x6525, 0x63CA, 0x6C54, 0x6DFE, 0x6E00, 0x74E9, 0x76E9})
         EXPECT_EQ(word(dump, at), word(loaded, at)) << std::hex << at;
     for (uint16_t at = 0x7342; at < 0x7342 + 64; ++at)
         EXPECT_EQ(byte(dump, at), byte(loaded, at)) << std::hex << at;
-    for (const uint16_t at : {0x6CD0, 0x6D31, 0x6B48})
+    for (const uint16_t at : std::initializer_list<uint16_t>{0x6CD0, 0x6D31, 0x6B48})
         EXPECT_EQ(byte(dump, at), 0) << std::hex << at;
     EXPECT_EQ(byte(dump, 0x73B6), 0xFF);   // redrawn on the editor's next entry
     std::vector<uint8_t> name;
@@ -1213,7 +1214,7 @@ TEST(SyncInject_Test, Tasm412TakesAFileAtItsCommandLineAsLoadLeavesIt)
         pokes[static_cast<uint16_t>((p.page == 2 ? 0x8000 : 0xC000) + p.offset)] = p.value;
     for (size_t k = 0; k < written.bytes.size(); ++k)
         EXPECT_EQ(pokes[static_cast<uint16_t>(0xA6EE + k)], written.bytes[k]) << k;
-    for (const uint16_t at : {0x8F5B, 0x8F5D, 0x8F5F, 0x94D9, 0x94CE})
+    for (const uint16_t at : std::initializer_list<uint16_t>{0x8F5B, 0x8F5D, 0x8F5F, 0x94D9, 0x94CE})
         EXPECT_EQ(pokes.count(at) && pokes[at] == 0 && pokes[at + 1] == 0, true) << std::hex << at;
     EXPECT_EQ(pokes[0x9BA6], 0xFF);   // changed: TASM asks before it drops the text
     EXPECT_EQ(pokes.count(0x9C10), 0u) << "no name given: the work name stays";

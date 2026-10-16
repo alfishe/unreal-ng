@@ -10,6 +10,7 @@ project(unreal-qt LANGUAGES CXX)
 
 # -DSANITIZE=address,undefined | thread: before any target (docs/testing/sanitizers.md)
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/Sanitize.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/Lto.cmake)
 
 # Automation options follow the root CMakeLists.txt (single source of truth).
 # option() never overrides an existing cache entry: in a root-level build the values
@@ -624,6 +625,9 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/ttdsessionobserver.h"
         # The Slots window: plan preview, plug with the confirmation, removed cards named with Undo (ZX-bus slots)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/slotswindow_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/nextlayerswindow_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/nextlayers/nextlayerswindow.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/nextlayers/nextlayerswindow.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotchangecontroller.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotchangecontroller.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotswindow.cpp"

@@ -17,7 +17,7 @@
 #include <algorithm>
 
 using namespace slots;
-using ttd::PeripheralId;
+using ttd::TTDDeviceType;
 
 namespace
 {
@@ -44,15 +44,15 @@ uint64_t Fnv1a(const std::string& text)
 }
 
 /// A card position with a device of its own: the AY socket, the General Sound card, the MoonSound card, and one per
-/// card the slots build themselves (card.h: the ZX-MultiSound), known by its own device's id. A v1 checkpoint holds
-/// one blob per id, so each position is known by the ids its cards save under
+/// card the slots build themselves (card.h: the ZX-MultiSound), known by its own device's type. Each position is
+/// known by the types of the cards it takes
 struct TtdPosition
 {
     SlotCardGroup group;
     std::string label;   ///< when the plan names no slot for it
     struct Card
     {
-        PeripheralId id;
+        TTDDeviceType type;
         const char* name;
     };
     std::vector<Card> cards;
@@ -63,19 +63,19 @@ const std::vector<TtdPosition>& TtdPositions()
 {
     static const std::vector<TtdPosition> positions = [] {
         std::vector<TtdPosition> list = {
-            {SlotCardGroup::Socket, kAySocket, {{PeripheralId::TurboSound, kAyOrTs}, {PeripheralId::TSFM, "tsfm"}}},
+            {SlotCardGroup::Socket, kAySocket, {{TTDDeviceType::TurboSound, kAyOrTs}, {TTDDeviceType::TSFM, "tsfm"}}},
             {SlotCardGroup::GeneralSound,
              "General Sound card",
-             {{PeripheralId::GeneralSound, "gs"},
-              {PeripheralId::GeneralSoundLightweight, "gs-lw"},
-              {PeripheralId::NeoGS, "neogs"}}},
-            {SlotCardGroup::MoonSound, "MoonSound card", {{PeripheralId::MoonSound, "moonsound"}}},
+             {{TTDDeviceType::GeneralSound, "gs"},
+              {TTDDeviceType::GeneralSoundLightweight, "gs-lw"},
+              {TTDDeviceType::NeoGS, "neogs"}}},
+            {SlotCardGroup::MoonSound, "MoonSound card", {{TTDDeviceType::MoonSound, "moonsound"}}},
         };
         for (const CardType& type : CardTypes())
         {
-            if (!type.ttdIds.empty())
+            if (!type.ttdTypes.empty())
             {
-                list.push_back({SlotCardGroup::Count, std::string(type.id) + " card", {{type.ttdIds[0], type.id}}, &type});
+                list.push_back({SlotCardGroup::Count, std::string(type.id) + " card", {{type.ttdTypes[0], type.id}}, &type});
             }
         }
         return list;
@@ -96,12 +96,6 @@ std::string SocketCardOf(const std::string& instance)
     return card == "ay" || card == "ts" || card == "tsfm" ? card : std::string();
 }
 
-bool Holds(const SlotManager::TtdDeviceSet& set, PeripheralId id)
-{
-    const auto raw = static_cast<uint8_t>(id);
-    return std::find(set.ids.begin(), set.ids.end(), raw) != set.ids.end() || set.notRecorded.Test(raw);
-}
-
 /// The cards of a position a device set holds, as their names ("none" when none, "a + b" when a broken writer
 /// stored two)
 std::string CardsAt(const TtdPosition& position, const SlotManager::TtdDeviceSet& set)
@@ -109,10 +103,10 @@ std::string CardsAt(const TtdPosition& position, const SlotManager::TtdDeviceSet
     std::string names;
     for (const TtdPosition::Card& card : position.cards)
     {
-        if (Holds(set, card.id))
+        if (set.Holds(card.type))
         {
-            // The socket's TurboSound id is the `ay` or the `ts` board: named where the instance says which
-            const bool board = card.id == PeripheralId::TurboSound && (set.socketCard == "ay" || set.socketCard == "ts");
+            // The socket's TurboSound type is the `ay` or the `ts` board: named where the instance says which
+            const bool board = card.type == TTDDeviceType::TurboSound && (set.socketCard == "ay" || set.socketCard == "ts");
             names += (names.empty() ? "" : " + ") + (board ? set.socketCard : std::string(card.name));
         }
     }
@@ -171,15 +165,21 @@ std::string Lower(std::string text)
 
 }  // namespace
 
-SlotManager::TtdDeviceSet SlotManager::TtdDeviceSet::Of(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs,
-                                                        const ttd::PeripheralMask& notRecorded)
+bool SlotManager::TtdDeviceSet::Holds(TTDDeviceType type) const
+{
+    auto ofType = [type](const ttd::TTDDeviceKey& key) { return key.type == type; };
+    return std::any_of(devices.begin(), devices.end(), ofType) || std::any_of(notRecorded.begin(), notRecorded.end(), ofType);
+}
+
+SlotManager::TtdDeviceSet SlotManager::TtdDeviceSet::Of(const ttd::TTDDeviceStates& states,
+                                                        const std::vector<ttd::TTDDeviceKey>& notRecorded)
 {
     TtdDeviceSet set;
-    for (const auto& [id, blob] : blobs)
+    for (const auto& [key, state] : states)
     {
-        if (!blob.empty())
+        if (!state.empty())
         {
-            set.ids.push_back(id);
+            set.devices.push_back(key);
         }
     }
     set.notRecorded = notRecorded;
@@ -189,33 +189,30 @@ SlotManager::TtdDeviceSet SlotManager::TtdDeviceSet::Of(const std::unordered_map
 SlotManager::TtdDeviceSet SlotManager::TtdDeviceSet::Of(const ttd::TTDPeripheralRegistry& registry)
 {
     TtdDeviceSet set;
-    for (const auto& [id, device] : registry.Devices())
+    for (const ttd::TTDRegistryEntry& entry : registry.Entries())
     {
-        if (device != nullptr)
+        if (entry.device != nullptr)
         {
-            set.ids.push_back(id);
+            set.devices.push_back(entry.key);
         }
     }
-    set.notRecorded = registry.NotRecordedMask();
-    set.socketCard = SocketCardOf(registry.InstanceOf(PeripheralId::TurboSound));
+    set.notRecorded = registry.NotRecorded();
+    set.socketCard = SocketCardOf(registry.InstanceOf(TTDDeviceType::TurboSound));
     if (set.socketCard.empty())
     {
-        set.socketCard = SocketCardOf(registry.InstanceOf(PeripheralId::TSFM));
+        set.socketCard = SocketCardOf(registry.InstanceOf(TTDDeviceType::TSFM));
     }
     return set;
 }
 
-SlotManager::TtdDeviceSet SlotManager::TtdDeviceSet::Of(const ttd::TTDDeviceTable& devices, const ttd::PeripheralMask& notRecorded)
+SlotManager::TtdDeviceSet SlotManager::TtdDeviceSet::Of(const ttd::TTDDeviceTable& devices,
+                                                        const std::vector<ttd::TTDDeviceKey>& notRecorded)
 {
     TtdDeviceSet set;
     for (const ttd::TTDDeviceEntry& entry : devices.Entries())
     {
-        const auto id = static_cast<uint8_t>(entry.descriptor.legacyId);
-        if (std::find(set.ids.begin(), set.ids.end(), id) == set.ids.end())
-        {
-            set.ids.push_back(id);
-        }
-        if (entry.descriptor.legacyId == PeripheralId::TurboSound || entry.descriptor.legacyId == PeripheralId::TSFM)
+        set.devices.push_back(entry.descriptor.Key());
+        if (entry.descriptor.type == TTDDeviceType::TurboSound || entry.descriptor.type == TTDDeviceType::TSFM)
         {
             set.socketCard = SocketCardOf(entry.descriptor.instance);
         }
@@ -282,18 +279,18 @@ bool SlotManager::TtdDevicesMatchPlan(const Result& result, const TtdDeviceSet& 
         {
             continue;
         }
-        if (type->ttdIds.empty())
+        if (type->ttdTypes.empty())
         {
             differences += (differences.empty() ? "" : "; ") + slot.entry.slot + ": " + slot.entry.card +
                            " has no time-travel state, a recording would lose it";
             continue;
         }
-        for (const PeripheralId id : type->ttdIds)
+        for (const TTDDeviceType deviceType : type->ttdTypes)
         {
-            if (!Holds(live, id))
+            if (!live.Holds(deviceType))
             {
                 differences += (differences.empty() ? "" : "; ") + slot.entry.slot + ": " + slot.entry.card +
-                               " did not register its device " + std::to_string(static_cast<unsigned>(id));
+                               " did not register its device of type " + std::to_string(static_cast<unsigned>(deviceType));
             }
         }
     }
@@ -312,7 +309,7 @@ bool SlotManager::TtdDevicesMatchPlan(const Result& result, const TtdDeviceSet& 
             expectDevice = false;
         }
         bool matches = expectDevice == (fitted != "none");
-        // The socket's board decides the id (ay / ts: TurboSound, tsfm: TSFM) and the instance names the board;
+        // The socket's board decides the type (ay / ts: TurboSound, tsfm: TSFM) and the instance names the board;
         // the General Sound personality is the plan's card (the runtime switch moves the plan with it, SL-6)
         if (matches && expectDevice && position.group == SlotCardGroup::Socket)
         {
@@ -363,23 +360,15 @@ bool SlotManager::TtdSlotSetMatches(const Result& result, const TtdDeviceSet& re
     return false;
 }
 
-bool SlotManager::TtdSessionMatches(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs,
-                                    const ttd::PeripheralMask& notRecordedMask, const ttd::TTDPeripheralRegistry& live,
-                                    std::string& why) const
-{
-    return TtdSessionMatches(TtdDeviceSet::Of(blobs, notRecordedMask), blobs, live, why);
-}
-
 bool SlotManager::TtdSessionMatchesWithoutSlots(EmulatorContext* context, const TtdDeviceSet& recorded,
-                                                const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs,
+                                                const ttd::TTDDeviceStates& states,
                                                 const ttd::TTDPeripheralRegistry& live, std::string& why)
 {
     return TtdSlotSetMatches({}, recorded, TtdDeviceSet::Of(live), why) &&
-           (context == nullptr || context->pPortDecoder == nullptr || context->pPortDecoder->TtdSessionMatches(blobs, why));
+           (context == nullptr || context->pPortDecoder == nullptr || context->pPortDecoder->TtdSessionMatches(states, why));
 }
 
-bool SlotManager::TtdSessionMatches(const TtdDeviceSet& recorded,
-                                    const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs,
+bool SlotManager::TtdSessionMatches(const TtdDeviceSet& recorded, const ttd::TTDDeviceStates& states,
                                     const ttd::TTDPeripheralRegistry& live, std::string& why) const
 {
     if (!TtdSlotSetMatches(_result, recorded, TtdDeviceSet::Of(live), why))
@@ -389,15 +378,15 @@ bool SlotManager::TtdSessionMatches(const TtdDeviceSet& recorded,
     // The slot-built cards' own checks (configuration the session must share: the MultiSound's MIDI bank)
     for (const std::unique_ptr<ICard>& card : _cards)
     {
-        if (!card->TtdSessionMatches(blobs, why))
+        if (!card->TtdSessionMatches(states, why))
         {
             return false;
         }
     }
-    // The machine's own slots (the Sprinter's ISA slots): the board compares their population (the ISA blob)
+    // The machine's own slots (the Sprinter's ISA slots): the board compares their population (the ISA state)
     if (_context != nullptr && _context->pPortDecoder != nullptr)
     {
-        return _context->pPortDecoder->TtdSessionMatches(blobs, why);
+        return _context->pPortDecoder->TtdSessionMatches(states, why);
     }
     return true;
 }

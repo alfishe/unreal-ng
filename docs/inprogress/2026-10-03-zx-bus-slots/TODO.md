@@ -123,7 +123,9 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
     box segment). The refusal keeps `#n, started at frame f`; the recipe says what happens on the engine
     ([tdd.md](tdd.md) §17.1)
   - [ ] the guard is symmetric now (a session without a card no longer loads where one is fitted): owner check
-  - [ ] two instances of one module: still not recordable after TTD Phase 5 (checked 2026-10-06, [tdd.md](tdd.md)
+  - [x] two instances of one module: recordable on the engine since D23 was carried through (2026-10-13,
+    [d23-device-keys.md](../2026-09-25-ttd-v2-migration/d23-device-keys.md); `TtdMultiSound_Test.TwoCardsWithDisjointDipsAreRecordedSideBySide`);
+    v1 refuses, naming both. Before: still not recordable after TTD Phase 5 (checked 2026-10-06, [tdd.md](tdd.md)
     §17.2). The engine's device table is keyed by `{type, instance}` and its file keeps a state region per table entry,
     but everything between the live devices and that table is keyed by the v1 id: the registry (one device per id),
     the capture (`TTDFrameInput::deviceStates`, `LastCaptureState(id)`), the device state regions

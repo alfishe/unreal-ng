@@ -35,12 +35,19 @@ struct PACKED TRDOSDirectoryEntry : public TRDOSDirectoryEntryBase
     uint8_t StartTrack;
 };
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4200)  // the flexible array member (a GCC / Clang extension MSVC accepts too)
+#endif
 struct PACKED SCLHeader
 {
     uint8_t Signature[8];  // Should be 'SINCLAIR'
     uint8_t FileCount;
     TRDOSDirectoryEntryBase Files[];
 };
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 #if defined(_MSC_VER)
 #pragma pack(pop)

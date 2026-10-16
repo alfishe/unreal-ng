@@ -643,6 +643,9 @@ public:
     /// the CPU has taken the byte. Null unless a model decoder needs it (the 128K / +2 paging latch). The end of
     /// an IN tests one flag for it and the port interceptor together (_inResultHooks)
     IReadCycleLatch* readCycleLatch = nullptr;
+    /// A screen on the event rule (ScreenZX::CatchUpToStepStart): told before a port write and before a
+    /// read-clocked latch takes its byte, both of which may move what the picture shows. Null on the other machines
+    Screen* videoCatchUp = nullptr;
     uint16_t readCycleLatchMask = 0;
     uint16_t readCycleLatchMatch = 0;
     void SetReadCycleLatch(IReadCycleLatch* latch, uint16_t mask = 0, uint16_t match = 0)

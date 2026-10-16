@@ -567,10 +567,10 @@ TEST_F(ProfiV3PortDecoder_Test, NoPaletteMonochromeHiRes)
 ///        devices
 TEST_F(ProfiV3PortDecoder_Test, TtdStateIsPagingAndPpi)
 {
-    const std::vector<ttd::PeripheralId> ids = _context->pPortDecoder->GetTTDModelStateIds();
+    const std::vector<ttd::TTDDeviceType> ids = _context->pPortDecoder->GetTTDModelStateTypes();
     ASSERT_EQ(ids.size(), 2u);
-    EXPECT_EQ(ids[0], ttd::PeripheralId::ProfiPaging);
-    EXPECT_EQ(ids[1], ttd::PeripheralId::Ppi8255);
+    EXPECT_EQ(ids[0], ttd::TTDDeviceType::ProfiPaging);
+    EXPECT_EQ(ids[1], ttd::TTDDeviceType::Ppi8255);
     EXPECT_EQ(_context->pPortDecoder->CreateTTDSerializers().size(), 2u);
 }
 

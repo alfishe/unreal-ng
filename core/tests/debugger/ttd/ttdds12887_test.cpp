@@ -79,7 +79,7 @@ TEST_P(TTDDs12887_Test, RecordingRunsTheClockOnEmulatedTime)
 
     EXPECT_EQ(rtc->GetTimeMode(), Ds12887::TimeMode::Host);
     ASSERT_TRUE(ttd->StartRecording());
-    EXPECT_TRUE(ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::Ds12887));
+    EXPECT_TRUE(ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::Ds12887));
     EXPECT_EQ(rtc->GetTimeMode(), Ds12887::TimeMode::Emulated) << "switched before the baseline";
 
     const ttd::TTDCheckpoint* baseline = ttd->GetCheckpoint(0);
@@ -101,7 +101,7 @@ TEST_P(TTDDs12887_Test, RecordingRunsTheClockOnEmulatedTime)
     EXPECT_EQ(Read(*rtc, Ds12887::kSeconds), (500000 + elapsed) / 1000000) << "whole seconds of emulated time";
 
     // The blob replays the same reads
-    ttd::TTDSerializable* device = ttd->GetPeripheralRegistry().GetDevice(ttd::PeripheralId::Ds12887);
+    ttd::TTDSerializable* device = ttd->GetPeripheralRegistry().FindType(ttd::TTDDeviceType::Ds12887);
     ASSERT_NE(device, nullptr);
     std::vector<uint8_t> blob(device->TTDStateSize());
     device->TTDSaveState(blob.data());

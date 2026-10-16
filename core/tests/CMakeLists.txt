@@ -195,6 +195,13 @@ if (NOT TARGET ${PROJECT_NAME})
     add_executable(${PROJECT_NAME} EXCLUDE_FROM_ALL ${SOURCES})
     set_target_properties(${PROJECT_NAME} PROPERTIES AUTOMOC OFF)
 
+    # gcc 15 (MinGW): googletest's ParameterizedTestFactory<T> holds a parameter of the test's own type, which tests keep
+    # in an anonymous namespace; the class template lives in a googletest header, so gcc says "has a field whose type uses
+    # the anonymous namespace" for every TEST_P. A test binary has one definition of each: nothing to fix
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(${PROJECT_NAME} PRIVATE -Wno-subobject-linkage)
+    endif ()
+
     # Declare _ALWAYS_USE_LOGGING for compiler
     target_compile_definitions(${PROJECT_NAME} PRIVATE _ALWAYS_USE_LOGGING)
 
@@ -242,8 +249,9 @@ if (NOT TARGET ${PROJECT_NAME})
     endif (WIN32 AND MSVC)
 
     if (WIN32 AND MINGW)
-        # Link all as static
-        set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -liconv -Wl,--no-whole-archive")
+        # Link all as static. libiconv outside --whole-archive: libwinpthread and libiconv both carry a VERSION resource,
+        # and with both forced in ld reported ".rsrc merge failure: duplicate leaf: type: 10 (VERSION)"
+        set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive -liconv")
 
         set(common_libraries shlwapi ws2_32)
     endif (WIN32 AND MINGW)

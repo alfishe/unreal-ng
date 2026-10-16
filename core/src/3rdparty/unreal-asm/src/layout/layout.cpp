@@ -554,12 +554,12 @@ private:
             case Op::Shl: return y >= 32 || y < 0 ? 0 : Wrap32(static_cast<int64_t>(static_cast<uint64_t>(ux) << y));
             case Op::Shr: return y >= 32 || y < 0 ? (x < 0 ? -1 : 0) : Wrap32(x >> y);
             case Op::ShrUnsigned: return y >= 32 || y < 0 ? 0 : Wrap32(static_cast<int64_t>(ux >> y));
-            case Op::RotateLeft16:
-            case Op::RotateRight16:
+            case Op::CyclicLeft16:
+            case Op::CyclicRight16:
             {
                 const uint32_t w = ux & 0xFFFF;
                 const int n = static_cast<int>(((y % 16) + 16) % 16);
-                const uint32_t r = e.op == Op::RotateLeft16 ? (w << n | w >> (16 - n)) : (w >> n | w << (16 - n));
+                const uint32_t r = e.op == Op::CyclicLeft16 ? (w << n | w >> (16 - n)) : (w >> n | w << (16 - n));
                 return static_cast<int64_t>(r & 0xFFFF);
             }
             case Op::Equal: return x == y ? -1 : 0;
@@ -607,7 +607,7 @@ private:
             return Moves::Word;
         if (by == (kRelocShift >> 8))
             return Moves::HighInLow;
-        if (((moved >> 8) - (base >> 8) & 0xFF) == (kRelocShift >> 8) && (moved & 0xFF) == (base & 0xFF))
+        if ((((moved >> 8) - (base >> 8)) & 0xFF) == (kRelocShift >> 8) && (moved & 0xFF) == (base & 0xFF))
             return Moves::High;
         return Moves::Otherwise;
     }
@@ -1217,8 +1217,8 @@ private:
             if (left->kind == Expr::Kind::Number && left->spelling == ir::NumberSpelling::Character && TextBytes(left->text).size() > 1)
             {
                 const std::vector<uint8_t> chars = TextBytes(left->text);
-                for (size_t k = 0; k + 1 < chars.size(); ++k)
-                    bytes.push_back(chars[k]);
+                for (size_t c = 0; c + 1 < chars.size(); ++c)
+                    bytes.push_back(chars[c]);
                 bytes.push_back(static_cast<int16_t>(Value(o.expr) & 0xFF));
             }
             else

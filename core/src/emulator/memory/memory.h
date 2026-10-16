@@ -6,6 +6,7 @@
 
 class MemoryAccessTracker;
 class HostBusOverlay;
+class Screen;
 class Z80;
 class FeatureManager;
 class UlaContention;
@@ -168,6 +169,9 @@ protected:
     // Host bus overlay (hostbusoverlay.h): set only through Core (AddBusOverlay / RemoveBusOverlay),
     // read only by the overlay memory interfaces
     HostBusOverlay* _busOverlay = nullptr;
+
+    // A screen on the event rule (ScreenZX::CatchUpToStepStart): told before a CPU write into RAM page 5 or 7 lands
+    Screen* _videoWatch = nullptr;
 
     // Feature-gate flags
     bool _feature_memorytracking_enabled = false;
@@ -415,6 +419,8 @@ public:
 
     /// Core::SelectMemoryInterface keeps this in step with the Z80's interface
     void SetBusOverlay(HostBusOverlay* overlay) { _busOverlay = overlay; }
+    /// The screen that catches up before a write into the ZX screen pages (5 and 7); nullptr: none
+    void SetVideoWatch(Screen* screen) { _videoWatch = screen; }
     HostBusOverlay* GetBusOverlay() const { return _busOverlay; }
 
     /// endregion </Emulation memory interface methods>

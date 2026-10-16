@@ -128,7 +128,7 @@ recomputed by the inspector from the pixel position and the register state the l
 | L1 | the real sink with `ids`, `info`, the line table; oracle, copper, transparency, swap, off-cost tests | core tests; no regression in the renderer suite |
 | L2 | the settings (ini + runtime), the surfaces: `capture/screen?layer=`, `capture/next-layers`, `next/layer-capture`, OpenAPI, MCP, CLI, Lua, Python, the `video` report field; armed mode if the default is off; docs and recipe | verification pytest green against a live app; full `core-tests`; gcc-16 -O3 clean; `environment-variables.md` row if an env switch is added |
 | L3 | `next_pixel` with `why` and source addresses | tests above |
-| L4 | Qt: per-layer view and layer toggles (the jnext per-layer screenshots are the model), a pixel inspector under the mouse, the machine-menu switch | later (N12) |
+| L4 | Qt: per-layer view and layer toggles (the jnext per-layer screenshots are the model), a pixel inspector under the mouse, the machine-menu switch | **done 2026-10-13**: View -> Next Layers |
 
 ## 6. Open questions
 
@@ -222,3 +222,28 @@ recomputed from the record (`ComposedColour`, including the blend and stencil fo
 the CLI commands, MCP `capture_media` / `inspect_state` / `invoke_api`, and the Lua bindings (`tools/verification/webapi/src/test_api_next.py`: 16 passed). The Python bindings compile (syntax-only
 against pybind11 and Python 3.12) but could not run: this build has no Python interpreter (`ENABLE_PYTHON_AUTOMATION` is off), so the Python half of `TestNextInterpreters` skips; it is the one
 unverified surface. Not built: L4, the Qt panels.
+
+## 9. Image size (2026-10-13)
+
+Open question 2 is answered: `size=screen` (default, 640x512, the screenshot's geometry), `size=grid` (640x256: the grid's sub-pixels, every line once) and `size=pixel` (320x256: one sample, the first sub-pixel, per Next pixel; Layer 2 640 and Timex hi-res lose their second sub-pixel, use grid there). The record itself is unchanged (640 sub-pixels a line); the sizes are cut from the rendered image (`NextLayer::Reduce`), so the saving is in the transfer and the encode.
+
+## 10. Recording at 320: tried, not worth it (2026-10-16)
+
+The record's cost is memory traffic into the cold frame set (section 7), so recording the planes at pixel resolution looked like a way to
+halve it when no Layer 2 640 / Timex hi-res is on. The renderer draws the layers straight into the sink's rows, which are the working
+buffers, so a 320 record cannot be written directly without drawing every layer at 320. The cheap variant was measured instead: draw the
+whole lines into the hot stack planes (as the partial segments already do) and store every second sub-pixel (with a check that the pairs are
+equal) into the frame, 320 entries a plane, 320 ids and infos.
+
+Same benchmark (`BM_NextFrame_LayerCapture/0`, 200 rounds, thread CPU time, interleaved on/off), two runs of each build, alternated:
+
+| build | run 1 overhead (95 % CI) | run 2 overhead (95 % CI) |
+|:--|--:|--:|
+| current (direct 640 record) | +4.0 % (2.9) | +3.3 % (0.3) |
+| compact copy to 320 | +5.2 % (2.7) | +4.6 % (1.2) |
+
+The copy pass costs more than the halved stores save, so the variant is worse, not better; the bound for any 320 record is the whole
++3.5 %, and reaching even half of it would mean drawing the layers at pixel resolution (every layer function, the compositor and the
+readers, with a per-line fallback for the modes that need the second sub-pixel): a large change in the renderer for about 1.5 % of a
+frame, with the risk of losing a sub-pixel effect silently. Not done; the decision stands at default `on`, and the switch is there for
+a build that wants the last percent. `size=pixel` (section 9) stays a reader-side option.

@@ -259,8 +259,12 @@ uint8_t Memory::MemoryReadOverlayM1(uint16_t addr, bool isExecution)
 template <MemoryWriteCallback Inner>
 void Memory::MemoryWriteOverlay(uint16_t addr, uint8_t value)
 {
-    (this->*Inner)(addr, value);
     HostBusOverlay* overlay = _busOverlay;
+    const bool inWindow = addr >= overlay->windowStart && addr < overlay->windowEnd;
+    if (overlay->observesWriteStart && inWindow) [[unlikely]]
+        overlay->onBeforeWrite(addr);
+    (this->*Inner)(addr, value);
+    overlay = _busOverlay;  // the write may have changed the installed set (a port-like window)
     if (addr >= overlay->windowStart && addr < overlay->windowEnd)
         overlay->onWrite(addr, value, _bank_mode[0] == BANK_ROM);
 }
@@ -404,6 +408,10 @@ void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
     uint8_t bank = (addr >> 14) & 0b0000'0011;
     uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
 
+    // A screen on the event rule draws what it has not drawn yet first: RAM page 5 or 7 (page | 2 == 7)
+    if (_videoWatch && (_bank_ram_page_cache[bank] | 2) == 7) [[unlikely]]
+        _videoWatch->CatchUpToStepStart();
+
     // Write byte to the correspondent memory bank cell
     *(_bank_write[bank] + addressInBank) = value;
 }
@@ -502,6 +510,9 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     // Determine CPU bank (from address bits 14 and 15)
     const uint8_t bank = (addr >> 14) & 0b0000'0011;
     const uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
+
+    if (_videoWatch && (_bank_ram_page_cache[bank] | 2) == 7) [[unlikely]]
+        _videoWatch->CatchUpToStepStart();
 
     // Write byte to the correspondent memory bank cell
     *(_bank_write[bank] + addressInBank) = value;

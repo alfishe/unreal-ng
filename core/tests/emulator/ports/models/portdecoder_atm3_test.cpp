@@ -988,7 +988,7 @@ TEST(ZXEvoSdCardTtd_Test, SdCardUnderTheCommonTtdRule)
 
     ASSERT_TRUE(decoder->InsertSdCard(PatternDisk(64), SdCardSpi::WriteMode::Session));
     ASSERT_TRUE(ttd->StartRecording());
-    EXPECT_TRUE(ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::EvoSdCard)) << "the card's state is recorded";
+    EXPECT_TRUE(ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::EvoSdCard)) << "the card's state is recorded";
 
     SetShadow(context->emulatorState, false);
     decoder->DecodePortOut(0x0077, 0x00, 0);

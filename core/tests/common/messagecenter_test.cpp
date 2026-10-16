@@ -152,8 +152,12 @@ TEST_F(MessageCenterDisposal_Test, DisposesWhileWorkerThreadRunning)
 
 namespace
 {
-void plainCallbackA(int, Message*) {}
-void plainCallbackB(int, Message*) {}
+// Different bodies: a linker folds identical functions into one address (MSVC /OPT:ICF), and these two are told
+// apart by address
+int plainCallsA = 0;
+int plainCallsB = 0;
+void plainCallbackA(int, Message*) { ++plainCallsA; }
+void plainCallbackB(int, Message*) { plainCallsB += 2; }
 
 size_t ObserverCount(EventQueueCUT& queue, const std::string& topic)
 {

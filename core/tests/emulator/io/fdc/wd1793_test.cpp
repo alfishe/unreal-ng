@@ -3894,8 +3894,9 @@ TEST_F(WD1793_Test, ForceInterrupt_Terminate)
         // live drive state is invalid - the FDD starts at a randomized track, so a stale TRK00
         // (set while the head was once at track 0) made this check fail ~1/81 runs.
         bool isTrack0 = fdc.getStatusRegister() & WD1793::WDS_TRK00;
-        bool DRQ = fdc._beta128status & DRQ;
-        bool INTRQ = fdc._beta128status & INTRQ;
+        // The class's bits: a local named DRQ would read itself here, uninitialized
+        bool DRQ = (fdc._beta128status & WD1793::DRQ) != 0;
+        bool INTRQ = (fdc._beta128status & WD1793::INTRQ) != 0;
 
         EXPECT_EQ(isBusy, false);
         EXPECT_EQ(isCRCError, false);
