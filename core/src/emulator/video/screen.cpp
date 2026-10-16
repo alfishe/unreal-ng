@@ -748,6 +748,13 @@ uint8_t Screen::GetBorderColor()
     return _borderColor;
 }
 
+void Screen::SetPrevTstate(uint32_t tstate)
+{
+    _prevTstate = tstate;
+    if (_context && _context->pCore && _context->pCore->GetZ80())
+        _stepEndCpuT = _context->pCore->GetZ80()->t;
+}
+
 uint32_t Screen::GetCurrentTstate()
 {
     Z80* cpu = _context->pCore->GetZ80();

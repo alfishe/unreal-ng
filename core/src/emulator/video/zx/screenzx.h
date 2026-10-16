@@ -98,13 +98,22 @@ protected:
     using RangeRenderer = void (ScreenZX::*)(uint32_t fromTstate, uint32_t toTstate);
     RangeRenderer _rangeRenderer = &ScreenZX::DrawRangeNull;
 
+    // The event rule (CatchesUpOnEvents): wanted (SetCatchUpOnEvents), in effect for the frame being run (decided at
+    // its start), and dropped to the per-step draw for the rest of a frame whose mode changed in the middle
+    bool _eventsEnabled = true;
+    bool _eventsThisFrame = false;
+    bool _drawEveryStep = false;
+    // Where the catch-up is hooked in while the rule is in effect (the writes to video RAM, the port cycles)
+    Memory* _hookedMemory = nullptr;
+    Z80* _hookedCpu = nullptr;
+
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
 public:
     ScreenZX() = delete;  // Disable default constructor; C++ 11 feature
     ScreenZX(EmulatorContext* context);
-    virtual ~ScreenZX() = default;
+    ~ScreenZX() override;
     /// endregion </Constructors / Destructors>
 
 protected:
@@ -113,6 +122,7 @@ protected:
     void CreateTstateLUT();  // Pre-compute coordinate LUT for current mode
 
     void SelectRangeRenderer();
+    void HookCatchUp(Z80* cpu);
     void DrawRangeNull(uint32_t fromTstate, uint32_t toTstate);
     void DrawRangeZX(uint32_t fromTstate, uint32_t toTstate);
     void DrawRangeZXPlaneB(uint32_t fromTstate, uint32_t toTstate);
@@ -158,6 +168,19 @@ public:
     void SetPlaneBEnabled(bool enabled) override;
 
     void UpdateScreen() override;
+
+    /// The classic ZX screens catch up on their events: a CPU write into RAM page 5 or 7 (Memory), a port write and a
+    /// read-clocked latch (Z80) draw up to where their step began first; a port that moves the picture's state in
+    /// the middle of a step (the border) draws to its own T as before, and its step is drawn at its end. The frame
+    /// matches the per-step draw pixel for pixel. Decided at each frame start: the ZX renderer family only, and not
+    /// on a ZX-Poly member (its interceptor reaches the other machines); a mode change mid-frame (a port that
+    /// switches the family) falls back to the per-step draw for the rest of that frame
+    void InitFrame() override;
+    bool CatchesUpOnEvents() const override { return _eventsThisFrame; }
+    void CatchUpToStepStart() override;
+    /// Off: the per-step draw (for comparison, or a caller that draws by hand): at once, the rest of a frame on the
+    /// rule drawn per step. On: from the next frame start
+    void SetCatchUpOnEvents(bool on);
 
     /// @brief Render one T-state in the current mode (same path as DrawRange)
     /// @param tstate T-state timing position

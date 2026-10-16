@@ -1387,7 +1387,11 @@ uint8_t Z80::inFromBus(uint16_t port)
             portInterceptor->OnInResult(port, result, fromFloatingBus);
         // A latch clocked by read cycles takes the same byte the CPU took (the 128K's #7FFD)
         if (readCycleLatch && (port & readCycleLatchMask) == readCycleLatchMatch)
+        {
+            if (videoCatchUp)
+                videoCatchUp->CatchUpToStepStart();
             readCycleLatch->OnReadCycle(port, result);
+        }
     }
 
     return result;
@@ -1402,6 +1406,10 @@ void Z80::out(uint16_t port, uint8_t val)
     if (ttd::TTDPortJournal* journal = _context->ttdPortWrites) [[unlikely]]
         journal->OnWrite(port, val, _context->emulatorState.frame_counter, _context->emulatorState.TtdTInFrame(t),
                          m1_pc);
+
+    // A screen on the event rule draws up to where this step began before the write moves its state
+    if (videoCatchUp)
+        videoCatchUp->CatchUpToStepStart();
 
     // ULA I/O contention, as in in(): the wait before IORQ goes before the port write, so the device (the
     // border latch) sees the delayed T; the waits after IORQ follow the write

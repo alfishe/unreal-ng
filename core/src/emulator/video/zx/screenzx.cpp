@@ -6,7 +6,9 @@
 #include <cassert>
 
 #include "common/stringhelper.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
+#include "emulator/memory/memory.h"
 
 /// region <Constructors / Destructors>
 
@@ -16,7 +18,66 @@ ScreenZX::ScreenZX(EmulatorContext* context) : Screen(context)
     CreateTables();
 }
 
+ScreenZX::~ScreenZX()
+{
+    // The memory and the CPU outlive the screen (Core::Release)
+    HookCatchUp(nullptr);
+}
+
 /// endregion </Constructors / Destructors>
+
+/// region <The event rule>
+
+void ScreenZX::InitFrame()
+{
+    Screen::InitFrame();
+
+    Z80* cpu = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
+    const bool on = _eventsEnabled && cpu && _memory && FamilyOf(_mode) == VideoFamily::Zx && !cpu->portInterceptor;
+    HookCatchUp(on ? cpu : nullptr);
+    _eventsThisFrame = on;
+    _drawEveryStep = false;
+    _drawAtStepEnd = false;
+    // The first step of the frame starts here; the draw cursor stays where the frame before left it, as the
+    // per-step draw has it (DrawPeriod takes the wrap)
+    if (cpu)
+        _stepEndCpuT = cpu->t;
+}
+
+void ScreenZX::SetCatchUpOnEvents(bool on)
+{
+    _eventsEnabled = on;
+    if (on || !_eventsThisFrame)
+        return;
+    HookCatchUp(nullptr);
+    _drawEveryStep = _drawAtStepEnd = true;
+}
+
+void ScreenZX::HookCatchUp(Z80* cpu)
+{
+    if (_hookedCpu && _hookedCpu != cpu)
+        _hookedCpu->videoCatchUp = nullptr;
+    if (_hookedMemory && (!cpu || _hookedMemory != _memory))
+        _hookedMemory->SetVideoWatch(nullptr);
+    _hookedCpu = cpu;
+    _hookedMemory = cpu ? _memory : nullptr;
+    if (_hookedCpu)
+        _hookedCpu->videoCatchUp = this;
+    if (_hookedMemory)
+        _hookedMemory->SetVideoWatch(this);
+}
+
+void ScreenZX::CatchUpToStepStart()
+{
+    // UpdateScreen at the end of the step before; a cursor already there has nothing to draw
+    const uint32_t stepStart = _state->CpuToBaseT(_stepEndCpuT);
+    if (stepStart == _prevTstate)
+        return;
+    DrawPeriod(_prevTstate, stepStart);
+    _prevTstate = stepStart;
+}
+
+/// endregion </The event rule>
 
 /// @brief Override SetVideoMode to regenerate LUT when mode changes
 /// This ensures the TstateCoordLUT is always in sync with the current video mode
@@ -25,6 +86,10 @@ void ScreenZX::SetVideoMode(VideoModeEnum mode)
     Screen::SetVideoMode(mode);  // Call base class to update _mode and _rasterState
     CreateTimingTable();         // Regenerate timing tables including LUT
     SelectRangeRenderer();
+
+    // In the middle of a frame on the event rule (a port switched the mode): the per-step draw for the rest of it
+    if (_eventsThisFrame)
+        _drawEveryStep = _drawAtStepEnd = true;
 }
 
 void ScreenZX::SelectRangeRenderer()
@@ -719,6 +784,10 @@ void ScreenZX::SetBorderColor(uint8_t color)
 
     _borderColor = color & 0b0000'0111;
     NoteVideoWrite();
+
+    // The event rule: this step is drawn at its end as well, as the per-step draw would (Screen::NoteStepEnd)
+    if (_eventsThisFrame)
+        _drawAtStepEnd = true;
 }
 
 /// Emulate ULA video signal generator
@@ -734,6 +803,7 @@ void ScreenZX::UpdateScreen()
 
     // Store t-state position for next call
     _prevTstate = tstate;
+    _drawAtStepEnd = _drawEveryStep;
 }
 
 /// Render for single t-state (ULA draws 2 pixels per each t-state)

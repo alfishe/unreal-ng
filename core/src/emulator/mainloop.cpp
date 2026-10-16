@@ -608,8 +608,14 @@ void MainLoop::OnCPUStep()
     // Everything below still runs on every CPU step in every mode.
     if (_stepScreen) [[likely]]
         _context->pScreen->UpdateScreen();  // Trigger screen update after each CPU command cycle
-    else if (_tailScreen && _context->pCore->GetZ80()->IsFrameComplete())
-        _context->pScreen->UpdateScreen();  // the frame's tail (Screen::CatchesUpOnEvents)
+    else if (_tailScreen)
+    {
+        const Z80* cpu = _context->pCore->GetZ80();
+        if (cpu->IsFrameComplete())
+            _context->pScreen->UpdateScreen();  // the frame's tail (Screen::CatchesUpOnEvents)
+        else
+            _context->pScreen->NoteStepEnd(cpu->t);
+    }
 
     _context->pBetaDisk->handleStep();
     _context->pTape->handleStep();  // Process tape audio each step

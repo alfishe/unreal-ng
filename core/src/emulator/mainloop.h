@@ -136,7 +136,8 @@ protected:
     /// analyzers, keyboard) always runs, keeping turbo timing invariant.
     bool _renderThisFrame = true;
     /// From _renderThisFrame and Screen::CatchesUpOnEvents at the frame start: the screen is drawn after every step
-    /// (the classic screens), or only on the frame's last step (a screen that catches up on its own events)
+    /// (the classic screens by default), or only on the frame's last step (a screen that catches up on its own
+    /// events; the other steps tell it where they ended, Screen::NoteStepEnd)
     bool _stepScreen = true;
     bool _tailScreen = false;
     /// True while the previous frame rendered. A rendered frame that follows

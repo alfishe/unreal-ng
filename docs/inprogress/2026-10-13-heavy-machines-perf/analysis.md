@@ -668,6 +668,46 @@ benchmark target called `add_subdirectory` when the build had no Google Benchmar
 
 (Different runs on a shared machine: the ratios are within a few per cent.)
 
+### Fourth round (2026-10-16)
+
+**R5. The classic screen on its events.** `ScreenZX` (every machine whose picture is the ZX renderer family: Pentagon,
+48K, 128K, +2/+3, Scorpion, the ZX modes of Profi and ATM) is no longer drawn after every instruction. The rule
+P6 gave TS-Conf, kept pixel for pixel:
+
+- `MainLoop` tells the screen where each step ended (`Screen::NoteStepEnd`, one store) and draws only the frame's
+  last step.
+- Before a change lands in the middle of a step, the screen draws up to where that step began, as the per-step draw
+  had it (`ScreenZX::CatchUpToStepStart`): a CPU write into RAM page 5 or 7 (`Memory::MemoryWriteFast` /
+  `MemoryWriteDebug`, one pointer test where nothing watches), every port write and the 128K's read-clocked
+  `#7FFD` latch (`Z80::out` / `inFromBus`).
+- The border write draws to its own T as before, and its step is drawn at its end too: with a CPU multiplier the
+  step's end can fall on the Pentagon's 1T border compensation, where the per-step draw redraws that T.
+- A mode change in the middle of a frame (Pentagon 1024, ATM, Profi switch the family by a port) drops the rest of
+  that frame to the per-step draw; the decision is taken again at the next frame start. Not on a ZX-Poly member.
+  `SetCatchUpOnEvents(false)` gives the per-step draw back at once (comparisons, code that draws by hand).
+
+Exactness: `ZxScreenEvents_Test`, two machines per scenario, one in each mode, every frame compared byte for byte -
+the boots of six models, five border / multicolor demos, a beam racer (random bytes into pages 5 and 7, the border,
+`#7FFD` screen flips) at x1, x2 and x4, the read-clocked latch at eight places in the frame, ULA snow, an ATM
+flipping between its ZX and 16-colour modes mid-frame. Seven mutations (no write watch, no port catch-up, no latch
+catch-up, no draw at the border step's end, no mode fallback, no step end at the frame start, no catch-up at all)
+were each caught by at least one of them.
+
+| Row | before | after | x |
+|:--|--:|--:|--:|
+| Pentagon_ShipNormal | 739 | 615 | 0.83 |
+| Pentagon_WorstNormal | 832 | 721 | 0.87 |
+| Pentagon_ShipTurbo / 128K_ShipTurbo | 147 / 177 | 147 / 175 | 1.00 / 0.99 |
+| TSConf / Next / Sprinter (1x and turbo) | | | 0.99-1.01 |
+
+The remaining classic-screen cost is the per-T loop itself (`DrawRangeZXImpl`); a cell-at-a-time loop for long spans
+is what is left there.
+
+**Tried and dropped: the Next UART's peer promise.** A peer (the ESP module, a wired device) told the UART until when
+it stays silent (`QuietUntil` plus an activity counter), so the poll skipped the two virtual peer calls per
+instruction. Exact (lockstep twins with and without the promise, every Next frame / CPU / RAM hash equal at 3.5 and
+28 MHz), but the A/B showed nothing (Next rows 1.00-1.03): with LTO those calls had become cheap already. Not landed.
+
 ### Not proposed
 
 - The Next CPU memory model: the P2 PoC of the Next work found a paged bus would save 26 % of the CPU part, about
