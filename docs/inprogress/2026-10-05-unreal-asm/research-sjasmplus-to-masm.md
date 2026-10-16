@@ -58,7 +58,9 @@ first write over a loaded text needs force.
 
 ## 5. Limits
 
-- MASM 1.0 demo, 2.0 and 3.0: read, not written (no inject rule).
+- MASM 1.0 demo, 2.0 and 3.0 have inject rules (asm-synchronizer.md §7.12, 2026-10-16). MASM 3.0 refuses `@` (XOR,
+  error 0): the backend's version `3.0` writes the value. The 2.0 copy has no compiler and the demo assembles nothing:
+  their texts are checked by their own Save.
 - A code line over 31 characters (a long name in a long expression whose value is not known) assembles but does not
   show whole in MASM's editor.
 - No idle template snapshots for MASM yet.

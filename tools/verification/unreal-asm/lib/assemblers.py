@@ -9,6 +9,8 @@ the assembler built from `args.address`, `len(expected)` of them.
 """
 import importlib.util
 import os
+import subprocess
+import tempfile
 import time
 
 
@@ -98,6 +100,7 @@ def tasm_boot(emu, args):
 
 def tasm_finish(emu, args, expected):
     emu.write(args.address, [0xAA] * len(expected))   # bytes TASM does not write stay visible
+    time.sleep(1)                                  # 4.0 drops a key that comes at once
     emu.tap('a')                                   # Assemble: the text in memory, under the work name
     time.sleep(args.wait)
     _shot(emu, args, args.descriptor)
@@ -114,7 +117,14 @@ def zasm_boot(emu, args):
     time.sleep(6)
     emu.tap('enter')                               # File
     time.sleep(2)
-    emu.tap('enter')                               # Load
+    if args.descriptor == 'zasm-4.0x8':            # its drive D is built in (no settings file): Drive, A, then Load
+        emu.tap('d')
+        time.sleep(1)
+        emu.tap('a')
+        time.sleep(2)
+        emu.tap('l')
+    else:
+        emu.tap('enter')                           # Load
     time.sleep(3)
     emu.type('STUB')
     emu.tap('enter')                               # the editor opens on it
@@ -122,6 +132,162 @@ def zasm_boot(emu, args):
     emu.post('/keyboard/combo', {'keys': ['cs', 'ss'], 'frames': 4})   # COMMAND
     emu.idle()
     time.sleep(0.6)
+
+
+# the keys from RUN "boot" to the main menu of each Pentagon 512 ZAsm (.recipe/assemblers/zxasm.md): a key, or a pause
+ZASM_START_KEYS = {
+    'zasm-3.2x': ['space', 3],
+    'zasm-lite-1.07': [],
+    'zasm-3.3.02': ['space', 3],
+    'zasm-3.3.51': ['space', 4],
+    'zasm-3.3.final': ['space', 4],
+    'zasm-3.80.4': ['space', 4],
+    'zasm-3.4': ['space', 4],
+    'zasm-x64.1': ['space', 4],
+    'zasm-4.0x8': ['space', 5, 'space', 3],
+    'zasm-4.x64': [6, 'space', 4, ('cs', 'space'), 3],
+    'zasm-4.20': ['space', 4],
+}
+
+
+def _drive_a_disk(disk):
+    """A copy of the disk whose ZAsm settings file (type s / S, bytes +3 / +4 the system and overlays drives) says
+    drive A where it says D: the shipped D asks "No Disk" before every load"""
+    data = bytearray(open(disk, 'rb').read())
+    for k in range(128):
+        entry = data[k * 16:k * 16 + 16]
+        if entry[0] in (0, 1):
+            continue
+        if chr(entry[8]) in 'sS':
+            at = (entry[15] * 16 + entry[14]) * 256
+            for off in (3, 4):
+                if data[at + off] == ord('D'):
+                    data[at + off] = ord('A')
+    out = os.path.join(tempfile.gettempdir(), 'unreal-asm-zasm-' + os.path.basename(disk))
+    open(out, 'wb').write(data)
+    return out
+
+
+def zasmr_boot(emu, args):
+    """A Pentagon 512 ZAsm (3.2x ... 4.20): started, its STUB source loaded (File / Load: the editor opens on it), its
+    COMMAND prompt opened (CS+SS)"""
+    disk = _drive_a_disk(os.path.abspath(args.disk))
+    emu.insert_disk(disk)
+    if args.descriptor == 'zasm-4.0x8':            # drive D built in: its overlays are read from there (a copy:
+        copy = disk + '.d.trd'                     # one source takes one slot)
+        open(copy, 'wb').write(open(disk, 'rb').read())
+        emu.post('/media/D/swap', {'path': copy, 'discard': True, 'immediate': True})
+    emu.run_trdos(args.boot or 'boot', wait=10)
+    for key in ZASM_START_KEYS[args.descriptor]:
+        if isinstance(key, (int, float)):
+            time.sleep(key)
+        elif isinstance(key, tuple):
+            emu.post('/keyboard/combo', {'keys': list(key), 'frames': 4})
+            emu.idle()
+        else:
+            emu.tap(key)
+    emu.tap('enter')                               # File
+    time.sleep(2)
+    if args.descriptor == 'zasm-4.0x8':            # its drive D is built in (no settings file): Drive, A, then Load
+        emu.tap('d')
+        time.sleep(1)
+        emu.tap('a')
+        time.sleep(2)
+        emu.tap('l')
+    else:
+        emu.tap('enter')                           # Load
+    time.sleep(3)
+    emu.type('STUB')
+    emu.tap('enter')                               # the editor opens on it
+    time.sleep(3)
+    emu.post('/keyboard/combo', {'keys': ['cs', 'ss'], 'frames': 4})   # COMMAND
+    emu.idle()
+    time.sleep(0.6)
+
+
+def zasm310_boot(emu, args):
+    """ZX-ASM 3.10 (and ZX ASM 3.0): its STUB.A (3.0: STUB.C) loaded (File / Load; the name input types capitals),
+    COMMAND opened (CS+SS)"""
+    v30 = args.descriptor == 'zasm-3.0'
+    emu.insert_disk(os.path.abspath(args.disk))
+    emu.run_trdos(args.boot or ('ZX-TASM3' if v30 else 'ZASM3.10'), wait=10)
+    emu.tap('enter')                               # File
+    time.sleep(1)
+    emu.tap('enter')                               # Load
+    time.sleep(2)
+    emu.type('stub' if v30 else 'stub.a')
+    emu.tap('enter')
+    time.sleep(3)
+    emu.post('/keyboard/combo', {'keys': ['cs', 'ss'], 'frames': 4})   # COMMAND
+    emu.idle()
+    time.sleep(0.6)
+
+
+def zasm2_boot(emu, args):
+    """ZX-ASM 2.4 / 2.5 / 2.6: started; the text is written at its menu (it starts on Edit with an empty text)"""
+    emu.insert_disk(os.path.abspath(args.disk))
+    boot = {'zasm-2.4': 'ZXASM2.4', 'zasm-2.5': 'ZXASM2.5', 'zasm-2.6': 'boot'}[args.descriptor]
+    emu.run_trdos(args.boot or boot, wait=10)
+
+
+def zasm2_finish(emu, args, expected):
+    """ZX-ASM 2.x: Compile / Assemble from its menu; it puts the code right behind the text, from its end word (seen in
+    unreal-ng: 2.6 assembles into that buffer whatever the ORG)"""
+    emu.tap('right')                               # Compile
+    emu.tap('enter')
+    time.sleep(1)
+    emu.tap('enter')                               # Assemble
+    time.sleep(args.wait)
+    _shot(emu, args, args.descriptor)
+    end_at = 0x6005 if args.descriptor == 'zasm-2.6' else 0x6275
+    end = emu.read(end_at, 2)
+    return bytes(emu.read(end[0] | end[1] << 8, len(expected)))
+
+
+def zasm30_finish(emu, args, expected):
+    """ZX ASM 3.0: COMMAND Q to the menu, Compile / Assemble; the code for #4000-#7FFF is in RAM page 4 (seen in
+    unreal-ng)"""
+    import base64
+    if not 0x4000 <= args.address < 0x8000:
+        raise SystemExit('ZX ASM 3.0: give a source at #4000-#7FFF (its code is read from RAM page 4)')
+    emu.tap('q')                                   # COMMAND Q: the main menu
+    time.sleep(1)
+    emu.tap('right')                               # Compile
+    emu.tap('right')
+    emu.tap('enter')
+    time.sleep(1)
+    emu.tap('enter')                               # Assemble
+    time.sleep(args.wait)
+    _shot(emu, args, args.descriptor)
+    page = emu.get(f'/memory/page/ram/4?offset={args.address & 0x3FFF}&length={len(expected)}')
+    return bytes(page['data']) if isinstance(page.get('data'), list) else base64.b64decode(page.get('data_base64', ''))
+
+
+def zasmr_finish(emu, args, expected):
+    emu.tap('a')                                   # Assemble
+    time.sleep(args.wait)
+    _shot(emu, args, args.descriptor)
+    emu.tap('n')                                   # "Launch?" No
+    time.sleep(2)
+    data = emu.read_disk_file('out', 'C')
+    return bytes(data[1]) if data else b''
+
+
+def zasmlite_finish(emu, args, expected):
+    """Lite 1.07 assembles into memory; its SAVEOBJ writes no file ("No Disk" with disks in all four drives, open):
+    the bytes are read where it puts code for #4000-#7FFF, RAM page 29 (seen in unreal-ng)"""
+    import base64
+    if not 0x4000 <= args.address < 0x8000:
+        raise SystemExit('Lite 1.07: give a source at #4000-#7FFF (its code is read from RAM page 29)')
+    emu.tap('a')                                   # Assemble
+    time.sleep(args.wait)
+    _shot(emu, args, args.descriptor)
+    page = emu.get(f'/memory/page/ram/29?offset={args.address & 0x3FFF}&length={len(expected)}')
+    return bytes(page['data']) if isinstance(page.get('data'), list) else base64.b64decode(page.get('data_base64', ''))
+
+
+def zasmr_extra(args, expected):
+    return f'\n        SAVEBIN "a:out.C",#{args.address:04X},{len(expected)}\n'
 
 
 def zasm_extra(args, expected):
@@ -158,6 +324,29 @@ def masm_finish(emu, args, expected):
     return bytes(emu.read(args.address, len(expected)))
 
 
+def masm_save_finish(emu, args, expected):
+    """MASM 2.0 and the 1.0 demo (they assemble nothing): the text each holds saved by its own Save under the work
+    name and compared with what the converter wrote; `expected` when they agree (no bytes are built)"""
+    version = {'masm-2.0': '2.0', 'masm-1.0-demo': '1.0'}[args.descriptor]
+    emu.tap('s')                                   # Save file: the work name
+    time.sleep(1)
+    emu.tap('enter')
+    time.sleep(4)
+    _shot(emu, args, args.descriptor)
+    saved = emu.read_disk_file('INJECTED', 'a')
+    with tempfile.TemporaryDirectory() as tmp:
+        hobeta = os.path.join(tmp, 'x.$a')
+        subprocess.run([args.zxasm, 'inject', args.source, os.path.join(tmp, 'y.$a'), '--codec', 'masm', '--version', version,
+                        '-o', hobeta], check=True, capture_output=True)
+        raw = open(hobeta, 'rb').read()
+        written = raw[17:17 + (raw[11] | raw[12] << 8)]   # hobeta: whole sectors, the length in its header
+    if saved and saved[1].rstrip(b'\xff') == written.rstrip(b'\xff'):
+        print(f'{args.descriptor} saved the injected text: {len(written)} bytes, the converter\'s')
+        return expected
+    print(f'{args.descriptor} saved {len(saved[1]) if saved else None} bytes, the converter wrote {len(written)}')
+    return b''
+
+
 # ---- GENS4 (48K) ----
 
 def gens_boot(emu, args):
@@ -167,6 +356,72 @@ def gens_boot(emu, args):
     emu.write(26000, code)
     emu.post('/basic/run', {'command': 'RANDOMIZE USR 26000'})
     time.sleep(2)
+
+
+def gens3m21_boot(emu, args):
+    code = [b for b in _aie().tape_blocks(open(args.disk, 'rb').read()) if len(b) == 10037][0][1:-1]   # 'GENS3M21'
+    emu.post('/reset')
+    time.sleep(3)
+    for k in range(0, len(code), 1024):
+        emu.write(49000 + k, code[k:k + 1024])
+    emu.post('/basic/run', {'command': 'RANDOMIZE USR 49000'})
+    time.sleep(2)
+
+
+def gens3_finish(emu, args, expected):
+    emu.write(args.address, [0xAA] * len(expected))
+    emu.tap('a')                                   # Assemble: it asks the table size (ENTER: its default) and options
+    emu.tap('enter')
+    time.sleep(0.5)
+    emu.tap('enter')
+    time.sleep(0.5)
+    emu.type('4')                                  # no listing (GENS3 lists by default and stops at the scroll)
+    emu.tap('enter')
+    time.sleep(args.wait)
+    _shot(emu, args, args.descriptor)
+    return bytes(emu.read(args.address, len(expected)))
+
+
+def gens4b_boot(emu, args):
+    """GENS4B (MOA B-Disk, its hobeta gens4b.$c) calls TR-DOS through #3D13, which needs TR-DOS's system variables:
+    TR-DOS entered once from 48K BASIC (an empty disk in A) and left, then the code at 30000 and started there"""
+    blank = os.path.join(tempfile.gettempdir(), 'unreal-asm-blank.trd')
+    image = bytearray(16 * 256 * 160)
+    image[8 * 256 + 0xE1:8 * 256 + 0xE8] = bytes([0, 1, 0x16, 0, 0xF0, 0x09, 0x10])   # first free 1/0, 80x2, 2544 free
+    image[8 * 256 + 0xF5:8 * 256 + 0xFD] = b'BLANK   '
+    open(blank, 'wb').write(image)
+    emu.insert_disk(blank)
+    emu.post('/reset')
+    time.sleep(3)
+    for _ in range(3):                             # the menu: 48 BASIC
+        emu.tap('down')
+    emu.tap('enter')
+    time.sleep(2)
+    emu.post('/basic/run', {'command': 'RANDOMIZE USR 15616'})
+    time.sleep(2)
+    emu.post('/basic/run', {'command': 'RETURN'})
+    time.sleep(2)
+    code = open(args.disk, 'rb').read()[17:]       # the hobeta file's data
+    for k in range(0, len(code), 1024):
+        emu.write(30000 + k, code[k:k + 1024])
+    emu.post('/basic/run', {'command': 'RANDOMIZE USR 30000'})
+    time.sleep(3)
+
+
+def gens43t_boot(emu, args):
+    emu.insert_disk(os.path.abspath(args.disk))
+    emu.run_trdos(args.boot or 'GENS4tf', wait=8)
+
+
+def gens43t_finish(emu, args, expected):
+    emu.type('A,,OBJ')                             # Assemble to the disk file OBJ (a plain A ends in a disc error)
+    emu.tap('enter')
+    time.sleep(args.wait)
+    _shot(emu, args, args.descriptor)
+    saved = emu.read_disk_file('OBJ', 'C')
+    if not saved or saved[0] != args.address:
+        return b''
+    return saved[1]
 
 
 def gens_finish(emu, args, expected):
@@ -200,6 +455,35 @@ def zeus_finish(emu, args, expected):
     time.sleep(args.wait)
     _shot(emu, args, args.descriptor)
     return bytes(emu.read(args.address, len(expected)))
+
+
+# ---- ZEUS GG (B-disk) and v7.E (ZKSoft): from a TR-DOS disk on a 128K ----
+
+def zeus_disk_boot(emu, args):
+    emu.insert_disk(os.path.abspath(args.disk))
+    emu.run_trdos(args.boot, wait=10)
+    emu.post('/keyboard/combo', {'keys': ['cs', '2'], 'frames': 6})   # CAPS LOCK: ZEUS takes capitals
+    emu.idle()
+    time.sleep(0.5)
+
+
+# ---- ZEUS 1.1 beta (PHT): its hobeta file's code at 57344 under 48 BASIC of a 128K ----
+
+def zeus11_boot(emu, args):
+    emu.post('/reset')
+    time.sleep(3)
+    for _ in range(3):                             # the menu: 48 BASIC
+        emu.tap('down')
+    emu.tap('enter')
+    time.sleep(2)
+    code = open(args.disk, 'rb').read()[17:]       # the hobeta file's data
+    for k in range(0, len(code), 1024):
+        emu.write(57344 + k, code[k:k + 1024])
+    emu.post('/basic/run', {'command': 'RANDOMIZE USR 57344'})
+    time.sleep(5)
+    emu.post('/keyboard/combo', {'keys': ['cs', '2'], 'frames': 6})   # CAPS LOCK: ZEUS takes capitals
+    emu.idle()
+    time.sleep(0.5)
 
 
 # ---- Primus 2.9 ----
@@ -309,11 +593,13 @@ def pasm_finish(emu, args, expected):
 
 
 class Profile:
-    def __init__(self, descriptor, boot, finish, model='PENTAGON', force=False, extra=None, disk_at_finish=False, tape=False):
+    def __init__(self, descriptor, boot, finish, model='PENTAGON', force=False, extra=None, disk_at_finish=False, tape=False,
+                 ram_size=None):
         self.descriptor = descriptor          # the sync descriptor (sync::SyncDescriptor id)
         self.boot = boot
         self.finish = finish
         self.model = model                    # the machine it runs on
+        self.ram_size = ram_size              # its RAM in KB when the model's default is not enough (ZAsm 3.2x+: 512)
         self.force = force                    # no "changed" flag: the inject replaces the text by force
         self.extra = extra                    # (args, expected) -> text added to the source
         self.disk_at_finish = disk_at_finish  # it saves the code to its disk: the disk back in after a template
@@ -327,10 +613,24 @@ PROFILES = {
     'storm': Profile('storm-1.3', storm_boot, storm_finish),
     'tasm412': Profile('tasm-4.12', tasm_boot, tasm_finish),
     'zasm315': Profile('zasm-3.15', zasm_boot, zasm_finish, force=True, extra=zasm_extra, disk_at_finish=True),
+    'zasmlite': Profile('zasm-lite-1.07', zasmr_boot, zasmlite_finish, force=True, ram_size=512),   # ZLITE107.TRD with a STUB.a
+    'zasm2': Profile('zasm-2.6', zasm2_boot, zasm2_finish, force=True),   # --assembler zasm-2.4 / -2.5 / -2.6
+    'zasm30': Profile('zasm-3.0', zasm310_boot, zasm30_finish, force=True),                                            # a STUB.C on the disk
+    'zasm310': Profile('zasm-3.10', zasm310_boot, zasmr_finish, force=True, extra=zasmr_extra, disk_at_finish=True),   # a STUB.A on the disk
+    'zasmr': Profile('zasm-4.20', zasmr_boot, zasmr_finish, force=True, extra=zasmr_extra, disk_at_finish=True, ram_size=512),   # --assembler zasm-3.2x ... (a STUB.a on the disk)
     'masm11': Profile('masm-1.1', masm_boot, masm_finish),
+    'masm30': Profile('masm-3.0', masm_boot, masm_finish, force=True),     # --boot TSM
+    'masm20': Profile('masm-2.0', masm_boot, masm_save_finish, force=True),  # --boot m2: no compiler in it, its Save checked
+    'masmdemo': Profile('masm-1.0-demo', masm_boot, masm_save_finish, force=True),  # Spectrofon 15, --boot MASMdemo: the same
     'gens4': Profile('gens-4', gens_boot, gens_finish, model='48K', tape=True),
+    'gens3m21': Profile('gens-3m21', gens3m21_boot, gens3_finish, model='48K', tape=True),   # DEVPAC3M.TAP
+    'gens4b': Profile('gens-4b', gens4b_boot, gens_finish),                                 # gens4b.$c (MONSGENS.LZH)
+    'gens43t': Profile('gens-4.3t', gens43t_boot, gens43t_finish, disk_at_finish=True),                              # GENS4TF.SCL
     'zeus1983': Profile('zeus-1983', zeus_boot, zeus_finish, model='48K', tape=True),
     'primus': Profile('primus-2.9', primus_boot, primus_finish, force=True, disk_at_finish=True),
+    'zeusgg': Profile('zeus-gg', zeus_disk_boot, zeus_finish),          # --boot ZEUS
+    'zeus7e': Profile('zeus-7e', zeus_disk_boot, zeus_finish),          # --boot ZEUSv7.E
+    'zeus11': Profile('zeus-1.1', zeus11_boot, zeus_finish, tape=True),  # its hobeta file ZEUS.$C (no disk to eject)
     'lasergenius': Profile('lasergenius-1.04', lasergenius_boot, lasergenius_finish, force=True),
     'prometheus': Profile('prometheus-48', prometheus_boot, prometheus_finish, model='48K', force=True, tape=True),
     'pasm': Profile('pasm-3.0', pasm_boot, pasm_finish, force=True),

@@ -57,17 +57,19 @@ public:
     }
 
 private:
-    std::string version;   // "3", "4.0", "4.12"
+    std::string version;   // "2.0", "3", "4.0", "4.12"
 
     bool V412() const { return version.empty() || version == "4.12"; }
     bool V40() const { return version == "4.0"; }
+    bool V3() const { return version == "3" || version == "2.0"; }   // 2.0: 3.x's language as plain text
     std::string Dotted(const std::string& word) const { return V412() ? "." + word : word; }
 
     // ---- the dialect ----
 
     std::string Title() const override { return "TASM"; }
-    /// TASM keeps labels of any length (a hash table, 4.12's help); long ones only push the command to the right
-    size_t Significant() const override { return 24; }
+    /// TASM 4.12 keeps labels of any length (a hash table, its help; long ones only push the command to the right); 4.0
+    /// refuses a label of more than 7 characters (error 1, its manual), as 3.x
+    size_t Significant() const override { return V412() ? 24 : 7; }
     bool Reserved(const std::string& upper) const override { return kWords.count(upper) || z80::IsMnemonic(z80::Lower(upper)); }
     std::string Db() const override { return "DEFB"; }
     std::string Dw() const override { return "DEFW"; }
@@ -130,17 +132,17 @@ private:
                     }
                     case Op::High: case Op::Low:
                     {
-                        // on the value so far: 4.12 has no { } (error 8 in unreal-ng; its help lists + - * / | &),
-                        // x/256 and x&255 in its 16-bit words; 3 / 4.0 the postfix { }
+                        // on the value so far: 4.12 and 3.x have no { } (error 8 in unreal-ng; 4.12's help lists
+                        // + - * / | &), x/256 and x&255 in their 16-bit words; 4.0 the postfix { }
                         const auto t = Print(a);
                         if (!t)
                             return std::nullopt;
-                        if (V412())
+                        if (!V40())
                             return *t + (e.op == Op::High ? "/256" : "&255");
                         return *t + (e.op == Op::High ? "{" : "}");
                     }
                     case Op::SwapBytes:
-                        if (!V412())
+                        if (V40())
                         {
                             const auto t = Print(a);
                             return t ? std::optional<std::string>(*t + "^") : std::nullopt;
@@ -255,7 +257,7 @@ private:
     /// every whole keyword word, in strings too, shown and assembled in capitals): those not already in capitals
     std::vector<bool> KeywordLetters(const std::string& text) const
     {
-        const codecs::tasm::TokenTable& table = version == "3" ? codecs::tasm::Tasm3Tokens() : V40() ? codecs::tasm::Tasm40Tokens() : codecs::tasm::Tasm412Tokens();
+        const codecs::tasm::TokenTable& table = V3() ? codecs::tasm::Tasm3Tokens() : V40() ? codecs::tasm::Tasm40Tokens() : codecs::tasm::Tasm412Tokens();
         std::vector<bool> out(text.size(), false);
         auto wordChar = [](char c) {
             return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '@' || c == '$' || c == '#' || c == '\\';
@@ -292,6 +294,10 @@ private:
         const std::string& m = s.mnemonic;
         const auto& ops = s.operands;
         auto reg = [&](size_t k, const char* name) { return k < ops.size() && ops[k].kind == Operand::Kind::Register && ops[k].text == name; };
+        // 3.x have no HX / LX / HY / LY (error 5 in unreal-ng; 4.0 added their tokens): bytes
+        if (V3())
+            if (auto bytes = HalfRegisterBytes(s))
+                return bytes;
         if (m == "inf" || (m == "in" && (reg(0, "f") || (ops.size() == 1 && ops[0].kind == Operand::Kind::Indirect))))
             return std::vector<std::string>{V40() ? "INF" : Bytes({"#ED", "#70"}, "IN F,(C)")};
         if (m == "out" && ops.size() == 2 && ops[0].kind == Operand::Kind::Indirect && ops[1].kind == Operand::Kind::Immediate)
@@ -385,11 +391,26 @@ private:
             {
                 // DEFS n,fill: the fill repeated n times; a pattern of several bytes as DEFB
                 const std::string count = Known(s.args[0]);
+                const auto n = Value(s.args[0]);
+                if (!V412() && (s.args.size() > 1 || !s.operands.empty()))
+                {
+                    // 3.x / 4.0 take DEFS n only (4.0 hangs in pass 1 on a second operand): the fill as DEFB
+                    if (!n)
+                        return {NotConverted("a DS fill of a count known only when assembling")};
+                    std::vector<std::string> items;
+                    for (int64_t k = 0; k < *n; ++k)
+                    {
+                        const auto v = s.operands.empty() ? Value(s.args[1]) : Value(s.operands[static_cast<size_t>(k) % s.operands.size()].expr);
+                        if (!v)
+                            return {NotConverted("DS with a fill known only when assembling")};
+                        items.push_back(Number(*v & 0xFF));
+                    }
+                    return DataLines(Db(), items);
+                }
                 if (s.operands.empty())
                     return {"DEFS " + count + (s.args.size() > 1 ? "," + Known(s.args[1]) : std::string())};
                 if (s.operands.size() == 1)
                     return {"DEFS " + count + "," + Known(s.operands[0].expr)};
-                const auto n = Value(s.args[0]);
                 if (!n)
                     return {NotConverted("a fill pattern of a count known only when assembling")};
                 std::vector<std::string> items;

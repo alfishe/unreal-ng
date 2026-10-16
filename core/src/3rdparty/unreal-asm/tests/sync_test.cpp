@@ -1246,6 +1246,166 @@ TEST(SyncInject_Test, Tasm412TakesAFileAtItsCommandLineAsLoadLeavesIt)
     EXPECT_FALSE(PlanInject(dump.machine, *d, written.bytes).ok);
 }
 
+/// Every assembler the synchronizer reads takes a text too: an idle rule (where it waits) and a layout an inject writes
+TEST(SyncInject_Test, EveryDescriptorHasAnIdleRuleAndAnInject)
+{
+    for (const SyncDescriptor& d : Descriptors())
+    {
+        SCOPED_TRACE(d.id);
+        EXPECT_FALSE(d.idleChain.empty()) << "no idle rule";
+        const bool injectable = d.family == LayoutFamily::FileImage || (d.family == LayoutFamily::Linear && d.linear.injectable) ||
+                                (d.family == LayoutFamily::GapBuffer && (d.gapBuffer.loadedForm || d.gapBuffer.commandLineForm));
+        EXPECT_TRUE(injectable) << "no inject";
+    }
+}
+
+/// The rules added with the emulator checks (inject-oracle.py, 2026-10-16): on a dump of each, with its key wait put on
+/// the stack, a text written by the inject reads back as written
+TEST(SyncInject_Test, TheNewRulesWriteATextThatReadsBack)
+{
+    const Case cases[] = {
+        {"masm20-menu", "masm-2.0"},       {"masm30-menu", "masm-3.0"},       {"masm10-menu", "masm-1.0-demo"},
+        {"gens3m21-loaded", "gens-3m21"},  {"gens4b-edited", "gens-4b"},      {"gens43t-edited", "gens-4.3t"},
+        {"zasm24-edited", "zasm-2.4"},     {"zasm25-edited", "zasm-2.5"},     {"zasm26-edited", "zasm-2.6"},
+        {"zasm30-edited", "zasm-3.0"},     {"zasm310-edited", "zasm-3.10"},   {"zasm32x-edited", "zasm-3.2x"},
+        {"zlite107-edited", "zasm-lite-1.07"}, {"zasm3302-edited", "zasm-3.3.02"}, {"zasm3351-edited", "zasm-3.3.51"},
+        {"zasm33f-edited", "zasm-3.3.final"}, {"zasm384-edited", "zasm-3.80.4"}, {"zasm34-edited", "zasm-3.4"},
+        {"zasmx641-edited", "zasm-x64.1"}, {"zasm40x8-edited", "zasm-4.0x8"},  {"zasm4x64-edited", "zasm-4.x64"},
+        {"zasm420-edited", "zasm-4.20"},   {"zeusgg-loaded", "zeus-gg"},      {"zeus7e-loaded", "zeus-7e"},
+        {"zeus11-loaded", "zeus-1.1"},
+    };
+    for (const Case& c : cases)
+    {
+        SCOPED_TRACE(c.folder);
+        Dump dump = Load(c.folder);
+        const SyncDescriptor* d = FindDescriptor(c.descriptor);
+        ASSERT_NE(d, nullptr);
+        // the key wait on a stack of its own in the page at #4000
+        const int window = dump.machine.windows[1];
+        std::vector<uint8_t>* stackPage = nullptr;
+        for (size_t k = 0; k < dump.pages.size(); ++k)
+            if (dump.machine.ram[k].page == window)
+                stackPage = &dump.pages[k];
+        ASSERT_NE(stackPage, nullptr);
+        dump.machine.sp = 0x4800;
+        for (size_t k = 0; k < d->idleChain.size(); ++k)
+        {
+            (*stackPage)[0x0800 + 2 * k] = static_cast<uint8_t>(d->idleChain[k]);
+            (*stackPage)[0x0801 + 2 * k] = static_cast<uint8_t>(d->idleChain[k] >> 8);
+        }
+        if (d->idleZeroLength)
+            for (size_t k = 0; k < dump.pages.size(); ++k)
+                if (dump.machine.ram[k].page == dump.machine.windows[d->idleZeroAt >> 14])
+                    std::fill_n(dump.pages[k].begin() + (d->idleZeroAt & 0x3FFF), d->idleZeroLength, uint8_t(0));
+        std::string why;
+        ASSERT_TRUE(Idle(dump.machine, *d, why)) << why;
+
+        const WriteAsResult written = WriteAs(SourceDocument::FromText("        ORG #C000\nSTART   LD A,1\n        JR START\n", "sjasmplus"),
+                                              d->codec, d->version, "NEW");
+        ASSERT_TRUE(written.ok) << written.error;
+        InjectOptions force;
+        force.force = true;
+        const InjectPlan plan = PlanInject(dump.machine, *d, written.bytes, force);
+        ASSERT_TRUE(plan.ok) << plan.error;
+        for (size_t k = 0; k < dump.pages.size(); ++k)
+        {
+            if (plan.page >= 0 && dump.machine.ram[k].page == plan.page)
+                dump.pages[k] = plan.bytes;
+            for (const InjectPlan::Poke& p : plan.pokes)
+                if (dump.machine.ram[k].page == p.page)
+                    dump.pages[k][p.offset] = p.value;
+        }
+        const SyncText back = ReadText(dump.machine, *d);
+        ASSERT_TRUE(back.ok) << back.state;
+        EXPECT_EQ(back.file, written.bytes);
+    }
+}
+
+TEST(SyncInject_Test, TheOlderTasmsTakeAFileAtTheirCommandLineAsTheEditorLeavesIt)
+{
+    struct Version
+    {
+        const char* folder;
+        const char* descriptor;
+        std::vector<uint16_t> chain;   // its key wait at the command line (find-idle.py)
+        uint16_t pointers, start, changedAt, nameAt;
+    };
+    const Version versions[] = {
+        {"tasm40-command", "tasm-4.0", {0x9865, 0x807C}, 0x8DD0, 0x9FA8, 0x975E, 0x9793},
+        {"tasm44-command", "tasm-4.4", {0x9865, 0x807C}, 0x8DD0, 0x9FA8, 0x975E, 0x9793},
+        {"tasm30-command", "tasm-3.0", {0x93D5, 0x807C}, 0x8910, 0x9935, 0x9322, 0x9346},
+        {"tasm32-command", "tasm-3.2", {0x93D5, 0x807C}, 0x8910, 0x9935, 0x9322, 0x9346},
+        {"tasm35-command", "tasm-3.5", {0x93D5, 0x807C}, 0x8910, 0x9935, 0x9322, 0x9346},
+        {"tasm20-command", "tasm-2.0", {0x92CB, 0x807C}, 0x8847, 0x975D, 0x921D, 0x9241},
+    };
+    for (const Version& v : versions)
+    {
+        SCOPED_TRACE(v.descriptor);
+        Dump dump = Load(v.folder);
+        const SyncDescriptor* d = FindDescriptor(v.descriptor);
+        ASSERT_NE(d, nullptr);
+        const auto page = [&](int number) -> std::vector<uint8_t>& {
+            for (size_t k = 0; k < dump.pages.size(); ++k)
+                if (dump.machine.ram[k].page == number)
+                    return dump.pages[k];
+            ADD_FAILURE() << "no page " << number;
+            return dump.pages[0];
+        };
+        const auto byte = [&](uint16_t at) -> uint8_t& { return page(dump.machine.windows[at >> 14])[at & 0x3FFF]; };
+        std::string why;
+        dump.machine.sp = 0x617C;
+        for (size_t k = 0; k < v.chain.size(); ++k)
+        {
+            byte(static_cast<uint16_t>(0x6180 + 2 * k)) = static_cast<uint8_t>(v.chain[k]);
+            byte(static_cast<uint16_t>(0x6181 + 2 * k)) = static_cast<uint8_t>(v.chain[k] >> 8);
+        }
+        ASSERT_TRUE(Idle(dump.machine, *d, why)) << why;
+        byte(v.changedAt) = 0;   // as after SAVE
+
+        const WriteAsResult written = WriteAs(SourceDocument::FromText("        ORG #6900\nstart   LD A,1\n        JR start\n", "sjasmplus"), "tasm", d->version, "NEW");
+        ASSERT_TRUE(written.ok) << written.error;
+        InjectOptions named;
+        named.name = "NEW";
+        const InjectPlan plan = PlanInject(dump.machine, *d, written.bytes, named);
+        ASSERT_TRUE(plan.ok) << plan.error;
+        for (const InjectPlan::Poke& p : plan.pokes)
+            page(p.page)[p.offset] = p.value;
+        const auto word = [&](uint16_t at) { return static_cast<uint16_t>(byte(at) | (byte(static_cast<uint16_t>(at + 1)) << 8)); };
+        // the gap start on the end record (2.0: on the text's last byte), the gap end and the top #FFFF
+        const bool plain = d->gapBuffer.plainTextFile;
+        EXPECT_EQ(word(static_cast<uint16_t>(v.pointers + 4)), v.start + written.bytes.size() - (plain ? 0 : 2));
+        EXPECT_EQ(word(static_cast<uint16_t>(v.pointers + 2)), 0xFFFF);
+        EXPECT_EQ(word(static_cast<uint16_t>(v.pointers + 6)), 0xFFFF);
+        EXPECT_EQ(byte(v.changedAt), 0xFF);
+        std::string work;
+        for (uint16_t k = 0; k < 8; ++k)
+            work.push_back(static_cast<char>(byte(static_cast<uint16_t>(v.nameAt + k))));
+        EXPECT_EQ(work, "NEW     ");
+        const SyncText back = ReadText(dump.machine, *d);
+        ASSERT_TRUE(back.ok) << back.state;
+        EXPECT_FALSE(back.editor);
+        EXPECT_EQ(back.file, written.bytes);
+        // changed now: refused without force
+        EXPECT_FALSE(PlanInject(dump.machine, *d, written.bytes).ok);
+    }
+}
+
+/// A line of more than 96 characters left in the line buffer at the command line reaches into its tail: the editor is
+/// known by the buffer's last byte only
+TEST(Sync_Test, ALongLineLeftInTasmsLineBufferIsNotTheEditor)
+{
+    Dump dump = Load("tasm40-command");
+    const SyncDescriptor* d = FindDescriptor("tasm-4.0");
+    ASSERT_NE(d, nullptr);
+    for (size_t k = 0; k < dump.pages.size(); ++k)
+        if (dump.machine.ram[k].page == 2)
+            std::fill(dump.pages[k].begin() + 0x114C, dump.pages[k].begin() + 0x114C + 110, uint8_t('x'));   // #914C: the line buffer
+    const SyncText text = ReadText(dump.machine, *d);
+    ASSERT_TRUE(text.ok) << text.state;
+    EXPECT_FALSE(text.editor);
+    EXPECT_EQ(text.file, dump.expected);
+}
+
 TEST(SyncInject_Test, StormTakesAFileWhileItsEditorWaitsForAKey)
 {
     Dump dump = Load("storm13-edited");

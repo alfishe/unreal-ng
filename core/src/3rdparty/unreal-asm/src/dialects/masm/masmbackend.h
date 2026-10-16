@@ -4,7 +4,8 @@
 // left to right in 16-bit words with + - * / & | and @ (XOR), without parentheses or a unary minus; labels have up to
 // 10 characters; BEGIN n ... END repeats a block without labels; keywords are capitals (research-masm-to-sjasmplus.md
 // §1). An expression is written as such a chain (as for XAS), else as its value; macros are expanded, WHILE and the
-// repeats BEGIN cannot hold unrolled, conditions decided (the RetroWriter core).
+// repeats BEGIN cannot hold unrolled, conditions decided (the RetroWriter core). targetVersion "3.0": no @ (MASM 3.0
+// refuses it).
 
 #include "unrealasm/dialect.h"
 

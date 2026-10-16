@@ -207,18 +207,18 @@ phase; master only after the owner's review.
       - [x] XAS idle template (7.447, 2026-10-13); [ ] a project into XAS (one text: its INCLUDEs onto the disk)
       - [x] the `retrobackend` core shared by the XAS and STORM backends (2026-10-11, `RetroWriter`: names, values, conditions, the walk; ALASM keeps its own)
       - [x] STORM (2026-10-11, research-sjasmplus-to-storm.md): backend, inject while the editor waits for a key (STORM's PGUP redraws from the new text), the editor's changed flags; STORM 1.3 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
-      - [ ] STORM 1.0beta inject rule; 1.3i loses bytes of a large assembly (its own LOAD too); [x] STORM 1.3 idle template (2026-10-13)
+      - [x] STORM 1.0beta inject rule (2026-10-16, asm-synchronizer.md §7.8); [ ] 1.3i loses bytes of a large assembly (its own LOAD too); [x] STORM 1.3 idle template (2026-10-13)
       - [x] TASM 4.12 (2026-10-11, research-sjasmplus-to-tasm.md): backend (4.12 / 4.0 / 3), inject at its command line as LOAD leaves a file, its changed flag and work name; TASM 4.12 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes; `zxasm convert --to-version`
-      - [ ] TASM 4.0 / 4.4 / 3.x inject rules; [x] TASM 4.12 idle template (2026-10-13)
+      - [x] TASM 4.0 / 4.4 / 3.0 / 3.2 / 3.5 / 2.0 inject rules (2026-10-13, asm-synchronizer.md §7.6-§7.7): at the command line in the form the editor leaves, their changed bytes and work names; each assembled the injected `oracle1.asm` to sjasmplus' bytes. Found on the way: 7-character labels and no `DEFS n,fill` in 4.0, no `{ }` and no index halves in 3.x, the reader taking a long line left in the line buffer for the editor; [x] TASM 4.12 idle template (2026-10-13)
       - [x] ZX-ASM / ZAsm 3.15 (2026-10-11, research-sjasmplus-to-zxasm.md): backend, inject at its COMMAND prompt (the first `Linear` one); ZAsm 3.15 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
-      - [ ] ZX-ASM 3.0 / 3.10 / ZAsm 3.2x-4.20 inject rules; the editor redrawn after an inject; [x] ZAsm 3.15 idle template (2026-10-13; its disk back in with --media for the SAVEOBJ)
+      - [x] ZX-ASM 2.4-2.6 / 3.0 / 3.10 / ZAsm 3.2x-4.20 inject rules (2026-10-16, §7.9-§7.10; ZX ASM 3.0 and 2.x without `&` `|` `!`, `.` functions, `REPT` ..., 2.x without parentheses); [ ] Lite 1.07's SAVEOBJ "No Disk"; [ ] the editor redrawn after an inject; [x] ZAsm 3.15 idle template (2026-10-13; its disk back in with --media for the SAVEOBJ)
       - [x] MASM 1.1 / 1.3 (2026-10-11, research-sjasmplus-to-masm.md): backend, inject at its prompt as LOAD leaves a file; MASM 1.1 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
-      - [ ] MASM 1.0 demo / 2.0 / 3.0 inject rules; [x] MASM 1.1 idle template (2026-10-13)
+      - [x] MASM 1.0 demo / 2.0 / 3.0 inject rules (2026-10-16, §7.12; MASM 3.0 without `@`); [x] MASM 1.1 idle template (2026-10-13)
     - [x] Z4 48K targets: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM (2026-10-12; other builds' rules and templates below)
       - [x] GENS4 (2026-10-11, research-sjasmplus-to-gens.md): backend (`ChainWriter`), inject at its `>` prompt; GENS4 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes; the live synchronizer reads 48K machines (page 5)
-      - [ ] GENS3M21 / 4.3t / 4B inject rules
+      - [x] GENS3M21 / 4.3t / 4B inject rules (2026-10-16, §7.13)
       - [x] ZEUS 1983 (2026-10-11, research-sjasmplus-to-zeus.md): backend (1983 / GG / PHT texts), inject at its prompt; ZEUS 1983 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
-      - [ ] ZEUS GG / 1.1 / v7.E inject rules and emulator checks of their texts
+      - [x] ZEUS GG / 1.1 / v7.E inject rules and emulator checks of their texts (2026-10-13): idle rules by `find-idle.py` (GG `#F6E5, #E0D5`; 1.1 and v7.E `#F555, #E0F7`); each assembled the injected `oracle1.asm` to sjasmplus' bytes. Found on the way: GG and PHT's versions take `DB DW DM DS` only (the backend wrote `DEFB`: error 0 on every data line); ZEUS 1.1 has v7.E's table but no `*` (a codec version `1.1` of its own)
       - [x] Primus 2.9 (2026-10-11, research-sjasmplus-to-zeus.md §4.1): the ZEUS backend's `primus` text, inject at its prompt; Primus 2.9 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
       - [x] Laser Genius 1.04 (2026-10-12, research-sjasmplus-to-lasergenius.md): backend, inject in its editor (its screen lines moved behind the text); LG 1.04 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes; its `(IX-` / `(IY-` bug written around
       - [ ] Laser Genius with the hash extensions (end `(#ADA1)`) inject rule; [x] LG 1.04 idle template (2026-10-13)

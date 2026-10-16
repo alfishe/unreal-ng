@@ -1,7 +1,8 @@
 #pragma once
 
 // The ZEUS backend (asm-synchronizer.md §15.2, part B, Z4): the IR written as ZEUS 1983 source (GG, PHT 1.1 / v7.E and
-// Primus 2.9 by targetVersion "gg" / "pht" / "primus"). ZEUS computes strictly left to right with + - & ! (! OR; v7.E also *), without
+// Primus 2.9 by targetVersion "gg" / "pht" / "1.1" / "primus"). ZEUS computes strictly left to right with + - & ! (! OR;
+// v7.E, "pht", also *), without
 // parentheses, has no conditions, macros or repeats, and DISP is an offset from ORG; labels are letters and digits,
 // up to 14 characters (research-zeus-to-sjasmplus.md §2). Expressions are chains (ChainWriter), macros expanded,
 // repeats unrolled, conditions decided, the undocumented instructions written as bytes.

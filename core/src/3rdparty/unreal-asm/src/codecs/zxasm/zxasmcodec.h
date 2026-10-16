@@ -1,6 +1,7 @@
 #pragma once
 
-// ZX-ASM / ZAsm sources, every version: 2.4-2.6, 3.0-3.10, Lite 1.07, 3.15-4.20 (research-zxasm.md).
+// ZX-ASM / ZAsm sources, every version: 2.4-2.6, 3.0-3.10, Lite 1.07, 3.15-4.20 (research-zxasm.md); "3.00" (ZX ASM
+// 3.0 itself) is 3.0's table, a version for the backend, never detected.
 //
 // No header: the file is the editor's text buffer. Lines end with #0D; #06 #80+n = n blanks; from 3.0 on a keyword is
 // two bytes p, #20+index with p - 2 = bit 0 capitals, bit 1 one blank after it. Labels, numbers, expressions, strings
