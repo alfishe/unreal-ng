@@ -1,8 +1,8 @@
 # ZX Next: what a frame costs, by feature (runtime profile, 2026-10-16)
 
 Question (owner): is there still room in the hot paths of the Next (screen modes, 3 AYs, DACs, DivMMC, ...), or is it near what it can be?
-Answer in one line: **the machine is cheap where it is idle and the video is the biggest block; two places have real, safe room (the
-per-instruction device polling at high CPU speeds and the tilemap / ULA line renderers), the rest is not worth touching.**
+Answer in one line: **the machine is cheap where it is idle and the video is the biggest block; the places with some room are the tilemap and
+ULA line renderers and the silent AY chips; the per-instruction device polling, first thought the best target, was tested and is not (see the table).**
 
 ## How
 
@@ -40,7 +40,7 @@ tick even when silent), `NextAudio::Tick` 2 % more, `Screen::LatchFramebuffer` 3
 
 **Tilemap 40**: `TilemapLine` 34 % self, `UlaLine` 16 %, `ComposeLine` 15 %.
 
-**CPU busy at 28 MHz** (inclusive): the Z80N core `ExecuteStep` 38 % (`MemRead` 15 %), the machine's per-instruction hook `OnCPUStep` 23 %, of which
+**CPU busy at 28 MHz** (inclusive; the `sample` attribution of the poller path overstates it, see the verdict table): the Z80N core `ExecuteStep` 38 % (`MemRead` 15 %), the machine's per-instruction hook `OnCPUStep` 23 %, of which
 **`IsIntAsserted` 19 %** (it calls the device poller on every instruction: the CTC `Advance` 3.4 %, **`NextUart::Quiet` 9.4 %** - the ESP is always
 fitted, so the UART never counts as idle - and `PollInterrupts`), `NextBoard::AfterInstruction` 5 % (`StepDma`), video `RenderUpTo` 19 %,
 `AY updateState` 3 %.
@@ -49,7 +49,7 @@ fitted, so the UART never counts as idle - and `PollInterrupts`), `NextBoard::Af
 
 | area | room? | size, risk |
 |:--|:--|:--|
-| per-instruction device polling (UART `Quiet`, CTC `Advance`, interrupt latch, DMA step) | **yes, clear** | ~20 % of the CPU cost at 28 MHz = ~1 ms of 5.2 ms a frame (5 % of the 20 ms); safe if the UART / CTC are only looked at when something can have changed (a port access, a peer event, a frame start, the next deadline) - exact timing kept, covered by the UART / CTC / TTD tests |
+| per-instruction device polling (UART `Quiet`, CTC `Advance`, interrupt latch, DMA step) | **no (corrected 2026-10-16)** | the sampling profile put the poller path at ~20 % of the 28 MHz CPU cost, but the direct test says otherwise: with the poller body skipped altogether the 28 MHz scene was only 1.3-5.7 % faster (median ~3.5 %, ~0.2 ms a frame, 0.7 % of the 20 ms; a loaded host, load ~145). The CTC and the UART already have their quiet gates; what is left is ~8 ns an instruction. Not worth the risk to the exact timing of the UART / CTC |
 | tilemap line renderer | yes | up to ~600 us a frame (3 % of 20 ms) from per-cell decoding instead of per-pixel; needs the A/B benchmark rule |
 | ULA line renderer (every frame, every machine mode) | some | ~150-200 us a frame from cell-wise palette lookups; the idle floor of every Next program |
 | AY chips when silent | some | up to ~100 us a frame by not stepping a chip whose channels and envelope are off; `SoundChip_AY8910` is shared with all Spectrum models, so a wider blast radius |
@@ -68,3 +68,7 @@ recorder. They are listed, not planned: a change to a hot path needs its own A/B
 - `divmmc_busy_conmem` (the CPU inside the mapped window) came out below the floor: the program does not run there as written; the number is not valid.
 - One host, one build; the numbers are for ranking, not for absolute claims. Thread CPU time, load on the machine was not controlled (median of 40 rounds).
 - No real NEX program was profiled (the scenes are synthetic); NextZXOS idle is closest to the parked rows.
+
+## Lesson
+
+A sampling profile's inclusive share is not the saving: skipping the whole poller measured 3.5 % where the samples said ~20 %. Measure the removal before building the optimisation.
