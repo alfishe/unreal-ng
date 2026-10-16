@@ -465,20 +465,21 @@ public:
         _renderT += 16;
     }
 
-    /// renderTick when the pair is quiet at rest, and true; false (nothing done) otherwise. Quiet at rest: no SSG
-    /// write due at this tick, both SSGs silentAtRest, the HQ output stage of each chip with its coupling at rest on
-    /// the gated hold, its decimator history all zeros, no native tap, and every FM word due by the tick's second
-    /// half the level the hold has. renderTick would then feed zeros everywhere and change no filter state: only
-    /// the generators, the words consumed and the decimator positions move, and so they do here. The caller feeds
-    /// the SSG decimators (their history all zeros too)
-    bool quietTick(bool fmEnabled)
+    /// The `ticks` renderTick calls of a pair that is quiet at rest, and true; false (nothing done) otherwise. Quiet at
+    /// rest over the run: no SSG write due by its last tick, both SSGs silentAtRest, the HQ output stage of each chip
+    /// with its coupling at rest on the gated hold, its decimator history all zeros, no native tap, and every FM word
+    /// due by the last tick's second half the level the hold has (nothing within the run can change any of that).
+    /// renderTick would then feed zeros everywhere and change no filter state: only the generators, the words consumed
+    /// and the decimator positions move, and so they do here. The caller feeds the SSG decimators (all zeros too)
+    bool renderQuiet(uint32_t ticks, bool fmEnabled)
     {
-        if (!_quietTicksEnabled)
+        if (!_quietTicksEnabled || ticks == 0)
             return false;
-        const int64_t secondHalf = _renderT + 8;
+        const int64_t lastTick = _renderT + 16 * int64_t(ticks - 1);
+        const int64_t lastHalf = lastTick + 8;
         for (const auto& c : _chips)
         {
-            if (!c->ssgWrites.empty() && c->ssgWrites.front().t <= _renderT)
+            if (!c->ssgWrites.empty() && c->ssgWrites.front().t <= lastTick)
                 return false;
             if (!c->ssg.silentAtRest())
                 return false;
@@ -487,7 +488,7 @@ public:
                 return false;
             if (!o.coupling.restsAt(fmEnabled ? o.hold : 0.0))
                 return false;
-            for (size_t i = 0; i < c->words.size() && int64_t(c->words.at(i).t) <= secondHalf; i++)
+            for (size_t i = 0; i < c->words.size() && int64_t(c->words.at(i).t) <= lastHalf; i++)
             {
                 if (static_cast<double>(c->words.at(i).word) / 32768.0 != o.hold)
                     return false;
@@ -497,7 +498,7 @@ public:
         {
             Ym2203OutputState& o = c->out;
             bool consumed = false;
-            while (!c->words.empty() && int64_t(c->words.front().t) <= secondHalf)
+            while (!c->words.empty() && int64_t(c->words.front().t) <= lastHalf)
             {
                 c->words.pop();
                 consumed = true;
@@ -505,13 +506,12 @@ public:
             if (consumed)
                 o.couplingSettlePending = false;  // settling on the level it rests at changes nothing
             o.lastFed = 0.0;
-            o.decimator.feedZeroIntoSilence();
-            o.decimator.feedZeroIntoSilence();
-            o.zeroRun += 2;
-            c->ssg.updateStateSilent();
+            o.decimator.feedZerosIntoSilence(2 * size_t(ticks));
+            o.zeroRun += 2 * size_t(ticks);
+            c->ssg.advanceSilent(ticks);
         }
-        _renderT += 16;
-        _quietTicks++;
+        _renderT += 16 * int64_t(ticks);
+        _quietTicks += ticks;
         return true;
     }
 

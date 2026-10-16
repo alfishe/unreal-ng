@@ -359,6 +359,9 @@ protected:
         void setPeriod(uint8_t fine, uint8_t coarse);
         void setShape(uint8_t shape);
         uint8_t updateState();
+        /// `ticks` x updateState() in one step: the handler steps the run contains (the first when the counter
+        /// reaches the period, then one every period), applied a segment at a time
+        void advance(uint32_t ticks);
         /// endregion </Methods>
 
         /// region <Helper methods>
@@ -478,16 +481,32 @@ public:
         }
         return _filterDCLeft.restsAt(0.0) && _filterDCRight.restsAt(0.0);
     }
-    /// updateState(true) of a chip that is silentAtRest: the generators advance, the mixer is not run (it would
-    /// change nothing)
-    void updateStateSilent()
+    /// `ticks` x updateState(true) of a chip that is silentAtRest (the mixer would change nothing): the generators
+    /// advance. A generator whose counter does not reach its period within the run moves in one step, the others tick
+    /// by tick - the generators do not depend on each other, so the order within a tick is no matter
+    void advanceSilent(uint32_t ticks)
     {
-        _tick++;
-        _noiseGenerator.updateState();
-        _envelopeGenerator.updateState();
-        _toneGenerators[AY_CHANNEL_A].updateState();
-        _toneGenerators[AY_CHANNEL_B].updateState();
-        _toneGenerators[AY_CHANNEL_C].updateState();
+        _tick += ticks;
+
+        NoiseGenerator& noise = _noiseGenerator;
+        if (uint32_t(noise._counter) + ticks < (uint32_t(noise._period) << 1))
+            noise._counter = static_cast<uint16_t>(noise._counter + ticks);
+        else
+            for (uint32_t i = 0; i < ticks; i++)
+                noise.updateState();
+
+        _envelopeGenerator.advance(ticks);
+
+        for (ToneGenerator& tone : _toneGenerators)
+        {
+            if (tone._period == 0)
+                continue;  // a 0 period is not played (ToneGenerator::updateState)
+            if (uint32_t(tone._counter) + ticks < tone._period)
+                tone._counter = static_cast<uint16_t>(tone._counter + ticks);
+            else
+                for (uint32_t i = 0; i < ticks; i++)
+                    tone.updateState();
+        }
     }
 
     void setMixer(uint8_t mixerValue);

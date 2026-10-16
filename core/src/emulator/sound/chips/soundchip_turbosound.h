@@ -102,6 +102,8 @@ protected:
     // pending writes, kTurboSoundRenderLagT behind them, +16 T per SSG tick.
     // Re-anchored on a rate or quality switch and when far off its lag
     int64_t _renderT = -kTurboSoundRenderLagT;
+    bool _quietTicksEnabled = true;
+    uint64_t _quietTicks = 0;
     bool _renderReanchor = false;
     // Last T-state seen (handleStep, port write): the frame rebase delta and
     // the TTD base. false until the first one after reset / restore
@@ -276,6 +278,41 @@ public:
         _chip1->decimatorLeft().reset();
         _chip1->decimatorRight().reset();
     }
+
+    /// The `ticks` HQ generator ticks of a pair that is quiet at rest, and true; false (nothing done) otherwise. Quiet
+    /// at rest over the run: no SSG write (or clock marker) due by its last tick and both chips silentAtRest
+    /// (amplitude 0, output filters at rest on 0) - the full ticks would then give every stream a zero and change no
+    /// filter state, so only the generators and the render cursor move. The caller feeds the decimators (their
+    /// histories all zeros)
+    bool renderQuiet(uint32_t ticks)
+    {
+        if (!_quietTicksEnabled || ticks == 0)
+            return false;
+        // The render cursor at the run's last tick
+        const int64_t savedT = _renderT;
+        const uint32_t savedSub = _renderSub;
+        for (uint32_t i = 1; i < ticks; i++)
+            advanceRenderCursor();
+        const int64_t lastTick = _renderT;
+        _renderT = savedT;
+        _renderSub = savedSub;
+        for (const SsgWriteQueue& q : _ssgWrites)
+        {
+            if (!q.empty() && q.front().t <= lastTick)
+                return false;
+        }
+        if (!_chip0->silentAtRest() || !_chip1->silentAtRest())
+            return false;
+        _chip0->advanceSilent(ticks);
+        _chip1->advanceSilent(ticks);
+        for (uint32_t i = 0; i < ticks; i++)
+            advanceRenderCursor();
+        _quietTicks += ticks;
+        return true;
+    }
+    /// Off: every tick rendered (comparisons); the count of the ticks quietTick took
+    void setQuietTicksEnabled(bool enabled) { _quietTicksEnabled = enabled; }
+    uint64_t quietTicks() const { return _quietTicks; }
 
     void updateState(bool bypassPrescaler = false)
     {

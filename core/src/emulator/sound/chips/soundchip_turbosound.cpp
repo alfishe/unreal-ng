@@ -304,6 +304,20 @@ void SoundChip_TurboSound::handleStep()
                     zeroRun = v == 0.0 ? zeroRun + 1 : 0;
                 };
                 // Feed generator samples to decimator until we have an output
+                // The pair quiet at rest up to the next output (renderQuiet) and the four streams all zeros: the ticks
+                // feed zeros, which moves only their positions
+                const size_t quiet = _chip0->decimatorLeft().feedsToNextOutput();
+                if (!tapActive && _ssgZeroRun[0] >= FilterDecimator::history() &&
+                    _ssgZeroRun[1] >= FilterDecimator::history() && _ssgZeroRun[2] >= FilterDecimator::history() &&
+                    _ssgZeroRun[3] >= FilterDecimator::history() && renderQuiet(static_cast<uint32_t>(quiet)))
+                {
+                    _chip0->decimatorLeft().feedZerosIntoSilence(quiet);
+                    _chip0->decimatorRight().feedZerosIntoSilence(quiet);
+                    _chip1->decimatorLeft().feedZerosIntoSilence(quiet);
+                    _chip1->decimatorRight().feedZerosIntoSilence(quiet);
+                    for (size_t& zeroRun : _ssgZeroRun)
+                        zeroRun += quiet;
+                }
                 while (!_chip0->decimatorLeft().hasOutput())
                 {
                     // Tick generators (bypass internal prescaler), with the

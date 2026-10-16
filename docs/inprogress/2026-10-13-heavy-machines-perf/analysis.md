@@ -735,6 +735,32 @@ others), HQ and LQ, 300-500 frames each, hashed in a throwaway harness: the same
 golden digests are unchanged. (An AY mixer cache - the sums kept while the three amplitudes stay - was exact too but
 measured nothing and was dropped.)
 
+**R8. Quiet runs, and the plain AY.** The quiet tick still tested its conditions and stepped every generator 218,750
+times a second. The conditions cannot change between two queue events (an SSG write, an FM word), so they are now
+tested once for the whole run up to the next output sample (`Ym2203Pair::renderQuiet`, `SoundChip_TurboSound::
+renderQuiet`), and the generators move the run in one step (`SoundChip_AY8910::advanceSilent`: a tone or the noise
+whose counter does not reach its period moves at once; the envelope - in the reset state period 1, a step every tick -
+in closed form: the steps the run contains, applied a segment at a time). The decimators take the run's zeros in one
+call, their phase by the same additions as one feed at a time. The plain AY device (the 128K, Scorpion, Sprinter, any
+machine set to the two-AY TurboSound) got the same quiet runs.
+
+| Row | before | after | x |
+|:--|--:|--:|--:|
+| Pentagon_ShipNormal | 479 | 440 | 0.92 |
+| 128K_ShipNormal | 481 | 444 | 0.92 |
+| Scorpion_ShipNormal | 767 | 731 | 0.95 |
+| Sprinter_ShipNormal | 1,583 | 1,486 | 0.94 |
+| TSConf_ShipNormal | 3,118 | 3,075 | 0.99 |
+
+(128K_ShipNormal and Scorpion_ShipNormal are new rows; the shipped 128K has the TurboSound FM as well.)
+
+Exactness: `SoundChip_AY8910_Test.SilentAdvanceMovesTheGeneratorsAsTickByTick` - every envelope shape, envelope
+periods 0-300, tones (period 0 too) and noise, 400 runs of 1-40 ticks each, the whole generator state compared after
+every run (moving the envelope's turn by one step fails it); `AyQuietTicks_Test` - the lockstep of R7 for one AY and
+the two-AY TurboSound, ending on a channel switched to the envelope that ran through the silence unwritten (no R13
+write), so the phases the generators kept are heard; freezing the tones or moving the envelope's test by one tick
+fails it. The eleven snapshots' audio: the same bytes.
+
 **Tried and dropped: the Next UART's peer promise.** A peer (the ESP module, a wired device) told the UART until when
 it stays silent (`QuietUntil` plus an activity counter), so the poll skipped the two virtual peer calls per
 instruction. Exact (lockstep twins with and without the promise, every Next frame / CPU / RAM hash equal at 3.5 and

@@ -240,6 +240,9 @@ FRAME_PROFILE(Pentagon_WorstNormal, "PENTAGON", RunProfile::WorstNormal);
 FRAME_PROFILE(48K_ShipTurbo, "48K", RunProfile::ShipTurbo);
 FRAME_PROFILE(128K_ShipTurbo, "128K", RunProfile::ShipTurbo);
 FRAME_PROFILE(Scorpion_ShipTurbo, "SCORPION", RunProfile::ShipTurbo);
+// The AY machines at 1x (the plain AY device, not the TurboSound FM)
+FRAME_PROFILE(128K_ShipNormal, "128K", RunProfile::ShipNormal);
+FRAME_PROFILE(Scorpion_ShipNormal, "SCORPION", RunProfile::ShipNormal);
 
 #ifdef FRAME_PROFILE_HAS_SLOTS
 // One card at a time: the cost of a fitted card that nobody uses

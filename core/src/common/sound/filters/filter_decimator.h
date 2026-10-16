@@ -262,13 +262,27 @@ public:
     /// Samples the history holds: after this many zeros in a row it is all zeros
     static constexpr size_t history() { return HISTORY; }
 
-    /// feedSample(0.0) into a history that is all zeros already (the caller counted history() zeros in a row): the
-    /// same index and phase, no stores
-    void feedZeroIntoSilence()
+    /// n x feedSample(0.0) into a history that is all zeros already (the caller counted history() zeros in a row):
+    /// the same index and the same phase (the same additions), no stores
+    void feedZerosIntoSilence(size_t n)
     {
-        _bufferIndex = (_bufferIndex == 0) ? HISTORY - 1 : _bufferIndex - 1;
+        _bufferIndex = (_bufferIndex + HISTORY - n % HISTORY) % HISTORY;
         if (!_master)
-            _phase += 1.0;
+            for (size_t i = 0; i < n; i++)
+                _phase += 1.0;
+    }
+
+    /// Feeds before hasOutput() turns true (0 when it is already), counted with the additions feedSample makes
+    size_t feedsToNextOutput() const
+    {
+        double phase = _phase;
+        size_t feeds = 0;
+        while (!(phase >= _samplesPerOutput))
+        {
+            phase += 1.0;
+            feeds++;
+        }
+        return feeds;
     }
 
     bool hasOutput() const

@@ -234,6 +234,66 @@ uint8_t SoundChip_AY8910::EnvelopeGenerator::updateState()
     return _out;
 }
 
+void SoundChip_AY8910::EnvelopeGenerator::advance(uint32_t ticks)
+{
+    if (ticks == 0)
+        return;
+    if (_period == 0) [[unlikely]]
+    {
+        // setPeriod never leaves 0; a restored state might: tick by tick as updateState
+        for (uint32_t i = 0; i < ticks; i++)
+            updateState();
+        return;
+    }
+
+    // updateState tests the counter first (a step when it has reached the period: the counter restarts at 0), then
+    // counts: the first step at tick `first`, the next ones `_period` ticks apart
+    const uint32_t first = (_counter >= _period) ? 0 : _period - _counter;
+    if (first >= ticks)
+    {
+        _counter += ticks;
+        return;
+    }
+    uint32_t steps = 1 + (ticks - 1 - first) / _period;
+    const uint32_t last = first + (steps - 1) * _period;
+    _counter = 1 + (ticks - 1 - last);
+
+    // The steps, a segment at a time: a slide runs 32 steps from its start (31 down to -1, or 0 up to 32), the step that
+    // leaves the range turns to the other segment (resetSegment); a hold does not move
+    while (steps > 0)
+    {
+        const EnvelopeHandler handler = _handlers[_shape][_segment];
+        if (handler == &slideDown)
+        {
+            const uint32_t toWrap = static_cast<uint32_t>(_out) + 1;  // the step that takes _out below 0
+            if (steps < toWrap)
+            {
+                _out = static_cast<int8_t>(_out - steps);
+                return;
+            }
+            steps -= toWrap;
+            _segment ^= 1;
+            resetSegment();
+        }
+        else if (handler == &slideUp)
+        {
+            const uint32_t toWrap = 32u - static_cast<uint32_t>(_out);  // the step that takes _out above 31
+            if (steps < toWrap)
+            {
+                _out = static_cast<int8_t>(_out + steps);
+                return;
+            }
+            steps -= toWrap;
+            _segment ^= 1;
+            resetSegment();
+        }
+        else
+        {
+            return;  // holdTop / holdBottom
+        }
+    }
+}
+
 void SoundChip_AY8910::EnvelopeGenerator::resetSegment()
 {
     EnvelopeHandler handler = _handlers[_shape][_segment];

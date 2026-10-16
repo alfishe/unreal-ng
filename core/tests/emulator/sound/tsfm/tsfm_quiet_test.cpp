@@ -136,6 +136,9 @@ void Lockstep(bool hq)
         t.Reg(0x01, 0x01);
         t.Reg(0x07, 0x3E);
         t.Reg(0x08, 0x0F);
+        t.Reg(0x0B, 0x00);
+        t.Reg(0x0C, 0x04);
+        t.Reg(0x0D, 0x0A);  // a repeating triangle, nobody listens to it until the end
     });
     frames(15);
     both([](Twin& t) { t.Reg(0x08, 0x00); });
@@ -182,10 +185,12 @@ void Lockstep(bool hq)
     both([](Twin& t) { t.Reg(0x28, 0x00); });
     untilQuiet();
 
-    // And a tone once more, after the FM's silence
+    // And a tone once more, after the FM's silence, with B on the envelope running since the start (no R13 write, which
+    // would restart it): the phases the generators kept are heard
     both([](Twin& t) {
         t.Out(0xFFFD, 0xFA);
         t.Reg(0x08, 0x0B);
+        t.Reg(0x09, 0x10);
     });
     frames(10);
 }
