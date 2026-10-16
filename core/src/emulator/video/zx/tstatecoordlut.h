@@ -17,4 +17,6 @@ struct TstateCoordLUT
     RenderTypeEnum renderType;  // RT_BLANK, RT_BORDER, or RT_SCREEN
     uint16_t screenOffset;      // Pre-computed _screenLineOffsets[y]
     uint16_t attrOffset;        // Pre-computed _attrLineOffsets[y]
+    uint8_t run;                // T from this one to the end of its run (1 = the last): the same renderType and, when
+                                // visible, the next pixels of the same framebuffer row; at most 255
 };
