@@ -213,6 +213,50 @@ TEST(ZxasmBackend_Test, ExpressionsGoLeftToRightWithFunctions)
     EXPECT_TRUE(Contains(lines, "LD A,5!3")) << text;
 }
 
+/// What ZX ASM 3.0 itself and ZX-ASM 2.x take, seen in unreal-ng (each construct assembled alone): no & | ! and no .
+/// functions, no REPT, EXA, OUT (C),0 or DS fill; 2.x no parentheses either. 3.10 and later have them all
+TEST(ZxasmBackend_Test, TheOldestVersionsGetWhatTheyTake)
+{
+    const char* source =
+        "        ORG #6000\n"
+        "SIZE    EQU 10\n"
+        "lab     LD A,high lab\n"
+        "        LD A,low lab\n"
+        "        LD A,SIZE & 7\n"
+        "        LD A,1+(2*SIZE)\n"
+        "        EX AF,AF'\n"
+        "        OUT (C),0\n"
+        "        DS 2,#AA\n"
+        "        DUP 2\n"
+        "        NOP\n"
+        "        EDUP\n";
+    const std::vector<std::string> v310 = ToZxasm(source, nullptr, "3.0");
+    std::string text = Joined(v310);
+    EXPECT_TRUE(Contains(v310, "LAB LD A,LAB.h")) << text;
+    EXPECT_TRUE(Contains(v310, "LD A,SIZE&7")) << text;
+    EXPECT_TRUE(Contains(v310, "EXA")) << text;
+    EXPECT_TRUE(Contains(v310, "REPT 2")) << text;
+    for (const char* version : {"3.00", "2"})
+    {
+        const std::vector<std::string> lines = ToZxasm(source, nullptr, version);
+        text = Joined(lines);
+        EXPECT_TRUE(Contains(lines, "LAB LD A,LAB/256")) << version << text;
+        EXPECT_TRUE(Contains(lines, "LD A,0")) << version << text;   // low #6000 as its value
+        EXPECT_TRUE(Contains(lines, "LD A,2")) << version << text;   // SIZE&7
+        EXPECT_TRUE(Contains(lines, "EX AF,AF'")) << version << text;
+        EXPECT_TRUE(std::any_of(lines.begin(), lines.end(), [](const std::string& l) { return l.rfind("DB #ED,#71", 0) == 0; })) << version << text;
+        EXPECT_TRUE(Contains(lines, "DB 170,170")) << version << text;
+        EXPECT_FALSE(std::any_of(lines.begin(), lines.end(), [](const std::string& l) { return l.find("REPT") != std::string::npos; })) << version << text;
+        EXPECT_EQ(Contains(lines, "LD A,1+(2*SIZE)"), std::string(version) == "3.00") << version << text;
+    }
+    EXPECT_TRUE(Contains(ToZxasm(source, nullptr, "2"), "LD A,1+20")) << Joined(ToZxasm(source, nullptr, "2"));
+    // 3.00 is 3.0's table to the codec
+    const WriteAsResult a = WriteAs(SourceDocument::FromText("        NOP\n", "sjasmplus"), "zxasm", "3.0", "T");
+    const WriteAsResult b = WriteAs(SourceDocument::FromText("        NOP\n", "sjasmplus"), "zxasm", "3.00", "T");
+    ASSERT_TRUE(a.ok && b.ok) << b.error;
+    EXPECT_EQ(a.bytes, b.bytes);
+}
+
 TEST(ZxasmBackend_Test, BlocksStayWhereZxAsmHasThem)
 {
     const std::vector<std::string> lines = ToZxasm(

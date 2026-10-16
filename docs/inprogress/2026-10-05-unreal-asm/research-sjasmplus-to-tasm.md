@@ -26,10 +26,10 @@ start:  ld a,1+2*3                 START   LD      A,1+(2*3)      ; left to righ
 
 | Source | TASM text |
 |---|---|
-| An expression | a chain left to right whose operators each take a term (a number, a name, `$` or a part in parentheses): `+ - * / & \|` (4.0 also `!` XOR); `-x` as `0-x`, `~x` as `#FFFF-x`, `x<<n` / `x>>n` as `x*2^n` / `x/2^n`; `high` / `low` as `/256` / `&255` (4.12; 3 / 4.0 the postfix `{ }`) |
+| An expression | a chain left to right whose operators each take a term (a number, a name, `$` or a part in parentheses): `+ - * / & \|` (4.0 also `!` XOR); `-x` as `0-x`, `~x` as `#FFFF-x`, `x<<n` / `x>>n` as `x*2^n` / `x/2^n`; `high` / `low` as `/256` / `&255` (4.12, 3.x, 2.0; 4.0 the postfix `{ }`, which 3.0 refuses with error 8) |
 | One TASM computes otherwise (a division of a value outside 0..#FFFF, a comparison, a remainder, XOR in 4.12) | its value from the source's layout, with a note |
 | An operand that would start with `(` | `0+(...)`: TASM reads such an operand as memory (its 4.12 article) |
-| A label | upper case, letters, digits, `_`, up to 24 characters (TASM keeps any length), no TASM keyword (its tokenizer stores a keyword as a token wherever it stands) |
+| A label | upper case, letters, digits, `_`, up to 24 characters (4.12 keeps any length); 7 in 4.0 / 3.x / 2.0 (4.0's error 1 "label field over 7 characters", its manual and seen in unreal-ng), no TASM keyword (its tokenizer stores a keyword as a token wherever it stands) |
 | `IF` / `ELSE` / `ENDIF` | decided while converting when the value is known; else 4.12's `.IF` (its part assembled when the value is 0: `a==b` as `.IF a-b`, a plain value as `.IF x` / `.ELSE`), one level (TASM's do not nest); comparisons have no TASM form |
 | `DUP`, `WHILE`, `MACRO`, `DEFL` | unrolled, expanded, written as values (the core; 4.12's `DEFMAC` is not used) |
 | `DB` / `DW` / `DS` | `DEFB` (strings of three or more characters quoted, 4.12; 3 / 4.0 `DEFM`) / `DEFW` / `DEFS n,fill` (TASM repeats the fill n times: a pattern of several bytes as `DEFB`) |
@@ -72,5 +72,8 @@ one resets the machine). The checks use `#6200`.
 - TASM 4.12's own SINUS-style sources (a macro calling itself, steered by values carried from its first pass to its
   second with `.IF PASS`) do not survive the expansion: they stay in TASM's own form.
 - A project: TASM's `.INCLUDE` reads the disk; an inject writes one text.
-- Only 4.12 has an inject rule; 4.0 / 4.4 / 3.x / 2.0 are read, not written.
+- Every version has an inject rule (asm-synchronizer.md §7.5-§7.7). What the older ones refuse, each seen in unreal-ng
+  with the injected `oracle1.asm` and written around by the backend: 4.0 / 4.4 a label of more than 7 characters
+  (error 1) and `DEFS n,fill` (pass 1 never ends: the fill goes as `DEFB`); 3.x and 2.0 also the postfix `{ }`
+  (error 8: `/256`, `&255`) and `HX` / `LX` / `HY` / `LY` (error 5: bytes). 2.0 takes 3.x's language as plain text.
 - No idle template snapshots for TASM yet.

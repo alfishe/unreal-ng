@@ -47,6 +47,8 @@ constexpr std::array<Version, 4> kVersions = {{
 
 const Version* FindVersion(std::string_view id)
 {
+    if (id == "3.00")
+        id = "3.0";   // ZX ASM 3.0 itself: 3.0's table (the backend writes what it lacks otherwise); not detected
     for (const Version& v : kVersions)
         if (v.id == id)
             return &v;
@@ -144,6 +146,7 @@ ZxasmCodec::ZxasmCodec() : _info{"zxasm", "ZX-ASM / ZAsm source (tokenized)", "z
 {
     for (const Version& v : kVersions)
         _info.subversions.push_back({std::string(v.id), std::string(v.title)});
+    _info.subversions.push_back({"3.00", "ZX ASM 3.0 (1996): 3.0's table, written without & | ! . functions, REPT, EXA"});
 }
 
 std::string ZxasmCodec::DecodeLine(std::span<const uint8_t> line, const std::string& versionId)

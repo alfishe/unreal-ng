@@ -58,9 +58,19 @@ std::string CommentText(const std::string& utf8)
 class ZxasmWriter : public RetroWriter
 {
 public:
-    ZxasmWriter(const ir::Program& program, const BackendOptions& options, BackendResult& result) : RetroWriter(program, options, result) {}
+    ZxasmWriter(const ir::Program& program, const BackendOptions& options, BackendResult& result)
+        : RetroWriter(program, options, result), v300(options.targetVersion == "3.00" || options.targetVersion == "2"),
+          v2(options.targetVersion == "2")
+    {
+    }
 
 private:
+    /// ZX ASM 3.0 itself (1996), seen in unreal-ng: no & | ! and no . functions (an error), no REPT, EXA, OUT (C),0 or
+    /// DS fill; 3.10 has them all. ZX-ASM 2.x the same (2.6 seen)
+    bool v300 = false;
+    /// ZX-ASM 2.x: no parentheses in an expression either (a syntax error, 2.6 seen): such a part as its value
+    bool v2 = false;
+
     std::string Title() const override { return "ZX-ASM"; }
     size_t Significant() const override { return 24; }
     bool Reserved(const std::string& upper) const override { return kWords.count(upper) || z80::IsMnemonic(z80::Lower(upper)); }
@@ -98,6 +108,13 @@ private:
         const Expr& u = Unwrapped(e);
         if (u.kind == Expr::Kind::Unary && (u.op == Op::High || u.op == Op::Low || u.op == Op::Negate || u.op == Op::Not || u.op == Op::SwapBytes))
             return Print(u);   // a term with its function
+        if (v2 && !IsAtom(e))
+        {
+            if (const auto v = Value(e))
+                return Number(*v);
+            Problem("a part in parentheses (ZX-ASM 2.x has none) of a value known only when assembling");
+            return std::nullopt;
+        }
         const auto t = Print(e);
         if (!t)
             return std::nullopt;
@@ -121,6 +138,20 @@ private:
                     return Print(e.args[0]);
                 if (!function)
                     break;
+                if (v300)
+                {
+                    // high as /256, -x as 0-x, ~x as #FFFF-x; the rest as its value
+                    const auto t = Term(e.args[0]);
+                    if (!t)
+                        return std::nullopt;
+                    if (e.op == Op::High)
+                        return *t + "/256";
+                    if (e.op == Op::Negate)
+                        return "0-" + *t;
+                    if (e.op == Op::Not)
+                        return "#FFFF-" + *t;
+                    break;
+                }
                 const auto t = Term(e.args[0]);
                 return t ? std::optional<std::string>(*t + function) : std::nullopt;
             }
@@ -134,9 +165,9 @@ private:
                     case Op::Add: symbol = "+"; break;
                     case Op::Sub: symbol = "-"; break;
                     case Op::Mul: symbol = "*"; break;
-                    case Op::And: symbol = "&"; break;
-                    case Op::Or: symbol = "|"; break;
-                    case Op::Xor: symbol = "!"; break;
+                    case Op::And: symbol = v300 ? "" : "&"; break;
+                    case Op::Or: symbol = v300 ? "" : "|"; break;
+                    case Op::Xor: symbol = v300 ? "" : "!"; break;
                     case Op::Div: case Op::Mod:
                         if (!InWord(a) || !InWord(b))
                             Problem("a division ZX-ASM makes in 16-bit unsigned words");
@@ -228,7 +259,9 @@ private:
         if ((m == "sll" || m == "sli") && ops.size() == 1)
             return std::vector<std::string>{"SLI " + Operands(ops)};
         if (m == "ex" && reg(0, "af") && reg(1, "af'"))
-            return std::vector<std::string>{"EXA"};
+            return std::vector<std::string>{v300 ? "EX AF,AF'" : "EXA"};
+        if (v300 && m == "out" && ops.size() == 2 && ops[0].kind == Operand::Kind::Indirect && ops[1].kind == Operand::Kind::Immediate)
+            return std::vector<std::string>{Bytes({"#ED", "#71"}, "OUT (C),0")};
         return std::nullopt;
     }
 
@@ -266,6 +299,8 @@ private:
     /// assignments or blocks of its own
     RepeatForm Repeat(const std::vector<ir::Line>& lines, size_t begin, size_t end) const override
     {
+        if (v300)
+            return RepeatForm::Unrolled;
         for (size_t k = begin + 1; k < end; ++k)
         {
             if (!lines[k].label.empty())
@@ -297,9 +332,10 @@ private:
             {
                 // DS n,fill...: the fill sequence repeated n times; a pattern cut at n bytes as DB
                 const std::string count = Known(s.args[0]);
-                if (s.operands.empty())
+                const bool fill = s.args.size() > 1 || !s.operands.empty();
+                if (s.operands.empty() && (!fill || !v300))
                     return {"DS " + count + (s.args.size() > 1 ? "," + Known(s.args[1]) : std::string())};
-                if (s.operands.size() == 1)
+                if (s.operands.size() == 1 && !v300)
                     return {"DS " + count + "," + Known(s.operands[0].expr)};
                 const auto n = Value(s.args[0]);
                 if (!n)
@@ -307,7 +343,7 @@ private:
                 std::vector<std::string> items;
                 for (int64_t k = 0; k < *n; ++k)
                 {
-                    const auto v = Value(s.operands[static_cast<size_t>(k) % s.operands.size()].expr);
+                    const auto v = s.operands.empty() ? Value(s.args[1]) : Value(s.operands[static_cast<size_t>(k) % s.operands.size()].expr);
                     if (!v)
                         return {NotConverted("DS with a fill known only when assembling")};
                     items.push_back(Number(*v & 0xFF));

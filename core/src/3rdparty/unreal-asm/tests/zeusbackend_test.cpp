@@ -265,6 +265,39 @@ TEST(ZeusBackend_Test, ProgramsKeepTheirBytesThroughZeus)
     }
 }
 
+/// GG and PHT's versions name the data words DB DW DM DS (their tokens #96-#99; DEFB is error 0 there); v7.E alone
+/// multiplies: ZEUS 1.1 with the same table refuses * (error 0 in unreal-ng)
+TEST(ZeusBackend_Test, TheLaterVersionsHaveTheirDataWordsAndOnlyV7eMultiplies)
+{
+    const char* source =
+        "        ORG #C000\n"
+        "SIZE    EQU 10\n"
+        "        LD B,SIZE*2\n"
+        "        DB 1\n"
+        "        DW 2\n"
+        "        DB \"text\"\n";
+    const std::vector<std::string> v1983 = ToZeus(source);
+    EXPECT_TRUE(Contains(v1983, "DEFB 1")) << Joined(v1983);
+    EXPECT_TRUE(Contains(v1983, "DEFM /text/")) << Joined(v1983);
+    for (const char* version : {"gg", "pht", "1.1"})
+    {
+        const std::vector<std::string> lines = ToZeus(source, nullptr, version);
+        const std::string text = Joined(lines);
+        EXPECT_TRUE(Contains(lines, "DB 1")) << version << text;
+        EXPECT_TRUE(Contains(lines, "DW 2")) << version << text;
+        EXPECT_TRUE(Contains(lines, "DM /text/")) << version << text;
+        EXPECT_EQ(Contains(lines, "LD B,SIZE*2"), std::string(version) == "pht") << version << text;
+        if (std::string(version) != "pht")
+            EXPECT_TRUE(Contains(lines, "LD B,20")) << version << text;
+    }
+    // 1.1 is a version of the codec: PHT's table
+    const WriteAsResult written = WriteAs(SourceDocument::FromText(source, "sjasmplus"), "zeus", "1.1", "T");
+    ASSERT_TRUE(written.ok) << written.error;
+    const WriteAsResult pht = WriteAs(SourceDocument::FromText("        ORG #C000\n        DB 1\n", "sjasmplus"), "zeus", "pht", "T");
+    const WriteAsResult v11 = WriteAs(SourceDocument::FromText("        ORG #C000\n        DB 1\n", "sjasmplus"), "zeus", "1.1", "T");
+    EXPECT_EQ(pht.bytes, v11.bytes);
+}
+
 TEST(ZeusBackend_Test, PrimusTakesItsOwnOperatorsAndOneOrg)
 {
     Diagnostics diagnostics;

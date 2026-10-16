@@ -1,4 +1,20 @@
-# Status: TODO
+# Status: DONE (closed 2026-10-16)
+
+**The ZX Spectrum Next program is closed by the owner's decision of 2026-10-16.** `NEXT` is a creatable machine that boots the real firmware
+chain (boot ROM, `TBBLUE.FW`, NextZXOS) and runs NEX programs; the Z80N, memory and MMU, the five video layers with the copper, the DMA, the
+sound, the UARTs with the ESP and the NextPi supervisor peers, the DivMMC, Multiface, I2C, the mouse, ULA+, Radastan and the Pi header are
+modelled from the RTL (core 3.02.03), with TTD, the debugger and every automation surface, and the pixel-level copper timing measured on the
+RTL simulated whole (POC 028 / 029). The index of what was found and measured: [findings-2026-10-12-uart-esp-copper-d2.md](findings-2026-10-12-uart-esp-copper-d2.md),
+[copper-picture-latency-2026-10-12.md](copper-picture-latency-2026-10-12.md).
+
+**Closed without doing, on purpose** (the `[ ]` items below that remain open are of these kinds and are not planned): the ESP ROM-bootloader /
+SLIP flasher and an I2S player for the Pi (physical protocols with nothing to talk to: if real players appear they are emulated by what they
+do, not by their wire protocol), recording the layer planes at 320 (measured worse, design-layer-capture.md section 10), hardware probe
+programs that need a board ([2026-10-08-zx-next-hardware-poc](../2026-10-08-zx-next-hardware-poc/README.md): written, never run), and the
+older N-series wish-list items nobody asked for. Reopen by a new folder, not by editing this one.
+
+---
+
 
 ZX Spectrum Next (`NEXT`): designed 2026-10-07; N1, N2 (skeleton), P1-P4 done 2026-10-08 on branch `zx-next`. Plan:
 [phases.md](phases.md) (N0-N12, P1-P4). `NEXT` is creatable as the bare personality (128K board, user ROMs) and boots the
@@ -278,7 +294,7 @@ NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.
 
 - [x] Per-layer capture and the pixel inspector (L0-L3 of [design-layer-capture.md](design-layer-capture.md)): **done 2026-10-10**, default ON (measured +4.0 % of a full emulated frame, +4.4 % of the bare render, gate 5 %); WebAPI + OpenAPI, MCP, CLI, Lua, Python; tests `NextLayerCapture_Test`, `NextLayerImage_Test`, `NextPixel_Test` (+ the live `TestNextLayerCapture`, Lua and Python checks in `test_api_next.py`).
 - [x] Layer capture L4 (Qt, 2026-10-13): View -> Next Layers (`unreal-qt/src/nextlayers/nextlayerswindow.*`, docked on the right edge): the capture switch as a checkbox, a mode (Layers / Composed / Winner ids), a toggle for each of ULA, Layer 2, tilemap and sprites (stacked in a fixed order over a chequerboard: not the hardware priority, Composed is that), and the pixel inspector under the mouse (the `state/next/pixel` answer as text); refreshes at 10 Hz while shown; tests `NextLayersWindow_Test` in unreal-qt-tests (offscreen), `UNREAL_QT_STRESS_WINDOWS=nextlayers` opens it at start
-- [x] Layer capture size (2026-10-13): `size=screen|grid|pixel` on `capture/screen?layer=` and `capture/next-layers` (640x512 / 640x256 / 320x256), MCP `capture_media size`, CLI `--size=`, Lua `size`, Python `size`; the smaller ones are cut from the rendered image. Open: recording the planes at 320 when no Layer 2 640 / Timex hi-res is on (halves the record's cost; only worth it if the +4 % starts to matter)
+- [x] Layer capture size (2026-10-13): `size=screen|grid|pixel` on `capture/screen?layer=` and `capture/next-layers` (640x512 / 640x256 / 320x256), MCP `capture_media size`, CLI `--size=`, Lua `size`, Python `size`; the smaller ones are cut from the rendered image. Recording the planes at 320 was tried 2026-10-16 and is worse (+4.6 % against +3.3 %, design-layer-capture.md section 10): not done
 - [x] Lua / Python bindings of the new reports are verified in `tools/verification/webapi/src/test_api_next.py` (class `TestNextInterpreters`) against a live app, not in `core-tests` (the core library does not link the interpreters). Lua passes live; the Python test skips where the Python interpreter is off (the agent build).
 - [x] Gate the remaining ports by NR #82-#85: done for every port the Next decodes (`next_ports.enforced` says which).
 

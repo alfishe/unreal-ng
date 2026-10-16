@@ -83,7 +83,8 @@ STORM 1.3i gives the same wrong bytes when the file is loaded from its disk with
 
 ## 5. Limits
 
-- STORM 1.0beta: no inject rule (its code differs: `LASTK` is the ROM's `#5C08`, no `START` / `SCRP0` patterns).
+- STORM 1.0beta has an inject rule (2026-10-16): `START`, `INIT` and `INP4` match its code as they are (`LASTK` is the
+  system variable `#5C08`), its `SCRP0` has `LD D,0` where 1.3 has `XOR A / LD D,A`; no `INIT2` (no name, no `MBSTAT`).
 - An empty text is written, but STORM's screen is not redrawn (PGUP needs a line before the cursor).
 - The `*` STORM shows for a changed text stays on screen until STORM prints its status line again.
 - A project: STORM holds one text; `INCL` files go to the disk.

@@ -174,7 +174,7 @@ def main():
     profile = PROFILES[args.assembler]
     args.descriptor = args.descriptor or profile.descriptor
     expected = sjasmplus_bytes(args.sjasmplus, args.source, args.address)
-    emu = Emulator(port=args.port, model=profile.model)
+    emu = Emulator(port=args.port, model=profile.model, ram_size=profile.ram_size)
     try:
         inject(emu, args, profile, expected)
         built = profile.finish(emu, args, expected)

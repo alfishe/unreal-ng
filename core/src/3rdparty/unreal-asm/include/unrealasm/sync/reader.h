@@ -131,6 +131,9 @@ struct GapBufferParams
     /// the line count 0; MASM 1.1: at its fixed start with the gap start there and the gap end at #FFFF. The editor
     /// makes the gap buffer when it is entered. The reader takes that form, an inject writes it
     bool loadedForm = false;
+    /// TASM 4.0 / 3.x: an inject writes the text as their command line holds it after the editor: the file from the start,
+    /// the gap start on its end record, the gap end and the top #FFFF, the editor flag cleared
+    bool commandLineForm = false;
     uint16_t changedAt = 0;         ///< CPU address of the editor's "changed since LOAD / SAVE" byte (0 = none)
     uint8_t changedMask = 0xFF;
     uint16_t nameAt = 0;            ///< CPU address of the work name, blank padded (0 = none)
@@ -212,6 +215,7 @@ struct LinearParams
     bool injectable = false;
     uint16_t resetFrom = 0;
     uint16_t resetTo = 0;
+    std::vector<uint16_t> resetAlso;   ///< other words set to the start (ZX-ASM 3.10: one past an odd byte)
 };
 
 struct TypingParams

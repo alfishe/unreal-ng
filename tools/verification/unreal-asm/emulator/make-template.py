@@ -45,7 +45,7 @@ def main():
     outputs = [os.path.abspath(args.output)]
     stem = os.path.splitext(outputs[0])[0]
     outputs += [f'{stem}.{f}' for f in args.also.split(',') if f]
-    emu = Emulator(port=args.port, model=profile.model)
+    emu = Emulator(port=args.port, model=profile.model, ram_size=profile.ram_size)
     try:
         profile.boot(emu, args)
         emu.stop_recording()

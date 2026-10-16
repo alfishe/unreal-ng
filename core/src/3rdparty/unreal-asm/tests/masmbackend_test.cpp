@@ -191,6 +191,14 @@ std::vector<uint8_t> AssembleMasm(const char* sjasmplus, const SourceDocument& w
 }
 }  // namespace
 
+/// MASM 3.0 refuses @ (XOR, error 0 in unreal-ng): the value instead; 1.1 keeps it
+TEST(MasmBackend_Test, Masm30HasNoXor)
+{
+    const char* source = "        ORG #6000\nSIZE    EQU 10\n        LD A,SIZE ^ 3\n";
+    EXPECT_TRUE(Contains(ToMasm(source), "LD A,SIZE+0@3")) << Joined(ToMasm(source));
+    EXPECT_TRUE(Contains(ToMasm(source, nullptr, "3.0"), "LD A,9")) << Joined(ToMasm(source, nullptr, "3.0"));
+}
+
 TEST(MasmBackend_Test, ExpressionsAreChainsWithoutParentheses)
 {
     const std::vector<std::string> lines = ToMasm(

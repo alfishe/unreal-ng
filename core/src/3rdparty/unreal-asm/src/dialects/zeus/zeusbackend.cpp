@@ -49,9 +49,10 @@ public:
     }
 
 private:
-    std::string version;   // "1983", "gg", "pht" (1.1, v7.E), "primus" (Primus 2.9)
+    std::string version;   // "1983", "gg", "pht" (v7.E), "1.1" (PHT's table, no * / %), "primus" (Primus 2.9)
 
-    bool Pht() const { return version == "pht"; }
+    bool Pht() const { return version == "pht" || version == "1.1"; }
+    bool V7e() const { return version == "pht"; }   // * and %binary (1.1 refuses them: error 0)
     bool Primus() const { return version == "primus"; }
     int orgs = 0;          // Primus takes one ORG
 
@@ -71,8 +72,13 @@ private:
             out = "L" + out;
         return out;
     }
-    std::string Db() const override { return "DEFB"; }
-    std::string Dw() const override { return "DEFW"; }
+    /// the data words: DEFB / DEFW / DEFM / DEFS in 1983 and Primus, renamed DB / DW / DM / DS by GG and PHT (their
+    /// tokens #96-#99: the old spellings are no words there)
+    bool ShortData() const { return version == "gg" || Pht(); }
+    std::string Db() const override { return ShortData() ? "DB" : "DEFB"; }
+    std::string Dw() const override { return ShortData() ? "DW" : "DEFW"; }
+    std::string Dm() const { return ShortData() ? "DM" : "DEFM"; }
+    std::string Dss() const { return ShortData() ? "DS" : "DEFS"; }
 
     const char* OperatorSymbol(Op op) const override
     {
@@ -82,7 +88,7 @@ private:
             case Op::Sub: return "-";
             case Op::And: return "&";
             case Op::Or: return "!";
-            case Op::Mul: return Pht() || Primus() ? "*" : nullptr;   // v7.E (its / rounds: not used), Primus
+            case Op::Mul: return V7e() || Primus() ? "*" : nullptr;   // v7.E (its / rounds: not used), Primus
             case Op::Div: return Primus() ? "/" : nullptr;            // Primus: unsigned, truncating
             case Op::Mod: return Primus() ? "?" : nullptr;
             default: return nullptr;
@@ -120,7 +126,7 @@ private:
         const int64_t v = e.value & 0xFFFF;
         if (e.spelling == ir::NumberSpelling::Character && e.text.size() == 1 && e.text[0] > 0x20 && e.text[0] < 0x7F && !Primus())
             return "\"" + e.text;   // Primus refuses "A": the number
-        if (e.spelling == ir::NumberSpelling::Binary && !Pht())
+        if (e.spelling == ir::NumberSpelling::Binary && !V7e())
             return "#" + z80::HexDigits(static_cast<uint64_t>(v), v > 0xFF ? 4 : 2);
         if (e.spelling == ir::NumberSpelling::Character)
             return Number(v);
@@ -144,7 +150,7 @@ private:
                 if (delimiter)
                 {
                     flush();
-                    out.push_back(std::string("DEFM ") + delimiter + run + delimiter);
+                    out.push_back(Dm() + " " + delimiter + run + delimiter);
                     run.clear();
                     return;
                 }
@@ -223,7 +229,7 @@ private:
                 for (const Operand& o : s.operands)
                     pattern.push_back(Value(o.expr).value_or(-1));
                 if (Pht() && pattern.size() == 1 && pattern[0] == 0)
-                    return {"DEFS " + Known(s.args[0])};
+                    return {Dss() + " " + Known(s.args[0])};
                 if (!n || *n > 4096 || std::any_of(pattern.begin(), pattern.end(), [](int64_t v) { return v < 0; }))
                     return {NotConverted("DS of a count or fill known only when assembling (ZEUS's DEFS leaves memory as it was)")};
                 std::vector<std::string> items;

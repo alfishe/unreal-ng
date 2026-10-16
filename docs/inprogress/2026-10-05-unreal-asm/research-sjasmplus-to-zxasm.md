@@ -66,6 +66,10 @@ not the caller's own counts as changed, so the first write into a loaded text ne
 ## 5. Limits
 
 - The editor is not redrawn by the inject (COMMAND `CS+6` does it).
-- Only ZAsm 3.15 has an inject rule; ZX-ASM 3.0 / 3.10, 2.x and ZAsm 3.2x-4.20 are read, not written.
+- Every version has an inject rule (asm-synchronizer.md §7.9-§7.10, 2026-10-16). ZX ASM 3.0 itself (codec version
+  `3.00`: 3.0's table) has no `&` `|` `!`, no `.` functions, no `REPT`, `EXA`, `OUT (C),0` or `DS n,fill`, each tried
+  alone in unreal-ng: the backend writes `high` as `/256`, `-x` / `~x` as `0-x` / `#FFFF-x`, the rest as values, `REPT`
+  unrolled, `EX AF,AF'`, bytes and `DB` lists. ZX-ASM 2.x (`2`) the same and no parentheses (their parts as values).
+  3.10 has all of them.
 - A project: ZAsm's `INCLUDE` reads the disk; an inject writes one text.
 - No idle template snapshots for ZAsm yet.

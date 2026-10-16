@@ -209,13 +209,22 @@ SyncText ReadGapBufferFixed(const MachineView& machine, const SyncDescriptor& d)
     text.editor = std::any_of(flag.begin(), flag.end(), [](uint8_t b) { return b != 0; });
     if (p.loadedForm && !text.editor && *gapStart == start && *gapEnd == 0xFFFF)
     {
-        // as LOAD left it (MASM 1.1): the file at the start, up to its end record
+        // as LOAD left it (MASM 1.1; an inject into 2.0 / 3.0): the file at the start, up to its end record
         std::vector<uint8_t> all;
         if (!machine.Read(static_cast<uint16_t>(start), static_cast<size_t>(0x10000 - start), all))
             return Inconsistent(text, "the text lies in a page that was not copied");
         size_t at = 0;
         long lines = 0;
-        while (at < all.size() && all[at] != static_cast<uint8_t>(p.end[0]))
+        if (p.nextLineAt)
+        {
+            // MASM 2.0 / 3.0: FF (3.0: FF lo hi FF), lines ended by 00, FF
+            at = p.editorStateLength ? 4 : 1;
+            if (all.size() < at || all[0] != 0xFF)
+                return Inconsistent(text, "no FF header at the text start");
+            for (; at < all.size() && all[at] != 0xFF; ++at)
+                lines += all[at] == 0 ? 1 : 0;
+        }
+        while (!p.nextLineAt && at < all.size() && all[at] != static_cast<uint8_t>(p.end[0]))
         {
             const size_t n = all[at];
             if (at + n + 1 >= all.size() || all[at + n + 1] != n)
@@ -329,7 +338,16 @@ SyncText ReadGapBuffer(const MachineView& machine, const SyncDescriptor& d)
             return Inconsistent(text, "the text lies in a page that was not copied");
         size_t at = 0;
         long lines = 0;
-        while (at < all.size() && all[at] != static_cast<uint8_t>(p.end[0]))
+        if (p.nextLineAt)
+        {
+            // MASM 2.0 / 3.0: FF (3.0: FF lo hi FF), lines ended by 00, FF
+            at = p.editorStateLength ? 4 : 1;
+            if (all.size() < at || all[0] != 0xFF)
+                return Inconsistent(text, "no FF header at the text start");
+            for (; at < all.size() && all[at] != 0xFF; ++at)
+                lines += all[at] == 0 ? 1 : 0;
+        }
+        while (!p.nextLineAt && at < all.size() && all[at] != static_cast<uint8_t>(p.end[0]))
         {
             const size_t n = all[at];
             if (at + n + 1 >= all.size() || all[at + n + 1] != n)
@@ -632,6 +650,32 @@ SyncDescriptor Storm(const std::string& id, const std::string& title, const std:
         d.idleAlternatives = {{0x87CB}};
         d.idleWhere = "a key in its editor";
     }
+    else
+    {
+        // 1.0beta the same way (its code read in unreal-ng): SCRP0 with LD D,0 for XOR A / LD D,A, LASTK the system
+        // variable (23560); no name in its page, no MBSTAT (no block or "changed" state to clear). The main loop's
+        // CALL returns to #866C
+        const std::vector<int> scrp0 = {0xFD, 0x21, 0x00, 0x00, 0x22, -1, -1, 0x16, 0x00, 0x2B, 0x5E, 0x1C, 0x28, -1, 0xCB,
+                                        0xB3, 0xFD, 0x23, 0xED, 0x52, 0x5E, 0x1C, 0xC2, -1, -1, 0xFD, 0x22, -1, -1};
+        const std::vector<int> init = {0xF3, 0xCD, -1, -1, 0xDD, 0x36, 0x00, 0x82, 0xDD, 0xCB, 0x04, 0x86, 0xAF, 0x67, 0x6F, 0x22, -1, -1};
+        const std::vector<int> start = {0xF3, 0xED, 0x73, -1, -1, 0xCD, -1, -1, 0xDD, 0x21, -1, -1};
+        const std::vector<int> inp4 = {0xCD, -1, -1, 0xAF, 0xD3, 0xFE, 0x3A, -1, -1, 0xFE, 0x14, 0xDA};
+        using From = LoadVariable::From;
+        d.fileImage.loadVariables = {
+            {scrp0, 5, From::SecondLine, 0, 2},          // ABLINE: the cursor line, the second
+            {scrp0, 27, From::Constant, 0, 2, 1},        // NLINE: its number from 0
+            {init, 16, From::Constant, 0, 2, 0},         // CACHEST
+            {start, 10, From::Constant, 0, 1, 1, 2},     // VAR+2 (PY): the cursor on the first screen line
+            {start, 10, From::SetBits, 0, 1, 0x02, 4},   // VAR+4 bit 1: the line buffer is in the text
+            {inp4, 7, From::Constant, 0, 1, 4},          // LASTK: PGUP
+            {start, 10, From::SetBits, 0, 1, 0x01, 0},   // VAR+0 bit 0: a key was pressed
+        };
+        d.fileImage.changedVariables = {
+            {start, 10, From::Constant, 0, 1, 0x02, 4},  // VAR+4 bit 1 clear: the cursor line typed in, not in the text
+        };
+        d.idleChain = {0x866C};
+        d.idleWhere = "a key in its editor";
+    }
     return d;
 }
 
@@ -689,6 +733,14 @@ SyncDescriptor Masm10Demo()
     d.gapBuffer.recordAtGapStart = true;
     d.gapBuffer.end = std::string("\xFF", 1);
     d.typing = {TypingRule::NotInText, 0, 0};
+    // A text is written at its menu prompt (MASM128>) as 1.1's LOAD leaves one (the demo loads no file): the key wait
+    // returns through #8736 there (the editor's stack holds others); the line buffer's tail is zeros only in the menu
+    d.gapBuffer.loadedForm = true;
+    d.gapBuffer.nameAt = 0x8694;   // the work name in the menu's "Work name:" text: Save writes under it
+    d.idleChain = {0x8736};
+    d.idleZeroAt = 0x8600;
+    d.idleZeroLength = 32;
+    d.idleWhere = "its MASM128> prompt";
     return d;
 }
 
@@ -726,7 +778,8 @@ SyncDescriptor Masm11()
 /// closing routine LD DE,gs / LD HL,linebuf / LD A,flag / ... / LD HL,ge); while the flag is set the cursor line is in
 /// the line buffer as text and the text goes on at the word nextLineAt
 SyncDescriptor Masm2(const std::string& id, const std::string& title, const std::string& codecVersion, Signature identify,
-                     uint16_t fixedStart, uint16_t routine, uint16_t lineBuffer, uint16_t nextLineAt)
+                     uint16_t fixedStart, uint16_t routine, uint16_t lineBuffer, uint16_t nextLineAt, std::vector<uint16_t> idleChain,
+                     uint16_t nameAt)
 {
     SyncDescriptor d;
     d.id = id;
@@ -753,6 +806,10 @@ SyncDescriptor Masm2(const std::string& id, const std::string& title, const std:
     }
     d.gapBuffer.end = std::string("\xFF", 1);
     d.typing = {TypingRule::NotInText, 0, 0};
+    d.gapBuffer.loadedForm = true;   // an inject: the file at the start, the gap start there, the gap end #FFFF
+    d.gapBuffer.nameAt = nameAt;     // the work name in the menu's "Work file:" text: Save writes under it
+    d.idleChain = std::move(idleChain);
+    d.idleWhere = "its menu prompt";
     return d;
 }
 
@@ -775,10 +832,24 @@ SyncDescriptor TasmGap(const std::string& version, const std::string& title, con
     d.gapBuffer.top = static_cast<uint16_t>(pointers + 2);
     d.gapBuffer.gapStart = static_cast<uint16_t>(pointers + 4);
     d.gapBuffer.gapEnd = static_cast<uint16_t>(pointers + 6);
-    d.gapBuffer.editorFlagAt = lineBuffer;
-    d.gapBuffer.editorFlagLength = 32;
+    // the buffer's last byte: a line of more than 96 characters left at the command line reaches into the tail
+    d.gapBuffer.editorFlagAt = static_cast<uint16_t>(lineBuffer + 31);
+    d.gapBuffer.editorFlagLength = 1;
     d.gapBuffer.end = std::string("\xFF\xFF", 2);
     d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
+/// A TASM 4.0 / 3.x text written at its command line (find-idle.py: its key wait returns through `chain`) in the form
+/// the command line keeps after the editor, the "changed" byte (#FF after an edit, 0 after LOAD / SAVE) and the work
+/// name (in the menu's WORK> text: Assemble takes the text in memory under it)
+SyncDescriptor TasmInjectable(SyncDescriptor d, std::vector<uint16_t> chain, uint16_t changedAt, uint16_t nameAt)
+{
+    d.gapBuffer.commandLineForm = true;
+    d.gapBuffer.changedAt = changedAt;
+    d.gapBuffer.nameAt = nameAt;
+    d.idleChain = std::move(chain);
+    d.idleWhere = "its command line";
     return d;
 }
 
@@ -791,7 +862,7 @@ SyncDescriptor Tasm20()
     d.extension = "C";
     d.gapBuffer.end.clear();
     d.gapBuffer.plainTextFile = true;
-    return d;
+    return TasmInjectable(std::move(d), {0x92CB, 0x807C}, 0x921D, 0x9241);
 }
 
 /// ZAsm 3.2x and later, Rubts0FF's Pentagon 512 versions (asm-synchronizer.md §7.9): the buffer below #C000 from its
@@ -799,7 +870,7 @@ SyncDescriptor Tasm20()
 /// follow the cursor and the screen); SAVE writes a ";*" position line first. Each version has its table elsewhere;
 /// 3.2x, 3.3.02 and 3.3.51 share the code at #8048 up to the address of a variable (its low byte tells them apart)
 SyncDescriptor ZasmRubtsoff(const std::string& id, const std::string& title, const std::string& codecVersion, uint16_t signatureAt,
-                            const char* signature, uint16_t startAt)
+                            const char* signature, uint16_t startAt, std::vector<uint16_t> idleChain = {})
 {
     SyncDescriptor d;
     d.id = id;
@@ -815,6 +886,16 @@ SyncDescriptor ZasmRubtsoff(const std::string& id, const std::string& title, con
     d.linear.upperPage = 30;
     d.linear.stateLine = ";*";
     d.typing = {TypingRule::NotInText, 0, 0};
+    if (!idleChain.empty())
+    {
+        // A text is written at its COMMAND prompt (CS+SS in the editor; the key wait's chain by find-idle.py) as LOAD
+        // leaves one: the four words before the start word (the cursor and the screen) at the start
+        d.linear.injectable = true;
+        d.linear.resetFrom = static_cast<uint16_t>(startAt - 8);
+        d.linear.resetTo = startAt;
+        d.idleChain = std::move(idleChain);
+        d.idleWhere = "its COMMAND prompt (CS+SS)";
+    }
     return d;
 }
 
@@ -835,6 +916,14 @@ SyncDescriptor Zxasm310()
     d.linear.endAt = 0x869E;
     d.linear.upperPage = 6;
     d.typing = {TypingRule::NotInText, 0, 0};
+    // A text is written at its COMMAND prompt (CS+SS in the editor: the key wait returns through #C4D1, #D58A) as
+    // LOAD leaves one: the five words after the start word and the one at #869C at the start
+    d.linear.injectable = true;
+    d.linear.resetFrom = 0x8691;
+    d.linear.resetTo = 0x869B;
+    d.linear.resetAlso = {0x869C};
+    d.idleChain = {0xC4D1, 0xD58A};
+    d.idleWhere = "its COMMAND prompt (CS+SS)";
     return d;
 }
 
@@ -867,6 +956,15 @@ SyncDescriptor Gens4Tape()
     SyncDescriptor d = Gens("gens-4", "GENS4 (HiSoft Devpac 4, tape, at 26000)", {0x88F0, "Copyright (C) HiSoft 1987"}, 0x67A8, 0x65C6);
     d.linear.injectable = true;
     d.idleChain = {0x685D, 0x68DD, 0x67D9};
+    d.idleWhere = "its > prompt";
+    return d;
+}
+
+/// Another GENS build at its command prompt (>), as GENS4: the key wait's chain found by find-idle.py
+SyncDescriptor GensInjectable(SyncDescriptor d, std::vector<uint16_t> chain)
+{
+    d.linear.injectable = true;
+    d.idleChain = std::move(chain);
     d.idleWhere = "its > prompt";
     return d;
 }
@@ -1003,6 +1101,40 @@ SyncDescriptor Zeus1983()
     return d;
 }
 
+/// ZEUS GG (the B-disk build of the 1983 code) takes a text at its prompt as 1983 does: its line input returns through
+/// #F6E5, #E0D5 (find-idle.py)
+SyncDescriptor ZeusGg()
+{
+    SyncDescriptor d = Zeus("zeus-gg", "ZEUS (GG, B-disk)", "gg", 0xE028,
+             "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x5A\x45\x55\x53\x20\x77\x69\x74\x68\x20\x42\x2D\x64\x69\x73", 0xFD00, "C");
+    d.linear.injectable = true;
+    d.idleChain = {0xF6E5, 0xE0D5};
+    d.idleWhere = "its prompt";
+    return d;
+}
+
+/// ZEUS 1.1 beta (PHT) at its prompt: the v7.E code's line input, returning through #F555, #E0F7 (find-idle.py)
+SyncDescriptor Zeus11()
+{
+    SyncDescriptor d = Zeus("zeus-1.1", "ZEUS 1.1 beta (PHT)", "1.1", 0xE020,
+             "\x5C\x3E\xF7\x21\x6A\x5C\xA6\x77\xCD\x27\xF2\x0F\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53", 0xFD00, "C");
+    d.linear.injectable = true;
+    d.idleChain = {0xF555, 0xE0F7};
+    d.idleWhere = "its prompt";
+    return d;
+}
+
+/// ZEUS v7.E (ZKSoft) at its prompt: its line input returns through #F555, #E0F7 (find-idle.py)
+SyncDescriptor Zeus7e()
+{
+    SyncDescriptor d = Zeus("zeus-7e", "ZEUS v7.E (ZKSoft)", "pht", 0xE020,
+             "\x5C\x3E\xF7\x21\x6A\x5C\xA6\x77\xCD\x27\xF2\x0F\x00\x18\x1B\xCD\xC0\xDA\xDA\x12\xE1\xC3\xC5\xE0", 0xFAAB, "Z");
+    d.linear.injectable = true;
+    d.idleChain = {0xF555, 0xE0F7};
+    d.idleWhere = "its prompt";
+    return d;
+}
+
 /// Primus 2.9 also takes a text at its prompt (or its BETA-UNIT menu): its key wait returns through #6857 / #6858,
 /// then #6836 / #6851 (not while it assembles); the records from the start word, the end word at the last FF
 SyncDescriptor Primus29()
@@ -1019,7 +1151,7 @@ SyncDescriptor Primus29()
 /// the program's load address + 3, the end word after it; the part above #C000 in RAM page 0 (the 48K memory). 2.6
 /// keeps its ";*" line in the buffer and saves it as text
 SyncDescriptor ZxAsm2(const std::string& id, const std::string& title, uint16_t signatureAt, const char* signature,
-                      uint16_t startAt)
+                      uint16_t startAt, std::vector<uint16_t> idleChain = {})
 {
     SyncDescriptor d;
     d.id = id;
@@ -1034,6 +1166,13 @@ SyncDescriptor ZxAsm2(const std::string& id, const std::string& title, uint16_t 
     d.linear.endAt = static_cast<uint16_t>(startAt + 2);
     d.linear.upperPage = 0;
     d.typing = {TypingRule::NotInText, 0, 0};
+    if (!idleChain.empty())
+    {
+        // A text is written at its menu (it starts there with an empty text; the editor's stack holds others)
+        d.linear.injectable = true;
+        d.idleChain = std::move(idleChain);
+        d.idleWhere = "its menu";
+    }
     return d;
 }
 
@@ -1045,7 +1184,7 @@ SyncDescriptor Zxasm30()
     d.id = "zasm-3.0";
     d.title = "ZX ASM 3.0";
     d.codec = "zxasm";
-    d.version = "3.0";
+    d.version = "3.00";   // 3.0's table; the backend writes what 3.0 itself lacks (& | ! . functions, REPT ...) otherwise
     d.extension = "C";
     d.identify = {{0x8000, std::string("\x57\xCD\x38\x79\xCD\xE0\x7A\xD4\xCD\x77\x82\x57\x3A\xB6\x7B\xFE\x01\xCC\xD3\x77\xB7\x28\x13\x3A", 24)}};
     d.pages = PageIdRule::Fixed;
@@ -1054,6 +1193,12 @@ SyncDescriptor Zxasm30()
     d.linear.endAt = 0x61C8;
     d.linear.upperPage = 6;
     d.typing = {TypingRule::NotInText, 0, 0};
+    // A text is written at its COMMAND prompt (CS+SS in the editor: the key wait's CALL returns to #6986 there, to
+    // #6ABD in the editor) as LOAD leaves one: the table's other words that hold the start at the start
+    d.linear.injectable = true;
+    d.linear.resetAlso = {0x61D0, 0x61D4, 0x61DB, 0x61DD};
+    d.idleChain = {0x6986};
+    d.idleWhere = "its COMMAND prompt (CS+SS)";
     return d;
 }
 
@@ -1275,7 +1420,7 @@ InjectPlan PlanInjectLoaded(const MachineView& machine, const SyncDescriptor& d,
         plan.error = "the text pointers of " + d.title + " are not in memory";
         return plan;
     }
-    if (*start + file.size() > 0xFFFF)
+    if (*start + file.size() + 3 > 0xFFFF)
     {
         plan.error = "the text takes " + std::to_string(file.size()) + " bytes; " + d.title + " holds " + std::to_string(0xFFFF - *start);
         return plan;
@@ -1288,13 +1433,31 @@ InjectPlan PlanInjectLoaded(const MachineView& machine, const SyncDescriptor& d,
         return true;
     };
     bool ok = true;
+    // TASM 2.0: a line feed at the start, the plain text after it, #1A #1A behind it
+    const uint32_t base = *start + (p.plainTextFile ? 1u : 0u);
     for (size_t k = 0; k < file.size(); ++k)
-        ok = poke(*start + static_cast<uint32_t>(k), file[k]) && ok;
+        ok = poke(base + static_cast<uint32_t>(k), file[k]) && ok;
+    if (p.plainTextFile)
+        ok = poke(*start, 0x0A) && poke(base + static_cast<uint32_t>(file.size()), 0x1A) &&
+             poke(base + static_cast<uint32_t>(file.size()) + 1u, 0x1A) && ok;
     if (p.fixedStart)
     {
         // MASM: the gap start at the start, the gap end at #FFFF
         ok = poke(p.gapStart, static_cast<uint8_t>(*start & 0xFF)) && poke(p.gapStart + 1u, static_cast<uint8_t>(*start >> 8)) && ok;
         ok = poke(p.gapEnd, 0xFF) && poke(p.gapEnd + 1u, 0xFF) && ok;
+        if (p.nextLineAt)
+            ok = poke(p.editorFlagAt, 0) && ok;   // MASM 2.0 / 3.0: the flag an operand of their code, 0 = not in the editor
+    }
+    else if (p.commandLineForm)
+    {
+        // TASM 4.0 / 3.x: the gap start on the end record (2.0: on the text's last byte), the gap end and the top
+        // #FFFF, the editor flag clear
+        const uint32_t gap = *start + static_cast<uint32_t>(file.size() - std::min(file.size(), p.end.size()));
+        ok = poke(p.gapStart, static_cast<uint8_t>(gap & 0xFF)) && poke(p.gapStart + 1u, static_cast<uint8_t>(gap >> 8)) && ok;
+        for (const uint16_t at : {p.gapEnd, p.top})
+            ok = poke(at, 0xFF) && poke(at + 1u, 0xFF) && ok;
+        for (uint32_t k = 0; k < p.editorFlagLength; ++k)
+            ok = poke(p.editorFlagAt + k, 0) && ok;
     }
     else
         for (const uint16_t at : {p.top, p.gapStart, p.gapEnd, p.lineCount, p.cursorLine})
@@ -1605,6 +1768,8 @@ InjectPlan PlanInjectLinear(const MachineView& machine, const SyncDescriptor& d,
     }
     for (uint32_t at = p.resetFrom; at + 1 < p.resetTo; at += 2)
         ok = poke(at, static_cast<uint8_t>(*start & 0xFF)) && poke(at + 1, static_cast<uint8_t>(*start >> 8)) && ok;
+    for (const uint16_t at : p.resetAlso)
+        ok = poke(at, static_cast<uint8_t>(*start & 0xFF)) && poke(at + 1u, static_cast<uint8_t>(*start >> 8)) && ok;
     if (!ok)
     {
         plan.error = "the memory of " + d.title + "'s text is not in RAM";
@@ -1619,7 +1784,7 @@ InjectPlan PlanInjectLinear(const MachineView& machine, const SyncDescriptor& d,
 InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& file, const InjectOptions& options)
 {
     InjectPlan plan;
-    if (d.family == LayoutFamily::GapBuffer && d.gapBuffer.loadedForm)
+    if (d.family == LayoutFamily::GapBuffer && (d.gapBuffer.loadedForm || d.gapBuffer.commandLineForm))
         return PlanInjectLoaded(machine, d, file, options);
     if (d.family == LayoutFamily::Linear && d.linear.injectable)
         return PlanInjectLinear(machine, d, file, options);
@@ -1915,60 +2080,60 @@ const std::vector<SyncDescriptor>& Descriptors()
         Storm("storm-1.0b", "STORM 1.0beta", "1.0", 0x03, '\x85'),
         Zasm315(),
         ZasmRubtsoff("zasm-3.2x", "ZAsm 3.2x", "3.15", 0x8048,
-                     "\xCA\xFC\x7F\x3E\x20\x18\xC4\xF1\x3E\x00\xB7\x37\xC8\xCD\x54\x1F\xD4\x93\x79\x37\xC9\xF5\x3A\x02", 0x8538),
+                     "\xCA\xFC\x7F\x3E\x20\x18\xC4\xF1\x3E\x00\xB7\x37\xC8\xCD\x54\x1F\xD4\x93\x79\x37\xC9\xF5\x3A\x02", 0x8538, {0xC930, 0x7B4E}),
         ZasmRubtsoff("zasm-lite-1.07", "ZAsm Lite 1.07", "lite", 0x8000,
-                     "\xE5\x2A\x48\x62\xE5\xB7\xED\x42\x4D\x44\xE1\x09\x1B\x7A\xB3\x20\xFA\x22\x48\x62\xE1\xC9\xCD\xC8", 0x859D),
+                     "\xE5\x2A\x48\x62\xE5\xB7\xED\x42\x4D\x44\xE1\x09\x1B\x7A\xB3\x20\xFA\x22\x48\x62\xE1\xC9\xCD\xC8", 0x859D, {0xDF74, 0x6428}),
         ZasmRubtsoff("zasm-3.3.02", "ZAsm 3.3.02", "3.15", 0x8048,
-                     "\xCA\xFC\x7F\x3E\x20\x18\xC4\xF1\x3E\x00\xB7\x37\xC8\xCD\x54\x1F\xD4\x93\x79\x37\xC9\xF5\x3A\xD3", 0x850A),
+                     "\xCA\xFC\x7F\x3E\x20\x18\xC4\xF1\x3E\x00\xB7\x37\xC8\xCD\x54\x1F\xD4\x93\x79\x37\xC9\xF5\x3A\xD3", 0x850A, {0xCA21, 0x7B4E}),
         ZasmRubtsoff("zasm-3.3.51", "ZAsm 3.3.51", "3.15", 0x8048,
-                     "\xCA\xFC\x7F\x3E\x20\x18\xC4\xF1\x3E\x00\xB7\x37\xC8\xCD\x54\x1F\xD4\x93\x79\x37\xC9\xF5\x3A\xC6", 0x84FC),
+                     "\xCA\xFC\x7F\x3E\x20\x18\xC4\xF1\x3E\x00\xB7\x37\xC8\xCD\x54\x1F\xD4\x93\x79\x37\xC9\xF5\x3A\xC6", 0x84FC, {0xCBC9, 0x7B4E}),
         ZasmRubtsoff("zasm-3.3.final", "ZAsm 3.3.Final", "3.15", 0x8000,
-                     "\xD0\xEB\x29\x44\x4D\x29\x29\x09\x06\x00\xD6\x30\x4F\x09\xEB\x23\x18\xEA\x7E\x23\xFE\x0A\x28\xFA", 0x8401),
+                     "\xD0\xEB\x29\x44\x4D\x29\x29\x09\x06\x00\xD6\x30\x4F\x09\xEB\x23\x18\xEA\x7E\x23\xFE\x0A\x28\xFA", 0x8401, {0xD0BC, 0x7B64}),
         ZasmRubtsoff("zasm-3.80.4", "ZAsm 3.80.4", "3.15", 0x8000,
-                     "\x41\x20\xE6\xE5\x3C\x2A\xB7\x66\xCD\xC1\x63\x3A\xB6\x66\xB7\x28\x05\xED\x4B\x83\x80\x09\x73\x23", 0x6D02),
+                     "\x41\x20\xE6\xE5\x3C\x2A\xB7\x66\xCD\xC1\x63\x3A\xB6\x66\xB7\x28\x05\xED\x4B\x83\x80\x09\x73\x23", 0x6D02, {0xC685, 0x6425}),
         ZasmRubtsoff("zasm-3.4", "ZAsm 3.4 (ZXTA34X, Z34_04)", "3.15", 0x8130,
-                     "\xC5\xD5\x7E\x23\xFE\xFF\x28\x08\xA7\x28\x05\xCD\x44\x81\x18\xF2\xD1\xC1\xF1\xC9\xFE\x18\xD2\x02", 0x8520),
+                     "\xC5\xD5\x7E\x23\xFE\xFF\x28\x08\xA7\x28\x05\xCD\x44\x81\x18\xF2\xD1\xC1\xF1\xC9\xFE\x18\xD2\x02", 0x8520, {0xCF6B, 0x7B4E}),
         ZasmRubtsoff("zasm-x64.1", "ZAsm x64.1", "3.15", 0x8000,
-                     "\x28\x15\x30\x04\xFE\x02\x30\x2D\xFE\x0D\xC8\x12\x13\x10\xE5\x3E\x0D\x01\x00\x00\xED\xB1\xC9\x7E", 0x852D),
+                     "\x28\x15\x30\x04\xFE\x02\x30\x2D\xFE\x0D\xC8\x12\x13\x10\xE5\x3E\x0D\x01\x00\x00\xED\xB1\xC9\x7E", 0x852D, {0xC94A, 0x7B46}),
         ZasmRubtsoff("zasm-4.0x8", "ZAsm 4.0x8", "3.15", 0x8034,
-                     "\x76\x6C\x70\x0C\x66\x30\xCC\xF8\x78\xDC\x76\xDC\x7C\x7C\xCC\xCC\xC6\xC6\xCC\xFC\x30\x18\x30\x00", 0x692B),
+                     "\x76\x6C\x70\x0C\x66\x30\xCC\xF8\x78\xDC\x76\xDC\x7C\x7C\xCC\xCC\xC6\xC6\xCC\xFC\x30\x18\x30\x00", 0x692B, {0xD31F, 0x6212}),
         ZasmRubtsoff("zasm-4.x64", "ZAsm 4.x64", "3.15", 0x8000,
-                     "\x28\x0E\xCD\xC8\x6B\xCD\x3B\x6E\xDD\xCB\x1A\xD6\xD7\x96\x18\x03\xCD\x6B\x67\xCD\xAB\x70\xCD\x8B", 0x6929),
+                     "\x28\x0E\xCD\xC8\x6B\xCD\x3B\x6E\xDD\xCB\x1A\xD6\xD7\x96\x18\x03\xCD\x6B\x67\xCD\xAB\x70\xCD\x8B", 0x6929, {0xD919, 0x6212}),
         ZasmRubtsoff("zasm-4.20", "ZAsm 4.20", "3.15", 0x8000,
-                     "\xD4\xD5\xD6\xD7\xD8\xD9\xDA\xDB\xDC\xDD\xDE\xDF\x72\x73\x74\x75\x66\x68\x63\x7E\x7B\x7D\x5C\x79", 0x68FB),
+                     "\xD4\xD5\xD6\xD7\xD8\xD9\xDA\xDB\xDC\xDD\xDE\xDF\x72\x73\x74\x75\x66\x68\x63\x7E\x7B\x7D\x5C\x79", 0x68FB, {0xC18A, 0xE431, 0x6212}),
         Zxasm310(),
         Zxasm30(),
         LaserGenius(),
         Prometheus48(),
         Pasm30(),
         Zeus1983(),
-        Zeus("zeus-1.1", "ZEUS 1.1 beta (PHT)", "pht", 0xE020,
-             "\x5C\x3E\xF7\x21\x6A\x5C\xA6\x77\xCD\x27\xF2\x0F\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53", 0xFD00, "C"),
-        Zeus("zeus-gg", "ZEUS (GG, B-disk)", "gg", 0xE028,
-             "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x5A\x45\x55\x53\x20\x77\x69\x74\x68\x20\x42\x2D\x64\x69\x73", 0xFD00, "C"),
-        Zeus("zeus-7e", "ZEUS v7.E (ZKSoft)", "pht", 0xE020,
-             "\x5C\x3E\xF7\x21\x6A\x5C\xA6\x77\xCD\x27\xF2\x0F\x00\x18\x1B\xCD\xC0\xDA\xDA\x12\xE1\xC3\xC5\xE0", 0xFAAB, "Z"),
+        Zeus11(),
+        ZeusGg(),
+        Zeus7e(),
         Primus29(),
         Gens4Tape(),
-        Gens("gens-3m21", "GENS3M21 (HiSoft Devpac 3, tape, at 49000)", {0xE001, "HISOFT GENS3M2 ASSEMBLER"}, 0xDE54, 0xBF9E),
-        Gens("gens-4b", "GENS4B 4.1 (MOA B-Disk, at 30000)", {0x9A70, "MOA B-Disk version."}, 0x7928, 0x7566),
-        Gens("gens-4.3t", "GENS 4.3t (Aysoft, TR-DOS)", {0x8A9F, "BETA DISK VERSION 4.3t"}, 0x689C, 0x61FB),
+        GensInjectable(Gens("gens-3m21", "GENS3M21 (HiSoft Devpac 3, tape, at 49000)", {0xE001, "HISOFT GENS3M2 ASSEMBLER"}, 0xDE54, 0xBF9E),
+                       {0xC25B, 0xC2DB, 0xC1D7}),
+        GensInjectable(Gens("gens-4b", "GENS4B 4.1 (MOA B-Disk, at 30000)", {0x9A70, "MOA B-Disk version."}, 0x7928, 0x7566),
+                       {0x79DD, 0x7A5D, 0x7959}),
+        GensInjectable(Gens("gens-4.3t", "GENS 4.3t (Aysoft, TR-DOS)", {0x8A9F, "BETA DISK VERSION 4.3t"}, 0x689C, 0x61FB),
+                       {0x6952, 0x69D2, 0x68CE}),
         ZxAsm2("zasm-2.4", "ZX-ASM 2.4", 0x806C,
-               "\x70\x65\x00\x70\x00\x6D\x00\x7E\xFE\x20\x20\x08\x23\x7E\xFE\x20\x28\xFA\xB7\xC9\xFE\x06\x37\xC0", 0x6273),
+               "\x70\x65\x00\x70\x00\x6D\x00\x7E\xFE\x20\x20\x08\x23\x7E\xFE\x20\x28\xFA\xB7\xC9\xFE\x06\x37\xC0", 0x6273, {0x7279, 0x70EA}),
         ZxAsm2("zasm-2.5", "ZX-ASM 2.5", 0x804C,
-               "\x6F\x00\x70\x65\x00\x70\x00\x6D\x00\x7E\xFE\x20\x20\x08\x23\x7E\xFE\x20\x28\xFA\xB7\xC9\xFE\x06", 0x6273),
+               "\x6F\x00\x70\x65\x00\x70\x00\x6D\x00\x7E\xFE\x20\x20\x08\x23\x7E\xFE\x20\x28\xFA\xB7\xC9\xFE\x06", 0x6273, {0x7279, 0x70EA}),
         ZxAsm2("zasm-2.6", "ZX-ASM 2.6", 0x8000,
-               "\xCD\x2E\x61\x38\x65\xFE\x5F\x28\x61\x23\xFE\x23\x28\x35\xFE\x25\x28\x1B\xFE\x22\x28\x08\xFE\x24", 0x6003),
+               "\xCD\x2E\x61\x38\x65\xFE\x5F\x28\x61\x23\xFE\x23\x28\x35\xFE\x25\x28\x1B\xFE\x22\x28\x08\xFE\x24", 0x6003, {0x70A3, 0x6F24}),
         Masm11(),
         Masm10Demo(),
-        Masm2("masm-2.0", "MASM 2.0 TURBO", "2.0", {0x80E0, std::string("MASM2.0>\0", 9)}, 0x94DA, 0x92C6, 0x89D1, 0x929F),
-        Masm2("masm-3.0", "MASM 3.0 MACRO", "3.0", {0x80D3, std::string("MASM128>\0", 9)}, 0x9123, 0x8C24, 0x864F, 0x8BFD),
-        TasmGap("4.0", "TASM 4.0 (XL Design)", "4.0", {0x9859, "TASM4.0>"}, 0x8DD0, 0x91AC),
-        TasmGap("4.4", "TASM 4.4 (KVA)", "4.0", {0x9859, "TASM4.4>"}, 0x8DD0, 0x91AC),
-        TasmGap("3.0", "TASM 3.0 (Rst7)", "3", {0x9721, "TASM2.0 source file: "}, 0x8910, 0x8C82),
-        TasmGap("3.2", "TASM 3.2 (Rst7)", "3", {0x9728, "TASM2.0 file: "}, 0x8910, 0x8C82),
+        Masm2("masm-2.0", "MASM 2.0 TURBO", "2.0", {0x80E0, std::string("MASM2.0>\0", 9)}, 0x94DA, 0x92C6, 0x89D1, 0x929F, {0x80EC, 0x807B}, 0x8AD2),
+        Masm2("masm-3.0", "MASM 3.0 MACRO", "3.0", {0x80D3, std::string("MASM128>\0", 9)}, 0x9123, 0x8C24, 0x864F, 0x8BFD, {0x80DF, 0x8091}, 0),
+        TasmInjectable(TasmGap("4.0", "TASM 4.0 (XL Design)", "4.0", {0x9859, "TASM4.0>"}, 0x8DD0, 0x91AC), {0x9865, 0x807C}, 0x975E, 0x9793),
+        TasmInjectable(TasmGap("4.4", "TASM 4.4 (KVA)", "4.0", {0x9859, "TASM4.4>"}, 0x8DD0, 0x91AC), {0x9865, 0x807C}, 0x975E, 0x9793),
+        TasmInjectable(TasmGap("3.0", "TASM 3.0 (Rst7)", "3", {0x9721, "TASM2.0 source file: "}, 0x8910, 0x8C82), {0x93D5, 0x807C}, 0x9322, 0x9346),
+        TasmInjectable(TasmGap("3.2", "TASM 3.2 (Rst7)", "3", {0x9728, "TASM2.0 file: "}, 0x8910, 0x8C82), {0x93D5, 0x807C}, 0x9322, 0x9346),
         Tasm20(),
-        TasmGap("3.5", "TASM 3.5 FLASHVERSION", "3", {0x9350, "TASM128 FLASHVERSION"}, 0x8910, 0x8C82),
+        TasmInjectable(TasmGap("3.5", "TASM 3.5 FLASHVERSION", "3", {0x9350, "TASM128 FLASHVERSION"}, 0x8910, 0x8C82), {0x93D5, 0x807C}, 0x9322, 0x9346),
         Tasm412(),
     };
     return descriptors;

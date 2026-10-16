@@ -87,7 +87,7 @@ const TableIndex& Indexed(const std::string& version)
         }
         return out;
     }();
-    return tables[version == "gg" ? 1 : version == "pht" ? 2 : version == "primus" ? 3 : 0];
+    return tables[version == "gg" ? 1 : version == "pht" || version == "1.1" ? 2 : version == "primus" ? 3 : 0];   // 1.1: PHT's table
 }
 
 const std::vector<std::string_view>& Table(const std::string& version)
@@ -144,7 +144,8 @@ ZeusCodec::ZeusCodec()
             CodecFamily::Tokenized,
             {{"1983", "ZEUS 1983 (Crystal) and ports with its table"},
              {"gg", "ZEUS (GG)"},
-             {"pht", "ZEUS 1.1 beta (PHT) / ZEUS v7.E"},
+             {"pht", "ZEUS v7.E (PHT)"},
+             {"1.1", "ZEUS 1.1 beta (PHT): v7.E's table, no * / %"},
              {"primus", "Primus Assembler 2.9 (Trunov, 1994)"}}}
 {
 }

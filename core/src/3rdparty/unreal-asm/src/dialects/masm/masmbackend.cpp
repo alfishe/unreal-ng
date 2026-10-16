@@ -81,9 +81,14 @@ std::string CommentText(const std::string& utf8)
 class MasmWriter : public ChainWriter
 {
 public:
-    MasmWriter(const ir::Program& program, const BackendOptions& options, BackendResult& result) : ChainWriter(program, options, result) {}
+    MasmWriter(const ir::Program& program, const BackendOptions& options, BackendResult& result)
+        : ChainWriter(program, options, result), version(options.targetVersion)
+    {
+    }
 
 private:
+    std::string version;   // "1.1" (also 1.3, the default), "2.0", "3.0"
+
     std::string Title() const override { return "MASM"; }
     size_t Significant() const override { return kLabelLength; }
     bool Reserved(const std::string& upper) const override { return kWords.count(upper) || z80::IsMnemonic(z80::Lower(upper)); }
@@ -98,7 +103,7 @@ private:
             case Op::Div: return "/";
             case Op::And: return "&";
             case Op::Or: return "|";
-            case Op::Xor: return "@";
+            case Op::Xor: return version == "3.0" ? nullptr : "@";   // 3.0: error 0 on @ (seen in unreal-ng)
             default: return nullptr;
         }
     }

@@ -58,5 +58,5 @@ now always takes the pages the windows map.
 ## 5. Limits
 
 - A source with `DISP` / `PHASE` or `INCBIN` does not convert (GENS has neither).
-- Only the tape GENS4 at 26000 has an inject rule (GENS3M21, GENS 4.3t and GENS4B are read, not written).
+- GENS4, GENS3M21, GENS 4.3t and GENS4B have inject rules (asm-synchronizer.md §7.13; the last three 2026-10-16).
 - No idle template snapshots for GENS yet.

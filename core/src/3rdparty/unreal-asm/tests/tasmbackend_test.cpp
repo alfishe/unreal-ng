@@ -215,6 +215,40 @@ TEST(TasmBackend_Test, ExpressionsGoLeftToRight)
     EXPECT_TRUE(Contains(lines, "LD A,(LAB)")) << text;
 }
 
+/// What the older versions refuse or hang on, seen in unreal-ng: 4.0 a label of more than 7 characters (error 1) and
+/// DEFS with a fill (pass 1 never ends); 3.x also the postfix { } (error 8) and the index registers' halves (error 5)
+TEST(TasmBackend_Test, TheOlderVersionsGetWhatTheyTake)
+{
+    const char* source =
+        "        ORG #6000\n"
+        "main_loop LD A,high main_loop\n"
+        "        JR main_loop\n"
+        "        LD A,IXH\n"
+        "        SLI B\n"
+        "        DS 3,#AA\n"
+        "        DS 2\n";
+    const std::vector<std::string> v40 = ToTasm(source, nullptr, "4.0");
+    std::string text = Joined(v40);
+    EXPECT_TRUE(Contains(v40, "MAIN_LO LD A,MAIN_LO{")) << text;
+    EXPECT_TRUE(Contains(v40, "JR MAIN_LO")) << text;
+    EXPECT_TRUE(Contains(v40, "LD A,HX")) << text;
+    EXPECT_TRUE(Contains(v40, "SLI B")) << text;
+    EXPECT_TRUE(Contains(v40, "DEFB 170,170,170")) << text;
+    EXPECT_TRUE(Contains(v40, "DEFS 2")) << text;
+    for (const char* version : {"3", "2.0"})
+    {
+        const std::vector<std::string> v3 = ToTasm(source, nullptr, version);
+        text = Joined(v3);
+        EXPECT_TRUE(Contains(v3, "MAIN_LO LD A,MAIN_LO/256")) << text;
+        EXPECT_TRUE(std::none_of(v3.begin(), v3.end(), [](const std::string& l) { return l.find("HX") != std::string::npos || l.rfind("SLI", 0) == 0; })) << text;
+        EXPECT_TRUE(std::any_of(v3.begin(), v3.end(), [](const std::string& l) { return l.rfind("DEFB #DD,#7C", 0) == 0; })) << text;
+        EXPECT_TRUE(Contains(v3, "DEFB 170,170,170")) << text;
+    }
+    const std::vector<std::string> v412 = ToTasm(source);
+    EXPECT_TRUE(Contains(v412, "MAIN_LOOP LD A,MAIN_LOOP/256")) << Joined(v412);
+    EXPECT_TRUE(Contains(v412, "DEFS 3,#AA")) << Joined(v412);
+}
+
 TEST(TasmBackend_Test, ConditionsGoToDotIfAndBlocksUnroll)
 {
     Diagnostics diagnostics;

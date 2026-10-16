@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-11 |
-| **Code** | `src/dialects/zeus/zeusbackend.cpp` (the `zeus` backend: 1983, `gg`, `pht` for 1.1 / v7.E), `ChainWriter`, `src/sync/reader.cpp` (`Zeus1983`: idle rule, the `Linear` inject with an end marker) |
+| **Code** | `src/dialects/zeus/zeusbackend.cpp` (the `zeus` backend: 1983, `gg`, `pht` for v7.E, `1.1`), `ChainWriter`, `src/sync/reader.cpp` (`Zeus1983`: idle rule, the `Linear` inject with an end marker) |
 | **Rules from** | research-zeus-to-sjasmplus.md §2 (the ZEUS manual, four ZEUS versions run in unreal-ng), ZEUS 1983 run in unreal-ng |
 | **Checks** | `unreal-asm-tests` (`ZeusBackend_Test`; with `UNREAL_ASM_SJASMPLUS` a round trip of every instruction form, ZAsm, STORM, MASM, XAS and TASM 5.0 programs; `SyncInject_Test.Zeus1983TakesAFileAtItsPromptAsOLeavesIt`); `tools/verification/unreal-asm/emulator/inject-oracle.py zeus1983` |
 
@@ -66,7 +66,9 @@ every instruction form to sjasmplus' bytes (`inject-oracle.py primus`).
 
 ## 5. Limits
 
-- Only ZEUS 1983 has an inject rule (GG, 1.1, v7.E and Primus are read; the backend writes their text by
-  `--to-version gg` / `pht`, not checked in the emulator).
+- ZEUS 1983, GG, 1.1, v7.E and Primus have inject rules; each assembled the injected `oracle1.asm` to sjasmplus'
+  bytes (GG, 1.1, v7.E 2026-10-13). The backend's versions: `gg`, `pht` (v7.E) and `1.1` (v7.E's table without `*`:
+  ZEUS 1.1 gives error 0 on it); GG and PHT's versions take `DB DW DM DS` only (`DEFB` is error 0 there). v7.E keeps
+  its text from `#6000` up: give sources above it.
 - A source with `INCBIN` / `INCLUDE` does not convert for ZEUS 1983.
 - No idle template snapshots for ZEUS yet.
