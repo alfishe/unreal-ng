@@ -1,0 +1,118 @@
+2026-10-17 15:14:04.076 gcev[56767:192502450] controller vendor=Controller category=Xbox One ext=GCXboxGamepad
+2026-10-17 15:14:04.077 gcev[56767:192502450] paddles p1=nil p2=nil p3=nil p4=nil share=nil
+2026-10-17 15:14:04.077 gcev[56767:192502450] battery=0.00 st=-1 light=nil haptics=y localities=Left Handle,Right Handle,All,Triggers,Left Trigger,Default,Handles,Right Trigger
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Button A' sf=a.circle local=A Button
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Button B' sf=b.circle local=B Button
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Button Home' sf=logo.xbox local=Xbox Button
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Button Menu' sf=line.horizontal.3.circle local=Menu Button
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Button Options' sf=rectangle.fill.on.rectangle.fill.circle local=View Button
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Button X' sf=x.circle local=X Button
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Button Y' sf=y.circle local=Y Button
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Direction Pad Down' sf=dpad.down.fill local=D-pad (Down)
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Direction Pad Left' sf=dpad.left.fill local=D-pad (Left)
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Direction Pad Right' sf=dpad.right.fill local=D-pad (Right)
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Direction Pad Up' sf=dpad.up.fill local=D-pad (Up)
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Left Shoulder' sf=lb.rectangle.roundedbottom local=Left Bumper
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Left Thumbstick Button' sf=l.joystick.down local=Left Stick Click
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Left Thumbstick Down' sf=l.joystick.tilt.down local=Left Stick (Down)
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Left Thumbstick Left' sf=l.joystick.tilt.left local=Left Stick (Left)
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Left Thumbstick Right' sf=l.joystick.tilt.right local=Left Stick (Right)
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Left Thumbstick Up' sf=l.joystick.tilt.up local=Left Stick (Up)
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Left Trigger' sf=lt.rectangle.roundedtop local=Left Trigger
+2026-10-17 15:14:04.077 gcev[56767:192502450]   btn 'Right Shoulder' sf=rb.rectangle.roundedbottom local=Right Bumper
+2026-10-17 15:14:04.078 gcev[56767:192502450]   btn 'Right Thumbstick Button' sf=r.joystick.press.down local=Right Stick Click
+2026-10-17 15:14:04.078 gcev[56767:192502450]   btn 'Right Thumbstick Down' sf=r.joystick.tilt.down local=Right Stick (Down)
+2026-10-17 15:14:04.078 gcev[56767:192502450]   btn 'Right Thumbstick Left' sf=r.joystick.tilt.left local=Right Stick (Left)
+2026-10-17 15:14:04.078 gcev[56767:192502450]   btn 'Right Thumbstick Right' sf=r.joystick.tilt.right local=Right Stick (Right)
+2026-10-17 15:14:04.078 gcev[56767:192502450]   btn 'Right Thumbstick Up' sf=r.joystick.tilt.up local=Right Stick (Up)
+2026-10-17 15:14:04.078 gcev[56767:192502450]   btn 'Right Trigger' sf=rt.rectangle.roundedtop local=Right Trigger
+1098809968.8 battery 0.00 state=-1
+1098819992.9 battery 0.00 state=-1
+1098830010.8 battery 0.00 state=-1
+1098838546.3 Button B down
+1098838674.3 Button B up
+1098838954.3 Button Y down
+1098839098.4 Button Y up
+1098839594.3 Button X down
+1098839738.4 Button X up
+1098840060.8 battery 0.00 state=-1
+1098840474.4 Button B down
+1098840610.4 Button B up
+1098840770.5 Button Y down
+1098840906.4 Button Y up
+1098841018.4 Button A down
+1098841170.4 Button A up
+1098841298.5 Button X down
+1098841450.5 Button X up
+1098842162.3 Button B down
+1098842290.4 Button B up
+1098842442.5 Button Y down
+1098842586.4 Button Y up
+1098842698.5 Button A down
+1098842858.3 Button A up
+1098842970.4 Button X down
+1098843122.4 Button X up
+1098850062.1 battery 0.00 state=-1
+1098860073.8 battery 0.00 state=-1
+1098870100.4 battery 0.00 state=-1
+1098880126.5 battery 0.00 state=-1
+1098890176.7 battery 0.00 state=-1
+1098900215.4 battery 0.00 state=-1
+1098907134.7 Left Shoulder down
+1098907288.6 Left Shoulder up
+2026-10-17 15:15:54.528 gcev[56767:192502450] controller vendor=Xbox Wireless Controller category=Xbox One ext=GCXboxGamepad
+2026-10-17 15:15:54.528 gcev[56767:192502450] paddles p1=nil p2=nil p3=nil p4=nil share=nil
+2026-10-17 15:15:54.528 gcev[56767:192502450] battery=0.00 st=-1 light=nil haptics=y localities=Left Handle,Right Handle,All,Triggers,Left Trigger,Default,Handles,Right Trigger
+2026-10-17 15:15:54.528 gcev[56767:192502450]   btn 'Button A' sf=a.circle local=A Button
+2026-10-17 15:15:54.528 gcev[56767:192502450]   btn 'Button B' sf=b.circle local=B Button
+2026-10-17 15:15:54.528 gcev[56767:192502450]   btn 'Button Home' sf=logo.xbox local=Xbox Button
+2026-10-17 15:15:54.528 gcev[56767:192502450]   btn 'Button Menu' sf=line.horizontal.3.circle local=Menu Button
+2026-10-17 15:15:54.528 gcev[56767:192502450]   btn 'Button Options' sf=rectangle.fill.on.rectangle.fill.circle local=View Button
+2026-10-17 15:15:54.528 gcev[56767:192502450]   btn 'Button X' sf=x.circle local=X Button
+2026-10-17 15:15:54.528 gcev[56767:192502450]   btn 'Button Y' sf=y.circle local=Y Button
+2026-10-17 15:15:54.528 gcev[56767:192502450]   btn 'Direction Pad Down' sf=dpad.down.fill local=D-pad (Down)
+2026-10-17 15:15:54.528 gcev[56767:192502450]   btn 'Direction Pad Left' sf=dpad.left.fill local=D-pad (Left)
+2026-10-17 15:15:54.528 gcev[56767:192502450]   btn 'Direction Pad Right' sf=dpad.right.fill local=D-pad (Right)
+2026-10-17 15:15:54.528 gcev[56767:192502450]   btn 'Direction Pad Up' sf=dpad.up.fill local=D-pad (Up)
+2026-10-17 15:15:54.528 gcev[56767:192502450]   btn 'Left Shoulder' sf=lb.rectangle.roundedbottom local=Left Bumper
+2026-10-17 15:15:54.528 gcev[56767:192502450]   btn 'Left Thumbstick Button' sf=l.joystick.down local=Left Stick Click
+2026-10-17 15:15:54.528 gcev[56767:192502450]   btn 'Left Thumbstick Down' sf=l.joystick.tilt.down local=Left Stick (Down)
+2026-10-17 15:15:54.528 gcev[56767:192502450]   btn 'Left Thumbstick Left' sf=l.joystick.tilt.left local=Left Stick (Left)
+2026-10-17 15:15:54.529 gcev[56767:192502450]   btn 'Left Thumbstick Right' sf=l.joystick.tilt.right local=Left Stick (Right)
+2026-10-17 15:15:54.529 gcev[56767:192502450]   btn 'Left Thumbstick Up' sf=l.joystick.tilt.up local=Left Stick (Up)
+2026-10-17 15:15:54.529 gcev[56767:192502450]   btn 'Left Trigger' sf=lt.rectangle.roundedtop local=Left Trigger
+2026-10-17 15:15:54.529 gcev[56767:192502450]   btn 'Right Shoulder' sf=rb.rectangle.roundedbottom local=Right Bumper
+2026-10-17 15:15:54.529 gcev[56767:192502450]   btn 'Right Thumbstick Button' sf=r.joystick.press.down local=Right Stick Click
+2026-10-17 15:15:54.529 gcev[56767:192502450]   btn 'Right Thumbstick Down' sf=r.joystick.tilt.down local=Right Stick (Down)
+2026-10-17 15:15:54.529 gcev[56767:192502450]   btn 'Right Thumbstick Left' sf=r.joystick.tilt.left local=Right Stick (Left)
+2026-10-17 15:15:54.529 gcev[56767:192502450]   btn 'Right Thumbstick Right' sf=r.joystick.tilt.right local=Right Stick (Right)
+2026-10-17 15:15:54.529 gcev[56767:192502450]   btn 'Right Thumbstick Up' sf=r.joystick.tilt.up local=Right Stick (Up)
+2026-10-17 15:15:54.529 gcev[56767:192502450]   btn 'Right Trigger' sf=rt.rectangle.roundedtop local=Right Trigger
+1098920275.5 battery 0.00 state=-1
+1098930314.1 battery 0.00 state=-1
+1098940330.0 battery 0.00 state=-1
+1098942774.4 Button B down
+1098942895.8 Button B up
+1098943133.5 Button Y down
+1098943283.7 Button Y up
+1098943765.8 Button X down
+1098943854.8 Button X up
+1098944889.6 Button B down
+1098945022.6 Button B up
+1098945205.2 Button Y down
+1098945370.2 Button Y up
+1098945473.8 Button A down
+1098945628.3 Button A up
+1098945773.4 Button X down
+1098945955.2 Button X up
+1098946584.1 Button B down
+1098946705.7 Button B up
+1098946823.0 Button Y down
+1098947004.3 Button Y up
+1098947094.0 Button A down
+1098947266.7 Button A up
+1098947394.5 Button X down
+1098947542.7 Button X up
+1098950383.6 battery 0.00 state=-1
+1098960389.6 battery 0.00 state=-1
+1098970436.6 battery 0.00 state=-1

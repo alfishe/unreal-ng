@@ -7,6 +7,7 @@
 #include "emulator/bus/busmanager.h"
 #include "emulator/media/floppyformats.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/io/controllers/controllerconfig.h"
 #include <loaders/snapshot/loader_z80.h>
 
 #include <chrono>
@@ -36,6 +37,7 @@
 #include "emulator/notifications.h"
 #include "emulator/tstaterunbudget.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/io/controllers/controllerconfig.h"
 #include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
@@ -573,6 +575,15 @@ bool Emulator::Init()
             MLOGWARNING("Emulator::Init - media config: %s", line.c_str());
         for (const std::string& line : _context->pMediaManager->ApplyConfiguredMedia(_config->GetMediaSet()))
             MLOGWARNING("Emulator::Init - media: %s", line.c_str());
+    }
+
+    // Configured connector plugs ([CONTROLLERS]): the keyboard joysticks a keys-only game is set up for
+    if (result && _context->pControllerManager && _config)
+    {
+        for (const std::string& line : _config->GetControllerReport())
+            MLOGWARNING("Emulator::Init - controllers config: %s", line.c_str());
+        for (const std::string& line : controllers::ControllerConfig::Apply(_context, _config->GetControllerSet()))
+            MLOGWARNING("Emulator::Init - controllers: %s", line.c_str());
     }
 
     // Devices request machine-level actions through the context (the ZX-Evo

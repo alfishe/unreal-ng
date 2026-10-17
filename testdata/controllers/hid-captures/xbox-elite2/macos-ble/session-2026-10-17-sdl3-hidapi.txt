@@ -1,0 +1,119 @@
+     181 added 'Xbox One Elite 2 Controller' 045e:0b22
+   19813 dpdown down
+   20038 dpdown up
+   20096 x down
+   20277 x up
+   20475 dpup down
+   20728 dpup up
+   20833 y down
+   20998 y up
+   22137 paddle3 down
+   22301 y down
+   22377 a down
+   22377 x down
+   22377 paddle3 up
+   22498 x up
+   22514 axis righttrigger 8287
+   22535 paddle3 down
+   22544 a up
+   22544 axis righttrigger 18879
+   22574 b down
+   22574 axis righttrigger 29631
+   22770 b up
+   22799 paddle3 up
+   22845 y up
+   22888 dpdown down
+   22947 axis righttrigger 12863
+   23022 axis righttrigger 25023
+   23038 dpleft down
+   23114 axis lefttrigger 22431
+   23130 axis lefttrigger 32767
+   23146 dpdown up
+   23202 x down
+   23294 x up
+   23310 y down
+   23340 b down
+   23384 axis righttrigger 20479
+   23398 axis lefttrigger 17311
+   23398 axis righttrigger 9887
+   23427 axis lefttrigger 0
+   23427 axis righttrigger 2655
+   23489 y up
+   23562 dpleft up
+   23745 b up
+   24195 axis leftx -27784
+   24211 axis leftx -32768
+   24359 axis leftx -22742
+   24375 axis leftx -4628
+   24375 axis lefty 15512
+   24389 axis leftx 15737
+   24389 axis lefty 22969
+   24405 axis leftx 22242
+   24405 axis lefty 25133
+   24439 axis leftx 25378
+   24448 axis lefty 24041
+   24508 axis righty 12200
+   24539 axis righty 16827
+   24556 axis rightx 11910
+   24569 axis rightx 16926
+   24569 axis righty 25587
+   24599 axis lefty 15989
+   24599 axis rightx 26072
+   24613 axis righty 21473
+   24642 axis righty 15018
+   24658 axis leftx 21891
+   24690 axis leftx 6718
+   24690 axis lefty 7396
+   24690 axis righty 5110
+   24731 axis righttrigger 32767
+   24783 axis righty -10423
+   24838 axis righty -18486
+   24854 axis lefttrigger 32767
+   24884 axis rightx 23470
+   24900 paddle3 down
+   25064 axis rightx 16290
+   25091 paddle3 up
+   25139 axis lefttrigger 15807
+   25153 axis lefttrigger 0
+   25231 axis righttrigger 18591
+   25245 axis righttrigger 4927
+   25453 axis lefttrigger 20863
+   25469 axis lefttrigger 32767
+   25558 axis righty -12717
+   25574 axis rightx 4442
+   25574 axis righty -5335
+   25679 axis righttrigger 32031
+   25725 axis lefttrigger 13983
+   25739 axis lefttrigger 1919
+   25817 axis righttrigger 15743
+   25830 axis righttrigger 1759
+   25933 axis lefttrigger 24159
+   25933 axis righttrigger 32767
+   25963 axis lefttrigger 32767
+   26039 axis righttrigger 23967
+   26053 axis righttrigger 16255
+   26114 axis righttrigger 32767
+   26144 axis lefttrigger 16447
+   26171 axis lefttrigger 0
+   26233 axis righttrigger 22687
+   26263 axis righttrigger 0
+   27116 paddle3 down
+   27283 paddle3 up
+   27657 paddle4 down
+   27840 paddle4 up
+   28183 paddle1 down
+   28366 paddle1 up
+   28410 paddle2 down
+   28615 paddle2 up
+   28634 paddle3 down
+   28813 paddle3 up
+   29444 paddle4 down
+   29489 paddle3 down
+   29847 paddle4 up
+   29877 paddle3 up
+   30162 paddle3 down
+   30687 paddle1 down
+   31092 paddle2 down
+   31259 paddle1 up
+   31302 paddle3 up
+   31574 paddle2 up

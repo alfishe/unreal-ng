@@ -20,6 +20,7 @@ using unreal::UUID;
 class Core;
 class Emulator;
 class Joystick;
+namespace controllers { class ControllerManager; }
 class Keyboard;
 class Mouse;
 class MouseManager;
@@ -128,6 +129,7 @@ public:
 
 	// Kempston joystick instance
 	Joystick* pJoystick = nullptr;
+	controllers::ControllerManager* pControllerManager = nullptr;  ///< the machine's connectors and retro devices
 
 	// Virtual network of this machine (network adapters TDD §5): present only
 	// while a network adapter is fitted

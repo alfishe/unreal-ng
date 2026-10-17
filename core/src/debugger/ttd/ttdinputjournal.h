@@ -68,7 +68,8 @@ namespace ttd {
 /// source through TimeTravelManager::SubmitLiveInput - never mutate the device
 /// directly. That one path gives it replay ownership (live input refused while
 /// the journal drives the machine), marshalling onto the machine's thread and an
-/// exact journal time. (A Sinclair joystick is keyboard keys: no new kind.)
+/// exact journal time. Connector devices without a kind of their own (the Sinclair, Cursor and keys joysticks:
+/// keyboard overlays, not key events) share ConnectorState (controller manager D13).
 enum class TTDInputKind : uint8_t
 {
     Key = 0,            ///< keyboard matrix press / release (key, pressed)
@@ -109,12 +110,15 @@ enum class TTDInputKind : uint8_t
     MidiPanic,          ///< MIDI panic from automation / the GUI (ZX-MultiSound MS-6): every slot card's MIDI
                         ///< synthesizer stops all its voices (sam2695::Synth::Panic); no fields
 
-    NextPad             ///< the whole state of one joystick connector of a machine with 12-button pads (the ZX Next):
+    NextPad,            ///< the whole state of one joystick connector of a machine with 12-button pads (the ZX Next):
                         ///< key = connector (0 left, 1 right), dx = the 12 buttons (PortDecoder::PadState layout)
+
+    ConnectorState      ///< the retro controls held on one connector of ControllerManager whose device has no kind of
+                        ///< its own: key = connector index, dx = the control mask (controllers::kRight ... bit order)
 };
 
 /// Last valid kind: the file reader refuses anything above it
-constexpr TTDInputKind kLastTTDInputKind = TTDInputKind::NextPad;
+constexpr TTDInputKind kLastTTDInputKind = TTDInputKind::ConnectorState;
 
 /// The kinds that carry a network record (netIndex) and payload bytes
 constexpr bool HasNetRecord(TTDInputKind kind)

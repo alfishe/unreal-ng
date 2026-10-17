@@ -3,6 +3,7 @@
 #include "base/featuremanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/controllers/controllermanager.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/slots/slotmanager.h"
@@ -49,6 +50,11 @@ TTDConfigFingerprint CaptureConfigFingerprint(const EmulatorContext& context, ui
     // checkpoint holds the devices of its slot set, so a difference affects a restore
     if (context.pSlotManager)
         context.pSlotManager->AddTtdFingerprint(fp);
+
+    // The keyboard joysticks plugged (`controllers.<connector>`): a plug while recording is a cut; the checkpoint holds
+    // it, so it does not affect a restore
+    if (context.pControllerManager)
+        context.pControllerManager->AddTtdFingerprint(fp);
 
     // Every model's ROM set, the Sprinter BIOS (its flash) among them
     if (romSignature)

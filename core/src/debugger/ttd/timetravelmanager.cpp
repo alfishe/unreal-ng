@@ -36,6 +36,7 @@
 #include <random>
 #include <ctime>
 #include "emulator/config.h"
+#include "emulator/io/controllers/controllermanager.h"
 #include "ttdmachineperipherals.h"  // RegisterMachinePeripherals (shared with MachineStateTransfer)
 #include "emulator/slots/slotmanager.h"  // the slot-set guard on a session load
 #include "emulator/io/rtc/ds12887.h"
@@ -1730,6 +1731,10 @@ bool TimeTravelManager::RegisterModelPeripherals(std::string* err)
     // shared with MachineStateTransfer. On failure the registry is left empty.
     if (!RegisterMachinePeripherals(_context, _peripherals, _ownedPeripherals, err))
         return false;
+    // The keyboard joysticks (a type past the v1 ids) with nothing plugged hold nothing v1 must keep: leave them out,
+    // so a machine without one records as before. One plugged: v1 refuses below, the engine records it
+    if (_context && _context->pControllerManager && !_context->pControllerManager->HasOverlayDevices())
+        _peripherals.UnregisterType(ttd::TTDDeviceType::Controllers);
     // v1 keeps one blob per v1 id: a device added after the freeze (no v1 id) or two devices under one id cannot be
     // recorded here (D23): the engine records them
     std::string why;
