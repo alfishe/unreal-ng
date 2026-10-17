@@ -45,6 +45,7 @@ uint64_t SoundChip_TurboSoundFM::nowT() const
 
 void SoundChip_TurboSoundFM::reset()
 {
+    settleSteps();
     // §5.4: CPLD reset state = OUT #FFFD,#FE - first chip (D1), register
     // read, FM muted. Both YM2203 /RES pins are wired to host reset.
     _board = TsfmBoard{};
@@ -72,6 +73,7 @@ void SoundChip_TurboSoundFM::reset()
 
 void SoundChip_TurboSoundFM::handleFrameStart()
 {
+    settleSteps();
     // Frame rollover (§5.2): Core::AdjustFrameCounters already subtracted
     // the frame length from z80->t; shift the core's position and every
     // queued word timestamp by the same delta so they land on the new
@@ -154,6 +156,19 @@ void SoundChip_TurboSoundFM::handleFrameStart()
 /// left (§6.3): they output exactly when the SSG master does.
 void SoundChip_TurboSoundFM::handleStep()
 {
+    // The step gate: before the deadline a step only notes where it ended (settleSteps books it)
+    if (_stepDeadline != 0)
+    {
+        const uint64_t now = nowT();
+        if (now < _stepDeadline && _context->emulatorState.HostSpeedMultiplier() == 1)
+        {
+            _pendingT = now;
+            _stepPending = true;
+            return;
+        }
+        settleSteps();
+    }
+
     // §6.1: the core advances in every mode (turbo, sound feature off) -
     // SoundManager reaches this call unconditionally. Rendering is gated
     // on synthesis suppression; the core never is. With its synthesis
@@ -203,6 +218,13 @@ void SoundChip_TurboSoundFM::handleStep()
         _lastTStates = scaledCurrentTStates;
         _deferredT = now;
         _syncDeferred = true;
+
+        // Until the step whose T completes a sample, every step takes this branch with the same outcome: the gate's
+        // deadline (x1 speed, a sample to come, room in the buffer). samplePhase + d x rate < CPU_CLOCK_RATE holds
+        // for d < ceil((CPU_CLOCK_RATE - samplePhase) / rate)
+        if (_stepGate && speedMultiplier == 1 && _samplePhase < CPU_CLOCK_RATE &&
+            _ayBufferIndex < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
+            _stepDeadline = uint64_t(_lastTStates) + (CPU_CLOCK_RATE - _samplePhase + _coreRate - 1) / _coreRate;
         return;
     }
     syncTo(now);
@@ -519,6 +541,7 @@ bool SoundChip_TurboSoundFM::attachToPorts(PortDecoder* decoder)
 
 void SoundChip_TurboSoundFM::detachFromPorts()
 {
+    settleSteps();
     if (_portDecoder && _chipAttachedToPortDecoder)
     {
         _portDecoder->UnregisterPortHandler(0xBFFD);
@@ -672,6 +695,8 @@ void SoundChip_TurboSoundFM::TTDSaveState(uint8_t* dst) const
 
 void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
 {
+    _stepPending = false;   // the restored state replaces what the gate noted
+    _stepDeadline = 0;
     _syncDeferred = false;  // the restored chips stand at the restored position
     const uint8_t* cur = src;
     ++_renderEpoch;   // the host's character chains restart (ITurboSoundDevice::renderEpoch)

@@ -761,6 +761,30 @@ the two-AY TurboSound, ending on a channel switched to the envelope that ran thr
 write), so the phases the generators kept are heard; freezing the tones or moving the envelope's test by one tick
 fails it. The eleven snapshots' audio: the same bytes.
 
+**R9. The rest of the silent TurboSound FM** (branch `perf/sound-idle`):
+
+- The pair remembers that an FM half is idle (`Ym2203Chip::fmIdleKnown`): the idle test walks every operator and ran at
+  every sync; `clockFmIdle` keeps an idle engine idle, so only a register write, a reset, a restore, a timer expiry
+  (CSM) or a clock through `clockFmOnce` clears it. Pentagon / 128K 1x -7 %.
+- The silent tones and the noise count their turns in closed form too (in the reset state they turn every tick: tone
+  period 1, noise period 0), and the TSFM step reads the clock once. Pentagon / 128K 1x -6 %.
+- The step gate: the lazy deferral of a step that completes no sample holds until a T the step works out
+  (`_stepDeadline`); the steps before it note their T only and `settleSteps` books them as the deferral would, at the
+  next full step or any other entry into the device (each starts with it). Pentagon / 128K -1.5 %, Scorpion -3 %,
+  TSConf -3.6 %.
+
+| Row | before R9 | after | x |
+|:--|--:|--:|--:|
+| Pentagon_ShipNormal | 448 | 379 | 0.85 |
+| 128K_ShipNormal | 445 | 383 | 0.86 |
+| Scorpion_ShipNormal | 737 | 659 | 0.89 |
+
+Exactness: the TSFM golden digests and the MultiSound TFM trace (dropping the cache clear on a data write fails them),
+`SilentAdvanceMovesTheGeneratorsAsTickByTick` with the noise at periods 0-31 (moving the first shift or a tone's parity
+fails it), `TsfmStepGate_Test` (two machines, the gate closed in one, a program writing random registers of both chips
+at random places, dense and with long silences, HQ / LQ / 2x: the host sound and the end state equal; not booking the
+sample phase fails it); the eleven snapshots' audio is the same bytes after each step.
+
 **Tried and dropped: the Next UART's peer promise.** A peer (the ESP module, a wired device) told the UART until when
 it stays silent (`QuietUntil` plus an activity counter), so the poll skipped the two virtual peer calls per
 instruction. Exact (lockstep twins with and without the promise, every Next frame / CPU / RAM hash equal at 3.5 and
