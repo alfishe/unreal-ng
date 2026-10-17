@@ -917,9 +917,10 @@ Response Server::handleWriteState(const Command& cmd)
 void Server::tellControlTakenBack()
 {
     const IDebugInterface::Registers regs = m_debug->getRegisters();
-    notifyPause(BreakReason::OTHER, regs.pc, 0,
-                "revoked_by_user: the user took control back at the emulator's GUI; this debug session has ended. "
-                "Do not reconnect without asking the user.");
+    notifyPause(
+        BreakReason::OTHER, regs.pc, 0,
+        "revoked_by_user: the user took control back (at the GUI or from a companion); this debug session has ended. "
+        "Do not reconnect without asking the user.");
     std::cout << "[DZRP] The user took control back: closing the session\n";
 }
 

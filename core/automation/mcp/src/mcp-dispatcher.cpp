@@ -232,8 +232,8 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
                 // tool made of the 409, the agent gets the one answer - stop, do not retry, ask the user
                 if (caller.TakeRevoked())
                     result = ToolResult::Error(
-                        "revoked_by_user: the user took control of the emulator back at its GUI; your automation "
-                        "session has ended. Stop. Do not retry this call and do not take control again "
+                        "revoked_by_user: the user took control of the emulator back (at its GUI or from a companion); "
+                        "your automation session has ended. Stop. Do not retry this call and do not take control again "
                         "(control_execution take_control) without asking the user first.");
                 // The gate opened a session for this call: advise the agent to take control explicitly (once)
                 if (const std::string advice = caller.TakeImplicitAdvice(); !advice.empty())

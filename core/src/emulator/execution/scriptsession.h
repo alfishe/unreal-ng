@@ -34,9 +34,10 @@ class ControlRevoked : public std::runtime_error
 {
 public:
     ControlRevoked()
-        : std::runtime_error("revoked_by_user: the user took control back at the emulator's GUI; this script's "
-                             "automation session has ended. Stop - do not retry, and do not take control again "
-                             "without asking the user.")
+        : std::runtime_error(
+              "revoked_by_user: the user took control back (at the GUI or from a companion); this script's "
+              "automation session has ended. Stop - do not retry, and do not take control again "
+              "without asking the user.")
     {
     }
 };

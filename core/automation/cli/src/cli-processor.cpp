@@ -365,9 +365,11 @@ void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& com
     {
         _controlSession = unreal::UUID();
         _controlEmulator.reset();
-        session.SendResponse(std::string("Error: revoked_by_user - the user took control back at the emulator's GUI; "
-                                         "this session has ended. Do not retry, and do not take control again "
-                                         "without asking the user.") + NEWLINE);
+        session.SendResponse(
+            std::string("Error: revoked_by_user - the user took control back (at the GUI or from a companion); "
+                        "this session has ended. Do not retry, and do not take control again "
+                        "without asking the user.") +
+            NEWLINE);
         if (cmd != "session")
             return;
     }
@@ -402,9 +404,11 @@ void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& com
             {
                 _controlSession = unreal::UUID();
                 _controlEmulator.reset();
-                session.SendResponse(std::string("Error: revoked_by_user - the user took control back at the "
-                                                 "emulator's GUI; this session has ended. Do not retry, and do not "
-                                                 "take control again without asking the user.") + NEWLINE);
+                session.SendResponse(
+                    std::string("Error: revoked_by_user - the user took control back (at the "
+                                "GUI or from a companion); this session has ended. Do not retry, and do not "
+                                "take control again without asking the user.") +
+                    NEWLINE);
             }
         }
         catch (const std::exception& e)

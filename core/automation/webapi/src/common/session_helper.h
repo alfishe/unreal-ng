@@ -66,8 +66,8 @@ inline Json::Value RevokedBody()
     body["error"] = "revoked_by_user";
     body["retry"] = false;
     body["message"] =
-        "The user took control back at the emulator's GUI: this automation session has ended. Stop. Do not retry, and "
-        "do not take control again without asking the user.";
+        "The user took control back (at the GUI or from a companion): this automation session has ended. Stop. Do not "
+        "retry, and do not take control again without asking the user.";
     return body;
 }
 

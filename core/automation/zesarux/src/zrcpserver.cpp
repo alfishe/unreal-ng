@@ -425,8 +425,9 @@ void Server::sessionLoop(SOCKET clientSocket)
         // The user took control back at the GUI (execution arbiter design §6a): the client is told why, then dropped
         if (m_debug->controlTakenBack())
         {
-            sendLine(clientSocket, "Error. revoked_by_user: the user took control back at the emulator's GUI; this "
-                                   "debug session has ended. Do not reconnect without asking the user.");
+            sendLine(clientSocket,
+                     "Error. revoked_by_user: the user took control back (at the GUI or from a companion); this "
+                     "debug session has ended. Do not reconnect without asking the user.");
             std::cout << "[ZRCP] The user took control back: closing the session\n";
             break;
         }

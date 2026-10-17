@@ -356,9 +356,10 @@ bool GDBSession::RefuseAfterTakeBack(const std::string& packet)
                           c == 'M' || c == 'X' || packet.starts_with("vCont;");
     if (!controls)
         return false;
-    sendPacket("O" + GDBPacket::hexEncode("revoked_by_user: the user took control back at the emulator's GUI; this "
-                                          "session no longer controls the machine. Do not retry - detach, and ask "
-                                          "the user before attaching again.\n"));
+    sendPacket(
+        "O" + GDBPacket::hexEncode("revoked_by_user: the user took control back (at the GUI or from a companion); this "
+                                   "session no longer controls the machine. Do not retry - detach, and ask "
+                                   "the user before attaching again.\n"));
     return true;
 }
 
