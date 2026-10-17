@@ -182,7 +182,7 @@ phase; master only after the owner's review.
       - [x] PROMETHEUS 48K (2026-10-10): the records, checksum, FF and table from its reconstructed source (§7.17)
       - [x] Primus 2.9 (2026-10-10): ZEUS's start / last-FF pair at `#61B1` (§7.15)
       - [x] GENS4B (2026-10-10): started from 48K BASIC via USR 15616 / LOAD CODE / RETURN / USR 30000; text `(#7928)`-`(#7566)` (docs/disasm/software/gens4b)
-      - [ ] `RANDOMIZE USR 15619: REM : LOAD ...` returned without reading the disk (Pentagon, 48 BASIC; TTD: TR-DOS one frame, FDC only `#D0`): explain
+      - [x] `RANDOMIZE USR 15619: REM : LOAD ...` returned without reading the disk (Pentagon, 48 BASIC; TTD: TR-DOS one frame, FDC only `#D0`): explained 2026-10-16, a stored `#20` after `REM :` is taken for the command token (typer bug F1, fixed); reproduced on a live Pentagon through the WebAPI
     - [x] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
       - [x] INCLUDE from the disk in a drive and from host folders, option `project` (2026-10-10, §5.4)
       - [x] other texts in memory (2026-10-10): ALASM's pages (`textsPerPage`); XAS and ZAsm hold one text
