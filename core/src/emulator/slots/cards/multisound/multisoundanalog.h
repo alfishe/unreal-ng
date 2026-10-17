@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cmath>
+
 // ZX-MultiSound analog board: the component values of the mixer and the output filters (rev.A2 schematic, identical
 // in rev.A1), the weights derived from them, and the filter used to model the RC networks.
 //
@@ -97,6 +99,13 @@ public:
 
     /// Clears the history (the network discharged)
     void Reset() { _x1 = _x2 = _y1 = _y2 = 0.0; }
+
+    /// The whole history +0.0: Process(0.0) returns +0.0 and leaves it so (a run of zeros needs no calls)
+    bool AtRest() const
+    {
+        return _x1 == 0.0 && _x2 == 0.0 && _y1 == 0.0 && _y2 == 0.0 && !std::signbit(_x1) && !std::signbit(_x2) &&
+               !std::signbit(_y1) && !std::signbit(_y2);
+    }
 
     /// Magnitude of the digital response at hz (tests, Describe)
     double Magnitude(double hz, double sampleRate) const;

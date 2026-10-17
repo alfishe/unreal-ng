@@ -6,10 +6,13 @@
 #include "voice/envelope.h"
 #include "voice/filter.h"
 #include "voice/lfo.h"
+#include "render/resampler.h"
 
 #include <cmath>
 #include <algorithm>
 #include <complex>
+#include <cstring>
+#include <vector>
 
 using namespace sam2695;
 using namespace sam2695test;
@@ -375,4 +378,56 @@ TEST(Voice, Pan)
     CHECK_NEAR(quarter->R(600) / quarter->L(600), std::tan(kPi / 8), 1e-5);
     auto cc = play(0, {0xB0, 10, 0}); // CC 10 = 0: hard left through the default modulator
     CHECK_EQ_I(cc->R(600), 0);
+}
+
+// The resampler's silent windows (Resampler::_zeroRun): a window of zeros gives +0.0 without the FIR. Against the same
+// resampler running the FIR on every window: streams of sound and silences of every length, at the output rates the
+// card uses, fed and drained in chunks of every size - every output sample the same bit for bit
+TEST(Resampler, SilentWindowsSkippedGiveTheSameStream)
+{
+    uint32_t seed = 0x5A26u;
+    auto next = [&seed]() {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        return seed;
+    };
+    for (const uint32_t outRate : {32000u, 44100u, 48000u, 96000u})
+    {
+        sam2695::Resampler skipping;
+        sam2695::Resampler every;
+        skipping.Configure(32000, outRate);
+        every.Configure(32000, outRate);
+        every.SetSilentWindowsSkipped(false);
+        std::vector<float> stream;
+        for (int burst = 0; burst < 300; burst++)
+        {
+            const size_t frames = 1 + next() % 400;
+            const bool sounds = next() % 3 == 0;
+            for (size_t i = 0; i < frames; i++)
+            {
+                stream.push_back(sounds ? static_cast<float>(int(next() % 2001) - 1000) / 1000.0f : 0.0f);
+                stream.push_back(sounds ? static_cast<float>(int(next() % 2001) - 1000) / 1000.0f : 0.0f);
+            }
+        }
+        const size_t frames = stream.size() / 2;
+        std::vector<float> a(frames * 4), b(frames * 4);
+        size_t inA = 0, inB = 0, outA = 0, outB = 0;
+        while (inA < frames || inB < frames)
+        {
+            const size_t chunk = 1 + next() % 700;
+            const size_t room = 1 + next() % 900;
+            size_t used = 0;
+            const size_t spanA = std::min(chunk, frames - inA);
+            outA += skipping.Process(&stream[inA * 2], spanA, used, &a[outA * 2], std::min(room, a.size() / 2 - outA));
+            inA += used;
+            const size_t spanB = std::min(chunk, frames - inB);
+            outB += every.Process(&stream[inB * 2], spanB, used, &b[outB * 2], std::min(room, b.size() / 2 - outB));
+            inB += used;
+            if (outA + 1 >= a.size() / 2 || outB + 1 >= b.size() / 2)
+                break;
+        }
+        CHECK_EQ_I(outA, outB);
+        CHECK(std::memcmp(a.data(), b.data(), outA * 2 * sizeof(float)) == 0);
+    }
 }
