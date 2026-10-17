@@ -24,6 +24,7 @@ int16_t ToSample(Level level)
 
 /// region <Core loop (§5.2)>
 
+
 uint64_t SoundChip_TurboSoundFM::nowT() const
 {
     // The YM2203 is clocked from the AY socket, not the CPU: AudioTstate
@@ -174,7 +175,7 @@ void SoundChip_TurboSoundFM::handleStep()
     // Scorpion 7 MHz flip-flop the chip must see the real-time position
     // (t/2), not the doubled CPU count - otherwise it emitted 2x samples
     // per frame (copied from the legacy device)
-    size_t currentTStates = _context->emulatorState.AudioTstate(_context->pCore->GetZ80()->t);
+    size_t currentTStates = size_t(now);  // nowT(): AudioTstate of the CPU's clock
 
     // Scale t-states by the HOST speed multiplier for correct audio pitch
     uint8_t speedMultiplier = _context->emulatorState.HostSpeedMultiplier();

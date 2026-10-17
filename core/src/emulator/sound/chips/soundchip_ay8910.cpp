@@ -130,26 +130,6 @@ void SoundChip_AY8910::NoiseGenerator::updateState()
     }
 }
 
-/// Returns LSFR-generated random numbers for noise generator
-/// @return Output from LSFR bit 0
-///
-/// <b>Information:</b>
-/// The Random Number Generator of the 8910 is a 17-bit shift register.
-/// The input to the shift register is bit0 XOR bit3
-/// Bit0 is the output
-/// 17 stage LSFR with 1 tap (3)
-///
-/// See: https://en.wikipedia.org/wiki/Linear-feedback_shift_register
-/// See: https://github.com/floooh/chips/blob/master/chips/ay38910.h
-/// See: https://github.com/mamedev/mame/blob/master/src/devices/sound/ay8910.cpp
-bool SoundChip_AY8910::NoiseGenerator::shiftLSFR()
-{
-    uint32_t tapBit = (_registerLSFR & 1) ^ ((_registerLSFR >> 3) & 1); // Calculate tap (XOR of bits 0 and 3)
-    _registerLSFR = (_registerLSFR >> 1) | (tapBit << 16); // Right-shift the LFSR and insert tap value at the most significant bit
-
-    // Return output bit [0]
-    return _registerLSFR & 1;
-}
 /// endregion </NoiseGenerator>
 
 /// region <EnvelopeGenerator>
