@@ -273,7 +273,10 @@ They never act as companions (§2). They list and revoke (`companion_manage`, `c
 - `NC_COMPANION_CHANGED` `pairing_requested` → a non-modal prompt: "Pair companion 'Desk panel' (panel 15 keys) from
   192.168.1.40? Code 418 205", the scopes as check boxes (defaults ticked), Allow / Deny. It closes on
   `pairing_cancelled` / `pairing_expired` and after 120 s.
-- **Companions…** in the Tools menu: a table (name, device, scopes, source, last seen), Revoke, Revoke all.
+- **Companions…** in the Tools menu: a table (name, device, scopes, source, last seen), Revoke, Revoke all, and
+  **Accept pairing requests from devices** (on by default, kept in the settings as
+  `companions/acceptPairingRequests`). Off: `SetPairingAllowed(false)` refuses new requests (`pairing_disabled`, 403)
+  and denies the waiting ones (their prompts close); paired companions keep working.
 - Toasts: "Companion paired", "Companion revoked", and on `NC_RUN_CONTROL_CHANGED` "revoked" with a `by` other than the
   GUI: "Control taken back by companion 'X'".
 - The remote control guard is unchanged: a companion holds no claim, so the guard has nothing to show or lock.
@@ -292,5 +295,3 @@ They never act as companions (§2). They list and revoke (`companion_manage`, `c
 | The store's directory is not writable | logged once; pairings live for the process |
 | `UNREAL_COMPANION_TOKENS` repeats a name or token | the first entry wins, the rest are logged and skipped |
 | A pairing name longer than 64 characters or with control characters | trimmed to 64 printable characters |
-</content>
-</invoke>

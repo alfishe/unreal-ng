@@ -1,7 +1,7 @@
 #pragma once
 
 /// @file companionactions.h
-/// @brief What a companion client may do now (docs/inprogress/2026-10-16-companion-client/protocol.md §4.1): the
+/// @brief What a companion client may do now (docs/inprogress/2026-10-16-companion-client/design.md §3.1): the
 /// catalogue of its actions - the buttons of a panel - each with whether it is available in the machine's current
 /// state and, when not, why. A companion greys out what it cannot do instead of trying and being refused.
 ///

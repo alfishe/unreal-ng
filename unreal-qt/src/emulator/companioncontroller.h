@@ -20,7 +20,8 @@ class QTableWidget;
 /// - A pairing request opens a non-modal prompt (CompanionPairingPrompt): the device's name and description, its
 ///   address and the code the device shows, the scopes to grant. Allow pairs it; Deny or closing refuses it; the
 ///   prompt closes by itself when the device cancels or the request expires.
-/// - Tools > Companions... lists the companions with Revoke and Revoke all (CompanionsDialog).
+/// - Tools > Companions... lists the companions with Revoke and Revoke all (CompanionsDialog), and has "Accept pairing
+///   requests": off, a request is refused (pairing_disabled) and the waiting ones are denied; kept in the settings.
 /// - It asks for HUD toasts: paired, revoked.
 /// A companion holds no session, so the remote control guard has nothing to show or lock for it.
 class CompanionController : public QObject
@@ -83,7 +84,7 @@ private:
     bool _decided = false;
 };
 
-/// @brief Tools > Companions...: the paired companions, Revoke, Revoke all
+/// @brief Tools > Companions...: the paired companions, Revoke, Revoke all, Accept pairing requests
 class CompanionsDialog : public QDialog
 {
     Q_OBJECT
@@ -92,12 +93,18 @@ public:
     explicit CompanionsDialog(QWidget* parent = nullptr);
 
     QTableWidget* table() const { return _table; }
+    QCheckBox* acceptPairingBox() const { return _acceptPairing; }
 
 public slots:
     void refresh();
 
+signals:
+    /// The user ticked or unticked "Accept pairing requests" (the registry has it already)
+    void pairingAllowedChanged(bool allowed);
+
 private:
     QTableWidget* _table = nullptr;
+    QCheckBox* _acceptPairing = nullptr;
     QLabel* _note = nullptr;
     QPushButton* _revoke = nullptr;
     QPushButton* _revokeAll = nullptr;

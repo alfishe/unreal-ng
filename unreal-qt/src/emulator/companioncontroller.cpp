@@ -28,6 +28,9 @@ companion::CompanionRegistry& Registry()
     return companion::CompanionRegistry::Instance();
 }
 
+/// The user's settings file (QSettings: Unreal / Unreal-NG); "Accept pairing requests" lives there
+constexpr const char* kAcceptPairingKey = "companions/acceptPairingRequests";
+
 /// What a scope lets the device do, for the prompt
 QString ScopeLabel(const std::string& scope)
 {
@@ -68,6 +71,7 @@ CompanionController::CompanionController(QWidget* dialogParent, bool attachStore
         const QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
         const QString path = QFileInfo(settings.fileName()).absolutePath() + QStringLiteral("/companions.json");
         Registry().SetStorePath(path.toStdString());
+        Registry().SetPairingAllowed(settings.value(kAcceptPairingKey, true).toBool());
         Registry().SetApprovalAvailable(true);
     }
     _observer = MessageCenter::DefaultMessageCenter().AddObserver(NC_COMPANION_CHANGED, [this](int, Message* message) {
@@ -131,6 +135,12 @@ void CompanionController::showCompanionsDialog()
     {
         _dialog = new CompanionsDialog(_dialogParent);
         _dialog->setAttribute(Qt::WA_DeleteOnClose);
+        connect(_dialog, &CompanionsDialog::pairingAllowedChanged, this, [this](bool allowed) {
+            if (!_attached)
+                return;  // tests: the user's settings stay untouched
+            QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+            settings.setValue(kAcceptPairingKey, allowed);
+        });
     }
     _dialog->refresh();
     _dialog->show();
@@ -249,6 +259,10 @@ CompanionsDialog::CompanionsDialog(QWidget* parent) : QDialog(parent)
     layout->addWidget(_table);
     _note = new QLabel(this);
     layout->addWidget(_note);
+    _acceptPairing = new QCheckBox(tr("Accept pairing requests from devices"), this);
+    _acceptPairing->setToolTip(tr("Off: a device asking to pair is refused at once, the requests waiting are denied. "
+                                  "Paired companions keep working."));
+    layout->addWidget(_acceptPairing);
     auto* row = new QHBoxLayout();
     _revoke = new QPushButton(tr("Revoke"), this);
     _revokeAll = new QPushButton(tr("Revoke all"), this);
@@ -268,6 +282,13 @@ CompanionsDialog::CompanionsDialog(QWidget* parent) : QDialog(parent)
     });
     connect(_revokeAll, &QPushButton::clicked, this, [this]() {
         Registry().RevokeAll();
+        refresh();
+    });
+    connect(_acceptPairing, &QCheckBox::toggled, this, [this](bool allowed) {
+        if (allowed == Registry().IsPairingAllowed())
+            return;  // refresh() setting the box
+        Registry().SetPairingAllowed(allowed);
+        emit pairingAllowedChanged(allowed);
         refresh();
     });
     connect(_table, &QTableWidget::itemSelectionChanged, this,
@@ -295,10 +316,13 @@ void CompanionsDialog::refresh()
                                                           : tr("never")));
     }
     const size_t pending = Registry().Pending().size();
-    _note->setText(companions.empty() ? tr("No companions. A device asks to pair through the WebAPI "
-                                           "(POST /api/v1/companions/pairings); you allow it here.")
-                   : pending           ? tr("%n pairing request(s) waiting.", nullptr, static_cast<int>(pending))
-                                       : QString());
+    const bool allowed = Registry().IsPairingAllowed();
+    _acceptPairing->setChecked(allowed);
+    _note->setText(!allowed && companions.empty() ? tr("No companions, and pairing requests are turned off.")
+                   : companions.empty()           ? tr("No companions. A device asks to pair through the WebAPI "
+                                                       "(POST /api/v1/companions/pairings); you allow it here.")
+                   : pending ? tr("%n pairing request(s) waiting.", nullptr, static_cast<int>(pending))
+                             : QString());
     _revoke->setEnabled(_table->currentRow() >= 0);
     _revokeAll->setEnabled(!companions.empty());
 }

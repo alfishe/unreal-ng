@@ -100,6 +100,7 @@ Request:
 | 202 | `{ "pairing_id": "p-7c41d2", "code": "418205", "expires_in": 120, "scopes": ["run", …] }` |
 | 400 | `bad_request`: no name, an unknown scope |
 | 429 | `too_many_pairings` (`retry: true`): 4 pending, or one pending from this address already |
+| 403 | `pairing_disabled`: the user turned pairing requests off at the GUI (Tools > Companions…) |
 | 503 | `pairing_unavailable`: no GUI to approve; provision the companion in `UNREAL_COMPANION_TOKENS` |
 
 Show `code` on the device; the user compares it with the one in the GUI prompt.
@@ -151,8 +152,46 @@ in a stable order: `pause`, `resume`, `reset`, `nmi`, `turbo`, `speed`, `keyboar
 
 - `state`: `running`, `paused`, `stopped` (the instance's own word, as in `GET /api/v1/emulator/{id}`);
 - `control.can_act`: `false` while a session is held;
-- poll `me` for a live status: twice a second is cheap (a few atomics and a lock per instance), and drive the
-  buttons from `actions`.
+- for a live status open the events channel (§4.1); a client that cannot hold a WebSocket polls `me` (twice a
+  second is cheap: a few atomics and a lock per instance), and drives the buttons from `actions`.
+
+### 4.1 Events
+
+```
+GET /api/v1/companions/events      WebSocket (Upgrade: websocket)
+```
+
+The channel sends the companion its `me` once and then every instance entry that changed, so a button goes dark the
+moment the machine runs, an agent takes control or a session ends - without polling.
+
+**Authentication.** `Authorization: Bearer <token>` on the handshake, or, for clients that cannot set handshake headers
+(a browser's `WebSocket`), the first message:
+
+```json
+{ "op": "auth", "token": "unc_…" }
+```
+
+Before that the connection gets nothing. An unknown or revoked token is answered `companion_unknown` and the connection
+closes; the handshake marked `X-Unreal-Source: mcp` is answered `companion_not_for_agents` and closed.
+
+**Server → client.** Every message is a JSON text frame with `op`; `seq` counts this connection's messages from 1.
+
+| `op` | Body | When |
+|:--|:--|:--|
+| `hello` | `me` (§4) plus `op`, `seq` | once, on authentication |
+| `emulator` | `{ "op": "emulator", "seq": 7, "emulator": { …one entry of me.emulators… } }` | an instance's entry changed (state, control, actions, model, selected), or a new instance |
+| `emulator_gone` | `{ "op": "emulator_gone", "seq": 8, "id": "4d7f…" }` | an instance was closed |
+| `snapshot` | `me` plus `op`, `seq` | the answer to `{"op":"snapshot"}` |
+| `revoked` | `{ "op": "revoked", "message": "…" }` | the user revoked this companion; the connection closes: pair again |
+| `error` | `{ "op": "error", "error": "bad_request" \| "companion_required" \| "companion_unknown", "message": "…" }` | a bad message |
+
+**Client → server:** `{"op":"auth","token":…}`, `{"op":"snapshot"}` (the whole view again, e.g. after the device
+woke up).
+
+An entry is sent only when it differs from the last one sent on this connection. The server compares on every
+notification that can change it (state, run control, companions, instances, features) and once a second for what
+changes with time alone (a re-take cooldown running out, the first recorded frame of time travel), so the latency is
+that of the notification, at most a second. A dropped connection loses nothing: reconnect and take `hello` as the truth.
 
 ## 5. Managing companions (any client)
 
@@ -172,10 +211,12 @@ DELETE /api/v1/companions             revoke all
     { "pairing_id": "p-7c41d2", "name": "Phone", "device": "", "peer": "192.168.1.40", "expires_in": 87,
       "scopes": ["run"] }
   ],
-  "approval_available": true
+  "approval_available": true,
+  "pairing_allowed": true
 }
 ```
 
+`approval_available`: a GUI can approve; `pairing_allowed`: the user accepts pairing requests (the GUI setting).
 Neither tokens nor codes are ever listed. Revoking needs no token: whoever can reach the WebAPI can already disturb the
 machine, and revoking only takes power away. Approval has no endpoint (design §2).
 
@@ -193,7 +234,7 @@ stateDiagram-v2
     Pairing --> Pairing: poll (pending)
     Pairing --> Ready: poll (approved): store the token
     Pairing --> Unpaired: denied / expired / 404
-    Ready --> Ready: action 2xx · me
+    Ready --> Ready: action 2xx · me · event
     Ready --> Held: 409 held_by_session · me: can_act false
     Held --> Ready: take-back 200 · me: can_act true
     Held --> Held: poll me
@@ -229,5 +270,3 @@ curl -s -X POST $H/api/v1/emulator/0/control/take-back -H "$T"
 
 The routes are in the generated spec (`GET /api/v1/openapi.json`), tag `Companions`, with the
 `companionBearer` security scheme on the routes that need a token.
-</content>
-</invoke>

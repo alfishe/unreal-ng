@@ -112,5 +112,3 @@ Part of [README.md](README.md).
 | A-6 | Pairing: request, approve at the GUI, the token is delivered once, the companion works, survives a restart, and a revoke from the CLI stops it at once. |
 | A-7 | Every plane lists and revokes companions: WebAPI, CLI, MCP, Lua, Python. |
 | A-8 | Unit tests, Qt tests and the live verification script pass; the build has zero warnings. |
-</content>
-</invoke>

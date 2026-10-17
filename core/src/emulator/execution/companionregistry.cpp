@@ -233,6 +233,7 @@ void CompanionRegistry::ResetForTesting()
     _byHash.clear();
     _pairings.clear();
     _approvalAvailable = false;
+    _pairingAllowed = true;
     _storePath.clear();
     _storeReadOnly = false;
     _clock = nullptr;
@@ -313,6 +314,11 @@ PairingRequestResult CompanionRegistry::RequestPairing(const std::string& name, 
             result.error = "pairing_unavailable";
             result.message = "no user interface to approve a pairing on this instance; its owner provisions companions "
                              "in UNREAL_COMPANION_TOKENS";
+        }
+        else if (!_pairingAllowed)
+        {
+            result.error = "pairing_disabled";
+            result.message = "the user turned pairing requests off (Tools > Companions... at the emulator)";
         }
         else
         {
@@ -642,6 +648,7 @@ StateNode CompanionRegistry::Report() const
     report["companions"] = std::move(companions);
     report["pairings"] = std::move(pairings);
     report["approval_available"] = IsApprovalAvailable();
+    report["pairing_allowed"] = IsPairingAllowed();
     return report;
 }
 
@@ -659,6 +666,36 @@ bool CompanionRegistry::IsApprovalAvailable() const
 {
     std::lock_guard<std::mutex> lock(_mutex);
     return _approvalAvailable;
+}
+
+void CompanionRegistry::SetPairingAllowed(bool allowed)
+{
+    std::vector<Event> events;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _pairingAllowed = allowed;
+        if (!allowed)
+        {
+            // The requests waiting now are refused too: their prompts close, the devices see "denied"
+            const int64_t now = NowMs();
+            ExpireLocked(now, events);
+            for (Pairing& p : _pairings)
+            {
+                if (p.info.state != PairingState::Pending)
+                    continue;
+                p.info.state = PairingState::Denied;
+                p.finishedMs = now;
+                events.push_back({"denied", {}, p.info.id, p.info.name});
+            }
+        }
+    }
+    Announce(events);
+}
+
+bool CompanionRegistry::IsPairingAllowed() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _pairingAllowed;
 }
 
 std::string CompanionRegistry::StorePath() const
