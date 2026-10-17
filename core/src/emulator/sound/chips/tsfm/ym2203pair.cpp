@@ -1,6 +1,7 @@
 #include "ym2203pair.h"
 
 #include <algorithm>
+#include <limits>
 #include <cassert>
 #include <cstring>
 
@@ -363,8 +364,12 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
     };
     for (size_t n = 0; n < frames; n++)
     {
-        // The ticks up to this output in one quiet run when nothing sounds (renderQuietChannels)
-        renderQuietChannels(static_cast<uint32_t>(master.feedsToNextOutput()), fmEnabled);
+        // The outputs from here on in one quiet run while nothing sounds (renderQuietChannels)
+        if (const size_t quiet = renderQuietChannels(n, frames, block, fmEnabled))
+        {
+            n += quiet - 1;
+            continue;
+        }
         while (!master.hasOutput())
         {
             for (int i = 0; i < 2; i++)
@@ -441,42 +446,78 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
     return frames;
 }
 
-bool Ym2203Pair::renderQuietChannels(uint32_t ticks, bool fmEnabled)
+size_t Ym2203Pair::renderQuietChannels(size_t n, size_t frames, const Ym2203ChannelBlock& block, bool fmEnabled)
 {
-    if (!_quietTicksEnabled || ticks == 0 || !_channels)
-        return false;
-    const int64_t lastTick = _renderT + 16 * int64_t(ticks - 1);
-    const int64_t lastHalf = lastTick + 8;
+    if (!_quietTicksEnabled || !_channels || n >= frames)
+        return 0;
+    // The quiet now
+    int64_t nextEvent = std::numeric_limits<int64_t>::max();  // the first SSG write due, or FM word off 0
     for (int i = 0; i < 2; i++)
     {
         const Ym2203Chip& c = *_chips[i];
-        if (!c.ssgWrites.empty() && c.ssgWrites.front().t <= lastTick)
-            return false;
         if (!c.ssg.silentAtRest() || c.out.nativeTap->isActive())
-            return false;
+            return 0;
         if (_channels->fmZeroRun[i] < FilterDecimator::history())
-            return false;
+            return 0;
         for (int ch = 0; ch < 3; ch++)
         {
             if (_channels->ssgZeroRun[i][ch] < FilterDecimator::history())
-                return false;
+                return 0;
         }
-        // feedFm feeds the gated hold: 0 now, and 0 after every word the run consumes
+        if (!c.ssgWrites.empty())
+            nextEvent = std::min<int64_t>(nextEvent, c.ssgWrites.front().t);
+        // feedFm feeds the gated hold: 0 now, and 0 after every word the run consumes (a muted part feeds 0 anyway)
         if (fmEnabled)
         {
             if (c.out.hold != 0.0)
-                return false;
-            for (size_t w = 0; w < c.words.size() && int64_t(c.words.at(w).t) <= lastHalf; w++)
+                return 0;
+            for (size_t w = 0; w < c.words.size(); w++)
             {
                 if (static_cast<double>(c.words.at(w).word) / 32768.0 != 0.0)
-                    return false;
+                {
+                    nextEvent = std::min<int64_t>(nextEvent, int64_t(c.words.at(w).t));
+                    break;
+                }
             }
         }
     }
+
+    // The outputs the run can take: each one's ticks with the master's own phase arithmetic (feedSample adds 1.0 a
+    // tick, skipOutput takes an output's worth), up to the one whose ticks would reach the event (an SSG write at or
+    // before a tick, a word at or before its second half)
+    FilterDecimator& master = _channels->ssg[0][0];
+    const double perOutput = master.samplesPerOutput();
+    double phase = master.phase();
+    uint64_t ticks = 0;
+    size_t outputs = 0;
+    for (size_t k = n; k < frames; k++)
+    {
+        double p = phase;
+        uint64_t t = 0;
+        while (!(p >= perOutput))
+        {
+            p += 1.0;
+            t++;
+        }
+        if (t > 0)
+        {
+            const int64_t lastTick = _renderT + 16 * int64_t(ticks + t - 1);
+            if (lastTick >= nextEvent || lastTick + 8 >= nextEvent)
+                break;
+        }
+        p -= perOutput;
+        phase = p;
+        ticks += t;
+        outputs++;
+    }
+    if (outputs == 0)
+        return 0;
+
+    // The run
+    const int64_t lastHalf = _renderT + 16 * int64_t(ticks) - 8;
     for (int i = 0; i < 2; i++)
     {
         Ym2203Chip& c = *_chips[i];
-        // consumeWords: the hold takes each word (0.0 when FM is on; whatever it is when the zeros fed are the mute's)
         while (!c.words.empty() && int64_t(c.words.front().t) <= lastHalf)
         {
             c.out.hold = static_cast<double>(c.words.front().word) / 32768.0;
@@ -486,14 +527,29 @@ bool Ym2203Pair::renderQuietChannels(uint32_t ticks, bool fmEnabled)
         _channels->fmZeroRun[i] += 2 * size_t(ticks);
         for (int ch = 0; ch < 3; ch++)
         {
-            _channels->ssg[i][ch].feedZerosIntoSilence(ticks);
-            _channels->ssgZeroRun[i][ch] += ticks;
+            _channels->ssg[i][ch].feedZerosIntoSilence(size_t(ticks));
+            _channels->ssgZeroRun[i][ch] += size_t(ticks);
         }
-        c.ssg.advanceSilent(ticks);
+        c.ssg.advanceSilent(static_cast<uint32_t>(ticks));
     }
+    master.setPhase(phase);  // the run's additions and output steps in their order (the feeds above added their own)
     _renderT += 16 * int64_t(ticks);
     _quietTicks += ticks;
-    return true;
+
+    for (size_t k = n; k < n + outputs; k++)
+    {
+        for (int i = 0; i < 2; i++)
+        {
+            for (int ch = 0; ch < 3; ch++)
+            {
+                if (float* row = block.ssg[i][ch])
+                    row[k] = 0.0f;
+            }
+            if (float* row = block.fm[i])
+                row[k] = 0.0f;
+        }
+    }
+    return outputs;
 }
 
 /// endregion </Per-channel outputs>
