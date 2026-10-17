@@ -785,6 +785,25 @@ fails it), `TsfmStepGate_Test` (two machines, the gate closed in one, a program 
 at random places, dense and with long silences, HQ / LQ / 2x: the host sound and the end state equal; not booking the
 sample phase fails it); the eleven snapshots' audio is the same bytes after each step.
 
+**R10. The Next's three AYs in quiet runs.** `NextAudio::Tick` (three `updateState`, the mix, the device's DC
+filter, a pushed level per tick at 218.75 kHz) was ~15 % of an idle Next 1x frame. `NextAudio::QuietTicks` takes
+`AdvanceTo` to its end in one run while the three chips are silentAtRest and the DC filter sits at its fixed point for
+their silence (the next step would leave it bit for bit where it is): every tick then has one level - the DC filter's,
+the DAC's and the Pi's - worked out by Tick's own arithmetic once and pushed for the run, and the generators advance
+(`advanceSilent`). Every input that moves the level (the ports, the DAC, the configuration) advances the device first,
+so nothing changes inside a run. Asked at the start of a run and every 256 ticks.
+
+| Row | before | after | x |
+|:--|--:|--:|--:|
+| Next_ShipNormal | 1,048 | 899 | 0.86 |
+| Next_ShipTurbo / Pentagon_ShipNormal | | | 1.00 |
+
+Exactness: `NextAudioQuietTicks_Test` - two Next machines (CPU parked), the quiet runs off in one, through silences
+long enough for them to take over and out again on each of the three chips (tone, noise, envelope, a pan change, the
+DAC held off its middle), ending on an envelope that ran through the silences unwritten; dropping the DAC from the
+quiet level or freezing the tones fails it. The audio of Spectron 2084, ScrollNutter (music), the copper demo and the
+idle machine, with the eleven classic snapshots: the same bytes.
+
 **Tried and dropped: the Next UART's peer promise.** A peer (the ESP module, a wired device) told the UART until when
 it stays silent (`QuietUntil` plus an activity counter), so the poll skipped the two virtual peer calls per
 instruction. Exact (lockstep twins with and without the promise, every Next frame / CPU / RAM hash equal at 3.5 and
