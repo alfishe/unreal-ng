@@ -259,6 +259,9 @@ public:
 
     /// Check if enough samples for one output (fractional). A slave
     /// delegates: it outputs exactly when its master does.
+    /// Takes its output instants from a master (attachMaster): its own phase does not move
+    bool isSlave() const { return _master != nullptr; }
+
     /// Samples the history holds: after this many zeros in a row it is all zeros
     static constexpr size_t history() { return HISTORY; }
 
