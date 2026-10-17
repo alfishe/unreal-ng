@@ -57,7 +57,8 @@ struct PairingInfo
     PairingState state = PairingState::Pending;
 };
 
-/// RequestPairing's answer. `error`: "" (ok), "bad_request", "pairing_unavailable", "too_many_pairings"
+/// RequestPairing's answer. `error`: "" (ok), "bad_request", "pairing_unavailable", "pairing_disabled",
+/// "too_many_pairings"
 struct PairingRequestResult
 {
     std::string error;
@@ -145,6 +146,10 @@ public:
     /// A GUI that can approve pairings is present (unreal-qt); without one, pairing is refused
     void SetApprovalAvailable(bool available);
     bool IsApprovalAvailable() const;
+    /// The user's setting (Tools > Companions...): false refuses new requests (pairing_disabled) and denies the ones
+    /// waiting; paired companions keep working
+    void SetPairingAllowed(bool allowed);
+    bool IsPairingAllowed() const;
     /// Keeps paired companions in this file (loaded now); "" = for the process only
     void SetStorePath(const std::string& path);
     std::string StorePath() const;
@@ -206,6 +211,7 @@ private:
     std::unordered_map<std::string, size_t> _byHash;  ///< token digest -> index in _companions
     std::vector<Pairing> _pairings;
     bool _approvalAvailable = false;
+    bool _pairingAllowed = true;
     std::string _storePath;
     bool _storeReadOnly = false;  ///< a newer version: never overwritten
     std::function<int64_t()> _clock;

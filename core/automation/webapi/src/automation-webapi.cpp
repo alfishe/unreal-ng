@@ -21,6 +21,7 @@
 #include "emulator/execution/companionregistry.h"
 #include "emulator_api.h"        // Triggers auto-registration for API handlers
 #include "emulator_websocket.h"  // Triggers auto-registration for WebSocket handlers
+#include "companion-event-hub.h"
 #include "debug-event-hub.h"
 #include "hello_world_api.h"     // Triggers auto-registration for API handlers
 #include "interpreter_api.h"     // Triggers auto-registration for Lua/Python API handlers
@@ -152,6 +153,9 @@ void AutomationWebAPI::start()
 
     // Debugger events for /api/v1/websocket subscribers
     DebugEventHub::Instance().Start();
+    // Companion events for /api/v1/companions/events: the same view as GET /api/v1/companions/me
+    CompanionEventHub::Instance().SetSnapshot(&api::v1::CompanionMeJson);
+    CompanionEventHub::Instance().Start();
 
     // Create a new thread and run HTTP server in it
     _thread = new std::thread(&AutomationWebAPI::threadFunc, this);
@@ -194,6 +198,7 @@ void AutomationWebAPI::stop()
     }
 
     DebugEventHub::Instance().Stop();
+    CompanionEventHub::Instance().Stop();
 
     std::cout << "AutomationWebAPI stopped" << std::endl;
 }
@@ -512,6 +517,10 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
         .disableSigtermHandling()  // SIGTERM is handled by the main application (unreal-qt or testclient)
         .addListener("0.0.0.0", static_cast<uint16_t>(port))
         .setThreadNum(2);
+
+    // Companion events: what changes with time alone (a re-take cooldown running out, the first recorded frame of
+    // time travel) posts no notification, so the views are compared once a second too; only changes are sent
+    app.getLoop()->runEvery(1.0, [] { CompanionEventHub::Instance().Refresh(); });
 
     try
     {

@@ -126,6 +126,8 @@ void CLIProcessor::HandleCompanion(const ClientSession& session, const std::vect
         }
         if (!registry.IsApprovalAvailable())
             oss << "No GUI on this instance: companions come from UNREAL_COMPANION_TOKENS" << NEWLINE;
+        else if (!registry.IsPairingAllowed())
+            oss << "The user turned pairing requests off at the GUI" << NEWLINE;
         session.SendResponse(oss.str());
         return;
     }

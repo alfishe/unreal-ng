@@ -15,6 +15,12 @@
 #include "emulator/execution/automationgate.h"
 #include "emulator/execution/companionregistry.h"
 
+namespace api::v1
+{
+/// The body of GET /api/v1/companions/me for this companion (companion_api.cpp); the events channel sends the same
+Json::Value CompanionMeJson(const companion::CompanionInfo& companion);
+}  // namespace api::v1
+
 namespace webapi_companion
 {
 

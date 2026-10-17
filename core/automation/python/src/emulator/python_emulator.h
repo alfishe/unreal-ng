@@ -816,7 +816,7 @@ namespace PythonBindings
         // as the user's hands. A script lists and revokes them; it never pairs, approves or acts as one
         m.def("companions", []() -> py::object {
             return StateNodeToPy(companion::CompanionRegistry::Instance().Report());
-        }, "Companion clients and pending pairings: {companions: [...], pairings: [...], approval_available}");
+        }, "Companion clients and pending pairings: {companions: [...], pairings: [...], approval_available, pairing_allowed}");
         m.def("companion_revoke", [](const std::string& idOrName) -> size_t {
             return companion::CompanionRegistry::Instance().Revoke(idOrName);
         }, "Revoke a companion by id or name ('all': every one); the number revoked", py::arg("id"));

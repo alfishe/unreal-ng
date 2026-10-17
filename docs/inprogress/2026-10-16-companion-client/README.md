@@ -1,7 +1,6 @@
 # Companion clients: remote hands of the user
 
-**Started:** 2026-10-16 · branch `companion-client` · status: design agreed with the owner, implementation in
-progress ([TODO.md](TODO.md))
+**Started:** 2026-10-16 · **landed** on master 2026-10-17 (`48e0af786`) · status: done ([DONE.md](DONE.md))
 
 Every automation surface goes through the automation gate ([execution arbiter design §6a](../2026-10-09-execution-arbiter/design.md#6a-automation-sessions-visible-remote-control-x7)).
 A client that changes the machine opens a run-control session. The GUI then shows the remote control bar, locks every
@@ -26,7 +25,7 @@ A **companion client** is a paired device that acts as the user's own hands:
 | [surfaces.md](surfaces.md) | every automation plane (WebAPI, CLI, MCP, Lua, Python) and the GUI, with the parity table |
 | [client-guide.md](client-guide.md) | how to write a companion: pairing UX, the action catalogue, handling a held session, reconnects |
 | [testing.md](testing.md) | the test plan: unit, integration, Qt, live verification |
-| [TODO.md](TODO.md) | status and the work list |
+| [DONE.md](DONE.md) | what landed, phase by phase; follow-ups not planned |
 
 ## Decisions (2026-10-16)
 
@@ -40,5 +39,3 @@ D1-D5 were proposed in the session and accepted by the owner; D3 was widened and
 | D4 | While a session is held, a companion's changing requests are refused `held_by_session`, as the GUI is locked. With the `takeback` scope it may take control back, as the GUI user can. |
 | D5 | Companions can be listed and revoked from every plane. Acting as a companion is possible on the WebAPI and the CLI, the planes a remote device reaches. MCP agents and in-process scripts never act as companions. |
 | D6 | Stepping without a pause makes no sense: steps, direct runs and register writes are refused `not_now` while the machine runs. The companion is told what it can do now: `GET /api/v1/companions/me` lists every action with `available` and a `reason`. |
-</content>
-</invoke>

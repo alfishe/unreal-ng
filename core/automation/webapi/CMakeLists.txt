@@ -214,6 +214,8 @@ set(COMMON_SOURCES
     src/api/asm_api.cpp
     src/emulator_websocket.cpp
     src/emulator_websocket.h
+    src/companion-event-hub.cpp
+    src/companion-event-hub.h
     src/debug-event-hub.cpp
     src/debug-event-hub.h
     src/automation-webapi.cpp

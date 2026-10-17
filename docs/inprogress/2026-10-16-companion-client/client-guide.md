@@ -22,7 +22,8 @@ Keep the token in the platform's secure storage when there is one. Never log it.
 2. Show the six-digit `code` large, with "Allow it at the emulator".
 3. Poll `GET /api/v1/companions/pairings/{pid}` once a second until a final state.
 4. On `approved`, store the token and the approved scopes. Grey out buttons whose scope was not granted.
-5. On `503 pairing_unavailable`, explain that the instance has no GUI and that its owner provisions companions in
+5. On `403 pairing_disabled`, say that the user turned pairing requests off at the emulator (Tools > Companions…).
+6. On `503 pairing_unavailable`, explain that the instance has no GUI and that its owner provisions companions in
    `UNREAL_COMPANION_TOKENS`.
 
 ## 3. Buttons to endpoints
@@ -62,7 +63,9 @@ the media endpoints that accept an upload (multipart), as every client may.
 
 ## 4. Showing the state
 
-Poll `GET /api/v1/companions/me` (2 Hz is enough) and drive every button from `emulators[i].actions`: lit when
+Open the events channel (`/api/v1/companions/events`, [protocol §4.1](protocol.md#41-events)): `hello` is the whole
+view, then each `emulator` message replaces that instance's entry. Where a WebSocket is not possible, poll
+`GET /api/v1/companions/me` (2 Hz is enough). Either way drive every button from `emulators[i].actions`: lit when
 `available`, dark otherwise, with the `reason` as its tooltip or second line. The step keys go dark while the machine
 runs and light up at a pause or a breakpoint stop; resume and pause swap; rewind lights once there is history; take-back
 lights only while a session holds the machine.
@@ -72,7 +75,8 @@ lights only while a session holds the machine.
 | `actions.<a>.available` | the button lit or dark, `reason` on it |
 | `control.held: true` | a label "MCP agent controls the emulator"; the take-back button if `can_take_back` |
 | 401 | "unpaired": offer to pair again |
-| no answer | "offline": keep the token, retry with back-off (1, 2, 4 … 30 s) |
+| no answer, or the channel dropped | "offline": keep the token, reconnect with back-off (1, 2, 4 … 30 s) |
+| `revoked` on the channel | "unpaired", as a 401 |
 
 Do not hammer actions while held: the server refuses them, `retry: false`.
 
@@ -85,5 +89,3 @@ Do not hammer actions while held: the server refuses them, `retry: false`.
 - **Several instances.** `me.emulators` lists them all; let the user pick, or follow `selected`.
 - **Clock-free.** Every time in the protocol is a server timestamp in ms; show ages, not clock times, when the device's
   clock may differ.
-</content>
-</invoke>

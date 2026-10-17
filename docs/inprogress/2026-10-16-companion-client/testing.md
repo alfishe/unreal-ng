@@ -51,6 +51,14 @@ the text table, revoke by name (URL-encoded), revoke all, a revoke without an id
 The CLI processor is not linked into `core-tests`; its companion gate is `CheckAction` (above) plus the scope table,
 and the live script drives the CLI itself.
 
+`companion-event-hub_test.cpp` (`CompanionEventHub_Test`): the handshake token gets `hello`; only a changed instance is
+sent, a new one too, a closed one as `emulator_gone`; authentication by message, nothing before it; an unknown token
+told and closed; a revoked companion told once and closed; a notification refreshes.
+
+`PairingTurnedOffRefusesRequestsAndDeniesTheWaitingOnes` (`CompanionRegistry_Test`): off → the waiting request is
+`denied` (an event for its prompt), a new one `pairing_disabled`, `pairing_allowed: false` in the report, paired
+companions still authenticate; on again → requests are accepted.
+
 ## 2. Qt tests (`unreal-qt-tests`)
 
 `unreal-qt/tests/qt/companioncontroller_test.cpp`, `CompanionController_Test`:
@@ -60,6 +68,7 @@ and the live script drives the CLI itself.
 | `ARequestOpensAPromptAndAllowPairsWithTheTickedScopes` | `pairing_requested` → the prompt with the code and the asked scopes ticked; untick one, Allow → the companion has the rest; the prompt goes |
 | `DenyRefusesAndACancelledRequestTakesItsPromptAway` | Deny → `denied`; a cancelled request closes its prompt without a decision |
 | `TheCompanionsDialogListsAndRevokes` | the rows, Revoke on the selected one: its token stops, the other stays |
+| `UntickingAcceptPairingRefusesNewRequestsAndDeniesTheWaitingOnes` | on by default; untick → the signal, the waiting request `denied` and its prompt gone, a new one `pairing_disabled`; tick → accepted again |
 
 ## 3. Live verification
 
@@ -78,7 +87,9 @@ verification companion (`verify`, every scope) and a narrow one (`narrow`, `run`
 | CLI | `companion auth`, `resume`, `memory write`, `step`, `companion`, `session take` | ok, ok, ok, `not_now`, "Available now" with the reasons, `companion_session` |
 | agents | WebAPI with the token and `X-Unreal-Source: mcp` | 403 `companion_not_for_agents` |
 | me | `GET /api/v1/companions/me` | the companion, the instance, `can_act` |
-| revoke | MCP `companion_manage revoke` | the token then gets 401 |
+| events | WebSocket with the token; resume; MCP `take_control`; take-back; `snapshot` | `hello` (paused, step lit); an `emulator` entry with step dark ("pause first") within 0.9 s; `held` with `can_take_back`; not held; `snapshot` |
+| events auth | WebSocket without a header: `snapshot`, then `auth`; another with a wrong token | `companion_required`; `hello`; `companion_unknown` and closed |
+| revoke | MCP `companion_manage revoke` (an events channel open) | the token then gets 401; the channel gets `revoked` and closes |
 
 The script checks `content[]` text as well as `structuredContent` (MCP testing guidelines).
 
@@ -90,5 +101,3 @@ The script checks `content[]` text as well as `structuredContent` (MCP testing g
    toast says who took control back.
 4. Tools → Companions…: the companion is listed; Revoke; its next request is 401.
 5. Restart: the store brings the companion back.
-</content>
-</invoke>

@@ -96,6 +96,11 @@ bool RequireCompanion(const HttpRequestPtr& req, std::function<void(const HttpRe
 
 }  // namespace
 
+Json::Value CompanionMeJson(const companion::CompanionInfo& companion)
+{
+    return MeJson(companion);
+}
+
 /// @brief GET /api/v1/companions - companions and pending pairings (never a token or a code);
 /// DELETE /api/v1/companions - revoke every companion
 void EmulatorAPI::companionsCollection(const HttpRequestPtr& req,
@@ -160,6 +165,8 @@ void EmulatorAPI::companionItem(const HttpRequestPtr& req, std::function<void(co
             }
             else if (result.error == "pairing_unavailable")
                 status = HttpStatusCode::k503ServiceUnavailable;
+            else if (result.error == "pairing_disabled")
+                status = HttpStatusCode::k403Forbidden;
             return ReplyJson(callback, body, status);
         }
         Json::Value out;
