@@ -41,7 +41,7 @@ def main():
     parser.add_argument('--keep', action='store_true', help='keep the instance (default: delete it)')
     args = parser.parse_args()
     profile = PROFILES[args.assembler]
-    descriptor = args.descriptor or profile.descriptor
+    descriptor = args.descriptor = args.descriptor or profile.descriptor   # the boot of some profiles reads it
     outputs = [os.path.abspath(args.output)]
     stem = os.path.splitext(outputs[0])[0]
     outputs += [f'{stem}.{f}' for f in args.also.split(',') if f]
@@ -66,6 +66,9 @@ def main():
             ejected = emu.post('/media/A/eject', {'discard': True})   # the snapshot names no host disk (the assembler is in memory)
             if not ejected.get('ok'):
                 raise SystemExit(f'eject: {ejected}')
+            for drive in 'BCD':                    # a disk some put in another drive too (ZAsm 4.0x8: D)
+                if emu.get('/media').get('slots', [{}] * 4)[' ABCD'.index(drive) - 1].get('state') == 'present':
+                    emu.post(f'/media/{drive}/eject', {'discard': True})
         for path in outputs:
             reply = emu.post('/snapshot/save', {'path': path, 'force': True})
             print('saved:', path, reply.get('format') or reply.get('message') or reply)

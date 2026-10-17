@@ -909,7 +909,7 @@ SyncDescriptor Zxasm310()
     d.codec = "zxasm";
     d.version = "3.0";
     d.extension = "a";
-    d.identify = {{0x816C, std::string("\xC8\x00\xC8\x00\xDB\x6B\xC0\x00\x00\x0A\x0A\x8E\x00\x20\x80\x17\x00\x20\x01\x8F\x00\xF3\xFD\xE5", 24)}};
+    d.identify = {{0x8171, std::string("\x6B\xC0\x00\x00\x0A\x0A\x8E\x00\x20\x80\x17\x00\x20\x01\x8F\x00\xF3\xFD\xE5\xDD\xE5\xE5\xD5\xC5", 24)}};
     d.pages = PageIdRule::Fixed;
     d.family = LayoutFamily::Linear;
     d.linear.startAt = 0x868F;
