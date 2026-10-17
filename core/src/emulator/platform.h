@@ -74,6 +74,7 @@ constexpr char const* NC_MEDIA_DIRTY = "MEDIA_DIRTY";                           
 constexpr char const* NC_MEDIA_CLEAN = "MEDIA_CLEAN";                           // A medium has no unsaved changes any more: saved, discarded, written back (payload: MediaSlotPayload). An eject posts NC_MEDIA_EJECTED instead
 constexpr char const* NC_MEDIA_EXPORTED = "MEDIA_EXPORTED";                     // A medium was exported to a file (payload: MediaSlotPayload, _path = target)
 constexpr char const* NC_MEDIA_SAVED = "MEDIA_SAVED";                           // A medium was saved; it now stands for that file (payload: MediaSlotPayload, path = the file)
+constexpr char const* NC_CONTROLLER_CONNECTOR_CHANGED = "CONTROLLER_CONNECTOR_CHANGED"; // A device was plugged into or unplugged from a connector, or the connector list was rebuilt (payload: ControllerConnectorPayload). Posted from ControllerManager on the thread that applied it, after its lock is released
 constexpr char const* NC_RECORDING_STATE = "RECORDING_STATE";                   // Recording started or stopped (payload: RecordingStatePayload). Posted from RecordingManager.
 constexpr char const* NC_MEMORY_PAGE_CHANGED = "MEMORY_PAGE_CHANGED";           // RAM bank mapping changed (payload: MemoryPagePayload). Posted by Memory on bank switch.
 constexpr char const* NC_ROM_PAGE_CHANGED = "ROM_PAGE_CHANGED";                 // ROM selection changed (payload: ROMPagePayload). Posted by Memory on ROM switch.

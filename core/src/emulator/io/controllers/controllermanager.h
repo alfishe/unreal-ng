@@ -39,18 +39,24 @@ namespace controllers
 
 class IHostInputSource;
 
-/// Options of a keyboard joystick (ignored by the other devices)
+/// Options of a connector's device (each device reads its own, the others are ignored)
 struct OverlayOptions
 {
     uint8_t sinclairPort = 1;  ///< sinclair-joystick: 1 (6-0) or 2 (1-5)
     bool cursorShift = false;  ///< cursor-joystick: also hold CAPS SHIFT while a direction is held
     /// keys-joystick: the key of each control bit (kRight ... kFire4); ZXKEY_NONE = unbound
     std::array<ZXKeysEnum, kOverlayControls> keys{};
+    /// kempston-joystick: bits 5-7 carry fire 2-4 (an extended interface, a Sega pad); off = they read 0 (the
+    /// original interface grounds D5-D7)
+    bool extended = true;
+    /// kempston-joystick: a cheap interface that decodes A5 = 0 without /RD answers the interrupt acknowledge too:
+    /// with A5 of PC low the stick byte is the IM 2 vector (Joystick::Im2Vector)
+    bool im2Leak = false;
 };
 
 struct Connector
 {
-    std::string id;     ///< kempston, next.left, next.right, sinclair-1, sinclair-2, keyjoy.1, keyjoy.2
+    std::string id;     ///< kempston, next.left, next.right, sinclair-1, sinclair-2, fuller, keyjoy.1, keyjoy.2
     std::string alias;  ///< left / right on the Next, "" otherwise
     ConnectorKind kind = ConnectorKind::KeyboardJoystick;
     unsigned kindIndex = 0;  ///< index among the connectors of its kind (the kind:index selector)
@@ -58,7 +64,8 @@ struct Connector
     bool fixed = false;  ///< the device is part of the board: cannot be unplugged or replaced
     RetroDeviceKind device = RetroDeviceKind::None;
     OverlayOptions options;
-    uint16_t mask = 0;  ///< keyboard joysticks: the controls held (the others read their device)
+    uint16_t mask = 0;  ///< keyboard joysticks and card sockets: the controls held (the others read their device)
+    const void* owner = nullptr;  ///< the card that brought the connector (ICard); null for the machine's own
 };
 
 class ControllerManager : public ttd::TTDSerializable
@@ -103,10 +110,14 @@ public:
     /// region <Input>
     /// The controls held on the connector now (Kempston: the joystick byte; Next: the pad's 12 bits)
     uint16_t State(size_t index) const;
+    /// The controls held on the connector a card brought (ICard::Connectors): what the card's port answers from.
+    /// 0 when the card has none
+    uint16_t OwnedState(const void* owner) const;
     /// Live input: the whole state of a connector, through TimeTravelManager::SubmitLiveInput (applied directly
     /// without TTD). False when refused (the journal owns input) or the connector has no device
     bool Submit(size_t index, uint16_t mask);
-    /// The TTD apply point of ConnectorState (live and replay): a keyboard joystick's mask. False for other kinds
+    /// The TTD apply point of ConnectorState (live and replay): a keyboard joystick's or card socket's mask. False
+    /// for other kinds
     bool ApplyConnectorState(size_t index, uint16_t mask);
     /// The host's devices: sampled at every frame boundary (OnFrame). nullptr detaches
     void SetHostInputSource(std::shared_ptr<IHostInputSource> source);
@@ -123,8 +134,9 @@ public:
     void AddTtdFingerprint(ttd::TTDConfigFingerprint& fp) const;
 
     /// region <TTD (TTDDeviceType::Controllers)>
-    /// Blob v2: version, the count of keyboard-joystick connectors, then each one's device, Sinclair port, Cursor
-    /// shift, eight keys (u8 each) and mask (u16 little-endian). v1 (masks only) still loads
+    /// Blob v2: version, the count of journaled connectors (keyboard joysticks and card sockets, in list order), then
+    /// each one's device, Sinclair port, Cursor shift, eight keys (u8 each) and mask (u16 little-endian). v1 (masks
+    /// only) still loads
     size_t TTDStateSize() const override;
     void TTDSaveState(uint8_t* dst) const override;
     void TTDLoadState(const uint8_t* src) override;
@@ -153,7 +165,14 @@ private:
     bool FramesRun() const;
     /// The overlay of every keyboard joystick, pushed to the keyboard
     void UpdateOverlay();
-    size_t OverlayCount() const;
+    /// The Kempston connector's options, pushed to the Joystick device
+    void UpdateKempston();
+    /// The connectors whose controls the manager holds and journals as ConnectorState
+    size_t JournaledCount() const;
+    /// NC_CONTROLLER_CONNECTOR_CHANGED for a change made under the lock (connector "" = the list was rebuilt)
+    void QueuePostLocked(const std::string& connector, const std::string& device);
+    /// Post what was queued; the lock must not be held (observers may call back)
+    void FlushPosts();
 
     EmulatorContext* _context = nullptr;
     /// Guards the connectors: plugs come from control threads, input and TTD from the machine's thread. Never held
@@ -169,6 +188,13 @@ private:
     };
     std::vector<PendingPlug> _pending;  ///< plugs made while TTD records, applied at the frame boundary
     std::condition_variable _applied;
+    struct QueuedPost
+    {
+        std::string connector;
+        std::string device;
+        uint64_t revision = 0;
+    };
+    std::vector<QueuedPost> _posts;  ///< guarded by _mutex
 
     std::mutex _sourceMutex;
     std::shared_ptr<IHostInputSource> _source;

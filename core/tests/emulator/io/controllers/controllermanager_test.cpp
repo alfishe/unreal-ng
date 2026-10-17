@@ -247,6 +247,41 @@ TEST_F(ControllerManager_Test, KempstonAndNextKeepTheirDevicesAndKinds)
     EXPECT_EQ(_manager->State(Index("next.right")), 0x0811);
 }
 
+/// The Kempston options (C1c): `extended` off reads bits 5-7 as 0, `im2-leak` makes the stick byte the IM2 vector
+/// when A5 of PC is 0; an options change is a replug of the fixed socket, refused while recording
+TEST_F(ControllerManager_Test, KempstonOptions_ExtendedAndIm2Leak)
+{
+    Init("PENTAGON");
+    Joystick& stick = *_context->pJoystick;
+    const size_t kempston = Index("kempston");
+    ASSERT_TRUE(_manager->Submit(kempston, 0xE1));  // right + fires 2-4
+    EXPECT_EQ(stick.Read(), 0xE1);
+    EXPECT_EQ(stick.Im2Vector(0xFF, 0x8000), 0xFF) << "no leak by default";
+
+    OverlayOptions options;
+    options.extended = false;
+    options.im2Leak = true;
+    PlugOrFail("kempston", RetroDeviceKind::KempstonJoystick, options);
+    EXPECT_FALSE(_manager->At(kempston).options.extended);
+    EXPECT_TRUE(_manager->At(kempston).options.im2Leak);
+    EXPECT_EQ(stick.Read(), 0x01) << "bits 5-7 read 0";
+    EXPECT_EQ(stick.Im2Vector(0xFF, 0x8000), 0x01) << "A5 of PC is 0: the stick drives the bus";
+    EXPECT_EQ(stick.Im2Vector(0xFF, 0x8020), 0xFF) << "A5 of PC is 1: the floating bus";
+
+    _manager->Rebuild();
+    EXPECT_TRUE(_manager->At(Index("kempston")).options.im2Leak) << "a rebuild keeps the socket's options";
+    EXPECT_FALSE(stick.Extended());
+
+    _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    ASSERT_TRUE(_context->pTimeTravelController->StartRecording());
+    const ControllerResult refused = _manager->Plug(kempston, RetroDeviceKind::KempstonJoystick, {});
+    EXPECT_EQ(refused.error, ControllerError::Recording) << refused.message;
+    _context->pTimeTravelController->StopRecording();
+    PlugOrFail("kempston", RetroDeviceKind::KempstonJoystick, {});
+    EXPECT_TRUE(stick.Extended());
+    EXPECT_EQ(stick.Im2Vector(0xFF, 0x8000), 0xFF);
+}
+
 TEST_F(ControllerManager_Test, HostSource_SubmitsChangesOnly)
 {
     Init("48K");

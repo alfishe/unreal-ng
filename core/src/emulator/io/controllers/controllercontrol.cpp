@@ -114,9 +114,9 @@ const std::vector<std::string>& ControllerControl::OptionsFor(const std::string&
     static const std::map<std::string, std::vector<std::string>> options = {
         {"list", {}},
         {"get", {}},
-        {"plug", {"port", "shift", "keys", "async"}},
+        {"plug", {"port", "shift", "keys", "extended", "im2-leak", "async"}},
         {"unplug", {"async"}},
-        {"options", {"port", "shift", "keys", "async"}},
+        {"options", {"port", "shift", "keys", "extended", "im2-leak", "async"}},
         {"targets", {}},
     };
     static const std::vector<std::string> none;
@@ -209,6 +209,10 @@ StateNode ControllerControl::ConnectorValue(const Connector& connector, uint16_t
         case RetroDeviceKind::KeysJoystick:
             options["keys"] = ControllerManager::KeysSpec(connector.options.keys);
             break;
+        case RetroDeviceKind::KempstonJoystick:
+            options["extended"] = connector.options.extended;
+            options["im2-leak"] = connector.options.im2Leak;
+            break;
         default:
             break;
     }
@@ -249,6 +253,13 @@ ControllerResult ControllerControl::ParseOptions(RetroDeviceKind device,
                                                   "right, left, down, up, fire, fire2, fire3, fire4");
             }
             base.keys = keys;
+        }
+        else if ((name == "extended" || name == "im2-leak") && device == RetroDeviceKind::KempstonJoystick)
+        {
+            bool& field = name == "extended" ? base.extended : base.im2Leak;
+            if (!ParseBool(text, field))
+                return ControllerResult::Fail(ControllerError::BadRequest,
+                                              name + " '" + text + "': expected on or off");
         }
         else
         {
@@ -370,7 +381,8 @@ ControllerReply ControllerControl::Plug(const ControllerRequest& request)
     {
         return Fail(ControllerError::BadRequest,
                     "plug needs a retro device ('" + request.device +
-                        "' is not one: kempston-joystick, md6-pad, sinclair-joystick, cursor-joystick, keys-joystick)");
+                        "' is not one: kempston-joystick, md6-pad, sinclair-joystick, cursor-joystick, keys-joystick, " +
+                        "fuller-joystick)");
     }
 
     size_t index = 0;

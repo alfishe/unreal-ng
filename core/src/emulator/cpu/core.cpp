@@ -204,7 +204,7 @@ bool Core::Init()
 
     /// region <Controllers>
 
-    // Connectors and retro devices; the list follows the machine (Rebuild on reset, when the decoder exists)
+    // Connectors and retro devices; the list follows the machine (rebuilt below once the slot cards exist)
     if (result)
     {
         _controllerManager = new controllers::ControllerManager(_context);
@@ -526,6 +526,10 @@ bool Core::Init()
         if (!result)
             _initError = _slotManager->BuildError();
     }
+
+    // The connectors the cards bring (a Fuller Box's stick socket) join the machine's
+    if (result && _controllerManager)
+        _controllerManager->Rebuild();
 
     /// endregion </Activate IO devices>
 

@@ -251,6 +251,38 @@ constexpr Src kWifiSources[] = { Src::IzzxZxWifi, Src::IzzxZxWifiReadme, Src::Re
 
 // endregion
 
+// region <fuller-box (research-cards.md "Fuller Box"): AY on #3F / #5F, stick on #7F, passive, no /DOS gating>
+
+constexpr OptionValue kFullerDecodeValues[] = {
+    { "full-low", "full low byte (FUSE)" }, { "a7a6a5", "A7-A5 only (zxsp)" },
+};
+constexpr When kFullerFullLow{ Opt::Decode, Bit(0) };
+constexpr When kFullerA7A6A5{ Opt::Decode, Bit(1) };
+
+constexpr PortClaim kFullerClaims[] = {
+    // #3F: register select (write), register data (read: FUSE, zxsp, nocash; MAME reads #5F)
+    { .mask = 0x00FF, .match = 0x003F, .dir = Dir::InOut, .when = kFullerFullLow },
+    { .mask = 0x00FF, .match = 0x005F, .dir = Dir::Out, .when = kFullerFullLow },
+    { .mask = 0x00FF, .match = 0x007F, .dir = Dir::In, .when = kFullerFullLow },
+    { .mask = 0x00E0, .match = 0x0020, .dir = Dir::InOut, .when = kFullerA7A6A5, .port = 0x003F },
+    { .mask = 0x00E0, .match = 0x0040, .dir = Dir::Out, .when = kFullerA7A6A5, .port = 0x005F },
+    { .mask = 0x00E0, .match = 0x0060, .dir = Dir::In, .when = kFullerA7A6A5, .port = 0x007F },
+};
+
+constexpr FunctionUse kFullerFunctions[] = {
+    { .function = Function::FullerAy },
+    { .function = Function::FullerJoystick },
+};
+
+constexpr OptionDef kFullerOptions[] = {
+    { .key = Opt::Decode, .kind = OptionKind::Enum, .values = kFullerDecodeValues, .defaultBits = Bit(0),
+      .description = "port decode: the full low byte, or A7-A5 only (no schematic survives)" },
+};
+
+constexpr Src kFullerSources[] = { Src::FuseFuller, Src::MameFuller, Src::ZxspFullerBox, Src::RepoSlotsResearchCards };
+
+// endregion
+
 constexpr CardDef kCards[] = {
     { .id = "ay", .name = "machine's own AY (socket default)", .bus = BusKind::AySocket, .needs = kNone,
       .socketDefault = true, .portsNote = "host decode",
@@ -278,6 +310,8 @@ constexpr CardDef kCards[] = {
     { .id = "soundrive", .name = "SounDrive 1.05", .bus = BusKind::ZxBus, .needs = kNone,
       .options = kSoundriveOptions, .functions = kSoundriveFunctions, .claims = kSoundriveClaims,
       .sources = kSoundriveSources },
+    { .id = "fuller-box", .name = "Fuller Box (AY + joystick)", .bus = BusKind::SinclairEdge, .needs = kNone,
+      .options = kFullerOptions, .functions = kFullerFunctions, .claims = kFullerClaims, .sources = kFullerSources },
     { .id = "multisound", .name = "ZX-MultiSound rev.A2", .bus = BusKind::ZxBus,
       .needs = BusSignal::Iorqge | BusSignal::Plus12V, .detection = CycleDetection::RdWr,
       .options = kMultisoundOptions, .functions = kMultisoundFunctions, .claims = kMultisoundClaims,

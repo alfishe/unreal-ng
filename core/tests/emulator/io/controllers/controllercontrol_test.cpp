@@ -4,14 +4,20 @@
 
 #include "emulator/io/controllers/controllercontrol.h"
 
+#include <atomic>
+#include <mutex>
 #include <string>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testwaithelper.h"
+#include "3rdparty/message-center/messagecenter.h"
 #include "common/inifile.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/controllers/controllerconfig.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
 #include "gtest/gtest.h"
 #include "stdafx.h"
 
@@ -112,6 +118,53 @@ TEST_F(ControllerControl_Test, PlugAuto_FreeSocketsFirst)
     reply = Run("options", "keyjoy.1", "", {{"port", "1"}});
     ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
     EXPECT_EQ(_context->pControllerManager->At(1).options.sinclairPort, 1);
+}
+
+/// Every plug and unplug posts NC_CONTROLLER_CONNECTOR_CHANGED naming the emulator, the connector, the device and the
+/// revision the reply shows; a refused one posts nothing
+TEST_F(ControllerControl_Test, PlugAndUnplug_PostConnectorChanged)
+{
+    struct Seen
+    {
+        std::string connector;
+        std::string device;
+        uint64_t revision;
+    };
+    std::mutex mutex;
+    std::vector<Seen> seen;
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    const unreal::UUID emulatorId = _context->emulatorId;
+    struct Observing
+    {
+        MessageCenter& mc;
+        uint64_t id;
+        ~Observing() { mc.RemoveObserverById(NC_CONTROLLER_CONNECTOR_CHANGED, id); }
+    } observing{mc, mc.AddObserver(NC_CONTROLLER_CONNECTOR_CHANGED, [&mutex, &seen, emulatorId](int, Message* message) {
+                    auto* payload = message ? dynamic_cast<ControllerConnectorPayload*>(message->obj) : nullptr;
+                    if (!payload || payload->emulatorId != emulatorId)
+                        return;
+                    std::lock_guard<std::mutex> lock(mutex);
+                    seen.push_back({payload->connector, payload->device, payload->revision});
+                })};
+    auto count = [&mutex, &seen] {
+        std::lock_guard<std::mutex> lock(mutex);
+        return seen.size();
+    };
+
+    const ControllerReply plugged = Run("plug", "keyjoy.2", "cursor-joystick");
+    ASSERT_TRUE(plugged.result.Ok()) << plugged.result.message;
+    EXPECT_FALSE(Run("unplug", "kempston").result.Ok());
+    const ControllerReply unplugged = Run("unplug", "keyjoy.2");
+    ASSERT_TRUE(unplugged.result.Ok()) << unplugged.result.message;
+
+    ASSERT_TRUE(TestWait::For([&count] { return count() >= 2; }));
+    std::lock_guard<std::mutex> lock(mutex);
+    ASSERT_EQ(seen.size(), 2u) << "the refused unplug posts nothing";
+    EXPECT_EQ(seen[0].connector, "keyjoy.2");
+    EXPECT_EQ(seen[0].device, "cursor-joystick");
+    EXPECT_EQ(seen[0].revision, plugged.revision);
+    EXPECT_EQ(seen[1].device, "none");
+    EXPECT_EQ(seen[1].revision, unplugged.revision);
 }
 
 TEST_F(ControllerControl_Test, Targets_RefusalIsAnAnswer)

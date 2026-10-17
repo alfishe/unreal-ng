@@ -162,7 +162,7 @@ Each route gets an `openapi_controllers*.inc` entry, as media and joystick do.
 | Notification | When |
 |:--|:--|
 | `NC_CONTROLLER_HOST_CHANGED` | a host device connected, disconnected, changed role or pin |
-| `NC_CONTROLLER_CONNECTOR_CHANGED` | plug or unplug on a connector (revision increments) |
+| `NC_CONTROLLER_CONNECTOR_CHANGED` | plug or unplug on a connector (revision increments); built in C1c: `ControllerConnectorPayload` (emulator id, connector id, device kind or `none`, revision), posted after the manager's lock is released; a rebuild of the connector list posts once with an empty connector id |
 | `NC_CONTROLLER_AUTO_DECIDED` | the auto decision changed (the toast listens) |
 | `NC_CONTROLLER_LAYER` | the debug layer was entered or left (the status bar listens) |
 | `NC_CONTROLLER_FEEDBACK` | core output for rumble and LEDs, and the haptic source levels and gate state ([architecture.md §10](architecture.md#10-outputs-rumble-leds-triggers), [haptics.md](haptics.md)) |

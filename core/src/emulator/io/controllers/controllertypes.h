@@ -22,6 +22,7 @@ enum class RetroDeviceKind : uint8_t
     SinclairJoystick,  ///< overlay: Sinclair 1 = 6 L, 7 R, 8 D, 9 U, 0 F; Sinclair 2 = 1 L, 2 R, 3 D, 4 U, 5 F
     CursorJoystick,    ///< overlay: 5 L, 6 D, 7 U, 8 R, 0 F
     KeysJoystick,      ///< overlay: a user key per control (QAOP + Space by default)
+    FullerJoystick,    ///< the Fuller Box's stick: #7F active low, F---RLDU (a card's connector, journaled as ConnectorState)
 };
 
 enum class ConnectorKind : uint8_t
@@ -30,7 +31,9 @@ enum class ConnectorKind : uint8_t
     NextDb9,           ///< a ZX Next DB9 connector: fixed md6-pad, projection by NR #05
     KeyboardJoystick,  ///< a joystick wired to the keyboard matrix: built-in sockets (+2 / +2A / +3) and the
                        ///< keyjoy sockets every machine has for keys-only games
+    Fuller,            ///< the Fuller Box card's joystick socket: fixed fuller-joystick, while the card is fitted
 };
+constexpr unsigned kConnectorKinds = 4;
 
 /// Retro control bits, the Kempston order every connector device shares (the Md6Pad adds bits 4-11 of PadState)
 constexpr uint16_t kRight = 0x01;
@@ -44,11 +47,11 @@ constexpr uint16_t kFire4 = 0x80;
 /// The controls a keyboard joystick has: four directions and up to four fire buttons
 constexpr unsigned kOverlayControls = 8;
 
-/// kempston-joystick, md6-pad, sinclair-joystick, cursor-joystick, keys-joystick ("none" for None)
+/// kempston-joystick, md6-pad, sinclair-joystick, cursor-joystick, keys-joystick, fuller-joystick ("none" for None)
 const char* RetroDeviceKindName(RetroDeviceKind kind);
 /// The reverse; false when the name is unknown
 bool RetroDeviceKindFromName(const std::string& name, RetroDeviceKind& kind);
-/// kempston, next-db9, keyboard-joystick
+/// kempston, next-db9, keyboard-joystick, fuller
 const char* ConnectorKindName(ConnectorKind kind);
 
 /// The error of a connector operation; the text codes and HTTP statuses are the surfaces' (surfaces.md §4)

@@ -729,7 +729,15 @@ types:
           64 MachineSerialPeer2 (the peer on a machine's second serial port, the Next's UART 1 / the Pi's line: the
           blob of MachineSerialPeer (27), a netstate::Com with its tail; needs the wide peripheral mask of schema 3),
           65 JoystickSerialPeer (the peer plugged into the Next's joystick connector while NR #0B selects the UART
-          mode: the same blob).
+          mode: the same blob),
+          66 Controllers (controllers::ControllerManager, a machine peripheral: u1 version 2, u1 the count of
+          journaled connectors (the keyboard joysticks and the card-brought ones such as the Fuller Box's), then per
+          connector in connector order: u1 device (RetroDeviceKind), u1 Sinclair port, u1 cursor shift, 8 x u1 the
+          keys of right, left, down, up, fire 1-4 (PcKey), u2 the held controls (Kempston bit order); a blob of
+          another connector count restores nothing),
+          67 FullerBox (a Fuller Box card, slot-built, instance <slot>.fuller-box: u1 version 1, u8 card-axis origin,
+          u8 last card time, f8 next generator tick (IEEE bits, u8), u8 the mixer's frame-start sample phase, then the
+          AY (SoundChip_AY8910's 73 bytes); the stick's controls are in Controllers (66)).
           ScorpionProfROM (6) byte 5 is the Turbo+ latch (scorpion_turbo; 0 in sessions recorded before it).
           Plus3Paging (13): u1 p1FFD, u1 floating-bus byte (the gate array's last contended byte), u1 flags
           (bit 0: the byte is valid; 0 in sessions recorded before it), u1 reserved.

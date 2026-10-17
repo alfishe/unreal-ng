@@ -4,13 +4,18 @@
 #include <cctype>
 #include <chrono>
 
+#include "3rdparty/message-center/messagecenter.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/ttd/timetravelhooks.h"
 #include "debugger/ttd/ttdinputapply.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/joystick/joystick.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/slots/card.h"
+#include "emulator/slots/slotmanager.h"
 #include "ihostinputsource.h"
 
 namespace controllers
@@ -66,7 +71,7 @@ void SavePlug(const Connector& connector, uint8_t* dst)
 
 void LoadPlug(const uint8_t* src, Connector& connector)
 {
-    connector.device = src[0] <= static_cast<uint8_t>(RetroDeviceKind::KeysJoystick)
+    connector.device = src[0] <= static_cast<uint8_t>(RetroDeviceKind::FullerJoystick)
                            ? static_cast<RetroDeviceKind>(src[0])
                            : RetroDeviceKind::None;
     connector.options.sinclairPort = src[1] == 2 ? 2 : 1;
@@ -77,10 +82,17 @@ void LoadPlug(const uint8_t* src, Connector& connector)
 
 bool SameOptions(const OverlayOptions& a, const OverlayOptions& b)
 {
-    return a.sinclairPort == b.sinclairPort && a.cursorShift == b.cursorShift && a.keys == b.keys;
+    return a.sinclairPort == b.sinclairPort && a.cursorShift == b.cursorShift && a.keys == b.keys &&
+           a.extended == b.extended && a.im2Leak == b.im2Leak;
 }
 
-Connector MakeConnector(const char* id, const char* alias, ConnectorKind kind, bool fixed, RetroDeviceKind device,
+/// The manager holds the controls (journaled as ConnectorState, in the Controllers blob)
+bool Journaled(const Connector& connector)
+{
+    return connector.kind == ConnectorKind::KeyboardJoystick || connector.kind == ConnectorKind::Fuller;
+}
+
+Connector MakeConnector(const std::string& id, const char* alias, ConnectorKind kind, bool fixed, RetroDeviceKind device,
                         std::vector<RetroDeviceKind> accepts)
 {
     Connector connector;
@@ -134,14 +146,36 @@ void ControllerManager::Rebuild()
         built.back().options.sinclairPort = 2;
     }
 
+    // The sockets the fitted cards bring (a Fuller Box): the card answers its port from the connector's controls
+    if (SlotManager* slotManager = _context ? _context->pSlotManager : nullptr)
+    {
+        std::vector<CardConnector> brought;
+        for (const std::unique_ptr<ICard>& card : slotManager->Cards())
+        {
+            brought.clear();
+            card->Connectors(brought);
+            for (const CardConnector& socket : brought)
+            {
+                std::string id = socket.id;
+                for (unsigned n = 2; std::any_of(built.begin(), built.end(),
+                                                 [&id](const Connector& c) { return c.id == id; });
+                     n++)
+                    id = socket.id + "." + std::to_string(n);
+                built.push_back(MakeConnector(id, "", socket.kind, true, socket.device, {socket.device}));
+                built.back().owner = card.get();
+            }
+        }
+    }
+
     // Every machine: two keyboard-joystick sockets for keys-only games (no card needed)
     built.push_back(
         MakeConnector("keyjoy.1", "", ConnectorKind::KeyboardJoystick, false, RetroDeviceKind::None, overlays));
     built.push_back(
         MakeConnector("keyjoy.2", "", ConnectorKind::KeyboardJoystick, false, RetroDeviceKind::None, overlays));
 
-    std::lock_guard<std::mutex> lock(_mutex);
-    unsigned perKind[3] = {0, 0, 0};
+    std::unique_lock<std::mutex> lock(_mutex);
+    const bool rebuilt = !_connectors.empty();  // the constructor's first build tells nobody
+    unsigned perKind[kConnectorKinds] = {};
     for (Connector& connector : built)
     {
         connector.kindIndex = perKind[static_cast<unsigned>(connector.kind)]++;
@@ -150,7 +184,8 @@ void ControllerManager::Rebuild()
         {
             if (old.id != connector.id)
                 continue;
-            if (!connector.fixed)
+            // A fixed socket keeps its options (Kempston's) while its device stays the board's
+            if (!connector.fixed || old.device == connector.device)
             {
                 connector.device = old.device;
                 connector.options = old.options;
@@ -163,6 +198,11 @@ void ControllerManager::Rebuild()
     _lastSample.assign(_connectors.size(), -1);
     _revision++;
     UpdateOverlay();
+    UpdateKempston();
+    if (rebuilt)
+        QueuePostLocked({}, {});
+    lock.unlock();
+    FlushPosts();
 }
 
 size_t ControllerManager::Count() const
@@ -251,7 +291,8 @@ ControllerResult ControllerManager::CheckPlugLocked(size_t index, RetroDeviceKin
     if (index >= _connectors.size())
         return ControllerResult::Fail(ControllerError::UnknownConnector, "no connector " + std::to_string(index));
     const Connector& connector = _connectors[index];
-    if (connector.fixed)
+    // A fixed socket takes new options for its own device, nothing else
+    if (connector.fixed && device != connector.device)
         return ControllerResult::Fail(ControllerError::Fixed, connector.id + " is part of the board");
     if (device != RetroDeviceKind::None &&
         std::find(connector.accepts.begin(), connector.accepts.end(), device) == connector.accepts.end())
@@ -271,6 +312,30 @@ void ControllerManager::PlugLocked(size_t index, RetroDeviceKind device, const O
     _lastSample[index] = -1;
     _revision++;
     UpdateOverlay();
+    UpdateKempston();
+    QueuePostLocked(connector.id, RetroDeviceKindName(device));
+}
+
+void ControllerManager::QueuePostLocked(const std::string& connector, const std::string& device)
+{
+    _posts.push_back({connector, device, _revision});
+}
+
+void ControllerManager::FlushPosts()
+{
+    std::vector<QueuedPost> posts;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        posts.swap(_posts);
+    }
+    for (QueuedPost& post : posts)
+    {
+        auto* payload = new ControllerConnectorPayload(std::move(post.connector), std::move(post.device), post.revision);
+        // Every payload names its emulator: the context's id is there from the start (the emulator object may not be)
+        if (_context)
+            payload->emulatorId = _context->emulatorId;
+        MessageCenter::DefaultMessageCenter().Post(NC_CONTROLLER_CONNECTOR_CHANGED, payload, true);
+    }
 }
 
 ControllerResult ControllerManager::Plug(size_t index, RetroDeviceKind device, const OverlayOptions& options)
@@ -278,13 +343,21 @@ ControllerResult ControllerManager::Plug(size_t index, RetroDeviceKind device, c
     bool defer = false;
     if (ControllerResult refused = PlugRefused(defer); !refused.Ok())
         return refused;
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::unique_lock<std::mutex> lock(_mutex);
     if (ControllerResult checked = CheckPlugLocked(index, device); !checked.Ok())
         return checked;
+    // The Kempston options are not in the Controllers blob: a seek could not take them back
+    if (defer && _connectors[index].kind == ConnectorKind::Kempston)
+    {
+        return ControllerResult::Fail(ControllerError::Recording,
+                                      "the Kempston options are not journaled: set them before the recording starts");
+    }
 
     if (!defer)
     {
         PlugLocked(index, device, options);
+        lock.unlock();
+        FlushPosts();
         return ControllerResult::Success();
     }
     // The latest request per connector wins
@@ -319,6 +392,7 @@ void ControllerManager::ApplyPending()
         }
         _pending.clear();
     }
+    FlushPosts();
     _applied.notify_all();
 }
 
@@ -423,6 +497,18 @@ uint16_t ControllerManager::State(size_t index) const
         case ConnectorKind::NextDb9:
             return _context && _context->pPortDecoder ? _context->pPortDecoder->PadState(connector.kindIndex) : 0;
         case ConnectorKind::KeyboardJoystick:
+        case ConnectorKind::Fuller:
+            return connector.mask;
+    }
+    return 0;
+}
+
+uint16_t ControllerManager::OwnedState(const void* owner) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    for (const Connector& connector : _connectors)
+    {
+        if (owner && connector.owner == owner)
             return connector.mask;
     }
     return 0;
@@ -446,6 +532,7 @@ bool ControllerManager::EventFor(size_t index, uint16_t mask, ttd::TTDInputEvent
             ev.dx = static_cast<int16_t>(mask & PortDecoder::kPadMask);
             return true;
         case ConnectorKind::KeyboardJoystick:
+        case ConnectorKind::Fuller:
             if (connector.device == RetroDeviceKind::None)
                 return false;
             ev.kind = ttd::TTDInputKind::ConnectorState;
@@ -472,7 +559,7 @@ bool ControllerManager::ApplyConnectorState(size_t index, uint16_t mask)
     if (index >= _connectors.size())
         return false;
     Connector& connector = _connectors[index];
-    if (connector.kind != ConnectorKind::KeyboardJoystick || connector.device == RetroDeviceKind::None)
+    if (!Journaled(connector) || connector.device == RetroDeviceKind::None)
         return false;
     connector.mask = mask;
     UpdateOverlay();
@@ -574,11 +661,26 @@ void ControllerManager::UpdateOverlay()
         _context->pKeyboard->SetOverlay(rows);
 }
 
-size_t ControllerManager::OverlayCount() const
+void ControllerManager::UpdateKempston()
 {
-    return static_cast<size_t>(std::count_if(_connectors.begin(), _connectors.end(), [](const Connector& c) {
-        return c.kind == ConnectorKind::KeyboardJoystick;
-    }));
+    if (!_context || !_context->pJoystick)
+        return;
+    for (const Connector& connector : _connectors)
+    {
+        if (connector.kind != ConnectorKind::Kempston)
+            continue;
+        _context->pJoystick->SetExtended(connector.options.extended);
+        _context->pJoystick->SetIm2Leak(connector.options.im2Leak);
+        return;
+    }
+    // No Kempston connector: the device keeps the original interface's view
+    _context->pJoystick->SetExtended(true);
+    _context->pJoystick->SetIm2Leak(false);
+}
+
+size_t ControllerManager::JournaledCount() const
+{
+    return static_cast<size_t>(std::count_if(_connectors.begin(), _connectors.end(), Journaled));
 }
 
 bool ControllerManager::HasOverlayDevices() const
@@ -609,6 +711,13 @@ void ControllerManager::AddTtdFingerprint(ttd::TTDConfigFingerprint& fp) const
         // The checkpoint holds the plug: a restore across the change is exact
         fp.Add("controllers." + connector.id, hash, false);
     }
+    // The Kempston options, when not the default: they cannot change while recording; a replay under others is not exact
+    for (const Connector& connector : _connectors)
+    {
+        if (connector.kind == ConnectorKind::Kempston && (!connector.options.extended || connector.options.im2Leak))
+            fp.Add("controllers." + connector.id,
+                   (connector.options.extended ? 1u : 0u) | (connector.options.im2Leak ? 2u : 0u), false);
+    }
 }
 
 /// region <TTD>
@@ -616,18 +725,18 @@ void ControllerManager::AddTtdFingerprint(ttd::TTDConfigFingerprint& fp) const
 size_t ControllerManager::TTDStateSize() const
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    return 2 + (kPlugBytes + 2) * OverlayCount();
+    return 2 + (kPlugBytes + 2) * JournaledCount();
 }
 
 void ControllerManager::TTDSaveState(uint8_t* dst) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
     dst[0] = kControllersTTDVersion;
-    dst[1] = static_cast<uint8_t>(OverlayCount());
+    dst[1] = static_cast<uint8_t>(JournaledCount());
     size_t offset = 2;
     for (const Connector& connector : _connectors)
     {
-        if (connector.kind != ConnectorKind::KeyboardJoystick)
+        if (!Journaled(connector))
             continue;
         SavePlug(connector, dst + offset);
         offset += kPlugBytes;
@@ -638,17 +747,17 @@ void ControllerManager::TTDSaveState(uint8_t* dst) const
 
 void ControllerManager::TTDLoadState(const uint8_t* src)
 {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::unique_lock<std::mutex> lock(_mutex);
     // The connector set is the machine's; a blob of another set changes nothing
     const uint8_t version = src[0];
-    if ((version != 1 && version != kControllersTTDVersion) || src[1] != OverlayCount())
+    if ((version != 1 && version != kControllersTTDVersion) || src[1] != JournaledCount())
         return;
     size_t offset = 2;
     bool replugged = false;
     for (size_t i = 0; i < _connectors.size(); i++)
     {
         Connector& connector = _connectors[i];
-        if (connector.kind != ConnectorKind::KeyboardJoystick)
+        if (!Journaled(connector))
             continue;
         if (version == kControllersTTDVersion)
         {
@@ -666,6 +775,7 @@ void ControllerManager::TTDLoadState(const uint8_t* src)
                 connector.options = restored.options;
                 _lastSample[i] = -1;
                 replugged = true;
+                _posts.push_back({connector.id, RetroDeviceKindName(connector.device), 0});
             }
         }
         connector.mask = static_cast<uint16_t>(src[offset] | (src[offset + 1] << 8));
@@ -673,7 +783,11 @@ void ControllerManager::TTDLoadState(const uint8_t* src)
     }
     if (replugged)
         _revision++;
+    for (QueuedPost& post : _posts)
+        post.revision = _revision;
     UpdateOverlay();
+    lock.unlock();
+    FlushPosts();
 }
 
 uint64_t ControllerManager::TTDHashState() const
@@ -687,7 +801,7 @@ uint64_t ControllerManager::TTDHashState() const
     };
     for (const Connector& connector : _connectors)
     {
-        if (connector.kind != ConnectorKind::KeyboardJoystick)
+        if (!Journaled(connector))
             continue;
         uint8_t bytes[kPlugBytes];
         SavePlug(connector, bytes);

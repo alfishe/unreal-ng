@@ -95,12 +95,12 @@ An item without `=` continues the option before it, so `keys=` keeps its commas;
 
 | Kind | Retro controls | Projection | Options | Status |
 |:--|:--|:--|:--|:--|
-| `kempston-joystick` | up down left right fire fire2 fire3 fire4 | `#1F` active high; b0 R, b1 L, b2 D, b3 U, b4 F, b5-b7 extended | `decode` (`a5`, `a7a6a5`, `a7a6a5a0`, `a5a0`, `scorpion`, `odd`, `full-low`, `full16`); `extended` (`off` = bits 5-7 read 0, `on`); `im2-leak` (cheap interface on the IM2 bus) | exists: `core/src/emulator/io/joystick/joystick.{h,cpp}`; the decode is the board's (`portdecoder.h:672-702`); options new |
+| `kempston-joystick` | up down left right fire fire2 fire3 fire4 | `#1F` active high; b0 R, b1 L, b2 D, b3 U, b4 F, b5-b7 extended | `extended` (`off` = bits 5-7 read 0, `on`); `im2-leak` (cheap interface on the IM2 bus: the stick byte is the vector when A5 of PC is 0). The decode stays the board's, as its schematic has it (owner 2026-10-17): decode variants belong to a future Kempston card for the 48K | exists: `core/src/emulator/io/joystick/joystick.{h,cpp}`; the decode is the board's (`portdecoder.h:672-702`); `extended` and `im2-leak` built in C1c, refused while TTD records (not journaled; in the fingerprint as `controllers.kempston` when not the default) |
 | `md6-pad` (`md3-pad` = the same with X Y Z MODE absent) | up down left right a b c start x y z mode | Next: `#1F` / `#37` b0-b7 = R L D U B C A START, NR #B2 for X Y Z MODE; Evo 8-bit `#1F` = R L D U B C A START | `buttons` (3 / 6) | exists for the Next (`portdecoder_next.cpp:578-627`, `NextExtendedInput`); Evo 8-bit new |
 | `sinclair-joystick` | up down left right fire | keyboard overlay: Sinclair 1 = `#EFFE` (6 L, 7 R, 8 D, 9 U, 0 F), Sinclair 2 = `#F7FE` (1 L, 2 R, 3 D, 4 U, 5 F), active low | `port` (1 / 2) | new |
 | `cursor-joystick` | up down left right fire | keyboard overlay: 5 L, 6 D, 7 U, 8 R, 0 F | `shift` (also hold CAPS SHIFT, the ZEsarUX variant) | new |
 | `keys-joystick` | up down left right fire fire2 ... | keyboard overlay with a user key per control (QAOP + Space, OPQA + M, a game's "redefine keys") | `keys` map | new; the Next UDK mode uses the same overlay with the keyjoy RAM as the map |
-| `fuller-joystick` | up down left right fire | `#7F` active low: b0 U, b1 D, b2 L, b3 R, b7 F, b6-b4 = 1 | `decode` (`full-low`, `a7a6a5`) | new |
+| `fuller-joystick` | up down left right fire | `#7F` active low: b0 U, b1 D, b2 L, b3 R, b7 F, b6-b4 = 1 | the card's `decode` (`full-low`, `a7a6a5`) | built in C1c: the slot card `fuller-box` (`core/src/emulator/slots/cards/fuller/fullerboxcard.{h,cpp}`) brings the fixed connector `fuller`; its controls are journaled and saved in the Controllers blob; the AY is TTD type FullerBox (67) |
 | `timex-joystick` | up down left right fire | AY R14 through `#F6` with A8 (left) / A9 (right); active low b0 U, b1 D, b2 L, b3 R, fire b7 or b4 **[unc]** | `stick` (left / right) | new (no Timex machine yet) |
 | `kempston-mouse` | dx dy left right middle wheel | `#FADF` buttons (active low, b3 = 1, b7:4 wheel counter), `#FBDF` X, `#FFDF` Y | `button-order` (`right-first` / `left-first`, default per board), `wheel` | exists: `io/mouse/mouse.{h,cpp}`, `MouseManager`; button order per board new |
 | `evo-mouse`, `sprinter-serial-mouse` | dx dy left right middle wheel | Evo AVR registers; Sprinter SIO B Microsoft 3-byte | — | exist (`evoavrmouse.h:41`, `MsSerialMouse`) |
@@ -145,6 +145,7 @@ pad on a bare 48K. The +2 / +2A / +3 sockets `sinclair-1` / `sinclair-2` are the
 | A decoder with `HasKempstonJoystick` | `kempston`, `keyjoy.1`, `keyjoy.2` |
 | +2 / +2A / +3 | `sinclair-1`, `sinclair-2`, `keyjoy.1`, `keyjoy.2` (plus `kempston` if the decoder answers #1F) |
 | Others (48K, 128K, ATM2) | `keyjoy.1`, `keyjoy.2` |
+| A card that brings connectors (C1c: the Fuller Box, `fuller`) | the machine's list, then the card's fixed sockets (a second card of the kind gets `.2`) |
 
 ## 4. auto: which connector a new pad drives
 
@@ -264,8 +265,8 @@ The watch starts at the end of loading (media `NC_MEDIA_*` and tape stop) and ru
 4. Keyboard overlay table in `Keyboard` (per connector, ANDed per half-row); `sinclair-joystick`, `cursor-joystick`,
    `keys-joystick` on it; the Next's Sinclair / Cursor / UDK modes through it.
 5. `TTDInputKind::ConnectorState`, its apply case (`ttdinputapply.cpp`), routing through `SubmitLiveInput`.
-6. Kempston options: decode variants, `extended`, `im2-leak`; Evo 8-bit Sega layout.
-7. `fuller-joystick`; then `timex-joystick` with a Timex machine.
+6. Kempston options: `extended`, `im2-leak` (C1c); decode variants only with a Kempston card; Evo 8-bit Sega layout.
+7. `fuller-joystick` (C1c); then `timex-joystick` with a Timex machine.
 8. Mouse button order per board (the default changes for Next, Karabas-class and Scorpion ProfROM: E-1 in
    [research §10](research-retro-hardware.md#10-errata-in-other-unreal-ng-docs)), with a test per board.
 9. `PortReadWatch` ([§6](#6-port-read-evidence)).
