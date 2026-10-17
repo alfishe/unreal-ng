@@ -42,6 +42,11 @@ drive restrictions, pause races).
   `retry: false`; Python `ControlRevoked`). **Stop. Do not retry, do not take
   control again by yourself - ask the user.** A re-take by the same client is
   refused (`revoked_cooldown`) until the user allows it.
+- **Companion clients are the user, not you.** A device the user paired at the
+  GUI (`companion_manage list`) acts as the user's hands: its changes open no
+  session. An agent never acts as one, never asks to pair, and revokes one only
+  when the user asks. A companion may take control back from your session, as
+  the GUI can: you then get `revoked_by_user` as above.
 
 ## Picking recipes for a task (read this before the index)
 

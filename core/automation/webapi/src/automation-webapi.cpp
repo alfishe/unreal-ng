@@ -13,10 +13,12 @@
 #include <vector>
 
 #include "common/threadhelper.h"
+#include "common/companion_helper.h"
 #include "common/session_helper.h"
 #include "emulator/coordinator/machineop.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/execution/automationgate.h"
+#include "emulator/execution/companionregistry.h"
 #include "emulator_api.h"        // Triggers auto-registration for API handlers
 #include "emulator_websocket.h"  // Triggers auto-registration for WebSocket handlers
 #include "debug-event-hub.h"
@@ -273,6 +275,63 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
             return resp;
         }
 
+        // Companion clients (docs/inprogress/2026-10-16-companion-client): a paired device acts as the user's hands.
+        // Its changes open no session - no remote control at the GUI, no lock - within the scopes the user granted;
+        // while a session holds the instance it is refused like the GUI is locked, and may take control back
+        if (const std::optional<std::string> token = webapi_companion::BearerOf(req))
+        {
+            auto refuse = [](drogon::HttpStatusCode status, const Json::Value& body) {
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(body);
+                resp->setStatusCode(status);
+                resp->addHeader("Access-Control-Allow-Origin", "*");
+                return resp;
+            };
+            if (req->getHeader("X-Unreal-Source") == "mcp")
+                return refuse(drogon::HttpStatusCode::k403Forbidden,
+                              webapi_companion::ErrorBody("companion_not_for_agents",
+                                                          "An MCP agent does not act as a companion: take control "
+                                                          "(control_execution take_control) instead"));
+            if (webapi_session::SessionOf(req))
+                return refuse(drogon::HttpStatusCode::k400BadRequest,
+                              webapi_companion::ErrorBody("companion_session",
+                                                          "A companion acts as the user and carries no session: drop "
+                                                          "the X-Unreal-Session header"));
+            const std::optional<companion::CompanionInfo> companion =
+                companion::CompanionRegistry::Instance().Authenticate(*token);
+            if (!companion)
+                return refuse(drogon::HttpStatusCode::k401Unauthorized,
+                              webapi_companion::ErrorBody("companion_unknown",
+                                                          "Unknown or revoked companion token: pair again"));
+            req->attributes()->insert(webapi_companion::kAttribute, *companion);
+
+            static const std::string kPrefix = "/api/v1/emulator/";
+            const std::string& path = req->path();
+            if (path.rfind(kPrefix, 0) != 0)
+                return {};
+            const size_t idEnd = path.find('/', kPrefix.size());
+            const std::string subpath = idEnd == std::string::npos ? std::string() : path.substr(idEnd);
+            if (!automation_gate::ChangesMachine(req->methodString(), subpath))
+                return {};
+            std::shared_ptr<Emulator> emulator = api::v1::getEmulatorByIdOrIndex(
+                path.substr(kPrefix.size(), idEnd == std::string::npos ? std::string::npos : idEnd - kPrefix.size()));
+            EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+            if (!context)
+                return {};  // the handler answers
+            const EmulatorContext::RunControlState control = context->GetRunControlState();
+            const uint32_t required = automation_gate::CompanionScopeOf(req->methodString(), subpath);
+            const companion::ActionCheck check = companion::CheckAction(
+                *companion, required, control.claimed, webapi_companion::HolderName(control),
+                "POST /control/take-back", automation_gate::CompanionNeedsPause(subpath),
+                emulator->GetState() == StatePaused);
+            if (check.allowed)
+                return {};  // the user's own action: no session
+            if (check.error == "companion_forbidden")
+                return refuse(drogon::HttpStatusCode::k403Forbidden, webapi_companion::ForbiddenBody(required));
+            if (check.error == "held_by_session")
+                return refuse(drogon::HttpStatusCode::k409Conflict, webapi_companion::HeldBody(control, *companion));
+            return refuse(drogon::HttpStatusCode::k409Conflict, webapi_companion::ErrorBody(check.error, check.message));
+        }
+
         // Automation sessions (execution arbiter design §6a): a request carrying the session the user took control back
         // from is answered at once, final - the client stops, it does not retry. A live session's request renews its
         // idle lease. Ending a taken-back session (DELETE .../control/session) is let through: it is a no-op
@@ -344,8 +403,10 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     // The operation log names who asked (machine state coordinator): a handler runs on the thread this advice ran
     // on, so the request marks its thread; the MCP server calls the WebAPI and says so in X-Unreal-Source
     app.registerPreHandlingAdvice([](const drogon::HttpRequestPtr& req) {
-        coordinator::SetThreadSource(req->getHeader("X-Unreal-Source") == "mcp" ? coordinator::OpSource::Mcp
-                                                                                : coordinator::OpSource::WebApi);
+        coordinator::SetThreadSource(req->attributes()->find(webapi_companion::kAttribute)
+                                         ? coordinator::OpSource::Companion
+                                     : req->getHeader("X-Unreal-Source") == "mcp" ? coordinator::OpSource::Mcp
+                                                                                  : coordinator::OpSource::WebApi);
     });
 
     // Add CORS headers to all responses

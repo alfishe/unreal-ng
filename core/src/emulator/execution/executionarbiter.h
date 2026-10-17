@@ -62,6 +62,7 @@ enum class Origin : uint8_t
     Python,
     Gdb,
     DeZog,
+    Companion,  ///< a paired companion client: the user's hands on another device (no session)
     Debugger,
     Ttd,
     Rzx,

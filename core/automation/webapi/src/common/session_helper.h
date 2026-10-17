@@ -46,10 +46,12 @@ inline bool HoldsControl(const drogon::HttpRequestPtr& req, EmulatorContext* con
 }
 
 /// Who asks, for the execution arbiter: the session (its surface and id) when the request carries the session that
-/// holds control, otherwise the surface alone
+/// holds control, a companion client (companion_helper.h) as itself, otherwise the surface alone
 inline execution::Requester RequesterOf(const drogon::HttpRequestPtr& req, EmulatorContext* context,
                                         execution::Origin fallback = execution::Origin::WebApi)
 {
+    if (req && req->attributes()->find("unreal.companion"))
+        return execution::Requester{execution::Origin::Companion, {}};
     const std::optional<unreal::UUID> id = SessionOf(req);
     if (id && context && context->HasRunControl(*id))
         return execution::Requester{execution::OriginFromName(context->GetRunControlState().surfaceLabel),

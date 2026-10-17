@@ -1,6 +1,7 @@
 #pragma once
 
 #include "emulator/memory/devicememory.h"
+#include "emulator/execution/companionregistry.h"
 #include "emulator/execution/scriptsession.h"
 #include "emulator/sound/audiomixer.h"
 #include "emulator/video/framebufferexport.h"
@@ -610,11 +611,6 @@ protected:
         buttons["right"] = state.IsPressed(MouseButton::Right);
         buttons["middle"] = state.IsPressed(MouseButton::Middle);
 
-        auto hex = [](uint8_t value) {
-            char text[8];
-            std::snprintf(text, sizeof(text), "0x%02X", value);
-            return std::string(text);
-        };
         sol::table ports = lua.create_table();
         ports["FADF"] = static_cast<int>(state.portButtons);  // integers, same as the WebAPI
         ports["FBDF"] = static_cast<int>(state.portX);  // integers, same as the WebAPI
@@ -1969,6 +1965,14 @@ public:
         lua.set_function("release_control", [this]() {
             if (Emulator* emulator = effectiveEmulator())
                 execution::script::ReleaseControl(*emulator, execution::Origin::Lua);
+        });
+        // Companion clients (docs/inprogress/2026-10-16-companion-client): devices the user paired at the GUI to act
+        // as the user's hands. A script lists and revokes them; it never pairs, approves or acts as one
+        lua.set_function("companions", [](sol::this_state s) -> sol::object {
+            return StateNodeToLua(s, companion::CompanionRegistry::Instance().Report());
+        });
+        lua.set_function("companion_revoke", [](const std::string& idOrName) -> size_t {
+            return companion::CompanionRegistry::Instance().Revoke(idOrName);
         });
         lua.set_function("step", [this, stepOutcome](sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
             if (!effectiveEmulator()) return sol::lua_nil;

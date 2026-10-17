@@ -427,7 +427,7 @@ public:
 };
 
 /// Payload of NC_RUN_CONTROL_CHANGED: an automation session (the run-control claim) changed. `event`: "taken",
-/// "released", "revoked" (the user took control back at the GUI), "expired" (an HTTP session's idle lease ran out),
+/// "released", "revoked" (the user took control back at the GUI or from a companion: `by`), "expired" (an HTTP session's idle lease ran out),
 /// "retake_refused" (a client tried to take control back within its cooldown after a take-back)
 class RunControlChangedPayload : public MessagePayload
 {
@@ -437,14 +437,33 @@ public:
     std::string surfaceLabel;  ///< "gdb", "webapi", "mcp", "cli", "lua", "python"
     std::string client;        ///< the client's own name, if it gave one
     std::string ownerUuid;
+    std::string by;            ///< "revoked": who took control back ("gui", "companion 'Desk panel'")
 
     RunControlChangedPayload(const unreal::UUID& id, std::string e, std::string label, std::string clientName,
-                             std::string owner)
+                             std::string owner, std::string byWhom = {})
         : emulatorId(id), event(std::move(e)), surfaceLabel(std::move(label)), client(std::move(clientName)),
-          ownerUuid(std::move(owner))
+          ownerUuid(std::move(owner)), by(std::move(byWhom))
     {
     }
     virtual ~RunControlChangedPayload() = default;
+};
+
+/// Payload of NC_COMPANION_CHANGED: the companion registry changed (companionregistry.h). `event`: "pairing_requested",
+/// "pairing_cancelled", "pairing_expired", "paired", "denied", "revoked"
+class CompanionChangedPayload : public MessagePayload
+{
+public:
+    std::string event;
+    std::string companionId;  ///< "paired", "revoked"
+    std::string pairingId;    ///< the pairing events and "paired", "denied"
+    std::string name;         ///< the companion's or the pairing's name
+
+    CompanionChangedPayload(std::string e, std::string companion, std::string pairing, std::string displayName)
+        : event(std::move(e)), companionId(std::move(companion)), pairingId(std::move(pairing)),
+          name(std::move(displayName))
+    {
+    }
+    virtual ~CompanionChangedPayload() = default;
 };
 
 /// Payload of NC_BREAKPOINTS_CHANGED: the breakpoint set of this emulator changed (added,

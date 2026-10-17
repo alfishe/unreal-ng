@@ -111,6 +111,9 @@ private:
     void HandleRtc(const ClientSession& session, const std::vector<std::string>& args);
     /// Automation session (execution arbiter design §6a): `session take [name]`, `session release`, `session`
     void HandleSession(const ClientSession& session, const std::vector<std::string>& args);
+    /// Companion clients (docs/inprogress/2026-10-16-companion-client): `companion auth <token>`, `logout`, `list`,
+    /// `revoke <id|name|all|me>`, `take-back`, `allow-again`, `companion` (status) - cli-processor-companion.cpp
+    void HandleCompanion(const ClientSession& session, const std::vector<std::string>& args);
     /// ZX-Evo flash ROM: the saved flash (status, save, discard) - cli-processor-romflash.cpp
     void HandleRomFlash(const ClientSession& session, const std::vector<std::string>& args);
     void HandleIsa(const ClientSession& session, const std::vector<std::string>& args);
@@ -474,6 +477,13 @@ private:
                             const std::vector<std::string>& args);
     /// Who asks, for the execution arbiter: this connection's session when it holds control, else the CLI
     execution::Requester CliRequester(EmulatorContext* context) const;
+    /// The companion this connection acts as (`companion auth`); "" = an ordinary connection. Looked up again per
+    /// command, so a revoke takes effect at once
+    std::string _companionId;
+    /// The companion's gate (automationgate.h): its user actions pass without a session within its scopes; refused
+    /// while a session holds the machine. False: refused, the answer is sent
+    bool PassCompanionGate(const ClientSession& session, const std::string& command,
+                           const std::vector<std::string>& args);
 
     // Flag to track if this is the first command
     bool _isFirstCommand;

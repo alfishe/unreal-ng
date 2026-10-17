@@ -1200,6 +1200,11 @@ void MenuManager::createToolsMenu()
     _hudSettingsAction->setStatusTip(tr("Configure which HUD notifications to display"));
     connect(_hudSettingsAction, &QAction::triggered, this, &MenuManager::hudSettingsRequested);
 
+    // Companion clients: devices paired to act as the user's hands (docs/inprogress/2026-10-16-companion-client)
+    _companionsAction = _toolsMenu->addAction(tr("&Companions..."));
+    _companionsAction->setStatusTip(tr("Devices paired to control the emulator for you; revoke them here"));
+    connect(_companionsAction, &QAction::triggered, this, &MenuManager::companionsRequested);
+
     _toolsMenu->addSeparator();
 
     // Tape Manager Window (design §9.2 — checkable show/hide, hidden until

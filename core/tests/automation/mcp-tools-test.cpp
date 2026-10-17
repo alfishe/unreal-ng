@@ -4270,3 +4270,58 @@ TEST(McpToolUtils_Test, RunSeriesFreesTheChainWhenItEnds)
     EXPECT_TRUE(doneCalled);
     EXPECT_TRUE(watch.expired()) << "the ended chain is freed";
 }
+
+// ===========================================================================
+// companion_manage (docs/inprogress/2026-10-16-companion-client)
+// ===========================================================================
+
+TEST_F(McpTools_Test, CompanionManage_ListsAndRevokes)
+{
+    Json::Value list;
+    Json::Value c;
+    c["id"] = "c-5f2a91";
+    c["name"] = "Desk panel";
+    c["scopes"].append("run");
+    c["scopes"].append("input");
+    c["source"] = "paired";
+    list["companions"].append(c);
+    Json::Value p;
+    p["pairing_id"] = "p-7c41d2";
+    p["name"] = "Phone";
+    p["peer"] = "192.168.1.40";
+    list["pairings"].append(p);
+    list["approval_available"] = true;
+    _caller->routes["GET /api/v1/companions"] = {200, list};
+
+    Json::Value args;
+    args["action"] = "list";
+    mcp::ToolResult result = RunTool(*_registry, "companion_manage", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("1 companion(s)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("c-5f2a91 'Desk panel' [run, input] paired"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("1 pairing(s) waiting for the user"), std::string::npos) << result.text;
+
+    Json::Value revoked;
+    revoked["revoked"] = true;
+    revoked["id"] = "c-5f2a91";
+    _caller->routes["DELETE /api/v1/companions/Desk%20panel"] = {200, revoked};
+    Json::Value revoke;
+    revoke["action"] = "revoke";
+    revoke["id"] = "Desk panel";
+    result = RunTool(*_registry, "companion_manage", revoke, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("c-5f2a91 revoked"), std::string::npos) << result.text;
+
+    Json::Value noId;
+    noId["action"] = "revoke";
+    EXPECT_TRUE(RunTool(*_registry, "companion_manage", noId, *_caller).isError);
+
+    Json::Value all;
+    all["revoked"] = 3;
+    _caller->routes["DELETE /api/v1/companions"] = {200, all};
+    Json::Value revokeAll;
+    revokeAll["action"] = "revoke_all";
+    result = RunTool(*_registry, "companion_manage", revokeAll, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("3 companion(s) revoked"), std::string::npos) << result.text;
+}

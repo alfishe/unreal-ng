@@ -9,8 +9,14 @@
 #include "pch.h"
 
 #include <emulator/emulatorcontext.h>
+#include <emulator/notifications.h>
+#include <emulator/platform.h>
 #include <common/uuid.h>
 
+#include "3rdparty/message-center/messagecenter.h"
+#include "_helpers/testwaithelper.h"
+
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -313,3 +319,31 @@ TEST_F(RunControlClaim_Test, AnExplicitTakeReplacesTheClientsOwnImplicitSession)
 }
 
 /// endregion </The automation gate>
+
+// Companion clients (docs/inprogress/2026-10-16-companion-client): a companion takes control back as the GUI does,
+// and the announcement names who took it, so the GUI can tell the user it was done from another device
+TEST_F(RunControlClaim_Test, ATakeBackNamesWhoTookIt)
+{
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    std::mutex mutex;
+    std::vector<std::string> seen;
+    const uint64_t observer = messageCenter.AddObserver(NC_RUN_CONTROL_CHANGED, [&](int, Message* message) {
+        auto* payload = message ? dynamic_cast<RunControlChangedPayload*>(message->obj) : nullptr;
+        if (payload && payload->client == "claim-test agent")
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            seen.push_back(payload->event + " by " + payload->by);
+        }
+    });
+    ASSERT_TRUE(_ctx->TakeRunControl(_ownerA, "mcp", nullptr, "claim-test agent", std::chrono::milliseconds(0)));
+    ASSERT_TRUE(_ctx->RevokeRunControl("companion 'Desk panel'"));
+    EXPECT_TRUE(_ctx->IsRunControlRevoked(_ownerA));
+    const bool announced = TestWait::For([&]() {
+        std::lock_guard<std::mutex> lock(mutex);
+        return seen.size() >= 2;
+    });
+    messageCenter.RemoveObserverById(NC_RUN_CONTROL_CHANGED, observer);
+    ASSERT_TRUE(announced);
+    std::lock_guard<std::mutex> lock(mutex);
+    EXPECT_EQ(seen, (std::vector<std::string>{"taken by ", "revoked by companion 'Desk panel'"}));
+}

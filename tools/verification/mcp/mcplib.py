@@ -33,6 +33,12 @@ class Failure(Exception):
     pass
 
 
+# The companion launch() provisions (UNREAL_COMPANION_TOKENS); test_companion.py acts with it
+COMPANION_TOKEN = os.environ.get('UNREAL_COMPANION_VERIFY_TOKEN', 'unc_verification-companion-0001')
+# ... and one with the run scope only, for the refusals of a scope the user did not grant
+COMPANION_NARROW_TOKEN = 'unc_verification-narrow-0001'
+
+
 def expect(condition, what, details=''):
     """A check: raises Failure with `what` (and the first 600 characters of `details`) when false"""
     if not condition:
@@ -119,6 +125,8 @@ def launch(binary, port_base):
     for name, offset in (('UNREAL_WEBAPI_PORT', 0), ('UNREAL_CLI_PORT', 100), ('UNREAL_MCP_PORT', 200),
                          ('UNREAL_GDB_PORT', 300), ('UNREAL_DEZOG_PORT', 400), ('UNREAL_ZRCP_PORT', 500)):
         env[name] = str(port_base + offset)
+    # A companion client for test_companion.py (a paired device acting as the user's hands)
+    env.setdefault('UNREAL_COMPANION_TOKENS', f'verify:{COMPANION_TOKEN}:all;narrow:{COMPANION_NARROW_TOKEN}:run')
     process = subprocess.Popen([binary, '-platform', 'offscreen'], env=env, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL)
     session = Session(f'http://127.0.0.1:{port_base + 200}/mcp', 'PENTAGON')

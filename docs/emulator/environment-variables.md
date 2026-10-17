@@ -57,6 +57,7 @@ automation servers live inside it).
 | `UNREAL_CLI_PORT` | 1-65535 (8765, the CLI module's default) | Port of the text command-line (telnet-style) server. | `core/automation/cli/src/automation-cli.cpp:81` |
 | `UNREAL_GDB_PORT` | 1-65535 (2000) | Port of the GDB remote debugging server. | `core/automation/gdb/src/automation-gdb.cpp:26` |
 | `UNREAL_DEZOG_PORT` | 1-65535 (12000) | Port of the DeZog debugger server (DZRP protocol). Used when the caller does not pass a port. | `core/automation/dezog/src/automation-dezog.cpp:33`, name in `core/automation/dezog/include/automation-dezog.h:47` |
+| `UNREAL_COMPANION_TOKENS` | `name:token[:scope,scope]` entries separated by `;` (none) | Companion clients of a headless instance: devices acting as the user's hands, whose changes open no session ([companion clients](../inprogress/2026-10-16-companion-client/design.md#53-the-environment)). A token has at least 16 characters; scopes `run`, `input`, `media`, `machine`, `rewind`, `debug`, `takeback` or `all` (default: all). Read once when automation starts; never stored. | `core/src/emulator/execution/companionregistry.cpp:828`, called from `core/automation/automation.cpp` |
 | `UNREAL_DEZOG_TARGET_WAIT_MS` | 1-60000 ms (2000) | How long the DeZog server waits for an emulator instance before a connection fails. Mainly for tests that want a short failure. | `core/automation/dezog/src/automation-dezog.cpp:59` |
 | `UNREAL_DEZOG_HISTORY` | `0` = off, anything else = on (on) | Turns off the step-back history that DeZog's reverse debugging uses. | `core/automation/dezog/src/dezogdebugadapter.cpp:60` |
 | `UNREAL_ZRCP_PORT` | 1-65535 (10000) | Port of the ZEsarUX-compatible remote control server (ZRCP). Used when the caller does not pass a port. | `core/automation/zesarux/src/automation-zesarux.cpp:33`, name in `core/automation/zesarux/include/automation-zesarux.h:48` |
@@ -260,6 +261,12 @@ description in [`tools/verification/ttd-bench/README.md`](../../tools/verificati
 | `UNREAL_TTD_ENGINE_SNAPSHOT_INTERVAL` | number (engine default) | Full reference table every N checkpoints, to compare settings (`ttdbench.cpp:673`). |
 
 The last three are in the shared bench code, so they also act in `core-tests`' `ttdbench_test`.
+
+**MCP live verification** (`tools/verification/mcp`):
+
+| Variable | Values (default) | What it does |
+|---|---|---|
+| `UNREAL_COMPANION_VERIFY_TOKEN` | a token (`unc_verification-companion-0001`) | The companion `mcplib.launch` provisions (`UNREAL_COMPANION_TOKENS=verify:<token>:all`, unless that is set) and `test_companion.py` acts with (`tools/verification/mcp/mcplib.py:37`). |
 
 **Scripts and tools:**
 

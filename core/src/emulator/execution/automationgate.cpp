@@ -3,6 +3,7 @@
 #include <array>
 #include <initializer_list>
 #include <string_view>
+#include <utility>
 
 namespace automation_gate
 {
@@ -15,9 +16,10 @@ bool StartsWith(std::string_view text, std::string_view prefix)
 
 /// Requests that do not change the machine, by subpath prefix (a whole segment: "/profiler" covers
 /// "/profiler/opcode/start", not "/profilers")
-constexpr std::array<std::string_view, 25> kNoChange = {
+constexpr std::array<std::string_view, 27> kNoChange = {
     "/pause",                                   // always allowed (execution arbiter design §3.7)
     "/control/session",                         // the session itself
+    "/control/take-back", "/control/allow-again",   // a companion's take-back: its handler checks the companion
     "/profiler", "/coverage", "/analyzer",      // observers
     "/capture", "/audio/capture", "/audio/mixer", "/video/record", "/video/temporal",
     "/labels", "/symbols",                      // the debugger's names, not the machine
@@ -108,5 +110,192 @@ std::string ClientFromUserAgent(const std::string& userAgent)
         return "HTTP client";
     const size_t end = userAgent.find(' ', start);
     return userAgent.substr(start, end == std::string::npos ? std::string::npos : end - start);
+}
+
+namespace
+{
+bool OneOf(std::string_view value, std::initializer_list<std::string_view> values)
+{
+    for (std::string_view v : values)
+        if (value == v)
+            return true;
+    return false;
+}
+
+/// The settings and features a companion may switch, by the scope they belong to (WebAPI and CLI names)
+uint32_t SettingScope(std::string_view name)
+{
+    if (OneOf(name, {"speed", "turbo_mode", "turbo_audio"}))
+        return ScopeRun;
+    if (OneOf(name, {"fast_tape", "turbo_tape", "fast_disk"}))
+        return ScopeMedia;
+    return ScopeMachine;  // every other setting is the machine's configuration
+}
+
+uint32_t FeatureScope(std::string_view name)
+{
+    if (OneOf(name, {"turbomode", "turbo"}))
+        return ScopeRun;
+    if (OneOf(name, {"fasttape", "ftape", "turbotape", "ttape", "fastdisk", "fdisk"}))
+        return ScopeMedia;
+    if (OneOf(name, {"debugmode", "breakpoints", "memorycounters", "calltrace"}))
+        return ScopeDebug;
+    return ScopeMachine;  // every other feature is the machine's configuration
+}
+
+constexpr std::array<std::pair<std::string_view, uint32_t>, 7> kScopeNames = {{
+    {"run", ScopeRun},
+    {"input", ScopeInput},
+    {"media", ScopeMedia},
+    {"machine", ScopeMachine},
+    {"rewind", ScopeRewind},
+    {"takeback", ScopeTakeBack},
+    {"debug", ScopeDebug},
+}};
+}  // namespace
+
+uint32_t CompanionScopeOf(const std::string& method, const std::string& subpath)
+{
+    (void)method;  // the gate asks only for changing requests: POST, PUT, DELETE
+    std::string_view path(subpath);
+    if (const size_t query = path.find('?'); query != std::string_view::npos)
+        path = path.substr(0, query);
+    std::vector<std::string_view> segments;
+    while (!path.empty())
+    {
+        if (path.front() == '/')
+        {
+            path.remove_prefix(1);
+            continue;
+        }
+        const size_t slash = path.find('/');
+        segments.push_back(path.substr(0, slash));
+        path = slash == std::string_view::npos ? std::string_view() : path.substr(slash);
+    }
+    if (segments.empty())
+        return ScopeDebug;
+    const size_t n = segments.size();
+    const std::string_view head = segments[0];
+    const std::string_view second = n > 1 ? segments[1] : std::string_view();
+    const std::string_view third = n > 2 ? segments[2] : std::string_view();
+    if (n == 1 && OneOf(head, {"resume", "reset", "nmi"}))
+        return ScopeRun;
+    if (head == "settings" && n == 2)
+        return SettingScope(second);
+    if (head == "feature" && n == 2)
+        return FeatureScope(second);
+    if (OneOf(head, {"keyboard", "joystick", "mouse"}) && n == 2)
+        return ScopeInput;
+    if (head == "tape" && n == 2 && OneOf(second, {"load", "eject", "play", "pause", "stop", "rewind", "seek"}))
+        return ScopeMedia;
+    if (head == "disk" && n == 3 && OneOf(third, {"insert", "eject", "create"}))
+        return ScopeMedia;
+    if (head == "snapshot" && n == 2 && second == "load")
+        return ScopeMedia;
+    if (head == "media" && n == 3)
+        return ScopeMedia;
+    if (head == "rzx" && n == 2 && OneOf(second, {"play", "stop", "seek"}))
+        return ScopeMedia;
+    if (head == "cdaudio" && n == 2)
+        return ScopeMedia;
+    if (head == "ttd" && n == 2 && OneOf(second, {"seek", "step-back", "step-forward", "resume"}))
+        return ScopeRewind;
+    if (n == 1 && OneOf(head, {"model", "switches", "start", "stop"}))
+        return ScopeMachine;
+    if (head == "slots" && n == 3)
+        return ScopeMachine;
+    if ((head == "network" && second == "config") || (head == "snapshot" && second == "transfer") ||
+        (head == "state" && second == "screen" && third == "overscan") || (head == "sprinter" && second == "bios") ||
+        (head == "bus" && third == "sd-timing") || (head == "memory" && second == "rom" && third == "protect"))
+        return ScopeMachine;
+    if (head == "control" && n == 2 && OneOf(second, {"take-back", "allow-again"}))
+        return ScopeTakeBack;
+    return ScopeDebug;  // memory, registers, ports, breakpoints, steps, runs, TTD analysis, BASIC, assembler, ...
+}
+
+uint32_t CompanionCliScopeOf(const std::string& command, const std::vector<std::string>& args)
+{
+    const std::string_view verb = args.empty() ? std::string_view() : std::string_view(args[0]);
+    if (OneOf(command, {"resume", "reset", "nmi", "mni"}))
+        return ScopeRun;
+    if (OneOf(command, {"setting", "settings", "set"}))
+        return SettingScope(verb);
+    if (command == "feature")
+        return FeatureScope(verb);
+    if (OneOf(command, {"key", "keyboard", "joystick", "mouse"}))
+        return ScopeInput;
+    if (command == "tape" && OneOf(verb, {"load", "eject", "play", "pause", "stop", "rewind", "seek"}))
+        return ScopeMedia;
+    if (command == "disk" && OneOf(verb, {"insert", "eject", "create"}))
+        return ScopeMedia;
+    if (command == "snapshot" && verb == "load")
+        return ScopeMedia;
+    if (OneOf(command, {"media", "open"}))
+        return ScopeMedia;
+    if (command == "rzx" && OneOf(verb, {"play", "stop", "seek"}))
+        return ScopeMedia;
+    if (command == "ttd" && OneOf(verb, {"back", "forward", "goto", "seek", "sb", "sf", "step-back", "step-forward",
+                                         "resume"}))
+        return ScopeRewind;
+    if (OneOf(command, {"model", "switch", "slots", "start", "zxpoly"}))
+        return ScopeMachine;
+    if ((command == "bus" && args.size() >= 2 && (args[1] == "sd-timing" || args[1] == "sdtiming")) ||
+        (OneOf(command, {"network", "net"}) && verb == "set"))
+        return ScopeMachine;
+    return ScopeDebug;  // memory, registers, steps, runs, breakpoints, ports, debug mode, ...
+}
+
+bool CompanionNeedsPause(const std::string& subpath)
+{
+    std::string_view path(subpath);
+    if (const size_t query = path.find('?'); query != std::string_view::npos)
+        path = path.substr(0, query);
+    for (std::string_view stepping : {"/step", "/steps", "/stepover", "/stepout", "/skip_until", "/run_frame",
+                                      "/run_frames", "/run_tstates", "/run_scanlines", "/run_to_scanline",
+                                      "/run_to_pixel", "/run_to_interrupt", "/listing/step_line", "/listing/run_to_line",
+                                      "/ttd/step-instruction", "/ttd/reverse-step", "/ttd/reverse-continue"})
+        if (path == stepping)
+            return true;
+    return StartsWith(path, "/registers/");
+}
+
+bool CompanionCliNeedsPause(const std::string& command, const std::vector<std::string>& args)
+{
+    if (OneOf(command, {"step", "stepin", "steps", "stepover", "stepout", "skip_until", "run_tstates",
+                        "run_to_scanline", "run_scanlines", "run_to_pixel", "run_to_interrupt", "run_frame",
+                        "run_frames", "run_ncycles"}))
+        return true;
+    if (OneOf(command, {"registers", "regs", "r"}))
+        return args.size() >= 2;
+    const std::string_view verb = args.empty() ? std::string_view() : std::string_view(args[0]);
+    return command == "ttd" && OneOf(verb, {"si-back", "si-forward", "step-instruction", "reverse-step", "rs",
+                                            "reverse-continue", "rc"});
+}
+
+std::string CompanionScopeName(uint32_t scope)
+{
+    for (const auto& [name, bit] : kScopeNames)
+        if (bit == scope)
+            return std::string(name);
+    return {};
+}
+
+std::vector<std::string> CompanionScopeNames(uint32_t scopes)
+{
+    std::vector<std::string> names;
+    for (const auto& [name, bit] : kScopeNames)
+        if (scopes & bit)
+            names.emplace_back(name);
+    return names;
+}
+
+uint32_t CompanionScopeFromName(const std::string& name)
+{
+    if (name == "all")
+        return kCompanionAllScopes;
+    for (const auto& [scopeName, bit] : kScopeNames)
+        if (name == scopeName)
+            return bit;
+    return 0;
 }
 }  // namespace automation_gate

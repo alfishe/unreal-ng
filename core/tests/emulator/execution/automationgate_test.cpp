@@ -76,3 +76,85 @@ TEST(AutomationGate_Test, TheClientNameIsTheUserAgentsFirstProduct)
     EXPECT_EQ(automation_gate::ClientFromUserAgent("Mozilla/5.0 (Macintosh)"), "Mozilla/5.0");
     EXPECT_EQ(automation_gate::ClientFromUserAgent(""), "HTTP client");
 }
+
+// Companion clients (docs/inprogress/2026-10-16-companion-client): the scope each user action needs
+
+using namespace automation_gate;
+
+TEST(AutomationGate_Test, CompanionScopesCoverTheUserActions)
+{
+    EXPECT_EQ(CompanionScopeOf("POST", "/resume"), uint32_t(ScopeRun));
+    EXPECT_EQ(CompanionScopeOf("POST", "/reset"), uint32_t(ScopeRun));
+    EXPECT_EQ(CompanionScopeOf("POST", "/nmi"), uint32_t(ScopeRun));
+    EXPECT_EQ(CompanionScopeOf("PUT", "/settings/speed"), uint32_t(ScopeRun));
+    EXPECT_EQ(CompanionScopeOf("POST", "/settings/turbo_mode"), uint32_t(ScopeRun));
+    EXPECT_EQ(CompanionScopeOf("POST", "/feature/turbomode"), uint32_t(ScopeRun));
+    EXPECT_EQ(CompanionScopeOf("POST", "/keyboard/tap"), uint32_t(ScopeInput));
+    EXPECT_EQ(CompanionScopeOf("POST", "/keyboard/type"), uint32_t(ScopeInput));
+    EXPECT_EQ(CompanionScopeOf("POST", "/joystick/press"), uint32_t(ScopeInput));
+    EXPECT_EQ(CompanionScopeOf("POST", "/mouse/click"), uint32_t(ScopeInput));
+    EXPECT_EQ(CompanionScopeOf("POST", "/tape/play"), uint32_t(ScopeMedia));
+    EXPECT_EQ(CompanionScopeOf("POST", "/disk/A/insert"), uint32_t(ScopeMedia));
+    EXPECT_EQ(CompanionScopeOf("POST", "/snapshot/load"), uint32_t(ScopeMedia));
+    EXPECT_EQ(CompanionScopeOf("POST", "/media/disk0/insert"), uint32_t(ScopeMedia));
+    EXPECT_EQ(CompanionScopeOf("POST", "/rzx/play"), uint32_t(ScopeMedia));
+    EXPECT_EQ(CompanionScopeOf("POST", "/settings/fast_tape"), uint32_t(ScopeMedia));
+    EXPECT_EQ(CompanionScopeOf("POST", "/feature/ftape"), uint32_t(ScopeMedia));
+    EXPECT_EQ(CompanionScopeOf("POST", "/ttd/step-back"), uint32_t(ScopeRewind));
+    EXPECT_EQ(CompanionScopeOf("POST", "/ttd/seek?x=1"), uint32_t(ScopeRewind));
+    EXPECT_EQ(CompanionScopeOf("POST", "/model"), uint32_t(ScopeMachine));
+    EXPECT_EQ(CompanionScopeOf("POST", "/slots/0/insert"), uint32_t(ScopeMachine));
+    EXPECT_EQ(CompanionScopeOf("POST", "/control/take-back"), uint32_t(ScopeTakeBack));
+    // The take-back routes change no machine: their handler checks the companion, every other client is refused there
+    EXPECT_FALSE(ChangesMachine("POST", "/control/take-back"));
+    EXPECT_FALSE(ChangesMachine("POST", "/control/allow-again"));
+}
+
+TEST(AutomationGate_Test, EveryOtherActionIsDebugOrConfiguration)
+{
+    for (const char* path : {"/memory/write", "/registers/pc", "/ports/out", "/breakpoints", "/step", "/steps",
+                             "/run_frames", "/skip_until", "/basic/inject", "/memory/rom/flash", "/debugmode",
+                             "/feature/debugmode", "/tape/render", "/disk/A/sector/0/0/1", "/ttd/load",
+                             "/ttd/reverse-step", "/resume/now"})
+        EXPECT_EQ(CompanionScopeOf("POST", path), uint32_t(ScopeDebug)) << path;
+    EXPECT_EQ(CompanionScopeOf("DELETE", "/breakpoints/3"), uint32_t(ScopeDebug));
+    for (const char* path : {"/settings/trdos_traps", "/feature/sound", "/start", "/stop", "/network/config",
+                             "/snapshot/transfer", "/state/screen/overscan", "/memory/rom/protect", "/switches"})
+        EXPECT_EQ(CompanionScopeOf("POST", path), uint32_t(ScopeMachine)) << path;
+}
+
+TEST(AutomationGate_Test, SteppingNeedsAPause)
+{
+    for (const char* path : {"/step", "/steps", "/stepover", "/stepout", "/skip_until", "/run_frames", "/run_tstates",
+                             "/registers/pc", "/ttd/reverse-step", "/listing/step_line"})
+        EXPECT_TRUE(CompanionNeedsPause(path)) << path;
+    for (const char* path : {"/resume", "/memory/write", "/breakpoints", "/ttd/seek", "/stepping"})
+        EXPECT_FALSE(CompanionNeedsPause(path)) << path;
+    EXPECT_TRUE(CompanionCliNeedsPause("stepover", {}));
+    EXPECT_TRUE(CompanionCliNeedsPause("r", {"pc", "8000"}));
+    EXPECT_FALSE(CompanionCliNeedsPause("r", {}));
+    EXPECT_TRUE(CompanionCliNeedsPause("ttd", {"rs"}));
+    EXPECT_FALSE(CompanionCliNeedsPause("memory", {"write", "8000", "00"}));
+}
+
+TEST(AutomationGate_Test, CompanionCliScopesFollowTheCommandForms)
+{
+    EXPECT_EQ(CompanionCliScopeOf("resume", {}), uint32_t(ScopeRun));
+    EXPECT_EQ(CompanionCliScopeOf("setting", {"speed", "2"}), uint32_t(ScopeRun));
+    EXPECT_EQ(CompanionCliScopeOf("feature", {"turbo", "on"}), uint32_t(ScopeRun));
+    EXPECT_EQ(CompanionCliScopeOf("setting", {"fast_tape", "on"}), uint32_t(ScopeMedia));
+    EXPECT_EQ(CompanionCliScopeOf("setting", {"trdos_traps", "1"}), uint32_t(ScopeMachine));
+    EXPECT_EQ(CompanionCliScopeOf("key", {"tap", "SPACE"}), uint32_t(ScopeInput));
+    EXPECT_EQ(CompanionCliScopeOf("tape", {"play"}), uint32_t(ScopeMedia));
+    EXPECT_EQ(CompanionCliScopeOf("disk", {"insert", "A", "x.trd"}), uint32_t(ScopeMedia));
+    EXPECT_EQ(CompanionCliScopeOf("disk", {"write", "A"}), uint32_t(ScopeDebug));
+    EXPECT_EQ(CompanionCliScopeOf("snapshot", {"load", "x.sna"}), uint32_t(ScopeMedia));
+    EXPECT_EQ(CompanionCliScopeOf("ttd", {"sb"}), uint32_t(ScopeRewind));
+    EXPECT_EQ(CompanionCliScopeOf("ttd", {"load", "x.ttd"}), uint32_t(ScopeDebug));
+    EXPECT_EQ(CompanionCliScopeOf("model", {"PENTAGON"}), uint32_t(ScopeMachine));
+    for (const char* command : {"memory", "r", "step", "run_frames", "bp", "out", "romflash", "assemble", "debugmode",
+                                "basic"})
+        EXPECT_EQ(CompanionCliScopeOf(command, {"write", "1"}), uint32_t(ScopeDebug)) << command;
+    EXPECT_EQ(CompanionCliScopeOf("start", {}), uint32_t(ScopeMachine));
+    EXPECT_EQ(CompanionCliScopeOf("network", {"set", "card=zxwifi"}), uint32_t(ScopeMachine));
+}

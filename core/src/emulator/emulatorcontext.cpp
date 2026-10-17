@@ -267,7 +267,7 @@ bool EmulatorContext::RevokeRunControl(const std::string& by)
     if (pEmulator)
         pEmulator->GetArbiter().AbortDriving();
     LOGINFO("Run control taken back from %s %s by %s", label.c_str(), client.c_str(), by.c_str());
-    PostRunControlChanged("revoked", label, client, ownerText);
+    PostRunControlChanged("revoked", label, client, ownerText, by);
     return true;
 }
 
@@ -395,10 +395,11 @@ void EmulatorContext::ExpireIdleRunControl() const
 }
 
 void EmulatorContext::PostRunControlChanged(const std::string& event, const std::string& label,
-                                            const std::string& client, const std::string& owner) const
+                                            const std::string& client, const std::string& owner,
+                                            const std::string& by) const
 {
     MessageCenter::DefaultMessageCenter().Post(
-        NC_RUN_CONTROL_CHANGED, new RunControlChangedPayload(emulatorId, event, label, client, owner), true);
+        NC_RUN_CONTROL_CHANGED, new RunControlChangedPayload(emulatorId, event, label, client, owner, by), true);
 }
 
 bool EmulatorContext::HasRunControl(const unreal::UUID& owner) const

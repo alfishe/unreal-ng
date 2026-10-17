@@ -37,6 +37,7 @@ set(SOURCES
     src/commands/cli-processor-isa.cpp
     src/commands/cli-processor-network.cpp
     src/commands/cli-processor-ttd.cpp
+    src/commands/cli-processor-companion.cpp
     src/handlers/python-handler.cpp
     src/handlers/lua-handler.cpp
     src/commands/cli-processor-capture.cpp

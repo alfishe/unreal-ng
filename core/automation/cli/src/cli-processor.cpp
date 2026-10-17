@@ -1,5 +1,7 @@
 #include "cli-processor.h"
+#include "emulator/coordinator/machineop.h"
 #include "emulator/execution/automationgate.h"
+#include "emulator/execution/companionregistry.h"
 
 #include <3rdparty/message-center/eventqueue.h>
 #include <3rdparty/message-center/messagecenter.h>
@@ -14,6 +16,7 @@
 #include <algorithm>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -106,6 +109,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"run_ncycles", &CLIProcessor::HandleRunNCycles},           // Run N CPU cycles
                         {"memory", &CLIProcessor::HandleMemory},
                         {"session", &CLIProcessor::HandleSession},  // automation session: take / release run control
+                        {"companion", &CLIProcessor::HandleCompanion},  // companion client: act as the user's hands
                         {"rtc", &CLIProcessor::HandleRtc},   // CMOS clock: report, read / write cells
                         {"cmos", &CLIProcessor::HandleRtc},
                         {"romflash", &CLIProcessor::HandleRomFlash},  // ZX-Evo flash ROM: the saved flash
@@ -368,14 +372,28 @@ void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& com
             return;
     }
 
+    // A companion connection whose companion was revoked: the command does not run (as an ordinary one it would open
+    // a session the user did not expect); the connection is ordinary from now on
+    if (!_companionId.empty() && !companion::CompanionRegistry::Instance().Find(_companionId))
+    {
+        _companionId.clear();
+        session.SendResponse(std::string("Error: companion_unknown - this companion was revoked; the connection is an "
+                                         "ordinary one again") + NEWLINE);
+        return;
+    }
+
     // Find and execute the command handler
     auto it = _commandHandlers.find(cmd);
     if (it != _commandHandlers.end())
     {
-        if (!PassAutomationGate(session, cmd, args))
+        if (!_companionId.empty() ? !PassCompanionGate(session, cmd, args) : !PassAutomationGate(session, cmd, args))
             return;
         try
         {
+            // A companion's operations are the companion's in the operation log
+            std::optional<coordinator::SourceScope> companionSource;
+            if (!_companionId.empty())
+                companionSource.emplace(coordinator::OpSource::Companion);
             // Call the member function using 'this' pointer to provide context to the handler
             (this->*(it->second))(session, args);
             // Taken back while this command ran (a long run_frames ends at once): the same final answer
@@ -915,6 +933,8 @@ bool CLIProcessor::PassAutomationGate(const ClientSession& session, const std::s
 
 execution::Requester CLIProcessor::CliRequester(EmulatorContext* context) const
 {
+    if (!_companionId.empty())
+        return execution::Requester{execution::Origin::Companion, {}};
     if (HoldsControl(context))
         return execution::Requester{execution::Origin::Cli, _controlSession.toString()};
     return execution::Requester{execution::Origin::Cli, {}};
@@ -930,6 +950,12 @@ void CLIProcessor::HandleSession(const ClientSession& session, const std::vector
         return;
     }
     const std::string sub = args.empty() ? std::string() : args[0];
+    if (sub == "take" && !_companionId.empty())
+    {
+        session.SendResponse(std::string("Error: companion_session - a companion acts as the user and takes no "
+                                         "session ('companion logout' first)") + NEWLINE);
+        return;
+    }
     if (sub == "take")
     {
         // The gate's implicit session for this connection gives way to the explicit one

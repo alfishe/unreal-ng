@@ -59,6 +59,7 @@ enum class OpSource : uint8_t
     Gdb,
     DeZog,
     Mcp,
+    Companion, ///< a paired companion client (docs/inprogress/2026-10-16-companion-client)
     Machine,   ///< the machine thread: a trap, a device, an RZX playback
     Core,      ///< the emulator's own code (a model's start-up, a composite operation)
     Test,

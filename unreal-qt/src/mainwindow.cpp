@@ -101,6 +101,7 @@
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/mousecapturecontroller.h"
+#include "emulator/companioncontroller.h"
 #include "emulator/remotecontrolguard.h"
 
 namespace
@@ -525,6 +526,23 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _remoteControl->exempt(_toolBarManager->allowAgainAction());
     _remoteControl->exempt(_menuManager->fullScreenAction());
     _remoteControl->exempt(_menuManager->exitAction());
+    // Companion clients (docs/inprogress/2026-10-16-companion-client): pairing is approved here; listing and revoking
+    // stay possible during a session (revoking only takes power away)
+    _remoteControl->exempt(_menuManager->companionsAction());
+    _companions = new CompanionController(this);
+    connect(_menuManager, &MenuManager::companionsRequested, _companions, &CompanionController::showCompanionsDialog);
+    connect(_companions, &CompanionController::toastRequested, this, [this](const QString& title, const QString& body) {
+        if (statusBar())
+            statusBar()->showMessage(title + QStringLiteral(": ") + body, 8000);
+        if (!_hudModel)
+            return;
+        HudToastRequest toast;
+        toast.title = title.toStdString();
+        toast.icon = "remote";
+        toast.body = body.toStdString();
+        toast.dedupKey = "companion";
+        _hudModel->notify(toast);
+    });
     _remoteControl->exempt(_fullScreenShortcut);
     for (QObject* widget : _toolBarManager->remoteControlWidgets())
         _remoteControl->exempt(widget);
@@ -4889,9 +4907,29 @@ void MainWindow::unsubscribeFromMessageBus()
 void MainWindow::handleRunControlChanged(int id, Message* message)
 {
     Q_UNUSED(id);
-    Q_UNUSED(message);
     if (_remoteControl)
         QMetaObject::invokeMethod(_remoteControl, "refresh", Qt::QueuedConnection);
+    // A companion took control back (companion clients): the user did it from another device - say so
+    auto* payload = message ? dynamic_cast<RunControlChangedPayload*>(message->obj) : nullptr;
+    if (!payload || payload->event != "revoked" || payload->by.rfind("companion", 0) != 0)
+        return;
+    const QString by = QString::fromStdString(payload->by);
+    const QString from = QString::fromStdString(payload->client.empty() ? payload->surfaceLabel : payload->client);
+    QMetaObject::invokeMethod(
+        this,
+        [this, by, from]() {
+            if (statusBar())
+                statusBar()->showMessage(tr("Control taken back from %1 by %2").arg(from, by), 10000);
+            if (!_hudModel)
+                return;
+            HudToastRequest toast;
+            toast.title = tr("Control taken back").toStdString();
+            toast.icon = "remote";
+            toast.body = tr("%1 took control back from %2").arg(by, from).toStdString();
+            toast.dedupKey = "remote-control";
+            _hudModel->notify(toast);
+        },
+        Qt::QueuedConnection);
 }
 
 void MainWindow::updateRemoteControlUi()

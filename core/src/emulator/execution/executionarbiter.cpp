@@ -59,6 +59,7 @@ const char* OriginName(Origin origin)
         case Origin::Python: return "python";
         case Origin::Gdb: return "gdb";
         case Origin::DeZog: return "dezog";
+        case Origin::Companion: return "companion";
         case Origin::Debugger: return "debugger";
         case Origin::Ttd: return "ttd";
         case Origin::Rzx: return "rzx";
@@ -75,7 +76,7 @@ Origin OriginFromName(const std::string& name)
         {"webapi", Origin::WebApi}, {"cli", Origin::Cli},        {"mcp", Origin::Mcp},
         {"lua", Origin::Lua},       {"python", Origin::Python}, {"gdb", Origin::Gdb},
         {"dezog", Origin::DeZog},   {"debugger", Origin::Debugger}, {"ttd", Origin::Ttd},
-        {"rzx", Origin::Rzx}};
+        {"rzx", Origin::Rzx},       {"companion", Origin::Companion}};
     for (const auto& [text, origin] : names)
         if (name == text)
             return origin;

@@ -83,6 +83,7 @@ public:
     // Actions shared with the transport toolbar (ToolBarManager). Their visible /
     // enabled / checked state is maintained by updateMenuStates()
     QAction* fullScreenAction() const { return _fullScreenAction; }
+    QAction* companionsAction() const { return _companionsAction; }
     QAction* overscanAction() const { return _overscanAction; }  // Pentagon only (hidden otherwise)
     QAction* mediaPanelAction() const { return _mediaPanelAction; }
     QMenu* viewMenu() const { return _viewMenu; }
@@ -192,6 +193,7 @@ signals:
     void audioSettingsRequested();
     void temporalEffectsRequested();
     void hudSettingsRequested();
+    void companionsRequested();  ///< Tools > Companions...: paired companion clients, revoke
     void screenshotRequested();
     void saveScreenshotRequested();
 #ifdef ENABLE_RECORDING
@@ -338,6 +340,7 @@ private:
     QAction* _audioSettingsAction;
     QAction* _temporalEffectsAction = nullptr;
     QAction* _hudSettingsAction;
+    QAction* _companionsAction = nullptr;
     QAction* _screenshotAction;
     QAction* _saveScreenshotAction;
 #ifdef ENABLE_RECORDING

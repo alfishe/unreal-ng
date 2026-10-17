@@ -2,6 +2,9 @@
 
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <common/logger.h>
+#include <emulator/execution/companionregistry.h>
+#include <mutex>
 
 #include <thread>
 
@@ -58,6 +61,14 @@ Automation& Automation::GetInstance()
 bool Automation::start()
 {
     bool result = true;
+
+    // Companion clients of a headless instance (docs/inprogress/2026-10-16-companion-client): provisioned by whoever
+    // starts the process. Once per process, however often automation starts
+    static std::once_flag companionsFromEnvironment;
+    std::call_once(companionsFromEnvironment, [] {
+        if (const size_t added = companion::CompanionRegistry::Instance().LoadFromEnvironment())
+            LOGINFO("%zu companion client(s) from UNREAL_COMPANION_TOKENS", added);
+    });
 
 #if ENABLE_LUA_AUTOMATION
     result &= startLua();

@@ -5837,6 +5837,95 @@ void RegisterRzxPlayback(ToolRegistry& registry)
 
 /// endregion </rzx_playback>
 
+/// region <companion_manage>
+
+/// companion_manage (docs/inprogress/2026-10-16-companion-client/surfaces.md §4): list and revoke companion clients -
+/// paired devices acting as the user's hands. An agent never acts as one, pairs or approves; it revokes only when the
+/// user asks
+void RegisterCompanionManage(ToolRegistry& registry)
+{
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["action"]["type"] = "string";
+    schema["properties"]["action"]["enum"].append("list");
+    schema["properties"]["action"]["enum"].append("revoke");
+    schema["properties"]["action"]["enum"].append("revoke_all");
+    schema["properties"]["action"]["description"] =
+        "list the companions and pending pairings; revoke one (id or name); revoke every one";
+    schema["properties"]["id"]["type"] = "string";
+    schema["properties"]["id"]["description"] = "revoke: the companion's id (c-...) or name";
+    schema["required"].append("action");
+
+    registry.Register(
+        "companion_manage",
+        "Companion clients: devices the user paired at the GUI to act as the user's own hands (their changes open no "
+        "session and lock nothing). List them and the pairings waiting for the user, or revoke one. An agent cannot "
+        "pair, approve or act as a companion; revoke only when the user asks.",
+        std::move(schema),
+        [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
+            const std::string action = args["action"].asString();
+            if (action == "list")
+            {
+                caller.Call("GET", "/api/v1/companions", nullptr, [done](int status, Json::Value body) {
+                    if (status != 200)
+                    {
+                        done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                        return;
+                    }
+                    std::ostringstream out;
+                    const Json::Value& companions = body["companions"];
+                    out << companions.size() << " companion(s)";
+                    for (const Json::Value& c : companions)
+                    {
+                        std::string scopes;
+                        for (const Json::Value& scope : c["scopes"])
+                            scopes += (scopes.empty() ? "" : ", ") + scope.asString();
+                        out << "\n- " << c["id"].asString() << " '" << c["name"].asString() << "' [" << scopes << "] "
+                            << c["source"].asString();
+                    }
+                    const Json::Value& pairings = body["pairings"];
+                    if (!pairings.empty())
+                    {
+                        out << "\n" << pairings.size() << " pairing(s) waiting for the user at the GUI";
+                        for (const Json::Value& p : pairings)
+                            out << "\n- " << p["pairing_id"].asString() << " '" << p["name"].asString() << "' from "
+                                << p["peer"].asString();
+                    }
+                    if (!body["approval_available"].asBool())
+                        out << "\nNo GUI on this instance: companions come from UNREAL_COMPANION_TOKENS";
+                    done(ToolResult::Ok(out.str(), std::move(body)));
+                });
+                return;
+            }
+            if (action == "revoke" || action == "revoke_all")
+            {
+                const std::string id = args["id"].asString();
+                if (action == "revoke" && id.empty())
+                {
+                    done(ToolResult::Error("revoke needs 'id': the companion's id or name (companion_manage list)"));
+                    return;
+                }
+                const std::string path = action == "revoke_all" ? std::string("/api/v1/companions")
+                                                                : "/api/v1/companions/" + UrlEncodeSegment(id);
+                caller.Call("DELETE", path, nullptr, [done, action](int status, Json::Value body) {
+                    if (status != 200)
+                    {
+                        done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                        return;
+                    }
+                    const std::string text = action == "revoke_all"
+                                                 ? std::to_string(body["revoked"].asUInt()) + " companion(s) revoked"
+                                                 : "Companion " + body["id"].asString() + " revoked";
+                    done(ToolResult::Ok(text, std::move(body)));
+                });
+                return;
+            }
+            done(ToolResult::Error("unknown action '" + action + "': list, revoke or revoke_all"));
+        });
+}
+
+/// endregion </companion_manage>
+
 /// region <Registry composition>
 
 std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
@@ -5861,6 +5950,9 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
 
     // memory_access: every memory by name - the Z80 view and the device memory regions
     RegisterMemoryAccess(*registry);
+
+    // companion_manage: list and revoke companion clients (docs/inprogress/2026-10-16-companion-client)
+    RegisterCompanionManage(*registry);
 
     // Phase 2 — smart tools
     RegisterManageSymbols(*registry);

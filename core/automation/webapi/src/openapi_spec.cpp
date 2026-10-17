@@ -53,6 +53,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_rtc.inc"
 #include "openapi/openapi_execution.inc"
 #include "openapi/openapi_session.inc"
+#include "openapi/openapi_companion.inc"
 #include "openapi/openapi_profi.inc"
 #include "openapi/openapi_isa.inc"
 #include "openapi/openapi_network.inc"
@@ -237,6 +238,12 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
         "Time-Travel Debug recorder control — start/stop recording, seek, step, "
         "resume, and inspect external-event markers (parent TDD §10.4)";
     tags.append(tagTTD);
+    Json::Value tagCompanions;
+    tagCompanions["name"] = "Companions";
+    tagCompanions["description"] =
+        "Companion clients: paired devices acting as the user's hands. With Authorization: Bearer <token> their "
+        "changes open no session (no remote control at the GUI, no lock), within the scopes the user granted";
+    tags.append(tagCompanions);
 
     spec["tags"] = tags;
 
@@ -249,6 +256,10 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     Json::Value schemas;
     buildSchemas(schemas);
     spec["components"]["schemas"] = schemas;
+    spec["components"]["securitySchemes"]["companionBearer"]["type"] = "http";
+    spec["components"]["securitySchemes"]["companionBearer"]["scheme"] = "bearer";
+    spec["components"]["securitySchemes"]["companionBearer"]["description"] =
+        "A companion token (unc_...), issued once at pairing or set in UNREAL_COMPANION_TOKENS";
 
     auto resp = HttpResponse::newHttpJsonResponse(spec);
     addCorsHeaders(resp);

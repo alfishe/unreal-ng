@@ -407,6 +407,14 @@ class Emulator:
     def release_control(self) -> None:
         """End the automation session"""
 
+# Module functions: companion clients (devices the user paired at the GUI to act as the user's hands; a script lists
+# and revokes them, it never pairs or acts as one)
+def companions() -> dict:
+    """{companions: [{id, name, device, scopes, source, paired_ms, last_seen_ms}], pairings: [...], approval_available}"""
+
+def companion_revoke(id: str) -> int:
+    """Revoke a companion by id or name ('all': every one); the number revoked"""
+
     def execution_state(self) -> dict:
         """Execution arbiter: phase, intent (run / pause) with intent_set_by (origin, client), intent_reason,
         main_loop (attached, parked), may_run, parked, serving (the command holding the CPU, drives_z80), queue,

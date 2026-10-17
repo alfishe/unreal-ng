@@ -389,6 +389,12 @@ public:
     ADD_METHOD_TO(EmulatorAPI::postControlSession, "/api/v1/emulator/{id}/control/session", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getControlSession, "/api/v1/emulator/{id}/control/session", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::deleteControlSession, "/api/v1/emulator/{id}/control/session", drogon::Delete);
+    // Companion clients (docs/inprogress/2026-10-16-companion-client): pairing, the companion itself, take-back
+    ADD_METHOD_TO(EmulatorAPI::postControlTakeBack, "/api/v1/emulator/{id}/control/take-back", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::postControlAllowAgain, "/api/v1/emulator/{id}/control/allow-again", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::companionsCollection, "/api/v1/companions", drogon::Get, drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::companionItem, "/api/v1/companions/{cid}", drogon::Get, drogon::Post, drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::companionPairing, "/api/v1/companions/pairings/{pid}", drogon::Get, drogon::Delete);
     // Execution arbiter: who decides whether the Z80 runs (DeviceState::Execution)
     ADD_METHOD_TO(EmulatorAPI::getStateExecution, "/api/v1/emulator/{id}/state/execution", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateExecutionActive, "/api/v1/emulator/state/execution", drogon::Get);
@@ -1373,6 +1379,18 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void deleteControlSession(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                               const std::string& id) const;
+    void postControlTakeBack(const drogon::HttpRequestPtr& req,
+                             std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id) const;
+    void postControlAllowAgain(const drogon::HttpRequestPtr& req,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
+    void companionsCollection(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void companionItem(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& cid) const;
+    void companionPairing(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& pid) const;
     void getStateExecution(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                            const std::string& id) const;

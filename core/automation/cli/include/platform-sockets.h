@@ -95,6 +95,13 @@ inline void cleanupSockets()
     WSACleanup();
 }
 
+// Wake whoever waits on the socket (recv answers 0) without closing it: its owner closes it (Windows implementation)
+inline void shutdownSocket(SOCKET sock)
+{
+    if (sock != INVALID_SOCKET)
+        shutdown(sock, SD_BOTH);
+}
+
 // Close socket safely (Windows implementation)
 inline void closeSocket(SOCKET& sock)
 {
@@ -158,6 +165,13 @@ inline void cleanupSockets()
     // No cleanup needed for UNIX
 }
 
+// Wake whoever waits on the socket (recv answers 0) without closing it: its owner closes it (UNIX implementation)
+inline void shutdownSocket(SOCKET sock)
+{
+    if (sock != INVALID_SOCKET)
+        shutdown(sock, SHUT_RDWR);
+}
+
 // Close socket safely (UNIX implementation)
 inline void closeSocket(SOCKET& sock)
 {
@@ -187,6 +201,16 @@ inline bool setSocketNonBlocking(SOCKET sock)
 #endif
 
 // Platform-agnostic interface
+
+// Wake whoever waits on the socket without closing it (platform-agnostic)
+inline void shutdownSocket(SOCKET sock)
+{
+#ifdef _WIN32
+    win_sockets::shutdownSocket(sock);
+#else
+    unix_sockets::shutdownSocket(sock);
+#endif
+}
 
 // Close socket safely (platform-agnostic)
 inline void closeSocket(SOCKET& sock)

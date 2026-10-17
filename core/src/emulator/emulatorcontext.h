@@ -466,7 +466,7 @@ private:
                           const std::string& client, std::chrono::milliseconds lease, const std::string& peer,
                           const std::string& implicitIdentity);
     void PostRunControlChanged(const std::string& event, const std::string& label, const std::string& client,
-                               const std::string& owner) const;
+                               const std::string& owner, const std::string& by = {}) const;
     RunControlClaim _runControlClaim;
     /// endregion </Run-control claim>
 

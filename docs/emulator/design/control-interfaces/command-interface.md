@@ -868,6 +868,9 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | CMOS clock (report) | `state rtc` / `rtc` | `GET /state/rtc` | `rtc_state()` | `rtc_state()` | `rtc` |
 | Execution arbiter | `state execution` / `state exec` | `GET /state/execution` | `execution_state()` | `execution_state()` | `execution` |
 | Automation session (take / release run control) | `session take [name]` / `session release` / `session` | `POST` / `DELETE` / `GET /control/session` + `X-Unreal-Session` | `take_control(name)` / `release_control()` | `take_control(name)` / `release_control()` | `control_execution take_control` / `release_control` |
+| Act as a companion client (no session; [companion clients](../../../inprogress/2026-10-16-companion-client/surfaces.md)) | `companion auth <token>` / `companion logout` | `Authorization: Bearer <token>` | - (never) | - (never) | - (never) |
+| Companion: status, take back, allow again | `companion` / `companion take-back` / `companion allow-again` | `GET /api/v1/companions/me`, `POST /control/take-back`, `POST /control/allow-again` | - | - | - |
+| Companions: list, revoke (approval: GUI only) | `companion list` / `companion revoke <id\|name\|all\|me>` | `GET /api/v1/companions`, `DELETE /api/v1/companions[/{id}]` | `companions()` / `companion_revoke(id)` | `companions()` / `companion_revoke(id)` | `companion_manage list` / `revoke` / `revoke_all` |
 | ZX Profi board chips (report) | `state profi` | `GET /state/profi` | `profi_state()` | `profi_state()` | `profi` |
 | Network adapters (report) | `network` / `net` | `GET /state/network` | `network_state()` | `network_state()` | `network` |
 | Network settings (change; a ZX-bus card change restarts the machine, [§14](#14-zx-bus-slots)) | `network set k=v .. [--replace] [--dry-run]` | `POST /network/config` | `network_configure{..}[, opts]` | `network_configure(**kw)` | `emulator_manage` `network_configure` |

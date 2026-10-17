@@ -607,6 +607,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/inkcentre.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/remotecontrolguard.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/remotecontrolguard.h"
+        # Companion clients in the GUI: the pairing prompt, the Companions dialog (companion client design)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/companioncontroller_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/companioncontroller.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/companioncontroller.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/ttdwidget_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.h"

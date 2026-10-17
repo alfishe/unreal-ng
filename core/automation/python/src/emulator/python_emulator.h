@@ -1,6 +1,7 @@
 #pragma once
 
 #include "emulator/io/network/networkmanager.h"
+#include "emulator/execution/companionregistry.h"
 #include "emulator/execution/scriptsession.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memoryread.h"
@@ -810,6 +811,15 @@ namespace PythonBindings
             auto* mgr = EmulatorManager::GetInstance();
             return static_cast<int>(mgr->GetEmulatorIds().size());
         }, "Get count of emulator instances");
+
+        // Companion clients (docs/inprogress/2026-10-16-companion-client): devices the user paired at the GUI to act
+        // as the user's hands. A script lists and revokes them; it never pairs, approves or acts as one
+        m.def("companions", []() -> py::object {
+            return StateNodeToPy(companion::CompanionRegistry::Instance().Report());
+        }, "Companion clients and pending pairings: {companions: [...], pairings: [...], approval_available}");
+        m.def("companion_revoke", [](const std::string& idOrName) -> size_t {
+            return companion::CompanionRegistry::Instance().Revoke(idOrName);
+        }, "Revoke a companion by id or name ('all': every one); the number revoked", py::arg("id"));
 
         // ZX-Poly machines (EmulatorManager::CreateZXPolyMachine - the entry point
         // every surface uses): four synchronized instances of one model

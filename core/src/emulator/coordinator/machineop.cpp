@@ -73,6 +73,7 @@ const char* OpSourceName(OpSource source)
         case OpSource::Gdb: return "gdb";
         case OpSource::DeZog: return "dezog";
         case OpSource::Mcp: return "mcp";
+        case OpSource::Companion: return "companion";
         case OpSource::Machine: return "machine";
         case OpSource::Core: return "core";
         case OpSource::Test: return "test";

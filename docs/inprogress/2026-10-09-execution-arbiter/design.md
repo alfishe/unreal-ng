@@ -316,6 +316,11 @@ Mechanics:
     indicator ("MCP tried to take control back").
 - **Notifications.** `NC_RUN_CONTROL_CHANGED` (taken / released / revoked, with the holder) drives the toolbar
   indicator, the lock of the GUI actions and the HUD status. The arbiter's report (X5) shows the session too.
+- **Companion clients** (owner, 2026-10-16; [design](../2026-10-16-companion-client/README.md)). A device the user
+  paired at the GUI acts as the user's hands: with its token the gate opens no session for its actions (no indicator,
+  no lock), any action within its scopes, the debugger included (steps need a pause: `not_now`); it is refused
+  `held_by_session` while a session holds the machine, and it may take control back as the GUI does
+  (`RevokeRunControl` with `by` = the companion). Origin and operation-log source `companion`.
 
 ## 7. Invariants (checked in every test, every mode)
 
