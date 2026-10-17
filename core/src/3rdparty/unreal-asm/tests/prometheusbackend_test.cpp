@@ -238,9 +238,13 @@ TEST(PrometheusBackend_Test, LinesAsPrometheusShowsThem)
 TEST(PrometheusBackend_Test, ALargeHoleStaysAHoleWithAWarning)
 {
     Diagnostics diagnostics;
-    const std::vector<std::string> lines = ToProm("        ORG #6000\n        DS 1000\n", &diagnostics);
-    EXPECT_TRUE(Contains(lines, "defs 1000")) << Joined(lines);
+    const std::vector<std::string> lines = ToProm("        ORG #6000\n        DS 5000\n", &diagnostics);
+    EXPECT_TRUE(Contains(lines, "defs 5000")) << Joined(lines);
     EXPECT_TRUE(std::any_of(diagnostics.begin(), diagnostics.end(), [](const Diagnostic& d) { return d.severity == Severity::Warning; }));
+    // up to 4096 bytes the zeros are written (FlexNavigator clears a place with DS #400 over code laid there before)
+    Diagnostics none;
+    const std::vector<std::string> zeros = ToProm("        ORG #6000\n        DS 1000\n", &none);
+    EXPECT_FALSE(std::any_of(zeros.begin(), zeros.end(), [](const std::string& l) { return l.rfind("defs", 0) == 0; })) << Joined(zeros);
 }
 
 TEST(PrometheusBackend_Test, ProgramsKeepTheirBytesThroughPrometheus)

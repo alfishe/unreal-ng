@@ -18,5 +18,6 @@ public:
     BackendResult Write(const ir::Program& program, const BackendOptions& options) const override;
     bool WantsLabelValues() const override { return true; }
     bool JoinsSjasmplusProject() const override { return true; }
+    bool Includes(const BackendOptions&) const override { return false; }
 };
 }  // namespace unrealasm::dialects

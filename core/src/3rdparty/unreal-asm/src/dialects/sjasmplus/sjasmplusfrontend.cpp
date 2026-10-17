@@ -733,6 +733,21 @@ Statement ParseStatement(const std::string& text, std::string& label, const Cont
             const bool condition = k == 0 && z80::TakesCondition(mnemonic) && (ops.size() > 1 || mnemonic == "ret");
             s.operands.push_back(c.InstructionOperand(ops[k], condition, mnemonic == "in" || mnemonic == "out"));
         }
+        // what sjasmplus reads otherwise than it is written: EX HL,DE is EX DE,HL; an ALU operation's (n) is the number n
+        // (the Z80 has no ADD A,(nn): sjasmplus assembles the value)
+        auto reg = [&](size_t k, const char* name) { return k < s.operands.size() && s.operands[k].kind == Operand::Kind::Register && s.operands[k].text == name; };
+        if (mnemonic == "ex" && s.operands.size() == 2 && reg(0, "hl") && reg(1, "de"))
+            std::swap(s.operands[0], s.operands[1]);
+        // LD r,(n) with r not A: there is no such load either (LD H,(TABLE/256) is LD H,TABLE/256)
+        static const std::set<std::string> kByteRegisters = {"b", "c", "d", "e", "h", "l", "ixh", "ixl", "iyh", "iyl", "i", "r"};
+        if (mnemonic == "ld" && s.operands.size() == 2 && s.operands[0].kind == Operand::Kind::Register && kByteRegisters.count(s.operands[0].text) &&
+            s.operands[1].kind == Operand::Kind::Memory)
+            s.operands[1].kind = Operand::Kind::Immediate;
+        static const std::set<std::string> kAlu = {"add", "adc", "sub", "sbc", "and", "xor", "or", "cp"};
+        if (kAlu.count(mnemonic))
+            for (Operand& o : s.operands)
+                if (o.kind == Operand::Kind::Memory)
+                    o.kind = Operand::Kind::Immediate;
         return s;
     }
 

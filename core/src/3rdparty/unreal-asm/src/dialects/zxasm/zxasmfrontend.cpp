@@ -57,6 +57,17 @@ Expr Hex(int64_t v, int digits)
     return Expr::Number(v, ir::NumberSpelling::Hex, digits);
 }
 
+/// A 16-bit mask (& #FFFF) somewhere in it: the result of a function that wraps to 16 bits (.n .c ...)
+bool HasWordMask(const Expr& e)
+{
+    if (e.kind == Expr::Kind::Binary && e.op == Op::And && e.args.size() == 2 && e.args[1].kind == Expr::Kind::Number && e.args[1].value == 0xFFFF)
+        return true;
+    for (const Expr& a : e.args)
+        if (HasWordMask(a))
+            return true;
+    return false;
+}
+
 /// Expressions: left to right without priorities ("10+20*2 is 60"), parentheses first; postfix functions act on the
 /// operand right before them (checked in ZAsm 3.15: #1200+#34.b = #1234)
 struct ExpressionParser
@@ -395,6 +406,14 @@ Operand ParseOperand(const std::string& text, bool conditionAllowed, bool port)
             // The offset is a byte: (IY+#FE) is (IY-2)
             if (o.expr.kind == Expr::Kind::Number && o.expr.value >= 0x80 && o.expr.value <= 0xFF)
                 o.expr = Expr::Unary(Op::Negate, Expr::Number(0x100 - o.expr.value, o.expr.spelling, o.expr.digits));
+            else if (HasWordMask(o.expr))
+            {
+                // ZX-ASM takes the low byte of its 16-bit value ((IY+100.n+X) is IY-100+X): as a signed byte for sjasmplus,
+                // ((e+#80)&#FF)-#80
+                o.expr = Expr::Binary(Op::Sub,
+                                      Grouped(Expr::Binary(Op::And, Grouped(Expr::Binary(Op::Add, Grouped(std::move(o.expr)), Hex(0x80, 2))), Hex(0xFF, 2))),
+                                      Hex(0x80, 2));
+            }
             return o;
         }
         o.kind = Operand::Kind::Memory;

@@ -132,6 +132,9 @@ protected:
     std::string Operands(const std::vector<Operand>& operands);
     std::string NotConverted(const std::string& what);
     std::vector<std::string> DataLines(const std::string& keyword, const std::vector<std::string>& items, size_t width = 40) const;
+    /// INCBIN for a target without it (or without its part): the file's bytes as DB lines, when the project's data files
+    /// hold it (options.dataFiles); else the line not converted, `why`
+    std::vector<std::string> IncbinAsData(const Statement& s, const std::string& why);
     std::vector<std::string> Data(const Statement& s, bool words);
     std::vector<std::string> InstructionText(const Statement& s);
     /// The bytes of an instruction the target lacks, as a DB line with the instruction as its comment

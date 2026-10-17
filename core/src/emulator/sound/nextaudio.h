@@ -85,12 +85,20 @@ public:
     std::vector<std::pair<std::string, std::string>> AudioStateFields() const override;
     /// endregion
 
+    /// Off: every tick through Tick (comparisons); the count of the ticks the quiet runs took (AdvanceTo)
+    void SetQuietTicksEnabled(bool enabled) { _quietTicksEnabled = enabled; }
+    uint64_t QuietTicks() const { return _quietTicks; }
+
 private:
     friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     /// Run the generators up to absolute base T `t` (a tick every 16 T), recording the level of each tick
     void AdvanceTo(double t);
     void ResetChips();
     void Tick();
+    /// `ticks` Tick() calls of three chips that are silentAtRest, with the DC filter at its fixed point for their silence,
+    /// and true; false (nothing done) otherwise. Every chip level is then 0 and stays 0, so every tick has the one level
+    /// the DC filter, the DAC and the Pi give, worked out once; the generators advance (SoundChip_AY8910::advanceSilent)
+    bool QuietTicks(size_t ticks);
 
     EmulatorContext* _context;
     std::array<std::unique_ptr<SoundChip_AY8910>, kChips> _chips;
@@ -116,6 +124,8 @@ private:
     bool _hadSound = false;
     size_t _rate = AUDIO_SAMPLING_RATE;
     std::vector<float> _tickLeft, _tickRight;  ///< the level of each tick of this frame
+    bool _quietTicksEnabled = true;
+    uint64_t _quietTicks = 0;
     AudioFrameDescriptor _audioDescriptor;
     int16_t* const _buffer = reinterpret_cast<int16_t*>(_audioDescriptor.memoryBuffer);
 };

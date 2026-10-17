@@ -30,6 +30,22 @@ def device_of(folder, main):
     return found.group(1).strip() if found else None   # with its arguments (ZXSPECTRUM48, $5D00: the stack's top)
 
 
+def own_device(folder, main, device):
+    """The DEVICE the converter adds to a text that needs one (`; unreal-asm:`) becomes the original's: the memory a
+    device sets up (the 48K's attributes and system variables) is not the program's"""
+    path = os.path.join(folder, main)
+    with open(path, encoding='latin-1') as f:
+        lines = f.read().split('\n')
+    changed = False
+    for k, line in enumerate(lines):
+        if re.match(r'^\s*DEVICE\s', line, re.I) and '; unreal-asm:' in line:
+            lines[k] = (f'        DEVICE {device}' if device else '        DEVICE NOSLOT64K') + '   ; the original\'s'
+            changed = True
+    if changed:
+        with open(path, 'w', encoding='latin-1') as f:
+            f.write('\n'.join(lines))
+
+
 def assemble(sjasmplus, folder, main, out, device=None):
     """sjasmplus on a harness around `main` (in `folder`): the 64K memory, or (None, log). Without a DEVICE of its own
     the source gets `device` (NOSLOT64K: a plain 64K, zeros; ZXSPECTRUM48 would set the system variables)"""
@@ -38,7 +54,7 @@ def assemble(sjasmplus, folder, main, out, device=None):
     own = re.search(r'^\s*DEVICE\s', text, re.I | re.M)
     # the folders its OUTPUT / SAVEBIN ... write into
     for name in re.findall(r'^\s*(?:OUTPUT|SAVEBIN|SAVESNA|SAVETAP|SAVENEX|EMPTYTAP|SAVETRD|EMPTYTRD)\s+"([^"]+)"', text, re.I | re.M):
-        target = os.path.dirname(os.path.join(folder, name))
+        target = os.path.dirname(os.path.join(folder, name.replace('\\', '/')))   # sjasmplus reads a DOS \\ as /
         if target.startswith(folder):
             os.makedirs(target, exist_ok=True)
     harness = ('' if own else f'        DEVICE {device or "NOSLOT64K"}\n') + f'        INCLUDE "{main}"\n'
@@ -105,6 +121,7 @@ def check(path, args):
     code, backWarnings = convert(args.zxasm, there, args, os.path.join(back, '__back.asm'), back=True)
     if code != 0:
         return {'project': path, 'state': 'back conversion failed', 'warnings': warnings + backWarnings}
+    own_device(back, '__back.asm', device)
     memory, log = assemble(args.sjasmplus, back, '__back.asm', '__memory.bin', device)
     if memory is None:
         return {'project': path, 'state': 'the converted text does not assemble', 'warnings': warnings, 'log': log[-600:]}
@@ -144,6 +161,7 @@ def check_project(path, args, folder, original, main, reference, device):
     stem = disk_name(main).lower() + '.asm'
     if not os.path.exists(os.path.join(back, stem)):
         return {'project': path, 'state': 'no ' + stem + ' came back', 'warnings': warnings}
+    own_device(back, stem, device)
     memory, log = assemble(args.sjasmplus, back, stem, '__memory.bin', device)
     if memory is None:
         return {'project': path, 'state': 'the converted text does not assemble', 'warnings': warnings, 'log': log[-600:]}

@@ -350,3 +350,72 @@ TEST(SjasmplusLower_Test, ASourceOfAnotherDialectGivesItsLabelValuesToo)
     ASSERT_TRUE(r.ok);
     EXPECT_NE(r.document.Text().find("X\tEQU #8004+1"), std::string::npos) << r.document.Text();
 }
+
+/// What the real projects showed on the 48K and other targets (research-sjasmplus-projects.md §6, 2026-10-17)
+TEST(SjasmplusLower_Test, TheRealProjectsOnEveryTargetShowedThese)
+{
+    // sjasmplus reads EX HL,DE as EX DE,HL and an ALU operation's or LD r's (n) as the number (no such Z80 forms)
+    const std::vector<std::string> tasm = Lines("        ORG #8000\n        ex hl,de\n        add a,(5)\n        ld h,(#1234/256)\n", "tasm");
+    EXPECT_TRUE(Contains(tasm, "EX DE,HL")) << Joined(tasm);
+    EXPECT_TRUE(Contains(tasm, "ADD A,5")) << Joined(tasm);
+    EXPECT_TRUE(Contains(tasm, "LD H,#1234/256")) << Joined(tasm);
+
+    // GENS: *F from the line's first column; ^ and ` (the Spectrum's arrow and pound) in a string as numbers
+    BackendOptions gens;
+    gens.targetVersion = "2";
+    const ConvertResult included = Convert(SourceDocument::FromText("        ORG #8000\n        INCLUDE \"lib.asm\"\n        DB \"a^b\"\n", "sjasmplus"), "gens", gens);
+    ASSERT_TRUE(included.ok);
+    EXPECT_TRUE(std::any_of(included.document.lines.begin(), included.document.lines.end(), [](const SourceLine& l) { return l.text == "*F lib"; }));
+    EXPECT_TRUE(std::any_of(included.document.lines.begin(), included.document.lines.end(),
+                            [](const SourceLine& l) { return l.text.find("97,94,98") != std::string::npos; }));
+
+    // a target without INCBIN gets the file's bytes when the project holds the file
+    BackendOptions withData;
+    withData.targetVersion = "2";
+    withData.dataFiles = [](const std::string& name) { return name == "d.bin" ? std::vector<uint8_t>{1, 2, 3} : std::vector<uint8_t>{}; };
+    const ConvertResult data = Convert(SourceDocument::FromText("        ORG #8000\n        INCBIN \"d.bin\",1\n", "sjasmplus"), "gens", withData);
+    ASSERT_TRUE(data.ok);
+    EXPECT_TRUE(std::any_of(data.document.lines.begin(), data.document.lines.end(), [](const SourceLine& l) { return l.text.find("DEFB 2,3") != std::string::npos; }));
+
+    // ZEUS 1983 has no INCLUDE: the project stays one file, the INCLUDEd text where its INCLUDE was
+    std::vector<ProjectFile> project = {{"main", SourceDocument::FromText("        ORG #8000\n        INCLUDE \"lib.asm\"\n        RET\n", "sjasmplus")},
+                                        {"lib", SourceDocument::FromText("LIBRARY NOP\n", "sjasmplus")}};
+    BackendOptions zeus;
+    zeus.targetVersion = "1983";
+    const ProjectResult joined = ConvertProject(project, "zeus", zeus);
+    ASSERT_TRUE(joined.ok);
+    ASSERT_EQ(joined.files.size(), 2u);
+    std::string main;
+    for (const SourceLine& l : joined.files[0].document.lines)
+        main += l.text + "\n";
+    EXPECT_NE(main.find("LIBRARY"), std::string::npos) << main;
+    for (const SourceLine& l : joined.files[0].document.lines)
+        if (l.text.find("INCLUDE") != std::string::npos)
+            EXPECT_EQ(l.text.find_first_not_of(" \t"), l.text.find(';')) << "only as a comment: " << l.text;
+    ASSERT_EQ(joined.files[1].document.lines.size(), 1u);
+    EXPECT_EQ(joined.files[1].document.lines[0].text[0], ';');
+
+    // ZEUS: a DM delimited by " holds a : (ZEUS' statement separator elsewhere)
+    SourceDocument text = SourceDocument::FromText("        ORG #8000\nT       DM \"http://z\"\n", "zeus");
+    text.subversion = "pht";
+    const ConvertResult back = Convert(text, "sjasmplus");
+    ASSERT_TRUE(back.ok);
+    std::string all;
+    for (const SourceLine& l : back.document.lines)
+        all += l.text + "\n";
+    EXPECT_NE(all.find("http://z"), std::string::npos) << all;
+    EXPECT_EQ(all.find("unparsed"), std::string::npos) << all;
+
+    // ZX-ASM: an index offset made with a 16-bit function is its low byte ((IY+100.n+5) is IY-95)
+    const ConvertResult zx = Convert(SourceDocument::FromText("        ORG #8000\n        LD (IY+100.n+5),A\n", "zxasm"), "sjasmplus");
+    ASSERT_TRUE(zx.ok);
+    std::string zxText;
+    for (const SourceLine& l : zx.document.lines)
+        zxText += l.text + "\n";
+    EXPECT_NE(zxText.find("+#80)&#FF)-#80"), std::string::npos) << zxText;
+
+    // back to sjasmplus, a SAVEBIN alone gets the plain 64K device (no screen attributes, no system variables)
+    const ConvertResult saved = Convert(SourceDocument::FromText("        ORG #8000\nS       NOP\n        SAVEOBJ \"s.bin\",S,1\n", "zxasm"), "sjasmplus");
+    ASSERT_TRUE(saved.ok);
+    EXPECT_NE(saved.document.lines[0].text.find("DEVICE NOSLOT64K"), std::string::npos) << saved.document.lines[0].text;
+}

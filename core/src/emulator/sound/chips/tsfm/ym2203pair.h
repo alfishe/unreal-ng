@@ -127,6 +127,7 @@ public:
         fm.write_address(0x2D);
         address = 0;
         fmClockPhase = 0;
+        fmIdleKnown = false;
         fmKeyOn[0] = fmKeyOn[1] = fmKeyOn[2] = 0;
         intf.reset();
         ssg.setChipModel(AYChipModel::YM2149);
@@ -140,6 +141,10 @@ public:
 
     uint8_t address = 0;       // YM2203 address latch (8-bit)
     int32_t fmClockPhase = 0;  // master clocks since the last FM sample, 0 .. 12*p-1
+    // fm.fmIdle() found true and nothing since that could end it: clockFmIdle keeps an idle engine idle (it turns
+    // phases and counters only), so only a register write, a reset, a restore or a clock through clockFmOnce (a timer
+    // expiry may key on: CSM) clears it - the idle test walks every operator
+    bool fmIdleKnown = false;
 
     // Key-on mask per FM channel as last written to register 0x28 (bits 4-7 = slots S1,S2,S3,S4). Mirror for the
     // state report (DeviceState::FmChip); ymfm keeps the live key state privately.
@@ -255,6 +260,7 @@ public:
         Ym2203Chip& c = *_chips[index];
         c.address = value;
         c.fm.write_address(value);
+        c.fmIdleKnown = false;
         c.ssg.setRegister(value);
     }
 
@@ -555,6 +561,12 @@ public:
     /// stopped (the cursor placed by beginChannelRender). Returns the samples written (0 before
     /// configureChannelOutputs)
     size_t renderChannels(size_t frames, const Ym2203ChannelBlock& block, bool fmEnabled);
+    /// The `ticks` generator ticks of renderChannels when the pair is quiet over them, and true; false (nothing done)
+    /// otherwise. Quiet: no SSG write due by the last tick, both SSGs silentAtRest (every channel level 0 now and at
+    /// the last tick), every channel and FM decimator history all zeros, each chip's FM part fed 0 (muted, or holding
+    /// 0 with every word due by the last tick's second half 0 too), no native tap. The ticks would then feed zeros
+    /// everywhere: only the generators, the words consumed and the decimator positions move
+    bool renderQuietChannels(uint32_t ticks, bool fmEnabled);
     /// endregion </Per-channel outputs>
 
     /// region <TTD>

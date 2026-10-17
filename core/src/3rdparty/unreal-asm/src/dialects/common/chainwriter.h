@@ -28,6 +28,9 @@ protected:
     /// The longest expression the target's line takes (0: any); a longer one is written as its value where known
     virtual size_t ExpressionWidth() const { return 0; }
     virtual std::string NumberText(const Expr& e) const;
+    /// A character the target's text holds as itself in quotes (the ZX Spectrum set's targets: not ^ and `, its arrow and
+    /// pound, which the codecs give no ASCII byte)
+    virtual bool InQuotes(char c) const { return c > 0x20 && c < 0x7F && c != '"'; }
 
     std::optional<std::string> Atom(const Expr& e);
     static bool IsAtom(const Expr& e);

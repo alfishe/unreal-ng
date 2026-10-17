@@ -182,7 +182,7 @@ phase; master only after the owner's review.
       - [x] PROMETHEUS 48K (2026-10-10): the records, checksum, FF and table from its reconstructed source (§7.17)
       - [x] Primus 2.9 (2026-10-10): ZEUS's start / last-FF pair at `#61B1` (§7.15)
       - [x] GENS4B (2026-10-10): started from 48K BASIC via USR 15616 / LOAD CODE / RETURN / USR 30000; text `(#7928)`-`(#7566)` (docs/disasm/software/gens4b)
-      - [ ] `RANDOMIZE USR 15619: REM : LOAD ...` returned without reading the disk (Pentagon, 48 BASIC; TTD: TR-DOS one frame, FDC only `#D0`): explain
+      - [x] `RANDOMIZE USR 15619: REM : LOAD ...` returned without reading the disk (Pentagon, 48 BASIC; TTD: TR-DOS one frame, FDC only `#D0`): explained 2026-10-16, a stored `#20` after `REM :` is taken for the command token (typer bug F1, fixed); reproduced on a live Pentagon through the WebAPI
     - [x] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
       - [x] INCLUDE from the disk in a drive and from host folders, option `project` (2026-10-10, §5.4)
       - [x] other texts in memory (2026-10-10): ALASM's pages (`textsPerPage`); XAS and ZAsm hold one text
@@ -232,6 +232,7 @@ phase; master only after the owner's review.
       - [x] a project's files lowered together (MODULE, STRUCT, DEFL across INCLUDEs) (2026-10-12): `ConvertProject` joins a sjasmplus project for the retro backends and cuts it back into its files; long files cut into INCLUDEd parts (`splitLines`, ALASM's 64K)
       - [x] a host project's file names onto TR-DOS names for targets that INCLUDE by disk name (2026-10-12): `zxasm convert --project`, `ProjectDiskNames`, `BackendOptions::fileNames`
       - [x] the projects' failures run down one by one (2026-10-12, research-sjasmplus-projects.md §5-§6): TASM 30 of 37, ALASM 29, STORM 32, XAS 32; twenty more bugs fixed (sjasmplus syntax the frontend did not read, DISP in DISP, STRUCT fields without values, Z80N written by name, XAS spelling across files ...)
+      - [x] the 37 projects through every other retro target (2026-10-17, research-sjasmplus-projects.md §5-§6): ZX-ASM 33, PROMETHEUS 33, MASM 31, GENS 30, ZEUS 1983 / v7.E 30, Laser Genius 30, Primus 24, PASM 19 (was 12-20); fifteen bugs fixed (SAVEOBJ names, index offsets of 16-bit functions, MASM comments, GENS' *F column, the Spectrum's ^ and `, INCBIN as DB, ZEUS' DM ", the project joined for targets without INCLUDE, $ in DISP, EX HL,DE / ADD A,(n) / LD H,(n), PROMETHEUS' DS zeros, --version for a folder); what is left: Lua, DISP and one ORG where a target has none, sector slack, ZEUS's text size, PASM's memory model
       - Lua blocks stay left out with a warning (owner, 2026-10-12: not in scope)
       - [x] RELOCATE_START / RELOCATE_TABLE (2026-10-13, research-sjasmplus-projects.md §7): the layout builds sjasmplus' table (24 of its 30 relocation tests equal, the rest use syntax the layout does not read), the writers put it as DW; DG / DH laid out
       - [x] ALASM: a macro mixing LOCAL labels and global ones expanded at its calls (2026-10-13): Wild Commander's `emu.asm` equal; real projects now TASM 31 / ALASM 33 / STORM 33 / XAS 33 of 37 (the rest: Lua, TASM's sector slack)

@@ -52,7 +52,8 @@ std::string Cut(const std::string& t)
     return t.substr(0, at);
 }
 
-/// A comment for MASM: ASCII and Russian letters (CP866); others as "?"
+/// A comment for MASM: ASCII; others as "?" (MASM's bytes #80 and up are its keywords: a Russian letter is no character
+/// of a MASM line, the codec refuses it)
 std::string CommentText(const std::string& utf8)
 {
     std::string out;
@@ -65,15 +66,8 @@ std::string CommentText(const std::string& utf8)
             ++p;
             continue;
         }
-        const size_t length = b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : b >= 0xC0 ? 2 : 1;
-        char32_t c = length == 1 ? b : b & (0x7F >> length);
-        for (size_t k = 1; k < length && p + k < utf8.size(); ++k)
-            c = (c << 6) | (static_cast<unsigned char>(utf8[p + k]) & 0x3F);
-        if ((c >= U'А' && c <= U'я') || c == U'Ё' || c == U'ё')
-            out.append(utf8, p, length);
-        else
-            out.push_back('?');
-        p += length;
+        out.push_back('?');
+        p += b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : b >= 0xC0 ? 2 : 1;
     }
     return out;
 }

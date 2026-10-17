@@ -2,6 +2,8 @@
 
 #include "nextaudio.h"
 
+#include <cmath>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -204,6 +206,41 @@ void NextAudio::Tick()
     _tickRight.push_back(static_cast<float>(right / 32768.0));
 }
 
+bool NextAudio::QuietTicks(size_t ticks)
+{
+    if (!_quietTicksEnabled || ticks == 0)
+        return false;
+    for (const auto& chip : _chips)
+    {
+        if (!chip->silentAtRest())
+            return false;
+    }
+    // Tick() with every chip level 0 (silentAtRest: amplitude 0 now, and the levels the last tick made were 0 - the
+    // chips' own output filters rest on 0): the same arithmetic, which must leave the DC filter where it is
+    double left = 0, right = 0;
+    left *= 4.0;
+    right *= 4.0;
+    const double dcLeft = _dcLeft + (left - _dcLeft) * kDcAlpha;
+    const double dcRight = _dcRight + (right - _dcRight) * kDcAlpha;
+    if (dcLeft != _dcLeft || dcRight != _dcRight)
+        return false;
+    left -= dcLeft;
+    right -= dcRight;
+    if (_dacEnabled)
+    {
+        left += ((_dac[0] - 128) + (_dac[1] - 128)) * 16.0;
+        right += ((_dac[2] - 128) + (_dac[3] - 128)) * 16.0;
+    }
+    left += (static_cast<double>(_piLeft) - 512.0) * 4.0;
+    right += (static_cast<double>(_piRight) - 512.0) * 4.0;
+    _tickLeft.insert(_tickLeft.end(), ticks, static_cast<float>(left / 32768.0));
+    _tickRight.insert(_tickRight.end(), ticks, static_cast<float>(right / 32768.0));
+    for (const auto& chip : _chips)
+        chip->advanceSilent(static_cast<uint32_t>(ticks));
+    _quietTicks += ticks;
+    return true;
+}
+
 void NextAudio::AdvanceTo(double t)
 {
     if (_suppressed)
@@ -211,8 +248,22 @@ void NextAudio::AdvanceTo(double t)
         _tickT = std::max(_tickT, t);
         return;
     }
+    // A quiet run to t when the chips are silent at rest (QuietTicks), asked at the start and every 256 ticks. The tick
+    // times are whole multiples of a binary fraction of a T (the CPU clock's), so k additions of 16 are 16 x k exactly
+    uint32_t untilAsk = 0;
     while (_tickT < t)
     {
+        if (untilAsk-- == 0)
+        {
+            untilAsk = 255;
+            const size_t ticks = static_cast<size_t>(std::ceil((t - _tickT) / kTickT));
+            const double last = _tickT + kTickT * static_cast<double>(ticks - 1);  // the run's last tick: before t
+            if (ticks > 0 && last < t && last + kTickT >= t && QuietTicks(ticks))
+            {
+                _tickT += kTickT * static_cast<double>(ticks);
+                return;
+            }
+        }
         Tick();
         _tickT += kTickT;
     }

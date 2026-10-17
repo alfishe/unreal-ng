@@ -25,7 +25,7 @@ const std::set<std::string> kWords = {
     "I", "R", "AF", "BC", "DE", "HL", "SP", "IX", "IY", "NZ", "Z", "NC", "PO", "PE", "P", "M",
 };
 
-/// A comment for GENS: ASCII only (other characters as "?")
+/// A comment for GENS: ASCII only (other characters as "?"); ^ and ` are the Spectrum's arrow and pound (their bytes)
 std::string CommentText(const std::string& utf8)
 {
     std::string out;
@@ -33,7 +33,12 @@ std::string CommentText(const std::string& utf8)
     {
         const unsigned char b = static_cast<unsigned char>(utf8[p]);
         const size_t length = b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : b >= 0xC0 ? 2 : 1;
-        out.push_back(b < 0x20 || b == 0x7F ? ' ' : b < 0x80 ? static_cast<char>(b) : '?');
+        if (b == '^')
+            out += "\u2191";
+        else if (b == '`')
+            out += "\u00A3";
+        else
+            out.push_back(b < 0x20 || b == 0x7F ? ' ' : b < 0x80 ? static_cast<char>(b) : '?');
         p += b < 0x80 ? 1 : length;
     }
     return out;
@@ -85,6 +90,8 @@ private:
 
     /// A string: DEFM "text" lines for runs of three characters or more; the quote, control characters and bytes above
     /// #7F as DEFB numbers
+    bool InQuotes(char c) const override { return ChainWriter::InQuotes(c) && c != '^' && c != '`'; }
+
     void PutString(const std::string& text, std::vector<std::string>& items, std::vector<std::string>& out, const std::function<void()>& flush) override
     {
         std::string run;
@@ -102,7 +109,7 @@ private:
         for (const char c : text)
         {
             const unsigned char u = static_cast<unsigned char>(c);
-            if (u < 0x20 || u >= 0x7F || c == '"' || c == ';')
+            if (u < 0x20 || u >= 0x7F || c == '"' || c == ';' || !InQuotes(c))
             {
                 end();
                 items.push_back(std::to_string(u));
@@ -209,7 +216,7 @@ private:
                     name = name.substr(0, dot);
                 return {"*F " + name};
             }
-            case ir::DirectiveKind::Incbin: return {NotConverted("INCBIN (GENS has none): " + s.text)};
+            case ir::DirectiveKind::Incbin: return IncbinAsData(s, "INCBIN (GENS has none): " + s.text);
             case ir::DirectiveKind::End:
                 diagnostics.push_back({Severity::Info, line, 0, "END dropped (GENS' END closes an IF)"});
                 return {";END"};
@@ -233,6 +240,14 @@ private:
             if (!t.empty() && t[0] == ';')
             {
                 out.push_back(text.empty() ? t : text + " " + t);
+                continue;
+            }
+            if (!t.empty() && t[0] == '*')
+            {
+                // an assembler command (*F name): GENS reads it only from the line's first column
+                if (!text.empty())
+                    out.push_back(text);
+                out.push_back(t);
                 continue;
             }
             text.append(text.size() < 8 ? 8 - text.size() : 1, ' ');

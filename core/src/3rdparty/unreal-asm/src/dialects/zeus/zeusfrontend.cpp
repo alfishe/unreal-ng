@@ -337,13 +337,8 @@ std::vector<std::string> SplitStatements(const std::string& text, std::string& c
     for (size_t k = 0; k < text.size(); ++k)
     {
         const char c = text[k];
-        if (c == '"' && k + 1 < text.size())
-        {
-            cur += text.substr(k, 2);
-            ++k;
-            continue;
-        }
-        // DEFM / DM: everything to the closing delimiter is text
+        // DEFM / DM: everything to the closing delimiter is text (first: its delimiter may be ", which elsewhere starts a
+        // character)
         const std::string trimmed = Trim(cur);
         const bool atText = (trimmed == "DM" || trimmed == "DEFM" || (trimmed.size() > 3 && (trimmed.compare(trimmed.size() - 3, 3, " DM") == 0)) ||
                              (trimmed.size() > 5 && trimmed.compare(trimmed.size() - 5, 5, " DEFM") == 0)) &&
@@ -354,6 +349,12 @@ std::vector<std::string> SplitStatements(const std::string& text, std::string& c
             const size_t end = close == std::string::npos ? text.size() : close + 1;
             cur += text.substr(k, end - k);
             k = end - 1;
+            continue;
+        }
+        if (c == '"' && k + 1 < text.size())
+        {
+            cur += text.substr(k, 2);
+            ++k;
             continue;
         }
         if (c == ';')
