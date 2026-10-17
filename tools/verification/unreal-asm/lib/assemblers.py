@@ -279,8 +279,8 @@ def zasmr_finish(emu, args, expected):
     for _ in range(2):
         if emu.read_disk_file('out', 'C'):
             break
-        # "No Disk": a drive it was not given (Lite's built-in D; after a template's disk went in, the others ask once
-        # too): Retry, drive A
+        # "No Disk": a drive it was not given (Lite's built-in D), or the disk check timed out (with real FDC timing:
+        # its index wait starts with a stale counter, TODO.md): Retry, drive A
         emu.tap('enter')
         time.sleep(1)
         emu.tap('a')

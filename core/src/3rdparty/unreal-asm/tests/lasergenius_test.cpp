@@ -270,7 +270,7 @@ TEST(LaserGeniusFrontend_Test, Expressions)
     // Unsigned 16-bit words, & | ^ on one level, comparisons and && || ! giving 1 (sjasmplus: -1), [ ] parentheses
     const std::vector<std::string> out = ToSjasmplus("DW 1|2&4\nDW 2&&1\nDW -10/3\nDW 1<<2+1\nDW [1+2]*3\nDW #1234@<4\nLD A,\"\\13\"\nDW ^5\n");
     const std::vector<std::string> expected = {"DW (1|2)&4", "DW -(2&&1)", "DW (-10&#FFFF)/(3&#FFFF)", "DW 1<<2+1", "DW (1+2)*3",
-                                               "DW (((#1234&#FFFF)<<4|(#1234&#FFFF)>>>(16-4))&#FFFF)", "LD A,13", "DW ~5"};
+                                               "DW ((#1234*#10001>>>12)&#FFFF)", "LD A,13", "DW ~5"};
     EXPECT_EQ(out, expected);
 }
 

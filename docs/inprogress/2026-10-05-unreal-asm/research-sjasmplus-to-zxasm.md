@@ -48,9 +48,9 @@ file from the start (above `#C000` into page 6 whatever is mapped), the end word
 the start (`LinearParams::resetFrom` / `resetTo`).
 
 The idle rule: at its COMMAND prompt (CS+SS in the editor) its key wait returns through `#C404`, `#E630`, `#E6F0`
-(its code runs in the page at `#C000`). `A` there assembles the new text. The editor's screen is redrawn by COMMAND
-`CS+6` (to the text's start); until then it shows the old lines, and typing there would put them back: move to the
-start first.
+(its code runs in the page at `#C000`). `A` there assembles the new text. Back in the editor (ENTER) the screen is
+redrawn from the new text; the inject sets the cursor's line number (`#8827`) and column (`#8630`) to 0 as LOAD leaves
+them, or the editor would go on from the old line (2026-10-17).
 
 ZAsm keeps no "changed" flag (none found in memory between an edit and SAVE): a text in memory that is not empty and
 not the caller's own counts as changed, so the first write into a loaded text needs force.
@@ -65,7 +65,7 @@ not the caller's own counts as changed, so the first write into a loaded text ne
 
 ## 5. Limits
 
-- The editor is not redrawn by the inject (COMMAND `CS+6` does it).
+- The editor shows the template's work name (`STUB`) after an inject: SAVE writes under it.
 - Every version has an inject rule (asm-synchronizer.md §7.9-§7.10, 2026-10-16). ZX ASM 3.0 itself (codec version
   `3.00`: 3.0's table) has no `&` `|` `!`, no `.` functions, no `REPT`, `EXA`, `OUT (C),0` or `DS n,fill`, each tried
   alone in unreal-ng: the backend writes `high` as `/256`, `-x` / `~x` as `0-x` / `#FFFF-x`, the rest as values, `REPT`

@@ -96,7 +96,7 @@ TEST(TasmFrontend_Test, ExpressionsRunLeftToRightWithPostfixOperators)
     EXPECT_EQ(ToSjasmplus("        LD H,TAB{\n        ADD A,TAB}+1\n        DW #9C40^", "4.0"),
               (std::vector<std::string>{"LD H,high TAB", "ADD A,low TAB+1", "DW ((#9C40&#FF)<<8|(#9C40&#FFFF)>>8)"}));
     // 4.0: [ ] rotate a 16-bit word by one bit
-    EXPECT_EQ(ToSjasmplus("        DW %1[", "4.0"), std::vector<std::string>{"DW (((%1&#FFFF)<<1|(%1&#FFFF)>>>(16-1))&#FFFF)"});
+    EXPECT_EQ(ToSjasmplus("        DW %1[", "4.0"), std::vector<std::string>{"DW ((%1*#10001>>>15)&#FFFF)"});
     // 4.12: [address] reads memory while assembling
     EXPECT_EQ(ToSjasmplus("KEY     =       [#5C08]"), (std::vector<std::string>{"DEVICE ZXSPECTRUM4096", "KEY={#5C08}"}));
     EXPECT_EQ(ToSjasmplus("        LD A,40H\n        LD A,\"\"\"\"", "4.0"), (std::vector<std::string>{"LD A,#40", "LD A,'\"'"}));

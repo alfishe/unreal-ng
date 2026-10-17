@@ -8,6 +8,7 @@
 #include <cctype>
 #include <initializer_list>
 #include <map>
+#include <optional>
 
 #include "codecs/alasm/alasmcodec.h"
 #include "codecs/prometheus/prometheuscodec.h"
@@ -788,6 +789,8 @@ TEST(SyncInject_Test, Zasm315TakesAFileAtItsCommandPromptAsLoadLeavesIt)
     EXPECT_EQ(word(0x8837), static_cast<int>(0x884C + written.bytes.size()));   // the end
     for (uint16_t at = 0x882B; at < 0x8837; at += 2)
         EXPECT_EQ(word(at), 0x884C) << std::hex << at;   // the cursor line and the marks at the start
+    EXPECT_TRUE(pokes.count(0x8827) && word(0x8827) == 0);   // the cursor's line number
+    EXPECT_TRUE(pokes.count(0x8630) && pokes[0x8630] == 0);  // and its column
 
     for (size_t k = 0; k < dump.pages.size(); ++k)
         for (const InjectPlan::Poke& p : plan.pokes)
@@ -1319,6 +1322,37 @@ TEST(SyncInject_Test, TheNewRulesWriteATextThatReadsBack)
         const SyncText back = ReadText(dump.machine, *d);
         ASSERT_TRUE(back.ok) << back.state;
         EXPECT_EQ(back.file, written.bytes);
+        // ZAsm's editor starts over at the new text (seen in unreal-ng, 2026-10-17): its cursor line number 0 (or it
+        // counts on from the old one and the cursor sticks), ZX-ASM 2.x's cursor line buffer blank (or the editor
+        // writes the old line into the new text, beyond its end)
+        static const std::map<std::string, uint16_t> lineAt = {
+            {"zasm-2.4", 0x6282}, {"zasm-2.5", 0x6282}, {"zasm-2.6", 0x6012}, {"zasm-3.0", 0x61D6}, {"zasm-3.10", 0x868D},
+            {"zasm-3.2x", 0x852E}, {"zasm-lite-1.07", 0x8593}, {"zasm-3.3.02", 0x8500}, {"zasm-3.3.51", 0x84F2},
+            {"zasm-3.3.final", 0x83F7}, {"zasm-3.80.4", 0x6CF8}, {"zasm-3.4", 0x8516}, {"zasm-x64.1", 0x8523},
+            {"zasm-4.0x8", 0x6921}, {"zasm-4.x64", 0x691F}, {"zasm-4.20", 0x68F1}};
+        if (const auto found = lineAt.find(d->id); found != lineAt.end())
+        {
+            EXPECT_EQ(dump.machine.Word(found->second), std::optional<uint16_t>(0));
+            // and its column: 3.0 #61D9, 3.10 #867F, the Pentagon 512 versions four bytes below the line number
+            const uint16_t columnAt = d->id == "zasm-3.0" ? 0x61D9 : d->id == "zasm-3.10" ? 0x867F
+                                    : d->id.rfind("zasm-2.", 0) == 0 ? static_cast<uint16_t>(found->second + 3)
+                                                                       : static_cast<uint16_t>(found->second - 4);
+            std::vector<uint8_t> column;
+            ASSERT_TRUE(dump.machine.Read(columnAt, 1, column));
+            EXPECT_EQ(column[0], 0) << std::hex << columnAt;
+        }
+        // the second end word (seen in unreal-ng: LOAD sets it; a line typed into the new text moved memory up to the
+        // old one: 3.0 crashed, 2.x moved its own code)
+        if (d->id == "zasm-3.0")
+            EXPECT_EQ(dump.machine.Word(0x61CA), dump.machine.Word(0x61C8));
+        if (d->id.rfind("zasm-2.", 0) == 0)
+            EXPECT_EQ(dump.machine.Word(static_cast<uint16_t>(d->linear.startAt + 4)), dump.machine.Word(d->linear.endAt));
+        if (d->id.rfind("zasm-2.", 0) == 0)
+        {
+            std::vector<uint8_t> line;
+            ASSERT_TRUE(dump.machine.Read(static_cast<uint16_t>(d->linear.startAt + 0x17), d->id == "zasm-2.6" ? 133 : 145, line));
+            EXPECT_EQ(line, std::vector<uint8_t>(line.size(), ' '));
+        }
     }
 }
 

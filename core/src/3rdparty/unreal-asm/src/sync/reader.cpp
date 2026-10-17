@@ -700,6 +700,8 @@ SyncDescriptor Zasm315()
     d.linear.injectable = true;
     d.linear.resetFrom = 0x882B;   // the cursor line and the marks, up to the end word
     d.linear.resetTo = 0x8837;
+    d.linear.zeroWords = {0x8827};   // the cursor's line number (from 0), or the editor counts on from the old one
+    d.linear.zeroBytes = {0x8630};   // and its column
     d.typing = {TypingRule::NotInText, 0, 0};
     // A text is written at its COMMAND prompt (CS+SS in the editor): its key wait returns through #C404, #E630, #E6F0
     // (code in the page at #C000 while ZAsm runs)
@@ -889,10 +891,13 @@ SyncDescriptor ZasmRubtsoff(const std::string& id, const std::string& title, con
     if (!idleChain.empty())
     {
         // A text is written at its COMMAND prompt (CS+SS in the editor; the key wait's chain by find-idle.py) as LOAD
-        // leaves one: the four words before the start word (the cursor and the screen) at the start
+        // leaves one: the four words before the start word (the cursor and the screen) at the start, the line number
+        // before them and the column 0
         d.linear.injectable = true;
         d.linear.resetFrom = static_cast<uint16_t>(startAt - 8);
         d.linear.resetTo = startAt;
+        d.linear.zeroWords = {static_cast<uint16_t>(startAt - 10)};   // the cursor's line number (from 0)
+        d.linear.zeroBytes = {static_cast<uint16_t>(startAt - 14)};   // and its column
         d.idleChain = std::move(idleChain);
         d.idleWhere = "its COMMAND prompt (CS+SS)";
     }
@@ -917,11 +922,13 @@ SyncDescriptor Zxasm310()
     d.linear.upperPage = 6;
     d.typing = {TypingRule::NotInText, 0, 0};
     // A text is written at its COMMAND prompt (CS+SS in the editor: the key wait returns through #C4D1, #D58A) as
-    // LOAD leaves one: the five words after the start word and the one at #869C at the start
+    // LOAD leaves one: the five words after the start word and the one at #869C at the start, the line and column 0
     d.linear.injectable = true;
     d.linear.resetFrom = 0x8691;
     d.linear.resetTo = 0x869B;
     d.linear.resetAlso = {0x869C};
+    d.linear.zeroWords = {0x868D};   // the cursor's line number (from 0)
+    d.linear.zeroBytes = {0x867F};   // and its column
     d.idleChain = {0xC4D1, 0xD58A};
     d.idleWhere = "its COMMAND prompt (CS+SS)";
     return d;
@@ -1151,7 +1158,7 @@ SyncDescriptor Primus29()
 /// the program's load address + 3, the end word after it; the part above #C000 in RAM page 0 (the 48K memory). 2.6
 /// keeps its ";*" line in the buffer and saves it as text
 SyncDescriptor ZxAsm2(const std::string& id, const std::string& title, uint16_t signatureAt, const char* signature,
-                      uint16_t startAt, std::vector<uint16_t> idleChain = {})
+                      uint16_t startAt, std::vector<uint16_t> idleChain = {}, uint16_t lineEnd = 0, uint16_t columnCopy = 0)
 {
     SyncDescriptor d;
     d.id = id;
@@ -1168,8 +1175,18 @@ SyncDescriptor ZxAsm2(const std::string& id, const std::string& title, uint16_t 
     d.typing = {TypingRule::NotInText, 0, 0};
     if (!idleChain.empty())
     {
-        // A text is written at its menu (it starts there with an empty text; the editor's stack holds others)
+        // A text is written at its menu (it starts there with an empty text; the editor's stack holds others) as it
+        // starts: the second end word after the end word at the end (an inserted line moves the memory up to it: an
+        // old one moved the program's code), the cursor line's and the screen's pointers at the start, the line
+        // number and the column 0, the cursor line's buffer (from the start word + #17 to lineEnd) blank, the
+        // column's copy and the row after it 0 (else the editor writes the old line into the new text)
         d.linear.injectable = true;
+        d.linear.endAlso = {static_cast<uint16_t>(startAt + 4)};
+        d.linear.resetAlso = {static_cast<uint16_t>(startAt + 0x0A), static_cast<uint16_t>(startAt + 0x0D)};
+        d.linear.zeroWords = {static_cast<uint16_t>(startAt + 0x0F)};
+        d.linear.zeroBytes = {static_cast<uint16_t>(startAt + 0x12), columnCopy, static_cast<uint16_t>(columnCopy + 1)};
+        d.linear.blankFrom = static_cast<uint16_t>(startAt + 0x17);
+        d.linear.blankTo = lineEnd;
         d.idleChain = std::move(idleChain);
         d.idleWhere = "its menu";
     }
@@ -1194,9 +1211,13 @@ SyncDescriptor Zxasm30()
     d.linear.upperPage = 6;
     d.typing = {TypingRule::NotInText, 0, 0};
     // A text is written at its COMMAND prompt (CS+SS in the editor: the key wait's CALL returns to #6986 there, to
-    // #6ABD in the editor) as LOAD leaves one: the table's other words that hold the start at the start
+    // #6ABD in the editor) as LOAD leaves one: the table's other words that hold the start at the start, the second
+    // end word at the end, the cursor's line and column 0
     d.linear.injectable = true;
     d.linear.resetAlso = {0x61D0, 0x61D4, 0x61DB, 0x61DD};
+    d.linear.endAlso = {0x61CA};     // a second end word, as LOAD leaves it (else typing a line crashes the editor)
+    d.linear.zeroWords = {0x61D6};   // the cursor's line (from 0): the editor counts on from the old one
+    d.linear.zeroBytes = {0x61D9};   // and its column
     d.idleChain = {0x6986};
     d.idleWhere = "its COMMAND prompt (CS+SS)";
     return d;
@@ -1770,6 +1791,14 @@ InjectPlan PlanInjectLinear(const MachineView& machine, const SyncDescriptor& d,
         ok = poke(at, static_cast<uint8_t>(*start & 0xFF)) && poke(at + 1, static_cast<uint8_t>(*start >> 8)) && ok;
     for (const uint16_t at : p.resetAlso)
         ok = poke(at, static_cast<uint8_t>(*start & 0xFF)) && poke(at + 1u, static_cast<uint8_t>(*start >> 8)) && ok;
+    for (const uint16_t at : p.endAlso)
+        ok = poke(at, static_cast<uint8_t>(end & 0xFF)) && poke(at + 1u, static_cast<uint8_t>(end >> 8)) && ok;
+    for (const uint16_t at : p.zeroWords)
+        ok = poke(at, 0) && poke(at + 1u, 0) && ok;
+    for (const uint16_t at : p.zeroBytes)
+        ok = poke(at, 0) && ok;
+    for (uint32_t at = p.blankFrom; at < p.blankTo; ++at)
+        ok = poke(at, ' ') && ok;
     if (!ok)
     {
         plan.error = "the memory of " + d.title + "'s text is not in RAM";
@@ -2119,11 +2148,11 @@ const std::vector<SyncDescriptor>& Descriptors()
         GensInjectable(Gens("gens-4.3t", "GENS 4.3t (Aysoft, TR-DOS)", {0x8A9F, "BETA DISK VERSION 4.3t"}, 0x689C, 0x61FB),
                        {0x6952, 0x69D2, 0x68CE}),
         ZxAsm2("zasm-2.4", "ZX-ASM 2.4", 0x806C,
-               "\x70\x65\x00\x70\x00\x6D\x00\x7E\xFE\x20\x20\x08\x23\x7E\xFE\x20\x28\xFA\xB7\xC9\xFE\x06\x37\xC0", 0x6273, {0x7279, 0x70EA}),
+               "\x70\x65\x00\x70\x00\x6D\x00\x7E\xFE\x20\x20\x08\x23\x7E\xFE\x20\x28\xFA\xB7\xC9\xFE\x06\x37\xC0", 0x6273, {0x7279, 0x70EA}, 0x631B, 0x631C),
         ZxAsm2("zasm-2.5", "ZX-ASM 2.5", 0x804C,
-               "\x6F\x00\x70\x65\x00\x70\x00\x6D\x00\x7E\xFE\x20\x20\x08\x23\x7E\xFE\x20\x28\xFA\xB7\xC9\xFE\x06", 0x6273, {0x7279, 0x70EA}),
+               "\x6F\x00\x70\x65\x00\x70\x00\x6D\x00\x7E\xFE\x20\x20\x08\x23\x7E\xFE\x20\x28\xFA\xB7\xC9\xFE\x06", 0x6273, {0x7279, 0x70EA}, 0x631B, 0x631C),
         ZxAsm2("zasm-2.6", "ZX-ASM 2.6", 0x8000,
-               "\xCD\x2E\x61\x38\x65\xFE\x5F\x28\x61\x23\xFE\x23\x28\x35\xFE\x25\x28\x1B\xFE\x22\x28\x08\xFE\x24", 0x6003, {0x70A3, 0x6F24}),
+               "\xCD\x2E\x61\x38\x65\xFE\x5F\x28\x61\x23\xFE\x23\x28\x35\xFE\x25\x28\x1B\xFE\x22\x28\x08\xFE\x24", 0x6003, {0x70A3, 0x6F24}, 0x609F, 0x60A5),
         Masm11(),
         Masm10Demo(),
         Masm2("masm-2.0", "MASM 2.0 TURBO", "2.0", {0x80E0, std::string("MASM2.0>\0", 9)}, 0x94DA, 0x92C6, 0x89D1, 0x929F, {0x80EC, 0x807B}, 0x8AD2),

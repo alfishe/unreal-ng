@@ -25,7 +25,7 @@ start   LD A,(IX)
         LD HL,(lab)
         LD (lab+2),A
         DW (2+3)*4,10-2-3,(100&#FFFF)/(7&#FFFF),(0-7&#FFFF)/(2&#FFFF),300*300,0
-        DW lab^#FF,(((lab&#FFFF)<<1|(lab&#FFFF)>>>(16-1))&#FFFF),(((lab&#FFFF)>>>1|(lab&#FFFF)<<(16-1))&#FFFF),((((((lab&#FFFF)<<1|(lab&#FFFF)>>>(16-1))&#FFFF)&#FFFF)<<1|((((lab&#FFFF)<<1|(lab&#FFFF)>>>(16-1))&#FFFF)&#FFFF)>>>(16-1))&#FFFF),low lab,high lab
+        DW lab^#FF,(((lab&#FFFF)*#10001>>>15)&#FFFF),(((lab&#FFFF)*#10001>>>1)&#FFFF),((((((lab&#FFFF)*#10001>>>15)&#FFFF)&#FFFF)*#10001>>>15)&#FFFF),low lab,high lab
         DW low high lab,low (lab+six),high (1+lab)
         DW six-lab
         DW (lab&#FFFF)/(six&#FFFF)

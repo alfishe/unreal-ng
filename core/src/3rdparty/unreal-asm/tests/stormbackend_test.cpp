@@ -281,6 +281,17 @@ TEST(StormBackend_Test, ConditionsAreDecidedAndOneLineRepeats)
     EXPECT_TRUE(Contains(lines, "SLI B")) << text;
 }
 
+TEST(StormBackend_Test, ADataListBreaksBeforeTheFortiethColumn)
+{
+    // the items fill 29 characters of the 40 only with their commas: a list one character longer goes on (the comma
+    // was not counted: STORM got a 41-character line)
+    Diagnostics diagnostics;
+    const std::vector<std::string> lines = ToStorm("        DW 12,#2345,#3456,#4567,#56,#6789\n", &diagnostics);
+    for (const Diagnostic& d : diagnostics)
+        EXPECT_EQ(d.severity, Severity::Info) << d.message;
+    EXPECT_EQ(lines, (std::vector<std::string>{"DW 12,#2345,#3456,#4567,#56", "DW #6789"})) << Joined(lines);
+}
+
 TEST(StormBackend_Test, ProgramsKeepTheirBytesThroughStorm)
 {
     const char* sjasmplus = std::getenv("UNREAL_ASM_SJASMPLUS");

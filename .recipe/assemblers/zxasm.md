@@ -41,7 +41,7 @@ ZAsm 3.10+ occupies `#5D3B-#FFFF` while it runs and keeps the user's `#8000-#BFF
 
 ## A host source into ZAsm 3.15
 
-Open COMMAND in the editor (CS+SS) and write the source there; `A` assembles it, COMMAND `CS+6` shows it:
+Open COMMAND in the editor (CS+SS) and write the source there; `A` assembles it, ENTER goes back to the editor on it:
 
 ```text
 type_input  {"action":"combo","keys":["caps","symbol"],"frames":4}                     # COMMAND
@@ -52,7 +52,7 @@ type_input  {"action":"tap","key":"a","frames":4}                               
 The source is written as ZAsm 3.15 text (left to right with the functions `.h .b .n .c`, `IF` / `REPT` / `PHASE`,
 macros expanded: [research-sjasmplus-to-zxasm.md](../../docs/inprogress/2026-10-05-unreal-asm/research-sjasmplus-to-zxasm.md))
 as LOAD leaves a file. ZAsm keeps no "changed" flag, so a text it holds is replaced only by force (or when it is the
-push watch's own). The editor still shows the old lines until COMMAND `CS+6`: move there before typing.
+push watch's own). The editor comes back on the new text at its first line.
 `tools/verification/unreal-asm/emulator/inject-oracle.py zasm315 <ZASM315 disk with STUB.a> <source.asm> 0x6000` runs the
 whole check (the source gets a `SAVEOBJ`, the bytes are the file ZAsm saves).
 
