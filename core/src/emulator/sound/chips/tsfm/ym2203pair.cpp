@@ -363,6 +363,8 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
     };
     for (size_t n = 0; n < frames; n++)
     {
+        // The ticks up to this output in one quiet run when nothing sounds (renderQuietChannels)
+        renderQuietChannels(static_cast<uint32_t>(master.feedsToNextOutput()), fmEnabled);
         while (!master.hasOutput())
         {
             for (int i = 0; i < 2; i++)
@@ -437,6 +439,61 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
         }
     }
     return frames;
+}
+
+bool Ym2203Pair::renderQuietChannels(uint32_t ticks, bool fmEnabled)
+{
+    if (!_quietTicksEnabled || ticks == 0 || !_channels)
+        return false;
+    const int64_t lastTick = _renderT + 16 * int64_t(ticks - 1);
+    const int64_t lastHalf = lastTick + 8;
+    for (int i = 0; i < 2; i++)
+    {
+        const Ym2203Chip& c = *_chips[i];
+        if (!c.ssgWrites.empty() && c.ssgWrites.front().t <= lastTick)
+            return false;
+        if (!c.ssg.silentAtRest() || c.out.nativeTap->isActive())
+            return false;
+        if (_channels->fmZeroRun[i] < FilterDecimator::history())
+            return false;
+        for (int ch = 0; ch < 3; ch++)
+        {
+            if (_channels->ssgZeroRun[i][ch] < FilterDecimator::history())
+                return false;
+        }
+        // feedFm feeds the gated hold: 0 now, and 0 after every word the run consumes
+        if (fmEnabled)
+        {
+            if (c.out.hold != 0.0)
+                return false;
+            for (size_t w = 0; w < c.words.size() && int64_t(c.words.at(w).t) <= lastHalf; w++)
+            {
+                if (static_cast<double>(c.words.at(w).word) / 32768.0 != 0.0)
+                    return false;
+            }
+        }
+    }
+    for (int i = 0; i < 2; i++)
+    {
+        Ym2203Chip& c = *_chips[i];
+        // consumeWords: the hold takes each word (0.0 when FM is on; whatever it is when the zeros fed are the mute's)
+        while (!c.words.empty() && int64_t(c.words.front().t) <= lastHalf)
+        {
+            c.out.hold = static_cast<double>(c.words.front().word) / 32768.0;
+            c.words.pop();
+        }
+        _channels->fm[i].feedZerosIntoSilence(2 * size_t(ticks));
+        _channels->fmZeroRun[i] += 2 * size_t(ticks);
+        for (int ch = 0; ch < 3; ch++)
+        {
+            _channels->ssg[i][ch].feedZerosIntoSilence(ticks);
+            _channels->ssgZeroRun[i][ch] += ticks;
+        }
+        c.ssg.advanceSilent(ticks);
+    }
+    _renderT += 16 * int64_t(ticks);
+    _quietTicks += ticks;
+    return true;
 }
 
 /// endregion </Per-channel outputs>

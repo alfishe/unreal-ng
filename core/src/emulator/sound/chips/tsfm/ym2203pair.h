@@ -561,6 +561,12 @@ public:
     /// stopped (the cursor placed by beginChannelRender). Returns the samples written (0 before
     /// configureChannelOutputs)
     size_t renderChannels(size_t frames, const Ym2203ChannelBlock& block, bool fmEnabled);
+    /// The `ticks` generator ticks of renderChannels when the pair is quiet over them, and true; false (nothing done)
+    /// otherwise. Quiet: no SSG write due by the last tick, both SSGs silentAtRest (every channel level 0 now and at
+    /// the last tick), every channel and FM decimator history all zeros, each chip's FM part fed 0 (muted, or holding
+    /// 0 with every word due by the last tick's second half 0 too), no native tap. The ticks would then feed zeros
+    /// everywhere: only the generators, the words consumed and the decimator positions move
+    bool renderQuietChannels(uint32_t ticks, bool fmEnabled);
     /// endregion </Per-channel outputs>
 
     /// region <TTD>

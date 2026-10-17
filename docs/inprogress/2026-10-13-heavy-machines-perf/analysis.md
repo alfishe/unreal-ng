@@ -804,6 +804,25 @@ DAC held off its middle), ending on an envelope that ran through the silences un
 quiet level or freezing the tones fails it. The audio of Spectron 2084, ScrollNutter (music), the copper demo and the
 idle machine, with the eleven classic snapshots: the same bytes.
 
+**R11. The cards at 1x, and the MultiSound's quiet runs.** New rows: one card in the ZX bus at 1x, the AY socket a
+plain AY (`Pentagon_Only*_Normal`, `Pentagon_NoCards_Normal`). Idle Pentagon, median us: no card 300, GS 303, NeoGS 326,
+MoonSound 334, MultiSound 626. The MultiSound's YM2203 pair renders per channel (`renderChannels`: six SSG and two FM
+decimators, no coupling stage) and ticked every generator through silence. `Ym2203Pair::renderQuietChannels` takes the
+ticks up to each output in one run while nothing sounds: no SSG write due, both SSGs silentAtRest, all eight decimator
+histories zeros, each FM part fed 0 (muted, or holding 0 with every word due 0), no native tap.
+
+| Row | before | after | x |
+|:--|--:|--:|--:|
+| Pentagon_OnlyMultiSound_Normal | 559 | 422 | 0.75 |
+| Pentagon_NoCards_Normal / ShipNormal | | | 1.00 |
+
+Exactness: `MultiSoundQuietTicks_Test` - two Pentagons with the card (CPU parked), the quiet runs off in one, through
+silences and out (SSG tone, noise and envelope on both chips, an FM note alone after a silence), ending on an envelope
+that ran through them unwritten, each stretch checked audible; freezing the tones or not testing the FM words due fails
+it. The card's TFM / player traces (MultiSoundTrace_Test digests) unchanged; the card with allsources.sna, tech_support
+and idle, with the classic and Next snapshots: the same audio bytes. What the card costs on top now: the mixer
+(`MultiSoundMixer::Mix`), the SAM2695 resampler and the GS on the card.
+
 **Tried and dropped: the Next UART's peer promise.** A peer (the ESP module, a wired device) told the UART until when
 it stays silent (`QuietUntil` plus an activity counter), so the poll skipped the two virtual peer calls per
 instruction. Exact (lockstep twins with and without the promise, every Next frame / CPU / RAM hash equal at 3.5 and
