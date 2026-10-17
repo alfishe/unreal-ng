@@ -17,7 +17,7 @@ static constexpr const size_t FDD_RPS = 5;
 // FDD index pulse duration (in ms)
 static constexpr const size_t FDD_INDEX_PULSE_DURATION_MS = 4;
 // FDD index pulse duration (4ms) in T-states @3.5MHz
-static constexpr const size_t FDD_INDEX_PULSE_DURATION_T_STATES = 14;
+static constexpr const size_t FDD_INDEX_PULSE_DURATION_T_STATES = FDD_INDEX_PULSE_DURATION_MS * 3500;
 
 /// 3.5" DS DD (720KB): 250 Kbps MFM @ 300 RPM
 /// 5.25" DS DD (360KB): 250 Kbps MFM @ 300 RPM

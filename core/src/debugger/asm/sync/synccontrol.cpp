@@ -128,6 +128,8 @@ AsmReply SyncControl::Inject(const sync::SyncDescriptor& descriptor, const sync:
     AsmReply failure;
     if (!AsmControl(_context).ReadDocument(request, document, diagnostics, source, failure))
         return failure;
+    if (document.dialect.empty())
+        document.dialect = "sjasmplus";   // a plain text file without 'from' (as 'text' and zxasm inject take it)
     StateNode body = StateNode::Object();
     body["assembler"] = descriptor.id;
     body["title"] = descriptor.title;

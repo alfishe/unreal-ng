@@ -211,11 +211,15 @@ struct LinearParams
     uint16_t editorStateAt = 0;     ///< bytes of the file SAVE fills (masked by the tests)
     uint16_t editorStateLength = 0;
     /// An inject writes the text from (startAt) and the end pointer (injectable), and sets the words from resetFrom up
-    /// to resetTo (exclusive; the cursor line, the marks: ZAsm's table) to the start, as LOAD leaves them
+    /// to resetTo (exclusive; the cursor line, the marks: ZAsm's table) to the start, as LOAD leaves them; the words in
+    /// zeroWords and the bytes in zeroBytes to 0 (ZAsm's cursor line and column: the editor would go on from the old ones)
     bool injectable = false;
     uint16_t resetFrom = 0;
     uint16_t resetTo = 0;
     std::vector<uint16_t> resetAlso;   ///< other words set to the start (ZX-ASM 3.10: one past an odd byte)
+    std::vector<uint16_t> endAlso;     ///< other words set to the end (ZX ASM 3.0: a second end word)
+    uint16_t blankFrom = 0;            ///< bytes from blankFrom up to blankTo (exclusive) set to blanks (ZX-ASM 2.x: the
+    uint16_t blankTo = 0;              ///< cursor line's buffer, which the editor writes back into the text)
 };
 
 struct TypingParams

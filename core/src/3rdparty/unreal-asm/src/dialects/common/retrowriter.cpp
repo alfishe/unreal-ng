@@ -446,7 +446,7 @@ std::vector<std::string> RetroWriter::DataLines(const std::string& keyword, cons
     std::string current;
     for (const std::string& item : items)
     {
-        if (!current.empty() && current.size() + item.size() > width)
+        if (!current.empty() && current.size() + 1 + item.size() > width)   // the comma counts too
         {
             out.push_back(keyword + " " + current);
             current.clear();
