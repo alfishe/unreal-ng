@@ -129,6 +129,7 @@ void Ym2203Pair::advanceChip(Ym2203Chip& c, int32_t delta, int64_t t0)
         // clocking is skipped. Everything the CPU can observe stays exact - timers expire on their clock (CSM
         // key-on included), busy counts down, and the sample-clock phase keeps its alignment for the moment
         // synthesis resumes
+        c.fmIdleKnown = false;
         while (delta > 0)
         {
             const int32_t period = 12 * int32_t(c.fm.fmClockPrescale());
@@ -165,7 +166,7 @@ void Ym2203Pair::advanceChip(Ym2203Chip& c, int32_t delta, int64_t t0)
         if (_fmIdleFastPath && toTimer > 1)
         {
             const int32_t n = std::min(delta, toTimer - 1);
-            if (n >= toClock && c.fm.fmIdle())
+            if (n >= toClock && (c.fmIdleKnown || (c.fmIdleKnown = c.fm.fmIdle())))
             {
                 c.intf.advance(n);
                 const int32_t samples = (c.fmClockPhase + n) / period;
@@ -183,6 +184,8 @@ void Ym2203Pair::advanceChip(Ym2203Chip& c, int32_t delta, int64_t t0)
 
         const int32_t n = std::min({delta, toClock, toTimer});
 
+        if (n == toTimer)
+            c.fmIdleKnown = false;  // a timer expires: CSM may key on
         c.intf.advance(n);  // counts down busy; fires expired timers exactly on their clock
         c.fmClockPhase += n;
         delta -= n;
@@ -192,6 +195,7 @@ void Ym2203Pair::advanceChip(Ym2203Chip& c, int32_t delta, int64_t t0)
         {
             c.fmClockPhase = 0;
             const int16_t word = c.fm.clockFmOnce();
+            c.fmIdleKnown = false;
             c.words.push(uint64_t(t0), word);  // the owner drops these when nothing renders
         }
     }
@@ -217,6 +221,7 @@ void Ym2203Pair::writeData(int index, uint8_t value)
     {
         // FM register; sets busy itself; allowed while a board mutes FM
         c.fm.write_data(value);
+        c.fmIdleKnown = false;
         // Key-on mirror for the state report: 0x28 = ch (bits 0-1, 3 = none) | slot mask (bits 4-7)
         if (c.address == 0x28 && (value & 3) < 3)
             c.fmKeyOn[value & 3] = uint8_t(value >> 4);
@@ -497,6 +502,7 @@ void Ym2203Pair::loadChipState(int index, const uint8_t*& cur)
     cur += ymfmSize;
     ymfm::ymfm_saved_state state(c.ttdScratch, /*saving=*/false);
     c.fm.save_restore(state);
+    c.fmIdleKnown = false;
 
     // The key-on mirror (the state report's, not chip state) as the restored envelopes have it: an operator is
     // keyed while its envelope is not releasing. 0x28 mask bits are S1, S2, S3, S4; operator numbers run in
