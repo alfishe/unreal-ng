@@ -168,6 +168,8 @@ protected:
         0.63517204547200, 0.75800717174000,
         0.87992675669500, 1.0
     };
+    // silentAtRest: amplitude 0 and 1 (volume 0 with the gate open) are the same DAC level, 0
+    static_assert(AY_DAC_TABLE[0] == 0.0 && AY_DAC_TABLE[1] == 0.0 && YM_DAC_TABLE[0] == 0.0 && YM_DAC_TABLE[1] == 0.0);
 
     const double* _volumeDACTablePtr = (double*)&AY_DAC_TABLE;
 
@@ -357,6 +359,9 @@ protected:
         void setPeriod(uint8_t fine, uint8_t coarse);
         void setShape(uint8_t shape);
         uint8_t updateState();
+        /// `ticks` x updateState() in one step: the handler steps the run contains (the first when the counter
+        /// reaches the period, then one every period), applied a segment at a time
+        void advance(uint32_t ticks);
         /// endregion </Methods>
 
         /// region <Helper methods>
@@ -464,6 +469,45 @@ public:
     void reset() override;
     void updateState(bool bypassPrescaler = false);
     void updateMixer();
+
+    /// Every channel at amplitude 0 (volume 0, no envelope: the DAC gives 0 whatever the tone and noise gates do) and
+    /// both output filters at rest on 0: updateMixer would leave every output and filter state as it is
+    bool silentAtRest() const
+    {
+        for (const ToneGenerator& tone : _toneGenerators)
+        {
+            if (tone._envelopeEnabled || tone._volume != 0)
+                return false;
+        }
+        return _filterDCLeft.restsAt(0.0) && _filterDCRight.restsAt(0.0);
+    }
+    /// `ticks` x updateState(true) of a chip that is silentAtRest (the mixer would change nothing): the generators
+    /// advance. A generator whose counter does not reach its period within the run moves in one step, the others tick
+    /// by tick - the generators do not depend on each other, so the order within a tick is no matter
+    void advanceSilent(uint32_t ticks)
+    {
+        _tick += ticks;
+
+        NoiseGenerator& noise = _noiseGenerator;
+        if (uint32_t(noise._counter) + ticks < (uint32_t(noise._period) << 1))
+            noise._counter = static_cast<uint16_t>(noise._counter + ticks);
+        else
+            for (uint32_t i = 0; i < ticks; i++)
+                noise.updateState();
+
+        _envelopeGenerator.advance(ticks);
+
+        for (ToneGenerator& tone : _toneGenerators)
+        {
+            if (tone._period == 0)
+                continue;  // a 0 period is not played (ToneGenerator::updateState)
+            if (uint32_t(tone._counter) + ticks < tone._period)
+                tone._counter = static_cast<uint16_t>(tone._counter + ticks);
+            else
+                for (uint32_t i = 0; i < ticks; i++)
+                    tone.updateState();
+        }
+    }
 
     void setMixer(uint8_t mixerValue);
     void setVolume(uint8_t volume, uint8_t channel);

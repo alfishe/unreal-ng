@@ -49,6 +49,9 @@ public:
         _y1 = 0.0;
     }
 
+    /// Fed x, the filter returns 0 and keeps its state (its fixed point for that input): a run of x needs no calls
+    bool restsAt(double x) const { return _y1 == 0.0 && _x1 == x; }
+
     /// Steady state for an input that has rested at `x`: the next sample at
     /// the same level outputs 0, later samples pass only the change. Picks the
     /// filter up after a gap in which its input was not rendered, without the

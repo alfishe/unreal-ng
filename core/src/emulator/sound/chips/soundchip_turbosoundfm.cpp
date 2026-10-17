@@ -239,6 +239,21 @@ void SoundChip_TurboSoundFM::handleStep()
                 // register writes timed up to this tick applied, generators
                 // ticked (bypass internal prescaler), the lambda, FM half-tick
                 // 2/2; the cursor advances one SSG tick
+                // The pair quiet at rest up to the next output (Ym2203Pair::renderQuiet) and the four SSG streams all
+                // zeros: the ticks feed zeros, which moves only their positions
+                const size_t quiet = chip0.ssg.decimatorLeft().feedsToNextOutput();
+                if (!tapActive && _ssgZeroRun[0] >= FilterDecimator::history() &&
+                    _ssgZeroRun[1] >= FilterDecimator::history() && _ssgZeroRun[2] >= FilterDecimator::history() &&
+                    _ssgZeroRun[3] >= FilterDecimator::history() &&
+                    _pair.renderQuiet(static_cast<uint32_t>(quiet), _board.fmEnabled))
+                {
+                    chip0.ssg.decimatorLeft().feedZerosIntoSilence(quiet);
+                    chip0.ssg.decimatorRight().feedZerosIntoSilence(quiet);
+                    chip1.ssg.decimatorLeft().feedZerosIntoSilence(quiet);
+                    chip1.ssg.decimatorRight().feedZerosIntoSilence(quiet);
+                    for (size_t& zeroRun : _ssgZeroRun)
+                        zeroRun += quiet;
+                }
                 while (!chip0.ssg.decimatorLeft().hasOutput())
                 {
                     _pair.renderTick(_board.fmEnabled, [&](TsfmChip& c0, TsfmChip& c1)

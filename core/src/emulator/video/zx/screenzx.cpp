@@ -362,6 +362,25 @@ void ScreenZX::CreateTstateLUT()
             entry.zxY = 255;
         }
     }
+
+    // The runs, from the end: a T continues the run of the next one when both are blank, or both are of one visible
+    // kind and the next one draws the following pixels of the same row
+    const uint32_t lutEnd = std::min<uint32_t>(maxFrameTiming, MAX_FRAME_TSTATES);
+    for (uint32_t t = lutEnd; t-- > 0;)
+    {
+        TstateCoordLUT& entry = _tstateLUT[t];
+        entry.run = 1;
+        if (t + 1 >= lutEnd)
+            continue;
+        const TstateCoordLUT& next = _tstateLUT[t + 1];
+        if (next.renderType != entry.renderType || next.run == 255)
+            continue;
+        const bool continues = entry.renderType == RT_BLANK ||
+                               (next.framebufferY == entry.framebufferY &&
+                                next.framebufferX == entry.framebufferX + _rasterState.pixelsPerTState);
+        if (continues)
+            entry.run = static_cast<uint8_t>(next.run + 1);
+    }
 }
 
 // ZX-Spectrum 48k ULA screen addressing:
@@ -910,7 +929,10 @@ void ScreenZX::DrawRangeZXImpl(uint32_t fromTstate, uint32_t toTstate)
     {
         const TstateCoordLUT& e = lut[t];
         if (e.renderType == RT_BLANK)
+        {
+            t += e.run - 1u;  // the rest of the blank run in one step
             continue;
+        }
 
         const size_t pixel = e.framebufferY * fbWidth + e.framebufferX;
         uint32_t* const out = fb + pixel;
@@ -941,6 +963,28 @@ void ScreenZX::DrawRangeZXImpl(uint32_t fromTstate, uint32_t toTstate)
 
             const uint32_t ink = inkColors[attributes];
             const uint32_t paper = paperColors[attributes];
+
+            // A whole cell in the range (its first T, and the T three on is its last, two pixels on each): the eight
+            // pixels at once, as the four T would draw them from the one latch
+            if (e.pixelXBit == 0 && toTstate - t >= 3)
+            {
+                const TstateCoordLUT& last = lut[t + 3];
+                if (last.renderType == RT_SCREEN && last.pixelXBit == 6 && last.symbolX == e.symbolX &&
+                    last.zxY == e.zxY && last.framebufferY == e.framebufferY &&
+                    last.framebufferX == e.framebufferX + 6)
+                {
+                    for (uint32_t i = 0; i < 8; i++)
+                    {
+                        const uint32_t mask = static_cast<uint32_t>(-static_cast<int32_t>((pixels >> (7 - i)) & 1));
+                        out[i] = (ink & mask) | (paper & ~mask);
+                        if constexpr (PlaneB)
+                            planeB[pixel + i] = static_cast<uint16_t>((inkB & mask) | (paperB & ~mask));
+                    }
+                    t += 3;
+                    continue;
+                }
+            }
+
             // Branch-free: the pixel bit becomes an all-ones / all-zeros mask
             const uint32_t bit0 = (pixels << e.pixelXBit) & 0x80;
             const uint32_t mask0 = static_cast<uint32_t>(-static_cast<int32_t>(bit0 >> 7));
@@ -968,14 +1012,15 @@ void ScreenZX::DrawRangeZXImpl(uint32_t fromTstate, uint32_t toTstate)
             latchedBorderRGBA = borderColorRGBA;
             latchedBorderIndex = borderColor;
         }
-        out[0] = latchedBorderRGBA;
-        out[1] = latchedBorderRGBA;
+        // The latch holds the colour of the range: it cannot change any more, so the rest of the run is one fill
+        const uint32_t count = (latchedBorderIndex == borderColor) ? std::min<uint32_t>(e.run, toTstate - t + 1u) : 1u;
+        std::fill_n(out, 2u * count, latchedBorderRGBA);
         if constexpr (PlaneB)
         {
             const uint16_t border = static_cast<uint16_t>(kPlaneBRoleBorder | (latchedBorderIndex << 8));
-            planeB[pixel] = border;
-            planeB[pixel + 1] = border;
+            std::fill_n(planeB + pixel, 2u * count, border);
         }
+        t += count - 1u;
     }
 
     _latchedPixels = pixels;

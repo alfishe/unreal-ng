@@ -703,6 +703,64 @@ were each caught by at least one of them.
 The remaining classic-screen cost is the per-T loop itself (`DrawRangeZXImpl`); a cell-at-a-time loop for long spans
 is what is left there.
 
+**R6. The ZX range renderer a cell at a time** (`f5ac00cd3`): a range that covers a character cell's four T draws
+its eight pixels at once; the T-state LUT carries each T's run, so a blank run is one step and a border run one fill
+once the border latch holds the range's colour. Pentagon 1x 611 -> 573 (-6 %). `ZxScreenCells_Test`: a frame in one
+range equals the frame drawn one T at a time, picture and plane B.
+
+**R7. The TSFM's quiet ticks.** With R5 and R6 the classic screen was ~7 % of a Pentagon 1x frame and the TurboSound
+FM ~53 % - in the BASIC idle, two silent chips rendered tick by tick (218.75 kHz: two SSG mixers and output filters,
+four FM half-ticks with their coupling filters, six decimator feeds). `Ym2203Pair::quietTick` replaces `renderTick`
+while the pair is quiet at rest: no SSG write due, both SSGs at amplitude 0 (volume 0, no envelope; the DAC gives 0
+for amplitudes 0 and 1 on both chips) with their output filters at rest on 0, each FM output stage's coupling at rest
+on the gated hold, every FM word due the level held, all six decimator histories zeros (HQ only; LQ is untouched).
+Then the full tick would change no filter state and feed zeros everywhere: the quiet tick advances the generators
+(their phase is heard when the sound comes back), consumes the words and moves the decimator positions. The output
+filters settle to exactly 0 some seconds after a sound stops (the SSG's ~2 s, the FM coupling's ~8 s), so a playing
+tune never takes the path.
+
+| Row | before | after | x |
+|:--|--:|--:|--:|
+| Pentagon_ShipNormal | 570 | 476 | 0.84 |
+| Pentagon_WorstNormal | 678 | 579 | 0.85 |
+| TSConf_ShipNormal | 3,183 | 3,094 | 0.97 |
+| turbo rows, Sprinter | | | 1.00 |
+
+Exactness: `TsfmQuietTicks_Test` - two machines (CPU parked, the test writes the chips), one with the quiet ticks off,
+the host sound compared sample for sample through silence, an SSG tone, noise and an envelope on chip 1, an FM note,
+each followed by silence until the quiet ticks take over again, and a tone after that; HQ and LQ. Freezing the tone
+counters in the quiet tick fails it at once; not advancing the decimator phase never reaches an output. The audio of
+eleven snapshots (tech_support on the TSFM, 7th Reality, Eye Ache, Vibrations, Earshaver, Binary Love II, Crazy Love,
+others), HQ and LQ, 300-500 frames each, hashed in a throwaway harness: the same bytes before and after. The TSFM
+golden digests are unchanged. (An AY mixer cache - the sums kept while the three amplitudes stay - was exact too but
+measured nothing and was dropped.)
+
+**R8. Quiet runs, and the plain AY.** The quiet tick still tested its conditions and stepped every generator 218,750
+times a second. The conditions cannot change between two queue events (an SSG write, an FM word), so they are now
+tested once for the whole run up to the next output sample (`Ym2203Pair::renderQuiet`, `SoundChip_TurboSound::
+renderQuiet`), and the generators move the run in one step (`SoundChip_AY8910::advanceSilent`: a tone or the noise
+whose counter does not reach its period moves at once; the envelope - in the reset state period 1, a step every tick -
+in closed form: the steps the run contains, applied a segment at a time). The decimators take the run's zeros in one
+call, their phase by the same additions as one feed at a time. The plain AY device (the 128K, Scorpion, Sprinter, any
+machine set to the two-AY TurboSound) got the same quiet runs.
+
+| Row | before | after | x |
+|:--|--:|--:|--:|
+| Pentagon_ShipNormal | 479 | 440 | 0.92 |
+| 128K_ShipNormal | 481 | 444 | 0.92 |
+| Scorpion_ShipNormal | 767 | 731 | 0.95 |
+| Sprinter_ShipNormal | 1,583 | 1,486 | 0.94 |
+| TSConf_ShipNormal | 3,118 | 3,075 | 0.99 |
+
+(128K_ShipNormal and Scorpion_ShipNormal are new rows; the shipped 128K has the TurboSound FM as well.)
+
+Exactness: `SoundChip_AY8910_Test.SilentAdvanceMovesTheGeneratorsAsTickByTick` - every envelope shape, envelope
+periods 0-300, tones (period 0 too) and noise, 400 runs of 1-40 ticks each, the whole generator state compared after
+every run (moving the envelope's turn by one step fails it); `AyQuietTicks_Test` - the lockstep of R7 for one AY and
+the two-AY TurboSound, ending on a channel switched to the envelope that ran through the silence unwritten (no R13
+write), so the phases the generators kept are heard; freezing the tones or moving the envelope's test by one tick
+fails it. The eleven snapshots' audio: the same bytes.
+
 **Tried and dropped: the Next UART's peer promise.** A peer (the ESP module, a wired device) told the UART until when
 it stays silent (`QuietUntil` plus an activity counter), so the poll skipped the two virtual peer calls per
 instruction. Exact (lockstep twins with and without the promise, every Next frame / CPU / RAM hash equal at 3.5 and
