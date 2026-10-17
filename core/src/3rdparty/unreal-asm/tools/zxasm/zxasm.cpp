@@ -598,6 +598,8 @@ int ConvertDirectory(const Args& args, const CodecRegistry& registry)
         }
         DecodeOptions options;
         options.catalog = hints;
+        if (codec == forced)
+            options.subversion = args.version;   // --version: the files' version, not a guess (Primus' DISK is not ZEUS' DISP)
         DecodeResult decoded = codec->Decode(bytes, options);
         if (!decoded.ok)
         {

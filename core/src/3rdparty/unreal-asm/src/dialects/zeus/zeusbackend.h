@@ -18,5 +18,9 @@ public:
     BackendResult Write(const ir::Program& program, const BackendOptions& options) const override;
     bool WantsLabelValues() const override { return true; }
     bool JoinsSjasmplusProject() const override { return true; }
+    bool Includes(const BackendOptions& options) const override
+    {
+        return options.targetVersion == "pht" || options.targetVersion == "1.1" || options.targetVersion == "primus";   // 1983, GG: none
+    }
 };
 }  // namespace unrealasm::dialects

@@ -26,7 +26,7 @@ const std::set<std::string> kWords = {
     "M", "V", "NV",
 };
 
-/// A comment for ZEUS: ASCII only (other characters as "?")
+/// A comment for ZEUS: ASCII only (other characters as "?"); ^ and ` are the Spectrum's arrow and pound (their bytes)
 std::string CommentText(const std::string& utf8)
 {
     std::string out;
@@ -34,7 +34,12 @@ std::string CommentText(const std::string& utf8)
     {
         const unsigned char b = static_cast<unsigned char>(utf8[p]);
         const size_t length = b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : b >= 0xC0 ? 2 : 1;
-        out.push_back(b < 0x20 || b == 0x7F ? ' ' : b < 0x80 ? static_cast<char>(b) : '?');
+        if (b == '^')
+            out += "\u2191";
+        else if (b == '`')
+            out += "\u00A3";
+        else
+            out.push_back(b < 0x20 || b == 0x7F ? ' ' : b < 0x80 ? static_cast<char>(b) : '?');
         p += b < 0x80 ? 1 : length;
     }
     return out;
@@ -124,7 +129,8 @@ private:
     std::string NumberText(const Expr& e) const override
     {
         const int64_t v = e.value & 0xFFFF;
-        if (e.spelling == ir::NumberSpelling::Character && e.text.size() == 1 && e.text[0] > 0x20 && e.text[0] < 0x7F && !Primus())
+        if (e.spelling == ir::NumberSpelling::Character && e.text.size() == 1 && e.text[0] > 0x20 && e.text[0] < 0x7F && e.text[0] != '^' &&
+            e.text[0] != '`' && !Primus())
             return "\"" + e.text;   // Primus refuses "A": the number
         if (e.spelling == ir::NumberSpelling::Binary && !V7e())
             return "#" + z80::HexDigits(static_cast<uint64_t>(v), v > 0xFF ? 4 : 2);
@@ -162,7 +168,7 @@ private:
         for (const char c : text)
         {
             const unsigned char u = static_cast<unsigned char>(c);
-            if (u < 0x20 || u >= 0x7F)
+            if (u < 0x20 || u >= 0x7F || c == '^' || c == '`')   // ^ ` : no ASCII byte in the Spectrum's set
             {
                 end();
                 items.push_back(std::to_string(u));
@@ -230,8 +236,10 @@ private:
                     pattern.push_back(Value(o.expr).value_or(-1));
                 if (Pht() && pattern.size() == 1 && pattern[0] == 0)
                     return {Dss() + " " + Known(s.args[0])};
-                if (!n || *n > 4096 || std::any_of(pattern.begin(), pattern.end(), [](int64_t v) { return v < 0; }))
+                if (!n || std::any_of(pattern.begin(), pattern.end(), [](int64_t v) { return v < 0; }))
                     return {NotConverted("DS of a count or fill known only when assembling (ZEUS's DEFS leaves memory as it was)")};
+                if (*n > 4096)
+                    return {NotConverted("DS of " + std::to_string(*n) + " filled bytes: more DEFB than ZEUS's text holds (its DEFS leaves memory as it was)")};
                 std::vector<std::string> items;
                 for (int64_t k = 0; k < *n; ++k)
                     items.push_back(Number(pattern[static_cast<size_t>(k) % pattern.size()] & 0xFF));
@@ -282,12 +290,12 @@ private:
                 return {NotConverted("INCLUDE (ZEUS 1983 and GG have none): " + s.text)};
             case ir::DirectiveKind::Incbin:
                 if (s.args.size() > 1 || (!s.args.empty() && !(s.args[0].kind == Expr::Kind::Number && s.args[0].value == 0)))
-                    return {NotConverted("INCBIN of a part of a file: " + s.text)};
+                    return IncbinAsData(s, "INCBIN of a part of a file: " + s.text);
                 if (version == "gg")
                     return {"INCBIN \"" + DiskName(options, s.text) + "\""};
                 if (Pht())
                     return {"PLACE " + DiskName(options, s.text)};
-                return {NotConverted("INCBIN (ZEUS 1983 has none): " + s.text)};
+                return IncbinAsData(s, "INCBIN (ZEUS 1983 has none): " + s.text);
             case ir::DirectiveKind::End:
                 diagnostics.push_back({Severity::Info, line, 0, "END dropped (ZEUS assembles the whole text)"});
                 return {";END"};

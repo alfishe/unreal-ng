@@ -1352,13 +1352,15 @@ EncodeResult LaserGeniusCodec::Encode(const SourceDocument& document, const Enco
     std::vector<uint8_t> body;
     // The numbers kept when the first line has one; a document of plain lines gets one paragraph a line, 10, 20, ...
     const bool numbered = !document.lines.empty() && document.lines.front().number >= 0;
+    // 10 apart, or closer when the paragraphs would pass 65534 (a long file: 1 apart from 6554 lines on)
+    const size_t step = document.lines.size() * 10 <= 0xFFFE ? 10 : document.lines.size() * 5 <= 0xFFFE ? 5 : document.lines.size() * 2 <= 0xFFFE ? 2 : 1;
     bool open = false;
     int previous = -1;
     uint32_t index = 0;
     for (const SourceLine& line : document.lines)
     {
         ++index;
-        int number = numbered ? line.number : static_cast<int>(index * 10);
+        int number = numbered ? line.number : static_cast<int>(index * step);
         if (number >= 0)
         {
             if (number <= previous || number > 0xFFFE)

@@ -34,7 +34,12 @@ std::string CommentText(const std::string& utf8)
     {
         const unsigned char b = static_cast<unsigned char>(utf8[p]);
         const size_t length = b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : b >= 0xC0 ? 2 : 1;
-        out.push_back(b < 0x20 || b == 0x7F ? ' ' : b < 0x80 ? static_cast<char>(b) : '?');
+        if (b == '^')
+            out += "\u2191";   // ^ and ` are the Spectrum's arrow and pound: their bytes
+        else if (b == '`')
+            out += "\u00A3";
+        else
+            out.push_back(b < 0x20 || b == 0x7F ? ' ' : b < 0x80 ? static_cast<char>(b) : '?');
         p += b < 0x80 ? 1 : length;
     }
     return out;
@@ -62,7 +67,7 @@ private:
             case ir::NumberSpelling::Hex: return "#" + z80::HexDigits(static_cast<uint64_t>(v), v > 0xFF || e.digits > 2 ? 4 : 2);
             case ir::NumberSpelling::Binary: return "#" + z80::HexDigits(static_cast<uint64_t>(v), v > 0xFF ? 4 : 2);
             case ir::NumberSpelling::Character:
-                if (e.text.size() == 1 && e.text[0] > 0x20 && e.text[0] < 0x7F && e.text[0] != '"' && e.text[0] != '\\')
+                if (e.text.size() == 1 && e.text[0] > 0x20 && e.text[0] < 0x7F && e.text[0] != '"' && e.text[0] != '\\' && e.text[0] != '^' && e.text[0] != '`')
                     return "\"" + e.text + "\"";
                 return Number(v);
             default: return std::to_string(v);
@@ -225,7 +230,7 @@ private:
         for (const char c : text)
         {
             const unsigned char u = static_cast<unsigned char>(c);
-            if (u < 0x20 || u >= 0x7F || c == '"' || c == '\\')
+            if (u < 0x20 || u >= 0x7F || c == '"' || c == '\\' || c == '^' || c == '`')   // ^ `: no ASCII byte in the Spectrum's set
             {
                 end();
                 items.push_back(std::to_string(u));
@@ -340,7 +345,7 @@ private:
                 return DataLines(Db(), items);
             }
             case ir::DirectiveKind::Include: return {"*INCLUDE \"" + DiskName(options, s.text) + "\""};
-            case ir::DirectiveKind::Incbin: return {NotConverted("INCBIN (Laser Genius has none): " + s.text)};
+            case ir::DirectiveKind::Incbin: return IncbinAsData(s, "INCBIN (Laser Genius has none): " + s.text);
             case ir::DirectiveKind::End:
                 diagnostics.push_back({Severity::Info, line, 0, "END dropped (Laser Genius assembles the whole text)"});
                 return {";END"};

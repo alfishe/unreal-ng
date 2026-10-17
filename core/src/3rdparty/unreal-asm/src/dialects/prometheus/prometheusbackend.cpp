@@ -27,7 +27,7 @@ const std::set<std::string> kWords = {
 };
 
 /// The longest DS written as DEFB zeros (PROMETHEUS' DEFS leaves the bytes as they were, sjasmplus writes zeros)
-constexpr int64_t kZeroedHole = 256;
+constexpr int64_t kZeroedHole = 4096;   // as ZEUS: FlexNavigator lays files over each other and clears with DS #400
 
 /// A comment for PROMETHEUS: ASCII only (other characters as "?")
 std::string CommentText(const std::string& utf8)
@@ -228,7 +228,7 @@ private:
                 return DataLines(Db(), items, DataWidth());
             }
             case ir::DirectiveKind::Include: return {NotConverted("INCLUDE (PROMETHEUS has none): " + s.text)};
-            case ir::DirectiveKind::Incbin: return {NotConverted("INCBIN (PROMETHEUS has none): " + s.text)};
+            case ir::DirectiveKind::Incbin: return IncbinAsData(s, "INCBIN (PROMETHEUS has none): " + s.text);
             case ir::DirectiveKind::End:
                 diagnostics.push_back({Severity::Info, line, 0, "END dropped (PROMETHEUS assembles the whole text)"});
                 return {";END"};

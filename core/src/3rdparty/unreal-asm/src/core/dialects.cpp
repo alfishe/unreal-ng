@@ -395,6 +395,17 @@ public:
         for (size_t main = 0; main < _files.size(); ++main)
             if (!included[main])
                 Program(main);
+        // a file joined into a main one (a target without INCLUDE): a note in its place
+        for (const size_t k : _inlined)
+            if (!_written[k])
+            {
+                SourceDocument note;
+                note.name = _files[k].name;
+                note.dialect = std::string(_backend.Dialect());
+                note.lines.push_back({";in the file INCLUDing it", {}, -1});   // short: PROMETHEUS' line holds 63 bytes
+                _written[k] = std::move(note);
+                _labels[k] = {};
+            }
         // files only a cycle of INCLUDEs reaches: each as a main of its own
         for (size_t k = 0; k < _files.size(); ++k)
             if (!_written[k])
@@ -421,6 +432,9 @@ private:
         std::string name;           // the name its INCLUDE is written with (a copy: name~2)
         bool part = false;          // a part a long file was cut into (BackendOptions::splitLines)
     };
+    bool _inline = false;           // the target has no INCLUDE: the INCLUDEd texts stay in the main file
+    std::set<size_t> _inlined;      // the files written into a main file so
+
     struct Copy
     {
         size_t file = 0;
@@ -440,6 +454,16 @@ private:
             _origin.push_back({k, static_cast<uint32_t>(i + 1)});
             ++since;
             const auto found = _includes[k].find(static_cast<uint32_t>(i + 1));
+            if (found != _includes[k].end() && std::find(stack.begin(), stack.end(), found->second) == stack.end() && _inline)
+            {
+                // a target without INCLUDE: the text stays here, the INCLUDE a comment
+                _joined.lines.back().text = ";" + _joined.lines.back().text;
+                _inlined.insert(found->second);
+                stack.push_back(found->second);
+                Join(found->second, stack);
+                stack.pop_back();
+                continue;
+            }
             if (found != _includes[k].end() && std::find(stack.begin(), stack.end(), found->second) == stack.end())
             {
                 const size_t id = _regions.size();
@@ -516,6 +540,7 @@ private:
         BackendOptions options = _options;
         options.fileName.clear();
         _writing = &options;   // the parts' names go into its fileNames
+        _inline = !_backend.Includes(options);
         std::vector<size_t> stack = {main};
         Join(main, stack);
         for (const auto& f : _files)

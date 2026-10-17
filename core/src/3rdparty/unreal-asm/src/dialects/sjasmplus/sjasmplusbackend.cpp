@@ -781,7 +781,7 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
 
     // Pages in ORG and memory reads {..} need a sjasmplus device; the largest one keeps every ALASM page number valid
     {
-        bool device = false, hasDevice = false;
+        bool device = false, hasDevice = false, saveOnly = true;   // saveOnly: only SAVEBIN wants one
         std::function<bool(const Expr&)> memory = [&](const Expr& e) {
             if (e.kind == Expr::Kind::Memory)
                 return true;
@@ -793,17 +793,26 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
         for (const ir::Line& l : program.lines)
             for (const Statement& s : l.statements)
             {
-                if (s.kind == Statement::Kind::Directive &&
-                    ((s.directive == ir::DirectiveKind::Org && s.args.size() > 1) || s.directive == ir::DirectiveKind::SaveBinary))
+                if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::SaveBinary)
                     device = true;
+                if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Org && s.args.size() > 1)
+                    device = true, saveOnly = false;
                 if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Other && z80::Upper(s.text).rfind("DEVICE", 0) == 0)
                     hasDevice = true;
                 for (const Expr& a : s.args)
-                    device = device || memory(a);
+                    if (memory(a))
+                        device = true, saveOnly = false;
                 for (const Operand& o : s.operands)
-                    device = device || memory(o.expr);
+                    if (memory(o.expr))
+                        device = true, saveOnly = false;
             }
-        if (device && !hasDevice)
+        if (device && !hasDevice && saveOnly)
+        {
+            // a plain 64K of zeros: ZXSPECTRUM4096 would set the screen's attributes and the system variables
+            result.document.lines.push_back({"        DEVICE NOSLOT64K   ; unreal-asm: SAVEBIN needs a device", {}});
+            result.diagnostics.push_back({Severity::Info, 0, 0, "DEVICE NOSLOT64K added for SAVEBIN"});
+        }
+        else if (device && !hasDevice)
         {
             result.document.lines.push_back({"        DEVICE ZXSPECTRUM4096   ; unreal-asm: ORG pages, {memory} reads and SAVEBIN need a device", {}});
             result.diagnostics.push_back({Severity::Info, 0, 0, "DEVICE ZXSPECTRUM4096 added for ORG pages / memory reads / SAVEBIN"});

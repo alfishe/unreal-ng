@@ -318,7 +318,31 @@ private:
     {
         if (word != "SAVEBIN")
             return std::nullopt;
-        return std::vector<std::string>{"SAVEOBJ " + rest};
+        // the names in the target's spelling (ZX-ASM writes them in capitals; the file name in quotes as it is)
+        std::string out;
+        for (size_t k = 0; k < rest.size();)
+        {
+            const char c = rest[k];
+            if (c == '"' || c == '\'')
+            {
+                const size_t end = rest.find(c, k + 1);
+                const size_t stop = end == std::string::npos ? rest.size() : end + 1;
+                out += rest.substr(k, stop - k);
+                k = stop;
+            }
+            else if (std::isalpha(static_cast<unsigned char>(c)) || c == '_' || c == '.')
+            {
+                size_t j = k;
+                while (j < rest.size() && (std::isalnum(static_cast<unsigned char>(rest[j])) || std::string("_.?@!").find(rest[j]) != std::string::npos))
+                    ++j;
+                const bool number = k > 0 && (rest[k - 1] == '#' || std::isdigit(static_cast<unsigned char>(rest[k - 1])));
+                out += number ? rest.substr(k, j - k) : Name(rest.substr(k, j - k));
+                k = j;
+            }
+            else
+                out += rest[k++];
+        }
+        return std::vector<std::string>{"SAVEOBJ " + out};
     }
 
     std::vector<std::string> DirectiveText(const Statement& s, const std::string&) override

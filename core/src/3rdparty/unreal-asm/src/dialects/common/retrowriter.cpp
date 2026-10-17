@@ -185,7 +185,17 @@ std::optional<int64_t> RetroWriter::Value(const Expr& e) const
                 return std::nullopt;
             return l->value;   // (assigned with DEFL once: a constant)
         }
-        case Expr::Kind::Current: return displaced ? std::nullopt : here;
+        case Expr::Kind::Current:
+        {
+            if (!displaced)
+                return here;
+            // in a DISP block: the line's address as the source's layout gives it ($ is the displaced one there)
+            for (const bool withFile : {true, false})
+                if (const auto found = options.labelValues.find(bodyLine ? BodyLineLabel(withFile) : LineLabel(withFile));
+                    found != options.labelValues.end())
+                    return found->second.value;
+            return std::nullopt;
+        }
         case Expr::Kind::Group: return Value(e.args[0]);
         case Expr::Kind::Unary:
         {
@@ -446,6 +456,21 @@ std::vector<std::string> RetroWriter::DataLines(const std::string& keyword, cons
     if (!current.empty())
         out.push_back(keyword + " " + current);
     return out;
+}
+
+std::vector<std::string> RetroWriter::IncbinAsData(const Statement& s, const std::string& why)
+{
+    const std::vector<uint8_t> bytes = options.dataFiles ? options.dataFiles(s.text) : std::vector<uint8_t>{};
+    const auto offset = s.args.empty() ? std::optional<int64_t>(0) : Value(s.args[0]);
+    const auto length = s.args.size() < 2 ? std::optional<int64_t>(static_cast<int64_t>(bytes.size()) - offset.value_or(0)) : Value(s.args[1]);
+    if (bytes.empty() || !offset || !length || *offset < 0 || *length < 0 || static_cast<uint64_t>(*offset + *length) > bytes.size())
+        return {NotConverted(why)};
+    std::vector<std::string> items;
+    items.reserve(static_cast<size_t>(*length));
+    for (int64_t k = 0; k < *length; ++k)
+        items.push_back(Number(bytes[static_cast<size_t>(*offset + k)]));
+    diagnostics.push_back({Severity::Info, line, 0, "INCBIN " + s.text + " written as its " + std::to_string(*length) + " bytes"});
+    return DataLines(Db(), items);
 }
 
 std::vector<std::string> RetroWriter::Data(const Statement& s, bool words)

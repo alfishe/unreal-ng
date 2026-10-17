@@ -20,7 +20,7 @@ std::string ChainWriter::NumberText(const Expr& e) const
             return "%" + bits;
         }
         case ir::NumberSpelling::Character:
-            if (e.text.size() == 1 && e.text[0] > 0x20 && e.text[0] < 0x7F && e.text[0] != '"')
+            if (e.text.size() == 1 && InQuotes(e.text[0]))
                 return "\"" + e.text + "\"";
             return Number(v);
         default: return std::to_string(v);

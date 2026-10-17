@@ -103,6 +103,14 @@ them assemble alone with sjasmplus. Each went to the target as a project (`zxasm
 | ALASM 5.09 | 33 | 22 | the Lua ones (4) |
 | STORM 1.3 | 33 | 12 | the Lua ones (4) |
 | XAS 7.447 | 33 | 12 | the Lua ones (4) |
+| ZX-ASM 3.15 (2026-10-17) | 33 | 17 | the Lua ones (4) |
+| PROMETHEUS 48K (2026-10-17) | 33 | 13 | the Lua ones (4) |
+| MASM 1.1 (2026-10-17) | 31 | 18 | the Lua ones (4), MASM's INCBIN sector slack as TASM's (2) |
+| GENS 4 (2026-10-17) | 30 | 12 | the Lua ones (4), DISP (3: GENS assembles code where it lies) |
+| ZEUS 1983 / v7.E (2026-10-17) | 30 / 30 | 12 / 20 | the Lua ones (4), `DS 16384,#CF` (3: more DEFB than ZEUS's text holds, its DEFS leaves memory as it was) |
+| Laser Genius 1.04 (2026-10-17) | 30 | 19 | the Lua ones (4), Wild Commander's `emu.asm` (3: 10 bytes of a macro that assigns `VORG = $` at each call) |
+| Primus 2.9 (2026-10-17) | 24 | 12 | the Lua ones (4), DISP and a second ORG (Primus has neither) |
+| PASM 3.0 (2026-10-17) | 19 | 19 | the Lua ones (4), PASM's memory model (one ORG; code below #8000 in another page) |
 
 What is left, by cause:
 - **Lua** (`3color.asm`, `fire.asm`, both BasicLib examples): the bytes come from Lua scripts sjasmplus runs (BasicLib's
@@ -136,6 +144,20 @@ Two more are done (§7): sjasmplus' relocation table, and ALASM's macros with lo
 | XAS frontend | a name spelled in another file was not given the definition's spelling (XAS compares 7 characters without case) | Wild Commander's plugins |
 | `zxasm convert <dir>` | `--to-version` was not passed on; the codec's errors were not printed; INCBIN of a host file got no sector slack | the check |
 | backends | the folder of an INCLUDE / INCBIN was kept in its TR-DOS name (`_spg/dow`) | ZiFi |
+| ZX-ASM backend | SAVEOBJ's operands were written as typed: the names not in ZX-ASM's capitals (`Start`), so the text came back to sjasmplus with names it did not define | The Link's loader |
+| ZX-ASM frontend | an index offset made with a 16-bit function (`(IY+100.n+X)`) came back as 65436+X: now the low byte as a signed one | NextPlayer |
+| sjasmplus backend | a SAVEBIN alone got DEVICE ZXSPECTRUM4096 (it sets the screen's attributes): NOSLOT64K | The Link's loader |
+| MASM backend | a Russian letter in a comment was kept: MASM's bytes #80 and up are its keywords, the codec refused the line | ZiFi, Wild Commander, FAT32 driver, DEMON, Flex Navigator (15 projects) |
+| GENS backend | `*F name` (INCLUDE) was put in the command column: GENS reads it only from the first one | every project with an INCLUDE |
+| GENS, ZEUS, Laser Genius backends | `^` and `` ` `` in a string, a character or a comment: the Spectrum's set has the arrow and the pound there (no ASCII byte): numbers, or those characters in comments | NextPlayer, Cobra, unzip, DEMON, Flex Navigator |
+| GENS, ZEUS 1983, Laser Genius, PROMETHEUS backends | INCBIN not converted: the file's bytes as DB when the project holds it (`RetroWriter::IncbinAsData`) | ZiFi, DEMON, Flex Navigator, NextPlayer |
+| ZEUS frontend | a DM delimited by `"` was read as a character `"h` first, so a `:` in it split the line | ZiFi's URLs |
+| project joiner | ZEUS 1983 / GG and PROMETHEUS have no INCLUDE: the project was cut into files again anyway; now it stays one file (`IBackend::Includes`) | 15 projects |
+| `RetroWriter` | `$` in a DISP block was unknown: the line's address from the source's layout | sjasmplus' relocation example |
+| sjasmplus frontend | `EX HL,DE` (sjasmplus: EX DE,HL), `ADD A,(n)` and `LD H,(n)` (no such Z80 forms: sjasmplus assembles the number) were kept as written | DEMON, ZiFi, NextPlayer, Cobra |
+| PROMETHEUS backend | a DS of up to 4096 zeros is written as DEFB (PROMETHEUS' DEFS leaves memory as it was; Flex Navigator clears a place with DS #400) | Flex Navigator |
+| `zxasm convert <dir>` | `--version` was not given to the decoder: a Primus text read as ZEUS (DISK as DISP) | DEMON, Flex Navigator |
+| projectcheck.py | the folder of a DOS-style `bin\name` OUTPUT; the device a target text needs is the original's (the memory a device sets up is not the program's) | Flex Navigator, The Link |
 
 ## 7. The relocation table and ALASM's mixed macros
 

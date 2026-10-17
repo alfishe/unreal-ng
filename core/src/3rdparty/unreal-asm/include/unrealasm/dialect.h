@@ -136,6 +136,9 @@ public:
     /// project is written as sjasmplus assembles it, its INCLUDEs joined into one text, and cut into its files again
     /// (ConvertProject)
     virtual bool JoinsSjasmplusProject() const { return false; }
+    /// The target reads an INCLUDE (in the version options.targetVersion names): without one a joined project stays one
+    /// file, the INCLUDEd texts in it where their INCLUDEs were (ZEUS 1983, PROMETHEUS)
+    virtual bool Includes(const BackendOptions&) const { return true; }
 };
 
 class DialectRegistry
