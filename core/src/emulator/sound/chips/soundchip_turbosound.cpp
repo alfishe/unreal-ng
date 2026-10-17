@@ -83,6 +83,7 @@ void SoundChip_TurboSound::applyPsgClock(uint32_t hz)
 
 bool SoundChip_TurboSound::SetPsgClock(uint32_t hz)
 {
+    settleSteps();
     hz = (hz + kPsgClockStepHz / 2) / kPsgClockStepHz * kPsgClockStepHz;
     if (hz < kMinPsgClock || hz > kMaxPsgClock)
         return false;
@@ -158,6 +159,7 @@ void SoundChip_TurboSound::applyAllSsgWrites()
 
 void SoundChip_TurboSound::handleFrameStart()
 {
+    settleSteps();
     // Frame rollover: AdjustFrameCounters already rebased z80->t; shift the
     // render cursor and every pending write by the same delta so they stay on
     // one continuous timeline (the TSFM scheme, kept bit-identical)
@@ -240,6 +242,19 @@ void SoundChip_TurboSound::handleFrameStart()
 /// - Correct relationship between chip clock and generator periods
 void SoundChip_TurboSound::handleStep()
 {
+    // The step gate: before the deadline a step only notes where it ended (settleSteps books it)
+    if (_stepDeadline != 0)
+    {
+        const int64_t now = nowT();
+        if (now < _stepDeadline && _context->emulatorState.HostSpeedMultiplier() == 1)
+        {
+            _pendingT = now;
+            _stepPending = true;
+            return;
+        }
+        settleSteps();
+    }
+
     // The timeline follows the core in every mode (the frame rebase and the
     // write timestamps need it), rendering does not
     _lastSeenT = nowT();
@@ -451,10 +466,18 @@ void SoundChip_TurboSound::handleStep()
     // piled up a backlog of millions of samples that rendered 8192 samples per frame (time-compressed audio, a jump
     // at every frame boundary) for minutes after the speed went back to 1x. At 1x the two are the same number
     _lastTStates = uint32_t(scaledCurrentTStates);
+
+    // Until the step whose T completes a sample every step only moves the timeline and the phase: the gate's deadline
+    // (x1 speed, room in the buffer). samplePhase + d x rate < CPU_CLOCK_RATE holds for d < ceil((CPU_CLOCK_RATE -
+    // samplePhase) / rate)
+    if (_stepGate && speedMultiplier == 1 && _samplePhase < CPU_CLOCK_RATE &&
+        _ayBufferIndex < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
+        _stepDeadline = int64_t(_lastTStates) + int64_t((CPU_CLOCK_RATE - _samplePhase + _coreRate - 1) / _coreRate);
 }
 
 void SoundChip_TurboSound::handleFrameEnd()
 {
+    settleSteps();
     // Nothing to drain. HUD activity: SoundManager (AudioActivityIndicators),
     // from the audio-settings LEDs computed on the chip buffers
 }
@@ -464,6 +487,7 @@ void SoundChip_TurboSound::handleFrameEnd()
 /// region <PortDevice interface methods>
 uint8_t SoundChip_TurboSound::portDeviceInMethod(uint16_t port)
 {
+    settleSteps();
     uint8_t result = _currentChip->portDeviceInMethod(port);
 
     return result;
@@ -471,6 +495,7 @@ uint8_t SoundChip_TurboSound::portDeviceInMethod(uint16_t port)
 
 void SoundChip_TurboSound::portDeviceOutMethod(uint16_t port, uint8_t value)
 {
+    settleSteps();
     switch (port)
     {
         case PORT_FFFD:
@@ -552,6 +577,7 @@ bool SoundChip_TurboSound::attachToPorts(PortDecoder* decoder)
 
 void SoundChip_TurboSound::detachFromPorts()
 {
+    settleSteps();
     if (_portDecoder && _chipAttachedToPortDecoder)
     {
         _portDecoder->UnregisterPortHandler(0xBFFD);
@@ -632,6 +658,7 @@ size_t SoundChip_TurboSound::TTDStateSize() const
 
 void SoundChip_TurboSound::TTDSaveState(uint8_t* dst) const
 {
+    const_cast<SoundChip_TurboSound*>(this)->settleSteps();
     uint8_t* cur = dst;
 
     // Current chip selector (0 or 1).
@@ -690,6 +717,8 @@ void SoundChip_TurboSound::TTDSaveState(uint8_t* dst) const
 
 void SoundChip_TurboSound::TTDLoadState(const uint8_t* src)
 {
+    _stepPending = false;  // the restored state replaces what the gate noted
+    _stepDeadline = 0;
     const uint8_t* cur = src;
     ++_renderEpoch;   // the host's character chains restart (ITurboSoundDevice::renderEpoch)
 
