@@ -24,7 +24,7 @@
         const char* kList = "/api/v1/companions";
         op(kList, "get", "List companions and pending pairings",
            "companions (id, name, device, scopes, source paired | environment, paired_ms, last_seen_ms), pairings "
-           "(pairing_id, name, device, peer, expires_in, scopes) and approval_available (a GUI can approve). Never a "
+           "(pairing_id, name, device, peer, expires_in, scopes) and approval_available (a GUI can approve), pairing_allowed (the user accepts requests). Never a "
            "token or a code.");
         paths[kList]["get"]["responses"]["200"]["description"] = "The companions and pairings";
         op(kList, "delete", "Revoke every companion", "Their tokens stop working at once.");
@@ -40,6 +40,8 @@
         paths[kItem]["post"]["responses"]["400"]["description"] = "bad_request: no name, an unknown scope";
         paths[kItem]["post"]["responses"]["429"]["description"] =
             "too_many_pairings: 4 pending, or one from this address already (retry: true)";
+        paths[kItem]["post"]["responses"]["403"]["description"] =
+            "pairing_disabled: the user turned pairing requests off at the GUI";
         paths[kItem]["post"]["responses"]["503"]["description"] =
             "pairing_unavailable: no GUI to approve; provision companions in UNREAL_COMPANION_TOKENS";
         op(kItem, "get", "The companion itself (cid = me) or one companion",

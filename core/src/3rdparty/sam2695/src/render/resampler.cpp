@@ -73,6 +73,7 @@ void Resampler::Reset()
     std::fill(_history.begin(), _history.end(), 0.0f);
     _write = 0;
     _num = 0;
+    _zeroRun = static_cast<uint32_t>(_taps);  // the history is zeros
     // the first output lands on the first input frame: it must sit at the window's center tap
     // (half - 1), behind half + 1 real frames
     _pending = static_cast<uint32_t>(_taps / 2 + 1);
@@ -102,8 +103,20 @@ size_t Resampler::Process(const float* in, size_t inFrames, size_t& consumed, fl
             float* b = &_history[(static_cast<size_t>(_write) + taps) * 2];
             a[0] = b[0] = l;
             a[1] = b[1] = r;
+            _zeroRun = (l == 0.0f && r == 0.0f) ? _zeroRun + 1 : 0;
             _write = static_cast<uint32_t>((_write + 1) % taps);
             _pending--;
+        }
+        if (_skipSilent && _zeroRun >= taps)
+        {
+            // A window of zeros: every product is a zero, the sums and their blend +0.0 - as the loop below gives
+            out[produced * 2] = 0.0f;
+            out[produced * 2 + 1] = 0.0f;
+            produced++;
+            _num += _inRate;
+            _pending = static_cast<uint32_t>(_num / _outRate);
+            _num %= _outRate;
+            continue;
         }
         const double pos = static_cast<double>(_num) / _outRate * kPhases;
         const int phase = std::min(static_cast<int>(pos), kPhases - 1);

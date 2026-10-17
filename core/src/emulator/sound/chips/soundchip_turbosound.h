@@ -109,6 +109,13 @@ protected:
     // the TTD base. false until the first one after reset / restore
     int64_t _lastSeenT = 0;
     bool _seenT = false;
+    // The step gate (handleStep): the audio T before which a step completes no output sample - such a step only moves
+    // the timeline and the sample phase, so it notes its T (_pendingT) and settleSteps books it once. 0: every step the
+    // full way. Set only by the full way; every other entry clears it first
+    int64_t _stepDeadline = 0;
+    int64_t _pendingT = 0;
+    bool _stepPending = false;
+    bool _stepGate = true;
     // SSG register writes timed to their T-state, per chip (0 = _chip0, the
     // 0xFF chip; 1 = _chip1): the CPU sees a write at once, the generators on
     // the tick it falls in (SsgWriteQueue). TTD state
@@ -148,10 +155,14 @@ public:
 
     uint64_t getSamplePhase() const override
     {
+        const_cast<SoundChip_TurboSound*>(this)->settleSteps();
+
         return _samplePhase;
     }
     void followSamplePhase(uint64_t phase) override
     {
+        settleSteps();
+
         _samplePhase = phase;
     }
 
@@ -205,6 +216,8 @@ public:
 public:
     void setSingleChip(bool single)
     {
+        settleSteps();
+
         _singleChip = single;
         if (single)
             _currentChip = _chip0;
@@ -238,6 +251,8 @@ public:
 public:
     void reset() override
     {
+        settleSteps();
+
         _chip0->reset();
         _chip1->reset();
 
@@ -312,6 +327,12 @@ public:
     }
     /// Off: every tick rendered (comparisons); the count of the ticks quietTick took
     void setQuietTicksEnabled(bool enabled) { _quietTicksEnabled = enabled; }
+    /// Tests: off = every step through the full path (the step gate of handleStep closed)
+    void setStepGate(bool on)
+    {
+        settleSteps();
+        _stepGate = on;
+    }
     uint64_t quietTicks() const { return _quietTicks; }
 
     void updateState(bool bypassPrescaler = false)
@@ -323,6 +344,8 @@ public:
     // Feature cache update
     void setHQEnabled(bool enabled) override
     {
+        settleSteps();
+
         if (enabled != _hqEnabled)
             _renderReanchor = true;
         if (enabled && !_hqEnabled)
@@ -332,6 +355,8 @@ public:
 
     void setSynthesisSuppressed(bool suppressed) override
     {
+        settleSteps();
+
         if (!suppressed && _synthesisSuppressed)
             _outputFlushPending = true;  // nothing was rendered while suppressed
         _synthesisSuppressed = suppressed;
@@ -344,11 +369,15 @@ public:
     /// rebuild only, at a frame boundary.
     void setDecimatorQuality(FilterDecimator::Quality quality) override
     {
+        settleSteps();
+
         _decimatorQuality = quality;
     }
 
     void setCoreRate(size_t rate) override
     {
+        settleSteps();
+
         _coreRate = rate;
         _samplePhase = 0;
         _renderReanchor = true;
@@ -441,6 +470,22 @@ public:
     size_t TTDStateSize() const override;
 private:
     int64_t nowT() const;
+    /// The steps the gate let through, booked as handleStep books a step that renders nothing (the timeline, the
+    /// sample phase, the last T, frame-clipped), and the gate closed. Every entry other than handleStep starts here
+    void settleSteps()
+    {
+        _stepDeadline = 0;
+        if (!_stepPending)
+            return;
+        _stepPending = false;
+        _lastSeenT = _pendingT;
+        _seenT = true;
+        const int64_t frameT = int64_t(_context->config.frame);
+        const uint32_t scaled = uint32_t(frameT > 0 ? std::min(_pendingT, frameT) : _pendingT);  // x1 speed only
+        if (scaled > _lastTStates)
+            _samplePhase += uint64_t(scaled - _lastTStates) * _coreRate;
+        _lastTStates = scaled;
+    }
     /// Timed SSG register write at the current T-state (see SsgWriteQueue);
     /// applied at once while synthesis is suppressed
     void queueSsgWrite(int chipIndex, uint8_t reg, uint8_t value);

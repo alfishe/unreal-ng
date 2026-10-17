@@ -22,5 +22,23 @@ public:
     WS_PATH_ADD("/api/v1/websocket", drogon::Get);
     WS_PATH_LIST_END
 };
+
+/// /api/v1/companions/events: a companion's live view (companion protocol §4.1). The token comes on the handshake
+/// (Authorization: Bearer) or in the first message ({"op":"auth"}, for clients that cannot set headers); then
+/// CompanionEventHub sends `me` once and every change of an instance's entry
+class CompanionWebSocket : public drogon::WebSocketController<CompanionWebSocket>
+{
+public:
+    void handleNewMessage(const drogon::WebSocketConnectionPtr& wsConnPtr, std::string&& message,
+                          const drogon::WebSocketMessageType& type) override;
+
+    void handleConnectionClosed(const drogon::WebSocketConnectionPtr& wsConnPtr) override;
+
+    void handleNewConnection(const drogon::HttpRequestPtr& req, const drogon::WebSocketConnectionPtr& wsConnPtr) override;
+
+    WS_PATH_LIST_BEGIN
+    WS_PATH_ADD("/api/v1/companions/events", drogon::Get);
+    WS_PATH_LIST_END
+};
 }  // namespace v1
 }  // namespace api

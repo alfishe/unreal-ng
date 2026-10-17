@@ -39,5 +39,3 @@ D1-D5 were proposed in the session and accepted by the owner; D3 was widened and
 | D4 | While a session is held, a companion's changing requests are refused `held_by_session`, as the GUI is locked. With the `takeback` scope it may take control back, as the GUI user can. |
 | D5 | Companions can be listed and revoked from every plane. Acting as a companion is possible on the WebAPI and the CLI, the planes a remote device reaches. MCP agents and in-process scripts never act as companions. |
 | D6 | Stepping without a pause makes no sense: steps, direct runs and register writes are refused `not_now` while the machine runs. The companion is told what it can do now: `GET /api/v1/companions/me` lists every action with `available` and a `reason`. |
-</content>
-</invoke>

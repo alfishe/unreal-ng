@@ -4,6 +4,7 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <algorithm>
 #include <fstream>
 #include <mutex>
 #include <sstream>
@@ -352,4 +353,45 @@ TEST(CompanionActions_Test, AvailabilityFollowsTheMachinesState)
 
     report = companion::ActionsReport(me, companion::MachineView{});
     EXPECT_EQ(reason(report, "reset"), "the machine is stopped");
+}
+
+TEST_F(CompanionRegistry_Test, PairingTurnedOffRefusesRequestsAndDeniesTheWaitingOnes)
+{
+    std::vector<std::string> events;
+    std::mutex eventsMutex;
+    MessageCenter& center = MessageCenter::DefaultMessageCenter();
+    const uint64_t observer = center.AddObserver(NC_COMPANION_CHANGED, [&](int, Message* message) {
+        if (auto* payload = message ? dynamic_cast<CompanionChangedPayload*>(message->obj) : nullptr)
+        {
+            std::lock_guard<std::mutex> lock(eventsMutex);
+            events.push_back(payload->event);
+        }
+    });
+    const std::string kept = Pair("Desk panel");
+    const companion::PairingRequestResult waiting = _registry.RequestPairing("Phone", "", 0, "192.168.1.41");
+    ASSERT_EQ(waiting.error, "");
+    EXPECT_TRUE(_registry.IsPairingAllowed()) << "on by default";
+
+    _registry.SetPairingAllowed(false);
+    EXPECT_EQ(_registry.PollPairing(waiting.pairing.id).state, "denied");
+    const companion::PairingRequestResult refused = _registry.RequestPairing("Tablet", "", 0, "192.168.1.42");
+    EXPECT_EQ(refused.error, "pairing_disabled");
+    {
+        const StateNode report = _registry.Report();
+        const StateNode* allowed = report.find("pairing_allowed");
+        ASSERT_NE(allowed, nullptr);
+        EXPECT_FALSE(allowed->b);
+    }
+    EXPECT_TRUE(_registry.Authenticate(kept).has_value()) << "paired companions keep working";
+    EXPECT_TRUE(TestWait::For(
+        [&] {
+            std::lock_guard<std::mutex> lock(eventsMutex);
+            return std::find(events.begin(), events.end(), "denied") != events.end();
+        },
+        std::chrono::seconds(2)))
+        << "the prompt of the waiting request is told";
+    center.RemoveObserverById(NC_COMPANION_CHANGED, observer);
+
+    _registry.SetPairingAllowed(true);
+    EXPECT_EQ(_registry.RequestPairing("Tablet", "", 0, "192.168.1.42").error, "");
 }

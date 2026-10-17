@@ -7,7 +7,9 @@ Needs the companion that mcplib.launch provisions (UNREAL_COMPANION_TOKENS 'veri
 --launch, or start the server with that variable. The WebAPI and the CLI are found from the MCP port (WebAPI = MCP - 200,
 CLI = WebAPI + 100)."""
 
+import base64
 import json
+import os
 import re
 import socket
 import sys
@@ -93,6 +95,79 @@ def cli(s, *commands):
             sock.sendall((command + '\n').encode())
             answers.append(read_until_prompt())
     return answers
+
+
+class Events:
+    """A WebSocket client of /api/v1/companions/events (stdlib only: text frames, client-masked)"""
+
+    def __init__(self, s, token=None):
+        port = int(webapi(s).rsplit(':', 1)[1])
+        self.sock = socket.create_connection(('127.0.0.1', port), timeout=10)
+        key = base64.b64encode(os.urandom(16)).decode()
+        auth = f'Authorization: Bearer {token}\r\n' if token else ''
+        self.sock.sendall((f'GET /api/v1/companions/events HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n'
+                           f'Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n'
+                           f'Sec-WebSocket-Version: 13\r\n{auth}\r\n').encode())
+        head = b''
+        while b'\r\n\r\n' not in head:
+            chunk = self.sock.recv(4096)
+            expect(chunk, 'the handshake answer', head)
+            head += chunk
+        head, self.buffer = head.split(b'\r\n\r\n', 1)
+        expect(head.startswith(b'HTTP/1.1 101'), 'the WebSocket upgrade', head)
+        self.closed = False
+
+    def send(self, value):
+        data = json.dumps(value).encode()
+        mask = os.urandom(4)
+        header = bytes([0x81, 0x80 | len(data)]) if len(data) < 126 else \
+            bytes([0x81, 0x80 | 126]) + len(data).to_bytes(2, 'big')
+        self.sock.sendall(header + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data)))
+
+    def _read(self, n):
+        while len(self.buffer) < n:
+            chunk = self.sock.recv(65536)
+            if not chunk:
+                raise EOFError
+            self.buffer += chunk
+        data, self.buffer = self.buffer[:n], self.buffer[n:]
+        return data
+
+    def recv(self, timeout=5):
+        """The next JSON text message; None once the server closed"""
+        self.sock.settimeout(timeout)
+        while True:
+            try:
+                b0, b1 = self._read(2)
+                n = b1 & 0x7f
+                if n == 126:
+                    n = int.from_bytes(self._read(2), 'big')
+                elif n == 127:
+                    n = int.from_bytes(self._read(8), 'big')
+                payload = self._read(n)
+            except (EOFError, ConnectionError):
+                self.closed = True
+                return None
+            if b0 & 0x0f == 0x8:
+                self.closed = True
+                return None
+            if b0 & 0x0f == 0x1:
+                return json.loads(payload)
+
+    def until(self, predicate, what, timeout=5):
+        deadline = time.time() + timeout
+        seen = []
+        while time.time() < deadline:
+            message = self.recv(max(0.1, deadline - time.time()))
+            if message is None:
+                break
+            seen.append(message)
+            if predicate(message):
+                return message
+        expect(False, what, seen)
+
+    def close(self):
+        self.sock.close()
 
 
 def test_mcp_lists_the_companion(s):
@@ -226,9 +301,66 @@ def test_me_and_pairing_routes(s):
     expect(status == 404, 'gone', poll)
 
 
+def test_events_follow_the_machine(s):
+    eid = emulator_id(s)
+    http(s, 'POST', f'/api/v1/emulator/{eid}/pause')
+    events = Events(s, COMPANION_TOKEN)
+    try:
+        hello = events.recv()
+        expect(hello and hello.get('op') == 'hello' and hello['companion']['name'] == 'verify', 'hello: me', hello)
+        entry = next(e for e in hello['emulators'] if e['id'] == eid)
+        expect(entry['state'] == 'paused' and entry['actions']['step']['available'], 'paused: step lit', entry)
+        start = time.time()
+        http(s, 'POST', f'/api/v1/emulator/{eid}/resume')
+        running = events.until(lambda m: m.get('op') == 'emulator' and m['emulator']['id'] == eid and
+                               not m['emulator']['actions']['step']['available'], 'resumed: step goes dark')
+        expect('pause first' in running['emulator']['actions']['step'].get('reason', ''), 'with the reason', running)
+        expect(time.time() - start < 0.9, 'at once, not at the next second', time.time() - start)
+
+        s.call('control_execution', {'action': 'take_control', 'client': 'verification agent'})
+        held_event = events.until(lambda m: m.get('op') == 'emulator' and m['emulator']['control']['held'],
+                                  'an agent takes control: the entry says so')
+        expect(held_event['emulator']['control']['can_take_back'], 'and offers take-back', held_event)
+        http(s, 'POST', f'/api/v1/emulator/{eid}/control/take-back')
+        events.until(lambda m: m.get('op') == 'emulator' and not m['emulator']['control']['held'], 'taken back')
+        r = s.call('inspect_state', {'aspects': ['registers']}, ok=False)  # the agent's one stop answer
+        expect(r.is_error and 'revoked_by_user' in r.text, "the agent's next call is the stop error", r.text)
+        http(s, 'POST', f'/api/v1/emulator/{eid}/control/allow-again')
+        http(s, 'POST', f'/api/v1/emulator/{eid}/pause')
+        events.send({'op': 'snapshot'})
+        events.until(lambda m: m.get('op') == 'snapshot', 'a snapshot on request')
+    finally:
+        events.close()
+
+
+def test_events_authenticate_by_message(s):
+    events = Events(s)
+    try:
+        events.send({'op': 'snapshot'})
+        refused = events.recv()
+        expect(refused and refused.get('error') == 'companion_required', 'nothing before authentication', refused)
+        events.send({'op': 'auth', 'token': COMPANION_TOKEN})
+        events.until(lambda m: m.get('op') == 'hello', 'authenticated by message')
+    finally:
+        events.close()
+    events = Events(s)
+    try:
+        events.send({'op': 'auth', 'token': 'unc_not-a-companion-token-0000'})
+        refused = events.recv()
+        expect(refused and refused.get('error') == 'companion_unknown', 'an unknown token', refused)
+        expect(events.recv() is None, 'and the connection closes', '')
+    finally:
+        events.close()
+
+
 def test_zz_revoked_over_mcp_the_token_stops(s):
+    events = Events(s, COMPANION_TOKEN)
+    events.until(lambda m: m.get('op') == 'hello', 'hello')
     r = s.call('companion_manage', {'action': 'revoke', 'id': 'verify'})
     expect('revoked' in r.text, 'revoked', r.text)
+    events.until(lambda m: m.get('op') == 'revoked', 'the events channel is told')
+    expect(events.recv() is None, 'and closed', '')
+    events.close()
     status, answer, _ = http(s, 'POST', f'/api/v1/emulator/{emulator_id(s)}/resume')
     expect(status == 401 and answer.get('error') == 'companion_unknown', 'the token no longer works', answer)
 

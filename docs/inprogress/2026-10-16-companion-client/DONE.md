@@ -16,5 +16,10 @@ possible now). The landing also fixed the CLI server: the accept loop no longer 
 own (a reused descriptor closed under the next connection); regression in `tools/verification/mcp/test_cli_server.py`.
 Not yet built on MSVC / MinGW, and the WebAPI / MCP / Qt files not yet through the gcc:16 check.
 
-Possible follow-ups (not planned): companion events over the WebSocket instead of polling `me`; a GUI setting to
-refuse pairing requests altogether; per-instance scopes.
+Follow-ups (owner 2026-10-17):
+
+| # | Work | Status |
+|:--|:--|:--|
+| F1 | Companion events over a WebSocket (`/api/v1/companions/events`, protocol §4.1): `hello`, then changed instance entries; `CompanionEventHub`; unit and live tests | done |
+| F2 | "Accept pairing requests from devices" in Tools > Companions… (QSettings): off refuses (`pairing_disabled`, 403) and denies the waiting ones; `pairing_allowed` in every list; unit and Qt tests | done |
+| F3 | Per-instance scopes | not now (owner) |

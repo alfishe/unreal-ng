@@ -119,3 +119,34 @@ TEST_F(CompanionController_Test, TheCompanionsDialogListsAndRevokes)
     dialog->close();
     Settle();
 }
+
+TEST_F(CompanionController_Test, UntickingAcceptPairingRefusesNewRequestsAndDeniesTheWaitingOnes)
+{
+    CompanionController controller(&_window, false);
+    const std::string waiting = Request("Phone");
+    controller.handleEvent(QStringLiteral("pairing_requested"), QString::fromStdString(waiting), {}, {});
+    controller.showCompanionsDialog();
+    CompanionsDialog* dialog = controller.dialog();
+    ASSERT_NE(dialog, nullptr);
+    ASSERT_NE(dialog->acceptPairingBox(), nullptr);
+    EXPECT_TRUE(dialog->acceptPairingBox()->isChecked()) << "on by default";
+
+    bool signalled = true;
+    QObject::connect(dialog, &CompanionsDialog::pairingAllowedChanged, [&](bool allowed) { signalled = allowed; });
+    dialog->acceptPairingBox()->setChecked(false);
+    EXPECT_FALSE(signalled);
+    EXPECT_FALSE(Registry().IsPairingAllowed());
+    EXPECT_EQ(Registry().PollPairing(waiting).state, "denied") << "the waiting request is refused too";
+    controller.handleEvent(QStringLiteral("denied"), QString::fromStdString(waiting), {}, {});
+    Settle();
+    EXPECT_EQ(controller.prompt(QString::fromStdString(waiting)), nullptr) << "and its prompt goes";
+
+    const companion::PairingRequestResult refused = Registry().RequestPairing("Tablet", "", 0, "10.0.0.8");
+    EXPECT_EQ(refused.error, "pairing_disabled");
+
+    dialog->acceptPairingBox()->setChecked(true);
+    EXPECT_TRUE(Registry().IsPairingAllowed());
+    EXPECT_EQ(Registry().RequestPairing("Tablet", "", 0, "10.0.0.8").error, "");
+    dialog->close();
+    Settle();
+}

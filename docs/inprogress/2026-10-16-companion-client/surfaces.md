@@ -28,7 +28,8 @@ Pairing a device happens on the WebAPI only, because that is what a device speak
 
 ## 2. WebAPI
 
-See [protocol.md](protocol.md). OpenAPI tag `Companions`.
+See [protocol.md](protocol.md). OpenAPI tag `Companions`. Live status: the WebSocket `/api/v1/companions/events`
+([protocol §4.1](protocol.md#41-events)), served by `CompanionEventHub` (`core/automation/webapi/src/companion-event-hub.*`).
 
 ## 3. CLI
 
@@ -103,8 +104,8 @@ companion_revoke("c-5f2a91")      # the number revoked (0 or 1); "all" revokes e
 
 - **Pairing prompt** (non-modal): name, device, peer, code, scope check boxes, Allow / Deny; it closes when the request
   is cancelled or expires.
-- **Tools → Companions…**: the list with Revoke and Revoke all.
+- **Tools → Companions…**: the list with Revoke and Revoke all; "Accept pairing requests from devices" (on by default):
+  off refuses new requests (`pairing_disabled`) and denies the waiting ones. The lists on every plane show
+  `pairing_allowed`.
 - **Toasts:** paired, revoked, "Control taken back by companion 'X'".
 - **Unchanged:** the remote control bar, the lock and the input block, which only sessions trigger.
-</content>
-</invoke>

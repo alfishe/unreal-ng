@@ -5893,6 +5893,8 @@ void RegisterCompanionManage(ToolRegistry& registry)
                     }
                     if (!body["approval_available"].asBool())
                         out << "\nNo GUI on this instance: companions come from UNREAL_COMPANION_TOKENS";
+                    else if (!body["pairing_allowed"].asBool())
+                        out << "\nThe user turned pairing requests off at the GUI";
                     done(ToolResult::Ok(out.str(), std::move(body)));
                 });
                 return;

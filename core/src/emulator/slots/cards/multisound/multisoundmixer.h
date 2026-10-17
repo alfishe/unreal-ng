@@ -125,10 +125,14 @@ public:
     /// Mixes one block: every row of `out` gets `in.frames` stereo frames
     void Mix(const MultiSoundMixerInput& in, const MultiSoundMixerOutput& out);
 
+    /// Off: every stream mixed sample by sample, silent or not (comparisons; Mix)
+    void SetSilentStreamsSkipped(bool skipped) { _skipSilent = skipped; }
+
 private:
     void DesignFilters();
 
     MultiSoundMixerConfig _cfg;
+    bool _skipSilent = true;
     MultiSoundMixerTrim _trim;
     double _fmLevel = kFmFullScale;             // FmFullScale(_trim.fmDb)
 
