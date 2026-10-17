@@ -761,6 +761,68 @@ the two-AY TurboSound, ending on a channel switched to the envelope that ran thr
 write), so the phases the generators kept are heard; freezing the tones or moving the envelope's test by one tick
 fails it. The eleven snapshots' audio: the same bytes.
 
+**R9. The rest of the silent TurboSound FM** (branch `perf/sound-idle`):
+
+- The pair remembers that an FM half is idle (`Ym2203Chip::fmIdleKnown`): the idle test walks every operator and ran at
+  every sync; `clockFmIdle` keeps an idle engine idle, so only a register write, a reset, a restore, a timer expiry
+  (CSM) or a clock through `clockFmOnce` clears it. Pentagon / 128K 1x -7 %.
+- The silent tones and the noise count their turns in closed form too (in the reset state they turn every tick: tone
+  period 1, noise period 0), and the TSFM step reads the clock once. Pentagon / 128K 1x -6 %.
+- The step gate: the lazy deferral of a step that completes no sample holds until a T the step works out
+  (`_stepDeadline`); the steps before it note their T only and `settleSteps` books them as the deferral would, at the
+  next full step or any other entry into the device (each starts with it). Pentagon / 128K -1.5 %, Scorpion -3 %,
+  TSConf -3.6 %.
+
+| Row | before R9 | after | x |
+|:--|--:|--:|--:|
+| Pentagon_ShipNormal | 448 | 379 | 0.85 |
+| 128K_ShipNormal | 445 | 383 | 0.86 |
+| Scorpion_ShipNormal | 737 | 659 | 0.89 |
+
+Exactness: the TSFM golden digests and the MultiSound TFM trace (dropping the cache clear on a data write fails them),
+`SilentAdvanceMovesTheGeneratorsAsTickByTick` with the noise at periods 0-31 (moving the first shift or a tone's parity
+fails it), `TsfmStepGate_Test` (two machines, the gate closed in one, a program writing random registers of both chips
+at random places, dense and with long silences, HQ / LQ / 2x: the host sound and the end state equal; not booking the
+sample phase fails it); the eleven snapshots' audio is the same bytes after each step.
+
+**R10. The Next's three AYs in quiet runs.** `NextAudio::Tick` (three `updateState`, the mix, the device's DC
+filter, a pushed level per tick at 218.75 kHz) was ~15 % of an idle Next 1x frame. `NextAudio::QuietTicks` takes
+`AdvanceTo` to its end in one run while the three chips are silentAtRest and the DC filter sits at its fixed point for
+their silence (the next step would leave it bit for bit where it is): every tick then has one level - the DC filter's,
+the DAC's and the Pi's - worked out by Tick's own arithmetic once and pushed for the run, and the generators advance
+(`advanceSilent`). Every input that moves the level (the ports, the DAC, the configuration) advances the device first,
+so nothing changes inside a run. Asked at the start of a run and every 256 ticks.
+
+| Row | before | after | x |
+|:--|--:|--:|--:|
+| Next_ShipNormal | 1,048 | 899 | 0.86 |
+| Next_ShipTurbo / Pentagon_ShipNormal | | | 1.00 |
+
+Exactness: `NextAudioQuietTicks_Test` - two Next machines (CPU parked), the quiet runs off in one, through silences
+long enough for them to take over and out again on each of the three chips (tone, noise, envelope, a pan change, the
+DAC held off its middle), ending on an envelope that ran through the silences unwritten; dropping the DAC from the
+quiet level or freezing the tones fails it. The audio of Spectron 2084, ScrollNutter (music), the copper demo and the
+idle machine, with the eleven classic snapshots: the same bytes.
+
+**R11. The cards at 1x, and the MultiSound's quiet runs.** New rows: one card in the ZX bus at 1x, the AY socket a
+plain AY (`Pentagon_Only*_Normal`, `Pentagon_NoCards_Normal`). Idle Pentagon, median us: no card 300, GS 303, NeoGS 326,
+MoonSound 334, MultiSound 626. The MultiSound's YM2203 pair renders per channel (`renderChannels`: six SSG and two FM
+decimators, no coupling stage) and ticked every generator through silence. `Ym2203Pair::renderQuietChannels` takes the
+ticks up to each output in one run while nothing sounds: no SSG write due, both SSGs silentAtRest, all eight decimator
+histories zeros, each FM part fed 0 (muted, or holding 0 with every word due 0), no native tap.
+
+| Row | before | after | x |
+|:--|--:|--:|--:|
+| Pentagon_OnlyMultiSound_Normal | 559 | 422 | 0.75 |
+| Pentagon_NoCards_Normal / ShipNormal | | | 1.00 |
+
+Exactness: `MultiSoundQuietTicks_Test` - two Pentagons with the card (CPU parked), the quiet runs off in one, through
+silences and out (SSG tone, noise and envelope on both chips, an FM note alone after a silence), ending on an envelope
+that ran through them unwritten, each stretch checked audible; freezing the tones or not testing the FM words due fails
+it. The card's TFM / player traces (MultiSoundTrace_Test digests) unchanged; the card with allsources.sna, tech_support
+and idle, with the classic and Next snapshots: the same audio bytes. What the card costs on top now: the mixer
+(`MultiSoundMixer::Mix`), the SAM2695 resampler and the GS on the card.
+
 **Tried and dropped: the Next UART's peer promise.** A peer (the ESP module, a wired device) told the UART until when
 it stays silent (`QuietUntil` plus an activity counter), so the poll skipped the two virtual peer calls per
 instruction. Exact (lockstep twins with and without the promise, every Next frame / CPU / RAM hash equal at 3.5 and

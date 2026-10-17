@@ -67,12 +67,14 @@ enum class RunProfile
     WorstNormal,
     NoCardsTurbo,
     OnlyCardTurbo,
+    OnlyCardNormal,  ///< as OnlyCardTurbo at 1x: the card renders its sound
     MaxTurbo,
 };
 
 bool ReplacesCards(RunProfile profile)
 {
-    return profile == RunProfile::NoCardsTurbo || profile == RunProfile::OnlyCardTurbo || profile == RunProfile::MaxTurbo;
+    return profile == RunProfile::NoCardsTurbo || profile == RunProfile::OnlyCardTurbo ||
+           profile == RunProfile::OnlyCardNormal || profile == RunProfile::MaxTurbo;
 }
 
 void SetFeature(EmulatorContext* context, const char* feature, bool on)
@@ -202,7 +204,8 @@ void RunFrameProfile(benchmark::State& state, const char* model, RunProfile prof
         context->pMemory->UpdateFeatureCache();
     }
 
-    const bool turbo = profile != RunProfile::ShipNormal && profile != RunProfile::WorstNormal;
+    const bool turbo =
+        profile != RunProfile::ShipNormal && profile != RunProfile::WorstNormal && profile != RunProfile::OnlyCardNormal;
     if (turbo)
         context->pCore->EnableTurboMode();
 
@@ -231,6 +234,10 @@ void RunFrameProfile(benchmark::State& state, const char* model, RunProfile prof
     static void BM_Prof_##name(benchmark::State& s) { RunFrameProfile(s, model, RunProfile::OnlyCardTurbo, card); } \
     BENCHMARK(BM_Prof_##name)->Unit(benchmark::kMicrosecond)->MinTime(1.0)
 
+#define FRAME_PROFILE_CARD_NORMAL(name, model, card)                                                            \
+    static void BM_Prof_##name(benchmark::State& s) { RunFrameProfile(s, model, RunProfile::OnlyCardNormal, card); } \
+    BENCHMARK(BM_Prof_##name)->Unit(benchmark::kMicrosecond)->MinTime(1.0)
+
 // Present in every tree
 FRAME_PROFILE(Pentagon_ShipNormal, "PENTAGON", RunProfile::ShipNormal);
 FRAME_PROFILE(Pentagon_ShipTurbo, "PENTAGON", RunProfile::ShipTurbo);
@@ -252,6 +259,12 @@ FRAME_PROFILE_CARD(Pentagon_OnlyGS_Turbo, "PENTAGON", "gs");
 FRAME_PROFILE_CARD(Pentagon_OnlyMoonSound_Turbo, "PENTAGON", "moonsound");
 FRAME_PROFILE_CARD(Pentagon_OnlyTSFM_Turbo, "PENTAGON", "tsfm");
 FRAME_PROFILE_CARD(Pentagon_OnlySounDrive_Turbo, "PENTAGON", "soundrive");
+// One card at 1x, rendering its sound (the AY socket a plain AY)
+FRAME_PROFILE_CARD_NORMAL(Pentagon_OnlyMultiSound_Normal, "PENTAGON", "multisound");
+FRAME_PROFILE_CARD_NORMAL(Pentagon_OnlyGS_Normal, "PENTAGON", "gs");
+FRAME_PROFILE_CARD_NORMAL(Pentagon_OnlyNeoGS_Normal, "PENTAGON", "neogs");
+FRAME_PROFILE_CARD_NORMAL(Pentagon_OnlyMoonSound_Normal, "PENTAGON", "moonsound");
+FRAME_PROFILE_CARD_NORMAL(Pentagon_NoCards_Normal, "PENTAGON", "");
 FRAME_PROFILE(Pentagon_MaxTurbo, "PENTAGON", RunProfile::MaxTurbo);
 FRAME_PROFILE(48K_MaxTurbo, "48K", RunProfile::MaxTurbo);
 

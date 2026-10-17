@@ -285,9 +285,39 @@ protected:
         void setPeriod(uint8_t period);
         void updateState();
         bool out() { return _out; };
+        /// `ticks` x updateState() in one step: the shifts the run contains (one each time the counter reaches
+        /// twice the period, the counter then restarting at 0), the register shifted that many times
+        void advance(uint32_t ticks)
+        {
+            if (ticks == 0)
+                return;
+            // updateState counts first, then tests: a shift at tick i when counter + 1 + i reaches the limit, then
+            // one every limit ticks (every tick with a 0 period)
+            const uint32_t limit = uint32_t(_period) << 1;
+            const uint32_t first = (uint32_t(_counter) + 1 >= limit) ? 0 : limit - uint32_t(_counter) - 1;
+            if (first >= ticks)
+            {
+                _counter = static_cast<uint16_t>(_counter + ticks);
+                return;
+            }
+            const uint32_t stride = limit ? limit : 1;
+            const uint32_t shifts = 1 + (ticks - 1 - first) / stride;
+            const uint32_t last = first + (shifts - 1) * stride;
+            _counter = static_cast<uint16_t>(ticks - 1 - last);
+            for (uint32_t i = 0; i < shifts; i++)
+                _out = shiftLSFR();
+        }
 
     protected:
-        inline bool shiftLSFR();
+        /// Returns LSFR-generated random numbers for noise generator: the output, bit 0. The Random Number Generator of
+        /// the 8910 is a 17-bit shift register; the input to the shift register is bit 0 XOR bit 3 (17 stages, 1 tap).
+        /// See: https://github.com/mamedev/mame/blob/master/src/devices/sound/ay8910.cpp
+        bool shiftLSFR()
+        {
+            const uint32_t tapBit = (_registerLSFR & 1) ^ ((_registerLSFR >> 3) & 1);
+            _registerLSFR = (_registerLSFR >> 1) | (tapBit << 16);
+            return _registerLSFR & 1;
+        }
         /// endregion </Methods>
     };
 
@@ -482,18 +512,13 @@ public:
         return _filterDCLeft.restsAt(0.0) && _filterDCRight.restsAt(0.0);
     }
     /// `ticks` x updateState(true) of a chip that is silentAtRest (the mixer would change nothing): the generators
-    /// advance. A generator whose counter does not reach its period within the run moves in one step, the others tick
-    /// by tick - the generators do not depend on each other, so the order within a tick is no matter
+    /// advance, each in one step (the tones and the noise count their turns, the envelope its steps) - the generators do
+    /// not depend on each other, so the order within a tick is no matter
     void advanceSilent(uint32_t ticks)
     {
         _tick += ticks;
 
-        NoiseGenerator& noise = _noiseGenerator;
-        if (uint32_t(noise._counter) + ticks < (uint32_t(noise._period) << 1))
-            noise._counter = static_cast<uint16_t>(noise._counter + ticks);
-        else
-            for (uint32_t i = 0; i < ticks; i++)
-                noise.updateState();
+        _noiseGenerator.advance(ticks);
 
         _envelopeGenerator.advance(ticks);
 
@@ -501,11 +526,20 @@ public:
         {
             if (tone._period == 0)
                 continue;  // a 0 period is not played (ToneGenerator::updateState)
-            if (uint32_t(tone._counter) + ticks < tone._period)
+            // updateState counts first, then tests: a toggle at tick i when counter + 1 + i reaches the period, then
+            // one every period ticks
+            const uint32_t period = tone._period;
+            const uint32_t first = (uint32_t(tone._counter) + 1 >= period) ? 0 : period - uint32_t(tone._counter) - 1;
+            if (first >= ticks)
+            {
                 tone._counter = static_cast<uint16_t>(tone._counter + ticks);
-            else
-                for (uint32_t i = 0; i < ticks; i++)
-                    tone.updateState();
+                continue;
+            }
+            const uint32_t toggles = 1 + (ticks - 1 - first) / period;
+            const uint32_t last = first + (toggles - 1) * period;
+            tone._counter = static_cast<uint16_t>(ticks - 1 - last);
+            if (toggles & 1)
+                tone._out = !tone._out;
         }
     }
 

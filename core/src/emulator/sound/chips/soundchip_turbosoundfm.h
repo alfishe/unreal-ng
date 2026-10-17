@@ -117,9 +117,17 @@ protected:
     size_t _ssgZeroRun[4] = {};
     bool _syncDeferred = false;
     bool _deferAllowed = true;
+    // The step gate (handleStep): the audio T before which a step completes no output sample - the lazy deferral of the
+    // step that set it holds until then, so a step only notes its T (_pendingT) and the deferral's bookkeeping is done
+    // once (settleSteps). 0: every step the full way. Set only by that full way; every other entry clears it first
+    uint64_t _stepDeadline = 0;
+    uint64_t _pendingT = 0;
+    bool _stepPending = false;
     // With audio on: a step that completes no output sample defers its sync as well (handleStep). Off: every such step
     // syncs, as before (comparison tests)
     bool _lazySync = true;
+    // Off: no step gate (comparisons; settleSteps)
+    bool _stepGate = true;
 
     // FM gain = kFmBaseGain * 10^(trim/20) (§7.1); [SOUND] TSFM_FmLevelDb
     double _fmGain = kFmBaseGain;
@@ -211,6 +219,7 @@ public:
     /// step deferred it, see the file comment)
     void catchUp() override
     {
+        settleSteps();
         if (_syncDeferred)
         {
             _syncDeferred = false;
@@ -222,6 +231,25 @@ public:
     /// the IORQ's own T-state; handleStep then advances to the instruction
     /// end - §5.3 note)
     uint64_t nowT() const;
+
+    /// The steps the gate let through, booked as the lazy deferral books one (handleStep), and the gate closed: the
+    /// next step goes the full way. Every entry other than handleStep starts here
+    void settleSteps()
+    {
+        _stepDeadline = 0;
+        if (!_stepPending)
+            return;
+        _stepPending = false;
+        // The deferral's bookkeeping (x1 speed: the gate holds only then) for the last noted T, frame-clipped as the
+        // step clips it; the steps before it added their part of the same sum
+        const uint64_t frameT = uint64_t(_context->config.frame);
+        const uint32_t scaled = uint32_t(std::min(_pendingT, frameT ? frameT : _pendingT));
+        if (scaled > _lastTStates)
+            _samplePhase += uint64_t(scaled - _lastTStates) * _coreRate;
+        _lastTStates = scaled;
+        _deferredT = _pendingT;
+        _syncDeferred = true;
+    }
 
     /// One FM half-tick of chip `chipIndex` ending at half-tick boundary h
     /// (§6.2): consume every word that landed by h into the hold register
@@ -245,6 +273,7 @@ public:
 
     void setHQEnabled(bool enabled) override
     {
+        settleSteps();
         if (enabled != _pair.hqEnabled())
             _renderReanchor = true;
         if (enabled && !_pair.hqEnabled())
@@ -254,6 +283,7 @@ public:
 
     void setSynthesisSuppressed(bool suppressed) override
     {
+        settleSteps();
         if (!suppressed && _pair.synthesisSuppressed())
             _outputFlushPending = true;  // nothing was rendered while suppressed
         _pair.setSynthesisSuppressed(suppressed);
@@ -272,6 +302,12 @@ public:
         catchUp();
         _lazySync = on;
     }
+    /// Tests: off = every step through the full deferral path (the step gate of handleStep closed)
+    void setStepGate(bool on)
+    {
+        catchUp();
+        _stepGate = on;
+    }
 
     /// Redesigns all six decimators for the rate (§6.3): four SSG ones at
     /// the generator rate (identical to the legacy device — bit-identity,
@@ -283,6 +319,7 @@ public:
 
     void setCoreRate(size_t rate) override
     {
+        settleSteps();
         _coreRate = rate;
         _samplePhase = 0;  // in step with SoundManager::applyCoreRate
         _renderReanchor = true;
@@ -342,10 +379,12 @@ public:
 
     uint64_t getSamplePhase() const override
     {
+        const_cast<SoundChip_TurboSoundFM*>(this)->settleSteps();
         return _samplePhase;
     }
     void followSamplePhase(uint64_t phase) override
     {
+        settleSteps();
         _samplePhase = phase;
     }
 
