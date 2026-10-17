@@ -154,8 +154,9 @@ invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/basic/run","body":{"co
 ```
 
 `RANDOMIZE USR 30000` typed at the `A>` prompt is refused (a BASIC statement, not a TR-DOS command); `RETURN` after
-the menu's TR-DOS item goes to 128 BASIC; `RANDOMIZE USR 15619: REM : LOAD ...` returned without reading the disk
-here (open, see the dossier).
+the menu's TR-DOS item goes to 128 BASIC; `RANDOMIZE USR 15619: REM : LOAD ...` works from 48 BASIC, but a stored blank between `REM :` and the command token
+(`#20` before `LOAD`) makes TR-DOS skip the command silently, "0 OK", no disk access (see
+[manual-trdos-run.md](../run/manual-trdos-run.md#pitfalls)).
 
 The editor (V4.1, "1990 MOA B-Disk version") lists its commands. A disk file is named `n:NAME`, `n` = 1-4 for drives
 A-D, the type is always `C` (the code reads the digit, the name, pads it to 8 blanks and asks TR-DOS for type `C`):

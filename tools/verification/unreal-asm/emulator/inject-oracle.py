@@ -126,14 +126,17 @@ def inject(emu, args, profile, expected):
         print('zxasm inject:', run.stderr.strip().splitlines()[-1] if run.stderr.strip() else run.returncode)
         if run.returncode != 0:
             raise SystemExit(run.stderr)
-        emu.stop_recording()
-        reply = emu.post('/snapshot/load', {'path': injected})
-        if not reply.get('ok', True) or reply.get('error'):
-            raise SystemExit(f'snapshot load: {reply}')
+        # the disk goes in before the snapshot is loaded: ZAsm 3.80.4 answers "No Disk" to a disk put in while it runs
         if profile.disk_at_finish:
             if not args.media:
                 raise SystemExit(f'{args.assembler} saves its code to its disk: give the disk with --media')
             emu.insert_disk(os.path.abspath(args.media))
+            if profile.media:
+                profile.media(emu, args, os.path.abspath(args.media))
+        emu.stop_recording()
+        reply = emu.post('/snapshot/load', {'path': injected})
+        if not reply.get('ok', True) or reply.get('error'):
+            raise SystemExit(f'snapshot load: {reply}')
         emu.ensure_running()
         time.sleep(1)
         return

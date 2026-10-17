@@ -173,6 +173,14 @@ TEST(Snapshot_Test, EveryAssemblerTemplateTakesASourceWithoutAnEmulator)
         {"alasm-5.09", false}, {"tasm-4.12", false}, {"xas-7.447", false}, {"storm-1.3", false}, {"masm-1.1", false},
         {"zasm-3.15", true},   {"gens-4", false},    {"zeus-1983", false}, {"primus-2.9", true}, {"lasergenius-1.04", true},
         {"prometheus-48", true}, {"pasm-3.0", true},
+        {"zeus-gg", false},    {"zeus-7e", false},   {"zeus-1.1", false},
+        {"tasm-4.0", false},   {"tasm-4.4", false},  {"tasm-3.0", false},  {"tasm-3.2", false},  {"tasm-3.5", false},
+        {"tasm-2.0", false},   {"masm-3.0", true},   {"masm-2.0", true},   {"masm-1.0-demo", true},
+        {"gens-3m21", false},  {"gens-4b", false},   {"gens-4.3t", false}, {"storm-1.0b", false},
+        {"zasm-3.2x", true},   {"zasm-lite-1.07", true}, {"zasm-3.3.02", true}, {"zasm-3.3.51", true},
+        {"zasm-3.3.final", true}, {"zasm-3.80.4", true}, {"zasm-3.4", true}, {"zasm-x64.1", true},
+        {"zasm-4.0x8", true},  {"zasm-4.x64", true}, {"zasm-4.20", true},  {"zasm-3.10", true},  {"zasm-3.0", true},
+        {"zasm-2.4", true},    {"zasm-2.5", true},   {"zasm-2.6", true},
     };
     SourceDocument source = SourceDocument::FromText(ReadTestText("dialects/alasm-backend/oracle1.asm"), "sjasmplus");
     source.name = "oracle1";

@@ -168,15 +168,25 @@ def _drive_a_disk(disk):
     return out
 
 
+def zasmr_media(emu, args, disk):
+    """The disk a Pentagon 512 ZAsm needs besides the program: the copy whose settings say drive A (its overlays and
+    files go to the system drive; inject-oracle --template's --media disk is the original); 4.0x8 has drive D built
+    in, so the disk goes into D too (a copy: one source takes one slot)"""
+    if not os.path.basename(disk).startswith('unreal-asm-zasm-'):
+        disk = _drive_a_disk(disk)
+        emu.post('/media/A/swap', {'path': disk, 'discard': True, 'immediate': True})
+    if args.descriptor == 'zasm-4.0x8':
+        copy = os.path.join(tempfile.gettempdir(), 'unreal-asm-zasm-d-' + os.path.basename(disk))
+        open(copy, 'wb').write(open(disk, 'rb').read())
+        emu.post('/media/D/swap', {'path': copy, 'discard': True, 'immediate': True})
+
+
 def zasmr_boot(emu, args):
     """A Pentagon 512 ZAsm (3.2x ... 4.20): started, its STUB source loaded (File / Load: the editor opens on it), its
     COMMAND prompt opened (CS+SS)"""
     disk = _drive_a_disk(os.path.abspath(args.disk))
     emu.insert_disk(disk)
-    if args.descriptor == 'zasm-4.0x8':            # drive D built in: its overlays are read from there (a copy:
-        copy = disk + '.d.trd'                     # one source takes one slot)
-        open(copy, 'wb').write(open(disk, 'rb').read())
-        emu.post('/media/D/swap', {'path': copy, 'discard': True, 'immediate': True})
+    zasmr_media(emu, args, disk)
     emu.run_trdos(args.boot or 'boot', wait=10)
     for key in ZASM_START_KEYS[args.descriptor]:
         if isinstance(key, (int, float)):
@@ -266,24 +276,20 @@ def zasm30_finish(emu, args, expected):
 def zasmr_finish(emu, args, expected):
     emu.tap('a')                                   # Assemble
     time.sleep(args.wait)
+    for _ in range(2):
+        if emu.read_disk_file('out', 'C'):
+            break
+        # "No Disk": a drive it was not given (Lite's built-in D; after a template's disk went in, the others ask once
+        # too): Retry, drive A
+        emu.tap('enter')
+        time.sleep(1)
+        emu.tap('a')
+        time.sleep(args.wait)
     _shot(emu, args, args.descriptor)
     emu.tap('n')                                   # "Launch?" No
     time.sleep(2)
     data = emu.read_disk_file('out', 'C')
     return bytes(data[1]) if data else b''
-
-
-def zasmlite_finish(emu, args, expected):
-    """Lite 1.07 assembles into memory; its SAVEOBJ writes no file ("No Disk" with disks in all four drives, open):
-    the bytes are read where it puts code for #4000-#7FFF, RAM page 29 (seen in unreal-ng)"""
-    import base64
-    if not 0x4000 <= args.address < 0x8000:
-        raise SystemExit('Lite 1.07: give a source at #4000-#7FFF (its code is read from RAM page 29)')
-    emu.tap('a')                                   # Assemble
-    time.sleep(args.wait)
-    _shot(emu, args, args.descriptor)
-    page = emu.get(f'/memory/page/ram/29?offset={args.address & 0x3FFF}&length={len(expected)}')
-    return bytes(page['data']) if isinstance(page.get('data'), list) else base64.b64decode(page.get('data_base64', ''))
 
 
 def zasmr_extra(args, expected):
@@ -594,12 +600,13 @@ def pasm_finish(emu, args, expected):
 
 class Profile:
     def __init__(self, descriptor, boot, finish, model='PENTAGON', force=False, extra=None, disk_at_finish=False, tape=False,
-                 ram_size=None):
+                 ram_size=None, media=None):
         self.descriptor = descriptor          # the sync descriptor (sync::SyncDescriptor id)
         self.boot = boot
         self.finish = finish
         self.model = model                    # the machine it runs on
         self.ram_size = ram_size              # its RAM in KB when the model's default is not enough (ZAsm 3.2x+: 512)
+        self.media = media                    # inject-oracle --template: what else the loaded template needs with --media
         self.force = force                    # no "changed" flag: the inject replaces the text by force
         self.extra = extra                    # (args, expected) -> text added to the source
         self.disk_at_finish = disk_at_finish  # it saves the code to its disk: the disk back in after a template
@@ -613,15 +620,14 @@ PROFILES = {
     'storm': Profile('storm-1.3', storm_boot, storm_finish),
     'tasm412': Profile('tasm-4.12', tasm_boot, tasm_finish),
     'zasm315': Profile('zasm-3.15', zasm_boot, zasm_finish, force=True, extra=zasm_extra, disk_at_finish=True),
-    'zasmlite': Profile('zasm-lite-1.07', zasmr_boot, zasmlite_finish, force=True, ram_size=512),   # ZLITE107.TRD with a STUB.a
-    'zasm2': Profile('zasm-2.6', zasm2_boot, zasm2_finish, force=True),   # --assembler zasm-2.4 / -2.5 / -2.6
-    'zasm30': Profile('zasm-3.0', zasm310_boot, zasm30_finish, force=True),                                            # a STUB.C on the disk
+    'zasm2': Profile('zasm-2.6', zasm2_boot, zasm2_finish, force=True, disk_at_finish=True),   # --assembler zasm-2.4 / -2.5 / -2.6
+    'zasm30': Profile('zasm-3.0', zasm310_boot, zasm30_finish, force=True, disk_at_finish=True),                                            # a STUB.C on the disk
     'zasm310': Profile('zasm-3.10', zasm310_boot, zasmr_finish, force=True, extra=zasmr_extra, disk_at_finish=True),   # a STUB.A on the disk
-    'zasmr': Profile('zasm-4.20', zasmr_boot, zasmr_finish, force=True, extra=zasmr_extra, disk_at_finish=True, ram_size=512),   # --assembler zasm-3.2x ... (a STUB.a on the disk)
+    'zasmr': Profile('zasm-4.20', zasmr_boot, zasmr_finish, force=True, extra=zasmr_extra, disk_at_finish=True, ram_size=512, media=zasmr_media),   # --assembler zasm-3.2x ... (a STUB.a on the disk)
     'masm11': Profile('masm-1.1', masm_boot, masm_finish),
     'masm30': Profile('masm-3.0', masm_boot, masm_finish, force=True),     # --boot TSM
-    'masm20': Profile('masm-2.0', masm_boot, masm_save_finish, force=True),  # --boot m2: no compiler in it, its Save checked
-    'masmdemo': Profile('masm-1.0-demo', masm_boot, masm_save_finish, force=True),  # Spectrofon 15, --boot MASMdemo: the same
+    'masm20': Profile('masm-2.0', masm_boot, masm_save_finish, force=True, disk_at_finish=True),  # --boot m2: no compiler in it, its Save checked
+    'masmdemo': Profile('masm-1.0-demo', masm_boot, masm_save_finish, force=True, disk_at_finish=True),  # Spectrofon 15, --boot MASMdemo: the same
     'gens4': Profile('gens-4', gens_boot, gens_finish, model='48K', tape=True),
     'gens3m21': Profile('gens-3m21', gens3m21_boot, gens3_finish, model='48K', tape=True),   # DEVPAC3M.TAP
     'gens4b': Profile('gens-4b', gens4b_boot, gens_finish),                                 # gens4b.$c (MONSGENS.LZH)

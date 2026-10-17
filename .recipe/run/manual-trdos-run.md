@@ -134,6 +134,13 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/basic/run" \
   `basic/run` leaves it for `128 BASIC` (every key verified) and types there;
   the 128K editor takes keywords spelled out and tokenises them at ENTER. On Pentagon machines, selecting option 5 (`TR-DOS` via 4x `Down` + `Enter`)
   enters `A>` directly; alternatively, select option 4 (`48 BASIC`) before running `RANDOMIZE USR 15616`.
+- **`REM :` must be followed at once by the command token.** `RANDOMIZE USR 15619: REM : LOAD "x"` reads the byte
+  after `REM :` as the command; a stored blank (`3A EA 3A 20 EF ...`) is no command, TR-DOS returns at once, BASIC
+  answers `0 OK`, the disk is not touched (TTD: `#3D00`-`#3D10` for one frame, FDC only Force Interrupt `#D0`). A
+  wrong or missing file name ends the same way: no error text, `0 OK`. `basic/run` and `type_input tokenized` drop the
+  blanks, so a line typed through them is right (`3A EA 3A EF 22 ...`); raw `keyboard/type` or a hand-made line may
+  keep one. Check: `memory/read/0x5D3B?length=32&format=full` after the line is stored, and the listing, where a
+  stored blank shows as two blanks (`REM :  LOAD`). Works from 48 BASIC, fresh or after TR-DOS was entered.
 - **Reset vs page-in**: `RANDOMIZE USR 15616` enters TR-DOS at `$3D00`
   (prompt). `15619` + `REM:` enters at `$3D03` and executes the trailing
   command — the two are not interchangeable.
