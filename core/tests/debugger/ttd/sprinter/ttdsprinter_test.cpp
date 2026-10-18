@@ -128,9 +128,9 @@ TEST_F(TTDSprinter_Test, Pld_RoundTripsThePldTheDecoderAndTheIntSource)
     acc.operations = 1234;
 
     ttd::TTDSprinterPld serializer(*_decoder);
-    EXPECT_EQ(serializer.TTDStateSize(), ttd::TTDSprinterPld::kFixedSize + sizeof(SprinterGameVideoState) + 2 +
+    EXPECT_EQ(serializer.TTDStateSize(), ttd::TTDSprinterPld::kFixedSize + sizeof(SprinterAccelTmkState) + 2 +
                                              sizeof(SprinterAccelState))
-        << "Standard brings no module state, the room is Game's (the largest); the accelerator section";
+        << "Standard brings no module state, the room is TMK's (the largest); the accelerator section";
     const std::vector<uint8_t> saved = Save(serializer);
     EXPECT_EQ(saved[0], ttd::TTDSprinterPld::kVersion);
     const SprinterPldState pldBefore = pld;
@@ -190,8 +190,8 @@ TEST_F(TTDSprinter_Test, Pld_TheModuleTravelsByNameWithItsState)
 
     ttd::TTDSprinterPld serializer(*_decoder);
     EXPECT_EQ(serializer.TTDStateSize(),
-              ttd::TTDSprinterPld::kFixedSize + sizeof(SprinterGameVideoState) + 2 + sizeof(SprinterAccelState))
-        << "room for the largest module state (Game's 16 bytes, more than this module's 4)";
+              ttd::TTDSprinterPld::kFixedSize + sizeof(SprinterAccelTmkState) + 2 + sizeof(SprinterAccelState))
+        << "room for the largest module state (TMK's 772 bytes, more than this module's 4)";
     const std::vector<uint8_t> saved = Save(serializer);
     EXPECT_EQ(std::string(reinterpret_cast<const char*>(saved.data()) + 139), "TtdStateModule");
 

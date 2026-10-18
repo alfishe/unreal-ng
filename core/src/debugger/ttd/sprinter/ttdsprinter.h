@@ -59,12 +59,17 @@ public:
     static constexpr size_t kFixedSize = 175;
     /// Longest module name the blob keeps (the registry looks the module up by it)
     static constexpr size_t kModuleNameSize = 32;
+    /// The module state room of every blob before TMK (Game's 16 bytes): the least room a blob has
+    static constexpr size_t kMinModuleRoom = 16;
 
     explicit TTDSprinterPld(PortDecoder_Sprinter& decoder) : _decoder(decoder) {}
 
+    /// The largest blob (the largest module's room); a blob holds the active module's room only
     size_t TTDStateSize() const override;
     void TTDSaveState(uint8_t* dst) const override;
     void TTDLoadState(const uint8_t* src) override;
+    bool TTDVariableSize() const override { return true; }
+    void TTDSaveStateTo(std::vector<uint8_t>& out) const override;
     std::string TTDDeviceName() const override { return "SprinterPld"; }
     PeripheralId TTDPeripheralId() const override { return PeripheralId::SprinterPld; }
     uint64_t TTDHashState() const override;
@@ -74,8 +79,10 @@ public:
     static constexpr uint16_t kAckedPulseOffset = 128;
 
 private:
-    /// The largest StateSize() of the registered modules: the blob has room for any of them
+    /// The largest StateSize() of the registered modules (at least kMinModuleRoom): the largest blob
     size_t ModuleStateRoom() const;
+    /// The room of this blob: the active module's StateSize(), at least kMinModuleRoom
+    size_t ActiveModuleRoom() const;
 
     PortDecoder_Sprinter& _decoder;
 };
