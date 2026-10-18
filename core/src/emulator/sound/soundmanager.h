@@ -8,6 +8,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "common/modulelogger.h"
@@ -301,9 +302,13 @@ protected:
     // Save to Wave file
     TinyWav _tinyWav;
 
-    // Feature cache flags (updated by FeatureManager::onFeatureChanged)
-    bool _feature_sound_enabled = true;
-    bool _feature_soundhq_enabled = true;
+    // Feature cache flags (updated by FeatureManager::onFeatureChanged on whatever thread toggled the feature, read by
+    // the emulation thread)
+    std::atomic<bool> _feature_sound_enabled{true};
+    std::atomic<bool> _feature_soundhq_enabled{true};
+    /// The thread that runs the frames (stored by handleFrameStart; a default id until the first frame). The
+    /// TurboSound device's setters run its renderer, which only that thread may do while the machine runs
+    std::atomic<std::thread::id> _emulationThread{};
 
     /// Turbo mode forces the low-quality DSP path without touching the user's
     /// `soundhq` feature state; clearing the override restores the previous quality. Set on any thread (turbo
