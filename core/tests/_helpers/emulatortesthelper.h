@@ -35,6 +35,9 @@ public:
     /// @param configOverride Applied to the loaded config before the machine is built (a create request's
     ///        override, e.g. SlotControl::CreateOverride for a slot set); empty = none
     /// @return Initialized emulator instance (caller owns)
+    /// The NEXT starts the bare personality whatever the shipped ini says (it boots the real chain: [ROM] NEXTBOOT,
+    /// [NEXT] SdCard): the boot ROM and the card are cleared before configOverride, which sets them for the suites
+    /// that model the real boot
     static Emulator* CreateStandardEmulator(
         const std::string& modelName = "PENTAGON",
         LoggerLevel logLevel = LoggerLevel::LogError,

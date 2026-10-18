@@ -196,6 +196,7 @@ bool LoaderZXP::CommitImage(EmulatorContext* context, const snapshot::Image& ima
     // Reset Z80 and all peripherals, then replace the state (the order the
     // SNA/Z80 loaders use)
     core.Reset();
+    memory.ClearModelRAM();
 
     for (const auto& bank : image.banks)
         memory.LoadRAMPageData(bank.first, const_cast<uint8_t*>(bank.second.data()), bank.second.size());

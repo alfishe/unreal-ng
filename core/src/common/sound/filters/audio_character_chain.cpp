@@ -362,6 +362,64 @@ void AudioCharacterChain::primeRoom(const int16_t* buffer)
     _roomDirty = true;
 }
 
+bool AudioCharacterChain::skipSilentSteady(const int16_t* buffer, int32_t numSamples, bool punch, bool room)
+{
+    // At rest: punch's previous samples 0 (every first difference is then 0: no edge, no transient), room's lowpass
+    // at 0 and the delay line 0 where this call reads what was written before it. A silent frame then comes out
+    // silent: the buffer stays as it is
+    if (punch && (_prevOutL != 0.0f || _prevOutR != 0.0f))
+        return false;
+    const int fromLine = std::min(_roomDelay, numSamples);  // reads of slots written before this call
+    if (room)
+    {
+        if (_roomLpL != 0.0f || _roomLpR != 0.0f)
+            return false;
+        for (int k = 1; k <= fromLine; k++)
+        {
+            const int idx = (_delayIdx - k + MAX_DELAY) & (MAX_DELAY - 1);
+            if (_delayL[idx] != 0.0f || _delayR[idx] != 0.0f)
+                return false;
+        }
+    }
+    for (int32_t i = 0; i < numSamples * 2; i++)
+    {
+        if (buffer[i] != 0)
+            return false;
+    }
+
+    // The state processSteady leaves: the previous samples and the lowpass +0.0, the envelopes released sample by
+    // sample (no attack: a first difference of 0 never exceeds them), zeros written into the line
+    if (punch)
+    {
+        _punchDirty = true;
+        _prevOutL = _prevOutR = 0.0f;
+        for (float* env : {&_envL, &_envR})
+        {
+            float e = *env;
+            for (int32_t i = 0; i < numSamples && e != 0.0f; i++)
+            {
+                const float next = e * _releaseEff;
+                if (next == e)
+                    break;  // a fixed point: the rest of the releases leave it
+                e = next;
+            }
+            *env = e;
+        }
+    }
+    if (room)
+    {
+        _roomDirty = true;
+        _roomLpL = _roomLpR = 0.0f;
+        for (int32_t i = 0; i < numSamples; i++)
+        {
+            _delayL[_delayIdx] = 0.0f;
+            _delayR[_delayIdx] = 0.0f;
+            _delayIdx = (_delayIdx + 1) & (MAX_DELAY - 1);
+        }
+    }
+    return true;
+}
+
 void AudioCharacterChain::processEngaged(int16_t* buffer, int32_t numSamples)
 {
     if (numSamples <= 0)
@@ -388,13 +446,16 @@ void AudioCharacterChain::processEngaged(int16_t* buffer, int32_t numSamples)
 
     if (_punchGain == punchTarget && _roomGain == roomTarget)
     {
-        // Steady: the exact per-sample path, only the stages that are on
-        if (punchOn && roomOn)
-            processSteady<true, true>(buffer, numSamples);
-        else if (punchOn)
-            processSteady<true, false>(buffer, numSamples);
-        else if (roomOn)
-            processSteady<false, true>(buffer, numSamples);
+        // Steady: the exact per-sample path, only the stages that are on; a silent frame at rest in one step
+        if (!(_silenceSkipped && skipSilentSteady(buffer, numSamples, punchOn, roomOn)))
+        {
+            if (punchOn && roomOn)
+                processSteady<true, true>(buffer, numSamples);
+            else if (punchOn)
+                processSteady<true, false>(buffer, numSamples);
+            else if (roomOn)
+                processSteady<false, true>(buffer, numSamples);
+        }
     }
     else
     {

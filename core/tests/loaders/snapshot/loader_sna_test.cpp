@@ -2,6 +2,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatormanager.h"
+#include <algorithm>
 #include <memory>
 #include <cstring>
 #include "loader_sna_test.h"
@@ -405,6 +406,30 @@ TEST_F(LoaderSNA_Test, repeatedLoadIsIdempotent)
     
     bool apply2 = loader2.applySnapshotFromStaging();
     ASSERT_TRUE(apply2) << "Second apply should succeed";
+}
+
+TEST_F(LoaderSNA_Test, loadLeavesNoPageOfThePreviousProgram)
+{
+    // Every RAM page of the model holds the program before; a 48K snapshot carries pages 5, 2 and 0 only
+    Memory& memory = *_context->pMemory;
+    const uint16_t pages = static_cast<uint16_t>(_context->config.ramsize / 16);
+    ASSERT_GT(pages, 3);
+    for (uint16_t page = 0; page < pages; page++)
+        std::memset(memory.RAMPageAddress(page), 0xAA, PAGE_SIZE);
+
+    static std::string test48Path = TestPathHelper::GetTestDataPath("loaders/sna/Timing_Tests-48k_v1.0.sna");
+    LoaderSNACUT loader48(_context, test48Path);
+    ASSERT_TRUE(loader48.load());
+    ASSERT_TRUE(loader48.applySnapshotFromStaging());
+
+    for (uint16_t page = 0; page < pages; page++)
+    {
+        if (page == 0 || page == 2 || page == 5)
+            continue;
+        const uint8_t* bytes = memory.RAMPageAddress(page);
+        const bool clear = std::all_of(bytes, bytes + PAGE_SIZE, [](uint8_t b) { return b == 0; });
+        EXPECT_TRUE(clear) << "RAM page " << page << " kept the previous program";
+    }
 }
 
 /// endregion </Lock/State Verification Tests>

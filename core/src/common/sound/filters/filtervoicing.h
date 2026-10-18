@@ -222,6 +222,10 @@ public:
     {
         if (isBypass())
             return;
+        // At rest on silence: every sample in is 0 and every section holds +0.0 - each output is then +0.0 and every
+        // state stays +0.0 (process: b0 * 0 + 0 is +0.0, the floor turns a -0.0 state into +0.0), so nothing changes
+        if (_silenceSkipped && atRest() && IsSilent(interleaved, frames))
+            return;
         for (size_t n = 0; n < frames; n++)
         {
             interleaved[n * 2] = toInt16(process(0, interleaved[n * 2]));
@@ -239,6 +243,30 @@ public:
             interleaved[n * 2] = static_cast<float>(process(0, interleaved[n * 2]));
             interleaved[n * 2 + 1] = static_cast<float>(process(1, interleaved[n * 2 + 1]));
         }
+    }
+
+    /// Every section state is 0 (the filter has settled: its output on silence is exactly 0)
+    bool atRest() const
+    {
+        for (size_t i = 0; i < _sectionCount; i++)
+        {
+            const Section& s = _sections[i];
+            if (s.s1[0] != 0.0 || s.s1[1] != 0.0 || s.s2[0] != 0.0 || s.s2[1] != 0.0)
+                return false;
+        }
+        return true;
+    }
+
+    /// Tests: off = processInt16 filters a silent frame at rest too (comparisons)
+    void setSilenceSkipped(bool skipped) { _silenceSkipped = skipped; }
+
+    /// Every sample of the interleaved stereo frame is 0
+    static bool IsSilent(const int16_t* interleaved, size_t frames)
+    {
+        int16_t any = 0;
+        for (size_t i = 0; i < frames * 2; i++)
+            any |= interleaved[i];
+        return any == 0;
     }
 
     static int16_t toInt16(double value)
@@ -279,11 +307,12 @@ private:
             double n1 = b1 * x - a1 * y + s2[ch];
             double n2 = b2 * x - a2 * y;
             // A decaying tail sinks into denormals after a few seconds of
-            // silence (a large slowdown on x86); nothing below this is audible
-            if (std::fabs(n1) < kDenormalFloor)
-                n1 = 0.0;
-            if (std::fabs(n2) < kDenormalFloor)
-                n2 = 0.0;
+            // silence (a large slowdown on x86); nothing below this is audible.
+            // The two states go to 0 together: flushing one while the other
+            // stayed above the floor changed the recursion, and a cascade could
+            // ring on at ~1e-29 forever instead of settling
+            if (std::fabs(n1) < kDenormalFloor && std::fabs(n2) < kDenormalFloor)
+                n1 = n2 = 0.0;
             s1[ch] = n1;
             s2[ch] = n2;
             return y;
@@ -381,4 +410,5 @@ private:
     Preset _preset = Preset::Flat;
     std::array<Section, kMaxSections> _sections{};
     size_t _sectionCount = 0;
+    bool _silenceSkipped = true;  // processInt16 skips a silent frame at rest (setSilenceSkipped)
 };

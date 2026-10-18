@@ -547,13 +547,13 @@ size_t SoundChip_TurboSoundFM::renderQuietOutputs()
     if (ticks > 0 && !_pair.renderQuiet(static_cast<uint32_t>(ticks), _board.fmEnabled))
         return 0;
     // Each decimator that keeps its own phase (all four here: none is a slave) takes the run's additions and output steps
-    // in their order, as feedSample and skipOutput would (the feeds below add their own, replaced); from the master's
-    // starting phase that is the master's own result
+    // in their order, as feedSample and skipOutput would; from the master's starting phase that is the master's own
+    // result
     for (FilterDecimator* d : {&chip0.ssg.decimatorLeft(), &chip0.ssg.decimatorRight(), &chip1.ssg.decimatorLeft(),
                                &chip1.ssg.decimatorRight()})
     {
         double own = d->phase();
-        d->feedZerosIntoSilence(size_t(ticks));
+        d->moveZerosIntoSilence(size_t(ticks));  // the phase set below
         if (d->isSlave())
             continue;
         if (own == startPhase && d->samplesPerOutput() == perOutput)

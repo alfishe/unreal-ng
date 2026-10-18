@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <atomic>
+#include <bitset>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -192,9 +193,9 @@ private:
     uint8_t _z80BankExecuteMarks = 0;
 
     // Page-level flags
-    ZeroInitBuffer<uint8_t> _pageReadMarks;     // Size: MAX_PAGES / 8
-    ZeroInitBuffer<uint8_t> _pageWriteMarks;    // Size: MAX_PAGES / 8
-    ZeroInitBuffer<uint8_t> _pageExecuteMarks;  // Size: MAX_PAGES / 8
+    std::bitset<MAX_PAGES> _pageReadMarks;     // One bit a page
+    std::bitset<MAX_PAGES> _pageWriteMarks;
+    std::bitset<MAX_PAGES> _pageExecuteMarks;
 
     std::unique_ptr<CallTraceBuffer> _callTraceBuffer;
     std::unique_ptr<Z80Disassembler> _disassembler;

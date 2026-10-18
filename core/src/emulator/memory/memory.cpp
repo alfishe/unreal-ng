@@ -542,6 +542,14 @@ void Memory::Reset()
     }
 }
 
+void Memory::ClearModelRAM()
+{
+    uint32_t pages = _context->config.ramsize >> 4;  // KB -> 16 KB pages
+    if (pages == 0 || pages > MAX_RAM_PAGES)
+        pages = MAX_RAM_PAGES;
+    std::memset(_ramBase, 0, static_cast<size_t>(pages) * PAGE_SIZE);
+}
+
 /// Fill RAM pages visible in 48K mode with random values
 /// Only pages 5 (0x4000-0x7FFF) and 7 (0xC000-0xFFFF in 48K) are randomized.
 /// Other pages (0,1,2,3,4,6) remain zeroed to allow empty page detection for snapshot saving.

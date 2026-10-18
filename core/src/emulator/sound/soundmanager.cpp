@@ -1576,14 +1576,12 @@ void SoundManager::handleFrameEnd()
         if (!srcBuffer)
             continue;
 
-        // Compute peak and activity (always, even if muted — for UI meters)
-        float peak = 0.0f;
+        // Compute peak and activity (always, even if muted — for UI meters). The largest |sample| in integers, scaled
+        // once: |s| / 32768 is exact and ordered as |s| is, so this is the largest of the scaled values
+        int32_t peakAbs = 0;
         for (size_t i = 0; i < samplesThisFrame * AUDIO_CHANNELS; i++)
-        {
-            float absVal = std::abs(static_cast<float>(srcBuffer[i])) / 32768.0f;
-            if (absVal > peak)
-                peak = absVal;
-        }
+            peakAbs = std::max(peakAbs, std::abs(static_cast<int32_t>(srcBuffer[i])));
+        const float peak = static_cast<float>(peakAbs) / 32768.0f;
         d.peak = peak;
         if (d.type == AudioSourceType::GeneralSound)
         {
@@ -1625,8 +1623,8 @@ void SoundManager::handleFrameEnd()
             d.activeRecently = (peak > AUDIO_ACTIVITY_PEAK);
         }
 
-        // Mix into output if audible
-        if (audible && d.volume > 0.0f)
+        // Mix into output if audible. A silent buffer adds +0 to every sample: nothing to mix
+        if (audible && d.volume > 0.0f && peakAbs != 0)
         {
             float vol = d.volume;
             if (_wideMix)

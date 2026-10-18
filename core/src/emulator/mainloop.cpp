@@ -159,11 +159,15 @@ void MainLoop::Run(const std::atomic<bool>& stopRequested)
         /// region <Handle Pause>
         // The arbiter asks the loop to park: a pause, or a command (media, TTD work, a silent pause) that needs the
         // CPU still. The park serves posted commands and returns when the machine may run again (false: stop - the
-        // loop head sees the stop request, which Stop() sets before it wakes the park)
+        // loop head sees the stop request, which Stop() sets before it wakes the park).
+        // The next frame keeps its deadline below: skipping the wait after a park ran one frame early per park - a
+        // client holding the CPU a few times a second (a TTD read while recording) sped the machine up by as many
+        // frames a second and upset the audio ring's balance. A long park (a pause) re-anchors there
         if (arbiter && arbiter->ShouldYield())
         {
             Park(emulator, arbiter);
-            continue;
+            if (stopRequested)
+                continue;
         }
         /// endregion </Handle Pause>
 
