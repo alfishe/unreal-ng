@@ -319,6 +319,8 @@ void SprinterMemory::OnWrite(uint16_t addr, uint8_t value)
             const uint8_t page = static_cast<uint8_t>(GetRAMPageFromAddress(_bank_read[bank]));
             if ((page & 0x08) && value == 0xFF)
                 return;  // transparent: #FF is not written
+            if (const SprinterAccelerator* accelerator = _decoder->GetAccelerator(); accelerator && accelerator->ClipsGraphicsWrite(addr))
+                return;  // TMK GFX_CLIP: BLK_MR and GLISSER block both stores
             const uint32_t videoAddr = _pld->portY * 1024u + (addr & 0x3FF);
             if (!(page & 0x04))
             {
