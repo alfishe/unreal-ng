@@ -3544,22 +3544,27 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
             result = getStatusRegister();
 
             {
-                std::string statusInfo = dumpStatusRegister(_lastDecodedCmd);
-                // Replace newlines with spaces for cleaner log output
-                std::replace(statusInfo.begin(), statusInfo.end(), '\n', ' ');
-                // Remove any double spaces that might have been created
-                std::string::size_type pos;
-                while ((pos = statusInfo.find("  ")) != std::string::npos)
-                {
-                    statusInfo.replace(pos, 2, " ");
-                }
-                // Trim trailing space
-                if (!statusInfo.empty() && statusInfo.back() == ' ')
-                {
-                    statusInfo.pop_back();
-                }
-                MLOGDEBUG("In #1F (Get Status Register) - 0x%02X - %s, pc: 0x%04X bank: %s", result, statusInfo.c_str(),
-                          pc, memBankName().c_str());
+                // Lazy as memBankName: built only when the debug level logs (a macro argument) - TR-DOS polls the
+                // status register, and the text (stringstream, snprintf per flag) cost on every read
+                [[maybe_unused]] auto statusText = [this]() {
+                    std::string statusInfo = dumpStatusRegister(_lastDecodedCmd);
+                    // Replace newlines with spaces for cleaner log output
+                    std::replace(statusInfo.begin(), statusInfo.end(), '\n', ' ');
+                    // Remove any double spaces that might have been created
+                    std::string::size_type pos;
+                    while ((pos = statusInfo.find("  ")) != std::string::npos)
+                    {
+                        statusInfo.replace(pos, 2, " ");
+                    }
+                    // Trim trailing space
+                    if (!statusInfo.empty() && statusInfo.back() == ' ')
+                    {
+                        statusInfo.pop_back();
+                    }
+                    return statusInfo;
+                };
+                MLOGDEBUG("In #1F (Get Status Register) - 0x%02X - %s, pc: 0x%04X bank: %s", result,
+                          statusText().c_str(), pc, memBankName().c_str());
             }
 
             // Reset INTRQ (Interrupt request) flag - status register is read

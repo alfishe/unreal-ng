@@ -726,7 +726,8 @@ public:
     /// @brief Upper bound of the recorded timeline.
     ///
     /// Returns the time of the last checkpoint. Seeks to any point > this
-    /// will fail. Returns {0,0} when the timeline is empty.
+    /// will fail. Returns {0,0} when the timeline is empty. While a recording
+    /// runs, another thread gets the end the machine's thread noted (no park)
     TTDTimePoint SessionEndPosition() const;
 
     /// @brief Where "frame N" without a T-state lands (D13): the end of frame
@@ -1728,6 +1729,14 @@ private:
 
     /// The recorded timeline. Appended only on the emulator thread.
     std::vector<TTDCheckpoint> _timeline;
+    /// The timeline's end (_timeline.back().time) as its last change left it: SessionEndPosition answers another
+    /// thread from it while a recording runs. Reading the timeline itself needs the machine parked (it appends every
+    /// frame), and a client polling the position (a companion's live readout, 50 times a second) parked the machine
+    /// as often - every park a stall of the frame and a session publish on the machine's thread
+    mutable std::mutex _liveEndMutex;
+    TTDTimePoint _liveEnd{};
+    /// After every change of _timeline
+    void NoteTimelineEnd();
 
     /// Model-specific peripheral serializers. The framework never names a
     /// machine: it registers whatever the active model provides (see

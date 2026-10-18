@@ -154,8 +154,7 @@ uint8_t PortDecoder_Spectrum3::DecodePortIn(uint16_t port, uint16_t pc)
     if (!key_exists(_loggingMutePorts, port))
     {
         // Determine RAM/ROM page where code executed from
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
-        MLOGINFO("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
+        MLOGINFO("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, GetPCAddressLocator(pc).c_str(), port, result);
     }
     /// endregion </Debug logging>
 
@@ -260,8 +259,7 @@ void PortDecoder_Spectrum3::DecodePortOut(uint16_t port, uint8_t value, uint16_t
         if (!key_exists(_loggingMutePorts, port))
         {
             // Determine RAM/ROM page where code executed from
-            std::string currentMemoryPage = GetPCAddressLocator(pc);
-            MLOGINFO("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
+            MLOGINFO("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, GetPCAddressLocator(pc).c_str(), port, value);
         }
     }
     /// endregion </Debug logging>
