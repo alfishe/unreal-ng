@@ -69,9 +69,9 @@ void MemoryAccessTracker::ResetCounters()
     _z80BankWriteMarks = 0;
     _z80BankExecuteMarks = 0;
 
-    _pageReadMarks.zero();
-    _pageWriteMarks.zero();
-    _pageExecuteMarks.zero();
+    _pageReadMarks.reset();
+    _pageWriteMarks.reset();
+    _pageExecuteMarks.reset();
 
     // Reset monitored regions and ports statistics
     for (auto& region : _monitoredRegions)
@@ -195,11 +195,6 @@ void MemoryAccessTracker::AllocateCounters()
     _pageReadCounters.resize(MAX_PAGES);
     _pageWriteCounters.resize(MAX_PAGES);
     _pageExecuteCounters.resize(MAX_PAGES);
-
-    // Allocate page access flags
-    _pageReadMarks.resize(MAX_PAGES / 8);
-    _pageWriteMarks.resize(MAX_PAGES / 8);
-    _pageExecuteMarks.resize(MAX_PAGES / 8);
 
     _isAllocated.store(true, std::memory_order_release);
 }
@@ -508,7 +503,7 @@ void MemoryAccessTracker::TrackMemoryRead(uint16_t address, uint8_t value, uint1
             }
 
             // Set the page mark
-            _pageReadMarks[page / 8] |= (1 << (page % 8));
+            _pageReadMarks.set(page);
         }
     }
 
@@ -559,7 +554,7 @@ void MemoryAccessTracker::TrackMemoryWrite(uint16_t address, uint8_t value, uint
             }
 
             // Set the page mark
-            _pageWriteMarks[page / 8] |= (1 << (page % 8));
+            _pageWriteMarks.set(page);
         }
     }
 
@@ -642,7 +637,7 @@ void MemoryAccessTracker::TrackMemoryExecute(uint16_t address, uint16_t callerAd
             }
 
             // Set the page mark
-            _pageExecuteMarks[page / 8] |= (1 << (page % 8));
+            _pageExecuteMarks.set(page);
         }
     }
 
@@ -1057,18 +1052,15 @@ uint32_t MemoryAccessTracker::GetPageExecuteAccessCount(uint16_t page) const
 
 bool MemoryAccessTracker::IsPageActive(uint16_t page, AccessType accessType) const
 {
-    if (page >= MAX_PAGES || _pageReadMarks.empty())
+    if (page >= MAX_PAGES || !_isAllocated.load(std::memory_order_acquire))
         return false;
 
-    uint8_t byteIdx = page / 8;
-    uint8_t bitMask = 1u << (page % 8);
-
     uint8_t typeFlags = static_cast<uint8_t>(accessType);
-    if ((typeFlags & static_cast<uint8_t>(AccessType::Read)) && (_pageReadMarks[byteIdx] & bitMask))
+    if ((typeFlags & static_cast<uint8_t>(AccessType::Read)) && _pageReadMarks.test(page))
         return true;
-    if ((typeFlags & static_cast<uint8_t>(AccessType::Write)) && (_pageWriteMarks[byteIdx] & bitMask))
+    if ((typeFlags & static_cast<uint8_t>(AccessType::Write)) && _pageWriteMarks.test(page))
         return true;
-    if ((typeFlags & static_cast<uint8_t>(AccessType::Execute)) && (_pageExecuteMarks[byteIdx] & bitMask))
+    if ((typeFlags & static_cast<uint8_t>(AccessType::Execute)) && _pageExecuteMarks.test(page))
         return true;
 
     return false;
@@ -1078,7 +1070,7 @@ std::vector<uint16_t> MemoryAccessTracker::GetActivePages(AccessType accessType)
 {
     std::vector<uint16_t> result;
 
-    if (_pageReadMarks.empty())
+    if (!_isAllocated.load(std::memory_order_acquire))
         return result;
 
     result.reserve(32);
@@ -1093,7 +1085,7 @@ std::vector<uint16_t> MemoryAccessTracker::GetActivePages(AccessType accessType)
 
 uint16_t MemoryAccessTracker::GetActivePageCount(AccessType accessType) const
 {
-    if (_pageReadMarks.empty())
+    if (!_isAllocated.load(std::memory_order_acquire))
         return 0;
 
     uint16_t count = 0;
