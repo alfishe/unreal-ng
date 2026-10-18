@@ -146,11 +146,12 @@ TEST_F(FullerBoxCard_Test, TimeTravelBlobsRoundTrip)
     EXPECT_EQ(card->Chip().readRegister(1), 0x05);
     EXPECT_EQ(blob.TTDHashState(), hash);
 
-    // The stick's controls are the manager's: three journaled connectors (fuller, keyjoy.1, keyjoy.2)
+    // The stick's controls are the manager's: three journaled connectors (fuller, keyjoy.1, keyjoy.2) and the eight
+    // host key rows
     ControllerManager& manager = *_context->pControllerManager;
     const size_t fuller = static_cast<size_t>(manager.Find("fuller"));
     ASSERT_TRUE(manager.Submit(fuller, kLeft));
-    EXPECT_EQ(manager.TTDStateSize(), 2u + 13u * 3u);
+    EXPECT_EQ(manager.TTDStateSize(), 2u + 13u * 3u + 8u);
     std::vector<uint8_t> controls(manager.TTDStateSize());
     manager.TTDSaveState(controls.data());
     ASSERT_TRUE(manager.Submit(fuller, 0));

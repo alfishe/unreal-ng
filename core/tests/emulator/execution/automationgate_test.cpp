@@ -93,6 +93,8 @@ TEST(AutomationGate_Test, CompanionScopesCoverTheUserActions)
     EXPECT_EQ(CompanionScopeOf("POST", "/keyboard/type"), uint32_t(ScopeInput));
     EXPECT_EQ(CompanionScopeOf("POST", "/joystick/press"), uint32_t(ScopeInput));
     EXPECT_EQ(CompanionScopeOf("POST", "/mouse/click"), uint32_t(ScopeInput));
+    EXPECT_EQ(CompanionScopeOf("POST", "/controllers/kempston/press"), uint32_t(ScopeInput));
+    EXPECT_EQ(CompanionScopeOf("POST", "/controllers/kempston/plug"), uint32_t(ScopeMachine));
     EXPECT_EQ(CompanionScopeOf("POST", "/tape/play"), uint32_t(ScopeMedia));
     EXPECT_EQ(CompanionScopeOf("POST", "/disk/A/insert"), uint32_t(ScopeMedia));
     EXPECT_EQ(CompanionScopeOf("POST", "/snapshot/load"), uint32_t(ScopeMedia));
@@ -142,6 +144,8 @@ TEST(AutomationGate_Test, CompanionCliScopesFollowTheCommandForms)
     EXPECT_EQ(CompanionCliScopeOf("resume", {}), uint32_t(ScopeRun));
     EXPECT_EQ(CompanionCliScopeOf("setting", {"speed", "2"}), uint32_t(ScopeRun));
     EXPECT_EQ(CompanionCliScopeOf("feature", {"turbo", "on"}), uint32_t(ScopeRun));
+    EXPECT_EQ(CompanionCliScopeOf("controllers", {"tap", "kempston", "fire"}), uint32_t(ScopeInput));
+    EXPECT_EQ(CompanionCliScopeOf("controllers", {"plug", "kempston", "kempston"}), uint32_t(ScopeMachine));
     EXPECT_EQ(CompanionCliScopeOf("setting", {"fast_tape", "on"}), uint32_t(ScopeMedia));
     EXPECT_EQ(CompanionCliScopeOf("setting", {"trdos_traps", "1"}), uint32_t(ScopeMachine));
     EXPECT_EQ(CompanionCliScopeOf("key", {"tap", "SPACE"}), uint32_t(ScopeInput));
