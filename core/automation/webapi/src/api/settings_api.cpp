@@ -512,6 +512,19 @@ void EmulatorAPI::setSetting(const HttpRequestPtr& req, std::function<void(const
         return;
     }
 
+    // asBool() throws on a string/array/object value, which surfaced as a 500 with an empty body
+    if (!(*json)["value"].isBool())
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid " + name + " value: expected a bool";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
     bool boolValue = (*json)["value"].asBool();
     CONFIG& config = context->config;
     Json::Value ret;

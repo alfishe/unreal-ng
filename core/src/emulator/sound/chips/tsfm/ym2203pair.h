@@ -523,6 +523,7 @@ public:
 
     /// Off: every tick through renderTick (comparisons); the count of the ticks quietTick took
     void setQuietTicksEnabled(bool enabled) { _quietTicksEnabled = enabled; }
+    bool quietTicksEnabled() const { return _quietTicksEnabled; }
     uint64_t quietTicks() const { return _quietTicks; }
 
     /// Silence the output-stage audio content - hold, coupling, LQ boxcar, decimator histories - keeping every
@@ -561,12 +562,12 @@ public:
     /// stopped (the cursor placed by beginChannelRender). Returns the samples written (0 before
     /// configureChannelOutputs)
     size_t renderChannels(size_t frames, const Ym2203ChannelBlock& block, bool fmEnabled);
-    /// The `ticks` generator ticks of renderChannels when the pair is quiet over them, and true; false (nothing done)
-    /// otherwise. Quiet: no SSG write due by the last tick, both SSGs silentAtRest (every channel level 0 now and at
-    /// the last tick), every channel and FM decimator history all zeros, each chip's FM part fed 0 (muted, or holding
-    /// 0 with every word due by the last tick's second half 0 too), no native tap. The ticks would then feed zeros
-    /// everywhere: only the generators, the words consumed and the decimator positions move
-    bool renderQuietChannels(uint32_t ticks, bool fmEnabled);
+    /// renderChannels' outputs from `n` on while the pair is quiet over them, in one run; the count it took (0: none).
+    /// Quiet: both SSGs silentAtRest (every channel level 0 now and at the last tick), every channel and FM decimator
+    /// history all zeros, each chip's FM part fed 0 (muted, or holding 0), no native tap - and over the run no SSG write
+    /// due and, FM on, no word off 0 due. Every output of the run is then +0.0 on every row: the generators, the words
+    /// consumed, the decimator positions and the master's phase move as the ticks would move them
+    size_t renderQuietChannels(size_t n, size_t frames, const Ym2203ChannelBlock& block, bool fmEnabled);
     /// endregion </Per-channel outputs>
 
     /// region <TTD>

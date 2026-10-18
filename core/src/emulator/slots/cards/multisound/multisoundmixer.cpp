@@ -87,30 +87,67 @@ void MultiSoundMixer::DesignFilters()
     }
 }
 
+namespace
+{
+/// `count` values of a row all +0.0 (a missing row reads 0)
+template <typename T>
+bool RowSilent(const T* row, size_t count)
+{
+    if (!row)
+        return true;
+    for (size_t i = 0; i < count; i++)
+    {
+        if (row[i] != 0 || std::signbit(static_cast<double>(row[i])))
+            return false;
+    }
+    return true;
+}
+} // namespace
+
 void MultiSoundMixer::Mix(const MultiSoundMixerInput& in, const MultiSoundMixerOutput& out)
 {
     const bool coupled = _cfg.acCoupling;
     const bool authentic = _cfg.renderMode == MultiSoundRenderMode::Authentic;
     auto couple = [coupled](MultiSoundRcFilter& filter, double x) { return coupled ? filter.Process(x) : x; };
+    // A stream whose input rows are all zeros with every filter on its path at rest: each sample would be +0.0 through
+    // filters that stay at rest - its output rows are zeros. The streams do not share state, so each runs on its own
+    const bool skip = _skipSilent;
+    auto atRest = [coupled, skip](const MultiSoundRcFilter& filter) { return skip && (!coupled || filter.AtRest()); };
+    const size_t frames = in.frames;
+    auto zeros = [frames](int16_t* row) { std::fill_n(row, frames * 2, int16_t(0)); };
 
-    for (size_t i = 0; i < in.frames; i++)
+    // FM per chip: centred, weight 1.0, each through its own coupling capacitor
+    for (size_t chip = 0; chip < 2; chip++)
     {
-        // FM per chip: centred, weight 1.0, each through its own coupling capacitor
-        for (size_t chip = 0; chip < 2; chip++)
+        if (!out.fm[chip])
+            continue;
+        if (atRest(_couplingFm[chip]) && RowSilent(in.fm[chip], frames))
         {
-            if (!out.fm[chip])
-                continue;
+            zeros(out.fm[chip]);
+            continue;
+        }
+        for (size_t i = 0; i < frames; i++)
+        {
             const double fm = in.fm[chip] ? in.fm[chip][i] : 0.0f;
             const double level = couple(_couplingFm[chip], fm * _fmLevel) * kWeightFm;
             out.fm[chip][i * 2] = ToSample(level);
             out.fm[chip][i * 2 + 1] = ToSample(level);
         }
+    }
 
-        // SSG per chip: A -> L, B -> both, C -> R
-        for (size_t chip = 0; chip < 2; chip++)
+    // SSG per chip: A -> L, B -> both, C -> R
+    for (size_t chip = 0; chip < 2; chip++)
+    {
+        if (!out.ssg[chip])
+            continue;
+        if (atRest(_couplingSsgSide[chip][0]) && atRest(_couplingSsgCenter[chip]) && atRest(_couplingSsgSide[chip][1]) &&
+            RowSilent(in.ssg[chip][0], frames) && RowSilent(in.ssg[chip][1], frames) && RowSilent(in.ssg[chip][2], frames))
         {
-            if (!out.ssg[chip])
-                continue;
+            zeros(out.ssg[chip]);
+            continue;
+        }
+        for (size_t i = 0; i < frames; i++)
+        {
             double channel[3] = {};
             for (int c = 0; c < 3; c++)
                 channel[c] = in.ssg[chip][c] ? in.ssg[chip][c][i] : 0.0f;
@@ -120,39 +157,62 @@ void MultiSoundMixer::Mix(const MultiSoundMixerInput& in, const MultiSoundMixerO
             out.ssg[chip][i * 2] = ToSample(a * kWeightSsgSide + b * kWeightSsgCenter);
             out.ssg[chip][i * 2 + 1] = ToSample(c * kWeightSsgSide + b * kWeightSsgCenter);
         }
+    }
 
-        // SAA: each side through its own ladder (Authentic) and coupling capacitor
-        if (out.saa)
-        {
-            for (size_t side = 0; side < 2; side++)
+    // SAA: each side through its own ladder (Authentic) and coupling capacitor
+    if (out.saa)
+    {
+        if (atRest(_couplingSaa[0]) && atRest(_couplingSaa[1]) &&
+            (!authentic || (_saaLadder[0].AtRest() && _saaLadder[1].AtRest())) &&
+            RowSilent(in.saa, frames * 2))
+            zeros(out.saa);
+        else
+            for (size_t i = 0; i < frames; i++)
             {
-                double v = in.saa ? in.saa[i * 2 + side] * kSaaUnit : 0.0;
-                if (authentic)
-                    v = _saaLadder[side].Process(v);
-                out.saa[i * 2 + side] = ToSample(couple(_couplingSaa[side], v) * kWeightSaa);
+                for (size_t side = 0; side < 2; side++)
+                {
+                    double v = in.saa ? in.saa[i * 2 + side] * kSaaUnit : 0.0;
+                    if (authentic)
+                        v = _saaLadder[side].Process(v);
+                    out.saa[i * 2 + side] = ToSample(couple(_couplingSaa[side], v) * kWeightSaa);
+                }
             }
-        }
+    }
 
-        if (out.midi)
-        {
-            for (size_t side = 0; side < 2; side++)
+    if (out.midi)
+    {
+        if (atRest(_couplingMidi[0]) && atRest(_couplingMidi[1]) && RowSilent(in.midi, frames * 2))
+            zeros(out.midi);
+        else
+            for (size_t i = 0; i < frames; i++)
             {
-                const double v = in.midi ? in.midi[i * 2 + side] * kMidiFullScale : 0.0;
-                out.midi[i * 2 + side] = ToSample(couple(_couplingMidi[side], v) * kWeightMidi);
+                for (size_t side = 0; side < 2; side++)
+                {
+                    const double v = in.midi ? in.midi[i * 2 + side] * kMidiFullScale : 0.0;
+                    out.midi[i * 2 + side] = ToSample(couple(_couplingMidi[side], v) * kWeightMidi);
+                }
             }
-        }
+    }
 
-        if (out.dac)
-        {
-            for (size_t side = 0; side < 2; side++)
+    if (out.dac)
+    {
+        if (atRest(_couplingDac[0]) && atRest(_couplingDac[1]) && RowSilent(in.dac, frames * 2))
+            zeros(out.dac);
+        else
+            for (size_t i = 0; i < frames; i++)
             {
-                const double v = in.dac ? in.dac[i * 2 + side] * kDacUnit : 0.0;
-                out.dac[i * 2 + side] = ToSample(couple(_couplingDac[side], v) * kWeightDac);
+                for (size_t side = 0; side < 2; side++)
+                {
+                    const double v = in.dac ? in.dac[i * 2 + side] * kDacUnit : 0.0;
+                    out.dac[i * 2 + side] = ToSample(couple(_couplingDac[side], v) * kWeightDac);
+                }
             }
-        }
+    }
 
-        // External input: DC-coupled (no capacitor)
-        if (out.external)
+    // External input: DC-coupled (no capacitor)
+    if (out.external)
+    {
+        for (size_t i = 0; i < frames; i++)
         {
             for (size_t side = 0; side < 2; side++)
             {

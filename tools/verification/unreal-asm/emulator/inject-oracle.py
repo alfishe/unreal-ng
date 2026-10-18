@@ -15,7 +15,7 @@ from the same source. The assembler disk is the collection's; the tool creates i
     inject-oracle.py gens4 <DEVPAC_4.TAP> <source.asm> <address> [--wait 240]
     inject-oracle.py zeus1983 <ZEUS.TAP> <source.asm> <address> [--wait 60]
     inject-oracle.py primus <PRIMUS29.SCL> <source.asm> <address> [--wait 30]
-    inject-oracle.py lasergenius <LG_1_04.SCL> <source.asm> <address> [--wait 20]
+    inject-oracle.py lasergenius <LG_1_04.SCL> <source.asm> <address> [--wait 20]   # lasergeniushx: the hash extensions loaded
     inject-oracle.py prometheus <prometheus-48.tap> <source.asm> <address> [--wait 10]
     inject-oracle.py pasm <PASM3_0.SCL> <source.asm> <address> [--wait 5]
 
@@ -126,7 +126,8 @@ def inject(emu, args, profile, expected):
         print('zxasm inject:', run.stderr.strip().splitlines()[-1] if run.stderr.strip() else run.returncode)
         if run.returncode != 0:
             raise SystemExit(run.stderr)
-        # the disk goes in before the snapshot is loaded: ZAsm 3.80.4 answers "No Disk" to a disk put in while it runs
+        # the disk goes in before the snapshot is loaded and the recording insert_disk starts is stopped: under TTD
+        # recording the FDC runs with real timing (no fast disk), and ZAsm 3.80.4's disk check times out (TODO.md)
         if profile.disk_at_finish:
             if not args.media:
                 raise SystemExit(f'{args.assembler} saves its code to its disk: give the disk with --media')

@@ -45,6 +45,19 @@ class TestSettings:
             # Belt and braces: never leave fast_tape disabled for later tests
             api_client.update_setting(emu_id, "fast_tape", True)
 
+    def test_non_bool_value_for_bool_setting_returns_400(self, api_client, active_emulator):
+        """A string/array/object/null value for a boolean setting is a 400, not a 500 with an empty body."""
+        emu_id = active_emulator
+
+        for bad in ("abc", [1], {"a": 1}, None):
+            try:
+                api_client.update_setting(emu_id, "fast_tape", bad)
+                raise AssertionError(f"PUT fast_tape {bad!r} should have failed")
+            except AssertionError:
+                raise
+            except Exception as e:
+                assert "400" in str(e) or "Bad Request" in str(e), f"{bad!r}: {e}"
+
     def test_unknown_setting_returns_404(self, api_client, active_emulator):
         """Reading or writing an unknown setting name fails with 404."""
         emu_id = active_emulator

@@ -4,7 +4,7 @@ start   LD A,(1+2)*3            ;left to right: (1+2)*3 = 9
         LD HL,high table        ;'x is the high byte
         LD L,low table          ;.x is the low byte
         LD DE,((0+(65536-46))*98&#FFFF)/(256&#FFFF) ;16-bit unsigned arithmetic: #EE
-        LD BC,+(((#1234&#FFFF)<<4|(#1234&#FFFF)>>>(16-4))&#FFFF) ;< rotates a 16-bit word left
+        LD BC,+((#1234*#10001>>>12)&#FFFF) ;< rotates a 16-bit word left
         LD A,5^3                ;! is xor
         EX AF,AF'
         EX DE,HL

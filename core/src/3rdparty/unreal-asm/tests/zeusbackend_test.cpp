@@ -298,6 +298,27 @@ TEST(ZeusBackend_Test, TheLaterVersionsHaveTheirDataWordsAndOnlyV7eMultiplies)
     EXPECT_EQ(pht.bytes, v11.bytes);
 }
 
+TEST(ZeusBackend_Test, Zeus31TakesLabelsOfSixCharacters)
+{
+    // ZEUS+ 3.1: a seventh character is its error 1 (label too long, seen in unreal-ng); 1983 takes 14
+    const char* source =
+        "        ORG #C000\n"
+        "mainloop:  djnz mainloop\n"
+        "mainskip:  jr mainskip\n";
+    const std::vector<std::string> lines = ToZeus(source, nullptr, "3.1");
+    ASSERT_EQ(lines.size(), 3u) << Joined(lines);
+    std::vector<std::string> labels;
+    for (size_t k = 1; k < lines.size(); ++k)
+    {
+        const std::string label = lines[k].substr(0, lines[k].find(' '));
+        EXPECT_LE(label.size(), 6u) << lines[k];
+        EXPECT_EQ(lines[k].substr(lines[k].rfind(' ') + 1), label) << lines[k];   // the jump names its own line
+        labels.push_back(label);
+    }
+    EXPECT_NE(labels[0], labels[1]) << Joined(lines);
+    EXPECT_TRUE(Contains(ToZeus(source), "MAINLOOP DJNZ MAINLOOP")) << Joined(ToZeus(source));
+}
+
 TEST(ZeusBackend_Test, PrimusTakesItsOwnOperatorsAndOneOrg)
 {
     Diagnostics diagnostics;
@@ -308,7 +329,9 @@ TEST(ZeusBackend_Test, PrimusTakesItsOwnOperatorsAndOneOrg)
         "        LD A,lab%7\n"
         "        LD A,\"A\"\n"
         "        INCLUDE \"lib.asm\"\n"
-        "        ORG #7000\n",
+        "        ORG #7000\n"
+        "        NOP\n"
+        "        ORG #6800\n",
         &diagnostics, "primus");
     const std::string text = Joined(lines);
     EXPECT_TRUE(Contains(lines, "LAB LD A,LAB/256")) << text;
@@ -316,6 +339,8 @@ TEST(ZeusBackend_Test, PrimusTakesItsOwnOperatorsAndOneOrg)
     EXPECT_TRUE(Contains(lines, "LD A,LAB+0?7")) << text;   // Primus reads LAB?7 as the name LAB?7
     EXPECT_TRUE(Contains(lines, "LD A,65")) << text;   // Primus refuses "A
     EXPECT_TRUE(Contains(lines, "DISK lib")) << text;
+    // a second ORG ahead of $ is a hole up to it; one back is refused (Primus takes one ORG)
+    EXPECT_TRUE(std::any_of(lines.begin(), lines.end(), [](const std::string& l) { return l.rfind("DEFS ", 0) == 0; })) << text;
     EXPECT_TRUE(std::any_of(diagnostics.begin(), diagnostics.end(), [](const Diagnostic& d) { return d.message.find("a second ORG") != std::string::npos; }));
     const char* sjasmplus = std::getenv("UNREAL_ASM_SJASMPLUS");
     if (!sjasmplus)

@@ -14,7 +14,7 @@ An ALASM fragment and what `zxasm convert --to sjasmplus` writes:
 ```text
         LD A,1+2*3              LD A,(1+2)*3            ; ALASM computes left to right
         LD HL,'table            LD HL,high table
-        LD BC,#1234<4           LD BC,+(((#1234&#FFFF)<<4|(#1234&#FFFF)>>>(16-4))&#FFFF)
+        LD BC,#1234<4           LD BC,+((#1234*#10001>>>12)&#FFFF)
         DW 0-2/2                DW (0-2&#FFFF)/(2&#FFFF) ; 16-bit unsigned: #7FFF
         IF0 ?debug              IF exist debug
 iy      EQU 7                   L_iy    EQU 7            ; a label, not the register

@@ -116,7 +116,7 @@ TEST(XasFrontend_Test, ExpressionsRunLeftToRightOnUnsignedWords)
     EXPECT_EQ(ToSjasmplus("        DW    2+3*4,0-7/2,LAB!.FF"),
               (std::vector<std::string>{"DW (2+3)*4,(0-7&#FFFF)/(2&#FFFF),LAB^#FF"}));
     EXPECT_EQ(ToSjasmplus("        DW    1+LAB&H,LAB&H&L"), (std::vector<std::string>{"DW high (1+LAB),low high LAB"}));
-    EXPECT_EQ(ToSjasmplus("        DW    LAB'L"), (std::vector<std::string>{"DW (((LAB&#FFFF)<<1|(LAB&#FFFF)>>>(16-1))&#FFFF)"}));
+    EXPECT_EQ(ToSjasmplus("        DW    LAB'L"), (std::vector<std::string>{"DW (((LAB&#FFFF)*#10001>>>15)&#FFFF)"}));
     // 65536 is 0, a division by 0 is 0, "AB" is #4142
     EXPECT_EQ(ToSjasmplus("        DW    65536,LAB/0,\"AB\""), (std::vector<std::string>{"DW 0,0,16706"}));
     // No unary minus, no parentheses, no H suffix: XAS reports a syntax error, the line stays text

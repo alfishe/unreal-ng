@@ -28,7 +28,7 @@ end:                               END EQU $              ; a label alone is an 
 | Source | ZEUS text |
 |---|---|
 | An expression | a chain left to right of `+ - & !` (`!` OR; v7.E also `*`; its `/` rounds, so it is not used), each operator taking an atom (`ChainWriter`); `low` as `&255`, `-x` as `0-x`, `~x` as `#FFFF-x`; anything else (a high byte, XOR, a product before v7.E, a comparison) as its value from the source's layout |
-| A label | letters and digits, a letter first, up to 14 characters, case counts (manual 5.1.1); a label alone on a line as `NAME EQU $` (ZEUS 1983 gives error 0 otherwise) |
+| A label | letters and digits, a letter first, up to 14 characters, case counts (manual 5.1.1; ZEUS+ 3.1: 6, a seventh is its error 1); a label alone on a line as `NAME EQU $` (ZEUS 1983 gives error 0 otherwise) |
 | `IF`, `DUP`, `WHILE`, `MACRO`, `DEFL` | decided, unrolled, expanded, written as values (ZEUS has none of them) |
 | `DB` / `DW` / `DS` | `DEFB`, `DEFM` with a delimiter the text lacks, `DEFW`; `DS` as `DEFB` (ZEUS 1983 / GG's `DEFS` leaves memory as it was; v7.E's writes zeros) |
 | `DISP r` / `ENT` | `ORG r` / `DISP place-r` (an offset), `DISP 0` / `ORG $+offset`; a place known only when ZEUS assembles under names of its own (`ZPLACE EQU $`, `ZRUN EQU r`) |

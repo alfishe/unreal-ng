@@ -116,6 +116,11 @@ protected:
     int64_t _pendingT = 0;
     bool _stepPending = false;
     bool _stepGate = true;
+    // The quiet deferral: the gate holds until the next entry (a port, the frame end...) because the device is quiet at
+    // rest - every output is +0.0 until a write; settleSteps then runs the step at the last noted T, which renders the
+    // outputs due in one quiet run (renderQuietOutputs)
+    bool _quietDeferral = false;
+    std::vector<uint32_t> _quietOutputTicks;  // renderQuietOutputs: the ticks of each output of the run
     // SSG register writes timed to their T-state, per chip (0 = _chip0, the
     // 0xFF chip; 1 = _chip1): the CPU sees a write at once, the generators on
     // the tick it falls in (SsgWriteQueue). TTD state
@@ -142,6 +147,8 @@ protected:
 public:
     uint16_t* getAudioBuffer()
     {
+        settleSteps();
+
         return (uint16_t*)_ayBuffer;
     }
 
@@ -150,6 +157,8 @@ public:
     /// this frame (diagnostics / adaptivity tests)
     size_t getRenderedSamplesThisFrame() const override
     {
+        const_cast<SoundChip_TurboSound*>(this)->settleSteps();
+
         return _ayBufferIndex / AUDIO_CHANNELS;
     }
 
@@ -168,6 +177,8 @@ public:
 
     int16_t* getChipBuffer(int index) override
     {
+        settleSteps();
+
         if (index == 0)
             return _chip0Buffer;
         if (index == 1)
@@ -176,6 +187,8 @@ public:
     }
     const int16_t* getChipBuffer(int index) const
     {
+        const_cast<SoundChip_TurboSound*>(this)->settleSteps();
+
         if (index == 0)
             return _chip0Buffer;
         if (index == 1)
@@ -470,14 +483,34 @@ public:
     size_t TTDStateSize() const override;
 private:
     int64_t nowT() const;
+    /// handleStep's full way for a step that ended at audio T `now`
+    void stepAt(int64_t now);
+    /// The outputs due (as many as the sample phase and the buffer hold) while the pair is quiet at rest over them, in
+    /// one run, HQ; the count it took (0: none). Quiet at rest: both chips silentAtRest, the four decimator histories
+    /// zeros, and no SSG write (or clock marker) due at any of the run's ticks. Every output is then +0.0 on every row:
+    /// the generators, the render cursor, the decimator positions and the master's phase move as the ticks move them
+    size_t renderQuietOutputs();
     /// The steps the gate let through, booked as handleStep books a step that renders nothing (the timeline, the
     /// sample phase, the last T, frame-clipped), and the gate closed. Every entry other than handleStep starts here
     void settleSteps()
     {
         _stepDeadline = 0;
         if (!_stepPending)
+        {
+            _quietDeferral = false;
             return;
+        }
         _stepPending = false;
+        if (_quietDeferral)
+        {
+            // The step at the last noted T, as handleStep would have taken it; the entry that called this then acts on
+            // the device, so the gate stays open after it
+            _quietDeferral = false;
+            stepAt(_pendingT);
+            _stepDeadline = 0;
+            _quietDeferral = false;
+            return;
+        }
         _lastSeenT = _pendingT;
         _seenT = true;
         const int64_t frameT = int64_t(_context->config.frame);

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstring>
+#include <limits>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/cpu/core.h"
@@ -168,18 +169,21 @@ void SoundChip_TurboSoundFM::handleStep()
         }
         settleSteps();
     }
+    stepAt(nowT());
+}
 
+void SoundChip_TurboSoundFM::stepAt(uint64_t now)
+{
     // §6.1: the core advances in every mode (turbo, sound feature off) -
     // SoundManager reaches this call unconditionally. Rendering is gated
     // on synthesis suppression; the core never is. With its synthesis
     // skipped the core only notes the position (deferred sync, header)
     if (_pair.coreSynthesisSkipped() && _pair.synthesisSuppressed() && _deferAllowed && !_pair.adoptsCpuClock())
     {
-        _deferredT = nowT();
+        _deferredT = now;
         _syncDeferred = true;
         return;
     }
-    const uint64_t now = nowT();
     if (_pair.synthesisSuppressed())
     {
         syncTo(now);
@@ -225,6 +229,11 @@ void SoundChip_TurboSoundFM::handleStep()
         if (_stepGate && speedMultiplier == 1 && _samplePhase < CPU_CLOCK_RATE &&
             _ayBufferIndex < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
             _stepDeadline = uint64_t(_lastTStates) + (CPU_CLOCK_RATE - _samplePhase + _coreRate - 1) / _coreRate;
+        if (sleepsThroughSilence())
+        {
+            _stepDeadline = std::numeric_limits<uint64_t>::max();
+            _quietDeferral = true;
+        }
         return;
     }
     syncTo(now);
@@ -246,6 +255,10 @@ void SoundChip_TurboSoundFM::handleStep()
 
         while (_samplePhase >= CPU_CLOCK_RATE && _ayBufferIndex < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
         {
+            // The outputs due in one quiet run while nothing sounds (renderQuietOutputs)
+            if (hqEnabled && !tapActive && renderQuietOutputs() > 0)
+                continue;
+
             _samplePhase -= CPU_CLOCK_RATE;
 
             int16_t leftSample;
@@ -423,6 +436,157 @@ void SoundChip_TurboSoundFM::handleStep()
     }
 
     _lastTStates = scaledCurrentTStates;
+
+    // Quiet at rest with nothing queued: every output stays +0.0 until something enters the device, so the gate holds
+    // until then and the step at the last noted T renders them in one run (settleSteps)
+    if (sleepsThroughSilence())
+    {
+        _stepDeadline = std::numeric_limits<uint64_t>::max();
+        _quietDeferral = true;
+    }
+}
+
+bool SoundChip_TurboSoundFM::sleepsThroughSilence() const
+{
+    if (!_stepGate || !_lazySync || !_deferAllowed || !_pair.quietTicksEnabled() || !_pair.hqEnabled() ||
+        _pair.synthesisSuppressed() || _pair.adoptsCpuClock() || _nativeTap->isActive() ||
+        _context->emulatorState.HostSpeedMultiplier() != 1)
+        return false;
+    for (size_t zeroRun : _ssgZeroRun)
+    {
+        if (zeroRun < FilterDecimator::history())
+            return false;
+    }
+    for (int i = 0; i < 2; i++)
+    {
+        const TsfmChip& c = *_pair.chip(i);
+        const TsfmOutputState& o = c.out;
+        if (!c.ssgWrites.empty() || !c.ssg.silentAtRest() || !c.fmIdleKnown || o.hold != 0.0 ||
+            o.nativeTap->isActive() || o.zeroRun < FilterDecimator::history() || !o.coupling.restsAt(0.0))
+            return false;
+    }
+    return true;
+}
+
+size_t SoundChip_TurboSoundFM::renderQuietOutputs()
+{
+    if (!_pair.quietTicksEnabled())
+        return 0;
+    for (size_t zeroRun : _ssgZeroRun)
+    {
+        if (zeroRun < FilterDecimator::history())
+            return 0;
+    }
+    // The quiet now, and the first events that end it: an SSG write due, an FM word off the hold
+    int64_t nextWrite = std::numeric_limits<int64_t>::max();
+    int64_t nextWord = std::numeric_limits<int64_t>::max();
+    for (int i = 0; i < 2; i++)
+    {
+        const TsfmChip& c = *_pair.chip(i);
+        const TsfmOutputState& o = c.out;
+        if (!c.ssg.silentAtRest() || o.nativeTap->isActive() || o.zeroRun < FilterDecimator::history() ||
+            !o.coupling.restsAt(_board.fmEnabled ? o.hold : 0.0))
+            return 0;
+        if (!c.ssgWrites.empty())
+            nextWrite = std::min<int64_t>(nextWrite, c.ssgWrites.front().t);
+        for (size_t w = 0; w < c.words.size(); w++)
+        {
+            if (static_cast<double>(c.words.at(w).word) / 32768.0 != o.hold)
+            {
+                nextWord = std::min<int64_t>(nextWord, int64_t(c.words.at(w).t));
+                break;
+            }
+        }
+    }
+
+    // The outputs the run can take: each one's ticks with the master's own phase arithmetic (feedSample adds 1.0 a
+    // tick, skipOutput takes an output's worth), up to the one with a tick at or past a write (renderTick applies the
+    // writes due by the tick's cursor) or a half-tick at or past a word off the hold
+    TsfmChip& chip0 = *_pair.chip(0);
+    TsfmChip& chip1 = *_pair.chip(1);
+    FilterDecimator& master = chip0.ssg.decimatorLeft();
+    const double perOutput = master.samplesPerOutput();
+    const double startPhase = master.phase();
+    double phase = startPhase;
+    const int64_t cursor = _pair.renderT();
+    uint64_t ticks = 0;
+    size_t outputs = 0;
+    uint64_t samplePhase = _samplePhase;
+    size_t index = _ayBufferIndex;
+    _quietOutputTicks.clear();
+    while (samplePhase >= CPU_CLOCK_RATE && index < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
+    {
+        double p = phase;
+        uint64_t t = 0;
+        bool reached = false;
+        while (!(p >= perOutput))
+        {
+            const int64_t tick = cursor + 16 * int64_t(ticks + t);
+            if (tick >= nextWrite || tick + 8 >= nextWord)
+            {
+                reached = true;
+                break;
+            }
+            p += 1.0;
+            t++;
+        }
+        if (reached)
+            break;
+        p -= perOutput;
+        phase = p;
+        ticks += t;
+        outputs++;
+        _quietOutputTicks.push_back(static_cast<uint32_t>(t));
+        samplePhase -= CPU_CLOCK_RATE;
+        index += AUDIO_CHANNELS;
+    }
+    if (outputs == 0)
+        return 0;
+
+    // The run: the pair's side (generators, words, FM decimators, the cursor), then the four SSG decimators
+    if (ticks > 0 && !_pair.renderQuiet(static_cast<uint32_t>(ticks), _board.fmEnabled))
+        return 0;
+    // Each decimator that keeps its own phase (all four here: none is a slave) takes the run's additions and output steps
+    // in their order, as feedSample and skipOutput would (the feeds below add their own, replaced); from the master's
+    // starting phase that is the master's own result
+    for (FilterDecimator* d : {&chip0.ssg.decimatorLeft(), &chip0.ssg.decimatorRight(), &chip1.ssg.decimatorLeft(),
+                               &chip1.ssg.decimatorRight()})
+    {
+        double own = d->phase();
+        d->feedZerosIntoSilence(size_t(ticks));
+        if (d->isSlave())
+            continue;
+        if (own == startPhase && d->samplesPerOutput() == perOutput)
+            own = phase;
+        else
+        {
+            for (const uint32_t t : _quietOutputTicks)
+            {
+                for (uint32_t i = 0; i < t; i++)
+                    own += 1.0;
+                own -= d->samplesPerOutput();
+            }
+        }
+        d->setPhase(own);
+    }
+    for (size_t& zeroRun : _ssgZeroRun)
+        zeroRun += size_t(ticks);
+    for (size_t i = 0; i < outputs; i++)
+    {
+        _chip0Buffer[_ayBufferIndex] = 0;
+        _chip0Buffer[_ayBufferIndex + 1] = 0;
+        _chip1Buffer[_ayBufferIndex] = 0;
+        _chip1Buffer[_ayBufferIndex + 1] = 0;
+        _fm0Buffer[_ayBufferIndex] = 0;
+        _fm0Buffer[_ayBufferIndex + 1] = 0;
+        _fm1Buffer[_ayBufferIndex] = 0;
+        _fm1Buffer[_ayBufferIndex + 1] = 0;
+        _ayBuffer[_ayBufferIndex++] = 0;
+        _ayBuffer[_ayBufferIndex++] = 0;
+    }
+    _samplePhase = samplePhase;
+    _longestQuietRun = std::max(_longestQuietRun, outputs);
+    return outputs;
 }
 
 void SoundChip_TurboSoundFM::handleFrameEnd()
@@ -697,6 +861,7 @@ void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
 {
     _stepPending = false;   // the restored state replaces what the gate noted
     _stepDeadline = 0;
+    _quietDeferral = false;
     _syncDeferred = false;  // the restored chips stand at the restored position
     const uint8_t* cur = src;
     ++_renderEpoch;   // the host's character chains restart (ITurboSoundDevice::renderEpoch)

@@ -89,6 +89,30 @@ def storm_finish(emu, args, expected):
     return bytes(emu.read(args.address, len(expected)))
 
 
+STORM13I_PAGES = ((0x6000, 0x7000, 7), (0x7000, 0x8000, 3), (0x8000, 0xC000, 4), (0xC000, 0x10000, 0))
+
+
+def storm13i_finish(emu, args, expected):
+    """STORM 1.3i: its Quit restarts the machine (the 48K memory comes back empty), so the code is read where 1.3i
+    keeps it while it runs (seen in unreal-ng): #6000-#6FFF in RAM page 7, #7000-#7FFF in page 3, #8000-#BFFF in page
+    4, #C000-#FFFF in page 0, each from the page's start"""
+    time.sleep(1)
+    _shot(emu, args, args.descriptor, '.editor')
+    emu.tap('break')
+    emu.tap('a')                                   # Assemble
+    time.sleep(args.wait)
+    _shot(emu, args, args.descriptor)
+    out = bytearray()
+    address = args.address
+    while len(out) < len(expected):
+        page, base, top = next((p, lo, hi) for lo, hi, p in STORM13I_PAGES if lo <= address < hi)
+        n = min(len(expected) - len(out), top - address)
+        reply = emu.get(f'/memory/page/ram/{page}?offset={address - base}&length={n}')['data']
+        out += bytes.fromhex(reply) if isinstance(reply, str) else bytes(reply)
+        address += n
+    return bytes(out)
+
+
 # ---- TASM 4.12 ----
 
 def tasm_boot(emu, args):
@@ -279,8 +303,8 @@ def zasmr_finish(emu, args, expected):
     for _ in range(2):
         if emu.read_disk_file('out', 'C'):
             break
-        # "No Disk": a drive it was not given (Lite's built-in D; after a template's disk went in, the others ask once
-        # too): Retry, drive A
+        # "No Disk": a drive it was not given (Lite's built-in D), or the disk check timed out (with real FDC timing:
+        # its index wait starts with a stale counter, TODO.md): Retry, drive A
         emu.tap('enter')
         time.sleep(1)
         emu.tap('a')
@@ -473,6 +497,48 @@ def zeus_disk_boot(emu, args):
     time.sleep(0.5)
 
 
+ZEUSPLUS_TABLE_TOPS = (0xE09D, 0xE46B, 0xE5FB, 0xEB8D)   # LD HL,#5800 operands (1983: #DFF0)
+
+
+def zeusplus_boot(emu, args):
+    """Zeus Plus 2.16 Max (Stepanenko 1991): its window menu first (ZEUS / TEXT / CODE / MMAN), ENTER takes ZEUS"""
+    emu.insert_disk(os.path.abspath(args.disk))
+    emu.run_trdos(args.boot or 'boot', wait=10)
+    emu.tap('enter')
+    time.sleep(2)
+    # This MAX build moved 1983's label table (top #DFF0) into the screen but left LD HL,#5800 in four places where
+    # 1983 has the top: its first label lands in the slot that holds the name being read (#57F0), ERROR 6 follows
+    # from the third label on. The four made #57F0, as 1983 has them, the table takes a text with many labels
+    for operand in ZEUSPLUS_TABLE_TOPS:
+        if bytes(emu.read(operand, 2)) == b'\x00\x58':
+            emu.write(operand, [0xF0, 0x57])
+    emu.post('/keyboard/combo', {'keys': ['cs', '2'], 'frames': 6})   # CAPS LOCK: ZEUS takes capitals
+    emu.idle()
+    time.sleep(0.5)
+
+
+def zeus128_boot(emu, args):
+    """ZEUS 128 (Stars Soft 1995): its menu first, ENTER takes the first line (128 BASIC and 128K of memory)"""
+    emu.insert_disk(os.path.abspath(args.disk))
+    emu.run_trdos(args.boot or 'ZEUS.128', wait=10)
+    emu.tap('enter')
+    time.sleep(4)
+    emu.post('/keyboard/combo', {'keys': ['cs', '2'], 'frames': 6})   # CAPS LOCK: ZEUS takes capitals
+    emu.idle()
+    time.sleep(0.5)
+
+
+def zeus22si_boot(emu, args):
+    """ZEUS 2.2SI (SI Soft 1991): its BASIC menu first, Z starts the assembler"""
+    emu.insert_disk(os.path.abspath(args.disk))
+    emu.run_trdos(args.boot or 'ZEUS', wait=10)
+    emu.tap('z')
+    time.sleep(4)
+    emu.post('/keyboard/combo', {'keys': ['cs', '2'], 'frames': 6})   # CAPS LOCK: ZEUS takes capitals
+    emu.idle()
+    time.sleep(0.5)
+
+
 # ---- ZEUS 1.1 beta (PHT): its hobeta file's code at 57344 under 48 BASIC of a 128K ----
 
 def zeus11_boot(emu, args):
@@ -514,17 +580,22 @@ def primus_finish(emu, args, expected):
 
 # ---- Laser Genius 1.04 ----
 
-def lasergenius_boot(emu, args):
+def lasergenius_boot(emu, args, hash_extensions='n'):
     emu.insert_disk(os.path.abspath(args.disk))
     emu.run_trdos(args.boot or 'L_G_ASS.', wait=6)
     emu.tap('1')                                   # the loader's menu is a BASIC INPUT
     emu.tap('enter')
     time.sleep(4)
-    for key in ('y', 'n', 'd'):                    # tool-kit, hash extensions, from disk
+    for key in ('y', hash_extensions, 'd'):        # tool-kit, hash extensions, from disk
         emu.tap(key)
         emu.tap('enter')
         time.sleep(3)
     time.sleep(6)
+
+
+def lasergenius_hash_boot(emu, args):
+    """With the hash extensions (Phoenix): the text starts at #737E instead of #7F2E, the code is where it was"""
+    lasergenius_boot(emu, args, 'y')
 
 
 def lasergenius_finish(emu, args, expected):
@@ -549,6 +620,34 @@ def prometheus_boot(emu, args):
     time.sleep(2)
     emu.tap('enter')                               # the installer: run the assembler
     time.sleep(3)
+    emu.post('/tape/eject')
+
+
+def prometheus_trdos_boot(emu, args):
+    """The TR-DOS adaptation (trdos-prometheus48.trd: TRD-PROM, PROMBD.C at 25000): the 48K edition moved up by #514;
+    its installer asks the address (ENTER takes 25000)"""
+    emu.insert_disk(os.path.abspath(args.disk))
+    emu.run_trdos(args.boot or 'TRD-PROM', wait=8)
+    emu.tap('enter')
+    time.sleep(3)
+
+
+def prometheus128_boot(emu, args):
+    """PROMETHEUS 128 (Proxima 1993, tape: PROM128LNG / PROM128MDM / PROM128SHT, --boot picks one): the address (ENTER
+    takes 24000), then "Install D40/D80 version?" n (L and M)"""
+    emu.post('/tape/load', {'path': os.path.abspath(args.disk)})
+    emu.post('/basic/run', {'command': f'LOAD "{args.boot or "PROM128LNG"}"'})
+    emu.post('/tape/play')
+    for _ in range(300):
+        time.sleep(0.5)
+        if emu.get('/tape/info').get('state') in ('ended', 'stopped', 'idle'):
+            break
+    time.sleep(3)
+    emu.tap('enter')
+    time.sleep(3)
+    if (args.boot or 'PROM128LNG') != 'PROM128SHT':   # S asks no D40/D80 question: an n would land in its editor
+        emu.tap('n')
+        time.sleep(3)
     emu.post('/tape/eject')
 
 
@@ -618,6 +717,7 @@ PROFILES = {
     'alasm': Profile('alasm-5.09', alasm_boot, alasm_finish),            # any build: --boot, --assembler
     'xas': Profile('xas-7.447', xas_boot, xas_finish),
     'storm': Profile('storm-1.3', storm_boot, storm_finish),
+    'storm13i': Profile('storm-1.3', storm_boot, storm13i_finish),     # --boot STORMimp
     'tasm412': Profile('tasm-4.12', tasm_boot, tasm_finish),
     'zasm315': Profile('zasm-3.15', zasm_boot, zasm_finish, force=True, extra=zasm_extra, disk_at_finish=True),
     'zasm2': Profile('zasm-2.6', zasm2_boot, zasm2_finish, force=True, disk_at_finish=True),   # --assembler zasm-2.4 / -2.5 / -2.6
@@ -636,8 +736,15 @@ PROFILES = {
     'primus': Profile('primus-2.9', primus_boot, primus_finish, force=True, disk_at_finish=True),
     'zeusgg': Profile('zeus-gg', zeus_disk_boot, zeus_finish),          # --boot ZEUS
     'zeus7e': Profile('zeus-7e', zeus_disk_boot, zeus_finish),          # --boot ZEUSv7.E
+    'zeusdisk': Profile('zeus-2.2', zeus_disk_boot, zeus_finish),       # --boot ZEUS'96 (2.2), ZPro, ZEUS+3.1 + --assembler
+    'zeus22si': Profile('zeus-2.2si', zeus22si_boot, zeus_finish),
+    'zeus128': Profile('zeus-1983', zeus128_boot, zeus_finish),
+    'zeusplus': Profile('zeus-plus-2.16', zeusplus_boot, zeus_finish),
     'zeus11': Profile('zeus-1.1', zeus11_boot, zeus_finish, tape=True),  # its hobeta file ZEUS.$C (no disk to eject)
     'lasergenius': Profile('lasergenius-1.04', lasergenius_boot, lasergenius_finish, force=True),
+    'lasergeniushx': Profile('lasergenius-1.04', lasergenius_hash_boot, lasergenius_finish, force=True),
     'prometheus': Profile('prometheus-48', prometheus_boot, prometheus_finish, model='48K', force=True, tape=True),
+    'prometheustrd': Profile('prometheus-48-trdos', prometheus_trdos_boot, prometheus_finish, force=True),
+    'prometheus128': Profile('prometheus-128', prometheus128_boot, prometheus_finish, force=True, tape=True),
     'pasm': Profile('pasm-3.0', pasm_boot, pasm_finish, force=True),
 }

@@ -162,7 +162,12 @@ TEST(Dialects_Test, AlasmHighLowXorAndRotations)
     EXPECT_EQ(ToSjasmplus("        LD A,'x\n        LD A,.x\n        LD A,5!3"),
               (std::vector<std::string>{"LD A,high x", "LD A,low x", "LD A,5^3"}));
     // < rotates a 16-bit word; a value wholly in parentheses gets "+" so that sjasmplus does not read memory
-    EXPECT_EQ(ToSjasmplus("        LD BC,#1234<4"), std::vector<std::string>{"LD BC,+(((#1234&#FFFF)<<4|(#1234&#FFFF)>>>(16-4))&#FFFF)"});
+    EXPECT_EQ(ToSjasmplus("        LD BC,#1234<4"), std::vector<std::string>{"LD BC,+((#1234*#10001>>>12)&#FFFF)"});
+    // the word doubled in 32 bits and 16 bits taken out of it: an operand written once, so nested rotations stay
+    // short; the count modulo 16 (ALASM: #1234<20 is #1234<4)
+    EXPECT_EQ(ToSjasmplus("        DW x*257<1+#303>1"), std::vector<std::string>{"DW ((((((x*257&#FFFF)*#10001>>>15)&#FFFF)+#303&#FFFF)*#10001>>>1)&#FFFF)"});
+    EXPECT_EQ(ToSjasmplus("        DW #1234<20\n        DW #1234>n"),
+              (std::vector<std::string>{"DW ((#1234*#10001>>>12)&#FFFF)", "DW ((#1234*#10001>>>(n&15))&#FFFF)"}));
 }
 
 TEST(Dialects_Test, AlasmDivisionIsUnsigned16Bit)

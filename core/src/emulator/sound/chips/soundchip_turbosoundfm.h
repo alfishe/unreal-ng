@@ -123,6 +123,12 @@ protected:
     uint64_t _stepDeadline = 0;
     uint64_t _pendingT = 0;
     bool _stepPending = false;
+    // The quiet deferral: the gate holds until the next entry (a port, the frame end...) because the device is quiet at
+    // rest - every output is +0.0 until a write; settleSteps then runs the step at the last noted T, which renders the
+    // outputs due in one quiet run (renderQuietOutputs)
+    bool _quietDeferral = false;
+    std::vector<uint32_t> _quietOutputTicks;  // renderQuietOutputs: the ticks of each output of the run
+    size_t _longestQuietRun = 0;              // the most outputs one quiet run took (diagnostics, not state)
     // With audio on: a step that completes no output sample defers its sync as well (handleStep). Off: every such step
     // syncs, as before (comparison tests)
     bool _lazySync = true;
@@ -238,8 +244,21 @@ public:
     {
         _stepDeadline = 0;
         if (!_stepPending)
+        {
+            _quietDeferral = false;
             return;
+        }
         _stepPending = false;
+        if (_quietDeferral)
+        {
+            // The step at the last noted T, as handleStep would have taken it; the entry that called this then acts on
+            // the device, so the gate stays open after it
+            _quietDeferral = false;
+            stepAt(_pendingT);
+            _stepDeadline = 0;
+            _quietDeferral = false;
+            return;
+        }
         // The deferral's bookkeeping (x1 speed: the gate holds only then) for the last noted T, frame-clipped as the
         // step clips it; the steps before it added their part of the same sum
         const uint64_t frameT = uint64_t(_context->config.frame);
@@ -302,6 +321,8 @@ public:
         catchUp();
         _lazySync = on;
     }
+    /// The most outputs one quiet run took (renderQuietOutputs): past the outputs of a step or two only while asleep
+    size_t longestQuietRun() const { return _longestQuietRun; }
     /// Tests: off = every step through the full deferral path (the step gate of handleStep closed)
     void setStepGate(bool on)
     {
@@ -369,11 +390,13 @@ public:
 public:
     uint16_t* getAudioBuffer()
     {
+        settleSteps();
         return (uint16_t*)_ayBuffer;
     }
 
     size_t getRenderedSamplesThisFrame() const override
     {
+        const_cast<SoundChip_TurboSoundFM*>(this)->settleSteps();
         return _ayBufferIndex / AUDIO_CHANNELS;
     }
 
@@ -390,6 +413,7 @@ public:
 
     int16_t* getChipBuffer(int index) override
     {
+        settleSteps();
         if (index == 0)
             return _chip0Buffer;
         if (index == 1)
@@ -399,6 +423,7 @@ public:
 
     int16_t* getFmBuffer(int index) override
     {
+        settleSteps();
         if (index == 0)
             return _fm0Buffer;
         if (index == 1)
@@ -426,6 +451,19 @@ public:
     void handleStep() override;
     void handleFrameEnd() override;
     /// endregion </Emulation events>
+
+private:
+    /// handleStep's full way for a step that ended at audio T `now`
+    void stepAt(uint64_t now);
+    /// The outputs due (as many as the sample phase and the buffer hold) while the pair is quiet at rest over them, in
+    /// one run, HQ; the count it took (0: none). Quiet at rest: both SSGs silentAtRest, the four SSG decimator histories
+    /// zeros, each chip's FM output stage at rest (Ym2203Pair::renderQuiet), and no SSG write due at any of the run's
+    /// ticks, no FM word off the hold at any of their half-ticks. Every output is then +0.0 on every row: the
+    /// generators, the words consumed, the render cursor and the decimator positions and phases move as the ticks would
+    size_t renderQuietOutputs();
+    /// Every output stays +0.0 until something enters the device: quiet at rest with nothing queued and both FM halves
+    /// idle, holding 0 (the gate may then hold until the next entry, handleStep). HQ, x1, the lazy sync on
+    bool sleepsThroughSilence() const;
 
     /// region <Automation tap (MCP M7j)>
 public:

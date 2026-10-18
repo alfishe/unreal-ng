@@ -54,7 +54,7 @@ public:
     }
 
 private:
-    std::string version;   // "1983", "gg", "pht" (v7.E), "1.1" (PHT's table, no * / %), "primus" (Primus 2.9)
+    std::string version;   // "1983", "3.1" (ZEUS+ 3.1), "gg", "pht" (v7.E), "1.1" (PHT's table, no * / %), "primus" (Primus 2.9)
 
     bool Pht() const { return version == "pht" || version == "1.1"; }
     bool V7e() const { return version == "pht"; }   // * and %binary (1.1 refuses them: error 0)
@@ -62,8 +62,9 @@ private:
     int orgs = 0;          // Primus takes one ORG
 
     std::string Title() const override { return Primus() ? "Primus" : "ZEUS"; }
-    /// labels of up to 14 characters, compared whole with case (manual 5.1.1); Primus 16 (its PRI.DOC)
-    size_t Significant() const override { return Primus() ? 16 : 14; }
+    /// labels of up to 14 characters, compared whole with case (manual 5.1.1); Primus 16 (its PRI.DOC); ZEUS+ 3.1 6 (a
+    /// seventh is its error 1, "label too long", seen in unreal-ng)
+    size_t Significant() const override { return Primus() ? 16 : version == "3.1" ? 6 : 14; }
     std::string Key(const std::string& name) const override { return name; }
     bool Reserved(const std::string& upper) const override { return kWords.count(upper) || z80::IsMnemonic(z80::Lower(upper)); }
     /// letters and digits, a letter first (no "_" in ZEUS)
@@ -211,6 +212,7 @@ private:
     RepeatForm Repeat(const std::vector<ir::Line>&, size_t, size_t) const override { return RepeatForm::Unrolled; }
 
     std::string dispOffset{};   // the offset of the displacement in force (a number, or the names' difference)
+    bool orgRefused = false;    // Primus: a second ORG was left out (its addresses part from the source's from there)
 
     std::vector<std::string> DirectiveText(const Statement& s, const std::string&) override
     {
@@ -218,7 +220,20 @@ private:
         {
             case ir::DirectiveKind::Org:
                 if (Primus() && orgs++ > 0)
+                {
+                    // a second ORG ahead of $: the gap as a hole (Primus refuses another ORG: Duplicate ORG)
+                    const auto to = s.args.empty() ? std::nullopt : Value(s.args[0]);
+                    // (after one refused, the text's addresses are no longer the source's: no more holes)
+                    if (to && here && *to >= *here && !displaced && !orgRefused)
+                    {
+                        if (*to == *here)
+                            return {};
+                        diagnostics.push_back({Severity::Info, line, 0, "ORG forward written as DEFS (Primus takes one ORG)"});
+                        return {Dss() + " " + std::to_string(*to - *here)};
+                    }
+                    orgRefused = true;
                     return {NotConverted("a second ORG (Primus takes one: Duplicate ORG)")};
+                }
                 if (displaced)
                 {
                     displaced = false;

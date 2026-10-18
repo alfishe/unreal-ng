@@ -21,7 +21,7 @@ SHA-256).
 | ZEUS (GG, "ZEUS with B-disk v20.04.96") | `archives/ZEUS_GG.zip` → `ZEUS_GG.SCL` (`ZEUS.B` + `ZEUS.C`) | `PENTAGON` | `RUN "ZEUS"` from TR-DOS | `DB DM DS DW`, `INCBIN` |
 | ZEUS 1.1 beta (YRIC, MIPh&T 1993; the ZEUS of PHT 3.6 and of the ADS 2.0 sources) | `PHT_ZEUS.LZH` → `zeus.$c` (hobeta, CODE 57344,6775) | `PENTAGON` in 48 BASIC | `RANDOMIZE USR 57344` | `DB DM DS DW`, `INCLUDE PLACE` |
 | ZEUS v7.E (ZKSoft) | `archives/ZEUS72ZK.zip` → `ZEUS72ZK.SCL` (`ZEUSv7.E.B`) | `PENTAGON` | `RUN "ZEUSv7.E"` from TR-DOS | as 1.1 |
-| ZEUS 2.2 (Daniel'96; SI Soft'91), 3.0 (= ZEUS 128, Stars of Keladan'95), 3.1 (ZEUS+, H.S.O.'93), Zeus Pro 2.01, Zeus Plus 2.16 Max | `archives/` (vtrd.in) | `PENTAGON` | their BASIC loaders from TR-DOS (not run here) | 1983 (compared in their code; their files read as `1983`) |
+| ZEUS 2.2 (Daniel'96; SI Soft'91), 3.0 (= ZEUS 128, Stars of Keladan'95), 3.1 (ZEUS+, H.S.O.'93), Zeus Pro 2.01, Zeus Plus 2.16 Max | `archives/` (vtrd.in) | `PENTAGON` | their BASIC loaders from TR-DOS (below: the ports of the 1983 code) | 1983 (compared in their code; their files read as `1983`) |
 | Primus Assembler 2.9 (Trunov, 1994; a ZEUS clone) | [PRIMUS29.ZIP](https://vtrd.in/system/PRIMUS29.ZIP) → `PRIMUS29.SCL` (`P_AS_2.9.B`, `PRI.ASS`, `PRI.DOC`) | `PENTAGON` | `RUN "P_AS_2.9"` from TR-DOS; it loads the text file `PRI.ASS` names (`PRI.DOC`) | 1983 with `DISK` for `DISP`; Russian letters |
 
 The language is the same everywhere (manual: `archives/zxdb/Zeus.txt`, section 5) except where the table below
@@ -66,6 +66,26 @@ digits, `DISP` as an offset, the undocumented instructions as bytes:
 text. ZEUS keeps no "changed" flag: a loaded text is replaced only by force (or when it is the push watch's own).
 `tools/verification/unreal-asm/emulator/inject-oracle.py zeus1983 <ZEUS.TAP> <source.asm> 0x6000 --wait 60` runs the whole
 check (a 48K machine).
+
+## The ports of the 1983 code (synchronizer)
+
+ZEUS 2.2 (`RUN "ZEUS'96"`), ZEUS 2.2SI (`RUN "ZEUS"`, then `Z` in its menu), Zeus Pro (`RUN "ZPro"`), Zeus Plus 2.16
+(`RUN "boot"`, ENTER in its window menu), ZEUS+ 3.1 (`RUN "ZEUS+3.1"`) and ZEUS 128 (`RUN "ZEUS.128"`, ENTER on its
+menu's first line) take a host source at their prompt like ZEUS 1983 (descriptors `zeus-2.2`, `zeus-2.2si`,
+`zeus-pro`, `zeus-plus-2.16`, `zeus-3.1`; ZEUS 128 is `zeus-1983`; idle templates in `testdata/templates`). ZEUS 3.0 is
+ZEUS 128: vtrd.in's "Zeus v3.0 ... Stars of Keladan'95" is `ZEUS128.ZIP`; the `ZINUS3.0.B` on the ZEUS+ 3.1 disk installs
+the same code as 3.1.
+
+- ZEUS+ 3.1 takes labels of up to 6 characters (a seventh is its error 1, "label too long"): the conversion for
+  `zeus-3.1` shortens longer names (unique within 6).
+- Zeus Plus 2.16 (the MAX build, `ZSPL216M`) as it starts holds two labels only: ERROR 6 ("redefined label") from
+  the third one on, typed or injected alike. It is the build's own defect: it moved 1983's label table (its top at
+  `#DFF0`, 16 bytes a label downwards) into the screen, `#57F0` down, but left `LD HL,#5800` in four places where
+  1983 has the top (operands at `#E09D`, `#E46B`, `#E5FB`, `#EB8D`), so its first label lands in the slot that holds
+  the name being read. Write `F0 57` at those four addresses (WebAPI `memory` write, once after it starts) and it
+  takes any number of labels (`inject-oracle.py zeusplus` does it). Its MMAN is the file menu (LOAD / SAVE / UPDT /
+  APND); `A` moves down its window menu. Its label table lives in the screen: what it prints over the bottom lines
+  (an error listing) spoils labels.
 
 ## Memory
 

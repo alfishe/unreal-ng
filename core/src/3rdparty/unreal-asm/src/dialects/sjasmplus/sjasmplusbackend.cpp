@@ -251,14 +251,32 @@ struct Writer
             {
                 if (e.op == Op::CyclicLeft16 || e.op == Op::CyclicRight16)
                 {
-                    // ALASM's cyclic shifts of a 16-bit word, spelled out: ((a&#FFFF)<<b|(a&#FFFF)>>>(16-b))&#FFFF
+                    // ALASM's cyclic shifts of a 16-bit word: the word doubled in 32 bits, the 16 bits wanted taken out,
+                    // ((a&#FFFF)*#10001>>>(16-n))&#FFFF (right: >>>n). The operand stands once (a nested shift does not
+                    // double it) and the count is taken modulo 16 as ALASM does.
                     const bool right = e.op == Op::CyclicRight16;
-                    const Expr a = Masked16(e.args[0]);
-                    const Expr b = e.args[1].kind == Expr::Kind::Binary ? Grouped(e.args[1]) : e.args[1];
-                    Expr back = Grouped(Expr::Binary(Op::Sub, Expr::Number(16), b));
-                    Expr rotated = Expr::Binary(Op::Or, Expr::Binary(right ? Op::ShrUnsigned : Op::Shl, a, b),
-                                                Expr::Binary(right ? Op::Shl : Op::ShrUnsigned, a, std::move(back)));
-                    return Print(Masked16(Grouped(std::move(rotated))));
+                    const Expr& x = e.args[0];
+                    const Expr* inner = &x;
+                    while (inner->kind == Expr::Kind::Group)
+                        inner = &inner->args[0];
+                    const bool masked = inner->kind == Expr::Kind::Binary && inner->op == Op::And &&
+                                        inner->args[1].kind == Expr::Kind::Number && inner->args[1].value == 0xFFFF;
+                    const bool word = (x.kind == Expr::Kind::Number && x.value >= 0 && x.value <= 0xFFFF) || masked;
+                    Expr a = !word ? Masked16(x) : x.kind == Expr::Kind::Binary ? Grouped(x) : x;
+                    const Expr& b = e.args[1];
+                    Expr shift = Expr::Number(0);
+                    if (b.kind == Expr::Kind::Number)
+                    {
+                        const int64_t n = ((b.value % 16) + 16) % 16;
+                        shift = Expr::Number(right ? n : 16 - n);
+                    }
+                    else
+                    {
+                        Expr n = Grouped(Expr::Binary(Op::And, b, Expr::Number(15)));
+                        shift = right ? std::move(n) : Grouped(Expr::Binary(Op::Sub, Expr::Number(16), std::move(n)));
+                    }
+                    Expr doubled = Expr::Binary(Op::Mul, std::move(a), Expr::Number(0x10001, ir::NumberSpelling::Hex, 5));
+                    return Print(Masked16(Grouped(Expr::Binary(Op::ShrUnsigned, std::move(doubled), std::move(shift)))));
                 }
                 const bool comparison = e.op == Op::Equal || e.op == Op::NotEqual || e.op == Op::Less || e.op == Op::Greater ||
                                         e.op == Op::LessEqual || e.op == Op::GreaterEqual;
@@ -655,7 +673,7 @@ struct Writer
             case ir::DirectiveKind::Main: return {"@; ALASM MAIN \"" + s.text + "\" (the project's main source)"};
             case ir::DirectiveKind::Run: return {NotConverted("RUN " + args() + " (code called while assembling)")};
             case ir::DirectiveKind::Other:
-                if (sameDialect)
+                if (sameDialect || (!s.params.empty() && s.params[0] == "sjasmplus"))   // or a frontend's sjasmplus words
                     return {s.text};
                 return {NotConverted(s.text.empty() ? "a directive" : s.text)};
             default: return {NotConverted(s.text.empty() ? "a directive" : s.text)};

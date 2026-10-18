@@ -5,7 +5,8 @@
 // - a line is [number, 2 bytes little endian, 0..65534][line bytes][#00], numbers increasing; #FF #FF ends the file
 // - line bytes: #20-#7F characters, #0A n = n blanks (0 = 256), #80+k keyword k of the version's table (a keyword
 //   that takes operands holds its blank)
-// - versions: "1983" (Crystal ZEUS and the ports that keep its table and tokenizer), "gg" (ZEUS from GG: DB DM DS DW,
+// - versions: "1983" (Crystal ZEUS and the ports that keep its table and tokenizer), "3.1" (ZEUS+ 3.1: 1983's table,
+//   labels of 6 characters), "gg" (ZEUS from GG: DB DM DS DW,
 //   INCBIN), "pht" (ZEUS 1.1 beta of Professional Hackers Tools and ZEUS v7.E: DB DM DS DW, INCLUDE, PLACE, and '_'
 //   and other symbols join words), "1.1" (the same table: what ZEUS 1.1 takes, without v7.E's * / %), "primus" (Primus Assembler 2.9: DISK for DISP, ? . @ _ $ join words, Russian
 //   letters at #EB-#FF; its files are type C at 33364)

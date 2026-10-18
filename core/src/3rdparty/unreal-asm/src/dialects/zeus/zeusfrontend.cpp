@@ -37,7 +37,7 @@ bool IsKeyword(const std::string& word, const std::string& version)
         return word == "DISK";
     if (table.count(word))
         return true;
-    if (version == "1983" || version == "primus")
+    if (version == "1983" || version == "3.1" || version == "primus")
         return word == "DEFB" || word == "DEFM" || word == "DEFS" || word == "DEFW";
     if (word == "DB" || word == "DM" || word == "DS" || word == "DW")
         return true;

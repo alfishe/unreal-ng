@@ -7,6 +7,7 @@
 #include "dialects/common/z80.h"
 #include "dialects/sjasmplus/sjasmplusfrontend.h"
 #include "dialects/sjasmplus/sjasmpluslower.h"
+#include "layout/z80size.h"
 #include "unrealasm/registry.h"
 
 namespace unrealasm::dialects
@@ -446,7 +447,7 @@ std::vector<std::string> RetroWriter::DataLines(const std::string& keyword, cons
     std::string current;
     for (const std::string& item : items)
     {
-        if (!current.empty() && current.size() + item.size() > width)
+        if (!current.empty() && current.size() + 1 + item.size() > width)   // the comma counts too
         {
             out.push_back(keyword + " " + current);
             current.clear();
@@ -1315,12 +1316,23 @@ void RetroWriter::WriteLine(const ir::Line& l, size_t k, const std::string* repe
             here = found->second.value;
     }
     lineAddress = here;
+    statementAddress = here;
 
     assignedName.clear();
     for (const Statement& s : l.statements)
     {
         for (std::string& t : StatementText(s, own))
             texts.push_back(t);
+        // the next statement's address: past this instruction (call ESC : jr nz,.esc), unknown after data
+        if (statementAddress && s.kind == Statement::Kind::Instruction)
+        {
+            std::string error;
+            const int size = layout::InstructionSize(s, error);
+            statementAddress = size > 0 ? std::optional<int64_t>(*statementAddress + size) : std::nullopt;
+        }
+        else if (s.kind != Statement::Kind::Directive || IsDirective(s, ir::DirectiveKind::Db) || IsDirective(s, ir::DirectiveKind::Dw) ||
+                 IsDirective(s, ir::DirectiveKind::Ds) || IsDirective(s, ir::DirectiveKind::Incbin))
+            statementAddress.reset();
         // $ moves past what the statement puts down (sjasmplus: several statements a line)
         if (s.kind != Statement::Kind::Directive || IsDirective(s, ir::DirectiveKind::Db) || IsDirective(s, ir::DirectiveKind::Dw) ||
             IsDirective(s, ir::DirectiveKind::Ds) || IsDirective(s, ir::DirectiveKind::Incbin))

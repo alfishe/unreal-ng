@@ -2,7 +2,8 @@
 // machines with a TurboSound FM run the same program - random register writes to both chips at random places in the
 // frame, FM key-on writes, dense and sparse (long silences between bursts) - one with the gate closed, and the sound each
 // sends to the host must be the same sample for sample, and the device state (the TTD blob) the same at the end; HQ, LQ
-// and a 2x host speed (the gate holds only at 1x).
+// and a 2x host speed (the gate holds only at 1x). And the quiet deferral (the device asleep through silence, the
+// outputs rendered in one run at the next entry) against a machine rendering every tick with no gate and no quiet runs.
 
 #include "stdafx.h"
 #include "pch.h"
@@ -64,10 +65,86 @@ std::vector<uint8_t> Program(bool sparse)
     return code;
 }
 
+/// `ld bc,#FFFD : ld a,reg : out (c),a : ld b,#BF : ld a,value : out (c),a` - a register of the selected chip
+void Out(std::vector<uint8_t>& code, uint8_t reg, uint8_t value)
+{
+    code.insert(code.end(), {0x01, 0xFD, 0xFF, 0x3E, reg, 0xED, 0x79, 0x06, 0xBF, 0x3E, value, 0xED, 0x79});
+}
+
+/// A ~0.27 s wait (`ld hl,#9000 : dec hl : ld a,h : or l : jr nz`)
+void Wait(std::vector<uint8_t>& code)
+{
+    code.insert(code.end(), {0x21, 0x00, 0x90, 0x2B, 0x7C, 0xB5, 0x20, 0xFB});
+}
+
+/// `ld bc,#FFFD : ld a,value : out (c),a` - a board control word
+void Control(std::vector<uint8_t>& code, uint8_t value)
+{
+    code.insert(code.end(), {0x01, 0xFD, 0xFF, 0x3E, value, 0xED, 0x79});
+}
+
+/// Chip 0, the device asleep at each event (falling asleep once the SSG and FM filters are back at exactly 0: some two
+/// seconds after an SSG sound, eight after an FM one): an SSG tone for about a frame and 3.4 s of silence; the FM timer A
+/// in CSM mode with the FM part muted - its expiries key channel 3 on, the first one about a frame after the write - for
+/// ~0.27 s and 3.4 s of silence; the same audible. A random wait between the parts. Interrupts off
+std::vector<uint8_t> BeepsAfterSilence()
+{
+    std::vector<uint8_t> code = {
+        0xF3,              // di
+        0x31, 0xF0, 0xBF,  // ld sp,#BFF0
+    };
+    Control(code, 0xFA);  // chip 0, FM on
+    Out(code, 0x00, 0x40);
+    Out(code, 0x01, 0x01);
+    Out(code, 0x07, 0x3E);
+    Out(code, 0xB2, 0x07);  // channel 3: every operator a carrier
+    for (uint8_t op : {uint8_t(0), uint8_t(4), uint8_t(8), uint8_t(12)})
+    {
+        Out(code, uint8_t(0x32 + op), 0x01);  // MUL 1
+        Out(code, uint8_t(0x42 + op), 0x10);  // TL
+        Out(code, uint8_t(0x52 + op), 0x1F);  // AR 31
+        Out(code, uint8_t(0x82 + op), 0x0F);  // SL 0, RR 15
+    }
+    Out(code, 0xA6, 0x22);
+    Out(code, 0xA2, 0x69);
+    Out(code, 0x24, 0x00);  // timer A: the longest period (about a frame)
+    Out(code, 0x25, 0x00);
+    const auto silence = [&code]() {
+        code.insert(code.end(), {
+                                    0x16, 0x07,                                      // ld d,7
+                                    0x21, 0x00, 0x00, 0x2B, 0x7C, 0xB5, 0x20, 0xFB,  // ld hl,0 : 65536 turns (1.7 M T)
+                                    0x15, 0x20, 0xF5,                                // dec d : jr nz (3.4 s in all)
+                                    0xED, 0x5F, 0x67, 0x2E, 0x00, 0x2B, 0x7C, 0xB5, 0x20, 0xFB,  // a random wait
+                                });
+    };
+    const auto csm = [&code](uint8_t control) {
+        Control(code, control);
+        Out(code, 0x27, 0x85);  // CSM, timer A loaded, its flag on
+        Wait(code);
+        Out(code, 0x27, 0x30);  // timers stopped, flags reset
+        Control(code, 0xFA);
+    };
+    const size_t loop = code.size();
+    Out(code, 0x08, 0x0F);  // SSG A volume 15
+    code.insert(code.end(), {0x21, 0x00, 0x08, 0x2B, 0x7C, 0xB5, 0x20, 0xFB});  // ~53 000 T
+    Out(code, 0x08, 0x00);
+    silence();
+    csm(0xFE);  // FM muted
+    silence();
+    csm(0xFA);
+    silence();
+    silence();
+    silence();
+    code.push_back(0xC3);  // jp loop
+    code.push_back(static_cast<uint8_t>((0x8000 + loop) & 0xFF));
+    code.push_back(static_cast<uint8_t>((0x8000 + loop) >> 8));
+    return code;
+}
+
 class Twin
 {
 public:
-    Twin(bool gate, bool hq, uint8_t speed, bool sparse)
+    Twin(bool gate, bool hq, uint8_t speed, bool sparse, bool beeps = false)
     {
         _emulator = EmulatorTestHelper::CreateEmulatorWithTurboSoundKind("PENTAGON", TurboSoundKind::FM, LoggerLevel::LogError);
         EXPECT_NE(_emulator, nullptr);
@@ -79,13 +156,17 @@ public:
         _tsfm = dynamic_cast<SoundChip_TurboSoundFM*>(_context->pSoundManager->getTurboSound());
         EXPECT_NE(_tsfm, nullptr);
         if (_tsfm)
+        {
             _tsfm->setStepGate(gate);
+            if (beeps)
+                _tsfm->pair().setQuietTicksEnabled(gate);  // the full way renders every tick: no quiet runs either
+        }
         if (speed != 1)
             EXPECT_TRUE(_emulator->SetSpeedMultiplier(speed));
         _context->pAudioCallback.store(&Capture, std::memory_order_release);
         _context->pAudioManagerObj.store(&_sound, std::memory_order_release);
 
-        const std::vector<uint8_t> code = Program(sparse);
+        const std::vector<uint8_t> code = beeps ? BeepsAfterSilence() : Program(sparse);
         for (size_t i = 0; i < code.size(); i++)
             _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), code[i]);
         Z80& z80 = *_context->pCore->GetZ80();
@@ -106,6 +187,7 @@ public:
     bool Ready() const { return _emulator && _tsfm; }
     void Frame() { reinterpret_cast<MainLoop_CUT*>(_context->pMainLoop)->RunFrame(); }
     const std::vector<int16_t>& Sound() const { return _sound; }
+    size_t LongestQuietRun() const { return _tsfm->longestQuietRun(); }
     std::vector<uint8_t> State() const
     {
         std::vector<uint8_t> blob(_tsfm->TTDStateSize());
@@ -120,10 +202,10 @@ private:
     std::vector<int16_t> _sound;
 };
 
-void Lockstep(bool hq, uint8_t speed, bool sparse, int frames)
+void Lockstep(bool hq, uint8_t speed, bool sparse, int frames, bool beeps = false)
 {
-    Twin gated(true, hq, speed, sparse);
-    Twin full(false, hq, speed, sparse);
+    Twin gated(true, hq, speed, sparse, beeps);
+    Twin full(false, hq, speed, sparse, beeps);
     ASSERT_TRUE(gated.Ready());
     ASSERT_TRUE(full.Ready());
     for (int frame = 0; frame < frames; frame++)
@@ -141,6 +223,8 @@ void Lockstep(bool hq, uint8_t speed, bool sparse, int frames)
         }
     }
     EXPECT_EQ(gated.State(), full.State()) << "the device state at the end";
+    if (beeps)
+        EXPECT_GT(gated.LongestQuietRun(), 100u) << "the device never slept (a run of a step's few outputs at most)";
 }
 }  // namespace
 
@@ -161,4 +245,10 @@ TEST(TsfmStepGate_Test, AFasterHostClockMatchesEveryStepTakenTheFullWay)
 {
     Lockstep(true, 2, false, 20);
     Lockstep(true, 2, true, 30);
+}
+
+// ~420 frames: asleep, an SSG write wakes the device, then a CSM expiry with FM muted and one audible (no write)
+TEST(TsfmStepGate_Test, BeepsAfterSilencesMatchEveryStepTakenTheFullWay)
+{
+    Lockstep(true, 1, false, 420, true);
 }

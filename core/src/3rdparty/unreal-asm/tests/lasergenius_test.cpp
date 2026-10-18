@@ -270,7 +270,7 @@ TEST(LaserGeniusFrontend_Test, Expressions)
     // Unsigned 16-bit words, & | ^ on one level, comparisons and && || ! giving 1 (sjasmplus: -1), [ ] parentheses
     const std::vector<std::string> out = ToSjasmplus("DW 1|2&4\nDW 2&&1\nDW -10/3\nDW 1<<2+1\nDW [1+2]*3\nDW #1234@<4\nLD A,\"\\13\"\nDW ^5\n");
     const std::vector<std::string> expected = {"DW (1|2)&4", "DW -(2&&1)", "DW (-10&#FFFF)/(3&#FFFF)", "DW 1<<2+1", "DW (1+2)*3",
-                                               "DW (((#1234&#FFFF)<<4|(#1234&#FFFF)>>>(16-4))&#FFFF)", "LD A,13", "DW ~5"};
+                                               "DW ((#1234*#10001>>>12)&#FFFF)", "LD A,13", "DW ~5"};
     EXPECT_EQ(out, expected);
 }
 
@@ -296,10 +296,22 @@ TEST(LaserGeniusFrontend_Test, Constructs)
         "v: DL v+1\n"
         "*ENDW\n"
         "*LIST OFF\n");
-    const std::vector<std::string> expected = {"ORG #8000", "__LG_PUT1=$", "ORG #9000", "DISP __LG_PUT1", "start   LD HL,$$$",
+    const std::vector<std::string> expected = {"ORG #8000", "__LG_PUT1=$", "IFDEF __LG_PUTIN", "ENT", "UNDEFINE __LG_PUTIN", "ENDIF",
+                                               "ORG #9000", "DISP __LG_PUT1", "start   LD HL,$$$",
                                                "DB 13,'OK',255", "DS 2", "v=1", "IF v", "NOP", "ELSE", "HALT", "ENDIF",
                                                "MACRO exg p1,p2", "PUSH p1", "ENDM", "exg BC,DE", "WHILE -((v&#FFFF)<=3)", "v=v+1", "ENDW"};
     EXPECT_EQ(out, expected);
+}
+
+TEST(LaserGeniusFrontend_Test, AnIncludedFileEndsTheIncludersPutBeforeItsOwn)
+{
+    // a PUT is global in Laser Genius; each file of a project is converted alone, and sjasmplus keeps a DISP across
+    // INCLUDE: the includer defines __LG_PUTIN while one is in force, the included file's first PUT ends it before
+    // the bytes move (Wild Commander's emu.asm put 5 bytes at #3FD1 instead of #2A53)
+    EXPECT_EQ(ToSjasmplus("ORG #3FD1\nPUT #3FD1\nNOP\n*INCLUDE \"TRAP\"\n"),
+              (std::vector<std::string>{"ORG #3FD1", "__LG_PUT1=$", "IFDEF __LG_PUTIN", "ENT", "UNDEFINE __LG_PUTIN", "ENDIF",
+                                        "ORG #3FD1", "DISP __LG_PUT1", "NOP", "DEFINE+ __LG_PUTIN", "INCLUDE \"TRAP.asm\"",
+                                        "IFDEF __LG_PUTIN", "UNDEFINE __LG_PUTIN", "ENDIF"}));
 }
 
 TEST(LaserGeniusFrontend_Test, IndexedOperandsGetTheDisplacementLaserGeniusBuilds)

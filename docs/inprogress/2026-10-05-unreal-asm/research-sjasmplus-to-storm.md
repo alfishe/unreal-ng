@@ -76,10 +76,12 @@ refuses an inject without force, unless the text is the caller's own (the push w
 |---|---|
 | `StormBackend_Test.ProgramsKeepTheirBytesThroughStorm` (host): every instruction form, STORM 1.3's STORMT1 / STORMT2, XAS 7.447 `constrct`, 4.18 `cons418`, ZAsm 3.15 and TASM 5.0 programs → sjasmplus → STORM → the STORM codec and back → the STORM frontend → sjasmplus | the original assemblers' bytes |
 | `inject-oracle.py storm` in STORM 1.3: `oracle1.asm` (sjasmplus constructs, macros, WHILE, DUP, IF), every instruction form at `#6000` and at `#8000` | 143 / 1173 / 1173 bytes = sjasmplus' |
-| the same in STORM 1.3i | `oracle1.asm` 143 bytes and the first 340 lines of the instruction forms (618 bytes) = sjasmplus'; the whole file: wrong bytes after the first `#1A` |
+| the same in STORM 1.3i (`inject-oracle.py storm13i`, 2026-10-17) | `oracle1.asm` 143 bytes, every instruction form at `#6000` and at `#8000` (1173) = sjasmplus' |
 
-STORM 1.3i gives the same wrong bytes when the file is loaded from its disk with its own LOAD (no inject): it is 1.3i's
-(after assembling, or in restoring the 48K memory when it quits to BASIC, which the check reads), not the text's.
+STORM 1.3i's Quit restarts the machine: the 48K memory the 1.3 check reads after it is empty (an earlier note took
+that for lost bytes). While it runs, 1.3i keeps the code it builds in its pages: `#6000`-`#6FFF` in RAM page 7,
+`#7000`-`#7FFF` in page 3, `#8000`-`#BFFF` in page 4, `#C000`-`#FFFF` in page 0, each from the page's start;
+`storm13i_finish` reads it there.
 
 ## 5. Limits
 

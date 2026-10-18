@@ -254,3 +254,75 @@ TEST(MultiSoundMixer_Test, FmTrimFollowsTheTsfmGainLaw)
         EXPECT_NEAR(Gain(rows.ssg2[0], MultiSoundMixer::kSsgChannelFullScale), 0.417, 0.0015) << trim;
     }
 }
+
+// Mix skips a stream whose input rows are zeros with its filters at rest (its rows are zeros then): against the same mixer
+// mixing every sample, block for block - sound and silences of every length on every stream (the filter tails after a
+// sound must still be mixed), both render modes, coupled and DC-coupled
+TEST(MultiSoundMixer_Test, SilentStreamsSkippedMixTheSameRows)
+{
+    for (const MultiSoundRenderMode mode : {MultiSoundRenderMode::HiFi, MultiSoundRenderMode::Authentic})
+    {
+        for (const bool coupled : {true, false})
+        {
+            MultiSoundMixer skipping = MakeMixer(coupled, mode);
+            MultiSoundMixer every = MakeMixer(coupled, mode);
+            every.SetSilentStreamsSkipped(false);
+            uint32_t seed = 0x51E7u;
+            auto next = [&seed]() {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                return seed;
+            };
+            for (int block = 0; block < 400; block++)
+            {
+                const size_t frames = 1 + next() % 1000;
+                // Each stream sounds in a block with probability 1/4, else silent: tails, long silences, restarts
+                std::vector<float> fm[2], ssg[2][3], midi(frames * 2);
+                std::vector<int16_t> saa(frames * 2), dac(frames * 2);
+                auto sounds = [&]() { return next() % 4 == 0; };
+                MultiSoundMixerInput in;
+                in.frames = frames;
+                for (int chip = 0; chip < 2; chip++)
+                {
+                    fm[chip].assign(frames, 0.0f);
+                    if (sounds())
+                        for (auto& v : fm[chip])
+                            v = static_cast<float>(int(next() % 2001) - 1000) / 1000.0f;
+                    in.fm[chip] = fm[chip].data();
+                    for (int c = 0; c < 3; c++)
+                    {
+                        ssg[chip][c].assign(frames, 0.0f);
+                        if (sounds())
+                            for (auto& v : ssg[chip][c])
+                                v = static_cast<float>(next() % 1000) / 1000.0f;
+                        in.ssg[chip][c] = ssg[chip][c].data();
+                    }
+                }
+                if (sounds())
+                    for (auto& v : saa)
+                        v = static_cast<int16_t>(int(next() % 20001) - 10000);
+                if (sounds())
+                    for (auto& v : midi)
+                        v = static_cast<float>(int(next() % 2001) - 1000) / 1000.0f;
+                if (sounds())
+                    for (auto& v : dac)
+                        v = static_cast<int16_t>(int(next() % 20001) - 10000);
+                in.saa = saa.data();
+                in.midi = midi.data();
+                in.dac = dac.data();
+
+                Rows a(frames), b(frames);
+                skipping.Mix(in, a.Output());
+                every.Mix(in, b.Output());
+                ASSERT_EQ(a.fm, b.fm) << "block " << block;
+                ASSERT_EQ(a.fm2, b.fm2) << "block " << block;
+                ASSERT_EQ(a.ssg, b.ssg) << "block " << block;
+                ASSERT_EQ(a.ssg2, b.ssg2) << "block " << block;
+                ASSERT_EQ(a.saa, b.saa) << "block " << block;
+                ASSERT_EQ(a.midi, b.midi) << "block " << block;
+                ASSERT_EQ(a.dac, b.dac) << "block " << block;
+            }
+        }
+    }
+}

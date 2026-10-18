@@ -350,12 +350,15 @@ TEST_F(SyncControl_Test, InjectPutsTheSourcesAHostFileIncludesIntoPagesOfTheirOw
     const std::filesystem::path folder = TestPathHelper::GetUniqueTestScratchPath("project");
     std::filesystem::create_directories(folder / "lib");
     const auto write = [&](const std::filesystem::path& path, const std::string& text) { std::ofstream(path, std::ios::binary) << text; };
-    write(folder / "main.asm", "        ORG #6000\n        INCLUDE \"lib/inc1.asm\"\n        INCLUDE \"inc2.asm\"\nend_    RET\n");
+    // INF reads as ASM80's directive: detection is "ambiguous: asm80 vs text", the file still goes as a text
+    write(folder / "main.asm", "        ORG #6000\n        INCLUDE \"lib/inc1.asm\"\n        INCLUDE \"inc2.asm\"\n        LD A,INF\nend_    RET\nINF     EQU 1\n");
     write(folder / "lib" / "inc1.asm", "        LD HL,end_\n");
     write(folder / "inc2.asm", "        NOP\n");
 
-    AsmReply reply = SyncRun(_context, "sync-inject", {{"path", (folder / "main.asm").string()}, {"from", "sjasmplus"}, {"title", "MAIN"}});
+    // no 'from': a text file is sjasmplus (it was "no frontend for dialect ''")
+    AsmReply reply = SyncRun(_context, "sync-inject", {{"path", (folder / "main.asm").string()}, {"title", "MAIN"}});
     ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.find("from")->s, "sjasmplus");
     EXPECT_EQ(reply.body.find("page")->i, 6);
     const StateNode* includes = reply.body.find("includes");
     ASSERT_NE(includes, nullptr);
