@@ -255,6 +255,7 @@ bool TimeTravelManager::StartRecording()
         for (auto& cp : _timeline)
             ReleaseCheckpointRefs(cp);
         _timeline.clear();
+        NoteTimelineEnd();
         _blobBytes = 0;
         _pageStore.Reset();
         _dirtyTracker->ResetSession();
@@ -332,6 +333,7 @@ bool TimeTravelManager::StartRecording()
     CaptureNow(baseline);
     _blobBytes += BlobBytes(baseline);
     _timeline.push_back(std::move(baseline));
+    NoteTimelineEnd();
 
     SetState(TTDSessionState::Recording);
     DisarmInputPlayback();  // live input again (journaled while recording)
@@ -514,6 +516,7 @@ void TimeTravelManager::InvalidateSession(const char* reason)
     for (auto& cp : _timeline)
         ReleaseCheckpointRefs(cp);
     _timeline.clear();
+    NoteTimelineEnd();
     _blobBytes = 0;
     _pageStore.Reset();
     _dirtyScratch.clear();
@@ -595,6 +598,8 @@ void TimeTravelManager::EngageCaptureFeatures()
 
 void TimeTravelManager::SetState(TTDSessionState next)
 {
+    if (next == TTDSessionState::Recording)
+        NoteTimelineEnd();   // read by other threads from now on (SessionEndPosition)
     _state = next;
     SyncCoverageSink();
     if (next == TTDSessionState::Recording)
@@ -1236,6 +1241,7 @@ void TimeTravelManager::OnFrameBoundary()
         CaptureNow(cp);
         _blobBytes += BlobBytes(cp);
         _timeline.push_back(std::move(cp));
+        NoteTimelineEnd();
         EnforceHistoryLimit();
         _perf.lastCaptureNs = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - captureStart).count());
@@ -2806,8 +2812,21 @@ void TimeTravelManager::RunToTInFrame(uint32_t targetTInFrame)
     }
 }
 
+void TimeTravelManager::NoteTimelineEnd()
+{
+    const TTDTimePoint end = _timeline.empty() ? TTDTimePoint{} : _timeline.back().time;
+    std::lock_guard<std::mutex> lock(_liveEndMutex);
+    _liveEnd = end;
+}
+
 TTDTimePoint TimeTravelManager::SessionEndPosition() const
 {
+    // A running recording ends at its last checkpoint, noted by the machine's thread: no park for another thread
+    if (_state.load() == TTDSessionState::Recording && !OnMachineThread())
+    {
+        std::lock_guard<std::mutex> lock(_liveEndMutex);
+        return _liveEnd;
+    }
     const SessionOperation op{*this, SessionOperation::Kind::Read};
     if (_timeline.empty())
         return TTDTimePoint{};
@@ -2903,12 +2922,18 @@ bool TimeTravelManager::AddBookmark(const TTDTimePoint& time, const std::string&
 
 std::vector<TTDBookmark> TimeTravelManager::GetBookmarks() const
 {
+    // The bookmark store locks itself: a running recording is not parked for a read of it (the machine's thread only
+    // drops the bookmarks an eviction leaves behind, under that lock)
+    if (_state.load() == TTDSessionState::Recording && !OnMachineThread())
+        return _bookmarks.Snapshot();
     const SessionOperation op{*this, SessionOperation::Kind::Read};
     return _bookmarks.Snapshot();
 }
 
 bool TimeTravelManager::FindBookmark(const std::string& label, TTDBookmark& out) const
 {
+    if (_state.load() == TTDSessionState::Recording && !OnMachineThread())
+        return _bookmarks.Find(label, out);   // the store locks itself (GetBookmarks)
     const SessionOperation op{*this, SessionOperation::Kind::Read};
     return _bookmarks.Find(label, out);
 }
@@ -3766,6 +3791,7 @@ void TimeTravelManager::EvictOldest(size_t count)
         _blobBytes -= BlobBytes(_timeline[i]);
     }
     _timeline.erase(_timeline.begin(), _timeline.begin() + static_cast<std::ptrdiff_t>(count));
+    NoteTimelineEnd();
     _evictedCheckpoints += count;
 
     // The journals start where the history now starts
@@ -4266,6 +4292,7 @@ void TimeTravelManager::TruncateTimelineAfter(const TTDTimePoint& from)
     }
 
     _timeline.erase(upperIt, _timeline.end());
+    NoteTimelineEnd();
 
     MLOGINFO("TimeTravelManager::TruncateTimelineAfter — dropped %zu checkpoints "
              "after (frame=%llu, tInFrame=%u); timeline now has %zu entries",
