@@ -446,6 +446,24 @@ TEST_F(MemoryAccessTracker_Test, DataFlowTracking)
 /// region <Feature Flag Tests>
 
 // Test that disabling tracking deallocates buffers
+TEST_F(MemoryAccessTracker_Test, LastRomPageMarkIsInsideItsBufferAndCleared)
+{
+    // MAX_PAGES is not a multiple of 8: the last pages' marks used to land in the byte past the buffer, which no reset
+    // cleared (a page shown active with no accesses)
+    const uint16_t lastPage = MAX_PAGES - 1;
+
+    _memory->SetROMPage(MAX_ROM_PAGES - 1);
+    _tracker->ResetCounters();
+    SimulateMemoryReads(0x0010, CALLER_ADDRESS_1, 3);
+    SimulateMemoryExecutes(0x0010, CALLER_ADDRESS_1, 2);
+    EXPECT_TRUE(_tracker->IsPageActive(lastPage));
+    EXPECT_EQ(_tracker->GetPageReadAccessCount(lastPage), 3u);
+
+    _tracker->ResetCounters();
+    EXPECT_FALSE(_tracker->IsPageActive(lastPage));
+    EXPECT_EQ(_tracker->GetActivePageCount(), 0u);
+}
+
 TEST_F(MemoryAccessTracker_Test, FeatureFlag_OffByDefault)
 {
     FeatureManager* fm = _context->pFeatureManager;

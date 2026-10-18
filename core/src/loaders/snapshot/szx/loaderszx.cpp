@@ -370,6 +370,7 @@ bool LoaderSZX::CommitImage(EmulatorContext* context, const snapshot::Image& ima
     Core& core = *context->pCore;
     Memory& memory = *context->pMemory;
     core.Reset();
+    memory.ClearModelRAM();  // the pages the image does not carry keep nothing of the program before it
 
     // RAM: the machine's pages; a page outside its RAM is reported. A 48K
     // keeps its three pages under their 128K numbers 5, 2 and 0
