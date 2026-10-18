@@ -193,10 +193,15 @@ public:
         }
         processEngaged(buffer, numSamples);
     }
+    /// Tests: off = a silent frame at rest goes through the per-sample path too (comparisons)
+    void setSilenceSkipped(bool skipped) { _silenceSkipped = skipped; }
     /// endregion </Processing>
 
 private:
     void processEngaged(int16_t* buffer, int32_t numSamples);
+    /// A silent frame in the steady state with every stage on at rest: the state processSteady would leave, the
+    /// buffer untouched (it stays silent), and true; false (nothing done) otherwise
+    bool skipSilentSteady(const int16_t* buffer, int32_t numSamples, bool punch, bool room);
     template <bool Punch, bool Room>
     void processSteady(int16_t* buffer, int32_t numSamples);
     void processRamp(int16_t* buffer, int32_t numSamples, float punchFrom, float punchTo, float roomFrom,
@@ -216,6 +221,7 @@ private:
     float _roomGain = 0.0f;
     bool _punchDirty = false;       // the punch followers hold audio
     bool _roomDirty = false;        // the delay line / lowpass hold audio
+    bool _silenceSkipped = true;    // a silent frame at rest skips the per-sample path (skipSilentSteady)
 
 private:
     double _sampleRate = 44100.0;

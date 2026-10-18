@@ -307,3 +307,38 @@ TEST(AudioCharacterChain_Test, SwitchedOnAgainReplaysNothing)
         }
     }
 }
+
+/// A silent frame at rest skips the per-sample path (skipSilentSteady): punch, room and both, a tone, a long silence, the
+/// tone again and a short silence - the same samples as with every frame processed. The punch envelopes released over
+/// the skipped frames decide the transient boost when the tone comes back; the delay line's zeros what room adds then
+TEST(AudioCharacterChain_Test, SilentFramesAtRestMatchEveryFrameProcessed)
+{
+    const struct
+    {
+        bool punch;
+        RoomMode room;
+    } settings[] = {{true, RoomMode::Off}, {false, RoomMode::Room_14dB}, {true, RoomMode::Room_14dB},
+                    {true, RoomMode::Room_1dB}};
+    for (const auto& s : settings)
+    {
+        AudioCharacterChain skipping;
+        AudioCharacterChain full;
+        ConfigureAy(skipping, s.punch, s.room);
+        ConfigureAy(full, s.punch, s.room);
+        full.setSilenceSkipped(false);
+        for (int k = 0; k < 120; k++)
+        {
+            const bool tone = k < 5 || (k >= 60 && k < 63) || k == 100 || k == 110;
+            std::vector<int16_t> frame = tone ? Sines(kFrame, k * kFrame) : std::vector<int16_t>(kFrame * 2, 0);
+            if (k == 100)
+                std::fill(frame.begin(), frame.begin() + kFrame, int16_t(0));  // the tone starts mid-frame
+            if (k == 110)  // a burst shorter than the room delay: the lowpass still reads silence, the line does not
+                std::fill(frame.begin(), frame.end() - 2 * 40, int16_t(0));
+            std::vector<int16_t> other = frame;
+            skipping.processInt16(frame.data(), kFrame);
+            full.processInt16(other.data(), kFrame);
+            ASSERT_EQ(frame, other) << "punch " << s.punch << " room " << AudioCharacterChain::roomModeId(s.room)
+                                    << ": frame " << k;
+        }
+    }
+}
