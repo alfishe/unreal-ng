@@ -242,7 +242,16 @@ void MainLoop::Run(const std::atomic<bool>& stopRequested)
             // against WASAPI's 10 ms pulls and caused steady underruns
             // ("ring errors ... dequeue=N" growing) - see
             // TimeHelper::WaitUntilPrecise and SoundAdaptivity.AVLatencyBudget
-            TimeHelper::WaitUntilPrecise(_nextFrameTime, [&stopRequested] { return stopRequested.load(); });
+            // A park asked for meanwhile (a snapshot load, a command) is served at once, not after the wait and the
+            // next frame; the wait then goes on to the same deadline
+            const auto parkOrStop = [&stopRequested, arbiter] {
+                return stopRequested.load() || (arbiter && arbiter->ShouldYield());
+            };
+            while (!TimeHelper::WaitUntilPrecise(_nextFrameTime, parkOrStop, arbiter ? &arbiter->LoopWake() : nullptr))
+            {
+                if (stopRequested || !arbiter || !Park(emulator, arbiter) || stopRequested)
+                    break;
+            }
         }
         else
         {

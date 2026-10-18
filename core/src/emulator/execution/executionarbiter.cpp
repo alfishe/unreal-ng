@@ -1070,7 +1070,11 @@ void ExecutionArbiter::RecomputeLocked()
     }
     // Only an attached loop parks on it: without one (not started, stopped, ZX-Poly slaves stepped by their master)
     // nothing executes on its own, and the per-instruction check stays a single false read
-    _yield.store(_loopAttached && !mayRun, std::memory_order_relaxed);
+    const bool yield = _loopAttached && !mayRun;
+    const bool raised = yield && !_yield.load(std::memory_order_relaxed);
+    _yield.store(yield, std::memory_order_relaxed);
+    if (raised)
+        _loopWake.Notify();
 }
 
 std::string ExecutionArbiter::HolderLocked() const
