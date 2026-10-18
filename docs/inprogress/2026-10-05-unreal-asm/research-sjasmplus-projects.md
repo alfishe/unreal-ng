@@ -108,9 +108,9 @@ them assemble alone with sjasmplus. Each went to the target as a project (`zxasm
 | MASM 1.1 (2026-10-17) | 31 | 18 | the Lua ones (4), MASM's INCBIN sector slack as TASM's (2) |
 | GENS 4 (2026-10-17) | 30 | 12 | the Lua ones (4), DISP (3: GENS assembles code where it lies) |
 | ZEUS 1983 / v7.E (2026-10-17) | 30 / 30 | 12 / 20 | the Lua ones (4), `DS 16384,#CF` (3: more DEFB than ZEUS's text holds, its DEFS leaves memory as it was) |
-| Laser Genius 1.04 (2026-10-17) | 30 | 19 | the Lua ones (4), Wild Commander's `emu.asm` (3: 10 bytes of a macro that assigns `VORG = $` at each call) |
-| Primus 2.9 (2026-10-17) | 24 | 12 | the Lua ones (4), DISP and a second ORG (Primus has neither) |
-| PASM 3.0 (2026-10-17) | 19 | 19 | the Lua ones (4), PASM's memory model (one ORG; code below #8000 in another page) |
+| Laser Genius 1.04 (2026-10-17) | 33 | 19 | the Lua ones (4) |
+| Primus 2.9 (2026-10-17) | 25 | 12 | the Lua ones (4), a second ORG back (Wild Commander's `emu.asm` ×3, Cobra, Flex Navigator ×2: Primus takes one ORG; one ahead is a hole), DISP (relocation, pentevo's `plasmatw`: Primus has none) |
+| PASM 3.0 (2026-10-17) | 26 | 19 | the Lua ones (4), a second ORG back (`emu.asm` ×3, Cobra, Flex Navigator ×2: PASM takes one ORG), the relocation example (its DISP table) |
 
 What is left, by cause:
 - **Lua** (`3color.asm`, `fire.asm`, both BasicLib examples): the bytes come from Lua scripts sjasmplus runs (BasicLib's
@@ -158,6 +158,10 @@ Two more are done (§7): sjasmplus' relocation table, and ALASM's macros with lo
 | PROMETHEUS backend | a DS of up to 4096 zeros is written as DEFB (PROMETHEUS' DEFS leaves memory as it was; Flex Navigator clears a place with DS #400) | Flex Navigator |
 | `zxasm convert <dir>` | `--version` was not given to the decoder: a Primus text read as ZEUS (DISK as DISP) | DEMON, Flex Navigator |
 | projectcheck.py | the folder of a DOS-style `bin\name` OUTPUT; the device a target text needs is the original's (the memory a device sets up is not the program's) | Flex Navigator, The Link |
+| Laser Genius frontend (2026-10-17) | a PUT is global in Laser Genius, but each file of a project is converted alone: an included file's own PUT moved its bytes inside the includer's DISP (sjasmplus keeps one across INCLUDE). The includer now defines `__LG_PUTIN` while its PUT is in force, the included file's first PUT ends that DISP first (`IFDEF` / `ENT` / `UNDEFINE`) | Wild Commander's `emu.asm` (×3) |
+| PASM frontend (2026-10-17) | "without ORG the code goes to 24576" (`IF $==0`) moved an included file whose includer had `ORG 0`: an ORG now defines `__PASM_ORG` and the rule applies only without it | Wild Commander's `plasmatw` (×3), `trdump`, `setime` |
+| PASM backend (2026-10-17) | a relative jump in a displaced block counted from the line's start, not its statement's (`call ESC : jr nz,.esc` was 3 bytes off): `RetroWriter::statementAddress` | Wild Commander's `trdump`, `setime` |
+| Primus and PASM backends (2026-10-17) | a second ORG ahead of `$` is a hole up to it (Primus' DEFS; PASM had its zeros); after a second ORG left out the text's addresses part from the source's, so no hole is made from there (`emu.asm` grew past 64K) | NextPlayer |
 
 ## 7. The relocation table and ALASM's mixed macros
 

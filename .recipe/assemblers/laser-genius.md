@@ -48,9 +48,9 @@ characters). Add it to the TRD (`zxdisk.py add`), insert the disk, `load "NAME"`
 Typing works too: one paragraph a line (`10 nop`, `20 ld a,7`, …) with ENTER after each; a line the editor took
 moves the end of the text, `(#A973)`, so a script knows when to type the next.
 
-The text in memory: the paragraphs and `FF FF` from `#7F2E` to `(#A973)` (with the hash extensions the end word is
-`#ADA1`); `save` writes them without the `FF FF`, after the `#AF` header. The asm-synchronizer reads it live
-(descriptor `lasergenius-1.04`, without the hash extensions; asm-synchronizer.md §7.16). The loader's first menu is a
+The text in memory: the paragraphs and `FF FF` from `(#A975)` (`#7F2E`; `#737E` with the hash extensions) to
+`(#A973)`; `save` writes them without the `FF FF`, after the `#AF` header. The asm-synchronizer reads, types and
+injects it live, with or without the hash extensions (descriptor `lasergenius-1.04`; asm-synchronizer.md §7.16). The loader's first menu is a
 BASIC INPUT: `1` then ENTER.
 
 ## Assemble and read the code
@@ -112,5 +112,5 @@ lasergenius` gives the same text as a file (the paragraphs; the disk file adds t
   computes it right.
 - **Phoenix (`.PHX`) files** decode like the assembler's (the `#` pseudo-ops of the hash extensions); the conversion
   reports their statements (no assembler equivalent). Typing Phoenix needs the hash extensions loaded (the loader's
-  second question: y); then the text starts at `#77AC` and its end pointer is `(#ADA1)`; register names (`a`, `z`)
+  second question: y); then the text starts at `#737E` and its end pointer is `(#A973)` as without them; register names (`a`, `z`)
   are not variable names there.

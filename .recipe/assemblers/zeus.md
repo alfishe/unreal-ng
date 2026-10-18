@@ -67,6 +67,13 @@ text. ZEUS keeps no "changed" flag: a loaded text is replaced only by force (or 
 `tools/verification/unreal-asm/emulator/inject-oracle.py zeus1983 <ZEUS.TAP> <source.asm> 0x6000 --wait 60` runs the whole
 check (a 48K machine).
 
+## The ports of the 1983 code (synchronizer)
+
+ZEUS 2.2 (`RUN "ZEUS'96"`), ZEUS 2.2SI (`RUN "ZEUS"`, then `Z` in its menu), Zeus Pro (`RUN "ZPro"`), Zeus Plus 2.16
+(`RUN "boot"`, ENTER in its window menu) take a host source at their prompt like ZEUS 1983 (descriptors `zeus-2.2`,
+`zeus-2.2si`, `zeus-pro`, `zeus-plus-2.16`; idle templates in `testdata/templates`). Zeus Plus as it starts holds
+two labels only (ERROR 6 from the third, typed or injected). ZEUS+ 3.1 and ZEUS 128 read as `zeus-1983`.
+
 ## Memory
 
 ZEUS 1983 / 1.1 / GG run at 57344-65535 (v7.E's help: ZEUS at 56000, its label buffer below 55999). The source

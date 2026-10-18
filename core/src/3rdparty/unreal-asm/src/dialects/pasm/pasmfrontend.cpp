@@ -440,6 +440,11 @@ struct LineParser
             Statement s = Directive(DirectiveKind::Org);
             s.args.push_back(Parse(one()));
             line.statements.push_back(std::move(s));
+            // an ORG was given: a file read with ITXT after it keeps that address, even 0 (see the prologue)
+            Statement mark = Directive(DirectiveKind::Other);
+            mark.text = "DEFINE+ __PASM_ORG";
+            mark.params = {"sjasmplus"};
+            line.statements.push_back(std::move(mark));
             return;
         }
         if (upper == "EQU")
@@ -532,20 +537,25 @@ FrontendResult PasmFrontend::Parse(const SourceDocument& source) const
             origin = origin || (s.kind == Statement::Kind::Directive && s.directive == DirectiveKind::Org);
         result.program.lines.push_back(std::move(line));
     }
-    // Without ORG the code goes to 24576: in the main text, where nothing has set the address yet ($ = 0); a text read
-    // with ITXT goes on from its includer's address
+    // Without ORG the code goes to 24576: in the main text, where nothing has set the address yet ($ = 0 and no ORG
+    // marked __PASM_ORG: an includer's ORG 0 is an address too); a text read with ITXT goes on from its includer's
     if (!origin && !result.program.lines.empty())
     {
-        std::vector<ir::Line> head(3);
+        std::vector<ir::Line> head(5);
+        Statement unmarked = Directive(DirectiveKind::Other);
+        unmarked.text = "IFNDEF __PASM_ORG";
+        unmarked.params = {"sjasmplus"};
+        head[0].statements.push_back(std::move(unmarked));
         Statement unset = Directive(DirectiveKind::If);
         unset.args.push_back(Expr::Binary(Op::Equal, Expr::Make(Expr::Kind::Current), Expr::Number(0)));
-        head[0].statements.push_back(std::move(unset));
-        head[0].comment = " PASM puts the code at 24576 without ORG";
-        head[0].hasComment = true;
+        head[1].statements.push_back(std::move(unset));
+        head[1].comment = " PASM puts the code at 24576 without ORG";
+        head[1].hasComment = true;
         Statement org = Directive(DirectiveKind::Org);
         org.args.push_back(Expr::Number(kDefaultOrigin));
-        head[1].statements.push_back(std::move(org));
-        head[2].statements.push_back(Directive(DirectiveKind::EndIf));
+        head[2].statements.push_back(std::move(org));
+        head[3].statements.push_back(Directive(DirectiveKind::EndIf));
+        head[4].statements.push_back(Directive(DirectiveKind::EndIf));
         for (ir::Line& l : head)
             l.sourceLine = 1;
         result.program.lines.insert(result.program.lines.begin(), head.begin(), head.end());

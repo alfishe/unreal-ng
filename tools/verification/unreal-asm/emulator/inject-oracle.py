@@ -15,7 +15,7 @@ from the same source. The assembler disk is the collection's; the tool creates i
     inject-oracle.py gens4 <DEVPAC_4.TAP> <source.asm> <address> [--wait 240]
     inject-oracle.py zeus1983 <ZEUS.TAP> <source.asm> <address> [--wait 60]
     inject-oracle.py primus <PRIMUS29.SCL> <source.asm> <address> [--wait 30]
-    inject-oracle.py lasergenius <LG_1_04.SCL> <source.asm> <address> [--wait 20]
+    inject-oracle.py lasergenius <LG_1_04.SCL> <source.asm> <address> [--wait 20]   # lasergeniushx: the hash extensions loaded
     inject-oracle.py prometheus <prometheus-48.tap> <source.asm> <address> [--wait 10]
     inject-oracle.py pasm <PASM3_0.SCL> <source.asm> <address> [--wait 5]
 

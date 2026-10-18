@@ -128,15 +128,15 @@ TEST(PasmFrontend_Test, Constructs)
     // Left to right (1+2*255 = 765), DUP fills, ' strings, $ of a DW item its own address, ENT a comment, SLI
     EXPECT_EQ(ToSjasmplus("        ORG #6000\nLAB     LD HL,1+2*255\n        DB 'AB',1 DUP 2,'C\n        DW 1,$\n        DW #A0ED DUP 2\n"
                           "        ENT\n        SLI B\n        ITXT LIB1\n        IBIN DAT\n"),
-              (Lines{"ORG #6000", "LAB LD HL,+((1+2)*255)", "DB 'AB'", "DS 2,1", "DB 'C'", "DW 1,($+2)", "DUP 2",
+              (Lines{"ORG #6000", "DEFINE+ __PASM_ORG", "LAB LD HL,+((1+2)*255)", "DB 'AB'", "DS 2,1", "DB 'C'", "DW 1,($+2)", "DUP 2",
                      "DB (#A0ED)&#FF,((#A0ED)&#FFFF)>>8", "EDUP", "SLI B", "INCLUDE \"LIB1.asm\"", "INCBIN \"DAT\""}));
     // $ in an instruction: the bytes put before the operand is read (the first of two operands: before the opcode)
     EXPECT_EQ(ToSjasmplus("        ORG 0\n        JP $\n        LD ($),A\n        LD BC,($)\n        DJNZ $\n"),
-              (Lines{"ORG 0", "JP +($+1)", "LD ($),A", "LD BC,(($+2))", "DJNZ +($+1)"}));
+              (Lines{"ORG 0", "DEFINE+ __PASM_ORG", "JP +($+1)", "LD ($),A", "LD BC,(($+2))", "DJNZ +($+1)"}));
     // $ in EQU is 0 (PASM 3.0: K EQU $ after code gave 0)
-    EXPECT_EQ(ToSjasmplus("        ORG #6000\n        NOP\nK       EQU $\n"), (Lines{"ORG #6000", "NOP", "K EQU 0"}));
-    // Without ORG the code goes to 24576 (in the main text only)
-    EXPECT_EQ(ToSjasmplus("        NOP\n"), (Lines{"IF $==0", "ORG 24576", "ENDIF", "NOP"}));
+    EXPECT_EQ(ToSjasmplus("        ORG #6000\n        NOP\nK       EQU $\n"), (Lines{"ORG #6000", "DEFINE+ __PASM_ORG", "NOP", "K EQU 0"}));
+    // Without ORG the code goes to 24576 (in the main text only: an includer's ORG, even 0, defines __PASM_ORG)
+    EXPECT_EQ(ToSjasmplus("        NOP\n"), (Lines{"IFNDEF __PASM_ORG", "IF $==0", "ORG 24576", "ENDIF", "ENDIF", "NOP"}));
 }
 
 // --- Assembled by sjasmplus (opt-in: UNREAL_ASM_SJASMPLUS) ----------------------------------------------------------

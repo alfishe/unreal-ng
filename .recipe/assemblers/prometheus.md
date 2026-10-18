@@ -99,6 +99,16 @@ The records go from `#9C28`, its symbol table after them; the active line and th
 `zxasm convert --to prometheus -o x.bin` gives the same save as a file. The source and its names lie from `#9C28` up,
 and give code addresses above them (60000).
 
+## Other builds
+
+- **TR-DOS** (`trdos-prometheus48.trd`): `RUN "TRD-PROM"`, ENTER takes the address 25000; the same code as the 48K
+  edition moved up by `#514` (descriptor `prometheus-48-trdos`; `inject-oracle.py prometheustrd`).
+- **PROMETHEUS 128** (tape, Proxima 1993): `LOAD "PROM128LNG"` (or `PROM128MDM`, `PROM128SHT`), ENTER takes 24000, L
+  and M then ask "Install D40/D80 version?" (n; S asks nothing). The text lives in its own 64K space over RAM pages
+  1, 3, 4, 6, from `#C01A` in page 6 (descriptors `prometheus-128`, `-128m`, `-128s`; `inject-oracle.py prometheus128
+  --boot PROM128MDM --assembler prometheus-128m`). Idle templates of all four in `testdata/templates`.
+- Another installation address moves the code: the synchronizer knows only the installers' defaults.
+
 ## Pitfalls
 
 - **`$` in an instruction is the address of the byte its value goes into**, not the instruction's: `jr $` builds
