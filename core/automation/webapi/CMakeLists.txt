@@ -386,4 +386,9 @@ if (ENABLE_RECORDING)
     target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/recording/src)
 endif()
 
+# The host controller verbs (HostInputControl in core/controllers): the define, the headers and the link order
+if (TARGET unrealng::controllers)
+    target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::controllers)
+endif()
+
 

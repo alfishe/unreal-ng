@@ -292,7 +292,7 @@ work at all while no device is connected and no binding is active (the keyboard 
 | What | Where | Why there |
 |:--|:--|:--|
 | Device database, built-in profiles, images and hotspot maps | `data/controllers/` in the repository, shipped | Reviewed by PR, versioned with the code |
-| User profiles, user photos and hotspot maps, device overrides | `<user config>/unreal-ng/controllers/` (JSON) | Host-wide, shared by the Qt client and headless instances; not QSettings, so non-Qt clients read it |
+| User profiles, user photos and hotspot maps, device overrides | `<user config>/unreal-ng/controllers/` (YAML profiles, JSON device overrides) | Host-wide, shared by the Qt client and headless instances; not QSettings, so non-Qt clients read it |
 | Device roles, instance pins, global options (dead zones, Simple / Advanced) | `<user config>/unreal-ng/controllers/settings.json` | Host-wide |
 | Connector plugs of a machine | per-model INI, `[CONTROLLERS] <connector>=<retro device>[,option=value]` | Same place as `[MEDIA]`; survives a model switch by connector id |
 | Legacy keys | `[INPUT] Joystick=`, `JoystickKeys=` (parsed today); Unreal Speccy `KJoystick=`, `FJoystick=`, `Fire=`, `FireRate=`, `ZXKeyMap=` (ignored today) | Read as defaults for unset connectors, quietly, like legacy media keys |
@@ -307,7 +307,7 @@ work at all while no device is connected and no binding is active (the keyboard 
 | Retro devices | existing `io/joystick/joystick.*`, `io/mouse/*`; new `io/joystick/sinclairjoystick.*` (Sinclair and Cursor, on the keyboard matrix overlay), `fullerjoystick.*`, `timexjoystick.*`, `mdpad.*`, `io/mouse/amxmouse.*`, `io/lightgun/*` |
 | Automation | `core/automation/webapi/src/api/controllers_api.cpp`, `openapi_controllers*.inc`; `mcp/src/mcp-controllers.*`; `cli/src/commands/cli-processor-controllers.cpp`; Lua and Python bindings |
 | Qt | `unreal-qt/src/controllers/`: `controllersdialog.*`, `hostdevicelist.*`, `connectorlist.*`, `controllerpicture.*` (QGraphicsView), `patchcordoverlay.*`, `bindingeditor.*`, `devicetestpanel.*`, `learnwizard.*`, `hotspoteditor.*`, `profilebar.*`, `controllertoast.*` |
-| Data | `data/controllers/devices.json`, `data/controllers/images/<family>/`, `data/controllers/profiles/{play,debug}/`, `data/controllers/70-unreal-ng.rules` (Linux udev rule for hidraw access, installed by the packages) |
+| Data | `data/controllers/devices.json`, `data/controllers/images/<family>/`, `data/controllers/profiles/{play,debug,schemes,games}/`, `data/controllers/70-unreal-ng.rules` (Linux udev rule for hidraw access, installed by the packages) |
 | Tests | `core/tests/controllers/`, `core/tests/emulator/io/controllers/`, `tools/verification/webapi/src/test_api_controllers.py`, `tools/verification/mcp/test_controllers.py` |
 
 ## 14. Decision trees

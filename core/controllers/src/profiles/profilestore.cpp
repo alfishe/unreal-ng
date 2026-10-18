@@ -8,6 +8,7 @@
 #include <set>
 #include <sstream>
 
+#include "profiles/yaml.h"
 #include "router/inputrouter.h"
 
 namespace controllers
@@ -68,6 +69,8 @@ bool AppliesTo(const Profile& profile, const ScopeTarget& target)
 
 bool Selected(const Profile& profile, const ProfileContext& context)
 {
+    if (profile.scheme)
+        return false;
     if (profile.kind == ProfileKind::Debug && !context.debugLayer)
         return false;
     if (!profile.machines.empty() && !context.machine.empty() && !Contains(profile.machines, context.machine))
@@ -104,14 +107,18 @@ JsonValue::Members* FindLayer(Layers& layers, const std::string& name)
     return &layers.back().second;
 }
 
+/// layer + '\n' + control -> the profile that changed it last
+using Sources = std::map<std::string, std::string>;
+
 /// mapping-and-profiles.md §6.2: field by field; a target in the later binding replaces every target field before it
-void Merge(Layers& into, const Profile& profile)
+void Merge(Layers& into, const Profile& profile, Sources& sources)
 {
     for (const auto& [layer, bindings] : profile.layers)
     {
         JsonValue::Members& members = *FindLayer(into, layer);
         for (const auto& [control, spec] : bindings)
         {
+            sources[layer + "\n" + control] = profile.id;
             JsonValue later = spec;
             for (const auto& [field, value] : profile.options.GetMembers())
                 if (later.Find(field) == nullptr)
@@ -166,6 +173,36 @@ bool IsPad(const HostDeviceInfo& device)
     return device.family != "keyboard" && device.family != "mouse";
 }
 
+const char* Directory(const Profile& profile)
+{
+    if (profile.kind == ProfileKind::Debug)
+        return "debug";
+    if (profile.scheme)
+        return "schemes";
+    return profile.IsGame() ? "games" : "play";
+}
+
+/// What a directory of LoadDirectory holds; `play/` also takes the game profiles older versions wrote there
+bool Belongs(const Profile& profile, const std::string& sub)
+{
+    if (sub == "play")
+        return profile.kind == ProfileKind::Play && !profile.scheme;
+    if (sub == "debug")
+        return profile.kind == ProfileKind::Debug;
+    if (sub == "schemes")
+        return profile.scheme;
+    return profile.kind == ProfileKind::Play && !profile.scheme && profile.IsGame();
+}
+
+std::string FileName(const Profile& profile)
+{
+    std::string name = profile.id.substr(profile.id.find_last_of('/') + 1);
+    for (char& c : name)
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_' && c != '.')
+            c = '_';
+    return name;
+}
+
 void DumpStrings(JsonValue& object, const char* field, const std::vector<std::string>& values)
 {
     if (values.empty())
@@ -179,10 +216,10 @@ void DumpStrings(JsonValue& object, const char* field, const std::vector<std::st
 
 ProfileStore::ProfileStore()
 {
-    for (const char* text : BuiltinProfileTexts())
+    for (const BuiltinProfileText& builtin : BuiltinProfileTexts())
     {
         std::string error;
-        AddText(text, ProfileScope::Builtin, error);  // the built-in texts are checked by a test
+        AddText(builtin.text, ProfileScope::Builtin, error);  // the built-in texts are checked by a test
     }
 }
 
@@ -226,44 +263,100 @@ size_t ProfileStore::LoadDirectory(const std::string& root, ProfileScope scope, 
 {
     namespace fs = std::filesystem;
     size_t kept = 0;
-    for (const char* sub : {"play", "debug"})
+    for (const std::string sub : {"play", "debug", "schemes", "games"})
     {
         std::error_code ec;
         const fs::path dir = fs::path(root) / sub;
         if (!fs::is_directory(dir, ec))
             continue;
         std::vector<fs::path> files;
-        for (const fs::directory_entry& entry : fs::directory_iterator(dir, ec))
-            if (entry.is_regular_file(ec) && entry.path().extension() == ".json")
-                files.push_back(entry.path());
+        for (fs::recursive_directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+        {
+            const fs::path extension = it->path().extension();
+            if (it->is_regular_file(ec) && (extension == ".yaml" || extension == ".yml" || extension == ".json") &&
+                it->path().filename() != "index.yaml")
+                files.push_back(it->path());
+            if (sub != "games" && it->is_directory(ec))
+                it.disable_recursion_pending();
+        }
         std::sort(files.begin(), files.end());
         for (const fs::path& file : files)
         {
             std::ifstream in(file, std::ios::binary);
-            std::stringstream text;
-            text << in.rdbuf();
-            Profile profile;
-            std::string error;
-            if (!in || !ParseProfile(text.str(), profile, error))
+            std::stringstream stream;
+            stream << in.rdbuf();
+            const std::string text = stream.str();
+            if (!in)
             {
-                errors.push_back(file.string() + ": " + (error.empty() ? "cannot be read" : error));
+                errors.push_back(file.string() + ": cannot be read");
                 continue;
             }
-            const char* kind = profile.kind == ProfileKind::Play ? "play" : "debug";
-            if (std::string(kind) != sub)
+            // A file of games/ may be a bundle: one profile per YAML document
+            std::vector<std::pair<size_t, size_t>> documents = {{0, text.size()}};
+            if (sub == "games" && file.extension() != ".json")
+                documents = SplitYamlDocuments(text);
+            for (const auto& [offset, length] : documents)
             {
-                errors.push_back(file.string() + ": a " + kind + " profile in " + sub + "/");
-                continue;
+                const std::string where = file.string() + (offset != 0 ? " at byte " + std::to_string(offset) : "");
+                Profile profile;
+                std::string error;
+                if (!ParseProfile(text.substr(offset, length), profile, error))
+                {
+                    errors.push_back(where + ": " + error);
+                    continue;
+                }
+                if (!Belongs(profile, sub))
+                {
+                    errors.push_back(where + ": belongs in " + Directory(profile) + "/, not " + sub + "/");
+                    continue;
+                }
+                profile.scope = scope;
+                profile.path = file.string();
+                if (!Add(std::move(profile), error))
+                {
+                    errors.push_back(where + ": " + error);
+                    continue;
+                }
+                ++kept;
             }
-            profile.scope = scope;
-            profile.path = file.string();
-            if (!Add(std::move(profile), error))
-            {
-                errors.push_back(file.string() + ": " + error);
-                continue;
-            }
-            ++kept;
         }
+    }
+    return kept;
+}
+
+bool ProfileStore::OpenGames(const std::string& gamesDir, std::vector<std::string>& errors)
+{
+    return _games.Open(gamesDir, errors);
+}
+
+size_t ProfileStore::LoadGamesFor(const ProfileContext& context, std::vector<std::string>& errors)
+{
+    std::vector<std::string> keys;
+    for (const std::string& sha : context.fileSha256)
+        keys.push_back("sha256:" + sha);
+    for (const std::string& signature : context.signatures)
+        keys.push_back("sig:" + signature);
+    std::vector<std::string> ids;
+    for (const GameEntry* entry : _games.Lookup(keys))
+        ids.push_back(entry->id);
+    for (const std::string& id : context.manual)
+        if (_games.FindId(id) != nullptr)
+            ids.push_back(id);
+    size_t kept = 0;
+    for (const std::string& id : ids)
+    {
+        if (Find(id) != nullptr)
+            continue;
+        Profile profile;
+        std::string error;
+        if (!_games.Load(id, profile, error))
+        {
+            errors.push_back(error);
+            continue;
+        }
+        profile.scope = ProfileScope::Builtin;
+        if (Add(std::move(profile), error))
+            ++kept;
     }
     return kept;
 }
@@ -295,27 +388,67 @@ ResolvedProfiles ProfileStore::Resolve(const ProfileContext& context) const
         return Rank(*a, context) < Rank(*b, context);
     });
 
+    // §7.6: the schemes a profile extends merge just below it, in order, a scheme's own schemes below that scheme
+    std::map<const Profile*, std::vector<const Profile*>> schemes;
+    const auto expand = [&](const Profile& profile, std::vector<std::string>& chain, std::vector<const Profile*>& out,
+                            const auto& self) -> void {
+        for (const std::string& id : profile.extends)
+        {
+            const Profile* scheme = Find(id);
+            if (scheme == nullptr || !scheme->scheme)
+            {
+                resolved.warnings.push_back(profile.id + " extends '" + id + "', which is not a scheme");
+                continue;
+            }
+            if (std::find(chain.begin(), chain.end(), id) != chain.end())
+            {
+                resolved.warnings.push_back(profile.id + " extends '" + id + "': a cycle");
+                continue;
+            }
+            chain.push_back(id);
+            self(*scheme, chain, out, self);
+            chain.pop_back();
+            out.push_back(scheme);
+        }
+    };
+    for (const Profile* profile : selected)
+    {
+        std::vector<std::string> chain = {profile->id};
+        expand(*profile, chain, schemes[profile], expand);
+    }
+
     const auto mergeFor = [&](const ScopeTarget& target, const std::string& scope, bool top) {
         Layers layers;
+        Sources sources;
+        const auto take = [&](const Profile& profile) {
+            Merge(layers, profile, sources);
+            if (!top)
+                return;
+            resolved.applied.push_back(profile.id);
+            for (const auto& [connector, plan] : profile.connectors)
+                resolved.connectors[connector] = plan;
+            if (!profile.players.empty())
+                resolved.players = profile.players;
+            if (!profile.haptics.IsNull())
+            {
+                resolved.haptics = profile.haptics;
+                resolved.hapticsProfile = profile.id;
+            }
+        };
         for (const Profile* profile : selected)
         {
             if (!AppliesTo(*profile, target))
                 continue;
-            Merge(layers, *profile);
-            if (!top)
-                continue;
-            resolved.applied.push_back(profile->id);
-            for (const auto& [connector, plan] : profile->connectors)
-                resolved.connectors[connector] = plan;
-            if (!profile->players.empty())
-                resolved.players = profile->players;
-            if (!profile->haptics.IsNull())
-            {
-                resolved.haptics = profile->haptics;
-                resolved.hapticsProfile = profile->id;
-            }
+            for (const Profile* scheme : schemes[profile])
+                take(*scheme);
+            take(*profile);
         }
         resolved.scopes.emplace_back(scope, Compile(layers, scope, resolved.warnings));
+        std::vector<EffectiveBinding> effective;
+        for (const auto& [layer, members] : layers)
+            for (const auto& [control, spec] : members)
+                effective.push_back({layer, control, spec, sources[layer + "\n" + control]});
+        resolved.effective.emplace_back(scope, std::move(effective));
     };
 
     mergeFor({}, "", true);
@@ -343,7 +476,10 @@ ResolvedProfiles ProfileStore::Resolve(const ProfileContext& context) const
 
 ResolvedProfiles ProfileStore::Apply(InputRouter& router, const ProfileContext& context)
 {
+    std::vector<std::string> gameErrors;
+    LoadGamesFor(context, gameErrors);
     ResolvedProfiles resolved = Resolve(context);
+    resolved.warnings.insert(resolved.warnings.end(), gameErrors.begin(), gameErrors.end());
     std::vector<std::string> scopes;
     for (const auto& [scope, bindings] : resolved.scopes)
     {
@@ -381,12 +517,21 @@ ResolvedProfiles ProfileStore::Apply(InputRouter& router, const ProfileContext& 
 
 std::string ProfileStore::Dump(const Profile& profile)
 {
+    return "# " + profile.id +
+           ": written by unreal-ng, which does not keep comments in this file when it writes it again\n" +
+           DumpYaml(ToJson(profile));
+}
+
+JsonValue ProfileStore::ToJson(const Profile& profile)
+{
     JsonValue root = JsonValue::Object();
     root.Set("schema", JsonValue::Number(1));
-    root.Set("kind", JsonValue::String(profile.kind == ProfileKind::Play ? "play" : "debug"));
+    const char* kind = profile.kind == ProfileKind::Play ? "play" : "debug";
+    root.Set("kind", JsonValue::String(profile.scheme ? "scheme" : kind));
     root.Set("id", JsonValue::String(profile.id));
     if (!profile.label.empty())
         root.Set("label", JsonValue::String(profile.label));
+    DumpStrings(root, "extends", profile.extends);
 
     JsonValue match = JsonValue::Object();
     DumpStrings(match, "machines", profile.machines);
@@ -446,37 +591,44 @@ std::string ProfileStore::Dump(const Profile& profile)
     root.Set("layers", layers);
     if (!profile.haptics.IsNull())
         root.Set("haptics", profile.haptics);
-    return root.Dump(2) + "\n";
+    return root;
+}
+
+std::string ProfileStore::SavePath(const Profile& profile, const std::string& root)
+{
+    return (std::filesystem::path(root) / Directory(profile) / (FileName(profile) + ".yaml")).string();
 }
 
 bool ProfileStore::Save(const Profile& profile, const std::string& root, std::string& error)
 {
     namespace fs = std::filesystem;
-    std::string name = profile.id.substr(profile.id.find_last_of('/') + 1);
-    for (char& c : name)
-        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_' && c != '.')
-            c = '_';
+    const std::string name = FileName(profile);
     if (name.empty() || name[0] == '.')
     {
         error = "'" + profile.id + "' does not name a file";
         return false;
     }
-    const fs::path dir = fs::path(root) / (profile.kind == ProfileKind::Play ? "play" : "debug");
+    const fs::path file = SavePath(profile, root);
     std::error_code ec;
-    fs::create_directories(dir, ec);
+    fs::create_directories(file.parent_path(), ec);
     if (ec)
     {
-        error = dir.string() + ": " + ec.message();
+        error = file.parent_path().string() + ": " + ec.message();
         return false;
     }
-    const fs::path file = dir / (name + ".json");
-    std::ofstream out(file, std::ios::binary | std::ios::trunc);
-    out << Dump(profile);
-    if (!out)
     {
-        error = file.string() + ": cannot be written";
-        return false;
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out << Dump(profile);
+        if (!out)
+        {
+            error = file.string() + ": cannot be written";
+            return false;
+        }
     }
+    // The JSON an older version wrote for this profile (play/ held the game profiles then)
+    fs::remove(fs::path(root) / Directory(profile) / (name + ".json"), ec);
+    if (profile.IsGame())
+        fs::remove(fs::path(root) / "play" / (name + ".json"), ec);
     return true;
 }
 

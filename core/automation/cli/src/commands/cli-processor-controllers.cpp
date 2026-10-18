@@ -2,8 +2,14 @@
 #include <emulator/io/controllers/controllercontrol.h>
 #include <emulator/state/statenodejson.h>
 
+#ifdef ENABLE_CONTROLLERS
+#include "hostinputcontrol.h"
+#endif
+
 #include <algorithm>
+#include <fstream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -12,7 +18,9 @@
 /// region <Controllers>
 
 // controllers [verb] ... : a thin adapter over ControllerControl (core/src/emulator/io/controllers/controllercontrol.h),
-// the same verbs as WebAPI /api/v1/emulator/{id}/controllers and MCP `controllers` (controller manager surfaces.md §2)
+// the same verbs as WebAPI /api/v1/emulator/{id}/controllers and MCP `controllers` (controller manager surfaces.md §2).
+// The host verbs (profiles, bindings, devices: the process's, no emulator) go to HostInputControl
+// (core/controllers/src/hostinputcontrol.h), as WebAPI /api/v1/controllers/{verb} does
 
 namespace
 {
@@ -25,6 +33,18 @@ namespace
         "controllers options <connector> opt=val .. - Change the options of the device it holds\n"
         "controllers targets <device>               - The connectors that take a device, the default first\n"
         "controllers auto [apply]                   - The port-read evidence and the joystick it points to\n"
+        "Host (profiles and bindings of the host's pads, keyboard and mouse):\n"
+        "controllers devices                        - The connected host devices\n"
+        "controllers context                        - Machine, file hashes, manual game profile, devices\n"
+        "controllers profiles [set=game|play|debug|scheme] [machine=next] - Every profile\n"
+        "controllers profile <id>                   - One profile as YAML\n"
+        "controllers save <file>                    - Save a profile file (YAML or JSON) into the user's profiles\n"
+        "controllers delete <id>                    - Delete a user profile\n"
+        "controllers apply <id|none>                - The game profile by hand (none: by the loaded file)\n"
+        "controllers bindings [device=..] [layer=play|debug] - The effective bindings and their profiles\n"
+        "controllers bind <control> field=val .. [family=..|device=..|profile=..] [layer=..] - e.g. bind south "
+        "key=ENTER, bind west spec='{key: \"5\"}'\n"
+        "controllers unbind <control> [family=..|device=..|profile=..] [layer=..]\n"
         "Flags: --json (the reply every surface returns), async (do not wait for the frame boundary)\n";
 
     std::string Lines(const std::string& text, const char* newline)
@@ -62,6 +82,85 @@ namespace
             line += "  (" + alias->s + ")";
         return line + "\n";
     }
+
+#ifdef ENABLE_CONTROLLERS
+    /// A host verb: positional id (profile, delete, apply), control (bind, unbind) or file (save); for bind, the
+    /// options that are not the verb's become the binding spec (key=ENTER label=Fire)
+    std::string HandleHostVerb(const std::string& verb, const std::vector<std::string>& words,
+                               const std::map<std::string, std::string>& options, bool json)
+    {
+        using namespace controllers;
+        HostRequest request;
+        request.verb = verb;
+        const std::vector<std::string>& known = HostInputControl::OptionsFor(verb);
+        JsonValue spec = JsonValue::Object();
+        for (const auto& [name, value] : options)
+        {
+            if (std::find(known.begin(), known.end(), name) != known.end() || verb != "bind")
+                request.options[name] = value;
+            else
+                spec.Set(name, JsonValue::String(value));
+        }
+        if (words.size() > 1)
+        {
+            if (verb == "bind" || verb == "unbind")
+                request.options["control"] = words[1];
+            else if (verb == "save")
+            {
+                std::ifstream file(words[1], std::ios::binary);
+                if (!file)
+                    return "Error: cannot read '" + words[1] + "'\n";
+                std::ostringstream text;
+                text << file.rdbuf();
+                request.options["text"] = text.str();
+            }
+            else
+                request.options["id"] = words[1];
+        }
+        if (verb == "bind" && request.options.count("spec") == 0 && !spec.GetMembers().empty())
+            request.options["spec"] = spec.Dump();
+
+        const HostReply reply = HostInputControl::Process(request);
+        if (json)
+            return reply.ToJson() + "\n";
+        if (!reply.Ok())
+            return "Error: " + reply.message + "\n";
+        std::string text;
+        if (verb == "profile" && reply.body.Find("yaml") != nullptr)
+            return reply.body.Find("yaml")->AsString();
+        if (const JsonValue* bindings = reply.body.Find("bindings"))
+        {
+            for (const JsonValue& binding : bindings->Items())
+            {
+                std::string line = "  " + binding.Find("layer")->AsString() + "." + binding.Find("control")->AsString();
+                line.resize(std::max<size_t>(line.size() + 1, 24), ' ');
+                line += binding.Find("spec")->Dump();
+                line.resize(std::max<size_t>(line.size() + 1, 60), ' ');
+                text += line + binding.Find("profile")->AsString() + "\n";
+            }
+            return "Bindings (control, spec, profile):\n" + text;
+        }
+        if (const JsonValue* profiles = reply.body.Find("profiles"))
+        {
+            for (const JsonValue& profile : profiles->Items())
+            {
+                std::string line = "  " + profile.Find("id")->AsString();
+                line.resize(std::max<size_t>(line.size() + 1, 40), ' ');
+                if (const JsonValue* label = profile.Find("label"))
+                    line += label->AsString();
+                text += line + "\n";
+            }
+            return "Profiles (id, label):\n" + text;
+        }
+        text = "OK";
+        if (!reply.message.empty())
+            text += ": " + reply.message;
+        text += "\n";
+        for (const auto& [key, field] : reply.body.GetMembers())
+            text += "  " + key + ": " + (field.IsString() ? field.AsString() : field.Dump()) + "\n";
+        return text;
+    }
+#endif
 }  // namespace
 
 void CLIProcessor::HandleControllers(const ClientSession& session, const std::vector<std::string>& args)
@@ -81,11 +180,22 @@ void CLIProcessor::HandleControllers(const ClientSession& session, const std::ve
             json = true;
         else if (arg.find('=') != std::string::npos)
             options[arg.substr(0, arg.find('='))] = arg.substr(arg.find('=') + 1);
-        else if (arg == "async" || arg == "apply" || arg == "shift")
+        else if (!words.empty() && (arg == "async" || arg == "apply" || arg == "shift"))  // not the verb `apply`
             options[arg] = "";
         else
             words.push_back(arg);
     }
+#ifdef ENABLE_CONTROLLERS
+    if (!words.empty())
+    {
+        const auto& hostVerbs = HostInputControl::Verbs();
+        if (std::find(hostVerbs.begin(), hostVerbs.end(), words[0]) != hostVerbs.end())
+        {
+            session.SendResponse(Lines(HandleHostVerb(words[0], words, options, json), NEWLINE));
+            return;
+        }
+    }
+#endif
     ControllerRequest request;
     request.verb = words.empty() ? "list" : words[0];
     const auto& verbs = ControllerControl::Verbs();

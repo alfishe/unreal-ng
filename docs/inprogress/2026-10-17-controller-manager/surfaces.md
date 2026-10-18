@@ -116,13 +116,13 @@ POST   /api/v1/emulator/{id}/controllers/{connector}/{verb}  plug | unplug | pre
 GET    /api/v1/emulator/{id}/controllers/targets?device=...
 GET    /api/v1/emulator/{id}/controllers/auto                explain; POST .../auto/apply
 
-GET    /api/v1/controllers/host                              devices + probe summary
-GET    /api/v1/controllers/host/{device}
-POST   /api/v1/controllers/host/{device}/{verb}              role | pin | identify | bind | unbind | learn
-GET    /api/v1/controllers/host/{device}/bindings?layer=play|debug
-GET    /api/v1/controllers/profiles?set=play|debug
-POST   /api/v1/controllers/profiles/{profile}/{verb}         apply | save | delete | export
-POST   /api/v1/controllers/profiles/import
+GET    /api/v1/controllers/{verb}            devices | context | profiles?set=game|play|debug|scheme&machine=..
+                                             | profile?id=.. | bindings?device=..&layer=play|debug
+POST   /api/v1/controllers/{verb}            save {text} | delete {id} | apply {id|none}
+                                             | bind {control, spec, layer?, family?|device?|profile?}
+                                             | unbind {control, layer?, family?|device?|profile?}
+       (built: HostInputControl, core/controllers/src/hostinputcontrol.h; the wrong method answers 405)
+POST   /api/v1/controllers/host/{device}/{verb}              role | pin | identify | learn (not built)
 GET    /api/v1/controllers/database?vidpid=045e:0b00 | guid=...
 POST   /api/v1/controllers/database/import                   gamecontrollerdb line or RetroArch .cfg
 GET    /api/v1/controllers/probe
@@ -139,6 +139,16 @@ Actions belong to the companion scopes that already exist (`run`, `rewind`, `deb
 D3), so a paired Stream Deck calls them without opening a session.
 
 Each route gets an `openapi_controllers*.inc` entry, as media and joystick do.
+
+The host verbs are one table, `HostInputControl` (process scope: the Qt client's `HostControllers` registers as its
+owner and runs each request on the GUI thread; no owner answers `unavailable` 503). WebAPI `/api/v1/controllers/{verb}`,
+MCP `controllers` (the same action names, no target), CLI `controllers <verb>` (positional id / control / file;
+`bind south key=ENTER` builds the spec) and Python `controllers_host(verb, **options)` with the named wrappers
+(`controllers_profiles`, `controllers_profile`, `controllers_save_profile`, `controllers_delete_profile`,
+`controllers_apply_profile`, `controllers_bindings`, `controllers_bind`, `controllers_unbind`) all build a
+`HostRequest`. `bind` without `profile` writes `user/device-<id>` (device=), `user/<family>` (family=) or
+`user/global`; a shipped profile named by `profile=` is copied into the user's of the same id, which overrides it, and
+`delete` of that copy brings the shipped one back.
 
 ## 7. MCP
 

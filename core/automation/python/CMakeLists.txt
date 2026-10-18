@@ -238,6 +238,11 @@ else()
         target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/recording/src)
     endif()
 
+    # The host controller verbs (HostInputControl in core/controllers): the define, the headers and the link order
+    if (TARGET unrealng::controllers)
+        target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::controllers)
+    endif()
+
     # zstd::libzstd is required because core's ttd_compression.h (pulled in
     # transitively via python_emulator.h -> timetravelmanager.h ->
     # ttd_codec_page_store.h) #includes <zstd.h>, and this target uses

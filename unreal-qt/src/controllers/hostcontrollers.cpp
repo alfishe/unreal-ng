@@ -8,10 +8,12 @@
 #include <QMetaObject>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QThread>
 
 #include <algorithm>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "common/filehelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatorcontext.h"
@@ -28,6 +30,49 @@
 #include "router/inputrouter.h"
 
 using namespace controllers;
+
+namespace
+{
+/// HostInputControl's view of the Qt client's host input
+class ControlOwner : public IHostInputOwner
+{
+public:
+    explicit ControlOwner(HostControllers& host) : _host(host)
+    {
+    }
+    ProfileStore& Profiles() override
+    {
+        return _host.Profiles();
+    }
+    ProfileContext Context() const override
+    {
+        return _host.Context();
+    }
+    const ResolvedProfiles& Resolved() const override
+    {
+        return _host.Resolved();
+    }
+    std::string UserProfileDir() const override
+    {
+        return HostControllers::UserProfileDir().toStdString();
+    }
+    std::string ManualProfile() const override
+    {
+        return _host.ManualProfile();
+    }
+    void SetManualProfile(const std::string& id) override
+    {
+        _host.SetManualProfile(id);
+    }
+    void Reapply() override
+    {
+        _host.Reapply();
+    }
+
+private:
+    HostControllers& _host;
+};
+}  // namespace
 #endif
 
 HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QObject(parent), _binding(binding)
@@ -38,6 +83,8 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
     _service = std::make_unique<HostInputService>();
     std::vector<std::string> errors;
     _profiles.LoadDirectory(UserProfileDir().toStdString(), ProfileScope::User, errors);
+    // The shipped game profiles: the index now, a profile when a loaded file or a manual choice names it
+    _profiles.OpenGames(FileHelper::GetResourcesPath() + "/controllers/profiles/games", errors);
     for (const std::string& error : errors)
         qWarning("controllers: %s", error.c_str());
     _service->Router().SetActionSink([this](const ActionEvent& event) {
@@ -47,6 +94,15 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
                                   Qt::QueuedConnection);
     });
     _service->StartNative();
+    // The host verbs of the automation surfaces run here, on the GUI thread
+    _controlOwner = std::make_unique<ControlOwner>(*this);
+    HostInputControl::SetOwner(_controlOwner.get(), [](const std::function<void()>& task) {
+        QCoreApplication* app = QCoreApplication::instance();
+        if (app == nullptr || QThread::currentThread() == app->thread())
+            task();
+        else
+            QMetaObject::invokeMethod(app, [&task] { task(); }, Qt::BlockingQueuedConnection);
+    });
     // The program loaded: its file's hash keys the game profiles, and the auto decision starts again
     _fileObserver = MessageCenter::DefaultMessageCenter().AddObserver(NC_FILE_LOADED, [this](int, Message* message) {
         auto* payload = message != nullptr ? dynamic_cast<FileLoadedPayload*>(message->obj) : nullptr;
@@ -78,6 +134,7 @@ HostControllers::~HostControllers()
 {
     onUnbound();
 #ifdef ENABLE_CONTROLLERS
+    HostInputControl::SetOwner(nullptr);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_FILE_LOADED, _fileObserver);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_EXECUTION_BREAKPOINT, _breakpointObserver);
     _service->Router().SetActionSink(nullptr);
@@ -198,6 +255,7 @@ void HostControllers::Reapply()
     context.debugLayer = _debugLayer;
     assignPlayers(context.devices);
     _resolved = _profiles.Apply(_service->Router(), context);
+    _context = context;
     applyConnectorPlans();
     attachHaptics();
     for (const std::string& warning : _resolved.warnings)

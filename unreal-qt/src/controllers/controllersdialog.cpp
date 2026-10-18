@@ -89,10 +89,23 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
                                 "started from the machine itself (a NEX from NextZXOS's browser)"));
     _gameProfile->addItem(tr("By the loaded file"), QString());
 #ifdef ENABLE_CONTROLLERS
+    // The shipped games from the index (not parsed until chosen) and the user's own
+    std::map<QString, QString> games;  // label -> id, sorted by label
+    const auto addGame = [&games](const std::string& id, const std::string& label,
+                                  const std::vector<std::string>& machines) {
+        QString text = QString::fromStdString(label.empty() ? id : label);
+        if (!machines.empty())
+            text += " (" + QString::fromStdString(machines.front()) + ")";
+        games.emplace(text, QString::fromStdString(id));
+    };
+    for (const GameEntry& entry : _host->Profiles().Games().Entries())
+        addGame(entry.id, entry.label, entry.machines);
     for (const Profile* profile : _host->Profiles().Profiles())
-        if (profile->kind == ProfileKind::Play && profile->IsGame())
-            _gameProfile->addItem(QString::fromStdString(profile->label.empty() ? profile->id : profile->label),
-                                  QString::fromStdString(profile->id));
+        if (profile->kind == ProfileKind::Play && profile->IsGame() &&
+            _host->Profiles().Games().FindId(profile->id) == nullptr)
+            addGame(profile->id, profile->label, profile->machines);
+    for (const auto& [text, id] : games)
+        _gameProfile->addItem(text, id);
     _gameProfile->setCurrentIndex(std::max(0, _gameProfile->findData(QString::fromStdString(_host->ManualProfile()))));
     connect(_gameProfile, &QComboBox::currentIndexChanged, this,
             [this] { _host->SetManualProfile(_gameProfile->currentData().toString().toStdString()); });

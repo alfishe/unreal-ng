@@ -1,0 +1,111 @@
+#pragma once
+
+/// @file hostinputcontrol.h
+/// @brief The host side of the controller verbs for every surface (surfaces.md §1-§2): the profiles, the effective
+/// bindings, bind / unbind in a user profile, the manual game profile, the connected devices. One per process, as
+/// ControllerControl is one per machine: WebAPI (and MCP through it), CLI and Python turn their input into a
+/// HostRequest and the HostReply into their output, so the surfaces cannot drift apart.
+///
+/// The profiles and the router belong to the process's host input owner (the Qt client's HostControllers): it
+/// registers itself with SetOwner and a runner that executes a request on its own thread.
+///
+/// Verbs: devices, context, profiles, profile, save, delete, apply, bindings, bind, unbind.
+///
+/// @code
+///   HostRequest request{"apply", {{"id", "builtin/game/vradarks-revenge"}}};
+///   HostReply reply = HostInputControl::Process(request);
+///   http.status = reply.HttpStatus();  http.body = reply.ToJson();
+/// @endcode
+
+#include <functional>
+#include <map>
+#include <string>
+#include <vector>
+
+#include "profiles/json.h"
+#include "profiles/profilestore.h"
+
+namespace controllers
+{
+
+struct HostRequest
+{
+    std::string verb;
+    /// Options by name (surfaces.md §2): id, set, text, control, spec, layer, family, device, profile
+    std::map<std::string, std::string> options;
+};
+
+struct HostReply
+{
+    std::string error;    ///< empty = ok; surfaces.md §4: unknown-profile, bad-request, invalid-binding, read-only,
+                          ///< unavailable
+    std::string message;  ///< why, for a person (and an agent that reads only the text)
+    JsonValue body = JsonValue::Object();  ///< verb-specific fields, merged into the envelope
+
+    bool Ok() const
+    {
+        return error.empty();
+    }
+    /// {ok, error, message, ...body}
+    JsonValue ToValue() const;
+    std::string ToJson() const;
+    int HttpStatus() const;
+};
+
+/// What the host input owner gives the control
+class IHostInputOwner
+{
+public:
+    virtual ~IHostInputOwner() = default;
+    virtual ProfileStore& Profiles() = 0;
+    /// The context of the last apply: machine, file hashes, manual choice, devices
+    virtual ProfileContext Context() const = 0;
+    virtual const ResolvedProfiles& Resolved() const = 0;
+    /// `<user config>/unreal-ng/controllers/profiles`
+    virtual std::string UserProfileDir() const = 0;
+    virtual std::string ManualProfile() const = 0;
+    /// Choose the game profile by hand (empty: by the loaded file); applies at once
+    virtual void SetManualProfile(const std::string& id) = 0;
+    /// Resolve and apply the profiles again (after a change in the store)
+    virtual void Reapply() = 0;
+};
+
+class HostInputControl
+{
+public:
+    /// Runs a request on the owner's thread and returns when it ran
+    using Runner = std::function<void(const std::function<void()>&)>;
+
+    explicit HostInputControl(IHostInputOwner& owner) : _owner(owner)
+    {
+    }
+
+    /// On the owner's thread
+    HostReply Execute(const HostRequest& request);
+
+    static const std::vector<std::string>& Verbs();
+    static const std::vector<std::string>& OptionsFor(const std::string& verb);
+
+    /// The process's owner (nullptr when it goes); @p run defaults to calling in place
+    static void SetOwner(IHostInputOwner* owner, Runner run = {});
+    /// Execute on the registered owner's thread; `unavailable` with the reason when there is none
+    static HostReply Process(const HostRequest& request);
+
+private:
+    HostReply Devices();
+    HostReply Context();
+    HostReply List(const HostRequest& request);
+    HostReply Get(const HostRequest& request);
+    HostReply Save(const HostRequest& request);
+    HostReply Delete(const HostRequest& request);
+    HostReply Apply(const HostRequest& request);
+    HostReply Bindings(const HostRequest& request);
+    HostReply Bind(const HostRequest& request, bool unbind);
+
+    /// The profile @p id, parsing a shipped game from the index when it is not kept yet
+    const Profile* FindProfile(const std::string& id);
+
+    IHostInputOwner& _owner;
+};
+
+}  // namespace controllers

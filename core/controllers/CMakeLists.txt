@@ -46,6 +46,28 @@ file(READ ${DEVICES_JSON_FILE} DEVICES_JSON)
 configure_file(${SOURCE_DIR}/devicesjson.cpp.in ${CMAKE_CURRENT_BINARY_DIR}/generated/devicesjson.cpp @ONLY)
 list(APPEND CPP_FILES ${CMAKE_CURRENT_BINARY_DIR}/generated/devicesjson.cpp)
 
+# The default profiles and the schemes (mapping-and-profiles.md §7.5) are compiled in the same way, one literal per
+# file; the game profiles stay files (runtime data, through games/index.yaml)
+set(PROFILES_DIR ${ROOT_DIR}/data/controllers/profiles)
+file(GLOB BUILTIN_PROFILE_FILES CONFIGURE_DEPENDS
+    ${PROFILES_DIR}/play/*.yaml ${PROFILES_DIR}/debug/*.yaml ${PROFILES_DIR}/schemes/*.yaml)
+list(SORT BUILTIN_PROFILE_FILES)
+set(BUILTIN_PROFILES "")
+foreach(PROFILE_FILE ${BUILTIN_PROFILE_FILES})
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${PROFILE_FILE})
+    file(READ ${PROFILE_FILE} PROFILE_TEXT)
+    string(LENGTH "${PROFILE_TEXT}" PROFILE_LENGTH)
+    file(RELATIVE_PATH PROFILE_NAME ${PROFILES_DIR} ${PROFILE_FILE})
+    # MSVC takes up to 16380 bytes in one literal
+    if(PROFILE_LENGTH GREATER 16000)
+        message(FATAL_ERROR "${PROFILE_NAME}: ${PROFILE_LENGTH} bytes, a compiled-in profile holds at most 16000")
+    endif()
+    string(APPEND BUILTIN_PROFILES "    {\"${PROFILE_NAME}\", R\"profile(${PROFILE_TEXT})profile\"},\n")
+endforeach()
+configure_file(${SOURCE_DIR}/profiles/builtinprofiles.cpp.in ${CMAKE_CURRENT_BINARY_DIR}/generated/builtinprofiles.cpp
+               @ONLY)
+list(APPEND CPP_FILES ${CMAKE_CURRENT_BINARY_DIR}/generated/builtinprofiles.cpp)
+
 add_library(${PROJECT_NAME} STATIC ${CPP_FILES})
 add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
@@ -55,6 +77,12 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 )
 
 target_compile_definitions(${PROJECT_NAME} PUBLIC ENABLE_CONTROLLERS)
+
+# rapidyaml for the profile files (profiles/yaml.cpp); its own library, not the core's
+if(NOT TARGET rapidyaml)
+    add_subdirectory(${ROOT_DIR}/core/src/3rdparty/rapidyaml ${CMAKE_CURRENT_BINARY_DIR}/rapidyaml)
+endif()
+target_link_libraries(${PROJECT_NAME} PRIVATE rapidyaml)
 
 if(APPLE)
     target_link_libraries(${PROJECT_NAME} PUBLIC "-framework IOKit" "-framework CoreFoundation")

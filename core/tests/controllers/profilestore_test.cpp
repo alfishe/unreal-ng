@@ -1,15 +1,19 @@
 /// @file profilestore_test.cpp
-/// @brief Controller profiles (mapping-and-profiles.md §6-§8): the JSON reader, schema 1 validation with the reason,
-/// the built-in defaults, the field-by-field merge global → family → device → game, the directories and a save.
+/// @brief Controller profiles (mapping-and-profiles.md §6-§8): the JSON and YAML readers, schema 1 validation with the
+/// reason, the built-in defaults and every shipped game file, the games index, schemes (`extends`), the field-by-field
+/// merge global → family → device → game, the directories and a save.
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 
 #include "_helpers/testpathhelper.h"
 #include "profiles/json.h"
 #include "profiles/profilestore.h"
+#include "profiles/yaml.h"
 #include "router/inputrouter.h"
 
 using namespace controllers;
@@ -25,6 +29,11 @@ const Binding* Find(const ResolvedProfiles& resolved, const std::string& scope, 
                 if (binding.layer == layer && binding.sources.size() == 1 && binding.sources[0] == source)
                     return &binding;
     return nullptr;
+}
+
+std::string GamesDir()
+{
+    return (TestPathHelper::FindProjectRoot() / "data" / "controllers" / "profiles" / "games").string();
 }
 
 std::string Play(const std::string& id, const std::string& extra, const std::string& bindings)
@@ -53,14 +62,86 @@ TEST(ProfileStore_Test, Json_ParsesAndReportsThePlace)
     EXPECT_FALSE(ParseJson("{} x", value, error));
 }
 
+TEST(ProfileStore_Test, Yaml_ScalarsKeysAndPlace)
+{
+    JsonValue value;
+    std::string error;
+    ASSERT_TRUE(ParseYaml(R"(# a comment
+a: [1, 2.5, 0x10, true, ~, "7", '']
+b: plain text   # a trailing comment
+"dpad.*": { on: 2, off: 3 }
+)",
+                          value, error))
+        << error;
+    ASSERT_TRUE(value.IsObject());
+    EXPECT_EQ(value.GetMembers()[0].first, "a") << "members keep their order";
+    const auto& items = value.Find("a")->Items();
+    ASSERT_EQ(items.size(), 7u);
+    EXPECT_EQ(items[1].AsNumber(), 2.5);
+    EXPECT_EQ(items[2].AsNumber(), 16);
+    EXPECT_TRUE(items[3].IsBool());
+    EXPECT_TRUE(items[4].IsNull());
+    EXPECT_TRUE(items[5].IsString()) << "a quoted digit stays a string";
+    EXPECT_TRUE(items[6].IsString());
+    EXPECT_EQ(value.Find("b")->AsString(), "plain text");
+    EXPECT_EQ(value.Find("dpad.*")->Find("on")->AsNumber(), 2) << "YAML 1.2: `on` is a key, not a bool";
+
+    JsonValue again;
+    ASSERT_TRUE(ParseYaml(DumpYaml(value), again, error)) << error << "\n" << DumpYaml(value);
+    EXPECT_EQ(again.Dump(), value.Dump()) << DumpYaml(value);
+
+    EXPECT_FALSE(ParseYaml("a: 1\nb: 2\na: 3\n", value, error));
+    EXPECT_NE(error.find("duplicate key 'a'"), std::string::npos) << error;
+    EXPECT_FALSE(ParseYaml("a: [1, 2\nb: 3\n", value, error));
+    EXPECT_NE(error.find("line "), std::string::npos) << error;
+
+    const std::string bundle = "# header\n---\nid: a\n---\n# nothing\n--- \nid: b\n";
+    const auto documents = SplitYamlDocuments(bundle);
+    ASSERT_EQ(documents.size(), 2u);
+    ASSERT_TRUE(ParseYaml(bundle.substr(documents[1].first, documents[1].second), value, error)) << error;
+    EXPECT_EQ(value.Find("id")->AsString(), "b");
+}
+
 TEST(ProfileStore_Test, BuiltinsParseAndInvalidProfilesSayWhy)
 {
-    for (const char* text : BuiltinProfileTexts())
+    for (const BuiltinProfileText& builtin : BuiltinProfileTexts())
     {
         Profile profile;
         std::string error;
-        EXPECT_TRUE(ParseProfile(text, profile, error)) << error << "\n" << text;
+        EXPECT_TRUE(ParseProfile(builtin.text, profile, error)) << builtin.name << ": " << error;
+        const char* directory = profile.kind == ProfileKind::Play ? "play/" : "debug/";
+        EXPECT_EQ(std::string(builtin.name).rfind(profile.scheme ? "schemes/" : directory, 0), 0u)
+            << builtin.name << ": in its kind's directory";
     }
+    // §7.4: every shipped game file and bundle entry, and the committed index is what the files say
+    std::vector<GameEntry> entries;
+    std::vector<std::string> errors;
+    ASSERT_TRUE(GameLibrary::Build(GamesDir(), entries, errors));
+    for (const std::string& e : errors)
+        ADD_FAILURE() << e;
+    EXPECT_FALSE(entries.empty());
+    std::ifstream in(std::filesystem::path(GamesDir()) / "index.yaml", std::ios::binary);
+    const std::string indexText((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::vector<GameEntry> indexed;
+    std::string why;
+    ASSERT_TRUE(GameLibrary::ParseIndex(indexText, indexed, why)) << why;
+    EXPECT_EQ(GameLibrary::DumpIndex(indexed), GameLibrary::DumpIndex(entries))
+        << "games/index.yaml is stale: run tools/controllers/profile-index.py";
+    {
+        ProfileStore store;
+        ASSERT_TRUE(store.OpenGames(GamesDir(), errors));
+        for (const GameEntry& entry : entries)
+        {
+            ProfileContext context;
+            context.manual = {entry.id};
+            errors.clear();
+            EXPECT_EQ(store.LoadGamesFor(context, errors), 1u) << entry.id;
+            const ResolvedProfiles resolved = store.Resolve(context);
+            for (const std::string& w : resolved.warnings)
+                ADD_FAILURE() << entry.id << ": " << w;
+        }
+    }
+
     Profile profile;
     std::string error;
     EXPECT_FALSE(ParseProfile(Play("x", "", R"("south": {"retro": "kempston:fire", "turob": "classic"})"), profile,
@@ -73,6 +154,11 @@ TEST(ProfileStore_Test, BuiltinsParseAndInvalidProfilesSayWhy)
                               profile, error));
     EXPECT_NE(error.find("no game level"), std::string::npos) << error;
     EXPECT_FALSE(ParseProfile(R"({"schema": 2, "kind": "play", "id": "x"})", profile, error));
+    EXPECT_FALSE(ParseProfile("schema: 1\nkind: scheme\nid: s\nmatch: { machines: [next] }\n", profile, error));
+    EXPECT_NE(error.find("a scheme has no 'match'"), std::string::npos) << error;
+    EXPECT_FALSE(ParseProfile("schema: 1\nkind: play\nid: x\nlayers:\n  play:\n    southh: { key: \"1\" }\n",
+                              profile, error));
+    EXPECT_NE(error.find("layers.play.southh"), std::string::npos) << "YAML says where too: " << error;
 
     ASSERT_TRUE(ParseProfile(Play("x", "", R"("view+menu": {"action": "osd.quick_menu"})"), profile, error)) << error;
 }
@@ -150,9 +236,14 @@ TEST(ProfileStore_Test, Next_MegaDrivePadByDefault)
     context.machine = "pentagon";
     EXPECT_EQ(Find(store.Resolve(context), "", "", "north")->target.kind, TargetKind::Keys) << "SPACE elsewhere";
 
-    // A NEX started from NextZXOS: no file the emulator loaded, the game profile chosen by hand
+    // A NEX started from NextZXOS: no file the emulator loaded, the game profile chosen by hand; it lives on disk
+    // behind the index and extends scheme/wasd and scheme/kempston-mouse
     context.machine = "next";
     context.manual = {"builtin/game/vradarks-revenge"};
+    std::vector<std::string> errors;
+    ASSERT_TRUE(store.OpenGames(GamesDir(), errors));
+    EXPECT_EQ(store.Find("builtin/game/vradarks-revenge"), nullptr) << "not parsed before a match";
+    EXPECT_EQ(store.LoadGamesFor(context, errors), 1u) << (errors.empty() ? "" : errors.front());
     const ResolvedProfiles game = store.Resolve(context);
     EXPECT_TRUE(game.warnings.empty()) << game.warnings.front();
     EXPECT_EQ(game.applied.back(), "builtin/game/vradarks-revenge");
@@ -161,6 +252,52 @@ TEST(ProfileStore_Test, Next_MegaDrivePadByDefault)
     EXPECT_EQ(Find(game, "", "", "south")->target.kind, TargetKind::Keys) << "Enter fires";
     EXPECT_EQ(Find(game, "", "", "rt.click")->target.kind, TargetKind::Mouse);
     EXPECT_EQ(Find(game, "", "", "rstick.x")->target.kind, TargetKind::Mouse) << "the right stick aims";
+    EXPECT_EQ(Find(game, "", "", "lt.click")->target.kind, TargetKind::Mouse) << "from scheme/kempston-mouse";
+    const auto at = [&game](const std::string& id) {
+        return std::find(game.applied.begin(), game.applied.end(), id) - game.applied.begin();
+    };
+    EXPECT_LT(at("scheme/wasd"), at("builtin/game/vradarks-revenge")) << "a scheme merges below its game";
+    EXPECT_LT(at("scheme/kempston-mouse"), at("builtin/game/vradarks-revenge"));
+
+    // The program's hash finds it too, with no manual choice
+    ProfileStore byHash;
+    ASSERT_TRUE(byHash.OpenGames(GamesDir(), errors));
+    context.manual.clear();
+    context.fileSha256 = {"32AD0B5FA7CBB749841ECF26BDD6FCE7563D8FFBCC736C15689B1FA4ABCBCD9E"};
+    EXPECT_EQ(byHash.LoadGamesFor(context, errors), 1u) << "keys compare in any case";
+    EXPECT_EQ(byHash.Resolve(context).applied.back(), "builtin/game/vradarks-revenge");
+}
+
+TEST(ProfileStore_Test, Schemes_ExtendsMergesBelowAndCyclesWarn)
+{
+    ProfileStore store;
+    std::string error;
+    ASSERT_TRUE(store.AddText("schema: 1\nkind: scheme\nid: scheme/a\nextends: scheme/b\nlayers:\n  play:\n"
+                              "    north: { key: Q }\n    west: { key: W }\n",
+                              ProfileScope::User, error))
+        << error;
+    ASSERT_TRUE(store.AddText("schema: 1\nkind: scheme\nid: scheme/b\nextends: [scheme/a]\nlayers:\n  play:\n"
+                              "    east: { key: E }\n",
+                              ProfileScope::User, error))
+        << error;
+    ASSERT_TRUE(store.AddText("schema: 1\nkind: play\nid: user/game\nextends: [scheme/a, scheme/missing]\n"
+                              "match: { file_sha256: [\"ab\"] }\nlayers:\n  play:\n    west: { key: X }\n",
+                              ProfileScope::User, error))
+        << error;
+    ProfileContext context;
+    EXPECT_EQ(Find(store.Resolve(context), "", "", "east")->target.kind, TargetKind::Retro)
+        << "a scheme is not selected by itself: the pad default's fire2";
+    context.fileSha256 = {"ab"};
+    const ResolvedProfiles resolved = store.Resolve(context);
+    ASSERT_NE(Find(resolved, "", "", "north"), nullptr);
+    EXPECT_EQ(Find(resolved, "", "", "north")->target.kind, TargetKind::Keys);
+    EXPECT_EQ(Find(resolved, "", "", "east")->target.kind, TargetKind::Keys) << "a scheme's scheme merges too";
+    ASSERT_EQ(resolved.warnings.size(), 2u);
+    EXPECT_NE(resolved.warnings[0].find("a cycle"), std::string::npos) << resolved.warnings[0];
+    EXPECT_NE(resolved.warnings[1].find("scheme/missing"), std::string::npos) << resolved.warnings[1];
+    const auto& applied = resolved.applied;
+    EXPECT_EQ(applied.back(), "user/game");
+    EXPECT_EQ(applied[applied.size() - 2], "scheme/a");
 }
 
 TEST(ProfileStore_Test, Directories_WrongKindRefusedAndSaveRoundTrips)
@@ -169,6 +306,10 @@ TEST(ProfileStore_Test, Directories_WrongKindRefusedAndSaveRoundTrips)
     const fs::path root = TestPathHelper::GetUniqueTestScratchPath("profiles");
     fs::create_directories(root / "debug");
     std::ofstream(root / "debug" / "wrong.json") << Play("user/wrong", "", R"("south": {"retro": "auto:fire"})");
+    // A JSON file of an older version, replaced when the profile is saved again
+    fs::create_directories(root / "play");
+    std::ofstream(root / "play" / "sabre-wulf.json")
+        << Play("user/sabre-wulf", R"(, "match": {"file_sha256": ["3b2a"]})", R"("south": {"retro": "auto:fire"})");
 
     Profile profile;
     std::string error;
@@ -178,12 +319,14 @@ TEST(ProfileStore_Test, Directories_WrongKindRefusedAndSaveRoundTrips)
                              profile, error))
         << error;
     ASSERT_TRUE(ProfileStore::Save(profile, root.string(), error)) << error;
+    EXPECT_TRUE(fs::is_regular_file(root / "games" / "sabre-wulf.yaml")) << "a game profile goes to games/";
+    EXPECT_FALSE(fs::exists(root / "play" / "sabre-wulf.json")) << "the older JSON goes";
 
     ProfileStore store;
     std::vector<std::string> errors;
     EXPECT_EQ(store.LoadDirectory(root.string(), ProfileScope::User, errors), 1u);
     ASSERT_EQ(errors.size(), 1u);
-    EXPECT_NE(errors[0].find("a play profile in debug/"), std::string::npos) << errors[0];
+    EXPECT_NE(errors[0].find("belongs in play/, not debug/"), std::string::npos) << errors[0];
     const Profile* loaded = store.Find("user/sabre-wulf");
     ASSERT_NE(loaded, nullptr);
     EXPECT_EQ(ProfileStore::Dump(*loaded), ProfileStore::Dump(profile));

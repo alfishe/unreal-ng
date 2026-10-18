@@ -92,6 +92,11 @@ if (NOT TARGET miniz)
     add_subdirectory(3rdparty/miniz)
 endif()
 
+# rapidyaml — YAML / JSON parser of the core and of core/controllers (see its CMakeLists.txt)
+if (NOT TARGET rapidyaml)
+    add_subdirectory(3rdparty/rapidyaml)
+endif()
+
 # libopl4 — MoonSound (YMF278B / OPL4) synthesis library, vendored in-house at
 # 3rdparty/opl4 (std-lib only, own CMakeLists.txt). Declared here — not in the
 # root file — so every entry point that builds core (root, unreal-qt,
@@ -160,6 +165,7 @@ EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/sam2695/" FALSE OUTVAR C
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/unreal-asm/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/unreal-disk/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/gif/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/rapidyaml/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/eve-emu/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt (ENABLE_VDAC2 below)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/recording/" FALSE OUTVAR CPP_FILES) # Moved to separate library
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/emulator/coordinator/" FALSE OUTVAR CPP_FILES) # Own library, own include path
@@ -217,16 +223,6 @@ set_source_files_properties(${Z84C15_FILES} PROPERTIES SKIP_PRECOMPILE_HEADERS O
 file (GLOB UNREAL_NEXT_Z80_FILES ${SOURCE_DIR}/3rdparty/unreal-next-z80/*.cpp)
 set_source_files_properties(${UNREAL_NEXT_Z80_FILES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
-# rapidyaml (single-header YAML / JSON parser): its definitions compile in one
-# translation unit, ryml_impl.cpp. The vendored code is not warning-clean under
-# -Wall -Wextra -Werror and must not be force-fed stdafx.h
-set(RYML_IMPL_CPP ${SOURCE_DIR}/3rdparty/rapidyaml/ryml_impl.cpp)
-set_source_files_properties(${RYML_IMPL_CPP} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-if (MSVC)
-    set_source_files_properties(${RYML_IMPL_CPP} PROPERTIES COMPILE_OPTIONS "/w")
-else()
-    set_source_files_properties(${RYML_IMPL_CPP} PROPERTIES COMPILE_OPTIONS "-w")
-endif()
 message("CPP_FILES:${CPP_FILES}")
 
 set (SOURCES ${CPP_FILES})
@@ -322,6 +318,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE lzma)
 # include path available.
 target_link_libraries(${PROJECT_NAME} PUBLIC $<TARGET_NAME:zstd::libzstd>)
 target_link_libraries(${PROJECT_NAME} PUBLIC miniz)
+target_link_libraries(${PROJECT_NAME} PUBLIC rapidyaml)
 
 # Host-side TLS for emulated devices whose firmware speaks TLS itself (the ZiFi ESP32-S3's HTTPS):
 # common/network/hosttls.cpp with OpenSSL, the project's only TLS user (the WebAPI is plain HTTP). Without OpenSSL (or with

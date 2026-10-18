@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "haptics/hapticprofile.h"
+#include "profiles/yaml.h"
 
 namespace controllers
 {
@@ -18,7 +19,7 @@ const char* const kOptionFields[] = {"turbo",        "on",           "off",   "c
                                      "frames",       "label",        "consume", "ways",   "deadzone",
                                      "saturation",   "diagonal_hold", "gamma", "invert", "repeat",
                                      "curve"};
-const char* const kProfileFields[] = {"schema",  "kind",    "id",     "label",     "match",  "applies_to",
+const char* const kProfileFields[] = {"schema",  "kind",    "id",     "label",     "match",  "applies_to", "extends",
                                       "connectors", "players", "options", "layers", "layer_key", "haptics"};
 
 template <size_t N>
@@ -177,6 +178,10 @@ bool CompileTarget(const JsonValue& spec, Target& out, std::string& error)
     error.clear();
     if (StringField(spec, "retro", text, error))
         return ParseRetroTarget(text, out, error);
+    // YAML reads `key: 1` as a number: a digit key
+    if (const JsonValue* key = spec.Find("key"); key != nullptr && key->IsNumber() && key->AsNumber() >= 0 &&
+                                                 key->AsNumber() <= 9 && std::floor(key->AsNumber()) == key->AsNumber())
+        return ParseKeysTarget(std::to_string(static_cast<int>(key->AsNumber())), out, error);
     if (StringField(spec, "key", text, error))
         return ParseKeysTarget(text, out, error);
     if (const JsonValue* keys = spec.Find("keys"))
@@ -316,8 +321,15 @@ Specificity Profile::GetSpecificity() const
 bool ParseProfile(const std::string& text, Profile& out, std::string& error)
 {
     JsonValue root;
-    if (!ParseJson(text, root, error))
+    const size_t first = text.find_first_not_of(" \t\r\n");
+    const bool json = first != std::string::npos && text[first] == '{';
+    if (!(json ? ParseJson(text, root, error) : ParseYaml(text, root, error)))
         return false;
+    return ParseProfile(root, out, error);
+}
+
+bool ParseProfile(const JsonValue& root, Profile& out, std::string& error)
+{
     if (!root.IsObject())
     {
         error = "a profile is an object";
@@ -339,12 +351,13 @@ bool ParseProfile(const std::string& text, Profile& out, std::string& error)
     }
     Profile profile;
     std::string kind;
-    if (!StringField(root, "kind", kind, error) || (kind != "play" && kind != "debug"))
+    if (!StringField(root, "kind", kind, error) || (kind != "play" && kind != "debug" && kind != "scheme"))
     {
-        error = "'kind' is play or debug";
+        error = "'kind' is play, debug or scheme";
         return false;
     }
-    profile.kind = kind == "play" ? ProfileKind::Play : ProfileKind::Debug;
+    profile.kind = kind == "debug" ? ProfileKind::Debug : ProfileKind::Play;
+    profile.scheme = kind == "scheme";
     if (!StringField(root, "id", profile.id, error) || profile.id.empty())
     {
         error = "'id' names the profile";
@@ -406,6 +419,23 @@ bool ParseProfile(const std::string& text, Profile& out, std::string& error)
     {
         error = "a debug profile has no game level";
         return false;
+    }
+    if (profile.scheme && (root.Find("match") != nullptr || root.Find("applies_to") != nullptr))
+    {
+        error = "a scheme has no 'match' or 'applies_to': the profiles that extend it have";
+        return false;
+    }
+    if (const JsonValue* extends = root.Find("extends"))
+    {
+        if (extends->IsString())
+            profile.extends = {extends->AsString()};
+        else if (!Strings(extends, profile.extends, "'extends'", error))
+            return false;
+        if (std::find(profile.extends.begin(), profile.extends.end(), profile.id) != profile.extends.end())
+        {
+            error = "'" + profile.id + "' extends itself";
+            return false;
+        }
     }
 
     if (const JsonValue* connectors = root.Find("connectors"))

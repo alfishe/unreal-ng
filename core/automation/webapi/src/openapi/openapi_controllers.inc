@@ -72,3 +72,48 @@
         post["parameters"][2]["schema"]["enum"].append("apply");
         replies(post);
     }
+
+    // The host side, for the process: profiles, bindings, devices (controller-manager surfaces.md §2, §6), through
+    // HostInputControl; the Qt client owns them (503 unavailable elsewhere)
+    {
+        auto verbParameter = [](Json::Value& operation, std::initializer_list<const char*> verbs) {
+            operation["parameters"][0]["name"] = "verb";
+            operation["parameters"][0]["in"] = "path";
+            operation["parameters"][0]["required"] = true;
+            operation["parameters"][0]["schema"]["type"] = "string";
+            for (const char* verb : verbs)
+                operation["parameters"][0]["schema"]["enum"].append(verb);
+        };
+        auto replies = [](Json::Value& operation) {
+            operation["responses"]["200"]["description"] = "The envelope: ok, error, message, then the verb's fields";
+            operation["responses"]["400"]["description"] = "bad-request, invalid-binding";
+            operation["responses"]["404"]["description"] = "unknown-profile, unknown-device";
+            operation["responses"]["409"]["description"] = "read-only (a built-in profile cannot be deleted)";
+            operation["responses"]["503"]["description"] = "unavailable: no host input in this process";
+        };
+
+        Json::Value& get = paths["/api/v1/controllers/{verb}"]["get"];
+        get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings";
+        get["description"] =
+            "devices: the connected host devices. context: the machine, the loaded file's SHA-256, the manual game "
+            "profile, the applied profiles and the warnings. profiles (?set=all|play|debug|scheme|game&machine=): "
+            "every profile with its kind, scope, specificity, match and whether it applies; shipped games not parsed "
+            "yet have loaded=false. profile (?id=): one profile as JSON ('profile') and YAML ('yaml'). bindings "
+            "(?device=&layer=): the effective bindings as written, each with the profile it came from";
+        get["tags"].append("Controllers");
+        verbParameter(get, {"devices", "context", "profiles", "profile", "bindings"});
+        replies(get);
+
+        Json::Value& post = paths["/api/v1/controllers/{verb}"]["post"];
+        post["summary"] = "Host game controllers: save, delete, apply a profile; bind, unbind a control";
+        post["description"] =
+            "Body (JSON) or query. save {text}: a profile as YAML or JSON (schema 1) into the user's profiles, applied "
+            "at once. delete {id}: a user profile (a built-in of the same id comes back). apply {id}: the game profile "
+            "chosen by hand, for a program the emulator did not load itself ('none' = by the loaded file). bind "
+            "{control, spec, layer, family | device | profile}: spec is a binding object ({key: ENTER}, {retro: "
+            "'auto:fire'}, {none: true}); it goes into user/<family>, user/device-<id>, user/global or the named "
+            "profile (a shipped one is copied into the user's). unbind {control, layer, ...}: removes it there";
+        post["tags"].append("Controllers");
+        verbParameter(post, {"save", "delete", "apply", "bind", "unbind"});
+        replies(post);
+    }

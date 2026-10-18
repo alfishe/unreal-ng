@@ -1,0 +1,12 @@
+# A DB9 adapter (a generic HID pad): its hat and X / Y already arrive as the d-pad and the left stick (HidPad), so
+# only its buttons are bound here
+schema: 1
+kind: play
+id: builtin/play/generic-default
+label: DB9 adapter
+applies_to: { families: [generic] }
+layers:
+  play:
+    button.0: { retro: "auto:fire" }
+    button.1: { retro: "auto:fire2" }
+    button.2: { retro: "auto:fire3" }

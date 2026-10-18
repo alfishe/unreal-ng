@@ -4,6 +4,9 @@
 #include <gtest/gtest.h>
 
 #include "emulator/io/controllers/controllercontrol.h"
+#ifdef ENABLE_CONTROLLERS
+#include "hostinputcontrol.h"
+#endif
 #include "mcp-controllers.h"
 
 #include <json/json.h>
@@ -22,6 +25,16 @@ TEST(McpControllers_Test, ActionsAndOptionsMatchControllerControl)
         EXPECT_EQ(options, controllers::ControllerControl::OptionsFor(verb)) << "options of " << verb;
     }
     EXPECT_EQ(verbs, controllers::ControllerControl::Verbs()) << "the same verbs, in the same order";
+
+#ifdef ENABLE_CONTROLLERS
+    verbs.clear();
+    for (const auto& [verb, options] : mcp::HostControllerToolActions())
+    {
+        verbs.push_back(verb);
+        EXPECT_EQ(options, controllers::HostInputControl::OptionsFor(verb)) << "options of " << verb;
+    }
+    EXPECT_EQ(verbs, controllers::HostInputControl::Verbs()) << "the host verbs, in the same order";
+#endif
 }
 
 namespace
@@ -132,4 +145,41 @@ TEST(McpControllers_Test, ActionsBecomeControllerRoutes)
     const mcp::ToolResult missing = RunControllersTool(*registry, get, *caller);
     EXPECT_TRUE(missing.isError);
     EXPECT_NE(missing.text.find("[not_found]"), std::string::npos) << missing.text;
+}
+
+/// A host action needs no emulator: reads become a GET with the options in the query, changes a POST with a body; an
+/// object spec goes as its JSON text
+TEST(McpControllers_Test, HostActionsBecomeHostRoutes)
+{
+    auto caller = std::make_shared<RecordingCaller>();
+    auto registry = mcp::BuildFullRegistry(caller);
+
+    Json::Value listed;
+    listed["ok"] = true;
+    Json::Value profile;
+    profile["id"] = "builtin/game/vradarks-revenge";
+    profile["label"] = "Vradark's Revenge";
+    profile["applied"] = true;
+    profile["loaded"] = true;
+    listed["profiles"].append(profile);
+    caller->routes["GET /api/v1/controllers/profiles?set=game"] = {200, listed};
+    Json::Value args;
+    args["action"] = "profiles";
+    args["set"] = "game";
+    const mcp::ToolResult result = RunControllersTool(*registry, args, *caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(caller->calls.size(), 1u) << "no emulator lookup";
+    EXPECT_NE(result.text.find("* builtin/game/vradarks-revenge"), std::string::npos) << result.text;
+
+    Json::Value bind;
+    bind["action"] = "bind";
+    bind["control"] = "south";
+    bind["family"] = "dualsense";
+    bind["spec"]["key"] = "ENTER";
+    RunControllersTool(*registry, bind, *caller);
+    const auto& call = caller->calls.back();
+    EXPECT_EQ(call.method, "POST");
+    EXPECT_EQ(call.path, "/api/v1/controllers/bind");
+    EXPECT_EQ(call.body["spec"].asString(), R"({"key":"ENTER"})");
+    EXPECT_FALSE(call.body.isMember("action"));
 }

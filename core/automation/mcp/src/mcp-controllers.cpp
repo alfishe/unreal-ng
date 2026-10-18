@@ -27,8 +27,88 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& ControllerT
     return actions;
 }
 
+const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControllerToolActions()
+{
+    static const std::vector<std::pair<std::string, std::vector<std::string>>> actions = {
+        {"devices", {}},
+        {"context", {}},
+        {"profiles", {"set", "machine"}},
+        {"profile", {"id"}},
+        {"save", {"text"}},
+        {"delete", {"id"}},
+        {"apply", {"id"}},
+        {"bindings", {"device", "layer"}},
+        {"bind", {"control", "spec", "layer", "family", "device", "profile"}},
+        {"unbind", {"control", "layer", "family", "device", "profile"}},
+    };
+    return actions;
+}
+
 namespace
 {
+    bool IsHostAction(const std::string& action)
+    {
+        for (const auto& [verb, options] : HostControllerToolActions())
+            if (verb == action)
+                return true;
+        return false;
+    }
+
+    std::string Compact(const Json::Value& value)
+    {
+        Json::StreamWriterBuilder builder;
+        builder["indentation"] = "";
+        return Json::writeString(builder, value);
+    }
+
+    std::string HostSummary(const std::string& action, const Json::Value& reply)
+    {
+        std::ostringstream out;
+        if (action == "devices")
+        {
+            for (const Json::Value& device : reply["devices"])
+                out << device["id"].asString() << ": " << device["name"].asString() << " ("
+                    << device["family"].asString() << ")\n";
+            if (reply["devices"].empty())
+                out << "no host game controllers connected";
+            return out.str();
+        }
+        if (action == "context" || action == "apply")
+        {
+            if (reply["message"].isString())
+                out << reply["message"].asString() << "\n";
+            out << "machine " << reply["machine"].asString() << "; game profile "
+                << (reply["manual"].asString().empty() ? "by the loaded file" : reply["manual"].asString())
+                << "; applied:";
+            for (const Json::Value& id : reply["applied"])
+                out << " " << id.asString();
+            for (const Json::Value& warning : reply["warnings"])
+                out << "\nwarning: " << warning.asString();
+            return out.str();
+        }
+        if (action == "profiles")
+        {
+            for (const Json::Value& profile : reply["profiles"])
+                out << (profile["applied"].asBool() ? "* " : "  ") << profile["id"].asString() << " - "
+                    << profile["label"].asString() << " [" << profile["kind"].asString() << ", "
+                    << profile["scope"].asString() << ", " << profile["specificity"].asString()
+                    << (profile["loaded"].asBool() ? "" : ", not loaded") << "]\n";
+            out << "(* = applies now)";
+            return out.str();
+        }
+        if (action == "profile")
+            return reply["yaml"].asString();
+        if (action == "bindings")
+        {
+            out << reply["scope"].asString() << ":";
+            for (const Json::Value& binding : reply["bindings"])
+                out << "\n" << binding["layer"].asString() << "." << binding["control"].asString() << ": "
+                    << Compact(binding["spec"]) << " (" << binding["profile"].asString() << ")";
+            return out.str();
+        }
+        return reply.get("message", action + ": ok").asString();
+    }
+
     std::string EncodeSegment(const std::string& text)
     {
         static const char* hex = "0123456789ABCDEF";
@@ -131,6 +211,8 @@ void RegisterControllers(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     for (const auto& [verb, verbOptions] : ControllerToolActions())
         schema["properties"]["action"]["enum"].append(verb);
+    for (const auto& [verb, verbOptions] : HostControllerToolActions())
+        schema["properties"]["action"]["enum"].append(verb);
     schema["properties"]["connector"]["type"] = "string";
     schema["properties"]["connector"]["description"] =
         "Connector selector: id (kempston, sinclair-1, keyjoy.1, next.left, fuller), alias (left, right), kind:index "
@@ -138,7 +220,7 @@ void RegisterControllers(ToolRegistry& registry)
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
         "plug / targets: the retro device (kempston-joystick, sinclair-joystick, cursor-joystick, keys-joystick, "
-        "fuller-joystick, md6-pad)";
+        "fuller-joystick, md6-pad); bindings / bind / unbind: a host device id (devices lists them)";
     std::string perVerb;
     std::set<std::string> options;
     for (const auto& [verb, verbOptions] : ControllerToolActions())
@@ -151,6 +233,17 @@ void RegisterControllers(ToolRegistry& registry)
         }
         perVerb += "\n" + verb + ": " + (list.empty() ? "-" : list);
     }
+    for (const auto& [verb, verbOptions] : HostControllerToolActions())
+    {
+        std::string list;
+        for (const std::string& option : verbOptions)
+        {
+            if (option != "device")
+                options.insert(option);
+            list += (list.empty() ? "" : ", ") + option;
+        }
+        perVerb += "\n" + verb + " (host): " + (list.empty() ? "-" : list);
+    }
     const std::set<std::string> booleans = {"shift", "extended", "im2-leak", "async", "apply"};
     for (const std::string& option : options)
         schema["properties"][option]["type"] = booleans.count(option) ? "boolean" : option == "port" ? "integer" : "string";
@@ -160,6 +253,20 @@ void RegisterControllers(ToolRegistry& registry)
     for (const char* option : {"press", "release", "set"})
         schema["properties"][option]["description"] =
             "input: the controls ('up+fire'; right, left, down, up, fire, fire2, fire3, fire4; set 'none' = nothing held)";
+    schema["properties"]["set"]["description"] = "profiles: all (default), play, debug, scheme, game";
+    schema["properties"]["machine"]["description"] = "profiles: only those of a machine model (next, pentagon)";
+    schema["properties"]["id"]["description"] =
+        "profile / delete / apply: a profile id (builtin/game/vradarks-revenge); apply 'none' = by the loaded file";
+    schema["properties"]["text"]["description"] = "save: the whole profile, YAML or JSON (schema 1)";
+    schema["properties"]["control"]["description"] = "bind / unbind: south, lt.click, rstick.x, view+menu, dpad.*";
+    schema["properties"]["spec"]["type"] = "object";
+    schema["properties"]["spec"]["description"] =
+        "bind: the binding ({\"key\": \"ENTER\"}, {\"retro\": \"auto:fire\"}, {\"mouse\": \"left\"}, "
+        "{\"none\": true}; plus label, turbo, ...)";
+    schema["properties"]["layer"]["description"] = "bindings / bind / unbind: play (default), debug, a shift layer";
+    schema["properties"]["family"]["description"] = "bind / unbind: into user/<family> (xbox-elite-2, dualsense)";
+    schema["properties"]["profile"]["description"] =
+        "bind / unbind: into this profile (a shipped one is copied into the user's); default user/global";
     schema["required"].append("action");
 
     registry.Register(
@@ -168,7 +275,11 @@ void RegisterControllers(ToolRegistry& registry)
         "options, targets (where a retro device can go, in order, with the default), auto (the automatic choice from "
         "the program's port reads: which joystick it polls; apply re-runs it), input (press / release / set controls "
         "on a connector, as joystick_input with connector). Plugs apply at the next frame boundary and wait for it "
-        "unless async. Options per action:" + perVerb,
+        "unless async. Host actions (no target: the process's game controllers, the Qt client's): devices, context "
+        "(machine, applied profiles, the manual game profile), profiles, profile (as YAML), save, delete, apply (the "
+        "game profile by hand, for a program started from the machine itself), bindings (effective, with the profile "
+        "each came from), bind, unbind (in a user profile, saved and applied at once). Options per action:" +
+            perVerb,
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string action = args["action"].asString();
@@ -177,6 +288,43 @@ void RegisterControllers(ToolRegistry& registry)
             for (const std::string& name : args.getMemberNames())
                 if (name != "action" && name != "connector" && name != "target")
                     (*body)[name] = args[name];
+
+            if (IsHostAction(action))
+            {
+                if ((*body).isMember("spec") && (*body)["spec"].isObject())
+                    (*body)["spec"] = Compact((*body)["spec"]);
+                static const std::set<std::string> reads = {"devices", "context", "profiles", "profile", "bindings"};
+                const bool read = reads.count(action) != 0;
+                std::string path = "/api/v1/controllers/" + action;
+                if (read)
+                {
+                    std::string query;
+                    for (const std::string& name : (*body).getMemberNames())
+                        query += (query.empty() ? "?" : "&") + name + "=" +
+                                 EncodeSegment((*body)[name].isString() ? (*body)[name].asString()
+                                                                         : Compact((*body)[name]));
+                    path += query;
+                }
+                caller.Call(read ? "GET" : "POST", path, read ? nullptr : body.get(),
+                            [action, done](int status, Json::Value reply) {
+                                if (status == 0)
+                                {
+                                    done(ToolResult::Error("WebAPI unreachable — is the emulator running with WebAPI "
+                                                           "enabled (port 8090)?"));
+                                    return;
+                                }
+                                if (status < 200 || status >= 300 || !reply.get("ok", false).asBool())
+                                {
+                                    done(ToolResult::Error("controllers " + action + ": [" +
+                                                           reply.get("error", "error").asString() + "] " +
+                                                           reply.get("message", DescribeErrorBody(reply)).asString()));
+                                    return;
+                                }
+                                const std::string text = HostSummary(action, reply);
+                                done(ToolResult::Ok(text, std::move(reply)));
+                            });
+                return;
+            }
 
             TargetResolver::ResolveFromArgs(args, caller, [action, connector, body, &caller, done](bool ok, const std::string& idOrError) {
                 if (!ok)

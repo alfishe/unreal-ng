@@ -1,0 +1,19 @@
+# The cursor keys and 0, the Protek / AGF interfaces: 5 left, 6 down, 7 up, 8 right, 0 fire.
+# The d-pad and the left stick move; a game that extends it binds the rest (mapping-and-profiles.md §7.6)
+schema: 1
+kind: scheme
+id: scheme/cursor
+label: Cursor (5 6 7 8 0)
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.up:      { key: "7" }
+    dpad.down:    { key: "6" }
+    dpad.left:    { key: "5" }
+    dpad.right:   { key: "8" }
+    lstick.up:    { key: "7" }
+    lstick.down:  { key: "6" }
+    lstick.left:  { key: "5" }
+    lstick.right: { key: "8" }
+    south:        { key: "0", label: Fire }

@@ -1,7 +1,8 @@
 #pragma once
 
 /// @file profile.h
-/// @brief One controller profile file, schema 1 (mapping-and-profiles.md §7): what it applies to, the connectors and
+/// @brief One controller profile, schema 1 (mapping-and-profiles.md §7), a YAML document: what it applies to, the
+/// schemes it extends (§7.6), the connectors and
 /// players it wants, and its bindings per layer as JSON objects, kept as written so profiles merge field by field
 /// (§6.2) before they become router bindings.
 
@@ -58,6 +59,9 @@ struct Profile
     std::string id;
     std::string label;
     std::string path;  ///< the file; empty for a compiled-in one
+    /// `kind: scheme` (§7.6): a play profile no context selects by itself, merged below the profiles that extend it
+    bool scheme = false;
+    std::vector<std::string> extends;  ///< scheme ids, merged in this order below this profile
 
     /// match: a game profile names signatures or file hashes; `machines` narrows any profile to machine models
     std::vector<std::string> machines;
@@ -83,8 +87,11 @@ struct Profile
     }
 };
 
-/// Parse and validate a profile (every binding compiles); false with the reason, which names the place
+/// Parse and validate a profile (every binding compiles): YAML, or JSON when the text starts with `{`; false with the
+/// reason, which names the place
 bool ParseProfile(const std::string& text, Profile& out, std::string& error);
+/// The same on a parsed tree
+bool ParseProfile(const JsonValue& root, Profile& out, std::string& error);
 
 /// The JSON layer name of a router layer and back ("play" <-> kPlayLayer)
 std::string RouterLayer(const std::string& jsonLayer);

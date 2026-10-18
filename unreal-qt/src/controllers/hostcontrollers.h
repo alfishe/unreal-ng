@@ -14,6 +14,7 @@
 #include <vector>
 
 #ifdef ENABLE_CONTROLLERS
+#include "hostinputcontrol.h"
 #include "hostinputservice.h"
 #include "profiles/autodecision.h"
 #include "profiles/profilestore.h"
@@ -43,6 +44,11 @@ public:
     const controllers::ResolvedProfiles& Resolved() const
     {
         return _resolved;
+    }
+    /// What the last Reapply resolved for
+    const controllers::ProfileContext& Context() const
+    {
+        return _context;
     }
     /// The user profiles' directory (`<user config>/unreal-ng/controllers/profiles`, architecture.md §12)
     static QString UserProfileDir();
@@ -122,6 +128,9 @@ private:
     std::unique_ptr<controllers::HostInputService> _service;
     controllers::ProfileStore _profiles;
     controllers::ResolvedProfiles _resolved;
+    controllers::ProfileContext _context;
+    /// HostInputControl's owner (the WebAPI / MCP / CLI / Python host verbs run on the GUI thread through it)
+    std::unique_ptr<controllers::IHostInputOwner> _controlOwner;
     std::vector<controllers::HostDeviceId> _known;
 #endif
     EmulatorBinding* _binding = nullptr;

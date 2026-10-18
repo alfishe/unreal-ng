@@ -18,6 +18,9 @@
 #include <emulator/emulator.h>
 #include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/io/controllers/controllercontrol.h>
+#ifdef ENABLE_CONTROLLERS
+#include "hostinputcontrol.h"
+#endif
 #include <emulator/media/mediacontrol.h>
 #include <emulator/slots/slotcontrol.h>
 #include <emulator/sound/midi/midicontrol.h>
@@ -441,6 +444,43 @@ inline pybind11::object ControllerCallPy(Emulator& self, const std::string& verb
         reply = controllers::ControllerControl(self.GetContext()).Execute(request);
     }
     return StateNodeToPy(reply.ToValue());
+}
+
+/// One host controllers verb through HostInputControl (surfaces.md §2: profiles, bindings, devices; the process's,
+/// not the machine's): the options as keyword arguments (a dict spec becomes its JSON), the reply as a dict
+inline pybind11::object HostControllerCallPy(const std::string& verb, const pybind11::kwargs& options)
+{
+    namespace py = pybind11;
+#ifdef ENABLE_CONTROLLERS
+    controllers::HostRequest request;
+    request.verb = verb;
+    const py::module_ json = py::module_::import("json");
+    for (const auto& item : options)
+    {
+        const std::string name = py::str(item.first);
+        const py::handle value = item.second;
+        if (py::isinstance<py::dict>(value))
+            request.options[name] = json.attr("dumps")(value).cast<std::string>();
+        else if (py::isinstance<py::bool_>(value))
+            request.options[name] = value.cast<bool>() ? "true" : "false";
+        else if (!value.is_none())
+            request.options[name] = py::str(value);
+    }
+    std::string text;
+    {
+        py::gil_scoped_release release;  // runs on the host input owner's (the GUI) thread
+        text = controllers::HostInputControl::Process(request).ToJson();
+    }
+    return json.attr("loads")(text);
+#else
+    (void)verb;
+    (void)options;
+    py::dict reply;
+    reply["ok"] = false;
+    reply["error"] = "unavailable";
+    reply["message"] = "built without host game controllers (ENABLE_CONTROLLERS=OFF)";
+    return reply;
+#endif
 }
 
 /// RZX playback helpers for the bindings below
@@ -1686,6 +1726,49 @@ namespace PythonBindings
             .def("controllers_input", [](Emulator& self, const std::string& connector, const py::kwargs& options) {
                      return ControllerCallPy(self, "input", connector, "", options);
                  }, py::arg("connector"), "Live input on a connector: press='up+fire', release='fire', set='none'")
+            .def("controllers_host", [](Emulator&, const std::string& verb, const py::kwargs& options) {
+                     return HostControllerCallPy(verb, options);
+                 }, py::arg("verb"), "A host controllers verb (devices, context, profiles, profile, save, delete, apply, "
+                 "bindings, bind, unbind) with its options as keywords")
+            .def("controllers_profiles", [](Emulator&, const py::kwargs& options) {
+                     return HostControllerCallPy("profiles", options);
+                 }, "Every controller profile (set='game' / 'play' / 'debug' / 'scheme', machine='next')")
+            .def("controllers_profile", [](Emulator&, const std::string& id) {
+                     py::kwargs options;
+                     options["id"] = id;
+                     return HostControllerCallPy("profile", options);
+                 }, py::arg("id"), "One profile: 'profile' (the tree) and 'yaml' (the file)")
+            .def("controllers_save_profile", [](Emulator&, const std::string& text) {
+                     py::kwargs options;
+                     options["text"] = text;
+                     return HostControllerCallPy("save", options);
+                 }, py::arg("text"), "Save a profile (YAML or JSON) into the user's profiles and apply it")
+            .def("controllers_delete_profile", [](Emulator&, const std::string& id) {
+                     py::kwargs options;
+                     options["id"] = id;
+                     return HostControllerCallPy("delete", options);
+                 }, py::arg("id"), "Delete a user profile")
+            .def("controllers_apply_profile", [](Emulator&, const std::string& id) {
+                     py::kwargs options;
+                     options["id"] = id;
+                     return HostControllerCallPy("apply", options);
+                 }, py::arg("id"), "The game profile by hand ('none': by the loaded file)")
+            .def("controllers_bindings", [](Emulator&, const py::kwargs& options) {
+                     return HostControllerCallPy("bindings", options);
+                 }, "The effective bindings (device=..., layer='play'), each with the profile it came from")
+            .def("controllers_bind", [](Emulator&, const std::string& control, const py::object& spec,
+                                        const py::kwargs& options) {
+                     py::kwargs all = options;
+                     all["control"] = control;
+                     all["spec"] = spec;
+                     return HostControllerCallPy("bind", all);
+                 }, py::arg("control"), py::arg("spec"), "Bind a control in a user profile: spec={'key': 'ENTER'} "
+                 "(family=..., device=..., profile=..., layer=...)")
+            .def("controllers_unbind", [](Emulator&, const std::string& control, const py::kwargs& options) {
+                     py::kwargs all = options;
+                     all["control"] = control;
+                     return HostControllerCallPy("unbind", all);
+                 }, py::arg("control"), "Remove a control's binding from a user profile")
             .def("media_eject", [](Emulator& self, const std::string& slot, const py::kwargs& options) {
                      return MediaCallPy(self, "eject", slot, "", options);
                  }, py::arg("slot"), "Take the medium out (save=True / export=path / discard=True for a dirty medium)")

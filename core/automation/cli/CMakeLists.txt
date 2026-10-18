@@ -98,6 +98,11 @@ if (ENABLE_RECORDING)
     target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/recording/src)
 endif()
 
+# The host controller verbs (HostInputControl in core/controllers): the define, the headers and the link order
+if (TARGET unrealng::controllers)
+    target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::controllers)
+endif()
+
 # Suppress deprecated-declarations warning for pybind11 (uses deprecated _Py_fopen_obj in Python 3.14)
 if (ENABLE_PYTHON_AUTOMATION)
     if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")

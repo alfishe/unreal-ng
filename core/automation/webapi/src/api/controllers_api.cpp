@@ -1,8 +1,12 @@
 // Controllers API: the machine's connectors over HTTP (controller-manager surfaces.md §6).
 // Every route is a thin adapter over ControllerControl (core/src/emulator/io/controllers/controllercontrol.h): the
-// request becomes a ControllerRequest, the ControllerReply is the response body and its status.
+// request becomes a ControllerRequest, the ControllerReply is the response body and its status. The host side
+// (/api/v1/controllers/{verb}: profiles, bindings, devices) is the same over HostInputControl
+// (core/controllers/src/hostinputcontrol.h), which runs on the host input owner's thread.
 
 #include "../emulator_api.h"
+
+#include <algorithm>
 
 #include <drogon/HttpResponse.h>
 #include <json/json.h>
@@ -10,6 +14,9 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/io/controllers/controllercontrol.h>
+#ifdef ENABLE_CONTROLLERS
+#include "hostinputcontrol.h"
+#endif
 
 using namespace drogon;
 using namespace api::v1;
@@ -62,6 +69,13 @@ namespace
                 list += (list.empty() ? "" : ",") + OptionText(item);
             return list.empty() ? "none" : list;
         }
+        if (value.isObject())
+        {
+            // A binding spec ({"key": "ENTER"}): its JSON text, which HostInputControl reads as YAML
+            Json::StreamWriterBuilder builder;
+            builder["indentation"] = "";
+            return Json::writeString(builder, value);
+        }
         return value.asString();  // numbers and strings alike
     }
 
@@ -84,7 +98,55 @@ namespace
                     request.options[name] = OptionText((*json)[name]);
             }
     }
+    void RespondHost(std::function<void(const HttpResponsePtr&)>& callback, const HttpRequestPtr& req,
+                     const std::string& verb, bool post)
+    {
+#ifdef ENABLE_CONTROLLERS
+        static const std::vector<std::string> reads = {"devices", "context", "profiles", "profile", "bindings"};
+        const bool read = std::find(reads.begin(), reads.end(), verb) != reads.end();
+        const bool known = std::find(HostInputControl::Verbs().begin(), HostInputControl::Verbs().end(), verb) !=
+                           HostInputControl::Verbs().end();
+        if (known && read == post)
+        {
+            Respond(callback, 405,
+                    std::string(R"({"ok":false,"error":"bad-request","message":")") + verb +
+                        (read ? " is a GET" : " is a POST") + "\"}");
+            return;
+        }
+        HostRequest request;
+        request.verb = verb;
+        for (const auto& [name, value] : req->getParameters())
+            request.options[name] = value;
+        if (auto json = req->getJsonObject())
+            for (const std::string& name : json->getMemberNames())
+                request.options[name] = OptionText((*json)[name]);
+        const HostReply reply = HostInputControl::Process(request);
+        Respond(callback, reply.HttpStatus(), reply.ToJson());
+#else
+        (void)req;
+        (void)verb;
+        (void)post;
+        Respond(callback, 503,
+                R"json({"ok":false,"error":"unavailable","message":"built without host game controllers (ENABLE_CONTROLLERS=OFF)"})json");
+#endif
+    }
 }  // namespace
+
+/// @brief GET /api/v1/controllers/{verb}: devices, context, profiles (?set=&machine=), profile (?id=), bindings
+/// (?device=&layer=)
+void EmulatorAPI::getHostControllers(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& verb) const
+{
+    RespondHost(callback, req, verb, false);
+}
+
+/// @brief POST /api/v1/controllers/{verb}: save {text}, delete {id}, apply {id}, bind {control, spec, layer, family,
+/// device, profile}, unbind {control, layer, family, device, profile}
+void EmulatorAPI::postHostControllers(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                      const std::string& verb) const
+{
+    RespondHost(callback, req, verb, true);
+}
 
 /// @brief GET /api/v1/emulator/{id}/controllers
 void EmulatorAPI::getControllers(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,

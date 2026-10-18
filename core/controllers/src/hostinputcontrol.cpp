@@ -1,0 +1,580 @@
+#include "hostinputcontrol.h"
+
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
+#include <mutex>
+
+#include "profiles/yaml.h"
+
+namespace controllers
+{
+
+namespace
+{
+std::mutex& OwnerMutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
+IHostInputOwner*& OwnerSlot()
+{
+    static IHostInputOwner* owner = nullptr;
+    return owner;
+}
+
+HostInputControl::Runner& RunnerSlot()
+{
+    static HostInputControl::Runner runner;
+    return runner;
+}
+
+HostReply Fail(const std::string& error, const std::string& message)
+{
+    HostReply reply;
+    reply.error = error;
+    reply.message = message;
+    return reply;
+}
+
+std::string Option(const HostRequest& request, const std::string& name, const std::string& fallback = {})
+{
+    const auto it = request.options.find(name);
+    return it != request.options.end() ? it->second : fallback;
+}
+
+JsonValue Strings(const std::vector<std::string>& values)
+{
+    std::vector<JsonValue> items;
+    for (const std::string& value : values)
+        items.push_back(JsonValue::String(value));
+    return JsonValue::Array(std::move(items));
+}
+
+const char* KindName(const Profile& profile)
+{
+    if (profile.scheme)
+        return "scheme";
+    return profile.kind == ProfileKind::Play ? "play" : "debug";
+}
+
+const char* ScopeName(ProfileScope scope)
+{
+    switch (scope)
+    {
+        case ProfileScope::Builtin: return "builtin";
+        case ProfileScope::Community: return "community";
+        case ProfileScope::User: return "user";
+    }
+    return "builtin";
+}
+
+const char* SpecificityName(Specificity specificity)
+{
+    switch (specificity)
+    {
+        case Specificity::Global: return "global";
+        case Specificity::Machine: return "machine";
+        case Specificity::Family: return "family";
+        case Specificity::Device: return "device";
+        case Specificity::Game: return "game";
+    }
+    return "global";
+}
+
+/// `set`: play (not schemes, not games), debug, scheme, game, all (the default)
+bool InSet(const Profile& profile, const std::string& set)
+{
+    if (set.empty() || set == "all")
+        return true;
+    if (set == "scheme")
+        return profile.scheme;
+    if (set == "game")
+        return profile.IsGame();
+    if (set == "debug")
+        return profile.kind == ProfileKind::Debug;
+    return set == "play" && profile.kind == ProfileKind::Play && !profile.scheme && !profile.IsGame();
+}
+
+bool MachineFits(const std::vector<std::string>& machines, const std::string& machine)
+{
+    if (machine.empty() || machines.empty())
+        return true;
+    std::string lower = machine;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
+    return std::any_of(machines.begin(), machines.end(), [&lower](std::string name) {
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return std::tolower(c); });
+        return name == lower;
+    });
+}
+
+JsonValue Summary(const Profile& profile, const ResolvedProfiles& resolved)
+{
+    JsonValue item = JsonValue::Object({{"id", JsonValue::String(profile.id)}});
+    item.Set("label", JsonValue::String(profile.label));
+    item.Set("kind", JsonValue::String(KindName(profile)));
+    item.Set("scope", JsonValue::String(ScopeName(profile.scope)));
+    item.Set("specificity", JsonValue::String(SpecificityName(profile.GetSpecificity())));
+    item.Set("game", JsonValue::Bool(profile.IsGame()));
+    item.Set("machines", Strings(profile.machines));
+    item.Set("families", Strings(profile.families));
+    item.Set("devices", Strings(profile.devices));
+    item.Set("extends", Strings(profile.extends));
+    item.Set("path", JsonValue::String(profile.path));
+    item.Set("loaded", JsonValue::Bool(true));
+    item.Set("applied", JsonValue::Bool(std::find(resolved.applied.begin(), resolved.applied.end(), profile.id) !=
+                                        resolved.applied.end()));
+    return item;
+}
+
+std::string Sanitized(const std::string& text)
+{
+    std::string out = text;
+    for (char& c : out)
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_')
+            c = '_';
+    return out;
+}
+}  // namespace
+
+JsonValue HostReply::ToValue() const
+{
+    JsonValue value = JsonValue::Object({{"ok", JsonValue::Bool(Ok())}});
+    if (!Ok())
+    {
+        value.Set("error", JsonValue::String(error));
+        value.Set("message", JsonValue::String(message));
+    }
+    else if (!message.empty())
+        value.Set("message", JsonValue::String(message));
+    for (const auto& [field, member] : body.GetMembers())
+        value.Set(field, member);
+    return value;
+}
+
+std::string HostReply::ToJson() const
+{
+    return ToValue().Dump();
+}
+
+int HostReply::HttpStatus() const
+{
+    if (error.empty())
+        return 200;
+    if (error == "unknown-profile" || error == "unknown-device")
+        return 404;
+    if (error == "read-only")
+        return 409;
+    if (error == "unavailable")
+        return 503;
+    return 400;
+}
+
+const std::vector<std::string>& HostInputControl::Verbs()
+{
+    static const std::vector<std::string> verbs = {"devices", "context", "profiles", "profile", "save",
+                                                   "delete",  "apply",   "bindings", "bind",    "unbind"};
+    return verbs;
+}
+
+const std::vector<std::string>& HostInputControl::OptionsFor(const std::string& verb)
+{
+    static const std::map<std::string, std::vector<std::string>> options = {
+        {"devices", {}},
+        {"context", {}},
+        {"profiles", {"set", "machine"}},
+        {"profile", {"id"}},
+        {"save", {"text"}},
+        {"delete", {"id"}},
+        {"apply", {"id"}},
+        {"bindings", {"device", "layer"}},
+        {"bind", {"control", "spec", "layer", "family", "device", "profile"}},
+        {"unbind", {"control", "layer", "family", "device", "profile"}},
+    };
+    static const std::vector<std::string> none;
+    const auto it = options.find(verb);
+    return it != options.end() ? it->second : none;
+}
+
+void HostInputControl::SetOwner(IHostInputOwner* owner, Runner run)
+{
+    std::lock_guard<std::mutex> lock(OwnerMutex());
+    OwnerSlot() = owner;
+    RunnerSlot() = owner != nullptr ? std::move(run) : Runner();
+}
+
+HostReply HostInputControl::Process(const HostRequest& request)
+{
+    Runner run;
+    {
+        std::lock_guard<std::mutex> lock(OwnerMutex());
+        if (OwnerSlot() == nullptr)
+            return Fail("unavailable", "no host input in this process: the game controllers live in the Qt client");
+        run = RunnerSlot();
+    }
+    HostReply reply = Fail("unavailable", "the host input owner went away");
+    const auto task = [&reply, &request] {
+        // On the owner's thread, where SetOwner(nullptr) also runs: the owner cannot go while the request runs
+        IHostInputOwner* owner = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(OwnerMutex());
+            owner = OwnerSlot();
+        }
+        if (owner != nullptr)
+            reply = HostInputControl(*owner).Execute(request);
+    };
+    if (run)
+        run(task);
+    else
+        task();
+    return reply;
+}
+
+HostReply HostInputControl::Execute(const HostRequest& request)
+{
+    for (const auto& [name, value] : request.options)
+    {
+        const std::vector<std::string>& known = OptionsFor(request.verb);
+        if (std::find(known.begin(), known.end(), name) == known.end() &&
+            std::find(Verbs().begin(), Verbs().end(), request.verb) != Verbs().end())
+        {
+            std::string list;
+            for (const std::string& option : known)
+                list += (list.empty() ? "" : ", ") + option;
+            return Fail("bad-request", "unknown option '" + name + "' of " + request.verb + " (known: " +
+                                           (list.empty() ? "none" : list) + ")");
+        }
+    }
+    const std::string& verb = request.verb;
+    if (verb == "devices")
+        return Devices();
+    if (verb == "context")
+        return Context();
+    if (verb == "profiles")
+        return List(request);
+    if (verb == "profile")
+        return Get(request);
+    if (verb == "save")
+        return Save(request);
+    if (verb == "delete")
+        return Delete(request);
+    if (verb == "apply")
+        return Apply(request);
+    if (verb == "bindings")
+        return Bindings(request);
+    if (verb == "bind" || verb == "unbind")
+        return Bind(request, verb == "unbind");
+    std::string list;
+    for (const std::string& known : Verbs())
+        list += (list.empty() ? "" : ", ") + known;
+    return Fail("bad-request", "unknown verb '" + verb + "' (known: " + list + ")");
+}
+
+HostReply HostInputControl::Devices()
+{
+    HostReply reply;
+    std::vector<JsonValue> devices;
+    for (const HostDeviceInfo& device : _owner.Context().devices)
+        devices.push_back(JsonValue::Object({{"id", JsonValue::String(device.id)},
+                                             {"name", JsonValue::String(device.name)},
+                                             {"family", JsonValue::String(device.family)},
+                                             {"layout", JsonValue::String(device.layout)},
+                                             {"backend", JsonValue::String(device.backend)}}));
+    reply.body.Set("devices", JsonValue::Array(std::move(devices)));
+    return reply;
+}
+
+HostReply HostInputControl::Context()
+{
+    const ProfileContext context = _owner.Context();
+    const ResolvedProfiles& resolved = _owner.Resolved();
+    HostReply reply;
+    reply.body.Set("machine", JsonValue::String(context.machine));
+    reply.body.Set("file_sha256", Strings(context.fileSha256));
+    reply.body.Set("manual", JsonValue::String(_owner.ManualProfile()));
+    reply.body.Set("applied", Strings(resolved.applied));
+    reply.body.Set("warnings", Strings(resolved.warnings));
+    reply.body.Set("debug_layer", JsonValue::Bool(context.debugLayer));
+    reply.body.Set("user_dir", JsonValue::String(_owner.UserProfileDir()));
+    return reply;
+}
+
+HostReply HostInputControl::List(const HostRequest& request)
+{
+    const std::string set = Option(request, "set", "all");
+    if (set != "all" && set != "play" && set != "debug" && set != "scheme" && set != "game")
+        return Fail("bad-request", "set is all, play, debug, scheme or game, not '" + set + "'");
+    const std::string machine = Option(request, "machine");
+    ProfileStore& store = _owner.Profiles();
+    const ResolvedProfiles& resolved = _owner.Resolved();
+    std::vector<JsonValue> profiles;
+    for (const Profile* profile : store.Profiles())
+        if (InSet(*profile, set) && MachineFits(profile->machines, machine))
+            profiles.push_back(Summary(*profile, resolved));
+    // The shipped games not parsed yet: what the index says of them
+    if (set == "all" || set == "game")
+        for (const GameEntry& entry : store.Games().Entries())
+            if (store.Find(entry.id) == nullptr && MachineFits(entry.machines, machine))
+                profiles.push_back(JsonValue::Object({{"id", JsonValue::String(entry.id)},
+                                                      {"label", JsonValue::String(entry.label)},
+                                                      {"kind", JsonValue::String("play")},
+                                                      {"scope", JsonValue::String("builtin")},
+                                                      {"specificity", JsonValue::String("game")},
+                                                      {"game", JsonValue::Bool(true)},
+                                                      {"machines", Strings(entry.machines)},
+                                                      {"path", JsonValue::String(entry.file)},
+                                                      {"loaded", JsonValue::Bool(false)},
+                                                      {"applied", JsonValue::Bool(false)}}));
+    HostReply reply;
+    reply.body.Set("profiles", JsonValue::Array(std::move(profiles)));
+    reply.body.Set("manual", JsonValue::String(_owner.ManualProfile()));
+    return reply;
+}
+
+const Profile* HostInputControl::FindProfile(const std::string& id)
+{
+    ProfileStore& store = _owner.Profiles();
+    if (const Profile* profile = store.Find(id))
+        return profile;
+    ProfileContext context;
+    context.manual = {id};
+    std::vector<std::string> errors;
+    store.LoadGamesFor(context, errors);
+    return store.Find(id);
+}
+
+HostReply HostInputControl::Get(const HostRequest& request)
+{
+    const std::string id = Option(request, "id");
+    const Profile* profile = FindProfile(id);
+    if (profile == nullptr)
+        return Fail("unknown-profile", "no profile '" + id + "' (profiles lists them)");
+    HostReply reply;
+    reply.body.Set("info", Summary(*profile, _owner.Resolved()));
+    reply.body.Set("profile", ProfileStore::ToJson(*profile));
+    reply.body.Set("yaml", JsonValue::String(ProfileStore::Dump(*profile)));
+    return reply;
+}
+
+HostReply HostInputControl::Save(const HostRequest& request)
+{
+    const std::string text = Option(request, "text");
+    if (text.empty())
+        return Fail("bad-request", "save takes the profile as 'text' (YAML or JSON, schema 1)");
+    Profile profile;
+    std::string error;
+    if (!ParseProfile(text, profile, error))
+        return Fail("invalid-binding", error);
+    profile.scope = ProfileScope::User;
+    if (!ProfileStore::Save(profile, _owner.UserProfileDir(), error))
+        return Fail("bad-request", error);
+    profile.path = ProfileStore::SavePath(profile, _owner.UserProfileDir());
+    const std::string id = profile.id;
+    const std::string path = profile.path;
+    if (!_owner.Profiles().Add(std::move(profile), error))
+        return Fail("bad-request", error);
+    _owner.Reapply();
+    HostReply reply;
+    reply.message = "saved " + id + " to " + path;
+    reply.body.Set("id", JsonValue::String(id));
+    reply.body.Set("path", JsonValue::String(path));
+    return reply;
+}
+
+HostReply HostInputControl::Delete(const HostRequest& request)
+{
+    const std::string id = Option(request, "id");
+    ProfileStore& store = _owner.Profiles();
+    const Profile* profile = store.Find(id);
+    if (profile == nullptr)
+        return Fail("unknown-profile", "no profile '" + id + "'");
+    if (profile->scope != ProfileScope::User)
+        return Fail("read-only", "'" + id + "' is a " + ScopeName(profile->scope) +
+                                     " profile: only the user's own are deleted (a user profile of the same id "
+                                     "overrides it)");
+    std::error_code ec;
+    if (!profile->path.empty())
+        std::filesystem::remove(profile->path, ec);
+    if (ec)
+        return Fail("bad-request", profile->path + ": " + ec.message());
+    store.Remove(id);
+    // A built-in of the same id comes back; a shipped game comes back from the index on its next match
+    for (const BuiltinProfileText& builtin : BuiltinProfileTexts())
+    {
+        Profile shipped;
+        std::string error;
+        if (ParseProfile(builtin.text, shipped, error) && shipped.id == id)
+            store.Add(std::move(shipped), error);
+    }
+    if (_owner.ManualProfile() == id && store.Find(id) == nullptr && store.Games().FindId(id) == nullptr)
+        _owner.SetManualProfile({});
+    _owner.Reapply();
+    HostReply reply;
+    reply.message = "deleted " + id;
+    reply.body.Set("id", JsonValue::String(id));
+    return reply;
+}
+
+HostReply HostInputControl::Apply(const HostRequest& request)
+{
+    std::string id = Option(request, "id");
+    if (id == "none")
+        id.clear();
+    if (!id.empty())
+    {
+        const Profile* profile = FindProfile(id);
+        if (profile == nullptr)
+            return Fail("unknown-profile", "no profile '" + id + "' (profiles lists them)");
+        if (profile->kind != ProfileKind::Play || profile->scheme)
+            return Fail("bad-request", "'" + id + "' is a " + KindName(*profile) +
+                                           " profile: apply chooses a play profile as the game's");
+    }
+    _owner.SetManualProfile(id);
+    HostReply reply = Context();
+    if (id.empty())
+    {
+        reply.message = "the game profile follows the loaded file";
+        return reply;
+    }
+    const JsonValue* applied = reply.body.Find("applied");
+    const bool active = applied != nullptr && std::any_of(applied->Items().begin(), applied->Items().end(),
+                                                          [&id](const JsonValue& item) { return item.AsString() == id; });
+    if (active)
+        reply.message = "applied " + id + " as the game profile";
+    else
+    {
+        // `machines` narrows a profile: the choice is kept and applies once such a machine runs
+        const Profile* profile = FindProfile(id);
+        std::string machines;
+        if (profile != nullptr)
+            for (const std::string& machine : profile->machines)
+                machines += (machines.empty() ? "" : ", ") + machine;
+        const std::string machine = _owner.Context().machine;
+        reply.message = "chose " + id + " as the game profile; it applies on " + machines + " (now: " +
+                        (machine.empty() ? std::string("no machine") : machine) + ")";
+    }
+    return reply;
+}
+
+HostReply HostInputControl::Bindings(const HostRequest& request)
+{
+    const std::string device = Option(request, "device");
+    const std::string layer = Option(request, "layer");
+    const ResolvedProfiles& resolved = _owner.Resolved();
+    // A device's scope, else its family's, else every device's
+    std::string scope;
+    if (!device.empty())
+    {
+        const ProfileContext context = _owner.Context();
+        const auto it = std::find_if(context.devices.begin(), context.devices.end(),
+                                     [&device](const HostDeviceInfo& info) { return info.id == device; });
+        if (it == context.devices.end())
+            return Fail("unknown-device", "no connected device '" + device + "' (devices lists them)");
+        for (const std::string& candidate : {it->id, "family:" + it->family})
+            if (scope.empty() && std::any_of(resolved.effective.begin(), resolved.effective.end(),
+                                             [&candidate](const auto& entry) { return entry.first == candidate; }))
+                scope = candidate;
+    }
+    std::vector<JsonValue> bindings;
+    for (const auto& [name, effective] : resolved.effective)
+    {
+        if (name != scope)
+            continue;
+        for (const EffectiveBinding& binding : effective)
+            if (layer.empty() || binding.layer == layer)
+                bindings.push_back(JsonValue::Object({{"layer", JsonValue::String(binding.layer)},
+                                                      {"control", JsonValue::String(binding.control)},
+                                                      {"spec", binding.spec},
+                                                      {"profile", JsonValue::String(binding.profile)}}));
+    }
+    HostReply reply;
+    reply.body.Set("scope", JsonValue::String(scope.empty() ? "every device" : scope));
+    reply.body.Set("bindings", JsonValue::Array(std::move(bindings)));
+    return reply;
+}
+
+HostReply HostInputControl::Bind(const HostRequest& request, bool unbind)
+{
+    const std::string control = Option(request, "control");
+    const std::string layer = Option(request, "layer", "play");
+    const std::string family = Option(request, "family");
+    const std::string device = Option(request, "device");
+    if (control.empty())
+        return Fail("bad-request", "name the 'control' (south, lt.click, view+menu, dpad.*)");
+    JsonValue spec;
+    if (!unbind)
+    {
+        std::string error;
+        if (!ParseYaml(Option(request, "spec"), spec, error) || !spec.IsObject())
+            return Fail("invalid-binding", "spec is a binding object ({key: ENTER}, {retro: \"auto:fire\"}, "
+                                           "{none: true})" + (error.empty() ? std::string() : ": " + error));
+    }
+
+    // The user profile it goes in: named, else the device's, the family's, or every device's
+    std::string id = Option(request, "profile");
+    if (id.empty())
+        id = !device.empty() ? "user/device-" + Sanitized(device) : !family.empty() ? "user/" + family : "user/global";
+    ProfileStore& store = _owner.Profiles();
+    Profile profile;
+    if (const Profile* existing = FindProfile(id))
+        profile = *existing;  // a shipped one is copied: the user's of the same id overrides it
+    else if (unbind)
+        return Fail("unknown-profile", "no profile '" + id + "' to unbind from");
+    else
+    {
+        profile.id = id;
+        profile.label = !device.empty() ? device : !family.empty() ? family : "Every device";
+        if (!device.empty())
+            profile.devices = {device};
+        else if (!family.empty())
+            profile.families = {family};
+        profile.options = JsonValue::Object();
+    }
+    if (profile.kind != ProfileKind::Play && layer != "debug")
+        return Fail("bad-request", "'" + id + "' is a debug profile: it binds the debug layer only");
+    profile.scope = ProfileScope::User;
+
+    auto entry = std::find_if(profile.layers.begin(), profile.layers.end(),
+                              [&layer](const auto& item) { return item.first == layer; });
+    if (entry == profile.layers.end())
+    {
+        if (unbind)
+            return Fail("bad-request", "'" + id + "' binds nothing in the " + layer + " layer");
+        profile.layers.emplace_back(layer, JsonValue::Members{});
+        entry = profile.layers.end() - 1;
+    }
+    auto member = std::find_if(entry->second.begin(), entry->second.end(),
+                               [&control](const auto& item) { return item.first == control; });
+    if (unbind)
+    {
+        if (member == entry->second.end())
+            return Fail("bad-request", "'" + id + "' does not bind " + control + " in the " + layer + " layer");
+        entry->second.erase(member);
+    }
+    else if (member == entry->second.end())
+        entry->second.emplace_back(control, spec);
+    else
+        member->second = spec;
+
+    // Through the reader the files go through: a binding that does not compile is refused here
+    Profile checked;
+    std::string error;
+    if (!ParseProfile(ProfileStore::Dump(profile), checked, error))
+        return Fail("invalid-binding", error);
+    checked.scope = ProfileScope::User;
+    if (!ProfileStore::Save(checked, _owner.UserProfileDir(), error))
+        return Fail("bad-request", error);
+    checked.path = ProfileStore::SavePath(checked, _owner.UserProfileDir());
+    const std::string path = checked.path;
+    if (!store.Add(std::move(checked), error))
+        return Fail("bad-request", error);
+    _owner.Reapply();
+    HostReply reply;
+    reply.message = std::string(unbind ? "unbound " : "bound ") + layer + "." + control + " in " + id;
+    reply.body.Set("profile", JsonValue::String(id));
+    reply.body.Set("path", JsonValue::String(path));
+    return reply;
+}
+
+}  // namespace controllers
