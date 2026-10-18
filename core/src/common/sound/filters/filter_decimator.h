@@ -269,11 +269,15 @@ public:
     /// the same index and the same phase (the same additions), no stores
     void feedZerosIntoSilence(size_t n)
     {
-        _bufferIndex = (_bufferIndex + HISTORY - n % HISTORY) % HISTORY;
+        moveZerosIntoSilence(n);
         if (!_master)
             for (size_t i = 0; i < n; i++)
                 _phase += 1.0;
     }
+
+    /// feedZerosIntoSilence without the phase additions: for a caller that sets the phase itself right after (a quiet
+    /// run replays the run's additions and output steps, setPhase), where n serial additions would be overwritten
+    void moveZerosIntoSilence(size_t n) { _bufferIndex = (_bufferIndex + HISTORY - n % HISTORY) % HISTORY; }
 
     /// Feeds before hasOutput() turns true (0 when it is already), counted with the additions feedSample makes
     size_t feedsToNextOutput() const
