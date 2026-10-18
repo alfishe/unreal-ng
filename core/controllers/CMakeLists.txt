@@ -1,0 +1,46 @@
+cmake_minimum_required(VERSION 3.16)
+project(controllers LANGUAGES CXX)
+
+# The host game controllers library (docs/inprogress/2026-10-17-controller-manager/architecture.md §3): backends,
+# device identity, the canonical control vocabulary, the input router, profiles. No Qt. Built like core/recording:
+# core links it PUBLIC under ENABLE_CONTROLLERS; it uses only the core's controller headers (no core symbols).
+# Added from core/src/CMakeLists.txt, so it inherits the core's warning flags (zero warnings).
+
+# C++ standard - MUST match the rest of the project (C++20)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+message(">> <${PROJECT_NAME}>")
+
+get_filename_component(ROOT_DIR ../../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+set(SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+include(${ROOT_DIR}/cmake/func.cmake)
+
+option(ENABLE_CONTROLLERS "Enable host game controllers" ON)
+
+if(NOT ENABLE_CONTROLLERS)
+    message(STATUS "Controllers disabled - skipping ${PROJECT_NAME} library")
+    return()
+endif()
+
+file(GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/build/" FALSE OUTVAR CPP_FILES)
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/CMakeFiles/" FALSE OUTVAR CPP_FILES)
+
+add_library(${PROJECT_NAME} STATIC ${CPP_FILES})
+add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
+
+target_include_directories(${PROJECT_NAME} PUBLIC
+    ${SOURCE_DIR}/
+    ${ROOT_DIR}/core/src/           # the core's controller types (emulator/io/controllers/*.h, header-only use)
+)
+
+target_compile_definitions(${PROJECT_NAME} PUBLIC ENABLE_CONTROLLERS)
+
+if(CMAKE_BUILD_TYPE MATCHES Debug)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE _DEBUG)
+endif()
+
+message("<< <${PROJECT_NAME}>")

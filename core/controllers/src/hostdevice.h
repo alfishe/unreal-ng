@@ -1,0 +1,51 @@
+#pragma once
+
+/// @file hostdevice.h
+/// @brief A host device as the library sees it (architecture.md §1, §5): its identity, what it is for, which
+/// emulator instance it drives, and the control events a backend reports for it.
+
+#include <cstdint>
+#include <string>
+
+namespace controllers
+{
+
+/// Stable across replug and restart: "usb:045e:0b00:0517:<serial>", "bt:045e:0b22:<mac-hash>", "gc:<vendor>#<n>",
+/// "kbd:system", "mouse:system", "fake:<n>" (architecture.md §5)
+using HostDeviceId = std::string;
+
+/// What a host device is for (architecture.md §1)
+enum class DeviceRole : uint8_t
+{
+    Player,          ///< the play layer (default)
+    DebuggerRemote,  ///< every control is a debug binding: never reaches a connector
+    Disabled,        ///< reaches nothing
+};
+
+/// Which emulator instance a device drives (architecture.md §9, DT-4)
+enum class InstanceMode : uint8_t
+{
+    FollowFocus,  ///< the instance whose window has focus (default)
+    Pinned,       ///< always one instance
+    All,          ///< every instance (a demo on the video wall)
+};
+
+/// What a backend reports when a device arrives
+struct HostDeviceInfo
+{
+    HostDeviceId id;
+    std::string name;     ///< for display only
+    std::string family;   ///< "xbox", "playstation", "switch", "generic", "keyboard", "mouse" (device-database.md)
+    std::string backend;  ///< the backend that reported it
+};
+
+/// One change of one control (architecture.md §1)
+struct ControlEvent
+{
+    HostDeviceId device;
+    std::string control;  ///< canonical name (controls.h)
+    float value = 0;      ///< a button 0 / 1, an axis -1..1, a trigger 0..1, a delta a count
+    uint64_t hostTimeNs = 0;
+};
+
+}  // namespace controllers

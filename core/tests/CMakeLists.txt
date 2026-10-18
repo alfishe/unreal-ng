@@ -127,6 +127,11 @@ if (NOT ENABLE_RECORDING)
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/recording/" FALSE OUTVAR TEST_CPP_FILES)
 endif()
 
+# The controllers library's tests follow its option (core/tests/emulator/io/controllers is the core's own)
+if (NOT ENABLE_CONTROLLERS)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/tests/controllers/" FALSE OUTVAR TEST_CPP_FILES)
+endif()
+
 # CLI tests (header-only CLI helpers) follow the CLI module
 if (NOT ENABLE_CLI_AUTOMATION)
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/automation/cli-" FALSE OUTVAR TEST_CPP_FILES)

@@ -265,6 +265,15 @@ if (ENABLE_RECORDING)
     target_link_libraries(${PROJECT_NAME} PUBLIC unrealng::recording)
 endif()
 
+# Host game controllers (core/controllers, controller manager C2): the same pattern as recording
+option(ENABLE_CONTROLLERS "Enable host game controllers" ON)
+if (ENABLE_CONTROLLERS)
+    if (NOT TARGET unrealng::controllers)
+        add_subdirectory("${ROOT_DIR}/core/controllers" "${CMAKE_CURRENT_BINARY_DIR}/controllers")
+    endif()
+    target_link_libraries(${PROJECT_NAME} PUBLIC unrealng::controllers)
+endif()
+
 # Set include paths for compiler
 
 # Set include paths for compiler.

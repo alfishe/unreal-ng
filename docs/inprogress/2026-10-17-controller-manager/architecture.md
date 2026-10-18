@@ -101,12 +101,14 @@ core/controllers/
                                       # add_library(controllers STATIC), alias unrealng::controllers,
                                       # OBJCXX on Apple, frameworks IOKit GameController CoreHaptics
   src/
-    hostinputservice.{h,cpp}          # process-wide entry: start/stop, devices, events, sample
-    backendfactory.{h,cpp}            # like PlatformEncoderFactory: native list, fallback, probes
-    hostdevice.{h,cpp}                # merged device, capabilities, live state
+    hostinputservice.{h,cpp}          # process-wide entry: start/stop, devices, events, sample      (C2a)
+    backendfactory.{h,cpp}            # like PlatformEncoderFactory: native list, fallback, probes   (C2a, empty)
+    hostbackend.h                     # IBackend, IBackendSink, BackendProbe                        (C2a)
+    hostdevice.h                      # HostDeviceId, role, instance mode, ControlEvent             (C2a)
     devicedatabase.{h,cpp}            # data/controllers/devices.json + user overrides
-    controls.{h,cpp}                  # canonical vocabulary, names, parsing
-    router/                           # InputRouter, layers, bindings, analog, autofire, chords
+    hostcontrols.{h,cpp}              # canonical vocabulary, retro control names, parsing           (C2a)
+    fake/fakebackend.{h,cpp}          # devices and controls set by calls: tests, scripted pads      (C2a)
+    router/                           # InputRouter, bindings, analog, autofire (C2a); layers, chords (C2b)
     profiles/                         # ProfileStore, schema, merge, match
     hid/                              # report-descriptor parser, generic HID pad, vendor drivers
       drivers/xbox_gip.{h,cpp}        # Xbox One / Series / Elite input report (GIP 0x20)
@@ -119,7 +121,9 @@ core/controllers/
 ```
 
 `core/src/CMakeLists.txt` links `unrealng::controllers` PUBLIC under `ENABLE_CONTROLLERS`, exactly as it links
-`unrealng::recording`, so automation and every Qt app get it. With the option off, `IHostInputSource` has no
+`unrealng::recording`, so automation and every Qt app get it. The library uses only the core's controller headers
+(`controllertypes.h`, `ihostinputsource.h`), no core symbols, so the static link order needs no cycle. Header names
+carry a `host` prefix or a subdirectory (`router/binding.h`): the library's include root is public. With the option off, `IHostInputSource` has no
 implementation, the keyboard path (`Joystick::OnPcKey`) keeps working, and the dialog shows only the keyboard and the
 mouse.
 
