@@ -180,7 +180,7 @@ bool Capturable(EmulatorContext* context, const std::string& key, AudioSourceTyp
         error = "unknown source '" + key + "' (" + KnownKeys(sm) + ")";
         return false;
     }
-    if (type != AudioSourceType::MasterMix && (!sm->device(type) || !sm->deviceBuffer(type)))
+    if (type != AudioSourceType::MasterMix && (!sm->device(type) || !sm->hasDeviceBuffer(type)))
     {
         error = "source '" + key + "' is not fitted on this machine (" + KnownKeys(sm) + ")";
         return false;
@@ -245,7 +245,7 @@ StateNode AudioMixer(EmulatorContext* context)
         n["gain_db"] = d.volume > 0.0f ? std::round(200.0 * std::log10(static_cast<double>(d.volume))) / 10.0 : -120.0;
         n["peak"] = std::round(1000.0 * static_cast<double>(d.peak)) / 1000.0;
         n["active"] = d.activeRecently;
-        n["capturable"] = sm->deviceBuffer(d.type) != nullptr;
+        n["capturable"] = sm->hasDeviceBuffer(d.type);
         // Silent by hardware: a slot card's IORQGE hides the device ("shadowed by zxbus.1")
         const std::string state = sm->deviceState(d.type);
         if (!state.empty())

@@ -70,6 +70,7 @@ bool TsConfProgramSnapshot::Commit(const snapshot::Image& image, EmulatorContext
     const uint8_t clock = header->payload[1] & 0x03;
 
     context.pCore->Reset();
+    context.pMemory->ClearModelRAM();  // nothing of the program before it stays in the pages the image does not fill
     // A program is started by the shell (Wild Commander), which leaves the SD card
     // initialized and idle. The reset above keeps the card's state (its power is
     // not cut), so a load that lands while the TS-BIOS is initializing or streaming

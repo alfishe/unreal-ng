@@ -445,11 +445,10 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     /// region <Debug logging>
 
     // Check if port was not explicitly muted
-    if (!key_exists(_loggingMutePorts, port))
+    if (_logger && _logger->GetLevel() <= LoggerLevel::LogInfo && !key_exists(_loggingMutePorts, port))
     {
         // Determine RAM/ROM page where code executed from
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
-        MLOGINFO("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
+        MLOGINFO("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, GetPCAddressLocator(pc).c_str(), port, result);
     }
     /// endregion </Debug logging>
 
@@ -666,8 +665,7 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
         if (!key_exists(_loggingMutePorts, port))
         {
             // Determine RAM/ROM page where code executed from
-            std::string currentMemoryPage = GetPCAddressLocator(pc);
-            MLOGINFO("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
+            MLOGINFO("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, GetPCAddressLocator(pc).c_str(), port, value);
         }
     }
     /// endregion </Debug logging>

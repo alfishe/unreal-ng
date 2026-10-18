@@ -1623,6 +1623,7 @@ TEST_F(BreakpointManager_test, ChangesFromAnotherThreadWhileTheMachineRuns)
     ASSERT_TRUE(TestWait::For([&] { return bpm->GetBreakpointById(counter)->hitCount > 0; }, std::chrono::seconds(2)))
         << "the machine runs through the breakpoint";
 
+    const uint32_t countedBefore = bpm->GetBreakpointById(counter)->hitCount;
     std::atomic<int> changes{0};
     std::thread surface([&] {
         std::string threadError;
@@ -1638,8 +1639,11 @@ TEST_F(BreakpointManager_test, ChangesFromAnotherThreadWhileTheMachineRuns)
             changes++;
         }
     });
-    const uint32_t countedBefore = bpm->GetBreakpointById(counter)->hitCount;
     surface.join();
+    // The 50 changes may all go through before the machine runs another instruction (each waits for the main loop to
+    // park): the machine still counting afterwards is the proof that the changes left it running
+    const bool counting = TestWait::For([&] { return bpm->GetBreakpointById(counter)->hitCount > countedBefore; },
+                                        std::chrono::seconds(2));
     const uint32_t countedAfter = bpm->GetBreakpointById(counter)->hitCount;
 
     emulator->Stop();
@@ -1647,5 +1651,6 @@ TEST_F(BreakpointManager_test, ChangesFromAnotherThreadWhileTheMachineRuns)
     delete emulator;
 
     EXPECT_EQ(changes.load(), 50) << "every change went through: " << error;
-    EXPECT_GT(countedAfter, countedBefore) << "the machine ran while the breakpoints changed";
+    EXPECT_TRUE(counting) << "the machine runs on after the breakpoints changed: " << countedBefore << " -> "
+                          << countedAfter;
 }

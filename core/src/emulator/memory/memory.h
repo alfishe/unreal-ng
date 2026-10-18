@@ -292,6 +292,9 @@ public:
     /// region <Initialization>
 public:
     void Reset();
+    /// Zero every RAM page the model has (config.ramsize): a snapshot commit starts from no trace of the program
+    /// before it - the pages the snapshot does not carry read 0, whatever ran there
+    void ClearModelRAM();
     void RandomizeMemoryContent();
     void RandomizeMemoryBlock(uint8_t* buffer, size_t size);
 
