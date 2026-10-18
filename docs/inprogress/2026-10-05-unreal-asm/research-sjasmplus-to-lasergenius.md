@@ -74,7 +74,7 @@ A,(IX-4)` `DD 7E 04`. `LD (IY-3),A` is right: LD and its first operand are one t
 
 ## 5. Limits
 
-- Only Laser Genius 1.04 without the hash extensions has an inject rule (with them the end word is `(#ADA1)`).
+- Laser Genius 1.04 with the hash extensions takes the same rule (2026-10-17): only the start word differs (`#737E`), the end word is `(#A973)` in both.
 - LG stores code between `#68D2` and `#7F22` (its `stats`). Its text space is 8K by default (`set space` gives more
   text space and less for names), and its name table holds a few hundred names: larger sources do not fit.
 - A source with `INCBIN` does not convert.

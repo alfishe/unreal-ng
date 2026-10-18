@@ -980,6 +980,8 @@ void SoundManager::applyCoreRate(size_t rate)
 
 void SoundManager::handleFrameStart()
 {
+    _emulationThread.store(std::this_thread::get_id(), std::memory_order_relaxed);
+
     // The turbo low-quality override, set on whatever thread toggled turbo (setTurboLowQualityOverride)
     if (_turboSound)
         _turboSound->setHQEnabled(isHQActive());
@@ -1887,10 +1889,16 @@ void SoundManager::UpdateFeatureCache()
 
         _feature_sound_enabled = newSoundEnabled;
 
-        // Propagate the effective HQ flag (feature state minus the turbo override) to TurboSound
+        // Propagate the effective HQ flag (feature state minus the turbo override) to TurboSound. From the thread that
+        // runs the frames (or before the first frame) at once. From any other thread (GUI, WebAPI, CLI toggling a
+        // feature while the machine runs) NOT here: the device's setters settle the step gate, i.e. run stepAt -
+        // concurrently with the emulation thread's own stepAt on the same buffers (ASan: emplace_back on the
+        // quiet-ticks vector, SIGSEGV). handleFrameStart hands the flag over on the emulation thread every frame
         if (_turboSound)
         {
-            _turboSound->setHQEnabled(isHQActive());
+            const std::thread::id owner = _emulationThread.load(std::memory_order_relaxed);
+            if (owner == std::thread::id() || owner == std::this_thread::get_id())
+                _turboSound->setHQEnabled(isHQActive());
         }
 
         // GS personality follows the gs_lightweight feature (runtime

@@ -143,6 +143,7 @@ ZeusCodec::ZeusCodec()
             "zeus",
             CodecFamily::Tokenized,
             {{"1983", "ZEUS 1983 (Crystal) and ports with its table"},
+             {"3.1", "ZEUS+ 3.1 (H.S.O. 1993): 1983's table, labels of 6 characters"},
              {"gg", "ZEUS (GG)"},
              {"pht", "ZEUS v7.E (PHT)"},
              {"1.1", "ZEUS 1.1 beta (PHT): v7.E's table, no * / %"},

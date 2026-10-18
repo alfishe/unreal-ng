@@ -976,34 +976,77 @@ SyncDescriptor GensInjectable(SyncDescriptor d, std::vector<uint16_t> chain)
     return d;
 }
 
-/// PROMETHEUS 48K tape edition installed at 24000 (asm-synchronizer.md §7.17, from its reconstructed source): the
-/// records from sourceBufferAccessLine (#9C28) to twelve bytes below the symbol table (operand of varcSymbolTablePt at
-/// #87D7), the table up to the operand of varcCodeEndPt (#881A); the save adds FF XOR the records and FF between. An
-/// inject writes them so, below U-TOP (varcUTop's operand, #7946), and sets the active line (varcSourceBufferActiveLine,
-/// #826D) and the block margins (varcSelectedBlockStart / End, #80E8 / #80EB) to the start
-SyncDescriptor Prometheus48()
+/// PROMETHEUS (asm-synchronizer.md §7.17, from the 48K edition's reconstructed source): the records from
+/// sourceBufferAccessLine (fixedStart) to twelve bytes below the symbol table (the operand of varcSymbolTablePt), the
+/// table up to the operand of varcCodeEndPt; the save adds FF XOR the records and FF between. An inject writes them
+/// so, below U-TOP (varcUTop's operand; 0 = the end of memory), and sets the active line (varcSourceBufferActiveLine)
+/// and the block margins (varcSelectedBlockStart / End) to the start
+struct PrometheusBuild
+{
+    const char* id;
+    const char* title;
+    uint16_t signatureAt;
+    std::string signature;
+    uint16_t start, tableAt, endAt, uTopAt;
+    std::vector<uint16_t> resetWords;
+    std::vector<uint16_t> idleChain;   // its editor's key wait
+    int upperPage;
+};
+
+SyncDescriptor Prometheus(const PrometheusBuild& b)
 {
     SyncDescriptor d;
-    d.id = "prometheus-48";
-    d.title = "PROMETHEUS 48K (Proxima, at 24000)";
+    d.id = b.id;
+    d.title = b.title;
     d.codec = "prometheus";
     d.version = "";
     d.extension = "C";
-    d.identify = {{0x8000, std::string("\xC9\xF5\xD6\x34\x5F\x16\x37\xCD\xE6\x82\xC5\x21\xE4\x8A\xAF\x4F\x23\x0C\xBE\x20\xFB\x11\xD1\x8A", 24)}};
+    d.identify = {{b.signatureAt, b.signature}};
     d.pages = PageIdRule::Fixed;
     d.family = LayoutFamily::Linear;
-    d.linear.fixedStart = 0x9C28;
-    d.linear.prometheusTableAt = 0x87D7;
-    d.linear.prometheusEndAt = 0x881A;
-    d.linear.upperPage = 0;
+    d.linear.fixedStart = b.start;
+    d.linear.prometheusTableAt = b.tableAt;
+    d.linear.prometheusEndAt = b.endAt;
+    d.linear.upperPage = b.upperPage;
     d.linear.injectable = true;
-    d.linear.limitAt = 0x7946;                          // U-TOP: the text and its names stay below it
-    d.linear.resetWords = {0x826D, 0x80E8, 0x80EB};     // the active line, the block's first and last line
+    d.linear.limitAt = b.uTopAt;
+    d.linear.resetWords = b.resetWords;
     d.typing = {TypingRule::NotInText, 0, 0};
-    // its editor's key wait (CALL #86AE from #8626, called from #7CFA): the word between is the key scan's own
-    d.idleChain = {0x8629, 0x7CFD};
+    d.idleChain = b.idleChain;
     d.idleWhere = "its editor";
     return d;
+}
+
+/// The 48K tape edition installed at 24000: the records from #9C28, varcSymbolTablePt #87D7, varcCodeEndPt #881A,
+/// U-TOP #7946, the active line #826D, the block #80E8 / #80EB; the key wait (CALL #86AE from #8626, called from
+/// #7CFA) leaves #8629, #7CFD (the word between is the key scan's own). shift: the same code moved up (the TR-DOS
+/// adaptation, PROMBD.C installed at its 25000: #514); the signature's three addresses move with it
+SyncDescriptor Prometheus48(const char* id = "prometheus-48", const char* title = "PROMETHEUS 48K (Proxima, at 24000)",
+                            uint16_t shift = 0)
+{
+    std::string signature("\xC9\xF5\xD6\x34\x5F\x16\x37\xCD\xE6\x82\xC5\x21\xE4\x8A\xAF\x4F\x23\x0C\xBE\x20\xFB\x11\xD1\x8A", 24);
+    for (const size_t at : {size_t(8), size_t(12), size_t(22)})
+    {
+        const auto word = static_cast<uint16_t>((static_cast<uint8_t>(signature[at]) | static_cast<uint8_t>(signature[at + 1]) << 8) + shift);
+        signature[at] = static_cast<char>(word & 0xFF);
+        signature[at + 1] = static_cast<char>(word >> 8);
+    }
+    const auto at = [shift](uint16_t a) { return static_cast<uint16_t>(a + shift); };
+    return Prometheus({id, title, at(0x8000), signature, at(0x9C28), at(0x87D7), at(0x881A), at(0x7946),
+                       {at(0x826D), at(0x80E8), at(0x80EB)}, {at(0x8629), at(0x7CFD)}, 0});
+}
+
+/// PROMETHEUS 128 (Proxima 1993; the tape's PROM128LNG / MDM / SHT installed at 24000, "D40/D80" n): the text in a
+/// 64K space of its own over RAM pages 1, 3, 4, 6 (address bits 15-14 pick the page, mapped at #C000: LNG #5F85); the
+/// records from #C01A, i.e. page 6, so a text stays within that page (16K); no U-TOP but the space's end. Its
+/// variables found by the 48K code around them: L varcSymbolTablePt #9186, varcCodeEndPt #9217, the active line
+/// #8BF7, the block #8A59 / #8A5C; M and S are L shorter (by #237 / #5CC up to the block, 4 bytes more after it)
+SyncDescriptor Prometheus128(const char* id, const char* title, uint16_t shift, uint16_t tableShift, const char* signature)
+{
+    const auto at = [shift](uint16_t a) { return static_cast<uint16_t>(a - shift); };
+    const auto late = [tableShift](uint16_t a) { return static_cast<uint16_t>(a - tableShift); };
+    return Prometheus({id, title, at(0x8955), std::string(signature, 24), 0xC01A, late(0x9186), late(0x9217), 0,
+                       {at(0x8BF7), at(0x8A59), at(0x8A5C)}, {at(0x8FD3), at(0x864E)}, 6});
 }
 
 /// Power Assembler 3.0 (asm-synchronizer.md §7.18, from its code): CR LF text from #79AF to #1A; the cursor line's
@@ -1041,8 +1084,8 @@ SyncDescriptor Pasm30()
     return d;
 }
 
-/// Laser Genius 1.04 Beta (asm-synchronizer.md §7.16): paragraphs from (#A975) to (#A973) (without the hash
-/// extensions; (#ADA1) with them), then FF FF; the disk file adds its #AF header. Identified by its code at #AC00;
+/// Laser Genius 1.04 Beta (asm-synchronizer.md §7.16): paragraphs from (#A975) to (#A973), then FF FF (with the hash
+/// extensions too: the start word says #737E instead of #7F2E); the disk file adds its #AF header. Identified by its code at #AC00;
 /// an inject writes the paragraphs and FF FF from (#A975) and the end word, up to (#A971) (no "changed" flag)
 SyncDescriptor LaserGenius()
 {
@@ -1102,9 +1145,22 @@ SyncDescriptor Zeus1983()
 {
     SyncDescriptor d = Zeus("zeus-1983", "ZEUS 1983 (Crystal)", "1983", 0xE028,
              "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x20\x20\x20\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53", 0xFD00, "C");
+    d.identify.push_back({0xE040, std::string("EMBLER\r\x7F 1983 Crystal")});   // ZEUS 128 too; ZEUS+ 3.1 says 1993
     d.linear.injectable = true;
     d.idleChain = {0xF6E5, 0xE0D5};
     d.idleWhere = "its prompt";
+    return d;
+}
+
+/// ZEUS+ 3.1 (H.S.O. 1993, resident; ZEUS31HS: RUN "ZEUS+3.1") is 1983's code with 1983's title up to its second
+/// line ("1993 Crystal & H.S.O. Ver 3.1"), its labels of 6 characters (error 1 from the seventh)
+SyncDescriptor Zeus31()
+{
+    SyncDescriptor d = Zeus1983();
+    d.id = "zeus-3.1";
+    d.title = "ZEUS+ 3.1 (H.S.O. 1993)";
+    d.version = "3.1";
+    d.identify.back() = {0xE040, std::string("EMBLER\r\x7F 1993 Crystal & H.S.O.")};
     return d;
 }
 
@@ -1116,6 +1172,18 @@ SyncDescriptor ZeusGg()
              "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x5A\x45\x55\x53\x20\x77\x69\x74\x68\x20\x42\x2D\x64\x69\x73", 0xFD00, "C");
     d.linear.injectable = true;
     d.idleChain = {0xF6E5, 0xE0D5};
+    d.idleWhere = "its prompt";
+    return d;
+}
+
+/// The ports that kept ZEUS 1983's code at #E000 and its words at #FD00 (asm-synchronizer.md §7.14, 2026-10-17): each
+/// told by its title at #E028, its line input returning through #F6E5, #E0D5 like 1983's (2.2SI's own input #6EAC).
+/// ZEUS 128 (Stars Soft 1995, its menu's first line) keeps 1983's title: zeus-1983 reads it
+SyncDescriptor ZeusPort(const char* id, const char* title, const char* signature, std::vector<uint16_t> idleChain = {0xF6E5, 0xE0D5})
+{
+    SyncDescriptor d = Zeus(id, title, "1983", 0xE028, signature, 0xFD00, "C");
+    d.linear.injectable = true;
+    d.idleChain = std::move(idleChain);
     d.idleWhere = "its prompt";
     return d;
 }
@@ -1542,7 +1610,7 @@ InjectPlan PlanInjectPrometheus(const MachineView& machine, const SyncDescriptor
     const uint32_t start = p.fixedStart;
     const uint32_t tableAt = start + static_cast<uint32_t>(records.size()) + 12;
     const uint32_t end = tableAt + static_cast<uint32_t>(table.size());
-    const auto topWord = machine.Word(p.limitAt);
+    const auto topWord = p.limitAt ? machine.Word(p.limitAt) : std::optional<uint16_t>(0);   // 0: the end of memory
     const auto oldEndWord = machine.Word(p.prometheusEndAt);
     if (!topWord || !oldEndWord)
     {
@@ -1550,7 +1618,7 @@ InjectPlan PlanInjectPrometheus(const MachineView& machine, const SyncDescriptor
         return plan;
     }
     // plain values: gcc 14 at -O3 takes *optional for maybe-uninitialized (-Werror)
-    const uint32_t top = topWord.value_or(0);
+    const uint32_t top = p.limitAt ? topWord.value_or(0) : 0x10000;
     const uint32_t oldEnd = oldEndWord.value_or(0);
     if (end >= top)
     {
@@ -1559,7 +1627,8 @@ InjectPlan PlanInjectPrometheus(const MachineView& machine, const SyncDescriptor
         return plan;
     }
     const auto poke = [&](uint32_t at, uint8_t value) {
-        const int window = machine.windows[(at >> 14) & 3];
+        // the text's part from #C000 in its page (PROMETHEUS 128: page 6 whatever is mapped)
+        const int window = at >= 0xC000 && p.upperPage >= 0 ? p.upperPage : machine.windows[(at >> 14) & 3];
         if (window < 0 || at < 0x4000 || at > 0xFFFF)
             return false;
         plan.pokes.push_back({window, static_cast<uint16_t>(at & (kPage - 1)), value});
@@ -1649,7 +1718,8 @@ InjectPlan PlanInjectPasm(const MachineView& machine, const SyncDescriptor& d, c
         return plan;
     }
     const auto poke = [&](uint32_t at, uint8_t value) {
-        const int window = machine.windows[(at >> 14) & 3];
+        // the text's part from #C000 in its page (PROMETHEUS 128: page 6 whatever is mapped)
+        const int window = at >= 0xC000 && p.upperPage >= 0 ? p.upperPage : machine.windows[(at >> 14) & 3];
         if (window < 0 || at < 0x4000 || at > 0xFFFF)
             return false;
         plan.pokes.push_back({window, static_cast<uint16_t>(at & (kPage - 1)), value});
@@ -2134,10 +2204,26 @@ const std::vector<SyncDescriptor>& Descriptors()
         Zxasm30(),
         LaserGenius(),
         Prometheus48(),
+        Prometheus48("prometheus-48-trdos", "PROMETHEUS 48K TR-DOS (PROMBD.C, at 25000)", 0x514),
+        Prometheus128("prometheus-128", "PROMETHEUS 128 L (Proxima 1993, at 24000)", 0, 0,
+                      "\xC9\xF5\xD6\x34\x5F\x16\x37\xCD\x90\x8C\xC5\x21\x03\x5E\xAF\x4F\x23\x0C\xBE\x20\xFB\x11\xF0\x5D"),
+        Prometheus128("prometheus-128m", "PROMETHEUS 128 M (Proxima 1993, at 24000)", 0x237, 0x23B,
+                      "\xC9\xF5\xD6\x34\x5F\x16\x37\xCD\x59\x8A\xC5\x21\x03\x5E\xAF\x4F\x23\x0C\xBE\x20\xFB\x11\xF0\x5D"),
+        Prometheus128("prometheus-128s", "PROMETHEUS 128 S (Proxima 1993, at 24000)", 0x5CC, 0x5D0,
+                      "\xC9\xF5\xD6\x34\x5F\x16\x37\xCD\xC4\x86\xC5\x21\x03\x5E\xAF\x4F\x23\x0C\xBE\x20\xFB\x11\xF0\x5D"),
         Pasm30(),
         Zeus1983(),
+        Zeus31(),
         Zeus11(),
         ZeusGg(),
+        ZeusPort("zeus-2.2", "ZEUS 2.2 (Bayanov 1996)",
+                 "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x5A\x45\x55\x53\x20\x76\x32\x2E\x32\x0D\x7F\x31\x39\x38\x33"),
+        ZeusPort("zeus-2.2si", "ZEUS 2.2SI (SI Soft 1991)",
+                 "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53\x45\x4D\x42", {0x6EAC, 0xE0D5}),
+        ZeusPort("zeus-pro", "Zeus Pro 2.18 (RIP Group)",
+                 "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x20\x20\x20\x20\x20\x20\x20\x20\x20\x5A\x45\x55\x53\x20\x50"),
+        ZeusPort("zeus-plus-2.16", "Zeus Plus 2.16 (Stepanenko 1991)",
+                 "\x21\x6A\x5C\xA6\x77\xC3\xC2\xDC\x83\xD6\xC9\xD9\xDF\xAC\xF3\xAC\xCF\xDE\xD5\xDF\xD8\xCD\xC0\xAC"),
         Zeus7e(),
         Primus29(),
         Gens4Tape(),
