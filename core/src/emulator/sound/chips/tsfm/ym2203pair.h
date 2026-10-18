@@ -523,6 +523,7 @@ public:
 
     /// Off: every tick through renderTick (comparisons); the count of the ticks quietTick took
     void setQuietTicksEnabled(bool enabled) { _quietTicksEnabled = enabled; }
+    bool quietTicksEnabled() const { return _quietTicksEnabled; }
     uint64_t quietTicks() const { return _quietTicks; }
 
     /// Silence the output-stage audio content - hold, coupling, LQ boxcar, decimator histories - keeping every

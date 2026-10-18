@@ -823,6 +823,30 @@ it. The card's TFM / player traces (MultiSoundTrace_Test digests) unchanged; the
 and idle, with the classic and Next snapshots: the same audio bytes. What the card costs on top now: the mixer
 (`MultiSoundMixer::Mix`), the SAM2695 resampler and the GS on the card.
 
+**R12. The AY and TSFM devices sleep through silence.** Quiet at rest (both SSGs silentAtRest, the decimator
+histories zeros, nothing queued, HQ, x1, no native tap; the TSFM also both FM halves idle, holding 0, the output
+coupling at rest), every output is +0.0 until something enters the device. The step gate then holds to the next entry
+(a port access, the frame start / end, a buffer or sample-phase accessor, TTD), and settleSteps takes the step at the
+last noted T as handleStep would (`stepAt`); the outputs due go in one quiet run (`renderQuietOutputs`), up to the first
+tick with an SSG write due (or, TSFM, the first half-tick with an FM word off the hold: a CSM key-on from timer A
+sounds with no CPU write). The device is open again after the entry, so nothing is late. Asleep again once the filters
+are back at exactly 0: about 2 s after an SSG sound, about 8 s after an FM one (the 1.3 Hz output coupling).
+
+| Row | before | after | x |
+|:--|--:|--:|--:|
+| Pentagon_NoCards_Normal (plain AY) | 288 | 269 | 0.93 |
+| Pentagon_OnlyMoonSound / NeoGS / MultiSound_Normal | | | 0.92-0.93 |
+| Pentagon_ShipNormal (TSFM) | 436 | 326 | 0.75 |
+| 128K_ShipNormal (TSFM) | 440 | 332 | 0.75 |
+| Scorpion_ShipNormal (TSFM) | 754 | 621 | 0.82 |
+| Sprinter_ShipNormal | | | 0.99-1.00 |
+
+Exactness: `AyStepGate_Test` / `TsfmStepGate_Test.BeepsAfterSilencesMatchEveryStepTakenTheFullWay` - a CPU program
+sounding after long silences (the TSFM one also a CSM expiry with FM muted and one audible, no write), against a
+machine with no gate and no quiet runs: the host sound frame by frame and the end state equal, and the device slept.
+Settling without the step, losing the decimator phases, or a run blind to FM words each fail them. The 29 snapshots'
+audio: the same bytes.
+
 **Tried and dropped: the Next UART's peer promise.** A peer (the ESP module, a wired device) told the UART until when
 it stays silent (`QuietUntil` plus an activity counter), so the poll skipped the two virtual peer calls per
 instruction. Exact (lockstep twins with and without the promise, every Next frame / CPU / RAM hash equal at 3.5 and
