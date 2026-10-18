@@ -330,7 +330,9 @@ paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]
 paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["snapshot"]["description"] = "A snapshot file (.szx, .sna, .z80) to write into instead of the machine (an idle template, Z1); needs output";
 paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["output"]["type"] = "string";
 paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["output"]["description"] = "With snapshot: the snapshot file written, the same format with the text's page replaced";
-paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["responses"]["200"]["description"] = "{assembler, title, source, from, name, page, bytes, lines, previous {name, bytes, changed, backup}, diagnostics; with snapshot: output, format}";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["drive"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["drive"]["description"] = "A-D: the drive whose disk takes the sources an assembler INCLUDEs from its disk (XAS: LTEXT; default A)";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["responses"]["200"]["description"] = "{assembler, title, source, from, name, page, bytes, lines, previous {name, bytes, changed, backup}, includes [{source, name, page | disk, bytes}], diagnostics; with snapshot: output, format}";
 paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["responses"]["409"]["description"] = "Refused: the assembler is busy, in its editor, or its text has changes not saved";
 paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["responses"]["422"]["description"] = "The conversion failed or the format cannot hold the text {diagnostics}";
 
@@ -357,6 +359,8 @@ paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["conte
 paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["from"]["description"] = "Its dialect (default sjasmplus)";
 paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["assembler"]["type"] = "string";
 paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["assembler"]["description"] = "A descriptor id; default the one found";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["drive"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["drive"]["description"] = "A-D: as sync-inject's drive";
 paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["title"]["type"] = "string";
 paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["title"]["description"] = "The text's name in the assembler (default: the replaced text's)";
 paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["force"]["type"] = "string";

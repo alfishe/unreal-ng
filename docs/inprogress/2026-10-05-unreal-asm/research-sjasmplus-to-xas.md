@@ -92,7 +92,8 @@ at the command line and in the editor (`SyncDescriptor::idleChain`):
 ## 5. Limits
 
 - A project: XAS holds one text, so the files a source INCLUDEs go as `LTEXT` to the disk (`zxasm inject` onto a disk
-  writes them there); an inject of a project into memory is refused.
+  writes them there); an inject of a project puts the main text into memory and the others onto the disk in the drive
+  (2026-10-18; into a snapshot: `zxasm inject --disk`).
 - A condition known only when XAS assembles works in 7.43 / 7.447 only (`IFNZ` / `IFZ`), and outside other blocks.
 - Labels inside an expanded macro or an unrolled block have no layout value: an expression XAS cannot chain that uses
   one is not converted.

@@ -60,6 +60,7 @@ public:
         std::string assembler;          ///< a descriptor id; "" = the one the probe finds
         std::string title;              ///< the text's name ("" = the name of the text it replaces)
         bool force = false;             ///< overwrite the user's own changes in the guest too
+        std::string drive;              ///< the drive taking the sources an assembler INCLUDEs from its disk ("" = A)
         uint32_t intervalMs = 500;
         uint32_t quietMs = 300;         ///< a change must stay this long before it is written (an editor's save in parts)
     };

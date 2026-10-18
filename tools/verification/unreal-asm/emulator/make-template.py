@@ -35,6 +35,7 @@ def main():
     parser.add_argument('--combo-frames', type=int, default=4, help='xas: frames EXT is held (9.x: 12)')
     parser.add_argument('--right', type=int, default=0, help='xas: cursor moves right in the file list before loading')
     parser.add_argument('--help-key', action='store_true', help='alasm: a key closes a help screen at the start (3.8c)')
+    parser.add_argument('--install', type=int, help='prometheus: the address its installer moves the code to (as inject-oracle.py)')
     parser.add_argument('--zxasm', default=os.environ.get('ZXASM', 'zxasm'), help='zxasm to check the template with')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
     parser.add_argument('--settle', type=int, default=60, help='seconds it may take to reach its prompt after the start')

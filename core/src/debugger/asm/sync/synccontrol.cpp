@@ -158,6 +158,15 @@ AsmReply SyncControl::Inject(const sync::SyncDescriptor& descriptor, const sync:
     options.force = request.options.count("force") && (force.empty() || force == "true" || force == "1" || force == "on");
     if (written)
         options.written = *written;
+    // the drive whose disk takes the sources an assembler INCLUDEs from its disk (XAS)
+    uint8_t drive = 0;
+    if (const std::string letter = Option(request, "drive"); !letter.empty())
+    {
+        const char upper = static_cast<char>(std::toupper(static_cast<unsigned char>(letter[0])));
+        if (letter.size() != 1 || upper < 'A' || upper > 'D')
+            return Fail(AsmControlError::BadRequest, "'drive' is A, B, C or D", std::move(body));
+        drive = static_cast<uint8_t>(upper - 'A');
+    }
     sync::ProjectInjectPlan plan;
     std::string error;
     if (snapshot)
@@ -168,6 +177,12 @@ AsmReply SyncControl::Inject(const sync::SyncDescriptor& descriptor, const sync:
             return Fail(AsmControlError::BadRequest, "an inject into a snapshot needs 'output' (the snapshot file to write)", std::move(body));
         std::vector<uint8_t> file;
         plan = sync::InjectProjectIntoSnapshot(*snapshot, descriptor, project, title, options, file);
+        if (plan.ok && !plan.diskFiles.empty())
+            return Fail(AsmControlError::Refused,
+                        descriptor.title + " reads the " + std::to_string(plan.diskFiles.size()) +
+                            " source(s) the main one INCLUDEs from its disk, which a snapshot does not hold: inject into the running "
+                            "machine (its disk takes them) or use zxasm inject --disk",
+                        std::move(body));
         if (plan.ok)
         {
             std::ofstream out(output, std::ios::binary);
@@ -179,7 +194,7 @@ AsmReply SyncControl::Inject(const sync::SyncDescriptor& descriptor, const sync:
         }
     }
     else
-        asmsync::InjectProject(_context, descriptor, project, title, options, plan, error);
+        asmsync::InjectProject(_context, descriptor, project, title, options, plan, error, drive);
     diagnostics.insert(diagnostics.end(), plan.diagnostics.begin(), plan.diagnostics.end());
     body["diagnostics"] = asmsync::DiagnosticsValue(diagnostics);
     if (!plan.ok)
@@ -237,6 +252,21 @@ AsmReply SyncControl::Inject(const sync::SyncDescriptor& descriptor, const sync:
         }
         body["includes"] = std::move(includes);
     }
+    if (!plan.diskFiles.empty())
+    {
+        // onto the disk the assembler reads them from
+        StateNode includes = StateNode::Array();
+        for (size_t k = 0; k < plan.diskFiles.size(); ++k)
+        {
+            StateNode item = StateNode::Object();
+            item["source"] = project[k + 1].name;
+            item["name"] = plan.texts[k + 1].document.name;
+            item["disk"] = std::string("disk:") + static_cast<char>('A' + drive) + "/" + plan.diskFiles[k].FullName();
+            item["bytes"] = static_cast<uint64_t>(plan.diskFiles[k].data.size());
+            includes.items.push_back(std::move(item));
+        }
+        body["includes"] = std::move(includes);
+    }
     AsmReply reply;
     reply.body = std::move(body);
     return reply;
@@ -251,8 +281,8 @@ const std::vector<std::string>& SyncControl::OptionsFor(const std::string& verb)
         {"watch", {"assembler", "interval", "quiet", "as", "to", "output", "project"}},
         {"unwatch", {}},
         {"hints", {}},
-        {"inject", {"assembler", "path", "data", "name", "file", "codec", "version", "from", "text", "title", "force", "backup", "snapshot", "output"}},
-        {"push-watch", {"path", "from", "assembler", "title", "force", "interval", "quiet"}},
+        {"inject", {"assembler", "path", "data", "name", "file", "codec", "version", "from", "text", "title", "force", "backup", "snapshot", "output", "drive"}},
+        {"push-watch", {"path", "from", "assembler", "title", "force", "interval", "quiet", "drive"}},
         {"push-unwatch", {}},
     };
     static const std::vector<std::string> none;
@@ -287,6 +317,7 @@ AsmReply SyncControl::Execute(const std::string& verb, const AsmRequest& request
         if (!options.assembler.empty() && !sync::FindDescriptor(options.assembler))
             return Fail(AsmControlError::NotFound, "no assembler '" + options.assembler + "'");
         options.title = Option(request, "title");
+        options.drive = Option(request, "drive");
         std::string force = Option(request, "force");
         std::transform(force.begin(), force.end(), force.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
         options.force = request.options.count("force") && (force.empty() || force == "true" || force == "1" || force == "on");

@@ -141,6 +141,25 @@ bool ReadDiskFile(EmulatorContext* context, const DiskFileRef& ref, unrealasm::c
     return false;
 }
 
+namespace
+{
+/// The write itself, at a coherent moment
+bool WriteNow(EmulatorContext* context, uint8_t drive, const std::string& name, char type, const unrealdisk::TrdosFileSystem::WriteOptions& options,
+              const std::vector<uint8_t>& bytes, std::string& error)
+{
+    FDD* fdd = nullptr;
+    DiskImage* image = nullptr;
+    if (!Drive(context, drive, fdd, image, error))
+        return false;
+    if (fdd->isWriteProtect())
+    {
+        error = std::string("the disk in drive ") + static_cast<char>('A' + drive) + " is write-protected";
+        return false;
+    }
+    return unrealdisk::TrdosFileSystem(*image).Write(name, type, bytes, options, error);
+}
+}  // namespace
+
 bool WriteDiskFile(EmulatorContext* context, const DiskFileRef& ref, uint16_t start, const std::vector<uint8_t>& bytes, std::string& error)
 {
     if (ref.type == 0)
@@ -154,23 +173,23 @@ bool WriteDiskFile(EmulatorContext* context, const DiskFileRef& ref, uint16_t st
         return false;
     }
     bool ok = false;
-    const bool reached = Coherent(context, [&]() {
-        FDD* fdd = nullptr;
-        DiskImage* image = nullptr;
-        if (!Drive(context, ref.drive, fdd, image, error))
-            return;
-        if (fdd->isWriteProtect())
-        {
-            error = std::string("the disk in drive ") + static_cast<char>('A' + ref.drive) + " is write-protected";
-            return;
-        }
-        unrealdisk::TrdosFileSystem::WriteOptions options;
-        options.start = start;
-        if (!unrealdisk::TrdosFileSystem(*image).Write(ref.name, ref.type, bytes, options, error))
-            return;
-        ok = true;
-    }, error);
+    unrealdisk::TrdosFileSystem::WriteOptions options;
+    options.start = start;
+    const bool reached = Coherent(context, [&]() { ok = WriteNow(context, ref.drive, ref.name, ref.type, options, bytes, error); }, error);
     return reached && ok;
+}
+
+bool WriteDiskFileNow(EmulatorContext* context, uint8_t drive, const unrealasm::containers::TrdosFile& file, std::string& error)
+{
+    if (file.data.size() > 0xFFFF)
+    {
+        error = "a TR-DOS file holds at most 65535 bytes";
+        return false;
+    }
+    unrealdisk::TrdosFileSystem::WriteOptions options;
+    options.start = file.start;
+    options.lengthField = file.length != 0 || file.data.empty();
+    return WriteNow(context, drive, file.TrimmedName(), file.type, options, file.data, error);
 }
 
 bool IsImageExtension(const std::string& extension)
