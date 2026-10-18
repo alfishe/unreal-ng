@@ -1970,8 +1970,7 @@ uint8_t PortDecoder::PeripheralPortIn(uint16_t port)
         // Determine RAM/ROM page where code executed from
         // (pCore may be absent in unit-test contexts)
         uint16_t pc = _context->pCore ? _context->pCore->GetZ80()->m1_pc : 0;  // Use IN command PC, not the next one (z80->pc)
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
-        MLOGWARNING("[In] [PC:%04X%s] Port: %02X - no peripheral device to handle", pc, currentMemoryPage.c_str(),
+        MLOGWARNING("[In] [PC:%04X%s] Port: %02X - no peripheral device to handle", pc, GetPCAddressLocator(pc).c_str(),
                     port);
     }
 
@@ -1995,9 +1994,8 @@ void PortDecoder::PeripheralPortOut(uint16_t port, uint8_t value)
         // Determine RAM/ROM page where code executed from
         // (pCore may be absent in unit-test contexts)
         uint16_t pc = _context->pCore ? _context->pCore->GetZ80()->m1_pc : 0;  // Use OUT command PC, not the next one (z80->pc)
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
         MLOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X - no peripheral device to handle", pc,
-                    currentMemoryPage.c_str(), port, value);
+                    GetPCAddressLocator(pc).c_str(), port, value);
     }
 }
 

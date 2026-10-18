@@ -214,8 +214,7 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
         if (!key_exists(_loggingMutePorts, logPort))
         {
             // Determine RAM/ROM page where code executed from
-            std::string currentMemoryPage = GetPCAddressLocator(pc);
-            MLOGINFO("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
+            MLOGINFO("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, GetPCAddressLocator(pc).c_str(), port, result);
         }
     }
     /// endregion </Debug logging>
@@ -317,8 +316,7 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
         if (!key_exists(_loggingMutePorts, decodedPort))
         {
             // Determine RAM/ROM page where code executed from
-            std::string currentMemoryPage = GetPCAddressLocator(pc);
-            MLOGINFO("[Out] [PC:%04X%s] Port: %04X; Decoded port: %04X; Value: %02X", pc, currentMemoryPage.c_str(), port, decodedPort, value);
+            MLOGINFO("[Out] [PC:%04X%s] Port: %04X; Decoded port: %04X; Value: %02X", pc, GetPCAddressLocator(pc).c_str(), port, decodedPort, value);
         }
     }
     /// endregion </Debug logging>
