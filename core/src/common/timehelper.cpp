@@ -37,8 +37,39 @@ void sleep_us(uint32_t us)
 }
 
 
+#ifdef _WIN32
+WakeSignal::WakeSignal() : _event(CreateEventW(nullptr, FALSE, FALSE, nullptr))
+{
+}
+
+WakeSignal::~WakeSignal()
+{
+    if (_event != nullptr)
+        CloseHandle(_event);
+}
+
+void WakeSignal::Notify()
+{
+    if (_event != nullptr)
+        SetEvent(_event);
+}
+#else
+WakeSignal::WakeSignal() = default;
+WakeSignal::~WakeSignal() = default;
+
+void WakeSignal::Notify()
+{
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _signaled = true;
+    }
+    _cv.notify_one();
+}
+#endif
+
 /// Precise deadline sleep with abort polling - see timehelper.h for the rationale
-bool TimeHelper::WaitUntilPrecise(std::chrono::steady_clock::time_point deadline, const std::function<bool()>& shouldAbort)
+bool TimeHelper::WaitUntilPrecise(std::chrono::steady_clock::time_point deadline, const std::function<bool()>& shouldAbort,
+                                  WakeSignal* wake)
 {
     using clock = std::chrono::steady_clock;
 
@@ -77,17 +108,34 @@ bool TimeHelper::WaitUntilPrecise(std::chrono::steady_clock::time_point deadline
             due.QuadPart = -static_cast<LONGLONG>(remaining.count()) * 10;  // 100 ns units, relative
             if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE))
             {
-                WaitForSingleObject(timer, INFINITE);
+                if (wake != nullptr && wake->_event != nullptr)
+                {
+                    HANDLE handles[] = {timer, static_cast<HANDLE>(wake->_event)};
+                    if (WaitForMultipleObjects(2, handles, FALSE, INFINITE) == WAIT_OBJECT_0 + 1)
+                        CancelWaitableTimer(timer);
+                }
+                else
+                    WaitForSingleObject(timer, INFINITE);
                 continue;
             }
         }
         // No timer at all: coarse Sleep() for the bulk, the loop's time check keeps us from returning early
-        if (remaining > std::chrono::milliseconds(2))
-            Sleep(1);
+        const DWORD coarse = remaining > std::chrono::milliseconds(2) ? 1 : 0;
+        if (wake != nullptr && wake->_event != nullptr)
+            WaitForSingleObject(static_cast<HANDLE>(wake->_event), coarse);
+        else if (coarse != 0)
+            Sleep(coarse);
         else
             std::this_thread::yield();
 #else
-        std::this_thread::sleep_until(now + remaining);
+        if (wake != nullptr)
+        {
+            std::unique_lock<std::mutex> lock(wake->_mutex);
+            wake->_cv.wait_until(lock, now + remaining, [wake] { return wake->_signaled; });
+            wake->_signaled = false;
+        }
+        else
+            std::this_thread::sleep_until(now + remaining);
 #endif
     }
 }
