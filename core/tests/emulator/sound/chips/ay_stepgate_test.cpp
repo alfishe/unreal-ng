@@ -64,10 +64,37 @@ std::vector<uint8_t> Program(bool sparse)
     return code;
 }
 
+/// Beeps after silences: a tone on A, then volume 15 for a moment and 0 for some three seconds (the output filters settle
+/// and the device sleeps) with a random extra wait, again and again - the writes land mid-frame while the device sleeps
+std::vector<uint8_t> BeepsAfterSilence()
+{
+    std::vector<uint8_t> code = {
+        0xF3,              // di
+        0x31, 0xF0, 0xBF,  // ld sp,#BFF0
+        0x01, 0xFD, 0xFF, 0x3E, 0x00, 0xED, 0x79, 0x06, 0xBF, 0x3E, 0x40, 0xED, 0x79,  // R0 = #40
+        0x06, 0xFF, 0x3E, 0x01, 0xED, 0x79, 0x06, 0xBF, 0x3E, 0x01, 0xED, 0x79,        // R1 = #01
+        0x06, 0xFF, 0x3E, 0x07, 0xED, 0x79, 0x06, 0xBF, 0x3E, 0x3E, 0xED, 0x79,        // R7 = #3E
+    };
+    const size_t loop = code.size();
+    code.insert(code.end(), {
+                                0x06, 0xFF, 0x3E, 0x08, 0xED, 0x79, 0x06, 0xBF, 0x3E, 0x0F, 0xED, 0x79,  // R8 = 15
+                                0x21, 0x00, 0x08, 0x2B, 0x7C, 0xB5, 0x20, 0xFB,                          // ~53 000 T
+                                0x06, 0xFF, 0x3E, 0x08, 0xED, 0x79, 0x06, 0xBF, 0x3E, 0x00, 0xED, 0x79,  // R8 = 0
+                                0x16, 0x07,                                                              // ld d,7
+                                0x21, 0x00, 0x00, 0x2B, 0x7C, 0xB5, 0x20, 0xFB,  // ld hl,0 : 65536 turns (1.7 M T)
+                                0x15, 0x20, 0xF5,                                // dec d : jr nz (3.4 s in all)
+                                0xED, 0x5F, 0x67, 0x2E, 0x00, 0x2B, 0x7C, 0xB5, 0x20, 0xFB,  // ld a,r : ld h,a : a random wait
+                                0x01, 0xFD, 0xFF,                                // ld bc,#FFFD
+                            });
+    code.push_back(0x18);  // jr loop
+    code.push_back(static_cast<uint8_t>(loop - (code.size() + 1)));
+    return code;
+}
+
 class Twin
 {
 public:
-    Twin(TurboSoundKind kind, bool gate, bool hq, uint8_t speed, bool sparse)
+    Twin(TurboSoundKind kind, bool gate, bool hq, uint8_t speed, bool sparse, bool beeps = false)
     {
         _emulator = EmulatorTestHelper::CreateEmulatorWithTurboSoundKind("PENTAGON", kind, LoggerLevel::LogError);
         EXPECT_NE(_emulator, nullptr);
@@ -79,13 +106,16 @@ public:
         _tsfm = dynamic_cast<SoundChip_TurboSound*>(_context->pSoundManager->getTurboSound());
         EXPECT_NE(_tsfm, nullptr);
         if (_tsfm)
+        {
             _tsfm->setStepGate(gate);
+            _tsfm->setQuietTicksEnabled(gate);  // the full way renders every tick: no quiet runs either
+        }
         if (speed != 1)
             EXPECT_TRUE(_emulator->SetSpeedMultiplier(speed));
         _context->pAudioCallback.store(&Capture, std::memory_order_release);
         _context->pAudioManagerObj.store(&_sound, std::memory_order_release);
 
-        const std::vector<uint8_t> code = Program(sparse);
+        const std::vector<uint8_t> code = beeps ? BeepsAfterSilence() : Program(sparse);
         for (size_t i = 0; i < code.size(); i++)
             _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), code[i]);
         Z80& z80 = *_context->pCore->GetZ80();
@@ -106,6 +136,7 @@ public:
     bool Ready() const { return _emulator && _tsfm; }
     void Frame() { reinterpret_cast<MainLoop_CUT*>(_context->pMainLoop)->RunFrame(); }
     const std::vector<int16_t>& Sound() const { return _sound; }
+    uint64_t QuietTicks() const { return _tsfm->quietTicks(); }
     std::vector<uint8_t> State() const
     {
         std::vector<uint8_t> blob(_tsfm->TTDStateSize());
@@ -120,10 +151,10 @@ private:
     std::vector<int16_t> _sound;
 };
 
-void Lockstep(TurboSoundKind kind, bool hq, uint8_t speed, bool sparse, int frames)
+void Lockstep(TurboSoundKind kind, bool hq, uint8_t speed, bool sparse, int frames, bool beeps = false)
 {
-    Twin gated(kind, true, hq, speed, sparse);
-    Twin full(kind, false, hq, speed, sparse);
+    Twin gated(kind, true, hq, speed, sparse, beeps);
+    Twin full(kind, false, hq, speed, sparse, beeps);
     ASSERT_TRUE(gated.Ready());
     ASSERT_TRUE(full.Ready());
     for (int frame = 0; frame < frames; frame++)
@@ -141,6 +172,8 @@ void Lockstep(TurboSoundKind kind, bool hq, uint8_t speed, bool sparse, int fram
         }
     }
     EXPECT_EQ(gated.State(), full.State()) << "the device state at the end";
+    if (beeps)
+        EXPECT_GT(gated.QuietTicks(), 0u) << "the device never slept";
 }
 }  // namespace
 
@@ -162,4 +195,11 @@ TEST(AyStepGate_Test, AFasterHostClockMatchesEveryStepTakenTheFullWay)
 {
     Lockstep(TurboSoundKind::AY, true, 2, false, 20);
     Lockstep(TurboSoundKind::AY, true, 2, true, 30);
+}
+
+// The device sleeps through each silence (the quiet deferral: the gate holds to the next entry) and wakes at the CPU's
+// write in the middle of a frame; three beeps
+TEST(AyStepGate_Test, BeepsAfterSilencesMatchEveryStepTakenTheFullWay)
+{
+    Lockstep(TurboSoundKind::AY, true, 1, false, 600, true);
 }

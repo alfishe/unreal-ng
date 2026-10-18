@@ -1,5 +1,7 @@
 #include "soundchip_turbosound.h"
 
+#include <limits>
+
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -254,10 +256,14 @@ void SoundChip_TurboSound::handleStep()
         }
         settleSteps();
     }
+    stepAt(nowT());
+}
 
+void SoundChip_TurboSound::stepAt(int64_t now)
+{
     // The timeline follows the core in every mode (the frame rebase and the
     // write timestamps need it), rendering does not
-    _lastSeenT = nowT();
+    _lastSeenT = now;
     _seenT = true;
 
     // Output-stage suppression (§6.1): turbo without audio or the sound
@@ -271,7 +277,7 @@ void SoundChip_TurboSound::handleStep()
     // Hardware turbo descaled: the AY has its own clock, so under the Scorpion
     // 7 MHz flip-flop the chip must see the real-time position (t/2), not the
     // doubled CPU count - otherwise it emitted 2x samples per frame
-    size_t currentTStates = _context->emulatorState.AudioTstate(_context->pCore->GetZ80()->t);
+    size_t currentTStates = size_t(now);  // nowT(): AudioTstate of the CPU's clock
 
     // Scale t-states by the HOST speed multiplier for correct AY audio pitch
     uint8_t speedMultiplier = _context->emulatorState.HostSpeedMultiplier();
@@ -301,6 +307,10 @@ void SoundChip_TurboSound::handleStep()
 
         while (_samplePhase >= CPU_CLOCK_RATE && _ayBufferIndex < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
         {
+            // The outputs due in one quiet run while nothing sounds (renderQuietOutputs)
+            if (_hqEnabled && !tapActive && renderQuietOutputs() > 0)
+                continue;
+
             _samplePhase -= CPU_CLOCK_RATE;
 
             int16_t leftSample;
@@ -473,6 +483,121 @@ void SoundChip_TurboSound::handleStep()
     if (_stepGate && speedMultiplier == 1 && _samplePhase < CPU_CLOCK_RATE &&
         _ayBufferIndex < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
         _stepDeadline = int64_t(_lastTStates) + int64_t((CPU_CLOCK_RATE - _samplePhase + _coreRate - 1) / _coreRate);
+
+    // Quiet at rest with nothing queued: every output stays +0.0 until something enters the device, so the gate holds
+    // until then and the step at the last noted T renders them in one run (settleSteps)
+    if (_stepGate && _quietTicksEnabled && speedMultiplier == 1 && _hqEnabled && !_nativeTap->isActive() &&
+        _ssgWrites[0].empty() && _ssgWrites[1].empty() && _chip0->silentAtRest() && _chip1->silentAtRest() &&
+        _ssgZeroRun[0] >= FilterDecimator::history() && _ssgZeroRun[1] >= FilterDecimator::history() &&
+        _ssgZeroRun[2] >= FilterDecimator::history() && _ssgZeroRun[3] >= FilterDecimator::history())
+    {
+        _stepDeadline = std::numeric_limits<int64_t>::max();
+        _quietDeferral = true;
+    }
+}
+
+size_t SoundChip_TurboSound::renderQuietOutputs()
+{
+    if (!_quietTicksEnabled || !_chip0->silentAtRest() || !_chip1->silentAtRest())
+        return 0;
+    for (size_t zeroRun : _ssgZeroRun)
+    {
+        if (zeroRun < FilterDecimator::history())
+            return 0;
+    }
+    int64_t nextWrite = std::numeric_limits<int64_t>::max();
+    for (const SsgWriteQueue& q : _ssgWrites)
+    {
+        if (!q.empty())
+            nextWrite = std::min<int64_t>(nextWrite, q.front().t);
+    }
+
+    // The outputs the run can take: each one's ticks with the master's own phase arithmetic (feedSample adds 1.0 a
+    // tick, skipOutput takes an output's worth) and the render cursor's, up to the one with a tick at or past a write
+    FilterDecimator& master = _chip0->decimatorLeft();
+    const double perOutput = master.samplesPerOutput();
+    double phase = master.phase();
+    const int64_t cursorT = _renderT;
+    const uint32_t cursorSub = _renderSub;
+    uint64_t ticks = 0;
+    size_t outputs = 0;
+    uint64_t samplePhase = _samplePhase;
+    size_t index = _ayBufferIndex;
+    _quietOutputTicks.clear();
+    while (samplePhase >= CPU_CLOCK_RATE && index < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
+    {
+        double p = phase;
+        uint64_t t = 0;
+        const int64_t outputT = _renderT;
+        const uint32_t outputSub = _renderSub;
+        bool reached = false;
+        while (!(p >= perOutput))
+        {
+            if (_renderT >= nextWrite)  // the tick at the cursor applies writes due by it
+            {
+                reached = true;
+                break;
+            }
+            advanceRenderCursor();
+            p += 1.0;
+            t++;
+        }
+        if (reached)
+        {
+            _renderT = outputT;
+            _renderSub = outputSub;
+            break;
+        }
+        p -= perOutput;
+        phase = p;
+        ticks += t;
+        outputs++;
+        _quietOutputTicks.push_back(static_cast<uint32_t>(t));
+        samplePhase -= CPU_CLOCK_RATE;
+        index += AUDIO_CHANNELS;
+    }
+    if (outputs == 0)
+    {
+        _renderT = cursorT;
+        _renderSub = cursorSub;
+        return 0;
+    }
+
+    // The run (the cursor stands at its end already)
+    _chip0->advanceSilent(static_cast<uint32_t>(ticks));
+    _chip1->advanceSilent(static_cast<uint32_t>(ticks));
+    (void)phase;
+    // Each decimator that keeps its own phase (all four here: none is a slave) takes the run's additions and output steps
+    // in their order, as feedSample and skipOutput would (the feeds below add their own, replaced)
+    for (FilterDecimator* d : {&_chip0->decimatorLeft(), &_chip0->decimatorRight(), &_chip1->decimatorLeft(),
+                               &_chip1->decimatorRight()})
+    {
+        double own = d->phase();
+        d->feedZerosIntoSilence(size_t(ticks));
+        if (d->isSlave())
+            continue;
+        for (const uint32_t t : _quietOutputTicks)
+        {
+            for (uint32_t i = 0; i < t; i++)
+                own += 1.0;
+            own -= d->samplesPerOutput();
+        }
+        d->setPhase(own);
+    }
+    for (size_t& zeroRun : _ssgZeroRun)
+        zeroRun += size_t(ticks);
+    _quietTicks += ticks;
+    for (size_t i = 0; i < outputs; i++)
+    {
+        _chip0Buffer[_ayBufferIndex] = 0;
+        _chip0Buffer[_ayBufferIndex + 1] = 0;
+        _chip1Buffer[_ayBufferIndex] = 0;
+        _chip1Buffer[_ayBufferIndex + 1] = 0;
+        _ayBuffer[_ayBufferIndex++] = 0;
+        _ayBuffer[_ayBufferIndex++] = 0;
+    }
+    _samplePhase = samplePhase;
+    return outputs;
 }
 
 void SoundChip_TurboSound::handleFrameEnd()
