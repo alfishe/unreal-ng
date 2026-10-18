@@ -120,7 +120,10 @@ macros expanded, WHILE unrolled: [research-sjasmplus-to-xas.md](../../docs/inpro
 over the text at `#C000` of page 3, and XAS's editor variables (cursor line, top line, text end) are set as its LOAD
 sets them. Refused in the editor (its cursor points into the text): open the command line first. The push watch
 (`sync_push_watch`) waits the same way: each save goes in the next time the command line is open. XAS holds one text,
-so a source with INCLUDEs goes onto the disk instead (`zxasm inject main.asm work.trd --assembler xas-7.447`).
+so a source with INCLUDEs goes in as a project: the main text into memory, each INCLUDEd source as an XAS file
+(`LTEXT "NAME"`, type X) onto the disk in drive A (`drive` picks another; the reply's `includes` name them,
+`disk:A/NAME.X`). Into a snapshot: `zxasm inject main.asm xas.szx --disk work.trd` (the WebAPI refuses a project into a
+snapshot of XAS: no disk there); the whole project onto a disk alone: `zxasm inject main.asm work.trd --assembler xas-7.447`.
 `tools/verification/unreal-asm/emulator/inject-oracle.py xas <XAS disk> <source.asm> 0x6000 --boot XAS7.447 --assembler xas-7.447`
 runs the whole check (`--right 1` past XMACROS on the 4.18 and 5.05SE disks, `--combo-frames 12` for 9.x).
 

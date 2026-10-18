@@ -14,8 +14,8 @@
 //   sync_watch   → POST /asm/sync/watch {assembler?, interval?, quiet?, as?, to?, output?}
 //   sync_unwatch → DELETE /asm/sync/watch
 //   sync_hints   → GET  /asm/sync/hints
-//   sync_inject  → POST /asm/sync/inject {text | path | data + name, from?, assembler?, title?, force?, backup?, snapshot?, output?}
-//   sync_push_watch   → POST /asm/sync/push-watch {path, from?, assembler?, title?, force?, interval?, quiet?}
+//   sync_inject  → POST /asm/sync/inject {text | path | data + name, from?, assembler?, title?, force?, backup?, snapshot?, output?, drive?}
+//   sync_push_watch   → POST /asm/sync/push-watch {path, from?, assembler?, title?, force?, interval?, quiet?, drive?}
 //   sync_push_unwatch → DELETE /asm/sync/push-watch
 //   (snapshot: a .szx / .sna / .z80 file read instead of the machine's memory; sync_inject then writes `output`)
 //
@@ -68,7 +68,8 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
     text("output", "a host file or disk:A/NAME.T to write to; without it the reply carries the text / the bytes as base64");
     text("to", "convert: the target dialect (dialects)");
     text("from", "convert: the source dialect when the codec does not tell (the text codec)");
-    text("drive", "files: A-D (default A)");
+    text("drive", "files: A-D (default A); sync_inject / sync_push_watch: the drive whose disk takes the sources an assembler "
+                  "INCLUDEs from its disk (XAS: its LTEXT files; default A)");
     text("assembler", "sync_*: the assembler when two identify (alasm-5.09, alasm-4.44, tasm-4.12)");
     text("as", "sync_extract / sync_watch: text (default), file (the assembler's own format) or dialect (with to)");
     schema["properties"]["interval"]["type"] = "integer";
@@ -140,7 +141,7 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
             if (action == "sync_push_watch")
             {
                 Json::Value body(Json::objectValue);
-                for (const char* name : {"path", "from", "assembler", "title", "force", "interval", "quiet"})
+                for (const char* name : {"path", "from", "assembler", "title", "force", "interval", "quiet", "drive"})
                     if (args.isMember(name) && !args[name].isNull())
                         body[name] = args[name].isBool() ? Json::Value(args[name].asBool() ? "true" : "false") : Json::Value(args[name].asString());
                 ResolveAndForward(args, "POST", "/asm/sync/push-watch", &body, caller, "Assembler in RAM: push watch", done);
@@ -164,7 +165,7 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
             {
                 Json::Value body(Json::objectValue);
                 for (const char* name : {"assembler", "text", "path", "data", "name", "file", "codec", "version", "from", "title", "force", "backup",
-                                         "snapshot", "output"})
+                                         "snapshot", "output", "drive"})
                     if (args.isMember(name) && !args[name].isNull())
                         body[name] = args[name].isBool() ? Json::Value(args[name].asBool() ? "true" : "false") : Json::Value(args[name].asString());
                 ResolveAndForward(args, "POST", "/asm/sync/inject", &body, caller, "Assembler in RAM: inject", done);

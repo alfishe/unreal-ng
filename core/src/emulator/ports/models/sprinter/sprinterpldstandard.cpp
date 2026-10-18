@@ -36,7 +36,9 @@ bool SprinterPldStandard::UpdateBanks(SprinterMemory& memory, const SprinterPldS
 
 SprinterAccelerator* SprinterPldStandard::Accelerator(PortDecoder_Sprinter& decoder)
 {
-    return &decoder.StandardAccelerator();
+    SprinterAccelerator& accelerator = decoder.StandardAccelerator();
+    accelerator.AttachTmk(nullptr);  // a module that adds to it (TMK) attaches its part while it runs
+    return &accelerator;
 }
 
 const SprinterVideoRenderer* SprinterPldStandard::VideoRenderer() const

@@ -609,6 +609,21 @@ def lasergenius_finish(emu, args, expected):
 
 # ---- PROMETHEUS 48K ----
 
+def _prometheus_install(emu, args):
+    """The installer's address: ENTER takes the default, --install types another one (the code moves there). Its
+    field takes DELETE only with CAPS SHIFT down before 0 (both in one frame, as a tap of DELETE does, alternate with a
+    0 typed), and a digit typed again only after a release"""
+    address = getattr(args, 'install', None)
+    if address:
+        def key(name, down):
+            emu.post('/keyboard/press' if down else '/keyboard/release', {'key': name})
+            time.sleep(0.15)
+        for _ in range(5):
+            key('cs', True), key('0', True), key('0', False), key('cs', False)
+        for digit in str(address):
+            key(digit, True), key(digit, False)
+    emu.tap('enter')
+
 def prometheus_boot(emu, args):
     emu.post('/tape/load', {'path': os.path.abspath(args.disk)})
     emu.post('/basic/run', {'command': 'LOAD ""'})
@@ -618,7 +633,7 @@ def prometheus_boot(emu, args):
         if emu.get('/tape/info').get('state') in ('ended', 'stopped'):
             break
     time.sleep(2)
-    emu.tap('enter')                               # the installer: run the assembler
+    _prometheus_install(emu, args)                               # the installer: run the assembler
     time.sleep(3)
     emu.post('/tape/eject')
 
@@ -628,7 +643,7 @@ def prometheus_trdos_boot(emu, args):
     its installer asks the address (ENTER takes 25000)"""
     emu.insert_disk(os.path.abspath(args.disk))
     emu.run_trdos(args.boot or 'TRD-PROM', wait=8)
-    emu.tap('enter')
+    _prometheus_install(emu, args)
     time.sleep(3)
 
 
@@ -643,7 +658,7 @@ def prometheus128_boot(emu, args):
         if emu.get('/tape/info').get('state') in ('ended', 'stopped', 'idle'):
             break
     time.sleep(3)
-    emu.tap('enter')
+    _prometheus_install(emu, args)
     time.sleep(3)
     if (args.boot or 'PROM128LNG') != 'PROM128SHT':   # S asks no D40/D80 question: an n would land in its editor
         emu.tap('n')

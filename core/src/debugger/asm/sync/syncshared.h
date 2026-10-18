@@ -28,10 +28,11 @@ bool CopyMachine(EmulatorContext* context, MachineCopy& out, std::string& error,
 
 /// Part B: at one coherent moment, copies the machine, plans writing the project `files` (files[0] the main source)
 /// as the live text and the project's other texts (PlanInjectProject: the idle rule, unsaved changes, the sizes) and
-/// writes every page as one TTD tool edit. False with the reason (the plan's, or no coherent moment)
+/// writes every page as one TTD tool edit; the sources an assembler reads from its disk (plan.diskFiles, XAS) go first
+/// onto the disk in `drive` (0-3). False with the reason (the plan's, the disk's, or no coherent moment)
 bool InjectProject(EmulatorContext* context, const unrealasm::sync::SyncDescriptor& descriptor, const std::vector<unrealasm::ProjectFile>& files,
                    const std::string& title, const unrealasm::sync::InjectOptions& options, unrealasm::sync::ProjectInjectPlan& plan,
-                   std::string& error);
+                   std::string& error, uint8_t drive = 0);
 
 StateNode DiagnosticsValue(const unrealasm::Diagnostics& diagnostics);
 

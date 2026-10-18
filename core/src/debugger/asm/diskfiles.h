@@ -34,6 +34,10 @@ bool ReadDiskFile(EmulatorContext* context, const DiskFileRef& ref, unrealasm::c
 /// Writes `bytes` as NAME.T with the start field `start`; an older live NAME.T is deleted first
 bool WriteDiskFile(EmulatorContext* context, const DiskFileRef& ref, uint16_t start, const std::vector<uint8_t>& bytes, std::string& error);
 
+/// `file` (its name, type and start; length 0: the length field left 0, as XAS saves) onto the disk in `drive`, an
+/// older live NAME.T deleted first; for a caller already at a coherent moment of the emulator
+bool WriteDiskFileNow(EmulatorContext* context, uint8_t drive, const unrealasm::containers::TrdosFile& file, std::string& error);
+
 /// `extension` (lower case, no dot) is a disk image unreal-disk reads (TRD, SCL, FDI, UDI, TD0, DSK ...) or a tape (TAP, TZX)
 bool IsImageExtension(const std::string& extension);
 /// The live files of an image file's bytes (`name` gives its extension): a disk image's TR-DOS files through unreal-disk,

@@ -144,7 +144,8 @@ bool CopyMachine(EmulatorContext* context, MachineCopy& out, std::string& error,
 }
 
 bool InjectProject(EmulatorContext* context, const sync::SyncDescriptor& descriptor, const std::vector<ProjectFile>& files,
-                   const std::string& title, const sync::InjectOptions& options, sync::ProjectInjectPlan& plan, std::string& error)
+                   const std::string& title, const sync::InjectOptions& options, sync::ProjectInjectPlan& plan, std::string& error,
+                   uint8_t drive)
 {
     if (!CheckMachine(context, error))
         return false;
@@ -155,6 +156,14 @@ bool InjectProject(EmulatorContext* context, const sync::SyncDescriptor& descrip
         plan = sync::PlanInjectProject(copy.view, descriptor, files, title, options);
         if (!plan.ok)
             return;
+        // the INCLUDEd sources onto the disk first: a disk that takes none (no disk, write-protected) leaves the memory
+        for (const containers::TrdosFile& file : plan.diskFiles)
+            if (std::string diskError; !WriteDiskFileNow(context, drive, file, diskError))
+            {
+                plan.ok = false;
+                plan.error = file.FullName() + ": " + diskError;
+                return;
+            }
         Memory* memory = context->pMemory;
         const auto write = [&]() {
             for (const sync::InjectPlan& page : plan.pages)

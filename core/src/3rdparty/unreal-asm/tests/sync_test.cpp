@@ -1507,3 +1507,65 @@ TEST(SyncInject_Test, StormTakesAFileWhileItsEditorWaitsForAKey)
     dump.machine.sp = 0xBF02;
     EXPECT_FALSE(PlanInject(dump.machine, *d, written.bytes, force).ok);
 }
+
+TEST(Sync_Test, ARelocatableDescriptorInstalledElsewhereMovesItsCodeAddresses)
+{
+    // PROMETHEUS' installer moves the whole code: "<id>@<address>" is that move (the probe finds it in memory)
+    const SyncDescriptor* base = FindDescriptor("prometheus-48");
+    const SyncDescriptor* moved = FindDescriptor("prometheus-48@30000");
+    ASSERT_NE(base, nullptr);
+    ASSERT_NE(moved, nullptr);
+    EXPECT_EQ(moved, FindDescriptor("prometheus-48@30000"));   // one descriptor per move
+    EXPECT_EQ(moved->installedAt, 30000);
+    EXPECT_NE(moved->title.find("at 30000"), std::string::npos) << moved->title;
+    EXPECT_EQ(moved->identify[0].address, base->identify[0].address + 6000);
+    EXPECT_EQ(moved->linear.fixedStart, base->linear.fixedStart + 6000);
+    EXPECT_EQ(moved->idleChain[0], base->idleChain[0] + 6000);
+    // the signature's CALL operand moved too
+    EXPECT_EQ(static_cast<uint8_t>(moved->identify[0].bytes[8]) | static_cast<uint8_t>(moved->identify[0].bytes[9]) << 8,
+              (static_cast<uint8_t>(base->identify[0].bytes[8]) | static_cast<uint8_t>(base->identify[0].bytes[9]) << 8) + 6000);
+
+    // PROMETHEUS 128's text stays in page 6 at #C01A
+    const SyncDescriptor* moved128 = FindDescriptor("prometheus-128@28000");
+    ASSERT_NE(moved128, nullptr);
+    EXPECT_EQ(moved128->linear.fixedStart, 0xC01A);
+    EXPECT_EQ(moved128->linear.prometheusTableAt, FindDescriptor("prometheus-128")->linear.prometheusTableAt + 4000);
+
+    EXPECT_EQ(FindDescriptor("prometheus-48@24000"), base);
+    EXPECT_EQ(FindDescriptor("zasm-3.15@30000"), nullptr);   // a fixed code
+    EXPECT_EQ(FindDescriptor("prometheus-48@"), nullptr);
+    EXPECT_EQ(FindDescriptor("prometheus-48@70000"), nullptr);
+    EXPECT_EQ(FindDescriptor("prometheus-48@3x"), nullptr);
+}
+
+TEST(SyncInject_Test, XasTakesAProjectWithItsIncludesOntoItsDisk)
+{
+    // XAS holds one text and reads what LTEXT names from the disk: the main source into memory, the INCLUDEd ones as
+    // its files (type X, start "AS", length 0) for the disk
+    containers::Snapshot snapshot;
+    std::string error;
+    ASSERT_TRUE(containers::ReadSnapshot(ReadTestData("templates/xas-7.447.szx"), "szx", snapshot, error)) << error;
+    const SyncDescriptor* d = FindDescriptor("xas-7.447");
+    ASSERT_NE(d, nullptr);
+    SourceDocument main = SourceDocument::FromText("        ORG #6000\n        LD A,1\n        INCLUDE \"lib/inc1.asm\"\nEND_    NOP\n", "sjasmplus");
+    main.name = "MAIN";
+    Diagnostics diagnostics;
+    const std::vector<ProjectFile> project = HostProject(main, HostFiles({{"lib/inc1.asm", "        LD B,2\nL1      DW END_\n"}}), diagnostics);
+    ASSERT_EQ(project.size(), 2u);
+    const ProjectInjectPlan plan = PlanInjectProject(ViewOf(snapshot), *d, project, "MAIN");
+    ASSERT_TRUE(plan.ok) << plan.error;
+    ASSERT_EQ(plan.pages.size(), 1u);
+    ASSERT_EQ(plan.diskFiles.size(), 1u);
+    EXPECT_TRUE(HasLine(plan.texts[0].document, "LTEXT \"INC1\"")) << plan.texts[0].document.Text();
+    const containers::TrdosFile& file = plan.diskFiles[0];
+    EXPECT_EQ(file.FullName(), "INC1.X");
+    EXPECT_EQ(file.start, 0x5341);
+    EXPECT_EQ(file.length, 0);
+    EXPECT_EQ(file.data, plan.texts[1].bytes);
+
+    // a snapshot alone has no disk for them: InjectProjectIntoSnapshot gives them to the caller
+    std::vector<uint8_t> out;
+    const ProjectInjectPlan written = InjectProjectIntoSnapshot(snapshot, *d, project, "MAIN", {}, out);
+    ASSERT_TRUE(written.ok) << written.error;
+    EXPECT_EQ(written.diskFiles.size(), 1u);
+}

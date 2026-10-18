@@ -89,8 +89,8 @@ uint64_t Fnv1a(const uint8_t* data, size_t size, uint64_t h = 0xcbf29ce484222325
 
 uint64_t HashOf(const TTDSerializable& device)
 {
-    std::vector<uint8_t> blob(device.TTDStateSize());
-    device.TTDSaveState(blob.data());
+    std::vector<uint8_t> blob;
+    device.TTDSaveStateTo(blob);
     return Fnv1a(blob.data(), blob.size());
 }
 }  // namespace
@@ -110,25 +110,38 @@ uint64_t HashOf(const TTDSerializable& device)
 //  136    1  INT source: the PLD's INT flip-flop holds a keyboard INT
 //  137    2  the frame height the raster runs with (ScreenSprinter; 0 = no Sprinter screen)
 //  139   32  active configuration module: name, zero padded (the registry index is not stable)
-//  171    2  module state room M (u16): the largest StateSize() of the registered modules (Standard: 0)
+//  171    2  module state room M (u16): the active module's StateSize(), at least kMinModuleRoom
 //  173    2  module state: bytes the active module uses (u16)
 //  175    M  module state
 //  175+M  2  accelerator state: bytes (u16)
 //  177+M  A  accelerator state (PortDecoder_Sprinter::SaveAccelState)
 // The WD1793's command in flight (its rate-retry search included) is the Wd1793Context blob
+// The blob is variable-size: M follows the active module, so a Standard or Game session keeps the 16-byte room every
+// blob had before TMK (772 bytes) and its bytes do not change, and a blob of any room loads
 
 size_t TTDSprinterPld::ModuleStateRoom() const
 {
-    size_t room = 0;
+    size_t room = kMinModuleRoom;
     const SprinterPldConfigurationRegistry& registry = _decoder.GetRegistry();
     for (size_t i = 0; i < registry.Count(); i++)
         room = std::max(room, registry.At(i).StateSize());
     return room;
 }
 
+size_t TTDSprinterPld::ActiveModuleRoom() const
+{
+    return std::max(kMinModuleRoom, _decoder.ActiveModule().StateSize());
+}
+
 size_t TTDSprinterPld::TTDStateSize() const
 {
     return kFixedSize + ModuleStateRoom() + 2 + _decoder.AccelStateSize();
+}
+
+void TTDSprinterPld::TTDSaveStateTo(std::vector<uint8_t>& out) const
+{
+    out.resize(kFixedSize + ActiveModuleRoom() + 2 + _decoder.AccelStateSize());
+    TTDSaveState(out.data());
 }
 
 void TTDSprinterPld::TTDSaveState(uint8_t* dst) const
@@ -164,8 +177,8 @@ void TTDSprinterPld::TTDSaveState(uint8_t* dst) const
     std::memcpy(name, moduleName.data(), std::min(moduleName.size(), kModuleNameSize));
     w.Bytes(name, kModuleNameSize);
 
-    const size_t room = ModuleStateRoom();
-    const size_t used = std::min(module.StateSize(), room);
+    const size_t room = ActiveModuleRoom();
+    const size_t used = module.StateSize();
     w.U16(static_cast<uint16_t>(room));
     w.U16(static_cast<uint16_t>(used));
     if (used)
@@ -215,17 +228,13 @@ void TTDSprinterPld::TTDLoadState(const uint8_t* src)
     const size_t room = r.U16();
     const size_t used = r.U16();
     SprinterPldConfiguration& module = d.ActiveModule();
-    // Another module set (room) is another blob size too, which the registry refuses before this point
-    if (room == ModuleStateRoom())
-    {
-        if (used && used <= room && used == module.StateSize())
-            module.LoadState(r.p);
-        r.p += room;
+    if (used && used <= room && used == module.StateSize())
+        module.LoadState(r.p);
+    r.p += room;
 
-        const size_t accel = r.U16();
-        if (accel && accel == d.AccelStateSize())
-            d.LoadAccelState(r.p);
-    }
+    const size_t accel = r.U16();
+    if (accel && accel == d.AccelStateSize())
+        d.LoadAccelState(r.p);
 
     // The CPU's frame geometry follows a restored frame height (config.frame)
     if (context && context->pCore && context->pCore->GetZ80())

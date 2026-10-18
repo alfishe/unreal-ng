@@ -30,7 +30,7 @@
 //                                                   in a snapshot: UTF-8 text, its own file (-o *.$X: hobeta), or
 //                                                   converted to a dialect
 //   zxasm inject   <source> <target> [-o out] [--assembler id | --codec id [--version v]] [--from dialect]
-//                  [--title NAME] [--name NAME.T] [--force]
+//                  [--title NAME] [--name NAME.T] [--force] [--disk image]
 //                                                   a source (any dialect with a frontend; a plain text is sjasmplus
 //                                                   unless --from) written as an assembler's own file into the target:
 //                                                   a snapshot (the text of the assembler waiting at its prompt there;
@@ -41,7 +41,9 @@
 //                                                   rewritten unless -o names another file. The source may be a file
 //                                                   in an image: <image> --file NAME[.T]. A text file brings the files
 //                                                   it INCLUDEs (beside it): into a snapshot each goes into an ALASM
-//                                                   page of its own (INCLUDE "NAME",page), onto a disk each as a file
+//                                                   page of its own (INCLUDE "NAME",page), onto a disk each as a file;
+//                                                   into a snapshot of XAS (one text) onto the disk image --disk names
+//                                                   (a blank disk when missing), as XAS' LTEXT reads them
 //
 // Containers: a hobeta file (NAME.$A, ...) is unwrapped and its catalog fields used for detection; a file inside a
 // TR-DOS image, an SCL archive or a tape is picked with --file NAME (or NAME.T for the type letter T). An encode output named *.$X is written
@@ -81,7 +83,7 @@ int Usage()
                  "       files <image.trd|.scl|.fdi|.udi|.td0|.tap|.tzx ...> (decode/detect/encoding/check take --file NAME[.T] for a file in an image) |\n"
                  "       probe <snapshot.sna|.z80|.szx> | extract <snapshot> [--assembler id] [--as text|file] [--to dialect] [-o out] |\n"
                  "       inject <source> <snapshot|disk image|file.$X> [-o out] [--assembler id | --codec id [--version v]]\n"
-                 "              [--from dialect] [--title NAME] [--name NAME.T] [--force]\n";
+                 "              [--from dialect] [--title NAME] [--name NAME.T] [--force] [--disk image]\n";
     return 2;
 }
 
@@ -120,6 +122,7 @@ struct Args
     std::string command, file, output, codec, codePage, outCodePage, lineEnd, inner, version, to, from;
     std::string toVersion;   // convert: the target's version (its codec's version names: TASM "4.12", XAS "7.447")
     std::string target, assembler, title, name, as;   // inject / extract
+    std::string disk;   // inject into a snapshot: the image taking the sources the assembler INCLUDEs from its disk (XAS)
     bool show = false;
     bool force = false;
     bool z80n = false;   // convert: the sources are for the ZX Spectrum Next (sjasmplus --zxnext)
@@ -160,9 +163,9 @@ bool Parse(int argc, char** argv, Args& args)
             args.force = true;
             continue;
         }
-        if (a == "--assembler" || a == "--title" || a == "--name" || a == "--as")
+        if (a == "--assembler" || a == "--title" || a == "--name" || a == "--as" || a == "--disk")
         {
-            if (!value(a == "--assembler" ? args.assembler : a == "--title" ? args.title : a == "--name" ? args.name : args.as))
+            if (!value(a == "--assembler" ? args.assembler : a == "--title" ? args.title : a == "--name" ? args.name : a == "--disk" ? args.disk : args.as))
                 return false;
             continue;
         }
@@ -194,26 +197,6 @@ std::string Lower(std::string text)
     for (char& c : text)
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return text;
-}
-
-/// The catalog's start field each assembler writes for a saved source (the research documents of each codec)
-uint16_t CatalogStart(const std::string& codec, const std::string& version, char type)
-{
-    if (codec == "tasm")
-        return version == "2.0" ? 38750 : version == "3" ? 39221 : version == "4.0" ? 40872 : 0;
-    if (codec == "storm")
-        return version == "1.0" ? 0xC003 : 0xC00B;
-    if (codec == "zxasm")
-    {
-        if (type == 'a')
-            return 0x6D73;   // extension "sm"
-        if (type == 'z')
-            return 0x7361;   // extension "as"
-        return version == "2" ? 0xA1DF : 35151;
-    }
-    if (codec == "xas")
-        return 0x5341;   // "AS": XAS lists only files that carry it (research-xas.md)
-    return 0;
 }
 
 /// An image of files: a disk image of any format unreal-disk reads (its TR-DOS files), or a tape (.tap / .tzx)
@@ -868,16 +851,9 @@ const sync::SyncDescriptor* ChooseAssembler(const sync::MachineView& view, const
 containers::TrdosFile CatalogFile(const std::string& spec, const std::string& name, char type, const std::string& codec,
                                   const std::string& version, const std::vector<uint8_t>& bytes)
 {
-    containers::TrdosFile file;
     const size_t dot = spec.rfind('.');
-    file.name = (spec.empty() ? name : dot == std::string::npos ? spec : spec.substr(0, dot)).substr(0, 8);
-    file.name.resize(8, ' ');
-    file.type = !spec.empty() && dot != std::string::npos && dot + 2 == spec.size() ? spec[dot + 1] : type;
-    file.start = CatalogStart(codec, version, file.type);
-    // XAS keeps 0 in the length field (it reads whole sectors): its file list skips other files
-    file.length = codec == "xas" ? 0 : static_cast<uint16_t>(bytes.size());
-    file.data = bytes;
-    return file;
+    return unrealasm::CatalogFile(spec.empty() ? name : dot == std::string::npos ? spec : spec.substr(0, dot),
+                                  !spec.empty() && dot != std::string::npos && dot + 2 == spec.size() ? spec[dot + 1] : type, codec, version, bytes);
 }
 
 /// zxasm probe <snapshot>
@@ -1048,6 +1024,24 @@ int Inject(const Args& args, const std::vector<uint8_t>& bytes, const CatalogHin
         {
             std::cerr << "zxasm: " << plan.error << "\n";
             return 1;
+        }
+        if (!plan.diskFiles.empty() && args.disk.empty())
+        {
+            std::cerr << "zxasm: " << d->title << " reads the " << plan.diskFiles.size()
+                      << " source(s) the main one INCLUDEs from its disk: --disk <image> takes them\n";
+            return 1;
+        }
+        for (size_t k = 0; k < plan.diskFiles.size(); ++k)
+        {
+            std::string error;
+            if (!tools::PutImageFile(args.disk, args.disk, plan.diskFiles[k], error))
+            {
+                std::cerr << "zxasm: " << args.disk << ": " << error << "\n";
+                return 1;
+            }
+            std::cerr << d->id << ": " << plan.texts[k + 1].document.name << ", " << plan.texts[k + 1].document.lines.size() << " line(s), "
+                      << plan.diskFiles[k].data.size() << " bytes as " << plan.diskFiles[k].FullName() << " -> " << args.disk
+                      << " (INCLUDE " << project[k + 1].name << ")\n";
         }
         if (!WriteFile(output, out))
         {

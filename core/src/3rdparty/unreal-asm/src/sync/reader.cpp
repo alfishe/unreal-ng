@@ -1,7 +1,9 @@
 #include "unrealasm/sync/reader.h"
 
 #include <algorithm>
+#include <deque>
 #include <map>
+#include <mutex>
 
 #include "codecs/prometheus/prometheuscodec.h"
 
@@ -587,6 +589,7 @@ SyncDescriptor Xas(const std::string& id, const std::string& codecVersion, uint1
                                  {textEnd, 10, LoadVariable::From::TextEnd, 0, 2}};
     d.typing = {TypingRule::NotInText, 0, 0};
     d.labelScanner = "xas-table";
+    d.projectOnDisk = true;   // LTEXT reads the disk
     d.idleChain = std::move(idle);
     return d;
 }
@@ -702,6 +705,7 @@ SyncDescriptor Zasm315()
     d.linear.resetTo = 0x8837;
     d.linear.zeroWords = {0x8827};   // the cursor's line number (from 0), or the editor counts on from the old one
     d.linear.zeroBytes = {0x8630};   // and its column
+    d.linear.nameAt = 0x883F;        // the work name in "A:STUB    .asm": SAVE writes under it (seen in unreal-ng)
     d.typing = {TypingRule::NotInText, 0, 0};
     // A text is written at its COMMAND prompt (CS+SS in the editor): its key wait returns through #C404, #E630, #E6F0
     // (code in the page at #C000 while ZAsm runs)
@@ -872,7 +876,7 @@ SyncDescriptor Tasm20()
 /// follow the cursor and the screen); SAVE writes a ";*" position line first. Each version has its table elsewhere;
 /// 3.2x, 3.3.02 and 3.3.51 share the code at #8048 up to the address of a variable (its low byte tells them apart)
 SyncDescriptor ZasmRubtsoff(const std::string& id, const std::string& title, const std::string& codecVersion, uint16_t signatureAt,
-                            const char* signature, uint16_t startAt, std::vector<uint16_t> idleChain = {})
+                            const char* signature, uint16_t startAt, std::vector<uint16_t> idleChain = {}, uint16_t nameAt = 0)
 {
     SyncDescriptor d;
     d.id = id;
@@ -898,6 +902,11 @@ SyncDescriptor ZasmRubtsoff(const std::string& id, const std::string& title, con
         d.linear.resetTo = startAt;
         d.linear.zeroWords = {static_cast<uint16_t>(startAt - 10)};   // the cursor's line number (from 0)
         d.linear.zeroBytes = {static_cast<uint16_t>(startAt - 14)};   // and its column
+        // the work name in "A:STUB    .asm": SAVE writes under it (seen in unreal-ng); from #C000 in page 27 (not
+        // the text's page 30), mapped there at the prompt but in Lite
+        d.linear.nameAt = nameAt;
+        if (nameAt >= 0xC000)
+            d.linear.namePage = 27;
         d.idleChain = std::move(idleChain);
         d.idleWhere = "its COMMAND prompt (CS+SS)";
     }
@@ -929,6 +938,7 @@ SyncDescriptor Zxasm310()
     d.linear.resetAlso = {0x869C};
     d.linear.zeroWords = {0x868D};   // the cursor's line number (from 0)
     d.linear.zeroBytes = {0x867F};   // and its column
+    d.linear.nameAt = 0x89B7;        // the work name in "A:STUB    .A  ": SAVE writes under it (seen in unreal-ng)
     d.idleChain = {0xC4D1, 0xD58A};
     d.idleWhere = "its COMMAND prompt (CS+SS)";
     return d;
@@ -1032,8 +1042,15 @@ SyncDescriptor Prometheus48(const char* id = "prometheus-48", const char* title 
         signature[at + 1] = static_cast<char>(word >> 8);
     }
     const auto at = [shift](uint16_t a) { return static_cast<uint16_t>(a + shift); };
-    return Prometheus({id, title, at(0x8000), signature, at(0x9C28), at(0x87D7), at(0x881A), at(0x7946),
-                       {at(0x826D), at(0x80E8), at(0x80EB)}, {at(0x8629), at(0x7CFD)}, 0});
+    SyncDescriptor d = Prometheus({id, title, at(0x8000), signature, at(0x9C28), at(0x87D7), at(0x881A), at(0x7946),
+                                   {at(0x826D), at(0x80E8), at(0x80EB)}, {at(0x8629), at(0x7CFD)}, 0});
+    if (!shift)
+    {
+        // its installer asks the address and moves the code there (the TR-DOS adaptation is that move, found so too)
+        d.installedAt = 24000;
+        d.relocatedWords = {8, 12, 22};
+    }
+    return d;
 }
 
 /// PROMETHEUS 128 (Proxima 1993; the tape's PROM128LNG / MDM / SHT installed at 24000, "D40/D80" n): the text in a
@@ -1045,8 +1062,11 @@ SyncDescriptor Prometheus128(const char* id, const char* title, uint16_t shift, 
 {
     const auto at = [shift](uint16_t a) { return static_cast<uint16_t>(a - shift); };
     const auto late = [tableShift](uint16_t a) { return static_cast<uint16_t>(a - tableShift); };
-    return Prometheus({id, title, at(0x8955), std::string(signature, 24), 0xC01A, late(0x9186), late(0x9217), 0,
-                       {at(0x8BF7), at(0x8A59), at(0x8A5C)}, {at(0x8FD3), at(0x864E)}, 6});
+    SyncDescriptor d = Prometheus({id, title, at(0x8955), std::string(signature, 24), 0xC01A, late(0x9186), late(0x9217), 0,
+                                   {at(0x8BF7), at(0x8A59), at(0x8A5C)}, {at(0x8FD3), at(0x864E)}, 6});
+    d.installedAt = 24000;   // its installer moves the code too; the text stays in page 6
+    d.relocatedWords = {8, 12, 22};
+    return d;
 }
 
 /// Power Assembler 3.0 (asm-synchronizer.md §7.18, from its code): CR LF text from #79AF to #1A; the cursor line's
@@ -1869,6 +1889,20 @@ InjectPlan PlanInjectLinear(const MachineView& machine, const SyncDescriptor& d,
         ok = poke(at, 0) && ok;
     for (uint32_t at = p.blankFrom; at < p.blankTo; ++at)
         ok = poke(at, ' ') && ok;
+    if (p.nameAt && !options.name.empty())
+    {
+        std::string name = options.name.substr(0, p.nameLength);
+        name.resize(p.nameLength, ' ');
+        for (size_t k = 0; k < name.size(); ++k)
+        {
+            const uint32_t at = p.nameAt + static_cast<uint32_t>(k);
+            const int window = p.namePage >= 0 ? p.namePage : machine.windows[(at >> 14) & 3];
+            if (window < 0 || at < 0x4000 || at > 0xFFFF)
+                ok = false;
+            else
+                plan.pokes.push_back({window, static_cast<uint16_t>(at & (kPage - 1)), static_cast<uint8_t>(name[k])});
+        }
+    }
     if (!ok)
     {
         plan.error = "the memory of " + d.title + "'s text is not in RAM";
@@ -2050,6 +2084,32 @@ ProjectInjectPlan PlanInjectProject(const MachineView& machine, const SyncDescri
         return result;
     }
     const size_t others = files.size() - 1;
+    if (d.projectOnDisk && d.projectPages.empty())
+    {
+        // one text in memory, the others onto the disk it reads them from, each INCLUDE naming its file there
+        const std::vector<std::string> names = ProjectTextNames(files, title);
+        std::map<std::string, std::string> includeAs;
+        for (size_t k = 1; k < files.size(); ++k)
+            includeAs[files[k].name] = "\"" + names[k] + "\"";
+        WriteProjectResult written = WriteProjectAs(files, d.codec, d.version, names, includeAs);
+        result.diagnostics = std::move(written.diagnostics);
+        if (!written.ok)
+        {
+            result.error = written.error;
+            return result;
+        }
+        result.texts = std::move(written.files);
+        InjectOptions named = options;
+        if (named.name.empty())
+            named.name = title;
+        result.pages.push_back(PlanInject(machine, d, result.texts[0].bytes, named));
+        result.ok = result.pages[0].ok;
+        result.error = result.pages[0].error;
+        const char type = d.extension.empty() ? 'C' : d.extension[0];
+        for (size_t k = 1; result.ok && k < result.texts.size(); ++k)
+            result.diskFiles.push_back(CatalogFile(names[k], type, d.codec, d.version, result.texts[k].bytes));
+        return result;
+    }
     if (others > d.projectPages.size())
     {
         std::string pages;
@@ -2179,27 +2239,27 @@ const std::vector<SyncDescriptor>& Descriptors()
         Storm("storm-1.0b", "STORM 1.0beta", "1.0", 0x03, '\x85'),
         Zasm315(),
         ZasmRubtsoff("zasm-3.2x", "ZAsm 3.2x", "3.15", 0x8048,
-                     "\xCA\xFC\x7F\x3E\x20\x18\xC4\xF1\x3E\x00\xB7\x37\xC8\xCD\x54\x1F\xD4\x93\x79\x37\xC9\xF5\x3A\x02", 0x8538, {0xC930, 0x7B4E}),
+                     "\xCA\xFC\x7F\x3E\x20\x18\xC4\xF1\x3E\x00\xB7\x37\xC8\xCD\x54\x1F\xD4\x93\x79\x37\xC9\xF5\x3A\x02", 0x8538, {0xC930, 0x7B4E}, 0xF9B6),
         ZasmRubtsoff("zasm-lite-1.07", "ZAsm Lite 1.07", "lite", 0x8000,
-                     "\xE5\x2A\x48\x62\xE5\xB7\xED\x42\x4D\x44\xE1\x09\x1B\x7A\xB3\x20\xFA\x22\x48\x62\xE1\xC9\xCD\xC8", 0x859D, {0xDF74, 0x6428}),
+                     "\xE5\x2A\x48\x62\xE5\xB7\xED\x42\x4D\x44\xE1\x09\x1B\x7A\xB3\x20\xFA\x22\x48\x62\xE1\xC9\xCD\xC8", 0x859D, {0xDF74, 0x6428}, 0xE692),
         ZasmRubtsoff("zasm-3.3.02", "ZAsm 3.3.02", "3.15", 0x8048,
-                     "\xCA\xFC\x7F\x3E\x20\x18\xC4\xF1\x3E\x00\xB7\x37\xC8\xCD\x54\x1F\xD4\x93\x79\x37\xC9\xF5\x3A\xD3", 0x850A, {0xCA21, 0x7B4E}),
+                     "\xCA\xFC\x7F\x3E\x20\x18\xC4\xF1\x3E\x00\xB7\x37\xC8\xCD\x54\x1F\xD4\x93\x79\x37\xC9\xF5\x3A\xD3", 0x850A, {0xCA21, 0x7B4E}, 0xF9B4),
         ZasmRubtsoff("zasm-3.3.51", "ZAsm 3.3.51", "3.15", 0x8048,
-                     "\xCA\xFC\x7F\x3E\x20\x18\xC4\xF1\x3E\x00\xB7\x37\xC8\xCD\x54\x1F\xD4\x93\x79\x37\xC9\xF5\x3A\xC6", 0x84FC, {0xCBC9, 0x7B4E}),
+                     "\xCA\xFC\x7F\x3E\x20\x18\xC4\xF1\x3E\x00\xB7\x37\xC8\xCD\x54\x1F\xD4\x93\x79\x37\xC9\xF5\x3A\xC6", 0x84FC, {0xCBC9, 0x7B4E}, 0xF889),
         ZasmRubtsoff("zasm-3.3.final", "ZAsm 3.3.Final", "3.15", 0x8000,
-                     "\xD0\xEB\x29\x44\x4D\x29\x29\x09\x06\x00\xD6\x30\x4F\x09\xEB\x23\x18\xEA\x7E\x23\xFE\x0A\x28\xFA", 0x8401, {0xD0BC, 0x7B64}),
+                     "\xD0\xEB\x29\x44\x4D\x29\x29\x09\x06\x00\xD6\x30\x4F\x09\xEB\x23\x18\xEA\x7E\x23\xFE\x0A\x28\xFA", 0x8401, {0xD0BC, 0x7B64}, 0xF8A7),
         ZasmRubtsoff("zasm-3.80.4", "ZAsm 3.80.4", "3.15", 0x8000,
-                     "\x41\x20\xE6\xE5\x3C\x2A\xB7\x66\xCD\xC1\x63\x3A\xB6\x66\xB7\x28\x05\xED\x4B\x83\x80\x09\x73\x23", 0x6D02, {0xC685, 0x6425}),
+                     "\x41\x20\xE6\xE5\x3C\x2A\xB7\x66\xCD\xC1\x63\x3A\xB6\x66\xB7\x28\x05\xED\x4B\x83\x80\x09\x73\x23", 0x6D02, {0xC685, 0x6425}, 0x6D31),
         ZasmRubtsoff("zasm-3.4", "ZAsm 3.4 (ZXTA34X, Z34_04)", "3.15", 0x8130,
-                     "\xC5\xD5\x7E\x23\xFE\xFF\x28\x08\xA7\x28\x05\xCD\x44\x81\x18\xF2\xD1\xC1\xF1\xC9\xFE\x18\xD2\x02", 0x8520, {0xCF6B, 0x7B4E}),
+                     "\xC5\xD5\x7E\x23\xFE\xFF\x28\x08\xA7\x28\x05\xCD\x44\x81\x18\xF2\xD1\xC1\xF1\xC9\xFE\x18\xD2\x02", 0x8520, {0xCF6B, 0x7B4E}, 0xF94C),
         ZasmRubtsoff("zasm-x64.1", "ZAsm x64.1", "3.15", 0x8000,
-                     "\x28\x15\x30\x04\xFE\x02\x30\x2D\xFE\x0D\xC8\x12\x13\x10\xE5\x3E\x0D\x01\x00\x00\xED\xB1\xC9\x7E", 0x852D, {0xC94A, 0x7B46}),
+                     "\x28\x15\x30\x04\xFE\x02\x30\x2D\xFE\x0D\xC8\x12\x13\x10\xE5\x3E\x0D\x01\x00\x00\xED\xB1\xC9\x7E", 0x852D, {0xC94A, 0x7B46}, 0xF837),
         ZasmRubtsoff("zasm-4.0x8", "ZAsm 4.0x8", "3.15", 0x8034,
-                     "\x76\x6C\x70\x0C\x66\x30\xCC\xF8\x78\xDC\x76\xDC\x7C\x7C\xCC\xCC\xC6\xC6\xCC\xFC\x30\x18\x30\x00", 0x692B, {0xD31F, 0x6212}),
+                     "\x76\x6C\x70\x0C\x66\x30\xCC\xF8\x78\xDC\x76\xDC\x7C\x7C\xCC\xCC\xC6\xC6\xCC\xFC\x30\x18\x30\x00", 0x692B, {0xD31F, 0x6212}, 0xF9BE),
         ZasmRubtsoff("zasm-4.x64", "ZAsm 4.x64", "3.15", 0x8000,
-                     "\x28\x0E\xCD\xC8\x6B\xCD\x3B\x6E\xDD\xCB\x1A\xD6\xD7\x96\x18\x03\xCD\x6B\x67\xCD\xAB\x70\xCD\x8B", 0x6929, {0xD919, 0x6212}),
+                     "\x28\x0E\xCD\xC8\x6B\xCD\x3B\x6E\xDD\xCB\x1A\xD6\xD7\x96\x18\x03\xCD\x6B\x67\xCD\xAB\x70\xCD\x8B", 0x6929, {0xD919, 0x6212}, 0xFAD9),
         ZasmRubtsoff("zasm-4.20", "ZAsm 4.20", "3.15", 0x8000,
-                     "\xD4\xD5\xD6\xD7\xD8\xD9\xDA\xDB\xDC\xDD\xDE\xDF\x72\x73\x74\x75\x66\x68\x63\x7E\x7B\x7D\x5C\x79", 0x68FB, {0xC18A, 0xE431, 0x6212}),
+                     "\xD4\xD5\xD6\xD7\xD8\xD9\xDA\xDB\xDC\xDD\xDE\xDF\x72\x73\x74\x75\x66\x68\x63\x7E\x7B\x7D\x5C\x79", 0x68FB, {0xC18A, 0xE431, 0x6212}, 0xDE36),
         Zxasm310(),
         Zxasm30(),
         LaserGenius(),
@@ -2259,7 +2319,65 @@ const SyncDescriptor* FindDescriptor(const std::string& id)
     for (const SyncDescriptor& d : Descriptors())
         if (d.id == id)
             return &d;
+    // "<id>@<address>": a relocatable one installed elsewhere
+    const size_t sign = id.rfind('@');
+    if (sign == std::string::npos || sign + 1 == id.size() || id.find_first_not_of("0123456789", sign + 1) != std::string::npos ||
+        id.size() - sign > 6)
+        return nullptr;
+    const long address = std::stol(id.substr(sign + 1));
+    for (const SyncDescriptor& d : Descriptors())
+        if (d.installedAt && d.id.compare(0, std::string::npos, id, 0, sign) == 0 && address >= 0x4000 && address <= 0xFFFF)
+            return Relocated(d, static_cast<int>(address) - d.installedAt);
     return nullptr;
+}
+
+const SyncDescriptor* Relocated(const SyncDescriptor& base, int shift)
+{
+    if (!base.installedAt || base.identify.empty())
+        return nullptr;
+    if (!shift)
+        return &base;
+    const auto installed = static_cast<uint16_t>(base.installedAt + shift);
+    const std::string id = base.id + "@" + std::to_string(installed);
+    static std::mutex mutex;
+    static std::deque<SyncDescriptor> made;   // a deque: the pointers handed out stay valid
+    const std::lock_guard<std::mutex> lock(mutex);
+    for (const SyncDescriptor& d : made)
+        if (d.id == id)
+            return &d;
+
+    SyncDescriptor d = base;
+    d.id = id;
+    const std::string at = "at " + std::to_string(base.installedAt);
+    if (const size_t found = d.title.find(at); found != std::string::npos)
+        d.title.replace(found, at.size(), "at " + std::to_string(installed));
+    d.installedAt = installed;
+    // the code's addresses move, the paged window's do not (PROMETHEUS 128's text in page 6 at #C01A)
+    const auto move = [&](uint16_t& a) {
+        if (a && (!base.linear.upperPage || a < 0xC000))
+            a = static_cast<uint16_t>(a + shift);
+    };
+    for (Signature& s : d.identify)
+        move(s.address);
+    for (const uint8_t w : base.relocatedWords)
+    {
+        std::string& bytes = d.identify.front().bytes;
+        if (w + 1u >= bytes.size())
+            continue;
+        uint16_t word = static_cast<uint8_t>(bytes[w]) | static_cast<uint8_t>(bytes[w + 1]) << 8;
+        move(word);
+        bytes[w] = static_cast<char>(word & 0xFF);
+        bytes[w + 1] = static_cast<char>(word >> 8);
+    }
+    LinearParams& p = d.linear;
+    for (uint16_t* a : {&p.fixedStart, &p.prometheusTableAt, &p.prometheusEndAt, &p.limitAt})
+        move(*a);
+    for (uint16_t& a : p.resetWords)
+        move(a);
+    for (uint16_t& a : d.idleChain)
+        move(a);
+    made.push_back(std::move(d));
+    return &made.back();
 }
 
 std::vector<SyncText> ReadOtherTexts(const MachineView& machine, const SyncDescriptor& descriptor, int exceptPage)
@@ -2295,18 +2413,59 @@ SyncText ReadText(const MachineView& machine, const SyncDescriptor& descriptor)
     return text;
 }
 
+namespace
+{
+/// Where a relocatable descriptor's code lies moved (Probe): its first signature anywhere in memory with the absolute
+/// words masked, those words all moved by the same shift (0 = not found; a move by 0 identifies in place)
+int FindMove(const std::vector<uint8_t>& memory, const SyncDescriptor& d)
+{
+    const std::string& signature = d.identify.front().bytes;
+    std::vector<bool> masked(signature.size());
+    for (const uint8_t w : d.relocatedWords)
+        for (size_t k = w; k < std::min<size_t>(w + 2u, signature.size()); ++k)
+            masked[k] = true;
+    const auto word = [](auto&& bytes, size_t at) {
+        return static_cast<uint16_t>(static_cast<uint8_t>(bytes[at]) | static_cast<uint8_t>(bytes[at + 1]) << 8);
+    };
+    for (size_t at = 0; at + signature.size() <= memory.size(); ++at)
+    {
+        size_t k = 0;
+        while (k < signature.size() && (masked[k] || memory[at + k] == static_cast<uint8_t>(signature[k])))
+            ++k;
+        if (k < signature.size())
+            continue;
+        const int shift = static_cast<int>(0x4000 + at) - d.identify.front().address;
+        if (shift && std::all_of(d.relocatedWords.begin(), d.relocatedWords.end(), [&](uint8_t w) {
+                return word(memory, at + w) == static_cast<uint16_t>(word(signature, w) + shift);
+            }))
+            return shift;
+    }
+    return 0;
+}
+}  // namespace
+
 std::vector<ProbeCandidate> Probe(const MachineView& machine)
 {
     std::vector<ProbeCandidate> candidates;
-    for (const SyncDescriptor& d : Descriptors())
-    {
-        if (d.identify.empty() ||
-            !std::all_of(d.identify.begin(), d.identify.end(), [&](const Signature& s) { return Matches(machine, s); }))
-            continue;
+    const auto add = [&](const SyncDescriptor& d, const char* how) {
         const SyncText text = ReadText(machine, d);
         candidates.push_back({&d, text.ok ? 100 : 60,
-                              text.ok ? "identified, the text reads" : "identified; " + (text.diagnostics.empty() ? text.state : text.diagnostics.back().message)});
-    }
+                              text.ok ? std::string(how) + ", the text reads"
+                                      : std::string(how) + "; " + (text.diagnostics.empty() ? text.state : text.diagnostics.back().message)});
+    };
+    for (const SyncDescriptor& d : Descriptors())
+        if (!d.identify.empty() &&
+            std::all_of(d.identify.begin(), d.identify.end(), [&](const Signature& s) { return Matches(machine, s); }))
+            add(d, "identified");
+    // nothing in place: a relocatable code installed elsewhere
+    std::vector<uint8_t> memory;
+    if (candidates.empty() && machine.Read(0x4000, 0xC000, memory))
+        for (const SyncDescriptor& d : Descriptors())
+            if (d.installedAt && !d.identify.empty())
+                if (const int shift = FindMove(memory, d))
+                    if (const SyncDescriptor* moved = Relocated(d, shift);
+                        moved && std::all_of(moved->identify.begin(), moved->identify.end(), [&](const Signature& s) { return Matches(machine, s); }))
+                        add(*moved, ("identified at " + std::to_string(moved->installedAt)).c_str());
     std::stable_sort(candidates.begin(), candidates.end(), [](const ProbeCandidate& a, const ProbeCandidate& b) { return a.score > b.score; });
     return candidates;
 }

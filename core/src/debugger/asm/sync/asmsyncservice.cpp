@@ -203,6 +203,8 @@ void AsmSyncService::RunPush(PushOptions options)
                 request.options["title"] = options.title;
             if (options.force)
                 request.options["force"] = "true";
+            if (!options.drive.empty())
+                request.options["drive"] = options.drive;
             const AsmReply reply = SyncControl(_context).PushInject(request, written);
             // Written; refused for the user's changes in the guest (stays until the file changes again); refused
             // while the assembler is busy (retried); or not written at all (the conversion, too many sources, an

@@ -61,7 +61,8 @@ below #8000 from #2000 of page 4 whatever the ORG (give the ORG as the address t
 takes one ORG (a later one forward is written as zeros). 674 lines take it about 30 s: --wait 45.
 
 With --project the source goes as a path, and each file it INCLUDEs into an ALASM text page of its own (the INCLUDE
-names the page); --template always takes the INCLUDEs (zxasm inject reads them beside the source).
+names the page), or onto the disk in drive A for XAS (LTEXT); --template always takes the INCLUDEs (zxasm inject reads
+them beside the source), with --project those XAS reads from its disk go onto <source>.includes.trd, put in drive A.
 
 With --template (Z1) the source goes into the template snapshot with `zxasm inject` instead, without an emulator; the
 snapshot written is then loaded into a fresh instance and assembled there (make-template.py makes templates, every
@@ -122,10 +123,20 @@ def inject(emu, args, profile, expected):
         injected = os.path.abspath(args.source) + '.injected' + os.path.splitext(args.disk)[1]
         command = [args.zxasm, 'inject', source, args.disk, '-o', injected, '--from', args.from_, '--title', 'INJECTED',
                    '--assembler', args.descriptor] + (['--force'] if profile.force else [])
+        includes = None
+        if args.project:
+            # an assembler that reads its INCLUDEs from the disk (XAS) gets them on a disk of their own, put in drive A
+            includes = os.path.abspath(args.source) + '.includes.trd'
+            if os.path.exists(includes):
+                os.remove(includes)
+            command += ['--disk', includes]
         run = subprocess.run(command, capture_output=True, text=True)
-        print('zxasm inject:', run.stderr.strip().splitlines()[-1] if run.stderr.strip() else run.returncode)
+        for line in run.stderr.strip().splitlines():
+            print('zxasm inject:', line)
         if run.returncode != 0:
             raise SystemExit(run.stderr)
+        if includes and os.path.exists(includes):
+            emu.insert_disk(includes)
         # the disk goes in before the snapshot is loaded and the recording insert_disk starts is stopped: under TTD
         # recording the FDC runs with real timing (no fast disk), and ZAsm 3.80.4's disk check times out (TODO.md)
         if profile.disk_at_finish:
@@ -165,6 +176,7 @@ def main():
                         help='give the source as a path: the files it INCLUDEs go into texts of their own (ALASM pages)')
     parser.add_argument('--combo-frames', type=int, default=4, help='xas: frames EXT is held (9.x: 12)')
     parser.add_argument('--right', type=int, default=0, help='xas: cursor moves right in the file list before loading (past XMACROS)')
+    parser.add_argument('--install', type=int, help='prometheus: the address its installer moves the code to (default its own)')
     parser.add_argument('--help-key', action='store_true', help='alasm: a key closes a help screen at the start (3.8c)')
     parser.add_argument('source')
     parser.add_argument('address', type=lambda v: int(v, 0))
