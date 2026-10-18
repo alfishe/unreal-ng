@@ -75,15 +75,16 @@ Emulator* EmulatorTestHelper::CreateStandardEmulator(const std::string& modelNam
 {
     EmulatorManager* manager = EmulatorManager::GetInstance();
 
-    std::function<void(CONFIG&)> overrides = Config::RamPowerOnOverride(ramPowerOn);
-    if (configOverride)
+    // The bare NEXT personality (the boot ROM and the card off), then the caller's override
+    const std::function<void(CONFIG&)> overrides =
+        [ram = Config::RamPowerOnOverride(ramPowerOn), configOverride](CONFIG& config)
     {
-        overrides = [ram = std::move(overrides), configOverride](CONFIG& config)
-        {
-            ram(config);
+        ram(config);
+        config.next_boot_rom_path[0] = '\0';
+        config.next_sd_path[0] = '\0';
+        if (configOverride)
             configOverride(config);
-        };
-    }
+    };
 
     // Create emulator with model name if specified
     std::shared_ptr<Emulator> emulator;

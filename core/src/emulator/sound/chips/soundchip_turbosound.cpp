@@ -516,7 +516,8 @@ size_t SoundChip_TurboSound::renderQuietOutputs()
     // tick, skipOutput takes an output's worth) and the render cursor's, up to the one with a tick at or past a write
     FilterDecimator& master = _chip0->decimatorLeft();
     const double perOutput = master.samplesPerOutput();
-    double phase = master.phase();
+    const double startPhase = master.phase();
+    double phase = startPhase;
     const int64_t cursorT = _renderT;
     const uint32_t cursorSub = _renderSub;
     uint64_t ticks = 0;
@@ -566,9 +567,9 @@ size_t SoundChip_TurboSound::renderQuietOutputs()
     // The run (the cursor stands at its end already)
     _chip0->advanceSilent(static_cast<uint32_t>(ticks));
     _chip1->advanceSilent(static_cast<uint32_t>(ticks));
-    (void)phase;
     // Each decimator that keeps its own phase (all four here: none is a slave) takes the run's additions and output steps
-    // in their order, as feedSample and skipOutput would (the feeds below add their own, replaced)
+    // in their order, as feedSample and skipOutput would (the feeds below add their own, replaced); from the master's
+    // starting phase that is the master's own result
     for (FilterDecimator* d : {&_chip0->decimatorLeft(), &_chip0->decimatorRight(), &_chip1->decimatorLeft(),
                                &_chip1->decimatorRight()})
     {
@@ -576,11 +577,16 @@ size_t SoundChip_TurboSound::renderQuietOutputs()
         d->feedZerosIntoSilence(size_t(ticks));
         if (d->isSlave())
             continue;
-        for (const uint32_t t : _quietOutputTicks)
+        if (own == startPhase && d->samplesPerOutput() == perOutput)
+            own = phase;
+        else
         {
-            for (uint32_t i = 0; i < t; i++)
-                own += 1.0;
-            own -= d->samplesPerOutput();
+            for (const uint32_t t : _quietOutputTicks)
+            {
+                for (uint32_t i = 0; i < t; i++)
+                    own += 1.0;
+                own -= d->samplesPerOutput();
+            }
         }
         d->setPhase(own);
     }
