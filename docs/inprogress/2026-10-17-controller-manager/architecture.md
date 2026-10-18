@@ -108,7 +108,8 @@ core/controllers/
     devicedatabase.{h,cpp}            # data/controllers/devices.json + user overrides
     hostcontrols.{h,cpp}              # canonical vocabulary, retro control names, parsing           (C2a)
     fake/fakebackend.{h,cpp}          # devices and controls set by calls: tests, scripted pads      (C2a)
-    router/                           # InputRouter, bindings, analog, autofire (C2a); layers, chords (C2b)
+    router/                           # InputRouter, bindings, analog, autofire (C2a); layers, chords, targets,
+                                      # zxkeys (ZX key names for key / macro targets) (C2b)
     profiles/                         # ProfileStore, schema, merge, match
     hid/                              # report-descriptor parser, generic HID pad, vendor drivers
       drivers/xbox_gip.{h,cpp}        # Xbox One / Series / Elite input report (GIP 0x20)

@@ -16,6 +16,7 @@ void FakeBackend::Stop()
     std::lock_guard<std::mutex> lock(_mutex);
     _sink = nullptr;
     _devices.clear();
+    _rumble.clear();
 }
 
 size_t FakeBackend::DeviceCount() const
@@ -51,6 +52,28 @@ bool FakeBackend::Set(const HostDeviceId& device, const std::string& control, fl
         return false;
     _sink->OnControl({device, control, value, hostTimeNs});
     return true;
+}
+
+bool FakeBackend::HasRumble(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _devices.count(device) != 0;
+}
+
+bool FakeBackend::SetRumble(const HostDeviceId& device, const RumbleLevels& levels)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (_devices.count(device) == 0)
+        return false;
+    _rumble[device] = levels;
+    return true;
+}
+
+RumbleLevels FakeBackend::Rumble(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto it = _rumble.find(device);
+    return it == _rumble.end() ? RumbleLevels{} : it->second;
 }
 
 }  // namespace controllers

@@ -51,9 +51,9 @@ A binding is **source → target, with options**. A profile is a list of binding
 | Target | JSON | Reaches the core as |
 |:--|:--|:--|
 | Retro control | `{"retro": "kempston:fire"}`, `{"retro": "next.left:c"}` | The connector's device state, sampled at frame start ([architecture.md §7](architecture.md#7-the-event-pipeline)). `auto:fire` means "the connector this device drives". |
-| ZX key | `{"key": "SPACE"}` | Keyboard overlay (ZX key names of `ZXKeysEnum`, incl. `ZXKEY_EXT_*` composites such as `EDIT`). |
+| ZX key | `{"key": "SPACE"}` | The host key overlay of the matrix, independent of the keys the user holds (ZX key names of `ZXKeysEnum`, incl. `ZXKEY_EXT_*` composites such as `EDIT`, which hold their shift and key); journaled per half-row as `HostKeys` (C2b). |
 | ZX chord | `{"keys": ["CAPS", "1"]}` | Held together. |
-| Macro | `{"macro": ["J", "SYM+P", "SYM+P", "ENTER"]}` | A sequence; each key held one frame and released one frame, so the ROM scan sees every key (Deck design §3). Runs through `DebugKeyboardManager`-style scheduling in the core, so it is journaled. |
+| Macro | `{"macro": ["J", "SYM+P", "SYM+P", "ENTER"]}` | A sequence; each key held one frame and released one frame, so the ROM scan sees every key (Deck design §3). The router steps it at each frame sample onto the host key overlay, so it is journaled (`HostKeys`) and replays without the router. |
 | Mouse axis or button | `{"mouse": "dx", "scale": 6}`, `{"mouse": "left"}` | Mouse deltas through the existing `MouseManager` path. |
 | Pointer | `{"pointer": "absolute"}` | Light gun / pen position in screen coordinates. |
 | Action | `{"action": "ttd.scrub_back"}` | A host command ([debug-and-ttd.md §3](debug-and-ttd.md#3-action-catalogue)); never journaled. Only some actions are allowed in play profiles (OSD keyboard, pause, quick menu, screenshot). |
@@ -246,79 +246,70 @@ Debug profiles layer the same way but on their own: global → machine → famil
 
 ## 7. Profile format
 
-JSON, one profile per file. Play profiles in `profiles/play/`, debug profiles in `profiles/debug/`; a file in the wrong
-directory is refused with a reason. Schema version 1.
+YAML (1.2), parsed by the vendored rapidyaml (`core/src/3rdparty/rapidyaml`): a config needs comments, which standard
+JSON does not have (decided 2026-10-18). One schema, version 1, for every file; the WebAPI and MCP keep sending profiles
+as JSON, the same tree. Play profiles live under `play/`, debug profiles under `debug/`, game profiles under `games/`;
+a profile in the wrong directory is refused with a reason. Where the files are and how a game profile is found among
+thousands: [§7.5](#75-files-bundles-and-the-index); shared binding sets: [§7.6](#76-schemes-extends).
 
 ### 7.1 Play profile: a Kempston game on an Elite Series 2
 
-```json
-{
-  "schema": 1,
-  "kind": "play",
-  "id": "user/sabre-wulf",
-  "label": "Sabre Wulf",
-  "match": {
-    "signatures": ["tape:sha256:5e1c..."],
-    "file_sha256": ["3b2a..."],
-    "title": "Sabre Wulf",
-    "zxdb_id": 4231
-  },
-  "applies_to": { "families": ["xbox"], "devices": [] },
-  "connectors": {
-    "kempston": { "device": "kempston-joystick" }
-  },
-  "options": { "ways": 8, "deadzone": 0.15 },
-  "layers": {
-    "play": {
-      "dpad.*":       { "retro": "kempston:dpad" },
-      "lstick":       { "retro": "kempston:dpad", "ways": 8 },
-      "south":        { "retro": "kempston:fire", "label": "Sword" },
-      "rt.click":     { "retro": "kempston:fire", "turbo": "classic", "on": 2, "off": 2, "label": "Sword (auto)" },
-      "east":         { "key": "SPACE", "label": "Start" },
-      "menu":         { "key": "ENTER", "press": "tap" },
-      "view":         { "action": "osd.keyboard" },
-      "paddle.p1":    { "retro": "kempston:fire2" },
-      "paddle.p4":    { "layer": "debug", "mode": "hold" }
-    }
-  }
-}
+```yaml
+schema: 1
+kind: play
+id: user/sabre-wulf
+label: Sabre Wulf
+match:
+  signatures: ["tape:sha256:5e1c..."]
+  file_sha256: ["3b2a..."]
+  title: Sabre Wulf
+  zxdb_id: 4231
+applies_to: { families: [xbox], devices: [] }
+connectors:
+  kempston: { device: kempston-joystick }
+options: { ways: 8, deadzone: 0.15 }
+layers:
+  play:
+    dpad.*:    { retro: "kempston:dpad" }
+    lstick:    { retro: "kempston:dpad", ways: 8 }
+    south:     { retro: "kempston:fire", label: Sword }
+    rt.click:  { retro: "kempston:fire", turbo: classic, on: 2, off: 2, label: Sword (auto) }
+    east:      { key: SPACE, label: Start }   # the title screen waits for SPACE
+    menu:      { key: ENTER, press: tap }
+    view:      { action: osd.keyboard }
+    paddle.p1: { retro: "kempston:fire2" }
+    paddle.p4: { layer: debug, mode: hold }
 ```
 
 The `dpad.*` and `lstick` shorthands expand to the four directions. `kempston:dpad` expands to `up down left right`.
+A key with a dot or a star is a plain YAML key; a target with a colon is quoted.
 
 ### 7.2 Play profile: a Next MD6 game, two pads
 
-```json
-{
-  "schema": 1,
-  "kind": "play",
-  "id": "community/next-md6-two-players",
-  "label": "Next, two MD 6-button pads",
-  "match": { "machines": ["next"] },
-  "connectors": {
-    "next.left":  { "device": "md6-pad", "mode": "md1" },
-    "next.right": { "device": "md6-pad", "mode": "md2" }
-  },
-  "players": [
-    { "device": "auto:1", "connector": "next.left" },
-    { "device": "auto:2", "connector": "next.right" }
-  ],
-  "layers": {
-    "play": {
-      "dpad.*":  { "retro": "auto:dpad" },
-      "lstick":  { "retro": "auto:dpad" },
-      "south":   { "retro": "auto:b" },
-      "east":    { "retro": "auto:c" },
-      "west":    { "retro": "auto:a" },
-      "north":   { "retro": "auto:start" },
-      "menu":    { "retro": "auto:start" },
-      "view":    { "retro": "auto:mode" },
-      "lb":      { "retro": "auto:x" },
-      "rb":      { "retro": "auto:z" },
-      "rt.click":{ "retro": "auto:y" }
-    }
-  }
-}
+```yaml
+schema: 1
+kind: play
+id: community/next-md6-two-players
+label: Next, two MD 6-button pads
+match: { machines: [next] }
+connectors:
+  next.left:  { device: md6-pad, mode: md1 }
+  next.right: { device: md6-pad, mode: md2 }
+players:
+  - { device: "auto:1", connector: next.left }
+  - { device: "auto:2", connector: next.right }
+layers:
+  play:
+    dpad.*:   { retro: "auto:dpad" }
+    lstick:   { retro: "auto:dpad" }
+    south:    { retro: "auto:b" }
+    east:     { retro: "auto:c" }
+    west:     { retro: "auto:a" }
+    north:    { retro: "auto:y" }
+    lb:       { retro: "auto:x" }
+    rb:       { retro: "auto:z" }
+    menu:     { retro: "auto:start" }
+    view:     { retro: "auto:mode" }
 ```
 
 `auto:` in a target means "the connector this player drives". The NR `#05` mode the guest writes still decides what the
@@ -326,22 +317,18 @@ guest reads (MD on `#1F` / `#37`, or keys in Sinclair / Cursor modes): the profi
 
 ### 7.3 Debug profile
 
-```json
-{
-  "schema": 1,
-  "kind": "debug",
-  "id": "builtin/debug-elite2",
-  "applies_to": { "families": ["xbox-elite"] },
-  "layer_key": { "control": "paddle.p4", "mode": "hold" },
-  "layers": {
-    "debug": {
-      "lt":         { "action": "ttd.scrub_back", "curve": "scrub" },
-      "rt":         { "action": "ttd.scrub_forward", "curve": "scrub" },
-      "dpad.left":  { "action": "ttd.step_back_instruction", "repeat": { "delay": 15, "rate": 4 } },
-      "dpad.right": { "action": "run.step_in", "repeat": { "delay": 15, "rate": 4 } }
-    }
-  }
-}
+```yaml
+schema: 1
+kind: debug
+id: builtin/debug-elite2
+applies_to: { families: [xbox-elite] }
+layer_key: { control: paddle.p4, mode: hold }
+layers:
+  debug:
+    lt:         { action: ttd.scrub_back, curve: scrub }
+    rt:         { action: ttd.scrub_forward, curve: scrub }
+    dpad.left:  { action: ttd.step_back_instruction, repeat: { delay: 15, rate: 4 } }
+    dpad.right: { action: run.step_in, repeat: { delay: 15, rate: 4 } }
 ```
 
 The full default set is in [debug-and-ttd.md §4](debug-and-ttd.md#4-default-debug-profiles).
@@ -350,7 +337,79 @@ The full default set is in [debug-and-ttd.md §4](debug-and-ttd.md#4-default-deb
 
 Unknown controls, unknown connectors and unknown actions are errors that list the candidates (the media manager's
 `unknown-slot` style); a binding to a control the device lacks (paddles on a DualShock) is kept and shown greyed, so one
-profile serves several families.
+profile serves several families. A unit test parses every file and every bundle entry of `data/controllers/profiles/`
+(the built-ins' test today), so a broken profile fails the build's tests, not a player's session.
+
+### 7.5 Files, bundles and the index
+
+Profiles are data: none is written in C++. `builtinprofiles.cpp` today holds the defaults and the first game profiles as
+string literals; they move to files, and the source keeps only the loader.
+
+| What | Where | Loaded |
+|:--|:--|:--|
+| Defaults: global, machine, family (§8), debug (debug-and-ttd.md §4) | `data/controllers/profiles/{play,debug}/*.yaml` | compiled in at build time (the `devices.json` way: a CMake step makes a source of them), all at start |
+| Schemes (§7.6) | `data/controllers/profiles/schemes/*.yaml` | compiled in, all at start (a few dozen) |
+| A game, one per file: every new profile, reviewed by its own PR | `data/controllers/profiles/games/<machine>/<slug>.yaml` | through the index, on a match |
+| Legacy games in bulk: entries made from a database or a converted collection | `data/controllers/profiles/games/bundles/<name>.yaml`, one YAML document per game (`---` between them) | through the index, on a match |
+| User profiles: the dialog's binds, Keep on the auto-decision toast | `<user config>/unreal-ng/controllers/profiles/{play,debug,games}/*.yaml` | all at start (a user has tens, not thousands); they rank above the shipped ones (§6.2) |
+
+The game files and bundles are copied with the runtime data (`cmake/RuntimeData.cmake` already copies
+`data/controllers`), not compiled in: a bundle of thousands of entries does not belong in a string literal (MSVC takes
+16 380 bytes in one), and an update of the data needs no rebuild of the core.
+
+**The index.** A build step (`tools/controllers/profile-index.py`) reads every game file and bundle and writes
+`games/index.yaml` next to them; the loader also rebuilds it in memory when it is missing or older than a file, so a
+profile dropped into the directory works without the tool. Per profile, one entry:
+
+```yaml
+# games/index.yaml - generated by tools/controllers/profile-index.py: do not edit
+version: 1
+profiles:
+  - id: builtin/game/vradarks-revenge
+    label: Vradark's Revenge
+    machines: [next]
+    file: games/next/vradarks-revenge.yaml   # or a bundle, with the entry's place in it
+    offset: 0
+    length: 1873
+    keys: ["sha256:32ad0b5f..."]               # also "zxdb:<id>", "sig:<signature>"
+```
+
+At start the loader reads the index only and keeps a hash map from every key to its entries. A key comes from what the
+emulator knows about the program: the SHA-256 of a file it loaded, a signature (when the signature library exists),
+the ZXDB id the metadata manager found. On a hit it parses that one entry (the `offset` / `length` slice of the file),
+validates it and adds it to the store; a second hit is served from the store. The dialog's game list (manual choice,
+§6.1 step 3, the program the emulator did not load itself - a NEX started from NextZXOS's browser) is the index's
+labels filtered by the machine, also without parsing a profile. Duplicate keys over two profiles are an error of the
+index tool, not a silent choice.
+
+**The library.** rapidyaml compiles into the core today (`ryml_impl.cpp` in `core/src`). The `controllers` library
+must not use core symbols (it is linked under the core), so rapidyaml becomes its own static library that the core and
+`controllers` both link. The profile parser keeps working on its tree (`JsonValue`): one converter turns a rapidyaml
+tree into it, and the validation, the merge and the WebAPI / MCP JSON stay as they are. The dialog writes user files in
+YAML; a comment a user put in such a file is not kept when the dialog rewrites it, and the file says so in its first
+line.
+
+### 7.6 Schemes: `extends`
+
+Most games of the 1980s use one of a few control schemes: Kempston, Sinclair 1 or 2, Cursor, QAOP + Space, OPQA + M,
+the Kempston mouse, a redefinable set. A scheme is a play profile of `kind: scheme` with no `match`; a game names it
+and writes only what differs:
+
+```yaml
+schema: 1
+kind: play
+id: builtin/game/jetpac
+label: Jetpac
+extends: [scheme/kempston, scheme/qaop-space]   # merged in this order, then this profile's own fields
+match: { file_sha256: ["..."] }
+layers:
+  play:
+    north: { key: "1", label: One player }
+```
+
+The merge is the field-by-field merge of §6.2, so a scheme behaves as a profile one step below the game. A bundle
+entry is mostly `id`, `label`, `match` and `extends`: a few hundred bytes. A scheme is not chosen by itself; a scheme
+that names another scheme is allowed, a cycle is an error.
 
 ## 8. Defaults out of the box
 
@@ -370,9 +429,13 @@ connector `auto` chose ([retro-devices.md](retro-devices.md)); "fire" means the 
 | Kempston mouse | right stick | right stick | right stick | - | host mouse |
 | Debug layer key | `paddle.p4` (Elite) or `view+menu` held | `view+menu` held (Edge: back button) | `view+menu` held | - | - (keyboard has shortcuts) |
 
-**Next MD 6-button default** (jnext, `joystick_dispatcher.cpp:58-90`): `south` → B (fire 1), `east` → C (fire 2),
-`west` → A, `north` and `menu` → START, `view` → MODE, `lb` → X, `rb` → Z, `rt.click` → Y. Only R L D U B C A START reach
-`#1F` / `#37`; X Y Z MODE are readable through NR `#B2` only, and the dialog says so next to those buttons.
+**Next MD 6-button default** (`builtin/play/next-md-pad`, RetroArch's Genesis layout, owner 2026-10-18): the pad's two
+rows of three keep their places, A B C on `west` / `south` / `east` and X Y Z on `lb` / `north` / `rb`, left to right;
+`menu` → START, `view` → MODE. `south` → B is the Kempston fire (D4), so a game that reads `#1F` as a plain Kempston
+fires on `south` as on every other machine. Only R L D U B C A START reach `#1F` / `#37`; X Y Z MODE are readable
+through NR `#B2` only, and the dialog says so next to those buttons. jnext's layout (`joystick_dispatcher.cpp:58-90`:
+`north` and `menu` → START, `rt.click` → Y) puts START under the thumb for 3-button games at the cost of Y on a
+trigger; it is a user profile away, not the default.
 
 **Kempston fire 2 and 3.** Classic interfaces read bits 5-7 as 0; the Evo 8-bit mode, the Next and homebrew use D5
 (fire 2 / C) and D6 (A). The default binds them, but a connector whose board grounds D5-D7 ignores them, and the

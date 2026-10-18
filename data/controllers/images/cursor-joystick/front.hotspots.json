@@ -1,0 +1,104 @@
+{
+  "schema": 1,
+  "family": "cursor-joystick",
+  "view": "front",
+  "size": [
+    2048,
+    1536
+  ],
+  "controls": [
+    {
+      "control": "up",
+      "label": "Up",
+      "shape": {
+        "rect": [
+          974,
+          180,
+          100,
+          100
+        ]
+      },
+      "anchor": [
+        1024,
+        230
+      ],
+      "callout": "left",
+      "group": "directions",
+      "order": 0
+    },
+    {
+      "control": "down",
+      "label": "Down",
+      "shape": {
+        "rect": [
+          974,
+          860,
+          100,
+          100
+        ]
+      },
+      "anchor": [
+        1024,
+        910
+      ],
+      "callout": "left",
+      "group": "directions",
+      "order": 1
+    },
+    {
+      "control": "left",
+      "label": "Left",
+      "shape": {
+        "rect": [
+          760,
+          520,
+          100,
+          100
+        ]
+      },
+      "anchor": [
+        810,
+        570
+      ],
+      "callout": "left",
+      "group": "directions",
+      "order": 2
+    },
+    {
+      "control": "right",
+      "label": "Right",
+      "shape": {
+        "rect": [
+          1188,
+          520,
+          100,
+          100
+        ]
+      },
+      "anchor": [
+        1238,
+        570
+      ],
+      "callout": "right",
+      "group": "directions",
+      "order": 3
+    },
+    {
+      "control": "fire",
+      "label": "Fire",
+      "shape": {
+        "circle": [
+          760,
+          1000,
+          80
+        ]
+      },
+      "anchor": [
+        760,
+        1000
+      ],
+      "callout": "left",
+      "order": 4
+    }
+  ]
+}

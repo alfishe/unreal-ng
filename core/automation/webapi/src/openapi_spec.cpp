@@ -35,6 +35,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_tape_disk.inc"
 #include "openapi/openapi_media.inc"
 #include "openapi/openapi_slots.inc"
+#include "openapi/openapi_controllers.inc"
 #include "openapi/openapi_snapshot.inc"
 #include "openapi/openapi_rzx.inc"
 #include "openapi/openapi_capture.inc"

@@ -1,5 +1,9 @@
 #include "controllercontrol.h"
 
+#ifdef ENABLE_CONTROLLERS
+#include "profiles/autodecision.h"
+#endif
+
 #include <algorithm>
 #include <cctype>
 
@@ -56,6 +60,47 @@ bool ParseBool(const std::string& text, bool& value)
     return true;
 }
 
+/// "up+fire", "up,fire", "up fire" -> bits; b5..b7 are the Kempston names of fire2..fire4. False with the name
+bool ParseControls(const std::string& text, uint16_t& bits, std::string& error)
+{
+    bits = 0;
+    std::string name;
+    auto flush = [&]() {
+        if (name.empty())
+            return true;
+        const std::string lower = Lower(name);
+        name.clear();
+        static const std::pair<const char*, const char*> kAliases[] = {{"b5", "fire2"}, {"b6", "fire3"}, {"b7", "fire4"}};
+        std::string control = lower;
+        for (const auto& [alias, real] : kAliases)
+            if (control == alias)
+                control = real;
+        for (unsigned bit = 0; bit < kOverlayControls; bit++)
+        {
+            if (control == kControlNames[bit])
+            {
+                bits |= static_cast<uint16_t>(1u << bit);
+                return true;
+            }
+        }
+        error = "unknown control '" + lower + "' (controls: right, left, down, up, fire, fire2, fire3, fire4)";
+        return false;
+    };
+    if (Lower(Trim(text)) == "none")
+        return true;  // `set none`: nothing held
+    for (char c : text)
+    {
+        if (c == '+' || c == ',' || c == ' ')
+        {
+            if (!flush())
+                return false;
+        }
+        else
+            name += c;
+    }
+    return flush();
+}
+
 /// The controls held, by name ("up", "fire")
 StateNode HeldControls(ConnectorKind kind, uint16_t state)
 {
@@ -105,7 +150,8 @@ ControllerControl::ControllerControl(EmulatorContext* context)
 
 const std::vector<std::string>& ControllerControl::Verbs()
 {
-    static const std::vector<std::string> verbs = {"list", "get", "plug", "unplug", "options", "targets"};
+    static const std::vector<std::string> verbs = {"list",    "get",     "plug", "unplug",
+                                                   "options", "targets", "auto", "input"};
     return verbs;
 }
 
@@ -118,6 +164,8 @@ const std::vector<std::string>& ControllerControl::OptionsFor(const std::string&
         {"unplug", {"async"}},
         {"options", {"port", "shift", "keys", "extended", "im2-leak", "async"}},
         {"targets", {}},
+        {"auto", {"apply"}},
+        {"input", {"press", "release", "set"}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -155,6 +203,8 @@ ControllerReply ControllerControl::Run(const ControllerRequest& request)
 
     if (verb == "list")
         return List();
+    if (verb == "auto")
+        return Auto(request);
     if (verb == "get")
         return Get(request);
     if (verb == "plug")
@@ -163,6 +213,8 @@ ControllerReply ControllerControl::Run(const ControllerRequest& request)
         return Unplug(request);
     if (verb == "options")
         return Options(request);
+    if (verb == "input")
+        return Input(request);
     return Targets(request);
 }
 
@@ -323,6 +375,94 @@ std::vector<ControllerControl::Target> ControllerControl::TargetsFor(RetroDevice
         }
     }
     return targets;
+}
+
+ControllerReply ControllerControl::Auto(const ControllerRequest& request)
+{
+    if (request.options.count("apply") != 0)
+        _manager->WatchPortReads(true);
+    const PortReadEvidence evidence = _manager->PortReads();
+    ControllerReply reply;
+    StateNode watch = StateNode::Object();
+    watch["active"] = evidence.active;
+    watch["frames_observed"] = static_cast<uint64_t>(evidence.framesObserved);
+    watch["window"] = static_cast<uint64_t>(evidence.window);
+    StateNode classes = StateNode::Object();
+    for (size_t index = 0; index < kPortReadClasses; ++index)
+    {
+        if (evidence.framesWithReads[index] == 0)
+            continue;
+        StateNode entry = StateNode::Object();
+        entry["frames"] = static_cast<uint64_t>(evidence.framesWithReads[index]);
+        entry["reads_per_frame"] = static_cast<double>(evidence.readsPerFrame[index]);
+        classes[PortReadClassName(static_cast<PortReadClass>(index))] = entry;
+    }
+    watch["classes"] = classes;
+    reply.body["evidence"] = watch;
+#ifdef ENABLE_CONTROLLERS
+    // The library's heuristic (mapping-and-profiles.md §6.1 step 2): what the Qt host would plug
+    const controllers::AutoDecision decision = controllers::DecideFromPortReads(evidence);
+    StateNode value = StateNode::Object();
+    value["decisive"] = decision.decisive;
+    value["keyboard"] = decision.keyboard;
+    value["device"] = decision.device.empty() ? StateNode() : StateNode(decision.device);
+    value["connector"] = decision.connector.empty() ? StateNode() : StateNode(decision.connector);
+    value["label"] = decision.label;
+    value["reason"] = decision.reason;
+    reply.body["decision"] = value;
+#endif
+    return reply;
+}
+
+ControllerReply ControllerControl::Input(const ControllerRequest& request)
+{
+    ControllerReply reply;
+    size_t index = 0;
+    reply.result = Resolve(request.selector, index);
+    if (!reply.result.Ok())
+        return reply;
+    const Connector connector = _manager->At(index);
+    reply.connector = connector.id;
+    if (connector.device == RetroDeviceKind::None)
+    {
+        reply.result = ControllerResult::Fail(ControllerError::BadRequest, "connector '" + connector.id + "' is empty");
+        return reply;
+    }
+    uint16_t mask = _manager->State(index);
+    bool any = false;
+    for (const char* option : {"set", "press", "release"})
+    {
+        auto it = request.options.find(option);
+        if (it == request.options.end())
+            continue;
+        any = true;
+        uint16_t bits = 0;
+        std::string error;
+        if (!ParseControls(it->second, bits, error))
+        {
+            reply.result = ControllerResult::Fail(ControllerError::BadRequest, std::string(option) + ": " + error);
+            return reply;
+        }
+        if (std::string(option) == "set")
+            mask = bits;  // the Next pad keeps its own buttons above the named ones
+        else if (std::string(option) == "press")
+            mask = static_cast<uint16_t>(mask | bits);
+        else
+            mask = static_cast<uint16_t>(mask & ~bits);
+    }
+    if (!any)
+    {
+        reply.result = ControllerResult::Fail(ControllerError::BadRequest, "input takes press, release or set");
+        return reply;
+    }
+    if (!_manager->Submit(index, mask))
+    {
+        reply.result =
+            ControllerResult::Fail(ControllerError::OwnedByReplay, "input refused: TTD replay or RZX playback owns it");
+        return reply;
+    }
+    reply.body["held"] = HeldControls(connector.kind, mask);
+    return reply;
 }
 
 ControllerReply ControllerControl::Targets(const ControllerRequest& request)

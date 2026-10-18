@@ -35,7 +35,8 @@ struct HostDeviceInfo
 {
     HostDeviceId id;
     std::string name;     ///< for display only
-    std::string family;   ///< "xbox", "playstation", "switch", "generic", "keyboard", "mouse" (device-database.md)
+    std::string family;   ///< the device database family: "xbox-elite-2", "dualsense", "generic", "keyboard", "mouse"
+    std::string layout;   ///< its layout: "xbox", "playstation", "nintendo", "generic" (profiles may name either)
     std::string backend;  ///< the backend that reported it
 };
 

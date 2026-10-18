@@ -452,6 +452,7 @@ protected:
 
     // Tracks whether this chip has received any register writes (for TurboSound detection)
     bool _hasBeenWritten = false;
+    uint8_t _envelopeRestarts = 0;  ///< TakeEnvelopeRestarts
 
     // Board wiring on the I/O port pins (ayioportinput.h), set by the machine that has some (the 128K family).
     // Null on every other machine: the R14 / R15 read is the chip alone. Board configuration, not chip state:
@@ -633,6 +634,14 @@ protected:
 public:
     // Access to internal state for debugging
     const uint8_t* getRegisters() const { return _registers; }
+    /// R13 writes (each restarts the envelope) since the last call: the haptic feed's ay-envelope (controller manager
+    /// haptics.md §4). Host output only, not part of the chip's state
+    uint8_t TakeEnvelopeRestarts()
+    {
+        const uint8_t restarts = _envelopeRestarts;
+        _envelopeRestarts = 0;
+        return restarts;
+    }
     const ToneGenerator* getToneGenerators() const { return _toneGenerators; }
     const NoiseGenerator& getNoiseGenerator() const { return _noiseGenerator; }
     const EnvelopeGenerator& getEnvelopeGenerator() const { return _envelopeGenerator; }

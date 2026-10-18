@@ -7,7 +7,7 @@
 /// and the error codes live here, so the surfaces cannot drift apart.
 /// Design: docs/inprogress/2026-10-17-controller-manager/surfaces.md (§2 verbs, §3 selectors, §4 envelope).
 ///
-/// Verbs: list, get, plug, unplug, options, targets.
+/// Verbs: list, get, plug, unplug, options, targets, auto, input.
 ///
 /// Example (what a surface does):
 /// @code
@@ -86,6 +86,10 @@ private:
     ControllerReply Unplug(const ControllerRequest& request);
     ControllerReply Options(const ControllerRequest& request);
     ControllerReply Targets(const ControllerRequest& request);
+    /// The port-read evidence and the decision drawn from it; apply starts the watch again
+    ControllerReply Auto(const ControllerRequest& request);
+    /// Live input on a connector: press / release / set the named controls, journaled like a host device's
+    ControllerReply Input(const ControllerRequest& request);
     /// Sync: wait for a plug made while TTD records to land (async: report it pending)
     void Finish(ControllerReply& reply, const std::map<std::string, std::string>& options);
 

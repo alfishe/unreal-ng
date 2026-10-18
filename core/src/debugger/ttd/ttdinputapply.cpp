@@ -128,6 +128,11 @@ bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices, co
                 return false;
             return devices.controllers->ApplyConnectorState(ev.key, static_cast<uint16_t>(ev.dx));
 
+        case TTDInputKind::HostKeys:
+            if (!devices.controllers)
+                return false;
+            return devices.controllers->ApplyHostKeys(ev.key, static_cast<uint8_t>(ev.dx));
+
         case TTDInputKind::FrontPanelSwitch:
             if (!devices.portDecoder)
                 return false;

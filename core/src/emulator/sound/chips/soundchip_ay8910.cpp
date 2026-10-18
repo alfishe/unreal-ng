@@ -579,6 +579,8 @@ void SoundChip_AY8910::latchRegister(uint8_t regAddr, uint8_t value, uint64_t t)
 
     // Track that this chip has been written to (for TurboSound detection)
     _hasBeenWritten = true;
+    if (regAddr == AY_ENVELOPE_SHAPE && _envelopeRestarts < UINT8_MAX)
+        _envelopeRestarts++;
 
     _registers[regAddr] = value;
 

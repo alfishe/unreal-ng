@@ -233,6 +233,7 @@ if (NOT TARGET ${PROJECT_NAME})
             ${ROOT_DIR}/core/automation/mcp/src/mcp-analysis.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-media.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-slots.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-controllers.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-bus.cpp
             ${ROOT_DIR}/core/automation/mcp/src/target-resolver.cpp
             ${ROOT_DIR}/core/automation/webapi/src/companion-event-hub.cpp

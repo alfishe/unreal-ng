@@ -4,6 +4,7 @@
 /// @brief A backend whose devices and controls are set by calls: the tests' host devices, and later a scripted
 /// pad for headless runs (TODO.md C2).
 
+#include <map>
 #include <mutex>
 #include <set>
 #include <string>
@@ -23,6 +24,10 @@ public:
     bool Start(IBackendSink& sink, std::string& reason) override;
     void Stop() override;
     size_t DeviceCount() const override;
+    bool HasRumble(const HostDeviceId& device) const override;
+    bool SetRumble(const HostDeviceId& device, const RumbleLevels& levels) override;
+    /// What the last SetRumble wrote to a device
+    RumbleLevels Rumble(const HostDeviceId& device) const;
 
     /// A device arrives (id, name, family); false when the id is already connected or the backend is stopped
     bool Connect(const HostDeviceInfo& device);
@@ -42,6 +47,7 @@ private:
     mutable std::mutex _mutex;
     IBackendSink* _sink = nullptr;
     std::set<HostDeviceId> _devices;
+    std::map<HostDeviceId, RumbleLevels> _rumble;
 };
 
 }  // namespace controllers

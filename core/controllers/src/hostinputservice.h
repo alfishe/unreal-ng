@@ -5,12 +5,18 @@
 /// their devices and control events, routes them (InputRouter), and gives each emulator instance the
 /// IHostInputSource its ControllerManager samples at every frame boundary.
 
+#include <atomic>
+#include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
 
+#include "emulator/io/controllers/ihapticfeed.h"
 #include "emulator/io/controllers/ihostinputsource.h"
+#include "haptics/hapticmixer.h"
+#include "haptics/hapticprofile.h"
 #include "hostbackend.h"
 #include "router/inputrouter.h"
 
@@ -49,6 +55,38 @@ public:
     /// @p instance is the emulator's id. Dropping the source forgets the instance
     std::shared_ptr<IHostInputSource> SourceFor(const std::string& instance);
 
+    /// Changes when a device arrives or leaves (the dialog's refresh, ui-ux.md §7)
+    uint64_t Revision() const
+    {
+        return _revision.load();
+    }
+    /// A device's last value of every control it reported: the dialog's live view and press-to-bind
+    std::map<std::string, float> Live(const HostDeviceId& device) const;
+
+    /// region <Haptics (haptics.md §3; host output only, H-4)>
+    /// The device has motors its backend can drive
+    bool HasRumble(const HostDeviceId& device) const;
+    /// Play an effect on a device (ignored while the gate is closed)
+    void PlayEffect(const HostDeviceId& device, const HapticEffect& effect);
+    /// Identify: a short pulse on both motors, so the user sees which pad is which (ui-ux.md)
+    void Identify(const HostDeviceId& device);
+    /// H-5: the host closes it on pause, seek, replay, turbo and focus loss; closing stops every motor
+    void SetHapticsGate(bool open);
+    void SetHapticsStrength(float strength);
+    /// The generic sound haptics of one instance (haptics.md §4) for its ControllerManager::SetHapticFeed: they
+    /// play on the devices with motors that drive the instance
+    std::shared_ptr<IHapticFeed> HapticFeedFor(const std::string& instance);
+    /// RumbleActuator bits of @p device (0: no motors)
+    uint8_t RumbleActuators(const HostDeviceId& device) const;
+    /// A game profile's haptics (haptics.md §7) for @p instance: its sources and rules instead of the generic filters
+    std::shared_ptr<IHapticFeed> HapticFeedFor(const std::string& instance, const HapticProfile& profile,
+                                               const std::string& name);
+    HapticMixer& Haptics()
+    {
+        return *_haptics;
+    }
+    /// endregion </Haptics>
+
     /// region <IBackendSink>
     void OnDeviceAdded(const HostDeviceInfo& device) override;
     void OnDeviceRemoved(const HostDeviceId& device) override;
@@ -63,9 +101,20 @@ private:
         std::string reason;
     };
 
+    IBackend* BackendOfLocked(const HostDeviceId& device) const;
+    /// The devices that drive @p instance and have motors, asked at every haptic frame
+    std::function<std::vector<HostDeviceId>()> TargetsFor(const std::string& instance);
+
     mutable std::mutex _mutex;
+    std::mutex _hapticsWrite;  ///< held across a backend's SetRumble; Stop takes it before it drops the backends
     std::vector<Entry> _backends;
     std::shared_ptr<InputRouter> _router;
+    std::atomic<uint64_t> _revision{0};
+    mutable std::mutex _liveMutex;
+    std::map<HostDeviceId, std::map<std::string, float>> _live;
+    std::map<HostDeviceId, std::string> _deviceBackend;  ///< under _mutex: the backend that reported a device
+    /// Last member: destroyed first, while the backends it writes to still exist
+    std::unique_ptr<HapticMixer> _haptics;
 };
 
 }  // namespace controllers

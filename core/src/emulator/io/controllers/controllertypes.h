@@ -97,4 +97,31 @@ struct ConnectorSample
     uint16_t mask = 0;      ///< the held controls, kRight ... bit order (Md6Pad: the 12 PadState bits)
 };
 
+/// The mouse a host source drives this frame (a pad's mouse targets, mapping-and-profiles.md §5)
+struct MouseSample
+{
+    int dx = 0;           ///< counts this frame, + = right
+    int dy = 0;           ///< counts this frame, + = up (MouseEvent)
+    int wheel = 0;        ///< notches this frame
+    uint8_t buttons = 0;  ///< held, active high: D0 left, D1 right, D2 middle
+};
+
+/// One frame of a host source (IHostInputSource::Sample)
+struct HostSample
+{
+    /// The connectors it drives; a connector left out keeps its state
+    std::vector<ConnectorSample> connectors;
+    /// Every ZX key it holds (ZXKeysEnum values, the ZXKEY_EXT_* composites too): the whole set each frame, held on
+    /// the host key overlay of the matrix, independent of the keys the user holds
+    std::vector<uint8_t> keys;
+    MouseSample mouse;
+
+    void Clear()
+    {
+        connectors.clear();
+        keys.clear();
+        mouse = MouseSample{};
+    }
+};
+
 }  // namespace controllers

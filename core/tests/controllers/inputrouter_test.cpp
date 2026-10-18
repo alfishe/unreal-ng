@@ -1,18 +1,21 @@
 /// @file inputrouter_test.cpp
-/// @brief The controllers library's router (C2a, mapping-and-profiles.md §1-§3): bindings to retro targets,
-/// OR-lists, sticks and the D-pad, turbo in emulated frames, roles, instance assignment, the `auto` connector.
+/// @brief The controllers library's router (mapping-and-profiles.md §1-§3): bindings to retro targets, OR-lists,
+/// sticks and the D-pad, turbo in emulated frames, roles, instance assignment, the `auto` connector (C2a); layers,
+/// layer keys, chords, key / macro / mouse / action targets, consume (C2b).
 /// No machine: the router is sampled directly, as a ControllerManager samples it at each frame boundary.
 
 #include "router/inputrouter.h"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <map>
 #include <string>
 #include <vector>
 
 #include "fake/fakebackend.h"
 #include "hostinputservice.h"
+#include "router/zxkeys.h"
 
 using namespace controllers;
 
@@ -31,11 +34,66 @@ Binding Bind(std::vector<std::string> sources, const std::string& target, Bindin
     return binding;
 }
 
+Binding To(std::vector<std::string> sources, const Target& target, const std::string& layer = kPlayLayer)
+{
+    Binding binding;
+    binding.sources = std::move(sources);
+    binding.target = target;
+    binding.layer = layer;
+    return binding;
+}
+
+Target Layer(const std::string& layer, const std::string& mode = "hold")
+{
+    Target target;
+    std::string error;
+    EXPECT_TRUE(ParseLayerTarget(layer, mode, target, error)) << error;
+    return target;
+}
+
+Target Keys(const std::string& keys)
+{
+    Target target;
+    std::string error;
+    EXPECT_TRUE(ParseKeysTarget(keys, target, error)) << error;
+    return target;
+}
+
+Target Mouse(const std::string& control, float scale = 8.0f)
+{
+    Target target;
+    std::string error;
+    EXPECT_TRUE(ParseMouseTarget(control, scale, target, error)) << error;
+    return target;
+}
+
+Target Retro(const std::string& text)
+{
+    Target target;
+    std::string error;
+    EXPECT_TRUE(ParseRetroTarget(text, target, error)) << error;
+    return target;
+}
+
 class InputRouter_Test : public ::testing::Test
 {
 protected:
     InputRouter _router;
     uint64_t _frame = 100;
+    uint64_t _now = 1'000'000'000;  ///< the router's host clock, ns
+    HostSample _last;               ///< the last Sample()
+    std::vector<ActionEvent> _actions;
+
+    void SetUp() override
+    {
+        _router.SetClock([this] { return _now; });
+        _router.SetActionSink([this](const ActionEvent& action) { _actions.push_back(action); });
+    }
+
+    void AdvanceMs(uint64_t ms)
+    {
+        _now += ms * 1'000'000;
+    }
 
     void SetBindings(const std::vector<Binding>& bindings, const std::string& scope = {})
     {
@@ -51,10 +109,10 @@ protected:
     /// One frame boundary of @p instance: connector -> mask (absent = not sampled)
     std::map<std::string, uint16_t> Sample(const std::string& instance = "emu-1")
     {
-        std::vector<ConnectorSample> out;
-        _router.Sample(instance, _frame++, out);
+        _last.Clear();
+        _router.Sample(instance, _frame++, _last);
         std::map<std::string, uint16_t> masks;
-        for (const ConnectorSample& sample : out)
+        for (const ConnectorSample& sample : _last.connectors)
             masks[sample.connector] = sample.mask;
         return masks;
     }
@@ -272,16 +330,250 @@ TEST(HostInputService_Test, FakeBackendThroughTheService)
     ASSERT_TRUE(service.Router().SetBindings({}, {fire}, reason)) << reason;
     std::shared_ptr<IHostInputSource> source = service.SourceFor("emu-1");
     ASSERT_TRUE(pads->Press("fake:1", "south"));
-    std::vector<ConnectorSample> out;
+    HostSample out;
     source->Sample(1, out);
-    ASSERT_EQ(out.size(), 1u);
-    EXPECT_EQ(out[0].connector, "kempston");
-    EXPECT_EQ(out[0].mask, kFire);
+    ASSERT_EQ(out.connectors.size(), 1u);
+    EXPECT_EQ(out.connectors[0].connector, "kempston");
+    EXPECT_EQ(out.connectors[0].mask, kFire);
 
     service.Stop();
     EXPECT_TRUE(service.Router().Devices().empty()) << "stopping the backends removes their devices";
-    out.clear();
+    out.Clear();
     source->Sample(2, out);
-    ASSERT_EQ(out.size(), 1u);
-    EXPECT_EQ(out[0].mask, 0) << "and releases what they held";
+    ASSERT_EQ(out.connectors.size(), 1u);
+    EXPECT_EQ(out.connectors[0].mask, 0) << "and releases what they held";
 }
+
+/// region <C2b: layers, chords, targets>
+
+/// testing.md Router_LayerReleasesHeld; DT-5 rules 2, 4, 5
+TEST_F(InputRouter_Test, Router_LayerReleasesHeld)
+{
+    _router.OnDeviceAdded(kPad);
+    SetBindings({Bind({"south"}, "kempston:fire"), To({"paddle.p4"}, Layer(kDebugLayer)),
+                 To({"south"}, ActionTarget("ttd.scrub_back"), kDebugLayer), Bind({"paddle.p4"}, "kempston:fire2")});
+    Set("fake:1", "south", 1);
+    EXPECT_EQ(Kempston(), kFire);
+
+    Set("fake:1", "paddle.p4", 1);
+    EXPECT_EQ(_router.Layers("fake:1"), (std::vector<std::string>{kDebugLayer}));
+    EXPECT_EQ(Kempston(), 0) << "the switch releases the held fire in the next sample";
+    EXPECT_TRUE(_actions.empty()) << "south held across the switch is ignored until released";
+    EXPECT_TRUE(_router.Consumes("fake:1", "paddle.p4")) << "the layer key is the layer's alone";
+
+    Set("fake:1", "south", 0);
+    Set("fake:1", "south", 1);
+    ASSERT_EQ(_actions.size(), 1u);
+    EXPECT_EQ(_actions[0].action, "ttd.scrub_back");
+    EXPECT_TRUE(_actions[0].pressed);
+    EXPECT_TRUE(Sample().empty()) << "debug is opaque: play's fire does nothing while it is up";
+
+    Set("fake:1", "paddle.p4", 0);
+    ASSERT_EQ(_actions.size(), 2u);
+    EXPECT_FALSE(_actions[1].pressed) << "dropping the layer releases its held action";
+    EXPECT_TRUE(Sample().empty()) << "south held across the drop: still ignored, fire2 never sent";
+    Set("fake:1", "south", 0);
+    Set("fake:1", "south", 1);
+    EXPECT_EQ(Kempston(), kFire);
+}
+
+/// testing.md Router_OrListAndChord; DT-5 rule 4: the chord's members wait for the window
+TEST_F(InputRouter_Test, Router_OrListAndChord)
+{
+    _router.OnDeviceAdded(kPad);
+    Binding chord = To({"view", "menu"}, Layer(kDebugLayer, "toggle"));
+    chord.chord = true;
+    SetBindings({chord, Bind({"view"}, "kempston:fire2"), To({"menu"}, ActionTarget("osd.keyboard")),
+                 To({"south"}, ActionTarget("ttd.pause"), kDebugLayer)});
+
+    Set("fake:1", "view", 1);
+    AdvanceMs(10);
+    Set("fake:1", "menu", 1);
+    EXPECT_EQ(_router.Layers("fake:1"), (std::vector<std::string>{kDebugLayer})) << "the chord entered debug";
+    AdvanceMs(100);
+    EXPECT_TRUE(Sample().empty()) << "view's own binding never saw the press";
+    Set("fake:1", "view", 0);
+    Set("fake:1", "menu", 0);
+    EXPECT_TRUE(_actions.empty()) << "nor menu's";
+
+    Set("fake:1", "view", 1);
+    Set("fake:1", "menu", 1);
+    EXPECT_EQ(_router.Layers("fake:1"), (std::vector<std::string>{kPlayLayer})) << "again: toggled off";
+    Set("fake:1", "view", 0);
+    Set("fake:1", "menu", 0);
+
+    // A member alone: its binding acts once the window closes
+    Set("fake:1", "view", 1);
+    AdvanceMs(30);
+    EXPECT_EQ(Kempston(), 0xFFFF) << "inside the window: held back";
+    AdvanceMs(40);
+    EXPECT_EQ(Kempston(), kFire2) << "the window closed at the sample";
+    Set("fake:1", "view", 0);
+    EXPECT_EQ(Kempston(), 0);
+
+    // A tap inside the window: the press goes out at the release
+    Set("fake:1", "menu", 1);
+    AdvanceMs(20);
+    Set("fake:1", "menu", 0);
+    ASSERT_EQ(_actions.size(), 2u);
+    EXPECT_EQ(_actions[0].action, "osd.keyboard");
+    EXPECT_TRUE(_actions[0].pressed);
+    EXPECT_FALSE(_actions[1].pressed);
+
+    // A paused machine samples nothing: Poll closes the window
+    Set("fake:1", "menu", 1);
+    AdvanceMs(70);
+    _router.Poll();
+    ASSERT_EQ(_actions.size(), 3u);
+    EXPECT_TRUE(_actions[2].pressed);
+}
+
+/// DT-5 rule 2: a shift layer overrides only what it names; layer modes
+TEST_F(InputRouter_Test, Layers_ShiftOverridesWhatItNamesAndModes)
+{
+    _router.OnDeviceAdded(kPad);
+    SetBindings({Bind({"south"}, "kempston:fire"), Bind({"east"}, "kempston:fire2"), To({"lb"}, Layer("keys")),
+                 To({"rb"}, Layer("keys", "toggle")), To({"view"}, Layer("keys", "oneshot")),
+                 To({"south"}, Keys("SPACE"), "keys"), To({"west"}, Target{}, "keys"),
+                 Bind({"west"}, "kempston:fire3")});
+    std::vector<uint8_t> space;
+    ASSERT_TRUE(ZxKeysFromName("space", space));
+
+    Set("fake:1", "lb", 1);
+    Set("fake:1", "south", 1);
+    Set("fake:1", "east", 1);
+    Set("fake:1", "west", 1);
+    EXPECT_EQ(Kempston(), kFire2) << "east is not named by the layer: play's binding acts";
+    EXPECT_EQ(_last.keys, space) << "south is the layer's";
+    Set("fake:1", "lb", 0);
+    EXPECT_EQ(Kempston(), 0) << "the drop releases everything held; west was unbound by the layer";
+    EXPECT_TRUE(_last.keys.empty());
+    for (const char* control : {"south", "east", "west"})
+        Set("fake:1", control, 0);
+
+    Set("fake:1", "rb", 1);
+    Set("fake:1", "rb", 0);
+    EXPECT_EQ(_router.Layers("fake:1"), (std::vector<std::string>{kPlayLayer, "keys"})) << "toggle: up";
+    Set("fake:1", "rb", 1);
+    Set("fake:1", "rb", 0);
+    EXPECT_EQ(_router.Layers("fake:1"), (std::vector<std::string>{kPlayLayer})) << "and down";
+
+    Set("fake:1", "view", 1);
+    Set("fake:1", "view", 0);
+    Set("fake:1", "east", 1);
+    Set("fake:1", "east", 0);
+    EXPECT_EQ(_router.Layers("fake:1").size(), 2u) << "oneshot: a control the layer does not bind keeps it up";
+    Set("fake:1", "south", 1);
+    Sample();
+    EXPECT_EQ(_last.keys, space);
+    Set("fake:1", "south", 0);
+    EXPECT_EQ(_router.Layers("fake:1"), (std::vector<std::string>{kPlayLayer})) << "dropped after the layer's press";
+}
+
+/// A layer key to a layer with no bindings is an ordinary button (DT-5 rule 6); a debugger remote has debug alone
+TEST_F(InputRouter_Test, Layers_InertKeyAndTheDebuggerRemote)
+{
+    _router.OnDeviceAdded(kPad);
+    SetBindings({To({"paddle.p4"}, Layer(kDebugLayer)), Bind({"paddle.p4"}, "kempston:fire"),
+                 Bind({"south"}, "kempston:fire2")});
+    Set("fake:1", "paddle.p4", 1);
+    EXPECT_EQ(Kempston(), kFire) << "no debug profile: the layer key is a button";
+    Set("fake:1", "paddle.p4", 0);
+    Sample();
+
+    SetBindings({Bind({"south"}, "kempston:fire2"), To({"south"}, ActionTarget("ttd.step_back"), kDebugLayer)});
+    _router.SetRole("fake:1", DeviceRole::DebuggerRemote);
+    EXPECT_EQ(_router.Layers("fake:1"), (std::vector<std::string>{kDebugLayer}));
+    Set("fake:1", "south", 1);
+    EXPECT_TRUE(Sample().empty()) << "a debugger remote drives no connector";
+    ASSERT_EQ(_actions.size(), 1u);
+    EXPECT_EQ(_actions[0].action, "ttd.step_back");
+}
+
+TEST_F(InputRouter_Test, Targets_KeysMacroAndMouse)
+{
+    _router.OnDeviceAdded(kPad);
+    Target macro;
+    std::string error;
+    ASSERT_TRUE(ParseMacroTarget({"J", "SYM+P"}, macro, error)) << error;
+    SetBindings({To({"north"}, Keys("EDIT")), To({"west"}, macro), To({"rstick.x"}, Mouse("dx", 4)),
+                 To({"dpad.up"}, Mouse("dy", -3)), To({"south"}, Mouse("left")), To({"rb"}, Mouse("wheel", 1))});
+
+    std::vector<uint8_t> edit;
+    ASSERT_TRUE(ZxKeysFromName("caps+1", edit));
+    Set("fake:1", "north", 1);
+    Sample();
+    EXPECT_EQ(_last.keys.size(), 2u);
+    EXPECT_TRUE(std::is_permutation(_last.keys.begin(), _last.keys.end(), edit.begin())) << "EDIT is CAPS and 1";
+    Set("fake:1", "north", 0);
+
+    // Each step one frame held, one released
+    std::vector<uint8_t> j;
+    std::vector<uint8_t> quote;
+    ASSERT_TRUE(ZxKeysFromName("j", j));
+    ASSERT_TRUE(ZxKeysFromName("\"", quote));
+    Set("fake:1", "west", 1);
+    Set("fake:1", "west", 0);
+    std::vector<size_t> sizes;
+    for (int f = 0; f < 5; f++)
+    {
+        Sample();
+        sizes.push_back(_last.keys.size());
+        if (f == 0)
+            EXPECT_EQ(_last.keys, j);
+        if (f == 2)
+            EXPECT_TRUE(std::is_permutation(_last.keys.begin(), _last.keys.end(), quote.begin()));
+    }
+    EXPECT_EQ(sizes, (std::vector<size_t>{1, 0, 2, 0, 0}));
+
+    // Full deflection: 4 counts a frame; the D-pad up at -3 (+ down in the profile) is 3 up for the machine
+    Set("fake:1", "rstick.x", 1.0f);
+    Set("fake:1", "dpad.up", 1);
+    Set("fake:1", "south", 1);
+    Set("fake:1", "rb", 1);
+    Sample();
+    EXPECT_EQ(_last.mouse.dx, 4);
+    EXPECT_EQ(_last.mouse.dy, 3);
+    EXPECT_EQ(_last.mouse.buttons, 0x01);
+    EXPECT_EQ(_last.mouse.wheel, 1);
+    Sample();
+    EXPECT_EQ(_last.mouse.wheel, 0) << "one notch per press";
+    Set("fake:1", "rstick.x", 0.1f);
+    Sample();
+    EXPECT_EQ(_last.mouse.dx, 0) << "inside the dead zone";
+}
+
+/// mapping-and-profiles.md §4.2
+TEST_F(InputRouter_Test, Consume_KeyboardBindings)
+{
+    const HostDeviceInfo keyboard{"kbd:system", "Keyboard", "keyboard", {}};
+    _router.OnDeviceAdded(keyboard);
+    Binding pass = Bind({"key.kp5"}, "kempston:fire2");
+    pass.options.consume = false;
+    SetBindings({Bind({"key.kp8"}, "kempston:up"), pass}, "kbd:system");
+    EXPECT_TRUE(_router.Consumes("kbd:system", "key.kp8"));
+    EXPECT_FALSE(_router.Consumes("kbd:system", "key.kp5")) << "pass: the ZX keyboard sees it too";
+    EXPECT_FALSE(_router.Consumes("kbd:system", "key.a"));
+    _router.SetRole("kbd:system", DeviceRole::Disabled);
+    EXPECT_FALSE(_router.Consumes("kbd:system", "key.kp8")) << "a disabled device takes nothing";
+}
+
+TEST_F(InputRouter_Test, InvalidTargetsAreRefusedWithTheReason)
+{
+    std::string error;
+    Target target;
+    EXPECT_FALSE(ParseKeysTarget("CAPS+HYPER", target, error));
+    EXPECT_NE(error.find("edit"), std::string::npos) << error;
+    EXPECT_FALSE(ParseMouseTarget("dz", 1, target, error));
+    EXPECT_FALSE(ParseLayerTarget("keys", "sticky", target, error));
+    EXPECT_FALSE(ParseMacroTarget({}, target, error));
+
+    Binding chord = To({"south", "lstick"}, Retro("kempston:fire"));
+    chord.chord = true;
+    EXPECT_FALSE(_router.SetBindings({}, {chord}, error));
+    EXPECT_NE(error.find("not a button"), std::string::npos) << error;
+    EXPECT_FALSE(_router.SetBindings({}, {To({"lstick"}, Mouse("dx"))}, error));
+    EXPECT_FALSE(_router.SetBindings({}, {To({"lb"}, Layer("keys"), "keys")}, error)) << "a layer cannot switch itself";
+}
+
+/// endregion </C2b>

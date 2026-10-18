@@ -3,6 +3,7 @@
 #include <cctype>
 
 #include "hostcontrols.h"
+#include "router/zxkeys.h"
 
 namespace controllers
 {
@@ -11,6 +12,7 @@ namespace
 {
 constexpr unsigned kMaxFrames = 50;
 constexpr unsigned kMaxBurst = 16;
+constexpr size_t kMaxMacroSteps = 64;
 
 std::string Join(const std::vector<std::string>& names)
 {
@@ -34,6 +36,34 @@ constexpr TurboEntry kTurboNames[] = {{Turbo::Off, "off"},
                                       {Turbo::Toggle, "toggle"},
                                       {Turbo::Hold, "hold"},
                                       {Turbo::Burst, "burst"}};
+
+struct MouseEntry
+{
+    MouseControl control;
+    const char* name;
+};
+constexpr MouseEntry kMouseNames[] = {{MouseControl::Left, "left"},   {MouseControl::Right, "right"},
+                                      {MouseControl::Middle, "middle"}, {MouseControl::Dx, "dx"},
+                                      {MouseControl::Dy, "dy"},       {MouseControl::Wheel, "wheel"}};
+
+struct LayerModeEntry
+{
+    LayerMode mode;
+    const char* name;
+};
+constexpr LayerModeEntry kLayerModes[] = {
+    {LayerMode::Hold, "hold"}, {LayerMode::Toggle, "toggle"}, {LayerMode::Oneshot, "oneshot"}};
+
+/// A digital control: a button, a key, a trigger's click (not a stick, an axis or `dpad.*`)
+bool IsDigital(const std::string& source)
+{
+    ControlInfo info;
+    if (!ParseControl(source, info))
+        return false;
+    if (!info.base.empty())
+        return info.direction == 0;  // lt.click, not lstick.left
+    return info.type == ControlType::Button || info.type == ControlType::Trigger;
+}
 }  // namespace
 
 bool ParseRetroTarget(const std::string& text, RetroTarget& out, std::string& error)
@@ -58,6 +88,101 @@ bool ParseRetroTarget(const std::string& text, RetroTarget& out, std::string& er
     return true;
 }
 
+bool ParseRetroTarget(const std::string& text, Target& out, std::string& error)
+{
+    Target target;
+    target.kind = TargetKind::Retro;
+    if (!ParseRetroTarget(text, target.retro, error))
+        return false;
+    out = target;
+    return true;
+}
+
+bool ParseKeysTarget(const std::string& text, Target& out, std::string& error)
+{
+    Target target;
+    target.kind = TargetKind::Keys;
+    if (!ZxKeysFromName(text, target.keys))
+    {
+        error = "unknown ZX key '" + text + "' (known: " + Join(KnownZxKeyNames()) + ", joined with +)";
+        return false;
+    }
+    out = target;
+    return true;
+}
+
+bool ParseMacroTarget(const std::vector<std::string>& steps, Target& out, std::string& error)
+{
+    if (steps.empty() || steps.size() > kMaxMacroSteps)
+    {
+        error = "a macro is 1.." + std::to_string(kMaxMacroSteps) + " steps";
+        return false;
+    }
+    Target target;
+    target.kind = TargetKind::Macro;
+    for (size_t i = 0; i < steps.size(); i++)
+    {
+        std::vector<uint8_t> keys;
+        if (!ZxKeysFromName(steps[i], keys))
+        {
+            error = "macro step " + std::to_string(i) + ": unknown ZX key '" + steps[i] + "'";
+            return false;
+        }
+        target.steps.push_back(keys);
+    }
+    out = target;
+    return true;
+}
+
+bool ParseMouseTarget(const std::string& control, float scale, Target& out, std::string& error)
+{
+    for (const MouseEntry& entry : kMouseNames)
+    {
+        if (control == entry.name)
+        {
+            Target target;
+            target.kind = TargetKind::Mouse;
+            target.mouse = entry.control;
+            target.scale = scale;
+            out = target;
+            return true;
+        }
+    }
+    error = "unknown mouse control '" + control + "' (known: left, right, middle, dx, dy, wheel)";
+    return false;
+}
+
+Target ActionTarget(const std::string& action)
+{
+    Target target;
+    target.kind = TargetKind::Action;
+    target.name = action;
+    return target;
+}
+
+bool ParseLayerTarget(const std::string& layer, const std::string& mode, Target& out, std::string& error)
+{
+    if (layer.empty())
+    {
+        error = "a layer target names its layer";
+        return false;
+    }
+    for (const LayerModeEntry& entry : kLayerModes)
+    {
+        if (mode == entry.name)
+        {
+            Target target;
+            target.kind = TargetKind::Layer;
+            target.name = layer;
+            target.layerMode = entry.mode;
+            out = target;
+            return true;
+        }
+    }
+    error = "unknown layer mode '" + mode + "' (known: hold, toggle, oneshot)";
+    return false;
+}
+
 bool ValidateBinding(const Binding& binding, std::string& error)
 {
     if (binding.sources.empty())
@@ -65,27 +190,81 @@ bool ValidateBinding(const Binding& binding, std::string& error)
         error = "a binding needs at least one source";
         return false;
     }
+    const Target& target = binding.target;
+    const bool mouseAxis =
+        target.kind == TargetKind::Mouse && (target.mouse == MouseControl::Dx || target.mouse == MouseControl::Dy);
+    if (binding.chord && binding.sources.size() < 2)
+    {
+        error = "a chord needs at least two controls";
+        return false;
+    }
     for (const std::string& source : binding.sources)
     {
         ControlInfo info;
-        if (source == "dpad.*" || !StickOf(source).empty())
-            continue;
-        if (!ParseControl(source, info))
+        const bool whole = source == "dpad.*" || !StickOf(source).empty();
+        if (!whole && !ParseControl(source, info))
         {
             error = "unknown control '" + source + "' (known: " + Join(KnownControls()) +
                     ", button.<n>, axis.<n>, hat.<n>.<dir>, key.<name>, lstick, rstick, dpad.*)";
             return false;
         }
-        if (info.type == ControlType::Delta || info.type == ControlType::Pointer)
+        if (binding.chord && !IsDigital(source))
         {
-            error = "'" + source + "' is not a button: it cannot drive a retro control";
+            error = "chord member '" + source + "' is not a button";
+            return false;
+        }
+        if (!whole && (info.type == ControlType::Delta || info.type == ControlType::Pointer))
+        {
+            error = "'" + source + "' is not a button: it cannot drive a target yet";
+            return false;
+        }
+        if (whole && mouseAxis)
+        {
+            error = "a mouse axis takes one axis ('" + source + ".x'), not a whole stick";
             return false;
         }
     }
-    if (binding.target.connector.empty() || binding.target.mask == 0)
+    switch (target.kind)
     {
-        error = "a binding needs a retro target (<connector>:<control>)";
-        return false;
+        case TargetKind::None:
+            break;
+        case TargetKind::Retro:
+            if (target.retro.connector.empty() || target.retro.mask == 0)
+            {
+                error = "a binding needs a retro target (<connector>:<control>)";
+                return false;
+            }
+            break;
+        case TargetKind::Keys:
+            if (target.keys.empty())
+            {
+                error = "a key target needs a ZX key";
+                return false;
+            }
+            break;
+        case TargetKind::Macro:
+            if (target.steps.empty() || target.steps.size() > kMaxMacroSteps)
+            {
+                error = "a macro is 1.." + std::to_string(kMaxMacroSteps) + " steps";
+                return false;
+            }
+            break;
+        case TargetKind::Mouse:
+            break;
+        case TargetKind::Action:
+        case TargetKind::Layer:
+            if (target.name.empty())
+            {
+                error = target.kind == TargetKind::Action ? "an action target names its action"
+                                                          : "a layer target names its layer";
+                return false;
+            }
+            if (target.kind == TargetKind::Layer && target.name == binding.layer)
+            {
+                error = "layer '" + target.name + "' cannot switch itself";
+                return false;
+            }
+            break;
     }
     const BindingOptions& options = binding.options;
     const bool pulses = options.turbo != Turbo::Off && options.turbo != Turbo::Hold;

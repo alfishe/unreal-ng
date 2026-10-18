@@ -213,8 +213,9 @@ ConnectorState { connectorIndex: u8, mask: u16 }   // the retro controls held on
   changes: there a plug is refused with `recording`. A game that asks "Kempston / Sinclair / Cursor / Keys" after
   loading no longer needs the recording stopped.
 - **Checkpoints.** Each device's held state is machine state; the keyboard joysticks' plugs (device, Sinclair port,
-  Cursor shift, eight keys) and masks are the blob of `TTDDeviceType::Controllers` (66, blob v2; v1 = masks only
-  still loads), registered on every machine as `KeyboardMatrix` is, so a seek before a plug takes it back. Existing ids stay
+  Cursor shift, eight keys), masks and the host key overlay (the ZX keys of key, chord and macro targets, journaled
+  as `HostKeys` per half-row, C2b) are the blob of `TTDDeviceType::Controllers` (66, blob v3; v2 without the overlay
+  and v1 = masks only still load), registered on every machine as `KeyboardMatrix` is, so a seek before a plug takes it back. Existing ids stay
   (`PeripheralId::KempstonJoystick` = 23, `KempstonMouse` = 7). A new device declares only a `TTDDeviceType` from 66 on
   (the D23 rule: `PeripheralId` is frozen at 65, `ttdserializable.h:136-205`); two devices of one kind on two
   connectors are two instances of one type, keyed by the connector id.

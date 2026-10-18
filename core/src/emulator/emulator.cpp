@@ -2205,6 +2205,10 @@ bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error, c
     if (result)
         SetSnapshotFilePath(openedPath);
 
+    // A new program: the controllers watch its port reads for the auto connector (retro-devices.md §6)
+    if (result && _context && _context->pControllerManager)
+        _context->pControllerManager->WatchPortReads(true);
+
     if (_context)
     {
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -2563,6 +2567,8 @@ bool Emulator::LoadTape(const std::string& path, std::string* error)
                                                new FileLoadedPayload(_context->emulatorId, "tape", resolvedPath, inserted.Ok()));
     if (!inserted.Ok())
         return fail(inserted.message);
+    if (_context->pControllerManager)
+        _context->pControllerManager->WatchPortReads(true);
     return true;
 }
 
@@ -2754,6 +2760,8 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
                                                new FileLoadedPayload(_context->emulatorId, "disk", resolvedPath, inserted.Ok()));
     if (!inserted.Ok())
         return fail(inserted.message);
+    if (_context->pControllerManager)
+        _context->pControllerManager->WatchPortReads(true);
     return true;
 }
 

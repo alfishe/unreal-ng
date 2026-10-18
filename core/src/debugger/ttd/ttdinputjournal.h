@@ -113,12 +113,16 @@ enum class TTDInputKind : uint8_t
     NextPad,            ///< the whole state of one joystick connector of a machine with 12-button pads (the ZX Next):
                         ///< key = connector (0 left, 1 right), dx = the 12 buttons (PortDecoder::PadState layout)
 
-    ConnectorState      ///< the retro controls held on one connector of ControllerManager whose device has no kind of
+    ConnectorState,     ///< the retro controls held on one connector of ControllerManager whose device has no kind of
                         ///< its own: key = connector index, dx = the control mask (controllers::kRight ... bit order)
+
+    HostKeys            ///< the ZX keys host controllers hold on one half-row (ControllerManager's host key overlay,
+                        ///< independent of the user's keys): key = half-row 0..7 (A8..A15), dx = the held bits
+                        ///< (bit n = D n, active high)
 };
 
 /// Last valid kind: the file reader refuses anything above it
-constexpr TTDInputKind kLastTTDInputKind = TTDInputKind::ConnectorState;
+constexpr TTDInputKind kLastTTDInputKind = TTDInputKind::HostKeys;
 
 /// The kinds that carry a network record (netIndex) and payload bytes
 constexpr bool HasNetRecord(TTDInputKind kind)

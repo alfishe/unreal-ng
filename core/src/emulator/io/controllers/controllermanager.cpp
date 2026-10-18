@@ -5,17 +5,27 @@
 #include <chrono>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/mouse/debugmousemanager.h"
 #include "debugger/ttd/timetravelhooks.h"
 #include "debugger/ttd/ttdinputapply.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/joystick/joystick.h"
+#include "emulator/io/mouse/mousemanager.h"
+#include "emulator/io/tape/tape.h"
+#include "emulator/memory/memory.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/slots/card.h"
 #include "emulator/slots/slotmanager.h"
+#include "emulator/sound/chips/soundchip_ay8910.h"
+#include "emulator/sound/soundmanager.h"
+#include "ihapticfeed.h"
 #include "ihostinputsource.h"
 
 namespace controllers
@@ -23,7 +33,9 @@ namespace controllers
 
 namespace
 {
-constexpr uint8_t kControllersTTDVersion = 2;
+/// v3: the host key overlay (8 half-rows) after the connectors
+constexpr uint8_t kControllersTTDVersion = 3;
+constexpr size_t kHostKeyRows = 8;
 
 /// The key each control bit holds (kRight, kLeft, kDown, kUp, kFire), per wiring
 constexpr ZXKeysEnum kSinclair1Keys[5] = {ZXKEY_7, ZXKEY_6, ZXKEY_8, ZXKEY_9, ZXKEY_0};
@@ -572,8 +584,118 @@ void ControllerManager::SetHostInputSource(std::shared_ptr<IHostInputSource> sou
     _source = std::move(source);
 }
 
+void ControllerManager::SetHapticFeed(std::shared_ptr<IHapticFeed> feed)
+{
+    std::lock_guard<std::mutex> lock(_sourceMutex);
+    _hapticFeed = std::move(feed);
+}
+
+void ControllerManager::FeedHaptics(uint64_t frame)
+{
+    std::shared_ptr<IHapticFeed> feed;
+    {
+        std::lock_guard<std::mutex> lock(_sourceMutex);
+        feed = _hapticFeed;
+    }
+    SoundManager* sound = _context ? _context->pSoundManager : nullptr;
+    if (!feed || sound == nullptr)
+    {
+        _hapticFed = nullptr;
+        return;
+    }
+    HapticFrame summary;
+    summary.frame = frame;
+    summary.frameTStates = _context->GetFrameTStates();
+    summary.cpuHz = _context->emulatorState.current_z80_frequency;
+    summary.beeperEdges = sound->getBeeper().TakeEarEdges();
+    const int chips = std::min<int>(sound->getAYChipCount(), static_cast<int>(HapticFrame::kMaxAy));
+    for (int index = 0; index < chips; index++)
+    {
+        SoundChip_AY8910* chip = sound->getAYChip(index);
+        if (chip == nullptr)
+            continue;
+        HapticAyFrame& ay = summary.ay[summary.ayCount++];
+        const uint8_t* regs = chip->getRegisters();
+        for (unsigned channel = 0; channel < 3; channel++)
+        {
+            const uint8_t volume = regs[AY_A_VOLUME + channel];
+            const bool envelope = (volume & 0x10) != 0;
+            ay.envelopeUsed = ay.envelopeUsed || envelope;
+            // R7 bits 3-5 clear: the channel's noise is on
+            if (!(regs[AY_MIXER_CONTROL] & (0x08u << channel)))
+                ay.noiseVolume[channel] = envelope ? 16 : static_cast<uint8_t>(volume & 0x0F);
+        }
+        ay.envelopeRestarts = chip->TakeEnvelopeRestarts();
+        ay.envelopeShape = regs[AY_ENVELOPE_SHAPE];
+    }
+    if (_hapticFed != feed.get())
+    {
+        _hapticFed = feed.get();  // the counters ran up while nobody listened
+        _hapticWatches = feed->Watches();
+        if (_hapticWatches.size() > HapticFrame::kMaxWatches)
+            _hapticWatches.resize(HapticFrame::kMaxWatches);
+        return;
+    }
+    if (Memory* memory = _context->pMemory)
+    {
+        // Read, never written: the probes cost nothing to the emulation (haptics.md §9)
+        for (const HapticWatch& watch : _hapticWatches)
+        {
+            uint8_t value = 0;
+            if (watch.page == 0xFFFF)
+                value = memory->DirectReadFromZ80Memory(watch.address);
+            else if (const uint8_t* page = memory->RAMPageAddress(watch.page))
+                value = page[watch.address & 0x3FFF];
+            summary.watched[summary.watchCount++] = value;
+        }
+    }
+    feed->OnHapticFrame(summary);
+}
+
+void ControllerManager::WatchPortReads(bool on)
+{
+    _watchRequest.store(on ? 1 : 2, std::memory_order_release);
+}
+
+PortReadEvidence ControllerManager::PortReads() const
+{
+    PortReadEvidence evidence = _watch.Evidence();
+    evidence.active = _watching.load(std::memory_order_acquire);
+    return evidence;
+}
+
+void ControllerManager::ApplyWatchRequest()
+{
+    Z80* cpu = _context->pCore != nullptr ? _context->pCore->GetZ80() : nullptr;
+    const int request = _watchRequest.exchange(0, std::memory_order_acq_rel);
+    if (request == 1)
+    {
+        _watch.Reset();
+        _watching.store(true, std::memory_order_release);
+        if (cpu != nullptr)
+            cpu->SetPortReadWatch(&_watch);
+        return;
+    }
+    if (!_watching.load(std::memory_order_relaxed))
+        return;
+    // While a tape plays the program is still loading: the watch starts counting when it stops
+    if (_context->pTape != nullptr && _context->pTape->IsPlaying())
+    {
+        _watch.Reset();
+        return;
+    }
+    _watch.EndFrame();
+    if (request == 2 || _watch.Evidence().framesObserved >= kPortReadWatchFrames)
+    {
+        _watching.store(false, std::memory_order_release);
+        if (cpu != nullptr)
+            cpu->SetPortReadWatch(nullptr);
+    }
+}
+
 void ControllerManager::OnFrame(uint64_t frame)
 {
+    ApplyWatchRequest();
     if (InputOwnedByReplay())
     {
         _wasOwned = true;
@@ -586,7 +708,9 @@ void ControllerManager::OnFrame(uint64_t frame)
         std::lock_guard<std::mutex> lock(_mutex);
         _lastSample.assign(_connectors.size(), -1);
         _wasOwned = false;
+        _mouseButtons = 0;  // the seek cleared the mouse's button sources
     }
+    FeedHaptics(frame);
 
     std::shared_ptr<IHostInputSource> source;
     {
@@ -596,9 +720,9 @@ void ControllerManager::OnFrame(uint64_t frame)
     if (!source)
         return;
 
-    _samples.clear();
-    source->Sample(frame, _samples);
-    for (const ConnectorSample& sample : _samples)
+    _sample.Clear();
+    source->Sample(frame, _sample);
+    for (const ConnectorSample& sample : _sample.connectors)
     {
         int index = -1;
         {
@@ -615,6 +739,85 @@ void ControllerManager::OnFrame(uint64_t frame)
                 _lastSample[static_cast<size_t>(index)] = sample.mask;
         }
     }
+    SubmitHostKeys(_sample.keys);
+    SubmitMouse(_sample.mouse);
+}
+
+void ControllerManager::SubmitHostKeys(const std::vector<uint8_t>& keys)
+{
+    std::array<uint8_t, kHostKeyRows> rows{};
+    for (uint8_t key : keys)
+    {
+        uint8_t row = 0;
+        uint8_t bit = 0;
+        if (Keyboard::MatrixPosition(static_cast<ZXKeysEnum>(key), row, bit))
+            rows[row] = static_cast<uint8_t>(rows[row] | (1u << bit));
+    }
+    for (uint8_t row = 0; row < kHostKeyRows; row++)
+    {
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            if (_hostKeys[row] == rows[row])
+                continue;
+        }
+        ttd::TTDInputEvent ev;
+        ev.kind = ttd::TTDInputKind::HostKeys;
+        ev.key = row;
+        ev.dx = rows[row];
+        // Not under the lock: the submit may apply here and come back through ApplyHostKeys
+        if (_context && _context->pTimeTravelHooks)
+            _context->pTimeTravelHooks->SubmitLiveInput(ev);
+        else
+            ttd::ApplyInputEvent(ev, ttd::InputDevicesOf(_context));
+    }
+}
+
+void ControllerManager::SubmitMouse(const MouseSample& mouse)
+{
+    MouseManager* manager = _context ? _context->pMouseManager : nullptr;
+    if (!manager)
+        return;
+    // The journaled path when the machine has one (DebugMouseManager), as the host mouse does
+    DebugMouseManager* funnel =
+        _context->pDebugManager ? _context->pDebugManager->GetMouseManager() : nullptr;
+    if (mouse.dx != 0 || mouse.dy != 0)
+    {
+        if (funnel)
+            funnel->ApplyHostMove(mouse.dx, mouse.dy);
+        else
+            manager->ApplyMotion(mouse.dx, mouse.dy);
+    }
+    if (mouse.wheel != 0)
+    {
+        if (funnel)
+            funnel->ApplyHostWheel(mouse.wheel);
+        else
+            manager->ApplyWheel(mouse.wheel);
+    }
+    if (mouse.buttons != _mouseButtons)
+    {
+        _mouseButtons = mouse.buttons;
+        if (funnel)
+            funnel->ApplyControllerButtons(mouse.buttons);
+        else
+            manager->ApplyButtons(manager->ComposeButtons(MouseManager::ButtonSource::Controllers, mouse.buttons));
+    }
+}
+
+bool ControllerManager::ApplyHostKeys(uint8_t row, uint8_t bits)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (row >= kHostKeyRows)
+        return false;
+    _hostKeys[row] = static_cast<uint8_t>(bits & 0x1F);
+    UpdateOverlay();
+    return true;
+}
+
+uint8_t ControllerManager::HostKeys(uint8_t row) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return row < kHostKeyRows ? _hostKeys[row] : 0;
 }
 
 /// endregion </Input>
@@ -657,6 +860,9 @@ void ControllerManager::UpdateOverlay()
                 HoldKey(rows, wiring[bit]);
         }
     }
+    // The keys host controllers hold (key, chord and macro targets)
+    for (size_t row = 0; row < kHostKeyRows; row++)
+        rows[row] = static_cast<uint8_t>(rows[row] & ~_hostKeys[row]);
     if (_context && _context->pKeyboard)
         _context->pKeyboard->SetOverlay(rows);
 }
@@ -725,7 +931,7 @@ void ControllerManager::AddTtdFingerprint(ttd::TTDConfigFingerprint& fp) const
 size_t ControllerManager::TTDStateSize() const
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    return 2 + (kPlugBytes + 2) * JournaledCount();
+    return 2 + (kPlugBytes + 2) * JournaledCount() + kHostKeyRows;
 }
 
 void ControllerManager::TTDSaveState(uint8_t* dst) const
@@ -743,6 +949,8 @@ void ControllerManager::TTDSaveState(uint8_t* dst) const
         dst[offset++] = static_cast<uint8_t>(connector.mask & 0xFF);
         dst[offset++] = static_cast<uint8_t>(connector.mask >> 8);
     }
+    for (uint8_t row : _hostKeys)
+        dst[offset++] = row;
 }
 
 void ControllerManager::TTDLoadState(const uint8_t* src)
@@ -750,7 +958,7 @@ void ControllerManager::TTDLoadState(const uint8_t* src)
     std::unique_lock<std::mutex> lock(_mutex);
     // The connector set is the machine's; a blob of another set changes nothing
     const uint8_t version = src[0];
-    if ((version != 1 && version != kControllersTTDVersion) || src[1] != JournaledCount())
+    if (version < 1 || version > kControllersTTDVersion || src[1] != JournaledCount())
         return;
     size_t offset = 2;
     bool replugged = false;
@@ -759,7 +967,7 @@ void ControllerManager::TTDLoadState(const uint8_t* src)
         Connector& connector = _connectors[i];
         if (!Journaled(connector))
             continue;
-        if (version == kControllersTTDVersion)
+        if (version >= 2)
         {
             // A seek before a plug made while recording takes it back; a fixed socket keeps its device
             Connector restored = connector;
@@ -781,6 +989,9 @@ void ControllerManager::TTDLoadState(const uint8_t* src)
         connector.mask = static_cast<uint16_t>(src[offset] | (src[offset + 1] << 8));
         offset += 2;
     }
+    // v1 and v2 had no host key overlay: nothing held
+    for (size_t row = 0; row < kHostKeyRows; row++)
+        _hostKeys[row] = version >= 3 ? static_cast<uint8_t>(src[offset + row] & 0x1F) : uint8_t{0};
     if (replugged)
         _revision++;
     for (QueuedPost& post : _posts)
@@ -809,6 +1020,12 @@ uint64_t ControllerManager::TTDHashState() const
             mix(b);
         mix(static_cast<uint8_t>(connector.mask & 0xFF));
         mix(static_cast<uint8_t>(connector.mask >> 8));
+    }
+    // Only when held: a machine no host key touched hashes as before
+    if (std::any_of(_hostKeys.begin(), _hostKeys.end(), [](uint8_t row) { return row != 0; }))
+    {
+        for (uint8_t row : _hostKeys)
+            mix(row);
     }
     return hash;
 }

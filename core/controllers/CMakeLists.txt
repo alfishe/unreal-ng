@@ -28,6 +28,23 @@ endif()
 file(GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/build/" FALSE OUTVAR CPP_FILES)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/CMakeFiles/" FALSE OUTVAR CPP_FILES)
+# Each OS builds its own backends only (architecture.md §4)
+if(NOT APPLE)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/platform/macos/" FALSE OUTVAR CPP_FILES)
+endif()
+if(NOT WIN32)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/platform/windows/" FALSE OUTVAR CPP_FILES)
+endif()
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/platform/linux/" FALSE OUTVAR CPP_FILES)
+endif()
+
+# The device database (device-database.md §2) is compiled in, so a headless build needs no data folder
+set(DEVICES_JSON_FILE ${ROOT_DIR}/data/controllers/devices.json)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${DEVICES_JSON_FILE})
+file(READ ${DEVICES_JSON_FILE} DEVICES_JSON)
+configure_file(${SOURCE_DIR}/devicesjson.cpp.in ${CMAKE_CURRENT_BINARY_DIR}/generated/devicesjson.cpp @ONLY)
+list(APPEND CPP_FILES ${CMAKE_CURRENT_BINARY_DIR}/generated/devicesjson.cpp)
 
 add_library(${PROJECT_NAME} STATIC ${CPP_FILES})
 add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
@@ -38,6 +55,10 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 )
 
 target_compile_definitions(${PROJECT_NAME} PUBLIC ENABLE_CONTROLLERS)
+
+if(APPLE)
+    target_link_libraries(${PROJECT_NAME} PUBLIC "-framework IOKit" "-framework CoreFoundation")
+endif()
 
 if(CMAKE_BUILD_TYPE MATCHES Debug)
     target_compile_definitions(${PROJECT_NAME} PRIVATE _DEBUG)

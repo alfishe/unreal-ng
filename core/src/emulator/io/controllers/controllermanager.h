@@ -19,6 +19,7 @@
 /// joysticks' devices, options and held controls are the blob of TTDDeviceType::Controllers, on every machine.
 
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <memory>
@@ -27,10 +28,12 @@
 #include <vector>
 
 #include "controllertypes.h"
+#include "emulator/io/controllers/ihapticfeed.h"
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
 #include "debugger/ttd/ttdinputjournal.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/io/keyboard/keyboard.h"
+#include "portreadwatch.h"
 
 class EmulatorContext;
 
@@ -38,6 +41,7 @@ namespace controllers
 {
 
 class IHostInputSource;
+class IHapticFeed;
 
 /// Options of a connector's device (each device reads its own, the others are ignored)
 struct OverlayOptions
@@ -119,13 +123,30 @@ public:
     /// The TTD apply point of ConnectorState (live and replay): a keyboard joystick's or card socket's mask. False
     /// for other kinds
     bool ApplyConnectorState(size_t index, uint16_t mask);
+    /// The TTD apply point of HostKeys (live and replay): the ZX keys host controllers hold on one half-row
+    /// (active high), on the matrix overlay beside the keyboard joysticks. False for a row past 7
+    bool ApplyHostKeys(uint8_t row, uint8_t bits);
+    /// The host key overlay's half-row (active high)
+    uint8_t HostKeys(uint8_t row) const;
     /// The host's devices: sampled at every frame boundary (OnFrame). nullptr detaches
     void SetHostInputSource(std::shared_ptr<IHostInputSource> source);
+    /// The host's haptics (haptics.md §3): a summary of the frame's sound goes to it at every live frame boundary;
+    /// nullptr (the default) costs one pointer check per frame
+    void SetHapticFeed(std::shared_ptr<IHapticFeed> feed);
     /// MainLoop, after the frame's checkpoint: sample the host, submit what changed. While the journal owns
     /// input the samples are dropped; when it gives input back, the next sample is submitted whole (a seek
     /// restored the devices: a held button stays held, a released one is released)
     void OnFrame(uint64_t frame);
     /// endregion </Input>
+
+    /// region <Port-read evidence (retro-devices.md §6)>
+    /// Start (from zero) or stop the port-read watch; applied at the next frame boundary on the machine's thread.
+    /// A media load starts it; it counts from the end of a tape's playing and stops itself after kPortReadWatchFrames
+    void WatchPortReads(bool on);
+    /// What the watch saw over its last window (active false when it does not run)
+    PortReadEvidence PortReads() const;
+    static constexpr uint32_t kPortReadWatchFrames = 1500;  ///< 30 s of play at 50 Hz
+    /// endregion </Port-read evidence>
 
     /// The keyboard-joystick connectors that have a device
     bool HasOverlayDevices() const;
@@ -134,9 +155,9 @@ public:
     void AddTtdFingerprint(ttd::TTDConfigFingerprint& fp) const;
 
     /// region <TTD (TTDDeviceType::Controllers)>
-    /// Blob v2: version, the count of journaled connectors (keyboard joysticks and card sockets, in list order), then
-    /// each one's device, Sinclair port, Cursor shift, eight keys (u8 each) and mask (u16 little-endian). v1 (masks
-    /// only) still loads
+    /// Blob v3: version, the count of journaled connectors (keyboard joysticks and card sockets, in list order), then
+    /// each one's device, Sinclair port, Cursor shift, eight keys (u8 each) and mask (u16 little-endian), then the
+    /// host key overlay (8 half-rows, active high). v2 (no overlay) and v1 (masks only) still load
     size_t TTDStateSize() const override;
     void TTDSaveState(uint8_t* dst) const override;
     void TTDLoadState(const uint8_t* src) override;
@@ -198,10 +219,25 @@ private:
 
     std::mutex _sourceMutex;
     std::shared_ptr<IHostInputSource> _source;
+    std::shared_ptr<IHapticFeed> _hapticFeed;  ///< under _sourceMutex
+    const IHapticFeed* _hapticFed = nullptr;   ///< the feed the last frame went to: a new one starts from fresh counters
+    std::vector<HapticWatch> _hapticWatches;   ///< the bytes _hapticFed reads (emulator thread)
+    void FeedHaptics(uint64_t frame);
     /// Per connector: the host's last submitted sample (-1 = none yet, submit the next one whole)
     std::vector<int32_t> _lastSample;
     bool _wasOwned = false;
-    std::vector<ConnectorSample> _samples;  // reused per frame
+    HostSample _sample;  // reused per frame
+    std::array<uint8_t, 8> _hostKeys{};  ///< the host key overlay, active high (journaled, in the blob); _mutex
+    uint8_t _mouseButtons = 0;           ///< the mouse buttons the host source held at its last sample
+
+    /// The watch request (0 none, 1 start, 2 stop), taken at the frame boundary
+    std::atomic<int> _watchRequest{0};
+    std::atomic<bool> _watching{false};
+    PortReadWatch _watch;
+    void ApplyWatchRequest();
+
+    void SubmitHostKeys(const std::vector<uint8_t>& keys);
+    void SubmitMouse(const MouseSample& mouse);
 };
 
 }  // namespace controllers

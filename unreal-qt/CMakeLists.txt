@@ -422,6 +422,7 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/testrom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/boot" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/configs" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/controllers" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/controllers"
         COMMAND ${CMAKE_COMMAND} -DDEST="${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs" -P "${ROOT_DIR}/cmake/ExtractConfigImages.cmake"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/html"
 
@@ -460,6 +461,7 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/testrom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/boot" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/configs" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/configs"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/controllers" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/controllers"
         COMMAND ${CMAKE_COMMAND} -DDEST="$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/configs" -P "${ROOT_DIR}/cmake/ExtractConfigImages.cmake"
         # WebAPI HTML resources (404 page, index, etc.)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/core/automation/webapi/resources/html" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/html"
@@ -491,6 +493,7 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/midi" "${CMAKE_BINARY_DIR}/packages/UnrealNG/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/boot" "${CMAKE_BINARY_DIR}/packages/UnrealNG/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/configs" "${CMAKE_BINARY_DIR}/packages/UnrealNG/configs"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/controllers" "${CMAKE_BINARY_DIR}/packages/UnrealNG/controllers"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/resources/html" "${CMAKE_BINARY_DIR}/packages/UnrealNG/resources/html"
         # Create the final zip package
         COMMAND ${CMAKE_COMMAND} -E tar "cf" "${CMAKE_BINARY_DIR}/packages/UnrealNG-Windows.zip" "--format=zip" "--" "${CMAKE_BINARY_DIR}/packages/UnrealNG"
@@ -516,6 +519,7 @@ if(UNIX AND NOT APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/midi" "${CMAKE_BINARY_DIR}/packages/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/boot" "${CMAKE_BINARY_DIR}/packages/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/configs" "${CMAKE_BINARY_DIR}/packages/configs"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/controllers" "${CMAKE_BINARY_DIR}/packages/controllers"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/resources/html" "${CMAKE_BINARY_DIR}/packages/resources/html"
         # Desktop integration files in XDG layout (copy share/ into ~/.local/share or /usr/share)
         COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/install/linux/unrealng.desktop" "${CMAKE_BINARY_DIR}/packages/share/applications/unrealng.desktop"

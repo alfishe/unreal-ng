@@ -585,6 +585,14 @@ void DebugMouseManager::ApplyHostButtons(uint8_t activeLowMask)
     ApplyButtons(*mouse, activeLowMask);
 }
 
+void DebugMouseManager::ApplyControllerButtons(uint8_t pressedBits)
+{
+    Mouse* mouse = Device();
+    if (!mouse || IsReplaying() || !_context || !_context->pMouseManager)
+        return;
+    ApplyButtons(*mouse, _context->pMouseManager->ComposeButtons(MouseManager::ButtonSource::Controllers, pressedBits));
+}
+
 void DebugMouseManager::ApplyHostWheel(int steps)
 {
     Mouse* mouse = Device();

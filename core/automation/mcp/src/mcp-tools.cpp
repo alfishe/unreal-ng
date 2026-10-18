@@ -20,6 +20,7 @@
 #include "mcp-media.h"
 #include "mcp-bus.h"
 #include "mcp-slots.h"
+#include "mcp-controllers.h"
 #include "mcp-router.h"
 #include "mcp-symbols.h"
 #include "mcp-asm.h"
@@ -4333,6 +4334,10 @@ void RegisterJoystickInput(ToolRegistry& registry)
     schema["properties"]["frames"]["minimum"] = 1;
     schema["properties"]["frames"]["default"] = 2;
     schema["properties"]["frames"]["description"] = "Hold time for 'tap'";
+    schema["properties"]["connector"]["type"] = "string";
+    schema["properties"]["connector"]["description"] =
+        "Any joystick connector instead of the Kempston joystick (sinclair-1, keyjoy.1, next.left, fuller; see the "
+        "controllers tool): press / release / set go to its device; tap and status are Kempston only";
     schema["required"].append("action");
 
     registry.Register(
@@ -4343,6 +4348,26 @@ void RegisterJoystickInput(ToolRegistry& registry)
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
+
+            if (args.isMember("connector"))
+            {
+                // A connector's device through ControllerControl's input verb (the controllers tool's input)
+                if (action != "press" && action != "release" && action != "set")
+                {
+                    done(ToolResult::Error(action + " takes no connector: press, release or set"));
+                    return;
+                }
+                if (!args.isMember("buttons"))
+                {
+                    done(ToolResult::Error(action + " with a connector requires 'buttons'"));
+                    return;
+                }
+                Json::Value body;
+                body[action] = args["buttons"];
+                ResolveAndForward(args, "POST", "/controllers/" + args["connector"].asString() + "/input", &body, caller,
+                                  "Joystick " + action + " on " + args["connector"].asString(), done);
+                return;
+            }
 
             if (action == "status")
             {
@@ -5963,6 +5988,8 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterAnalyzePerformance(*registry);
     RegisterCaptureMedia(*registry);
     RegisterMediaSlots(*registry);
+    // controllers: connectors and retro devices (docs/inprogress/2026-10-17-controller-manager/surfaces.md §7)
+    RegisterControllers(*registry);
     // bus_analyzer: peripheral bus traces, checks, SD card timing (docs/inprogress/2026-10-11-bus-analyzer)
     RegisterBusAnalyzer(*registry);
 

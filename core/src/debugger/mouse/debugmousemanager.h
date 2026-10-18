@@ -144,6 +144,8 @@ public:
     /// region <Host input - replay guard + journal, no automation range limits>
     void ApplyHostMove(int dx, int dy);
     void ApplyHostButtons(uint8_t activeLowMask);
+    /// The buttons host game controllers hold (active high), joined with the host's and automation's
+    void ApplyControllerButtons(uint8_t pressedBits);
     void ApplyHostWheel(int steps);
     /// endregion </Host input>
 

@@ -1,5 +1,6 @@
 #include "router/analog.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "emulator/io/controllers/controllertypes.h"
@@ -78,6 +79,16 @@ uint16_t StickDirections(float x, float y, uint16_t previous, const AnalogOption
 bool TriggerClick(float value, bool previous, const AnalogOptions& options)
 {
     return previous ? value >= options.triggerRelease : value >= options.triggerClick;
+}
+
+float MouseCurve(float value, const AnalogOptions& options)
+{
+    const float magnitude = std::fabs(value);
+    if (magnitude <= options.deadzone || options.deadzone >= 1.0f)
+        return 0.0f;
+    const float rescaled = std::min(1.0f, (magnitude - options.deadzone) / (1.0f - options.deadzone));
+    const float curved = std::pow(rescaled, options.mouseGamma);
+    return value < 0 ? -curved : curved;
 }
 
 }  // namespace controllers

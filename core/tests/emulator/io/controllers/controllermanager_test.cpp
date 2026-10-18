@@ -22,6 +22,8 @@
 #include "emulator/io/controllers/ihostinputsource.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/keyboard/keyboard.h"
+#include "emulator/io/mouse/mouse.h"
+#include "emulator/io/mouse/mousemanager.h"
 #include "emulator/ports/portdecoder.h"
 #include "gtest/gtest.h"
 #include "stdafx.h"
@@ -34,15 +36,19 @@ namespace
 class FakeHostSource : public IHostInputSource
 {
 public:
-    void Sample(uint64_t frame, std::vector<ConnectorSample>& out) override
+    void Sample(uint64_t frame, HostSample& out) override
     {
         (void)frame;
         samples++;
         for (const ConnectorSample& sample : held)
-            out.push_back(sample);
+            out.connectors.push_back(sample);
+        out.keys = keys;
+        out.mouse = mouse;
     }
 
     std::vector<ConnectorSample> held;
+    std::vector<uint8_t> keys;
+    MouseSample mouse;
     int samples = 0;
 };
 
@@ -309,6 +315,40 @@ TEST_F(ControllerManager_Test, HostSource_SubmitsChangesOnly)
     EXPECT_EQ(source->samples, before) << "detached";
 }
 
+// Boot-bound (~15 ms): one 48K, four frames
+TEST_F(ControllerManager_Test, HostSource_KeysOnTheOverlayAndTheMouse)
+{
+    Init("48K");
+    auto source = std::make_shared<FakeHostSource>();
+    _manager->SetHostInputSource(source);
+    constexpr uint16_t kRowQ = 0xFBFE;  // Q W E R T from D0
+
+    // The user holds W; a pad holds Q and W through the host key overlay
+    _context->pKeyboard->PressKey(ZXKEY_W);
+    source->keys = {ZXKEY_Q, ZXKEY_W};
+    _emulator->RunNFrames(1);
+    EXPECT_EQ(Row(kRowQ), 0x1C);
+    EXPECT_EQ(_manager->HostKeys(2), 0x03);
+    source->keys.clear();
+    _emulator->RunNFrames(1);
+    EXPECT_EQ(Row(kRowQ), 0x1D) << "the pad's release leaves the user's W held";
+    _context->pKeyboard->ReleaseKey(ZXKEY_W);
+
+    Mouse* mouse = _context->pMouse;
+    ASSERT_NE(mouse, nullptr);
+    const uint8_t x = mouse->GetX();
+    source->mouse.dx = 5;
+    source->mouse.buttons = 0x01;
+    _emulator->RunNFrames(1);
+    EXPECT_EQ(static_cast<uint8_t>(mouse->GetX() - x), 5) << "a move of this frame";
+    EXPECT_EQ(_context->pMouseManager->PressedBits(MouseManager::ButtonSource::Controllers), 0x01);
+    source->mouse = MouseSample{};
+    _emulator->RunNFrames(1);
+    EXPECT_EQ(static_cast<uint8_t>(mouse->GetX() - x), 5) << "no move: no counts";
+    EXPECT_EQ(_context->pMouseManager->PressedBits(MouseManager::ButtonSource::Controllers), 0x00);
+    _manager->SetHostInputSource(nullptr);
+}
+
 /// endregion </Routing and the host source>
 
 /// region <TTD>
@@ -322,7 +362,7 @@ TEST_F(ControllerManager_Test, TTDBlobRoundTrip)
     ASSERT_TRUE(_manager->Submit(Index("keyjoy.2"), kFire));
 
     std::vector<uint8_t> blob(_manager->TTDStateSize());
-    ASSERT_EQ(blob.size(), 28u) << "version, count, two plugs of 11 bytes and their masks";
+    ASSERT_EQ(blob.size(), 36u) << "version, count, two plugs of 11 bytes and their masks, the host key overlay";
     _manager->TTDSaveState(blob.data());
     const uint64_t hash = _manager->TTDHashState();
 

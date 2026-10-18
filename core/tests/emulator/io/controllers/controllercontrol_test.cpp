@@ -226,3 +226,26 @@ TEST_F(ControllerControl_Test, Config_ParsesAndApplies)
     EXPECT_TRUE(ControllerConfig::Apply(_context, none).empty());
     EXPECT_EQ(manager.At(1).device, RetroDeviceKind::None);
 }
+
+TEST_F(ControllerControl_Test, Input_PressReleaseSetOnAConnector)
+{
+    ControllerReply reply = Run("input", "kempston", "", {{"press", "up+fire"}});
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    StateNode held = reply.ToValue()["held"];
+    ASSERT_EQ(held.size(), 2u);
+    EXPECT_EQ(held.items[0].s, "up");
+    EXPECT_EQ(held.items[1].s, "fire");
+
+    reply = Run("input", "kempston", "", {{"set", "left,b5"}});
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    held = reply.ToValue()["held"];
+    ASSERT_EQ(held.size(), 2u) << "set replaces; b5 is fire2";
+    EXPECT_EQ(held.items[1].s, "fire2");
+    reply = Run("input", "kempston", "", {{"set", "none"}});
+    EXPECT_EQ(reply.ToValue()["held"].size(), 0u);
+
+    EXPECT_EQ(Run("input", "keyjoy.1", "", {{"press", "up"}}).result.error, ControllerError::BadRequest) << "empty socket";
+    reply = Run("input", "kempston", "", {{"press", "jump"}});
+    EXPECT_NE(reply.result.message.find("unknown control 'jump'"), std::string::npos) << reply.result.message;
+    EXPECT_EQ(Run("input", "kempston").result.error, ControllerError::BadRequest) << "nothing to do";
+}

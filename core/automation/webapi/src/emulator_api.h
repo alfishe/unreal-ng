@@ -90,6 +90,13 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getMediaSlot, "/api/v1/emulator/{id}/media/{slot}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postMediaVerb, "/api/v1/emulator/{id}/media/{slot}/{verb}", drogon::Post);
 
+    // Controllers: the machine's connectors and their retro devices through ControllerControl
+    // (implementation: api/controllers_api.cpp; controller-manager surfaces.md §6)
+    ADD_METHOD_TO(EmulatorAPI::getControllers, "/api/v1/emulator/{id}/controllers", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getController, "/api/v1/emulator/{id}/controllers/{connector}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postControllerVerb, "/api/v1/emulator/{id}/controllers/{connector}/{verb}",
+                  drogon::Post);
+
     // ZX-bus slots: the machine's buses, slots and cards (implementation: api/slots_api.cpp over SlotControl,
     // core/src/emulator/slots/slotcontrol.h; ZX-bus slots architecture.md §9). A change restarts the machine
     ADD_METHOD_TO(EmulatorAPI::getSlots, "/api/v1/emulator/{id}/slots", drogon::Get);
@@ -771,6 +778,16 @@ public:
     void postMediaVerb(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                        const std::string& id, const std::string& slot, const std::string& verb) const;
     // endregion Media
+
+    // region Controllers (implementation: api/controllers_api.cpp)
+    void getControllers(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
+    void getController(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id, const std::string& connector) const;
+    void postControllerVerb(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                            const std::string& connector, const std::string& verb) const;
+    // endregion Controllers
 
     // region Tape/Disk/Snapshot Control Methods (implementation: api/tape_disk_api.cpp and api/snapshot_api.cpp)
     // Tape control

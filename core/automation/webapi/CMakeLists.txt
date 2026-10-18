@@ -190,6 +190,7 @@ set(COMMON_SOURCES
     src/api/rzx_api.cpp
     src/api/media_api.cpp
     src/api/slots_api.cpp
+    src/api/controllers_api.cpp
     src/api/cdaudio_api.cpp
     src/api/snapshot_api.cpp
     src/common/upload_helper.h

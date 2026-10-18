@@ -17,6 +17,7 @@
 #include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/diskfastload.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/controllers/portreadwatch.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/tape/tape.h"
 #include "emulator/io/tape/tapefastload.h"
@@ -1381,9 +1382,11 @@ uint8_t Z80::inFromBus(uint16_t port)
     if (ioContention && !lateWaitsCounted)
         IoWaitAfterIorq(port, ioWait);
 
-    // One flag for both observers: machines with neither test it once
+    // One flag for the observers: machines with none test it once
     if (_inResultHooks) [[unlikely]]
     {
+        if (portReadWatch)
+            portReadWatch->OnRead(port);
         if (portInterceptor)
             portInterceptor->OnInResult(port, result, fromFloatingBus);
         // A latch clocked by read cycles takes the same byte the CPU took (the 128K's #7FFD)

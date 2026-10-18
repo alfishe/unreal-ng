@@ -2,7 +2,7 @@
 
 /// @file analog.h
 /// @brief Analog to digital (mapping-and-profiles.md §3): the radial dead zone, the direction threshold with
-/// hysteresis, 8-way and 4-way sectors, the trigger click.
+/// hysteresis, 8-way and 4-way sectors, the trigger click, the stick-to-mouse curve.
 
 #include <cstdint>
 
@@ -19,6 +19,7 @@ struct AnalogOptions
     float diagonalHold = 55.0f;  ///< 4-way: the previous axis wins until the angle is this far from it
     float triggerClick = 0.5f;   ///< lt.click / rt.click at this share of the travel
     float triggerRelease = 0.4f;
+    float mouseGamma = 1.8f;  ///< an axis driving a mouse axis: the response curve past the dead zone
 };
 
 /// The rescaled deflection of a stick, 0..1: 0 inside the dead zone, 1 past the saturation, linear between
@@ -30,5 +31,8 @@ uint16_t StickDirections(float x, float y, uint16_t previous, const AnalogOption
 
 /// A trigger's click with hysteresis
 bool TriggerClick(float value, bool previous, const AnalogOptions& options);
+
+/// An axis driving a mouse axis, -1..1: sign(v) * ((|v| - deadzone) / (1 - deadzone))^gamma, 0 inside the dead zone
+float MouseCurve(float value, const AnalogOptions& options);
 
 }  // namespace controllers

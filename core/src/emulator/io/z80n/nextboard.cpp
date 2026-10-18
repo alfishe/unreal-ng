@@ -387,6 +387,18 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
         case 0x18: case 0x19: case 0x1A: case 0x1B:
             _video.WriteClip(reg - 0x18, value);
             return;
+        case 0x28:  // NR #28-#2B: the PS/2 keymap is not modelled, the key joystick map is (zxnext.vhd 6297-6322)
+            _regs[reg] = value;
+            _keyJoystick.WriteAddressHigh(value);
+            return;
+        case 0x29:
+            _regs[reg] = value;
+            _keyJoystick.WriteAddressLow(value);
+            return;
+        case 0x2B:
+            _regs[reg] = value;
+            _keyJoystick.WriteData(value);
+            return;
         case 0x60:
             _copper.WriteData(value);
             return;
