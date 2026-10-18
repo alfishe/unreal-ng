@@ -105,7 +105,8 @@ and STORM's own PGUP is pressed through its variables: the screen shows the new 
 without force when STORM's text changed since its LOAD / SAVE (the `*` in its status) or the cursor line has typing
 not yet in the text. The push watch (`sync_push_watch`) waits the same way.
 `tools/verification/unreal-asm/emulator/inject-oracle.py storm <STORM_13.trd> <source.asm> 0x6000` runs the whole
-check (`--boot STORMimp` for 1.3i).
+check (`storm13i --boot STORMimp` for 1.3i: its Quit restarts the machine, so the code is read from its pages,
+#6000-#6FFF page 7, #7000-#7FFF page 3, #8000-#BFFF page 4, #C000-#FFFF page 0).
 
 ## The text in memory
 

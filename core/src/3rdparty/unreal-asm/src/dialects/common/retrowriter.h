@@ -188,6 +188,7 @@ protected:
     bool displaced = false;
     std::optional<int64_t> here{};                       // $ on the line being written, when its label gives it
     std::optional<int64_t> lineAddress{};                // ... as it stands at the line's start (the statements move here)
+    std::optional<int64_t> statementAddress{};           // ... and at the statement being written (several a line)
     std::string problem{};                               // why the target cannot compute the expression being written
     bool strict = false;                                 // every label must be known when the line is assembled (ORG, DS ...)
     std::vector<Condition> conditions{};

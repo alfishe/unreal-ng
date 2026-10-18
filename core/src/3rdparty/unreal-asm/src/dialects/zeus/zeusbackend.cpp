@@ -211,6 +211,7 @@ private:
     RepeatForm Repeat(const std::vector<ir::Line>&, size_t, size_t) const override { return RepeatForm::Unrolled; }
 
     std::string dispOffset{};   // the offset of the displacement in force (a number, or the names' difference)
+    bool orgRefused = false;    // Primus: a second ORG was left out (its addresses part from the source's from there)
 
     std::vector<std::string> DirectiveText(const Statement& s, const std::string&) override
     {
@@ -218,7 +219,20 @@ private:
         {
             case ir::DirectiveKind::Org:
                 if (Primus() && orgs++ > 0)
+                {
+                    // a second ORG ahead of $: the gap as a hole (Primus refuses another ORG: Duplicate ORG)
+                    const auto to = s.args.empty() ? std::nullopt : Value(s.args[0]);
+                    // (after one refused, the text's addresses are no longer the source's: no more holes)
+                    if (to && here && *to >= *here && !displaced && !orgRefused)
+                    {
+                        if (*to == *here)
+                            return {};
+                        diagnostics.push_back({Severity::Info, line, 0, "ORG forward written as DEFS (Primus takes one ORG)"});
+                        return {Dss() + " " + std::to_string(*to - *here)};
+                    }
+                    orgRefused = true;
                     return {NotConverted("a second ORG (Primus takes one: Duplicate ORG)")};
+                }
                 if (displaced)
                 {
                     displaced = false;

@@ -157,11 +157,11 @@ private:
     /// byte computed from $ by subtraction)
     std::string DataItem(const Operand& item, bool words) override
     {
-        if (displaced && lineAddress && UsesCurrent(item.expr))
+        if (displaced && statementAddress && UsesCurrent(item.expr))
         {
             // in a displaced block $ is the run address: its value
             Operand at = item;
-            at.expr = AtAddress(item.expr, *lineAddress);
+            at.expr = AtAddress(item.expr, *statementAddress);
             return DataItem(at, words);
         }
         if (!words && item.kind == Operand::Kind::Immediate)
@@ -202,6 +202,7 @@ private:
     }
 
     bool adjusted = false;   // the instruction being written has its operands adjusted already
+    bool orgRefused = false; // a second ORG was left out (the text's addresses part from the source's from there)
 
     std::optional<std::vector<std::string>> OwnInstruction(const Statement& s) override
     {
@@ -210,20 +211,20 @@ private:
             // a byte below 0 or made from $ as its value; $ in a word as PASM's (pasmcurrent.h): the source's $ as $-k
             Statement moved = s;
             bool changed = false;
-            if (displaced && lineAddress)
+            if (displaced && statementAddress)
             {
                 // a displaced block (no DISP in PASM): $ is the run address, a relative jump goes by its distance there
                 for (Operand& o : moved.operands)
                     if (UsesCurrent(o.expr))
                     {
-                        o.expr = AtAddress(o.expr, *lineAddress);
+                        o.expr = AtAddress(o.expr, *statementAddress);
                         changed = true;
                     }
                 if ((s.mnemonic == "jr" || s.mnemonic == "djnz") && !moved.operands.empty())
                     if (const auto target = Value(moved.operands.back().expr))
                     {
                         // PASM's $ there is the place + 1, the offset counts from the place + 2
-                        const int64_t k = *target - *lineAddress - 1;
+                        const int64_t k = *target - *statementAddress - 1;
                         std::string text = z80::Upper(s.mnemonic) + " ";
                         if (moved.operands.size() == 2)
                             text += z80::Upper(moved.operands[0].text) + ",";
@@ -294,13 +295,15 @@ private:
                 strict = true;
                 const auto to = Value(s.args[0]);
                 strict = false;
-                if (to && here && *to >= *here)
+                // (after one refused, the text's addresses are no longer the source's: no more zeros)
+                if (to && here && *to >= *here && !orgRefused)
                 {
                     if (*to == *here)
                         return {};
                     diagnostics.push_back({Severity::Info, line, 0, "ORG forward written as zeros (PASM takes one ORG)"});
                     return {"DB 0 DUP " + std::to_string(*to - *here)};
                 }
+                orgRefused = true;
                 return {NotConverted("a second ORG (PASM takes one, at the start)")};
             }
             case ir::DirectiveKind::Disp:

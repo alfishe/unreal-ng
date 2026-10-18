@@ -308,7 +308,9 @@ TEST(ZeusBackend_Test, PrimusTakesItsOwnOperatorsAndOneOrg)
         "        LD A,lab%7\n"
         "        LD A,\"A\"\n"
         "        INCLUDE \"lib.asm\"\n"
-        "        ORG #7000\n",
+        "        ORG #7000\n"
+        "        NOP\n"
+        "        ORG #6800\n",
         &diagnostics, "primus");
     const std::string text = Joined(lines);
     EXPECT_TRUE(Contains(lines, "LAB LD A,LAB/256")) << text;
@@ -316,6 +318,8 @@ TEST(ZeusBackend_Test, PrimusTakesItsOwnOperatorsAndOneOrg)
     EXPECT_TRUE(Contains(lines, "LD A,LAB+0?7")) << text;   // Primus reads LAB?7 as the name LAB?7
     EXPECT_TRUE(Contains(lines, "LD A,65")) << text;   // Primus refuses "A
     EXPECT_TRUE(Contains(lines, "DISK lib")) << text;
+    // a second ORG ahead of $ is a hole up to it; one back is refused (Primus takes one ORG)
+    EXPECT_TRUE(std::any_of(lines.begin(), lines.end(), [](const std::string& l) { return l.rfind("DEFS ", 0) == 0; })) << text;
     EXPECT_TRUE(std::any_of(diagnostics.begin(), diagnostics.end(), [](const Diagnostic& d) { return d.message.find("a second ORG") != std::string::npos; }));
     const char* sjasmplus = std::getenv("UNREAL_ASM_SJASMPLUS");
     if (!sjasmplus)

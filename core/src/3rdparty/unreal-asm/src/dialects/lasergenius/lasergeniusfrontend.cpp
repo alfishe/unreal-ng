@@ -347,6 +347,7 @@ struct LineParser
     Diagnostics& diagnostics;
     uint32_t number = 0;
     bool put = false;   ///< a PUT in force: the bytes go elsewhere than the addresses say
+    bool includeEnded = false;   ///< the line just parsed was an INCLUDE under a PUT: __LG_PUTIN goes after it
     int puts = 0;
     int orgs = 0;
 
@@ -474,6 +475,30 @@ struct LineParser
         }
         flush();
         return out;
+    }
+
+    /// A line of sjasmplus' own words the conversion needs (DEFINE+, UNDEFINE, IFDEF), or ENT / ENDIF
+    void Sjasmplus(const std::string& text)
+    {
+        ir::Line l = Plain();
+        if (text == "ENT" || text == "ENDIF")
+            l.statements.push_back(Directive(text == "ENT" ? DirectiveKind::Ent : DirectiveKind::EndIf));
+        else
+        {
+            Statement s = Directive(DirectiveKind::Other);
+            s.text = text;
+            s.params = {"sjasmplus"};
+            l.statements.push_back(std::move(s));
+        }
+        Add(std::move(l));
+    }
+
+    /// __LG_PUTIN no longer defined (the included file is over, or its first PUT took it)
+    void ForgetPutIn()
+    {
+        Sjasmplus("IFDEF __LG_PUTIN");
+        Sjasmplus("UNDEFINE __LG_PUTIN");
+        Sjasmplus("ENDIF");
     }
 
     void EndPut()
@@ -607,6 +632,16 @@ struct LineParser
             assign.args.push_back(Expr::Make(Expr::Kind::Current));
             at.statements.push_back(std::move(assign));
             Add(std::move(at));
+            if (!put)
+            {
+                // A PUT is global in Laser Genius: the file that INCLUDEs this one may have one in force (its DISP is
+                // open across the INCLUDE, sjasmplus keeps it). This file is converted alone: the includer defines
+                // __LG_PUTIN then, and that DISP ends before the bytes move here
+                Sjasmplus("IFDEF __LG_PUTIN");
+                Sjasmplus("ENT");
+                Sjasmplus("UNDEFINE __LG_PUTIN");
+                Sjasmplus("ENDIF");
+            }
             EndPut();
             if (!line.label.empty())
             {
@@ -768,9 +803,13 @@ struct LineParser
         }
         if (name == "INCLUDE")
         {
+            // the included file learns that a PUT is in force here (see PUT); the name is gone again after it
+            if (put)
+                Sjasmplus("DEFINE+ __LG_PUTIN");
             Statement s = Directive(DirectiveKind::Include);
             s.text = quoted();
             line.statements.push_back(std::move(s));
+            includeEnded = put;
             return;
         }
         if (name == "PRINT")
@@ -854,6 +893,11 @@ FrontendResult LaserGeniusFrontend::Parse(const SourceDocument& source) const
             result.diagnostics.push_back({Severity::Warning, index, 0, "not parsed (" + f.reason + "): " + sourceLine.text});
         }
         result.program.lines.push_back(std::move(line));
+        if (p.includeEnded)
+        {
+            p.includeEnded = false;
+            p.ForgetPutIn();
+        }
     }
     return result;
 }

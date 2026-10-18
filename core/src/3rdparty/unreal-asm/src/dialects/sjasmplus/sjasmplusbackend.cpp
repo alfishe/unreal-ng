@@ -673,7 +673,7 @@ struct Writer
             case ir::DirectiveKind::Main: return {"@; ALASM MAIN \"" + s.text + "\" (the project's main source)"};
             case ir::DirectiveKind::Run: return {NotConverted("RUN " + args() + " (code called while assembling)")};
             case ir::DirectiveKind::Other:
-                if (sameDialect)
+                if (sameDialect || (!s.params.empty() && s.params[0] == "sjasmplus"))   // or a frontend's sjasmplus words
                     return {s.text};
                 return {NotConverted(s.text.empty() ? "a directive" : s.text)};
             default: return {NotConverted(s.text.empty() ? "a directive" : s.text)};

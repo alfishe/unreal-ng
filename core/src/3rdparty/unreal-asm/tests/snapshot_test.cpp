@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include <map>
+
 #include "testdata.h"
 #include "unrealasm/dialect.h"
 #include "unrealasm/registry.h"
@@ -169,7 +171,7 @@ TEST(Snapshot_Test, EveryAssemblerTemplateTakesASourceWithoutAnEmulator)
     // it by the inject (a page of its own, or the text byte by byte where the assembler keeps it in the 48K memory),
     // the written snapshot read back with the text there. Each one also assembled the text to sjasmplus' bytes in
     // unreal-ng (inject-oracle.py <profile> --template)
-    const std::vector<std::pair<std::string, bool>> templates = {   // descriptor, force (no "changed" flag)
+    const std::vector<std::pair<std::string, bool>> templates = {   // descriptor (or another build of it: builds below), force (no "changed" flag)
         {"alasm-5.09", false}, {"tasm-4.12", false}, {"xas-7.447", false}, {"storm-1.3", false}, {"masm-1.1", false},
         {"zasm-3.15", true},   {"gens-4", false},    {"zeus-1983", false}, {"primus-2.9", true}, {"lasergenius-1.04", true},
         {"prometheus-48", true}, {"pasm-3.0", true},
@@ -181,6 +183,10 @@ TEST(Snapshot_Test, EveryAssemblerTemplateTakesASourceWithoutAnEmulator)
         {"zasm-3.3.final", true}, {"zasm-3.80.4", true}, {"zasm-3.4", true}, {"zasm-x64.1", true},
         {"zasm-4.0x8", true},  {"zasm-4.x64", true}, {"zasm-4.20", true},  {"zasm-3.10", true},  {"zasm-3.0", true},
         {"zasm-2.4", true},    {"zasm-2.5", true},   {"zasm-2.6", true},
+        {"lasergenius-1.04-hash", true},   // with the hash extensions (Phoenix): the text from #737E, the same descriptor
+        {"prometheus-48-trdos", true}, {"prometheus-128", true}, {"prometheus-128m", true}, {"prometheus-128s", true},
+        {"zeus-2.2", false},   {"zeus-2.2si", false}, {"zeus-pro", false}, {"zeus-plus-2.16", false},
+        {"storm-1.3i", false},   // STORM 1.3i: the 1.3 descriptor
     };
     SourceDocument source = SourceDocument::FromText(ReadTestText("dialects/alasm-backend/oracle1.asm"), "sjasmplus");
     source.name = "oracle1";
@@ -189,7 +195,10 @@ TEST(Snapshot_Test, EveryAssemblerTemplateTakesASourceWithoutAnEmulator)
         Snapshot snapshot;
         std::string error;
         ASSERT_TRUE(ReadSnapshot(ReadTestData("templates/" + id + ".szx"), "szx", snapshot, error)) << id << ": " << error;
-        const sync::SyncDescriptor* descriptor = sync::FindDescriptor(id);
+        // a template of another build of a descriptor's assembler
+        static const std::map<std::string, std::string> builds = {{"lasergenius-1.04-hash", "lasergenius-1.04"}, {"storm-1.3i", "storm-1.3"}};
+        const auto build = builds.find(id);
+        const sync::SyncDescriptor* descriptor = sync::FindDescriptor(build != builds.end() ? build->second : id);
         ASSERT_NE(descriptor, nullptr) << id;
         std::string why;
         EXPECT_TRUE(sync::Idle(sync::ViewOf(snapshot), *descriptor, why)) << id << ": " << why;
