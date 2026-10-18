@@ -527,12 +527,12 @@ size_t Ym2203Pair::renderQuietChannels(size_t n, size_t frames, const Ym2203Chan
         _channels->fmZeroRun[i] += 2 * size_t(ticks);
         for (int ch = 0; ch < 3; ch++)
         {
-            _channels->ssg[i][ch].feedZerosIntoSilence(size_t(ticks));
+            _channels->ssg[i][ch].moveZerosIntoSilence(size_t(ticks));  // ssg[0][0], the master: setPhase below
             _channels->ssgZeroRun[i][ch] += size_t(ticks);
         }
         c.ssg.advanceSilent(static_cast<uint32_t>(ticks));
     }
-    master.setPhase(phase);  // the run's additions and output steps in their order (the feeds above added their own)
+    master.setPhase(phase);  // the run's additions and output steps in their order
     _renderT += 16 * int64_t(ticks);
     _quietTicks += ticks;
 

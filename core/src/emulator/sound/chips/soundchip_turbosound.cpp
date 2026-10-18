@@ -568,13 +568,13 @@ size_t SoundChip_TurboSound::renderQuietOutputs()
     _chip0->advanceSilent(static_cast<uint32_t>(ticks));
     _chip1->advanceSilent(static_cast<uint32_t>(ticks));
     // Each decimator that keeps its own phase (all four here: none is a slave) takes the run's additions and output steps
-    // in their order, as feedSample and skipOutput would (the feeds below add their own, replaced); from the master's
-    // starting phase that is the master's own result
+    // in their order, as feedSample and skipOutput would; from the master's starting phase that is the master's own
+    // result
     for (FilterDecimator* d : {&_chip0->decimatorLeft(), &_chip0->decimatorRight(), &_chip1->decimatorLeft(),
                                &_chip1->decimatorRight()})
     {
         double own = d->phase();
-        d->feedZerosIntoSilence(size_t(ticks));
+        d->moveZerosIntoSilence(size_t(ticks));  // the phase set below
         if (d->isSlave())
             continue;
         if (own == startPhase && d->samplesPerOutput() == perOutput)

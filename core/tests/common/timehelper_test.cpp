@@ -121,3 +121,41 @@ TEST(TimeHelper_Test, WaitUntilPrecise_PastDeadline)
     const double elapsedMs = std::chrono::duration<double, std::milli>(clock::now() - start).count();
     EXPECT_LT(elapsedMs, 5.0);
 }
+
+/// @brief A WakeSignal notified ends the wait at once, not at the end of the poll chunk (4 ms): the main loop's wait
+/// between frames gives the CPU to a park asked for meanwhile (a snapshot load) without waiting for the next frame.
+/// The best of several attempts is asserted (OS scheduling, as WaitUntilPrecise_WakesOnTime)
+TEST(TimeHelper_Test, WaitUntilPrecise_WakeSignalEndsTheWaitAtOnce)
+{
+    using clock = std::chrono::steady_clock;
+    constexpr int kAttempts = 12;
+    double bestMs = 1e9;
+    for (int attempt = 0; attempt < kAttempts && bestMs >= 1.0; attempt++)
+    {
+        WakeSignal wake;
+        std::atomic<bool> waiting{false};
+        std::atomic<bool> abort{false};
+        clock::time_point notifiedAt;
+        std::thread notifier([&] {
+            while (!waiting.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            notifiedAt = clock::now();
+            abort.store(true, std::memory_order_release);
+            wake.Notify();
+        });
+
+        const bool reached = TimeHelper::WaitUntilPrecise(
+            clock::now() + std::chrono::seconds(2),
+            [&] {
+                waiting.store(true, std::memory_order_release);
+                return abort.load(std::memory_order_acquire);
+            },
+            &wake);
+        const auto returnedAt = clock::now();
+        notifier.join();
+
+        EXPECT_FALSE(reached);
+        bestMs = std::min(bestMs, std::chrono::duration<double, std::milli>(returnedAt - notifiedAt).count());
+    }
+    EXPECT_LT(bestMs, 1.0) << "the wake did not end the wait before the poll chunk did";
+}

@@ -600,6 +600,21 @@ const int16_t* SoundManager::deviceBuffer(AudioSourceType type) const
     }
 }
 
+bool SoundManager::hasDeviceBuffer(AudioSourceType type) const
+{
+    switch (type)
+    {
+        case AudioSourceType::AY1_All:
+        case AudioSourceType::AY2_All:
+            return _turboSound != nullptr;
+        case AudioSourceType::FM1:
+        case AudioSourceType::FM2:
+            return _turboSound && _turboSound->hasFm();
+        default:
+            return deviceBuffer(type) != nullptr;
+    }
+}
+
 const int16_t* SoundManager::slotCardBuffer(AudioSourceType type) const
 {
     for (const ICard* card : _slotCards)
