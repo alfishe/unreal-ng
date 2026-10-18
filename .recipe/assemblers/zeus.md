@@ -72,7 +72,9 @@ check (a 48K machine).
 ZEUS 2.2 (`RUN "ZEUS'96"`), ZEUS 2.2SI (`RUN "ZEUS"`, then `Z` in its menu), Zeus Pro (`RUN "ZPro"`), Zeus Plus 2.16
 (`RUN "boot"`, ENTER in its window menu), ZEUS+ 3.1 (`RUN "ZEUS+3.1"`) and ZEUS 128 (`RUN "ZEUS.128"`, ENTER on its
 menu's first line) take a host source at their prompt like ZEUS 1983 (descriptors `zeus-2.2`, `zeus-2.2si`,
-`zeus-pro`, `zeus-plus-2.16`, `zeus-3.1`; ZEUS 128 is `zeus-1983`; idle templates in `testdata/templates`).
+`zeus-pro`, `zeus-plus-2.16`, `zeus-3.1`; ZEUS 128 is `zeus-1983`; idle templates in `testdata/templates`). ZEUS 3.0 is
+ZEUS 128: vtrd.in's "Zeus v3.0 ... Stars of Keladan'95" is `ZEUS128.ZIP`; the `ZINUS3.0.B` on the ZEUS+ 3.1 disk installs
+the same code as 3.1.
 
 - ZEUS+ 3.1 takes labels of up to 6 characters (a seventh is its error 1, "label too long"): the conversion for
   `zeus-3.1` shortens longer names (unique within 6).
