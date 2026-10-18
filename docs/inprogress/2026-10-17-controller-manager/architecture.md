@@ -306,7 +306,7 @@ work at all while no device is connected and no binding is active (the keyboard 
 | Core manager and verbs | `core/src/emulator/io/controllers/`: `controllermanager.{h,cpp}`, `connector.{h,cpp}`, `controllercontrol.{h,cpp}`, `hostinputsource.h`, `portreadwatch.{h,cpp}` |
 | Retro devices | existing `io/joystick/joystick.*`, `io/mouse/*`; new `io/joystick/sinclairjoystick.*` (Sinclair and Cursor, on the keyboard matrix overlay), `fullerjoystick.*`, `timexjoystick.*`, `mdpad.*`, `io/mouse/amxmouse.*`, `io/lightgun/*` |
 | Automation | `core/automation/webapi/src/api/controllers_api.cpp`, `openapi_controllers*.inc`; `mcp/src/mcp-controllers.*`; `cli/src/commands/cli-processor-controllers.cpp`; Lua and Python bindings |
-| Qt | `unreal-qt/src/controllers/`: `controllersdialog.*`, `hostdevicelist.*`, `connectorlist.*`, `controllerpicture.*` (QGraphicsView), `patchcordoverlay.*`, `bindingeditor.*`, `devicetestpanel.*`, `learnwizard.*`, `hotspoteditor.*`, `profilebar.*`, `controllertoast.*` |
+| Qt | `unreal-qt/src/controllers/`: `controllersdialog.*`, `hostdevicelist.*`, `connectorlist.*`, `controllerpicture.*` (QGraphicsView), `patchcordoverlay.*`, `bindingtable.*`, `devicetestpanel.*`, `learnwizard.*`, `hotspoteditor.*`, `profilebar.*`, `controllertoast.*` |
 | Data | `data/controllers/devices.json`, `data/controllers/images/<family>/`, `data/controllers/profiles/{play,debug,schemes,games}/`, `data/controllers/70-unreal-ng.rules` (Linux udev rule for hidraw access, installed by the packages) |
 | Tests | `core/tests/controllers/`, `core/tests/emulator/io/controllers/`, `tools/verification/webapi/src/test_api_controllers.py`, `tools/verification/mcp/test_controllers.py` |
 

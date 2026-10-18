@@ -146,7 +146,7 @@ take several devices (two pads ORed into one Kempston, as the Next ORs two stick
 
 ### 3.1 Binding editor
 
-Click a callout (or Enter on a focused hotspot) → a popover anchored at the callout:
+The first design (superseded by the table below, kept for the options it lists). Click a callout (or Enter on a focused hotspot) → a popover anchored at the callout:
 
 ```
 ┌ A (south) ─ Play layer ───────────────────────────┐
@@ -174,6 +174,55 @@ Click a callout (or Enter on a focused hotspot) → a popover anchored at the ca
   keyboard, screenshot, quick save; Advanced adds debug actions), layer switches.
 - Options (Advanced): autofire on / off frames, tap vs hold, threshold for analog-as-digital, 4-way / 8-way for a
   stick, response curve.
+
+Built (C4), redesigned after the owner's review of the first editor ("not intuitive, cryptic"; the survey of other
+emulators is [research-binding-ux.md](research-binding-ux.md)): the bindings are a table below the picture
+(`unreal-qt/src/controllers/bindingtable.cpp`) that starts from what the game sees, as Mesen2, RetroArch, MAME,
+Dolphin and PCSX2 do, not from the pad's controls:
+
+```
+ Playing | Debugging                     Works as [Machine joystick ▾]  Save for [Every dualsense pad ▾]
+ Joystick
+   Move          ( D-pad ) ( Left stick )  +
+   Up            + Bind
+   Fire          ( Cross )  ( R2 · auto )  +
+   Fire 2        ( Circle )  +
+ ZX keys
+   Space         ( Triangle )  +
+   Enter         ( Options )  +
+                 + Add a ZX key…
+ Mouse
+   Move          ( Right stick )  +
+ Emulator
+   Pause / continue   + Bind
+   On-screen keyboard ( Create )  +
+ [Set all…] [Restore defaults]   Cross → Joystick fire
+```
+
+- **Rows** are the machine's inputs in plain words: Joystick (Move, Up, Down, Left, Right, Fire, Fire 2, and any MD
+  pad button a profile binds), ZX keys (each bound key, "+ Add a ZX key…" opens a Spectrum keyboard with Caps / Symbol
+  Shift), Mouse (Move, buttons), Emulator (pause, on-screen keyboard, quick menu, turbo, screenshot, reset). The
+  Debugging tab (Advanced: debug layer only) lists every host action by group.
+- **Chips** are the pad's controls bound to a row, named as the pad names them (Cross, LB, D-pad, Left stick ←):
+  bold when the user's own, plain when a default. Click **+**, then press: the button counts down 5 s, the bar above
+  says what it waits for, Esc or Cancel cancels, a timeout cancels and changes nothing. The baseline is taken first
+  and a control counts again once it is let go. Move takes the D-pad or a whole stick, Mouse move a stick, other rows
+  one control (a stick's direction, a trigger's click).
+- **One control does one thing**: pressing one another row has asks "Cross is Joystick fire 2 now. Use it for
+  Joystick fire instead?"; taking a direction from a D-pad bound to Move hides the D-pad's group binding and binds
+  its other three directions alone, so they keep moving.
+- **Right-click a chip**: Change…, Autofire (Off, Slow, Normal, Fast), Short tap per press, Remove, Restore default,
+  Edit as text….
+- **Works as** sets the scheme the Save for profile extends (`scheme` verb); **Save for** picks the profile written:
+  this game (when a game profile applies), every pad of the family, only this pad, every pad. **Set all…** walks Up,
+  Down, Left, Right, Fire, Fire 2 with Step N of M, Back, Skip, Cancel. **Restore defaults** removes the user's
+  bindings of the tab (and the scheme) from the Save for profile.
+- **The picture is the overview**: callouts name the row of each control, hovering a chip highlights its control, a
+  pressed control lights its chips and scrolls to them, a click on a callout names its row.
+
+Everything goes through the host verbs (`bindings`, `bind`, `unbind`, `scheme`), as WebAPI, MCP, CLI and Python do.
+Profiles… opens the profile manager (`profilesdialog.cpp`): every profile as YAML, edited and saved as a user
+profile, New, Import…, Export…, Delete, Use as game profile.
 
 ### 3.2 Layer tabs
 
@@ -323,7 +372,7 @@ Toast (main window): ControllerToast (frameless top-level, like DropTargetOverla
 - **Requests** are async (`ControllerControl` replies with `pending` where a change waits for a frame boundary);
   the UI never blocks on the emulator thread.
 - Class mapping: [architecture.md §13](architecture.md#13-code-placement) (`controllersdialog.*`,
-  `hostdevicelist.*`, `connectorlist.*`, `controllerpicture.*`, `patchcordoverlay.*`, `bindingeditor.*`,
+  `hostdevicelist.*`, `connectorlist.*`, `controllerpicture.*`, `patchcordoverlay.*`, `bindingtable.*`,
   `devicetestpanel.*`, `learnwizard.*`, `hotspoteditor.*`), plus `profilebar.*` and `controllertoast.*`.
 
 ## 8. Main-window integration

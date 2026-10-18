@@ -45,6 +45,7 @@ namespace
         "controllers bind <control> field=val .. [family=..|device=..|profile=..] [layer=..] - e.g. bind south "
         "key=ENTER, bind west spec='{key: \"5\"}'\n"
         "controllers unbind <control> [family=..|device=..|profile=..] [layer=..]\n"
+        "controllers scheme <scheme/kempston|scheme/qaop-space|none> [family=..|device=..|profile=..] - How the pad works\n"
         "Flags: --json (the reply every surface returns), async (do not wait for the frame boundary)\n";
 
     std::string Lines(const std::string& text, const char* newline)

@@ -371,44 +371,9 @@ void HostControllers::assignPlayers(const std::vector<HostDeviceInfo>& devices)
     }
 }
 
-bool HostControllers::BindForFamily(const std::string& family, const std::string& control,
-                                    const std::string& specJson, QString& error)
+HostReply HostControllers::Host(const HostRequest& request)
 {
-    JsonValue spec;
-    std::string why;
-    if (!ParseJson(specJson, spec, why))
-    {
-        error = QString::fromStdString(why);
-        return false;
-    }
-    const std::string id = "user/" + family;
-    Profile profile;
-    if (const Profile* existing = _profiles.Find(id))
-        profile = *existing;
-    else
-    {
-        profile.kind = ProfileKind::Play;
-        profile.scope = ProfileScope::User;
-        profile.id = id;
-        profile.label = family;
-        profile.families = {family};
-        profile.options = JsonValue::Object();
-    }
-    auto layer = std::find_if(profile.layers.begin(), profile.layers.end(),
-                              [](const auto& entry) { return entry.first == "play"; });
-    if (layer == profile.layers.end())
-    {
-        profile.layers.emplace_back("play", JsonValue::Members{});
-        layer = profile.layers.end() - 1;
-    }
-    auto member = std::find_if(layer->second.begin(), layer->second.end(),
-                               [&control](const auto& entry) { return entry.first == control; });
-    if (member == layer->second.end())
-        layer->second.emplace_back(control, spec);
-    else
-        member->second = spec;
-
-    return saveUserProfile(std::move(profile), error);
+    return HostInputControl(*_controlOwner).Execute(request);
 }
 
 bool HostControllers::saveUserProfile(Profile profile, QString& error)

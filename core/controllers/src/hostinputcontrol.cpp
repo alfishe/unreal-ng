@@ -174,7 +174,8 @@ int HostReply::HttpStatus() const
 const std::vector<std::string>& HostInputControl::Verbs()
 {
     static const std::vector<std::string> verbs = {"devices", "context", "profiles", "profile", "save",
-                                                   "delete",  "apply",   "bindings", "bind",    "unbind"};
+                                                   "delete",  "apply",   "bindings", "bind",    "unbind",
+                                                   "scheme"};
     return verbs;
 }
 
@@ -191,6 +192,7 @@ const std::vector<std::string>& HostInputControl::OptionsFor(const std::string& 
         {"bindings", {"device", "layer"}},
         {"bind", {"control", "spec", "layer", "family", "device", "profile"}},
         {"unbind", {"control", "layer", "family", "device", "profile"}},
+        {"scheme", {"id", "family", "device", "profile"}},
     };
     static const std::vector<std::string> none;
     const auto it = options.find(verb);
@@ -265,6 +267,8 @@ HostReply HostInputControl::Execute(const HostRequest& request)
         return Bindings(request);
     if (verb == "bind" || verb == "unbind")
         return Bind(request, verb == "unbind");
+    if (verb == "scheme")
+        return Scheme(request);
     std::string list;
     for (const std::string& known : Verbs())
         list += (list.empty() ? "" : ", ") + known;
@@ -494,12 +498,69 @@ HostReply HostInputControl::Bindings(const HostRequest& request)
     return reply;
 }
 
+std::string HostInputControl::UserProfileFor(const std::string& device, const std::string& family)
+{
+    return !device.empty() ? "user/device-" + Sanitized(device) : !family.empty() ? "user/" + family : "user/global";
+}
+
+bool HostInputControl::EditProfile(const HostRequest& request, bool mustExist, Profile& profile, std::string& id,
+                                   HostReply& failure)
+{
+    const std::string family = Option(request, "family");
+    const std::string device = Option(request, "device");
+    // The user profile it goes in: named, else the device's, the family's, or every device's
+    id = Option(request, "profile");
+    if (id.empty())
+        id = UserProfileFor(device, family);
+    if (const Profile* existing = FindProfile(id))
+        profile = *existing;  // a shipped one is copied: the user's of the same id overrides it
+    else if (mustExist)
+    {
+        failure = Fail("unknown-profile", "no profile '" + id + "' to change");
+        return false;
+    }
+    else
+    {
+        profile = Profile{};
+        profile.id = id;
+        profile.label = !device.empty() ? device : !family.empty() ? family : "Every device";
+        if (!device.empty())
+            profile.devices = {device};
+        else if (!family.empty())
+            profile.families = {family};
+        profile.options = JsonValue::Object();
+    }
+    profile.scope = ProfileScope::User;
+    return true;
+}
+
+HostReply HostInputControl::Store(const Profile& profile, const std::string& message)
+{
+    // Through the reader the files go through: a binding that does not compile is refused here
+    Profile checked;
+    std::string error;
+    if (!ParseProfile(ProfileStore::Dump(profile), checked, error))
+        return Fail("invalid-binding", error);
+    checked.scope = ProfileScope::User;
+    if (!ProfileStore::Save(checked, _owner.UserProfileDir(), error))
+        return Fail("bad-request", error);
+    checked.path = ProfileStore::SavePath(checked, _owner.UserProfileDir());
+    const std::string id = checked.id;
+    const std::string path = checked.path;
+    if (!_owner.Profiles().Add(std::move(checked), error))
+        return Fail("bad-request", error);
+    _owner.Reapply();
+    HostReply reply;
+    reply.message = message;
+    reply.body.Set("profile", JsonValue::String(id));
+    reply.body.Set("path", JsonValue::String(path));
+    return reply;
+}
+
 HostReply HostInputControl::Bind(const HostRequest& request, bool unbind)
 {
     const std::string control = Option(request, "control");
     const std::string layer = Option(request, "layer", "play");
-    const std::string family = Option(request, "family");
-    const std::string device = Option(request, "device");
     if (control.empty())
         return Fail("bad-request", "name the 'control' (south, lt.click, view+menu, dpad.*)");
     JsonValue spec;
@@ -510,30 +571,13 @@ HostReply HostInputControl::Bind(const HostRequest& request, bool unbind)
             return Fail("invalid-binding", "spec is a binding object ({key: ENTER}, {retro: \"auto:fire\"}, "
                                            "{none: true})" + (error.empty() ? std::string() : ": " + error));
     }
-
-    // The user profile it goes in: named, else the device's, the family's, or every device's
-    std::string id = Option(request, "profile");
-    if (id.empty())
-        id = !device.empty() ? "user/device-" + Sanitized(device) : !family.empty() ? "user/" + family : "user/global";
-    ProfileStore& store = _owner.Profiles();
     Profile profile;
-    if (const Profile* existing = FindProfile(id))
-        profile = *existing;  // a shipped one is copied: the user's of the same id overrides it
-    else if (unbind)
-        return Fail("unknown-profile", "no profile '" + id + "' to unbind from");
-    else
-    {
-        profile.id = id;
-        profile.label = !device.empty() ? device : !family.empty() ? family : "Every device";
-        if (!device.empty())
-            profile.devices = {device};
-        else if (!family.empty())
-            profile.families = {family};
-        profile.options = JsonValue::Object();
-    }
+    std::string id;
+    HostReply failure;
+    if (!EditProfile(request, unbind, profile, id, failure))
+        return failure;
     if (profile.kind != ProfileKind::Play && layer != "debug")
         return Fail("bad-request", "'" + id + "' is a debug profile: it binds the debug layer only");
-    profile.scope = ProfileScope::User;
 
     auto entry = std::find_if(profile.layers.begin(), profile.layers.end(),
                               [&layer](const auto& item) { return item.first == layer; });
@@ -556,25 +600,31 @@ HostReply HostInputControl::Bind(const HostRequest& request, bool unbind)
         entry->second.emplace_back(control, spec);
     else
         member->second = spec;
+    return Store(profile, std::string(unbind ? "unbound " : "bound ") + layer + "." + control + " in " + id);
+}
 
-    // Through the reader the files go through: a binding that does not compile is refused here
-    Profile checked;
-    std::string error;
-    if (!ParseProfile(ProfileStore::Dump(profile), checked, error))
-        return Fail("invalid-binding", error);
-    checked.scope = ProfileScope::User;
-    if (!ProfileStore::Save(checked, _owner.UserProfileDir(), error))
-        return Fail("bad-request", error);
-    checked.path = ProfileStore::SavePath(checked, _owner.UserProfileDir());
-    const std::string path = checked.path;
-    if (!store.Add(std::move(checked), error))
-        return Fail("bad-request", error);
-    _owner.Reapply();
-    HostReply reply;
-    reply.message = std::string(unbind ? "unbound " : "bound ") + layer + "." + control + " in " + id;
-    reply.body.Set("profile", JsonValue::String(id));
-    reply.body.Set("path", JsonValue::String(path));
-    return reply;
+HostReply HostInputControl::Scheme(const HostRequest& request)
+{
+    std::string scheme = Option(request, "id");
+    if (scheme == "none")
+        scheme.clear();
+    if (!scheme.empty())
+    {
+        const Profile* found = FindProfile(scheme);
+        if (found == nullptr)
+            return Fail("unknown-profile", "no scheme '" + scheme + "' (profiles set=scheme lists them)");
+        if (!found->scheme)
+            return Fail("bad-request", "'" + scheme + "' is not a scheme (kind: scheme)");
+    }
+    Profile profile;
+    std::string id;
+    HostReply failure;
+    if (!EditProfile(request, false, profile, id, failure))
+        return failure;
+    if (profile.scheme)
+        return Fail("bad-request", "'" + id + "' is a scheme: a scheme does not extend another one");
+    profile.extends = scheme.empty() ? std::vector<std::string>{} : std::vector<std::string>{scheme};
+    return Store(profile, scheme.empty() ? id + " uses no scheme" : id + " works as " + scheme);
 }
 
 }  // namespace controllers

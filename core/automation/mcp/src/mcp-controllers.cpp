@@ -40,6 +40,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControl
         {"bindings", {"device", "layer"}},
         {"bind", {"control", "spec", "layer", "family", "device", "profile"}},
         {"unbind", {"control", "layer", "family", "device", "profile"}},
+        {"scheme", {"id", "family", "device", "profile"}},
     };
     return actions;
 }
@@ -256,7 +257,9 @@ void RegisterControllers(ToolRegistry& registry)
     schema["properties"]["set"]["description"] = "profiles: all (default), play, debug, scheme, game";
     schema["properties"]["machine"]["description"] = "profiles: only those of a machine model (next, pentagon)";
     schema["properties"]["id"]["description"] =
-        "profile / delete / apply: a profile id (builtin/game/vradarks-revenge); apply 'none' = by the loaded file";
+        "profile / delete / apply: a profile id (builtin/game/vradarks-revenge); apply 'none' = by the loaded file; "
+        "scheme: the scheme the pad works as (scheme/kempston, scheme/sinclair-1, scheme/qaop-space; 'none' = the "
+        "machine's default)";
     schema["properties"]["text"]["description"] = "save: the whole profile, YAML or JSON (schema 1)";
     schema["properties"]["control"]["description"] = "bind / unbind: south, lt.click, rstick.x, view+menu, dpad.*";
     schema["properties"]["spec"]["type"] = "object";
@@ -264,7 +267,8 @@ void RegisterControllers(ToolRegistry& registry)
         "bind: the binding ({\"key\": \"ENTER\"}, {\"retro\": \"auto:fire\"}, {\"mouse\": \"left\"}, "
         "{\"none\": true}; plus label, turbo, ...)";
     schema["properties"]["layer"]["description"] = "bindings / bind / unbind: play (default), debug, a shift layer";
-    schema["properties"]["family"]["description"] = "bind / unbind: into user/<family> (xbox-elite-2, dualsense)";
+    schema["properties"]["family"]["description"] =
+        "bind / unbind / scheme: into user/<family> (xbox-elite-2, dualsense)";
     schema["properties"]["profile"]["description"] =
         "bind / unbind: into this profile (a shipped one is copied into the user's); default user/global";
     schema["required"].append("action");
@@ -278,7 +282,8 @@ void RegisterControllers(ToolRegistry& registry)
         "unless async. Host actions (no target: the process's game controllers, the Qt client's): devices, context "
         "(machine, applied profiles, the manual game profile), profiles, profile (as YAML), save, delete, apply (the "
         "game profile by hand, for a program started from the machine itself), bindings (effective, with the profile "
-        "each came from), bind, unbind (in a user profile, saved and applied at once). Options per action:" +
+        "each came from), bind, unbind (in a user profile, saved and applied at once), scheme (how the pad works: "
+        "Kempston, Sinclair 1, QAOP + Space; the scheme the user profile extends). Options per action:" +
             perVerb,
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {

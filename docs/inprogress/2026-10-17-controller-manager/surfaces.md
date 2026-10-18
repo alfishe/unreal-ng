@@ -57,6 +57,7 @@ connector verbs keep working (keyboard joystick, automation input).
 | `pin` | Set `follow-focus`, `pinned:<instance>`, `all`. |
 | `bindings` | Read the effective bindings of a device per layer, with the profile each one came from. |
 | `bind` / `unbind` | Change one binding in the user layer of a profile. |
+| `scheme` | The scheme a user profile extends (how the pad works: Kempston, Sinclair 1, QAOP + Space), or none. |
 | `profiles` | List profiles (play and debug sets, scopes, match rules); `apply`, `save`, `delete`, `export`, `import`. |
 | `probe` | The backend report: loaded, why not, endpoints found, permissions. |
 | `database` | Look up a VID/PID or SDL GUID; import a `gamecontrollerdb` line or a RetroArch autoconfig file. |
@@ -121,6 +122,7 @@ GET    /api/v1/controllers/{verb}            devices | context | profiles?set=ga
 POST   /api/v1/controllers/{verb}            save {text} | delete {id} | apply {id|none}
                                              | bind {control, spec, layer?, family?|device?|profile?}
                                              | unbind {control, layer?, family?|device?|profile?}
+                                             | scheme {id|none, family?|device?|profile?}
        (built: HostInputControl, core/controllers/src/hostinputcontrol.h; the wrong method answers 405)
 POST   /api/v1/controllers/host/{device}/{verb}              role | pin | identify | learn (not built)
 GET    /api/v1/controllers/database?vidpid=045e:0b00 | guid=...
@@ -146,7 +148,8 @@ MCP `controllers` (the same action names, no target), CLI `controllers <verb>` (
 `bind south key=ENTER` builds the spec) and Python `controllers_host(verb, **options)` with the named wrappers
 (`controllers_profiles`, `controllers_profile`, `controllers_save_profile`, `controllers_delete_profile`,
 `controllers_apply_profile`, `controllers_bindings`, `controllers_bind`, `controllers_unbind`) all build a
-`HostRequest`. `bind` without `profile` writes `user/device-<id>` (device=), `user/<family>` (family=) or
+`HostRequest`; the CLI and Python reach `scheme` through `controllers scheme <id|none>` and `controllers_host`.
+`bind` without `profile` writes `user/device-<id>` (device=), `user/<family>` (family=) or
 `user/global`; a shipped profile named by `profile=` is copied into the user's of the same id, which overrides it, and
 `delete` of that copy brings the shipped one back.
 

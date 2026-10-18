@@ -52,10 +52,9 @@ public:
     }
     /// The user profiles' directory (`<user config>/unreal-ng/controllers/profiles`, architecture.md §12)
     static QString UserProfileDir();
-    /// Bind @p control of a device family to a target spec (`{"retro": "auto:fire"}`): a user profile per family
-    /// (`user/<family>`), saved and applied; false with the reason
-    bool BindForFamily(const std::string& family, const std::string& control, const std::string& specJson,
-                       QString& error);
+    /// A host verb (surfaces.md §2: profiles, bindings, bind / unbind, save, delete, apply) run here as the automation
+    /// surfaces run it: the dialog's editors take the same path as WebAPI, MCP, CLI and Python
+    controllers::HostReply Host(const controllers::HostRequest& request);
     /// "Keep" on the auto toast: a user game profile keyed by the loaded file's SHA-256 (mapping-and-profiles.md
     /// §6.1) holding the connector and the first pad's pin; false with the reason
     bool KeepAutoDecision(QString& error);

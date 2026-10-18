@@ -2,14 +2,16 @@
 
 /// @file controllersdialog.h
 /// @brief Tools > Controllers (docs/inprogress/2026-10-17-controller-manager/ui-ux.md §2): host devices on the left,
-/// the selected device's controls with their live value and binding in the centre (a press selects the control:
-/// press-to-bind), the machine's connectors with their retro device on the right, the applied profiles on top.
-/// Above the controls, the device's picture with a callout per control (ControllerPicture, C5).
+/// the selected device's picture (ControllerPicture, C5) and its bindings from the machine's side (BindingTable: what
+/// the game sees, each with the pad's controls bound to it) in the centre, the machine's connectors with their retro
+/// device on the right, the applied profiles on top. Profiles… opens the profile manager.
 
 #include <QWidget>
 
 #include <string>
 
+class ActionRegistry;
+class BindingTable;
 class ControllerPicture;
 class HostControllers;
 class QCheckBox;
@@ -26,6 +28,8 @@ class ControllersDialog : public QWidget
 
 public:
     explicit ControllersDialog(HostControllers* host, QWidget* parent = nullptr);
+    /// The host actions the bindings offer by name
+    void setActions(const ActionRegistry* actions);
 
 signals:
     void visibilityChanged(bool visible);
@@ -39,12 +43,10 @@ private:
     void rebuildControls();
     void rebuildConnectors();
     void tick();
-    void bindSelected();
     void plug(const std::string& connector, const QString& device);
     std::string selectedDevice() const;
     std::string selectedFamily() const;
     std::string selectedLayout() const;
-    void selectControl(const QString& control);
 
     HostControllers* _host = nullptr;
     QLabel* _profileLabel = nullptr;
@@ -56,8 +58,8 @@ private:
     QLabel* _deviceTitle = nullptr;
     ControllerPicture* _picture = nullptr;
     QString _pictureSet;
-    QTableWidget* _controls = nullptr;
-    QPushButton* _bindButton = nullptr;
+    BindingTable* _table = nullptr;
+    QPushButton* _profilesButton = nullptr;
     QPushButton* _identifyButton = nullptr;  ///< a 300 ms rumble on the selected device (ui-ux.md)
     QTableWidget* _connectors = nullptr;
     QLabel* _machineLabel = nullptr;

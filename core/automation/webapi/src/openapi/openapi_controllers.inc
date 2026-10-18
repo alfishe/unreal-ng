@@ -105,15 +105,17 @@
         replies(get);
 
         Json::Value& post = paths["/api/v1/controllers/{verb}"]["post"];
-        post["summary"] = "Host game controllers: save, delete, apply a profile; bind, unbind a control";
+        post["summary"] = "Host game controllers: save, delete, apply a profile; bind, unbind a control; the scheme";
         post["description"] =
             "Body (JSON) or query. save {text}: a profile as YAML or JSON (schema 1) into the user's profiles, applied "
             "at once. delete {id}: a user profile (a built-in of the same id comes back). apply {id}: the game profile "
             "chosen by hand, for a program the emulator did not load itself ('none' = by the loaded file). bind "
             "{control, spec, layer, family | device | profile}: spec is a binding object ({key: ENTER}, {retro: "
             "'auto:fire'}, {none: true}); it goes into user/<family>, user/device-<id>, user/global or the named "
-            "profile (a shipped one is copied into the user's). unbind {control, layer, ...}: removes it there";
+            "profile (a shipped one is copied into the user's). unbind {control, layer, ...}: removes it there. "
+            "scheme {id, family | device | profile}: the scheme that profile extends (scheme/kempston, "
+            "scheme/sinclair-1; 'none' = no scheme)";
         post["tags"].append("Controllers");
-        verbParameter(post, {"save", "delete", "apply", "bind", "unbind"});
+        verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme"});
         replies(post);
     }

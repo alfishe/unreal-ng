@@ -9,7 +9,8 @@
 /// The profiles and the router belong to the process's host input owner (the Qt client's HostControllers): it
 /// registers itself with SetOwner and a runner that executes a request on its own thread.
 ///
-/// Verbs: devices, context, profiles, profile, save, delete, apply, bindings, bind, unbind.
+/// Verbs: devices, context, profiles, profile, save, delete, apply, bindings, bind, unbind, scheme (the scheme a user
+/// profile extends: how the pad works, Kempston, Sinclair 1, QAOP + Space).
 ///
 /// @code
 ///   HostRequest request{"apply", {{"id", "builtin/game/vradarks-revenge"}}};
@@ -85,6 +86,9 @@ public:
 
     static const std::vector<std::string>& Verbs();
     static const std::vector<std::string>& OptionsFor(const std::string& verb);
+    /// The user profile bind / unbind / scheme write without a named profile: user/device-<id>, user/<family>,
+    /// user/global
+    static std::string UserProfileFor(const std::string& device, const std::string& family);
 
     /// The process's owner (nullptr when it goes); @p run defaults to calling in place
     static void SetOwner(IHostInputOwner* owner, Runner run = {});
@@ -101,6 +105,11 @@ private:
     HostReply Apply(const HostRequest& request);
     HostReply Bindings(const HostRequest& request);
     HostReply Bind(const HostRequest& request, bool unbind);
+    HostReply Scheme(const HostRequest& request);
+    /// The user profile a request edits (profile=, else by device / family), copied from the store or new
+    bool EditProfile(const HostRequest& request, bool mustExist, Profile& profile, std::string& id, HostReply& failure);
+    /// Check through the reader, save, keep and apply
+    HostReply Store(const Profile& profile, const std::string& message);
 
     /// The profile @p id, parsing a shipped game from the index when it is not kept yet
     const Profile* FindProfile(const std::string& id);

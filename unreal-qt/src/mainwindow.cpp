@@ -370,6 +370,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     RegisterDefaultActions(*_actionRegistry, m_binding,
                            {debuggerWindow, [this] { handleDebuggerToggled(true); },
                             [this] { handleScreenshotRequested(); }});
+    _controllersDialog->setActions(_actionRegistry);
     connect(_hostControllers, &HostControllers::actionTriggered, this, [this](const QString& action, bool pressed) {
         QString error;
         if (!_actionRegistry->Trigger(action.toStdString(), pressed, error))

@@ -143,6 +143,22 @@ TEST(HostInputControl_Test, ProfilesApplyAndBindings)
     reply = control.Execute({"unbind", {{"control", "north"}, {"family", "dualsense"}}});
     ASSERT_TRUE(reply.Ok()) << reply.message;
 
+    // The pad works as Sinclair 1: the family's profile extends the scheme, its keys come from it; none undoes it
+    reply = control.Execute({"scheme", {{"id", "scheme/sinclair-1"}, {"family", "dualsense"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(owner.Profiles().Find("user/dualsense")->extends, std::vector<std::string>{"scheme/sinclair-1"});
+    reply = control.Execute({"bindings", {{"device", "bt:054c:0ce6:1"}}});
+    const JsonValue* left = FindItem(*reply.body.Find("bindings"), "control", "dpad.left");
+    ASSERT_NE(left, nullptr);
+    EXPECT_EQ(left->Find("profile")->AsString(), "scheme/sinclair-1");
+    EXPECT_EQ(control.Execute({"scheme", {{"id", "builtin/play/pad-default"}, {"family", "dualsense"}}}).error,
+              "bad-request")
+        << "only a scheme";
+    reply = control.Execute({"scheme", {{"id", "none"}, {"family", "dualsense"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_TRUE(owner.Profiles().Find("user/dualsense")->extends.empty());
+    EXPECT_EQ(HostInputControl::UserProfileFor("bt:054c:0ce6:1", "dualsense"), "user/device-bt_054c_0ce6_1");
+
     fs::remove_all(root);
 }
 
