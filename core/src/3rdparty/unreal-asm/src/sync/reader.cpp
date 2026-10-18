@@ -1145,9 +1145,22 @@ SyncDescriptor Zeus1983()
 {
     SyncDescriptor d = Zeus("zeus-1983", "ZEUS 1983 (Crystal)", "1983", 0xE028,
              "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x20\x20\x20\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53", 0xFD00, "C");
+    d.identify.push_back({0xE040, std::string("EMBLER\r\x7F 1983 Crystal")});   // ZEUS 128 too; ZEUS+ 3.1 says 1993
     d.linear.injectable = true;
     d.idleChain = {0xF6E5, 0xE0D5};
     d.idleWhere = "its prompt";
+    return d;
+}
+
+/// ZEUS+ 3.1 (H.S.O. 1993, resident; ZEUS31HS: RUN "ZEUS+3.1") is 1983's code with 1983's title up to its second
+/// line ("1993 Crystal & H.S.O. Ver 3.1"), its labels of 6 characters (error 1 from the seventh)
+SyncDescriptor Zeus31()
+{
+    SyncDescriptor d = Zeus1983();
+    d.id = "zeus-3.1";
+    d.title = "ZEUS+ 3.1 (H.S.O. 1993)";
+    d.version = "3.1";
+    d.identify.back() = {0xE040, std::string("EMBLER\r\x7F 1993 Crystal & H.S.O.")};
     return d;
 }
 
@@ -1165,7 +1178,7 @@ SyncDescriptor ZeusGg()
 
 /// The ports that kept ZEUS 1983's code at #E000 and its words at #FD00 (asm-synchronizer.md §7.14, 2026-10-17): each
 /// told by its title at #E028, its line input returning through #F6E5, #E0D5 like 1983's (2.2SI's own input #6EAC).
-/// ZEUS+ 3.1 (ZEUS31HS) and ZEUS 128 keep 1983's title: zeus-1983 reads them
+/// ZEUS 128 (Stars Soft 1995, its menu's first line) keeps 1983's title: zeus-1983 reads it
 SyncDescriptor ZeusPort(const char* id, const char* title, const char* signature, std::vector<uint16_t> idleChain = {0xF6E5, 0xE0D5})
 {
     SyncDescriptor d = Zeus(id, title, "1983", 0xE028, signature, 0xFD00, "C");
@@ -2200,9 +2213,10 @@ const std::vector<SyncDescriptor>& Descriptors()
                       "\xC9\xF5\xD6\x34\x5F\x16\x37\xCD\xC4\x86\xC5\x21\x03\x5E\xAF\x4F\x23\x0C\xBE\x20\xFB\x11\xF0\x5D"),
         Pasm30(),
         Zeus1983(),
+        Zeus31(),
         Zeus11(),
         ZeusGg(),
-        ZeusPort("zeus-2.2", "ZEUS 2.2 (Sayanov 1996)",
+        ZeusPort("zeus-2.2", "ZEUS 2.2 (Bayanov 1996)",
                  "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x5A\x45\x55\x53\x20\x76\x32\x2E\x32\x0D\x7F\x31\x39\x38\x33"),
         ZeusPort("zeus-2.2si", "ZEUS 2.2SI (SI Soft 1991)",
                  "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53\x45\x4D\x42", {0x6EAC, 0xE0D5}),

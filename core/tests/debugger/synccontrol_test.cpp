@@ -350,7 +350,8 @@ TEST_F(SyncControl_Test, InjectPutsTheSourcesAHostFileIncludesIntoPagesOfTheirOw
     const std::filesystem::path folder = TestPathHelper::GetUniqueTestScratchPath("project");
     std::filesystem::create_directories(folder / "lib");
     const auto write = [&](const std::filesystem::path& path, const std::string& text) { std::ofstream(path, std::ios::binary) << text; };
-    write(folder / "main.asm", "        ORG #6000\n        INCLUDE \"lib/inc1.asm\"\n        INCLUDE \"inc2.asm\"\nend_    RET\n");
+    // INF reads as ASM80's directive: detection is "ambiguous: asm80 vs text", the file still goes as a text
+    write(folder / "main.asm", "        ORG #6000\n        INCLUDE \"lib/inc1.asm\"\n        INCLUDE \"inc2.asm\"\n        LD A,INF\nend_    RET\nINF     EQU 1\n");
     write(folder / "lib" / "inc1.asm", "        LD HL,end_\n");
     write(folder / "inc2.asm", "        NOP\n");
 

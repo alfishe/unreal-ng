@@ -639,6 +639,10 @@ bool AsmControl::ReadDocument(const AsmRequest& request, SourceDocument& out, Di
     DetectResult detected;
     const std::string name = Option(request, "codec");
     const ISourceCodec* codec = CodecFor(source, name, detected);
+    // As zxasm inject: a source no tokenized format claims for sure is a text in 'from''s dialect (sjasmplus by default)
+    if (!codec && name.empty())
+        if (const ISourceCodec* text = CodecRegistry::Builtin().Find("text"); text && text->Detect(source.bytes, source.hints) > 0)
+            codec = text;
     if (!codec)
     {
         failure = name.empty() ? Fail(AsmControlError::Failed, "no format recognized: " + detected.reason + " (give 'codec')")

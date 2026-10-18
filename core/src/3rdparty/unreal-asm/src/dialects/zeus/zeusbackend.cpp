@@ -54,7 +54,7 @@ public:
     }
 
 private:
-    std::string version;   // "1983", "gg", "pht" (v7.E), "1.1" (PHT's table, no * / %), "primus" (Primus 2.9)
+    std::string version;   // "1983", "3.1" (ZEUS+ 3.1), "gg", "pht" (v7.E), "1.1" (PHT's table, no * / %), "primus" (Primus 2.9)
 
     bool Pht() const { return version == "pht" || version == "1.1"; }
     bool V7e() const { return version == "pht"; }   // * and %binary (1.1 refuses them: error 0)
@@ -62,8 +62,9 @@ private:
     int orgs = 0;          // Primus takes one ORG
 
     std::string Title() const override { return Primus() ? "Primus" : "ZEUS"; }
-    /// labels of up to 14 characters, compared whole with case (manual 5.1.1); Primus 16 (its PRI.DOC)
-    size_t Significant() const override { return Primus() ? 16 : 14; }
+    /// labels of up to 14 characters, compared whole with case (manual 5.1.1); Primus 16 (its PRI.DOC); ZEUS+ 3.1 6 (a
+    /// seventh is its error 1, "label too long", seen in unreal-ng)
+    size_t Significant() const override { return Primus() ? 16 : version == "3.1" ? 6 : 14; }
     std::string Key(const std::string& name) const override { return name; }
     bool Reserved(const std::string& upper) const override { return kWords.count(upper) || z80::IsMnemonic(z80::Lower(upper)); }
     /// letters and digits, a letter first (no "_" in ZEUS)

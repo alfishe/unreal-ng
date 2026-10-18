@@ -187,6 +187,7 @@ TEST(Snapshot_Test, EveryAssemblerTemplateTakesASourceWithoutAnEmulator)
         {"prometheus-48-trdos", true}, {"prometheus-128", true}, {"prometheus-128m", true}, {"prometheus-128s", true},
         {"zeus-2.2", false},   {"zeus-2.2si", false}, {"zeus-pro", false}, {"zeus-plus-2.16", false},
         {"storm-1.3i", false},   // STORM 1.3i: the 1.3 descriptor
+        {"zeus-3.1", false},
     };
     SourceDocument source = SourceDocument::FromText(ReadTestText("dialects/alasm-backend/oracle1.asm"), "sjasmplus");
     source.name = "oracle1";
@@ -202,6 +203,11 @@ TEST(Snapshot_Test, EveryAssemblerTemplateTakesASourceWithoutAnEmulator)
         ASSERT_NE(descriptor, nullptr) << id;
         std::string why;
         EXPECT_TRUE(sync::Idle(sync::ViewOf(snapshot), *descriptor, why)) << id << ": " << why;
+        // the probe names it alone (ZEUS+ 3.1 carries 1983's title up to its second line)
+        const std::vector<sync::ProbeCandidate> candidates = sync::Probe(sync::ViewOf(snapshot));
+        ASSERT_FALSE(candidates.empty()) << id;
+        EXPECT_EQ(candidates[0].descriptor, descriptor) << id << ": " << candidates[0].descriptor->id;
+        EXPECT_TRUE(candidates.size() == 1 || candidates[1].score < candidates[0].score) << id << ": " << candidates[1].descriptor->id;
 
         sync::InjectOptions options;
         options.force = force;
