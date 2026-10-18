@@ -497,12 +497,32 @@ def zeus_disk_boot(emu, args):
     time.sleep(0.5)
 
 
+ZEUSPLUS_TABLE_TOPS = (0xE09D, 0xE46B, 0xE5FB, 0xEB8D)   # LD HL,#5800 operands (1983: #DFF0)
+
+
 def zeusplus_boot(emu, args):
     """Zeus Plus 2.16 Max (Stepanenko 1991): its window menu first (ZEUS / TEXT / CODE / MMAN), ENTER takes ZEUS"""
     emu.insert_disk(os.path.abspath(args.disk))
     emu.run_trdos(args.boot or 'boot', wait=10)
     emu.tap('enter')
     time.sleep(2)
+    # This MAX build moved 1983's label table (top #DFF0) into the screen but left LD HL,#5800 in four places where
+    # 1983 has the top: its first label lands in the slot that holds the name being read (#57F0), ERROR 6 follows
+    # from the third label on. The four made #57F0, as 1983 has them, the table takes a text with many labels
+    for operand in ZEUSPLUS_TABLE_TOPS:
+        if bytes(emu.read(operand, 2)) == b'\x00\x58':
+            emu.write(operand, [0xF0, 0x57])
+    emu.post('/keyboard/combo', {'keys': ['cs', '2'], 'frames': 6})   # CAPS LOCK: ZEUS takes capitals
+    emu.idle()
+    time.sleep(0.5)
+
+
+def zeus128_boot(emu, args):
+    """ZEUS 128 (Stars Soft 1995): its menu first, ENTER takes the first line (128 BASIC and 128K of memory)"""
+    emu.insert_disk(os.path.abspath(args.disk))
+    emu.run_trdos(args.boot or 'ZEUS.128', wait=10)
+    emu.tap('enter')
+    time.sleep(4)
     emu.post('/keyboard/combo', {'keys': ['cs', '2'], 'frames': 6})   # CAPS LOCK: ZEUS takes capitals
     emu.idle()
     time.sleep(0.5)
@@ -716,8 +736,9 @@ PROFILES = {
     'primus': Profile('primus-2.9', primus_boot, primus_finish, force=True, disk_at_finish=True),
     'zeusgg': Profile('zeus-gg', zeus_disk_boot, zeus_finish),          # --boot ZEUS
     'zeus7e': Profile('zeus-7e', zeus_disk_boot, zeus_finish),          # --boot ZEUSv7.E
-    'zeusdisk': Profile('zeus-2.2', zeus_disk_boot, zeus_finish),       # --boot ZEUS'96 (2.2), ZPro, ZEUS+3.1, ZEUS.128 + --assembler
+    'zeusdisk': Profile('zeus-2.2', zeus_disk_boot, zeus_finish),       # --boot ZEUS'96 (2.2), ZPro, ZEUS+3.1 + --assembler
     'zeus22si': Profile('zeus-2.2si', zeus22si_boot, zeus_finish),
+    'zeus128': Profile('zeus-1983', zeus128_boot, zeus_finish),
     'zeusplus': Profile('zeus-plus-2.16', zeusplus_boot, zeus_finish),
     'zeus11': Profile('zeus-1.1', zeus11_boot, zeus_finish, tape=True),  # its hobeta file ZEUS.$C (no disk to eject)
     'lasergenius': Profile('lasergenius-1.04', lasergenius_boot, lasergenius_finish, force=True),
