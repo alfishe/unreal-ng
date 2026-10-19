@@ -34,7 +34,7 @@ PortDecoder_Next* ScreenNext::Decoder() const
     return _decoder;
 }
 
-void ScreenNext::InitRaster()
+void ScreenNext::DetectRaster()
 {
     // One mode: the family of NR #03 only changes the beam (GetTimingDescriptor), which SetVideoMode reads again
     if (_mode != M_NEXT)
