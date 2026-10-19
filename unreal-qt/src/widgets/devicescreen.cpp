@@ -218,9 +218,14 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
 
         _crtRenderer->setLayout(layout, params);
         _crtRenderer->grade(drawImage->constBits(), static_cast<int>(drawImage->bytesPerLine()), params);
-        if (_crtFrame.width() != layout.outWidth || _crtFrame.height() != layout.outHeight)
-            _crtFrame = QImage(layout.outWidth, layout.outHeight, QImage::Format_RGBA8888);
-        _crtRenderer->compose(_crtFrame.bits(), static_cast<int>(_crtFrame.bytesPerLine()));
+        // Opaque in the backing store's byte order: the 1:1 draw is a copy, no conversion, no blending (RGB32 is
+        // B G R 0xFF bytes on little-endian; an image with alpha would be blended pixel by pixel)
+        constexpr bool kBgra = Q_BYTE_ORDER == Q_LITTLE_ENDIAN;
+        constexpr QImage::Format kFormat = kBgra ? QImage::Format_RGB32 : QImage::Format_RGBX8888;
+        if (_crtFrame.width() != layout.outWidth || _crtFrame.height() != layout.outHeight ||
+            _crtFrame.format() != kFormat)
+            _crtFrame = QImage(layout.outWidth, layout.outHeight, kFormat);
+        _crtRenderer->compose(_crtFrame.bits(), static_cast<int>(_crtFrame.bytesPerLine()), kBgra);
         _crtFrame.setDevicePixelRatio(dpr);
 
 #if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)

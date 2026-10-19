@@ -1,13 +1,19 @@
 #include "hostcontrollers.h"
 
+#include <QAbstractSpinBox>
+#include <QApplication>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QKeyEvent>
+#include <QLineEdit>
 #include <QMetaObject>
 #include <QSettings>
+#include <QPlainTextEdit>
 #include <QStandardPaths>
+#include <QTextEdit>
 #include <QThread>
 
 #include <algorithm>
@@ -17,6 +23,8 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/keyboard/pckey.h"
+#include "emulator/keyboardmanager.h"
 
 #ifdef ENABLE_CONTROLLERS
 #include "debugger/ttd/timetravelhooks.h"
@@ -27,6 +35,7 @@
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "haptics/profilehaptics.h"
+#include "hostcontrols.h"
 #include "profiles/json.h"
 #include "router/inputrouter.h"
 
@@ -34,6 +43,8 @@ using namespace controllers;
 
 namespace
 {
+constexpr const char* kKeyboard = "kbd:system";
+
 /// HostInputControl's view of the Qt client's host input
 class ControlOwner : public IHostInputOwner
 {
@@ -84,8 +95,12 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
 {
     _debugLayer = QSettings().value("Controllers/DebugLayer", false).toBool();
     _soundHaptics = QSettings().value("Controllers/SoundHaptics", false).toBool();
+    _globalShortcuts = QSettings().value("Controllers/GlobalShortcuts", false).toBool();
 #ifdef ENABLE_CONTROLLERS
     _service = std::make_unique<HostInputService>();
+    // The window keyboard: its debug bindings are the debugger's shortcuts; it never drives a connector
+    _service->Router().SetRole(kKeyboard, DeviceRole::DebuggerRemote);
+    _service->OnDeviceAdded({kKeyboard, tr("Keyboard").toStdString(), "keyboard", "keyboard", "qt"});
     std::vector<std::string> errors;
     _profiles.LoadDirectory(UserProfileDir().toStdString(), ProfileScope::User, errors);
     // The shipped game profiles: the index now, a profile when a loaded file or a manual choice names it
@@ -137,6 +152,8 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
 
 HostControllers::~HostControllers()
 {
+    if (_mainWindow != nullptr || _debuggerWindow != nullptr)
+        qApp->removeEventFilter(this);
     onUnbound();
 #ifdef ENABLE_CONTROLLERS
     HostInputControl::SetOwner(nullptr);
@@ -156,6 +173,122 @@ void HostControllers::SetSoundHaptics(bool on)
 #ifdef ENABLE_CONTROLLERS
     if (_attached)
         attachHaptics();
+#endif
+}
+
+void HostControllers::SetGlobalShortcuts(bool on)
+{
+    if (on == _globalShortcuts)
+        return;
+    _globalShortcuts = on;
+    QSettings().setValue("Controllers/GlobalShortcuts", on);
+}
+
+void HostControllers::SetShortcutWindows(QWidget* main, QWidget* debugger)
+{
+    if (_mainWindow == nullptr && _debuggerWindow == nullptr)
+        qApp->installEventFilter(this);
+    _mainWindow = main;
+    _debuggerWindow = debugger;
+}
+
+std::string HostControllers::KeyControlOf(const QKeyEvent* event)
+{
+#ifdef ENABLE_CONTROLLERS
+    const PcKey key = KeyboardManager::mapQtEventToPcKey(event);
+    switch (key)
+    {
+        case PcKey::None:
+        case PcKey::LeftShift:
+        case PcKey::RightShift:
+        case PcKey::LeftCtrl:
+        case PcKey::RightCtrl:
+        case PcKey::LeftAlt:
+        case PcKey::RightAlt:
+        case PcKey::LeftGui:
+        case PcKey::RightGui:
+            return {};
+        default:
+            break;
+    }
+    const Qt::KeyboardModifiers modifiers = event->modifiers();
+    uint8_t held = 0;
+    if (modifiers.testFlag(Qt::ControlModifier))
+        held |= kKeyCtrl;
+    if (modifiers.testFlag(Qt::AltModifier))
+        held |= kKeyAlt;
+    if (modifiers.testFlag(Qt::ShiftModifier))
+        held |= kKeyShift;
+    if (modifiers.testFlag(Qt::MetaModifier))
+        held |= kKeyMeta;
+    return KeyControl(pckey::Name(key), held);
+#else
+    (void)event;
+    return {};
+#endif
+}
+
+bool HostControllers::eventFilter(QObject* watched, QEvent* event)
+{
+    const QEvent::Type type = event->type();
+    if (type != QEvent::KeyPress && type != QEvent::KeyRelease && type != QEvent::ShortcutOverride)
+        return QObject::eventFilter(watched, event);
+    // The debugger window always, the main window with global shortcuts on; a dialog never
+    QWidget* window = QApplication::activeWindow();
+    if (window == nullptr || !(window == _debuggerWindow || (_globalShortcuts && window == _mainWindow)))
+        return QObject::eventFilter(watched, event);
+    auto* key = static_cast<QKeyEvent*>(event);
+    if (type == QEvent::ShortcutOverride)
+    {
+        // A bound key comes as a key press, not as a menu shortcut of the window
+#ifdef ENABLE_CONTROLLERS
+        const std::string control = KeyControlOf(key);
+        if (!control.empty() && _service->Router().Consumes(kKeyboard, control))
+            event->accept();
+#endif
+        return QObject::eventFilter(watched, event);
+    }
+    return shortcutKey(key, type == QEvent::KeyPress) || QObject::eventFilter(watched, event);
+}
+
+bool HostControllers::shortcutKey(const QKeyEvent* event, bool pressed)
+{
+#ifdef ENABLE_CONTROLLERS
+    const int code = static_cast<int>(KeyboardManager::mapQtEventToPcKey(event));
+    auto held = _heldKeys.find(code);
+    if (!pressed)
+    {
+        // An event that propagates to the parent comes again: the first one released it
+        if (held == _heldKeys.end() || event->isAutoRepeat())
+            return held != _heldKeys.end() && held->second.taken;
+        const HeldKey key = held->second;
+        _heldKeys.erase(held);
+        _service->OnControl({kKeyboard, key.control, 0, 0});
+        return key.taken;
+    }
+    if (held != _heldKeys.end())
+        return held->second.taken;  // the auto-repeat, or the same press seen by a parent
+    const std::string control = KeyControlOf(event);
+    if (control.empty())
+        return false;
+    // A text field keeps its keys: there only the function keys are shortcuts
+    QWidget* focus = QApplication::focusWidget();
+    const auto* line = qobject_cast<QLineEdit*>(focus);
+    const auto* text = qobject_cast<QTextEdit*>(focus);
+    const auto* plain = qobject_cast<QPlainTextEdit*>(focus);
+    const bool editing = (line != nullptr && !line->isReadOnly()) || (text != nullptr && !text->isReadOnly()) ||
+                         (plain != nullptr && !plain->isReadOnly()) || qobject_cast<QAbstractSpinBox*>(focus);
+    const PcKey key = static_cast<PcKey>(code);
+    if (editing && !(key >= PcKey::Function1 && key <= PcKey::Function12))
+        return false;
+    const bool taken = _service->Router().Consumes(kKeyboard, control);
+    _heldKeys[code] = {control, taken};
+    _service->OnControl({kKeyboard, control, 1, 0});
+    return taken;
+#else
+    (void)event;
+    (void)pressed;
+    return false;
 #endif
 }
 
@@ -234,7 +367,7 @@ void HostControllers::poll()
 
     const std::vector<HostDeviceInfo> devices = _service->Router().Devices();
     for (const HostDeviceInfo& device : devices)
-        if (std::find(_known.begin(), _known.end(), device.id) == _known.end())
+        if (device.id != kKeyboard && std::find(_known.begin(), _known.end(), device.id) == _known.end())
             emit notice(tr("%1 connected").arg(QString::fromStdString(device.name)));
     _known.clear();
     for (const HostDeviceInfo& device : devices)

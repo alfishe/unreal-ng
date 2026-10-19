@@ -135,7 +135,10 @@ needs none of this).
 
 ## 4. Keyboard mappings
 
-The window keyboard is a host device (`kbd:system`) with controls `key.<PcKey>`. Its events come from Qt
+The window keyboard is a host device (`kbd:system`) with controls `key.<PcKey>`, and `key.<modifiers>.<PcKey>` for
+the shortcut combos (`key.ctrl.f10`, [debug-and-ttd.md §4.3](debug-and-ttd.md#43-keyboard)). The Qt client registers
+it as a debugger remote: today it carries the debugger's shortcuts only, and the numpad joystick still comes from the
+core's `JoystickKeys=` path. Its events come from Qt
 (`KeyboardManager::postHostKey`, `unreal-qt/src/emulator/keyboardmanager.cpp:293`) and the core already turns them into
 ZX keys, PS/2 bytes and Kempston bits ([docs/features/keyboard.md](../../features/keyboard.md)).
 

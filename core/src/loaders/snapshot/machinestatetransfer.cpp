@@ -23,6 +23,7 @@
 #include "emulator/media/mediamanager.h"
 #include "emulator/media/medium.h"
 #include "emulator/memory/memory.h"
+#include "emulator/io/rtc/ds12887.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/ports/statetransferhost.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
@@ -1182,6 +1183,11 @@ MachineStateTransfer::Report MachineStateTransfer::Apply(EmulatorContext& source
             }
         }
 
+        // The target's clock chip stays its own (no transfer between two of them): it keeps its time over the jump
+        // of the emulated clock it runs on
+        Ds12887* const targetRtc = target.pPortDecoder ? target.pPortDecoder->RtcChip() : nullptr;
+        const uint64_t emulatedBefore = targetRtc ? target.pPortDecoder->EmulatedMicroseconds() : 0;
+
         EmulatorState& state = target.emulatorState;
         state.pFE = source.emulatorState.pFE;
         state.border_attr = source.emulatorState.border_attr;
@@ -1193,6 +1199,8 @@ MachineStateTransfer::Report MachineStateTransfer::Apply(EmulatorContext& source
         state.frame_counter = source.emulatorState.frame_counter;
 
         ApplyCpu(source, target, keepPosition);
+        if (targetRtc)
+            targetRtc->RebaseEmulatedTime(emulatedBefore, target.pPortDecoder->EmulatedMicroseconds());
         TransferDevices(source, target, false, true, media, report.items);
 
         // The banks from the latches, then the DOS ROM over them when the source is in TR-DOS

@@ -20,8 +20,9 @@
 /// @file ttdds12887_test.cpp
 /// @brief TTD capture of the shared clock chip (PeripheralId::Ds12887) on every
 /// machine that wires one: the blob is registered, recording switches the
-/// clock to emulated time before the baseline, the emulated clock follows the
-/// frames, and stopping returns it to the host clock with the guest's offset.
+/// clock runs on emulated time (the tests' fixed start, EmulatorTestHelper;
+/// the baseline holds it), the emulated clock follows the frames, a reset
+/// keeps the time, and stopping keeps the tests' time base.
 
 namespace
 {
@@ -65,8 +66,8 @@ class TTDDs12887_Test : public ::testing::TestWithParam<std::string>
 {
 };
 
-/// Recording: the chip is registered, runs on emulated time from the
-/// baseline on and counts with the frames; stopping hands it back to the host
+/// Recording: the chip is registered, runs on emulated time (the tests' fixed
+/// start: the baseline holds it) and counts with the frames; stopping keeps it there
 TEST_P(TTDDs12887_Test, RecordingRunsTheClockOnEmulatedTime)
 {
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(GetParam(), LoggerLevel::LogError);
@@ -77,10 +78,10 @@ TEST_P(TTDDs12887_Test, RecordingRunsTheClockOnEmulatedTime)
     ttd::TimeTravelController* ttd = context->pTimeTravelController;
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
 
-    EXPECT_EQ(rtc->GetTimeMode(), Ds12887::TimeMode::Host);
+    EXPECT_EQ(rtc->GetTimeMode(), Ds12887::TimeMode::Emulated) << "the tests' fixed start";
     ASSERT_TRUE(ttd->StartRecording());
     EXPECT_TRUE(ttd->GetPeripheralRegistry().IsRegistered(ttd::TTDDeviceType::Ds12887));
-    EXPECT_EQ(rtc->GetTimeMode(), Ds12887::TimeMode::Emulated) << "switched before the baseline";
+    EXPECT_EQ(rtc->GetTimeMode(), Ds12887::TimeMode::Emulated) << "still at the baseline";
 
     const ttd::TTDCheckpoint* baseline = ttd->GetCheckpoint(0);
     ASSERT_NE(baseline, nullptr);
@@ -114,7 +115,34 @@ TEST_P(TTDDs12887_Test, RecordingRunsTheClockOnEmulatedTime)
     EXPECT_EQ(Read(*rtc, Ds12887::kHours), 0x10);
 
     ttd->StopRecording();
-    EXPECT_EQ(rtc->GetTimeMode(), Ds12887::TimeMode::Host) << "back to the host clock";
+    EXPECT_EQ(rtc->GetTimeMode(), Ds12887::TimeMode::Emulated) << "the tests' time base outlives the session";
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// The tests run the clock on emulated time from a fixed start, so a test never reads the host's speed or its clock;
+/// a reset restarts the emulated time but not the battery clock. Boot-bound (~40 frames for half a second of
+/// emulated time)
+TEST_P(TTDDs12887_Test, TestClockRunsOnEmulatedTimeAndKeepsItOverAReset)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(GetParam(), LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr) << GetParam();
+    EmulatorContext* context = emulator->GetContext();
+    Ds12887* rtc = RtcOf(context);
+    ASSERT_NE(rtc, nullptr);
+    EXPECT_EQ(rtc, context->pPortDecoder->RtcChip());
+    EXPECT_EQ(rtc->GetTimeMode(), Ds12887::TimeMode::Emulated);
+
+    SetTenOClock(*rtc);
+    emulator->RunNFrames(40);
+    const uint8_t seconds = Read(*rtc, Ds12887::kSeconds);
+    const uint8_t minutes = Read(*rtc, Ds12887::kMinutes);
+    const uint8_t hours = Read(*rtc, Ds12887::kHours);
+    ASSERT_EQ(hours, 0x10);
+    emulator->Reset();
+    EXPECT_EQ(Read(*rtc, Ds12887::kSeconds), seconds);
+    EXPECT_EQ(Read(*rtc, Ds12887::kMinutes), minutes);
+    EXPECT_EQ(Read(*rtc, Ds12887::kHours), hours);
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

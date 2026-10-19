@@ -185,3 +185,24 @@ TEST(CRTRenderer_Test, NoneIsThePlainPictureExactly)
             ASSERT_EQ(0, std::memcmp(source, shown, 3)) << x << "," << y;
         }
 }
+
+TEST(CRTRenderer_Test, BgraIsTheSamePictureSwapped)
+{
+    // The software screen composes in its backing store's byte order: the same values, red and blue swapped
+    const std::vector<uint8_t> frame = MakeFrame();
+    for (CRTProfile profile : {CRTProfile::None, CRTProfile::Megatron})
+    {
+        CRTRenderer renderer;
+        const CRTRenderer::Layout layout = MakeLayout(2);
+        const std::vector<uint8_t> rgba = Render(renderer, layout, CRTProfileParams::FromProfile(profile), frame);
+        std::vector<uint8_t> bgra(rgba.size());
+        renderer.compose(bgra.data(), layout.outWidth * 4, true);
+        for (size_t i = 0; i < rgba.size(); i += 4)
+        {
+            ASSERT_EQ(bgra[i], rgba[i + 2]) << i;
+            ASSERT_EQ(bgra[i + 1], rgba[i + 1]) << i;
+            ASSERT_EQ(bgra[i + 2], rgba[i]) << i;
+            ASSERT_EQ(bgra[i + 3], 255) << i;
+        }
+    }
+}

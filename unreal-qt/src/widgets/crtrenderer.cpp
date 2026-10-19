@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <thread>
 
 namespace
@@ -157,6 +158,7 @@ bool CRTRenderer::setLayout(const Layout& layout, const CRTProfileParams& params
     _layout = layout;
     _params = params;
     _built = true;
+    _plain = params.profile == CRTProfile::None;
     if (colorChanged)
         buildColorTables(params);
     buildGeometry(params);
@@ -256,6 +258,15 @@ void CRTRenderer::grade(const uint8_t* src, int stride, const CRTProfileParams& 
     if (width <= 0 || height <= 0 || !src)
         return;
 
+    // The plain picture's grading is the identity: a copy (the alpha byte is never read)
+    if (_plain)
+    {
+        for (int y = 0; y < height; ++y)
+            std::memcpy(_graded.data() + static_cast<size_t>(y) * width * 4, src + static_cast<size_t>(y) * stride,
+                        static_cast<size_t>(width) * 4);
+        return;
+    }
+
     // Bloom: a separable binomial blur (1 4 6 4 1, taps _bloomStep apart), added by its strength
     const int step = _bloomStep;
     if (_bloom256 > 0)
@@ -327,12 +338,19 @@ void CRTRenderer::grade(const uint8_t* src, int stride, const CRTProfileParams& 
     });
 }
 
-void CRTRenderer::compose(uint8_t* out, int stride) const
+void CRTRenderer::compose(uint8_t* out, int stride, bool bgra) const
 {
+    const int red = bgra ? 2 : 0;
+    const int blue = bgra ? 0 : 2;
     const int width = _layout.outWidth;
     const int frameWidth = _layout.frameWidth;
     if (!out || _graded.empty() || _index.size() != static_cast<size_t>(width) * _layout.outHeight * 4)
         return;
+    if (_plain)
+    {
+        composePlain(out, stride, bgra);
+        return;
+    }
     ForRows(_layout.outHeight, [&](int firstRow, int endRow) {
         for (int y = firstRow; y < endRow; ++y)
         {
@@ -344,9 +362,43 @@ void CRTRenderer::compose(uint8_t* out, int stride) const
                 const int sx = index[0] | (index[1] << 8);
                 const int sy = index[2] | (index[3] << 8);
                 const uint8_t* c = _graded.data() + (static_cast<size_t>(sy) * frameWidth + sx) * 4;
-                o[0] = static_cast<uint8_t>(std::min(255, (c[0] * factor[0]) >> 7));
+                o[red] = static_cast<uint8_t>(std::min(255, (c[0] * factor[0]) >> 7));
                 o[1] = static_cast<uint8_t>(std::min(255, (c[1] * factor[1]) >> 7));
-                o[2] = static_cast<uint8_t>(std::min(255, (c[2] * factor[2]) >> 7));
+                o[blue] = static_cast<uint8_t>(std::min(255, (c[2] * factor[2]) >> 7));
+                o[3] = 255;
+            }
+        }
+    });
+}
+
+void CRTRenderer::composePlain(uint8_t* out, int stride, bool bgra) const
+{
+    const int red = bgra ? 2 : 0;
+    const int blue = bgra ? 0 : 2;
+    // The same values as compose() with factor 128 (c * 128 >> 7 = c): every row maps x alike, so a row showing the
+    // source row of the one above is a copy of it
+    const int width = _layout.outWidth;
+    const int frameWidth = _layout.frameWidth;
+    ForRows(_layout.outHeight, [&](int firstRow, int endRow) {
+        int shownRow = -1;
+        for (int y = firstRow; y < endRow; ++y)
+        {
+            const uint8_t* index = _index.data() + static_cast<size_t>(y) * width * 4;
+            const int sy = index[2] | (index[3] << 8);
+            uint8_t* o = out + static_cast<size_t>(y) * stride;
+            if (sy == shownRow)
+            {
+                std::memcpy(o, o - stride, static_cast<size_t>(width) * 4);
+                continue;
+            }
+            shownRow = sy;
+            const uint8_t* row = _graded.data() + static_cast<size_t>(sy) * frameWidth * 4;
+            for (int x = 0; x < width; ++x, index += 4, o += 4)
+            {
+                const uint8_t* c = row + static_cast<size_t>(index[0] | (index[1] << 8)) * 4;
+                o[red] = c[0];
+                o[1] = c[1];
+                o[blue] = c[2];
                 o[3] = 255;
             }
         }

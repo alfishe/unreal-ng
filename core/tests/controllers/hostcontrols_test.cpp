@@ -43,6 +43,18 @@ TEST(HostControls_Test, ParseControl_FixedRawDerived)
     EXPECT_FALSE(ParseControl("lstick.sideways", info));
 }
 
+/// The window keyboard's shortcuts: the modifiers in one order, '.' between them (debug-and-ttd.md §4.3)
+TEST(HostControls_Test, KeyControl_ModifiersInAFixedOrder)
+{
+    EXPECT_EQ(KeyControl("f10", 0), "key.f10");
+    EXPECT_EQ(KeyControl("F10", kKeyCtrl), "key.ctrl.f10");
+    EXPECT_EQ(KeyControl("f11", kKeyShift | kKeyCtrl | kKeyMeta | kKeyAlt), "key.ctrl.alt.shift.meta.f11");
+    ControlInfo info;
+    ASSERT_TRUE(ParseControl(KeyControl("left", kKeyCtrl), info));
+    EXPECT_EQ(info.type, ControlType::Button);
+    EXPECT_EQ(info.name, "key.ctrl.left") << "a key, not a stick direction";
+}
+
 TEST(HostControls_Test, RetroControls_KempstonAndMdPadShareTheBits)
 {
     uint16_t mask = 0;

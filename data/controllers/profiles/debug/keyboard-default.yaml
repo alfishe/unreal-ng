@@ -1,0 +1,18 @@
+# The debugger's keyboard shortcuts (debug-and-ttd.md §4.3): the window keyboard is a debugger remote, so these
+# work in the debugger window without the debug layer, and in the main window with "global shortcuts" on. Ctrl is
+# Command on macOS
+schema: 1
+kind: debug
+id: builtin/debug/keyboard-default
+label: Debugger shortcuts
+applies_to: { families: [keyboard] }
+layers:
+  debug:
+    key.f5:         { action: run.pause_toggle }
+    key.f10:        { action: run.step_over }
+    key.f11:        { action: run.step_in }
+    key.shift.f11:  { action: run.step_out }
+    key.ctrl.f10:   { action: run.frame_step }
+    key.ctrl.left:  { action: ttd.step_back_instruction }
+    key.ctrl.right: { action: ttd.step_forward_instruction }
+    key.ctrl.b:     { action: ttd.bookmark_add }

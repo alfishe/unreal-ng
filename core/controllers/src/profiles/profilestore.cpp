@@ -67,11 +67,20 @@ bool AppliesTo(const Profile& profile, const ScopeTarget& target)
     return true;
 }
 
+/// A debug profile of the keyboard alone: its bindings are the debugger's shortcuts (debug-and-ttd.md §4.3), which
+/// work without the debug layer
+bool KeyboardShortcuts(const Profile& profile)
+{
+    return profile.devices.empty() && !profile.families.empty() &&
+           std::all_of(profile.families.begin(), profile.families.end(),
+                       [](const std::string& family) { return family == "keyboard"; });
+}
+
 bool Selected(const Profile& profile, const ProfileContext& context)
 {
     if (profile.scheme)
         return false;
-    if (profile.kind == ProfileKind::Debug && !context.debugLayer)
+    if (profile.kind == ProfileKind::Debug && !context.debugLayer && !KeyboardShortcuts(profile))
         return false;
     if (!profile.machines.empty() && !context.machine.empty() && !Contains(profile.machines, context.machine))
         return false;
