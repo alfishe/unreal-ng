@@ -236,7 +236,9 @@ GC↔IOHID match (D18) matters for haptics.
   "this game has haptics" badge when a profile with haptics matched.
 - **Advanced**: the Haptics tab: sources with live meters, rules, the effect editor with "Test", per-actuator meters,
   the gate state ("muted: replay"), and the per-device strength.
-- **Test** plays each effect on the selected device; "Identify" stays a 300 ms rumble (ui-ux.md).
+- **Test** plays each effect on the selected device; "Identify" stays a 300 ms rumble (ui-ux.md). The device list's
+  **Test haptics** button (built) plays Identify, one effect per actuator and a swell; off, with the backend's reason
+  in its tooltip, for a device without motors the emulator can drive.
 - The controller picture lights the actuator zones (grips, triggers) while they play.
 
 ## 11. Surfaces
