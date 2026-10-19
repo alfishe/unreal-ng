@@ -250,6 +250,7 @@ TEST(StormBackend_Test, AWideLineGetsAnEquOfItsLongestExpression)
         "value_t_a equ 3\n"
         "        ORG #8000\n"
         "        ld h,(iy+(value11_a*value11_a)+value_t_a-1)\n"
+        "        ld (iy+(value11_a*value11_a)+value_t_a-1),h\n"
         "        ld hl,(value_e_a-value_4_a-2)*256+#18\n"
         "        ret\n"
         "value_e_a equ 300\n"
@@ -260,6 +261,8 @@ TEST(StormBackend_Test, AWideLineGetsAnEquOfItsLongestExpression)
     const auto at = [&](const std::string& line) { return std::find(lines.begin(), lines.end(), line) - lines.begin(); };
     EXPECT_TRUE(Contains(lines, "S EQU VALUE11*VALUE11+VALUE_T-1")) << text;
     EXPECT_TRUE(Contains(lines, "LD H,(IY+S)")) << text;
+    EXPECT_TRUE(Contains(lines, "LD (IY+S),H")) << text;   // the same value: the same name
+    EXPECT_EQ(std::count_if(lines.begin(), lines.end(), [](const std::string& l) { return l.find("EQU VALUE11*") != std::string::npos; }), 1) << text;
     EXPECT_TRUE(Contains(lines, "S1 EQU (VALUE_E-VALUE_4-2)*256+#18")) << text;
     EXPECT_TRUE(Contains(lines, "LD HL,S1")) << text;
     EXPECT_LT(at("S EQU VALUE11*VALUE11+VALUE_T-1"), at("LD H,(IY+S)")) << text;

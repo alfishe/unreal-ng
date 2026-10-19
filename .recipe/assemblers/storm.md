@@ -121,6 +121,9 @@ bytes; the asm-synchronizer reads them without a save
   `File too big` and the text stays empty (measured 2026-10-19). `zxasm convert --project --to storm` cuts a longer file
   into INCLUDEd parts.
 - **The code is not in memory while STORM runs**: read it after BREAK Q.
+- **After Assemble, leave the error list with a cursor key, not a space**: STORM's editor takes the space into the
+  text, a 40-character line becomes 41 (blue border) and BREAK Q no longer quits (the oracles did that until
+  2026-10-19: a source whose first line has 40 characters read as "nothing assembled").
 - **The export's start field** holds the text length (82 for an 82-byte text), not an address.
 - A line of more than 40 characters cannot be stored (blue border): the format's limit. The backend puts the longest
   expression of a wider line under a name of its own (`S EQU (VALUE_E-VALUE_4-2)*256+#18`, `LD HL,S`); STORM's EQU

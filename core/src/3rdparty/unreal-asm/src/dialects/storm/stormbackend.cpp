@@ -548,13 +548,14 @@ private:
 
     struct Short
     {
-        std::string equ, line, name, expr;
+        std::string equ, line, name, expr, value;   ///< no equ: an EQU of the value given before is taken
     };
+    std::map<std::string, std::pair<std::string, size_t>> named{};   // an EQU's value: its name, the line it goes before
 
     /// An instruction line wider than STORM's 40 columns: its longest operand expression under a name of its own, an EQU
     /// of it (`LD H,(IY+(100~)+V+T+1)` -> `S1 EQU (100~)+V+T+1`, `LD H,(IY+S1)`); nothing when no operand gives a pair
     /// that fits
-    std::optional<Short> Shortened(const std::string& t)
+    std::optional<Short> Shortened(const std::string& t, size_t k)
     {
         if (t.empty() || t[0] == ';' || t[0] == '.' || t.find_first_of("\"'") != std::string::npos)
             return std::nullopt;
@@ -614,18 +615,30 @@ private:
         if (best < 8)
             return std::nullopt;
         const bool sign = bestExpr[0] == '-';
-        const std::string name = Give("S");
-        std::string equ = name;
-        equ.append(equ.size() < 8 ? 8 - equ.size() : 1, ' ');
-        equ += "EQU " + std::string(sign ? "0" : "") + bestExpr;
+        const std::string value = std::string(sign ? "0" : "") + bestExpr;
+        // the same value again: its name, where the EQU stands above or the line is an instruction (a directive's
+        // value must be known on STORM's first pass); not with $, the address of the line it was written for
+        const std::string word = z80::Upper(t.substr(command, blank - command));
+        const auto given = named.find(value);
+        const bool reuse = given != named.end() && value.find('$') == std::string::npos &&
+                           (given->second.second <= k || (word != "EQU" && word != "ORG" && word != "DS"));
+        const std::string name = reuse ? given->second.first : Give("S");
+        std::string equ;
+        if (!reuse)
+        {
+            equ = name;
+            equ.append(equ.size() < 8 ? 8 - equ.size() : 1, ' ');
+            equ += "EQU " + value;
+        }
         std::string rest = operands.substr(0, bestAt) + (sign ? "+" : "") + name + operands.substr(bestAt + best);
         const std::string shorter = head + rest;
         if (Width(equ) > kWidth || Width(shorter) > kWidth)
         {
-            taken.erase(Key(name));
+            if (!reuse)
+                taken.erase(Key(name));
             return std::nullopt;
         }
-        return Short{equ, shorter, name, bestExpr};
+        return Short{equ, shorter, name, bestExpr, value};
     }
 
     std::string CommentAfter() const override { return ";"; }
@@ -744,7 +757,12 @@ public:
             if (Width(lines[k].text) <= kWidth)
                 continue;
             std::optional<size_t> at;
-            const auto shorter = Shortened(lines[k].text);
+            const auto shorter = Shortened(lines[k].text, k);
+            if (shorter && shorter->equ.empty())
+            {
+                lines[k].text = shorter->line;
+                continue;
+            }
             if (const auto names = shorter ? Names(shorter->expr) : std::nullopt)
             {
                 size_t last = 0;
@@ -772,6 +790,7 @@ public:
             SourceLine equ = lines[k];
             equ.text = shorter->equ;
             before[*at].push_back(equ);
+            named.emplace(shorter->value, std::make_pair(shorter->name, *at));
             lines[k].text = shorter->line;
         }
         for (auto b = before.rbegin(); b != before.rend(); ++b)
