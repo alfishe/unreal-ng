@@ -16,12 +16,13 @@ bool StartsWith(std::string_view text, std::string_view prefix)
 
 /// Requests that do not change the machine, by subpath prefix (a whole segment: "/profiler" covers
 /// "/profiler/opcode/start", not "/profilers")
-constexpr std::array<std::string_view, 27> kNoChange = {
+constexpr std::array<std::string_view, 28> kNoChange = {
     "/pause",                                   // always allowed (execution arbiter design §3.7)
     "/control/session",                         // the session itself
     "/control/take-back", "/control/allow-again",   // a companion's take-back: its handler checks the companion
     "/profiler", "/coverage", "/analyzer",      // observers
     "/capture", "/audio/capture", "/audio/mixer", "/video/record", "/video/temporal",
+    "/video/window",                            // the GUI window's display settings (GPU, CRT, blending)
     "/labels", "/symbols",                      // the debugger's names, not the machine
     "/debug/pchist", "/memory/find",
     "/snapshot/save", "/snapshot/inspect",

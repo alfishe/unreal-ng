@@ -249,6 +249,10 @@ target_sources(${PROJECT_NAME} PRIVATE ${APP_ICON_RESOURCES})
 qt6_add_resources(UI_ICON_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons.qrc")
 target_sources(${PROJECT_NAME} PRIVATE ${UI_ICON_RESOURCES})
 
+# Custom CRT shaders shipped with the app: data/shaders is not deployed into any bundle
+qt6_add_resources(CRT_SHADER_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/resources/shaders.qrc")
+target_sources(${PROJECT_NAME} PRIVATE ${CRT_SHADER_RESOURCES})
+
 
 # Set common target properties
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -681,6 +685,12 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/savesnapshotchoices_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/savesnapshotchoices.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/savesnapshotchoices.h"
+        # The CRT model both screen backends share: the GPU picture is the software one bit for bit
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/crtrenderer_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtrenderer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtrenderer.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtprofiles.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtprofiles.h"
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")

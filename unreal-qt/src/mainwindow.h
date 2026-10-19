@@ -175,6 +175,8 @@ private slots:
     void handleGpuAccelerationToggled(bool enabled);
     void handleCrtEffectsToggled(bool enabled);
     void handleCrtProfileChanged(int profileIndex);
+    void handleCrtShaderChanged(const QString& name);
+    static int crtProfileIndex(CRTProfile profile);  ///< the entry of View > CRT Profile
     void handleTemporalBlendingToggled(bool enabled);
     void handleDebuggerToggled(bool visible);
     void handleDebuggerVisibilityChanged(bool visible);

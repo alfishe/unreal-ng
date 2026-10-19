@@ -208,7 +208,7 @@ CRTShaderManager& CRTShaderManager::instance()
 
 QString CRTShaderManager::shaderDirectory() const
 {
-    // Look for shaders in multiple locations:
+    // A user's own shaders, first existing of:
     // 1. Application data directory: data/shaders/
     // 2. User config directory: ~/.config/unreal-ng/shaders/ (Linux)
     //                          ~/Library/Application Support/unreal-ng/shaders/ (macOS)
@@ -238,35 +238,32 @@ QString CRTShaderManager::shaderDirectory() const
 void CRTShaderManager::scanShaderDirectory()
 {
     _shaderFiles.clear();
+    _shaderPaths.clear();
 
-    QDir dir(shaderDirectory());
-    if (!dir.exists())
-        return;
-
-    QStringList filters;
-    filters << "*.glsl" << "*.frag" << "*.fs";
-
-    QFileInfoList files = dir.entryInfoList(filters, QDir::Files | QDir::Readable);
-    for (const QFileInfo& fi : files)
+    // The shipped shaders (resources/shaders.qrc), then the user's: a user file of the same name replaces a shipped one
+    const QStringList filters = {"*.glsl", "*.frag", "*.fs"};
+    for (const QString& path : {QStringLiteral(":/shaders"), shaderDirectory()})
     {
-        _shaderFiles.push_back(fi.baseName());
+        const QDir dir(path);
+        if (!dir.exists())
+            continue;
+        for (const QFileInfo& fi : dir.entryInfoList(filters, QDir::Files | QDir::Readable, QDir::Name))
+        {
+            if (_shaderPaths.find(fi.baseName()) == _shaderPaths.end())
+                _shaderFiles.push_back(fi.baseName());
+            _shaderPaths[fi.baseName()] = fi.filePath();
+        }
     }
 }
 
 QString CRTShaderManager::loadShader(const QString& name) const
 {
-    QString dir = shaderDirectory();
-    QStringList extensions = {"glsl", "frag", "fs"};
-
-    for (const QString& ext : extensions)
-    {
-        QFile file(dir + "/" + name + "." + ext);
-        if (file.open(QIODevice::ReadOnly | QIODevice::Text))
-        {
-            QTextStream in(&file);
-            return in.readAll();
-        }
-    }
-
-    return QString();
+    const auto it = _shaderPaths.find(name);
+    if (it == _shaderPaths.end())
+        return QString();
+    QFile file(it->second);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return QString();
+    QTextStream in(&file);
+    return in.readAll();
 }

@@ -267,11 +267,7 @@ bool DeviceScreenWrapper::grabWindowView(WindowViewGrab& out, std::string& error
     }
 
     if (out.backend == "gpu")
-    {
-        const QRect device(qRound(picture.x() * ratio), qRound(picture.y() * ratio), qRound(picture.width() * ratio),
-                           qRound(picture.height() * ratio));
-        image = image.copy(device.intersected(image.rect()));
-    }
+        image = image.copy(_gpuWindow->pictureDeviceRect().intersected(image.rect()));
     image = image.convertToFormat(QImage::Format_RGBA8888);
 
     out.width = static_cast<uint16_t>(image.width());
@@ -468,6 +464,13 @@ bool DeviceScreenWrapper::loadCustomShader(const QString& name)
     if (_useGPU && _gpuWindow)
         return _gpuWindow->loadCustomShader(name);
     return false;
+}
+
+QString DeviceScreenWrapper::customShader() const
+{
+    if (_useGPU && _gpuWindow)
+        return _gpuWindow->customShader();
+    return QString();
 }
 
 std::vector<QString> DeviceScreenWrapper::availableShaders()
