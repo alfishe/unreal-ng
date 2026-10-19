@@ -757,7 +757,9 @@ void Core::SelectMemoryInterface()
         if (debug)
             _z80->MemIf = contended ? _z80->DbgContendedMemIf : _z80->DbgMemIf;
         else
-            _z80->MemIf = contended ? _z80->FastContendedMemIf : _z80->FastMemIf;
+            _z80->MemIf = !contended                     ? _z80->FastMemIf
+                          : _memory->HasStockFastRead() ? _z80->FastContendedStockMemIf
+                                                        : _z80->FastContendedMemIf;
         _memory->SetBusOverlay(nullptr);
     }
 
@@ -877,7 +879,7 @@ const char* Core::GetMemoryInterfaceName() const
         return "fast_overlay";
     if (m == _z80->DbgContendedMemIf)
         return "debug_contended";
-    if (m == _z80->FastContendedMemIf)
+    if (m == _z80->FastContendedMemIf || m == _z80->FastContendedStockMemIf)
         return "fast_contended";
     if (m == _z80->DbgMemIf)
         return "debug";

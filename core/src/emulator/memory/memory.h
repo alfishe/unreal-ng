@@ -348,6 +348,7 @@ public:
     static MemoryInterface* GetFastMemoryInterface();
     static MemoryInterface* GetDebugMemoryInterface();
     static MemoryInterface* GetFastContendedMemoryInterface();   // Fast + video memory contention
+    static MemoryInterface* GetFastContendedStockMemoryInterface();  // The same, MemoryReadFastStock (HasStockFastRead)
     static MemoryInterface* GetDebugContendedMemoryInterface();  // Debug + video memory contention
     /// The fast / debug interface, contended or not, plus the installed bus
     /// overlay (neogs-zxdma-design.md §5.2); selected only while one is installed
@@ -383,6 +384,15 @@ public:
     /// The fast read ignores isExecution (no per-access tracking there), so
     /// the parameter is marked maybe_unused
     virtual uint8_t MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution);
+    /// Memory::MemoryReadFast itself, without the virtual dispatch: for the interfaces selected only while the
+    /// model does not override it (HasStockFastRead)
+    uint8_t MemoryReadFastStock(uint16_t addr, [[maybe_unused]] bool isExecution)
+    {
+        return *(_bank_read[(addr >> 14) & 3] + (addr & 0x3FFF));
+    }
+    /// true while MemoryReadFast is this class's own: a model that overrides it answers false, and
+    /// Core::SelectMemoryInterface then keeps the interfaces that call it through the vtable
+    virtual bool HasStockFastRead() const { return true; }
     /// A halted CPU's idle opcode fetch at `addr` through the fast read, repeated: true when it reads a byte and
     /// nothing else (an engine may then run such fetches in one go, Z84C15Engine). A model whose read has a side
     /// effect in some window (a bus cycle on a card) answers false there
