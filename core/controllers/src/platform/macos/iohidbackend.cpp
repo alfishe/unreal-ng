@@ -131,6 +131,15 @@ public:
         return false;
     }
 
+    std::string RumbleUnavailable(const HostDeviceId& device) const override
+    {
+        std::lock_guard lock(_mutex);
+        for (const auto& [ref, known] : _devices)
+            if (known->id == device)
+                return known->rumbleUnavailable;
+        return "The device is not connected";
+    }
+
     uint8_t RumbleActuators(const HostDeviceId& device) const override
     {
         std::lock_guard lock(_mutex);
@@ -193,6 +202,7 @@ private:
         IOHIDDeviceRef ref = nullptr;
         bool xboxBluetooth = false;  ///< rumble through output report 3 (an Xbox One / Series pad over Bluetooth)
         bool dualSenseUsb = false;   ///< rumble and trigger resistance through output report 2
+        std::string rumbleUnavailable;  ///< why neither: the Test haptics button's tooltip
     };
 
     void Run(std::promise<std::string>& started)
@@ -288,6 +298,20 @@ private:
         device->xboxBluetooth = bluetooth && vendor == kMicrosoft && match.layout == "xbox" &&
                                 match.family != "xbox-360";
         device->dualSenseUsb = !bluetooth && DualSenseOutput::Handles(vendor, product);
+        auto rumbleUnavailable = [&]() -> std::string {
+            if (device->dualSenseUsb || device->xboxBluetooth)
+                return {};
+            if (DualSenseOutput::Handles(vendor, product))
+                return "A DualSense rumbles over the USB cable only for now";
+            if (vendor == kMicrosoft && match.family == "xbox-360")
+                return "Xbox 360 pads do not rumble on macOS yet";
+            if (vendor == kMicrosoft && match.layout == "xbox")
+                return "Over USB macOS keeps the motors of an Xbox pad in its own driver: connect the pad over "
+                       "Bluetooth";
+            return "On macOS rumble works for Xbox pads over Bluetooth and a DualSense over USB; this device has no "
+                   "motors the emulator can drive";
+        };
+        device->rumbleUnavailable = rumbleUnavailable();
         const int maxInput = IntProperty(ref, CFSTR(kIOHIDMaxInputReportSizeKey));
         const HidLayout layout = HidLayoutFor(match.layout);
         if (XboxGipPad::Handles(vendor, product) && maxInput == 18)

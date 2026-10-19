@@ -83,6 +83,11 @@ public:
     {
         return HasRumble(device) ? static_cast<uint8_t>(kRumbleLow | kRumbleHigh) : 0;
     }
+    /// Why the device's motors cannot be driven here, in words a user can act on; "" where HasRumble
+    virtual std::string RumbleUnavailable(const HostDeviceId& device) const
+    {
+        return HasRumble(device) ? std::string() : "The " + Name() + " backend drives no motors";
+    }
     /// Set the actuators; a device without triggers ignores their levels. False when it has no motors here
     virtual bool SetRumble(const HostDeviceId& device, const RumbleLevels& levels)
     {

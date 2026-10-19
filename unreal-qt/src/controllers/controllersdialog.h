@@ -18,6 +18,7 @@ class QCheckBox;
 class QComboBox;
 class QLabel;
 class QListWidget;
+class QMenu;
 class QPushButton;
 class QTableWidget;
 class QTimer;
@@ -42,6 +43,8 @@ private:
     void rebuild();
     void rebuildControls();
     void rebuildConnectors();
+    /// The Test haptics button: its menu holds the selected device's actuators, or it is off with the reason
+    void rebuildHapticsTest(const std::string& device);
     void tick();
     void plug(const std::string& connector, const QString& device);
     std::string selectedDevice() const;
@@ -60,7 +63,8 @@ private:
     QString _pictureSet;
     BindingTable* _table = nullptr;
     QPushButton* _profilesButton = nullptr;
-    QPushButton* _identifyButton = nullptr;  ///< a 300 ms rumble on the selected device (ui-ux.md)
+    QPushButton* _testHaptics = nullptr;  ///< always there; off, with the reason, for a device it cannot drive
+    QMenu* _testHapticsMenu = nullptr;
     QTableWidget* _connectors = nullptr;
     QLabel* _machineLabel = nullptr;
     QLabel* _hapticsLabel = nullptr;  ///< haptics.md §7: the live meters of the feed
