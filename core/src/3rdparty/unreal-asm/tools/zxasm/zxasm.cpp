@@ -735,8 +735,8 @@ int ConvertHostProject(const Args& args, const std::vector<uint8_t>& bytes, cons
     const bool disk = backend && backend->JoinsSjasmplusProject();
     if (disk)
         options.fileNames = ProjectDiskNames(project, dataNames);
-    // A file the target's format cannot hold whole (ALASM: 64K): the project written again with its long files cut
-    // into INCLUDEd parts, smaller until every one fits
+    // A file the target's format or editor cannot hold whole (ALASM: 64K; TASM 4.12, STORM, XAS: their text memory):
+    // the project written again with its long files cut into INCLUDEd parts, smaller until every one fits
     const ISourceCodec* target = registry.Find(args.to) ? registry.Find(args.to) : registry.Find("text");
     ProjectResult converted;
     for (const size_t lines : {size_t(0), size_t(4000), size_t(2000), size_t(1000), size_t(500)})
@@ -749,7 +749,7 @@ int ConvertHostProject(const Args& args, const std::vector<uint8_t>& bytes, cons
                 fits = fits && d.message.find("longer than") == std::string::npos;
         if (fits || !disk)
             break;
-        std::cerr << "info: a file is longer than " << target->Info().title << "'s format holds: cut into parts of " << (lines ? lines / 2 : 4000) << " lines\n";
+        std::cerr << "info: a file is longer than " << target->Info().title << " holds: cut into parts of " << (lines ? lines / 2 : 4000) << " lines\n";
     }
     PrintDiagnostics(converted.diagnostics);
     const auto named = [&](const std::string& name) {

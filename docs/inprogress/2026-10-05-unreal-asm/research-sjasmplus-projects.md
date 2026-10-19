@@ -76,7 +76,11 @@ that lowers (`IBackend::JoinsSjasmplusProject`, the eleven retro ones):
   (another module) becomes a copy of its own (`NAME2`), its INCLUDE naming it;
 - `BackendOptions::splitLines`: a file longer than that is cut into parts INCLUDEd where they stood, at lines outside
   any block (MACRO, DUP, WHILE, IF, STRUCT, LUA, DISP): `zxasm` turns it on when the target's format cannot hold a file
-  (ALASM's 64K: NextPlayer becomes `NextPlay`, `NextPla2`, `NextPla3`).
+  (ALASM's 64K: NextPlayer becomes `NextPlay`, `NextPla2`, `NextPla3`) or its editor cannot (2026-10-19, measured by
+  each editor's own LOAD of longer and longer files in the emulator: TASM 4.12 22801 bytes, its text from `#A6EE` below
+  `#FFFF`, and a longer file loads "OK" over itself; STORM 1.3 16369 bytes in RAM page 6, "File too big" from 16373;
+  XAS 7.447 64 sectors at `#C000` of RAM page 3, the 65th wrapping over `#0000` without a word). NextPlayer goes to each
+  of the three in parts of 1000 lines, and back to the same memory.
 
 `zxasm convert <main> --project --to <target> -o <dir>` takes a host project (`HostProject`: every INCLUDE relative to
 the folder of the file that INCLUDEs it, `\` as a folder separator as sjasmplus takes it), the files its INCBINs name,
@@ -201,5 +205,3 @@ per line, its global labels and assignments as they are.
 ## 8. Open
 
 - Lua blocks stay left out with a warning (not in scope).
-- A real editor holds less than the format: TASM, STORM and XAS take the 10000-line NextPlayer as one file here (their
-  codecs check no size); `splitLines` would cut it for them too once their memory limits are known.

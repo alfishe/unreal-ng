@@ -10,6 +10,7 @@ namespace unrealasm::codecs
 namespace
 {
 constexpr uint8_t kEndMarker = 0xFF;
+constexpr size_t kTasm412Text = 0xFFFF - 0xA6EE;   // TASM 4.12's text from #A6EE below #FFFF: a longer file loads "OK" over itself (measured)
 constexpr char32_t kRawBase = 0xF700;   // a byte the format gives no character: U+F700 + byte (as the encodings do)
 
 enum class Spacing : uint8_t
@@ -994,6 +995,8 @@ EncodeResult TasmCodec::Encode(const SourceDocument& document, const EncodeOptio
         result.bytes.insert(result.bytes.end(), document.attrs.bytes.begin(), document.attrs.bytes.end());
     else
         result.bytes.insert(result.bytes.end(), {kEndMarker, kEndMarker});
+    if (version == "4.12" && result.bytes.size() > kTasm412Text)
+        result.diagnostics.push_back({Severity::Warning, 0, 0, "the source is longer than TASM 4.12's editor holds (" + std::to_string(kTasm412Text) + " bytes)"});
     result.ok = !HasErrors(result.diagnostics);
     return result;
 }
