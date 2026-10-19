@@ -161,6 +161,14 @@ Two more are done (§7): sjasmplus' relocation table, and ALASM's macros with lo
 | Laser Genius frontend (2026-10-17) | a PUT is global in Laser Genius, but each file of a project is converted alone: an included file's own PUT moved its bytes inside the includer's DISP (sjasmplus keeps one across INCLUDE). The includer now defines `__LG_PUTIN` while its PUT is in force, the included file's first PUT ends that DISP first (`IFDEF` / `ENT` / `UNDEFINE`) | Wild Commander's `emu.asm` (×3) |
 | PASM frontend (2026-10-17) | "without ORG the code goes to 24576" (`IF $==0`) moved an included file whose includer had `ORG 0`: an ORG now defines `__PASM_ORG` and the rule applies only without it | Wild Commander's `plasmatw` (×3), `trdump`, `setime` |
 | PASM backend (2026-10-17) | a relative jump in a displaced block counted from the line's start, not its statement's (`call ESC : jr nz,.esc` was 3 bytes off): `RetroWriter::statementAddress` | Wild Commander's `trdump`, `setime` |
+| pasmo backend (2026-10-19) | a Z80N word's low byte written `&255`: pasmo reads `&FF` as a hexadecimal number; now `AND 255` | `tests/relocate` |
+| lowering, every backend (2026-10-19) | an EQU the lowering writes became the parent of the `.labels` after it in TASM / ALASM / pasmo (`!` now keeps the parent); an EQU's own `.t` was resolved with the new parent, sjasmplus uses the previous one | `tests/relocate`, the probe |
+| lowering, layout (2026-10-19) | a nested STRUCT's field values were dropped; `TEXT len,{...}` and D24 / DWORD fields took no room or wrong bytes (the last byte fills the rest, an instance's `{...}` overwrites only the bytes it gives); a DWORD constant over 16 bits reached pasmo, which refuses it | `relocation_high_1` |
+| lowering, layout (2026-10-19) | ABYTE's offset ended at the first blank; sjasmplus takes the longest expression before one (`ABYTE 123 high label2-123`) | `relocation_high_1` |
+| layout (2026-10-19) | HIGH relocation recorded a byte of a moving word (`LD B,label`), NEXTREG's register number, Z80N `PUSH nn` (big-endian, HIGH only) at the low byte, missed `EQU high label` uses and ABYTE / DB bytes of a high byte | `relocation_high_1`, `relocation_high_2` |
+| sjasmplus frontend, layout, writers (2026-10-19) | sjasmplus' fake instructions (`LD BC,(IX+d)`, `LDI A,(HL)`, `SUB DE,BC`, `LD HL,IX` ...): only a few were expanded, and the layout sized and relocated them as one instruction; now the full list of sjasmplus' manual, shared by every writer and by the layout part by part (`SjasmplusFake`) | `relocation_fake_instructions` |
+| pasmo backend (2026-10-19) | the undocumented `RLC (IX+d),B` / `SET b,(IX+d),r` copies: pasmo has none of them; now their bytes | `relocation_fake_instructions` |
+| every backend (2026-10-19) | an IF on a memory read while assembling (`IF {addr}`): pasmo / z88dk left its ENDIF alone, TASM wrote the condition as 0 and dropped the block; now each writes the block as taken with a warning (pasmo `IF 1`) | `relocation_mem_read` |
 | Primus and PASM backends (2026-10-17) | a second ORG ahead of `$` is a hole up to it (Primus' DEFS; PASM had its zeros); after a second ORG left out the text's addresses part from the source's, so no hole is made from there (`emu.asm` grew past 64K) | NextPlayer |
 
 ## 7. The relocation table and ALASM's mixed macros
@@ -176,10 +184,12 @@ values it gives) are recorded too. `relocate_count` / `relocate_size` are the ta
 words down (minus the offset). The writers put the table as DW of its addresses and `relocate_count` /
 `relocate_size` as numbers. DG / DEFG (bits) and DH / DEFH (hex pairs) are laid out and written as DB.
 
-Checked against sjasmplus' own `tests/relocate`: 24 of 30 tables equal; the other six use the `--syntax=abfw`
-`,,` argument separator (`relocation_multiarg`), temporary labels written `2_B` (`relocation_temporary_labels_exp`),
-STRUCT aliases `name STRUCT = address` (`relocation_struct`, `relocation_nested_struct`, `relocation_high_2`) and a
-STRUCT of D24 / TEXT fields (`relocation_high_1`), none of which the layout reads yet.
+Checked against sjasmplus' own `tests/relocate` (2026-10-19) as whole programs: each test converted to pasmo, built,
+and its 64K memory compared with sjasmplus' (`DEVICE NOSLOT64K`, so no device fills the screen). 23 of 30 are the same
+bytes, tables included. The other seven are not conversions: six are sjasmplus' own error cases (`0000_region` wraps
+past 64K, `disp_inside`, `disp_outside`, `norel_operator`, `table_sub_offset`,
+`temporary_labels_consistency`), and `mem_read` reads memory while assembling (`{addr}`), which no target has. The
+rules the conversion keeps are in `testdata/dialects/sjasmplus/relocfake.asm` (pasmo oracle test).
 
 **ALASM, a macro with local and global labels** (Wild Commander's `emutrap.asm`: a temporary label and `VORG = $` in
 one macro). ALASM's LOCAL block, which the local labels need, makes the global one local too, and ALASM's `@name` is
@@ -191,9 +201,5 @@ per line, its global labels and assignments as they are.
 ## 8. Open
 
 - Lua blocks stay left out with a warning (not in scope).
-- STRUCT aliases (`name STRUCT = address`), the `--syntax` options of sjasmplus (`,,` between arguments, `2_B`
-  temporary labels).
-- Macro parameters named like registers (`MACRO T a` ... `LD A,a`): the frontend keeps registers in lower case,
-  so `a` cannot be told from `A`.
 - A real editor holds less than the format: TASM, STORM and XAS take the 10000-line NextPlayer as one file here (their
   codecs check no size); `splitLines` would cut it for them too once their memory limits are known.

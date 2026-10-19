@@ -1,6 +1,7 @@
 #include "dialects/common/classicbackend.h"
 
 #include <algorithm>
+#include <cctype>
 #include <functional>
 #include <iterator>
 #include <map>
@@ -8,6 +9,8 @@
 #include <set>
 
 #include "dialects/common/z80.h"
+#include "dialects/sjasmplus/sjasmplusfrontend.h"
+#include "dialects/sjasmplus/sjasmpluslower.h"
 
 namespace unrealasm::dialects
 {
@@ -217,6 +220,7 @@ struct Writer
     std::map<std::string, std::string> renames{};
     std::vector<std::map<std::string, std::string>> localScopes{};
     bool inMacro = false;
+    bool sjasmplus = false;   // the source is sjasmplus': its repeated and fake instructions
     bool displaced = false;   // a displacement may be active: labels and $ go through __UNREALASM_D
     int trueValue = 0;
     std::string problem{};    // set when an expression has no pasmo form
@@ -235,6 +239,37 @@ struct Writer
     std::set<std::string> addressLabels{};   // names whose value is an address in this file (labels, EQU $+..., names built on them)
     const std::set<const Statement*>* virtualOrgs = nullptr;   // z80asm: ORGs followed by labels only
     std::string virtualAddress{};   // the address of such a region while it lasts
+    // sjasmplus' temporary labels ("1" ... JR 1B / LD HL,1_F): a name of each one's own, the references by their line
+    std::map<std::string, std::vector<std::pair<size_t, std::string>>> temporaries{};
+    size_t lineIndex = 0;
+
+    static bool IsTemporary(const std::string& label)
+    {
+        return !label.empty() && label.find_first_not_of("0123456789") == std::string::npos;
+    }
+
+    /// The name of the temporary label a reference (1B, 1F, 1_B, 1_F) finds from this line
+    std::optional<std::string> Temporary(const std::string& reference) const
+    {
+        if (reference.size() < 2)
+            return std::nullopt;
+        std::string number = reference.substr(0, reference.size() - 1);
+        if (number.size() > 1 && number.back() == '_')
+            number.pop_back();
+        const char way = static_cast<char>(std::tolower(static_cast<unsigned char>(reference.back())));
+        const auto found = temporaries.find(number);
+        if (!IsTemporary(number) || found == temporaries.end() || (way != 'b' && way != 'f'))
+            return std::nullopt;
+        std::optional<std::string> pick;
+        for (const auto& [at, name] : found->second)
+        {
+            if (way == 'b' && at <= lineIndex)
+                pick = name;
+            if (way == 'f' && at > lineIndex)
+                return name;
+        }
+        return pick;
+    }
 
     bool UsesAddressLabel(const Expr& e) const
     {
@@ -262,6 +297,11 @@ struct Writer
     {
         if (inMacro && name.size() == 2 && name[0] == '\\')
             return std::string("_arg") + name[1];
+        if (IsTemporary(name))
+            if (const auto found = temporaries.find(name); found != temporaries.end())
+                for (const auto& [at, given] : found->second)
+                    if (at == lineIndex)
+                        return given;
         for (auto it = localScopes.rbegin(); it != localScopes.rend(); ++it)
         {
             const auto found = it->find(name);
@@ -355,7 +395,12 @@ struct Writer
         switch (e.kind)
         {
             case Expr::Kind::Number: return Number(e);
-            case Expr::Kind::Symbol: return Name(e.text);
+            case Expr::Kind::Symbol:
+                // sjasmplus' built-in names of the relocation table: the target has none, the layout gives their values
+                if (e.text == "relocate_count" || e.text == "relocate_size")
+                    if (const auto v = options.labelValues.find(e.text); v != options.labelValues.end())
+                        return std::to_string(v->second.value);
+                return Name(e.text);
             case Expr::Kind::Current:
                 if (!virtualAddress.empty())
                     return "(" + virtualAddress + ")";
@@ -386,9 +431,12 @@ struct Writer
                 return "0";
             case Expr::Kind::Group: return "(" + Print(e.args[0]) + ")";
             case Expr::Kind::Memory:
-                problem = "a memory read while assembling ({...})";
+                problem = "memory reads while assembling ({...})";
                 return "0";
-            case Expr::Kind::Raw: return e.text;
+            case Expr::Kind::Raw:
+                if (const auto temporary = Temporary(e.text))
+                    return *temporary;
+                return e.text;
             case Expr::Kind::Defined:   // ALASM ?label: 0 when defined
                 if (Z80asm())
                     return e.args[0].kind == Expr::Kind::Symbol && definedNames.count(e.args[0].text) ? "0" : "65535";
@@ -561,6 +609,52 @@ struct Writer
         return out;
     }
 
+    /// sjasmplus' RELOCATE_START / RELOCATE_END (comments) and RELOCATE_TABLE [offset]: the words the layout found
+    std::optional<std::vector<std::string>> Relocation(const std::string& text)
+    {
+        const std::string word = z80::Upper(text.substr(0, text.find_first_of(" \t")));
+        const size_t at = text.find_first_not_of(" \t", word.size());
+        const std::string rest = at == std::string::npos ? std::string() : text.substr(at);
+        if (word == "RELOCATE_START" || word == "RELOCATE_END")
+            return std::vector<std::string>{"@; " + text + " (the table comes from the layout)"};
+        if (word != "RELOCATE_TABLE")
+            return std::nullopt;
+        std::string offset;
+        if (!rest.empty())
+        {
+            // one expression (sjasmplus reports RELOCATE_TABLE @@ / $1000,123 as errors)
+            const FrontendResult parsed = SjasmplusFrontend().Parse(SourceDocument::FromText("        DW " + rest, "sjasmplus"));
+            std::function<bool(const Expr&)> named = [&](const Expr& e) {
+                if (e.kind == Expr::Kind::Symbol)
+                {
+                    const size_t at = e.text.find_first_not_of("@.");
+                    return at != std::string::npos && (std::isalpha(static_cast<unsigned char>(e.text[at])) || e.text[at] == '_');
+                }
+                return std::all_of(e.args.begin(), e.args.end(), [&](const Expr& a) { return named(a); });
+            };
+            const bool one = parsed.program.lines.size() == 1 && parsed.program.lines[0].statements.size() == 1 &&
+                             parsed.program.lines[0].statements[0].operands.size() == 1 &&
+                             parsed.program.lines[0].statements[0].operands[0].kind == Operand::Kind::Immediate &&
+                             parsed.program.lines[0].statements[0].operands[0].expr.kind != Expr::Kind::Raw &&
+                             named(parsed.program.lines[0].statements[0].operands[0].expr);
+            if (!one || std::any_of(parsed.diagnostics.begin(), parsed.diagnostics.end(), [](const Diagnostic& d) { return d.severity == Severity::Error; }))
+                return std::vector<std::string>{NotConverted(text)};
+            offset = "-(" + Print(parsed.program.lines[0].statements[0].operands[0].expr) + ")";
+        }
+        std::vector<std::string> out;
+        for (size_t k = 0;; ++k)
+        {
+            const auto found = options.labelValues.find("__UNREALASM_RELOC_" + std::to_string(k));
+            if (found == options.labelValues.end())
+                break;
+            out.push_back("DW " + Hex(found->second.value & 0xFFFF, 4) + offset);
+        }
+        diagnostics.push_back({Severity::Info, line, 0, "RELOCATE_TABLE written as its " + std::to_string(out.size()) + " word(s)"});
+        if (out.empty())
+            out.push_back("@; " + text + " (no relocation data)");
+        return out;
+    }
+
     std::string NotConverted(const std::string& what)
     {
         diagnostics.push_back({Severity::Warning, line, 0, "not converted: " + what});
@@ -664,10 +758,11 @@ struct Writer
             return std::vector<std::string>{head + "," + Print(Masked8(ops[0].expr))};
         if (layout == 'b' || layout == 'B')
             return std::vector<std::string>{head + "," + Print(Masked8(ops[0].expr)) + (layout == 'B' ? "," + Print(Masked8(ops[1].expr)) : "")};
+        // the low byte with AND: in pasmo &255 is a hexadecimal number
         const std::string word = Print(Masked16(ops[ops.size() - 1].expr));
         if (layout == 'W')
-            return std::vector<std::string>{head + ",(" + word + ")/256,(" + word + ")&255"};
-        return std::vector<std::string>{head + ",(" + word + ")&255,(" + word + ")/256"};
+            return std::vector<std::string>{head + ",(" + word + ")/256,(" + word + ") AND 255"};
+        return std::vector<std::string>{head + ",(" + word + ") AND 255,(" + word + ")/256"};
     }
 
     std::vector<std::string> InstructionText(const Statement& s)
@@ -675,12 +770,44 @@ struct Writer
         const std::string m = s.mnemonic;
         if (auto next = Z80nText(s))
             return *next;
+        // sjasmplus repeats an instruction for its operands (LD A,1,B,2; PUSH AF,BC) and has fake ones (LD BC,DE)
+        if (sjasmplus)
+            for (const auto& parts : {SjasmplusRepeated(s), SjasmplusFake(s)})
+                if (parts.size() > 1)
+                {
+                    std::vector<std::string> out;
+                    for (const Statement& one : parts)
+                        for (std::string& t : InstructionText(one))
+                            out.push_back(std::move(t));
+                    return out;
+                }
         // pasmo knows neither IN F,(C) nor OUT (C),0: their bytes
         if (!Z80asm() && m == "in" && s.operands.size() == 2 && s.operands[0].kind == Operand::Kind::Register && s.operands[0].text == "f")
             return {"DB #ED,#70"};
         if (!Z80asm() && m == "out" && s.operands.size() == 2 && s.operands[1].kind == Operand::Kind::Immediate && s.operands[1].expr.kind == Expr::Kind::Number &&
             s.operands[1].expr.value == 0)
             return {"DB #ED,#71"};
+        // RLC (IX+d),B / SET b,(IX+d),C: the undocumented copy to a register; pasmo has no spelling, its bytes
+        if (!Z80asm())
+        {
+            static const std::map<std::string, int> kShifts = {{"rlc", 0x00}, {"rrc", 0x08}, {"rl", 0x10}, {"rr", 0x18},
+                                                               {"sla", 0x20}, {"sra", 0x28}, {"sll", 0x30}, {"sli", 0x30}, {"srl", 0x38}};
+            static const std::map<std::string, int> kRegisters = {{"b", 0}, {"c", 1}, {"d", 2}, {"e", 3}, {"h", 4}, {"l", 5}, {"a", 7}};
+            const auto& ops = s.operands;
+            const bool bitOp = m == "res" || m == "set";
+            const size_t at = bitOp ? 1 : 0;
+            const bool index = ops.size() == at + 2 && (ops[at].kind == Operand::Kind::Indexed ||
+                                                         (ops[at].kind == Operand::Kind::Indirect && (ops[at].text == "ix" || ops[at].text == "iy")));
+            if ((bitOp || kShifts.count(m)) && index && ops[at + 1].kind == Operand::Kind::Register && kRegisters.count(ops[at + 1].text))
+            {
+                const int r = kRegisters.at(ops[at + 1].text);
+                const std::string d = ops[at].kind == Operand::Kind::Indexed ? Print(Masked8(ops[at].expr)) : "0";   // (IX): no offset
+                const std::string code = bitOp ? "#" + z80::HexDigits(static_cast<uint64_t>((m == "res" ? 0x80 : 0xC0) | r), 2) + "+((" +
+                                                     Print(ops[0].expr) + ") AND 7)*8"
+                                               : std::to_string(kShifts.at(m) | r);
+                return Checked({"DB " + std::string(ops[at].text == "ix" ? "#DD" : "#FD") + ",#CB," + d + "," + code}, z80::Upper(m));
+            }
+        }
         // CP 0,0 / INC A,B: one instruction per operand, as sjasmplus reads them (not RLC (IX+1),B, the undocumented copy)
         const bool indexed = std::any_of(s.operands.begin(), s.operands.end(), [](const Operand& o) { return o.kind == Operand::Kind::Indexed; });
         if (z80::SplitArity(m) == 1 && s.operands.size() > 1 && !indexed)
@@ -868,7 +995,13 @@ struct Writer
                     };
                     later(s.args[0]);
                 }
-                return Checked({"IF " + Print(s.args[0])}, "IF");
+                {
+                    // a condition the target cannot compute: the block is assembled (its ELSE / ENDIF stay paired)
+                    std::vector<std::string> out = Checked({"IF " + Print(s.args[0])}, "IF");
+                    if (out.size() == 1 && out[0].rfind("@; unreal-asm: not converted", 0) == 0)
+                        out.push_back("IF 1");
+                    return out;
+                }
             case ir::DirectiveKind::Else: return {"ELSE"};
             case ir::DirectiveKind::EndIf: return {"ENDIF"};
             case ir::DirectiveKind::EndMacro: return {"ENDM"};
@@ -922,6 +1055,11 @@ struct Writer
                 // OPT --zxnext / DEVICE ZXSPECTRUMNEXT: the Z80N is on in the target by other means (z80asm -mz80n; pasmo gets the bytes)
                 if (z80::EnablesZ80n(s.text))
                     return {Z80asm() ? "; Z80N source: assemble with z80asm -mz80n" : "; Z80N source: its instructions are written as bytes"};
+                // a MODULE's mark (sjasmpluslower.h): its names are full already, its line keeps it as a comment
+                if (s.text.rfind(kModuleMark, 0) == 0 || s.text == kEndModuleMark)
+                    return {};
+                if (auto table = Relocation(s.text))
+                    return *table;
                 return {NotConverted(s.text.empty() ? "a directive" : s.text)};
         }
     }
@@ -935,7 +1073,9 @@ void RewriteDotNames(ir::Program& program)
 {
     std::string scope = "L";
     bool inMacro = false;
-    const auto rename = [&](const std::string& name) -> std::string {
+    const bool full = program.dialect == "sjasmplus";   // sjasmplus' @name is a full name (the lowered names have it)
+    const auto rename = [&](const std::string& given) -> std::string {
+        const std::string name = full && given.size() > 1 && given[0] == '@' ? given.substr(1) : given;
         if (name.empty() || name.find('.') == std::string::npos)
             return name;
         std::string out = name[0] == '.' ? scope + "__" + name.substr(1) : name;
@@ -962,8 +1102,12 @@ void RewriteDotNames(ir::Program& program)
             }
         if (!line.label.empty() && !inMacro)
         {
-            if (line.label[0] != '.')
-                scope = line.label.find('.') == std::string::npos ? line.label : rename(line.label);
+            // sjasmplus' !label leaves the parent of the .labels after it as it is
+            const bool keepsParent = full && line.label.size() > 1 && line.label[0] == '!';
+            if (keepsParent)
+                line.label.erase(0, 1);
+            else if (line.label[0] != '.')
+                scope = rename(line.label);
             line.label = rename(line.label);
         }
         for (Statement& s : line.statements)
@@ -978,13 +1122,15 @@ void RewriteDotNames(ir::Program& program)
 
 BackendResult WriteClassic(const ir::Program& input, const BackendOptions& options, ClassicTarget target)
 {
-    ir::Program program = input;
-    RewriteDotNames(program);
     BackendResult result;
+    // sjasmplus' MODULE, STRUCT, DZ ... in words pasmo and z80asm have (sjasmpluslower.h)
+    ir::Program program = input.dialect == "sjasmplus" ? LowerSjasmplus(input, result.diagnostics) : input;
+    RewriteDotNames(program);
     result.document.dialect = target == ClassicTarget::Z80asm ? "z88dk" : "pasmo";
     result.document.codePage = encoding::CodePage::Cp866;   // texts are program bytes: the Spectrum code page
     Writer w{options, result.diagnostics, target};
     w.trueValue = program.trueValue;
+    w.sjasmplus = program.dialect == "sjasmplus";
     w.wordBits = program.expressionBits;
     w.unsignedWords = program.unsignedArithmetic;
     w.phased = program.displacementAcrossFiles;   // a file may start inside a PHASE of the file that INCLUDEs it
@@ -1245,12 +1391,19 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
         w.displaced = true;
     }
 
+    for (size_t index = 0; index < program.lines.size(); ++index)
+        if (Writer::IsTemporary(program.lines[index].label))
+        {
+            auto& defined = w.temporaries[program.lines[index].label];
+            defined.push_back({index, "__T" + program.lines[index].label + "_" + std::to_string(defined.size() + 1)});
+        }
     size_t nextBlock = 0;
     int repeatMacros = 0;
     for (size_t index = 0; index < program.lines.size(); ++index)
     {
         const ir::Line& l = program.lines[index];
         w.line = l.sourceLine;
+        w.lineIndex = index;
         std::vector<std::string> texts;
         // A REPT with labels: its body becomes a macro
         if (repeatEnd.count(index))
@@ -1313,7 +1466,7 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
             if (!namedParams.empty())
             {
                 for (size_t k = 0; k < namedParams.size(); ++k)
-                    params += (k ? "," : "") + namedParams[k];
+                    params += (k ? "," : "") + w.Name(namedParams[k]);   // as the body spells it (a: L_a)
                 count = static_cast<int>(namedParams.size());
             }
             else

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
 
 #include "codecs/prometheus/prometheustable.h"
 #include "dialects/common/z80.h"
@@ -29,6 +30,16 @@ RetroWriter::RetroWriter(const ir::Program& p, const BackendOptions& o, BackendR
 }
 
 // ---- helpers ----
+
+std::string RetroWriter::TemporaryNumber(const std::string& reference)
+{
+    if (reference.size() < 2)
+        return {};
+    std::string number = reference.substr(0, reference.size() - 1);
+    if (number.size() > 1 && number.back() == '_')
+        number.pop_back();   // 1_B (sjasmplus 1.19)
+    return number;
+}
 
 bool RetroWriter::IsTemporary(const std::string& label)
 {
@@ -104,10 +115,11 @@ std::string RetroWriter::FullName(const std::string& text) const
 
 std::optional<std::string> RetroWriter::Temporary(const std::string& reference) const
 {
-    if (reference.size() < 2 || !IsTemporary(reference.substr(0, reference.size() - 1)))
+    const std::string number = TemporaryNumber(reference);
+    if (!IsTemporary(number))
         return std::nullopt;
     const char way = static_cast<char>(std::tolower(static_cast<unsigned char>(reference.back())));
-    const auto found = temporaries.find(reference.substr(0, reference.size() - 1));
+    const auto found = temporaries.find(number);
     if (found == temporaries.end() || (way != 'b' && way != 'f'))
         return std::nullopt;
     std::optional<std::string> pick;
@@ -653,52 +665,13 @@ std::vector<std::string> RetroWriter::InstructionText(const Statement& s)
             return out;
         }
         // and its fake instructions, written out as it assembles them
-        auto halves = [](const std::string& r) -> std::pair<std::string, std::string> {
-            if (r == "bc") return {"b", "c"};
-            if (r == "de") return {"d", "e"};
-            if (r == "hl") return {"h", "l"};
-            if (r == "ix") return {"ixh", "ixl"};
-            if (r == "iy") return {"iyh", "iyl"};
-            return {};
-        };
-        auto regOp = [](const std::string& r) {
-            Operand o;
-            o.kind = Operand::Kind::Register;
-            o.text = r;
-            return o;
-        };
-        auto one = [&](const char* mnemonic, std::vector<Operand> operands) {
-            Statement t = s;
-            t.mnemonic = mnemonic;
-            t.operands = std::move(operands);
-            return InstructionText(t);
-        };
-        auto join = [](std::vector<std::string> a, const std::vector<std::string>& b) {
-            a.insert(a.end(), b.begin(), b.end());
-            return a;
-        };
-        const bool pair0 = ops.size() == 2 && ops[0].kind == Operand::Kind::Register && !halves(ops[0].text).first.empty();
-        const bool pair1 = ops.size() == 2 && ops[1].kind == Operand::Kind::Register && !halves(ops[1].text).first.empty();
-        if (m == "sub" && pair0 && ops[0].text == "hl" && pair1)
-            return join(one("or", {regOp("a")}), one("sbc", {ops[0], ops[1]}));
-        if (m == "ld" && pair0 && pair1)
+        if (const std::vector<Statement> parts = SjasmplusFake(s); parts.size() > 1)
         {
-            const auto d = halves(ops[0].text), v = halves(ops[1].text);
-            return join(one("ld", {regOp(d.first), regOp(v.first)}), one("ld", {regOp(d.second), regOp(v.second)}));
-        }
-        if (m == "ld" && pair0 && ops[1].kind == Operand::Kind::Indexed)
-        {
-            Operand next = ops[1];
-            next.expr = Expr::Binary(Op::Add, ops[1].expr, Expr::Number(1));
-            const auto d = halves(ops[0].text);
-            return join(one("ld", {regOp(d.second), ops[1]}), one("ld", {regOp(d.first), next}));
-        }
-        if (m == "ld" && pair1 && ops[0].kind == Operand::Kind::Indexed)
-        {
-            Operand next = ops[0];
-            next.expr = Expr::Binary(Op::Add, ops[0].expr, Expr::Number(1));
-            const auto v = halves(ops[1].text);
-            return join(one("ld", {ops[0], regOp(v.second)}), one("ld", {next, regOp(v.first)}));
+            std::vector<std::string> out;
+            for (const Statement& one : parts)
+                for (const std::string& t : InstructionText(one))
+                    out.push_back(t);
+            return out;
         }
     }
     if (program.dialect != "sjasmplus" && ops.size() == 2 && reg(0, "a") && (m == "and" || m == "or" || m == "xor" || m == "cp" || m == "sub"))
@@ -734,6 +707,15 @@ std::vector<std::string> RetroWriter::OpenCondition(const Expr& condition)
         return {};
     }
     c.decided = false;
+    // a memory read while assembling ({addr}): no target has one, so no native condition either
+    const std::function<bool(const Expr&)> reads = [&](const Expr& e) {
+        return e.kind == Expr::Kind::Memory || std::any_of(e.args.begin(), e.args.end(), reads);
+    };
+    if (reads(condition))
+    {
+        conditions.push_back(c);
+        return {NotConverted("a condition on memory read while assembling ({...}): its block is written as taken")};
+    }
     if (!nativeBlock)
         if (auto lines = OpenNative(condition, c))
         {
@@ -1063,7 +1045,7 @@ void RetroWriter::RepeatPass(const std::vector<ir::Line>& lines, size_t begin, s
         if ((e.kind == Expr::Kind::Symbol || e.kind == Expr::Kind::Raw) && e.text.size() >= 2)
         {
             const char way = static_cast<char>(std::tolower(static_cast<unsigned char>(e.text.back())));
-            const std::string label = e.text.substr(0, e.text.size() - 1);
+            const std::string label = TemporaryNumber(e.text);
             if ((way == 'b' || way == 'f') && IsTemporary(label))
                 if (const auto found = temporaryAt.find(label); found != temporaryAt.end())
                 {
@@ -1187,7 +1169,7 @@ void RetroWriter::Expand(const MacroDef& def, const Statement& call, size_t inde
         if ((e.kind == Expr::Kind::Symbol || e.kind == Expr::Kind::Raw) && e.text.size() >= 2)
         {
             const char way = static_cast<char>(std::tolower(static_cast<unsigned char>(e.text.back())));
-            const std::string label = e.text.substr(0, e.text.size() - 1);
+            const std::string label = TemporaryNumber(e.text);
             if ((way == 'b' || way == 'f') && IsTemporary(label))
                 if (const auto found = temporaryAt.find(label); found != temporaryAt.end())
                 {

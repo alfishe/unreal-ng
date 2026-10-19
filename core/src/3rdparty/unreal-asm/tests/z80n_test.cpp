@@ -134,7 +134,7 @@ TEST(Z80n_Pasmo_Test, PasmoHasNoZ80nSoItGetsTheBytes)
     EXPECT_NE(push->find("/256,"), std::string::npos);
     const auto add = std::find_if(lines.begin(), lines.end(), [](const std::string& l) { return l.rfind("DB 237,52,", 0) == 0; });
     ASSERT_NE(add, add == lines.end() ? lines.begin() : lines.end());
-    EXPECT_NE(add->find("&255,"), std::string::npos);
+    EXPECT_NE(add->find(" AND 255,"), std::string::npos);   // not &255: a hexadecimal number in pasmo
 }
 
 TEST(Z80n_Layout_Test, TheSizesFollowTheInstructionTable)

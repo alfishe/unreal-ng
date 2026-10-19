@@ -71,6 +71,17 @@ std::string Sanitized(const std::string& name)
     return out;
 }
 
+/// The number of a temporary label's reference: 1 of 1B, 1F, 1_B, 1_F
+std::string TemporaryNumber(const std::string& reference)
+{
+    if (reference.size() < 2)
+        return {};
+    std::string number = reference.substr(0, reference.size() - 1);
+    if (number.size() > 1 && number.back() == '_')
+        number.pop_back();
+    return number;
+}
+
 bool IsTemporary(const std::string& label)
 {
     return !label.empty() && label.find_first_not_of("0123456789") == std::string::npos;
@@ -144,10 +155,11 @@ struct Writer
 
     std::optional<std::string> Temporary(const std::string& reference) const
     {
-        if (reference.size() < 2 || !IsTemporary(reference.substr(0, reference.size() - 1)))
+        const std::string number = TemporaryNumber(reference);
+        if (!IsTemporary(number))
             return std::nullopt;
         const char way = static_cast<char>(std::tolower(static_cast<unsigned char>(reference.back())));
-        const auto found = temporaries.find(reference.substr(0, reference.size() - 1));
+        const auto found = temporaries.find(number);
         if (found == temporaries.end() || (way != 'b' && way != 'f'))
             return std::nullopt;
         std::optional<std::string> pick;
@@ -785,36 +797,13 @@ struct Writer
                 return out;
             }
             // and its fake instructions, written out as it assembles them
-            auto halves = [](const std::string& r) -> std::pair<std::string, std::string> {
-                if (r == "bc") return {"B", "C"};
-                if (r == "de") return {"D", "E"};
-                if (r == "hl") return {"H", "L"};
-                if (r == "ix") return {"HX", "LX"};
-                if (r == "iy") return {"HY", "LY"};
-                return {};
-            };
-            const bool pair0 = ops.size() == 2 && ops[0].kind == Operand::Kind::Register && !halves(ops[0].text).first.empty();
-            const bool pair1 = ops.size() == 2 && ops[1].kind == Operand::Kind::Register && !halves(ops[1].text).first.empty();
-            if (m == "sub" && pair0 && ops[0].text == "hl" && pair1)
-                return {"OR A", "SBC HL," + z80::Upper(ops[1].text)};
-            if (m == "ld" && pair0 && pair1)
+            if (const std::vector<Statement> parts = SjasmplusFake(s); parts.size() > 1)
             {
-                const auto d = halves(ops[0].text), v = halves(ops[1].text);
-                return {"LD " + d.first + "," + v.first, "LD " + d.second + "," + v.second};
-            }
-            if (m == "ld" && pair0 && ops[1].kind == Operand::Kind::Indexed)
-            {
-                Operand next = ops[1];
-                next.expr = Expr::Binary(Op::Add, ops[1].expr, Expr::Number(1));
-                const auto d = halves(ops[0].text);
-                return {"LD " + d.second + "," + OperandText(ops[1], true), "LD " + d.first + "," + OperandText(next, true)};
-            }
-            if (m == "ld" && pair1 && ops[0].kind == Operand::Kind::Indexed)
-            {
-                Operand next = ops[0];
-                next.expr = Expr::Binary(Op::Add, ops[0].expr, Expr::Number(1));
-                const auto v = halves(ops[1].text);
-                return {"LD " + OperandText(ops[0], true) + "," + v.second, "LD " + OperandText(next, true) + "," + v.first};
+                std::vector<std::string> out;
+                for (const Statement& one : parts)
+                    for (const std::string& t : InstructionText(one))
+                        out.push_back(t);
+                return out;
             }
         }
         // AND A,n of another dialect means AND n; ALASM reads A,n as two operand groups (AND A, then AND n)

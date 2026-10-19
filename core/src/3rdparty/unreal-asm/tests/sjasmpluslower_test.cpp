@@ -122,6 +122,21 @@ TEST(SjasmplusLower_Test, StructsAreLaidOutAsSjasmplusDoes)
         EXPECT_EQ(values[name], value) << name;
 }
 
+TEST(SjasmplusLower_Test, AStructureAliasAndTheNewerSyntax)
+{
+    // sjasmplus 1.21's --sym: an alias (label STRUCT = address) gives the label and its fields, no bytes; 1_B / 1_F
+    // reach temporary labels in any expression; `,,` separates instructions (--syntax=a)
+    const std::string text = "        ORG #6000\n1       nop\n        ld hl,1_B,,de,1_F\n1       nop\n        STRUCT st\nx       BYTE 1\n"
+                             "y       WORD 2\n        ENDS\nins     st\naka     st = ins+1\nend     nop\n";
+    const layout::LayoutResult laid = layout::Layout({{"probe", SourceDocument::FromText(text, "sjasmplus")}}, 0);
+    EXPECT_TRUE(laid.ok);
+    std::map<std::string, int64_t> values;
+    for (const layout::Label& l : laid.labels)
+        values[l.name] = l.value;
+    for (const auto& [name, value] : std::map<std::string, int64_t>{{"ins", 0x6008}, {"aka", 0x6009}, {"aka.x", 0x6009}, {"aka.y", 0x600A}, {"end", 0x600B}})
+        EXPECT_EQ(values[name], value) << name;
+}
+
 TEST(SjasmplusLower_Test, WordsATargetHasNot)
 {
     Diagnostics diagnostics;
@@ -316,6 +331,14 @@ TEST(SjasmplusLower_Test, TheRelocationTableAsSjasmplusBuildsIt)
     EXPECT_TRUE(Contains(lines, "DEFW #8001,#8004,#800C")) << Joined(lines);
     EXPECT_TRUE(Contains(lines, "DEFW 3")) << Joined(lines);
     EXPECT_TRUE(Contains(lines, "LD BC,DATA")) << Joined(lines);
+}
+
+TEST(SjasmplusLower_Test, AConditionOnMemoryIsWrittenAsTaken)
+{
+    // IF {addr} reads memory while assembling, which no target does: its block is written, as pasmo's IF 1 does
+    const std::vector<std::string> lines = Lines("        ORG #8000\n        IF {#8000}\n        nop\n        ENDIF\n", "tasm", nullptr, "4.12");
+    EXPECT_TRUE(Contains(lines, "NOP")) << Joined(lines);
+    EXPECT_FALSE(std::any_of(lines.begin(), lines.end(), [](const std::string& l) { return l.find(".IF") != std::string::npos; })) << Joined(lines);
 }
 
 TEST(SjasmplusLower_Test, ALasmGetsAMacroOfLocalAndGlobalLabelsPutInAtItsCalls)
