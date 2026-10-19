@@ -188,6 +188,15 @@ std::map<std::string, SourceLabel> LabelValues(const std::vector<ProjectFile>& f
                                            : "__UNREALASM_L" + file + "_" + std::to_string(a.line);
         values[key] = {a.address, files.size() == 1 ? std::string() : a.file, a.line, false};
     }
+    // how often each WHILE ran: __UNREALASM_W<file>_<line> (a target without a loop that tests writes a repeat count)
+    for (const layout::WhileCount& w : laid.whileCounts)
+    {
+        std::string file;
+        if (files.size() > 1)
+            for (const char c : w.file)
+                file.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
+        values["__UNREALASM_W" + file + "_" + std::to_string(w.line)] = {w.count, files.size() == 1 ? std::string() : w.file, w.line, false};
+    }
     return values;
 }
 }  // namespace
