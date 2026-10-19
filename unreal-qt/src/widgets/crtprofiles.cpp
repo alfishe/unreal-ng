@@ -151,6 +151,20 @@ QString CRTProfileParams::ProfileName(CRTProfile profile)
     }
 }
 
+QString CRTProfileParams::ProfileKey(CRTProfile profile)
+{
+    switch (profile)
+    {
+        case CRTProfile::None:       return "none";
+        case CRTProfile::Basic:      return "basic";
+        case CRTProfile::Aperture:   return "aperture";
+        case CRTProfile::ShadowMask: return "shadow-mask";
+        case CRTProfile::SlotMask:   return "slot-mask";
+        case CRTProfile::Megatron:   return "megatron";
+        default:                     return "unknown";
+    }
+}
+
 QString CRTProfileParams::ProfileDescription(CRTProfile profile)
 {
     switch (profile)

@@ -859,7 +859,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | Pixel sources (memory, registers, palette behind a pixel; `t=` the beam point at a frame T) | `video pixel <x> <y> [layer]`, `video pixel t <tstate>` | `GET /video/pixel?x=&y=&layer=` / `?t=` | `video_pixel(...)`, `video_pixel_at(t)` | `video_pixel(...)`, `video_pixel_at(t)` | `invoke_api` |
 | Pixels a byte feeds (RAM page, Z80 address, palette cell, sprite word, device video RAM) | `video address <page> <off>`, `video address z80\|palette\|sprite_ram\|vram <n>` | `GET /video/address?page=&offset=` / `?z80=` / `?space=vram&offset=` | `video_address(...)`, `video_address_in(space, off)` | the same | `invoke_api` |
 | Text grid of a text mode (ATM / ZX-Evo / TS-Conf, the Sprinter's text squares) | `video text [layer]` | `GET /video/text` | `video_text()` | `video_text()` | `video_text` |
-| Screenshot of the presented frame: the whole frame with border (default) or the working picture (`area=screen`); PNG (default) or GIF; the answer carries the frame geometry (`frame`, `screen_window`, `crop`); optional file path | `capture screen [--area=full\|screen] [--format=png\|gif] [--source=presented\|live] [file]` | `GET /capture/screen?area=&format=&source=&path=` (`mode=` is a deprecated alias of `area`) | `screenshot{area=, format=, source=, path=}` | `capture_screen(format="png", area="", path="", source="")` (`full=` deprecated) | `capture_media` screenshot `area`, `format`, `source`, `path` |
+| Screenshot of the presented frame: the whole frame with border (default) or the working picture (`area=screen`); PNG (default) or GIF; the answer carries the frame geometry (`frame`, `screen_window`, `crop`); optional file path | `capture screen [--area=full\|screen] [--format=png\|gif] [--source=presented\|live\|window] [file]` | `GET /capture/screen?area=&format=&source=&path=` (`mode=` is a deprecated alias of `area`) | `screenshot{area=, format=, source=, path=}` | `capture_screen(format="png", area="", path="", source="")` (`full=` deprecated) | `capture_media` screenshot `area`, `format`, `source`, `path` |
 | Raw framebuffer (rgba; the Sprinter's u16 pens with `index`) | `capture framebuffer <file> [rgba\|index]` | `GET /capture/framebuffer?format=&encoding=binary\|base64` | `framebuffer([format])` | `framebuffer(format)` (+ numpy `array`) | `capture_media` framebuffer |
 | Screen digest (RAM pages, or the machine's own video RAM on the Sprinter) | `digest [--active] [--banks ..] [<start> <end>]` | `GET /state/screen/digest` | `screen_digest(...)` | `screen_digest(...)` | `screen_digest` |
 | Audio channels overview (beeper, AY, GS, Covox, master, mixer devices) | `state audio channels` | `GET /state/audio/channels` | - (`audio_mixer()`) | - (`audio_mixer()`) | `invoke_api` |
@@ -1561,6 +1561,25 @@ hear.
 | `video temporal list` | | List the algorithms that can be switched on (the default is `mod-tpgwafsd`). |
 | `video temporal <algorithm>` | algorithm name | Switch the de-flicker on with that algorithm. An unknown name is an error that lists the valid ones. |
 | `video temporal off` | | Switch the de-flicker off (the delays return to the normal A/V delay). |
+
+#### GUI window display settings
+
+How the unreal-qt window draws the picture: the View menu's GPU acceleration, CRT effects and profile, and temporal
+blending (gigascreen smoothing, the window's own, apart from ZX DLSS). The window belongs to the front end: the GUI
+registers it with the core (`WindowView`), the core has no UI dependency. Headless there is no window and every
+surface answers `no-window`. The settings are the window's, whichever instance it shows; screenshot `source=window`
+shows their effect.
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `video window` / `video window status` | | Show the settings. |
+| `video window <key>=<value> ...` | `gpu`, `crt`, `blending` = on / off; `crt_profile` = none, basic, aperture, shadow-mask, slot-mask, megatron; `blending_frames` = 2..5; `blending_weights` = equal / exponential | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off. |
+
+Fields: `backend` (`gpu` / `software`), `gpu_available`, `gpu`, `crt`, `crt_profile`, `crt_profiles` (offered),
+`blending`, `blending_frames`, `blending_weights`, `emulator` (the instance the window shows). Errors: `bad-parameter`
+(an unknown key or value; an unknown profile lists the offered ones), `unavailable` (`gpu=on` on a host without
+OpenGL), `no-window`. The same as WebAPI `GET` / `PUT /api/v1/emulator/{id}/video/window`, Lua and Python
+`window_display()` / `window_display_set(...)`, MCP `capture_media` `window_display` / `window_display_set`.
 
 The same status and switch are available as WebAPI
 `GET` / `PUT /api/v1/emulator/{id}/video/temporal`, Lua and Python
@@ -4089,7 +4108,7 @@ Capture and extract various output data from the emulator: screen text via OCR, 
 | :--- | :--- | :--- | :--- |
 | `capture ocr` | | OCR text from screen using ROM font bitmap matching. Returns 24 lines × 32 characters. | ✅ Implemented |
 | `capture romtext` | | Start/show captured ROM print output (uses ROMPrintDetector). | 🔮 Planned |
-| `capture screen` | `[--area=full\|screen] [--format=png\|gif] [--source=presented\|live] [file]` | Screenshot of the session's emulator: the whole frame with its border by default, `--area=screen` the working picture; PNG by default; the presented frame by default, `--source=live` the frame as drawn now. Prints the geometry and a data URI, or saves to `file`. Legacy spellings `-png`, `-gif`, `png`, `gif`, `full`, `screen` still work. An unknown word is an error. | ✅ Implemented |
+| `capture screen` | `[--area=full\|screen] [--format=png\|gif] [--source=presented\|live\|window] [file]` | Screenshot of the session's emulator: the whole frame with its border by default, `--area=screen` the working picture; PNG by default; the presented frame by default, `--source=live` the frame as drawn now, `--source=window` the picture as the unreal-qt window draws it (GUI only). Prints the geometry and a data URI, or saves to `file`. Legacy spellings `-png`, `-gif`, `png`, `gif`, `full`, `screen` still work. An unknown word is an error. | ✅ Implemented |
 | `capture framebuffer` | `<file> [rgba\|index]` | Raw pixels of the same presented frame (RGBA, or the Sprinter's u16 pens with `index`). | ✅ Implemented |
 
 `source=presented` (default) is the finished frame the window shows, a couple of frames behind the machine. `source=live` is the frame as drawn right now, with no present delay and no ZX DLSS processing: on a running machine the emulation thread copies it at the end of its next frame (an answer within one frame time; 409 `no-frame` if none comes within 1 s), on a paused one it is read directly and the answer says where the beam stopped (`frame.beam.line`, `frame.beam.tstate`) and whether the frame is half drawn (`frame.partial`: the beam is inside a frame drawn per T-state, so the lines it has not reached are still the previous frame's). The master of a ZX-Poly group shows the group's composed display frame (2x, `frame.source: composed`, the working picture 512x384); a slave keeps its own frame.

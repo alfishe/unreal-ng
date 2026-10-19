@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "emulator/video/screen.h"
+#include "emulator/video/windowview.h"
 #include "crtprofiles.h"
 
 class Emulator;
@@ -47,7 +48,16 @@ public:
     ~DeviceScreenWrapper();
 
     /// @brief Initialize with framebuffer dimensions and memory
-    void init(uint16_t width, uint16_t height, void* buffer);
+    /// `aspect`: width : height the picture is drawn in; 0 = the CRT frame's 352:288 (every machine raster).
+    /// A video card's own picture (the VDAC2's FT812) has square pixels and gives its own
+    void init(uint16_t width, uint16_t height, void* buffer, float aspect = 0.0f);
+    /// @brief Initialize with an emulator's framebuffer, in the shape the screen shows it (see PictureAspect)
+    void init(const FramebufferDescriptor& framebuffer, const Screen& screen);
+    /// @brief Width : height a screen's current picture is drawn in: its own for a video card's picture
+    /// (square pixels), 0 (the CRT frame's 352:288) for the machine's raster
+    static float PictureAspect(const FramebufferDescriptor& framebuffer, const Screen& screen);
+    /// @brief The shape init() was given (0 = the CRT frame's 352:288)
+    float pictureAspect() const { return _pictureAspect; }
 
     /// @brief Detach from current framebuffer
     void detach();
@@ -110,6 +120,9 @@ public:
     /// screen's scale (FT812 Debug) line their rows up with it
     QRect pictureGlobalRect() const;
     QRectF pictureSourceRect() const;
+    /// @brief The picture as this screen draws it, for the automation's screenshot source "window" (WindowView):
+    /// letterbox excluded, CRT shader and HUD included, in device pixels. GUI thread only
+    bool grabWindowView(WindowViewGrab& out, std::string& error);
 
     /// @brief Host mouse capture of this screen (both backends); owned by the wrapper
     MouseCaptureController* mouseCapture() const { return _mouseCapture; }
@@ -167,4 +180,5 @@ private:
     // Track viewport state for getters
     DisplayViewport _displayViewport;
     bool _hasViewport = false;
+    float _pictureAspect = 0.0f;
 };

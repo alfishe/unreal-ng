@@ -425,7 +425,7 @@ TEST(Screenshotter_Test, BadRequestWordsNameTheWordAndTheAllowedOnes)
     }
 }
 
-TEST(Screenshotter_Test, SourceWordsArePresentedOrLive)
+TEST(Screenshotter_Test, SourceWordsArePresentedLiveOrWindow)
 {
     ScreenshotOptions options;
     std::string message;
@@ -435,10 +435,13 @@ TEST(Screenshotter_Test, SourceWordsArePresentedOrLive)
     EXPECT_EQ(options.source, ScreenshotSource::Live);
     ASSERT_TRUE(Screenshotter::ParseRequestWords("", "", "", "presented", options, message)) << message;
     EXPECT_EQ(options.source, ScreenshotSource::Presented);
-    for (const char* bad : {"Live", "now", "latest", "1"})
+    ASSERT_TRUE(Screenshotter::ParseRequestWords("", "", "", "window", options, message)) << message;
+    EXPECT_EQ(options.source, ScreenshotSource::Window);
+    EXPECT_STREQ(Screenshotter::RequestSourceName(ScreenshotSource::Window), "window");
+    for (const char* bad : {"Live", "now", "latest", "1", "Window"})
     {
         EXPECT_FALSE(Screenshotter::ParseRequestWords("", "", "", bad, options, message)) << bad;
-        EXPECT_NE(message.find("presented or live"), std::string::npos) << message;
+        EXPECT_NE(message.find("presented, live or window"), std::string::npos) << message;
     }
 }
 
@@ -638,5 +641,119 @@ TEST_F(ScreenshotterMachine_Test, ConcurrentLiveRequestsAreServedOneByOne)
     emulation.join();
     EXPECT_EQ(good.load(), 6);
 }
+
+/// region <Window source>
+
+namespace
+{
+/// A front end's window as the tests draw it: a picture of known pixels, shown for one emulator id
+class FakeWindowView : public IWindowViewProvider
+{
+public:
+    std::string shownId;
+    std::string lastAskedId;
+
+    bool GrabWindowView(const std::string& emulatorId, WindowViewGrab& out, std::string& error) override
+    {
+        lastAskedId = emulatorId;
+        if (emulatorId != shownId)
+        {
+            error = "The window shows another emulator";
+            return false;
+        }
+        out.width = 6;
+        out.height = 4;
+        out.rgba.assign(static_cast<size_t>(out.width) * out.height * 4, 0x40);
+        out.viewport = PictureRect{0, 0, 8, 4};
+        out.picture = PictureRect{1, 0, 6, 4};
+        out.devicePixelRatio = 1.0;
+        out.backend = "fake";
+        return true;
+    }
+
+    // The display settings are windowdisplay_test.cpp's
+    bool GetWindowDisplay(WindowDisplaySettings&, std::string& error) override
+    {
+        error = "not in this test";
+        return false;
+    }
+    bool SetWindowDisplay(const WindowDisplayChange&, WindowDisplaySettings&, std::string& error) override
+    {
+        error = "not in this test";
+        return false;
+    }
+};
+
+/// Registers a provider for one test, and always takes it away again: the registry is process-wide
+struct ScopedWindowView
+{
+    explicit ScopedWindowView(std::shared_ptr<IWindowViewProvider> provider) { WindowView::SetProvider(std::move(provider)); }
+    ~ScopedWindowView() { WindowView::SetProvider(nullptr); }
+};
+
+ScreenshotOptions WindowOptions(ScreenshotArea area = ScreenshotArea::Full)
+{
+    ScreenshotOptions o = Options(area);
+    o.source = ScreenshotSource::Window;
+    return o;
+}
+}  // namespace
+
+/// Headless (no front end registered): the source says there is no window, it never falls back to the frame
+TEST_F(ScreenshotterMachine_Test, WindowSourceWithoutAFrontEndIsNoWindow)
+{
+    WindowView::SetProvider(nullptr);
+    const ScreenshotResult r = Screenshotter::TakeFrom(*_screen, WindowOptions());
+    EXPECT_FALSE(r.ok);
+    EXPECT_EQ(r.error, ScreenshotError::NoWindow);
+    EXPECT_STREQ(Screenshotter::ErrorName(r.error), "no-window");
+}
+
+/// The front end's picture comes back as it drew it, with the window's geometry and the frame it shows
+TEST_F(ScreenshotterMachine_Test, WindowSourceIsThePictureTheFrontEndDrew)
+{
+    auto view = std::make_shared<FakeWindowView>();
+    view->shownId = _emulator->GetId();
+    ScopedWindowView registered(view);
+
+    const ScreenshotResult r = Screenshotter::Take(_emulator->GetId(), WindowOptions());
+    ASSERT_TRUE(r.ok) << r.errorMessage;
+    EXPECT_EQ(view->lastAskedId, _emulator->GetId()) << "the provider is asked for this emulator";
+    EXPECT_EQ(r.width, 6);
+    EXPECT_EQ(r.height, 4);
+    ASSERT_TRUE(r.fromWindow);
+    EXPECT_EQ(r.window.backend, "fake");
+    EXPECT_EQ(r.window.viewport.width, 8);
+    EXPECT_EQ(r.window.picture.x, 1);
+    EXPECT_TRUE(r.window.rgba.empty()) << "the pixels are in bytes only";
+    EXPECT_EQ(r.frame.width, 352) << "the frame the window shows";
+
+    unsigned w = 0, h = 0;
+    std::vector<uint8_t> rgba;
+    ASSERT_TRUE(DecodePng(r.bytes, w, h, rgba));
+    EXPECT_EQ(w, 6u);
+    EXPECT_EQ(h, 4u);
+    EXPECT_EQ(rgba[0], 0x40);
+}
+
+/// Another instance in the window, or a part of the picture: errors, not a wrong image
+TEST_F(ScreenshotterMachine_Test, WindowSourceRefusesAnotherInstanceAndTheScreenArea)
+{
+    auto view = std::make_shared<FakeWindowView>();
+    view->shownId = "some-other-instance";
+    ScopedWindowView registered(view);
+
+    const ScreenshotResult other = Screenshotter::TakeFrom(*_screen, WindowOptions());
+    EXPECT_FALSE(other.ok);
+    EXPECT_EQ(other.error, ScreenshotError::NoWindow);
+    EXPECT_NE(other.errorMessage.find("another emulator"), std::string::npos) << other.errorMessage;
+
+    view->shownId = _emulator->GetId();
+    const ScreenshotResult area = Screenshotter::TakeFrom(*_screen, WindowOptions(ScreenshotArea::Screen));
+    EXPECT_FALSE(area.ok);
+    EXPECT_EQ(area.error, ScreenshotError::BadParameter);
+}
+
+/// endregion </Window source>
 
 /// endregion </Real frames>

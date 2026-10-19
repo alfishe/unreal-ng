@@ -215,6 +215,27 @@ thread with no lock (problem 3). The live source never does that:
   the switch.
 - A timeout (emulation stuck, no frames) returns an error kind `no-frame` instead of hanging.
 
+### 6a. Window source (`source=window`, implemented 2026-10-19)
+
+The frame says what the machine shows; how a front end puts it on the host display (the shape, the letterbox, the CRT
+shader, the HUD) only the front end knows. A wrong shape there (the FT812's 4:3 picture squeezed to 352:288) is
+invisible in the frame. `source=window` returns the picture as the GUI window drew it.
+
+- **No core dependency on a UI.** `emulator/video/windowview.h` declares `IWindowViewProvider` and the process-wide
+  `WindowView::SetProvider`. unreal-qt registers its `WindowViewProvider` while its main screen exists (re-registered
+  when the screen backend is switched, removed in `~MainWindow`). Nothing registered (headless, tests, the video
+  wall): `no-window`.
+- **Threads.** The surfaces call from their own threads; the provider queues the grab to the GUI thread and waits up
+  to 3 s (called on the GUI thread, it grabs at once). The queued job holds only guarded pointers and a shared state,
+  so a grab that runs after a timeout or after the window closed writes nowhere it should not. Python releases the GIL
+  while waiting.
+- **What is grabbed.** GPU backend: `QOpenGLWindow::grabFramebuffer`, cut to `drawnPictureSize` centered (the quad
+  paintGL draws). Software backend: the `DeviceScreen` widget, which keeps the picture's shape inside its parent. The
+  answer's `window` gives the viewport, the picture rect (logical pixels), the device pixel ratio and the backend;
+  `frame` is the frame the window shows; `crop` the whole frame.
+- **Which instance.** Only the one the window shows (a ZX-Poly master: the group's display); another id is
+  `no-window` with the shown id in the message. `area=screen` is refused (400): the window has no working-window cut.
+
 ### 7. ZX-Poly (decision 4, implemented)
 
 `ZXPolyGroup` latches the geometry of its display frame with the pixels at every composed frame

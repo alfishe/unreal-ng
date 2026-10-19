@@ -249,6 +249,13 @@ protected:
     QSize pictureNativeSize() const;
     /// Resizes the window to the picture at the remembered zoom factor (aspect ratio kept); no-op after a manual resize
     void refitWindowToPicture();
+    /// Offers the screen to the automation's screenshot source "window" and display settings (WindowView): after every
+    /// new screen wrapper
+    void registerWindowView();
+    /// The View menu's display settings (GPU, CRT, temporal blending) for the automation. GUI thread
+    WindowDisplaySettings windowDisplaySettings() const;
+    /// Apply an automation change (validated by the core) through the View menu's handlers, menu checks in step. GUI thread
+    void applyWindowDisplay(const WindowDisplayChange& change);
     /// Menu bar, toolbar, status bar and margins around the screen: the window minus the content frame, measured on a laid-out window
     QSize windowChrome();
     /// The smallest the screen may get is the picture at 1x: a pixel is never squeezed; follows every video mode

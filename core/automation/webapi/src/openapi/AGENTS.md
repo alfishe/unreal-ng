@@ -46,6 +46,7 @@ openapi/
 ├── openapi_state.inc      # State inspection (screen, audio)
 ├── openapi_stepping.inc   # Execution control (step, run)
 ├── openapi_temporal.inc   # ZX DLSS de-flicker status / switch + openapi_temporal_schemas.inc
+├── openapi_window.inc     # GUI window display settings (GPU, CRT, blending) + openapi_window_schemas.inc
 ├── openapi_ttd.inc        # Time-Travel Debug
 ├── openapi_ttdfile.inc    # TTD file info (no instance) + openapi_ttdfile_schemas.inc
 └── openapi_video.inc      # Video debug translation: layout, pixel sources, byte -> pixels, text

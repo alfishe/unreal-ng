@@ -39,12 +39,13 @@ DeviceScreen::~DeviceScreen()
     delete ui;
 }
 
-void DeviceScreen::init(uint16_t width, uint16_t height, void* buffer)
+void DeviceScreen::init(uint16_t width, uint16_t height, void* buffer, float aspect)
 {
     detach();
 
-    // Note: the widget's aspect ratio is fixed (352x288) regardless of the framebuffer size;
-    // larger (overscan) framebuffers are scaled into the same frame
+    // Note: the widget's aspect ratio is the CRT frame's 352x288 regardless of the framebuffer size;
+    // larger (overscan) framebuffers are scaled into the same frame. A video card's picture brings its own
+    ratio = aspect > 0.0f ? aspect : kNativeRatio;
 
     devicePixelsRect = QRectF(0.0, 0.0, width, height);
     // RGBX8888: same byte layout as RGBA8888, but alpha is IGNORED (treated as

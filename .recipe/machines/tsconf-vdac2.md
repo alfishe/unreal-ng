@@ -176,7 +176,10 @@ an overflow looks like: [line-budget-model.md](../../docs/inprogress/2026-10-01-
   end record is written then.
 - The monitor switches per machine frame, as the last line latched `V_CONFIG` bit 2.
 - The Qt window, screenshots and recordings take the FT812 picture's size
-  (`HSIZE × VSIZE`, 1024×768 in the games) while it is shown. A screenshot
+  (`HSIZE × VSIZE`, 1024×768 in the games) while it is shown. The window draws
+  it in its own shape with square pixels (4:3: 1600x1200 at zoom 2 for 800x600),
+  not in the 352:288 CRT frame of the Evo's picture, and goes back to that frame
+  when the Evo's picture returns. A screenshot
   needs no special parameter for it: the default `area=full` returns the
   whole FT812 picture, and `area=screen` is the same image (the picture has
   no border). Before the screenshot rewrite it returned a 256x192 piece cut

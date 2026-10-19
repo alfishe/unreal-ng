@@ -353,7 +353,7 @@ class Emulator:
         """Raw pixels: width, height, format, encoding, data (bytes), array (numpy when installed)"""
 
     def capture_screen(self, format="png", full=None, area="", path="", source="") -> dict:
-        """Screenshot of the presented frame (source="live": the frame as drawn now; a paused machine adds the beam position and partial to frame). area="full" (default, the whole frame with border) or "screen" (the
+        """Screenshot of the presented frame (source="live": the frame as drawn now; a paused machine adds the beam position and partial to frame; source="window": the picture as the unreal-qt window draws it, GUI only, with a "window" dict). area="full" (default, the whole frame with border) or "screen" (the
         working picture); format "png" (default) or "gif"; path writes the file on the machine running the
         emulator. Returns {success, format, area, width, height, size, crop, screen_window, frame, data (base64)
         | file} or {success: False, error, kind}. full= is a deprecated alias (True = "full", False = "screen")"""
@@ -1613,6 +1613,16 @@ emu.video_temporal_set('mod-tpgwafsd') # switch it on; 'off' or '' switches it o
                                      #   picture is shown later by the algorithm's look-ahead (7 frames for
                                      #   mod-tpgwafsd with the default A/V delay of 2) and the sound is delayed
                                      #   by the difference ('audio_extra_delay_frames', 5 here) to stay in sync.
+emu.window_display()                 # GUI window display settings: {'backend' ('gpu' / 'software'), 'gpu_available',
+                                     #   'gpu', 'crt', 'crt_profile', 'crt_profiles': [...], 'blending' (temporal
+                                     #   blending), 'blending_frames' (2..5), 'blending_weights' ('equal' /
+                                     #   'exponential'), 'emulator' (the instance the window shows)}; headless
+                                     #   {'ok': False, 'error', 'kind': 'no-window'}
+emu.window_display_set(crt_profile='shadow-mask', blending=True)  # any of gpu=, crt=, blending= (bool),
+                                     #   crt_profile= (none, basic, aperture, shadow-mask, slot-mask, megatron; other
+                                     #   than none switches CRT on), blending_frames=, blending_weights=; applied
+                                     #   the way the View menu does. Returns the settings after the change, or
+                                     #   {'ok': False, 'error', 'kind': 'bad-parameter' / 'no-window' / 'unavailable'}
 emu.frame_cost()                     # per-frame halt/run cost accounting
 emu.operations(since=0, limit=0)     # the operation log (reset, autostart, snapshot load, media insert / eject /
                                      #   discard, blank disk; refusals too): {'mode', 'last_seq', 'capacity',

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""capture_media: screenshots (metadata by default, the picture as an MCP image block on request), digests, status"""
+"""capture_media: screenshots (metadata by default, the picture as an MCP image block on request), digests, status,
+the GUI window's display settings"""
 
 import base64
 import json
@@ -41,6 +42,25 @@ def test_record_and_audio_status(s):
     for action in ('record_status', 'audio_status'):
         r = s.call('capture_media', {'action': action})
         expect('=' in r.text or 'status' in r.text.lower(), f'{action}: fields in the text', r.text)
+
+
+def test_window_display_changes_and_restores(s):
+    before = s.call('capture_media', {'action': 'window_display'})
+    expect(before.text.startswith('window gpu '), 'a one-line summary', before.text)
+    expect('shadow-mask' in before.structured['crt_profiles'], 'the profiles the window offers', before.structured)
+
+    changed = s.call('capture_media', {'action': 'window_display_set',
+                                       'display': {'crt_profile': 'shadow-mask', 'blending_frames': 4}})
+    expect(changed.structured['crt'] and changed.structured['crt_profile'] == 'shadow-mask', 'the profile switches CRT on',
+           changed.structured)
+    expect('crt shadow-mask' in changed.text and '4 frames' in changed.text, 'the change in the text', changed.text)
+
+    bad = s.call('capture_media', {'action': 'window_display_set', 'display': {'crt_profile': 'nope'}}, ok=False)
+    expect('HTTP 400' in bad.text and 'shadow-mask' in bad.text, 'an unknown profile lists the offered ones', bad.text)
+
+    restore = {k: before.structured[k] for k in ('crt_profile', 'crt', 'blending_frames')}
+    after = s.call('capture_media', {'action': 'window_display_set', 'display': restore})
+    expect(after.structured['crt_profile'] == before.structured['crt_profile'], 'restored', after.structured)
 
 
 if __name__ == '__main__':

@@ -14,6 +14,7 @@
 #include <QKeyEvent>
 #include <QMimeData>
 #include <QOpenGLContext>
+#include <QOpenGLFramebufferObject>
 #include <QOpenGLPixelTransferOptions>
 #include <QSurfaceFormat>
 #include <QUrl>
@@ -196,9 +197,10 @@ DeviceScreenGLWindow::~DeviceScreenGLWindow()
     detach();
 }
 
-void DeviceScreenGLWindow::init(uint16_t width, uint16_t height, void* buffer)
+void DeviceScreenGLWindow::init(uint16_t width, uint16_t height, void* buffer, float aspect)
 {
     detach();
+    ratio = aspect > 0.0f ? aspect : kNativeRatio;
 
     _devicePixelsRect = QRectF(0.0, 0.0, width, height);
     _devicePixels = new QImage(static_cast<const unsigned char*>(buffer), width, height, QImage::Format_RGBA8888);
@@ -413,6 +415,35 @@ void DeviceScreenGLWindow::resizeGL(int w, int h)
     glViewport(0, 0, w, h);
 }
 
+QImage DeviceScreenGLWindow::renderWindowImage()
+{
+    if (!isValid())
+        return {};
+    makeCurrent();
+    const qreal ratio = devicePixelRatio();
+    const QSize pixels = (QSizeF(size()) * ratio).toSize();
+    QImage image;
+    {
+        QOpenGLFramebufferObject fbo(pixels);
+        fbo.bind();
+        glViewport(0, 0, pixels.width(), pixels.height());
+        // The HUD's QPainter would paint into the window, not this FBO: it goes onto the image below
+        _renderingImage = true;
+        paintGL();
+        _renderingImage = false;
+        fbo.release();
+        image = fbo.toImage();
+    }
+    doneCurrent();
+    image.setDevicePixelRatio(ratio);
+    if (_hudOverlay && _hudOverlay->isVisible())
+    {
+        QPainter painter(&image);
+        _hudOverlay->renderHUD(painter, width(), height(), ratio);
+    }
+    return image;
+}
+
 void DeviceScreenGLWindow::updateTexture()
 {
     if (!_textureNeedsUpdate.load(std::memory_order_relaxed))
@@ -591,7 +622,7 @@ void DeviceScreenGLWindow::paintGL()
     glDisable(GL_TEXTURE_2D);
     _texture->release();
 
-    if (_hudOverlay && _hudOverlay->isVisible())
+    if (_hudOverlay && _hudOverlay->isVisible() && !_renderingImage)
     {
         QPainter painter(this);
         _hudOverlay->renderHUD(painter, width(), height(), devicePixelRatio());

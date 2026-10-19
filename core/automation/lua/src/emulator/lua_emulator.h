@@ -51,6 +51,7 @@
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
+#include "../../../windowdisplay.h"
 #include "../../../operationsstatus.h"
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/debugmanager.h>
@@ -1413,10 +1414,11 @@ public:
             out.push_back(t);
             return out;
         });
-        // screenshot([{area = "full"|"screen", format = "png"|"gif", source = "presented"|"live", path = "file"}]): a
+        // screenshot([{area = "full"|"screen", format = "png"|"gif", source = "presented"|"live"|"window", path = "file"}]): a
         // screenshot (core Screenshotter): the whole frame (default) or the working picture, PNG (default) or GIF,
         // of the presented frame (default) or the live one as drawn now (a paused machine adds frame.partial and
-        // frame.beam = {line, tstate}).
+        // frame.beam = {line, tstate}), or the picture as the unreal-qt window draws it ("window": GUI only, area full;
+        // adds window = {viewport, picture, device_pixel_ratio, backend}).
         // Returns {format, area, width, height, size, crop = {x,y,width,height}, screen_window = {...}, frame = {width,
         // height, mode, source, frame_number}, data = the encoded image as a string of bytes} or, with a path, `file`
         // instead of `data`; nil, error on a bad word, a missing emulator or no frame
@@ -1435,7 +1437,7 @@ public:
                 if (!area.empty() && !Screenshotter::ParseArea(area, options.area))
                     return mouseError(s, "Unknown area '" + area + "': use full or screen");
                 if (!source.empty() && !Screenshotter::ParseSource(source, options.source))
-                    return mouseError(s, "Unknown source '" + source + "': use presented or live");
+                    return mouseError(s, "Unknown source '" + source + "': use presented, live or window");
                 if (!format.empty() && !Screenshotter::ParseFormat(format, options.format))
                     return mouseError(s, "Unknown format '" + format + "': use png or gif");
                 options.saveTo = opts->get_or<std::string>("path", "");
@@ -1478,6 +1480,15 @@ public:
                 frame["beam"] = beam;
             }
             t["frame"] = frame;
+            if (shot.fromWindow)
+            {
+                sol::table window = view.create_table();
+                window["viewport"] = rect(shot.window.viewport);
+                window["picture"] = rect(shot.window.picture);
+                window["device_pixel_ratio"] = shot.window.devicePixelRatio;
+                window["backend"] = shot.window.backend;
+                t["window"] = window;
+            }
             if (!shot.savedFile.empty())
                 t["file"] = shot.savedFile;
             else
@@ -5840,6 +5851,36 @@ public:
                 return StateNodeToLua(s, error);
             }
             return StateNodeToLua(s, TemporalStatus::Report(ctx));
+        });
+        // GUI window display settings (GPU, CRT effects / profile, temporal blending): the WindowDisplay report every
+        // interface returns. window_display() reads; window_display_set({gpu = true, crt_profile = "shadow-mask",
+        // blending = true, blending_frames = 3, blending_weights = "exponential", crt = false}) changes any of them the
+        // way the View menu does. Headless: {ok = false, error, kind = "no-window"}
+        lua.set_function("window_display", [](sol::this_state s) -> sol::object {
+            const WindowDisplay::Result r = WindowDisplay::Get();
+            return StateNodeToLua(s, r.Ok() ? WindowDisplay::Report(r.settings) : WindowDisplay::ErrorNode(r));
+        });
+        lua.set_function("window_display_set", [](sol::this_state s, sol::table changes) -> sol::object {
+            WindowDisplayChange change;
+            WindowDisplay::Result bad;
+            bad.status = WindowDisplay::Status::BadParameter;
+            for (const auto& [k, v] : changes)
+            {
+                const std::string key = k.is<std::string>() ? k.as<std::string>() : std::string("?");
+                std::string word;
+                if (v.get_type() == sol::type::boolean)
+                    word = v.as<bool>() ? "on" : "off";
+                else if (v.get_type() == sol::type::number)
+                    word = std::to_string(v.as<long long>());
+                else if (v.get_type() == sol::type::string)
+                    word = v.as<std::string>();
+                if (word.empty())
+                    bad.error = "'" + key + "' takes a boolean, a number or a string";
+                if (!bad.error.empty() || !WindowDisplay::ApplyWord(change, key, word, bad.error))
+                    return StateNodeToLua(s, WindowDisplay::ErrorNode(bad));
+            }
+            const WindowDisplay::Result r = WindowDisplay::Set(change);
+            return StateNodeToLua(s, r.Ok() ? WindowDisplay::Report(r.settings) : WindowDisplay::ErrorNode(r));
         });
 
         // Halt/active cost of the last frame plus session averages

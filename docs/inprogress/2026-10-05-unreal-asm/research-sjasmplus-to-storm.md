@@ -16,7 +16,7 @@ start:  ld a,1+2*3                 START   LD A,1+2*3
         ld a,low (label+1)                 LD A,(LABEL+1)]
         ld bc,10-(4+2)                     LD BC,10-(+4+2)        ; a part after - begins with an operator
         ld hl,-(label*2)*3                 LD HL,(LABEL*2~)*3     ; STORM 1.3 computes 2*3~*2 as -6
-        ld hl,(1<2)+label                  LD HL,((1<2)~)+LABEL   ; a comparison gives 1 in STORM, -1 in sjasmplus
+        ld hl,(label&7)+1                  LD HL,1                ; STORM 1.3 loses & ! | @ in parentheses: the value
         ld a,~5 & #0F                      LD A,5|#FFFF&#0F       ; | is STORM's XOR, ! its OR
         DUP 3 / ldi / EDUP                 .3      LDI            ; one line repeated
         DISP #9000 ... ENT                 ORG #9000,$ ... ORG $-#9000+#600B
@@ -27,8 +27,9 @@ start:  ld a,1+2*3                 START   LD A,1+2*3
 
 | Source | STORM text |
 |---|---|
-| An expression | STORM's operators with its priorities (postfix `[ ] ~ @` 8 / 6 / 2, `* / \` 7, `<< >>` 5, `+ -` 4, `& ! \|` 3, comparisons 2), parentheses where they differ from the source's; `high x` as `x[`, `low x` as `x]`, `-x` as `x~`, `~x` as `x\|#FFFF`, `!x` as `x@`, `a&&b` as `a@@&(b@@)`; a comparison negated for sjasmplus' -1; a postfix part on the left of an operator parenthesized (STORM 1.3's `2*3~*2` bug); `x&#FFFF` as `x` (STORM's words are 16 bits) |
+| An expression | STORM's operators with its priorities (postfix `[ ] ~ @` 8 / 6 / 2, `* / \` 7, `<< >>` 5, `+ -` 4, `& ! \|` 3, comparisons 2), parentheses where they differ from the source's; `high x` as `x[`, `low x` as `x]`, `-x` as `x~`, `~x` as `x\|#FFFF`, `!x` as `x@`, `a&&b` as `a@@&(b@@)`; a comparison negated for sjasmplus' -1 (`a&&b` and a negated comparison hold a part in parentheses STORM cannot compute: written as their values, see below); a postfix part on the left of an operator parenthesized (STORM 1.3's `2*3~*2` bug); `x&#FFFF` as `x` (STORM's words are 16 bits) |
 | One STORM computes otherwise (a division, a remainder, `>>` or a comparison of a value outside 0..#FFFF, a rotation) or one longer than the line holds | its value from the source's layout (`BackendOptions::labelValues`), with a note |
+| A part in parentheses holding `& ! \| @` or a comparison, or an index offset `(IX+d)` with one outside parentheses | its value with a note, else the text with a warning: in parentheses STORM 1.3 computes only `+ - * / \ << >>` and `~ [ ]` (`1+(6&3)` = 7, `1+(0@)` = 1, `1+(1<2)` a syntax error, `(6!1)` "3 Subscript wrong"; checked 2026-10-19 with the lines typed in STORM's editor) |
 | A part in parentheses after `- / & \| >> >= >` | `(+...)`: STORM stores such a part beginning with an operator (its own source: `(+C2-KEYTXT)`) |
 | A label | upper case, letters, digits, `_` (a letter first: a line starting `_` and a command is a command in column 0), up to 7 characters, unique, no STORM keyword |
 | A name assigned with `=` / `DEFL`, `IF`, `WHILE`, `MACRO` | as for XAS (research-sjasmplus-to-xas.md §2), STORM 1.3 having no conditions: a condition known only when assembling is written as taken, with a warning |
@@ -39,7 +40,7 @@ start:  ld a,1+2*3                 START   LD A,1+2*3
 | `DISP a` ... `ENT` | `ORG a,$` ... `ORG $-a+place` (the place from the source's layout); a run address with `$` in it under a name of its own (`RUN EQU ...`) |
 | `INCLUDE` / `INCBIN` | `INCL "NAME"` / `INCB "NAME"`, the TR-DOS type as the 9th character (`"NAME.B"` → `"NAME    B"`) |
 | `IN F,(C)`, `SLL`, `EX AF,AF'` | `INF`, `SLI`, `EXA`; `OUT (C),0` and the undocumented copies (`RLC (IX+d),B`) as bytes |
-| Lines | the label, the command from column 8, a comment right after the operands (`ADD HL,DE; (ETEXT)`: STORM's codec reads no blank before it); at most 40 characters: a comment that does not fit goes on a line of its own, cut at 40; Russian letters kept (CP866), other characters as `?` |
+| Lines | the label, the command from column 8, a comment right after the operands (`ADD HL,DE; (ETEXT)`: STORM's codec reads no blank before it); at most 40 characters: a comment that does not fit goes on a line of its own, cut at 40; a wider statement gets an EQU of its longest expression (`S1 EQU (VALUE_E-VALUE_4-2)*256+#18`, `LD HL,S1`), before the line, or after the line of the last name it holds when one is defined further down (STORM's EQU takes no later label, an instruction takes a later EQU; then without `$`); NextPlayer 8 wide lines to none, the 37 projects 25 to none; Russian letters kept (CP866), other characters as `?` |
 
 ## 3. Writing into STORM (the injection)
 
