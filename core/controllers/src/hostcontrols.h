@@ -38,6 +38,19 @@ struct ControlInfo
 /// digital controls. False for anything else
 bool ParseControl(const std::string& text, ControlInfo& out);
 
+/// The window keyboard's modifiers in a key control name (debug-and-ttd.md §4.3)
+enum KeyModifier : uint8_t
+{
+    kKeyCtrl = 1,   ///< Qt's Control: Command on macOS, as in Qt's shortcuts
+    kKeyAlt = 2,    ///< Alt / Option
+    kKeyShift = 4,  ///< Shift
+    kKeyMeta = 8,   ///< Qt's Meta: the Control key on macOS, Windows / Super elsewhere
+};
+
+/// `key.<key>` of the window keyboard, with the held modifiers before the key in the fixed order ctrl, alt, shift,
+/// meta: `key.f10`, `key.ctrl.f10`, `key.ctrl.shift.f11`. '+' is not used: it joins the members of a chord
+std::string KeyControl(const std::string& key, uint8_t modifiers);
+
 /// The fixed control names (for "did you mean" lists): face, D-pad, shoulders, sticks, system, extras, motion, mouse,
 /// the control surfaces' `knob` (encoder), `push` and `touch` (the hand on the knob)
 const std::vector<std::string>& KnownControls();

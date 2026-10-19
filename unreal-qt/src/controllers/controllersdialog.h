@@ -57,6 +57,7 @@ private:
     QComboBox* _gameProfile = nullptr;  ///< ProfileContext::manual: by the loaded file, or one chosen here
     QCheckBox* _advanced = nullptr;
     QCheckBox* _soundHaptics = nullptr;
+    QCheckBox* _globalShortcuts = nullptr;
     QListWidget* _devices = nullptr;
     QLabel* _probeLabel = nullptr;
     QLabel* _deviceTitle = nullptr;

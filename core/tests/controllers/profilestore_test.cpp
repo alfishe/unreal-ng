@@ -300,6 +300,44 @@ TEST(ProfileStore_Test, Schemes_ExtendsMergesBelowAndCyclesWarn)
     EXPECT_EQ(applied[applied.size() - 2], "scheme/a");
 }
 
+/// The keyboard's debug profile is the debugger's shortcuts (debug-and-ttd.md §4.3): selected without the debug
+/// layer, and the window keyboard, a debugger remote, takes the bound combos only
+TEST(ProfileStore_Test, KeyboardShortcuts_WithoutTheDebugLayer)
+{
+    ProfileStore store;
+    ProfileContext context;
+    context.machine = "pentagon";
+    context.debugLayer = false;
+    context.devices = {{"kbd:system", "Keyboard", "keyboard", "keyboard", "qt"},
+                       {"usb:045e:0b00:1", "Elite", "xbox-elite-2", "xbox", "fake"}};
+    const ResolvedProfiles resolved = store.Resolve(context);
+    EXPECT_TRUE(resolved.warnings.empty()) << resolved.warnings.front();
+    const Binding* stepOver = Find(resolved, "family:keyboard", "debug", "key.f10");
+    ASSERT_NE(stepOver, nullptr) << "the shortcuts need no debug layer";
+    EXPECT_EQ(stepOver->target.name, "run.step_over");
+    EXPECT_NE(Find(resolved, "family:keyboard", "", "key.kp8"), nullptr) << "the numpad joystick stays";
+    EXPECT_EQ(Find(resolved, "family:xbox-elite-2", "debug", "rb"), nullptr) << "the pads' debug profiles wait";
+
+    InputRouter router;
+    std::vector<std::string> actions;
+    router.SetActionSink([&actions](const ActionEvent& event) {
+        if (event.pressed)
+            actions.push_back(event.action);
+    });
+    router.OnDeviceAdded(context.devices[0]);
+    router.SetRole("kbd:system", DeviceRole::DebuggerRemote);
+    store.Apply(router, context);
+    EXPECT_TRUE(router.Consumes("kbd:system", "key.ctrl.f10"));
+    EXPECT_TRUE(router.Consumes("kbd:system", "key.f5"));
+    EXPECT_FALSE(router.Consumes("kbd:system", "key.kp8")) << "a debugger remote has no play layer";
+    EXPECT_FALSE(router.Consumes("kbd:system", "key.a"));
+    EXPECT_FALSE(router.Consumes("kbd:system", "key.alt.f10"));
+    router.OnControl({"kbd:system", "key.ctrl.f10", 1, 1});
+    router.OnControl({"kbd:system", "key.ctrl.f10", 0, 2});
+    router.OnControl({"kbd:system", "key.shift.f11", 1, 3});
+    EXPECT_EQ(actions, (std::vector<std::string>{"run.frame_step", "run.step_out"}));
+}
+
 TEST(ProfileStore_Test, Directories_WrongKindRefusedAndSaveRoundTrips)
 {
     namespace fs = std::filesystem;

@@ -9,6 +9,7 @@
 #include <QString>
 #include <QTimer>
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -23,6 +24,8 @@
 class Emulator;
 class EmulatorContext;
 class EmulatorBinding;
+class QKeyEvent;
+class QWidget;
 
 class HostControllers : public QObject
 {
@@ -78,6 +81,18 @@ public:
         return _soundHaptics;
     }
     void SetSoundHaptics(bool on);
+    /// The window keyboard (`kbd:system`, mapping-and-profiles.md §4) is a debugger remote: its debug bindings are the
+    /// debugger's shortcuts (debug-and-ttd.md §4.3). They take the keys of the debugger window, and of the main window
+    /// with "global shortcuts" on (kept in the settings, off by default); a key they take does not reach the machine
+    void SetShortcutWindows(QWidget* main, QWidget* debugger);
+    bool GlobalShortcuts() const
+    {
+        return _globalShortcuts;
+    }
+    void SetGlobalShortcuts(bool on);
+    /// The keyboard control of a key event (`key.ctrl.f10`); empty for a modifier alone or an unknown key
+    static std::string KeyControlOf(const QKeyEvent* event);
+
     /// The Haptics panel (haptics.md §7): the feed, the gate, the motors of @p device and the sources' levels
     QString HapticsStatus(const std::string& device) const;
 
@@ -97,7 +112,12 @@ signals:
     /// The port-read heuristic plugged a device for the loaded program (ui-ux.md §3.8): the toast's line
     void autoDecided(const QString& text);
 
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
 private:
+    /// A key of a window the shortcuts take: true when a binding takes it (the window and the machine do not see it)
+    bool shortcutKey(const QKeyEvent* event, bool pressed);
     void onBound();
     void onUnbound();
     void poll();
@@ -140,4 +160,13 @@ private:
     bool _debugLayer = false;
     std::string _manualProfile;
     bool _soundHaptics = false;
+    bool _globalShortcuts = false;
+    QWidget* _mainWindow = nullptr;
+    QWidget* _debuggerWindow = nullptr;
+    struct HeldKey
+    {
+        std::string control;
+        bool taken = false;
+    };
+    std::map<int, HeldKey> _heldKeys;  ///< by native key: the control its press sent, released by the same name
 };

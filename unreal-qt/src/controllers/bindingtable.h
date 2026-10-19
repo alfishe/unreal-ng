@@ -189,4 +189,5 @@ private:
     std::map<std::string, QString> _captions;
     std::set<QPushButton*> _lit;
     bool _filling = false;
+    bool _debugTab = false;  ///< the debug layer is on: every device shows its Debugging tab
 };

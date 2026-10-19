@@ -204,6 +204,20 @@ The keyboard's debug bindings are the shortcut table, editable in the same edito
 step in, Shift+F11 step out, Ctrl+F10 frame step, Ctrl+Left / Right step back / forward instruction, Ctrl+B bookmark.
 They are active in the debugger window and, with "global shortcuts" on, in the main window.
 
+Built (`data/controllers/profiles/debug/keyboard-default.yaml`, `HostControllers::eventFilter`):
+
+- The window keyboard `kbd:system` is a debugger remote (§5): its debug layer is always up, it drives no connector.
+- A combo is one control, the modifiers before the key in the order ctrl, alt, shift, meta: `key.f10`,
+  `key.ctrl.f10`, `key.shift.f11` (`KeyControl`). Not '+': that joins a chord. `ctrl` is Qt's Control, Command on
+  macOS, as in Qt's own shortcuts; `meta` is the Control key there.
+- A debug profile that applies to the keyboard alone is selected without the debug layer: the shortcuts need no
+  Advanced switch.
+- The debugger window always takes them; the main window only with Controllers > Global shortcuts
+  (`Controllers/GlobalShortcuts`, off by default), and a key they take does not reach the machine. A dialog never
+  does. In a text field only the function keys are shortcuts. A bound key is taken before a menu shortcut of the
+  window (ShortcutOverride).
+- The editor shows the keyboard's Debugging tab without the debug layer; press-to-bind takes the combo pressed.
+
 ## 5. Debugger remote and Stream Deck
 
 - **Role `debugger-remote`**: any host device. Every control maps through the debug profile, no layer key is needed,

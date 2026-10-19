@@ -364,6 +364,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Host game controllers (controller-manager ui-ux.md §8): the service runs for the whole session; the dialog is
     // hidden until Tools → Controllers
     _hostControllers = new HostControllers(m_binding, this);
+    _hostControllers->SetShortcutWindows(this, debuggerWindow);
     _controllersDialog = new ControllersDialog(_hostControllers, this);
     connect(_hostControllers, &HostControllers::notice, this,
             [this](const QString& text) { statusBar()->showMessage(text, 5000); });

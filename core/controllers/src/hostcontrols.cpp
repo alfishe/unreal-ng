@@ -139,6 +139,20 @@ bool ParseControl(const std::string& text, ControlInfo& out)
     return false;
 }
 
+std::string KeyControl(const std::string& key, uint8_t modifiers)
+{
+    std::string name = "key.";
+    if (modifiers & kKeyCtrl)
+        name += "ctrl.";
+    if (modifiers & kKeyAlt)
+        name += "alt.";
+    if (modifiers & kKeyShift)
+        name += "shift.";
+    if (modifiers & kKeyMeta)
+        name += "meta.";
+    return name + Lower(key);
+}
+
 const std::vector<std::string>& KnownControls()
 {
     static const std::vector<std::string> names = [] {
