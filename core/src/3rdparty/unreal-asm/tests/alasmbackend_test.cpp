@@ -195,6 +195,8 @@ TEST(AlasmBackend_Test, ExpressionsLeftToRight)
               (std::vector<std::string>{"X EQU 5", "LD A,'X", "LD A,.(X+1)", "LD A,X!3", "LD A,X~+1"}));
     // Shifts by a number: * and / (the value shifted right lies in 0..#FFFF here)
     EXPECT_EQ(ToAlasm("X       EQU 5\n        LD HL,X<<4\n        LD A,X>>1"), (std::vector<std::string>{"X EQU 5", "LD HL,X*16", "LD A,X/2"}));
+    // sjasmplus takes a shift count modulo 32, as the machine does: such a shift is written as its value
+    EXPECT_EQ(ToAlasm("        LD HL,1<<33\n        LD HL,#8001>>-22"), (std::vector<std::string>{"LD HL,2", "LD HL,32"}));
     // A value outside ALASM's word for a division is written as its value
     Diagnostics diagnostics;
     EXPECT_EQ(ToAlasm("        LD A,-2/2", &diagnostics), (std::vector<std::string>{"LD A,#FFFF"}));

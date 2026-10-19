@@ -140,6 +140,7 @@ build assembled it to sjasmplus' bytes; in the editor the same write was refused
 | `inject-oracle.py alasm509 --template` (Z1): `zxasm inject` into the .szx, .sna and .z80 templates, the snapshot loaded and assembled | 143 bytes = sjasmplus' in each; `instructions.asm` 1173 |
 | `zxasm inject` onto a copy of ALASM's disk, `WORK ORACLE1` and `ASSEMBLE` in ALASM 5.09 | 143 bytes = sjasmplus' |
 | `inject-oracle.py alasm … --assembler alasm-X` live in 3.8c, 4.2, 4.42, 4.44, 4.5, 5.00 (2026-10-18) | 143 bytes = sjasmplus' in each |
+| `expression-fuzz.py alasm` in ALASM 5.09 (2026-10-19): random `DW` expressions (labels above and below, numbers, unary `- ~ high low !`, every binary operator, three levels), seeds 71-77 of 100 lines, 16-50 a seed written as expressions | all words = sjasmplus' (found on the way: ALASM's own value writer shifted by a count of 32 or more, or a negative one, to 0; sjasmplus takes the count modulo 32) |
 
 ## 6. Limits and open items
 
