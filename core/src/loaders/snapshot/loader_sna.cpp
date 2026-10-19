@@ -539,8 +539,9 @@ bool LoaderSNA::applySnapshotFromStaging()
         const snapshot::Cpu& cpu = image.cpu;
         const bool is48 = image.memoryModel == snapshot::MemoryModel::Mem48k;
 
-        // Reset Z80 and all peripherals; no RAM page keeps the program before it (the snapshot may not carry all)
-        core.Reset();
+        // Reset Z80 and all peripherals; no RAM page keeps the program before it (the snapshot may not carry all). The
+        // file has no clock: the program runs at the clock the machine ran at (ATM #FF77 turbo, as Xpeccy keeps it)
+        core.ResetKeepingClock();
         memory.ClearModelRAM();
         // A model whose reset leaves an extended paging on (the Pentagon 1024) goes back to the plain 128K form
         _context->pPortDecoder->EnterSpectrum128Paging(z80.pc);

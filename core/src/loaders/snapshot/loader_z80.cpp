@@ -502,8 +502,9 @@ void LoaderZ80::commitFromStage()
         const uint8_t portFFFD = image.ayAddressLatch.value_or(0);
 
         // Reset Z80 and all peripherals for a clean state-independent load
-        // Ensures AY registers, beeper, FDC, tape, screen mode etc. are clean; no RAM page keeps the program before it
-        core.Reset();
+        // Ensures AY registers, beeper, FDC, tape, screen mode etc. are clean; no RAM page keeps the program before it.
+        // The file has no clock: the program runs at the clock the machine ran at (ATM #FF77 turbo, as Xpeccy keeps it)
+        core.ResetKeepingClock();
         memory.ClearModelRAM();
         // A model whose reset leaves an extended paging on (the Pentagon 1024) goes back to the plain 128K form
         ports.EnterSpectrum128Paging(cpu.pc);
