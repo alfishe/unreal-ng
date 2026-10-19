@@ -91,6 +91,12 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
            "a debugger remote"));
     _advanced->setChecked(_host->DebugLayer());
     top->addWidget(_advanced);
+    _globalShortcuts = new QCheckBox(tr("Global shortcuts"), this);
+    _globalShortcuts->setToolTip(
+        tr("The debugger's shortcuts (F5, F10, F11...) work in the main window too; a key they take does not "
+           "reach the machine. In the debugger window they always work"));
+    _globalShortcuts->setChecked(_host->GlobalShortcuts());
+    top->addWidget(_globalShortcuts);
     _soundHaptics = new QCheckBox(tr("Haptics from the sound"), this);
     _soundHaptics->setToolTip(
         tr("Pads with motors rumble with the AY noise and envelope booms and the beeper's noise "
@@ -186,6 +192,7 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
         _host->SetDebugLayer(on);
     });
     connect(_soundHaptics, &QCheckBox::toggled, _host, &HostControllers::SetSoundHaptics);
+    connect(_globalShortcuts, &QCheckBox::toggled, _host, &HostControllers::SetGlobalShortcuts);
     rebuild();
 }
 

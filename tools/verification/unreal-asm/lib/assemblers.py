@@ -81,7 +81,8 @@ def storm_finish(emu, args, expected):
     emu.tap('a')                                   # Assemble
     time.sleep(args.wait)
     _shot(emu, args, args.descriptor)
-    emu.tap('space')                               # leaves an error list
+    emu.tap('left')                                # leaves an error list; a space would go into the text (a first
+                                                   # line of 40 characters then has 41: blue border, no Quit)
     time.sleep(1)
     emu.tap('break')
     emu.tap('q')                                   # Quit to BASIC: the 48K memory holds the code again

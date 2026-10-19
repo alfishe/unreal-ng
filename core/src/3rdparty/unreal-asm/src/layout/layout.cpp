@@ -563,9 +563,11 @@ private:
             case Op::And: return Wrap32(x & y);
             case Op::Or: return Wrap32(x | y);
             case Op::Xor: return Wrap32(x ^ y);
-            case Op::Shl: return y >= 32 || y < 0 ? 0 : Wrap32(static_cast<int64_t>(static_cast<uint64_t>(ux) << y));
-            case Op::Shr: return y >= 32 || y < 0 ? (x < 0 ? -1 : 0) : Wrap32(x >> y);
-            case Op::ShrUnsigned: return y >= 32 || y < 0 ? 0 : Wrap32(static_cast<int64_t>(ux >> y));
+            // sjasmplus shifts its 32-bit value with C++'s << / >>: the count taken modulo 32 as the machine does
+            // (1<<33 = 2, 14>>224 = 14, #8001>>-22 = #20, sjasmplus 1.24 checked)
+            case Op::Shl: return Wrap32(static_cast<int64_t>(ux << (y & 31)));
+            case Op::Shr: return Wrap32(static_cast<int32_t>(ux) >> (y & 31));
+            case Op::ShrUnsigned: return Wrap32(static_cast<int64_t>(ux >> (y & 31)));
             case Op::CyclicLeft16:
             case Op::CyclicRight16:
             {

@@ -1,5 +1,11 @@
 # POC 026: CRT Effects GPU/CPU Parity Test
 
+> **Superseded (2026-10-19).** The parity below was of Python models, not of the shipped code: the real CPU filter
+> (`crtfilter.cpp`) drew most profiles black (an int16 overflow in its NEON contrast) and the GPU shader was much
+> brighter (an unpaired `pow(1/2.2)`). Both were replaced by one model, `CRTRenderer`, whose GPU and CPU pictures are
+> the same bit for bit: [docs/features/crt-effects.md](../../../docs/features/crt-effects.md). `crtfilter.cpp` is
+> gone, so the C++ part here no longer builds.
+
 ## Purpose
 Verify GPU shader and CPU filter produce identical CRT effects across all profiles and resolutions.
 

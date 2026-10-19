@@ -148,6 +148,8 @@ public:
 
     /// @brief Load custom shader from file
     bool loadCustomShader(const QString& name);
+    /// The custom shader shown in place of the built-in CRT (empty: none; always empty without the GPU)
+    QString customShader() const;
     /// @brief Get list of available custom shaders
     static std::vector<QString> availableShaders();
 

@@ -288,6 +288,24 @@ TEST(FromSource_Test, ForwardReferencesSettleAndUnknownNamesAreReported)
     EXPECT_TRUE(reported);
 }
 
+TEST(FromSource_Test, ShiftCountsAreTakenModulo32AsSjasmplusDoes)
+{
+    // sjasmplus 1.24 shifts with C++'s << / >> on 32 bits: the machine takes the count modulo 32
+    const layout::LayoutResult r = layout::Layout(
+        {{"shift", SourceDocument::FromText("a1 equ 1 << 33\na2 equ 1 << -31\na3 equ 14 >> 224\na4 equ -64 >> 33\na5 equ #8001 >> -22\na6 equ 5 >>> 33\n", "sjasmplus")}},
+        0);
+    EXPECT_TRUE(r.ok);
+    std::map<std::string, int64_t> v;
+    for (const layout::Label& l : r.labels)
+        v[l.name] = l.value;
+    EXPECT_EQ(v["a1"], 2);
+    EXPECT_EQ(v["a2"], 2);
+    EXPECT_EQ(v["a3"], 14);
+    EXPECT_EQ(v["a4"], -32);
+    EXPECT_EQ(v["a5"], 0x20);
+    EXPECT_EQ(v["a6"], 2);
+}
+
 TEST(FromSource_Test, StringsTakeTheirBytesInTheFilesCodePage)
 {
     // A converted source keeps the Spectrum's code page: one byte a letter, as sjasmplus reads the written file; a

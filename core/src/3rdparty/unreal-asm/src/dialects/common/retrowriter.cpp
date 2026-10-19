@@ -240,6 +240,13 @@ std::optional<int64_t> RetroWriter::Value(const Expr& e) const
             if (!a || !b)
                 return std::nullopt;
             const bool unsignedWords = program.expressionBits == 16 && program.unsignedArithmetic;
+            if (program.dialect == "sjasmplus" && (e.op == Op::Shl || e.op == Op::Shr || e.op == Op::ShrUnsigned))
+            {
+                // its 32-bit value shifted with C++'s << / >>: the count modulo 32 as the machine takes it (1<<33 = 2)
+                const uint32_t u = static_cast<uint32_t>(*a & 0xFFFFFFFF);
+                const int n = static_cast<int>(*b & 31);
+                return Wrap(e.op == Op::Shl ? static_cast<int64_t>(u << n) : e.op == Op::Shr ? static_cast<int32_t>(u) >> n : static_cast<int64_t>(u >> n));
+            }
             switch (e.op)
             {
                 case Op::Add: return Wrap(*a + *b);

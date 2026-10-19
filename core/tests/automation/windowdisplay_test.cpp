@@ -26,7 +26,7 @@ public:
         settings.backend = "software";
         settings.gpuAvailable = false;
         settings.crtProfile = "none";
-        settings.crtProfiles = {"none", "basic", "shadow-mask"};
+        settings.crtProfiles = {"none", "basic", "shadow-mask", "shader:megatron"};
         settings.blendingWeights = "equal";
         settings.emulatorId = "fake-id";
     }
@@ -146,6 +146,12 @@ TEST(WindowDisplay_Test, SetRefusesWhatTheWindowDoesNotOffer)
     const WindowDisplay::Result badProfile = WindowDisplay::Set(profile);
     EXPECT_EQ(badProfile.status, WindowDisplay::Status::BadParameter);
     EXPECT_NE(badProfile.error.find("none, basic, shadow-mask"), std::string::npos) << badProfile.error;
+
+    WindowDisplayChange shader;
+    shader.crtProfile = "shader:megatron";  // offered, but runs on the GPU only
+    const WindowDisplay::Result noGpuShader = WindowDisplay::Set(shader);
+    EXPECT_EQ(noGpuShader.status, WindowDisplay::Status::Unavailable);
+    EXPECT_NE(noGpuShader.error.find("gpu=on"), std::string::npos) << noGpuShader.error;
 
     WindowDisplayChange gpu;
     gpu.gpu = true;

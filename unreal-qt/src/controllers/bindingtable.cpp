@@ -432,6 +432,23 @@ QString BindingTable::ControlName(const std::string& control, const std::string&
             parts << ControlName(part, glyphs);
         return parts.join(" + ");
     }
+    if (control.rfind("key.", 0) == 0)
+    {
+        // A keyboard shortcut: `key.ctrl.f10` is Ctrl + F10 (Command + F10 on macOS)
+        QStringList parts;
+        for (const std::string& part : Split(control.substr(4), '.'))
+        {
+#if defined(Q_OS_MACOS)
+            const char* modifier = part == "ctrl" ? "Cmd" : part == "alt" ? "Option" : part == "meta" ? "Ctrl" : nullptr;
+#else
+            const char* modifier = part == "ctrl" ? "Ctrl" : part == "alt" ? "Alt" : part == "meta" ? "Meta" : nullptr;
+#endif
+            if (modifier == nullptr && part == "shift")
+                modifier = "Shift";
+            parts << (modifier != nullptr ? QString(modifier) : QString::fromStdString(Upper(part)));
+        }
+        return parts.join(" + ");
+    }
     const DeviceDatabase& database = DeviceDatabase::Builtin();
     const auto glyph = [&](const std::string& name) {
         if (glyphs.empty())
@@ -498,13 +515,21 @@ void BindingTable::setDevice(const Device& device)
         _status->clear();
     }
     _device = device;
+    setDebugTab(_debugTab);
     refresh();
 }
 
 void BindingTable::setDebugTab(bool on)
 {
-    _layers->setTabVisible(1, on);
-    if (!on && _layers->currentIndex() == 1)
+    _debugTab = on;
+    // The keyboard's debug bindings are the debugger's shortcuts: there without the debug layer
+    const bool shown = on || _device.family == "keyboard";
+    _layers->setTabVisible(1, shown);
+    _layers->setTabToolTip(1, _device.family == "keyboard"
+                                  ? tr("The debugger's shortcuts: in the debugger window, and in the main window with "
+                                       "global shortcuts on")
+                                  : tr("What the pad does while its debugger key is held (View + Menu on most pads)"));
+    if (!shown && _layers->currentIndex() == 1)
         _layers->setCurrentIndex(0);
 }
 
@@ -558,9 +583,12 @@ void BindingTable::refreshScope()
                             QString::fromStdString("game:" + profile->id));
             break;
         }
-    if (!_device.family.empty())
+    const bool keyboard = _device.family == "keyboard";
+    if (keyboard)
+        _scope->addItem(tr("The keyboard"), "family");
+    else if (!_device.family.empty())
         _scope->addItem(tr("Every %1 pad").arg(QString::fromStdString(_device.family)), "family");
-    if (!_device.id.empty())
+    if (!_device.id.empty() && !keyboard)
         _scope->addItem(tr("Only this pad"), "device");
     _scope->addItem(tr("Every pad"), "global");
     int index = _scope->findData(keep);
@@ -993,6 +1021,7 @@ void BindingTable::startCapture(const std::string& rowKey, const std::string& re
         showPrompt(
             capture == Capture::Directions  ? tr("Press the D-pad or push a stick for <b>%1</b>… Esc cancels").arg(what)
             : capture == Capture::MouseMove ? tr("Push a stick for <b>%1</b>… Esc cancels").arg(what)
+            : _device.family == "keyboard"  ? tr("Press the keys for <b>%1</b>… Esc cancels").arg(what)
                                             : tr("Press the control for <b>%1</b> on the pad… Esc cancels").arg(what),
             false, false);
     }
@@ -1494,6 +1523,16 @@ void BindingTable::keyPressEvent(QKeyEvent* event)
     {
         cancelCapture(tr("Cancelled: nothing changed"));
         return;
+    }
+    // The keyboard binds the key pressed here, with its modifiers (`key.ctrl.f10`)
+    if (!_captureRow.empty() && _pendingBinds.empty() && _device.family == "keyboard" && !event->isAutoRepeat())
+    {
+        const std::string control = HostControllers::KeyControlOf(event);
+        if (!control.empty())
+        {
+            captured(control, 1);
+            return;
+        }
     }
     QWidget::keyPressEvent(event);
 }
