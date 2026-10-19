@@ -159,7 +159,7 @@ types:
           gone; their network fields live in the bit-10 section, 14 Joystick - a
           Kempston joystick state write, u1 buttonMask = the state byte, 15 FrontPanelSwitch, 16 NetFrame - an
           Ethernet frame from the host LAN for the bridged gateway, its network record and bytes in the bit-10
-          section like a NetEvent's, 17 MidiPanic - every slot card's MIDI synthesizer stops all its voices, no fields, 18 NextPad - the whole state of one joystick connector of the ZX Next: key = connector 0 left / 1 right, s2 dx = the 12 buttons R L D U B C A START Y Z X MODE from bit 0), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
+          section like a NetEvent's, 17 MidiPanic - every slot card's MIDI synthesizer stops all its voices, no fields, 18 NextPad - the whole state of one joystick connector of the ZX Next: key = connector 0 left / 1 right, s2 dx = the 12 buttons R L D U B C A START Y Z X MODE from bit 0), 19 ConnectorState - the retro controls held on one controller-manager connector whose device has no kind of its own (Sinclair, Cursor, keys joystick): key = connector index, s2 dx = the control mask (bit 0 right, 1 left, 2 down, 3 up, 4 fire, 5-7 fire 2-4), 20 HostKeys - the ZX keys host controllers hold on one half-row (the controller manager's host key overlay): key = half-row 0..7 (A8..A15), s2 dx = the held bits (bit n = D n, active high), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
           u1 buttonMask, s1 wheelSteps, u1 value; ascending time. Bit 7 = an
           external-event section follows: u32 count, then per marker u64
           frame, u32 tInFrame, u8 kind (TTDExternalEventKind; unknown values
@@ -729,7 +729,15 @@ types:
           64 MachineSerialPeer2 (the peer on a machine's second serial port, the Next's UART 1 / the Pi's line: the
           blob of MachineSerialPeer (27), a netstate::Com with its tail; needs the wide peripheral mask of schema 3),
           65 JoystickSerialPeer (the peer plugged into the Next's joystick connector while NR #0B selects the UART
-          mode: the same blob).
+          mode: the same blob),
+          66 Controllers (controllers::ControllerManager, a machine peripheral: u1 version 2, u1 the count of
+          journaled connectors (the keyboard joysticks and the card-brought ones such as the Fuller Box's), then per
+          connector in connector order: u1 device (RetroDeviceKind), u1 Sinclair port, u1 cursor shift, 8 x u1 the
+          keys of right, left, down, up, fire 1-4 (PcKey), u2 the held controls (Kempston bit order); a blob of
+          another connector count restores nothing),
+          67 FullerBox (a Fuller Box card, slot-built, instance <slot>.fuller-box: u1 version 1, u8 card-axis origin,
+          u8 last card time, f8 next generator tick (IEEE bits, u8), u8 the mixer's frame-start sample phase, then the
+          AY (SoundChip_AY8910's 73 bytes); the stick's controls are in Controllers (66)).
           ScorpionProfROM (6) byte 5 is the Turbo+ latch (scorpion_turbo; 0 in sessions recorded before it).
           Plus3Paging (13): u1 p1FFD, u1 floating-bus byte (the gate array's last contended byte), u1 flags
           (bit 0: the byte is valid; 0 in sessions recorded before it), u1 reserved.

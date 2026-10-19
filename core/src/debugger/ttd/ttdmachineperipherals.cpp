@@ -18,6 +18,7 @@
 #include "debugger/ttd/ttdwd1793context.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/ide/idecontroller.h"
+#include "emulator/io/controllers/controllermanager.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/emulator.h"
@@ -148,6 +149,10 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
     // cannot observe it, and its checkpoints stay as they were)
     if (context->pPortDecoder && context->pPortDecoder->HasKempstonJoystick())
         registry.Register(context->pJoystick);
+    // Keyboard joysticks: every machine has the sockets; their plugs and held controls (a plug made while recording
+    // lands at a boundary, and a seek before it takes it back)
+    if (context->pControllerManager)
+        registry.Register(context->pControllerManager);
     registry.Register(context->pBetaDisk);
     // The WD1793's command in flight (queued steps, transfer pointers): a
     // restore inside a multi-frame command (an ID search, a sector half read)

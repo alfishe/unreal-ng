@@ -1,0 +1,389 @@
+#include "platform/macos/iohidbackend.h"
+
+#include <CoreFoundation/CoreFoundation.h>
+#include <IOKit/hid/IOHIDKeys.h>
+#include <IOKit/hid/IOHIDManager.h>
+
+#include <pthread.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cstdio>
+#include <future>
+#include <map>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include "devicedatabase.h"
+#include "hid/drivers/dualsenseoutput.h"
+#include "hid/drivers/xboxgip.h"
+#include "hid/hiddescriptor.h"
+#include "hid/hidpad.h"
+
+namespace controllers
+{
+
+namespace
+{
+int IntProperty(IOHIDDeviceRef device, CFStringRef key)
+{
+    int value = 0;
+    CFTypeRef ref = IOHIDDeviceGetProperty(device, key);
+    if (ref != nullptr && CFGetTypeID(ref) == CFNumberGetTypeID())
+        CFNumberGetValue(static_cast<CFNumberRef>(ref), kCFNumberIntType, &value);
+    return value;
+}
+
+std::string StringProperty(IOHIDDeviceRef device, CFStringRef key)
+{
+    CFTypeRef ref = IOHIDDeviceGetProperty(device, key);
+    if (ref == nullptr || CFGetTypeID(ref) != CFStringGetTypeID())
+        return {};
+    char buffer[256] = {};
+    if (!CFStringGetCString(static_cast<CFStringRef>(ref), buffer, sizeof(buffer), kCFStringEncodingUTF8))
+        return {};
+    return buffer;
+}
+
+std::string Hex4(int value)
+{
+    char text[8];
+    snprintf(text, sizeof(text), "%04x", value & 0xFFFF);
+    return text;
+}
+
+/// FNV-1a, for ids that must not carry a MAC address or a port path as such
+std::string Hash(const std::string& text)
+{
+    uint32_t hash = 2166136261u;
+    for (unsigned char c : text)
+        hash = (hash ^ c) * 16777619u;
+    char out[12];
+    snprintf(out, sizeof(out), "%08x", hash);
+    return out;
+}
+
+CFDictionaryRef Matching(int usage)
+{
+    int page = 0x01;
+    CFNumberRef pageRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &page);
+    CFNumberRef usageRef = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &usage);
+    const void* keys[] = {CFSTR(kIOHIDDeviceUsagePageKey), CFSTR(kIOHIDDeviceUsageKey)};
+    const void* values[] = {pageRef, usageRef};
+    CFDictionaryRef dict = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 2, &kCFTypeDictionaryKeyCallBacks,
+                                              &kCFTypeDictionaryValueCallBacks);
+    CFRelease(pageRef);
+    CFRelease(usageRef);
+    return dict;
+}
+
+class IoHidBackend : public IBackend
+{
+public:
+    ~IoHidBackend() override
+    {
+        Stop();
+    }
+
+    std::string Name() const override
+    {
+        return "iohid";
+    }
+
+    bool Start(IBackendSink& sink, std::string& reason) override
+    {
+        if (_thread.joinable())
+            return true;
+        _sink = &sink;
+        std::promise<std::string> started;
+        std::future<std::string> result = started.get_future();
+        _thread = std::thread([this, &started] { Run(started); });
+        reason = result.get();
+        if (!reason.empty())
+        {
+            _thread.join();
+            _sink = nullptr;
+            return false;
+        }
+        return true;
+    }
+
+    void Stop() override
+    {
+        if (!_thread.joinable())
+            return;
+        _stopping = true;
+        if (CFRunLoopRef loop = _loop.load())
+            CFRunLoopStop(loop);  // thread-safe; a stop before the loop runs is caught by the flag
+        _thread.join();
+        _stopping = false;
+        _sink = nullptr;
+    }
+
+    bool HasRumble(const HostDeviceId& device) const override
+    {
+        std::lock_guard lock(_mutex);
+        for (const auto& [ref, known] : _devices)
+            if (known->id == device)
+                return known->xboxBluetooth || known->dualSenseUsb;
+        return false;
+    }
+
+    uint8_t RumbleActuators(const HostDeviceId& device) const override
+    {
+        std::lock_guard lock(_mutex);
+        for (const auto& [ref, known] : _devices)
+            if (known->id == device && (known->xboxBluetooth || known->dualSenseUsb))
+                return kRumbleLow | kRumbleHigh | kRumbleLeftTrigger | kRumbleRightTrigger;
+        return 0;
+    }
+
+    /// The Xbox Bluetooth rumble report (as SDL's HIDAPI Xbox One driver sends it): 03, enable 0F, left trigger,
+    /// right trigger, low motor, high motor (0..100), duration FF, delay 00, repeat EB
+    bool SetRumble(const HostDeviceId& device, const RumbleLevels& levels) override
+    {
+        std::lock_guard lock(_mutex);
+        for (const auto& [ref, known] : _devices)
+        {
+            if (known->id != device)
+                continue;
+            if (known->dualSenseUsb)
+            {
+                // The triggers' levels become their resistance (haptics.md §6.4); zero turns it off
+                const std::vector<uint8_t> report = DualSenseOutput::UsbReport(levels);
+                return IOHIDDeviceSetReport(known->ref, kIOHIDReportTypeOutput, report[0], report.data(),
+                                            static_cast<CFIndex>(report.size())) == kIOReturnSuccess;
+            }
+            if (!known->xboxBluetooth)
+                return false;
+            auto percent = [](float level) {
+                return static_cast<uint8_t>((level < 0 ? 0 : level > 1 ? 1 : level) * 100.0f + 0.5f);
+            };
+            const uint8_t report[] = {0x03,
+                                      0x0F,
+                                      percent(levels.leftTrigger),
+                                      percent(levels.rightTrigger),
+                                      percent(levels.low),
+                                      percent(levels.high),
+                                      0xFF,
+                                      0x00,
+                                      0xEB};
+            return IOHIDDeviceSetReport(known->ref, kIOHIDReportTypeOutput, report[0], report, sizeof(report)) ==
+                   kIOReturnSuccess;
+        }
+        return false;
+    }
+
+    size_t DeviceCount() const override
+    {
+        std::lock_guard lock(_mutex);
+        return _devices.size();
+    }
+
+private:
+    struct Device
+    {
+        HostDeviceId id;
+        std::vector<uint8_t> buffer;
+        std::unique_ptr<HidPad> hid;
+        std::unique_ptr<XboxGipPad> gip;
+        IoHidBackend* owner = nullptr;
+        IOHIDDeviceRef ref = nullptr;
+        bool xboxBluetooth = false;  ///< rumble through output report 3 (an Xbox One / Series pad over Bluetooth)
+        bool dualSenseUsb = false;   ///< rumble and trigger resistance through output report 2
+    };
+
+    void Run(std::promise<std::string>& started)
+    {
+        pthread_setname_np("controllers-io");
+        IOHIDManagerRef manager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
+        if (manager == nullptr)
+        {
+            started.set_value("IOHIDManagerCreate failed");
+            return;
+        }
+        CFDictionaryRef matches[] = {Matching(0x04), Matching(0x05), Matching(0x08)};
+        CFArrayRef matching = CFArrayCreate(kCFAllocatorDefault, reinterpret_cast<const void**>(matches), 3,
+                                            &kCFTypeArrayCallBacks);
+        for (CFDictionaryRef match : matches)
+            CFRelease(match);
+        IOHIDManagerSetDeviceMatchingMultiple(manager, matching);
+        CFRelease(matching);
+        IOHIDManagerRegisterDeviceMatchingCallback(manager, &IoHidBackend::Added, this);
+        IOHIDManagerRegisterDeviceRemovalCallback(manager, &IoHidBackend::Removed, this);
+        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
+        const IOReturn opened = IOHIDManagerOpen(manager, kIOHIDOptionsTypeNone);
+        if (opened != kIOReturnSuccess)
+        {
+            IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
+            CFRelease(manager);
+            char text[64];
+            snprintf(text, sizeof(text), "IOHIDManagerOpen: 0x%08x", opened);
+            started.set_value(text);
+            return;
+        }
+        _loop = CFRunLoopGetCurrent();
+        started.set_value({});
+
+        while (!_stopping)
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.5, false);
+
+        _loop = nullptr;
+        IOHIDManagerRegisterDeviceMatchingCallback(manager, nullptr, nullptr);
+        IOHIDManagerRegisterDeviceRemovalCallback(manager, nullptr, nullptr);
+        IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
+        IOHIDManagerClose(manager, kIOHIDOptionsTypeNone);
+        CFRelease(manager);
+        std::vector<HostDeviceId> gone;
+        {
+            std::lock_guard lock(_mutex);
+            for (auto& [ref, device] : _devices)
+                gone.push_back(device->id);
+            _devices.clear();
+        }
+        for (const HostDeviceId& id : gone)
+            _sink->OnDeviceRemoved(id);
+    }
+
+    static void Added(void* context, IOReturn, void*, IOHIDDeviceRef ref)
+    {
+        static_cast<IoHidBackend*>(context)->OnAdded(ref);
+    }
+    static void Removed(void* context, IOReturn, void*, IOHIDDeviceRef ref)
+    {
+        static_cast<IoHidBackend*>(context)->OnRemoved(ref);
+    }
+    static void Report(void* context, IOReturn, void*, IOHIDReportType, uint32_t, uint8_t* report, CFIndex size)
+    {
+        Device* device = static_cast<Device*>(context);
+        device->owner->OnReport(*device, report, static_cast<size_t>(size));
+    }
+
+    void OnAdded(IOHIDDeviceRef ref)
+    {
+        const uint16_t vendor = static_cast<uint16_t>(IntProperty(ref, CFSTR(kIOHIDVendorIDKey)));
+        const uint16_t product = static_cast<uint16_t>(IntProperty(ref, CFSTR(kIOHIDProductIDKey)));
+        const int version = IntProperty(ref, CFSTR(kIOHIDVersionNumberKey));
+        const std::string transport = StringProperty(ref, CFSTR(kIOHIDTransportKey));
+        const bool bluetooth = transport.find("Bluetooth") != std::string::npos;
+        DeviceIdentity identity;
+        identity.bus = bluetooth ? "bt" : (transport == "USB" ? "usb" : "");
+        identity.vendor = vendor;
+        identity.product = product;
+        identity.version = version;
+        identity.name = StringProperty(ref, CFSTR(kIOHIDProductKey));
+        identity.backend = Name();
+        const DeviceMatch match = DeviceDatabase::Builtin().Lookup(identity);
+        // Apple's synthetic legacy pad mirrors a GIP pad we read directly (research-host-apis.md §2.1)
+        if (match.ignore)
+            return;
+
+        auto device = std::make_unique<Device>();
+        device->owner = this;
+        device->ref = ref;
+        // USB GIP pads take their rumble through the dext: haptics.md §13 open point
+        constexpr uint16_t kMicrosoft = 0x045E;
+        device->xboxBluetooth = bluetooth && vendor == kMicrosoft && match.layout == "xbox" &&
+                                match.family != "xbox-360";
+        device->dualSenseUsb = !bluetooth && DualSenseOutput::Handles(vendor, product);
+        const int maxInput = IntProperty(ref, CFSTR(kIOHIDMaxInputReportSizeKey));
+        const HidLayout layout = HidLayoutFor(match.layout);
+        if (XboxGipPad::Handles(vendor, product) && maxInput == 18)
+            device->gip = std::make_unique<XboxGipPad>();
+        else
+        {
+            CFTypeRef data = IOHIDDeviceGetProperty(ref, CFSTR(kIOHIDReportDescriptorKey));
+            if (data == nullptr || CFGetTypeID(data) != CFDataGetTypeID())
+                return;
+            HidDescriptor descriptor;
+            std::string error;
+            if (!ParseHidDescriptor(CFDataGetBytePtr(static_cast<CFDataRef>(data)),
+                                    static_cast<size_t>(CFDataGetLength(static_cast<CFDataRef>(data))), descriptor,
+                                    error))
+                return;
+            device->hid = std::make_unique<HidPad>(descriptor, layout);
+            if (device->hid->Empty())
+                return;
+        }
+
+        // architecture.md §5: usb:<vid>:<pid>:<version>:<serial>, usb:...@<path hash>, bt:<vid>:<pid>:<hash>
+        const std::string serial = StringProperty(ref, CFSTR(kIOHIDSerialNumberKey));
+        const std::string location = std::to_string(IntProperty(ref, CFSTR(kIOHIDLocationIDKey)));
+        std::string id;
+        if (bluetooth)
+            id = "bt:" + Hex4(vendor) + ":" + Hex4(product) + ":" + Hash(serial.empty() ? location : serial);
+        else if (!serial.empty())
+            id = "usb:" + Hex4(vendor) + ":" + Hex4(product) + ":" + Hex4(version) + ":" + serial;
+        else
+            id = "usb:" + Hex4(vendor) + ":" + Hex4(product) + ":" + Hex4(version) + "@" + Hash(location);
+
+        HostDeviceInfo info;
+        info.name = match.name;
+        info.family = match.family;
+        info.layout = match.layout;
+        info.backend = Name();
+        {
+            std::lock_guard lock(_mutex);
+            std::string unique = id;
+            for (int n = 2; std::any_of(_devices.begin(), _devices.end(),
+                                        [&unique](const auto& entry) { return entry.second->id == unique; });
+                 ++n)
+                unique = id + "#" + std::to_string(n);
+            device->id = unique;
+            device->buffer.resize(static_cast<size_t>(maxInput > 0 ? maxInput : 64));
+            info.id = unique;
+        }
+        Device* raw = device.get();
+        {
+            std::lock_guard lock(_mutex);
+            _devices[ref] = std::move(device);
+        }
+        _sink->OnDeviceAdded(info);
+        IOHIDDeviceRegisterInputReportCallback(ref, raw->buffer.data(), static_cast<CFIndex>(raw->buffer.size()),
+                                               &IoHidBackend::Report, raw);
+    }
+
+    void OnRemoved(IOHIDDeviceRef ref)
+    {
+        std::unique_ptr<Device> device;
+        {
+            std::lock_guard lock(_mutex);
+            auto it = _devices.find(ref);
+            if (it == _devices.end())
+                return;
+            device = std::move(it->second);
+            _devices.erase(it);
+        }
+        IOHIDDeviceRegisterInputReportCallback(ref, device->buffer.data(),
+                                               static_cast<CFIndex>(device->buffer.size()), nullptr, nullptr);
+        _sink->OnDeviceRemoved(device->id);
+    }
+
+    void OnReport(Device& device, const uint8_t* report, size_t size)
+    {
+        const auto sink = [this, &device](const std::string& control, float value) {
+            _sink->OnControl({device.id, control, value, 0});
+        };
+        if (device.gip)
+            device.gip->Decode(report, size, sink);
+        else if (device.hid)
+            device.hid->Decode(report, size, sink);
+    }
+
+    IBackendSink* _sink = nullptr;
+    std::thread _thread;
+    std::atomic<CFRunLoopRef> _loop{nullptr};
+    std::atomic<bool> _stopping{false};
+    mutable std::mutex _mutex;
+    std::map<IOHIDDeviceRef, std::unique_ptr<Device>> _devices;
+};
+}  // namespace
+
+std::unique_ptr<IBackend> CreateIoHidBackend()
+{
+    return std::make_unique<IoHidBackend>();
+}
+
+}  // namespace controllers

@@ -17,6 +17,8 @@
 #include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/diskfastload.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/controllers/portreadwatch.h"
+#include "emulator/io/joystick/joystick.h"
 #include "emulator/io/tape/tape.h"
 #include "emulator/io/tape/tapefastload.h"
 #include "emulator/memory/memoryaccesstracker.h"
@@ -1380,9 +1382,11 @@ uint8_t Z80::inFromBus(uint16_t port)
     if (ioContention && !lateWaitsCounted)
         IoWaitAfterIorq(port, ioWait);
 
-    // One flag for both observers: machines with neither test it once
+    // One flag for the observers: machines with none test it once
     if (_inResultHooks) [[unlikely]]
     {
+        if (portReadWatch)
+            portReadWatch->OnRead(port);
         if (portInterceptor)
             portInterceptor->OnInResult(port, result, fromFloatingBus);
         // A latch clocked by read cycles takes the same byte the CPU took (the 128K's #7FFD)
@@ -1693,6 +1697,8 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
             // Wired-OR: the machine's logic drives its vector when it asserts;
             // a device alone drives none, the bus reads #FF
             uint8_t vector = sourceInt ? _interruptSource->AcknowledgeInterrupt(cpu.t) : 0xFF;
+            if (const Joystick* joystick = _context->pJoystick)
+                vector = joystick->Im2Vector(vector, cpu.pc);
             // TTD (Phase 3): every vector the CPU took, recorded (a check and a
             // search key); a replay from the engine hands back the recorded one
             if (ttd::TTDPortJournal* journal = _context->ttdVectors) [[unlikely]]
@@ -1759,7 +1765,9 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
 
     if (intLine && cpu.iff1 && cpu.boundary != Z80_BOUNDARY_INT_SHADOW && !prefixPending)
     {
-        HandleINT();
+        // The idle bus reads #FF; a cheap Kempston interface may drive it (Joystick::Im2Vector)
+        const Joystick* joystick = _context->pJoystick;
+        HandleINT(joystick ? joystick->Im2Vector(0xFF, cpu.pc) : 0xFF);
         intHandled = true;  // Signal caller to skip Z80Step this iteration
     }
 

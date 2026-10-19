@@ -1,0 +1,74 @@
+# Controller manager: TODO
+
+| | |
+|---|---|
+| **Date** | 2026-10-17 |
+| **Status** | C1-C7 in code on branch `controller-manager-design`; C8-C11 partly; verification of the whole pending |
+
+## Phases
+
+Each phase lands on its own, with tests, and leaves the emulator working.
+
+| Phase | Content | Depends on | Status |
+|:--|:--|:--|:--|
+| C0 | Design set (this folder); owner review | | in review |
+| C1a | Core: `ControllerManager`, connectors per machine, `IHostInputSource`, frame-boundary sample hook, `ConnectorState` journal kind, matrix overlay; Sinclair 1 / 2, Cursor, keys joystick; TTD type `Controllers` (66) | | done (11 tests in `ControllerManager_Test`, not committed) |
+| C1b | `ControllerControl` (list, get, plug / auto, unplug, options, targets; the envelope and `ControllerError`); `[CONTROLLERS]` INI and legacy `[INPUT] Joystick=`; plugs journaled while the engine records (deferred to the boundary, fingerprint cut, Controllers blob v2 on every machine) | C1a | done (17 tests, not committed) |
+| C1c | Fuller box as a Sinclair-edge card (`#7F` stick and its AY at `#3F` / `#5F`) through the slot manager, its stick a card-brought connector; Kempston options `extended`, `im2-leak` (no `decode`: the board's, owner 2026-10-17); `NC_CONTROLLER_CONNECTOR_CHANGED` | C1b | done (not committed) |
+| C2a | Library skeleton `core/controllers` like `core/recording` (`unrealng::controllers`, `ENABLE_CONTROLLERS`); canonical vocabulary (`hostcontrols.h`); `IBackend` and the fake backend; `HostInputService` (backends, probe, a source per instance); `InputRouter`: retro targets, OR-lists, sticks and `dpad.*` as directions, derived digital with hysteresis, 8 / 4 ways, turbo / burst / toggle / autohold / tap in emulated frames, roles, instance assignment, `auto` connector, scopes device > family > global | C1 | done (16 tests, not committed) |
+| C2b | Router layers: the layer stack (`debug` opaque, shift layers override what they name), layer keys (hold / toggle / oneshot; inert without bindings), chords with the 60 ms window (members held back, a tap released inside it still goes out), held targets released on a switch; ZX key (`zxkeys.h`, checked against `ResolveKeyName`), macro (stepped by the router onto the host key overlay), mouse (buttons as a third `MouseManager` source, axes with the curve, wheel) and action targets (`ActionEvent` sink, `Poll` for a paused machine); `consume` / `pass`; core: `HostSample`, journal kind `HostKeys` (20), Controllers blob v3. Left for C2c: `invert`, `repeat`, the pointer target, the stick-to-mouse precision modifier, the gyro ratchet | C2a | done (9 tests, not committed) |
+| C2c | `ProfileStore`: JSON schema 1 (play / debug), built-in ⊂ community ⊂ user, field-by-field layering global → machine → family → device → game, validation with candidates, the out-of-the-box defaults per family; the seqlock state table if the C3 budget needs it | C2b | done (`profiles/`: json, profile, profilestore, builtinprofiles; `ProfileStore_Test`, not committed). Seqlock table not needed so far |
+| C3 | macOS backends: IOHID primary with the Xbox GIP and generic HID drivers, GameController companion, synthetic-device filter, endpoint merge | C2 | done in part: IOHID backend (`platform/macos/iohidbackend`), HID descriptor parser and `HidPad`, Xbox GIP driver, synthetic-pad filter (`HidPad_Test` on the captures, not committed). Left: the GameController companion, the endpoint merge (with H1) |
+| C4 | Qt dialog, Simple view: three panes, patch cords, picture with callouts, press-to-bind, test panel; status-bar LED; first-connect toast | C2, C3 | done in part (`unreal-qt/src/controllers/`): `HostControllers`, the three-pane dialog with the live table, press-to-bind, plug combos, status-bar notices; the bindings table (`bindingtable.cpp`, [ui-ux.md §3.1](ui-ux.md#31-binding-editor), redesigned after [research-binding-ux.md](research-binding-ux.md): rows are what the game sees, chips the pad's controls, click + and press, Works as scheme, Save for scope, Set all…, conflicts inline, right-click autofire / tap / remove / restore / edit as text) and the profile manager (`profilesdialog.cpp`: YAML edit, save, new, import / export, delete, use as game profile), both over the host verbs. Left: patch cords, test panel, status-bar LED, first-connect toast |
+| C5 | Device database and first image set (Xbox, Elite 2, DualSense, Switch Pro, generic, DB9 stick; retro: Kempston stick, Sinclair SJS-1, MD6 pad, Kempston mouse, ZX keyboard) | C4 | done in part: `data/controllers/devices.json` (compiled in, `DeviceDatabase`), the fallback image sets (`tools/controllers/make_fallback_images.py`), `ControllerPicture` with callouts and live highlight. Left: the retouched photo sets (Q-1), `devices.user.json` |
+| C6 | Port-read heuristic and the auto toast; signature match hook (waits for the signature library) | C1, C4 | done: `PortReadWatch` (core, on the CPU's IN-result hook; started by a load, counts from the tape's end, 30 s), `DecideFromPortReads` (library), the auto plug, the toast with Keep (a user game profile by file SHA-256) and Change; `AutoDecision_Test`, `HostInputMachine_Test.PortReadWatch*`. Left: row-bit sampling, AY R14, NR #B2, the signature hook |
+| C7 | Debug layer and debug profiles; action registry shared with keyboard shortcuts; Advanced view | C4 | done in part: `ActionRegistry` and the §3 catalogue (`defaultactions.cpp`: run control through the debugger window, TTD through `TTDControl`, machine), pad actions dispatched on the GUI thread; Advanced: the debug-layer switch (`ProfileContext::debugLayer`) and the debug column. Left: keyboard shortcuts as `kbd:system` bindings, the analog scrub, pane focus, OSD keyboard |
+| C8 | Windows backends (GameInput, Raw Input, XInput fallback) | C2 | done in part: the XInput backend (`platform/windows/xinputbackend`, run-time DLL). Left: GameInput, Raw Input HID |
+| C9 | Linux backends (evdev, hidraw, udev) | C2 | done in part: the evdev backend (`platform/linux/evdevbackend`: positional kernel names, inotify hot plug). Left: hidraw for the Elite paddles, udev rules hint |
+| C10 | Surfaces: WebAPI, MCP, CLI, Lua, Python; extended `joystick_input` | C1, C2 | done in part: WebAPI `/api/v1/emulator/{id}/controllers[/{connector}[/{verb}]]` over `ControllerControl` (`api/controllers_api.cpp`, OpenAPI `openapi_controllers.inc`), the `auto` verb (port-read evidence and the decision, `apply` re-runs the watch), MCP tool `controllers` (`mcp-controllers.cpp`, `McpControllers_Test` keeps it equal to `ControllerControl`), the backends registered per OS. The `input` verb, CLI `controllers` (`cli-processor-controllers.cpp`), the Python methods, MCP `joystick_input` with a connector. The host verbs (devices, context, profiles, profile, save, delete, apply, bindings, bind, unbind) over `HostInputControl` on WebAPI `/api/v1/controllers/{verb}`, MCP, CLI and Python ([surfaces.md §6](surfaces.md#6-webapi)). Left: role / pin / identify / learn, the database and probe routes (Lua: P3, owner 2026-10-12) |
+| C11 | More retro devices: Timex, Next user-defined keys and the right connector, Evo Sega pad, AMX mouse, light guns | C1 | done in part: the Next key joystick (`io/z80n/nextkeyjoystick`, membrane_stick.vhd: the Sinclair 1 / 2, Cursor and user-defined modes of NR #05 press membrane keys for both connectors, the Kempston / MD spare buttons their user keys; NR #28 / #29 / #2B write the map; off in the NR #0B I/O mode; Next state image v11), the TS-Config Sega pad profile (`builtin/play/tsconf-sega-pad`). Left: Timex (no Timex machine), AMX mouse (needs a daisy-chained IM2 model), light guns (need a beam-position query) |
+| H1-H5 | Haptics: actuators and gate; audio taps and filters; probes and haptic profiles; HD haptics; first game profiles ([haptics.md](haptics.md#13-phases-and-open-points)) | C3, C8, C9 | H1 done in part: `IBackend::HasRumble` / `SetRumble` (XInput motors, evdev `FF_RUMBLE`, IOHID Xbox Bluetooth report 3 with the impulse triggers), `HapticMixer` (loudest per channel, timed effects, master strength, the gate; debug feedback plays through it), `HostInputService::PlayEffect` / `Identify`, the Qt gate (running, 1x, live, focused), the breakpoint pulse with the debug layer, Identify in the dialog; `Haptics_Test`. Left: USB GIP rumble through the dext, DualSense / Switch output reports, the gate on seek at once (now the 250 ms poll). H2 done in part: the core feed (`IHapticFeed`, `ControllerManager::SetHapticFeed`: per live frame the AY noise volumes from R7 / R8-R10, the R13 restarts and shape, the beeper's EAR edges; the counters are host-only, not chip state), `SoundHaptics` (`ay-noise` → low motor with a 100 ms release, `ay-envelope` decaying restart → thump, `beeper-density` above 2 edges / ms → high motor), Qt "Haptics from the sound" (off by default, H-6); `SoundHaptics_Test`. Left: the DSP filters on sample streams (`envelope`, `lowband`, `onset`), Covox / GS / Next DAC sources, the frame-hash test of §12. H3 done in part: the profile's `haptics` section (`ParseHapticProfile`, refused at parse when wrong; resolved whole from the most specific profile, `ResolvedProfiles::haptics`), the frame probes `write` (changed / decreased / increased / == / != / < / >), `value`, `frame` on CPU or `page:N:addr` bytes the core reads at the frame end (`IHapticFeed::Watches`, at most 16), the filters as sources, the built-in effect library (§6.2, each its peak for its length until H4's envelopes), `ProfileHaptics` (rules, `scale`, `target` with the first fallback), Qt: a game profile's haptics replace the sound filters, the dialog's Haptics panel (feed, gate, motors, source levels); `HapticProfile_Test` (Haptics_ProbeWriteDecreased). Left: `exec` / `read` / `port-in` / `port-out` probes (the non-breaking breakpoint action, hot path, A/B benchmark), a write undone within one frame, "Add probe from debugger". H4 done in part: `HapticMixer` envelopes (attack / sustain / release per effect), the DualSense USB output report (`dualsenseoutput`), `RumbleActuators`; `HdHaptics_Test`. Left: the DualSense Bluetooth input parser, Switch HD rumble, CoreHaptics. H5 open (Exolon, Chase H.Q., Manic Miner) |
+| C12 | SDL3 backend behind `ENABLE_SDL_CONTROLLERS` (D6) | C2 | later |
+| C13 | Profiles as data ([mapping-and-profiles.md §7.5-§7.6](mapping-and-profiles.md#75-files-bundles-and-the-index)): YAML (owner 2026-10-18: configs need comments), rapidyaml as its own static library for the core and `controllers`, a rapidyaml-to-`JsonValue` converter; the defaults and schemes in `data/controllers/profiles/` compiled in; game profiles one per file plus bundles, `games/index.yaml` (`tools/controllers/profile-index.py`, rebuilt in memory when stale), parse on a match; `extends` with the schemes; user files in YAML; the dialog's game list from the index. The C++ literals of `builtinprofiles.cpp` (defaults, `next-md-pad`, `vradarks-revenge`) move out | C2c | done: `profiles/yaml.cpp`, `GameLibrary` (`gamelibrary.cpp`), generated `builtinprofiles.cpp`, schemes kempston / kempston-mouse / sinclair-1 / sinclair-2 / cursor / qaop-space / qaop-m / wasd, `ProfileStore_Test` |
+
+## Owner questions
+
+Answered 2026-10-17 (D13-D18 in [README.md](README.md#decisions-2026-10-17)); Q-1 and Q-8 stay open.
+
+| # | Question | Answer |
+|:--|:--|:--|
+| Q-1 | Vectorize the retouched photos (one SVG style) or keep raster at 2x? | **Open**: separate study after C5 (D5) |
+| Q-2 | One new journal kind `ConnectorState` for the new connector devices, or a kind per device? | One kind; Kempston, NextPad and mice keep theirs (D13) |
+| Q-3 | Kempston mouse button order | Per-board property following each board's hardware (D14) |
+| Q-4 | macOS: matching a `GCController` to its IOHID device | Arrival + vendor name, confirmed by button-edge correlation; input from IOHID, GameController adds outputs after the match (D18) |
+| Q-5 | Windows GameInput | A prerequisite of the Windows installer, like the MSVC runtime; loaded dynamically so a portable build without it falls back to Raw Input (D17) |
+| Q-6 | Signature library | Shared `swsignature` for the controller manager, the metadata manager and the Steam Deck client, a separate project before C6 (D16) |
+| Q-7 | Elite paddles hidden by an onboard profile | Read the profile byte and the raw paddle bits where the OS gives them; otherwise a hint "switch to profile 0" (D15). Measured on macOS; the mirrored face button is removed (D19) |
+| Q-8 | Retro Games Ltd THEJOYSTICK / THESPECTRUM pad VID/PIDs | **Open**: read from ioreg when a device is available |
+| Q-9 | Manufacturer press-kit photos | Allowed with the source and terms recorded per image; platform logos removed in the retouch (D5) |
+
+## Not checked yet
+
+- Elite 2 paddles on macOS: all measured ([research-host-apis.md §2.3a-c](research-host-apis.md#23c-gamecontroller-over-bluetooth-and-usb)):
+  raw IOHID over Bluetooth has paddles and profile on every profile; the USB dext has neither; GameController never
+  reports paddles on either transport.
+- Elite 2 battery on macOS: GameController says unknown on both transports, `system_profiler` says 100 % over
+  Bluetooth. Check the 0x99 nibble in `[18]` (0x05 at 100 %) once the pad has discharged (not soon: it was full on
+  2026-10-17). The IORegistry has no `BatteryPercent` for the Elite (only for Apple devices), so the 100 % of
+  `system_profiler` comes from the Bluetooth stack (BLE Battery Service through IOBluetooth / CoreBluetooth): a
+  candidate source for the macOS backend.
+- Windows paddles through GameInput with an onboard profile; Linux xpad with profile 0.
+- Stream Deck + XL `0FD9:00C6` is not in `usb.ids`; it is used through the companion client, not as a HID device.
+
+## Errata found in other documents (fix separately)
+
+Details and sources in [research-retro-hardware.md](research-retro-hardware.md).
+
+- Kempston mouse "D0 = left on every board": `2026-09-12-kempston-mouse/hardware-reference.md` §4,
+  `2026-10-03-zx-bus-slots/research-cards.md:781`.
+- BC#4 machine list misread for the Kempston mouse: `2026-09-12-kempston-mouse/hardware-reference.md` §2.1-2.2,
+  `2026-10-07-kay/design.md:53`.
+- Timex AY ports: `docs/ports/ports.md:252-258` (#F5 select, #F6 data; #F4 is not an AY port).
+- MCP `joystick_input` description lists ATM3 / Scorpion / TS-Conf only.
+- ATM Turbo 2+ has no Kempston joystick or mouse on the board (manual feature table); check what our ATM2 decoder
+  answers.

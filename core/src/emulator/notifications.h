@@ -567,6 +567,20 @@ public:
     {}
 };
 
+/// Payload for NC_CONTROLLER_CONNECTOR_CHANGED (controller manager connectors)
+class ControllerConnectorPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string connector;  // "keyjoy.1", "kempston", ...; empty: the connector list was rebuilt
+    std::string device;     // the retro device now plugged ("none" after an unplug); empty with a rebuild
+    uint64_t revision = 0;  // ControllerManager::Revision() after the change
+
+    ControllerConnectorPayload(std::string connectorId, std::string deviceKind, uint64_t rev)
+        : MessagePayload(), connector(std::move(connectorId)), device(std::move(deviceKind)), revision(rev)
+    {}
+};
+
 /// Payload for NC_FILE_LOADED.
 /// Posted by Emulator::LoadSnapshot / LoadTape / LoadDisk after the loader
 /// returns. Carries the result so consumers can show success or failure toasts.

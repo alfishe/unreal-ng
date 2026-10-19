@@ -1,0 +1,225 @@
+{
+  "schema": 1,
+  "family": "md6-pad",
+  "view": "front",
+  "size": [
+    2048,
+    1536
+  ],
+  "controls": [
+    {
+      "control": "up",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          590,
+          710,
+          100,
+          100
+        ]
+      },
+      "anchor": [
+        640,
+        760
+      ],
+      "callout": "left",
+      "group": "directions",
+      "order": 0
+    },
+    {
+      "control": "down",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          590,
+          910,
+          100,
+          100
+        ]
+      },
+      "anchor": [
+        640,
+        960
+      ],
+      "callout": "left",
+      "group": "directions",
+      "order": 1
+    },
+    {
+      "control": "left",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          490,
+          810,
+          100,
+          100
+        ]
+      },
+      "anchor": [
+        540,
+        860
+      ],
+      "callout": "left",
+      "group": "directions",
+      "order": 2
+    },
+    {
+      "control": "right",
+      "label": "D-pad",
+      "shape": {
+        "rect": [
+          690,
+          810,
+          100,
+          100
+        ]
+      },
+      "anchor": [
+        740,
+        860
+      ],
+      "callout": "left",
+      "group": "directions",
+      "order": 3
+    },
+    {
+      "control": "a",
+      "label": "A",
+      "shape": {
+        "circle": [
+          1240,
+          960,
+          56
+        ]
+      },
+      "anchor": [
+        1240,
+        960
+      ],
+      "callout": "right",
+      "order": 4
+    },
+    {
+      "control": "b",
+      "label": "B",
+      "shape": {
+        "circle": [
+          1380,
+          920,
+          56
+        ]
+      },
+      "anchor": [
+        1380,
+        920
+      ],
+      "callout": "right",
+      "order": 5
+    },
+    {
+      "control": "c",
+      "label": "C",
+      "shape": {
+        "circle": [
+          1520,
+          880,
+          56
+        ]
+      },
+      "anchor": [
+        1520,
+        880
+      ],
+      "callout": "right",
+      "order": 6
+    },
+    {
+      "control": "x",
+      "label": "X",
+      "shape": {
+        "circle": [
+          1220,
+          800,
+          56
+        ]
+      },
+      "anchor": [
+        1220,
+        800
+      ],
+      "callout": "right",
+      "order": 7
+    },
+    {
+      "control": "y",
+      "label": "Y",
+      "shape": {
+        "circle": [
+          1360,
+          760,
+          56
+        ]
+      },
+      "anchor": [
+        1360,
+        760
+      ],
+      "callout": "right",
+      "order": 8
+    },
+    {
+      "control": "z",
+      "label": "Z",
+      "shape": {
+        "circle": [
+          1500,
+          720,
+          56
+        ]
+      },
+      "anchor": [
+        1500,
+        720
+      ],
+      "callout": "right",
+      "order": 9
+    },
+    {
+      "control": "start",
+      "label": "Start",
+      "shape": {
+        "rect": [
+          954,
+          640,
+          140,
+          44
+        ]
+      },
+      "anchor": [
+        1024,
+        662
+      ],
+      "callout": "right",
+      "order": 10
+    },
+    {
+      "control": "mode",
+      "label": "Mode",
+      "shape": {
+        "rect": [
+          1430,
+          560,
+          140,
+          44
+        ]
+      },
+      "anchor": [
+        1500,
+        582
+      ],
+      "callout": "right",
+      "order": 11
+    }
+  ]
+}

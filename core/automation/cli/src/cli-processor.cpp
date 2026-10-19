@@ -229,6 +229,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 
                         // ZX-bus slots: buses, slots, cards (plug / remove / set restart the machine)
                         {"slots", &CLIProcessor::HandleSlots},
+                        // Joystick connectors: the retro devices plugged into them, live input (ControllerControl)
+                        {"controllers", &CLIProcessor::HandleControllers},
 
                         // ZX-MultiSound card and its MIDI synthesizer
                         {"multisound", &CLIProcessor::HandleMultiSound},
@@ -824,6 +826,12 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  slots plug <slot> <card> [opt=val ..] [--replace] [--dry-run] - e.g. plug zxbus.next multisound" << NEWLINE;
     oss << "  slots remove <slot> | set <slot> opt=val .. | gs <gs|gs-lw|neogs> | matrix [table]" << NEWLINE;
     oss << "  slots help             - All verbs and flags" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Controllers (joystick connectors and the retro devices in them):" << NEWLINE;
+    oss << "  controllers [list]     - Connectors, devices, what is held" << NEWLINE;
+    oss << "  controllers plug <connector|auto> <device> [opt=val ..] | unplug <connector>" << NEWLINE;
+    oss << "  controllers input <connector> press=up+fire | release=fire | set=none" << NEWLINE;
+    oss << "  controllers help       - All verbs and flags" << NEWLINE;
     oss << NEWLINE;
     oss << "ZX-MultiSound and MIDI:" << NEWLINE;
     oss << "  multisound [--full|--json] - The card: options, CPLD, YM2203 pair, SAA1099, GS, DACs, MIDI" << NEWLINE;

@@ -96,6 +96,8 @@ void Beeper::handlePortOut(uint8_t value, uint32_t frameTState)
     if (earMicBits == _portFEState)
         return;
 
+    if ((earMicBits ^ _portFEState) & 0b0001'0000)
+        _earEdges++;
     _portFEState = earMicBits;
 
     // Look up the DAC amplitude for this EAR/MIC combination

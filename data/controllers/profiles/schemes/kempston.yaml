@@ -1,0 +1,11 @@
+# The Kempston joystick, whatever the machine's auto decision: the d-pad and the left stick move, south fires
+# (mapping-and-profiles.md §7.6)
+schema: 1
+kind: scheme
+id: scheme/kempston
+label: Kempston joystick
+layers:
+  play:
+    "dpad.*": { retro: "kempston:dpad" }
+    lstick:   { retro: "kempston:dpad" }
+    south:    { retro: "kempston:fire", label: Fire }

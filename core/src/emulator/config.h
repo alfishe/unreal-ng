@@ -4,6 +4,7 @@
 
 #include "common/inifile.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/controllers/controllerconfig.h"
 #include <functional>
 #include <string>
 
@@ -96,6 +97,10 @@ protected:
     std::vector<MediaSetEntry> _mediaSet;
     std::vector<std::string> _mediaReport;
 
+    // [CONTROLLERS] and the legacy [INPUT] Joystick= keyboard joysticks (controller manager)
+    std::vector<controllers::ControllerSetEntry> _controllerSet;
+    std::vector<std::string> _controllerReport;
+
     // [MIDI] Bank= (here, not in CONFIG: a field in CONFIG moves every EmulatorContext member after it, so the CPU
     // and port paths' code changes for a card no machine fits by default - ZX-bus slots tdd.md §12)
     std::string _midiBank;
@@ -125,6 +130,10 @@ public:
 	/// against the config file's folder; problems in it are in the report
 	const std::vector<MediaSetEntry>& GetMediaSet() const { return _mediaSet; }
 	const std::vector<std::string>& GetMediaReport() const { return _mediaReport; }
+
+	/// The connector plugs the config states ([CONTROLLERS] + legacy [INPUT] Joystick=); problems in the report
+	const std::vector<controllers::ControllerSetEntry>& GetControllerSet() const { return _controllerSet; }
+	const std::vector<std::string>& GetControllerReport() const { return _controllerReport; }
 
 	/// [MIDI] Bank= : the SoundFont 2 bank of a slot card's General MIDI synthesizer (the ZX-MultiSound's SAM2695),
 	/// resolved like a ROM path. Empty = the card's default (midi/generaluser-gs.sf2, shipped from data/midi);

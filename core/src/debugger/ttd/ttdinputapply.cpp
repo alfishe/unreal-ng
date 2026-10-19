@@ -7,6 +7,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/keyboard.h"  // Keyboard, ZXKeysEnum
 #include "emulator/io/keyboard/pckey.h"
+#include "emulator/io/controllers/controllermanager.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/mouse/mouse.h"
 #include "emulator/io/mouse/mousemanager.h"
@@ -32,6 +33,7 @@ TTDInputDevices InputDevicesOf(EmulatorContext* context)
     devices.network = context->pVirtualNetwork;
     devices.portDecoder = context->pPortDecoder;
     devices.slotManager = context->pSlotManager;
+    devices.controllers = context->pControllerManager;
     return devices;
 }
 
@@ -120,6 +122,16 @@ bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices, co
             if (!devices.portDecoder)
                 return false;
             return devices.portDecoder->ApplyPadState(ev.key, static_cast<uint16_t>(ev.dx));
+
+        case TTDInputKind::ConnectorState:
+            if (!devices.controllers)
+                return false;
+            return devices.controllers->ApplyConnectorState(ev.key, static_cast<uint16_t>(ev.dx));
+
+        case TTDInputKind::HostKeys:
+            if (!devices.controllers)
+                return false;
+            return devices.controllers->ApplyHostKeys(ev.key, static_cast<uint8_t>(ev.dx));
 
         case TTDInputKind::FrontPanelSwitch:
             if (!devices.portDecoder)

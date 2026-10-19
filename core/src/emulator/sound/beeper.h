@@ -61,6 +61,7 @@ protected:
 
     // Previous port #FE state (bits 3-4: MIC/EAR)
     uint8_t _portFEState = 0;
+    uint32_t _earEdges = 0;  ///< TakeEarEdges
 
     // Output buffer — points into SoundManager's beeper AudioFrameDescriptor
     int16_t* _outputBuffer = nullptr;
@@ -117,6 +118,13 @@ public:
     /// @param value  Full port #FE byte (bits 3-4 = MIC/EAR)
     /// @param frameTState  T-state counter within the current frame
     void handlePortOut(uint8_t value, uint32_t frameTState);
+    /// EAR (bit 4) edges since the last call: the haptic feed's beeper-density (controller manager haptics.md §4)
+    uint32_t TakeEarEdges()
+    {
+        const uint32_t edges = _earEdges;
+        _earEdges = 0;
+        return edges;
+    }
 
     /// Turbo mode (audio muted, frame-end synthesis skipped): keep tracking the
     /// port #FE / tape levels so the next edge after turbo is correct, but do not

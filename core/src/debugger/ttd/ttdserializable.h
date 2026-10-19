@@ -202,6 +202,8 @@ enum class TTDDeviceType : uint16_t
     MachineSerialPeer2 = 64,
     JoystickSerialPeer = 65,
     // New kinds from 66 on: no PeripheralId
+    Controllers = 66,   ///< controllers::ControllerManager: the controls held on the keyboard joysticks
+    FullerBox = 67,     ///< a Fuller Box card (slot-built, "<slot>.fuller-box"): its time base and AY
 };
 static_assert(static_cast<uint16_t>(TTDDeviceType::TurboSound) == static_cast<uint16_t>(PeripheralId::TurboSound), "TTDDeviceType::TurboSound must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::BetaDisk) == static_cast<uint16_t>(PeripheralId::BetaDisk), "TTDDeviceType::BetaDisk must keep its v1 number");

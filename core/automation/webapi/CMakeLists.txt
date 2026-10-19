@@ -190,6 +190,7 @@ set(COMMON_SOURCES
     src/api/rzx_api.cpp
     src/api/media_api.cpp
     src/api/slots_api.cpp
+    src/api/controllers_api.cpp
     src/api/cdaudio_api.cpp
     src/api/snapshot_api.cpp
     src/common/upload_helper.h
@@ -383,6 +384,11 @@ endif ()
 if (ENABLE_RECORDING)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RECORDING)
     target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/recording/src)
+endif()
+
+# The host controller verbs (HostInputControl in core/controllers): the define, the headers and the link order
+if (TARGET unrealng::controllers)
+    target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::controllers)
 endif()
 
 

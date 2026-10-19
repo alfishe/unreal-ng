@@ -193,6 +193,7 @@ signals:
     void audioSettingsRequested();
     void temporalEffectsRequested();
     void hudSettingsRequested();
+    void controllersRequested();  ///< Tools > Controllers...: host game controllers, connectors, bindings
     void companionsRequested();  ///< Tools > Companions...: paired companion clients, revoke
     void screenshotRequested();
     void saveScreenshotRequested();
@@ -269,6 +270,7 @@ private:
     QAction* _logWindowAction;
     QAction* _tapeManagerAction;
     QAction* _mediaPanelAction = nullptr;
+    QAction* _controllersAction = nullptr;
     QAction* _networkWindowAction = nullptr;
     QAction* _slotsWindowAction = nullptr;
     QAction* _nextLayersAction = nullptr;

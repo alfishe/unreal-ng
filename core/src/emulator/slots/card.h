@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "debugger/ttd/ttdserializable.h"
+#include "emulator/io/controllers/controllertypes.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/slots/slotplanner.h"
 #include "emulator/sound/audiodeviceinfo.h"
@@ -67,6 +68,15 @@ struct CardTtdDevice
     ttd::TTDSerializable* device = nullptr;          ///< owned by the card; its type is its own (TTDDescribe)
     std::string instance;                            ///< the engine's instance name: "<slot>.<card>[.<module>]"
     ttd::ITTDRegionSource* regions = nullptr;        ///< memory the engine records as regions (a GS RAM); may be null
+};
+
+/// A joystick socket a card brings (controller manager retro-devices.md §1): ControllerManager::Rebuild lists it while
+/// the card is fitted, with the card as its owner (ControllerManager::OwnedState)
+struct CardConnector
+{
+    std::string id;  ///< "fuller"; a second card of the kind gets ".2" appended
+    controllers::ConnectorKind kind = controllers::ConnectorKind::Fuller;
+    controllers::RetroDeviceKind device = controllers::RetroDeviceKind::None;  ///< fixed: the card's own device
 };
 
 /// A running card (architecture.md §3.2). Every call comes from the emulation thread
@@ -172,6 +182,14 @@ public:
         return false;
     }
     /// endregion </Frames and audio (SoundManager)>
+
+    /// region <Controllers>
+    /// The joystick sockets of the card (none by default)
+    virtual void Connectors(std::vector<CardConnector>& out) const
+    {
+        (void)out;
+    }
+    /// endregion </Controllers>
 
     /// region <Time travel (ZX-bus slots architecture.md §8; MultiSound MS-5)>
     /// Every device the card's state is in, each of a type its CardType declares (CardType::ttdTypes), named by

@@ -25,6 +25,7 @@ class PortDecoder;
 class MouseManager;
 class SlotManager;
 class VirtualNetwork;
+namespace controllers { class ControllerManager; }
 
 namespace ttd {
 
@@ -40,6 +41,7 @@ struct TTDInputDevices
     VirtualNetwork* network = nullptr;   ///< the machine's virtual network (NetEvent, NetLinkReset, NetFrame)
     PortDecoder* portDecoder = nullptr;  ///< the machine's own switches (FrontPanelSwitch)
     SlotManager* slotManager = nullptr;  ///< the cards the slots built (MidiPanic)
+    controllers::ControllerManager* controllers = nullptr;  ///< the keyboard joysticks (ConnectorState)
 };
 
 /// @brief The context's input devices at this moment. Look them up per event:

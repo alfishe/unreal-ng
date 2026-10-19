@@ -366,6 +366,7 @@ private:
     void HandleMedia(const ClientSession& session, const std::vector<std::string>& args);
     // ZX-bus slots: buses, slots, cards; plug / remove / set applied by a restart (cli-processor-slots.cpp, SlotControl)
     void HandleSlots(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleControllers(const ClientSession& session, const std::vector<std::string>& args);
     // ZX-MultiSound and its MIDI synthesizer (cli-processor-multisound.cpp, DeviceState::MultiSound / Midi, MidiControl)
     void HandleMultiSound(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMidi(const ClientSession& session, const std::vector<std::string>& args);

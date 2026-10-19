@@ -660,7 +660,8 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 
 	// INPUT section - Kempston joystick (joystick TDD J4, J6):
-	//   Joystick=KEMPSTON|NONE (default KEMPSTON)
+	//   Joystick=KEMPSTON|NONE (default KEMPSTON); SINCLAIR1|SINCLAIR2|CURSOR|QAOP keep Kempston and plug keyjoy.1
+	//   (ControllerConfig, below)
 	//   JoystickKeys=up:kp8,down:kp2,left:kp4,right:kp6,fire:kp0 (absent: these defaults; empty: no host keys)
 	{
 		line[0] = '\0';
@@ -670,7 +671,14 @@ bool Config::ParseConfig(IniFile& inimanager)
 		if (StringHelper::CompareCaseInsensitive(line, "NONE", strlen("NONE")) == 0)
 			config.input.joystick = 0;
 		else if (line[0] != '\0' && StringHelper::CompareCaseInsensitive(line, "KEMPSTON", strlen("KEMPSTON")) != 0)
-			MLOGWARNING("Config: unsupported [INPUT] Joystick='%s', using KEMPSTON", line);
+		{
+			// Unreal Speccy's keyboard joysticks are connector plugs (controller manager); anything else is unknown
+			std::string choice(line);
+			std::transform(choice.begin(), choice.end(), choice.begin(),
+			               [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+			if (choice != "SINCLAIR1" && choice != "SINCLAIR2" && choice != "CURSOR" && choice != "QAOP")
+				MLOGWARNING("Config: unsupported [INPUT] Joystick='%s', using KEMPSTON", line);
+		}
 
 		const char* keys = inimanager.GetValue(input, "JoystickKeys", nullptr);
 		config.input.joystickKeysConfigured = keys != nullptr;
@@ -1083,6 +1091,10 @@ bool Config::ParseConfig(IniFile& inimanager)
 		SessionWriteMap::SetDefaults(session);
 		CompositeMediumFactory::SetDefaultExtentBudget(settings.extentBudget.value_or(CompositeMediumFactory::kDefaultExtentBudget));
 	}
+
+	// Connector plugs: [CONTROLLERS] + the legacy [INPUT] Joystick= keyboard joysticks
+	_controllerReport.clear();
+	_controllerSet = controllers::ControllerConfig::FromIni(inimanager, &_controllerReport);
 
 	// Emulated model
 	CopyStringValue(inimanager.GetValue(misc, "HIMEM", "PENTAGON"), line, sizeof line);

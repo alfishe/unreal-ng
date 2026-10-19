@@ -25,7 +25,7 @@
 
 namespace
 {
-constexpr uint8_t kImageVersion = 10;  // 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
+constexpr uint8_t kImageVersion = 11;  // 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -213,6 +213,10 @@ static void SaveBoard(Writer& w, const NextBoard& b)
     w.Put(b._resetPending);
     w.Put(b._resetType);
     w.Put(b._resetHard);
+    for (unsigned i = 0; i < NextKeyJoystick::kEntries; i++)
+        w.Put(b._keyJoystick.Entry(i));
+    w.Put(b._keyJoystick.Address());
+    w.Put(b._keyJoystick.Selected());
 }
 static void LoadBoard(Reader& r, NextBoard& b)
 {
@@ -223,6 +227,17 @@ static void LoadBoard(Reader& r, NextBoard& b)
     r.Get(b._resetType);
     b.LatchVideoFrameSync();  // the effective video bits are not in the image: they follow the registers
     r.Get(b._resetHard);
+    for (unsigned i = 0; i < NextKeyJoystick::kEntries; i++)
+    {
+        uint8_t entry = 0;
+        r.Get(entry);
+        b._keyJoystick.SetEntry(i, entry);
+    }
+    uint16_t address = 0;
+    bool selected = false;
+    r.Get(address);
+    r.Get(selected);
+    b._keyJoystick.Restore(address, selected);
 }
 
 static void SaveMemory(Writer& w, const NextMemory& m)

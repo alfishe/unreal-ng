@@ -203,6 +203,10 @@ AY-3-8912, Atari-style joystick port (Fuller), beep amplifier, through bus. No s
 - **Clock:** MAME 1.7898 MHz ("unverified"); zxsp 1.7 MHz ("guessed").
 - **Conflicts [DER]:** Beta-128 `#3F` / `#5F` / `#7F` (TR-DOS writes program the AY, `#7F` reads fight; no /DOS
   gating known); SounDrive mode 1 `#5F`; Profi Covox `#3F` / `#5F`; ZON X data.
+- **Built (controller manager C1c):** card `fuller-box` on the Sinclair edge (`slots/cards/fuller/fullerboxcard.{h,cpp}`).
+  Data read on `#3F` (FUSE, zxsp, nocash); AY clock MAME's 3.579545 MHz / 2; option `decode` = `full-low` (default,
+  FUSE) or `a7a6a5` (zxsp); mono mixer row "Fuller AY"; the stick is the controller manager's fixed connector
+  `fuller`; TTD type FullerBox (67). Orator speech not modelled.
 - **Sources:** [FUSE fuller.c](https://sourceforge.net/p/fuse-emulator/fuse/ci/master/tree/peripherals/sound/fuller.c),
   [MAME fuller.cpp](https://github.com/mamedev/mame/blob/master/src/devices/bus/spectrum/fuller.cpp),
   [zxsp FullerBox.cpp](https://github.com/Megatokio/zxsp/blob/master/Source/Uni/Items/Ay/FullerBox.cpp),

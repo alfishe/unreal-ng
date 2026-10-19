@@ -46,6 +46,8 @@ enum class Function : uint8_t
     Rtc,                ///< "rtc": real-time clock
     Palette,            ///< "palette": Profi v5 palette
     FdcUpd765,          ///< "fdc.upd765": +3 floppy controller
+    FullerAy,           ///< "fuller-ay": the Fuller Box / DK'tronics AY on #3F / #5F (not the AY socket's role)
+    FullerJoystick,     ///< "fuller-joystick": the Fuller stick on #7F
     Count
 };
 
@@ -182,7 +184,7 @@ enum class Opt : uint8_t
     Ram,        ///< card RAM size
     Rom,        ///< card ROM / firmware version
     Jp1,        ///< ZXM-MoonSound JP1 "PentEvo"
-    Decode,     ///< Covox port decode width
+    Decode,     ///< port decode width (Covox, Fuller Box)
     Count
 };
 constexpr int kOptCount = static_cast<int>(Opt::Count);
