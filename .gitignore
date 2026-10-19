@@ -7,6 +7,8 @@
 **/x64
 **/x86
 **/[Dd]ebug
+# the debug-layer controller profiles are data, not a build folder
+!data/controllers/profiles/debug/
 **/[Rr]elease
 
 # CMake temporary folders
