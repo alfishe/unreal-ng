@@ -17,6 +17,8 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/ports/models/portdecoder_atm710.h"
+#include "emulator/video/screen.h"
 #include "loaders/snapshot/loader_sna.h"
 #include "loaders/snapshot/snapshotlauncher.h"
 #include "loaders/snapshot/snapshotpipeline.h"
@@ -474,6 +476,35 @@ TEST(SnapshotAtm_Test, TheSamePictureAsThePentagonOnEveryClone)
         for (const char* clone : {"ATM710", "ATM3", "ATM450"})
             EXPECT_EQ(PictureAfterLoad(clone, path), pentagon) << clone << " " << file;
     }
+}
+
+// A load sets up only the video mode the snapshot's ports select (Screen::RasterDeferral): the reset's EGA mode on the
+// way is never built. From a ZX picture the framebuffer stays the same buffer (nothing for the GUI to re-attach); from an
+// EGA program the ZX mode comes back, with the picture a fresh machine shows
+TEST(SnapshotAtm_Test, ALoadSetsUpOnlyTheVideoModeTheSnapshotSelects)
+{
+    const std::string path = TestPathHelper::GetTestDataPath("loaders/sna/z80full.sna");
+    const uint64_t fresh = PictureAfterLoad("ATM3", path);
+
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    Screen& screen = *emulator->GetContext()->pScreen;
+    ASSERT_TRUE(emulator->LoadSnapshot(path));
+    ASSERT_EQ(screen.GetVideoMode(), M_ZX48);
+    const uint8_t* zxBuffer = screen.GetFramebufferDescriptor().memoryBuffer;
+    ASSERT_TRUE(emulator->LoadSnapshot(path));
+    EXPECT_EQ(screen.GetVideoMode(), M_ZX48);
+    EXPECT_EQ(screen.GetFramebufferDescriptor().memoryBuffer, zxBuffer) << "the framebuffer was built again";
+
+    // An EGA program before the load
+    emulator->GetContext()->emulatorState.pFF77 = (emulator->GetContext()->emulatorState.pFF77 & ~PortDecoder_ATM710::ATM_FF77_VMODE_MASK) | FF77_16;
+    screen.InitRaster();
+    ASSERT_EQ(screen.GetVideoMode(), M_ATM16);
+    ASSERT_TRUE(emulator->LoadSnapshot(path));
+    EXPECT_EQ(screen.GetVideoMode(), M_ZX48);
+    emulator->RunNFrames(3);
+    EXPECT_EQ(PictureHash(emulator), fresh);
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
 TEST(SnapshotAtm_Test, TheMemoryManagerIsOnAndLaidOutLikeA128k)
