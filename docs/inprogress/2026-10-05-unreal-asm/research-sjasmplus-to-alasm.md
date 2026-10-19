@@ -80,6 +80,9 @@ From ALASM 5.07's help (`al50help`) and checked in unreal-ng where marked.
 | LOCAL / ENDL hides the labels inside (a label used before the block stays global) | macro and repeat labels |
 | `DS n,a,b` repeats the pattern n times | sjasmplus' `DS n,v`; STORM's cyclic fill as DS + DB |
 | ALASM 5.09 assembles #8000-#BFFF into its system page | the oracle sources ORG #6000 |
+| **emulator** (2026-10-18): 4.2, 4.42, 4.44 and 4.5 take macro parameters as `:0`..`:9` (their help: `:0 .. :9`); there `\0` is a label (`Not defined:\0`). 5.0 takes `\0` and not `:0` | `:N` before 5.0, `\N` from it |
+| **emulator**: EXA is a keyword only in the tables of 4.44 and 5.x (not 3.8, 4.2, 4.42, 4.5); 4.2 skips a line `EXA` without an error | `EX AF,AF'` where the table lacks it (the codec's table decides: 4.5 is no later than 4.44) |
+| REPEAT is not in 3.8, 4.2, 4.42 | WHILE as `DUP n` ... `EDUP` with the count the layout ran it (`IFN 0` ... `ENDIF` for none); a WHILE met with two counts (in a macro or a repeat) is not converted |
 
 ## 4. When ALASM is idle (the injection's precondition)
 
@@ -120,6 +123,7 @@ Every other build has the same chain at its own addresses: the pair right below 
 | 4.44 | `al64_444` | `9A08 8BA8` | `8BD5` |
 | 4.43 | `al64_443` | `99A4 8B99` | `8BC6` |
 | 4.42 | `alasm442` | `99B2 8B8F` | `8BBC` |
+| 4.2 | `ALM` (2026-10-18) | `983F 8B84` | `8BAD` |
 | 3.8c | `ALASM` | `943A 8149` | `816D` |
 
 Checked in every build: `inject-oracle.py alasm --boot ... --assembler alasm-X` wrote a source at the prompt and the

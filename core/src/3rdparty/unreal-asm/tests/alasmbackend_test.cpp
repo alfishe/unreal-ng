@@ -240,6 +240,27 @@ TEST(AlasmBackend_Test, NamesAndLabels)
     EXPECT_TRUE(Contains(lines, "LD A,L_EXA"));
     // Instructions ALASM spells its own way
     EXPECT_EQ(ToAlasm("        ex af,af'\n        ld a,ixh\n        sll b\n        in f,(c)"), (std::vector<std::string>{"EXA", "LD A,HX", "SLI B", "INF"}));
+    // EXA is a keyword from 4.44 (not in 4.5): an older ALASM (4.2) skips the line, so EX AF,AF' there
+    BackendOptions old;
+    for (const char* version : {"4.42", "4.5"})
+    {
+        old.targetVersion = version;
+        EXPECT_NE(Convert(SourceDocument::FromText("        ex af,af'", "sjasmplus"), "alasm", old).document.Text().find("EX AF,AF'"), std::string::npos)
+            << version;
+    }
+    // 4.2-4.5 take macro parameters as :0..:9 (\0 is a label there); 4.2 / 4.42 have no REPEAT: a WHILE is a DUP of
+    // the count it ran (each seen in ALASM 4.2 / 4.42 / 4.5 / 5.0 in unreal-ng)
+    old.targetVersion = "4.2";
+    const std::string text = Convert(SourceDocument::FromText("        MACRO WAIT n\n        ld b,n\n        ENDM\n        WAIT 5\n"
+                                                              "n       = 0\n        WHILE n < 3\n        db n\nn       = n+1\n        ENDW\n"
+                                                              "        WHILE n < 3\n        db n\n        ENDW",
+                                                              "sjasmplus"),
+                                     "alasm", old)
+                                 .document.Text();
+    EXPECT_NE(text.find("LD B,:0"), std::string::npos) << text;
+    EXPECT_NE(text.find("DUP 3"), std::string::npos) << text;
+    EXPECT_NE(text.find("IFN 0"), std::string::npos) << text;
+    EXPECT_EQ(text.find("REPEAT"), std::string::npos) << text;
     // ALASM 5.09 puts nothing down for ADD B (seen in unreal-ng): always A,x
     EXPECT_EQ(ToAlasm("        add b\n        adc (hl)\n        sbc 5"), (std::vector<std::string>{"ADD A,B", "ADC A,(HL)", "SBC A,5"}));
     // sjasmplus' several operands and fake instructions, written out
