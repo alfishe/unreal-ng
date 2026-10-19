@@ -179,7 +179,7 @@ TEST_F(MemoryContendedFuse_Test, NothingWaitsInUncontendedPages)
     Layout(0);
     ASSERT_FALSE(_memory->IsBank0ROM()) << "all-RAM layout expected";
     ASSERT_FALSE(_context->pCore->IsSlotContended(0));
-    ASSERT_EQ(_z80->MemIf, _z80->FastContendedStockMemIf) << "the machine is contended, only the pages are not";
+    ASSERT_EQ(_z80->MemIf, _z80->FastContendedMemIf) << "the machine is contended, only the pages are not";
 
     int failed = 0;
     std::string report;

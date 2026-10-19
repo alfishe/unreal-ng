@@ -277,9 +277,17 @@ void Memory::MemoryWriteOverlay(uint16_t addr, uint8_t value)
 // The contended overlay opcode fetches are the inner read of the opcode fetch with ULA snow (memorycontended.cpp)
 template uint8_t Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>(uint16_t, bool);
 template uint8_t Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>(uint16_t, bool);
+template uint8_t Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>>(uint16_t, bool);
 
-MemoryInterface* Memory::GetOverlayMemoryInterface(bool debug, bool contended)
+MemoryInterface* Memory::GetOverlayMemoryInterface(bool debug, bool contended, bool stockRead)
 {
+    if (stockRead && !debug && contended)
+        return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>>,
+                                   &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>>,
+                                   &Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>>>);
+    if (stockRead && !debug)
+        return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadFastStock>, &Memory::MemoryWriteOverlay<&Memory::MemoryWriteFast>,
+                                   &Memory::MemoryReadOverlayM1<&Memory::MemoryReadFastStock>);
     if (debug && contended)
         return new MemoryInterface(&Memory::MemoryReadOverlay<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>,
                                    &Memory::MemoryWriteOverlay<&Memory::MemoryWriteContended<&Memory::MemoryWriteDebug, true>>,
