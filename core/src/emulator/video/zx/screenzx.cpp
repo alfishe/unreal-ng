@@ -900,6 +900,12 @@ void ScreenZX::DrawRangeZXPlaneB(uint32_t fromTstate, uint32_t toTstate)
 /// PlaneB = false is the plain renderer; PlaneB = true also writes what it drew
 /// into plane B, in the same pass (ZX DLSS). Two instantiations, chosen by
 /// SelectRangeRenderer, so the disabled path carries no extra check.
+///
+/// Multicolor stays exact: video RAM and the border cannot change inside one call (Screen::DrawRange's contract),
+/// so a cell's bytes read at its first T are what the T-by-T path reads there. A program rewriting attributes
+/// behind the beam cuts the frame into calls at its writes (CatchUpToStepStart); the blocks below (a whole cell,
+/// the whole cells of a run) only group T of one call. Each cell still latches at its first T; a range ending
+/// inside a cell draws its tail T by T and leaves the latch for the next call; snow takes the T-by-T path.
 template <bool PlaneB>
 void ScreenZX::DrawRangeZXImpl(uint32_t fromTstate, uint32_t toTstate)
 {
@@ -947,6 +953,41 @@ void ScreenZX::DrawRangeZXImpl(uint32_t fromTstate, uint32_t toTstate)
         uint32_t* const out = fb + pixel;
         if (e.renderType == RT_SCREEN)
         {
+            // The whole cells of the run in the range, without the LUT: a run is the next pixels of one row, so its
+            // cells follow each other on one ZX line. Each is latched at its first T, as the T-by-T path does
+            const uint32_t cells = (e.pixelXBit == 0 && !snow) ? std::min<uint32_t>(e.run, toTstate - t + 1u) / 4u : 0;
+            if (cells != 0)
+            {
+                for (uint32_t c = 0; c < cells; c++)
+                {
+                    const uint8_t symbolX = static_cast<uint8_t>(e.symbolX + c);
+                    if (symbolX != lastSymbolX || e.zxY != lastZxY)
+                    {
+                        pixels = zxScreen[e.screenOffset + symbolX];
+                        attributes = zxScreen[e.attrOffset + symbolX];
+                        lastSymbolX = symbolX;
+                        lastZxY = e.zxY;
+                        if constexpr (PlaneB)
+                        {
+                            inkB = _planeBInk[attributes];
+                            paperB = _planeBPaper[attributes];
+                        }
+                    }
+                    const uint32_t ink = inkColors[attributes];
+                    const uint32_t paper = paperColors[attributes];
+                    uint32_t* const cellOut = out + 8u * c;
+                    for (uint32_t i = 0; i < 8; i++)
+                    {
+                        const uint32_t mask = static_cast<uint32_t>(-static_cast<int32_t>((pixels >> (7 - i)) & 1));
+                        cellOut[i] = (ink & mask) | (paper & ~mask);
+                        if constexpr (PlaneB)
+                            planeB[pixel + 8u * c + i] = static_cast<uint16_t>((inkB & mask) | (paperB & ~mask));
+                    }
+                }
+                t += 4u * cells - 1u;
+                continue;
+            }
+
             if (e.symbolX != lastSymbolX || e.zxY != lastZxY)
             {
                 pixels = zxScreen[e.screenOffset + e.symbolX];

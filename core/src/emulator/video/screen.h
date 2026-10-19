@@ -819,6 +819,12 @@ public:
 
     /// Render the inclusive frame T-state range [from, to]. DrawPeriod calls it
     /// once per catch-up; renderers override it to loop without per-T dispatch.
+    /// The contract: nothing the picture is drawn from changes inside one call (video RAM, border, palette, mode).
+    /// The call runs on the emulation thread with the CPU stopped, and every change catches the beam up before it
+    /// lands (CatchUpToStepStart), so a change always falls between two calls. The time resolution of the picture
+    /// is set by where the callers cut the frame, never by the renderer: a renderer may draw any part of its range
+    /// in any order or in blocks, as long as each pixel shows what it would show drawn T by T
+    /// (docs/emulator/design/video/screen-rendering-pipeline.md, "The event rule and the DrawRange contract")
     virtual void DrawRange(uint32_t fromTstate, uint32_t toTstate);
 
     /// @brief Reset the previous t-state tracker used by DrawPeriod
