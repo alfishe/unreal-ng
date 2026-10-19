@@ -139,7 +139,7 @@ const TsConfState* ScreenTSConf::State()
     return _ts;
 }
 
-void ScreenTSConf::InitRaster()
+void ScreenTSConf::DetectRaster()
 {
     const TsConfState* ts = State();
     const VideoModeEnum mode = ts ? ModeOf(ts->regs[TsConfReg::VConfig]) : M_TSZX;

@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <optional>
 #include <vector>
 
 #include "common/filehelper.h"
@@ -369,6 +370,8 @@ bool LoaderSZX::CommitImage(EmulatorContext* context, const snapshot::Image& ima
 
     Core& core = *context->pCore;
     Memory& memory = *context->pMemory;
+    // The video mode the image's ports select is set up once, before the picture: the reset's on the way is not built
+    std::optional<Screen::RasterDeferral> raster(std::in_place, context->pScreen);
     core.Reset();
     memory.ClearModelRAM();  // the pages the image does not carry keep nothing of the program before it
 
@@ -455,6 +458,7 @@ bool LoaderSZX::CommitImage(EmulatorContext* context, const snapshot::Image& ima
     state.pFE = version >= 0x0101 ? static_cast<uint8_t>((image.portFE.value_or(0) & 0xF8) | border)
                                   : static_cast<uint8_t>((state.pFE & 0xF8) | border);
     state.border_attr = border;
+    raster.reset();
     if (context->pScreen)
     {
         context->pScreen->FillBorderWithColor(border);

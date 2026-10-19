@@ -64,6 +64,15 @@ struct LineAddress
     int64_t address = 0;
 };
 
+/// How often a WHILE of a project file ran its block, as sjasmplus assembles it (a WHILE met more than once with two
+/// counts, in a macro or a repeated block: none)
+struct WhileCount
+{
+    std::string file;
+    uint32_t line = 0;   ///< 1-based line of the WHILE
+    int64_t count = 0;
+};
+
 struct LayoutResult
 {
     std::vector<Label> labels;   ///< each name once, in the order the source defines them
@@ -74,6 +83,7 @@ struct LayoutResult
     /// relocation adjusts), in the order the source puts them down
     std::vector<int64_t> relocations;
     std::vector<WideByteOperand> wideBytes;
+    std::vector<WhileCount> whileCounts;
     Diagnostics diagnostics;
     int passes = 0;
     bool ok = false;             ///< every value resolved and no label moved in the last pass
