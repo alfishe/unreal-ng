@@ -34,13 +34,14 @@ before launch just works in the game that is loaded.
 | [haptics.md](haptics.md) | Rumble, impulse triggers, HD haptics; audio filters and game-event probes mapped to effects per game profile; never journaled, muted on seek and replay |
 | [ui-ux.md](ui-ux.md) | The Qt dialog: three panes and patch cords, Simple and Advanced, the controller picture with callouts, test, learn and wizard flows |
 | [device-database.md](device-database.md) | VID/PID identification, the device database, images and hotspot maps, the photo pipeline |
+| [surface-dial.md](surface-dial.md) | The Surface Dial: reports, clicks, the late touch sensor and the inferred touch, per OS |
 | [surfaces.md](surfaces.md) | WebAPI, MCP, CLI, Lua, Python: the parity table |
 | [testing.md](testing.md) | Unit, integration, hardware-in-the-loop and live verification |
 | [TODO.md](TODO.md) | Phases, open questions, errata found in other docs |
 | [research-retro-hardware.md](research-retro-hardware.md) | Every ZX-family input peripheral: ports, decode, bits, per board; use cases by title |
 | [research-other-emulators.md](research-other-emulators.md) | How 25 other emulators map controllers; comparison; ideas to take and pitfalls |
 | [research-host-apis.md](research-host-apis.md) | macOS / Windows / Linux input APIs, SDL3, HID; the Xbox Elite Series 2 measured on this machine; other controllers |
-| [probes/](probes/) | The probes used for the measurements: `probe.c`, `probe2.c` (SDL3 identity), `gc.m` (GameController dump), `hiddump.c` (raw IOHID reports and descriptor), `sdlev.c` (SDL3 events), `gcev.m` (GameController events); fixtures in `testdata/controllers/hid-captures/` |
+| [probes/](probes/) | The probes used for the measurements: `probe.c`, `probe2.c` (SDL3 identity), `gc.m` (GameController dump), `hiddump.c` (raw IOHID reports and descriptor), `sdlev.c` (SDL3 events), `gcev.m` (GameController events), `dialtouch.c` / `dialfeat.c` (Surface Dial touch latency, its feature reports); fixtures in `testdata/controllers/hid-captures/` |
 
 ## In one picture
 

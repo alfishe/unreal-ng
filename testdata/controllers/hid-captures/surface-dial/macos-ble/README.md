@@ -9,8 +9,8 @@ not every step). The owner touched, turned both ways and pressed the dial freely
   descriptor, then `<ms> dev0 id=<id> len=<n> : <bytes>`.
 
 Input report 0x01, 9 bytes: byte 1 bit 0 push, bit 1 touch; bytes 2-3 the rotation since the last report (int16 LE);
-bytes 4-8 constants. Report 0x32 is System Control (sleep / wake); `32 02` follows each press report by about 2 ms. Layout and haptics:
-[modules.md §2](../../../../../docs/inprogress/2026-10-18-control-model/modules.md#2-surface-dial).
+bytes 4-8 constants. Report 0x32 is System Control (sleep / wake); `32 02` follows each press report by about 2 ms. Layout, haptics and touch:
+[surface-dial.md](../../../../../docs/inprogress/2026-10-17-controller-manager/surface-dial.md).
 
 Touch latency (2026-10-19, `docs/inprogress/2026-10-17-controller-manager/probes/dialtouch.c`; `dialfeat.c` beside it reads the feature reports, a raw report log beside the owner's hand): the touch bit
 comes on and goes off a second or more after the hand, both ways; the release always arrives (11 of 11 touches

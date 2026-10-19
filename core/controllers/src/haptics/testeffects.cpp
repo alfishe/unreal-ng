@@ -11,7 +11,7 @@ std::vector<TestEffect> TestEffects(uint8_t actuators)
     if (actuators == kHapticClicker)
     {
         using Wave = HapticClicks::Wave;
-        // Retrigger 60 ms between clicks: they stay apart on the Dial (control-model modules.md §2.2)
+        // Retrigger 60 ms between clicks: they stay apart on the Dial (surface-dial.md §2)
         effects.push_back({"identify", "Identify (two clicks)", {}, HapticClicks{Wave::Click, 2, 60}});
         effects.push_back({"click", "Click", {}, HapticClicks{Wave::Click, 1, 0}});
         effects.push_back({"clicks", "Three clicks", {}, HapticClicks{Wave::Click, 3, 60}});
