@@ -77,8 +77,9 @@ that lowers (`IBackend::JoinsSjasmplusProject`, the eleven retro ones):
 - `BackendOptions::splitLines`: a file longer than that is cut into parts INCLUDEd where they stood, at lines outside
   any block (MACRO, DUP, WHILE, IF, STRUCT, LUA, DISP): `zxasm` turns it on when the target's format cannot hold a file
   (ALASM's 64K: NextPlayer becomes `NextPlay`, `NextPla2`, `NextPla3`) or its editor cannot (2026-10-19, measured by
-  each editor's own LOAD of longer and longer files in the emulator: TASM 4.12 22801 bytes, its text from `#A6EE` below
-  `#FFFF`, and a longer file loads "OK" over itself; STORM 1.3 16369 bytes in RAM page 6, "File too big" from 16373;
+  each editor's own LOAD of longer and longer files in the emulator: TASM 4.12 / 4512 22801 bytes, its text from
+  `#A6EE` below `#FFFF`, 4.0 / 4.4 24655 (`#9FA8`), 3.0-3.5 26305 (`#9935`), 2.0 26529, and a longer file loads "OK"
+  over itself; STORM 1.3 16369 bytes in RAM page 6, "File too big" from 16373;
   XAS 7.447 64 sectors at `#C000` of RAM page 3, the 65th wrapping over `#0000` without a word). NextPlayer goes to each
   of the three in parts of 1000 lines, and back to the same memory.
 

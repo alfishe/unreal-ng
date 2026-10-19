@@ -166,9 +166,11 @@ curl -s -X POST $BASE/emulator/$EMU_ID/media/A/export -H 'Content-Type: applicat
 
 ## Pitfalls
 
-- **TASM 4.12 holds a file of 22801 bytes** (its text from `#A6EE` below `#FFFF`): a longer one loads with `OK` and
-  overwrites itself, no error (measured 2026-10-19). `zxasm convert --project --to tasm` cuts a longer file into
-  INCLUDEd parts.
+- **The editor holds a file of** 22801 bytes in TASM 4.12 and 4512 (its text from `#A6EE` below `#FFFF`), 24655 in
+  4.0 and 4.4 (`#9FA8`), 26305 in 3.0, 3.2 and 3.5 (`#9935`), 26529 in 2.0 (its plain text loads from `#975D`, the
+  editor turns it into records): a longer one loads with `OK` and overwrites itself, no error (measured 2026-10-19 by
+  LOAD, Edit and Extend Q). The codec warns "longer than" for each version; `zxasm convert --project --to tasm
+  [--to-version v]` cuts a longer file into INCLUDEd parts.
 - **TASM 4.12's stack is at `#617C`**: code assembled from `#6000` overwrites it (the bytes change from run to run, a
   large program resets the machine). Use `#6200` and up (its overlay is at `#8000`).
 - **TASM 4.12 has no `{ }`** (error 8, even on a number) and assembles `LD HX,LX` / `LD HX,HX` with two prefixes.
