@@ -48,7 +48,7 @@ public:
     ~ScreenTSConf() override = default;
 
     /// Mode and window from TsConfState (V_CONFIG)
-    void InitRaster() override;
+    void DetectRaster() override;
     /// The graphics window (V_CONFIG geometry) in frame pixels: a TS frame stores 2 px per raster dot
     /// and one pixel per raster line, so the 256x192 window is 512x192 pixels at (104, 48)
     PictureRect WorkingWindow() const override;

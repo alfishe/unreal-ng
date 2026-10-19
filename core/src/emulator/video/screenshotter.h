@@ -12,7 +12,8 @@
 /// A screenshot is a pure function of one frame snapshot: the pixels and the geometry of the same
 /// presented frame (Screen::SnapshotPresented). The area (whole frame, or the working picture the
 /// frame's own geometry names) is cut from it and encoded. Nothing here knows a machine: the
-/// raster table, FT812 and TS-Conf windows are all behind PictureGeometry.
+/// raster table, FT812 and TS-Conf windows are all behind PictureGeometry. The image has the shape the CRT
+/// shows (DisplayGeometry::Picture, as a recording): a hi-res frame of 720 / 736 x 288 doubles its lines.
 /// Design: docs/inprogress/2026-10-03-screenshotter/design.md
 
 /// What part of the frame to return
@@ -67,9 +68,9 @@ struct ScreenshotResult
     std::string savedFile;       ///< where it was written, when saveTo was given
     size_t encodedSize = 0;      ///< bytes of the encoded image, saved or not
 
-    uint16_t width = 0;   ///< size of the returned image
+    uint16_t width = 0;   ///< size of the returned image: the crop as the CRT shows it (DisplayGeometry::Picture)
     uint16_t height = 0;
-    PictureRect crop;       ///< the returned image's rectangle inside the frame
+    PictureRect crop;       ///< the returned image's rectangle inside the frame, in stored pixels
     PictureGeometry frame;  ///< the frame the image was taken from
 };
 

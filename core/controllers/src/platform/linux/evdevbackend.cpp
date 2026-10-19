@@ -116,6 +116,7 @@ struct Device
     int hatX = 0;
     int hatY = 0;
     bool rumble = false;  ///< opened for writing and FF_RUMBLE is offered
+    std::string rumbleUnavailable;  ///< why not: the Test haptics button's tooltip
     int effect = -1;      ///< the uploaded FF_RUMBLE effect, -1 before the first
 };
 
@@ -179,6 +180,13 @@ public:
         std::lock_guard lock(_mutex);
         const Device* known = Find(device);
         return known != nullptr && known->rumble;
+    }
+
+    std::string RumbleUnavailable(const HostDeviceId& device) const override
+    {
+        std::lock_guard lock(_mutex);
+        const Device* known = Find(device);
+        return known != nullptr ? known->rumbleUnavailable : "The device is not connected";
     }
 
     /// FF_RUMBLE: strong = the low-frequency motor, weak = the high one; one effect per device, updated in place and
@@ -289,6 +297,10 @@ private:
         device.node = node;
         device.pad = pad;
         device.rumble = writable && TestBit(Bits(fd, EV_FF, FF_MAX), FF_RUMBLE);
+        if (!device.rumble)
+            device.rumbleUnavailable = writable ? "The device offers no rumble (FF_RUMBLE) to Linux"
+                                                : "No write access to " + node + ": a udev rule that gives the user "
+                                                  "write access drives its motors";
         const std::vector<unsigned long> axes = Bits(fd, EV_ABS, ABS_MAX);
         for (unsigned code = 0; code <= ABS_MAX; ++code)
             if (TestBit(axes, code))

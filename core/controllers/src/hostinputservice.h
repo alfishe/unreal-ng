@@ -66,6 +66,8 @@ public:
     /// region <Haptics (haptics.md §3; host output only, H-4)>
     /// The device has motors its backend can drive
     bool HasRumble(const HostDeviceId& device) const;
+    /// Why the device cannot be tested for haptics ("" when it can): no motors, or none its backend drives yet
+    std::string HapticsUnavailable(const HostDeviceId& device) const;
     /// Play an effect on a device (ignored while the gate is closed)
     void PlayEffect(const HostDeviceId& device, const HapticEffect& effect);
     /// Identify: a short pulse on both motors, so the user sees which pad is which (ui-ux.md)

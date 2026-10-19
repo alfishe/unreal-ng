@@ -17,6 +17,8 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/ports/models/portdecoder_atm710.h"
+#include "emulator/video/screen.h"
 #include "loaders/snapshot/loader_sna.h"
 #include "loaders/snapshot/snapshotlauncher.h"
 #include "loaders/snapshot/snapshotpipeline.h"
@@ -474,6 +476,72 @@ TEST(SnapshotAtm_Test, TheSamePictureAsThePentagonOnEveryClone)
         for (const char* clone : {"ATM710", "ATM3", "ATM450"})
             EXPECT_EQ(PictureAfterLoad(clone, path), pentagon) << clone << " " << file;
     }
+}
+
+// An SNA / Z80 has no clock: the program runs at the clock the machine ran at (Xpeccy keeps it too), not at the reset's
+// 3.5 MHz (owner report 2026-10-18, ATM710 at 7 MHz). The ATM710's #FF77 bit 3 is 7 MHz; the ATM3's #FF77 bit 3 is
+// 14 MHz, its #EFF7 bit 4 3.5 MHz (7 MHz is its reset clock). Six machines are created: about 200 ms
+TEST(SnapshotAtm_Test, TheClockTheMachineRanAtIsKept)
+{
+    struct Case
+    {
+        const char* model;
+        uint16_t port;
+        uint8_t bit;
+        uint8_t ratio;
+    };
+    for (const Case& c : {Case{"ATM710", 0xFF77, 0x08, 2}, Case{"ATM3", 0xFF77, 0x08, 4}, Case{"ATM3", 0xEFF7, 0x10, 1}})
+    {
+        for (const char* file : {"loaders/sna/across-the-edge-second.sna", "loaders/z80/dizzyx.z80"})
+        {
+            const std::string what = std::string(c.model) + " #" + (c.port == 0xFF77 ? "FF77" : "EFF7") + " " + file;
+            Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(c.model, LoggerLevel::LogError, RamPowerOn::Zero);
+            ASSERT_NE(emulator, nullptr) << what;
+            EmulatorContext* context = emulator->GetContext();
+            EmulatorState& state = context->emulatorState;
+            // #EFF7 is the pager's inside the shadow (the ATM3 boots in it): the latch is set the way the decoder keeps it
+            if (c.port == 0xFF77)
+                context->pPortDecoder->DecodePortOut(c.port, static_cast<uint8_t>(state.pFF77 | c.bit), 0x8000);
+            else
+                context->pPortDecoder->RestoreClockSelect(static_cast<uint16_t>(c.bit << 8));
+            ASSERT_EQ(state.hw_turbo_ratio, c.ratio) << what << ": the guest's clock select";
+
+            ASSERT_TRUE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(file))) << what;
+            EXPECT_EQ(state.hw_turbo_ratio, c.ratio) << what;
+            emulator->RunNFrames(1, true);
+            EXPECT_EQ(state.current_z80_frequency_multiplier, state.next_z80_frequency_multiplier * c.ratio) << what;
+            EmulatorTestHelper::CleanupEmulator(emulator);
+        }
+    }
+}
+
+// A load sets up only the video mode the snapshot's ports select (Screen::RasterDeferral): the reset's EGA mode on the
+// way is never built. From a ZX picture the framebuffer stays the same buffer (nothing for the GUI to re-attach); from an
+// EGA program the ZX mode comes back, with the picture a fresh machine shows
+TEST(SnapshotAtm_Test, ALoadSetsUpOnlyTheVideoModeTheSnapshotSelects)
+{
+    const std::string path = TestPathHelper::GetTestDataPath("loaders/sna/z80full.sna");
+    const uint64_t fresh = PictureAfterLoad("ATM3", path);
+
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    Screen& screen = *emulator->GetContext()->pScreen;
+    ASSERT_TRUE(emulator->LoadSnapshot(path));
+    ASSERT_EQ(screen.GetVideoMode(), M_ZX48);
+    const uint8_t* zxBuffer = screen.GetFramebufferDescriptor().memoryBuffer;
+    ASSERT_TRUE(emulator->LoadSnapshot(path));
+    EXPECT_EQ(screen.GetVideoMode(), M_ZX48);
+    EXPECT_EQ(screen.GetFramebufferDescriptor().memoryBuffer, zxBuffer) << "the framebuffer was built again";
+
+    // An EGA program before the load
+    emulator->GetContext()->emulatorState.pFF77 = (emulator->GetContext()->emulatorState.pFF77 & ~PortDecoder_ATM710::ATM_FF77_VMODE_MASK) | FF77_16;
+    screen.InitRaster();
+    ASSERT_EQ(screen.GetVideoMode(), M_ATM16);
+    ASSERT_TRUE(emulator->LoadSnapshot(path));
+    EXPECT_EQ(screen.GetVideoMode(), M_ZX48);
+    emulator->RunNFrames(3);
+    EXPECT_EQ(PictureHash(emulator), fresh);
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
 TEST(SnapshotAtm_Test, TheMemoryManagerIsOnAndLaidOutLikeA128k)

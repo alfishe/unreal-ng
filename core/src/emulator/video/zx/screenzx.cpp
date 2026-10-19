@@ -280,57 +280,73 @@ void ScreenZX::CreateTstateLUT()
     const int overscanExtraLines = (_mode == M_P384) ? ZxGeometry::kP384ExtraTopLines : 0;
     const int overscanExtraPixels = (_mode == M_P384) ? ZxGeometry::kP384ExtraPixels : 0;
 
-    // Clear LUT first
-    memset(_tstateLUT, 0, sizeof(_tstateLUT));
+    const uint32_t tstatesPerLine = _rasterState.tstatesPerLine;
+    const uint32_t lutEnd = tstatesPerLine ? std::min<uint32_t>(maxFrameTiming, MAX_FRAME_TSTATES) : 0;
 
-    for (uint32_t t = 0; t < maxFrameTiming && t < MAX_FRAME_TSTATES; t++)
+    // The T past the frame stay clear; each T of the frame is written whole below (one pass over the 1.4 MB table)
+    memset(_tstateLUT + lutEnd, 0, sizeof(TstateCoordLUT) * (MAX_FRAME_TSTATES - lutEnd));
+    if (lutEnd == 0)
+        return;
+
+    // For standard mode: visible starts at line 32 (after vSync+vBlank)
+    // For M_P384 overscan: visible starts at line 16 (after vSync only, into vBlank)
+    const int visibleStartLine = FirstStoredRasterLine();
+
+    // Check if within visible framebuffer area (use actual framebuffer dimensions)
+    // For M_P384, we render 32 more pixels per line (from what's normally hBlank)
+    const int visibleWidth = timing.fullFrameWidth + overscanExtraPixels;
+    const int visibleHeight = timing.fullFrameHeight + overscanExtraLines;
+
+    // Line by line (line 0 = start of vSync), T by T within the line: no division per T
+    uint32_t t = 0;
+    for (uint32_t lineInFrame = 0; t < lutEnd; lineInFrame++)
     {
-        TstateCoordLUT& entry = _tstateLUT[t];
-
-        // Calculate line number within frame (0 = start of vSync)
-        const int lineInFrame = t / _rasterState.tstatesPerLine;
-        const int pixelInLine = (t % _rasterState.tstatesPerLine) * _rasterState.pixelsPerTState;
-
-        // For standard mode: visible starts at line 32 (after vSync+vBlank)
-        // For M_P384 overscan: visible starts at line 16 (after vSync only, into vBlank)
-        const int visibleStartLine = FirstStoredRasterLine();
-        const int framebufferY = lineInFrame - visibleStartLine;
-
-        // For M_P384, we render 32 more pixels per line (from what's normally hBlank)
-        // No horizontal offset - just extend the visible width
-        const int framebufferX = pixelInLine;
-
-        // Check if within visible framebuffer area (use actual framebuffer dimensions)
-        const int visibleWidth = timing.fullFrameWidth + overscanExtraPixels;
-        const int visibleHeight = timing.fullFrameHeight + overscanExtraLines;
-        if (framebufferY >= 0 && framebufferY < visibleHeight && framebufferX < visibleWidth)
+        const int framebufferY = static_cast<int>(lineInFrame) - visibleStartLine;
+        const bool lineVisible = framebufferY >= 0 && framebufferY < visibleHeight;
+        for (uint32_t tInLine = 0; tInLine < tstatesPerLine && t < lutEnd; tInLine++, t++)
         {
-            entry.framebufferX = static_cast<uint16_t>(framebufferX);
-            entry.framebufferY = static_cast<uint16_t>(framebufferY);
+            TstateCoordLUT entry{};
 
-            // Check if within ZX screen area (using timing boundaries)
-            if (t >= _rasterState.screenAreaStart && t <= _rasterState.screenAreaEnd)
+            // No horizontal offset - just extend the visible width
+            const int pixelInLine = static_cast<int>(tInLine * _rasterState.pixelsPerTState);
+            const int framebufferX = pixelInLine;
+
+            if (lineVisible && framebufferX < visibleWidth)
             {
-                const uint16_t pixelX = pixelInLine;  // Use pixel position for screen detection
+                entry.framebufferX = static_cast<uint16_t>(framebufferX);
+                entry.framebufferY = static_cast<uint16_t>(framebufferY);
 
-                if (pixelX >= timing.screenOffsetLeft && pixelX < (timing.screenOffsetLeft + timing.screenWidth))
+                // Check if within ZX screen area (using timing boundaries)
+                if (t >= _rasterState.screenAreaStart && t <= _rasterState.screenAreaEnd)
                 {
-                    const uint16_t zxX = pixelX - timing.screenOffsetLeft;
-                    const uint16_t zxY = (t - _rasterState.screenAreaStart) / _rasterState.tstatesPerLine;
+                    const uint16_t pixelX = pixelInLine;  // Use pixel position for screen detection
 
-                    if (zxX <= 255 && zxY < 192)
+                    if (pixelX >= timing.screenOffsetLeft && pixelX < (timing.screenOffsetLeft + timing.screenWidth))
                     {
-                        entry.zxX = zxX;
-                        entry.zxY = static_cast<uint8_t>(zxY);
-                        entry.symbolX = static_cast<uint8_t>(zxX / 8);
-                        entry.pixelXBit = static_cast<uint8_t>(zxX % 8);
-                        entry.renderType = RT_SCREEN;
-                        entry.screenOffset = _screenLineOffsets[zxY];
-                        entry.attrOffset = _attrLineOffsets[zxY];
+                        const uint16_t zxX = pixelX - timing.screenOffsetLeft;
+                        const uint16_t zxY = (t - _rasterState.screenAreaStart) / tstatesPerLine;
+
+                        if (zxX <= 255 && zxY < 192)
+                        {
+                            entry.zxX = zxX;
+                            entry.zxY = static_cast<uint8_t>(zxY);
+                            entry.symbolX = static_cast<uint8_t>(zxX / 8);
+                            entry.pixelXBit = static_cast<uint8_t>(zxX % 8);
+                            entry.renderType = RT_SCREEN;
+                            entry.screenOffset = _screenLineOffsets[zxY];
+                            entry.attrOffset = _attrLineOffsets[zxY];
+                        }
+                        else
+                        {
+                            // Should not happen for valid t-states
+                            entry.renderType = RT_BORDER;
+                            entry.zxX = UINT16_MAX;
+                            entry.zxY = 255;
+                        }
                     }
                     else
                     {
-                        // Should not happen for valid t-states
+                        // Left/right border within screen lines
                         entry.renderType = RT_BORDER;
                         entry.zxX = UINT16_MAX;
                         entry.zxY = 255;
@@ -338,7 +354,7 @@ void ScreenZX::CreateTstateLUT()
                 }
                 else
                 {
-                    // Left/right border within screen lines
+                    // Top/bottom border
                     entry.renderType = RT_BORDER;
                     entry.zxX = UINT16_MAX;
                     entry.zxY = 255;
@@ -346,26 +362,19 @@ void ScreenZX::CreateTstateLUT()
             }
             else
             {
-                // Top/bottom border
-                entry.renderType = RT_BORDER;
+                // Invisible area (VSync, VBlank, HSync, HBlank)
+                entry.framebufferX = UINT16_MAX;
+                entry.framebufferY = 0;
+                entry.renderType = RT_BLANK;
                 entry.zxX = UINT16_MAX;
                 entry.zxY = 255;
             }
-        }
-        else
-        {
-            // Invisible area (VSync, VBlank, HSync, HBlank)
-            entry.framebufferX = UINT16_MAX;
-            entry.framebufferY = 0;
-            entry.renderType = RT_BLANK;
-            entry.zxX = UINT16_MAX;
-            entry.zxY = 255;
+            _tstateLUT[t] = entry;
         }
     }
 
     // The runs, from the end: a T continues the run of the next one when both are blank, or both are of one visible
     // kind and the next one draws the following pixels of the same row
-    const uint32_t lutEnd = std::min<uint32_t>(maxFrameTiming, MAX_FRAME_TSTATES);
     for (uint32_t t = lutEnd; t-- > 0;)
     {
         TstateCoordLUT& entry = _tstateLUT[t];
@@ -891,6 +900,12 @@ void ScreenZX::DrawRangeZXPlaneB(uint32_t fromTstate, uint32_t toTstate)
 /// PlaneB = false is the plain renderer; PlaneB = true also writes what it drew
 /// into plane B, in the same pass (ZX DLSS). Two instantiations, chosen by
 /// SelectRangeRenderer, so the disabled path carries no extra check.
+///
+/// Multicolor stays exact: video RAM and the border cannot change inside one call (Screen::DrawRange's contract),
+/// so a cell's bytes read at its first T are what the T-by-T path reads there. A program rewriting attributes
+/// behind the beam cuts the frame into calls at its writes (CatchUpToStepStart); the blocks below (a whole cell,
+/// the whole cells of a run) only group T of one call. Each cell still latches at its first T; a range ending
+/// inside a cell draws its tail T by T and leaves the latch for the next call; snow takes the T-by-T path.
 template <bool PlaneB>
 void ScreenZX::DrawRangeZXImpl(uint32_t fromTstate, uint32_t toTstate)
 {
@@ -938,6 +953,41 @@ void ScreenZX::DrawRangeZXImpl(uint32_t fromTstate, uint32_t toTstate)
         uint32_t* const out = fb + pixel;
         if (e.renderType == RT_SCREEN)
         {
+            // The whole cells of the run in the range, without the LUT: a run is the next pixels of one row, so its
+            // cells follow each other on one ZX line. Each is latched at its first T, as the T-by-T path does
+            const uint32_t cells = (e.pixelXBit == 0 && !snow) ? std::min<uint32_t>(e.run, toTstate - t + 1u) / 4u : 0;
+            if (cells != 0)
+            {
+                for (uint32_t c = 0; c < cells; c++)
+                {
+                    const uint8_t symbolX = static_cast<uint8_t>(e.symbolX + c);
+                    if (symbolX != lastSymbolX || e.zxY != lastZxY)
+                    {
+                        pixels = zxScreen[e.screenOffset + symbolX];
+                        attributes = zxScreen[e.attrOffset + symbolX];
+                        lastSymbolX = symbolX;
+                        lastZxY = e.zxY;
+                        if constexpr (PlaneB)
+                        {
+                            inkB = _planeBInk[attributes];
+                            paperB = _planeBPaper[attributes];
+                        }
+                    }
+                    const uint32_t ink = inkColors[attributes];
+                    const uint32_t paper = paperColors[attributes];
+                    uint32_t* const cellOut = out + 8u * c;
+                    for (uint32_t i = 0; i < 8; i++)
+                    {
+                        const uint32_t mask = static_cast<uint32_t>(-static_cast<int32_t>((pixels >> (7 - i)) & 1));
+                        cellOut[i] = (ink & mask) | (paper & ~mask);
+                        if constexpr (PlaneB)
+                            planeB[pixel + 8u * c + i] = static_cast<uint16_t>((inkB & mask) | (paperB & ~mask));
+                    }
+                }
+                t += 4u * cells - 1u;
+                continue;
+            }
+
             if (e.symbolX != lastSymbolX || e.zxY != lastZxY)
             {
                 pixels = zxScreen[e.screenOffset + e.symbolX];

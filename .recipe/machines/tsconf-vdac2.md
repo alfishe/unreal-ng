@@ -181,3 +181,11 @@ an overflow looks like: [line-budget-model.md](../../docs/inprogress/2026-10-01-
   whole FT812 picture, and `area=screen` is the same image (the picture has
   no border). Before the screenshot rewrite it returned a 256x192 piece cut
   from the middle.
+- A recording keeps the size it started with: started on the FT812 picture it
+  is that picture's size (800x600 for `test2.spg`, square pixels, never
+  stretched to the Spectrum's shape); started on the Evo's picture (720x576)
+  it gets the FT812 picture scaled in with its 4:3 kept (720x540, bars above
+  and below), and the other way round. Loading a program into a running
+  recording (a snapshot load resets the machine) no longer restarts the file:
+  before, the frame after the reset set a new size and the FT812 picture was
+  written as noise.

@@ -605,3 +605,44 @@ TEST_F(ATMVideoMode_Test, Render_ATMTL_DedicatedPageContent)
 }
 
 /// endregion </ATM Renderer Tests>
+
+/// region <Raster deferral>
+
+/// A snapshot load holds InitRaster off (Screen::RasterDeferral): the ATM reset's EGA mode on the way to the
+/// snapshot's ZX mode is never set up - no 320x200 framebuffer, no timing table - and the mode the ports select at the
+/// end is applied once
+TEST_F(ATMVideoMode_Test, RasterDeferral_AppliesOnlyTheModeTheEndSelects)
+{
+    SetATMModel();
+    SetVideoMode(FF77_ZX);
+    _screen->InitRaster();
+    ASSERT_EQ(_screen->GetVideoMode(), M_ZX48);
+    const uint8_t* zxBuffer = _screen->GetFramebufferDescriptor().memoryBuffer;
+    const uint16_t zxWidth = _screen->GetFramebufferDescriptor().width;
+
+    {
+        Screen::RasterDeferral deferral(_screen);
+        SetVideoMode(FF77_16);
+        _screen->InitRaster();
+        EXPECT_EQ(_screen->GetVideoMode(), M_ZX48) << "the EGA mode on the way was set up";
+        SetVideoMode(FF77_ZX);
+        _screen->InitRaster();
+    }
+    EXPECT_EQ(_screen->GetVideoMode(), M_ZX48);
+    EXPECT_EQ(_screen->GetFramebufferDescriptor().memoryBuffer, zxBuffer) << "the framebuffer was built again";
+    EXPECT_EQ(_screen->GetFramebufferDescriptor().width, zxWidth);
+
+    // Nested scopes: the outer one's end applies
+    {
+        Screen::RasterDeferral outer(_screen);
+        {
+            Screen::RasterDeferral inner(_screen);
+            SetVideoMode(FF77_16);
+            _screen->InitRaster();
+        }
+        EXPECT_EQ(_screen->GetVideoMode(), M_ZX48);
+    }
+    EXPECT_EQ(_screen->GetVideoMode(), M_ATM16);
+}
+
+/// endregion </Raster deferral>

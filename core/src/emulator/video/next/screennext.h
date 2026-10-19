@@ -27,7 +27,7 @@ public:
 
     /// region <Screen>
     void CreateTables() override {}
-    void InitRaster() override;
+    void DetectRaster() override;
     void InitFrame() override;
     void SetVideoMode(VideoModeEnum mode) override;
     void UpdateScreen() override;

@@ -83,3 +83,17 @@ fixed with a test; none was reproduced yet):
 
 Possible follow-ups, not part of this work: the Qt "Take Screenshot" (clipboard) still crops to the window's
 viewport by design; `StoresHalfHeightLines` doubling in recordings of TS-Conf.
+
+## The image in the CRT's shape (2026-10-18)
+
+Recordings went through `DisplayGeometry::Picture` but screenshots did not: a Sprinter / TS-Conf frame (736 / 720 x
+288, one stored line per TV line) came out half as tall as the window shows it. `Screenshotter::Render` now gives every
+surface (WebAPI, MCP, CLI, Lua, Python, Qt, the video wall) the picture a recording has. The whole frame takes the 352:288
+shape and a working window its share of it. When repeating each line keeps the shape within 5%, the pixels are exact:
+736x288 becomes 736x576. Otherwise the picture grows to the shape: the ATM's 640x200 window becomes 640x364, its
+640x288 frame 640x524. A Spectrum's 352x288, ZX-Poly's 704x576 and the Next's 640x512 stay as they are. A video card's
+picture (`FrameSource::External`, the FT812) keeps its own square pixels.
+
+`crop` stays in stored pixels. `/capture/framebuffer` still returns the stored pixels. Tests: `Screenshotter_Test.HiRes*`,
+`FrameInTheCrtShapeStaysAsItIs`, `ExternalPictureKeepsItsSize`. `tools/verification/video/check_video_modes.py` expects the
+shaped size.

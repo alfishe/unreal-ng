@@ -153,7 +153,7 @@ inspect_state {"aspects":["sprinter_text"]}
 #               6 file(s)       364,060 bytes
 #       B:\>
 capture_media {"action":"screenshot","format":"png","area":"full","filename":"/abs/path/scratch/dss-dir.png"}
-#   → Screenshot saved to .../scratch/dss-dir.png (736x288 ...)
+#   → Screenshot saved to .../scratch/dss-dir.png (736x576: the 736x288 frame, each line twice ...)
 ```
 
 `\` types as the PC backslash (step 4 runs `a:\zx\spectrum.exe`). Single keys: `type_input {"action":"tap","key":"f4"}`; PC-only keys take a

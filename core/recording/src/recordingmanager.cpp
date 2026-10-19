@@ -306,10 +306,14 @@ void RecordingManager::Reset()
     MLOGDEBUG("RecordingManager::Reset - Resetting recording manager");
 
     // Do NOT stop recording on reset - user may want to record across resets
-    // Recording only auto-stops when the emulator is destroyed
+    // Recording only auto-stops when the emulator is destroyed. A recording keeps its file's timeline and size
+    // across the reset (a snapshot load resets the machine too): restarted clocks made the encoder drop every frame
+    // until the time caught up, and a zeroed frame count let the next frame set a new size for the open file (the
+    // VDAC2 switching to its FT812 picture right after a load). StartRecording* resets these for a new file
+    if (_isRecording)
+        return;
 
     // Reset counters (these track total frames/samples recorded, not per-reset)
-    // Note: We could optionally preserve these across resets if needed
     _emulatedFrameCount = 0;
     _emulatedAudioSampleCount = 0;
     _emulatedVideoTime = 0.0;
@@ -473,11 +477,19 @@ void RecordingManager::PrepareVideoGeometry()
             }
 
             // What the user sees: the picture of DisplayGeometry (every video mode of every machine: exact pixels
-            // where the CRT shape allows, the shape itself where it does not)
-            const DisplayGeometry::Size shown =
-                DisplayGeometry::Picture(static_cast<uint16_t>(_videoWidth), static_cast<uint16_t>(_videoHeight), _pictureAspect);
-            _videoWidth = shown.width;
-            _videoHeight = shown.height;
+            // where the CRT shape allows, the shape itself where it does not). A video card's picture keeps its size
+            if (!haveComposed && _context->pScreen->IsExternalPictureActive())
+            {
+                _videoWidth = (_videoWidth + 1) & ~1u;  // video codecs want even sizes
+                _videoHeight = (_videoHeight + 1) & ~1u;
+            }
+            else
+            {
+                const DisplayGeometry::Size shown = DisplayGeometry::Picture(
+                    static_cast<uint16_t>(_videoWidth), static_cast<uint16_t>(_videoHeight), _pictureAspect);
+                _videoWidth = shown.width;
+                _videoHeight = shown.height;
+            }
         }
         else
         {
@@ -1027,7 +1039,9 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& nativeFramebuff
 
     // The recording must show what the user sees: each frame becomes the picture DisplayGeometry names for it (a
     // TS-Conf's fat pixels at half height are doubled, an ATM's 640 wide hi-res grows to the CRT's shape, a Spectrum
-    // frame stays as it is). Frames that are not an emulated machine's (the video wall's grab) are left alone
+    // frame stays as it is). Frames without a video mode are left alone: the video wall's grab, and a video card's
+    // picture (the FT812 of the TS-Conf VDAC2: VGA modes, square pixels of their own)
+    const bool external = !composed && _context && _context->pScreen && _context->pScreen->IsExternalPictureActive();
     if (toEncode->memoryBuffer && _context && toEncode->videoMode != M_NUL)
     {
         const DisplayGeometry::Size shown = DisplayGeometry::Picture(toEncode->width, toEncode->height, _pictureAspect);
@@ -1046,7 +1060,8 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& nativeFramebuff
     }
 
     // A file keeps the size it started with: a picture of another size (the TS-Conf V_CONFIG windows, the Pentagon
-    // overscan toggle, a Profi switching to hi-res) is scaled into it with its aspect kept, never cut and never dropped
+    // overscan toggle, a Profi switching to hi-res, the VDAC2 switching to its FT812 picture and back) is scaled into
+    // it with its aspect kept, never cut and never dropped
     bool deliveredToEncoder = false;  // the frame went into the encoder's own buffer (zero-copy)
     if (HasFixedOutput())
     {
@@ -1087,7 +1102,7 @@ void RecordingManager::CaptureFrame(const FramebufferDescriptor& nativeFramebuff
             toEncode = &fitted;
         }
     }
-    else if (_context && toEncode->videoMode != M_NUL && toEncode->memoryBuffer &&
+    else if (_context && (toEncode->videoMode != M_NUL || external) && toEncode->memoryBuffer &&
              (_captureRegion == VideoCaptureRegion::MainScreen || _stats.framesRecorded > 0))
     {
         // The file's size: the one it started with (MainScreen: the size its window had at the start)

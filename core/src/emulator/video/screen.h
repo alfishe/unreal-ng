@@ -689,9 +689,32 @@ public:
     virtual void Reset();
 
     virtual void InitFrame();
-    virtual void InitRaster();
+    /// Re-detects the video mode from the ports and config and applies it when it changed (DetectRaster); with a
+    /// RasterDeferral open only noted, and done once when the last one closes
+    void InitRaster();
+    /// Holds InitRaster off while it lives (scopes nest): the mode the ports select at its end is applied once, the
+    /// modes they pass through meanwhile are never set up. A snapshot load from its reset to its paging: the reset's
+    /// transient mode (the ATM's EGA) and its framebuffer are not built just to be replaced. Nothing may draw or
+    /// paint while one is open (the CPU held, closed before the loader paints the picture)
+    class RasterDeferral
+    {
+    public:
+        explicit RasterDeferral(Screen* screen);
+        ~RasterDeferral();
+        RasterDeferral(const RasterDeferral&) = delete;
+        RasterDeferral& operator=(const RasterDeferral&) = delete;
+
+    private:
+        Screen* _screen;
+    };
     virtual void InitMemoryCounters();
     /// endregion </Initialization>
+
+protected:
+    /// The model's mode detection behind InitRaster
+    virtual void DetectRaster();
+
+public:
 
     /// region <Video mode detection>
 protected:
@@ -796,6 +819,12 @@ public:
 
     /// Render the inclusive frame T-state range [from, to]. DrawPeriod calls it
     /// once per catch-up; renderers override it to loop without per-T dispatch.
+    /// The contract: nothing the picture is drawn from changes inside one call (video RAM, border, palette, mode).
+    /// The call runs on the emulation thread with the CPU stopped, and every change catches the beam up before it
+    /// lands (CatchUpToStepStart), so a change always falls between two calls. The time resolution of the picture
+    /// is set by where the callers cut the frame, never by the renderer: a renderer may draw any part of its range
+    /// in any order or in blocks, as long as each pixel shows what it would show drawn T by T
+    /// (docs/emulator/design/video/screen-rendering-pipeline.md, "The event rule and the DrawRange contract")
     virtual void DrawRange(uint32_t fromTstate, uint32_t toTstate);
 
     /// @brief Reset the previous t-state tracker used by DrawPeriod
@@ -985,6 +1014,10 @@ protected:
 
     // User-forced Pentagon overscan (see SetOverscanForced)
     bool _overscanForced = false;
+
+    // RasterDeferral: the scopes open, and an InitRaster held off by them
+    uint32_t _rasterDeferrals = 0;
+    bool _rasterDeferred = false;
 
     // External picture source (SetExternalPicture): its descriptor, and the
     // present delay in its frames (converted from the native delay)

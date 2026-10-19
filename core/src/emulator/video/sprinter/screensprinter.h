@@ -58,7 +58,7 @@ public:
 
     /// region <Screen>
     void CreateTables() override {}
-    void InitRaster() override;
+    void DetectRaster() override;
     /// The frame start: also closes the beam-ordered picture's previous frame (SprinterBeamVideo::CloseFrame)
     void InitFrame() override;
     void SetVideoMode(VideoModeEnum mode) override;

@@ -37,6 +37,11 @@ public:
     /// window, the Sprinter's video shadow, ZX-Evo flash writes). Its reads
     /// cost one flag test and onRead is never called. Fixed while installed
     bool observesReads = true;
+    /// true: the overlay does nothing for an access to a window mapped to ROM (a RAM wait rule: the Scorpion
+    /// turbo's DRAM slots). The memory interface then skips the call there, after the normal access, as the
+    /// overlay would have returned. A chain does not take it: its members check for themselves. Fixed while
+    /// installed
+    bool ignoresRom = false;
 
     /// A host read in the window, after the normal read. `normal` is what the
     /// normal read returned; the result is what the CPU gets. `romPaged`: ROM
