@@ -355,6 +355,51 @@ TEST(Ds12887_Test, LeavingEmulatedTimeKeepsTheGuestOffset)
     EXPECT_EQ(rtc.chip.GetTimeMode(), Ds12887::TimeMode::Fixed) << "a fixed clock stays fixed while recording";
 }
 
+/// A reset zeroes the emulated clock, not the battery clock: rebased, the chip reads on from where it was
+TEST(Ds12887_Test, RebaseKeepsTheTimeAcrossTheEmulatedClockJump)
+{
+    Rtc rtc;
+    rtc.Set(0x26, 0x10, 0x19, 0x12, 0x00, 0x00);
+    rtc.now += 10 * kSecond;
+    ASSERT_EQ(rtc.Read(Ds12887::kSeconds), 0x10);
+
+    rtc.chip.RebaseEmulatedTime(rtc.now, 0);
+    rtc.now = 0;
+    EXPECT_EQ(rtc.Read(Ds12887::kSeconds), 0x10) << "not back to the time of the old clock's zero";
+    EXPECT_EQ(rtc.Read(Ds12887::kMinutes), 0x00);
+    rtc.now += kSecond;
+    EXPECT_EQ(rtc.Read(Ds12887::kSeconds), 0x11) << "and it counts on";
+
+    rtc.chip.SetFixedTime(1767268830);
+    rtc.chip.RebaseEmulatedTime(rtc.now, 5 * kSecond);
+    EXPECT_EQ(rtc.chip.GetTimeMode(), Ds12887::TimeMode::Fixed) << "only an emulated clock rebases";
+}
+
+/// One fixed start makes two chips read the same time, whenever and at whatever emulated time each was anchored
+TEST(Ds12887_Test, AnchorStartsEveryChipAtTheSameInstant)
+{
+    const int64_t wall = Ds12887::ToMicros({2026, 1, 1, 12, 0, 0});
+    Rtc a;
+    Rtc b;
+    b.now = 77 * kSecond;
+    a.chip.AnchorEmulatedTime(wall);
+    b.chip.AnchorEmulatedTime(wall);
+    EXPECT_EQ(a.chip.GetTimeMode(), Ds12887::TimeMode::Emulated);
+    for (int step = 0; step < 3; ++step)
+    {
+        for (uint8_t index : {Ds12887::kSeconds, Ds12887::kMinutes, Ds12887::kHours, Ds12887::kDay, Ds12887::kMonth,
+                              Ds12887::kYear})
+            EXPECT_EQ(a.Read(index), b.Read(index)) << "register " << int(index) << " step " << step;
+        a.now += kSecond / 3;
+        b.now += kSecond / 3;
+    }
+    EXPECT_EQ(a.Read(Ds12887::kHours), 0x12);
+    EXPECT_EQ(a.Read(Ds12887::kYear), 0x26);
+
+    a.chip.LeaveEmulatedTime();
+    EXPECT_EQ(a.chip.GetTimeMode(), Ds12887::TimeMode::Emulated) << "a recording's stop keeps the tests' start";
+}
+
 /// TTD: a restored state replays the same reads, whatever the host clock does
 TEST(Ds12887_Test, StateRoundTripReplaysIdentically)
 {

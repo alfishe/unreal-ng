@@ -14,6 +14,7 @@
 #include "emulator/emulator.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/mouse/mouse.h"
+#include "emulator/io/rtc/ds12887.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/notifications.h"
 #include "emulator/ports/models/portdecoder_atm3.h"
@@ -238,6 +239,13 @@ uint16_t PortDecoder::IoPc() const
 {
     Z80* z80 = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
     return z80 ? z80->m1_pc : 0;
+}
+
+void PortDecoder::BindRtc(Ds12887& chip)
+{
+    chip.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
+    chip.SetSessionWall([this]() { return SessionWallMicros(); });
+    _rtcChip = &chip;
 }
 
 int64_t PortDecoder::SessionWallMicros() const

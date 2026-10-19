@@ -903,6 +903,10 @@ public:
     /// base of every real-time clock of the machine (Phase 3, Step 5)
     int64_t SessionWallMicros() const;
 
+    /// The machine's clock chip whether or not the guest can reach it now (RtcBinding may say absent); null = none.
+    /// Core::Reset rebases it: a reset zeroes the emulated time, not the battery clock
+    Ds12887* RtcChip() const { return _rtcChip; }
+
     /// Serializers for the ids above. Ownership transfers to the caller.
     /// Every type from GetTTDModelStateTypes() must be covered.
     virtual std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const
@@ -931,6 +935,11 @@ public:
     /// endregion </Port trace>
 
 protected:
+    /// A model's clock chip: the machine's emulated time and the TTD session wall are its emulated time base (a TTD
+    /// recording, the tests' fixed start). Called once, from the constructor
+    void BindRtc(Ds12887& chip);
+    Ds12887* _rtcChip = nullptr;
+
     /// The IDE board decodes before the model's own ports (UnrealSpeccy io.cpp
     /// order). A model calls these first in DecodePortIn / DecodePortOut: when
     /// they return true the I/O is done, trace and breakpoints included

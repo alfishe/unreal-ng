@@ -203,6 +203,10 @@ void Ds12887::SetFixedTime(time_t unixSeconds)
     // the same on every machine (tests, TTD benchmark), whatever its time zone
     _fixedMicros = static_cast<int64_t>(unixSeconds) * kMicrosPerSecond;
     _secondValid = false;
+    // An earlier emulated anchor (a session's host time) has no use here: cleared, the state (TTD blob) holds
+    // nothing of the host clock
+    _anchorMicros = 0;
+    _anchorEmulated = 0;
 }
 
 void Ds12887::UseLiveTime()
@@ -223,12 +227,31 @@ void Ds12887::EnterEmulatedTime()
     _anchorMicros = sessionWall != kNoSessionWall ? sessionWall : ReferenceMicros();
     _anchorEmulated = _emulatedClock ? _emulatedClock() : 0;
     _mode = TimeMode::Emulated;
+    _emulatedForSession = true;
+}
+
+void Ds12887::RebaseEmulatedTime(uint64_t before, uint64_t after)
+{
+    if (_mode != TimeMode::Emulated)
+        return;
+    _anchorEmulated += after - before;  // modulo 2^64: ReferenceMicros takes the difference signed
+}
+
+void Ds12887::AnchorEmulatedTime(int64_t wallMicros)
+{
+    _anchorMicros = wallMicros;
+    _anchorEmulated = _emulatedClock ? _emulatedClock() : 0;
+    _mode = TimeMode::Emulated;
+    _emulatedForSession = false;
+    _rawValid = false;
+    _secondValid = false;
 }
 
 void Ds12887::LeaveEmulatedTime()
 {
-    if (_mode != TimeMode::Emulated)
-        return;
+    if (_mode != TimeMode::Emulated || !_emulatedForSession)
+        return;  // not on emulated time, or on it for good (the tests' fixed start)
+    _emulatedForSession = false;
 
     // Back to the wall clock; the offset the guest set survives
     _mode = TimeMode::Host;

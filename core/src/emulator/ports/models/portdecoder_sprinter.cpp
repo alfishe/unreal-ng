@@ -83,8 +83,7 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
     SetSnapshotCapturePolicy(&SprinterZxCapture::Instance());
 
     _rtc.SetCenturyRegister(0x32);
-    _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
-    _rtc.SetSessionWall([this]() { return SessionWallMicros(); });
+    BindRtc(_rtc);
 
     _vram.SetIntModeListener([this]() { _intSource.Invalidate(); });
 
