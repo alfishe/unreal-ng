@@ -96,6 +96,8 @@ protected:
     // ---- helpers ----
 
     static bool IsTemporary(const std::string& label);
+    /// The number of a temporary label's reference: 1 of 1B, 1F, 1_B, 1_F
+    static std::string TemporaryNumber(const std::string& reference);
     static bool IsDirective(const Statement& s, ir::DirectiveKind kind);
     static const Expr& Unwrapped(const Expr& e);
     static bool UsesCurrent(const Expr& e);

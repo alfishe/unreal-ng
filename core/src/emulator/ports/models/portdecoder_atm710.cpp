@@ -197,8 +197,9 @@ void PortDecoder_ATM710::EnterSpectrum128Paging(uint16_t pc)
     //   #7FFD.4 = 0 (set 0): window 0 = the 128K BASIC's ROM pair (the system ROM when the DOS signal is up)
     //   #7FFD.4 = 1 (set 1): window 0 = the 48K BASIC's ROM pair (TR-DOS when the DOS signal is up)
     //   windows 1 and 2 = RAM 5 and 2, window 3 = RAM page from #7FFD (the FFF7 high bits are 0)
-    // The pairs are where the model keeps its ROMs: pages 2 / 0 in the 64 KB ROM of the ATM710, 30 / 28 in the ATM3's
-    Port_FF77_Out(0x4000 | 0x200 | 0x100, 0x80 | 0x40 | 0x20 | 3, pc);
+    // The pairs are where the model keeps its ROMs: pages 2 / 0 in the 64 KB ROM of the ATM710, 30 / 28 in the ATM3's.
+    // The clock select (bit 3) is kept: Core::ResetKeepingClock put back the clock the machine ran at
+    Port_FF77_Out(0x4000 | 0x200 | 0x100, static_cast<uint8_t>(0x80 | 0x40 | 0x20 | 3 | (_state->pFF77 & ATM_FF77_TURBO)), pc);
     uint16_t rom128 = 2;
     uint16_t rom48 = 0;
     if (_memory)
@@ -229,6 +230,21 @@ bool PortDecoder_ATM710::FinishAutostartColdStart(uint16_t pc)
     // 128K programs is "SPECTRUM 128", whose menu enters TR-DOS without the resident probe; this is its paging
     EnterSpectrum128Paging(pc);
     return true;
+}
+
+uint16_t PortDecoder_ATM710::GetClockSelect() const
+{
+    return _state->pFF77 & ATM_FF77_TURBO;
+}
+
+void PortDecoder_ATM710::RestoreClockSelect(uint16_t select)
+{
+    // Bit 3 of #FF77 is the clock alone: the video mode, VE1 and the INT gate stay as the reset left them
+    const uint8_t turbo = static_cast<uint8_t>(select & ATM_FF77_TURBO);
+    if ((_state->pFF77 & ATM_FF77_TURBO) == turbo)
+        return;
+    _state->pFF77 = static_cast<uint8_t>((_state->pFF77 & ~ATM_FF77_TURBO) | turbo);
+    updateTurboMode();
 }
 
 void PortDecoder_ATM710::UpdateModelMemoryBanks()

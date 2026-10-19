@@ -5,7 +5,7 @@
 | **Date** | 2026-10-07 |
 | **Scope** | symbols/formats.md §4.2, steps R1-R6: where an assembler running in the machine keeps its labels and how one entry is laid out, found from RAM dumps, not from guesses |
 | **Method** | own unreal-ng instance (`PENTAGON`, 128K); each assembler started from its disk, a source with known labels assembled, the RAM pages read before and after (`GET /memory/page/ram/{n}?format=binary&offset=0&length=16384`; without `length` the endpoint gives a 128-byte window) and compared; every layout confirmed on a second source |
-| **Result** | ALASM 5.09, 4.5, 4.44 and 3.8c (also over two pages of a Pentagon 512), XAS 9.10, 9.07m, 7.447 (also on a Pentagon 512), 5.05 and 4.18: layouts below, golden pages in `core/src/3rdparty/unreal-asm/testdata/symbols/live/`, read by `symbols/live.h` (`symconv live`). STS keeps no table of its own (§3) |
+| **Result** | ALASM 5.09, 4.5, 4.44, 4.2 and 3.8c (5.09 also over two pages of a Pentagon 512; the 4.x builds keep one), XAS 9.10, 9.07m, 7.447 (also on a Pentagon 512), 5.05 and 4.18: layouts below, golden pages in `core/src/3rdparty/unreal-asm/testdata/symbols/live/`, read by `symbols/live.h` (`symconv live`). STS keeps no table of its own (§3) |
 
 The prior art (Unreal Speccy 0.37.1's `dbglabls.cpp`, [prior-art.md](prior-art.md) P7) described both layouts; the dumps
 confirm them and add the end offsets, the flag values, the version differences and XAS's split of the names.
@@ -29,8 +29,13 @@ two placements). `ASSEMBLE` reports the lowest byte: `Symbols:#FD89` for the fir
 ALASM's `SYMBOL` command walks the same records (`al2_44` in `AL446SRC`, label `symbols`): `AND 63` for the size,
 `#40` Macro, `#80` NoDef, `#C0` Wrong, the name compared backwards from the record's end.
 
-**Versions.** 3.8c keeps the table in page 3, 4.5 in page 6 (`INFO`: `Symbols list page - #0E`), both with the
-4.4x end at `#3F7F`; 5.0x ends at `#3DFF`.
+**Versions.** 3.8c and 4.2 keep the table in page 3, 4.5 in page 6 (`INFO`: `Symbols list page - #0E`), all with
+the 4.4x end at `#3F7F`; 5.0x ends at `#3DFF`.
+
+**One page in 4.x** (2026-10-18, run): 4.42, 4.44 and 4.5 on a Pentagon 512 report `Memory test: 128kB mask#07`
+and stop 1800 names with `Symbols overflow!` after `#0610` of them; the table stays in its one page (1600 records
+read). ALASM 4.46's source sets `MSK_PG EQU #07` and one symbol page in the build everybody got; the author's own
+configuration (`ver2pipl`) has `MSK_PG #C7` and a second page (`SYM1 #C3`), and no such build is in the collection.
 
 ### 1.1 A table over two pages (ALASM 5.09)
 
@@ -58,7 +63,8 @@ down from just below the marker: names starting **A-L** under `#3FFF`, **M-Z** u
 conversion) and a probe of 26 names over the alphabet.
 
 **9.10 / 9.07m** keep the 7.x layout in page 6 (the same probe: the same 27 entries); on a Pentagon 512, 7.447 puts
-it in **RAM 14** (`#46`: page 6 with bit 6, as Unreal's note says).
+it in **RAM 14** (`#46`: page 6 with bit 6, as Unreal's note says), and on a Pentagon 1024 too (2026-10-18: the
+scan found the 4 labels of a probe there, RAM 14, the 7.x layout).
 
 **5.05** (5.05SE): **one list** going down from just below `#3FFF` of page 6 **in definition order**, no markers
 (`#56` at `#3FFF`), ended by an entry starting with `#80`.
@@ -71,9 +77,13 @@ order, ended by a zero byte; no markers. Seen: `cons418` (7 labels) and the same
 STS 7.0 / 7.1's own source (`STS7!!!!.RAR`, `STS70`, `71DASM`) has no symbol table: its label lookup (`RES_WL`)
 walks **ALASM's** table in the page ALASM passes it (`AL_STS_BANK`; ALASM 4.46 sets `STSlabAD` / `STSlabPG`), and
 its disassembler's label buffer (`71DASM`) holds 3-byte entries (a flag and an address) whose names STS makes up. So
-STS's labels are ALASM's, read by the ALASM scanner. STS 5.1 / 5.4 hold no string about labels; STS 6.2 (on the XAS 9.07m disk) has a
-"[SS+5] - Disasm/Label_Disasm Mod" and XAS file names in its body: it shows XAS's labels, read from XAS's table
-(not run here). Unreal 0.37's note that STS keeps labels in bank 7 is not confirmed for any version.
+STS's labels are ALASM's, read by the ALASM scanner. STS 5.1 / 5.4 hold no string about labels. STS 6.2 has
+"[SS+5] - Disasm/Label_Disasm Mod". Run on 2026-10-18: the copy that ALASM 4.2's ALM loader puts in page 7
+(`#D000`), entered with ALASM's `Debug`, shows 4.2's labels after SS+5 (`start` in the address column at `#6000`,
+`LD DE,(table)`). The copy on the XAS 9.07m disk (332 bytes differ), entered with XAS's `sTs`, drops the byte column
+on SS+5 but shows no name while XAS 9.07m's table is in page 6: the XAS file names in its body (`MTABAS  XAS`, ...,
+`]XAS9.06+B`) are leftover catalog sectors after the code, not a reader of XAS's table. Unreal 0.37's note that STS
+keeps labels in bank 7 is not confirmed for any version.
 
 ## 4. The scanners (`symbols/live.h`, `src/symbols/live/`)
 
@@ -93,6 +103,6 @@ STS's labels are ALASM's, read by the ALASM scanner. STS 5.1 / 5.4 hold no strin
 ## 5. Open
 
 - Label files on disk: neither ALASM nor XAS was seen saving its table to a file (none found in the collection).
-- ALASM 4.2 (did not start in unreal-ng); ALASM 4.4x / 4.5 over two pages; XAS 7.x on a Pentagon 1024.
-- STS 6.2's label mode run in the emulator; STS 5.x.
+- An ALASM 4.x build configured for more memory (none in the collection; the shipped ones keep one page).
+- STS 5.x.
 - The emulator surface (copy the pages of a running machine, offer the candidates): with S5.

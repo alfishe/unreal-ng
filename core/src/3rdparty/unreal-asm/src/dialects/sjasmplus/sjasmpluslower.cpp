@@ -88,6 +88,9 @@ Statement Data(DirectiveKind kind, std::vector<Expr> items)
 /// (e >> shift) & mask
 Expr Part(const Expr& e, int shift, int64_t mask)
 {
+    // a number: its part (a target of 16-bit numbers reads no #445566)
+    if (e.kind == Expr::Kind::Number)
+        return Expr::Number((e.value >> shift) & mask, ir::NumberSpelling::Hex, mask > 0xFF ? 4 : 2);
     Expr value = Grouped(e);
     if (shift)
         value = Grouped(Expr::Binary(Op::Shr, value, Expr::Number(shift)));
@@ -141,12 +144,12 @@ std::optional<std::vector<Statement>> LowerData(const std::string& word, const s
     if (word == "ABYTE" || word == "ABYTEC" || word == "ABYTEZ")
     {
         // ABYTE offset items: each byte plus the offset
-        const size_t blank = rest.find_first_of(" \t");
-        const Statement offsetHolder = Parsed("DW", rest.substr(0, blank));
+        const auto [offsetText, itemsText] = SjasmplusAbyteParts(rest);
+        const Statement offsetHolder = Parsed("DW", offsetText);
         if (offsetHolder.operands.empty())
             return std::nullopt;
         const Expr offset = offsetHolder.operands[0].expr;
-        const Statement items = Parsed("DB", blank == std::string::npos ? std::string() : Trim(rest.substr(blank)));
+        const Statement items = Parsed("DB", itemsText);
         std::vector<Expr> bytes;
         for (const Operand& o : items.operands)
         {
@@ -217,7 +220,7 @@ struct Leaf
     int64_t offset = 0;
     int64_t size = 0;
     Statement data;
-    int init = 0;   // the value an instance may give it: 0 none (BLOCK), 1 a byte, 2 a word, 3 D24, 4 DWORD
+    int init = 0;   // the value an instance may give it: 0 none (BLOCK), 1 a byte, 2 a word, 3 D24, 4 DWORD, 5 TEXT
 };
 
 struct StructDef
@@ -373,6 +376,51 @@ private:
     }
 
     /// A field's statement as leaves of the structure being defined
+    /// The bytes of a TEXT field's {DB items} (a string a byte per character)
+    static std::vector<Expr> TextBytes(const std::string& braced)
+    {
+        std::string inner = Trim(braced);
+        if (!inner.empty() && inner.front() == '{')
+            inner.erase(0, 1);
+        if (!inner.empty() && inner.back() == '}')
+            inner.pop_back();
+        std::vector<Expr> out;
+        if (Trim(inner).empty())
+            return out;
+        for (const Operand& o : Parsed("DB", inner).operands)
+        {
+            if (o.kind == Operand::Kind::String)
+                for (const char c : o.text)
+                    out.push_back(Expr::Number(static_cast<unsigned char>(c)));
+            else
+                out.push_back(o.expr);
+        }
+        return out;
+    }
+
+    /// A leaf's data with the value an instance (or a nested structure's field) gives it ("" keeps its own)
+    Statement Given(const Leaf& leaf, const std::string& value) const
+    {
+        Statement d = leaf.data;
+        const Statement parsed = Parsed("DW", value);
+        if (value.empty() || parsed.operands.empty())
+            return d;
+        if (leaf.init == 5)
+        {
+            // TEXT: the bytes given overwrite the default ones, the rest stays
+            const std::vector<Expr> bytes = TextBytes(value);
+            for (size_t k = 0; k < bytes.size() && k < d.operands.size(); ++k)
+                d.operands[k].expr = bytes[k];
+            return d;
+        }
+        const Expr& e = parsed.operands[0].expr;
+        if (leaf.init == 1 || leaf.init == 2)
+            d.operands[0].expr = e;
+        else
+            d = Data(leaf.init == 3 ? DirectiveKind::Db : DirectiveKind::Dw, leaf.init == 3 ? D24Bytes(e) : DwordWords(e));
+        return d;
+    }
+
     void Field(const ir::Line& l, const Statement& s, bool named)
     {
         StructDef& def = open->second;
@@ -390,12 +438,36 @@ private:
                 for (const auto& [name, offset] : copy.names)
                     if (named)
                         def.names.push_back({l.label + "." + name, position + offset});
+                // st1B st1 {high x, ...}: the field's own values for the nested structure's leaves
+                const std::vector<std::string> values = Values(s.params, copy);
+                size_t next = 0;
                 for (Leaf leaf : copy.leaves)
                 {
                     leaf.offset += position;
+                    if (leaf.init && next < values.size())
+                        leaf.data = Given(leaf, values[next++]);
                     def.leaves.push_back(std::move(leaf));
                 }
                 position += copy.size;
+                return;
+            }
+            if (z80::Upper(s.mnemonic) == "TEXT" && !s.params.empty())
+            {
+                // TEXT length[,{bytes}]: the last byte given fills the rest (zeros without any)
+                const Statement length = Parsed("DW", s.params[0]);
+                const auto size = length.operands.size() == 1 ? Constant(length.operands[0].expr, constants) : std::nullopt;
+                if (!size || *size < 0)
+                {
+                    report.push_back({Severity::Warning, l.sourceLine, 0, "a TEXT field of STRUCT " + open->first + " with a length known only when assembling"});
+                    return;
+                }
+                std::string given;
+                for (size_t k = 1; k < s.params.size(); ++k)
+                    given += (k > 1 ? "," : "") + s.params[k];
+                std::vector<Expr> bytes = TextBytes(given);
+                const Expr fill = bytes.empty() ? Expr::Number(0) : bytes.back();
+                bytes.resize(static_cast<size_t>(*size), fill);
+                add(Data(DirectiveKind::Db, std::move(bytes)), *size, 5);
                 return;
             }
             report.push_back({Severity::Warning, l.sourceLine, 0, "a field of STRUCT " + open->first + " not understood: " + s.mnemonic});
@@ -705,17 +777,28 @@ private:
         return false;
     }
 
-    static ir::Line Equ(uint32_t sourceLine, const std::string& label, Expr value)
+    /// `keepsParent`: sjasmplus' !label, the parent of the .labels after it stays (a structure's offsets and an
+    /// instance's fields are no labels of the source)
+    static ir::Line Equ(uint32_t sourceLine, const std::string& label, Expr value, bool keepsParent = true)
     {
         ir::Line line;
         line.sourceLine = sourceLine;
-        line.label = label;
+        line.label = keepsParent ? "!" + label : label;
         Statement s;
         s.kind = Statement::Kind::Directive;
         s.directive = DirectiveKind::Equ;
         s.args.push_back(std::move(value));
         line.statements.push_back(std::move(s));
         return line;
+    }
+
+    /// The .labels an EQU / DEFL / alias names, as sjasmplus reads them: from the parent before the line's own label
+    void Localized(Expr& e, const std::string& at) const
+    {
+        if (e.kind == Expr::Kind::Symbol && e.text.size() > 1 && e.text[0] == '.' && !at.empty())
+            e.text = "@" + at + e.text;
+        for (Expr& a : e.args)
+            Localized(a, at);
     }
 
     void Resolve(Expr& e) const
@@ -839,49 +922,40 @@ private:
     }
 
     /// The values an instance gives, braces flattened ("{5,6},#5678": 5, 6, #5678; an empty one keeps the default)
-    static std::vector<std::string> Values(const std::vector<std::string>& params)
+    /// The values an instance gives the leaves of `def` (sjasmplusfrontend.h)
+    static std::vector<std::string> Values(const std::vector<std::string>& params, const StructDef& def)
     {
         std::string text;
         for (size_t k = 0; k < params.size(); ++k)
             text += (k ? "," : "") + params[k];
-        std::vector<std::string> out;
-        std::string current;
-        int depth = 0;
-        char quote = 0;
-        for (const char c : text)
-        {
-            if (quote)
-            {
-                current.push_back(c);
-                if (c == quote)
-                    quote = 0;
-                continue;
-            }
-            if (c == '"' || c == '\'')
-                quote = c;
-            if (c == '{' || c == '}')
-                continue;
-            if (c == '(')
-                ++depth;
-            if (c == ')')
-                --depth;
-            if (c == ',' && depth == 0)
-            {
-                out.push_back(Trim(current));
-                current.clear();
-                continue;
-            }
-            current.push_back(c);
-        }
-        if (!Trim(current).empty() || !out.empty())
-            out.push_back(Trim(current));
-        return out;
+        std::vector<bool> textLeaves;
+        for (const Leaf& leaf : def.leaves)
+            if (leaf.init)
+                textLeaves.push_back(leaf.init == 5);
+        return SjasmplusStructValues(text, textLeaves);
     }
 
     /// An instance: its data from the defaults and the values given, label.field as EQU
     void Instance(const ir::Line& l, const Statement& call, const StructDef& def, std::vector<ir::Line>& out)
     {
-        const std::vector<std::string> values = Values(call.params);
+        if (!call.params.empty() && !call.params[0].empty() && call.params[0][0] == '=' && !l.label.empty())
+        {
+            // label STRUCT = address: an alias, its label and label.field as EQU from the address, no bytes
+            std::string text = call.params[0].substr(1);
+            for (size_t k = 1; k < call.params.size(); ++k)
+                text += "," + call.params[k];
+            const Statement parsed = Parsed("DW", text);
+            Expr address = parsed.operands.empty() ? Expr::Number(0) : parsed.operands[0].expr;
+            Localized(address, parent);
+            const std::string full = FullOf(l.label);
+            if (l.label[0] != '.' && l.label[0] != '!')
+                parent = full;
+            out.push_back(Equ(l.sourceLine, "@" + full, address, l.label[0] == '.' || l.label[0] == '!'));
+            for (const auto& [field, offset] : def.names)
+                out.push_back(Equ(l.sourceLine, "@" + full + "." + field, Expr::Binary(Op::Add, Expr::Symbol("@" + full), Expr::Number(offset))));
+            return;
+        }
+        const std::vector<std::string> values = Values(call.params, def);
         size_t next = 0;
         std::vector<Statement> data;
         int64_t at = 0;
@@ -900,18 +974,7 @@ private:
             gap(leaf.offset);
             Statement d = leaf.data;
             if (leaf.init && next < values.size())
-            {
-                const std::string value = values[next++];
-                const Statement parsed = Parsed("DW", value);
-                if (!value.empty() && !parsed.operands.empty())
-                {
-                    const Expr& e = parsed.operands[0].expr;
-                    if (leaf.init == 1 || leaf.init == 2)
-                        d.operands[0].expr = e;
-                    else
-                        d = Data(leaf.init == 3 ? DirectiveKind::Db : DirectiveKind::Dw, leaf.init == 3 ? D24Bytes(e) : DwordWords(e));
-                }
-            }
+                d = Given(leaf, values[next++]);
             data.push_back(std::move(d));
             at = leaf.offset + leaf.size;
         }
@@ -974,6 +1037,12 @@ private:
                         return;
                     }
         ir::Line line = l;
+        std::vector<Statement> statements = l.statements;
+        if (!line.label.empty() && line.label[0] != '.' && line.label[0] != '!' && !IsTemporary(line.label) && !inMacro)
+            for (Statement& s : statements)
+                if (s.kind == Statement::Kind::Directive && (s.directive == DirectiveKind::Equ || s.directive == DirectiveKind::Defl))
+                    for (Expr& a : s.args)
+                        Localized(a, parent);
         if (!line.label.empty() && !IsTemporary(line.label) && !inMacro)
         {
             const std::string full = FullOf(line.label);
@@ -987,7 +1056,7 @@ private:
             }
         }
         line.statements.clear();
-        for (const Statement& s : l.statements)
+        for (const Statement& s : statements)
         {
             if (!inMacro && !Displacement(s, l.sourceLine))
             {
@@ -1126,8 +1195,9 @@ std::string SubstitutedText(const std::string& text, const std::map<std::string,
 
 /// ALASM's LOCAL block makes every label of a macro local, sjasmplus only its .labels (and temporary ones): a macro
 /// with both kinds is put in at each of its calls instead, its .labels named for each expansion (`!` keeps the parent
-/// of the .labels after it as it is), its global labels and assignments as they are
-ir::Program ExpandMixedMacros(const ir::Program& program, Diagnostics& diagnostics)
+/// of the .labels after it as it is), its global labels and assignments as they are. `all`: every macro so (a target
+/// without macros: ALASM 3.8)
+ir::Program ExpandMixedMacros(const ir::Program& program, Diagnostics& diagnostics, bool all)
 {
     struct Def
     {
@@ -1159,7 +1229,7 @@ ir::Program ExpandMixedMacros(const ir::Program& program, Diagnostics& diagnosti
                     else
                         global = true;
                 }
-                if (local && global && end < program.lines.size())
+                if (((local && global) || all) && end < program.lines.size())
                     mixed[s.text] = {k, end, s.params};
             }
     if (mixed.empty())
@@ -1177,7 +1247,7 @@ ir::Program ExpandMixedMacros(const ir::Program& program, Diagnostics& diagnosti
             {
                 ir::Line note;
                 note.sourceLine = l.sourceLine;
-                note.comment = "MACRO " + s.text + " (put in at its calls: local and global labels)";
+                note.comment = "MACRO " + s.text + (all ? " (put in at its calls)" : " (put in at its calls: local and global labels)");
                 note.hasComment = true;
                 out.lines.push_back(std::move(note));
                 k = mixed.at(s.text).end;
@@ -1255,16 +1325,17 @@ ir::Program ExpandMixedMacros(const ir::Program& program, Diagnostics& diagnosti
             out.lines.push_back(std::move(copy));
         }
     }
-    diagnostics.push_back({Severity::Info, 0, 0, std::to_string(expansions) + " call(s) of macros with local and global labels put in where they stand"});
+    diagnostics.push_back({Severity::Info, 0, 0, std::to_string(expansions) + (all ? " macro call(s)" : " call(s) of macros with local and global labels") +
+                                                     " put in where they stand"});
     return out;
 }
 }  // namespace
 
-ir::Program LowerSjasmplus(const ir::Program& program, Diagnostics& diagnostics, bool expandMixedMacros)
+ir::Program LowerSjasmplus(const ir::Program& program, Diagnostics& diagnostics, bool expandMixedMacros, bool expandAllMacros)
 {
-    if (expandMixedMacros)
+    if (expandMixedMacros || expandAllMacros)
     {
-        const ir::Program expanded = ExpandMixedMacros(program, diagnostics);
+        const ir::Program expanded = ExpandMixedMacros(program, diagnostics, expandAllMacros);
         Lowering lowering(expanded, diagnostics);
         return lowering.Run();
     }

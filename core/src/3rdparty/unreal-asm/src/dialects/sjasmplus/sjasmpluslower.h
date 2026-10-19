@@ -18,6 +18,7 @@ inline const std::string kModuleMark = "UNREALASM_MODULE";
 inline const std::string kEndModuleMark = "UNREALASM_ENDMODULE";
 
 /// `expandMixedMacros`: a macro whose body has both local labels (.name, temporary ones) and global ones (a label, an
-/// assignment) is put in at its calls (ALASM: its LOCAL block would make the global ones local too)
-ir::Program LowerSjasmplus(const ir::Program& program, Diagnostics& diagnostics, bool expandMixedMacros = false);
+/// assignment) is put in at its calls (ALASM: its LOCAL block would make the global ones local too); `expandAllMacros`:
+/// every macro (ALASM 3.8 has none: MACRO is a syntax error there, live)
+ir::Program LowerSjasmplus(const ir::Program& program, Diagnostics& diagnostics, bool expandMixedMacros = false, bool expandAllMacros = false);
 }  // namespace unrealasm::dialects

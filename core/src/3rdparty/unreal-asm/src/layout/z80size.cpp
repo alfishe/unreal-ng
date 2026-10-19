@@ -2,6 +2,8 @@
 
 #include <string_view>
 
+#include "dialects/sjasmplus/sjasmplusfrontend.h"
+
 namespace unrealasm::layout
 {
 namespace
@@ -106,23 +108,10 @@ int Ld(const Operand& d, const Operand& v)
             return d.text == "hl" ? 3 : 4;
         if (Is(d, Kind::Register, "sp") && (Is(v, Kind::Register, "hl") || Index(v)))
             return Index(v) ? 2 : 1;
-        if (d.text != "sp" && v.kind == Kind::Register && (Pair(v) || Index(v)) && v.text != "sp")
-        {
-            // sjasmplus' fake LD rr,rr': two 8-bit loads (LD B,D : LD C,E; with IX: LD B,IXH : LD C,IXL)
-            if (Index(d) && Index(v))
-                return 0;
-            if (Index(d) || Index(v))
-                return d.text == "hl" || v.text == "hl" ? 0 : 4;
-            return 2;
-        }
-        if (d.text != "sp" && !Index(d) && Indexed(v))
-            return 6;   // fake LD rr,(IX+d): two indexed loads
     }
     if (d.kind == Kind::Memory && (Pair(v) || Index(v)))
         return v.text == "hl" ? 3 : 4;
-    if (Indexed(d) && Pair(v) && v.text != "sp")
-        return 6;   // fake LD (IX+d),rr
-    return 0;
+    return 0;   // LD rr,rr' / LD rr,(IX+d) ...: fakes, sized by their parts (InstructionSize)
 }
 
 int Alu(const ir::Statement& s)
@@ -140,9 +129,7 @@ int Alu(const ir::Statement& s)
             return 0;
         if (m == "add")
             return 1;
-        if (m == "sub")
-            return 3;   // fake SUB HL,rr: OR A + SBC HL,rr
-        return 2;
+        return m == "sub" ? 0 : 2;   // SUB HL,rr: a fake, sized by its parts
     }
     // "op a,x" or "op x"
     const Operand* v = nullptr;
@@ -331,6 +318,19 @@ bool TakesSeveral(const ir::Statement& s)
 
 int InstructionSize(const ir::Statement& s, std::string& error)
 {
+    // a fake instruction: the instructions sjasmplus puts in its place
+    if (const std::vector<ir::Statement> parts = dialects::SjasmplusFake(s); parts.size() != 1 || parts[0].mnemonic != s.mnemonic)
+    {
+        int total = 0;
+        for (const ir::Statement& part : parts)
+        {
+            const int size = InstructionSize(part, error);
+            if (size == 0)
+                return Fail(error, s);
+            total += size;
+        }
+        return total;
+    }
     if (TakesSeveral(s) && s.operands.size() > 1)
     {
         int total = 0;

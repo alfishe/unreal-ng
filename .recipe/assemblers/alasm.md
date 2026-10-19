@@ -111,14 +111,16 @@ data mismatch` when asked to assemble with no text.
 
 At the `A>` prompt, `asm_source {"action":"sync_inject","path":"/abs/main.asm"}` writes a sjasmplus source (or any
 dialect with `from`) as ALASM's current text; `a` + ENTER then assembles it. Refused in the editor and while a
-command runs. Whether ALASM waits for a command shows on its stack: the return addresses of the line input and the
+command runs. 3.8c reads none of `( ) & | ! ~ < >`, MACRO or IF: the conversion writes such expressions as values,
+expands macros and decides IFs itself (a comment line tells which part), so only the source's bytes match, not its
+structure. Whether ALASM waits for a command shows on its stack: the return addresses of the line input and the
 command loop follow each other above SP (5.09: `#91E3`, `#9707`; the other builds in
 [research-sjasmplus-to-alasm.md](../../docs/inprogress/2026-10-05-unreal-asm/research-sjasmplus-to-alasm.md) §4). A
 command, the editor included, has another address in that slot. Read with the 64-column loaders.
 
 A `path` source brings the files it INCLUDEs (relative to the file that INCLUDEs each). Each goes into an ALASM text page
 of its own, and its INCLUDE is written `INCLUDE "NAME",page`: ALASM then finds the text loaded and reads no disk. The
-reply lists them under `includes`. 5.05-5.09 have pages 4 and 0 free, 4.5 pages 0 and 3, 5.00 / 4.42-4.46 / 3.8c page 4 (4.2: none measured, its project goes to the disk): a
+reply lists them under `includes`. 5.05-5.09 have pages 4 and 0 free, 4.5 pages 0 and 3, 4.2 pages 4 and 0, 5.00 / 4.42-4.46 / 3.8c page 4: a
 project with more sources is refused (put it onto the disk with `zxasm inject main.asm disk.trd --assembler ...`).
 
 `asm_source {"action":"sync_push_watch","path":"/abs/main.asm"}` does the same on every save of the file (or of a file
