@@ -22,7 +22,7 @@ instance, entering TR-DOS, keys, host exchange, labels): [README.md](README.md).
 | 4.44 (Stall edition) | `ALASM444.SCL` in `zxart/ALASM444.ZIP` ([zxart](https://zxart.ee/releasefile/id:249270/ALASM444.ZIP)) | `al64_444` | load, assemble |
 | 4.42 | `zxart/Alasm442.SCL` ([zxart](https://zxart.ee/releasefile/id:408359/Alasm442.SCL)) | `alasm442` | load, assemble |
 | 3.8c (Alem, 1997) | `al38c_.scl` in `zxart/ALASM38c.zip` ([zxart](https://zxart.ee/releasefile/id:406950/ALASM38c.zip)) | `ALASM` | load, assemble; no `DB` (use `DEFB`) |
-| 4.2 | `zxart/ALM.scl` ([zxart](https://zxart.ee/releasefile/id:574325/ALM.scl)), `klug-bbs/ALASM42.ZIP` | `ALM`, `ALASM48` | **did not start** on `PENTAGON` 128K or 512K: `ALM` crashed to 48 BASIC, `ALASM48` ended at once with `0 OK` |
+| 4.2 | `zxart/ALM.scl` ([zxart](https://zxart.ee/releasefile/id:574325/ALM.scl)), `klug-bbs/ALASM42.ZIP` | `ALM` (from a disk in the order ALM, sts6.2, alasm48) | load, assemble, sync inject (2026-10-18); a key closes its title screen; macro parameters `:0`..`:9` |
 
 Each version saves sources in its own variant of the format (type `H`): give `zxasm encode --codec alasm --version`
 `3.8`, `4.2` (also 4.3), `4.42`, `4.5` (also 4.43), `4.44` (4.44-4.46), `5.0`, `5.05` or `5.07` (5.07-5.09). ALASM 5.09 compiles `#8000-#BFFF` into its system page:
@@ -107,7 +107,7 @@ The same commands. 4.42 - 4.5 report `Symbols:#0005-#FF6C-#C000`; 3.8c shows a h
 send ENTER before the first command), has no `DB` (the line errs with code `#0D`: write `DEFB`) and says `System
 data mismatch` when asked to assemble with no text.
 
-### A host source into ALASM (every build, 3.8c to 5.09)
+### A host source into ALASM (every build, 3.8c to 5.09, 4.2 included)
 
 At the `A>` prompt, `asm_source {"action":"sync_inject","path":"/abs/main.asm"}` writes a sjasmplus source (or any
 dialect with `from`) as ALASM's current text; `a` + ENTER then assembles it. Refused in the editor and while a
@@ -118,7 +118,7 @@ command, the editor included, has another address in that slot. Read with the 64
 
 A `path` source brings the files it INCLUDEs (relative to the file that INCLUDEs each). Each goes into an ALASM text page
 of its own, and its INCLUDE is written `INCLUDE "NAME",page`: ALASM then finds the text loaded and reads no disk. The
-reply lists them under `includes`. 5.05-5.09 have pages 4 and 0 free, 4.5 pages 0 and 3, 5.00 / 4.42-4.46 / 3.8c page 4: a
+reply lists them under `includes`. 5.05-5.09 have pages 4 and 0 free, 4.5 pages 0 and 3, 5.00 / 4.42-4.46 / 3.8c page 4 (4.2: none measured, its project goes to the disk): a
 project with more sources is refused (put it onto the disk with `zxasm inject main.asm disk.trd --assembler ...`).
 
 `asm_source {"action":"sync_push_watch","path":"/abs/main.asm"}` does the same on every save of the file (or of a file
@@ -156,8 +156,9 @@ those of [tasm.md](tasm.md#webapi) with `RUN "alasm64"` and the ALASM commands a
 - **Inverted keyboard**: file names in capitals are typed in lower case.
 - **`#8000-#BFFF` in 5.09** is compiled into ALASM's system page, not where the CPU reads it: assemble lower or into
   a page.
-- **ALASM 4.2** did not start in unreal-ng here (`ALM` falls to 48 BASIC on a Pentagon 128 and 512); use 4.42 or
-  later (4.3, 4.43, 4.45, 4.46 and 5.0 are in the KLUG BBS archive, `klug-bbs/`).
+- **ALASM 4.2 from the zxart `ALM.scl` falls to 48 BASIC**: its loader reads the raw sectors that follow it (48 of
+  STS 6.2 into page 7, then 64 of `alasm48` into page 4), and that SCL holds `alasm48` first. Rebuild the disk in the
+  order ALM, sts6.2, alasm48 (an SCL to TRD copy that writes the files in that order); then `ALM` starts it.
 - **The `W` list draws for a moment**: a cursor key pressed right after ENTER is lost and the wrong file loads (seen
   with 5.0 / 5.05). Wait about 3 s, move with keys held 6 frames, and check the highlighted name before ENTER
   (`assemble-in-emulator.py alasm509` saves `<out>.selected.png`).

@@ -219,6 +219,9 @@ public:
         for (const auto& [key, address] : _lineAddresses)
             if (!_lineAmbiguous.count(key))
                 result.lines.push_back({std::get<0>(key), std::get<1>(key), std::get<2>(key), address});
+        for (const auto& [key, count] : _whileCounts)
+            if (!_whileAmbiguous.count(key))
+                result.whileCounts.push_back({key.first, key.second, count});
         result.diagnostics = std::move(_diagnostics);
         result.wideBytes = std::move(_wideBytes);
         if (!stable)
@@ -232,6 +235,8 @@ private:
     std::vector<Chunk> _files;
     std::map<std::tuple<std::string, uint32_t, uint32_t>, int64_t> _lineAddresses;   // the last pass: each line's $ (LineAddress)
     std::set<std::tuple<std::string, uint32_t, uint32_t>> _lineAmbiguous;            // ... met at two addresses
+    std::map<std::pair<std::string, uint32_t>, int64_t> _whileCounts;                 // the last pass: each WHILE's runs
+    std::set<std::pair<std::string, uint32_t>> _whileAmbiguous;                        // ... met with two counts
     const Chunk* _expansionChunk = nullptr;                                          // the macro expanded on a file's line
     // RELOCATE_START ... RELOCATE_END (sjasmplus' relocation data): a value is relocatable when moving every
     // relocatable label (and $ in the block) by kRelocShift moves it by as much
@@ -886,6 +891,13 @@ private:
                     }
                     if (n == kMaxRepeats)
                         Report(Severity::Error, "WHILE does not end");
+                    if (_final && k < chunk.fileLines.size() && IsFile(chunk))
+                    {
+                        const auto key = std::make_pair(chunk.file, chunk.fileLines[k]);
+                        const auto [at, added] = _whileCounts.insert({key, n});
+                        if (!added && at->second != n)
+                            _whileAmbiguous.insert(key);
+                    }
                 }
                 k = stop;
                 continue;

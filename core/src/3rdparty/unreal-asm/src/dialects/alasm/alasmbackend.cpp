@@ -7,6 +7,7 @@
 #include <optional>
 #include <set>
 
+#include "codecs/alasm/alasmtokens.h"
 #include "dialects/common/diskname.h"
 #include "dialects/common/z80.h"
 #include "dialects/sjasmplus/sjasmplusfrontend.h"
@@ -164,11 +165,11 @@ struct Writer
     {
         if (inMacro)
         {
-            if (sameDialect && text.size() == 2 && text[0] == '\\')
-                return text;
+            if (sameDialect && text.size() == 2 && (text[0] == '\\' || text[0] == ':'))
+                return std::string(1, ParamMark()) + text[1];
             for (size_t k = 0; k < macroParams.size(); ++k)
                 if (macroParams[k] == text)
-                    return "\\" + std::to_string(k);
+                    return ParamMark() + std::to_string(k);
         }
         for (auto it = scopes.rbegin(); it != scopes.rend(); ++it)
         {
@@ -293,6 +294,19 @@ struct Writer
             for (const char c : options.fileName)
                 file.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
         return "__UNREALASM_L" + file + "_" + std::to_string(line);
+    }
+
+    /// How often the WHILE on this line ran, as the layout gives it (LabelValues: __UNREALASM_W<file>_<line>)
+    std::optional<int64_t> WhileCount() const
+    {
+        for (const bool withFile : {true, false})
+        {
+            const std::string key = "__UNREALASM_W" + LineLabel(withFile).substr(std::string("__UNREALASM_L").size());
+            const auto found = options.labelValues.find(key);
+            if (found != options.labelValues.end())
+                return found->second.value;
+        }
+        return std::nullopt;
     }
 
     /// A label defined further down (or in another file): ALASM knows it only for + and -, after the pass
@@ -557,6 +571,13 @@ struct Writer
     std::string Until0() const { return version < 507 ? "UNTIL" : "UNTIL0"; }
     std::string Db() const { return version < 400 ? "DEFB" : "DB"; }
     std::string Dw() const { return version < 400 ? "DEFW" : "DW"; }
+    char ParamMark() const { return version < 500 ? ':' : '\\'; }   // macro parameters: :0..:9 before 5.0 (4.2-4.5, live)
+    /// Whether the target version's table has this keyword (4.5 lacks EXA that 4.44 has: the numbers are no order)
+    bool HasKeyword(std::string_view word) const
+    {
+        const codecs::alasm::Version* v = codecs::alasm::FindVersion(options.targetVersion);
+        return !v || std::find(v->mnemonics.begin(), v->mnemonics.end(), word) != v->mnemonics.end();
+    }
 
     std::string IfText(const Test& t) const { return (t.whenZero ? If0() : std::string("IFN")) + " " + t.text; }
 
@@ -683,7 +704,7 @@ struct Writer
         const auto& ops = s.operands;
         auto reg = [&](size_t k, const char* name) { return k < ops.size() && ops[k].kind == Operand::Kind::Register && ops[k].text == name; };
         if (m == "ex" && reg(0, "af") && reg(1, "af'"))
-            return {"EXA"};
+            return {HasKeyword("EXA") ? "EXA" : "EX AF,AF'"};   // EXA is no keyword before 4.44 / in 4.5 (4.2 skips the line)
         if (m == "in" && (reg(0, "f") || (ops.size() == 1 && ops[0].kind == Operand::Kind::Indirect)))
             return {"INF"};
         // A Z80N instruction (a source for the ZX Spectrum Next): ALASM has none, so its bytes
@@ -912,6 +933,15 @@ struct Writer
             case ir::DirectiveKind::EndRepeat: return {"EDUP"};
             case ir::DirectiveKind::While:
             {
+                if (!HasKeyword("REPEAT"))
+                {
+                    // no REPEAT before 4.43 (3.8, 4.2, 4.42): DUP of the count the layout ran it (none: not converted)
+                    const auto count = WhileCount();
+                    whileTests.push_back({false, count ? std::to_string(*count) : std::string(), false});
+                    if (!count)
+                        return {NotConverted("a WHILE (ALASM before 4.43 has no REPEAT) whose runs the layout does not give")};
+                    return {*count ? "DUP " + std::to_string(*count) : "IFN 0"};
+                }
                 // WHILE c tests first; ALASM's REPEAT ... UNTIL0 x runs the body until x is 0: IF around it
                 const Test t = Condition(s.args[0]);
                 whileTests.push_back(t);
@@ -923,6 +953,10 @@ struct Writer
                     return {NotConverted("ENDW without WHILE")};
                 const Test t = whileTests.back();
                 whileTests.pop_back();
+                if (!HasKeyword("REPEAT") && t.text.empty())
+                    return {};
+                if (!HasKeyword("REPEAT"))
+                    return {t.text == "0" ? "ENDIF" : "EDUP"};
                 if (!t.whenZero)
                     return {Until0() + " " + t.text, "ENDIF"};
                 if (t.zeroOrOne)

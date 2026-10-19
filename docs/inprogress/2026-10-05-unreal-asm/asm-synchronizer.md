@@ -276,7 +276,8 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | | |
 |---|---|
 | **Verified** (2026-10-09, dumps `alasm38c-*`, `alasm442-*`) | 3.8c and 4.42 keep the same `sysvars` at `#80BF` and the same file image. 4.42's title `ALASM v4.42` is at `#9E2F`. 3.8c has no "ALASM v" title; it is recognized by `3.8c\r Written by` at `#9951` |
-| **Built** | descriptors `alasm-4.42`, `alasm-3.8c` (codec table 3.8). 4.2 stays out: its ALM loader crashes on a Pentagon |
+| **Built** | descriptors `alasm-4.42`, `alasm-3.8c` (codec table 3.8) |
+| **4.2** (2026-10-18) | The ALM loader is no emulator bug. Its BASIC shows `RANDOMIZE USR 23525` but runs 23908; the code reads the raw sectors that follow it on the disk (from `(#5CF4)`): 48 into page 7 at `#D000` (STS 6.2), then 64 into page 4 at `#C000` (`alasm48`). The zxart `ALM.scl` holds `alasm48` before `sts6.2`, so STS lands where ALASM is expected and the machine resets to 48 BASIC. In the order ALM, sts6.2, alasm48 it runs. The same `sysvars` at `#80BF` (text page 6, macros 1, labels / pocket 3, debugger 7) and file image; title `4.2\r Written by` at `#9D3B`; idle chain `#983F`, `#8B84` (the editor has `#A5C3`, `#A1FC` there). Descriptor `alasm-4.2` (codec table 4.2), no project pages yet: which free page survives its uses is not measured. The inject writes 4.2's spelling (macro parameters `:0`, `EX AF,AF'`, WHILE as DUP: research-sjasmplus-to-alasm.md §3) |
 
 ### 7.5 TASM 4.12
 
