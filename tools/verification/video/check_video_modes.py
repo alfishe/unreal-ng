@@ -5,7 +5,8 @@ For every machine (and, with --switch, the video modes a machine can be driven i
 the surfaces say about the picture and reports every disagreement:
 
   * `state/screen/mode`  - the mode the machine reports: `video_mode`, `resolution` (the working picture), `framebuffer`
-  * `capture/screen`     - the presented frame: `frame.mode`, `frame.width/height`, `screen_window`
+  * `capture/screen`     - the presented frame: `frame.mode`, `frame.width/height`, `screen_window`; the image in the
+                           CRT's shape (DisplayGeometry::Picture: a 736x288 frame is a 736x576 image)
   * the raster table     - the frame size each mode name must have (RASTER below, from screen.h rasterDescriptors)
   * the display shape    - DisplayGeometry::DisplayFrame: what window / tile / recording is sized for
   * the window (macOS, --window-port): the real unreal-qt window against that display shape
@@ -77,6 +78,21 @@ def display_frame(width, height):
     if width * rh < height * rw:
         return -(-height * rw // rh), height
     return width, -(-width * rh // rw)
+
+
+def crt_picture(width, height):
+    """DisplayGeometry::Picture of a whole frame: each line once or twice when that is within 5% of 352:288, else the
+    picture grown to that shape (even sizes) - the size of a screenshot or a recording of the frame"""
+    aspect = REFERENCE[0] / REFERENCE[1]
+    even = lambda value: (int(value) + 1) & ~1
+    distance = lambda shape: shape / aspect if shape > aspect else aspect / shape
+    single = width / height
+    repeat = 2 if distance(single / 2) < distance(single) else 1
+    if distance(single / repeat) <= 1.05:
+        return even(width), even(height * repeat)
+    if single < aspect:
+        return even(height * aspect + 0.999), even(height)
+    return even(width), even(width / aspect + 0.999)
 
 
 class Api:
@@ -151,8 +167,10 @@ def check(api, emulator, what, problems, window_port, chrome):
         notes.append(mismatch(f'video mode "{name}" is not in the raster table of this script (a new mode?)'))
     elif RASTER[name] != size and frame.get('source') == 'native':
         notes.append(mismatch(f'the raster table says {name} is {RASTER[name][0]}x{RASTER[name][1]}, the frame is {size[0]}x{size[1]}'))
-    if (shot['width'], shot['height']) != size:
-        notes.append(mismatch(f'the screenshot is {shot["width"]}x{shot["height"]}, its frame {size[0]}x{size[1]}'))
+    shown = size if frame.get('source') == 'external' else crt_picture(*size)
+    if (shot['width'], shot['height']) != shown:
+        notes.append(mismatch(f'the screenshot is {shot["width"]}x{shot["height"]}, the {size[0]}x{size[1]} frame '
+                              f'on the CRT {shown[0]}x{shown[1]}'))
     if window['x'] + window['width'] > size[0] or window['y'] + window['height'] > size[1] or window['width'] == 0:
         notes.append(mismatch('the working picture does not lie inside the frame'))
 

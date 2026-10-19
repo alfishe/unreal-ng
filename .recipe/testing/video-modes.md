@@ -78,7 +78,8 @@ machines. The checks, one line each:
 1. `frame.mode` is a mode the script's raster table knows (a mode the table lacks is a **new mode**: add it here and to
    `displaygeometry_test.cpp`).
 2. The frame size equals the raster table's size for that mode.
-3. The screenshot's size equals its frame's; the working picture (`screen_window`) lies inside the frame.
+3. The screenshot's size is its frame in the CRT's shape (`DisplayGeometry::Picture`: 736x288 -> 736x576, ATM 640x288 ->
+   640x524; an external FT812 picture as it is); the working picture (`screen_window`) lies inside the frame.
 4. `state/screen/mode`'s `framebuffer`, when present, equals the frame; its `resolution` equals the working picture
    (native frames only: a ZX-Poly master's composed frame has the group's own sizes).
 5. With `--window-port` (macOS): the window's picture is the `DisplayFrame` shape at the zoom of the first fit.
