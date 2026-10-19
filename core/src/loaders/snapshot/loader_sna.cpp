@@ -541,10 +541,14 @@ bool LoaderSNA::applySnapshotFromStaging()
 
         // Reset Z80 and all peripherals; no RAM page keeps the program before it (the snapshot may not carry all). The
         // file has no clock: the program runs at the clock the machine ran at (ATM #FF77 turbo, as Xpeccy keeps it)
-        core.ResetKeepingClock();
-        memory.ClearModelRAM();
-        // A model whose reset leaves an extended paging on (the Pentagon 1024) goes back to the plain 128K form
-        _context->pPortDecoder->EnterSpectrum128Paging(z80.pc);
+        {
+            // The video mode of the 128K paging is set up once: the reset's on the way (the ATM's EGA) is not built
+            Screen::RasterDeferral raster(&screen);
+            core.ResetKeepingClock();
+            memory.ClearModelRAM();
+            // A model whose reset leaves an extended paging on (the Pentagon 1024) goes back to the plain 128K form
+            _context->pPortDecoder->EnterSpectrum128Paging(z80.pc);
+        }
 
         // Transfer RAM data to emulator (only the banks the snapshot has)
         for (const auto& bank : image.banks)

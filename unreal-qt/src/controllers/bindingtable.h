@@ -26,8 +26,8 @@ class HostControllers;
 class QComboBox;
 class QLabel;
 class QPushButton;
-class QScrollArea;
 class QTabBar;
+class QTableWidget;
 
 class BindingTable : public QWidget
 {
@@ -121,6 +121,8 @@ private:
     void refreshScope();
     void updateCaptions();
     void light();
+    /// Scroll the table to the line of a chip or + button
+    void reveal(QWidget* widget);
 
     void startCapture(const std::string& rowKey, const std::string& replace = {});
     void captured(const std::string& control, float value);
@@ -170,7 +172,7 @@ private:
     QPushButton* _promptBack = nullptr;
     QPushButton* _promptSkip = nullptr;
     QPushButton* _promptCancel = nullptr;
-    QScrollArea* _scroll = nullptr;
+    QTableWidget* _grid = nullptr;  ///< borderless: the input column sized to its text, the controls column the rest
     QLabel* _status = nullptr;
     QPushButton* _captureButton = nullptr;  ///< the + or chip that shows the press is awaited
 

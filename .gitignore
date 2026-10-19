@@ -8,6 +8,8 @@
 **/x86
 **/[Dd]ebug
 **/[Rr]elease
+# ...but not source data named like them (the compiled-in debug-layer profiles)
+!data/controllers/profiles/debug/
 
 # CMake temporary folders
 **/CMakeFiles

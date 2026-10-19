@@ -240,6 +240,8 @@ uint8_t Memory::MemoryReadOverlay(uint16_t addr, bool isExecution)
     HostBusOverlay* overlay = _busOverlay;
     if (!overlay->observesReads || addr < overlay->windowStart || addr >= overlay->windowEnd)
         return normal;
+    if (overlay->ignoresRom && _bank_mode[addr >> 14] == BANK_ROM)
+        return normal;
     return overlay->onRead(addr, normal, isExecution, _bank_mode[0] == BANK_ROM);
 }
 
@@ -250,6 +252,8 @@ uint8_t Memory::MemoryReadOverlayM1(uint16_t addr, bool isExecution)
     const uint8_t normal = (this->*Inner)(addr, isExecution);
     HostBusOverlay* overlay = _busOverlay;
     if (!overlay->observesReads || addr < overlay->windowStart || addr >= overlay->windowEnd)
+        return normal;
+    if (overlay->ignoresRom && _bank_mode[addr >> 14] == BANK_ROM)
         return normal;
     return overlay->onReadM1(addr, normal, _bank_mode[0] == BANK_ROM);
 }
@@ -265,7 +269,8 @@ void Memory::MemoryWriteOverlay(uint16_t addr, uint8_t value)
         overlay->onBeforeWrite(addr);
     (this->*Inner)(addr, value);
     overlay = _busOverlay;  // the write may have changed the installed set (a port-like window)
-    if (addr >= overlay->windowStart && addr < overlay->windowEnd)
+    if (addr >= overlay->windowStart && addr < overlay->windowEnd &&
+        !(overlay->ignoresRom && _bank_mode[addr >> 14] == BANK_ROM))
         overlay->onWrite(addr, value, _bank_mode[0] == BANK_ROM);
 }
 
