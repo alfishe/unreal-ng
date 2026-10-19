@@ -261,6 +261,23 @@ TEST(AlasmBackend_Test, NamesAndLabels)
     EXPECT_NE(text.find("DUP 3"), std::string::npos) << text;
     EXPECT_NE(text.find("IFN 0"), std::string::npos) << text;
     EXPECT_EQ(text.find("REPEAT"), std::string::npos) << text;
+    // 3.8 has no parentheses in expressions ("(" is memory), no MACRO and no IF (each seen in ALASM 3.8c): values,
+    // macros put in at their calls, an IF decided by its value
+    old.targetVersion = "3.8";
+    const std::string text38 = Convert(SourceDocument::FromText("SIZE    EQU 10\n        ld a,1+(2*3)\n        MACRO WAIT n\n        ld b,n\n        ENDM\n"
+                                                                "        WAIT 5\n        IF SIZE > 5\n        db 1\n        ELSE\n        db 2\n        ENDIF\n"
+                                                                "        ds 4,#AA\n        ld a,~SIZE & #0F",
+                                                                "sjasmplus"),
+                                       "alasm", old)
+                                   .document.Text();
+    EXPECT_NE(text38.find("LD A,7"), std::string::npos) << text38;
+    EXPECT_EQ(text38.find("        MACRO"), std::string::npos) << text38;
+    EXPECT_NE(text38.find("LD B,5"), std::string::npos) << text38;
+    EXPECT_NE(text38.find("DEFB 1"), std::string::npos) << text38;
+    EXPECT_EQ(text38.find("DEFB 2"), std::string::npos) << text38;
+    EXPECT_EQ(text38.find("        IF"), std::string::npos) << text38;
+    EXPECT_NE(text38.find("DEFS 4,#AA"), std::string::npos) << text38;   // no DS, no & | ! ~
+    EXPECT_NE(text38.find("LD A,5"), std::string::npos) << text38;
     // ALASM 5.09 puts nothing down for ADD B (seen in unreal-ng): always A,x
     EXPECT_EQ(ToAlasm("        add b\n        adc (hl)\n        sbc 5"), (std::vector<std::string>{"ADD A,B", "ADC A,(HL)", "SBC A,5"}));
     // sjasmplus' several operands and fake instructions, written out

@@ -178,6 +178,17 @@ TEST(XasFrontend_Test, LabelsCompareOnSevenCharacters)
               (std::vector<std::string>{"longlabelname EQU 9", "DB longlabelname,longlabelname"}));
 }
 
+TEST(XasFrontend_Test, UselNamesAndMakeGiveNoLabelsNorBytes)
+{
+    // 7.447 live: a :NAME line is skipped by the assembler (it only picks the USEL library's "!ASSM x ;:NAME"
+    // blocks), and MAKE has no handler (Object Length counts no bytes for it)
+    Diagnostics d;
+    EXPECT_EQ(ToSjasmplus("        ORG   #6000\n        NOP\n:FOO\n:FOO\nlbl     RET\n        MAKE  \"lbl\"", &d),
+              (std::vector<std::string>{"ORG #6000", "NOP", "lbl     RET"}));
+    for (const Diagnostic& x : d)
+        EXPECT_NE(x.severity, Severity::Warning) << x.message;
+}
+
 TEST(XasFrontend_Test, WorkIsADisplacementOrgKeeps)
 {
     EXPECT_EQ(ToSjasmplus("        WORK  #9000\nw1      DW    w1\n        ORG   #6100\n        WORK"),

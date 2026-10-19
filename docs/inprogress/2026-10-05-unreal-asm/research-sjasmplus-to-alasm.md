@@ -82,6 +82,7 @@ From ALASM 5.07's help (`al50help`) and checked in unreal-ng where marked.
 | ALASM 5.09 assembles #8000-#BFFF into its system page | the oracle sources ORG #6000 |
 | **emulator** (2026-10-18): 4.2, 4.42, 4.44 and 4.5 take macro parameters as `:0`..`:9` (their help: `:0 .. :9`); there `\0` is a label (`Not defined:\0`). 5.0 takes `\0` and not `:0` | `:N` before 5.0, `\N` from it |
 | **emulator**: EXA is a keyword only in the tables of 4.44 and 5.x (not 3.8, 4.2, 4.42, 4.5); 4.2 skips a line `EXA` without an error | `EX AF,AF'` where the table lacks it (the codec's table decides: 4.5 is no later than 4.44) |
+| **emulator** (2026-10-18): 3.8c's calculator has no parentheses and no `& \| ! ~ < >` (only `+ - * / ' . {}`), no MACRO, no IF / IFN, and `DS` is `DEFS` there | an expression it cannot read written as its value (labels from the layout; a later label without one is a warning); macros expanded in place; IF decided at conversion, a comment line for the part taken; `DEFS` before 4.0 |
 | REPEAT is not in 3.8, 4.2, 4.42 | WHILE as `DUP n` ... `EDUP` with the count the layout ran it (`IFN 0` ... `ENDIF` for none); a WHILE met with two counts (in a macro or a repeat) is not converted |
 
 ## 4. When ALASM is idle (the injection's precondition)
@@ -138,6 +139,7 @@ build assembled it to sjasmplus' bytes; in the editor the same write was refused
 | the same with `instructions.asm` at ORG #6000 | 1173 bytes = sjasmplus' |
 | `inject-oracle.py alasm509 --template` (Z1): `zxasm inject` into the .szx, .sna and .z80 templates, the snapshot loaded and assembled | 143 bytes = sjasmplus' in each; `instructions.asm` 1173 |
 | `zxasm inject` onto a copy of ALASM's disk, `WORK ORACLE1` and `ASSEMBLE` in ALASM 5.09 | 143 bytes = sjasmplus' |
+| `inject-oracle.py alasm … --assembler alasm-X` live in 3.8c, 4.2, 4.42, 4.44, 4.5, 5.00 (2026-10-18) | 143 bytes = sjasmplus' in each |
 
 ## 6. Limits and open items
 
@@ -146,8 +148,8 @@ build assembled it to sjasmplus' bytes; in the editor the same write was refused
   (asm-synchronizer.md §19).
 - Projects (2026-10-10): the files a host source INCLUDEs go into ALASM pages of their own, each INCLUDE written
   `INCLUDE "NAME",page`, so ALASM finds the text loaded and reads no disk (asm-synchronizer.md §16.4). 5.05-5.09 keep
-  two more texts (pages 4 and 0), 4.5 two (0 and 3), 5.00, 4.42-4.46 and 3.8c one (page 4). Checked in every build:
-  a project of three files (5.05-5.09, 4.5) or two (the others) injected live and assembled to sjasmplus'
+  two more texts (pages 4 and 0), 4.5 and 4.2 two (0 and 3; 4 and 0), 5.00, 4.42-4.46 and 3.8c one (page 4). Checked in every build:
+  a project of three files (5.05-5.09, 4.5, 4.2) or two (the others) injected live and assembled to sjasmplus'
   bytes with ALASM's own disk in the drive; ALASM 5.09 assembled the three-file project from a template snapshot too.
   Onto a disk (`zxasm inject main.asm disk.trd`) each file goes as a file of its own: ALASM 5.09 loaded the main text
   with `W` and assembled the project to the same bytes. Its screen shows why the pages matter: without a page each

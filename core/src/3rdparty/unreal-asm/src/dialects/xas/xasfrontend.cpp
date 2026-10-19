@@ -394,6 +394,13 @@ Fields Split(const std::string& text)
 {
     Fields f;
     std::string t = text;
+    if (!t.empty() && t[0] == ':')
+    {
+        // A USEL procedure name: the assembler skips the line (two equal ones are no "Label Exists")
+        f.comment = t;
+        f.hasComment = true;
+        return f;
+    }
     for (size_t k = 0; k < t.size(); ++k)
     {
         if (t[k] == '"')
@@ -682,9 +689,15 @@ struct LineParser
                 line.statements.push_back(std::move(s));
                 return;
             }
-            case Command::Usel:
             case Command::Make:
+                // 7.44 tokenizes MAKE, but its assembler has no handler for it: no bytes, no label
+                line.comment = " " + z80::Upper(f.word) + (f.rest.empty() ? "" : " " + f.rest) + " (XAS: no bytes)" +
+                               (line.hasComment ? ";" + line.comment : std::string());
+                line.hasComment = true;
+                return;
+            case Command::Usel:
             {
+                // The library's text assembled in place; its !ASSM blocks only for the :NAME lines below it
                 Statement s = Directive(ir::DirectiveKind::Other);
                 s.text = z80::Upper(f.word) + (f.rest.empty() ? "" : " " + f.rest);
                 Warn(number, "XAS " + z80::Upper(f.word) + " kept as text (not converted)");

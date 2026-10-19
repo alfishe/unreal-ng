@@ -1126,8 +1126,9 @@ std::string SubstitutedText(const std::string& text, const std::map<std::string,
 
 /// ALASM's LOCAL block makes every label of a macro local, sjasmplus only its .labels (and temporary ones): a macro
 /// with both kinds is put in at each of its calls instead, its .labels named for each expansion (`!` keeps the parent
-/// of the .labels after it as it is), its global labels and assignments as they are
-ir::Program ExpandMixedMacros(const ir::Program& program, Diagnostics& diagnostics)
+/// of the .labels after it as it is), its global labels and assignments as they are. `all`: every macro so (a target
+/// without macros: ALASM 3.8)
+ir::Program ExpandMixedMacros(const ir::Program& program, Diagnostics& diagnostics, bool all)
 {
     struct Def
     {
@@ -1159,7 +1160,7 @@ ir::Program ExpandMixedMacros(const ir::Program& program, Diagnostics& diagnosti
                     else
                         global = true;
                 }
-                if (local && global && end < program.lines.size())
+                if (((local && global) || all) && end < program.lines.size())
                     mixed[s.text] = {k, end, s.params};
             }
     if (mixed.empty())
@@ -1177,7 +1178,7 @@ ir::Program ExpandMixedMacros(const ir::Program& program, Diagnostics& diagnosti
             {
                 ir::Line note;
                 note.sourceLine = l.sourceLine;
-                note.comment = "MACRO " + s.text + " (put in at its calls: local and global labels)";
+                note.comment = "MACRO " + s.text + (all ? " (put in at its calls)" : " (put in at its calls: local and global labels)");
                 note.hasComment = true;
                 out.lines.push_back(std::move(note));
                 k = mixed.at(s.text).end;
@@ -1255,16 +1256,17 @@ ir::Program ExpandMixedMacros(const ir::Program& program, Diagnostics& diagnosti
             out.lines.push_back(std::move(copy));
         }
     }
-    diagnostics.push_back({Severity::Info, 0, 0, std::to_string(expansions) + " call(s) of macros with local and global labels put in where they stand"});
+    diagnostics.push_back({Severity::Info, 0, 0, std::to_string(expansions) + (all ? " macro call(s)" : " call(s) of macros with local and global labels") +
+                                                     " put in where they stand"});
     return out;
 }
 }  // namespace
 
-ir::Program LowerSjasmplus(const ir::Program& program, Diagnostics& diagnostics, bool expandMixedMacros)
+ir::Program LowerSjasmplus(const ir::Program& program, Diagnostics& diagnostics, bool expandMixedMacros, bool expandAllMacros)
 {
-    if (expandMixedMacros)
+    if (expandMixedMacros || expandAllMacros)
     {
-        const ir::Program expanded = ExpandMixedMacros(program, diagnostics);
+        const ir::Program expanded = ExpandMixedMacros(program, diagnostics, expandAllMacros);
         Lowering lowering(expanded, diagnostics);
         return lowering.Run();
     }

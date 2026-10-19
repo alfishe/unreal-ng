@@ -48,7 +48,8 @@ XAS 7.447                          sjasmplus
 | **One block level**: a block opened inside another is ignored and the next `!CONT` ends the outer one (`!ASSM 2` / `IFNZ 0` / `DB 6` / `!CONT` / `DB 7` / `!CONT` gives 06 06 07; *run*) | the inner opening becomes a comment with a warning. XAS's own object pointer then runs one byte behind (seen only through a later `WORK` + `ORG`): the oracle programs leave the construct out |
 | `PUSH` / `POP` with several registers (5.05 on), `EX AF,AF` = `EX AF,AF'`, `(IX)` = `(IX+0)`, `HX` / `LX` / `HY` / `LY`, `IN A,port` / `OUT port,A` without parentheses (7.43 help; 4.18: `Fatal Error`) | spelled out |
 | `LTEXT "file"` (`LOADTEXT` in 4.x / 5.x) assembles another source, `LCODE "file"` loads a code file (type C, or `"name.T"`, `"B:name"` another drive; 7.22 help) (*run*) | `INCLUDE` / `INCBIN` with the name as `zxasm convert` writes the files |
-| `USEL "library"` `:proc` ... (7.x) and `MAKE` (7.43 / 7.447) | kept as text with a warning (meaning not checked) |
+| `USEL "library"` then lines `:proc` (7.x): the library's text assembled in place, its `!ASSM` blocks switched off except those whose `!ASSM` line ends in `;:proc` for a `:proc` listed; text outside the blocks always (7.447: handler at `#B2B4`, *run*) | USEL kept as text with a warning (the library would have to be converted with its block choice); a `:proc` line as a comment (the assembler skips it) |
+| `MAKE` (7.43 / 7.447): tokenized (`#F6`), no handler in the assembler (no `CP #F6`; *run*: `MAKE "lbl"` adds no bytes) | a comment |
 
 ## 3. Results
 
@@ -83,6 +84,5 @@ Run in unreal-ng (2026-10-07, `XAS9_10.SCL`, `RUN "XAS9.10"`):
 ## 5. Open
 
 - XAS 9.07m (its tables match 9.10 apart from the dot words; not run).
-- `USEL` libraries and `MAKE` (not established: no source uses them, no help text found unpacked; 9.10's "XAS help"
-  is packed inside its BASIC file).
+- `USEL` as sjasmplus: an INCLUDE of the library converted with its block choice (no source uses USEL so far).
 - How ZX Navigator's modules got the kernel's labels (XAS's two texts, `aNother`?).
