@@ -5,6 +5,7 @@
 #include "backendfactory.h"
 #include "haptics/profilehaptics.h"
 #include "haptics/soundhaptics.h"
+#include "hostcontrols.h"
 
 namespace controllers
 {
@@ -182,10 +183,31 @@ void HostInputService::PlayEffect(const HostDeviceId& device, const HapticEffect
     _haptics->Play(device, effect);
 }
 
+void HostInputService::PlayTest(const HostDeviceId& device, const TestEffect& test)
+{
+    if (!test.clicks)
+    {
+        _haptics->Play(device, test.effect);
+        return;
+    }
+    std::lock_guard<std::mutex> write(_hapticsWrite);
+    IBackend* backend = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        backend = BackendOfLocked(device);
+    }
+    if (backend != nullptr)
+        backend->PlayClicks(device, *test.clicks);
+}
+
 void HostInputService::Identify(const HostDeviceId& device)
 {
-    constexpr uint32_t kIdentifyMs = 300;  // haptics.md §10: "Identify" stays a 300 ms rumble
-    _haptics->Play(device, {{0.6f, 0.6f, 0.0f, 0.0f}, kIdentifyMs, true});
+    for (const TestEffect& test : TestEffects(RumbleActuators(device)))
+        if (test.id == "identify")
+        {
+            PlayTest(device, test);
+            return;
+        }
 }
 
 std::function<std::vector<HostDeviceId>()> HostInputService::TargetsFor(const std::string& instance)
@@ -253,8 +275,12 @@ void HostInputService::OnDeviceRemoved(const HostDeviceId& device)
 void HostInputService::OnControl(const ControlEvent& event)
 {
     _router->OnControl(event);
+    // An encoder's event is its steps since the last one: the live view shows where it has turned to since connect
+    ControlInfo info;
+    const bool encoder = ParseControl(event.control, info) && info.type == ControlType::Encoder;
     std::lock_guard<std::mutex> lock(_liveMutex);
-    _live[event.device][event.control] = event.value;
+    float& live = _live[event.device][event.control];
+    live = encoder ? live + event.value : event.value;
 }
 
 std::map<std::string, float> HostInputService::Live(const HostDeviceId& device) const

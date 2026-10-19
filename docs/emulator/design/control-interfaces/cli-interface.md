@@ -403,6 +403,29 @@ Error: state=300 out of range 0..255
 Joystick tap: fire for 3 frames -> state=0x18 buttons=up,fire (IN #1F=0x18)
 ```
 
+### Game Controller Commands
+
+The `controllers` verb (source: `core/automation/cli/src/commands/cli-processor-controllers.cpp`): the machine's
+joystick connectors and the host's game controllers, their profiles, bindings and haptics. Full table and the other
+surfaces: [command-interface.md §15](./command-interface.md#15-game-controllers).
+
+| CLI Command | Description |
+| :--- | :--- |
+| `controllers [list]`, `get <connector>`, `plug <connector\|auto> <device> [opt=val ..]`, `unplug`, `options`, `targets <device>`, `auto [apply]` | The machine's connectors and the retro devices in them |
+| `controllers devices`, `context`, `profiles`, `profile <id>`, `save <file>`, `delete <id>`, `apply <id\|none>` | The host devices and the profiles |
+| `controllers bindings`, `bind <control> field=val ..`, `unbind <control>`, `scheme <id\|none>` | The effective bindings and their changes in a user profile |
+| `controllers haptics [device]` | Whether the emulator drives each device's motors (or why not) and its test effects |
+| `controllers rumble <device> [effect]` | Play a test effect: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz` |
+
+`--json` prints the reply every surface returns. The host verbs need the Qt client (it owns the game controllers).
+
+```
+> controllers rumble bt:045e:0b22:c6928f45 swell
+OK: Swell (attack, hold, release) on Xbox Elite Wireless Controller Series 2
+> controllers rumble usb:045e:0b00:0516:3032 identify
+Error: Xbox Elite Wireless Controller Series 2: macOS drives no motors of an Xbox pad over USB: connect the pad over Bluetooth
+```
+
 ### Analysis, Capture & Assembly Commands
 
 The analysis, capture and assembly families are available on **all** automation

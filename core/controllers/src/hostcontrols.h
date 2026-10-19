@@ -19,6 +19,7 @@ enum class ControlType : uint8_t
     Trigger,  ///< 0 .. 1
     Delta,    ///< a mouse count per event (mouse.dx, mouse.dy, mouse.wheel)
     Pointer,  ///< an absolute screen position (pointer.x, pointer.y)
+    Encoder,  ///< a rotary encoder: signed detents since the last event (a Surface Dial's `knob`); not a mouse delta
 };
 
 /// What a control name means
@@ -37,7 +38,8 @@ struct ControlInfo
 /// digital controls. False for anything else
 bool ParseControl(const std::string& text, ControlInfo& out);
 
-/// The fixed control names (for "did you mean" lists): face, D-pad, shoulders, sticks, system, extras, motion, mouse
+/// The fixed control names (for "did you mean" lists): face, D-pad, shoulders, sticks, system, extras, motion, mouse,
+/// the control surfaces' `knob` (encoder), `push` and `touch` (the hand on the knob)
 const std::vector<std::string>& KnownControls();
 
 /// The stick a name stands for as a whole (`lstick`, `rstick`), for a binding of all four directions; empty otherwise

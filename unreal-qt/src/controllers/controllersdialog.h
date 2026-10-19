@@ -8,7 +8,9 @@
 
 #include <QWidget>
 
+#include <functional>
 #include <string>
+#include <vector>
 
 class ActionRegistry;
 class BindingTable;
@@ -18,7 +20,6 @@ class QCheckBox;
 class QComboBox;
 class QLabel;
 class QListWidget;
-class QMenu;
 class QPushButton;
 class QTableWidget;
 class QTimer;
@@ -43,7 +44,7 @@ private:
     void rebuild();
     void rebuildControls();
     void rebuildConnectors();
-    /// The Test haptics button: its menu holds the selected device's actuators, or it is off with the reason
+    /// The haptics test: the effects of the selected device's actuators and the Test button, or both off with the reason
     void rebuildHapticsTest(const std::string& device);
     void tick();
     void plug(const std::string& connector, const QString& device);
@@ -63,8 +64,9 @@ private:
     QString _pictureSet;
     BindingTable* _table = nullptr;
     QPushButton* _profilesButton = nullptr;
+    QComboBox* _hapticsEffect = nullptr;  ///< the effect Test plays
     QPushButton* _testHaptics = nullptr;  ///< always there; off, with the reason, for a device it cannot drive
-    QMenu* _testHapticsMenu = nullptr;
+    std::vector<std::function<void()>> _hapticsTests;  ///< one per _hapticsEffect item
     QTableWidget* _connectors = nullptr;
     QLabel* _machineLabel = nullptr;
     QLabel* _hapticsLabel = nullptr;  ///< haptics.md §7: the live meters of the feed

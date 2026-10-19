@@ -32,7 +32,11 @@
 #include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/media/mediacontrol.h>
 #include <emulator/slots/slotcontrol.h>
+#include <emulator/io/controllers/controllercontrol.h>
 #include <emulator/sound/midi/midicontrol.h>
+#ifdef ENABLE_CONTROLLERS
+#include "hostinputcontrol.h"
+#endif
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/tape/tape.h>
 #include <tapeaudio/tapeaudioimporter.h>
@@ -158,6 +162,35 @@ inline sol::object StateNodeToLua(sol::this_state s, const StateNode& node)
         default: return sol::make_object(lua, sol::lua_nil);
     }
 }
+
+#ifdef ENABLE_CONTROLLERS
+/// A host controllers reply (HostReply::ToValue) -> Lua table, as StateNodeToLua
+inline sol::object JsonValueToLua(sol::this_state s, const controllers::JsonValue& value)
+{
+    sol::state_view lua(s);
+    if (value.IsBool())
+        return sol::make_object(lua, value.AsBool());
+    if (value.IsNumber())
+        return sol::make_object(lua, value.AsNumber());
+    if (value.IsString())
+        return sol::make_object(lua, value.AsString());
+    if (value.IsObject())
+    {
+        sol::table t = lua.create_table();
+        for (const auto& [key, member] : value.GetMembers())
+            t[key] = JsonValueToLua(s, member);
+        return t;
+    }
+    if (value.IsArray())
+    {
+        sol::table t = lua.create_table();
+        for (size_t i = 0; i < value.Items().size(); i++)
+            t[i + 1] = JsonValueToLua(s, value.Items()[i]);
+        return t;
+    }
+    return sol::make_object(lua, sol::lua_nil);
+}
+#endif
 
 
 class LuaEmulator
@@ -1768,6 +1801,88 @@ public:
             }
             return StateNodeToLua(s, MediaControl(emulator->GetContext()).Execute(request).ToValue());
         };
+        // controllers(verb, [connector], [device], [{options}]) -> the reply table every surface returns: the machine's
+        // joystick connectors (list, get, plug, unplug, options, targets, auto, input; ControllerControl, as the
+        // CLI `controllers`, WebAPI /controllers and Python controllers_*)
+        lua.set_function("controllers", [this](sol::this_state s, const std::string& verb, sol::optional<std::string> connector,
+                                               sol::optional<std::string> device, sol::optional<sol::table> opts) {
+            controllers::ControllerRequest request;
+            request.verb = verb;
+            request.selector = connector.value_or("");
+            request.device = device.value_or("");
+            if (opts)
+                for (const auto& [key, value] : *opts)
+                {
+                    if (!key.is<std::string>())
+                        continue;
+                    std::string text;
+                    if (value.is<bool>())
+                        text = value.as<bool>() ? "true" : "false";
+                    else if (value.get_type() == sol::type::number)
+                        text = std::to_string(value.as<long long>());
+                    else if (value.is<std::string>())
+                        text = value.as<std::string>();
+                    request.options[key.as<std::string>()] = text;
+                }
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+            {
+                StateNode none = StateNode::Object();
+                none["ok"] = false;
+                none["error"] = "unknown-emulator";
+                none["message"] = "no emulator selected";
+                return StateNodeToLua(s, none);
+            }
+            return StateNodeToLua(s, controllers::ControllerControl(emulator->GetContext()).Execute(request).ToValue());
+        });
+        // controllers_host(verb, {options}) -> the reply table every surface returns: the host game controllers
+        // (devices, profiles, bindings, haptics, rumble; HostInputControl, the process's, not the machine's)
+        auto hostControllersCall = [](sol::this_state s, const std::string& verb, sol::optional<sol::table> opts) {
+#ifdef ENABLE_CONTROLLERS
+            controllers::HostRequest request;
+            request.verb = verb;
+            if (opts)
+                for (const auto& [key, value] : *opts)
+                {
+                    if (!key.is<std::string>())
+                        continue;
+                    std::string text;
+                    if (value.is<bool>())
+                        text = value.as<bool>() ? "true" : "false";
+                    else if (value.get_type() == sol::type::number)
+                        text = std::to_string(value.as<long long>());
+                    else if (value.is<std::string>())
+                        text = value.as<std::string>();
+                    request.options[key.as<std::string>()] = text;
+                }
+            return JsonValueToLua(s, controllers::HostInputControl::Process(request).ToValue());
+#else
+            (void)verb;
+            (void)opts;
+            StateNode reply = StateNode::Object();
+            reply["ok"] = false;
+            reply["error"] = "unavailable";
+            reply["message"] = "built without host game controllers (ENABLE_CONTROLLERS=OFF)";
+            return StateNodeToLua(s, reply);
+#endif
+        };
+        lua.set_function("controllers_host", hostControllersCall);
+        // controllers_haptics([device]) -> devices[]: available or reason, actuators, the test effects
+        lua.set_function("controllers_haptics", [hostControllersCall](sol::this_state s, sol::optional<std::string> device) {
+            sol::table opts = sol::state_view(s).create_table();
+            if (device && !device->empty())
+                opts["device"] = *device;
+            return hostControllersCall(s, "haptics", opts);
+        });
+        // controllers_rumble(device, [effect]) -> play a test effect (identify, low, high, clicks, left-trigger,
+        // right-trigger, swell)
+        lua.set_function("controllers_rumble", [hostControllersCall](sol::this_state s, const std::string& device,
+                                                                     sol::optional<std::string> effect) {
+            sol::table opts = sol::state_view(s).create_table();
+            opts["device"] = device;
+            opts["effect"] = effect.value_or("identify");
+            return hostControllersCall(s, "rumble", opts);
+        });
         lua.set_function("media", [mediaCall](sol::this_state s, const std::string& verb, sol::optional<std::string> slot,
                                               sol::optional<std::string> path, sol::optional<sol::table> opts) {
             return mediaCall(s, verb, slot.value_or(""), path.value_or(""), opts);

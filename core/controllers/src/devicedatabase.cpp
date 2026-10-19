@@ -48,6 +48,8 @@ void Info(const JsonValue& entry, DeviceMatch& info)
         if (!value.empty())
             *target = value;
     }
+    if (const JsonValue* player = entry.Find("player"); player != nullptr && player->IsBool())
+        info.player = player->AsBool();
     if (const JsonValue* controls = entry.Find("controls"); controls != nullptr && controls->IsArray())
         for (const JsonValue& control : controls->Items())
             if (control.IsString())

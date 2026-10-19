@@ -259,12 +259,16 @@ bool Active(const std::string& control, const std::map<std::string, float>& live
     return std::fabs(value(control)) >= kEdge;
 }
 
-/// A capture ignores what moves by itself or is no press: motion, the touchpad's finger, the mouse
+/// A capture ignores what moves by itself or is no press: motion, the touchpad's finger, the mouse, an encoder's
+/// turn and the hand on it (a Surface Dial's `knob` and `touch`)
 bool Ignored(const std::string& name)
 {
     for (const char* prefix : {"gyro.", "accel.", "mouse.", "pointer."})
         if (name.rfind(prefix, 0) == 0)
             return true;
+    ControlInfo info;
+    if (name == "touch" || (ParseControl(name, info) && info.type == ControlType::Encoder))
+        return true;
     return name.rfind("touchpad.", 0) == 0 && name != "touchpad.click";
 }
 

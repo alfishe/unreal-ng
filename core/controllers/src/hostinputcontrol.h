@@ -10,7 +10,8 @@
 /// registers itself with SetOwner and a runner that executes a request on its own thread.
 ///
 /// Verbs: devices, context, profiles, profile, save, delete, apply, bindings, bind, unbind, scheme (the scheme a user
-/// profile extends: how the pad works, Kempston, Sinclair 1, QAOP + Space).
+/// profile extends: how the pad works, Kempston, Sinclair 1, QAOP + Space), haptics (what a device's motors can do, or
+/// why not), rumble (play a test effect on a device, haptics.md §10).
 ///
 /// @code
 ///   HostRequest request{"apply", {{"id", "builtin/game/vradarks-revenge"}}};
@@ -29,10 +30,12 @@
 namespace controllers
 {
 
+class HostInputService;
+
 struct HostRequest
 {
     std::string verb;
-    /// Options by name (surfaces.md §2): id, set, text, control, spec, layer, family, device, profile
+    /// Options by name (surfaces.md §2): id, set, text, control, spec, layer, family, device, profile, effect
     std::map<std::string, std::string> options;
 };
 
@@ -69,6 +72,11 @@ public:
     virtual void SetManualProfile(const std::string& id) = 0;
     /// Resolve and apply the profiles again (after a change in the store)
     virtual void Reapply() = 0;
+    /// The service whose motors haptics / rumble drive; nullptr: no host output in this process
+    virtual HostInputService* Input()
+    {
+        return nullptr;
+    }
 };
 
 class HostInputControl
@@ -106,6 +114,8 @@ private:
     HostReply Bindings(const HostRequest& request);
     HostReply Bind(const HostRequest& request, bool unbind);
     HostReply Scheme(const HostRequest& request);
+    HostReply Haptics(const HostRequest& request);
+    HostReply Rumble(const HostRequest& request);
     /// The user profile a request edits (profile=, else by device / family), copied from the store or new
     bool EditProfile(const HostRequest& request, bool mustExist, Profile& profile, std::string& id, HostReply& failure);
     /// Check through the reader, save, keep and apply

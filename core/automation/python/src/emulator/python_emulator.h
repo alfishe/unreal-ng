@@ -1729,7 +1729,22 @@ namespace PythonBindings
             .def("controllers_host", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return HostControllerCallPy(verb, options);
                  }, py::arg("verb"), "A host controllers verb (devices, context, profiles, profile, save, delete, apply, "
-                 "bindings, bind, unbind) with its options as keywords")
+                 "bindings, bind, unbind, scheme, haptics, rumble) with its options as keywords")
+            .def("controllers_haptics", [](Emulator&, const std::string& device) {
+                     py::kwargs options;
+                     if (!device.empty())
+                         options["device"] = device;
+                     return HostControllerCallPy("haptics", options);
+                 }, py::arg("device") = "",
+                 "Per host device: whether the emulator drives its motors ('available', else 'reason'), its "
+                 "'actuators' and the test 'effects' controllers_rumble plays")
+            .def("controllers_rumble", [](Emulator&, const std::string& device, const std::string& effect) {
+                     py::kwargs options;
+                     options["device"] = device;
+                     options["effect"] = effect;
+                     return HostControllerCallPy("rumble", options);
+                 }, py::arg("device"), py::arg("effect") = "identify",
+                 "Play a test effect on a host device: identify, low, high, clicks, left-trigger, right-trigger, swell")
             .def("controllers_profiles", [](Emulator&, const py::kwargs& options) {
                      return HostControllerCallPy("profiles", options);
                  }, "Every controller profile (set='game' / 'play' / 'debug' / 'scheme', machine='next')")

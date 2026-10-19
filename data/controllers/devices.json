@@ -60,6 +60,10 @@
       "match": [ { "vid": "0e8f", "pid": ["3013"] } ], "layout": "generic", "images": "generic-db9-stick" },
     { "id": "retrobit-adapter", "name": "Retro-bit adapter", "vendor": "Retro-bit",
       "match": [ { "vid": "1292", "pid": ["4745", "4643", "5346"] } ], "layout": "generic", "images": "generic-unknown" },
+    { "id": "surface-dial", "name": "Surface Dial", "vendor": "Microsoft", "player": false,
+      "match": [ { "bus": "bt", "vid": "045e", "pid": ["091b"] } ], "layout": "generic", "images": "surface-dial",
+      "glyphs": "surface-dial", "controls": ["knob", "push", "touch"] },
+
     { "id": "dragonrise-generic", "name": "USB Gamepad", "vendor": "DragonRise",
       "match": [ { "vid": "0079", "pid": ["0006", "0011"] } ], "layout": "generic", "images": "generic-unknown" }
   ],
@@ -78,6 +82,7 @@
     "playstation": { "south": "Cross", "east": "Circle", "west": "Square", "north": "Triangle", "view": "Create",
                      "menu": "Options", "guide": "PS", "lb": "L1", "rb": "R1", "lt": "L2", "rt": "R2", "touchpad.click": "Touchpad" },
     "nintendo": { "south": "B", "east": "A", "west": "Y", "north": "X", "view": "-", "menu": "+", "guide": "Home",
-                  "lb": "L", "rb": "R", "lt": "ZL", "rt": "ZR", "share": "Capture" }
+                  "lb": "L", "rb": "R", "lt": "ZL", "rt": "ZR", "share": "Capture" },
+    "surface-dial": { "knob": "Turn", "push": "Press", "touch": "Touch" }
   }
 }

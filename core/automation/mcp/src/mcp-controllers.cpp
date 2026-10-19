@@ -41,6 +41,8 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControl
         {"bind", {"control", "spec", "layer", "family", "device", "profile"}},
         {"unbind", {"control", "layer", "family", "device", "profile"}},
         {"scheme", {"id", "family", "device", "profile"}},
+        {"haptics", {"device"}},
+        {"rumble", {"device", "effect"}},
     };
     return actions;
 }
@@ -99,6 +101,25 @@ namespace
         }
         if (action == "profile")
             return reply["yaml"].asString();
+        if (action == "haptics")
+        {
+            for (const Json::Value& device : reply["devices"])
+            {
+                out << device["id"].asString() << ": " << device["name"].asString();
+                if (!device["available"].asBool())
+                {
+                    out << " - off: " << device["reason"].asString() << "\n";
+                    continue;
+                }
+                out << " - effects:";
+                for (const Json::Value& effect : device["effects"])
+                    out << " " << effect["id"].asString();
+                out << "\n";
+            }
+            if (reply["devices"].empty())
+                out << "no host game controllers connected";
+            return out.str();
+        }
         if (action == "bindings")
         {
             out << reply["scope"].asString() << ":";
@@ -221,7 +242,7 @@ void RegisterControllers(ToolRegistry& registry)
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
         "plug / targets: the retro device (kempston-joystick, sinclair-joystick, cursor-joystick, keys-joystick, "
-        "fuller-joystick, md6-pad); bindings / bind / unbind: a host device id (devices lists them)";
+        "fuller-joystick, md6-pad); bindings / bind / unbind / haptics / rumble: a host device id (devices lists them)";
     std::string perVerb;
     std::set<std::string> options;
     for (const auto& [verb, verbOptions] : ControllerToolActions())
@@ -261,6 +282,9 @@ void RegisterControllers(ToolRegistry& registry)
         "scheme: the scheme the pad works as (scheme/kempston, scheme/sinclair-1, scheme/qaop-space; 'none' = the "
         "machine's default)";
     schema["properties"]["text"]["description"] = "save: the whole profile, YAML or JSON (schema 1)";
+    schema["properties"]["effect"]["description"] =
+        "rumble: the test effect (identify by default; low, high, clicks, left-trigger, right-trigger, swell: haptics "
+        "lists a device's)";
     schema["properties"]["control"]["description"] = "bind / unbind: south, lt.click, rstick.x, view+menu, dpad.*";
     schema["properties"]["spec"]["type"] = "object";
     schema["properties"]["spec"]["description"] =
@@ -283,7 +307,9 @@ void RegisterControllers(ToolRegistry& registry)
         "(machine, applied profiles, the manual game profile), profiles, profile (as YAML), save, delete, apply (the "
         "game profile by hand, for a program started from the machine itself), bindings (effective, with the profile "
         "each came from), bind, unbind (in a user profile, saved and applied at once), scheme (how the pad works: "
-        "Kempston, Sinclair 1, QAOP + Space; the scheme the user profile extends). Options per action:" +
+        "Kempston, Sinclair 1, QAOP + Space; the scheme the user profile extends), haptics (whether the emulator "
+        "drives a device's motors, else why; its test effects), rumble (play a test effect on a host device). Options "
+        "per action:" +
             perVerb,
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
@@ -298,7 +324,8 @@ void RegisterControllers(ToolRegistry& registry)
             {
                 if ((*body).isMember("spec") && (*body)["spec"].isObject())
                     (*body)["spec"] = Compact((*body)["spec"]);
-                static const std::set<std::string> reads = {"devices", "context", "profiles", "profile", "bindings"};
+                static const std::set<std::string> reads = {"devices", "context", "profiles", "profile", "bindings",
+                                                            "haptics"};
                 const bool read = reads.count(action) != 0;
                 std::string path = "/api/v1/controllers/" + action;
                 if (read)

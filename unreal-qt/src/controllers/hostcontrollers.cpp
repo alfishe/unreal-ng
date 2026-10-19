@@ -20,6 +20,7 @@
 
 #ifdef ENABLE_CONTROLLERS
 #include "debugger/ttd/timetravelhooks.h"
+#include "devicedatabase.h"
 #include "emulator/config.h"
 #include "emulator/io/controllers/controllercontrol.h"
 #include "emulator/io/controllers/controllermanager.h"
@@ -67,6 +68,10 @@ public:
     void Reapply() override
     {
         _host.Reapply();
+    }
+    HostInputService* Input() override
+    {
+        return &_host.Service();
     }
 
 private:
@@ -349,10 +354,13 @@ void HostControllers::assignPlayers(const std::vector<HostDeviceInfo>& devices)
             std::find(order.begin(), order.end(), connector.id) == order.end())
             order.push_back(connector.id);
 
-    size_t pads = 0;
-    for (const HostDeviceInfo& device : devices)
-        if (device.family != "keyboard" && device.family != "mouse")
-            ++pads;
+    // A keyboard, a mouse and a control surface (the Surface Dial, `"player": false` in the device database) take
+    // no player connector
+    const auto player = [](const HostDeviceInfo& device) {
+        return device.family != "keyboard" && device.family != "mouse" &&
+               DeviceDatabase::Builtin().ForFamily(device.family, device.layout).player;
+    };
+    const size_t pads = static_cast<size_t>(std::count_if(devices.begin(), devices.end(), player));
     if (order.empty() && pads > 0)
     {
         ControllerControl control(context);
@@ -364,7 +372,7 @@ void HostControllers::assignPlayers(const std::vector<HostDeviceInfo>& devices)
     size_t n = 0;
     for (const HostDeviceInfo& device : devices)
     {
-        if (device.family == "keyboard" || device.family == "mouse")
+        if (!player(device))
             continue;
         _service->Router().SetPlayerConnector(device.id, n < order.size() ? order[n] : std::string{});
         ++n;

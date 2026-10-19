@@ -1,14 +1,17 @@
 /// @file hostinputcontrol_test.cpp
 /// @brief The host verbs every surface calls (surfaces.md §2): profiles listed with the shipped games of the index,
 /// one profile as YAML, save / delete in the user directory, the manual game profile, the effective bindings with
-/// their source, bind / unbind in a user profile, the errors, and Process without an owner.
+/// their source, bind / unbind in a user profile, the haptics of the devices and their test effects, the errors, and
+/// Process without an owner.
 
 #include <gtest/gtest.h>
 
 #include <filesystem>
 
 #include "_helpers/testpathhelper.h"
+#include "fake/fakebackend.h"
 #include "hostinputcontrol.h"
+#include "hostinputservice.h"
 
 using namespace controllers;
 
@@ -60,7 +63,16 @@ public:
         _resolved = _store.Resolve(_context);
         reapplied++;
     }
+    HostInputService* Input() override
+    {
+        return input;
+    }
+    void SetDevices(std::vector<HostDeviceInfo> devices)
+    {
+        _context.devices = std::move(devices);
+    }
     int reapplied = 0;
+    HostInputService* input = nullptr;
 
 private:
     ProfileStore _store;
@@ -195,4 +207,71 @@ TEST(HostInputControl_Test, ErrorsSayWhy)
     EXPECT_TRUE(HostInputControl::Process({"context", {}}).Ok());
     HostInputControl::SetOwner(nullptr);
     fs::remove_all(root);
+}
+
+TEST(HostInputControl_Test, HapticsListsTheEffectsAndRumblePlaysThem)
+{
+    FakeOwner owner(TestPathHelper::GetUniqueTestScratchPath("host-haptics"));
+    HostInputControl control(owner);
+    const HostDeviceInfo pad{"fake:1", "Pad", "xbox", "xbox", "fake"};
+    const HostDeviceInfo keyboard{"fake:kbd", "Keyboard", "keyboard", "keyboard", "fake"};
+    owner.SetDevices({pad, keyboard});
+
+    HostReply reply = control.Execute({"haptics", {}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    const JsonValue* none = FindItem(*reply.body.Find("devices"), "id", "fake:1");
+    ASSERT_NE(none, nullptr);
+    EXPECT_FALSE(none->Find("available")->AsBool()) << "no host output without a service";
+    EXPECT_EQ(control.Execute({"rumble", {{"device", "fake:1"}}}).error, "unavailable");
+
+    HostInputService service;
+    auto owned = std::make_unique<FakeBackend>();
+    FakeBackend* fake = owned.get();
+    std::string reason;
+    ASSERT_TRUE(service.AddBackend(std::move(owned), reason)) << reason;
+    ASSERT_TRUE(fake->Connect(pad));
+    ASSERT_TRUE(fake->Connect(keyboard));
+    owner.input = &service;
+
+    reply = control.Execute({"haptics", {}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    const JsonValue* motors = FindItem(*reply.body.Find("devices"), "id", "fake:1");
+    ASSERT_NE(motors, nullptr);
+    EXPECT_TRUE(motors->Find("available")->AsBool()) << motors->Find("reason")->AsString();
+    EXPECT_EQ(motors->Find("actuators")->Dump(), R"(["low","high"])") << "a backend's default: the two motors";
+    ASSERT_NE(FindItem(*motors->Find("effects"), "id", "clicks"), nullptr);
+    EXPECT_EQ(FindItem(*motors->Find("effects"), "id", "left-trigger"), nullptr) << "no trigger motors";
+    const JsonValue* keys = FindItem(*reply.body.Find("devices"), "id", "fake:kbd");
+    ASSERT_NE(keys, nullptr);
+    EXPECT_FALSE(keys->Find("available")->AsBool());
+    EXPECT_EQ(keys->Find("reason")->AsString(), "Keyboards and mice have no motors");
+    EXPECT_EQ(keys->Find("effects")->Items().size(), 0u);
+
+    reply = control.Execute({"haptics", {{"device", "fake:1"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.Find("devices")->Items().size(), 1u) << "device= keeps only that one";
+
+    reply = control.Execute({"rumble", {{"device", "fake:1"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.Find("effect")->AsString(), "identify") << "identify by default";
+    EXPECT_GT(fake->Rumble("fake:1").low, 0.0f) << "identify pulses both motors";
+    EXPECT_GT(fake->Rumble("fake:1").high, 0.0f);
+    service.Haptics().StopAll();
+
+    reply = control.Execute({"rumble", {{"device", "fake:1"}, {"effect", "high"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(fake->Rumble("fake:1").low, 0.0f);
+    EXPECT_GT(fake->Rumble("fake:1").high, 0.0f) << "the high-frequency motor alone";
+
+    reply = control.Execute({"rumble", {{"device", "fake:1"}, {"effect", "left-trigger"}}});
+    EXPECT_EQ(reply.error, "bad-request");
+    EXPECT_NE(reply.message.find("it has: identify, low, high, clicks, swell"), std::string::npos) << reply.message;
+    reply = control.Execute({"rumble", {{"device", "fake:kbd"}}});
+    EXPECT_EQ(reply.error, "unavailable");
+    EXPECT_NE(reply.message.find("no motors"), std::string::npos) << reply.message;
+    EXPECT_EQ(control.Execute({"rumble", {}}).error, "bad-request") << "rumble needs a device";
+    EXPECT_EQ(control.Execute({"rumble", {{"device", "fake:9"}}}).error, "unknown-device");
+    EXPECT_EQ(control.Execute({"haptics", {{"device", "fake:9"}}}).error, "unknown-device");
+    EXPECT_EQ(control.Execute({"haptics", {{"effect", "low"}}}).error, "bad-request") << "effect is rumble's";
+    service.Stop();
 }
