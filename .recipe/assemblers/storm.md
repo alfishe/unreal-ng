@@ -122,7 +122,15 @@ bytes; the asm-synchronizer reads them without a save
   into INCLUDEd parts.
 - **The code is not in memory while STORM runs**: read it after BREAK Q.
 - **The export's start field** holds the text length (82 for an 82-byte text), not an address.
-- A line of more than 40 characters cannot be stored (blue border): the format's limit.
+- A line of more than 40 characters cannot be stored (blue border): the format's limit. The backend puts the longest
+  expression of a wider line under a name of its own (`S EQU (VALUE_E-VALUE_4-2)*256+#18`, `LD HL,S`); STORM's EQU
+  takes no label defined further down ("Label not defined"), an instruction takes a later EQU, so the EQU goes after
+  the line of the last name it holds.
+- **In parentheses STORM 1.3 computes only `+ - * / \ << >>` and `~ [ ]`**: `&` `!` `|` lose their right operand
+  (`1+(6&3)` = 7), `@` is dropped (`1+(0@)` = 1), a comparison is a syntax error that derails the whole pass, `(6!1)`
+  stops STORM with `3 Subscript wrong`. The same in an index's `(IX+5!2)`; a memory operand's `LD HL,(5!2)` is right,
+  and so are all of them outside parentheses. Checked 2026-10-19 with the lines typed in STORM's own editor (its tokens
+  are the codec's byte for byte). The backend writes such an expression as its value.
 - **`DB "A"`**: STORM 1.3's first pass counts it as two bytes, so the labels after it come out too high (its help
   lists it among the bugs); write the character's number.
 - **STORM 1.3i** loses bytes of a large assembly (about 500 lines and more): the code read after BREAK Q is wrong

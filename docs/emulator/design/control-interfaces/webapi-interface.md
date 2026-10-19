@@ -569,6 +569,15 @@ Pentagon) with the default A/V delay of 2, and `audio_extra_delay_frames` 5.
 Emulation itself is not delayed. The same status is CLI `video temporal`,
 Lua / Python `video_temporal()`, MCP `capture_media` `temporal_status`.
 
+```
+GET  /api/v1/emulator/{id}/video/window       GUI window display settings: backend (gpu / software), gpu_available, gpu, crt, crt_profile, crt_profiles[], blending, blending_frames, blending_weights, emulator (the instance the window shows)
+PUT  /api/v1/emulator/{id}/video/window       any of {"gpu": bool, "crt": bool, "crt_profile": "shadow-mask", "blending": bool, "blending_frames": 2..5, "blending_weights": "equal"|"exponential"} (POST too); applied the way the View menu does, answers the settings after the change; 400 bad-parameter, 409 no-window (headless) / unavailable (gpu without OpenGL), {error, kind}
+```
+
+The window belongs to the GUI, which registers it with the core; headless every call answers 409 `no-window`. The
+same settings are CLI `video window`, Lua / Python `window_display()` / `window_display_set()`, MCP `capture_media`
+`window_display` / `window_display_set`; screenshot `source=window` shows their effect.
+
 The device reports (AY, FM, GS, Covox, MoonSound, FDC) are built once in the core
 (`core/src/emulator/state/devicestate.h`) and are byte-for-byte the same
 data the CLI, Lua, Python and MCP return — see
@@ -606,11 +615,13 @@ POST /api/v1/emulator/{id}/listing/run_to_line Run to first code byte of a line 
 ### Screenshots
 
 ```
-GET /api/v1/emulator/{id}/capture/screen?area=full|screen&format=png|gif&source=presented|live&path=<file>
+GET /api/v1/emulator/{id}/capture/screen?area=full|screen&format=png|gif&source=presented|live|window&path=<file>
 GET /api/v1/emulator/{id}/capture/framebuffer?format=rgba|index&encoding=binary|base64   (raw pixels of the same frame)
 ```
 
 `capture/screen` is a screenshot of the **presented frame** (the finished, tear-free frame the window shows, a couple of frames behind the machine, more with ZX DLSS). `area=full` (default) is the whole frame with its border (352x288 on a Spectrum, 736x288 on the Sprinter, the whole picture of an FT812 card, e.g. 1024x768); `area=screen` is the working picture the frame's own geometry names (the paper of a Spectrum, the graphics window of a TS-Conf, the whole FT812 picture; on a hires mode it can be the whole frame, then both give the same image). `format=png` (default, lossless) or `gif` (256 colors). `path=` (alias `filename=`) writes the image on the server (folders are created) instead of returning it. `mode=full|screen` is a deprecated alias of `area`; the pair must not disagree. `source=presented` (default) is the frame above; `source=live` is the frame as drawn right now (no present delay, no ZX DLSS): a running machine's emulation thread copies it at the end of its next frame (409 `no-frame` if none arrives within 1 s), a paused machine is read directly and the answer adds `frame.beam {line, tstate}` and `frame.partial` (the beam stopped inside a frame drawn per T-state). The master of a ZX-Poly group answers with the group's composed display frame (`frame.source: composed`, 2x, the working picture 512x384).
+
+`source=window` is the picture as the unreal-qt window draws it: the shape it gives the frame (its own 4:3 for the VDAC2's FT812 picture), the CRT shader and the HUD, in display pixels, letterbox excluded; the answer adds `window` (`viewport`, `picture`, `device_pixel_ratio`, `backend`). Only for the instance the GUI shows and `area=full`; headless or another instance is 409 `no-window`. The core only declares the interface (`IWindowViewProvider`); the GUI registers the grab.
 
 ```bash
 curl -s "http://localhost:8090/api/v1/emulator/$EMU/capture/screen" | jq 'del(.data)'
@@ -1624,6 +1635,24 @@ Every route is SlotControl ([command-interface.md section 14](./command-interfac
 restarts with the new slot set: `200`, `status: "applied"`, `restart.emulatorId` is the new id (`started` when the old
 one ran), `media` says where the media went. `POST /control/audio/gs` `switch_personality` is the same change for the
 card in the GS slot (owner decision Q10).
+
+### Game Controllers
+
+```
+GET  /api/v1/emulator/{id}/controllers                   the machine's connectors and the retro devices in them
+GET  /api/v1/emulator/{id}/controllers/{connector}       one connector
+POST /api/v1/emulator/{id}/controllers/{connector}/{verb} plug {device, options} | unplug | options | input
+GET  /api/v1/controllers/{verb}                          devices | context | profiles | profile | bindings | haptics
+POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble
+```
+
+The machine routes are ControllerControl, the host routes HostInputControl
+([command-interface.md section 15](./command-interface.md#15-game-controllers); OpenAPI tag `Controllers`); a host verb
+called with the wrong method answers `405`. `GET /api/v1/controllers/haptics[?device=]` lists per device `available`,
+`reason` (why the emulator cannot drive its motors), `actuators` and `effects` (`id`, `label`, `ms`);
+`POST /api/v1/controllers/rumble {"device": "...", "effect": "clicks"}` plays one (`identify` by default): `200` with
+`message`, `404` `unknown-device`, `400` `bad-request` for an effect the device lacks, `503` `unavailable` with the
+reason for a device without drivable motors or a process without the Qt client.
 
 ### Snapshots (Implemented Separately)
 ```

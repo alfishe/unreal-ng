@@ -6,6 +6,8 @@
 
 #include <QDebug>
 #include <QKeyEvent>
+#include <QPixmap>
+#include <cstring>
 #include <QWidget>
 #include <QWindow>
 
@@ -159,15 +161,29 @@ DeviceScreenWrapper::~DeviceScreenWrapper()
     _software = nullptr;
 }
 
-void DeviceScreenWrapper::init(uint16_t width, uint16_t height, void* buffer)
+void DeviceScreenWrapper::init(uint16_t width, uint16_t height, void* buffer, float aspect)
 {
+    _pictureAspect = aspect > 0.0f ? aspect : 0.0f;
     if (_useGPU && _gpuWindow)
-        _gpuWindow->init(width, height, buffer);
+        _gpuWindow->init(width, height, buffer, _pictureAspect);
     else if (_software)
-        _software->init(width, height, buffer);
+        _software->init(width, height, buffer, _pictureAspect);
 
     emit screenInitialized();
     emit pictureGeometryChanged();
+}
+
+void DeviceScreenWrapper::init(const FramebufferDescriptor& framebuffer, const Screen& screen)
+{
+    init(framebuffer.width, framebuffer.height, framebuffer.memoryBuffer, PictureAspect(framebuffer, screen));
+}
+
+float DeviceScreenWrapper::PictureAspect(const FramebufferDescriptor& framebuffer, const Screen& screen)
+{
+    // The machine's raster is a CRT picture (DisplayGeometry); a video card's picture (VGA modes) is not
+    if (!screen.IsExternalPictureActive() || framebuffer.height == 0)
+        return 0.0f;
+    return static_cast<float>(framebuffer.width) / static_cast<float>(framebuffer.height);
 }
 
 void DeviceScreenWrapper::detach()
@@ -211,6 +227,71 @@ QRectF DeviceScreenWrapper::pictureSourceRect() const
     if (_software)
         return _software->displaySourceRect();
     return {};
+}
+
+bool DeviceScreenWrapper::grabWindowView(WindowViewGrab& out, std::string& error)
+{
+    QImage image;
+    QRect viewport;
+    QRect picture;
+    double ratio = 1.0;
+    if (_useGPU && _gpuWindow)
+    {
+        // The GL window fills the screen area; paintGL draws the picture centered in it at drawnPictureSize. Rendered
+        // afresh: the back buffer QOpenGLWindow::grabFramebuffer reads holds the frame before the last swap, so a
+        // paused machine would show a setting changed after its last frame only on the next one
+        image = _gpuWindow->renderWindowImage();
+        ratio = _gpuWindow->devicePixelRatio();
+        viewport = QRect(0, 0, _gpuWindow->width(), _gpuWindow->height());
+        const QSize drawn = _gpuWindow->drawnPictureSize();
+        picture = QRect((viewport.width() - drawn.width()) / 2, (viewport.height() - drawn.height()) / 2, drawn.width(),
+                        drawn.height());
+        out.backend = "gpu";
+    }
+    else if (_software)
+    {
+        // The widget keeps the picture's shape inside its parent (fitToParent): the widget is the picture
+        const QPixmap pixmap = _software->grab();
+        image = pixmap.toImage();
+        ratio = pixmap.devicePixelRatio();
+        const QWidget* parent = _software->parentWidget();
+        viewport = parent ? QRect(QPoint(0, 0), parent->size()) : QRect(QPoint(0, 0), _software->size());
+        picture = parent ? _software->geometry() : viewport;
+        image = image.copy(QRect(QPoint(0, 0), (QSizeF(picture.size()) * ratio).toSize()));
+        out.backend = "software";
+    }
+    if (image.isNull() || picture.isEmpty())
+    {
+        error = "The screen has drawn no picture yet";
+        return false;
+    }
+
+    if (out.backend == "gpu")
+    {
+        const QRect device(qRound(picture.x() * ratio), qRound(picture.y() * ratio), qRound(picture.width() * ratio),
+                           qRound(picture.height() * ratio));
+        image = image.copy(device.intersected(image.rect()));
+    }
+    image = image.convertToFormat(QImage::Format_RGBA8888);
+
+    out.width = static_cast<uint16_t>(image.width());
+    out.height = static_cast<uint16_t>(image.height());
+    const size_t lineBytes = static_cast<size_t>(out.width) * 4;
+    out.rgba.resize(lineBytes * out.height);
+    for (int y = 0; y < image.height(); ++y)
+        std::memcpy(out.rgba.data() + lineBytes * static_cast<size_t>(y), image.constScanLine(y), lineBytes);
+    // The grab has no alpha of its own: what the window shows is opaque
+    for (size_t i = 3; i < out.rgba.size(); i += 4)
+        out.rgba[i] = 0xFF;
+
+    auto rect = [](const QRect& r) {
+        return PictureRect{static_cast<uint16_t>(r.x()), static_cast<uint16_t>(r.y()), static_cast<uint16_t>(r.width()),
+                           static_cast<uint16_t>(r.height())};
+    };
+    out.viewport = rect(viewport);
+    out.picture = rect(picture);
+    out.devicePixelRatio = ratio;
+    return true;
 }
 
 void DeviceScreenWrapper::setFrameSource(std::function<bool(uint8_t*, size_t)> fn)

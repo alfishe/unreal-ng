@@ -17,6 +17,7 @@
 #include "emulator/io/controllers/ihostinputsource.h"
 #include "haptics/hapticmixer.h"
 #include "haptics/hapticprofile.h"
+#include "haptics/testeffects.h"
 #include "hostbackend.h"
 #include "router/inputrouter.h"
 
@@ -60,7 +61,8 @@ public:
     {
         return _revision.load();
     }
-    /// A device's last value of every control it reported: the dialog's live view and press-to-bind
+    /// A device's last value of every control it reported (an encoder's: the sum of its steps since it connected):
+    /// the dialog's live view and press-to-bind
     std::map<std::string, float> Live(const HostDeviceId& device) const;
 
     /// region <Haptics (haptics.md §3; host output only, H-4)>
@@ -70,7 +72,9 @@ public:
     std::string HapticsUnavailable(const HostDeviceId& device) const;
     /// Play an effect on a device (ignored while the gate is closed)
     void PlayEffect(const HostDeviceId& device, const HapticEffect& effect);
-    /// Identify: a short pulse on both motors, so the user sees which pad is which (ui-ux.md)
+    /// Play a test effect (haptics.md §10): a clicker's clicks straight to its backend, an envelope as PlayEffect
+    void PlayTest(const HostDeviceId& device, const TestEffect& test);
+    /// Identify: a short pulse on both motors (two clicks on a clicker), so the user sees which pad is which (ui-ux.md)
     void Identify(const HostDeviceId& device);
     /// H-5: the host closes it on pause, seek, replay, turbo and focus loss; closing stops every motor
     void SetHapticsGate(bool open);

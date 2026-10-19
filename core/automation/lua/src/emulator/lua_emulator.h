@@ -32,7 +32,11 @@
 #include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/media/mediacontrol.h>
 #include <emulator/slots/slotcontrol.h>
+#include <emulator/io/controllers/controllercontrol.h>
 #include <emulator/sound/midi/midicontrol.h>
+#ifdef ENABLE_CONTROLLERS
+#include "hostinputcontrol.h"
+#endif
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/tape/tape.h>
 #include <tapeaudio/tapeaudioimporter.h>
@@ -47,6 +51,7 @@
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
+#include "../../../windowdisplay.h"
 #include "../../../operationsstatus.h"
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/debugmanager.h>
@@ -158,6 +163,35 @@ inline sol::object StateNodeToLua(sol::this_state s, const StateNode& node)
         default: return sol::make_object(lua, sol::lua_nil);
     }
 }
+
+#ifdef ENABLE_CONTROLLERS
+/// A host controllers reply (HostReply::ToValue) -> Lua table, as StateNodeToLua
+inline sol::object JsonValueToLua(sol::this_state s, const controllers::JsonValue& value)
+{
+    sol::state_view lua(s);
+    if (value.IsBool())
+        return sol::make_object(lua, value.AsBool());
+    if (value.IsNumber())
+        return sol::make_object(lua, value.AsNumber());
+    if (value.IsString())
+        return sol::make_object(lua, value.AsString());
+    if (value.IsObject())
+    {
+        sol::table t = lua.create_table();
+        for (const auto& [key, member] : value.GetMembers())
+            t[key] = JsonValueToLua(s, member);
+        return t;
+    }
+    if (value.IsArray())
+    {
+        sol::table t = lua.create_table();
+        for (size_t i = 0; i < value.Items().size(); i++)
+            t[i + 1] = JsonValueToLua(s, value.Items()[i]);
+        return t;
+    }
+    return sol::make_object(lua, sol::lua_nil);
+}
+#endif
 
 
 class LuaEmulator
@@ -1380,10 +1414,11 @@ public:
             out.push_back(t);
             return out;
         });
-        // screenshot([{area = "full"|"screen", format = "png"|"gif", source = "presented"|"live", path = "file"}]): a
+        // screenshot([{area = "full"|"screen", format = "png"|"gif", source = "presented"|"live"|"window", path = "file"}]): a
         // screenshot (core Screenshotter): the whole frame (default) or the working picture, PNG (default) or GIF,
         // of the presented frame (default) or the live one as drawn now (a paused machine adds frame.partial and
-        // frame.beam = {line, tstate}).
+        // frame.beam = {line, tstate}), or the picture as the unreal-qt window draws it ("window": GUI only, area full;
+        // adds window = {viewport, picture, device_pixel_ratio, backend}).
         // Returns {format, area, width, height, size, crop = {x,y,width,height}, screen_window = {...}, frame = {width,
         // height, mode, source, frame_number}, data = the encoded image as a string of bytes} or, with a path, `file`
         // instead of `data`; nil, error on a bad word, a missing emulator or no frame
@@ -1402,7 +1437,7 @@ public:
                 if (!area.empty() && !Screenshotter::ParseArea(area, options.area))
                     return mouseError(s, "Unknown area '" + area + "': use full or screen");
                 if (!source.empty() && !Screenshotter::ParseSource(source, options.source))
-                    return mouseError(s, "Unknown source '" + source + "': use presented or live");
+                    return mouseError(s, "Unknown source '" + source + "': use presented, live or window");
                 if (!format.empty() && !Screenshotter::ParseFormat(format, options.format))
                     return mouseError(s, "Unknown format '" + format + "': use png or gif");
                 options.saveTo = opts->get_or<std::string>("path", "");
@@ -1445,6 +1480,15 @@ public:
                 frame["beam"] = beam;
             }
             t["frame"] = frame;
+            if (shot.fromWindow)
+            {
+                sol::table window = view.create_table();
+                window["viewport"] = rect(shot.window.viewport);
+                window["picture"] = rect(shot.window.picture);
+                window["device_pixel_ratio"] = shot.window.devicePixelRatio;
+                window["backend"] = shot.window.backend;
+                t["window"] = window;
+            }
             if (!shot.savedFile.empty())
                 t["file"] = shot.savedFile;
             else
@@ -1768,6 +1812,88 @@ public:
             }
             return StateNodeToLua(s, MediaControl(emulator->GetContext()).Execute(request).ToValue());
         };
+        // controllers(verb, [connector], [device], [{options}]) -> the reply table every surface returns: the machine's
+        // joystick connectors (list, get, plug, unplug, options, targets, auto, input; ControllerControl, as the
+        // CLI `controllers`, WebAPI /controllers and Python controllers_*)
+        lua.set_function("controllers", [this](sol::this_state s, const std::string& verb, sol::optional<std::string> connector,
+                                               sol::optional<std::string> device, sol::optional<sol::table> opts) {
+            controllers::ControllerRequest request;
+            request.verb = verb;
+            request.selector = connector.value_or("");
+            request.device = device.value_or("");
+            if (opts)
+                for (const auto& [key, value] : *opts)
+                {
+                    if (!key.is<std::string>())
+                        continue;
+                    std::string text;
+                    if (value.is<bool>())
+                        text = value.as<bool>() ? "true" : "false";
+                    else if (value.get_type() == sol::type::number)
+                        text = std::to_string(value.as<long long>());
+                    else if (value.is<std::string>())
+                        text = value.as<std::string>();
+                    request.options[key.as<std::string>()] = text;
+                }
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+            {
+                StateNode none = StateNode::Object();
+                none["ok"] = false;
+                none["error"] = "unknown-emulator";
+                none["message"] = "no emulator selected";
+                return StateNodeToLua(s, none);
+            }
+            return StateNodeToLua(s, controllers::ControllerControl(emulator->GetContext()).Execute(request).ToValue());
+        });
+        // controllers_host(verb, {options}) -> the reply table every surface returns: the host game controllers
+        // (devices, profiles, bindings, haptics, rumble; HostInputControl, the process's, not the machine's)
+        auto hostControllersCall = [](sol::this_state s, const std::string& verb, sol::optional<sol::table> opts) {
+#ifdef ENABLE_CONTROLLERS
+            controllers::HostRequest request;
+            request.verb = verb;
+            if (opts)
+                for (const auto& [key, value] : *opts)
+                {
+                    if (!key.is<std::string>())
+                        continue;
+                    std::string text;
+                    if (value.is<bool>())
+                        text = value.as<bool>() ? "true" : "false";
+                    else if (value.get_type() == sol::type::number)
+                        text = std::to_string(value.as<long long>());
+                    else if (value.is<std::string>())
+                        text = value.as<std::string>();
+                    request.options[key.as<std::string>()] = text;
+                }
+            return JsonValueToLua(s, controllers::HostInputControl::Process(request).ToValue());
+#else
+            (void)verb;
+            (void)opts;
+            StateNode reply = StateNode::Object();
+            reply["ok"] = false;
+            reply["error"] = "unavailable";
+            reply["message"] = "built without host game controllers (ENABLE_CONTROLLERS=OFF)";
+            return StateNodeToLua(s, reply);
+#endif
+        };
+        lua.set_function("controllers_host", hostControllersCall);
+        // controllers_haptics([device]) -> devices[]: available or reason, actuators, the test effects
+        lua.set_function("controllers_haptics", [hostControllersCall](sol::this_state s, sol::optional<std::string> device) {
+            sol::table opts = sol::state_view(s).create_table();
+            if (device && !device->empty())
+                opts["device"] = *device;
+            return hostControllersCall(s, "haptics", opts);
+        });
+        // controllers_rumble(device, [effect]) -> play a test effect (identify, low, high, clicks, left-trigger,
+        // right-trigger, swell)
+        lua.set_function("controllers_rumble", [hostControllersCall](sol::this_state s, const std::string& device,
+                                                                     sol::optional<std::string> effect) {
+            sol::table opts = sol::state_view(s).create_table();
+            opts["device"] = device;
+            opts["effect"] = effect.value_or("identify");
+            return hostControllersCall(s, "rumble", opts);
+        });
         lua.set_function("media", [mediaCall](sol::this_state s, const std::string& verb, sol::optional<std::string> slot,
                                               sol::optional<std::string> path, sol::optional<sol::table> opts) {
             return mediaCall(s, verb, slot.value_or(""), path.value_or(""), opts);
@@ -5725,6 +5851,36 @@ public:
                 return StateNodeToLua(s, error);
             }
             return StateNodeToLua(s, TemporalStatus::Report(ctx));
+        });
+        // GUI window display settings (GPU, CRT effects / profile, temporal blending): the WindowDisplay report every
+        // interface returns. window_display() reads; window_display_set({gpu = true, crt_profile = "shadow-mask",
+        // blending = true, blending_frames = 3, blending_weights = "exponential", crt = false}) changes any of them the
+        // way the View menu does. Headless: {ok = false, error, kind = "no-window"}
+        lua.set_function("window_display", [](sol::this_state s) -> sol::object {
+            const WindowDisplay::Result r = WindowDisplay::Get();
+            return StateNodeToLua(s, r.Ok() ? WindowDisplay::Report(r.settings) : WindowDisplay::ErrorNode(r));
+        });
+        lua.set_function("window_display_set", [](sol::this_state s, sol::table changes) -> sol::object {
+            WindowDisplayChange change;
+            WindowDisplay::Result bad;
+            bad.status = WindowDisplay::Status::BadParameter;
+            for (const auto& [k, v] : changes)
+            {
+                const std::string key = k.is<std::string>() ? k.as<std::string>() : std::string("?");
+                std::string word;
+                if (v.get_type() == sol::type::boolean)
+                    word = v.as<bool>() ? "on" : "off";
+                else if (v.get_type() == sol::type::number)
+                    word = std::to_string(v.as<long long>());
+                else if (v.get_type() == sol::type::string)
+                    word = v.as<std::string>();
+                if (word.empty())
+                    bad.error = "'" + key + "' takes a boolean, a number or a string";
+                if (!bad.error.empty() || !WindowDisplay::ApplyWord(change, key, word, bad.error))
+                    return StateNodeToLua(s, WindowDisplay::ErrorNode(bad));
+            }
+            const WindowDisplay::Result r = WindowDisplay::Set(change);
+            return StateNodeToLua(s, r.Ok() ? WindowDisplay::Report(r.settings) : WindowDisplay::ErrorNode(r));
         });
 
         // Halt/active cost of the last frame plus session averages

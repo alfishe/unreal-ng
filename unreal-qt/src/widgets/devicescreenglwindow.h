@@ -31,7 +31,9 @@ public:
     explicit DeviceScreenGLWindow(QWindow* parent = nullptr);
     ~DeviceScreenGLWindow() override;
 
-    void init(uint16_t width, uint16_t height, void* buffer);
+    /// `aspect`: width : height the picture is drawn in; 0 = the CRT frame's 352:288 (every machine raster).
+    /// A video card's own picture (the VDAC2's FT812) has square pixels and gives its own
+    void init(uint16_t width, uint16_t height, void* buffer, float aspect = 0.0f);
     void detach();
 
     using FrameCopyFn = std::function<bool(uint8_t* dst, size_t dstSize)>;
@@ -74,6 +76,9 @@ public:
     void setDisplayViewport(const DisplayViewport& viewport);
     void clearDisplayViewport();
     QImage grabFramebuffer();
+    /// The window as it draws now (picture, letterbox, CRT shader, HUD), rendered afresh into an image in device
+    /// pixels. QOpenGLWindow::grabFramebuffer only reads the back buffer, which after a swap may hold an older frame
+    QImage renderWindowImage();
 
     void setCRTEffectsEnabled(bool enabled);
     bool crtEffectsEnabled() const { return _crtEnabled; }
@@ -130,7 +135,8 @@ private:
     bool _temporalEnabled = false;
     int _temporalWeightMode = 0;
 
-    static constexpr float ratio = static_cast<float>(kNativeWidth) / static_cast<float>(kNativeHeight);
+    static constexpr float kNativeRatio = static_cast<float>(kNativeWidth) / static_cast<float>(kNativeHeight);
+    float ratio = kNativeRatio;  // the shape the picture is drawn in (init)
 
     std::shared_ptr<Emulator> _emulator = nullptr;
     class MouseCaptureController* _mouseCapture = nullptr;  // owned by DeviceScreenWrapper
@@ -140,6 +146,7 @@ private:
     bool _hasViewport = false;
 
     class HudOverlay* _hudOverlay = nullptr;
+    bool _renderingImage = false;  ///< paintGL draws for renderWindowImage(): no HUD into the window
 public:
     void setHudOverlay(class HudOverlay* overlay) { _hudOverlay = overlay; }
     class HudOverlay* hudOverlay() const { return _hudOverlay; }

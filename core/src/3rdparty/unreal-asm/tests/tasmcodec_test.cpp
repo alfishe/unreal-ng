@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <tuple>
 
 #include "codecs/tasm/tasmcodec.h"
 #include "testdata.h"
@@ -342,12 +343,18 @@ TEST(TasmCodec_Test, Tasm5xStoresLinesStructurally)
 
 TEST(TasmCodec_Test, ALongerTextThanTheEditorHoldsIsReported)
 {
-    // TASM 4.12 loads 22801 bytes (#A6EE up to #FFFF) and says "OK" over a longer file, its text broken: a project's longer file is cut into INCLUDEd parts (zxasm convert --project)
+    // each version's editor loads and edits a file up to its text's room (4.12 22801 bytes from #A6EE, 4.0 / 4.4 24663
+    // from #9FA8, 3.x 26314 from #9935, 2.0 26529) and says "OK" over a longer one, its text broken: a project's longer
+    // file is cut into INCLUDEd parts (zxasm convert --project). The line counts: the last that fit and the first that
+    // did not, measured in the emulator
     const codecs::TasmCodec codec;
-    EncodeOptions options;
-    options.subversion = "4.12";
-    const EncodeResult fits = codec.Encode(MeasuredText(2122, "tasm"), options);
-    EXPECT_EQ(fits.bytes.size(), 22801u);
-    EXPECT_FALSE(Longer(fits));
-    EXPECT_TRUE(Longer(codec.Encode(MeasuredText(2123, "tasm"), options)));
+    for (const auto& [version, fit, size] : {std::tuple<std::string, size_t, size_t>{"4.12", 2122, 22801}, {"4.0", 2099, 24655}, {"3", 2239, 26305}, {"2.0", 1930, 26529}})
+    {
+        EncodeOptions options;
+        options.subversion = version;
+        const EncodeResult fits = codec.Encode(MeasuredText(fit, "tasm"), options);
+        EXPECT_EQ(fits.bytes.size(), size) << version;
+        EXPECT_FALSE(Longer(fits)) << version;
+        EXPECT_TRUE(Longer(codec.Encode(MeasuredText(fit + 1, "tasm"), options))) << version;
+    }
 }

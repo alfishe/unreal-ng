@@ -49,6 +49,7 @@ audio and game events to haptic effects.
 | Impulse triggers | Xbox One / Series, Elite 2 | two amplitudes 0..1 (LT, RT) | Over GIP; GameInput and WGI on Windows, GameController on macOS (localities seen in the dump, research-host-apis §2.3) |
 | Voice-coil HD haptics | DualSense, DualSense Edge, Steam Deck, Switch Pro / Joy-Con (HD rumble) | waveform or amplitude + frequency | DualSense: audio-rate signal on USB (the second audio channel pair), CoreHaptics patterns on macOS; Switch: amplitude + frequency pairs |
 | Adaptive triggers | DualSense, Edge | resistance, vibration, weapon modes | Not haptic in the pulse sense; a separate optional output (§6.4) |
+| Clicker (Simple Haptic Controller) | Surface Dial | a waveform (click, buzz), a repeat count and a period | No levels: plays HapticClicks through HID output report 1 (`01, count, 3 click / 4 buzz, period lo, hi`); the game's motor haptics skip it, the test effects and Identify click it |
 | Speaker in the pad | DualSense, Wii Remote | audio | Out of scope; listed so it is not confused with haptics |
 | LEDs, light bar, player LEDs | DualSense, DS4, Switch, Elite guide light | colour, brightness | Already in architecture §10; usable as a visual twin of an effect |
 
@@ -221,14 +222,17 @@ asserts that frame hashes are identical with the feed active (§12).
 
 | OS | Handle motors | Impulse triggers | HD haptics |
 |:--|:--|:--|:--|
-| macOS | GameController `GCDeviceHaptics` (CoreHaptics engine per locality) once the GC device is matched (D18); raw output reports where the HID path allows them | GC localities `leftTrigger` / `rightTrigger` | DualSense through CoreHaptics; AHAP patterns |
+| macOS | IOHID output reports: Xbox over Bluetooth (report 3), DualSense over USB (report 2), the Surface Dial's clicks (report 1); none for an Xbox pad over USB (below) | GC localities `leftTrigger` / `rightTrigger` | DualSense through CoreHaptics; AHAP patterns |
 | Windows | GameInput `SetRumbleState`; XInput `XInputSetState` as the last resort | GameInput (Xbox) | DualSense raw output reports over Raw Input / HID (no OS API) |
-| Linux | evdev force feedback (`EV_FF`, `FF_RUMBLE`) | hidraw for Xbox (xpad exposes only `FF_RUMBLE`) | hidraw output reports (hid-playstation for basic rumble) |
+| Linux | evdev force feedback (`EV_FF`, `FF_RUMBLE`); the Surface Dial's clicks need hidraw (not yet) | hidraw for Xbox (xpad exposes only `FF_RUMBLE`) | hidraw output reports (hid-playstation for basic rumble) |
 | SDL3 (later, D6) | `SDL_RumbleGamepad` | `SDL_RumbleGamepadTriggers` | none |
 
-Open on macOS: whether output reports through the `XboxGamepad.dext` work over USB (SDL says they do not;
-research-host-apis §2.3a). If they do not, Xbox rumble on macOS goes only through GameController, which is why the
-GC↔IOHID match (D18) matters for haptics.
+macOS over USB (2026-10-19): an Xbox pad over USB does not rumble. The `XboxGamepad.dext` endpoint offers only vendor
+output reports 1 (12 bytes) and 5 (4 bytes); writes of the Bluetooth and GIP rumble layouts to them return success and
+drive nothing. GameController lists the pad (vendor name "Controller", all localities) and its CoreHaptics engines start
+and play without an error, yet no motor turns (a probe on an Elite Series 2, firmware 5.22; SDL reports the same,
+libsdl-org/SDL#14800, and dropped output reports to wired Xbox pads on macOS in 7da728a). The backend says so: the Test
+haptics button is off with "connect the pad over Bluetooth"; over Bluetooth output report 3 drives all four actuators.
 
 ## 10. UI
 
@@ -236,9 +240,11 @@ GC↔IOHID match (D18) matters for haptics.
   "this game has haptics" badge when a profile with haptics matched.
 - **Advanced**: the Haptics tab: sources with live meters, rules, the effect editor with "Test", per-actuator meters,
   the gate state ("muted: replay"), and the per-device strength.
-- **Test** plays each effect on the selected device; "Identify" stays a 300 ms rumble (ui-ux.md). The device list's
-  **Test haptics** button (built) plays Identify, one effect per actuator and a swell; off, with the backend's reason
-  in its tooltip, for a device without motors the emulator can drive.
+- **Test** plays each effect on the selected device; "Identify" stays a 300 ms rumble (ui-ux.md). The selected
+  device's header (built) has the test effects in a list and the **Test haptics** button that plays the chosen one:
+  Identify, one effect per actuator and a swell; for a clicker (the Surface Dial) Identify (two clicks), a click,
+  three clicks and a buzz (`haptics/testeffects.h`, the `rumble` verb's effects too); both off,
+  with the backend's reason in their tooltip, for a device without motors the emulator can drive.
 - The controller picture lights the actuator zones (grips, triggers) while they play.
 
 ## 11. Surfaces
@@ -249,6 +255,13 @@ GC↔IOHID match (D18) matters for haptics.
 | WebAPI | `GET/PUT /api/v1/controllers/haptics`, `POST /api/v1/controllers/haptics/play`, `POST /api/v1/controllers/haptics/stop` |
 | MCP `controllers` | `haptics_state`, `haptics_play`, `haptics_stop` |
 | Events | `NC_CONTROLLER_FEEDBACK` gains `haptic-source` and `haptic-gate` payloads, for meters and companion clients ([surfaces.md §9](surfaces.md#9-events)) |
+
+Built (2026-10-19): the host verbs `haptics` (per device: `available` or the `reason`, `actuators`, the test
+`effects`) and `rumble` (`device`, `effect`: one of the test effects of §10) on every surface - CLI `controllers
+haptics` / `controllers rumble`, WebAPI `GET /api/v1/controllers/haptics`, `POST /api/v1/controllers/rumble`, MCP
+`controllers` actions `haptics` / `rumble`, Python `controllers_haptics()` / `controllers_rumble()`, Lua
+`controllers_haptics()` / `controllers_rumble()`. The effects are one table (`haptics/testeffects.h`) that the
+dialog's Test haptics also plays. Mode, strength, gate and stop are still to come.
 
 A companion client (Steam Deck, phone) may receive the effect stream and play it on its own actuators.
 

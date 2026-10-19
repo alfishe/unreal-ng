@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <map>
+#include <optional>
 #include <set>
 
 #include "codecs/storm/stormcodec.h"
@@ -115,15 +117,20 @@ private:
         std::string text;
         int priority = 9;
         bool postfix = false;   ///< ends with a postfix operator
+        bool lost = false;      ///< holds a group STORM 1.3 cannot compute
     };
 
-    static Printed Parenthesized(const Printed& p) { return {"(" + p.text + ")", 9, false}; }
+    /// In parentheses STORM 1.3 computes only + - * / \ << >> and ~ [ ] (priorities 4 and up): & ! | lose their right
+    /// operand (1+(6&3) = 7, 9-(+6&3) = 3), @ is dropped (1+(0@) = 1), a comparison is a syntax error, (6!1) and a
+    /// following *2 stop STORM with "3 Subscript wrong" (STORM's own tokens of the lines typed in its editor, 2026-10-19).
+    /// The same holds for an index's (IX+d), not for a memory operand's (5!2)
+    static Printed Parenthesized(const Printed& p) { return {"(" + p.text + ")", 9, false, p.lost || p.priority <= 3}; }
 
     /// `x` with a postfix operator of priority `q`: it acts on what the operators of priority q and above built
     static Printed Postfix(const Printed& x, const char* symbol, int q)
     {
         const Printed operand = x.priority < q ? Parenthesized(x) : x;
-        return {operand.text + symbol, q, true};
+        return {operand.text + symbol, q, true, operand.lost};
     }
 
     /// `l op r`, equal priorities left to right. A postfix operand on the left is parenthesized: STORM 1.3 computes
@@ -132,7 +139,7 @@ private:
     {
         const Printed left = l.priority < p || l.postfix ? Parenthesized(l) : l;
         const Printed right = r.priority <= p ? Parenthesized(r) : r;
-        return {left.text + symbol + right.text, p, false};
+        return {left.text + symbol + right.text, p, false, left.lost || right.lost};
     }
 
     /// STORM's 1 for true as the source's (sjasmplus -1: negated)
@@ -315,9 +322,21 @@ private:
         const auto p = Print(e);
         if (!p)
             return std::nullopt;
+        if (p->lost || (indexed && p->priority <= 3))
+            Problem("STORM 1.3 cannot compute & ! | @ or a comparison in parentheses");   // written as its value
         const std::string text = SubExpressions(p->text);
         if (text.size() > kOperandWidth && Value(e))
             Problem("too long for STORM's line");   // written as its value
+        return text;
+    }
+
+    bool indexed = false;   ///< the displacement of (IX+d) being written
+
+    std::string OperandText(const Operand& o) override
+    {
+        indexed = o.kind == Operand::Kind::Indexed;
+        const std::string text = RetroWriter::OperandText(o);
+        indexed = false;
         return text;
     }
 
@@ -501,6 +520,114 @@ private:
         return std::string::npos;
     }
 
+    /// The names in a STORM expression; nothing for a local label
+    std::optional<std::vector<std::string>> Names(const std::string& e) const
+    {
+        std::vector<std::string> names;
+        for (size_t i = 0; i < e.size();)
+        {
+            const auto c = static_cast<unsigned char>(e[i]);
+            if (std::isalpha(c) || c == '_')
+            {
+                size_t j = i;
+                while (j < e.size() && (std::isalnum(static_cast<unsigned char>(e[j])) || e[j] == '_'))
+                    ++j;
+                names.push_back(Key(e.substr(i, j - i)));
+                i = j;
+            }
+            else if (c == '#' || c == '%' || std::isdigit(c))
+                for (++i; i < e.size() && std::isalnum(static_cast<unsigned char>(e[i]));)
+                    ++i;
+            else if (c == '.')
+                return std::nullopt;
+            else
+                ++i;
+        }
+        return names;
+    }
+
+    struct Short
+    {
+        std::string equ, line, name, expr;
+    };
+
+    /// An instruction line wider than STORM's 40 columns: its longest operand expression under a name of its own, an EQU
+    /// of it (`LD H,(IY+(100~)+V+T+1)` -> `S1 EQU (100~)+V+T+1`, `LD H,(IY+S1)`); nothing when no operand gives a pair
+    /// that fits
+    std::optional<Short> Shortened(const std::string& t)
+    {
+        if (t.empty() || t[0] == ';' || t[0] == '.' || t.find_first_of("\"'") != std::string::npos)
+            return std::nullopt;
+        const size_t labelEnd = t[0] == ' ' ? 0 : t.find(' ');
+        const size_t command = t.find_first_not_of(' ', labelEnd);
+        const size_t blank = command == std::string::npos ? std::string::npos : t.find(' ', command);
+        if (blank == std::string::npos)
+            return std::nullopt;
+        const std::string head = t.substr(0, blank + 1), operands = t.substr(blank + 1);
+        // the operands at the commas outside brackets
+        std::vector<std::pair<size_t, size_t>> parts;
+        int depth = 0;
+        size_t from = 0;
+        for (size_t i = 0; i <= operands.size(); ++i)
+        {
+            if (i == operands.size() || (operands[i] == ',' && depth == 0))
+            {
+                parts.push_back({from, i});
+                from = i + 1;
+            }
+            else if (operands[i] == '(')
+                ++depth;
+            else if (operands[i] == ')')
+                --depth;
+        }
+        // the expression of each: inside a bracket that holds the whole operand, after IX / IY
+        size_t best = 0, bestAt = 0;
+        std::string bestExpr;
+        for (const auto& [b, e] : parts)
+        {
+            size_t at = b, end = e;
+            if (operands[at] == '(' && operands[end - 1] == ')')
+            {
+                int d = 0;
+                size_t close = at;
+                for (; close < end; ++close)
+                    if (operands[close] == '(')
+                        ++d;
+                    else if (operands[close] == ')' && --d == 0)
+                        break;
+                if (close == end - 1)
+                {
+                    ++at;
+                    --end;
+                    const std::string reg = z80::Upper(operands.substr(at, 2));
+                    if ((reg == "IX" || reg == "IY") && end - at > 2 && (operands[at + 2] == '+' || operands[at + 2] == '-'))
+                        at += operands[at + 2] == '+' ? 3 : 2;   // (IX-a+b): the offset 0-a+b under the name
+                }
+            }
+            if (end - at > best)
+            {
+                best = end - at;
+                bestAt = at;
+                bestExpr = operands.substr(at, end - at);
+            }
+        }
+        if (best < 8)
+            return std::nullopt;
+        const bool sign = bestExpr[0] == '-';
+        const std::string name = Give("S");
+        std::string equ = name;
+        equ.append(equ.size() < 8 ? 8 - equ.size() : 1, ' ');
+        equ += "EQU " + std::string(sign ? "0" : "") + bestExpr;
+        std::string rest = operands.substr(0, bestAt) + (sign ? "+" : "") + name + operands.substr(bestAt + best);
+        const std::string shorter = head + rest;
+        if (Width(equ) > kWidth || Width(shorter) > kWidth)
+        {
+            taken.erase(Key(name));
+            return std::nullopt;
+        }
+        return Short{equ, shorter, name, bestExpr};
+    }
+
     std::string CommentAfter() const override { return ";"; }
     /// STORM 1.3's first pass counts DB "A" as two bytes (the labels after it come out too high; its help lists DB "A"
     /// among the bugs): a character of DB is written as its number
@@ -590,14 +717,65 @@ private:
                 }
                 t.resize(at);
             }
-            else if (Width(t) > kWidth)
-                diagnostics.push_back({Severity::Warning, line, 0, "a line of " + std::to_string(Width(t)) + " characters (STORM edits 40): " + t});
             std::vector<uint8_t> body;
             std::string error;
             if (!t.empty() && !codecs::StormCodec::EncodeLine(t, body, error))
                 diagnostics.push_back({Severity::Warning, line, 0, "STORM cannot hold the line (" + error + "): " + t});
         }
         return out;
+    }
+
+public:
+    /// The text written: a line wider than STORM's 40 columns gets an EQU of its longest expression. STORM's EQU takes
+    /// no label defined further down ("Label not defined", STORM 1.3) and an instruction takes a later EQU, so the EQU
+    /// goes before the line, or after the line of the last name it holds (then without $: the instruction's address
+    /// is no longer the EQU's). A name of another file, a local label: the line stays as it is, reported
+    void Finish()
+    {
+        std::vector<SourceLine>& lines = result.document.lines;
+        const auto labelOf = [](const std::string& t) { return t.empty() || t[0] == ' ' || t[0] == ';' ? std::string() : t.substr(0, t.find(' ')); };
+        std::map<std::string, size_t> where;
+        for (size_t k = 0; k < lines.size(); ++k)
+            if (const std::string label = labelOf(lines[k].text); !label.empty())
+                where.emplace(Key(label), k);
+        std::map<size_t, std::vector<SourceLine>> before;   // EQU lines to put before a line (lines.size(): at the end)
+        for (size_t k = 0; k < lines.size(); ++k)
+        {
+            if (Width(lines[k].text) <= kWidth)
+                continue;
+            std::optional<size_t> at;
+            const auto shorter = Shortened(lines[k].text);
+            if (const auto names = shorter ? Names(shorter->expr) : std::nullopt)
+            {
+                size_t last = 0;
+                bool known = true;
+                for (const std::string& n : *names)
+                {
+                    const auto w = where.find(n);
+                    known = known && w != where.end();
+                    if (w != where.end())
+                        last = std::max(last, w->second);
+                }
+                if (known && (names->empty() || last < k))
+                    at = k;
+                else if (known && shorter->expr.find('$') == std::string::npos)
+                    at = last + 1;
+            }
+            if (!at)
+            {
+                if (shorter)
+                    taken.erase(Key(shorter->name));
+                diagnostics.push_back({Severity::Warning, lines[k].origin, 0,
+                                       "a line of " + std::to_string(Width(lines[k].text)) + " characters (STORM edits 40): " + lines[k].text});
+                continue;
+            }
+            SourceLine equ = lines[k];
+            equ.text = shorter->equ;
+            before[*at].push_back(equ);
+            lines[k].text = shorter->line;
+        }
+        for (auto b = before.rbegin(); b != before.rend(); ++b)
+            lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(b->first), b->second.begin(), b->second.end());
     }
 };
 }  // namespace
@@ -608,6 +786,7 @@ BackendResult StormBackend::Write(const ir::Program& program, const BackendOptio
     result.document.dialect = "storm";
     StormWriter w{program, options, result};
     w.Run();
+    w.Finish();
     return result;
 }
 }  // namespace unrealasm::dialects

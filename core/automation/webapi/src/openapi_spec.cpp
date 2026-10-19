@@ -64,6 +64,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_analysis.inc"
 #include "openapi/openapi_video.inc"
 #include "openapi/openapi_temporal.inc"
+#include "openapi/openapi_window.inc"
 #include "openapi/openapi_stepping.inc"
 #include "openapi/openapi_breakpoints.inc"
 #include "openapi/openapi_debug.inc"
@@ -88,6 +89,7 @@ void buildSchemas(Json::Value& schemas)
 #include "openapi/openapi_next_schemas.inc"
 #include "openapi/openapi_ttdfile_schemas.inc"
 #include "openapi/openapi_temporal_schemas.inc"
+#include "openapi/openapi_window_schemas.inc"
 #include "openapi/openapi_operations_schemas.inc"
 }
 

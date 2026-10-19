@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "emulator/video/screen.h"
+#include "emulator/video/windowview.h"
 
 /// @file screenshotter.h
 /// @brief One screenshot for every surface (WebAPI, MCP, CLI, Lua, Python, Qt).
@@ -28,6 +29,8 @@ enum class ScreenshotSource
 {
     Presented,  ///< The finished, tear-free frame the window shows, a couple of frames behind (the default)
     Live,       ///< The frame as drawn right now: no present delay, no post-processing. Taken by the emulation thread
+    Window,     ///< The picture as the GUI window draws it (its shape, letterbox excluded, CRT shader and HUD included),
+                ///< in the display's pixels. Only with a front end that offers it (WindowView); the whole picture only
 };
 
 enum class ScreenshotFormat
@@ -46,6 +49,7 @@ enum class ScreenshotError
     BadGeometry,    ///< the screen window does not fit inside the frame
     EncodeFailed,   ///< the encoder produced nothing
     IoFailed,       ///< the file could not be written
+    NoWindow,       ///< source window: no GUI window shows this emulator (headless, or another instance is shown)
 };
 
 struct ScreenshotOptions
@@ -72,6 +76,9 @@ struct ScreenshotResult
     uint16_t height = 0;
     PictureRect crop;       ///< the returned image's rectangle inside the frame, in stored pixels
     PictureGeometry frame;  ///< the frame the image was taken from
+
+    bool fromWindow = false;  ///< source window: `window` describes the window the image was grabbed from
+    WindowViewGrab window;    ///< its geometry (the pixels are in `bytes`; window.rgba is left empty)
 };
 
 class Screenshotter

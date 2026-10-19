@@ -65,6 +65,8 @@ struct CRTProfileParams
 
     static CRTProfileParams FromProfile(CRTProfile profile);
     static QString ProfileName(CRTProfile profile);
+    /// The automation word: "none", "basic", "aperture", "shadow-mask", "slot-mask", "megatron"
+    static QString ProfileKey(CRTProfile profile);
     static QString ProfileDescription(CRTProfile profile);
     static std::vector<CRTProfile> AllProfiles();
 

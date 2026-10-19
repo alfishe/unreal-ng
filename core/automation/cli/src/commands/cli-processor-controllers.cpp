@@ -46,6 +46,9 @@ namespace
         "key=ENTER, bind west spec='{key: \"5\"}'\n"
         "controllers unbind <control> [family=..|device=..|profile=..] [layer=..]\n"
         "controllers scheme <scheme/kempston|scheme/qaop-space|none> [family=..|device=..|profile=..] - How the pad works\n"
+        "controllers haptics [device]               - Which devices' motors the emulator drives, why not, their effects\n"
+        "controllers rumble <device> [effect]       - Play a test effect (identify, low, high, clicks, left-trigger,\n"
+        "                                             right-trigger, swell; default identify)\n"
         "Flags: --json (the reply every surface returns), async (do not wait for the frame boundary)\n";
 
     std::string Lines(const std::string& text, const char* newline)
@@ -85,8 +88,9 @@ namespace
     }
 
 #ifdef ENABLE_CONTROLLERS
-    /// A host verb: positional id (profile, delete, apply), control (bind, unbind) or file (save); for bind, the
-    /// options that are not the verb's become the binding spec (key=ENTER label=Fire)
+    /// A host verb: positional id (profile, delete, apply), control (bind, unbind), file (save) or device (haptics,
+    /// rumble, then its effect); for bind, the options that are not the verb's become the binding spec (key=ENTER
+    /// label=Fire)
     std::string HandleHostVerb(const std::string& verb, const std::vector<std::string>& words,
                                const std::map<std::string, std::string>& options, bool json)
     {
@@ -106,6 +110,12 @@ namespace
         {
             if (verb == "bind" || verb == "unbind")
                 request.options["control"] = words[1];
+            else if (verb == "haptics" || verb == "rumble")
+            {
+                request.options["device"] = words[1];
+                if (verb == "rumble" && words.size() > 2)
+                    request.options["effect"] = words[2];
+            }
             else if (verb == "save")
             {
                 std::ifstream file(words[1], std::ios::binary);
@@ -140,6 +150,23 @@ namespace
                 text += line + binding.Find("profile")->AsString() + "\n";
             }
             return "Bindings (control, spec, profile):\n" + text;
+        }
+        if (verb == "haptics")
+        {
+            for (const JsonValue& device : reply.body.Find("devices")->Items())
+            {
+                text += "  " + device.Find("id")->AsString() + "  " + device.Find("name")->AsString() + "\n";
+                if (!device.Find("available")->AsBool())
+                {
+                    text += "    off: " + device.Find("reason")->AsString() + "\n";
+                    continue;
+                }
+                std::string effects;
+                for (const JsonValue& effect : device.Find("effects")->Items())
+                    effects += (effects.empty() ? "" : ", ") + effect.Find("id")->AsString();
+                text += "    effects: " + effects + "\n";
+            }
+            return "Haptics (device, the effects rumble plays or why not):\n" + (text.empty() ? "  none\n" : text);
         }
         if (const JsonValue* profiles = reply.body.Find("profiles"))
         {

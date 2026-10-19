@@ -403,6 +403,29 @@ Error: state=300 out of range 0..255
 Joystick tap: fire for 3 frames -> state=0x18 buttons=up,fire (IN #1F=0x18)
 ```
 
+### Game Controller Commands
+
+The `controllers` verb (source: `core/automation/cli/src/commands/cli-processor-controllers.cpp`): the machine's
+joystick connectors and the host's game controllers, their profiles, bindings and haptics. Full table and the other
+surfaces: [command-interface.md §15](./command-interface.md#15-game-controllers).
+
+| CLI Command | Description |
+| :--- | :--- |
+| `controllers [list]`, `get <connector>`, `plug <connector\|auto> <device> [opt=val ..]`, `unplug`, `options`, `targets <device>`, `auto [apply]` | The machine's connectors and the retro devices in them |
+| `controllers devices`, `context`, `profiles`, `profile <id>`, `save <file>`, `delete <id>`, `apply <id\|none>` | The host devices and the profiles |
+| `controllers bindings`, `bind <control> field=val ..`, `unbind <control>`, `scheme <id\|none>` | The effective bindings and their changes in a user profile |
+| `controllers haptics [device]` | Whether the emulator drives each device's motors (or why not) and its test effects |
+| `controllers rumble <device> [effect]` | Play a test effect: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz` |
+
+`--json` prints the reply every surface returns. The host verbs need the Qt client (it owns the game controllers).
+
+```
+> controllers rumble bt:045e:0b22:c6928f45 swell
+OK: Swell (attack, hold, release) on Xbox Elite Wireless Controller Series 2
+> controllers rumble usb:045e:0b00:0516:3032 identify
+Error: Xbox Elite Wireless Controller Series 2: macOS drives no motors of an Xbox pad over USB: connect the pad over Bluetooth
+```
+
 ### Analysis, Capture & Assembly Commands
 
 The analysis, capture and assembly families are available on **all** automation
@@ -433,8 +456,9 @@ reference: [command-interface.md](./command-interface.md).
 | `video address vram <offset>` | Every pixel a byte of the machine's own video RAM feeds (the Sprinter). |
 | `video changes [1\|2]` | Video change log: latch changes (mode, #7FFD, border, the Sprinter's RGMOD / HOLD / PORT_Y / ALL_MODE / frame height) with T, line and PC; palette / mode table writes per frame. |
 | `capture screen --layer=ula\|layer2\|tilemap\|sprites\|ids [--format=png\|rgba] [--alpha=false] [file]` | ZX Spectrum Next: ONE LAYER of the last completed frame (alpha 0 where the layer does not paint; `ids` = the winner of every pixel, the legend is printed); 640 x 512 like the screenshot; prints the frame and size and a data URI, or saves to `file`. Needs the layer record (`next layer-capture on`, the default). |
-| `capture screen [--area=full\|screen] [--format=png\|gif] [--source=presented\|live] [file]` | Screenshot of the session's emulator: the whole frame with border (default) or the working picture; PNG (default) or GIF; the presented frame (default) or `--source=live`, the frame as drawn now (a paused machine reports where the beam stopped). Prints the size, the cut rectangle, the screen window and a data URI, or saves to `file`. An unknown word is an error. |
+| `capture screen [--area=full\|screen] [--format=png\|gif] [--source=presented\|live\|window] [file]` | Screenshot of the session's emulator: the whole frame with border (default) or the working picture; PNG (default) or GIF; the presented frame (default) or `--source=live`, the frame as drawn now (a paused machine reports where the beam stopped), or `--source=window`, the picture as the unreal-qt window draws it (GUI only). Prints the size, the cut rectangle, the screen window and a data URI, or saves to `file`. An unknown word is an error. |
 | `capture framebuffer <file> [rgba\|index]` | The picture as raw pixels (R,G,B,A, or the Sprinter's u16 pens). |
+| `video window [status \| <key>=<value> ...]` | GUI window display settings: show them, or change any of `gpu`, `crt`, `blending` (on / off), `crt_profile` (none, basic, aperture, shadow-mask, slot-mask, megatron), `blending_frames` (2..5), `blending_weights` (equal / exponential) the way the View menu does, e.g. `video window crt_profile=shadow-mask blending=on`. Headless: `Error (no-window)` (see [command-interface.md](./command-interface.md#gui-window-display-settings)). |
 | `video temporal [status\|list\|off\|<algorithm>]` | ZX DLSS de-flicker: show its status (algorithm, video / audio delay it causes, timing), list the algorithms, switch it off or on (default `mod-tpgwafsd`, which shows the picture 7 frames later and delays the sound 5 more frames to match; see [command-interface.md §5.9](./command-interface.md)). |
 | `frame_cost` | Per-frame halt/run cost accounting. |
 | `coverage <start\|stop\|clear\|gaps\|status>` | Executed-address coverage analysis. |

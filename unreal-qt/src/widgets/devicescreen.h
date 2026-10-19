@@ -31,7 +31,9 @@ public:
     ~DeviceScreen() override;
 
 public:
-    void init(uint16_t width, uint16_t height, void* buffer);
+    /// `aspect`: width : height the picture is drawn in; 0 = the CRT frame's 352:288 (every machine raster).
+    /// A video card's own picture (the VDAC2's FT812) has square pixels and gives its own
+    void init(uint16_t width, uint16_t height, void* buffer, float aspect = 0.0f);
     void detach();
 
     /// Largest ratio-conforming geometry inside the parent widget, centered.
@@ -156,7 +158,8 @@ private:
     FrameCopyFn _frameSource;       // Tear-free frame provider (empty = legacy live-buffer path)
     mutable std::mutex _frameSourceMutex;  // Guards _frameSource + devicePixels across threads
 
-    static constexpr float ratio = static_cast<float>(kNativeWidth) / static_cast<float>(kNativeHeight);
+    static constexpr float kNativeRatio = static_cast<float>(kNativeWidth) / static_cast<float>(kNativeHeight);
+    float ratio = kNativeRatio;  // the shape the picture is drawn in (init)
 
     std::shared_ptr<Emulator> _emulator = nullptr;  // Reference to emulator for UUID tagging
     bool _isShuttingDown = false;  // Flag to block refreshes during shutdown

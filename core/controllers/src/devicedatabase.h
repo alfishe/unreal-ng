@@ -35,6 +35,8 @@ struct DeviceMatch
     std::string mode;  ///< the PID's mode ("d-input") when the family names one
     std::vector<std::string> controls;
     bool ignore = false;  ///< a device to filter out (the macOS synthetic pad)
+    /// It takes a player connector (a pad, a stick); false for a control surface (the Surface Dial): `"player": false`
+    bool player = true;
     int score = 0;        ///< device-database.md §3: 100 exact, 80 VID + PID, 20 name, 0 unknown
     std::string step;     ///< "exact", "vid-pid", "name", "unknown"
 };

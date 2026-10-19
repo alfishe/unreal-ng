@@ -70,6 +70,33 @@ working picture sits inside the frame.
   `capture_media {"action":"screenshot","source":"live"}`: the summary ends with "beam stopped at line 120 T 26880
   (half-drawn frame)", and the image shows the lines above line 120 as the machine drew them now.
 
+### What the window draws (`source=window`, GUI only)
+
+- `source=window` is the picture as the unreal-qt window draws it: the shape it stretches the frame to (352:288 for
+  a machine's raster, its own 4:3 for the VDAC2's FT812 picture), the CRT shader and the HUD, in the display's
+  pixels, letterbox excluded. Use it when the question is how the **window** shows something (a squeezed picture, a
+  shader, the letterbox); the frame itself is the same as `presented`.
+- The answer adds `window`: `viewport` (the screen area, picture plus letterbox) and `picture` (where the picture is
+  drawn in it), both in logical pixels, `device_pixel_ratio` (the image is `picture` times it) and `backend`
+  (`gpu` / `software`). Check a shape with `picture.width / picture.height`.
+- Only for the instance the GUI window shows, `area=full` only. Headless, or another instance: HTTP 409, kind
+  `no-window`; `area=screen`: 400. The core has no UI dependency: the GUI registers the grab (`WindowView`).
+- `capture_media {"action":"screenshot","source":"window","path":"scratch/window.png"}`;
+  `GET /emulator/{id}/capture/screen?source=window&path=scratch/window.png`; CLI `capture screen --source=window`;
+  Lua `screenshot({source = "window"})`; Python `capture_screen(source="window")`.
+
+### The window's display settings
+
+The window's View menu settings are automatable too: GPU acceleration, CRT effects and profile, temporal blending.
+Change them, then grab `source=window` to see the effect. Same GUI-only rule: headless, 409 `no-window`.
+
+- `capture_media {"action":"window_display"}` reads; `{"action":"window_display_set","display":{"crt_profile":"shadow-mask"}}`
+  changes (any of `gpu`, `crt`, `crt_profile`, `blending`, `blending_frames`, `blending_weights`).
+- `GET` / `PUT /emulator/{id}/video/window`; CLI `video window crt_profile=shadow-mask`; Lua / Python
+  `window_display()` / `window_display_set(...)`.
+- `gpu=true` on a host without OpenGL (an offscreen GUI): 409 `unavailable`. Put the settings back after a test: they
+  are the user's window.
+
 ### ZX-Poly
 
 The master of a ZX-Poly group answers with the group's composed display frame, the frame the window shows: 2x
@@ -174,6 +201,8 @@ the same machine state). What still differs is what the window does on top:
 | **Source** | Presented frame (`CopyPresentedFramebuffer()`) | The same presented frame |
 | **Mid-frame pause** | Completed frame, lagging by the present delay | Same: completed frame, not the beam position |
 | **Post-processing** | Temporal blending (Gigascreen flicker), CRT scanlines, viewport cropping | None: 1:1 pixels of the frame |
+
+`source=window` returns the window's side of this table: the picture with its post-processing and in its shape.
 
 Tools > Take Screenshot (clipboard) copies what the window shows
 (viewport-cropped); Tools > Save Screenshot As... writes the whole frame.

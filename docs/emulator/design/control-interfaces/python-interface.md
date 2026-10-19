@@ -353,7 +353,7 @@ class Emulator:
         """Raw pixels: width, height, format, encoding, data (bytes), array (numpy when installed)"""
 
     def capture_screen(self, format="png", full=None, area="", path="", source="") -> dict:
-        """Screenshot of the presented frame (source="live": the frame as drawn now; a paused machine adds the beam position and partial to frame). area="full" (default, the whole frame with border) or "screen" (the
+        """Screenshot of the presented frame (source="live": the frame as drawn now; a paused machine adds the beam position and partial to frame; source="window": the picture as the unreal-qt window draws it, GUI only, with a "window" dict). area="full" (default, the whole frame with border) or "screen" (the
         working picture); format "png" (default) or "gif"; path writes the file on the machine running the
         emulator. Returns {success, format, area, width, height, size, crop, screen_window, frame, data (base64)
         | file} or {success: False, error, kind}. full= is a deprecated alias (True = "full", False = "screen")"""
@@ -676,6 +676,28 @@ change `plan` (`removed` with each card's `undo`, `shadowed`, `lostFunctions`, `
 (`restarted`, `previousEmulatorId`, `emulatorId`, `started`) and `media`. A refusal is a reply, not an exception.
 `Emulator.gs_switch_personality(name)` is the same change as `slots_gs` (a restart: the `Emulator` object then names
 the old machine; `emu_get_selected()` the new one); it raises `RuntimeError` with the reason when refused.
+
+### Game Controllers
+
+`Emulator` methods - the same verbs, options and replies as the CLI `controllers`, the WebAPI `/controllers`, MCP and
+Lua ([command-interface.md section 15](./command-interface.md#15-game-controllers)). Each returns the reply dict (`ok`,
+`error`, `message` and the verb's fields); a refusal is a reply, not an exception.
+
+```python
+emu.controllers_list()                                   # the machine's connectors
+emu.controllers_plug("auto", "kempston-joystick")
+emu.controllers_input("kempston", press="up+fire")
+emu.controllers_host("devices")                          # any host verb with its options as keywords
+emu.controllers_bindings(); emu.controllers_bind("south", {"key": "ENTER"}, family="xbox-elite-2")
+
+h = emu.controllers_haptics()                            # per device: available / reason, actuators, effects
+for device in h["devices"]:
+    if device["available"]:
+        emu.controllers_rumble(device["id"], "clicks")   # identify (default), low, high, clicks, left-trigger, ...
+```
+
+`controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`; the host side needs the Qt client
+(a headless process answers `unavailable`).
 
 ### Disk Operations
 
@@ -1591,6 +1613,16 @@ emu.video_temporal_set('mod-tpgwafsd') # switch it on; 'off' or '' switches it o
                                      #   picture is shown later by the algorithm's look-ahead (7 frames for
                                      #   mod-tpgwafsd with the default A/V delay of 2) and the sound is delayed
                                      #   by the difference ('audio_extra_delay_frames', 5 here) to stay in sync.
+emu.window_display()                 # GUI window display settings: {'backend' ('gpu' / 'software'), 'gpu_available',
+                                     #   'gpu', 'crt', 'crt_profile', 'crt_profiles': [...], 'blending' (temporal
+                                     #   blending), 'blending_frames' (2..5), 'blending_weights' ('equal' /
+                                     #   'exponential'), 'emulator' (the instance the window shows)}; headless
+                                     #   {'ok': False, 'error', 'kind': 'no-window'}
+emu.window_display_set(crt_profile='shadow-mask', blending=True)  # any of gpu=, crt=, blending= (bool),
+                                     #   crt_profile= (none, basic, aperture, shadow-mask, slot-mask, megatron; other
+                                     #   than none switches CRT on), blending_frames=, blending_weights=; applied
+                                     #   the way the View menu does. Returns the settings after the change, or
+                                     #   {'ok': False, 'error', 'kind': 'bad-parameter' / 'no-window' / 'unavailable'}
 emu.frame_cost()                     # per-frame halt/run cost accounting
 emu.operations(since=0, limit=0)     # the operation log (reset, autostart, snapshot load, media insert / eject /
                                      #   discard, blank disk; refusals too): {'mode', 'last_seq', 'capacity',

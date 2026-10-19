@@ -204,7 +204,6 @@ TEST(StormBackend_Test, ExpressionsFollowStormsPriorities)
         "        LD HL,lab<<2\n"
         "        LD A,~5\n"
         "        LD A,5 ^ 3 | 8\n"
-        "        LD HL,(1<2)+lab\n"
         "        LD HL,-(lab*2)*3\n");
     const std::string text = Joined(lines);
     EXPECT_TRUE(Contains(lines, "LAB LD HL,LAB+2*3")) << text;
@@ -216,8 +215,56 @@ TEST(StormBackend_Test, ExpressionsFollowStormsPriorities)
     EXPECT_TRUE(Contains(lines, "LD HL,LAB<<2")) << text;
     EXPECT_TRUE(Contains(lines, "LD A,5|#FFFF")) << text;   // ~x as XOR #FFFF (STORM's | is XOR, ! OR)
     EXPECT_TRUE(Contains(lines, "LD A,5|3!8")) << text;
-    EXPECT_TRUE(Contains(lines, "LD HL,((1<2)~)+LAB")) << text;   // a comparison gives 1 in STORM, -1 in sjasmplus
     EXPECT_TRUE(Contains(lines, "LD HL,(LAB*2~)*3")) << text;      // STORM 1.3: 2*3~*2 = -6
+}
+
+TEST(StormBackend_Test, LowPrioritiesInParenthesesAreValues)
+{
+    // STORM 1.3 computes only priorities 4 and up in parentheses: 1+(6&3) gives 7 there
+    Diagnostics diagnostics;
+    const std::vector<std::string> lines = ToStorm(
+        "        ORG #6000\n"
+        "lab     LD HL,(lab&7)+1\n"
+        "        LD HL,(lab+1)*2\n"
+        "        LD HL,lab&7\n"
+        "        LD A,(IX+5|2)\n"
+        "        LD HL,(5|2)\n"
+        "        LD HL,(1<2)+lab\n",
+        &diagnostics);
+    const std::string text = Joined(lines);
+    EXPECT_TRUE(Contains(lines, "LAB LD HL,1")) << text;
+    EXPECT_TRUE(Contains(lines, "LD HL,(LAB+1)*2")) << text;
+    EXPECT_TRUE(Contains(lines, "LD HL,LAB&7")) << text;
+    EXPECT_TRUE(Contains(lines, "LD A,(IX+7)")) << text;   // an index's parentheses too
+    EXPECT_TRUE(Contains(lines, "LD HL,(5!2)")) << text;   // not a memory operand's
+    EXPECT_TRUE(Contains(lines, "LD HL,#5FFF")) << text;   // -1 + lab
+    EXPECT_TRUE(Mentions(diagnostics, "in parentheses")) << text;
+}
+
+TEST(StormBackend_Test, AWideLineGetsAnEquOfItsLongestExpression)
+{
+    // STORM edits 40 columns; its EQU takes no label defined further down, an instruction takes a later EQU
+    Diagnostics diagnostics;
+    const std::vector<std::string> lines = ToStorm(
+        "value11_a equ 6\n"
+        "value_t_a equ 3\n"
+        "        ORG #8000\n"
+        "        ld h,(iy+(value11_a*value11_a)+value_t_a-1)\n"
+        "        ld hl,(value_e_a-value_4_a-2)*256+#18\n"
+        "        ret\n"
+        "value_e_a equ 300\n"
+        "value_4_a equ 48\n"
+        "        nop\n",
+        &diagnostics);
+    const std::string text = Joined(lines);
+    const auto at = [&](const std::string& line) { return std::find(lines.begin(), lines.end(), line) - lines.begin(); };
+    EXPECT_TRUE(Contains(lines, "S EQU VALUE11*VALUE11+VALUE_T-1")) << text;
+    EXPECT_TRUE(Contains(lines, "LD H,(IY+S)")) << text;
+    EXPECT_TRUE(Contains(lines, "S1 EQU (VALUE_E-VALUE_4-2)*256+#18")) << text;
+    EXPECT_TRUE(Contains(lines, "LD HL,S1")) << text;
+    EXPECT_LT(at("S EQU VALUE11*VALUE11+VALUE_T-1"), at("LD H,(IY+S)")) << text;
+    EXPECT_GT(at("S1 EQU (VALUE_E-VALUE_4-2)*256+#18"), at("VALUE_4 EQU 48")) << text;   // after its last name
+    EXPECT_FALSE(Mentions(diagnostics, "STORM edits 40")) << text;
 }
 
 TEST(StormBackend_Test, NamesHaveSevenCharacters)

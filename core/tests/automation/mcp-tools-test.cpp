@@ -2550,6 +2550,59 @@ TEST_F(McpTools_Test, CaptureMedia_TemporalSet_RejectsMissingAlgorithmAndReports
     EXPECT_NE(unknown.text.find("HTTP 400"), std::string::npos) << unknown.text;
 }
 
+TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_GetsAndPutsTheWindowRoute)
+{
+    Json::Value settings;
+    settings["backend"] = "gpu";
+    settings["gpu_available"] = true;
+    settings["gpu"] = true;
+    settings["crt"] = true;
+    settings["crt_profile"] = "shadow-mask";
+    settings["blending"] = false;
+    settings["blending_frames"] = 3;
+    settings["blending_weights"] = "exponential";
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+    _caller->routes["PUT /api/v1/emulator/emu-1/video/window"] = {200, settings};
+
+    Json::Value args;
+    args["action"] = "window_display";
+    mcp::ToolResult read = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(read.isError) << read.text;
+    EXPECT_NE(read.text.find("window gpu on (available), crt shadow-mask, blending off (3 frames, exponential)"),
+              std::string::npos)
+        << read.text;
+
+    args["action"] = "window_display_set";
+    args["display"]["crt_profile"] = "shadow-mask";
+    args["display"]["gpu"] = true;
+    mcp::ToolResult set = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(set.isError) << set.text;
+    const auto* call = _caller->Last("PUT", "/api/v1/emulator/emu-1/video/window");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["crt_profile"].asString(), "shadow-mask");
+    EXPECT_TRUE(call->body["gpu"].asBool());
+    EXPECT_EQ(set.structured["crt_profile"].asString(), "shadow-mask");
+}
+
+TEST_F(McpTools_Test, CaptureMedia_WindowDisplaySet_NeedsDisplayAndReportsNoWindow)
+{
+    Json::Value args;
+    args["action"] = "window_display_set";
+    mcp::ToolResult missing = RunTool(*_registry, "capture_media", args, *_caller);
+    EXPECT_TRUE(missing.isError);
+    EXPECT_FALSE(_caller->Saw("PUT", "/api/v1/emulator/emu-1/video/window"));
+
+    Json::Value error;
+    error["error"] = "No window: the display settings exist only in the GUI (unreal-qt)";
+    error["kind"] = "no-window";
+    _caller->routes["PUT /api/v1/emulator/emu-1/video/window"] = {409, error};
+    args["display"]["crt"] = true;
+    mcp::ToolResult headless = RunTool(*_registry, "capture_media", args, *_caller);
+    EXPECT_TRUE(headless.isError);
+    EXPECT_NE(headless.text.find("HTTP 409"), std::string::npos) << headless.text;
+    EXPECT_NE(headless.text.find("only in the GUI"), std::string::npos) << headless.text;
+}
+
 // ===========================================================================
 // time_travel (TD-4 — agent bookmarks)
 // ===========================================================================
