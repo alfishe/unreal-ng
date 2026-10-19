@@ -453,6 +453,7 @@ void EmulatorAPI::captureScreen(const HttpRequestPtr& req, std::function<void(co
                 reason = "Not Found";
                 break;
             case ScreenshotError::NoFrame:
+            case ScreenshotError::NoWindow:  // headless, or the window shows another instance
                 status = HttpStatusCode::k409Conflict;  // the emulator has not presented a frame yet: try again
                 reason = "Conflict";
                 break;
@@ -493,6 +494,15 @@ void EmulatorAPI::captureScreen(const HttpRequestPtr& req, std::function<void(co
         frame["beam"]["tstate"] = shot.frame.beamTstate;
     }
     ret["frame"] = frame;
+    if (shot.fromWindow)
+    {
+        Json::Value window;
+        window["viewport"] = RectJson(shot.window.viewport);
+        window["picture"] = RectJson(shot.window.picture);
+        window["device_pixel_ratio"] = shot.window.devicePixelRatio;
+        window["backend"] = shot.window.backend;
+        ret["window"] = window;
+    }
     if (!shot.savedFile.empty())
     {
         ret["saved"] = true;

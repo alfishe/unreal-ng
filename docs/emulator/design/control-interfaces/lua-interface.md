@@ -1243,6 +1243,15 @@ emu.video_temporal_set("mod-tpgwafsd") -- switch it on; "off" or "" switches it 
                                      --   picture is shown later by the algorithm's look-ahead (7 frames for
                                      --   mod-tpgwafsd with the default A/V delay of 2) and the sound is delayed
                                      --   by the difference (audio_extra_delay_frames, 5 here) to stay in sync.
+emu.window_display()                 -- GUI window display settings: { backend ("gpu" / "software"), gpu_available,
+                                     --   gpu, crt, crt_profile, crt_profiles = {...}, blending (temporal blending),
+                                     --   blending_frames (2..5), blending_weights ("equal" / "exponential"), emulator
+                                     --   (the instance the window shows) }; headless { ok = false, error, kind = "no-window" }
+emu.window_display_set({crt_profile = "shadow-mask", blending = true})  -- any of gpu, crt, blending (boolean),
+                                     --   crt_profile (none, basic, aperture, shadow-mask, slot-mask, megatron; other
+                                     --   than none switches CRT on), blending_frames, blending_weights; applied the
+                                     --   way the View menu does. Returns the settings after the change, or
+                                     --   { ok = false, error, kind = "bad-parameter" / "no-window" / "unavailable" }
 emu.frame_cost()                     -- per-frame halt/run cost accounting
 emu.operations([since [, limit]])    -- the operation log (reset, autostart, snapshot load, media insert / eject /
                                      --   discard, blank disk; refusals too): { mode, last_seq, capacity,

@@ -283,6 +283,9 @@ public:
     // Temporal effects (ZX DLSS de-flicker, api/video_temporal_api.cpp): status, switch algorithm / off
     ADD_METHOD_TO(EmulatorAPI::getVideoTemporal, "/api/v1/emulator/{id}/video/temporal", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::setVideoTemporal, "/api/v1/emulator/{id}/video/temporal", drogon::Put, drogon::Post);
+    // GUI window display settings (api/video_window_api.cpp): GPU acceleration, CRT effects, temporal blending
+    ADD_METHOD_TO(EmulatorAPI::getVideoWindow, "/api/v1/emulator/{id}/video/window", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::setVideoWindow, "/api/v1/emulator/{id}/video/window", drogon::Put, drogon::Post);
     // endregion Screen State
 
     // region Audio State (implementation: api/state_audio_api.cpp)
@@ -1150,6 +1153,13 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     /// @brief PUT|POST /api/v1/emulator/{id}/video/temporal — body {"algorithm": "<name>"|""}; returns the new status
     void setVideoTemporal(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                           const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/video/window — the GUI window's display settings (409 headless)
+    void getVideoWindow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
+    /// @brief PUT|POST /api/v1/emulator/{id}/video/window — body {gpu, crt, crt_profile, blending, blending_frames,
+    /// blending_weights} (any of them); returns the settings after the change
+    void setVideoWindow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
 
     /// @brief GET /api/v1/emulator/{id}/state/screen/digest?banks=5,7&include_border=true&start=&end=
     /// FNV-1a 64 digest over screen RAM pages (or an explicit Z80 range) with

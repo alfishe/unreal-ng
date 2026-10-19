@@ -15,6 +15,8 @@
 //   audio_result   → GET /audio/capture/result?wav=
 //   temporal_status → GET /video/temporal (ZX DLSS de-flicker status, one-line summary)
 //   temporal_set    → PUT /video/temporal {algorithm} ("off" / "" switches it off)
+//   window_display     → GET /video/window (GUI window: GPU, CRT effects / profile, temporal blending)
+//   window_display_set → PUT /video/window {display fields} (409 no-window headless)
 //   vdac2_capture_start  → POST /vdac2/capture/start {path} (TS-Conf VDAC2 card: FT812 bus to an .evr stream)
 //   vdac2_capture_stop   → POST /vdac2/capture/stop
 //   vdac2_capture_status → GET  /vdac2/capture/status
@@ -106,6 +108,19 @@ std::string TemporalSummary(const Json::Value& status)
     return out.str();
 }
 
+/// One-line summary of a /video/window answer, e.g. "window gpu on (available), crt shadow-mask, blending off (2
+/// frames, equal)"
+std::string WindowDisplaySummary(const Json::Value& s)
+{
+    std::string line = std::string("window gpu ") + (s.get("gpu", false).asBool() ? "on" : "off") +
+                       (s.get("gpu_available", false).asBool() ? " (available)" : " (unavailable)");
+    line += ", crt " + (s.get("crt", false).asBool() ? s.get("crt_profile", "").asString() : std::string("off"));
+    line += std::string(", blending ") + (s.get("blending", false).asBool() ? "on" : "off") + " (" +
+            std::to_string(s.get("blending_frames", 0).asInt()) + " frames, " + s.get("blending_weights", "").asString() +
+            ")";
+    return line;
+}
+
 void RegisterCaptureMediaImpl(ToolRegistry& registry)
 {
     Json::Value schema;
@@ -114,14 +129,15 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"screenshot", "screen_digest", "record_start", "record_stop", "record_status", "record_pause",
                                "record_resume", "audio_capture", "audio_status", "audio_result", "temporal_status",
-                               "temporal_set", "vdac2_capture_start", "vdac2_capture_stop", "vdac2_capture_status",
+                               "temporal_set", "window_display", "window_display_set", "vdac2_capture_start", "vdac2_capture_stop", "vdac2_capture_status",
                                "framebuffer"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
         "Media operation: still capture, digest, video recording session, audio capture, the ZX DLSS de-flicker "
-        "(temporal_status / temporal_set), or the TS-Conf VDAC2 card's FT812 bus capture to an .evr replay stream "
+        "(temporal_status / temporal_set), the GUI window's display settings (window_display / window_display_set: "
+        "GPU acceleration, CRT effects and profile, temporal blending; unreal-qt only), or the TS-Conf VDAC2 card's FT812 bus capture to an .evr replay stream "
         "(vdac2_capture_start with filename / vdac2_capture_stop / vdac2_capture_status), or the picture as raw "
         "pixels (framebuffer: format rgba | index - the Sprinter's u16 pens; metadata, base64 data with include_image).";
     schema["properties"]["target"]["type"] = "string";
@@ -215,7 +231,9 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["source"]["type"] = "string";
     schema["properties"]["source"]["description"] =
         "screenshot: presented (default: the finished frame the window shows, a couple of frames behind) or live "
-        "(the frame as drawn now, no delay, no ZX DLSS; a paused machine also reports where the beam stopped). "
+        "(the frame as drawn now, no delay, no ZX DLSS; a paused machine also reports where the beam stopped) or window "
+        "(the picture as the unreal-qt window draws it: its shape, CRT shader and HUD, in display pixels; only for the "
+        "instance the GUI shows, area full). "
         "audio_capture: one mixer device instead of the master mix - beeper, ay1, ay2, fm1, fm2, covox (also the "
         "Sprinter's Covox-Blaster DAC), gs, gs_mp3, moonsound_fm, moonsound_pcm, a ZX-MultiSound's ms_ssg1, ms_ssg2, "
         "ms_fm1, ms_fm2 (its YM2203 pair per chip), ms_saa, ms_pcm (GS + SounDrive DACs), ms_midi (inspect_state aspect audio_mixer lists "
@@ -228,6 +246,17 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "temporal_set: ZX DLSS algorithm name (default/recommended mod-tpgwafsd; temporal_status lists all), or "
         "\"off\" / \"\" to switch it off. While on, video is delayed by the algorithm's look-ahead (7 frames for "
         "mod-tpgwafsd) and audio by the matching extra frames";
+    schema["properties"]["display"]["type"] = "object";
+    schema["properties"]["display"]["description"] =
+        "window_display_set: any of gpu (bool), crt (bool), crt_profile (none, basic, aperture, shadow-mask, "
+        "slot-mask, megatron; other than none switches CRT on), blending (bool, temporal blending / gigascreen "
+        "smoothing), blending_frames (2..5), blending_weights (equal, exponential); the rest stay. Applied the way "
+        "the View menu does; screenshot source=window shows the effect. Headless: no window (error)";
+    for (const char* flag : {"gpu", "crt", "blending"})
+        schema["properties"]["display"]["properties"][flag]["type"] = "boolean";
+    schema["properties"]["display"]["properties"]["crt_profile"]["type"] = "string";
+    schema["properties"]["display"]["properties"]["blending_frames"]["type"] = "integer";
+    schema["properties"]["display"]["properties"]["blending_weights"]["type"] = "string";
     schema["required"].append("action");
 
     registry.Register(
@@ -235,7 +264,9 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "Media capture: screenshots (PNG/GIF with OCR-friendly metadata or saved to file), deterministic screen digests, video recording "
         "(GIF native; h264/hevc mp4/mov with an optional audio track: audio:'aac') with optional every_nth:'auto' visual-quantum detection for duplicate-free bounded recordings, and "
         "one-shot audio capture with DSP analysis (dominant frequency, RMS/peak, optional WAV export), and the ZX DLSS "
-        "temporal de-flicker (temporal_status / temporal_set: algorithm, video/audio delay it causes, timing), and the "
+        "temporal de-flicker (temporal_status / temporal_set: algorithm, video/audio delay it causes, timing), the GUI "
+        "window's display settings (window_display / window_display_set: GPU acceleration, CRT effects and profile, "
+        "temporal blending), and the "
         "TS-Conf VDAC2 card's FT812 bus capture (vdac2_capture_start / _stop / _status: every chip select and byte "
         "with FT812 clocks and per-frame picture hashes, an .evr stream that replays the chip alone).",
         std::move(schema),
@@ -321,6 +352,15 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                             }
                             if (body.get("source", "presented").asString() == "live")
                                 what << ", live frame";
+                            if (body.isMember("window"))  // source window: how the GUI window draws the frame
+                            {
+                                const Json::Value& view = body["window"];
+                                what << ", as the window draws it (" << view.get("backend", "").asString() << ", picture "
+                                     << view["picture"].get("width", 0).asUInt() << "x" << view["picture"].get("height", 0).asUInt()
+                                     << " in a " << view["viewport"].get("width", 0).asUInt() << "x"
+                                     << view["viewport"].get("height", 0).asUInt() << " viewport, pixel ratio "
+                                     << view.get("device_pixel_ratio", 1.0).asDouble() << ")";
+                            }
                             if (body.isMember("frame") && body.isMember("screen_window"))
                             {
                                 const Json::Value& frame = body["frame"];
@@ -796,6 +836,40 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                 return;
             }
 
+            if (action == "window_display" || action == "window_display_set")
+            {
+                const bool set = action == "window_display_set";
+                if (set && (!args.isMember("display") || !args["display"].isObject() || args["display"].empty()))
+                {
+                    done(ToolResult::Error("window_display_set needs 'display': an object of any of gpu, crt, "
+                                           "crt_profile, blending, blending_frames, blending_weights"));
+                    return;
+                }
+                const Json::Value body = set ? args["display"] : Json::Value();
+                TargetResolver::ResolveFromArgs(args, caller, [set, body, &caller, done](bool ok, const std::string& idOrError) {
+                    if (!ok)
+                    {
+                        done(ToolResult::Error(idOrError));
+                        return;
+                    }
+                    auto request = std::make_shared<Json::Value>(body);
+                    caller.Call(set ? "PUT" : "GET", Endpoint(idOrError, "/video/window"), set ? request.get() : nullptr,
+                                [request, set, done](int status, Json::Value response) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error(std::string(set ? "Window display change" : "Window display") +
+                                                   " failed (HTTP " + std::to_string(status) +
+                                                   "): " + DescribeErrorBody(response)));
+                            return;
+                        }
+                        // the text first: argument order is unspecified, and gcc moves `response` out before reading it
+                        const std::string text = WindowDisplaySummary(response);
+                        done(ToolResult::Ok(text, std::move(response)));
+                    });
+                });
+                return;
+            }
+
             if (action == "vdac2_capture_start")
             {
                 const std::string path = args.isMember("filename") ? args["filename"].asString()
@@ -858,7 +932,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
             done(ToolResult::Error("Unknown action '" + action +
                                             "'. Valid: screenshot, screen_digest, record_start, record_stop, record_status, "
                                             "record_pause, record_resume, audio_capture, audio_status, audio_result, "
-                                            "temporal_status, temporal_set, vdac2_capture_start, vdac2_capture_stop, framebuffer, "
+                                            "temporal_status, temporal_set, window_display, window_display_set, vdac2_capture_start, vdac2_capture_stop, framebuffer, "
                                             "vdac2_capture_status"));
         });
 }

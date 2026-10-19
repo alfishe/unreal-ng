@@ -1193,6 +1193,9 @@ public:
     void SetExternalPicture(uint8_t* buffer, uint16_t width, uint16_t height, uint32_t framePeriodUs);
     void ClearExternalPicture();
     bool IsExternalPictureActive() const { return _externalActive.load(std::memory_order_acquire); }
+
+    /// The emulator this screen belongs to (null for a screen made without one, as in tests)
+    const EmulatorContext* GetEmulatorContext() const { return _context; }
     /// The machine's own framebuffer, whatever the monitor shows
     FramebufferDescriptor& GetNativeFramebufferDescriptor() { return _framebuffer; }
     /// Latch the external picture into the present queue (emulation thread)

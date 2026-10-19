@@ -98,6 +98,7 @@
 #include <debugger/ttd/ttdexternalevents.h>
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
+#include "../../../windowdisplay.h"
 #include "../../../operationsstatus.h"
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/io/sprinter/isa/isaaccess.h>
@@ -2858,7 +2859,7 @@ namespace PythonBindings
                 if (!area.empty() && !Screenshotter::ParseArea(area, options.area))
                     return fail("Unknown area '" + area + "': use full or screen", "bad-parameter");
                 if (!source.empty() && !Screenshotter::ParseSource(source, options.source))
-                    return fail("Unknown source '" + source + "': use presented or live", "bad-parameter");
+                    return fail("Unknown source '" + source + "': use presented, live or window", "bad-parameter");
                 if (!fullLegacy.is_none())
                 {
                     // Deprecated: full=True is area="full", full=False is area="screen"
@@ -2871,8 +2872,12 @@ namespace PythonBindings
 
                 if (!self.GetContext() || !self.GetContext()->pScreen)
                     return fail("The emulator has no screen", "no-frame");
-                const ScreenshotResult shot =
-                    Screenshotter::TakeFrom(*self.GetContext()->pScreen, options, self.IsEmulationParked());
+                ScreenshotResult shot;
+                {
+                    // source window waits for the GUI thread, which may want the GIL meanwhile
+                    py::gil_scoped_release release;
+                    shot = Screenshotter::TakeFrom(*self.GetContext()->pScreen, options, self.IsEmulationParked());
+                }
                 if (!shot.ok)
                     return fail(shot.errorMessage, Screenshotter::ErrorName(shot.error));
 
@@ -2909,6 +2914,15 @@ namespace PythonBindings
                 result["crop"] = rect(shot.crop);
                 result["screen_window"] = rect(shot.frame.screenWindow);
                 result["frame"] = frame;
+                if (shot.fromWindow)
+                {
+                    py::dict window;
+                    window["viewport"] = rect(shot.window.viewport);
+                    window["picture"] = rect(shot.window.picture);
+                    window["device_pixel_ratio"] = shot.window.devicePixelRatio;
+                    window["backend"] = shot.window.backend;
+                    result["window"] = window;
+                }
                 if (!shot.savedFile.empty())
                     result["file"] = shot.savedFile;
                 else
@@ -2918,7 +2932,8 @@ namespace PythonBindings
                "(area='screen'), PNG (default) or GIF; returns a dict with the image base64 in 'data' (or 'file' when "
                "path is given), the frame geometry ('frame', 'screen_window') and the rectangle cut ('crop'). "
                "source='live' takes the frame as drawn now instead of the presented one (a paused machine adds the beam "
-               "position and 'partial' to 'frame'). full= is a deprecated alias of area (True = 'full', False = 'screen')",
+               "position and 'partial' to 'frame'); source='window' the picture as the unreal-qt window draws it (its "
+               "shape, CRT shader and HUD, in display pixels, with 'window' describing it; GUI only, area 'full'). full= is a deprecated alias of area (True = 'full', False = 'screen')",
                py::arg("format") = "png", py::arg("full") = py::none(), py::arg("area") = "", py::arg("path") = "",
                py::arg("source") = "")
             
@@ -5515,6 +5530,44 @@ namespace PythonBindings
             }
             return StateNodeToPy(TemporalStatus::Report(self.GetContext()));
         }, "Switch the ZX DLSS de-flicker: an algorithm name, or \"\" / \"off\"; returns the new status", py::arg("name"))
+        // GUI window display settings (GPU, CRT effects / profile, temporal blending): the WindowDisplay report every
+        // interface returns. Both wait for the GUI thread, which may want the GIL meanwhile
+        .def("window_display", [](Emulator&) -> py::object {
+            WindowDisplay::Result r;
+            {
+                py::gil_scoped_release release;
+                r = WindowDisplay::Get();
+            }
+            return StateNodeToPy(r.Ok() ? WindowDisplay::Report(r.settings) : WindowDisplay::ErrorNode(r));
+        }, "The GUI window's display settings: backend, gpu_available, gpu, crt, crt_profile, crt_profiles, blending, "
+           "blending_frames, blending_weights, emulator; {ok: False, error, kind: 'no-window'} headless")
+        .def("window_display_set", [](Emulator&, const py::kwargs& changes) -> py::object {
+            WindowDisplayChange change;
+            for (const auto& item : changes)
+            {
+                const std::string key = py::str(item.first);
+                const py::handle value = item.second;
+                std::string word;
+                if (py::isinstance<py::bool_>(value))
+                    word = value.cast<bool>() ? "on" : "off";
+                else if (py::isinstance<py::int_>(value) || py::isinstance<py::str>(value))
+                    word = py::str(value);
+                WindowDisplay::Result bad;
+                bad.status = WindowDisplay::Status::BadParameter;
+                if (word.empty())
+                    bad.error = "'" + key + "' takes a bool, an int or a str";
+                if (!bad.error.empty() || !WindowDisplay::ApplyWord(change, key, word, bad.error))
+                    return StateNodeToPy(WindowDisplay::ErrorNode(bad));
+            }
+            WindowDisplay::Result r;
+            {
+                py::gil_scoped_release release;
+                r = WindowDisplay::Set(change);
+            }
+            return StateNodeToPy(r.Ok() ? WindowDisplay::Report(r.settings) : WindowDisplay::ErrorNode(r));
+        }, "Change the GUI window's display settings, the way the View menu does: any of gpu=, crt=, blending= "
+           "(bool), crt_profile= (none, basic, aperture, shadow-mask, slot-mask, megatron), blending_frames= (2..5), "
+           "blending_weights= ('equal', 'exponential'); returns the settings after the change, or {ok: False, error, kind}")
 
         .def("frame_cost", [](Emulator& self) -> py::dict {
             py::dict d;

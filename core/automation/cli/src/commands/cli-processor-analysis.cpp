@@ -39,6 +39,7 @@
 #include "recordingmanager.h"
 #include "cli-videorecord-options.h"
 #include "../../../temporalstatus.h"
+#include "../../../windowdisplay.h"
 #endif
 
 namespace
@@ -416,6 +417,9 @@ void CLIProcessor::HandleVideo(const ClientSession& session, const std::vector<s
         "  video temporal list            - algorithms that can be switched on\n"
         "  video temporal off             - switch the de-flicker off\n"
         "  video temporal <algorithm>     - switch it on (e.g. mod-tpgwafsd)\n"
+        "  video window [status]          - GUI window display: GPU, CRT effects / profile, temporal blending\n"
+        "  video window <key>=<value> ... - change them: gpu, crt, blending on|off; crt_profile <name>;\n"
+        "                                   blending_frames 2..5; blending_weights equal|exponential\n"
         "Numbers are decimal or 0x-hex.";
 
     auto emulator = GetSelectedEmulator(session);
@@ -448,6 +452,11 @@ void CLIProcessor::HandleVideo(const ClientSession& session, const std::vector<s
     if (sub == "temporal")
     {
         HandleVideoTemporal(session, context, args);
+        return;
+    }
+    if (sub == "window")
+    {
+        HandleVideoWindow(session, args);
         return;
     }
     unsigned a = 0, b = 0, c = 0;
@@ -510,6 +519,38 @@ void CLIProcessor::HandleVideoTemporal(const ClientSession& session, EmulatorCon
         }
     }
     session.SendResponse(TemporalStatus::Summary(context) + NEWLINE + DeviceState::ToText(TemporalStatus::Report(context)));
+}
+
+// HandleVideoWindow — `video window [status | <key>=<value> ...]`: the GUI window's display settings (GPU
+// acceleration, CRT effects and profile, temporal blending). Mirrors GET / PUT /api/v1/emulator/{id}/video/window
+// (the same WindowDisplay report); headless there is no window.
+void CLIProcessor::HandleVideoWindow(const ClientSession& session, const std::vector<std::string>& args)
+{
+    WindowDisplayChange change;
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        if (i == 1 && args[i] == "status" && args.size() == 2)
+            break;
+        const size_t eq = args[i].find('=');
+        std::string error;
+        if (eq == std::string::npos)
+            error = "Expected <key>=<value>, not '" + args[i] + "': keys " + WindowDisplay::kKeys;
+        else
+            WindowDisplay::ApplyWord(change, args[i].substr(0, eq), args[i].substr(eq + 1), error);
+        if (!error.empty())
+        {
+            session.SendResponse(error);
+            return;
+        }
+    }
+    const WindowDisplay::Result r = WindowDisplay::Set(change);
+    if (!r.Ok())
+    {
+        session.SendResponse(std::string("Error (") + WindowDisplay::StatusName(r.status) + "): " + r.error);
+        return;
+    }
+    session.SendResponse("Window " + WindowDisplay::Summary(r.settings) + NEWLINE +
+                         DeviceState::ToText(WindowDisplay::Report(r.settings)));
 }
 
 // HandleFrameCost — halt/active cost of the last frame plus session averages.
