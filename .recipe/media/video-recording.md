@@ -38,7 +38,9 @@ Verified 2026-10-02 on macOS GUI builds: WebAPI, MCP, CLI, Lua and Python (`tool
   start; when the window changes later (a TS-Conf program switching its `V_CONFIG` window, the
   Pentagon overscan toggle) the new window is scaled into that size with its aspect kept and
   black bars, never cut. A `full` recording of a TS-Conf machine is always 720x576 (720x288
-  with every line doubled to square pixels).
+  with every line doubled to square pixels). A video card's own picture (the TS-Conf VDAC2's FT812) keeps its
+  square pixels: a recording started on it has its size, a switch to or from it is scaled into the file's size. A
+  reset or a snapshot load while recording continues the same file and its clock.
 
 Timestamps are emulated time: a recording made in turbo mode plays at normal speed, and the
 sound track has exactly the frames' length.

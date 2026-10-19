@@ -889,6 +889,18 @@ void Core::Reset()
     Reset(static_cast<ROMModeEnum>(_config->reset_rom));
 }
 
+void Core::ResetKeepingClock()
+{
+    ResetKeepingClock(static_cast<ROMModeEnum>(_config->reset_rom));
+}
+
+void Core::ResetKeepingClock(ROMModeEnum mode)
+{
+    const uint16_t clockSelect = _portDecoder->GetClockSelect();
+    Reset(mode);
+    _portDecoder->RestoreClockSelect(clockSelect);
+}
+
 void Core::Reset(ROMModeEnum mode)
 {
     // Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
@@ -950,7 +962,7 @@ void Core::Reset(ROMModeEnum mode)
     _screen->ResetBorderColor(_state->border_attr);
 #ifdef ENABLE_RECORDING
     if (_recordingManager)
-        _recordingManager->Reset();  // Reset recording manager (stops active recording, clears counters)
+        _recordingManager->Reset();  // Clears the counters; a recording goes on with its file untouched
 #endif
 
     // Single NC_SYSTEM_RESET notification per reset, posted only after the reset completes:

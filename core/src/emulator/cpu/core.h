@@ -223,6 +223,10 @@ public:
     void Reset();
     /// Reset with an explicit ROM mode instead of the configured RESET= mode (e.g. RM_DOS: reset into TR-DOS)
     void Reset(ROMModeEnum mode);
+    /// A reset that stands in for loading a program (disk autostart, snapshot load): Reset, then the guest's hardware
+    /// clock select is put back (PortDecoder::GetClockSelect), so the program runs at the clock the machine ran at
+    void ResetKeepingClock();
+    void ResetKeepingClock(ROMModeEnum mode);
 
     void SetCPUClockSpeed(uint8_t);
     uint32_t GetBaseCPUFrequency();

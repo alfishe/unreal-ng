@@ -12,6 +12,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/video/displaygeometry.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 
 namespace
@@ -138,15 +139,36 @@ ScreenshotResult Screenshotter::Render(const FrameSnapshot& snapshot, const Scre
         rgba = cropped.data();
     }
 
-    std::vector<uint8_t> encoded = options.format == ScreenshotFormat::Png ? EncodePng(rgba, rect.width, rect.height)
-                                                                          : EncodeGif(rgba, rect.width, rect.height);
+    // The picture as the CRT shows it, the same as a recording (DisplayGeometry::Picture): the whole frame in the
+    // reference 352:288 shape, the working window in its share of it. A Sprinter / TS-Conf frame of 736x288 / 720x288
+    // doubles its lines, an ATM's 640x200 window grows to its shape; a Spectrum's 352x288 stays as it is. The stored
+    // pixels are the crop's (and /capture/framebuffer's). A video card's picture (the FT812's VGA modes) has square
+    // pixels of its own and stays as it is
+    DisplayGeometry::Size shown{rect.width, rect.height, 1};
+    if (g.source != FrameSource::External)
+    {
+        const double aspect = options.area == ScreenshotArea::Full
+                                  ? 0.0
+                                  : DisplayGeometry::WindowAspect(g.width, g.height, rect.width, rect.height);
+        shown = DisplayGeometry::Picture(rect.width, rect.height, aspect);
+    }
+    std::vector<uint8_t> shaped;
+    if (shown.width != rect.width || shown.height != rect.height)
+    {
+        shaped.resize(static_cast<size_t>(shown.width) * shown.height * RGBA_SIZE);
+        DisplayGeometry::StretchNearest(rgba, rect.width, rect.height, shaped.data(), shown.width, shown.height);
+        rgba = shaped.data();
+    }
+
+    std::vector<uint8_t> encoded = options.format == ScreenshotFormat::Png ? EncodePng(rgba, shown.width, shown.height)
+                                                                          : EncodeGif(rgba, shown.width, shown.height);
     if (encoded.empty())
         return Fail(ScreenshotError::EncodeFailed, std::string("The ") + FormatName(options.format) + " encoder produced nothing");
 
     ScreenshotResult r;
     r.format = options.format;
-    r.width = rect.width;
-    r.height = rect.height;
+    r.width = shown.width;
+    r.height = shown.height;
     r.crop = rect;
     r.frame = g;
     r.encodedSize = encoded.size();

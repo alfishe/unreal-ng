@@ -132,6 +132,13 @@ public:
         return _setState != nullptr && Index(device) < kSlots;
     }
 
+    std::string RumbleUnavailable(const HostDeviceId& device) const override
+    {
+        if (_setState == nullptr)
+            return "XInput is not available on this Windows";
+        return Index(device) < kSlots ? std::string() : "The device is not connected";
+    }
+
     bool SetRumble(const HostDeviceId& device, const RumbleLevels& levels) override
     {
         const DWORD index = Index(device);

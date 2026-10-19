@@ -5,8 +5,8 @@
 #include <QDialog>
 #include <QEvent>
 #include <QFrame>
-#include <QGridLayout>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <QLabel>
@@ -14,8 +14,8 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QScrollArea>
 #include <QTabBar>
+#include <QTableWidget>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cctype>
@@ -39,6 +39,8 @@ constexpr float kEdge = 0.5f;
 // The direction bits of a group, in this order: up 1, down 2, left 4, right 8
 const char* const kDirections[] = {"up", "down", "left", "right"};
 constexpr unsigned kAllDirections = 15;
+constexpr int kLineHeight = 30;  // a line of the table: a chip and its margins
+constexpr int kChipHeight = 24;
 
 const char* const kChipStyle =
     "QPushButton { border: 1px solid palette(mid); border-radius: 10px; padding: 2px 10px; }";
@@ -351,10 +353,25 @@ BindingTable::BindingTable(HostControllers* host, QWidget* parent) : QWidget(par
     bar->hide();
     root->addWidget(bar);
 
-    _scroll = new QScrollArea(this);
-    _scroll->setWidgetResizable(true);
-    _scroll->setFrameShape(QFrame::NoFrame);
-    root->addWidget(_scroll, 1);
+    _grid = new QTableWidget(0, 2, this);
+    _grid->setHorizontalHeaderLabels({tr("Machine input"), tr("Pad controls")});
+    QHeaderView* columns = _grid->horizontalHeader();
+    columns->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    columns->setSectionResizeMode(1, QHeaderView::Stretch);
+    columns->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    columns->setHighlightSections(false);
+    _grid->verticalHeader()->hide();
+    _grid->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+    _grid->verticalHeader()->setDefaultSectionSize(kLineHeight);
+    _grid->setShowGrid(false);
+    _grid->setFrameShape(QFrame::NoFrame);
+    _grid->setSelectionMode(QAbstractItemView::NoSelection);
+    _grid->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    _grid->setFocusPolicy(Qt::NoFocus);
+    _grid->setWordWrap(false);
+    _grid->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    _grid->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+    root->addWidget(_grid, 1);
 
     auto* bottom = new QHBoxLayout();
     _setAll = new QPushButton(tr("Set all…"), this);
@@ -753,6 +770,7 @@ QWidget* BindingTable::chipButton(const Row& row, const Chip& chip)
     if (Text(chip.spec, "press") == "tap")
         text += tr(" · tap");
     auto* button = new QPushButton(text);
+    button->setFixedHeight(kChipHeight);
     QFont font = button->font();
     font.setBold(chip.user);
     button->setFont(font);
@@ -782,13 +800,35 @@ void BindingTable::populate()
     _chipButtons.clear();
     _lit.clear();
     _captureButton = nullptr;
-    auto* body = new QWidget();
-    auto* grid = new QGridLayout(body);
-    grid->setColumnStretch(1, 1);
-    grid->setHorizontalSpacing(16);
-    int line = 0;
+    // Removing the rows deletes their widgets later: a button of them may be the one whose click got here
+    _grid->setRowCount(0);
+    const auto addLine = [this] {
+        const int line = _grid->rowCount();
+        _grid->insertRow(line);
+        return line;
+    };
+    const auto spanned = [this, &addLine](const QString& text, bool header) {
+        const int line = addLine();
+        auto* item = new QTableWidgetItem(text);
+        item->setFlags(Qt::ItemIsEnabled);
+        if (header)
+        {
+            QFont font = item->font();
+            font.setBold(true);
+            item->setFont(font);
+            item->setBackground(palette().alternateBase());
+        }
+        _grid->setItem(line, 0, item);
+        _grid->setSpan(line, 0, 1, 2);
+    };
+    const auto cellOf = [](QWidget* parent) {
+        auto* layout = new QHBoxLayout(parent);
+        layout->setContentsMargins(4, 0, 4, 0);
+        layout->setSpacing(4);
+        return layout;
+    };
     if (_device.id.empty())
-        grid->addWidget(new QLabel(tr("Connect a game controller to bind it.")), line++, 0, 1, 2);
+        spanned(tr("Connect a game controller to bind it."), false);
     else
     {
         std::vector<QString> sections;
@@ -799,24 +839,28 @@ void BindingTable::populate()
                 sections.push_back(row.section);
         for (const QString& section : sections)
         {
-            auto* header = new QLabel(QString("<b>%1</b>").arg(section.toHtmlEscaped()));
-            header->setContentsMargins(0, line == 0 ? 0 : 10, 0, 2);
-            grid->addWidget(header, line++, 0, 1, 2);
+            spanned(section, true);
             for (const Row& row : _rows)
             {
                 if (row.section != section)
                     continue;
-                auto* title = new QLabel(row.title);
+                const int line = addLine();
+                auto* title = new QTableWidgetItem(row.title);
+                title->setFlags(Qt::ItemIsEnabled);
                 title->setToolTip(row.tooltip);
-                grid->addWidget(title, line, 0);
+                _grid->setItem(line, 0, title);
                 auto* cell = new QWidget();
-                auto* chips = new QHBoxLayout(cell);
-                chips->setContentsMargins(0, 0, 0, 0);
-                chips->setSpacing(4);
+                QHBoxLayout* chips = cellOf(cell);
                 for (const Chip& chip : row.chips)
-                    chips->addWidget(chipButton(row, chip));
+                {
+                    QWidget* button = chipButton(row, chip);
+                    button->setProperty("line", line);
+                    chips->addWidget(button);
+                }
                 auto* add = new QPushButton(row.chips.empty() ? tr("+ Bind") : QString("+"));
                 add->setFlat(true);
+                add->setFixedHeight(kChipHeight);
+                add->setProperty("line", line);
                 add->setToolTip(row.chips.empty() ? tr("Click, then press the control on the pad")
                                                   : tr("Add another control: click, then press it on the pad"));
                 const std::string key = row.key;
@@ -825,22 +869,24 @@ void BindingTable::populate()
                     _captureButton = add;
                 chips->addWidget(add);
                 chips->addStretch(1);
-                grid->addWidget(cell, line++, 1);
+                _grid->setCellWidget(line, 1, cell);
             }
             if (section == tr("ZX keys"))
             {
+                const int line = addLine();
+                auto* cell = new QWidget();
                 auto* more = new QPushButton(tr("+ Add a ZX key…"));
                 more->setFlat(true);
+                more->setFixedHeight(kChipHeight);
                 more->setToolTip(tr("Pick a key of the Spectrum's keyboard, then press the control for it"));
                 connect(more, &QPushButton::clicked, this, &BindingTable::addKey);
-                grid->addWidget(more, line++, 1, Qt::AlignLeft);
+                QHBoxLayout* layout = cellOf(cell);
+                layout->addWidget(more);
+                layout->addStretch(1);
+                _grid->setCellWidget(line, 1, cell);
             }
         }
     }
-    grid->setRowStretch(line, 1);
-    if (QWidget* old = _scroll->takeWidget())
-        old->deleteLater();  // a button of it may be the one whose click got here
-    _scroll->setWidget(body);
     if (_captureButton != nullptr)
     {
         _captureButton->setStyleSheet(kCaptureStyle);
@@ -848,13 +894,20 @@ void BindingTable::populate()
             _wizard.empty()
                 ? tr("Press… %1 s").arg((kCaptureTicks - _captureTicks + kTicksPerSecond - 1) / kTicksPerSecond)
                 : tr("Press…"));
-        _scroll->ensureWidgetVisible(_captureButton);
+        reveal(_captureButton);
     }
     _setAll->setVisible(layer() == "play");
     _setAll->setEnabled(!_device.id.empty());
     _restore->setEnabled(!_device.id.empty());
     _filling = false;
     light();
+}
+
+void BindingTable::reveal(QWidget* widget)
+{
+    const QVariant line = widget->property("line");
+    if (line.isValid())
+        _grid->scrollTo(_grid->model()->index(line.toInt(), 1));
 }
 
 void BindingTable::light()
@@ -872,7 +925,7 @@ void BindingTable::light()
             button->setStyleSheet(kLitStyle);
             // Spectaculator's press-to-find: a pressed control shows where it is bound
             if (_captureRow.empty())
-                _scroll->ensureWidgetVisible(button);
+                reveal(button);
         }
         else
         {
@@ -1421,7 +1474,7 @@ void BindingTable::showControl(const std::string& control)
             const std::vector<std::string> spots = HotspotsOf(part);
             if (!Overlaps(part, control) && std::find(spots.begin(), spots.end(), control) == spots.end())
                 continue;
-            _scroll->ensureWidgetVisible(button);
+            reveal(button);
             button->setFocus();
             say(tr("%1 is %2")
                     .arg(ControlName(part, _device.glyphs),
