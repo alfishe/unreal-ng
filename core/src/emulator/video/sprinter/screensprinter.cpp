@@ -56,7 +56,7 @@ SprinterVideoInputs ScreenSprinter::CurrentInputs() const
 
 /// region <Raster>
 
-void ScreenSprinter::InitRaster()
+void ScreenSprinter::DetectRaster()
 {
     _vid.mode = M_SPRINTER;
     _vid.raster = raster[R_736_288];

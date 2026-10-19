@@ -503,10 +503,14 @@ void LoaderZ80::commitFromStage()
 
         // Reset Z80 and all peripherals for a clean state-independent load
         // Ensures AY registers, beeper, FDC, tape, screen mode etc. are clean; no RAM page keeps the program before it
-        core.Reset();
-        memory.ClearModelRAM();
-        // A model whose reset leaves an extended paging on (the Pentagon 1024) goes back to the plain 128K form
-        ports.EnterSpectrum128Paging(cpu.pc);
+        {
+            // The video mode of the 128K paging is set up once: the reset's on the way (the ATM's EGA) is not built
+            Screen::RasterDeferral raster(&screen);
+            core.Reset();
+            memory.ClearModelRAM();
+            // A model whose reset leaves an extended paging on (the Pentagon 1024) goes back to the plain 128K form
+            ports.EnterSpectrum128Paging(cpu.pc);
+        }
 
         /// region <Apply port configuration>
         switch (memoryMode)

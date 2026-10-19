@@ -159,12 +159,36 @@ void Screen::InitFrame()
     InitMemoryCounters();
 }
 
+void Screen::InitRaster()
+{
+    if (_rasterDeferrals > 0)
+    {
+        _rasterDeferred = true;
+        return;
+    }
+    DetectRaster();
+}
+
+Screen::RasterDeferral::RasterDeferral(Screen* screen) : _screen(screen)
+{
+    if (_screen)
+        _screen->_rasterDeferrals++;
+}
+
+Screen::RasterDeferral::~RasterDeferral()
+{
+    if (!_screen || --_screen->_rasterDeferrals > 0 || !_screen->_rasterDeferred)
+        return;
+    _screen->_rasterDeferred = false;
+    _screen->DetectRaster();
+}
+
 //
 // Set appropriate video mode based on ports for current platform.
 // Routing only: the per-model detection logic lives in the DetectMode*
 // methods below (routed through DetectVideoMode), one per machine family.
 //
-void Screen::InitRaster()
+void Screen::DetectRaster()
 {
     // Check for null pointers before proceeding
     if (!_context || !_state)

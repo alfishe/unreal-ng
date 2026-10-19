@@ -689,9 +689,32 @@ public:
     virtual void Reset();
 
     virtual void InitFrame();
-    virtual void InitRaster();
+    /// Re-detects the video mode from the ports and config and applies it when it changed (DetectRaster); with a
+    /// RasterDeferral open only noted, and done once when the last one closes
+    void InitRaster();
+    /// Holds InitRaster off while it lives (scopes nest): the mode the ports select at its end is applied once, the
+    /// modes they pass through meanwhile are never set up. A snapshot load from its reset to its paging: the reset's
+    /// transient mode (the ATM's EGA) and its framebuffer are not built just to be replaced. Nothing may draw or
+    /// paint while one is open (the CPU held, closed before the loader paints the picture)
+    class RasterDeferral
+    {
+    public:
+        explicit RasterDeferral(Screen* screen);
+        ~RasterDeferral();
+        RasterDeferral(const RasterDeferral&) = delete;
+        RasterDeferral& operator=(const RasterDeferral&) = delete;
+
+    private:
+        Screen* _screen;
+    };
     virtual void InitMemoryCounters();
     /// endregion </Initialization>
+
+protected:
+    /// The model's mode detection behind InitRaster
+    virtual void DetectRaster();
+
+public:
 
     /// region <Video mode detection>
 protected:
@@ -985,6 +1008,10 @@ protected:
 
     // User-forced Pentagon overscan (see SetOverscanForced)
     bool _overscanForced = false;
+
+    // RasterDeferral: the scopes open, and an InitRaster held off by them
+    uint32_t _rasterDeferrals = 0;
+    bool _rasterDeferred = false;
 
     // External picture source (SetExternalPicture): its descriptor, and the
     // present delay in its frames (converted from the native delay)
