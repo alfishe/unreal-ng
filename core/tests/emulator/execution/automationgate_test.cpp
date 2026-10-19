@@ -21,6 +21,8 @@ TEST(AutomationGate_Test, ReadsAndObserversDoNotChangeTheMachine)
     EXPECT_FALSE(ChangesMachine("POST", "/profiler/opcode/start"));
     EXPECT_FALSE(ChangesMachine("POST", "/coverage/start"));
     EXPECT_FALSE(ChangesMachine("PUT", "/audio/mixer/master"));
+    EXPECT_FALSE(ChangesMachine("PUT", "/video/window"));            // the GUI window's display, not the machine
+    EXPECT_FALSE(ChangesMachine("POST", "/video/window"));
     EXPECT_FALSE(ChangesMachine("POST", "/symbols/import"));
     EXPECT_FALSE(ChangesMachine("POST", "/labels"));
     EXPECT_FALSE(ChangesMachine("POST", "/snapshot/save"));

@@ -697,6 +697,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::gpuAccelerationToggled, this, &MainWindow::handleGpuAccelerationToggled);
     connect(_menuManager, &MenuManager::crtEffectsToggled, this, &MainWindow::handleCrtEffectsToggled);
     connect(_menuManager, &MenuManager::crtProfileChanged, this, &MainWindow::handleCrtProfileChanged);
+    connect(_menuManager, &MenuManager::crtShaderChanged, this, &MainWindow::handleCrtShaderChanged);
     connect(_menuManager, &MenuManager::temporalBlendingToggled, this, &MainWindow::handleTemporalBlendingToggled);
 
     // Set GPU acceleration menu state
@@ -707,6 +708,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     UiGpuAcceleration() = _screenWrapper->isGPUAccelerated();  // recording follows View > GPU acceleration
 #endif
     _menuManager->setCrtEffectsEnabled(true);
+    _menuManager->setCustomShadersEnabled(_screenWrapper->isGPUAccelerated());
 
     _statusBarManager->restoreSettings();
 
@@ -1054,6 +1056,12 @@ void MainWindow::registerWindowView()
     WindowView::SetProvider(std::make_shared<WindowViewProvider>(_screenWrapper, shownEmulatorId, display));
 }
 
+namespace
+{
+/// The automation word of a custom CRT shader: "shader:<name>"
+const QString kShaderPrefix = QStringLiteral("shader:");
+}  // namespace
+
 WindowDisplaySettings MainWindow::windowDisplaySettings() const
 {
     WindowDisplaySettings s;
@@ -1061,9 +1069,17 @@ WindowDisplaySettings MainWindow::windowDisplaySettings() const
     s.gpuAvailable = DeviceScreenWrapper::isGPUAvailable();
     s.gpu = _screenWrapper->isGPUAccelerated();
     s.crt = _screenWrapper->crtEffectsEnabled();
-    s.crtProfile = CRTProfileParams::ProfileKey(_screenWrapper->crtProfile()).toStdString();
+    // A custom shader is "shader:<name>", offered when the host has a GPU (it needs the GPU on: WindowDisplay::Set)
+    const QString shader = _screenWrapper->customShader();
+    s.crtProfile = shader.isEmpty() ? CRTProfileParams::ProfileKey(_screenWrapper->crtProfile()).toStdString()
+                                    : (kShaderPrefix + shader).toStdString();
     for (CRTProfile profile : CRTProfileParams::AllProfiles())
         s.crtProfiles.push_back(CRTProfileParams::ProfileKey(profile).toStdString());
+    if (s.gpuAvailable)
+    {
+        for (const QString& name : DeviceScreenWrapper::availableShaders())
+            s.crtProfiles.push_back((kShaderPrefix + name).toStdString());
+    }
     s.blending = _screenWrapper->temporalBlendingEnabled();
     s.blendingFrames = _screenWrapper->temporalHistorySize();
     s.blendingWeights = _screenWrapper->temporalWeightMode() == 1 ? "exponential" : "equal";
@@ -1080,7 +1096,13 @@ void MainWindow::applyWindowDisplay(const WindowDisplayChange& change)
         _menuManager->setGpuAccelerationChecked(*change.gpu);
         handleGpuAccelerationToggled(*change.gpu);
     }
-    if (change.crtProfile)
+    if (change.crtProfile && QString::fromStdString(*change.crtProfile).startsWith(kShaderPrefix))
+    {
+        const QString name = QString::fromStdString(*change.crtProfile).mid(static_cast<int>(kShaderPrefix.size()));
+        _menuManager->setCrtShader(name);
+        handleCrtShaderChanged(name);
+    }
+    else if (change.crtProfile)
     {
         const std::vector<CRTProfile> profiles = CRTProfileParams::AllProfiles();
         for (int index = 0; index < static_cast<int>(profiles.size()); ++index)
@@ -1104,6 +1126,12 @@ void MainWindow::applyWindowDisplay(const WindowDisplayChange& change)
     {
         _menuManager->setTemporalBlendingChecked(*change.blending);
         handleTemporalBlendingToggled(*change.blending);
+    }
+    // An open Temporal Effects dialog shows what automation set
+    if (change.blending || change.blendingFrames || change.blendingWeights)
+    {
+        for (auto* dialog : findChildren<TemporalEffectsDialog*>())
+            dialog->updateFromScreen();
     }
 }
 
@@ -4499,6 +4527,7 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
     bool hudVisible = _hudWrapper ? _hudWrapper->isVisible() : false;
     bool crtEnabled = _screenWrapper->crtEffectsEnabled();
     CRTProfileParams crtParams = _screenWrapper->crtParams();
+    const QString crtShader = _screenWrapper->customShader();
     bool hasViewport = _screenWrapper->hasViewport();
     DisplayViewport savedViewport = _screenWrapper->displayViewport();
     bool temporalEnabled = _screenWrapper->temporalBlendingEnabled();
@@ -4543,11 +4572,12 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
     _hudWrapper->setVisible(hudVisible);
     _hudWrapper->setModel(_hudModel);
 
-    // Restore CRT effects (works for both GPU and software modes)
-    if (crtEnabled)
-    {
-        _screenWrapper->setCRTProfile(crtParams);
-    }
+    // Restore CRT effects (works for both GPU and software modes): the profile even when CRT is off, so switching it
+    // on again shows the chosen one. A custom shader needs the GPU: the software screen shows its base profile
+    _screenWrapper->setCRTProfile(crtParams);
+    if (!crtShader.isEmpty())
+        _screenWrapper->loadCustomShader(crtShader);
+    _screenWrapper->setCRTEffectsEnabled(crtEnabled);
 
     // Re-attach to emulator if one is running
     if (_emulator)
@@ -4584,6 +4614,9 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
 #endif
     _menuManager->setCrtEffectsEnabled(true);
     _menuManager->setCrtEffectsChecked(_screenWrapper->crtEffectsEnabled());
+    _menuManager->setCustomShadersEnabled(_screenWrapper->isGPUAccelerated());
+    if (_screenWrapper->customShader().isEmpty())
+        _menuManager->setCrtProfile(crtProfileIndex(_screenWrapper->crtProfile()));
 
     // Show, resize and center the new widget
     _screenWrapper->widget()->show();
@@ -4618,6 +4651,40 @@ void MainWindow::handleCrtProfileChanged(int profileIndex)
         _screenWrapper->setCRTProfile(profile);
         _menuManager->setCrtEffectsChecked(profile != CRTProfile::None);
     }
+}
+
+void MainWindow::handleCrtShaderChanged(const QString& name)
+{
+    if (!_screenWrapper)
+        return;
+    // A custom shader takes the current profile's parameters as its uniforms, Megatron's when there is none
+    CRTProfileParams params = _screenWrapper->crtParams();
+    if (params.profile == CRTProfile::None)
+        params = CRTProfileParams::Megatron();
+    if (!_screenWrapper->isGPUAccelerated())
+    {
+        _menuManager->setCrtProfile(crtProfileIndex(_screenWrapper->crtProfile()));
+        return;
+    }
+    _screenWrapper->setCRTProfile(params);
+    if (!_screenWrapper->loadCustomShader(name))
+    {
+        qWarning() << "Custom CRT shader" << name << "not loaded";
+        _menuManager->setCrtProfile(crtProfileIndex(params.profile));
+    }
+    _screenWrapper->setCRTEffectsEnabled(true);
+    _menuManager->setCrtEffectsChecked(true);
+}
+
+int MainWindow::crtProfileIndex(CRTProfile profile)
+{
+    const std::vector<CRTProfile> profiles = CRTProfileParams::AllProfiles();
+    for (int index = 0; index < static_cast<int>(profiles.size()); ++index)
+    {
+        if (profiles[index] == profile)
+            return index;
+    }
+    return 0;
 }
 
 void MainWindow::handleTemporalBlendingToggled(bool enabled)

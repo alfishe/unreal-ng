@@ -571,7 +571,7 @@ Lua / Python `video_temporal()`, MCP `capture_media` `temporal_status`.
 
 ```
 GET  /api/v1/emulator/{id}/video/window       GUI window display settings: backend (gpu / software), gpu_available, gpu, crt, crt_profile, crt_profiles[], blending, blending_frames, blending_weights, emulator (the instance the window shows)
-PUT  /api/v1/emulator/{id}/video/window       any of {"gpu": bool, "crt": bool, "crt_profile": "shadow-mask", "blending": bool, "blending_frames": 2..5, "blending_weights": "equal"|"exponential"} (POST too); applied the way the View menu does, answers the settings after the change; 400 bad-parameter, 409 no-window (headless) / unavailable (gpu without OpenGL), {error, kind}
+PUT  /api/v1/emulator/{id}/video/window       any of {"gpu": bool, "crt": bool, "crt_profile": "shadow-mask", "blending": bool, "blending_frames": 2..5, "blending_weights": "equal"|"exponential"} (POST too); applied the way the View menu does, answers the settings after the change; a custom shader is `"crt_profile": "shader:<name>"` (offered when the host has a GPU; needs `gpu` on, in the same request or before: 409 unavailable otherwise); the window's display, not the machine: no control session opened or needed; 400 bad-parameter, 409 no-window (headless) / unavailable (gpu without OpenGL), {error, kind}
 ```
 
 The window belongs to the GUI, which registers it with the core; headless every call answers 409 `no-window`. The
@@ -1635,6 +1635,24 @@ Every route is SlotControl ([command-interface.md section 14](./command-interfac
 restarts with the new slot set: `200`, `status: "applied"`, `restart.emulatorId` is the new id (`started` when the old
 one ran), `media` says where the media went. `POST /control/audio/gs` `switch_personality` is the same change for the
 card in the GS slot (owner decision Q10).
+
+### Game Controllers
+
+```
+GET  /api/v1/emulator/{id}/controllers                   the machine's connectors and the retro devices in them
+GET  /api/v1/emulator/{id}/controllers/{connector}       one connector
+POST /api/v1/emulator/{id}/controllers/{connector}/{verb} plug {device, options} | unplug | options | input
+GET  /api/v1/controllers/{verb}                          devices | context | profiles | profile | bindings | haptics
+POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble
+```
+
+The machine routes are ControllerControl, the host routes HostInputControl
+([command-interface.md section 15](./command-interface.md#15-game-controllers); OpenAPI tag `Controllers`); a host verb
+called with the wrong method answers `405`. `GET /api/v1/controllers/haptics[?device=]` lists per device `available`,
+`reason` (why the emulator cannot drive its motors), `actuators` and `effects` (`id`, `label`, `ms`);
+`POST /api/v1/controllers/rumble {"device": "...", "effect": "clicks"}` plays one (`identify` by default): `200` with
+`message`, `404` `unknown-device`, `400` `bad-request` for an effect the device lacks, `503` `unavailable` with the
+reason for a device without drivable motors or a process without the Qt client.
 
 ### Snapshots (Implemented Separately)
 ```

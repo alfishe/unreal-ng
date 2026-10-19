@@ -1,0 +1,13 @@
+{
+  "family": "surface-dial",
+  "images": [
+    {
+      "view": "front",
+      "source": "tools/controllers/make_fallback_images.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "generated line drawing, no photo",
+      "retouch": "none"
+    }
+  ]
+}

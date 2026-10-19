@@ -40,15 +40,16 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     _logger = context->pModuleLogger;
     _memory = context->pMemory;
 
-    // Initialize memory access interfaces
+    // Initialize memory access interfaces. The contended and overlay fast ones read without the virtual call where
+    // MemoryReadFast is Memory's own (the memory exists before the CPU, Core::Init, and keeps its class)
+    const bool stockRead = _memory && _memory->HasStockFastRead();
     FastMemIf = Memory::GetFastMemoryInterface();
     DbgMemIf = Memory::GetDebugMemoryInterface();
-    FastContendedMemIf = Memory::GetFastContendedMemoryInterface();
-    FastContendedStockMemIf = Memory::GetFastContendedStockMemoryInterface();
+    FastContendedMemIf = Memory::GetFastContendedMemoryInterface(stockRead);
     DbgContendedMemIf = Memory::GetDebugContendedMemoryInterface();
-    OverlayFastMemIf = Memory::GetOverlayMemoryInterface(false, false);
+    OverlayFastMemIf = Memory::GetOverlayMemoryInterface(false, false, stockRead);
     OverlayDbgMemIf = Memory::GetOverlayMemoryInterface(true, false);
-    OverlayFastContendedMemIf = Memory::GetOverlayMemoryInterface(false, true);
+    OverlayFastContendedMemIf = Memory::GetOverlayMemoryInterface(false, true, stockRead);
     OverlayDbgContendedMemIf = Memory::GetOverlayMemoryInterface(true, true);
     MemIf = FastMemIf;  // Use fast memory access interface by default (Core::SelectMemoryInterface decides)
 
@@ -105,8 +106,6 @@ Z80::~Z80()
 
     delete FastContendedMemIf;
     FastContendedMemIf = nullptr;
-    delete FastContendedStockMemIf;
-    FastContendedStockMemIf = nullptr;
     delete DbgContendedMemIf;
     DbgContendedMemIf = nullptr;
     delete OverlayFastMemIf;

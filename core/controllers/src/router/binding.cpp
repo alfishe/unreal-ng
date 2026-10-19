@@ -213,7 +213,9 @@ bool ValidateBinding(const Binding& binding, std::string& error)
             error = "chord member '" + source + "' is not a button";
             return false;
         }
-        if (!whole && (info.type == ControlType::Delta || info.type == ControlType::Pointer))
+        // An encoder's detents drive actions with the projection to come (control-model TODO T4), not a target
+        if (!whole && (info.type == ControlType::Delta || info.type == ControlType::Pointer ||
+                       info.type == ControlType::Encoder))
         {
             error = "'" + source + "' is not a button: it cannot drive a target yet";
             return false;

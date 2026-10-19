@@ -677,6 +677,28 @@ change `plan` (`removed` with each card's `undo`, `shadowed`, `lostFunctions`, `
 `Emulator.gs_switch_personality(name)` is the same change as `slots_gs` (a restart: the `Emulator` object then names
 the old machine; `emu_get_selected()` the new one); it raises `RuntimeError` with the reason when refused.
 
+### Game Controllers
+
+`Emulator` methods - the same verbs, options and replies as the CLI `controllers`, the WebAPI `/controllers`, MCP and
+Lua ([command-interface.md section 15](./command-interface.md#15-game-controllers)). Each returns the reply dict (`ok`,
+`error`, `message` and the verb's fields); a refusal is a reply, not an exception.
+
+```python
+emu.controllers_list()                                   # the machine's connectors
+emu.controllers_plug("auto", "kempston-joystick")
+emu.controllers_input("kempston", press="up+fire")
+emu.controllers_host("devices")                          # any host verb with its options as keywords
+emu.controllers_bindings(); emu.controllers_bind("south", {"key": "ENTER"}, family="xbox-elite-2")
+
+h = emu.controllers_haptics()                            # per device: available / reason, actuators, effects
+for device in h["devices"]:
+    if device["available"]:
+        emu.controllers_rumble(device["id"], "clicks")   # identify (default), low, high, clicks, left-trigger, ...
+```
+
+`controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`; the host side needs the Qt client
+(a headless process answers `unavailable`).
+
 ### Disk Operations
 
 `Emulator` methods for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands and the WebAPI `/disk/{drive}/*` endpoints.
@@ -1597,7 +1619,8 @@ emu.window_display()                 # GUI window display settings: {'backend' (
                                      #   'exponential'), 'emulator' (the instance the window shows)}; headless
                                      #   {'ok': False, 'error', 'kind': 'no-window'}
 emu.window_display_set(crt_profile='shadow-mask', blending=True)  # any of gpu=, crt=, blending= (bool),
-                                     #   crt_profile= (none, basic, aperture, shadow-mask, slot-mask, megatron; other
+                                     #   crt_profile= (none, basic, aperture, shadow-mask, slot-mask, megatron,
+                                     #   shader:<name> with the GPU; other
                                      #   than none switches CRT on), blending_frames=, blending_weights=; applied
                                      #   the way the View menu does. Returns the settings after the change, or
                                      #   {'ok': False, 'error', 'kind': 'bad-parameter' / 'no-window' / 'unavailable'}

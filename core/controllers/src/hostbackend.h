@@ -49,6 +49,22 @@ enum RumbleActuator : uint8_t
     kRumbleHigh = 2,
     kRumbleLeftTrigger = 4,
     kRumbleRightTrigger = 8,
+    /// A clicker: discrete waveforms (a click, a buzz) and no levels - the Surface Dial's Simple Haptic Controller.
+    /// It plays HapticClicks through IBackend::PlayClicks; the motor levels of the game's haptics do not reach it
+    kHapticClicker = 16,
+};
+
+/// One effect of a clicker (kHapticClicker): a waveform played @p count times, @p periodMs apart
+struct HapticClicks
+{
+    enum class Wave : uint8_t
+    {
+        Click,
+        Buzz,
+    };
+    Wave wave = Wave::Click;
+    uint8_t count = 1;
+    uint16_t periodMs = 0;
 };
 
 /// What a backend says about itself (architecture.md §4 rule 3: probes are cheap and explicit)
@@ -93,6 +109,13 @@ public:
     {
         (void)device;
         (void)levels;
+        return false;
+    }
+    /// Play a clicker's effect (kHapticClicker); false for a device that is not one
+    virtual bool PlayClicks(const HostDeviceId& device, const HapticClicks& clicks)
+    {
+        (void)device;
+        (void)clicks;
         return false;
     }
     /// endregion </Haptics>

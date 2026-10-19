@@ -53,9 +53,10 @@ private:
         QRectF rect;  ///< the rect, or the circle's bounding box (image units)
         QPointF anchor;
         bool left = true;
-        QString analog;  ///< "", "trigger", "stick"
+        QString analog;  ///< "", "trigger", "stick", "encoder"
         std::string pair;  ///< a stick's other axis
         double radius = 0;
+        double steps = 0;  ///< an encoder's steps per turn
     };
 
     QRectF imageRect() const;

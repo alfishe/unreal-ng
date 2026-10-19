@@ -1573,7 +1573,7 @@ shows their effect.
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
 | `video window` / `video window status` | | Show the settings. |
-| `video window <key>=<value> ...` | `gpu`, `crt`, `blending` = on / off; `crt_profile` = none, basic, aperture, shadow-mask, slot-mask, megatron; `blending_frames` = 2..5; `blending_weights` = equal / exponential | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off. |
+| `video window <key>=<value> ...` | `gpu`, `crt`, `blending` = on / off; `crt_profile` = none, basic, aperture, shadow-mask, slot-mask, megatron, shader:<name> (a custom shader, GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off. |
 
 Fields: `backend` (`gpu` / `software`), `gpu_available`, `gpu`, `crt`, `crt_profile`, `crt_profiles` (offered),
 `blending`, `blending_frames`, `blending_weights`, `emulator` (the instance the window shows). Errors: `bad-parameter`
@@ -3593,6 +3593,65 @@ The network settings change the ZX-bus network cards the same way (owner decisio
 machine and applies the other keys of the request to it; settings without a card change apply in place (`accepted`).
 WebAPI `POST /network/config` (with `replaceIfIncompatible` / `dryRun` / `mediaDisposition`), MCP `emulator_manage`
 `network_configure` (`settings`), Lua / Python `network_configure`, and the Qt Network window's card boxes do the same.
+
+### 15. Game Controllers
+
+Two sides through one control layer each, with the same verbs, options and replies on every surface. The **machine
+side** (`ControllerControl`, per emulator) holds the joystick connectors and the retro devices in them (Kempston,
+Sinclair 1 / 2, Cursor, keys, Fuller, the Next's pads). The **host side** (`HostInputControl`, per process: the Qt
+client's game controllers) holds the host devices, their profiles and bindings, and their haptics. Design:
+[controller manager surfaces](../../../inprogress/2026-10-17-controller-manager/surfaces.md) §2-§8; haptics:
+[haptics.md](../../../inprogress/2026-10-17-controller-manager/haptics.md) §10.
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `controllers [list]` | `[--json]` | The machine's connectors: id, alias, kind, the retro device each holds, what is held | ✅ Implemented |
+| `controllers get` | `<connector>` | One connector and the controls it holds now | ✅ Implemented |
+| `controllers plug` | `<connector\|auto> <device> [opt=val ...] [async]` | Plug a retro device (`kempston-joystick`, `sinclair-joystick port=2`, `keys-joystick keys=up:q,...`, `md6-pad`); `auto` takes the first free connector that fits. Waits for the frame boundary unless `async` | ✅ Implemented |
+| `controllers unplug` | `<connector>` | Free a connector | ✅ Implemented |
+| `controllers options` | `<connector> opt=val ...` | Change the options of the device a connector holds | ✅ Implemented |
+| `controllers targets` | `<device>` | The connectors that take a retro device, in order, with the default | ✅ Implemented |
+| `controllers auto` | `[apply]` | The port-read evidence and the joystick it points to; `apply` runs the watch again | ✅ Implemented |
+| `controllers devices` | | The connected host devices: id, name, family, layout, backend | ✅ Implemented |
+| `controllers context` | | Machine, the loaded file's SHA-256, the manual game profile, the applied profiles, warnings | ✅ Implemented |
+| `controllers profiles` | `[set=game\|play\|debug\|scheme] [machine=..]` | Every profile with kind, scope, specificity and whether it applies | ✅ Implemented |
+| `controllers profile` | `<id>` | One profile as YAML | ✅ Implemented |
+| `controllers save` / `delete` / `apply` | `<file>` / `<id>` / `<id\|none>` | Save a profile file into the user's profiles; delete a user profile; choose the game profile by hand | ✅ Implemented |
+| `controllers bindings` | `[device=..] [layer=play\|debug]` | The effective bindings, each with the profile it came from | ✅ Implemented |
+| `controllers bind` / `unbind` | `<control> field=val .. [family=..\|device=..\|profile=..] [layer=..]` | Change one binding in a user profile, saved and applied at once | ✅ Implemented |
+| `controllers scheme` | `<scheme/kempston\|scheme/qaop-space\|none> [family=..\|device=..\|profile=..]` | How the pad works: the scheme the user profile extends | ✅ Implemented |
+| `controllers haptics` | `[device]` | Per host device: whether the emulator drives its motors (`available`, else the `reason`), its `actuators` (`low`, `high`, `left-trigger`, `right-trigger`) and the test `effects` (`id`, `label`, `ms`) | ✅ Implemented |
+| `controllers rumble` | `<device> [effect]` | Play a test effect on a host device: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell` (a Surface Dial: `identify`, `click`, `clicks`, `buzz`) - the ones `haptics` lists for it | ✅ Implemented |
+
+**Haptics.** The test effects are debug feedback: they play while the game's haptics are held back (paused machine,
+TTD replay, turbo), and they are the effects of the dialog's **Test haptics** (Tools > Controllers). A device the
+emulator cannot drive answers `rumble` with `unavailable` and the reason, the same text as the dialog's tooltip:
+keyboards and mice have no motors; a DualSense rumbles over USB only for now; on macOS an Xbox pad rumbles over
+Bluetooth only (over USB neither its driver nor GameController moves a motor, haptics.md §9); on Linux the event
+device needs write access (a udev rule). An unknown effect is `bad-request` with the effects the device has.
+
+```
+controllers haptics
+# Haptics (device, the effects rumble plays or why not):
+#   bt:045e:0b22:c6928f45  Xbox Elite Wireless Controller Series 2
+#     effects: identify, low, high, clicks, left-trigger, right-trigger, swell
+controllers rumble bt:045e:0b22:c6928f45 clicks
+# OK: Three clicks on Xbox Elite Wireless Controller Series 2
+```
+
+Every surface offers the same verbs:
+
+| Surface | Machine side | Host side | Haptics |
+| :--- | :--- | :--- | :--- |
+| CLI | `controllers <verb> ...` | `controllers <verb> ...` | `controllers haptics [device]`, `controllers rumble <device> [effect]` |
+| WebAPI | `GET /emulator/{id}/controllers[/{connector}]`, `POST .../controllers/{connector}/{verb}` | `GET` / `POST /api/v1/controllers/{verb}` (the wrong method answers 405) | `GET /api/v1/controllers/haptics?device=`, `POST /api/v1/controllers/rumble {device, effect}` |
+| MCP | `controllers` actions `list` ... `input` (with `target`) | `controllers` actions `devices` ... `scheme` (no target) | `controllers` actions `haptics` (`device`), `rumble` (`device`, `effect`) |
+| Python | `controllers_list()`, `controllers_plug()`, ... `controllers_input()` | `controllers_host(verb, **options)` and `controllers_profiles()`, `controllers_bind()`, ... | `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")` |
+| Lua | `controllers(verb, connector, device, opts)` | `controllers_host(verb, opts)` | `controllers_haptics([device])`, `controllers_rumble(device, [effect])` |
+
+Each returns the reply every surface returns: `ok`, `error` (`bad-request`, `unknown-device`, `unknown-profile`,
+`unavailable`, `read-only`), `message` and the verb's fields; `--json` in the CLI prints it as is. The host side needs
+the Qt client (it owns the game controllers): a headless process answers `unavailable`.
 
 ## Future Capabilities
 

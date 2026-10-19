@@ -102,7 +102,8 @@ namespace
                      const std::string& verb, bool post)
     {
 #ifdef ENABLE_CONTROLLERS
-        static const std::vector<std::string> reads = {"devices", "context", "profiles", "profile", "bindings"};
+        static const std::vector<std::string> reads = {"devices", "context", "profiles", "profile", "bindings",
+                                                       "haptics"};
         const bool read = std::find(reads.begin(), reads.end(), verb) != reads.end();
         const bool known = std::find(HostInputControl::Verbs().begin(), HostInputControl::Verbs().end(), verb) !=
                            HostInputControl::Verbs().end();
@@ -133,7 +134,7 @@ namespace
 }  // namespace
 
 /// @brief GET /api/v1/controllers/{verb}: devices, context, profiles (?set=&machine=), profile (?id=), bindings
-/// (?device=&layer=)
+/// (?device=&layer=), haptics (?device=)
 void EmulatorAPI::getHostControllers(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                      const std::string& verb) const
 {
@@ -141,7 +142,8 @@ void EmulatorAPI::getHostControllers(const HttpRequestPtr& req, std::function<vo
 }
 
 /// @brief POST /api/v1/controllers/{verb}: save {text}, delete {id}, apply {id}, bind {control, spec, layer, family,
-/// device, profile}, unbind {control, layer, family, device, profile}, scheme {id, family, device, profile}
+/// device, profile}, unbind {control, layer, family, device, profile}, scheme {id, family, device, profile}, rumble
+/// {device, effect}
 void EmulatorAPI::postHostControllers(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                       const std::string& verb) const
 {

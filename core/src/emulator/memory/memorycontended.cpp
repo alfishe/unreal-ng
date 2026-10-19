@@ -64,18 +64,15 @@ uint8_t Memory::MemoryReadM1Snow(uint16_t addr, bool isExecution)
     return value;
 }
 
-MemoryInterface* Memory::GetFastContendedMemoryInterface()
+MemoryInterface* Memory::GetFastContendedMemoryInterface(bool stockRead)
 {
+    if (stockRead)
+        return new MemoryInterface(&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>,
+                                   &Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>,
+                                   &Memory::MemoryReadM1Snow<&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>>);
     return new MemoryInterface(&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>,
                                &Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>,
                                &Memory::MemoryReadM1Snow<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>);
-}
-
-MemoryInterface* Memory::GetFastContendedStockMemoryInterface()
-{
-    return new MemoryInterface(&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>,
-                               &Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>,
-                               &Memory::MemoryReadM1Snow<&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>>);
 }
 
 MemoryInterface* Memory::GetDebugContendedMemoryInterface()
@@ -98,4 +95,6 @@ template uint8_t Memory::MemoryReadM1Snow<&Memory::MemoryReadContended<&Memory::
 template uint8_t Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>>>(
     uint16_t, bool);
 template uint8_t Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>>(
+    uint16_t, bool);
+template uint8_t Memory::MemoryReadM1Snow<&Memory::MemoryReadOverlayM1<&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>>>(
     uint16_t, bool);

@@ -16,6 +16,7 @@
 
 #include "emulator/video/screen.h"
 #include "crtprofiles.h"
+#include "crtrenderer.h"
 #include "framehistory.h"
 
 class Emulator;
@@ -73,6 +74,9 @@ public:
     QRectF displaySourceRect() const;
     /// Size of the drawn picture inside the window (the quad paintGL letterboxes), logical pixels
     QSize drawnPictureSize() const;
+    /// Where paintGL draws the picture: centered, device pixels, rows top first. The CRT composition is made for
+    /// exactly this size
+    QRect pictureDeviceRect() const;
     void setDisplayViewport(const DisplayViewport& viewport);
     void clearDisplayViewport();
     QImage grabFramebuffer();
@@ -88,7 +92,10 @@ public:
     CRTProfile crtProfile() const { return _crtParams.profile; }
     const CRTProfileParams& crtParams() const { return _crtParams; }
 
+    /// A fragment shader from CRTShaderManager in place of the built-in CRT (legacy uniforms: tex, texSize, outputSize,
+    /// maskType, curvature, ...). An empty name goes back to the built-in one. @return false: not found or not compiled
     bool loadCustomShader(const QString& name);
+    QString customShader() const { return _customShaderName; }
     static std::vector<QString> availableShaders();
 
     void setTemporalBlendingEnabled(bool enabled);
@@ -115,6 +122,10 @@ protected:
 private:
     void updateTexture();
     void setupVSync();
+    bool compileCustomShader(const QString& source);  ///< the context current; empty: none
+    void drawQuad(float srcX1, float srcY1, float srcX2, float srcY2);
+    void drawComposedCrt(const QRect& picture, int glY);
+    void drawCustomCrt(const QRect& picture);
 
     QRectF _devicePixelsRect;
     QImage* _devicePixels = nullptr;
@@ -125,9 +136,21 @@ private:
     QOpenGLTexture* _texture = nullptr;
     std::atomic<bool> _textureNeedsUpdate{true};
 
-    QOpenGLShaderProgram* _crtShader = nullptr;
+    const QImage* _shownFrame = nullptr;  ///< the frame in _texture: _latchedFrame, _blendedFrame or _legacyFrame
+    QImage _legacyFrame;
+    uint64_t _frameSerial = 0;           ///< counts uploads into _texture
+    uint64_t _gradedSerial = ~0ull;      ///< the upload _gradedTexture was graded from
+
+    // CRT: the composition of CRTRenderer (the software screen's picture, bit for bit), or a custom shader
+    QOpenGLShaderProgram* _composeShader = nullptr;
+    QOpenGLShaderProgram* _customShader = nullptr;
+    QOpenGLTexture* _gradedTexture = nullptr;
+    QOpenGLTexture* _indexTexture = nullptr;
+    QOpenGLTexture* _factorTexture = nullptr;
+    CRTRenderer _crtRenderer;
     bool _crtEnabled = false;
     CRTProfileParams _crtParams;
+    QString _customShaderName;
     QString _customShaderSource;
 
     FrameHistory _frameHistory;

@@ -86,7 +86,7 @@ nc localhost 8765
 | Command | Description |
 |---------|-------------|
 | `capture screen [--area=full\|screen] [--format=png\|gif] [--source=presented\|live\|window] [file]` | Screenshot of the session's emulator; `--source=live` takes the frame as drawn now instead of the presented one; `--source=window` the picture as the unreal-qt window draws it (its shape, CRT shader, HUD; GUI only, `--area=full`). `--area=full` (default): the whole frame with its border; `screen`: the working picture (the paper of a Spectrum, the graphics window of a TS-Conf, the whole FT812 picture). PNG (default) or GIF. Prints the geometry and a data URI, or saves to `file`. |
-| `video window [status \| <key>=<value> ...]` | The GUI window's display settings: GPU acceleration, CRT effects and profile, temporal blending. `gpu`, `crt`, `blending` = on / off; `crt_profile` = none, basic, aperture, shadow-mask, slot-mask, megatron; `blending_frames` = 2..5; `blending_weights` = equal / exponential. GUI only (headless: `Error (no-window)`). |
+| `video window [status \| <key>=<value> ...]` | The GUI window's display settings: GPU acceleration, CRT effects and profile, temporal blending. `gpu`, `crt`, `blending` = on / off; `crt_profile` = none, basic, aperture, shadow-mask, slot-mask, megatron, shader:<name> (GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential. GUI only (headless: `Error (no-window)`). |
 | `capture framebuffer <file> [rgba\|index]` | Raw pixels of the same frame |
 | `capture ocr` | OCR text from the screen |
 

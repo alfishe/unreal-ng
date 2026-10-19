@@ -76,6 +76,10 @@ public:
     void setCrtEffectsChecked(bool checked);
     void setCrtEffectsEnabled(bool enabled);
     void setCrtProfile(int profileIndex);
+    /// Check the custom shader's entry
+    void setCrtShader(const QString& name);
+    /// Custom shaders need the GPU: their entries are greyed out without it
+    void setCustomShadersEnabled(bool enabled);
     void populateCrtProfileMenu();
     void setTemporalBlendingChecked(bool checked);
     void setTemporalBlendingEnabled(bool enabled);
@@ -165,6 +169,7 @@ signals:
     void gpuAccelerationToggled(bool enabled);
     void crtEffectsToggled(bool enabled);
     void crtProfileChanged(int profileIndex);
+    void crtShaderChanged(const QString& name);  ///< a custom shader (GPU only)
     void temporalBlendingToggled(bool enabled);
     void debuggerToggled(bool visible);
     void logWindowToggled(bool visible);

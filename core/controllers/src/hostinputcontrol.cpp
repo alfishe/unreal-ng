@@ -5,6 +5,9 @@
 #include <filesystem>
 #include <mutex>
 
+#include "devicedatabase.h"
+#include "haptics/testeffects.h"
+#include "hostinputservice.h"
 #include "profiles/yaml.h"
 
 namespace controllers
@@ -50,6 +53,15 @@ JsonValue Strings(const std::vector<std::string>& values)
     for (const std::string& value : values)
         items.push_back(JsonValue::String(value));
     return JsonValue::Array(std::move(items));
+}
+
+/// The connected device @p id, or nullptr
+const HostDeviceInfo* FindDevice(const std::vector<HostDeviceInfo>& devices, const std::string& id)
+{
+    for (const HostDeviceInfo& device : devices)
+        if (device.id == id)
+            return &device;
+    return nullptr;
 }
 
 const char* KindName(const Profile& profile)
@@ -175,7 +187,7 @@ const std::vector<std::string>& HostInputControl::Verbs()
 {
     static const std::vector<std::string> verbs = {"devices", "context", "profiles", "profile", "save",
                                                    "delete",  "apply",   "bindings", "bind",    "unbind",
-                                                   "scheme"};
+                                                   "scheme",  "haptics", "rumble"};
     return verbs;
 }
 
@@ -193,6 +205,8 @@ const std::vector<std::string>& HostInputControl::OptionsFor(const std::string& 
         {"bind", {"control", "spec", "layer", "family", "device", "profile"}},
         {"unbind", {"control", "layer", "family", "device", "profile"}},
         {"scheme", {"id", "family", "device", "profile"}},
+        {"haptics", {"device"}},
+        {"rumble", {"device", "effect"}},
     };
     static const std::vector<std::string> none;
     const auto it = options.find(verb);
@@ -269,6 +283,10 @@ HostReply HostInputControl::Execute(const HostRequest& request)
         return Bind(request, verb == "unbind");
     if (verb == "scheme")
         return Scheme(request);
+    if (verb == "haptics")
+        return Haptics(request);
+    if (verb == "rumble")
+        return Rumble(request);
     std::string list;
     for (const std::string& known : Verbs())
         list += (list.empty() ? "" : ", ") + known;
@@ -280,13 +298,85 @@ HostReply HostInputControl::Devices()
     HostReply reply;
     std::vector<JsonValue> devices;
     for (const HostDeviceInfo& device : _owner.Context().devices)
-        devices.push_back(JsonValue::Object({{"id", JsonValue::String(device.id)},
-                                             {"name", JsonValue::String(device.name)},
-                                             {"family", JsonValue::String(device.family)},
-                                             {"layout", JsonValue::String(device.layout)},
-                                             {"backend", JsonValue::String(device.backend)}}));
+    {
+        JsonValue item = JsonValue::Object({{"id", JsonValue::String(device.id)},
+                                            {"name", JsonValue::String(device.name)},
+                                            {"family", JsonValue::String(device.family)},
+                                            {"layout", JsonValue::String(device.layout)},
+                                            {"backend", JsonValue::String(device.backend)}});
+        // The family's controls when the device database names them (a Surface Dial: knob, push, touch)
+        const DeviceMatch family = DeviceDatabase::Builtin().ForFamily(device.family, device.layout);
+        if (!family.controls.empty())
+            item.Set("controls", Strings(family.controls));
+        devices.push_back(std::move(item));
+    }
     reply.body.Set("devices", JsonValue::Array(std::move(devices)));
     return reply;
+}
+
+HostReply HostInputControl::Haptics(const HostRequest& request)
+{
+    const std::vector<HostDeviceInfo> devices = _owner.Context().devices;
+    const std::string only = Option(request, "device");
+    if (!only.empty() && FindDevice(devices, only) == nullptr)
+        return Fail("unknown-device", "no connected host device '" + only + "' (devices lists them)");
+    HostInputService* input = _owner.Input();
+    HostReply reply;
+    std::vector<JsonValue> list;
+    for (const HostDeviceInfo& device : devices)
+    {
+        if (!only.empty() && device.id != only)
+            continue;
+        const std::string why = input != nullptr ? input->HapticsUnavailable(device.id)
+                                                 : std::string("No host haptics output in this process");
+        const uint8_t actuators = why.empty() ? input->RumbleActuators(device.id) : 0;
+        std::vector<JsonValue> effects;
+        for (const TestEffect& test : TestEffects(actuators))
+            effects.push_back(JsonValue::Object({{"id", JsonValue::String(test.id)},
+                                                 {"label", JsonValue::String(test.label)},
+                                                 {"ms", JsonValue::Number(DurationMs(test))}}));
+        list.push_back(JsonValue::Object({{"id", JsonValue::String(device.id)},
+                                          {"name", JsonValue::String(device.name)},
+                                          {"available", JsonValue::Bool(why.empty())},
+                                          {"reason", JsonValue::String(why)},
+                                          {"actuators", Strings(ActuatorNames(actuators))},
+                                          {"effects", JsonValue::Array(std::move(effects))}}));
+    }
+    reply.body.Set("devices", JsonValue::Array(std::move(list)));
+    return reply;
+}
+
+HostReply HostInputControl::Rumble(const HostRequest& request)
+{
+    const std::string id = Option(request, "device");
+    if (id.empty())
+        return Fail("bad-request", "rumble needs device= (haptics lists the devices and their effects)");
+    const std::vector<HostDeviceInfo> devices = _owner.Context().devices;
+    const HostDeviceInfo* device = FindDevice(devices, id);
+    if (device == nullptr)
+        return Fail("unknown-device", "no connected host device '" + id + "' (devices lists them)");
+    HostInputService* input = _owner.Input();
+    const std::string why = input != nullptr ? input->HapticsUnavailable(id)
+                                             : std::string("No host haptics output in this process");
+    if (!why.empty())
+        return Fail("unavailable", device->name + ": " + why);
+    const std::string name = Option(request, "effect", "identify");
+    const std::vector<TestEffect> effects = TestEffects(input->RumbleActuators(id));
+    for (const TestEffect& test : effects)
+        if (test.id == name)
+        {
+            input->PlayTest(id, test);
+            HostReply reply;
+            reply.message = test.label + " on " + device->name;
+            reply.body.Set("device", JsonValue::String(id));
+            reply.body.Set("effect", JsonValue::String(test.id));
+            reply.body.Set("ms", JsonValue::Number(DurationMs(test)));
+            return reply;
+        }
+    std::string list;
+    for (const TestEffect& test : effects)
+        list += (list.empty() ? "" : ", ") + test.id;
+    return Fail("bad-request", "no effect '" + name + "' on " + device->name + " (it has: " + list + ")");
 }
 
 HostReply HostInputControl::Context()

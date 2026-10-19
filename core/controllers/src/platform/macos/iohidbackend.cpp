@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstdio>
 #include <future>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <string>
@@ -18,6 +19,7 @@
 
 #include "devicedatabase.h"
 #include "hid/drivers/dualsenseoutput.h"
+#include "hid/drivers/surfacedial.h"
 #include "hid/drivers/xboxgip.h"
 #include "hid/hiddescriptor.h"
 #include "hid/hidpad.h"
@@ -144,9 +146,28 @@ public:
     {
         std::lock_guard lock(_mutex);
         for (const auto& [ref, known] : _devices)
+        {
             if (known->id == device && (known->xboxBluetooth || known->dualSenseUsb))
                 return kRumbleLow | kRumbleHigh | kRumbleLeftTrigger | kRumbleRightTrigger;
+            if (known->id == device && known->dial)
+                return kHapticClicker;
+        }
         return 0;
+    }
+
+    /// The Surface Dial's clicks: output report 1 of its Simple Haptic Controller (SurfaceDial::HapticReport)
+    bool PlayClicks(const HostDeviceId& device, const HapticClicks& clicks) override
+    {
+        std::lock_guard lock(_mutex);
+        for (const auto& [ref, known] : _devices)
+        {
+            if (known->id != device || !known->dial)
+                continue;
+            const std::vector<uint8_t> report = SurfaceDial::HapticReport(clicks);
+            return IOHIDDeviceSetReport(known->ref, kIOHIDReportTypeOutput, report[0], report.data(),
+                                        static_cast<CFIndex>(report.size())) == kIOReturnSuccess;
+        }
+        return false;
     }
 
     /// The Xbox Bluetooth rumble report (as SDL's HIDAPI Xbox One driver sends it): 03, enable 0F, left trigger,
@@ -198,6 +219,7 @@ private:
         std::vector<uint8_t> buffer;
         std::unique_ptr<HidPad> hid;
         std::unique_ptr<XboxGipPad> gip;
+        std::unique_ptr<SurfaceDial> dial;
         IoHidBackend* owner = nullptr;
         IOHIDDeviceRef ref = nullptr;
         bool xboxBluetooth = false;  ///< rumble through output report 3 (an Xbox One / Series pad over Bluetooth)
@@ -214,9 +236,11 @@ private:
             started.set_value("IOHIDManagerCreate failed");
             return;
         }
-        CFDictionaryRef matches[] = {Matching(0x04), Matching(0x05), Matching(0x08)};
-        CFArrayRef matching = CFArrayCreate(kCFAllocatorDefault, reinterpret_cast<const void**>(matches), 3,
-                                            &kCFTypeArrayCallBacks);
+        // Joystick, game pad, multi-axis controller; System Multi-Axis Controller for the Surface Dial and devices of
+        // its pattern. Opened without seizing (kIOHIDOptionsTypeNone): the system keeps its own use of them
+        CFDictionaryRef matches[] = {Matching(0x04), Matching(0x05), Matching(0x08), Matching(0x0E)};
+        CFArrayRef matching = CFArrayCreate(kCFAllocatorDefault, reinterpret_cast<const void**>(matches),
+                                            static_cast<CFIndex>(std::size(matches)), &kCFTypeArrayCallBacks);
         for (CFDictionaryRef match : matches)
             CFRelease(match);
         IOHIDManagerSetDeviceMatchingMultiple(manager, matching);
@@ -237,8 +261,12 @@ private:
         _loop = CFRunLoopGetCurrent();
         started.set_value({});
 
+        // 0.1 s: a Surface Dial's inferred touch ends on time between its reports (DialTouch)
         while (!_stopping)
-            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.5, false);
+        {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false);
+            ExpireDials();
+        }
 
         _loop = nullptr;
         IOHIDManagerRegisterDeviceMatchingCallback(manager, nullptr, nullptr);
@@ -293,7 +321,8 @@ private:
         auto device = std::make_unique<Device>();
         device->owner = this;
         device->ref = ref;
-        // USB GIP pads take their rumble through the dext: haptics.md §13 open point
+        // A USB GIP pad gets no rumble on macOS: its dext takes no rumble report, and GameController accepts the
+        // haptics of a pad over USB but drives no motor (haptics.md §9, SDL issue #14800)
         constexpr uint16_t kMicrosoft = 0x045E;
         device->xboxBluetooth = bluetooth && vendor == kMicrosoft && match.layout == "xbox" &&
                                 match.family != "xbox-360";
@@ -306,8 +335,7 @@ private:
             if (vendor == kMicrosoft && match.family == "xbox-360")
                 return "Xbox 360 pads do not rumble on macOS yet";
             if (vendor == kMicrosoft && match.layout == "xbox")
-                return "Over USB macOS keeps the motors of an Xbox pad in its own driver: connect the pad over "
-                       "Bluetooth";
+                return "macOS drives no motors of an Xbox pad over USB: connect the pad over Bluetooth";
             return "On macOS rumble works for Xbox pads over Bluetooth and a DualSense over USB; this device has no "
                    "motors the emulator can drive";
         };
@@ -316,6 +344,8 @@ private:
         const HidLayout layout = HidLayoutFor(match.layout);
         if (XboxGipPad::Handles(vendor, product) && maxInput == 18)
             device->gip = std::make_unique<XboxGipPad>();
+        else if (SurfaceDial::Handles(vendor, product))
+            device->dial = std::make_unique<SurfaceDial>();
         else
         {
             CFTypeRef data = IOHIDDeviceGetProperty(ref, CFSTR(kIOHIDReportDescriptorKey));
@@ -327,10 +357,17 @@ private:
                                     static_cast<size_t>(CFDataGetLength(static_cast<CFDataRef>(data))), descriptor,
                                     error))
                 return;
-            device->hid = std::make_unique<HidPad>(descriptor, layout);
-            if (device->hid->Empty())
-                return;
+            if (SurfaceDial::Matches(descriptor))
+                device->dial = std::make_unique<SurfaceDial>(descriptor);
+            else
+            {
+                device->hid = std::make_unique<HidPad>(descriptor, layout);
+                if (device->hid->Empty())
+                    return;
+            }
         }
+        if (device->dial)
+            device->rumbleUnavailable.clear();  // no motors, but its clicks play (PlayClicks)
 
         // architecture.md §5: usb:<vid>:<pid>:<version>:<serial>, usb:...@<path hash>, bt:<vid>:<pid>:<hash>
         const std::string serial = StringProperty(ref, CFSTR(kIOHIDSerialNumberKey));
@@ -385,6 +422,22 @@ private:
         _sink->OnDeviceRemoved(device->id);
     }
 
+    void ExpireDials()
+    {
+        std::vector<Device*> dials;
+        {
+            std::lock_guard lock(_mutex);
+            for (const auto& [ref, device] : _devices)
+                if (device->dial)
+                    dials.push_back(device.get());  // only this thread erases
+        }
+        const uint64_t now = DialNowMs();
+        for (Device* device : dials)
+            device->dial->Expire(now, [this, device](const std::string& control, float value) {
+                _sink->OnControl({device->id, control, value, 0});
+            });
+    }
+
     void OnReport(Device& device, const uint8_t* report, size_t size)
     {
         const auto sink = [this, &device](const std::string& control, float value) {
@@ -392,6 +445,8 @@ private:
         };
         if (device.gip)
             device.gip->Decode(report, size, sink);
+        else if (device.dial)
+            device.dial->Decode(report, size, sink);
         else if (device.hid)
             device.hid->Decode(report, size, sink);
     }

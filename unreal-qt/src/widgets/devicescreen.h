@@ -12,7 +12,7 @@
 #include "framehistory.h"
 #include "crtprofiles.h"
 
-class CRTFilter;
+class CRTRenderer;
 
 class Emulator;  // Forward declaration
 class MouseCaptureController;
@@ -113,7 +113,7 @@ public:
     void setTemporalWeightMode(int mode);
     int temporalWeightMode() const { return _temporalWeightMode; }
 
-    // CRT effects (SIMD-accelerated)
+    // CRT effects (CRTRenderer: the same picture as the GPU screen, bit for bit)
     void setCRTEffectsEnabled(bool enabled);
     bool crtEffectsEnabled() const { return _crtEnabled; }
     void setCRTProfile(CRTProfile profile);
@@ -175,7 +175,7 @@ private:
     int _temporalWeightMode = 0;
 
     // CRT effects
-    std::unique_ptr<CRTFilter> _crtFilter;
+    std::unique_ptr<CRTRenderer> _crtRenderer;
     QImage _crtFrame;
     bool _crtEnabled = false;
     CRTProfileParams _crtParams;

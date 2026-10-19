@@ -281,11 +281,13 @@ the same JSON hotspot map as built-in images ([device-database.md](device-databa
 bar, player LEDs) where the capabilities allow, and pulses its row and cord in the dialog. Tells two identical pads
 apart.
 
-On the device list it is the first entry of **Test haptics** (owner 2026-10-18): the button is always there; its menu
-holds Identify and one test effect per actuator the device has (low motor, high motor with three clicks, left and
-right trigger) and an ADSR swell. For a device the emulator cannot drive the button is off and its tooltip says why
-(keyboards and mice have no motors; a DualSense rumbles over USB only for now; Xbox pads over USB on macOS: connect
-over Bluetooth; Linux: no write access to the event device). The reason comes from the backend
+It is the first effect of **Test haptics** in the selected device's header (owner 2026-10-18/19): an effect list and
+the Test haptics button that plays the chosen one, both always there. The list holds Identify and one test effect per
+actuator the device has (low motor, high motor with three clicks, left and right trigger) and an ADSR swell; a Surface Dial
+gets its clicks instead (two clicks for Identify, a click, three clicks, a buzz). For a
+device the emulator cannot drive both are off and their tooltip says why (keyboards and mice have no motors; a
+DualSense rumbles over USB only for now; an Xbox pad over USB on macOS: connect it over Bluetooth, haptics.md §9;
+Linux: no write access to the event device). The reason comes from the backend
 (`IBackend::RumbleUnavailable`). Test effects are debug feedback: they play while the game's haptics are held back.
 
 ### 3.8 Auto-profile toast

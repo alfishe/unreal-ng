@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <map>
 #include <vector>
 
 /// @brief CRT effect profile identifiers
@@ -82,21 +83,22 @@ public:
     /// @brief Get singleton instance
     static CRTShaderManager& instance();
 
-    /// @brief Scan for available shader files in data/shaders directory
+    /// @brief Scan for the shipped shaders (resources/shaders.qrc) and the user's (shaderDirectory())
     void scanShaderDirectory();
 
     /// @brief Get list of available external shader profiles
     std::vector<QString> availableShaders() const { return _shaderFiles; }
 
-    /// @brief Load shader source from file
+    /// @brief Load shader source from file (a name the last scan found)
     /// @param name Shader name (without .glsl extension)
     /// @return Shader source code, or empty string if not found
     QString loadShader(const QString& name) const;
 
-    /// @brief Get shader directory path
+    /// @brief The directory of the user's own shaders
     QString shaderDirectory() const;
 
 private:
     CRTShaderManager() = default;
     std::vector<QString> _shaderFiles;
+    std::map<QString, QString> _shaderPaths;  ///< name -> file
 };

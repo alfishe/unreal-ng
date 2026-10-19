@@ -34,7 +34,8 @@ constexpr FixedControl kFixed[] = {
     {"mouse.dx", ControlType::Delta},      {"mouse.dy", ControlType::Delta},      {"mouse.wheel", ControlType::Delta},
     {"mouse.left", ControlType::Button},   {"mouse.right", ControlType::Button},  {"mouse.middle", ControlType::Button},
     {"mouse.x4", ControlType::Button},     {"mouse.x5", ControlType::Button},     {"pointer.x", ControlType::Pointer},
-    {"pointer.y", ControlType::Pointer},
+    {"pointer.y", ControlType::Pointer},   {"knob", ControlType::Encoder},        {"push", ControlType::Button},
+    {"touch", ControlType::Button},
 };
 
 struct Direction
