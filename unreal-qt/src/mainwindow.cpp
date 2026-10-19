@@ -23,6 +23,7 @@
 
 #include "base/featuremanager.h"
 #include "widgets/ttdwidget.h"
+#include "widgets/windowviewprovider.h"
 #ifdef ENABLE_RECORDING
 #include "widgets/recordingwidget.h"
 #endif
@@ -206,6 +207,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Wrapper auto-selects GPU or software backend
     QFrame* contentFrame = ui->contentFrame;
     _screenWrapper = new DeviceScreenWrapper(contentFrame);
+    registerWindowView();
     // Windows that show the same moment as the screen refresh with it
     connect(_screenWrapper, &DeviceScreenWrapper::refreshed, this, [this]() {
         if (_ft812DebugWindow && _ft812DebugWindow->isVisible())
@@ -813,6 +815,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 MainWindow::~MainWindow()
 {
     setAcceptDrops(false);
+    WindowView::SetProvider(nullptr);  // the automation's "window" screenshots end with the window
 
     // Clean up automation resources first
     cleanupAutomation();
@@ -958,14 +961,18 @@ void MainWindow::applyDisplayRefreshRate()
 
 QSize MainWindow::pictureNativeSize() const
 {
-    // The screen always draws in the CRT frame's 352:288 shape (wide framebuffers - TS-Conf 720x288, Profi 608x288 -
-    // are stretched into it): the window is sized for that frame, as DisplayGeometry defines it
+    // The screen draws a machine's raster in the CRT frame's 352:288 shape (wide framebuffers - TS-Conf 720x288, Profi
+    // 608x288 - are stretched into it): the window is sized for that frame, as DisplayGeometry defines it
     QSize source(DisplayGeometry::kReferenceWidth, DisplayGeometry::kReferenceHeight);
     if (_screenWrapper)
     {
         const QSize shown = _screenWrapper->pictureSourceRect().size().toSize();
         if (shown.width() > 0 && shown.height() > 0)
             source = shown;
+
+        // A video card's picture (the VDAC2's FT812, VGA modes) has square pixels: the window takes its own size
+        if (_screenWrapper->pictureAspect() > 0.0f)
+            return source;
     }
 
     const DisplayGeometry::Size frame = DisplayGeometry::DisplayFrame(static_cast<uint16_t>(source.width()),
@@ -1022,6 +1029,82 @@ void MainWindow::fitWindowToScreen(int scale)
     _fitTarget = native * fitted + chrome;
     _fitClock.start();
     resize(_fitTarget);
+}
+
+void MainWindow::registerWindowView()
+{
+    // The instance the screen shows, asked on the GUI thread; a guarded pointer, as a queued grab may outlive the window
+    QPointer<MainWindow> window(this);
+    auto shownEmulatorId = [window]() -> std::string {
+        if (!window || !window->_emulator)
+            return {};
+        return window->_emulator->GetId();
+    };
+    auto display = [window](const WindowDisplayChange* change, WindowDisplaySettings& out, std::string& error) {
+        if (!window || !window->_screenWrapper)
+        {
+            error = "The window is closed";
+            return false;
+        }
+        if (change)
+            window->applyWindowDisplay(*change);
+        out = window->windowDisplaySettings();
+        return true;
+    };
+    WindowView::SetProvider(std::make_shared<WindowViewProvider>(_screenWrapper, shownEmulatorId, display));
+}
+
+WindowDisplaySettings MainWindow::windowDisplaySettings() const
+{
+    WindowDisplaySettings s;
+    s.backend = _screenWrapper->isGPUAccelerated() ? "gpu" : "software";
+    s.gpuAvailable = DeviceScreenWrapper::isGPUAvailable();
+    s.gpu = _screenWrapper->isGPUAccelerated();
+    s.crt = _screenWrapper->crtEffectsEnabled();
+    s.crtProfile = CRTProfileParams::ProfileKey(_screenWrapper->crtProfile()).toStdString();
+    for (CRTProfile profile : CRTProfileParams::AllProfiles())
+        s.crtProfiles.push_back(CRTProfileParams::ProfileKey(profile).toStdString());
+    s.blending = _screenWrapper->temporalBlendingEnabled();
+    s.blendingFrames = _screenWrapper->temporalHistorySize();
+    s.blendingWeights = _screenWrapper->temporalWeightMode() == 1 ? "exponential" : "equal";
+    s.emulatorId = _emulator ? _emulator->GetId() : std::string();
+    return s;
+}
+
+void MainWindow::applyWindowDisplay(const WindowDisplayChange& change)
+{
+    // The order of the menu: the backend first (it re-creates the screen and carries the rest over), then the profile
+    // (it switches CRT on or off by itself), then the switches that name it
+    if (change.gpu)
+    {
+        _menuManager->setGpuAccelerationChecked(*change.gpu);
+        handleGpuAccelerationToggled(*change.gpu);
+    }
+    if (change.crtProfile)
+    {
+        const std::vector<CRTProfile> profiles = CRTProfileParams::AllProfiles();
+        for (int index = 0; index < static_cast<int>(profiles.size()); ++index)
+        {
+            if (CRTProfileParams::ProfileKey(profiles[index]).toStdString() != *change.crtProfile)
+                continue;
+            _menuManager->setCrtProfile(index);
+            handleCrtProfileChanged(index);
+        }
+    }
+    if (change.crt)
+    {
+        _menuManager->setCrtEffectsChecked(*change.crt);
+        handleCrtEffectsToggled(*change.crt);
+    }
+    if (change.blendingFrames)
+        _screenWrapper->setTemporalHistorySize(*change.blendingFrames);
+    if (change.blendingWeights)
+        _screenWrapper->setTemporalWeightMode(*change.blendingWeights == "exponential" ? 1 : 0);
+    if (change.blending)
+    {
+        _menuManager->setTemporalBlendingChecked(*change.blending);
+        handleTemporalBlendingToggled(*change.blending);
+    }
 }
 
 void MainWindow::refitWindowToPicture()
@@ -2414,7 +2497,7 @@ void MainWindow::handleVideoModeChanged(int id, Message* message)
                 return;
 
             auto& fb = context->pScreen->GetFramebufferDescriptor();
-            _screenWrapper->init(fb.width, fb.height, fb.memoryBuffer);
+            _screenWrapper->init(fb, *context->pScreen);
 
             // init() -> detach() clears the tear-free frame source - re-install
             Screen* screen = context->pScreen;
@@ -3929,7 +4012,7 @@ void MainWindow::handleOverscanModeToggled(bool enabled)
         if (context && context->pScreen)
         {
             auto& fb = context->pScreen->GetFramebufferDescriptor();
-            _screenWrapper->init(fb.width, fb.height, fb.memoryBuffer);
+            _screenWrapper->init(fb, *context->pScreen);
 
             // init() -> detach() clears the tear-free frame source - re-install it
             Screen* screen = context->pScreen;
@@ -4433,6 +4516,7 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
 
     // Create new wrappers with desired mode
     _screenWrapper = new DeviceScreenWrapper(contentFrame, enabled);
+    registerWindowView();
     connect(_screenWrapper, &DeviceScreenWrapper::refreshed, this, [this]() {
         if (_ft812DebugWindow && _ft812DebugWindow->isVisible())
             _ft812DebugWindow->refresh();
@@ -4473,7 +4557,7 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
         {
             Screen* screen = context->pScreen;
             auto& fb = screen->GetFramebufferDescriptor();
-            _screenWrapper->init(fb.width, fb.height, fb.memoryBuffer);
+            _screenWrapper->init(fb, *context->pScreen);
 
             _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
                 return context && screen->CopyPresentedFramebuffer(dst, dstSize);
@@ -5239,7 +5323,7 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
         try
         {
             auto& framebufferDesc = context->pScreen->GetFramebufferDescriptor();
-            _screenWrapper->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
+            _screenWrapper->init(framebufferDesc, *context->pScreen);
 
             // Match the widget's crop to the emulator being adopted. Viewport crops are
             // absolute pixel insets, so one left over from the previous machine's overscan

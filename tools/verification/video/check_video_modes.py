@@ -188,7 +188,8 @@ def check(api, emulator, what, problems, window_port, chrome):
     if not reported and frame.get('source') == 'native':
         notes.append('  (state/screen/mode has no "framebuffer": the frame size cannot be cross-checked there)')
 
-    frame_shape = display_frame(*size)
+    # A video card's picture (the VDAC2's FT812) has square pixels: the window takes its own shape
+    frame_shape = tuple(size) if frame.get('source') == 'external' else display_frame(*size)
     line += f', display frame {frame_shape[0]}x{frame_shape[1]}'
     if window_port:
         win = settled_window(window_port)

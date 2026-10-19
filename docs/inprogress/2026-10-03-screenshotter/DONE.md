@@ -97,3 +97,21 @@ picture (`FrameSource::External`, the FT812) keeps its own square pixels.
 `crop` stays in stored pixels. `/capture/framebuffer` still returns the stored pixels. Tests: `Screenshotter_Test.HiRes*`,
 `FrameInTheCrtShapeStaysAsItIs`, `ExternalPictureKeepsItsSize`. `tools/verification/video/check_video_modes.py` expects the
 shaped size.
+
+## The window's picture: `source=window` (2026-10-19)
+
+A screenshot could not show how the Qt window draws a frame, so the FT812's 4:3 picture squeezed into the window's
+352:288 shape went unseen (the frame and the screenshot were right). `source=window` returns the window's own drawing
+on every surface (WebAPI + OpenAPI, MCP `capture_media`, CLI, Lua, Python), with `window` = viewport, picture rect,
+device pixel ratio, backend. The core declares `IWindowViewProvider` (`emulator/video/windowview.h`); unreal-qt
+registers one; without it the answer is 409 `no-window`. Design: section 6a of [design.md](design.md). Tests:
+`ScreenshotterMachine_Test.WindowSource*`, `Screenshotter_Test.SourceWordsArePresentedLiveOrWindow`.
+
+## The window's display settings (2026-10-19)
+
+GPU acceleration, CRT effects and profile, and temporal blending were set only from the View menu. The same provider
+now reads and changes them (`GetWindowDisplay` / `SetWindowDisplay`), and every surface exposes them: WebAPI
+`GET` / `PUT /video/window` + OpenAPI, MCP `capture_media` `window_display` / `window_display_set`, CLI `video window`,
+Lua / Python `window_display()` / `window_display_set()`. Validation and the report are shared
+(`core/automation/windowdisplay.h`); unreal-qt applies a change through the menu's handlers, so the checks follow.
+Tests: `WindowDisplay_Test.*`, `McpTools_Test.CaptureMedia_WindowDisplay*`, live `test_capture_media.py`.

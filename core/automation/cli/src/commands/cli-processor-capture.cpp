@@ -233,7 +233,7 @@ void CLIProcessor::HandleCaptureScreen(const ClientSession& session,
             word = arg.substr(9);
             if (!Screenshotter::ParseSource(word, options.source))
             {
-                session.SendResponse("Error: unknown source '" + word + "': use presented or live" + NEWLINE);
+                session.SendResponse("Error: unknown source '" + word + "': use presented, live or window" + NEWLINE);
                 return;
             }
         }
@@ -288,6 +288,13 @@ void CLIProcessor::HandleCaptureScreen(const ClientSession& session,
     }
     ss << "  Size: " << shot.width << "x" << shot.height << " (at " << shot.crop.x << "," << shot.crop.y
        << " of the " << shot.frame.width << "x" << shot.frame.height << " frame)" << NEWLINE;
+    if (shot.fromWindow)
+    {
+        ss << "  Window: " << shot.window.backend << ", picture " << shot.window.picture.width << "x"
+           << shot.window.picture.height << " at " << shot.window.picture.x << "," << shot.window.picture.y << " of a "
+           << shot.window.viewport.width << "x" << shot.window.viewport.height << " viewport, pixel ratio "
+           << shot.window.devicePixelRatio << NEWLINE;
+    }
     ss << "  Screen window: " << shot.frame.screenWindow.width << "x" << shot.frame.screenWindow.height << " at "
        << shot.frame.screenWindow.x << "," << shot.frame.screenWindow.y << NEWLINE;
     ss << "  Data size: " << shot.encodedSize << " bytes" << NEWLINE;
@@ -314,10 +321,11 @@ void CLIProcessor::ShowCaptureHelp(const ClientSession& session)
     ss << "================" << NEWLINE;
     ss << NEWLINE;
     ss << "  capture ocr                     OCR text from screen (ROM font)" << NEWLINE;
-    ss << "  capture screen [--area=full|screen] [--format=png|gif] [--source=presented|live] [file]" << NEWLINE;
+    ss << "  capture screen [--area=full|screen] [--format=png|gif] [--source=presented|live|window] [file]" << NEWLINE;
     ss << "                                  Screenshot: the whole frame (default) or the working picture;" << NEWLINE;
     ss << "                                  PNG (default) or GIF; the presented frame (default) or the live" << NEWLINE;
-    ss << "                                  one as drawn now; to a file or printed as a data URI" << NEWLINE;
+    ss << "                                  one as drawn now, or the picture as the GUI window draws it" << NEWLINE;
+    ss << "                                  (window: unreal-qt only); to a file or printed as a data URI" << NEWLINE;
     ss << "  capture screen --layer=ula|layer2|tilemap|sprites|ids [--format=png|rgba] [--alpha=false] [--size=screen|grid|pixel] [file]" << NEWLINE;
     ss << "                                  ZX Spectrum Next: ONE LAYER of the last completed frame (PNG with alpha 0 where the layer" << NEWLINE;
     ss << "                                  does not paint; ids = the winner of every pixel); `next layer-capture on|off` switches the record" << NEWLINE;

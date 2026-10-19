@@ -69,8 +69,10 @@
              "presented (default): the finished, tear-free frame the window shows, a couple of frames behind. live: "
              "the frame as drawn right now, no delay and no ZX DLSS: a running machine's emulation thread copies it at "
              "the end of its next frame (409 no-frame if none arrives within 1 s); a paused one is read directly and "
-             "answers where the beam stopped",
-             {"presented", "live"}},
+             "answers where the beam stopped. window: the picture as the GUI window draws it - its shape, letterbox "
+             "excluded, CRT shader and HUD included - in the display's pixels, with `window` describing the window; only "
+             "for the instance unreal-qt shows (409 no-window headless or for another instance), area=full only",
+             {"presented", "live", "window"}},
             {"mode", "query", false, "Deprecated alias of area (full / screen); a conflicting pair is 400",
              {"full", "screen"}},
             {"path", "query", false, "Save the image to this server-side path instead of returning it (folders are created)",
@@ -99,7 +101,7 @@
         props["area"]["type"] = "string";
         props["area"]["description"] = "The area that was asked for: full or screen";
         props["source"]["type"] = "string";
-        props["source"]["description"] = "The frame that was asked for: presented or live";
+        props["source"]["description"] = "The frame that was asked for: presented, live or window";
         props["width"]["type"] = "integer";
         props["width"]["description"] = "Width of the returned image";
         props["height"]["type"] = "integer";
@@ -148,6 +150,16 @@
         props["legend"]["items"]["$ref"] = "#/components/schemas/NextLayerLegendEntry";
         props["frame"]["properties"]["sequence"]["type"] = "integer";
         props["frame"]["properties"]["sequence"]["description"] = "Only with layer=: the n-th frame recorded since the layer capture was switched on";
+        props["window"]["type"] = "object";
+        props["window"]["description"] =
+            "Only with source=window: the window the image was grabbed from. viewport: its screen area (the picture "
+            "and its letterbox) and picture: where the picture is drawn in it, in logical pixels; the image is "
+            "picture x device_pixel_ratio; backend: gpu or software";
+        for (const char* rect : {"viewport", "picture"})
+            for (const char* field : {"x", "y", "width", "height"})
+                props["window"]["properties"][rect]["properties"][field]["type"] = "integer";
+        props["window"]["properties"]["device_pixel_ratio"]["type"] = "number";
+        props["window"]["properties"]["backend"]["type"] = "string";
         props["data"]["type"] = "string";
         props["data"]["description"] = "Base64 image (absent when saved to a path)";
         props["saved"]["type"] = "boolean";
@@ -159,7 +171,8 @@
             "kind: bad-parameter";
         op["responses"]["404"]["description"] = "No such emulator; kind: not-found";
         op["responses"]["409"]["description"] =
-            "The emulator has not presented a frame yet (try again); kind: no-frame. With layer=: kind not-next, layer-capture-off (POST "
+            "The emulator has not presented a frame yet (try again); kind: no-frame. source=window: no GUI window shows "
+            "this instance; kind: no-window. With layer=: kind not-next, layer-capture-off (POST "
             "/next/layer-capture {\"enabled\":true}) or no-frame (no frame completed since it was switched on)";
         op["responses"]["500"]["description"] =
             "The screen window does not fit the frame (kind: bad-geometry), the encoder failed (encode-failed) or the "
