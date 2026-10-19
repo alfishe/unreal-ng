@@ -19,6 +19,7 @@ ScorpionTurboOverlay::ScorpionTurboOverlay(Core* core, Z80* cpu, Memory* memory,
                                            uint32_t paperStartT, ScorpionTurboLogic logic)
     : _core(core), _cpu(cpu), _memory(memory), _state(state), _windowStart(2 * paperStartT + 1), _logic(logic)
 {
+    ignoresRom = true;  // ROM never waits: the memory interface skips the call (about 4 of 5 accesses of a ROM program)
 }
 
 bool ScorpionTurboOverlay::WaitsApply() const
@@ -108,7 +109,8 @@ uint32_t ScorpionTurboOverlay::OpcodeFetchWaitByEdges(uint32_t start) const
 
 void ScorpionTurboOverlay::Wait(uint16_t addr, bool opcodeFetch)
 {
-    // The RAM select, not the address: RAM paged at #0000 waits, ROM never does
+    // The RAM select, not the address: RAM paged at #0000 waits, ROM never does (ignoresRom: the memory interface
+    // checks it before the call; a chain of overlays does not)
     if (_memory->IsWindowRom(static_cast<uint8_t>(addr >> 14)) || !WaitsApply())
         return;
     const uint32_t start = _cpu->AccessStartClock();

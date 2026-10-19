@@ -7,6 +7,7 @@
 Atm710TurboOverlay::Atm710TurboOverlay(Core* core, Z80* cpu, Memory* memory, const EmulatorState* state)
     : _core(core), _cpu(cpu), _memory(memory), _state(state)
 {
+    ignoresRom = true;  // ROM never waits: the memory interface skips the call
 }
 
 bool Atm710TurboOverlay::WaitsApply() const
@@ -16,7 +17,8 @@ bool Atm710TurboOverlay::WaitsApply() const
 
 void Atm710TurboOverlay::Wait(uint16_t addr)
 {
-    // The RAM select (RAMCS'), not the address: RAM paged at #0000 waits, ROM never does
+    // The RAM select (RAMCS'), not the address: RAM paged at #0000 waits, ROM never does (ignoresRom: the memory
+    // interface checks it before the call; a chain of overlays does not)
     if (_memory->IsWindowRom(static_cast<uint8_t>(addr >> 14)) || !WaitsApply())
         return;
     _cpu->AddWaitStates(RamWait(_cpu->AccessStartClock()));

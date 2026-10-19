@@ -42,7 +42,7 @@ load_software {"path":".../program.spg"}              # a TS-Conf SDK program
 #     switched to TSL first (media kept): the answer's emulator_id is the NEW
 #     instance - use it from then on (model_switched, previous_emulator_id)
 
-capture_media {"action":"screenshot"}                # whole frame: 720x288 for every TS mode
+capture_media {"action":"screenshot"}                # whole frame: 720x288 for every TS mode, the image 720x576 (each line twice, as the window shows it)
 capture_media {"action":"screenshot","area":"screen"} # only the graphics window (below)
 ```
 

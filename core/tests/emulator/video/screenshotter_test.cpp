@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <thread>
@@ -14,12 +15,14 @@
 #include "common/filehelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/video/displaygeometry.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/screenshotter.h"
 
 /// The screenshotter: what it returns for a given frame snapshot, how it fails, and that every
 /// answer carries the geometry it was cut from (docs/inprogress/2026-10-03-screenshotter/design.md).
-/// Frames here are synthetic, so the expected pixels are known exactly; the machine tests at the end
+/// Frames here are synthetic, so the expected pixels are known exactly (in the CRT's 11:9 shape, so they come back
+/// pixel for pixel; the hi-res region checks the shaping); the machine tests at the end
 /// check the real frames of a Spectrum and of an FT812 picture.
 
 namespace
@@ -67,34 +70,34 @@ ScreenshotOptions Options(ScreenshotArea area, ScreenshotFormat format = Screens
 
 TEST(Screenshotter_Test, FullFrameIsReturnedAsIsAndSaysWhatItIs)
 {
-    const FrameSnapshot frame = Gradient(20, 10, PictureRect{4, 2, 8, 5});
+    const FrameSnapshot frame = Gradient(22, 18, PictureRect{4, 2, 8, 6});
     const ScreenshotResult r = Screenshotter::Render(frame, Options(ScreenshotArea::Full));
     ASSERT_TRUE(r.ok) << r.errorMessage;
-    EXPECT_EQ(r.width, 20);
-    EXPECT_EQ(r.height, 10);
+    EXPECT_EQ(r.width, 22);
+    EXPECT_EQ(r.height, 18);
     EXPECT_EQ(r.crop.x, 0);
     EXPECT_EQ(r.crop.y, 0);
-    EXPECT_EQ(r.crop.width, 20);
-    EXPECT_EQ(r.crop.height, 10);
-    EXPECT_EQ(r.frame.width, 20);
+    EXPECT_EQ(r.crop.width, 22);
+    EXPECT_EQ(r.crop.height, 18);
+    EXPECT_EQ(r.frame.width, 22);
     EXPECT_EQ(r.frame.screenWindow.width, 8) << "the window is reported next to the pixels";
     EXPECT_EQ(r.frame.frameNumber, 7u);
 
     unsigned w = 0, h = 0;
     std::vector<uint8_t> rgba;
     ASSERT_TRUE(DecodePng(r.bytes, w, h, rgba));
-    EXPECT_EQ(w, 20u);
-    EXPECT_EQ(h, 10u);
+    EXPECT_EQ(w, 22u);
+    EXPECT_EQ(h, 18u);
     EXPECT_EQ(rgba, frame.pixels) << "lossless: every pixel";
 }
 
 TEST(Screenshotter_Test, ScreenAreaIsExactlyTheFramesWindow)
 {
-    const FrameSnapshot frame = Gradient(20, 10, PictureRect{4, 2, 8, 5});
+    const FrameSnapshot frame = Gradient(22, 18, PictureRect{4, 2, 8, 6});
     const ScreenshotResult r = Screenshotter::Render(frame, Options(ScreenshotArea::Screen));
     ASSERT_TRUE(r.ok) << r.errorMessage;
     EXPECT_EQ(r.width, 8);
-    EXPECT_EQ(r.height, 5);
+    EXPECT_EQ(r.height, 6);
     EXPECT_EQ(r.crop.x, 4);
     EXPECT_EQ(r.crop.y, 2);
 
@@ -102,7 +105,7 @@ TEST(Screenshotter_Test, ScreenAreaIsExactlyTheFramesWindow)
     std::vector<uint8_t> rgba;
     ASSERT_TRUE(DecodePng(r.bytes, w, h, rgba));
     ASSERT_EQ(w, 8u);
-    ASSERT_EQ(h, 5u);
+    ASSERT_EQ(h, 6u);
     for (unsigned y = 0; y < h; y++)
     {
         for (unsigned x = 0; x < w; x++)
@@ -117,7 +120,7 @@ TEST(Screenshotter_Test, ScreenAreaIsExactlyTheFramesWindow)
 TEST(Screenshotter_Test, WindowThatIsTheWholeFrameMakesFullAndScreenTheSamePicture)
 {
     // Hires modes: the working picture can be the whole frame, and then there is nothing to cut
-    const FrameSnapshot frame = Gradient(16, 8, PictureRect{0, 0, 16, 8});
+    const FrameSnapshot frame = Gradient(22, 18, PictureRect{0, 0, 22, 18});
     const ScreenshotResult full = Screenshotter::Render(frame, Options(ScreenshotArea::Full));
     const ScreenshotResult screen = Screenshotter::Render(frame, Options(ScreenshotArea::Screen));
     ASSERT_TRUE(full.ok && screen.ok);
@@ -126,22 +129,22 @@ TEST(Screenshotter_Test, WindowThatIsTheWholeFrameMakesFullAndScreenTheSamePictu
 
 TEST(Screenshotter_Test, WindowOutsideTheFrameIsAnErrorNamingTheSizes)
 {
-    for (const PictureRect window : {PictureRect{15, 0, 8, 5}, PictureRect{0, 8, 4, 4}, PictureRect{0, 0, 0, 0}})
+    for (const PictureRect window : {PictureRect{15, 0, 8, 5}, PictureRect{0, 16, 4, 4}, PictureRect{0, 0, 0, 0}})
     {
-        const FrameSnapshot frame = Gradient(20, 10, window);
+        const FrameSnapshot frame = Gradient(22, 18, window);
         const ScreenshotResult r = Screenshotter::Render(frame, Options(ScreenshotArea::Screen));
         EXPECT_FALSE(r.ok);
         EXPECT_EQ(r.error, ScreenshotError::BadGeometry);
-        EXPECT_NE(r.errorMessage.find("20x10"), std::string::npos) << r.errorMessage;
+        EXPECT_NE(r.errorMessage.find("22x18"), std::string::npos) << r.errorMessage;
         EXPECT_TRUE(r.bytes.empty()) << "never a silent substitute picture";
     }
     // The whole frame still works for the same snapshot
-    EXPECT_TRUE(Screenshotter::Render(Gradient(20, 10, PictureRect{0, 0, 0, 0}), Options(ScreenshotArea::Full)).ok);
+    EXPECT_TRUE(Screenshotter::Render(Gradient(22, 18, PictureRect{0, 0, 0, 0}), Options(ScreenshotArea::Full)).ok);
 }
 
 TEST(Screenshotter_Test, PixelsThatDoNotMatchTheirGeometryAreNoFrame)
 {
-    FrameSnapshot frame = Gradient(20, 10, PictureRect{0, 0, 20, 10});
+    FrameSnapshot frame = Gradient(22, 18, PictureRect{0, 0, 22, 18});
     frame.pixels.resize(frame.pixels.size() - 4);
     EXPECT_EQ(Screenshotter::Render(frame, Options(ScreenshotArea::Full)).error, ScreenshotError::NoFrame);
     EXPECT_EQ(Screenshotter::Render(FrameSnapshot{}, Options(ScreenshotArea::Full)).error, ScreenshotError::NoFrame);
@@ -149,17 +152,92 @@ TEST(Screenshotter_Test, PixelsThatDoNotMatchTheirGeometryAreNoFrame)
 
 /// endregion </Crop and encode>
 
+/// region <The CRT's shape>
+
+/// A hi-res frame (Sprinter 736x288, TS-Conf 720x288) stores one line per TV line: the screenshot shows each line
+/// twice, as the window and a recording do, and every pixel is still exact
+TEST(Screenshotter_Test, HiResFrameDoublesItsLines)
+{
+    for (const auto& size : {std::pair<uint16_t, uint16_t>{736, 288}, std::pair<uint16_t, uint16_t>{720, 288}})
+    {
+        SCOPED_TRACE(testing::Message() << size.first << "x" << size.second);
+        const FrameSnapshot frame = Gradient(size.first, size.second, PictureRect{0, 0, size.first, size.second});
+        for (const ScreenshotArea area : {ScreenshotArea::Full, ScreenshotArea::Screen})
+        {
+            const ScreenshotResult r = Screenshotter::Render(frame, Options(area));
+            ASSERT_TRUE(r.ok) << r.errorMessage;
+            EXPECT_EQ(r.width, size.first);
+            EXPECT_EQ(r.height, size.second * 2);
+            EXPECT_EQ(r.crop.height, size.second) << "the crop stays in stored pixels";
+
+            unsigned w = 0, h = 0;
+            std::vector<uint8_t> rgba;
+            ASSERT_TRUE(DecodePng(r.bytes, w, h, rgba));
+            ASSERT_EQ(h, size.second * 2u);
+            for (unsigned y = 0; y < h; y++)
+                ASSERT_EQ(0, std::memcmp(&rgba[static_cast<size_t>(y) * w * 4],
+                                         &frame.pixels[static_cast<size_t>(y / 2) * frame.geometry.stride], w * 4))
+                    << "line " << y << " is stored line " << y / 2;
+        }
+    }
+}
+
+/// A working window takes its share of the CRT's frame: the ATM / Profi hi-res 640x200 of a 640x288 frame is not
+/// within 5% of any line repeat, so it grows to its shape (1.76) instead of coming out 10% too narrow
+TEST(Screenshotter_Test, HiResWindowTakesItsShapeOnTheCrt)
+{
+    const FrameSnapshot frame = Gradient(640, 288, PictureRect{0, 44, 640, 200});
+    const ScreenshotResult r = Screenshotter::Render(frame, Options(ScreenshotArea::Screen));
+    ASSERT_TRUE(r.ok) << r.errorMessage;
+    const DisplayGeometry::Size expected =
+        DisplayGeometry::Picture(640, 200, DisplayGeometry::WindowAspect(640, 288, 640, 200));
+    EXPECT_EQ(r.width, expected.width);
+    EXPECT_EQ(r.height, expected.height);
+    EXPECT_NEAR(static_cast<double>(r.width) / r.height, 1.76, 0.02);
+
+    const ScreenshotResult full = Screenshotter::Render(frame, Options(ScreenshotArea::Full));
+    ASSERT_TRUE(full.ok);
+    EXPECT_EQ(full.width, 640);
+    EXPECT_EQ(full.height, 524) << "the whole 640x288 frame takes the CRT's 352:288 (doubled it would be 10% too flat)";
+}
+
+/// Frames already in the CRT's shape stay as they are: a Spectrum's 352x288, the Next's 640x512
+TEST(Screenshotter_Test, FrameInTheCrtShapeStaysAsItIs)
+{
+    for (const auto& size : {std::pair<uint16_t, uint16_t>{352, 288}, std::pair<uint16_t, uint16_t>{640, 512}})
+    {
+        const FrameSnapshot frame = Gradient(size.first, size.second, PictureRect{0, 0, size.first, size.second});
+        const ScreenshotResult r = Screenshotter::Render(frame, Options(ScreenshotArea::Full));
+        ASSERT_TRUE(r.ok);
+        EXPECT_EQ(r.width, size.first);
+        EXPECT_EQ(r.height, size.second);
+    }
+}
+
+/// A video card's picture (the FT812's VGA modes) has square pixels of its own: never reshaped
+TEST(Screenshotter_Test, ExternalPictureKeepsItsSize)
+{
+    FrameSnapshot frame = Gradient(640, 240, PictureRect{0, 0, 640, 240});
+    frame.geometry.source = FrameSource::External;
+    const ScreenshotResult r = Screenshotter::Render(frame, Options(ScreenshotArea::Full));
+    ASSERT_TRUE(r.ok);
+    EXPECT_EQ(r.width, 640);
+    EXPECT_EQ(r.height, 240);
+}
+
+/// endregion </The CRT's shape>
+
 /// region <GIF>
 
 TEST(Screenshotter_Test, GifIsAGifOfTheRightSize)
 {
-    const FrameSnapshot frame = Gradient(20, 10, PictureRect{4, 2, 8, 5});
+    const FrameSnapshot frame = Gradient(22, 18, PictureRect{4, 2, 8, 6});
     const ScreenshotResult r = Screenshotter::Render(frame, Options(ScreenshotArea::Screen, ScreenshotFormat::Gif));
     ASSERT_TRUE(r.ok) << r.errorMessage;
     ASSERT_GT(r.bytes.size(), 13u);
     EXPECT_EQ(std::string(r.bytes.begin(), r.bytes.begin() + 4), "GIF8");
     EXPECT_EQ(r.bytes[6] | (r.bytes[7] << 8), 8) << "logical screen width";
-    EXPECT_EQ(r.bytes[8] | (r.bytes[9] << 8), 5) << "logical screen height";
+    EXPECT_EQ(r.bytes[8] | (r.bytes[9] << 8), 6) << "logical screen height";
     EXPECT_EQ(r.format, ScreenshotFormat::Gif);
 }
 
@@ -178,7 +256,7 @@ TEST(Screenshotter_Test, GifWorksWithANonAsciiTempFolderAndLeavesNothingBehind)
     const auto u8 = dir.u8string();
     setenv("TMPDIR", std::string(u8.begin(), u8.end()).c_str(), 1);
 
-    const FrameSnapshot frame = Gradient(20, 10, PictureRect{4, 2, 8, 5});
+    const FrameSnapshot frame = Gradient(22, 18, PictureRect{4, 2, 8, 6});
     const ScreenshotResult r = Screenshotter::Render(frame, Options(ScreenshotArea::Full, ScreenshotFormat::Gif));
 
     if (oldTmp)
@@ -199,7 +277,7 @@ TEST(Screenshotter_Test, GifWorksWithANonAsciiTempFolderAndLeavesNothingBehind)
 /// same buffer shared it; here many threads encode the same frame at once and each gets its own file
 TEST(Screenshotter_Test, ConcurrentGifEncodesDoNotShareATempFile)
 {
-    const FrameSnapshot frame = Gradient(64, 48, PictureRect{0, 0, 64, 48});
+    const FrameSnapshot frame = Gradient(66, 54, PictureRect{0, 0, 66, 54});
     const ScreenshotResult reference = Screenshotter::Render(frame, Options(ScreenshotArea::Full, ScreenshotFormat::Gif));
     ASSERT_TRUE(reference.ok);
 
@@ -227,7 +305,7 @@ TEST(Screenshotter_Test, ConcurrentGifEncodesDoNotShareATempFile)
 
 TEST(Screenshotter_Test, SaveToWritesTheSameBytesAndCreatesTheFolders)
 {
-    const FrameSnapshot frame = Gradient(20, 10, PictureRect{4, 2, 8, 5});
+    const FrameSnapshot frame = Gradient(22, 18, PictureRect{4, 2, 8, 6});
     const ScreenshotResult inMemory = Screenshotter::Render(frame, Options(ScreenshotArea::Screen));
     ASSERT_TRUE(inMemory.ok);
 
