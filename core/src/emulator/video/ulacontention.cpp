@@ -30,6 +30,19 @@ void UlaContention::SetDependencies(Z80* cpu, Memory* memory, EmulatorContext* c
 void UlaContention::UpdateRaster(const ContentionRaster& raster)
 {
     _raster = raster;
+    RebuildDelayLut();
+}
+
+void UlaContention::RebuildDelayLut()
+{
+    const uint32_t size = _raster.screenAreaEnd >= _raster.screenAreaStart && _raster.tstatesPerLine
+                              ? _raster.screenAreaEnd - _raster.screenAreaStart + 1
+                              : 0;
+    _delayLutStorage.assign(size, 0);
+    for (uint32_t d = 0; d < size; d++)
+        _delayLutStorage[d] = ComputeContentionDelay(_raster.screenAreaStart + d);
+    _delayLut = _delayLutStorage.data();
+    _delayLutSize = size;
 }
 
 uint8_t UlaContention::GetContentionDelay() const

@@ -71,6 +71,13 @@ MemoryInterface* Memory::GetFastContendedMemoryInterface()
                                &Memory::MemoryReadM1Snow<&Memory::MemoryReadContended<&Memory::MemoryReadFast, false>>);
 }
 
+MemoryInterface* Memory::GetFastContendedStockMemoryInterface()
+{
+    return new MemoryInterface(&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>,
+                               &Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>,
+                               &Memory::MemoryReadM1Snow<&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>>);
+}
+
 MemoryInterface* Memory::GetDebugContendedMemoryInterface()
 {
     return new MemoryInterface(&Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>,
@@ -81,6 +88,8 @@ MemoryInterface* Memory::GetDebugContendedMemoryInterface()
 // Explicit instantiations: the host bus overlay interfaces (memory.cpp) wrap
 // these same four as their inner access
 template uint8_t Memory::MemoryReadContended<&Memory::MemoryReadFast, false>(uint16_t, bool);
+template uint8_t Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>(uint16_t, bool);
+template uint8_t Memory::MemoryReadM1Snow<&Memory::MemoryReadContended<&Memory::MemoryReadFastStock, false>>(uint16_t, bool);
 template uint8_t Memory::MemoryReadContended<&Memory::MemoryReadDebug, true>(uint16_t, bool);
 template void Memory::MemoryWriteContended<&Memory::MemoryWriteFast, false>(uint16_t, uint8_t);
 template void Memory::MemoryWriteContended<&Memory::MemoryWriteDebug, true>(uint16_t, uint8_t);
