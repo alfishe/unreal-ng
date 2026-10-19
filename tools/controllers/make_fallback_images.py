@@ -148,6 +148,21 @@ def md6():
     return spots, svgs
 
 
+def surface_dial():
+    """A Surface Dial from above: the body turns (knob, a dot where it has turned to), the top presses (push); the
+    hand on it (touch) has no place of its own, so it is a tag under the dial"""
+    spots, svgs = [], []
+    spot, svg = circle("push", "Press", 1024, 700, 170, "right", fill=BODY)
+    spots.append(spot)
+    knob, ring = circle("knob", "Turn", 1024, 700, 520, "left", fill=KEY,
+                        analog={"kind": "encoder", "steps": 36, "radius": 440})
+    spots.append(knob)
+    touch, tag = rect("touch", "Touch", 874, 1300, 300, 90, "right", rx=45)
+    spots.append(touch)
+    svgs += [ring, f'<circle cx="1024" cy="700" r="440" fill="none" stroke="{EDGE}" stroke-width="4"/>', svg, tag]
+    return spots, svgs
+
+
 XBOX = {"south": "A", "east": "B", "west": "X", "north": "Y", "view": "View", "menu": "Menu", "guide": "Guide"}
 PLAYSTATION = {"south": "Cross", "east": "Circle", "west": "Square", "north": "Triangle", "view": "Create",
                "menu": "Options", "guide": "PS"}
@@ -164,6 +179,7 @@ SETS = {
     "sinclair-joystick": lambda: stick_joystick("", "Fire"),
     "cursor-joystick": lambda: stick_joystick("", "Fire"),
     "md6-pad": md6,
+    "surface-dial": surface_dial,
 }
 
 

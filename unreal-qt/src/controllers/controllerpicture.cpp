@@ -18,6 +18,7 @@ namespace
 {
 constexpr int kCalloutWidth = 170;  // each side column, widget pixels
 constexpr float kPressed = 0.5f;
+constexpr double kPi = 3.14159265358979323846;  // M_PI is not standard (MSVC)
 
 bool Pressed(float value)
 {
@@ -71,6 +72,7 @@ bool ControllerPicture::load(const QString& imageSet)
         spot.analog = analog.value("kind").toString();
         spot.pair = analog.value("pair").toString().toStdString();
         spot.radius = analog.value("radius").toDouble();
+        spot.steps = analog.value("steps").toDouble();
         _hotspots.push_back(spot);
     }
     if (_size.isEmpty())
@@ -168,6 +170,23 @@ void ControllerPicture::paintEvent(QPaintEvent*)
             painter.setBrush(Pressed(value) || Pressed(valueOf(spot.pair)) ? lit : QColor(255, 255, 255, 90));
             painter.drawEllipse(dot, 6, 6);
         }
+        else if (spot.analog == "encoder")
+        {
+            // A dot on the ring where the knob has turned to (the live value is the sum of its steps)
+            if (spot.control == _selected)
+            {
+                painter.setPen(QPen(selected, 8));
+                painter.setBrush(Qt::NoBrush);
+                painter.drawEllipse(box);
+            }
+            const double turn = spot.steps > 0 ? value / spot.steps : 0.0;
+            const double angle = 2.0 * kPi * (turn - std::floor(turn));
+            const double reach = spot.radius > 0 ? spot.radius * scale : box.width() / 2;
+            const QPointF dot(box.center().x() + reach * std::sin(angle), box.center().y() - reach * std::cos(angle));
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(lit);
+            painter.drawEllipse(dot, 8, 8);
+        }
         else if (Pressed(value) || spot.control == _selected)
         {
             painter.setPen(Qt::NoPen);
@@ -200,7 +219,8 @@ void ControllerPicture::paintEvent(QPaintEvent*)
             const QString text = spot->label + (caption != _captions.end() && !caption->second.isEmpty()
                                                     ? "  " + caption->second
                                                     : QString());
-            const bool active = Pressed(valueOf(spot->control)) || spot->control == _selected;
+            const bool active =
+                (spot->analog != "encoder" && Pressed(valueOf(spot->control))) || spot->control == _selected;
             const QRectF label = left ? QRectF(2, y - line / 2.0, kCalloutWidth - 10, line)
                                       : QRectF(width() - kCalloutWidth + 8, y - line / 2.0, kCalloutWidth - 10, line);
             const QPointF anchor = toWidget(spot->anchor);

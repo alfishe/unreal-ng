@@ -93,19 +93,23 @@
         };
 
         Json::Value& get = paths["/api/v1/controllers/{verb}"]["get"];
-        get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings";
+        get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings, haptics";
         get["description"] =
             "devices: the connected host devices. context: the machine, the loaded file's SHA-256, the manual game "
             "profile, the applied profiles and the warnings. profiles (?set=all|play|debug|scheme|game&machine=): "
             "every profile with its kind, scope, specificity, match and whether it applies; shipped games not parsed "
             "yet have loaded=false. profile (?id=): one profile as JSON ('profile') and YAML ('yaml'). bindings "
-            "(?device=&layer=): the effective bindings as written, each with the profile it came from";
+            "(?device=&layer=): the effective bindings as written, each with the profile it came from. haptics "
+            "(?device=): per device whether the emulator can drive its motors (available, else the reason: no "
+            "motors, an Xbox pad over USB on macOS, no write access on Linux), its actuators (low, high, "
+            "left-trigger, right-trigger) and the test effects rumble plays (id, label, ms)";
         get["tags"].append("Controllers");
-        verbParameter(get, {"devices", "context", "profiles", "profile", "bindings"});
+        verbParameter(get, {"devices", "context", "profiles", "profile", "bindings", "haptics"});
         replies(get);
 
         Json::Value& post = paths["/api/v1/controllers/{verb}"]["post"];
-        post["summary"] = "Host game controllers: save, delete, apply a profile; bind, unbind a control; the scheme";
+        post["summary"] =
+            "Host game controllers: save, delete, apply a profile; bind, unbind a control; the scheme; rumble";
         post["description"] =
             "Body (JSON) or query. save {text}: a profile as YAML or JSON (schema 1) into the user's profiles, applied "
             "at once. delete {id}: a user profile (a built-in of the same id comes back). apply {id}: the game profile "
@@ -114,8 +118,11 @@
             "'auto:fire'}, {none: true}); it goes into user/<family>, user/device-<id>, user/global or the named "
             "profile (a shipped one is copied into the user's). unbind {control, layer, ...}: removes it there. "
             "scheme {id, family | device | profile}: the scheme that profile extends (scheme/kempston, "
-            "scheme/sinclair-1; 'none' = no scheme)";
+            "scheme/sinclair-1; 'none' = no scheme). rumble {device, effect}: play a test effect on a host device "
+            "(identify by default; low, high, clicks, left-trigger, right-trigger, swell as haptics lists them), as "
+            "debug feedback that plays while the game's haptics are held back; unavailable with the reason when the "
+            "emulator cannot drive the device's motors";
         post["tags"].append("Controllers");
-        verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme"});
+        verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble"});
         replies(post);
     }

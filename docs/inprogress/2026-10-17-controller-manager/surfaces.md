@@ -62,7 +62,8 @@ connector verbs keep working (keyboard joystick, automation input).
 | `probe` | The backend report: loaded, why not, endpoints found, permissions. |
 | `database` | Look up a VID/PID or SDL GUID; import a `gamecontrollerdb` line or a RetroArch autoconfig file. |
 | `learn` | Start, step and finish the learn wizard for an unknown device (the UI flow, scriptable). |
-| `haptics` | Mode (`off`, `game`, `always`) and strength per device, the gate state, `play` an effect, `stop` all ([haptics.md §11](haptics.md#11-surfaces)). |
+| `haptics` | Built: per device whether the emulator drives its motors (`available`, else the `reason`), its `actuators` and the test `effects` (`id`, `label`, `ms`). Planned: mode (`off`, `game`, `always`) and strength per device, the gate state, `stop` all ([haptics.md §11](haptics.md#11-surfaces)). |
+| `rumble` | Built: play a test effect on a device (`device`, `effect`: `identify` by default, `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz`), the dialog's Test haptics ([haptics.md §10](haptics.md#10-ui)). |
 
 ## 3. Selectors
 
@@ -119,10 +120,12 @@ GET    /api/v1/emulator/{id}/controllers/auto                explain; POST .../a
 
 GET    /api/v1/controllers/{verb}            devices | context | profiles?set=game|play|debug|scheme&machine=..
                                              | profile?id=.. | bindings?device=..&layer=play|debug
+                                             | haptics?device=..
 POST   /api/v1/controllers/{verb}            save {text} | delete {id} | apply {id|none}
                                              | bind {control, spec, layer?, family?|device?|profile?}
                                              | unbind {control, layer?, family?|device?|profile?}
                                              | scheme {id|none, family?|device?|profile?}
+                                             | rumble {device, effect?}
        (built: HostInputControl, core/controllers/src/hostinputcontrol.h; the wrong method answers 405)
 POST   /api/v1/controllers/host/{device}/{verb}              role | pin | identify | learn (not built)
 GET    /api/v1/controllers/database?vidpid=045e:0b00 | guid=...
@@ -131,10 +134,8 @@ GET    /api/v1/controllers/probe
 
 GET    /api/v1/controllers/actions                       the action registry: ids, enabled state, reason
 POST   /api/v1/controllers/actions/{id}                  run an action (debug-and-ttd.md §3)
-GET    /api/v1/controllers/haptics                       mode, strength, gate per device
-PUT    /api/v1/controllers/haptics                       set mode / strength
-POST   /api/v1/controllers/haptics/play                  play an effect on a device
-POST   /api/v1/controllers/haptics/stop                  stop every actuator
+PUT    /api/v1/controllers/haptics                       set mode / strength (not built; GET haptics is above)
+POST   /api/v1/controllers/haptics/stop                  stop every actuator (not built)
 ```
 
 Actions belong to the companion scopes that already exist (`run`, `rewind`, `debug`, `media`; companion-client
@@ -147,8 +148,10 @@ owner and runs each request on the GUI thread; no owner answers `unavailable` 50
 MCP `controllers` (the same action names, no target), CLI `controllers <verb>` (positional id / control / file;
 `bind south key=ENTER` builds the spec) and Python `controllers_host(verb, **options)` with the named wrappers
 (`controllers_profiles`, `controllers_profile`, `controllers_save_profile`, `controllers_delete_profile`,
-`controllers_apply_profile`, `controllers_bindings`, `controllers_bind`, `controllers_unbind`) all build a
-`HostRequest`; the CLI and Python reach `scheme` through `controllers scheme <id|none>` and `controllers_host`.
+`controllers_apply_profile`, `controllers_bindings`, `controllers_bind`, `controllers_unbind`, `controllers_haptics`,
+`controllers_rumble`) and Lua `controllers_host(verb, opts)` (with `controllers_haptics`, `controllers_rumble`) all
+build a `HostRequest`; the CLI and Python reach `scheme` through `controllers scheme <id|none>` and
+`controllers_host`. Lua reaches the connectors through `controllers(verb, connector, device, opts)`.
 `bind` without `profile` writes `user/device-<id>` (device=), `user/<family>` (family=) or
 `user/global`; a shipped profile named by `profile=` is copied into the user's of the same id, which overrides it, and
 `delete` of that copy brings the shipped one back.

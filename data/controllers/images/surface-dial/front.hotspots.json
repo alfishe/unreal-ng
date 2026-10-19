@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "family": "surface-dial",
+  "view": "front",
+  "size": [
+    2048,
+    1536
+  ],
+  "controls": [
+    {
+      "control": "push",
+      "label": "Press",
+      "shape": {
+        "circle": [
+          1024,
+          700,
+          170
+        ]
+      },
+      "anchor": [
+        1024,
+        700
+      ],
+      "callout": "right",
+      "order": 0
+    },
+    {
+      "control": "knob",
+      "label": "Turn",
+      "shape": {
+        "circle": [
+          1024,
+          700,
+          520
+        ]
+      },
+      "anchor": [
+        1024,
+        700
+      ],
+      "callout": "left",
+      "analog": {
+        "kind": "encoder",
+        "steps": 36,
+        "radius": 440
+      },
+      "order": 1
+    },
+    {
+      "control": "touch",
+      "label": "Touch",
+      "shape": {
+        "rect": [
+          874,
+          1300,
+          300,
+          90
+        ]
+      },
+      "anchor": [
+        1024,
+        1345
+      ],
+      "callout": "right",
+      "order": 2
+    }
+  ]
+}

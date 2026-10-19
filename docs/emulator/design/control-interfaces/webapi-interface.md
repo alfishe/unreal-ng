@@ -1636,6 +1636,24 @@ restarts with the new slot set: `200`, `status: "applied"`, `restart.emulatorId`
 one ran), `media` says where the media went. `POST /control/audio/gs` `switch_personality` is the same change for the
 card in the GS slot (owner decision Q10).
 
+### Game Controllers
+
+```
+GET  /api/v1/emulator/{id}/controllers                   the machine's connectors and the retro devices in them
+GET  /api/v1/emulator/{id}/controllers/{connector}       one connector
+POST /api/v1/emulator/{id}/controllers/{connector}/{verb} plug {device, options} | unplug | options | input
+GET  /api/v1/controllers/{verb}                          devices | context | profiles | profile | bindings | haptics
+POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble
+```
+
+The machine routes are ControllerControl, the host routes HostInputControl
+([command-interface.md section 15](./command-interface.md#15-game-controllers); OpenAPI tag `Controllers`); a host verb
+called with the wrong method answers `405`. `GET /api/v1/controllers/haptics[?device=]` lists per device `available`,
+`reason` (why the emulator cannot drive its motors), `actuators` and `effects` (`id`, `label`, `ms`);
+`POST /api/v1/controllers/rumble {"device": "...", "effect": "clicks"}` plays one (`identify` by default): `200` with
+`message`, `404` `unknown-device`, `400` `bad-request` for an effect the device lacks, `503` `unavailable` with the
+reason for a device without drivable motors or a process without the Qt client.
+
 ### Snapshots (Implemented Separately)
 ```
 POST /api/v1/emulator/{id}/snapshot/save  ✅ Implemented

@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "devicedatabase.h"
+#include "hid/drivers/surfacedial.h"
 
 namespace controllers
 {
@@ -112,6 +113,11 @@ struct Device
     std::string node;
     HostDeviceInfo info;
     bool pad = false;  ///< BTN_GAMEPAD: positional names; else a joystick with button.<n> / axis.<n>
+    bool dial = false;  ///< a Surface Dial (hid-generic): REL_DIAL is `knob`, BTN_0 `push`, BTN_TOUCH `touch`
+    DialTouch hand;     ///< the Dial's `touch`, sooner than its sensor
+    bool sensor = false;
+    bool pushed = false;
+    bool touched = false;
     std::map<unsigned, input_absinfo> abs;
     int hatX = 0;
     int hatY = 0;
@@ -272,16 +278,20 @@ private:
         }
         if (fd < 0)
             return;  // not ours to read (no `input` group): the probe counts what opened
+        input_id ident{};
+        ioctl(fd, EVIOCGID, &ident);
         const std::vector<unsigned long> keys = Bits(fd, EV_KEY, KEY_MAX);
         const bool pad = TestBit(keys, BTN_GAMEPAD);
         const bool joystick = TestBit(keys, BTN_JOYSTICK) || TestBit(keys, BTN_TRIGGER);
-        if (!pad && !joystick)
+        // The Surface Dial by its id, or a device of its kind: a dial and a button
+        const std::vector<unsigned long> relative = Bits(fd, EV_REL, REL_MAX);
+        const bool dial = !pad && !joystick && TestBit(relative, REL_DIAL) &&
+                          (SurfaceDial::Handles(ident.vendor, ident.product) || TestBit(keys, BTN_0));
+        if (!pad && !joystick && !dial)
         {
             close(fd);
             return;
         }
-        input_id ident{};
-        ioctl(fd, EVIOCGID, &ident);
         const std::string name = StringIoctl(fd, EVIOCGNAME(255));
         const bool bluetooth = ident.bustype == BUS_BLUETOOTH;
         const DeviceMatch match = DeviceDatabase::Builtin().Lookup(
@@ -296,8 +306,12 @@ private:
         device.fd = fd;
         device.node = node;
         device.pad = pad;
+        device.dial = dial;
         device.rumble = writable && TestBit(Bits(fd, EV_FF, FF_MAX), FF_RUMBLE);
-        if (!device.rumble)
+        if (dial)
+            device.rumbleUnavailable = "The Surface Dial clicks through its HID output report: Linux reaches it "
+                                       "through hidraw, not evdev, and that backend is not there yet";
+        else if (!device.rumble)
             device.rumbleUnavailable = writable ? "The device offers no rumble (FF_RUMBLE) to Linux"
                                                 : "No write access to " + node + ": a udev rule that gives the user "
                                                   "write access drives its motors";
@@ -357,16 +371,21 @@ private:
             fds.push_back({_wake[0], POLLIN, 0});
             if (_inotify >= 0)
                 fds.push_back({_inotify, POLLIN, 0});
+            bool dials = false;
             {
                 std::lock_guard lock(_mutex);
                 for (const auto& [node, device] : _devices)
                 {
                     fds.push_back({device.fd, POLLIN, 0});
                     nodes.push_back(node);
+                    dials = dials || device.dial;
                 }
             }
-            if (poll(fds.data(), fds.size(), -1) < 0 && errno != EINTR)
+            // A Surface Dial's inferred touch ends on time between its events (DialTouch): wake 10 times a second
+            const int timeout = dials ? 100 : -1;
+            if (poll(fds.data(), fds.size(), timeout) < 0 && errno != EINTR)
                 return;
+            ExpireDials();
             if (fds[0].revents != 0)
                 return;  // Stop
             size_t first = 1;
@@ -393,6 +412,25 @@ private:
                 if (fds[i].revents & POLLIN)
                     Read(node);
             }
+        }
+    }
+
+    void ExpireDials()
+    {
+        const uint64_t now = DialNowMs();
+        std::vector<Device*> dials;
+        {
+            std::lock_guard lock(_mutex);
+            for (auto& [node, device] : _devices)
+                if (device.dial)
+                    dials.push_back(&device);  // only this thread erases
+        }
+        for (Device* device : dials)
+        {
+            const bool touched = device->hand.Expire(now);
+            if (!touched && device->touched)
+                _sink->OnControl({device->info.id, SurfaceDial::kTouch, 0.0f, 0});
+            device->touched = touched;
         }
     }
 
@@ -424,6 +462,28 @@ private:
     void Event(Device& device, const input_event& event)
     {
         const std::string& id = device.info.id;
+        if (device.dial)
+        {
+            const bool turned = event.type == EV_REL && event.code == REL_DIAL && event.value != 0;
+            if (event.type == EV_KEY && event.code == BTN_0)
+                device.pushed = event.value != 0;
+            else if (event.type == EV_KEY && event.code == BTN_TOUCH)
+                device.sensor = event.value != 0;
+            else if (!turned)
+                return;
+            // The hand arrives before what it does and leaves after it (SurfaceDial::Decode)
+            const bool touched = device.hand.Update(device.sensor, turned, device.pushed, DialNowMs());
+            if (touched && !device.touched)
+                _sink->OnControl({id, SurfaceDial::kTouch, 1.0f, 0});
+            if (turned)
+                _sink->OnControl({id, SurfaceDial::kKnob, static_cast<float>(event.value), 0});
+            else if (event.code == BTN_0)
+                _sink->OnControl({id, SurfaceDial::kPush, device.pushed ? 1.0f : 0.0f, 0});
+            if (!touched && device.touched)
+                _sink->OnControl({id, SurfaceDial::kTouch, 0.0f, 0});
+            device.touched = touched;
+            return;
+        }
         if (event.type == EV_KEY)
         {
             const float value = event.value != 0 ? 1.0f : 0.0f;

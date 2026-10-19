@@ -218,6 +218,27 @@ option (`dip = {"ym", "saa"}` works too). Each returns the reply table every sur
 (`restarted`, `previousEmulatorId`, `emulatorId`, `started`) and `media`. A change restarts the machine: a script bound
 to the old instance follows it to the new one; the selection follows too.
 
+### Game Controllers
+
+The machine's joystick connectors and the host's game controllers - the same verbs, options and replies as the CLI
+`controllers`, the WebAPI `/controllers`, MCP and Python ([command-interface.md section 15](./command-interface.md#15-game-controllers)).
+
+```lua
+controllers("list")                                     -- the selected machine's connectors
+controllers("plug", "auto", "kempston-joystick")
+controllers("input", "kempston", nil, {press = "up+fire"})
+controllers_host("bindings", {layer = "play"})          -- any host verb with its options as a table
+
+local h = controllers_haptics()                         -- devices: available / reason, actuators, effects
+for _, device in ipairs(h.devices) do
+    if device.available then controllers_rumble(device.id, "clicks") end
+end
+```
+
+`controllers(verb, [connector], [device], [opts])`, `controllers_host(verb, [opts])`, `controllers_haptics([device])`,
+`controllers_rumble(device, [effect])` (`identify` by default). Each returns the reply table: `ok`, `error`, `message`
+and the verb's fields. The host side needs the Qt client (a headless process answers `unavailable`).
+
 ### Disk Operations
 
 Global functions for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands

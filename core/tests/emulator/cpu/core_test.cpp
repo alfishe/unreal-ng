@@ -110,7 +110,7 @@ protected:
         if (!contended)
             return _z80->MemIf == _z80->FastMemIf;
         return _z80->MemIf ==
-               (_ctx->pMemory->HasStockFastRead() ? _z80->FastContendedStockMemIf : _z80->FastContendedMemIf);
+               (_ctx->pMemory->HasStockFastRead() ? _z80->FastContendedMemIf : _z80->FastContendedMemIf);
     }
 };
 } // namespace
@@ -164,13 +164,14 @@ TEST_F(Core_Test, EveryModelUsesThePlainInterfacesInEveryDebugState)
 /// The contended fast interface skips the virtual MemoryReadFast only where it is Memory's own: the models that
 /// override it (their own paging or access side effects) answer false, and a contended selection keeps the
 /// virtual read for them
-TEST_F(Core_Test, ContendedFastReadSkipsTheVirtualCallOnlyForTheStockRead)
+TEST_F(Core_Test, FastReadSkipsTheVirtualCallOnlyForTheStockRead)
 {
     for (const char* model : {"48K", "128k", "PLUS3", "PENTAGON", "ATM710", "PROFI3"})
     {
         SCOPED_TRACE(model);
         create(model);
         EXPECT_TRUE(_ctx->pMemory->HasStockFastRead());
+        EXPECT_TRUE(_z80->OverlayFastMemIf->MemoryRead == &Memory::MemoryReadOverlay<&Memory::MemoryReadFastStock>);
         EmulatorTestHelper::CleanupEmulator(_emulator);
         _emulator = nullptr;
         _core = nullptr;
@@ -180,6 +181,7 @@ TEST_F(Core_Test, ContendedFastReadSkipsTheVirtualCallOnlyForTheStockRead)
         SCOPED_TRACE(model);
         create(model);
         EXPECT_FALSE(_ctx->pMemory->HasStockFastRead());
+        EXPECT_TRUE(_z80->OverlayFastMemIf->MemoryRead == &Memory::MemoryReadOverlay<&Memory::MemoryReadFast>);
         EmulatorTestHelper::CleanupEmulator(_emulator);
         _emulator = nullptr;
         _core = nullptr;
@@ -187,7 +189,7 @@ TEST_F(Core_Test, ContendedFastReadSkipsTheVirtualCallOnlyForTheStockRead)
 
     create("128k");
     ASSERT_TRUE(_core->IsContentionEffective());
-    EXPECT_EQ(_z80->MemIf, _z80->FastContendedStockMemIf);
+    EXPECT_EQ(_z80->MemIf, _z80->FastContendedMemIf);
     EXPECT_STREQ(_core->GetMemoryInterfaceName(), "fast_contended");
 }
 
@@ -412,7 +414,7 @@ TEST_F(Core_Test, OverlayOnAContendedMachineKeepsTheContention)
     const uint32_t withOverlay = timed();
     EXPECT_GE(overlay.reads.size(), 64u);
     _core->RemoveBusOverlay(&overlay);
-    EXPECT_EQ(_z80->MemIf, _z80->FastContendedStockMemIf);
+    EXPECT_EQ(_z80->MemIf, _z80->FastContendedMemIf);
     const uint32_t without = timed();
     EXPECT_EQ(withOverlay, without) << "the contention wait is kept under the overlay";
     EXPECT_GT(without, 64u * 13u) << "and there is a wait: 64 x 13 T uncontended";

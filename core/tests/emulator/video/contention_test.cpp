@@ -767,7 +767,7 @@ TEST_F(Contention48K_Test, Switch_OffRunsTheMachineUncontended)
     EXPECT_FALSE(Member(DeviceState::Screen(_context, false), "contention").b);
 
     ASSERT_TRUE(fm->setFeature(Features::kContention, true));
-    EXPECT_EQ(_z80->MemIf, _z80->FastContendedStockMemIf);
+    EXPECT_EQ(_z80->MemIf, _z80->FastContendedMemIf);
     EXPECT_EQ(runAt(0x4000, { 0x00 }, _firstContendedT), 10u);
     report = DeviceState::Contention(_context);
     EXPECT_TRUE(Member(report, "effective").b);
@@ -904,7 +904,7 @@ TEST(MemoryInterfaceSelection_Test, FollowsTheMachineAndTheDebugger)
         context->pScreen->InitFrame();
         Z80* z80 = context->pCore->GetZ80();
 
-        EXPECT_EQ(z80->MemIf, c.contended ? z80->FastContendedStockMemIf : z80->FastMemIf) << c.model;
+        EXPECT_EQ(z80->MemIf, c.contended ? z80->FastContendedMemIf : z80->FastMemIf) << c.model;
         EXPECT_EQ(z80->ioContention, c.ioContended ? context->pUlaContention : nullptr) << c.model;
 
         emulator->DebugOn();
@@ -912,7 +912,7 @@ TEST(MemoryInterfaceSelection_Test, FollowsTheMachineAndTheDebugger)
         EXPECT_EQ(z80->ioContention, c.ioContended ? context->pUlaContention : nullptr) << c.model << " debug on";
 
         emulator->DebugOff();
-        EXPECT_EQ(z80->MemIf, c.contended ? z80->FastContendedStockMemIf : z80->FastMemIf) << c.model << " debug off";
+        EXPECT_EQ(z80->MemIf, c.contended ? z80->FastContendedMemIf : z80->FastMemIf) << c.model << " debug off";
 
         EmulatorTestHelper::CleanupEmulator(emulator);
     }
@@ -935,9 +935,9 @@ TEST(MemoryInterfaceSelection_Test, DebuggerAndSwitchCombinations)
         const MemoryInterface* Z80::*expected;
     };
     const Step steps[] = {
-        { false, true, &Z80::FastContendedStockMemIf }, { true, true, &Z80::DbgContendedMemIf },
+        { false, true, &Z80::FastContendedMemIf }, { true, true, &Z80::DbgContendedMemIf },
         { true, false, &Z80::DbgMemIf },                { false, false, &Z80::FastMemIf },
-        { false, true, &Z80::FastContendedStockMemIf }, { true, false, &Z80::DbgMemIf },
+        { false, true, &Z80::FastContendedMemIf }, { true, false, &Z80::DbgMemIf },
         { true, true, &Z80::DbgContendedMemIf },        { false, false, &Z80::FastMemIf },
     };
     for (const Step& step : steps)
@@ -967,11 +967,11 @@ TEST(MemoryInterfaceSelection_Test, TtdReplayModeKeepsContention)
     Z80* z80 = context->pCore->GetZ80();
     ASSERT_NE(context->pTimeTravelController, nullptr);
 
-    ASSERT_EQ(z80->MemIf, z80->FastContendedStockMemIf);
+    ASSERT_EQ(z80->MemIf, z80->FastContendedMemIf);
     context->pTimeTravelController->EnterReplayMode();
     EXPECT_EQ(z80->MemIf, z80->DbgContendedMemIf);
     context->pTimeTravelController->ExitReplayMode();
-    EXPECT_EQ(z80->MemIf, z80->FastContendedStockMemIf);
+    EXPECT_EQ(z80->MemIf, z80->FastContendedMemIf);
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
