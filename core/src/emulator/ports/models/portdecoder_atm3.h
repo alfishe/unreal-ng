@@ -326,6 +326,9 @@ public:
     /// The ATM710 layout plus the BaseConf's own state: #7FFD bits 5-7 are not page bits (#EFF7 bit 2 = 1), no RAM at #0000
     /// (bit 3 = 0), no write protection, no NMI or virtual TR-DOS page
     void EnterSpectrum128Paging(uint16_t pc) override;
+    /// #FF77 bit 3 (14 MHz) in the low byte, #EFF7 bit 4 (3.5 MHz) in the high byte
+    uint16_t GetClockSelect() const override;
+    void RestoreClockSelect(uint16_t select) override;
 protected:
 
     void DecodeF7Out(uint16_t port, uint8_t value, uint16_t pc);

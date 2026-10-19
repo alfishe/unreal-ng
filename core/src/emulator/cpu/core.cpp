@@ -889,6 +889,18 @@ void Core::Reset()
     Reset(static_cast<ROMModeEnum>(_config->reset_rom));
 }
 
+void Core::ResetKeepingClock()
+{
+    ResetKeepingClock(static_cast<ROMModeEnum>(_config->reset_rom));
+}
+
+void Core::ResetKeepingClock(ROMModeEnum mode)
+{
+    const uint16_t clockSelect = _portDecoder->GetClockSelect();
+    Reset(mode);
+    _portDecoder->RestoreClockSelect(clockSelect);
+}
+
 void Core::Reset(ROMModeEnum mode)
 {
     // Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)

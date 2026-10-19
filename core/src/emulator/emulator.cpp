@@ -1221,7 +1221,7 @@ bool Emulator::AutostartNow(AutostartRequest& request, coordinator::OpStage& sta
 
     stage.CommitPoint();
     request.autostart->Disarm();
-    _core->Reset(RM_DOS);  // Quick reset straight into TR-DOS: PC = 0 with the DOS ROM active
+    _core->ResetKeepingClock(RM_DOS);  // Quick reset straight into TR-DOS: PC = 0 with the DOS ROM active, the guest's clock kept
     RestartFrame();        // Frame 0 starts at the reset state (see Reset())
     request.autostart->ArmColdStartFinish();  // the model's paging for the disk's program (ATM710: the 128K way)
     if (action == DiskAutostart::Action::BootNamed)
