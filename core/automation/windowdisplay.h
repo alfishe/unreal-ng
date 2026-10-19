@@ -177,6 +177,10 @@ inline Result Set(const WindowDisplayChange& change)
     }
     if (change.gpu && *change.gpu && !now.settings.gpuAvailable)
         return Fail(Status::Unavailable, "GPU acceleration is not available on this host (no OpenGL)");
+    // A custom shader ("shader:<name>", offered when the host has a GPU) runs on the GPU only: on with this change or
+    // already on
+    if (change.crtProfile && change.crtProfile->rfind("shader:", 0) == 0 && !change.gpu.value_or(now.settings.gpu))
+        return Fail(Status::Unavailable, "A custom shader needs GPU acceleration: add gpu=on");
 
     std::shared_ptr<IWindowViewProvider> provider = WindowView::Provider();
     if (!provider)

@@ -251,7 +251,8 @@ def main():
         emu.tap('a')                           # Assemble
         time.sleep(6)
         emu.screenshot(stem + '.assembled.png')
-        emu.tap('space')                       # leaves an error list
+        emu.tap('left')                                # leaves an error list; a space would go into the text (a first
+                                                       # line of 40 characters then has 41: blue border, no Quit)
         time.sleep(1)
         emu.tap('break')
         emu.tap('q')                           # Quit to BASIC: the 48K memory holds the code again

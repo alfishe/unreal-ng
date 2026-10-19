@@ -18,6 +18,7 @@
 #include <QOpenGLPixelTransferOptions>
 #include <QSurfaceFormat>
 #include <QUrl>
+#include <QVector2D>
 #include <cmath>
 #include <cstring>
 
@@ -27,6 +28,7 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "crtprofiles.h"
 
+// The vertex shader of every CRT program: a quad in clip space, the legacy texture coordinate for custom shaders
 static const char* CRT_VERTEX_SHADER = R"(
 #version 120
 varying vec2 texCoord;
@@ -36,143 +38,6 @@ void main() {
 }
 )";
 
-static const char* CRT_FRAGMENT_SHADER = R"(
-#version 120
-varying vec2 texCoord;
-uniform sampler2D tex;
-uniform vec2 texSize;
-uniform vec2 outputSize;
-
-uniform int maskType;
-uniform float curvature;
-uniform float cornerRadius;
-uniform float scanlineWeight;
-uniform float maskStrength;
-uniform float maskDotPitch;
-uniform float bloomStrength;
-uniform float saturation;
-uniform float brightness;
-uniform float contrast;
-uniform float gamma;
-
-vec2 curve(vec2 uv) {
-    if (curvature < 0.001) return uv;
-    uv = (uv - 0.5) * 2.0;
-    uv *= 1.0 + pow(length(uv) * curvature, 2.0);
-    return uv * 0.5 + 0.5;
-}
-
-float cornerMask(vec2 uv) {
-    if (cornerRadius < 0.001) return 1.0;
-    vec2 d = abs(uv - 0.5) * 2.0;
-    float r = cornerRadius;
-    vec2 corner = max(d - (1.0 - r), 0.0);
-    return 1.0 - smoothstep(r - 0.01, r, length(corner));
-}
-
-vec3 apertureGrille(vec2 pos, float pitch) {
-    float x = mod(pos.x, pitch * 3.0);
-    vec3 mask = vec3(0.0);
-    if (x < pitch)          mask = vec3(1.0, 0.2, 0.2);
-    else if (x < pitch*2.0) mask = vec3(0.2, 1.0, 0.2);
-    else                    mask = vec3(0.2, 0.2, 1.0);
-    return mix(vec3(1.0), mask, maskStrength);
-}
-
-vec3 shadowMask(vec2 pos, float pitch) {
-    vec2 cell = floor(pos / pitch);
-    vec2 offset = mod(pos, pitch) / pitch;
-    float phase = mod(cell.y, 2.0) * 0.5;
-    float x = mod(offset.x + phase, 1.0);
-    vec3 mask = vec3(0.0);
-    if (x < 0.333)      mask = vec3(1.0, 0.1, 0.1);
-    else if (x < 0.666) mask = vec3(0.1, 1.0, 0.1);
-    else                mask = vec3(0.1, 0.1, 1.0);
-    float dist = length(offset - 0.5) * 2.0;
-    mask *= smoothstep(1.0, 0.5, dist);
-    return mix(vec3(1.0), mask + 0.3, maskStrength);
-}
-
-vec3 slotMask(vec2 pos, float pitch) {
-    float slotHeight = pitch * 1.5;
-    vec2 cell = floor(pos / vec2(pitch * 3.0, slotHeight));
-    vec2 offset = mod(pos, vec2(pitch * 3.0, slotHeight));
-    float phase = mod(cell.y, 2.0) * pitch * 1.5;
-    float x = mod(offset.x + phase, pitch * 3.0);
-    vec3 mask = vec3(0.0);
-    if (x < pitch)          mask = vec3(1.0, 0.15, 0.15);
-    else if (x < pitch*2.0) mask = vec3(0.15, 1.0, 0.15);
-    else                    mask = vec3(0.15, 0.15, 1.0);
-    float yGap = smoothstep(0.0, 0.15, offset.y / slotHeight) *
-                 smoothstep(1.0, 0.85, offset.y / slotHeight);
-    mask *= yGap;
-    return mix(vec3(1.0), mask + 0.2, maskStrength);
-}
-
-vec3 blur(vec2 uv, float radius) {
-    vec3 sum = vec3(0.0);
-    float total = 0.0;
-    vec2 texel = 1.0 / texSize;
-    for (float x = -2.0; x <= 2.0; x += 1.0) {
-        for (float y = -2.0; y <= 2.0; y += 1.0) {
-            float weight = 1.0 - length(vec2(x, y)) / 4.0;
-            sum += texture2D(tex, uv + vec2(x, y) * texel * radius).rgb * weight;
-            total += weight;
-        }
-    }
-    return sum / total;
-}
-
-void main() {
-    vec2 uv = curve(texCoord);
-
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
-    }
-
-    vec3 color = texture2D(tex, uv).rgb;
-
-    if (bloomStrength > 0.001) {
-        vec3 bloom = blur(uv, 2.0);
-        color += bloom * bloomStrength;
-    }
-
-    color = pow(color, vec3(gamma));
-
-    if (scanlineWeight > 0.001) {
-        float scanY = uv.y * outputSize.y;
-        float scanline = sin(scanY * 3.14159 / (outputSize.y / texSize.y)) * 0.5 + 0.5;
-        color *= mix(1.0, scanline, scanlineWeight);
-    }
-
-    vec2 pixelPos = uv * outputSize;
-    float pitch = maskDotPitch;
-    if (pitch < 1.0) pitch = max(1.0, outputSize.x / 640.0);
-
-    if (maskType == 1) {
-        color *= apertureGrille(pixelPos, pitch);
-    } else if (maskType == 2) {
-        color *= shadowMask(pixelPos, pitch);
-    } else if (maskType == 3) {
-        color *= slotMask(pixelPos, pitch);
-    }
-
-    float luma = dot(color, vec3(0.299, 0.587, 0.114));
-    color = mix(vec3(luma), color, saturation);
-    color = (color - 0.5) * contrast + 0.5;
-    color *= brightness;
-
-    color = pow(max(color, 0.0), vec3(1.0 / 2.2));
-
-    color *= cornerMask(uv);
-
-    float vignette = 1.0 - pow(length(texCoord - 0.5) * 1.1, 2.0) * 0.15;
-    color *= vignette;
-
-    gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
-}
-)";
 
 DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent)
     : QOpenGLWindow(QOpenGLWindow::NoPartialUpdate, parent)
@@ -192,7 +57,11 @@ DeviceScreenGLWindow::~DeviceScreenGLWindow()
 {
     makeCurrent();
     delete _texture;
-    delete _crtShader;
+    delete _gradedTexture;
+    delete _indexTexture;
+    delete _factorTexture;
+    delete _composeShader;
+    delete _customShader;
     doneCurrent();
     detach();
 }
@@ -320,13 +189,15 @@ void DeviceScreenGLWindow::initializeGL()
     _texture->setMagnificationFilter(QOpenGLTexture::Nearest);
     _texture->setWrapMode(QOpenGLTexture::ClampToEdge);
 
-    _crtShader = new QOpenGLShaderProgram(this);
-    if (!_crtShader->addShaderFromSourceCode(QOpenGLShader::Vertex, CRT_VERTEX_SHADER))
-        qWarning() << "CRT vertex shader compilation failed:" << _crtShader->log();
-    if (!_crtShader->addShaderFromSourceCode(QOpenGLShader::Fragment, CRT_FRAGMENT_SHADER))
-        qWarning() << "CRT fragment shader compilation failed:" << _crtShader->log();
-    if (!_crtShader->link())
-        qWarning() << "CRT shader linking failed:" << _crtShader->log();
+    _composeShader = new QOpenGLShaderProgram(this);
+    if (!_composeShader->addShaderFromSourceCode(QOpenGLShader::Vertex, CRT_VERTEX_SHADER) ||
+        !_composeShader->addShaderFromSourceCode(QOpenGLShader::Fragment, CRTRenderer::kCompositionShader) ||
+        !_composeShader->link())
+        qWarning() << "CRT composition shader failed:" << _composeShader->log();
+
+    // A custom shader chosen before the context existed
+    if (!_customShaderSource.isEmpty())
+        compileCustomShader(_customShaderSource);
 }
 
 void DeviceScreenGLWindow::setCRTEffectsEnabled(bool enabled)
@@ -337,6 +208,8 @@ void DeviceScreenGLWindow::setCRTEffectsEnabled(bool enabled)
 
 void DeviceScreenGLWindow::setCRTProfile(CRTProfile profile)
 {
+    if (!_customShaderName.isEmpty())
+        loadCustomShader(QString());  // a built-in profile replaces the custom shader
     _crtParams = CRTProfileParams::FromProfile(profile);
     _crtEnabled = (profile != CRTProfile::None);
     update();
@@ -344,6 +217,8 @@ void DeviceScreenGLWindow::setCRTProfile(CRTProfile profile)
 
 void DeviceScreenGLWindow::setCRTProfile(const CRTProfileParams& params)
 {
+    if (!_customShaderName.isEmpty())
+        loadCustomShader(QString());
     _crtParams = params;
     _crtEnabled = (params.profile != CRTProfile::None);
     update();
@@ -351,29 +226,51 @@ void DeviceScreenGLWindow::setCRTProfile(const CRTProfileParams& params)
 
 bool DeviceScreenGLWindow::loadCustomShader(const QString& name)
 {
-    QString source = CRTShaderManager::instance().loadShader(name);
-    if (source.isEmpty())
-        return false;
-
-    _customShaderSource = source;
-
-    makeCurrent();
-    if (_crtShader)
+    QString source;
+    if (!name.isEmpty())
     {
-        delete _crtShader;
-        _crtShader = new QOpenGLShaderProgram(this);
-        _crtShader->addShaderFromSourceCode(QOpenGLShader::Vertex, CRT_VERTEX_SHADER);
-        if (!_crtShader->addShaderFromSourceCode(QOpenGLShader::Fragment, source))
+        source = CRTShaderManager::instance().loadShader(name);
+        if (source.isEmpty())
         {
-            qWarning() << "Custom shader compilation failed:" << _crtShader->log();
-            _crtShader->addShaderFromSourceCode(QOpenGLShader::Fragment, CRT_FRAGMENT_SHADER);
+            CRTShaderManager::instance().scanShaderDirectory();  // a file added since the menu was built
+            source = CRTShaderManager::instance().loadShader(name);
         }
-        _crtShader->link();
+        if (source.isEmpty())
+            return false;
     }
-    doneCurrent();
 
+    bool ok = true;
+    if (context())
+    {
+        makeCurrent();
+        ok = compileCustomShader(source);
+        doneCurrent();
+    }
+    if (ok)
+    {
+        _customShaderName = name;
+        _customShaderSource = source;
+    }
     update();
-    return true;
+    return ok;
+}
+
+bool DeviceScreenGLWindow::compileCustomShader(const QString& source)
+{
+    delete _customShader;
+    _customShader = nullptr;
+    if (source.isEmpty())
+        return true;
+    _customShader = new QOpenGLShaderProgram(this);
+    if (_customShader->addShaderFromSourceCode(QOpenGLShader::Vertex, CRT_VERTEX_SHADER) &&
+        _customShader->addShaderFromSourceCode(QOpenGLShader::Fragment, source) && _customShader->link())
+        return true;
+    qWarning() << "Custom CRT shader failed:" << _customShader->log();
+    delete _customShader;
+    _customShader = nullptr;
+    _customShaderName.clear();
+    _customShaderSource.clear();
+    return false;
 }
 
 std::vector<QString> DeviceScreenGLWindow::availableShaders()
@@ -452,7 +349,6 @@ void DeviceScreenGLWindow::updateTexture()
     // Selection under the frame-source mutex (see clearFrameSource): the
     // legacy fallback deep-copies so post-lock texture upload only touches
     // owned memory.
-    QImage legacyCopy;
     QImage* sourceImage = nullptr;
     {
         std::lock_guard<std::mutex> lock(_frameSourceMutex);
@@ -466,8 +362,8 @@ void DeviceScreenGLWindow::updateTexture()
         // before the queued re-attach runs - a null or dangling image would be uploaded to the GPU.
         else if (!_frameSource && _devicePixels != nullptr)
         {
-            legacyCopy = _devicePixels->copy();
-            sourceImage = &legacyCopy;
+            _legacyFrame = _devicePixels->copy();
+            sourceImage = &_legacyFrame;
         }
     }
 
@@ -517,116 +413,181 @@ void DeviceScreenGLWindow::updateTexture()
     transfer.setRowLength(static_cast<int>(uploadImage->bytesPerLine() / 4));
     _texture->setData(0, QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, uploadImage->constBits(), &transfer);
 
+    _shownFrame = uploadImage;
+    ++_frameSerial;
     _textureNeedsUpdate = false;
 }
 
+namespace
+{
+/// A tight RGBA8 image into a nearest-sampled texture, (re)allocated for its size
+void UploadRgba(QOpenGLTexture*& texture, int width, int height, const uint8_t* pixels)
+{
+    if (!texture)
+        texture = new QOpenGLTexture(QOpenGLTexture::Target2D);
+    if (!texture->isCreated() || texture->width() != width || texture->height() != height)
+    {
+        if (texture->isCreated())
+            texture->destroy();
+        texture->create();
+        texture->setSize(width, height);
+        texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
+        texture->setMipLevels(1);
+        texture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
+        texture->setMinificationFilter(QOpenGLTexture::Nearest);
+        texture->setMagnificationFilter(QOpenGLTexture::Nearest);
+        texture->setWrapMode(QOpenGLTexture::ClampToEdge);
+    }
+    QOpenGLPixelTransferOptions transfer;
+    transfer.setAlignment(1);
+    texture->setData(0, QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, pixels, &transfer);
+}
+}  // namespace
+
 void DeviceScreenGLWindow::paintGL()
 {
+    const qreal dpr = devicePixelRatio();
+    const int surfaceWidth = qRound(width() * dpr);
+    const int surfaceHeight = qRound(height() * dpr);
+    glViewport(0, 0, surfaceWidth, surfaceHeight);
+    glDisable(GL_DITHER);  // the composition writes exact values
     glClear(GL_COLOR_BUFFER_BIT);
 
     updateTexture();
 
-    if (!_texture || !_texture->isCreated())
-        return;
-
-    _texture->bind();
-
-    float srcX1 = 0.0f, srcY1 = 0.0f, srcX2 = 1.0f, srcY2 = 1.0f;
-    if (_hasViewport && !_devicePixelsRect.isEmpty())
+    const QRect picture = pictureDeviceRect();
+    if (_texture && _texture->isCreated() && !picture.isEmpty())
     {
-        float texW = _devicePixelsRect.width();
-        float texH = _devicePixelsRect.height();
-        srcX1 = _displayViewport.cropLeft / texW;
-        srcY1 = _displayViewport.cropTop / texH;
-        srcX2 = 1.0f - (_displayViewport.cropRight / texW);
-        srcY2 = 1.0f - (_displayViewport.cropBottom / texH);
-    }
+        // The viewport is the picture, to the device pixel: the quad covers it, the CRT composition reads its tables
+        // per pixel. GL counts rows from the bottom
+        const int glY = surfaceHeight - picture.y() - picture.height();
+        glViewport(picture.x(), glY, picture.width(), picture.height());
 
-    // Calculate aspect-ratio-preserving quad coordinates
-    float windowW = static_cast<float>(width());
-    float windowH = static_cast<float>(height());
-    float windowRatio = windowW / windowH;
-
-    float quadW, quadH;
-    if (windowRatio > ratio)
-    {
-        // Window is wider than content - pillarbox
-        quadH = 1.0f;
-        quadW = ratio / windowRatio;
-    }
-    else
-    {
-        // Window is taller than content - letterbox
-        quadW = 1.0f;
-        quadH = windowRatio / ratio;
-    }
-
-    glEnable(GL_TEXTURE_2D);
-
-    if (_crtEnabled && _crtShader && _crtShader->isLinked())
-    {
-        _crtShader->bind();
-        _crtShader->setUniformValue("tex", 0);
-        _crtShader->setUniformValue("texSize", QVector2D(_devicePixelsRect.width(), _devicePixelsRect.height()));
-        _crtShader->setUniformValue("outputSize", QVector2D(windowW * quadW, windowH * quadH));
-
-        int maskType = 0;
-        switch (_crtParams.profile)
+        // With or without CRT effects the composition draws (CRTProfile::None: the plain nearest scale), the software
+        // screen's picture bit for bit; the fixed-function quad only when the shader is not there
+        if (_crtEnabled && _customShader && _customShader->isLinked())
+            drawCustomCrt(picture);
+        else if (_composeShader && _composeShader->isLinked() && _shownFrame)
+            drawComposedCrt(picture, glY);
+        else
         {
-            case CRTProfile::Aperture:
-            case CRTProfile::Megatron:
-                maskType = 1;
-                break;
-            case CRTProfile::ShadowMask:
-                maskType = 2;
-                break;
-            case CRTProfile::SlotMask:
-                maskType = 3;
-                break;
-            default:
-                maskType = 0;
-                break;
+            const QRectF source = displaySourceRect();
+            const float texW = static_cast<float>(_texture->width());
+            const float texH = static_cast<float>(_texture->height());
+            glEnable(GL_TEXTURE_2D);
+            _texture->bind();
+            drawQuad(static_cast<float>(source.left()) / texW, static_cast<float>(source.top()) / texH,
+                     static_cast<float>(source.right()) / texW, static_cast<float>(source.bottom()) / texH);
+            _texture->release();
+            glDisable(GL_TEXTURE_2D);
         }
-
-        _crtShader->setUniformValue("maskType", maskType);
-        _crtShader->setUniformValue("curvature", _crtParams.curvature);
-        _crtShader->setUniformValue("cornerRadius", _crtParams.cornerRadius);
-        _crtShader->setUniformValue("scanlineWeight", _crtParams.scanlineWeight);
-        _crtShader->setUniformValue("maskStrength", _crtParams.maskStrength);
-        _crtShader->setUniformValue("maskDotPitch", _crtParams.maskDotPitch);
-        _crtShader->setUniformValue("bloomStrength", _crtParams.bloomStrength);
-        _crtShader->setUniformValue("saturation", _crtParams.saturation);
-        _crtShader->setUniformValue("brightness", _crtParams.brightness);
-        _crtShader->setUniformValue("contrast", _crtParams.contrast);
-        _crtShader->setUniformValue("gamma", _crtParams.gamma);
-
-        glBegin(GL_QUADS);
-        glTexCoord2f(srcX1, srcY1); glVertex2f(-quadW,  quadH);
-        glTexCoord2f(srcX2, srcY1); glVertex2f( quadW,  quadH);
-        glTexCoord2f(srcX2, srcY2); glVertex2f( quadW, -quadH);
-        glTexCoord2f(srcX1, srcY2); glVertex2f(-quadW, -quadH);
-        glEnd();
-
-        _crtShader->release();
+        glViewport(0, 0, surfaceWidth, surfaceHeight);
     }
-    else
-    {
-        glBegin(GL_QUADS);
-        glTexCoord2f(srcX1, srcY1); glVertex2f(-quadW,  quadH);
-        glTexCoord2f(srcX2, srcY1); glVertex2f( quadW,  quadH);
-        glTexCoord2f(srcX2, srcY2); glVertex2f( quadW, -quadH);
-        glTexCoord2f(srcX1, srcY2); glVertex2f(-quadW, -quadH);
-        glEnd();
-    }
-
-    glDisable(GL_TEXTURE_2D);
-    _texture->release();
 
     if (_hudOverlay && _hudOverlay->isVisible() && !_renderingImage)
     {
         QPainter painter(this);
         _hudOverlay->renderHUD(painter, width(), height(), devicePixelRatio());
     }
+}
+
+void DeviceScreenGLWindow::drawQuad(float srcX1, float srcY1, float srcX2, float srcY2)
+{
+    glBegin(GL_QUADS);
+    glTexCoord2f(srcX1, srcY1); glVertex2f(-1.0f,  1.0f);
+    glTexCoord2f(srcX2, srcY1); glVertex2f( 1.0f,  1.0f);
+    glTexCoord2f(srcX2, srcY2); glVertex2f( 1.0f, -1.0f);
+    glTexCoord2f(srcX1, srcY2); glVertex2f(-1.0f, -1.0f);
+    glEnd();
+}
+
+void DeviceScreenGLWindow::drawComposedCrt(const QRect& picture, int glY)
+{
+    CRTRenderer::Layout layout;
+    layout.outWidth = picture.width();
+    layout.outHeight = picture.height();
+    layout.frameWidth = _shownFrame->width();
+    layout.frameHeight = _shownFrame->height();
+    layout.source = displaySourceRect().toRect().intersected(_shownFrame->rect());
+    if (layout.source.isEmpty())
+        return;
+
+    // The tables again only for a new size or profile, the grading once per frame
+    static const CRTProfileParams kPlain = CRTProfileParams::None();
+    const CRTProfileParams& params = _crtEnabled ? _crtParams : kPlain;
+    const bool rebuilt = _crtRenderer.setLayout(layout, params);
+    if (rebuilt || !_indexTexture || !_factorTexture)
+    {
+        UploadRgba(_indexTexture, layout.outWidth, layout.outHeight, _crtRenderer.indexTable().data());
+        UploadRgba(_factorTexture, layout.outWidth, layout.outHeight, _crtRenderer.factorTable().data());
+    }
+    if (rebuilt || !_gradedTexture || _gradedSerial != _frameSerial)
+    {
+        _crtRenderer.grade(_shownFrame->constBits(), static_cast<int>(_shownFrame->bytesPerLine()), params);
+        UploadRgba(_gradedTexture, layout.frameWidth, layout.frameHeight, _crtRenderer.graded().data());
+        _gradedSerial = _frameSerial;
+    }
+
+    _composeShader->bind();
+    _gradedTexture->bind(0);
+    _indexTexture->bind(1);
+    _factorTexture->bind(2);
+    _composeShader->setUniformValue("frame", 0);
+    _composeShader->setUniformValue("indexTable", 1);
+    _composeShader->setUniformValue("factorTable", 2);
+    _composeShader->setUniformValue("frameSize", QVector2D(static_cast<float>(layout.frameWidth), static_cast<float>(layout.frameHeight)));
+    _composeShader->setUniformValue("outSize", QVector2D(static_cast<float>(layout.outWidth), static_cast<float>(layout.outHeight)));
+    _composeShader->setUniformValue("outOrigin", QVector2D(static_cast<float>(picture.x()), static_cast<float>(glY)));
+    drawQuad(0.0f, 0.0f, 1.0f, 1.0f);
+    _factorTexture->release(2);
+    _indexTexture->release(1);
+    _gradedTexture->release(0);
+    glActiveTexture(GL_TEXTURE0);
+    _composeShader->release();
+}
+
+void DeviceScreenGLWindow::drawCustomCrt(const QRect& picture)
+{
+    const QRectF source = displaySourceRect();
+    const float texW = static_cast<float>(_texture->width());
+    const float texH = static_cast<float>(_texture->height());
+
+    int maskType = 0;
+    switch (_crtParams.maskType)
+    {
+        case CRTMaskType::Aperture:
+            maskType = 1;
+            break;
+        case CRTMaskType::ShadowMask:
+            maskType = 2;
+            break;
+        case CRTMaskType::SlotMask:
+            maskType = 3;
+            break;
+        case CRTMaskType::None:
+            break;
+    }
+
+    _customShader->bind();
+    _texture->bind(0);
+    _customShader->setUniformValue("tex", 0);
+    _customShader->setUniformValue("texSize", QVector2D(texW, texH));
+    _customShader->setUniformValue("outputSize", QVector2D(static_cast<float>(picture.width()), static_cast<float>(picture.height())));
+    _customShader->setUniformValue("maskType", maskType);
+    _customShader->setUniformValue("curvature", _crtParams.curvature);
+    _customShader->setUniformValue("cornerRadius", _crtParams.cornerRadius);
+    _customShader->setUniformValue("scanlineWeight", _crtParams.scanlineWeight);
+    _customShader->setUniformValue("maskStrength", _crtParams.maskStrength);
+    _customShader->setUniformValue("maskDotPitch", _crtParams.maskDotPitch);
+    _customShader->setUniformValue("bloomStrength", _crtParams.bloomStrength);
+    _customShader->setUniformValue("saturation", _crtParams.saturation);
+    _customShader->setUniformValue("brightness", _crtParams.brightness);
+    _customShader->setUniformValue("contrast", _crtParams.contrast);
+    _customShader->setUniformValue("gamma", _crtParams.gamma);
+    drawQuad(static_cast<float>(source.left()) / texW, static_cast<float>(source.top()) / texH,
+             static_cast<float>(source.right()) / texW, static_cast<float>(source.bottom()) / texH);
+    _texture->release(0);
+    _customShader->release();
 }
 
 void DeviceScreenGLWindow::keyPressEvent(QKeyEvent* event)
@@ -743,6 +704,17 @@ QSize DeviceScreenGLWindow::drawnPictureSize() const
     if (windowW / windowH > ratio)
         return QSize(static_cast<int>(windowH * ratio), static_cast<int>(windowH));
     return QSize(static_cast<int>(windowW), static_cast<int>(windowW / ratio));
+}
+
+QRect DeviceScreenGLWindow::pictureDeviceRect() const
+{
+    const QSize drawn = drawnPictureSize();
+    if (drawn.isEmpty())
+        return QRect();
+    const qreal dpr = devicePixelRatio();
+    const int x = (width() - drawn.width()) / 2;
+    const int y = (height() - drawn.height()) / 2;
+    return QRect(qRound(x * dpr), qRound(y * dpr), qRound(drawn.width() * dpr), qRound(drawn.height() * dpr));
 }
 
 bool DeviceScreenGLWindow::event(QEvent* event)

@@ -1,0 +1,8 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <!-- The custom CRT shaders shipped with the app (View > CRT Profile, GPU only); a user's own go to the shaders
+         directory CRTShaderManager scans -->
+    <qresource prefix="/">
+        <file alias="shaders/megatron.glsl">../../data/shaders/megatron.glsl</file>
+    </qresource>
+</RCC>

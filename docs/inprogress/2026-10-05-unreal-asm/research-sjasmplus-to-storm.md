@@ -77,6 +77,8 @@ refuses an inject without force, unless the text is the caller's own (the push w
 |---|---|
 | `StormBackend_Test.ProgramsKeepTheirBytesThroughStorm` (host): every instruction form, STORM 1.3's STORMT1 / STORMT2, XAS 7.447 `constrct`, 4.18 `cons418`, ZAsm 3.15 and TASM 5.0 programs → sjasmplus → STORM → the STORM codec and back → the STORM frontend → sjasmplus | the original assemblers' bytes |
 | `inject-oracle.py storm` in STORM 1.3: `oracle1.asm` (sjasmplus constructs, macros, WHILE, DUP, IF), every instruction form at `#6000` and at `#8000` | 143 / 1173 / 1173 bytes = sjasmplus' |
+| `storm-expression-fuzz.py` in STORM 1.3 (2026-10-19): random `DW` expressions (labels above and below, numbers, unary `- ~ high low !`, every binary operator, three levels), 15 seeds of 100 lines, half of them written as expressions | all words = sjasmplus' (found on the way: sjasmplus takes a shift count modulo 32, `1<<33` = 2, `14>>224` = 14: the layout and the writers' values gave 0) |
+| `inject-oracle.py storm` in STORM 1.3 (2026-10-19): `z5probe.asm` (STRUCT, MODULE, ALIGN, DZ / D24 / DD, IFUSED, DEFINE, EXA / EXD, temporary labels), the real loaders of The Link (stage 1, stage 2, src) and romych's `cmdtest` | 94 / 466 / 1172 / 1477 / 198 bytes = sjasmplus' |
 | the same in STORM 1.3i (`inject-oracle.py storm13i`, 2026-10-17) | `oracle1.asm` 143 bytes, every instruction form at `#6000` and at `#8000` (1173) = sjasmplus' |
 
 STORM 1.3i's Quit restarts the machine: the 48K memory the 1.3 check reads after it is empty (an earlier note took

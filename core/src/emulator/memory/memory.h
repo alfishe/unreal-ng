@@ -347,12 +347,15 @@ public:
 public:
     static MemoryInterface* GetFastMemoryInterface();
     static MemoryInterface* GetDebugMemoryInterface();
-    static MemoryInterface* GetFastContendedMemoryInterface();   // Fast + video memory contention
-    static MemoryInterface* GetFastContendedStockMemoryInterface();  // The same, MemoryReadFastStock (HasStockFastRead)
+    /// stockRead: the fast read inside is MemoryReadFastStock instead of the virtual MemoryReadFast - for a memory
+    /// whose HasStockFastRead is true (the Z80 decides once, at its construction: the memory is created before it).
+    /// The plain fast interface keeps the virtual read: it calls the read directly, with nothing to inline it into,
+    /// and the stock pointer measured +1 % on Pentagon
+    static MemoryInterface* GetFastContendedMemoryInterface(bool stockRead = false);  // Fast + video memory contention
     static MemoryInterface* GetDebugContendedMemoryInterface();  // Debug + video memory contention
     /// The fast / debug interface, contended or not, plus the installed bus
     /// overlay (neogs-zxdma-design.md §5.2); selected only while one is installed
-    static MemoryInterface* GetOverlayMemoryInterface(bool debug, bool contended);
+    static MemoryInterface* GetOverlayMemoryInterface(bool debug, bool contended, bool stockRead = false);  // stockRead: as above
 
     /// Contended interfaces: the plain access (Plain = Fast / Debug) with the video logic's wait in front of
     /// accesses to a contended slot, every MREQ cycle alike (opcode fetch, operand, data). Selected only
@@ -384,14 +387,14 @@ public:
     /// The fast read ignores isExecution (no per-access tracking there), so
     /// the parameter is marked maybe_unused
     virtual uint8_t MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution);
-    /// Memory::MemoryReadFast itself, without the virtual dispatch: for the interfaces selected only while the
-    /// model does not override it (HasStockFastRead)
+    /// Memory::MemoryReadFast itself, without the virtual dispatch: the fast interfaces of a memory that does not
+    /// override it (HasStockFastRead) read through it
     uint8_t MemoryReadFastStock(uint16_t addr, [[maybe_unused]] bool isExecution)
     {
         return *(_bank_read[(addr >> 14) & 3] + (addr & 0x3FFF));
     }
-    /// true while MemoryReadFast is this class's own: a model that overrides it answers false, and
-    /// Core::SelectMemoryInterface then keeps the interfaces that call it through the vtable
+    /// true while MemoryReadFast is this class's own: a model that overrides it answers false, and its fast
+    /// interfaces keep calling it through the vtable
     virtual bool HasStockFastRead() const { return true; }
     /// A halted CPU's idle opcode fetch at `addr` through the fast read, repeated: true when it reads a byte and
     /// nothing else (an engine may then run such fetches in one go, Z84C15Engine). A model whose read has a side

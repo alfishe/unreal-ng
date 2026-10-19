@@ -1,6 +1,6 @@
 #include "devicescreen.h"
 #include "emulator/remotecontrolguard.h"
-#include "crtfilter.h"
+#include "crtrenderer.h"
 
 #include <QDebug>
 #include <QFocusEvent>
@@ -8,6 +8,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QWheelEvent>
+#include <algorithm>
 #include <cmath>
 
 #include "emulator/emulator.h"
@@ -16,6 +17,9 @@
 #include "emulator/keyboardmanager.h"
 #include "emulator/mousecapturecontroller.h"
 #include "ui_devicescreen.h"
+/// The picture without CRT effects (CRTRenderer's plain nearest scale)
+static const CRTProfileParams kPlainParams = CRTProfileParams::None();
+
 static inline bool isFloatsEqual(float x, float y, float epsilon = 0.01f)
 {
     bool result = false;
@@ -196,45 +200,39 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
         }
     }
 
-    // CRT effects: apply SIMD-accelerated filter at OUTPUT resolution
-    // Effects like scanlines need output-resolution precision for fine lines
-    if (_crtEnabled && _crtFilter && _crtParams.profile != CRTProfile::None)
+    // CRTRenderer at device pixels, drawn 1:1, with or without CRT effects: the GPU screen composes the same picture
+    // from the same tables, so the two backends match bit for bit
     {
-        int outWidth = destRect.width();
-        int outHeight = destRect.height();
+        const CRTProfileParams& params = _crtEnabled ? _crtParams : kPlainParams;
+        if (!_crtRenderer)
+            _crtRenderer = std::make_unique<CRTRenderer>();
+        const qreal dpr = devicePixelRatioF();
+        CRTRenderer::Layout layout;
+        layout.outWidth = std::max(1, static_cast<int>(std::lround(destRect.width() * dpr)));
+        layout.outHeight = std::max(1, static_cast<int>(std::lround(destRect.height() * dpr)));
+        layout.source = sourceRect.toRect().intersected(drawImage->rect());
+        layout.frameWidth = drawImage->width();
+        layout.frameHeight = drawImage->height();
+        if (layout.source.isEmpty())
+            return;
 
-        // Reinitialize CRT buffer if output size changed
-        if (_crtFrame.width() != outWidth || _crtFrame.height() != outHeight)
-        {
-            _crtFrame = QImage(outWidth, outHeight, QImage::Format_RGBA8888);
-        }
+        _crtRenderer->setLayout(layout, params);
+        _crtRenderer->grade(drawImage->constBits(), static_cast<int>(drawImage->bytesPerLine()), params);
+        // Opaque in the backing store's byte order: the 1:1 draw is a copy, no conversion, no blending (RGB32 is
+        // B G R 0xFF bytes on little-endian; an image with alpha would be blended pixel by pixel)
+        constexpr bool kBgra = Q_BYTE_ORDER == Q_LITTLE_ENDIAN;
+        constexpr QImage::Format kFormat = kBgra ? QImage::Format_RGB32 : QImage::Format_RGBX8888;
+        if (_crtFrame.width() != layout.outWidth || _crtFrame.height() != layout.outHeight ||
+            _crtFrame.format() != kFormat)
+            _crtFrame = QImage(layout.outWidth, layout.outHeight, kFormat);
+        _crtRenderer->compose(_crtFrame.bits(), static_cast<int>(_crtFrame.bytesPerLine()), kBgra);
+        _crtFrame.setDevicePixelRatio(dpr);
 
-        // Get source dimensions for scale-aware effects
-        QRect srcRect = sourceRect.toRect();
-        int srcWidth = srcRect.width();
-        int srcHeight = srcRect.height();
-
-        // Scale source to output size first - use nearest-neighbor for crisp pixels
-        QImage scaled = drawImage->copy(srcRect).scaled(
-            outWidth, outHeight, Qt::IgnoreAspectRatio, Qt::FastTransformation);
-        scaled = scaled.convertToFormat(QImage::Format_RGBA8888);
-
-        // Apply CRT filter at output resolution with source dimensions for scale-aware effects
-        _crtFilter->apply(scaled.bits(), _crtFrame.bits(), outWidth, outHeight,
-                          srcWidth, srcHeight, _crtParams);
-
-        // Draw directly - already at output size
 #if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
         painter.setRenderHint(QPainter::LosslessImageRendering);
 #endif
-        painter.drawImage(destRect, _crtFrame);
-        return;
+        painter.drawImage(destRect.topLeft(), _crtFrame);
     }
-
-#if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
-    painter.setRenderHint(QPainter::LosslessImageRendering);
-#endif
-    painter.drawImage(destRect, *drawImage, sourceRect);
 }
 
 void DeviceScreen::setTemporalBlendingEnabled(bool enabled)
@@ -266,11 +264,6 @@ void DeviceScreen::setCRTEffectsEnabled(bool enabled)
 {
     _crtEnabled = enabled;
 
-    if (enabled && !_crtFilter)
-    {
-        _crtFilter = std::make_unique<CRTFilter>();
-    }
-
     // Don't auto-select profile - respect current profile selection
     // If profile is None, no effects will be applied even if enabled
 
@@ -282,11 +275,6 @@ void DeviceScreen::setCRTProfile(CRTProfile profile)
     _crtParams = CRTProfileParams::FromProfile(profile);
     _crtEnabled = (profile != CRTProfile::None);
 
-    if (_crtEnabled && !_crtFilter)
-    {
-        _crtFilter = std::make_unique<CRTFilter>();
-    }
-
     update();
 }
 
@@ -294,11 +282,6 @@ void DeviceScreen::setCRTProfile(const CRTProfileParams& params)
 {
     _crtParams = params;
     _crtEnabled = (params.profile != CRTProfile::None);
-
-    if (_crtEnabled && !_crtFilter)
-    {
-        _crtFilter = std::make_unique<CRTFilter>();
-    }
 
     update();
 }
@@ -511,17 +494,20 @@ void DeviceScreen::fitToParent()
     if (pw < 1 || ph < 1 || ratio <= 0)
         return;
 
+    // The fit DeviceScreenGLWindow::drawnPictureSize() draws: both backends show the picture at the same size
+    const double windowW = pw;
+    const double windowH = ph;
     int newWidth;
     int newHeight;
-    if (static_cast<float>(ph) * ratio <= static_cast<float>(pw))
+    if (windowW / windowH > ratio)
     {
         newHeight = ph;
-        newWidth = static_cast<int>(static_cast<float>(ph) * ratio);
+        newWidth = static_cast<int>(windowH * ratio);
     }
     else
     {
         newWidth = pw;
-        newHeight = static_cast<int>(static_cast<float>(pw) / ratio);
+        newHeight = static_cast<int>(windowW / ratio);
     }
 
     if (newWidth < 1 || newHeight < 1)
@@ -536,7 +522,12 @@ void DeviceScreen::fitToParent()
 
 void DeviceScreen::resizeEvent(QResizeEvent* event)
 {
-    conformToAspectRatio();
+    // Fitted from the parent, not shrunk from the current size: conforming a size already conformed shrinks it again
+    // by a pixel (the rounding of width / ratio), and every resize event walked the picture smaller
+    if (parentWidget())
+        fitToParent();
+    else
+        conformToAspectRatio();
     QWidget::resizeEvent(event);
 
     update();

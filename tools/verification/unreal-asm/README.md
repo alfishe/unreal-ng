@@ -32,6 +32,9 @@ unreal-asm/
                                 assembled by it, its bytes compared with sjasmplus' build (part B's oracle); with
                                 --template the source goes into an idle template snapshot by `zxasm inject` and the
                                 snapshot is loaded and assembled (Z1)
+    storm-expression-fuzz.py    random sjasmplus expressions (labels, numbers, every operator) as DW lines: built by
+                                sjasmplus and, through the STORM backend, by STORM 1.3 itself (assemble-in-emulator);
+                                the words that differ printed with their STORM text
     find-idle.py                an assembler's idle rule: started with an inject-oracle profile, paused at many moments
                                 of its key wait, the return addresses that stay on the stack (each after a CALL / RST,
                                 outside the ROM) are the descriptor's idleChain

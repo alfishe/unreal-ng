@@ -468,6 +468,28 @@ void MenuManager::setCrtProfile(int profileIndex)
     }
 }
 
+void MenuManager::setCrtShader(const QString& name)
+{
+    if (!_crtProfileGroup)
+        return;
+    for (QAction* action : _crtProfileGroup->actions())
+    {
+        if (action->property("shaderName").toString() == name)
+            action->setChecked(true);
+    }
+}
+
+void MenuManager::setCustomShadersEnabled(bool enabled)
+{
+    if (!_crtProfileGroup)
+        return;
+    for (QAction* action : _crtProfileGroup->actions())
+    {
+        if (action->property("shaderName").isValid())
+            action->setEnabled(enabled);
+    }
+}
+
 void MenuManager::populateCrtProfileMenu()
 {
     if (!_crtProfileMenu || !_crtProfileGroup)
@@ -512,14 +534,12 @@ void MenuManager::populateCrtProfileMenu()
         {
             QAction* action = _crtProfileMenu->addAction(shaderName + " (custom)");
             action->setCheckable(true);
-            action->setStatusTip(tr("Custom shader: %1").arg(shaderName));
+            action->setStatusTip(tr("Custom shader: %1 (GPU acceleration only)").arg(shaderName));
             action->setData(-1);  // Custom shader marker
             action->setProperty("shaderName", shaderName);
             _crtProfileGroup->addAction(action);
 
-            connect(action, &QAction::triggered, this, [this, shaderName]() {
-                emit crtProfileChanged(-1);  // -1 = custom, use property
-            });
+            connect(action, &QAction::triggered, this, [this, shaderName]() { emit crtShaderChanged(shaderName); });
         }
     }
     else
