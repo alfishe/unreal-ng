@@ -58,16 +58,19 @@ public:
     void grade(const uint8_t* src, int stride, const CRTProfileParams& params);
     const std::vector<uint8_t>& graded() const { return _graded; }
 
-    /// The composed picture, RGBA8, outWidth x outHeight, `stride` in bytes
-    void compose(uint8_t* out, int stride) const;
+    /// The composed picture, outWidth x outHeight, `stride` in bytes: RGBA8, or B G R A bytes with `bgra` (a little-endian
+    /// QImage::Format_RGB32, drawn into the backing store without a conversion). Alpha 255
+    void compose(uint8_t* out, int stride, bool bgra = false) const;
 
 private:
     void buildGeometry(const CRTProfileParams& params);
     void buildColorTables(const CRTProfileParams& params);
+    void composePlain(uint8_t* out, int stride, bool bgra) const;
 
     Layout _layout;
     CRTProfileParams _params;
     bool _built = false;
+    bool _plain = false;  ///< CRTProfile::None: grading is a copy, composition a nearest scale
 
     std::vector<uint8_t> _index;
     std::vector<uint8_t> _factor;
