@@ -6,6 +6,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QListWidget>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSplitter>
@@ -110,10 +111,12 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
     leftLayout->addWidget(new QLabel(tr("<b>Host devices</b>"), left));
     _devices = new QListWidget(left);
     leftLayout->addWidget(_devices, 1);
-    _identifyButton = new QPushButton(tr("Identify"), left);
-    _identifyButton->setToolTip(tr("Rumble the selected device"));
-    _identifyButton->setEnabled(false);
-    leftLayout->addWidget(_identifyButton);
+    _testHaptics = new QPushButton(tr("Test haptics"), left);
+    _testHapticsMenu = new QMenu(_testHaptics);
+    _testHaptics->setMenu(_testHapticsMenu);
+    _testHaptics->setEnabled(false);
+    _testHaptics->setToolTip(tr("Select a device"));
+    leftLayout->addWidget(_testHaptics);
     _probeLabel = new QLabel(left);
     _probeLabel->setWordWrap(true);
     leftLayout->addWidget(_probeLabel);
@@ -164,11 +167,6 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
         dialog.exec();
     });
 #ifdef ENABLE_CONTROLLERS
-    connect(_identifyButton, &QPushButton::clicked, this, [this] {
-        const std::string device = selectedDevice();
-        if (!device.empty())
-            _host->Service().Identify(device);
-    });
 #endif
     connect(_picture, &ControllerPicture::controlClicked, this, [this](const QString& control) {
         _picture->setSelected(control.toStdString());
@@ -271,12 +269,59 @@ void ControllersDialog::rebuild()
 #endif
 }
 
+void ControllersDialog::rebuildHapticsTest(const std::string& device)
+{
+#ifdef ENABLE_CONTROLLERS
+    using controllers::HapticEffect;
+    using controllers::RumbleLevels;
+    _testHapticsMenu->clear();
+    const std::string why =
+        device.empty() ? std::string("Select a device") : _host->Service().HapticsUnavailable(device);
+    _testHaptics->setEnabled(why.empty());
+    _testHaptics->setToolTip(why.empty() ? tr("Play a test effect on the selected device")
+                                         : QString::fromStdString(why));
+    if (!why.empty())
+        return;
+
+    // Test effects are debug feedback (haptics.md §10): they play while the game's haptics are held back
+    auto add = [this, device](const QString& label, const HapticEffect& effect) {
+        connect(_testHapticsMenu->addAction(label), &QAction::triggered, this,
+                [this, device, effect] { _host->Service().PlayEffect(device, effect); });
+    };
+    add(tr("Identify (both motors)"), HapticEffect({0.6f, 0.6f, 0.0f, 0.0f}, 300, true));
+    const uint8_t actuators = _host->Service().RumbleActuators(device);
+    if (actuators & controllers::kRumbleLow)
+        add(tr("Low-frequency motor"), HapticEffect({0.8f, 0.0f, 0.0f, 0.0f}, 400, true));
+    if (actuators & controllers::kRumbleHigh)
+    {
+        add(tr("High-frequency motor"), HapticEffect({0.0f, 0.8f, 0.0f, 0.0f}, 400, true));
+        HapticEffect clicks({0.0f, 0.9f, 0.0f, 0.0f}, 360, true);
+        clicks.shape = controllers::HapticShape::Pattern;
+        clicks.pattern = {{30, 1.0f}, {90, 0.0f}};
+        add(tr("Three clicks"), clicks);
+    }
+    if (actuators & controllers::kRumbleLeftTrigger)
+        add(tr("Left trigger"), HapticEffect({0.0f, 0.0f, 0.8f, 0.0f}, 400, true));
+    if (actuators & controllers::kRumbleRightTrigger)
+        add(tr("Right trigger"), HapticEffect({0.0f, 0.0f, 0.0f, 0.8f}, 400, true));
+    HapticEffect swell({0.9f, 0.5f, 0.0f, 0.0f}, 900, true);
+    swell.shape = controllers::HapticShape::Adsr;
+    swell.attackMs = 300;
+    swell.decayMs = 150;
+    swell.sustain = 0.5f;
+    swell.releaseMs = 300;
+    add(tr("Swell (attack, hold, release)"), swell);
+#else
+    (void)device;
+#endif
+}
+
 void ControllersDialog::rebuildControls()
 {
 #ifdef ENABLE_CONTROLLERS
     const std::string device = selectedDevice();
     const std::string family = selectedFamily();
-    _identifyButton->setEnabled(!device.empty() && _host->Service().HasRumble(device));
+    rebuildHapticsTest(device);
     QListWidgetItem* item = _devices->currentItem();
     const QString name = item != nullptr && !device.empty() ? item->text().section('\n', 0, 0) : QString();
     QString title = device.empty() ? QString() : QString("<b>%1</b>").arg(name.toHtmlEscaped());

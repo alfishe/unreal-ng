@@ -158,6 +158,18 @@ bool HostInputService::HasRumble(const HostDeviceId& device) const
     return backend != nullptr && backend->HasRumble(device);
 }
 
+std::string HostInputService::HapticsUnavailable(const HostDeviceId& device) const
+{
+    for (const HostDeviceInfo& info : _router->Devices())
+        if (info.id == device && (info.family == "keyboard" || info.family == "mouse"))
+            return "Keyboards and mice have no motors";
+    std::lock_guard<std::mutex> lock(_mutex);
+    const IBackend* backend = BackendOfLocked(device);
+    if (backend == nullptr)
+        return "The device is not connected";
+    return backend->RumbleUnavailable(device);
+}
+
 uint8_t HostInputService::RumbleActuators(const HostDeviceId& device) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
