@@ -105,6 +105,10 @@ An XAS source on disk is type `X` with start #5341 (`AS`) and length 0 (XAS igno
 name, `X`, `41 53`, `00 00`, `00`, sector count, checksum. LTEXT names another XAS source, LCODE a code file (`"name"`
 = type C, `"name.Z"` another type, `"B:name"` drive B).
 
+A library for `USEL "LIB"` (7.x): procedures in blocks `!ASSM !OFF ;:NAME` ... `!CONT`; the calling text lists the
+ones it wants on lines `:NAME` right below the USEL. Type the `;` - XAS compares the comment, `!assm !off :name` is
+never found. Lines outside the blocks are always assembled. `MAKE` assembles to nothing (7.447).
+
 ## A host source into XAS (every build, 4.18 to 9.10)
 
 Open XAS's command line (EXT; 9.x: hold it 12 frames) and write the source there; `A` then assembles it:
@@ -138,6 +142,9 @@ the first sector (about a second, 4 revolutions), reads the ID under the head an
 
 ## Pitfalls
 
+- **XAS holds a file of 64 sectors** (16K at `#C000` of RAM page 3, title and end included): a 65th sector wraps over
+  `#0000` and leaves a scrap of the text, no error (measured on 7.447, 2026-10-19). `zxasm convert --project --to xas`
+  cuts a longer file into INCLUDEd parts.
 - **XAS 9.10**: Extend for 4 frames types letters into the text: hold it 12 frames. Its file list shows only files
   with `AS` in the catalog start field (what XAS and `zxasm encode` write); after a Pentagon reset it reopens the
   text left in RAM instead of showing the list (start a new machine). A string of several characters in an LD / DW

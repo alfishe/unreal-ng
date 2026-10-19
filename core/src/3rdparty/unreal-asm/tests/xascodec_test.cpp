@@ -4,6 +4,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include "codecs/xas/xascodec.h"
 #include "testdata.h"
 #include "unrealasm/containers.h"
@@ -12,6 +14,23 @@
 using namespace unrealasm;
 using unrealasm::testing::ReadTestData;
 using unrealasm::testing::ReadTestText;
+
+namespace
+{
+/// ORG and n lines, the text the editor's room was measured with (LOAD in the emulator, 2026-10-19)
+SourceDocument MeasuredText(size_t n, const std::string& dialect)
+{
+    std::string text = "        ORG 40000\n";
+    for (size_t i = 0; i < n; ++i)
+        text += i % 3 ? "        LD A,(IX+" + std::to_string(i % 100) + ")\n" : "        ADD A,"  + std::to_string(i % 200) + "\n";
+    return SourceDocument::FromText(text, dialect);
+}
+
+bool Longer(const EncodeResult& r)
+{
+    return std::any_of(r.diagnostics.begin(), r.diagnostics.end(), [](const Diagnostic& d) { return d.message.find("longer than") != std::string::npos; });
+}
+}  // namespace
 
 namespace
 {
@@ -146,4 +165,14 @@ TEST(XasCodec_Test, Detection)
         ASSERT_NE(detected.chosen, nullptr) << sample.stem << ": " << detected.reason;
         EXPECT_EQ(detected.chosen->Info().id, "xas") << sample.stem;
     }
+}
+
+TEST(XasCodec_Test, ALongerTextThanTheEditorHoldsIsReported)
+{
+    // XAS 7.447 loads 64 sectors at #C000 of RAM page 3; the 65th wraps over #0000 without a word: a project's longer file is cut into INCLUDEd parts (zxasm convert --project)
+    const codecs::XasCodec codec;
+    const EncodeResult fits = codec.Encode(MeasuredText(2111, "xas"), {});
+    EXPECT_EQ(fits.bytes.size(), 16381u);
+    EXPECT_FALSE(Longer(fits));
+    EXPECT_TRUE(Longer(codec.Encode(MeasuredText(2112, "xas"), {})));
 }

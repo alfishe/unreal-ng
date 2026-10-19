@@ -2,6 +2,8 @@
 
 #include "stdafx.h"
 
+#include <vector>
+
 class Z80;
 class Memory;
 class EmulatorContext;
@@ -99,6 +101,9 @@ class UlaContention
 public:
     UlaContention() = default;
     ~UlaContention() = default;
+    // _delayLut points into the object's own storage
+    UlaContention(const UlaContention&) = delete;
+    UlaContention& operator=(const UlaContention&) = delete;
 
     /// Wire up dependencies. Called once after Core::Init().
     void SetDependencies(Z80* cpu, Memory* memory, EmulatorContext* context);
@@ -119,7 +124,11 @@ public:
     /// +2A/+3 Amstrad gate array instead of the Ferranti ULA: the 1,0,7,6,5,4,3,2 pattern, no I/O
     /// contention, RAM pages 4-7 contended in any slot, and a floating bus only on ports
     /// 0000 xxxx xxxx xx01 (see GetGateArrayFloatingBus)
-    void SetGateArray(bool gateArray) { _gateArray = gateArray; }
+    void SetGateArray(bool gateArray)
+    {
+        _gateArray = gateArray;
+        RebuildDelayLut();
+    }
     bool IsGateArray() const { return _gateArray; }
 
     /// The machine's rule, from the flags above (None while contention is disabled for the model)
@@ -181,7 +190,13 @@ public:
     /// Wait of a memory access to contended RAM that starts at T-state `t` (0 outside the fetch window).
     /// The contended memory interfaces call it for every access to a contended slot
     /// (Memory::MemoryReadContended); they are selected only while contention is enabled
-    uint8_t DelayAt(uint32_t t) const { return ComputeContentionDelay(t); }
+    /// From the table of the frame's waits (ComputeContentionDelay of each T of the screen area, rebuilt with the
+    /// raster and the gate array): no division per access
+    uint8_t DelayAt(uint32_t t) const
+    {
+        const uint32_t d = t - _raster.screenAreaStart;  // wraps above the table before the screen area
+        return d < _delayLutSize ? _delayLut[d] : 0;
+    }
 
     /// Is this Z80 address in contended memory on the current model?
     /// 48K/128K: the slots holding an odd RAM page (page 5 at 0x4000, and 0xC000 when page 1/3/5/7 is
@@ -323,6 +338,10 @@ private:
 
     bool _contentionEnabled = false;
     bool _gateArray = false;
+    std::vector<uint8_t> _delayLutStorage;  // DelayAt: the wait of each T from screenAreaStart to screenAreaEnd
+    const uint8_t* _delayLut = nullptr;
+    uint32_t _delayLutSize = 0;
+    void RebuildDelayLut();  // after any change of _raster or _gateArray (ComputeContentionDelay reads nothing else)
     bool _slotContended[4] = { false, true, false, false };  // 48K / 128K power-on layout: page 5 at #4000
     uint8_t _lastContendedByte = 0xFF;
     UlaFetchType _fetchType = ULA_FERRANTI;

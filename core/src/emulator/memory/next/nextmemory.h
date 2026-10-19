@@ -36,6 +36,7 @@ public:
 
     /// region <Memory overrides>
     uint8_t MemoryReadFast(uint16_t addr, bool isExecution) override;
+    bool HasStockFastRead() const override { return false; }
     uint8_t MemoryReadDebug(uint16_t addr, bool isExecution) override;
     void SlotWriteFast(uint16_t addr, uint8_t value);
     void SlotWriteDebug(uint16_t addr, uint8_t value);

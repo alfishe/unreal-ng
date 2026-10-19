@@ -483,6 +483,7 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
     const MemoryInterface* FastMemIf;                  // Fast memory interface (max performance)
     const MemoryInterface* DbgMemIf;                   // Debug memory interface (supports memory access breakpoints)
     const MemoryInterface* FastContendedMemIf;         // Fast + video memory contention (Memory::MemoryReadContended)
+    const MemoryInterface* FastContendedStockMemIf;    // The same without the virtual read (Memory::HasStockFastRead)
     const MemoryInterface* DbgContendedMemIf;          // Debug + video memory contention
     const MemoryInterface* OverlayFastMemIf;           // Fast + host bus overlay (only while one is installed)
     const MemoryInterface* OverlayDbgMemIf;            // Debug + host bus overlay

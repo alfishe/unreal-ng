@@ -71,6 +71,17 @@ std::string Sanitized(const std::string& name)
     return out;
 }
 
+/// The number of a temporary label's reference: 1 of 1B, 1F, 1_B, 1_F
+std::string TemporaryNumber(const std::string& reference)
+{
+    if (reference.size() < 2)
+        return {};
+    std::string number = reference.substr(0, reference.size() - 1);
+    if (number.size() > 1 && number.back() == '_')
+        number.pop_back();
+    return number;
+}
+
 bool IsTemporary(const std::string& label)
 {
     return !label.empty() && label.find_first_not_of("0123456789") == std::string::npos;
@@ -144,10 +155,11 @@ struct Writer
 
     std::optional<std::string> Temporary(const std::string& reference) const
     {
-        if (reference.size() < 2 || !IsTemporary(reference.substr(0, reference.size() - 1)))
+        const std::string number = TemporaryNumber(reference);
+        if (!IsTemporary(number))
             return std::nullopt;
         const char way = static_cast<char>(std::tolower(static_cast<unsigned char>(reference.back())));
-        const auto found = temporaries.find(reference.substr(0, reference.size() - 1));
+        const auto found = temporaries.find(number);
         if (found == temporaries.end() || (way != 'b' && way != 'f'))
             return std::nullopt;
         std::optional<std::string> pick;
@@ -369,7 +381,15 @@ struct Writer
     std::string Term(const Expr& e, bool linear)
     {
         const std::string s = Print(e, linear);
-        return Compound(e) ? "(" + s + ")" : s;
+        return Compound(e) ? Parenthesized(s) : s;
+    }
+
+    /// Text in parentheses; ALASM 3.8 has none in expressions (an operand starting with "(" is memory, live)
+    std::string Parenthesized(const std::string& s)
+    {
+        if (version < 400)
+            Problem("parentheses (ALASM 3.8 has none)");
+        return "(" + s + ")";
     }
 
     void Problem(const std::string& why)
@@ -398,7 +418,7 @@ struct Writer
                 if (displaced)
                     Problem("the address where the code is put ($$$) during DISP");
                 return "$";
-            case Expr::Kind::Group: return "(" + Print(e.args[0], linear) + ")";
+            case Expr::Kind::Group: return Parenthesized(Print(e.args[0], linear));
             case Expr::Kind::Memory: return "{" + Print(e.args[0], false) + "}";
             case Expr::Kind::Defined: return "?" + Term(e.args[0], false);
             case Expr::Kind::Raw:
@@ -415,7 +435,10 @@ struct Writer
                 {
                     case Op::Negate: return "-" + Term(e.args[0], linear);
                     case Op::Plus: return Print(e.args[0], linear);
-                    case Op::Not: return Print(e.args[0], false) + "~";   // inverts the result so far
+                    case Op::Not:
+                        if (version < 400)
+                            Problem("the operator ~ (ALASM 3.8 has + - * / only)");
+                        return Print(e.args[0], false) + "~";   // inverts the result so far
                     case Op::High: return "'" + Term(e.args[0], false);
                     case Op::Low: return "." + Term(e.args[0], false);
                     case Op::SwapBytes:
@@ -436,6 +459,8 @@ struct Writer
         const Expr& a = e.args[0];
         const Expr& b = e.args[1];
         auto joined = [&](const char* symbol, bool keepsLinear) {
+            if (version < 400 && std::string("+-*/").find(symbol[0]) == std::string::npos)
+                Problem(std::string("the operator ") + symbol + " (ALASM 3.8 has + - * / only)");
             const std::string left = Print(a, linear && keepsLinear);
             return left + symbol + Term(b, linear && keepsLinear);
         };
@@ -476,7 +501,7 @@ struct Writer
                     Problem("a remainder ALASM makes in 16-bit unsigned words");
                 const std::string left = Print(a, false);
                 const std::string right = Term(b, false);
-                return left + "-(" + left + "/" + right + "*" + right + ")";
+                return left + "-" + Parenthesized(left + "/" + right + "*" + right);
             }
             default:
                 Problem("a comparison or logical operator (ALASM has none)");
@@ -571,6 +596,7 @@ struct Writer
     std::string Until0() const { return version < 507 ? "UNTIL" : "UNTIL0"; }
     std::string Db() const { return version < 400 ? "DEFB" : "DB"; }
     std::string Dw() const { return version < 400 ? "DEFW" : "DW"; }
+    std::string Ds() const { return version < 400 ? "DEFS" : "DS"; }   // 3.8 has no DS (live)
     char ParamMark() const { return version < 500 ? ':' : '\\'; }   // macro parameters: :0..:9 before 5.0 (4.2-4.5, live)
     /// Whether the target version's table has this keyword (4.5 lacks EXA that 4.44 has: the numbers are no order)
     bool HasKeyword(std::string_view word) const
@@ -771,36 +797,13 @@ struct Writer
                 return out;
             }
             // and its fake instructions, written out as it assembles them
-            auto halves = [](const std::string& r) -> std::pair<std::string, std::string> {
-                if (r == "bc") return {"B", "C"};
-                if (r == "de") return {"D", "E"};
-                if (r == "hl") return {"H", "L"};
-                if (r == "ix") return {"HX", "LX"};
-                if (r == "iy") return {"HY", "LY"};
-                return {};
-            };
-            const bool pair0 = ops.size() == 2 && ops[0].kind == Operand::Kind::Register && !halves(ops[0].text).first.empty();
-            const bool pair1 = ops.size() == 2 && ops[1].kind == Operand::Kind::Register && !halves(ops[1].text).first.empty();
-            if (m == "sub" && pair0 && ops[0].text == "hl" && pair1)
-                return {"OR A", "SBC HL," + z80::Upper(ops[1].text)};
-            if (m == "ld" && pair0 && pair1)
+            if (const std::vector<Statement> parts = SjasmplusFake(s); parts.size() > 1)
             {
-                const auto d = halves(ops[0].text), v = halves(ops[1].text);
-                return {"LD " + d.first + "," + v.first, "LD " + d.second + "," + v.second};
-            }
-            if (m == "ld" && pair0 && ops[1].kind == Operand::Kind::Indexed)
-            {
-                Operand next = ops[1];
-                next.expr = Expr::Binary(Op::Add, ops[1].expr, Expr::Number(1));
-                const auto d = halves(ops[0].text);
-                return {"LD " + d.second + "," + OperandText(ops[1], true), "LD " + d.first + "," + OperandText(next, true)};
-            }
-            if (m == "ld" && pair1 && ops[0].kind == Operand::Kind::Indexed)
-            {
-                Operand next = ops[0];
-                next.expr = Expr::Binary(Op::Add, ops[0].expr, Expr::Number(1));
-                const auto v = halves(ops[1].text);
-                return {"LD " + OperandText(ops[0], true) + "," + v.second, "LD " + OperandText(next, true) + "," + v.first};
+                std::vector<std::string> out;
+                for (const Statement& one : parts)
+                    for (const std::string& t : InstructionText(one))
+                        out.push_back(t);
+                return out;
             }
         }
         // AND A,n of another dialect means AND n; ALASM reads A,n as two operand groups (AND A, then AND n)
@@ -895,14 +898,14 @@ struct Writer
                     const int64_t k = static_cast<int64_t>(s.operands.size());
                     std::vector<std::string> out;
                     if (*count / k > 0)
-                        out.push_back("DS " + std::to_string(*count / k) + "," + Operands(s.operands));
+                        out.push_back(Ds() + " " + std::to_string(*count / k) + "," + Operands(s.operands));
                     if (*count % k > 0)
                         out.push_back(Db() + " " + Operands(std::vector<Operand>(s.operands.begin(), s.operands.begin() + *count % k)));
                     return out;
                 }
                 if (!s.operands.empty())
-                    return {"DS " + Known(s.args[0]) + "," + Operands(s.operands)};
-                return {"DS " + args(0)};
+                    return {Ds() + " " + Known(s.args[0]) + "," + Operands(s.operands)};
+                return {Ds() + " " + args(0)};
             }
             case ir::DirectiveKind::Include:
             {
@@ -1105,7 +1108,7 @@ BackendResult AlasmBackend::Write(const ir::Program& given, const BackendOptions
 {
     BackendResult result;
     // sjasmplus' MODULE, STRUCT ... in words ALASM has (sjasmpluslower.h)
-    const ir::Program lowered = given.dialect == "sjasmplus" ? LowerSjasmplus(given, result.diagnostics, true) : ir::Program{};
+    const ir::Program lowered = given.dialect == "sjasmplus" ? LowerSjasmplus(given, result.diagnostics, true, VersionNumber(options.targetVersion) < 400) : ir::Program{};
     const ir::Program& program = given.dialect == "sjasmplus" ? lowered : given;
     result.document.dialect = "alasm";
     result.document.codePage = encoding::CodePage::Cp866;
@@ -1171,11 +1174,59 @@ BackendResult AlasmBackend::Write(const ir::Program& given, const BackendOptions
     }
 
     std::vector<int> localForBlock;   // per open MACRO / DUP: 1 when it was given a LOCAL block
+    // ALASM 3.8 has no IF (its lines are errors and both branches assemble, live): an IF whose value the layout gives
+    // is decided here, the branch not taken left out. Per open IF: 1 taken, 0 not taken, -1 written as it is; and
+    // whether it opened inside a branch left out
+    struct Decided
+    {
+        int state = -1;
+        bool inSkipped = false;
+    };
+    std::vector<Decided> decided;
+    const auto skipping = [&decided] { return std::any_of(decided.begin(), decided.end(), [](const Decided& d) { return d.state == 0; }); };
     for (size_t k = 0; k < program.lines.size(); ++k)
     {
         const ir::Line& l = program.lines[k];
         w.line = l.sourceLine;
         w.lineIndex = k;
+        if (w.version < 400 && l.statements.size() == 1 && l.statements[0].kind == Statement::Kind::Directive)
+        {
+            const Statement& s = l.statements[0];
+            const auto note = [&](const std::string& text) { result.document.lines.push_back({";" + text + " (ALASM 3.8 has no IF)", {}}); };
+            if (s.directive == ir::DirectiveKind::If || s.directive == ir::DirectiveKind::IfUsed)
+            {
+                const auto value = s.directive == ir::DirectiveKind::If && !s.args.empty() ? w.Value(s.args[0]) : std::nullopt;
+                if (skipping())
+                {
+                    decided.push_back({0, true});
+                    continue;
+                }
+                if (value)
+                {
+                    decided.push_back({*value != 0 ? 1 : 0, false});
+                    note(*value != 0 ? "IF: taken" : "IF: left out");
+                    continue;
+                }
+                decided.push_back({-1, false});
+                result.diagnostics.push_back({Severity::Warning, l.sourceLine, 0, "an IF whose value is not known: ALASM 3.8 has no IF"});
+            }
+            else if ((s.directive == ir::DirectiveKind::Else || s.directive == ir::DirectiveKind::EndIf) && !decided.empty() &&
+                     decided.back().state != -1)
+            {
+                const Decided top = decided.back();
+                if (s.directive == ir::DirectiveKind::EndIf)
+                    decided.pop_back();
+                else if (!top.inSkipped)
+                    decided.back().state = 1 - top.state;
+                if (!top.inSkipped)
+                    note(s.directive == ir::DirectiveKind::Else ? "ELSE" : "ENDIF");
+                continue;
+            }
+            else if (s.directive == ir::DirectiveKind::EndIf && !decided.empty())
+                decided.pop_back();
+        }
+        if (skipping())
+            continue;
         std::vector<std::string> texts;
         std::vector<std::string> before;   // lines written ahead of this one (name=$ of a redefinable label)
 

@@ -38,6 +38,7 @@ public:
     /// region <Model overrides>
 public:
     uint8_t MemoryReadFast(uint16_t addr, bool isExecution) override;
+    bool HasStockFastRead() const override { return false; }
     uint8_t MemoryReadDebug(uint16_t addr, bool isExecution) override;
 
     void AttachState(TsConfState* state) { _ts = state; }

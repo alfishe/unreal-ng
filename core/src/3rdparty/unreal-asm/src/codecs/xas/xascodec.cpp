@@ -12,6 +12,7 @@ namespace
 {
 constexpr char32_t kRawBase = 0xF700;   // a byte the font gives no character: U+F700 + byte
 constexpr size_t kHeader = 36;
+constexpr size_t kTextRoom = 0x4000;    // the text at #C000 of RAM page 3, loaded in whole sectors: a 65th wraps over #0000 (measured, 7.447)
 constexpr uint8_t kSentinel = 0x01;
 constexpr uint8_t kNormal = 0x0D;
 constexpr uint8_t kFirstText = 0x0E;    // bytes below end a line
@@ -705,6 +706,8 @@ EncodeResult XasCodec::Encode(const SourceDocument& document, const EncodeOption
         out.insert(out.end(), a.begin() + 1 + a[0] + 2, a.end());
     else
         out.push_back(0);
+    if (out.size() > kTextRoom)
+        result.diagnostics.push_back({Severity::Warning, 0, 0, "the source is longer than XAS's editor holds (" + std::to_string(kTextRoom) + " bytes)"});
     result.ok = !HasErrors(result.diagnostics);
     return result;
 }

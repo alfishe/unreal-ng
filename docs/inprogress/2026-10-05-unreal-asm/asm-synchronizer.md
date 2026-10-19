@@ -277,7 +277,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 |---|---|
 | **Verified** (2026-10-09, dumps `alasm38c-*`, `alasm442-*`) | 3.8c and 4.42 keep the same `sysvars` at `#80BF` and the same file image. 4.42's title `ALASM v4.42` is at `#9E2F`. 3.8c has no "ALASM v" title; it is recognized by `3.8c\r Written by` at `#9951` |
 | **Built** | descriptors `alasm-4.42`, `alasm-3.8c` (codec table 3.8) |
-| **4.2** (2026-10-18) | The ALM loader is no emulator bug. Its BASIC shows `RANDOMIZE USR 23525` but runs 23908; the code reads the raw sectors that follow it on the disk (from `(#5CF4)`): 48 into page 7 at `#D000` (STS 6.2), then 64 into page 4 at `#C000` (`alasm48`). The zxart `ALM.scl` holds `alasm48` before `sts6.2`, so STS lands where ALASM is expected and the machine resets to 48 BASIC. In the order ALM, sts6.2, alasm48 it runs. The same `sysvars` at `#80BF` (text page 6, macros 1, labels / pocket 3, debugger 7) and file image; title `4.2\r Written by` at `#9D3B`; idle chain `#983F`, `#8B84` (the editor has `#A5C3`, `#A1FC` there). Descriptor `alasm-4.2` (codec table 4.2), no project pages yet: which free page survives its uses is not measured. The inject writes 4.2's spelling (macro parameters `:0`, `EX AF,AF'`, WHILE as DUP: research-sjasmplus-to-alasm.md §3) |
+| **4.2** (2026-10-18) | The ALM loader is no emulator bug. Its BASIC shows `RANDOMIZE USR 23525` but runs 23908; the code reads the raw sectors that follow it on the disk (from `(#5CF4)`): 48 into page 7 at `#D000` (STS 6.2), then 64 into page 4 at `#C000` (`alasm48`). The zxart `ALM.scl` holds `alasm48` before `sts6.2`, so STS lands where ALASM is expected and the machine resets to 48 BASIC. In the order ALM, sts6.2, alasm48 it runs. The same `sysvars` at `#80BF` (text page 6, macros 1, labels / pocket 3, debugger 7) and file image; title `4.2\r Written by` at `#9D3B`; idle chain `#983F`, `#8B84` (the editor has `#A5C3`, `#A1FC` there). Descriptor `alasm-4.2` (codec table 4.2), project pages 4 and 0 (2026-10-18: both filled with a pattern stay untouched through boot, assembling, `sYmbol`, `Info`, `Catalogue`, `Edit`; a three-file project injected live assembled to sjasmplus' bytes with no INCLUDEd file on the disk). The inject writes 4.2's spelling (macro parameters `:0`, `EX AF,AF'`, WHILE as DUP: research-sjasmplus-to-alasm.md §3) |
 
 ### 7.5 TASM 4.12
 
@@ -469,8 +469,8 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 
 ### 7.19 Not covered
 
-ASM80 and the A9 cross assemblers (they run on the host). STS, a monitor, keeps no source. ALASM 2.x, TASM 5.5, MASM 2.0
-syntax and XAS USEL / MAKE stay blocked as in the TODO; a descriptor can come later without a design change.
+ASM80 and the A9 cross assemblers (they run on the host). STS, a monitor, keeps no source. ALASM 2.x, TASM 5.5 and MASM 2.0
+syntax stay blocked as in the TODO (XAS USEL / MAKE were read and run on 2026-10-18); a descriptor can come later without a design change.
 
 ## 8. Surfaces
 

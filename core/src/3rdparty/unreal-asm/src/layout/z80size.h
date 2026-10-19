@@ -2,7 +2,7 @@
 
 // How many bytes a Z80 instruction takes, from its IR form (Zilog's Z80 CPU User Manual, the undocumented forms
 // sjasmplus accepts: IXH / IXL halves, SLI / SLL, OUT (C),0, IN F,(C), the CB forms with (IX+d) and a register, and
-// sjasmplus' fake instructions LD rr,rr' / LD rr,(IX+d) / LD (IX+d),rr / SUB HL,rr). The value of an operand never
+// sjasmplus' fake instructions, as the instructions they stand for: dialects::SjasmplusFake). The value of an operand never
 // changes the size, so pass 1 already knows every address.
 
 #include <string>

@@ -1326,6 +1326,14 @@ public:
     /// Default: nothing, the cold start already is that boot
     virtual bool FinishAutostartColdStart(uint16_t pc) { (void)pc; return false; }
 
+    /// The guest's CPU clock select (the model's hardware turbo latch bits), read before a reset that stands in for
+    /// loading a program (Core::ResetKeepingClock: disk autostart, snapshot load) and put back after it with
+    /// RestoreClockSelect. A real reset clears the latch and the firmware sets the clock again; the quick reset skips
+    /// the firmware, so the program would run at the reset clock. Xpeccy keeps the clock the same way. Default: the
+    /// model has no clock select (0, nothing to restore)
+    virtual uint16_t GetClockSelect() const { return 0; }
+    virtual void RestoreClockSelect(uint16_t select) { (void)select; }
+
     /// Whether #7FFD paging is latched off until reset. A locked #7FFD ignores
     /// every later write, screen bit included, and keeps the value that locked
     /// it (UnrealSpeccy, Fuse, Xpeccy, ZXMAK2 and the MiSTer RTL agree), so the

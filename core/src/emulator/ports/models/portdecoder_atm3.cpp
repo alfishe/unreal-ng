@@ -1505,6 +1505,23 @@ void PortDecoder_ATM3::EnterSpectrum128Paging(uint16_t pc)
     PortDecoder_ATM710::EnterSpectrum128Paging(pc);   // ends in updateMemoryBanks(): this class's mapping
 }
 
+uint16_t PortDecoder_ATM3::GetClockSelect() const
+{
+    return static_cast<uint16_t>((_state->pFF77 & ATM_FF77_TURBO) | ((_state->pEFF7 & ATM_EFF7_TURBO_3_5) << 8));
+}
+
+void PortDecoder_ATM3::RestoreClockSelect(uint16_t select)
+{
+    // Only the two clock bits (updateTurboMode): the video mode and paging bits stay as the reset left them
+    const uint8_t ff77 = static_cast<uint8_t>((_state->pFF77 & ~ATM_FF77_TURBO) | (select & ATM_FF77_TURBO));
+    const uint8_t eff7 = static_cast<uint8_t>((_state->pEFF7 & ~ATM_EFF7_TURBO_3_5) | ((select >> 8) & ATM_EFF7_TURBO_3_5));
+    if (ff77 == _state->pFF77 && eff7 == _state->pEFF7)
+        return;
+    _state->pFF77 = ff77;
+    _state->pEFF7 = eff7;
+    updateTurboMode();
+}
+
 void PortDecoder_ATM3::updateMemoryBanks()
 {
     if (!_memory)

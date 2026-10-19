@@ -149,6 +149,42 @@ TEST(PasmoBackend_Test, NamesAndInstructionsPasmoLacks)
     EXPECT_TRUE(std::any_of(diagnostics.begin(), diagnostics.end(), [](const Diagnostic& d) { return d.message.find("memory read") != std::string::npos; }));
 }
 
+TEST(PasmoBackend_Test, MacroParametersNamedLikeRegisters)
+{
+    // sjasmplus puts the argument where the parameter's name stands, case kept: in LD A,a the A is the register and
+    // the a the parameter, in LD HL,(b) memory (LD B,(b) has no memory form: the parentheses group, sjasmplus' LD B,7);
+    // the header names the parameters as the body does
+    EXPECT_EQ(ToPasmo("        MACRO T a, b\n        LD A,a\n        LD B,(b)\n        LD HL,(b)\n        LD HL,a+b\n        ENDM\n        T 5, 7",
+                      "sjasmplus"),
+              (std::vector<std::string>{"T MACRO L_a,L_b", "LD A,L_a", "LD B,L_b", "LD HL,(L_b)", "LD HL,L_a+L_b", "ENDM", "T 5,7"}));
+}
+
+TEST(PasmoBackend_Test, SjasmplusTemporaryLabelsAndStructures)
+{
+    // a temporary label (2 ... 2_B / 2F) gets a name of each one's own; a STRUCT is its EQUs, an instance its data, an
+    // alias (aka st = ins+1) the fields' EQUs only; `,,` (--syntax=a) separates the instructions of one line
+    EXPECT_EQ(ToPasmo("2       nop\n        ld hl,2_B,,de,2F\n2       nop\n        STRUCT st\nx       BYTE 1\ny       WORD 2\n        ENDS\n"
+                      "ins     st\naka     st = ins+1\n        ld hl,aka.y",
+                      "sjasmplus"),
+              (std::vector<std::string>{"__T2_1", "NOP", "LD HL,__T2_1", "LD DE,__T2_2", "__T2_2", "NOP", "st__x EQU 0", "st__y EQU 1",
+                                        "st EQU 3", "ins", "DB 1", "DW 2", "ins__x EQU ins+0", "ins__y EQU ins+1", "aka EQU ins+1",
+                                        "aka__x EQU aka+0", "aka__y EQU aka+1", "LD HL,aka__y"}));
+}
+
+TEST(PasmoBackend_Test, SjasmplusWordsPasmoHasNot)
+{
+    // an undocumented indexed shift / RES / SET with a register copy: its bytes; a fake instruction: its instructions;
+    // RELOCATE_TABLE +1: the addresses less one; an IF on memory read while assembling: not converted, IF 1 keeps the
+    // ENDIF paired
+    Diagnostics diagnostics;
+    const std::vector<std::string> lines = ToPasmo("        ORG #8000\n        RELOCATE_START\nst      ld hl,st\n        RELOCATE_END\n        RELOCATE_TABLE +1\n"
+                                                   "        rlc (ix+3),b\n        set 5,(iy),e\n        ldi a,(hl)\n        IF {#8000}\n        nop\n        ENDIF",
+                                                   "sjasmplus", &diagnostics);
+    for (const char* expected : {"DW #8001-((+1))", "DB #DD,#CB,((+3) AND #FF),0", "DB #FD,#CB,0,#C3+((5) AND 7)*8", "LD A,(HL)", "INC HL", "IF 1", "ENDIF"})
+        EXPECT_TRUE(Contains(lines, expected)) << expected;
+    EXPECT_TRUE(std::any_of(diagnostics.begin(), diagnostics.end(), [](const Diagnostic& d) { return d.severity == Severity::Warning; }));
+}
+
 TEST(PasmoBackend_Test, DisplacementWithoutPhase)
 {
     // pasmo has no PHASE: the code stays where it is put, labels get the run address, a JR its physical target
@@ -204,5 +240,11 @@ TEST(PasmoBackend_Test, ProgramsAssembleToWhatTheOriginalsBuilt)
         SourceDocument constructs = SourceDocument::FromText(ReadTestText("dialects/alasm-sjasmplus/constructs.alasm.txt"), "alasm");
         const Built built = AssembleWithPasmo(pasmo, Project({{"constructs", constructs}}), "constructs", {});
         EXPECT_EQ(built.bytes, ReadTestData("dialects/alasm-sjasmplus/constructs.bin"));
+    }
+    // sjasmplus: a HIGH relocation table, EQU parents, D24 / TEXT fields, fake and undocumented instructions, from #8000
+    {
+        const SourceDocument relocfake = SourceDocument::FromText(ReadTestText("dialects/sjasmplus/relocfake.asm"), "sjasmplus");
+        const Built built = AssembleWithPasmo(pasmo, Project({{"relocfake", relocfake}}), "relocfake", {});
+        EXPECT_EQ(built.bytes, ReadTestData("dialects/sjasmplus/relocfake.bin"));
     }
 }

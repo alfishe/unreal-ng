@@ -757,7 +757,9 @@ void Core::SelectMemoryInterface()
         if (debug)
             _z80->MemIf = contended ? _z80->DbgContendedMemIf : _z80->DbgMemIf;
         else
-            _z80->MemIf = contended ? _z80->FastContendedMemIf : _z80->FastMemIf;
+            _z80->MemIf = !contended                     ? _z80->FastMemIf
+                          : _memory->HasStockFastRead() ? _z80->FastContendedStockMemIf
+                                                        : _z80->FastContendedMemIf;
         _memory->SetBusOverlay(nullptr);
     }
 
@@ -877,7 +879,7 @@ const char* Core::GetMemoryInterfaceName() const
         return "fast_overlay";
     if (m == _z80->DbgContendedMemIf)
         return "debug_contended";
-    if (m == _z80->FastContendedMemIf)
+    if (m == _z80->FastContendedMemIf || m == _z80->FastContendedStockMemIf)
         return "fast_contended";
     if (m == _z80->DbgMemIf)
         return "debug";
@@ -887,6 +889,18 @@ const char* Core::GetMemoryInterfaceName() const
 void Core::Reset()
 {
     Reset(static_cast<ROMModeEnum>(_config->reset_rom));
+}
+
+void Core::ResetKeepingClock()
+{
+    ResetKeepingClock(static_cast<ROMModeEnum>(_config->reset_rom));
+}
+
+void Core::ResetKeepingClock(ROMModeEnum mode)
+{
+    const uint16_t clockSelect = _portDecoder->GetClockSelect();
+    Reset(mode);
+    _portDecoder->RestoreClockSelect(clockSelect);
 }
 
 void Core::Reset(ROMModeEnum mode)
@@ -950,7 +964,7 @@ void Core::Reset(ROMModeEnum mode)
     _screen->ResetBorderColor(_state->border_attr);
 #ifdef ENABLE_RECORDING
     if (_recordingManager)
-        _recordingManager->Reset();  // Reset recording manager (stops active recording, clears counters)
+        _recordingManager->Reset();  // Clears the counters; a recording goes on with its file untouched
 #endif
 
     // Single NC_SYSTEM_RESET notification per reset, posted only after the reset completes:

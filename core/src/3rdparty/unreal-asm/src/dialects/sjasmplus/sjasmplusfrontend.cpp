@@ -1,6 +1,7 @@
 #include "dialects/sjasmplus/sjasmplusfrontend.h"
 
 #include <algorithm>
+#include <cstring>
 #include <cctype>
 #include <map>
 #include <optional>
@@ -200,6 +201,15 @@ struct ExpressionParser
         const std::string run(t.substr(i, j - i));
         i = j;
         auto all = [](std::string_view s, const char* set) { return !s.empty() && s.find_first_not_of(set) == std::string_view::npos; };
+        if (j + 1 < t.size() && t[j] == '_' && std::strchr("bBfF", t[j + 1]) && (j + 2 == t.size() || !std::isalnum(static_cast<unsigned char>(t[j + 2]))) &&
+            all(run, "0123456789"))
+        {
+            // 1_B / 1_F: a temporary label in any expression (sjasmplus 1.19); 1B / 1F only in a jump
+            i = j + 2;
+            Expr raw = Expr::Make(Expr::Kind::Raw);
+            raw.text = run + "_" + std::string(1, t[j + 1]);
+            return raw;
+        }
         const char* hex = "0123456789abcdefABCDEF";
         const char last = static_cast<char>(std::tolower(static_cast<unsigned char>(run.back())));
         if (run.size() > 2 && run[0] == '0' && (run[1] == 'x' || run[1] == 'X') && all(std::string_view(run).substr(2), hex))
@@ -465,12 +475,26 @@ struct Context
     Diagnostics& diagnostics;
     std::set<std::string>& macros;
     bool z80n = false;   ///< the Next mode is on from this line on
+    const std::vector<std::string>* params = nullptr;   ///< the parameters of the macro being defined
+
+    /// sjasmplus puts a macro's argument wherever its parameter's name stands as a word, case kept: `a` in
+    /// `MACRO T a` ... `LD A,a` is the parameter, `A` the register
+    bool IsParameter(const std::string& text) const
+    {
+        return params && std::find(params->begin(), params->end(), text) != params->end();
+    }
 
     Expr Parse(std::string_view text) const { return ParseExpression(text, line, diagnostics); }
 
     Operand InstructionOperand(const std::string& text, bool conditionAllowed, bool flagAllowed) const
     {
         Operand o;
+        if (IsParameter(text))
+        {
+            o.kind = Operand::Kind::Immediate;
+            o.expr = Parse(text);
+            return o;
+        }
         const std::string lower = z80::Lower(text);
         if (conditionAllowed && z80::IsCondition(lower))
         {
@@ -495,7 +519,7 @@ struct Context
         if (WhollyParenthesized(text))
         {
             const std::string inner = Trim(std::string_view(text).substr(1, text.size() - 2));
-            const std::string innerLower = z80::Lower(inner);
+            const std::string innerLower = IsParameter(inner) ? std::string() : z80::Lower(inner);
             if (innerLower == "hl" || innerLower == "bc" || innerLower == "de" || innerLower == "sp" || innerLower == "c" || innerLower == "ix" ||
                 innerLower == "iy")
             {
@@ -727,7 +751,9 @@ Statement ParseStatement(const std::string& text, std::string& label, const Cont
     {
         s.kind = Statement::Kind::Instruction;
         s.mnemonic = mnemonic;
-        const std::vector<std::string> ops = Split(rest, ',');
+        // --syntax=a writes ",," between the repeated operand groups (ld hl,1,,de,2): an empty item between them
+        std::vector<std::string> ops = Split(rest, ',');
+        ops.erase(std::remove_if(ops.begin(), ops.end(), [](const std::string& op) { return op.empty(); }), ops.end());
         for (size_t k = 0; k < ops.size(); ++k)
         {
             const bool condition = k == 0 && z80::TakesCondition(mnemonic) && (ops.size() > 1 || mnemonic == "ret");
@@ -761,6 +787,42 @@ Statement ParseStatement(const std::string& text, std::string& label, const Cont
 
 namespace
 {
+/// --syntax=a: "ld hl,1,,de,2" is "ld hl,1" and "ld de,2" (",," between the repeated operand groups); other text as it is
+std::vector<std::string> MultiArgGroups(const std::string& part)
+{
+    const size_t wordEnd = part.find_first_of(" \t");
+    if (wordEnd == std::string::npos || !z80::IsMnemonic(z80::Lower(part.substr(0, wordEnd))))
+        return {part};
+    std::vector<std::string> groups;
+    std::string current;
+    char quote = 0;
+    int depth = 0;
+    const std::string rest = part.substr(wordEnd);
+    for (size_t k = 0; k < rest.size(); ++k)
+    {
+        const char c = rest[k];
+        if (quote)
+            quote = c == quote ? 0 : quote;
+        else if (c == '"' || (c == '\'' && !(k >= 2 && std::tolower(static_cast<unsigned char>(rest[k - 1])) == 'f' &&
+                                               std::tolower(static_cast<unsigned char>(rest[k - 2])) == 'a')))
+            quote = c;
+        else if (c == '(' || c == '[')
+            ++depth;
+        else if (c == ')' || c == ']')
+            --depth;
+        else if (c == ',' && depth == 0 && k + 1 < rest.size() && rest[k + 1] == ',')
+        {
+            groups.push_back(part.substr(0, wordEnd) + " " + Trim(current));
+            current.clear();
+            ++k;
+            continue;
+        }
+        current += c;
+    }
+    groups.push_back(part.substr(0, wordEnd) + " " + Trim(current));
+    return groups;
+}
+
 /// 101b: sjasmplus reads a temporary label backwards only in a jump's operand (JR 1B); anywhere else digits 0 and 1
 /// before b are a binary number
 void BinaryRaw(Expr& e)
@@ -936,6 +998,227 @@ std::optional<std::vector<uint8_t>> SjasmplusBitBytes(const std::string& word, c
     return std::nullopt;
 }
 
+std::vector<std::string> SjasmplusStructValues(const std::string& text, const std::vector<bool>& textLeaves)
+{
+    std::vector<std::string> out;
+    std::string current;
+    int depth = 0;
+    char quote = 0;
+    for (size_t k = 0; k < text.size(); ++k)
+    {
+        const char c = text[k];
+        if (quote)
+        {
+            current.push_back(c);
+            if (c == quote)
+                quote = 0;
+            continue;
+        }
+        if (c == '"' || c == '\'')
+            quote = c;
+        depth += c == '(';
+        depth -= c == ')';
+        if (depth == 0 && c == '{' && out.size() < textLeaves.size() && textLeaves[out.size()] && Trim(current).empty())
+        {
+            // a TEXT leaf's bytes: the group up to its closing brace
+            size_t end = k + 1;
+            for (char q = 0; end < text.size() && (q || text[end] != '}'); ++end)
+                q = q ? (text[end] == q ? 0 : q) : (text[end] == '"' || text[end] == '\'' ? text[end] : 0);
+            current = text.substr(k, end - k + 1);
+            k = end;
+            continue;
+        }
+        if (depth == 0 && (c == '{' || c == '}'))
+            continue;
+        if (depth == 0 && c == ',')
+        {
+            out.push_back(Trim(current));
+            current.clear();
+            continue;
+        }
+        current.push_back(c);
+    }
+    if (!Trim(current).empty() || !out.empty())
+        out.push_back(Trim(current));
+    return out;
+}
+
+std::pair<std::string, std::string> SjasmplusAbyteParts(const std::string& operands)
+{
+    const std::string text = Trim(operands);
+    const SjasmplusFrontend frontend;
+    std::pair<std::string, std::string> parts{text, std::string()};
+    for (size_t at = text.find_first_of(" \t"); at != std::string::npos; at = text.find_first_of(" \t", at + 1))
+    {
+        const FrontendResult r = frontend.Parse(SourceDocument::FromText("        DW " + text.substr(0, at), "sjasmplus"));
+        const bool one = r.program.lines.size() == 1 && r.program.lines[0].statements.size() == 1 && r.program.lines[0].statements[0].operands.size() == 1 &&
+                         r.program.lines[0].statements[0].operands[0].kind == Operand::Kind::Immediate &&
+                         r.program.lines[0].statements[0].operands[0].expr.kind != Expr::Kind::Raw;
+        if (one)
+            parts = {Trim(text.substr(0, at)), Trim(text.substr(at))};
+    }
+    return parts;
+}
+
+std::vector<ir::Statement> SjasmplusFake(const ir::Statement& s)
+{
+    const std::vector<Operand>& ops = s.operands;
+    if (s.kind != Statement::Kind::Instruction || ops.empty() || ops.size() > 2)
+        return {s};
+    const std::string m = z80::Lower(s.mnemonic);
+    const auto reg = [](const std::string& r) {
+        Operand o;
+        o.kind = Operand::Kind::Register;
+        o.text = r;
+        return o;
+    };
+    const auto one = [&](const char* mnemonic, std::vector<Operand> operands) {
+        Statement t = s;
+        t.mnemonic = mnemonic;
+        t.operands = std::move(operands);
+        return t;
+    };
+    const auto is = [](const Operand& o, std::initializer_list<const char*> names) {
+        return o.kind == Operand::Kind::Register && std::any_of(names.begin(), names.end(), [&](const char* n) { return o.text == n; });
+    };
+    // the halves of a pair: high, low
+    const auto halves = [](const std::string& r) -> std::pair<std::string, std::string> {
+        if (r == "bc") return {"b", "c"};
+        if (r == "de") return {"d", "e"};
+        if (r == "hl") return {"h", "l"};
+        if (r == "ix") return {"ixh", "ixl"};
+        if (r == "iy") return {"iyh", "iyl"};
+        return {};
+    };
+    // (IX+d) / (IX) / (IY+d) / (IY): the index register, else ""
+    const auto index = [](const Operand& o) -> std::string {
+        if (o.kind == Operand::Kind::Indexed || (o.kind == Operand::Kind::Indirect && (o.text == "ix" || o.text == "iy")))
+            return o.text;
+        return {};
+    };
+    const auto next = [](Operand o) {
+        if (o.kind == Operand::Kind::Indirect)   // (IX) is (IX+0)
+        {
+            o.kind = Operand::Kind::Indexed;
+            o.expr = Expr::Number(0);
+        }
+        o.expr = Expr::Binary(Op::Add, o.expr, Expr::Number(1));
+        return o;
+    };
+    const bool hlMemory0 = ops[0].kind == Operand::Kind::Indirect && ops[0].text == "hl";
+    const bool hlMemory1 = ops.size() == 2 && ops[1].kind == Operand::Kind::Indirect && ops[1].text == "hl";
+
+    if (ops.size() == 1)
+    {
+        // RL BC ... SRL HL: the pair's halves shifted through the carry
+        if (!is(ops[0], {"bc", "de", "hl"}))
+            return {s};
+        const auto [high, low] = halves(ops[0].text);
+        if (m == "rl")
+            return {one("rl", {reg(low)}), one("rl", {reg(high)})};
+        if (m == "rr")
+            return {one("rr", {reg(high)}), one("rr", {reg(low)})};
+        if (m == "sla" && ops[0].text == "hl")
+            return {one("add", {reg("hl"), reg("hl")})};
+        if (m == "sla")
+            return {one("sla", {reg(low)}), one("rl", {reg(high)})};
+        if (m == "sll" || m == "sli")
+            return {one("sli", {reg(low)}), one("rl", {reg(high)})};
+        if (m == "sra" || m == "srl")
+            return {one(m == "sra" ? "sra" : "srl", {reg(high)}), one("rr", {reg(low)})};
+        return {s};
+    }
+
+    // ADD / ADC / SBC / SUB DE,rr: through HL (EX DE,HL around); SUB HL,rr: OR A : SBC HL,rr
+    if ((m == "add" || m == "adc" || m == "sbc" || m == "sub") && is(ops[0], {"de"}) && is(ops[1], {"bc", "de", "hl", "sp"}))
+    {
+        const std::string other = ops[1].text == "de" ? "hl" : ops[1].text == "hl" ? "de" : ops[1].text;
+        std::vector<Statement> out;
+        if (m == "sub")
+            out.push_back(one("or", {reg("a")}));
+        out.push_back(one("ex", {reg("de"), reg("hl")}));
+        out.push_back(one(m == "sub" ? "sbc" : m == "add" ? "add" : m == "adc" ? "adc" : "sbc", {reg("hl"), reg(other)}));
+        out.push_back(one("ex", {reg("de"), reg("hl")}));
+        return out;
+    }
+    if (m == "sub" && is(ops[0], {"hl"}) && is(ops[1], {"bc", "de", "hl", "sp"}))
+        return {one("or", {reg("a")}), one("sbc", ops)};
+
+    if (m == "ld")
+    {
+        const Operand& d = ops[0];
+        const Operand& v = ops[1];
+        // LD rr,rr': two 8-bit loads, PUSH / POP where an index register meets HL or the other one
+        if (is(d, {"bc", "de", "hl", "ix", "iy"}) && is(v, {"bc", "de", "hl", "ix", "iy"}))
+        {
+            const bool d16 = d.text == "ix" || d.text == "iy", v16 = v.text == "ix" || v.text == "iy";
+            if ((d16 && (v.text == "hl" || (v16 && v.text != d.text))) || (v16 && d.text == "hl"))
+                return {one("push", {v}), one("pop", {d})};
+            const auto dh = halves(d.text), vh = halves(v.text);
+            return {one("ld", {reg(dh.first), reg(vh.first)}), one("ld", {reg(dh.second), reg(vh.second)})};
+        }
+        // LD rr,(HL) / LD (HL),rr: through HL and back
+        if (is(d, {"bc", "de"}) && hlMemory1)
+        {
+            const auto [high, low] = halves(d.text);
+            return {one("ld", {reg(low), v}), one("inc", {reg("hl")}), one("ld", {reg(high), v}), one("dec", {reg("hl")})};
+        }
+        if (hlMemory0 && is(v, {"bc", "de"}))
+        {
+            const auto [high, low] = halves(v.text);
+            return {one("ld", {d, reg(low)}), one("inc", {reg("hl")}), one("ld", {d, reg(high)}), one("dec", {reg("hl")})};
+        }
+        // LD rr,(IX+d) / LD (IX+d),rr: the low byte at d
+        if (is(d, {"bc", "de", "hl"}) && !index(v).empty())
+        {
+            const auto [high, low] = halves(d.text);
+            return {one("ld", {reg(low), v}), one("ld", {reg(high), next(v)})};
+        }
+        if (!index(d).empty() && is(v, {"bc", "de", "hl"}))
+        {
+            const auto [high, low] = halves(v.text);
+            return {one("ld", {d, reg(low)}), one("ld", {next(d), reg(high)})};
+        }
+        return {s};
+    }
+
+    if (m == "ldi" || m == "ldd")
+    {
+        // LDI / LDD with operands: the load, then the pointer moved (LDI A,(HL) is LD A,(HL) : INC HL)
+        const Operand& d = ops[0];
+        const Operand& v = ops[1];
+        const char* step = m == "ldi" ? "inc" : "dec";
+        const auto pointer = [&](const Operand& o) -> std::string {
+            if (!index(o).empty())
+                return index(o);
+            if (o.kind == Operand::Kind::Indirect && (o.text == "hl" || o.text == "bc" || o.text == "de"))
+                return o.text;
+            return {};
+        };
+        // LDI rr,(HL) / (IX+d) and LDI (HL) / (IX+d),rr: a byte, the pointer, the other byte, the pointer
+        if (m == "ldi" && is(d, {"bc", "de", "hl"}) && (pointer(v) == "hl" || !index(v).empty()) && !(d.text == "hl" && pointer(v) == "hl"))
+        {
+            const auto [high, low] = halves(d.text);
+            const std::string p = pointer(v);
+            return {one("ld", {reg(low), v}), one("inc", {reg(p)}), one("ld", {reg(high), v}), one("inc", {reg(p)})};
+        }
+        if (m == "ldi" && is(v, {"bc", "de", "hl"}) && (pointer(d) == "hl" || !index(d).empty()) && !(v.text == "hl" && pointer(d) == "hl"))
+        {
+            const auto [high, low] = halves(v.text);
+            const std::string p = pointer(d);
+            return {one("ld", {d, reg(low)}), one("inc", {reg(p)}), one("ld", {d, reg(high)}), one("inc", {reg(p)})};
+        }
+        // LDI r,(rr) / LDI (rr),r / LDI (rr),n: (BC) and (DE) with A only
+        const bool byteReg0 = is(d, {"a", "b", "c", "d", "e", "h", "l"}), byteReg1 = is(v, {"a", "b", "c", "d", "e", "h", "l"});
+        if (byteReg0 && !pointer(v).empty() && (d.text == "a" || pointer(v) == "hl" || !index(v).empty()))
+            return {one("ld", {d, v}), one(step, {reg(pointer(v))})};
+        if (!pointer(d).empty() && (byteReg1 || v.kind == Operand::Kind::Immediate) && (pointer(d) == "hl" || !index(d).empty() || is(v, {"a"})))
+            return {one("ld", {d, v}), one(step, {reg(pointer(d))})};
+        return {s};
+    }
+    return {s};
+}
+
 std::vector<ir::Statement> SjasmplusRepeated(const ir::Statement& s)
 {
     const std::vector<Operand>& ops = s.operands;
@@ -1000,6 +1283,7 @@ FrontendResult SjasmplusFrontend::Parse(const SourceDocument& source) const
     result.program.dialect = "sjasmplus";
     result.program.trueValue = -1;   // sjasmplus' comparisons give -1
     std::set<std::string> macros;
+    std::vector<std::string> macroParams;   // the parameters of the macro being defined
     std::map<std::string, std::string> defines;   // DEFINE name value
     bool z80n = source.z80n;   // the Next mode: the project enables it, or DEVICE ZXSPECTRUMNEXT / OPT --zxnext below
     bool inBlock = false;   // inside /* ... */
@@ -1104,13 +1388,17 @@ FrontendResult SjasmplusFrontend::Parse(const SourceDocument& source) const
             else if (word != "IFDEF" && word != "IFNDEF" && !defines.empty())
                 rest = Substitute(rest, defines);
         }
-        Context c{number, result.diagnostics, macros, z80n};
+        Context c{number, result.diagnostics, macros, z80n, &macroParams};
         std::vector<std::string> partTexts;   // each statement's text
         if (!rest.empty())
         {
             // "label=expr" and "label = expr": one statement, the ':' inside belongs to nothing else
             const std::vector<std::string> parts = rest[0] == '=' ? std::vector<std::string>{rest} : Split(rest, ':');
+            std::vector<std::string> split;
             for (const std::string& part : parts)
+                for (const std::string& group : MultiArgGroups(part))
+                    split.push_back(group);
+            for (const std::string& part : split)
                 if (!part.empty())
                 {
                     line.statements.push_back(ParseStatement(part, line.label, c));
@@ -1118,6 +1406,14 @@ FrontendResult SjasmplusFrontend::Parse(const SourceDocument& source) const
                     const Statement& parsed = line.statements.back();
                     if (parsed.kind == Statement::Kind::Directive && z80::EnablesZ80n(parsed.text))
                         z80n = true;
+                    if (parsed.kind == Statement::Kind::Directive && parsed.directive == ir::DirectiveKind::Macro)
+                    {
+                        macroParams.clear();
+                        for (const std::string& param : parsed.params)
+                            macroParams.push_back(Trim(param));
+                    }
+                    else if (parsed.kind == Statement::Kind::Directive && parsed.directive == ir::DirectiveKind::EndMacro)
+                        macroParams.clear();
                 }
         }
         for (Statement& st : line.statements)

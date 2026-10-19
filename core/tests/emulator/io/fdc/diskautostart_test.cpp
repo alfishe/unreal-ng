@@ -609,6 +609,35 @@ TEST_P(DiskAutostart_Atm_Test, ThePagesOfThe7FFDAreTheFirst128KAfterTheColdStart
 
 INSTANTIATE_TEST_SUITE_P(Models, DiskAutostart_Atm_Test, ::testing::Values("ATM710", "ATM450"));
 
+/// Owner report 2026-10-18 (thebrd2.trd on the ATM710 at 7 MHz loaded slowly): the autostart's quick reset skips the
+/// BIOS, which on a real reset sets the clock again, so the disk ran at the reset's 3.5 MHz. The clock the machine ran
+/// at is kept (Xpeccy keeps it too) through the cold start and its 128K paging; a real reset still clears #FF77.
+/// Boot-bound: the cold start runs to the TR-DOS command loop (a few frames, in turbo)
+TEST(DiskAutostart_Atm710, TheClockTheMachineRanAtIsKept)
+{
+    MessageCenter::DisposeDefaultMessageCenter();
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM710", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    EmulatorState& state = context->emulatorState;
+    emulator->EnableTurboMode();
+    context->pPortDecoder->DecodePortOut(0xFF77, static_cast<uint8_t>(state.pFF77 | 0x08), 0x8000);
+    ASSERT_EQ(state.hw_turbo_ratio, 2) << "#FF77 bit 3: 7 MHz";
+
+    auto result = emulator->AutostartDisk(TestPathHelper::GetTestDataPath("loaders/trd/atarin.trd"));
+    ASSERT_TRUE(result.started) << result.message;
+    EXPECT_EQ(state.hw_turbo_ratio, 2) << "after the quick reset";
+    for (int frames = 0; frames < 200 && context->pDiskAutostart->IsColdStartFinishPending(); frames++)
+        emulator->RunNFrames(1, true);
+    ASSERT_FALSE(context->pDiskAutostart->IsColdStartFinishPending()) << "the cold start never reached the command loop";
+    EXPECT_EQ(state.hw_turbo_ratio, 2) << "after the 128K paging";
+    EXPECT_EQ(state.hw_turbo_ratio_applied, 2);
+
+    context->pCore->Reset();
+    EXPECT_EQ(state.hw_turbo_ratio, 1) << "a real reset clears #FF77";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
 /// The owner's disk end to end: BQ ATM from testdata/machines/atm/ballq_gr.scl runs through the autostart on the
 /// ATM710 and its title is in the EGA mode with all four planes in the video pages: RAM 1 / 3 carry its planes, RAM
 /// 25 / 27 (where the cold start's #7FFD pages were) stay empty. Boot-bound: TR-DOS loads the game (about 13 s of

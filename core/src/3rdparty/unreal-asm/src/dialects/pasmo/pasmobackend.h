@@ -16,5 +16,6 @@ class PasmoBackend : public IBackend
 public:
     std::string_view Dialect() const override { return "pasmo"; }
     BackendResult Write(const ir::Program& program, const BackendOptions& options) const override;
+    bool WantsLabelValues() const override { return true; }   // sjasmplus' RELOCATE_TABLE
 };
 }  // namespace unrealasm::dialects

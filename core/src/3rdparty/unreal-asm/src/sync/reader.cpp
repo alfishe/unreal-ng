@@ -2228,7 +2228,7 @@ const std::vector<SyncDescriptor>& Descriptors()
         Alasm("4.44", "4.44", 0x9E7E, "", true, {0x9A08, 0x8BA8}, {4}),
         Alasm("4.43", "4.5", 0x9E1B, "", false, {0x99A4, 0x8B99}, {4}),
         Alasm("4.42", "4.42", 0x9E2F, "", true, {0x99B2, 0x8B8F}, {4}),
-        Alasm("4.2", "4.2", 0x9D3B, "4.2\r Written by", true, {0x983F, 0x8B84}),
+        Alasm("4.2", "4.2", 0x9D3B, "4.2\r Written by", true, {0x983F, 0x8B84}, {4, 0}),
         Alasm("3.8c", "3.8", 0x9951, "3.8c\r Written by", true, {0x943A, 0x8149}, {4}),
         Xas("4.18", "4.18", 0xB51A, "XAS by Max Petrov (HPM) 3.091", {0x979F, 0x8D85}),
         Xas("5.05", "5.05", 0xB601, "XAS by Max Petrov (HPM) 5.05 ", {0x97A8, 0x8D9E}),   // 5.05 and 5.05SE alike

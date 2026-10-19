@@ -27,6 +27,7 @@ constexpr std::array<std::string_view, 131> kTokens = {
     "ELSE", "EIF", "ENDM",
 };
 constexpr uint8_t kFirstCode = 0x09;
+constexpr size_t kTextRoom = 16369;   // STORM 1.3's text in RAM page 6 from #C00B: a longer file is "File too big" (measured)
 constexpr uint8_t kExtended = 0x49;   // #49 n: INCL .. ENDM (code n + #80)
 constexpr uint8_t kComment = 0x2F;
 constexpr uint8_t kColumnZero = 0x06;
@@ -1160,6 +1161,8 @@ EncodeResult StormCodec::Encode(const SourceDocument& document, const EncodeOpti
         result.bytes.insert(result.bytes.end(), body.begin(), body.end());
         result.bytes.push_back(static_cast<uint8_t>(body.size()));
     }
+    if (result.bytes.size() > kTextRoom)
+        result.diagnostics.push_back({Severity::Warning, 0, 0, "the source is longer than STORM's editor holds (" + std::to_string(kTextRoom) + " bytes)"});
     result.ok = !HasErrors(result.diagnostics);
     return result;
 }
