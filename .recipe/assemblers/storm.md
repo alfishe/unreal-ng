@@ -117,6 +117,9 @@ bytes; the asm-synchronizer reads them without a save
 
 ## Pitfalls
 
+- **STORM 1.3 holds a file of 16369 bytes** (RAM page 6 from `#C00B`; `Mem 16367` on an empty text): a longer one is
+  `File too big` and the text stays empty (measured 2026-10-19). `zxasm convert --project --to storm` cuts a longer file
+  into INCLUDEd parts.
 - **The code is not in memory while STORM runs**: read it after BREAK Q.
 - **The export's start field** holds the text length (82 for an 82-byte text), not an address.
 - A line of more than 40 characters cannot be stored (blue border): the format's limit.
