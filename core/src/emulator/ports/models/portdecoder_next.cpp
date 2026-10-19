@@ -551,6 +551,15 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         return result;
     }
     uint8_t value = PortDecoder_Spectrum128::DecodePortIn(port, pc);
+    // The pads press membrane keys in the Sinclair, Cursor and user-defined modes, and their extra buttons in the Kempston
+    // and MD ones (membrane_stick.vhd), unless NR #0B bit 7 gives the connectors to the I/O mode
+    if (IsPort_FE(port) && !(_board->Stored(0x0B) & 0x80))
+    {
+        // columns 5 and 6 are the extended keys (NR #B0 / #B1), not bits of the port
+        const uint8_t columns = _board->KeyJoystick().Columns(static_cast<uint8_t>(port >> 8), PadState(0), JoystickMode(true),
+                                                              PadState(1), JoystickMode(false));
+        value &= static_cast<uint8_t>(0xE0 | (columns & 0x1F));
+    }
     // port #FE's EAR bit is the tape input or the Pi's I2S audio thresholded into it (zxnext.vhd 3459, NR #A2 bit 0)
     if (_board->PiEar() && IsPort_FE(port))
         value |= 0x40;

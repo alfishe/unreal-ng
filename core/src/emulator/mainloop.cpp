@@ -14,6 +14,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/joystick/debugjoystickmanager.h"
+#include "emulator/io/controllers/controllermanager.h"
 #include "debugger/mouse/debugmousemanager.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator.h"
@@ -241,7 +242,16 @@ void MainLoop::Run(const std::atomic<bool>& stopRequested)
             // against WASAPI's 10 ms pulls and caused steady underruns
             // ("ring errors ... dequeue=N" growing) - see
             // TimeHelper::WaitUntilPrecise and SoundAdaptivity.AVLatencyBudget
-            TimeHelper::WaitUntilPrecise(_nextFrameTime, [&stopRequested] { return stopRequested.load(); });
+            // A park asked for meanwhile (a snapshot load, a command) is served at once, not after the wait and the
+            // next frame; the wait then goes on to the same deadline
+            const auto parkOrStop = [&stopRequested, arbiter] {
+                return stopRequested.load() || (arbiter && arbiter->ShouldYield());
+            };
+            while (!TimeHelper::WaitUntilPrecise(_nextFrameTime, parkOrStop, arbiter ? &arbiter->LoopWake() : nullptr))
+            {
+                if (stopRequested || !arbiter || !Park(emulator, arbiter) || stopRequested)
+                    break;
+            }
         }
         else
         {
@@ -474,6 +484,9 @@ void MainLoop::CompleteFrame()
     // before the frame's checkpoint (technical design §3)
     if (_context->pMediaManager)
         _context->pMediaManager->ApplyPending();
+    // Connector plugs made while TTD records land here too: the checkpoint holds them
+    if (_context->pControllerManager)
+        _context->pControllerManager->ApplyPending();
 
     // The network devices' own boundary work (timers, a serial peer's flush, a dialed link's connect) belongs to the
     // state the checkpoint holds; the host's answers to them are journaled input and come after it (below)
@@ -516,6 +529,10 @@ void MainLoop::CompleteFrame()
     {
         _context->pDebugManager->GetJoystickManager()->OnFrame();
     }
+
+    // Host controllers: the frame's sample of every connector the host drives (journaled input, after the checkpoint)
+    if (_context->pControllerManager)
+        _context->pControllerManager->OnFrame(_state->frame_counter);
 
     // Network adapters: the virtual network's own answers, then the host's
     // (journaled like the input above: after the checkpoint)

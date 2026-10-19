@@ -52,7 +52,8 @@ type_input  {"action":"tap","key":"a","frames":4}                               
 The source is written as ZAsm 3.15 text (left to right with the functions `.h .b .n .c`, `IF` / `REPT` / `PHASE`,
 macros expanded: [research-sjasmplus-to-zxasm.md](../../docs/inprogress/2026-10-05-unreal-asm/research-sjasmplus-to-zxasm.md))
 as LOAD leaves a file. ZAsm keeps no "changed" flag, so a text it holds is replaced only by force (or when it is the
-push watch's own). The editor comes back on the new text at its first line.
+push watch's own). The editor comes back on the new text at its first line, under the inject's title: SAVE (SS+2 at
+COMMAND) writes it as `TITLE.asm` and the status line shows it (3.10 and later; 2.x ask the name on Save).
 `tools/verification/unreal-asm/emulator/inject-oracle.py zasm315 <ZASM315 disk with STUB.a> <source.asm> 0x6000` runs the
 whole check (the source gets a `SAVEOBJ`, the bytes are the file ZAsm saves).
 

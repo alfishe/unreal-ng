@@ -2,14 +2,39 @@
 #include "stdafx.h"
 
 #include <chrono>
+#include <condition_variable>
 #include <ctime>
 #include <functional>
+#include <mutex>
 #include <thread>
 #include <tuple>
 #include <time.h>
 
 typedef std::chrono::high_resolution_clock::time_point chrono_time_t;
 typedef std::chrono::high_resolution_clock hiresclock;
+
+/// Ends a WaitUntilPrecise at once from another thread (Notify): the wait checks its abort predicate on the wake.
+/// A notification while nobody waits is kept for the next wait
+class WakeSignal
+{
+public:
+    WakeSignal();
+    ~WakeSignal();
+    WakeSignal(const WakeSignal&) = delete;
+    WakeSignal& operator=(const WakeSignal&) = delete;
+
+    void Notify();
+
+private:
+    friend class TimeHelper;
+#ifdef _WIN32
+    void* _event = nullptr;  // auto-reset event (HANDLE)
+#else
+    std::mutex _mutex;
+    std::condition_variable _cv;
+    bool _signaled = false;
+#endif
+};
 
 class TimeHelper
 {
@@ -26,7 +51,9 @@ public:
 	/// 10-17 ms (MinGW winpthreads) LATE - measured on a 20.48 ms frame cadence - which ate the whole audio ring
 	/// trough and caused periodic underruns. Windows uses a high-resolution waitable timer (~0.1-0.5 ms lateness,
 	/// independent of timeBeginPeriod); POSIX sleeps are precise already. Never returns before the deadline.
-	static bool WaitUntilPrecise(std::chrono::steady_clock::time_point deadline, const std::function<bool()>& shouldAbort);
+	/// A @p wake notified ends the current poll at once instead of at its end (the predicate then decides).
+	static bool WaitUntilPrecise(std::chrono::steady_clock::time_point deadline, const std::function<bool()>& shouldAbort,
+	                             WakeSignal* wake = nullptr);
 
 	static chrono_time_t GetPrecisionTime();
 	static unsigned GetTimeIntervalNs(chrono_time_t t1, chrono_time_t t2);

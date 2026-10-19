@@ -202,6 +202,17 @@ bool Core::Init()
 
     /// endregion </Joystick>
 
+    /// region <Controllers>
+
+    // Connectors and retro devices; the list follows the machine (rebuilt below once the slot cards exist)
+    if (result)
+    {
+        _controllerManager = new controllers::ControllerManager(_context);
+        _context->pControllerManager = _controllerManager;
+    }
+
+    /// endregion </Controllers>
+
     /// region <Tape>
 
     if (result)
@@ -516,6 +527,10 @@ bool Core::Init()
             _initError = _slotManager->BuildError();
     }
 
+    // The connectors the cards bring (a Fuller Box's stick socket) join the machine's
+    if (result && _controllerManager)
+        _controllerManager->Rebuild();
+
     /// endregion </Activate IO devices>
 
     // Release all allocated object in case of at least single failure
@@ -645,6 +660,13 @@ void Core::Release()
     {
         delete _mouse;
         _mouse = nullptr;
+    }
+
+    _context->pControllerManager = nullptr;
+    if (_controllerManager != nullptr)
+    {
+        delete _controllerManager;
+        _controllerManager = nullptr;
     }
 
     _context->pJoystick = nullptr;
@@ -892,6 +914,8 @@ void Core::Reset(ROMModeEnum mode)
                                        // only - RESET does not reach the interface (MiSTer mouse.v: cold_reset)
     if (_joystick)
         _joystick->ApplyConfiguration();  // Kempston joystick fitting and keys; held buttons mirror the physical stick
+    if (_controllerManager)
+        _controllerManager->Rebuild();    // the machine's connectors (plugs and held controls survive by id)
     _sound->reset();             // All sound devices (AY(s), COVOX, MoonSound, GS) and sound subsystem
     _screen->Reset();            // Reset all video subsystem
     _tape->reset();              // Reset tape loader state

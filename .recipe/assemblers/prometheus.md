@@ -107,7 +107,11 @@ and give code addresses above them (60000).
   and M then ask "Install D40/D80 version?" (n; S asks nothing). The text lives in its own 64K space over RAM pages
   1, 3, 4, 6, from `#C01A` in page 6 (descriptors `prometheus-128`, `-128m`, `-128s`; `inject-oracle.py prometheus128
   --boot PROM128MDM --assembler prometheus-128m`). Idle templates of all four in `testdata/templates`.
-- Another installation address moves the code: the synchronizer knows only the installers' defaults.
+- Another installation address moves the whole code; the probe finds it there (descriptor `<id>@<address>`, e.g.
+  `prometheus-48@30000`). In the installer's field DELETE needs CAPS SHIFT pressed before 0 (a tap of DELETE, both in
+  one frame, alternates a delete with a typed 0) and a digit typed twice needs a release between: `inject-oracle.py
+  prometheus --install 30000 --assembler prometheus-48@30000` (make-template.py too).
+- PROMETHEUS 128 keeps a text within page 6 (16K, from `#C01A`): a longer one loads as "Memory full".
 
 ## Pitfalls
 

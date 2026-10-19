@@ -127,6 +127,11 @@ if (NOT ENABLE_RECORDING)
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/recording/" FALSE OUTVAR TEST_CPP_FILES)
 endif()
 
+# The controllers library's tests follow its option (core/tests/emulator/io/controllers is the core's own)
+if (NOT ENABLE_CONTROLLERS)
+    EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/tests/controllers/" FALSE OUTVAR TEST_CPP_FILES)
+endif()
+
 # CLI tests (header-only CLI helpers) follow the CLI module
 if (NOT ENABLE_CLI_AUTOMATION)
     EXCLUDE_FILES_FROM_DIR_IN_LIST("${TEST_CPP_FILES}" "/automation/cli-" FALSE OUTVAR TEST_CPP_FILES)
@@ -228,6 +233,7 @@ if (NOT TARGET ${PROJECT_NAME})
             ${ROOT_DIR}/core/automation/mcp/src/mcp-analysis.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-media.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-slots.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-controllers.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-bus.cpp
             ${ROOT_DIR}/core/automation/mcp/src/target-resolver.cpp
             ${ROOT_DIR}/core/automation/webapi/src/companion-event-hub.cpp

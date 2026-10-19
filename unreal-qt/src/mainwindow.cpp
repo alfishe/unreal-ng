@@ -54,6 +54,11 @@
 
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/dockingmanager.h"
+#include "controllers/actionregistry.h"
+#include "controllers/controllersdialog.h"
+#include "controllers/controllertoast.h"
+#include "controllers/defaultactions.h"
+#include "controllers/hostcontrollers.h"
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
@@ -354,6 +359,41 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     mediaPanelWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(mediaPanelWindow, Qt::BottomEdge);
 
+    // Host game controllers (controller-manager ui-ux.md §8): the service runs for the whole session; the dialog is
+    // hidden until Tools → Controllers
+    _hostControllers = new HostControllers(m_binding, this);
+    _controllersDialog = new ControllersDialog(_hostControllers, this);
+    connect(_hostControllers, &HostControllers::notice, this,
+            [this](const QString& text) { statusBar()->showMessage(text, 5000); });
+    // Host actions (debug-and-ttd.md §3): a pad's action bindings run here, on the GUI thread
+    _actionRegistry = new ActionRegistry(this);
+    RegisterDefaultActions(*_actionRegistry, m_binding,
+                           {debuggerWindow, [this] { handleDebuggerToggled(true); },
+                            [this] { handleScreenshotRequested(); }});
+    _controllersDialog->setActions(_actionRegistry);
+    connect(_hostControllers, &HostControllers::actionTriggered, this, [this](const QString& action, bool pressed) {
+        QString error;
+        if (!_actionRegistry->Trigger(action.toStdString(), pressed, error))
+            statusBar()->showMessage(error, 3000);
+    });
+    _controllerToast = new ControllerToast(this);
+    connect(_hostControllers, &HostControllers::autoDecided, this, [this](const QString& text) {
+        _controllerToast->showText(text, QRect(mapToGlobal(QPoint(0, 0)), size()));
+    });
+    connect(_controllerToast, &ControllerToast::keepRequested, this, [this] {
+#ifdef ENABLE_CONTROLLERS
+        QString error;
+        statusBar()->showMessage(_hostControllers->KeepAutoDecision(error) ? tr("Controller choice kept for this program")
+                                                                          : error,
+                                 5000);
+#endif
+    });
+    connect(_controllerToast, &ControllerToast::changeRequested, this, [this] {
+        _controllersDialog->show();
+        _controllersDialog->raise();
+        _controllersDialog->activateWindow();
+    });
+
     // Network window (network TDD §8): hidden by default, Tools → Network
     networkWindow = new NetworkWindow();
     networkWindow->setBinding(m_binding);
@@ -530,6 +570,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // stay possible during a session (revoking only takes power away)
     _remoteControl->exempt(_menuManager->companionsAction());
     _companions = new CompanionController(this);
+    connect(_menuManager, &MenuManager::controllersRequested, this, [this] {
+        if (_controllersDialog)
+        {
+            _controllersDialog->show();
+            _controllersDialog->raise();
+            _controllersDialog->activateWindow();
+        }
+    });
     connect(_menuManager, &MenuManager::companionsRequested, _companions, &CompanionController::showCompanionsDialog);
     connect(_companions, &CompanionController::toastRequested, this, [this](const QString& title, const QString& body) {
         if (statusBar())
@@ -814,6 +862,13 @@ MainWindow::~MainWindow()
         mediaPanelWindow->hide();
         delete mediaPanelWindow;
     }
+
+    delete _controllerToast;
+    _controllerToast = nullptr;
+    delete _controllersDialog;
+    _controllersDialog = nullptr;
+    delete _hostControllers;
+    _hostControllers = nullptr;
 
     if (networkWindow != nullptr)
     {
@@ -1109,6 +1164,12 @@ void MainWindow::closeEvent(QCloseEvent* event)
         delete mediaPanelWindow;
         mediaPanelWindow = nullptr;
     }
+    delete _controllerToast;
+    _controllerToast = nullptr;
+    delete _controllersDialog;
+    _controllersDialog = nullptr;
+    delete _hostControllers;
+    _hostControllers = nullptr;
     if (networkWindow)
     {
         _dockingManager->removeDockableWindow(networkWindow);

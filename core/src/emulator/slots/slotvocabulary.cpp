@@ -33,6 +33,8 @@ constexpr FunctionInfo kFunctions[] = {
     { "rtc", "real-time clock", "per machine (ZX-Evo `#BFF7 #DFF7 #EFF7`)" },
     { "palette", "Profi v5 palette", "`#xx7E`" },
     { "fdc.upd765", "+3 floppy controller", "`#2FFD`, `#3FFD`" },
+    { "fuller-ay", "Fuller Box AY (register `#3F`, data `#5F`)", "`#3F`, `#5F`" },
+    { "fuller-joystick", "Fuller joystick", "`#7F`" },
 };
 static_assert(sizeof(kFunctions) / sizeof(kFunctions[0]) == static_cast<std::size_t>(Function::Count));
 

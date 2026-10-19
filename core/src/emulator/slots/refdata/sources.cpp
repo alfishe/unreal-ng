@@ -114,6 +114,12 @@ constexpr SourceRef kSources[] = {
     { Src::Lvd2ZxnetUsb, "lvd2/zxnet_usb (CPLD zbus.v, PRM rev C)", "https://github.com/lvd2/zxnet_usb" },
     { Src::IzzxZxWifi, "izzx-git/ZX-WiFi", "https://github.com/izzx-git/ZX-WiFi" },
     { Src::IzzxZxWifiReadme, "izzx-git/ZX-WiFi ReadMe", "https://github.com/izzx-git/ZX-WiFi/blob/main/ReadMe.txt" },
+    { Src::FuseFuller, "FUSE peripherals/sound/fuller.c",
+      "https://sourceforge.net/p/fuse-emulator/fuse/ci/master/tree/peripherals/sound/fuller.c" },
+    { Src::MameFuller, "MAME spectrum/fuller.cpp",
+      "https://github.com/mamedev/mame/blob/master/src/devices/bus/spectrum/fuller.cpp" },
+    { Src::ZxspFullerBox, "zxsp FullerBox.cpp",
+      "https://github.com/Megatokio/zxsp/blob/master/Source/Uni/Items/Ay/FullerBox.cpp" },
 
     { Src::RepoSlotsResearchMachines, "unreal-ng: ZX-bus slots research, machines",
       "docs/inprogress/2026-10-03-zx-bus-slots/research-machines.md" },

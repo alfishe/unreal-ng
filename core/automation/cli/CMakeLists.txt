@@ -26,6 +26,7 @@ set(SOURCES
     src/commands/cli-processor-disk.cpp
     src/commands/cli-processor-media.cpp
     src/commands/cli-processor-slots.cpp
+    src/commands/cli-processor-controllers.cpp
     src/commands/cli-processor-multisound.cpp
     src/commands/cli-processor-cdaudio.cpp
     src/commands/cli-processor-snapshot.cpp
@@ -95,6 +96,11 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 if (ENABLE_RECORDING)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RECORDING)
     target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/recording/src)
+endif()
+
+# The host controller verbs (HostInputControl in core/controllers): the define, the headers and the link order
+if (TARGET unrealng::controllers)
+    target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::controllers)
 endif()
 
 # Suppress deprecated-declarations warning for pybind11 (uses deprecated _Py_fopen_obj in Python 3.14)

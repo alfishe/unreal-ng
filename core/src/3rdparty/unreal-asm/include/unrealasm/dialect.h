@@ -225,6 +225,14 @@ std::vector<std::string> ProjectTextNames(const std::vector<ProjectFile>& files,
 /// extensions, up to 8 characters, unique in any case (NAME~2, NAME~3 ...)
 std::map<std::string, std::string> ProjectDiskNames(const std::vector<ProjectFile>& files, const std::vector<std::string>& dataFiles);
 
+/// The catalog's start field each assembler writes for a saved source (the research documents of each codec)
+uint16_t CatalogStart(std::string_view codec, const std::string& version, char type);
+
+/// A source file as its assembler saves it to a TR-DOS disk: `name` (up to 8 characters, blank padded), `type`, the
+/// start field CatalogStart gives, the length (XAS keeps 0 there: it reads whole sectors, its file list skips other files)
+containers::TrdosFile CatalogFile(const std::string& name, char type, std::string_view codec, const std::string& version,
+                                  const std::vector<uint8_t>& bytes);
+
 struct WriteProjectResult
 {
     std::vector<WriteAsResult> files;   ///< in the order of the project's files, each named as asked

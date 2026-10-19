@@ -1031,6 +1031,38 @@ std::map<std::string, std::string> ProjectDiskNames(const std::vector<ProjectFil
     return names;
 }
 
+uint16_t CatalogStart(std::string_view codec, const std::string& version, char type)
+{
+    if (codec == "tasm")
+        return version == "2.0" ? 38750 : version == "3" ? 39221 : version == "4.0" ? 40872 : 0;
+    if (codec == "storm")
+        return version == "1.0" ? 0xC003 : 0xC00B;
+    if (codec == "zxasm")
+    {
+        if (type == 'a')
+            return 0x6D73;   // extension "sm"
+        if (type == 'z')
+            return 0x7361;   // extension "as"
+        return version == "2" ? 0xA1DF : 35151;
+    }
+    if (codec == "xas")
+        return 0x5341;   // "AS": XAS lists only files that carry it (research-xas.md)
+    return 0;
+}
+
+containers::TrdosFile CatalogFile(const std::string& name, char type, std::string_view codec, const std::string& version,
+                                  const std::vector<uint8_t>& bytes)
+{
+    containers::TrdosFile file;
+    file.name = name.substr(0, 8);
+    file.name.resize(8, ' ');
+    file.type = type;
+    file.start = CatalogStart(codec, version, type);
+    file.length = codec == "xas" ? 0 : static_cast<uint16_t>(bytes.size());
+    file.data = bytes;
+    return file;
+}
+
 WriteProjectResult WriteProjectAs(const std::vector<ProjectFile>& files, std::string_view codecId, const std::string& version,
                                   const std::vector<std::string>& names, const std::map<std::string, std::string>& includeAs)
 {

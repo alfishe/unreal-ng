@@ -186,6 +186,9 @@ uint32_t CompanionScopeOf(const std::string& method, const std::string& subpath)
         return FeatureScope(second);
     if (OneOf(head, {"keyboard", "joystick", "mouse"}) && n == 2)
         return ScopeInput;
+    // A connector's retro device: plugging one is a hardware change, pressing its controls is the user's input
+    if (head == "controllers" && n == 3)
+        return OneOf(third, {"plug", "unplug"}) ? ScopeMachine : ScopeInput;
     if (head == "tape" && n == 2 && OneOf(second, {"load", "eject", "play", "pause", "stop", "rewind", "seek"}))
         return ScopeMedia;
     if (head == "disk" && n == 3 && OneOf(third, {"insert", "eject", "create"}))
@@ -223,6 +226,10 @@ uint32_t CompanionCliScopeOf(const std::string& command, const std::vector<std::
     if (command == "feature")
         return FeatureScope(verb);
     if (OneOf(command, {"key", "keyboard", "joystick", "mouse"}))
+        return ScopeInput;
+    if (command == "controllers" && OneOf(verb, {"plug", "unplug"}))
+        return ScopeMachine;
+    if (command == "controllers" && OneOf(verb, {"press", "release", "set", "tap"}))
         return ScopeInput;
     if (command == "tape" && OneOf(verb, {"load", "eject", "play", "pause", "stop", "rewind", "seek"}))
         return ScopeMedia;

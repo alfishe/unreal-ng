@@ -1200,6 +1200,11 @@ void MenuManager::createToolsMenu()
     _hudSettingsAction->setStatusTip(tr("Configure which HUD notifications to display"));
     connect(_hudSettingsAction, &QAction::triggered, this, &MenuManager::hudSettingsRequested);
 
+    // Host game controllers (docs/inprogress/2026-10-17-controller-manager/ui-ux.md §8)
+    _controllersAction = _toolsMenu->addAction(tr("C&ontrollers..."));
+    _controllersAction->setStatusTip(tr("Game pads and joysticks: what they drive on this machine, and their bindings"));
+    connect(_controllersAction, &QAction::triggered, this, &MenuManager::controllersRequested);
+
     // Companion clients: devices paired to act as the user's hands (docs/inprogress/2026-10-16-companion-client)
     _companionsAction = _toolsMenu->addAction(tr("&Companions..."));
     _companionsAction->setStatusTip(tr("Devices paired to control the emulator for you; revoke them here"));

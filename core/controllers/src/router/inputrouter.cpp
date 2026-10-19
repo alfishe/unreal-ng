@@ -1,0 +1,982 @@
+#include "inputrouter.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+
+#include "hostcontrols.h"
+
+namespace controllers
+{
+
+namespace
+{
+constexpr uint16_t kDirections = kRight | kLeft | kDown | kUp;
+constexpr float kButtonThreshold = 0.5f;
+/// A value below it is released: a control held across a layer switch is seen again
+constexpr float kReleased = 0.35f;
+
+const char* const kDpadValues[] = {"dpad.up", "dpad.down", "dpad.left", "dpad.right"};
+
+bool Contains(const std::vector<std::string>& names, const std::string& name)
+{
+    return std::find(names.begin(), names.end(), name) != names.end();
+}
+
+bool IsLayerKey(const Binding& binding)
+{
+    return binding.target.kind == TargetKind::Layer;
+}
+
+/// Mark every control held now: a layer switch releases them (DT-5 rule 5)
+template <typename Values, typename Gates>
+void MarkHeldStale(const Values& values, Gates& gates, float released)
+{
+    for (const auto& [name, value] : values)
+    {
+        if (std::fabs(value) >= released)
+            gates[name].stale = true;
+    }
+}
+
+/// The targets a sample carries (the rest act on arrival)
+bool Sampled(TargetKind kind)
+{
+    return kind == TargetKind::Retro || kind == TargetKind::Keys || kind == TargetKind::Macro ||
+           kind == TargetKind::Mouse;
+}
+}  // namespace
+
+InputRouter::InputRouter()
+    : _clock([] {
+          return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                           std::chrono::steady_clock::now().time_since_epoch())
+                                           .count());
+      })
+{
+}
+
+/// region <Bindings>
+
+bool InputRouter::Compile(const Binding& binding, CompiledBinding& out, std::string& error)
+{
+    if (!ValidateBinding(binding, error))
+        return false;
+    out = CompiledBinding{};
+    out.binding = binding;
+    if (binding.target.kind == TargetKind::Retro)
+    {
+        out.mask = binding.target.retro.mask;
+        out.directionalTarget = out.mask == kDirections;
+    }
+    for (const std::string& name : binding.sources)
+    {
+        CompiledSource source;
+        ControlInfo info;
+        if (name == "dpad.*")
+            source.kind = SourceKind::Dpad;
+        else if (!StickOf(name).empty())
+        {
+            source.kind = SourceKind::Stick;
+            source.control = StickOf(name);
+        }
+        else if (ParseControl(name, info))
+        {
+            if (!info.base.empty() && info.direction != 0)
+            {
+                source.kind = SourceKind::StickDirection;
+                source.control = info.base;
+                source.direction = info.direction;
+            }
+            else if (!info.base.empty() || info.type == ControlType::Trigger)
+            {
+                source.kind = SourceKind::Trigger;
+                source.control = info.base.empty() ? info.name : info.base;
+            }
+            else
+            {
+                source.kind = info.type == ControlType::Axis ? SourceKind::Axis : SourceKind::Button;
+                source.control = info.name;
+            }
+        }
+
+        switch (source.kind)
+        {
+            case SourceKind::Stick:
+            case SourceKind::StickDirection:
+                source.values = {source.control + ".x", source.control + ".y"};
+                out.controls.insert(source.control);
+                break;
+            case SourceKind::Dpad:
+                for (const char* value : kDpadValues)
+                {
+                    source.values.emplace_back(value);
+                    out.controls.insert(value);
+                }
+                break;
+            case SourceKind::Axis:
+            {
+                source.values = {source.control};
+                // lstick.x is the stick for an override: a shift layer binding `lstick` takes it too
+                const size_t dot = source.control.find('.');
+                const std::string stick = dot == std::string::npos ? "" : source.control.substr(0, dot);
+                out.controls.insert(stick == "lstick" || stick == "rstick" ? stick : source.control);
+                break;
+            }
+            case SourceKind::Button:
+            case SourceKind::Trigger:
+                source.values = {source.control};
+                out.controls.insert(source.control);
+                break;
+        }
+        out.sources.push_back(source);
+    }
+    return true;
+}
+
+bool InputRouter::SetBindings(const std::string& scope, const std::vector<Binding>& bindings, std::string& error)
+{
+    CompiledSet set;
+    set.bindings.resize(bindings.size());
+    for (size_t i = 0; i < bindings.size(); i++)
+    {
+        if (!Compile(bindings[i], set.bindings[i], error))
+        {
+            error = "binding " + std::to_string(i) + ": " + error;
+            return false;
+        }
+        if (!IsLayerKey(bindings[i]))
+            set.liveLayers.insert(bindings[i].layer);
+    }
+    std::lock_guard<std::mutex> lock(_mutex);
+    _bindings[scope] = std::move(set);
+    ResetLocked();
+    return true;
+}
+
+void InputRouter::ClearBindings(const std::string& scope)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _bindings.erase(scope);
+    ResetLocked();
+}
+
+const InputRouter::CompiledSet* InputRouter::BindingsForLocked(const Device& device) const
+{
+    for (const std::string& scope : {device.info.id, "family:" + device.info.family, std::string{}})
+    {
+        const auto it = _bindings.find(scope);
+        if (it != _bindings.end())
+            return &it->second;
+    }
+    return nullptr;
+}
+
+void InputRouter::ResetLocked()
+{
+    // The bindings changed: the held states start over from the controls' values, the layers from `play`, the
+    // turbo phases from scratch. Actions of the old bindings are not released: their bindings are gone
+    std::vector<ActionEvent> dropped;
+    for (auto& [id, device] : _devices)
+    {
+        device.states.clear();
+        device.gates.clear();
+        device.layers.clear();
+        EvaluateLocked(device, Now(), dropped);
+    }
+    for (auto& [name, instance] : _instances)
+        instance.phases.clear();
+}
+
+/// endregion </Bindings>
+
+/// region <Devices>
+
+void InputRouter::OnDeviceAdded(const HostDeviceInfo& info)
+{
+    std::vector<ActionEvent> actions;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        Device& device = _devices[info.id];
+        device = Device{};
+        device.info = info;
+        EvaluateLocked(device, Now(), actions);
+    }
+    Dispatch(actions);
+}
+
+void InputRouter::OnDeviceRemoved(const HostDeviceId& id)
+{
+    std::vector<ActionEvent> actions;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const auto it = _devices.find(id);
+        if (it == _devices.end())
+            return;
+        // A held action is released with the device
+        const CompiledSet* set = BindingsForLocked(it->second);
+        for (size_t i = 0; set && i < it->second.states.size() && i < set->bindings.size(); i++)
+        {
+            const Target& target = set->bindings[i].binding.target;
+            if (target.kind == TargetKind::Action && it->second.states[i].bits != 0)
+                actions.push_back({id, target.name, false});
+        }
+        _devices.erase(it);
+        for (auto& [name, instance] : _instances)
+        {
+            for (auto phase = instance.phases.begin(); phase != instance.phases.end();)
+                phase = phase->first.first == id ? instance.phases.erase(phase) : std::next(phase);
+        }
+    }
+    Dispatch(actions);
+}
+
+void InputRouter::OnControl(const ControlEvent& event)
+{
+    std::vector<ActionEvent> actions;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const auto it = _devices.find(event.device);
+        if (it == _devices.end())
+            return;
+        ControlInfo info;
+        if (!ParseControl(event.control, info))
+            return;
+        it->second.values[info.name] = event.value;
+        EvaluateLocked(it->second, event.hostTimeNs != 0 ? event.hostTimeNs : Now(), actions);
+    }
+    Dispatch(actions);
+}
+
+std::vector<HostDeviceInfo> InputRouter::Devices() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    std::vector<HostDeviceInfo> list;
+    for (const auto& [id, device] : _devices)
+        list.push_back(device.info);
+    return list;
+}
+
+void InputRouter::SetRole(const HostDeviceId& id, DeviceRole role)
+{
+    std::vector<ActionEvent> actions;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _settings[id].role = role;
+        const auto it = _devices.find(id);
+        if (it != _devices.end())
+        {
+            // Another role has other layers: what was held is released
+            it->second.layers.clear();
+            it->second.epoch++;
+            EvaluateLocked(it->second, Now(), actions);
+        }
+    }
+    Dispatch(actions);
+}
+
+bool InputRouter::Drives(const HostDeviceId& device, const std::string& instance) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return DrivesLocked(device, instance);
+}
+
+DeviceRole InputRouter::Role(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return RoleLocked(device);
+}
+
+DeviceRole InputRouter::RoleLocked(const HostDeviceId& device) const
+{
+    const auto it = _settings.find(device);
+    return it == _settings.end() ? DeviceRole::Player : it->second.role;
+}
+
+void InputRouter::SetInstanceMode(const HostDeviceId& device, InstanceMode mode, const std::string& pinned)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    Settings& settings = _settings[device];
+    settings.mode = mode;
+    settings.pinned = mode == InstanceMode::Pinned ? pinned : std::string{};
+}
+
+void InputRouter::SetPlayerConnector(const HostDeviceId& device, const std::string& connector)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _settings[device].connector = connector;
+}
+
+void InputRouter::SetFocus(const std::string& instance)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _focus = instance;
+}
+
+std::vector<std::string> InputRouter::Layers(const HostDeviceId& id) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _devices.find(id);
+    if (it == _devices.end())
+        return {};
+    return ActiveLayersLocked(it->second);
+}
+
+bool InputRouter::Consumes(const HostDeviceId& id, const std::string& control) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _devices.find(id);
+    if (it == _devices.end() || RoleLocked(id) == DeviceRole::Disabled)
+        return false;
+    const Device& device = it->second;
+    const CompiledSet* set = BindingsForLocked(device);
+    if (set == nullptr || device.states.size() != set->bindings.size())
+        return false;
+    const std::vector<std::string> active = ActiveLayersLocked(device);
+    for (size_t i = 0; i < set->bindings.size(); i++)
+    {
+        const CompiledBinding& compiled = set->bindings[i];
+        const Binding& binding = compiled.binding;
+        // A layer key is the layer's alone; a binding only while its layer acts
+        const bool layerKey = IsLayerKey(binding) && set->liveLayers.count(binding.target.name) != 0 &&
+                              (binding.layer == kPlayLayer || Contains(active, binding.layer));
+        if (!layerKey && !(device.states[i].active && binding.options.consume))
+            continue;
+        for (const CompiledSource& source : compiled.sources)
+        {
+            if (Contains(source.values, control))
+                return true;
+        }
+    }
+    return false;
+}
+
+float InputRouter::Value(const Device& device, const std::string& control)
+{
+    const auto it = device.values.find(control);
+    return it == device.values.end() ? 0.0f : it->second;
+}
+
+std::vector<std::string> InputRouter::ActiveLayersLocked(const Device& device) const
+{
+    const DeviceRole role = RoleLocked(device.info.id);
+    if (role == DeviceRole::Disabled)
+        return {};
+    if (role == DeviceRole::DebuggerRemote)
+        return {kDebugLayer};
+    std::vector<std::string> layers = {kPlayLayer};
+    for (const LayerEntry& entry : device.layers)
+    {
+        // `debug` is opaque: what it does not bind does nothing while it is up
+        if (entry.name == kDebugLayer)
+            layers.clear();
+        layers.push_back(entry.name);
+    }
+    return layers;
+}
+
+bool InputRouter::RaisedLocked(const Device& device, const std::string& layer)
+{
+    return layer == kPlayLayer || std::any_of(device.layers.begin(), device.layers.end(),
+                                              [&layer](const LayerEntry& entry) { return entry.name == layer; });
+}
+
+uint16_t InputRouter::SourceBits(const CompiledBinding& compiled, BindingState& state, const ValueOf& value)
+{
+    const AnalogOptions& analog = compiled.binding.options.analog;
+    if (state.sources.size() != compiled.sources.size())
+        state.sources.assign(compiled.sources.size(), SourceState{});
+
+    uint16_t bits = 0;
+    bool all = true;
+    for (size_t j = 0; j < compiled.sources.size(); j++)
+    {
+        const CompiledSource& source = compiled.sources[j];
+        SourceState& held = state.sources[j];
+        bool directional = false;
+        switch (source.kind)
+        {
+            case SourceKind::Button:
+                held.on = value(source.control) >= kButtonThreshold;
+                break;
+            case SourceKind::Trigger:
+                held.on = TriggerClick(value(source.control), held.on, analog);
+                break;
+            case SourceKind::Axis:
+            {
+                const float deflection = std::fabs(value(source.control));
+                held.on = deflection >= (held.on ? analog.off : analog.on);
+                break;
+            }
+            case SourceKind::Stick:
+            case SourceKind::StickDirection:
+                held.dirs = StickDirections(value(source.values[0]), value(source.values[1]), held.dirs, analog);
+                held.on = source.kind == SourceKind::Stick ? held.dirs != 0 : (held.dirs & source.direction) != 0;
+                directional = source.kind == SourceKind::Stick;
+                break;
+            case SourceKind::Dpad:
+                held.dirs = static_cast<uint16_t>((value("dpad.up") >= kButtonThreshold ? kUp : 0) |
+                                                  (value("dpad.down") >= kButtonThreshold ? kDown : 0) |
+                                                  (value("dpad.left") >= kButtonThreshold ? kLeft : 0) |
+                                                  (value("dpad.right") >= kButtonThreshold ? kRight : 0));
+                held.on = held.dirs != 0;
+                directional = true;
+                break;
+        }
+        all = all && held.on;
+        if (directional && compiled.directionalTarget)
+            bits |= held.dirs;
+        else if (held.on)
+            bits |= compiled.mask;
+    }
+    if (compiled.binding.chord)
+        return all ? compiled.mask : uint16_t{0};
+    return bits;
+}
+
+void InputRouter::Settle(BindingState& state, uint16_t bits)
+{
+    if (bits != 0 && state.bits == 0)
+    {
+        state.presses++;
+        state.pressBits = bits;
+    }
+    state.bits = bits;
+}
+
+bool InputRouter::UpdateLayersLocked(Device& device, const CompiledSet& set, const ValueOf& raw)
+{
+    bool changed = false;
+    const bool player = RoleLocked(device.info.id) == DeviceRole::Player;
+    for (size_t i = 0; i < set.bindings.size(); i++)
+    {
+        const CompiledBinding& compiled = set.bindings[i];
+        const Binding& binding = compiled.binding;
+        BindingState& state = device.states[i];
+        // A key to a layer with no bindings is an ordinary button; a debugger remote has no layer keys
+        if (!IsLayerKey(binding) || set.liveLayers.count(binding.target.name) == 0 || !player)
+            continue;
+        // A layer key acts from its layer while that is up, `debug` or not: the key that raised it must drop it
+        const bool up = RaisedLocked(device, binding.layer);
+        const bool on = up && (binding.chord ? state.chordOn : SourceBits(compiled, state, raw) != 0);
+        const bool edge = on && !state.layerOn;
+        state.layerOn = on;
+        state.active = up;
+
+        const auto raised = std::find_if(device.layers.begin(), device.layers.end(),
+                                         [&](const LayerEntry& e) { return e.binding == i; });
+        const bool isRaised = raised != device.layers.end();
+        bool raise = false;
+        bool drop = false;
+        switch (binding.target.layerMode)
+        {
+            case LayerMode::Hold:
+                raise = on && !isRaised;
+                drop = !on && isRaised;
+                break;
+            case LayerMode::Toggle:
+                raise = edge && !isRaised;
+                drop = edge && isRaised;
+                break;
+            case LayerMode::Oneshot:
+                raise = edge && !isRaised;
+                break;
+        }
+        if (raise)
+            device.layers.push_back({binding.target.name, i, binding.target.layerMode, false});
+        else if (drop)
+            device.layers.erase(raised);
+        changed = changed || raise || drop;
+    }
+    return changed;
+}
+
+void InputRouter::EvaluateLocked(Device& device, uint64_t now, std::vector<ActionEvent>& actions)
+{
+    const CompiledSet* set = BindingsForLocked(device);
+    if (set == nullptr)
+    {
+        device.states.clear();
+        device.layers.clear();
+        return;
+    }
+    const std::vector<CompiledBinding>& bindings = set->bindings;
+    if (device.states.size() != bindings.size())
+        device.states.assign(bindings.size(), BindingState{});
+    const ValueOf raw = [&device](const std::string& name) { return Value(device, name); };
+
+    // A control held across a layer switch is seen again once released
+    for (auto& [name, gate] : device.gates)
+    {
+        if (gate.stale && std::fabs(Value(device, name)) < kReleased)
+            gate.stale = false;
+    }
+
+    // Chord members: a press alone opens the window, a release inside it gives the press to the member's own
+    // bindings at once (a tap still works, one release later)
+    std::set<std::string> members;
+    for (const CompiledBinding& compiled : bindings)
+    {
+        if (!compiled.binding.chord || !RaisedLocked(device, compiled.binding.layer))
+            continue;
+        for (const CompiledSource& source : compiled.sources)
+            members.insert(source.control);
+    }
+    for (const std::string& member : members)
+    {
+        Gate& gate = device.gates[member];
+        const bool pressed = Value(device, member) >= kButtonThreshold;
+        if (pressed && !gate.pressed && !gate.consumed)
+        {
+            gate.pending = true;
+            gate.until = now + kChordWindowNs;
+        }
+        if (!pressed && gate.pressed)
+        {
+            gate.owed = gate.pending;
+            gate.pending = false;
+            gate.consumed = false;
+        }
+        gate.pressed = pressed;
+        if (gate.pending && now >= gate.until)
+            gate.pending = false;
+    }
+    for (size_t i = 0; i < bindings.size(); i++)
+    {
+        const CompiledBinding& compiled = bindings[i];
+        if (!compiled.binding.chord)
+            continue;
+        BindingState& state = device.states[i];
+        bool all = true;
+        bool fresh = true;
+        for (const CompiledSource& source : compiled.sources)
+        {
+            const Gate& gate = device.gates[source.control];
+            all = all && gate.pressed;
+            fresh = fresh && gate.pending;
+        }
+        if (state.chordOn)
+            state.chordOn = all;
+        else if (all && fresh && RaisedLocked(device, compiled.binding.layer))
+        {
+            state.chordOn = true;
+            for (const CompiledSource& source : compiled.sources)
+            {
+                Gate& gate = device.gates[source.control];
+                gate.pending = false;
+                gate.consumed = true;
+            }
+        }
+    }
+
+    // Layer keys; a switch releases what is held (DT-5 rule 5)
+    if (UpdateLayersLocked(device, *set, raw))
+    {
+        device.epoch++;
+        MarkHeldStale(device.values, device.gates, kReleased);
+    }
+
+    // What the layer keys take: their controls reach no other binding
+    const std::vector<std::string> active = ActiveLayersLocked(device);
+    std::set<std::string> layerKeyValues;
+    for (size_t i = 0; i < bindings.size(); i++)
+    {
+        const CompiledBinding& compiled = bindings[i];
+        if (IsLayerKey(compiled.binding) && !compiled.binding.chord && device.states[i].active)
+        {
+            for (const CompiledSource& source : compiled.sources)
+                layerKeyValues.insert(source.values.begin(), source.values.end());
+        }
+    }
+    bool anyOwed = false;
+    const ValueOf effective = [&](const std::string& name) {
+        if (layerKeyValues.count(name) != 0)
+            return 0.0f;
+        const auto gate = device.gates.find(name);
+        if (gate != device.gates.end() && (gate->second.pending || gate->second.consumed || gate->second.stale))
+            return 0.0f;
+        return Value(device, name);
+    };
+    const ValueOf owed = [&](const std::string& name) {
+        const auto gate = device.gates.find(name);
+        if (gate != device.gates.end() && gate->second.owed)
+            return 1.0f;
+        return effective(name);
+    };
+    for (const auto& [name, gate] : device.gates)
+        anyOwed = anyOwed || gate.owed;
+
+    auto layerIndex = [&active](const std::string& layer) {
+        const auto it = std::find(active.begin(), active.end(), layer);
+        return it == active.end() ? -1 : static_cast<int>(it - active.begin());
+    };
+    for (size_t i = 0; i < bindings.size(); i++)
+    {
+        const CompiledBinding& compiled = bindings[i];
+        const Binding& binding = compiled.binding;
+        if (IsLayerKey(binding))
+            continue;
+        BindingState& state = device.states[i];
+        const int level = layerIndex(binding.layer);
+        bool active = level >= 0;
+        // A higher layer binding the same control overrides this one
+        for (size_t j = 0; active && j < bindings.size(); j++)
+        {
+            const CompiledBinding& other = bindings[j];
+            if (j == i || IsLayerKey(other.binding) || layerIndex(other.binding.layer) <= level)
+                continue;
+            active = std::none_of(compiled.controls.begin(), compiled.controls.end(),
+                                  [&other](const std::string& c) { return other.controls.count(c) != 0; });
+        }
+        const uint16_t was = state.bits;
+        const uint32_t presses = state.presses;
+        state.active = active;
+        state.epoch = device.epoch;
+        if (!active)
+            state.bits = 0;
+        else if (binding.chord)
+            Settle(state, state.chordOn ? compiled.mask : uint16_t{0});
+        else
+        {
+            // A member released inside its chord window: the press, then the release
+            if (anyOwed)
+                Settle(state, SourceBits(compiled, state, owed));
+            Settle(state, SourceBits(compiled, state, effective));
+        }
+
+        if (binding.target.kind == TargetKind::Action)
+        {
+            const bool pressed = state.presses != presses;
+            if (pressed)
+                actions.push_back({device.info.id, binding.target.name, true});
+            if ((was != 0 || pressed) && state.bits == 0)
+                actions.push_back({device.info.id, binding.target.name, false});
+        }
+        // A oneshot layer is used once one of its controls was pressed
+        if (state.bits != 0)
+        {
+            for (LayerEntry& entry : device.layers)
+            {
+                if (entry.mode == LayerMode::Oneshot && entry.name == binding.layer)
+                    entry.used = true;
+            }
+        }
+    }
+    for (auto& [name, gate] : device.gates)
+        gate.owed = false;
+
+    // A used oneshot layer drops once its controls are released
+    const size_t layersBefore = device.layers.size();
+    device.layers.erase(std::remove_if(device.layers.begin(), device.layers.end(),
+                                       [&](const LayerEntry& entry) {
+                                           if (entry.mode != LayerMode::Oneshot || !entry.used)
+                                               return false;
+                                           for (size_t i = 0; i < bindings.size(); i++)
+                                           {
+                                               if (bindings[i].binding.layer == entry.name &&
+                                                   device.states[i].bits != 0)
+                                                   return false;
+                                           }
+                                           return true;
+                                       }),
+                        device.layers.end());
+    if (device.layers.size() != layersBefore)
+    {
+        device.epoch++;
+        MarkHeldStale(device.values, device.gates, kReleased);
+        // Once more with the layers left: the bindings it hid act again (the layers only shrink: this ends)
+        EvaluateLocked(device, now, actions);
+    }
+}
+
+void InputRouter::ExpireLocked(uint64_t now, std::vector<ActionEvent>& actions)
+{
+    for (auto& [id, device] : _devices)
+    {
+        const bool due = std::any_of(device.gates.begin(), device.gates.end(), [now](const auto& entry) {
+            return entry.second.pending && now >= entry.second.until;
+        });
+        if (due)
+            EvaluateLocked(device, now, actions);
+    }
+}
+
+bool InputRouter::DrivesLocked(const HostDeviceId& device, const std::string& instance) const
+{
+    const auto it = _settings.find(device);
+    if (it == _settings.end())
+        return _focus.empty() || _focus == instance;
+    const Settings& settings = it->second;
+    if (settings.role != DeviceRole::Player)
+        return false;
+    switch (settings.mode)
+    {
+        case InstanceMode::All:
+            return true;
+        case InstanceMode::Pinned:
+            return settings.pinned == instance;
+        case InstanceMode::FollowFocus:
+            break;
+    }
+    return _focus.empty() || _focus == instance;
+}
+
+/// endregion </Devices>
+
+/// region <Actions and time>
+
+void InputRouter::SetActionSink(ActionSink sink)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _actions = std::move(sink);
+}
+
+void InputRouter::SetClock(Clock clock)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _clock = std::move(clock);
+}
+
+void InputRouter::Poll()
+{
+    std::vector<ActionEvent> actions;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        ExpireLocked(Now(), actions);
+    }
+    Dispatch(actions);
+}
+
+uint64_t InputRouter::Now() const
+{
+    return _clock ? _clock() : 0;
+}
+
+void InputRouter::Dispatch(const std::vector<ActionEvent>& actions) const
+{
+    if (actions.empty())
+        return;
+    ActionSink sink;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        sink = _actions;
+    }
+    if (!sink)
+        return;
+    for (const ActionEvent& action : actions)
+        sink(action);
+}
+
+/// endregion </Actions and time>
+
+/// region <Sampling>
+
+uint16_t InputRouter::Output(const CompiledBinding& compiled, const BindingState& state, Phase& phase, uint64_t frame)
+{
+    const BindingOptions& options = compiled.binding.options;
+    const uint16_t mask = compiled.mask;
+    // A press since the last sample, even one released already: the game still sees it for a frame
+    const bool edge = state.presses != phase.presses;
+    phase.presses = state.presses;
+    if (frame < phase.since)  // a seek went back past the press
+        phase.since = phase.until = frame;
+    const uint16_t bits = state.bits != 0 ? state.bits : (edge ? state.pressBits : uint16_t{0});
+    const unsigned period = options.on + options.off;
+    auto pulse = [&]() { return period != 0 && (frame - phase.since) % period < options.on; };
+
+    if (options.press == PressMode::Tap)
+    {
+        if (edge)
+        {
+            phase.since = frame;
+            phase.until = frame + options.frames;
+            phase.tapBits = state.pressBits;
+        }
+        return frame < phase.until ? phase.tapBits : uint16_t{0};
+    }
+
+    switch (options.turbo)
+    {
+        case Turbo::Off:
+            return bits;
+        case Turbo::Classic:
+            if (edge)
+                phase.since = frame;
+            return bits != 0 && pulse() ? bits : uint16_t{0};
+        case Turbo::Toggle:
+            if (edge)
+            {
+                phase.latched = !phase.latched;
+                phase.since = frame;
+            }
+            return phase.latched && pulse() ? mask : uint16_t{0};
+        case Turbo::Hold:
+            if (edge)
+                phase.latched = !phase.latched;
+            return phase.latched ? mask : uint16_t{0};
+        case Turbo::Burst:
+            if (edge)
+            {
+                phase.since = frame;
+                phase.until = frame + static_cast<uint64_t>(options.count) * period;
+            }
+            return frame < phase.until && pulse() ? mask : uint16_t{0};
+    }
+    return bits;
+}
+
+void InputRouter::Sample(const std::string& instanceName, uint64_t frame, HostSample& out)
+{
+    std::vector<ActionEvent> actions;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        ExpireLocked(Now(), actions);
+
+        Instance& instance = _instances[instanceName];
+        std::map<std::string, uint16_t> masks;
+        std::set<uint8_t> keys;
+        auto hold = [&keys](const std::vector<uint8_t>& held) { keys.insert(held.begin(), held.end()); };
+        int dx = 0;
+        int dy = 0;
+        for (auto& [id, device] : _devices)
+        {
+            if (!DrivesLocked(id, instanceName))
+                continue;
+            const CompiledSet* set = BindingsForLocked(device);
+            if (set == nullptr || device.states.size() != set->bindings.size())
+                continue;
+            const auto settings = _settings.find(id);
+            const std::string player = settings == _settings.end() ? std::string{} : settings->second.connector;
+            for (size_t i = 0; i < set->bindings.size(); i++)
+            {
+                const CompiledBinding& compiled = set->bindings[i];
+                const Target& target = compiled.binding.target;
+                if (!Sampled(target.kind))
+                    continue;
+                const BindingState& state = device.states[i];
+                Phase& phase = instance.phases[{id, i}];
+                if (!state.active || phase.epoch != state.epoch)
+                {
+                    // A layer switch released it: autohold, toggles, taps and macros end with the layer
+                    phase.epoch = state.epoch;
+                    phase.latched = false;
+                    phase.until = 0;
+                    phase.remainder = 0.0f;
+                    if (!state.active)
+                    {
+                        phase.presses = state.presses;
+                        continue;
+                    }
+                }
+
+                switch (target.kind)
+                {
+                    case TargetKind::Retro:
+                    {
+                        const uint16_t bits = Output(compiled, state, phase, frame);
+                        const std::string& connector =
+                            target.retro.connector == "auto" ? player : target.retro.connector;
+                        if (!connector.empty())
+                            masks[connector] |= bits;
+                        break;
+                    }
+                    case TargetKind::Keys:
+                        if (Output(compiled, state, phase, frame) != 0)
+                            hold(target.keys);
+                        break;
+                    case TargetKind::Macro:
+                    {
+                        // Each step held one frame and released one, so the ROM's scan sees every key; a press
+                        // while it runs is ignored
+                        const bool edge = state.presses != phase.presses;
+                        phase.presses = state.presses;
+                        if (edge && frame >= phase.until)
+                        {
+                            phase.since = frame;
+                            phase.until = frame + 2 * target.steps.size();
+                        }
+                        if (frame < phase.until && frame >= phase.since && (frame - phase.since) % 2 == 0)
+                            hold(target.steps[(frame - phase.since) / 2]);
+                        break;
+                    }
+                    case TargetKind::Mouse:
+                        switch (target.mouse)
+                        {
+                            case MouseControl::Left:
+                            case MouseControl::Right:
+                            case MouseControl::Middle:
+                                if (Output(compiled, state, phase, frame) != 0)
+                                    out.mouse.buttons |= static_cast<uint8_t>(1u << static_cast<unsigned>(target.mouse));
+                                break;
+                            case MouseControl::Wheel:
+                                if (state.presses != phase.presses)
+                                    out.mouse.wheel += static_cast<int>(std::lround(target.scale));
+                                phase.presses = state.presses;
+                                break;
+                            case MouseControl::Dx:
+                            case MouseControl::Dy:
+                            {
+                                float amount = 0.0f;
+                                for (size_t j = 0; j < compiled.sources.size(); j++)
+                                {
+                                    const CompiledSource& source = compiled.sources[j];
+                                    if (source.kind == SourceKind::Axis)
+                                    {
+                                        const auto gate = device.gates.find(source.control);
+                                        const bool gated = gate != device.gates.end() && gate->second.stale;
+                                        amount += gated ? 0.0f
+                                                        : MouseCurve(Value(device, source.control),
+                                                                     compiled.binding.options.analog);
+                                    }
+                                    else if (j < state.sources.size() && state.sources[j].on)
+                                        amount += 1.0f;
+                                }
+                                phase.remainder += amount * target.scale;
+                                const int counts = static_cast<int>(phase.remainder);
+                                phase.remainder -= static_cast<float>(counts);
+                                // The profile's dy is + down; the machine's mouse + up
+                                if (target.mouse == MouseControl::Dx)
+                                    dx += counts;
+                                else
+                                    dy -= counts;
+                                break;
+                            }
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+
+        std::set<std::string> held;
+        for (const auto& [connector, bits] : masks)
+        {
+            if (bits != 0)
+            {
+                out.connectors.push_back({connector, bits});
+                held.insert(connector);
+            }
+        }
+        for (const std::string& connector : instance.held)
+        {
+            if (held.count(connector) == 0)
+                out.connectors.push_back({connector, 0});
+        }
+        instance.held = std::move(held);
+        out.keys.assign(keys.begin(), keys.end());
+        out.mouse.dx += dx;
+        out.mouse.dy += dy;
+    }
+    Dispatch(actions);
+}
+
+void InputRouter::ForgetInstance(const std::string& instance)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _instances.erase(instance);
+}
+
+/// endregion </Sampling>
+
+}  // namespace controllers

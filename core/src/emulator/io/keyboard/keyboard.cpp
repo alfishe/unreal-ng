@@ -293,6 +293,31 @@ void Keyboard::PressKey(ZXKeysEnum key)
     _keyboardMatrixState[matrixIndex] &= keyBits;
 }
 
+void Keyboard::SetOverlay(const uint8_t rows[8])
+{
+    for (uint8_t i = 0; i < 8; i++)
+        _overlay[i] = rows[i];
+}
+
+bool Keyboard::MatrixPosition(ZXKeysEnum key, uint8_t& row, uint8_t& bit)
+{
+    const auto it = _zxKeyMap.find(key);
+    if (key == ZXKEY_NONE || it == _zxKeyMap.end())
+        return false;
+    // A key clears the bits of `mask` that `match` leaves 0: exactly one
+    const uint8_t cleared = static_cast<uint8_t>(it->second.mask & ~it->second.match);
+    for (uint8_t b = 0; b < 5; b++)
+    {
+        if (cleared == (1u << b))
+        {
+            row = it->second.matrix_offset;
+            bit = b;
+            return true;
+        }
+    }
+    return false;
+}
+
 /// Unregister key in keyboard matrix state on release
 /// @param key ZX Spectrum key released
 void Keyboard::ReleaseKey(ZXKeysEnum key)
@@ -497,7 +522,7 @@ uint8_t Keyboard::HandlePortIn(uint16_t port)
         {
             if (subport_inv & (1 << i))
             {
-                result &= _keyboardMatrixState[i];
+                result &= _keyboardMatrixState[i] & _overlay[i];
             }
         }
     }

@@ -1,0 +1,143 @@
+#pragma once
+
+/// @file hostcontrollers.h
+/// @brief The Qt client's host controllers (docs/inprogress/2026-10-17-controller-manager/ui-ux.md §8): the process's
+/// HostInputService and ProfileStore, the bound emulator's IHostInputSource, the player connector each pad drives
+/// (retro-devices.md §4, the machine default) and the profiles re-applied whenever a device or the machine changes.
+
+#include <QObject>
+#include <QString>
+#include <QTimer>
+
+#include <memory>
+#include <string>
+#include <vector>
+
+#ifdef ENABLE_CONTROLLERS
+#include "hostinputcontrol.h"
+#include "hostinputservice.h"
+#include "profiles/autodecision.h"
+#include "profiles/profilestore.h"
+#endif
+
+class Emulator;
+class EmulatorContext;
+class EmulatorBinding;
+
+class HostControllers : public QObject
+{
+    Q_OBJECT
+
+public:
+    explicit HostControllers(EmulatorBinding* binding, QObject* parent = nullptr);
+    ~HostControllers() override;
+
+#ifdef ENABLE_CONTROLLERS
+    controllers::HostInputService& Service()
+    {
+        return *_service;
+    }
+    controllers::ProfileStore& Profiles()
+    {
+        return _profiles;
+    }
+    const controllers::ResolvedProfiles& Resolved() const
+    {
+        return _resolved;
+    }
+    /// What the last Reapply resolved for
+    const controllers::ProfileContext& Context() const
+    {
+        return _context;
+    }
+    /// The user profiles' directory (`<user config>/unreal-ng/controllers/profiles`, architecture.md §12)
+    static QString UserProfileDir();
+    /// A host verb (surfaces.md §2: profiles, bindings, bind / unbind, save, delete, apply) run here as the automation
+    /// surfaces run it: the dialog's editors take the same path as WebAPI, MCP, CLI and Python
+    controllers::HostReply Host(const controllers::HostRequest& request);
+    /// "Keep" on the auto toast: a user game profile keyed by the loaded file's SHA-256 (mapping-and-profiles.md
+    /// §6.1) holding the connector and the first pad's pin; false with the reason
+    bool KeepAutoDecision(QString& error);
+#endif
+    /// Advanced > Debug layer (debug-and-ttd.md §1.6): the debug profiles take part; kept in the settings
+    bool DebugLayer() const
+    {
+        return _debugLayer;
+    }
+    void SetDebugLayer(bool on);
+    /// A game profile chosen by hand (empty: by the loaded file), for a program the emulator did not load itself
+    /// (a NEX started from NextZXOS's browser)
+    const std::string& ManualProfile() const
+    {
+        return _manualProfile;
+    }
+    void SetManualProfile(const std::string& id);
+    /// Advanced > Haptics from the sound (haptics.md §4, H-6: off by default): the generic AY / beeper filters
+    bool SoundHaptics() const
+    {
+        return _soundHaptics;
+    }
+    void SetSoundHaptics(bool on);
+    /// The Haptics panel (haptics.md §7): the feed, the gate, the motors of @p device and the sources' levels
+    QString HapticsStatus(const std::string& device) const;
+
+    /// The emulator the host devices drive, and its context (nullptr when none)
+    Emulator* BoundEmulator() const;
+    EmulatorContext* BoundContext() const;
+    /// Resolve the profiles and the player connectors again
+    void Reapply();
+
+signals:
+    /// A device arrived or left, or the profiles changed
+    void changed();
+    /// A host action (debug-and-ttd.md §3) from a device: run on the GUI thread
+    void actionTriggered(const QString& action, bool pressed);
+    /// For the status bar: "Xbox Elite 2 connected → kempston"
+    void notice(const QString& text);
+    /// The port-read heuristic plugged a device for the loaded program (ui-ux.md §3.8): the toast's line
+    void autoDecided(const QString& text);
+
+private:
+    void onBound();
+    void onUnbound();
+    void poll();
+#ifdef ENABLE_CONTROLLERS
+    void assignPlayers(const std::vector<controllers::HostDeviceInfo>& devices);
+    /// Plug what the resolved profiles' connectors name, where the machine holds something else
+    void applyConnectorPlans();
+    void onFileLoaded(const QString& emulatorId, const QString& path);
+    void checkAuto();
+    void applyAuto(const controllers::AutoDecision& decision);
+    bool saveUserProfile(controllers::Profile profile, QString& error);
+    /// H-5: the game's haptics play only while the bound machine runs live at 1x and the application has focus
+    void updateHapticsGate();
+    /// debug-and-ttd.md §7: a breakpoint hit is one short pulse on every pad with motors (debug layer on)
+    void onBreakpointHit(const QString& emulatorId);
+    /// The feed for the resolved profiles: a game profile's haptics, else the sound filters when on, else none
+    void attachHaptics();
+    std::shared_ptr<controllers::IHapticFeed> _hapticFeed;
+    std::string _hapticsKey;  ///< what _hapticFeed was made from: a re-resolve to the same keeps its state
+    uint64_t _fileObserver = 0;
+    uint64_t _breakpointObserver = 0;
+    std::string _fileSha256;  ///< of the program loaded last into the bound emulator
+    QString _fileName;
+    bool _autoDone = false;      ///< decided (or a kept game profile holds the connectors) for this program
+    std::string _autoConnector;  ///< the connector the decision chose: the first pad drives it
+    controllers::AutoDecision _decision;
+    std::unique_ptr<controllers::HostInputService> _service;
+    controllers::ProfileStore _profiles;
+    controllers::ResolvedProfiles _resolved;
+    controllers::ProfileContext _context;
+    /// HostInputControl's owner (the WebAPI / MCP / CLI / Python host verbs run on the GUI thread through it)
+    std::unique_ptr<controllers::IHostInputOwner> _controlOwner;
+    std::vector<controllers::HostDeviceId> _known;
+#endif
+    EmulatorBinding* _binding = nullptr;
+    std::shared_ptr<Emulator> _attached;  ///< the emulator whose ControllerManager samples the service
+    QTimer _timer;
+    uint64_t _revision = ~0ull;
+    uint64_t _machineRevision = ~0ull;
+    bool _debugLayer = false;
+    std::string _manualProfile;
+    bool _soundHaptics = false;
+};

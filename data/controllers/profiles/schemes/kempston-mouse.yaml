@@ -1,0 +1,12 @@
+# The Kempston mouse: the right stick moves it, the right trigger is its left button, the left trigger its right one
+# (mapping-and-profiles.md §7.6)
+schema: 1
+kind: scheme
+id: scheme/kempston-mouse
+label: Kempston mouse
+layers:
+  play:
+    rstick.x: { mouse: dx }
+    rstick.y: { mouse: dy }
+    rt.click: { mouse: left, label: Mouse left }
+    lt.click: { mouse: right, label: Mouse right }

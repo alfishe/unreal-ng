@@ -41,6 +41,8 @@
 #include <thread>
 #include <vector>
 
+#include "common/timehelper.h"
+
 namespace execution
 {
 
@@ -332,6 +334,8 @@ public:
     bool IsLoopThread() const;
     /// One relaxed load: the loop must call LoopWait at this instruction boundary
     bool ShouldYield() const { return _yield.load(std::memory_order_relaxed); }
+    /// Notified when ShouldYield turns true: the loop's wait between frames ends at once (MainLoop::Run)
+    WakeSignal& LoopWake() { return _loopWake; }
     /// Called by the loop at a boundary: pumps the queue, parks while it may not run (serving posted commands).
     /// Returns false when the loop must exit (stopping).
     bool LoopWait();
@@ -408,6 +412,7 @@ private:
     std::chrono::milliseconds _throttle{0};
 
     std::atomic<bool> _yield{false};
+    WakeSignal _loopWake;
     std::atomic<bool> _servingAborted{false};
     std::atomic<Intent> _intentAtomic{Intent::Pause};
     std::atomic<std::thread::id> _loopThreadAtomic{};

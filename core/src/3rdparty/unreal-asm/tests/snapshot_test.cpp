@@ -188,6 +188,7 @@ TEST(Snapshot_Test, EveryAssemblerTemplateTakesASourceWithoutAnEmulator)
         {"zeus-2.2", false},   {"zeus-2.2si", false}, {"zeus-pro", false}, {"zeus-plus-2.16", false},
         {"storm-1.3i", false},   // STORM 1.3i: the 1.3 descriptor
         {"zeus-3.1", false},
+        {"prometheus-48@30000", true}, {"prometheus-128@28000", true},   // installed elsewhere: the probe finds the move
     };
     SourceDocument source = SourceDocument::FromText(ReadTestText("dialects/alasm-backend/oracle1.asm"), "sjasmplus");
     source.name = "oracle1";
@@ -218,6 +219,17 @@ TEST(Snapshot_Test, EveryAssemblerTemplateTakesASourceWithoutAnEmulator)
         ASSERT_TRUE(ReadSnapshot(out, "szx", written, error)) << id << ": " << error;
         const sync::SyncText text = sync::ReadText(sync::ViewOf(written), *descriptor);
         ASSERT_TRUE(text.ok) << id << ": " << text.state;
+        if (const sync::LinearParams& p = descriptor->linear; p.nameAt)
+        {
+            // the work name SAVE writes under (ZAsm 3.10 and later): the title, no more the template's STUB
+            const sync::MachineView view = sync::ViewOf(written);
+            const int page = p.namePage >= 0 ? p.namePage : view.windows[p.nameAt >> 14];
+            const symbols::MemoryPage* bytes = view.Page(page);
+            ASSERT_NE(bytes, nullptr) << id << ": page " << page;
+            const size_t at = p.nameAt & 0x3FFF;
+            EXPECT_EQ(std::string(bytes->bytes.begin() + static_cast<std::ptrdiff_t>(at), bytes->bytes.begin() + static_cast<std::ptrdiff_t>(at + 8)),
+                      "INJECTED") << id;
+        }
         // the text in memory as the assembler's codec reads it (some keep a header of their own there): oracle1's lines
         const ISourceCodec* codec = CodecRegistry::Builtin().Find(descriptor->codec);
         ASSERT_NE(codec, nullptr) << id;

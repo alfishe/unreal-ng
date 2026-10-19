@@ -1,5 +1,6 @@
 #include "card.h"
 
+#include "emulator/slots/cards/fuller/fullerboxcard.h"
 #include "emulator/slots/cards/multisound/multisoundslotcard.h"
 
 namespace
@@ -10,9 +11,13 @@ namespace
 constexpr ttd::TTDDeviceType kMultiSoundTtdTypes[] = { ttd::TTDDeviceType::MultiSound, ttd::TTDDeviceType::Saa1099,
                                                       ttd::TTDDeviceType::Sam2695, ttd::TTDDeviceType::MultiSoundGs };
 
+/// The Fuller Box: one blob, its time base and AY
+constexpr ttd::TTDDeviceType kFullerBoxTtdTypes[] = { ttd::TTDDeviceType::FullerBox };
+
 /// One entry per card the slots build themselves (the others keep their legacy owners, slotmanager.h)
 constexpr CardType kCardTypes[] = {
     { MultiSoundCard::kCardId, &MultiSoundSlotCard::Create, kMultiSoundTtdTypes },
+    { FullerBoxCard::kCardId, &FullerBoxCard::Create, kFullerBoxTtdTypes },
 };
 
 } // namespace

@@ -333,6 +333,11 @@ protected:
     uint8_t _keyboardMatrixState[8];
     std::map<ZXKeysEnum, uint8_t> _keyboardPressedKeys;
 
+    /// Keyboard-joystick overlay (controller manager, retro-devices §5): the keys every Sinclair / Cursor / keys
+    /// joystick holds, active low per half-row, ANDed into the matrix read. Wired in parallel with the keys, so a
+    /// released stick never releases a key the user holds. Owned by ControllerManager (its TTD state), 0xFF = none
+    uint8_t _overlay[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
     /// Host (MessageCenter) key events ignored: a ZX-Poly group member takes
     /// its keys from the group, at frame boundaries, in step with the others
     bool _hostInputGated = false;
@@ -424,6 +429,16 @@ public:
     bool RequestHostRoute(const std::string& name, std::string& error);
     static const char* HostRouteName(HostKeyboardRoute route);
     /// endregion </PS/2 (physical keys)>
+
+    /// region <Keyboard-joystick overlay>
+public:
+    /// Replace the overlay (8 half-rows, active low); ControllerManager recomputes it from its connectors
+    void SetOverlay(const uint8_t rows[8]);
+    uint8_t OverlayRow(uint8_t row) const { return row < 8 ? _overlay[row] : 0xFF; }
+    /// Where a plain matrix key sits: its half-row (0 = A8 ... 7 = A15) and its bit. False for ZXKEY_NONE and the
+    /// extended keys (shift combinations, no position of their own)
+    static bool MatrixPosition(ZXKeysEnum key, uint8_t& row, uint8_t& bit);
+    /// endregion </Keyboard-joystick overlay>
 
     /// region <Helper methods>
 public:

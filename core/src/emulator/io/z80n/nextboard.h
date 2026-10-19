@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "emulator/io/z80n/nextcopper.h"
+#include "emulator/io/z80n/nextkeyjoystick.h"
 #include "emulator/io/z80n/nextregjournal.h"
 #include "emulator/io/z80n/nextsprites.h"
 #include "emulator/io/z80n/nextvideoregs.h"
@@ -121,6 +122,8 @@ public:
     bool PiEar() const { return _piEar; }
     void SetBeforeCpuWrite(std::function<void()> hook) { _beforeCpuWrite = std::move(hook); }
     void SetInterrupts(NextInterruptSource* interrupts) { _interrupts = interrupts; }
+    /// The key joystick (NR #28 / #29 / #2B write its map; the decoder ANDs its keys into port #FE)
+    const NextKeyJoystick& KeyJoystick() const { return _keyJoystick; }
     /// Every NextREG access of the program (a read through #253B, a write by NEXTREG, #253B or the copper) is told to the hook with the
     /// door it came through, before the register takes the write (the breakpoints; a tool's write and the board's own never are)
     using AccessHook = std::function<void(bool write, uint8_t reg, uint8_t value, NextRegSource source)>;
@@ -220,6 +223,7 @@ private:
     NextVideoRegs _video;
     NextSprites _sprites;
     NextCopper _copper;
+    NextKeyJoystick _keyJoystick;
     NextRegJournal _journal;
     std::function<void(uint32_t&, uint32_t&, uint16_t&)> _journalClock;
     NextRegSource _source = NextRegSource::Internal;

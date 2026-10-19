@@ -97,6 +97,9 @@ enum class Src : uint16_t
     Lvd2ZxnetUsb,
     IzzxZxWifi,
     IzzxZxWifiReadme,
+    FuseFuller,
+    MameFuller,
+    ZxspFullerBox,
     // The SL-0 research of this design (facts collected from sources without a direct URL, e.g. SVN-only)
     RepoSlotsResearchMachines,
     RepoSlotsResearchCards,

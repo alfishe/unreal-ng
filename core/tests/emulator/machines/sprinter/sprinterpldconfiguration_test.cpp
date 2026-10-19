@@ -96,7 +96,7 @@ protected:
 TEST_F(SprinterPldConfiguration_Test, Registry_FindsByFullThenHeadHash)
 {
     SprinterPldConfigurationRegistry registry;
-    ASSERT_EQ(registry.Count(), 2u) << "Standard and Game";
+    ASSERT_EQ(registry.Count(), 3u) << "Standard, Game and TMK";
     EXPECT_EQ(registry.Standard().Descriptor().name, "Standard");
     EXPECT_EQ(registry.Find(SprinterPldStandard::kFullHash304, 0), 0);
 

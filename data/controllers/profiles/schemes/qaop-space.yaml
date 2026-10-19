@@ -1,0 +1,19 @@
+# Q up, A down, O left, P right, Space fire.
+# The d-pad and the left stick move; a game that extends it binds the rest (mapping-and-profiles.md §7.6)
+schema: 1
+kind: scheme
+id: scheme/qaop-space
+label: Q A O P + Space
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.up:      { key: Q }
+    dpad.down:    { key: A }
+    dpad.left:    { key: O }
+    dpad.right:   { key: P }
+    lstick.up:    { key: Q }
+    lstick.down:  { key: A }
+    lstick.left:  { key: O }
+    lstick.right: { key: P }
+    south:        { key: SPACE, label: Fire }

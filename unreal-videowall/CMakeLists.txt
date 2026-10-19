@@ -313,6 +313,7 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/testrom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/boot" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/configs" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/configs"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/controllers" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/controllers"
         # Bump the bundle mtime so Finder/Dock drop their cached icon for this path
         COMMAND touch "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}>"
         COMMENT "Copying resources to Video Wall app bundle"
@@ -341,6 +342,7 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/midi" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/boot" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/configs" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall/configs"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/controllers" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall/controllers"
         COMMAND ${CMAKE_COMMAND} -E tar "cf" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall-Windows.zip" "--format=zip" "--" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall"
         DEPENDS ${PROJECT_NAME}
         COMMENT "Creating Windows package for Video Wall in ${CMAKE_BINARY_DIR}/packages"
@@ -360,6 +362,7 @@ if(UNIX AND NOT APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/midi" "${CMAKE_BINARY_DIR}/packages/unreal-videowall/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/boot" "${CMAKE_BINARY_DIR}/packages/unreal-videowall/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/configs" "${CMAKE_BINARY_DIR}/packages/unreal-videowall/configs"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/controllers" "${CMAKE_BINARY_DIR}/packages/unreal-videowall/controllers"
         # Desktop integration files in XDG layout (copy share/ into ~/.local/share or /usr/share)
         COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/install/linux/unrealng-videowall.desktop" "${CMAKE_BINARY_DIR}/packages/unreal-videowall/share/applications/unrealng-videowall.desktop"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/install/linux/icons" "${CMAKE_BINARY_DIR}/packages/unreal-videowall/share/icons"

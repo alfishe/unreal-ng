@@ -707,6 +707,9 @@ public:
     AudioDeviceInfo* device(AudioSourceType type);
     const AudioDeviceInfo* device(AudioSourceType type) const;
     const int16_t* deviceBuffer(AudioSourceType type) const;
+    /// Whether the device has a frame buffer, without reading it: any thread may ask (the TurboSound buffers settle the
+    /// chips' deferred steps on a read, which only the emulator thread may do)
+    bool hasDeviceBuffer(AudioSourceType type) const;
     void setDeviceMute(AudioSourceType type, bool mute);
     void setDeviceSolo(AudioSourceType type, bool solo);
     void setDeviceVolume(AudioSourceType type, float volume);

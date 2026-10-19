@@ -11,6 +11,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <functional>
 #include <filesystem>
@@ -63,10 +64,18 @@ MachineState CaptureState(EmulatorContext* context, Session& session)
     s.t = z80->t;
     const size_t pages = session.GetModelRamPages();
     s.ram.assign(context->pMemory->RAMPageAddress(0), context->pMemory->RAMPageAddress(0) + pages * 0x4000);
+    // A device past the v1 ids (D23: the controller manager's keyboard joysticks) has no counterpart in v1
     for (const ttd::TTDRegistryEntry& e : session.GetPeripheralRegistry().Entries())
-        if (e.device && e.device->TTDStateSize() != 0)
+        if (e.device && e.device->TTDStateSize() != 0 && e.legacyId != ttd::PeripheralId::None)
             e.device->TTDSaveStateTo(s.devices[static_cast<uint8_t>(e.legacyId)]);
     return s;
+}
+
+/// The devices v1 can record: the engine also records the ones past the v1 ids (D23), which v1 leaves out
+std::vector<std::string> V1Devices(std::vector<std::string> peripherals)
+{
+    peripherals.erase(std::remove(peripherals.begin(), peripherals.end(), "controllers"), peripherals.end());
+    return peripherals;
 }
 }  // namespace
 
@@ -521,7 +530,7 @@ TEST_F(TimeTravelController_Test, StatusDescribesTheSessionAsV1)
     EXPECT_EQ(a.checkpointCount, b.checkpointCount);
     EXPECT_EQ(a.sessionStartFrame, b.sessionStartFrame);
     EXPECT_EQ(a.currentEndFrame, b.currentEndFrame);
-    EXPECT_EQ(a.machine.peripherals, b.machine.peripherals) << "the same devices recorded";
+    EXPECT_EQ(a.machine.peripherals, V1Devices(b.machine.peripherals)) << "the same devices recorded";
     EXPECT_FALSE(b.machine.peripherals.empty());
     EXPECT_EQ(a.inputEventCount, b.inputEventCount);
 
@@ -627,7 +636,7 @@ TEST_F(TimeTravelController_Test, FileInfoAndPortSearchReadTheEngineFile)
     EXPECT_EQ(b.schemaVersion, 2u);
     EXPECT_EQ(a.machine.modelId, b.machine.modelId);
     EXPECT_EQ(a.machine.model, b.machine.model);
-    EXPECT_EQ(a.machine.peripherals, b.machine.peripherals);
+    EXPECT_EQ(a.machine.peripherals, V1Devices(b.machine.peripherals));
     EXPECT_EQ(a.machine.romSignature, b.machine.romSignature);
     EXPECT_EQ(a.machine.generalSound, b.machine.generalSound);
     EXPECT_EQ(a.startFrame, b.startFrame);

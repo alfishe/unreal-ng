@@ -220,6 +220,12 @@ struct LinearParams
     std::vector<uint16_t> endAlso;     ///< other words set to the end (ZX ASM 3.0: a second end word)
     uint16_t blankFrom = 0;            ///< bytes from blankFrom up to blankTo (exclusive) set to blanks (ZX-ASM 2.x: the
     uint16_t blankTo = 0;              ///< cursor line's buffer, which the editor writes back into the text)
+    /// The work name, blank padded: what SAVE writes the text under and the editor's status line shows (ZAsm 3.10 and
+    /// later: the name in its "A:NAME    .asm"); an inject gives it the title (0 = none). In RAM page namePage (the
+    /// 512K ZAsms: page 27, mapped at #C000 or not), -1: the page mapped at nameAt now (not upperPage)
+    uint16_t nameAt = 0;
+    uint8_t nameLength = 8;
+    int namePage = -1;
 };
 
 struct TypingParams
@@ -248,6 +254,9 @@ struct SyncDescriptor
     /// RAM pages (0-7, the same ids at 128K and 512K) the assembler leaves to texts of their own: a project's other
     /// sources go there, and its INCLUDE "NAME",page finds them loaded (ALASM) instead of reading the disk
     std::vector<int> projectPages;
+    /// The assembler holds one text and reads what it INCLUDEs from the disk (XAS: LTEXT): a project's other sources
+    /// go onto the disk (ProjectInjectPlan::diskFiles) instead of into memory
+    bool projectOnDisk = false;
     /// Return addresses the stack holds in this order (lowest address first, within `idleDepth` bytes above SP) only
     /// while the assembler waits for a command: a text may be written then (part B, §16.2). Empty = no rule known
     std::vector<uint16_t> idleChain;
@@ -259,12 +268,21 @@ struct SyncDescriptor
     /// Bytes that are all zero while it is idle (MASM: its line buffer, blank padded in the editor; 0 = none)
     uint16_t idleZeroAt = 0;
     uint16_t idleZeroLength = 0;
+    /// An installer that moves the whole code (PROMETHEUS asks its address): installedAt the address this descriptor
+    /// describes (0 = the code stays), identify[0]'s absolute words at the offsets relocatedWords move with it. Probe
+    /// finds a moved copy when nothing identifies in place; its descriptor is "<id>@<address>" (Relocated)
+    uint16_t installedAt = 0;
+    std::vector<uint8_t> relocatedWords;
 };
 
 /// Every built-in descriptor (asm-synchronizer.md §7), each checked with golden dumps: ALASM 3.8c, 4.42-4.46, 4.5,
 /// 5.00-5.09, TASM 4.12, XAS 4.18, 5.05, 7.43c, 7.447, 9.07m, 9.10, STORM 1.3, ZAsm 3.15
 const std::vector<SyncDescriptor>& Descriptors();
+/// A built-in descriptor by id; "<id>@<address>" is the relocatable one installed at that address (Relocated)
 const SyncDescriptor* FindDescriptor(const std::string& id);
+/// The code of `base` moved by `shift` bytes: every address of it below the paged window (all of them on a 48K one,
+/// upperPage 0) moves, so do identify[0]'s relocatedWords. Kept for the process (the same pointer for the same move)
+const SyncDescriptor* Relocated(const SyncDescriptor& base, int shift);
 
 /// The source in memory as its assembler would save it
 struct SyncText
@@ -333,13 +351,16 @@ struct ProjectInjectPlan
     std::string error;
     std::vector<InjectPlan> pages;       ///< main first, then the INCLUDEd sources in the project's order
     std::vector<WriteAsResult> texts;    ///< the files written, in the same order (empty: not written)
+    /// projectOnDisk: the INCLUDEd sources as the assembler's disk files (texts[1...] by CatalogFile), for the disk it
+    /// reads them from; pages then holds the main text alone
+    std::vector<containers::TrdosFile> diskFiles;
     Diagnostics diagnostics;
 };
 
 /// Plans a project (HostProject: files[0] the main source): written as the assembler's texts by WriteProjectAs, the
 /// main one titled `title` over the live text (PlanInject's rules), the others named by ProjectTextNames into the
 /// descriptor's project pages, each refused when it holds a text with changes not
-/// saved (unless `force`). One file is PlanInject of WriteAs
+/// saved (unless `force`), or as disk files (projectOnDisk). One file is PlanInject of WriteAs
 ProjectInjectPlan PlanInjectProject(const MachineView& machine, const SyncDescriptor& descriptor, const std::vector<ProjectFile>& files,
                                     const std::string& title, const InjectOptions& options = {});
 
