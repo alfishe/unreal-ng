@@ -44,6 +44,7 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     FastMemIf = Memory::GetFastMemoryInterface();
     DbgMemIf = Memory::GetDebugMemoryInterface();
     FastContendedMemIf = Memory::GetFastContendedMemoryInterface();
+    FastContendedStockMemIf = Memory::GetFastContendedStockMemoryInterface();
     DbgContendedMemIf = Memory::GetDebugContendedMemoryInterface();
     OverlayFastMemIf = Memory::GetOverlayMemoryInterface(false, false);
     OverlayDbgMemIf = Memory::GetOverlayMemoryInterface(true, false);
@@ -104,6 +105,8 @@ Z80::~Z80()
 
     delete FastContendedMemIf;
     FastContendedMemIf = nullptr;
+    delete FastContendedStockMemIf;
+    FastContendedStockMemIf = nullptr;
     delete DbgContendedMemIf;
     DbgContendedMemIf = nullptr;
     delete OverlayFastMemIf;

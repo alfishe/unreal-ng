@@ -142,6 +142,9 @@ the first sector (about a second, 4 revolutions), reads the ID under the head an
 
 ## Pitfalls
 
+- **XAS holds a file of 64 sectors** (16K at `#C000` of RAM page 3, title and end included): a 65th sector wraps over
+  `#0000` and leaves a scrap of the text, no error (measured on 7.447, 2026-10-19). `zxasm convert --project --to xas`
+  cuts a longer file into INCLUDEd parts.
 - **XAS 9.10**: Extend for 4 frames types letters into the text: hold it 12 frames. Its file list shows only files
   with `AS` in the catalog start field (what XAS and `zxasm encode` write); after a Pentagon reset it reopens the
   text left in RAM instead of showing the list (start a new machine). A string of several characters in an LD / DW

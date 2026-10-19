@@ -18,6 +18,23 @@ using unrealasm::testing::ReadTestText;
 
 namespace
 {
+/// ORG and n lines, the text the editor's room was measured with (LOAD in the emulator, 2026-10-19)
+SourceDocument MeasuredText(size_t n, const std::string& dialect)
+{
+    std::string text = "        ORG 40000\n";
+    for (size_t i = 0; i < n; ++i)
+        text += i % 3 ? "        LD A,(IX+" + std::to_string(i % 100) + ")\n" : "        ADD A,"  + std::to_string(i % 200) + "\n";
+    return SourceDocument::FromText(text, dialect);
+}
+
+bool Longer(const EncodeResult& r)
+{
+    return std::any_of(r.diagnostics.begin(), r.diagnostics.end(), [](const Diagnostic& d) { return d.message.find("longer than") != std::string::npos; });
+}
+}  // namespace
+
+namespace
+{
 struct Sample
 {
     const char* file;
@@ -321,4 +338,16 @@ TEST(TasmCodec_Test, Tasm5xStoresLinesStructurally)
     EXPECT_EQ(codecs::TasmCodec::DecodeBody(body, "5.5"), "LAB4    LD      A,(IX-LAB1)     ;C2");
     EXPECT_EQ(codecs::TasmCodec::DecodeBody(std::vector<uint8_t>{0xB3, 0x80, '1', 0x86, '2'}, "5.0"), "        LD      A,1,B,2");
     EXPECT_EQ(codecs::TasmCodec::DecodeBody(std::vector<uint8_t>{'L', 'A', 'B', '1', ',', 'L', 'A', 'B', '2'}, "5.0").substr(0, 4), "LAB1");
+}
+
+TEST(TasmCodec_Test, ALongerTextThanTheEditorHoldsIsReported)
+{
+    // TASM 4.12 loads 22801 bytes (#A6EE up to #FFFF) and says "OK" over a longer file, its text broken: a project's longer file is cut into INCLUDEd parts (zxasm convert --project)
+    const codecs::TasmCodec codec;
+    EncodeOptions options;
+    options.subversion = "4.12";
+    const EncodeResult fits = codec.Encode(MeasuredText(2122, "tasm"), options);
+    EXPECT_EQ(fits.bytes.size(), 22801u);
+    EXPECT_FALSE(Longer(fits));
+    EXPECT_TRUE(Longer(codec.Encode(MeasuredText(2123, "tasm"), options)));
 }
