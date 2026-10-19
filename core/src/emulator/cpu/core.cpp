@@ -950,7 +950,7 @@ void Core::Reset(ROMModeEnum mode)
     _screen->ResetBorderColor(_state->border_attr);
 #ifdef ENABLE_RECORDING
     if (_recordingManager)
-        _recordingManager->Reset();  // Reset recording manager (stops active recording, clears counters)
+        _recordingManager->Reset();  // Clears the counters; a recording goes on with its file untouched
 #endif
 
     // Single NC_SYSTEM_RESET notification per reset, posted only after the reset completes:

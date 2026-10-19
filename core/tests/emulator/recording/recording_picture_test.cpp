@@ -35,8 +35,9 @@ public:
     std::string GetDisplayName() const override { return "picture sink"; }
     bool SupportsVideo() const override { return true; }
     bool SupportsAudio() const override { return false; }
-    void OnVideoFrame(const FramebufferDescriptor& framebuffer, double) override
+    void OnVideoFrame(const FramebufferDescriptor& framebuffer, double timestamp) override
     {
+        timestamps.push_back(timestamp);
         width = framebuffer.width;
         height = framebuffer.height;
         pixels.assign(framebuffer.memoryBuffer, framebuffer.memoryBuffer + framebuffer.memoryBufferSize);
@@ -46,6 +47,7 @@ public:
     uint16_t width = 0;
     uint16_t height = 0;
     std::vector<uint8_t> pixels;
+    std::vector<double> timestamps;
     bool _recording = false;
 };
 
@@ -205,4 +207,112 @@ TEST_F(RecordingPicture_Test, AZXPolyMasterRecordsTheComposedFrame)
 
     context->pRecordingManager->StopRecording();
     manager->RemoveEmulator(master->GetId());
+}
+
+/// A video card's picture (the FT812 of the TS-Conf VDAC2, 1024x768 / 800x600 VGA modes) has square pixels of its
+/// own: a recording that starts on it has its size and its pixels, not the CRT's 352:288 shape (it was 1024x838)
+TEST_F(RecordingPicture_Test, AVideoCardsPictureKeepsItsSize)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    emulator->RunNFrames(2);
+
+    std::vector<uint8_t> card(static_cast<size_t>(1024) * 768 * 4);
+    context->pScreen->SetExternalPicture(card.data(), 1024, 768, 16949);
+    const FramebufferDescriptor fb = context->pScreen->GetFramebufferDescriptor();
+    ASSERT_EQ(fb.width, 1024);
+    WritePattern(fb);
+
+    auto sink = std::make_unique<PictureSink>();
+    PictureSink* sinkPtr = sink.get();
+    ASSERT_TRUE(context->pRecordingManager->StartRecordingWithEncoder(
+        TestPathHelper::GetUniqueTestScratchPath("picture-external") + ".mp4", std::move(sink)));
+    EXPECT_EQ(sinkPtr->startedConfig.videoWidth, 1024u);
+    EXPECT_EQ(sinkPtr->startedConfig.videoHeight, 768u);
+
+    context->pRecordingManager->CaptureFrame(fb);
+    EXPECT_EQ(sinkPtr->width, 1024);
+    EXPECT_EQ(sinkPtr->height, 768);
+    ASSERT_EQ(sinkPtr->pixels.size(), card.size());
+    EXPECT_EQ(sinkPtr->pixels, card) << "every pixel as the card drew it";
+
+    context->pRecordingManager->StopRecording();
+    context->pScreen->ClearExternalPicture();
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// A program that switches the monitor to the video card while recording: the card's 4:3 picture is fitted into the
+/// file with its aspect kept (bars above and below), not dropped as a "picture of another size"
+TEST_F(RecordingPicture_Test, ASwitchToTheVideoCardIsFittedIntoTheFile)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    emulator->RunNFrames(2);
+
+    auto sink = std::make_unique<PictureSink>();
+    PictureSink* sinkPtr = sink.get();
+    ASSERT_TRUE(context->pRecordingManager->StartRecordingWithEncoder(
+        TestPathHelper::GetUniqueTestScratchPath("picture-external-switch") + ".mp4", std::move(sink)));
+    const FramebufferDescriptor native = context->pScreen->GetFramebufferDescriptor();
+    ASSERT_EQ(native.width, 352);
+    context->pRecordingManager->CaptureFrame(native);
+    ASSERT_EQ(sinkPtr->width, 352);
+    ASSERT_EQ(sinkPtr->height, 288);
+
+    std::vector<uint8_t> card(static_cast<size_t>(1024) * 768 * 4);
+    context->pScreen->SetExternalPicture(card.data(), 1024, 768, 16949);
+    const FramebufferDescriptor fb = context->pScreen->GetFramebufferDescriptor();
+    WritePattern(fb);
+    sinkPtr->pixels.clear();
+    context->pRecordingManager->CaptureFrame(fb);
+
+    ASSERT_EQ(sinkPtr->pixels.size(), static_cast<size_t>(352) * 288 * 4) << "the card's frame was recorded";
+    EXPECT_EQ(context->pRecordingManager->GetStats().framesRecorded, 2u);
+    // 4:3 in 352x288: 352x264, 12 lines of bars above and below
+    const auto pixel = [&](uint32_t x, uint32_t y) { return sinkPtr->pixels.data() + (static_cast<size_t>(y) * 352 + x) * 4; };
+    EXPECT_EQ(pixel(176, 0)[3], 0xFF) << "a bar above";
+    EXPECT_EQ(pixel(176, 287)[3], 0xFF) << "a bar below";
+    EXPECT_EQ(pixel(176, 12)[3], 0xA5) << "the picture starts on line 12";
+    EXPECT_EQ(pixel(176, 275)[3], 0xA5) << "and ends on line 275";
+    EXPECT_EQ(pixel(0, 144)[3], 0xA5) << "full width";
+
+    context->pRecordingManager->StopRecording();
+    context->pScreen->ClearExternalPicture();
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// A reset while recording (a snapshot load resets the machine too) leaves the file alone: its size stays, its clock
+/// goes on. A VDAC2 program loaded into a recording switches to the FT812 picture right after the load
+TEST_F(RecordingPicture_Test, AResetKeepsTheRecordingsFile)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    emulator->RunNFrames(2);
+
+    auto sink = std::make_unique<PictureSink>();
+    PictureSink* sinkPtr = sink.get();
+    ASSERT_TRUE(context->pRecordingManager->StartRecordingWithEncoder(
+        TestPathHelper::GetUniqueTestScratchPath("picture-reset") + ".mp4", std::move(sink)));
+    context->pRecordingManager->CaptureFrame(context->pScreen->GetFramebufferDescriptor());
+    context->pRecordingManager->CaptureFrame(context->pScreen->GetFramebufferDescriptor());
+    ASSERT_EQ(sinkPtr->width, 352);
+
+    emulator->Reset();
+    std::vector<uint8_t> card(static_cast<size_t>(1024) * 768 * 4);
+    context->pScreen->SetExternalPicture(card.data(), 1024, 768, 16949);
+    context->pRecordingManager->CaptureFrame(context->pScreen->GetFramebufferDescriptor());
+
+    EXPECT_TRUE(context->pRecordingManager->IsRecording());
+    EXPECT_EQ(context->pRecordingManager->GetStats().framesRecorded, 3u) << "the count goes on";
+    EXPECT_EQ(sinkPtr->width, 352) << "the card's picture is fitted into the file";
+    EXPECT_EQ(sinkPtr->height, 288);
+    ASSERT_EQ(sinkPtr->timestamps.size(), 3u);
+    EXPECT_GT(sinkPtr->timestamps[2], sinkPtr->timestamps[1]) << "the file's clock goes on";
+
+    context->pRecordingManager->StopRecording();
+    context->pScreen->ClearExternalPicture();
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
