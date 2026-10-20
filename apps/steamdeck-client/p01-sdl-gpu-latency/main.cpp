@@ -12,6 +12,11 @@
 //
 //   p01-sdl-gpu-latency [--model PENTAGON] [--file game.tap] [--present vsync|mailbox|immediate] [--fif 1|2]
 //                       [--delay 0..3] [--crop full|deckfit|paper] [--seconds N] [--windowed] [--autofire MS]
+//                       [--headless]
+//
+// Built with automation (build.sh default) the instance is driven over the network: WebAPI on port 8090
+// (UNREAL_WEBAPI_PORT). --headless runs the emulator and automation only, no window and no GPU (a container, an
+// SSH session); Ctrl+C or --seconds ends it.
 //
 // Logs: ~/steamdeck-poc-logs/p01-*.csv. Quit: View + Menu, Esc.
 
@@ -40,6 +45,7 @@ struct Options
     double seconds = 0;
     double autofireMs = 0;   // > 0: toggle fire on a timer, no human needed (automated latency runs)
     bool windowed = false;   // development on a desktop: a 1280x800 window instead of fullscreen
+    bool headless = false;   // no window, no GPU: the emulator and automation only
 };
 
 struct Rect { uint32_t x, y, w, h; };
@@ -70,12 +76,19 @@ Rect Fit(const Rect& src, uint32_t dw, uint32_t dh)
 int main(int argc, char** argv)
 {
     Options opt;
+    auto isFlag = [](const char* arg) {
+        return std::strcmp(arg, "--windowed") == 0 || std::strcmp(arg, "--headless") == 0;
+    };
     for (int i = 1; i < argc; i++)
-        if (std::strcmp(argv[i], "--windowed") == 0)
-            opt.windowed = true;
-    for (int i = 1; i + 1 < argc; i += 2)
     {
         if (std::strcmp(argv[i], "--windowed") == 0)
+            opt.windowed = true;
+        if (std::strcmp(argv[i], "--headless") == 0)
+            opt.headless = true;
+    }
+    for (int i = 1; i + 1 < argc; i += 2)
+    {
+        if (isFlag(argv[i]))
         {
             i--;   // a flag without a value
             continue;
@@ -91,11 +104,13 @@ int main(int argc, char** argv)
         else if (k == "--autofire") opt.autofireMs = std::stod(v);
     }
 
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD))
+    if (!SDL_Init(opt.headless ? SDL_INIT_EVENTS : SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD))
     {
         SDL_Log("SDL_Init: %s", SDL_GetError());
         return 1;
     }
+    if (opt.headless && !SDL_InitSubSystem(SDL_INIT_AUDIO))
+        SDL_Log("audio: %s", SDL_GetError());   // a container has no sound: run silent
 
     // Emulator
     deckpoc::EmuHost emu;
@@ -131,6 +146,24 @@ int main(int argc, char** argv)
         SDL_Log("audio: %s", error.c_str());
     emu.SetPresentDelayFrames(static_cast<uint8_t>(opt.presentDelay));
     emu.Start();
+
+    if (opt.headless)
+    {
+        // SDL turns SIGINT / SIGTERM into SDL_EVENT_QUIT
+        const uint64_t begin = deckpoc::NowNs();
+        bool done = false;
+        while (!done)
+        {
+            SDL_Event e;
+            while (SDL_PollEvent(&e))
+                done |= e.type == SDL_EVENT_QUIT;
+            done |= opt.seconds > 0 && (deckpoc::NowNs() - begin) / 1e9 >= opt.seconds;
+            SDL_Delay(50);
+        }
+        emu.Stop();
+        SDL_Quit();
+        return 0;
+    }
 
     // GPU
     SDL_Window* window = SDL_CreateWindow("P-01 SDL_GPU latency", 1280, 800, opt.windowed ? 0 : SDL_WINDOW_FULLSCREEN);

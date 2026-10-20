@@ -29,6 +29,12 @@ public:
 public:
     uint8_t MemoryReadFast(uint16_t addr, bool isExecution) override;
     bool HasStockFastRead() const override { return false; }
+    /// The ProfROM strobes and the magic-button release act on reads: while either is armed, no fetch is pure
+    bool RepeatFetchIsPure(uint16_t addr) const override
+    {
+        (void)addr;
+        return !(_scorpProfromActive | _scorpionDosTriggerActive);
+    }
     uint8_t MemoryReadDebug(uint16_t addr, bool isExecution) override;
 
     /// ROM loader completion hook (design §4.2): derives the ProfROM image

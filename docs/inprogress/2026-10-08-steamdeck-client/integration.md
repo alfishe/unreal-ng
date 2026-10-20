@@ -128,10 +128,10 @@ if(DECK_STEAMWORKS)
 endif()
 ```
 
-- **Automation is off** in the Deck player build by default (`ENABLE_AUTOMATION=OFF`). That means
-  no Drogon and no listening ports on a handheld, and a smaller binary. Companion mode (D4) has its
-  own client and needs no server on the Deck. A Deck-side server, e.g. for a Decky plugin, is an
-  explicit opt-in.
+- **Automation is on** in the Deck build (owner, 2026-10-20): the emulator on the Deck is driven over the
+  network through the WebAPI (`:8090`, all interfaces) and MCP, plain HTTP (`UNREAL_HOST_TLS=OFF`).
+  `apps/steamdeck-client/build.sh --no-automation` builds without the servers. Companion mode (D4) has its own
+  client and needs no server on the Deck.
 - **Qt is not needed:** `BUILD_QT_APPS=OFF BUILD_DECK_APP=ON` is a valid configuration, and the CI
   image for it has no Qt.
 - **Compiler flags.** The release binary targets `-march=x86-64-v3`, which Zen 2 supports. A
