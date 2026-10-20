@@ -91,7 +91,7 @@ const char* SymbolC(Op op)
         case Op::Sub: return "-";
         case Op::Mul: return "*";
         case Op::Div: return "/";
-        case Op::Mod: return "%";
+        case Op::Mod: return " % ";   // "7%100" is 7 and the binary number %100 to z80asm
         case Op::And: return "&";
         case Op::Or: return "|";
         case Op::Xor: return "^";
@@ -220,6 +220,9 @@ struct Writer
     std::map<std::string, std::string> renames{};
     std::vector<std::map<std::string, std::string>> localScopes{};
     bool inMacro = false;
+    std::set<std::string> parameters{};   // the names of the parameters of the macro being written
+    // EQU names whose values the numbers give (a 16-bit source's value beyond #FFFF wrapped, as its assembler does)
+    std::map<std::string, int64_t> constants{};
     bool sjasmplus = false;   // the source is sjasmplus': its repeated and fake instructions
     bool displaced = false;   // a displacement may be active: labels and $ go through __UNREALASM_D
     int trueValue = 0;
@@ -373,6 +376,85 @@ struct Writer
         return g;
     }
 
+    std::optional<int64_t> Known(const Expr& e) const
+    {
+        return z80::ConstantValue(e, [&](const std::string& name) {
+            const auto found = constants.find(Name(name));
+            return found == constants.end() ? std::nullopt : std::optional<int64_t>(found->second);
+        });
+    }
+
+    /// A 16-bit source's value beyond #FFFF (X EQU #FFFF+2 is 1 in GENS): masked to its word where z80asm's 32 bits
+    /// would keep it (pasmo's words are 16-bit)
+    bool BeyondWord(const Expr& e) const
+    {
+        const auto v = Known(e);
+        return Z80asm() && wordBits == 16 && v && *v > 0xFFFF;
+    }
+
+    Expr Word(const Expr& e) const { return BeyondWord(e) ? Masked16(e) : e; }
+
+    /// a / b or a MOD b of a source with 16-bit two's complement words and signed division (GENS: #8000/2 = #C000,
+    /// 60000/2 = -2768; the remainder takes the dividend's sign)
+    std::string SignedDivision(const Expr& e)
+    {
+        const auto positive = [](const Expr& a) { return a.kind == Expr::Kind::Number && a.value >= 0 && a.value <= 0x7FFF; };
+        const std::string op = Symbol_(e.op);
+        if (Z80asm())
+        {
+            // 32-bit signed words: each operand widened from 16 bits ((x & #FFFF) ^ #8000) - #8000
+            const auto widen = [&](const Expr& a) {
+                if (positive(a))
+                    return Print(a);
+                return Print(Grouped(Expr::Binary(Op::Sub, Grouped(Expr::Binary(Op::Xor, Masked16(a), Expr::Number(0x8000, ir::NumberSpelling::Hex, 4))),
+                                                  Expr::Number(0x8000, ir::NumberSpelling::Hex, 4))));
+            };
+            return "(" + widen(e.args[0]) + op + widen(e.args[1]) + ")";
+        }
+        // pasmo's 16-bit unsigned words: the magnitudes divided, the sign put back; s = 0-(x SHR 15) is #FFFF for a
+        // negative word, (x XOR s)-s its magnitude or its negation (a number's magnitude and sign are written known)
+        const Expr& x = e.args[0];
+        const Expr& y = e.args[1];
+        const auto word = [](const Expr& n) { return n.value & 0xFFFF; };
+        if (x.kind == Expr::Kind::Number && y.kind == Expr::Kind::Number && word(y) != 0)
+        {
+            // both known: the value (C's division and remainder truncate towards 0, as GENS')
+            const int64_t a = word(x) >= 0x8000 ? word(x) - 0x10000 : word(x);
+            const int64_t b = word(y) >= 0x8000 ? word(y) - 0x10000 : word(y);
+            return std::to_string((e.op == Op::Div ? a / b : a % b) & 0xFFFF);
+        }
+        const std::string a = Print(Grouped(x));
+        const std::string b = Print(Grouped(y));
+        const std::string sub = Symbol_(Op::Sub);
+        const std::string xr = Symbol_(Op::Xor);
+        const auto sign = [&](const std::string& s) { return "(0" + sub + "(" + s + Symbol_(Op::Shr) + "15))"; };
+        const auto apply = [&](const std::string& s, const std::string& negative) { return "((" + s + xr + negative + ")" + sub + negative + ")"; };
+        const auto magnitude = [&](const Expr& n, const std::string& text) {
+            if (n.kind == Expr::Kind::Number)
+                return std::to_string(word(n) >= 0x8000 ? 0x10000 - word(n) : word(n));
+            return apply(text, sign(text));
+        };
+        const auto negative = [&](const Expr& n) { return n.kind == Expr::Kind::Number && word(n) >= 0x8000; };
+        const std::string quotient = "(" + magnitude(x, a) + op + magnitude(y, b) + ")";
+        if (e.op == Op::Mod)
+        {
+            if (x.kind == Expr::Kind::Number)
+                return negative(x) ? "(0" + sub + quotient + ")" : quotient;
+            return apply(quotient, sign(a));
+        }
+        // the quotient's sign: the operands' signs differ (a known operand gives it, or turns it)
+        std::string differ;
+        if (x.kind == Expr::Kind::Number || y.kind == Expr::Kind::Number)
+        {
+            const Expr& known = x.kind == Expr::Kind::Number ? x : y;
+            const std::string& other = x.kind == Expr::Kind::Number ? b : a;
+            differ = negative(known) ? sign("(" + other + xr + "65535)") : sign(other);
+        }
+        else
+            differ = sign("(" + a + xr + b + ")");
+        return apply(quotient, differ);
+    }
+
     std::string TrueIsOne(const Expr& e)
     {
         Expr top = e;
@@ -505,6 +587,8 @@ struct Writer
                         return out;
                     }
                 }
+                if (wordBits == 16 && !unsignedWords && (e.op == Op::Div || e.op == Op::Mod))
+                    return SignedDivision(e);
                 const int p = Priority_(e.op);
                 std::string left = Print(e.args[0]);
                 std::string right = Print(e.args[1]);
@@ -593,8 +677,10 @@ struct Writer
             case Operand::Kind::Immediate:
             {
                 // pasmo reads an operand that starts with a parenthesis as memory: "0+" keeps it a value (pasmodoc "Bugs")
+                // (also a macro parameter it starts with: its argument may be in parentheses)
                 const std::string v = Print(o.expr);
-                return instruction && !v.empty() && v[0] == '(' ? "0+" + v : v;
+                const std::string first = v.substr(0, v.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"));
+                return instruction && !v.empty() && (v[0] == '(' || parameters.count(first)) ? "0+" + v : v;
             }
             case Operand::Kind::String: return Quote(o.text);
         }
@@ -900,6 +986,12 @@ struct Writer
             case ir::DirectiveKind::Equ:
                 if (redefinable && redefinable->count(label))
                     return Checked({"= " + args()}, "DEFL");
+                if (s.args.size() == 1)
+                {
+                    if (const auto v = Known(s.args[0]))
+                        constants[label] = BeyondWord(s.args[0]) ? *v & 0xFFFF : *v;
+                    return Checked({"EQU " + Print(Word(s.args[0]))}, "EQU");
+                }
                 return Checked({"EQU " + args()}, "EQU");
             case ir::DirectiveKind::Defl:
                 if (redefinable && !redefinable->count(label))
@@ -913,12 +1005,14 @@ struct Writer
                 if (!s.operands.empty())
                 {
                     if (s.operands.size() == 1 && s.operands[0].kind == Operand::Kind::Immediate)
-                        return Checked({"DS " + Print(s.args[0]) + "," + Operands(s.operands)}, "DS");
-                    return Checked({"REPT " + Print(s.args[0]), "DB " + Operands(s.operands), RepeatEnd()}, "DS");
+                        return Checked({"DS " + Print(Word(s.args[0])) + "," + Operands(s.operands)}, "DS");
+                    return Checked({"REPT " + Print(Word(s.args[0])), "DB " + Operands(s.operands), RepeatEnd()}, "DS");
                 }
-                if (s.args.size() <= 2)
+                if (s.args.empty())
                     return Checked({"DS " + args()}, "DS");
-                return Checked({"REPT " + Print(s.args[0]), "DB " + args(1), RepeatEnd()}, "DS");
+                if (s.args.size() <= 2)
+                    return Checked({"DS " + Print(Word(s.args[0])) + (s.args.size() > 1 ? "," + Print(s.args[1]) : "")}, "DS");
+                return Checked({"REPT " + Print(Word(s.args[0])), "DB " + args(1), RepeatEnd()}, "DS");
             case ir::DirectiveKind::Include:
             {
                 std::string name = s.text;
@@ -997,7 +1091,7 @@ struct Writer
                 }
                 {
                     // a condition the target cannot compute: the block is assembled (its ELSE / ENDIF stay paired)
-                    std::vector<std::string> out = Checked({"IF " + Print(s.args[0])}, "IF");
+                    std::vector<std::string> out = Checked({"IF " + Print(Word(s.args[0]))}, "IF");
                     if (out.size() == 1 && out[0].rfind("@; unreal-asm: not converted", 0) == 0)
                         out.push_back("IF 1");
                     return out;
@@ -1503,6 +1597,13 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
             texts.push_back("@" + w.Name(macroHeader) + " MACRO" + (params.empty() ? "" : " " + params));
             result.macroParams[macroHeader] = count;
             w.inMacro = true;
+            w.parameters.clear();
+            for (size_t from = 0; from < params.size();)
+            {
+                const size_t comma = std::min(params.find(',', from), params.size());
+                w.parameters.insert(params.substr(from, comma - from));
+                from = comma + 1;
+            }
         }
         if (openBlock)
         {
@@ -1582,7 +1683,10 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
                 texts.push_back("ENDP");
         }
         if (closeMacro)
+        {
             w.inMacro = false;
+            w.parameters.clear();
+        }
 
         // Lay out: label in column 0, statements from column 8; "@" lines own their column; "= x" is label DEFL x
         std::string out;

@@ -249,7 +249,11 @@ not kept: XMACROS and Xas help on the XAS 4.18, 5.05 and 5.05SE disks (= the ZX 
 - screen check (OCR of the emulator screen against the decoded rows cut at the row width, every 19-line window):
   XAS 7.447: 3373 rows of the 11 7.x files, 0 differences; XAS 4.18: 1544 rows of the 7 4.x files, 0;
   XAS 9.10: all 18 files, 4913 rows, 1 difference (XASCII's `IFNZ`, a 7.x-only token: 9.10 prints table junk);
-  XAS 7.43c: all files, no difference in rows 1-16 (rows 17-19 are covered by its status lines).
+  XAS 7.43c: all files, no difference in rows 1-16 (rows 17-19 are covered by its status lines);
+  XAS 9.07m (2026-10-19, `tools/verification/unreal-asm/emulator/xas-screen-check.py`, the 20-row windows read from
+  the screen memory): all 18 files, 4913 rows, 1 difference, the same `IFNZ` as 9.10.
+- `P#14VRZZ__KERNEL` (the file without its first title byte) does not load as it is into 9.07m or 9.10: XAS shows a
+  new text. With that byte back it loads and shows its 296 rows as decoded.
 - None of 470 TR-DOS images of other software has a file the codec takes for XAS.
 
 ## 10. Open questions
@@ -258,6 +262,5 @@ not kept: XMACROS and Xas help on the XAS 4.18, 5.05 and 5.05SE disks (= the ZX 
   register in command position instead of rewriting it.
 - The meaning of the four editor-state bytes at offset 31 and of the TR-DOS length field.
 - 4.x display of lines longer than 44 bytes (junk from the row buffer) is not modeled.
-- 9.07m was not checked on screen (its tables and packer match 9.10 apart from the dot words).
 - The XAS version whose packer XASCII copied (`:` → #0E) was not found.
 - TD0 and UDI images were not searched.

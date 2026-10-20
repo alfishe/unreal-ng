@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <optional>
 #include <set>
 
 #include "dialects/common/z80.h"
@@ -130,6 +131,23 @@ struct Writer
     // A LOCAL block in a DUP: its labels are sjasmplus' temporary ones, "\x01" + number in localScopes; a reference is
     // number+B once the definition is written, number+F before
     std::set<std::string> temporariesWritten{};
+    // EQU names whose values the numbers give (a 16-bit source's value beyond #FFFF wrapped, as its assembler does)
+    std::map<std::string, int64_t> constants{};
+
+    std::optional<int64_t> Known(const Expr& e) const
+    {
+        return z80::ConstantValue(e, [&](const std::string& name) {
+            const auto found = constants.find(Name(name));
+            return found == constants.end() ? std::nullopt : std::optional<int64_t>(found->second);
+        });
+    }
+
+    /// A 16-bit source's value beyond #FFFF (X EQU #FFFF+2 is 1 in GENS, 65537 in sjasmplus): masked to its word
+    bool BeyondWord(const Expr& e) const
+    {
+        const auto v = Known(e);
+        return wordBits == 16 && v && *v > 0xFFFF;
+    }
 
     std::string Name(const std::string& name) const
     {
@@ -551,6 +569,14 @@ struct Writer
             case ir::DirectiveKind::Equ:
                 if (redefinable && redefinable->count(label))
                     return {"= " + args()};   // reassigned elsewhere with "=": sjasmplus keeps EQU fixed
+                if (s.args.size() == 1 && BeyondWord(s.args[0]))
+                {
+                    constants[label] = *Known(s.args[0]) & 0xFFFF;
+                    return {"EQU " + Print(Masked16(s.args[0]))};
+                }
+                if (s.args.size() == 1)
+                    if (const auto v = Known(s.args[0]))
+                        constants[label] = *v;
                 return {"EQU " + args()};
             case ir::DirectiveKind::Defl: return {"= " + args()};
             case ir::DirectiveKind::Db: return {"DB " + Operands(s.operands)};
@@ -571,7 +597,9 @@ struct Writer
                 {
                     // A 16-bit word count: ALASM's DS -$ fills up to #10000 (the rest of memory), sjasmplus' would move
                     // $ back
-                    if (wordBits == 16 && !s.args.empty() && s.args[0].kind == Expr::Kind::Unary && s.args[0].op == Op::Negate)
+                    // (and a count beyond #FFFF)
+                    if (wordBits == 16 && !s.args.empty() &&
+                        ((s.args[0].kind == Expr::Kind::Unary && s.args[0].op == Op::Negate) || BeyondWord(s.args[0])))
                     {
                         std::string out = "DS " + Print(Masked16(s.args[0]));
                         for (size_t k = 1; k < s.args.size(); ++k)
@@ -622,7 +650,7 @@ struct Writer
                     c.args[0].args[0].kind == Expr::Kind::Defined && c.args[0].args[0].args[0].kind == Expr::Kind::Symbol &&
                     c.args[1].kind == Expr::Kind::Number && c.args[1].value == 0)
                     return {"IF exist " + Name(c.args[0].args[0].args[0].text)};
-                return {"IF " + Print(c)};
+                return {"IF " + Print(BeyondWord(c) ? Masked16(c) : c)};
             }
             case ir::DirectiveKind::Else: return {"ELSE"};
             case ir::DirectiveKind::EndIf: return {"ENDIF"};
