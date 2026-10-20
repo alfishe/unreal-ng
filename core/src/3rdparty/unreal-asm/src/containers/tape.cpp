@@ -131,15 +131,24 @@ bool ReadTapeBlocks(std::span<const uint8_t> image, std::vector<TapeBlock>& out,
 namespace
 {
 /// GENS's T command (an include file for *F): header type 4, its length field the number of lines + 1, then data
-/// blocks of the include buffer's size, each holding whole lines ([number][text] CR) up to a #00 #00 word; GENS4
-/// leaves stale bytes after it. The lines of all blocks, joined
-std::vector<uint8_t> GensIncludeLines(const std::vector<TapeBlock>& blocks, size_t first, size_t& next)
+/// blocks of the include buffer's size, each holding whole lines ([number][text] CR). GENS3 clears the buffer, so a
+/// #00 #00 word ends a block's lines; GENS4 V4.0 does not write that word: what the buffer held before follows the
+/// last line (its relocation table in a fresh session; GENS4's own *F reads it as lines). A block's lines end at #00
+/// #00, at a line the block's end cuts, or where the line numbers stop rising below the next block's first; at most
+/// `count` lines. The lines of all blocks, joined
+std::vector<uint8_t> GensIncludeLines(const std::vector<TapeBlock>& blocks, size_t first, size_t count, size_t& next)
 {
-    std::vector<uint8_t> lines;
+    struct Line
+    {
+        unsigned number;
+        size_t at, end;   // the record [at, end] of its block, CR included
+    };
+    std::vector<std::vector<Line>> found;
     size_t k = first;
     for (; k < blocks.size() && !(blocks[k].flag == 0 && blocks[k].data.size() == 17); ++k)
     {
         const std::vector<uint8_t>& b = blocks[k].data;
+        std::vector<Line> lines;
         size_t at = 0;
         while (at + 2 <= b.size() && (b[at] | b[at + 1]) != 0)
         {
@@ -148,12 +157,34 @@ std::vector<uint8_t> GensIncludeLines(const std::vector<TapeBlock>& blocks, size
                 ++end;
             if (end == b.size())
                 break;   // a line cut by the block's end: not GENS's
-            lines.insert(lines.end(), b.begin() + static_cast<std::ptrdiff_t>(at), b.begin() + static_cast<std::ptrdiff_t>(end + 1));
+            const unsigned number = b[at] | b[at + 1] << 8;
+            if (!lines.empty() && number <= lines.back().number)
+                break;
+            lines.push_back({number, at, end});
             at = end + 1;
         }
+        found.push_back(std::move(lines));
     }
     next = k;
-    return lines;
+    std::vector<uint8_t> joined;
+    size_t taken = 0;
+    for (size_t n = 0; n < found.size(); ++n)
+    {
+        const std::vector<uint8_t>& b = blocks[first + n].data;
+        // the next block's first number bounds this one's (stale bytes read as a line carry any number)
+        unsigned bound = 0;
+        for (size_t m = n + 1; m < found.size() && !bound; ++m)
+            if (!found[m].empty())
+                bound = found[m].front().number;
+        for (const Line& l : found[n])
+        {
+            if ((bound && l.number >= bound) || (count && taken == count))
+                break;
+            joined.insert(joined.end(), b.begin() + static_cast<std::ptrdiff_t>(l.at), b.begin() + static_cast<std::ptrdiff_t>(l.end + 1));
+            ++taken;
+        }
+    }
+    return joined;
 }
 }  // namespace
 
@@ -174,7 +205,8 @@ bool ReadTape(std::span<const uint8_t> image, std::vector<TrdosFile>& out, std::
             size_t next = k + 1;
             f.type = 'C';
             f.name.assign(reinterpret_cast<const char*>(b.data.data() + 1), 10);
-            f.data = GensIncludeLines(blocks, k + 1, next);
+            const size_t count = Le(b.data, 11, 2);   // lines + 1
+            f.data = GensIncludeLines(blocks, k + 1, count ? count - 1 : 0, next);
             f.length = static_cast<uint16_t>(f.data.size());
             k = next - 1;
         }
