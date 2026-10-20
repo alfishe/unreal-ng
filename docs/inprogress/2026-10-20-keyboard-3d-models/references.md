@@ -100,6 +100,19 @@ Also: `pentagon-case-top-owner.png` (the owner's black "PENTAGON" computer case 
 | ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/quorum128plus-photo-7.jpg) `clones/quorum128plus-photo-7.jpg` | inside: the case's wall thickness, the keyboard's mounting |
 | ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/quorum-kbd-extended-schematic.jpg) `clones/quorum-kbd-extended-schematic.jpg` | the 88 switches and their codes (the mapping) |
 
+## Orel BK-08 (`orel`)
+
+![2D](../../../tools/poc/031-authentic-osd-keyboards/atlas/orel.photo.atlas.png)
+
+| Photo | Use |
+|---|---|
+| ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/orel-bk08-chm-1.jpg) `clones/orel-bk08-chm-1.jpg` | 3/4 from the front: the layout (measured), the ribbed ends, the palm rest, the main unit behind |
+| ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/orel-bk08-chm-2.jpg) `clones/orel-bk08-chm-2.jpg` | 3/4 from the left: the right-hand grey keys, the cap profile, the main unit's vents and buttons |
+| ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/orel-bk08-chm-3.jpg) `clones/orel-bk08-chm-3.jpg` | detail: the main unit's label |
+| ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/orel-bk08-manual-fig5-key-legends.png) `clones/orel-bk08-manual-fig5-key-legends.png` | the manual's Рис. 5: key names and zones (a drawing, not to scale) |
+
+Also: `orel-bk08-chm-4.jpg`, `-5.jpg` (the manual's covers), `-6.jpg` (the box).
+
 ## ZX Spectrum Next (`zxnext`)
 
 ![2D](../../../tools/poc/031-authentic-osd-keyboards/atlas/zxnext.photo.atlas.png)
@@ -120,7 +133,6 @@ Also: `next-issue2-render-commons.jpg`, `next-topdown-festival-commons.jpg`, `ne
 
 | Keyboard | Photos |
 |---|---|
-| Orel BK-08 | `clones/orel-bk08-chm-1.jpg` … `-6.jpg`, `clones/orel-bk08-manual-fig5-key-legends.png` |
 | Profi | `clones/profi-v50-keyboard-schematic-album-p29.png`, `clones/profi-v3-in-bk0010-case-speccyinfo-screenshot.jpg`, `clones/profi-v32-homemade-reed-kbd-es1840-caps-zxpk26525.jpg` |
 | PC keyboards | `pc/xt-83-ibm-model-f-top.jpg`, `pc/at-84-ibm-model-f-top.jpg`, `pc/genius-kb-06xe-beige.jpg`, `pc/russian-ps2-genius-cyrillic-legends.jpg`, `pc/ms7004-soviet-keyboard.jpg` |
 

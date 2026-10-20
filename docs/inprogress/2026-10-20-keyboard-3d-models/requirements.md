@@ -27,6 +27,7 @@ exportable to any format.
 | Consumer | Use |
 |---|---|
 | UE plugin (`UnrealNG`, UE 5.3+, 4.27) | the keyboard actor: a static case mesh, one key component per key node, the press animated by the emulator's key state and by hand or controller collision; OpenXR on PC VR and Quest |
+| Unity (2022 LTS+, FBX native, glTF through glTFast) | the same keyboard as a prefab: a mesh per key, the key properties read on import, XR Interaction Toolkit for the hands; first priority with UE |
 | Apple AR (USDZ, Quick Look / RealityKit) | a keyboard placed on a real desk; later live, through the iOS host ([2026-09-19-ios-integration](../2026-09-19-ios-integration/)) |
 | Web (three.js / model-viewer) | a gallery and a preview of the models |
 | Offline renders | marketing shots, the README, a check against the photos |
@@ -79,8 +80,8 @@ Use cases:
 
 ### 4.4 Exports
 
-- FR12 Formats: **GLB / glTF 2.0** (primary: UE Interchange, three.js, Blender), **USDZ / USD** (Apple AR), **FBX**
-  (UE 4.27, other DCC), **OBJ + MTL**, **STL** (one solid per part). Optional: `.blend` of the built scene.
+- FR12 Formats, in priority order (owner 2026-10-20): **FBX** and **GLB / glTF 2.0** first (UE 5.3+ and 4.27,
+  Unity, three.js, Blender), then **USDZ / USD** (Apple AR), **OBJ + MTL**, **STL** (one solid per part). Optional: `.blend` of the built scene.
 - FR13 Each export of a keyboard holds the case node, the key nodes under a `keys` group, the legend meshes parented
   to their keys, the collision shapes, and the LODs (LOD0 full, LOD1 ≈ 50 %, LOD2 ≈ 15 %).
 - FR14 Textures: base colour, ORM (occlusion / roughness / metallic) and normal maps, power-of-two sizes, one atlas
@@ -129,15 +130,17 @@ Use cases:
 - Each keyboard of [keyboards.md](keyboards.md) in GLB, USDZ, FBX, OBJ, STL; the owner judges each as authentic and
   photoreal next to its reference photos, or names what is wrong.
 - The key set check (FR11) passes for every keyboard; every key has a mapping.
-- The GLB files pass the Khronos glTF validator with no errors; the USDZ opens in Quick Look; the FBX imports into UE
-  5.3 with its collisions and LODs.
+- The GLB files pass the Khronos glTF validator with no errors; the FBX and GLB import into Unity with their key
+  properties; the FBX imports into UE 5.3 with its
+  collisions and LODs; the USDZ opens in Quick Look.
 - The top render overlaid on the POC 031 picture: every key rectangle within 0.5 mm.
 - The budgets of NFR1 hold.
 
 ## 9. Open questions (for the owner, one at a time)
 
-1. **Engine of record**: the UE plugin first (FBX / glTF into UE), or Apple AR first (USDZ)? This decides which
-   export is checked first.
+1. ~~**Engine of record**~~ decided (owner, 2026-10-20): **UE and Unity first, Apple AR after**. The models are
+   the deliverable; how a consumer visualises them does not matter. FBX and GLB are checked first (UE import, Unity
+   import), USDZ later.
 2. **Legends**: geometry (outlined text extruded 0.05 mm, sharp at any distance, more triangles) or baked into a
    texture (cheap, blurs up close in VR)? Proposal: geometry at LOD0, texture at LOD1+.
 3. **Measurements**: may the owner measure their own machines (the +2, the Pentagon 2+ keyboard and the others they have) for heights

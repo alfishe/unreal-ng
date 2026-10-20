@@ -1,4 +1,4 @@
-# tools/poc/023-steamdeck-client - Steam Deck client experiments (see README.md).
+# apps/steamdeck-client - Steam Deck client experiments (see README.md).
 # Enabled from the root with -DBUILD_STEAMDECK_POC=ON; build.sh does it inside the steamrt4 SDK container.
 
 find_package(SDL3 3.2 CONFIG REQUIRED)

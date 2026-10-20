@@ -4,7 +4,7 @@
 on (the default) and off, and as a Flatpak? This covers the back buttons, both trackpads (position,
 pressure, click), the gyro / accelerometer, capacitive stick touch, and rumble on the trackpads. How
 fast do events arrive?
-([input-and-profiles.md §2.1](../../../../docs/inprogress/2026-10-08-steamdeck-client/input-and-profiles.md))
+([input-and-profiles.md §2.1](../../../docs/inprogress/2026-10-08-steamdeck-client/input-and-profiles.md))
 
 **Pass.** Steam Input off exposes every control; Steam Input on gives a usable fallback (the
 "compatible mode" of the design).

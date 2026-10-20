@@ -17,6 +17,7 @@ Footprints are the POC 031 data in mm (W × D); heights are published figures or
 | `pentagon2plus` | PENTAGON (second variant) | 58 | `soviet` | 343 × 165 | UNVERIFIED | approved (2026-10-20) |
 | `scorpion` | SCORPION, PROFSCORP, GMX | 58 | `soviet` | 327 × 155 | UNVERIFIED | drawn, shown |
 | `quorum` | QUORUM | 88 | `soviet` | 438 × 281 | UNVERIFIED | approved (2026-10-20) |
+| `orel` | LSY256 | 67 | `soviet` | 386 × 176 (the keyboard unit) | UNVERIFIED | approved (2026-10-20) |
 | `zxnext` | NEXT | 58 | `next` | 330 × 146 | UNVERIFIED (a wedge, ≈35–40 mm at the back) | approved |
 
 The 2D atlas of each is `tools/poc/031-authentic-osd-keyboards/atlas/<id>.photo.atlas.png`; its keys
@@ -26,7 +27,6 @@ The 2D atlas of each is `tools/poc/031-authentic-osd-keyboards/atlas/<id>.photo.
 
 | Keyboard | Models | What | Source |
 |---|---|---|---|
-| Orel BK-08 | LSY256 | the 67-key reed keyboard in its own unit, in front of the main unit (two pieces, warm grey) | refs-clones §5, `orel-bk08-*.jpg`, manual Рис. 5 |
 | Profi | PROFI, PROFI3 | the album's 40 keys + an inverted-T cursor cluster + "*" (v3.2 KEYBOARD-ZX, v5.0 PROFI PLUS), or the 58-key film | refs-clones §6 |
 | PC keyboards | ATM710, ATM3, TSL, SPRINTER, PHOENIX, KAY | the PC keyboard of the era (XT 83, AT 84, Enhanced 101/102, MS 7004) plus the 40-key ZX matrix, switchable | refs-pc §0, §7 |
 | ZX matrix only | ATM450 | the 40-key matrix (it had no PC keyboard) | refs-pc §1 |
@@ -81,6 +81,11 @@ The 3D project starts on the keyboards of section 1 and takes these as POC 031 d
   panel connectors (photo 2).
 - **Caps**: the same Soviet sculpted family as the Pentagon 2+; two-row keys (the L ENTER, the tall ← and →).
 - **Unknown**: every height; the case's depth (281 mm is an estimate from a perspective photo).
+
+### `orel`
+- **Case**: the separate keyboard unit (the main unit behind it is not drawn): cool grey plastic, the well of 5 rows, 18 moulded ribs across each end, the broad palm rest with one step line.
+- **Caps**: sculpted reed-switch caps, white and dark blue-grey, an L ENTER, an 8-key space bar.
+- **Unknown**: every height; the main unit (NMI, RESET, the LED, the vents, the label) if the 3D scene wants the whole computer.
 
 ### `zxnext`
 - **Case**: the wedge case, the rainbow insert in a groove, the vent, the logo moulded black on black, the front DB9

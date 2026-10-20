@@ -396,7 +396,8 @@ def cap(pic, key):
     if key.cap == "mech":  # a low black cap of a Soviet mechanical switch, its sticker on the top face
         return hard(pic, x, y, w, h, key.color, inset=(0.9, 0.6, 0.9, 1.3), radius=1.0, top_radius=1.2, gloss=0.05)
     if key.cap == "soviet":
-        return soviet(pic, x, y, w, h, lit(pic, key), key.shape, depth=pic.keyboard.get("depth"))
+        return soviet(pic, x, y, w, h, lit(pic, key), key.shape, depth=pic.keyboard.get("depth"),
+                      **pic.keyboard.get("soviet", {}))
     if key.cap == "amstrad":
         return amstrad(pic, x, y, w, h, key.color, key.shape)
     raise ValueError(f"{key.id}: cap {key.cap}")

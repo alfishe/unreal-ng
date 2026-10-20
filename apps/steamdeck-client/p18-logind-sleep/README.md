@@ -2,7 +2,7 @@
 
 **Question.** Does a game in SteamOS Game Mode get `PrepareForSleep(true)` through a `sleep` **delay**
 inhibitor before the device sleeps? How much time does it get, and does audio come back without a
-click? ([architecture.md §7](../../../../docs/inprogress/2026-10-08-steamdeck-client/architecture.md))
+click? ([architecture.md §7](../../../docs/inprogress/2026-10-08-steamdeck-client/architecture.md))
 
 **Pass.** The signal arrives every time, at least 100 ms is granted, and there is no click.
 

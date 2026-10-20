@@ -25,7 +25,7 @@
 - **No input libraries in shipped code.** There is no SDL, hidapi or gamepad code. `lib/` holds googletest and
   benchmark.
 - **Qt.** The Qt apps use Qt 6 (Homebrew qtbase 6.11.2 / 6.12.0). Qt 6 has no gamepad module ([§3.4](#34-qt)).
-- **SDL3 only in proofs of concept.** SDL3 appears in `tools/poc/023-steamdeck-client/` and
+- **SDL3 only in proofs of concept.** SDL3 appears in `apps/steamdeck-client/` and
   `tools/poc/018-tui-debuggers/`. Homebrew has SDL3 3.4.18 (`/opt/homebrew/Cellar/sdl3/3.4.18`) and sdl2-compat.
 - **The entry point exists.** `TimeTravelManager::SubmitLiveInput` with `TTDInputKind::Joystick` / `NextPad` / `PcKey`
   (`core/src/debugger/ttd/ttdinputjournal.h`). Any live source must use it and must not write devices directly.

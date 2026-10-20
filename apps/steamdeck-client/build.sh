@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # Build the Steam Deck POCs inside the Steam Linux Runtime 4.0 SDK container (amd64, as on the Deck).
 #
-#   tools/poc/023-steamdeck-client/build.sh                 # every POC target
-#   tools/poc/023-steamdeck-client/build.sh p08-input-inspector
-#   tools/poc/023-steamdeck-client/build.sh --clean
-#   tools/poc/023-steamdeck-client/build.sh --type Debug
-#   tools/poc/023-steamdeck-client/build.sh --march x86-64      # baseline ISA: runs under Docker's amd64
+#   apps/steamdeck-client/build.sh                 # every POC target
+#   apps/steamdeck-client/build.sh p08-input-inspector
+#   apps/steamdeck-client/build.sh --clean
+#   apps/steamdeck-client/build.sh --type Debug
+#   apps/steamdeck-client/build.sh --march x86-64      # baseline ISA: runs under Docker's amd64
 #                                                               # emulation on a Mac (no AVX2), for smoke runs
 #
-# Output: tools/poc/023-steamdeck-client/build/deck/bin/ (x86-64-v3, for the Deck) or build/container/bin/
+# Output: apps/steamdeck-client/build/deck/bin/ (x86-64-v3, for the Deck) or build/container/bin/
 # (--march x86-64), git-ignored, with configs/ and rom/ staged next to the binaries, ready for deploy.sh. On Apple Silicon the amd64 container runs emulated (Rosetta / qemu):
 # the first core build takes a while, later builds are incremental.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMAGE="registry.gitlab.steamos.cloud/steamrt/steamrt4/sdk:latest"
 TYPE="Release"
 MARCH="x86-64-v3"
@@ -36,7 +36,7 @@ while [ $# -gt 0 ]; do
 done
 [ ${#TARGETS[@]} -gt 0 ] || TARGETS=(steamdeck-poc-all)
 
-POC="tools/poc/023-steamdeck-client"
+POC="apps/steamdeck-client"
 case "$MARCH" in
   x86-64-v3) VARIANT="deck" ;;
   x86-64)    VARIANT="container" ;;
