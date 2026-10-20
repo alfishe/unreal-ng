@@ -110,8 +110,10 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
     _service->Router().SetActionSink([this](const ActionEvent& event) {
         const QString action = QString::fromStdString(event.action);
         const bool pressed = event.pressed;
-        QMetaObject::invokeMethod(this, [this, action, pressed] { emit actionTriggered(action, pressed); },
-                                  Qt::QueuedConnection);
+        const float value = event.value;
+        QMetaObject::invokeMethod(
+            this, [this, action, pressed, value] { emit actionTriggered(action, pressed, value); },
+            Qt::QueuedConnection);
     });
     _service->StartNative();
     // The host verbs of the automation surfaces run here, on the GUI thread
@@ -505,6 +507,10 @@ void HostControllers::assignPlayers(const std::vector<HostDeviceInfo>& devices)
     size_t n = 0;
     for (const HostDeviceInfo& device : devices)
     {
+        // A control surface is a debugger remote (debug-and-ttd.md §4.4): its debug profile acts with no layer key
+        if (device.family != "keyboard" && device.family != "mouse" && !player(device) &&
+            _service->Router().Role(device.id) == DeviceRole::Player)
+            _service->Router().SetRole(device.id, DeviceRole::DebuggerRemote);
         if (!player(device))
             continue;
         _service->Router().SetPlayerConnector(device.id, n < order.size() ? order[n] : std::string{});

@@ -35,4 +35,8 @@ bool TriggerClick(float value, bool previous, const AnalogOptions& options);
 /// An axis driving a mouse axis, -1..1: sign(v) * ((|v| - deadzone) / (1 - deadzone))^gamma, 0 inside the dead zone
 float MouseCurve(float value, const AnalogOptions& options);
 
+/// The scrub curve (debug-and-ttd.md §3.2): a trigger's travel 0..1 -> emulated frames per second. 0 below 0.08 (a
+/// resting finger), then 1, 5, 50, 500 and 5000 frames/s at 0.08, 0.30, 0.60, 0.90 and 1.0, exponential between
+float ScrubSpeed(float travel);
+
 }  // namespace controllers

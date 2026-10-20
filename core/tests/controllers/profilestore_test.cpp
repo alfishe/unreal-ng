@@ -300,8 +300,8 @@ TEST(ProfileStore_Test, Schemes_ExtendsMergesBelowAndCyclesWarn)
     EXPECT_EQ(applied[applied.size() - 2], "scheme/a");
 }
 
-/// The keyboard's debug profile is the debugger's shortcuts (debug-and-ttd.md §4.3): selected without the debug
-/// layer, and the window keyboard, a debugger remote, takes the bound combos only
+/// The keyboard's debug profile is the debugger's shortcuts (debug-and-ttd.md §4.3), the Dial's its time travel remote
+/// (§4.4): selected without the debug layer; the window keyboard, a debugger remote, takes the bound combos only
 TEST(ProfileStore_Test, KeyboardShortcuts_WithoutTheDebugLayer)
 {
     ProfileStore store;
@@ -309,7 +309,8 @@ TEST(ProfileStore_Test, KeyboardShortcuts_WithoutTheDebugLayer)
     context.machine = "pentagon";
     context.debugLayer = false;
     context.devices = {{"kbd:system", "Keyboard", "keyboard", "keyboard", "qt"},
-                       {"usb:045e:0b00:1", "Elite", "xbox-elite-2", "xbox", "fake"}};
+                       {"usb:045e:0b00:1", "Elite", "xbox-elite-2", "xbox", "fake"},
+                       {"bt:045e:091b:1", "Surface Dial", "surface-dial", "generic", "fake"}};
     const ResolvedProfiles resolved = store.Resolve(context);
     EXPECT_TRUE(resolved.warnings.empty()) << resolved.warnings.front();
     const Binding* stepOver = Find(resolved, "family:keyboard", "debug", "key.f10");
@@ -317,6 +318,9 @@ TEST(ProfileStore_Test, KeyboardShortcuts_WithoutTheDebugLayer)
     EXPECT_EQ(stepOver->target.name, "run.step_over");
     EXPECT_NE(Find(resolved, "family:keyboard", "", "key.kp8"), nullptr) << "the numpad joystick stays";
     EXPECT_EQ(Find(resolved, "family:xbox-elite-2", "debug", "rb"), nullptr) << "the pads' debug profiles wait";
+    const Binding* knob = Find(resolved, "family:surface-dial", "debug", "knob");
+    ASSERT_NE(knob, nullptr) << "a control surface is a remote by nature";
+    EXPECT_EQ(knob->target.name, "ttd.jog_frames");
 
     InputRouter router;
     std::vector<std::string> actions;

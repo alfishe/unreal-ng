@@ -237,6 +237,8 @@ DeviceMatch DeviceDatabase::ForFamily(const std::string& family, const std::stri
         match.images = "generic-" + match.layout + "-like";
         match.glyphs = match.layout;
     }
+    else if (match.family == "keyboard")
+        match.images = "generic-keyboard";
     return match;
 }
 

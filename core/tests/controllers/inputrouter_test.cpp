@@ -490,6 +490,65 @@ TEST_F(InputRouter_Test, Layers_InertKeyAndTheDebuggerRemote)
     EXPECT_EQ(_actions[0].action, "ttd.step_back");
 }
 
+/// An encoder's steps run an action (debug-and-ttd.md §4.4): alone, or with buttons held while it turns; a button
+/// held for a turn gives its own binding nothing, a press alone acts on its release
+TEST_F(InputRouter_Test, Encoder_StepsAndButtonsHeldWhileItTurns)
+{
+    const HostDeviceInfo dial{"fake:9", "Dial", "surface-dial", {}};
+    _router.OnDeviceAdded(dial);
+    _router.SetRole("fake:9", DeviceRole::DebuggerRemote);
+    Binding held = To({"push", "knob"}, ActionTarget("ttd.jog_instructions"), kDebugLayer);
+    held.chord = true;
+    SetBindings({To({"knob"}, ActionTarget("ttd.jog_frames"), kDebugLayer), held,
+                 To({"push"}, ActionTarget("run.pause_toggle"), kDebugLayer)});
+
+    Set("fake:9", "knob", 3);
+    ASSERT_EQ(_actions.size(), 1u);
+    EXPECT_EQ(_actions[0].action, "ttd.jog_frames");
+    EXPECT_EQ(_actions[0].value, 3.0f) << "the steps of the event";
+
+    _actions.clear();
+    Set("fake:9", "push", 1);
+    EXPECT_TRUE(_actions.empty()) << "a press waits: a turn may follow";
+    Set("fake:9", "knob", -2);
+    Set("fake:9", "push", 0);
+    ASSERT_EQ(_actions.size(), 1u) << "the turn took the press";
+    EXPECT_EQ(_actions[0].action, "ttd.jog_instructions");
+    EXPECT_EQ(_actions[0].value, -2.0f);
+
+    _actions.clear();
+    Set("fake:9", "push", 1);
+    Set("fake:9", "push", 0);
+    ASSERT_EQ(_actions.size(), 2u) << "a press alone acts on its release";
+    EXPECT_EQ(_actions[0].action, "run.pause_toggle");
+    EXPECT_TRUE(_actions[0].pressed);
+    EXPECT_FALSE(_actions[1].pressed);
+
+    std::string error;
+    EXPECT_FALSE(_router.SetBindings({}, {To({"knob"}, Retro("kempston:fire"))}, error));
+    EXPECT_NE(error.find("drive an action only"), std::string::npos) << error;
+}
+
+/// `curve: scrub`: the action gets the trigger's level each time it changes, 0 on release
+TEST_F(InputRouter_Test, Level_TheScrubActionGetsTheTriggerLevel)
+{
+    _router.OnDeviceAdded(kPad);
+    _router.SetRole("fake:1", DeviceRole::DebuggerRemote);
+    Binding scrub = To({"lt"}, ActionTarget("ttd.scrub_back"), kDebugLayer);
+    scrub.options.level = true;
+    SetBindings({scrub});
+
+    Set("fake:1", "lt", 0.25f);
+    Set("fake:1", "lt", 0.75f);
+    Set("fake:1", "lt", 0);
+    ASSERT_EQ(_actions.size(), 3u);
+    EXPECT_TRUE(_actions[0].pressed);
+    EXPECT_EQ(_actions[0].value, 0.25f) << "below the click too";
+    EXPECT_EQ(_actions[1].value, 0.75f);
+    EXPECT_FALSE(_actions[2].pressed);
+    EXPECT_EQ(_actions[2].value, 0.0f);
+}
+
 TEST_F(InputRouter_Test, Targets_KeysMacroAndMouse)
 {
     _router.OnDeviceAdded(kPad);

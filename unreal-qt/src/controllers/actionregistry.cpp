@@ -32,13 +32,30 @@ QString ActionRegistry::Unavailable(const std::string& id) const
     return action->unavailable ? action->unavailable() : QString();
 }
 
-bool ActionRegistry::Trigger(const std::string& id, bool pressed, QString& error)
+bool ActionRegistry::Trigger(const std::string& id, bool pressed, float value, QString& error)
 {
     const Action* action = Find(id);
     if (action == nullptr)
     {
         error = tr("%1: unknown action").arg(QString::fromStdString(id));
         return false;
+    }
+    if (action->amount)
+    {
+        // The release always arrives: a scrub stops on it
+        if (pressed)
+            if (const QString why = Unavailable(id); !why.isEmpty())
+            {
+                error = tr("%1: %2").arg(action->label, why);
+                return false;
+            }
+        const QString why = action->amount(pressed ? value : 0.0f);
+        if (!why.isEmpty())
+        {
+            error = tr("%1: %2").arg(action->label, why);
+            return false;
+        }
+        return true;
     }
     if (!pressed && !action->held)
         return true;
