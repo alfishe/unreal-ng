@@ -24,10 +24,10 @@ using namespace sdb;
 
 namespace
 {
-std::atomic<bool> g_stop{false};
+std::atomic<bool> stopRequested{false};
 void OnSignal(int)
 {
-    g_stop = true;
+    stopRequested = true;
 }
 
 const char* LcdKindName(LcdKind k)
@@ -183,7 +183,7 @@ int CmdEvents(const cli::Args& a)
     {  // every input report as hex: shows what the firmware really sends (e.g. drag points)
         std::vector<std::uint8_t> buf(1024);
         std::size_t n = 0;
-        while (!g_stop && (seconds <= 0 || (NowUs() - t0) < seconds * 1e6))
+        while (!stopRequested && (seconds <= 0 || (NowUs() - t0) < seconds * 1e6))
         {
             const int r = dev->GetTransport().Read(buf, 50);
             if (r <= 0)
@@ -201,7 +201,7 @@ int CmdEvents(const cli::Args& a)
         std::fprintf(stderr, "%zu raw reports\n", n);
         return 0;
     }
-    while (!g_stop && (seconds <= 0 || (NowUs() - t0) < seconds * 1e6))
+    while (!stopRequested && (seconds <= 0 || (NowUs() - t0) < seconds * 1e6))
     {
         ++reads;
         for (const auto& e : dev->PollEvents(50))
@@ -297,6 +297,7 @@ int Usage()
         "[seconds] | probe | hid-test [--only N]\nsdctl brightness <0-100> | clear | reset\nsdctl lcd-test "
         "<orient|tiles|sweep> [...]\nsdctl bench <keys|matrix|lcd|feature|mixed> [...]\n"
         "sdctl ws <ws://host:port/path> [message ...] [--token T] [--seconds N] [--count N]   (WebSocket check)\n"
+        "sdctl viewer [--port N] [--deck SERIAL | --own MODEL] [--seconds N]   (join unreal-streamdeck as a viewer)\n"
         "Stream Deck Studio (any command: --device emu[:host:port] = the studio only, --mirror [host:port] = real deck "
         "+ studio,\n"
         "  the default when the studio runs; --no-mirror = the real deck alone):\n"
@@ -316,6 +317,8 @@ int main(int argc, char** argv)
     {
         if (cmd == "ws")
             return cli::CmdWs(a);
+        if (cmd == "viewer")
+            return cli::CmdViewer(a);
         if (cmd == "info")
             return CmdInfo(a);
         if (cmd == "probe")

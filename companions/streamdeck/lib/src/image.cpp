@@ -1,11 +1,12 @@
 #include "sdb/image.h"
 
-#include <turbojpeg.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
+
+#include "sdb/jpeg.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
@@ -262,42 +263,26 @@ std::optional<Rgb> LoadImage(const std::filesystem::path& file)
 
 std::vector<std::uint8_t> EncodeJpeg(const Rgb& img, int quality)
 {
-    tjhandle tj = tj3Init(TJINIT_COMPRESS);
-    if (!tj)
-        throw std::runtime_error("tj3Init failed");
-    tj3Set(tj, TJPARAM_QUALITY, quality);
-    // 4:4:4 (no chroma subsampling): the Stream Deck + / + XL key decoder garbles 4:2:0 into stringy noise
-    // (the crate's reference blank JPEG for those models is 4:4:4). Every model accepts 4:4:4.
-    tj3Set(tj, TJPARAM_SUBSAMP, TJSAMP_444);
-    unsigned char* out = nullptr;
-    size_t size = 0;
-    const int rc = tj3Compress8(tj, img.px.data(), img.w, 0, img.h, TJPF_RGB, &out, &size);
-    std::vector<std::uint8_t> v;
-    if (rc == 0)
-        v.assign(out, out + size);
-    const std::string err = rc ? tj3GetErrorStr(tj) : "";
-    tj3Free(out);
-    tj3Destroy(tj);
-    if (rc)
-        throw std::runtime_error("JPEG encode: " + err);
-    return v;
+    // Baseline JPEG, 4:4:4 (no chroma subsampling): the Stream Deck + / + XL key decoder garbles 4:2:0 into stringy
+    // noise (the crate's reference blank JPEG for those models is 4:4:4). Every model accepts 4:4:4. The encoder and
+    // its measurement against libjpeg-turbo: sdb/jpeg.h, tools/poc/032-streamdeck-jpeg-encoder.
+    if (img.Empty() || img.w > 65535 || img.h > 65535)
+        throw std::invalid_argument("JPEG encode: bad dimensions");
+    return jpeg::Encode(img.px.data(), img.w, img.h, quality);
 }
 
 std::optional<Rgb> DecodeJpeg(const std::vector<std::uint8_t>& data)
 {
-    tjhandle tj = tj3Init(TJINIT_DECOMPRESS);
-    if (!tj)
+    if (data.empty() || data.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
         return std::nullopt;
-    std::optional<Rgb> out;
-    if (tj3DecompressHeader(tj, data.data(), data.size()) == 0)
-    {
-        const int w = tj3Get(tj, TJPARAM_JPEGWIDTH), h = tj3Get(tj, TJPARAM_JPEGHEIGHT);
-        Rgb img(w, h);
-        if (tj3Decompress8(tj, data.data(), data.size(), img.px.data(), 0, TJPF_RGB) == 0)
-            out = std::move(img);
-    }
-    tj3Destroy(tj);
-    return out;
+    int w = 0, h = 0, n = 0;
+    unsigned char* px = stbi_load_from_memory(data.data(), static_cast<int>(data.size()), &w, &h, &n, 3);
+    if (!px)
+        return std::nullopt;
+    Rgb img(w, h);
+    std::memcpy(img.px.data(), px, img.px.size());
+    stbi_image_free(px);
+    return img;
 }
 
 std::vector<std::uint8_t> EncodeBmp(const Rgb& img)

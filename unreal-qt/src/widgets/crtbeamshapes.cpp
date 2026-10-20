@@ -2,6 +2,7 @@
 // parameters) as the model's tables. Each one names the shader's terms it follows.
 
 #include "crtbeammodel.h"
+#include "crtmath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -46,7 +47,7 @@ void Lanczos2(float x, float w[4])
     for (int i = 0; i < 4; ++i)
     {
         const float c = std::max(std::abs(d[i] * kPi), 1e-5f);
-        w[i] = std::sin(c) * 2.0f * std::sin(c * 0.5f) / (c * c);
+        w[i] = CRTMath::Sin(c) * 2.0f * CRTMath::Sin(c * 0.5f) / (c * c);
     }
 }
 
@@ -58,11 +59,11 @@ public:
     float toLinear(float c) const override
     {
         c *= kBrightBoost;
-        return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+        return c <= 0.04045f ? c / 12.92f : CRTMath::Pow((c + 0.055f) / 1.055f, 2.4f);
     }
     float toDisplay(float v) const override
     {
-        return v < 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 0.41666f) - 0.055f;
+        return v < 0.0031308f ? v * 12.92f : 1.055f * CRTMath::Pow(v, 0.41666f) - 0.055f;
     }
     void horizontal(float phase, float w[4]) const override
     {
@@ -113,7 +114,7 @@ public:
     }
 
 private:
-    static float Gaus(float d, float scale) { return std::exp2(scale * d * d); }
+    static float Gaus(float d, float scale) { return CRTMath::Exp2(scale * d * d); }
 
     static constexpr float kHardScan = -8.0f;
     static constexpr float kHardPix = -3.0f;
@@ -153,8 +154,8 @@ public:
     {
         // pow(fp, h_sharp) towards the pixel, pow(1 - fp, h_sharp) towards its left neighbour
         w[0] = 0.0f;
-        w[1] = std::pow(1.0f - phase, kHSharp);
-        w[2] = std::pow(phase, kHSharp);
+        w[1] = CRTMath::Pow(1.0f - phase, kHSharp);
+        w[2] = CRTMath::Pow(phase, kHSharp);
         w[3] = 0.0f;
     }
     CRTBeamModel::Vertical vertical() const override { return CRTBeamModel::Vertical::Beams; }
@@ -172,7 +173,7 @@ public:
         // sw(): the scanline exponent grows with the distance, the beam narrows with the luminance
         const float scan = kScanline - 2.0f + 2.0f * distance;
         const float width = distance * (kBeamMin + (kBeamMax - kBeamMin) * value);
-        return std::exp2(-scan * width * width);
+        return CRTMath::Exp2(-scan * width * width);
     }
     void mask(int x, int y, int width, int height, float rgb[3], int& state) const override
     {
@@ -201,8 +202,8 @@ class Consumer : public CRTBeamModel::Shape
 public:
     float toLinear(float c) const override { return c; }
     // "pow(color, 2.8) * 2 - pow(color, 3.6)" on the mixed colour
-    float transfer(float v) const override { return 2.0f * std::pow(v, 2.8f) - std::pow(v, 3.6f); }
-    float toDisplay(float v) const override { return std::pow(v, 1.0f / kGammaOut); }
+    float transfer(float v) const override { return 2.0f * CRTMath::Pow(v, 2.8f) - CRTMath::Pow(v, 3.6f); }
+    float toDisplay(float v) const override { return CRTMath::Pow(v, 1.0f / kGammaOut); }
     bool warp(float& u, float& v) const override
     {
         // "TexCoord * 1.0001", then Warp()
@@ -299,7 +300,7 @@ private:
         const float beam = kScanLow + (kScanHigh - kScanLow) * y;
         const float scan = kBeamLow + (kBeamHigh - kBeamLow) * l;
         const float ex = y * scan;
-        return std::exp2(-beam * ex * ex);
+        return CRTMath::Exp2(-beam * ex * ex);
     }
 
     static constexpr float kWarpX = 0.03f;
@@ -341,8 +342,8 @@ public:
         _scale = std::max(hiX - loX, hiY - loY);
     }
 
-    float toLinear(float c) const override { return std::pow(c, kCrtGamma); }
-    float toDisplay(float v) const override { return std::pow(v, 1.0f / kMonitorGamma); }
+    float toLinear(float c) const override { return CRTMath::Pow(c, kCrtGamma); }
+    float toDisplay(float v) const override { return CRTMath::Pow(v, 1.0f / kMonitorGamma); }
     void horizontal(float phase, float w[4]) const override { Lanczos2(phase, w); }
     bool warp(float& u, float& v) const override
     {
@@ -389,7 +390,7 @@ private:
     {
         const float wid = 2.0f + 2.0f * value * value * value * value;
         const float w = distance / kScanlineWeight / std::sqrt(wid * 0.5f);
-        return std::exp(-std::pow(w, wid)) * (kLum + 1.4f) / (0.6f + 0.2f * wid);
+        return CRTMath::Exp(-CRTMath::Pow(w, wid)) * (kLum + 1.4f) / (0.6f + 0.2f * wid);
     }
 
     /// intersect() and bkwtrans() without tilt: the screen position (x, y) to the position on the flat picture
@@ -404,8 +405,8 @@ private:
         const float aa = 1.0f;
         const float cc = px * px + py * py - 1.0f;
         const float along = std::sqrt(-4.0f * aa * cc) / (2.0f * aa);
-        const float r = std::max(std::abs(kR * std::acos(along)), 1e-5f);
-        const float k = r / std::sin(r / kR);
+        const float r = std::max(std::abs(kR * CRTMath::Acos(along)), 1e-5f);
+        const float k = r / CRTMath::Sin(r / kR);
         out[0] = px * k;
         out[1] = py * k;
     }
@@ -425,10 +426,10 @@ private:
     static float Forward(float x, float y, int axis)
     {
         const float r = std::max(std::sqrt(x * x + y * y), 1e-5f);
-        const float k = std::sin(r / kR) / r;
+        const float k = CRTMath::Sin(r / kR) / r;
         const float cx = x * k;
         const float cy = y * k;
-        const float d = kD / kR + (1.0f - std::cos(r / kR));
+        const float d = kD / kR + (1.0f - CRTMath::Cos(r / kR));
         return (axis == 0 ? cx : cy) * kD / d;
     }
 
@@ -454,7 +455,7 @@ class Easymode : public CRTBeamModel::Shape
 public:
     // dilate() squares the taps (DILATION 1), the pow(GAMMA_INPUT / (DILATION + 1)) after the filter is 1
     float toLinear(float c) const override { return c * c; }
-    float toDisplay(float v) const override { return std::pow(v, 1.0f / kGammaOutput) * kBrightBoost; }
+    float toDisplay(float v) const override { return CRTMath::Pow(v, 1.0f / kGammaOutput) * kBrightBoost; }
     void horizontal(float phase, float w[4]) const override { Lanczos2(Curve(phase, kSharpnessH * kSharpnessH), w); }
     bool clampToCentre() const override { return true; }
     CRTBeamModel::Vertical vertical() const override { return CRTBeamModel::Vertical::Interpolation; }
@@ -479,8 +480,8 @@ public:
         // "cos(uv.y * 2 pi * height)": the output row's own position, half a pixel from the phase
         const float scanBright = std::clamp(bright, kScanlineBrightMin, kScanlineBrightMax);
         const float scanBeam = std::clamp(bright * kBeamWidthMax, kBeamWidthMin, kBeamWidthMax);
-        const float wave = std::cos((phase + 0.5f) * 2.0f * kPi) * 0.5f + 0.5f;
-        const float scanWeight = 1.0f - std::pow(wave, scanBeam) * kScanlineStrength;
+        const float wave = CRTMath::Cos((phase + 0.5f) * 2.0f * kPi) * 0.5f + 0.5f;
+        const float scanWeight = 1.0f - CRTMath::Pow(wave, scanBeam) * kScanlineStrength;
         return scanWeight * (1.0f - scanBright) + scanBright;
     }
     void mask(int x, int y, int width, int height, float rgb[3], int& state) const override

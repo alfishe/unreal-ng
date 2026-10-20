@@ -253,8 +253,8 @@ private:
     bool _glowOwnSource = false;
     std::vector<uint16_t> _frame;
     std::vector<uint16_t> _glowFrame;
-    /// The glow's columns: (source + pads) rows x columns x kGlowPhases x (gaussian: RGB; squared: the squares RGB,
-    /// the products with the next row RGB)
+    /// The glow's columns: (source + pads) rows x columns x kGlowPhases x (gaussian: RGB0; squared: the squares RGB0,
+    /// the products with the next row RGB0)
     std::vector<uint16_t> _glow;
     std::vector<int16_t> _geometry;
     std::vector<uint16_t> _factors;

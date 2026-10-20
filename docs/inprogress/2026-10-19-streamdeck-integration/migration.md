@@ -37,12 +37,12 @@ Tracked files only (`build/`, `.cache/`, `__pycache__/`, `.DS_Store` are never c
 | `streamdeck-bridge/examples/themes/unrealng/` (30 files) | `data/streamdeck/themes/unrealng/` | boot / idle theme |
 | — | — | the example scenarios are **not** needed as fixtures: the tests write their own files |
 | `streamdeck-bridge/examples/make_unrealng_control.py`, `capture_zx.py` | `companions/streamdeck/tools/` | the default-scenario generator and its thumbnail capture: **SD5**, rewritten for v2 when the catalogue exists (they read the REST presets, which are not imported) |
-| `streamdeck-emulator/src/` main, mainwindow, deckwidget, virtualdeck, emulatorapi, recorder, gui.h, textedit.h | `companions/streamdeck/studio/` | **SD3**: imported when rewritten as a wire v2 client (without `server` and `usblistener` it does not build) |
-| `streamdeck-emulator/src/editor/*` (14) | `companions/streamdeck/studio/editor/` | **SD3**; `presets.cpp`: generic presets only |
+| `streamdeck-emulator/src/` main, mainwindow, deckwidget, virtualdeck, emulatorapi, recorder, gui.h, textedit.h | `companions/streamdeck/studio/` | **SD3, done 2026-10-20**: a wire v2 client (`deckclient.*`, `decklink.h`), the v1 server rewritten as `--listen` only (`listenserver.*`), `emulatorapi` became `studioapi` (USB routes gone, `/connection` GET / PUT); the recorder links `core/recording` |
+| `streamdeck-emulator/src/editor/*` (14) | `companions/streamdeck/studio/editor/` | **SD3, done 2026-10-20**; `presets.cpp`: generic presets only (no unreal-ng REST paths); `runcontroller` plays the scenario through the daemon (reload of a running one, else `unreal-streamdeck run`) |
 | `docs/hid/*` (8) | `docs/companions/streamdeck/hid/` | the protocol reference, checked against Elgato's docs and hardware |
 | `streamdeck-bridge/docs/PERFORMANCE.md` | `docs/companions/streamdeck/performance.md` | device measurements only |
 | `streamdeck-emulator/docs/scenario-editor/01-04` | `docs/companions/streamdeck/scenario-editor/` | **SD3**, rewritten to this design (daemon, catalogue) |
-| `streamdeck-bridge/README.md`, `streamdeck-emulator/README.md` | `docs/companions/streamdeck/` (`sdctl.md`, `studio.md`) | rewritten |
+| `streamdeck-bridge/README.md`, `streamdeck-emulator/README.md` | `docs/companions/streamdeck/` (`sdctl.md`, `studio.md`) | rewritten; `studio.md` done 2026-10-20 |
 
 ### 1.2 Not copied
 

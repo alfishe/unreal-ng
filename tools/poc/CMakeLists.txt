@@ -12,3 +12,7 @@ add_subdirectory(011-ttd-v2-capture-analysis)
 if (NOT TARGET opl4)
     add_subdirectory(015-opl4-synthesis)
 endif()
+# 032 needs libsdb: configure with -DUNREAL_STREAMDECK=ON as well.
+if (TARGET sdb)
+    add_subdirectory(032-streamdeck-jpeg-encoder)
+endif ()

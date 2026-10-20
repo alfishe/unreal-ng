@@ -32,7 +32,7 @@ below have their own, shared the same way):
 1. **Grading**, once per frame, at the source's resolution, in integers: bloom (a separable 1-4-6-4-1 blur, taps
    `bloomRadius` apart, added by `bloomStrength`), gamma, saturation (luma 77/150/29), contrast and brightness.
 2. **Geometry tables**, once per output size and profile: for every output pixel (device pixels) the source pixel it
-   shows (curvature, the viewport crop) and a per-channel factor (scanline, corners, vignette; 128 = 1.0). Float math here is fine: the tables are integers both backends read.
+   shows (curvature, the viewport crop) and a per-channel factor (scanline, corners, vignette; 128 = 1.0). Float math here is fine: the tables are integers both backends read, and every platform builds the same ones (below).
 3. **Composition**, per output pixel and channel: `min(255, graded * factor / 128)`.
 
 The software screen composes on the CPU (rows in parallel) and draws the image 1:1 at device pixels. The GPU screen
@@ -58,6 +58,21 @@ with per-model tables (float math builds them once per output size and profile):
    rows followed by a per-channel factor from phase, brightness and mask state;
 5. a gain from the brightest channel, the glow (crt-lottes' bloom, crt-consumer's squared glow) summed around the
    beam position, the per-pixel factor (mask, corners), the output table back to 8 bits.
+
+On the CPU the sums take the four channels at once (NEON, SSE2, plain C++ elsewhere: the same integers, so the same
+picture), an output pixel reuses the filtered rows of the output pixel above it when it shows the same source column
+and phase, and the glow's columns are a table per frame (rows, then columns, then x phases). A 352x288 frame at
+1408x1152 costs 27-80 ms of CPU time over the threads, half of what the plain per-pixel code took (2026-10-20).
+
+**The same bits on every platform.** The tables are built in floats, and two things would make them differ between
+compilers by one here and there (a different picture on Windows, Linux and macOS, arm64 and x86): the C libraries'
+`pow`, `exp2`, `sin`, `cos`, `acos` differ in the last bit, and clang and gcc fuse a multiply and an add into one
+instruction on arm64 (FMA, one rounding instead of two). So the tables use `unreal-qt/src/widgets/crtmath.h` (those
+functions from `+ - * /` and `sqrt` only, in doubles: the correctly rounded float almost always), and
+`unreal-qt/CMakeLists.txt` builds `crtrenderer.cpp`, `crtbeammodel.cpp` and `crtbeamshapes.cpp` with
+`-ffp-contract=off` (`/fp:precise` on MSVC). The rest is integers. Checked on 2026-10-20: clang arm64 and x86_64
+(macOS), gcc 13 arm64 and x86_64 (Linux), MSVC 2019 and MinGW (Windows) give the same tables and pictures for all
+nine profiles at five sizes on the ten gallery frames; `*_Test.TheSameBitsOnEveryCompiler` keeps the hashes.
 
 Against librashader on the gallery frames (352x288 at 1408x1152) the models differ by a mean of 0.06-0.28 / 255
 (zfast-crt 0.06, crt-easymode 0.07, crt-lottes 0.10, crt-gdv-mini 0.15, crt-geom 0.22, crt-consumer 0.22, crt-pi
@@ -133,10 +148,11 @@ the GPU and the software grab are the same image.
 ## Verification
 
 - `unreal-qt-tests --gtest_filter='CRTRenderer*'`: every profile shows the picture, full white stays bright with
-  contrast, a profile without effects is a nearest scale, the shader arithmetic, the tables rebuilt only when needed.
+  contrast, a profile without effects is a nearest scale, the shader arithmetic, the tables rebuilt only when needed,
+  the tables' and the picture's hash (the same on every compiler).
 - `unreal-qt-tests --gtest_filter='CRTBeamModel*'`: every model shows the picture, the tables rebuilt only when
-  needed, the GPU picture is the software one bit for bit (two layouts, all seven models); with
-  `UNREAL_CRT_REFERENCE` the comparison with librashader.
+  needed, the GPU picture is the software one bit for bit (two layouts, all seven models), the tables' and the
+  picture's hash (the same on every compiler); with `UNREAL_CRT_REFERENCE` the comparison with librashader.
 - `unreal-qt-tests --gtest_filter='SlangPresetRunner*'`: every preset compiles and shows the picture, the window's
   composition shader is the CPU picture; with `UNREAL_CRT_REFERENCE` the comparison with librashader.
 - Live: grab `source=window` with `gpu` on and off for every profile and compare the images.

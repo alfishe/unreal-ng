@@ -121,7 +121,9 @@ Also: `orel-bk08-chm-4.jpg`, `-5.jpg` (the manual's covers), `-6.jpg` (the box).
 
 | Photo | Use |
 |---|---|
-| ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/profi-v3-in-bk0010-case-speccyinfo-screenshot.jpg) `clones/profi-v3-in-bk0010-case-speccyinfo-screenshot.jpg` | top, 686 px: the only real Profi keyboard, the БК-0010 case and the badge (measured) |
+| ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/profi-bk0010-case-top-owner.png) `clones/profi-bk0010-case-top-owner.png` | top, 2560 px, the owner's: the case, the layout and every legend (measured), the badge (traced) |
+| ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/profi-bk0010-case-thumbnail-owner.png) `clones/profi-bk0010-case-thumbnail-owner.png` | 3/4, the owner's: the case's depth, the surround |
+| ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/profi-v3-in-bk0010-case-speccyinfo-screenshot.jpg) `clones/profi-v3-in-bk0010-case-speccyinfo-screenshot.jpg` | top, 686 px: the same keyboard, small |
 | ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/profi-v50-keyboard-schematic-album-p29.png) `clones/profi-v50-keyboard-schematic-album-p29.png` | the album's v5.0 keyboard: the keys, their order and wiring (a drawing, not to scale) |
 | ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/profi-v32-homemade-reed-kbd-es1840-caps-zxpk26525.jpg) `clones/profi-v32-homemade-reed-kbd-es1840-caps-zxpk26525.jpg` | a home-made reed keyboard with ЕС-1840 caps (not drawn) |
 

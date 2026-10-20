@@ -6,6 +6,7 @@
 // - frame: CopyPresentedFramebuffer into a caller buffer (any thread)
 // - input: Kempston joystick bits (atomic), ZX keys through the MessageCenter
 // - a test program poked into RAM and started at its address (no ROM involvement)
+// - automation (WebAPI, MCP, CLI) when built with ENABLE_AUTOMATION: started with the instance, stopped with it
 
 #include <SDL3/SDL.h>
 
@@ -87,6 +88,7 @@ private:
     uint32_t _audioRate = 0;
     std::atomic<uint32_t> _audioOccupancy{0};
     std::atomic<uint32_t> _audioUnderruns{0};
+    bool _automation = false;
 };
 
 } // namespace deckpoc

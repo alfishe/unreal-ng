@@ -38,6 +38,14 @@ SocketHandle Accept(SocketHandle listener);  // kInvalidSocket when none is pend
 long Send(SocketHandle s, const void* data, std::size_t size);
 long Recv(SocketHandle s, void* data, std::size_t size);
 std::string LastErrorText();
+// Kernel buffer sizes: a small send buffer makes a slow peer's backlog visible to our own queue (and bounded).
+void SetSendBuffer(SocketHandle s, int bytes);
+void SetReceiveBuffer(SocketHandle s, int bytes);
+
+// Blocking helpers for code outside a loop (the HTTP client, the emulator transport); the socket stays non-blocking.
+int WaitSocket(SocketHandle s, bool read, bool write, int timeoutMs);  // 1 ready, 0 timeout, -1 error
+SocketHandle Connect(const std::string& host, int port, int timeoutMs, std::string* error);
+bool SendAll(SocketHandle s, const void* data, std::size_t size, int timeoutMs);
 
 class EventLoop
 {

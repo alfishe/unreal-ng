@@ -1,6 +1,7 @@
 /// @file crtbeammodel_test.cpp
 /// @brief The integer models of the libretro CRT shaders (CRTBeamModel): every model shows the picture, the GPU
-/// picture (CRTBeamModelGPU) is the software one bit for bit, the tables are rebuilt only for a new size or profile.
+/// picture (CRTBeamModelGPU) is the software one bit for bit, the tables are rebuilt only for a new size or profile,
+/// every compiler builds the same tables and picture.
 /// The GPU test needs an OpenGL 3.3 core context: the offscreen platform has none on macOS
 /// (UNREAL_QT_TEST_PLATFORM=cocoa), the test skips without one.
 ///
@@ -15,6 +16,7 @@
 #include <QOpenGLContext>
 #include <QOpenGLExtraFunctions>
 #include <QOpenGLFramebufferObject>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -98,6 +100,16 @@ double MiddleMean(const std::vector<uint8_t>& out, const CRTBeamModel::Layout& l
     return sum / count;
 }
 
+/// FNV-1a over a table's bytes
+template <class T>
+uint64_t Hash(uint64_t hash, const std::vector<T>& table)
+{
+    const auto* bytes = reinterpret_cast<const uint8_t*>(table.data());
+    for (size_t i = 0; i < table.size() * sizeof(T); ++i)
+        hash = (hash ^ bytes[i]) * 1099511628211ull;
+    return hash;
+}
+
 class GLContext
 {
 public:
@@ -178,6 +190,55 @@ TEST(CRTBeamModel_Test, BgraIsTheSamePictureSwapped)
         ASSERT_EQ(bgra[i + 3], 255) << i / 4;
     }
 }
+
+// The tables come from float math (crtmath.h, no contraction): every compiler, C library and CPU must build the same
+// ones, and the CPU paths (NEON, SSE2, plain) must compose the same picture. A new hash after a change to a model is
+// expected: take it from the failure message on one platform, the others must then agree
+class CRTBeamModelBits_Test : public ::testing::TestWithParam<std::pair<CRTProfile, uint64_t>>
+{
+};
+
+TEST_P(CRTBeamModelBits_Test, TheSameBitsOnEveryCompiler)
+{
+    const auto [profile, hash] = GetParam();
+    const std::vector<uint8_t> frame = MakeFrame();
+    const CRTBeamModel::Layout layout = MakeLayout(300, 240);
+    CRTBeamModel model;
+    const std::vector<uint8_t> out = Compose(model, layout, profile, frame.data(), kFrameWidth * 4);
+    uint64_t h = 14695981039346656037ull;
+    h = Hash(h, model.frame());
+    h = Hash(h, model.glowFrame());
+    h = Hash(h, model.geometry());
+    h = Hash(h, model.factors());
+    h = Hash(h, model.horizontalWeights());
+    h = Hash(h, model.verticalTable());
+    h = Hash(h, model.interpolationTable());
+    h = Hash(h, model.transferTable());
+    h = Hash(h, model.boostTable());
+    h = Hash(h, model.glowPhase());
+    h = Hash(h, model.glowWeightsX());
+    h = Hash(h, model.glowWeightsY());
+    h = Hash(h, model.glowWeightsB());
+    h = Hash(h, model.outputTable());
+    h = Hash(h, out);
+    EXPECT_EQ(h, hash) << Key(profile) << std::hex << " 0x" << h;
+}
+
+INSTANTIATE_TEST_SUITE_P(CRTBeamModel, CRTBeamModelBits_Test,
+                         ::testing::Values(std::pair{CRTProfile::Lottes, 0xd3ab40f1ec7799c5ull},
+                                           std::pair{CRTProfile::Geom, 0x64b855aa5c490e24ull},
+                                           std::pair{CRTProfile::Easymode, 0xce4b0640481085abull},
+                                           std::pair{CRTProfile::GdvMini, 0x00c626f288a1dc2aull},
+                                           std::pair{CRTProfile::Consumer, 0x6bb9adbf4394458bull},
+                                           std::pair{CRTProfile::Pi, 0x2aaaeb52db431829ull},
+                                           std::pair{CRTProfile::Zfast, 0x0f219ab6c5de8d9cull}),
+                         [](const auto& info) {
+                             std::string name;
+                             for (char c : Key(info.param.first))
+                                 if (c != '-')
+                                     name += c;
+                             return name;
+                         });
 
 TEST(CRTBeamModel_Test, TheGpuPictureIsTheSoftwarePicture)
 {

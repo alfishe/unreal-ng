@@ -66,7 +66,7 @@ contributors) as the format reference; no MAME source is vendored.
 | rapidcsv 9.07 | `companions/streamdeck/3rdparty/rapidcsv.h` | BSD-3-Clause | header (scenario CSV / TSV) |
 | nanosvg | `companions/streamdeck/3rdparty/nanosvg.h`, `nanosvgrast.h` | zlib | header (SVG icons) |
 | stb_image | `companions/streamdeck/3rdparty/stb_image.h` | MIT / public domain | header (image loading) |
-| libjpeg-turbo (system, temporary until the vendored encoder) | via pkg-config `libturbojpeg` | IJG / BSD-3-Clause / zlib | dynamic |
+| TooJpeg (commit 341de5c295e4), altered: the base of the JPEG encoder | `companions/streamdeck/lib/src/jpeg.cpp` (notice in the file) | zlib | static (JPEG encoder; arithmetic after libjpeg / libjpeg-turbo, IJG / BSD-3-Clause) |
 
 ## Tools, tests and benchmarks only
 
