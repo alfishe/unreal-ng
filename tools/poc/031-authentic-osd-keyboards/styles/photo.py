@@ -147,6 +147,13 @@ def case_stripe(pic, part):
             f'Z" fill="{part.color}"/>')
 
 
+def case_print(pic, part):
+    """A traced print (trace.py): path data in mm from its own origin, placed at @p x, @p y"""
+    g = part.geometry
+    return (f'<path d="{g["d"]}" transform="translate({g["x"]:.3f},{g["y"]:.3f})" fill="{part.color}" '
+            f'fill-rule="evenodd"/>')
+
+
 def case_logo(pic, part):
     """A printed word; `width` sizes it to its measured width, `gloss` makes it glossy on a matte case (the Next's
     black-on-black wordmark reads by its sheen only)"""
@@ -361,13 +368,34 @@ def case_steps(pic, part):
     return "\n".join(parts)
 
 
+def case_mesh(pic, part):
+    """A finely textured plate (the Profi's keyboard surround): flat, crossed by two sets of faint diagonal ribs
+    @p pitch mm apart"""
+    g = part.geometry
+    x, y, w, h, pitch = g["x"], g["y"], g["w"], g["h"], g.get("pitch", 0.9)
+    lines = {1: [], -1: []}
+    k = -h
+    while k < w:
+        for sign in (1, -1):
+            # a 45° line through (x + k, y), clipped to the rectangle
+            x1, y1 = max(x, x + k), y + max(0.0, -k)
+            x2, y2 = min(x + w, x + k + h), y + min(h, w - k)
+            if sign < 0:  # the mirrored set
+                x1, x2 = 2 * x + w - x1, 2 * x + w - x2
+            lines[sign].append(f"M{x1:.2f},{y1:.2f}L{x2:.2f},{y2:.2f}")
+        k += pitch
+    return "\n".join([f'<path d="{rounded(x, y, w, h, g.get("r", 0.6))}" fill="{part.color}"/>'] + [
+        f'<path d="{"".join(paths)}" stroke="{colour}" stroke-width="{pitch * 0.3:.3f}" stroke-opacity="{opacity}"/>'
+        for paths, colour, opacity in ((lines[1], "#000000", 0.3), (lines[-1], "#ffffff", 0.05))])
+
+
 def case_ring(pic, part):
     """A printed ring (the Quorum's emblem)"""
     g = part.geometry
     return (f'<circle cx="{g["x"]:.3f}" cy="{g["y"]:.3f}" r="{g["r"]:.3f}" fill="none" stroke="{part.color}" '
             f'stroke-width="{g["width"]:.3f}"/>')
 
-CASE = {"ring": case_ring, "vents": case_vents, "steps": case_steps, "boss": case_boss, "panel": case_panel, "fddpanel": case_fddpanel, "teeth": case_teeth, "datacorder": case_datacorder, "buttons": case_buttons, "body": case_body, "plate": case_plate, "stripe": case_stripe, "logo": case_logo, "well": case_well,
+CASE = {"print": case_print, "mesh": case_mesh, "ring": case_ring, "vents": case_vents, "steps": case_steps, "boss": case_boss, "panel": case_panel, "fddpanel": case_fddpanel, "teeth": case_teeth, "datacorder": case_datacorder, "buttons": case_buttons, "body": case_body, "plate": case_plate, "stripe": case_stripe, "logo": case_logo, "well": case_well,
         "groove": case_groove, "insert": case_insert, "grille": case_grille, "tab": case_tab, "led": case_led,
         "hump": case_hump, "fins": case_fins}
 

@@ -405,8 +405,25 @@ bool Z80::IdleStepsInert() const
         if (analyzers && analyzers->hasCPUStepSubscribers())
             return false;
     }
-    if (_context->emulatorState.flags & (CF_SETDOSROM | CF_LEAVEDOSADR | CF_LEAVEDOSRAM))
-        return false;
+    // The TR-DOS session switch (RunInstructionStartHooks) acts on the PC at the instruction start: idle steps repeat
+    // the same PC, so only a switch that would fire at this PC stops them
+    const uint32_t dosFlags = _context->emulatorState.flags;
+    if (dosFlags & CF_SETDOSROM)
+    {
+        if (pch == 0x3D)
+            return false;
+    }
+    else if (dosFlags & CF_LEAVEDOSADR)
+    {
+        if (pch & 0xC0)
+            return false;
+    }
+    else if (dosFlags & CF_LEAVEDOSRAM)
+    {
+        const PortDecoder* ports = _context->pPortDecoder;
+        if ((pch & 0x3F) == 0x3D || !ports || ports->IsDosLeavingBank(static_cast<uint8_t>((pc >> 14) & 3)))
+            return false;
+    }
     if ((pc == ROMAddresses::LD_BYTES && _context->pTapeFastLoad) || (pc == 0x3FEC && _context->pDiskFastLoad) ||
         (pc == DiskAutostart::COMMAND_LOOP_ENTRY && _context->pDiskAutostart))
         return false;
@@ -420,6 +437,104 @@ bool Z80::IdleStepsInert() const
     if (_context->pBetaDisk && !_context->pBetaDisk->IsStepInert())
         return false;
     return true;
+}
+
+/// The idle fetches of a halted CPU in one go (the plain step's counterpart of Z84C15Engine::RunIdleCycles). The
+/// step loop would run one idle fetch per step, asking the interrupt question at every boundary: while nothing but
+/// time changes (IdleStepsInert, HaltedFetchIsPure), the answer depends on the boundary's T alone - "no" up to the
+/// INT pulse (t <= _intStart; a wrapping pulse was raised at the frame start), and up to the frame end past it. The
+/// fetches that start before that boundary, the frame end and the driver's limit become T-states and one R tick
+/// each. Their length is learned from real fetches, one per start phase (the Scorpion's Even M1 adds a T to a fetch
+/// that starts on an odd T). The screen and the sound catch up by time on its own OnCPUStep (true: time moved)
+bool Z80::RunHaltedIdle(bool skipBreakpoints)
+{
+    if (idleSkipLimit == 0 || !haltedIdleInOneGo || halted != 1 || vm1 || boundary != Z80_BOUNDARY_NONE)
+        return false;
+    const uint16_t fetch = static_cast<uint16_t>(pc + 1);  // the byte after the HALT (HaltedM1)
+    if (!InterruptsIdle() || !IdleStepsInert() || !HaltedFetchIsPure(fetch))
+    {
+        _haltedIdleRetryAt = t + kHaltedIdleRetryT;
+        return false;
+    }
+
+    const uint32_t start = t;
+    const uint32_t period = _context->config.even_M1 ? 2u : 1u;
+    uint32_t length[2] = {0, 0};
+    uint32_t fetches = 0;
+    for (;;)
+    {
+        // The first boundary the step loop would treat differently: the INT pulse, the frame end, the driver's limit
+        uint32_t target = std::min(idleSkipLimit, _frameLimit);
+        if (!_intWraps && t <= _intStart)
+            target = std::min(target, _intStart + 1);
+        else if (!_intWraps && t < _intEnd)
+            break;
+        if (t >= target)
+            break;
+
+        const uint32_t phase = t % period;
+        if (length[phase] == 0)
+        {
+            // A real idle fetch: its length at this phase
+            const uint32_t before = t;
+            Z80Step(skipBreakpoints);
+            length[phase] = t - before;
+            if (length[phase] == 0)
+                break;
+            continue;
+        }
+        const uint32_t len = length[phase];
+        if ((phase + len) % period == phase)
+        {
+            // Every fetch from here starts on this phase: those that start before the target
+            const uint32_t n = (target - t + len - 1) / len;
+            t += n * len;
+            fetches += n;
+        }
+        else
+        {
+            t += len;
+            fetches++;
+        }
+    }
+    haltedIdleFetchesInOneGo += fetches;
+    if (fetches)
+        r_low = static_cast<uint8_t>(((r_low + fetches) & 0x7F) | (r_low & 0x80));  // HaltedM1's refresh tick
+    if (t == start)
+        return false;
+    OnCPUStep();  // the peripherals see the end of the idle fetches
+    return true;
+}
+
+bool Z80::HaltedFetchIsPure(uint16_t fetch) const
+{
+    const MemoryInterface* const memIf = MemIf;
+    const bool contended = memIf == FastContendedMemIf || memIf == OverlayFastContendedMemIf;
+    const bool overlay = memIf == OverlayFastMemIf || memIf == OverlayFastContendedMemIf;
+    if (!contended && !overlay && memIf != FastMemIf)
+        return false;
+    if (contended)
+    {
+        // Memory::MemoryReadContended waits only in slow memory; MemoryReadM1Snow notes a refresh only with I there
+        const UlaContention* ula = _context->pUlaContention;
+        if (!ula || ula->IsSlotContended(static_cast<uint8_t>(fetch >> 14)) ||
+            (!ula->IsGateArray() && ula->IsSlotContended(static_cast<uint8_t>(i >> 6))))
+            return false;
+    }
+    if (overlay)
+    {
+        // An overlay watching the fetch: only one whose effect on it is a constant wait (the length is learned)
+        const HostBusOverlay* bus = _memory->GetBusOverlay();
+        if (!bus)
+            return false;
+        uint32_t period = 1;
+        if (bus->observesReads && fetch >= bus->windowStart && fetch < bus->windowEnd &&
+            (!bus->RepeatFetchIsPure(fetch, period) || period != 1))
+            return false;
+    }
+    if (machineM1Hook && !machineM1Hook->RepeatM1IsInert(fetch))
+        return false;
+    return _memory->RepeatFetchIsPure(fetch);
 }
 
 /// Single CPU command cycle (non-interruptable)
@@ -810,6 +925,12 @@ Z80::StepResult Z80::StepInstruction(bool skipBreakpoints)
     {
         Z80Step(skipBreakpoints);
         OnCPUStep();
+        // The peripherals saw this step's end (a device starts its time axis at the first step after a reset):
+        // the idle fetches after it in one go, then their end
+        // A refusal holds for kHaltedIdleRetryT: a HALT whose fetch is not pure (slow memory, waits) asks again
+        // later, not at every fetch (the frame end's wrap of t asks at once)
+        if (halted && static_cast<uint32_t>(_haltedIdleRetryAt - t - 1) >= kHaltedIdleRetryT) [[unlikely]]
+            RunHaltedIdle(skipBreakpoints);
         return result;
     }
 
