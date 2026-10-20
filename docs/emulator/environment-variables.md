@@ -273,7 +273,7 @@ The last three are in the shared bench code, so they also act in `core-tests`' `
 | Variable | Values (default) | What it does | Read by |
 |---|---|---|---|
 | `UNREAL_API_URL` | URL (`http://localhost:8090`) | Emulator the WebAPI pytest suite talks to. | `tools/verification/webapi/src/conftest.py:13` ([README](../../tools/verification/webapi/README.md)) |
-| `UNREAL_WEBAPI_URL` | URL (`http://127.0.0.1:8090`) | Emulator the Wireshark capture plugin talks to. | `tools/wireshark/unreal-ng-extcap.py:26` ([README](../../tools/wireshark/README.md)) |
+| `UNREAL_WEBAPI_URL` | URL (`http://127.0.0.1:8090`) | Emulator the Wireshark capture plugin talks to. | `plugins/wireshark/unreal-ng-extcap.py:26` ([README](../../plugins/wireshark/README.md)) |
 | `UNREAL_ASM_EMULATOR_URL` | URL (default `http://localhost:<--port>`, port 8090) | Emulator the assembler scripts talk to (another host); `--port` is enough on this one. | `tools/verification/unreal-asm/lib/emulator.py` |
 | `UNREAL_ASM_ZXASM`, `UNREAL_ASM_SJASMPLUS`, `UNREAL_ASM_PASMO`, `UNREAL_ASM_Z80ASM` | binary paths (names on `PATH`; in `unreal-asm-tests` the tests skip) | External assemblers for the cross-checks, in `tools/verification/unreal-asm/*/*.py` and in `unreal-asm-tests`. | `tools/verification/unreal-asm/checks/crosscheck.py:115`, `core/src/3rdparty/unreal-asm/tests/*_test.cpp` ([README](../../core/src/3rdparty/unreal-asm/README.md)) |
 | `UNREAL_TTD_PERIPHERAL_HEADER` | header path (the repository's `ttdserializable.h`) | Where the TTD analyzer reads device ids from, when run outside the tree. | `tools/verification/ttd-analyzer/src/ttd_format.py:216` |

@@ -254,7 +254,7 @@ emu.porttrace_include(port=0xFFFD)       # Now only FFFD events are recorded
 
 # Scenario 5: Chip-select commands only (value range at capture time)
 emu.porttrace_include(port=0xFFFD, direction="out", value=(0xFE, 0xFF))
-# (broader value filtering in post-processing via tools/porttrace/porttrace_convert.py
+# (broader value filtering in post-processing via utilities/porttrace/porttrace_convert.py
 #  is preferred for exploratory sessions)
 
 # Clear everything

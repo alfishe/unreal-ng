@@ -3,7 +3,7 @@
 /// @file trafficstream.h
 /// @brief The traffic tap as a live pcapng stream on a TCP port (network #91 T3, owner Q3): Wireshark reads it with
 /// `wireshark -k -i TCP@127.0.0.1:<port>` on macOS, Linux and Windows alike (portable sockets, netsockets.h); the
-/// extcap script tools/wireshark/unreal-ng-extcap.py lists running emulators in Wireshark and reads the same stream.
+/// extcap script plugins/wireshark/unreal-ng-extcap.py lists running emulators in Wireshark and reads the same stream.
 ///
 /// Every client gets the pcapng header and the ring as it is, then each new packet as it is recorded (the tap's live
 /// readers). One port per emulator; port 0 picks a free one. The listener binds the address the network's host

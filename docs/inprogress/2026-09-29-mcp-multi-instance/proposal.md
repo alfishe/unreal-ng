@@ -39,7 +39,7 @@ Two smaller gaps make this worse:
   cannot be given its own MCP port without this fix — it can only be reached
   via its WebAPI port (`/mcp` also rides on 8090, since it is the same drogon
   app instance), which conflates the two ports' semantics.
-- `tools/python/emulator_discovery.py` already implements list+select UX for
+- `utilities/python/emulator_discovery.py` already implements list+select UX for
   emulator objects within one process (`discover_emulators`, `select_emulator`,
   `--host`/`--port`/`-e/--emulator`) — a template worth mirroring rather than
   inventing new conventions.
@@ -61,7 +61,7 @@ Two smaller gaps make this worse:
 5. Naming/UX matches existing MCP conventions: a single verb-dispatch tool
    (cf. `emulator_manage`, `manage_symbols`) rather than two new top-level
    tools, and list/select semantics mirroring
-   `tools/python/emulator_discovery.py`.
+   `utilities/python/emulator_discovery.py`.
 
 ## Non-Goals
 
@@ -178,6 +178,6 @@ listener rather than `/mcp` on the WebAPI port.
 - `core/automation/webapi/src/automation-webapi.cpp:190-198`,
   `core/automation/cli/src/automation-cli.cpp:78-85` — env-var port override
   pattern to mirror
-- `tools/python/emulator_discovery.py` — list/select UX template
+- `utilities/python/emulator_discovery.py` — list/select UX template
 - `docs/emulator/design/control-interfaces/cli-interface.md:188-191` —
   existing (undocumented-for-MCP) multi-process port pattern

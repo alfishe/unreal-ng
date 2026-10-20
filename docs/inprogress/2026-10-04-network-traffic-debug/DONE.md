@@ -12,7 +12,7 @@
 - [x] T3 (2026-10-04): `TrafficStream` - the tap's live readers served as a pcapng stream on a TCP port (netsock:
   macOS, Linux, Windows; the ring first, then each packet; a reader 16 MiB behind is dropped), `[NETWORK]
   TrafficStream=off|auto|<port>`, actions `stream` / `stream-stop` on every surface, the Wireshark extcap script
-  `tools/wireshark/unreal-ng-extcap.py` (+ `.bat` for Windows) with its README
+  `plugins/wireshark/unreal-ng-extcap.py` (+ `.bat` for Windows) with its README
 - [x] T4 (2026-10-05): the Qt window Tools > Network traffic (Ctrl+6, dockable): the newest 20000 records polled
   through `TrafficAccess` (frame, time since the row above, adapter, direction, length, summary), word filter + kind,
   decode tree (Ethernet / ARP / IPv4 / ICMP / UDP / TCP / DHCP / DNS, socket operation fields), hex dump; Seek here

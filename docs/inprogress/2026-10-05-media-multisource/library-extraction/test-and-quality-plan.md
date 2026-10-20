@@ -59,7 +59,7 @@ name must reappear (possibly in the other binary).
 | `cpm`, `plus3dos` | cpmtools (`cpmls`, `cpmcp`, `cpmrm`, `fsck.cpm`) with the same disk definitions | as above, per disk definition |
 | `iso9660` | `isoinfo -l -J`, `xorriso -indev … -ls` | listings, Joliet names, El Torito catalog |
 | `tape` | `tzxlist` (fuse-utils) | block list, headers |
-| `trdos`, `scl`, `hobeta` | the real TR-DOS ROM through the emulator (acceptance), `tools/diskconverter` during its overlap | CAT, LOAD, MOVE, file bytes |
+| `trdos`, `scl`, `hobeta` | the real TR-DOS ROM through the emulator (acceptance), `utilities/diskconverter` during its overlap | CAT, LOAD, MOVE, file bytes |
 | `amiga` | amitools `xdftool` (list, read, write, create), ADFlib's command-line tools where installed | as for FAT |
 | `cbm` | VICE `c1541` (`-list`, `-read`, `-write`, `-validate`) | as for FAT |
 | tier-2 ZX file systems | corpora of real disks plus the behaviour notes of each driver; an emulated guest where one exists | listings and contents of known-good disks |

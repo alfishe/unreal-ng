@@ -22,7 +22,7 @@ Depends on the control-surfaces phases (branch `control-surfaces-design`): S1 co
 | SD7 | Supervision in unreal-qt, settings page, pairing from the deck and the studio | SD5 | open |
 | SD8 | Windows and Linux ports, udev rule, packaging on all three | SD5 | ports done 2026-10-20: the daemon, sdctl, the studio and both test binaries build with zero warnings and pass (1011 + 94 checks) on Linux gcc 14 (the CI image, `docker/linux/build.sh --streamdeck --test`), MSVC 2019 and MinGW gcc 15, and on macOS; hidraw backend + `companions/streamdeck/linux/70-unreal-streamdeck.rules`, the DEB installs the daemon, the studio and the rule. Fixes on the way: a use-after-free on reload (the navigator read the replaced scenario), the studio's Leave lost to a reset on Windows, `shell` / `open` on Windows (cmd.exe, output, timeout, job object). Open: DEB/AppImage/ZIP/DMG staging of the daemon and the studio beyond the DEB install rules, the AppImage rule text in the settings page (SD7), the parent watch on Windows / Linux, a hardware run on Windows and Linux (SD9) |
 | SD9 | Conformance suite in CI, hardware acceptance ACC-1 … ACC-7 | SD7, SD8 | open |
-| SD10 | Move the plugin and utility entries of `tools/` into `plugins/` and `utilities/` (one mechanical commit) | SD0 | open |
+| SD10 | Move the plugin and utility entries of `tools/` into `plugins/` and `utilities/` (one mechanical commit) | SD0 | done 2026-10-20: `tools/{wireshark,imhex,idapro}` -> `plugins/`, `tools/{diskconverter,diskinfo,porttrace,python,workload-monitor,neogs}` -> `utilities/` (`git mv`), references in code comments, tests, CI path filters, docs and recipes updated; group READMEs |
 
 ## Owner questions
 
