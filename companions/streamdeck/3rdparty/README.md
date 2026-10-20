@@ -11,4 +11,4 @@ Embedded source, built by `companions/streamdeck/CMakeLists.txt`; nothing is dow
 | `fkYAML.hpp` | [fkYAML](https://github.com/fktn-k/fkYAML) single header | 0.5.0 | scenario YAML |
 | `rapidcsv.h` | [rapidcsv](https://github.com/d99kris/rapidcsv) | 9.07 | scenario CSV / TSV |
 | `nanosvg.h`, `nanosvgrast.h` | [nanosvg](https://github.com/memononen/nanosvg) | | SVG icons |
-| `stb_image.h` | [stb](https://github.com/nothings/stb) | | PNG / JPEG / GIF loading |
+| `stb_image.h` | [stb](https://github.com/nothings/stb) | | PNG / JPEG / GIF loading, JPEG decoding (tests, emulation) |
