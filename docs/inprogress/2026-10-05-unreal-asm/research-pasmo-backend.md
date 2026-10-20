@@ -36,7 +36,8 @@ IN F,(C) / OUT (C),0                DB #ED,#70 / DB #ED,#71
 | Names: a letter, `_ ? @ .` first; `$` inside a name is ignored; mnemonics, registers, operators and directives are reserved | such labels renamed `L_...` |
 | `'text'` takes every byte, `''` is a quote | texts and one-character constants single-quoted (the file keeps the Spectrum code page) |
 | No PHASE / DISP | the displacement written out: `__UNREALASM_D DEFL run-$` at DISP, 0 at ENT; labels `EQU $+__UNREALASM_D`, `$` as `($+__UNREALASM_D)`, JR / DJNZ targets `-__UNREALASM_D`; a file that may start inside a displacement defines the delta once (`IF !DEFINED`) |
-| A DEFL name may not be used before its definition | a name assigned with `=` once in its assembly (the main source and what it INCLUDEs) is an `EQU`; ConvertProject counts definitions per assembly |
+| A DEFL name may not be used before its definition | a name assigned with `=` once in its assembly (the main source and what it INCLUDEs) is an `EQU`; ConvertProject counts definitions per assembly, a name assigned in exclusive IF / ELSE branches once |
+| IF needs its names defined before it; no value carries over from one pass to the next | an IF outside a macro whose names the layout of its own assembly knows (not redefinable) is decided when converting: the branch left out becomes a comment line, the DEFL names it would define first get the value the layout leaves (TASM 4.12's `.IF PASS`) |
 | `LOCAL` works in `MACRO` and `PROC`, not in `REPT` (redeclared in the second pass) | local blocks as `PROC ... ENDP` with `LOCAL`; a `REPT` body that defines labels becomes a macro called by `REPT` |
 | `REPT` with `EXITM` inside `IF` | WHILE and REPEAT ... UNTIL as `REPT 65535` with an exit test |
 | `DS n,fill` takes one fill byte | a fill sequence as `REPT n` / `DB` / `ENDM` |
@@ -53,8 +54,8 @@ IN F,(C) / OUT (C),0                DB #ED,#70 / DB #ED,#71
 | ZXT1..ZXT3 (ZAsm 3.15) | equal (nested PHASE, macros, REPT labels); ZXT4 needs IFUSED and `.m` |
 | T50PROG (TASM 5.0), constructs (ALASM 5.09) | equal |
 | General Sound 1.04 ROM (TASM 4.0, PHASE across 20 INCLUDEs, INCBIN sector tails) | all 32 768 bytes equal |
-| `crosscheck.py`: STORM and ZX-ASM disks of the collection | 88 equal, 0 differ; 22 need IFUSED, 2 refer to a redefinable name before it is defined |
-| `crosscheck.py`: TASM and ALASM disks of the collection | 245 equal, 0 differ; 5 are TASM 4.12's SINUS (`.IF PASS`: an undefined name read as 0 in the first pass) |
+| `crosscheck.py`: STORM and ZX-ASM disks of the collection | 88 equal, 0 differ; 22 need IFUSED; the 2 that referred to a redefinable name before its definition (EM3D13) equal since 2026-10-20 |
+| `crosscheck.py`: TASM and ALASM disks of the collection | 245 equal, 0 differ; TASM 4.12's SINUS (`.IF PASS`) equal since 2026-10-20 |
 
 pasmo 0.5.5 writes an empty file when the code spans the whole 64K: its output size is a 16-bit sum that wraps to 0
 (the GS ROM conversion places TASM's variables at 0 and the ROM at #8000). `crosscheck.py` was run with a pasmo built
@@ -65,5 +66,4 @@ with that one line widened; the unit tests use programs that stay below.
 | Item | Note |
 |---|---|
 | IFUSED, memory reads, pages | pasmo has none of them |
-| A redefinable name used before its definition (`EM3D13=$ ... EM3D13=#3D13`, used first) | pasmo refuses; sjasmplus takes the previous pass's value |
-| TASM 4.12's `.IF PASS` | pasmo refuses an undefined name in `IF` |
+| A name assigned more than once outside exclusive branches and used before its definition | pasmo refuses; sjasmplus takes the previous pass's value (none left in the collection) |

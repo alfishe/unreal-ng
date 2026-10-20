@@ -600,6 +600,10 @@ bool Server::Start(const Api& api, const std::string& host, int port, std::strin
     s.Put("/api/v1/.*", any);
     s.Delete("/api/v1/.*", any);
     s.set_default_headers({{"Access-Control-Allow-Origin", "*"}});
+    // One worker: a handful of editor and agent calls, not a pool of max(8, cores - 1) threads (architecture §9;
+    // the automation moves onto the network loop later)
+    s.new_task_queue = [] { return new httplib::ThreadPool(1); };
+    s.set_keep_alive_max_count(1);  // a kept-alive connection would hold the one worker from the next client
     _port = port == 0 ? s.bind_to_any_port(host) : (s.bind_to_port(host, port) ? port : -1);
     if (_port < 0)
     {

@@ -233,6 +233,7 @@ struct Writer
     int sections = 0;
     bool phased = false;           // z80asm: a PHASE may be active
     std::string pcLabel{};         // the label standing for $ in the statement being written
+    bool deflText = false;         // z80asm: writing a DEFL, a text macro ($ in it would be the $ where the name is used)
     int pcLabels = 0;
     // The names the assembly defines outside a block that tests them (sjasmplus' "exist" answers from the whole source
     // in the same way): z80asm's tests for a defined name are decided from them
@@ -472,6 +473,23 @@ struct Writer
         return "(-(" + out + "))";   // the target's true has the other sign (pasmo #FFFF, z80asm 1)
     }
 
+    static bool Mentions(const Expr& e, const std::function<bool(const std::string&)>& name)
+    {
+        if (e.kind == Expr::Kind::Symbol && name(e.text))
+            return true;
+        return std::any_of(e.args.begin(), e.args.end(), [&](const Expr& a) { return Mentions(a, name); });
+    }
+
+    /// A label of its own for the address here: __UNREALASM_PC_<file>_<n>
+    std::string NewPcLabel()
+    {
+        std::string file = options.fileName.empty() ? std::string("main") : options.fileName;
+        for (char& c : file)
+            if (!std::isalnum(static_cast<unsigned char>(c)))
+                c = '_';
+        return "__UNREALASM_PC_" + file + "_" + std::to_string(++pcLabels);
+    }
+
     std::string Print(const Expr& e)
     {
         switch (e.kind)
@@ -486,18 +504,12 @@ struct Writer
             case Expr::Kind::Current:
                 if (!virtualAddress.empty())
                     return "(" + virtualAddress + ")";
-                if (Z80asm() && phased && !inMacro)   // (a macro keeps $: the label would repeat at every call)
+                if (Z80asm() && ((phased && !inMacro) || deflText))   // (a macro keeps $ in PHASE: the label would repeat)
                 {
                     // z80asm 2.3 adds the section's ORG to $ inside PHASE (labels come out right): a label put before
                     // the statement stands for it
                     if (pcLabel.empty())
-                    {
-                        std::string file = options.fileName.empty() ? std::string("main") : options.fileName;
-                        for (char& c : file)
-                            if (!std::isalnum(static_cast<unsigned char>(c)))
-                                c = '_';
-                        pcLabel = "__UNREALASM_PC_" + file + "_" + std::to_string(++pcLabels);
-                    }
+                        pcLabel = NewPcLabel();
                     return pcLabel;
                 }
                 return displaced ? std::string("($+") + kDelta + ")" : "$";
@@ -948,6 +960,14 @@ struct Writer
                 out += (out.empty() ? "" : ",") + Print(s.args[k]);
             return out;
         };
+        // name = value (written as DEFL): z80asm puts the value's text where the name is used, so a $ in it is a label
+        // put here (pcLabel)
+        auto deflOf = [&]() {
+            deflText = Z80asm();
+            std::string text = "= " + args();
+            deflText = false;
+            return Checked({text}, "DEFL");
+        };
         switch (s.directive)
         {
             case ir::DirectiveKind::Org:
@@ -969,6 +989,13 @@ struct Writer
                     }
                     if (a.kind == Expr::Kind::Binary && a.op == Op::Add && a.args[0].kind == Expr::Kind::Current && a.args[1].kind == Expr::Kind::Number)
                         return Checked({"DEFS " + Print(a.args[1])}, "ORG");
+                    if (a.kind == Expr::Kind::Binary && a.op == Op::Sub && a.args[0].kind == Expr::Kind::Current && a.args[1].kind == Expr::Kind::Number &&
+                        a.args[1].value > 0)
+                        diagnostics.push_back({Severity::Warning, line, 0, "ORG " + Print(a) + ": z80asm cannot move back in a section (its DEFS is an error)"});
+                    else if (Mentions(a, [&](const std::string& n) { return redefinable && redefinable->count(n) > 0; }))
+                        diagnostics.push_back({Severity::Warning, line, 0,
+                                               "ORG " + Print(a) + " by DEFS: z80asm moves only forward in a section, from its start; a redefinable name "
+                                               "holding a number or an address before $ comes out wrong"});
                     return Checked({"DEFS " + Print(Expr::Binary(Op::Sub, Grouped(Masked16(a)), Expr::Make(Expr::Kind::Current)))}, "ORG");
                 }
                 if (Z80asm())
@@ -985,7 +1012,7 @@ struct Writer
                 return Checked({"ORG " + Print(s.args[0])}, "ORG");
             case ir::DirectiveKind::Equ:
                 if (redefinable && redefinable->count(label))
-                    return Checked({"= " + args()}, "DEFL");
+                    return deflOf();
                 if (s.args.size() == 1)
                 {
                     if (const auto v = Known(s.args[0]))
@@ -996,7 +1023,7 @@ struct Writer
             case ir::DirectiveKind::Defl:
                 if (redefinable && !redefinable->count(label))
                     return Checked({"EQU " + args()}, "EQU");   // assigned once
-                return Checked({"= " + args()}, "DEFL");
+                return deflOf();
             case ir::DirectiveKind::Db: return Checked({"DB " + Operands(s.operands)}, "DB");
             case ir::DirectiveKind::Dw: return Checked({"DW " + Operands(s.operands)}, "DW");
             case ir::DirectiveKind::Ds:
@@ -1330,6 +1357,18 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
     std::map<std::string, int> definitions;
     std::map<std::string, int> callArguments;
     bool inMacroBody = false;
+    // The branches of an IF exclude each other: a name defined once in each is defined once (IF x / N=$ / ELSE /
+    // N=#3D13 / ENDIF), the largest count of the branches. Per open IF: the branches so far, the current one
+    struct Branches
+    {
+        std::map<std::string, int> most, current;
+    };
+    std::vector<Branches> ifs;
+    const auto close = [](Branches& b) {
+        for (const auto& [name, count] : b.current)
+            b.most[name] = std::max(b.most[name], count);
+        b.current.clear();
+    };
     for (const ir::Line& l : program.lines)
     {
         bool assigned = false;
@@ -1343,12 +1382,36 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
                 callArguments[s.mnemonic] = std::max(callArguments[s.mnemonic], static_cast<int>(s.params.size()));
         }
         if (!l.label.empty())
-            definitions[l.label] += inMacroBody ? 2 : 1;   // inside a macro: defined at every call
+            (ifs.empty() ? definitions : ifs.back().current)[l.label] += inMacroBody ? 2 : 1;   // inside a macro: defined at every call
         if (assigned)
             redefinable.insert(l.label);
         for (const Statement& s : l.statements)
-            if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::EndMacro)
+        {
+            if (s.kind != Statement::Kind::Directive)
+                continue;
+            if (s.directive == ir::DirectiveKind::EndMacro)
                 inMacroBody = false;
+            else if (s.directive == ir::DirectiveKind::If || s.directive == ir::DirectiveKind::IfUsed)
+                ifs.emplace_back();
+            else if (s.directive == ir::DirectiveKind::Else && !ifs.empty())
+                close(ifs.back());
+            else if (s.directive == ir::DirectiveKind::EndIf && !ifs.empty())
+            {
+                close(ifs.back());
+                const std::map<std::string, int> most = std::move(ifs.back().most);
+                ifs.pop_back();
+                for (const auto& [name, count] : most)
+                    (ifs.empty() ? definitions : ifs.back().current)[name] += count;
+            }
+        }
+    }
+    while (!ifs.empty())   // an IF left open: its branches as they are
+    {
+        close(ifs.back());
+        const std::map<std::string, int> most = std::move(ifs.back().most);
+        ifs.pop_back();
+        for (const auto& [name, count] : most)
+            (ifs.empty() ? definitions : ifs.back().current)[name] += count;
     }
     result.definitions = definitions;
     // In a project the other files count too (a name assigned in a source and in a file it INCLUDEs)
@@ -1491,6 +1554,170 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
             auto& defined = w.temporaries[program.lines[index].label];
             defined.push_back({index, "__T" + program.lines[index].label + "_" + std::to_string(defined.size() + 1)});
         }
+    // A source of two passes (TASM's `.IF PASS` / `PASS EQU 1` / `.ENDIF`, a name its pass 1 sets for pass 2): an IF
+    // outside a macro on a name defined only after it is decided from the layout (the target's IF needs its names
+    // defined before), the branch not taken left out. So is z80asm's IF on an address (its labels count from their
+    // section's start there: `IF high maintree&#40` is 0). A redefinable name that branch assigns, and no line before it,
+    // starts with the value the pass before left (the layout's)
+    std::set<size_t> leftOut;
+    std::map<size_t, std::vector<std::string>> decidedLines;
+    {
+        std::map<std::string, size_t> firstIndex;
+        for (size_t k = 0; k < program.lines.size(); ++k)
+            if (!program.lines[k].label.empty())
+                firstIndex.emplace(program.lines[k].label, k);
+        const auto is = [](const ir::Line& l, ir::DirectiveKind kind) {
+            return std::any_of(l.statements.begin(), l.statements.end(),
+                               [kind](const Statement& s) { return s.kind == Statement::Kind::Directive && s.directive == kind; });
+        };
+        std::function<void(const Expr&, std::set<std::string>&)> names = [&](const Expr& e, std::set<std::string>& into) {
+            if (e.kind == Expr::Kind::Symbol)
+                into.insert(e.text);
+            for (const Expr& a : e.args)
+                names(a, into);
+        };
+        bool inMacro = false;
+        for (size_t k = 0; k < program.lines.size(); ++k)
+        {
+            const ir::Line& l = program.lines[k];
+            inMacro = (inMacro || is(l, ir::DirectiveKind::Macro)) && !is(l, ir::DirectiveKind::EndMacro);
+            if (inMacro || leftOut.count(k) || !only(l, ir::DirectiveKind::If) || l.statements[0].args.empty())
+                continue;
+            std::set<std::string> tested;
+            names(l.statements[0].args[0], tested);
+            bool later = false, known = !tested.empty();
+            for (const std::string& n : tested)
+            {
+                const auto first = firstIndex.find(n);
+                later = later || first == firstIndex.end() || first->second > k || (w.Z80asm() && w.addressLabels.count(n));
+                const auto v = options.labelValues.find(n);
+                known = known && v != options.labelValues.end() && !v->second.redefinable && !redefinable.count(n);
+            }
+            if (!later || !known)
+                continue;
+            // the condition's value as the layout gives its names (any true is not 0)
+            std::function<std::optional<int64_t>(const Expr&)> truth = [&](const Expr& e) -> std::optional<int64_t> {
+                switch (e.kind)
+                {
+                    case Expr::Kind::Number: return e.value;
+                    case Expr::Kind::Symbol: return options.labelValues.at(e.text).value;
+                    case Expr::Kind::Group: return truth(e.args[0]);
+                    case Expr::Kind::Unary:
+                    {
+                        const auto a = truth(e.args[0]);
+                        if (!a)
+                            return std::nullopt;
+                        switch (e.op)
+                        {
+                            case Op::Negate: return -*a;
+                            case Op::Plus: return *a;
+                            case Op::Not: return ~*a;
+                            case Op::High: return (*a >> 8) & 0xFF;
+                            case Op::Low: return *a & 0xFF;
+                            case Op::LogicalNot: return *a == 0;
+                            default: return std::nullopt;
+                        }
+                    }
+                    case Expr::Kind::Binary:
+                    {
+                        const auto a = truth(e.args[0]), b = truth(e.args[1]);
+                        if (!a || !b)
+                            return std::nullopt;
+                        switch (e.op)
+                        {
+                            case Op::Add: return *a + *b;
+                            case Op::Sub: return *a - *b;
+                            case Op::Mul: return *a * *b;
+                            case Op::Div: return *b ? std::optional<int64_t>(*a / *b) : std::nullopt;
+                            case Op::Mod: return *b ? std::optional<int64_t>(*a % *b) : std::nullopt;
+                            case Op::And: return *a & *b;
+                            case Op::Or: return *a | *b;
+                            case Op::Xor: return *a ^ *b;
+                            case Op::Shl: return *b >= 0 && *b < 32 ? std::optional<int64_t>(*a << *b) : std::nullopt;
+                            case Op::Shr: return *b >= 0 && *b < 32 ? std::optional<int64_t>(*a >> *b) : std::nullopt;
+                            case Op::Equal: return *a == *b;
+                            case Op::NotEqual: return *a != *b;
+                            case Op::Less: return *a < *b;
+                            case Op::Greater: return *a > *b;
+                            case Op::LessEqual: return *a <= *b;
+                            case Op::GreaterEqual: return *a >= *b;
+                            case Op::LogicalAnd: return *a != 0 && *b != 0;
+                            case Op::LogicalOr: return *a != 0 || *b != 0;
+                            default: return std::nullopt;
+                        }
+                    }
+                    default: return std::nullopt;
+                }
+            };
+            const auto value = truth(l.statements[0].args[0]);
+            // its ELSE and ENDIF; no block opens or closes in it (their lines are matched by index)
+            size_t elseAt = 0, endAt = 0;
+            bool plain = value.has_value();
+            int depth = 0;
+            for (size_t e = k + 1; e < program.lines.size() && !endAt && plain; ++e)
+            {
+                const ir::Line& b = program.lines[e];
+                for (const ir::DirectiveKind kind : {ir::DirectiveKind::Macro, ir::DirectiveKind::EndMacro, ir::DirectiveKind::LocalBlock,
+                                                     ir::DirectiveKind::EndLocalBlock, ir::DirectiveKind::Repeat, ir::DirectiveKind::EndRepeat})
+                    plain = plain && !is(b, kind);
+                if (is(b, ir::DirectiveKind::If) || is(b, ir::DirectiveKind::IfUsed))
+                    ++depth;
+                else if (only(b, ir::DirectiveKind::EndIf) && depth == 0)
+                    endAt = e;
+                else if (is(b, ir::DirectiveKind::EndIf))
+                    --depth;
+                else if (only(b, ir::DirectiveKind::Else) && depth == 0)
+                    elseAt = e;
+            }
+            if (!plain || !endAt)
+                continue;
+            const bool taken = *value != 0;
+            const size_t from = taken ? (elseAt ? elseAt : endAt) : k, to = taken ? endAt : (elseAt ? elseAt : endAt);
+            std::vector<std::string>& lines = decidedLines[k];
+            lines.push_back(std::string("; unreal-asm: IF ") + (taken ? "taken" : "left out") + " (the layout gives its names)");
+            for (size_t e = from; e <= to; ++e)
+            {
+                const ir::Line& b = program.lines[e];
+                if (!taken && e > k && e < to && !b.label.empty() && redefinable.count(b.label) && firstIndex[b.label] == e)
+                    if (const auto v = options.labelValues.find(b.label); v != options.labelValues.end())
+                        lines.push_back(w.Name(b.label) + " DEFL " + std::to_string(v->second.value) + "   ; the value the pass before left");
+                leftOut.insert(e);
+            }
+            leftOut.insert(k);
+            leftOut.insert(endAt);
+            if (elseAt)
+                leftOut.insert(elseAt);
+        }
+    }
+
+    // z80asm's DEFL is a text macro (its preprocessor puts the expression's text in place of the name): two names
+    // assigned from each other (X DEFL X+Y/41, Y DEFL Y-X/41) double the text at every assignment
+    if (w.Z80asm())
+    {
+        std::map<std::string, std::set<std::string>> uses;
+        std::map<std::string, uint32_t> at;
+        std::function<void(const Expr&, std::set<std::string>&)> names = [&](const Expr& e, std::set<std::string>& into) {
+            if (e.kind == Expr::Kind::Symbol)
+                into.insert(e.text);
+            for (const Expr& a : e.args)
+                names(a, into);
+        };
+        for (const ir::Line& l : program.lines)
+            if (!l.label.empty() && redefinable.count(l.label))
+                for (const Statement& s : l.statements)
+                    if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Defl && !s.args.empty())
+                    {
+                        names(s.args[0], uses[l.label]);
+                        at.emplace(l.label, l.sourceLine);
+                    }
+        for (const auto& [name, used] : uses)
+            for (const std::string& other : used)
+                if (other < name && uses.count(other) && uses[other].count(name))
+                    result.diagnostics.push_back({Severity::Warning, at[name], 0,
+                                           "z80asm's DEFL is a text macro: " + other + " and " + name +
+                                               " assigned from each other grow at every assignment (z80asm may not end)"});
+    }
+
     size_t nextBlock = 0;
     int repeatMacros = 0;
     for (size_t index = 0; index < program.lines.size(); ++index)
@@ -1498,6 +1725,11 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
         const ir::Line& l = program.lines[index];
         w.line = l.sourceLine;
         w.lineIndex = index;
+        if (const auto decided = decidedLines.find(index); decided != decidedLines.end())
+            for (const std::string& text : decided->second)
+                result.document.lines.push_back({text, {}});
+        if (leftOut.count(index))
+            continue;
         std::vector<std::string> texts;
         // A REPT with labels: its body becomes a macro
         if (repeatEnd.count(index))
@@ -1647,6 +1879,15 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
                 result.document.lines.push_back({label + " EQU " + w.virtualAddress, {}});
             else if (w.displaced)
                 result.document.lines.push_back({label + (redefined ? " DEFL $+" : " EQU $+") + kDelta, {}});
+            else if (redefined && w.Z80asm())
+            {
+                // z80asm's DEFL is a text macro: the name stands for a label here, not for the $ where it is used
+                const std::string here = w.NewPcLabel();
+                if (w.inMacro)
+                    result.document.lines.push_back({"        LOCAL " + here, {}});
+                result.document.lines.push_back({here + ":", {}});
+                result.document.lines.push_back({label + " DEFL " + here, {}});
+            }
             else if (redefined)
                 result.document.lines.push_back({label + " DEFL $", {}});
             else
@@ -1661,6 +1902,8 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
                 continue;
             w.pcLabel.clear();
             std::vector<std::string> written = w.StatementText(s, l.label);
+            if (!w.pcLabel.empty() && w.inMacro)
+                texts.push_back("LOCAL " + w.pcLabel);   // a label of each expansion
             if (!w.pcLabel.empty())
                 texts.push_back("@" + w.pcLabel + ":");
             for (std::string t : written)

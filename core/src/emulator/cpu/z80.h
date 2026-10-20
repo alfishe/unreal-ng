@@ -768,6 +768,14 @@ public:
     /// screen and the sound catch up by time, so their per-step calls need not run (the engine's precondition
     /// for the idle fast-forward: Z84C15Engine)
     bool IdleStepsInert() const;
+    /// The plain step's idle fast-forward (StepInstruction with no work-gate job): after a step that left the CPU
+    /// halted, the idle fetches that follow run as arithmetic up to the next boundary where the interrupt decision
+    /// may change, the frame end or idleSkipLimit (no-op while idleSkipLimit is 0), then OnCPUStep. true: time moved
+    bool RunHaltedIdle(bool skipBreakpoints);
+    /// Another idle fetch at `fetch` through the current memory interface reads a byte and nothing else: a plain
+    /// interface, or a contended one with the fetch and the refresh (I) outside slow memory; no bus overlay
+    /// watching the address; the board's M1 hook and the memory model agree
+    bool HaltedFetchIsPure(uint16_t fetch) const;
     /// Sets idleSkipLimit for a scope and restores it
     class IdleSkipScope
     {
@@ -1016,4 +1024,12 @@ public:
     /// Z80BoundaryEnum as the debugger protocol names it: none, prefix_dd, prefix_fd, int_shadow, ld_a_ir, nmi_ack
     static const char* BoundaryName(uint8_t boundary);
     /// endregion </Register Access API>
+
+    // Last, so the step's hot fields keep their offsets
+    /// RunHaltedIdle's switch (tests compare a machine with it off) and the idle fetches it ran as arithmetic
+    bool haltedIdleInOneGo = true;
+    uint64_t haltedIdleFetchesInOneGo = 0;
+    /// RunHaltedIdle's last refusal: no new check before this T (kHaltedIdleRetryT after it)
+    static constexpr uint32_t kHaltedIdleRetryT = 256;
+    uint32_t _haltedIdleRetryAt = 0;
 };

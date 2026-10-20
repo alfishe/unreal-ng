@@ -2,7 +2,7 @@
 /// @brief The CRT model both screen backends share (CRTRenderer): every profile shows the picture (the old CPU filter
 /// drew most of them black), a profile without effects is a plain nearest scale, the GPU shader's arithmetic gives the
 /// integer composition's values, the tables are rebuilt only for a new size or profile, a GLSL 1.20 custom shader
-/// becomes GLSL 330 for the core context.
+/// becomes GLSL 330 for the core context, every compiler builds the same tables and picture.
 
 #include <gtest/gtest.h>
 
@@ -209,6 +209,28 @@ TEST(CRTRenderer_Test, BgraIsTheSamePictureSwapped)
             ASSERT_EQ(bgra[i + 2], rgba[i]) << i;
             ASSERT_EQ(bgra[i + 3], 255) << i;
         }
+    }
+}
+
+TEST(CRTRenderer_Test, TheSameBitsOnEveryCompiler)
+{
+    // The tables come from float math (crtmath.h, no contraction): every compiler, C library and CPU must build the
+    // same ones. A new hash after a change to a profile is expected: take it from the failure message
+    const std::vector<uint8_t> frame = MakeFrame();
+    const CRTRenderer::Layout layout = MakeLayout(2);
+    const std::pair<CRTProfile, uint64_t> expected[] = {{CRTProfile::None, 0x5f532fcc57d5bf25ull},
+                                                        {CRTProfile::Basic, 0xc525cb91bf4385c8ull}};
+    for (const auto& [profile, hash] : expected)
+    {
+        CRTRenderer renderer;
+        const CRTProfileParams params = CRTProfileParams::FromProfile(profile);
+        const std::vector<uint8_t> out = Render(renderer, layout, params, frame);
+        uint64_t h = 14695981039346656037ull;
+        for (const std::vector<uint8_t>* table :
+             {&renderer.indexTable(), &renderer.factorTable(), &renderer.graded(), &out})
+            for (uint8_t b : *table)
+                h = (h ^ b) * 1099511628211ull;
+        EXPECT_EQ(h, hash) << CRTProfileParams::ProfileKey(profile).toStdString() << std::hex << " 0x" << h;
     }
 }
 

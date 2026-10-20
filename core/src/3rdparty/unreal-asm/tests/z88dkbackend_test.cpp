@@ -161,6 +161,26 @@ TEST(Z88dkBackend_Test, LabelsSectionsAndPhase)
     EXPECT_EQ(ToZ80asm("        INCBIN \"F\"\n        IN F,(C)", "sjasmplus"), (std::vector<std::string>{"BINARY \"F\"", "IN F,(C)"}));
 }
 
+TEST(Z88dkBackend_Test, TextMacrosAndSectionOffsets)
+{
+    // z80asm's DEFL is a text macro: SV=$ names a label put there (else SV would be the $ where it is used); in a
+    // macro the label is LOCAL
+    const std::vector<std::string> defl = ToZ80asm("        ORG #8000\n        NOP\nSV=$\n        NOP\nSV=$\n        DW SV", "sjasmplus");
+    EXPECT_TRUE(Contains(defl, "__UNREALASM_PC_main_1:")) << ::testing::PrintToString(defl);
+    EXPECT_TRUE(Contains(defl, "SV DEFL __UNREALASM_PC_main_1"));
+    const std::vector<std::string> macro = ToZ80asm("        MACRO M\nY=$\n        DW Y\nY=$\n        ENDM\n        ORG #8000\n        M", "sjasmplus");
+    EXPECT_TRUE(Contains(macro, "LOCAL __UNREALASM_PC_main_1")) << ::testing::PrintToString(macro);
+    // Its labels count from their section's start in an IF: an IF on an address is decided from the layout
+    const std::vector<std::string> address = ToZ80asm("        ORG #F045\nT       NOP\n        ORG #6000\n        IF high T&#40\n        NOP\n"
+                                                      "        ELSE\n        HALT\n        ENDIF", "sjasmplus");
+    EXPECT_FALSE(Contains(address, "HALT")) << ::testing::PrintToString(address);
+    EXPECT_EQ(std::count(address.begin(), address.end(), "NOP"), 2);
+    // Names assigned from each other grow at every assignment: reported
+    Diagnostics diagnostics;
+    ToZ80asm("SX=0\nSY=100\nSX=SX+SY/41\nSY=SY-SX/41", "sjasmplus", &diagnostics);
+    EXPECT_TRUE(std::any_of(diagnostics.begin(), diagnostics.end(), [](const Diagnostic& d) { return d.message.find("text macro") != std::string::npos; }));
+}
+
 TEST(Z88dkBackend_Test, ProgramsAssembleToWhatTheOriginalsBuilt)
 {
     const char* z80asm = std::getenv("UNREAL_ASM_Z80ASM");

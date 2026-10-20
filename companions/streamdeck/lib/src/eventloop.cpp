@@ -287,6 +287,81 @@ long Recv(SocketHandle s, void* data, std::size_t size)
     return WouldBlock() ? 0 : -1;
 }
 
+void SetSendBuffer(SocketHandle s, int bytes)
+{
+#ifdef _WIN32
+    ::setsockopt(static_cast<SOCKET>(s), SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&bytes), sizeof bytes);
+#else
+    ::setsockopt(s, SOL_SOCKET, SO_SNDBUF, &bytes, sizeof bytes);
+#endif
+}
+
+void SetReceiveBuffer(SocketHandle s, int bytes)
+{
+#ifdef _WIN32
+    ::setsockopt(static_cast<SOCKET>(s), SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&bytes), sizeof bytes);
+#else
+    ::setsockopt(s, SOL_SOCKET, SO_RCVBUF, &bytes, sizeof bytes);
+#endif
+}
+
+int WaitSocket(SocketHandle s, bool read, bool write, int timeoutMs)
+{
+    PollFd p{};
+#ifdef _WIN32
+    p.fd = static_cast<SOCKET>(s);
+    p.events = static_cast<SHORT>((read ? POLLRDNORM : 0) | (write ? POLLWRNORM : 0));
+#else
+    p.fd = s;
+    p.events = static_cast<short>((read ? POLLIN : 0) | (write ? POLLOUT : 0));
+#endif
+    const int n = PollFds(&p, 1, timeoutMs);
+    if (n < 0)
+        return -1;
+    if (n == 0)
+        return 0;
+    // A hang-up with data still to read is "ready": the read then sees the data, and the end after it.
+    return (p.revents & (POLLERR | POLLNVAL)) && !(p.revents & (read ? POLLIN : 0)) ? -1 : 1;
+}
+
+SocketHandle Connect(const std::string& host, int port, int timeoutMs, std::string* error)
+{
+    SocketHandle s = ConnectStart(host, port, error);
+    if (s == kInvalidSocket)
+        return s;
+    const int ready = WaitSocket(s, false, true, timeoutMs);
+    if (ready <= 0 || SocketError(s) != 0)
+    {
+        if (error)
+            *error = "connect " + host + ":" + std::to_string(port) + (ready == 0 ? ": timed out" : ": refused");
+        CloseSocket(s);
+        return kInvalidSocket;
+    }
+    return s;
+}
+
+bool SendAll(SocketHandle s, const void* data, std::size_t size, int timeoutMs)
+{
+    const auto* p = static_cast<const char*>(data);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    while (size > 0)
+    {
+        const long n = Send(s, p, size);
+        if (n < 0)
+            return false;
+        if (n == 0)
+        {
+            const auto left = std::chrono::ceil<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+            if (left.count() <= 0 || WaitSocket(s, false, true, static_cast<int>(left.count())) <= 0)
+                return false;
+            continue;
+        }
+        p += n;
+        size -= static_cast<std::size_t>(n);
+    }
+    return true;
+}
+
 std::string LastErrorText()
 {
 #ifdef _WIN32

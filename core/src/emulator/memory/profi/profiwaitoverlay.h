@@ -69,6 +69,14 @@ public:
     uint8_t onRead(uint16_t addr, uint8_t normal, bool isExecution, bool romPaged) override;
     uint8_t onReadM1(uint16_t addr, uint8_t normal, bool romPaged) override;
     void onWrite(uint16_t addr, uint8_t value, bool romPaged) override;
+    /// A repeated idle fetch is pure only while no rule applies: the waits follow the frame position (the paper
+    /// fetch window) or the clock's parity
+    bool RepeatFetchIsPure(uint16_t addr, uint32_t& period) const override
+    {
+        (void)addr;
+        period = 1;
+        return !WaitsApply();
+    }
 
 private:
     void Wait(uint16_t addr, bool write);
