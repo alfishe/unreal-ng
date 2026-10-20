@@ -6,6 +6,15 @@
 #include <cmath>
 #include <utility>
 
+// The composition's sums four lanes at a time (the same integers: no rounding differs)
+#if defined(__ARM_NEON) || defined(_M_ARM64)
+#include <arm_neon.h>
+#define CRT_BEAM_NEON
+#elif defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#define CRT_BEAM_SSE2
+#endif
+
 namespace
 {
 constexpr int kPhases = CRTBeamModel::kPhases;
@@ -13,6 +22,7 @@ constexpr int kLinearMax = CRTBeamModel::kLinearMax;
 constexpr int kOutputMax = CRTBeamModel::kOutputMax;
 constexpr int kGlowPhases = CRTBeamModel::kGlowPhases;
 constexpr int kGlowRows = CRTBeamModel::kGlowRows;
+constexpr int kGlowTaps = CRTBeamModel::kGlowTaps;
 constexpr int kGlowFirst = CRTBeamModel::kGlowFirst;
 constexpr int kGlowSamples = 7;  ///< the squared glow's samples per row and rows
 constexpr int kGlowPad = 12;  ///< glow table columns and rows past the picture: farther than kReach plus the taps
@@ -63,171 +73,496 @@ void SplitPosition(float p, int& tap, int& phase)
     }
 }
 
-struct Rgb
+/// R, G, B and a zero: every loop over the four is one vector operation
+struct Lanes
 {
-    int c[3];
+    int c[4];
+};
+
+enum class Glow
+{
+    None,
+    Gaussian,
+    Squared
+};
+
+/// The horizontal weights, 3 rows (r, g, b) of kPhases x 4, to [phase][tap pair][lane][tap in the pair], lane 3
+/// zero: a pair of taps is one multiply-add
+std::vector<int16_t> PairTaps(const std::vector<int16_t>& table)
+{
+    std::vector<int16_t> out(static_cast<size_t>(kPhases) * 16, 0);
+    for (int p = 0; p < kPhases; ++p)
+        for (int t = 0; t < 4; ++t)
+            for (int ch = 0; ch < 3; ++ch)
+                out[static_cast<size_t>(p * 16 + (t / 2) * 8 + ch * 2 + t % 2)] =
+                    table[static_cast<size_t>((ch * kPhases + p) * 4 + t)];
+    return out;
+}
+
+/// The glow's row weights per y phase, as the eight values a glow table entry has per row: squared, row k's square
+/// weight for RGB0 then its product weight; gaussian, rows 2k and 2k + 1 (the table has four values a row)
+std::vector<uint16_t> GlowLanes(const std::vector<uint16_t>& rows, const std::vector<uint16_t>& products, bool squared)
+{
+    std::vector<uint16_t> out(rows.empty() ? 0 : static_cast<size_t>(kPhases) * kGlowRows * 8, 0);
+    for (size_t p = 0; p < out.size() / (kGlowRows * 8); ++p)
+    {
+        const uint16_t* wy = &rows[p * kGlowRows];
+        uint16_t* o = &out[p * kGlowRows * 8];
+        for (int k = 0; k < kGlowRows; ++k)
+            for (int ch = 0; ch < 3; ++ch)
+            {
+                if (squared)
+                {
+                    o[k * 8 + ch] = wy[k];
+                    o[k * 8 + 4 + ch] = products[p * kGlowRows + static_cast<size_t>(k)];
+                }
+                else if (k < kGlowRows / 2)
+                {
+                    o[k * 8 + ch] = wy[2 * k];
+                    o[k * 8 + 4 + ch] = wy[2 * k + 1];
+                }
+            }
+    }
+    return out;
+}
+
+/// The gaussian glow's column weights, kGlowPhases rows of kGlowTaps, to [phase][tap pair][lane][tap in the pair]
+std::vector<int16_t> GlowPairs(const std::vector<int16_t>& table)
+{
+    std::vector<int16_t> out(static_cast<size_t>(kGlowPhases) * kGlowTaps * 4, 0);
+    for (int q = 0; q < kGlowPhases && !table.empty(); ++q)
+        for (int t = 0; t < kGlowTaps; ++t)
+            for (int ch = 0; ch < 3; ++ch)
+                out[static_cast<size_t>(q * kGlowTaps * 4 + (t / 2) * 8 + ch * 2 + t % 2)] =
+                    table[static_cast<size_t>(q * kGlowTaps + t)];
+    return out;
+}
+
+/// The gaussian glow at one column: its taps `t` ([tap][lane], lane 3 zero) times the weights of every x phase `w`
+/// (GlowPairs()) to `out`, kGlowPhases x RGB0
+void GlowColumn(const uint16_t* t, const int16_t* w, uint16_t* out)
+{
+#if defined(CRT_BEAM_NEON)
+    int16x4_t taps[kGlowTaps];
+    for (int k = 0; k < kGlowTaps; ++k)
+        taps[k] = vreinterpret_s16_u16(vld1_u16(t + k * 4));
+    for (int q = 0; q < kGlowPhases; ++q, w += kGlowTaps * 4)
+    {
+        int32x4_t sum = vdupq_n_s32(0);
+        for (int k = 0; k < kGlowTaps / 2; ++k)
+        {
+            const int16x4x2_t pair = vld2_s16(w + k * 8);
+            sum = vmlal_s16(sum, taps[2 * k], pair.val[0]);
+            sum = vmlal_s16(sum, taps[2 * k + 1], pair.val[1]);
+        }
+        sum = vshrq_n_s32(vaddq_s32(vmaxq_s32(sum, vdupq_n_s32(0)), vdupq_n_s32(2048)), 12);
+        vst1_u16(out + q * 4, vmovn_u32(vreinterpretq_u32_s32(sum)));
+    }
+#elif defined(CRT_BEAM_SSE2)
+    __m128i pairs[kGlowTaps / 2];
+    for (int k = 0; k < kGlowTaps / 2; ++k)
+    {
+        const __m128i both = _mm_loadu_si128(reinterpret_cast<const __m128i*>(t + k * 8));
+        pairs[k] = _mm_unpacklo_epi16(both, _mm_srli_si128(both, 8));
+    }
+    for (int q = 0; q < kGlowPhases; ++q, w += kGlowTaps * 4)
+    {
+        __m128i sum = _mm_setzero_si128();
+        for (int k = 0; k < kGlowTaps / 2; ++k)
+            sum = _mm_add_epi32(sum,
+                                _mm_madd_epi16(pairs[k], _mm_loadu_si128(reinterpret_cast<const __m128i*>(w + k * 8))));
+        sum = _mm_andnot_si128(_mm_srai_epi32(sum, 31), sum);
+        sum = _mm_srli_epi32(_mm_add_epi32(sum, _mm_set1_epi32(2048)), 12);
+        // The low 16 bits, as the scalar cast
+        sum = _mm_srai_epi32(_mm_slli_epi32(sum, 16), 16);
+        _mm_storel_epi64(reinterpret_cast<__m128i*>(out + q * 4), _mm_packs_epi32(sum, sum));
+    }
+#else
+    for (int q = 0; q < kGlowPhases; ++q, w += kGlowTaps * 4)
+        for (int ch = 0; ch < 4; ++ch)
+        {
+            int sum = 0;
+            for (int k = 0; k < kGlowTaps; ++k)
+                sum += t[k * 4 + ch] * w[(k / 2) * 8 + ch * 2 + k % 2];
+            out[q * 4 + ch] = static_cast<uint16_t>((std::max(sum, 0) + 2048) >> 12);
+        }
+#endif
+}
+
+/// 3 rows (r, g, b) of kPhases x 4 weights to [phase][tap][lane], lane 3 zero
+std::vector<int> Spread(const std::vector<int16_t>& table)
+{
+    std::vector<int> out(static_cast<size_t>(kPhases) * 16, 0);
+    if (table.empty())
+        return out;
+    for (int p = 0; p < kPhases; ++p)
+        for (int t = 0; t < 4; ++t)
+            for (int ch = 0; ch < 3; ++ch)
+                out[static_cast<size_t>((p * 4 + t) * 4 + ch)] = table[static_cast<size_t>((ch * kPhases + p) * 4 + t)];
+    return out;
+}
+
+/// Up to four source rows through the horizontal filter, from row `first` at column x, phase px
+struct Filtered
+{
+    int x = CRTBeamModel::kOutside;
+    int px = 0;
+    int first = 0;
+    Lanes rows[4];
 };
 
 // ---- The composition, the same integer arithmetic as kShader ----
 
 struct Composer
 {
-    const CRTBeamModel& model;
     const uint16_t* frame;
-    const uint16_t* glow;
+    const uint16_t* glowTable;
     int frameWidth;
-    QRect source;
+    int left;
+    int top;
+    int right;
+    int bottom;
+    int glowColumns;
+    int glowRows;
+    const uint16_t* vertical;
+    const uint16_t* transferTable;
+    const uint16_t* boost;
+    const uint16_t* glowPhase;
+    const uint16_t* output;
+    bool clampToCentre;
+    bool beamByBrightness;
+    bool fourRows;
+    bool glowInDisplay;
+    int brightnessWeights[4];
+    std::vector<int16_t> horizontal;    ///< PairTaps()
+    std::vector<int> interpolation;     ///< [phase][row][lane]
+    std::vector<uint16_t> glowWeights;  ///< GlowLanes()
 
-    /// The shaders' ClampToBorder: a tap off the shown picture is black
-    Rgb fetch(int x, int y) const
+    Composer(const CRTBeamModel& model, const uint16_t* frameData, const uint16_t* glowData)
+        : frame(frameData),
+          glowTable(glowData),
+          frameWidth(model.layout().frameWidth),
+          left(model.layout().source.left()),
+          top(model.layout().source.top()),
+          right(model.layout().source.right()),
+          bottom(model.layout().source.bottom()),
+          glowColumns(model.layout().source.width() + 2 * kGlowPad),
+          glowRows(model.layout().source.height() + 2 * kGlowPad),
+          vertical(model.verticalTable().data()),
+          transferTable(model.transferTable().empty() ? nullptr : model.transferTable().data()),
+          boost(model.boostTable().empty() ? nullptr : model.boostTable().data()),
+          glowPhase(model.glowPhase().data()),
+          output(model.outputTable().data()),
+          clampToCentre(model.clampToCentre()),
+          beamByBrightness(model.beamByBrightness()),
+          fourRows(model.fourRows()),
+          glowInDisplay(model.glowInDisplay()),
+          brightnessWeights{model.brightnessWeights()[0], model.brightnessWeights()[1], model.brightnessWeights()[2],
+                            model.brightnessWeights()[3]},
+          horizontal(PairTaps(model.horizontalWeights())),
+          interpolation(Spread(model.interpolationTable())),
+          glowWeights(GlowLanes(model.glowWeightsY(), model.glowWeightsB(), model.glowSquared()))
     {
-        if (x < source.left() || x > source.right() || y < source.top() || y > source.bottom())
-            return {{0, 0, 0}};
-        const uint16_t* p = frame + (static_cast<size_t>(y) * frameWidth + x) * 4;
-        return {{p[0], p[1], p[2]}};
     }
 
-    /// The glow's columns around (x, y) at x phase q (`stride` values): zeros past the table (no tap of it reaches
-    /// the picture)
-    const uint16_t* glowColumns(int x, int y, int q, int stride) const
+    /// The taps x - 1 .. x + 2 of row y, RGBA each: in the frame when all are on the shown picture, otherwise copied
+    /// into `buffer`, the ones off it black (the shaders' ClampToBorder)
+    const uint16_t* taps(int x, int y, bool inside, uint16_t* buffer) const
     {
-        static const uint16_t kZero[6] = {};
-        const int c = x - source.left() + kGlowPad;
-        const int r = y - source.top() + kGlowPad;
-        const int columns = source.width() + 2 * kGlowPad;
-        if (c < 0 || c >= columns || r < 0 || r >= source.height() + 2 * kGlowPad)
-            return kZero;
-        return glow + ((static_cast<size_t>(r) * columns + c) * kGlowPhases + q) * stride;
-    }
-
-    /// One row through the horizontal filter, `w` the weights of the phase (3 channels x 4)
-    Rgb row(int x, int y, const int16_t* w, bool centre) const
-    {
-        const Rgb a = fetch(x - 1, y);
-        const Rgb b = fetch(x, y);
-        const Rgb c = fetch(x + 1, y);
-        const Rgb d = fetch(x + 2, y);
-        Rgb out;
-        for (int ch = 0; ch < 3; ++ch)
+        if (inside)
+            return frame + (static_cast<size_t>(y) * frameWidth + x - 1) * 4;
+        for (int t = 0; t < 4; ++t)
         {
-            const int16_t* k = w + static_cast<size_t>(ch) * kPhases * 4;
-            const int sum = (std::max(a.c[ch] * k[0] + b.c[ch] * k[1] + c.c[ch] * k[2] + d.c[ch] * k[3], 0) + 2048) >> 12;
-            out.c[ch] = centre ? std::clamp(sum, std::min(b.c[ch], c.c[ch]), std::max(b.c[ch], c.c[ch]))
-                               : std::min(sum, kLinearMax);
+            const int tx = x - 1 + t;
+            const bool shown = tx >= left && tx <= right && y >= top && y <= bottom;
+            for (int ch = 0; ch < 4; ++ch)
+                buffer[t * 4 + ch] = shown ? frame[(static_cast<size_t>(y) * frameWidth + tx) * 4 + ch] : 0;
         }
+        return buffer;
+    }
+
+    /// One row through the horizontal filter: taps `t` ([tap][lane]), weights `w` of the phase (PairTaps())
+    Lanes row(const uint16_t* t, const int16_t* w) const
+    {
+        Lanes out;
+#if defined(CRT_BEAM_NEON)
+        const int16x4x2_t w01 = vld2_s16(w);  // the even weights tap 0's, the odd ones tap 1's
+        const int16x4x2_t w23 = vld2_s16(w + 8);
+        const int16x4_t b = vreinterpret_s16_u16(vld1_u16(t + 4));
+        const int16x4_t c = vreinterpret_s16_u16(vld1_u16(t + 8));
+        int32x4_t sum = vmull_s16(vreinterpret_s16_u16(vld1_u16(t)), w01.val[0]);
+        sum = vmlal_s16(sum, b, w01.val[1]);
+        sum = vmlal_s16(sum, c, w23.val[0]);
+        sum = vmlal_s16(sum, vreinterpret_s16_u16(vld1_u16(t + 12)), w23.val[1]);
+        sum = vshrq_n_s32(vaddq_s32(vmaxq_s32(sum, vdupq_n_s32(0)), vdupq_n_s32(2048)), 12);
+        if (clampToCentre)
+            sum = vminq_s32(vmaxq_s32(sum, vmovl_s16(vmin_s16(b, c))), vmovl_s16(vmax_s16(b, c)));
+        else
+            sum = vminq_s32(sum, vdupq_n_s32(kLinearMax));
+        vst1q_s32(out.c, sum);
+#elif defined(CRT_BEAM_SSE2)
+        const __m128i t01 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(t));
+        const __m128i t23 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(t + 8));
+        // Each lane's two taps next to each other, then one multiply-add per pair (the taps are under 2^14)
+        const __m128i pair01 = _mm_unpacklo_epi16(t01, _mm_srli_si128(t01, 8));
+        const __m128i pair23 = _mm_unpacklo_epi16(t23, _mm_srli_si128(t23, 8));
+        __m128i sum = _mm_add_epi32(_mm_madd_epi16(pair01, _mm_loadu_si128(reinterpret_cast<const __m128i*>(w))),
+                                    _mm_madd_epi16(pair23, _mm_loadu_si128(reinterpret_cast<const __m128i*>(w + 8))));
+        sum = _mm_andnot_si128(_mm_srai_epi32(sum, 31), sum);
+        sum = _mm_srli_epi32(_mm_add_epi32(sum, _mm_set1_epi32(2048)), 12);
+        // 16 bits, saturated: both bounds are under 2^15, a larger sum ends at the bound either way
+        __m128i narrow = _mm_packs_epi32(sum, sum);
+        if (clampToCentre)
+        {
+            const __m128i b = _mm_srli_si128(t01, 8);
+            narrow = _mm_min_epi16(_mm_max_epi16(narrow, _mm_min_epi16(b, t23)), _mm_max_epi16(b, t23));
+        }
+        else
+            narrow = _mm_min_epi16(narrow, _mm_set1_epi16(static_cast<short>(kLinearMax)));
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(out.c), _mm_unpacklo_epi16(narrow, _mm_setzero_si128()));
+#else
+        for (int ch = 0; ch < 4; ++ch)
+        {
+            const int b = t[4 + ch];
+            const int c = t[8 + ch];
+            const int sum = t[ch] * w[ch * 2] + b * w[ch * 2 + 1] + c * w[8 + ch * 2] + t[12 + ch] * w[9 + ch * 2];
+            const int v = (std::max(sum, 0) + 2048) >> 12;
+            out.c[ch] = clampToCentre ? std::min(std::max(v, std::min(b, c)), std::max(b, c)) : std::min(v, kLinearMax);
+        }
+#endif
         return out;
     }
 
-    int brightness(const Rgb& v) const
+    /// The glow: the eight rows' values from `v`, `stride` apart (`Values` each, the table's), times the weights
+    /// `w` of the y phase (GlowLanes())
+    template <int Values>
+    static Lanes glowSum(const uint16_t* v, size_t stride, const uint16_t* w)
     {
-        const int* bw = model.brightnessWeights();
-        const int top = std::max(v.c[0], std::max(v.c[1], v.c[2]));
-        return std::clamp((v.c[0] * bw[0] + v.c[1] * bw[1] + v.c[2] * bw[2] + top * bw[3] + 2048) >> 12, 0, kLinearMax);
+        Lanes out;
+#if defined(CRT_BEAM_NEON) || defined(CRT_BEAM_SSE2)
+        constexpr int count = kGlowRows * Values / 8;  // eight values a step
+#endif
+#if defined(CRT_BEAM_NEON)
+        uint32x4_t sum = vdupq_n_u32(0);
+        for (int k = 0; k < count; ++k)
+        {
+            const uint16x8_t a = Values == 8
+                                     ? vld1q_u16(v + k * stride)
+                                     : vcombine_u16(vld1_u16(v + 2 * k * stride), vld1_u16(v + (2 * k + 1) * stride));
+            const uint16x8_t b = vld1q_u16(w + k * 8);
+            sum = vmlal_u16(sum, vget_low_u16(a), vget_low_u16(b));
+            sum = vmlal_u16(sum, vget_high_u16(a), vget_high_u16(b));
+        }
+        vst1q_s32(out.c,
+                  vreinterpretq_s32_u32(vshrq_n_u32(vaddq_u32(sum, vdupq_n_u32(CRTBeamModel::kGlowUnit / 2)), 16)));
+#elif defined(CRT_BEAM_SSE2)
+        __m128i sum = _mm_setzero_si128();
+        for (int k = 0; k < count; ++k)
+        {
+            const __m128i a =
+                Values == 8
+                    ? _mm_loadu_si128(reinterpret_cast<const __m128i*>(v + k * stride))
+                    : _mm_unpacklo_epi64(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(v + 2 * k * stride)),
+                                         _mm_loadl_epi64(reinterpret_cast<const __m128i*>(v + (2 * k + 1) * stride)));
+            const __m128i b = _mm_loadu_si128(reinterpret_cast<const __m128i*>(w + k * 8));
+            const __m128i low = _mm_mullo_epi16(a, b);
+            const __m128i high = _mm_mulhi_epu16(a, b);
+            sum = _mm_add_epi32(sum, _mm_add_epi32(_mm_unpacklo_epi16(low, high), _mm_unpackhi_epi16(low, high)));
+        }
+        sum = _mm_srli_epi32(_mm_add_epi32(sum, _mm_set1_epi32(CRTBeamModel::kGlowUnit / 2)), 16);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(out.c), sum);
+#else
+        uint32_t sum[4] = {};
+        for (int k = 0; k < kGlowRows; ++k)
+            for (int i = 0; i < Values; ++i)
+                sum[i % 4] += static_cast<uint32_t>(v[k * stride + i]) * w[k * Values + i];
+        for (int ch = 0; ch < 4; ++ch)
+            out.c[ch] = static_cast<int>((sum[ch] + CRTBeamModel::kGlowUnit / 2) >> 16);
+#endif
+        return out;
     }
 
-    void transfer(Rgb& v) const
+    int brightness(const Lanes& v) const
     {
-        const std::vector<uint16_t>& t = model.transferTable();
-        if (t.empty())
+        const int* bw = brightnessWeights;
+        const int high = std::max(v.c[0], std::max(v.c[1], v.c[2]));
+        return std::clamp((v.c[0] * bw[0] + v.c[1] * bw[1] + v.c[2] * bw[2] + high * bw[3] + 2048) >> 12, 0,
+                          kLinearMax);
+    }
+
+    void transfer(Lanes& v) const
+    {
+        if (!transferTable)
             return;
         for (int ch = 0; ch < 3; ++ch)
-            v.c[ch] = t[static_cast<size_t>(v.c[ch])];
+            v.c[ch] = transferTable[v.c[ch]];
     }
 
-    /// One output pixel: geometry g (x, y, x phase, y phase), factors f (r, g, b, state) -> the 8-bit channels
-    Rgb pixel(const int16_t* g, const uint16_t* f) const
+    /// The rows around source row y through the horizontal filter at column x, phase px: rows y - 1 .. y + 2
+    /// (`four`) or y, y + 1 from `first`. The rows the cache (the output row above at this output column) has
+    /// are not filtered again
+    void filtered(int x, int y, int px, bool four, Filtered& cache) const
     {
-        const std::vector<uint16_t>& vertical = model.verticalTable();
+        const int first = four ? y - 1 : y;
+        const int count = four ? 4 : 2;
+        int done = 0;
+        if (cache.x == x && cache.px == px && cache.first <= first && first < cache.first + count)
+        {
+            done = cache.first + count - first;
+            for (int i = 0; i < done; ++i)
+                cache.rows[i] = cache.rows[i + first - cache.first];
+        }
+        cache.x = x;
+        cache.px = px;
+        cache.first = first;
+        if (done == count)
+            return;
+        const int16_t* w = &horizontal[static_cast<size_t>(px) * 16];
+        const bool inside = x - 1 >= left && x + 2 <= right && first >= top && first + count - 1 <= bottom;
+        uint16_t buffer[16];
+        for (int i = done; i < count; ++i)
+            cache.rows[i] = row(taps(x, first + i, inside, buffer), w);
+    }
+
+    /// One output pixel: geometry g (x, y, x phase, y phase), factors f (r, g, b, state) -> the 8-bit channels;
+    /// `cache` the filtered rows of this output column
+    template <bool Beams, Glow GlowKind>
+    Lanes pixel(const int16_t* g, const uint16_t* f, Filtered& cache) const
+    {
         const int x = g[0];
         const int y = g[1];
         const int px = g[2];
         const int py = g[3];
-        const int16_t* w = &model.horizontalWeights()[static_cast<size_t>(px) * 4];
-        Rgb r0 = row(x, y, w, model.clampToCentre());
-        Rgb r1 = row(x, y + 1, w, model.clampToCentre());
-        Rgb col;
-        if (model.vertical() == CRTBeamModel::Vertical::Beams)
+        const bool four = !Beams && fourRows;
+        filtered(x, y, px, four, cache);
+        Lanes r0 = cache.rows[four ? 1 : 0];
+        Lanes r1 = cache.rows[four ? 2 : 1];
+        Lanes col;
+        if constexpr (Beams)
         {
             transfer(r0);
             transfer(r1);
-            const uint16_t* b0 = &vertical[static_cast<size_t>(py) * 256];
-            const uint16_t* b1 = &vertical[static_cast<size_t>(kPhases - py) * 256];
-            const int bright0 = brightness(r0);
-            const int bright1 = brightness(r1);
+            const uint16_t* b0 = vertical + static_cast<size_t>(py) * 256;
+            const uint16_t* b1 = vertical + static_cast<size_t>(kPhases - py) * 256;
+            const int bright0 = beamByBrightness ? brightness(r0) : 0;
+            const int bright1 = beamByBrightness ? brightness(r1) : 0;
             for (int ch = 0; ch < 3; ++ch)
             {
-                const int v0 = model.beamByBrightness() ? bright0 : r0.c[ch];
-                const int v1 = model.beamByBrightness() ? bright1 : r1.c[ch];
+                const int v0 = beamByBrightness ? bright0 : r0.c[ch];
+                const int v1 = beamByBrightness ? bright1 : r1.c[ch];
                 col.c[ch] = (r0.c[ch] * b0[v0 >> 6] + r1.c[ch] * b1[v1 >> 6] + 2048) >> 12;
             }
+            col.c[3] = 0;
         }
         else
         {
-            const int16_t* a = &model.interpolationTable()[static_cast<size_t>(py) * 4];
-            const bool four = model.fourRows();
-            const Rgb above = four ? row(x, y - 1, w, model.clampToCentre()) : Rgb{{0, 0, 0}};
-            const Rgb below = four ? row(x, y + 2, w, model.clampToCentre()) : Rgb{{0, 0, 0}};
-            for (int ch = 0; ch < 3; ++ch)
+            const int* a = &interpolation[static_cast<size_t>(py) * 16];
+            const Lanes above = four ? cache.rows[0] : Lanes{};
+            const Lanes below = four ? cache.rows[3] : Lanes{};
+            for (int ch = 0; ch < 4; ++ch)
             {
-                const int16_t* k = a + static_cast<size_t>(ch) * kPhases * 4;
-                const int sum = above.c[ch] * k[0] + r0.c[ch] * k[1] + r1.c[ch] * k[2] + below.c[ch] * k[3];
+                const int sum =
+                    above.c[ch] * a[ch] + r0.c[ch] * a[4 + ch] + r1.c[ch] * a[8 + ch] + below.c[ch] * a[12 + ch];
                 col.c[ch] = std::clamp((sum + 2048) >> 12, 0, kLinearMax);
             }
             transfer(col);
             const int bright = brightness(col) >> 6;
+            const uint16_t* factor = vertical + (static_cast<size_t>(f[3]) * 3 * kPhases + py) * 256 + bright;
             for (int ch = 0; ch < 3; ++ch)
-            {
-                const size_t index = ((static_cast<size_t>(f[3]) * 3 + ch) * kPhases + py) * 256 + bright;
-                col.c[ch] = (col.c[ch] * vertical[index] + 2048) >> 12;
-            }
+                col.c[ch] = (col.c[ch] * factor[static_cast<size_t>(ch) * kPhases * 256] + 2048) >> 12;
         }
-        for (int ch = 0; ch < 3; ++ch)
+        for (int ch = 0; ch < 4; ++ch)
             col.c[ch] = std::min(col.c[ch], kOutputMax);
-        if (!model.boostTable().empty())
+        if (boost)
         {
-            const int top = std::max(col.c[0], std::max(col.c[1], col.c[2]));
-            const int gain = model.boostTable()[static_cast<size_t>(top >> 6)];
-            for (int ch = 0; ch < 3; ++ch)
+            const int gain = boost[std::max(col.c[0], std::max(col.c[1], col.c[2])) >> 6];
+            for (int ch = 0; ch < 4; ++ch)
                 col.c[ch] = std::min((col.c[ch] * gain + 2048) >> 12, kOutputMax);
         }
-        Rgb glowSum{{0, 0, 0}};
-        if (!model.glowWeightsY().empty())
+        Lanes glow{};
+        if constexpr (GlowKind != Glow::None)
         {
-            const int phase = model.glowPhase()[static_cast<size_t>(px)];
-            const int gx = x + phase / kGlowPhases;
-            const int q = phase % kGlowPhases;
-            const uint16_t* wy = &model.glowWeightsY()[static_cast<size_t>(py) * kGlowRows];
-            const bool squared = model.glowSquared();
-            const uint16_t* wb = squared ? &model.glowWeightsB()[static_cast<size_t>(py) * kGlowRows] : nullptr;
-            for (int r = 0; r < kGlowRows; ++r)
+            // The glow table's eight rows around the beam: zeros past the table (no tap of it reaches the picture)
+            constexpr int values = GlowKind == Glow::Squared ? 8 : 4;
+            const int phase = glowPhase[px];
+            const int c = x + phase / kGlowPhases - left + kGlowPad;
+            const int r = y + kGlowFirst - top + kGlowPad;
+            const bool column = c >= 0 && c < glowColumns;
+            const size_t stride = static_cast<size_t>(glowColumns) * kGlowPhases * values;
+            const uint16_t* p =
+                column ? glowTable + (static_cast<size_t>(c) * kGlowPhases + phase % kGlowPhases) * values : nullptr;
+            uint16_t edge[kGlowRows * values];
+            const uint16_t* v = edge;
+            size_t step = values;
+            if (column && r >= 0 && r + kGlowRows <= glowRows)
             {
-                const uint16_t* c = glowColumns(gx, y + r + kGlowFirst, q, squared ? 6 : 3);
-                for (int ch = 0; ch < 3; ++ch)
-                    glowSum.c[ch] += c[ch] * wy[r] + (squared ? c[3 + ch] * wb[r] : 0);
+                v = p + static_cast<size_t>(r) * stride;
+                step = stride;
             }
-            for (int ch = 0; ch < 3; ++ch)
-                glowSum.c[ch] = (glowSum.c[ch] + CRTBeamModel::kGlowUnit / 2) >> 16;
+            else
+                for (int k = 0; k < kGlowRows; ++k)
+                {
+                    const bool shown = column && r + k >= 0 && r + k < glowRows;
+                    for (int i = 0; i < values; ++i)
+                        edge[k * values + i] = shown ? p[static_cast<size_t>(r + k) * stride + i] : 0;
+                }
+            glow = glowSum<values>(v, step, &glowWeights[static_cast<size_t>(py) * kGlowRows * 8]);
         }
-        const std::vector<uint16_t>& output = model.outputTable();
-        Rgb out;
+        Lanes out;
         for (int ch = 0; ch < 3; ++ch)
         {
-            if (model.glowInDisplay())
+            if (glowInDisplay)
             {
                 // The display value (kLinearMax = 1.0) plus the glow, then the factor, to 8 bits
-                const int d = output[static_cast<size_t>(col.c[ch])] + glowSum.c[ch];
+                const int d = output[col.c[ch]] + glow.c[ch];
                 const int v = (std::min(d, kOutputMax) * f[ch] + 512) >> 10;
                 out.c[ch] = std::min((v * 255 + kLinearMax / 2) / kLinearMax, 255);
             }
             else
             {
-                const int v = std::min(col.c[ch] + glowSum.c[ch], kOutputMax);
-                out.c[ch] = output[static_cast<size_t>(std::min((v * f[ch] + 512) >> 10, kOutputMax))];
+                const int v = std::min(col.c[ch] + glow.c[ch], kOutputMax);
+                out.c[ch] = output[std::min((v * f[ch] + 512) >> 10, kOutputMax)];
             }
         }
+        out.c[3] = 255;
         return out;
     }
 };
+
+/// The picture with one pixel() for the model's vertical stage and glow
+template <bool Beams, Glow GlowKind>
+void ComposeRows(const Composer& composer, const CRTBeamModel& model, uint8_t* out, int stride, bool bgra)
+{
+    const CRTBeamModel::Layout& l = model.layout();
+    const int red = bgra ? 2 : 0;
+    const int blue = bgra ? 0 : 2;
+    ForRows(l.outHeight, [&](int first, int end) {
+        // An output column mostly shows the same source column and phase as the output row above it
+        std::vector<Filtered> columns(static_cast<size_t>(l.outWidth));
+        for (int y = first; y < end; ++y)
+        {
+            uint8_t* o = out + static_cast<size_t>(y) * stride;
+            const size_t row = static_cast<size_t>(y) * l.outWidth * 4;
+            const int16_t* g = &model.geometry()[row];
+            const uint16_t* f = &model.factors()[row];
+            Filtered* cache = columns.data();
+            for (int x = 0; x < l.outWidth; ++x, o += 4, g += 4, f += 4, ++cache)
+            {
+                if (g[0] == CRTBeamModel::kOutside)
+                {
+                    o[0] = o[1] = o[2] = 0;
+                    o[3] = 255;
+                    continue;
+                }
+                const Lanes c = composer.pixel<Beams, GlowKind>(g, f, *cache);
+                o[red] = static_cast<uint8_t>(c.c[0]);
+                o[1] = static_cast<uint8_t>(c.c[1]);
+                o[blue] = static_cast<uint8_t>(c.c[2]);
+                o[3] = 255;
+            }
+        }
+    });
+}
 }  // namespace
 
 const char* const CRTBeamModel::kShader = R"(
@@ -641,45 +976,51 @@ void CRTBeamModel::prepare(const uint8_t* src, int stride, bool withGlow)
     const QRect& source = _layout.source;
     const int columns = source.width() + 2 * kGlowPad;
     const int rows = source.height() + 2 * kGlowPad;
-    const int values = _glowSquared ? 6 : 3;
+    const int values = _glowSquared ? 8 : 4;
     _glow.resize(static_cast<size_t>(rows) * columns * kGlowPhases * values);
     // Source value at (x, y), black off the picture
     auto tap = [&](int x, int y, int ch) {
         const bool inside = x >= source.left() && x <= source.right() && y >= source.top() && y <= source.bottom();
         return inside ? static_cast<int>(input[(static_cast<size_t>(y) * w + x) * 4 + ch]) : 0;
     };
+    const std::vector<int16_t> columnWeights = GlowPairs(_glowX);
     ForRows(rows, [&](int first, int end) {
-        // Squared: the bilinear samples of a row at every column and x phase, [column + kGlowSamples][q][ch]
+        // Squared: the bilinear samples of a row at every column and x phase, [column + kGlowSamples][q][RGB0]
+        constexpr int kColumn = kGlowPhases * 4;
         const int span = columns + kGlowSamples;
         std::vector<int> samples[2];
-        std::vector<int> squareTerms(static_cast<size_t>(span) * kGlowPhases * 3);
+        std::vector<int> squareTerms(static_cast<size_t>(span) * kColumn);
         std::vector<int> productTerms(squareTerms.size());
         auto sampleRow = [&](int y, std::vector<int>& out) {
-            out.resize(static_cast<size_t>(span) * kGlowPhases * 3);
+            out.resize(static_cast<size_t>(span) * kColumn);
             for (int c = 0; c < span; ++c)
             {
                 const int x = source.left() - kGlowPad + c + kGlowFirst;
+                int t0[4] = {};
+                int t1[4] = {};
                 for (int ch = 0; ch < 3; ++ch)
                 {
-                    const int t0 = tap(x, y, ch);
-                    const int t1 = tap(x + 1, y, ch);
-                    for (int q = 0; q < kGlowPhases; ++q)
-                        out[(static_cast<size_t>(c) * kGlowPhases + q) * 3 + ch] =
-                            ((kGlowPhases - q) * t0 + q * t1 + kGlowPhases / 2) / kGlowPhases;
+                    t0[ch] = tap(x, y, ch);
+                    t1[ch] = tap(x + 1, y, ch);
                 }
+                int* o = &out[static_cast<size_t>(c) * kColumn];
+                for (int q = 0; q < kGlowPhases; ++q)
+                    for (int ch = 0; ch < 4; ++ch)
+                        o[q * 4 + ch] = ((kGlowPhases - q) * t0[ch] + q * t1[ch] + kGlowPhases / 2) / kGlowPhases;
             }
         };
         for (int r = first; r < end; ++r)
         {
             const int y = source.top() - kGlowPad + r;
-            uint16_t* o = &_glow[static_cast<size_t>(r) * columns * kGlowPhases * values];
+            auto at = [&](int c, int q) {
+                return &_glow[((static_cast<size_t>(r) * columns + c) * kGlowPhases + q) * values];
+            };
             if (_glowSquared)
             {
                 // This row's samples are the last row's next ones; the sums over seven columns slide
                 if (r == first)
                     sampleRow(y, samples[0]);
                 sampleRow(y + 1, samples[1]);
-                constexpr int kColumn = kGlowPhases * 3;
                 for (size_t k = 0; k < samples[0].size(); ++k)
                 {
                     squareTerms[k] = (samples[0][k] * samples[0][k]) >> 15;
@@ -702,11 +1043,12 @@ void CRTBeamModel::prepare(const uint8_t* src, int stride, bool withGlow)
                         squares[j] += squareTerms[enter + j];
                         products[j] += productTerms[enter + j];
                     }
-                    for (int q = 0; q < kGlowPhases; ++q, o += values)
-                        for (int ch = 0; ch < 3; ++ch)
+                    uint16_t* o = at(c, 0);
+                    for (int q = 0; q < kGlowPhases; ++q, o += 8)
+                        for (int ch = 0; ch < 4; ++ch)
                         {
-                            o[ch] = static_cast<uint16_t>(squares[q * 3 + ch]);
-                            o[3 + ch] = static_cast<uint16_t>(products[q * 3 + ch]);
+                            o[ch] = static_cast<uint16_t>(squares[q * 4 + ch]);
+                            o[4 + ch] = static_cast<uint16_t>(products[q * 4 + ch]);
                         }
                     for (int j = 0; j < kColumn; ++j)
                     {
@@ -720,21 +1062,11 @@ void CRTBeamModel::prepare(const uint8_t* src, int stride, bool withGlow)
             for (int c = 0; c < columns; ++c)
             {
                 const int x = source.left() - kGlowPad + c;
-                int taps[kGlowTaps][3];
+                uint16_t taps[kGlowTaps * 4] = {};
                 for (int t = 0; t < kGlowTaps; ++t)
                     for (int ch = 0; ch < 3; ++ch)
-                        taps[t][ch] = tap(x + t + kGlowFirst, y, ch);
-                for (int q = 0; q < kGlowPhases; ++q, o += values)
-                {
-                    const int16_t* wx = &_glowX[static_cast<size_t>(q) * kGlowTaps];
-                    for (int ch = 0; ch < 3; ++ch)
-                    {
-                        int sum = 0;
-                        for (int t = 0; t < kGlowTaps; ++t)
-                            sum += taps[t][ch] * wx[t];
-                        o[ch] = static_cast<uint16_t>((std::max(sum, 0) + 2048) >> 12);
-                    }
-                }
+                        taps[t * 4 + ch] = static_cast<uint16_t>(tap(x + t + kGlowFirst, y, ch));
+                GlowColumn(taps, columnWeights.data(), at(c, 0));
             }
         }
     });
@@ -742,30 +1074,21 @@ void CRTBeamModel::prepare(const uint8_t* src, int stride, bool withGlow)
 
 void CRTBeamModel::compose(uint8_t* out, int stride, bool bgra) const
 {
-    const Layout& l = _layout;
-    const Composer composer{*this, _frame.data(), _glow.data(), l.frameWidth, l.source};
-    const int red = bgra ? 2 : 0;
-    const int blue = bgra ? 0 : 2;
-    ForRows(l.outHeight, [&](int first, int end) {
-        for (int y = first; y < end; ++y)
-        {
-            uint8_t* o = out + static_cast<size_t>(y) * stride;
-            const size_t row = static_cast<size_t>(y) * l.outWidth * 4;
-            for (int x = 0; x < l.outWidth; ++x, o += 4)
-            {
-                const int16_t* g = &_geometry[row + static_cast<size_t>(x) * 4];
-                if (g[0] == kOutside)
-                {
-                    o[0] = o[1] = o[2] = 0;
-                    o[3] = 255;
-                    continue;
-                }
-                const Rgb c = composer.pixel(g, &_factors[row + static_cast<size_t>(x) * 4]);
-                o[red] = static_cast<uint8_t>(c.c[0]);
-                o[1] = static_cast<uint8_t>(c.c[1]);
-                o[blue] = static_cast<uint8_t>(c.c[2]);
-                o[3] = 255;
-            }
-        }
-    });
+    const Composer composer(*this, _frame.data(), _glow.data());
+    const Glow glow = _glowY.empty() ? Glow::None : _glowSquared ? Glow::Squared : Glow::Gaussian;
+    if (_verticalMode == Vertical::Beams)
+    {
+        if (glow == Glow::None)
+            ComposeRows<true, Glow::None>(composer, *this, out, stride, bgra);
+        else if (glow == Glow::Gaussian)
+            ComposeRows<true, Glow::Gaussian>(composer, *this, out, stride, bgra);
+        else
+            ComposeRows<true, Glow::Squared>(composer, *this, out, stride, bgra);
+    }
+    else if (glow == Glow::None)
+        ComposeRows<false, Glow::None>(composer, *this, out, stride, bgra);
+    else if (glow == Glow::Gaussian)
+        ComposeRows<false, Glow::Gaussian>(composer, *this, out, stride, bgra);
+    else
+        ComposeRows<false, Glow::Squared>(composer, *this, out, stride, bgra);
 }
