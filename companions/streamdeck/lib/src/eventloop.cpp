@@ -136,7 +136,7 @@ void CloseSocket(SocketHandle s)
 #endif
 }
 
-SocketHandle ConnectStart(const std::string& host, int port, std::string* error)
+SocketHandle ConnectStart(const std::string& host, int port, std::string* error, int receiveBuffer)
 {
     StartupOnce();
     addrinfo hints{};
@@ -157,6 +157,8 @@ SocketHandle ConnectStart(const std::string& host, int port, std::string* error)
         if (s == kInvalidSocket)
             continue;
         Prepare(s, true);
+        if (receiveBuffer > 0)
+            SetReceiveBuffer(s, receiveBuffer);
 #ifdef _WIN32
         const int rc = ::connect(static_cast<SOCKET>(s), p->ai_addr, static_cast<int>(p->ai_addrlen));
 #else

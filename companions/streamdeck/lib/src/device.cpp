@@ -553,9 +553,12 @@ WriteStats Device::EmuLcd(int vx, int vy, const Rgb& img, int q)
     auto shown = DecodeForFormat(EncodeForFormat(img, f, q), f);
     if (!shown)
         return {};
+    // the place is read before _emu moves out (gcc 15 cannot see through the moved-from optional)
+    const int x = _emu->stripX + vx;
+    const int y = _emu->stripY + vy;
     auto saved = std::move(_emu);
     _emu.reset();
-    WriteStats st = SetLcdRegion(saved->stripX + vx, saved->stripY + vy, *shown, q);
+    WriteStats st = SetLcdRegion(x, y, *shown, q);
     _emu = std::move(saved);
     return st;
 }

@@ -19,6 +19,12 @@ elseif (CMAKE_CXX_COMPILER_ID MATCHES "AppleClang" OR CMAKE_CXX_COMPILER_ID MATC
     set(SD_WARNINGS -Wall -Wextra -Werror)
 endif ()
 
+# Windows 10 API level for the whole companion: cpp-httplib refuses anything lower, and MinGW's headers default to
+# Windows 7 (0x0601); MSVC's SDK leaves it undefined (= the SDK's own, Windows 10)
+if (WIN32)
+    add_compile_definitions(_WIN32_WINNT=0x0A00)
+endif ()
+
 # ---------------------------------------------------------------- hidapi (vendored, one backend per OS)
 add_library(sd-hidapi STATIC)
 target_include_directories(sd-hidapi PUBLIC ${SD_3RDPARTY}/hidapi/hidapi)
@@ -27,8 +33,8 @@ if(APPLE)
     target_include_directories(sd-hidapi PUBLIC ${SD_3RDPARTY}/hidapi/mac)
     target_link_libraries(sd-hidapi PUBLIC "-framework IOKit" "-framework CoreFoundation")
 elseif(WIN32)
-    target_sources(sd-hidapi PRIVATE ${SD_3RDPARTY}/hidapi/windows/hid.c
-        ${SD_3RDPARTY}/hidapi/windows/hidapi_descriptor_reconstruct.c)
+    # through a wrapper that undoes the root's WIN32_LEAN_AND_MEAN; hid.c includes hidapi_descriptor_reconstruct.c
+    target_sources(sd-hidapi PRIVATE ${SD_DIR}/lib/hidapi/windows-hid.c)
     target_include_directories(sd-hidapi PUBLIC ${SD_3RDPARTY}/hidapi/windows)
 else()
     find_package(PkgConfig REQUIRED)

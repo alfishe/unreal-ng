@@ -208,9 +208,7 @@ struct TestViewer
     TestViewer(net::EventLoop& l, int port, int receiveBuffer = 0) : loop(l)
     {
         std::string error;
-        s = net::ConnectStart("127.0.0.1", port, &error);
-        if (receiveBuffer > 0)
-            net::SetReceiveBuffer(s, receiveBuffer);
+        s = net::ConnectStart("127.0.0.1", port, &error, receiveBuffer);
         loop.Watch(s, true, true, [this](bool r, bool w, bool e) {
             if (w)
                 Flush();

@@ -1,6 +1,7 @@
 #include "sdb/protocol.h"
 
 #include <algorithm>
+#include <cstring>
 #include <stdexcept>
 
 namespace sdb::proto
@@ -26,10 +27,13 @@ std::vector<Report> Chunked(std::span<const std::uint8_t> data, const Chunking& 
     while (sent < data.size())
     {
         const std::size_t n = std::min(data.size() - sent, c.payloadLen);
-        Report r = header(page, n, sent + n == data.size());
-        r.insert(r.end(), data.begin() + static_cast<std::ptrdiff_t>(sent),
-                 data.begin() + static_cast<std::ptrdiff_t>(sent + n));
-        r.resize(c.reportLen, 0);
+        // The report built at its final size, header and payload copied in: growing the header vector (insert,
+        // resize) makes gcc 15 at -O3 report a false -Warray-bounds in the inlined growth path
+        const Report h = header(page, n, sent + n == data.size());
+        Report r(c.reportLen, 0);
+        const std::size_t hn = std::min(h.size(), r.size());
+        std::memcpy(r.data(), h.data(), hn);
+        std::memcpy(r.data() + hn, data.data() + sent, std::min(n, r.size() - hn));
         out.push_back(std::move(r));
         sent += n;
         ++page;

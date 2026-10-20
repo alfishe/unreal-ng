@@ -55,6 +55,35 @@ An older Stream Deck Studio that listens on 37050 itself takes the port: `run` t
 | Runtime workers | Actions and the time-travel readout, per runtime (both go with the surface client, SD5) |
 | Automation | With `--api`: one worker |
 
+## Platforms
+
+| Platform | Deck access | Actions | Built with |
+|:--|:--|:--|:--|
+| macOS | IOHID (hidapi), exclusive open | `shell` via `/bin/sh`, `open`, `keys` (CGEvent) | Apple clang |
+| Linux | hidraw (hidapi; libudev enumerates): the udev rule below | `shell` via `/bin/sh`, `open` via `xdg-open`, `keys` via `xdotool` (X11, optional) | gcc 14 (the CI image) |
+| Windows | HID.dll (hidapi), no driver | `shell` via `cmd.exe` (output, timeout; the whole process tree ends on timeout), `open` via `start`; no `keys` | MSVC 2019, MinGW gcc 15 |
+
+All three build the daemon, `sdctl`, the studio and both test suites with zero warnings. Build on Linux in the CI
+image: `docker/linux/build.sh --streamdeck --test` (configures from the root with `-DUNREAL_STREAMDECK=ON`, runs
+`streamdeck-tests` and `streamdeck-studio-tests` offscreen). A native build needs `libudev-dev` (and Qt 6 for the
+studio).
+
+### Linux: the udev rule
+
+Without it only root can open the deck's `/dev/hidraw*` nodes. The rule
+[`companions/streamdeck/linux/70-unreal-streamdeck.rules`](../../../companions/streamdeck/linux/70-unreal-streamdeck.rules)
+tags every Elgato device (USB vendor `0fd9`) `uaccess`, so the user at the seat gets read and write access. The DEB
+installs it to `/usr/lib/udev/rules.d`; for an AppImage or a build from source:
+
+```bash
+sudo install -m 0644 companions/streamdeck/linux/70-unreal-streamdeck.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+# then unplug the deck and plug it back in
+```
+
+`uaccess` needs a local login session. A user without a seat (SSH only, a service account) needs a group instead:
+copy the rule with `MODE="0660", GROUP="plugdev"` in place of `TAG+="uaccess"` and add the user to the group.
+
 ## Developer checks (`sdctl`)
 
 | Command | What |

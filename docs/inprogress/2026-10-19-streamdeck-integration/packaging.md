@@ -59,7 +59,9 @@ The prototype build of the studio has no `Contents/Frameworks` (Qt by `@rpath`),
 
 - AppImage: both binaries in `AppDir/usr/bin`, the studio deployed by linuxdeploy's Qt plugin with the rest.
 - DEB: both in `lib/unreal-ng`, symlinks in `bin`; `/usr/lib/udev/rules.d/70-unreal-streamdeck.rules`
-  (`SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", TAG+="uaccess"`).
+  (`SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", TAG+="uaccess"`, plus the same for `usb`). Done 2026-10-20 in
+  `cmake/LinuxPackaging.cmake` when the build has `-DUNREAL_STREAMDECK=ON`; the rule's source is
+  `companions/streamdeck/linux/70-unreal-streamdeck.rules`. The release workflow does not turn the companion on yet.
 - AppImage users get the rule text in the settings page (an AppImage cannot install it).
 
 ## 6. Data
