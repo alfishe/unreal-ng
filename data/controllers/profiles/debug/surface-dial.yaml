@@ -1,0 +1,13 @@
+# The Surface Dial is a time travel remote (debug-and-ttd.md §4.4): a control surface takes no player connector, so
+# this works without the debug layer. A turn moves through the history a frame per step, clockwise forward; held
+# down, an instruction per step. A press alone pauses / continues, on its release
+schema: 1
+kind: debug
+id: builtin/debug/surface-dial
+label: Time travel on the Dial
+applies_to: { families: [surface-dial] }
+layers:
+  debug:
+    knob:      { action: ttd.jog_frames }
+    push+knob: { action: ttd.jog_instructions }
+    push:      { action: run.pause_toggle }

@@ -71,6 +71,7 @@ A,(IX-4)` `DD 7E 04`. `LD (IY-3),A` is right: LD and its first operand are one t
 | `LaserGeniusBackend_Test.ProgramsKeepTheirBytesThroughLaserGenius` (host): every instruction form, LG's EXPR probe, ZAsm 3.15's ZXT1-3, STORM 1.3's STORMT2, MASM 1.1's MT1, XAS 7.447 `constrct`, TASM 5.0's T50PROG → sjasmplus → Laser Genius → the LG frontend → sjasmplus | the original assemblers' bytes |
 | Laser Genius 1.04 in unreal-ng, the converted files loaded from disk (`load "NAME"`), assembled with `assem`: `oracle1.asm` and every instruction form at `#6900` (without the labels: its name table does not hold 599 names, nor its 8K space the labelled text) | 143 / 1173 bytes = sjasmplus' |
 | `inject-oracle.py lasergenius`: the same written in its editor, assembled with `assem` | 143 / 1173 bytes = sjasmplus' |
+| `expression-fuzz.py lasergenius --template` in Laser Genius 1.04 (2026-10-19): random `DW` expressions (labels above and below, numbers, unary `- ~ high low !`, every binary operator, three levels), seeds 71-85 of 100 lines | all words = sjasmplus' (found on the way, each measured: its binary `+ - *` stop the assembly with `** overflow **` outside 0..#FFFF, `2-3`, `#FFFF+1`, `256*256`; a shift by 0 gives 0, `4<<0`; `3-(-5)` was written `3--5`, Phoenix' decrement, now `3-[-5]`; those operations are written as their values) |
 
 ## 5. Limits
 

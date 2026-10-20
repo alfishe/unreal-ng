@@ -37,6 +37,8 @@ struct ActionEvent
     HostDeviceId device;
     std::string action;
     bool pressed = false;
+    /// 1 for a press; a `curve: scrub` binding's level (0..1, 0 = released); an encoder's signed steps
+    float value = 0;
 };
 
 class InputRouter
@@ -75,6 +77,9 @@ public:
     void SetPlayerConnector(const HostDeviceId& device, const std::string& connector);
     /// The instance whose window has focus: what follow-focus devices drive. Empty (the default) = every instance
     void SetFocus(const std::string& instance);
+    /// The debugger window has the focus: every player device acts as a debugger remote (its `debug` layer alone,
+    /// no layer key needed) until it is cleared. Either switch releases what is held
+    void SetDebugFocus(bool on);
     /// The device drives that instance now (a player that follows the focus, is pinned to it, or drives all)
     bool Drives(const HostDeviceId& device, const std::string& instance) const;
 
@@ -117,6 +122,7 @@ private:
         Stick,           ///< `lstick`: the directions
         StickDirection,  ///< `lstick.left`: one direction of the stick
         Dpad,            ///< `dpad.*`: the four buttons as directions
+        Encoder,         ///< `knob`: steps, no state; the binding's other sources are buttons held while it turns
     };
     struct CompiledSource
     {
@@ -131,6 +137,7 @@ private:
         std::vector<CompiledSource> sources;
         bool directionalTarget = false;  ///< the target is the four directions: directional sources keep theirs
         uint16_t mask = 1;               ///< the output when on: the retro bits, 1 for the other targets
+        int encoder = -1;                ///< the encoder source: its steps run the action while the rest is held
         std::set<std::string> controls;  ///< what a higher layer overrides it by (a stick, a button)
     };
     struct CompiledSet
@@ -155,12 +162,15 @@ private:
         bool active = false;     ///< its layer is up and no higher layer overrides it
         bool chordOn = false;
         bool layerOn = false;    ///< a layer key's last state
+        float level = 0;         ///< a `curve: scrub` action's last level
     };
     /// What the router does to one value of a device besides reading it
     struct Gate
     {
         bool pressed = false;   ///< a chord member's last digital state
-        bool pending = false;   ///< a chord member pressed alone: its own bindings wait for the window
+        /// a chord member pressed alone: its own bindings wait for the window (a button held with an encoder: until
+        /// released, and a turn while held takes the press)
+        bool pending = false;
         uint64_t until = 0;
         bool consumed = false;  ///< it completed a chord: its own bindings never see this press
         bool owed = false;      ///< released inside the window: its own bindings get the press now
@@ -216,11 +226,16 @@ private:
     /// The layers whose bindings act, bottom to top: `debug` hides what is below it
     std::vector<std::string> ActiveLayersLocked(const Device& device) const;
     /// `play`, or a layer a layer key raised (`debug` may hide it)
-    static bool RaisedLocked(const Device& device, const std::string& layer);
+    bool RaisedLocked(const Device& device, const std::string& layer) const;
+    /// A debugger remote by its role, or a player while the debugger window has the focus
+    bool RemoteLocked(const Device& device) const;
     /// The bits of a binding's sources as @p value gives them (the hysteresis memory advances)
     static uint16_t SourceBits(const CompiledBinding& compiled, BindingState& state, const ValueOf& value);
     static void Settle(BindingState& state, uint16_t bits);
     void EvaluateLocked(Device& device, uint64_t now, std::vector<ActionEvent>& actions);
+    /// An encoder turned @p steps: the action of its binding whose buttons are held (the most of them wins)
+    void TurnLocked(Device& device, const std::string& control, float steps, uint64_t now,
+                    std::vector<ActionEvent>& actions);
     bool UpdateLayersLocked(Device& device, const CompiledSet& set, const ValueOf& raw);
     void ExpireLocked(uint64_t now, std::vector<ActionEvent>& actions);
     void ResetLocked();
@@ -235,6 +250,7 @@ private:
     std::map<HostDeviceId, Settings> _settings;
     std::map<std::string, Instance> _instances;
     std::string _focus;
+    bool _debugFocus = false;
     Clock _clock;
     ActionSink _actions;
 };

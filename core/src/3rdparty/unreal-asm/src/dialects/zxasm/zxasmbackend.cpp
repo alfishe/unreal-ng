@@ -96,6 +96,17 @@ private:
         }
     }
 
+    /// ZAsm 3.15 multiplies a*b by a's bits from the top and stops at the first carry: 7*#4000 is #8000, #8001*4 is 0
+    void Multiplied(const Expr& a, std::optional<int64_t> b)
+    {
+        const auto x = Value(a);
+        if (!x || !b)
+            return;
+        const uint32_t multiplier = static_cast<uint32_t>(*x & 0xFFFF), multiplicand = static_cast<uint32_t>(*b & 0xFFFF);
+        if (z80::StopAtCarryProduct(multiplicand, multiplier) != ((multiplier * multiplicand) & 0xFFFF))
+            Problem("a multiplication ZX-ASM makes otherwise");
+    }
+
     static bool IsAtom(const Expr& e)
     {
         const Expr& u = Unwrapped(e);
@@ -152,7 +163,12 @@ private:
                         return "#FFFF-" + *t;
                     break;
                 }
-                const auto t = Term(e.args[0]);
+                // a function on a term with its own function in parentheses: ZAsm 3.15 refuses (x).c.b
+                const Expr& inner = Unwrapped(e.args[0]);
+                const bool nested = inner.kind == Expr::Kind::Unary && inner.op != Op::Plus && inner.op != Op::LogicalNot;
+                auto t = Term(e.args[0]);
+                if (t && nested)
+                    t = "(" + *t + ")";
                 return t ? std::optional<std::string>(*t + function) : std::nullopt;
             }
             case Expr::Kind::Binary:
@@ -164,9 +180,17 @@ private:
                 {
                     case Op::Add: symbol = "+"; break;
                     case Op::Sub: symbol = "-"; break;
-                    case Op::Mul: symbol = "*"; break;
+                    case Op::Mul: Multiplied(a, Value(b)); symbol = "*"; break;
                     case Op::And: symbol = v300 ? "" : "&"; break;
-                    case Op::Or: symbol = v300 ? "" : "|"; break;
+                    case Op::Or:
+                    {
+                        // ZAsm 3.15's | ORs the low bytes only, the high byte is the left one's (1|#8000 is 1, measured)
+                        const auto x = Value(a), y = Value(b);
+                        if (x && y && (*y & 0xFF00 & ~*x) != 0)
+                            Problem("an OR of high bytes ZX-ASM drops");
+                        symbol = v300 ? "" : "|";
+                        break;
+                    }
                     case Op::Xor: symbol = v300 ? "" : "!"; break;
                     case Op::Div: case Op::Mod:
                         if (!InWord(a) || !InWord(b))
@@ -180,6 +204,8 @@ private:
                             break;
                         if (e.op != Op::Shl && !InWord(a))
                             Problem("a right shift of a value outside 0..#FFFF");
+                        if (e.op == Op::Shl)
+                            Multiplied(a, int64_t{1} << *shift);
                         const auto l = Print(a);
                         if (!l)
                             return std::nullopt;

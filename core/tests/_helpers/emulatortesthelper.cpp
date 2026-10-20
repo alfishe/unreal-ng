@@ -9,8 +9,10 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/io/fdc/fdd.h"
+#include "emulator/io/rtc/ds12887.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
+#include "emulator/ports/portdecoder.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 
@@ -107,6 +109,11 @@ Emulator* EmulatorTestHelper::CreateStandardEmulator(const std::string& modelNam
     // staged unreal.ini, which CMake re-copies on every build (RESET=128)
     emulator->GetContext()->config.reset_rom = RM_SOS;
     emulator->Reset();
+
+    // The CMOS clock in its test mode: emulated time from one fixed instant instead of the host's live clock, so two
+    // runs read the same time to the microsecond (an ATM3 boot polls it) however fast the host runs them
+    if (PortDecoder* ports = emulator->GetContext()->pPortDecoder; ports && ports->RtcChip())
+        ports->RtcChip()->AnchorEmulatedTime(Ds12887::ToMicros({2026, 1, 1, 12, 0, 0}));
 
     // Test-speed defaults (2026-09-13): the two per-frame "HQ" features are
     // OFF for tests. Per-t-state screen rendering (screenhq) and the FIR

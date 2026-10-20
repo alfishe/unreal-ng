@@ -201,7 +201,10 @@ TEST(ZxasmBackend_Test, ExpressionsGoLeftToRightWithFunctions)
         "        LD DE,10-(4+2)\n"
         "        LD HL,(lab+1)*2\n"
         "        LD A,~5\n"
-        "        LD A,5 ^ 3\n");
+        "        LD A,5 ^ 3\n"
+        "        LD A,low ~lab\n"
+        "        LD HL,lab | #8000\n"
+        "        LD HL,7*#4000\n");
     const std::string text = Joined(lines);
     EXPECT_TRUE(Contains(lines, "LAB LD HL,LAB+(2*3)")) << text;
     EXPECT_TRUE(Contains(lines, "LD A,LAB.h")) << text;
@@ -211,6 +214,9 @@ TEST(ZxasmBackend_Test, ExpressionsGoLeftToRightWithFunctions)
     EXPECT_TRUE(Contains(lines, "LD HL,LAB+1*2")) << text;
     EXPECT_TRUE(Contains(lines, "LD A,5.c")) << text;
     EXPECT_TRUE(Contains(lines, "LD A,5!3")) << text;
+    EXPECT_TRUE(Contains(lines, "LD A,0+(LAB.c).b")) << text;   // ZAsm 3.15 refuses LAB.c.b
+    EXPECT_TRUE(Contains(lines, "LD HL,#E000")) << text;
+    EXPECT_TRUE(Contains(lines, "LD HL,#C000")) << text;   // its 7*#4000 stops at the first carry: #8000   // its | keeps the left high byte: LAB|#8000 would be #6000
 }
 
 /// What ZX ASM 3.0 itself and ZX-ASM 2.x take, seen in unreal-ng (each construct assembled alone): no & | ! and no .

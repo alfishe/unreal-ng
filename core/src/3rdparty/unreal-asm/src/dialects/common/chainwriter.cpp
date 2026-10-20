@@ -27,6 +27,12 @@ std::string ChainWriter::NumberText(const Expr& e) const
     }
 }
 
+void ChainWriter::Multiplied(std::optional<int64_t> a, std::optional<int64_t> b)
+{
+    if (!MultiplicationAgrees(a, b))
+        Problem("a multiplication " + Title() + " makes otherwise");
+}
+
 std::optional<std::string> ChainWriter::Atom(const Expr& e)
 {
     const Expr& u = Unwrapped(e);
@@ -62,6 +68,7 @@ std::optional<std::string> ChainWriter::Text(const Expr& e)
                     if (IsAtom(e.args[0]))
                         if (const auto a = Atom(e.args[0]))
                             return "0-" + *a;
+                    Multiplied(Value(e.args[0]), 0xFFFF);
                     return inner && OperatorSymbol(Op::Mul) ? std::optional<std::string>(*inner + "*#FFFF") : std::nullopt;   // -x = x*#FFFF in 16 bits
                 case Op::Not:
                     if (IsAtom(e.args[0]))
@@ -69,11 +76,13 @@ std::optional<std::string> ChainWriter::Text(const Expr& e)
                             return "#FFFF-" + *a;   // ~x = #FFFF-x
                     if (const char* x = OperatorSymbol(Op::Xor); x && inner)
                         return *inner + Guard(*inner, x) + x + "#FFFF";
+                    Multiplied(Value(e.args[0]), 0xFFFF);
                     return inner && OperatorSymbol(Op::Mul) ? std::optional<std::string>(*inner + "*#FFFF+#FFFF") : std::nullopt;   // ~x = -x-1
                 case Op::High: return inner ? std::optional<std::string>(HighOf(*inner)) : std::nullopt;
                 case Op::Low:
                     if (const char* a = OperatorSymbol(Op::And); a && inner)
                         return *inner + Guard(*inner, a) + a + "255";
+                    Multiplied(Value(e.args[0]), 256);
                     return inner && OperatorSymbol(Op::Mul) && OperatorSymbol(Op::Div) ? std::optional<std::string>(*inner + "*256/256") : std::nullopt;
                 default: return std::nullopt;
             }
@@ -100,6 +109,8 @@ std::optional<std::string> ChainWriter::Chained(const Expr& e)
         const auto r = Atom(right);
         if (!l || !r)
             return std::nullopt;
+        if (e.op == Op::Mul)
+            Multiplied(Value(left), Value(right));   // in the order written: the target's multiplier is on the right
         return *l + Guard(*l, symbol) + symbol + *r;
     };
     const char* symbol = OperatorSymbol(e.op);
@@ -127,6 +138,7 @@ std::optional<std::string> ChainWriter::Chained(const Expr& e)
             {
                 const auto r = Text(b);
                 const auto l = Atom(a);
+                Multiplied(Value(b), 0xFFFF);
                 if (r && l && OperatorSymbol(Op::Mul))
                     return *r + "*#FFFF+" + *l;   // a-b = (b*#FFFF)+a
             }
@@ -145,6 +157,8 @@ std::optional<std::string> ChainWriter::Chained(const Expr& e)
                 return std::nullopt;
             if (e.op != Op::Shl && !ShiftAgrees(a))
                 Problem("a right shift " + Title() + " would make as a division");
+            if (e.op == Op::Shl)
+                Multiplied(Value(a), int64_t{1} << *shift);
             const auto l = Text(a);
             return l ? std::optional<std::string>(*l + (e.op == Op::Shl ? "*" : "/") + Number(int64_t{1} << *shift)) : std::nullopt;
         }

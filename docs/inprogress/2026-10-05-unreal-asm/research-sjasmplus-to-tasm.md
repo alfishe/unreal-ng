@@ -66,6 +66,7 @@ one resets the machine). The checks use `#6200`.
 | `TasmBackend_Test.ProgramsKeepTheirBytesThroughTasm` (host): every instruction form, STORM 1.3's STORMT1 / STORMT2, XAS 7.447 `constrct`, 4.18 `cons418`, ZAsm 3.15 and TASM 5.0 programs → sjasmplus → TASM 4.12 → the TASM codec and back → the TASM frontend → sjasmplus | the original assemblers' bytes |
 | TASM 4.12 in unreal-ng, the converted files loaded from its disk: `oracle1.asm` and every instruction form at `#6200` | 143 / 1173 bytes = sjasmplus' |
 | `inject-oracle.py tasm412`: the same written at its command line, assembled with `A` | 143 / 1173 bytes = sjasmplus' |
+| `expression-fuzz.py tasm` in TASM 4.12 (2026-10-19): random `DW` expressions (labels above and below, numbers, unary `- ~ high low !`, every binary operator, three levels), seeds 61 and 71-77 of 100 lines, 31-62 a seed written as expressions | all words = sjasmplus' |
 
 ## 5. Limits
 

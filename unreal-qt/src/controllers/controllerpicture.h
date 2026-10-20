@@ -57,6 +57,7 @@ private:
         std::string pair;  ///< a stick's other axis
         double radius = 0;
         double steps = 0;  ///< an encoder's steps per turn
+        bool quiet = false;  ///< a callout only while bound, held or selected (a keyboard's hundred keys)
     };
 
     QRectF imageRect() const;

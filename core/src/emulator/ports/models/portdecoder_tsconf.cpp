@@ -40,8 +40,7 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
     SetSnapshotPolicy(&TsConfProgramSnapshot::Instance());
     SetSnapshotCapturePolicy(&snapshot::WindowMapCapture::Instance());
 
-    _evoAvr.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
-    _evoAvr.SetSessionWall([this]() { return SessionWallMicros(); });
+    BindRtc(_evoAvr);
 
     // SD card: the Z-Controller registers and the DMA share the board's SPI
     // master ([V] top.v:1168-1189); a guest write is a TTD replay barrier (the

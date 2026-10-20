@@ -8,6 +8,7 @@
 #include <set>
 #include <sstream>
 
+#include "devicedatabase.h"
 #include "profiles/yaml.h"
 #include "router/inputrouter.h"
 
@@ -67,20 +68,21 @@ bool AppliesTo(const Profile& profile, const ScopeTarget& target)
     return true;
 }
 
-/// A debug profile of the keyboard alone: its bindings are the debugger's shortcuts (debug-and-ttd.md §4.3), which
-/// work without the debug layer
-bool KeyboardShortcuts(const Profile& profile)
+/// A debug profile of the keyboard or a control surface alone (the Surface Dial, `"player": false`): those are
+/// debugger remotes by nature, so it works without the debug layer (debug-and-ttd.md §4.3, §4.4)
+bool RemoteByNature(const Profile& profile)
 {
     return profile.devices.empty() && !profile.families.empty() &&
-           std::all_of(profile.families.begin(), profile.families.end(),
-                       [](const std::string& family) { return family == "keyboard"; });
+           std::all_of(profile.families.begin(), profile.families.end(), [](const std::string& family) {
+               return family == "keyboard" || !DeviceDatabase::Builtin().ForFamily(family).player;
+           });
 }
 
 bool Selected(const Profile& profile, const ProfileContext& context)
 {
     if (profile.scheme)
         return false;
-    if (profile.kind == ProfileKind::Debug && !context.debugLayer && !KeyboardShortcuts(profile))
+    if (profile.kind == ProfileKind::Debug && !context.debugLayer && !RemoteByNature(profile))
         return false;
     if (!profile.machines.empty() && !context.machine.empty() && !Contains(profile.machines, context.machine))
         return false;

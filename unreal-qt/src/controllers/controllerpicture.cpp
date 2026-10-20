@@ -73,6 +73,7 @@ bool ControllerPicture::load(const QString& imageSet)
         spot.pair = analog.value("pair").toString().toStdString();
         spot.radius = analog.value("radius").toDouble();
         spot.steps = analog.value("steps").toDouble();
+        spot.quiet = control.value("quiet").toBool();
         _hotspots.push_back(spot);
     }
     if (_size.isEmpty())
@@ -144,7 +145,14 @@ void ControllerPicture::paintEvent(QPaintEvent*)
 
     auto valueOf = [this](const std::string& control) {
         auto it = _live.find(control);
-        return it != _live.end() ? it->second : 0.0f;
+        float value = it != _live.end() ? it->second : 0.0f;
+        // A key lights while held with modifiers too: key.ctrl.f10 is the f10 key
+        if (control.rfind("key.", 0) == 0)
+            for (const auto& [name, level] : _live)
+                if (name.rfind("key.", 0) == 0 && name.size() > control.size() &&
+                    name.compare(name.size() - control.size() + 3, std::string::npos, control, 3) == 0)
+                    value = std::max(value, level);
+        return value;
     };
 
     for (const Hotspot& spot : _hotspots)
@@ -205,7 +213,9 @@ void ControllerPicture::paintEvent(QPaintEvent*)
     {
         std::vector<const Hotspot*> side;
         for (const Hotspot& spot : _hotspots)
-            if (spot.left == left)
+            if (spot.left == left &&
+                (!spot.quiet || _captions.count(spot.control) || spot.control == _selected ||
+                 Pressed(valueOf(spot.control))))
                 side.push_back(&spot);
         std::stable_sort(side.begin(), side.end(),
                          [](const Hotspot* a, const Hotspot* b) { return a->anchor.y() < b->anchor.y(); });

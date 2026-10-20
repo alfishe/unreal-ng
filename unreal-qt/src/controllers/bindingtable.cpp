@@ -219,6 +219,8 @@ std::vector<std::string> HotspotsOf(const std::string& control)
         return {cover.group + ".x"};
     if (control == "lt.click" || control == "rt.click")
         return {control.substr(0, 2)};
+    if (control.rfind("key.", 0) == 0)
+        return {"key." + control.substr(control.rfind('.') + 1)};  // key.ctrl.f10 is the f10 key
     return {control};
 }
 
@@ -522,13 +524,18 @@ void BindingTable::setDevice(const Device& device)
 void BindingTable::setDebugTab(bool on)
 {
     _debugTab = on;
-    // The keyboard's debug bindings are the debugger's shortcuts: there without the debug layer
-    const bool shown = on || _device.family == "keyboard";
+    // The keyboard's debug bindings are the debugger's shortcuts, a control surface's (the Surface Dial) its time
+    // travel remote: there without the debug layer
+    const bool keyboard = _device.family == "keyboard";
+    const bool surface = !keyboard && !_device.family.empty() && _device.family != "mouse" &&
+                         !DeviceDatabase::Builtin().ForFamily(_device.family).player;
+    const bool shown = on || keyboard || surface;
     _layers->setTabVisible(1, shown);
-    _layers->setTabToolTip(1, _device.family == "keyboard"
-                                  ? tr("The debugger's shortcuts: in the debugger window, and in the main window with "
-                                       "global shortcuts on")
-                                  : tr("What the pad does while its debugger key is held (View + Menu on most pads)"));
+    _layers->setTabToolTip(1, keyboard  ? tr("The debugger's shortcuts: in the debugger window, and in the main window "
+                                             "with global shortcuts on")
+                              : surface ? tr("What the control does in the debugger: it is a debugger remote")
+                                        : tr("What the pad does while its debugger key is held (View + Menu on most "
+                                             "pads)"));
     if (!shown && _layers->currentIndex() == 1)
         _layers->setCurrentIndex(0);
 }
@@ -785,9 +792,13 @@ void BindingTable::updateCaptions()
             for (const std::string& part : chip.parts)
                 for (const std::string& spot : HotspotsOf(part))
                 {
+                    // A key with modifiers names its combo: "Ctrl + F10: Step out"
+                    const QString entry =
+                        spot != part && part.rfind("key.", 0) == 0 ? ControlName(part, _device.glyphs) + ": " + caption
+                                                                    : caption;
                     QString& text = _captions[spot];
-                    if (!text.split(" / ").contains(caption))
-                        text += (text.isEmpty() ? "" : " / ") + caption;
+                    if (!text.split(" / ").contains(entry))
+                        text += (text.isEmpty() ? "" : " / ") + entry;
                 }
     }
     emit captionsChanged();

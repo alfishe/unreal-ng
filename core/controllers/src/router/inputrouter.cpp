@@ -93,6 +93,12 @@ bool InputRouter::Compile(const Binding& binding, CompiledBinding& out, std::str
                 source.kind = SourceKind::Trigger;
                 source.control = info.base.empty() ? info.name : info.base;
             }
+            else if (info.type == ControlType::Encoder)
+            {
+                source.kind = SourceKind::Encoder;
+                source.control = info.name;
+                out.encoder = static_cast<int>(out.sources.size());
+            }
             else
             {
                 source.kind = info.type == ControlType::Axis ? SourceKind::Axis : SourceKind::Button;
@@ -125,6 +131,7 @@ bool InputRouter::Compile(const Binding& binding, CompiledBinding& out, std::str
             }
             case SourceKind::Button:
             case SourceKind::Trigger:
+            case SourceKind::Encoder:
                 source.values = {source.control};
                 out.controls.insert(source.control);
                 break;
@@ -242,8 +249,14 @@ void InputRouter::OnControl(const ControlEvent& event)
         ControlInfo info;
         if (!ParseControl(event.control, info))
             return;
-        it->second.values[info.name] = event.value;
-        EvaluateLocked(it->second, event.hostTimeNs != 0 ? event.hostTimeNs : Now(), actions);
+        const uint64_t now = event.hostTimeNs != 0 ? event.hostTimeNs : Now();
+        if (info.type == ControlType::Encoder)
+            TurnLocked(it->second, info.name, event.value, now, actions);
+        else
+        {
+            it->second.values[info.name] = event.value;
+            EvaluateLocked(it->second, now, actions);
+        }
     }
     Dispatch(actions);
 }
@@ -313,6 +326,29 @@ void InputRouter::SetFocus(const std::string& instance)
     _focus = instance;
 }
 
+void InputRouter::SetDebugFocus(bool on)
+{
+    std::vector<ActionEvent> actions;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (on == _debugFocus)
+            return;
+        _debugFocus = on;
+        const uint64_t now = Now();
+        for (auto& [id, device] : _devices)
+        {
+            if (RoleLocked(id) != DeviceRole::Player)
+                continue;
+            // Other layers: what was held is released, a control held across the switch waits for its release
+            device.layers.clear();
+            device.epoch++;
+            MarkHeldStale(device.values, device.gates, kReleased);
+            EvaluateLocked(device, now, actions);
+        }
+    }
+    Dispatch(actions);
+}
+
 std::vector<std::string> InputRouter::Layers(const HostDeviceId& id) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
@@ -362,7 +398,7 @@ std::vector<std::string> InputRouter::ActiveLayersLocked(const Device& device) c
     const DeviceRole role = RoleLocked(device.info.id);
     if (role == DeviceRole::Disabled)
         return {};
-    if (role == DeviceRole::DebuggerRemote)
+    if (RemoteLocked(device))
         return {kDebugLayer};
     std::vector<std::string> layers = {kPlayLayer};
     for (const LayerEntry& entry : device.layers)
@@ -375,8 +411,16 @@ std::vector<std::string> InputRouter::ActiveLayersLocked(const Device& device) c
     return layers;
 }
 
-bool InputRouter::RaisedLocked(const Device& device, const std::string& layer)
+bool InputRouter::RemoteLocked(const Device& device) const
 {
+    const DeviceRole role = RoleLocked(device.info.id);
+    return role == DeviceRole::DebuggerRemote || (_debugFocus && role == DeviceRole::Player);
+}
+
+bool InputRouter::RaisedLocked(const Device& device, const std::string& layer) const
+{
+    if (layer == kDebugLayer && RemoteLocked(device))
+        return true;
     return layer == kPlayLayer || std::any_of(device.layers.begin(), device.layers.end(),
                                               [&layer](const LayerEntry& entry) { return entry.name == layer; });
 }
@@ -421,6 +465,9 @@ uint16_t InputRouter::SourceBits(const CompiledBinding& compiled, BindingState& 
                                                   (value("dpad.right") >= kButtonThreshold ? kRight : 0));
                 held.on = held.dirs != 0;
                 directional = true;
+                break;
+            case SourceKind::Encoder:
+                held.on = false;  // steps, never held: TurnLocked
                 break;
         }
         all = all && held.on;
@@ -513,23 +560,28 @@ void InputRouter::EvaluateLocked(Device& device, uint64_t now, std::vector<Actio
     }
 
     // Chord members: a press alone opens the window, a release inside it gives the press to the member's own
-    // bindings at once (a tap still works, one release later)
-    std::set<std::string> members;
+    // bindings at once (a tap still works, one release later). A button held with an encoder waits until released:
+    // a turn meanwhile takes its press (TurnLocked)
+    std::map<std::string, bool> members;  // -> held with an encoder
+    const std::vector<std::string> up = ActiveLayersLocked(device);
     for (const CompiledBinding& compiled : bindings)
     {
-        if (!compiled.binding.chord || !RaisedLocked(device, compiled.binding.layer))
+        const bool turn = compiled.encoder >= 0;
+        if (!compiled.binding.chord || !(turn ? Contains(up, compiled.binding.layer)
+                                              : RaisedLocked(device, compiled.binding.layer)))
             continue;
         for (const CompiledSource& source : compiled.sources)
-            members.insert(source.control);
+            if (source.kind != SourceKind::Encoder)
+                members[source.control] = members[source.control] || turn;
     }
-    for (const std::string& member : members)
+    for (const auto& [member, turn] : members)
     {
         Gate& gate = device.gates[member];
         const bool pressed = Value(device, member) >= kButtonThreshold;
         if (pressed && !gate.pressed && !gate.consumed)
         {
             gate.pending = true;
-            gate.until = now + kChordWindowNs;
+            gate.until = turn ? UINT64_MAX : now + kChordWindowNs;
         }
         if (!pressed && gate.pressed)
         {
@@ -544,7 +596,7 @@ void InputRouter::EvaluateLocked(Device& device, uint64_t now, std::vector<Actio
     for (size_t i = 0; i < bindings.size(); i++)
     {
         const CompiledBinding& compiled = bindings[i];
-        if (!compiled.binding.chord)
+        if (!compiled.binding.chord || compiled.encoder >= 0)
             continue;
         BindingState& state = device.states[i];
         bool all = true;
@@ -632,6 +684,11 @@ void InputRouter::EvaluateLocked(Device& device, uint64_t now, std::vector<Actio
         const uint32_t presses = state.presses;
         state.active = active;
         state.epoch = device.epoch;
+        if (compiled.encoder >= 0)
+        {
+            state.bits = 0;  // it acts when the encoder turns
+            continue;
+        }
         if (!active)
             state.bits = 0;
         else if (binding.chord)
@@ -644,13 +701,27 @@ void InputRouter::EvaluateLocked(Device& device, uint64_t now, std::vector<Actio
             Settle(state, SourceBits(compiled, state, effective));
         }
 
-        if (binding.target.kind == TargetKind::Action)
+        if (binding.target.kind == TargetKind::Action && binding.options.level)
+        {
+            // The scrub curve's input: the level, each time it changes
+            float level = 0;
+            if (active)
+                for (const CompiledSource& source : compiled.sources)
+                    for (const std::string& value : source.values)
+                        level = std::max(level, std::min(1.0f, std::fabs(effective(value))));
+            if (level != state.level)
+            {
+                state.level = level;
+                actions.push_back({device.info.id, binding.target.name, level > 0, level});
+            }
+        }
+        else if (binding.target.kind == TargetKind::Action)
         {
             const bool pressed = state.presses != presses;
             if (pressed)
-                actions.push_back({device.info.id, binding.target.name, true});
+                actions.push_back({device.info.id, binding.target.name, true, 1});
             if ((was != 0 || pressed) && state.bits == 0)
-                actions.push_back({device.info.id, binding.target.name, false});
+                actions.push_back({device.info.id, binding.target.name, false, 0});
         }
         // A oneshot layer is used once one of its controls was pressed
         if (state.bits != 0)
@@ -687,6 +758,48 @@ void InputRouter::EvaluateLocked(Device& device, uint64_t now, std::vector<Actio
         // Once more with the layers left: the bindings it hid act again (the layers only shrink: this ends)
         EvaluateLocked(device, now, actions);
     }
+}
+
+void InputRouter::TurnLocked(Device& device, const std::string& control, float steps, uint64_t now,
+                             std::vector<ActionEvent>& actions)
+{
+    const CompiledSet* set = BindingsForLocked(device);
+    if (steps == 0 || set == nullptr)
+        return;
+    if (device.states.size() != set->bindings.size())
+        EvaluateLocked(device, now, actions);
+    int best = -1;
+    size_t most = 0;
+    for (size_t i = 0; i < set->bindings.size() && i < device.states.size(); i++)
+    {
+        const CompiledBinding& compiled = set->bindings[i];
+        if (compiled.encoder < 0 || !device.states[i].active ||
+            compiled.sources[static_cast<size_t>(compiled.encoder)].control != control)
+            continue;
+        bool held = true;
+        const size_t buttons = compiled.sources.size() - 1;
+        for (const CompiledSource& source : compiled.sources)
+            if (source.kind != SourceKind::Encoder)
+                held = held && Value(device, source.control) >= kButtonThreshold;
+        if (held && (best < 0 || buttons > most))
+        {
+            best = static_cast<int>(i);
+            most = buttons;
+        }
+    }
+    if (best < 0)
+        return;
+    const CompiledBinding& chosen = set->bindings[static_cast<size_t>(best)];
+    // The buttons held for the turn: their own bindings never see this press
+    for (const CompiledSource& source : chosen.sources)
+    {
+        if (source.kind == SourceKind::Encoder)
+            continue;
+        Gate& gate = device.gates[source.control];
+        gate.pending = false;
+        gate.consumed = true;
+    }
+    actions.push_back({device.info.id, chosen.binding.target.name, true, steps});
 }
 
 void InputRouter::ExpireLocked(uint64_t now, std::vector<ActionEvent>& actions)

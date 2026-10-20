@@ -372,13 +372,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _actionRegistry = new ActionRegistry(this);
     RegisterDefaultActions(*_actionRegistry, m_binding,
                            {debuggerWindow, [this] { handleDebuggerToggled(true); },
-                            [this] { handleScreenshotRequested(); }});
+                            [this] { handleScreenshotRequested(); },
+                            [this](const QString& text) { statusBar()->showMessage(text, 3000); }});
     _controllersDialog->setActions(_actionRegistry);
-    connect(_hostControllers, &HostControllers::actionTriggered, this, [this](const QString& action, bool pressed) {
-        QString error;
-        if (!_actionRegistry->Trigger(action.toStdString(), pressed, error))
-            statusBar()->showMessage(error, 3000);
-    });
+    connect(_hostControllers, &HostControllers::actionTriggered, this,
+            [this](const QString& action, bool pressed, float value) {
+                QString error;
+                if (!_actionRegistry->Trigger(action.toStdString(), pressed, value, error))
+                    statusBar()->showMessage(error, 3000);
+            });
     _controllerToast = new ControllerToast(this);
     connect(_hostControllers, &HostControllers::autoDecided, this, [this](const QString& text) {
         _controllerToast->showText(text, QRect(mapToGlobal(QPoint(0, 0)), size()));
