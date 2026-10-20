@@ -6,6 +6,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
+
 #include "emulator/io/controllers/controllertypes.h"
 #include "router/analog.h"
 #include "router/binding.h"
@@ -88,6 +90,19 @@ TEST(HostControls_Test, ParseRetroTarget_ListsTheKnownControls)
 
 /// mapping-and-profiles.md §3 and testing.md Analog_Hysteresis: the thresholds are of the rescaled deflection,
 /// (r - 0.15) / 0.8 with the default dead zone and saturation
+/// debug-and-ttd.md §3.2: the dead band, the table's points, exponential between them
+TEST(HostControls_Test, ScrubSpeed_TheCurvePoints)
+{
+    EXPECT_EQ(ScrubSpeed(0.0f), 0.0f);
+    EXPECT_EQ(ScrubSpeed(0.07f), 0.0f) << "a resting finger";
+    EXPECT_NEAR(ScrubSpeed(0.08f), 1.0f, 1e-3f);
+    EXPECT_NEAR(ScrubSpeed(0.30f), 5.0f, 1e-2f);
+    EXPECT_NEAR(ScrubSpeed(0.45f), std::sqrt(5.0f * 50.0f), 0.1f) << "the geometric mean halfway";
+    EXPECT_NEAR(ScrubSpeed(0.90f), 500.0f, 0.5f);
+    EXPECT_NEAR(ScrubSpeed(1.0f), 5000.0f, 1.0f);
+    EXPECT_NEAR(ScrubSpeed(1.5f), 5000.0f, 1.0f);
+}
+
 TEST(HostControls_Test, Analog_Hysteresis)
 {
     const AnalogOptions options;

@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <iterator>
 
 #include "emulator/io/controllers/controllertypes.h"
 
@@ -89,6 +91,26 @@ float MouseCurve(float value, const AnalogOptions& options)
     const float rescaled = std::min(1.0f, (magnitude - options.deadzone) / (1.0f - options.deadzone));
     const float curved = std::pow(rescaled, options.mouseGamma);
     return value < 0 ? -curved : curved;
+}
+
+float ScrubSpeed(float travel)
+{
+    struct Point
+    {
+        float travel;
+        float speed;
+    };
+    static constexpr Point kPoints[] = {{0.08f, 1.0f}, {0.30f, 5.0f}, {0.60f, 50.0f}, {0.90f, 500.0f}, {1.0f, 5000.0f}};
+    if (travel < kPoints[0].travel)
+        return 0.0f;
+    for (size_t i = 1; i < std::size(kPoints); i++)
+    {
+        const Point& from = kPoints[i - 1];
+        const Point& to = kPoints[i];
+        if (travel <= to.travel)
+            return from.speed * std::pow(to.speed / from.speed, (travel - from.travel) / (to.travel - from.travel));
+    }
+    return kPoints[std::size(kPoints) - 1].speed;
 }
 
 }  // namespace controllers

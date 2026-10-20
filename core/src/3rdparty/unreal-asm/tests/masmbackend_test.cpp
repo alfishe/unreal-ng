@@ -211,6 +211,7 @@ TEST(MasmBackend_Test, ExpressionsAreChainsWithoutParentheses)
         "        LD HL,(lab+1)*2\n"
         "        LD A,5 ^ 3\n"
         "        LD A,lab ^ 3\n"
+        "        LD A,3 ^ lab ^ 5\n"
         "longname_a NOP\n"
         "longname_b NOP\n");
     const std::string text = Joined(lines);
@@ -222,6 +223,7 @@ TEST(MasmBackend_Test, ExpressionsAreChainsWithoutParentheses)
     EXPECT_TRUE(Contains(lines, "LD HL,LAB+1*2")) << text;
     EXPECT_TRUE(Contains(lines, "LD A,5@3")) << text;
     EXPECT_TRUE(Contains(lines, "LD A,LAB+0@3")) << text;   // MASM reads LAB@3 as the name LAB@
+    EXPECT_TRUE(Contains(lines, "LD A,3@LAB+0@5")) << text;   // the name after an @ too
     EXPECT_TRUE(Contains(lines, "LONGNAME_A NOP")) << text;   // 10 characters
     EXPECT_TRUE(Contains(lines, "LONGNAME_B NOP")) << text;
 }

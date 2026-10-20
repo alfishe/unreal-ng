@@ -40,6 +40,9 @@ struct BindingOptions
     /// false = pass: the key reaches both (mapping-and-profiles.md §4.2)
     bool consume = true;
     AnalogOptions analog;
+    /// `curve: scrub`: an action gets the source's level (0..1) whenever it changes, not a press
+    /// (debug-and-ttd.md §3.2, the scrub curve)
+    bool level = false;
     std::string label;  ///< the game's meaning ("Fire"), shown in the picture
 };
 

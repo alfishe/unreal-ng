@@ -53,6 +53,9 @@ sends output report 1 (`SurfaceDial::HapticReport`). Its test effects, in the di
 verb, are `identify` (two clicks), `click`, `clicks` (three, 60 ms apart) and `buzz`. The game's motor haptics skip
 it: it has no levels. Local detents (feature report 1 with auto trigger 3) are not set yet.
 
+Its default profile makes it a time travel remote ([debug-and-ttd.md §4.4](debug-and-ttd.md#44-surface-dial)): a
+turn moves a frame per step, a turn while pressed an instruction per step, a press alone pauses / continues.
+
 ## 3. Touch latency
 
 Measured 2026-10-19 with [probes/dialtouch.c](probes/dialtouch.c) against the owner's hand: the touch bit comes on

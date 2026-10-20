@@ -51,8 +51,10 @@ Two personas, two separate worlds:
 
 | Way | Default | Notes |
 |:--|:--|:--|
+| The debugger window has the focus | always, nothing to switch on | Every player pad is a debugger remote while the debugger window (or a pane of a docked one) has the focus, no layer key needed (`InputRouter::SetDebugFocus`); the main window gives it back to the game. Another app taking the focus changes nothing. The status bar says "Game pads drive the debugger / the game" |
 | Hold a layer key | `paddle.p4` (lower left paddle) on the Elite where paddles are visible (not macOS USB, research-host-apis §2.3a) and pads with back buttons (DualSense Edge, Steam Deck L5) | Release returns to play; held play targets were released at entry ([mapping-and-profiles.md §2](mapping-and-profiles.md#2-routing-and-layers)) |
 | Chord | `view+menu` on pads without paddles (both down within the 60 ms chord window) | Consumed by the layer: the members' play bindings fire only if the chord does not complete in the window, so ENTER and the OSD keyboard do not fire ([mapping-and-profiles.md §2](mapping-and-profiles.md#2-routing-and-layers) rule 4) |
+| The layer key in the emulator window | the dialog's "Debug layer key" switch (off by default) | Without it the layer key and the chord above do nothing in the emulator window |
 | Toggle | Advanced option: the layer key toggles instead of holding | For long sessions; the layer LED / overlay shows the state |
 | Role `debugger-remote` | a whole device is the debug layer, always | A second pad on the desk, a Stream Deck, a MIDI controller later |
 | Elite profile button | optional, Advanced: profile button cycles play / debug | Only if the backend sees it ([below](#elite-onboard-profiles)) |
@@ -126,16 +128,34 @@ maps to a speed in emulated frames per second, with a dead band so a resting fin
 Exponential between the points. The right stick X refines inside a frame: full deflection = 1 scanline per tick of 20
 ms, so a release lands on an exact line. At the end of history the scrub stops and the pad pulses once ([§7](#7-feedback)).
 
+Built: `curve: scrub` gives the action the source's level each time it changes (`ActionEvent::value`, 0 on the
+release); `ScrubSpeed` is the table; a 20 ms timer in the Qt client moves by the frames covered with `seek`, both
+triggers held count against each other. It stops on the release, at either end of the history and on a refusal,
+with the reason in the status bar. A button bound to a scrub is the full level. Not yet: the fine scrub on the right
+stick, the pulse at the end, forward past the end into live (`ttd.resume_live` does that).
+
+`ttd.jog_frames` and `ttd.jog_instructions` take an encoder's signed steps (§4.4): a frame or an instruction per
+step, clockwise forward, at most 64 instructions per event. A seek to frame N stands at N's end, which the position
+names as the start of N + 1: the move keeps the frame it went to with the place it left, so the next step counts
+from N.
+
 ### 3.3 Debugger UI
 
 | Action id | What |
 |:--|:--|
 | `dbg.open` | open / raise the debugger window |
-| `dbg.focus_next_pane` / `dbg.focus_prev_pane` | disassembly → registers → memory → stack → breakpoints |
+| `dbg.focus_next_pane` / `dbg.focus_prev_pane` | disassembly → registers → memory → stack, around; a closed debugger opens first |
 | `dbg.breakpoint_toggle_pc` | toggle an execution breakpoint at PC (or the cursor) |
-| `dbg.memory_follow` | memory view follows the register under the cursor (HL, DE, SP, IX) |
-| `dbg.cursor_up` / `dbg.cursor_down` / `dbg.page_*` | move in the focused pane (the left stick in the debug layer) |
+| `dbg.memory_follow` | memory view follows the value under the cursor (Enter in the pane) |
+| `dbg.cursor_up` / `_down` / `_left` / `_right`, `dbg.page_up` / `_down` | move in the focused pane (the left stick in the debug layer), repeating while held |
 | `dbg.labels_toggle` | show / hide symbols |
+
+Built: the pane ring and the cursor (`unreal-qt/src/debugger/panefocus.{h,cpp}`). The pane in focus has a frame
+around it; the cursor actions are the keys the pane already takes (the disassembly's Up / Down, the hex view's
+arrows and pages) sent to it, so a held stick and the keyboard move the same cursor, after 300 ms every 60 ms. The
+registers and the stack are value cells: there the arrows move a cursor of their own to the nearest cell that way,
+Enter is a double click on it (the memory view goes to the value), the keyboard drives it too. Breakpoints live in a
+dialog, not a pane, so they are not in the ring. Not yet: `dbg.breakpoint_toggle_pc`, `dbg.labels_toggle`.
 
 ### 3.4 Capture and machine
 
@@ -217,6 +237,21 @@ Built (`data/controllers/profiles/debug/keyboard-default.yaml`, `HostControllers
   does. In a text field only the function keys are shortcuts. A bound key is taken before a menu shortcut of the
   window (ShortcutOverride).
 - The editor shows the keyboard's Debugging tab without the debug layer; press-to-bind takes the combo pressed.
+
+### 4.4 Surface Dial
+
+A control surface (`"player": false`, [surface-dial.md](surface-dial.md)) is a debugger remote by nature: the Qt
+client gives it that role, and its debug profile is selected without the debug layer
+(`data/controllers/profiles/debug/surface-dial.yaml`):
+
+| Control | Action |
+|:--|:--|
+| `knob` | `ttd.jog_frames`: a frame per step, clockwise forward |
+| `push+knob` (turned while pressed) | `ttd.jog_instructions` |
+| `push` alone | `run.pause_toggle`, on the release |
+
+An encoder binding may name buttons held while it turns (`push+knob`): the one with the most held buttons takes the
+turn, and a button held for a turn gives its own binding nothing; pressed alone, that binding acts on the release.
 
 ## 5. Debugger remote and Stream Deck
 

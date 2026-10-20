@@ -102,11 +102,12 @@ private:
         }
     }
 
-    /// The text ends with a name (its last token starts with a letter, "_", "?" or "@")
+    /// The text ends with a name (its last token starts with a letter, "_" or "?"; "@" is not looked through: in 24@BETA
+    /// it is the operator, and a +0 too many does no harm)
     static bool EndsWithName(const std::string& t)
     {
         size_t k = t.size();
-        while (k > 0 && (std::isalnum(static_cast<unsigned char>(t[k - 1])) || t[k - 1] == '_' || t[k - 1] == '?' || t[k - 1] == '@' || t[k - 1] == '.'))
+        while (k > 0 && (std::isalnum(static_cast<unsigned char>(t[k - 1])) || t[k - 1] == '_' || t[k - 1] == '?' || t[k - 1] == '.'))
             --k;
         return k < t.size() && !std::isdigit(static_cast<unsigned char>(t[k])) && t[k] != '#' && t[k] != '%';
     }

@@ -110,8 +110,10 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
     _service->Router().SetActionSink([this](const ActionEvent& event) {
         const QString action = QString::fromStdString(event.action);
         const bool pressed = event.pressed;
-        QMetaObject::invokeMethod(this, [this, action, pressed] { emit actionTriggered(action, pressed); },
-                                  Qt::QueuedConnection);
+        const float value = event.value;
+        QMetaObject::invokeMethod(
+            this, [this, action, pressed, value] { emit actionTriggered(action, pressed, value); },
+            Qt::QueuedConnection);
     });
     _service->StartNative();
     // The host verbs of the automation surfaces run here, on the GUI thread
@@ -187,9 +189,37 @@ void HostControllers::SetGlobalShortcuts(bool on)
 void HostControllers::SetShortcutWindows(QWidget* main, QWidget* debugger)
 {
     if (_mainWindow == nullptr && _debuggerWindow == nullptr)
+    {
         qApp->installEventFilter(this);
+        connect(qApp, &QApplication::focusChanged, this, &HostControllers::updateDebugFocus);
+        connect(qApp, &QGuiApplication::focusWindowChanged, this, &HostControllers::updateDebugFocus);
+    }
     _mainWindow = main;
     _debuggerWindow = debugger;
+}
+
+void HostControllers::updateDebugFocus()
+{
+#ifdef ENABLE_CONTROLLERS
+    QWidget* active = QApplication::activeWindow();
+    if (active == nullptr)
+        return;  // another app has the focus: the pads keep what they drove
+    QWidget* focus = QApplication::focusWidget();
+    const bool on = _debuggerWindow != nullptr && _debuggerWindow->isVisible() &&
+                    (active == _debuggerWindow || (focus != nullptr && _debuggerWindow->isAncestorOf(focus)));
+    if (on == _debugFocus)
+        return;
+    _debugFocus = on;
+    Reapply();
+    _service->Router().SetDebugFocus(on);
+    const std::vector<HostDeviceInfo> devices = _service->Router().Devices();
+    const bool pads = std::any_of(devices.begin(), devices.end(), [this](const HostDeviceInfo& device) {
+        return device.family != "keyboard" && device.family != "mouse" &&
+               _service->Router().Role(device.id) == DeviceRole::Player;
+    });
+    if (pads)
+        emit notice(on ? tr("Game pads drive the debugger") : tr("Game pads drive the game"));
+#endif
 }
 
 std::string HostControllers::KeyControlOf(const QKeyEvent* event)
@@ -390,7 +420,7 @@ void HostControllers::Reapply()
         context.fileSha256 = {_fileSha256};
     if (!_manualProfile.empty())
         context.manual = {_manualProfile};
-    context.debugLayer = _debugLayer;
+    context.debugLayer = _debugLayer || _debugFocus;
     assignPlayers(context.devices);
     _resolved = _profiles.Apply(_service->Router(), context);
     _context = context;
@@ -505,6 +535,10 @@ void HostControllers::assignPlayers(const std::vector<HostDeviceInfo>& devices)
     size_t n = 0;
     for (const HostDeviceInfo& device : devices)
     {
+        // A control surface is a debugger remote (debug-and-ttd.md §4.4): its debug profile acts with no layer key
+        if (device.family != "keyboard" && device.family != "mouse" && !player(device) &&
+            _service->Router().Role(device.id) == DeviceRole::Player)
+            _service->Router().SetRole(device.id, DeviceRole::DebuggerRemote);
         if (!player(device))
             continue;
         _service->Router().SetPlayerConnector(device.id, n < order.size() ? order[n] : std::string{});

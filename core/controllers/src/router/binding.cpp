@@ -198,6 +198,7 @@ bool ValidateBinding(const Binding& binding, std::string& error)
         error = "a chord needs at least two controls";
         return false;
     }
+    int encoders = 0;
     for (const std::string& source : binding.sources)
     {
         ControlInfo info;
@@ -208,14 +209,28 @@ bool ValidateBinding(const Binding& binding, std::string& error)
                     ", button.<n>, axis.<n>, hat.<n>.<dir>, key.<name>, lstick, rstick, dpad.*)";
             return false;
         }
+        // An encoder with buttons held while it turns (`push+knob`) drives an action
+        const bool encoder = !whole && info.type == ControlType::Encoder;
+        if (encoder && target.kind == TargetKind::Action)
+        {
+            if (++encoders > 1)
+            {
+                error = "a binding takes one encoder";
+                return false;
+            }
+            continue;
+        }
         if (binding.chord && !IsDigital(source))
         {
             error = "chord member '" + source + "' is not a button";
             return false;
         }
-        // An encoder's detents drive actions with the projection to come (control-model TODO T4), not a target
-        if (!whole && (info.type == ControlType::Delta || info.type == ControlType::Pointer ||
-                       info.type == ControlType::Encoder))
+        if (encoder)
+        {
+            error = "'" + source + "' is an encoder: its steps drive an action only";
+            return false;
+        }
+        if (!whole && (info.type == ControlType::Delta || info.type == ControlType::Pointer))
         {
             error = "'" + source + "' is not a button: it cannot drive a target yet";
             return false;

@@ -59,6 +59,15 @@ private:
     bool Pht() const { return version == "pht" || version == "1.1"; }
     bool V7e() const { return version == "pht"; }   // * and %binary (1.1 refuses them: error 0)
     bool Primus() const { return version == "primus"; }
+    /// Primus and v7.E multiply a*b by b's bits from the top and stop at the first carry: 3*#7FFF is #7FFA, 2420*#FFFF
+    /// #1B98 (Primus), 35*#2000 #1800 (v7.E)
+    bool MultiplicationAgrees(std::optional<int64_t> a, std::optional<int64_t> b) const override
+    {
+        if (!(Primus() || V7e()) || !a || !b)
+            return true;
+        const uint32_t x = static_cast<uint32_t>(*a & 0xFFFF), y = static_cast<uint32_t>(*b & 0xFFFF);
+        return z80::StopAtCarryProduct(x, y) == ((x * y) & 0xFFFF);
+    }
     int orgs = 0;          // Primus takes one ORG
 
     std::string Title() const override { return Primus() ? "Primus" : "ZEUS"; }

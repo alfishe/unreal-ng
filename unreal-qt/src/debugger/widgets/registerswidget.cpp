@@ -265,6 +265,12 @@ void RegistersWidget::refresh()
     }
 }
 
+std::vector<QWidget*> RegistersWidget::cursorCells() const
+{
+    return {ui->valBC, ui->valDE, ui->valHL, ui->valBC1, ui->valDE1, ui->valHL1,
+            ui->valSP, ui->valPC, ui->valIX, ui->valIY};
+}
+
 void RegistersWidget::bc_doubleClicked()
 {
     emit changeMemoryViewZ80Address(m_z80Registers->bc);

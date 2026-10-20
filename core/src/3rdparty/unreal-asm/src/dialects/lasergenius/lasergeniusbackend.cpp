@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstring>
 #include <map>
 #include <set>
 
@@ -88,9 +89,12 @@ private:
         const bool doubled = !x.text.empty() && (x.text[0] == '-' || x.text[0] == '+') && (symbol[0] == '-' || symbol[0] == '+');
         return {symbol + (x.priority < 8 || doubled ? Grouped(x) : x).text, 8};
     }
+    /// a binary operator; a right operand with a sign after - or + goes in [ ] the same way (3-[-5], not 3--5)
     static Printed Infix(const Printed& l, const char* symbol, int p, const Printed& r)
     {
-        return {(l.priority < p ? Grouped(l) : l).text + symbol + (r.priority <= p ? Grouped(r) : r).text, p};
+        const char last = symbol[std::strlen(symbol) - 1];
+        const bool doubled = !r.text.empty() && (r.text[0] == '-' || r.text[0] == '+') && (last == '-' || last == '+');
+        return {(l.priority < p ? Grouped(l) : l).text + symbol + (r.priority <= p || doubled ? Grouped(r) : r).text, p};
     }
     /// 1 for true as the source's (sjasmplus -1: negated), unless the operation is written as Laser Genius' own truth
     Printed Truth(const Printed& lg)
@@ -180,6 +184,14 @@ private:
                         if (!InWord(a) || !d || *d <= 0 || *d >= 0x8000)
                             Problem("a division Laser Genius makes otherwise");
                     }
+                    // its + - * stop the assembly with "** overflow **" outside 0..#FFFF (2-3, #FFFF+1, 256*256; measured)
+                    const auto outside = [this](const Expr& x) { const auto v = Value(x); return v && (*v < 0 || *v > 0xFFFF); };
+                    if ((e.op == Op::Add || e.op == Op::Sub || e.op == Op::Mul) && (outside(a) || outside(b) || outside(e)))
+                        Problem("an operation that overflows Laser Genius' 16-bit unsigned words");
+                    // its shift by 0 gives 0 (4<<0, 4>>0; by 1..17 right, measured)
+                    if (e.op == Op::Shl || e.op == Op::Shr || e.op == Op::ShrUnsigned)
+                        if (const auto count = Value(b); count && *count == 0)
+                            Problem("a shift by 0, which Laser Genius makes 0");
                     if ((level.truth && level.priority >= 3) || e.op == Op::Shr || e.op == Op::ShrUnsigned)
                         if (!InWord(a) || !InWord(b))
                             Problem("an operation Laser Genius makes in 16-bit unsigned words on a value outside 0..#FFFF");

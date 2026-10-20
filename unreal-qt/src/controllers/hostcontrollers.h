@@ -83,7 +83,9 @@ public:
     void SetSoundHaptics(bool on);
     /// The window keyboard (`kbd:system`, mapping-and-profiles.md §4) is a debugger remote: its debug bindings are the
     /// debugger's shortcuts (debug-and-ttd.md §4.3). They take the keys of the debugger window, and of the main window
-    /// with "global shortcuts" on (kept in the settings, off by default); a key they take does not reach the machine
+    /// with "global shortcuts" on (kept in the settings, off by default); a key they take does not reach the machine.
+    /// While the debugger window has the focus the pads are debugger remotes too, with no layer key and without the
+    /// Advanced switch (InputRouter::SetDebugFocus); another app taking the focus changes nothing
     void SetShortcutWindows(QWidget* main, QWidget* debugger);
     bool GlobalShortcuts() const
     {
@@ -105,8 +107,9 @@ public:
 signals:
     /// A device arrived or left, or the profiles changed
     void changed();
-    /// A host action (debug-and-ttd.md §3) from a device: run on the GUI thread
-    void actionTriggered(const QString& action, bool pressed);
+    /// A host action (debug-and-ttd.md §3) from a device: run on the GUI thread. @p value: 1 for a press, a scrub
+    /// level, an encoder's steps
+    void actionTriggered(const QString& action, bool pressed, float value);
     /// For the status bar: "Xbox Elite 2 connected → kempston"
     void notice(const QString& text);
     /// The port-read heuristic plugged a device for the loaded program (ui-ux.md §3.8): the toast's line
@@ -118,6 +121,8 @@ protected:
 private:
     /// A key of a window the shortcuts take: true when a binding takes it (the window and the machine do not see it)
     bool shortcutKey(const QKeyEvent* event, bool pressed);
+    /// The debugger window took or lost the focus: the pads follow
+    void updateDebugFocus();
     void onBound();
     void onUnbound();
     void poll();
@@ -158,6 +163,7 @@ private:
     uint64_t _revision = ~0ull;
     uint64_t _machineRevision = ~0ull;
     bool _debugLayer = false;
+    bool _debugFocus = false;  ///< the debugger window has the focus
     std::string _manualProfile;
     bool _soundHaptics = false;
     bool _globalShortcuts = false;
