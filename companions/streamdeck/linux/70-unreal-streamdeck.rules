@@ -1,0 +1,14 @@
+# Elgato Stream Deck (USB vendor 0fd9) for unreal-streamdeck: the user at the seat gets read and write access to the
+# deck's hidraw nodes (hidapi's hidraw backend), so the daemon runs without root.
+#
+# The DEB package installs this file to /usr/lib/udev/rules.d. By hand (AppImage, a build from source):
+#   sudo install -m 0644 70-unreal-streamdeck.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+# then unplug and replug the deck.
+#
+# uaccess covers the local session (the number must stay below 73, where systemd's seat rules apply the tag). A
+# headless or SSH-only user has no seat: give such a user a group instead, e.g. MODE="0660", GROUP="plugdev".
+
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
+# the USB device itself (firmware tools, a libusb-based client)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", TAG+="uaccess"

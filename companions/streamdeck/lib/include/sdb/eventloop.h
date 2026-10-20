@@ -29,7 +29,9 @@ inline constexpr SocketHandle kInvalidSocket = -1;
 void CloseSocket(SocketHandle s);
 // Starts a connect to host:port and returns at once; the socket becomes writable when the connect ends, then
 // SocketError() tells how. Name resolution itself blocks (the daemon talks to 127.0.0.1 / localhost only).
-SocketHandle ConnectStart(const std::string& host, int port, std::string* error);
+// receiveBuffer > 0: SO_RCVBUF, set before the connect (the TCP window is offered with the SYN; on Windows a value set
+// afterwards does not bound what the peer may send).
+SocketHandle ConnectStart(const std::string& host, int port, std::string* error, int receiveBuffer = 0);
 int SocketError(SocketHandle s);  // SO_ERROR: 0 = connected
 // A listening socket on host:port (0 = any free port); *boundPort gets the port.
 SocketHandle Listen(const std::string& host, int port, int* boundPort, std::string* error);

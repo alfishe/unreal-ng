@@ -553,8 +553,9 @@ WriteStats Device::EmuLcd(int vx, int vy, const Rgb& img, int q)
     auto shown = DecodeForFormat(EncodeForFormat(img, f, q), f);
     if (!shown)
         return {};
-    // the origin read before the move: gcc 16 cannot see that `saved` holds a value (maybe-uninitialized)
-    const int x = _emu->stripX + vx, y = _emu->stripY + vy;
+    // the place is read before _emu moves out (gcc 15 / 16 cannot see through the moved-from optional)
+    const int x = _emu->stripX + vx;
+    const int y = _emu->stripY + vy;
     auto saved = std::move(_emu);
     _emu.reset();
     WriteStats st = SetLcdRegion(x, y, *shown, q);

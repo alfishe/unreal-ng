@@ -90,7 +90,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential gcc-14 g++-14 ninja-build pkg-config \
     python3 python3-pip python3-venv \
     dpkg-dev patchelf desktop-file-utils \
-    libssl-dev zlib1g-dev uuid-dev \
+    libssl-dev zlib1g-dev uuid-dev libudev-dev \
     libgl1-mesa-dev libegl1 libxkbcommon0 libxkbcommon-x11-0 libx11-6 libx11-xcb1 libxcb1 \
     libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
     libxcb-xinerama0 libxcb-shape0 libxcb-cursor0 libxcb-xkb1 libglib2.0-0 \
