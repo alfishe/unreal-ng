@@ -732,7 +732,7 @@ configuration. It cannot run as is:
   `D:\` path.
 
 So the check is split:
-- `tools/neogs/pack_flash.py` rebuilds `full_ngs.rom` from its three parts
+- `utilities/neogs/pack_flash.py` rebuilds `full_ngs.rom` from its three parts
   plus the trailers, and CI checks the result byte for byte. This is exact
   and cheap.
 - The FPGA page (`bootFPGA.crc`) is imported as a binary.
@@ -1700,7 +1700,7 @@ new files up by `GLOB_RECURSE`, after a reconfigure.
   size; sparse, so it costs only its files on disk). Each holds `NEOGS.ROM`
   (main ROM v1.11), `NGS_ROM.UPD`, `EYEACHE.MP3` and a second MP3,
   `EYE22K.MP3` (Neo Player Light v0.44 needs two, §14.2).
-  `tools/neogs/make_sd_image.py` builds the same layout for use outside the
+  `utilities/neogs/make_sd_image.py` builds the same layout for use outside the
   tests.
 - The SD boot test proves the ROM came from the card, not from flash: it
   fills the flash's main ROM page (`#10000`-`#17FFF`) with `#FF` in its copy

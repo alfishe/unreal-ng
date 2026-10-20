@@ -40,7 +40,7 @@ and "-or-later" matches the licensing of UnrealSpeccyP, ZX Diagnostics and Z80 X
 * Optional: SPDX headers (`// SPDX-License-Identifier: GPL-3.0-or-later`) on own source files via a script; never on vendored files;
   mark UnrealSpeccy-derived files with "Portions Copyright (C) SMT, Alone Coder, deathsoft".
 * Docs that already point at "the LICENSE file" now resolve (`docs/emulator/design/control-interfaces/README.md`,
-  `tools/python/README.md`, `unreal-videowall/README.md`).
+  `utilities/python/README.md`, `unreal-videowall/README.md`).
 
 ## Verification
 

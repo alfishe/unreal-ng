@@ -6,6 +6,8 @@ on:
     paths-ignore:
       - 'docs/**'
       - 'tools/**'
+      - 'plugins/**'
+      - 'utilities/**'
       - 'apps/steamdeck-client/**'   # BUILD_STEAMDECK_POC, off in CI (SDL3, steamrt4 container)
       - 'data/**'
       - 'testdata/**'
@@ -15,6 +17,8 @@ on:
     paths-ignore:
       - 'docs/**'
       - 'tools/**'
+      - 'plugins/**'
+      - 'utilities/**'
       - 'apps/steamdeck-client/**'   # BUILD_STEAMDECK_POC, off in CI (SDL3, steamrt4 container)
       - 'data/**'
       - 'testdata/**'

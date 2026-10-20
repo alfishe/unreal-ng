@@ -142,11 +142,11 @@ once K11 / K12 / K13 are fixed (the folder disk builder needs a context only for
 | FAT12/16/32 | `FatVolumeReader`, `HostFolderFat`, `FatNameMapper`; multi-source adds graft patching | ✓ | synthesis only (no in-place writer) | in-place write is non-goal NG-8 of multi-source; the library adds it |
 | ISO 9660 | container probe only; `Iso9660Reader` / `IsoSynthVolume` come with multi-source C5 | (C5) | synthesis (C5) | |
 | Tape (TAP / TZX as a sequence of files) | `TapeCatalogParser`, `FolderTapeBuilder` | ✓ | build from folder | |
-| +3DOS / CP/M / AMSDOS | none (an all-`E5` disk from `LoaderDSK` is a valid empty CP/M disk) | — | — | Python `tools/diskinfo` detects CP/M directories heuristically |
+| +3DOS / CP/M / AMSDOS | none (an all-`E5` disk from `LoaderDSK` is a valid empty CP/M disk) | — | — | Python `utilities/diskinfo` detects CP/M directories heuristically |
 | Profi CP/M HDD | none | — | — | needs the Profi BIOS disk parameter block |
 | MB-02, D40/D80, +D / DISCiPLE, Opus, iS-DOS, MSX-DOS, Microdrive | none (MGT container exists) | — | — | |
 | AmigaDOS, CBM DOS, others | none | — | — | |
 
-Python tools duplicate part of this (`tools/diskconverter`: TRD / SCL / FDI / UDI / TD0 with a TR-DOS
-module; `tools/diskinfo`: inspector with heuristic FS detection; `tools/machines/profi/pqdosimage`:
+Python tools duplicate part of this (`utilities/diskconverter`: TRD / SCL / FDI / UDI / TD0 with a TR-DOS
+module; `utilities/diskinfo`: inspector with heuristic FS detection; `tools/machines/profi/pqdosimage`:
 FAT16 reader). The library's CLI and Python module replace them ([extraction-plan.md](extraction-plan.md) X10).

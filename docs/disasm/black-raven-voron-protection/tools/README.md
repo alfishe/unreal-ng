@@ -15,7 +15,7 @@ with the evidence.
   FDI, and the one whose track-0 fails `IsTrdos`), `testdata/loaders/fdi/VORON1.FDI`
   (offline damage analysis), `data/rom/trdos504t.rom` (TR-DOS 5.04T strings).
 - Python 3, stdlib only — except `voron1-damage-map.py`, which imports the
-  project's `tools/diskconverter` package (resolved from the repo root
+  project's `utilities/diskconverter` package (resolved from the repo root
   automatically, wherever the script is run from).
 - All transient outputs (`.json`, `.log`, screen `.gif`) go to `scratch/` per the
   project test-artifact rule. Scratch is git-ignored: anything worth keeping must

@@ -262,13 +262,13 @@ umedia check   <image>                       # fsck report, exit code 0 / 1 / 2
 umedia compact <image>
 umedia convert <src> <dst> [--fs cpm:+3] [--container dsk]
 umedia compose <descriptor.ucompose.yaml> --out <image> [--strategy flat|compact]
-umedia info    <image>                       # geometry, protection hints (tools/diskinfo parity)
+umedia info    <image>                       # geometry, protection hints (utilities/diskinfo parity)
 umedia dump    <image> --sector C/H/S | --lba N | --track C/H [--raw]
 ```
 
 Every command takes `--json` for machine output (the same `Doc` as the API). Exit codes: 0 ok,
-1 operation failed, 2 usage, 3 corrupt medium. It replaces `tools/diskinfo` (inspection, heuristic
-detection, dumps) and `tools/diskconverter` (TRD / SCL / FDI / UDI / TD0 conversions). Both Python
+1 operation failed, 2 usage, 3 corrupt medium. It replaces `utilities/diskinfo` (inspection, heuristic
+detection, dumps) and `utilities/diskconverter` (TRD / SCL / FDI / UDI / TD0 conversions). Both Python
 tools stay for one release as wrappers that print a deprecation line and call `umedia`.
 
 ## 9. The Python module

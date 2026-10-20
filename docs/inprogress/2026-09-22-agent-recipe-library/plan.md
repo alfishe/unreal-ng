@@ -123,7 +123,7 @@ workflow that item called for.
   clock-bitmap inspection, flaky-sector differential test (HFE live vs UDI
   weak-dropped), reversing the check with TTD.
 - UDI image authoring: format capability matrix, host-side conversion and
-  sector-level authoring (`tools/diskconverter`), in-emulator formatting
+  sector-level authoring (`utilities/diskconverter`), in-emulator formatting
   through the real WD1793, real-hardware flux dumps (SCP/HFE).
 - TTD bug-hunt worked example composing record/reverse/replay.
 - Agent screenshot viewing: server-side binary save (MCP `capture_media`

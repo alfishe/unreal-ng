@@ -22,7 +22,7 @@ Depends on the control-surfaces phases (branch `control-surfaces-design`): S1 co
 | SD7 | Supervision in unreal-qt, settings page, pairing from the deck and the studio | SD5 | open |
 | SD8 | Windows and Linux ports, udev rule, packaging on all three | SD5 | open |
 | SD9 | Conformance suite in CI, hardware acceptance ACC-1 … ACC-7 | SD7, SD8 | open |
-| SD10 | Move the plugin and utility entries of `tools/` into `plugins/` and `utilities/` (one mechanical commit) | SD0 | open |
+| SD10 | Move the plugin and utility entries of `tools/` into `plugins/` and `utilities/` (one mechanical commit) | SD0 | done 2026-10-20: `tools/{wireshark,imhex,idapro}` -> `plugins/`, `tools/{diskconverter,diskinfo,porttrace,python,workload-monitor,neogs}` -> `utilities/` (`git mv`), references in code comments, tests, CI path filters, docs and recipes updated; group READMEs |
 
 ## Owner questions
 

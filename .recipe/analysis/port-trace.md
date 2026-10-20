@@ -177,11 +177,11 @@ Offline conversion / analysis:
 
 ```bash
 # Capture N seconds straight from the shell, auto-enable + auto-size buffer:
-python3 tools/porttrace/porttrace_capture.py --duration 5 --preset fdc-only \
+python3 utilities/porttrace/porttrace_capture.py --duration 5 --preset fdc-only \
         --to json,csv,markdown -o scratch/fdc
 
 # Interactive GUI (filters, live counters, summaries, strictness report):
-python3 tools/porttrace/porttrace_gui.py
+python3 utilities/porttrace/porttrace_gui.py
 ```
 
 Analysis questions the tools answer: per-port/per-device histograms, IN/OUT
