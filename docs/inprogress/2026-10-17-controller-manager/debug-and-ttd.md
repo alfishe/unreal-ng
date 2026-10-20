@@ -126,6 +126,17 @@ maps to a speed in emulated frames per second, with a dead band so a resting fin
 Exponential between the points. The right stick X refines inside a frame: full deflection = 1 scanline per tick of 20
 ms, so a release lands on an exact line. At the end of history the scrub stops and the pad pulses once ([§7](#7-feedback)).
 
+Built: `curve: scrub` gives the action the source's level each time it changes (`ActionEvent::value`, 0 on the
+release); `ScrubSpeed` is the table; a 20 ms timer in the Qt client moves by the frames covered with `seek`, both
+triggers held count against each other. It stops on the release, at either end of the history and on a refusal,
+with the reason in the status bar. A button bound to a scrub is the full level. Not yet: the fine scrub on the right
+stick, the pulse at the end, forward past the end into live (`ttd.resume_live` does that).
+
+`ttd.jog_frames` and `ttd.jog_instructions` take an encoder's signed steps (§4.4): a frame or an instruction per
+step, clockwise forward, at most 64 instructions per event. A seek to frame N stands at N's end, which the position
+names as the start of N + 1: the move keeps the frame it went to with the place it left, so the next step counts
+from N.
+
 ### 3.3 Debugger UI
 
 | Action id | What |
@@ -217,6 +228,21 @@ Built (`data/controllers/profiles/debug/keyboard-default.yaml`, `HostControllers
   does. In a text field only the function keys are shortcuts. A bound key is taken before a menu shortcut of the
   window (ShortcutOverride).
 - The editor shows the keyboard's Debugging tab without the debug layer; press-to-bind takes the combo pressed.
+
+### 4.4 Surface Dial
+
+A control surface (`"player": false`, [surface-dial.md](surface-dial.md)) is a debugger remote by nature: the Qt
+client gives it that role, and its debug profile is selected without the debug layer
+(`data/controllers/profiles/debug/surface-dial.yaml`):
+
+| Control | Action |
+|:--|:--|
+| `knob` | `ttd.jog_frames`: a frame per step, clockwise forward |
+| `push+knob` (turned while pressed) | `ttd.jog_instructions` |
+| `push` alone | `run.pause_toggle`, on the release |
+
+An encoder binding may name buttons held while it turns (`push+knob`): the one with the most held buttons takes the
+turn, and a button held for a turn gives its own binding nothing; pressed alone, that binding acts on the release.
 
 ## 5. Debugger remote and Stream Deck
 

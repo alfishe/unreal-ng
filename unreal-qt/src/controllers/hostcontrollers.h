@@ -105,8 +105,9 @@ public:
 signals:
     /// A device arrived or left, or the profiles changed
     void changed();
-    /// A host action (debug-and-ttd.md §3) from a device: run on the GUI thread
-    void actionTriggered(const QString& action, bool pressed);
+    /// A host action (debug-and-ttd.md §3) from a device: run on the GUI thread. @p value: 1 for a press, a scrub
+    /// level, an encoder's steps
+    void actionTriggered(const QString& action, bool pressed, float value);
     /// For the status bar: "Xbox Elite 2 connected → kempston"
     void notice(const QString& text);
     /// The port-read heuristic plugged a device for the loaded program (ui-ux.md §3.8): the toast's line

@@ -14,7 +14,7 @@ namespace
 constexpr int kSchema = 1;
 
 const char* const kTargetFields[] = {"retro", "key", "keys", "macro", "mouse", "scale", "action", "layer", "mode", "none"};
-/// Known and kept, not acted on yet (TODO.md C2c): `invert`, `repeat`, the scrub `curve`
+/// Known and kept, not acted on yet (TODO.md C2c): `invert`, `repeat`
 const char* const kOptionFields[] = {"turbo",        "on",           "off",   "count",    "press",
                                      "frames",       "label",        "consume", "ways",   "deadzone",
                                      "saturation",   "diagonal_hold", "gamma", "invert", "repeat",
@@ -155,7 +155,17 @@ bool ApplyOption(const std::string& field, const JsonValue& value, BindingOption
         options.consume = value.AsBool();
         return true;
     }
-    return true;  // invert, repeat, curve: known, not acted on yet
+    if (field == "curve")
+    {
+        if (!value.IsString() || value.AsString() != "scrub")
+        {
+            error = "'curve' is scrub";
+            return false;
+        }
+        options.level = true;
+        return true;
+    }
+    return true;  // invert, repeat: known, not acted on yet
 }
 
 bool StringField(const JsonValue& spec, const char* field, std::string& out, std::string& error)

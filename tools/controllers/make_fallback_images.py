@@ -163,6 +163,87 @@ def surface_dial():
     return spots, svgs
 
 
+# A 104-key ANSI keyboard: (PcKey automation name, label, width in key units), rows top to bottom; None is a gap
+KEYBOARD_MAIN = [
+    [("esc", "Esc", 1), None, ("f1", "F1", 1), ("f2", "F2", 1), ("f3", "F3", 1), ("f4", "F4", 1), (None, 0.5),
+     ("f5", "F5", 1), ("f6", "F6", 1), ("f7", "F7", 1), ("f8", "F8", 1), (None, 0.5), ("f9", "F9", 1),
+     ("f10", "F10", 1), ("f11", "F11", 1), ("f12", "F12", 1)],
+    [("backquote", "`", 1), ("1", "1", 1), ("2", "2", 1), ("3", "3", 1), ("4", "4", 1), ("5", "5", 1),
+     ("6", "6", 1), ("7", "7", 1), ("8", "8", 1), ("9", "9", 1), ("0", "0", 1), ("minus", "-", 1),
+     ("equal", "=", 1), ("backspace", "Backspace", 2)],
+    [("tab", "Tab", 1.5), ("q", "Q", 1), ("w", "W", 1), ("e", "E", 1), ("r", "R", 1), ("t", "T", 1),
+     ("y", "Y", 1), ("u", "U", 1), ("i", "I", 1), ("o", "O", 1), ("p", "P", 1), ("lbracket", "[", 1),
+     ("rbracket", "]", 1), ("backslash", "\\", 1.5)],
+    [("capslock", "Caps", 1.75), ("a", "A", 1), ("s", "S", 1), ("d", "D", 1), ("f", "F", 1), ("g", "G", 1),
+     ("h", "H", 1), ("j", "J", 1), ("k", "K", 1), ("l", "L", 1), ("semicolon", ";", 1), ("quote", "'", 1),
+     ("enter", "Enter", 2.25)],
+    [("lshift", "Shift", 2.25), ("z", "Z", 1), ("x", "X", 1), ("c", "C", 1), ("v", "V", 1), ("b", "B", 1),
+     ("n", "N", 1), ("m", "M", 1), ("comma", ",", 1), ("period", ".", 1), ("slash", "/", 1),
+     ("rshift", "Shift", 2.75)],
+    [("lctrl", "Ctrl", 1.25), ("lgui", "Win", 1.25), ("lalt", "Alt", 1.25), ("space", "", 6.25),
+     ("ralt", "Alt", 1.25), ("rgui", "Win", 1.25), ("menu", "Menu", 1.25), ("rctrl", "Ctrl", 1.25)],
+]
+# The navigation block (x from its left, y in rows) and the keypad (x, y, w, h in key units)
+KEYBOARD_NAV = [("printscreen", "PrtSc", 0, 0), ("scrolllock", "ScrLk", 1, 0), ("pause", "Pause", 2, 0),
+                ("insert", "Ins", 0, 1), ("home", "Home", 1, 1), ("pageup", "PgUp", 2, 1),
+                ("delete", "Del", 0, 2), ("end", "End", 1, 2), ("pagedown", "PgDn", 2, 2),
+                ("up", "\u2191", 1, 4), ("left", "\u2190", 0, 5), ("down", "\u2193", 1, 5), ("right", "\u2192", 2, 5)]
+KEYBOARD_PAD = [("numlock", "Num", 0, 1, 1, 1), ("kp_divide", "/", 1, 1, 1, 1), ("kp_multiply", "*", 2, 1, 1, 1),
+                ("kp_minus", "-", 3, 1, 1, 1), ("kp_7", "7", 0, 2, 1, 1), ("kp_8", "8", 1, 2, 1, 1),
+                ("kp_9", "9", 2, 2, 1, 1), ("kp_plus", "+", 3, 2, 1, 2), ("kp_4", "4", 0, 3, 1, 1),
+                ("kp_5", "5", 1, 3, 1, 1), ("kp_6", "6", 2, 3, 1, 1), ("kp_1", "1", 0, 4, 1, 1),
+                ("kp_2", "2", 1, 4, 1, 1), ("kp_3", "3", 2, 4, 1, 1), ("kp_enter", "Enter", 3, 4, 1, 2),
+                ("kp_0", "0", 0, 5, 2, 1), ("kp_decimal", ".", 2, 5, 1, 1)]
+
+
+def keyboard():
+    """A generic 104-key PC keyboard from above. Every key is a quiet hotspot `key.<PcKey name>`: it lights while
+    held and takes a callout only when something is bound to it (a hundred lines would hide the picture)"""
+    unit = 84
+    gap = 8
+    left = (W - 22.5 * unit) / 2
+    top = (H - 6.5 * unit) / 2
+    spots, svgs = [], []
+    svgs.append(f'<rect x="{left - 30:.0f}" y="{top - 30:.0f}" width="{22.5 * unit + 60:.0f}" '
+                f'height="{6.5 * unit + 60:.0f}" rx="28" fill="{BODY}" stroke="{EDGE}" stroke-width="6"/>')
+
+    def key(name, label, x, y, w, h):
+        px, py = round(left + x * unit + gap / 2), round(top + y * unit + gap / 2)
+        pw, ph = round(w * unit - gap), round(h * unit - gap)
+        spot, svg = rect(f"key.{name}", label or "Space", px, py, pw, ph, "left" if px + pw / 2 < W / 2 else "right",
+                         rx=10)
+        spot["quiet"] = True
+        spots.append(spot)
+        svgs.append(svg)
+        if label:
+            size = 30 if len(label) <= 2 else (24 if len(label) <= 5 else 20)
+            svgs.append(f'<text x="{px + pw / 2:.0f}" y="{py + ph / 2 + size * 0.35:.0f}" font-family="sans-serif" '
+                        f'font-size="{size}" fill="#e6e8eb" text-anchor="middle">{escape(label)}</text>')
+
+    for row, keys in enumerate(KEYBOARD_MAIN):
+        x = 0.0
+        y = row + (0 if row == 0 else 0.5)  # the function row stands apart
+        for entry in keys:
+            if entry is None:
+                x += 1
+                continue
+            if entry[0] is None:
+                x += entry[1]
+                continue
+            name, label, w = entry
+            key(name, label, x, y, w, 1)
+            x += w
+    for name, label, x, y in KEYBOARD_NAV:
+        key(name, label, 15.25 + x, y + (0 if y == 0 else 0.5), 1, 1)
+    for name, label, x, y, w, h in KEYBOARD_PAD:
+        key(name, label, 18.5 + x, y + 0.5, w, h)
+    return spots, svgs
+
+
+def escape(text):
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 XBOX = {"south": "A", "east": "B", "west": "X", "north": "Y", "view": "View", "menu": "Menu", "guide": "Guide"}
 PLAYSTATION = {"south": "Cross", "east": "Circle", "west": "Square", "north": "Triangle", "view": "Create",
                "menu": "Options", "guide": "PS"}
@@ -180,6 +261,7 @@ SETS = {
     "cursor-joystick": lambda: stick_joystick("", "Fire"),
     "md6-pad": md6,
     "surface-dial": surface_dial,
+    "generic-keyboard": keyboard,
 }
 
 
