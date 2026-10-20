@@ -320,6 +320,15 @@ if (BUILD_QT_APPS)
 endif ()
 
 # ========================================
+# Companions (paired processes; no link to the core)
+# ========================================
+option(UNREAL_STREAMDECK "Build the Stream Deck companion (companions/streamdeck)" OFF)
+if (UNREAL_STREAMDECK)
+    message(STATUS ">>> Building the Stream Deck companion")
+    add_subdirectory(companions/streamdeck)
+endif ()
+
+# ========================================
 # Unit Tests (Opt-in)
 # To build and run: cmake -DTESTS=ON ... && ninja core-tests
 # ========================================
@@ -352,11 +361,11 @@ if (BUILD_POC)
 endif (BUILD_POC)
 
 # Steam Deck client experiments (SDL3), built on their own: the other PoCs are not needed
-# (tools/poc/023-steamdeck-client/build.sh configures a steamrt4 container with this ON)
-option(BUILD_STEAMDECK_POC "Build the Steam Deck client PoCs (tools/poc/023-steamdeck-client, needs SDL3)" OFF)
+# (apps/steamdeck-client/build.sh configures a steamrt4 container with this ON)
+option(BUILD_STEAMDECK_POC "Build the Steam Deck client PoCs (apps/steamdeck-client, needs SDL3)" OFF)
 if (BUILD_STEAMDECK_POC)
 	message(STATUS ">>> Building Steam Deck client PoCs")
-	add_subdirectory(tools/poc/023-steamdeck-client)
+	add_subdirectory(apps/steamdeck-client)
 endif (BUILD_STEAMDECK_POC)
 
 # ========================================

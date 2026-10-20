@@ -36,7 +36,14 @@ CRTProfileParams CRTProfileParams::FromProfile(CRTProfile profile)
     switch (profile)
     {
         case CRTProfile::Basic:      return Basic();
-        default:                     return None();
+        case CRTProfile::None:       return None();
+        default:
+        {
+            // A model (CRTBeamModel): its own tables, the grading neutral
+            CRTProfileParams p = None();
+            p.profile = profile;
+            return p;
+        }
     }
 }
 
@@ -46,6 +53,13 @@ QString CRTProfileParams::ProfileName(CRTProfile profile)
     {
         case CRTProfile::None:       return "None";
         case CRTProfile::Basic:      return "Basic";
+        case CRTProfile::Lottes:      return "CRT Lottes";
+        case CRTProfile::Geom:        return "CRT Geom";
+        case CRTProfile::Easymode:    return "CRT Easymode";
+        case CRTProfile::GdvMini:     return "CRT GDV Mini";
+        case CRTProfile::Consumer:    return "CRT Consumer";
+        case CRTProfile::Pi:          return "CRT Pi";
+        case CRTProfile::Zfast:       return "zfast CRT";
         default:                     return "Unknown";
     }
 }
@@ -56,6 +70,13 @@ QString CRTProfileParams::ProfileKey(CRTProfile profile)
     {
         case CRTProfile::None:       return "none";
         case CRTProfile::Basic:      return "basic";
+        case CRTProfile::Lottes:      return "crt-lottes";
+        case CRTProfile::Geom:        return "crt-geom";
+        case CRTProfile::Easymode:    return "crt-easymode";
+        case CRTProfile::GdvMini:     return "crt-gdv-mini";
+        case CRTProfile::Consumer:    return "crt-consumer";
+        case CRTProfile::Pi:          return "crt-pi";
+        case CRTProfile::Zfast:       return "zfast-crt";
         default:                     return "unknown";
     }
 }
@@ -68,6 +89,20 @@ QString CRTProfileParams::ProfileDescription(CRTProfile profile)
             return "No CRT effects";
         case CRTProfile::Basic:
             return "Simple scanlines with slight curvature";
+        case CRTProfile::Lottes:
+            return "crt-lottes model: gaussian beams, shadow mask, curvature, bloom";
+        case CRTProfile::Geom:
+            return "crt-geom model: lanczos, beams wider when bright, curved tube, dot mask";
+        case CRTProfile::Easymode:
+            return "crt-easymode model: sharp lanczos, scanlines by brightness, flat";
+        case CRTProfile::GdvMini:
+            return "crt-gdv-mini model: beams by brightness, aperture mask";
+        case CRTProfile::Consumer:
+            return "crt-consumer model: a soft consumer TV, glow, curvature";
+        case CRTProfile::Pi:
+            return "crt-pi model: light scanlines, RGB mask, curvature";
+        case CRTProfile::Zfast:
+            return "zfast-crt model: fast scanlines and a fine mask";
         default:
             return "";
     }
@@ -75,7 +110,8 @@ QString CRTProfileParams::ProfileDescription(CRTProfile profile)
 
 std::vector<CRTProfile> CRTProfileParams::AllProfiles()
 {
-    return {CRTProfile::None, CRTProfile::Basic};
+    return {CRTProfile::None,    CRTProfile::Basic,    CRTProfile::Lottes, CRTProfile::Geom, CRTProfile::Easymode,
+            CRTProfile::GdvMini, CRTProfile::Consumer, CRTProfile::Pi,     CRTProfile::Zfast};
 }
 
 // CRTShaderManager implementation

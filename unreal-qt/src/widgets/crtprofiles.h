@@ -8,7 +8,15 @@
 enum class CRTProfile
 {
     None,           // No effects
-    Basic           // Simple scanlines + slight curvature
+    Basic,          // Simple scanlines + slight curvature
+    // Integer models of the single-pass libretro shaders (CRTBeamModel), the same picture on the CPU and the GPU
+    Lottes,         // crt-lottes
+    Geom,           // crt-geom
+    Easymode,       // crt-easymode
+    GdvMini,        // crt-gdv-mini
+    Consumer,       // crt-consumer
+    Pi,             // crt-pi
+    Zfast,          // zfast-crt
 };
 
 /// @brief CRT profile parameters
@@ -38,7 +46,7 @@ struct CRTProfileParams
 
     static CRTProfileParams FromProfile(CRTProfile profile);
     static QString ProfileName(CRTProfile profile);
-    /// The automation word: "none", "basic"
+    /// The automation word: "none", "basic", a model by its preset key ("crt-lottes", ...)
     static QString ProfileKey(CRTProfile profile);
     static QString ProfileDescription(CRTProfile profile);
     static std::vector<CRTProfile> AllProfiles();

@@ -6,10 +6,16 @@ The Emulator Control Interface (ECI) provides a unified high-level abstraction f
 
 - **CLI** (TCP-based Command Line Interface)
 - **WebAPI** (HTTP/REST endpoints)
+- **WebSocket** (`/api/v1/ws`: every REST route as a `call`, plus pushed topics; adds to REST, replaces nothing)
+- **MCP** (smart tools for agents)
 - **Scripting** (Lua, Python bindings)
 - **Debugger Protocols** (Future: GDB Remote Serial Protocol, ADB-style universal debugging)
 
 Each interface layer translates its protocol-specific requests into standardized internal commands that operate on the emulator core.
+
+> **Rule.** A verb added here is added to **every** plane in the same change, and documented down the chain: this
+> document → the module's document → each plane's document. See
+> [automation planes guidelines](../../../guidelines/automation-planes-guidelines.md).
 
 ### Design Philosophy
 
@@ -29,6 +35,7 @@ The command interfaces are responsible for handling the specific protocol (e.g.,
 | :--- | :--- | :--- | :--- | :--- |
 | **CLI** | Human interaction & Simple Automation | TCP Socket (Text-based) | ✅ Implemented | Stateful connection. Interactive (REPL-like) or scripted via netcat/telnet. Human-readable text protocol. Session maintains selected emulator context. Default port: TBD |
 | **WebAPI** | UI Frontends & Remote Management | HTTP/1.1 REST (JSON) | ✅ Partially Implemented | Stateless request/response. Standard web compatibility. CORS-enabled. Ideal for web dashboards, SPAs, and microservice integration. Uses Drogon framework. |
+| **WebSocket** | Push & low-latency calls | WebSocket `/api/v1/ws` (JSON) | 🔮 Planned | One socket, one auth. Every REST route callable (`call`, same handler), state and events pushed by topic, no polling. Async I/O on the WebAPI's event loops. Older sockets `/api/v1/websocket`, `/api/v1/companions/events` stay as adapters. |
 | **Python** | Deep Integration & AI/ML | Direct C++ Bindings (pybind11) | ✅ Implemented | In-process execution. Zero-copy data access. Full Python ecosystem available. Ideal for ML/AI agents, data analysis, test automation, and complex scripting. Embedded interpreter or module import. |
 | **Lua** | Embedded Logic & Macros | Direct C++ Bindings (sol2) | ✅ Implemented | In-process execution. Minimal overhead. Sandboxed execution. Best for game scripts, hotkey macros, event handlers, and rapid prototyping. |
 | **GDB Protocol** | Source-level Debugging | GDB Remote Serial Protocol (Binary) | 🔮 Planned | Standard GDB/MI protocol. Attach with GDB, LLDB, or IDE debuggers (VS Code, CLion). Full breakpoint/watchpoint support. Z80 register mapping. |
@@ -39,6 +46,7 @@ The command interfaces are responsible for handling the specific protocol (e.g.,
 **Documentation References**:
 - CLI Interface: See [cli-interface.md](./cli-interface.md)
 - WebAPI Interface: See [webapi-interface.md](./webapi-interface.md)
+- WebSocket Interface: See [websocket-interface.md](./websocket-interface.md)
 - Python Bindings: See [python-interface.md](./python-interface.md)
 - Lua Bindings: See [lua-interface.md](./lua-interface.md)
 - GDB Protocol: See [gdb-protocol.md](./gdb-protocol.md)
@@ -4759,6 +4767,7 @@ Experimental features for networked emulation and multi-instance orchestration.
 ### Interface Implementations
 - **[CLI Interface](./cli-interface.md)** - TCP-based text protocol for interactive debugging
 - **[WebAPI Interface](./webapi-interface.md)** - HTTP/REST API for web integration
+- **[WebSocket Interface](./websocket-interface.md)** - One socket: REST routes as calls, pushed topics
 - **[Python Bindings](./python-interface.md)** - Direct C++ bindings for automation and AI/ML
 - **[Lua Bindings](./lua-interface.md)** - Lightweight scripting and embedded logic
 - **[GDB Protocol](./gdb-protocol.md)** - Professional debugging with standard GDB/LLDB clients

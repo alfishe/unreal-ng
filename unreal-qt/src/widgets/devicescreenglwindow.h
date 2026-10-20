@@ -18,6 +18,8 @@
 #include <atomic>
 
 #include "emulator/video/screen.h"
+#include "crtbeammodel.h"
+#include "crtbeammodelgpu.h"
 #include "crtprofiles.h"
 #include "crtrenderer.h"
 #include "framehistory.h"
@@ -139,6 +141,7 @@ private:
     /// The viewport-filling quad with the bound program, the texture coordinates from (x1, y1) top left to (x2, y2)
     void drawQuad(QOpenGLShaderProgram* program, float srcX1, float srcY1, float srcX2, float srcY2);
     void drawComposedCrt(const QRect& picture);
+    void drawModelCrt(const QRect& picture);
     void drawCustomCrt(const QRect& picture);
     void drawSlangPreset(const QRect& picture, int glY);
 
@@ -165,6 +168,11 @@ private:
     QOpenGLVertexArrayObject _quadVao;
     QOpenGLBuffer _quadBuffer{QOpenGLBuffer::VertexBuffer};
     CRTRenderer _crtRenderer;
+    // The shader models (crt-lottes, ...): CRTBeamModel's tables as integer textures, its kShader
+    CRTBeamModel _crtModel;
+    CRTBeamModelGPU _modelGpu;
+    bool _modelTablesUploaded = false;
+    uint64_t _modelSerial = ~0ull;  ///< the upload the model's frame was prepared from
     bool _crtEnabled = false;
     CRTProfileParams _crtParams;
     QString _customShaderName;

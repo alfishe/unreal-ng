@@ -1,41 +1,17 @@
 #include "crtrenderer.h"
 
+#include "crtmath.h"
+#include "crtrows.h"
+
 #include <QRegularExpression>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <thread>
 
 namespace
 {
 constexpr float kPi = 3.14159265f;
-
-/// Run fn(firstRow, endRow) over [0, rows) on a few threads: the tables and the composition are per row
-template <typename Fn>
-void ForRows(int rows, const Fn& fn)
-{
-    const int hardware = static_cast<int>(std::max(1u, std::thread::hardware_concurrency()));
-    const int parts = std::min({hardware, 8, std::max(1, rows / 64)});
-    if (parts <= 1)
-    {
-        fn(0, rows);
-        return;
-    }
-    std::vector<std::thread> threads;
-    threads.reserve(static_cast<size_t>(parts - 1));
-    const int chunk = (rows + parts - 1) / parts;
-    for (int part = 1; part < parts; ++part)
-    {
-        const int first = part * chunk;
-        const int end = std::min(rows, first + chunk);
-        if (first < end)
-            threads.emplace_back([&fn, first, end]() { fn(first, end); });
-    }
-    fn(0, std::min(rows, chunk));
-    for (std::thread& thread : threads)
-        thread.join();
-}
 
 float SmoothStep(float edge0, float edge1, float x)
 {
@@ -139,7 +115,7 @@ void CRTRenderer::buildColorTables(const CRTProfileParams& params)
     for (int i = 0; i < 256; ++i)
     {
         const float v = static_cast<float>(i) / 255.0f;
-        _gammaTable[i] = ToByte(std::pow(v, params.gamma) * 255.0f);
+        _gammaTable[i] = ToByte(CRTMath::Pow(v, params.gamma) * 255.0f);
         _toneTable[i] = ToByte(((v - 0.5f) * params.contrast + 0.5f) * params.brightness * 255.0f);
     }
     _saturation256 = static_cast<int>(std::lround(params.saturation * 256.0f));
@@ -196,7 +172,7 @@ void CRTRenderer::buildGeometry(const CRTProfileParams& params)
                 {
                     // Bright at a source line's centre, dark between lines
                     const float line = cv * source.height();
-                    const float beam = std::sin(kPi * (line - std::floor(line)));
+                    const float beam = CRTMath::Sin(kPi * (line - std::floor(line)));
                     shade *= 1.0f - params.scanlineWeight * (1.0f - beam);
                 }
                 shade *= CornerMask(cu, cv, params.cornerRadius);

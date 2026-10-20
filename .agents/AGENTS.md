@@ -128,6 +128,7 @@ Models list: `GET /api/v1/emulator/models`. Per-machine recipes: [`.recipe/machi
 - **Naming**: PascalCase methods, camelCase fields. No underscores except `*_test.cpp` / `ClassName_Test`
 - **Recipes**: Check `.recipe/` before building automation workflows
 - **Performance**: Hot-path changes need A/B benchmarks. See `docs/guidelines/performance-guidelines.md`
+- **Automation planes**: every capability on CLI, Python, Lua, MCP, REST and WebSocket; docs chain `command-interface.md` -> module doc -> plane docs; WebSocket adds to REST (every route is a socket `call`, changes are topics), async I/O, no threads per client. See `docs/guidelines/automation-planes-guidelines.md`
 - **New platforms**: buses, slots, cards and media go through their managers, no ad hoc integration. See `docs/guidelines/new-platform-guidelines.md`
 - **Cross-platform**: Zero warnings on gcc/clang/mingw/msvc. See `docs/guidelines/cross-platform-compatibility.md`
 - **Coding**: See `docs/guidelines/coding-guidelines.md`

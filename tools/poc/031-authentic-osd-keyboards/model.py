@@ -51,6 +51,8 @@ class Key:
     legends: list = field(default_factory=list)
     zx: list = None        # the matrix keys it presses: ["CS", "1"] for EDIT
     pc: str = None         # the PC key it is
+    line: str = None       # outside the ZX matrix: the machine's own line as its schematic names it (the Quorum's
+                           # port #7E switch codes "#7E:4Fh", NMI, RESET)
     shape: list = None     # a polygon (x, y points) for an L-shaped ENTER; None: the rectangle
     label: str = None      # the overlay's name for it
 
@@ -73,4 +75,4 @@ class Model:
         return {"schema": 1, "id": keyboard["id"], "models": keyboard["models"], "size": keyboard["size"],
                 "keys": [{"id": k.id, "rect": [round(v, 2) for v in k.rect], "label": k.label or k.id,
                           **({"shape": [[round(v, 2) for v in p] for p in k.shape]} if k.shape else {}),
-                          **({"zx": k.zx} if k.zx else {}), **({"pc": k.pc} if k.pc else {})} for k in self.keys]}
+                          **({"zx": k.zx} if k.zx else {}), **({"pc": k.pc} if k.pc else {}), **({"line": k.line} if k.line else {})} for k in self.keys]}

@@ -238,6 +238,11 @@ if (APPLE)
     set_source_files_properties(${APP_ICON_MACOS} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
 endif ()
 
+# The CRT tables are built in floats and must be the same bits on every compiler (src/widgets/crtmath.h): no
+# contraction of a multiply and an add into one fused instruction (clang and gcc do it by default on arm64)
+set_source_files_properties(src/widgets/crtrenderer.cpp src/widgets/crtbeammodel.cpp src/widgets/crtbeamshapes.cpp
+    PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/fp:precise,-ffp-contract=off>")
+
 add_executable(${PROJECT_NAME} ${CPP_FILES} ${UI_HEADERS} ${APP_ICON_MACOS})
 
 # Application icon as a Qt resource (window / taskbar icon on Windows and Linux).
@@ -692,6 +697,14 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtrenderer.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtprofiles.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtprofiles.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtrows.h"
+        # The integer models of the libretro shaders: the GPU picture is the software one bit for bit
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/crtbeammodel_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeammodel.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeammodel.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeamshapes.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeammodelgpu.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeammodelgpu.h"
         # The libretro presets of data/shaders/crt on the slang runner (GPU: skips without a 3.3 core context)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/slangpresetrunner_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/slangpresetrunner.cpp"
@@ -728,6 +741,18 @@ if (TESTS)
     if (APPLE)
         target_link_libraries(unreal-qt-tests PRIVATE "-framework AppKit" "-framework ApplicationServices")
     endif()
+
+    # The CRT picture of still frames for the gallery and the comparison with librashader (tools/crt-shaders)
+    add_executable(crt-render
+        "${ROOT_DIR}/tools/crt-shaders/crt-render.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtrenderer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtprofiles.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeammodel.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeamshapes.cpp"
+    )
+    set_target_properties(crt-render PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+    target_include_directories(crt-render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(crt-render PRIVATE Qt6::Gui)
 endif()
 
 # <Diagnostics>
