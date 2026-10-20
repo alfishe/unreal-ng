@@ -523,7 +523,7 @@ private:
     /// The names in a STORM expression; nothing for a local label
     std::optional<std::vector<std::string>> Names(const std::string& e) const
     {
-        std::vector<std::string> names;
+        std::vector<std::string> found;
         for (size_t i = 0; i < e.size();)
         {
             const auto c = static_cast<unsigned char>(e[i]);
@@ -532,7 +532,7 @@ private:
                 size_t j = i;
                 while (j < e.size() && (std::isalnum(static_cast<unsigned char>(e[j])) || e[j] == '_'))
                     ++j;
-                names.push_back(Key(e.substr(i, j - i)));
+                found.push_back(Key(e.substr(i, j - i)));
                 i = j;
             }
             else if (c == '#' || c == '%' || std::isdigit(c))
@@ -543,7 +543,7 @@ private:
             else
                 ++i;
         }
-        return names;
+        return found;
     }
 
     struct Short
@@ -763,18 +763,18 @@ public:
                 lines[k].text = shorter->line;
                 continue;
             }
-            if (const auto names = shorter ? Names(shorter->expr) : std::nullopt)
+            if (const auto used = shorter ? Names(shorter->expr) : std::nullopt)
             {
                 size_t last = 0;
                 bool known = true;
-                for (const std::string& n : *names)
+                for (const std::string& n : *used)
                 {
                     const auto w = where.find(n);
                     known = known && w != where.end();
                     if (w != where.end())
                         last = std::max(last, w->second);
                 }
-                if (known && (names->empty() || last < k))
+                if (known && (used->empty() || last < k))
                     at = k;
                 else if (known && shorter->expr.find('$') == std::string::npos)
                     at = last + 1;
