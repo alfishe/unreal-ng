@@ -54,8 +54,8 @@ def keymap(picture, keys, size_mm):
     small = font(max(9, int(scale * 2.2)))
     for key in keys:
         x, y, w, h = (v * scale for v in key["rect"])
-        combo = "+".join(key.get("zx", [])) or key.get("pc", "")
-        colour = (90, 200, 255) if len(key.get("zx", [])) == 1 or "pc" in key else (255, 170, 60)
+        combo = "+".join(key.get("zx", [])) or key.get("pc", "") or key.get("line", "")
+        colour = (90, 200, 255) if len(key.get("zx", [])) == 1 or "pc" in key or "line" in key else (255, 170, 60)
         if "shape" in key:  # an L-shaped ENTER: its hit area is the polygon, not the bounding rectangle
             draw.polygon([(px * scale, py * scale) for px, py in key["shape"]], outline=colour + (255,), width=2,
                          fill=colour + (40,))
