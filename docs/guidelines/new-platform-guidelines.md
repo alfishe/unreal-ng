@@ -56,9 +56,10 @@ and had no media slot: `media insert sd` answered `unknown-slot`.)
 
 ## 4. Every plane sees the new thing, for free
 
-Because media and cards go through the managers, the WebAPI, MCP, CLI, Lua, Python and the Qt windows already have verbs for them. A new platform
+Because media and cards go through the managers, the WebAPI (REST and WebSocket), MCP, CLI, Lua, Python and the Qt windows already have verbs for them. A new platform
 MUST NOT add a private endpoint, a private CLI command or a private MCP action for a medium or a card. If a verb is missing, it is added to the
-manager and to **every** plane (the rule of `docs/emulator/design/control-interfaces/command-interface.md`).
+manager and to **every** plane (the rule of `docs/emulator/design/control-interfaces/command-interface.md`; the planes, the
+documentation chain and the WebSocket topics: [automation-planes-guidelines.md](automation-planes-guidelines.md)).
 
 New state a platform wants to expose (registers, DMA, layers) is a report: one `DeviceState` function, thin adapters per plane, golden
 output ([docs/inprogress/2026-10-07-zx-next/design-automation-coverage.md](../inprogress/2026-10-07-zx-next/design-automation-coverage.md)).

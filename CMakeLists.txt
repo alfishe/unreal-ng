@@ -320,6 +320,15 @@ if (BUILD_QT_APPS)
 endif ()
 
 # ========================================
+# Companions (paired processes; no link to the core)
+# ========================================
+option(UNREAL_STREAMDECK "Build the Stream Deck companion (companions/streamdeck)" OFF)
+if (UNREAL_STREAMDECK)
+    message(STATUS ">>> Building the Stream Deck companion")
+    add_subdirectory(companions/streamdeck)
+endif ()
+
+# ========================================
 # Unit Tests (Opt-in)
 # To build and run: cmake -DTESTS=ON ... && ninja core-tests
 # ========================================

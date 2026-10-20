@@ -37,6 +37,14 @@ Each interface has its own detailed documentation file:
 - Client examples (JavaScript, Python, curl)
 - **Best for**: Web frontends, dashboards, remote management
 
+🔮 **[websocket-interface.md](./websocket-interface.md)** - WebSocket `/api/v1/ws`  
+- Every REST route as a `call`, the same handler
+- Pushed topics instead of polling (instances, debugger events, surfaces, module state)
+- Adds to REST, replaces nothing; async I/O, no thread per client
+- **Best for**: UIs, companions, control surfaces
+
+Every capability is on every plane: [automation planes guidelines](../../../guidelines/automation-planes-guidelines.md).
+
 ✅ **[python-interface.md](./python-interface.md)** - Python Bindings (pybind11)  
 - In-process C++ bindings
 - Complete API reference

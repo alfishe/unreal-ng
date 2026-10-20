@@ -172,6 +172,12 @@ def case_logo(pic, part):
                           f'stroke-width="{width}" stroke-opacity="{opacity}" stroke-linejoin="round"/>'
                           for dy, colour, width, opacity in [(0.25, "#000000", 0.8, 0.6), (-0.15, "#4a4a48", 0.45, 0.5),
                                                              (0, part.color, 0.45, 1)])
+    if g.get("emboss"):  # thin letters moulded in relief: a shadow under each stroke, a faint lit top
+        return "\n".join([
+            glyphs(g["text"], g["x"] + 0.1, g["y"] + 0.25, size, face, "#000", opacity=0.45, **kw),
+            glyphs(g["text"], g["x"], g["y"] - 0.12, size, face, "#ffffff", opacity=0.07, **kw),
+            glyphs(g["text"], *args, part.color, **kw),
+        ])
     if not g.get("gloss"):
         return glyphs(g["text"], *args, part.color, **kw)
     fill = pic.defs.linear([(0, "#3c3e42"), (0.35, part.color), (0.7, "#0a0a0b"), (1, "#26282b")])
@@ -305,7 +311,21 @@ def case_panel(pic, part):
     ])
 
 
-CASE = {"panel": case_panel, "fddpanel": case_fddpanel, "teeth": case_teeth, "datacorder": case_datacorder, "buttons": case_buttons, "body": case_body, "plate": case_plate, "stripe": case_stripe, "logo": case_logo, "well": case_well,
+
+def case_boss(pic, part):
+    """A raised flat moulding of the case's plastic (the Scorpion's logo plaque, its ribs): matte, its top edge
+    faintly lit, a narrow shadow under its front edge"""
+    g = part.geometry
+    x, y, w, h, r = g["x"], g["y"], g["w"], g["h"], g.get("r", 0.6)
+    lip = min(0.35, h * 0.3)
+    return "\n".join([
+        f'<path d="{rounded(x + 0.1, y + 0.3, w, h + 0.4, r)}" fill="#000" fill-opacity="0.35"/>',
+        f'<path d="{rounded(x, y, w, h, r)}" fill="{part.color}"/>',
+        f'<rect x="{x + r:.3f}" y="{y:.3f}" width="{w - 2 * r:.3f}" height="{lip:.3f}" fill="#ffffff" '
+        f'fill-opacity="0.06"/>',
+    ])
+
+CASE = {"boss": case_boss, "panel": case_panel, "fddpanel": case_fddpanel, "teeth": case_teeth, "datacorder": case_datacorder, "buttons": case_buttons, "body": case_body, "plate": case_plate, "stripe": case_stripe, "logo": case_logo, "well": case_well,
         "groove": case_groove, "insert": case_insert, "grille": case_grille, "tab": case_tab, "led": case_led,
         "hump": case_hump, "fins": case_fins}
 

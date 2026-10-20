@@ -284,6 +284,13 @@ The last three are in the shared bench code, so they also act in `core-tests`' `
 | `TSCONF_RTL_DIR`, `TSU_CYCLES`, `CPU_SIM_PIN_DELAY` | RTL source path; set; number | TS-Conf hardware-description simulator: source folder, sprite cycle print, CPU pin delay. | `tools/machines/tsconf/rtl-sim/build.sh:14`, `harness.cpp:599`, `cpuharness.cpp:933` ([README](../../tools/machines/tsconf/rtl-sim/README.md)) |
 | `MCP_URL` | URL (`http://localhost:8092/mcp`) | MCP endpoint for the curl example. | `docs/features/mcp/examples/curl-session.sh:14` |
 
+**Stream Deck companion** (`unreal-streamdeck`, `sdctl`; built with `-DUNREAL_STREAMDECK=ON`,
+[design](../inprogress/2026-10-19-streamdeck-integration/README.md)):
+
+| Variable | Values (default) | What it does |
+|---|---|---|
+| `SDCTL_NO_MIRROR` | any value (unset) | A real deck alone: no mirror to a running Stream Deck Studio, as `--no-mirror` (`companions/streamdeck/cli/cli.cpp:49`). |
+
 ## 7. Packaging, release and CI
 
 | Variable | Values (default) | What it does | Read by |

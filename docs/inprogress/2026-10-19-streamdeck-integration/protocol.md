@@ -4,13 +4,14 @@
 |---|---|
 | **Date** | 2026-10-19 |
 | **Status** | Design, for review |
-| **Base** | control surfaces `protocol.md` (`/api/v1/surfaces/ws`, v1: `auth`, `join`, `action`, `subscribe`, `welcome`, `result`, `ctx`, `readout`, `instance`, `revoked`, `error`) |
+| **Base** | control surfaces `protocol.md` (v1, served on `/api/v1/ws` as the `surface` topic, §0: `auth`, `join`, `action`, `subscribe`, `welcome`, `result`, `ctx`, `readout`, `instance`, `revoked`, `error`) |
 
 Everything here is an **addition** to protocol v1: peers that do not know a field or an op ignore it (base §8). The
 base `instance` message is replaced by `target`.
 
 ## Contents
 
+- [0. Transport: one WebSocket](#0-transport-one-websocket)
 - [1. Join](#1-join)
 - [2. Target](#2-target)
 - [3. Readouts](#3-readouts)
@@ -19,6 +20,67 @@ base `instance` message is replaced by `target`.
 - [6. Machine lifecycle without REST](#6-machine-lifecycle-without-rest)
 - [7. Errors](#7-errors)
 - [8. Example](#8-example)
+
+## 0. Transport: one WebSocket
+
+Decision D7 (owner, 2026-10-20). The WebAPI has one WebSocket for every client instead of one route per stream:
+
+| Route | Today | With this design |
+|:--|:--|:--|
+| `/api/v1/websocket` | debugger events (`DebugEventHub`), no auth | adapter: the `debug.*` topics of the hub, contract unchanged |
+| `/api/v1/companions/events` | instances status (`CompanionEventHub`), server to client | adapter: the `instances` topic, contract unchanged |
+| `/api/v1/surfaces/ws` (control surfaces design) | not built | not built: the `surface` topic of `/api/v1/ws` |
+| **`/api/v1/ws`** | | the hub: one auth, topics, two-way |
+
+- **WebSocket adds to REST, it replaces nothing.** REST stays a first-class API (scripts, `curl`, MCP, the CLI); the
+  socket is for clients that want push and low latency. Whatever an action does over the socket, it does over REST
+  (`POST /api/v1/controllers/actions/{id}`), and the other way round where it makes sense.
+- **One auth per socket.** The companion token on the handshake (`Authorization: Bearer`) or the first message
+  `{"op":"auth"}`. Without a token: localhost only, and only the `debug.*` topics, as `/api/v1/websocket` today.
+- **Every REST route is a call.** `{"op":"call","rid":…,"method":…,"path":…,"body":…}` runs the same handler as
+  REST and answers `result` ([websocket-interface.md](../../emulator/design/control-interfaces/websocket-interface.md),
+  [automation planes guidelines](../../guidelines/automation-planes-guidelines.md)).
+- **Topics.** `{"op":"subscribe","topics":["instances","debug.breakpoints"]}`; `join` opens the `surface` topic (the
+  base protocol and §1-§7 below, unchanged). Each topic needs its companion scope; a missing one is answered
+  `error forbidden` for that topic only.
+- **Every server message carries its topic** (`"t":"surface"`, `"t":"instances"`, `"t":"debug.events"`); ops keep
+  their names inside a topic, so the `hello` of `instances` and the surface ops never clash.
+- **Control traffic is never queued behind streams.** Each topic has its own outgoing queue; `result`, `ctx`,
+  `target` and `error` go first; readouts are latest-value (coalesced, `max_hz`); bulk debugger events drop oldest
+  with a `dropped` count, as `activity` (§4).
+- The daemon needs both `surface` and `instances`: one connection, one reconnect loop, one token.
+
+### 0.1 Asynchronous I/O, a fixed number of threads
+
+The hub adds **no thread**: not per connection, not per topic, not per hub.
+
+- **Sockets.** They live on the WebAPI's existing event loops: Drogon / trantor, non-blocking, kqueue / epoll / wepoll,
+  `setThreadNum(2)` in `automation-webapi.cpp`. A thousand clients are still two I/O threads.
+- **Producers never touch a socket and never wait.** The emulation thread, the message centre and the actions worker
+  only do two things:
+  - store into the hub under a short lock: a readout's latest value replaces the previous one; an event is
+    appended to a bounded ring;
+  - wake the connection's loop once (`queueInLoop`) while nothing is pending.
+
+  The loop drains its queues when the socket is writable.
+- **Serialised once, on the loop.** A readout tick builds each instance's JSON once and every subscriber gets the
+  same bytes. JSON is never built on the emulation thread, and never once per client.
+- **One timer for every readout.** A single `runEvery` on the loop, at most 50 Hz, armed only while some connection
+  subscribes, like `CompanionEventHub::Refresh` today. No ticker thread.
+- **Calls go to the instance's actions worker.** `action` is handed to that worker (control surfaces §3) and never
+  run on an I/O thread; its `result` comes back by `queueInLoop`.
+- **Backpressure per connection.** Use trantor's high-water mark on the bytes the connection has queued. Above
+  it:
+  - readouts keep only the latest value;
+  - events drop the oldest, and the next message says how many were dropped (`dropped`);
+  - the producer never blocks.
+
+  A client that stays above it for 10 s is closed with `error slow_consumer`.
+- **Today's hubs serialise on the producer thread.** `DebugEventHub::Publish` and `CompanionEventHub` build their
+  JSON there and send to each connection with no limit. They move to the same scheme when they become topics of the
+  hub.
+- **Acceptance.** The host's thread count is the same with 0, 1 and 50 connected clients. 50 clients with 50 Hz
+  readouts add no measurable time per frame to the emulation thread (NFR-2, NFR-8).
 
 ## 1. Join
 
