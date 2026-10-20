@@ -51,7 +51,7 @@ of the text. ZEUS keeps no "changed" flag: a loaded text is replaced by force or
 | `ZeusBackend_Test.ProgramsKeepTheirBytesThroughZeus` (host): every instruction form, ZAsm 3.15's ZXT1-3, STORM 1.3's STORMT2, MASM 1.1's MT1, XAS 7.447 `constrct`, TASM 5.0's T50PROG → sjasmplus → ZEUS 1983 → the ZEUS codec and back → the ZEUS frontend → sjasmplus | the original assemblers' bytes |
 | ZEUS 1983 in unreal-ng, the converted files at 32768 (`o 32768`): `oracle1.asm` and every instruction form at `#6000` | 143 / 1173 bytes = sjasmplus' |
 | `inject-oracle.py zeus1983`: the same written at its prompt, assembled with `A` | 143 / 1173 bytes = sjasmplus' |
-| `expression-fuzz.py zeus --template` in ZEUS 1983, `zeus7e` in ZEUS v7.E (code at #C000: v7.E lies low) (2026-10-19): random `DW` expressions (labels above and below, numbers, unary `- ~ high low !`, every binary operator, three levels), seeds 71-75 of 100 lines | all words = sjasmplus' (found on the way: v7.E's `*` stops at the first carry as Primus' does, `35*#2000` is #1800: written as its value) |
+| `expression-fuzz.py zeus --template` in ZEUS 1983, `zeus7e` in ZEUS v7.E (code at #C000: v7.E lies low; seeds 76-85 too) (2026-10-19): random `DW` expressions (labels above and below, numbers, unary `- ~ high low !`, every binary operator, three levels), seeds 71-75 of 100 lines | all words = sjasmplus' (found on the way: v7.E's `*` stops at the first carry as Primus' does, `35*#2000` is #1800: written as its value) |
 
 ## 4.1 Primus Assembler 2.9 (2026-10-11)
 
@@ -68,8 +68,8 @@ every instruction form to sjasmplus' bytes (`inject-oracle.py primus`).
 Its `*` (measured on 84 products, 2026-10-19) takes the right operand's bits from the top (`r*2`, `+a` at a 1) and
 stops at the first carry out of 16 bits with the value so far: `3*#7FFF` is #7FFA, `2420*#FFFF` #1B98, `#8001*x` 2.
 ZEUS v7.E multiplies the same way, ZAsm 3.15 with the operands the other way round (`z80::StopAtCarryProduct`). A
-product that differs from the 16-bit one is written as its value; `expression-fuzz.py primus --template` (seeds 71-75,
-`--media` its disk) then gave sjasmplus' words in all 500 lines (93 of 100 before).
+product that differs from the 16-bit one is written as its value; `expression-fuzz.py primus --template` (seeds 71-85,
+`--media` its disk) then gave sjasmplus' words in all 1500 lines (93 of 100 before).
 
 ## 5. Limits
 
