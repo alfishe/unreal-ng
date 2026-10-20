@@ -2,7 +2,7 @@
 
 **Question.** Does gamescope deliver vblanks at the refresh set in Quick Access (50 / 49 Hz on LCD and
 OLED)? Can the app measure that, and notice a change, fast enough to pick display-locked pacing?
-([rendering.md §4](../../../../docs/inprogress/2026-10-08-steamdeck-client/rendering.md))
+([rendering.md §4](../../../docs/inprogress/2026-10-08-steamdeck-client/rendering.md))
 
 **Pass.** Measured interval within ±0.1 % of the setting; a change is detected in under 1 s.
 

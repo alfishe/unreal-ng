@@ -61,7 +61,8 @@ with per-model tables (float math builds them once per output size and profile):
 
 Against librashader on the gallery frames (352x288 at 1408x1152) the models differ by a mean of 0.06-0.28 / 255
 (zfast-crt 0.06, crt-easymode 0.07, crt-lottes 0.10, crt-gdv-mini 0.15, crt-geom 0.22, crt-consumer 0.22, crt-pi
-0.28). The original presets stay under their `shader:<key>` names (GPU only) for an A/B.
+0.28). The original presets stay under their `shader:<key>` names (GPU only) for an A/B. The gallery, the clips and the
+comparison: [tools/crt-shaders](../../tools/crt-shaders/README.md) (`render.py`, `compare.py`).
 
 ## Shader presets (GPU only)
 

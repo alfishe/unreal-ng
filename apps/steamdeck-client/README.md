@@ -1,7 +1,7 @@
-# 023 steamdeck-client: Steam Deck client proofs of concept
+# steamdeck-client: Steam Deck client proofs of concept
 
-The experiments of the [POC plan](../../../docs/inprogress/2026-10-08-steamdeck-client/poc-plan.md) for the
-native Steam Deck front-end ([design](../../../docs/inprogress/2026-10-08-steamdeck-client/README.md)).
+The experiments of the [POC plan](../../docs/inprogress/2026-10-08-steamdeck-client/poc-plan.md) for the
+native Steam Deck front-end ([design](../../docs/inprogress/2026-10-08-steamdeck-client/README.md)).
 There is one folder per experiment, `pNN-<name>/`, numbered as in the plan. Each folder's README holds
 the goal, how to run it, and the measured results. The verdicts are copied into the plan's results table.
 
@@ -9,14 +9,14 @@ the goal, how to run it, and the measured results. The verdicts are copied into 
 
 ```bash
 # 1. Build in the Steam Linux Runtime 4.0 SDK container (amd64, gcc 14, SDL3 3.4)
-tools/poc/023-steamdeck-client/build.sh                       # every POC
-tools/poc/023-steamdeck-client/build.sh p08-input-inspector   # one target
+apps/steamdeck-client/build.sh                       # every POC
+apps/steamdeck-client/build.sh p08-input-inspector   # one target
 
 # 2. Copy to the Deck (SSH enabled in Desktop Mode)
-DECK=deck@steamdeck.local tools/poc/023-steamdeck-client/deploy.sh
+DECK=deck@steamdeck.local apps/steamdeck-client/deploy.sh
 
 # 3. Fetch the logs back (~/steamdeck-poc-logs on the Deck -> build/deck-logs/)
-DECK=deck@steamdeck.local tools/poc/023-steamdeck-client/deploy.sh --logs
+DECK=deck@steamdeck.local apps/steamdeck-client/deploy.sh --logs
 ```
 
 - Build output stays inside this folder, in `build/` (git-ignored), one directory per variant. The
@@ -38,8 +38,8 @@ DECK=deck@steamdeck.local tools/poc/023-steamdeck-client/deploy.sh --logs
   `--march x86-64` for a copy to smoke-run in the container.
 - **Other hosts.** The POCs are SDL3 code, not Linux code. With SDL3 installed (e.g. Homebrew), configure
   once with `-DBUILD_STEAMDECK_POC=ON -DBUILD_QT_APPS=OFF -DENABLE_AUTOMATION=OFF -DTESTS=OFF` into its own
-  build directory (`tools/poc/023-steamdeck-client/build/macos`), then
-  `BUILD_DIR=tools/poc/023-steamdeck-client/build/macos tools/build/build.sh steamdeck-poc-all`. P-01 / P-03 / P-08 build
+  build directory (`apps/steamdeck-client/build/macos`), then
+  `BUILD_DIR=apps/steamdeck-client/build/macos tools/build/build.sh steamdeck-poc-all`. P-01 / P-03 / P-08 build
   and run on macOS (Metal); `--windowed` opens a window instead of going fullscreen. P-18 (logind) is
   Linux only and skipped elsewhere.
 
@@ -103,4 +103,4 @@ A folder is created when its experiment starts. Names in `code` are reserved.
 on a Deck ("Index" above); the rest are planned. Verdicts go to the results table of
 `docs/inprogress/2026-10-08-steamdeck-client/poc-plan.md`.
 
-Serves: `docs/inprogress/2026-10-08-steamdeck-client/`.
+Serves: `docs/inprogress/2026-10-08-steamdeck-client/`. Started as POC 023 in `tools/poc/`; moved to `apps/` on 2026-10-20.
