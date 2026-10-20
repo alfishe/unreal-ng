@@ -84,6 +84,7 @@ fixed in `core/` after the POC, as its own task.
 | SPRINTER | the FPGA's PC→matrix table (`KBD_INI2.MIF`) and its sixth matrix line (FN: F1-F10 = FN + digit) are not applied; the matrix comes from the host keys | `KBD_INI2.MIF` |
 | QUORUM | the 48 keys off the ZX matrix (F1-F5, RUS / LAT, the boxed E and G, EDIT = TAB, CAPS LOCK, BS, DEL, the punctuation, the keypad) are read through port #7E (A7 = A0 = 0, A4 = A3 = 1, D0-D5); the model cannot be created yet (no port decoder for `MM_QUORUM`, `portdecoder.cpp:126-153`); its decoder needs #7E, FIRE on 0 and the arrows on 5-8 without CAPS SHIFT | quorum-kbd-extended-schematic.jpg, refs-clones §4 |
 | LSY256 | the Orel BK-08's 16 keys beyond the 40 (the ten punctuation keys with their Cyrillic letters, ~, TAB, УПР, РУС, two Р/А; with the 40 they make the manual's 56 keys a program sees) are read through spare bits of the keyboard ports, which bits is not decoded (the schematic `Orel_BK08_Schematic.djvu`); the model cannot be created yet (no port decoder for `MM_LSY256`, `portdecoder.cpp:126-153`) | refs-clones §5 |
+| PROFI, PROFI3 | the album keyboard's cursor keys and "*" are wired to their own joystick lines (RIGHT, DOWN, UP, LEFT, FIRE on pin 18), not the matrix; which port they land on is not known (the manuals: the Sinclair joystick on keyboard lines); the OSD sends them as `JOY:<line>` | refs-clones §6.1 |
 | PHOENIX | the model cannot be created: no port decoder for `MM_PHOENIX` (`portdecoder.cpp:126-153`, `:155-233`) | — |
 
 ## Progress
@@ -100,6 +101,8 @@ fixed in `core/` after the POC, as its own task.
 | `scorpion` | SCORPION, PROFSCORP, GMX (the Soviet 58-key keyboard, the Pentagon 2+'s caps, in its grey case with the moulded "ZX SPECTRUM / SINCLAIR" plaque, refs-clones §1.4, §2) | drawn, shown to the owner | — | — |
 | `quorum` | QUORUM (the 88-key Quorum 128+ in its ivory case, refs-clones §4) | done, approved (2026-10-20) | — | — |
 | `orel` | LSY256 (the Orel BK-08's 67-key reed keyboard unit, refs-clones §5) | done, approved (2026-10-20) | — | — |
+| `profi` | PROFI, PROFI3 (the Soviet 58-key keyboard in the БК-0010 case with the "Profi///" badge, white caps with the Spectrum print and Cyrillic, after the owner's top view of a real Profi keyboard (`references/photos/clones/profi-bk0010-case-top-owner.png`), the badge traced from it, refs-clones §6.1) | done, approved (2026-10-20) | — | — |
+| `profiplus` | PROFI, PROFI3 (the album's own keyboard: 40 keys, the inverted-T cursor keys and "*" on the joystick lines, RESET; the real Profi's case and caps, refs-clones §6.1, §6.2) | done, approved (2026-10-20) | — | — |
 | `zxnext` | NEXT | done, approved by the owner (2026-10-19) | — | — |
 
 ## Files
@@ -113,6 +116,7 @@ fixed in `core/` after the POC, as its own task.
 | `qtrender/` | renders an SVG with QSvgRenderer, as unreal-qt does, for the check |
 | `keyboards/` | the data per keyboard; `out/<id>.<style>.svg` the pictures, `out/<id>.keys.json` their key maps |
 | `atlas.py` | renders every SVG in every mode (Qt, rsvg, each layer alone, the key map, Qt vs rsvg) for review |
+| `trace.py` | rectifies a printed plate in a reference photo and traces its inks into path data (`references/traces/`): the Profi badge |
 | `atlas/<id>.<style>.atlas.png` | one sheet per keyboard and style with all those modes |
 | `gallery.html` | all models side by side |
 | `conclusions.md`, `proposal.md` | when done |

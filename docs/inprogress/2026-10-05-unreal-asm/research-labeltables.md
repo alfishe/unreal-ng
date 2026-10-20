@@ -85,6 +85,13 @@ on SS+5 but shows no name while XAS 9.07m's table is in page 6: the XAS file nam
 `]XAS9.06+B`) are leftover catalog sectors after the code, not a reader of XAS's table. Unreal 0.37's note that STS
 keeps labels in bank 7 is not confirmed for any version.
 
+**STS 5.1** ("Monitor-Debugger 48-512K, STS Main Bank 23, Test version, Piter '97", `sts5.1a` / `sts5.1b` on the
+XAS 7.447 disk) reads **XAS 7.4x's** table. Run on 2026-10-20 (Pentagon): XAS 7.447 assembled a probe (`START`,
+`ROUTIN`, `TABLE` at `#6000`), EXT then CS+T entered STS with PC at the code; SS+5 put the names in the address column
+and the operands (`LD HL,TABLE`, `CALL ROUTIN`, `JP START`, `LD A,(TABLE)`), capitals as XAS folds them. The
+`xas-table` scanner finds that table in page 6 (7.x, the same 3 names and values). So STS 5.1's labels, like STS 6.2's
+and 7's, are the assembler's own table; the string search found nothing because 5.1 has no message about labels.
+
 ## 4. The scanners (`symbols/live.h`, `src/symbols/live/`)
 
 - `alasm-table`: in every page given, every start whose records chain (sizes 6-63, valid name characters, a name not
@@ -104,5 +111,4 @@ keeps labels in bank 7 is not confirmed for any version.
 
 - Label files on disk: neither ALASM nor XAS was seen saving its table to a file (none found in the collection).
 - An ALASM 4.x build configured for more memory (none in the collection; the shipped ones keep one page).
-- STS 5.x.
 - The emulator surface (copy the pages of a running machine, offer the candidates): with S5.

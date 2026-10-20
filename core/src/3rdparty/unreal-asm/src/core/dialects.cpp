@@ -139,8 +139,10 @@ void DialectRegistry::Add(std::unique_ptr<IBackend> backend)
 
 namespace
 {
-/// The labels of a sjasmplus project as its layout computes them, for a backend that folds with them
-std::map<std::string, SourceLabel> LabelValues(const std::vector<ProjectFile>& files, size_t main, const BackendOptions& options)
+/// The labels of a sjasmplus project as its layout computes them, for a backend that folds with them (project: the
+/// labels name their files)
+std::map<std::string, SourceLabel> LabelValues(const std::vector<ProjectFile>& files, size_t main, const BackendOptions& options,
+                                               bool project)
 {
     std::map<std::string, SourceLabel> values;
     if (std::any_of(files.begin(), files.end(), [](const ProjectFile& f) { return f.document.dialect != "sjasmplus"; }))
@@ -158,7 +160,7 @@ std::map<std::string, SourceLabel> LabelValues(const std::vector<ProjectFile>& f
         const symbols::SourceSymbolsResult found = symbols::SymbolsFromProject(files, main, symbolOptions);
         for (const symbols::Symbol& symbol : found.set.symbols)
             if (symbol.parent.empty() && symbol.kind != symbols::SymbolKind::Local && !values.count(symbol.name))
-                values[symbol.name] = {static_cast<int64_t>(symbol.location.offset), files.size() == 1 ? std::string() : symbol.source.file,
+                values[symbol.name] = {static_cast<int64_t>(symbol.location.offset), !project ? std::string() : symbol.source.file,
                                        symbol.source.line, false};
         return values;
     }
@@ -171,7 +173,7 @@ std::map<std::string, SourceLabel> LabelValues(const std::vector<ProjectFile>& f
     const layout::LayoutResult laid = layout::Layout(files, main, layoutOptions);
     for (const layout::Label& l : laid.labels)
     {
-        const SourceLabel value = {l.value, files.size() == 1 ? std::string() : l.file, l.line, l.use == layout::LabelUse::Defl};
+        const SourceLabel value = {l.value, !project ? std::string() : l.file, l.line, l.use == layout::LabelUse::Defl};
         values[l.name] = value;
     }
     // the RELOCATE_TABLE words: __UNREALASM_RELOC_<k>
@@ -181,21 +183,21 @@ std::map<std::string, SourceLabel> LabelValues(const std::vector<ProjectFile>& f
     for (const layout::LineAddress& a : laid.lines)
     {
         std::string file;
-        if (files.size() > 1)
+        if (project)
             for (const char c : a.file)
                 file.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
         const std::string key = a.bodyLine ? "__UNREALASM_M" + file + "_" + std::to_string(a.line) + "_" + std::to_string(a.bodyLine)
                                            : "__UNREALASM_L" + file + "_" + std::to_string(a.line);
-        values[key] = {a.address, files.size() == 1 ? std::string() : a.file, a.line, false};
+        values[key] = {a.address, !project ? std::string() : a.file, a.line, false};
     }
     // how often each WHILE ran: __UNREALASM_W<file>_<line> (a target without a loop that tests writes a repeat count)
     for (const layout::WhileCount& w : laid.whileCounts)
     {
         std::string file;
-        if (files.size() > 1)
+        if (project)
             for (const char c : w.file)
                 file.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
-        values["__UNREALASM_W" + file + "_" + std::to_string(w.line)] = {w.count, files.size() == 1 ? std::string() : w.file, w.line, false};
+        values["__UNREALASM_W" + file + "_" + std::to_string(w.line)] = {w.count, !project ? std::string() : w.file, w.line, false};
     }
     return values;
 }
@@ -222,7 +224,7 @@ ConvertResult Convert(const SourceDocument& source, std::string_view targetDiale
     FrontendResult parsed = frontend->Parse(options.z80n && !source.z80n ? next : source);
     BackendOptions withValues = options;
     if (backend->WantsLabelValues() && options.labelValues.empty())
-        withValues.labelValues = LabelValues({{source.name, source}}, 0, options);
+        withValues.labelValues = LabelValues({{source.name, source}}, 0, options, false);
     BackendResult written = backend->Write(parsed.program, withValues);
     result.document = std::move(written.document);
     result.document.name = source.name;
@@ -566,7 +568,7 @@ private:
             SourceDocument laid = _joined;
             for (size_t r = 1; r < _regions.size(); ++r)
                 laid.lines[_regions[r].includeLine - 1].text = ";" + laid.lines[_regions[r].includeLine - 1].text;
-            options.labelValues = LabelValues({{_joined.name, laid}}, 0, options);
+            options.labelValues = LabelValues({{_joined.name, laid}}, 0, options, false);
         }
         BackendResult written = _backend.Write(parsed.program, options);
         std::vector<std::vector<SourceLine>> texts;
@@ -822,14 +824,11 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
                             includes[k].push_back(n);
                             included[n] = true;
                         }
-    if (backend->WantsLabelValues() && options.labelValues.empty())
-        for (size_t main = 0; main < programs.size(); ++main)
-            if (!included[main])
-            {
-                withMacros.labelValues = LabelValues(files, main, options);
-                break;
-            }
     std::vector<std::map<std::string, int>> unitDefinitions(programs.size());
+    // the main source of the first assembly each file belongs to: its labels are that assembly's layout (a disk of
+    // several programs: each one's own values)
+    std::vector<size_t> mainOf(programs.size(), programs.size());
+    std::vector<std::vector<size_t>> unitOf(programs.size());   // a main source's files: it and what it includes
     for (size_t main = 0; main < programs.size(); ++main)
     {
         if (included[main])
@@ -844,6 +843,10 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
                     seen[n] = true;
                     unit.push_back(n);
                 }
+        for (const size_t n : unit)
+            if (mainOf[n] == programs.size())
+                mainOf[n] = main;
+        unitOf[main] = unit;
         std::map<std::string, int> counts;
         for (const size_t n : unit)
             for (const auto& [name, count] : definitions[n])
@@ -852,8 +855,28 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
             for (const auto& [name, count] : counts)
                 unitDefinitions[n][name] = std::max(unitDefinitions[n][name], count);
     }
+    std::map<size_t, std::map<std::string, SourceLabel>> unitValues;
     for (size_t k = 0; k < programs.size(); ++k)
     {
+        if (backend->WantsLabelValues() && options.labelValues.empty())
+        {
+            size_t main = mainOf[k];
+            if (main == programs.size())   // only in a cycle of INCLUDEs: the first main source's, as before
+                main = static_cast<size_t>(std::find(included.begin(), included.end(), false) - included.begin());
+            if (main < programs.size())
+            {
+                if (!unitValues.count(main))
+                {
+                    // laid out from the assembly's own files only: each one over the whole disk is quadratic
+                    std::vector<ProjectFile> own;
+                    for (const size_t n : unitOf[main])
+                        own.push_back(files[n]);
+                    unitValues[main] = own.empty() ? LabelValues(files, main, options, files.size() > 1)
+                                                   : LabelValues(own, 0, options, files.size() > 1);
+                }
+                withMacros.labelValues = unitValues[main];
+            }
+        }
         withMacros.definitions = unitDefinitions[k];
         withMacros.fileName = files[k].name;
         BackendResult written = backend->Write(programs[k], withMacros);

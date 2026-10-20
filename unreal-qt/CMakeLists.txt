@@ -238,6 +238,11 @@ if (APPLE)
     set_source_files_properties(${APP_ICON_MACOS} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
 endif ()
 
+# The CRT tables are built in floats and must be the same bits on every compiler (src/widgets/crtmath.h): no
+# contraction of a multiply and an add into one fused instruction (clang and gcc do it by default on arm64)
+set_source_files_properties(src/widgets/crtrenderer.cpp src/widgets/crtbeammodel.cpp src/widgets/crtbeamshapes.cpp
+    PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/fp:precise,-ffp-contract=off>")
+
 add_executable(${PROJECT_NAME} ${CPP_FILES} ${UI_HEADERS} ${APP_ICON_MACOS})
 
 # Application icon as a Qt resource (window / taskbar icon on Windows and Linux).

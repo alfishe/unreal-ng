@@ -18,6 +18,8 @@ Footprints are the POC 031 data in mm (W × D); heights are published figures or
 | `scorpion` | SCORPION, PROFSCORP, GMX | 58 | `soviet` | 327 × 155 | UNVERIFIED | drawn, shown |
 | `quorum` | QUORUM | 88 | `soviet` | 438 × 281 | UNVERIFIED | approved (2026-10-20) |
 | `orel` | LSY256 | 67 | `soviet` | 386 × 176 (the keyboard unit) | UNVERIFIED | approved (2026-10-20) |
+| `profi` | PROFI, PROFI3 | 58 | `soviet` | 379 × 202 (the БК-0010 case) | UNVERIFIED | approved (2026-10-20) |
+| `profiplus` | PROFI, PROFI3 | 46 | `soviet` | 325 × 138 | UNVERIFIED (no photo) | approved (2026-10-20) |
 | `zxnext` | NEXT | 58 | `next` | 330 × 146 | UNVERIFIED (a wedge, ≈35–40 mm at the back) | approved |
 
 The 2D atlas of each is `tools/poc/031-authentic-osd-keyboards/atlas/<id>.photo.atlas.png`; its keys
@@ -27,7 +29,6 @@ The 2D atlas of each is `tools/poc/031-authentic-osd-keyboards/atlas/<id>.photo.
 
 | Keyboard | Models | What | Source |
 |---|---|---|---|
-| Profi | PROFI, PROFI3 | the album's 40 keys + an inverted-T cursor cluster + "*" (v3.2 KEYBOARD-ZX, v5.0 PROFI PLUS), or the 58-key film | refs-clones §6 |
 | PC keyboards | ATM710, ATM3, TSL, SPRINTER, PHOENIX, KAY | the PC keyboard of the era (XT 83, AT 84, Enhanced 101/102, MS 7004) plus the 40-key ZX matrix, switchable | refs-pc §0, §7 |
 | ZX matrix only | ATM450 | the 40-key matrix (it had no PC keyboard) | refs-pc §1 |
 
@@ -86,6 +87,16 @@ The 3D project starts on the keyboards of section 1 and takes these as POC 031 d
 - **Case**: the separate keyboard unit (the main unit behind it is not drawn): cool grey plastic, the well of 5 rows, 18 moulded ribs across each end, the broad palm rest with one step line.
 - **Caps**: sculpted reed-switch caps, white and dark blue-grey, an L ENTER, an 8-key space bar.
 - **Unknown**: every height; the main unit (NMI, RESET, the LED, the vents, the label) if the 3D scene wants the whole computer.
+
+### `profi`, `profiplus`
+- **Case**: `profi` is the black (navy in the light) БК-0010 case: the raised rear with the "Profi///" badge (a white
+  plate, purple rounded "Profi", red / yellow / green slanted stripes), the recess with a plain panel left of the keys
+  and a finely textured surround, the broad palm rest in front; `profiplus` has no known photo: the same case, badge
+  and surround, a RESET button and an LED (positions UNVERIFIED).
+- **Caps**: Soviet sculpted caps (the Pentagon 2+'s sculpt): white with the Spectrum print and Cyrillic, light grey
+  modifiers, a red BREAK; `profiplus` the same caps on the album's 40 ZX keys, the inverted-T cursor keys and "*".
+- **Unknown**: every height, the palm rest's slope (only a top view); `profiplus` everything beyond the album's
+  wiring drawing.
 
 ### `zxnext`
 - **Case**: the wedge case, the rainbow insert in a groove, the vent, the logo moulded black on black, the front DB9

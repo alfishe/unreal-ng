@@ -1,5 +1,6 @@
 #include "crtrenderer.h"
 
+#include "crtmath.h"
 #include "crtrows.h"
 
 #include <QRegularExpression>
@@ -114,7 +115,7 @@ void CRTRenderer::buildColorTables(const CRTProfileParams& params)
     for (int i = 0; i < 256; ++i)
     {
         const float v = static_cast<float>(i) / 255.0f;
-        _gammaTable[i] = ToByte(std::pow(v, params.gamma) * 255.0f);
+        _gammaTable[i] = ToByte(CRTMath::Pow(v, params.gamma) * 255.0f);
         _toneTable[i] = ToByte(((v - 0.5f) * params.contrast + 0.5f) * params.brightness * 255.0f);
     }
     _saturation256 = static_cast<int>(std::lround(params.saturation * 256.0f));
@@ -171,7 +172,7 @@ void CRTRenderer::buildGeometry(const CRTProfileParams& params)
                 {
                     // Bright at a source line's centre, dark between lines
                     const float line = cv * source.height();
-                    const float beam = std::sin(kPi * (line - std::floor(line)));
+                    const float beam = CRTMath::Sin(kPi * (line - std::floor(line)));
                     shade *= 1.0f - params.scanlineWeight * (1.0f - beam);
                 }
                 shade *= CornerMask(cu, cv, params.cornerRadius);

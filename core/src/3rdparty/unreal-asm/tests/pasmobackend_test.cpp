@@ -222,6 +222,31 @@ TEST(PasmoBackend_Test, BlocksAndRepeats)
     EXPECT_TRUE(Contains(assigned, "T DEFL 1"));
 }
 
+TEST(PasmoBackend_Test, PassesAndExclusiveBranches)
+{
+    // TASM's two passes (`.IF PASS` is true in pass 1 only, pass 2 starts with the values pass 1 left): the IF on a name
+    // defined after it is decided from the layout, a redefinable name only its branch set starts with the last value
+    const std::vector<std::string> passes = ToPasmo("        .IF     PASS\nPASS    EQU     1\nR1      EQU     1\n        .ENDIF\n"
+                                                    "        DEFB    R1\nR1      =       5\n", "tasm");
+    EXPECT_EQ(passes.size(), 3u) << ::testing::PrintToString(passes);
+    EXPECT_TRUE(Contains(passes, "R1 DEFL 5"));
+    EXPECT_FALSE(Contains(passes, "PASS EQU 1"));
+    // A name set once in each branch of an IF is set once: an EQU, which pasmo takes before its definition
+    const std::vector<std::string> branches = ToPasmo("        CALL X\n        IF 1\nX=$\n        ELSE\nX=#3D13\n        ENDIF", "sjasmplus");
+    EXPECT_TRUE(Contains(branches, "X EQU $"));
+    EXPECT_TRUE(Contains(branches, "X EQU #3D13"));
+    // A disk of two programs: each one's IF decided by its own layout
+    std::vector<ProjectFile> files = {{"A", SourceDocument::FromText("        IF P==9\n        DB 1\n        ENDIF\nP       EQU 9\n", "sjasmplus")},
+                                      {"B", SourceDocument::FromText("        IF P==9\n        DB 1\n        ENDIF\nP       EQU 0\n", "sjasmplus")}};
+    const ProjectResult project = ConvertProject(files, "pasmo");
+    ASSERT_EQ(project.files.size(), 2u);
+    const auto has = [](const SourceDocument& d, const std::string& text) {
+        return std::any_of(d.lines.begin(), d.lines.end(), [&](const SourceLine& l) { return l.text.find(text) != std::string::npos; });
+    };
+    EXPECT_TRUE(has(project.files[0].document, "DB 1"));
+    EXPECT_FALSE(has(project.files[1].document, "DB 1"));
+}
+
 TEST(PasmoBackend_Test, ProgramsAssembleToWhatTheOriginalsBuilt)
 {
     const char* pasmo = std::getenv("UNREAL_ASM_PASMO");

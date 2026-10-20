@@ -1,6 +1,7 @@
 # The Stream Deck companion (docs/inprogress/2026-10-19-streamdeck-integration): libsdb (models, HID protocol, images,
-# scenario engine, automation), the daemon unreal-streamdeck, the developer CLI sdctl and the tests. No Qt, no link
-# to the core. Added from the root CMakeLists.txt under UNREAL_STREAMDECK.
+# scenario engine, automation), the daemon unreal-streamdeck, the developer CLI sdctl and the tests (no Qt, no link
+# to the core), and Stream Deck Studio (studio/, Qt, when Qt is found). Added from the root CMakeLists.txt under
+# UNREAL_STREAMDECK.
 
 # Build settings are the project's: the C++ standard, build type, LTO and the macOS deployment target come from the
 # root CMakeLists.txt; the warnings are the core's (core/src/CMakeLists.txt), applied to our sources, not to 3rdparty.
@@ -39,21 +40,20 @@ if(NOT MSVC)
     target_compile_options(sd-hidapi PRIVATE -w)   # third-party source
 endif()
 
-# ---------------------------------------------------------------- JPEG (temporary: system libjpeg-turbo until the
-# vendored encoder is measured, source-layout.md L-6)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(SD_TURBOJPEG REQUIRED IMPORTED_TARGET libturbojpeg)
-
 # ---------------------------------------------------------------- libsdb
 file(GLOB SD_LIB_SOURCES CONFIGURE_DEPENDS ${SD_DIR}/lib/src/*.cpp)
 add_library(sdb STATIC ${SD_LIB_SOURCES})
 target_include_directories(sdb PUBLIC ${SD_DIR}/lib/include)
 target_include_directories(sdb SYSTEM PUBLIC ${SD_3RDPARTY})   # nlohmann/json is part of the public headers
 target_compile_options(sdb PRIVATE ${SD_WARNINGS})
-set_source_files_properties(${SD_DIR}/lib/src/svg.cpp PROPERTIES COMPILE_OPTIONS "-Wno-error")   # nanosvg inside
-target_link_libraries(sdb PUBLIC PkgConfig::SD_TURBOJPEG PRIVATE sd-hidapi)
+if(NOT MSVC)
+    set_source_files_properties(${SD_DIR}/lib/src/svg.cpp PROPERTIES COMPILE_OPTIONS "-Wno-error")   # nanosvg inside
+endif()
+target_link_libraries(sdb PRIVATE sd-hidapi)
 if(APPLE)
     target_link_libraries(sdb PRIVATE "-framework ApplicationServices")   # the keys action: CGEvent
+elseif(WIN32)
+    target_link_libraries(sdb PRIVATE ws2_32)   # sockets (sdb/eventloop.h)
 endif()
 
 # ---------------------------------------------------------------- shared CLI helpers
@@ -79,3 +79,6 @@ file(GLOB SD_TEST_SOURCES CONFIGURE_DEPENDS ${SD_DIR}/tests/*.cpp)
 add_executable(streamdeck-tests EXCLUDE_FROM_ALL ${SD_TEST_SOURCES})
 target_compile_options(streamdeck-tests PRIVATE ${SD_WARNINGS})
 target_link_libraries(streamdeck-tests PRIVATE sdb)
+
+# ---------------------------------------------------------------- Stream Deck Studio (Qt; skipped without Qt)
+add_subdirectory(studio)

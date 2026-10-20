@@ -4,7 +4,7 @@
 
 Everything here was measured with `sdctl bench ...` / `sdctl lcd-scene --animate` unless marked **(user-observed)** or **(structural)**.
 
-**Setup**: Stream Deck + XL (PID 0x00C6, FW 1.0.2.2), USB 2.0 high-speed, macOS (Darwin 24.6, Apple silicon), hidapi 0.15 (IOHID backend), libjpeg-turbo 3.2, Release build. No other Stream Deck software was running.
+**Setup**: Stream Deck + XL (PID 0x00C6, FW 1.0.2.2), USB 2.0 high-speed, macOS (Darwin 24.6, Apple silicon), hidapi 0.15 (IOHID backend), libjpeg-turbo 3.2 (since 2026-10-20 the library encodes with its own `sdb::jpeg`: turbojpeg's scan data, 1.37x its encode time, [POC 032](../../../tools/poc/032-streamdeck-jpeg-encoder/measurements-2026-10-20-optimised.md)), Release build. No other Stream Deck software was running.
 
 **Method**: the loop calls blocking `hid_write()`; frames are pre-encoded so JPEG cost is excluded unless stated. Images are 144×144 source art resized to the key's 120×120. "Content": *flat* = one solid colour per frame, *gradient* = smooth colour field with a moving bar and a counter (typical UI art), *noise* = random pixels (worst case for JPEG). One cell = one second, so values carry about ±5 % jitter.
 
