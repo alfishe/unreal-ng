@@ -18,7 +18,7 @@ Footprints are the POC 031 data in mm (W × D); heights are published figures or
 | `scorpion` | SCORPION, PROFSCORP, GMX | 58 | `soviet` | 327 × 155 | UNVERIFIED | drawn, shown |
 | `quorum` | QUORUM | 88 | `soviet` | 438 × 281 | UNVERIFIED | approved (2026-10-20) |
 | `orel` | LSY256 | 67 | `soviet` | 386 × 176 (the keyboard unit) | UNVERIFIED | approved (2026-10-20) |
-| `profi` | PROFI, PROFI3 | 58 | `soviet` | 357 × 183 (the БК-0010 case) | UNVERIFIED | approved (2026-10-20) |
+| `profi` | PROFI, PROFI3 | 58 | `soviet` | 379 × 202 (the БК-0010 case) | UNVERIFIED | approved (2026-10-20) |
 | `profiplus` | PROFI, PROFI3 | 46 | `soviet` | 325 × 138 | UNVERIFIED (no photo) | approved (2026-10-20) |
 | `zxnext` | NEXT | 58 | `next` | 330 × 146 | UNVERIFIED (a wedge, ≈35–40 mm at the back) | approved |
 
@@ -89,13 +89,14 @@ The 3D project starts on the keyboards of section 1 and takes these as POC 031 d
 - **Unknown**: every height; the main unit (NMI, RESET, the LED, the vents, the label) if the 3D scene wants the whole computer.
 
 ### `profi`, `profiplus`
-- **Case**: `profi` is the black БК-0010 case with the keyboard in a recess behind a thin frame and the "Profi///"
-  badge (a dark plate, light rim, red / white / green slanted stripes); `profiplus` has no known photo: the same black
-  case and badge, a RESET button and an LED (positions UNVERIFIED).
-- **Caps**: `profi` the Pentagon 2+'s Soviet 58-key caps (the only photo is too small to show its own);
-  `profiplus` the same caps on the album's 40 ZX keys, the inverted-T cursor keys and "*".
-- **Unknown**: every height, the case's depth; `profiplus` everything beyond the album's wiring drawing. Both are
-  low priority for 3D until a better photo turns up.
+- **Case**: `profi` is the black (navy in the light) БК-0010 case: the raised rear with the "Profi///" badge (a white
+  plate, purple rounded "Profi", red / yellow / green slanted stripes), the recess with a plain panel left of the keys
+  and a finely textured surround, the broad palm rest in front; `profiplus` has no known photo: the same case, badge
+  and surround, a RESET button and an LED (positions UNVERIFIED).
+- **Caps**: Soviet sculpted caps (the Pentagon 2+'s sculpt): white with the Spectrum print and Cyrillic, light grey
+  modifiers, a red BREAK; `profiplus` the same caps on the album's 40 ZX keys, the inverted-T cursor keys and "*".
+- **Unknown**: every height, the palm rest's slope (only a top view); `profiplus` everything beyond the album's
+  wiring drawing.
 
 ### `zxnext`
 - **Case**: the wedge case, the rainbow insert in a groove, the vent, the logo moulded black on black, the front DB9

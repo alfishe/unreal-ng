@@ -101,8 +101,8 @@ fixed in `core/` after the POC, as its own task.
 | `scorpion` | SCORPION, PROFSCORP, GMX (the Soviet 58-key keyboard, the Pentagon 2+'s caps, in its grey case with the moulded "ZX SPECTRUM / SINCLAIR" plaque, refs-clones §1.4, §2) | drawn, shown to the owner | — | — |
 | `quorum` | QUORUM (the 88-key Quorum 128+ in its ivory case, refs-clones §4) | done, approved (2026-10-20) | — | — |
 | `orel` | LSY256 (the Orel BK-08's 67-key reed keyboard unit, refs-clones §5) | done, approved (2026-10-20) | — | — |
-| `profi` | PROFI, PROFI3 (the Soviet 58-key keyboard in the БК-0010 case with the "Profi///" badge, the only photo of a real Profi keyboard, refs-clones §6.1) | done, approved (2026-10-20) | — | — |
-| `profiplus` | PROFI, PROFI3 (the album's own keyboard: 40 keys, the inverted-T cursor keys and "*" on the joystick lines, RESET; neutral case and caps, refs-clones §6.1, §6.2) | done, approved (2026-10-20) | — | — |
+| `profi` | PROFI, PROFI3 (the Soviet 58-key keyboard in the БК-0010 case with the "Profi///" badge, white caps with the Spectrum print and Cyrillic, after the owner's top view of a real Profi keyboard (`references/photos/clones/profi-bk0010-case-top-owner.png`), the badge traced from it, refs-clones §6.1) | done, approved (2026-10-20) | — | — |
+| `profiplus` | PROFI, PROFI3 (the album's own keyboard: 40 keys, the inverted-T cursor keys and "*" on the joystick lines, RESET; the real Profi's case and caps, refs-clones §6.1, §6.2) | done, approved (2026-10-20) | — | — |
 | `zxnext` | NEXT | done, approved by the owner (2026-10-19) | — | — |
 
 ## Files
@@ -116,6 +116,7 @@ fixed in `core/` after the POC, as its own task.
 | `qtrender/` | renders an SVG with QSvgRenderer, as unreal-qt does, for the check |
 | `keyboards/` | the data per keyboard; `out/<id>.<style>.svg` the pictures, `out/<id>.keys.json` their key maps |
 | `atlas.py` | renders every SVG in every mode (Qt, rsvg, each layer alone, the key map, Qt vs rsvg) for review |
+| `trace.py` | rectifies a printed plate in a reference photo and traces its inks into path data (`references/traces/`): the Profi badge |
 | `atlas/<id>.<style>.atlas.png` | one sheet per keyboard and style with all those modes |
 | `gallery.html` | all models side by side |
 | `conclusions.md`, `proposal.md` | when done |
