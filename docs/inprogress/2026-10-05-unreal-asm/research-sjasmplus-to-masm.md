@@ -55,6 +55,7 @@ first write over a loaded text needs force.
 | `MasmBackend_Test.ProgramsKeepTheirBytesThroughMasm` (host): every instruction form, MASM 1.1's MT1, ZAsm 3.15's ZXT1-3, STORM 1.3's STORMT1 / 2, XAS 7.447 `constrct`, 4.18 `cons418`, TASM 5.0's T50PROG → sjasmplus → MASM 1.1 → the MASM codec and back → the MASM frontend → sjasmplus | the original assemblers' bytes |
 | MASM 1.1 in unreal-ng, the converted files loaded from its disk: `oracle1.asm` and every instruction form at `#6000` | 143 / 1173 bytes = sjasmplus' |
 | `inject-oracle.py masm11`: the same written at its prompt, assembled with `A` | 143 / 1173 bytes = sjasmplus' |
+| `expression-fuzz.py masm --template` in MASM 1.1 (2026-10-19): random `DW` expressions (labels above and below, numbers, unary `- ~ high low !`, every binary operator, three levels), seeds 71-75 of 100 lines | all words = sjasmplus' (found on the way: `3@LAB@5` lacked the `+0` after the name, the scan for a name looked through the operator `@`) |
 
 ## 5. Limits
 

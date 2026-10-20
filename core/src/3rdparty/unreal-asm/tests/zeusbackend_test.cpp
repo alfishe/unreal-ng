@@ -279,6 +279,8 @@ TEST(ZeusBackend_Test, TheLaterVersionsHaveTheirDataWordsAndOnlyV7eMultiplies)
     const std::vector<std::string> v1983 = ToZeus(source);
     EXPECT_TRUE(Contains(v1983, "DEFB 1")) << Joined(v1983);
     EXPECT_TRUE(Contains(v1983, "DEFM /text/")) << Joined(v1983);
+    // v7.E stops its product at the first carry: 35*#2000 would be #1800
+    EXPECT_TRUE(Contains(ToZeus("        LD HL,35*#2000\n", nullptr, "pht"), "LD HL,#6000")) << Joined(ToZeus("        LD HL,35*#2000\n", nullptr, "pht"));
     for (const char* version : {"gg", "pht", "1.1"})
     {
         const std::vector<std::string> lines = ToZeus(source, nullptr, version);
@@ -326,6 +328,7 @@ TEST(ZeusBackend_Test, PrimusTakesItsOwnOperatorsAndOneOrg)
         "        ORG #6000\n"
         "lab     LD A,high lab\n"
         "        LD HL,lab*2/3\n"
+        "        LD HL,lab*#7FFF\n"
         "        LD A,lab%7\n"
         "        LD A,\"A\"\n"
         "        INCLUDE \"lib.asm\"\n"
@@ -336,6 +339,7 @@ TEST(ZeusBackend_Test, PrimusTakesItsOwnOperatorsAndOneOrg)
     const std::string text = Joined(lines);
     EXPECT_TRUE(Contains(lines, "LAB LD A,LAB/256")) << text;
     EXPECT_TRUE(Contains(lines, "LD HL,LAB*2/3")) << text;
+    EXPECT_TRUE(Contains(lines, "LD HL,#A000")) << text;   // Primus stops at its first carry: #6000*#7FFF gives #2000
     EXPECT_TRUE(Contains(lines, "LD A,LAB+0?7")) << text;   // Primus reads LAB?7 as the name LAB?7
     EXPECT_TRUE(Contains(lines, "LD A,65")) << text;   // Primus refuses "A
     EXPECT_TRUE(Contains(lines, "DISK lib")) << text;

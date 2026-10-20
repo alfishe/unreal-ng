@@ -25,6 +25,8 @@ protected:
     virtual bool DivisionAgrees(const Expr& a, const Expr& b) const { return InWord(a) && InWord(b); }
     /// A right shift as a division agrees on this operand
     virtual bool ShiftAgrees(const Expr& a) const { return InWord(a); }
+    /// The target's multiplication of these values agrees with the source's (GENS: no product above 32767 in absolute value)
+    virtual bool MultiplicationAgrees(std::optional<int64_t>, std::optional<int64_t>) const { return true; }
     /// The longest expression the target's line takes (0: any); a longer one is written as its value where known
     virtual size_t ExpressionWidth() const { return 0; }
     virtual std::string NumberText(const Expr& e) const;
@@ -37,5 +39,7 @@ protected:
     std::optional<std::string> Text(const Expr& e) override;
     std::optional<std::string> Binary(const Expr& e);
     std::optional<std::string> Chained(const Expr& e);
+    /// a * the chain writes: written as its value where the target's product differs
+    void Multiplied(std::optional<int64_t> a, std::optional<int64_t> b);
 };
 }  // namespace unrealasm::dialects

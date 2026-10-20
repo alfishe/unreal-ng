@@ -82,6 +82,7 @@ replaced by force, or when it is the caller's own.
 | `PasmBackend_Test.ProgramsKeepTheirBytesThroughPasm` (host): every instruction form, PASM's PROBE and CURRENT probes, ZAsm 3.15's ZXT1-3, STORM 1.3's STORMT2, MASM 1.1's MT1, XAS 7.447 `constrct`, TASM 5.0's T50PROG → sjasmplus → PASM (its text file) → the PASM frontend → sjasmplus | the original assemblers' bytes (`constrct`: the gap before its second ORG zeros, see §2) |
 | `inject-oracle.py pasm` (PASM 3.0 on a Pentagon 128 in unreal-ng): `oracle1.asm` at `#6000`, every instruction form with its 599 labels and without at `#8000` | 143 / 1173 / 1173 bytes = sjasmplus' |
 | The instruction forms with labels as a TR-DOS file `INSTR.C`, loaded with GET, compiled with L | 1173 bytes = sjasmplus' |
+| `expression-fuzz.py pasm --template` in PASM 3.0 (2026-10-19): random `DW` expressions (labels above and below, numbers, unary `- ~ high low !`, every binary operator, three levels), seeds 71-75 of 100 lines | all words = sjasmplus' |
 
 PASM puts the code it compiles in other RAM pages: code from `#8000` up in an image of the 48K memory (`#8000-#BFFF`
 in page 3, `#C000-#FFFF` in page 0), code below `#8000` from `#2000` of page 4 whatever its ORG (`#6000` and `#5010`

@@ -87,6 +87,14 @@ private:
         const auto v = Value(a);
         return v && *v >= 0 && *v <= 0x7FFF;
     }
+    /// A product above 32767 in absolute value, its words taken as signed, is *ERROR* 15 (its manual 2.5, checked in GENS4)
+    bool MultiplicationAgrees(std::optional<int64_t> a, std::optional<int64_t> b) const override
+    {
+        if (!a || !b)
+            return true;
+        const int64_t product = int64_t{static_cast<int16_t>(*a & 0xFFFF)} * static_cast<int16_t>(*b & 0xFFFF);
+        return product >= -32767 && product <= 32767;
+    }
 
     /// A string: DEFM "text" lines for runs of three characters or more; the quote, control characters and bytes above
     /// #7F as DEFB numbers
