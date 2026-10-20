@@ -64,8 +64,7 @@ static bool TryBeta128MirrorPort(uint16_t port, bool wideDecode, uint16_t& canon
 PortDecoder_Scorpion256::PortDecoder_Scorpion256(EmulatorContext* context) : PortDecoder(context)
 {
     _savedP7FFDValid = false;
-    _smucNvram.GetRtc().SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
-    _smucNvram.GetRtc().SetSessionWall([this]() { return SessionWallMicros(); });
+    BindRtc(_smucNvram.GetRtc());
 }
 
 PortDecoder_Scorpion256::~PortDecoder_Scorpion256()

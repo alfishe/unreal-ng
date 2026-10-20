@@ -36,8 +36,7 @@ PortDecoder_ATM3::PortDecoder_ATM3(EmulatorContext* context) : PortDecoder_ATM71
     _zc.SetTap(&_spiTap);
     _sdCard.SetBusTap(&_spiTap, 0);
     _sdCard.SetClock([this]() { return EmulatedMicroseconds(); });
-    _evoAvr.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
-    _evoAvr.SetSessionWall([this]() { return SessionWallMicros(); });
+    BindRtc(_evoAvr);
 
     // TTD: the card's protocol state is in the EvoSdCard blob; a guest write
     // changes the medium, so it is a replay barrier (the media manager's rule)

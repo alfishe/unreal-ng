@@ -52,8 +52,7 @@ PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context)
 {
     // Its snapshot view exists while the window map is a Spectrum 128K (both boards: RAM page n is bank n there)
     SetSnapshotCapturePolicy(&snapshot::WindowMapCapture::Instance());
-    _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
-    _rtc.SetSessionWall([this]() { return SessionWallMicros(); });
+    BindRtc(_rtc);
     // Port A's lines are the Kempston joystick (MAN v3.2 sheet: PA0-PA4 + PB0); nothing else drives the 8255's inputs
     _ppi.SetInputA([this]() { return IsKempstonJoystickFitted() ? Default_Port_KempstonJoystick_In() : uint8_t{0xFF}; });
     FitKeyboard();

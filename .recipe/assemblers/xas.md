@@ -129,7 +129,8 @@ so a source with INCLUDEs goes in as a project: the main text into memory, each 
 `disk:A/NAME.X`). Into a snapshot: `zxasm inject main.asm xas.szx --disk work.trd` (the WebAPI refuses a project into a
 snapshot of XAS: no disk there); the whole project onto a disk alone: `zxasm inject main.asm work.trd --assembler xas-7.447`.
 `tools/verification/unreal-asm/emulator/inject-oracle.py xas <XAS disk> <source.asm> 0x6000 --boot XAS7.447 --assembler xas-7.447`
-runs the whole check (`--right 1` past XMACROS on the 4.18 and 5.05SE disks, `--combo-frames 12` for 9.x).
+runs the whole check (`--right 1` past XMACROS on the 4.18 and 5.05SE disks, `--combo-frames 12` for 9.x; `--wait 10`
+for long sources: 100 lines of nested expressions take XAS more than the default 3 s, and memory read earlier is zeros).
 
 ## Saving and the text in memory
 

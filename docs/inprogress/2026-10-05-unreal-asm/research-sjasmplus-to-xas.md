@@ -88,6 +88,7 @@ at the command line and in the editor (`SyncDescriptor::idleChain`):
 | `XasBackend_Test.ProgramsKeepTheirBytesThroughXas` (host): every instruction form as XAS 7.43, 4.18 and 9.10 text, XAS's own constructs (7.447 `constrct`, 4.18 `cons418`), STORM 1.3, ZAsm 3.15 and TASM 5.0 programs → sjasmplus → XAS → the XAS codec and back → the XAS frontend → sjasmplus | the original assemblers' bytes |
 | `inject-oracle.py xas` in XAS 4.18, 5.05, 5.05SE, 7.43c, 7.447, 9.07m, 9.10: `oracle1.asm` (sjasmplus constructs, macros, WHILE, DUP, IF) | 143 bytes = sjasmplus' in each |
 | the same with every instruction form at `#6000` | 1173 bytes = sjasmplus' in each |
+| `expression-fuzz.py xas` in XAS 7.447 (2026-10-19): random `DW` expressions (labels above and below, numbers, unary `- ~ high low !`, every binary operator, three levels), seeds 71-77 of 100 lines, 17-39 a seed written as expressions | all words = sjasmplus' (XAS takes more than 3 s for 100 such lines: the oracle's default wait read the memory before the end, the target waits 10 s) |
 
 ## 5. Limits
 

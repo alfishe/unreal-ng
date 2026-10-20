@@ -20,6 +20,7 @@
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/memory/tsconf/tsconfmemory.h"
+#include "emulator/io/rtc/ds12887.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
@@ -905,6 +906,10 @@ void Core::Reset(ROMModeEnum mode)
 {
     // Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
     _mode = mode;
+
+    // The battery clock keeps its time over the reset, which restarts the emulated time it runs on
+    if (Ds12887* rtc = _portDecoder ? _portDecoder->RtcChip() : nullptr)
+        rtc->RebaseEmulatedTime(_portDecoder->EmulatedMicroseconds(), 0);
 
     // Reset EmulatorState fields that are not covered by individual peripheral resets
     // These must be cleared BEFORE peripheral resets so PortDecoder::reset() can set
