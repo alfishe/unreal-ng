@@ -172,6 +172,12 @@ def case_logo(pic, part):
                           f'stroke-width="{width}" stroke-opacity="{opacity}" stroke-linejoin="round"/>'
                           for dy, colour, width, opacity in [(0.25, "#000000", 0.8, 0.6), (-0.15, "#4a4a48", 0.45, 0.5),
                                                              (0, part.color, 0.45, 1)])
+    if g.get("emboss"):  # thin letters moulded in relief: a shadow under each stroke, a faint lit top
+        return "\n".join([
+            glyphs(g["text"], g["x"] + 0.1, g["y"] + 0.25, size, face, "#000", opacity=0.45, **kw),
+            glyphs(g["text"], g["x"], g["y"] - 0.12, size, face, "#ffffff", opacity=0.07, **kw),
+            glyphs(g["text"], *args, part.color, **kw),
+        ])
     if not g.get("gloss"):
         return glyphs(g["text"], *args, part.color, **kw)
     fill = pic.defs.linear([(0, "#3c3e42"), (0.35, part.color), (0.7, "#0a0a0b"), (1, "#26282b")])
@@ -305,9 +311,75 @@ def case_panel(pic, part):
     ])
 
 
-CASE = {"panel": case_panel, "fddpanel": case_fddpanel, "teeth": case_teeth, "datacorder": case_datacorder, "buttons": case_buttons, "body": case_body, "plate": case_plate, "stripe": case_stripe, "logo": case_logo, "well": case_well,
+
+def case_boss(pic, part):
+    """A raised flat moulding of the case's plastic (the Scorpion's logo plaque, its ribs): matte, its top edge
+    faintly lit, a narrow shadow under its front edge"""
+    g = part.geometry
+    x, y, w, h, r = g["x"], g["y"], g["w"], g["h"], g.get("r", 0.6)
+    lip = min(0.35, h * 0.3)
+    return "\n".join([
+        f'<path d="{rounded(x + 0.1, y + 0.3, w, h + 0.4, r)}" fill="#000" fill-opacity="0.35"/>',
+        f'<path d="{rounded(x, y, w, h, r)}" fill="{part.color}"/>',
+        f'<rect x="{x + r:.3f}" y="{y:.3f}" width="{w - 2 * r:.3f}" height="{lip:.3f}" fill="#ffffff" '
+        f'fill-opacity="0.06"/>',
+    ])
+
+
+def case_vents(pic, part):
+    """A field of vent slots across the case (the Quorum's top): @p rows slots front to back in each of @p cols
+    columns, each a dark groove with a faintly lit front lip"""
+    g = part.geometry
+    x, y, w, h, cols, rows = g["x"], g["y"], g["w"], g["h"], g["cols"], g["rows"]
+    pitch, col = h / rows, w / cols
+    slot, gap = pitch * 0.32, min(1.2, col * 0.06)
+    dark, lip = shade(part.color, 0.62), shade(part.color, 1.06)
+    parts = []
+    for c in range(cols):
+        sx, sw = x + c * col + gap / 2, col - gap
+        for r in range(rows):
+            sy = y + r * pitch + (pitch - slot) / 2
+            parts.append(f'<path d="{rounded(sx, sy, sw, slot, slot / 2)}" fill="{dark}"/>')
+            parts.append(f'<rect x="{sx + slot / 2:.3f}" y="{sy + slot:.3f}" width="{sw - slot:.3f}" height="0.25" '
+                         f'fill="{lip}"/>')
+    return "\n".join(parts)
+
+
+def case_steps(pic, part):
+    """Ledges stepping down to the front (the Quorum's raised rear onto its keyboard deck): @p steps bands, each a
+    faint lit top and a shadow line under its front edge"""
+    g = part.geometry
+    x, y, w, h, n = g["x"], g["y"], g["w"], g["h"], g["steps"]
+    band = h / n
+    parts = []
+    for i in range(n):
+        by = y + i * band
+        parts.append(f'<rect x="{x:.3f}" y="{by:.3f}" width="{w:.3f}" height="{band * 0.25:.3f}" fill="#ffffff" '
+                     f'fill-opacity="0.05"/>')
+        parts.append(f'<rect x="{x:.3f}" y="{by + band - 0.5:.3f}" width="{w:.3f}" height="0.5" fill="#000" '
+                     f'fill-opacity="0.18"/>')
+    return "\n".join(parts)
+
+
+def case_ring(pic, part):
+    """A printed ring (the Quorum's emblem)"""
+    g = part.geometry
+    return (f'<circle cx="{g["x"]:.3f}" cy="{g["y"]:.3f}" r="{g["r"]:.3f}" fill="none" stroke="{part.color}" '
+            f'stroke-width="{g["width"]:.3f}"/>')
+
+CASE = {"ring": case_ring, "vents": case_vents, "steps": case_steps, "boss": case_boss, "panel": case_panel, "fddpanel": case_fddpanel, "teeth": case_teeth, "datacorder": case_datacorder, "buttons": case_buttons, "body": case_body, "plate": case_plate, "stripe": case_stripe, "logo": case_logo, "well": case_well,
         "groove": case_groove, "insert": case_insert, "grille": case_grille, "tab": case_tab, "led": case_led,
         "hump": case_hump, "fins": case_fins}
+
+
+def lit(pic, key):
+    """The key's colour as the photo shows it: the light falls off from the top left across the board, and no two caps
+    of an old keyboard have quite the same tint (a fixed spread per key, ±1.5 %)"""
+    W, H = pic.keyboard["size"]
+    x, y, w, h = key.rect
+    falloff = 1.03 - 0.06 * (x + w / 2) / W - 0.04 * (y + h / 2) / H
+    spread = (sum(map(ord, key.id)) * 37 % 31 - 15) / 1000
+    return shade(key.color, falloff + spread)
 
 
 def cap(pic, key):
@@ -324,7 +396,8 @@ def cap(pic, key):
     if key.cap == "mech":  # a low black cap of a Soviet mechanical switch, its sticker on the top face
         return hard(pic, x, y, w, h, key.color, inset=(0.9, 0.6, 0.9, 1.3), radius=1.0, top_radius=1.2, gloss=0.05)
     if key.cap == "soviet":
-        return soviet(pic, x, y, w, h, key.color, key.shape)
+        return soviet(pic, x, y, w, h, lit(pic, key), key.shape, depth=pic.keyboard.get("depth"),
+                      **pic.keyboard.get("soviet", {}))
     if key.cap == "amstrad":
         return amstrad(pic, x, y, w, h, key.color, key.shape)
     raise ValueError(f"{key.id}: cap {key.cap}")

@@ -1894,29 +1894,13 @@ At least one of `addr`, `addr_from`, `addr_to`, `pc_from`, `pc_to`, `value` is r
 
 Everything else is reported in a 200 body: `reached: false`, `stepped: false`, `resumed: false`, `found: false`, `matched: false`.
 
-## WebSocket Support (Future)
+## WebSocket
 
-Real-time streaming for live updates without polling.
-
-**Endpoint**: `WS /api/v1/emulators/{id}/stream`  
-
-**Use Cases**:
-- Live screen updates (video streaming)
-- Real-time register monitoring
-- Event notifications (breakpoint hit, state change)
-- Audio streaming
-
-**Message Format**:
-```json
-{
-  "type": "register_update",
-  "timestamp": "2026-01-03T10:35:22.123Z",
-  "data": {
-    "pc": "0x0605",
-    "af": "0x44C4"
-  }
-}
-```
+Implemented today: `/api/v1/websocket` (debugger events) and `/api/v1/companions/events` (a companion's live view).
+Planned: one socket `/api/v1/ws` for every client. It can call every REST route (`call`, the same handler) and pushes
+state and events by topic. It adds to REST and replaces nothing; the two older sockets stay as adapters. See
+[websocket-interface.md](./websocket-interface.md) and the
+[automation planes guidelines](../../../guidelines/automation-planes-guidelines.md).
 
 ## HTTP Headers & CORS
 

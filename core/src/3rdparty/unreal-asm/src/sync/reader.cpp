@@ -1649,7 +1649,7 @@ InjectPlan PlanInjectPrometheus(const MachineView& machine, const SyncDescriptor
     const uint32_t start = p.fixedStart;
     const uint32_t tableAt = start + static_cast<uint32_t>(records.size()) + 12;
     const uint32_t end = tableAt + static_cast<uint32_t>(table.size());
-    const auto topWord = p.limitAt ? machine.Word(p.limitAt) : std::optional<uint16_t>(0);   // 0: the end of memory
+    const auto topWord = p.limitAt ? machine.Word(p.limitAt) : std::optional<uint16_t>(uint16_t{0});   // 0: the end of memory
     const auto oldEndWord = machine.Word(p.prometheusEndAt);
     if (!topWord || !oldEndWord)
     {

@@ -1,5 +1,6 @@
 #include "devicescreen.h"
 #include "emulator/remotecontrolguard.h"
+#include "crtbeammodel.h"
 #include "crtrenderer.h"
 
 #include <QDebug>
@@ -200,12 +201,15 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
         }
     }
 
-    // CRTRenderer at device pixels, drawn 1:1, with or without CRT effects: the GPU screen composes the same picture
-    // from the same tables, so the two backends match bit for bit
+    // CRTRenderer (or a CRTBeamModel for a shader model) at device pixels, drawn 1:1, with or without CRT effects: the
+    // GPU screen composes the same picture from the same tables, so the two backends match bit for bit
     {
         const CRTProfileParams& params = _crtEnabled ? _crtParams : kPlainParams;
+        const bool model = CRTBeamModel::isModel(params.profile);
         if (!_crtRenderer)
             _crtRenderer = std::make_unique<CRTRenderer>();
+        if (model && !_crtModel)
+            _crtModel = std::make_unique<CRTBeamModel>();
         const qreal dpr = devicePixelRatioF();
         CRTRenderer::Layout layout;
         layout.outWidth = std::max(1, static_cast<int>(std::lround(destRect.width() * dpr)));
@@ -216,8 +220,16 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
         if (layout.source.isEmpty())
             return;
 
-        _crtRenderer->setLayout(layout, params);
-        _crtRenderer->grade(drawImage->constBits(), static_cast<int>(drawImage->bytesPerLine()), params);
+        if (model)
+        {
+            _crtModel->setLayout(layout, params.profile);
+            _crtModel->prepare(drawImage->constBits(), static_cast<int>(drawImage->bytesPerLine()));
+        }
+        else
+        {
+            _crtRenderer->setLayout(layout, params);
+            _crtRenderer->grade(drawImage->constBits(), static_cast<int>(drawImage->bytesPerLine()), params);
+        }
         // Opaque in the backing store's byte order: the 1:1 draw is a copy, no conversion, no blending (RGB32 is
         // B G R 0xFF bytes on little-endian; an image with alpha would be blended pixel by pixel)
         constexpr bool kBgra = Q_BYTE_ORDER == Q_LITTLE_ENDIAN;
@@ -225,7 +237,10 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
         if (_crtFrame.width() != layout.outWidth || _crtFrame.height() != layout.outHeight ||
             _crtFrame.format() != kFormat)
             _crtFrame = QImage(layout.outWidth, layout.outHeight, kFormat);
-        _crtRenderer->compose(_crtFrame.bits(), static_cast<int>(_crtFrame.bytesPerLine()), kBgra);
+        if (model)
+            _crtModel->compose(_crtFrame.bits(), static_cast<int>(_crtFrame.bytesPerLine()), kBgra);
+        else
+            _crtRenderer->compose(_crtFrame.bits(), static_cast<int>(_crtFrame.bytesPerLine()), kBgra);
         _crtFrame.setDevicePixelRatio(dpr);
 
 #if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)

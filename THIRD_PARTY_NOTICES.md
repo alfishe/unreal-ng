@@ -55,6 +55,19 @@ contributors) as the format reference; no MAME source is vendored.
 | QHexView 5.0 | `unreal-qt/3rdparty/QHexView-5.0/` | MIT | static |
 | ayumi (interpolation filter excerpt) | `core/src/common/sound/filters/filter_interpolate.h` | MIT | source |
 
+## Stream Deck companion (`UNREAL_STREAMDECK`, off by default)
+
+| Component | Location | License | Use |
+|-----------|----------|---------|-----|
+| hidapi 0.15.0 (mac, windows, linux hidraw backends) | `companions/streamdeck/3rdparty/hidapi/` | BSD-3-Clause (triple BSD / GPL-3.0 / original; BSD elected) | static |
+| nlohmann/json 3.11.3 | `companions/streamdeck/3rdparty/nlohmann/` | MIT | header |
+| cpp-httplib 0.61.0 | `companions/streamdeck/3rdparty/httplib.h` | MIT | header (automation server) |
+| fkYAML 0.5.0 | `companions/streamdeck/3rdparty/fkYAML.hpp` | MIT | header (scenario YAML) |
+| rapidcsv 9.07 | `companions/streamdeck/3rdparty/rapidcsv.h` | BSD-3-Clause | header (scenario CSV / TSV) |
+| nanosvg | `companions/streamdeck/3rdparty/nanosvg.h`, `nanosvgrast.h` | zlib | header (SVG icons) |
+| stb_image | `companions/streamdeck/3rdparty/stb_image.h` | MIT / public domain | header (image loading) |
+| libjpeg-turbo (system, temporary until the vendored encoder) | via pkg-config `libturbojpeg` | IJG / BSD-3-Clause / zlib | dynamic |
+
 ## Tools, tests and benchmarks only
 
 | Component | Location | License |

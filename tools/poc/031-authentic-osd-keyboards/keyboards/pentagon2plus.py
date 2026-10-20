@@ -1,6 +1,6 @@
 """Pentagon 128 "2+": the Pentagon board in a black plastic case with the 58-key Spectrum+ layout (the 128's
-geometry and matrix), cream sculpted caps printed in black, the grey edit and shift keys, a red BREAK, the
-"ZX-SPECTR 128" plate at the rear left, a vent grille along the rear right.
+geometry and matrix), cream sculpted caps printed in black, the grey edit and shift keys, a red BREAK, a
+moulded name plaque at the rear left (generic, the owner 2026-10-20), a vent grille along the rear right.
 
 Sources: the owner's photo references/photos/clones/pentagon-128-2plus-owner.png (2026-10-19): the layout, the legends
 read key by key (the SS item and the E + SS item on top, the letter, its keyword beside it, the E-mode word on the
@@ -18,10 +18,10 @@ KEYBOARD = {"id": "pentagon2plus", "name": "Pentagon 128 2+", "models": ["PENTAG
 U = 19.0
 X0, Y0 = 30.0, 50.0      # the key block's top left
 CASE = "#1f2225"
-CREAM, GREY, RED = "#e2d9bf", "#b4b3ac", "#e0403a"
-INK = "#1c1c1c"
-LOGO = "#c2da62"
-WORD, SYMBOL = "narrow-bold", "sans-bold"
+CREAM, GREY, RED = "#eedfb2", "#b4b3ac", "#e0403a"
+INK = "#2b2722"  # the black print reads warm on the cream
+WORD, SYMBOL = "din-condensed", "sans-bold"
+NARROW = 1.15  # the print is a heavy DIN-like grotesque, less condensed than DIN Condensed
 
 # Top left, top right, the keyword beside the letter, the E-mode word on the skirt (as printed)
 LETTERS = {
@@ -51,30 +51,30 @@ CREAM_KEYS = set(LETTERS) | set(DIGITS) | set(ARROWS) | set(';",.')
 def top(text, x, anchor):
     """An item on the cap's top: a symbol large, a word small"""
     word = any(c.isalpha() for c in text) and len(text) > 1
-    size = 1.6 if word else 3.2
+    size = 2.4 if word else 3.2
     face = WORD if word else SYMBOL
-    squeeze = min(1.0, round(7.0 / max(text_width(text, size, face), 0.01), 3)) if word else 1.0
+    squeeze = min(NARROW, round(7.0 / max(text_width(text, size, face), 0.01), 3)) if word else 1.0
     return Legend(text, "symbol", "cap", x, 0.2 if word else 0.26, size, face, INK, anchor, squeeze=squeeze)
 
 
 def front(text):
     """The E-mode word or the colour, printed on the front slope under the top face"""
-    return Legend(text, "extend", "cap", 0.5, 1.36, 2.0, WORD, INK,
-                  squeeze=min(1.0, round(12.0 / text_width(text, 2.0, WORD), 3)))
+    return Legend(text, "extend", "cap", 0.5, 1.4, 3.0, WORD, INK,
+                  squeeze=min(NARROW, round(12.0 / text_width(text, 3.0, WORD), 3)))
 
 
 def legends(name):
     if name in LETTERS:
         left, right, keyword, extend = LETTERS[name]
-        result = [Legend(name, "main", "cap", 0.1, 0.8, 4.2, SYMBOL, INK, "start"),
-                  Legend(keyword, "keyword", "cap", 0.94, 0.8, 1.5, WORD, INK, "end",
-                         squeeze=min(1.0, round(6.0 / text_width(keyword, 1.5, WORD), 3))),
+        result = [Legend(name, "main", "cap", 0.1, 0.84, 6.0, WORD, INK, "start", squeeze=1.25),
+                  Legend(keyword, "keyword", "cap", 0.94, 0.84, 2.4, WORD, INK, "end",
+                         squeeze=min(NARROW, round(6.0 / text_width(keyword, 2.4, WORD), 3))),
                   front(extend)]
         result += [top(t, x, a) for t, x, a in ((left, 0.08, "start"), (right, 0.92, "end")) if t]
         return result
     if name in DIGITS:
         left, right, block, colour = DIGITS[name]
-        result = [Legend(name, "main", "cap", 0.1, 0.8, 4.2, SYMBOL, INK, "start"), top(left, 0.08, "start"),
+        result = [Legend(name, "main", "cap", 0.1, 0.84, 5.8, WORD, INK, "start", squeeze=1.25), top(left, 0.08, "start"),
                   top(right, 0.92, "end")]
         if block is not None:
             result.append(Legend("", "graphic", "cap", 0.7, 0.66, 3.0, color=INK, glyph=f"block:{block}"))
@@ -84,7 +84,7 @@ def legends(name):
     if name in NAMED:
         lines = NAMED[name]
         ys = [0.55] if len(lines) == 1 else [0.42, 0.8]
-        return [Legend(t, "main", "cap", 0.5, y, 2.6, WORD, INK) for t, y in zip(lines, ys)]
+        return [Legend(t, "main", "cap", 0.5, y, 3.2, WORD, INK, squeeze=NARROW) for t, y in zip(lines, ys)]
     if name in ARROWS:
         return [Legend("", "main", "cap", 0.5, 0.55, 4.4, color=INK, glyph=f"arrow:{ARROWS[name]}")]
     if name == "ENTER":  # on the upright
@@ -94,10 +94,36 @@ def legends(name):
     return []  # SPACE: blank
 
 
-def enter_shape():
-    x1, x2, x3 = X0 + 11.75 * U, X0 + 12.5 * U, X0 + 13.5 * U
-    y1, y2, y3 = Y0 + 1 * U, Y0 + 2 * U, Y0 + 3 * U
+def enter_shape(x0=X0, y0=Y0):
+    x1, x2, x3 = x0 + 11.75 * U, x0 + 12.5 * U, x0 + 13.5 * U
+    y1, y2, y3 = y0 + 1 * U, y0 + 2 * U, y0 + 3 * U
     return [(x2, y1), (x3, y1), (x3, y3), (x1, y3), (x1, y2), (x2, y2)]
+
+
+def keys(m, x0=X0, y0=Y0, grey=GREY):
+    """The 58 caps with their legends, the key block's top left at @p x0, @p y0 (the Scorpion's case uses them too)"""
+    for r, row in enumerate(ROWS):
+        for name, x, w in row:
+            rect = (x0 + x * U, y0 + r * U, w * U, U)
+            shape = None
+            if name == "ENTER":
+                rect, shape = (x0 + 11.75 * U, y0 + U, 1.75 * U, 2 * U), enter_shape(x0, y0)
+            colour = RED if name == "BREAK" else CREAM if name in CREAM_KEYS else grey
+            zx = EXTRA.get(name) or [SINGLE.get(name, name)]
+            m.keys.append(Key(name.lower().replace(" ", "-"), rect, "soviet", colour, legends(name), zx=zx,
+                              shape=shape, label=name.title() if len(name) > 1 else name))
+
+
+def plaque(x, y, colour):
+    """The generic name plaque moulded in the case's plastic: "ZX SPECTRUM" over "SINCLAIR" in thin spaced letters
+    on a raised plate (the Scorpion's case; the Pentagon 2+ gets the same instead of its printed plate)"""
+    return [
+        Part("boss", {"x": x, "y": y, "w": 58.0, "h": 13.4, "r": 1.0}, colour),
+        Part("logo", {"text": "ZX SPECTRUM", "x": x + 2.3, "y": y + 6.0, "size": 5.4, "spacing": 1.4, "face": "sans",
+                      "emboss": True}, colour),
+        Part("logo", {"text": "SINCLAIR", "x": x + 13.3, "y": y + 11.6, "size": 5.4, "spacing": 1.4, "face": "sans",
+                      "emboss": True}, colour),
+    ]
 
 
 def layout():
@@ -108,24 +134,8 @@ def layout():
         Part("grille", {"x": 180.0, "y": 1.2, "w": 150.0, "h": 4.0, "slots": 64}, CASE),
         Part("panel", {"x": X0 - 4.0, "y": Y0 - 4.0, "w": 13.5 * U + 8.0, "h": 5 * U + 8.0, "r": 1.2}, "#141517"),
         Part("panel", {"x": X0 - 0.6, "y": Y0 - 0.6, "w": 13.5 * U + 1.2, "h": 5 * U + 1.2, "r": 0.6}, "#4a4a47"),
-        # the name plate: hollow oblique letters spaced out, underlined, the Omega underlined too, a plain 128
-        Part("panel", {"x": 33.0, "y": 8.0, "w": 76.0, "h": 9.5, "r": 0.6}, "#141517"),
-        Part("logo", {"text": "ZX-SPECTR", "x": 41.5, "y": 14.6, "width": 34.0, "size": 5.0, "spacing": 1.0,
-                      "face": "oblique-bold", "stroke": 0.18}, LOGO),
-        Part("stripe", {"points": [(41.0, 15.4), (75.5, 15.4), (75.5, 15.75), (41.0, 15.75)]}, LOGO),
-        Part("logo", {"text": "Ω", "x": 81.5, "y": 14.6, "size": 5.0, "face": "oblique-bold", "stroke": 0.18}, LOGO),
-        Part("stripe", {"points": [(81.0, 15.4), (85.6, 15.4), (85.6, 15.75), (81.0, 15.75)]}, LOGO),
-        Part("logo", {"text": "128", "x": 90.0, "y": 14.6, "width": 8.0, "size": 4.6, "face": "sans"}, LOGO),
         Part("led", {"x": 329.0, "y": 12.8, "r": 1.0}, "#1a0c0c"),
     ]
-    for r, row in enumerate(ROWS):
-        for name, x, w in row:
-            rect = (X0 + x * U, Y0 + r * U, w * U, U)
-            shape = None
-            if name == "ENTER":
-                rect, shape = (X0 + 11.75 * U, Y0 + U, 1.75 * U, 2 * U), enter_shape()
-            colour = RED if name == "BREAK" else CREAM if name in CREAM_KEYS else GREY
-            zx = EXTRA.get(name) or [SINGLE.get(name, name)]
-            m.keys.append(Key(name.lower().replace(" ", "-"), rect, "soviet", colour, legends(name), zx=zx,
-                              shape=shape, label=name.title() if len(name) > 1 else name))
+    m.case += plaque(30.0, 6.0, CASE)
+    keys(m)
     return m

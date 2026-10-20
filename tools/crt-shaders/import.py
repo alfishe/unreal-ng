@@ -18,27 +18,7 @@ import subprocess
 import sys
 import tempfile
 
-PRESETS = [  # (key, preset relative to the slang-shaders checkout)
-    ('crt-lottes', 'crt/crt-lottes.slangp'),
-    ('crt-lottes-glow', 'crt/crt-lottes-multipass-glow.slangp'),
-    ('crt-geom', 'crt/crt-geom.slangp'),
-    ('crt-easymode', 'crt/crt-easymode.slangp'),
-    ('crt-hyllian', 'crt/crt-hyllian.slangp'),
-    ('crt-gdv-mini', 'crt/crt-gdv-mini.slangp'),
-    ('guest-advanced', 'crt/crt-guest-advanced.slangp'),
-    ('guest-advanced-fast', 'crt/crt-guest-advanced-fast.slangp'),
-    ('guest-pal', 'crt/crt-guest-advanced-pal.slangp'),
-    ('guest-pal-composite', 'pal/shaders/decoupled-guest/decoupled-guest-advanced-pal 2-Composite.slangp'),
-    ('crt-beans-rgb', 'crt/crt-beans-rgb.slangp'),
-    ('megatron-v2-sdr', 'hdr/crt-sony-megatron-v2-default-sdr.slangp'),
-    ('crt-royale', 'crt/crt-royale.slangp'),
-    ('crt-yah', 'crt/crt-yah.slangp'),
-    ('crt-yo6-pvm', 'crt/crt-yo6-KV-M1420B.slangp'),
-    ('crt-consumer', 'crt/crt-consumer.slangp'),
-    ('crt-pi', 'crt/crt-pi.slangp'),
-    ('zfast-crt', 'crt/zfast-crt.slangp'),
-    ('newpixie', 'crt/newpixie-crt.slangp'),
-]
+from presets import PRESETS
 
 # A block of the transpiled GLSL: `layout(std140) uniform LIBRA_UBO_VERTEX { ... } LIBRA_UBO_VERTEX_INSTANCE;` or
 # `struct LIBRA_PUSH_VERTEX { ... };` + `uniform LIBRA_PUSH_VERTEX LIBRA_PUSH_VERTEX_INSTANCE;`
