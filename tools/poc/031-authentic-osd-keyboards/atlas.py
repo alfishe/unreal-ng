@@ -4,12 +4,13 @@
     atlas.py [width]   renders keyboards/out/*.svg: each mode into scratch/2026-10-19-poc-031/atlas/, the sheet
                        of each keyboard and style into atlas/
 
-Per keyboard and style: Qt's QSvgRenderer (as unreal-qt draws it), rsvg (as a browser draws it), each named layer
-alone in Qt, the key map over the Qt picture (the overlay's rectangles and what each key presses) and the Qt vs
+Per keyboard and style: Qt's QSvgRenderer (as unreal-qt draws it), rsvg (as a browser draws it), the picture
+without its highlights layer, each named layer alone in Qt, the key map over the Qt picture (the overlay's rectangles and what each key presses) and the Qt vs
 rsvg difference. One sheet per keyboard and style puts them side by side.
 """
 
 import json
+import re
 import pathlib
 import subprocess
 import sys
@@ -99,12 +100,22 @@ def main():
         run("rsvg-convert", "-w", width, svg, "-o", f"{stem}.rsvg.png")
         qt, rsvg = on_background(f"{stem}.qt.png"), on_background(f"{stem}.rsvg.png")
         tiles = [("Qt QSvgRenderer", qt), ("rsvg (browser)", rsvg)]
+        text, layers = svg.read_text(), {}
         for layer in LAYERS:
-            if f'<g id="{layer}">\n\n</g>' in svg.read_text():
+            if re.search(rf'<g id="{layer}"[^>]*>\n\n</g>', text):
                 continue  # an empty layer: the hints come with phase 3
             path = f"{stem}.layer-{layer}.png"
             run(QTRENDER, svg, path, width, layer)
+            layers[layer] = Image.open(path).convert("RGBA")
             tiles.append((f"layer: {layer} (Qt)", on_background(path)))
+        if "highlights" in layers:  # what an app draws with the highlights off: every other layer, in order
+            plain = Image.new("RGBA", qt.size, BACKGROUND + (255,))
+            for layer, image in layers.items():
+                if layer != "highlights":
+                    plain = Image.alpha_composite(plain, image)
+            plain = plain.convert("RGB")
+            plain.save(f"{stem}.no-highlights.png")
+            tiles.insert(2, ("without the highlights layer (Qt, layer by layer)", plain))
         mapped = keymap(qt, keys["keys"], keys["size"])
         mapped.save(f"{stem}.keymap.png")
         diff = difference(qt, rsvg)

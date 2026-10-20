@@ -41,6 +41,22 @@ def case_hump(pic, part):
     ])
 
 
+def case_fins(pic, part):
+    """A finned heatsink seen from above: fins across, each lit on its rear edge, dark gaps between"""
+    g = part.geometry
+    d = pic.defs
+    x, y, w, h, n = g["x"], g["y"], g["w"], g["h"], g["fins"]
+    pitch = h / n
+    fin = d.linear([(0, shade(part.color, 1.3)), (0.3, shade(part.color, 1.08)), (1, shade(part.color, 0.8))])
+    end = d.linear([(0, "#000000", 0), (0.7, "#000000", 0.1), (1, "#000000", 0.5)], x1=0, y1=0, x2=1, y2=0)
+    parts = [f'<path d="{rounded(x, y, w, h, g.get("r", 2))}" fill="#050506"/>']
+    for i in range(n):
+        parts.append(f'<rect x="{x:.3f}" y="{y + i * pitch + pitch * 0.12:.3f}" width="{w:.3f}" '
+                     f'height="{pitch * 0.52:.3f}" fill="{fin}"/>')
+    parts.append(f'<path d="{rounded(x, y, w, h, g.get("r", 2))}" fill="{end}"/>')
+    return "\n".join(parts)
+
+
 def case_well(pic, part):
     """The keyboard's recess: a glossy black deck, its back rim in shadow and its front rim catching the light"""
     g = part.geometry
@@ -146,6 +162,10 @@ def case_logo(pic, part):
             size = (g["width"] - spacing * (len(g["text"]) - 1)) / text_width(g["text"], 1, face)
     args = (g["x"], g["y"], size, face)
     kw = dict(anchor=g.get("anchor", "start"), squeeze=squeeze, spacing=spacing)
+    if g.get("stroke"):  # printed as an outline (the 128's "128K")
+        d = text_path(g["text"], *args, kw["anchor"], spacing, squeeze)
+        return (f'<path d="{d}" fill="none" stroke="{part.color}" stroke-width="{g["stroke"]}" '
+                f'stroke-linejoin="round"/>')
     if g.get("outline"):  # moulded into the case: a double contour, lit above and shaded below
         d = text_path(g["text"], *args, kw["anchor"], spacing, squeeze)
         return "\n".join(f'<path d="{d}" transform="translate(0,{dy})" fill="none" stroke="{colour}" '
@@ -164,7 +184,7 @@ def case_logo(pic, part):
 
 CASE = {"body": case_body, "plate": case_plate, "stripe": case_stripe, "logo": case_logo, "well": case_well,
         "groove": case_groove, "insert": case_insert, "grille": case_grille, "tab": case_tab, "led": case_led,
-        "hump": case_hump}
+        "hump": case_hump, "fins": case_fins}
 
 
 def cap(pic, key):
@@ -175,6 +195,9 @@ def cap(pic, key):
         return hard(pic, x, y, w, h, key.color)
     if key.cap == "next":
         return next_cap(pic, x, y, w, h, key.color, key.shape)
+    if key.cap == "plus":  # the Spectrum+ / 128 key: a satin block, the convex glossy pad in front
+        return next_cap(pic, x, y, w, h, key.color, key.shape, top_inset=0.31, gloss=0.03, sheen=0.3, relief=(1.05, 0.92), rim=0.15,
+                        frame=[(0, "#2c2d30"), (0.1, "#202124"), (0.9, "#18191b"), (1, "#0e0f10")])
     raise ValueError(f"{key.id}: cap {key.cap}")
 
 

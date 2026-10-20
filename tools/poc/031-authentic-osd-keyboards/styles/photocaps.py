@@ -1,5 +1,9 @@
 """Key cap materials, each a function of the canvas (for its gradients) and the key's rectangle in mm.
 
+A material draws the cap's form: its colour, its light and shade. The specular highlight (the sheen on a glossy
+top, the dome on a rubber key) goes to the canvas's own `highlights` layer, which the picture draws at a set
+opacity and an app can turn down or leave out.
+
 Light comes from above and a little to the left, as in a desk photo: a top face is lighter at its top edge, a
 skirt is darker on its sides and darkest at the front, a shadow falls down and a little right.
 """
@@ -19,16 +23,16 @@ def rubber(canvas, x, y, w, h, color, radius=1.6, skirt=0.0):
     """A moulded rubber key (the 48K's): matte, a low dome, soft edges, a soft shadow on the plate; @p skirt mm of
     its front side show below the top face (a tall key seen from a little in front)"""
     d = canvas.defs
-    body = d.linear([(0, shade(color, 1.18)), (0.45, color), (1, shade(color, 0.72))])
+    body = d.linear([(0, shade(color, 1.07)), (0.5, color), (1, shade(color, 0.86))])
     dome = d.radial([(0, "#ffffff", 0.22), (0.6, "#ffffff", 0.05), (1, "#ffffff", 0)], cx=0.42, cy=0.3, r=0.75)
-    rim = d.linear([(0, "#000000", 0), (0.8, "#000000", 0), (1, "#000000", 0.35)])
+    rim = d.linear([(0, "#000000", 0), (0.8, "#000000", 0), (1, "#000000", 0.2)])
     side = d.linear([(0, shade(color, 0.62)), (1, shade(color, 0.42))])
+    canvas.add("highlights", f'<path d="{rounded(x + 0.4, y + 0.3, w - 0.8, h - 0.9, radius * 0.85)}" fill="{dome}"/>')
     return "\n".join([
         soft_shadow(x, y, w, h + skirt, radius, 1.2, dx=0.35, dy=0.7, opacity=0.55, steps=5),
         f'<path d="{rounded(x - 0.25, y + 0.5, w + 0.5, h + skirt - 0.4, radius)}" fill="{side}"/>' if skirt else "",
         f'<path d="{rounded(x, y, w, h, radius)}" fill="{body}"/>',
         f'<path d="{rounded(x, y, w, h, radius)}" fill="{rim}"/>',
-        f'<path d="{rounded(x + 0.4, y + 0.3, w - 0.8, h - 0.9, radius * 0.85)}" fill="{dome}"/>',
         f'<path d="{rounded(x, y, w, h, radius)}" fill="none" stroke="{shade(color, 0.45)}" stroke-width="0.12" '
         f'stroke-opacity="0.8"/>',
     ])
@@ -60,11 +64,11 @@ def hard(canvas, x, y, w, h, color, inset=(1.1, 0.7, 1.1, 1.9), radius=0.9, top_
     parts += [
         f'<path d="{rounded(tx, ty, tw, th, top_radius)}" fill="{top}"/>',
         f'<path d="{rounded(tx, ty, tw, th, top_radius)}" fill="{dish}"/>',
-        f'<path d="{rounded(tx, ty, tw, th, top_radius)}" fill="{sheen}"/>',
         f'<path d="{rounded(tx, ty, tw, th, top_radius)}" fill="none" stroke="{shade(color, 1.4)}" '
         f'stroke-width="0.1" stroke-opacity="0.45"/>',
         f'<path d="{rounded(x, y, w, h, radius)}" fill="none" stroke="#000" stroke-width="0.14" stroke-opacity="0.7"/>',
     ]
+    canvas.add("highlights", f'<path d="{rounded(tx, ty, tw, th, top_radius)}" fill="{sheen}"/>')
     return "\n".join(parts), (tx, ty, tw, th)
 
 
@@ -95,18 +99,22 @@ def polygon(points):
     return "M" + " L".join(f"{px:.3f},{py:.3f}" for px, py in points) + "Z"
 
 
-def next_cap(canvas, x, y, w, h, color, shape=None, unit=19.0):
+def next_cap(canvas, x, y, w, h, color, shape=None, unit=19.0, top_inset=0.25, frame=None, gloss=0.22, sheen=0.07,
+             relief=(1.12, 0.86), rim=0.35):
     """The Next's two-tone key: a glossy black frame over the whole cell, a low matte top shaped like a D on its back
     (flat back edge, rounded front) set low in the frame; the glossy strip above it carries the E-mode legends.
-    Returns the svg and the matte top's rectangle (for an L, the bar's)"""
+    The Spectrum+ / 128 key is the same shape with other finishes: a satin @p frame and ledge, a convex glossy pad
+    (@p sheen its highlight), the pad starting @p top_inset u down the key; @p relief the top's light at its back
+    and front, @p rim its edge's. Returns the svg and the top's rectangle
+    (for an L, the bar's)"""
     d = canvas.defs
     gap = 0.35
-    inset, top_inset = 0.08 * unit, 0.25 * unit
+    inset, top_inset = 0.08 * unit, top_inset * unit
     fx, fy, fw, fh = x + gap, y + gap, w - 2 * gap, h - 2 * gap
-    frame = d.linear([(0, "#2a2c30"), (0.12, "#1a1b1e"), (0.85, "#121315"), (1, "#0a0b0c")])
-    gloss = d.linear([(0, "#ffffff", 0.22), (0.05, "#ffffff", 0.05), (0.4, "#ffffff", 0)])
-    top = d.linear([(0, shade(color, 1.12)), (0.25, color), (1, shade(color, 0.86))])
-    sheen = d.radial([(0, "#ffffff", 0.07), (1, "#ffffff", 0)], cx=0.4, cy=0.2, r=0.8)
+    frame = d.linear(frame or [(0, "#2a2c30"), (0.12, "#1a1b1e"), (0.85, "#121315"), (1, "#0a0b0c")])
+    gloss = d.linear([(0, "#ffffff", gloss), (0.05, "#ffffff", round(gloss / 4.4, 3)), (0.4, "#ffffff", 0)])
+    top = d.linear([(0, shade(color, relief[0])), (0.25, color), (1, shade(color, relief[1]))])
+    sheen = d.radial([(0, "#ffffff", sheen), (1, "#ffffff", 0)], cx=0.4, cy=0.2, r=0.8)
     lip = d.linear([(0, "#000000", 0), (0.82, "#000000", 0), (1, "#000000", 0.35)])
     if shape:
         outer = l_shape(shape, gap, gap, 0.8, 0.8)
@@ -120,13 +128,13 @@ def next_cap(canvas, x, y, w, h, color, shape=None, unit=19.0):
         matte = d_shape(mx, my, mw, mh, 1.0, 0.3 * unit)
         face = (mx, my, mw, mh)
         drop = d_shape(mx - 0.15, my - 0.1, mw + 0.3, mh + 0.45, 1.1, 0.3 * unit)
+    canvas.add("highlights", f'<path d="{matte}" fill="{sheen}"/>')
     return "\n".join([
         f'<path d="{outer}" fill="{frame}"/>',
         f'<path d="{outer}" fill="{gloss}"/>',
         f'<path d="{outer}" fill="none" stroke="#4a4d52" stroke-width="0.12" stroke-opacity="0.55"/>',
         f'<path d="{drop}" fill="#000" fill-opacity="0.55"/>',
         f'<path d="{matte}" fill="{top}"/>',
-        f'<path d="{matte}" fill="{sheen}"/>',
         f'<path d="{matte}" fill="{lip}"/>',
-        f'<path d="{matte}" fill="none" stroke="{shade(color, 1.35)}" stroke-width="0.1" stroke-opacity="0.35"/>',
+        f'<path d="{matte}" fill="none" stroke="{shade(color, 1.35)}" stroke-width="0.1" stroke-opacity="{rim}"/>',
     ]), face

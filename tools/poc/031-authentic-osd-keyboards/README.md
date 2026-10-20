@@ -21,7 +21,7 @@ what the machine reads, before the overlay is built into unreal-qt.
 | 3 | hybrid | a mix of the two plus a hints layer (what a combo key does, the mode legends that matter now); maybe |
 
 One model per keyboard feeds every style (`design.md`): the geometry, legends and mapping are data, a style only
-draws them. Every SVG has the same named layers (`case`, `caps`, `legends`, `hints`), so a hybrid takes each layer
+draws them. Every SVG has the same named layers (`case`, `caps`, `highlights`, `legends`, `hints`), so a hybrid takes each layer
 from another style and Qt can draw a layer alone (`QSvgRenderer::render(painter, elementId)`).
 
 ## Goals
@@ -89,6 +89,7 @@ fixed in `core/` after the POC, as its own task.
 | Keyboard | Models | photo | schematic | hybrid |
 |---|---|---|---|---|
 | `zx48k` | 48K | drawn, shown to the owner | — | — |
+| `zx128` | 128k (the Spectrum+ keyboard in the 128's case) | drawn, shown to the owner | — | — |
 | `zxnext` | NEXT | done, approved by the owner (2026-10-19) | — | — |
 
 ## Files

@@ -14,7 +14,10 @@ styles/<style>.py  draw(keyboard, Model) -> SVG   how it looks
 - **Style**: draws each part kind and cap material its own way. `photo` lights materials with gradients and
   stacked-opacity shadows; `schematic` draws flat fills and outlines from the same data. A style may leave out a
   role (the schematic may drop the keyword legends in a sparse variant).
-- **Layers**: every SVG has `<g id="case">`, `caps`, `legends`, `hints`. The hybrid of phase 3 composes layers of
+- **Layers**: every SVG has `<g id="case">`, `caps`, `highlights`, `legends`, `hints`. The specular
+  highlights (the sheen on glossy tops, the rubber dome) are their own semi-transparent layer, not part of a cap's
+  material: the SVG draws it at the keyboard's opacity (0.5 by default; the approved Next at 1.0), an app can turn it
+  down or draw the picture without it (owner 2026-10-19: highlights baked into the caps looked kitsch). The hybrid of phase 3 composes layers of
   different styles; Qt draws one by id.
 - **Keys JSON** (`<id>.keys.json`): the rectangles and what each key presses, the same for every style: the overlay's
   cursor and pressed state come from it.
