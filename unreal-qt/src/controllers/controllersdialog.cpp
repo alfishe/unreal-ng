@@ -85,10 +85,11 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
             [this] { _host->SetManualProfile(_gameProfile->currentData().toString().toStdString()); });
 #endif
     top->addWidget(_gameProfile);
-    _advanced = new QCheckBox(tr("Advanced: debug layer"), this);
+    _advanced = new QCheckBox(tr("Debug layer key"), this);
     _advanced->setToolTip(
-        tr("The debug profiles take part: a layer key (a paddle, or View + Menu) turns the pad into "
-           "a debugger remote"));
+        tr("In the debugger window a game pad is always a debugger remote.\n"
+           "With this on, it is one in the emulator window too while you hold its layer key:\n"
+           "the P4 paddle on an Xbox Elite, View + Menu together on other pads."));
     _advanced->setChecked(_host->DebugLayer());
     top->addWidget(_advanced);
     _globalShortcuts = new QCheckBox(tr("Global shortcuts"), this);

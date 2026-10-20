@@ -200,8 +200,13 @@ TEST(LaserGeniusBackend_Test, ExpressionsTakeItsPriorities)
         "lab     LD HL,(lab+1)*2\n"
         "        LD A,high lab\n"
         "        LD A,low lab\n"
-        "        LD HL,(1<2)+lab\n"
+        "        LD HL,-(1<2)+lab\n"
         "        LD A,~5\n"
+        "        LD HL,3-(-lab)\n"
+        "        LD HL,lab-3\n"
+        "        LD HL,2-3\n"
+        "        LD HL,lab*3\n"
+        "        LD HL,lab>>0\n"
         "        LD A,ixh\n"
         "        RLC (iy-4)\n"
         "        IF ext == 5\n"
@@ -216,8 +221,13 @@ TEST(LaserGeniusBackend_Test, ExpressionsTakeItsPriorities)
     EXPECT_TRUE(Contains(lines, "LAB: LD HL,[LAB+1]*2")) << text;
     EXPECT_TRUE(Contains(lines, "LD A,LAB>>8")) << text;
     EXPECT_TRUE(Contains(lines, "LD A,LAB&255")) << text;
-    EXPECT_TRUE(Contains(lines, "LD HL,-[1<2]+LAB")) << text;   // a comparison gives 1, sjasmplus -1
+    EXPECT_TRUE(Contains(lines, "LD HL,[1<2]+LAB")) << text;   // a comparison gives 1, sjasmplus -1 (-[1<2]+LAB overflows)
     EXPECT_TRUE(Contains(lines, "LD A,^5")) << text;
+    EXPECT_TRUE(Contains(lines, "LD HL,#6003")) << text;   // 3-[-LAB] overflows (and 3--LAB is Phoenix' decrement)
+    EXPECT_TRUE(Contains(lines, "LD HL,LAB-3")) << text;
+    EXPECT_TRUE(Contains(lines, "LD HL,#FFFF")) << text;   // its 2-3 stops the assembly: overflow
+    EXPECT_TRUE(Contains(lines, "LD HL,#2000")) << text;   // and LAB*3 (#6000*3)
+    EXPECT_TRUE(Contains(lines, "LD HL,#6000")) << text;   // its LAB>>0 is 0
     EXPECT_TRUE(Contains(lines, "DB #DD,#7C")) << text;
     EXPECT_TRUE(Contains(lines, "RLC (IY+-4)")) << text;   // its (IY- builds +4
     EXPECT_TRUE(Contains(lines, "COND -[EXT?=5]")) << text;

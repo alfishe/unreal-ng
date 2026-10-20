@@ -100,6 +100,7 @@ text is replaced by force, or when it is the caller's own.
 | `PrometheusBackend_Test.ProgramsKeepTheirBytesThroughPrometheus` (host): every instruction form, the PROBE (60000, 60200 and the PUT at 62000), ZAsm 3.15's ZXT1-3, STORM 1.3's STORMT2, MASM 1.1's MT1, XAS 7.447 `constrct`, TASM 5.0's T50PROG → sjasmplus → PROMETHEUS (its records) → the PROMETHEUS frontend → sjasmplus | the original assemblers' bytes |
 | `inject-oracle.py prometheus` (PROMETHEUS 48K in unreal-ng): `oracle1.asm`, every instruction form with its 599 labels and without, at 60000 | 143 / 1173 / 1173 bytes = sjasmplus' |
 | The same saves on tape (`LOAD :name`, the tape in real time: `fasttape` / `turbotape` off), assembled with SS+A | 143 / 1173 / 1173 bytes = sjasmplus' |
+| `expression-fuzz.py prometheus --template` in PROMETHEUS 48K (2026-10-19): random `DW` expressions (labels above and below, numbers, unary `- ~ high low !`, every binary operator, three levels), seeds 71-75 of 100 lines | all words = sjasmplus' |
 
 The round trip also found two bugs in the PROMETHEUS frontend, now fixed:
 - An `org` that ends a `put` took `$` after the `ENT`, so `$` was where the bytes went instead of the address.

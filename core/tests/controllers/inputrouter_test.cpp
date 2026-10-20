@@ -490,6 +490,32 @@ TEST_F(InputRouter_Test, Layers_InertKeyAndTheDebuggerRemote)
     EXPECT_EQ(_actions[0].action, "ttd.step_back");
 }
 
+/// The debugger window has the focus: a player pad acts as a debugger remote with no layer key, a held play target
+/// is released by the switch and the switch back
+TEST_F(InputRouter_Test, DebugFocus_APlayerPadDrivesTheDebugger)
+{
+    _router.OnDeviceAdded(kPad);
+    SetBindings({Bind({"south"}, "kempston:fire"), To({"south"}, ActionTarget("run.step_in"), kDebugLayer)});
+    Set("fake:1", "south", 1);
+    EXPECT_EQ(Kempston(), kFire);
+
+    _router.SetDebugFocus(true);
+    EXPECT_EQ(_router.Layers("fake:1"), (std::vector<std::string>{kDebugLayer}));
+    EXPECT_EQ(Kempston(), 0) << "the switch releases the fire";
+    EXPECT_TRUE(_actions.empty()) << "south held across the switch waits for its release";
+    Set("fake:1", "south", 0);
+    Set("fake:1", "south", 1);
+    ASSERT_EQ(_actions.size(), 1u);
+    EXPECT_EQ(_actions[0].action, "run.step_in");
+    EXPECT_TRUE(Sample().empty()) << "the debug layer drives no connector";
+    Set("fake:1", "south", 0);
+
+    _router.SetDebugFocus(false);
+    EXPECT_EQ(_router.Layers("fake:1"), (std::vector<std::string>{kPlayLayer}));
+    Set("fake:1", "south", 1);
+    EXPECT_EQ(Kempston(), kFire) << "the game has the pad back";
+}
+
 /// An encoder's steps run an action (debug-and-ttd.md §4.4): alone, or with buttons held while it turns; a button
 /// held for a turn gives its own binding nothing, a press alone acts on its release
 TEST_F(InputRouter_Test, Encoder_StepsAndButtonsHeldWhileItTurns)

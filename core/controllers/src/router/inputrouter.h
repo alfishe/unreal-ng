@@ -77,6 +77,9 @@ public:
     void SetPlayerConnector(const HostDeviceId& device, const std::string& connector);
     /// The instance whose window has focus: what follow-focus devices drive. Empty (the default) = every instance
     void SetFocus(const std::string& instance);
+    /// The debugger window has the focus: every player device acts as a debugger remote (its `debug` layer alone,
+    /// no layer key needed) until it is cleared. Either switch releases what is held
+    void SetDebugFocus(bool on);
     /// The device drives that instance now (a player that follows the focus, is pinned to it, or drives all)
     bool Drives(const HostDeviceId& device, const std::string& instance) const;
 
@@ -223,7 +226,9 @@ private:
     /// The layers whose bindings act, bottom to top: `debug` hides what is below it
     std::vector<std::string> ActiveLayersLocked(const Device& device) const;
     /// `play`, or a layer a layer key raised (`debug` may hide it)
-    static bool RaisedLocked(const Device& device, const std::string& layer);
+    bool RaisedLocked(const Device& device, const std::string& layer) const;
+    /// A debugger remote by its role, or a player while the debugger window has the focus
+    bool RemoteLocked(const Device& device) const;
     /// The bits of a binding's sources as @p value gives them (the hysteresis memory advances)
     static uint16_t SourceBits(const CompiledBinding& compiled, BindingState& state, const ValueOf& value);
     static void Settle(BindingState& state, uint16_t bits);
@@ -245,6 +250,7 @@ private:
     std::map<HostDeviceId, Settings> _settings;
     std::map<std::string, Instance> _instances;
     std::string _focus;
+    bool _debugFocus = false;
     Clock _clock;
     ActionSink _actions;
 };

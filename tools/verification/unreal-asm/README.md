@@ -34,8 +34,10 @@ unreal-asm/
                                 snapshot is loaded and assembled (Z1)
     expression-fuzz.py          random sjasmplus expressions (labels, numbers, every operator) as DW lines: built by
                                 sjasmplus and, injected through the target's backend, by the assembler itself
-                                (storm, storm13i, tasm, alasm, xas); the words that differ printed with the target's
-                                text. The emulator converts with its own backend: rebuild and restart it after a change
+                                (storm, storm13i, tasm, alasm, xas live; with --template zasm, masm, gens, zeus,
+                                zeus7e, primus, lasergenius, prometheus, pasm, converted by zxasm; zasm and primus also
+                                --media their disk); the words that differ printed with the target's text. Live, the
+                                emulator converts with its own backend: rebuild and restart it after a change
     find-idle.py                an assembler's idle rule: started with an inject-oracle profile, paused at many moments
                                 of its key wait, the return addresses that stay on the stack (each after a CALL / RST,
                                 outside the ROM) are the descriptor's idleChain

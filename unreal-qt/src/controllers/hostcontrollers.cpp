@@ -189,9 +189,37 @@ void HostControllers::SetGlobalShortcuts(bool on)
 void HostControllers::SetShortcutWindows(QWidget* main, QWidget* debugger)
 {
     if (_mainWindow == nullptr && _debuggerWindow == nullptr)
+    {
         qApp->installEventFilter(this);
+        connect(qApp, &QApplication::focusChanged, this, &HostControllers::updateDebugFocus);
+        connect(qApp, &QGuiApplication::focusWindowChanged, this, &HostControllers::updateDebugFocus);
+    }
     _mainWindow = main;
     _debuggerWindow = debugger;
+}
+
+void HostControllers::updateDebugFocus()
+{
+#ifdef ENABLE_CONTROLLERS
+    QWidget* active = QApplication::activeWindow();
+    if (active == nullptr)
+        return;  // another app has the focus: the pads keep what they drove
+    QWidget* focus = QApplication::focusWidget();
+    const bool on = _debuggerWindow != nullptr && _debuggerWindow->isVisible() &&
+                    (active == _debuggerWindow || (focus != nullptr && _debuggerWindow->isAncestorOf(focus)));
+    if (on == _debugFocus)
+        return;
+    _debugFocus = on;
+    Reapply();
+    _service->Router().SetDebugFocus(on);
+    const std::vector<HostDeviceInfo> devices = _service->Router().Devices();
+    const bool pads = std::any_of(devices.begin(), devices.end(), [this](const HostDeviceInfo& device) {
+        return device.family != "keyboard" && device.family != "mouse" &&
+               _service->Router().Role(device.id) == DeviceRole::Player;
+    });
+    if (pads)
+        emit notice(on ? tr("Game pads drive the debugger") : tr("Game pads drive the game"));
+#endif
 }
 
 std::string HostControllers::KeyControlOf(const QKeyEvent* event)
@@ -392,7 +420,7 @@ void HostControllers::Reapply()
         context.fileSha256 = {_fileSha256};
     if (!_manualProfile.empty())
         context.manual = {_manualProfile};
-    context.debugLayer = _debugLayer;
+    context.debugLayer = _debugLayer || _debugFocus;
     assignPlayers(context.devices);
     _resolved = _profiles.Apply(_service->Router(), context);
     _context = context;

@@ -54,6 +54,7 @@ now always takes the pages the windows map.
 | `GensBackend_Test.ProgramsKeepTheirBytesThroughGens` (host): every instruction form, GENS4's constructs file, ZAsm 3.15's ZXT2 / ZXT3, STORM 1.3's STORMT2, MASM 1.1's MT1, XAS 7.447 `constrct`, TASM 5.0's T50PROG → sjasmplus → GENS → the GENS codec and back → the GENS frontend → sjasmplus | the original assemblers' bytes |
 | GENS4 in unreal-ng, the converted files loaded from tape: `oracle1.asm` and every instruction form at `#6000` | 143 / 1173 bytes = sjasmplus' (`A,8000`: GENS' own table size is too small for 600 labels; some 4 minutes at 3.5 MHz) |
 | `inject-oracle.py gens4`: the same written at its `>` prompt, assembled with `A,8000` | 143 / 1173 bytes = sjasmplus' |
+| `expression-fuzz.py gens --template` in GENS4 (2026-10-19): random `DW` expressions (labels above and below, numbers, unary `- ~ high low !`, every binary operator, three levels), seeds 71-75 of 100 lines | all words = sjasmplus' (found on the way: a product above 32767 in absolute value is `*ERROR* 15`, its manual 2.5; such a product is written as its value) |
 
 ## 5. Limits
 

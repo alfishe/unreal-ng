@@ -8,6 +8,8 @@
 #include <QContextMenuEvent>
 #include <QLabel>
 
+#include <vector>
+
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/z80.h"
@@ -26,6 +28,8 @@ public:
     virtual ~RegistersWidget() override;
 
     void setZ80State(Z80State* state);
+    /// The 16-bit value cells a double click follows into the memory view, for the pane cursor
+    std::vector<QWidget*> cursorCells() const;
 
     // Helper methods
 protected:

@@ -45,8 +45,9 @@ registry: a POC gets the next free number here before work starts. Numbers are n
 
 | 028 | [next-video-pipeline-alignment](028-next-video-pipeline-alignment/README.md) | ZX Next: clocks from a copper MOVE of a fetch-stage register (Layer 2 / ULA / tilemap / sprite scroll, clip, bank) to the first changed output pixel, and the Layer 2 vs ULA pixel alignment, from an RTL simulation of the video path; feature `docs/inprogress/2026-10-07-zx-next` | concluded | The whole zxnext core simulated in GHDL: a fetch-stage register change reaches the output after 22 clocks (chains, pixel clips), 26 (Layer 2), per 8-pixel cell +56 / +53 (ULA / tilemap scroll); Layer 2 and the ULA are aligned (2026-10-12) |
 | 029 | [next-sprite-engine-timing](029-next-sprite-engine-timing/README.md) | ZX Next: the sprite engine's 28 MHz clock budget per line (overtime flag, cut-off), the cost of a sprite beyond x = 320 and its wrap, and what counts for the collision flag, from `sprites.vhd` alone in GHDL; feature `docs/inprogress/2026-10-07-zx-next` | concluded | Overtime when 1 + 128 + sum(16 << x scale) >= 4 * line pixels (1792 / 1824), the clocks after it are not drawn; collision is before the clip window and the 224-line limit; the engine runs with the sprites off (2026-10-12) |
+| 031 | [authentic-osd-keyboards](031-authentic-osd-keyboards/README.md) | The on-screen keyboard: an authentic photorealistic vector keyboard for each of the 21 models (the PC clones also with the ZX matrix), every key mapped to the matrix or the PC key; feature `docs/inprogress/2026-10-17-controller-manager` | in progress | |
 
-Next free number: **030**. Local folders not in the repository (`012-calltrace-viz`, `015-ios-remote-control`, `016-ios-videocube`) are not registered; give them a free number when they are committed.
+Next free number: **032** (030 is taken by `wt-control-surfaces`, not landed yet). Local folders not in the repository (`012-calltrace-viz`, `015-ios-remote-control`, `016-ios-videocube`) are not registered; give them a free number when they are committed.
 ---
 
 ## Building POCs
