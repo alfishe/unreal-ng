@@ -1,32 +1,39 @@
-// Plays the edited scenario on the deck with the one engine, the daemon. The run file is a copy of the document
-// (includes resolved) in the app data folder that follows every edit (debounced), so the deck updates live while
-// the user's own file changes only on Save.
-//   - a daemon with its automation on the run API port: it reloads the run file (POST /api/v1/reload); Stop gives
-//     it its own file back;
-//   - none: `unreal-streamdeck run <run file> --watch --api PORT --with-parent` is started; Stop ends it.
-// The software deck shows the run as a viewer of that daemon (mirror of the real deck).
+// Plays the edited scenario with the one engine, the daemon. The run file is a copy of the document (includes
+// resolved) in the app data folder that follows every edit (debounced), so the deck updates live while the user's
+// own file changes only on Save.
+//   - a daemon answers on its automation port: the deck this window shows (its own deck, or the real deck it
+//     mirrors) plays the run file, that deck only (PUT /api/v1/decks/{serial}/scenario, watched); Stop gives the
+//     deck the daemon's start scenario back (DELETE);
+//   - none: `unreal-streamdeck run <run file> --watch --wait --api PORT --with-parent` is started; Stop ends it.
 #pragma once
 #include <QObject>
-#include <QProcess>
 #include <QStringList>
 #include <QTimer>
+#include <functional>
 
+class DaemonControl;
 class EditorDocument;
 
 class RunController : public QObject
 {
     Q_OBJECT
 public:
-    static constexpr int kApiPort = 37053;  // the daemon's automation (runtime state, navigate, press, reload)
-
-    explicit RunController(EditorDocument* doc, QObject* parent = nullptr);
+    RunController(EditorDocument* doc, DaemonControl* daemon, QObject* parent = nullptr);
     ~RunController() override;
 
-    // serial picks a USB deck for a daemon this starts (empty = the first)
+    // The deck to run on when Start gets none: the one the window shows ("" = the daemon's first real deck).
+    void SetTarget(std::function<QString()> deck)
+    {
+        _target = std::move(deck);
+    }
     bool Start(const QString& serial, QString* error);
     void Stop();
     [[nodiscard]] bool Running() const;
-    [[nodiscard]] QString How() const;  // "started" (our daemon) or "reloaded" (a running one)
+    [[nodiscard]] QString How() const;  // "deck <serial>" (a running daemon plays it there) or "started"
+    [[nodiscard]] QString Deck() const
+    {
+        return _deck;
+    }
     [[nodiscard]] QString RunFile() const
     {
         return _runFile;
@@ -35,13 +42,8 @@ public:
     {
         return _output;
     }
-    [[nodiscard]] int ApiPort() const
-    {
-        return kApiPort;
-    }
+    [[nodiscard]] int ApiPort() const;
     [[nodiscard]] QString ApiUrl() const;
-    // The daemon executable: $UNREAL_STREAMDECK_BIN, beside the studio (or its bundle, or the suite's bundle), PATH.
-    [[nodiscard]] static QString DaemonPath();
 
 signals:
     void StateChanged();
@@ -50,12 +52,13 @@ signals:
 private:
     void WriteRunFile();
     void Line(const QString& line);
-    bool Reload(const QString& file, QString* error);
 
     EditorDocument* _doc;
-    QProcess _proc;
+    DaemonControl* _daemon;
+    std::function<QString()> _target;
     QTimer _autosave;
-    QString _runFile, _previousFile;
-    bool _reloaded = false;  // a running daemon plays our run file
+    QString _runFile, _deck;
+    bool _onDeck = false;   // a running daemon plays our run file on _deck
+    bool _started = false;  // we started a daemon on the run file
     QStringList _output;
 };

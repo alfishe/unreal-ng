@@ -47,6 +47,8 @@ public:
     void Inject(const Event& e);                                          // as if the device sent it
     bool PressNode(const std::string& id, std::string* error = nullptr);  // a key on the current page
     void Navigate(const json& request);                                   // {to: back|home|node, node}
+    void SetBrightness(int percent);                                      // 0..100, sent on the next step
+    [[nodiscard]] int Brightness() const;
     [[nodiscard]] json State() const;
     [[nodiscard]] json CurrentPage() const;              // describePage of the current menu
     [[nodiscard]] json Nodes(const json& filter) const;  // listNodes of the loaded scenario

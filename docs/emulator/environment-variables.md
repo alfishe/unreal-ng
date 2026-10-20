@@ -290,7 +290,7 @@ The last three are in the shared bench code, so they also act in `core-tests`' `
 | Variable | Values (default) | What it does |
 |---|---|---|
 | `SDCTL_NO_MIRROR` | any value (unset) | A real deck alone: no mirror to a running Stream Deck Studio, as `--no-mirror` (`companions/streamdeck/cli/cli.cpp:49`). |
-| `UNREAL_STREAMDECK_BIN` | path (unset: beside the studio, its bundle or the suite's bundle, then `PATH`) | The `unreal-streamdeck` executable Stream Deck Studio starts for the editor's Run (`companions/streamdeck/studio/editor/runcontroller.cpp`, `RunController::DaemonPath`). |
+| `UNREAL_STREAMDECK_BIN` | path (unset: beside the studio, its bundle or the suite's bundle, then `PATH`) | The `unreal-streamdeck` executable Stream Deck Studio starts when no daemon answers at launch, or for the editor's Run (`companions/streamdeck/studio/daemoncontrol.cpp`, `DaemonControl::Path`). |
 
 ## 7. Packaging, release and CI
 

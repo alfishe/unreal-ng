@@ -13,8 +13,9 @@ namespace
 int Usage()
 {
     std::puts(
-        "unreal-streamdeck run <scenario: .json .yaml .csv .tsv> [--watch] [--api PORT] [--dry-run] [--seconds N]\n"
-        "                  [--device S|emu[:host:port]] [--mirror [host:port] | --no-mirror] [--emulate MODEL]\n"
+        "unreal-streamdeck run [scenario: .json .yaml .csv .tsv] [--watch] [--api PORT] [--wait] [--dry-run]\n"
+        "                  [--seconds N] [--device S|emu[:host:port]] [--mirror [host:port] | --no-mirror]\n"
+        "                  [--emulate MODEL] [--viewers [PORT] | --no-viewers] [--with-parent]\n"
         "unreal-streamdeck pair [--webapi URL] [--name NAME] [--file F]   (pair as an unreal-ng companion)\n"
         "unreal-streamdeck scenario check <file> | convert <in> <out> | extract <in> <node> <out> | resolve <in> "
         "<out>");

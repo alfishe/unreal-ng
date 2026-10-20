@@ -7,7 +7,9 @@
 //   sdctl bench <keys|matrix|lcd|feature|mixed> ...   (see bench.cpp)
 #include <atomic>
 #include <csignal>
+#include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <thread>
@@ -15,6 +17,7 @@
 #include "cli.h"
 #include "sdb/draw.h"
 #include "sdb/format.h"
+#include "sdb/http.h"
 #include "sdb/image.h"
 #include "sdb/protocol.h"
 #include "sdb/theme.h"
@@ -298,12 +301,79 @@ int Usage()
         "<orient|tiles|sweep> [...]\nsdctl bench <keys|matrix|lcd|feature|mixed> [...]\n"
         "sdctl ws <ws://host:port/path> [message ...] [--token T] [--seconds N] [--count N]   (WebSocket check)\n"
         "sdctl viewer [--port N] [--deck SERIAL | --own MODEL] [--seconds N]   (join unreal-streamdeck as a viewer)\n"
+        "sdctl decks [--api PORT] [--json]   (unreal-streamdeck's logical decks)\n"
         "Stream Deck Studio (any command: --device emu[:host:port] = the studio only, --mirror [host:port] = real deck "
         "+ studio,\n"
         "  the default when the studio runs; --no-mirror = the real deck alone):\n"
         "sdctl emu-model <name|pid> | emu-snapshot --out f.png | emu-record (--out f.mp4|.mov|.mkv|.webm|.gif [--fps "
-        "N] | --stop)   [--emu host:port]");
+        "N] | --stop)   [--emu host:port]   (a studio with --listen: device wire v1)\n"
+        "sdctl emu-snapshot --out f.png --api PORT [--deck SERIAL]   (the deck's viewers through unreal-streamdeck: "
+        "wire v2)");
     return 2;
+}
+}  // namespace
+
+namespace
+{
+std::string DaemonUrl(const cli::Args& a)
+{
+    return "http://127.0.0.1:" + std::to_string(a.Num("api", 37053));
+}
+
+// sdctl decks [--api PORT] [--json]: the daemon's logical decks (GET /api/v1/decks)
+int CmdDecks(const cli::Args& a)
+{
+    const auto r = HttpRequest(DaemonUrl(a), "GET", "/api/v1/decks", {}, {}, 2000);
+    if (!r.Ok())
+    {
+        std::fprintf(stderr, "error: unreal-streamdeck automation at %s: %s\n", DaemonUrl(a).c_str(),
+                     r.status ? r.body.c_str() : r.error.c_str());
+        return 1;
+    }
+    const json j = json::parse(r.body, nullptr, false);
+    if (a.Has("json") || !j.is_object())
+    {
+        std::printf("%s\n", r.body.c_str());
+        return 0;
+    }
+    for (const auto& d : j.value("decks", json::array()))
+    {
+        std::printf("%-16s %-22s %-5s %-12s brightness %3d  viewers %zu  %s\n", d.value("serial", "").c_str(),
+                    d.value("model", "").c_str(), d.value("real", false) ? "real" : "own",
+                    d.value("connected", false) ? "connected" : "unplugged", d.value("brightness", 0),
+                    d.value("viewers", json::array()).size(),
+                    d.value("scenario", "").empty() ? "(idle scenario)" : d.value("scenario", "").c_str());
+    }
+    if (j.value("waiting_mirrors", 0) > 0)
+        std::printf("%d mirror(s) waiting for a deck\n", j.value("waiting_mirrors", 0));
+    return 0;
+}
+
+// emu-snapshot through the daemon (device wire v2): the deck's viewers (Stream Deck Studio windows) get a Control
+// frame and save the PNG; this waits for the file.
+int DaemonSnapshot(const cli::Args& a, const std::string& path)
+{
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    const std::string deck = a.Str("deck", "first");
+    const auto r = HttpRequest(DaemonUrl(a), "POST", "/api/v1/decks/" + deck + "/snapshot",
+                               json{{"path", path}}.dump(), {}, 2000);
+    if (!r.Ok())
+    {
+        std::fprintf(stderr, "error: %s\n", r.status ? r.body.c_str() : r.error.c_str());
+        return 1;
+    }
+    for (int i = 0; i < 60; ++i)
+    {
+        if (std::filesystem::file_size(path, ec) > 0 && !ec)
+        {
+            std::printf("saved %s\n", path.c_str());
+            return 0;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    std::fprintf(stderr, "error: no viewer saved %s within 3 s\n", path.c_str());
+    return 1;
 }
 }  // namespace
 
@@ -358,12 +428,16 @@ int main(int argc, char** argv)
             std::printf("emulator shows %s\n", std::string(m->name).c_str());
             return 0;
         }
+        if (cmd == "decks")
+            return CmdDecks(a);
         if (cmd == "emu-snapshot")
-        {  // sdctl emu-snapshot --out file.png [--emu host:port]
+        {  // sdctl emu-snapshot --out file.png [--emu host:port] | [--api PORT [--deck SERIAL]]
             std::string err;
             const std::string out = a.Str("out", "emulator.png");
             const std::string path =
                 out.front() == '/' ? out : (std::string(std::getenv("PWD") ? std::getenv("PWD") : ".") + "/" + out);
+            if (a.Has("api"))
+                return DaemonSnapshot(a, path);
             if (!EmulatorSnapshot(a.Str("emu"), path, &err))
             {
                 std::fprintf(stderr, "error: %s\n", err.c_str());

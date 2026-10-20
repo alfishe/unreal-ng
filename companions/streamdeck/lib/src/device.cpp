@@ -553,58 +553,13 @@ WriteStats Device::EmuLcd(int vx, int vy, const Rgb& img, int q)
     auto shown = DecodeForFormat(EncodeForFormat(img, f, q), f);
     if (!shown)
         return {};
+    // the origin read before the move: gcc 16 cannot see that `saved` holds a value (maybe-uninitialized)
+    const int x = _emu->stripX + vx, y = _emu->stripY + vy;
     auto saved = std::move(_emu);
     _emu.reset();
-    WriteStats st = SetLcdRegion(saved->stripX + vx, saved->stripY + vy, *shown, q);
+    WriteStats st = SetLcdRegion(x, y, *shown, q);
     _emu = std::move(saved);
     return st;
-}
-
-std::vector<Found> ListDevices()
-{
-    std::vector<Found> out;
-    for (auto& i : EnumerateElgato())
-        if (const Model* m = FindModel(i.vid, i.pid))
-            out.push_back({m, i});
-    return out;
-}
-
-std::unique_ptr<Device> OpenDevice(const Found& f, std::string* error)
-{
-    if (f.info.path.rfind("emu:", 0) == 0)
-    {  // a Stream Deck Studio found by findTarget
-        auto dev = OpenEmulator(f.info.path.substr(4), error);
-        if (dev && f.physical && !dev->Emulate(*f.model, error))
-            return nullptr;
-        return dev;
-    }
-    auto t = OpenHid(f.info.path, error);
-    if (!t)
-        return nullptr;
-    auto dev = std::make_unique<Device>(f.physical ? *f.physical : *f.model, std::move(t), f.info.serial);
-    if (f.mirror)
-    {  // before emulate: the mirror shows the real model
-        std::string merr;
-        if (!dev->AttachMirror(*f.mirror, &merr) && !f.mirrorOptional)
-        {
-            if (error)
-                *error = merr;
-            return nullptr;
-        }
-    }
-    if (f.physical && !dev->Emulate(*f.model, error))
-        return nullptr;
-    return dev;
-}
-
-std::unique_ptr<Device> OpenFirst(const std::string& sub, std::string* error)
-{
-    for (auto& f : ListDevices())
-        if (sub.empty() || f.info.serial.find(sub) != std::string::npos)
-            return OpenDevice(f, error);
-    if (error)
-        *error = "no matching device";
-    return nullptr;
 }
 
 }  // namespace sdb

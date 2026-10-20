@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "sdb/eventloop.h"
 #include "sdb/models.h"
@@ -48,6 +49,34 @@ public:
         return _port;
     }
     [[nodiscard]] std::size_t ViewerCount() const;
+
+    // What the hub knows of each logical deck, for the daemon's automation (GET /api/v1/decks). Any thread: a copy
+    // the loop refreshes whenever a deck or a viewer comes or goes.
+    struct ViewerInfo
+    {
+        int id = 0;
+        std::string role;  // mirror | own
+        std::string name;  // the Join's "name" (e.g. "Stream Deck Studio")
+        long long pid = 0;
+    };
+    struct DeckInfo
+    {
+        std::string serial;
+        const Model* model = nullptr;
+        bool real = true;
+        bool connected = false;
+        std::vector<ViewerInfo> viewers;
+    };
+    struct Snapshot
+    {
+        std::vector<DeckInfo> decks;  // real decks in attach order, then own decks
+        int waiting = 0;              // mirrors waiting for a deck
+    };
+    [[nodiscard]] Snapshot Info() const;
+
+    // Any thread: a Control frame (JSON, device-wire.md) to every viewer of the deck. Returns how many viewers it
+    // goes to (0 = an unknown deck, or nobody watches it).
+    int SendControl(const std::string& serial, const std::string& json);
 
     // Any thread. The returned transport wraps `usb`; destroying it detaches the deck (its mirrors wait for it to
     // come back, with the last picture).

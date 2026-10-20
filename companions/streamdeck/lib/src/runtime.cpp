@@ -565,6 +565,19 @@ void Runtime::Navigate(const json& request)
     _navRequests.push_back(request);
 }
 
+void Runtime::SetBrightness(int percent)
+{
+    std::lock_guard l(_mu);
+    _brightness = std::clamp(percent, 0, 100);
+    _brightnessDirty = true;
+}
+
+int Runtime::Brightness() const
+{
+    std::lock_guard l(_mu);
+    return _brightness;
+}
+
 json Runtime::CurrentPage() const
 {
     std::lock_guard l(_mu);

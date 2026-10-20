@@ -2,6 +2,9 @@
 // (a mirror joining late gets the picture, input both ways, an own deck with GetFeature, a slow viewer, timeouts).
 #include "sdb/deckhub.h"
 
+#include "sdb/daemondecks.h"
+#include "sdb/runtime.h"
+
 #include <chrono>
 #include <deque>
 #include <functional>
@@ -453,6 +456,94 @@ void TestJoinRules()
     CHECK(odd.Welcome().value("error", "") == "version");
 }
 
+// What the daemon's automation reads (GET /api/v1/decks) and the Control frames it sends.
+void TestHubInfo()
+{
+    net::EventLoop loop;
+    DeckHub hub(loop, HubOptions());
+    std::string error;
+    CHECK(hub.Listen(&error));
+    std::unique_ptr<Transport> own;
+    hub.onOwnDeck = [&](std::unique_ptr<Transport> t, const Model&, const std::string&) { own = std::move(t); };
+    auto deck = hub.AttachDeck(std::make_unique<FakeUsb>(), PlusXl(), "SER1");
+    TestViewer mirror(loop, hub.Port());
+    mirror.Send(wire::Join, R"({"v":2,"role":"mirror","name":"Studio","pid":42})");
+    TestViewer mine(loop, hub.Port());
+    mine.Send(wire::Join, R"({"v":2,"role":"own","model":"neo","serial":"EMU7"})");
+    TestViewer waiting(loop, hub.Port());
+    waiting.Send(wire::Join, R"({"v":2,"role":"mirror","deck":"SER9"})");
+    CHECK(RunUntil(loop, [&] {
+        const auto i = hub.Info();
+        return i.decks.size() == 2 && i.decks[0].viewers.size() == 1 && i.waiting == 1 && own != nullptr;
+    }));
+    const auto info = hub.Info();
+    CHECK(info.decks.size() == 2 && info.decks[0].serial == "SER1" && info.decks[0].real && info.decks[0].connected);
+    CHECK(info.decks.size() == 2 && info.decks[0].viewers.size() == 1 && info.decks[0].viewers[0].name == "Studio" &&
+          info.decks[0].viewers[0].pid == 42 && info.decks[0].viewers[0].role == "mirror");
+    CHECK(info.decks.size() == 2 && info.decks[1].serial == "EMU7" && !info.decks[1].real &&
+          info.decks[1].model == FindModelByName("neo") && info.decks[1].viewers.size() == 1 &&
+          info.decks[1].viewers[0].role == "own");
+
+    // Control: to the deck's viewers only; an unknown deck reaches nobody.
+    CHECK_EQ(hub.SendControl("SER1", R"({"op":"snapshot","path":"/tmp/a.png"})"), 1);
+    CHECK_EQ(hub.SendControl("NOPE", "{}"), 0);
+    CHECK(RunUntil(loop, [&] { return mirror.Count(wire::Control) == 1; }));
+    CHECK_EQ(mine.Count(wire::Control), 0);
+
+    // Unplugged and gone: the copy follows.
+    deck.reset();
+    CHECK(RunUntil(loop, [&] { return !hub.Info().decks.empty() && !hub.Info().decks[0].connected; }));
+    mine.Send(wire::Leave, {});
+    CHECK(RunUntil(loop, [&] { return hub.Info().decks.size() == 1; }));
+}
+
+// The daemon's routes over a hub: an own deck's viewer listed with its name, a snapshot reaching it as Control.
+void TestHubWithDaemonDecks()
+{
+    net::EventLoop loop;
+    DeckHub hub(loop, HubOptions());
+    std::string error;
+    CHECK(hub.Listen(&error));
+    DaemonDecks decks(DaemonDecks::Options{});
+    CHECK(decks.LoadStart(&error));
+    decks.SetHub(&hub, hub.Port());
+    automation::Api api("unreal-streamdeck", "1.0");
+    decks.AddRoutes(api);
+    std::unique_ptr<Device> dev;
+    std::unique_ptr<scn::Runtime> rt;
+    hub.onOwnDeck = [&](std::unique_ptr<Transport> t, const Model& m, const std::string& serial) {
+        dev = std::make_unique<Device>(m, std::move(t), serial);
+        rt = std::make_unique<scn::Runtime>(*dev, decks.StartScenario());
+        decks.Add(serial, m, false, *rt);
+    };
+    hub.onOwnDeckGone = [&](const std::string& serial) { decks.Remove(serial); };
+    TestViewer v(loop, hub.Port());
+    v.Send(wire::Join, R"({"v":2,"role":"own","model":"mini","serial":"EMU9","name":"Studio"})");
+    CHECK(RunUntil(loop, [&] { return v.Count(wire::Welcome) == 1; }));
+    // the deck is known to the routes by the time its viewer is welcomed
+    automation::Request q;
+    q.method = "GET";
+    q.path = "/api/v1/decks";
+    const auto list = api.Dispatch(q).body["decks"];
+    CHECK(list.size() == 1 && list[0]["serial"] == "EMU9" && list[0]["viewers"].size() == 1 &&
+          list[0]["viewers"][0]["name"] == "Studio");
+    q.path = "/api/v1/health";
+    CHECK(api.Dispatch(q).body.value("wire_port", 0) == hub.Port());
+    q.method = "POST";
+    q.path = "/api/v1/decks/EMU9/snapshot";
+    q.body = {{"path", "/tmp/emu9.png"}};
+    const auto snap = api.Dispatch(q);
+    CHECK(snap.status == 200 && snap.body.value("viewers", 0) == 1);
+    CHECK(RunUntil(loop, [&] { return v.Count(wire::Control) == 1; }));
+    for (const auto& f : v.frames)
+        if (f.type == wire::Control)
+            CHECK(nlohmann::json::parse(f.payload).value("path", "") == "/tmp/emu9.png");
+    v.Send(wire::Leave, {});
+    CHECK(RunUntil(loop, [&] { return decks.Count() == 0; }));
+    rt.reset();
+    dev.reset();
+}
+
 }  // namespace
 
 void TestDeckHub()
@@ -464,4 +555,6 @@ void TestDeckHub()
     TestOwnDeck();
     TestSlowViewer();
     TestJoinRules();
+    TestHubInfo();
+    TestHubWithDaemonDecks();
 }

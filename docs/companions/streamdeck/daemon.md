@@ -9,7 +9,7 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 
 | Command | What |
 |:--|:--|
-| `unreal-streamdeck run <scenario> [options]` | Play a scenario (`.json`, `.yaml`, `.csv`, `.tsv`) on the deck |
+| `unreal-streamdeck run [scenario] [options]` | Play a scenario (`.json`, `.yaml`, `.csv`, `.tsv`) on the deck; without one, the built-in idle scenario (one empty menu) until a scenario is loaded for a deck |
 | `unreal-streamdeck pair [--webapi URL] [--name NAME] [--file F]` | Pair with unreal-ng as a companion (approved at the emulator's GUI); the token goes to `~/.config/unreal-streamdeck/companion.json` (mode 0600) |
 | `unreal-streamdeck scenario check \| convert \| extract \| resolve ...` | Check and convert scenario files |
 
@@ -17,8 +17,9 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 
 | Option | Meaning |
 |:--|:--|
-| `--watch` | Reload the scenario when it or an included file changes (the menu stack is kept) |
-| `--api PORT` | Automation on `127.0.0.1:PORT`: REST (`/api/v1/state`, navigate, press, reload, scenario) and MCP (`/mcp`) |
+| `--watch` | Reload the start scenario when it or an included file changes (the menu stack is kept) |
+| `--wait` | No deck attached: serve the viewers meanwhile (own decks work, mirrors wait) and take the first deck that appears (checked every second). Without it a missing deck ends `run` at once (exit 5) |
+| `--api PORT` | Automation on `127.0.0.1:PORT`: REST and MCP (`/mcp`), [below](#automation) |
 | `--viewers [PORT]` | Software decks join on `127.0.0.1:PORT` (device wire v2, default 37050). On by default |
 | `--no-viewers` | No software decks |
 | `--device S` | The deck whose serial contains S (default: the first one) |
@@ -46,6 +47,42 @@ continues.
 An older Stream Deck Studio that listens on 37050 itself takes the port: `run` then says so and runs without viewers.
 `--mirror` / `--device emu` still talk to such a studio (the device wire v1).
 
+## Automation
+
+With `--api PORT` (Stream Deck Studio uses 37053) the daemon serves one route table twice: REST under
+`http://127.0.0.1:PORT/api/v1/...` (described at `/api/v1/openapi.json`) and MCP on `POST /mcp` with the tools
+`search_api` and `invoke_api` (stdio clients: `unreal-mcp-bridge --url http://127.0.0.1:PORT/mcp`). Both answer
+from the same handlers (`sdb/daemondecks.h`), so a route is on both planes or on neither.
+
+A **logical deck** is the real deck or a viewer's own deck. `{serial}` is its serial, or `first` (the first real
+deck, else the first deck); the runtime routes take `?deck=SERIAL` with the same default.
+
+| Route | What |
+|:--|:--|
+| `GET /api/v1/health` | `ok`, version, the number of decks and viewers, mirrors waiting for a deck, the wire port |
+| `GET /api/v1/decks` | Every logical deck: serial, model, PID, real or own, connected, scenario file (`""` = the idle one), `start_scenario`, watched, brightness, viewers (id, role, name, pid); `waiting_mirrors` |
+| `GET /api/v1/decks/{serial}` | One deck, as in the list |
+| `GET` / `PUT /api/v1/decks/{serial}/brightness` | The deck's brightness; `{"value": 0..100}` or `{"delta": n}` (clamped). The runtime sends it on its next step, viewers get it as a feature report |
+| `GET /api/v1/decks/{serial}/scenario` | The deck's file, whether it is the start scenario, watched, the scenario's name; `?document=true` adds the document |
+| `PUT /api/v1/decks/{serial}/scenario` | `{"file": path, "watch": true}`: this deck plays another file (the other decks keep theirs), the menu stack kept; watched by default, so edits reload it. A file with errors is refused (422) and the deck keeps what it plays |
+| `DELETE /api/v1/decks/{serial}/scenario` | The deck plays the daemon's start scenario again |
+| `POST /api/v1/decks/{serial}/snapshot` | `{"path": file}`: every viewer of the deck saves a PNG there (a `Control` frame); answers how many viewers it went to, 409 when nobody views the deck |
+| `GET /api/v1/state`, `/page`, `/nodes` | The runtime of one deck: menu stack, page, toggles, last actions; what the keys mean now; the scenario's nodes (filters `tag`, `type`, `kind`, `menu`, `text`) |
+| `POST /api/v1/navigate`, `/press` | `{"to": back\|home\|node, "node"}`; a key by `node` id or `key` index |
+| `POST /api/v1/reload` | Read the deck's file again, or `{"file"}` for another one (as `PUT .../scenario`) |
+| `GET /api/v1/scenario` | The deck's file and its document |
+
+Own decks begin on the start scenario. Stream Deck Studio's Run puts the scenario open in its editor on the deck its
+window shows with `PUT /api/v1/decks/{serial}/scenario` and gives the deck back with `DELETE`. A runtime asking for
+another file (`nav {to: scenario}`) loads it for its own deck.
+
+```bash
+curl -s localhost:37053/api/v1/decks
+curl -s -X PUT localhost:37053/api/v1/decks/first/brightness -d '{"value":40}'
+curl -s -X PUT localhost:37053/api/v1/decks/EMU1/scenario -d '{"file":"/path/my.deck.json"}'
+curl -s -X DELETE localhost:37053/api/v1/decks/EMU1/scenario
+```
+
 ## Threads
 
 | Thread | Does |
@@ -54,6 +91,7 @@ An older Stream Deck Studio that listens on 37050 itself takes the port: `run` t
 | Network | The event loop: viewers and the device wire (`sdb/eventloop.h`, `sdb/deckhub.h`) |
 | Runtime workers | Actions and the time-travel readout, per runtime (both go with the surface client, SD5) |
 | Automation | With `--api`: one worker |
+| Watcher | Scenario loads a runtime asks for, and the watched files of every deck (every 250 ms) |
 
 ## Developer checks (`sdctl`)
 
@@ -61,6 +99,15 @@ An older Stream Deck Studio that listens on 37050 itself takes the port: `run` t
 |:--|:--|
 | `sdctl viewer [--port N] [--deck SERIAL \| --own MODEL] [--seconds N]` | Join the daemon as a viewer; prints the welcome, the replayed picture and frame counts per second |
 | `sdctl ws <ws://host:port/path> [message ...] [--token T] [--count N] [--seconds N]` | Open a WebSocket with the daemon's client; prints what arrives |
+| `sdctl decks [--api PORT] [--json]` | The daemon's logical decks (`GET /api/v1/decks`, port 37053 by default) |
+| `sdctl emu-snapshot --out f.png --api PORT [--deck SERIAL]` | The deck's viewers save a PNG through the daemon (device wire v2 `Control`); waits up to 3 s for the file |
+
+### `sdctl emu-*` and the device wire
+
+| Command | Wire | Why |
+|:--|:--|:--|
+| `emu-snapshot --api PORT` | v2, through the daemon | A snapshot is of a deck: the daemon knows its viewers and asks them (`Control`) |
+| `emu-snapshot` (no `--api`), `emu-model`, `emu-record` | v1, against `unreal-streamdeck-studio --listen` | In v2 a viewer's model is the viewer's own choice (a mirror follows the deck, an own deck is picked in the studio or with its `PUT /api/v1/connection`) and recording is the studio's (`POST /api/v1/recording` on its port): there is nothing for the daemon to forward. They stay as the protocol tests of the v1 server, with `sdctl --device emu:...` |
 
 ```
 unreal-streamdeck run my-scenario.yaml &    # the default scenario ships with SD5

@@ -1,18 +1,19 @@
-// unreal-streamdeck run <scenario: .json .yaml .csv .tsv> [--watch] [--api PORT] [--dry-run] [--seconds N] [--device S
-// | emu[:addr]] [--mirror [addr]] [--viewers [PORT] | --no-viewers] Plays a scenario (menus + actions,
-// docs/inprogress/2026-10-19-streamdeck-integration/scenarios.md) on the deck.
+// unreal-streamdeck run [scenario: .json .yaml .csv .tsv] [--watch] [--api PORT] [--wait] [--dry-run] [--seconds N]
+// [--device S | emu[:addr]] [--mirror [addr]] [--viewers [PORT] | --no-viewers] [--with-parent]
+// Plays a scenario (menus + actions, docs/inprogress/2026-10-19-streamdeck-integration/scenarios.md) on the deck.
+//   (no scenario) the built-in idle scenario: one empty menu, until a scenario is loaded for a deck
 //   --viewers   Stream Deck Studio windows join on 127.0.0.1:PORT (device wire v2, default 37050, on by default):
 //               mirrors of the deck, or decks of their own with their own runtime
+//   --wait      no deck attached: serve the viewers (own decks work, mirrors wait) and take the first USB deck that
+//               appears
 //   --watch     reload the file when it changes (the menu stack is kept)
-//   --api PORT  automation planes on 127.0.0.1:PORT: WebAPI (/api/v1/state, navigate, press, reload, scenario) + MCP
-//   (/mcp)
+//   --api PORT  automation planes on 127.0.0.1:PORT: WebAPI (/api/v1/decks, state, navigate, press, reload,
+//               scenario, brightness) + MCP (/mcp); sdb/daemondecks.h
 //   --dry-run   log actions instead of running them
 #include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
-#include <filesystem>
-#include <fstream>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -22,6 +23,7 @@
 
 #include "cli.h"
 #include "sdb/automation.h"
+#include "sdb/daemondecks.h"
 #include "sdb/deckhub.h"
 #include "sdb/devicewire.h"
 #include "sdb/eventloop.h"
@@ -31,7 +33,6 @@
 
 using namespace sdb;
 using namespace sdb::scn;
-namespace fs = std::filesystem;
 
 namespace cli
 {
@@ -44,9 +45,6 @@ void OnRunSig(int)
     runStop = true;
 }
 
-std::vector<std::string> watchedFiles;  // the scenario file and every file it includes (watched)
-std::mutex watchedFilesMutex;
-
 // A viewer's deck of its own: a device on the viewer, a runtime with the same scenario, its thread.
 struct OwnDeck
 {
@@ -56,66 +54,71 @@ struct OwnDeck
     std::thread thread;
 };
 
-std::optional<Scenario> LoadScenario(const std::string& file, std::string& err)
+// The deck to play on, or null. quiet: no error lines (--wait polls). mirror: an older Stream Deck Studio listening
+// on the wire port may get a copy (only when this daemon's hub does not listen there itself).
+std::unique_ptr<Device> TryOpen(const Args& a, bool quiet, bool mirror)
 {
-    std::vector<std::string> files;
-    auto doc = io::LoadResolved(file, &err, &files);  // .json .yaml .yml .csv .tsv, includes resolved
-    if (doc)
-    {
-        std::lock_guard l(watchedFilesMutex);
-        watchedFiles = files;
-    }
-    if (!doc)
-        return std::nullopt;
-    std::vector<Issue> issues;
-    auto s = Parse(*doc, issues);
-    for (const auto& i : issues)
-        if (!i.error)
-            std::fprintf(stderr, "warning: %s: %s\n", i.node.c_str(), i.message.c_str());
-    if (!s)
-    {
-        err.clear();
-        for (const auto& i : issues)
-            if (i.error)
-                err += (err.empty() ? "" : "; ") + (i.node.empty() ? i.message : i.node + ": " + i.message);
-    }
-    return s;
-}
-
-fs::file_time_type Mtime(const std::string& f)
-{
-    std::error_code ec;
-    auto t = fs::last_write_time(f, ec);
-    return ec ? fs::file_time_type{} : t;
+    Args sel = a;
+    if (!mirror && !sel.Has("mirror"))
+        sel.opt["no-mirror"] = "1";
+    if (!quiet)
+        return OpenOrExplain(sel);
+    if (sel.Str("device").rfind("emu", 0) == 0)
+        return nullptr;  // a studio address is not polled
+    for (const auto& d : ListDevices())
+        if (sel.Str("device").empty() || d.info.serial.find(sel.Str("device")) != std::string::npos)
+        {
+            Found f = d;
+            if (sel.Has("emulate"))
+            {
+                const Model* v = FindModelByName(sel.Str("emulate"));
+                if (!v)
+                    return nullptr;
+                f.physical = f.model;
+                f.model = v;
+            }
+            std::string err;
+            return OpenDevice(f, &err);
+        }
+    return nullptr;
 }
 }  // namespace
 
 int CmdRun(const Args& a)
 {
-    if (a.pos.size() < 2)
+    if (a.Has("help"))
     {
         std::fprintf(stderr,
-                     "usage: unreal-streamdeck run <scenario: .json .yaml .csv .tsv> [--watch] [--api PORT] "
-                     "[--dry-run] [--seconds N] [--device S|emu] [--mirror] [--viewers [PORT] | --no-viewers]\n");
+                     "usage: unreal-streamdeck run [scenario: .json .yaml .csv .tsv] [--watch] [--api PORT] [--wait] "
+                     "[--dry-run] [--seconds N] [--device S|emu] [--mirror] [--viewers [PORT] | --no-viewers] "
+                     "[--with-parent]\n");
         return kBadUsage;
     }
-    std::string file = a.pos[1], err;
-    auto scenario = LoadScenario(file, err);
-    if (!scenario)
+    DaemonDecks::Options dopt;
+    dopt.startFile = a.pos.size() >= 2 ? a.pos[1] : std::string();
+    dopt.watchStart = a.Has("watch");
+    DaemonDecks decks(dopt);
+    decks.log = [](const std::string& line) {
+        std::fprintf(stderr, "%s\n", line.c_str());
+        std::fflush(stderr);
+    };
+    std::string err;
+    if (!decks.LoadStart(&err))
     {
         std::fprintf(stderr, "error: %s\n", err.c_str());
         return kBadContent;
     }
-    auto dev = OpenOrExplain(a);
-    if (!dev)
+    const bool emulatorDevice = a.Str("device").rfind("emu", 0) == 0;
+    const bool wait = a.Has("wait") && !emulatorDevice;  // a studio address is opened once, not polled
+    const bool viewersWanted = !a.Has("no-viewers") && !emulatorDevice;
+    // Without --wait a missing deck ends the run at once (before anything listens). The default mirror is off when
+    // this daemon will serve the wire port itself.
+    std::unique_ptr<Device> dev = TryOpen(a, wait, !viewersWanted);
+    if (!dev && !wait)
         return kNoDevice;
-    if (&dev->GetModel() != scenario->model)
-        std::printf("note: scenario made for %s, playing on %s (keys outside the grid are not shown)\n",
-                    std::string(scenario->model->name).c_str(), std::string(dev->GetModel().name).c_str());
 
     RuntimeOptions opt;
     opt.dryRun = a.Has("dry-run");
-    const Scenario forOwnDecks = *scenario;
 
     // The device wire v2 on its network loop: viewers mirror the deck or get a deck of their own
     // (device-wire.md). A port taken by an older Stream Deck Studio (which listens itself) leaves it off.
@@ -125,8 +128,7 @@ int CmdRun(const Args& a)
     std::mutex ownMu;
     std::map<std::string, std::unique_ptr<OwnDeck>> owns;
     std::vector<std::thread> reapers;  // each takes an ended own deck apart (its runtime joins its threads)
-    const bool emulatorDevice = a.Str("device").rfind("emu", 0) == 0;
-    if (!a.Has("no-viewers") && !emulatorDevice)
+    if (viewersWanted)
     {
         DeckHub::Options ho;
         ho.port =
@@ -136,14 +138,20 @@ int CmdRun(const Args& a)
         hub->onOwnDeck = [&](std::unique_ptr<Transport> t, const Model& m, const std::string& serial) {
             auto own = std::make_unique<OwnDeck>();
             own->dev = std::make_unique<Device>(m, std::move(t), serial);
-            own->rt = std::make_unique<Runtime>(*own->dev, forOwnDecks, nullptr, opt);
+            own->rt = std::make_unique<Runtime>(*own->dev, decks.StartScenario(), nullptr, opt);
+            own->rt->onSwitchScenario = [&decks, serial](const std::string& f) { decks.RequestLoad(serial, f); };
+            decks.Add(serial, m, false, *own->rt);
             OwnDeck* p = own.get();
             own->thread = std::thread([p] { p->rt->Run(p->stop); });
             std::printf("viewer %s: own %s\n", serial.c_str(), std::string(m.name).c_str());
+            std::fflush(stdout);
             std::lock_guard l(ownMu);
             owns[serial] = std::move(own);
         };
         hub->onOwnDeckGone = [&](const std::string& serial) {
+            decks.Remove(serial);  // no route reaches its runtime from here on
+            std::printf("viewer %s: own deck gone\n", serial.c_str());
+            std::fflush(stdout);
             std::lock_guard l(ownMu);
             if (auto it = owns.find(serial); it != owns.end())
             {
@@ -159,10 +167,8 @@ int CmdRun(const Args& a)
         std::string herr;
         if (hub->Listen(&herr))
         {
-            dev->WrapTransport([&](std::unique_ptr<Transport> t) {
-                return hub->AttachDeck(std::move(t), dev->GetModel(), dev->Serial());
-            });
             std::printf("viewers: 127.0.0.1:%d (device wire v2)\n", hub->Port());
+            decks.SetHub(hub.get(), hub->Port());
             netThread = std::thread([&] { netLoop.Run(); });
         }
         else
@@ -172,191 +178,38 @@ int CmdRun(const Args& a)
         }
     }
 
-    Runtime rt(*dev, std::move(*scenario), nullptr, opt);
-    std::mutex fileMu;
-    auto reloadFrom = [&](const std::string& f) {
-        std::string e;
-        if (auto s = LoadScenario(f, e))
-        {
-            {
-                std::lock_guard l(fileMu);
-                file = f;
-            }
-            rt.Reload(std::move(*s));
-            std::printf("loaded %s\n", f.c_str());
-            return std::string();
-        }
-        std::fprintf(stderr, "scenario error (kept the previous one): %s\n", e.c_str());
-        dev->Note("scenario error: " + e);
-        return e;
-    };
-    rt.onSwitchScenario = [&](const std::string& f) { std::thread([&, f] { reloadFrom(f); }).detach(); };
-
     std::signal(SIGINT, OnRunSig);
     std::signal(SIGTERM, OnRunSig);
 
-    // automation planes
+    // automation planes: the decks' routes (sdb/daemondecks.h)
     automation::Api api(
         "unreal-streamdeck", "1.0",
-        "A Stream Deck playing a scenario (menus and actions). GET /api/v1/state shows the menu stack and what "
-        "each key does; press keys by node id, navigate, reload.");
-    using automation::Reply;
-    using automation::Request;
-    api.Add({"GET",
-             "/api/v1/state",
-             "Runtime state: menu stack, page (key -> node), breadcrumbs, toggles, last actions",
-             "",
-             {"runtime"},
-             {},
-             nullptr,
-             [&](const Request&) { return Reply::Ok(rt.State()); }});
-    api.Add({"GET",
-             "/api/v1/page",
-             "What every key, dial and the strip mean now (JSON, no screenshot needed)",
-             "",
-             {"runtime", "page", "keys"},
-             {},
-             nullptr,
-             [&](const Request&) { return Reply::Ok(rt.CurrentPage()); }});
-    api.Add({"GET",
-             "/api/v1/nodes",
-             "Nodes of the scenario, filtered by tag / type / kind / menu / text",
-             "",
-             {"scenario", "nodes", "tags"},
-             {{"tag", "query", "string", "only nodes with this tag"},
-              {"type", "query", "string", "menu | action", false, {"menu", "action"}},
-              {"kind", "query", "string", "action kind (webapi, multi, nav, ...)"},
-              {"menu", "query", "string", "direct children of this menu"},
-              {"text", "query", "string", "substring of id / title"}},
-             nullptr,
-             [&](const Request& r) {
-                 json f = json::object();
-                 for (const char* k : {"tag", "type", "kind", "menu", "text"})
-                     if (r.Has(k))
-                         f[k] = r.Str(k);
-                 return Reply::Ok({{"nodes", rt.Nodes(f)}});
-             }});
-    api.Add({"POST",
-             "/api/v1/navigate",
-             "Navigate: back, home, or to a node (its menu path is pushed)",
-             "",
-             {"runtime", "navigation"},
-             {{"to", "body", "string", "back | home | node", true, {"back", "home", "node"}},
-              {"node", "body", "string", "node id for to=node"}},
-             json{{"to", "node"}, {"node", "debug"}},
-             [&](const Request& r) {
-                 rt.Navigate(r.body);
-                 std::this_thread::sleep_for(std::chrono::milliseconds(40));  // applied by the device thread
-                 return Reply::Ok(rt.State());
-             }});
-    api.Add({"POST",
-             "/api/v1/press",
-             "Press a key on the current page, by node id or key index (a menu opens, an action runs)",
-             "",
-             {"runtime", "input"},
-             {{"node", "body", "string", "node id on the current page"}, {"key", "body", "integer", "key index"}},
-             json{{"node", "pause"}},
-             [&](const Request& r) {
-                 if (r.Has("key"))
-                 {
-                     rt.Inject({EventType::KeyDown, static_cast<int>(r.Num("key"))});
-                     rt.Inject({EventType::KeyUp, static_cast<int>(r.Num("key"))});
-                 }
-                 else
-                 {
-                     std::string e;
-                     if (!rt.PressNode(r.Str("node"), &e))
-                         return Reply::Error(404, e);
-                 }
-                 std::this_thread::sleep_for(std::chrono::milliseconds(60));
-                 return Reply::Ok(rt.State());
-             }});
-    api.Add({"POST",
-             "/api/v1/reload",
-             "Reload the scenario file (or another file)",
-             "",
-             {"runtime", "scenario"},
-             {{"file", "body", "string", "path; default the current file"}},
-             nullptr,
-             [&](const Request& r) {
-                 std::string f;
-                 {
-                     std::lock_guard l(fileMu);
-                     f = r.Str("file", file);
-                 }
-                 const std::string e = reloadFrom(f);
-                 return e.empty() ? Reply::Ok({{"loaded", f}}) : Reply::Error(422, e);
-             }});
-    api.Add({"GET",
-             "/api/v1/scenario",
-             "The scenario file being played",
-             "",
-             {"scenario"},
-             {},
-             nullptr,
-             [&](const Request&) {
-                 std::string f;
-                 {
-                     std::lock_guard l(fileMu);
-                     f = file;
-                 }
-                 std::string e;
-                 auto doc = io::LoadFile(f, &e);
-                 return !doc ? Reply::Error(500, e) : Reply::Ok({{"file", f}, {"document", *doc}});
-             }});
+        "The Stream Deck daemon: it plays a scenario (menus and actions) on every logical deck (the real one, and "
+        "decks of their own for Stream Deck Studio windows). GET /api/v1/decks lists them; per deck: brightness, "
+        "scenario; GET /api/v1/state shows the menu stack and what each key does; press keys by node id, navigate, "
+        "reload (?deck=serial, default the first deck).");
+    decks.AddRoutes(api);
     automation::Server server;
+    int rc = kOk;
     if (a.Has("api"))
     {
         const int port = a.Num("api", 37053);
         if (!server.Start(api, "127.0.0.1", port, &err))
         {
             std::fprintf(stderr, "error: %s\n", err.c_str());
-            return kDeviceError;
+            rc = kDeviceError;
+            runStop = true;
         }
-        std::printf("automation: http://127.0.0.1:%d/api/v1/state, MCP http://127.0.0.1:%d/mcp\n", server.Port(),
-                    server.Port());
+        else
+            std::printf("automation: http://127.0.0.1:%d/api/v1/decks, MCP http://127.0.0.1:%d/mcp\n", server.Port(),
+                        server.Port());
     }
 
-    // file watcher
-    std::thread watcher;
-    if (a.Has("watch"))
-    {
-        watcher = std::thread([&] {
-            // the scenario and its includes: any of them changing reloads the whole tree
-            std::map<std::string, fs::file_time_type> seen;
-            auto snapshot = [&] {
-                std::map<std::string, fs::file_time_type> m;
-                std::vector<std::string> fs;
-                {
-                    std::lock_guard l(watchedFilesMutex);
-                    fs = watchedFiles;
-                }
-                {
-                    std::lock_guard l(fileMu);
-                    fs.push_back(file);
-                }
-                for (const auto& f : fs)
-                    m[f] = Mtime(f);
-                return m;
-            };
-            seen = snapshot();
-            while (!runStop)
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(250));
-                if (auto now = snapshot(); now != seen)
-                {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(60));  // let the writer finish
-                    std::string f;
-                    {
-                        std::lock_guard l(fileMu);
-                        f = file;
-                    }
-                    reloadFrom(f);
-                    seen = snapshot();
-                }
-            }
-        });
-    }
+    // the watcher: requested loads (nav to a scenario) and changed files of watched decks
+    std::thread watcher([&] {
+        while (!runStop)
+            decks.Pump(std::chrono::milliseconds(250));
+    });
     if (const double secs = a.Dbl("seconds", 0); secs > 0)
         std::thread([secs] {
             std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(secs * 1000)));
@@ -373,12 +226,40 @@ int CmdRun(const Args& a)
         }).detach();
 #endif
 
-    std::printf("playing %s on %s%s (Ctrl-C to stop)\n", file.c_str(), std::string(dev->GetModel().name).c_str(),
-                opt.dryRun ? ", dry run" : "");
-    std::fflush(stdout);
-    rt.Run(runStop);
-    if (watcher.joinable())
-        watcher.join();
+    if (!dev && !runStop)
+    {
+        std::printf("waiting for a Stream Deck (viewers%s are served meanwhile)\n", hub ? "" : " are not");
+        std::fflush(stdout);
+    }
+    for (int tick = 0; !dev && !runStop; ++tick)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (tick % 10 == 9)
+            dev = TryOpen(a, true, !hub);
+    }
+    if (dev && !runStop)
+    {
+        const Scenario start = decks.StartScenario();
+        if (!decks.StartFile().empty() && &dev->GetModel() != start.model)
+            std::printf("note: scenario made for %s, playing on %s (keys outside the grid are not shown)\n",
+                        std::string(start.model->name).c_str(), std::string(dev->GetModel().name).c_str());
+        if (hub)
+            dev->WrapTransport([&](std::unique_ptr<Transport> t) {
+                return hub->AttachDeck(std::move(t), dev->GetModel(), dev->Serial());
+            });
+        const std::string serial = dev->Serial();
+        Runtime rt(*dev, start, nullptr, opt);
+        rt.onSwitchScenario = [&decks, serial](const std::string& f) { decks.RequestLoad(serial, f); };
+        decks.Add(serial, dev->GetModel(), true, rt);
+        std::printf("playing %s on %s %s%s (Ctrl-C to stop)\n",
+                    decks.StartFile().empty() ? "the idle scenario" : decks.StartFile().c_str(),
+                    std::string(dev->GetModel().name).c_str(), serial.c_str(), opt.dryRun ? ", dry run" : "");
+        std::fflush(stdout);
+        rt.Run(runStop);
+        decks.Remove(serial);
+    }
+    decks.Wake();
+    watcher.join();
     server.Stop();
     if (netThread.joinable())
     {
@@ -386,18 +267,22 @@ int CmdRun(const Args& a)
         netThread.join();
     }
     hub.reset();
-    std::lock_guard l(ownMu);
-    for (auto& [serial, own] : owns)
     {
-        own->stop = true;
-        if (own->thread.joinable())
-            own->thread.join();
+        std::lock_guard l(ownMu);
+        for (auto& [serial, own] : owns)
+        {
+            decks.Remove(serial);
+            own->stop = true;
+            if (own->thread.joinable())
+                own->thread.join();
+        }
+        owns.clear();
     }
-    owns.clear();
     for (auto& reaper : reapers)
         reaper.join();
+    dev.reset();
     std::printf("stopped\n");
-    return kOk;
+    return rc;
 }
 
 // sdctl scenario check <file> | convert <in> <out> | extract <in> <node> <out> | resolve <in> <out>

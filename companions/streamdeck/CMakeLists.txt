@@ -49,18 +49,24 @@ target_compile_options(sdb PRIVATE ${SD_WARNINGS})
 if(NOT MSVC)
     set_source_files_properties(${SD_DIR}/lib/src/svg.cpp PROPERTIES COMPILE_OPTIONS "-Wno-error")   # nanosvg inside
 endif()
-target_link_libraries(sdb PRIVATE sd-hidapi)
 if(APPLE)
     target_link_libraries(sdb PRIVATE "-framework ApplicationServices")   # the keys action: CGEvent
 elseif(WIN32)
     target_link_libraries(sdb PRIVATE ws2_32)   # sockets (sdb/eventloop.h)
 endif()
 
+# ---------------------------------------------------------------- libsdb-hid: decks on USB (hidapi)
+# Only what opens a USB deck: the daemon and sdctl link it, Stream Deck Studio (a client, no USB) does not.
+file(GLOB SD_HID_SOURCES CONFIGURE_DEPENDS ${SD_DIR}/lib/src/hid/*.cpp)
+add_library(sdb-hid STATIC ${SD_HID_SOURCES})
+target_compile_options(sdb-hid PRIVATE ${SD_WARNINGS})
+target_link_libraries(sdb-hid PUBLIC sdb PRIVATE sd-hidapi)
+
 # ---------------------------------------------------------------- shared CLI helpers
 add_library(sdb-cli STATIC ${SD_DIR}/cli/cli.cpp)
 target_include_directories(sdb-cli PUBLIC ${SD_DIR}/cli)
 target_compile_options(sdb-cli PRIVATE ${SD_WARNINGS})
-target_link_libraries(sdb-cli PUBLIC sdb)
+target_link_libraries(sdb-cli PUBLIC sdb-hid)
 
 # ---------------------------------------------------------------- unreal-streamdeck (the daemon)
 file(GLOB SD_DAEMON_SOURCES CONFIGURE_DEPENDS ${SD_DIR}/daemon/*.cpp)
