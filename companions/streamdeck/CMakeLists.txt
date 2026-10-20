@@ -39,11 +39,6 @@ if(NOT MSVC)
     target_compile_options(sd-hidapi PRIVATE -w)   # third-party source
 endif()
 
-# ---------------------------------------------------------------- JPEG (temporary: system libjpeg-turbo until the
-# vendored encoder is measured, source-layout.md L-6)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(SD_TURBOJPEG REQUIRED IMPORTED_TARGET libturbojpeg)
-
 # ---------------------------------------------------------------- libsdb
 file(GLOB SD_LIB_SOURCES CONFIGURE_DEPENDS ${SD_DIR}/lib/src/*.cpp)
 add_library(sdb STATIC ${SD_LIB_SOURCES})
@@ -51,7 +46,7 @@ target_include_directories(sdb PUBLIC ${SD_DIR}/lib/include)
 target_include_directories(sdb SYSTEM PUBLIC ${SD_3RDPARTY})   # nlohmann/json is part of the public headers
 target_compile_options(sdb PRIVATE ${SD_WARNINGS})
 set_source_files_properties(${SD_DIR}/lib/src/svg.cpp PROPERTIES COMPILE_OPTIONS "-Wno-error")   # nanosvg inside
-target_link_libraries(sdb PUBLIC PkgConfig::SD_TURBOJPEG PRIVATE sd-hidapi)
+target_link_libraries(sdb PRIVATE sd-hidapi)
 if(APPLE)
     target_link_libraries(sdb PRIVATE "-framework ApplicationServices")   # the keys action: CGEvent
 endif()

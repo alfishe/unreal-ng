@@ -14,7 +14,7 @@ Depends on the control-surfaces phases (branch `control-surfaces-design`): S1 co
 |:--|:--|:--|:--|
 | SD0 | Owner decisions: layout and names (L-1 … L-6), targeting (T-1, T-2), Q-1 … Q-3 | | done 2026-10-19 |
 | SD1 | Import the library, sdctl, the daemon (`run`, `pair`, `scenario`) and the tests into `companions/streamdeck/` (`UNREAL_STREAMDECK=OFF` by default), the project's style and build settings, hidapi + json embedded, docs `docs/companions/streamdeck/` (HID reference, performance), notices; 838 checks green | SD0 | done 2026-10-20 (turbojpeg still from the system: SD2) |
-| SD2 | JPEG POC + vendored encoder (removes the system turbojpeg and its link warning), WebSocket client; zero warnings on gcc / MSVC / MinGW | SD1 | open |
+| SD2 | JPEG POC + vendored encoder (removes the system turbojpeg and its link warning), WebSocket client; zero warnings on gcc / MSVC / MinGW | SD1 | open; JPEG part prepared 2026-10-20 ([POC 032](../../../tools/poc/032-streamdeck-jpeg-encoder/README.md)): own encoder `sdb::jpeg` (turbojpeg's output, 1.37x its time), turbojpeg removed, 855 checks green, the link warning gone; the encoder compiles warning-free on gcc 16 / MSVC / MinGW, full Linux / Windows companion builds still to do |
 | SD3 | Device multiplexer, wire v2, the studio imported as a client (no USB), late-join replay; sdctl `emu-*` commands follow wire v2 | SD2 | open |
 | SD4 | Core: `TargetState` + view registration in unreal-qt and the video wall; `target`, `activity`, readout vocabulary, catalogue fields | S1, S2, S4 | open |
 | SD5 | Daemon surface client, `action` kind, state-bound faces, contexts on menus, activity; default scenario v2 + its generator | SD3, SD4 | open |
@@ -35,7 +35,7 @@ Asked one at a time.
 | L-3 | Names of the daemon and the studio | **Decided 2026-10-19:** `unreal-streamdeck`, "Stream Deck Studio" (`unreal-streamdeck-studio`) |
 | L-4 | `libsdb` naming style | **Decided 2026-10-19:** the project's style on import |
 | L-5 | Import | **Decided 2026-10-19:** as new code, no history, minimal set ([migration.md §1](migration.md#1-manifest)) |
-| L-6 | JPEG encoder | **Decided 2026-10-19:** small vendored baseline 4:4:4 encoder after a measurement against turbojpeg; libjpeg-turbo vendored if much worse |
+| L-6 | JPEG encoder | **Decided 2026-10-19:** small vendored baseline 4:4:4 encoder after a measurement against turbojpeg; libjpeg-turbo vendored if much worse. **Measured 2026-10-20 (POC 032): own encoder `sdb::jpeg`** (TooJpeg + libjpeg's integer arithmetic): turbojpeg's scan data, 1.37x its encode time (2.37 ms per + XL frame vs ~90 ms of USB) |
 | T-1 | "No id" on the WebAPI with views | **Decided 2026-10-19:** the followed instance when views exist; selected (else sole) headless |
 | T-2 | Where pins are set in the GUI | **Decided 2026-10-19:** the settings' surfaces table + each window's status-bar surface icons (Pin here / Unpin) |
 | Q-1 | Default for starting the daemon | **Decided 2026-10-19:** when a deck is attached |

@@ -10,6 +10,8 @@
 **/[Rr]elease
 # ...but not source data named like them (the compiled-in debug-layer profiles)
 !data/controllers/profiles/debug/
+# ...and not vendored headers (nlohmann/json's detail/output/*.hpp)
+!companions/streamdeck/3rdparty/nlohmann/detail/output/
 
 # CMake temporary folders
 **/CMakeFiles
