@@ -131,6 +131,7 @@ DeviceScreenGLWindow::~DeviceScreenGLWindow()
     delete _indexTexture;
     delete _factorTexture;
     delete _composeShader;
+    _modelGpu.destroy();
     delete _customShader;
     if (_slangRunner)
         _slangRunner->release();
@@ -281,6 +282,8 @@ void DeviceScreenGLWindow::initializeGL()
         !_composeShader->addShaderFromSourceCode(QOpenGLShader::Fragment, CRTRenderer::kCompositionShader) ||
         !_composeShader->link())
         qWarning() << "CRT composition shader failed:" << _composeShader->log();
+    if (!_modelGpu.create())
+        qWarning() << "CRT model shader failed:" << _modelGpu.log();
 
     // A custom shader or preset chosen before the context existed
     if (!_customShaderSource.isEmpty())
@@ -586,6 +589,7 @@ void UploadRgba(QOpenGLTexture*& texture, int width, int height, const uint8_t* 
     transfer.setAlignment(1);
     texture->setData(0, QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, pixels, &transfer);
 }
+
 }  // namespace
 
 void DeviceScreenGLWindow::paintGL()
@@ -619,6 +623,8 @@ void DeviceScreenGLWindow::paintGL()
             drawSlangPreset(picture, glY);
         else if (_crtEnabled && _customShader && _customShader->isLinked())
             drawCustomCrt(picture);
+        else if (_crtEnabled && CRTBeamModel::isModel(_crtParams.profile) && _modelGpu.isCreated() && _shownFrame)
+            drawModelCrt(picture);
         else if (_composeShader && _composeShader->isLinked() && _shownFrame)
             drawComposedCrt(picture);
         glViewport(0, 0, surfaceWidth, surfaceHeight);
@@ -680,6 +686,35 @@ void DeviceScreenGLWindow::drawComposedCrt(const QRect& picture)
     _gradedTexture->release(0);
     glActiveTexture(GL_TEXTURE0);
     _composeShader->release();
+}
+
+void DeviceScreenGLWindow::drawModelCrt(const QRect& picture)
+{
+    CRTBeamModel::Layout layout;
+    layout.outWidth = picture.width();
+    layout.outHeight = picture.height();
+    layout.frameWidth = _shownFrame->width();
+    layout.frameHeight = _shownFrame->height();
+    layout.source = displaySourceRect().toRect().intersected(_shownFrame->rect());
+    if (layout.source.isEmpty())
+        return;
+
+    // The tables again only for a new size or profile, the frame once per upload
+    const bool rebuilt = _crtModel.setLayout(layout, _crtParams.profile);
+    if (rebuilt || !_modelTablesUploaded)
+    {
+        _modelGpu.uploadTables(_crtModel);
+        _modelTablesUploaded = true;
+    }
+    if (rebuilt || _modelSerial != _frameSerial)
+    {
+        // Not the glow's columns: the shader sums them from the frame itself
+        _crtModel.prepare(_shownFrame->constBits(), static_cast<int>(_shownFrame->bytesPerLine()), false);
+        _modelGpu.uploadFrame(_crtModel);
+        _modelSerial = _frameSerial;
+    }
+    _modelGpu.draw(_crtModel);
+    glActiveTexture(GL_TEXTURE0);
 }
 
 void DeviceScreenGLWindow::drawCustomCrt(const QRect& picture)

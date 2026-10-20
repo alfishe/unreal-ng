@@ -102,7 +102,7 @@ How the runtime talks to unreal-ng today (`streamdeck-bridge/src/actions.cpp`):
 | FR-1 | The daemon is the only process that opens a Stream Deck over USB. |
 | FR-2 | The daemon listens for software decks; each connects, says which role it takes (mirror of a real deck, or its own virtual deck) and gets the same output reports a real deck gets. |
 | FR-3 | Input from a real deck and from every mirroring software deck reaches the same runtime; a software deck sees presses made on the real deck. |
-| FR-4 | The daemon is a paired companion on `/api/v1/surfaces/ws`; scenarios call **action ids with values**; the REST kind stays as an escape hatch. |
+| FR-4 | The daemon is a paired companion on the WebSocket `/api/v1/ws` (one socket, topics `surface` and `instances`); scenarios call **action ids with values**; the REST kind stays: REST is a first-class API, not a fallback. |
 | FR-5 | The daemon subscribes to readouts (`ttd.position`, `run.state`, toggles' states) and draws from them; it never polls. |
 | FR-6 | A deck page may name a context; entering it sets the context (`ctx.set`); a `ctx` from the core navigates the deck to the page bound to that context, without echo. |
 | FR-7 | The core publishes an **activity** readout: action id, origin kind, surface name, result; the deck may show it (flash a key, a strip line); it never executes it. |
@@ -125,6 +125,7 @@ How the runtime talks to unreal-ng today (`streamdeck-bridge/src/actions.cpp`):
 | NFR-5 | The core gets no new dependency (hidapi and the JPEG encoder are the companion's only). |
 | NFR-6 | A daemon crash or hang never affects the emulator; a host restart never needs a daemon restart (it reconnects). |
 | NFR-7 | Input is never journaled from the daemon: actions are host commands (TTD determinism, control-surfaces §12). |
+| NFR-8 | The WebSocket hub uses asynchronous I/O on the WebAPI's existing event loops: no thread per connection, topic or hub; the host's thread count does not grow with clients; the daemon runs all its networking on one event-loop thread ([protocol.md §0.1](protocol.md#01-asynchronous-io-a-fixed-number-of-threads)). |
 
 ## 7. Non-goals
 

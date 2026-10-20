@@ -8,13 +8,13 @@
 ## Phases
 
 Depends on the control-surfaces phases (branch `control-surfaces-design`): S1 core `ActionRegistry` + RunControl +
-`/controllers/actions`; S2 `ContextState`, TTD published cursor, `seek_by`; S4 `SurfaceHub`.
+`/controllers/actions`; S2 `ContextState`, TTD published cursor, `seek_by`; S4 the surface protocol, served as the `surface` topic of `/api/v1/ws` (D7).
 
 | # | Phase | Needs | State |
 |:--|:--|:--|:--|
 | SD0 | Owner decisions: layout and names (L-1 … L-6), targeting (T-1, T-2), Q-1 … Q-3 | | done 2026-10-19 |
 | SD1 | Import the library, sdctl, the daemon (`run`, `pair`, `scenario`) and the tests into `companions/streamdeck/` (`UNREAL_STREAMDECK=OFF` by default), the project's style and build settings, hidapi + json embedded, docs `docs/companions/streamdeck/` (HID reference, performance), notices; 838 checks green | SD0 | done 2026-10-20 (turbojpeg still from the system: SD2) |
-| SD2 | JPEG POC + vendored encoder (removes the system turbojpeg and its link warning), WebSocket client; zero warnings on gcc / MSVC / MinGW | SD1 | open |
+| SD2 | JPEG POC + vendored encoder (removes the system turbojpeg and its link warning), WebSocket client on one non-blocking event loop (NFR-8; the automation's cpp-httplib pool pinned to 1 until it moves onto the loop); zero warnings on gcc / MSVC / MinGW | SD1 | open |
 | SD3 | Device multiplexer, wire v2, the studio imported as a client (no USB), late-join replay; sdctl `emu-*` commands follow wire v2 | SD2 | open |
 | SD4 | Core: `TargetState` + view registration in unreal-qt and the video wall; `target`, `activity`, readout vocabulary, catalogue fields | S1, S2, S4 | open |
 | SD5 | Daemon surface client, `action` kind, state-bound faces, contexts on menus, activity; default scenario v2 + its generator | SD3, SD4 | open |
@@ -62,6 +62,7 @@ Asked one at a time.
 | Document | Fix |
 |:--|:--|
 | control surfaces `architecture.md §6` | "the Qt client sets the selected instance when the focused one changes" → `TargetState` ([targeting.md](targeting.md)) |
+| control surfaces `protocol.md` §2, §4, S4 | no own route `/api/v1/surfaces/ws`: the surface protocol is the `surface` topic of the one WebSocket `/api/v1/ws` ([protocol.md §0](protocol.md#0-transport-one-websocket), D7); `SurfaceHub` becomes the topic's handler in the shared hub |
 | control surfaces `protocol.md` `instance` op | replaced by `target` ([protocol.md §2](protocol.md#2-target)) |
 | control surfaces `requirements.md` "what exists" | the Surface Dial driver and `ttd.jog_*` / `ttd.scrub_*` landed on master (`720fbb53e`, `f3d35d587`) after the design |
 | controller manager `debug-and-ttd.md:252-259` | the Stream Deck integrates as a companion: link this design |

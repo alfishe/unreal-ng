@@ -12,6 +12,7 @@
 #include "framehistory.h"
 #include "crtprofiles.h"
 
+class CRTBeamModel;
 class CRTRenderer;
 
 class Emulator;  // Forward declaration
@@ -113,7 +114,7 @@ public:
     void setTemporalWeightMode(int mode);
     int temporalWeightMode() const { return _temporalWeightMode; }
 
-    // CRT effects (CRTRenderer: the same picture as the GPU screen, bit for bit)
+    // CRT effects (CRTRenderer / CRTBeamModel: the same picture as the GPU screen, bit for bit)
     void setCRTEffectsEnabled(bool enabled);
     bool crtEffectsEnabled() const { return _crtEnabled; }
     void setCRTProfile(CRTProfile profile);
@@ -176,6 +177,7 @@ private:
 
     // CRT effects
     std::unique_ptr<CRTRenderer> _crtRenderer;
+    std::unique_ptr<CRTBeamModel> _crtModel;  ///< the shader models (crt-lottes, ...)
     QImage _crtFrame;
     bool _crtEnabled = false;
     CRTProfileParams _crtParams;

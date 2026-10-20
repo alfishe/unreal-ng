@@ -44,7 +44,7 @@ flowchart TB
         AR["core ActionRegistry<br/>per-instance actions worker"]
         CTX["ContextState · TargetState"]
         CUR["TTD published cursor · run state"]
-        HUB["SurfaceHub (/api/v1/surfaces/ws)"]
+        HUB["WebSocket hub (/api/v1/ws), surface topic"]
         SUP["daemon supervisor (unreal-qt only)"]
         CM --> AR
         AR --> CTX & CUR
@@ -165,7 +165,7 @@ sequenceDiagram
     participant DI as Surface Dial
     participant CM as controller manager
     participant AR as ActionRegistry
-    participant HUB as SurfaceHub
+    participant HUB as WebSocket hub
     participant D as unreal-streamdeck
     participant SD as Stream Deck + studio
     DI->>CM: knob +2
@@ -211,17 +211,22 @@ sequenceDiagram
 
 ## 9. Threads
 
-Host side: as control surfaces §11 (actions worker per instance, hub tick only with subscribers). The activity feed
-adds nothing: it is posted from the actions worker and sent on the hub's WebSocket threads.
+Host side: the actions worker per instance as in control surfaces §11. The WebSocket hub adds no thread
+([protocol.md §0.1](protocol.md#01-asynchronous-io-a-fixed-number-of-threads)). Sockets, the readout timer and the
+per-connection queues live on the WebAPI's existing event loops, two threads. Producers only store a value and wake
+the loop. The activity feed is posted from the actions worker the same way.
 
 Daemon side:
 
 | Thread | Does |
 |:--|:--|
 | Device | Polls every deck's input, injects viewer input, renders, writes HID reports (today `Runtime::step`; macOS hidapi delivers no input while another thread writes the same handle). |
-| Surface client | The WebSocket: sends actions, receives `result`, readouts, `ctx`, `target`, `activity`; hands them to the device thread through a queue. |
-| Wire server | Accepts viewers, reads their input, writes the fan-out (non-blocking; a slow viewer drops frames, never stalls the deck). |
-| Automation | REST + MCP for the editor and agents (cpp-httplib today). |
+| Network (one event loop) | Non-blocking, all sockets on one thread: the WebSocket client of `/api/v1/ws` (sends actions, receives `result`, readouts, `ctx`, `target`, `activity`), the wire server (viewers' input, the fan-out; a slow viewer drops frames, never stalls the deck) and the automation REST + MCP. Hands everything to the device thread through a queue and a wakeup. |
+
+Two threads in all, whatever the number of decks, viewers and clients. Today the automation is a cpp-httplib server.
+Its pool defaults to max(8, cores - 1) threads (`CPPHTTPLIB_THREAD_POOL_COUNT`), 23 on a 24-core machine, for a
+handful of editor calls. SD2 picks an event-loop library for the WebSocket client; the wire server and the automation
+move onto the same loop. Until then the pool is pinned to 1.
 
 No actions worker of its own: actions are sent and their results arrive asynchronously; dial coalescing moves to the
 core's registry (control surfaces §3), the daemon still merges deltas it has not sent yet.
@@ -239,7 +244,7 @@ core's registry (control surfaces §3), the daemon still merges deltas it has no
 
 | Where | Change |
 |:--|:--|
-| core (control surfaces design) | The registry, contexts, readouts, `SurfaceHub` as designed; plus `TargetState`, the `activity` feed, `target` messages, state readouts for toggles ([protocol.md](protocol.md)). |
+| core (control surfaces design) | The registry, contexts, readouts as designed; the surface protocol as the `surface` topic of the one WebSocket hub `/api/v1/ws` instead of its own `SurfaceHub` route; plus `TargetState`, the `activity` feed, `target` messages, state readouts for toggles ([protocol.md](protocol.md)). |
 | unreal-qt | Reports window focus and each window's active instance to `TargetState`; daemon supervisor; settings page "Stream Deck". |
 | unreal-videowall | Reports its focused tile as its window's active instance (FR-8 applies there too). |
 | daemon (from `sdctl run`) | Surface socket client instead of REST; device multiplexer; listens for viewers; config and supervision. |
