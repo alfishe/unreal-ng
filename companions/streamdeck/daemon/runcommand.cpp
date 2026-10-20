@@ -1,6 +1,8 @@
 // unreal-streamdeck run <scenario: .json .yaml .csv .tsv> [--watch] [--api PORT] [--dry-run] [--seconds N] [--device S
-// | emu[:addr]] [--mirror [addr]] Plays a scenario (menus + actions,
+// | emu[:addr]] [--mirror [addr]] [--viewers [PORT] | --no-viewers] Plays a scenario (menus + actions,
 // docs/inprogress/2026-10-19-streamdeck-integration/scenarios.md) on the deck.
+//   --viewers   Stream Deck Studio windows join on 127.0.0.1:PORT (device wire v2, default 37050, on by default):
+//               mirrors of the deck, or decks of their own with their own runtime
 //   --watch     reload the file when it changes (the menu stack is kept)
 //   --api PORT  automation planes on 127.0.0.1:PORT: WebAPI (/api/v1/state, navigate, press, reload, scenario) + MCP
 //   (/mcp)
@@ -20,6 +22,9 @@
 
 #include "cli.h"
 #include "sdb/automation.h"
+#include "sdb/deckhub.h"
+#include "sdb/devicewire.h"
+#include "sdb/eventloop.h"
 #include "sdb/runtime.h"
 #include "sdb/scenarioio.h"
 #include "sdb/scenarioops.h"
@@ -33,14 +38,23 @@ namespace cli
 
 namespace
 {
-std::atomic<bool> g_runStop{false};
+std::atomic<bool> runStop{false};
 void OnRunSig(int)
 {
-    g_runStop = true;
+    runStop = true;
 }
 
-std::vector<std::string> g_files;  // the scenario file and every file it includes (watched)
-std::mutex g_filesMu;
+std::vector<std::string> watchedFiles;  // the scenario file and every file it includes (watched)
+std::mutex watchedFilesMutex;
+
+// A viewer's deck of its own: a device on the viewer, a runtime with the same scenario, its thread.
+struct OwnDeck
+{
+    std::unique_ptr<Device> dev;
+    std::unique_ptr<Runtime> rt;
+    std::atomic<bool> stop{false};
+    std::thread thread;
+};
 
 std::optional<Scenario> LoadScenario(const std::string& file, std::string& err)
 {
@@ -48,8 +62,8 @@ std::optional<Scenario> LoadScenario(const std::string& file, std::string& err)
     auto doc = io::LoadResolved(file, &err, &files);  // .json .yaml .yml .csv .tsv, includes resolved
     if (doc)
     {
-        std::lock_guard l(g_filesMu);
-        g_files = files;
+        std::lock_guard l(watchedFilesMutex);
+        watchedFiles = files;
     }
     if (!doc)
         return std::nullopt;
@@ -82,7 +96,7 @@ int CmdRun(const Args& a)
     {
         std::fprintf(stderr,
                      "usage: unreal-streamdeck run <scenario: .json .yaml .csv .tsv> [--watch] [--api PORT] "
-                     "[--dry-run] [--seconds N] [--device S|emu] [--mirror]\n");
+                     "[--dry-run] [--seconds N] [--device S|emu] [--mirror] [--viewers [PORT] | --no-viewers]\n");
         return kBadUsage;
     }
     std::string file = a.pos[1], err;
@@ -101,6 +115,63 @@ int CmdRun(const Args& a)
 
     RuntimeOptions opt;
     opt.dryRun = a.Has("dry-run");
+    const Scenario forOwnDecks = *scenario;
+
+    // The device wire v2 on its network loop: viewers mirror the deck or get a deck of their own
+    // (device-wire.md). A port taken by an older Stream Deck Studio (which listens itself) leaves it off.
+    net::EventLoop netLoop;
+    std::unique_ptr<DeckHub> hub;
+    std::thread netThread;
+    std::mutex ownMu;
+    std::map<std::string, std::unique_ptr<OwnDeck>> owns;
+    std::vector<std::thread> reapers;  // each takes an ended own deck apart (its runtime joins its threads)
+    const bool emulatorDevice = a.Str("device").rfind("emu", 0) == 0;
+    if (!a.Has("no-viewers") && !emulatorDevice)
+    {
+        DeckHub::Options ho;
+        ho.port =
+            a.Has("viewers") && a.Str("viewers") != "1" ? std::atoi(a.Str("viewers").c_str()) : wire::kDefaultPort;
+        ho.daemonVersion = "1.0";
+        hub = std::make_unique<DeckHub>(netLoop, ho);
+        hub->onOwnDeck = [&](std::unique_ptr<Transport> t, const Model& m, const std::string& serial) {
+            auto own = std::make_unique<OwnDeck>();
+            own->dev = std::make_unique<Device>(m, std::move(t), serial);
+            own->rt = std::make_unique<Runtime>(*own->dev, forOwnDecks, nullptr, opt);
+            OwnDeck* p = own.get();
+            own->thread = std::thread([p] { p->rt->Run(p->stop); });
+            std::printf("viewer %s: own %s\n", serial.c_str(), std::string(m.name).c_str());
+            std::lock_guard l(ownMu);
+            owns[serial] = std::move(own);
+        };
+        hub->onOwnDeckGone = [&](const std::string& serial) {
+            std::lock_guard l(ownMu);
+            if (auto it = owns.find(serial); it != owns.end())
+            {
+                it->second->stop = true;  // its runtime stops within a step; taken apart off the network loop
+                reapers.emplace_back([own = std::move(it->second)]() mutable {
+                    if (own->thread.joinable())
+                        own->thread.join();
+                    own.reset();
+                });
+                owns.erase(it);
+            }
+        };
+        std::string herr;
+        if (hub->Listen(&herr))
+        {
+            dev->WrapTransport([&](std::unique_ptr<Transport> t) {
+                return hub->AttachDeck(std::move(t), dev->GetModel(), dev->Serial());
+            });
+            std::printf("viewers: 127.0.0.1:%d (device wire v2)\n", hub->Port());
+            netThread = std::thread([&] { netLoop.Run(); });
+        }
+        else
+        {
+            std::printf("note: no viewers (%s; an older Stream Deck Studio listens there?)\n", herr.c_str());
+            hub.reset();
+        }
+    }
+
     Runtime rt(*dev, std::move(*scenario), nullptr, opt);
     std::mutex fileMu;
     auto reloadFrom = [&](const std::string& f) {
@@ -257,8 +328,8 @@ int CmdRun(const Args& a)
                 std::map<std::string, fs::file_time_type> m;
                 std::vector<std::string> fs;
                 {
-                    std::lock_guard l(g_filesMu);
-                    fs = g_files;
+                    std::lock_guard l(watchedFilesMutex);
+                    fs = watchedFiles;
                 }
                 {
                     std::lock_guard l(fileMu);
@@ -269,7 +340,7 @@ int CmdRun(const Args& a)
                 return m;
             };
             seen = snapshot();
-            while (!g_runStop)
+            while (!runStop)
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds(250));
                 if (auto now = snapshot(); now != seen)
@@ -289,26 +360,42 @@ int CmdRun(const Args& a)
     if (const double secs = a.Dbl("seconds", 0); secs > 0)
         std::thread([secs] {
             std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(secs * 1000)));
-            g_runStop = true;
+            runStop = true;
         }).detach();
 #ifndef _WIN32
     // --with-parent: started by an app (Stream Deck Studio, unreal-qt); when it goes away, so does this run, not
     // holding the deck
     if (a.Has("with-parent"))
         std::thread([parent = getppid()] {
-            while (!g_runStop && getppid() == parent)
+            while (!runStop && getppid() == parent)
                 std::this_thread::sleep_for(std::chrono::milliseconds(300));
-            g_runStop = true;
+            runStop = true;
         }).detach();
 #endif
 
     std::printf("playing %s on %s%s (Ctrl-C to stop)\n", file.c_str(), std::string(dev->GetModel().name).c_str(),
                 opt.dryRun ? ", dry run" : "");
     std::fflush(stdout);
-    rt.Run(g_runStop);
+    rt.Run(runStop);
     if (watcher.joinable())
         watcher.join();
     server.Stop();
+    if (netThread.joinable())
+    {
+        netLoop.Stop();
+        netThread.join();
+    }
+    hub.reset();
+    std::lock_guard l(ownMu);
+    for (auto& [serial, own] : owns)
+    {
+        own->stop = true;
+        if (own->thread.joinable())
+            own->thread.join();
+    }
+    owns.clear();
+    for (auto& reaper : reapers)
+        reaper.join();
     std::printf("stopped\n");
     return kOk;
 }

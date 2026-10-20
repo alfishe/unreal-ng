@@ -839,6 +839,7 @@ int main()
     TestTagsAndPages();
     TestSubtrees();
     TestWebSocket();
+    TestDeckHub();
     std::printf("\n%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

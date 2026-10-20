@@ -50,10 +50,14 @@ add_library(sdb STATIC ${SD_LIB_SOURCES})
 target_include_directories(sdb PUBLIC ${SD_DIR}/lib/include)
 target_include_directories(sdb SYSTEM PUBLIC ${SD_3RDPARTY})   # nlohmann/json is part of the public headers
 target_compile_options(sdb PRIVATE ${SD_WARNINGS})
-set_source_files_properties(${SD_DIR}/lib/src/svg.cpp PROPERTIES COMPILE_OPTIONS "-Wno-error")   # nanosvg inside
+if(NOT MSVC)
+    set_source_files_properties(${SD_DIR}/lib/src/svg.cpp PROPERTIES COMPILE_OPTIONS "-Wno-error")   # nanosvg inside
+endif()
 target_link_libraries(sdb PUBLIC PkgConfig::SD_TURBOJPEG PRIVATE sd-hidapi)
 if(APPLE)
     target_link_libraries(sdb PRIVATE "-framework ApplicationServices")   # the keys action: CGEvent
+elseif(WIN32)
+    target_link_libraries(sdb PRIVATE ws2_32)   # sockets (sdb/eventloop.h)
 endif()
 
 # ---------------------------------------------------------------- shared CLI helpers

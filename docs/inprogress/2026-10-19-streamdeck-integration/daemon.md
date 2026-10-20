@@ -214,5 +214,5 @@ call to the daemon's `/api/v1/pair`; `sdctl run` becomes `unreal-streamdeck --sc
 | Platform | Work |
 |:--|:--|
 | macOS | Built and measured today (Stream Deck + XL). Exclusive open; `kqueue` parent watch. |
-| Windows | `http.cpp`, `transport_tcp.cpp` use POSIX sockets without `_WIN32` paths: port to Winsock (or to the shared socket helper of `unreal-mcp-bridge`); hidapi Windows backend; `keys` action unsupported (returns false) stays; parent watch by process handle. MSVC and MinGW, zero warnings. |
+| Windows | Sockets ported 2026-10-20: `http.cpp`, `transporttcp.cpp`, the event loop and the multiplexer go through `sdb/eventloop.h` (Winsock / POSIX); hidapi Windows backend; `keys` action unsupported (returns false) stays; parent watch by process handle. MSVC and MinGW, zero warnings. |
 | Linux | hidapi hidraw backend; a udev rule for `0FD9` (the package installs it); `keys` via `xdotool` stays optional. gcc and clang. |
