@@ -441,7 +441,7 @@ private:
         std::string name;           // the name its INCLUDE is written with (a copy: name~2)
         bool part = false;          // a part a long file was cut into (BackendOptions::splitLines)
     };
-    bool _inline = false;           // the target has no INCLUDE: the INCLUDEd texts stay in the main file
+    bool _inlineIncludes = false;   // the target has no INCLUDE: the INCLUDEd texts stay in the main file
     std::set<size_t> _inlined;      // the files written into a main file so
 
     struct Copy
@@ -463,7 +463,7 @@ private:
             _origin.push_back({k, static_cast<uint32_t>(i + 1)});
             ++since;
             const auto found = _includes[k].find(static_cast<uint32_t>(i + 1));
-            if (found != _includes[k].end() && std::find(stack.begin(), stack.end(), found->second) == stack.end() && _inline)
+            if (found != _includes[k].end() && std::find(stack.begin(), stack.end(), found->second) == stack.end() && _inlineIncludes)
             {
                 // a target without INCLUDE: the text stays here, the INCLUDE a comment
                 _joined.lines.back().text = ";" + _joined.lines.back().text;
@@ -549,7 +549,7 @@ private:
         BackendOptions options = _options;
         options.fileName.clear();
         _writing = &options;   // the parts' names go into its fileNames
-        _inline = !_backend.Includes(options);
+        _inlineIncludes = !_backend.Includes(options);
         std::vector<size_t> stack = {main};
         Join(main, stack);
         for (const auto& f : _files)

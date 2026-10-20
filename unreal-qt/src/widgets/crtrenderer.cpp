@@ -1,5 +1,7 @@
 #include "crtrenderer.h"
 
+#include <QRegularExpression>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -64,62 +66,10 @@ float CornerMask(float u, float v, float radius)
     return 1.0f - SmoothStep(radius - 0.01f, radius, std::sqrt(dx * dx + dy * dy));
 }
 
-/// Phosphor mask at an output pixel position: per channel, mixed toward 1 by the strength
-void Mask(CRTMaskType type, float px, float py, float pitch, float strength, float rgb[3])
-{
-    float m[3] = {1.0f, 1.0f, 1.0f};
-    float lift = 0.0f;
-    switch (type)
-    {
-        case CRTMaskType::Aperture:
-        {
-            const float x = std::fmod(px, pitch * 3.0f);
-            const int stripe = x < pitch ? 0 : (x < pitch * 2.0f ? 1 : 2);
-            for (int c = 0; c < 3; ++c)
-                m[c] = c == stripe ? 1.0f : 0.2f;
-            break;
-        }
-        case CRTMaskType::ShadowMask:
-        {
-            const float cellY = std::floor(py / pitch);
-            const float offsetX = std::fmod(px, pitch) / pitch;
-            const float offsetY = std::fmod(py, pitch) / pitch;
-            const float phase = std::fmod(cellY, 2.0f) * 0.5f;
-            const float x = std::fmod(offsetX + phase, 1.0f);
-            const int dot = x < 0.333f ? 0 : (x < 0.666f ? 1 : 2);
-            const float dist = std::sqrt((offsetX - 0.5f) * (offsetX - 0.5f) + (offsetY - 0.5f) * (offsetY - 0.5f)) * 2.0f;
-            const float falloff = SmoothStep(1.0f, 0.5f, dist);
-            for (int c = 0; c < 3; ++c)
-                m[c] = (c == dot ? 1.0f : 0.1f) * falloff;
-            lift = 0.3f;
-            break;
-        }
-        case CRTMaskType::SlotMask:
-        {
-            const float slotHeight = pitch * 1.5f;
-            const float cellY = std::floor(py / slotHeight);
-            const float offsetY = std::fmod(py, slotHeight);
-            const float phase = std::fmod(cellY, 2.0f) * pitch * 1.5f;
-            const float x = std::fmod(std::fmod(px, pitch * 3.0f) + phase, pitch * 3.0f);
-            const int slot = x < pitch ? 0 : (x < pitch * 2.0f ? 1 : 2);
-            const float gap = SmoothStep(0.0f, 0.15f, offsetY / slotHeight) * SmoothStep(1.0f, 0.85f, offsetY / slotHeight);
-            for (int c = 0; c < 3; ++c)
-                m[c] = (c == slot ? 1.0f : 0.15f) * gap;
-            lift = 0.2f;
-            break;
-        }
-        case CRTMaskType::None:
-            break;
-    }
-    for (int c = 0; c < 3; ++c)
-        rgb[c] = type == CRTMaskType::None ? 1.0f : 1.0f + (m[c] + lift - 1.0f) * strength;
-}
-
 bool SameParams(const CRTProfileParams& a, const CRTProfileParams& b)
 {
     return a.profile == b.profile && a.curvature == b.curvature && a.cornerRadius == b.cornerRadius &&
-           a.scanlineWeight == b.scanlineWeight && a.maskType == b.maskType && a.maskStrength == b.maskStrength &&
-           a.maskDotPitch == b.maskDotPitch && a.bloomStrength == b.bloomStrength && a.bloomRadius == b.bloomRadius &&
+           a.scanlineWeight == b.scanlineWeight && a.bloomStrength == b.bloomStrength && a.bloomRadius == b.bloomRadius &&
            a.saturation == b.saturation && a.brightness == b.brightness && a.contrast == b.contrast &&
            a.gamma == b.gamma;
 }
@@ -131,24 +81,43 @@ uint8_t ToByte(float v)
 }  // namespace
 
 const char* const CRTRenderer::kCompositionShader = R"(
-#version 120
+#version 330
 uniform sampler2D frame;
 uniform sampler2D indexTable;
 uniform sampler2D factorTable;
 uniform vec2 frameSize;
-uniform vec2 outSize;
-uniform vec2 outOrigin;
+in vec2 texCoord;
+out vec4 fragColor;
 void main() {
-    // Output pixel centre, rows top first; every value below is an integer, exact in a float
-    vec2 p = gl_FragCoord.xy - outOrigin;
-    vec2 uv = vec2(p.x, outSize.y - p.y) / outSize;
-    vec4 i = floor(texture2D(indexTable, uv) * 255.0 + 0.5);
+    // The output pixel's centre over the picture, rows top first, from the quad: not gl_FragCoord, whose rows Mesa
+    // turns over in a framebuffer object drawn in a window's context. Every value below is an integer, exact in a float
+    vec2 uv = texCoord;
+    vec4 i = floor(texture(indexTable, uv) * 255.0 + 0.5);
     vec2 s = vec2(i.r + i.g * 256.0, i.b + i.a * 256.0);
-    vec3 c = floor(texture2D(frame, (s + 0.5) / frameSize).rgb * 255.0 + 0.5);
-    vec3 f = floor(texture2D(factorTable, uv).rgb * 255.0 + 0.5);
-    gl_FragColor = vec4(min(floor(c * f / 128.0), 255.0) / 255.0, 1.0);
+    vec3 c = floor(texture(frame, (s + 0.5) / frameSize).rgb * 255.0 + 0.5);
+    vec3 f = floor(texture(factorTable, uv).rgb * 255.0 + 0.5);
+    fragColor = vec4(min(floor(c * f / 128.0), 255.0) / 255.0, 1.0);
 }
 )";
+
+QString CRTRenderer::coreFragmentSource(const QString& source)
+{
+    static const QRegularExpression version(QStringLiteral("^[ \\t]*#[ \\t]*version[ \\t]+(\\d+)[^\\n]*"),
+                                            QRegularExpression::MultilineOption);
+    const QRegularExpressionMatch match = version.match(source);
+    if (match.hasMatch() && match.captured(1).toInt() >= 330)
+        return source;
+
+    // The version line goes, its line stays: the compiler's line numbers are the file's plus the prelude's two
+    QString body = source;
+    if (match.hasMatch())
+        body.replace(match.capturedStart(), match.capturedLength(), QString());
+    body.replace(QRegularExpression(QStringLiteral("\\bvarying\\b")), QStringLiteral("in"));
+    body.replace(QRegularExpression(QStringLiteral("\\btexture2D\\b")), QStringLiteral("texture"));
+    body.replace(QRegularExpression(QStringLiteral("\\btexture2DLod\\b")), QStringLiteral("textureLod"));
+    body.replace(QRegularExpression(QStringLiteral("\\bgl_FragColor\\b")), QStringLiteral("unrealFragColor"));
+    return QStringLiteral("#version 330\nout vec4 unrealFragColor;\n") + body;
+}
 
 bool CRTRenderer::setLayout(const Layout& layout, const CRTProfileParams& params)
 {
@@ -191,9 +160,6 @@ void CRTRenderer::buildGeometry(const CRTProfileParams& params)
 
     // No profile: the plain picture, a nearest scale - drawn by the same tables, so the backends agree on it too
     const bool plain = params.profile == CRTProfile::None;
-    const float pitch = params.maskDotPitch >= 1.0f ? params.maskDotPitch : std::max(1.0f, width / 640.0f);
-    // Below 2.5x the mask's pattern aliases: it fades to its average, full from 3.5x
-    const float maskFade = SmoothStep(2.5f, 3.5f, static_cast<float>(width) / static_cast<float>(source.width()));
 
     ForRows(height, [&](int firstRow, int endRow) {
         for (int y = firstRow; y < endRow; ++y)
@@ -237,12 +203,7 @@ void CRTRenderer::buildGeometry(const CRTProfileParams& params)
                 const float r = std::sqrt((u - 0.5f) * (u - 0.5f) + (v - 0.5f) * (v - 0.5f)) * 1.1f;
                 shade *= 1.0f - r * r * 0.15f;  // vignette
 
-                float mask[3];
-                Mask(params.maskType, static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f, pitch,
-                     params.maskStrength, mask);
-                const float average = (mask[0] + mask[1] + mask[2]) / 3.0f;
-                for (int c = 0; c < 3; ++c)
-                    factor[c] = ToByte((average + (mask[c] - average) * maskFade) * shade * 128.0f);
+                factor[0] = factor[1] = factor[2] = ToByte(shade * 128.0f);
                 factor[3] = 255;
             }
         }

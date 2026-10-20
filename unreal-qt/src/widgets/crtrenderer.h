@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QRect>
+#include <QString>
 #include <cstdint>
 #include <vector>
 
@@ -14,7 +15,7 @@
 /// - grade(): the colour of every source pixel - bloom, gamma, saturation, contrast, brightness - in integers, at the
 ///   source's resolution, once per frame. Both backends show the graded frame.
 /// - the geometry (setLayout()): for every output pixel, the source pixel it shows (curvature, the source crop) and a
-///   per-channel factor (scanline, phosphor mask, rounded corners, vignette; 128 = 1.0). Built once per output size
+///   per-channel factor (scanline, rounded corners, vignette; 128 = 1.0). Built once per output size
 ///   and profile, with whatever float math; the result is integers both backends read.
 /// An output pixel is min(255, graded * factor / 128) per channel: compose() on the CPU, the shader kCompositionShader
 /// on the GPU. CRTProfile::None is the plain picture (a nearest scale, factor 1.0) through the same tables. Every value in that product is an integer below 2^24, exact in a float, so the GPU cannot round
@@ -39,9 +40,13 @@ public:
         bool operator!=(const Layout& other) const { return !(*this == other); }
     };
 
-    /// GLSL 1.20 fragment shader of the composition: frame = the graded frame, index / factor = the geometry tables,
+    /// GLSL 330 fragment shader of the composition: frame = the graded frame, index / factor = the geometry tables,
     /// all nearest-sampled. Draw a quad over a viewport of exactly the output size
     static const char* const kCompositionShader;
+
+    /// A GLSL 1.20 custom fragment shader as GLSL 330 for the core context (`varying` -> `in`, `texture2D` ->
+    /// `texture`, an output for `gl_FragColor`); a source of `#version 330` or later stays as it is
+    static QString coreFragmentSource(const QString& source);
 
     /// Build the geometry when the layout or the profile changed. @return true when the tables were rebuilt (a GPU
     /// backend uploads them again)

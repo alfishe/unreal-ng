@@ -30,7 +30,7 @@ RemoteControlRow BuildRemoteControlRow(QToolBar* bar, const QList<QAction*>& act
     r.label->setTextFormat(Qt::PlainText);
     r.label->setFont(lineFont);
     // Centred on the letters' ink, not on the fixed-pitch font's line box: on the axis of the icon and the buttons
-    r.label->setContentsMargins(InkCentringMargins(lineFont, QStringLiteral("Remote control: 00:00:00")));
+    r.label->setContentsMargins(InkCentringMargins(lineFont, QStringLiteral("REMOTE CONTROL: 00:00:00")));
     // The line takes the row's whole height and centres its text itself: a shorter label placed by the layout
     // lands half a pixel high whenever the heights differ by an odd number (the layout rounds down)
     r.label->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
@@ -44,6 +44,13 @@ RemoteControlRow BuildRemoteControlRow(QToolBar* bar, const QList<QAction*>& act
         button->setDefaultAction(action);
         button->setToolButtonStyle(Qt::ToolButtonTextOnly);
         button->setFont(buttonFont);
+        // The caption on its ink too (Segoe UI's line box puts the capitals a pixel low): the bar style's vertical
+        // padding (2 px) plus the centring margins; the button's own sheet wins over the bar's
+        const QMargins caption = InkCentringMargins(buttonFont, action->text().toUpper());
+        if (!caption.isNull())
+            button->setStyleSheet(QStringLiteral("QToolButton { padding-top: %1px; padding-bottom: %2px; }")
+                                      .arg(2 + caption.top())
+                                      .arg(2 + caption.bottom()));
         layout->addWidget(button, 0, Qt::AlignVCenter);
         r.buttons.append({button, action});
     }

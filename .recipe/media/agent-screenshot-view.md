@@ -90,9 +90,9 @@ working picture sits inside the frame.
 The window's View menu settings are automatable too: GPU acceleration, CRT effects and profile, temporal blending.
 Change them, then grab `source=window` to see the effect. Same GUI-only rule: headless, 409 `no-window`.
 
-- `capture_media {"action":"window_display"}` reads; `{"action":"window_display_set","display":{"crt_profile":"shadow-mask"}}`
+- `capture_media {"action":"window_display"}` reads; `{"action":"window_display_set","display":{"crt_profile":"basic"}}`
   changes (any of `gpu`, `crt`, `crt_profile`, `blending`, `blending_frames`, `blending_weights`).
-- `GET` / `PUT /emulator/{id}/video/window`; CLI `video window crt_profile=shadow-mask`; Lua / Python
+- `GET` / `PUT /emulator/{id}/video/window`; CLI `video window crt_profile=basic`; Lua / Python
   `window_display()` / `window_display_set(...)`.
 - `gpu=true` on a host without OpenGL (an offscreen GUI): 409 `unavailable`. Put the settings back after a test: they
   are the user's window.

@@ -249,9 +249,10 @@ target_sources(${PROJECT_NAME} PRIVATE ${APP_ICON_RESOURCES})
 qt6_add_resources(UI_ICON_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons.qrc")
 target_sources(${PROJECT_NAME} PRIVATE ${UI_ICON_RESOURCES})
 
-# Custom CRT shaders shipped with the app: data/shaders is not deployed into any bundle
-qt6_add_resources(CRT_SHADER_RESOURCES "${CMAKE_CURRENT_SOURCE_DIR}/resources/shaders.qrc")
-target_sources(${PROJECT_NAME} PRIVATE ${CRT_SHADER_RESOURCES})
+# The libretro CRT presets (tools/crt-shaders/import.py) as :/crt/<key>/: SlangPresetRunner, View > CRT Profile
+file(GLOB_RECURSE CRT_PRESET_FILES CONFIGURE_DEPENDS RELATIVE "${ROOT_DIR}/data/shaders/crt" "${ROOT_DIR}/data/shaders/crt/*/*")
+list(TRANSFORM CRT_PRESET_FILES PREPEND "${ROOT_DIR}/data/shaders/crt/")
+qt6_add_resources(${PROJECT_NAME} "crtpresets" PREFIX "/crt" BASE "${ROOT_DIR}/data/shaders/crt" FILES ${CRT_PRESET_FILES})
 
 
 # Set common target properties
@@ -691,6 +692,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtrenderer.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtprofiles.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtprofiles.h"
+        # The libretro presets of data/shaders/crt on the slang runner (GPU: skips without a 3.3 core context)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/slangpresetrunner_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/slangpresetrunner.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/slangpresetrunner.h"
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")
@@ -714,6 +719,8 @@ if (TESTS)
     target_link_libraries(unreal-qt-tests PRIVATE
         unrealng::core
         Qt6::Widgets
+        Qt6::OpenGL
+        $<$<PLATFORM_ID:Windows>:OpenGL::GL>
         Qt6::Svg
         QHexView
         gtest

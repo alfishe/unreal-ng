@@ -38,7 +38,7 @@ struct WindowDisplaySettings
     bool gpuAvailable = false;             ///< the host can draw with the GPU
     bool gpu = false;                      ///< GPU acceleration on
     bool crt = false;                      ///< CRT effects on (a profile other than "none" switches them on)
-    std::string crtProfile;                ///< e.g. "none", "basic", "shadow-mask"
+    std::string crtProfile;                ///< e.g. "none", "basic", "shader:<name>"
     std::vector<std::string> crtProfiles;  ///< every profile the window offers
     bool blending = false;                 ///< temporal blending (gigascreen smoothing) on
     int blendingFrames = 2;                ///< frames blended, 2..5

@@ -1,7 +1,8 @@
 /// @file crtrenderer_test.cpp
 /// @brief The CRT model both screen backends share (CRTRenderer): every profile shows the picture (the old CPU filter
 /// drew most of them black), a profile without effects is a plain nearest scale, the GPU shader's arithmetic gives the
-/// integer composition's values, the tables are rebuilt only for a new size or profile.
+/// integer composition's values, the tables are rebuilt only for a new size or profile, a GLSL 1.20 custom shader
+/// becomes GLSL 330 for the core context.
 
 #include <gtest/gtest.h>
 
@@ -76,7 +77,7 @@ TEST(CRTRenderer_Test, EveryProfileShowsThePicture)
 {
     const std::vector<uint8_t> frame = MakeFrame();
     CRTRenderer plain;
-    for (int scale : {1, 3})  // the mask averaged out, the mask half faded in (2.5x .. 3.5x)
+    for (int scale : {1, 3})
     {
         const CRTRenderer::Layout layout = MakeLayout(scale);
         const double reference = PaperMean(Render(plain, layout, CRTProfileParams::None(), frame), layout);
@@ -99,9 +100,13 @@ TEST(CRTRenderer_Test, WhiteStaysBrightWithContrast)
 {
     // The old NEON filter multiplied by contrast * 256 in int16: full white overflowed to black
     std::vector<uint8_t> white(static_cast<size_t>(kFrameWidth) * kFrameHeight * 4, 0xFF);
+    CRTProfileParams graded = CRTProfileParams::Basic();
+    graded.contrast = 1.1f;
+    graded.brightness = 1.05f;
+    graded.saturation = 1.2f;
     CRTRenderer renderer;
     const CRTRenderer::Layout layout = MakeLayout(3);
-    const std::vector<uint8_t> out = Render(renderer, layout, CRTProfileParams::Megatron(), white);
+    const std::vector<uint8_t> out = Render(renderer, layout, graded, white);
     EXPECT_GT(PaperMean(out, layout), 3 * 255 * 0.4);
 }
 
@@ -152,17 +157,17 @@ TEST(CRTRenderer_Test, TheShaderArithmeticIsTheIntegerComposition)
 TEST(CRTRenderer_Test, TablesOnlyForANewSizeOrProfile)
 {
     CRTRenderer renderer;
-    const CRTProfileParams aperture = CRTProfileParams::Aperture();
-    EXPECT_TRUE(renderer.setLayout(MakeLayout(2), aperture));
-    EXPECT_FALSE(renderer.setLayout(MakeLayout(2), aperture));
-    EXPECT_TRUE(renderer.setLayout(MakeLayout(3), aperture));
-    EXPECT_TRUE(renderer.setLayout(MakeLayout(3), CRTProfileParams::SlotMask()));
+    const CRTProfileParams basic = CRTProfileParams::Basic();
+    EXPECT_TRUE(renderer.setLayout(MakeLayout(2), basic));
+    EXPECT_FALSE(renderer.setLayout(MakeLayout(2), basic));
+    EXPECT_TRUE(renderer.setLayout(MakeLayout(3), basic));
+    EXPECT_TRUE(renderer.setLayout(MakeLayout(3), CRTProfileParams::None()));
 
     // Deterministic: the same input twice is the same picture
     const std::vector<uint8_t> frame = MakeFrame();
     CRTRenderer again;
-    EXPECT_EQ(Render(renderer, MakeLayout(3), CRTProfileParams::Megatron(), frame),
-              Render(again, MakeLayout(3), CRTProfileParams::Megatron(), frame));
+    EXPECT_EQ(Render(renderer, MakeLayout(3), CRTProfileParams::Basic(), frame),
+              Render(again, MakeLayout(3), CRTProfileParams::Basic(), frame));
 }
 
 TEST(CRTRenderer_Test, NoneIsThePlainPictureExactly)
@@ -190,7 +195,7 @@ TEST(CRTRenderer_Test, BgraIsTheSamePictureSwapped)
 {
     // The software screen composes in its backing store's byte order: the same values, red and blue swapped
     const std::vector<uint8_t> frame = MakeFrame();
-    for (CRTProfile profile : {CRTProfile::None, CRTProfile::Megatron})
+    for (CRTProfile profile : {CRTProfile::None, CRTProfile::Basic})
     {
         CRTRenderer renderer;
         const CRTRenderer::Layout layout = MakeLayout(2);
@@ -205,4 +210,29 @@ TEST(CRTRenderer_Test, BgraIsTheSamePictureSwapped)
             ASSERT_EQ(bgra[i + 3], 255) << i;
         }
     }
+}
+
+TEST(CRTRenderer_Test, CustomShaderPreludeForTheCoreContext)
+{
+    // A GLSL 1.20 custom shader runs on the 3.3 core context: the legacy words become the core ones, the line numbers
+    // keep their offset
+    const QString legacy = QStringLiteral("#version 120\n"
+                                          "uniform sampler2D tex;\n"
+                                          "varying vec2 texCoord;\n"
+                                          "void main() { vec4 texture2DColor = texture2D(tex, texCoord); "
+                                          "gl_FragColor = texture2DColor; }\n");
+    const QString core = CRTRenderer::coreFragmentSource(legacy);
+    EXPECT_EQ(core, QStringLiteral("#version 330\n"
+                                   "out vec4 unrealFragColor;\n"
+                                   "\n"
+                                   "uniform sampler2D tex;\n"
+                                   "in vec2 texCoord;\n"
+                                   "void main() { vec4 texture2DColor = texture(tex, texCoord); "
+                                   "unrealFragColor = texture2DColor; }\n"));
+
+    // Without a version line (GLSL 1.10) the same; a core shader stays as it is
+    EXPECT_TRUE(CRTRenderer::coreFragmentSource(QStringLiteral("varying vec2 texCoord;\n"))
+                    .startsWith(QStringLiteral("#version 330\nout vec4 unrealFragColor;\nin vec2 texCoord;")));
+    const QString modern = QStringLiteral("#version 330 core\nin vec2 texCoord;\nout vec4 color;\nvoid main() {}\n");
+    EXPECT_EQ(CRTRenderer::coreFragmentSource(modern), modern);
 }

@@ -1,0 +1,174 @@
+{
+ "key": "crt-gdv-mini",
+ "preset": "crt/crt-gdv-mini.slangp",
+ "passes": [
+  {
+   "source": "crt/shaders/crt-gdv-mini.slang",
+   "alias": null,
+   "filter": "Nearest",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Viewport",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Viewport",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "FinalViewportSize": "vec4",
+    "OutputSize": "vec4",
+    "SourceSize": "vec4",
+    "OriginalSize": "vec4",
+    "brightboost": "float",
+    "sat": "float",
+    "scanline": "float",
+    "beam_min": "float",
+    "beam_max": "float",
+    "h_sharp": "float",
+    "shadowMask": "float",
+    "masksize": "float",
+    "mcut": "float",
+    "maskDark": "float",
+    "maskLight": "float",
+    "CGWG": "float",
+    "csize": "float",
+    "warpX": "float",
+    "warpY": "float",
+    "gamma_out": "float",
+    "vignette": "float"
+   }
+  }
+ ],
+ "textures": [],
+ "parameters": {
+  "gdv_mini_title": {
+   "description": "[ GDV MINI - DariusG ]:",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "brightboost": {
+   "description": "Bright boost",
+   "initial": 1.0,
+   "minimum": 0.5,
+   "maximum": 2.0,
+   "step": 0.05
+  },
+  "sat": {
+   "description": "Saturation adjustment",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.05
+  },
+  "scanline": {
+   "description": "Scanline Adjust",
+   "initial": 8.0,
+   "minimum": 1.0,
+   "maximum": 12.0,
+   "step": 1.0
+  },
+  "beam_min": {
+   "description": "Scanline Dark",
+   "initial": 1.35,
+   "minimum": 0.5,
+   "maximum": 3.0,
+   "step": 0.05
+  },
+  "beam_max": {
+   "description": "Scanline Bright",
+   "initial": 1.05,
+   "minimum": 0.5,
+   "maximum": 3.0,
+   "step": 0.05
+  },
+  "h_sharp": {
+   "description": "Horizontal Sharpness",
+   "initial": 2.0,
+   "minimum": 1.0,
+   "maximum": 5.0,
+   "step": 0.05
+  },
+  "gamma_out": {
+   "description": "Gamma out",
+   "initial": 0.5,
+   "minimum": 0.2,
+   "maximum": 0.6,
+   "step": 0.01
+  },
+  "shadowMask": {
+   "description": "CRT Mask: 0:CGWG, 1-4:Lottes, 5-6:Trinitron",
+   "initial": 0.0,
+   "minimum": -1.0,
+   "maximum": 10.0,
+   "step": 1.0
+  },
+  "masksize": {
+   "description": "CRT Mask Size (2.0 is nice in 4k)",
+   "initial": 1.0,
+   "minimum": 1.0,
+   "maximum": 2.0,
+   "step": 1.0
+  },
+  "mcut": {
+   "description": "Mask 5-7-10 cutoff",
+   "initial": 0.2,
+   "minimum": 0.0,
+   "maximum": 0.5,
+   "step": 0.05
+  },
+  "maskDark": {
+   "description": "Lottes maskDark",
+   "initial": 0.5,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.1
+  },
+  "maskLight": {
+   "description": "Lottes maskLight",
+   "initial": 1.5,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.1
+  },
+  "CGWG": {
+   "description": "CGWG Mask Str.",
+   "initial": 0.3,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.1
+  },
+  "warpX": {
+   "description": "CurvatureX (default 0.03)",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.25,
+   "step": 0.01
+  },
+  "warpY": {
+   "description": "CurvatureY (default 0.04)",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.25,
+   "step": 0.01
+  },
+  "vignette": {
+   "description": "Vignette On/Off",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  }
+ }
+}

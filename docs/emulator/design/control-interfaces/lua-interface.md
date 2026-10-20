@@ -1268,9 +1268,9 @@ emu.window_display()                 -- GUI window display settings: { backend (
                                      --   gpu, crt, crt_profile, crt_profiles = {...}, blending (temporal blending),
                                      --   blending_frames (2..5), blending_weights ("equal" / "exponential"), emulator
                                      --   (the instance the window shows) }; headless { ok = false, error, kind = "no-window" }
-emu.window_display_set({crt_profile = "shadow-mask", blending = true})  -- any of gpu, crt, blending (boolean),
-                                     --   crt_profile (none, basic, aperture, shadow-mask, slot-mask, megatron,
-                                     --   shader:<name> with the GPU; other
+emu.window_display_set({crt_profile = "basic", blending = true})  -- any of gpu, crt, blending (boolean),
+                                     --   crt_profile (one of crt_profiles: none, basic, ...,
+                                     --   shader:<name> (a preset or a custom shader) with the GPU; other
                                      --   than none switches CRT on), blending_frames, blending_weights; applied the
                                      --   way the View menu does. Returns the settings after the change, or
                                      --   { ok = false, error, kind = "bad-parameter" / "no-window" / "unavailable" }

@@ -4,10 +4,12 @@
 #include <QApplication>
 #include <QMessageBox>
 #include <QSettings>
+#include <algorithm>
 #include <set>
 
 #include "debugger/vdac2/ft812debugwindow.h"
 #include "widgets/crtprofiles.h"
+#include "widgets/slangpresetrunner.h"
 
 #include "base/featuremanager.h"
 #include "emulator/buildinfo.h"
@@ -521,12 +523,27 @@ void MenuManager::populateCrtProfileMenu()
         index++;
     }
 
-    // Add separator and custom shaders section
+    // The libretro presets built in (GPU only), then the custom shaders
+    _crtProfileMenu->addSeparator();
+    const QStringList presets = SlangPresetRunner::availablePresets();
+    for (const QString& presetName : presets)
+    {
+        QAction* action = _crtProfileMenu->addAction(presetName);
+        action->setCheckable(true);
+        action->setStatusTip(tr("libretro shader preset %1 (GPU acceleration only)").arg(presetName));
+        action->setData(-1);
+        action->setProperty("shaderName", presetName);
+        _crtProfileGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, presetName]() { emit crtShaderChanged(presetName); });
+    }
     _crtProfileMenu->addSeparator();
 
     // Scan for custom shaders
     CRTShaderManager::instance().scanShaderDirectory();
     auto customShaders = CRTShaderManager::instance().availableShaders();
+    customShaders.erase(std::remove_if(customShaders.begin(), customShaders.end(),
+                                       [&presets](const QString& name) { return presets.contains(name); }),
+                        customShaders.end());
 
     if (!customShaders.empty())
     {

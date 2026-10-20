@@ -7,8 +7,11 @@
 #include <QOpenGLWindow>
 #include <QOpenGLFunctions>
 #include <QOpenGLTexture>
+#include <QOpenGLBuffer>
+#include <QOpenGLVertexArrayObject>
 #include <QOpenGLShaderProgram>
 #include <QImage>
+#include <QSurfaceFormat>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -18,6 +21,7 @@
 #include "crtprofiles.h"
 #include "crtrenderer.h"
 #include "framehistory.h"
+#include "slangpresetrunner.h"
 
 class Emulator;
 
@@ -31,6 +35,12 @@ class DeviceScreenGLWindow : public QOpenGLWindow, protected QOpenGLFunctions
 public:
     explicit DeviceScreenGLWindow(QWindow* parent = nullptr);
     ~DeviceScreenGLWindow() override;
+
+    /// A hardware OpenGL 3.3 core context (4.1 on macOS) can be created, not llvmpipe, GDI Generic, ...: otherwise
+    /// the software screen
+    static bool probeGPUAcceleration();
+    /// The window's surface format: 3.3 core, double buffered, vsync
+    static QSurfaceFormat surfaceFormat();
 
     /// `aspect`: width : height the picture is drawn in; 0 = the CRT frame's 352:288 (every machine raster).
     /// A video card's own picture (the VDAC2's FT812) has square pixels and gives its own
@@ -92,10 +102,12 @@ public:
     CRTProfile crtProfile() const { return _crtParams.profile; }
     const CRTProfileParams& crtParams() const { return _crtParams; }
 
-    /// A fragment shader from CRTShaderManager in place of the built-in CRT (legacy uniforms: tex, texSize, outputSize,
-    /// maskType, curvature, ...). An empty name goes back to the built-in one. @return false: not found or not compiled
+    /// A libretro preset built in (SlangPresetRunner::availablePresets, multi-pass on SlangPresetRunner) or a fragment
+    /// shader from CRTShaderManager (legacy uniforms: tex, texSize, outputSize, maskType, curvature, ...) in place of
+    /// the built-in CRT. An empty name goes back to the built-in one. @return false: not found or not compiled
     bool loadCustomShader(const QString& name);
-    QString customShader() const { return _customShaderName; }
+    QString customShader() const { return _slangPresetName.isEmpty() ? _customShaderName : _slangPresetName; }
+    /// The presets, then the custom shaders
     static std::vector<QString> availableShaders();
 
     void setTemporalBlendingEnabled(bool enabled);
@@ -123,9 +135,12 @@ private:
     void updateTexture();
     void setupVSync();
     bool compileCustomShader(const QString& source);  ///< the context current; empty: none
-    void drawQuad(float srcX1, float srcY1, float srcX2, float srcY2);
-    void drawComposedCrt(const QRect& picture, int glY);
+    bool applySlangPreset(const QString& name);       ///< the context current; empty: none
+    /// The viewport-filling quad with the bound program, the texture coordinates from (x1, y1) top left to (x2, y2)
+    void drawQuad(QOpenGLShaderProgram* program, float srcX1, float srcY1, float srcX2, float srcY2);
+    void drawComposedCrt(const QRect& picture);
     void drawCustomCrt(const QRect& picture);
+    void drawSlangPreset(const QRect& picture, int glY);
 
     QRectF _devicePixelsRect;
     QImage* _devicePixels = nullptr;
@@ -147,11 +162,15 @@ private:
     QOpenGLTexture* _gradedTexture = nullptr;
     QOpenGLTexture* _indexTexture = nullptr;
     QOpenGLTexture* _factorTexture = nullptr;
+    QOpenGLVertexArrayObject _quadVao;
+    QOpenGLBuffer _quadBuffer{QOpenGLBuffer::VertexBuffer};
     CRTRenderer _crtRenderer;
     bool _crtEnabled = false;
     CRTProfileParams _crtParams;
     QString _customShaderName;
     QString _customShaderSource;
+    std::unique_ptr<SlangPresetRunner> _slangRunner;  ///< the chosen preset, loaded (its GL objects need the context)
+    QString _slangPresetName;
 
     FrameHistory _frameHistory;
     QImage _blendedFrame;
