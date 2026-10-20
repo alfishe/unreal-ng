@@ -1,5 +1,6 @@
 #include "screenzx.h"
 #include "emulator/video/videofamily.h"
+#include "emulator/video/zx/cellexpand.h"
 #include "emulator/video/zx/zxgeometry.h"
 
 #include <algorithm>
@@ -975,14 +976,9 @@ void ScreenZX::DrawRangeZXImpl(uint32_t fromTstate, uint32_t toTstate)
                     }
                     const uint32_t ink = inkColors[attributes];
                     const uint32_t paper = paperColors[attributes];
-                    uint32_t* const cellOut = out + 8u * c;
-                    for (uint32_t i = 0; i < 8; i++)
-                    {
-                        const uint32_t mask = static_cast<uint32_t>(-static_cast<int32_t>((pixels >> (7 - i)) & 1));
-                        cellOut[i] = (ink & mask) | (paper & ~mask);
-                        if constexpr (PlaneB)
-                            planeB[pixel + 8u * c + i] = static_cast<uint16_t>((inkB & mask) | (paperB & ~mask));
-                    }
+                    cellexpand::Expand8(pixels, ink, paper, out + 8u * c);
+                    if constexpr (PlaneB)
+                        cellexpand::Expand8(pixels, inkB, paperB, planeB + pixel + 8u * c);
                 }
                 t += 4u * cells - 1u;
                 continue;

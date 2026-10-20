@@ -744,6 +744,7 @@ public:
     StepResult StepInstruction(bool skipBreakpoints = false);
     /// StepInstruction with rare work around the step (the per-step gate was non-zero)
     StepResult StepInstructionWithWork(uint32_t work, bool skipBreakpoints);
+    bool InterruptsIdle() const;  // the step needs no interrupt decision (StepInstruction)
 
     /// LD R,A: the R it replaced minus the new one (7 bits, accumulated), so
     /// that an R delta across a step still counts the step's fetches (the
