@@ -113,6 +113,18 @@ Also: `pentagon-case-top-owner.png` (the owner's black "PENTAGON" computer case 
 
 Also: `orel-bk08-chm-4.jpg`, `-5.jpg` (the manual's covers), `-6.jpg` (the box).
 
+## Profi (`profi`, `profiplus`)
+
+![2D](../../../tools/poc/031-authentic-osd-keyboards/atlas/profi.photo.atlas.png)
+
+![2D](../../../tools/poc/031-authentic-osd-keyboards/atlas/profiplus.photo.atlas.png)
+
+| Photo | Use |
+|---|---|
+| ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/profi-v3-in-bk0010-case-speccyinfo-screenshot.jpg) `clones/profi-v3-in-bk0010-case-speccyinfo-screenshot.jpg` | top, 686 px: the only real Profi keyboard, the БК-0010 case and the badge (measured) |
+| ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/profi-v50-keyboard-schematic-album-p29.png) `clones/profi-v50-keyboard-schematic-album-p29.png` | the album's v5.0 keyboard: the keys, their order and wiring (a drawing, not to scale) |
+| ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/profi-v32-homemade-reed-kbd-es1840-caps-zxpk26525.jpg) `clones/profi-v32-homemade-reed-kbd-es1840-caps-zxpk26525.jpg` | a home-made reed keyboard with ЕС-1840 caps (not drawn) |
+
 ## ZX Spectrum Next (`zxnext`)
 
 ![2D](../../../tools/poc/031-authentic-osd-keyboards/atlas/zxnext.photo.atlas.png)
@@ -133,7 +145,6 @@ Also: `next-issue2-render-commons.jpg`, `next-topdown-festival-commons.jpg`, `ne
 
 | Keyboard | Photos |
 |---|---|
-| Profi | `clones/profi-v50-keyboard-schematic-album-p29.png`, `clones/profi-v3-in-bk0010-case-speccyinfo-screenshot.jpg`, `clones/profi-v32-homemade-reed-kbd-es1840-caps-zxpk26525.jpg` |
 | PC keyboards | `pc/xt-83-ibm-model-f-top.jpg`, `pc/at-84-ibm-model-f-top.jpg`, `pc/genius-kb-06xe-beige.jpg`, `pc/russian-ps2-genius-cyrillic-legends.jpg`, `pc/ms7004-soviet-keyboard.jpg` |
 
 ## Missing
