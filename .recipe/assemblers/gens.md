@@ -249,3 +249,5 @@ stays out of the text until Enter. The asm-synchronizer reads the text live (des
 | `K Invalid colour` on a BASIC screen | GENS crashed (seen while it printed an error line) | reset and start GENS again |
 | Two labels clash that look different | only the first 6 characters count | rename |
 | `$` in `DEFW A,$` is not the line's address | GENS moves `$` per item | expected (the sjasmplus conversion writes `$+2`) |
+| GENS1's `P` returns at once, nothing saved | GENS1 was put into memory without its BASIC loader: `P` rewrites the loader's line 2 into a `SAVE` and runs it | load GENS1 from `HiSoftDevpac.tzx` with `LOAD ""`, then `RUN`; the ROM asks for a key before it saves |
+| `*F NAME` from a `T` tape: a line with a large number and graphics, `*ERROR* 07`, or wrong bytes with no error | GENS4 V4.0's `T` writes no `#00 #00` after a block's lines; `*F` reads the buffer's old bytes as lines (research-gens.md §8.2) | clear the include buffer before `T` (`#89ED`, the buffer size, for GENS4 at 26000), or convert the file with `zxasm` and assemble one text |

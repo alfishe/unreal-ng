@@ -24,6 +24,8 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib'))
 import zxdisk  # noqa: E402
 
+TIMEOUT = 60   # seconds an assembler may take on one source
+
 
 def includes(directory, name):
     """The names a converted file INCLUDEs (lower case, without .asm)"""
@@ -68,7 +70,10 @@ def sjasmplus_image(sjasmplus, directory, name):
 
 def pasmo_image(pasmo, directory, name):
     """(start, bytes) pasmo built, or an error text"""
-    run = subprocess.run([pasmo, '-d', name, '__pasmo.bin'], cwd=directory, capture_output=True, text=True, errors='replace')
+    try:
+        run = subprocess.run([pasmo, '-d', name, '__pasmo.bin'], cwd=directory, capture_output=True, text=True, errors='replace', timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return f'pasmo did not end in {TIMEOUT} s'
     errors = [line for line in run.stderr.split('\n') if line.startswith('ERROR')]
     if run.returncode != 0 or errors:
         return errors[0] if errors else 'pasmo failed'
@@ -87,7 +92,11 @@ def z80asm_image(z80asm, directory, name):
     for f in os.listdir(directory):
         if f.startswith(base):
             os.remove(os.path.join(directory, f))
-    run = subprocess.run([z80asm, '-b', '-m', f'-o={base}.bin', name], cwd=directory, capture_output=True, text=True, errors='replace')
+    try:   # z80asm's DEFL is a text macro: names assigned from each other may never end (a warning of the backend)
+        run = subprocess.run([z80asm, '-b', '-m', f'-o={base}.bin', name], cwd=directory, capture_output=True, text=True, errors='replace',
+                             timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return f'z80asm did not end in {TIMEOUT} s'
     errors = [line for line in (run.stdout + run.stderr).split('\n') if ': error:' in line]
     if run.returncode != 0 or errors:
         return errors[0] if errors else 'z80asm failed'

@@ -1268,6 +1268,8 @@ int main(int argc, char** argv)
         convertOptions.targetVersion = args.toVersion;
         const ConvertResult converted = Convert(decoded.document, args.to, convertOptions);
         PrintDiagnostics(converted.diagnostics);
+        if (!converted.ok && converted.document.lines.empty())
+            return 1;   // nothing converted (no frontend or backend): no empty file left behind
         EncodeOptions encodeOptions;
         if (!OutputEncodeOptions(args, encodeOptions))
             return 2;
