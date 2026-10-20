@@ -8,7 +8,9 @@ restart unreal-qt, or it judges the old code.
     expression-fuzz.py <target> <assembler disk> --seed 1 [--lines 100] [--ops +,-,*,&] [--port 8395]
         [--sjasmplus PATH] [--zxasm PATH] [--work scratch/expression-fuzz]
 
-Targets: storm (STORM_13.TRD), storm13i (STORM13I.SCL), tasm (TASM_412.SCL), alasm (ALASM509.TRD), xas (XAS7_447.trd).
+Targets: storm (STORM_13.TRD), storm13i (STORM13I.SCL), tasm (TASM_412.SCL), alasm (ALASM509.TRD), xas (XAS7_447.trd);
+with --template and an idle template of unreal-asm testdata/templates any of them and zasm (--media its disk), masm,
+gens, zeus, zeus7e, primus (--media), lasergenius, prometheus, pasm.
 Labels (EQU above, one defined below), numbers, unary - ~ high low !, binary + - * / % & | ^ << >> and the
 comparisons and && || by default (--ops narrows them). Exit 0 when all words agree.
 """
@@ -25,6 +27,15 @@ TARGETS = {
     'tasm': ('tasm412', ['--wait', '15'], 0x6200, ['tasm', '4.12']),   # TASM's stack is at #617C
     'alasm': ('alasm509', [], 0x6000, ['alasm']),                         # ALASM compiles #8000-#BFFF into its page
     'xas': ('xas', ['--boot', 'XAS7.447', '--assembler', 'xas-7.447', '--wait', '10'], 0x6000, ['xas']),   # 100 lines take XAS more than 3 s
+    'zasm': ('zasm315', ['--wait', '10'], 0x6000, ['zxasm', '3.15']),               # --media: its disk with STUB.a
+    'masm': ('masm11', ['--wait', '20'], 0x6000, ['masm', '1.1']),
+    'gens': ('gens4', ['--wait', '30'], 0x6000, ['gens', '2']),
+    'zeus': ('zeus1983', ['--wait', '60'], 0x6000, ['zeus', '1983']),
+    'zeus7e': ('zeus7e', ['--boot', 'ZEUSv7.E', '--wait', '30'], 0xC000, ['zeus', 'pht']),   # v7.E itself lies low
+    'primus': ('primus', ['--wait', '30'], 0x6000, ['zeus', 'primus']),           # --media: its disk
+    'lasergenius': ('lasergenius', ['--wait', '20'], 0x6900, ['lasergenius']),
+    'prometheus': ('prometheus', ['--wait', '10'], 0xEA60, ['prometheus']),
+    'pasm': ('pasm', ['--wait', '45'], 0x6000, ['pasm']),
 }
 LABELS = {'alpha': 1234, 'beta': 0x8001, 'gamma': 7, 'delta': 300}
 
@@ -67,8 +78,18 @@ def main():
     p.add_argument('--sjasmplus', default=os.environ.get('UNREAL_ASM_SJASMPLUS', 'sjasmplus'))
     p.add_argument('--zxasm', default=os.path.join(ROOT, 'cmake-build-agent-release/bin/zxasm'))
     p.add_argument('--work', default=os.path.join(ROOT, 'scratch/expression-fuzz'))
+    p.add_argument('--template', action='store_true', help='the disk is an idle template snapshot (inject-oracle --template)')
+    p.add_argument('--media', help='with --template: the assembler disk put back in (ZAsm, Primus)')
+    p.add_argument('--wait', help="seconds the assembler gets (default: the target's)")
     a = p.parse_args()
     profile, options, address, dialect = TARGETS[a.target]
+    options = list(options)
+    if a.wait:
+        options += ['--wait', a.wait]
+    if a.template:
+        options = [o for i, o in enumerate(options) if o != '--boot' and (i == 0 or options[i - 1] != '--boot')] + ['--template']
+    if a.media:
+        options += ['--media', a.media]
     os.makedirs(a.work, exist_ok=True)
     rnd = random.Random(a.seed)
     ops = a.ops.split(',') if a.ops else OPS

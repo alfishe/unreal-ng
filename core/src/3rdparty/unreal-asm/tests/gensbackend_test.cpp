@@ -203,6 +203,8 @@ TEST(GensBackend_Test, ExpressionsAreChainsInSignedWords)
         "        LD A,5 ^ 3\n"
         "        LD A,5 | 3\n"
         "        LD A,ixh\n"
+        "        LD HL,lab*2\n"
+        "        LD HL,lab<<1\n"
         "        IF ext != 5\n"
         "        DB 1\n"
         "        ENDIF\n"
@@ -215,6 +217,7 @@ TEST(GensBackend_Test, ExpressionsAreChainsInSignedWords)
     EXPECT_TRUE(Contains(lines, "LD A,5!3")) << text;
     EXPECT_TRUE(Contains(lines, "LD A,5@3")) << text;
     EXPECT_TRUE(Contains(lines, "DEFB #DD,#7C")) << text;   // no IXH in GENS
+    EXPECT_EQ(std::count(lines.begin(), lines.end(), "LD HL,#C000"), 2) << text;   // a product above 32767 is *ERROR* 15
     EXPECT_TRUE(Contains(lines, "IF EXT-5")) << text;
     EXPECT_TRUE(Contains(lines, "END")) << text;
     EXPECT_TRUE(Contains(lines, "DEFM \"text\"")) << text;

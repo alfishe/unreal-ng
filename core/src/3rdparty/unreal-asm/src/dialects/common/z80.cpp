@@ -151,4 +151,22 @@ std::optional<Z80nForm> Z80nEncoding(const ir::Statement& s)
     if (m == "lddrx") return form(0xBC);
     return std::nullopt;
 }
+
+uint32_t StopAtCarryProduct(uint32_t multiplicand, uint32_t multiplier)
+{
+    const uint32_t x = multiplicand & 0xFFFF, y = multiplier & 0xFFFF;
+    uint32_t r = 0;
+    bool started = false;
+    for (int bit = 15; bit >= 0 && r <= 0xFFFF; --bit)
+    {
+        const bool set = (y >> bit) & 1;
+        started = started || set;
+        if (!started)
+            continue;
+        r *= 2;
+        if (set && r <= 0xFFFF)
+            r += x;
+    }
+    return r & 0xFFFF;
+}
 }  // namespace unrealasm::dialects::z80

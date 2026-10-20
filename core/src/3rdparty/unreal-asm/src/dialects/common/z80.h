@@ -31,6 +31,9 @@ std::string Lower(std::string_view text);
 std::string Upper(std::string_view text);
 /// Upper-case hex digits of a value, at least `digits` of them (zero-padded)
 std::string HexDigits(uint64_t value, int digits);
+/// A 16-bit product as Primus 2.9 and ZAsm 3.15 make it: by the multiplier's bits from the top (r*2, +multiplicand),
+/// stopping at the first carry out of 16 bits with the value so far (both measured on 84-100 products)
+uint32_t StopAtCarryProduct(uint32_t multiplicand, uint32_t multiplier);
 
 /// A Z80N instruction's bytes: ED, `code`, then `layout`: 'n' nothing, 'b' a byte (operand 0), 'B' two bytes (operands 0
 /// and 1), 'w' a word low byte first (the last operand), 'W' a word high byte first (PUSH nn)
