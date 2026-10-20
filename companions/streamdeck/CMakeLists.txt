@@ -1,6 +1,7 @@
 # The Stream Deck companion (docs/inprogress/2026-10-19-streamdeck-integration): libsdb (models, HID protocol, images,
-# scenario engine, automation), the daemon unreal-streamdeck, the developer CLI sdctl and the tests. No Qt, no link
-# to the core. Added from the root CMakeLists.txt under UNREAL_STREAMDECK.
+# scenario engine, automation), the daemon unreal-streamdeck, the developer CLI sdctl and the tests (no Qt, no link
+# to the core), and Stream Deck Studio (studio/, Qt, when Qt is found). Added from the root CMakeLists.txt under
+# UNREAL_STREAMDECK.
 
 # Build settings are the project's: the C++ standard, build type, LTO and the macOS deployment target come from the
 # root CMakeLists.txt; the warnings are the core's (core/src/CMakeLists.txt), applied to our sources, not to 3rdparty.
@@ -79,3 +80,6 @@ file(GLOB SD_TEST_SOURCES CONFIGURE_DEPENDS ${SD_DIR}/tests/*.cpp)
 add_executable(streamdeck-tests EXCLUDE_FROM_ALL ${SD_TEST_SOURCES})
 target_compile_options(streamdeck-tests PRIVATE ${SD_WARNINGS})
 target_link_libraries(streamdeck-tests PRIVATE sdb)
+
+# ---------------------------------------------------------------- Stream Deck Studio (Qt; skipped without Qt)
+add_subdirectory(studio)
