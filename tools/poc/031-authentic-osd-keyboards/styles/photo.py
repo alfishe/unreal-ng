@@ -310,6 +310,16 @@ CASE = {"panel": case_panel, "fddpanel": case_fddpanel, "teeth": case_teeth, "da
         "hump": case_hump, "fins": case_fins}
 
 
+def lit(pic, key):
+    """The key's colour as the photo shows it: the light falls off from the top left across the board, and no two caps
+    of an old keyboard have quite the same tint (a fixed spread per key, ±1.5 %)"""
+    W, H = pic.keyboard["size"]
+    x, y, w, h = key.rect
+    falloff = 1.03 - 0.06 * (x + w / 2) / W - 0.04 * (y + h / 2) / H
+    spread = (sum(map(ord, key.id)) * 37 % 31 - 15) / 1000
+    return shade(key.color, falloff + spread)
+
+
 def cap(pic, key):
     x, y, w, h = key.rect
     if key.cap == "rubber":
@@ -324,7 +334,7 @@ def cap(pic, key):
     if key.cap == "mech":  # a low black cap of a Soviet mechanical switch, its sticker on the top face
         return hard(pic, x, y, w, h, key.color, inset=(0.9, 0.6, 0.9, 1.3), radius=1.0, top_radius=1.2, gloss=0.05)
     if key.cap == "soviet":
-        return soviet(pic, x, y, w, h, key.color, key.shape)
+        return soviet(pic, x, y, w, h, lit(pic, key), key.shape)
     if key.cap == "amstrad":
         return amstrad(pic, x, y, w, h, key.color, key.shape)
     raise ValueError(f"{key.id}: cap {key.cap}")

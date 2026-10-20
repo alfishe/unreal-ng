@@ -94,7 +94,7 @@ fixed in `core/` after the POC, as its own task.
 | `zxplus2a` | PLUS2A | done, approved by the owner (2026-10-19) | — | — |
 | `zxplus3` | PLUS3 | done, approved by the owner (2026-10-19) | — | — |
 | `pentagon` | PENTAGON (the 40-key sticker keyboard on its bare plate, refs-clones §1.2) | drawn, shown to the owner | — | — |
-| `pentagon2plus` | PENTAGON (the second variant: the "2+" black case with the 58-key layout, the owner's photo) | drawn, shown to the owner | — | — |
+| `pentagon2plus` | PENTAGON (the second variant: the "2+" black case with the 58-key layout, the owner's photo) | done, approved by the owner (2026-10-20) | — | — |
 | `zxnext` | NEXT | done, approved by the owner (2026-10-19) | — | — |
 
 ## Files

@@ -18,10 +18,11 @@ KEYBOARD = {"id": "pentagon2plus", "name": "Pentagon 128 2+", "models": ["PENTAG
 U = 19.0
 X0, Y0 = 30.0, 50.0      # the key block's top left
 CASE = "#1f2225"
-CREAM, GREY, RED = "#e2d9bf", "#b4b3ac", "#e0403a"
-INK = "#1c1c1c"
+CREAM, GREY, RED = "#eedfb2", "#b4b3ac", "#e0403a"
+INK = "#2b2722"  # the black print reads warm on the cream
 LOGO = "#c2da62"
-WORD, SYMBOL = "narrow-bold", "sans-bold"
+WORD, SYMBOL = "din-condensed", "sans-bold"
+NARROW = 1.15  # the print is a heavy DIN-like grotesque, less condensed than DIN Condensed
 
 # Top left, top right, the keyword beside the letter, the E-mode word on the skirt (as printed)
 LETTERS = {
@@ -51,30 +52,30 @@ CREAM_KEYS = set(LETTERS) | set(DIGITS) | set(ARROWS) | set(';",.')
 def top(text, x, anchor):
     """An item on the cap's top: a symbol large, a word small"""
     word = any(c.isalpha() for c in text) and len(text) > 1
-    size = 1.6 if word else 3.2
+    size = 2.4 if word else 3.2
     face = WORD if word else SYMBOL
-    squeeze = min(1.0, round(7.0 / max(text_width(text, size, face), 0.01), 3)) if word else 1.0
+    squeeze = min(NARROW, round(7.0 / max(text_width(text, size, face), 0.01), 3)) if word else 1.0
     return Legend(text, "symbol", "cap", x, 0.2 if word else 0.26, size, face, INK, anchor, squeeze=squeeze)
 
 
 def front(text):
     """The E-mode word or the colour, printed on the front slope under the top face"""
-    return Legend(text, "extend", "cap", 0.5, 1.36, 2.0, WORD, INK,
-                  squeeze=min(1.0, round(12.0 / text_width(text, 2.0, WORD), 3)))
+    return Legend(text, "extend", "cap", 0.5, 1.4, 3.0, WORD, INK,
+                  squeeze=min(NARROW, round(12.0 / text_width(text, 3.0, WORD), 3)))
 
 
 def legends(name):
     if name in LETTERS:
         left, right, keyword, extend = LETTERS[name]
-        result = [Legend(name, "main", "cap", 0.1, 0.8, 4.2, SYMBOL, INK, "start"),
-                  Legend(keyword, "keyword", "cap", 0.94, 0.8, 1.5, WORD, INK, "end",
-                         squeeze=min(1.0, round(6.0 / text_width(keyword, 1.5, WORD), 3))),
+        result = [Legend(name, "main", "cap", 0.1, 0.84, 6.0, WORD, INK, "start", squeeze=1.25),
+                  Legend(keyword, "keyword", "cap", 0.94, 0.84, 2.4, WORD, INK, "end",
+                         squeeze=min(NARROW, round(6.0 / text_width(keyword, 2.4, WORD), 3))),
                   front(extend)]
         result += [top(t, x, a) for t, x, a in ((left, 0.08, "start"), (right, 0.92, "end")) if t]
         return result
     if name in DIGITS:
         left, right, block, colour = DIGITS[name]
-        result = [Legend(name, "main", "cap", 0.1, 0.8, 4.2, SYMBOL, INK, "start"), top(left, 0.08, "start"),
+        result = [Legend(name, "main", "cap", 0.1, 0.84, 5.8, WORD, INK, "start", squeeze=1.25), top(left, 0.08, "start"),
                   top(right, 0.92, "end")]
         if block is not None:
             result.append(Legend("", "graphic", "cap", 0.7, 0.66, 3.0, color=INK, glyph=f"block:{block}"))
@@ -84,7 +85,7 @@ def legends(name):
     if name in NAMED:
         lines = NAMED[name]
         ys = [0.55] if len(lines) == 1 else [0.42, 0.8]
-        return [Legend(t, "main", "cap", 0.5, y, 2.6, WORD, INK) for t, y in zip(lines, ys)]
+        return [Legend(t, "main", "cap", 0.5, y, 3.2, WORD, INK, squeeze=NARROW) for t, y in zip(lines, ys)]
     if name in ARROWS:
         return [Legend("", "main", "cap", 0.5, 0.55, 4.4, color=INK, glyph=f"arrow:{ARROWS[name]}")]
     if name == "ENTER":  # on the upright
