@@ -7,7 +7,7 @@
 3. as a Flatpak.
 
 Which SDL3 does each environment bring?
-([integration.md §7](../../../../docs/inprogress/2026-10-08-steamdeck-client/integration.md))
+([integration.md §7](../../../docs/inprogress/2026-10-08-steamdeck-client/integration.md))
 
 **Pass.** All three run, with no host-library leaks.
 
@@ -23,9 +23,9 @@ Which SDL3 does each environment bring?
 ## Run
 
 ```bash
-tools/poc/023-steamdeck-client/build.sh
-tools/poc/023-steamdeck-client/p19-runtime-packaging/check-deps.sh
-DECK=deck@steamdeck.local tools/poc/023-steamdeck-client/deploy.sh
+apps/steamdeck-client/build.sh
+apps/steamdeck-client/p19-runtime-packaging/check-deps.sh
+DECK=deck@steamdeck.local apps/steamdeck-client/deploy.sh
 # On the Deck, in Game Mode:
 #   (a) non-Steam game: ~/steamdeck-poc/p08-input-inspector
 #   (b) non-Steam game: ~/steamdeck-poc/run-in-slr.sh, Launch Options: ./p08-input-inspector
