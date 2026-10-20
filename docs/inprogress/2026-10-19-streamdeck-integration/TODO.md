@@ -13,9 +13,9 @@ Depends on the control-surfaces phases (branch `control-surfaces-design`): S1 co
 | # | Phase | Needs | State |
 |:--|:--|:--|:--|
 | SD0 | Owner decisions: layout and names (L-1 … L-6), targeting (T-1, T-2), Q-1 … Q-3 | | done 2026-10-19 |
-| SD1 | Import `streamdeck-bridge` + `streamdeck-emulator` into the chosen path, off by default, own tests green | SD0 | open |
-| SD2 | Vendored dependencies (hidapi, JPEG POC, json, WebSocket client), project flags, zero warnings on macOS | SD1 | open |
-| SD3 | Device multiplexer, wire v2, studio as a client (no USB), late-join replay | SD2 | open |
+| SD1 | Import the library, sdctl, the daemon (`run`, `pair`, `scenario`) and the tests into `companions/streamdeck/` (`UNREAL_STREAMDECK=OFF` by default), the project's style and build settings, hidapi + json embedded, docs `docs/companions/streamdeck/` (HID reference, performance), notices; 838 checks green | SD0 | done 2026-10-20 (turbojpeg still from the system: SD2) |
+| SD2 | JPEG POC + vendored encoder (removes the system turbojpeg and its link warning), WebSocket client; zero warnings on gcc / MSVC / MinGW | SD1 | open |
+| SD3 | Device multiplexer, wire v2, the studio imported as a client (no USB), late-join replay; sdctl `emu-*` commands follow wire v2 | SD2 | open |
 | SD4 | Core: `TargetState` + view registration in unreal-qt and the video wall; `target`, `activity`, readout vocabulary, catalogue fields | S1, S2, S4 | open |
 | SD5 | Daemon surface client, `action` kind, state-bound faces, contexts on menus, activity; default scenario v2 + its generator | SD3, SD4 | open |
 | SD6 | Registry actions for the scenario's REST groups ([migration.md §4](migration.md#4-rest-paths-to-action-ids)), about 40 | S1 | open |
