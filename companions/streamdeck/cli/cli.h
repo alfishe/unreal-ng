@@ -71,6 +71,7 @@ int CmdPair(const Args& a);
 int CmdHidTest(const Args& a);
 int CmdRun(const Args& a);
 int CmdScenario(const Args& a);
+int CmdWs(const Args& a);
 
 // Exit codes shared by the set-* commands.
 enum Exit : int

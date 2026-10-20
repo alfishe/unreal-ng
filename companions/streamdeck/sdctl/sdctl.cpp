@@ -296,6 +296,7 @@ int Usage()
         "keys|all|panel] [--rows 0-2 --cols 0-3] [--no-trim]   (whole panel incl. strip, one image)\nsdctl sleep "
         "[seconds] | probe | hid-test [--only N]\nsdctl brightness <0-100> | clear | reset\nsdctl lcd-test "
         "<orient|tiles|sweep> [...]\nsdctl bench <keys|matrix|lcd|feature|mixed> [...]\n"
+        "sdctl ws <ws://host:port/path> [message ...] [--token T] [--seconds N] [--count N]   (WebSocket check)\n"
         "Stream Deck Studio (any command: --device emu[:host:port] = the studio only, --mirror [host:port] = real deck "
         "+ studio,\n"
         "  the default when the studio runs; --no-mirror = the real deck alone):\n"
@@ -313,6 +314,8 @@ int main(int argc, char** argv)
     const auto a = cli::Parse(argc, argv, 1);
     try
     {
+        if (cmd == "ws")
+            return cli::CmdWs(a);
         if (cmd == "info")
             return CmdInfo(a);
         if (cmd == "probe")
