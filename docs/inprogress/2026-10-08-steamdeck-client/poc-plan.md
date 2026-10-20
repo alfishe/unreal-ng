@@ -10,11 +10,12 @@ Each POC answers one question that the design takes for granted, before the phas
 on it. A POC is throw-away code. Its result is one row in [§3](#3-results), with a verdict:
 **confirmed**, **changed the design** (the affected document is updated), or **blocked**.
 
-**Location.** All experiments live under [`tools/poc/023-steamdeck-client/`](../../../tools/poc/),
+**Location.** All experiments live under [`apps/steamdeck-client/`](../../../apps/steamdeck-client/),
 one subdirectory per experiment, named `pNN-<name>/` (for example `p01-sdl-gpu-latency/`). Each
 has its own `README.md` with the goal, how to build and run it, and the measurements.
-`tools/poc/023-steamdeck-client/README.md` indexes every experiment with its status, and the
-global `tools/poc/README.md` lists the folder. The code is built with `BUILD_POC=ON`. Core changes
+`apps/steamdeck-client/README.md` indexes every experiment with its status, and the
+global `tools/poc/README.md` keeps number 023 pointing there (moved from `tools/poc/` on 2026-10-20). The code is
+built with `BUILD_STEAMDECK_POC=ON` (`build.sh` sets it). Core changes
 needed by a POC (C-1, C-2, C-4) are made on the POC branch, not on master, until they pass.
 
 ## Contents

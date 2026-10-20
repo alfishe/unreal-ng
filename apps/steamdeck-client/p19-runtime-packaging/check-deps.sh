@@ -3,14 +3,14 @@
 # Runs ldd inside the steamrt4 SDK container (the same image build.sh uses) and lists every library
 # that does not resolve, plus the SDL3 version the runtime brings.
 #
-#   tools/poc/023-steamdeck-client/p19-runtime-packaging/check-deps.sh [--variant deck|container]
+#   apps/steamdeck-client/p19-runtime-packaging/check-deps.sh [--variant deck|container]
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 VARIANT="deck"
 [ "${1:-}" = "--variant" ] && VARIANT="$2"
 IMAGE="registry.gitlab.steamos.cloud/steamrt/steamrt4/sdk:latest"
-BIN="tools/poc/023-steamdeck-client/build/$VARIANT/bin"
+BIN="apps/steamdeck-client/build/$VARIANT/bin"
 
 docker run --rm --platform linux/amd64 -v "$ROOT":/src -w "/src/$BIN" "$IMAGE" bash -c '
   echo "SDL3 in runtime: $(pkg-config --modversion sdl3)"

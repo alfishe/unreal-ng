@@ -736,6 +736,18 @@ if (TESTS)
     if (APPLE)
         target_link_libraries(unreal-qt-tests PRIVATE "-framework AppKit" "-framework ApplicationServices")
     endif()
+
+    # The CRT picture of still frames for the gallery and the comparison with librashader (tools/crt-shaders)
+    add_executable(crt-render
+        "${ROOT_DIR}/tools/crt-shaders/crt-render.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtrenderer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtprofiles.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeammodel.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeamshapes.cpp"
+    )
+    set_target_properties(crt-render PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+    target_include_directories(crt-render PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(crt-render PRIVATE Qt6::Gui)
 endif()
 
 # <Diagnostics>
