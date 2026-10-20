@@ -66,8 +66,12 @@ protected:
             Pump();
 
             RemoveFromAutomationThread(id);
-            ASSERT_FALSE(watch.expired()) << "the dialog holds the instance";
-            EXPECT_TRUE(watch.lock()->IsRetired());
+            {
+                // Checked for null: gcc's -Wstringop-overflow takes the unchecked lock() for a null object
+                auto held = watch.lock();
+                ASSERT_NE(held, nullptr) << "the dialog holds the instance";
+                EXPECT_TRUE(held->IsRetired());
+            }
 
             if (lateSlot)
                 QMetaObject::invokeMethod(&dialog, lateSlot, Qt::DirectConnection);

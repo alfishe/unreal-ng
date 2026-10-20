@@ -39,9 +39,9 @@
             op["description"] =
                 "Any of the fields, the rest stay; applied the way the View menu does (menu checks follow). gpu "
                 "re-creates the screen and carries the other settings over; a crt_profile other than none switches "
-                "CRT on, none switches it off; shader:<name> is a custom shader (GPU only). The window's display, not "
-                "the machine: no control session is opened or needed. An empty body only reads. Returns the settings "
-                "after the change.";
+                "CRT on, none switches it off; shader:<name> is a libretro preset (shader:crt-royale, "
+                "shader:guest-advanced, ...) or a custom shader, GPU only. The window's display, not the machine: no "
+                "control session is opened or needed. An empty body only reads. Returns the settings after the change.";
             idParam(op);
             Json::Value& body = op["requestBody"]["content"]["application/json"]["schema"];
             body["type"] = "object";
@@ -52,12 +52,12 @@
             field("gpu", "boolean", "GPU acceleration (OpenGL) on / off");
             field("crt", "boolean", "CRT effects on / off");
             field("crt_profile", "string",
-                  "A CRT profile from crt_profiles: none, basic, aperture, shadow-mask, slot-mask, megatron, "
-                  "shader:<name>");
+                  "A CRT profile from crt_profiles (the window offers them: none, basic, ..., shader:<name> for a "
+                  "libretro preset or a custom shader with the GPU)");
             field("blending", "boolean", "Temporal blending (gigascreen smoothing) on / off");
             field("blending_frames", "integer", "Frames blended, 2..5");
             field("blending_weights", "string", "equal or exponential (newer frames stronger)");
-            body["properties"]["crt_profile"]["example"] = "shadow-mask";
+            body["properties"]["crt_profile"]["example"] = "basic";
             settingsRef(op, "Display settings after the change");
             op["responses"]["400"]["description"] = "{error, kind: bad-parameter}: an unknown key or value";
         };

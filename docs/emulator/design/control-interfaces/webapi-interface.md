@@ -571,7 +571,7 @@ Lua / Python `video_temporal()`, MCP `capture_media` `temporal_status`.
 
 ```
 GET  /api/v1/emulator/{id}/video/window       GUI window display settings: backend (gpu / software), gpu_available, gpu, crt, crt_profile, crt_profiles[], blending, blending_frames, blending_weights, emulator (the instance the window shows)
-PUT  /api/v1/emulator/{id}/video/window       any of {"gpu": bool, "crt": bool, "crt_profile": "shadow-mask", "blending": bool, "blending_frames": 2..5, "blending_weights": "equal"|"exponential"} (POST too); applied the way the View menu does, answers the settings after the change; a custom shader is `"crt_profile": "shader:<name>"` (offered when the host has a GPU; needs `gpu` on, in the same request or before: 409 unavailable otherwise); the window's display, not the machine: no control session opened or needed; 400 bad-parameter, 409 no-window (headless) / unavailable (gpu without OpenGL), {error, kind}
+PUT  /api/v1/emulator/{id}/video/window       any of {"gpu": bool, "crt": bool, "crt_profile": "basic", "blending": bool, "blending_frames": 2..5, "blending_weights": "equal"|"exponential"} (POST too); applied the way the View menu does, answers the settings after the change; a custom shader is `"crt_profile": "shader:<name>"` (offered when the host has a GPU; needs `gpu` on, in the same request or before: 409 unavailable otherwise); the window's display, not the machine: no control session opened or needed; 400 bad-parameter, 409 no-window (headless) / unavailable (gpu without OpenGL), {error, kind}
 ```
 
 The window belongs to the GUI, which registers it with the core; headless every call answers 409 `no-window`. The

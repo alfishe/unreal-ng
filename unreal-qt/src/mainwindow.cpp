@@ -4658,10 +4658,10 @@ void MainWindow::handleCrtShaderChanged(const QString& name)
 {
     if (!_screenWrapper)
         return;
-    // A custom shader takes the current profile's parameters as its uniforms, Megatron's when there is none
+    // A custom shader takes the current profile's parameters as its uniforms, Basic's when there is none
     CRTProfileParams params = _screenWrapper->crtParams();
     if (params.profile == CRTProfile::None)
-        params = CRTProfileParams::Megatron();
+        params = CRTProfileParams::Basic();
     if (!_screenWrapper->isGPUAccelerated())
     {
         _menuManager->setCrtProfile(crtProfileIndex(_screenWrapper->crtProfile()));

@@ -449,7 +449,8 @@ private:
     EmulatorContext* _context = nullptr;
     std::function<bool()> _applyNowProbe;
     bool _releasing = false;  ///< the destructor saves by policy: nothing executes any more
-    static inline std::atomic<bool> _saveOnRelease{true};
+    /// Defined in mediamanager.cpp: an inline one gets a different type per TU under MSVC LTCG (C4744)
+    static std::atomic<bool> _saveOnRelease;
     mutable std::recursive_mutex _mutex;
     /// The coordinator (null: a manager without an emulator, operations run without rules)
     coordinator::IMachineOps* _machineOps = nullptr;

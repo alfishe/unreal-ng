@@ -1,0 +1,101 @@
+{
+ "key": "crt-pi",
+ "preset": "crt/crt-pi.slangp",
+ "passes": [
+  {
+   "source": "crt/shaders/crt-pi.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Viewport",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Viewport",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OutputSize": "vec4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "CURVATURE_X": "float",
+    "CURVATURE_Y": "float",
+    "MASK_BRIGHTNESS": "float",
+    "SCANLINE_WEIGHT": "float",
+    "SCANLINE_GAP_BRIGHTNESS": "float",
+    "BLOOM_FACTOR": "float",
+    "INPUT_GAMMA": "float",
+    "OUTPUT_GAMMA": "float"
+   }
+  }
+ ],
+ "textures": [],
+ "parameters": {
+  "CURVATURE_X": {
+   "description": "Screen curvature - horizontal",
+   "initial": 0.1,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "CURVATURE_Y": {
+   "description": "Screen curvature - vertical",
+   "initial": 0.15,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "MASK_BRIGHTNESS": {
+   "description": "Mask brightness",
+   "initial": 0.7,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "SCANLINE_WEIGHT": {
+   "description": "Scanline weight",
+   "initial": 6.0,
+   "minimum": 0.0,
+   "maximum": 15.0,
+   "step": 0.1
+  },
+  "SCANLINE_GAP_BRIGHTNESS": {
+   "description": "Scanline gap brightness",
+   "initial": 0.12,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "BLOOM_FACTOR": {
+   "description": "Bloom factor",
+   "initial": 1.5,
+   "minimum": 0.0,
+   "maximum": 5.0,
+   "step": 0.01
+  },
+  "INPUT_GAMMA": {
+   "description": "Input gamma",
+   "initial": 2.4,
+   "minimum": 0.0,
+   "maximum": 5.0,
+   "step": 0.01
+  },
+  "OUTPUT_GAMMA": {
+   "description": "Output gamma",
+   "initial": 2.2,
+   "minimum": 0.0,
+   "maximum": 5.0,
+   "step": 0.01
+  }
+ }
+}

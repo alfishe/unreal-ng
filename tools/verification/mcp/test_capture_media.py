@@ -47,16 +47,16 @@ def test_record_and_audio_status(s):
 def test_window_display_changes_and_restores(s):
     before = s.call('capture_media', {'action': 'window_display'})
     expect(before.text.startswith('window gpu '), 'a one-line summary', before.text)
-    expect('shadow-mask' in before.structured['crt_profiles'], 'the profiles the window offers', before.structured)
+    expect('basic' in before.structured['crt_profiles'], 'the profiles the window offers', before.structured)
 
     changed = s.call('capture_media', {'action': 'window_display_set',
-                                       'display': {'crt_profile': 'shadow-mask', 'blending_frames': 4}})
-    expect(changed.structured['crt'] and changed.structured['crt_profile'] == 'shadow-mask', 'the profile switches CRT on',
+                                       'display': {'crt_profile': 'basic', 'blending_frames': 4}})
+    expect(changed.structured['crt'] and changed.structured['crt_profile'] == 'basic', 'the profile switches CRT on',
            changed.structured)
-    expect('crt shadow-mask' in changed.text and '4 frames' in changed.text, 'the change in the text', changed.text)
+    expect('crt basic' in changed.text and '4 frames' in changed.text, 'the change in the text', changed.text)
 
     bad = s.call('capture_media', {'action': 'window_display_set', 'display': {'crt_profile': 'nope'}}, ok=False)
-    expect('HTTP 400' in bad.text and 'shadow-mask' in bad.text, 'an unknown profile lists the offered ones', bad.text)
+    expect('HTTP 400' in bad.text and 'basic' in bad.text, 'an unknown profile lists the offered ones', bad.text)
 
     restore = {k: before.structured[k] for k in ('crt_profile', 'crt', 'blending_frames')}
     after = s.call('capture_media', {'action': 'window_display_set', 'display': restore})

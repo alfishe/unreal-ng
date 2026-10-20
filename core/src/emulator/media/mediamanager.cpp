@@ -210,6 +210,8 @@ private:
     MediaManager& _manager;
 };
 
+std::atomic<bool> MediaManager::_saveOnRelease{true};
+
 MediaManager::MediaManager(EmulatorContext* context) : _context(context), _opOwner(std::make_unique<MediaOpOwner>(*this)) {}
 
 void MediaManager::SetMachineOps(coordinator::IMachineOps* ops)

@@ -1,6 +1,5 @@
 #include "devicescreenwrapper.h"
 #include "devicescreen.h"
-#include "devicescreen_gl.h"
 #include "devicescreenglwindow.h"
 #include "hud/qt/hudoverlay.h"
 
@@ -17,7 +16,7 @@
 #include "emulator/mousecapturecontroller.h"
 
 DeviceScreenWrapper::DeviceScreenWrapper(QWidget* parent)
-    : DeviceScreenWrapper(parent, DeviceScreenFactory::probeGPUAcceleration())
+    : DeviceScreenWrapper(parent, DeviceScreenGLWindow::probeGPUAcceleration())
 {
 }
 
@@ -25,7 +24,7 @@ DeviceScreenWrapper::DeviceScreenWrapper(QWidget* parent, bool useGPU)
     : QObject(parent)
 {
     // Try GPU-accelerated rendering with QOpenGLWindow for tear-free vsync
-    if (useGPU && DeviceScreenFactory::probeGPUAcceleration())
+    if (useGPU && DeviceScreenGLWindow::probeGPUAcceleration())
     {
         try
         {
@@ -480,7 +479,7 @@ std::vector<QString> DeviceScreenWrapper::availableShaders()
 
 bool DeviceScreenWrapper::isGPUAvailable()
 {
-    return DeviceScreenFactory::probeGPUAcceleration();
+    return DeviceScreenGLWindow::probeGPUAcceleration();
 }
 
 void DeviceScreenWrapper::setTemporalBlendingEnabled(bool enabled)

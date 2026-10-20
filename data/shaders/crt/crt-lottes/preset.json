@@ -1,0 +1,141 @@
+{
+ "key": "crt-lottes",
+ "preset": "crt/crt-lottes.slangp",
+ "passes": [
+  {
+   "source": "crt/shaders/crt-lottes.slang",
+   "alias": null,
+   "filter": "Nearest",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Viewport",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Viewport",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OutputSize": "vec4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "hardScan": "float",
+    "hardPix": "float",
+    "warpX": "float",
+    "warpY": "float",
+    "maskDark": "float",
+    "maskLight": "float",
+    "scaleInLinearGamma": "float",
+    "shadowMask": "float",
+    "brightBoost": "float",
+    "hardBloomScan": "float",
+    "hardBloomPix": "float",
+    "bloomAmount": "float",
+    "shape": "float"
+   }
+  }
+ ],
+ "textures": [],
+ "parameters": {
+  "hardScan": {
+   "description": "hardScan",
+   "initial": -8.0,
+   "minimum": -20.0,
+   "maximum": 0.0,
+   "step": 1.0
+  },
+  "hardPix": {
+   "description": "hardPix",
+   "initial": -3.0,
+   "minimum": -20.0,
+   "maximum": 0.0,
+   "step": 1.0
+  },
+  "warpX": {
+   "description": "warpX",
+   "initial": 0.031,
+   "minimum": 0.0,
+   "maximum": 0.125,
+   "step": 0.01
+  },
+  "warpY": {
+   "description": "warpY",
+   "initial": 0.041,
+   "minimum": 0.0,
+   "maximum": 0.125,
+   "step": 0.01
+  },
+  "maskDark": {
+   "description": "maskDark",
+   "initial": 0.5,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.1
+  },
+  "maskLight": {
+   "description": "maskLight",
+   "initial": 1.5,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.1
+  },
+  "scaleInLinearGamma": {
+   "description": "scaleInLinearGamma",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "shadowMask": {
+   "description": "shadowMask",
+   "initial": 3.0,
+   "minimum": 0.0,
+   "maximum": 4.0,
+   "step": 1.0
+  },
+  "brightBoost": {
+   "description": "brightness boost",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.05
+  },
+  "hardBloomPix": {
+   "description": "bloom-x soft",
+   "initial": -1.5,
+   "minimum": -2.0,
+   "maximum": -0.5,
+   "step": 0.1
+  },
+  "hardBloomScan": {
+   "description": "bloom-y soft",
+   "initial": -2.0,
+   "minimum": -4.0,
+   "maximum": -1.0,
+   "step": 0.1
+  },
+  "bloomAmount": {
+   "description": "bloom ammount",
+   "initial": 0.15,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "shape": {
+   "description": "filter kernel shape",
+   "initial": 2.0,
+   "minimum": 0.0,
+   "maximum": 10.0,
+   "step": 0.05
+  }
+ }
+}

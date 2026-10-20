@@ -1,0 +1,494 @@
+{
+ "key": "crt-hyllian",
+ "preset": "crt/crt-hyllian.slangp",
+ "passes": [
+  {
+   "source": "crt/shaders/hyllian/support/multiLUT-linear-fast.slang",
+   "alias": null,
+   "filter": "Nearest",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": true,
+   "float_framebuffer": false,
+   "format": "R8G8B8A8Srgb",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4",
+    "OriginalSize": "vec4",
+    "OutputSize": "vec4",
+    "FrameCount": "uint",
+    "LUT_selector_param": "float",
+    "H_InputGamma": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/hyllian/crt-hyllian-base.slang",
+   "alias": "CRTPass",
+   "filter": "Nearest",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": true,
+   "float_framebuffer": false,
+   "format": "R8G8B8A8Srgb",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Viewport",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Viewport",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OutputSize": "vec4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "PRESET_OPTION": "float",
+    "BEAM_MIN_WIDTH": "float",
+    "BEAM_MAX_WIDTH": "float",
+    "SCANLINES_STRENGTH": "float",
+    "SCANLINES_SHAPE": "float",
+    "SHARPNESS_HACK": "float",
+    "SCANLINES_CUTOFF": "float",
+    "SCANLINES_HIRES": "float",
+    "IR_SCALE": "float",
+    "CRT_ANTI_RINGING": "float",
+    "VSCANLINES": "float",
+    "BRIGHTBOOST": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/hyllian/support/glow/threshold.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": true,
+   "float_framebuffer": false,
+   "format": "R8G8B8A8Srgb",
+   "mipmap_input": false,
+   "scale": {
+    "valid": false,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OutputSize": "vec4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "GLOW_WHITEPOINT": "float",
+    "GLOW_ROLLOFF": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/hyllian/support/glow/blur_horiz.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": true,
+   "float_framebuffer": false,
+   "format": "R8G8B8A8Srgb",
+   "mipmap_input": true,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Viewport",
+     "factor": 0.2
+    },
+    "y": {
+     "type": "Viewport",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OutputSize": "vec4",
+    "OriginalSize": "vec4",
+    "SourceSize": "vec4",
+    "GLOW_RADIUS": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/hyllian/support/glow/blur-glow-mask-geom.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": true,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Viewport",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Viewport",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4",
+    "OriginalSize": "vec4",
+    "OutputSize": "vec4",
+    "FrameCount": "uint",
+    "GLOW_ENABLE": "float",
+    "GLOW_RADIUS": "float",
+    "GLOW_STRENGTH": "float",
+    "PRESET_OPTION": "float",
+    "DISPLAY_RES": "float",
+    "PHOSPHOR_LAYOUT": "float",
+    "MASK_STRENGTH": "float",
+    "BRIGHTBOOST": "float",
+    "MONITOR_SUBPIXELS": "float",
+    "VSCANLINES": "float",
+    "H_OUTPUT_GAMMA": "float",
+    "H_MaskGamma": "float",
+    "h_curvature": "float",
+    "h_shape": "float",
+    "h_radius": "float",
+    "h_cornersize": "float",
+    "h_cornersmooth": "float"
+   }
+  }
+ ],
+ "textures": [
+  {
+   "name": "SamplerLUT1",
+   "file": "SamplerLUT1.png",
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "mipmap": false
+  },
+  {
+   "name": "SamplerLUT2",
+   "file": "SamplerLUT2.png",
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "mipmap": false
+  }
+ ],
+ "parameters": {
+  "crt_nonono": {
+   "description": "** CRT-HYLLIAN **",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0,
+   "step": 1.0
+  },
+  "non_nonono": {
+   "description": " ",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0,
+   "step": 1.0
+  },
+  "col_nonono": {
+   "description": "COLOR SETTINGS:",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0,
+   "step": 1.0
+  },
+  "LUT_selector_param": {
+   "description": "    LUT [ OFF, DARK BLUE, DARK BLUE (cool) ]",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 1.0
+  },
+  "H_InputGamma": {
+   "description": "    Input Gamma",
+   "initial": 2.4,
+   "minimum": 1.0,
+   "maximum": 3.0,
+   "step": 0.05
+  },
+  "H_OUTPUT_GAMMA": {
+   "description": "    Output Gamma",
+   "initial": 2.2,
+   "minimum": 1.0,
+   "maximum": 3.0,
+   "step": 0.05
+  },
+  "BRIGHTBOOST": {
+   "description": "    Brightboost",
+   "initial": 1.0,
+   "minimum": 0.5,
+   "maximum": 2.0,
+   "step": 0.01
+  },
+  "pre_nonono": {
+   "description": "PRESET OPTIONS:",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0,
+   "step": 1.0
+  },
+  "pre_comment1": {
+   "description": "// Presets greater than 0 disable options with '*'.",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0,
+   "step": 1.0
+  },
+  "PRESET_OPTION": {
+   "description": "    Mask Preset [CUSTOM, APERT1, APERT2, SLOT1, SLOT2, DOT]",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 5.0,
+   "step": 1.0
+  },
+  "pre_comment2": {
+   "description": "// Only affects presets greater than '0'.",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0,
+   "step": 1.0
+  },
+  "DISPLAY_RES": {
+   "description": "    Target Resolution [ 1080P, 4K ]",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "scan_nonono": {
+   "description": "SCANLINES SETTINGS:",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0,
+   "step": 1.0
+  },
+  "BEAM_MIN_WIDTH": {
+   "description": "    * Min Beam Width",
+   "initial": 0.72,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "BEAM_MAX_WIDTH": {
+   "description": "    * Max Beam Width",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "SCANLINES_STRENGTH": {
+   "description": "    * Scanlines Strength",
+   "initial": 0.72,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "SCANLINES_SHAPE": {
+   "description": "    * Scanlines Shape [ SHARP, SOFT ]",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "VSCANLINES": {
+   "description": "    Orientation [ HORIZONTAL, VERTICAL ]",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "msk_nonono": {
+   "description": "MASK SETTINGS:",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0,
+   "step": 1.0
+  },
+  "PHOSPHOR_LAYOUT": {
+   "description": "    * Mask [1-6 APERT, 7-10 DOT, 11-14 SLOT, 15-17 LOTTES]",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 17.0,
+   "step": 1.0
+  },
+  "MASK_STRENGTH": {
+   "description": "    Mask Strength",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.02
+  },
+  "H_MaskGamma": {
+   "description": "    Mask Gamma",
+   "initial": 2.4,
+   "minimum": 1.0,
+   "maximum": 3.0,
+   "step": 0.05
+  },
+  "MONITOR_SUBPIXELS": {
+   "description": "    Monitor Subpixels Layout [ RGB, BGR ]",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "scl_nonono": {
+   "description": "SCALING SETTINGS:",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0,
+   "step": 1.0
+  },
+  "SCANLINES_CUTOFF": {
+   "description": "    Scanlines Cutoff",
+   "initial": 400.0,
+   "minimum": 0.0,
+   "maximum": 1000.0,
+   "step": 2.0
+  },
+  "SCANLINES_HIRES": {
+   "description": "    High Resolution Scanlines",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "IR_SCALE": {
+   "description": "    Internal Resolution Scale (downsampling)",
+   "initial": 1.0,
+   "minimum": 1.0,
+   "maximum": 10.0,
+   "step": 1.0
+  },
+  "fil_nonono": {
+   "description": "FILTERING SETTINGS:",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0,
+   "step": 1.0
+  },
+  "SHARPNESS_HACK": {
+   "description": "    Sharpness Hack",
+   "initial": 1.0,
+   "minimum": 1.0,
+   "maximum": 4.0,
+   "step": 1.0
+  },
+  "CRT_ANTI_RINGING": {
+   "description": "    Anti Ringing",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "glow_nonono": {
+   "description": "GLOW SETTINGS:",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0,
+   "step": 0.0
+  },
+  "GLOW_ENABLE": {
+   "description": "    Enable Glow",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "GLOW_WHITEPOINT": {
+   "description": "        Whitepoint",
+   "initial": 0.9,
+   "minimum": 0.5,
+   "maximum": 1.1,
+   "step": 0.02
+  },
+  "GLOW_ROLLOFF": {
+   "description": "        Rolloff",
+   "initial": 2.0,
+   "minimum": 1.2,
+   "maximum": 6.0,
+   "step": 0.1
+  },
+  "GLOW_RADIUS": {
+   "description": "        Radius",
+   "initial": 4.0,
+   "minimum": 2.0,
+   "maximum": 4.0,
+   "step": 0.1
+  },
+  "GLOW_STRENGTH": {
+   "description": "        Strength",
+   "initial": 0.05,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "h_nonono": {
+   "description": "CURVATURE SETTINGS:",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 0.0,
+   "step": 1.0
+  },
+  "h_curvature": {
+   "description": "    Curvature Toggle",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "h_shape": {
+   "description": "        Shape [ SPHERE, CYLINDER ]",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "h_radius": {
+   "description": "        Radius",
+   "initial": 5.0,
+   "minimum": 1.5,
+   "maximum": 10.0,
+   "step": 0.1
+  },
+  "h_cornersize": {
+   "description": "        Corner Size",
+   "initial": 0.04,
+   "minimum": 0.01,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "h_cornersmooth": {
+   "description": "        Corner Smoothness",
+   "initial": 0.5,
+   "minimum": 0.1,
+   "maximum": 1.0,
+   "step": 0.1
+  }
+ }
+}

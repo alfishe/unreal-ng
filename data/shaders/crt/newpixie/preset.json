@@ -1,0 +1,204 @@
+{
+ "key": "newpixie",
+ "preset": "crt/newpixie-crt.slangp",
+ "passes": [
+  {
+   "source": "crt/shaders/newpixie/accumulate.slang",
+   "alias": "accum1",
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4",
+    "OriginalSize": "vec4",
+    "OutputSize": "vec4",
+    "FrameCount": "uint",
+    "acc_modulate": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/newpixie/blur_horiz.slang",
+   "alias": "blur1",
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4",
+    "OriginalSize": "vec4",
+    "OutputSize": "vec4",
+    "FrameCount": "uint",
+    "blur_x": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/newpixie/blur_vert.slang",
+   "alias": "blur2",
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Input",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Input",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4",
+    "OriginalSize": "vec4",
+    "OutputSize": "vec4",
+    "FrameCount": "uint",
+    "blur_y": "float"
+   }
+  },
+  {
+   "source": "crt/shaders/newpixie/newpixie-crt.slang",
+   "alias": null,
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Viewport",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Viewport",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "SourceSize": "vec4",
+    "OutputSize": "vec4",
+    "FrameCount": "uint",
+    "use_frame": "float",
+    "curvature": "float",
+    "wiggle_toggle": "float",
+    "scanroll": "float",
+    "vignette": "float",
+    "ghosting": "float"
+   }
+  }
+ ],
+ "textures": [
+  {
+   "name": "frametexture",
+   "file": "frametexture.png",
+   "filter": "Linear",
+   "wrap": "ClampToBorder",
+   "mipmap": false
+  }
+ ],
+ "parameters": {
+  "acc_modulate": {
+   "description": "Accumulate Modulation",
+   "initial": 0.65,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "blur_x": {
+   "description": "Horizontal Blur",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 5.0,
+   "step": 0.25
+  },
+  "blur_y": {
+   "description": "Vertical Blur",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 5.0,
+   "step": 0.25
+  },
+  "use_frame": {
+   "description": "Use Frame Image",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "curvature": {
+   "description": "Curvature",
+   "initial": 2.0,
+   "minimum": 0.0001,
+   "maximum": 4.0,
+   "step": 0.25
+  },
+  "wiggle_toggle": {
+   "description": "Interference",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "scanroll": {
+   "description": "Rolling Scanlines",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "vignette": {
+   "description": "Vignette",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "ghosting": {
+   "description": "Ghosting",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 2.0,
+   "step": 0.1
+  }
+ }
+}

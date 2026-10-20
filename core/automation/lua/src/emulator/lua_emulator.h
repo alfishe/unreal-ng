@@ -5853,7 +5853,7 @@ public:
             return StateNodeToLua(s, TemporalStatus::Report(ctx));
         });
         // GUI window display settings (GPU, CRT effects / profile, temporal blending): the WindowDisplay report every
-        // interface returns. window_display() reads; window_display_set({gpu = true, crt_profile = "shadow-mask",
+        // interface returns. window_display() reads; window_display_set({gpu = true, crt_profile = "basic",
         // blending = true, blending_frames = 3, blending_weights = "exponential", crt = false}) changes any of them the
         // way the View menu does. Headless: {ok = false, error, kind = "no-window"}
         lua.set_function("window_display", [](sol::this_state s) -> sol::object {
