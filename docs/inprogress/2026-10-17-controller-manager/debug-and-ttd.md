@@ -51,8 +51,10 @@ Two personas, two separate worlds:
 
 | Way | Default | Notes |
 |:--|:--|:--|
+| The debugger window has the focus | always, nothing to switch on | Every player pad is a debugger remote while the debugger window (or a pane of a docked one) has the focus, no layer key needed (`InputRouter::SetDebugFocus`); the main window gives it back to the game. Another app taking the focus changes nothing. The status bar says "Game pads drive the debugger / the game" |
 | Hold a layer key | `paddle.p4` (lower left paddle) on the Elite where paddles are visible (not macOS USB, research-host-apis §2.3a) and pads with back buttons (DualSense Edge, Steam Deck L5) | Release returns to play; held play targets were released at entry ([mapping-and-profiles.md §2](mapping-and-profiles.md#2-routing-and-layers)) |
 | Chord | `view+menu` on pads without paddles (both down within the 60 ms chord window) | Consumed by the layer: the members' play bindings fire only if the chord does not complete in the window, so ENTER and the OSD keyboard do not fire ([mapping-and-profiles.md §2](mapping-and-profiles.md#2-routing-and-layers) rule 4) |
+| The layer key in the emulator window | the dialog's "Debug layer key" switch (off by default) | Without it the layer key and the chord above do nothing in the emulator window |
 | Toggle | Advanced option: the layer key toggles instead of holding | For long sessions; the layer LED / overlay shows the state |
 | Role `debugger-remote` | a whole device is the debug layer, always | A second pad on the desk, a Stream Deck, a MIDI controller later |
 | Elite profile button | optional, Advanced: profile button cycles play / debug | Only if the backend sees it ([below](#elite-onboard-profiles)) |
@@ -142,11 +144,18 @@ from N.
 | Action id | What |
 |:--|:--|
 | `dbg.open` | open / raise the debugger window |
-| `dbg.focus_next_pane` / `dbg.focus_prev_pane` | disassembly → registers → memory → stack → breakpoints |
+| `dbg.focus_next_pane` / `dbg.focus_prev_pane` | disassembly → registers → memory → stack, around; a closed debugger opens first |
 | `dbg.breakpoint_toggle_pc` | toggle an execution breakpoint at PC (or the cursor) |
-| `dbg.memory_follow` | memory view follows the register under the cursor (HL, DE, SP, IX) |
-| `dbg.cursor_up` / `dbg.cursor_down` / `dbg.page_*` | move in the focused pane (the left stick in the debug layer) |
+| `dbg.memory_follow` | memory view follows the value under the cursor (Enter in the pane) |
+| `dbg.cursor_up` / `_down` / `_left` / `_right`, `dbg.page_up` / `_down` | move in the focused pane (the left stick in the debug layer), repeating while held |
 | `dbg.labels_toggle` | show / hide symbols |
+
+Built: the pane ring and the cursor (`unreal-qt/src/debugger/panefocus.{h,cpp}`). The pane in focus has a frame
+around it; the cursor actions are the keys the pane already takes (the disassembly's Up / Down, the hex view's
+arrows and pages) sent to it, so a held stick and the keyboard move the same cursor, after 300 ms every 60 ms. The
+registers and the stack are value cells: there the arrows move a cursor of their own to the nearest cell that way,
+Enter is a double click on it (the memory view goes to the value), the keyboard drives it too. Breakpoints live in a
+dialog, not a pane, so they are not in the ring. Not yet: `dbg.breakpoint_toggle_pc`, `dbg.labels_toggle`.
 
 ### 3.4 Capture and machine
 

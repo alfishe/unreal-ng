@@ -8,6 +8,8 @@
 #include <QAction>
 #include <QContextMenuEvent>
 
+#include <vector>
+
 QT_BEGIN_NAMESPACE
 namespace Ui { class StackWidget; }
 QT_END_NAMESPACE
@@ -23,6 +25,9 @@ class StackWidget : public QWidget
 public:
     explicit StackWidget(QWidget *parent = nullptr);
     virtual ~StackWidget() override;
+
+    /// The stack entries a double click follows into the memory view, for the pane cursor
+    std::vector<QWidget*> cursorCells() const;
 
     // Helper methods
 protected:

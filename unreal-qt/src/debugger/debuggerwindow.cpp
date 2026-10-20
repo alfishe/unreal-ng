@@ -23,6 +23,7 @@
 #include "debugger/disksectordialog.h"
 #include "debugger/diskfilesdialog.h"
 #include "debugger/livesourcewindow.h"
+#include "debugger/panefocus.h"
 #include "debugger/pchistorydialog.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/labeleditor.h"
@@ -192,6 +193,11 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
             SLOT(goToAddress(uint16_t)));
     connect(ui->stackWidget, SIGNAL(jumpToAddressInDisassembly(uint16_t)), ui->disassemblerWidget,
             SLOT(goToAddress(uint16_t)));
+
+    _paneFocus = new PaneFocus(this, {{tr("Disassembly"), ui->disassemblerWidget, {}},
+                                      {tr("Registers"), ui->registersWidget, ui->registersWidget->cursorCells()},
+                                      {tr("Memory"), ui->hexView, {}},
+                                      {tr("Stack"), ui->stackWidget, ui->stackWidget->cursorCells()}});
 
     // Inject toolbar on top of other widget lines
     ui->verticalLayout_2->insertWidget(0, toolBar);
@@ -1400,6 +1406,21 @@ void DebuggerWindow::showBreakpointManager()
 
     // Update debugger state after dialog closes
     updateState();
+}
+
+void DebuggerWindow::focusNextPane()
+{
+    _paneFocus->Move(1);
+}
+
+void DebuggerWindow::focusPrevPane()
+{
+    _paneFocus->Move(-1);
+}
+
+void DebuggerWindow::paneKey(int key)
+{
+    _paneFocus->Key(key);
 }
 
 void DebuggerWindow::changeMemoryViewZ80Address(uint16_t addr)

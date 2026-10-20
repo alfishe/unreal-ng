@@ -4,6 +4,7 @@
 #include <QMetaObject>
 #include <QObject>
 #include <QTimer>
+#include <QWidget>
 
 #include <algorithm>
 #include <cmath>
@@ -287,8 +288,52 @@ void RegisterDefaultActions(ActionRegistry& registry, EmulatorBinding* binding, 
             return {};
         },
         nullptr);
-    for (const char* id : {"dbg.focus_next_pane", "dbg.focus_prev_pane", "dbg.breakpoint_toggle_pc",
-                           "dbg.memory_follow", "dbg.cursor_up", "dbg.cursor_down", "dbg.labels_toggle"})
+    // Pane focus opens a closed debugger first; the cursor keys go to the pane in focus and repeat while held
+    auto pane = [hooks](const char* name) {
+        return [hooks, name](bool) -> QString {
+            auto* window = qobject_cast<QWidget*>(hooks.debugger);
+            if (window == nullptr)
+                return Tr("the debugger is not available");
+            if (!window->isVisible() && hooks.showDebugger)
+                hooks.showDebugger();
+            QMetaObject::invokeMethod(window, name);
+            return {};
+        };
+    };
+    auto noDebugger = [hooks]() -> QString {
+        return hooks.debugger == nullptr ? Tr("the debugger is not available") : QString();
+    };
+    auto key = [hooks](int code, bool repeats) {
+        auto timer = std::make_shared<QTimer>();
+        auto send = [debugger = hooks.debugger, code] {
+            if (debugger != nullptr)
+                QMetaObject::invokeMethod(debugger, "paneKey", Q_ARG(int, code));
+        };
+        QObject::connect(timer.get(), &QTimer::timeout, [timer = timer.get(), send] {
+            timer->setInterval(60);
+            send();
+        });
+        return [timer, send, repeats](bool pressed) -> QString {
+            timer->stop();
+            if (!pressed)
+                return {};
+            send();
+            if (repeats)
+                timer->start(300);
+            return {};
+        };
+    };
+    add("dbg.focus_next_pane", Tr("Next debugger pane"), debug, pane("focusNextPane"), noDebugger);
+    add("dbg.focus_prev_pane", Tr("Previous debugger pane"), debug, pane("focusPrevPane"), noDebugger);
+    add("dbg.cursor_up", Tr("Cursor up in the pane"), debug, key(Qt::Key_Up, true), noDebugger, true);
+    add("dbg.cursor_down", Tr("Cursor down in the pane"), debug, key(Qt::Key_Down, true), noDebugger, true);
+    add("dbg.cursor_left", Tr("Cursor left in the pane"), debug, key(Qt::Key_Left, true), noDebugger, true);
+    add("dbg.cursor_right", Tr("Cursor right in the pane"), debug, key(Qt::Key_Right, true), noDebugger, true);
+    add("dbg.page_up", Tr("Page up in the pane"), debug, key(Qt::Key_PageUp, true), noDebugger, true);
+    add("dbg.page_down", Tr("Page down in the pane"), debug, key(Qt::Key_PageDown, true), noDebugger, true);
+    add("dbg.memory_follow", Tr("Memory follows the value under the cursor"), debug, key(Qt::Key_Return, false),
+        noDebugger, true);
+    for (const char* id : {"dbg.breakpoint_toggle_pc", "dbg.labels_toggle"})
         add(id, QString::fromLatin1(id), debug, nullptr, [later] { return later; });
 
     // 3.4 Capture and machine
