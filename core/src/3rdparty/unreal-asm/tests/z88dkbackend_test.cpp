@@ -157,6 +157,39 @@ TEST(Z88dkBackend_Test, LabelsSectionsAndPhase)
     // ORG computed from labels moves on within the section; nothing but labels after it: the labels are EQUs
     EXPECT_TRUE(Contains(ToZ80asm("        ORG #8000\nA1      NOP\n        ORG A1+16\n        NOP", "sjasmplus"), "DEFS ((A1+16&$FFFF))-$"));
     EXPECT_TRUE(Contains(ToZ80asm("        ORG #8000\nA1      NOP\n        ORG A1\nB1", "sjasmplus"), "B1 EQU (A1&$FFFF)"));
+    // ORG $-1 (the next byte writes over the last one) cannot move back in a section: a section of its own at the
+    // address the layout gives, from a sjasmplus source and through another dialect's conversion
+    for (const char* dialect : {"sjasmplus", "alasm", "storm"})
+    {
+        const std::vector<std::string> back = ToZ80asm("        ORG #8000\n        NOP\n        NOP\n        ORG $-1\n        HALT", dialect);
+        EXPECT_TRUE(Contains(back, "SECTION s_main_2")) << dialect << ": " << ::testing::PrintToString(back);
+        EXPECT_TRUE(Contains(back, "ORG $8001")) << dialect << ": " << ::testing::PrintToString(back);
+        // more statements after the ORG on its line: the address its value gives, not the next line's
+        if (std::string(dialect) == "sjasmplus")
+            EXPECT_TRUE(Contains(ToZ80asm("        ORG #8000\n        NOP\n        NOP\n        ORG $-1 : HALT : NOP\n        NOP", dialect), "ORG $8001"));
+        // back to a redefinable name that holds an address (its value where the ORG is: the address the next line has;
+        // STORM has no name = value)
+        if (std::string(dialect) == "storm")
+            continue;
+        const std::vector<std::string> named =
+            ToZ80asm("        ORG #7000\nP=$\n        ORG #8000\n        NOP\n        ORG P\n        HALT\nP=$", dialect);
+        EXPECT_TRUE(Contains(named, "ORG $7000")) << dialect << ": " << ::testing::PrintToString(named);
+    }
+    // TASM's INCBIN copies the rest of the file's last sector, then the address moves back: the tail in a section of
+    // its own at the file's end (s_tail_, first in the map), the code going on in a new section from there
+    {
+        SourceDocument tasm = SourceDocument::FromText("        ORG #8000\n        INCBIN BPM\n        NOP", "tasm");
+        tasm.subversion = "4.0";
+        BackendOptions options;
+        options.dataFiles = [](const std::string&) { return std::vector<uint8_t>(512, 1); };
+        options.fileSize = [](const std::string&) { return std::optional<uint64_t>(300); };
+        std::vector<std::string> tail;
+        for (const SourceLine& l : Convert(tasm, "z88dk", options).document.lines)
+            tail.push_back(l.text.substr(l.text.find_first_not_of(' ') == std::string::npos ? 0 : l.text.find_first_not_of(' ')));
+        EXPECT_TRUE(Contains(tail, "BINARY \"BPM.slack\"")) << ::testing::PrintToString(tail);
+        EXPECT_TRUE(Contains(tail, "SECTION s_tail_main_2")) << ::testing::PrintToString(tail);
+        EXPECT_EQ(std::count(tail.begin(), tail.end(), "ORG $812C"), 2) << ::testing::PrintToString(tail);
+    }
     // INCBIN is BINARY; IN F,(C) is z80asm's own
     EXPECT_EQ(ToZ80asm("        INCBIN \"F\"\n        IN F,(C)", "sjasmplus"), (std::vector<std::string>{"BINARY \"F\"", "IN F,(C)"}));
 }
@@ -175,10 +208,13 @@ TEST(Z88dkBackend_Test, TextMacrosAndSectionOffsets)
                                                       "        ELSE\n        HALT\n        ENDIF", "sjasmplus");
     EXPECT_FALSE(Contains(address, "HALT")) << ::testing::PrintToString(address);
     EXPECT_EQ(std::count(address.begin(), address.end(), "NOP"), 2);
-    // Names assigned from each other grow at every assignment: reported
-    Diagnostics diagnostics;
-    ToZ80asm("SX=0\nSY=100\nSX=SX+SY/41\nSY=SY-SX/41", "sjasmplus", &diagnostics);
-    EXPECT_TRUE(std::any_of(diagnostics.begin(), diagnostics.end(), [](const Diagnostic& d) { return d.message.find("text macro") != std::string::npos; }));
+    // Names assigned from each other would grow at every assignment: each value an EQU of its own (LOCAL in a macro)
+    const std::vector<std::string> grow = ToZ80asm("SX=0\nSY=100\nSX=SX+SY/41\nSY=SY-SX/41", "sjasmplus");
+    EXPECT_TRUE(Contains(grow, "SX DEFL __UNREALASM_V_main_3")) << ::testing::PrintToString(grow);
+    EXPECT_TRUE(std::any_of(grow.begin(), grow.end(), [](const std::string& t) { return t.rfind("__UNREALASM_V_main_4 EQU SY-", 0) == 0; }))
+        << ::testing::PrintToString(grow);
+    const std::vector<std::string> inMacro = ToZ80asm("        MACRO M\nSX=SX+SY/41\nSY=SY-SX/41\n        ENDM\nSX=0\nSY=100\n        M", "sjasmplus");
+    EXPECT_TRUE(Contains(inMacro, "LOCAL __UNREALASM_V_main_1")) << ::testing::PrintToString(inMacro);
 }
 
 TEST(Z88dkBackend_Test, ProgramsAssembleToWhatTheOriginalsBuilt)

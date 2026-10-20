@@ -36,6 +36,9 @@ struct SourceSymbolsResult
     SymbolSet set;
     Diagnostics diagnostics;   ///< the conversion's warnings and errors, the layout's, and the labels left without a value
     bool ok = false;           ///< laid out completely: every label of the result has its value
+    /// The address at the start of each source line the layout reached, on the source's own files and lines (a
+    /// converted project: the first line written from it; lines of macro bodies left out)
+    std::vector<layout::LineAddress> lines;
 };
 
 /// The labels of a project (its files as INCLUDE names them, every file of one dialect) assembled from `main`
