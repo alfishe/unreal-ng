@@ -1,7 +1,7 @@
 # P-01 SDL_GPU render path latency (gate)
 
 **Question.** Does SDL3 + SDL_GPU give the latency and pacing control the design needs on the Deck
-under gamescope? ([poc-plan.md](../../../../docs/inprogress/2026-10-08-steamdeck-client/poc-plan.md), [rendering.md §2–§3](../../../../docs/inprogress/2026-10-08-steamdeck-client/rendering.md))
+under gamescope? ([poc-plan.md](../../../docs/inprogress/2026-10-08-steamdeck-client/poc-plan.md), [rendering.md §2–§3](../../../docs/inprogress/2026-10-08-steamdeck-client/rendering.md))
 
 **Pass.** Median input → photon ≤ 40 ms at a 50 Hz panel; host CPU < 1 ms and GPU < 2 ms per frame.
 
