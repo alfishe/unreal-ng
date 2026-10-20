@@ -178,8 +178,10 @@ checked).
 
 COMMAND `2` asks for a name, `3` loads, `S` searches. The asm-synchronizer reads the buffer without a save
 ([asm-sources.md](../analysis/asm-sources.md#the-source-an-assembler-holds-in-ram-asm-synchronizer); descriptors
-`zasm-2.4` ... `zasm-4.20`, design in asm-synchronizer.md §7.9). Only the text being edited is read: 3.2x and later
-can hold several texts, switching between them is not covered yet.
+`zasm-2.4` ... `zasm-4.20`, design in asm-synchronizer.md §7.9). A load replaces the one text, and the read follows
+it: in 3.2x, `ovlib.a`, `ovldef.a`, `ReadMe.t` and `ovlib.a` again, one after the other (File / Load, then COMMAND
+`3`), each read equal to its decoded file, with its work name (`name`). The name input keeps the last name: DELETE
+(CS+0) its characters first; type the extension of a file other than `.a`.
 
 ## WebAPI
 

@@ -1573,7 +1573,7 @@ shows their effect.
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
 | `video window` / `video window status` | | Show the settings. |
-| `video window <key>=<value> ...` | `gpu`, `crt`, `blending` = on / off; `crt_profile` = none, basic, aperture, shadow-mask, slot-mask, megatron, shader:<name> (a custom shader, GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off. |
+| `video window <key>=<value> ...` | `gpu`, `crt`, `blending` = on / off; `crt_profile` = one of `crt_profiles` (none, basic, ..., shader:<name>: a libretro preset or a custom shader, GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off. |
 
 Fields: `backend` (`gpu` / `software`), `gpu_available`, `gpu`, `crt`, `crt_profile`, `crt_profiles` (offered),
 `blending`, `blending_frames`, `blending_weights`, `emulator` (the instance the window shows). Errors: `bad-parameter`

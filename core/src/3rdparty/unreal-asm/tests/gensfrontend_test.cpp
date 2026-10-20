@@ -119,6 +119,17 @@ TEST(GensFrontend_Test, ExpressionsRunLeftToRightOnSignedWords)
     EXPECT_EQ(ToSjasmplus("        DEFW 7/2,70016"), (std::vector<std::string>{"DW 7/2,4480"}));   // numbers modulo 65536
 }
 
+TEST(GensFrontend_Test, ValuesBeyondAWordWrap)
+{
+    // GENS keeps 16 bits: X EQU #FFFF+2 is 1, so DEFS X is one byte; sjasmplus would keep 65537. A value the numbers give
+    // beyond #FFFF is masked where it is defined, counted (DEFS) or tested (IF); a negative one stays (0-7 is -7 to both)
+    EXPECT_EQ(ToSjasmplus("X       EQU  #FFFF+2\nY       EQU  X*3\nN       EQU  0-7\n        DEFS X\n        DEFS #FFFF+3\n        DEFS Y"),
+              (std::vector<std::string>{"X       EQU (#FFFF+2&#FFFF)", "Y       EQU X*3", "N       EQU 0-7", "DS X", "DS (#FFFF+3&#FFFF)", "DS Y"}));
+    EXPECT_EQ(ToSjasmplus("W       EQU  #7FFF*4\n        IF   W+4\n        NOP\n        END"),
+              (std::vector<std::string>{"W       EQU (#7FFF*4&#FFFF)", "IF (W+4&#FFFF)", "NOP", "ENDIF"}));
+    EXPECT_EQ(ToSjasmplus("        IF   #FFFF+1\n        NOP\n        END"), (std::vector<std::string>{"IF (#FFFF+1&#FFFF)", "NOP", "ENDIF"}));
+}
+
 TEST(GensFrontend_Test, DollarIsTheAddressOfEachItem)
 {
     // GENS4: DEFW A,$ puts the address of the second word there

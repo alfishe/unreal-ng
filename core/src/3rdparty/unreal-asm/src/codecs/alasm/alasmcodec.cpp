@@ -457,11 +457,13 @@ bool AlasmCodec::EncodeLine(const std::string& text, const alasm::Version& versi
             afterRun = false;
             continue;
         }
-        if (c == ',' || (c != '(' && c < '?'))
+        // Another character below '?' is kept and the next one read afresh, so a register after it is a keyword
+        // (`DISPLAY "d",/D,x` stores D as #F1, which DISPLAY's switch needs). The source on the 5.09 disk copies the
+        // word after it (c2COPY) instead, as only its ATM and 80-column ZX Evo builds do; the editors of 4.2-5.09
+        // (alasm64, alasm42, alasm442, al64_444, alasm4.5, alasm48) and every file they write take it afresh
+        if (c != '(' && c < '?')
         {
             out.push_back(c);
-            if (c != ',')
-                copyWord();
             afterRun = false;
             continue;
         }

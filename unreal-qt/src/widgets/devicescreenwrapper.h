@@ -12,7 +12,6 @@
 
 class Emulator;
 class DeviceScreen;
-class DeviceScreenGL;
 class DeviceScreenGLWindow;
 class MouseCaptureController;
 

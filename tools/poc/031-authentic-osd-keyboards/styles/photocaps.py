@@ -177,3 +177,59 @@ def amstrad(canvas, x, y, w, h, color, shape=None, unit=19.0, skirt=0.27, shadow
         f'<path d="{face_path}" fill="{dish}"/>',
         f'<path d="{face_path}" fill="none" stroke="{shade(color, 1.25)}" stroke-width="0.12" stroke-opacity="0.3"/>',
     ]), face
+
+
+def tint(color, factors):
+    """@p color with each channel scaled by its factor: a warm shadow on aged plastic darkens the blue most. A
+    neutral plastic (the grey caps) takes the factors' mean, a warm one all of their spread"""
+    color = color.lstrip("#")
+    warmth = min(1.0, max(0.0, (int(color[0:2], 16) - int(color[4:6], 16)) / 50))
+    mean = sum(factors) / 3
+    factors = [mean + (f - mean) * warmth for f in factors]
+    return "#" + "".join(f"{min(255, round(int(color[i:i + 2], 16) * f)):02x}" for i, f in zip((0, 2, 4), factors))
+
+
+def soviet(canvas, x, y, w, h, color, shape=None, side=0.14, back=0.04, front=0.3):
+    """A Soviet sculpted cap (the MS 7004 family's, the Pentagon 2+'s) seen from above: a flat top face, about two
+    thirds of the key, nearly flush with its back; round it the cap's sides, the narrow left and right ones turning
+    darker towards their base, the tall front slope a little darker than the top (its legend is printed on it).
+    @p side, @p back, @p front the sides' share of the key. The sides are one moulded surface, so it is drawn as one:
+    a body darkening towards the front with the left and right falloff laid over it, no seams at the corners. The top
+    face is a shallow cylinder, its edge a soft rounded turn; the cap stands in a soft contact shadow. Matte: no
+    highlight. Returns the svg and the top face's rectangle (for an L, the bar's)"""
+    d = canvas.defs
+    gap = 0.45
+    # the sides as the photo shows them, against the top face: the front slope a warmer, darker tan, the left side
+    # (away from the light) much darker, the right one between
+    front_c, left_c, right_c = (tint(color, k) for k in ((0.88, 0.865, 0.82), (0.71, 0.655, 0.555),
+                                                         (0.835, 0.74, 0.63)))
+    body = d.linear([(0, left_c), (side, front_c), (1 - side, front_c), (1, right_c)], x1=0, y1=0, x2=1, y2=0)
+    flanks = d.linear([(0, "#000000", 0.06), (0.3, "#000000", 0.0), (1, "#000000", 0.08)])
+    top = d.linear([(0, shade(color, 1.02)), (0.45, shade(color, 1.0)), (1, shade(color, 0.975))])
+    edge = d.linear([(0, shade(color, 0.95)), (0.7, shade(color, 0.85)), (1, tint(color, (0.8, 0.76, 0.68)))])
+    if shape:  # the L: an inset L for the top face
+        outer = l_shape(shape, gap, gap, 0.8, 0.8)
+        unit = shape[1][0] - shape[0][0]
+        sd, b, f = side * unit, back * unit, front * unit
+        face_path = l_shape(shape, gap + sd, gap + b, 1.2, 1.2, front=gap + f)
+        (_, _), (rx, _), (_, by), (bx, _), (_, my), _ = shape
+        face = (bx + gap + sd, my + gap + b, rx - bx - 2 * (gap + sd), by - my - 2 * gap - b - f)
+        parts = [f'<path d="{l_shape(shape, gap - 0.5, gap - 0.1, 1.0, 1.0, front=gap - 0.9)}" fill="#000" '
+                 f'fill-opacity="0.22"/>',
+                 f'<path d="{l_shape(shape, gap - 0.2, gap, 0.8, 0.8, front=gap - 0.45)}" fill="#000" '
+                 f'fill-opacity="0.25"/>']
+    else:
+        ox, oy, ow, oh = x + gap, y + gap, w - 2 * gap, h - 2 * gap
+        sd, b, f = side * min(ow, oh), back * oh, front * oh
+        face = (ox + sd, oy + b, ow - 2 * sd, oh - b - f)
+        outer = rounded(ox, oy, ow, oh, 0.8)
+        face_path = rounded(*face, 1.6)
+        parts = [soft_shadow(ox, oy, ow, oh, 0.8, 0.9, dx=0.25, dy=0.55, opacity=0.5, steps=4)]
+    parts += [
+        f'<path d="{outer}" fill="{body}"/>',
+        f'<path d="{outer}" fill="{flanks}"/>',
+        f'<path d="{outer}" fill="none" stroke="#000" stroke-width="0.12" stroke-opacity="0.4"/>',
+        f'<path d="{face_path}" fill="{top}"/>',
+        f'<path d="{face_path}" fill="none" stroke="{edge}" stroke-width="0.3" stroke-opacity="0.8"/>',
+    ]
+    return "\n".join(parts), face

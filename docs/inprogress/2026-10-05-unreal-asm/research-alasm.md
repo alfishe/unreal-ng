@@ -7,7 +7,7 @@
 | **Primary source** | ALASM 5.09's own sources, `alTOKENS.H` (`cnv2str` = text → line, `str2txt` = line → text, `mnemtkn` / `regstkn` tables), on the disk of [ALASM509_STS75.rar](http://alonecoder.nedopc.com/zx/ALASM509_STS75.rar) from [Alone Coder's page](http://alonecoder.nedopc.com/zx/) (prior-art P9) |
 | **Other versions** | the keyword tables read from each release's binary: [ALASM 3.8c](https://zxart.ee/releasefile/id:406950/ALASM38c.zip), [4.2](https://zxart.ee/releasefile/id:574325/ALM.scl), [4.42](https://zxart.ee/releasefile/id:408359/Alasm442.SCL), [4.44](https://zxart.ee/releasefile/id:249270/ALASM444.ZIP), [4.5](https://zxart.ee/releasefile/id:589336/alasm45.scl), [4.3, 4.43, 4.44 bugfix, 4.45, 4.46 (with its source), 5.0](https://yadi.sk/d/N_p56RIHWU15Gw) (the KLUG BBS archive, `SINCLAIR/ALASM4.ZIP`, `ALASM443.ZIP`, `AL4_44BF.ZIP`, `ALASM445.RAR`, `ALASM446.RAR`, `AL446SRC.RAR`, `ALASM5_0.RAR`), [5.05](https://vtrd.in/system/PT+ALASM.ZIP) (in Pro Tracker + ALASM; the whole 5.05 disk with ALASM's sources and change log is `alasm/wdc/alasm505.zip` of the collection, the same build 01728 of 15.04.06), [5.07](https://zxart.ee/releasefile/id:155270/ALASMV5.07(AloneCoder).trd.zip), [5.08](http://alonecoder.nedopc.com/zx/ALASM508.rar), [5.09](https://zxart.ee/releasefile/id:249271/ALASM509.zip), [5.09 ZX Evolution](https://zxart.ee/releasefile/id:424011/ALSM509E.zip) (release list: [zxart](https://zxart.ee/prod/155267)) |
 | **Corpus** | every type-`H` file on those disks, plus [PT372SRC.rar](http://alonecoder.nedopc.com/zx/PT372SRC.rar), [ACE102SRC.rar](http://alonecoder.nedopc.com/zx/ACE102SRC.rar) and the repository's `testdata/machines/pentagon1024sl/TheLink.trd`: **429 files, 205 959 lines** |
-| **Result** | all 429 files decode and encode back **byte for byte**; the canonical tokenizer alone writes 99.6 % of the lines exactly as the editor stored them (§5) |
+| **Result** | all 429 files decode and encode back **byte for byte**; the canonical tokenizer alone writes 99.6 % of the lines exactly as the editor stored them (§5); with the rule after a character below `?` corrected (2026-10-19) the 205 files outside the RAR archives went from 99.85 % to 99.99 % (134 139 of 134 159 lines), none worse |
 
 ## 1. Example first
 
@@ -56,8 +56,12 @@ A line is `[n][n-1 bytes]`, `n` counting itself (`01` = an empty line). In a lin
 
 `cnv2str` (text → line) matches keywords **case-sensitively** (only upper case is a keyword), in table order, at the
 start of a word. A mnemonic must be followed by the end, `;` or a blank (which it absorbs); an operand keyword by
-`;` or a character below `0`. `DD` (`DEFM` in 3.8-4.5) stops tokenizing its operand so hex digits like `BC` are not
-split into registers. Blank runs: every blank gap outside strings and comments becomes runs of at most 15.
+`;` or a character below `0`. A character below `?` (other than `#`, which starts a number, and `(`) is stored and the
+next one read afresh, so a register after an operator or `/` is a keyword: `DISPLAY "d",/D,x` stores `D` as `#F1`,
+and DISPLAY's switches need that ([research-alasm-to-sjasmplus.md](research-alasm-to-sjasmplus.md) §7). The source on the 5.09 disk (`alTOKENS`, `c2COPY`) copies the word after such a
+character instead; of the builds in the collection only its `alasmatm` and the 80-column ZX Evo build do that, the
+editors of 4.2 (`alasm48`), 4.42, 4.44, 4.5 and 5.09 (`alasm64`, `alasm42`; checked typed in it, 2026-10-19) do not.
+`DD` (`DEFM` in 3.8-4.5) stops tokenizing its operand so hex digits like `BC` are not split into registers. Blank runs: every blank gap outside strings and comments becomes runs of at most 15.
 
 **Backward walk padding.** The editor moves to the previous line by walking back from a line's end to the first byte
 whose value equals its distance from the end. When a byte of the line would stop that walk early (a trailing `#01`
@@ -131,8 +135,7 @@ Every one is still written back exactly from the kept bytes; these are what an e
 |---|---|---|
 | Blanks before a column-8 keyword kept | `DIS_GO`, run 2, `EXX` | written by an editor older than 5.09's `c2s7` rule, or imported |
 | Trailing blank runs | `FNT     EQU     #8800` + 15 blanks | text imports (`alImpExp`) do not trim |
-| Switch letter tokenized | `DISPLAY /L,"..."` with `L` = `#F4` | an older editor tokenized after `/`; 5.09 does not |
-| `DD` as text | `DD #...` in `AL444nfo` | typed in a version without `DD` |
+| Switch letter not tokenized | `DISPLAY "end: ",/H,$` with a plain `H` | written by the codec before 2026-10-19 (`oracle/a5-constructs.trd`); 5.09 stops on it with error #00 |
 
 ## 6. Test data (`testdata/alasm/`)
 

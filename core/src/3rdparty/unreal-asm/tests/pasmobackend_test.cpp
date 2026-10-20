@@ -12,6 +12,7 @@
 #include <fstream>
 #include <random>
 
+#include "codecs/gens/genscodec.h"
 #include "codecs/storm/stormcodec.h"
 #include "codecs/tasm/tasmcodec.h"
 #include "codecs/text/textcodec.h"
@@ -135,6 +136,17 @@ TEST(PasmoBackend_Test, PasmoPrioritiesAndWords)
     EXPECT_EQ(ToPasmo("        LD A,(IX+OFS)\n        LD (IY-3),B", "storm"), (std::vector<std::string>{"LD A,(IX+((OFS) AND #FF))", "LD (IY-3),B"}));
 }
 
+TEST(PasmoBackend_Test, GensSignedDivisionOnUnsignedWords)
+{
+    // GENS divides signed words (#8000/2 is #C000), pasmo unsigned ones: the magnitudes divided and the sign put back
+    // through s = 0-(x SHR 15); numbers known when converting are computed; the remainder takes the dividend's sign
+    EXPECT_EQ(ToPasmo("        DEFW #8000/2,7?2", "gens"), (std::vector<std::string>{"DW 49152,1"}));
+    const std::string magnitude = "(((N) XOR (0-((N) SHR 15)))-(0-((N) SHR 15)))";
+    EXPECT_EQ(ToPasmo("N       EQU  0-7\n        DEFW N/2,N?3", "gens"),
+              (std::vector<std::string>{"N EQU 0-7", "DW (((" + magnitude + "/2) XOR (0-((N) SHR 15)))-(0-((N) SHR 15))),(((" + magnitude +
+                                                       " MOD 3) XOR (0-((N) SHR 15)))-(0-((N) SHR 15)))"}));
+}
+
 TEST(PasmoBackend_Test, NamesAndInstructionsPasmoLacks)
 {
     // Every Z80 mnemonic is reserved in pasmo: a label RET is renamed (a label of a file that may start inside a
@@ -153,10 +165,11 @@ TEST(PasmoBackend_Test, MacroParametersNamedLikeRegisters)
 {
     // sjasmplus puts the argument where the parameter's name stands, case kept: in LD A,a the A is the register and
     // the a the parameter, in LD HL,(b) memory (LD B,(b) has no memory form: the parentheses group, sjasmplus' LD B,7);
-    // the header names the parameters as the body does
+    // the header names the parameters as the body does; an operand starting with a parameter gets "0+" (an argument
+    // in parentheses, GENS' MOVE (X+1), would make it memory to pasmo)
     EXPECT_EQ(ToPasmo("        MACRO T a, b\n        LD A,a\n        LD B,(b)\n        LD HL,(b)\n        LD HL,a+b\n        ENDM\n        T 5, 7",
                       "sjasmplus"),
-              (std::vector<std::string>{"T MACRO L_a,L_b", "LD A,L_a", "LD B,L_b", "LD HL,(L_b)", "LD HL,L_a+L_b", "ENDM", "T 5,7"}));
+              (std::vector<std::string>{"T MACRO L_a,L_b", "LD A,0+L_a", "LD B,0+L_b", "LD HL,(L_b)", "LD HL,0+L_a+L_b", "ENDM", "T 5,7"}));
 }
 
 TEST(PasmoBackend_Test, SjasmplusTemporaryLabelsAndStructures)
@@ -246,5 +259,11 @@ TEST(PasmoBackend_Test, ProgramsAssembleToWhatTheOriginalsBuilt)
         const SourceDocument relocfake = SourceDocument::FromText(ReadTestText("dialects/sjasmplus/relocfake.asm"), "sjasmplus");
         const Built built = AssembleWithPasmo(pasmo, Project({{"relocfake", relocfake}}), "relocfake", {});
         EXPECT_EQ(built.bytes, ReadTestData("dialects/sjasmplus/relocfake.bin"));
+    }
+    // GENS4's constructs (signed division on pasmo's unsigned words), from #C000
+    {
+        const SourceDocument constructs = codecs::GensCodec().Decode(ReadTestData("dialects/gens/constructs.gens"), {}).document;
+        const Built built = AssembleWithPasmo(pasmo, Project({{"constructs", constructs}}), "constructs", {});
+        EXPECT_EQ(built.bytes, ReadTestData("dialects/gens/constructs.bin"));
     }
 }

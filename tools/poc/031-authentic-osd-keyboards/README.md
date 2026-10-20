@@ -91,8 +91,10 @@ fixed in `core/` after the POC, as its own task.
 | `zx48k` | 48K | drawn, shown to the owner | — | — |
 | `zx128` | 128k (the Spectrum+ keyboard in the 128's case) | drawn, shown to the owner | — | — |
 | `zxplus2` | PLUS2 (`keyboards/amstrad.py`, shared with +2A and +3) | done, approved by the owner (2026-10-19) | — | — |
-| `zxplus2a` | PLUS2A | drawn, shown to the owner | — | — |
-| `zxplus3` | PLUS3 | drawn, shown to the owner | — | — |
+| `zxplus2a` | PLUS2A | done, approved by the owner (2026-10-19) | — | — |
+| `zxplus3` | PLUS3 | done, approved by the owner (2026-10-19) | — | — |
+| `pentagon` | PENTAGON (the 40-key sticker keyboard on its bare plate, refs-clones §1.2) | drawn, shown to the owner | — | — |
+| `pentagon2plus` | PENTAGON (the second variant: the "2+" black case with the 58-key layout, the owner's photo) | done, approved by the owner (2026-10-20) | — | — |
 | `zxnext` | NEXT | done, approved by the owner (2026-10-19) | — | — |
 
 ## Files

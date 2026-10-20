@@ -1,0 +1,93 @@
+#version 330
+
+uniform mat4 LIBRA_UNIFORM_MVP;
+uniform vec4 LIBRA_UNIFORM_SourceSize;
+uniform vec4 LIBRA_UNIFORM_OriginalSize;
+uniform vec4 LIBRA_UNIFORM_OutputSize;
+uniform uint LIBRA_UNIFORM_FrameCount;
+uniform float LIBRA_UNIFORM_bloom;
+uniform float LIBRA_UNIFORM_halation;
+uniform float LIBRA_UNIFORM_slotms;
+uniform float LIBRA_UNIFORM_mask_gamma;
+uniform float LIBRA_UNIFORM_gamma_out;
+uniform float LIBRA_UNIFORM_overscanX;
+uniform float LIBRA_UNIFORM_overscanY;
+uniform float LIBRA_UNIFORM_VShift;
+uniform float LIBRA_UNIFORM_intres;
+uniform float LIBRA_UNIFORM_c_shape;
+uniform float LIBRA_UNIFORM_barspeed;
+uniform float LIBRA_UNIFORM_barintensity;
+uniform float LIBRA_UNIFORM_bardir;
+uniform float LIBRA_UNIFORM_sborder;
+uniform float LIBRA_UNIFORM_bloom_dist;
+uniform float LIBRA_UNIFORM_deconr;
+uniform float LIBRA_UNIFORM_decons;
+uniform float LIBRA_UNIFORM_addnoised;
+uniform float LIBRA_UNIFORM_noisetype;
+uniform float LIBRA_UNIFORM_noiseresd;
+uniform float LIBRA_UNIFORM_deconrr;
+uniform float LIBRA_UNIFORM_deconrg;
+uniform float LIBRA_UNIFORM_deconrb;
+uniform float LIBRA_UNIFORM_deconrry;
+uniform float LIBRA_UNIFORM_deconrgy;
+uniform float LIBRA_UNIFORM_deconrby;
+uniform float LIBRA_UNIFORM_dctypex;
+uniform float LIBRA_UNIFORM_dctypey;
+uniform float LIBRA_UNIFORM_post_br;
+uniform float LIBRA_UNIFORM_maskboost;
+uniform float LIBRA_UNIFORM_smoothmask;
+uniform float LIBRA_UNIFORM_gamma_c;
+uniform float LIBRA_UNIFORM_gamma_c2;
+uniform float LIBRA_UNIFORM_m_glow;
+uniform float LIBRA_UNIFORM_m_glow_low;
+uniform float LIBRA_UNIFORM_m_glow_high;
+uniform float LIBRA_UNIFORM_m_glow_dist;
+uniform float LIBRA_UNIFORM_m_glow_mask;
+uniform float LIBRA_UNIFORM_smask_mit;
+uniform float LIBRA_UNIFORM_mask_zoom;
+uniform float LIBRA_UNIFORM_no_scanlines;
+uniform float LIBRA_UNIFORM_bmask;
+uniform float LIBRA_UNIFORM_bmask1;
+uniform float LIBRA_UNIFORM_hmask1;
+uniform float LIBRA_UNIFORM_mzoom_sh;
+uniform float LIBRA_UNIFORM_mclip;
+uniform float LIBRA_UNIFORM_edgemask;
+uniform float LIBRA_UNIFORM_oimage;
+uniform float LIBRA_UNIFORM_interm;
+
+uniform float LIBRA_UNIFORM_TATE;
+uniform float LIBRA_UNIFORM_IOS;
+uniform float LIBRA_UNIFORM_OS;
+uniform float LIBRA_UNIFORM_BLOOM;
+uniform float LIBRA_UNIFORM_brightboost;
+uniform float LIBRA_UNIFORM_brightboost1;
+uniform float LIBRA_UNIFORM_csize;
+uniform float LIBRA_UNIFORM_bsize1;
+uniform float LIBRA_UNIFORM_warpX;
+uniform float LIBRA_UNIFORM_warpY;
+uniform float LIBRA_UNIFORM_glow;
+uniform float LIBRA_UNIFORM_shadowMask;
+uniform float LIBRA_UNIFORM_masksize;
+uniform float LIBRA_UNIFORM_slotmask;
+uniform float LIBRA_UNIFORM_slotmask1;
+uniform float LIBRA_UNIFORM_slotwidth;
+uniform float LIBRA_UNIFORM_double_slot;
+uniform float LIBRA_UNIFORM_mcut;
+uniform float LIBRA_UNIFORM_maskDark;
+uniform float LIBRA_UNIFORM_maskLight;
+uniform float LIBRA_UNIFORM_maskstr;
+uniform float LIBRA_UNIFORM_mshift;
+uniform float LIBRA_UNIFORM_mask_layout;
+uniform float LIBRA_UNIFORM_mask_bloom;
+uniform float LIBRA_UNIFORM_hiscan;
+uniform float LIBRA_UNIFORM_pr_scan;
+
+layout(location = 0) in vec4 Position;
+out vec2 LIBRA_VARYING_0;
+layout(location = 1) in vec2 TexCoord;
+
+void main()
+{
+    gl_Position = LIBRA_UNIFORM_MVP * Position;
+    LIBRA_VARYING_0 = TexCoord * 1.000010013580322265625;
+}

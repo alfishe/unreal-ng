@@ -1,7 +1,7 @@
 """Phase 1: photorealistic. Real colours, lit materials, soft shadows, all within what QSvgRenderer draws."""
 
 from styles.common import Picture, glyph_shape, glyphs, legend_origin
-from styles.photocaps import amstrad, hard, next_cap, rubber
+from styles.photocaps import amstrad, hard, next_cap, rubber, soviet
 from svgkit import rounded, shade, soft_shadow, text_path, text_width
 
 
@@ -293,9 +293,31 @@ def case_fddpanel(pic, part):
     return "\n".join(parts)
 
 
-CASE = {"fddpanel": case_fddpanel, "teeth": case_teeth, "datacorder": case_datacorder, "buttons": case_buttons, "body": case_body, "plate": case_plate, "stripe": case_stripe, "logo": case_logo, "well": case_well,
+def case_panel(pic, part):
+    """A flat plate recessed into the case (the Pentagon 2+'s name plate): flat, a thin dark rim, no sheen"""
+    g = part.geometry
+    x, y, w, h, r = g["x"], g["y"], g["w"], g["h"], g.get("r", 0.6)
+    return "\n".join([
+        f'<path d="{rounded(x - 0.5, y - 0.5, w + 1.0, h + 1.0, r + 0.5)}" fill="{shade(part.color, 0.6)}"/>',
+        f'<path d="{rounded(x, y, w, h, r)}" fill="{part.color}"/>',
+        f'<path d="{rounded(x, y, w, h, r)}" fill="none" stroke="{shade(part.color, 1.5)}" stroke-width="0.12" '
+        f'stroke-opacity="0.3"/>',
+    ])
+
+
+CASE = {"panel": case_panel, "fddpanel": case_fddpanel, "teeth": case_teeth, "datacorder": case_datacorder, "buttons": case_buttons, "body": case_body, "plate": case_plate, "stripe": case_stripe, "logo": case_logo, "well": case_well,
         "groove": case_groove, "insert": case_insert, "grille": case_grille, "tab": case_tab, "led": case_led,
         "hump": case_hump, "fins": case_fins}
+
+
+def lit(pic, key):
+    """The key's colour as the photo shows it: the light falls off from the top left across the board, and no two caps
+    of an old keyboard have quite the same tint (a fixed spread per key, ±1.5 %)"""
+    W, H = pic.keyboard["size"]
+    x, y, w, h = key.rect
+    falloff = 1.03 - 0.06 * (x + w / 2) / W - 0.04 * (y + h / 2) / H
+    spread = (sum(map(ord, key.id)) * 37 % 31 - 15) / 1000
+    return shade(key.color, falloff + spread)
 
 
 def cap(pic, key):
@@ -309,6 +331,10 @@ def cap(pic, key):
     if key.cap == "plus":  # the Spectrum+ / 128 key: a satin block, the convex glossy pad in front
         return next_cap(pic, x, y, w, h, key.color, key.shape, top_inset=0.31, gloss=0.03, sheen=0.3, relief=(1.05, 0.92), rim=0.15,
                         frame=[(0, "#2c2d30"), (0.1, "#202124"), (0.9, "#18191b"), (1, "#0e0f10")])
+    if key.cap == "mech":  # a low black cap of a Soviet mechanical switch, its sticker on the top face
+        return hard(pic, x, y, w, h, key.color, inset=(0.9, 0.6, 0.9, 1.3), radius=1.0, top_radius=1.2, gloss=0.05)
+    if key.cap == "soviet":
+        return soviet(pic, x, y, w, h, lit(pic, key), key.shape)
     if key.cap == "amstrad":
         return amstrad(pic, x, y, w, h, key.color, key.shape)
     raise ValueError(f"{key.id}: cap {key.cap}")

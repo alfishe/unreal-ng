@@ -499,9 +499,10 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
             const std::string text = f.document.Text() + "\n";
             out.assign(text.begin(), text.end());
         }
-        if (!WriteFile(args.output + "/" + f.name + ".asm", out))
+        // a TR-DOS name may hold '/' or ':' ("SAVEBAS/"): the host file takes '_' there
+        if (!WriteFile(args.output + "/" + HostName(f.name) + ".asm", out))
         {
-            std::cerr << "zxasm: cannot write " << args.output << "/" << f.name << ".asm\n";
+            std::cerr << "zxasm: cannot write " << args.output << "/" << HostName(f.name) << ".asm\n";
             return 1;
         }
         // INCBIN "name" / "name.T": the file of the image, written under the name the source uses
@@ -635,9 +636,9 @@ int ConvertDirectory(const Args& args, const CodecRegistry& registry)
             d.message = f.name + ": " + d.message;
             PrintDiagnostics({d});
         }
-        if (!WriteFile(args.output + "/" + f.name + ".asm", encoded.bytes))
+        if (!WriteFile(args.output + "/" + HostName(f.name) + ".asm", encoded.bytes))
         {
-            std::cerr << "zxasm: cannot write " << args.output << "/" << f.name << ".asm\n";
+            std::cerr << "zxasm: cannot write " << args.output << "/" << HostName(f.name) << ".asm\n";
             return 1;
         }
         // INCBIN "name": the directory's file of that name in any case, written under the name the source uses

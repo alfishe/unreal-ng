@@ -26,7 +26,7 @@ public:
         settings.backend = "software";
         settings.gpuAvailable = false;
         settings.crtProfile = "none";
-        settings.crtProfiles = {"none", "basic", "shadow-mask", "shader:megatron"};
+        settings.crtProfiles = {"none", "basic", "crt-lottes", "shader:mine"};
         settings.blendingWeights = "equal";
         settings.emulatorId = "fake-id";
     }
@@ -93,13 +93,13 @@ TEST(WindowDisplay_Test, WordsMakeAChange)
     std::string error;
     EXPECT_TRUE(WindowDisplay::ApplyWord(change, "gpu", "on", error));
     EXPECT_TRUE(WindowDisplay::ApplyWord(change, "CRT", "False", error));
-    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "crt_profile", "Shadow-Mask", error));
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "crt_profile", "CRT-Lottes", error));
     EXPECT_TRUE(WindowDisplay::ApplyWord(change, "blending", "1", error));
     EXPECT_TRUE(WindowDisplay::ApplyWord(change, "blending_frames", "5", error));
     EXPECT_TRUE(WindowDisplay::ApplyWord(change, "blending_weights", "exponential", error));
     EXPECT_EQ(change.gpu, true);
     EXPECT_EQ(change.crt, false);
-    EXPECT_EQ(change.crtProfile, "shadow-mask") << "profile words in any case";
+    EXPECT_EQ(change.crtProfile, "crt-lottes") << "profile words in any case";
     EXPECT_EQ(change.blending, true);
     EXPECT_EQ(change.blendingFrames, 5);
     EXPECT_EQ(change.blendingWeights, "exponential");
@@ -119,14 +119,14 @@ TEST(WindowDisplay_Test, SetAppliesAndAnswersTheNewSettings)
     ScopedDisplay registered(fake);
 
     WindowDisplayChange change;
-    change.crtProfile = "shadow-mask";
+    change.crtProfile = "crt-lottes";
     change.blending = true;
     change.blendingFrames = 3;
     const WindowDisplay::Result r = WindowDisplay::Set(change);
     ASSERT_TRUE(r.Ok()) << r.error;
     EXPECT_EQ(fake->applied, 1);
     EXPECT_TRUE(r.settings.crt);
-    EXPECT_EQ(r.settings.crtProfile, "shadow-mask");
+    EXPECT_EQ(r.settings.crtProfile, "crt-lottes");
     EXPECT_TRUE(r.settings.blending);
     EXPECT_EQ(r.settings.blendingFrames, 3);
 
@@ -142,13 +142,13 @@ TEST(WindowDisplay_Test, SetRefusesWhatTheWindowDoesNotOffer)
     ScopedDisplay registered(fake);
 
     WindowDisplayChange profile;
-    profile.crtProfile = "megatron";  // not in this window's list
+    profile.crtProfile = "crt-royale";  // not in this window's list
     const WindowDisplay::Result badProfile = WindowDisplay::Set(profile);
     EXPECT_EQ(badProfile.status, WindowDisplay::Status::BadParameter);
-    EXPECT_NE(badProfile.error.find("none, basic, shadow-mask"), std::string::npos) << badProfile.error;
+    EXPECT_NE(badProfile.error.find("none, basic, crt-lottes"), std::string::npos) << badProfile.error;
 
     WindowDisplayChange shader;
-    shader.crtProfile = "shader:megatron";  // offered, but runs on the GPU only
+    shader.crtProfile = "shader:mine";  // offered, but runs on the GPU only
     const WindowDisplay::Result noGpuShader = WindowDisplay::Set(shader);
     EXPECT_EQ(noGpuShader.status, WindowDisplay::Status::Unavailable);
     EXPECT_NE(noGpuShader.error.find("gpu=on"), std::string::npos) << noGpuShader.error;

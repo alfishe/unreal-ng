@@ -30,7 +30,8 @@ IN F,(C) / OUT (C),0                DB #ED,#70 / DB #ED,#71
 |---|---|
 | Precedence: `* / MOD SHL SHR`, then `+ -`, comparisons, the unary `NOT ~ ! + -`, `AND`, `OR XOR`, `&&`, `\|\|`, and `HIGH LOW` last: `-1+2` is -3, `HIGH #1234+1` is #12 | every unary operation and HIGH / LOW in parentheses; binary ones by priority |
 | 16-bit unsigned words; comparisons give #FFFF | the 16-bit sources (ALASM, TASM, STORM, ZX-ASM) need no masks; STORM's true 1 is negated |
-| An operand starting with `(` is taken for memory | `0+` in front of a value that starts with a parenthesis |
+| A signed 16-bit source (GENS) divides two's complement words | `/` and `MOD` on the magnitudes, the sign put back: `s = 0-(x SHR 15)`, `(x XOR s)-s`; the quotient's sign from `a XOR b`, the remainder's from the dividend; numbers computed when converting |
+| An operand starting with `(` is taken for memory | `0+` in front of a value that starts with a parenthesis, or with a macro parameter (its argument may be `(...)`: `LD DE,_g1*2` with `(+(START+1))` read memory before 2026-10-19) |
 | `(IX+e)`: after `+` any byte 0..255, after `-` 0..128 | a numeric offset as is, a negated one with `-`, any other `((e) AND #FF)` |
 | Names: a letter, `_ ? @ .` first; `$` inside a name is ignored; mnemonics, registers, operators and directives are reserved | such labels renamed `L_...` |
 | `'text'` takes every byte, `''` is a quote | texts and one-character constants single-quoted (the file keeps the Spectrum code page) |

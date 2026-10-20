@@ -1,0 +1,32 @@
+#version 330
+
+uniform mat4 LIBRA_UNIFORM_MVP;
+
+uniform vec4 LIBRA_UNIFORM_SourceSize;
+uniform vec4 LIBRA_UNIFORM_OriginalSize;
+uniform vec4 LIBRA_UNIFORM_OutputSize;
+uniform uint LIBRA_UNIFORM_FrameCount;
+uniform float LIBRA_UNIFORM_SIZEVB;
+uniform float LIBRA_UNIFORM_SIGMA_VB;
+uniform float LIBRA_UNIFORM_FINE_BLOOM;
+
+layout(location = 0) in vec4 Position;
+out vec2 LIBRA_VARYING_0;
+layout(location = 1) in vec2 TexCoord;
+float FINE_BLOOM;
+
+void main()
+{
+    float _23;
+    if (LIBRA_UNIFORM_FINE_BLOOM > 0.5)
+    {
+        _23 = LIBRA_UNIFORM_FINE_BLOOM;
+    }
+    else
+    {
+        _23 = mix(0.75, 0.5, -LIBRA_UNIFORM_FINE_BLOOM);
+    }
+    FINE_BLOOM = _23;
+    gl_Position = LIBRA_UNIFORM_MVP * Position;
+    LIBRA_VARYING_0 = TexCoord;
+}

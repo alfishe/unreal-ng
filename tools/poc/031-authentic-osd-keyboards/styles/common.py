@@ -57,7 +57,8 @@ def glyph_shape(glyph, x, y, size, color):
     arrow, `chevron:dir` / `chevron2:dir` an open single / double chevron (the Amstrad's cursor keys and tape
     buttons), `dot` a filled disc, `eject` a hollow roof over a bar, `pause` two bars, `hook` the return hook ┘ with
     its corner at (x, y); `tri:dir` / `tri2:dir` a filled single / double triangle, `eject:fill`, `pause:fill` the
-    filled ones (the +2A's tape symbols printed on the case)"""
+    filled ones (the +2A's tape symbols printed on the case); `sticker:zx` a Soviet key sticker @p size square,
+    dark, its top and bottom bands in @p color, `sticker:plain` one all in @p color, `enter` the hollow return arrow"""
     kind, _, arg = glyph.partition(":")
     if kind == "block":
         arg, _, polarity = arg.partition(":")
@@ -91,6 +92,24 @@ def glyph_shape(glyph, x, y, size, color):
         a, b, c, e = {"right": (1, 0, 0, 1), "left": (-1, 0, 0, 1), "up": (0, 1, -1, 0), "down": (0, 1, 1, 0)}[arg]
         return "".join('<path d="M' + " L".join(f"{x + (a * px + b * py) * size:.3f},{y + (c * px + e * py) * size:.3f}"
                                                  for px, py in line) + f'" {stroke}/>' for line in unit)
+    if kind == "enter":  # the hollow return arrow ↲: down the right, left along the bottom, the head at its end
+        s, t = size, size * 0.11
+        points = [(0.3, -0.5), (0.42, -0.5), (0.42, 0.28), (-0.12, 0.28), (-0.12, 0.42), (-0.42, 0.2), (-0.12, -0.02),
+                  (-0.12, 0.12), (0.3, 0.12)]
+        d = "M" + " L".join(f"{x + px * s:.3f},{y + py * s:.3f}" for px, py in points) + "Z"
+        return f'<path d="{d}" fill="none" stroke="{color}" stroke-width="{t * 0.6:.3f}" stroke-linejoin="miter"/>'
+    if kind == "sticker":
+        h = size / 2
+        parts = [f'<path d="{rounded(x - h, y - h, size, size, size * 0.1)}" '
+                 f'fill="{color if arg == "plain" else "#242528"}"/>']
+        if arg == "zx":  # the bands: rounded strips inset in the sticker's top and bottom
+            band, inset = size * 0.2, size * 0.06
+            for by in (y - h + inset * 0.6, y + h - inset * 0.6 - band):
+                parts.append(f'<path d="{rounded(x - h + inset, by, size - 2 * inset, band, band * 0.45)}" '
+                             f'fill="{color}"/>')
+        parts.append(f'<path d="{rounded(x - h, y - h, size, size, size * 0.1)}" fill="none" stroke="#9a9a9a" '
+                     f'stroke-width="{size * 0.012:.3f}" stroke-opacity="0.6"/>')
+        return "".join(parts)
     if kind in ("tri", "tri2"):  # drawn pointing right, then turned
         unit = [[(-0.3, -0.38), (0.3, 0), (-0.3, 0.38)]]
         if kind == "tri2":

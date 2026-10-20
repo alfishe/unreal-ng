@@ -5581,7 +5581,7 @@ namespace PythonBindings
             }
             return StateNodeToPy(r.Ok() ? WindowDisplay::Report(r.settings) : WindowDisplay::ErrorNode(r));
         }, "Change the GUI window's display settings, the way the View menu does: any of gpu=, crt=, blending= "
-           "(bool), crt_profile= (none, basic, aperture, shadow-mask, slot-mask, megatron), blending_frames= (2..5), "
+           "(bool), crt_profile= (one of crt_profiles: none, basic, ...), blending_frames= (2..5), "
            "blending_weights= ('equal', 'exponential'); returns the settings after the change, or {ok: False, error, kind}")
 
         .def("frame_cost", [](Emulator& self) -> py::dict {

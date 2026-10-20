@@ -4,6 +4,7 @@
 // names, how many operands an instruction takes (to split ALASM / STORM multi-operand lines).
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -34,6 +35,9 @@ std::string HexDigits(uint64_t value, int digits);
 /// A 16-bit product as Primus 2.9 and ZAsm 3.15 make it: by the multiplier's bits from the top (r*2, +multiplicand),
 /// stopping at the first carry out of 16 bits with the value so far (both measured on 84-100 products)
 uint32_t StopAtCarryProduct(uint32_t multiplicand, uint32_t multiplier);
+/// The value of an expression of numbers and names `symbol` knows, in sjasmplus' and z80asm's 32-bit arithmetic (+ - *
+/// & | ^ << ~ and unary minus; anything else unknown)
+std::optional<int64_t> ConstantValue(const ir::Expr& e, const std::function<std::optional<int64_t>(const std::string&)>& symbol);
 
 /// A Z80N instruction's bytes: ED, `code`, then `layout`: 'n' nothing, 'b' a byte (operand 0), 'B' two bytes (operands 0
 /// and 1), 'w' a word low byte first (the last operand), 'W' a word high byte first (PUSH nn)

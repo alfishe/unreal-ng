@@ -14,11 +14,13 @@
 #include <QKeyEvent>
 #include <QMimeData>
 #include <QOpenGLContext>
+#include <QOffscreenSurface>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLPixelTransferOptions>
 #include <QSurfaceFormat>
 #include <QUrl>
 #include <QVector2D>
+#include <QVector4D>
 #include <cmath>
 #include <cstring>
 
@@ -28,13 +30,16 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "crtprofiles.h"
 
-// The vertex shader of every CRT program: a quad in clip space, the legacy texture coordinate for custom shaders
+// The vertex shader of every CRT program: the viewport-filling quad from its corners (0, 0) top left .. (1, 1), the
+// texture coordinate custom shaders read
 static const char* CRT_VERTEX_SHADER = R"(
-#version 120
-varying vec2 texCoord;
+#version 330
+layout(location = 0) in vec2 corner;
+uniform vec4 texRect;
+out vec2 texCoord;
 void main() {
-    gl_Position = gl_Vertex;
-    texCoord = gl_MultiTexCoord0.xy;
+    gl_Position = vec4(corner.x * 2.0 - 1.0, 1.0 - corner.y * 2.0, 0.0, 1.0);
+    texCoord = mix(texRect.xy, texRect.zw, corner);
 }
 )";
 
@@ -47,10 +52,75 @@ DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent)
 
 void DeviceScreenGLWindow::setupVSync()
 {
+    setFormat(surfaceFormat());
+}
+
+QSurfaceFormat DeviceScreenGLWindow::surfaceFormat()
+{
+    // 3.3 core: the slang presets' passes need uint, textureSize, texelFetch and float framebuffers. macOS answers a
+    // 3.2+ core request with 4.1 core (its compatibility context stops at 2.1)
     QSurfaceFormat fmt;
+    fmt.setRenderableType(QSurfaceFormat::OpenGL);
+    fmt.setVersion(3, 3);
+    fmt.setProfile(QSurfaceFormat::CoreProfile);
     fmt.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
     fmt.setSwapInterval(1);  // Enable vsync: wait for vertical retrace before swap
-    setFormat(fmt);
+    return fmt;
+}
+
+bool DeviceScreenGLWindow::probeGPUAcceleration()
+{
+    QOpenGLContext ctx;
+    ctx.setFormat(surfaceFormat());
+    if (!ctx.create())
+    {
+        qInfo() << "DeviceScreenGLWindow: OpenGL context creation failed";
+        return false;
+    }
+    const QSurfaceFormat created = ctx.format();
+    if (ctx.isOpenGLES() || created.version() < qMakePair(3, 3) || created.profile() == QSurfaceFormat::CompatibilityProfile)
+    {
+        qInfo() << "DeviceScreenGLWindow: no OpenGL 3.3 core context (got" << created.majorVersion() << "."
+                 << created.minorVersion() << "), using the software screen";
+        return false;
+    }
+
+    QOffscreenSurface surface;
+    surface.create();
+    if (!ctx.makeCurrent(&surface))
+    {
+        qInfo() << "DeviceScreenGLWindow: Failed to make context current";
+        return false;
+    }
+
+    QOpenGLFunctions* gl = ctx.functions();
+    const char* renderer = reinterpret_cast<const char*>(gl->glGetString(GL_RENDERER));
+    const char* vendor = reinterpret_cast<const char*>(gl->glGetString(GL_VENDOR));
+    const char* version = reinterpret_cast<const char*>(gl->glGetString(GL_VERSION));
+
+    qInfo() << "DeviceScreenGLWindow: GL Renderer:" << (renderer ? renderer : "unknown");
+    qInfo() << "DeviceScreenGLWindow: GL Vendor:" << (vendor ? vendor : "unknown");
+    qInfo() << "DeviceScreenGLWindow: GL Version:" << (version ? version : "unknown");
+
+    bool isSoftware = false;
+    if (renderer)
+    {
+        isSoftware = (std::strstr(renderer, "llvmpipe") != nullptr) || (std::strstr(renderer, "softpipe") != nullptr) ||
+                     (std::strstr(renderer, "swrast") != nullptr) || (std::strstr(renderer, "Software") != nullptr) ||
+                     (std::strstr(renderer, "Microsoft Basic") != nullptr) ||
+                     (std::strstr(renderer, "GDI Generic") != nullptr);
+    }
+
+    ctx.doneCurrent();
+
+    if (isSoftware)
+    {
+        qInfo() << "DeviceScreenGLWindow: Software renderer detected, using CPU path";
+        return false;
+    }
+
+    qInfo() << "DeviceScreenGLWindow: Hardware GPU acceleration available";
+    return true;
 }
 
 DeviceScreenGLWindow::~DeviceScreenGLWindow()
@@ -62,6 +132,11 @@ DeviceScreenGLWindow::~DeviceScreenGLWindow()
     delete _factorTexture;
     delete _composeShader;
     delete _customShader;
+    if (_slangRunner)
+        _slangRunner->release();
+    _slangRunner.reset();
+    _quadBuffer.destroy();
+    _quadVao.destroy();
     doneCurrent();
     detach();
 }
@@ -189,15 +264,29 @@ void DeviceScreenGLWindow::initializeGL()
     _texture->setMagnificationFilter(QOpenGLTexture::Nearest);
     _texture->setWrapMode(QOpenGLTexture::ClampToEdge);
 
+    // The quad: two triangles as a strip, its corners top left, top right, bottom left, bottom right
+    static const float kCorners[] = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f};
+    _quadVao.create();
+    _quadVao.bind();
+    _quadBuffer.create();
+    _quadBuffer.bind();
+    _quadBuffer.allocate(kCorners, static_cast<int>(sizeof(kCorners)));
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    _quadBuffer.release();
+    _quadVao.release();
+
     _composeShader = new QOpenGLShaderProgram(this);
     if (!_composeShader->addShaderFromSourceCode(QOpenGLShader::Vertex, CRT_VERTEX_SHADER) ||
         !_composeShader->addShaderFromSourceCode(QOpenGLShader::Fragment, CRTRenderer::kCompositionShader) ||
         !_composeShader->link())
         qWarning() << "CRT composition shader failed:" << _composeShader->log();
 
-    // A custom shader chosen before the context existed
+    // A custom shader or preset chosen before the context existed
     if (!_customShaderSource.isEmpty())
         compileCustomShader(_customShaderSource);
+    if (!_slangPresetName.isEmpty() && !applySlangPreset(_slangPresetName))
+        _slangPresetName.clear();
 }
 
 void DeviceScreenGLWindow::setCRTEffectsEnabled(bool enabled)
@@ -208,7 +297,7 @@ void DeviceScreenGLWindow::setCRTEffectsEnabled(bool enabled)
 
 void DeviceScreenGLWindow::setCRTProfile(CRTProfile profile)
 {
-    if (!_customShaderName.isEmpty())
+    if (!customShader().isEmpty())
         loadCustomShader(QString());  // a built-in profile replaces the custom shader
     _crtParams = CRTProfileParams::FromProfile(profile);
     _crtEnabled = (profile != CRTProfile::None);
@@ -217,7 +306,7 @@ void DeviceScreenGLWindow::setCRTProfile(CRTProfile profile)
 
 void DeviceScreenGLWindow::setCRTProfile(const CRTProfileParams& params)
 {
-    if (!_customShaderName.isEmpty())
+    if (!customShader().isEmpty())
         loadCustomShader(QString());
     _crtParams = params;
     _crtEnabled = (params.profile != CRTProfile::None);
@@ -226,6 +315,29 @@ void DeviceScreenGLWindow::setCRTProfile(const CRTProfileParams& params)
 
 bool DeviceScreenGLWindow::loadCustomShader(const QString& name)
 {
+    // A preset replaces a custom shader and the other way round; the empty name drops both
+    const bool preset = SlangPresetRunner::isPreset(name);
+    if (preset || name.isEmpty())
+    {
+        bool ok = true;
+        if (context())
+        {
+            makeCurrent();
+            ok = applySlangPreset(name);
+            if (ok)
+                compileCustomShader(QString());
+            doneCurrent();
+        }
+        if (ok)
+        {
+            _slangPresetName = name;
+            _customShaderName.clear();
+            _customShaderSource.clear();
+        }
+        update();
+        return ok;
+    }
+
     QString source;
     if (!name.isEmpty())
     {
@@ -246,13 +358,37 @@ bool DeviceScreenGLWindow::loadCustomShader(const QString& name)
         ok = compileCustomShader(source);
         doneCurrent();
     }
+    if (ok && context())
+    {
+        makeCurrent();
+        applySlangPreset(QString());
+        doneCurrent();
+    }
     if (ok)
     {
         _customShaderName = name;
         _customShaderSource = source;
+        _slangPresetName.clear();
     }
     update();
     return ok;
+}
+
+bool DeviceScreenGLWindow::applySlangPreset(const QString& name)
+{
+    if (_slangRunner)
+        _slangRunner->release();
+    _slangRunner.reset();
+    if (name.isEmpty())
+        return true;
+    auto runner = std::make_unique<SlangPresetRunner>();
+    if (!runner->load(SlangPresetRunner::presetDirectory(name)))
+    {
+        qWarning() << "CRT preset" << name << "failed:" << runner->error();
+        return false;
+    }
+    _slangRunner = std::move(runner);
+    return true;
 }
 
 bool DeviceScreenGLWindow::compileCustomShader(const QString& source)
@@ -263,7 +399,8 @@ bool DeviceScreenGLWindow::compileCustomShader(const QString& source)
         return true;
     _customShader = new QOpenGLShaderProgram(this);
     if (_customShader->addShaderFromSourceCode(QOpenGLShader::Vertex, CRT_VERTEX_SHADER) &&
-        _customShader->addShaderFromSourceCode(QOpenGLShader::Fragment, source) && _customShader->link())
+        _customShader->addShaderFromSourceCode(QOpenGLShader::Fragment, CRTRenderer::coreFragmentSource(source)) &&
+        _customShader->link())
         return true;
     qWarning() << "Custom CRT shader failed:" << _customShader->log();
     delete _customShader;
@@ -275,8 +412,15 @@ bool DeviceScreenGLWindow::compileCustomShader(const QString& source)
 
 std::vector<QString> DeviceScreenGLWindow::availableShaders()
 {
+    const QStringList presets = SlangPresetRunner::availablePresets();
+    std::vector<QString> names(presets.begin(), presets.end());
     CRTShaderManager::instance().scanShaderDirectory();
-    return CRTShaderManager::instance().availableShaders();
+    for (const QString& name : CRTShaderManager::instance().availableShaders())
+    {
+        if (!presets.contains(name))  // a preset's name chooses the preset
+            names.push_back(name);
+    }
+    return names;
 }
 
 void DeviceScreenGLWindow::setTemporalBlendingEnabled(bool enabled)
@@ -451,6 +595,12 @@ void DeviceScreenGLWindow::paintGL()
     const int surfaceHeight = qRound(height() * dpr);
     glViewport(0, 0, surfaceWidth, surfaceHeight);
     glDisable(GL_DITHER);  // the composition writes exact values
+    // The HUD's QPainter of the previous frame may leave its state behind
+    glDisable(GL_BLEND);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);  // a preset's framebuffers clear to other colours
     glClear(GL_COLOR_BUFFER_BIT);
 
     updateTexture();
@@ -464,23 +614,13 @@ void DeviceScreenGLWindow::paintGL()
         glViewport(picture.x(), glY, picture.width(), picture.height());
 
         // With or without CRT effects the composition draws (CRTProfile::None: the plain nearest scale), the software
-        // screen's picture bit for bit; the fixed-function quad only when the shader is not there
-        if (_crtEnabled && _customShader && _customShader->isLinked())
+        // screen's picture bit for bit
+        if (_crtEnabled && _slangRunner)
+            drawSlangPreset(picture, glY);
+        else if (_crtEnabled && _customShader && _customShader->isLinked())
             drawCustomCrt(picture);
         else if (_composeShader && _composeShader->isLinked() && _shownFrame)
-            drawComposedCrt(picture, glY);
-        else
-        {
-            const QRectF source = displaySourceRect();
-            const float texW = static_cast<float>(_texture->width());
-            const float texH = static_cast<float>(_texture->height());
-            glEnable(GL_TEXTURE_2D);
-            _texture->bind();
-            drawQuad(static_cast<float>(source.left()) / texW, static_cast<float>(source.top()) / texH,
-                     static_cast<float>(source.right()) / texW, static_cast<float>(source.bottom()) / texH);
-            _texture->release();
-            glDisable(GL_TEXTURE_2D);
-        }
+            drawComposedCrt(picture);
         glViewport(0, 0, surfaceWidth, surfaceHeight);
     }
 
@@ -491,17 +631,15 @@ void DeviceScreenGLWindow::paintGL()
     }
 }
 
-void DeviceScreenGLWindow::drawQuad(float srcX1, float srcY1, float srcX2, float srcY2)
+void DeviceScreenGLWindow::drawQuad(QOpenGLShaderProgram* program, float srcX1, float srcY1, float srcX2, float srcY2)
 {
-    glBegin(GL_QUADS);
-    glTexCoord2f(srcX1, srcY1); glVertex2f(-1.0f,  1.0f);
-    glTexCoord2f(srcX2, srcY1); glVertex2f( 1.0f,  1.0f);
-    glTexCoord2f(srcX2, srcY2); glVertex2f( 1.0f, -1.0f);
-    glTexCoord2f(srcX1, srcY2); glVertex2f(-1.0f, -1.0f);
-    glEnd();
+    program->setUniformValue("texRect", QVector4D(srcX1, srcY1, srcX2, srcY2));
+    _quadVao.bind();
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    _quadVao.release();
 }
 
-void DeviceScreenGLWindow::drawComposedCrt(const QRect& picture, int glY)
+void DeviceScreenGLWindow::drawComposedCrt(const QRect& picture)
 {
     CRTRenderer::Layout layout;
     layout.outWidth = picture.width();
@@ -536,9 +674,7 @@ void DeviceScreenGLWindow::drawComposedCrt(const QRect& picture, int glY)
     _composeShader->setUniformValue("indexTable", 1);
     _composeShader->setUniformValue("factorTable", 2);
     _composeShader->setUniformValue("frameSize", QVector2D(static_cast<float>(layout.frameWidth), static_cast<float>(layout.frameHeight)));
-    _composeShader->setUniformValue("outSize", QVector2D(static_cast<float>(layout.outWidth), static_cast<float>(layout.outHeight)));
-    _composeShader->setUniformValue("outOrigin", QVector2D(static_cast<float>(picture.x()), static_cast<float>(glY)));
-    drawQuad(0.0f, 0.0f, 1.0f, 1.0f);
+    drawQuad(_composeShader, 0.0f, 0.0f, 1.0f, 1.0f);
     _factorTexture->release(2);
     _indexTexture->release(1);
     _gradedTexture->release(0);
@@ -552,42 +688,40 @@ void DeviceScreenGLWindow::drawCustomCrt(const QRect& picture)
     const float texW = static_cast<float>(_texture->width());
     const float texH = static_cast<float>(_texture->height());
 
-    int maskType = 0;
-    switch (_crtParams.maskType)
-    {
-        case CRTMaskType::Aperture:
-            maskType = 1;
-            break;
-        case CRTMaskType::ShadowMask:
-            maskType = 2;
-            break;
-        case CRTMaskType::SlotMask:
-            maskType = 3;
-            break;
-        case CRTMaskType::None:
-            break;
-    }
-
     _customShader->bind();
     _texture->bind(0);
     _customShader->setUniformValue("tex", 0);
     _customShader->setUniformValue("texSize", QVector2D(texW, texH));
     _customShader->setUniformValue("outputSize", QVector2D(static_cast<float>(picture.width()), static_cast<float>(picture.height())));
-    _customShader->setUniformValue("maskType", maskType);
+    // The profiles have no phosphor mask: the mask uniforms of the documented interface stay, as "none"
+    _customShader->setUniformValue("maskType", 0);
     _customShader->setUniformValue("curvature", _crtParams.curvature);
     _customShader->setUniformValue("cornerRadius", _crtParams.cornerRadius);
     _customShader->setUniformValue("scanlineWeight", _crtParams.scanlineWeight);
-    _customShader->setUniformValue("maskStrength", _crtParams.maskStrength);
-    _customShader->setUniformValue("maskDotPitch", _crtParams.maskDotPitch);
+    _customShader->setUniformValue("maskStrength", 0.0f);
+    _customShader->setUniformValue("maskDotPitch", 0.0f);
     _customShader->setUniformValue("bloomStrength", _crtParams.bloomStrength);
     _customShader->setUniformValue("saturation", _crtParams.saturation);
     _customShader->setUniformValue("brightness", _crtParams.brightness);
     _customShader->setUniformValue("contrast", _crtParams.contrast);
     _customShader->setUniformValue("gamma", _crtParams.gamma);
-    drawQuad(static_cast<float>(source.left()) / texW, static_cast<float>(source.top()) / texH,
+    drawQuad(_customShader, static_cast<float>(source.left()) / texW, static_cast<float>(source.top()) / texH,
              static_cast<float>(source.right()) / texW, static_cast<float>(source.bottom()) / texH);
     _texture->release(0);
     _customShader->release();
+}
+
+void DeviceScreenGLWindow::drawSlangPreset(const QRect& picture, int glY)
+{
+    // The passes render into their own framebuffers; the last one is copied 1:1 into the picture of the target (the
+    // window or renderWindowImage's framebuffer object)
+    GLint target = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &target);
+    const QRect source = displaySourceRect().toRect().intersected(QRect(0, 0, _texture->width(), _texture->height()));
+    if (source.isEmpty())
+        return;
+    _slangRunner->render(_texture->textureId(), source, picture.size());
+    _slangRunner->drawTo(static_cast<GLuint>(target), QRect(picture.x(), glY, picture.width(), picture.height()));
 }
 
 void DeviceScreenGLWindow::keyPressEvent(QKeyEvent* event)

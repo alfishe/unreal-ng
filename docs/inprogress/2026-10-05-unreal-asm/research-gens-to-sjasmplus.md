@@ -86,6 +86,12 @@ numbers (`SourceLine::number`).
   file `n:NAME` (`n` = 1-4, drives A-D) and always uses type `C`: `G,,1:NAME` loads, `P10,30,1:NAME` saves the same
   bytes, `*F 1:NAME` includes; checked with `testdata/dialects/gens/GMAIN.$C` + `GINC.$C` (`3E 01 06 02 C9`, equal
   to the sjasmplus conversion; `ImageProject` takes the one-line INC that detection alone cannot tell).
-- A value beyond 16 bits stays one in sjasmplus where GENS keeps the low 16 bits (`X EQU #FFFF+2` then `DEFS X`);
-  no real source does this.
-- The pasmo and z88dk backends have no signed 16-bit division yet: a GENS source converted to them divides as they do.
+- A value beyond 16 bits (2026-10-19): an `EQU`, a `DEFS` count or an `IF` condition known to exceed #FFFF is
+  written `(expr&#FFFF)` (sjasmplus) / `(expr&$FFFF)` (z80asm; pasmo's words are 16-bit already), so `X EQU #FFFF+2`
+  then `DEFS X` reserves 1 byte as GENS does. Checked in GENS4 in the emulator (`#FFF0+#14`: GENS stops a product
+  above 32767 with `*ERROR* 15`, so `#7FFF*4` does not assemble there): 16 bytes equal to sjasmplus.
+- Signed 16-bit division in the pasmo and z88dk backends (2026-10-19): z80asm divides its 32-bit words, each operand
+  sign-extended `(((x&$FFFF)^$8000)-$8000)`; pasmo's unsigned words divide the magnitudes and put the sign back
+  (`s = 0-(x SHR 15)`, `(x XOR s)-s`; the quotient's sign from `a XOR b`, the remainder's from the dividend), numbers
+  computed at once. 2000 random GENS expressions (10 seeds) equal to sjasmplus in both; GENS4's constructs assemble
+  equal in both backends' tests.

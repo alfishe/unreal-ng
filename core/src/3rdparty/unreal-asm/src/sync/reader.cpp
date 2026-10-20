@@ -426,7 +426,7 @@ void PackPasmLine(std::vector<uint8_t>& buffer)
     }
 }
 
-SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
+SyncText ReadLinearText(const MachineView& mapped, const SyncDescriptor& d)
 {
     SyncText text;
     const LinearParams& p = d.linear;
@@ -510,6 +510,25 @@ SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
     text.file.insert(text.file.end(), p.end.begin(), p.end.end());
     text.ok = true;
     text.state = "ok";
+    return text;
+}
+
+/// The text and its work name (ZAsm 3.10 and later: the name SAVE writes under), blank padded in RAM
+SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
+{
+    SyncText text = ReadLinearText(mapped, d);
+    const LinearParams& p = d.linear;
+    if (!text.ok || !p.nameAt)
+        return text;
+    MachineView machine = mapped;
+    if (p.namePage >= 0)
+        machine.windows[(p.nameAt >> 14) & 3] = p.namePage;
+    std::vector<uint8_t> name;
+    if (!machine.Read(p.nameAt, p.nameLength, name))
+        return text;
+    while (!name.empty() && (name.back() == ' ' || name.back() == 0))
+        name.pop_back();
+    text.name.assign(name.begin(), name.end());
     return text;
 }
 
