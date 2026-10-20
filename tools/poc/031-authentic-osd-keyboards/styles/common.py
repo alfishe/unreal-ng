@@ -58,7 +58,8 @@ def glyph_shape(glyph, x, y, size, color):
     buttons), `dot` a filled disc, `eject` a hollow roof over a bar, `pause` two bars, `hook` the return hook ┘ with
     its corner at (x, y); `tri:dir` / `tri2:dir` a filled single / double triangle, `eject:fill`, `pause:fill` the
     filled ones (the +2A's tape symbols printed on the case); `sticker:zx` a Soviet key sticker @p size square,
-    dark, its top and bottom bands in @p color, `sticker:plain` one all in @p color, `enter` the hollow return arrow"""
+    dark, its top and bottom bands in @p color, `sticker:plain` one all in @p color, `enter` the hollow return arrow, `box` a hollow square (the Quorum's
+    boxed E and G, the letter is a legend of its own), `speaker` a hollow loudspeaker"""
     kind, _, arg = glyph.partition(":")
     if kind == "block":
         arg, _, polarity = arg.partition(":")
@@ -136,6 +137,15 @@ def glyph_shape(glyph, x, y, size, color):
     if kind == "pause":
         return "".join(f'<path d="M{x + dx * size:.3f},{y - 0.4 * size:.3f} V{y + 0.4 * size:.3f}" {stroke}/>'
                        for dx in (-0.15, 0.15))
+    if kind == "box":
+        h = size / 2
+        return (f'<rect x="{x - h:.3f}" y="{y - h:.3f}" width="{size:.3f}" height="{size:.3f}" fill="none" '
+                f'stroke="{color}" stroke-width="{size * 0.07:.3f}"/>')
+    if kind == "speaker":  # the magnet's box and the cone opening to the right
+        s = size
+        points = [(-0.45, -0.18), (-0.15, -0.18), (0.25, -0.5), (0.25, 0.5), (-0.15, 0.18), (-0.45, 0.18)]
+        d = "M" + " L".join(f"{x + px * s:.3f},{y + py * s:.3f}" for px, py in points) + "Z"
+        return f'<path d="{d}" fill="none" stroke="{color}" stroke-width="{s * 0.07:.3f}" stroke-linejoin="round"/>'
     if kind == "hook":
         return (f'<path d="M{x - 1.0 * size:.3f},{y:.3f} H{x:.3f} V{y - size:.3f}" fill="none" stroke="{color}" '
                 f'stroke-width="{size * 0.07:.3f}" stroke-linejoin="miter"/>')

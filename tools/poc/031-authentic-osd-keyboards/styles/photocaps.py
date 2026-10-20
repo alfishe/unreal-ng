@@ -189,14 +189,14 @@ def tint(color, factors):
     return "#" + "".join(f"{min(255, round(int(color[i:i + 2], 16) * f)):02x}" for i, f in zip((0, 2, 4), factors))
 
 
-def soviet(canvas, x, y, w, h, color, shape=None, side=0.14, back=0.04, front=0.3):
+def soviet(canvas, x, y, w, h, color, shape=None, side=0.14, back=0.04, front=0.3, depth=None):
     """A Soviet sculpted cap (the MS 7004 family's, the Pentagon 2+'s) seen from above: a flat top face, about two
     thirds of the key, nearly flush with its back; round it the cap's sides, the narrow left and right ones turning
     darker towards their base, the tall front slope a little darker than the top (its legend is printed on it).
-    @p side, @p back, @p front the sides' share of the key. The sides are one moulded surface, so it is drawn as one:
-    a body darkening towards the front with the left and right falloff laid over it, no seams at the corners. The top
-    face is a shallow cylinder, its edge a soft rounded turn; the cap stands in a soft contact shadow. Matte: no
-    highlight. Returns the svg and the top face's rectangle (for an L, the bar's)"""
+    @p side, @p back, @p front the sides' share of the key, of @p depth mm at most (a two-row key keeps a one-row
+    slope). The sides are one moulded surface, so it is drawn as one: a body darkening towards the front with the
+    left and right falloff laid over it, no seams at the corners. The top face is a shallow cylinder, its edge a soft
+    rounded turn; the cap stands in a soft contact shadow. Matte: no highlight. Returns the svg and the top face's rectangle (for an L, the bar's)"""
     d = canvas.defs
     gap = 0.45
     # the sides as the photo shows them, against the top face: the front slope a warmer, darker tan, the left side
@@ -220,7 +220,7 @@ def soviet(canvas, x, y, w, h, color, shape=None, side=0.14, back=0.04, front=0.
                  f'fill-opacity="0.25"/>']
     else:
         ox, oy, ow, oh = x + gap, y + gap, w - 2 * gap, h - 2 * gap
-        sd, b, f = side * min(ow, oh), back * oh, front * oh
+        sd, b, f = side * min(ow, oh), back * min(oh, depth or oh), front * min(oh, depth or oh)
         face = (ox + sd, oy + b, ow - 2 * sd, oh - b - f)
         outer = rounded(ox, oy, ow, oh, 0.8)
         face_path = rounded(*face, 1.6)
