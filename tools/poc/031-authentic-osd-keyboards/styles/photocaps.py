@@ -81,12 +81,13 @@ def d_shape(x, y, w, h, top, bottom):
             f"V{y + top:.3f}A{top:.3f},{top:.3f} 0 0 1 {x + top:.3f},{y:.3f}Z")
 
 
-def l_shape(points, inset, top_inset, top, bottom):
+def l_shape(points, inset, top_inset, top, bottom, front=None):
     """The Next's ENTER: the inverted L of @p points (leg top left, leg top right, bar bottom right, bar bottom left,
-    bar top left, leg bottom left), inset; the bar's front corners rounded by @p bottom"""
+    bar top left, leg bottom left), inset (by @p front at the front, @p inset if not given); the bar's front corners
+    rounded by @p bottom"""
     (lx, ly), (rx, _), (_, by), (bx, _), (_, my), _ = points
     lx, rx, bx = lx + inset, rx - inset, bx + inset
-    ly, by, my = ly + top_inset, by - inset, my + top_inset
+    ly, by, my = ly + top_inset, by - (inset if front is None else front), my + top_inset
     return (f"M{lx + top:.3f},{ly:.3f}H{rx - top:.3f}A{top:.3f},{top:.3f} 0 0 1 {rx:.3f},{ly + top:.3f}"
             f"V{by - bottom:.3f}A{bottom:.3f},{bottom:.3f} 0 0 1 {rx - bottom:.3f},{by:.3f}H{bx + bottom:.3f}"
             f"A{bottom:.3f},{bottom:.3f} 0 0 1 {bx:.3f},{by - bottom:.3f}V{my + top:.3f}"
@@ -137,4 +138,42 @@ def next_cap(canvas, x, y, w, h, color, shape=None, unit=19.0, top_inset=0.25, f
         f'<path d="{matte}" fill="{top}"/>',
         f'<path d="{matte}" fill="{lip}"/>',
         f'<path d="{matte}" fill="none" stroke="{shade(color, 1.35)}" stroke-width="0.1" stroke-opacity="{rim}"/>',
+    ]), face
+
+
+def amstrad(canvas, x, y, w, h, color, shape=None, unit=19.0, skirt=0.27, shadow=0.55):
+    """The Amstrad +2 / +3 key (and the Datacorder's buttons): a sculpted typewriter cap seen from above and a little
+    in front, the top face a little narrower than the base, slightly dished, the front skirt showing below it as a
+    darker band (@p skirt of the key's height). Returns the svg and the top face's rectangle (for an L, the bar's)"""
+    d = canvas.defs
+    gap, side, back = 0.4, 1.1, 0.6
+    front = skirt * (unit if shape else h)
+    body = d.linear([(0, shade(color, 0.9)), (0.6, shade(color, 0.72)), (0.75, shade(color, 0.55)), (1, shade(color, 0.4))])
+    flanks = d.linear([(0, "#ffffff", 0.02), (0.06, "#ffffff", 0), (0.94, "#000000", 0), (1, "#000000", 0.28)],
+                      x1=0, y1=0, x2=1, y2=0)
+    top = d.linear([(0, shade(color, 1.05)), (0.35, shade(color, 1.0)), (1, shade(color, 0.95))])
+    dish = d.radial([(0, "#000000", 0), (0.7, "#000000", 0), (1, "#000000", 0.16)], cx=0.5, cy=0.45, r=0.72)
+    sheen = d.radial([(0, "#ffffff", 0.05), (1, "#ffffff", 0)], cx=0.35, cy=0.15, r=0.9)
+    if shape:
+        outer = l_shape(shape, gap, gap, 1.0, 1.0)
+        face_path = l_shape(shape, gap + side, gap + back, 1.4, 1.4, front=gap + front)
+        (_, _), (rx, _), (_, by), (bx, _), (_, my), _ = shape
+        face = (bx + gap + side, my + gap + back, rx - bx - 2 * (gap + side), by - my - 2 * gap - back - front)
+        shadow_svg = f'<path d="{l_shape(shape, gap - 0.6, gap - 0.2, 1.4, 1.4, front=gap - 1.0)}" fill="#000" ' \
+                     f'fill-opacity="{shadow * 0.6}"/>'
+    else:
+        ox, oy, ow, oh = x + gap, y + gap, w - 2 * gap, h - 2 * gap
+        outer = rounded(ox, oy, ow, oh, 1.0)
+        face = (ox + side, oy + back, ow - 2 * side, oh - back - front)
+        face_path = rounded(*face, 1.4)
+        shadow_svg = soft_shadow(ox, oy, ow, oh, 1.0, 1.0, dx=0.3, dy=0.8, opacity=shadow, steps=4)
+    canvas.add("highlights", f'<path d="{face_path}" fill="{sheen}"/>')
+    return "\n".join([
+        shadow_svg,
+        f'<path d="{outer}" fill="{body}"/>',
+        f'<path d="{outer}" fill="{flanks}"/>',
+        f'<path d="{outer}" fill="none" stroke="#000" stroke-width="0.14" stroke-opacity="0.6"/>',
+        f'<path d="{face_path}" fill="{top}"/>',
+        f'<path d="{face_path}" fill="{dish}"/>',
+        f'<path d="{face_path}" fill="none" stroke="{shade(color, 1.25)}" stroke-width="0.12" stroke-opacity="0.3"/>',
     ]), face

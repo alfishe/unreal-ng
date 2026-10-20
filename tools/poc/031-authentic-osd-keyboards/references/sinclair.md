@@ -344,8 +344,9 @@ matrix position is unchanged). The external Spanish keypad is out of scope.
 
 | Fact | Value | Source |
 |---|---|---|
+| Depth on the top | 171 mm from the notched rear edge to the front (the key block's top 63.5 mm from the rear, its left 18 mm; the Datacorder lid x 300-421, y 41-109; the buttons x 308-412, y 137-157), measured on `plus2-owner-top.png` at 3.42 px/mm | owner photo |
 | Dimensions | 440 × 175 × 55 mm, 1.525 kg (one spec sheet; the width fits the photo ratio: keyboard 13.5 u ≈257 mm = 58% of the case width) | spec sheet via search (UNVERIFIED primary); measured on `plus2-k1-top.jpg` |
-| Case plastic | **Mid grey**, matte. Est. `#5E5F5E` (samples `#60605f`; in shade `#41433f`) | `plus2-top.jpg`, `plus2-k1-top.jpg` |
+| Case plastic | **Mid grey**, matte, neutral. `#6A6B69` (median over the case on the neutral-light owner photo; keys a little darker, `#56585A`; the earlier `#5E5F5E` came from the yellow-lit, front-shot `plus2-top.jpg` and is wrong) | `plus2-owner-top.png`, `plus2-owner-top2.png` (owner, 2026-10-19) |
 | Form | Long flat slab. **Castellated (toothed) rear and front edges** (small rectangular ribs along the top edge). A raised rear strip with a horizontal groove line under the logos. Horizontal grooves across the margins left and right of the keyboard at the row boundaries | `plus2-top.jpg`, `plus2-view3.jpg` |
 | "sinclair" | **Red-painted** logotype, rear strip left (≈20–100 mm from the left) | `plus2-top.jpg` |
 | "128K" | Red bold italic, rear strip centre-right (≈270–300 mm), with a small red LED (power) just right of it | `plus2-top.jpg`, `plus2a-k1-datacorder.jpg` |

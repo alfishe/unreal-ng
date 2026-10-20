@@ -1,7 +1,7 @@
 """Phase 1: photorealistic. Real colours, lit materials, soft shadows, all within what QSvgRenderer draws."""
 
 from styles.common import Picture, glyph_shape, glyphs, legend_origin
-from styles.photocaps import hard, next_cap, rubber
+from styles.photocaps import amstrad, hard, next_cap, rubber
 from svgkit import rounded, shade, soft_shadow, text_path, text_width
 
 
@@ -182,7 +182,118 @@ def case_logo(pic, part):
     ])
 
 
-CASE = {"body": case_body, "plate": case_plate, "stripe": case_stripe, "logo": case_logo, "well": case_well,
+def case_teeth(pic, part):
+    """A castellated edge (the Amstrad's rear and front): small notches cut into the case's edge, @p pitch apart"""
+    g = part.geometry
+    x, y, w, h, pitch = g["x"], g["y"], g["w"], g["h"], g["pitch"]
+    notch = pitch * 0.45
+    parts = []
+    for i in range(int((w - notch) / pitch) + 1):
+        nx = x + i * pitch
+        parts.append(f'<rect x="{nx:.3f}" y="{y:.3f}" width="{notch:.3f}" height="{h:.3f}" fill="{part.color}"/>')
+        parts.append(f'<rect x="{nx + notch:.3f}" y="{y:.3f}" width="0.22" height="{h:.3f}" fill="#ffffff" '
+                     f'fill-opacity="0.12"/>')
+    return "\n".join(parts)
+
+
+def case_datacorder(pic, part):
+    """The +2's cassette deck seen from above: a lid of the case's plastic set into the case, its clear window over
+    the cassette well (the two black spindles, the grey plate between them), the dark band with DATACORDER in dark
+    italics over rainbow stripes, the microphone hole under it"""
+    g = part.geometry
+    d = pic.defs
+    x, y, w, h = g["x"], g["y"], g["w"], g["h"]
+    wx, wy, ww, wh = g["window"]
+    bx, by, bw, bh = g["band"]
+    lid = d.linear([(0, shade(part.color, 1.04)), (0.1, part.color), (1, shade(part.color, 0.96))])
+    inside = g.get("inside")  # the well's plastic: the lid's, darker, unless the deck sets its own
+    well = d.linear([(0, shade(inside, 0.9)), (1, shade(inside, 1.05))] if inside else
+                    [(0, shade(part.color, 0.62)), (1, shade(part.color, 0.78))])
+    glare = d.linear([(0, "#ffffff", 0.0), (0.3, "#ffffff", 0.04), (0.45, "#ffffff", 0.0)], x1=0, y1=0, x2=1, y2=1)
+    parts = [
+        f'<path d="{rounded(x - 0.5, y - 0.5, w + 1.0, h + 1.0, 1.2)}" fill="#000" fill-opacity="0.45"/>',
+        f'<path d="{rounded(x, y, w, h, 0.8)}" fill="{lid}"/>',
+        f'<path d="{rounded(wx, wy, ww, wh, 0.5)}" fill="{well}"/>',
+        f'<rect x="{wx:.3f}" y="{wy:.3f}" width="{ww:.3f}" height="1.2" fill="#000" fill-opacity="0.35"/>',
+    ]
+    lw, lh = g["label"]
+    cy = wy + wh * 0.62
+    parts.append(f'<path d="{rounded(wx + ww / 2 - lw / 4, cy - lh / 4, lw / 2, lh / 2, 0.6)}" '
+                 f'fill="{g.get("plate") or shade(part.color, 1.3)}"/>')
+    for sx in g.get("spindles", []):
+        cx = wx + sx
+        parts.append(f'<circle cx="{cx + 0.3:.3f}" cy="{cy + 0.5:.3f}" r="4.4" fill="#000" fill-opacity="0.4"/>')
+        parts.append(f'<circle cx="{cx:.3f}" cy="{cy:.3f}" r="4.2" fill="#141414"/>')
+        parts.append(f'<circle cx="{cx - 0.6:.3f}" cy="{cy - 0.6:.3f}" r="0.6" fill="#5a5a5a"/>')
+    parts += [
+        f'<path d="{rounded(wx, wy, ww, wh, 0.5)}" fill="none" stroke="#000" stroke-width="0.3" stroke-opacity="0.5"/>',
+        f'<path d="{rounded(bx, by, bw, bh, 0.5)}" fill="{shade(part.color, 0.62)}"/>',
+    ]
+    pic.add("highlights", f'<path d="{rounded(wx, wy, ww, wh, 0.5)}" fill="{glare}"/>')
+    rainbow = g["rainbow"]  # the stripes run across the band behind the letters, red at the top
+    sy, sh = by + bh * 0.25, bh * 0.5
+    for i, colour in enumerate(rainbow):
+        parts.append(f'<rect x="{bx + 1.0:.3f}" y="{sy + i * sh / len(rainbow):.3f}" width="{bw - 2.0:.3f}" '
+                     f'height="{sh / len(rainbow) + 0.02:.3f}" fill="{colour}"/>')
+    text = g["text"]
+    size = (bw - 6.0) / text_width(text, 1, "bold-italic")
+    baseline = sy + sh * 0.5 + size * 0.36
+    dpath = text_path(text, bx + bw / 2, baseline, size, "bold-italic", "middle", 0.0, 1.0)
+    parts.append(f'<path d="{dpath}" fill="#2a3036" stroke="#15171a" stroke-width="0.25" stroke-linejoin="round"/>')
+    mx, my = g["mic"]
+    parts.append(f'<circle cx="{mx:.3f}" cy="{my:.3f}" r="0.9" fill="#050505"/>')
+    return "\n".join(parts)
+
+
+def case_buttons(pic, part):
+    """The Datacorder's piano keys: dark Amstrad caps in a row, each with its symbol on the cap (the +2) or printed
+    on the case above it (the +2A)"""
+    g = part.geometry
+    x, y, w, h, gap = g["x"], g["y"], g["w"], g["h"], g["gap"]
+    on_case = g.get("on_case", False)
+    for i, symbol in enumerate(g["symbols"]):
+        bx = x + i * (w + gap)
+        svg, face = amstrad(pic, bx, y, w, h, part.color, skirt=0.42)
+        pic.add("caps", svg)
+        colour = "#e03030" if symbol == "dot" else "#f2f2f2"
+        size = 2.4 if symbol == "dot" else 3.4 if on_case else 4.0
+        fx, fy, fw, fh = face
+        cx, cy = (bx + w / 2, y - 3.2) if on_case else (fx + fw * 0.5, fy + fh * 0.5)
+        pic.add("legends", glyph_shape(symbol, cx, cy, size, colour))
+    return ""
+
+
+def case_fddpanel(pic, part):
+    """The +3's label panel over the disc drive: a flat black plate, the big outlined 128K, the thin rainbow lines
+    running out to its right edge with FDD in dark outline over them, FLOPPY DISC DRIVE under them"""
+    g = part.geometry
+    d = pic.defs
+    x, y, w, h = g["x"], g["y"], g["w"], g["h"]
+    plate = d.linear([(0, shade(part.color, 1.12)), (0.15, part.color), (1, shade(part.color, 0.9))])
+    parts = [
+        f'<path d="{rounded(x - 0.5, y - 0.5, w + 1.0, h + 1.0, 1.0)}" fill="#000" fill-opacity="0.5"/>',
+        f'<path d="{rounded(x, y, w, h, 0.6)}" fill="{plate}"/>',
+        f'<path d="{rounded(x, y, w, h, 0.6)}" fill="none" stroke="{shade(part.color, 1.6)}" stroke-width="0.2" '
+        f'stroke-opacity="0.4"/>',
+    ]
+    big = text_path("128K", x + w * 0.53, y + h * 0.4, g["size"], "sans", "middle", 0.4, 1.0)
+    parts.append(f'<path d="{big}" fill="none" stroke="{g["ink"]}" stroke-width="0.45" stroke-linejoin="round"/>')
+    lines = g["rainbow"]
+    top, band = y + h * 0.7, h * 0.17
+    pitch = band / len(lines)
+    for i, colour in enumerate(lines):  # each line starts further left going down: the band's slanted left end
+        ly = top + i * pitch
+        lx = x + w * (0.02 + 0.012 * (len(lines) - 1 - i))
+        parts.append(f'<rect x="{lx:.3f}" y="{ly:.3f}" width="{x + w - lx:.3f}" height="{pitch * 0.55:.3f}" '
+                     f'fill="{colour}"/>')
+    fdd = text_path("FDD", x + w * 0.47, top + band * 0.92, band * 1.25, "black", "middle", 0.3, 1.0)
+    parts.append(f'<path d="{fdd}" fill="{part.color}" fill-opacity="0.85" stroke="#4a4c50" stroke-width="0.35" '
+                 f'stroke-linejoin="round"/>')
+    parts.append(glyphs("FLOPPY DISC DRIVE", x + w * 0.47, y + h * 0.965, 3.0, "arial-bold", "#e8e8e8"))
+    return "\n".join(parts)
+
+
+CASE = {"fddpanel": case_fddpanel, "teeth": case_teeth, "datacorder": case_datacorder, "buttons": case_buttons, "body": case_body, "plate": case_plate, "stripe": case_stripe, "logo": case_logo, "well": case_well,
         "groove": case_groove, "insert": case_insert, "grille": case_grille, "tab": case_tab, "led": case_led,
         "hump": case_hump, "fins": case_fins}
 
@@ -198,6 +309,8 @@ def cap(pic, key):
     if key.cap == "plus":  # the Spectrum+ / 128 key: a satin block, the convex glossy pad in front
         return next_cap(pic, x, y, w, h, key.color, key.shape, top_inset=0.31, gloss=0.03, sheen=0.3, relief=(1.05, 0.92), rim=0.15,
                         frame=[(0, "#2c2d30"), (0.1, "#202124"), (0.9, "#18191b"), (1, "#0e0f10")])
+    if key.cap == "amstrad":
+        return amstrad(pic, x, y, w, h, key.color, key.shape)
     raise ValueError(f"{key.id}: cap {key.cap}")
 
 

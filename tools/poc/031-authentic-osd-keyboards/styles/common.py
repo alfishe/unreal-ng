@@ -1,6 +1,6 @@
 """What every style shares: the SVG frame with its named layers and legend placement."""
 
-from svgkit import Defs, text_path
+from svgkit import Defs, rounded, text_path
 
 LAYERS = ["case", "caps", "highlights", "legends", "hints"]
 HIGHLIGHTS = 0.5  # the highlights layer's opacity unless the keyboard sets its own
@@ -54,7 +54,10 @@ def legend_origin(legend, key, face):
 def glyph_shape(glyph, x, y, size, color):
     """A legend drawn as a shape, centred on (x, y), @p size its height: `block:N` the ZX block graphic N in its
     box (`block:N:paper` the 48K's print: the paper quadrants in @p color, no box), `arrow:up|down|left|right` a hollow
-    arrow"""
+    arrow, `chevron:dir` / `chevron2:dir` an open single / double chevron (the Amstrad's cursor keys and tape
+    buttons), `dot` a filled disc, `eject` a hollow roof over a bar, `pause` two bars, `hook` the return hook ┘ with
+    its corner at (x, y); `tri:dir` / `tri2:dir` a filled single / double triangle, `eject:fill`, `pause:fill` the
+    filled ones (the +2A's tape symbols printed on the case)"""
     kind, _, arg = glyph.partition(":")
     if kind == "block":
         arg, _, polarity = arg.partition(":")
@@ -79,4 +82,42 @@ def glyph_shape(glyph, x, y, size, color):
         d = "M" + " L".join(f"{px:.3f},{py:.3f}" for px, py in points) + "Z"
         return (f'<path d="{d}" fill="none" stroke="{color}" stroke-width="{size * 0.07:.3f}" '
                 f'stroke-linejoin="round"/>')
+    stroke = f'fill="none" stroke="{color}" stroke-width="{size * 0.11:.3f}" stroke-linecap="round" ' \
+             f'stroke-linejoin="round"'
+    if kind in ("chevron", "chevron2"):  # drawn pointing right, then turned
+        unit = [[(-0.22, -0.5), (0.22, 0), (-0.22, 0.5)]]
+        if kind == "chevron2":
+            unit = [[(px - 0.2, py) for px, py in unit[0]], [(px + 0.2, py) for px, py in unit[0]]]
+        a, b, c, e = {"right": (1, 0, 0, 1), "left": (-1, 0, 0, 1), "up": (0, 1, -1, 0), "down": (0, 1, 1, 0)}[arg]
+        return "".join('<path d="M' + " L".join(f"{x + (a * px + b * py) * size:.3f},{y + (c * px + e * py) * size:.3f}"
+                                                 for px, py in line) + f'" {stroke}/>' for line in unit)
+    if kind in ("tri", "tri2"):  # drawn pointing right, then turned
+        unit = [[(-0.3, -0.38), (0.3, 0), (-0.3, 0.38)]]
+        if kind == "tri2":
+            unit = [[(px - 0.28, py) for px, py in unit[0]], [(px + 0.28, py) for px, py in unit[0]]]
+        a, b, c, e = {"right": (1, 0, 0, 1), "left": (-1, 0, 0, 1), "up": (0, 1, -1, 0), "down": (0, 1, 1, 0)}[arg]
+        return "".join('<path d="M' + " L".join(f"{x + (a * px + b * py) * size:.3f},{y + (c * px + e * py) * size:.3f}"
+                                                 for px, py in tri) + f'Z" fill="{color}"/>' for tri in unit)
+    if kind == "dot":
+        return f'<circle cx="{x:.3f}" cy="{y:.3f}" r="{size / 2:.3f}" fill="{color}"/>'
+    if kind == "eject" and arg == "fill":
+        s = size
+        return (f'<path d="M{x - 0.42 * s:.3f},{y + 0.08 * s:.3f} L{x:.3f},{y - 0.38 * s:.3f} L{x + 0.42 * s:.3f},'
+                f'{y + 0.08 * s:.3f}Z" fill="{color}"/>'
+                f'<rect x="{x - 0.42 * s:.3f}" y="{y + 0.2 * s:.3f}" width="{0.84 * s:.3f}" height="{0.16 * s:.3f}" '
+                f'fill="{color}"/>')
+    if kind == "pause" and arg == "fill":
+        return "".join(f'<rect x="{x + dx * size:.3f}" y="{y - 0.38 * size:.3f}" width="{0.16 * size:.3f}" '
+                       f'height="{0.76 * size:.3f}" fill="{color}"/>' for dx in (-0.24, 0.08))
+    if kind == "eject":
+        s = size
+        return (f'<path d="M{x - 0.5 * s:.3f},{y + 0.05 * s:.3f} L{x:.3f},{y - 0.35 * s:.3f} L{x + 0.5 * s:.3f},'
+                f'{y + 0.05 * s:.3f}Z" {stroke}/>'
+                f'<path d="{rounded(x - 0.5 * s, y + 0.22 * s, s, 0.18 * s, 0.05 * s)}" {stroke}/>')
+    if kind == "pause":
+        return "".join(f'<path d="M{x + dx * size:.3f},{y - 0.4 * size:.3f} V{y + 0.4 * size:.3f}" {stroke}/>'
+                       for dx in (-0.15, 0.15))
+    if kind == "hook":
+        return (f'<path d="M{x - 1.0 * size:.3f},{y:.3f} H{x:.3f} V{y - size:.3f}" fill="none" stroke="{color}" '
+                f'stroke-width="{size * 0.07:.3f}" stroke-linejoin="miter"/>')
     raise ValueError(f"glyph {glyph}")

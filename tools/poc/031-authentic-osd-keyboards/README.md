@@ -90,6 +90,9 @@ fixed in `core/` after the POC, as its own task.
 |---|---|---|---|---|
 | `zx48k` | 48K | drawn, shown to the owner | — | — |
 | `zx128` | 128k (the Spectrum+ keyboard in the 128's case) | drawn, shown to the owner | — | — |
+| `zxplus2` | PLUS2 (`keyboards/amstrad.py`, shared with +2A and +3) | done, approved by the owner (2026-10-19) | — | — |
+| `zxplus2a` | PLUS2A | drawn, shown to the owner | — | — |
+| `zxplus3` | PLUS3 | drawn, shown to the owner | — | — |
 | `zxnext` | NEXT | done, approved by the owner (2026-10-19) | — | — |
 
 ## Files
