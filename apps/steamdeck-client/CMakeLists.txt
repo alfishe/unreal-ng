@@ -22,6 +22,22 @@ target_include_directories(steamdeck-poc-common PUBLIC
 )
 target_link_libraries(steamdeck-poc-common PUBLIC unrealng::core steamdeck-poc-timing)
 
+# Automation (WebAPI on 0.0.0.0:8090, MCP on :8092; the CLI on loopback): the emulator on the Deck is driven over
+# the network. Plain HTTP, no TLS. The definitions must match core/automation/CMakeLists.txt, as in unreal-qt
+if (ENABLE_AUTOMATION)
+    target_link_libraries(steamdeck-poc-common PUBLIC unrealng::automation)
+    target_compile_definitions(steamdeck-poc-common PUBLIC ENABLE_AUTOMATION
+        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:ENABLE_LUA_AUTOMATION>
+        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:ENABLE_PYTHON_AUTOMATION>
+        $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
+        $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
+        $<$<BOOL:${ENABLE_GDB_AUTOMATION}>:ENABLE_GDB_AUTOMATION>
+        $<$<BOOL:${ENABLE_DEZOG_AUTOMATION}>:ENABLE_DEZOG_AUTOMATION>
+        $<$<BOOL:${ENABLE_ZESARUX_AUTOMATION}>:ENABLE_ZESARUX_AUTOMATION>
+        $<$<BOOL:${ENABLE_MCP_AUTOMATION}>:ENABLE_MCP_AUTOMATION>
+    )
+endif()
+
 # Stage the model configs and ROMs next to the binaries (Config::LoadConfig looks there first)
 add_custom_target(steamdeck-poc-data
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/configs" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"

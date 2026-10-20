@@ -10,7 +10,12 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
 
+#ifdef ENABLE_AUTOMATION
+#include "automation.h"
+#endif
+
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 
@@ -26,7 +31,18 @@ bool EmuHost::Create(const std::string& model, std::string* error)
 {
     _id = "deck-poc";
     _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel(_id, model, LoggerLevel::LogWarning, error);
-    return _emulator != nullptr;
+    if (!_emulator)
+        return false;
+
+#ifdef ENABLE_AUTOMATION
+    // WebAPI on 0.0.0.0 (UNREAL_WEBAPI_PORT, 8090) and MCP: the instance above is driven over the network
+    const bool started = Automation::GetInstance().start();
+    _automation = true;   // stopped in Stop() even when a module failed to start (a port taken)
+    const char* port = std::getenv("UNREAL_WEBAPI_PORT");
+    SDL_Log("automation %s: WebAPI http://<deck>:%s/api/v1", started ? "started" : "started with errors",
+            port ? port : "8090");
+#endif
+    return true;
 }
 
 bool EmuHost::LoadFile(const std::string& path, std::string* error)
@@ -166,6 +182,13 @@ void EmuHost::Start()
 
 void EmuHost::Stop()
 {
+#ifdef ENABLE_AUTOMATION
+    if (_automation)
+    {
+        Automation::GetInstance().stop();
+        _automation = false;
+    }
+#endif
     if (_emulator)
     {
         _emulator->ClearAudioCallback();

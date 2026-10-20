@@ -43,7 +43,11 @@ cleared and labelled first (48K ROM font from `rom/48.rom`).
 --file /home/deck/ZX/game.tap                          # any program (press logging only works for the border test)
 --windowed                                             # desktop development: a 1280x800 window
 --autofire 137                                         # toggle fire every 137 ms by itself (no human; the phase sweeps the frame)
+--headless                                             # no window, no GPU: the emulator and its WebAPI only (SSH, a container)
 ```
+
+Built with automation (the default) the instance is driven over the network: WebAPI on `:8090`
+([README.md, Remote control](../README.md#remote-control-webapi-mcp)).
 
 Controls: A (or Space) = Kempston fire; D-pad = directions; View + Menu = quit.
 
