@@ -2,7 +2,7 @@
 
 from styles.common import Picture, glyph_shape, glyphs, legend_origin
 from styles.photocaps import hard, next_cap, rubber
-from svgkit import rounded, shade, soft_shadow, text_width
+from svgkit import rounded, shade, soft_shadow, text_path, text_width
 
 
 def case_body(pic, part):
@@ -24,6 +24,21 @@ def case_body(pic, part):
         roll = d.linear([(0, "#000000", 0), (0.45, "#000000", 0.12), (1, "#000000", 0.55)], x1=0, y1=0, x2=1, y2=0)
         parts.append(f'<path d="{rounded(x + w - run, y, run, h, r)}" fill="{roll}"/>')
     return "\n".join(parts)
+
+
+def case_hump(pic, part):
+    """The raised rear of a case (the 48K's): matte, lit along its top, a lit front edge and its shadow on the plate"""
+    g = part.geometry
+    d = pic.defs
+    x, y, w, h, r = g["x"], g["y"], g["w"], g["h"], g.get("r", 3)
+    fill = d.linear([(0, shade(part.color, 1.2)), (0.12, part.color), (0.93, shade(part.color, 0.95)),
+                     (1, shade(part.color, 1.12))])
+    return "\n".join([
+        f'<rect x="{x:.3f}" y="{y + h:.3f}" width="{w:.3f}" height="1.6" fill="#000" fill-opacity="0.55"/>',
+        f'<rect x="{x:.3f}" y="{y + h + 1.6:.3f}" width="{w:.3f}" height="1.2" fill="#000" fill-opacity="0.25"/>',
+        f'<path d="M{x:.3f},{y + h:.3f}V{y + r:.3f}A{r:.3f},{r:.3f} 0 0 1 {x + r:.3f},{y:.3f}H{x + w - r:.3f}'
+        f'A{r:.3f},{r:.3f} 0 0 1 {x + w:.3f},{y + r:.3f}V{y + h:.3f}Z" fill="{fill}"/>',
+    ])
 
 
 def case_well(pic, part):
@@ -131,6 +146,12 @@ def case_logo(pic, part):
             size = (g["width"] - spacing * (len(g["text"]) - 1)) / text_width(g["text"], 1, face)
     args = (g["x"], g["y"], size, face)
     kw = dict(anchor=g.get("anchor", "start"), squeeze=squeeze, spacing=spacing)
+    if g.get("outline"):  # moulded into the case: a double contour, lit above and shaded below
+        d = text_path(g["text"], *args, kw["anchor"], spacing, squeeze)
+        return "\n".join(f'<path d="{d}" transform="translate(0,{dy})" fill="none" stroke="{colour}" '
+                          f'stroke-width="{width}" stroke-opacity="{opacity}" stroke-linejoin="round"/>'
+                          for dy, colour, width, opacity in [(0.25, "#000000", 0.8, 0.6), (-0.15, "#4a4a48", 0.45, 0.5),
+                                                             (0, part.color, 0.45, 1)])
     if not g.get("gloss"):
         return glyphs(g["text"], *args, part.color, **kw)
     fill = pic.defs.linear([(0, "#3c3e42"), (0.35, part.color), (0.7, "#0a0a0b"), (1, "#26282b")])
@@ -142,13 +163,14 @@ def case_logo(pic, part):
 
 
 CASE = {"body": case_body, "plate": case_plate, "stripe": case_stripe, "logo": case_logo, "well": case_well,
-        "groove": case_groove, "insert": case_insert, "grille": case_grille, "tab": case_tab, "led": case_led}
+        "groove": case_groove, "insert": case_insert, "grille": case_grille, "tab": case_tab, "led": case_led,
+        "hump": case_hump}
 
 
 def cap(pic, key):
     x, y, w, h = key.rect
     if key.cap == "rubber":
-        return rubber(pic, x, y, w, h, key.color), (x, y, w, h)
+        return rubber(pic, x, y, w, h, key.color, skirt=pic.keyboard.get("skirt", 0.0)), (x, y, w, h)
     if key.cap == "hard":
         return hard(pic, x, y, w, h, key.color)
     if key.cap == "next":
@@ -169,8 +191,11 @@ def draw(keyboard, model):
                 pic.add("legends", glyph_shape(legend.glyph, lx, ly, legend.size, legend.color))
                 continue
             if legend.inverse:
-                width = text_width(legend.text, legend.size, legend.face) * legend.squeeze + legend.size * 0.6
-                pic.add("legends", f'<rect x="{lx - width / 2:.3f}" y="{ly - legend.size * 0.95:.3f}" '
+                text = text_width(legend.text, legend.size, legend.face) * legend.squeeze
+                pad = legend.size * 0.3
+                width = text + 2 * pad
+                left = {"start": lx - pad, "middle": lx - width / 2, "end": lx - text - pad}[legend.anchor]
+                pic.add("legends", f'<rect x="{left:.3f}" y="{ly - legend.size * 0.95:.3f}" '
                                    f'width="{width:.3f}" height="{legend.size * 1.2:.3f}" fill="{legend.color}"/>')
                 pic.add("legends", glyphs(legend.text, lx, ly, legend.size, legend.face, "#141517", legend.anchor,
                                           squeeze=legend.squeeze))

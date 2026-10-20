@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """POC 031: the atlas of every generated keyboard in every render mode, for review.
 
-    atlas.py [width]   renders keyboards/out/*.svg into scratch/2026-10-19-poc-031/atlas/
+    atlas.py [width]   renders keyboards/out/*.svg: each mode into scratch/2026-10-19-poc-031/atlas/, the sheet
+                       of each keyboard and style into atlas/
 
 Per keyboard and style: Qt's QSvgRenderer (as unreal-qt draws it), rsvg (as a browser draws it), each named layer
 alone in Qt, the key map over the Qt picture (the overlay's rectangles and what each key presses) and the Qt vs
@@ -23,6 +24,7 @@ from styles.common import LAYERS  # noqa: E402
 
 OUT = HERE / "keyboards" / "out"
 ATLAS = SCRATCH / "atlas"
+SHEETS = HERE / "atlas"
 LABEL = "/System/Library/Fonts/Helvetica.ttc"
 BACKGROUND = (30, 31, 34)
 
@@ -88,6 +90,7 @@ def sheet(title, tiles, columns=2):
 def main():
     width = int(sys.argv[1]) if len(sys.argv) > 1 else 1600
     ATLAS.mkdir(parents=True, exist_ok=True)
+    SHEETS.mkdir(exist_ok=True)
     for svg in sorted(OUT.glob("*.svg")):
         keyboard, style = svg.stem.split(".", 1)
         keys = json.loads((OUT / f"{keyboard}.keys.json").read_text())
@@ -108,7 +111,7 @@ def main():
         diff.save(f"{stem}.qt-vs-rsvg.png")
         tiles += [("key map: blue = one matrix key, orange = a combo", mapped), ("Qt vs rsvg, difference x8", diff)]
         sheet(f"{keys['id']} · {style} · {', '.join(keys['models'])} · {len(keys['keys'])} keys", tiles).save(
-            ATLAS / f"{svg.stem}.atlas.png")
+            SHEETS / f"{svg.stem}.atlas.png")
         print(f"{svg.stem}: {len(tiles)} modes")
     return 0
 

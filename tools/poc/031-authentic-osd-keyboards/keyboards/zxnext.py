@@ -1,6 +1,6 @@
 """ZX Spectrum Next (cased, KS1 / KS2: one drawing serves both).
 
-Sources: scratch/2026-10-19-poc-031/refs-next.md (layout measured on a rectified top-down photo, ±0.05u, against
+Sources: references/next.md (layout measured on a rectified top-down photo, ±0.05u, against
 the ZEsarUX bitmap; legends read from photos; matrix from membrane.vhd). 58 keys: the 40 of the matrix, 16 extra
 keys that press a shift and a key (and set their NR 0xB0 / 0xB1 bit), and a second CAPS SHIFT and SYMBOL SHIFT.
 """

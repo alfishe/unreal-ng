@@ -29,7 +29,7 @@ REPO = HERE.parents[2]
 SCRATCH = REPO / "scratch" / "2026-10-19-poc-031"
 QTRENDER = SCRATCH / "qtrender-build" / "qtrender"
 
-KEYBOARDS = ["zxnext"]
+KEYBOARDS = ["zx48k", "zxnext"]
 STYLES = ["photo"]
 
 

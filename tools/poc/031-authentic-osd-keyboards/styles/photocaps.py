@@ -15,14 +15,17 @@ def label(text, x, y, size, face="sans", color="#fff", anchor="middle", opacity=
     return f'<path d="{d}" fill="{color}"{extra}/>'
 
 
-def rubber(canvas, x, y, w, h, color, radius=1.6):
-    """A moulded rubber key (the 48K's): matte, a low dome, soft edges, a soft shadow on the plate"""
+def rubber(canvas, x, y, w, h, color, radius=1.6, skirt=0.0):
+    """A moulded rubber key (the 48K's): matte, a low dome, soft edges, a soft shadow on the plate; @p skirt mm of
+    its front side show below the top face (a tall key seen from a little in front)"""
     d = canvas.defs
     body = d.linear([(0, shade(color, 1.18)), (0.45, color), (1, shade(color, 0.72))])
     dome = d.radial([(0, "#ffffff", 0.22), (0.6, "#ffffff", 0.05), (1, "#ffffff", 0)], cx=0.42, cy=0.3, r=0.75)
     rim = d.linear([(0, "#000000", 0), (0.8, "#000000", 0), (1, "#000000", 0.35)])
+    side = d.linear([(0, shade(color, 0.62)), (1, shade(color, 0.42))])
     return "\n".join([
-        soft_shadow(x, y, w, h, radius, 1.2, dx=0.35, dy=0.7, opacity=0.55, steps=5),
+        soft_shadow(x, y, w, h + skirt, radius, 1.2, dx=0.35, dy=0.7, opacity=0.55, steps=5),
+        f'<path d="{rounded(x - 0.25, y + 0.5, w + 0.5, h + skirt - 0.4, radius)}" fill="{side}"/>' if skirt else "",
         f'<path d="{rounded(x, y, w, h, radius)}" fill="{body}"/>',
         f'<path d="{rounded(x, y, w, h, radius)}" fill="{rim}"/>',
         f'<path d="{rounded(x + 0.4, y + 0.3, w - 0.8, h - 0.9, radius * 0.85)}" fill="{dome}"/>',

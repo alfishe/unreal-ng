@@ -50,10 +50,17 @@ def legend_origin(legend, key, face):
 
 def glyph_shape(glyph, x, y, size, color):
     """A legend drawn as a shape, centred on (x, y), @p size its height: `block:N` the ZX block graphic N in its
-    box, `arrow:up|down|left|right` a hollow arrow"""
+    box (`block:N:paper` the 48K's print: the paper quadrants in @p color, no box), `arrow:up|down|left|right` a hollow
+    arrow"""
     kind, _, arg = glyph.partition(":")
     if kind == "block":
+        arg, _, polarity = arg.partition(":")
         s, n = size, int(arg)
+        if polarity == "paper":
+            x0, y0, half = x - s / 2, y - s / 2, s / 2
+            quads = [(1, x0 + half, y0), (2, x0, y0), (4, x0 + half, y0 + half), (8, x0, y0 + half)]
+            return "".join(f'<rect x="{qx:.3f}" y="{qy:.3f}" width="{half:.3f}" height="{half:.3f}" fill="{color}"/>'
+                           for bit, qx, qy in quads if not n & bit)
         x0, y0, half = x - s / 2, y - s / 2, s / 2
         quads = [(1, x0 + half, y0), (2, x0, y0), (4, x0 + half, y0 + half), (8, x0, y0 + half)]
         parts = [f'<rect x="{qx:.3f}" y="{qy:.3f}" width="{half:.3f}" height="{half:.3f}" fill="{color}"/>'
