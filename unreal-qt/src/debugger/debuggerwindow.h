@@ -23,6 +23,7 @@ class DebuggerWindow;
 QT_END_NAMESPACE
 
 class Emulator;
+class PaneFocus;
 class SpeedControlWidget;
 
 class DebuggerWindow : public QWidget, public Observer
@@ -100,6 +101,11 @@ private slots:
     void showBreakpointManager();
     void showLabelManager();
     void showVisualizationWindow();
+
+    // Pane focus for controllers: disassembly, registers, memory, stack
+    void focusNextPane();
+    void focusPrevPane();
+    void paneKey(int key);  ///< Qt::Key_Up / Down / Left / Right / PageUp / PageDown / Return into the pane in focus
 
     void changeMemoryViewZ80Address(uint16_t addr);
     void changeMemoryViewBank(uint8_t bank);
@@ -189,6 +195,7 @@ private:
 
     // Speed control widget
     SpeedControlWidget* m_speedControl = nullptr;
+    PaneFocus* _paneFocus = nullptr;
 };
 
 #endif  // DEBUGGERWINDOW_H

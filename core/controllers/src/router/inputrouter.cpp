@@ -326,6 +326,29 @@ void InputRouter::SetFocus(const std::string& instance)
     _focus = instance;
 }
 
+void InputRouter::SetDebugFocus(bool on)
+{
+    std::vector<ActionEvent> actions;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (on == _debugFocus)
+            return;
+        _debugFocus = on;
+        const uint64_t now = Now();
+        for (auto& [id, device] : _devices)
+        {
+            if (RoleLocked(id) != DeviceRole::Player)
+                continue;
+            // Other layers: what was held is released, a control held across the switch waits for its release
+            device.layers.clear();
+            device.epoch++;
+            MarkHeldStale(device.values, device.gates, kReleased);
+            EvaluateLocked(device, now, actions);
+        }
+    }
+    Dispatch(actions);
+}
+
 std::vector<std::string> InputRouter::Layers(const HostDeviceId& id) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
@@ -375,7 +398,7 @@ std::vector<std::string> InputRouter::ActiveLayersLocked(const Device& device) c
     const DeviceRole role = RoleLocked(device.info.id);
     if (role == DeviceRole::Disabled)
         return {};
-    if (role == DeviceRole::DebuggerRemote)
+    if (RemoteLocked(device))
         return {kDebugLayer};
     std::vector<std::string> layers = {kPlayLayer};
     for (const LayerEntry& entry : device.layers)
@@ -388,8 +411,16 @@ std::vector<std::string> InputRouter::ActiveLayersLocked(const Device& device) c
     return layers;
 }
 
-bool InputRouter::RaisedLocked(const Device& device, const std::string& layer)
+bool InputRouter::RemoteLocked(const Device& device) const
 {
+    const DeviceRole role = RoleLocked(device.info.id);
+    return role == DeviceRole::DebuggerRemote || (_debugFocus && role == DeviceRole::Player);
+}
+
+bool InputRouter::RaisedLocked(const Device& device, const std::string& layer) const
+{
+    if (layer == kDebugLayer && RemoteLocked(device))
+        return true;
     return layer == kPlayLayer || std::any_of(device.layers.begin(), device.layers.end(),
                                               [&layer](const LayerEntry& entry) { return entry.name == layer; });
 }
