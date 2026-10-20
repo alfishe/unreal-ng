@@ -27,7 +27,7 @@ bool Parses(const json& doc, std::string* why = nullptr)
         }
     return ok;
 }
-json main()
+json MainDoc()
 {
     return json::parse(R"({ "name": "main", "model": "plusxl",
       "root": { "id": "home", "type": "menu", "items": [
@@ -48,7 +48,7 @@ void Write(const std::filesystem::path& f, const json& j)
 void TestSubtrees()
 {
     std::printf("subtrees\n");
-    const json doc = main();
+    const json doc = MainDoc();
     CHECK(Parses(doc));
 
     // export: a menu becomes the root; outside nav targets are reported; the file is a playable scenario

@@ -5,7 +5,7 @@ The TCP link between the daemon and software decks.
 | | |
 |---|---|
 | **Date** | 2026-10-19 |
-| **Status** | Design, for review |
+| **Status** | Daemon side implemented 2026-10-20 (`companions/streamdeck/lib/include/sdb/devicewire.h`, `deckhub.h`, `picturecache.h`) |
 | **Decision** | D3 in [README.md](README.md#decisions-owner-2026-10-19) |
 | **From** | `streamdeck-bridge/include/sdb/emuwire.hpp` (v1), `streamdeck-emulator/src/server.cpp` |
 

@@ -1,11 +1,4 @@
 // Transports that are not a local USB device: the emulator over TCP, and a tee that drives two transports at once.
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -16,6 +9,7 @@
 
 #include "sdb/device.h"
 #include "sdb/emuwire.h"
+#include "sdb/eventloop.h"
 #include "sdb/transport.h"
 
 namespace sdb
@@ -27,11 +21,10 @@ using clk = std::chrono::steady_clock;
 class TcpTransport final : public Transport
 {
 public:
-    explicit TcpTransport(int fd) : _fd(fd) {}
+    explicit TcpTransport(net::SocketHandle fd) : _fd(fd) {}
     ~TcpTransport() override
     {
-        if (_fd >= 0)
-            ::close(_fd);
+        net::CloseSocket(_fd);
     }
 
     int Write(std::span<const std::uint8_t> r) override
@@ -191,23 +184,17 @@ private:
         f[1] = static_cast<std::uint8_t>(payload.size() & 0xff);
         f[2] = static_cast<std::uint8_t>(payload.size() >> 8);
         std::copy(payload.begin(), payload.end(), f.begin() + 3);
-        for (size_t sent = 0; sent < f.size();)
+        if (!net::SendAll(_fd, f.data(), f.size(), 2000))
         {
-            const ssize_t n = ::send(_fd, f.data() + sent, f.size() - sent, 0);
-            if (n <= 0)
-            {
-                _err = "emulator connection lost";
-                return false;
-            }
-            sent += static_cast<size_t>(n);
+            _err = "emulator connection lost";
+            return false;
         }
         return true;
     }
     // Reads whatever arrives within timeoutMs into complete frames. false = connection closed.
     bool Pump(int timeoutMs)
     {
-        pollfd p{_fd, POLLIN, 0};
-        const int r = ::poll(&p, 1, timeoutMs);
+        const int r = net::WaitSocket(_fd, true, false, timeoutMs);
         if (r < 0)
         {
             _err = "poll failed";
@@ -216,8 +203,8 @@ private:
         if (r > 0)
         {
             std::uint8_t tmp[8192];
-            const ssize_t n = ::recv(_fd, tmp, sizeof tmp, 0);
-            if (n <= 0)
+            const long n = net::Recv(_fd, tmp, sizeof tmp);
+            if (n < 0)
             {
                 _err = "emulator closed the connection";
                 return false;
@@ -236,7 +223,7 @@ private:
         return true;
     }
 
-    int _fd;
+    net::SocketHandle _fd;
     std::mutex _m;
     std::vector<std::uint8_t> _rx;
     std::deque<std::pair<std::uint8_t, std::vector<std::uint8_t>>> _frames;
@@ -325,38 +312,18 @@ std::unique_ptr<TcpTransport> ConnectEmulator(const std::string& addr, std::stri
             port = addr.substr(c + 1);
         }
     }
-    addrinfo hints{}, *res = nullptr;
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(host.c_str(), port.c_str(), &hints, &res) != 0 || !res)
-    {
-        if (error)
-            *error = "cannot resolve " + host;
-        return nullptr;
-    }
-    int fd = -1;
-    for (auto* p = res; p; p = p->ai_next)
-    {
-        fd = ::socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-        if (fd < 0)
-            continue;
-        if (::connect(fd, p->ai_addr, p->ai_addrlen) == 0)
-            break;
-        ::close(fd);
-        fd = -1;
-    }
-    freeaddrinfo(res);
-    if (fd < 0)
+    int portNumber = port.empty() || port.size() > 5 ? -1 : 0;
+    for (char ch : port)
+        if (portNumber >= 0)
+            portNumber = ch >= '0' && ch <= '9' ? portNumber * 10 + (ch - '0') : -1;
+    const net::SocketHandle fd =
+        portNumber > 0 && portNumber <= 65535 ? net::Connect(host, portNumber, 2000, nullptr) : net::kInvalidSocket;
+    if (fd == net::kInvalidSocket)
     {
         if (error)
             *error = "no emulator listening on " + host + ":" + port + " (start Stream Deck Studio)";
         return nullptr;
     }
-    int one = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
-#ifdef SO_NOSIGPIPE
-    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
-#endif
     return std::make_unique<TcpTransport>(fd);
 }
 }  // namespace

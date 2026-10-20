@@ -18,7 +18,7 @@ bool GridInRange(const Model& m, const GridSpec& g)
 
 std::vector<std::pair<int, Rgb>> SliceGrid(const Model& m, const Rgb& src, const GridSpec& g, Rgb* canvasOut)
 {
-    constexpr int cell = 144;
+    constexpr int kCell = 144;
     const int nr = g.r1 - g.r0 + 1, nc = g.c1 - g.c0 + 1;
     std::vector<std::pair<int, Rgb>> out;
     const PanelLayout l = GetPanelLayout(m);
@@ -49,17 +49,17 @@ std::vector<std::pair<int, Rgb>> SliceGrid(const Model& m, const Rgb& src, const
         return out;
     }
     // No published layout (e.g. Original): equal cells.
-    const Rgb canvas = FitImage(src, nc * cell, nr * cell, g.fit, g.bg[0], g.bg[1], g.bg[2]);
+    const Rgb canvas = FitImage(src, nc * kCell, nr * kCell, g.fit, g.bg[0], g.bg[1], g.bg[2]);
     for (int r = 0; r < nr; ++r)
         for (int c = 0; c < nc; ++c)
         {
-            Rgb tile = Crop(canvas, c * cell, r * cell, cell, cell);
+            Rgb tile = Crop(canvas, c * kCell, r * kCell, kCell, kCell);
             if (g.gap > 0)
             {
-                draw::FillRect(tile, 0, 0, cell, g.gap, {});
-                draw::FillRect(tile, 0, cell - g.gap, cell, g.gap, {});
-                draw::FillRect(tile, 0, 0, g.gap, cell, {});
-                draw::FillRect(tile, cell - g.gap, 0, g.gap, cell, {});
+                draw::FillRect(tile, 0, 0, kCell, g.gap, {});
+                draw::FillRect(tile, 0, kCell - g.gap, kCell, g.gap, {});
+                draw::FillRect(tile, 0, 0, g.gap, kCell, {});
+                draw::FillRect(tile, kCell - g.gap, 0, g.gap, kCell, {});
             }
             out.emplace_back((g.r0 + r) * m.cols + g.c0 + c, std::move(tile));
         }

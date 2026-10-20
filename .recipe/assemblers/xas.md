@@ -141,6 +141,13 @@ field stays 0). The asm-synchronizer reads the same text from RAM page 3 without
 operation 9.x issues STEP `#20`, which leaves the head one cylinder past the track register; its next operation misses
 the first sector (about a second, 4 revolutions), reads the ID under the head and seeks again: a pause, not an error.
 
+## STS and the labels (7.447)
+
+The disk's STS 5.1 is XAS's monitor: EXT then `T` enters it, EXT then CS+`T` with PC at the code just assembled
+(after an assemble report, one EXT first). A key closes its title. SS+`5` shows XAS's labels in the address column and
+the operands; the digits 5-8 are cursor keys there, not an address. The names are XAS's table in RAM page 6, which
+`symconv live` reads (research-labeltables.md §3).
+
 ## Pitfalls
 
 - **XAS holds a file of 64 sectors** (16K at `#C000` of RAM page 3, title and end included): a 65th sector wraps over
@@ -153,7 +160,7 @@ the first sector (about a second, 4 revolutions), reads the ID under the head an
 
 - **Typing into the text instead of a command.** EXT (`caps`+`symbol`) followed by the command letter works right
   after loading a file; in other editor states the letter went into the text as a new line (seen after an assemble
-  report). Reload the file (reset and step 2) rather than trying to recover.
+  report). After the report one EXT alone returns to the editor (7.447, 2026-10-20); then EXT and the letter work.
 - **Writing the text into #C000 while the editor runs** confuses it (its pointers keep the old text): put the source
   on the disk and load it through the file list.
 - **`capture_media` with an absolute `filename`** wrote a file named after the URL-encoded path into the emulator's

@@ -1,10 +1,14 @@
 // Hardware-free unit tests: model table, golden report bytes, input parsing, image ops, LCD mapping, theme upload.
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include "sdb/device.h"
 #include "sdb/draw.h"
@@ -392,6 +396,84 @@ void TestImage()
     auto strip = EncodeForFormat(Rgb(1200, 100, 5, 5, 5), ModelOf(0x00C6).lcd);
     auto d = DecodeJpeg(strip);
     CHECK(d && d->w == 100 && d->h == 1200);
+
+    // The stream the decks get (POC 032): baseline SOF0, three components, all 1x1 (4:4:4; 4:2:0 garbles + XL keys).
+    Rgb grad(112, 112);
+    for (int y = 0; y < 112; ++y)
+        for (int x = 0; x < 112; ++x)
+        {
+            auto* p = grad.At(x, y);
+            p[0] = static_cast<std::uint8_t>(x * 2);
+            p[1] = static_cast<std::uint8_t>(y * 2);
+            p[2] = static_cast<std::uint8_t>(255 - x - y);
+        }
+    const auto jpg = EncodeJpeg(grad, 90);
+    size_t sof = 0;
+    bool progressive = false;
+    for (size_t i = 2; i + 4 < jpg.size() && jpg[i] == 0xFF && jpg[i + 1] != 0xDA;
+         i += 2 + (static_cast<size_t>(jpg[i + 2]) << 8 | jpg[i + 3]))
+    {
+        if (jpg[i + 1] == 0xC0)
+            sof = i;
+        progressive = progressive || jpg[i + 1] == 0xC2;
+    }
+    CHECK(sof > 0 && !progressive);
+    if (sof > 0)
+    {
+        CHECK_EQ(jpg[sof + 9], 3);  // components
+        for (int c = 0; c < 3; ++c)
+            CHECK_EQ(jpg[sof + 11 + c * 3], 0x11);  // H1V1
+    }
+    auto back = DecodeJpeg(jpg);
+    CHECK(back && back->w == 112 && back->h == 112);
+    if (back)
+    {
+        long long err = 0;
+        double se = 0;
+        for (size_t i = 0; i < grad.px.size(); ++i)
+        {
+            const int delta = grad.px[i] - back->px[i];
+            err += std::abs(delta);
+            se += static_cast<double>(delta) * delta;
+        }
+        CHECK(err < static_cast<long long>(grad.px.size()) * 2);  // mean error under 2 levels at q90
+        const double psnr = 10 * std::log10(255.0 * 255.0 * static_cast<double>(grad.px.size()) / std::max(se, 1.0));
+        CHECK(psnr > 40.0);  // the smooth gradient: about 45 dB at q90
+    }
+    // Golden bytes (POC 032): the encoder is ours, so its output is pinned; a change to it must be deliberate. The
+    // scan data of this image equals libjpeg-turbo's (islow DCT, the same tables and colour conversion).
+    {
+        std::uint32_t hash = 2166136261u;  // FNV-1a
+        for (std::uint8_t byte : jpg)
+            hash = (hash ^ byte) * 16777619u;
+        CHECK_EQ(jpg.size(), size_t{2696});
+        CHECK_EQ(hash, 3336051733u);
+        Rgb odd(13, 5);  // not a multiple of 8: edges replicated
+        for (size_t i = 0; i < odd.px.size(); ++i)
+            odd.px[i] = static_cast<std::uint8_t>(i * 37);
+        const auto oddJpg = EncodeJpeg(odd, 75);
+        std::uint32_t hashOdd = 2166136261u;
+        for (std::uint8_t byte : oddJpg)
+            hashOdd = (hashOdd ^ byte) * 16777619u;
+        CHECK_EQ(oddJpg.size(), size_t{762});
+        CHECK_EQ(hashOdd, 953815062u);
+        auto smallBack = DecodeJpeg(oddJpg);
+        CHECK(smallBack && smallBack->w == 13 && smallBack->h == 5);
+    }
+    // Encoders on several threads at once give the same bytes as one alone (no shared state).
+    std::vector<std::vector<std::uint8_t>> par(4);
+    {
+        std::vector<std::thread> threads;
+        for (auto& out : par)
+            threads.emplace_back([&out, &grad] {
+                for (int k = 0; k < 20; ++k)
+                    out = EncodeJpeg(grad, 90);
+            });
+        for (auto& t : threads)
+            t.join();
+    }
+    for (const auto& out : par)
+        CHECK(out == jpg);
 }
 
 void TestLcdMapping()
@@ -838,6 +920,8 @@ int main()
     TestIo();
     TestTagsAndPages();
     TestSubtrees();
+    TestWebSocket();
+    TestDeckHub();
     std::printf("\n%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

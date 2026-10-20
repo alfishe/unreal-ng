@@ -223,7 +223,8 @@ Daemon side:
 | Device | Polls every deck's input, injects viewer input, renders, writes HID reports (today `Runtime::step`; macOS hidapi delivers no input while another thread writes the same handle). |
 | Network (one event loop) | Non-blocking, all sockets on one thread: the WebSocket client of `/api/v1/ws` (sends actions, receives `result`, readouts, `ctx`, `target`, `activity`), the wire server (viewers' input, the fan-out; a slow viewer drops frames, never stalls the deck) and the automation REST + MCP. Hands everything to the device thread through a queue and a wakeup. |
 
-Two threads in all, whatever the number of decks, viewers and clients. Today the automation is a cpp-httplib server.
+Two threads in all, whatever the number of decks, viewers and clients. The loop is `sdb::net::EventLoop`
+(`companions/streamdeck/lib/include/sdb/eventloop.h`), the WebSocket client `sdb::ws::Client` (`sdb/websocket.h`). Today the automation is a cpp-httplib server.
 Its pool defaults to max(8, cores - 1) threads (`CPPHTTPLIB_THREAD_POOL_COUNT`), 23 on a 24-core machine, for a
 handful of editor calls. SD2 picks an event-loop library for the WebSocket client; the wire server and the automation
 move onto the same loop. Until then the pool is pinned to 1.

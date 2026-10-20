@@ -133,6 +133,13 @@ public:
         return *_t;
     }
 
+    // Puts a transport around the current one (the daemon's multiplexer: AttachDeck). Before the runtime starts.
+    template <class Wrap>
+    void WrapTransport(Wrap&& wrap)
+    {
+        _t = wrap(std::move(_t));
+    }
+
     // Mirror everything this device is sent to a Stream Deck Studio too (it switches to this model); input comes
     // from both. addr = "host:port" (default 127.0.0.1:37050).
     bool AttachMirror(const std::string& addr, std::string* error = nullptr);

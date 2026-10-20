@@ -1,14 +1,11 @@
 #include "sdb/http.h"
 
-#include <netdb.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <unistd.h>
-
 #include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cstring>
+
+#include "sdb/eventloop.h"
 
 namespace sdb
 {
@@ -40,30 +37,23 @@ HttpResponse HttpRequest(const std::string& url, const std::string& method, cons
         port = hostport.substr(colon + 1);
     }
 
-    addrinfo hints{}, *res = nullptr;
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(host.c_str(), port.c_str(), &hints, &res) != 0 || !res)
+    int portNumber = port.empty() || port.size() > 5 ? -1 : 0;
+    for (char c : port)
+        if (portNumber >= 0)
+            portNumber = c >= '0' && c <= '9' ? portNumber * 10 + (c - '0') : -1;
+    if (portNumber <= 0 || portNumber > 65535)
     {
-        r.error = "resolve " + host;
+        r.error = "bad port " + port;
         return r;
     }
-    int fd = -1;
-    for (auto* p = res; p; p = p->ai_next)
-    {
-        fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-        if (fd < 0)
-            continue;
-        timeval tv{timeoutMs / 1000, (timeoutMs % 1000) * 1000};
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
-        if (connect(fd, p->ai_addr, p->ai_addrlen) == 0)
-            break;
-        close(fd);
-        fd = -1;
-    }
-    freeaddrinfo(res);
-    if (fd < 0)
+    const auto deadline = t0 + std::chrono::milliseconds(timeoutMs);
+    auto left = [&] {
+        return static_cast<int>(std::max<long long>(
+            0, std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now())
+                   .count()));
+    };
+    const net::SocketHandle fd = net::Connect(host, portNumber, timeoutMs, nullptr);
+    if (fd == net::kInvalidSocket)
     {
         r.error = "connect " + hostport + " failed";
         return r;
@@ -76,27 +66,23 @@ HttpResponse HttpRequest(const std::string& url, const std::string& method, cons
     if (!body.empty() || method == "POST" || method == "PUT")
         req += "Content-Type: application/json\r\nContent-Length: " + std::to_string(body.size()) + "\r\n";
     req += "\r\n" + body;
-    for (size_t sent = 0; sent < req.size();)
+    if (!net::SendAll(fd, req.data(), req.size(), left()))
     {
-        const ssize_t n = send(fd, req.data() + sent, req.size() - sent, 0);
-        if (n <= 0)
-        {
-            close(fd);
-            r.error = "send failed";
-            return r;
-        }
-        sent += static_cast<size_t>(n);
+        net::CloseSocket(fd);
+        r.error = "send failed";
+        return r;
     }
+    // Connection: close: the answer ends where the server closes the stream.
     std::string raw;
     char buf[16384];
-    for (;;)
+    while (net::WaitSocket(fd, true, false, left()) > 0)
     {
-        const ssize_t n = recv(fd, buf, sizeof buf, 0);
-        if (n <= 0)
+        const long n = net::Recv(fd, buf, sizeof buf);
+        if (n < 0)
             break;
         raw.append(buf, static_cast<size_t>(n));
     }
-    close(fd);
+    net::CloseSocket(fd);
 
     const auto hdrEnd = raw.find("\r\n\r\n");
     if (hdrEnd == std::string::npos)
