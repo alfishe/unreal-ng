@@ -36,3 +36,4 @@ void TestRuntime();
 void TestIo();
 void TestTagsAndPages();
 void TestSubtrees();
+void TestWebSocket();
