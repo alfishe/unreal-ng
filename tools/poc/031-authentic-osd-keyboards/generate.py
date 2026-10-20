@@ -29,7 +29,7 @@ REPO = HERE.parents[2]
 SCRATCH = REPO / "scratch" / "2026-10-19-poc-031"
 QTRENDER = SCRATCH / "qtrender-build" / "qtrender"
 
-KEYBOARDS = ["zx48k", "zx128", "zxplus2", "zxplus2a", "zxplus3", "pentagon", "pentagon2plus", "scorpion", "zxnext"]
+KEYBOARDS = ["zx48k", "zx128", "zxplus2", "zxplus2a", "zxplus3", "pentagon", "pentagon2plus", "scorpion", "quorum", "zxnext"]
 STYLES = ["photo"]
 
 
@@ -38,7 +38,7 @@ def check(keyboard, model):
     `twins` says: the Next's two CAPS SHIFT and two SYMBOL SHIFT keys)"""
     errors = []
     for key in model.keys:
-        if not key.zx and not key.pc:
+        if not key.zx and not key.pc and not key.line:
             errors.append(f"{key.id}: presses nothing")
     for i, a in enumerate(model.keys):  # the overlay's hit areas: no point belongs to two keys
         for b in model.keys[i + 1:]:
