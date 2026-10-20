@@ -12,7 +12,7 @@
 #include "hudtheme.h"
 
 /// @brief GPU-accelerated translucent HUD overlay using OpenGL.
-/// Stacks on top of DeviceScreenGL with proper alpha blending.
+/// Stacks on top of the device screen with proper alpha blending.
 class HudOverlayGL : public QOpenGLWidget, protected QOpenGLFunctions
 {
     Q_OBJECT

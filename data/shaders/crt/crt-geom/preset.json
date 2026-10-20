@@ -1,0 +1,213 @@
+{
+ "key": "crt-geom",
+ "preset": "crt/crt-geom.slangp",
+ "passes": [
+  {
+   "source": "crt/shaders/crt-geom.slang",
+   "alias": null,
+   "filter": "Nearest",
+   "wrap": "ClampToBorder",
+   "frame_count_mod": 0,
+   "srgb_framebuffer": false,
+   "float_framebuffer": false,
+   "format": "Unknown",
+   "mipmap_input": false,
+   "scale": {
+    "valid": true,
+    "x": {
+     "type": "Viewport",
+     "factor": 1.0
+    },
+    "y": {
+     "type": "Viewport",
+     "factor": 1.0
+    }
+   },
+   "uniforms": {
+    "MVP": "mat4",
+    "OutputSize": "vec4",
+    "SourceSize": "vec4",
+    "FrameCount": "uint",
+    "CRTgamma": "float",
+    "monitorgamma": "float",
+    "d": "float",
+    "R": "float",
+    "cornersize": "float",
+    "cornersmooth": "float",
+    "x_tilt": "float",
+    "y_tilt": "float",
+    "overscan_x": "float",
+    "overscan_y": "float",
+    "mask_type": "float",
+    "DOTMASK": "float",
+    "DOTMASK_brightboost": "float",
+    "SHARPER": "float",
+    "scanline_weight": "float",
+    "CURVATURE": "float",
+    "interlace_detect": "float",
+    "lum": "float",
+    "invert_aspect": "float",
+    "vertical_scanlines": "float",
+    "xsize": "float",
+    "ysize": "float"
+   }
+  }
+ ],
+ "textures": [],
+ "parameters": {
+  "CRTgamma": {
+   "description": "CRTGeom Target Gamma",
+   "initial": 2.4,
+   "minimum": 0.1,
+   "maximum": 5.0,
+   "step": 0.1
+  },
+  "monitorgamma": {
+   "description": "CRTGeom Monitor Gamma",
+   "initial": 2.2,
+   "minimum": 0.1,
+   "maximum": 5.0,
+   "step": 0.1
+  },
+  "d": {
+   "description": "CRTGeom Distance",
+   "initial": 1.5,
+   "minimum": 0.1,
+   "maximum": 3.0,
+   "step": 0.1
+  },
+  "CURVATURE": {
+   "description": "CRTGeom Curvature Toggle",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "invert_aspect": {
+   "description": "CRTGeom Curvature Aspect Inversion",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "R": {
+   "description": "CRTGeom Curvature Radius",
+   "initial": 2.0,
+   "minimum": 0.1,
+   "maximum": 10.0,
+   "step": 0.1
+  },
+  "cornersize": {
+   "description": "CRTGeom Corner Size",
+   "initial": 0.03,
+   "minimum": 0.001,
+   "maximum": 1.0,
+   "step": 0.005
+  },
+  "cornersmooth": {
+   "description": "CRTGeom Corner Smoothness",
+   "initial": 1000.0,
+   "minimum": 80.0,
+   "maximum": 2000.0,
+   "step": 100.0
+  },
+  "x_tilt": {
+   "description": "CRTGeom Horizontal Tilt",
+   "initial": 0.0,
+   "minimum": -0.5,
+   "maximum": 0.5,
+   "step": 0.05
+  },
+  "y_tilt": {
+   "description": "CRTGeom Vertical Tilt",
+   "initial": 0.0,
+   "minimum": -0.5,
+   "maximum": 0.5,
+   "step": 0.05
+  },
+  "overscan_x": {
+   "description": "CRTGeom Horiz. Overscan %",
+   "initial": 100.0,
+   "minimum": -125.0,
+   "maximum": 125.0,
+   "step": 0.5
+  },
+  "overscan_y": {
+   "description": "CRTGeom Vert. Overscan %",
+   "initial": 100.0,
+   "minimum": -125.0,
+   "maximum": 125.0,
+   "step": 0.5
+  },
+  "mask_type": {
+   "description": "CRTGeom Mask Pattern",
+   "initial": 1.0,
+   "minimum": 1.0,
+   "maximum": 20.0,
+   "step": 1.0
+  },
+  "DOTMASK": {
+   "description": "CRTGeom Mask strength",
+   "initial": 0.3,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "DOTMASK_brightboost": {
+   "description": "CRTGeom Mask brightness boost",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.05
+  },
+  "SHARPER": {
+   "description": "CRTGeom Sharpness",
+   "initial": 1.0,
+   "minimum": 1.0,
+   "maximum": 3.0,
+   "step": 1.0
+  },
+  "scanline_weight": {
+   "description": "CRTGeom Scanline Weight",
+   "initial": 0.3,
+   "minimum": 0.1,
+   "maximum": 0.5,
+   "step": 0.05
+  },
+  "vertical_scanlines": {
+   "description": "CRTGeom Vertical Scanlines",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "lum": {
+   "description": "CRTGeom Luminance",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 0.01
+  },
+  "interlace_detect": {
+   "description": "CRTGeom Interlacing Simulation",
+   "initial": 1.0,
+   "minimum": 0.0,
+   "maximum": 1.0,
+   "step": 1.0
+  },
+  "xsize": {
+   "description": "Simulated Width (0==Auto)",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1920.0,
+   "step": 16.0
+  },
+  "ysize": {
+   "description": "Simulated Height (0==Auto)",
+   "initial": 0.0,
+   "minimum": 0.0,
+   "maximum": 1080.0,
+   "step": 16.0
+  }
+ }
+}

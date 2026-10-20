@@ -777,6 +777,17 @@ void Z80::BeginFrame()
         int_pending = true;
 }
 
+/// No NMI, no INT pending, nothing to re-arm and the frame INT outside its
+/// pulse - not due yet (raised strictly after _intStart) or over (a pulse
+/// raised at t >= _intEnd drops at once; a wrapping pulse is raised by
+/// BeginFrame): ProcessInterruptsImpl<false, false> would decide nothing and
+/// return false. The machine's own INT logic and device lines are not covered
+__forceinline bool Z80::InterruptsIdle() const
+{
+    return _nmi_pending_count == 0 && !int_pending && !int_acked_in_pulse && !_localIntArmed &&
+           (_intWraps || t <= _intStart || t >= _intEnd) && !_context->emulatorState.nmiAtIntStartPending;
+}
+
 // CPU-LIBRARY-MIGRATION(step-routing): the plain step calls the engine; the kStepWorkEngine bit goes
 Z80::StepResult Z80::StepInstruction(bool skipBreakpoints)
 {
@@ -793,6 +804,14 @@ Z80::StepResult Z80::StepInstruction(bool skipBreakpoints)
         return StepInstructionWithWork(work, skipBreakpoints);
 
     StepResult result;
+
+    // Nearly every step: the instruction runs without the interrupt decision (InterruptsIdle)
+    if (InterruptsIdle()) [[likely]]
+    {
+        Z80Step(skipBreakpoints);
+        OnCPUStep();
+        return result;
+    }
 
     // Handle interrupts if arrived. Returns true if an interrupt was accepted -
     // in that case the acceptance IS the "instruction" that consumes this step
@@ -856,9 +875,11 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
     else
     {
         const bool nmiPending = _nmi_pending_count > 0;
-        const bool accepted = ProcessInterruptsSelect((work & EmulatorContext::kStepWorkInterruptSource) && _interruptSource,
-                                                      (work & EmulatorContext::kStepWorkDeviceInt) && _deviceIntLines,
-                                                      _intWraps, _intStart, _intEnd);
+        const bool useSource = (work & EmulatorContext::kStepWorkInterruptSource) && _interruptSource;
+        const bool deviceInt = (work & EmulatorContext::kStepWorkDeviceInt) && _deviceIntLines;
+        const bool accepted = (!useSource && !deviceInt && InterruptsIdle())
+                                  ? false
+                                  : ProcessInterruptsSelect(useSource, deviceInt, _intWraps, _intStart, _intEnd);
         if (accepted)
         {
             if (nmiPending)

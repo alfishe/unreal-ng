@@ -2557,7 +2557,7 @@ TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_GetsAndPutsTheWindowRoute)
     settings["gpu_available"] = true;
     settings["gpu"] = true;
     settings["crt"] = true;
-    settings["crt_profile"] = "shadow-mask";
+    settings["crt_profile"] = "crt-lottes";
     settings["blending"] = false;
     settings["blending_frames"] = 3;
     settings["blending_weights"] = "exponential";
@@ -2568,20 +2568,20 @@ TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_GetsAndPutsTheWindowRoute)
     args["action"] = "window_display";
     mcp::ToolResult read = RunTool(*_registry, "capture_media", args, *_caller);
     ASSERT_FALSE(read.isError) << read.text;
-    EXPECT_NE(read.text.find("window gpu on (available), crt shadow-mask, blending off (3 frames, exponential)"),
+    EXPECT_NE(read.text.find("window gpu on (available), crt crt-lottes, blending off (3 frames, exponential)"),
               std::string::npos)
         << read.text;
 
     args["action"] = "window_display_set";
-    args["display"]["crt_profile"] = "shadow-mask";
+    args["display"]["crt_profile"] = "crt-lottes";
     args["display"]["gpu"] = true;
     mcp::ToolResult set = RunTool(*_registry, "capture_media", args, *_caller);
     ASSERT_FALSE(set.isError) << set.text;
     const auto* call = _caller->Last("PUT", "/api/v1/emulator/emu-1/video/window");
     ASSERT_NE(call, nullptr);
-    EXPECT_EQ(call->body["crt_profile"].asString(), "shadow-mask");
+    EXPECT_EQ(call->body["crt_profile"].asString(), "crt-lottes");
     EXPECT_TRUE(call->body["gpu"].asBool());
-    EXPECT_EQ(set.structured["crt_profile"].asString(), "shadow-mask");
+    EXPECT_EQ(set.structured["crt_profile"].asString(), "crt-lottes");
 }
 
 TEST_F(McpTools_Test, CaptureMedia_WindowDisplaySet_NeedsDisplayAndReportsNoWindow)

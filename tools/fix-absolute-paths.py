@@ -29,6 +29,12 @@ Usage:
 
     # Scan specific files or directories
     python3 tools/fix-absolute-paths.py --path docs/inprogress/2026-09-21-devtools-roadmap --apply
+
+    # Scan inside an excluded directory too (scratch/, build/, ... are skipped by default)
+    python3 tools/fix-absolute-paths.py --include-dir scratch --path scratch/notes
+
+Exclusions are matched on the path relative to the repository root (or to the --path argument for files outside
+it), so the tool works the same in a worktree under scratch/.
 """
 
 import argparse
@@ -39,6 +45,15 @@ import sys
 from pathlib import Path
 
 EXCLUDED_PATH_PARTS = ("3rdparty", ".git", "cmake-build-release", "scratch", "build")
+
+
+def is_excluded(path: Path, base: Path, excluded: set[str]) -> bool:
+    """True when a directory of `path` below `base` is excluded; the parts above `base` never count."""
+    try:
+        parts = path.resolve().relative_to(base.resolve()).parts
+    except ValueError:
+        parts = path.parts
+    return any(part in excluded for part in parts)
 
 
 def find_project_root() -> Path:
@@ -55,7 +70,7 @@ def find_project_root() -> Path:
     raise SystemExit("Could not locate the repository root (no CMakeLists.txt + core/ above this script)")
 
 
-def discover_files(root: Path, extensions: list[str]) -> list[Path]:
+def discover_files(root: Path, extensions: list[str], excluded: set[str]) -> list[Path]:
     """Return tracked and untracked (non-ignored) files with requested extensions, excluding 3rdparty."""
     try:
         result = subprocess.run(
@@ -70,20 +85,21 @@ def discover_files(root: Path, extensions: list[str]) -> list[Path]:
     files = []
     for line in lines:
         path = (root / line).resolve()
-        if path.suffix in suffixes and not any(part in EXCLUDED_PATH_PARTS for part in path.parts):
+        if path.suffix in suffixes and not is_excluded(path, root, excluded):
             files.append(path)
     return sorted(files)
 
 
-def expand_paths(paths: list[str], extensions: list[str]) -> list[Path]:
+def expand_paths(paths: list[str], extensions: list[str], root: Path, excluded: set[str]) -> list[Path]:
     """Expand explicit file or directory arguments."""
     suffixes = {f".{ext.lstrip('.')}" for ext in extensions}
     expanded = []
     for p_str in paths:
         p = Path(p_str).resolve()
         if p.is_dir():
+            base = root if p.is_relative_to(root) else p
             for f in p.rglob("*"):
-                if f.is_file() and f.suffix in suffixes and not any(part in EXCLUDED_PATH_PARTS for part in f.parts):
+                if f.is_file() and f.suffix in suffixes and not is_excluded(f, base, excluded):
                     expanded.append(f.resolve())
         elif p.is_file():
             expanded.append(p.resolve())
@@ -199,6 +215,9 @@ def main() -> int:
                         help="File extension to scan (repeatable, default: md)")
     parser.add_argument("--path", action="append", default=[],
                         help="Scan specific file(s) or directory(ies) (repeatable)")
+    parser.add_argument("--include-dir", action="append", default=[], metavar="NAME",
+                        help="Scan directories with this name although they are excluded by default "
+                             f"(repeatable; default exclusions: {', '.join(EXCLUDED_PATH_PARTS)})")
     parser.add_argument("--apply", action="store_true",
                         help="Write changes; without it the tool only reports (dry run)")
     parser.add_argument("-v", "--verbose", action="store_true",
@@ -208,11 +227,12 @@ def main() -> int:
 
     project_root = find_project_root()
     roots = [project_root, *[Path(r).resolve() for r in args.root]]
+    excluded = set(EXCLUDED_PATH_PARTS) - set(args.include_dir)
 
     if args.path:
-        files = expand_paths(args.path, args.ext)
+        files = expand_paths(args.path, args.ext, project_root, excluded)
     else:
-        files = discover_files(project_root, args.ext)
+        files = discover_files(project_root, args.ext, excluded)
 
     print(f"Repository root: {project_root}")
     print(f"Scanning {len(files)} file(s) with extensions: {', '.join(args.ext)}")

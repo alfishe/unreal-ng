@@ -108,7 +108,7 @@ std::string TemporalSummary(const Json::Value& status)
     return out.str();
 }
 
-/// One-line summary of a /video/window answer, e.g. "window gpu on (available), crt shadow-mask, blending off (2
+/// One-line summary of a /video/window answer, e.g. "window gpu on (available), crt basic, blending off (2
 /// frames, equal)"
 std::string WindowDisplaySummary(const Json::Value& s)
 {
@@ -248,8 +248,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "mod-tpgwafsd) and audio by the matching extra frames";
     schema["properties"]["display"]["type"] = "object";
     schema["properties"]["display"]["description"] =
-        "window_display_set: any of gpu (bool), crt (bool), crt_profile (none, basic, aperture, shadow-mask, "
-        "slot-mask, megatron; other than none switches CRT on), blending (bool, temporal blending / gigascreen "
+        "window_display_set: any of gpu (bool), crt (bool), crt_profile (one of the window's crt_profiles: "
+        "none, basic, ...; other than none switches CRT on), blending (bool, temporal blending / gigascreen "
         "smoothing), blending_frames (2..5), blending_weights (equal, exponential); the rest stay. Applied the way "
         "the View menu does; screenshot source=window shows the effect. Headless: no window (error)";
     for (const char* flag : {"gpu", "crt", "blending"})

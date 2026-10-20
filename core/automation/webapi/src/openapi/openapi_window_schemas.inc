@@ -10,7 +10,7 @@
         field("gpu_available", "boolean", "The host can draw with the GPU (OpenGL)");
         field("gpu", "boolean", "GPU acceleration on");
         field("crt", "boolean", "CRT effects on (with profile none they show nothing)");
-        field("crt_profile", "string", "The CRT profile: none, basic, aperture, shadow-mask, slot-mask, megatron, shader:<name> (a custom shader)");
+        field("crt_profile", "string", "The CRT profile: one of crt_profiles (none, basic, ..., shader:<name> for a libretro preset or a custom shader)");
         s["properties"]["crt_profiles"]["type"] = "array";
         s["properties"]["crt_profiles"]["items"]["type"] = "string";
         s["properties"]["crt_profiles"]["description"] = "Profiles the window offers";

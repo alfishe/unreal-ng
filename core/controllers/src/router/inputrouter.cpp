@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <utility>
 
 #include "hostcontrols.h"
 
@@ -62,8 +63,11 @@ bool InputRouter::Compile(const Binding& binding, CompiledBinding& out, std::str
 {
     if (!ValidateBinding(binding, error))
         return false;
-    out = CompiledBinding{};
-    out.binding = binding;
+    // A named fresh one swapped in: gcc 15 (-O3) takes the destructor of an assigned temporary for a read of its
+    // uninitialized strings (-Wmaybe-uninitialized)
+    CompiledBinding fresh;
+    fresh.binding = binding;
+    std::swap(out, fresh);
     if (binding.target.kind == TargetKind::Retro)
     {
         out.mask = binding.target.retro.mask;

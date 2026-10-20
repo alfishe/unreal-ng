@@ -1,0 +1,58 @@
+#version 330
+
+uniform mat4 LIBRA_UNIFORM_MVP;
+uniform vec4 LIBRA_UNIFORM_SourceSize;
+uniform vec4 LIBRA_UNIFORM_OriginalSize;
+uniform vec4 LIBRA_UNIFORM_OutputSize;
+uniform uint LIBRA_UNIFORM_FrameCount;
+uniform uint LIBRA_UNIFORM_HDRMode;
+uniform float LIBRA_UNIFORM_BrightnessNits;
+uniform float LIBRA_UNIFORM_hcrt_r709_gamma_out;
+uniform float LIBRA_UNIFORM_hcrt_srgb_gamma_out;
+uniform float LIBRA_UNIFORM_hcrt_p3_gamma_out;
+uniform float LIBRA_UNIFORM_hcrt_adobe_gamma_out;
+uniform float LIBRA_UNIFORM_hcrt_r709_gamma_cutoff;
+uniform float LIBRA_UNIFORM_hcrt_srgb_gamma_cutoff;
+uniform float LIBRA_UNIFORM_hcrt_h_size;
+uniform float LIBRA_UNIFORM_hcrt_v_size;
+uniform float LIBRA_UNIFORM_hcrt_h_cent;
+uniform float LIBRA_UNIFORM_hcrt_v_cent;
+
+uniform float LIBRA_UNIFORM_hcrt_colour_space;
+uniform float LIBRA_UNIFORM_hcrt_max_nits;
+uniform float LIBRA_UNIFORM_hcrt_lcd_resolution;
+uniform float LIBRA_UNIFORM_hcrt_lcd_subpixel;
+uniform float LIBRA_UNIFORM_hcrt_red_vertical_convergence;
+uniform float LIBRA_UNIFORM_hcrt_green_vertical_convergence;
+uniform float LIBRA_UNIFORM_hcrt_blue_vertical_convergence;
+uniform float LIBRA_UNIFORM_hcrt_red_horizontal_convergence;
+uniform float LIBRA_UNIFORM_hcrt_green_horizontal_convergence;
+uniform float LIBRA_UNIFORM_hcrt_blue_horizontal_convergence;
+uniform float LIBRA_UNIFORM_hcrt_bloom_strength;
+uniform float LIBRA_UNIFORM_hcrt_crt_screen_type;
+uniform float LIBRA_UNIFORM_hcrt_crt_resolution;
+uniform float LIBRA_UNIFORM_hcrt_red_scanline_min;
+uniform float LIBRA_UNIFORM_hcrt_red_scanline_max;
+uniform float LIBRA_UNIFORM_hcrt_red_scanline_attack;
+uniform float LIBRA_UNIFORM_hcrt_green_scanline_min;
+uniform float LIBRA_UNIFORM_hcrt_green_scanline_max;
+uniform float LIBRA_UNIFORM_hcrt_green_scanline_attack;
+uniform float LIBRA_UNIFORM_hcrt_blue_scanline_min;
+uniform float LIBRA_UNIFORM_hcrt_blue_scanline_max;
+uniform float LIBRA_UNIFORM_hcrt_blue_scanline_attack;
+uniform float LIBRA_UNIFORM_hcrt_red_beam_sharpness;
+uniform float LIBRA_UNIFORM_hcrt_red_beam_attack;
+uniform float LIBRA_UNIFORM_hcrt_green_beam_sharpness;
+uniform float LIBRA_UNIFORM_hcrt_green_beam_attack;
+uniform float LIBRA_UNIFORM_hcrt_blue_beam_sharpness;
+uniform float LIBRA_UNIFORM_hcrt_blue_beam_attack;
+
+layout(location = 0) in vec4 Position;
+out vec2 LIBRA_VARYING_0;
+layout(location = 1) in vec2 TexCoord;
+
+void main()
+{
+    gl_Position = LIBRA_UNIFORM_MVP * Position;
+    LIBRA_VARYING_0 = TexCoord * vec2(1.000010013580322265625);
+}
