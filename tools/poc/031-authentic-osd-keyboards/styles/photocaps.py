@@ -177,3 +177,43 @@ def amstrad(canvas, x, y, w, h, color, shape=None, unit=19.0, skirt=0.27, shadow
         f'<path d="{face_path}" fill="{dish}"/>',
         f'<path d="{face_path}" fill="none" stroke="{shade(color, 1.25)}" stroke-width="0.12" stroke-opacity="0.3"/>',
     ]), face
+
+
+def soviet(canvas, x, y, w, h, color, shape=None, side=0.1, back=0.03, front=0.32):
+    """A Soviet sculpted cap (the MS 7004 family's, the Pentagon 2+'s) seen from above: a flat top face, about 70 %
+    of the key, nearly flush with its back; flat facets round it, the narrow sides a little darker, the tall front
+    slope almost as light as the top (its legend is printed on it). @p side, @p back, @p front the facets' share of
+    the key. Matte: no highlight. Returns the svg and the top face's rectangle (for an L, the bar's)"""
+    gap = 0.45
+    shades = {"back": 0.94, "left": 0.86, "right": 0.82, "front": 0.9}
+    if shape:  # the L: its outline in the front facet's shade, the top face an inset L
+        outer = l_shape(shape, gap, gap, 0.6, 0.6)
+        unit = shape[1][0] - shape[0][0]
+        s, b, f = side * unit, back * unit, front * unit
+        face_path = l_shape(shape, gap + s, gap + b, 0.6, 0.6, front=gap + f)
+        (_, _), (rx, _), (_, by), (bx, _), (_, my), _ = shape
+        face = (bx + gap + s, my + gap + b, rx - bx - 2 * (gap + s), by - my - 2 * gap - b - f)
+        parts = [f'<path d="{outer}" fill="#000" fill-opacity="0.3" transform="translate(0.2,0.4)"/>',
+                 f'<path d="{outer}" fill="{shade(color, shades["front"])}"/>']
+    else:
+        ox, oy, ow, oh = x + gap, y + gap, w - 2 * gap, h - 2 * gap
+        unit = min(ow, oh)
+        s, b, f = side * unit, back * oh, front * oh
+        o = (ox, oy, ox + ow, oy + oh)
+        i = (ox + s, oy + b, ox + ow - s, oy + oh - f)
+        face = (i[0], i[1], i[2] - i[0], i[3] - i[1])
+        face_path = rounded(*face, 0.5)
+        facets = [((o[0], o[1]), (o[2], o[1]), (i[2], i[1]), (i[0], i[1]), "back"),
+                  ((o[0], o[1]), (i[0], i[1]), (i[0], i[3]), (o[0], o[3]), "left"),
+                  ((o[2], o[1]), (o[2], o[3]), (i[2], i[3]), (i[2], i[1]), "right"),
+                  ((o[0], o[3]), (i[0], i[3]), (i[2], i[3]), (o[2], o[3]), "front")]
+        parts = [f'<path d="{rounded(ox, oy, ow, oh, 0.6)}" fill="#000" fill-opacity="0.3" '
+                 f'transform="translate(0.2,0.4)"/>']
+        parts += [f'<path d="{polygon(points)}" fill="{shade(color, shades[name])}"/>' for *points, name in facets]
+    parts += [
+        f'<path d="{outer if shape else rounded(x + gap, y + gap, w - 2 * gap, h - 2 * gap, 0.6)}" fill="none" '
+        f'stroke="#000" stroke-width="0.12" stroke-opacity="0.45"/>',
+        f'<path d="{face_path}" fill="{color}"/>',
+        f'<path d="{face_path}" fill="none" stroke="{shade(color, 0.7)}" stroke-width="0.12" stroke-opacity="0.5"/>',
+    ]
+    return "\n".join(parts), face

@@ -22,6 +22,7 @@ FONTS = {
     "unicode": ("/System/Library/Fonts/Supplemental/Arial Unicode.ttf", None),
     "rounded": ("/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf", None),
     "bold-italic": ("/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf", None),
+    "oblique-bold": ("/System/Library/Fonts/Helvetica.ttc", 3),
 }
 
 _fonts = {}
