@@ -60,9 +60,11 @@ esac
 docker run --rm --platform linux/amd64 \
   -v "$ROOT":/src -w /src ${MOUNTS[@]+"${MOUNTS[@]}"} -e GIT_OPTIONAL_LOCKS=0 \
   -e TYPE="$TYPE" -e JOBS="$JOBS" -e BUILDDIR="/src/$BUILDDIR" -e TARGETS="${TARGETS[*]}" -e MARCH="$MARCH" \
-  -e AUTOMATION="$AUTOMATION" \
+  -e AUTOMATION="$AUTOMATION" -e HOST_IDS="$(id -u):$(id -g)" \
   "$IMAGE" bash -c '
     set -e
+    # The container runs as root: on a Linux host the output would stay root-owned (deploy.sh cannot stage it)
+    trap "chown -R \"\$HOST_IDS\" \"\$BUILDDIR\"" EXIT
     git config --global --add safe.directory "*"
     cmake -S . -B "$BUILDDIR" -G Ninja -DCMAKE_BUILD_TYPE="$TYPE" \
           -DBUILD_QT_APPS=OFF -DENABLE_AUTOMATION="$AUTOMATION" -DTESTS=OFF \
