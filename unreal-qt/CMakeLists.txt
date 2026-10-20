@@ -692,6 +692,14 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtrenderer.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtprofiles.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtprofiles.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtrows.h"
+        # The integer models of the libretro shaders: the GPU picture is the software one bit for bit
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/crtbeammodel_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeammodel.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeammodel.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeamshapes.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeammodelgpu.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtbeammodelgpu.h"
         # The libretro presets of data/shaders/crt on the slang runner (GPU: skips without a 3.3 core context)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/slangpresetrunner_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/slangpresetrunner.cpp"

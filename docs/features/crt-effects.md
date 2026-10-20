@@ -1,7 +1,7 @@
 # CRT effects in the Qt window
 
 View > CRT Effects and View > CRT Profile draw the picture like a CRT: scanlines, curvature, rounded corners, vignette,
-bloom and colour grading. The effects work on both screen backends, the GPU one (View > GPU
+bloom, phosphor masks and colour grading. The effects work on both screen backends, the GPU one (View > GPU
 Acceleration, `DeviceScreenGLWindow`) and the software one (`DeviceScreen`), and **the two pictures are the same bit
 for bit**. Background ideas (phosphor persistence, offline filters): [crt-phosphor-effect.md](crt-phosphor-effect.md).
 
@@ -11,6 +11,13 @@ for bit**. Background ideas (phosphor persistence, offline filters): [crt-phosph
 |---------|-----------------|---------------|
 | None | `none` | The plain picture |
 | Basic | `basic` | Scanlines, slight curvature, a little bloom |
+| CRT Lottes | `crt-lottes` | Model of crt-lottes: gaussian beams, shadow mask, curvature, bloom |
+| CRT Geom | `crt-geom` | Model of crt-geom: lanczos, beams wider when bright, curved tube, aperture mask |
+| CRT Easymode | `crt-easymode` | Model of crt-easymode: sharp lanczos, scanlines by brightness, flat |
+| CRT GDV Mini | `crt-gdv-mini` | Model of crt-gdv-mini: beams by brightness, aperture mask |
+| CRT Consumer | `crt-consumer` | Model of crt-consumer: a soft consumer TV, glow, curvature |
+| CRT Pi | `crt-pi` | Model of crt-pi: light scanlines, RGB mask, curvature |
+| zfast CRT | `zfast-crt` | Model of zfast-crt: fast scanlines and a fine mask |
 
 The parameters are in `unreal-qt/src/widgets/crtprofiles.cpp`. The phosphor mask profiles (Aperture, Shadow Mask, Slot
 Mask, "Megatron") were removed on 2026-10-19: their mask pitch was fractional (2.2 px at 4x, stripes beating with the
@@ -19,7 +26,8 @@ shaders replacing them: [docs/inprogress/2026-10-19-crt-shaders](../inprogress/2
 
 ## One model for both backends
 
-`unreal-qt/src/widgets/crtrenderer.{h,cpp}` (`CRTRenderer`) is the only definition of the effect:
+`unreal-qt/src/widgets/crtrenderer.{h,cpp}` (`CRTRenderer`) is the only definition of None and Basic (the shader models
+below have their own, shared the same way):
 
 1. **Grading**, once per frame, at the source's resolution, in integers: bloom (a separable 1-4-6-4-1 blur, taps
    `bloomRadius` apart, added by `bloomStrength`), gamma, saturation (luma 77/150/29), contrast and brightness.
@@ -33,6 +41,27 @@ the window uses the software screen. It uploads the graded frame and the two tab
 over a viewport of exactly the picture's device pixels. Every value in the shader's product is an integer below 2^24,
 exact in a float, so the GPU cannot round differently (`CRTRenderer_Test.TheShaderArithmeticIsTheIntegerComposition`
 checks all 65536 pairs).
+
+## Shader models (CPU and GPU)
+
+The seven single-pass libretro shaders also exist as integer models, `CRTBeamModel`
+(`unreal-qt/src/widgets/crtbeammodel.{h,cpp}`, the shapes in `crtbeamshapes.cpp`), on both backends and the same bit
+for bit: the software screen composes with `CRTBeamModel::compose()`, the GPU screen uploads the same tables as integer
+textures and runs `CRTBeamModel::kShader` (`CRTBeamModelGPU`), which does the same integer arithmetic. One pipeline
+with per-model tables (float math builds them once per output size and profile):
+
+1. once per frame: the source through the input table (14 bits; linear light, or the shader's own space);
+2. per output pixel from the geometry table: the source pixel and the beam's phase (1/128 pixel), curvature and
+   offsets baked in; past the tube black;
+3. horizontal: four taps, per-phase and per-channel weights (gaussian, lanczos, linear, sharpened), clamped;
+4. vertical: two beams weighted by distance and value (or the row's brightness), or an interpolation of up to four
+   rows followed by a per-channel factor from phase, brightness and mask state;
+5. a gain from the brightest channel, the glow (crt-lottes' bloom, crt-consumer's squared glow) summed around the
+   beam position, the per-pixel factor (mask, corners), the output table back to 8 bits.
+
+Against librashader on the gallery frames (352x288 at 1408x1152) the models differ by a mean of 0.06-0.28 / 255
+(zfast-crt 0.06, crt-easymode 0.07, crt-lottes 0.10, crt-gdv-mini 0.15, crt-geom 0.22, crt-consumer 0.22, crt-pi
+0.28). The original presets stay under their `shader:<key>` names (GPU only) for an A/B.
 
 ## Shader presets (GPU only)
 
@@ -104,6 +133,9 @@ the GPU and the software grab are the same image.
 
 - `unreal-qt-tests --gtest_filter='CRTRenderer*'`: every profile shows the picture, full white stays bright with
   contrast, a profile without effects is a nearest scale, the shader arithmetic, the tables rebuilt only when needed.
+- `unreal-qt-tests --gtest_filter='CRTBeamModel*'`: every model shows the picture, the tables rebuilt only when
+  needed, the GPU picture is the software one bit for bit (two layouts, all seven models); with
+  `UNREAL_CRT_REFERENCE` the comparison with librashader.
 - `unreal-qt-tests --gtest_filter='SlangPresetRunner*'`: every preset compiles and shows the picture, the window's
   composition shader is the CPU picture; with `UNREAL_CRT_REFERENCE` the comparison with librashader.
 - Live: grab `source=window` with `gpu` on and off for every profile and compare the images.

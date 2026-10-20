@@ -1,8 +1,8 @@
 # CRT shaders: the libretro set in unreal-qt
 
 Status: phases 1-3 and the GPU part of 5 landed 2026-10-19 (all 19 presets in View > CRT Profile and as
-`shader:<key>`, see [crt-effects.md](../../features/crt-effects.md)); phase 4 (CPU models) and moving the gallery
-tools are open. Owner decisions: implement every candidate that survived the gallery and the motion review
+`shader:<key>`, see [crt-effects.md](../../features/crt-effects.md)); phase 4 (the seven integer models, CPU = GPU
+bit for bit, `CRTBeamModel`) done 2026-10-20; moving the gallery tools is open. Owner decisions: implement every candidate that survived the gallery and the motion review
 (19 presets); the shipped Aperture / Shadow mask / Slot mask / "Megatron" profiles go (their masks are wrong, below);
 Basic stays; a shader that cannot run on the CPU in real time is GPU only. Cross-platform compatibility must hold:
 Windows (MSVC, MinGW), Linux (gcc, clang), macOS (clang), x86_64 and ARM64.
