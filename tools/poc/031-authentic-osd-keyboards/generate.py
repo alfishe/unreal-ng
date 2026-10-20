@@ -7,7 +7,7 @@
 
 A keyboard is a module in keyboards/ with `KEYBOARD` (id, name, models, size in mm, matrix) and `layout()`, which
 returns the model: data only, no drawing (model.py). A style (styles/) draws a model; every SVG has the same named
-layers (`case`, `caps`, `legends`, `hints`), so a hybrid can take each layer from another style, and Qt can draw one
+layers (`case`, `caps`, `highlights`, `legends`, `hints`), so a hybrid can take each layer from another style, and Qt can draw one
 layer alone (QSvgRenderer::render(painter, elementId)).
 """
 
@@ -29,7 +29,7 @@ REPO = HERE.parents[2]
 SCRATCH = REPO / "scratch" / "2026-10-19-poc-031"
 QTRENDER = SCRATCH / "qtrender-build" / "qtrender"
 
-KEYBOARDS = ["zxnext"]
+KEYBOARDS = ["zx48k", "zx128", "zxplus2", "zxplus2a", "zxplus3", "zxnext"]
 STYLES = ["photo"]
 
 
@@ -81,9 +81,10 @@ def render(path):
 
 def same(a, b, name, limit=2.0):
     """Qt and the browser renderer draw the picture alike: the mean difference per channel under @p limit of 255,
-    and no more than 1 % of the pixels off by more than 64"""
-    from PIL import Image, ImageChops
-    qt, rsvg = (Image.open(p).convert("RGB") for p in (a, b))
+    and no more than 1 % of the pixels off by more than 64. Both are blurred by a pixel first: the check is for what
+    one renderer leaves out, not for their antialiasing of fine detail (heatsink fins, small print)"""
+    from PIL import Image, ImageChops, ImageFilter
+    qt, rsvg = (Image.open(p).convert("RGB").filter(ImageFilter.GaussianBlur(1)) for p in (a, b))
     if qt.size != rsvg.size:
         rsvg = rsvg.resize(qt.size)
     diff = ImageChops.difference(qt, rsvg)

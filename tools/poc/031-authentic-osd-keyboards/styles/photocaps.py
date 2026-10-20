@@ -1,5 +1,9 @@
 """Key cap materials, each a function of the canvas (for its gradients) and the key's rectangle in mm.
 
+A material draws the cap's form: its colour, its light and shade. The specular highlight (the sheen on a glossy
+top, the dome on a rubber key) goes to the canvas's own `highlights` layer, which the picture draws at a set
+opacity and an app can turn down or leave out.
+
 Light comes from above and a little to the left, as in a desk photo: a top face is lighter at its top edge, a
 skirt is darker on its sides and darkest at the front, a shadow falls down and a little right.
 """
@@ -15,17 +19,20 @@ def label(text, x, y, size, face="sans", color="#fff", anchor="middle", opacity=
     return f'<path d="{d}" fill="{color}"{extra}/>'
 
 
-def rubber(canvas, x, y, w, h, color, radius=1.6):
-    """A moulded rubber key (the 48K's): matte, a low dome, soft edges, a soft shadow on the plate"""
+def rubber(canvas, x, y, w, h, color, radius=1.6, skirt=0.0):
+    """A moulded rubber key (the 48K's): matte, a low dome, soft edges, a soft shadow on the plate; @p skirt mm of
+    its front side show below the top face (a tall key seen from a little in front)"""
     d = canvas.defs
-    body = d.linear([(0, shade(color, 1.18)), (0.45, color), (1, shade(color, 0.72))])
+    body = d.linear([(0, shade(color, 1.07)), (0.5, color), (1, shade(color, 0.86))])
     dome = d.radial([(0, "#ffffff", 0.22), (0.6, "#ffffff", 0.05), (1, "#ffffff", 0)], cx=0.42, cy=0.3, r=0.75)
-    rim = d.linear([(0, "#000000", 0), (0.8, "#000000", 0), (1, "#000000", 0.35)])
+    rim = d.linear([(0, "#000000", 0), (0.8, "#000000", 0), (1, "#000000", 0.2)])
+    side = d.linear([(0, shade(color, 0.62)), (1, shade(color, 0.42))])
+    canvas.add("highlights", f'<path d="{rounded(x + 0.4, y + 0.3, w - 0.8, h - 0.9, radius * 0.85)}" fill="{dome}"/>')
     return "\n".join([
-        soft_shadow(x, y, w, h, radius, 1.2, dx=0.35, dy=0.7, opacity=0.55, steps=5),
+        soft_shadow(x, y, w, h + skirt, radius, 1.2, dx=0.35, dy=0.7, opacity=0.55, steps=5),
+        f'<path d="{rounded(x - 0.25, y + 0.5, w + 0.5, h + skirt - 0.4, radius)}" fill="{side}"/>' if skirt else "",
         f'<path d="{rounded(x, y, w, h, radius)}" fill="{body}"/>',
         f'<path d="{rounded(x, y, w, h, radius)}" fill="{rim}"/>',
-        f'<path d="{rounded(x + 0.4, y + 0.3, w - 0.8, h - 0.9, radius * 0.85)}" fill="{dome}"/>',
         f'<path d="{rounded(x, y, w, h, radius)}" fill="none" stroke="{shade(color, 0.45)}" stroke-width="0.12" '
         f'stroke-opacity="0.8"/>',
     ])
@@ -57,11 +64,11 @@ def hard(canvas, x, y, w, h, color, inset=(1.1, 0.7, 1.1, 1.9), radius=0.9, top_
     parts += [
         f'<path d="{rounded(tx, ty, tw, th, top_radius)}" fill="{top}"/>',
         f'<path d="{rounded(tx, ty, tw, th, top_radius)}" fill="{dish}"/>',
-        f'<path d="{rounded(tx, ty, tw, th, top_radius)}" fill="{sheen}"/>',
         f'<path d="{rounded(tx, ty, tw, th, top_radius)}" fill="none" stroke="{shade(color, 1.4)}" '
         f'stroke-width="0.1" stroke-opacity="0.45"/>',
         f'<path d="{rounded(x, y, w, h, radius)}" fill="none" stroke="#000" stroke-width="0.14" stroke-opacity="0.7"/>',
     ]
+    canvas.add("highlights", f'<path d="{rounded(tx, ty, tw, th, top_radius)}" fill="{sheen}"/>')
     return "\n".join(parts), (tx, ty, tw, th)
 
 
@@ -74,12 +81,13 @@ def d_shape(x, y, w, h, top, bottom):
             f"V{y + top:.3f}A{top:.3f},{top:.3f} 0 0 1 {x + top:.3f},{y:.3f}Z")
 
 
-def l_shape(points, inset, top_inset, top, bottom):
+def l_shape(points, inset, top_inset, top, bottom, front=None):
     """The Next's ENTER: the inverted L of @p points (leg top left, leg top right, bar bottom right, bar bottom left,
-    bar top left, leg bottom left), inset; the bar's front corners rounded by @p bottom"""
+    bar top left, leg bottom left), inset (by @p front at the front, @p inset if not given); the bar's front corners
+    rounded by @p bottom"""
     (lx, ly), (rx, _), (_, by), (bx, _), (_, my), _ = points
     lx, rx, bx = lx + inset, rx - inset, bx + inset
-    ly, by, my = ly + top_inset, by - inset, my + top_inset
+    ly, by, my = ly + top_inset, by - (inset if front is None else front), my + top_inset
     return (f"M{lx + top:.3f},{ly:.3f}H{rx - top:.3f}A{top:.3f},{top:.3f} 0 0 1 {rx:.3f},{ly + top:.3f}"
             f"V{by - bottom:.3f}A{bottom:.3f},{bottom:.3f} 0 0 1 {rx - bottom:.3f},{by:.3f}H{bx + bottom:.3f}"
             f"A{bottom:.3f},{bottom:.3f} 0 0 1 {bx:.3f},{by - bottom:.3f}V{my + top:.3f}"
@@ -92,18 +100,22 @@ def polygon(points):
     return "M" + " L".join(f"{px:.3f},{py:.3f}" for px, py in points) + "Z"
 
 
-def next_cap(canvas, x, y, w, h, color, shape=None, unit=19.0):
+def next_cap(canvas, x, y, w, h, color, shape=None, unit=19.0, top_inset=0.25, frame=None, gloss=0.22, sheen=0.07,
+             relief=(1.12, 0.86), rim=0.35):
     """The Next's two-tone key: a glossy black frame over the whole cell, a low matte top shaped like a D on its back
     (flat back edge, rounded front) set low in the frame; the glossy strip above it carries the E-mode legends.
-    Returns the svg and the matte top's rectangle (for an L, the bar's)"""
+    The Spectrum+ / 128 key is the same shape with other finishes: a satin @p frame and ledge, a convex glossy pad
+    (@p sheen its highlight), the pad starting @p top_inset u down the key; @p relief the top's light at its back
+    and front, @p rim its edge's. Returns the svg and the top's rectangle
+    (for an L, the bar's)"""
     d = canvas.defs
     gap = 0.35
-    inset, top_inset = 0.08 * unit, 0.25 * unit
+    inset, top_inset = 0.08 * unit, top_inset * unit
     fx, fy, fw, fh = x + gap, y + gap, w - 2 * gap, h - 2 * gap
-    frame = d.linear([(0, "#2a2c30"), (0.12, "#1a1b1e"), (0.85, "#121315"), (1, "#0a0b0c")])
-    gloss = d.linear([(0, "#ffffff", 0.22), (0.05, "#ffffff", 0.05), (0.4, "#ffffff", 0)])
-    top = d.linear([(0, shade(color, 1.12)), (0.25, color), (1, shade(color, 0.86))])
-    sheen = d.radial([(0, "#ffffff", 0.07), (1, "#ffffff", 0)], cx=0.4, cy=0.2, r=0.8)
+    frame = d.linear(frame or [(0, "#2a2c30"), (0.12, "#1a1b1e"), (0.85, "#121315"), (1, "#0a0b0c")])
+    gloss = d.linear([(0, "#ffffff", gloss), (0.05, "#ffffff", round(gloss / 4.4, 3)), (0.4, "#ffffff", 0)])
+    top = d.linear([(0, shade(color, relief[0])), (0.25, color), (1, shade(color, relief[1]))])
+    sheen = d.radial([(0, "#ffffff", sheen), (1, "#ffffff", 0)], cx=0.4, cy=0.2, r=0.8)
     lip = d.linear([(0, "#000000", 0), (0.82, "#000000", 0), (1, "#000000", 0.35)])
     if shape:
         outer = l_shape(shape, gap, gap, 0.8, 0.8)
@@ -117,13 +129,51 @@ def next_cap(canvas, x, y, w, h, color, shape=None, unit=19.0):
         matte = d_shape(mx, my, mw, mh, 1.0, 0.3 * unit)
         face = (mx, my, mw, mh)
         drop = d_shape(mx - 0.15, my - 0.1, mw + 0.3, mh + 0.45, 1.1, 0.3 * unit)
+    canvas.add("highlights", f'<path d="{matte}" fill="{sheen}"/>')
     return "\n".join([
         f'<path d="{outer}" fill="{frame}"/>',
         f'<path d="{outer}" fill="{gloss}"/>',
         f'<path d="{outer}" fill="none" stroke="#4a4d52" stroke-width="0.12" stroke-opacity="0.55"/>',
         f'<path d="{drop}" fill="#000" fill-opacity="0.55"/>',
         f'<path d="{matte}" fill="{top}"/>',
-        f'<path d="{matte}" fill="{sheen}"/>',
         f'<path d="{matte}" fill="{lip}"/>',
-        f'<path d="{matte}" fill="none" stroke="{shade(color, 1.35)}" stroke-width="0.1" stroke-opacity="0.35"/>',
+        f'<path d="{matte}" fill="none" stroke="{shade(color, 1.35)}" stroke-width="0.1" stroke-opacity="{rim}"/>',
+    ]), face
+
+
+def amstrad(canvas, x, y, w, h, color, shape=None, unit=19.0, skirt=0.27, shadow=0.55):
+    """The Amstrad +2 / +3 key (and the Datacorder's buttons): a sculpted typewriter cap seen from above and a little
+    in front, the top face a little narrower than the base, slightly dished, the front skirt showing below it as a
+    darker band (@p skirt of the key's height). Returns the svg and the top face's rectangle (for an L, the bar's)"""
+    d = canvas.defs
+    gap, side, back = 0.4, 1.1, 0.6
+    front = skirt * (unit if shape else h)
+    body = d.linear([(0, shade(color, 0.9)), (0.6, shade(color, 0.72)), (0.75, shade(color, 0.55)), (1, shade(color, 0.4))])
+    flanks = d.linear([(0, "#ffffff", 0.02), (0.06, "#ffffff", 0), (0.94, "#000000", 0), (1, "#000000", 0.28)],
+                      x1=0, y1=0, x2=1, y2=0)
+    top = d.linear([(0, shade(color, 1.05)), (0.35, shade(color, 1.0)), (1, shade(color, 0.95))])
+    dish = d.radial([(0, "#000000", 0), (0.7, "#000000", 0), (1, "#000000", 0.16)], cx=0.5, cy=0.45, r=0.72)
+    sheen = d.radial([(0, "#ffffff", 0.05), (1, "#ffffff", 0)], cx=0.35, cy=0.15, r=0.9)
+    if shape:
+        outer = l_shape(shape, gap, gap, 1.0, 1.0)
+        face_path = l_shape(shape, gap + side, gap + back, 1.4, 1.4, front=gap + front)
+        (_, _), (rx, _), (_, by), (bx, _), (_, my), _ = shape
+        face = (bx + gap + side, my + gap + back, rx - bx - 2 * (gap + side), by - my - 2 * gap - back - front)
+        shadow_svg = f'<path d="{l_shape(shape, gap - 0.6, gap - 0.2, 1.4, 1.4, front=gap - 1.0)}" fill="#000" ' \
+                     f'fill-opacity="{shadow * 0.6}"/>'
+    else:
+        ox, oy, ow, oh = x + gap, y + gap, w - 2 * gap, h - 2 * gap
+        outer = rounded(ox, oy, ow, oh, 1.0)
+        face = (ox + side, oy + back, ow - 2 * side, oh - back - front)
+        face_path = rounded(*face, 1.4)
+        shadow_svg = soft_shadow(ox, oy, ow, oh, 1.0, 1.0, dx=0.3, dy=0.8, opacity=shadow, steps=4)
+    canvas.add("highlights", f'<path d="{face_path}" fill="{sheen}"/>')
+    return "\n".join([
+        shadow_svg,
+        f'<path d="{outer}" fill="{body}"/>',
+        f'<path d="{outer}" fill="{flanks}"/>',
+        f'<path d="{outer}" fill="none" stroke="#000" stroke-width="0.14" stroke-opacity="0.6"/>',
+        f'<path d="{face_path}" fill="{top}"/>',
+        f'<path d="{face_path}" fill="{dish}"/>',
+        f'<path d="{face_path}" fill="none" stroke="{shade(color, 1.25)}" stroke-width="0.12" stroke-opacity="0.3"/>',
     ]), face

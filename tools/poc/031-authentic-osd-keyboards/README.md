@@ -21,7 +21,7 @@ what the machine reads, before the overlay is built into unreal-qt.
 | 3 | hybrid | a mix of the two plus a hints layer (what a combo key does, the mode legends that matter now); maybe |
 
 One model per keyboard feeds every style (`design.md`): the geometry, legends and mapping are data, a style only
-draws them. Every SVG has the same named layers (`case`, `caps`, `legends`, `hints`), so a hybrid takes each layer
+draws them. Every SVG has the same named layers (`case`, `caps`, `highlights`, `legends`, `hints`), so a hybrid takes each layer
 from another style and Qt can draw a layer alone (`QSvgRenderer::render(painter, elementId)`).
 
 ## Goals
@@ -55,8 +55,9 @@ from another style and Qt can draw a layer alone (`QSvgRenderer::render(painter,
 ## Constraints
 
 - POC code only (`tools/poc/031-authentic-osd-keyboards/`): nothing in `core/` or the apps changes.
-- Build output and fetched references go to `scratch/2026-10-19-poc-031/` (git-ignored); only the generator, the
-  data, the generated SVGs and the reports are committed.
+- Build output and the per-mode renders go to `scratch/2026-10-19-poc-031/` (git-ignored). The generator, the data,
+  the generated SVGs, the atlas sheets, the references with their photos and the reports are committed (owner
+  2026-10-19).
 - No traced or embedded photos: the pictures are drawn, the photos are references.
 
 ## Acceptance criteria
@@ -87,18 +88,24 @@ fixed in `core/` after the POC, as its own task.
 
 | Keyboard | Models | photo | schematic | hybrid |
 |---|---|---|---|---|
+| `zx48k` | 48K | drawn, shown to the owner | — | — |
+| `zx128` | 128k (the Spectrum+ keyboard in the 128's case) | drawn, shown to the owner | — | — |
+| `zxplus2` | PLUS2 (`keyboards/amstrad.py`, shared with +2A and +3) | done, approved by the owner (2026-10-19) | — | — |
+| `zxplus2a` | PLUS2A | drawn, shown to the owner | — | — |
+| `zxplus3` | PLUS3 | drawn, shown to the owner | — | — |
 | `zxnext` | NEXT | done, approved by the owner (2026-10-19) | — | — |
 
 ## Files
 
 | File | Content |
 |---|---|
-| `references.md` | the keyboard of each model with its sources (to come; the raw research is in the scratch dir) |
+| `references/` | the keyboard of each model with its sources, and the photos they cite |
 | `design.md` | the data format, the generator, the materials |
 | `generate.py`, `model.py`, `svgkit.py` | the model → each style's SVG + the keys JSON |
 | `styles/` | `photo` (phase 1), `schematic` (phase 2), hybrids (phase 3) |
 | `qtrender/` | renders an SVG with QSvgRenderer, as unreal-qt does, for the check |
 | `keyboards/` | the data per keyboard; `out/<id>.<style>.svg` the pictures, `out/<id>.keys.json` their key maps |
 | `atlas.py` | renders every SVG in every mode (Qt, rsvg, each layer alone, the key map, Qt vs rsvg) for review |
+| `atlas/<id>.<style>.atlas.png` | one sheet per keyboard and style with all those modes |
 | `gallery.html` | all models side by side |
 | `conclusions.md`, `proposal.md` | when done |

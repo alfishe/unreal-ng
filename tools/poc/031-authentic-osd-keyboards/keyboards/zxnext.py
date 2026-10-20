@@ -1,6 +1,6 @@
 """ZX Spectrum Next (cased, KS1 / KS2: one drawing serves both).
 
-Sources: scratch/2026-10-19-poc-031/refs-next.md (layout measured on a rectified top-down photo, ±0.05u, against
+Sources: references/next.md (layout measured on a rectified top-down photo, ±0.05u, against
 the ZEsarUX bitmap; legends read from photos; matrix from membrane.vhd). 58 keys: the 40 of the matrix, 16 extra
 keys that press a shift and a key (and set their NR 0xB0 / 0xB1 bit), and a second CAPS SHIFT and SYMBOL SHIFT.
 """
@@ -8,7 +8,7 @@ keys that press a shift and a key (and set their NR 0xB0 / 0xB1 bit), and a seco
 from model import Key, Legend, Model, Part
 
 KEYBOARD = {"id": "zxnext", "name": "ZX Spectrum Next", "models": ["NEXT"], "size": [330, 146], "matrix": "zx",
-            "twins": {"CS": 2, "SS": 2}}
+            "twins": {"CS": 2, "SS": 2}, "highlights": 1.0}  # approved by the owner at full strength
 
 U = 19.0                 # key pitch, mm
 X0, Y0 = 0.25 * U, 2.25 * U + 0.065 * U  # the key grid's top left in the case
