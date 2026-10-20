@@ -41,6 +41,9 @@ unreal-asm/
     find-idle.py                an assembler's idle rule: started with an inject-oracle profile, paused at many moments
                                 of its key wait, the return addresses that stay on the stack (each after a CALL / RST,
                                 outside the ROM) are the descriptor's idleChain
+    xas-screen-check.py         XAS 9.07m / 9.10 on screen: every file of the XAS corpus loaded into the editor, the
+                                20-row windows read from the screen memory, each cell against the decoded rows (the
+                                font learned from the screens themselves; research-xas.md §9)
     make-template.py            every inject-oracle profile: the assembler started from its disk or tape and saved at
                                 its prompt as .szx (--also sna,z80), checked idle by `zxasm probe`: the templates of
                                 unreal-asm testdata/templates (inject-oracle.py --template checks each)

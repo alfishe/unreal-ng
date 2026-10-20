@@ -14,6 +14,7 @@
 #include <random>
 #include <regex>
 
+#include "codecs/gens/genscodec.h"
 #include "codecs/storm/stormcodec.h"
 #include "codecs/tasm/tasmcodec.h"
 #include "codecs/text/textcodec.h"
@@ -133,6 +134,14 @@ TEST(Z88dkBackend_Test, CPrioritiesOn32BitWords)
     EXPECT_EQ(ToZ80asm("        DW (0-1)/2,2<3", "storm"), (std::vector<std::string>{"DW ((0-1)&$FFFF)/2,2<3"}));
     // sjasmplus' true is -1: negated
     EXPECT_EQ(ToZ80asm("        DW 2<3", "sjasmplus"), (std::vector<std::string>{"DW (-(2<3))"}));
+    // GENS' signed 16-bit division: its operands widened from 16 bits; "%" between blanks ("7%100" is 7 and the
+    // binary number %100 to z80asm)
+    EXPECT_EQ(ToZ80asm("N       EQU  0-7\n        DEFW #8000/2,N?100", "gens"),
+              (std::vector<std::string>{"N EQU 0-7", "DW (((($8000&$FFFF)^$8000)-$8000)/2),((((N&$FFFF)^$8000)-$8000) % 100)"}));
+    EXPECT_EQ(ToZ80asm("        DW 7\\100", "storm"), (std::vector<std::string>{"DW 7 % 100"}));
+    // GENS keeps 16 bits (X EQU #FFFF+2 is 1): a value beyond #FFFF masked where it is defined, counted or tested
+    EXPECT_EQ(ToZ80asm("X       EQU  #FFFF+2\n        DEFS X\n        DEFS #FFFF+3", "gens"),
+              (std::vector<std::string>{"L_X EQU ($FFFF+2&$FFFF)", "DS L_X", "DS ($FFFF+3&$FFFF)"}));
 }
 
 TEST(Z88dkBackend_Test, LabelsSectionsAndPhase)
@@ -186,5 +195,11 @@ TEST(Z88dkBackend_Test, ProgramsAssembleToWhatTheOriginalsBuilt)
         const std::vector<uint8_t> expected = ReadTestData("dialects/alasm-sjasmplus/constructs.bin");
         const SourceDocument constructs = SourceDocument::FromText(ReadTestText("dialects/alasm-sjasmplus/constructs.alasm.txt"), "alasm");
         EXPECT_EQ(AssembleWithZ80asm(z80asm, Project("constructs", constructs), "constructs", {}, 0x6000, expected.size()), expected);
+    }
+    // GENS4's constructs (signed division), from #C000
+    {
+        const std::vector<uint8_t> expected = ReadTestData("dialects/gens/constructs.bin");
+        const SourceDocument constructs = codecs::GensCodec().Decode(ReadTestData("dialects/gens/constructs.gens"), {}).document;
+        EXPECT_EQ(AssembleWithZ80asm(z80asm, Project("constructs", constructs), "constructs", {}, 0xC000, expected.size()), expected);
     }
 }

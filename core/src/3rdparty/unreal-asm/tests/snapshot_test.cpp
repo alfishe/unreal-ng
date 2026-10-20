@@ -229,6 +229,7 @@ TEST(Snapshot_Test, EveryAssemblerTemplateTakesASourceWithoutAnEmulator)
             const size_t at = p.nameAt & 0x3FFF;
             EXPECT_EQ(std::string(bytes->bytes.begin() + static_cast<std::ptrdiff_t>(at), bytes->bytes.begin() + static_cast<std::ptrdiff_t>(at + 8)),
                       "INJECTED") << id;
+            EXPECT_EQ(text.name, "INJECTED") << id << ": the reader gives the work name";
         }
         // the text in memory as the assembler's codec reads it (some keep a header of their own there): oracle1's lines
         const ISourceCodec* codec = CodecRegistry::Builtin().Find(descriptor->codec);

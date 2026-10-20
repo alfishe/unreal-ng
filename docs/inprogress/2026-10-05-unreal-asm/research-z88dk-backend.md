@@ -30,7 +30,8 @@ ABC     NOP                          L_ABC:                    ; ABC, MOV, TEST 
 | Fact (checked with z80asm 2.3) | Writing |
 |---|---|
 | C's priorities, 32-bit signed words, comparisons give 1 | the sjasmplus-like tree; a 16-bit unsigned source's division, remainder, shift right and comparisons get `&$FFFF` operands, rotations a final mask; sjasmplus' -1 negated, STORM's 1 kept |
-| `$hex`, `%bin`, `'c'` (`'\''`), double-quoted texts read C escapes | `$` prefix; `\\` and `\"` escaped in texts |
+| A signed 16-bit source (GENS): two's complement words, numbers modulo 65536 | `/` and `%` on operands sign-extended `(((x&$FFFF)^$8000)-$8000)` (a number 0..#7FFF as is); an EQU, a DS count, an IF condition known to exceed #FFFF masked `&$FFFF` |
+| `$hex`, `%bin`, `'c'` (`'\''`), double-quoted texts read C escapes | `$` prefix; `\\` and `\"` escaped in texts; the remainder written ` % ` with blanks (`7%100` is 7 and the binary number `%100`; fixed 2026-10-19) |
 | A label ends with `:`; ~500 keywords of all the CPUs it knows (`abc`, `mov`, `test`, `copy`, `line` ...) are refused or read as keywords | such labels renamed `L_...` (`jp ret` silently assembled `jp 0`) |
 | One ORG per section; a section's ORG must be a constant; `$` and labels count from their section's start | every constant ORG opens a section (`s_<file>_<n>`); an ORG computed from labels or `$` moves on with `DEFS (address)-$` in the section (a move back is z80asm's error); an ORG followed by nothing but labels and EQUs makes those labels EQUs |
 | PHASE / DEPHASE, DEPHASE also outside PHASE; PHASE takes constants only | DISP / ENT; a nested PHASE's way back (ZX-ASM), an address computed from labels, has no form: z80asm reports it |

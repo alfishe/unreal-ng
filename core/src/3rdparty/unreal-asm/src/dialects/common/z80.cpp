@@ -169,4 +169,49 @@ uint32_t StopAtCarryProduct(uint32_t multiplicand, uint32_t multiplier)
     }
     return r & 0xFFFF;
 }
+
+std::optional<int64_t> ConstantValue(const ir::Expr& e, const std::function<std::optional<int64_t>(const std::string&)>& symbol)
+{
+    using Kind = ir::Expr::Kind;
+    using ir::Op;
+    switch (e.kind)
+    {
+        case Kind::Number: return e.value;
+        case Kind::Group: return ConstantValue(e.args[0], symbol);
+        case Kind::Symbol: return symbol(e.text);
+        case Kind::Unary:
+        {
+            const auto a = ConstantValue(e.args[0], symbol);
+            if (!a)
+                return std::nullopt;
+            switch (e.op)
+            {
+                case Op::Negate: return static_cast<int32_t>(0u - static_cast<uint32_t>(*a));
+                case Op::Plus: return *a;
+                case Op::Not: return static_cast<int32_t>(~static_cast<uint32_t>(*a));
+                default: return std::nullopt;
+            }
+        }
+        case Kind::Binary:
+        {
+            const auto a = ConstantValue(e.args[0], symbol);
+            const auto b = a ? ConstantValue(e.args[1], symbol) : std::nullopt;
+            if (!b)
+                return std::nullopt;
+            const uint32_t x = static_cast<uint32_t>(*a), y = static_cast<uint32_t>(*b);
+            switch (e.op)
+            {
+                case Op::Add: return static_cast<int32_t>(x + y);
+                case Op::Sub: return static_cast<int32_t>(x - y);
+                case Op::Mul: return static_cast<int32_t>(x * y);
+                case Op::And: return static_cast<int32_t>(x & y);
+                case Op::Or: return static_cast<int32_t>(x | y);
+                case Op::Xor: return static_cast<int32_t>(x ^ y);
+                case Op::Shl: return *b >= 0 && *b <= 31 ? std::optional<int64_t>(static_cast<int32_t>(x << y)) : std::nullopt;
+                default: return std::nullopt;
+            }
+        }
+        default: return std::nullopt;
+    }
+}
 }  // namespace unrealasm::dialects::z80
