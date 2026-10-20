@@ -126,6 +126,6 @@ The prototype's control scenario uses 123 distinct REST paths in 598 steps. By g
    its tests pass; nothing else in the tree changes.
 2. Vendor the dependencies, build with the project's flags (zero warnings) on macOS; then Windows and Linux.
 3. Device multiplexer + wire v2 + the studio as a client.
-4. Surface client (needs the core's `SurfaceHub`: control surfaces S1-S4 plus [protocol.md](protocol.md)); the
+4. Surface client (needs the core's WebSocket hub with the `surface` topic: control surfaces S1-S4 plus [protocol.md](protocol.md)); the
    `action` kind; readouts; default scenario v2.
 5. Supervision in unreal-qt, settings page, packaging; `UNREAL_STREAMDECK=ON`.

@@ -18,12 +18,13 @@ Surface Dial, game pad, keyboard, GUI) changes the same state and **every surfac
 
 | # | Decision |
 |:--|:--|
-| D1 | The deck logic (scenarios, navigation, rendering) runs in a **separate daemon**, a paired companion on `/api/v1/surfaces/ws`. unreal-qt starts and supervises it; it never links it. |
+| D1 | The deck logic (scenarios, navigation, rendering) runs in a **separate daemon**, a paired companion on the WebSocket `/api/v1/ws` (D7). unreal-qt starts and supervises it; it never links it. |
 | D2 | Surfaces are synchronised by **state, not by events**: each input runs once, where its mapping lives; the core pushes state, context and readouts to every surface, plus a display-only **activity feed** ("who did what", never executed). |
 | D3 | The daemon is the **only USB owner** and **listens**; software decks (the studio) connect to it as clients, any number, mirroring the real deck or showing their own model. The studio never opens USB. |
 | D4 | The code moves **into the unreal-ng repository and release**: the daemon, the studio (emulator + editor) and the default scenario ship with unreal-ng. |
 | D5 | Many windows, each with one active instance: surfaces **follow the active instance of the last focused window**; focus moving to another application keeps it; any surface can be **pinned** to a window or instance; the deck shows its current target. |
 | D6 | Repository layout by role: clients **stay at the root for now** (`unreal-*/`, moved later all at once); new groups **`companions/`**, **`plugins/`**, **`utilities/`**; `tools/` stays internal (build, verification, POCs). Names and the rest: [source-layout.md](source-layout.md), open. |
+| D7 | **One WebSocket** for every client, `/api/v1/ws`: one auth, topics (`instances`, `debug.*`, `surface`); the existing sockets (`/api/v1/websocket`, `/api/v1/companions/events`) stay as adapters over the same hub. WebSocket is an **addition** to REST, not its replacement: REST stays a first-class API, a client uses what suits it ([protocol.md §0](protocol.md#0-transport-one-websocket)). (2026-10-20) |
 
 ## Documents
 
@@ -56,7 +57,7 @@ flowchart LR
     subgraph HOST["unreal-qt (or headless)"]
         CM["controller manager<br/>backends · InputRouter · profiles"]
         CORE["core<br/>ActionRegistry · ContextState<br/>TTD cursor · RunControl"]
-        HUB["SurfaceHub<br/>/api/v1/surfaces/ws"]
+        HUB["WebSocket hub /api/v1/ws<br/>surface topic"]
         SUP["daemon supervisor"]
     end
     subgraph DAEMON["Stream Deck daemon (companion)"]

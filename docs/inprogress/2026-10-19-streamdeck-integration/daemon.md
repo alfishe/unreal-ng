@@ -28,7 +28,7 @@
 |:--|:--|
 | Open every attached Stream Deck (USB HID), alone | Show emulation, run instances |
 | Run one scenario per deck: navigation, rendering, input → actions | Interpret other surfaces' events (architecture §4) |
-| Talk to one host over `/api/v1/surfaces/ws` as a paired companion | Poll the WebAPI |
+| Talk to one host over one WebSocket (`/api/v1/ws`: topics `surface` and `instances`) as a paired companion | Poll the WebAPI |
 | Serve viewers (studio windows) on the device wire | Accept viewers from other machines (localhost only) |
 | Serve its automation (REST + MCP) for the editor and agents | Edit scenarios (the studio does; the daemon reloads) |
 
