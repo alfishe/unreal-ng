@@ -2,7 +2,8 @@
 // machines with a TurboSound FM run the same program - random register writes to both chips at random places in the
 // frame, FM key-on writes, dense and sparse (long silences between bursts) - one with the gate closed, and the sound each
 // sends to the host must be the same sample for sample, and the device state (the TTD blob) the same at the end; HQ, LQ
-// and a 2x host speed (the gate holds only at 1x). And the quiet deferral (the device asleep through silence, the
+// and a 2x host speed (the gate holds only at 1x), and turbo without audio (the core only notes the position, every
+// step deferred) with the way back to sound. And the quiet deferral (the device asleep through silence, the
 // outputs rendered in one run at the next entry) against a machine rendering every tick with no gate and no quiet runs.
 
 #include "stdafx.h"
@@ -186,6 +187,13 @@ public:
 
     bool Ready() const { return _emulator && _tsfm; }
     void Frame() { reinterpret_cast<MainLoop_CUT*>(_context->pMainLoop)->RunFrame(); }
+    void Turbo(bool on)
+    {
+        if (on)
+            _context->pCore->EnableTurboMode();
+        else
+            _context->pCore->DisableTurboMode();
+    }
     const std::vector<int16_t>& Sound() const { return _sound; }
     size_t LongestQuietRun() const { return _tsfm->longestQuietRun(); }
     std::vector<uint8_t> State() const
@@ -202,7 +210,8 @@ private:
     std::vector<int16_t> _sound;
 };
 
-void Lockstep(bool hq, uint8_t speed, bool sparse, int frames, bool beeps = false)
+/// `turbo`: the frames from a quarter to a half of them run in turbo without audio
+void Lockstep(bool hq, uint8_t speed, bool sparse, int frames, bool beeps = false, bool turbo = false)
 {
     Twin gated(true, hq, speed, sparse, beeps);
     Twin full(false, hq, speed, sparse, beeps);
@@ -210,6 +219,11 @@ void Lockstep(bool hq, uint8_t speed, bool sparse, int frames, bool beeps = fals
     ASSERT_TRUE(full.Ready());
     for (int frame = 0; frame < frames; frame++)
     {
+        if (turbo && (frame == frames / 4 || frame == frames / 2))
+        {
+            gated.Turbo(frame == frames / 4);
+            full.Turbo(frame == frames / 4);
+        }
         gated.Frame();
         full.Frame();
         ASSERT_EQ(gated.Sound().size(), full.Sound().size()) << "frame " << frame;
@@ -221,6 +235,8 @@ void Lockstep(bool hq, uint8_t speed, bool sparse, int frames, bool beeps = fals
             FAIL() << (hq ? "HQ" : "LQ") << " x" << int(speed) << (sparse ? " sparse" : " dense") << ": frame " << frame
                    << " differs first at sample " << first;
         }
+        if (turbo && frame == frames / 2 - 1)
+            ASSERT_EQ(gated.State(), full.State()) << "the device state at the end of the turbo frames";
     }
     EXPECT_EQ(gated.State(), full.State()) << "the device state at the end";
     if (beeps)
@@ -245,6 +261,12 @@ TEST(TsfmStepGate_Test, AFasterHostClockMatchesEveryStepTakenTheFullWay)
 {
     Lockstep(true, 2, false, 20);
     Lockstep(true, 2, true, 30);
+}
+
+TEST(TsfmStepGate_Test, TurboWithoutAudioMatchesEveryStepTakenTheFullWay)
+{
+    Lockstep(true, 1, false, 40, false, true);
+    Lockstep(false, 1, true, 40, false, true);
 }
 
 // ~420 frames: asleep, an SSG write wakes the device, then a CSM expiry with FM muted and one audible (no write)
