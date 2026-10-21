@@ -59,7 +59,8 @@ def glyph_shape(glyph, x, y, size, color):
     its corner at (x, y); `tri:dir` / `tri2:dir` a filled single / double triangle, `eject:fill`, `pause:fill` the
     filled ones (the +2A's tape symbols printed on the case); `sticker:zx` a Soviet key sticker @p size square,
     dark, its top and bottom bands in @p color, `sticker:plain` one all in @p color, `enter` the hollow return arrow, `box` a hollow square (the Quorum's
-    boxed E and G, the letter is a legend of its own), `speaker` a hollow loudspeaker"""
+    boxed E and G, the letter is a legend of its own), `speaker` a hollow loudspeaker, `tab` the XT's ⇤ ⇥, `win` the four panes of a PC's
+    Windows key, `menu` its context-menu key"""
     kind, _, arg = glyph.partition(":")
     if kind == "block":
         arg, _, polarity = arg.partition(":")
@@ -146,6 +147,26 @@ def glyph_shape(glyph, x, y, size, color):
         points = [(-0.45, -0.18), (-0.15, -0.18), (0.25, -0.5), (0.25, 0.5), (-0.15, 0.18), (-0.45, 0.18)]
         d = "M" + " L".join(f"{x + px * s:.3f},{y + py * s:.3f}" for px, py in points) + "Z"
         return f'<path d="{d}" fill="none" stroke="{color}" stroke-width="{s * 0.07:.3f}" stroke-linejoin="round"/>'
+    if kind == "tab":  # the XT's Tab: ⇤ over ⇥, a bar at each arrow's head
+        s, t = size, size * 0.07
+        parts = []
+        for dy, sign in ((-0.2, -1), (0.2, 1)):
+            yy, tip = y + dy * s, x + sign * 0.4 * s
+            parts.append(f'<path d="M{x - sign * 0.4 * s:.3f},{yy:.3f} H{tip:.3f} M{tip - sign * 0.15 * s:.3f},'
+                         f'{yy - 0.1 * s:.3f} L{tip:.3f},{yy:.3f} L{tip - sign * 0.15 * s:.3f},{yy + 0.1 * s:.3f} '
+                         f'M{tip:.3f},{yy - 0.13 * s:.3f} V{yy + 0.13 * s:.3f}" fill="none" stroke="{color}" '
+                         f'stroke-width="{t:.3f}"/>')
+        return "".join(parts)
+    if kind == "win":  # the Windows key's four panes, a little apart
+        h, g = size * 0.44, size * 0.12
+        return "".join(f'<rect x="{x + dx:.3f}" y="{y + dy:.3f}" width="{h:.3f}" height="{h:.3f}" fill="{color}"/>'
+                       for dx in (-h - g / 2, g / 2) for dy in (-h - g / 2, g / 2))
+    if kind == "menu":  # the context-menu key: a page with three lines and an arrow head over its corner
+        w, h = size * 0.7, size
+        lines = "".join(f'<path d="M{x - w * 0.3:.3f},{y + dy * h:.3f} H{x + w * 0.3:.3f}" {stroke}/>'
+                        for dy in (-0.22, 0.0, 0.22))
+        return (f'<path d="{rounded(x - w / 2, y - h / 2, w, h, size * 0.06)}" fill="none" stroke="{color}" '
+                f'stroke-width="{size * 0.07:.3f}"/>' + lines)
     if kind == "hook":
         return (f'<path d="M{x - 1.0 * size:.3f},{y:.3f} H{x:.3f} V{y - size:.3f}" fill="none" stroke="{color}" '
                 f'stroke-width="{size * 0.07:.3f}" stroke-linejoin="miter"/>')

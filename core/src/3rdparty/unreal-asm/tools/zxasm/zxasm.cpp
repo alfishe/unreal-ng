@@ -434,7 +434,7 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
         for (SourceLine& line : f.document.lines)
         {
             const size_t slackAt = line.text.find(".slack\"");
-            if (slackAt != std::string::npos && line.text.find("INCBIN \"") != std::string::npos && line.text.find(',', slackAt) == std::string::npos)
+            if (slackAt != std::string::npos && FindIncbin(line.text) != std::string::npos && line.text.find(',', slackAt) == std::string::npos)
             {
                 const size_t open = line.text.find('"');
                 const containers::TrdosFile* base = FindBinary(files, line.text.substr(open + 1, slackAt - open - 1));
@@ -614,7 +614,7 @@ int ConvertDirectory(const Args& args, const CodecRegistry& registry)
         for (SourceLine& line : f.document.lines)
         {
             const size_t slackAt = line.text.find(".slack\"");
-            if (slackAt == std::string::npos || line.text.find("INCBIN \"") == std::string::npos || line.text.find(',', slackAt) != std::string::npos)
+            if (slackAt == std::string::npos || FindIncbin(line.text) == std::string::npos || line.text.find(',', slackAt) != std::string::npos)
                 continue;
             const size_t open = line.text.find('"');
             const std::string base = line.text.substr(open + 1, slackAt - open - 1);
