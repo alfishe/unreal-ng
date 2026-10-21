@@ -654,6 +654,12 @@ if (TESTS)
         # The Slots window: plan preview, plug with the confirmation, removed cards named with Undo (ZX-bus slots)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/slotswindow_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/nextlayerswindow_test.cpp"
+        # The on-screen keyboard: the machines' own keyboards (POC 031 pictures), what a click posts
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/osdkeyboardwindow_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/osdkeyboard/osdkeyboardwindow.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/osdkeyboard/osdkeyboardwindow.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/osdkeyboard/keyboardpicture.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/osdkeyboard/keyboardpicture.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/nextlayers/nextlayerswindow.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/nextlayers/nextlayerswindow.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotchangecontroller.cpp"

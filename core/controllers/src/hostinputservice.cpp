@@ -1,8 +1,10 @@
 #include "hostinputservice.h"
 
+#include <chrono>
 #include <utility>
 
 #include "backendfactory.h"
+#include "devicedatabase.h"
 #include "haptics/profilehaptics.h"
 #include "haptics/soundhaptics.h"
 #include "hostcontrols.h"
@@ -49,10 +51,13 @@ HostInputService::HostInputService() : _router(std::make_shared<InputRouter>())
         }
         return backend != nullptr && backend->SetRumble(device, levels);
     });
+    // A device's feel follows its context and layers (the router decides, the backend's writer writes)
+    _router->SetOutputSink([this](const HostDeviceId& device, const StepsOut& steps) { Output(device, steps); });
 }
 
 HostInputService::~HostInputService()
 {
+    _router->SetOutputSink(nullptr);
     Stop();
 }
 
@@ -245,6 +250,76 @@ void HostInputService::SetHapticsStrength(float strength)
 
 /// endregion </Haptics>
 
+/// region <Surface outputs>
+
+uint8_t HostInputService::Outputs(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const IBackend* backend = BackendOfLocked(device);
+    return backend != nullptr ? backend->Outputs(device) : 0;
+}
+
+bool HostInputService::Output(const HostDeviceId& device, const HapticOut& out)
+{
+    // Under the lock, as HasRumble: a backend's Output only queues and never reports into this service
+    std::lock_guard<std::mutex> lock(_mutex);
+    IBackend* backend = BackendOfLocked(device);
+    return backend != nullptr && (backend->Outputs(device) & kOutputHaptic) != 0 && backend->Output(device, out);
+}
+
+bool HostInputService::Output(const HostDeviceId& device, const StepsOut& out)
+{
+    // Under the lock, as HasRumble: a backend's Output only queues and never reports into this service
+    std::lock_guard<std::mutex> lock(_mutex);
+    IBackend* backend = BackendOfLocked(device);
+    return backend != nullptr && (backend->Outputs(device) & kOutputSteps) != 0 && backend->Output(device, out);
+}
+
+HostInputService::MarksPlayed HostInputService::PlayMarks(const HostDeviceId& device,
+                                                          const std::vector<std::string>& marks, uint64_t nowMs)
+{
+    MarksPlayed result;
+    if (marks.empty())
+    {
+        result.reason = "no marks";
+        return result;
+    }
+    if ((Outputs(device) & kOutputHaptic) == 0)
+    {
+        result.reason = "the device plays no patterns";
+        return result;
+    }
+    LayerHaptics feel;
+    if (!_router->Feel(device, feel))
+    {
+        result.reason = "none of the device's layers has a feel (its debug profile's haptics)";
+        return result;
+    }
+    if (!PatternForMarks(feel, marks, result.pattern, result.mark))
+    {
+        result.reason = "the layer plays none of these marks";
+        return result;
+    }
+    if (nowMs == 0)
+        nowMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::steady_clock::now().time_since_epoch())
+                                          .count());
+    {
+        std::lock_guard<std::mutex> lock(_marksMutex);
+        if (!_marks.Admit(device, result.mark, nowMs, feel.minIntervalMs))
+        {
+            result.reason = "a mark played less than " + std::to_string(feel.minIntervalMs) + " ms ago";
+            return result;
+        }
+    }
+    result.played = Output(device, HapticOut{result.pattern});
+    if (!result.played)
+        result.reason = "the device refused the pattern";
+    return result;
+}
+
+/// endregion </Surface outputs>
+
 /// region <IBackendSink>
 
 void HostInputService::OnDeviceAdded(const HostDeviceInfo& device)
@@ -253,6 +328,9 @@ void HostInputService::OnDeviceAdded(const HostDeviceInfo& device)
         std::lock_guard<std::mutex> lock(_mutex);
         _deviceBackend[device.id] = device.backend;
     }
+    // The family's role until somebody sets one (control surfaces Q-8: a Surface Dial is a debugger remote)
+    if (!device.family.empty())
+        _router->SetDefaultRole(device.id, DeviceDatabase::Builtin().ForFamily(device.family, device.layout).role);
     _router->OnDeviceAdded(device);
     ++_revision;
 }
@@ -260,6 +338,10 @@ void HostInputService::OnDeviceAdded(const HostDeviceInfo& device)
 void HostInputService::OnDeviceRemoved(const HostDeviceId& device)
 {
     _haptics->Forget(device);
+    {
+        std::lock_guard<std::mutex> lock(_marksMutex);
+        _marks.Forget(device);
+    }
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _deviceBackend.erase(device);

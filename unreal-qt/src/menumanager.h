@@ -57,6 +57,7 @@ public:
     void setNetworkWindowChecked(bool checked);
     void setSlotsWindowChecked(bool checked);
     void setNextLayersChecked(bool checked);
+    void setOsdKeyboardChecked(bool checked);
     void setMidiActivityChecked(bool checked);
     void setTrafficWindowChecked(bool checked);
     void setFt812DebugChecked(bool checked);
@@ -177,6 +178,7 @@ signals:
     void mediaPanelToggled(bool visible);
     void networkWindowToggled(bool visible);
     void slotsWindowToggled(bool visible);      // Machine -> Slots (ZX-bus slots)
+    void osdKeyboardToggled(bool visible);      // View -> On-screen Keyboard (the machine's own keyboard)
     void nextLayersToggled(bool visible);       // View -> Next Layers (per-layer capture view)
     void midiActivityToggled(bool visible);     // Tools -> MIDI Activity
     void trafficWindowToggled(bool visible);
@@ -279,6 +281,7 @@ private:
     QAction* _networkWindowAction = nullptr;
     QAction* _slotsWindowAction = nullptr;
     QAction* _nextLayersAction = nullptr;
+    QAction* _osdKeyboardAction = nullptr;
     QAction* _midiActivityAction = nullptr;
     QAction* _trafficWindowAction = nullptr;
     QAction* _ft812DebugAction = nullptr;  // Debug -> FT812 Debug: only while the machine has the VDAC2 card

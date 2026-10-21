@@ -1,5 +1,5 @@
-// unreal-streamdeck run [scenario: .json .yaml .csv .tsv] [--watch] [--api PORT] [--wait] [--dry-run] [--seconds N]
-// [--device S | emu[:addr]] [--mirror [addr]] [--viewers [PORT] | --no-viewers] [--with-parent]
+// unreal-streamdeck run [scenario: .json .yaml .csv .tsv] [--watch] [--api PORT] [--host URL] [--wait] [--dry-run]
+// [--seconds N] [--device S | emu[:addr]] [--mirror [addr]] [--viewers [PORT] | --no-viewers] [--with-parent]
 // Plays a scenario (menus + actions, docs/inprogress/2026-10-19-streamdeck-integration/scenarios.md) on the deck.
 //   (no scenario) the built-in idle scenario: the UnrealNG look for the deck's model (sdb/idlescenario.h), until a
 //               scenario is loaded for a deck
@@ -12,6 +12,8 @@
 //   --watch     reload the file when it changes (the menu stack is kept)
 //   --api PORT  automation planes on 127.0.0.1:PORT: WebAPI (/api/v1/decks, state, navigate, press, reload,
 //               scenario, brightness) + MCP (/mcp); sdb/daemondecks.h
+//   --host URL  the unreal-ng WebAPI the scenarios' actions go to (default http://127.0.0.1:8090; a v1 scenario's
+//               settings.webapi still wins for that scenario)
 //   --dry-run   log actions instead of running them
 #include <atomic>
 #include <chrono>
@@ -26,6 +28,7 @@
 
 #include "cli.h"
 #include "sdb/automation.h"
+#include "sdb/catalogue.h"
 #include "sdb/daemondecks.h"
 #include "sdb/datadir.h"
 #include "sdb/deckhub.h"
@@ -117,10 +120,20 @@ int CmdRun(const Args& a)
     if (a.Has("help"))
     {
         std::fprintf(stderr,
-                     "usage: unreal-streamdeck run [scenario: .json .yaml .csv .tsv] [--watch] [--api PORT] [--wait] "
-                     "[--dry-run] [--seconds N] [--device S|emu] [--mirror] [--viewers [PORT] | --no-viewers] "
-                     "[--with-parent]\n");
+                     "usage: unreal-streamdeck run [scenario: .json .yaml .csv .tsv] [--watch] [--api PORT] "
+                     "[--host URL] [--wait] [--dry-run] [--seconds N] [--device S|emu] [--mirror] "
+                     "[--viewers [PORT] | --no-viewers] [--with-parent]\n");
         return kBadUsage;
+    }
+    if (a.Has("host"))
+    {  // before any scenario is parsed: a document without settings.webapi takes it
+        std::string host = a.Str("host");
+        if (host.find("://") == std::string::npos)
+            host = "http://" + host;
+        while (host.size() > 8 && host.back() == '/')
+            host.pop_back();
+        SetDefaultHost(host);
+        std::printf("host: %s\n", host.c_str());
     }
     DaemonDecks::Options dopt;
     dopt.startFile = a.pos.size() >= 2 ? a.pos[1] : std::string();
@@ -333,21 +346,45 @@ int CmdRun(const Args& a)
     return rc;
 }
 
-// unreal-streamdeck scenario check <file> | convert <in> <out> | extract <in> <node> <out> | resolve <in> <out>
+// unreal-streamdeck scenario check <file> [--catalogue FILE] | convert <in> <out> | upgrade <in> <out>
+// | extract <in> <node> <out> | resolve <in> <out>
 int CmdScenario(const Args& a)
 {
     const std::string sub = a.pos.size() > 1 ? a.pos[1] : "";
     const size_t need = sub == "check" ? 3 : sub == "extract" ? 5 : 4;
-    if ((sub != "check" && sub != "convert" && sub != "extract" && sub != "resolve") || a.pos.size() < need)
+    if ((sub != "check" && sub != "convert" && sub != "upgrade" && sub != "extract" && sub != "resolve") ||
+        a.pos.size() < need)
     {
         std::fprintf(
             stderr,
-            "usage: unreal-streamdeck scenario check <file> | convert <in> <out> | extract <in> <node-id> <out> "
-            "| resolve <in> <out>\n"
-            "  (.json .yaml .yml .csv .tsv; resolve = inline every include)\n");
+            "usage: unreal-streamdeck scenario check <file> [--catalogue FILE] | convert <in> <out> | upgrade <in> "
+            "<out> | extract <in> <node-id> <out> | resolve <in> <out>\n"
+            "  (.json .yaml .yml .csv .tsv; convert = another file format, upgrade = format v1 -> v2, resolve = "
+            "inline every include; check warns about action ids the catalogue lacks, default "
+            "$data/streamdeck/catalogue.json)\n");
         return kBadUsage;
     }
     std::string err;
+    if (sub == "upgrade")
+    {
+        auto doc = io::LoadFile(a.pos[2], &err);
+        if (!doc)
+        {
+            std::fprintf(stderr, "error: %s\n", err.c_str());
+            return kBadContent;
+        }
+        std::vector<std::string> notes;
+        const json v2 = ConvertToV2(*doc, &notes);
+        for (const auto& n : notes)
+            std::printf("%s\n", n.c_str());
+        if (!io::SaveFile(a.pos[3], v2, &err))
+        {
+            std::fprintf(stderr, "error: %s\n", err.c_str());
+            return kDeviceError;
+        }
+        std::printf("wrote %s (version 2)\n", a.pos[3].c_str());
+        return kOk;
+    }
     if (sub == "extract")
     {
         auto doc = io::LoadFile(a.pos[2], &err);
@@ -392,6 +429,13 @@ int CmdScenario(const Args& a)
     }
     std::vector<Issue> issues;
     auto s = Parse(*doc, issues);
+    if (s && sub == "check")
+    {
+        const std::string file = a.Has("catalogue") ? a.Str("catalogue") : cat::DefaultFile().string();
+        if (auto c = file.empty() ? std::nullopt : cat::Load(file))
+            for (auto& i : cat::Check(*s, *c))
+                issues.push_back(std::move(i));
+    }
     for (const auto& i : issues)
         std::printf("%s %s: %s\n", i.error ? "error" : "warning", i.node.empty() ? "(scenario)" : i.node.c_str(),
                     i.message.c_str());

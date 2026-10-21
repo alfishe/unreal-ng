@@ -4,7 +4,7 @@
 /// @brief The Qt client's part of the host actions (control surfaces architecture §2, §3): the core
 /// actions::ActionRegistry (core/src/emulator/actions) holds the catalogue and runs every action on the instance's
 /// actions worker; this registers the GUI ones there (the debugger window and its panes, the screenshot to the
-/// clipboard, the analog scrub, the OSD stubs) and turns a device's action events into registry calls with the origin
+/// clipboard, the analog scrub, the on-screen keyboard, the OSD stubs) and turns a device's action events into registry calls with the origin
 /// of the device. GUI executors run on the GUI thread: the worker posts them and answers at once.
 ///
 /// Lifetime: the registrations end with this object; a GUI call still queued then finds the alive token false and does
@@ -29,7 +29,12 @@ struct GuiActionHooks
     std::function<void()> showDebugger;
     std::function<void()> screenshot;
     std::function<void(const QString&)> notice;  ///< the status bar
+    std::function<void()> toggleKeyboard;        ///< the on-screen keyboard shown / hidden
+    /// A host device's action came back with timeline marks (`ttd.seek_by`): the device feels them (GUI thread)
+    std::function<void(const std::string& device, const std::vector<std::string>& marks)> marks;
 };
+
+struct HostActionEvent;
 
 class GuiActions : public QObject
 {
@@ -43,8 +48,9 @@ public:
     const actions::ActionRegistry& Registry() const;
 
     /// A device's action event (HostControllers::actionTriggered): `value` 1 for a press, a scrub level, an encoder's
-    /// steps; `device` the host device id ("keyboard" = the window keyboard: the GUI's own origin)
-    void Trigger(const QString& action, bool pressed, float value, const QString& device);
+    /// steps (with its rate and the binding's parameters); `device` the host device id (`kbd:system` = the window
+    /// keyboard: the GUI's own origin). An encoder turn bound to a Press action presses once per step, at most 16
+    void Trigger(const HostActionEvent& event);
 
 private:
     class Scrub;

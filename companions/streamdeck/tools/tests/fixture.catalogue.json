@@ -1,0 +1,12 @@
+{
+ "format": "unreal-ng-action-catalogue",
+ "version": 1,
+ "actions": [
+  {"id": "run.pause_toggle", "label": "Pause / continue", "group": "Run", "kind": "press", "held": false, "gui": false},
+  {"id": "run.turbo_hold", "label": "Turbo while held", "group": "Run", "kind": "press", "held": true, "gui": false},
+  {"id": "ttd.seek_by", "label": "Seek by (accelerated, with marks)", "group": "Time travel", "kind": "delta", "held": false, "gui": false},
+  {"id": "ttd.step_back_frame", "label": "Back one frame", "group": "Time travel", "kind": "press", "held": false, "gui": false},
+  {"id": "mach.start", "label": "Start a machine", "group": "Capture and machine", "kind": "press", "held": false, "gui": false, "params": "model, ram_kb?, replace?"},
+  {"id": "media.open", "label": "Open software", "group": "Media", "kind": "press", "held": false, "gui": false, "params": "path, kind?"}
+ ]
+}

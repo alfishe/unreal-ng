@@ -158,12 +158,18 @@ json DescribePage(const Scenario& s, const Navigator& nav, const Model& m, const
             e["kind"] = n->action.kind;
             if (n->then != "stay")
                 e["then"] = n->then;
-            if (n->action.kind == "toggle")
+            if (n->action.kind == "action")
+                e["action"] = n->action.spec.value("id", "");
+            if (!n->state.empty())
+                e["state"] = n->state;
+            if (n->action.kind == "toggle" || !n->state.empty())
                 e["on"] = toggles.count(n->id) && toggles.at(n->id);
         }
         else
         {
             e["items"] = n->items.size();
+            if (!n->context.empty())
+                e["context"] = n->context;
         }
         keys.push_back(e);
     }
@@ -190,7 +196,17 @@ json DescribePage(const Scenario& s, const Navigator& nav, const Model& m, const
              {"model", std::string(m.name)},
              {"grid", {m.rows, m.cols}}};
     if (p.strip)
+    {
         out["strip"] = {{"content", p.strip->content}, {"text", p.strip->text}};
+        if (!p.strip->status.empty())
+            out["strip"]["status"] = p.strip->status;
+    }
+    for (auto it = nav.Stack().rbegin(); it != nav.Stack().rend(); ++it)
+        if (!(*it)->context.empty())
+        {
+            out["context"] = (*it)->context;
+            break;
+        }
     if (p.autoExit > 0)
         out["auto_exit"] = p.autoExit;
     return out;

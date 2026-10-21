@@ -1,6 +1,7 @@
 #include "sdb/daemondecks.h"
 
 #include <algorithm>
+#include <filesystem>
 
 #include "sdb/datadir.h"
 #include "sdb/deckhub.h"
@@ -36,6 +37,12 @@ std::optional<scn::Scenario> DaemonDecks::LoadFile(const std::string& file, std:
         return std::nullopt;
     std::vector<scn::Issue> issues;
     auto s = scn::Parse(*doc, issues);
+    if (s)
+    {  // $scenario and relative picture paths: the file's folder, not the working directory
+        std::error_code ec;
+        const auto abs = std::filesystem::absolute(file, ec);
+        s->dir = (ec ? std::filesystem::path(file) : abs).parent_path().lexically_normal().generic_string();
+    }
     for (const auto& i : issues)
         if (!i.error && log)
             log("warning: " + file + ": " + i.node + ": " + i.message);

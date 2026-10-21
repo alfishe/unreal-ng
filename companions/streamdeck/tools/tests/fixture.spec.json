@@ -1,0 +1,27 @@
+{
+ "name": "fixture",
+ "model": "plusxl",
+ "settings": {"brightness": 60, "target": "follow", "activity": {"ignore": ["ttd.seek_by"]}},
+ "root": {
+  "id": "home", "title": "Home", "context": "play", "icon": "play", "label": "HOME",
+  "strip": {"content": "title", "status": "ttd", "target": true},
+  "dials": [
+   {"index": 0, "label": "TTD", "turn": {"action": "ttd.seek_by", "value": {"d": "$ticks", "rate": "$rate", "min": 1, "max": 100}},
+    "press": {"action": "run.pause_toggle"}}
+  ],
+  "items": [
+   {"id": "run", "title": "Pause / continue", "at": [0, 0], "icon": "pause", "icon_on": "play", "state": "run.state.paused",
+    "action": "run.pause_toggle"},
+   {"id": "turbo", "title": "Turbo while held", "icon": "forward", "label": "TURBO", "action": "run.turbo_hold", "hold": true},
+   {"id": "soft", "title": "Software", "menu": true, "icon": "chip", "label": "SOFTWARE",
+    "items": [
+     {"id": "soft.bench", "title": "newbench", "icon": "record", "label": "BENCH", "then": "home",
+      "steps": [{"action": "mach.start", "value": {"model": "PENTAGON", "ram_kb": 128, "replace": true}},
+                {"action": "media.open", "value": {"path": "$data/testsnapshots/z80/newbench.z80"}}]}
+    ]},
+   {"id": "ttd", "title": "Time travel", "menu": true, "context": "ttd", "icon": "rewind", "label": "TIME",
+    "strip": {"content": "text", "text": "FASTER = BIGGER", "status": "ttd"},
+    "items": [{"id": "ttd.back", "title": "Back one frame", "icon": "stepback", "action": "ttd.step_back_frame"}]}
+  ]
+ }
+}

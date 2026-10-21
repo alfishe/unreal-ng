@@ -5,6 +5,8 @@
 #include <QUndoCommand>
 #include <algorithm>
 
+#include "actioncatalogue.h"
+#include "sdb/catalogue.h"
 #include "sdb/scenarioio.h"
 
 using namespace sdb;
@@ -92,6 +94,33 @@ bool EditorDocument::Open(const QString& path, QString* error)
     return true;
 }
 
+int EditorDocument::Version() const
+{
+    return _doc.contains("version") && _doc["version"].is_number_integer() ? _doc["version"].get<int>()
+                                                                           : kFormatVersion;
+}
+
+bool EditorDocument::ConvertToV2(QStringList* notes)
+{
+    if (Version() >= 2)
+        return false;
+    std::vector<std::string> n;
+    const json v2 = scn::ConvertToV2(_doc, &n);
+    _notes.clear();
+    for (const auto& line : n)
+        _notes.append(QString::fromStdString(line));
+    if (notes)
+        *notes = _notes;
+    Replace(v2, QStringLiteral("Convert to v2"));
+    return true;
+}
+
+void EditorDocument::Recheck()
+{
+    Revalidate();
+    emit Changed();
+}
+
 bool EditorDocument::Save(const QString& path, QString* error)
 {
     const QString target = path.isEmpty() ? _path : path;
@@ -101,6 +130,8 @@ bool EditorDocument::Save(const QString& path, QString* error)
             *error = QStringLiteral("no file name");
         return false;
     }
+    _notes.clear();
+    ConvertToV2();  // the editor writes the current format
     std::string err;
     if (!io::SaveFile(target.toStdString(), _doc, &err))
     {
@@ -170,7 +201,10 @@ void EditorDocument::Revalidate()
     if (!r)
         _issues.push_back({"", "includes: " + err, true});
     _loose = ParseLoose(_resolved);
-    (void)Parse(_resolved, _issues);
+    // the host's catalogue: unknown ids, held actions without hold (warnings; nothing to say without a catalogue)
+    if (auto s = Parse(_resolved, _issues); s && !EditorCatalogue::Instance().Get().actions.empty())
+        for (auto& i : cat::Check(*s, EditorCatalogue::Instance().Get()))
+            _issues.push_back(std::move(i));
 }
 
 QString EditorDocument::BaseDir() const

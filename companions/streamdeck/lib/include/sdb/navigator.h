@@ -60,9 +60,10 @@ struct Page
 
 // What the page means, as compact JSON for agents (no image analysis needed):
 //   {menu, path:[{id,title}], breadcrumbs, back_key, can_back,
-//    keys:[{key,row,col,role:item|back,id,type,title,label,tags,kind,then,on}], dials:[{index,label,turn,press}],
-//    strip}
-// Empty keys are left out. `toggles` = node id -> on.
+//    keys:[{key,row,col,role:item|back,id,type,title,label,tags,kind,action,then,state,on,context}],
+//    dials:[{index,label,turn,press}], strip, context}
+// Empty keys are left out. `toggles` = node id -> on (toggles and state-bound faces); `context` = the surface context
+// of the path (its innermost menu declaring one).
 [[nodiscard]] json DescribePage(const Scenario& s, const Navigator& nav, const Model& m, const Page& p,
                                 const std::map<std::string, bool>& toggles = {});
 // One line per node of a document, filtered: tag, type (menu|action), kind, menu (direct parent id), text (in id /

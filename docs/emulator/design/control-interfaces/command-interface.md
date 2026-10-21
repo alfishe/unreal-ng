@@ -3620,7 +3620,7 @@ client's game controllers) holds the host devices, their profiles and bindings, 
 | `controllers options` | `<connector> opt=val ...` | Change the options of the device a connector holds | ✅ Implemented |
 | `controllers targets` | `<device>` | The connectors that take a retro device, in order, with the default | ✅ Implemented |
 | `controllers auto` | `[apply]` | The port-read evidence and the joystick it points to; `apply` runs the watch again | ✅ Implemented |
-| `controllers devices` | | The connected host devices: id, name, family, layout, backend | ✅ Implemented |
+| `controllers devices` | | The connected host devices: id, name, family, layout, backend; with the Qt client also `role` (`role_set`: chosen, else the family's default), `layers` (up, bottom to top: `play`, `debug`, a context layer such as `@ttd`), `context` (of the instance it acts on), `outputs` (`haptic`, `steps`) and `feel` (its top layer's `steps`, `clicks`, `marks`, `min_interval_ms`) | ✅ Implemented |
 | `controllers context` | | Machine, the loaded file's SHA-256, the manual game profile, the applied profiles, warnings | ✅ Implemented |
 | `controllers profiles` | `[set=game\|play\|debug\|scheme] [machine=..]` | Every profile with kind, scope, specificity and whether it applies | ✅ Implemented |
 | `controllers profile` | `<id>` | One profile as YAML | ✅ Implemented |
@@ -3630,6 +3630,7 @@ client's game controllers) holds the host devices, their profiles and bindings, 
 | `controllers scheme` | `<scheme/kempston\|scheme/qaop-space\|none> [family=..\|device=..\|profile=..]` | How the pad works: the scheme the user profile extends | ✅ Implemented |
 | `controllers haptics` | `[device]` | Per host device: whether the emulator drives its motors (`available`, else the `reason`), its `actuators` (`low`, `high`, `left-trigger`, `right-trigger`) and the test `effects` (`id`, `label`, `ms`) | ✅ Implemented |
 | `controllers rumble` | `<device> [effect]` | Play a test effect on a host device: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell` (a Surface Dial: `identify`, `click`, `clicks`, `buzz`) - the ones `haptics` lists for it | ✅ Implemented |
+| `controllers output` | `<device> <tick\|double\|buzz>` \| `<device> steps=N clicks=on\|off` \| `<device> marks=second,edge` | A control surface's outputs (the Surface Dial): play a haptic pattern; set its steps per turn (1..3600) and whether each step clicks (`off`: a free wheel) until its context or layers change; or play a seek's marks (strongest first) as its top layer's feel plays them, with the marks' rate limit (`played`, `mark`, `pattern`, else `reason`) | ✅ Implemented |
 
 **Haptics.** The test effects are debug feedback: they play while the game's haptics are held back (paused machine,
 TTD replay, turbo), and they are the effects of the dialog's **Test haptics** (Tools > Controllers). A device the
@@ -3647,15 +3648,36 @@ controllers rumble bt:045e:0b22:c6928f45 clicks
 # OK: Three clicks on Xbox Elite Wireless Controller Series 2
 ```
 
+**Control surfaces** (control surfaces design [profiles.md](../../../inprogress/2026-10-18-control-surfaces/profiles.md),
+[controls-and-feedback.md](../../../inprogress/2026-10-18-control-surfaces/controls-and-feedback.md)). A debug profile
+has context layers besides `debug`: `@ttd` is up while the instance's context (§16, `ctx.set`) is `ttd`,
+`@debug.*` while it starts with `debug.`; the longest match wins, above `debug`. Its `haptics` section is per layer
+(`{steps, clicks, marks, min_interval_ms}`), and an action binding's `curve` object (`{unit, min, max, rate_lo,
+rate_hi}`) reaches the action as its params. A Surface Dial starts in role `debugger-remote` (its family's
+default role) and runs the shipped `builtin/debug/surface-dial`: in `ttd` it scrubs with `ttd.seek_by` and feels the
+marks the seek crosses. The Qt client sets the context from the debugger's panes (`debug.disasm`,
+`debug.registers`, `debug.memory`, `debug.stack`) and the TTD panel (`ttd`), and the Dial follows it.
+
+```
+controllers devices
+# Host devices:
+#   bt:045e:091b:3c1e2f4a  Surface Dial (surface-dial)
+#     role debugger-remote (default); layers debug, @ttd; context ttd
+#     feel {"steps":36,"clicks":true,"marks":{"bookmark":"double","edge":"buzz",...},"min_interval_ms":40}
+controllers output bt:045e:091b:3c1e2f4a marks=ten_seconds,second
+# OK: ten_seconds -> double on Surface Dial
+```
+
 Every surface offers the same verbs:
 
 | Surface | Machine side | Host side | Haptics |
 | :--- | :--- | :--- | :--- |
-| CLI | `controllers <verb> ...` | `controllers <verb> ...` | `controllers haptics [device]`, `controllers rumble <device> [effect]` |
-| WebAPI | `GET /emulator/{id}/controllers[/{connector}]`, `POST .../controllers/{connector}/{verb}` | `GET` / `POST /api/v1/controllers/{verb}` (the wrong method answers 405) | `GET /api/v1/controllers/haptics?device=`, `POST /api/v1/controllers/rumble {device, effect}` |
-| MCP | `controllers` actions `list` ... `input` (with `target`) | `controllers` actions `devices` ... `scheme` (no target) | `controllers` actions `haptics` (`device`), `rumble` (`device`, `effect`) |
-| Python | `controllers_list()`, `controllers_plug()`, ... `controllers_input()` | `controllers_host(verb, **options)` and `controllers_profiles()`, `controllers_bind()`, ... | `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")` |
-| Lua | `controllers(verb, connector, device, opts)` | `controllers_host(verb, opts)` | `controllers_haptics([device])`, `controllers_rumble(device, [effect])` |
+| CLI | `controllers <verb> ...` | `controllers <verb> ...` | `controllers haptics [device]`, `controllers rumble <device> [effect]`, `controllers output <device> ...` |
+| WebAPI | `GET /emulator/{id}/controllers[/{connector}]`, `POST .../controllers/{connector}/{verb}` | `GET` / `POST /api/v1/controllers/{verb}` (the wrong method answers 405) | `GET /api/v1/controllers/haptics?device=`, `POST /api/v1/controllers/rumble {device, effect}`, `POST /api/v1/controllers/output {device, pattern \| steps, clicks \| marks}` |
+| WebSocket | | `{"op":"call","method":"GET","path":"/api/v1/controllers/devices"}` on `/api/v1/ws` (every route is a call) | `{"op":"call","method":"POST","path":"/api/v1/controllers/output","body":{...}}` |
+| MCP | `controllers` actions `list` ... `input` (with `target`) | `controllers` actions `devices` ... `scheme` (no target) | `controllers` actions `haptics` (`device`), `rumble` (`device`, `effect`), `output` (`device`, `pattern`, `steps`, `clicks`, `marks`) |
+| Python | `controllers_list()`, `controllers_plug()`, ... `controllers_input()` | `controllers_host(verb, **options)` and `controllers_profiles()`, `controllers_bind()`, ... | `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device, pattern=, steps=, clicks=, marks=)` |
+| Lua | `controllers(verb, connector, device, opts)` | `controllers_host(verb, opts)` | `controllers_haptics([device])`, `controllers_rumble(device, [effect])`, `controllers_output(device, pattern \| {steps=, clicks=, marks=})` |
 
 Each returns the reply every surface returns: `ok`, `error` (`bad-request`, `unknown-device`, `unknown-profile`,
 `unavailable`, `read-only`), `message` and the verb's fields; `--json` in the CLI prints it as is. The host side needs
@@ -3696,7 +3718,7 @@ The control-surface actions of phase S2 ([actions.md §2-§4](../../../inprogres
 | :--- | :--- | :--- |
 | CLI | `action list` | `action run ttd.jog_frames -10` |
 | WebAPI | `GET /api/v1/controllers/actions[?instance=]` | `POST /api/v1/controllers/actions/{id}` `{instance?, value?, params?}` |
-| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/controllers/actions"}` | `{"op":"call","method":"POST","path":"/api/v1/controllers/actions/{id}","body":{...}}`; topic: `surface` (planned, control surfaces S4) |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/controllers/actions"}` | `{"op":"call","method":"POST","path":"/api/v1/controllers/actions/{id}","body":{...}}`; or `join` + `{"op":"action","id":…,"value":…,"rid":…}` on the `surface` topic ([websocket-interface.md §3.1](websocket-interface.md#31-the-surface-topic)) |
 | MCP | `actions` action `list` (`target`) | `actions` action `run` (`id`, `value`, `params`, `target`) |
 | Python | `emu.actions()` | `emu.action(id, value=None, **params)` |
 | Lua | `actions()` | `action(id, [value], [params])` |
@@ -3707,7 +3729,7 @@ The context (read; set with `ctx.set`) and a dial's seek on every surface:
 | :--- | :--- | :--- |
 | CLI | `action context` | `action run ttd.seek_by -3 rate=18 unit=frames` |
 | WebAPI | `GET /api/v1/surfaces/context[?instance=]` | `POST /api/v1/controllers/actions/ttd.seek_by` `{"value":{"delta":-3,"rate":18},"params":{"unit":"seconds"}}` |
-| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/surfaces/context"}` | the same POST as a `call`; the `ctx` push and the `ttd.position` readout come with the `surface` topic (S4) |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/surfaces/context"}`; push: topic `surfaces.context`, or `ctx` on the `surface` topic | the same POST as a `call`, or `{"op":"action","id":"ttd.seek_by","value":{"d":-3,"rate":18,"unit":"seconds"},"rid":1}` on the `surface` topic; the cursor: topic `ttd.position` or the `ttd.position` readout ([websocket-interface.md §3](websocket-interface.md#3-topics)) |
 | MCP | `actions` action `context` | `actions` action `run`, `id` `ttd.seek_by`, `value` `{delta, rate}`, `params` |
 | Python | `emu.context()` | `emu.action("ttd.seek_by", -3, rate=18, unit="seconds")` |
 | Lua | `context()` | `action("ttd.seek_by", {delta = -3, rate = 18}, {unit = "seconds"})` |

@@ -300,12 +300,12 @@ std::optional<ImageRef> ParseImageRef(const std::string& ref)
     return r;
 }
 
-std::optional<Rgb> LoadImageRef(const std::string& ref)
+std::optional<Rgb> LoadImageRef(const std::string& ref, const std::filesystem::path& scenarioDir)
 {
     const auto r = ParseImageRef(ref);
     if (!r)
         return std::nullopt;
-    auto img = LoadImage(data::Resolve(r->file));
+    auto img = LoadImage(data::Resolve(r->file, scenarioDir));
     if (!img || !r->region)
         return img;
     Rgb out(r->w, r->h);

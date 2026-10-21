@@ -256,6 +256,9 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: ./streamdeck-studio-tests
 
+      - name: Scenario generator tests
+        run: python3 companions/streamdeck/tools/tests/test_make_deck_scenario.py
+
   build-streamdeck-macos:
     needs: throttle
     runs-on: macos-15

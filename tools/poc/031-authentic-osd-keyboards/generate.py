@@ -25,12 +25,12 @@ sys.path.insert(0, str(HERE))
 
 from model import ZX_MATRIX  # noqa: E402
 
-OUT = HERE / "keyboards" / "out"
 REPO = HERE.parents[2]
+OUT = REPO / "data" / "controllers" / "keyboards"  # the app loads them from here (unreal-qt OSD keyboard)
 SCRATCH = REPO / "scratch" / "2026-10-19-poc-031"
 QTRENDER = SCRATCH / "qtrender-build" / "qtrender"
 
-KEYBOARDS = ["zx48k", "zx128", "zxplus2", "zxplus2a", "zxplus3", "pentagon", "pentagon2plus", "scorpion", "quorum", "orel", "profi", "profiplus", "pcxt", "pcat", "pcps2", "zxnext"]
+KEYBOARDS = ["zx48k", "zx128", "zxplus2", "zxplus2a", "zxplus3", "pentagon", "pentagon2plus", "scorpion", "quorum", "orel", "profi", "profiplus", "pcat", "pcxt", "pcps2", "zxmatrix", "zxnext"]
 STYLES = ["photo"]
 
 
@@ -63,11 +63,10 @@ def check(keyboard, model):
 
 
 def pc_keys():
-    """The emulator's PcKey names (core/src/emulator/io/keyboard/pckey.h)"""
-    text = (REPO / "core/src/emulator/io/keyboard/pckey.h").read_text()
-    body = text[text.index("enum class PcKey"):]
-    body = re.sub(r"//[^\n]*", "", body[body.index("{") + 1:body.index("};")])
-    return {n.strip() for n in body.split(",") if n.strip() and n.strip() not in ("None", "Count")}
+    """The emulator's PcKey names and their automation names ("Escape" -> "esc"), from the name table of
+    core/src/emulator/io/keyboard/pckey.cpp: keys.json carries the automation name, which pckey::FromName reads"""
+    text = (REPO / "core/src/emulator/io/keyboard/pckey.cpp").read_text()
+    return dict(re.findall(r'\{PcKey::(\w+), "([^"]+)"', text))
 
 
 def area(key):
@@ -115,7 +114,7 @@ def same(a, b, name, limit=2.0):
 def gallery(built):
     rows = []
     for keyboard, model in built:
-        images = "".join(f'<figure><img src="keyboards/out/{keyboard["id"]}.{style}.svg"><figcaption>{style}'
+        images = "".join(f'<figure><img src="../../../data/controllers/keyboards/{keyboard["id"]}.{style}.svg"><figcaption>{style}'
                          f"</figcaption></figure>" for style in STYLES)
         rows.append(f'<section><h2>{keyboard["name"]}</h2><p>{", ".join(keyboard["models"])} · '
                     f"{len(model.keys)} keys</p>{images}</section>")
@@ -124,6 +123,20 @@ def gallery(built):
             "figure{margin:0 0 16px}img{width:100%;max-width:1400px;display:block}figcaption{color:#888}"
             "h2{margin:0 0 4px;font-weight:600}p{margin:0 0 10px;color:#999}</style>"
             "<h1>POC 031: authentic keyboards</h1>" + "".join(rows))
+
+
+def index():
+    """The keyboards per model for the app (index.json): each model's pictures in KEYBOARDS order, the first its
+    default; each picture's name, matrix kind ("zx" presses the ZX matrix, "pc" the machine's PC keyboard controller),
+    size in mm and files"""
+    keyboards, models = {}, {}
+    for name in KEYBOARDS:
+        keyboard = importlib.import_module(f"keyboards.{name}").KEYBOARD
+        keyboards[name] = {"name": keyboard["name"], "matrix": keyboard["matrix"], "size": keyboard["size"],
+                           "picture": f"{name}.photo.svg", "keys": f"{name}.keys.json"}
+        for model in keyboard["models"]:
+            models.setdefault(model, []).append(name)
+    return {"schema": 1, "models": models, "keyboards": keyboards}
 
 
 def main():
@@ -136,7 +149,13 @@ def main():
     for name in args.names or KEYBOARDS:
         module = importlib.import_module(f"keyboards.{name}")
         keyboard, model = module.KEYBOARD, module.layout()
-        (OUT / f"{name}.keys.json").write_text(json.dumps(model.keymap(keyboard), indent=1, ensure_ascii=False) + "\n")
+        keymap = model.keymap(keyboard)
+        if keyboard.get("matrix") == "pc":
+            names = pc_keys()
+            for key in keymap["keys"]:
+                if "pc" in key:
+                    key["pc"] = names[key["pc"]]
+        (OUT / f"{name}.keys.json").write_text(json.dumps(keymap, indent=1, ensure_ascii=False) + "\n")
         for style in STYLES:
             svg = importlib.import_module(f"styles.{style}").draw(keyboard, model)
             path = OUT / f"{name}.{style}.svg"
@@ -148,6 +167,7 @@ def main():
                 print(f"{name}: {error}")
                 failed = True
         built.append((keyboard, model))
+    (OUT / "index.json").write_text(json.dumps(index(), indent=1, ensure_ascii=False) + "\n")
     if not args.names:
         (HERE / "gallery.html").write_text(gallery(built))
     print(f"wrote {len(built)} keyboards x {len(STYLES)} styles")

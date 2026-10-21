@@ -1,6 +1,9 @@
 #pragma once
 
 #include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 #ifndef DEBUGGERWINDOW_H
 #define DEBUGGERWINDOW_H
 
@@ -31,6 +34,10 @@ class DebuggerWindow : public QWidget, public Observer
     Q_OBJECT
 public:
     explicit DebuggerWindow(std::shared_ptr<Emulator> emulator = nullptr, QWidget* parent = nullptr);
+
+    /// The panes as control surface contexts (control surfaces architecture.md §6): disassembly `debug.disasm`,
+    /// registers `debug.registers`, memory `debug.memory`, stack `debug.stack`
+    std::vector<std::pair<QWidget*, std::string>> contextPanes() const;
     virtual ~DebuggerWindow() override;
 
     void setEmulator(std::shared_ptr<Emulator> emulator);  // Legacy - will be removed

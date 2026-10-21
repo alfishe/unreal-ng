@@ -37,8 +37,9 @@ inline Json::Value StateNodeToJson(const StateNode& node)
     }
 }
 
-/// Json::Value -> StateNode (a request body's object for the core's verbs)
-inline StateNode JsonValueToStateNode(const Json::Value& value)
+/// Json::Value -> StateNode (an action's params, a WebSocket value): bool, integer, double, string, array, object;
+/// null for anything else
+inline StateNode JsonToStateNode(const Json::Value& value)
 {
     if (value.isBool())
         return StateNode(value.asBool());
@@ -52,14 +53,14 @@ inline StateNode JsonValueToStateNode(const Json::Value& value)
     {
         StateNode array = StateNode::Array();
         for (const Json::Value& item : value)
-            array.push(JsonValueToStateNode(item));
+            array.push(JsonToStateNode(item));
         return array;
     }
     if (value.isObject())
     {
         StateNode object = StateNode::Object();
         for (const std::string& name : value.getMemberNames())
-            object[name] = JsonValueToStateNode(value[name]);
+            object[name] = JsonToStateNode(value[name]);
         return object;
     }
     return {};

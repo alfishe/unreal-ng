@@ -22,6 +22,28 @@ enum class DeviceRole : uint8_t
     Disabled,        ///< reaches nothing
 };
 
+/// "player", "debugger-remote", "disabled"
+inline const char* DeviceRoleName(DeviceRole role)
+{
+    switch (role)
+    {
+        case DeviceRole::Player: return "player";
+        case DeviceRole::DebuggerRemote: return "debugger-remote";
+        case DeviceRole::Disabled: return "disabled";
+    }
+    return "player";
+}
+inline bool DeviceRoleFromName(const std::string& name, DeviceRole& out)
+{
+    for (const DeviceRole role : {DeviceRole::Player, DeviceRole::DebuggerRemote, DeviceRole::Disabled})
+        if (name == DeviceRoleName(role))
+        {
+            out = role;
+            return true;
+        }
+    return false;
+}
+
 /// Which emulator instance a device drives (architecture.md §9, DT-4)
 enum class InstanceMode : uint8_t
 {

@@ -1903,7 +1903,7 @@ namespace PythonBindings
             .def("controllers_host", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return HostControllerCallPy(verb, options);
                  }, py::arg("verb"), "A host controllers verb (devices, context, profiles, profile, save, delete, apply, "
-                 "bindings, bind, unbind, scheme, haptics, rumble) with its options as keywords")
+                 "bindings, bind, unbind, scheme, haptics, rumble, output) with its options as keywords")
             .def("surfaces", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return SurfacesPy(verb, options);
                  }, py::arg("verb") = "views",
@@ -1933,6 +1933,14 @@ namespace PythonBindings
                      return HostControllerCallPy("rumble", options);
                  }, py::arg("device"), py::arg("effect") = "identify",
                  "Play a test effect on a host device: identify, low, high, clicks, left-trigger, right-trigger, swell")
+            .def("controllers_output", [](Emulator&, const std::string& device, const py::kwargs& options) {
+                     py::kwargs all = options;
+                     all["device"] = device;
+                     return HostControllerCallPy("output", all);
+                 }, py::arg("device"),
+                 "A control surface's outputs (the Surface Dial): pattern='tick'|'double'|'buzz', or steps=36 / "
+                 "clicks='on'|'off' (its feel until the context changes), or marks='second,edge' (what its layer "
+                 "plays for a seek's marks)")
             .def("controllers_profiles", [](Emulator&, const py::kwargs& options) {
                      return HostControllerCallPy("profiles", options);
                  }, "Every controller profile (set='game' / 'play' / 'debug' / 'scheme', machine='next')")

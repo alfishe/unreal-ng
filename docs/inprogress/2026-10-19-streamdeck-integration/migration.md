@@ -36,7 +36,7 @@ Tracked files only (`build/`, `.cache/`, `__pycache__/`, `.DS_Store` are never c
 | `streamdeck-bridge/third_party/` httplib, fkYAML, nanosvg, nanosvgrast, rapidcsv, stb_image, README | `companions/streamdeck/3rdparty/` | rows in `THIRD_PARTY_NOTICES.md` |
 | `streamdeck-bridge/examples/themes/unrealng/` (30 files) | `data/streamdeck/themes/unrealng/` | boot / idle theme |
 | — | — | the example scenarios are **not** needed as fixtures: the tests write their own files |
-| `streamdeck-bridge/examples/make_unrealng_control.py`, `capture_zx.py` | `companions/streamdeck/tools/` | the default-scenario generator and its thumbnail capture: **SD5**, rewritten for v2 when the catalogue exists (they read the REST presets, which are not imported) |
+| `streamdeck-bridge/examples/make_unrealng_control.py`, `capture_zx.py` | `companions/streamdeck/tools/` | **SD5, 2026-10-20:** written new as `make_deck_scenario.py`, a v2 generator from a menu-hierarchy spec and the action catalogue (the old one read the REST presets and hard-coded its layout); the layout itself waits for the icon set and the use-case document ([scenarios.md §9](scenarios.md#9-the-default-scenario)); `capture_zx.py` (thumbnails) not imported, it waits with them |
 | `streamdeck-emulator/src/` main, mainwindow, deckwidget, virtualdeck, emulatorapi, recorder, gui.h, textedit.h | `companions/streamdeck/studio/` | **SD3, done 2026-10-20**: a wire v2 client (`deckclient.*`, `decklink.h`), the v1 server rewritten as `--listen` only (`listenserver.*`), `emulatorapi` became `studioapi` (USB routes gone, `/connection` GET / PUT); the recorder links `core/recording` |
 | `streamdeck-emulator/src/editor/*` (14) | `companions/streamdeck/studio/editor/` | **SD3, done 2026-10-20**; `presets.cpp`: generic presets only (no unreal-ng REST paths); `runcontroller` plays the scenario through the daemon (reload of a running one, else `unreal-streamdeck run`) |
 | `docs/hid/*` (8) | `docs/companions/streamdeck/hid/` | the protocol reference, checked against Elgato's docs and hardware |
@@ -54,7 +54,7 @@ Tracked files only (`build/`, `.cache/`, `__pycache__/`, `.DS_Store` are never c
 | `streamdeck-bridge/tools/mcp-bridge/` | Duplicates `unreal-mcp-bridge` |
 | `streamdeck-bridge/examples/*.py` demos (`unrealng_demo`, `unrealng_effects_demo`, `capture_screens`, `navigation_tour`, `mcp_editor_demo`, `make_bridge_config`, `make_scenario`, `_deck.py`) | Demos of the REST flows and the legacy bridge; screenshots for the old README |
 | `streamdeck-bridge/examples/screens/*.png` (17) | Screenshots for the old README; the new docs take new ones |
-| `streamdeck-bridge/examples/scenarios/unrealng-control.deck.json` | Generated, 98 absolute paths, REST steps; regenerated as v2 into `data/streamdeck/scenarios/` |
+| `streamdeck-bridge/examples/scenarios/unrealng-control.deck.json` | Generated, 98 absolute paths, REST steps, mostly test material (owner, 2026-10-20); the v2 default scenario is generated anew from the use-case document's spec into `data/streamdeck/scenarios/` |
 | `streamdeck-emulator/src/recording/` (33) | Duplicates `core/recording`; the studio links it |
 | `streamdeck-emulator/src/usblistener.*` | The daemon is the only USB owner |
 | `streamdeck-emulator/src/server.*` | The studio becomes a client (wire v2); kept only as the test `--listen` mode if needed, written new |
@@ -83,8 +83,8 @@ application's name, `/Volumes/`, `/Users/`, `/tmp/` must return nothing (plus `t
 
 | Area | Change | Doc |
 |:--|:--|:--|
-| unreal-ng calls | `webapi` REST steps → `action` ids; the `UnrealHost` on the surface socket | [daemon.md §5](daemon.md#5-runtime-changes), [scenarios.md §2](scenarios.md#2-the-action-kind) |
-| State | Polling and local toggles → readouts and state-bound faces | [scenarios.md §4](scenarios.md#4-state-bound-faces) |
+| unreal-ng calls | `webapi` REST steps → `action` ids; the `UnrealHost` on the surface socket | [daemon.md §5](daemon.md#5-runtime-changes), [scenarios.md §2](scenarios.md#2-the-action-kind). Done 2026-10-20: the `action` kind with a REST fallback behind `ActionExecutor` (the surface client is S4 / SD4), `ConvertToV2` / `scenario upgrade` maps the REST steps of §4 that have an action |
+| State | Polling and local toggles → readouts and state-bound faces | [scenarios.md §4](scenarios.md#4-state-bound-faces). Done 2026-10-20: `state` / `face_on`, `Runtime::SetReadout` for the surface client, a polled `run.state.paused` and the local flip until then |
 | Instance choice | `GET /api/v1/emulator` + `symbolic_id == "unreal-qt"` → host targeting | [targeting.md](targeting.md) |
 | Device ownership | Shared open + `/tmp` lock + the studio's own USB reader → the multiplexer, exclusive open | [daemon.md §3](daemon.md#3-device-multiplexer) |
 | Wire | The studio listens, v1 → the daemon listens, v2 | [device-wire.md](device-wire.md) |
@@ -121,6 +121,13 @@ The prototype's control scenario uses 123 distinct REST paths in 598 steps. By g
   actions, most with params, thin wrappers over the control object the route already calls, each with the companion
   scope of its route.
 - Every route keeps working for automation; the actions call the same control objects.
+- The conversion (`scn::ConvertToV2`, 2026-10-20) maps the POST paths of this table that have an action with the same
+  meaning: run (`/pause`, `/resume`, `/step`, `/stepover`, `/stepout`, `/steps`, `/run_frames`, `/run_tstates`,
+  `/run_scanlines`, `/run_to_interrupt`), `/nmi`, TTD (`start`, `stop`, `resume`, `step-back`, `step-forward`,
+  `step-instruction` back / forward, `reverse-step`, `seek`, `invalidate`), machine start, snapshot / tape / disk
+  loads (`media.open`), the tape ops (`media.tape`), `/basic/run`. Not mapped (meaning or body differ): `/reset` (the
+  action is the 1 s hold), GETs, the mixer, settings and feature routes (their bodies name values differently), the
+  `/api/` routes outside the instance; they stay `webapi` and the notes list them.
 
 ## 5. Order
 

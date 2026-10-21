@@ -34,7 +34,7 @@ namespace
         "controllers targets <device>               - The connectors that take a device, the default first\n"
         "controllers auto [apply]                   - The port-read evidence and the joystick it points to\n"
         "Host (profiles and bindings of the host's pads, keyboard and mouse):\n"
-        "controllers devices                        - The connected host devices\n"
+        "controllers devices                        - The connected host devices: role, layers up, context, outputs, feel\n"
         "controllers context                        - Machine, file hashes, manual game profile, devices\n"
         "controllers profiles [set=game|play|debug|scheme] [machine=next] - Every profile\n"
         "controllers profile <id>                   - One profile as YAML\n"
@@ -49,6 +49,9 @@ namespace
         "controllers haptics [device]               - Which devices' motors the emulator drives, why not, their effects\n"
         "controllers rumble <device> [effect]       - Play a test effect (identify, low, high, clicks, left-trigger,\n"
         "                                             right-trigger, swell; default identify)\n"
+        "controllers output <device> <tick|double|buzz> - A control surface's haptic pattern (the Surface Dial)\n"
+        "controllers output <device> steps=36 clicks=on|off - Its steps per turn and a click at each (off: free wheel)\n"
+        "controllers output <device> marks=second,edge - A seek's marks as the device's layer plays them\n"
         "Flags: --json (the reply every surface returns), async (do not wait for the frame boundary)\n";
 
     std::string Lines(const std::string& text, const char* newline)
@@ -89,7 +92,7 @@ namespace
 
 #ifdef ENABLE_CONTROLLERS
     /// A host verb: positional id (profile, delete, apply), control (bind, unbind), file (save) or device (haptics,
-    /// rumble, then its effect); for bind, the options that are not the verb's become the binding spec (key=ENTER
+    /// rumble, then its effect; output, then its pattern); for bind, the options that are not the verb's become the binding spec (key=ENTER
     /// label=Fire)
     std::string HandleHostVerb(const std::string& verb, const std::vector<std::string>& words,
                                const std::map<std::string, std::string>& options, bool json)
@@ -110,11 +113,13 @@ namespace
         {
             if (verb == "bind" || verb == "unbind")
                 request.options["control"] = words[1];
-            else if (verb == "haptics" || verb == "rumble")
+            else if (verb == "haptics" || verb == "rumble" || verb == "output")
             {
                 request.options["device"] = words[1];
                 if (verb == "rumble" && words.size() > 2)
                     request.options["effect"] = words[2];
+                if (verb == "output" && words.size() > 2)
+                    request.options["pattern"] = words[2];
             }
             else if (verb == "save")
             {
@@ -167,6 +172,28 @@ namespace
                 text += "    effects: " + effects + "\n";
             }
             return "Haptics (device, the effects rumble plays or why not):\n" + (text.empty() ? "  none\n" : text);
+        }
+        if (verb == "devices")
+        {
+            for (const JsonValue& device : reply.body.Find("devices")->Items())
+            {
+                text += "  " + device.Find("id")->AsString() + "  " + device.Find("name")->AsString() + " (" +
+                        device.Find("family")->AsString() + ")\n";
+                if (const JsonValue* role = device.Find("role"))
+                {
+                    std::string layers;
+                    for (const JsonValue& layer : device.Find("layers")->Items())
+                        layers += (layers.empty() ? "" : ", ") + layer.AsString();
+                    text += "    role " + role->AsString() + (device.Find("role_set")->AsBool() ? "" : " (default)") +
+                            "; layers " + (layers.empty() ? "none" : layers);
+                    if (!device.Find("context")->AsString().empty())
+                        text += "; context " + device.Find("context")->AsString();
+                    text += "\n";
+                }
+                if (const JsonValue* feel = device.Find("feel"))
+                    text += "    feel " + feel->Dump() + "\n";
+            }
+            return "Host devices:\n" + (text.empty() ? "  none\n" : text);
         }
         if (const JsonValue* profiles = reply.body.Find("profiles"))
         {

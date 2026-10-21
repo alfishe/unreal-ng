@@ -11,7 +11,7 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 |:--|:--|
 | `unreal-streamdeck run [scenario] [options]` | Play a scenario (`.json`, `.yaml`, `.csv`, `.tsv`) on the deck; without one, the built-in [idle scenario](#the-idle-scenario) (the UnrealNG look) until a scenario is loaded for a deck |
 | `unreal-streamdeck pair [--webapi URL] [--name NAME] [--file F]` | Pair with unreal-ng as a companion (approved at the emulator's GUI); the token goes to `~/.config/unreal-streamdeck/companion.json` (mode 0600) |
-| `unreal-streamdeck scenario check \| convert \| extract \| resolve ...` | Check and convert scenario files |
+| `unreal-streamdeck scenario check \| convert \| upgrade \| extract \| resolve ...` | Check scenario files (`check` also warns about action ids the catalogue lacks: `$data/streamdeck/catalogue.json` or `--catalogue F`), convert them to another file format, upgrade format v1 to v2 |
 | `unreal-streamdeck --help` | The usage on stdout, exit 0 (without a command: the same, exit 2) |
 
 `run` options:
@@ -21,6 +21,7 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 | `--watch` | Reload the start scenario when it or an included file changes (the menu stack is kept) |
 | `--wait` | No deck attached: serve the viewers meanwhile (own decks work, mirrors wait) and take the first deck that appears (checked every second). Without it a missing deck ends `run` at once (exit 5) |
 | `--api PORT` | Automation on `127.0.0.1:PORT`: REST and MCP (`/mcp`), [below](#automation) |
+| `--host URL` | The unreal-ng WebAPI the scenarios' actions go to (default `http://127.0.0.1:8090`; `host:port` is taken too). A v2 scenario names no host; a v1 scenario's `settings.webapi` still wins for it. The `action` kind posts `POST /api/v1/controllers/actions/{id}` there until the surface client comes ([scenarios.md §2](../../inprogress/2026-10-19-streamdeck-integration/scenarios.md#2-the-action-kind)) |
 | `--viewers [PORT]` | Software decks join on `127.0.0.1:PORT` (device wire v2, default 37050). On by default |
 | `--no-viewers` | No software decks |
 | `--device S` | The deck whose serial contains S (default: the first one) |
@@ -131,7 +132,7 @@ device) counts as another deck.
 `POST /api/v1/decks/{serial}/reconnect` does what an unplug does, on purpose: the handle is closed on the device
 thread's next call, stays closed `away_ms` (default 0), and the deck is opened again and redrawn the same way. It
 mends a deck that shows garbage after a USB hiccup, and it is how the reopen path is checked on a real deck without
-pulling the cable.
+pulling the cable. A real cable pull and replug on the + XL (macOS) was checked by hand: the same picture and menu return.
 
 An older Stream Deck Studio that listens on 37050 itself takes the port: `run` then says so and runs without viewers.
 `--mirror` / `--device emu` still talk to such a studio (the device wire v1).
@@ -243,7 +244,7 @@ Default scenarios and themes (`data/streamdeck/`) are not packaged yet (SD5).
 | Command | What |
 |:--|:--|
 | `sdctl viewer [--port N] [--deck SERIAL \| --own MODEL] [--seconds N]` | Join the daemon as a viewer; prints the welcome, the replayed picture and frame counts per second |
-| `sdctl ws <ws://host:port/path> [message ...] [--token T] [--count N] [--seconds N]` | Open a WebSocket with the daemon's client; prints what arrives |
+| `sdctl ws <ws://host:port/path> [message ...] [--token T] [--count N] [--seconds N]` | Open a WebSocket with the daemon's client; prints what arrives (`ws://127.0.0.1:8090/api/v1/ws '{"op":"join","v":1,"name":"deck","model":"elgato.streamdeck.plus"}' --token unc_…` joins the surface topic) |
 | `sdctl decks [--api PORT] [--json]` | The daemon's logical decks (`GET /api/v1/decks`, port 37053 by default) |
 | `sdctl emu-snapshot --out f.png --api PORT [--deck SERIAL]` | The deck's viewers save a PNG through the daemon (device wire v2 `Control`); waits up to 3 s for the file |
 

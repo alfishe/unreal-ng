@@ -68,13 +68,14 @@ bool AppliesTo(const Profile& profile, const ScopeTarget& target)
     return true;
 }
 
-/// A debug profile of the keyboard or a control surface alone (the Surface Dial, `"player": false`): those are
-/// debugger remotes by nature, so it works without the debug layer (debug-and-ttd.md §4.3, §4.4)
+/// A debug profile of the keyboard or of families that start as debugger remotes (the Surface Dial, `"role":
+/// "debugger-remote"`, control surfaces Q-8) alone: it works without the debug layer (debug-and-ttd.md §4.3, §4.4)
 bool RemoteByNature(const Profile& profile)
 {
     return profile.devices.empty() && !profile.families.empty() &&
            std::all_of(profile.families.begin(), profile.families.end(), [](const std::string& family) {
-               return family == "keyboard" || !DeviceDatabase::Builtin().ForFamily(family).player;
+               return family == "keyboard" ||
+                      DeviceDatabase::Builtin().ForFamily(family).role == DeviceRole::DebuggerRemote;
            });
 }
 
@@ -431,8 +432,11 @@ ResolvedProfiles ProfileStore::Resolve(const ProfileContext& context) const
     const auto mergeFor = [&](const ScopeTarget& target, const std::string& scope, bool top) {
         Layers layers;
         Sources sources;
+        JsonValue surface;
         const auto take = [&](const Profile& profile) {
             Merge(layers, profile, sources);
+            if (profile.kind == ProfileKind::Debug && !profile.haptics.IsNull())
+                surface = profile.haptics;  // the later (more specific) one wins whole
             if (!top)
                 return;
             resolved.applied.push_back(profile.id);
@@ -440,7 +444,7 @@ ResolvedProfiles ProfileStore::Resolve(const ProfileContext& context) const
                 resolved.connectors[connector] = plan;
             if (!profile.players.empty())
                 resolved.players = profile.players;
-            if (!profile.haptics.IsNull())
+            if (profile.kind == ProfileKind::Play && !profile.haptics.IsNull())
             {
                 resolved.haptics = profile.haptics;
                 resolved.hapticsProfile = profile.id;
@@ -455,6 +459,8 @@ ResolvedProfiles ProfileStore::Resolve(const ProfileContext& context) const
             take(*profile);
         }
         resolved.scopes.emplace_back(scope, Compile(layers, scope, resolved.warnings));
+        if (!surface.IsNull())
+            resolved.surfaceHaptics.emplace_back(scope, surface);
         std::vector<EffectiveBinding> effective;
         for (const auto& [layer, members] : layers)
             for (const auto& [control, spec] : members)
@@ -504,6 +510,25 @@ ResolvedProfiles ProfileStore::Apply(InputRouter& router, const ProfileContext& 
         if (std::find(scopes.begin(), scopes.end(), scope) == scopes.end())
             router.ClearBindings(scope);
     _appliedScopes = std::move(scopes);
+
+    // What the surfaces feel per layer (the debug profiles' haptics, checked when they were read)
+    std::vector<std::string> hapticScopes;
+    for (const auto& [scope, section] : resolved.surfaceHaptics)
+    {
+        SurfaceHaptics haptics;
+        std::string error;
+        if (!ParseSurfaceHaptics(section, haptics, error))
+        {
+            resolved.warnings.push_back((scope.empty() ? std::string("every device") : scope) + ": " + error);
+            continue;
+        }
+        router.SetSurfaceHaptics(scope, std::move(haptics));
+        hapticScopes.push_back(scope);
+    }
+    for (const std::string& scope : _hapticScopes)
+        if (std::find(hapticScopes.begin(), hapticScopes.end(), scope) == hapticScopes.end())
+            router.ClearSurfaceHaptics(scope);
+    _hapticScopes = std::move(hapticScopes);
 
     // players: `auto:N` is the N-th pad connected (keyboards and mice do not count), else an id substring
     std::vector<const HostDeviceInfo*> pads;

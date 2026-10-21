@@ -1643,7 +1643,7 @@ GET  /api/v1/emulator/{id}/controllers                   the machine's connector
 GET  /api/v1/emulator/{id}/controllers/{connector}       one connector
 POST /api/v1/emulator/{id}/controllers/{connector}/{verb} plug {device, options} | unplug | options | input
 GET  /api/v1/controllers/{verb}                          devices | context | profiles | profile | bindings | haptics
-POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble
+POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble | output
 ```
 
 The machine routes are ControllerControl, the host routes HostInputControl
@@ -1653,6 +1653,13 @@ called with the wrong method answers `405`. `GET /api/v1/controllers/haptics[?de
 `POST /api/v1/controllers/rumble {"device": "...", "effect": "clicks"}` plays one (`identify` by default): `200` with
 `message`, `404` `unknown-device`, `400` `bad-request` for an effect the device lacks, `503` `unavailable` with the
 reason for a device without drivable motors or a process without the Qt client.
+
+`POST /api/v1/controllers/output` drives a control surface's outputs (the Surface Dial): `{"device", "pattern":
+"tick|double|buzz"}` plays a pattern; `{"device", "steps": 36, "clicks": false}` sets its feel until its context or
+layers change; `{"device", "marks": ["ten_seconds", "second"]}` plays what its top layer's feel names for a seek's
+marks (`played`, `mark`, `pattern`, else `reason`, e.g. the marks' rate limit). `GET /api/v1/controllers/devices`
+gives each device's `role` (`role_set`), `layers`, `context`, `outputs` and `feel`. On the WebSocket `/api/v1/ws`
+both are `call`s, as every route.
 
 ### Host Actions
 

@@ -2,7 +2,7 @@
 
 // MCP smart tool: controllers — the machine's connectors and the retro devices in them (Kempston, Sinclair 1 / 2,
 // Cursor, keys, Fuller, the Next's pads): list, get, plug, unplug, options, targets, auto; and the host side: devices,
-// context, profiles, profile, save, delete, apply, bindings, bind, unbind, scheme, haptics, rumble. A thin adapter
+// context, profiles, profile, save, delete, apply, bindings, bind, unbind, scheme, haptics, rumble, output. A thin adapter
 // over the WebAPI /controllers routes, which are ControllerControl (core/src/emulator/io/controllers/
 // controllercontrol.h) and HostInputControl (core/controllers/src/hostinputcontrol.h): same verbs, options, selectors
 // and error codes as every other surface.

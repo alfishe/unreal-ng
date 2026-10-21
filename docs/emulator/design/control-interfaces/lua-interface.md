@@ -235,8 +235,13 @@ for _, device in ipairs(h.devices) do
 end
 ```
 
+A control surface's outputs (the Surface Dial; [command-interface.md §15](./command-interface.md#15-game-controllers)):
+`controllers_output(dial, "buzz")`, `controllers_output(dial, {steps = 36, clicks = "off"})`,
+`controllers_output(dial, {marks = "second,edge"})`.
+
 `controllers(verb, [connector], [device], [opts])`, `controllers_host(verb, [opts])`, `controllers_haptics([device])`,
-`controllers_rumble(device, [effect])` (`identify` by default). Each returns the reply table: `ok`, `error`, `message`
+`controllers_rumble(device, [effect])` (`identify` by default), `controllers_output(device, pattern | {steps, clicks,
+marks})`. Each returns the reply table: `ok`, `error`, `message`
 and the verb's fields. The host side needs the Qt client (a headless process answers `unavailable`).
 
 ### Host Actions

@@ -19,7 +19,9 @@
 #include <QVBoxLayout>
 #include <functional>
 
+#include "actioncatalogue.h"
 #include "editordocument.h"
+#include "sdb/datadir.h"
 #include "sdb/icons.h"
 #include "sdb/scenarioops.h"
 
@@ -71,6 +73,8 @@ json ActionTemplate(const std::string& kind)
 {
     const json pause{{"kind", "webapi"}, {"method", "POST"}, {"path", "/pause"}};
     const json resume{{"kind", "webapi"}, {"method", "POST"}, {"path", "/resume"}};
+    if (kind == "action")  // a catalogue action (the inspector's picker lists them)
+        return {{"kind", kind}, {"id", "run.pause_toggle"}};
     if (kind == "webapi")
         return pause;
     if (kind == "http")
@@ -323,23 +327,79 @@ void Inspector::BuildScenario()
     hold->setChecked(nav.value("home_on_hold", true));
     form->addRow(QString(), hold);
     connect(hold, &QCheckBox::toggled, this, [setNav](bool on) { setNav("home_on_hold", on); });
-    auto* webapi = Line(st.value("webapi", "http://127.0.0.1:8090"));
-    form->addRow(QStringLiteral("unreal-ng WebAPI"), webapi);
-    connect(webapi, &QLineEdit::editingFinished, this, [this, webapi] {
-        _doc->Apply(QStringLiteral("WebAPI URL"), [&](json& x) {
-            x["settings"]["webapi"] = webapi->text().toStdString();
+    const int version = d.contains("version") && d["version"].is_number_integer() ? d["version"].get<int>()
+                                                                                    : kFormatVersion;
+    auto setSetting = [this](const QString& text, const char* key, json v) {
+        _doc->Apply(text, [&](json& x) {
+            if (v.is_null())
+                x["settings"].erase(key);
+            else
+                x["settings"][key] = v;
             return ops::Result{};
         });
-    });
-    auto* emu = Line(st.value("emulator", "auto"));
-    emu->setToolTip(QStringLiteral("auto = unreal-qt, or an emulator id / symbolic id"));
-    form->addRow(QStringLiteral("Emulator"), emu);
-    connect(emu, &QLineEdit::editingFinished, this, [this, emu] {
-        _doc->Apply(QStringLiteral("Emulator id"), [&](json& x) {
-            x["settings"]["emulator"] = emu->text().toStdString();
-            return ops::Result{};
+    };
+    if (version < 2)
+    {
+        // v1: the host and the instance were the scenario's; v2 leaves them to the daemon and the host
+        form->addRow(new QLabel(QStringLiteral("Format v1: Save writes v2 (the REST steps that have a catalogue "
+                                               "action become action steps)")));
+        auto* convert = new QPushButton(QStringLiteral("Convert to v2 now"));
+        convert->setObjectName(QStringLiteral("convert-v2"));
+        form->addRow(convert);
+        connect(convert, &QPushButton::clicked, this, [this] {
+            QStringList notes;
+            _doc->ConvertToV2(&notes);
+            emit Message(notes.isEmpty() ? QStringLiteral("converted to v2") : notes.join(QStringLiteral("; ")));
         });
-    });
+        auto* webapi = Line(st.value("webapi", "http://127.0.0.1:8090"));
+        form->addRow(QStringLiteral("unreal-ng WebAPI"), webapi);
+        connect(webapi, &QLineEdit::editingFinished, this,
+                [setSetting, webapi] { setSetting(QStringLiteral("WebAPI URL"), "webapi", webapi->text().toStdString()); });
+        auto* emu = Line(st.value("emulator", "auto"));
+        emu->setToolTip(QStringLiteral("auto = unreal-qt, or an emulator id / symbolic id"));
+        form->addRow(QStringLiteral("Emulator"), emu);
+        connect(emu, &QLineEdit::editingFinished, this,
+                [setSetting, emu] { setSetting(QStringLiteral("Emulator id"), "emulator", emu->text().toStdString()); });
+    }
+    else
+    {
+        // v2 (scenarios.md §1, §5): which instance the deck drives, how it shows other surfaces' actions
+        auto* target = new QComboBox;
+        target->setObjectName(QStringLiteral("target"));
+        target->addItem(QStringLiteral("follow the focused view"), QStringLiteral("follow"));
+        for (int v = 1; v <= 4; ++v)
+            target->addItem(QStringLiteral("view %1").arg(v), v);
+        const json t = st.value("target", json("follow"));
+        target->setCurrentIndex(t.is_object() ? std::max(0, target->findData(t.value("view", 1))) : 0);
+        form->addRow(QStringLiteral("Target"), target);
+        connect(target, &QComboBox::currentIndexChanged, this, [setSetting, target](int i) {
+            setSetting(QStringLiteral("Target"), "target",
+                       i == 0 ? json(nullptr) : json{{"view", target->itemData(i).toInt()}});
+        });
+        const json act = st.value("activity", json::object());
+        auto setActivity = [this](const char* key, json v) {
+            _doc->Apply(QStringLiteral("Activity"), [&](json& x) {
+                x["settings"]["activity"][key] = v;
+                return ops::Result{};
+            });
+        };
+        auto* enabled = new QCheckBox(QStringLiteral("show what other surfaces do"));
+        enabled->setObjectName(QStringLiteral("activity-enabled"));
+        enabled->setChecked(act.value("enabled", true));
+        form->addRow(QStringLiteral("Activity"), enabled);
+        connect(enabled, &QCheckBox::toggled, this, [setActivity](bool on) { setActivity("enabled", on); });
+        auto* flash = new QCheckBox(QStringLiteral("flash the keys of the same action"));
+        flash->setChecked(act.value("flash_keys", true));
+        form->addRow(QString(), flash);
+        connect(flash, &QCheckBox::toggled, this, [setActivity](bool on) { setActivity("flash_keys", on); });
+        auto* line = new QComboBox;
+        line->addItems({QStringLiteral("none"), QStringLiteral("line")});
+        line->setCurrentText(Qs(act.value("strip", "none")));
+        line->setToolTip(QStringLiteral("line: a message on the strip, e.g. \"PAUSE · Xbox pad\""));
+        form->addRow(QStringLiteral("Activity strip"), line);
+        connect(line, &QComboBox::currentTextChanged, this,
+                [setActivity](const QString& v) { setActivity("strip", v.toStdString()); });
+    }
     json shown{{"name", d.value("name", "")}, {"model", d.value("model", "")}};
     if (d.contains("settings"))
         shown["settings"] = d["settings"];
@@ -447,7 +507,7 @@ void Inspector::BuildNode(const QString& id)
             const QString f = QFileDialog::getOpenFileName(this, QStringLiteral("Key image"), QString(),
                                                            QStringLiteral("Images (*.png *.jpg *.jpeg *.gif *.bmp)"));
             if (!f.isEmpty())
-                Patch(QStringLiteral("Image"), {{"face", {{"image", f.toStdString()}}}});
+                Patch(QStringLiteral("Image"), {{"face", {{"image", ScenarioPath(f)}}}});
         });
     }
 
@@ -479,6 +539,10 @@ void Inspector::BuildNode(const QString& id)
                     &err))
                 emit Message(err);
         });
+        if (kind == "action")
+            BuildActionStep(form, d);
+        if (kind == "webapi")
+            form->addRow(new QLabel(QStringLiteral("REST, breaks when the route changes: prefer an action")));
         if (kind == "webapi" || kind == "http")
         {
             auto* method = new QComboBox;
@@ -525,6 +589,13 @@ void Inspector::BuildNode(const QString& id)
                 },
                 QStringLiteral("JSON; \"$ticks\" = dial ticks"));
         }
+        text(
+            QStringLiteral("State"), n.value("state", ""),
+            [](const QString& v) {
+                return json{{"state", v.trimmed().isEmpty() ? json(nullptr) : json(v.trimmed().toStdString())}};
+            },
+            QStringLiteral("a readout: the face is face_on while it is true (run.state.paused, toggle.<action id>, "
+                           "audio.mute.muted, debug.mode.enabled)"));
         auto* then = new QComboBox;
         then->addItems({QStringLiteral("stay"), QStringLiteral("back"), QStringLiteral("home")});
         then->setCurrentText(Qs(n.value("then", "stay")));
@@ -536,6 +607,13 @@ void Inspector::BuildNode(const QString& id)
     }
     else
     {
+        text(
+            QStringLiteral("Context"), n.value("context", ""),
+            [](const QString& v) {
+                return json{{"context", v.trimmed().isEmpty() ? json(nullptr) : json(v.trimmed().toStdString())}};
+            },
+            QStringLiteral("entering the menu sets this surface context (play, ttd, debug, ...); a context the "
+                           "emulator sets brings the deck here"));
         const json nav = n.value("nav", json::object());
         auto* crumbs = new QComboBox;
         crumbs->addItems(
@@ -600,4 +678,121 @@ void Inspector::BuildNode(const QString& id)
     json shown = n;
     shown.erase("items");
     _json->setPlainText(Qs(shown.dump(2)));
+}
+
+std::string Inspector::ScenarioPath(const QString& file) const
+{
+    // a picked file as the scenario should name it: under the data directory $data/..., else relative to the
+    // scenario's folder (paths are relative to it, not to the working directory); absolute only for an unsaved one
+    const std::string path = QDir::cleanPath(file).toStdString();
+    const auto root = sdb::data::Root();
+    if (!root.empty())
+    {
+        const std::string r = root.lexically_normal().generic_string();
+        if (path.size() > r.size() && path.compare(0, r.size(), r) == 0 && path[r.size()] == '/')
+            return "$data/" + path.substr(r.size() + 1);
+    }
+    if (_doc->Path().isEmpty())
+        return path;
+    return _doc->RelativePath(file).toStdString();
+}
+
+void Inspector::SetStep(const QString& text, const char* key, const json& value)
+{
+    QString err;
+    const std::string id = _shownId.toStdString();
+    if (!_doc->Apply(
+            text,
+            [&](json& d) {
+                json* node = ops::FindNode(d, id);
+                if (!node || !node->contains("do"))
+                    return ops::Result::Fail("gone");
+                if (value.is_null())
+                    (*node)["do"].erase(key);
+                else
+                    (*node)["do"][key] = value;  // replaced as a whole (a merge patch would merge objects)
+                return ops::Result{true, {}, id};
+            },
+            &err))
+        emit Message(err);
+}
+
+void Inspector::BuildActionStep(QFormLayout* form, const json& d)
+{
+    // the catalogue action: a picker (group: label [id]), its params and kind, value and hold (scenarios.md §2)
+    EditorCatalogue& catalogue = EditorCatalogue::Instance();
+    const std::string aid = d.value("id", "");
+    auto* pick = new QComboBox;
+    pick->setObjectName(QStringLiteral("action-id"));
+    pick->setEditable(true);
+    pick->setInsertPolicy(QComboBox::NoInsert);
+    for (const auto& e : catalogue.Get().actions)
+        pick->addItem(Qs(e.group + ": " + e.label + "  [" + e.id + "]"), Qs(e.id));
+    int at = pick->findData(Qs(aid));
+    if (at < 0)
+    {
+        pick->addItem(Qs(aid + "  (not in the catalogue)"), Qs(aid));
+        at = pick->count() - 1;
+    }
+    pick->setCurrentIndex(at);
+    form->addRow(QStringLiteral("Action id"), pick);
+    auto setId = [this, aid](QString t) {
+        t = t.trimmed();
+        const qsizetype lb = t.lastIndexOf(QLatin1Char('[')), rb = t.lastIndexOf(QLatin1Char(']'));
+        if (lb >= 0 && rb > lb)
+            t = t.mid(lb + 1, rb - lb - 1);  // "Group: Label  [id]" -> id
+        if (const qsizetype sp = t.indexOf(QLatin1Char(' ')); sp > 0)
+            t = t.left(sp);
+        if (!t.isEmpty() && t.toStdString() != aid)
+            SetStep(QStringLiteral("Action id"), "id", t.toStdString());
+    };
+    connect(pick, &QComboBox::activated, this,
+            [pick, setId](int i) { setId(pick->itemData(i).toString()); });
+    connect(pick->lineEdit(), &QLineEdit::editingFinished, this, [pick, setId] { setId(pick->currentText()); });
+
+    const sdb::cat::Entry* e = catalogue.Get().Find(aid);
+    QString about = e ? QStringLiteral("%1 action%2%3").arg(Qs(e->kind), e->held ? QStringLiteral(", held") : QString(),
+                                                           e->gui ? QStringLiteral(", unreal-qt only") : QString())
+                      : QStringLiteral("not in the catalogue of %1").arg(catalogue.Source());
+    if (e && !e->params.empty())
+        about += QStringLiteral("\nparams: ") + Qs(e->params);
+    auto* info = new QLabel(about);
+    info->setObjectName(QStringLiteral("action-info"));
+    info->setWordWrap(true);
+    form->addRow(QString(), info);
+
+    auto* value = Line(d.contains("value") ? (d["value"].is_string() ? d["value"].get<std::string>() : d["value"].dump())
+                                           : std::string());
+    value->setObjectName(QStringLiteral("action-value"));
+    value->setToolTip(QStringLiteral(
+        "JSON: the params of a press ({\"model\": \"PENTAGON\"}), a dial's delta ({\"d\": \"$ticks\", \"rate\": "
+        "\"$rate\", ...params}), the text of a text action; empty = a plain press"));
+    form->addRow(QStringLiteral("Value"), value);
+    connect(value, &QLineEdit::editingFinished, this, [this, value, old = value->text()] {
+        if (value->text() == old)
+            return;
+        const std::string t = value->text().trimmed().toStdString();
+        json v = t.empty() ? json(nullptr) : json::parse(t, nullptr, false);
+        if (v.is_discarded())
+            v = t;  // plain text (ctx.set, input.type)
+        SetStep(QStringLiteral("Action value"), "value", v);
+    });
+    auto* hold = new QCheckBox(QStringLiteral("hold: press on the key's press, release on its release"));
+    hold->setObjectName(QStringLiteral("action-hold"));
+    hold->setChecked(d.value("hold", false));
+    form->addRow(QString(), hold);
+    connect(hold, &QCheckBox::toggled, this,
+            [this](bool on) { SetStep(QStringLiteral("Hold"), "hold", on ? json(true) : json(nullptr)); });
+    auto* refresh = new QPushButton(QStringLiteral("Catalogue from the running emulator"));
+    refresh->setObjectName(QStringLiteral("catalogue-refresh"));
+    refresh->setToolTip(QStringLiteral("GET /api/v1/controllers/actions; now: %1").arg(catalogue.Source()));
+    form->addRow(refresh);
+    connect(refresh, &QPushButton::clicked, this, [this] {
+        const json st = _doc->Doc().value("settings", json::object());
+        QString msg;
+        EditorCatalogue::Instance().Refresh(st.value("webapi", DefaultHost()), &msg);
+        emit Message(msg);
+        _doc->Recheck();
+        Rebuild();
+    });
 }

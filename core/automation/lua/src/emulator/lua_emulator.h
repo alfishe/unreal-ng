@@ -2082,6 +2082,20 @@ public:
             opts["effect"] = effect.value_or("identify");
             return hostControllersCall(s, "rumble", opts);
         });
+        // controllers_output(device, pattern | {steps=, clicks=, marks=}) -> a control surface's outputs (the Surface
+        // Dial): a haptic pattern (tick, double, buzz), its steps per turn and clicks, or a seek's marks as its layer
+        // plays them
+        lua.set_function("controllers_output", [hostControllersCall](sol::this_state s, const std::string& device,
+                                                                     sol::object what) {
+            sol::table opts = sol::state_view(s).create_table();
+            if (what.is<sol::table>())
+                for (const auto& [key, value] : what.as<sol::table>())
+                    opts[key] = value;
+            else if (what.is<std::string>())
+                opts["pattern"] = what.as<std::string>();
+            opts["device"] = device;
+            return hostControllersCall(s, "output", opts);
+        });
         lua.set_function("media", [mediaCall](sol::this_state s, const std::string& verb, sol::optional<std::string> slot,
                                               sol::optional<std::string> path, sol::optional<sol::table> opts) {
             return mediaCall(s, verb, slot.value_or(""), path.value_or(""), opts);

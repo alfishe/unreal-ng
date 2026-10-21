@@ -696,7 +696,17 @@ for device in h["devices"]:
         emu.controllers_rumble(device["id"], "clicks")   # identify (default), low, high, clicks, left-trigger, ...
 ```
 
-`controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`; the host side needs the Qt client
+A control surface's outputs (the Surface Dial; [command-interface.md §15](./command-interface.md#15-game-controllers)):
+
+```python
+emu.controllers_output(dial, pattern="double")           # tick, double, buzz
+emu.controllers_output(dial, steps=36, clicks="off")     # its feel until the context changes (off: a free wheel)
+emu.controllers_output(dial, marks="ten_seconds,second") # what its layer plays for a seek's marks
+```
+
+`controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device,
+**options)`; `controllers_host("devices")` lists each device's `role`, `layers`, `context`, `outputs` and `feel`. The
+host side needs the Qt client
 (a headless process answers `unavailable`).
 
 ### Host Actions

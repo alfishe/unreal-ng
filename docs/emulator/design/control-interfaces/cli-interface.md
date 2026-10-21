@@ -416,6 +416,7 @@ surfaces: [command-interface.md §15](./command-interface.md#15-game-controllers
 | `controllers bindings`, `bind <control> field=val ..`, `unbind <control>`, `scheme <id\|none>` | The effective bindings and their changes in a user profile |
 | `controllers haptics [device]` | Whether the emulator drives each device's motors (or why not) and its test effects |
 | `controllers rumble <device> [effect]` | Play a test effect: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz` |
+| `controllers output <device> <tick\|double\|buzz>`, `output <device> steps=N clicks=on\|off`, `output <device> marks=a,b` | A control surface's outputs (the Surface Dial): a haptic pattern; its steps per turn and clicks (until its context changes); a seek's marks as its top layer plays them |
 
 `--json` prints the reply every surface returns. The host verbs need the Qt client (it owns the game controllers).
 
@@ -424,6 +425,8 @@ surfaces: [command-interface.md §15](./command-interface.md#15-game-controllers
 OK: Swell (attack, hold, release) on Xbox Elite Wireless Controller Series 2
 > controllers rumble usb:045e:0b00:0516:3032 identify
 Error: Xbox Elite Wireless Controller Series 2: macOS drives no motors of an Xbox pad over USB: connect the pad over Bluetooth
+> controllers output bt:045e:091b:3c1e2f4a steps=36 clicks=off
+OK: 36 steps per turn, free wheel on Surface Dial (until its context or layers change)
 ```
 
 ### Host Action Commands

@@ -1,0 +1,803 @@
+{
+ "format": "unreal-ng-action-catalogue",
+ "version": 1,
+ "actions": [
+  {
+   "id": "run.pause_toggle",
+   "label": "Pause / continue",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.step_in",
+   "label": "Step in",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.step_over",
+   "label": "Step over",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.step_out",
+   "label": "Step out",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.frame_step",
+   "label": "Frame step",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.wait_int",
+   "label": "Run to interrupt",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.to_scanline",
+   "label": "Run to scanline",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.n_scanlines",
+   "label": "Run N scanlines",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.step_by",
+   "label": "Step by (in forward, back through the history)",
+   "group": "Run",
+   "kind": "delta",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.turbo_hold",
+   "label": "Turbo while held",
+   "group": "Run",
+   "kind": "press",
+   "held": true,
+   "gui": false
+  },
+  {
+   "id": "ttd.record_toggle",
+   "label": "Start / stop recording",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.step_back_frame",
+   "label": "Back one frame",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.step_forward_frame",
+   "label": "Forward one frame",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.step_back_instruction",
+   "label": "Back one instruction",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.step_forward_instruction",
+   "label": "Forward one instruction",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.reverse_step",
+   "label": "Reverse step",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.reverse_continue",
+   "label": "Reverse continue",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.bookmark_add",
+   "label": "Add a bookmark",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.resume_live",
+   "label": "Resume live",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.jog_frames",
+   "label": "Jog frames",
+   "group": "Time travel",
+   "kind": "delta",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.jog_instructions",
+   "label": "Jog instructions",
+   "group": "Time travel",
+   "kind": "delta",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.seek_by",
+   "label": "Seek by (accelerated, with marks)",
+   "group": "Time travel",
+   "kind": "delta",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.find_last_write",
+   "label": "ttd.find_last_write",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.bookmark_prev",
+   "label": "ttd.bookmark_prev",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.bookmark_next",
+   "label": "ttd.bookmark_next",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.step_back_scanline",
+   "label": "ttd.step_back_scanline",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ctx.set",
+   "label": "Set the surface context",
+   "group": "Context",
+   "kind": "text",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "mach.reset",
+   "label": "Reset (hold 1 s)",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": true,
+   "gui": false
+  },
+  {
+   "id": "mach.nmi",
+   "label": "NMI",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "mach.turbo_toggle",
+   "label": "Turbo",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "cap.record_toggle",
+   "label": "cap.record_toggle",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "cap.clip_last",
+   "label": "cap.clip_last",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.pause",
+   "label": "Pause",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.resume",
+   "label": "Continue",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.steps",
+   "label": "Step N instructions",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "count? (1..100000, 1)"
+  },
+  {
+   "id": "run.frames",
+   "label": "Run N frames",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "count? (1..10000, 1)"
+  },
+  {
+   "id": "run.tstates",
+   "label": "Run N t-states",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "count? (1..10000000, 1)"
+  },
+  {
+   "id": "mach.start",
+   "label": "Start a machine",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "model, ram_kb?, replace? (true: in place), stranded? (keep), ram_power_on? (random|zero), select? (true)"
+  },
+  {
+   "id": "mach.cold_reset",
+   "label": "Restart (cold)",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "ram_power_on? (random|zero)"
+  },
+  {
+   "id": "cap.screenshot_save",
+   "label": "Save a screenshot",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "path, format? (png|bmp|...), area?, source? (presented|live|window)"
+  },
+  {
+   "id": "input.key",
+   "label": "Key",
+   "group": "Input",
+   "kind": "press",
+   "held": true,
+   "gui": false,
+   "params": "key (or keys: a list, \"caps+1\"), hold? (false: a tap), frames? (2)"
+  },
+  {
+   "id": "input.type",
+   "label": "Type text",
+   "group": "Input",
+   "kind": "text",
+   "held": false,
+   "gui": false,
+   "params": "tokenized? (false), delay_frames? (2)"
+  },
+  {
+   "id": "input.macro",
+   "label": "Key macro",
+   "group": "Input",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "name (e_mode, cat, format, break, ...)"
+  },
+  {
+   "id": "input.joystick",
+   "label": "Joystick",
+   "group": "Input",
+   "kind": "press",
+   "held": true,
+   "gui": false,
+   "params": "buttons (up, down, left, right, fire; a list or \"up+fire\"), or dir + fire?; hold? (false: a tap), frames?"
+  },
+  {
+   "id": "input.release_all",
+   "label": "Release all keys and buttons",
+   "group": "Input",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "basic.run",
+   "label": "Run a BASIC command",
+   "group": "BASIC",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "command? (RUN), press_enter? (true), wait_report? (false), timeout_ms? (30000)"
+  },
+  {
+   "id": "basic.inject",
+   "label": "Write a BASIC program",
+   "group": "BASIC",
+   "kind": "text",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "basic.clear",
+   "label": "NEW (clear the program)",
+   "group": "BASIC",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "basic.mode",
+   "label": "BASIC mode from the 128K menu",
+   "group": "BASIC",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "mode (48k|128k)"
+  },
+  {
+   "id": "feature.toggle",
+   "label": "Toggle a feature",
+   "group": "Settings",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "name (GET /features), on? (else flips)"
+  },
+  {
+   "id": "set.speed",
+   "label": "Speed",
+   "group": "Settings",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "value? (1, 2, 4, 8, 16; else the next one)"
+  },
+  {
+   "id": "set.toggle",
+   "label": "Toggle a setting",
+   "group": "Settings",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "name (turbo_mode, fast_tape, turbo_tape, fast_disk, turbo_audio, trdos_traps, ay_punch, beeper_punch), on?"
+  },
+  {
+   "id": "set.value",
+   "label": "Set a setting",
+   "group": "Settings",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "name, value (speed, the bool ones, ay_voicing, ay_room, ay_punch, beeper_punch)"
+  },
+  {
+   "id": "audio.mute_toggle",
+   "label": "Mute",
+   "group": "Audio",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "on? (else flips)"
+  },
+  {
+   "id": "audio.source_mute",
+   "label": "Mute a source",
+   "group": "Audio",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "source (beeper, ay1, ay2, fm1, fm2, covox, gs, gs_mp3, moonsound_fm, moonsound_pcm, cd0..cd3), on?"
+  },
+  {
+   "id": "audio.volume_by",
+   "label": "Volume",
+   "group": "Audio",
+   "kind": "delta",
+   "held": false,
+   "gui": false,
+   "params": "source? (all), step? (0.05 per detent)"
+  },
+  {
+   "id": "media.open",
+   "label": "Open software",
+   "group": "Media",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "path, kind? (auto|snapshot|tape|disk), drive? (A), autostart? (true), switch_model?"
+  },
+  {
+   "id": "media.tape",
+   "label": "Tape",
+   "group": "Media",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "op (play|pause|toggle|stop|rewind|eject|seek), block?"
+  },
+  {
+   "id": "media.eject",
+   "label": "Eject",
+   "group": "Media",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "drive (A..D, tape, a slot id), save? / discard? / export?"
+  },
+  {
+   "id": "media.protect",
+   "label": "Write protect",
+   "group": "Media",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "drive (A..D, a slot id), on? (else flips)"
+  },
+  {
+   "id": "media.save",
+   "label": "Save the medium",
+   "group": "Media",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "drive (A..D, a slot id), path?"
+  },
+  {
+   "id": "media.create",
+   "label": "New blank disk",
+   "group": "Media",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "drive (A..D), format?, cylinders?, sides?"
+  },
+  {
+   "id": "snapshot.quick",
+   "label": "Quick snapshot",
+   "group": "Media",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "op (save|load), slot? (1..9, 1), dir?"
+  },
+  {
+   "id": "snapshot.save",
+   "label": "Save a snapshot",
+   "group": "Media",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "path (.sna, .z80, .szx), force? (false)"
+  },
+  {
+   "id": "video.overscan_toggle",
+   "label": "Overscan",
+   "group": "Video",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "on? (else flips)"
+  },
+  {
+   "id": "video.temporal",
+   "label": "De-flicker (ZX DLSS)",
+   "group": "Video",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "algorithm? (a name, or off; else flips between off and mod-tpgwafsd)"
+  },
+  {
+   "id": "dbg.mode_toggle",
+   "label": "Debug mode",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "on? (else flips)"
+  },
+  {
+   "id": "dbg.breakpoints_clear",
+   "label": "Clear breakpoints",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "dbg.breakpoint_hits_reset",
+   "label": "Reset hit counts",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "id? (else all)"
+  },
+  {
+   "id": "ttd.start",
+   "label": "Start recording",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.stop",
+   "label": "Stop recording",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.seek",
+   "label": "Go to a frame or bookmark",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "frame + tinframe?, or bookmark"
+  },
+  {
+   "id": "ttd.bookmark_delete",
+   "label": "Delete a bookmark",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "label"
+  },
+  {
+   "id": "ttd.invalidate",
+   "label": "Drop the history",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.history_limit",
+   "label": "History limit",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "frames?, bytes?"
+  },
+  {
+   "id": "ttd.journal",
+   "label": "Input journal",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "enabled"
+  },
+  {
+   "id": "ttd.dump",
+   "label": "Save the session",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "path"
+  },
+  {
+   "id": "ttd.load",
+   "label": "Open a session",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "path"
+  },
+  {
+   "id": "ttd.scrub_back",
+   "label": "Scrub back",
+   "group": "Time travel",
+   "kind": "level",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "ttd.scrub_forward",
+   "label": "Scrub forward",
+   "group": "Time travel",
+   "kind": "level",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "dbg.open",
+   "label": "Open the debugger",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "dbg.focus_next_pane",
+   "label": "Next debugger pane",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "dbg.focus_prev_pane",
+   "label": "Previous debugger pane",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "dbg.cursor_up",
+   "label": "Cursor up in the pane",
+   "group": "Debugger",
+   "kind": "press",
+   "held": true,
+   "gui": true
+  },
+  {
+   "id": "dbg.cursor_down",
+   "label": "Cursor down in the pane",
+   "group": "Debugger",
+   "kind": "press",
+   "held": true,
+   "gui": true
+  },
+  {
+   "id": "dbg.cursor_left",
+   "label": "Cursor left in the pane",
+   "group": "Debugger",
+   "kind": "press",
+   "held": true,
+   "gui": true
+  },
+  {
+   "id": "dbg.cursor_right",
+   "label": "Cursor right in the pane",
+   "group": "Debugger",
+   "kind": "press",
+   "held": true,
+   "gui": true
+  },
+  {
+   "id": "dbg.page_up",
+   "label": "Page up in the pane",
+   "group": "Debugger",
+   "kind": "press",
+   "held": true,
+   "gui": true
+  },
+  {
+   "id": "dbg.page_down",
+   "label": "Page down in the pane",
+   "group": "Debugger",
+   "kind": "press",
+   "held": true,
+   "gui": true
+  },
+  {
+   "id": "dbg.memory_follow",
+   "label": "Memory follows the value under the cursor",
+   "group": "Debugger",
+   "kind": "press",
+   "held": true,
+   "gui": true
+  },
+  {
+   "id": "cap.screenshot",
+   "label": "Screenshot",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "dbg.breakpoint_toggle_pc",
+   "label": "dbg.breakpoint_toggle_pc",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "dbg.labels_toggle",
+   "label": "dbg.labels_toggle",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "osd.keyboard",
+   "label": "osd.keyboard",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "osd.quick_menu",
+   "label": "osd.quick_menu",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  }
+ ]
+}

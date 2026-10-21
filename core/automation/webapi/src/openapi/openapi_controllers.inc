@@ -95,7 +95,10 @@
         Json::Value& get = paths["/api/v1/controllers/{verb}"]["get"];
         get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings, haptics";
         get["description"] =
-            "devices: the connected host devices. context: the machine, the loaded file's SHA-256, the manual game "
+            "devices: the connected host devices; with the Qt client each has its role (role_set: chosen, else its "
+            "family's default: a Surface Dial starts as a debugger-remote), the layers up (play, debug, a context "
+            "layer such as @ttd), the context of the instance it acts on, its outputs (haptic, steps) and the feel of "
+            "its top layer (steps, clicks, marks, min_interval_ms). context: the machine, the loaded file's SHA-256, the manual game "
             "profile, the applied profiles and the warnings. profiles (?set=all|play|debug|scheme|game&machine=): "
             "every profile with its kind, scope, specificity, match and whether it applies; shipped games not parsed "
             "yet have loaded=false. profile (?id=): one profile as JSON ('profile') and YAML ('yaml'). bindings "
@@ -109,7 +112,8 @@
 
         Json::Value& post = paths["/api/v1/controllers/{verb}"]["post"];
         post["summary"] =
-            "Host game controllers: save, delete, apply a profile; bind, unbind a control; the scheme; rumble";
+            "Host game controllers: save, delete, apply a profile; bind, unbind a control; the scheme; rumble; "
+            "output";
         post["description"] =
             "Body (JSON) or query. save {text}: a profile as YAML or JSON (schema 1) into the user's profiles, applied "
             "at once. delete {id}: a user profile (a built-in of the same id comes back). apply {id}: the game profile "
@@ -121,9 +125,13 @@
             "scheme/sinclair-1; 'none' = no scheme). rumble {device, effect}: play a test effect on a host device "
             "(identify by default; low, high, clicks, left-trigger, right-trigger, swell as haptics lists them), as "
             "debug feedback that plays while the game's haptics are held back; unavailable with the reason when the "
-            "emulator cannot drive the device's motors";
+            "emulator cannot drive the device's motors. output {device, pattern | steps, clicks | marks}: a control "
+            "surface's outputs (the Surface Dial): play a pattern (tick, double, buzz); set its steps per turn "
+            "(1..3600) and clicks (on: a click at each step, off: a free wheel) until its context or layers change; "
+            "or play a seek's marks (second, ten_seconds, bookmark, edge, barrier; strongest first) as its top "
+            "layer's feel plays them, with the marks' rate limit (played, mark, pattern, else reason)";
         post["tags"].append("Controllers");
-        verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble"});
+        verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble", "output"});
         replies(post);
     }
 

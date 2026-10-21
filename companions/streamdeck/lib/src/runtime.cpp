@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <deque>
 
 #include "sdb/format.h"
 #include "sdb/scenariorender.h"
@@ -56,6 +57,7 @@ Runtime::Runtime(Device& dev, Scenario s, std::unique_ptr<ActionHost> host, Runt
             _brightnessDirty = true;
         };
         cb.note = [this](const std::string& line) { _dev.Note(line); };
+        cb.executor = _opt.executor;
         host = MakeSystemHost(_s.settings, cb, &_cancel);
     }
     _host = std::move(host);
@@ -105,30 +107,55 @@ void Runtime::Run(const std::atomic<bool>& stop)
         });
     if (!_opt.syncActions && !_monitor.joinable())
         _monitor = std::thread([this] {
-            // time travel on the strip (strip.status "ttd"): the recording span while it records, the position after
+            // time travel on the strip (strip.status "ttd"): the recording span while it records, the position after;
+            // and the readouts of the page's state-bound faces nobody pushes (a few times a second, at once after an
+            // action)
             auto next = std::chrono::steady_clock::now();
+            auto nextReadouts = next;
             while (!_workerStop)
             {
                 // 50 readouts a second on a fixed beat: the poll's own time does not stretch the period
                 next += std::chrono::milliseconds(20);
-                const auto now = std::chrono::steady_clock::now();
+                auto now = std::chrono::steady_clock::now();
                 if (next < now)
                     next = now;
                 std::this_thread::sleep_until(next);
+                now = std::chrono::steady_clock::now();
                 double fps = 50;
+                bool ttd = false;
+                std::vector<std::string> paths;
                 {
                     std::lock_guard l(_mu);
-                    const bool wanted = _page.strip && _page.strip->status == "ttd";
-                    if (!wanted)
-                        continue;
-                    _monitorKick = false;
-                    fps = _page.strip->fps;
+                    ttd = _page.strip && _page.strip->status == "ttd";
+                    if (ttd)
+                        fps = _page.strip->fps;
+                    const bool kick = _monitorKick.exchange(false);
+                    if (kick || now >= nextReadouts)
+                    {
+                        nextReadouts = now + std::chrono::milliseconds(std::max(20, _opt.readoutPollMs));
+                        for (const Node* n : _page.keys)
+                            if (n && !n->state.empty() && !_pushed.count(n->state) &&
+                                std::find(paths.begin(), paths.end(), n->state) == paths.end())
+                                paths.push_back(n->state);
+                    }
                 }
-                const json t = _host->TtdState();
-                std::string text = TtdReadout(t, fps);
-                std::lock_guard l(_mu);
-                if (_page.strip && _page.strip->status == "ttd")
-                    _status = std::move(text);
+                if (ttd)
+                {
+                    const json t = _host->TtdState();
+                    std::string text = TtdReadout(t, fps);
+                    std::lock_guard l(_mu);
+                    if (_page.strip && _page.strip->status == "ttd")
+                        _status = std::move(text);
+                }
+                for (const auto& path : paths)
+                {
+                    json v = _host->Readout(path);
+                    if (v.is_null())
+                        continue;
+                    std::lock_guard l(_mu);
+                    if (!_pushed.count(path))
+                        _readouts[path] = std::move(v);
+                }
             }
         });
     NoteMenu();
@@ -193,6 +220,7 @@ void Runtime::Step(int timeoutMs)
             _pendingReload.reset();
             _nav.Rebind(_s, ids);
             _toggles.clear();
+            _holds.clear();
             force = true;
             _dev.Note("scenario reloaded: " + _s.name + ", menu " + JoinPath(Layout(_s, _nav, _m).path));
         }
@@ -243,9 +271,13 @@ void Runtime::Render(bool force)
             brightness = _brightness;
             _brightnessDirty = false;
         }
+        const std::int64_t now = NowMs();
+        for (auto it = _flashUntil.begin(); it != _flashUntil.end();)
+            it = now >= it->second ? _flashUntil.erase(it) : std::next(it);
         for (int k = 0; k < _m.keys; ++k)
         {
-            const bool pressed = _pressed[static_cast<size_t>(k)];
+            // an activity flash looks like a press (scenarios.md §5)
+            const bool pressed = _pressed[static_cast<size_t>(k)] || _flashUntil.count(k);
             std::size_t h = 1;
             Rgb img;
             if (k == _page.backKey)
@@ -257,11 +289,11 @@ void Runtime::Render(bool force)
             }
             else if (const Node* n = _page.keys[static_cast<size_t>(k)])
             {
-                const bool on = _toggles.count(n->id) && _toggles.at(n->id);
+                const bool on = IsOn(*n);
                 const Face& f = on && n->faceOn ? *n->faceOn : n->face;
                 h = Mix(Mix(Mix(HashFace(f), HashStr(n->id + n->title)), pressed), n->IsMenu());
                 if (force || h != _sentKey[static_cast<size_t>(k)])
-                    img = RenderFace(f, n->title, pressed, n->IsMenu(), _safePad, _faceSize);
+                    img = RenderFace(f, n->title, pressed, n->IsMenu(), _safePad, _faceSize, _s.dir);
             }
             if (h == 1 && (force || _sentKey[static_cast<size_t>(k)] != 1))
                 img = RenderEmptyKey(_faceSize);
@@ -291,7 +323,7 @@ void Runtime::Render(bool force)
             if (force || h != _sentStrip)
             {
                 strip = RenderStrip(_page, _m.lcdLogicalW, _m.lcdLogicalH, _m.dialTileW,
-                                    bannerOn ? _banner : std::string(), left, _status);
+                                    bannerOn ? _banner : std::string(), left, _status, _s.dir);
                 _sentStrip = h;
             }
         }
@@ -302,7 +334,7 @@ void Runtime::Render(bool force)
     std::string pageJson;
     {
         std::lock_guard l(_mu);
-        pageJson = DescribePage(_s, _nav, _m, _page, _toggles).dump();
+        pageJson = DescribePage(_s, _nav, _m, _page, OnStates()).dump();
         if (pageJson == _sentPage && !force)
             pageJson.clear();
         else
@@ -373,6 +405,12 @@ void Runtime::Handle(const Event& e, std::int64_t now)
             if (e.index < 0 || e.index >= _m.keys)
                 return;
             _pressed[static_cast<size_t>(e.index)] = false;
+            if (auto held = _holds.find(e.index); held != _holds.end())
+            {  // the release of a held action (hold: true): the job the press made, on whatever page shows now
+                Job release = std::move(held->second);
+                _holds.erase(held);
+                Enqueue(std::move(release));
+            }
             if (e.index == _page.backKey && _downAt.count(e.index))
             {
                 const bool hold = now - _downAt[e.index] >= _opt.holdMs;
@@ -402,7 +440,25 @@ void Runtime::Handle(const Event& e, std::int64_t now)
         case EventType::DialDown:
             if (e.index >= 0 && e.index < static_cast<int>(_page.dials.size()))
                 if (const Dial* d = _page.dials[static_cast<size_t>(e.index)]; d && d->press)
-                    Enqueue({*d->press, sdb::Format("dial {} press", e.index), json::object(), "stay"});
+                {
+                    Job j{*d->press, sdb::Format("dial {} press", e.index), json::object(), "stay"};
+                    if (d->press->kind == "action" && d->press->spec.value("hold", false))
+                    {
+                        j.phase = 1;
+                        Job release = j;
+                        release.phase = -1;
+                        _holds[1000 + e.index] = std::move(release);
+                    }
+                    Enqueue(std::move(j));
+                }
+            break;
+        case EventType::DialUp:
+            if (auto held = _holds.find(1000 + e.index); held != _holds.end())
+            {
+                Job release = std::move(held->second);
+                _holds.erase(held);
+                Enqueue(std::move(release));
+            }
             break;
         case EventType::LcdTap:
             if (_page.crumbs == Crumbs::Strip)
@@ -449,6 +505,16 @@ void Runtime::Activate(int key)
         return;
     }
     Job j{n->action, n->id, json::object(), n->then, n->action.kind == "toggle"};
+    j.state = n->state;
+    if (n->action.kind == "action" && n->action.spec.value("hold", false))
+    {
+        // press now, release on the key's release (KeyUp); "then" follows the release
+        j.phase = 1;
+        Job release = j;
+        release.phase = -1;
+        j.then = "stay";
+        _holds[key] = std::move(release);
+    }
     Enqueue(std::move(j));
 }
 
@@ -492,8 +558,17 @@ void Runtime::RunJob(Job& j)
             f();
         }
     };
-    if (j.toggle)
-        withLock([&] { state = _toggles[j.node]; });
+    std::string dir;
+    withLock([&] {
+        if (j.toggle)
+            state = _toggles[j.node];
+        dir = _s.dir;
+    });
+    json vars = j.vars;
+    if (j.phase != 0)
+        vars["phase"] = j.phase;
+    if (!dir.empty())
+        vars["__dir"] = dir;
     ActionResult r;
     if (_opt.dryRun)
         r = {true, "dry run: " + j.action.kind + " " + j.action.spec.dump()};
@@ -502,7 +577,7 @@ void Runtime::RunJob(Job& j)
         _cancel = false;
         try
         {
-            r = Execute(j.action, *_host, j.vars, j.toggle ? &state : nullptr);
+            r = Execute(j.action, *_host, vars, j.toggle ? &state : nullptr);
         }
         catch (const std::exception& e)
         {
@@ -516,6 +591,9 @@ void Runtime::RunJob(Job& j)
     withLock([&] {
         if (j.toggle && r.ok)
             _toggles[j.node] = state;
+        // a state-bound face nobody reports yet: flips on success, as a toggle does (the readout wins once it comes)
+        if (!j.toggle && r.ok && j.phase == 0 && !j.state.empty() && !_readouts.count(j.state))
+            _toggles[j.node] = !_toggles[j.node];
         _last.push_back({{"node", j.node}, {"ok", r.ok}, {"message", r.message}});
         if (_last.size() > 20)
             _last.erase(_last.begin());
@@ -544,6 +622,37 @@ void Runtime::ApplyNav(const json& r)
         moved = _nav.GoTo(r.value("node", ""));
     else if (to == "scenario" && onSwitchScenario)
         onSwitchScenario(r.value("file", ""));
+    else if (to == "context")
+    {
+        // the nearest menu declaring it: the current path (innermost first), below the current menu, then anywhere
+        const std::string ctx = r.value("context", "");
+        const Node* target = nullptr;
+        const auto& stack = _nav.Stack();
+        for (auto it = stack.rbegin(); it != stack.rend() && !target; ++it)
+            if ((*it)->context == ctx)
+                target = *it;
+        auto below = [&](const Node& from) -> const Node* {
+            std::deque<const Node*> q{&from};
+            while (!q.empty())
+            {
+                const Node* n = q.front();
+                q.pop_front();
+                if (n->IsMenu() && n->context == ctx)
+                    return n;
+                for (const auto& c : n->items)
+                    q.push_back(&c);
+            }
+            return nullptr;
+        };
+        if (!target && !ctx.empty())
+            target = below(_nav.Current());
+        if (!target && !ctx.empty())
+            target = below(_s.root);
+        _context = ctx;  // the core's: not sent back
+        _contextSent = true;
+        if (target && target != &_nav.Current())
+            moved = _nav.GoTo(target->id);
+    }
     if (moved)
     {
         _page = Layout(_s, _nav, _m);
@@ -562,6 +671,82 @@ void Runtime::NoteMenu()
 {
     _status.clear();  // a readout belongs to the menu that showed it
     _dev.Note("menu: " + JoinPath(_page.path));
+    // contexts on menus (scenarios.md §7): the innermost menu of the path that declares one sets it; leaving every
+    // such menu returns to the default ("")
+    std::string ctx;
+    const auto& stack = _nav.Stack();
+    for (auto it = stack.rbegin(); it != stack.rend(); ++it)
+        if (!(*it)->context.empty())
+        {
+            ctx = (*it)->context;
+            break;
+        }
+    if (ctx == _context && (_contextSent || ctx.empty()))
+        return;
+    _context = ctx;
+    _contextSent = true;
+    const json spec{{"kind", "action"}, {"id", "ctx.set"}, {"value", ctx}};
+    Enqueue({Action{"action", spec}, "context " + (ctx.empty() ? std::string("(default)") : ctx), json::object(),
+             "stay"});
+}
+
+bool Runtime::IsOn(const Node& n) const
+{
+    if (!n.state.empty())
+        if (auto it = _readouts.find(n.state); it != _readouts.end())
+        {
+            const json& v = it->second;  // true / false, a number, or a readout object ({on}: toggle.<id>)
+            if (v.is_object())
+                return v.contains("on") && v["on"].is_boolean() && v["on"].get<bool>();
+            return v.is_boolean() ? v.get<bool>() : v.is_number() ? v.get<double>() != 0 : !v.is_null();
+        }
+    auto t = _toggles.find(n.id);
+    return t != _toggles.end() && t->second;
+}
+
+std::map<std::string, bool> Runtime::OnStates() const
+{
+    std::map<std::string, bool> on = _toggles;
+    for (const Node* n : _page.keys)
+        if (n && !n->state.empty())
+            on[n->id] = IsOn(*n);
+    return on;
+}
+
+void Runtime::SetReadout(const std::string& path, const json& value)
+{
+    std::lock_guard l(_mu);
+    _pushed[path] = true;
+    _readouts[path] = value;
+}
+
+void Runtime::OnContext(const std::string& context)
+{
+    std::lock_guard l(_mu);
+    _navRequests.push_back({{"to", "context"}, {"context", context}});
+    ++_posted;
+}
+
+std::string Runtime::Context() const
+{
+    std::lock_guard l(_mu);
+    return _context;
+}
+
+void Runtime::ShowActivity(const std::string& actionId, const std::string& text)
+{
+    std::lock_guard l(_mu);
+    const Activity& a = _s.settings.activity;
+    if (!a.enabled || std::find(a.ignore.begin(), a.ignore.end(), actionId) != a.ignore.end())
+        return;
+    if (a.flashKeys)
+        for (int k = 0; k < static_cast<int>(_page.keys.size()); ++k)
+            if (const Node* n = _page.keys[static_cast<size_t>(k)]; n && !n->IsMenu() && n->activity &&
+                                                                     n->action.kind == "action" &&
+                                                                     n->action.spec.value("id", "") == actionId)
+                _flashUntil[k] = NowMs() + 200;
+    if (a.strip == "line" && !text.empty())
+        SetBanner(text, static_cast<int>(a.seconds * 1000));
 }
 
 // ---------------------------------------------------------------- controls
@@ -618,7 +803,7 @@ int Runtime::Brightness() const
 json Runtime::CurrentPage() const
 {
     std::lock_guard l(_mu);
-    return DescribePage(_s, _nav, _m, _page, _toggles);
+    return DescribePage(_s, _nav, _m, _page, OnStates());
 }
 
 json Runtime::Nodes(const json& filter) const
@@ -637,8 +822,10 @@ json Runtime::State() const
             {"model", std::string(_m.name)},
             {"stack", stack},
             {"path", _page.path},
-            {"page", DescribePage(_s, _nav, _m, _page, _toggles)},
+            {"page", DescribePage(_s, _nav, _m, _page, OnStates())},
             {"toggles", _toggles},
+            {"readouts", _readouts},
+            {"context", _context},
             {"last_actions", _last},
             {"brightness", _brightness},
             {"stats",

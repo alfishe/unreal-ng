@@ -59,6 +59,10 @@ class IBackend {
 Both calls only queue; the device's driver writes on its own thread ([architecture §9](architecture.md#9-haptic-feedback)).
 Rumble keeps its own path through `HapticMixer`.
 
+As built (S3, 2026-10-20): `OutputKind` is a bit set (`kOutputHaptic`, `kOutputSteps`), `Outputs` returns `uint8_t`,
+the `Output` calls return whether they queued; `HapticPattern` and the outputs live in `hostbackend.h`. Rumble and
+`PlayClicks` (test effects) are unchanged for callers; on the IOHID backend `PlayClicks` now queues on the writer.
+
 ## 4. Haptic patterns
 
 | Pattern | Use | Dial (to confirm in POC 030 A4, A5) |
@@ -67,7 +71,7 @@ Rumble keeps its own path through `HapticMixer`.
 | `double` | 10 s, a bookmark | click, Repeat Count for two plays, Retrigger 60 ms |
 | `buzz` | end of history, a barrier | Manual Trigger 4 (buzz continuous), length set by Waveform Cutoff |
 
-Profiles name patterns, never reports; the driver chooses the bytes. Whether Repeat Count `r` plays `r` or `r + 1`
+Profiles name patterns, never reports; the driver chooses the bytes (as built: [architecture §9.1](architecture.md#91-as-built-s3-2026-10-20)). Whether Repeat Count `r` plays `r` or `r + 1`
 times and how long a buzz lasts are measured in POC 030 before the driver is written.
 
 ## 5. Names

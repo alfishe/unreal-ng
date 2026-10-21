@@ -47,7 +47,7 @@ bool ArgsOf(const HttpRequestPtr& req, StateNode& args)
         return false;
     if (json->isObject())
         for (const std::string& name : json->getMemberNames())
-            args[name] = JsonValueToStateNode((*json)[name]);
+            args[name] = JsonToStateNode((*json)[name]);
     return true;
 }
 
