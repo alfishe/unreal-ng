@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🔧 In progress. Calls (§2) and auth (§1) are implemented (2026-10-20, `core/automation/webapi/src/api-websocket.cpp`); the topic mechanism with the state topics `run.state`, `ttd.position`, `surfaces.context` and the `surface` topic (§3) are implemented (2026-10-20, control surfaces S4, `ws-hub.*`, `surface-hub.*`). The `instances` and `debug.*` topics are planned: today they are the two older sockets, which become adapters. |
+| **Status** | 🔧 In progress. Calls (§2) and auth (§1) are implemented (2026-10-20, `core/automation/webapi/src/api-websocket.cpp`); the topic mechanism with the state topics `run.state`, `ttd.position`, `surfaces.context` and the `surface` topic (§3) are implemented (2026-10-20, control surfaces S4, `ws-hub.*`, `surface-hub.*`); the `instances` and `debug.*` topics (§3.2, §3.3) and backpressure (§4.1) too (2026-10-21). Still to come: the Stream Deck SD4 additions of the `surface` topic (`activity`, `catalogue`, more readouts, views). |
 | **Endpoint** | `GET /api/v1/ws` (WebSocket upgrade on the WebAPI port) |
 | **Rules** | [automation-planes-guidelines.md](../../../guidelines/automation-planes-guidelines.md) |
 | **Design** | [Stream Deck integration protocol §0](../../../inprogress/2026-10-19-streamdeck-integration/protocol.md#0-transport-one-websocket) |
@@ -14,9 +14,9 @@ socket, and the socket also pushes state changes, so clients never poll.
 
 - The companion token on the handshake (`Authorization: Bearer unc_…`), or the first message `{"op":"auth","token":…}`
   for clients that cannot set headers.
-- Without a token: calls only (each passes the REST gates, as a request without a token does). Topics and the
-  `surface` topic need the token (`companion_required` otherwise); the `debug.*` topics, which will not, are still
-  served on `/api/v1/websocket`.
+- Without a token: calls (each passes the REST gates, as a request without a token does) and, from this host (a
+  loopback peer), the `debug.*` topics, as `/api/v1/websocket`. The other topics and the `surface` topic need the
+  token (`companion_required` otherwise; the `debug.*` topics from another host too).
 - A token on the handshake passes the HTTP gates like any request with it: an unknown or revoked one is refused
   before the upgrade (401 `companion_unknown`), one with `X-Unreal-Source: mcp` too (403 `companion_not_for_agents`).
   A token sent by `auth` is checked when a topic or `join` first needs it: unknown or revoked is answered
@@ -85,8 +85,9 @@ readout) come with the `surface` topic (S4):
 | `ttd.position` | per instance the TTD published cursor `{frame, tinframe, first, end, end_tinframe, state, history, paused, fps}` (the `ttd position` verb's bounds) | none | implemented |
 | `surfaces.context` | per instance the surface context `{context, set, by, default}` (`GET /api/v1/surfaces/context`) | none | implemented |
 | `surface` | control surfaces: opened by `join` (not by `subscribe`): `action`, `result`, `ctx`, readouts, `target`, `revoked` ([below](#31-the-surface-topic)) | per action | implemented (S4); `activity`, `catalogue`, the readout vocabulary and views: Stream Deck SD4 |
-| `instances` | the companion's live view of instances (`hello`, `emulator`, `emulator_gone`, `revoked`) | | planned; today `/api/v1/companions/events` |
-| `debug.*` | debugger events: state change, CPU step, breakpoints, asm sync | | planned; today `/api/v1/websocket` |
+| `instances` | the companion's live view of the instances (`hello`, `emulator`, `emulator_gone`, `snapshot`): `/api/v1/companions/events` on this socket ([§3.2](#32-the-instances-topic)) | none (a companion's own view) | implemented |
+| `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
+| `debug.asm_sync` | the asm synchroniser's watch: `asm_sync_*` (the `asm_sync` topic of `/api/v1/websocket`) | none; no token needed from this host | implemented |
 
 - `subscribe` takes names or prefixes (`ttd.*`, `*`) and adds to what the connection has; `unsubscribe` removes.
   Each is answered `subscribed` / `unsubscribed` with the connection's topics. An unknown name is answered
@@ -95,8 +96,8 @@ readout) come with the `surface` topic (S4):
 - A state topic sends each instance's value at once on `subscribe`, then only values that changed, one `state`
   message per instance, at most `max_hz` times a second (1 … 50, default 10, per connection). `{"op":"gone"}` tells an
   instance went.
-- Messages of the hub itself (`subscribed`, `unsubscribed`, their errors, `revoked` before a `join`) carry `t: "ws"`;
-  those of the calls (`result`, `auth`) `t: "call"`.
+- Messages of the hub itself (`subscribed`, `unsubscribed`, their errors, `revoked` before a `join`, `slow_consumer`)
+  carry `t: "ws"`; those of the calls (`result`, `auth`) `t: "call"`.
 
 Each module adds its topics here (automation planes guidelines §3).
 
@@ -135,24 +136,85 @@ The control surfaces protocol ([protocol.md](../../../inprogress/2026-10-18-cont
 | `revoked` | The companion was revoked; the socket closes. |
 | `error` | `error`, `message`, `rid`?: `bad_request` (wrong field, `join` missing), `companion_required`, `companion_unknown`, `companion_not_for_agents`, `not_now`, `Not Found`, or an action's refusal (`companion_forbidden`, `held_by_session`, `not_now`, the route's phrase). |
 
+### 3.2 The instances topic
+
+What `/api/v1/companions/events` sends ([companion protocol §4.1](../../../inprogress/2026-10-16-companion-client/protocol.md#41-events)),
+as a topic: the Stream Deck daemon needs it beside the `surface` topic on one connection with one token.
+
+```json
+→ {"op":"subscribe","topics":["instances"]}
+← {"op":"subscribed","t":"ws","topics":["instances"],"max_hz":10}
+← {"t":"instances","op":"hello","seq":1,"companion":{…},"emulators":[{"id":"0f3a…","state":"paused","control":{…},"actions":{…},…}]}
+← {"t":"instances","op":"emulator","seq":2,"emulator":{"id":"0f3a…","state":"running",…}}
+← {"t":"instances","op":"emulator_gone","seq":3,"id":"4d7f…"}
+→ {"op":"snapshot"}
+← {"t":"instances","op":"snapshot","seq":4,"companion":{…},"emulators":[…]}
+```
+
+- `hello` (after `subscribe`) and `snapshot` (after `{"op":"snapshot"}`) are the whole view, the body of
+  `GET /api/v1/companions/me`; `emulator` an instance entry that changed (state, run control, actions, model,
+  selected) or a new instance; `emulator_gone` an instance closed. `seq` counts the connection's `instances`
+  messages from 1. A revoked companion is told `revoked` (`t: "ws"`) and closed.
+- An entry is sent only when it differs from the one last sent on this connection. The hub compares on every
+  notification that can change one (state, run control, features, companions, instances, the selection) and once a
+  second for what changes with time alone (a re-take cooldown, the first recorded frame), as the events socket.
+- `snapshot` without the topic: `bad_request`.
+
+### 3.3 The debug topics
+
+DebugEventHub's events ([debugger protocol §5](../../../inprogress/2026-09-28-debugger-model/protocol.md)), the
+`debug` and `asm_sync` topics of `/api/v1/websocket`, as topics `debug.events` and `debug.asm_sync`:
+
+```json
+→ {"op":"subscribe","topics":["debug.*"]}
+← {"op":"subscribed","t":"ws","topics":["debug.asm_sync","debug.events"],"max_hz":10}
+← {"t":"debug.events","op":"event","event":"paused","reason":"breakpoint","breakpoint_id":3,"address":32773,"access":"execute","seq":12,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}
+```
+
+- The fields of the old socket's `event`, with `t` instead of `topic` and `instance` beside `emulator`. `seq` is the
+  same number the old socket sends (per instance, one numbering for both sockets).
+- Every instance's events; a client that wants one filters by `instance` (the old socket's `emulator` filter is
+  not taken).
+- An event stream, not a value: queued per connection (256 at most), the oldest dropped first; the next event sent
+  carries `"dropped": n` ([§4](#4-delivery-and-threads)).
+
 ## 4. Delivery and threads
 
-- State topics and readouts keep the latest value, coalesced at `max_hz` (≤ 50 Hz). Event topics (the planned
-  `debug.*`, `activity`) will be bounded: when a client falls behind, the oldest events are dropped and the next
-  message says how many (`dropped`).
+- State topics, `instances` and readouts keep the latest value, coalesced at `max_hz` (≤ 50 Hz). Event topics
+  (`debug.*`; `activity` with SD4) are bounded: when a client falls behind, the oldest events are dropped and the
+  next event says how many (`dropped`).
 - Served on the WebAPI's event loops with asynchronous I/O: no thread per connection, per topic or for the hub.
-  Producers (the message centre, the actions workers) post a task to the WebAPI's main loop; one timer on it, armed
+  Producers (the message centre, the actions workers, DebugEventHub) post a task to the WebAPI's main loop (a
+  debugger event is queued, at most 1024 waiting, and serialised once on the loop); one timer on it, armed
   only while somebody subscribes and at the highest `max_hz` asked for, reads published state only (the TTD cursor's
   seqlock, the run state, the context: never a read that holds the emulation thread), builds each value's JSON once
   per tick, and sends each connection what changed when its own interval passed. A state topic's message of one
   instance is the same bytes for every subscriber.
 - `result`, `ctx`, `target` and `error` are sent as they happen, never behind a readout tick.
-- Not built yet: the per-connection high-water mark and `slow_consumer` (drogon's `WebSocketConnection` does not
-  expose the bytes its TCP connection has queued). The rate is bounded by `max_hz` and values are replaced, not
-  queued, in the hub.
+
+### 4.1 Backpressure
+
+Per connection, on the bytes its socket has queued (the TCP connection's own buffer, behind what the kernel takes):
+
+- **Above the high-water mark** (256 KiB; `UNREAL_WS_HIGH_WATER_BYTES`) the hub sends control messages only:
+  `subscribed` / `unsubscribed`, `error`, `result`, `ctx`, `target`, `revoked`. State topics, readouts and
+  `instances` are held and send their latest values once it drains (a value is replaced, never queued); events
+  queue (256 per connection) and drop the oldest, the first one sent after says `dropped`. The producers never block.
+- **Above it longer than the limit** (10 s; `UNREAL_WS_SLOW_CONSUMER_MS`):
+  `{"op":"error","t":"ws","error":"slow_consumer","message":"… bytes queued …"}`, then the socket is closed (a close
+  frame; dropped 2 s later when the client does not answer it).
+- **How it is measured.** Drogon's `WebSocketConnection` does not expose its queue, but the upgraded request still
+  holds the trantor `TcpConnection` (`HttpRequest::getConnectionPtr()`), and trantor calls its high-water mark
+  callback on a send that leaves more than the mark queued. That sets the connection congested. trantor's
+  `TcpConnectionImpl` never calls the write-complete callback it declares and has no queue size getter, so while congested the hub's tick asks for a
+  probe: a ping frame (2 bytes) sent on the connection's own loop behind everything queued; when that send does not
+  fire the callback the queue is below the mark and the connection drains. The measure runs on the connection's
+  I/O loop; the hub reads two atomics (`WsFlow`).
+- `max_hz` bounds the rate before that; the hub keeps one value per topic and instance, not a queue.
 
 ## 5. The older sockets
 
-`/api/v1/websocket` and `/api/v1/companions/events` keep their contracts as adapters over the same hub. Their
-clients (the recipes, `index.html`, `tools/verification/mcp/test_companion.py`) may move to `/api/v1/ws` at their
-own pace.
+`/api/v1/websocket` and `/api/v1/companions/events` keep their contracts and keep serving: they are not deprecated.
+The `debug.*` topics take DebugEventHub's events through a sink (one numbering for both sockets); the `instances`
+topic builds the same view as the events socket (`CompanionMeJson`). Their clients (the recipes, `index.html`,
+`tools/verification/mcp/test_companion.py`) may move to `/api/v1/ws` at their own pace.

@@ -107,6 +107,9 @@ class Session:
             self.call('emulator_manage', {'action': 'destroy', 'target': emulator['id']}, ok=False)
         self.call('emulator_manage', {'action': 'create', 'model': model or self.model})
         self.call('emulator_manage', {'action': 'start'}, ok=False)  # create starts it on most builds
+        # Silent: a verification run makes no sound on the host
+        self.call('invoke_api', {'method': 'PUT', 'path': '/api/v1/emulator/{id}/audio/mixer/master',
+                                 'body': {'muted': True}}, ok=False)
         self.call('control_execution', {'action': 'run_frames', 'frames': 100})
         self.call('control_execution', {'action': 'pause'})
 
@@ -121,9 +124,15 @@ class WebSocket:
     out. `headers`: extra handshake lines ({'X-Unreal-Source': 'mcp'}). With upgrade=False a refused handshake is no
     failure: `status` is its status line (the HTTP gates refuse a bad token before the upgrade)"""
 
-    def __init__(self, port, path='/api/v1/ws', token=None, headers=None, upgrade=True):
+    def __init__(self, port, path='/api/v1/ws', token=None, headers=None, upgrade=True, rcvbuf=None):
         import base64
-        self.sock = socket.create_connection(('127.0.0.1', port), timeout=10)
+        if rcvbuf:  # a small receive window, set before connect (a slow consumer)
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, rcvbuf)
+            self.sock.settimeout(10)
+            self.sock.connect(('127.0.0.1', port))
+        else:
+            self.sock = socket.create_connection(('127.0.0.1', port), timeout=10)
         key = base64.b64encode(os.urandom(16)).decode()
         extra = f'Authorization: Bearer {token}\r\n' if token else ''
         for name, value in (headers or {}).items():
@@ -238,6 +247,10 @@ def launch(binary, port_base):
     # A companion client for test_companion.py (a paired device acting as the user's hands)
     env.setdefault('UNREAL_COMPANION_TOKENS', f'verify:{COMPANION_TOKEN}:all;narrow:{COMPANION_NARROW_TOKEN}:run;'
                                               f'surface:{COMPANION_SURFACE_TOKEN}:all')
+    # /api/v1/ws backpressure in a test's time (test_ws_surface.py reads them too: the scripts inherit them)
+    for name, value in (('UNREAL_WS_HIGH_WATER_BYTES', '16384'), ('UNREAL_WS_SLOW_CONSUMER_MS', '1500')):
+        os.environ.setdefault(name, value)
+        env.setdefault(name, os.environ[name])
     process = subprocess.Popen([binary, '-platform', 'offscreen'], env=env, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL)
     session = Session(f'http://127.0.0.1:{port_base + 200}/mcp', 'PENTAGON')

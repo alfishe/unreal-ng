@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "debug-event-hub.h"
 #include "debugger/ttd/timetravelhooks.h"
 #include "debugger/ttd/ttdcursorcell.h"
 #include "emulator/actions/actionregistry.h"
@@ -47,11 +48,38 @@ bool RateOf(const Json::Value& message, double current, double& hz)
 const char* const kRefreshTriggers[] = {
     NC_COMPANION_CHANGED, NC_EMULATOR_INSTANCE_CREATED, NC_EMULATOR_INSTANCE_DESTROYED, NC_EMULATOR_SELECTION_CHANGED,
 };
-/// What changes a state topic's value without a TTD frame: woken at once instead of waiting for the next tick
+/// What changes a state topic's value or an `instances` entry without a TTD frame: woken at once instead of waiting
+/// for the next tick
 const char* const kWakeTriggers[] = {
     NC_EMULATOR_STATE_CHANGE,
     NC_FEATURE_CHANGED,
+    NC_RUN_CONTROL_CHANGED,
 };
+
+constexpr const char* kInstances = "instances";
+
+bool IsEventTopic(const std::string& name)
+{
+    const std::vector<std::string>& names = WsHub::EventTopicNames();
+    return std::find(names.begin(), names.end(), name) != names.end();
+}
+
+bool IsStateTopic(const std::string& name)
+{
+    const std::vector<std::string>& names = WsHub::StateTopicNames();
+    return std::find(names.begin(), names.end(), name) != names.end();
+}
+
+/// The peer is this host (the debug topics need no token from it, as /api/v1/websocket)
+bool IsLoopback(const std::string& host)
+{
+    return host == "::1" || host.rfind("127.", 0) == 0 || host.rfind("::ffff:127.", 0) == 0;
+}
+
+bool Congested(const WsConnection& connection)
+{
+    return connection.flow && connection.flow->congested.load(std::memory_order_relaxed);
+}
 }  // namespace
 
 /// region <WsOutbox>
@@ -131,7 +159,7 @@ WsHub::~WsHub()
 void WsHub::SetLoop(Post post, Timer timer)
 {
     {
-        std::lock_guard<std::mutex> lock(_mutex);
+        std::lock_guard<std::mutex> lock(_postMutex);
         _post = std::move(post);
     }
     {
@@ -155,6 +183,28 @@ void WsHub::SetRegistry(actions::ActionRegistry* registry)
 {
     std::lock_guard<std::mutex> lock(_mutex);
     _registry = registry;
+}
+
+void WsHub::SetSnapshot(Snapshot snapshot)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _snapshot = std::move(snapshot);
+}
+
+void WsHub::SetSlowConsumerLimit(std::chrono::milliseconds limit)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _slowAfter = limit;
+}
+
+void WsHub::SetHighWaterMark(uint64_t bytes)
+{
+    _highWater.store(std::max<uint64_t>(bytes, 1), std::memory_order_relaxed);
+}
+
+uint64_t WsHub::HighWaterMark() const
+{
+    return _highWater.load(std::memory_order_relaxed);
 }
 
 void WsHub::Start()
@@ -181,16 +231,24 @@ void WsHub::Start()
         _observers.emplace_back(topic, center.AddObserver(topic, ObserverCallbackFunc([this](int, Message*) {
                                     if (_subscribed.load(std::memory_order_relaxed))
                                         PostTask([this] { Tick(); });
+                                    WakeInstances();
                                 })));
+    // The debug.* topics: DebugEventHub numbers the events, the hub queues them for its loop
+    _debugSink = DebugEventHub::Instance().AddSink(
+        [this](const std::string& topic, const Json::Value& event) { OnDebugEvent(topic, event); });
 }
 
 void WsHub::Stop()
 {
     std::vector<std::pair<std::string, uint64_t>> observers;
+    uint64_t sink = 0;
     {
         std::lock_guard<std::mutex> lock(_observersMutex);
         observers.swap(_observers);
+        std::swap(sink, _debugSink);
     }
+    if (sink != 0)
+        DebugEventHub::Instance().RemoveSink(sink);
     MessageCenter& center = MessageCenter::DefaultMessageCenter();
     for (const auto& [topic, id] : observers)
         center.RemoveObserverById(topic, id);
@@ -201,13 +259,15 @@ void WsHub::Stop()
 /// region <Connections>
 
 void WsHub::Open(const void* client, Peer peer, std::function<void(const std::string&)> send,
-                 std::function<void()> close)
+                 std::function<void()> close, std::shared_ptr<WsFlow> flow, std::function<void()> probe)
 {
     std::lock_guard<std::mutex> lock(_mutex);
     auto connection = std::make_unique<WsConnection>();
     connection->id = _nextId++;
     connection->send = std::move(send);
     connection->close = std::move(close);
+    connection->flow = std::move(flow);
+    connection->probe = std::move(probe);
     connection->token = std::move(peer.token);
     connection->source = std::move(peer.source);
     connection->host = std::move(peer.host);
@@ -227,16 +287,29 @@ void WsHub::SetToken(const void* client, const std::string& token)
 bool WsHub::HandleMessage(const void* client, const Json::Value& message)
 {
     const std::string op = message.get("op", "").asString();
-    if (op != "subscribe" && op != "unsubscribe" && op != "join" && op != "action" && op != "bye")
+    if (op != "subscribe" && op != "unsubscribe" && op != "snapshot" && op != "join" && op != "action" && op != "bye")
         return false;
     WsOutbox out;
     bool subscriptions = false;
+    bool instances = false;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         WsConnection* connection = Find(client);
         if (connection == nullptr || connection->closing)
             return true;
-        if (op == "join")
+        if (op == "snapshot")
+        {
+            // As {"op":"snapshot"} on the events socket: the whole view again
+            if (connection->topics.count(kInstances) == 0)
+                out.Error(*connection, kInstances, "bad_request", "snapshot: subscribe to the instances topic first");
+            else
+            {
+                connection->instancesFull = true;
+                connection->instancesOp = "snapshot";
+                instances = true;
+            }
+        }
+        else if (op == "join")
             _surface.Join(*connection, message, out);
         else if (op == "action")
             _surface.Action(*connection, message, out);
@@ -249,17 +322,21 @@ bool WsHub::HandleMessage(const void* client, const Json::Value& message)
             const bool readouts = message.isMember("readouts");
             if (!topics && !readouts)
                 out.Error(*connection, "ws", "bad_request",
-                          op + " takes topics[] (run.state, ttd.position, surfaces.context) or readouts[] (the "
-                               "surface topic, after join)");
+                          op + " takes topics[] (run.state, ttd.position, surfaces.context, instances, debug.events, "
+                               "debug.asm_sync) or readouts[] (the surface topic, after join)");
             if (topics)
                 op == "subscribe" ? SubscribeTopics(*connection, message, out)
                                   : UnsubscribeTopics(*connection, message, out);
+            instances = op == "subscribe" && connection->instancesFull;
             if (readouts)
                 op == "subscribe" ? _surface.Subscribe(*connection, message, out)
                                   : _surface.Unsubscribe(*connection, message, out);
         }
     }
     out.Flush();
+    // The view at once (before the tick below, which then finds it fresh)
+    if (instances)
+        PostTask([this] { RefreshInstances(); });
     if (subscriptions)
     {
         UpdateTimer();
@@ -336,8 +413,7 @@ void WsHub::SubscribeTopics(WsConnection& connection, const Json::Value& message
         out.Error(connection, "ws", "bad_request", "subscribe: topics, an array of names; max_hz, a number (<= 50)");
         return;
     }
-    if (!Authenticated(connection, "ws", out))
-        return;
+    std::set<std::string> names;
     for (const Json::Value& item : list)
     {
         const std::string pattern = item.isString() ? item.asString() : std::string();
@@ -351,15 +427,51 @@ void WsHub::SubscribeTopics(WsConnection& connection, const Json::Value& message
         for (const std::string& name : TopicNames())
             if (Matches(pattern, name))
             {
-                connection.topics.insert(name);
+                names.insert(name);
                 matched = true;
             }
         if (!matched)
             out.Error(connection, pattern.empty() ? std::string("ws") : pattern, "Not Found",
                       "no topic '" + pattern +
-                          "' (run.state, ttd.position, surfaces.context; instances and debug.* are served on "
-                          "/api/v1/companions/events and /api/v1/websocket for now)");
+                          "' (run.state, ttd.position, surfaces.context, instances, debug.events, debug.asm_sync)");
     }
+
+    // The state topics and `instances` need the companion; the debug topics a companion or a loopback peer
+    const bool needsCompanion =
+        std::any_of(names.begin(), names.end(), [](const std::string& name) { return !IsEventTopic(name); });
+    bool companion = false;
+    bool told = false;
+    if (needsCompanion || !connection.token.empty())
+    {
+        companion = Authenticated(connection, "ws", out);
+        told = !companion;
+        if (connection.closing)
+            return;
+    }
+    const bool local = IsLoopback(connection.host);
+    size_t added = 0;
+    for (const std::string& name : names)
+    {
+        if (IsEventTopic(name) ? (companion || local) : companion)
+        {
+            connection.topics.insert(name);
+            added++;
+            if (name == kInstances)
+            {
+                // The whole view first, as `hello` on the events socket
+                connection.instancesFull = true;
+                connection.instancesOp = "hello";
+            }
+        }
+        else if (!told)
+        {
+            out.Error(connection, "ws", "companion_required",
+                      "the debug topics take a companion token from another host: {\"op\":\"auth\",\"token\":…}");
+            told = true;
+        }
+    }
+    if (told && added == 0)
+        return;  // refused: the error is the answer
     connection.topicHz = hz;
     connection.topicFull = true;
     Json::Value ack;
@@ -391,6 +503,17 @@ void WsHub::UnsubscribeTopics(WsConnection& connection, const Json::Value& messa
         const std::string topic = it->first.substr(0, it->first.find('|'));
         it = connection.topics.count(topic) == 0 ? connection.topicSent.erase(it) : std::next(it);
     }
+    if (connection.topics.count(kInstances) == 0)
+    {
+        connection.instancesFull = false;
+        connection.instancesSent.clear();
+    }
+    auto& events = connection.events;
+    events.erase(std::remove_if(events.begin(), events.end(),
+                                [&](const auto& event) { return connection.topics.count(event.first) == 0; }),
+                 events.end());
+    if (std::none_of(connection.topics.begin(), connection.topics.end(), IsEventTopic))
+        connection.eventsDropped = 0;
     Json::Value ack;
     ack["op"] = "unsubscribed";
     ack["t"] = "ws";
@@ -402,7 +525,20 @@ void WsHub::UnsubscribeTopics(WsConnection& connection, const Json::Value& messa
 
 const std::vector<std::string>& WsHub::TopicNames()
 {
+    static const std::vector<std::string> names = {"run.state",    "ttd.position",   "surfaces.context",
+                                                   kInstances,     "debug.events",   "debug.asm_sync"};
+    return names;
+}
+
+const std::vector<std::string>& WsHub::StateTopicNames()
+{
     static const std::vector<std::string> names = {"run.state", "ttd.position", "surfaces.context"};
+    return names;
+}
+
+const std::vector<std::string>& WsHub::EventTopicNames()
+{
+    static const std::vector<std::string> names = {"debug.events", "debug.asm_sync"};
     return names;
 }
 
@@ -479,6 +615,8 @@ std::string WsHub::FollowedInstance()
 void WsHub::Tick()
 {
     WsOutbox out;
+    bool refreshInstances = false;
+    bool drained = false;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         const auto now = Now();
@@ -489,104 +627,145 @@ void WsHub::Tick()
         {
             if (connection->closing)
                 continue;
-            if (!connection->topics.empty() &&
-                (connection->topicFull || now - connection->topicSentAt >= DueAfter(connection->topicHz)))
+            // Backpressure: above the high-water mark only control messages go; the values wait (the latest is sent
+            // once it drains), the events queue (the oldest dropped); too long above it: a slow consumer
+            if (Congested(*connection))
+            {
+                if (!connection->congestedAt)
+                    connection->congestedAt = now;
+                if (now - *connection->congestedAt >= _slowAfter)
+                {
+                    out.Error(*connection, "ws", "slow_consumer",
+                              "this connection read too slowly: " +
+                                  std::to_string(connection->flow->queued.load(std::memory_order_relaxed)) +
+                                  " bytes queued, above the high-water mark for " +
+                                  std::to_string(_slowAfter.count()) + " ms");
+                    out.Close(*connection);
+                    continue;
+                }
+                if (connection->probe)
+                    out.after.push_back(connection->probe);
+                continue;
+            }
+            if (connection->congestedAt)
+            {
+                // Drained: `instances` sends what changed meanwhile now, not at the next second
+                connection->congestedAt.reset();
+                drained = true;
+            }
+            FlushEvents(*connection, out);
+            const bool states = std::any_of(connection->topics.begin(), connection->topics.end(), IsStateTopic);
+            if (states && (connection->topicFull || now - connection->topicSentAt >= DueAfter(connection->topicHz)))
             {
                 topicDue.push_back(connection.get());
-                topicNames.insert(connection->topics.begin(), connection->topics.end());
+                for (const std::string& name : connection->topics)
+                    if (IsStateTopic(name))
+                        topicNames.insert(name);
             }
             if (connection->surface && SurfaceHub::Due(*connection->surface, now))
                 surfaceDue.push_back(connection.get());
         }
-        if (topicDue.empty() && surfaceDue.empty())
-            return;
-
-        // Read each value once: published state only
-        EmulatorManager* manager = EmulatorManager::GetInstance();
-        WsReadings readings;
-        std::map<std::string, std::shared_ptr<Emulator>> emulators;
-        auto read = [&](const std::string& id, const std::string& name) {
-            auto& values = readings[id];
-            if (values.count(name) != 0)
-                return;
-            auto it = emulators.find(id);
-            if (it == emulators.end())
-                it = emulators.emplace(id, manager->GetEmulator(id)).first;
-            if (it->second)
-                values[name] = Compact(Read(name, id, *it->second));
-        };
-        std::vector<std::string> all;
-        if (!topicDue.empty())
-        {
-            all = manager->GetEmulatorIds();
-            for (const std::string& id : all)
-                for (const std::string& name : topicNames)
-                    read(id, name);
-        }
-        for (WsConnection* connection : surfaceDue)
-        {
-            const SurfaceSession& session = *connection->surface;
-            if (!session.instance.empty())
-                for (const std::string& name : session.readouts)
-                    read(session.instance, name);
-        }
-
-        // A topic's message of one instance is the same bytes for every subscriber: built once
-        std::map<std::string, std::string> built;
-        for (WsConnection* connection : topicDue)
-        {
-            bool sent = false;
-            std::set<std::string> present;
-            for (const std::string& id : all)
-            {
-                auto values = readings.find(id);
-                if (values == readings.end())
-                    continue;
-                for (const std::string& topic : connection->topics)
-                {
-                    auto value = values->second.find(topic);
-                    if (value == values->second.end())
-                        continue;
-                    const std::string key = topic + "|" + id;
-                    present.insert(key);
-                    std::string& last = connection->topicSent[key];
-                    if (!connection->topicFull && last == value->second)
-                        continue;
-                    last = value->second;
-                    auto text = built.find(key);
-                    if (text == built.end())
-                        text = built
-                                   .emplace(key, "{\"t\":\"" + topic + "\",\"op\":\"state\",\"instance\":\"" + id +
-                                                     "\",\"value\":" + value->second + "}")
-                                   .first;
-                    out.Message(*connection, text->second);
-                    sent = true;
-                }
-            }
-            for (auto it = connection->topicSent.begin(); it != connection->topicSent.end();)
-            {
-                if (present.count(it->first) != 0)
-                {
-                    ++it;
-                    continue;
-                }
-                const size_t bar = it->first.find('|');
-                Json::Value gone;
-                gone["t"] = it->first.substr(0, bar);
-                gone["op"] = "gone";
-                gone["instance"] = it->first.substr(bar + 1);
-                out.Message(*connection, gone);
-                sent = true;
-                it = connection->topicSent.erase(it);
-            }
-            connection->topicFull = false;
-            if (sent)
-                connection->topicSentAt = now;
-        }
-        for (WsConnection* connection : surfaceDue)
-            _surface.Deliver(*connection, readings, now, out);
+        // `instances`: what changes with time alone (a re-take cooldown, the first recorded frame) once a second
+        refreshInstances = _instancesSubscribed.load(std::memory_order_relaxed) &&
+                           (drained || now - _instancesAt >= DueAfter(1));
+        if (!topicDue.empty() || !surfaceDue.empty())
+            DeliverValues(topicDue, topicNames, surfaceDue, now, out);
     }
     out.Flush();
+    if (refreshInstances)
+        RefreshInstances();
+}
+
+void WsHub::DeliverValues(const std::vector<WsConnection*>& topicDue, const std::set<std::string>& topicNames,
+                          const std::vector<WsConnection*>& surfaceDue, std::chrono::steady_clock::time_point now,
+                          WsOutbox& out)
+{
+    // Read each value once: published state only
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    WsReadings readings;
+    std::map<std::string, std::shared_ptr<Emulator>> emulators;
+    auto read = [&](const std::string& id, const std::string& name) {
+        auto& values = readings[id];
+        if (values.count(name) != 0)
+            return;
+        auto it = emulators.find(id);
+        if (it == emulators.end())
+            it = emulators.emplace(id, manager->GetEmulator(id)).first;
+        if (it->second)
+            values[name] = Compact(Read(name, id, *it->second));
+    };
+    std::vector<std::string> all;
+    if (!topicDue.empty())
+    {
+        all = manager->GetEmulatorIds();
+        for (const std::string& id : all)
+            for (const std::string& name : topicNames)
+                read(id, name);
+    }
+    for (WsConnection* connection : surfaceDue)
+    {
+        const SurfaceSession& session = *connection->surface;
+        if (!session.instance.empty())
+            for (const std::string& name : session.readouts)
+                read(session.instance, name);
+    }
+
+    // A topic's message of one instance is the same bytes for every subscriber: built once
+    std::map<std::string, std::string> built;
+    for (WsConnection* connection : topicDue)
+    {
+        bool sent = false;
+        std::set<std::string> present;
+        for (const std::string& id : all)
+        {
+            auto values = readings.find(id);
+            if (values == readings.end())
+                continue;
+            for (const std::string& topic : connection->topics)
+            {
+                if (!IsStateTopic(topic))
+                    continue;
+                auto value = values->second.find(topic);
+                if (value == values->second.end())
+                    continue;
+                const std::string key = topic + "|" + id;
+                present.insert(key);
+                std::string& last = connection->topicSent[key];
+                if (!connection->topicFull && last == value->second)
+                    continue;
+                last = value->second;
+                auto text = built.find(key);
+                if (text == built.end())
+                    text = built
+                               .emplace(key, "{\"t\":\"" + topic + "\",\"op\":\"state\",\"instance\":\"" + id +
+                                                 "\",\"value\":" + value->second + "}")
+                               .first;
+                out.Message(*connection, text->second);
+                sent = true;
+            }
+        }
+        for (auto it = connection->topicSent.begin(); it != connection->topicSent.end();)
+        {
+            if (present.count(it->first) != 0)
+            {
+                ++it;
+                continue;
+            }
+            const size_t bar = it->first.find('|');
+            Json::Value gone;
+            gone["t"] = it->first.substr(0, bar);
+            gone["op"] = "gone";
+            gone["instance"] = it->first.substr(bar + 1);
+            out.Message(*connection, gone);
+            sent = true;
+            it = connection->topicSent.erase(it);
+        }
+        connection->topicFull = false;
+        if (sent)
+            connection->topicSentAt = now;
+    }
+    for (WsConnection* connection : surfaceDue)
+        _surface.Deliver(*connection, readings, now, out);
 }
 
 void WsHub::Refresh()
@@ -614,6 +793,8 @@ void WsHub::Refresh()
         }
     }
     out.Flush();
+    if (_instancesSubscribed.load(std::memory_order_relaxed))
+        RefreshInstances();
     if (_subscribed.load(std::memory_order_relaxed))
         Tick();
 }
@@ -630,6 +811,181 @@ void WsHub::OnContext(const std::string& instanceId, const std::string& context,
     out.Flush();
     if (_subscribed.load(std::memory_order_relaxed))
         Tick();
+}
+
+void WsHub::RefreshInstances()
+{
+    std::lock_guard<std::mutex> refresh(_instancesMutex);
+    std::vector<std::pair<uint64_t, companion::CompanionInfo>> targets;
+    Snapshot snapshot;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _instancesAt = Now();
+        for (const auto& [client, connection] : _connections)
+            if (!connection->closing && connection->companion && connection->topics.count(kInstances) != 0 &&
+                !Congested(*connection))
+                targets.emplace_back(connection->id, *connection->companion);
+        snapshot = _snapshot;
+    }
+    if (targets.empty())
+        return;
+
+    // Built outside the hub's lock (`me` reads every instance), once per companion
+    std::map<std::string, Json::Value> views;
+    for (const auto& [id, companion] : targets)
+        if (views.count(companion.id) == 0 && companion::CompanionRegistry::Instance().Find(companion.id))
+            views.emplace(companion.id, snapshot ? snapshot(companion) : Json::Value(Json::objectValue));
+
+    WsOutbox out;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (const auto& [id, companion] : targets)
+        {
+            WsConnection* connection = FindById(id);
+            auto view = views.find(companion.id);
+            if (connection == nullptr || connection->closing || connection->topics.count(kInstances) == 0 ||
+                view == views.end())
+                continue;  // closed or unsubscribed meanwhile; revoked: Refresh tells it
+            const Json::Value& me = view->second;
+            if (connection->instancesFull)
+            {
+                connection->instancesFull = false;
+                connection->instancesSent.clear();
+                for (const Json::Value& emulator : me["emulators"])
+                    connection->instancesSent[emulator["id"].asString()] = Compact(emulator);
+                Json::Value message = me;
+                message["t"] = kInstances;
+                message["op"] = connection->instancesOp.empty() ? "hello" : connection->instancesOp;
+                message["seq"] = static_cast<Json::UInt64>(++connection->instancesSeq);
+                out.Message(*connection, message);
+                continue;
+            }
+            std::set<std::string> present;
+            for (const Json::Value& emulator : me["emulators"])
+            {
+                const std::string instance = emulator["id"].asString();
+                present.insert(instance);
+                std::string text = Compact(emulator);
+                std::string& last = connection->instancesSent[instance];
+                if (last == text)
+                    continue;
+                last = std::move(text);
+                Json::Value event;
+                event["t"] = kInstances;
+                event["op"] = "emulator";
+                event["seq"] = static_cast<Json::UInt64>(++connection->instancesSeq);
+                event["emulator"] = emulator;
+                out.Message(*connection, event);
+            }
+            for (auto sent = connection->instancesSent.begin(); sent != connection->instancesSent.end();)
+            {
+                if (present.count(sent->first) != 0)
+                {
+                    ++sent;
+                    continue;
+                }
+                Json::Value event;
+                event["t"] = kInstances;
+                event["op"] = "emulator_gone";
+                event["seq"] = static_cast<Json::UInt64>(++connection->instancesSeq);
+                event["id"] = sent->first;
+                out.Message(*connection, event);
+                sent = connection->instancesSent.erase(sent);
+            }
+        }
+    }
+    out.Flush();
+}
+
+void WsHub::WakeInstances()
+{
+    if (!_instancesSubscribed.load(std::memory_order_relaxed) || _instancesPending.exchange(true))
+        return;
+    PostTask([this] {
+        _instancesPending.store(false);
+        RefreshInstances();
+    });
+}
+
+void WsHub::OnDebugEvent(const std::string& topic, const Json::Value& event)
+{
+    if (!_eventsSubscribed.load(std::memory_order_relaxed))
+        return;
+    const std::string name = topic == "debug" ? std::string("debug.events") : "debug." + topic;
+    bool post = false;
+    {
+        std::lock_guard<std::mutex> lock(_eventsMutex);
+        if (_pendingEvents.size() >= kPendingEvents)
+        {
+            _pendingDropped[_pendingEvents.front().first]++;
+            _pendingEvents.pop_front();
+        }
+        _pendingEvents.emplace_back(name, event);
+        post = !_eventsPosted;
+        _eventsPosted = true;
+    }
+    if (post)
+        PostTask([this] { DrainEvents(); });
+}
+
+void WsHub::DrainEvents()
+{
+    std::deque<std::pair<std::string, Json::Value>> events;
+    std::map<std::string, uint64_t> dropped;
+    {
+        std::lock_guard<std::mutex> lock(_eventsMutex);
+        events.swap(_pendingEvents);
+        dropped.swap(_pendingDropped);
+        _eventsPosted = false;
+    }
+    WsOutbox out;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (const auto& [topic, count] : dropped)
+            for (auto& [client, connection] : _connections)
+                if (connection->topics.count(topic) != 0)
+                    connection->eventsDropped += count;
+        for (const auto& [topic, event] : events)
+        {
+            // Serialised once, on the loop: every subscriber gets the same bytes
+            Json::Value message = event;
+            message.removeMember("topic");
+            message["t"] = topic;
+            message["instance"] = event["emulator"];
+            const std::string text = Compact(message);
+            for (auto& [client, connection] : _connections)
+            {
+                if (connection->closing || connection->topics.count(topic) == 0)
+                    continue;
+                if (connection->events.size() >= kEventQueue)
+                {
+                    connection->events.pop_front();
+                    connection->eventsDropped++;
+                }
+                connection->events.emplace_back(topic, text);
+            }
+        }
+        for (auto& [client, connection] : _connections)
+            if (!connection->closing && !Congested(*connection))
+                FlushEvents(*connection, out);
+    }
+    out.Flush();
+}
+
+void WsHub::FlushEvents(WsConnection& connection, WsOutbox& out)
+{
+    while (!connection.events.empty())
+    {
+        std::string text = std::move(connection.events.front().second);
+        connection.events.pop_front();
+        if (connection.eventsDropped > 0)
+        {
+            // The first event after a loss says how many were lost: {"dropped":n,...}
+            text.insert(1, "\"dropped\":" + std::to_string(connection.eventsDropped) + ",");
+            connection.eventsDropped = 0;
+        }
+        out.Message(connection, std::move(text));
+    }
 }
 
 /// endregion </Driven by the loop>
@@ -651,12 +1007,16 @@ double WsHub::TimerHz() const
 void WsHub::UpdateTimer()
 {
     double hz = 0;
+    bool instances = false;
+    bool events = false;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         for (const auto& [client, connection] : _connections)
         {
             if (connection->closing)
                 continue;
+            instances = instances || connection->topics.count(kInstances) != 0;
+            events = events || std::any_of(connection->topics.begin(), connection->topics.end(), IsEventTopic);
             if (!connection->topics.empty())
                 hz = std::max(hz, connection->topicHz);
             if (connection->surface && !connection->surface->readouts.empty())
@@ -664,6 +1024,8 @@ void WsHub::UpdateTimer()
         }
     }
     _subscribed.store(hz > 0, std::memory_order_relaxed);
+    _instancesSubscribed.store(instances, std::memory_order_relaxed);
+    _eventsSubscribed.store(events, std::memory_order_relaxed);
     std::lock_guard<std::mutex> lock(_timerMutex);
     if (hz == _timerHz && _armed == (hz > 0))
         return;
@@ -682,7 +1044,7 @@ void WsHub::PostTask(Task task)
 {
     Post post;
     {
-        std::lock_guard<std::mutex> lock(_mutex);
+        std::lock_guard<std::mutex> lock(_postMutex);
         post = _post;
     }
     if (post)

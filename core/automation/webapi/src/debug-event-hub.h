@@ -23,6 +23,9 @@ class DebugEventHub
 public:
     /// Sends one text message to a client (thread-safe; a closed client ignores it)
     using Send = std::function<void(const std::string& text)>;
+    /// Gets every event, numbered, as published (the `debug.*` topics of /api/v1/ws, WsHub): `topic` is "debug" or
+    /// "asm_sync". Called on the producer's thread with the hub's lock held: it must only queue
+    using Sink = std::function<void(const std::string& topic, const Json::Value& event)>;
 
     static DebugEventHub& Instance();
 
@@ -42,6 +45,10 @@ public:
     void HandleMessage(const void* client, const std::string& text, const Send& send);
     /// The connection closed: drop its subscriptions
     void RemoveClient(const void* client);
+
+    /// Adds a sink (returns its id); RemoveSink returns once no call of it runs
+    uint64_t AddSink(Sink sink);
+    void RemoveSink(uint64_t id);
 
     /// The topics this build publishes; a subscription naming others is told so in its reply
     static const std::set<std::string>& PublishedTopics();
@@ -71,5 +78,7 @@ private:
     std::mutex _mutex;
     std::map<const void*, Client> _clients;
     std::map<std::string, uint64_t> _seq;  // the last event number per emulator
+    std::map<uint64_t, Sink> _sinks;
+    uint64_t _nextSink = 1;
     std::vector<std::pair<std::string, uint64_t>> _observers;  // topic, observer id
 };

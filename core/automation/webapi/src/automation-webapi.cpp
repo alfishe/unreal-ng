@@ -319,7 +319,21 @@ void AutomationWebAPI::start()
     // Companion events for /api/v1/companions/events: the same view as GET /api/v1/companions/me
     CompanionEventHub::Instance().SetSnapshot(&api::v1::CompanionMeJson);
     CompanionEventHub::Instance().Start();
-    // The topics of /api/v1/ws and its surface topic: contexts, companions, instances, run state
+    // The topics of /api/v1/ws and its surface topic: contexts, companions, instances, run state, debugger events.
+    // `instances` is the events socket's view; the backpressure limits may be moved for tests
+    WsHub::Instance().SetSnapshot(&api::v1::CompanionMeJson);
+    if (const char* bytes = getenv("UNREAL_WS_HIGH_WATER_BYTES"))
+    {
+        const long long parsed = strtoll(bytes, nullptr, 10);
+        if (parsed > 0)
+            WsHub::Instance().SetHighWaterMark(static_cast<uint64_t>(parsed));
+    }
+    if (const char* ms = getenv("UNREAL_WS_SLOW_CONSUMER_MS"))
+    {
+        const long long parsed = strtoll(ms, nullptr, 10);
+        if (parsed > 0)
+            WsHub::Instance().SetSlowConsumerLimit(std::chrono::milliseconds(parsed));
+    }
     WsHub::Instance().Start();
 
     // Create a new thread and run HTTP server in it
