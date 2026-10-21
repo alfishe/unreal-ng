@@ -6329,7 +6329,8 @@ public:
 
         // Buffered stereo audio capture (records into analyzer RAM, then export)
         // audio_mixer(): the per-device mixer (DeviceState::AudioMixer); audio_mixer_set(source, {muted=, solo=,
-        // volume=, gain_db=}) -> the mixer, or nil, error (AudioMixer::Apply; source "master" takes muted only)
+        // volume=, gain_db=}) -> the mixer, or nil, error (AudioMixer::Apply; source "master" takes muted only; a
+        // channel is "<source>.<channel>": "ay1.a", "gs.3", "moonsound_fm.7")
         lua.set_function("audio_mixer", [this](sol::this_state s) -> sol::object {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return sol::make_object(s, sol::lua_nil);
@@ -6356,6 +6357,24 @@ public:
             sol::variadic_results out;
             out.push_back(StateNodeToLua(s, DeviceState::AudioMixer(emulator->GetContext())));
             return out;
+        });
+        // audio_mixer_get(source) -> one row ("ay1") or channel ("ay1.a"), or nil, error; audio_levels() -> every
+        // row's and channel's levels and mute / solo (the WebSocket topic audio.mixer)
+        lua.set_function("audio_mixer_get", [this](sol::this_state s, const std::string& source) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            StateNode node;
+            std::string error;
+            if (!AudioMixer::Read(emulator->GetContext(), source, node, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, node));
+            return out;
+        });
+        lua.set_function("audio_levels", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, AudioMixer::Levels(emulator->GetContext()));
         });
 
         // audio_capture_start(seconds [, source]): source = a mixer key (beeper, ay1, covox, gs ...) records that

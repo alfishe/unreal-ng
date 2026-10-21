@@ -8,6 +8,7 @@
 #include "emulator/actions/hostactions.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/sound/audiomixer.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
 
@@ -93,8 +94,10 @@ const Descriptions& DescriptionTable()
         {"set.value", "Set a setting to a value (params name, value)."},
         // Audio
         {"audio.mute_toggle", "Mute the sound, or unmute it."},
-        {"audio.source_mute", "Mute or unmute one sound source (param source)."},
-        {"audio.volume_by", "Change the volume of a source by a delta."},
+        {"audio.source_mute", "Mute or unmute one sound source or channel (param source: ay1, or ay1.a for a channel)."},
+        {"audio.source_solo", "Solo a sound source (only soloed sources are heard) or a channel within its source."},
+        {"audio.source_volume", "Set the volume of a source or channel (param volume 0..1, or gain_db)."},
+        {"audio.volume_by", "Change the volume of a source or channel by a delta."},
         // Media and snapshots
         {"media.open", "Open software on the target (param path): a snapshot, a tape or a disk, with the fast-load settings."},
         {"media.tape", "Play, stop, rewind or eject the tape (param op)."},
@@ -154,6 +157,19 @@ const Toggles& ToggleTable()
                 return std::nullopt;
             return context->pSoundManager->isMuted();
         };
+        // A mixer source or channel (param source: ay1, ay1.a): its mute / solo; the readout toggle.audio.source_mute.ay1.a
+        for (const char* id : {"audio.source_mute", "audio.source_solo"})
+        {
+            DefaultToggle& source = t[id];
+            source.param = "source";
+            const bool solo = std::string_view(id) == "audio.source_solo";
+            source.state = [solo](Emulator& emulator, const ActionValue& value) -> std::optional<bool> {
+                const std::optional<std::string> key = TextParam(value, "source");
+                if (!key)
+                    return std::nullopt;
+                return AudioMixer::Flag(emulator.GetContext(), *key, solo ? "solo" : "muted");
+            };
+        }
         t["video.overscan_toggle"].state = [](Emulator& emulator, const ActionValue&) -> std::optional<bool> {
             return emulator.IsOverscanMode();
         };

@@ -22,6 +22,7 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/execution/automationgate.h"
 #include "emulator/execution/companionregistry.h"
+#include "emulator/sound/audiomixer.h"
 
 #include <json/json.h>
 
@@ -716,6 +717,45 @@ TEST_F(WsHub_Test, TopicsNeedATokenAndPushEachInstancesStateOnceThenChanges)
     EXPECT_EQ(inbox.Last()["op"].asString(), "unsubscribed");
     EXPECT_EQ(inbox.Last()["topics"].size(), 0u);
     EXPECT_EQ(_hub->TimerHz(), 0);
+}
+
+TEST_F(WsHub_Test, AudioMixerPushesTheLevelsAndMuteOfEveryRowOnceThenOnChange)
+{
+    Inbox inbox;
+    Connect(inbox);
+    Send(inbox, R"({"op":"subscribe","topics":["audio.mixer"],"max_hz":50})");
+    ASSERT_EQ(inbox.Ops("subscribed").size(), 1u);
+    auto states = [&]() {
+        std::vector<Json::Value> out;
+        for (const Json::Value& message : inbox.Ops("state"))
+            if (message["t"].asString() == "audio.mixer" && message["instance"].asString() == _id)
+                out.push_back(message);
+        return out;
+    };
+    auto beeper = [](const Json::Value& value) {
+        for (const Json::Value& row : value["devices"])
+            if (row["source"].asString() == "beeper")
+                return row;
+        return Json::Value();
+    };
+    ASSERT_EQ(states().size(), 1u);
+    EXPECT_FALSE(states()[0]["value"]["master"]["muted"].asBool());
+    ASSERT_TRUE(beeper(states()[0]["value"]).isObject());
+    EXPECT_FALSE(beeper(states()[0]["value"])["muted"].asBool());
+
+    Advance(50);
+    _hub->Tick();
+    EXPECT_EQ(states().size(), 1u) << "unchanged: not sent again";
+
+    AudioMixer::Change change;
+    change.muted = 1;
+    std::string error;
+    ASSERT_TRUE(AudioMixer::Apply(_emulator->GetContext(), "beeper", change, error)) << error;
+    Advance(50);
+    _hub->Tick();
+    ASSERT_EQ(states().size(), 2u);
+    EXPECT_TRUE(beeper(states()[1]["value"])["muted"].asBool());
+    EXPECT_FALSE(beeper(states()[1]["value"])["audible"].asBool());
 }
 
 /// endregion </Readouts and topics>

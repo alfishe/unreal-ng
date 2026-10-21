@@ -85,8 +85,10 @@ without `on` the action toggles the current state.
 | `set.toggle` | P | `name` (turbo_mode, fast_tape, turbo_tape, fast_disk, turbo_audio, trdos_traps, ay_punch, beeper_punch), `on?` | the setting's (`/settings/{name}`) | the route's rules: FeatureManager, config, `SoundCharacterSettings` |
 | `set.value` | P | `name`, `value` (speed, the bools, ay_voicing, ay_room) | the setting's | as `set.toggle` |
 | `audio.mute_toggle` | P | `on?` | free (`/audio/mixer`) | `AudioMixer::Apply` master |
-| `audio.source_mute` | P | `source` (beeper, ay1, ..., cd3), `on?` | free | `AudioMixer::Apply` |
-| `audio.volume_by` | D | `source?` (all), `step?` (0.05 per detent) | free | `SoundManager::setDeviceVolume`, clamped 0..1 (master has no volume in the core: it is the host's) |
+| `audio.source_mute` | P | `source` (beeper, ay1, ..., cd3, ms_*, next_*; a channel `ay1.a`), `channel?`, `on?` (toggle; readout `toggle.audio.source_mute.<key>`) | free | `AudioMixer::Apply` |
+| `audio.source_solo` | P | `source` (a row: only soloed rows are heard; a channel: only the soloed channels of its row), `channel?`, `on?` (toggle) | free | `AudioMixer::Apply` |
+| `audio.source_volume` | P | `source` (a row or channel), `channel?`, `volume` (0..1) or `gain_db` (-120..0) | free | `AudioMixer::Apply` |
+| `audio.volume_by` | D | `source?` (all rows; a row or a channel `ay1.a`), `channel?`, `step?` (0.05 per detent) | free | `SoundManager::setDeviceVolume` / `setMixerChannel`, clamped 0..1 (master has no volume in the core: it is the host's) |
 | `media.open` | P | `path`, `kind?` (auto by extension), `drive?` (A), `autostart?` (true), `switch_model?` | media (`/tape/load`, `/disk/X/insert`, `/snapshot/load`) | snapshot: `SnapshotLauncher::Load`; tape: `LoadTape`, autostart types `LOAD ""` (the 128K menu left for 48K BASIC); disk: `AutostartDisk` (drive A) or `LoadDisk` |
 | `media.tape` | P | `op` (play, pause, toggle, stop, rewind, eject, seek), `block?` | media (`/tape/{op}`) | `Tape` under a `CpuHold`, as the routes |
 | `media.eject`, `media.protect`, `media.save`, `media.create` | P | `drive` (A..D, tape, a slot id), the verb's options (`discard`, `on?` flips, `path`, `cylinders`, ...) | media (`/media/X/*`) | `MediaControl` verbs |

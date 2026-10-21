@@ -353,7 +353,7 @@ bool WsHub::HandleMessage(const void* client, const Json::Value& message)
             if (!topics && !readouts)
                 out.Error(*connection, "ws", "bad_request",
                           op + " takes topics[] (run.state, ttd.position, surfaces.context, instances, debug.events, "
-                               "debug.asm_sync) or readouts[] (the surface topic, after join)");
+                               "debug.asm_sync, audio.mixer) or readouts[] (the surface topic, after join)");
             if (topics)
                 op == "subscribe" ? SubscribeTopics(*connection, message, out)
                                   : UnsubscribeTopics(*connection, message, out);
@@ -466,7 +466,7 @@ void WsHub::SubscribeTopics(WsConnection& connection, const Json::Value& message
             out.Error(connection, pattern.empty() ? std::string("ws") : pattern, "Not Found",
                       "no topic '" + pattern +
                           "' (run.state, ttd.position, surfaces.context, streamdeck.status, instances, debug.events, "
-                          "debug.asm_sync)");
+                          "debug.asm_sync, audio.mixer)");
     }
 
     // The state topics and `instances` need the companion; the debug topics a companion or a loopback peer
@@ -560,13 +560,14 @@ const std::vector<std::string>& WsHub::TopicNames()
 {
     static const std::vector<std::string> names = {"run.state",    "ttd.position",   "surfaces.context",
                                                    kStreamDeck,    kInstances,       "debug.events",
-                                                   "debug.asm_sync"};
+                                                   "debug.asm_sync", "audio.mixer"};
     return names;
 }
 
 const std::vector<std::string>& WsHub::StateTopicNames()
 {
-    static const std::vector<std::string> names = {"run.state", "ttd.position", "surfaces.context", kStreamDeck};
+    static const std::vector<std::string> names = {"run.state", "ttd.position", "surfaces.context", kStreamDeck,
+                                                   "audio.mixer"};
     return names;
 }
 
@@ -619,6 +620,12 @@ Json::Value WsHub::Read(const std::string& name, const std::string& instanceId, 
         value["paused"] = hooks != nullptr ? cursor.paused : emulator.IsPaused();
         value["fps"] = ttd::TTDFrameRate(context);
         return value;
+    }
+    if (name == "audio.mixer")
+    {
+        // The mixer's levels and mute / solo of every row and channel (the readout of the same name): latest value,
+        // sent when it changed, at the subscriber's max_hz
+        return StateNodeToJson(actions::ReadReadout(emulator, name));
     }
     if (name == "surfaces.context")
     {

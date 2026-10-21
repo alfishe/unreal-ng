@@ -360,6 +360,12 @@ class Emulator:
 
     def audio_mixer(self) -> dict: ...
     def audio_mixer_set(self, source, muted=None, solo=None, volume=None, gain_db=None) -> dict: ...
+    # source: a row (ay1) or a channel "<row>.<channel>" (ay1.a, gs.3, moonsound_fm.7, ms_midi.10, next_dac.c):
+    # muted, solo (within its row), volume / gain_db; applied at the next frame start
+    def audio_mixer_get(self, source) -> dict: ...   # one row (with its channels) or channel; ValueError when absent
+    def audio_levels(self) -> dict: ...              # every row's and channel's peak, active, mute, solo (topic audio.mixer)
+    # get_sound_character() / set_sound_character(name, value) also serve ay_stereo, ay_chip, fm_trim_db,
+    # neogs_stereo, covox_dc_removal, fir_filter ("unavailable" where the machine has no such part)
     # audio_capture_start(seconds=1.0, source="") records one mixer device's own buffer
 
     def tsconf_tsu(self) -> dict:

@@ -560,6 +560,10 @@ shot, err = screenshot{area="screen", format="png", source="live", path="scratch
           -- nil, err for a bad word or no frame. screenshot() = the whole frame as PNG
 mx = audio_mixer()                -- per-device mixer: master, devices[] (source, muted, solo, volume, gain_db, peak, active)
 mx, err = audio_mixer_set("covox", {muted=true})  -- solo=, volume=0..1, gain_db=; "master" takes muted
+mx, err = audio_mixer_set("ay1.b", {solo=true})  -- a channel "<row>.<channel>": ay1.a, gs.3, moonsound_fm.7, ms_midi.10, next_dac.c (solo within its row)
+ch, err = audio_mixer_get("ay1.a")            -- one row (with its channels) or channel
+lv = audio_levels()                           -- every row's and channel's peak, active, mute, solo (the topic audio.mixer)
+-- get_sound_character() / set_sound_character(name, value): ay_stereo, ay_chip, fm_trim_db, neogs_stereo, covox_dc_removal, fir_filter too
 r = audio_capture_start(1.0, "covox")             -- capture one device's own buffer (default: the master mix)
 rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
 exe = execution_state()     -- execution arbiter: phase, intent + intent_set_by, serving, queue, claim, driver_violations

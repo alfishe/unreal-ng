@@ -12,6 +12,10 @@ The Unreal-NG audio subsystem uses [miniaudio](https://miniaud.io/) as a cross-p
   stub plan (COVOX, SounDrive, SAA1099, GS, MoonSound) and COVOX
   implementation sketch. Companion to
   [Audio Sources UX](../recording/audio-sources-ux.md).
+- **[Mixer channels, levels and sound settings](mixer-channels-and-settings.md)** — every row's channels
+  (`ay1.a`, `gs.3`, `moonsound_fm.18`, ...: mute, solo within the row, volume), the Next's AYs and DAC as rows, the
+  `audio.mixer` levels topic, and the sound settings (`ay_stereo`, `ay_chip`, `fm_trim_db`, `neogs_stereo`,
+  `covox_dc_removal`, `fir_filter`) on every automation plane.
 - **[Audio Sync Relay Thread](audio-sync-relay-thread.md)** — audio/video
   synchronization architecture.
 - **[AY Tone Voicing](ay-tone-voicing.md)** — the tonal balance profiles of

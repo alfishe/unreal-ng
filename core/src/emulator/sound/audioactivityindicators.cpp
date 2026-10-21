@@ -32,11 +32,14 @@ void AudioActivityIndicators::endFrame(const unreal::UUID& emulatorId, const std
 
     bool on[HUD_SOURCES] = {};
     on[static_cast<int>(AudioSource::Beeper)] = held(AudioSourceType::Beeper);
-    on[static_cast<int>(AudioSource::Covox)] = held(AudioSourceType::COVOX);
+    // The Next's parts: its DAC lights the Covox indicator, its AYs the AY (one chip) / TurboSound (more) ones
+    on[static_cast<int>(AudioSource::Covox)] = held(AudioSourceType::COVOX) || held(AudioSourceType::NextDac);
+    const int nextAys = int(held(AudioSourceType::NextAy1)) + int(held(AudioSourceType::NextAy2)) +
+                        int(held(AudioSourceType::NextAy3));
     const bool ssg1 = held(AudioSourceType::AY1_All);
     const bool ssg2 = held(AudioSourceType::AY2_All);
-    on[static_cast<int>(AudioSource::AY)] = !tsfm && ssg1 && !ssg2;
-    on[static_cast<int>(AudioSource::TurboSound)] = !tsfm && ssg2;
+    on[static_cast<int>(AudioSource::AY)] = (!tsfm && ssg1 && !ssg2) || nextAys == 1;
+    on[static_cast<int>(AudioSource::TurboSound)] = (!tsfm && ssg2) || nextAys > 1;
     on[static_cast<int>(AudioSource::TSFM)] = tsfm && (ssg1 || ssg2);
     on[static_cast<int>(AudioSource::FM)] = held(AudioSourceType::FM1) || held(AudioSourceType::FM2);
     on[static_cast<int>(neoGSFitted ? AudioSource::NeoGS : AudioSource::GeneralSound)] = held(AudioSourceType::GeneralSound);

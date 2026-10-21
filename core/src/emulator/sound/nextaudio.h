@@ -27,6 +27,7 @@ class NextAudio : public IModelAudioSource
 {
 public:
     static constexpr unsigned kChips = 3;
+    static constexpr size_t kParts = 4;  ///< the three chips, then the DAC
 
     explicit NextAudio(EmulatorContext* context);
     ~NextAudio() override = default;
@@ -83,6 +84,16 @@ public:
     bool AudioHadSoundLastFrame() const override { return _hadSound; }
     void AudioSetSampleRate(size_t rate) override { _rate = rate; }
     std::vector<std::pair<std::string, std::string>> AudioStateFields() const override;
+    /// Parts: AY 1..3 (next_ay1..3) and the DAC (next_dac), each a mixer row; the AYs' channels A / B / C go to the
+    /// chips (SoundChip_AY8910's channel mute / volume), the DAC's A..D are gains here
+    size_t AudioPartCount() const override { return kParts; }
+    AudioSourceType AudioPartType(size_t part) const override;
+    std::string AudioPartName(size_t part) const override;
+    void SetAudioPartGain(size_t part, float gain) override;
+    float AudioPartPeak(size_t part) const override { return part < kParts ? _partPeak[part] : 0.0f; }
+    bool AudioPartActive(size_t part) const override { return part < kParts && _partPeak[part] > 0.002f; }
+    void AudioChannels(AudioSourceType type, std::vector<MixerChannelDesc>& out) const override;
+    void SetAudioChannel(AudioSourceType type, size_t index, bool muted, float volume) override;
     /// endregion
 
     /// Off: every tick through Tick (comparisons); the count of the ticks the quiet runs took (AdvanceTo)
@@ -126,6 +137,23 @@ private:
     std::vector<float> _tickLeft, _tickRight;  ///< the level of each tick of this frame
     bool _quietTicksEnabled = true;
     uint64_t _quietTicks = 0;
+
+    /// region <The mixer's parts and channels (host-side, not state)>
+    /// The DAC's two sides with the channel gains (the hardware's sum while every gain is 1)
+    double DacSide(bool right) const;
+    void UpdateDacGains();
+    std::array<double, kParts> _partGain{{1.0, 1.0, 1.0, 1.0}};
+    bool _chipGainActive = false;                    ///< a chip's part gain is not 1
+    std::array<double, 4> _dacChannelGain{{1.0, 1.0, 1.0, 1.0}};  ///< the mixer's channel volume of DAC A..D
+    std::array<double, 4> _dacGain{{1.0, 1.0, 1.0, 1.0}};         ///< channel x part gain, applied per tick
+    bool _dacGainActive = false;
+    /// Per chip this frame, before its gain: the smallest and largest level of each side (a meter of the swing, the
+    /// unsigned DC left out), and the DAC's largest side
+    std::array<double, kChips * 4> _meter{};
+    double _dacMeter = 0;
+    std::array<float, kParts> _partPeak{};
+    void ResetMeters();
+    /// endregion
     AudioFrameDescriptor _audioDescriptor;
     int16_t* const _buffer = reinterpret_cast<int16_t*>(_audioDescriptor.memoryBuffer);
 };

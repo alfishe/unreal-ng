@@ -22,6 +22,7 @@
 #include "mcp-slots.h"
 #include "mcp-actions.h"
 #include "mcp-streamdeck.h"
+#include "mcp-audio.h"
 #include "mcp-controllers.h"
 #include "mcp-router.h"
 #include "mcp-symbols.h"
@@ -6010,6 +6011,8 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterStreamDeck(*registry);
     // bus_analyzer: peripheral bus traces, checks, SD card timing (docs/inprogress/2026-10-11-bus-analyzer)
     RegisterBusAnalyzer(*registry);
+    // audio_mixer: the mixer's rows and channels, the levels, the sound settings
+    RegisterAudioMixer(*registry);
 
     // Router tools (search_api + invoke_api)
     RegisterRouterTools(*registry, std::move(caller));

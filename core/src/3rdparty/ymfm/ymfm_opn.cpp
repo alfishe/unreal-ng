@@ -982,6 +982,33 @@ void ym2203::clock_fm()
 }
 
 
+//-------------------------------------------------
+//  [unreal-ng patch 7] clock_fm_gained - clock_fm()
+//  with a host gain per channel, see PATCHES.md §7
+//-------------------------------------------------
+
+void ym2203::clock_fm_gained(const int32_t *gain_q15)
+{
+	// clock the system
+	m_fm.clock(fm_engine::ALL_CHANNELS);
+
+	// each channel on its own: output() clamps every channel into the sum separately, so the channels taken one
+	// at a time sum as one output() call of all of them does; then the gain (Q15, truncated toward zero)
+	m_last_fm.clear();
+	for (uint32_t chnum = 0; chnum < fm_engine::CHANNELS; chnum++)
+	{
+		if (gain_q15[chnum] == 0)
+			continue;
+		fm_engine::output_data one;
+		m_fm.output(one.clear(), 0, 32767, 1u << chnum);
+		m_last_fm.data[0] += int32_t((int64_t(one.data[0]) * gain_q15[chnum]) / 32768);
+	}
+
+	// convert to 10.3 floating point value for the DAC and back
+	m_last_fm.roundtrip_fp();
+}
+
+
 
 //*********************************************************
 //  YM2608

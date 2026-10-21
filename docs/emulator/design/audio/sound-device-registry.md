@@ -128,12 +128,13 @@ out[i] = Σ audible(d) · d.volume · d.buffer[i]   (saturating add)
   and host-mute do not affect capture (UX doc open question #3: the mix
   above runs in `handleFrameEnd` regardless of the audio callback).
 
-### 3.4 Channel-level layer (AY)
+### 3.4 Channel-level layer
 
-Channel mute/solo/volume stay on `SoundChip_AY8910` (already implemented
-for mute/volume; solo added the same way). Channel-split capture buffers
-(`getChannelBuffer(ch)`) come in milestone M5 and are only rendered while
-a channel-split recording or channel solo is active (zero cost otherwise).
+Implemented for every chip with channels (AY, YM2203 FM, Covox / SounDrive, GS / NeoGS, OPL4 FM and PCM, the
+ZX-MultiSound's parts, the Next): one store in SoundManager, the user's mute / solo (within the row) / volume per
+channel applied to the device at the frame start - see
+[mixer-channels-and-settings.md](mixer-channels-and-settings.md). Channel-split capture buffers
+(`getChannelBuffer(ch)`) remain milestone M5.
 
 ## 4. Device stubs and implementation order
 

@@ -14,6 +14,7 @@
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/tape/tape.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/sound/audiomixer.h"
 #include "emulator/sound/soundmanager.h"
 
 namespace actions
@@ -174,7 +175,7 @@ bool ToggleOf(const std::string& name, std::string& id, StateNode& params)
 const std::vector<std::string>& BaseReadoutNames()
 {
     static const std::vector<std::string> names = {"ttd.position", "run.state",  "machine",   "media.tape",
-                                                   "media.disk",   "audio.mute", "debug.mode"};
+                                                   "media.disk",   "audio.mute", "debug.mode", "audio.mixer"};
     return names;
 }
 
@@ -222,6 +223,18 @@ StateNode ReadReadout(Emulator& emulator, const std::string& name)
         return MediaDisk(emulator);
     if (name == "audio.mute")
         return AudioMute(emulator);
+    // The mixer (audiomixer.h): every row's and channel's levels and mute / solo; one source or channel by name,
+    // audio.source.<key> (audio.source.ay1, audio.source.ay1.a), read by name only
+    if (name == "audio.mixer")
+        return AudioMixer::Levels(emulator.GetContext());
+    if (name.compare(0, 13, "audio.source.") == 0)
+    {
+        StateNode node;
+        std::string error;
+        if (!AudioMixer::Read(emulator.GetContext(), name.substr(13), node, error))
+            return {};
+        return node;
+    }
     if (name == "debug.mode")
         return DebugMode(emulator);
     std::string id;

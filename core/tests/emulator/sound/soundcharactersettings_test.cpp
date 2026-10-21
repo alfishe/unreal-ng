@@ -31,15 +31,19 @@ protected:
     }
 };
 
-TEST_F(SoundCharacterSettings_Test, KnowsExactlyTheFourSettings)
+TEST_F(SoundCharacterSettings_Test, KnowsExactlyTheTenSettings)
 {
-    ASSERT_EQ(SoundCharacterSettings::Descriptors().size(), 4u);
-    for (const char* name : {"ay_voicing", "ay_punch", "ay_room", "beeper_punch"})
+    // The sound character and the sound hardware's listening choices (mixer-channels-and-settings.md §4)
+    ASSERT_EQ(SoundCharacterSettings::Descriptors().size(), 10u);
+    for (const char* name : {"ay_voicing", "ay_punch", "ay_room", "beeper_punch", "ay_stereo", "ay_chip", "fm_trim_db",
+                             "neogs_stereo", "covox_dc_removal", "fir_filter"})
         EXPECT_NE(SoundCharacterSettings::Find(name), nullptr) << name;
     EXPECT_NE(SoundCharacterSettings::Find("AY_VOICING"), nullptr) << "names are case-insensitive";
     EXPECT_EQ(SoundCharacterSettings::Find("audio_rate"), nullptr);
     EXPECT_TRUE(SoundCharacterSettings::Find("ay_punch")->isBool);
     EXPECT_FALSE(SoundCharacterSettings::Find("ay_room")->isBool);
+    EXPECT_TRUE(SoundCharacterSettings::Find("fm_trim_db")->isNumber);
+    EXPECT_TRUE(SoundCharacterSettings::Find("fir_filter")->isBool);
 }
 
 TEST_F(SoundCharacterSettings_Test, DefaultsReadBack)

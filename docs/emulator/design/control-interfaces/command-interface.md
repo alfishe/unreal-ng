@@ -871,7 +871,11 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | Raw framebuffer (rgba; the Sprinter's u16 pens with `index`) | `capture framebuffer <file> [rgba\|index]` | `GET /capture/framebuffer?format=&encoding=binary\|base64` | `framebuffer([format])` | `framebuffer(format)` (+ numpy `array`) | `capture_media` framebuffer |
 | Screen digest (RAM pages, or the machine's own video RAM on the Sprinter) | `digest [--active] [--banks ..] [<start> <end>]` | `GET /state/screen/digest` | `screen_digest(...)` | `screen_digest(...)` | `screen_digest` |
 | Audio channels overview (beeper, AY, GS, Covox, master, mixer devices) | `state audio channels` | `GET /state/audio/channels` | - (`audio_mixer()`) | - (`audio_mixer()`) | `invoke_api` |
-| Per-device mixer (mute, solo, volume / gain dB, peak) | `mixer`, `mixer <source> [muted=] [solo=] [volume=] [gain_db=]` | `GET /audio/mixer`, `PUT /audio/mixer/{source}` | `audio_mixer()`, `audio_mixer_set(source, {..})` | `audio_mixer()`, `audio_mixer_set(source, ...)` | `audio_mixer`; `invoke_api` PUT |
+| Per-device mixer (mute, solo, volume / gain dB, peak; each row's channels) | `mixer`, `mixer <source>`, `mixer channels`, `mixer <source> [muted=] [solo=] [volume=] [gain_db=]` | `GET /audio/mixer`, `PUT /audio/mixer/{source}` | `audio_mixer()`, `audio_mixer_set(source, {..})` | `audio_mixer()`, `audio_mixer_set(source, ...)` | `audio_mixer` `get` / `set` |
+| Mixer channel (`<source>.<channel>`: `ay1.a`, `covox.lb`, `gs.3`, `fm1.2`, `moonsound_fm.18`, `moonsound_pcm.24`, `ms_midi.10`, `next_dac.c`): mute, solo within its row, volume / gain dB; applied at the next frame start, host-side ([mixer channels](../audio/mixer-channels-and-settings.md)) | `mixer ay1.a muted=1` | `PUT /audio/mixer/ay1.a`, `GET /audio/mixer/ay1.a` | `audio_mixer_set("ay1.a", {..})`, `audio_mixer_get("ay1.a")` | the same | `audio_mixer` `set` / `source` |
+| Mixer levels (every row's and channel's peak, active, mute, solo; the topic pushes them) | `mixer channels` | `GET /audio/levels`; WS topic `audio.mixer` | `audio_levels()` | `audio_levels()` | `audio_mixer` `levels` |
+| Mixer on a control surface: `audio.source_mute`, `audio.source_solo` (toggles), `audio.source_volume`, `audio.volume_by` (`source` a row or channel, or `source` + `channel`); readouts `audio.mixer`, `audio.source.<key>` | `action run audio.source_solo source=ay1.b` | `POST /api/v1/controllers/actions/{id}` | `action(id, [value], [params])` | `emu.action(id, value=None, **params)` | `actions` `run` |
+| Sound settings `ay_stereo` (abc / acb / mono), `ay_chip` (ay8910 / ym2149; fixed on a TSFM), `fm_trim_db` (-12..12, 0.5 steps), `neogs_stereo` (separated / gs / mono), `covox_dc_removal`, `fir_filter` (Sound HQ), with `ay_voicing`, `ay_room`, `ay_punch`, `beeper_punch`; `unavailable` where the machine has no such part | `setting <name> [value]` | `GET` / `PUT /settings/{name}` | `get_sound_character()`, `set_sound_character(name, value)` | the same | `audio_mixer` `settings` / `set_setting`; catalogue `set.value` / `set.toggle` |
 | Audio capture of one device (its own buffer) | `audiocapture start <seconds> [source]` | `POST /audio/capture {action: start, seconds, source}` | `audio_capture_start(s, source)` | `audio_capture_start(s, source)` | `capture_media` audio_capture `source` |
 | CMOS clock (report) | `state rtc` / `rtc` | `GET /state/rtc` | `rtc_state()` | `rtc_state()` | `rtc` |
 | Execution arbiter | `state execution` / `state exec` | `GET /state/execution` | `execution_state()` | `execution_state()` | `execution` |
@@ -2703,6 +2707,7 @@ Commands to configure emulator instance behavior and performance characteristics
    - `audio_rate`: Runtime pin for the core audio sample rate — the rate the DSP stack and every capture/recording run at
    - Resolution chain: runtime pin > connected audio device rate > `[SOUND] CoreRate` (ini — headless only, a connected device always outranks it) > 44100
    - A pinned rate beats even the device rate, which is what fixed-rate headless recordings need; `auto` lets UI clients switch dynamically as the audio device changes
+   - The sound character and the sound hardware's listening choices ([mixer channels and settings](../audio/mixer-channels-and-settings.md#4-sound-settings)): `ay_voicing`, `ay_room`, `ay_punch`, `beeper_punch`, `ay_stereo`, `ay_chip`, `fm_trim_db`, `neogs_stereo`, `covox_dc_removal`, `fir_filter`; a part the machine does not have reads `unavailable`
 
 4. **Compatibility Settings** (Future):
    - `timing_model`: `accurate` | `fast` | `compatible`
@@ -2721,6 +2726,12 @@ Commands to configure emulator instance behavior and performance characteristics
 | `turbo_audio` | Boolean | `off` | `on`, `off` | Audio stays on in turbo mode |
 | `cpu_frequency` | Float | `3.5` | `3.5` - `112.0` | CPU frequency in MHz |
 | `audio_rate` | Integer/String | `auto` | `44100`, `48000`, `88200`, `96000`, `176400`, `192000`, `auto` | Core audio rate pin (runtime only; `auto` follows device > `[SOUND] CoreRate` > 44100) |
+| `ay_stereo` | String | `[SOUND] AYStereo` | `abc`, `acb`, `mono` | The AY socket's stereo mixing (runtime only) |
+| `ay_chip` | String | the chip's | `ay8910`, `ym2149` | The AY socket's DAC curve; `ym2203` and fixed with a TurboSound FM |
+| `fm_trim_db` | Number | `[SOUND] TSFM_FmLevelDb` | `-12` .. `12`, 0.5 dB steps | YM2203 FM level (TurboSound FM, ZX-MultiSound); `unavailable` without one |
+| `neogs_stereo` | String | `[NGS] StereoMode` | `separated`, `gs`, `mono` | The NeoGS listening choice |
+| `covox_dc_removal` | Boolean | `off` | `on`, `off` | Covox / SounDrive DC offset removal; `unavailable` without one |
+| `fir_filter` | Boolean | the `soundhq` feature | `on`, `off` | Sound HQ: the AY FIR decimation and the character chains |
 | `timing_model` | String | `accurate` | `accurate`, `fast`, `compatible` | Timing emulation model |
 
 **Use Cases**:
@@ -3692,7 +3703,8 @@ The host actions by id (control surfaces design
 `run.step_in`, `run.turbo_hold`, ...), time travel (`ttd.step_back_frame`, `ttd.jog_frames`, ...), the machine
 (`mach.reset`, `mach.nmi`, `mach.turbo_toggle`, `mach.start`, `mach.cold_reset`), and the actions a Stream Deck
 scenario runs instead of REST steps (`input.key`, `input.type`, `input.joystick`, `basic.run`, `feature.toggle`,
-`set.speed`, `set.toggle`, `audio.mute_toggle`, `audio.volume_by`, `media.open`, `media.tape`, `media.eject`,
+`set.speed`, `set.toggle`, `set.value`, `audio.mute_toggle`, `audio.source_mute`, `audio.source_solo`,
+`audio.source_volume`, `audio.volume_by` (a source or a channel `ay1.a`), `media.open`, `media.tape`, `media.eject`,
 `snapshot.quick`, `video.overscan_toggle`, `dbg.mode_toggle`, `ttd.seek`, ...: the full list with their params in
 [actions.md §1.1](../../../inprogress/2026-10-18-control-surfaces/actions.md#11-scenario-actions-sd6)) and, with the
 Qt client, its GUI actions (`dbg.open`, the debugger panes, `cap.screenshot`, `ttd.scrub_*`). Each takes the companion

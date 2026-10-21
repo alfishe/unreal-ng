@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #include <cstdint>
 #include <cstddef>
 #include "emulator/sound/audio.h"
@@ -131,6 +133,12 @@ protected:
 
     // Per-channel mute (for UI)
     bool _channelMute[4] = {false, false, false, false};
+    // Per-channel host gain, Q15 (the mixer's channel volume; 32768 = unity: bit-exact). Not machine state
+    int32_t _channelGain[4] = {32768, 32768, 32768, 32768};
+    // A mute or a gain changed: the output level is rebuilt at the next frame start (T-state 0)
+    bool _levelsDirty = false;
+    /// Emit the step to the current amplitudes at T-state 0 of the frame (frame start only)
+    void emitLevelsAtFrameStart();
 
     // Stale-channel decay state (see STALE_CHANNEL_FRAMES doc, public section)
     bool _writtenThisFrame[4] = {false, false, false, false};
@@ -148,7 +156,7 @@ protected:
     bool _hadSoundLastFrame = false;
 
     // DC offset removal (optional, applied post-blip)
-    bool _dcRemovalEnabled = false;
+    std::atomic<bool> _dcRemovalEnabled{false};  // any thread sets it (the audio settings, automation)
     float _dcAccumL = 0.0f;
     float _dcAccumR = 0.0f;
     static constexpr float DC_COEF = 0.995f;  // ~7 Hz cutoff @ 44.1 kHz
@@ -203,12 +211,26 @@ public:
     bool hadSoundLastFrame() const { return _hadSoundLastFrame; }
 
     // DC removal control (for UI section)
-    void setDCRemovalEnabled(bool enabled) { _dcRemovalEnabled = enabled; }
-    bool isDCRemovalEnabled() const { return _dcRemovalEnabled; }
+    void setDCRemovalEnabled(bool enabled) { _dcRemovalEnabled.store(enabled, std::memory_order_relaxed); }
+    bool isDCRemovalEnabled() const { return _dcRemovalEnabled.load(std::memory_order_relaxed); }
 
     // Per-channel mute control
-    void setChannelMute(Channel ch, bool mute) { _channelMute[static_cast<int>(ch)] = mute; }
+    /// Takes effect at the next DAC write or frame start
+    void setChannelMute(Channel ch, bool mute)
+    {
+        if (_channelMute[static_cast<int>(ch)] != mute)
+            _levelsDirty = true;
+        _channelMute[static_cast<int>(ch)] = mute;
+    }
     bool isChannelMuted(Channel ch) const { return _channelMute[static_cast<int>(ch)]; }
+    /// The mixer's channel volume as a Q15 gain (MixerChannelGainQ15); takes effect at the next DAC write or frame start
+    void setChannelGain(Channel ch, int32_t gainQ15)
+    {
+        if (_channelGain[static_cast<int>(ch)] != gainQ15)
+            _levelsDirty = true;
+        _channelGain[static_cast<int>(ch)] = gainQ15;
+    }
+    int32_t channelGain(Channel ch) const { return _channelGain[static_cast<int>(ch)]; }
 
     /// The four DAC latches (LeftA, LeftB, RightA, RightB order of Channel)
     void getDacLatches(uint8_t (&out)[4]) const

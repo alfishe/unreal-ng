@@ -59,6 +59,10 @@ public:
     bool SetFmTrimDb(double db) override;
     bool FmTrimDb(double& db) const override;
     const int16_t* MixerBuffer(AudioSourceType type) const override;
+    /// ms_ssg1/2.a..c (the SSG parts' channels), ms_fm1/2.1..3 (the YM2203 FM channels), ms_midi.1..16 (the SAM2695's
+    /// parts: mute only)
+    void MixerChannels(AudioSourceType type, std::vector<MixerChannelDesc>& out) const override;
+    void SetMixerChannel(AudioSourceType type, size_t index, bool muted, float volume) override;
     bool WantsWideMix() const override
     {
         return true;

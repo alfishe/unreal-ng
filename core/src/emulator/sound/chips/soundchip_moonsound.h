@@ -107,6 +107,8 @@ public:
     // the UI reaches the 18 FM + 24 PCM taps through these accessors.
     size_t channelCount(opl4::ChannelGroup group) const;
     void setChannelMute(opl4::ChannelGroup group, size_t index, bool mute);
+    /// The mixer's channel volume as a Q15 gain (MixerChannelGainQ15): the render path only, never chip state
+    void setChannelGain(opl4::ChannelGroup group, size_t index, int32_t gainQ15);
     float channelPeak(opl4::ChannelGroup group, size_t index) const;
 
     // Frame lifecycle

@@ -5991,7 +5991,17 @@ namespace PythonBindings
                 throw py::value_error(error);
             return StateNodeToPy(DeviceState::AudioMixer(self.GetContext()));
         }, py::arg("source"), py::arg("muted") = py::none(), py::arg("solo") = py::none(), py::arg("volume") = py::none(),
-           py::arg("gain_db") = py::none(), "Set one mixer device (source key from audio_mixer(), or 'master' for muted): returns the mixer")
+           py::arg("gain_db") = py::none(), "Set one mixer device (source key from audio_mixer(), or 'master' for muted) or channel ('ay1.a', 'gs.3'): returns the mixer")
+        .def("audio_mixer_get", [](Emulator& self, const std::string& source) -> py::object {
+            StateNode node;
+            std::string error;
+            if (!AudioMixer::Read(self.GetContext(), source, node, error))
+                throw py::value_error(error);
+            return StateNodeToPy(node);
+        }, py::arg("source"), "One mixer row ('ay1') or channel ('ay1.a'): muted, solo, audible, volume, gain_db, peak, active, channels")
+        .def("audio_levels", [](Emulator& self) -> py::object {
+            return StateNodeToPy(AudioMixer::Levels(self.GetContext()));
+        }, "Every mixer row's and channel's levels and mute / solo (the WebSocket topic audio.mixer)")
         .def("audio_capture_start", [](Emulator& self, double seconds, const std::string& sourceKey) -> py::dict {
             py::dict d;
             auto* context = self.GetContext();

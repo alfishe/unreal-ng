@@ -5,6 +5,7 @@
 #include "../emulator_api.h"
 
 #include <algorithm>
+#include <cstdlib>
 
 #include <drogon/HttpResponse.h>
 #include <base/featuremanager.h>
@@ -14,6 +15,8 @@
 #include <emulator/sound/soundcharactersettings.h>
 #include <emulator/sound/soundmanager.h>
 #include <json/json.h>
+
+#include <cstdlib>
 
 using namespace drogon;
 using namespace api::v1;
@@ -32,8 +35,12 @@ namespace
 Json::Value SoundCharacterJson(const SoundManager& sound, const SoundCharacterSettings::Descriptor& d)
 {
     const std::string value = SoundCharacterSettings::Get(sound, d.name);
+    if (value == "unavailable")
+        return Json::Value();  // the machine has no such part (no YM2203 FM, no Covox): null
     if (d.isBool)
         return Json::Value(value == "on");
+    if (d.isNumber)
+        return Json::Value(std::strtod(value.c_str(), nullptr));
     return Json::Value(value);
 }
 
@@ -359,10 +366,12 @@ void EmulatorAPI::setSetting(const HttpRequestPtr& req, std::function<void(const
             text = value.asBool() ? "on" : "off";
         else if (value.isString())
             text = value.asString();
+        else if (soundSetting->isNumber && value.isNumeric())
+            text = std::to_string(value.asDouble());
         else
         {
             badRequest(std::string("Invalid ") + soundSetting->name + " value: expected a string" +
-                       (soundSetting->isBool ? " or a bool" : ""));
+                       (soundSetting->isBool ? " or a bool" : soundSetting->isNumber ? " or a number" : ""));
             return;
         }
 
