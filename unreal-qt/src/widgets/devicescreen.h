@@ -113,11 +113,16 @@ public:
     int temporalHistorySize() const { return _frameHistory.historySize(); }
     void setTemporalWeightMode(int mode);
     int temporalWeightMode() const { return _temporalWeightMode; }
+    /// Exponential weights: each older frame's share of the newer one (0.1..0.9)
+    void setTemporalDecay(float decay);
+    float temporalDecay() const { return _temporalDecay; }
 
     // CRT effects (CRTRenderer / CRTBeamModel: the same picture as the GPU screen, bit for bit)
     void setCRTEffectsEnabled(bool enabled);
     bool crtEffectsEnabled() const { return _crtEnabled; }
     void setCRTProfile(CRTProfile profile);
+    /// New values of the profile's parameters, the CRT switch kept
+    void setCRTParams(const CRTProfileParams& params);
     void setCRTProfile(const CRTProfileParams& params);
     CRTProfile crtProfile() const { return _crtParams.profile; }
     const CRTProfileParams& crtParams() const { return _crtParams; }
@@ -174,6 +179,7 @@ private:
     QImage _blendedFrame;
     bool _temporalEnabled = false;
     int _temporalWeightMode = 0;
+    float _temporalDecay = 0.5f;
 
     // CRT effects
     std::unique_ptr<CRTRenderer> _crtRenderer;

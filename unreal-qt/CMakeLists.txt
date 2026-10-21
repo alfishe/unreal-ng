@@ -214,7 +214,6 @@ EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/CMakeFiles/" FALSE OUTVAR CPP_FI
 if (NOT ENABLE_RECORDING)
     list(FILTER CPP_FILES EXCLUDE REGEX ".*videorecordingwidget\\.cpp$")
     list(FILTER CPP_FILES EXCLUDE REGEX ".*multitrackdialog\\.cpp$")
-    list(FILTER CPP_FILES EXCLUDE REGEX ".*recordingpresets\\.cpp$")
 endif()
 
 set (SOURCES ${CPP_FILES})

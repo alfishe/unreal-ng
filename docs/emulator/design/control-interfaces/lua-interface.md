@@ -295,6 +295,15 @@ streamdeck("pair")                         -- the user approves it at the GUI
 streamdeck("brightness", {deck = "A1B2C3", value = 40})
 ```
 
+Monitoring (`monitor(name, {instance = })`, [command-interface.md §17](./command-interface.md#17-monitoring)); an
+instance's name reads this emulator unless `instance` names another:
+
+```lua
+local stats = monitor("emulator.stats")       -- stats.fps, stats.speed_percent, stats.cpu.mhz, stats.interrupts_per_frame
+local host = monitor("host.stats")            -- host.cpu_percent, host.rss_bytes, host.threads
+local groups = bp_groups().groups             -- {{name, total, active, ids}}
+```
+
 ### Disk Operations
 
 Global functions for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands
@@ -560,6 +569,10 @@ shot, err = screenshot{area="screen", format="png", source="live", path="scratch
           -- nil, err for a bad word or no frame. screenshot() = the whole frame as PNG
 mx = audio_mixer()                -- per-device mixer: master, devices[] (source, muted, solo, volume, gain_db, peak, active)
 mx, err = audio_mixer_set("covox", {muted=true})  -- solo=, volume=0..1, gain_db=; "master" takes muted
+mx, err = audio_mixer_set("ay1.b", {solo=true})  -- a channel "<row>.<channel>": ay1.a, gs.3, moonsound_fm.7, ms_midi.10, next_dac.c (solo within its row)
+ch, err = audio_mixer_get("ay1.a")            -- one row (with its channels) or channel
+lv = audio_levels()                           -- every row's and channel's peak, active, mute, solo (the topic audio.mixer)
+-- get_sound_character() / set_sound_character(name, value): ay_stereo, ay_chip, fm_trim_db, neogs_stereo, covox_dc_removal, fir_filter too
 r = audio_capture_start(1.0, "covox")             -- capture one device's own buffer (default: the master mix)
 rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
 exe = execution_state()     -- execution arbiter: phase, intent + intent_set_by, serving, queue, claim, driver_violations
@@ -774,6 +787,14 @@ bp_remove(id); bp_clear()
 bp_enable(id); bp_disable(id)
 bp_note(id, "main loop")       -- annotation (empty clears); false for an unknown id
 bp_group(id, "game")           -- group, created on use; switched on / off together (CLI bpgroup)
+id = bp_key("space")           -- keyboard: the first keyboard read that sees SPACE go down; {on="release"|"both", hits=, group=, note=}; "any"
+bp_select("group:game", "disable")  -- a selection (all, an id, a kind, group:<name>): enable | disable | toggle | remove
+                               -- -> {select, selected, changed, active}; a refusal: ok = false, error
+bp_groups()                    -- {ok, instance, groups = {{name, total, active, ids}, ...}}
+trace("opcode", "start")       -- profilers and traces (tracecontrol): opcode, memory, calltrace, coverage, porttrace,
+trace("audio", "start", {seconds = 2, source = "ay1"})  -- gsporttrace, pchist, aylog, audio, all; start | stop | toggle |
+                               -- pause | resume | pause_toggle | clear | status -> {name, state, can_pause}
+analyzer_list(); analyzer_enable("trdos"); analyzer_disable("trdos"); analyzer_active("trdos")
 n = bp_count()
 print(bp_list())               -- the text table: range "to 0x80FF", "in ram32", "mask 0x00FF", "hits >=50", "(hit 12x)"
 st = bp_status()               -- the last hit: {valid, id, type, address, access, active, note, group, hit_count, page = {kind, page}}
@@ -999,6 +1020,7 @@ ttd_set_journal_enabled(b)   --> ok, reason  -- switch the write journal at any 
 ttd_build_journal([from_frame], [to_frame])  --> {ok, error, cancelled, frames_built, frames_covered,
                                        --   frames_refused, records}: build it by replaying frames from..to
                                        --   (default: the whole session), about 2-4 ms per frame; not while recording
+ttd_cancel_journal_build()   --> {cancelled}  -- stop a build that runs (another thread's call)
 ttd_set_history_limit(frames, bytes)   --> frames, bytes  -- keep only the newest history while recording
                                        --   (0 = no limit, nil keeps a value; status: history_* fields)
 ttd_get_journal_enabled()    --> bool
@@ -1099,6 +1121,7 @@ ttd_position()   -- current, session_end, first_frame, history, state, paused, f
 ttd_reverse_step()               --> bool  -- one instruction back
 ttd_reverse_step(10)             --> bool  -- ten instructions back
 ttd_reverse_step_tstates(5000)   --> bool  -- back 5000 t-states (nearest instruction start)
+ttd_reverse_step_scanlines(2)    --> bool  -- back 2 scanlines of the machine (t_line each)
 
 local r = ttd_reverse_continue({0x8000, 0x8010})
 -- --> { matched = true, pc = 0x8000, frame = 4700, tinframe = 812 }
@@ -1257,6 +1280,17 @@ emu.step_out()                       -- run until the current subroutine returns
 emu.skip_until(0x8000)               -- fast-forward until PC == target (breakpoints skipped)
 emu.skip_until("0x8000", 70000000)   -- optional explicit t-state budget
 
+-- The paced run (core RunPacer, command-interface.md §2.1): a frame / lines / an instruction per interval,
+-- stops at a breakpoint. The reply: the body with `pace` and ok (false: error = the message)
+pace()                               -- {preset, label, unit, count, interval_ms, effective_ms, running, ticks,
+                                     --  stop_reason, presets}
+pace_set("5fps")                     -- full, 25fps, 5fps, 1fps, frame, 100lines, 10lines, 1line, 1op
+pace_set("1op", 200)                 -- and the interval of frame .. 1op (1..5000 ms)
+pace_interval(50)
+pace_next() pace_prev()              -- finer / coarser
+pace_start() pace_stop() pace_toggle()
+pace_step()                          -- one step at the pace
+
 -- Memory search
 emu.mem_find("AF 3C")                -- hex pattern as string (spaces optional)
 emu.mem_find(0xAF3C)                 -- or as a number
@@ -1322,14 +1356,33 @@ emu.video_temporal_set("mod-tpgwafsd") -- switch it on; "off" or "" switches it 
                                      --   by the difference (audio_extra_delay_frames, 5 here) to stay in sync.
 emu.window_display()                 -- GUI window display settings: { backend ("gpu" / "software"), gpu_available,
                                      --   gpu, crt, crt_profile, crt_profiles = {...}, blending (temporal blending),
-                                     --   blending_frames (2..5), blending_weights ("equal" / "exponential"), emulator
-                                     --   (the instance the window shows) }; headless { ok = false, error, kind = "no-window" }
-emu.window_display_set({crt_profile = "basic", blending = true})  -- any of gpu, crt, blending (boolean),
+                                     --   blending_frames (2..5), blending_weights ("equal" / "exponential"),
+                                     --   blending_decay (0.1..0.9), emulator (the instance the window shows),
+                                     --   fullscreen, scale (1..4, 0 = resized by hand), toolbar, status_bar, hud,
+                                     --   hud_theme, hud_themes, hud_notices = {id = shown}, osd_keyboard,
+                                     --   osd_keyboard_picture, osd_keyboard_pictures, next_layers, next_layers_mode,
+                                     --   next_layers_shown = {ula, layer2, tilemap, sprites} }; headless
+                                     --   { ok = false, error, kind = "no-window" }
+emu.window_display_set({crt_profile = "basic", blending = true})  -- any of gpu, crt, blending, fullscreen,
+                                     --   toolbar, status_bar, hud, osd_keyboard, next_layers (boolean),
                                      --   crt_profile (one of crt_profiles: none, basic, ...,
                                      --   shader:<name> (a preset or a custom shader) with the GPU; other
-                                     --   than none switches CRT on), blending_frames, blending_weights; applied the
-                                     --   way the View menu does. Returns the settings after the change, or
+                                     --   than none switches CRT on), blending_frames, blending_weights,
+                                     --   blending_decay (0.3), scale (1..4), hud_theme, hud_notices = {["ram-page"]
+                                     --   = false}, osd_keyboard_picture, next_layers_mode ("layers" / "composed" /
+                                     --   "winner"), next_layers_shown = {sprites = false}; applied the way the View
+                                     --   menu does. Returns the settings after the change, or
                                      --   { ok = false, error, kind = "bad-parameter" / "no-window" / "unavailable" }
+emu.window_crt_params()              -- the active CRT profile's parameters: { profile, kind ("preset" / "profile" /
+                                     --   "none"), parameters = {{name, description, value, initial, minimum,
+                                     --   maximum, step}, ...} }; headless { ok = false, error, kind = "no-window" }
+emu.window_crt_params_set({CRTgamma = 2.4}, {steps = {curvature = 2}, reset = true})  -- set values (clamped),
+                                     --   move by a dial's steps, reset all (true) or one ("name"); returns the
+                                     --   parameters after it, or { ok = false, error, kind }
+emu.video_viewport()                 -- the overscan frame and its crop: { overscan, overscan_available, viewport,
+                                     --   viewports, framebuffer, display, video_mode } (the machine's: headless too)
+emu.video_viewport_set("standard")   -- full / symmetric / standard / screen_only / next / prev; a crop other than
+                                     --   full needs overscan on (feature "overscan"); { ok = false, error } refused
 emu.frame_cost()                     -- per-frame halt/run cost accounting
 emu.operations([since [, limit]])    -- the operation log (reset, autostart, snapshot load, media insert / eject /
                                      --   discard, blank disk; refusals too): { mode, last_seq, capacity,
@@ -1377,7 +1430,13 @@ emu.video_record("start", {format = "h264", filename = "run.mkv", profile = "4k"
                                      -- profile: "native" (default) | "1080p" | "1440p" | "4k": a fixed frame, the
                                      -- picture fitted into it (aspect kept, nearest, black bars; h264 /
                                      -- h265 only). acceleration: "auto" | "hardware" | "software"
+emu.video_record("start", {preset = "gameplay"})  -- a core preset (recording_presets() lists them); fields win
+emu.video_record("start", {mode = "audio", container = "flac"})  -- audio only; mode "multi": a track per source
+emu.video_record("toggle")           -- stop a running recording, else start one
 emu.video_record("stop")             -- also "pause" / "resume"
+recording_presets()                  -- {{id = "gameplay", title = "Gameplay (MP4)", mode, format, container, audio, ...}, ...}
+recent_files("tape")                 -- the files opened lately: {kind, files = {{index, kind, name, path, time}, ...}}
+recent_clear()                       -- forget them (a kind, or all); open one: action("media.open_recent", nil, {index = 0})
 emu.video_record_status()             -- recording state + live stats (frames, duration, fps,
                                      -- audio, audio_codec, audio_sample_rate, audio_duration)
 

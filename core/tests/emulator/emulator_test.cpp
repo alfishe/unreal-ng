@@ -573,7 +573,9 @@ TEST(Emulator_BlankDisk_Test, RefusesWhatNoDriveTakes)
     EXPECT_EQ(format, Emulator::BlankDiskFormat::Plus3);
     EXPECT_TRUE(Emulator::ParseBlankDiskFormat("unformatted", format));
     EXPECT_EQ(format, Emulator::BlankDiskFormat::Unformatted);
-    EXPECT_FALSE(Emulator::ParseBlankDiskFormat("trdos", format));
+    EXPECT_TRUE(Emulator::ParseBlankDiskFormat("trdos", format));
+    EXPECT_EQ(format, Emulator::BlankDiskFormat::Trdos);
+    EXPECT_FALSE(Emulator::ParseBlankDiskFormat("dos", format));
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

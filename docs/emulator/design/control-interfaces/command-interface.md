@@ -398,6 +398,7 @@ Commands to control the CPU execution flow for the selected emulator instance. T
 | `run_frame` | | | Run exactly one complete video frame worth of t-states. The beam stops at approximately the same position in the next frame, providing consistent "one frame forward" behavior. |
 | `run_frames <N>` | | `<count>` | Run exactly `<N>` complete video frames. Equivalent to calling `run_frame` N times but more efficient. Max: 10,000. |
 | `run_ncycles <N>` | | `<count>` | Run exactly `<N>` CPU cycles (instructions). Each cycle executes one complete Z80 instruction. Max: 100,000. |
+| `pace [verb]` | | `[show \| presets \| set <preset> [ms] \| interval <ms> \| next \| prev \| start \| stop \| toggle \| step] [--json]` | The paced run (see **2.1 Paced run** below): the machine steps a frame, N scanlines or an instruction per interval on its own and stops at a breakpoint. |
 
 **Implementation Details**:
 
@@ -514,6 +515,56 @@ Python `emu.operations(since=0, limit=0)` and the MCP `emulator_manage` action `
 - `step` commands disable real-time rendering for precision
 - Frequent stepping may impact overall emulation performance
 - Use `resume` to return to full-speed emulation
+
+#### 2.1 Paced run and runs to a place (Stream Deck D1, D2)
+
+**The paced run** (`execution::RunPacer`, `core/src/emulator/execution/runpacer.h`; module doc
+[SPEED-CONTROL.md](../../../inprogress/2026-02-07-speed-control/SPEED-CONTROL.md#2026-10-21-the-pace-in-the-core)):
+the debugger's speed control ladder in the core, one pacer per instance, the same on every surface and in the Qt
+widget (now its client). Presets, coarse to fine: `full` (no pacing: the machine runs at its speed), `25fps`, `5fps`,
+`1fps` (a frame per 40 / 200 / 1000 ms), `frame`, `100lines`, `10lines`, `1line`, `1op` (one unit per the adjustable
+interval, 1..5000 ms, default 1000). A run steps on the pacer's own thread (only while it runs) with breakpoints
+honoured: a breakpoint ends it with the machine paused there (`stop_reason` `breakpoint`, `breakpoint` {id, address});
+so do a resume of the machine (`resumed`), another surface holding run control (`held`), the user taking control back
+(`revoked`) and the instance going (`gone`). Choosing a preset acts as the slider: a paced preset while the machine
+runs at full speed pauses it and starts the pace; `full` while the pace runs stops it and resumes the machine.
+
+| Verb | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| pace (read) | | `{preset, label, index, unit, count, interval_ms, effective_ms, adjustable, running, ticks, stop_reason, breakpoint?, presets}` | ✅ Implemented |
+| pace set | `preset?`, `interval_ms?` | Choose a preset (id, label or index) and / or the adjustable interval | ✅ Implemented |
+| pace next / prev / by | `delta` (by) | A finer / coarser preset, clamped (`edge: true` at an end) | ✅ Implemented |
+| pace start / stop / toggle | | Run at the pace / stop it (the machine stays paused) / the dial's push: a running pace stops, a machine at full speed pauses, else the pace starts | ✅ Implemented |
+| pace step | | One unit of the preset now (a running pace stops first); `stop` as a step's | ✅ Implemented |
+
+| Plane | Read | Change |
+| :--- | :--- | :--- |
+| CLI | `pace`, `pace presets` | `pace set 5fps`, `pace interval 200`, `pace next`, `pace start`, `pace step` |
+| WebAPI | `GET /api/v1/emulator/{id}/run_pace` | `POST /api/v1/emulator/{id}/run_pace` `{op: set\|next\|prev\|by\|start\|stop\|toggle\|step, preset?, interval_ms?, delta?}` (scope run) |
+| WebSocket | the GET as a `call`; push: `pace` in the `run.state` topic and readout (`preset`, `label`, `unit`, `count`, `interval_ms`, `effective_ms`, `running`, `stop_reason`) | the POST as a `call` |
+| MCP | `control_execution` action `pace` (`pace_op` `get`) | `control_execution` action `pace`, `pace_op` `set` / `next` / `prev` / `start` / `stop` / `toggle` / `step`, `preset`, `interval_ms` |
+| Python | `emu.pace()` | `emu.pace_set("5fps", 200)`, `pace_interval(ms)`, `pace_next()`, `pace_prev()`, `pace_start()`, `pace_stop()`, `pace_toggle()`, `pace_step()` (a refusal raises `RuntimeError`) |
+| Lua | `pace()` | `pace_set("5fps", 200)`, `pace_interval(ms)`, `pace_next()`, ... `pace_step()` (a table with `ok`, `error` on a refusal) |
+| Actions | readout `run.state` → `pace`, toggle `toggle.run.pace_toggle` | `run.pace_set`, `run.pace_next`, `run.pace_prev`, `run.pace_by` (a dial), `run.pace_toggle`, `run.pace_stop`, `run.pace_step` |
+| Qt | the debugger's speed control shows the pacer (`NC_RUN_PACE`) | its slider, interval, play / pause and step submit the actions |
+
+**Runs to a place.** Each is a `RunControl` verb (`core/src/emulator/execution/runcontrol.h`: the claim rule, the
+revoked answer, `pc`, `sp`, `state`), on every plane:
+
+| Verb | Arguments | CLI | WebAPI | MCP `control_execution` | Python / Lua | Action |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| run to scanline | `scanline` | `run_to_scanline <N>` | `POST /run_to_scanline` | `run_to_scanline` (`scanline`) | `run_to_scanline(n)` | `run.to_scanline` (`line`) |
+| run N scanlines | `count` 1..1000 | `run_scanlines <N>` | `POST /run_scanlines` | `run_scanlines` (`count`) | `run_scanlines(n)` | `run.n_scanlines` (`count`) |
+| run to the first paper pixel | | `run_to_pixel` | `POST /run_to_pixel` | `run_to_pixel` | `run_to_pixel()` | `run.to_pixel` |
+| run until PC | `pc`, `max_tstates?` (0: 100 frames, at most 700000000), `breakpoints?` (false: skipped) | `skip_until <pc> [max]` | `POST /skip_until` `{pc, max_tstates?, breakpoints?}` | `run_until_pc` (`pc`, `max_tstates`, `breakpoints`) | `skip_until(pc, max)` | `run.until_pc` (`pc`, `max_tstates?`, `breakpoints?`) |
+| run to the cursor | `addr?` (else the Qt disassembly's cursor), `max_tstates?` (0: 500 frames); a breakpoint on the way stops it | `action run run.to_cursor addr=#8000` | `POST /skip_until` `{pc, breakpoints: true}` | `run_until_pc` with `breakpoints` true | `action("run.to_cursor", addr=...)` | `run.to_cursor`; Qt Debug menu "Run to Cursor" |
+| N instructions | `count` 1..100000 | `run_ncycles <N>`, `steps <N>` | `POST /steps` | `step_n` (`count`) | `steps(n)` | `run.steps` (`count`) |
+| step a source line | `max_tstates?` | `listing step_line` | `POST /listing/step_line` | `symbols` `step_line` | `listing_step_line()` | `run.step_line` |
+| run to a source line | `line`, `max_tstates?` | `listing run_to_line <N>` | `POST /listing/run_to_line` | `symbols` `run_to_line` | `listing_run_to_line(n)` | `run.to_line` (`line`) |
+
+The WebAPI's `skip_until`, `run_to_pixel` and the listing routes run on the long-call pool through `RunControl`
+since 2026-10-21 (the listing ones ran on an I/O thread before); `skip_until` answers `hit`, `target`, `max_tstates`
+and `stop`.
 
 ### 3. State Inspection
 
@@ -871,7 +922,11 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | Raw framebuffer (rgba; the Sprinter's u16 pens with `index`) | `capture framebuffer <file> [rgba\|index]` | `GET /capture/framebuffer?format=&encoding=binary\|base64` | `framebuffer([format])` | `framebuffer(format)` (+ numpy `array`) | `capture_media` framebuffer |
 | Screen digest (RAM pages, or the machine's own video RAM on the Sprinter) | `digest [--active] [--banks ..] [<start> <end>]` | `GET /state/screen/digest` | `screen_digest(...)` | `screen_digest(...)` | `screen_digest` |
 | Audio channels overview (beeper, AY, GS, Covox, master, mixer devices) | `state audio channels` | `GET /state/audio/channels` | - (`audio_mixer()`) | - (`audio_mixer()`) | `invoke_api` |
-| Per-device mixer (mute, solo, volume / gain dB, peak) | `mixer`, `mixer <source> [muted=] [solo=] [volume=] [gain_db=]` | `GET /audio/mixer`, `PUT /audio/mixer/{source}` | `audio_mixer()`, `audio_mixer_set(source, {..})` | `audio_mixer()`, `audio_mixer_set(source, ...)` | `audio_mixer`; `invoke_api` PUT |
+| Per-device mixer (mute, solo, volume / gain dB, peak; each row's channels) | `mixer`, `mixer <source>`, `mixer channels`, `mixer <source> [muted=] [solo=] [volume=] [gain_db=]` | `GET /audio/mixer`, `PUT /audio/mixer/{source}` | `audio_mixer()`, `audio_mixer_set(source, {..})` | `audio_mixer()`, `audio_mixer_set(source, ...)` | `audio_mixer` `get` / `set` |
+| Mixer channel (`<source>.<channel>`: `ay1.a`, `covox.lb`, `gs.3`, `fm1.2`, `moonsound_fm.18`, `moonsound_pcm.24`, `ms_midi.10`, `next_dac.c`): mute, solo within its row, volume / gain dB; applied at the next frame start, host-side ([mixer channels](../audio/mixer-channels-and-settings.md)) | `mixer ay1.a muted=1` | `PUT /audio/mixer/ay1.a`, `GET /audio/mixer/ay1.a` | `audio_mixer_set("ay1.a", {..})`, `audio_mixer_get("ay1.a")` | the same | `audio_mixer` `set` / `source` |
+| Mixer levels (every row's and channel's peak, active, mute, solo; the topic pushes them) | `mixer channels` | `GET /audio/levels`; WS topic `audio.mixer` | `audio_levels()` | `audio_levels()` | `audio_mixer` `levels` |
+| Mixer on a control surface: `audio.source_mute`, `audio.source_solo` (toggles), `audio.source_volume`, `audio.volume_by` (`source` a row or channel, or `source` + `channel`); readouts `audio.mixer`, `audio.source.<key>` | `action run audio.source_solo source=ay1.b` | `POST /api/v1/controllers/actions/{id}` | `action(id, [value], [params])` | `emu.action(id, value=None, **params)` | `actions` `run` |
+| Sound settings `ay_stereo` (abc / acb / mono), `ay_chip` (ay8910 / ym2149; fixed on a TSFM), `fm_trim_db` (-12..12, 0.5 steps), `neogs_stereo` (separated / gs / mono), `covox_dc_removal`, `fir_filter` (Sound HQ), with `ay_voicing`, `ay_room`, `ay_punch`, `beeper_punch`; `unavailable` where the machine has no such part | `setting <name> [value]` | `GET` / `PUT /settings/{name}` | `get_sound_character()`, `set_sound_character(name, value)` | the same | `audio_mixer` `settings` / `set_setting`; catalogue `set.value` / `set.toggle` |
 | Audio capture of one device (its own buffer) | `audiocapture start <seconds> [source]` | `POST /audio/capture {action: start, seconds, source}` | `audio_capture_start(s, source)` | `audio_capture_start(s, source)` | `capture_media` audio_capture `source` |
 | CMOS clock (report) | `state rtc` / `rtc` | `GET /state/rtc` | `rtc_state()` | `rtc_state()` | `rtc` |
 | Execution arbiter | `state execution` / `state exec` | `GET /state/execution` | `execution_state()` | `execution_state()` | `execution` |
@@ -1008,11 +1063,13 @@ Breakpoint groups allow logical organization of related breakpoints (e.g., "grap
 
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
-| `bpgroup list` | | List all breakpoint group names. |
-| `bpgroup add <id> <group>` | `<breakpoint-id> <group-name>` | Add breakpoint `<id>` to group `<group>`. If group doesn't exist, creates it automatically. |
+| `bpgroup list` | | List all breakpoint group names with their counts. |
+| `bpgroup set <id> <group>` | `<breakpoint-id> <group-name>` | Move breakpoint `<id>` to group `<group>`. If group doesn't exist, creates it automatically. A new breakpoint takes `--group G` at once (`bp`, `wp`, `bport`, `bnextreg`, `bbeam`, `bcopper`, `bmagic`, `bkey`). |
 | `bpgroup remove <id>` | `<breakpoint-id>` | Remove breakpoint from its current group (moves to "default" group). |
 | `bpgroup show <group>` | `<group-name>` | List all breakpoints in the specified group. |
-| `bpgroup delete <group>` | `<group-name>` | Delete entire group and remove all its breakpoints. |
+| `bpgroup on\|off\|toggle <group>` | `<group-name>` | Switch the group's breakpoints on, off, or all on when one is off (else all off). |
+| `bpclear group <group>` | `<group-name>` | Remove the group's breakpoints. |
+| `bpnote <id> [text]` | `<breakpoint-id> [text]` | Set a breakpoint's note (no text clears it). |
 
 #### 4.3 Breakpoint Activation Control
 
@@ -1020,8 +1077,10 @@ Breakpoints can be temporarily disabled without deleting them. This is useful fo
 
 | Command | Aliases | Arguments | Description |
 | :--- | :--- | :--- | :--- |
-| `bpon <target>` | `enable` | `<id \| group \| all>` | Enable (activate) breakpoints:<br/>• `<id>`: enable specific breakpoint<br/>• `<group-name>`: enable all breakpoints in group<br/>• `all`: enable all breakpoints<br/>Enabled breakpoints will pause execution when hit. |
-| `bpoff <target>` | `disable` | `<id \| group \| all>` | Disable (deactivate) breakpoints:<br/>• `<id>`: disable specific breakpoint<br/>• `<group-name>`: disable all breakpoints in group<br/>• `all`: disable all breakpoints<br/>Disabled breakpoints remain in the list but won't trigger. Useful for temporarily ignoring breakpoints without deletion. |
+| `bpon <target>` | | `<id \| all \| kind \| group <name> \| group:<name>>` | Enable (activate) breakpoints:<br/>• `<id>`: enable specific breakpoint<br/>• `group <name>` or `group:<name>`: enable all breakpoints in group<br/>• `all`: enable all breakpoints<br/>• a kind: `mem`, `port`, `read`, `write`, `exec`, `in`, `out`, `nextreg`, `nextreg_read`, `nextreg_write`, `beam`, `copper`, `magic`, `keyboard`<br/>Enabled breakpoints will pause execution when hit. |
+| `bpoff <target>` | | `<id \| all \| kind \| group <name> \| group:<name>>` | Disable (deactivate) breakpoints, the same targets as `bpon`. Disabled breakpoints remain in the list but won't trigger. |
+| `bptoggle [target]` | | `[id \| all \| kind \| group:<name>]` | All of the target on when one of it is off, else all off (default: all). |
+| `bkey <key\|any> [press\|release\|both]` | | `[--hits N\|>=N\|%N] [--group G] [note]` | A keyboard breakpoint: stops on the first keyboard read (`IN #xxFE`, any model's matrix read) that sees the key go down (`press`, default), up (`release`) or either. It catches the program's key handling, not the host's key event; a scanning loop that reads the key again and again stops once per change. Keys: `space`, `enter`, `caps`, `symbol`, `a`..`z`, `0`..`9` (`any`: any key of the rows read). |
 
 **Implementation Details**:
 
@@ -1121,6 +1180,34 @@ bpgroup show loader
 - Recommend <100 active breakpoints for real-time debugging
 - Disable unused breakpoints rather than deleting for faster re-enabling
 
+#### 4.3a Debug tools on every plane (status)
+
+The verbs of breakpoints, profilers and traces, machine state and symbols on each plane. A selection (`select`) is
+`all`, an id, a kind (`exec`, `read`, `write`, `mem`, `port`, `in`, `out`, `nextreg`, `nextreg_read`,
+`nextreg_write`, `beam`, `copper`, `magic`, `keyboard`) or `group:<name>` (core `BreakpointSelection`): only the
+user's breakpoints, never the ones the analyzers, debugger adapters and step traps own. Profilers and traces go
+through core `tracecontrol` (names `opcode`, `memory`, `calltrace`, `coverage`, `porttrace`, `gsporttrace`, `pchist`,
+`aylog`, `audio`, `all`). Every REST route is also a WebSocket `call`; breakpoint changes are pushed as
+`breakpoints_changed` on `debug.events`.
+
+| Verb | CLI | Lua | Python | MCP | REST | Catalogue action |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Add a breakpoint of any kind | `bp`, `wp`, `bport`, `bnextreg`, `bbeam`, `bcopper`, `bmagic`, `bkey` | `bp`, `bp_read`, `bp_write`, `bp_port_in/out`, `bp_nextreg*`, `bp_beam`, `bp_copper`, `bp_magic`, `bp_key` | the same | `control_execution` `bp_add` (type ... `keyboard` + key, on) | `POST /breakpoints` (type ... `keyboard`) | `dbg.bp_add` (kind, address, end, preset `fe` / `7ffd` / `1ffd` / `fffd` / `bffd`, mask, page, hits, key, on, note, group) |
+| Toggle at PC / an address | `bp` / `bpclear <id>` | `bp` / `bp_remove` | the same | `bp_add` / `bp_remove` | `POST` / `DELETE /breakpoints` | `dbg.breakpoint_toggle_pc` (state); Qt: `dbg.breakpoint_toggle_cursor` |
+| Enable / disable / toggle a selection | `bpon`, `bpoff`, `bptoggle` | `bp_select(select, op)` | `bp_select(select, op)` | `bp_enable` / `bp_disable` / `bp_toggle` with `select` | `PUT /breakpoints/active {select, active: true\|false\|"toggle"}`, `GET /breakpoints/active?select=` | `dbg.bp_enable`, `dbg.bp_disable`, `dbg.bp_toggle` (state `toggle.bp.<select>`) |
+| Remove a selection | `bpclear` | `bp_select(select, "remove")` | the same | `bp_remove` with `select` | `POST /breakpoints/remove {select}` | `dbg.bp_remove` |
+| Group on / off, list, set | `bpgroup on\|off\|toggle\|list\|set` | `bp_select("group:G", op)`, `bp_groups()`, `bp_group(id, G)` | the same | `bp_toggle select=group:G`, `bp_groups`, `bp_group_set` | `PUT /breakpoints/active`, `GET /breakpoints/groups`, `PUT /breakpoints/{bp_id}/group` | `dbg.bp_group_toggle` (state `toggle.bp_group.<group>`) |
+| Note | `bpnote` | `bp_note` | `bp_note` | `bp_note` | `PUT /breakpoints/{bp_id}/note` | - |
+| Clear all, reset hits | `bpclear all`, `bphits reset` | `bp_clear`, `bp_reset_hits` | the same | `bp_clear`, `bp_reset_hits` | `DELETE /breakpoints`, `POST /breakpoints/hits/reset` | `dbg.breakpoints_clear`, `dbg.breakpoint_hits_reset` |
+| Profiler / trace start, stop, pause, resume, clear | `profiler`, `coverage`, `porttrace`, `gsporttrace`, `pchist`, `aylog`, `audiocapture` | `trace(name, op, opts)` (+ `porttrace_*`, `gs_porttrace_*`, `coverage_*`, `ay_log_*`, `pc_history*`, `audio_capture_*`) | `trace(name, op, **opts)` (+ the per-profiler functions) | `analyze_performance` `profiler` {profiler, op}, `gs_trace`, `aylog`, `pchist`, `coverage_*`, `profile_*`; `capture_media` audio | `/profiler/{opcode,memory,calltrace,porttrace}/*`, `/profiler/*`, `/coverage/*`, `/control/audio/gs/porttrace`, `/debug/pchist`, `/ay/log`, `/audio/capture` | `prof.toggle`, `prof.pause_toggle`, `prof.clear` (state `toggle.profiler.<name>`, `toggle.profiler_paused.<name>`) |
+| Analyzers on / off, clear | `analyzer` | `analyzer_list/enable/disable/active` | `analyzer_*` | `analyze_performance` `analyzers` {op, name} | `GET /analyzers`, `PUT /analyzer/{name}`, `DELETE /analyzer/{name}/events` | `analyzer.toggle` (state `toggle.analyzer.<name>`), `analyzer.clear` |
+| Set a register | `reg <name> <value>` | `set_register` | `set_register` | `control_execution` `set_register` | `PUT /registers/{name}` | `dbg.register_set` |
+| Write / fill memory | `memory write`, `memory fill` | `mem_write*` | `mem_write*` | `memory_access` `write` | `PUT /memory/{addr}`, `POST /memory/write` | `mem.write` (bytes, or value + count) |
+| Port OUT | `out` | `port_out` | `port_out` | `control_execution` `port_out` | `POST /ports/out` | `port.out` (port or a preset, value) |
+| Symbols: load, save, import from source / RAM, drop, set on / off | `symbols ...` | `symbols_*` | `symbols_*` | `manage_symbols` | `/symbols/*` | `sym.import`, `sym.export`, `sym.import_source`, `sym.import_live`, `sym.drop`, `sym.set_toggle` (state `toggle.sym_set.<id>`) |
+
+Readout `debug.breakpoints`: `{total, active, inactive, owned, by_kind, groups, last_hit}` (the monitoring value, `GET /api/v1/monitor/debug.breakpoints`) of the user's breakpoints (the surface topic, `readouts`).
+
 #### 4.4 Labels & Symbol Management
 
 Labels provide symbolic names for memory addresses, enabling human-readable debugging. The LabelManager supports bank-aware addressing, multiple symbol file formats, and filtering capabilities.
@@ -1217,7 +1304,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | `sharedmemory` | `shm` | OFF | Export emulator memory via POSIX/Windows shared memory for external tool access. Enables real-time memory inspection by debuggers, analyzers, or visualization tools. Memory content preserved during enable/disable transitions. | Low (startup overhead when enabled, minimal runtime impact) |
 | `opcodeprofiler` | `op` | OFF | Track Z80 opcode execution statistics and sequential trace. Records execution counts for all 1792 opcode variants (non-prefixed + CB/DD/ED/FD/DDCB/FDCB prefixes) and maintains a 10,000-entry ring buffer of recent executed instructions with PC, flags, and A register for crash forensics. Required for `profiler opcode` commands. | Medium (~12-18% CPU overhead, ~174KB memory) |
 | `timetravel` | `ttd` | OFF | Record execution history for rewind and reverse debugging (time-travel debug, see the `ttd` commands). | Varies (depends on the recording mode, write journal on or off) |
-| `overscan` | `osc` | OFF | Pentagon overscan mode (384x304): shows the border areas a normal picture hides. Pentagon only; for demo development. | Low (a larger picture to render) |
+| `overscan` | `osc` | OFF | Pentagon overscan mode (384x304): shows the border areas a normal picture hides. Pentagon only; for demo development. The switch of the frame itself (as View > Overscan and `video.overscan_toggle`, with the symmetric viewport): it follows the frame, stays off on a machine without one, and is not restored from `features.ini` or the GUI's settings: every new Pentagon starts without overscan, the viewport full. | Low (a larger picture to render) |
 | `porttrace` | `pt` | OFF | Port I/O trace: a ring buffer of IN/OUT events for diagnosing peripherals. | Low while on (one ring-buffer entry per IN/OUT) |
 | `fasttape` | `ftape` | ON | Fast tape loading: standard ROM tape loads finish at once through the ROM LD-BYTES trap. Custom loaders fall back to playing the tape signal. Same switch as `setting fast_tape`. | None (saves loading time) |
 | `turbotape` | `ttape` | ON | Turbo tape loading: runs the emulator at warp speed while the tape signal plays, so blocks the trap cannot serve (headerless, custom timing, pulse streams) still load fast. Ends with the read-gap watchdog, the end of the tape, or any stop. Same switch as `setting turbo_tape`. | None (saves loading time) |
@@ -1510,11 +1597,22 @@ subsystem (`RecordingManager`); requires a build with `ENABLE_RECORDING`
 
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
-| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--region full\|screen] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS] [--profile native\|1080p\|1440p\|4k] [--acceleration auto\|hardware\|software]` | Start recording. Default format `gif`, video only; `--region` `full` (default) records the whole frame with its border, `screen` the working picture (the file keeps the size of the working window at the start, a window that changes later is scaled into it with its aspect kept and black bars); `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`.mkv` for h264/h265/vp9). |
+| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--preset NAME] [--mode single\|multi\|audio] [--container EXT] [--fps N] [--scale N] [--region full\|screen] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS] [--profile native\|1080p\|1440p\|4k] [--acceleration auto\|hardware\|software]` | Start recording. Default format `gif`, video only; `--preset` takes one of the core's presets (below; what the command line names wins); `--mode multi` records an audio track per fitted sound source (master first), `--mode audio` audio only (`wav`, `flac`, `mp3`, `ogg`, `m4a`; `split`, a track per AY channel, is not implemented: 501); `--region` `full` (default) records the whole frame with its border, `screen` the working picture (the file keeps the size of the working window at the start, a window that changes later is scaled into it with its aspect kept and black bars); `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`--container`, else the format's: `.mp4` for h264/h265, `.webm` vp9, `.avi` rawvideo). |
+| `videorecord toggle` | | Stop a running recording, else start one (the `cap.record_toggle` action). |
+| `videorecord presets` | | The core's presets: `gameplay` (Gameplay (MP4): H.264 + AAC, 2x), `music` (Music (FLAC): audio only), `audio` (Audio Only (WAV): PCM), `gif` (GIF Animation), `hq` (High Quality (MKV): H.265 + FLAC, 2x), `multitrack` (Multi-Track (MKV): H.264 + a FLAC track per source). The Qt Tools > Quick Record menu shows the same ones. |
 | `videorecord stop` | | Stop recording and finalize the file. |
 | `videorecord pause` | | Pause recording. |
 | `videorecord resume` | | Resume a paused recording. |
 | `videorecord status` | | Show recording state, output file, frames, region, output profile, acceleration, video codec and the audio track (codec, rate, channels, samples and seconds recorded). |
+
+One layer for every plane: `capture::RecordingControl` (`core/src/emulator/capture/recordingcontrol.h`) takes the
+same option names on the CLI, `POST /api/v1/emulator/{id}/video/record` (`action` start / stop / pause / resume /
+toggle / status, `preset`, `mode`, `container`, ...; `GET /api/v1/recording/presets` lists the presets), MCP
+`capture_media` (`record_start` with `preset`, `container`, `record_mode`; `record_presets`), Lua
+`video_record(action, opts)` / `recording_presets()`, Python `emu.video_record(action, opts)` /
+`unreal_emulator.recording_presets()` and the catalogue actions `cap.record_toggle` / `cap.record_pause`; the
+WebSocket `call` of the route, the topic `cap.record` (recording, paused, frames, seconds, bytes, output) pushes the
+state.
 
 **Sound track**: `--audio CODEC` records the emulated sound with the picture (the default is video
 only). The codec must fit the file's container: `.mp4` aac/mp3/opus/flac, `.mov` aac/mp3/pcm_s16le,
@@ -1574,22 +1672,59 @@ hear.
 
 #### GUI window display settings
 
-How the unreal-qt window draws the picture: the View menu's GPU acceleration, CRT effects and profile, and temporal
-blending (gigascreen smoothing, the window's own, apart from ZX DLSS). The window belongs to the front end: the GUI
-registers it with the core (`WindowView`), the core has no UI dependency. Headless there is no window and every
-surface answers `no-window`. The settings are the window's, whichever instance it shows; screenshot `source=window`
-shows their effect.
+How the unreal-qt window draws the picture: the View menu's GPU acceleration, CRT effects and profile, temporal
+blending (gigascreen smoothing, the window's own, apart from ZX DLSS) with its frames, weights and decay, full screen
+and the window scale, the toolbar and status bar, the HUD with its theme and notice categories, the on-screen keyboard
+and its picture, the ZX Next layers window. The window belongs to the front end: the GUI registers it with the core
+(`WindowView`), the core has no UI dependency. Headless there is no window and every surface answers `no-window`. The
+settings are the window's, whichever instance it shows; screenshot `source=window` shows their effect. They persist
+across sessions (QSettings `View/*`; `UNREAL_QT_VIEW_SETTINGS=off` neither reads nor writes them). The overscan frame
+and its viewport do not: they are the machine's, off on every new Pentagon.
 
-| Command | Arguments | Description |
-| :--- | :--- | :--- |
-| `video window` / `video window status` | | Show the settings. |
-| `video window <key>=<value> ...` | `gpu`, `crt`, `blending` = on / off; `crt_profile` = one of `crt_profiles` (none, basic, ..., shader:<name>: a libretro preset or a custom shader, GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off. |
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `video window` / `video window status` | | Show the settings. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+| `video window <key>=<value> ...` | `gpu`, `crt`, `blending`, `fullscreen`, `toolbar`, `status_bar`, `hud`, `osd_keyboard`, `next_layers` = on / off; `crt_profile` = one of `crt_profiles` (none, basic, ..., shader:<name>: a libretro preset or a custom shader, GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential; `blending_decay` = 0.1..0.9 (exponential: each older frame's share of the newer one); `scale` = 1..4; `hud_theme` = one of `hud_themes`; `hud_notice.<id>` = on / off (ids of `hud_notices`); `osd_keyboard_picture` = one of `osd_keyboard_pictures`; `next_layers_mode` = layers / composed / winner; `next_layer.<ula\|layer2\|tilemap\|sprites>` = on / off | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off; `scale` leaves full screen and fits the window to the picture; full screen follows after the window system's transition. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+| `video window crt_params` | `[<name>=<value> \| <name>+=<steps> \| <name>-=<steps> \| reset \| reset=<name> ...]` | The active CRT profile's parameters: list them, set one (clamped to its range), move one by a dial's steps (its own step), reset all or one. A libretro preset (`shader:crt-geom`, ...) has its own (its `preset.json`, 3..177); `basic` and a custom shader take the built-in ones (`curvature`, `corner_radius`, `scanline_weight`, `bloom_strength`, `bloom_radius`, `saturation`, `brightness`, `contrast`, `gamma`); `none` and the beam models (`crt-lottes`, ...) have none. A preset's values are kept per preset across a GPU switch and in the settings. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
 
 Fields: `backend` (`gpu` / `software`), `gpu_available`, `gpu`, `crt`, `crt_profile`, `crt_profiles` (offered),
-`blending`, `blending_frames`, `blending_weights`, `emulator` (the instance the window shows). Errors: `bad-parameter`
-(an unknown key or value; an unknown profile lists the offered ones), `unavailable` (`gpu=on` on a host without
-OpenGL), `no-window`. The same as WebAPI `GET` / `PUT /api/v1/emulator/{id}/video/window`, Lua and Python
-`window_display()` / `window_display_set(...)`, MCP `capture_media` `window_display` / `window_display_set`.
+`blending`, `blending_frames`, `blending_weights`, `blending_decay`, `emulator` (the instance the window shows),
+`fullscreen`, `scale` (1..4 while the window is fitted to the picture, 0 when resized by hand, maximized or full
+screen), `toolbar`, `status_bar`, `hud`, `hud_theme`, `hud_themes` (`dark_glass`, `retro_zx`, `cyberpunk`,
+`amber_crt`, `emerald_crt`, `light_modern`), `hud_notices` ({id: shown}, the 22 categories of View > HUD
+Notifications: `ram-page`, `rom-page`, `screen-page`, `audio-beeper`, ..., `breakpoints`, `file-loading`),
+`osd_keyboard`, `osd_keyboard_picture`, `osd_keyboard_pictures` (the shown machine's: Pentagon `pentagon` /
+`pentagon2plus`, the PC clones a PC keyboard and `zxmatrix`, ...), `next_layers`, `next_layers_mode`,
+`next_layers_shown` ({ula, layer2, tilemap, sprites}). CRT parameters: `profile`, `kind` (`preset` / `profile` /
+`none`), `parameters` [{`name`, `description`, `value`, `initial`, `minimum`, `maximum`, `step`}]. Errors:
+`bad-parameter` (an unknown key or value; an unknown profile, theme, notice, picture or parameter lists the offered
+ones), `unavailable` (`gpu=on` on a host without OpenGL, a shader without the GPU, a keyboard picture on a machine
+without one, a parameter of a profile without parameters), `no-window`. The same as WebAPI `GET` / `PUT
+/api/v1/emulator/{id}/video/window` (also `hud_notices: {id: bool}` and `next_layers_shown: {name: bool}` objects) and
+`GET` / `PUT /video/window/crt_params` (`{values: {name: number}, steps: {name: steps}, reset: true | name | [names]}`),
+`POST /video/window/crt_params/reset`, the WebSocket `call` of them, Lua and Python `window_display()` /
+`window_display_set(...)` / `window_crt_params()` / `window_crt_params_set(...)`, MCP `capture_media`
+`window_display` / `window_display_set` / `window_crt_params` / `window_crt_params_set`. The catalogue's
+`video.*`, `view.*`, `hud.*` and `osd.keyboard_picture` actions (§16) change the same settings; the readouts
+`video.window` and `video.crt_params` show what the window published.
+
+#### Overscan viewport
+
+The Pentagon's 384x304 overscan frame (feature `overscan`, View > Overscan, PUT `/state/screen/overscan`, the
+catalogue's `video.overscan_toggle`) and the viewport that crops it, the View > Overscan > Viewport menu's four presets.
+The viewport is the machine's (it answers headless too); the GUI window follows a change made anywhere
+(`NC_VIDEO_VIEWPORT_CHANGED`). Without overscan the picture is the full frame.
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `video viewport` / `video viewport status` | | Overscan, the viewport, the frame and display size. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+| `video viewport <name>` | `full` (384x304), `symmetric` (352x304, the default when overscan goes on), `standard` (352x288), `screen_only` (256x192), `next`, `prev` | Crop the overscan frame. A crop other than `full` needs overscan on (`unavailable` / 409 otherwise). | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+
+Fields: `overscan`, `overscan_available` (a Pentagon), `viewport`, `viewports`, `framebuffer`, `display`,
+`video_mode`. The same as WebAPI `GET` / `PUT /api/v1/emulator/{id}/video/viewport` (`{viewport}`; overscan itself stays
+on `PUT /state/screen/overscan`, which takes the viewport too and now answers it), Lua and Python `video_viewport()` /
+`video_viewport_set(name)`, MCP `capture_media` `viewport` / `viewport_set`, the catalogue's `video.viewport`, the
+readout `video.viewport`.
 
 The same status and switch are available as WebAPI
 `GET` / `PUT /api/v1/emulator/{id}/video/temporal`, Lua and Python
@@ -2703,6 +2838,7 @@ Commands to configure emulator instance behavior and performance characteristics
    - `audio_rate`: Runtime pin for the core audio sample rate — the rate the DSP stack and every capture/recording run at
    - Resolution chain: runtime pin > connected audio device rate > `[SOUND] CoreRate` (ini — headless only, a connected device always outranks it) > 44100
    - A pinned rate beats even the device rate, which is what fixed-rate headless recordings need; `auto` lets UI clients switch dynamically as the audio device changes
+   - The sound character and the sound hardware's listening choices ([mixer channels and settings](../audio/mixer-channels-and-settings.md#4-sound-settings)): `ay_voicing`, `ay_room`, `ay_punch`, `beeper_punch`, `ay_stereo`, `ay_chip`, `fm_trim_db`, `neogs_stereo`, `covox_dc_removal`, `fir_filter`; a part the machine does not have reads `unavailable`
 
 4. **Compatibility Settings** (Future):
    - `timing_model`: `accurate` | `fast` | `compatible`
@@ -2721,6 +2857,12 @@ Commands to configure emulator instance behavior and performance characteristics
 | `turbo_audio` | Boolean | `off` | `on`, `off` | Audio stays on in turbo mode |
 | `cpu_frequency` | Float | `3.5` | `3.5` - `112.0` | CPU frequency in MHz |
 | `audio_rate` | Integer/String | `auto` | `44100`, `48000`, `88200`, `96000`, `176400`, `192000`, `auto` | Core audio rate pin (runtime only; `auto` follows device > `[SOUND] CoreRate` > 44100) |
+| `ay_stereo` | String | `[SOUND] AYStereo` | `abc`, `acb`, `mono` | The AY socket's stereo mixing (runtime only) |
+| `ay_chip` | String | the chip's | `ay8910`, `ym2149` | The AY socket's DAC curve; `ym2203` and fixed with a TurboSound FM |
+| `fm_trim_db` | Number | `[SOUND] TSFM_FmLevelDb` | `-12` .. `12`, 0.5 dB steps | YM2203 FM level (TurboSound FM, ZX-MultiSound); `unavailable` without one |
+| `neogs_stereo` | String | `[NGS] StereoMode` | `separated`, `gs`, `mono` | The NeoGS listening choice |
+| `covox_dc_removal` | Boolean | `off` | `on`, `off` | Covox / SounDrive DC offset removal; `unavailable` without one |
+| `fir_filter` | Boolean | the `soundhq` feature | `on`, `off` | Sound HQ: the AY FIR decimation and the character chains |
 | `timing_model` | String | `accurate` | `accurate`, `fast`, `compatible` | Timing emulation model |
 
 **Use Cases**:
@@ -2803,7 +2945,7 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 | `ttd status` | `ttd info` | — | Print the session: origin, recorded machine, state, frame range, checkpoint count, page store, heap, write journal, coverage index, bookmark count. See "Status fields" below. | ✅ Implemented |
 | `ttd info <path>` | `ttd file-info <path>` | `<path>` | Describe a `.ttd` file **without loading it** and without an emulator: size, frame range, checkpoints, sections and the recorded machine (model, ROM signature, General Sound card, TurboSound slot device, fitted devices). See "Reading a file before loading it" below. | ✅ Implemented |
 | `ttd start` | `ttd record` | `[--journal \| -j] [--black-box [--minutes N]]` | Start recording. Captures a baseline checkpoint, then one checkpoint per frame. `--journal` also records the write journal (off by default; see "The write journal" below). `--black-box` records as the black box (the engine): the last `N` minutes (default 5, 1..1440), turbo and a host speed above 1x stay free - the recording stops before them, history kept; without it the recording holds real speed. v1 refuses `--black-box`. Prints `Already recording (no-op)` if a recording is running. | ✅ Implemented |
-| `ttd journal` | — | `[on \| off \| status]` *or* `build [from-frame] [to-frame]` | The write journal: "who wrote this address last" answered at once. `on` / `off` switch it at any moment, also while recording (each on-off span is a segment). `build` builds it by replaying frames `from`..`to` (default: the whole session), about 2-4 ms per frame; not while recording. No argument or `status`: on/off, records, and the spans it covers. | ✅ Implemented |
+| `ttd journal` | — | `[on \| off \| status]` *or* `build [from-frame] [to-frame]` *or* `build-cancel` | The write journal: "who wrote this address last" answered at once. `on` / `off` switch it at any moment, also while recording (each on-off span is a segment). `build` builds it by replaying frames `from`..`to` (default: the whole session), about 2-4 ms per frame; not while recording. `build-cancel` (alias `cancel`) stops a build that runs (verb `journal-build-cancel`: WebAPI `POST /ttd/journal/build/cancel`, MCP `time_travel` `journal_build_cancel`, Lua `ttd_cancel_journal_build()`, Python `emu.ttd_cancel_journal_build()`, action `ttd.journal_build_cancel`). No argument or `status`: on/off, records, and the spans it covers. | ✅ Implemented |
 | `ttd stop` | — | — | Stop recording. History is kept and can be browsed (seek, step, find-last). Prints `Not recording (no-op)` when nothing records. | ✅ Implemented |
 | `ttd invalidate` | `ttd clear`, `ttd reset` | `[reason]` | Drop all history (checkpoints, journals, markers, bookmarks) and return to `idle`. The live machine is not touched. | ✅ Implemented |
 | `ttd limit` | `ttd history-limit` | `[frames <n>] [bytes <n>[K\|M\|G]]` *or* `off` | Bound the history. While recording, the oldest checkpoints (one per frame) are released once there are more than `frames` of them or their data (RAM pages + device blobs, compressed) exceeds `bytes`; the session start moves forward and the input, port, external-event and bookmark records before it go too, so a file saved afterwards replays its remaining frames exactly. Two checkpoints always stay. `0` = no limit (the default), a value not given is kept, `off` clears both; no arguments prints the limit, the history range, the bytes held and how many checkpoints were released. The limit stays for later recordings of this instance. | ✅ Implemented |
@@ -2811,7 +2953,7 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 | `ttd step-back` | `ttd back`, `ttd sb` | — | Step back one frame, keeping the position inside the frame. | ✅ Implemented |
 | `ttd step-forward` | `ttd forward`, `ttd sf` | — | Step forward one frame inside recorded history (never extends the timeline). | ✅ Implemented |
 | `ttd step-instruction` | `ttd si-back`, `ttd si-forward` | `[back \| forward \| fwd]` | Step one instruction. `step-instruction` alone and `si-back` step back; `step-instruction forward`/`fwd` and `si-forward` step forward. | ✅ Implemented |
-| `ttd reverse-step` | `ttd rs` | `[--count N]` *or* `[--tstates T]` | Step back N instructions (default 1), or back T t-states (lands on the nearest instruction start at or before the target). If both are given, `--tstates` wins. | ✅ Implemented |
+| `ttd reverse-step` | `ttd rs` | `[--count N]` *or* `[--tstates T]` *or* `[--scanlines L]` | Step back N instructions (default 1), back T t-states, or back L scanlines of the machine (`t_line` each; the reply's `tstates` says how many); the t-state forms land on the nearest instruction start at or before the target. More than one: `Bad Request`. The verb's `scanlines` option on every plane: WebAPI `POST /ttd/reverse-step` `{scanlines}`, MCP `time_travel` `reverse_step` `scanlines`, Lua `ttd_reverse_step_scanlines(n)`, Python `emu.ttd_reverse_step_scanlines(n)`, actions `ttd.step_back_scanline` / `ttd.step_forward_scanline` (`count`). | ✅ Implemented |
 | `ttd reverse-continue` | `ttd rc` | `--pc <A> [--pc <B> ...]` | Run backward until the PC equals any of the given addresses. Reports the hit, a blocking marker, or "no match (reached session start)", and the part of history it searched (`Searched: frame … .. frame …`). | ✅ Implemented |
 | `ttd resume` | — | `[frame] [tinframe] [media=ask\|empty\|keep]` | Resume recording from the current position, or from the given point. Everything recorded after that point is discarded. Every medium goes back to that point when it can; one that cannot (another medium in the slot, a write beyond its undo log) is decided by `media`: `empty` (default) takes it out, `keep` leaves it, `ask` resumes nothing and lists them (`needs_decision`); the decision is in the operation log (`timeline-cut`). Needs a session that is `detached` or `recording`; from `idle` (for example straight after `ttd stop`) it fails, so seek first. | ✅ Implemented |
 | `ttd position` | `ttd pos` | — | Current position and session end, each as `(frame, tInFrame)`; the history's first frame, the state, whether the machine is paused, the frame rate (`fps`, the machine's unscaled clock: turbo does not change it). The bounds come from the TTD's published cursor (control surfaces [architecture §7](../../../inprogress/2026-10-18-control-surfaces/architecture.md#7-the-ttd-published-cursor-and-readouts)): the read never parks the machine, a companion may poll it at 50 Hz. | ✅ Implemented |
@@ -2827,7 +2969,7 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 | `ttd coverage` | `ttd cov` | `probe --frame N` / `scan` / `summary`, plus `[--kind executed\|written\|read] [--from-frame F] [--to-frame T] [--addr-from A] [--addr-to B] [--phys-page P] [--space ram\|vram\|cache] [--limit L] [--bucket-size S]` | Query the coverage index. `--space vram` / `cache` asks about the Sprinter's video / fast RAM: the address options are offsets in it, inside one 16 KB page. `probe`: did frame N touch the range? `scan`: which frames in the window touched it (default limit 200). `summary`: activity heatmap per bucket (default limit 100, `--bucket-size 0` = automatic). Address range defaults to the whole 64K; `--to-frame` defaults to the session end. Short forms: `-f`, `-k`, `--from`/`-a`, `--to`/`-b`, `--page`/`-p`, `-l`, `--bucket`. | ✅ Implemented |
 | `ttd help` | `ttd ?`, `ttd` alone | — | Print the subcommand list. | ✅ Implemented |
 
-There is no `ttd timeline` command and no relative-unit `step-back --unit/--count` form; use `ttd step-back` (one frame), `ttd step-instruction` (one instruction) or `ttd reverse-step --count N`.
+There is no `ttd timeline` command and no relative-unit `step-back --unit/--count` form; use `ttd step-back` (one frame), `ttd step-instruction` (one instruction) or `ttd reverse-step --count N` / `--scanlines L`. A dial or a key steps through the history in a unit with the action `ttd.seek_by` (`unit`: frames, seconds, batch, instructions, tstates, scanlines, bookmarks) and `ttd.unit_back` / `ttd.unit_forward` (see §16).
 
 **Sessions on disk (`ttd dump` / `ttd load`).**
 
@@ -3692,7 +3834,8 @@ The host actions by id (control surfaces design
 `run.step_in`, `run.turbo_hold`, ...), time travel (`ttd.step_back_frame`, `ttd.jog_frames`, ...), the machine
 (`mach.reset`, `mach.nmi`, `mach.turbo_toggle`, `mach.start`, `mach.cold_reset`), and the actions a Stream Deck
 scenario runs instead of REST steps (`input.key`, `input.type`, `input.joystick`, `basic.run`, `feature.toggle`,
-`set.speed`, `set.toggle`, `audio.mute_toggle`, `audio.volume_by`, `media.open`, `media.tape`, `media.eject`,
+`set.speed`, `set.toggle`, `set.value`, `audio.mute_toggle`, `audio.source_mute`, `audio.source_solo`,
+`audio.source_volume`, `audio.volume_by` (a source or a channel `ay1.a`), `media.open`, `media.tape`, `media.eject`,
 `snapshot.quick`, `video.overscan_toggle`, `dbg.mode_toggle`, `ttd.seek`, ...: the full list with their params in
 [actions.md §1.1](../../../inprogress/2026-10-18-control-surfaces/actions.md#11-scenario-actions-sd6)) and, with the
 Qt client, its GUI actions (`dbg.open`, the debugger panes, `cap.screenshot`, `ttd.scrub_*`). Each takes the companion
@@ -3716,6 +3859,37 @@ The control-surface actions of phase S2 ([actions.md §2-§4](../../../inprogres
 | `run.step_by` | delta | Forward: step in, at most 16 times, a breakpoint ends it (`stopped_by: breakpoint`); back: instruction steps back through the history, at most 16 (without a history `not_now` "record first"). Needs a pause. The result: the last step's body plus `steps` (instructions executed), `direction` |
 | `ctx.set` | text | Set the instance's surface context (`play`, `ttd`, `ttd.timecode`, `debug.disasm`: lowercase letters, digits, `.`, `_`, `-`); the last setter wins; `""` returns to the default (`ttd` when the instance has a history, else `play`). A change posts `NC_SURFACE_CONTEXT`. Needs no scope. The result: `context`, `previous`, `set`, `by`, `default` |
 
+The picture and window actions (Stream Deck use case C9, `core/src/emulator/actions/pictureactions.cpp`): each one
+a change of the [GUI window display settings](#gui-window-display-settings) or the
+[overscan viewport](#overscan-viewport), with the same validation. Headless the window ones are listed and unavailable
+(`not_now` "no window"); their toggles read the copy the window published, never the GUI thread. None needs a
+companion scope (their routes change nothing).
+
+| Action | Kind | Params | What | Toggle readout |
+| :--- | :--- | :--- | :--- | :--- |
+| `video.gpu_toggle` | press | `on?` | GPU acceleration on / off (flips without `on`) | `toggle.video.gpu_toggle` |
+| `video.crt_toggle` | press | `on?` | CRT effects on / off | `toggle.video.crt_toggle` |
+| `video.crt_profile` | press | `profile?` (a name, `next`, `prev`; next) | The CRT profile; cycling skips the shaders without the GPU | |
+| `video.crt_param_by` | delta | `name` | One parameter of the active profile moved by the dial's steps (its own step, clamped); the result has `value` | |
+| `video.crt_params_reset` | press | `name?` | The active profile's parameters (or one) back to their initial values | |
+| `video.blending` | press | `on?`, `frames?`, `weights?`, `decay?` | Temporal blending on / off; with only `frames` / `weights` / `decay` the switch stays | `toggle.video.blending` |
+| `video.blending_decay_by` | delta | | The exponential decay by steps of 0.1 (0.1..0.9; switches the weights to exponential) | |
+| `video.viewport` | press | `viewport?` (a name, `next`, `prev`; next) | The overscan frame's crop | |
+| `view.fullscreen` | press | `on?` | Full screen on / off | `toggle.view.fullscreen` |
+| `view.scale` | press | `scale?` (1..4, `next`, `prev`; next) | Fit the window to the picture at that zoom | |
+| `view.toolbar`, `view.status_bar` | press | `on?` | Show / hide the bar | `toggle.view.toolbar`, `toggle.view.status_bar` |
+| `view.next_layers` | press | `on?` | The ZX Next layers window | `toggle.view.next_layers` |
+| `view.next_layers_mode` | press | `mode?` (layers, composed, winner, `next`, `prev`) | Its mode | |
+| `view.next_layer` | press | `name` (ula, layer2, tilemap, sprites), `on?` | One layer's tick | `toggle.view.next_layer.<name>` |
+| `hud.toggle` | press | `on?` | The HUD | `toggle.hud.toggle` |
+| `hud.theme` | press | `theme?` (a name, `next`, `prev`) | The HUD's theme | |
+| `hud.notice` | press | `name` (a `hud_notices` id), `on?` | One notice category | `toggle.hud.notice.<id>` |
+| `osd.keyboard` | press | | The on-screen keyboard window (the Qt client's GUI action) | `toggle.osd.keyboard` |
+| `osd.keyboard_picture` | press | `picture?` (an id, `next`, `prev`) | The keyboard picture for the machine shown | |
+
+Readouts: `video.window` (the published WindowDisplay report, `available`), `video.crt_params` (`profile`, `kind`,
+`values` {name: value}), `video.viewport` (the VideoViewport report).
+
 | Surface | List | Run |
 | :--- | :--- | :--- |
 | CLI | `action list` | `action run ttd.jog_frames -10` |
@@ -3724,6 +3898,35 @@ The control-surface actions of phase S2 ([actions.md §2-§4](../../../inprogres
 | MCP | `actions` action `list` (`target`) | `actions` action `run` (`id`, `value`, `params`, `target`) |
 | Python | `emu.actions()` | `emu.action(id, value=None, **params)` |
 | Lua | `actions()` | `action(id, [value], [params])` |
+
+Run, step and time-travel units (Stream Deck use cases D1, D2, D3, D5, D6; `core/src/emulator/actions/steppingactions.cpp`,
+2026-10-21). Each calls the core verb of its route and takes that route's scope:
+
+| Action | Kind | Params | What |
+| :--- | :--- | :--- | :--- |
+| `run.pace_set` | press | `preset?`, `interval_ms?` | Choose the pace (§2.1); off full speed on a running machine it pauses and paces |
+| `run.pace_next`, `run.pace_prev` | press | | A finer / coarser preset |
+| `run.pace_by` | delta | | A dial walks the ladder |
+| `run.pace_toggle` | press (toggle) | | Run at the pace / stop; at full speed pause / continue (the dial's push); `toggle.run.pace_toggle` |
+| `run.pace_stop`, `run.pace_step` | press | | Stop the pace; one step at it |
+| `run.to_pixel` | press | | To the first paper pixel (needs a pause) |
+| `run.until_pc` | press | `pc`, `max_tstates?`, `breakpoints?` | Until PC = `pc` (needs a pause); `hit`, `stop` |
+| `run.to_cursor` | press | `addr?` (else the disassembly's cursor row), `max_tstates?` | To the cursor; a breakpoint on the way stops it (needs a pause). The cursor row moves with a click, Up / Down, PageUp / PageDown and `dbg.cursor_up` / `_down`, `dbg.page_up` / `_down` on the disassembly pane (from PC when there is none; the view scrolls to keep it visible); the memory pane's keys move its cursor, which `ttd.find_last*` take |
+| `run.step_line`, `run.to_line` | press | `max_tstates?`; `line` | Source level (a loaded listing; `Conflict` "No listing loaded") |
+| `run.step_by` | delta | `unit?` (instructions, frames, scanlines, tstates), `count?` | Forward runs `count` units a step, back steps back through the history in the unit |
+| `ttd.step_back_scanline`, `ttd.step_forward_scanline` | press | `count?` 1..1000 | A scanline (N) back (`reverse-step scanlines`) or forward (a seek to the T-state) |
+| `ttd.bookmark_prev`, `ttd.bookmark_next` | press | | The previous / next bookmark from the position; `Conflict` "no earlier bookmark" / "no later bookmark" |
+| `ttd.bookmarks` | press | | The bookmark list |
+| `ttd.find_last_write`, `ttd.find_last` | press | `addr?` (else the memory view's cursor, then the disassembly's), `access?` (find_last: write, read, execute, io), `seek?` (true), and the find-last filters | The last access before now, then the seek there (`seeked`, `arrived_at`) |
+| `ttd.seek_start`, `ttd.seek_end` | press | | The history's first frame / its end |
+| `ttd.unit_back`, `ttd.unit_forward` | press | `unit?`, `count?` | One step of the scrub unit |
+| `ttd.scrub_unit` | text | `count?` | The unit a dial scrubs in: `frames`, `seconds`, `batch` (10 frames), `instructions`, `tstates` (100), `scanlines`, `bookmarks`, or `next` / `prev`; the `ttd.position` topic and readout show it (`unit`, `unit_count`) |
+| `ttd.journal_build`, `ttd.journal_build_cancel` | press | `from_frame?`, `to_frame?` | Build the write journal / cancel a build |
+| `ttd.export_clip` | press | `path`, `from?` (the start), `to?` (the end), `chunk?` | A range of the history as a lossless clip |
+| `dbg.follow_pc`, `dbg.labels_toggle`, `dbg.scroll_mode_toggle`, `dbg.goto` | press (Qt) | `addr` (goto) | The disassembly: back to PC, labels on / off (`toggle.dbg.labels_toggle`), byte / command scroll, an address |
+
+`ttd.seek_by` takes the same `unit` (else the instance's scrub unit): frames and seconds keep the acceleration
+curve, `batch` moves `count` frames a step, the others answer through the verbs above, with `unit` in the result.
 
 The context (read; set with `ctx.set`) and a dial's seek on every surface:
 
@@ -3764,7 +3967,7 @@ request without an instance id acts on the followed instance (T-1). The verbs ar
 | `surface target` | `[session]` | A target object: `instance`, `index`, `model`, `ram_kb`, `view` {`id`, `name`} or null, `mode` (`follow`, `view`, `instance`), `pin`, `source` (`view`, `selected`, `sole`, `none`); the followed instance's, or a session's | ✅ Implemented |
 | `surface sessions` | | Every surface session: `id`, `name`, `kind`, `serial`, `pin`, `target`, `notice` (why a pin fell back) | ✅ Implemented |
 | `surface pin` | `<session> <target>` | Pin a session: `follow` (unpin), `view:<id>` (that window's active instance), `instance:<id|index>`. `Not Found`: no such session, view or instance; `not_now`: a view pin on a headless host | ✅ Implemented |
-| `surface readouts` | `[names] [instance=]` | The readouts now (names or prefixes: `ttd.position`, `run.state`, `machine`, `media.tape`, `media.disk`, `audio.mute`, `debug.mode`, `toggle.*`); default all, of the followed instance. Unknown names are listed in `unknown` | ✅ Implemented |
+| `surface readouts` | `[names] [instance=]` | The readouts now (names or prefixes: `ttd.position`, `run.state` (`speed`: the host setting 1..16), `machine`, `media.tape`, `media.disk` (each drive with `dirty`: unsaved changes), `audio.mute`, `debug.mode`, `toggle.*`, and the monitoring names of [§17](#17-monitoring): `host.*`, `emulator.stats`, `debug.breakpoints`, ...); default all, of the followed instance. Unknown names are listed in `unknown` | ✅ Implemented |
 | `surface activity` | `[since] [instance=] [limit=]` | The activity feed: each action the registry ran (`seq`, `id`, `value`, `origin`, `surface`, `ok`, `error`, `t_ms`, `merged`), deltas of one surface within 100 ms merged; `last` (the next `since`), `dropped` | ✅ Implemented |
 | `surface view_add` / `view_update` / `view_remove` | `<name> [active=]` / `<view> [active=] [activate=true]` / `<view>` | A view of the automation plane (a window of another process, tests); `activate` moves any view to the front as a focus would; the active instance of a client's window is its own (`Conflict`) | ✅ Implemented |
 | `surface session_open` / `session` / `session_close` | `<name> [kind=] [target=]` / `<id>` / `<id>` | A surface session of the automation plane (a REST surface with a target of its own); a deck's session comes with the surface topic's `join` (S4) | ✅ Implemented |
@@ -3814,6 +4017,81 @@ In the GUI: Tools > Stream Deck... (the same status, Start / Stop / Restart, whe
 pairing with Pair / Approve / Revoke, each deck's brightness, "Surfaces..." to the surfaces table, the udev rule on
 Linux). The daemon's own automation (`127.0.0.1:37053`, REST + MCP) is in
 [docs/companions/streamdeck/daemon.md](../../../companions/streamdeck/daemon.md#automation).
+
+#### 16.3 Machine, media, input and recording actions
+
+The catalogue actions of the machine area (Stream Deck use cases C1.5, C3.3, C4.3, C4.5, C5, C6.4, C6.5, C7, U1.3,
+U1.5; `core/src/emulator/actions/hostactions_machine.cpp`, the full table with params, scopes and executors in
+[actions.md §1.1](../../../inprogress/2026-10-18-control-surfaces/actions.md#11-scenario-actions-sd6)): every plane
+runs them as `action run <id>` (CLI), `POST /api/v1/controllers/actions/{id}` (REST and its WebSocket `call`, or
+`action` on the `surface` topic), MCP `actions` `run`, Lua `action(id, value, params)`, Python `emu.action(id, ...)`.
+Their readouts (`readouts.h`, `machinereadouts.h`) are pushed by the `surface` topic, and as WebSocket state topics of
+the same name: `media.recent`, `media.rzx`, `cap.record`, `machine.switches`, `input.connectors`.
+
+| Action | Params | What | Readout |
+| :--- | :--- | :--- | :--- |
+| `mach.start` | `model` (a short name, a variant `TSL-VDAC2` / `PROFI-PLUS` and their aliases, a ZX-Poly configuration), ... | Start a machine (in place by default); the names `machines::Resolve` takes are the ones `EmulatorManager` creates (before 2026-10-21 variants and ZX-Poly configurations were refused here and by `POST /emulator/{id}/model`) | `machine` |
+| `mach.switch` | `name` (`turbo`, `cpm`), `on?` (flips) | The Profi's front panel (v3 / v5 TURBO, v5 CP/M) | `toggle.mach.switch.<name>`, `machine.switches` |
+| `mach.previous` | `replace?`, `stranded?`, `ram_power_on?` | Start the model used before this one (the machine history of the process) | `machine.previous` |
+| `media.insert`, `media.swap`, `media.export`, `media.discard`, `media.rescan`, `media.create` | `drive`, the verb's | The media verbs a key needs; `media.swap` with `with` exchanges two drives' disks; `media.export` writes another format (disk: trd, scl, udi, fdi, dsk, td0, mgt, img, hfe, scp; tape: tap, tzx); `media.create` `format` `trdos` (formatted), `plus3`, `unformatted` (`raw`), `size` for IDE / SD (`64M`) | `media.disk` (with `changed`), `media.tape` |
+| `media.open_recent` | `index?`, `kind?` | Open one of the files opened lately ([media.md → Recent files](../../../features/media.md#recent-files)) | `media.recent` |
+| `rzx.play`, `rzx.stop`, `rzx.seek` | play: `path`, `tolerant?`, `switch_model?`; seek: `frame` or `by` | RZX playback (§12) | `media.rzx` |
+| `input.joystick_type` | `kind` (kempston, sinclair1, sinclair2, cursor, fuller, keys, md6, none), `connector?` | The joystick on a connector (§15) | `input.connectors` |
+| `input.mouse_button`, `input.mouse_release` | `button`, `hold?`, `frames?` | Kempston mouse buttons (§11); the mouse itself is `feature.toggle name=kempstonmouse` | |
+| `cap.record_toggle`, `cap.record_pause` | `preset?`, `format?`, `container?`, `audio?`, `mode?`, `profile?`, `path?`, ... | Video recording (§5.8) over `capture::RecordingControl`; a start without a path writes `<user data>/recordings/` | `toggle.cap.record_toggle`, `cap.record` |
+| `cap.clip_last` | `seconds?` (10), `format?` (gif), `path?`, `scale?` | The last seconds of a running TTD recording as a video file: the recording pauses for browsing at its end, the clip is written, the recording goes on from that point, the run state as it was. Without a recording: `not_now` | |
+| `ttd.export_clip` | `from`, `to`, `path?`, `codec?`, `scale?` | A TTD range as a clip: a `.gif` / `.mp4` / `.mkv` / `.webm` / `.mov` / `.avi` path writes a video (`ttd export-clip` takes such a path on every plane too), a folder the lossless clip | |
+| `cap.audio_capture` | `source?`, `seconds?` (5), `path?` | One sound source (or the mix) for N emulated seconds into a WAV (needs a running machine; waits for the capture) | |
+
+The plane verbs that came with them:
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `switch` | `[turbo\|cpm [on\|off]]` | The front-panel switches: list, read, flip. WebAPI `GET` / `POST /api/v1/emulator/{id}/switches` `{name, on}`, MCP `emulator_manage` `switches` / `switch` (`switch`, `on`), Lua `emu:get_switch(name)` / `emu:set_switch(name, on)`, Python `emu.get_switch(name)` / `emu.set_switch(name, on)`, WebSocket topic `machine.switches` | ✅ Implemented |
+| `recent` | `[kind] [--json]`, `clear [kind]` | The files opened lately per kind (`snapshot`, `tape`, `disk`, `rzx`, `image`, `cd`), newest first. WebAPI `GET` / `DELETE /api/v1/recent[?kind=]`, MCP `media` `recent` / `recent_clear`, Lua `recent_files([kind])` / `recent_clear([kind])`, Python `recent_files(kind)` / `recent_clear(kind)`, WebSocket topic `media.recent`, Qt File > Recent Files | ✅ Implemented |
+| `videorecord presets` | | The recording presets (§5.8). WebAPI `GET /api/v1/recording/presets`, MCP `capture_media` `record_presets`, Lua / Python `recording_presets()` | ✅ Implemented |
+| `media create` | `--format trdos` | A formatted TR-DOS blank (also `disk create <drive> [cyl] [sides] trdos`, `POST /disk/{drive}/create {"format": "trdos"}`, Lua / Python `disk_create`) | ✅ Implemented |
+
+### 17. Monitoring
+
+What a monitoring page shows (Stream Deck use case C10), read-only: what the host process uses, how fast each
+instance runs, who is connected, and per instance a summary of its breakpoints, media, recording, labels, TTD,
+profilers and controllers. The verbs are `monitoring::Call` (`core/src/emulator/monitoring/monitoringapi.h`), the
+same on every plane. Each name is at once a verb, a WebSocket state topic of the same name (latest value, coalesced at
+the subscriber's `max_hz`, [websocket-interface.md §3](websocket-interface.md#3-topics)) and a surface readout: the
+topic pushes what the verb returns, without `ok` / `instance`. Reads take published state only: never a pause, never
+a wait for an emulation thread; a list that is counted (breakpoints, media slots, symbol sets, connectors) is cached
+by its manager's revision.
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `monitor [all]` | `[instance=]` | Everything: `host`, `clients`, `instances` [{`instance`, `index`, `model`, and each instance name below}] (every instance, or the one named) | ✅ Implemented |
+| `monitor host.stats` | | The process (never per instance): `cpu_percent` (over the last 0.5 s, 100 = one core busy), `cpu_percent_host` (of all `cores`), `rss_bytes`, `peak_rss_bytes`, `virtual_bytes`, `threads`, `cpu_time_s`, `uptime_s`, `interval_s`. macOS task_info / proc_pidinfo, Linux /proc/self/status, Windows GetProcessTimes / GetProcessMemoryInfo; sampled at most twice a second | ✅ Implemented |
+| `monitor host.clients` | | Per plane (`rest` HTTP requests, `ws` `/api/v1/ws` sockets and their `call`s, `events` `/api/v1/companions/events`, `debug_ws` `/api/v1/websocket`, `mcp` POST `/mcp`, `cli` connections and commands): `connections` (open now), `opened`, `requests`; `companions` (paired), `instances`. An MCP tool's own WebAPI calls are not counted as REST | ✅ Implemented |
+| `monitor emulator.stats` | `[instance=]` | The measured pace (MainLoop, a 0.5 s window, no lock on the emulation thread): `state`, `measuring` (false while paused or stopped), `fps`, `nominal_fps`, `speed_percent` (emulated time over wall time: fps / nominal × the host multiplier; 2x shows 200, turbo its rate), `frame_time_us` {`avg`, `max`} (the host time a frame's emulation took), `frame_budget_percent` (avg over the frame period), `halted_percent` (T-states in HALT), `interrupts_per_frame` (INTs the CPU accepted), `frame`, `t_states` (cumulative; while it runs taken at the window's end, so the value changes twice a second), `turbo`, `cpu` {`mhz`, `base_mhz`, `multiplier` (host × the machine's own turbo), `host_multiplier`, `hw_turbo_ratio`} | ✅ Implemented |
+| `monitor debug.breakpoints` | `[instance=]` | The user breakpoints: `total`, `active`, `inactive`, `owned` (analyzers', DeZog's, hidden traps: not counted), `by_kind` {`memory`, `exec`, `read`, `write`, `port`, `port_in`, `port_out`, `keyboard`, `nextreg`, `beam`, `copper`, `magic`}, `groups` [{`name`, `total`, `active`}], `last_hit` {`id`, `type`, `address`, `access`, `group`, `note`} or null | ✅ Implemented |
+| `monitor breakpoint_groups` | `[instance=]` | `groups` [{`name`, `total`, `active`, `ids`}] (also `GET /api/v1/emulator/{id}/breakpoints/groups`, `bp_groups()`; the CLI's `bpgroup list` names them too). Not a topic: `debug.breakpoints` pushes the groups' counts | ✅ Implemented |
+| `monitor media.slots` | `[instance=]` | Every media slot: `slots` [{`id`, `kind`, `present`, `pending`, `name`, `format`, `dirty`, `changed_units`, `protect`}], `loaded`, `dirty` (any slot has unsaved changes) | ✅ Implemented |
+| `monitor recording.state` | `[instance=]` | `available`, `enabled`, `recording`, `paused`, `mode`, `file`, `frames`, `duration_s`, `emulated_s`, `file_bytes`, `fps` | ✅ Implemented |
+| `monitor debug.labels` | `[instance=]` | `total` labels, `sets` [{`id`, `title`, `enabled`, `symbols`}] (recounted on `NC_LABEL_CHANGED`, at most every 2 s) | ✅ Implemented |
+| `monitor ttd.status` | `[instance=]` | From the published cursor: `state`, `recording`, `history`, `frame`, `first`, `end`, `frames`; from the published session summary (refreshed every 2 s at most, never the live session): `checkpoints`, `memory_bytes`, `history_bytes`, `page_store_bytes`, `bookmarks`, `write_journal_records`, `input_events`, `evicted_checkpoints` | ✅ Implemented |
+| `monitor debug.analyzers` | `[instance=]` | Session states: `opcode`, `memory`, `calltrace` (`stopped`, `capturing`, `paused`), `coverage` {`available`, `recording`, `instructions`}, `pchist` (`armed` / `off`) | ✅ Implemented |
+| `monitor controllers.state` | `[instance=]` | `connectors` [{`id`, `kind`, `device`, `plugged`, `fixed`}], `plugged` | ✅ Implemented |
+
+`instance=` takes an id or an index; without it an instance's name reads the followed instance (T-1). Errors:
+`Not Found` (404: no such name, no such instance).
+
+| Surface | Everything | One name | Push |
+| :--- | :--- | :--- | :--- |
+| CLI | `monitor` | `monitor emulator.stats 1`, `monitor host.stats --json` | - |
+| WebAPI | `GET /api/v1/monitor[?instance=]` | `GET /api/v1/monitor/{name}[?instance=]`, `GET /api/v1/emulator/{id}/breakpoints/groups` | - |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/monitor"}` | the same `call` per name | topics `host.stats`, `host.clients` (the process: no `instance`), `emulator.stats`, `debug.breakpoints`, `media.slots`, `recording.state`, `debug.labels`, `ttd.status`, `debug.analyzers`, `controllers.state` (per instance); the same names as surface readouts |
+| MCP | `inspect_state` aspect `monitor` | the aspect's JSON (the `all` body of the instance); `breakpoints` aspect carries `groups` | - |
+| Python | `emu.monitor()` | `emu.monitor("emulator.stats")`, `emu.bp_groups()` | - |
+| Lua | `monitor()` | `monitor("emulator.stats", {instance = 1})`, `bp_groups()` | - |
+
+`run.state`'s `speed` (topic, readout, `GET /api/v1/surfaces/readouts`) is the host setting (1..16) everywhere; the
+composed clock multiplier with the machine's own turbo is `emulator.stats` `cpu.multiplier`.
 
 ## Future Capabilities
 

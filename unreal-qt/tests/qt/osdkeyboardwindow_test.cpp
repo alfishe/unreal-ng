@@ -306,3 +306,26 @@ TEST_F(OsdKeyboardWindow_Test, AHostCursorKeyLightsItsKeys)
         EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
     }
 }
+
+/// The automation's report of a hidden window (osd_keyboard_pictures): the shown machine's pictures, the one chosen,
+/// and a signal on every change of the picture
+TEST_F(OsdKeyboardWindow_Test, FollowModelOffersThePicturesWhileHidden)
+{
+    auto emulator = Create("PENTAGON");
+    ASSERT_NE(emulator, nullptr);
+    OsdKeyboardWindow window;
+    window.setRoot(Root());
+    window.setBinding(&_binding);
+    int changes = 0;
+    QObject::connect(&window, &OsdKeyboardWindow::pictureChanged, [&changes] { ++changes; });
+    window.followModel();
+    EXPECT_FALSE(window.isVisible());
+    EXPECT_EQ(window.choices(), (std::vector<std::string>{"pentagon", "pentagon2plus"}));
+    EXPECT_FALSE(window.picture().id.empty());
+    const int before = changes;
+    window.choose("pentagon2plus");
+    EXPECT_EQ(window.picture().id, "pentagon2plus");
+    EXPECT_EQ(changes, before + 1);
+    window.choose("zx48k");
+    EXPECT_EQ(window.picture().id, "pentagon2plus") << "not offered for this machine: nothing changes";
+}

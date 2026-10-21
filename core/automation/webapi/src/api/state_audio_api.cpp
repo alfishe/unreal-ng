@@ -1411,5 +1411,58 @@ void EmulatorAPI::setAudioMixer(const HttpRequestPtr& req, std::function<void(co
     reply(StateNodeToJson(DeviceState::AudioMixer(emulator->GetContext())), HttpStatusCode::k200OK);
 }
 
+/// @brief GET /api/v1/emulator/{id}/audio/mixer/{source} - one row ("ay1") or channel ("ay1.a"): muted, solo, audible,
+/// volume, gain_db, peak, active, the row's channels
+void EmulatorAPI::getAudioMixerSource(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                      const std::string& id, const std::string& source) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    Json::Value body;
+    HttpStatusCode code = HttpStatusCode::k200OK;
+    StateNode node;
+    std::string error;
+    if (!emulator)
+    {
+        body["error"] = "Not Found";
+        body["message"] = "Emulator not found with ID: " + id;
+        code = HttpStatusCode::k404NotFound;
+    }
+    else if (!AudioMixer::Read(emulator->GetContext(), source, node, error))
+    {
+        body["error"] = "Not Found";
+        body["message"] = error;
+        code = HttpStatusCode::k404NotFound;
+    }
+    else
+        body = StateNodeToJson(node);
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/audio/levels - the mixer's levels (the topic audio.mixer pushes the same value)
+void EmulatorAPI::getAudioLevels(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    Json::Value body;
+    HttpStatusCode code = HttpStatusCode::k200OK;
+    if (!emulator)
+    {
+        body["error"] = "Not Found";
+        body["message"] = "Emulator not found with ID: " + id;
+        code = HttpStatusCode::k404NotFound;
+    }
+    else
+        body = StateNodeToJson(AudioMixer::Levels(emulator->GetContext()));
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 }  // namespace v1
 }  // namespace api

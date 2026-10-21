@@ -74,3 +74,22 @@ TEST_F(NextLayersWindow_Test, AnotherMachineSaysSo)
     window.refresh();
     EXPECT_TRUE(window.currentImage().isNull());
 }
+
+/// The mode and the layer ticks the automation sets (next_layers_mode, next_layer.<name>), each change signalled once
+TEST_F(NextLayersWindow_Test, TheModeAndTheTicksForTheAutomation)
+{
+    NextLayersWindow window;
+    int changes = 0;
+    QObject::connect(&window, &NextLayersWindow::viewChanged, [&changes] { ++changes; });
+    EXPECT_EQ(window.mode(), 0);
+    window.setMode(2);
+    EXPECT_EQ(window.mode(), 2);
+    window.setMode(9);
+    EXPECT_EQ(window.mode(), 2) << "an unknown mode changes nothing";
+    EXPECT_TRUE(window.layerShown(3));
+    window.setLayerShown(3, false);
+    EXPECT_FALSE(window.layerShown(3));
+    EXPECT_TRUE(window.layerShown(0));
+    EXPECT_FALSE(window.layerShown(7));
+    EXPECT_EQ(changes, 2);
+}

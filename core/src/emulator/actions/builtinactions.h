@@ -20,6 +20,7 @@ class ActionRegistry;
 class RegistrationHandle;
 struct ActionResult;
 struct ActionOrigin;
+struct ActionCall;
 
 /// Register the core actions; the registry keeps the handles
 std::vector<RegistrationHandle> RegisterBuiltinActions(ActionRegistry& registry);
@@ -47,6 +48,9 @@ bool SeekCurveFromParams(const StateNode& params, SeekCurve& curve, std::string&
 /// Frames to move for `delta` steps at `rate` steps/s: per = min * (max / min) ^ t, t = clamp((rate - rateLo) /
 /// (rateHi - rateLo), 0, 1); seconds become frames (at `fps`) before rounding, so a step is at least one frame
 int64_t SeekFrames(const SeekCurve& curve, double delta, double rate, double fps);
+
+/// ttd.seek_by: the call's delta in its unit (the `unit` param, else the instance's scrub unit), the marks crossed
+ActionResult SeekBy(const ActionCall& call);
 
 /// Who set a context, as NC_SURFACE_CONTEXT and the surface protocol's `ctx.by` name it: "companion:<id>",
 /// "host-device:<id>", "webapi:<client>", "gui", ...

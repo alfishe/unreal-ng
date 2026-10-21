@@ -38,5 +38,17 @@ def test_rzx_status(s):
     expect('RZX' in r.text, 'status in the text', r.text)
 
 
+def test_recent_lists_and_clears(s):
+    # The launched unreal-qt keeps its list in memory (mcplib sets UNREAL_RECENT_FILES=off)
+    r = s.call('media', {'action': 'recent'})
+    expect('No recent files' in r.text or 'recent file(s)' in r.text, 'the list in the text', r.text)
+    cleared = s.call('media', {'action': 'recent_clear', 'kind': 'cd'})
+    expect('cleared' in cleared.text.lower(), 'the text says cleared', cleared.text)
+    cds = s.call('media', {'action': 'recent', 'kind': 'cd'})
+    expect('No recent files' in cds.text, 'no cd after the clear', cds.text)
+    bad = s.call('media', {'action': 'recent', 'kind': 'floppies'}, ok=False)
+    expect(bad.is_error, 'an unknown kind is an error', bad.text)
+
+
 if __name__ == '__main__':
     sys.exit(main(globals()))

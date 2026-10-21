@@ -380,6 +380,16 @@
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("copper");
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("magic_ed_ff");
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("magic_dd_01");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("keyboard");
+    schemas["AddBreakpointRequest"]["properties"]["key"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["key"]["description"] =
+        "Keyboard only: the key (space, enter, caps, symbol, a..z, 0..9; GET /keyboard/keys) or any (default). It stops "
+        "on the first keyboard read (IN #xxFE) that sees the key change: the program's handling, not the host event";
+    schemas["AddBreakpointRequest"]["properties"]["on"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["on"]["enum"].append("press");
+    schemas["AddBreakpointRequest"]["properties"]["on"]["enum"].append("release");
+    schemas["AddBreakpointRequest"]["properties"]["on"]["enum"].append("both");
+    schemas["AddBreakpointRequest"]["properties"]["on"]["description"] = "Keyboard only: the edge (default press)";
     schemas["AddBreakpointRequest"]["properties"]["hc"]["type"] = "integer";
     schemas["AddBreakpointRequest"]["properties"]["hc"]["description"] =
         "Beam only: the pixel clock in the row (0-511, default 0); 'address' is the line of the copper's counter";
@@ -1431,8 +1441,8 @@
     // POST /ttd/reverse-step
     schemas["TTDReverseStepRequest"]["type"] = "object";
     schemas["TTDReverseStepRequest"]["description"] =
-        "Request body for POST /ttd/reverse-step. Exactly one of count or "
-        "tstates must be specified.";
+        "Request body for POST /ttd/reverse-step. Exactly one of count, "
+        "tstates or scanlines must be specified.";
     schemas["TTDReverseStepRequest"]["properties"]["count"]["type"] = "integer";
     schemas["TTDReverseStepRequest"]["properties"]["count"]["format"] = "uint32";
     schemas["TTDReverseStepRequest"]["properties"]["count"]["description"] =
@@ -1441,6 +1451,10 @@
     schemas["TTDReverseStepRequest"]["properties"]["tstates"]["format"] = "uint64";
     schemas["TTDReverseStepRequest"]["properties"]["tstates"]["description"] =
         "Number of T-states to step back (lands at nearest M1 <= target).";
+    schemas["TTDReverseStepRequest"]["properties"]["scanlines"]["type"] = "integer";
+    schemas["TTDReverseStepRequest"]["properties"]["scanlines"]["format"] = "uint32";
+    schemas["TTDReverseStepRequest"]["properties"]["scanlines"]["description"] =
+        "Number of scanlines to step back: the machine's t_line T-states each (lands at nearest M1 <= target).";
 
     schemas["TTDReverseStepResponse"]["type"] = "object";
     schemas["TTDReverseStepResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
@@ -1450,6 +1464,10 @@
     schemas["TTDReverseStepResponse"]["properties"]["mode"]["type"] = "string";
     schemas["TTDReverseStepResponse"]["properties"]["mode"]["enum"].append("count");
     schemas["TTDReverseStepResponse"]["properties"]["mode"]["enum"].append("tstates");
+    schemas["TTDReverseStepResponse"]["properties"]["mode"]["enum"].append("scanlines");
+    schemas["TTDReverseStepResponse"]["properties"]["tstates"]["type"] = "integer";
+    schemas["TTDReverseStepResponse"]["properties"]["tstates"]["description"] =
+        "scanlines mode: the T-states the scanlines came to";
     schemas["TTDReverseStepResponse"]["properties"]["frame"]["type"] = "integer";
     schemas["TTDReverseStepResponse"]["properties"]["frame"]["format"] = "uint64";
     schemas["TTDReverseStepResponse"]["properties"]["tinframe"]["type"] = "integer";

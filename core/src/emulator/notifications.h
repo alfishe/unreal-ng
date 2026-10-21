@@ -328,7 +328,8 @@ enum class BreakpointHitKind : uint8_t
     NextRegWrite,
     Beam,
     CopperInstruction,
-    Magic
+    Magic,
+    Keyboard  // the program read the keyboard and saw the key change (address: the port read)
 };
 
 /// The automation surfaces' name of a breakpoint access kind
@@ -346,6 +347,7 @@ inline const char* BreakpointHitKindName(BreakpointHitKind kind)
         case BreakpointHitKind::Beam: return "beam";
         case BreakpointHitKind::CopperInstruction: return "copper";
         case BreakpointHitKind::Magic: return "magic";
+        case BreakpointHitKind::Keyboard: return "keyboard";
     }
     return "execute";
 }
@@ -446,6 +448,17 @@ public:
     {
     }
     virtual ~RunControlChangedPayload() = default;
+};
+
+/// Payload of NC_RUN_PACE: the paced run of an instance changed (execution::RunPacer); its state is read back from
+/// the pacer (RunPacer::Find(id)->State())
+class RunPacePayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+
+    explicit RunPacePayload(const unreal::UUID& id) : emulatorId(id) {}
+    virtual ~RunPacePayload() = default;
 };
 
 /// Payload of NC_SURFACE_CONTEXT: the context in force on an instance changed (actions::ContextState). `by` names

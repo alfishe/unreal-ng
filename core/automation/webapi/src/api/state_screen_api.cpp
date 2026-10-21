@@ -15,6 +15,7 @@
 #include <emulator/platform.h>
 #include <emulator/video/screen.h>
 #include <emulator/video/screendigest.h>
+#include <emulator/video/viewportcontrol.h>
 #include <json/json.h>
 
 #include <sstream>
@@ -114,45 +115,31 @@ void EmulatorAPI::putStateScreenOverscan(const HttpRequestPtr& req,
     if (!json || !json->isMember("enabled") || !(*json)["enabled"].isBool())
     {
         Json::Value body;
-        body["message"] = "Request must contain a boolean 'enabled' (and optionally 'viewport': symmetric | standard | screen_only | full)";
+        body["message"] = "Request must contain a boolean 'enabled' (and optionally 'viewport': " + VideoViewport::NameList() + ")";
         reply(HttpStatusCode::k400BadRequest, "Bad Request", body);
         return;
     }
     const bool enable = (*json)["enabled"].asBool();
-
-    // The viewport that crops the larger frame: the GUI's own default when overscan goes on is the symmetric one
-    DisplayViewport viewport = enable ? ViewportPresets::SYMMETRIC_HORIZONTAL : ViewportPresets::FULL_OVERSCAN;
-    if (json->isMember("viewport"))
-    {
-        const std::string name = (*json)["viewport"].asString();
-        if (name == "symmetric")
-            viewport = ViewportPresets::SYMMETRIC_HORIZONTAL;
-        else if (name == "standard")
-            viewport = ViewportPresets::STANDARD;
-        else if (name == "screen_only")
-            viewport = ViewportPresets::SCREEN_ONLY;
-        else if (name == "full")
-            viewport = ViewportPresets::FULL_OVERSCAN;
-        else
-        {
-            Json::Value body;
-            body["message"] = "Unknown viewport '" + name + "': symmetric | standard | screen_only | full";
-            reply(HttpStatusCode::k400BadRequest, "Bad Request", body);
-            return;
-        }
-    }
-
-    // Only the Pentagon has the larger frame; asking for the mode it is already in is not an error
-    const bool changed = emulator->SetOverscanMode(enable);
-    if (!changed && emulator->IsOverscanMode() != enable)
+    if (json->isMember("viewport") && !(*json)["viewport"].isString())
     {
         Json::Value body;
-        body["message"] = "Only a Pentagon has an overscan frame; this machine's video mode is " +
-                          Screen::GetVideoModeName(emulator->GetContext()->pScreen->GetVideoMode());
-        reply(HttpStatusCode::k409Conflict, "Conflict", body);
+        body["message"] = "'viewport' takes a name: " + VideoViewport::NameList();
+        reply(HttpStatusCode::k400BadRequest, "Bad Request", body);
         return;
     }
-    emulator->SetDisplayViewport(viewport);
+
+    // The viewport that crops the larger frame: the GUI's own default when overscan goes on is the symmetric one
+    const std::string viewport = json->isMember("viewport") ? (*json)["viewport"].asString() : std::string();
+    const VideoViewport::Result r = VideoViewport::SetOverscan(*emulator, enable, viewport);
+    if (!r.Ok())
+    {
+        Json::Value body;
+        body["message"] = r.error;
+        reply(r.status == 400 ? HttpStatusCode::k400BadRequest : HttpStatusCode::k409Conflict,
+              r.status == 400 ? "Bad Request" : "Conflict", body);
+        return;
+    }
+    const bool changed = r.changed;
 
     Screen* screen = emulator->GetContext()->pScreen;
     Json::Value ret;
@@ -163,6 +150,7 @@ void EmulatorAPI::putStateScreenOverscan(const HttpRequestPtr& req,
     ret["framebuffer"] = std::to_string(screen->GetFramebufferDescriptor().width) + "x" +
                          std::to_string(screen->GetFramebufferDescriptor().height);
     ret["display"] = std::to_string(screen->GetDisplayWidth()) + "x" + std::to_string(screen->GetDisplayHeight());
+    ret["viewport"] = VideoViewport::NameOf(emulator->GetDisplayViewport());
     reply(HttpStatusCode::k200OK, "OK", ret);
 }
 

@@ -22,6 +22,7 @@
 #include "emulator/video/screenshotter.h"
 
 #include "base/featuremanager.h"
+#include "emulator/media/recentfiles.h"
 #include "widgets/ttdwidget.h"
 #include "widgets/windowviewprovider.h"
 #ifdef ENABLE_RECORDING
@@ -38,6 +39,7 @@
 
 #include <QCloseEvent>
 #include <QCoreApplication>
+#include <QPointer>
 #include <QDebug>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -58,6 +60,7 @@
 #include "controllers/controllersdialog.h"
 #include "controllers/controllertoast.h"
 #include "controllers/guiactions.h"
+#include "emulator/actions/actionregistry.h"
 #include "controllers/hostcontrollers.h"
 #include "controllers/surfacestatusicon.h"
 #include "controllers/streamdeckpage.h"
@@ -87,7 +90,7 @@
 #include "hud/core/hudmodel.h"
 #ifdef ENABLE_RECORDING
 #include "debugger/widgets/videorecordingwidget.h"
-#include "debugger/widgets/recordingpresets.h"
+#include "emulator/capture/recordingcontrol.h"
 #endif
 #include "base/featuremanager.h"
 #include "emulator/video/screen.h"  // For DisplayViewport, ViewportPresets
@@ -475,10 +478,30 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     });
 
     // Create and configure menu system
+    // The files opened lately live in <user data>/recent-files.json (the core keeps the list; every plane shows it);
+    // UNREAL_RECENT_FILES names another file, or "off" keeps it in memory (the verification scripts)
+    {
+        const QString recentEnv = qEnvironmentVariable("UNREAL_RECENT_FILES");
+        std::string store = recentEnv.toStdString();
+        if (store.empty())
+            if (const std::string folder = FileHelper::GetUserDataFolder(""); !folder.empty())
+                store = FileHelper::PathCombine(folder, "recent-files.json");
+        std::string recentError;
+        if (!store.empty() && store != "off" && !RecentFiles::Instance().SetStoreFile(store, &recentError))
+            qWarning() << "Recent files:" << QString::fromStdString(recentError);
+    }
     _menuManager = new MenuManager(this, ui->menubar, this);
 
     // Connect menu signals to handlers
     connect(_menuManager, &MenuManager::openFileRequested, this, &MainWindow::openFileDialog);
+    connect(_menuManager, &MenuManager::openRecentFileRequested, this, [this](const QString& path) {
+        if (!QFileInfo::exists(path))
+        {
+            QMessageBox::warning(this, tr("Recent Files"), tr("%1 is no longer there.").arg(path));
+            return;
+        }
+        loadFile(path);
+    });
     connect(_menuManager, &MenuManager::openSnapshotRequested, this, &MainWindow::openSnapshotDialog);
     connect(_menuManager, &MenuManager::openZXPolyRequested, this, &MainWindow::openZXPolyDialog);
     connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openTapeDialog);
@@ -530,6 +553,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     });
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
+    connect(_menuManager, &MenuManager::stepOutRequested, this, &MainWindow::handleStepOut);
+    connect(_menuManager, &MenuManager::runToCursorRequested, this, &MainWindow::handleRunToCursor);
+    connect(_menuManager, &MenuManager::toggleBreakpointRequested, this, &MainWindow::handleToggleBreakpoint);
+    connect(_menuManager, &MenuManager::clearAllBreakpointsRequested, this, &MainWindow::handleClearAllBreakpoints);
+    connect(_menuManager, &MenuManager::showBreakpointsRequested, this, &MainWindow::handleShowBreakpoints);
+    connect(_menuManager, &MenuManager::showRegistersRequested, this, &MainWindow::handleShowRegisters);
+    connect(_menuManager, &MenuManager::showMemoryRequested, this, &MainWindow::handleShowMemory);
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
     connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
     connect(_menuManager, &MenuManager::tapeManagerToggled, this, &MainWindow::handleTapeManagerToggled);
@@ -746,6 +776,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _menuManager->setCustomShadersEnabled(_screenWrapper->isGPUAccelerated());
 
     _statusBarManager->restoreSettings();
+
+    // The picture as the user left it (View/*); the automation's published copy follows every change from here on
+    restoreViewSettings();
+    connectWindowDisplayPublishing();
 
     // Bring application window to foreground
     this->raise();
@@ -984,7 +1018,7 @@ void MainWindow::showEvent(QShowEvent* event)
     if (!_initialFitDone)
     {
         _initialFitDone = true;
-        QTimer::singleShot(0, this, [this]() { fitWindowToScreen(2); });
+        QTimer::singleShot(0, this, [this]() { fitWindowToScreen(_startScale); });
 
         // Turbo render cap follows the display we are on (and moves with the window)
         applyDisplayRefreshRate();
@@ -1095,89 +1129,28 @@ void MainWindow::registerWindowView()
         if (change)
             window->applyWindowDisplay(*change);
         out = window->windowDisplaySettings();
+        if (change)
+            window->publishWindowDisplay();  // the toggles read it at once
         return true;
     };
-    WindowView::SetProvider(std::make_shared<WindowViewProvider>(_screenWrapper, shownEmulatorId, display));
-}
-
-namespace
-{
-/// The automation word of a custom CRT shader: "shader:<name>"
-const QString kShaderPrefix = QStringLiteral("shader:");
-}  // namespace
-
-WindowDisplaySettings MainWindow::windowDisplaySettings() const
-{
-    WindowDisplaySettings s;
-    s.backend = _screenWrapper->isGPUAccelerated() ? "gpu" : "software";
-    s.gpuAvailable = DeviceScreenWrapper::isGPUAvailable();
-    s.gpu = _screenWrapper->isGPUAccelerated();
-    s.crt = _screenWrapper->crtEffectsEnabled();
-    // A custom shader is "shader:<name>", offered when the host has a GPU (it needs the GPU on: WindowDisplay::Set)
-    const QString shader = _screenWrapper->customShader();
-    s.crtProfile = shader.isEmpty() ? CRTProfileParams::ProfileKey(_screenWrapper->crtProfile()).toStdString()
-                                    : (kShaderPrefix + shader).toStdString();
-    for (CRTProfile profile : CRTProfileParams::AllProfiles())
-        s.crtProfiles.push_back(CRTProfileParams::ProfileKey(profile).toStdString());
-    if (s.gpuAvailable)
-    {
-        for (const QString& name : DeviceScreenWrapper::availableShaders())
-            s.crtProfiles.push_back((kShaderPrefix + name).toStdString());
-    }
-    s.blending = _screenWrapper->temporalBlendingEnabled();
-    s.blendingFrames = _screenWrapper->temporalHistorySize();
-    s.blendingWeights = _screenWrapper->temporalWeightMode() == 1 ? "exponential" : "equal";
-    s.emulatorId = _emulator ? _emulator->GetId() : std::string();
-    return s;
-}
-
-void MainWindow::applyWindowDisplay(const WindowDisplayChange& change)
-{
-    // The order of the menu: the backend first (it re-creates the screen and carries the rest over), then the profile
-    // (it switches CRT on or off by itself), then the switches that name it
-    if (change.gpu)
-    {
-        _menuManager->setGpuAccelerationChecked(*change.gpu);
-        handleGpuAccelerationToggled(*change.gpu);
-    }
-    if (change.crtProfile && QString::fromStdString(*change.crtProfile).startsWith(kShaderPrefix))
-    {
-        const QString name = QString::fromStdString(*change.crtProfile).mid(static_cast<int>(kShaderPrefix.size()));
-        _menuManager->setCrtShader(name);
-        handleCrtShaderChanged(name);
-    }
-    else if (change.crtProfile)
-    {
-        const std::vector<CRTProfile> profiles = CRTProfileParams::AllProfiles();
-        for (int index = 0; index < static_cast<int>(profiles.size()); ++index)
+    auto parameters = [window](const CrtParameterChange* change, CrtParameters& out, std::string& error) {
+        if (!window || !window->_screenWrapper)
         {
-            if (CRTProfileParams::ProfileKey(profiles[index]).toStdString() != *change.crtProfile)
-                continue;
-            _menuManager->setCrtProfile(index);
-            handleCrtProfileChanged(index);
+            error = "The window is closed";
+            return false;
         }
-    }
-    if (change.crt)
-    {
-        _menuManager->setCrtEffectsChecked(*change.crt);
-        handleCrtEffectsToggled(*change.crt);
-    }
-    if (change.blendingFrames)
-        _screenWrapper->setTemporalHistorySize(*change.blendingFrames);
-    if (change.blendingWeights)
-        _screenWrapper->setTemporalWeightMode(*change.blendingWeights == "exponential" ? 1 : 0);
-    if (change.blending)
-    {
-        _menuManager->setTemporalBlendingChecked(*change.blending);
-        handleTemporalBlendingToggled(*change.blending);
-    }
-    // An open Temporal Effects dialog shows what automation set
-    if (change.blending || change.blendingFrames || change.blendingWeights)
-    {
-        for (auto* dialog : findChildren<TemporalEffectsDialog*>())
-            dialog->updateFromScreen();
-    }
+        if (change)
+            window->applyCrtParameters(*change);
+        out = window->crtParameters();
+        if (change)
+            window->publishWindowDisplay();
+        return true;
+    };
+    WindowView::SetProvider(std::make_shared<WindowViewProvider>(_screenWrapper, shownEmulatorId, display, parameters));
+    schedulePublishWindowDisplay();
 }
+
+// windowDisplaySettings / applyWindowDisplay and the rest of the window's automation: mainwindow_picture.cpp
 
 void MainWindow::refitWindowToPicture()
 {
@@ -1234,6 +1207,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
     {
         _statusBarManager->saveSettings();
     }
+    saveViewSettings();
 
     // ============================================================
     // PHASE 1: NOTIFY ALL WINDOWS/WIDGETS (instant)
@@ -1362,6 +1336,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
 void MainWindow::resizeEvent(QResizeEvent* event)
 {
+    schedulePublishWindowDisplay();  // a hand resize ends the whole scale
     if (_screenWrapper && ui->contentFrame) {
         // fitToParent() sets move+resize atomically, so no deferred
         // re-centering dance is needed anymore
@@ -1446,6 +1421,7 @@ void MainWindow::changeEvent(QEvent* event)
 {
     if (event->type() == QEvent::WindowStateChange)
     {
+        schedulePublishWindowDisplay();  // full screen / maximized: the automation's copy follows
         QWindowStateChangeEvent* stateEvent = static_cast<QWindowStateChangeEvent*>(event);
         Qt::WindowStates oldState = stateEvent->oldState();
         Qt::WindowStates newState = windowState();
@@ -3830,6 +3806,108 @@ void MainWindow::handleStepOver()
     }
 }
 
+void MainWindow::handleStepOut()
+{
+    submitGuiAction("run.step_out");
+}
+
+void MainWindow::handleRunToCursor()
+{
+    submitGuiAction("run.to_cursor");
+}
+
+void MainWindow::submitGuiAction(const char* id)
+{
+    if (!_emulator)
+        return;
+    actions::ActionOrigin origin;
+    origin.origin = execution::Origin::Gui;
+    origin.identity = "gui:menu";
+    origin.client = "menu";
+    QPointer<MainWindow> self(this);
+    // The actions worker runs it (a run never blocks the GUI thread); a refusal goes to the status bar
+    actions::ActionRegistry::Instance().Submit(id, actions::ActionValue{}, _emulator->GetId(), std::move(origin),
+                                               [self](actions::ActionResult result) {
+                                                   if (result.ok)
+                                                       return;
+                                                   const QString text = QString::fromStdString(result.message);
+                                                   QMetaObject::invokeMethod(
+                                                       QCoreApplication::instance(),
+                                                       [self, text] {
+                                                           if (self)
+                                                               self->statusBar()->showMessage(text, 5000);
+                                                       },
+                                                       Qt::QueuedConnection);
+                                               });
+}
+
+void MainWindow::handleToggleBreakpoint()
+{
+    if (debuggerWindow && debuggerWindow->isVisible())
+    {
+        debuggerWindow->toggleBreakpointAtCursor();
+        return;
+    }
+    // The debugger is hidden: at PC, as the core's dbg.breakpoint_toggle_pc
+    if (!_emulator || RemoteControlGuard::Refuse(this))
+        return;
+    BreakpointManager* breakpoints = _emulator->GetBreakpointManager();
+    Z80State* z80 = _emulator->GetZ80State();
+    if (breakpoints == nullptr || z80 == nullptr)
+        return;
+    const uint16_t pc = z80->pc;
+    const QString where = QStringLiteral("#%1").arg(pc, 4, 16, QLatin1Char('0')).toUpper();
+    for (const auto& [id, bp] : breakpoints->GetAllBreakpoints())
+        if (bp && BreakpointManager::IsUserBreakpoint(*bp) && bp->type == BRK_MEMORY && !bp->isRange &&
+            bp->matchType == BRK_MATCH_ADDR && bp->memoryType == BRK_MEM_EXECUTE && bp->z80address == pc)
+        {
+            breakpoints->RemoveBreakpointByID(id);
+            statusBar()->showMessage(tr("Breakpoint at %1 removed").arg(where), 3000);
+            return;
+        }
+    BreakpointSpec spec;
+    spec.access = BRK_MEM_EXECUTE;
+    spec.address = pc;
+    std::string error;
+    if (breakpoints->AddBreakpoint(spec, error) == BRK_INVALID)
+        statusBar()->showMessage(tr("Breakpoint not set: %1").arg(QString::fromStdString(error)), 5000);
+    else
+        statusBar()->showMessage(tr("Breakpoint at %1 set").arg(where), 3000);
+}
+
+void MainWindow::handleClearAllBreakpoints()
+{
+    if (!_emulator || RemoteControlGuard::Refuse(this))
+        return;
+    if (BreakpointManager* breakpoints = _emulator->GetBreakpointManager())
+    {
+        // The user's breakpoints: the BASIC typer's control points and the debugger adapters' stay with their owners
+        breakpoints->ClearUserBreakpoints();
+        statusBar()->showMessage(tr("All breakpoints cleared"), 3000);
+    }
+}
+
+void MainWindow::handleShowBreakpoints()
+{
+    handleDebuggerToggled(true);
+    if (debuggerWindow)
+        debuggerWindow->openBreakpoints();
+}
+
+void MainWindow::handleShowRegisters()
+{
+    handleDebuggerToggled(true);
+    if (debuggerWindow)
+        debuggerWindow->focusRegistersPane();
+}
+
+void MainWindow::handleShowMemory()
+{
+    handleDebuggerToggled(true);
+    if (debuggerWindow)
+        debuggerWindow->focusMemoryPane();
+}
+
 void MainWindow::handleDebuggerToggled(bool visible)
 {
     if (debuggerWindow)
@@ -4065,7 +4143,9 @@ void MainWindow::handleTemporalEffectsRequested()
     connect(dialog, &TemporalEffectsDialog::blendingChanged, this, [this](bool enabled) {
         if (_menuManager)
             _menuManager->setTemporalBlendingChecked(enabled);
+        schedulePublishWindowDisplay();
     });
+    connect(dialog, &TemporalEffectsDialog::settingsChanged, this, &MainWindow::schedulePublishWindowDisplay);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
     dialog->raise();
@@ -4433,81 +4513,30 @@ void MainWindow::handleQuickRecord(const QString& presetName)
         qDebug() << "Cannot start Quick Record: No active emulator instance";
         return;
     }
+    Emulator& emulator = *m_binding->emulator();
 
-    EmulatorContext* context = m_binding->emulator()->GetContext();
-    if (!context || !context->pRecordingManager)
+    // The core's preset (capture::RecordingControl, what every plane and cap.record_toggle start); a running
+    // recording is stopped first, as the menu always did
+    QString folder = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+    if (folder.isEmpty())
+        folder = QString::fromStdString(capture::RecordingControl::UserRecordingsFolder());
+    QDir().mkpath(folder);
+    capture::RecordingControl control(emulator, folder.toStdString());
+    const capture::RecordingReply status = control.Execute("status");
+    if (const StateNode* recording = status.body.find("recording"); recording != nullptr && recording->b)
+        control.Execute("stop");
+
+    const capture::RecordingReply started = control.Execute("start", {{"preset", presetName.toStdString()}});
+    if (!started.ok)
     {
-        qDebug() << "Cannot start Quick Record: No recording manager";
+        qWarning() << "Quick Record:" << QString::fromStdString(started.message);
+        QMessageBox::warning(this, tr("Quick Record"),
+                             tr("The recording did not start:\n%1").arg(QString::fromStdString(started.message)));
         return;
     }
-
-    auto* rm = context->pRecordingManager;
-
-    // Recording subsystem is behind a master feature switch — Quick Record
-    // must enable it (the recording dialog does the same on show)
-    if (context->pFeatureManager && !context->pFeatureManager->isEnabled(Features::kRecording))
-    {
-        context->pFeatureManager->setFeature(Features::kRecording, true);
-    }
-
-    // If already recording, stop first
-    if (rm->IsRecording())
-    {
-        rm->StopRecording();
-    }
-
-    // Find the preset
-    static RecordingPresetManager presetManager;
-    const RecordingPreset* preset = presetManager.findPreset(presetName);
-    if (!preset)
-    {
-        qDebug() << "Quick Record: Preset not found:" << presetName;
-        return;
-    }
-
-    // Apply preset to recording manager
-    rm->SetRecordingMode(preset->mode);
-    rm->SetVideoEnabled(!preset->videoCodec.isEmpty());
-
-    // Set audio source
-    rm->SelectAudioSource(AudioSourceType::MasterMix);
-
-    // Set video params via individual setters
-    if (!preset->videoCodec.isEmpty())
-    {
-        rm->SetVideoCodec(preset->videoCodec.toStdString());
-        rm->SetVideoBitrate(preset->videoBitrate);
-        rm->SetVideoFrameRate(preset->frameRate);
-    }
-
-    // Same defaults as the recording dialog: full frame, 2x nearest-neighbor
-    // (preserves multicolor detail through chroma subsampling; GIF ignores it)
-    rm->SetCaptureRegion(VideoCaptureRegion::FullFrame);
-    rm->SetScaleFactor(2);
-    rm->SetVideoResolution(0, 0);  // Derive from screen + capture region
-
-    // Generate output filename
-    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_HH-mm-ss");
-    QString defaultDir = preset->outputDir.isEmpty()
-        ? QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)
-        : preset->outputDir;
-    QDir().mkpath(defaultDir);
-    QString filename = QString("%1/unreal_%2_%3.%4")
-        .arg(defaultDir)
-        .arg(timestamp)
-        .arg(preset->name.split(' ').first())
-        .arg(preset->container);
-
-    qDebug() << "Quick Record: Starting recording with preset" << presetName << "to" << filename;
-
-    // Start recording (StartRecording takes codec/bitrate directly)
-    std::string vidCodec = preset->videoCodec.toStdString();
-    std::string audCodec = preset->includeAudio ? preset->audioCodec.toStdString() : "";
-    if (!rm->StartRecording(filename.toStdString(), vidCodec, audCodec,
-                            preset->videoBitrate, preset->audioBitrate))
-    {
-        qDebug() << "Quick Record: Failed to start recording";
-    }
+    const StateNode* output = started.body.find("output");
+    qDebug() << "Quick Record: recording with preset" << presetName << "to"
+             << (output != nullptr ? QString::fromStdString(output->s) : QString());
 }
 #endif
 
@@ -4587,6 +4616,8 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
     bool temporalEnabled = _screenWrapper->temporalBlendingEnabled();
     int temporalHistorySize = _screenWrapper->temporalHistorySize();
     int temporalWeightMode = _screenWrapper->temporalWeightMode();
+    const float temporalDecay = _screenWrapper->temporalDecay();
+    const std::map<QString, float> presetValues = _screenWrapper->presetOverrides();
 
     // Detach from emulator before destroying
     _screenWrapper->detach();
@@ -4631,6 +4662,7 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
     _screenWrapper->setCRTProfile(crtParams);
     if (!crtShader.isEmpty())
         _screenWrapper->loadCustomShader(crtShader);
+    _screenWrapper->setPresetOverrides(presetValues);  // the preset's values set (none: nothing)
     _screenWrapper->setCRTEffectsEnabled(crtEnabled);
 
     // Re-attach to emulator if one is running
@@ -4658,6 +4690,7 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
 
     // Restore temporal blending state
     _screenWrapper->setTemporalBlendingEnabled(temporalEnabled);
+    _screenWrapper->setTemporalDecay(temporalDecay);
     _screenWrapper->setTemporalHistorySize(temporalHistorySize);
     _screenWrapper->setTemporalWeightMode(temporalWeightMode);
 
@@ -4757,6 +4790,7 @@ void MainWindow::handleTemporalBlendingToggled(bool enabled)
 
 void MainWindow::handleScaleRequested(int scale)
 {
+    _userResizedWindow = false;  // a whole scale asked for: the window follows the picture again
     // Leave full screen / maximized first so the resize can take effect
     if (isFullScreen())
         handleFullScreenShortcut();
@@ -5273,6 +5307,10 @@ void MainWindow::subscribeToPerEmulatorEvents()
     ObserverCallbackMethod modeCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoModeChanged);
     messageCenter.AddObserver(NC_VIDEO_MODE_CHANGED, observerInstance, modeCallback);
 
+    ObserverCallbackMethod viewportCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoViewportChanged);
+    messageCenter.AddObserver(NC_VIDEO_VIEWPORT_CHANGED, observerInstance, viewportCallback);
+
     ObserverCallbackMethod resetCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleSystemReset);
     messageCenter.AddObserver(NC_SYSTEM_RESET, observerInstance, resetCallback);
 
@@ -5300,6 +5338,10 @@ void MainWindow::unsubscribeFromPerEmulatorEvents()
 
     ObserverCallbackMethod modeCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoModeChanged);
     messageCenter.RemoveObserver(NC_VIDEO_MODE_CHANGED, observerInstance, modeCallback);
+
+    ObserverCallbackMethod viewportCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoViewportChanged);
+    messageCenter.RemoveObserver(NC_VIDEO_VIEWPORT_CHANGED, observerInstance, viewportCallback);
 
     ObserverCallbackMethod resetCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleSystemReset);
     messageCenter.RemoveObserver(NC_SYSTEM_RESET, observerInstance, resetCallback);
@@ -5538,6 +5580,7 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
         });
 
         _hudModel->setAlwaysShownPrefix("remote");  // the automation session's indicator and toasts
+        _hudModel->setTheme(_hudTheme);             // the theme chosen (View/HudTheme, hud_theme)
         _hudWrapper->setModel(_hudModel);
         updateRemoteControlUi();
 
@@ -5553,6 +5596,9 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
         _hudWrapper->setVisible(_hudOverlayVisible);
         _hudWrapper->syncGeometryWithParent();
     }
+
+    // The published copy follows the new binding
+    schedulePublishWindowDisplay();
 
     if (_ttdWidget)
     {

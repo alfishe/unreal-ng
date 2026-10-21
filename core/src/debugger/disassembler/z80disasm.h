@@ -309,6 +309,7 @@ protected:
     ModuleLogger* _logger;
     EmulatorContext* _context;
     bool _z80nMode = false;     // decode the ZX Spectrum Next (Z80N) ED-prefixed extensions
+    static inline thread_local bool t_noLabels = false;  // NoLabelsScope
     /// endregion </Fields>
 
 public:
@@ -320,6 +321,21 @@ public:
     /// Enables the Z80N (ZX Spectrum Next) extended instructions; off by default so plain Z80 listings do not change
     void SetZ80nMode(bool enabled) { _z80nMode = enabled; }
     bool IsZ80nMode() const { return _z80nMode; }
+
+    /// Labels off on this thread while it lives (the Qt disassembly's labels toggle, dbg.labels_toggle): operands and
+    /// instructions show plain addresses. Thread-local, so the other surfaces' disassembly keeps its labels
+    class NoLabelsScope
+    {
+    public:
+        NoLabelsScope() : _previous(t_noLabels) { t_noLabels = true; }
+        ~NoLabelsScope() { t_noLabels = _previous; }
+        NoLabelsScope(const NoLabelsScope&) = delete;
+        NoLabelsScope& operator=(const NoLabelsScope&) = delete;
+
+    private:
+        bool _previous;
+    };
+    static bool LabelsOffOnThisThread() { return t_noLabels; }
     
     std::string disassembleSingleCommand(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen = nullptr, DecodedInstruction* decoded = nullptr);
     std::string disassembleSingleCommandWithRuntime(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded = nullptr);

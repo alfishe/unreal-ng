@@ -78,6 +78,10 @@ public:
     /// Get all enabled category IDs
     static QSet<QString> enabledCategories();
 
+    /// Show or hide one category (the automation's hud_notice.<id>): saved, the change callback called, an open
+    /// dialog's check box follows. False for an unknown id
+    static bool setCategoryEnabled(const QString& categoryId, bool enabled);
+
     /// Save current settings to persistent storage
     static void saveSettings();
 

@@ -31,6 +31,10 @@ enum class AudioSourceType
     MultiSoundSaa,   // MS SAA: the SAA1099
     MultiSoundPcm,   // MS PCM: the four shared DACs (General Sound + SounDrive)
     MultiSoundMidi,  // MS MIDI: the SAM2695 General MIDI synthesizer
+    // The ZX Spectrum Next's sound (NextAudio, a model audio source with parts): its three AY / YM chips and the
+    // four-channel DAC, each a row; the device mixes them in its one buffer at the part's gain
+    NextAy1, NextAy2, NextAy3,
+    NextDac,
     Custom
 };
 

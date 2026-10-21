@@ -871,6 +871,9 @@ public:
     /// ExportClip; leaves the machine displayed at the last frame visited.
     /// @return empty on success, otherwise the reason
     std::string VisitComposedFrames(uint64_t fromFrame, uint64_t toFrame, const TTDFrameVisitor& visit);
+    /// VisitComposedFrames as one operation of the session (its lock, the CPU held), for a caller outside the TTD
+    /// (capture::ExportTtdClip writes the frames as a video file)
+    std::string VisitComposedFramesAsOperation(uint64_t fromFrame, uint64_t toFrame, const TTDFrameVisitor& visit);
 
     // -----------------------------------------------------------------------
     // Agent bookmarks (TD-4; ttd-coverage-evaluation.md §TD-4)

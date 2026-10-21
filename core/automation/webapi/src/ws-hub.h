@@ -12,7 +12,10 @@
 ///   → {"op":"unsubscribe","topics":["ttd.*"]}
 ///
 /// State topics (latest value, coalesced at the connection's `max_hz`, at most 50): `run.state`, `ttd.position`,
-/// `surfaces.context`, one message per instance whose value changed; `{"op":"gone"}` when the instance went. A
+/// `surfaces.context`, the monitoring ones of an instance (`emulator.stats`, `debug.breakpoints`, `media.slots`,
+/// `recording.state`, `debug.labels`, `ttd.status`, `debug.analyzers`, `controllers.state`: monitoringapi.h), one
+/// message per instance whose value changed; `{"op":"gone"}` when the instance went. Topics of the process, one
+/// message without `instance`: `streamdeck.status`, `host.stats`, `host.clients`. A
 /// topic and a surface readout need a companion token (handshake or `auth`), no scope: they read what the REST GETs
 /// read, which need none. An unknown topic is answered `Not Found` once and ignored.
 ///
@@ -237,7 +240,8 @@ public:
     /// The value of a topic / readout of one instance (published state only); null when it has none. The state
     /// topics' names read here, every other surface readout through actions::ReadReadout
     static Json::Value Read(const std::string& name, const std::string& instanceId, Emulator& emulator);
-    /// The instance a following surface takes: the selected one, else the only one; "" none
+    /// The instance a following surface takes: actions::TargetState's followed instance (the front view's active
+    /// instance, else the selected one, else the only one); "" none
     static std::string FollowedInstance();
     /// `name` matches `pattern`: equal, "*", or a prefix pattern "ttd.*"
     static bool Matches(const std::string& pattern, const std::string& name);
@@ -258,6 +262,8 @@ private:
                        const SurfaceDue& surfaceDue, std::chrono::steady_clock::time_point now, WsOutbox& out);
     /// Posts RefreshInstances once while somebody subscribes `instances` (coalesced)
     void WakeInstances();
+    /// Posts one Tick while somebody subscribes (coalesced: a burst of monitoring notifications is one tick)
+    void WakeTick();
     /// The queued events of a connection that is not congested, the first with `dropped` when some were
     static void FlushEvents(WsConnection& connection, WsOutbox& out);
     /// Re-arms the timer at the highest rate anyone asked for (disarms it when nobody subscribes)
@@ -287,6 +293,7 @@ private:
     std::mutex _instancesMutex;  ///< one refresh of `instances` at a time
     std::atomic<bool> _instancesSubscribed{false};
     std::atomic<bool> _instancesPending{false};
+    std::atomic<bool> _tickPending{false};
 
     std::mutex _eventsMutex;  ///< the events from the producers, waiting for the loop
     std::deque<std::pair<std::string, Json::Value>> _pendingEvents;  ///< hub topic, event

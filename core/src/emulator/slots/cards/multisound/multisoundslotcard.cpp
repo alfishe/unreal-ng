@@ -14,6 +14,7 @@
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/soundmanager.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
+#include "emulator/sound/chips/tsfm/ym2203pair.h"
 #include "sam2695/sam2695.h"
 
 using namespace slots;
@@ -260,6 +261,57 @@ const int16_t* MultiSoundSlotCard::MixerBuffer(AudioSourceType type) const
         }
     }
     return nullptr;
+}
+
+void MultiSoundSlotCard::MixerChannels(AudioSourceType type, std::vector<MixerChannelDesc>& out) const
+{
+    switch (type)
+    {
+        case AudioSourceType::MultiSoundSsg1:
+        case AudioSourceType::MultiSoundSsg2:
+            out.push_back({"a", "A", true, false});
+            out.push_back({"b", "B", true, false});
+            out.push_back({"c", "C", true, false});
+            break;
+        case AudioSourceType::MultiSoundFm1:
+        case AudioSourceType::MultiSoundFm2:
+            for (int ch = 1; ch <= 3; ch++)
+                out.push_back({std::to_string(ch), "FM " + std::to_string(ch), true, false});
+            break;
+        case AudioSourceType::MultiSoundMidi:
+            // The SAM2695 mutes a part (its voices render silent); it has no part gain
+            for (int ch = 1; ch <= 16; ch++)
+                out.push_back({std::to_string(ch), "MIDI " + std::to_string(ch), false, false});
+            break;
+        default:
+            break;
+    }
+}
+
+void MultiSoundSlotCard::SetMixerChannel(AudioSourceType type, size_t index, bool muted, float volume)
+{
+    switch (type)
+    {
+        case AudioSourceType::MultiSoundSsg1:
+        case AudioSourceType::MultiSoundSsg2:
+            if (Ym2203Chip* chip = index < 3 ? _card.Ym().chip(type == AudioSourceType::MultiSoundSsg1 ? 0 : 1) : nullptr)
+            {
+                chip->ssg.setChannelMuted(static_cast<uint8_t>(index), muted);
+                chip->ssg.setChannelVolume(static_cast<uint8_t>(index), volume);
+            }
+            break;
+        case AudioSourceType::MultiSoundFm1:
+        case AudioSourceType::MultiSoundFm2:
+            if (Ym2203Chip* chip = index < 3 ? _card.Ym().chip(type == AudioSourceType::MultiSoundFm1 ? 0 : 1) : nullptr)
+                chip->fm.setChannelGain(static_cast<uint32_t>(index), MixerChannelGainQ15(muted, volume));
+            break;
+        case AudioSourceType::MultiSoundMidi:
+            if (index < 16)
+                _card.Synth().SetChannelMute(static_cast<int>(index), muted);
+            break;
+        default:
+            break;
+    }
 }
 
 /// endregion </Frames>

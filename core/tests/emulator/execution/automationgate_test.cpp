@@ -23,6 +23,8 @@ TEST(AutomationGate_Test, ReadsAndObserversDoNotChangeTheMachine)
     EXPECT_FALSE(ChangesMachine("PUT", "/audio/mixer/master"));
     EXPECT_FALSE(ChangesMachine("PUT", "/video/window"));            // the GUI window's display, not the machine
     EXPECT_FALSE(ChangesMachine("POST", "/video/window"));
+    EXPECT_FALSE(ChangesMachine("PUT", "/video/window/crt_params"));   // the window's CRT parameters
+    EXPECT_FALSE(ChangesMachine("PUT", "/video/viewport"));            // a crop of the frame; overscan itself is the machine's
     EXPECT_FALSE(ChangesMachine("POST", "/symbols/import"));
     EXPECT_FALSE(ChangesMachine("POST", "/labels"));
     EXPECT_FALSE(ChangesMachine("POST", "/snapshot/save"));

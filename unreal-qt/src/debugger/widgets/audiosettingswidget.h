@@ -33,6 +33,18 @@ struct SourceRow
     QProgressBar* meter = nullptr;
 };
 
+/// Row in the Channels section: one channel of the selected source (SoundManager's channel layer)
+struct ChannelRow
+{
+    std::string key;  ///< "a", "7"
+    QLabel* nameLabel = nullptr;
+    QCheckBox* muteCheck = nullptr;
+    QCheckBox* soloCheck = nullptr;
+    QSlider* volumeSlider = nullptr;  ///< null: the channel has no volume (MIDI parts)
+    QLabel* volumeLabel = nullptr;
+    QProgressBar* meter = nullptr;    ///< null: the device does not meter the channel
+};
+
 class AudioSettingsWidget : public QWidget
 {
     Q_OBJECT
@@ -67,9 +79,8 @@ private slots:
     // TSFM controls
     void onFmTrimChanged(int value);
 
-    // Per-channel controls
-    void onChannelMuteChanged(int state);
-    void onChannelVolumeChanged(int value);
+    // Channels section (any source with channels)
+    void onChannelSourceChanged(int index);
 
     // Beeper controls
     void onBeeperPunchChanged(int state);
@@ -82,7 +93,6 @@ private slots:
 
     // Covox controls
     void onCovoxDCRemovalChanged(int state);
-    void onCovoxChannelMuteChanged(int state);
 
     // Meter updates
     void onUpdateMeters();
@@ -97,6 +107,10 @@ private:
     void updatePunchVoicingHint();
     QString buildDeviceDetailText() const;  // Full breakdown for the (i) popup
     void updateGSSection(const GeneralSoundSlot& slot);
+    /// The Channels section: the sources with channels in its selector, the selected one's channels as rows
+    void rebuildChannelsSection();
+    void rebuildChannelRows();
+    AudioSourceType selectedChannelSource() const;
 
     std::shared_ptr<Emulator> _emulator;
     /// The held machine's context, per call (never stored)
@@ -133,13 +147,12 @@ private:
     QSlider* _fmTrimSlider = nullptr;   // -12..+12 dB in 0.5 dB steps (half-dB units)
     QLabel* _fmTrimLabel = nullptr;
 
-    // Channel Mixer (per-chip: 2 chips x 3 channels)
-    QGroupBox* _channelMixerGroup = nullptr;
-    QLabel* _chip1SectionLabel = nullptr;  // "AY1" / "SSG 1"
-    QLabel* _chip2SectionLabel = nullptr;  // "AY2" / "SSG 2"
-    QCheckBox* _channelMuteChecks[2][3] = {};   // [chip][channel]
-    QSlider* _channelVolumeSliders[2][3] = {};
-    QLabel* _channelVolumeLabels[2][3] = {};
+    // Channels: every source with channels (AY A / B / C, the SounDrive's DACs, GS, OPL4, YM2203 FM, MIDI, the Next)
+    QGroupBox* _channelsGroup = nullptr;
+    QComboBox* _channelSourceCombo = nullptr;
+    QWidget* _channelsContainer = nullptr;
+    std::vector<ChannelRow> _channelRows;
+    std::vector<AudioSourceType> _channelSources;  ///< what the selector lists
 
     // Beeper section
     QGroupBox* _beeperGroup = nullptr;
@@ -163,7 +176,6 @@ private:
     // SOUNDRIVE/COVOX section (shown only when present)
     QGroupBox* _covoxGroup = nullptr;
     QCheckBox* _covoxDCRemovalCheckbox = nullptr;
-    QCheckBox* _covoxChannelMute[4] = {};  // LA, LB, RA, RB
 
     // Meter update timer
     QTimer* _meterTimer = nullptr;

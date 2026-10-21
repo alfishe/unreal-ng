@@ -99,7 +99,9 @@ void FmBus::Advance(std::array<int32_t, kChannelCount>& taps, int32_t& outL, int
             taps[ch] = out.channel[ch]; // raw: meters see muted channels too
             if ((_muteMask >> ch) & 1u)
                 continue;
-            const int32_t v = out.channel[ch];
+            // The host gain (Q15, truncated toward zero): the tap itself at unity
+            const int32_t v = _anyGain ? static_cast<int32_t>((static_cast<int64_t>(out.channel[ch]) * _gain[ch]) / 32768)
+                                       : out.channel[ch];
             // Output routing (YMF262 silicon, include semantics): with NEW
             // set, C0 bits 4..7 enable CHA/CHB/CHC/CHD; the card sums pair
             // A/C into L and pair B/D into R; all four clear = channel
@@ -186,6 +188,18 @@ void FmBus::SetChannelMute(int ch, bool mute)
         _muteMask |= (1u << ch);
     else
         _muteMask &= ~(1u << ch);
+}
+
+void FmBus::SetChannelGain(int ch, int32_t gainQ15)
+{
+    if (ch < 0 || ch >= kChannelCount)
+        return;
+    if (!_anyGain)
+        _gain.fill(32768);
+    _gain[ch] = gainQ15;
+    _anyGain = false;
+    for (int32_t g : _gain)
+        _anyGain = _anyGain || g != 32768;
 }
 
 void FmBus::SaveState(uint8_t* dst) const

@@ -4,6 +4,7 @@
 
 #include "common/companion_helper.h"
 #include "companion-event-hub.h"
+#include "emulator/monitoring/clientstats.h"
 #include "debug-event-hub.h"
 
 namespace api
@@ -26,11 +27,13 @@ void EmulatorWebSocket::handleNewMessage(const drogon::WebSocketConnectionPtr& w
 
 void EmulatorWebSocket::handleConnectionClosed(const drogon::WebSocketConnectionPtr& wsConnPtr)
 {
+    monitoring::ClientStats::Instance().Closed(monitoring::ClientPlane::DebugWs);
     DebugEventHub::Instance().RemoveClient(wsConnPtr.get());
 }
 
 void EmulatorWebSocket::handleNewConnection(const drogon::HttpRequestPtr& req, const drogon::WebSocketConnectionPtr&)
 {
+    monitoring::ClientStats::Instance().Opened(monitoring::ClientPlane::DebugWs);  // host.clients
     LOG_INFO << "WebSocket connection from " << req->getPeerAddr().toIpPort();
 }
 
@@ -44,12 +47,15 @@ void CompanionWebSocket::handleNewMessage(const drogon::WebSocketConnectionPtr& 
 
 void CompanionWebSocket::handleConnectionClosed(const drogon::WebSocketConnectionPtr& wsConnPtr)
 {
+    monitoring::ClientStats::Instance().Closed(monitoring::ClientPlane::Events);
     CompanionEventHub::Instance().Remove(wsConnPtr.get());
 }
 
 void CompanionWebSocket::handleNewConnection(const drogon::HttpRequestPtr& req,
                                              const drogon::WebSocketConnectionPtr& wsConnPtr)
 {
+    // host.clients: counted before any refusal, as the close that follows one is counted
+    monitoring::ClientStats::Instance().Opened(monitoring::ClientPlane::Events);
     // An agent never acts as a companion (as on HTTP: companion_not_for_agents)
     if (req->getHeader("X-Unreal-Source") == "mcp")
     {

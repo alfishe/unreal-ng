@@ -44,6 +44,8 @@ public:
 
     // Reset viewport selection to default (Full Overscan)
     void resetViewportSelection();
+    // Check the viewport preset shown (0 full, 1 symmetric, 2 standard, 3 screen only) without emitting viewportChanged
+    void setViewportSelection(int presetIndex);
 
     // Sync the Tape Manager check state from the window's own close box
     // (setChecked does not re-emit triggered)
@@ -117,6 +119,8 @@ signals:
 
     // Signal emitted when user requests to open a file
     void openFileRequested();
+    /// File > Recent Files: one of the files opened lately (RecentFiles)
+    void openRecentFileRequested(const QString& path);
     void openSnapshotRequested();
     void openTapeRequested();
     void openDiskRequested();
@@ -163,6 +167,13 @@ signals:
     // Debug signals
     void stepInRequested();
     void stepOverRequested();
+    void stepOutRequested();
+    void runToCursorRequested();
+    void toggleBreakpointRequested();     ///< at the disassembly cursor with the debugger shown, else at PC
+    void clearAllBreakpointsRequested();  ///< the user's breakpoints (owned ones stay)
+    void showBreakpointsRequested();
+    void showRegistersRequested();
+    void showMemoryRequested();
 
     // View signals
     void toolBarToggled(bool visible);
@@ -260,7 +271,7 @@ private:
     QAction* _saveDiskTRDAction;    // Save as TRD
     QAction* _saveDiskSCLAction;    // Save as SCL
     QAction* _saveDiskUDIAction;    // Save as UDI
-    QAction* _recentFilesAction;
+    QMenu* _recentFilesMenu = nullptr;  ///< File > Recent Files: the core's RecentFiles, built when it opens
     QAction* _exitAction;
 
     // Edit Menu Actions

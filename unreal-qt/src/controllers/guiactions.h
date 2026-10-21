@@ -60,7 +60,7 @@ private:
     /// An executor that runs `run` on the GUI thread and answers at once; its reason goes to the status bar
     actions::Executor OnGui(GuiRun run);
     void Add(const char* id, const QString& label, const QString& group, actions::ValueKind kind, GuiRun run,
-             actions::ActionRules rules = {}, bool held = false);
+             actions::ActionRules rules = {}, bool held = false, const char* params = "");
     /// Show a result's error on the GUI thread
     void Notice(const QString& text);
 

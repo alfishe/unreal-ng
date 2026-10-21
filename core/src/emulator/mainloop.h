@@ -11,6 +11,7 @@
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/logger.h"
 #include "emulator/cpu/core.h"
+#include "emulator/emulationstats.h"
 #include "emulator/emulatorcontext.h"
 #include "stdafx.h"
 
@@ -128,6 +129,8 @@ public:
     uint64_t GetTurboRenderDecimation() const { return _turboRenderDecimation; }
     /// Emulated frames per second measured while in turbo mode (0 until the first sample)
     double GetTurboMeasuredFps() const { return _turboMeasuredFps; }
+    /// The measured pace in every mode (fps, speed, frame work, interrupts per frame): any thread, never waits
+    const EmulationStatsMeter& GetEmulationStats() const { return _emulationStats; }
 
 protected:
     /// Computed once per frame in OnFrameStart; gates per-frame rendering work
@@ -152,6 +155,8 @@ protected:
     bool _turboRateSampling = false;
     std::chrono::steady_clock::time_point _turboRateSampleTime{};
     uint32_t _turboRateSampleFrame = 0;
+    /// Fed once per frame by Run (emulation thread), read by the monitoring planes
+    EmulationStatsMeter _emulationStats;
 
     /// Sample the turbo frame rate (wall clock vs. frame counter) and refresh
     /// _turboRenderDecimation every TURBO_RATE_SAMPLE_SECONDS; resets when turbo ends

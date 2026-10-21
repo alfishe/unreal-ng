@@ -3,6 +3,7 @@
 #include <optional>
 
 #include "mediacontrol.h"
+#include "emulator/media/recentfiles.h"
 
 #include "emulator/media/mediachanges.h"
 #include "emulator/io/storage/compose/composedlayout.h"
@@ -1037,6 +1038,10 @@ MediaReply MediaControl::Insert(const MediaRequest& request, bool swap)
     reply.result = _manager->Insert(reply.slot, source, options);
     reply.result.report.insert(reply.result.report.begin(), decided.report.begin(), decided.report.end());
     Finish(reply, o);
+    // Every plane's recent list (a file or a folder the user named; not an upload, not an inline descriptor)
+    if (reply.result.Ok() && (source.type == MediaSourceType::File || source.type == MediaSourceType::Folder))
+        if (const std::optional<SlotInfo> slot = _manager->Info(reply.slot))
+            RecentFiles::Instance().Note(RecentFiles::KindOfSlot(MediaKindName(slot->descriptor.kind)), path);
     return reply;
 }
 

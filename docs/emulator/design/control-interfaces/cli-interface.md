@@ -140,6 +140,10 @@ next nextreg <reg> <value> [nextreg|port|internal]  ZX Spectrum Next: write a Ne
 state sprinter [ports|port <hex>|text|video|palette [k]|ring|bios [<name> ...]]  Sprinter Sp2000 reports; bios <3.04|3.06|3.07|file> selects
 memory regions          Device memory regions (the Sprinter's video RAM "vram", the TS-Conf palette "cram" and sprite table "sfile", the CMOS clock's "cmos", the ZX-Evo AVR's "eeprom"); memory region read|write|save|load <name> ...
 mixer [<source> [muted=0|1] [solo=0|1] [volume=0..1] [gain_db=..]]  Per-device audio mixer (beeper, ay1, covox, gs, ...)
+mixer <source>                                    One row and its channels (mute, solo, volume, peak where metered)
+mixer channels                                    Every row with its channels
+mixer <source>.<channel> [muted=] [solo=] [volume=] [gain_db=]  One channel: ay1.a, covox.lb, gs.3, fm1.2, moonsound_fm.7, ms_midi.10, next_dac.c (solo within its row)
+setting ay_stereo|ay_chip|fm_trim_db|neogs_stereo|covox_dc_removal|fir_filter [value]  Sound settings (also ay_voicing, ay_room, ay_punch, beeper_punch, audio_rate)
 ```
 
 The screen reports ([command-interface.md §6.6](./command-interface.md#66-screen-configuration)) are rendered from the same core reports.
@@ -503,6 +507,16 @@ The Stream Deck daemon as unreal-qt supervises it
 | `streamdeck brightness [deck] [value]` | A deck's brightness (`streamdeck brightness 40`: the first deck) |
 | `streamdeck udev` | The Linux udev rule |
 
+Monitoring ([command-interface.md §17](./command-interface.md#17-monitoring)), read-only:
+
+| CLI Command | Description |
+| :--- | :--- |
+| `monitor [all] [instance=]` | Host, clients, every instance's pace and breakpoints |
+| `monitor host.stats` / `host.clients` | The process: CPU %, resident / peak memory, threads; connections and requests per plane |
+| `monitor emulator.stats [instance]` | fps, real-time speed %, frame time, halted %, CPU MHz and multipliers, interrupts per frame |
+| `monitor debug.breakpoints` / `breakpoint_groups` / `media.slots` / `recording.state` / `debug.labels` / `ttd.status` / `debug.analyzers` / `controllers.state` | The summaries (JSON) |
+| `monitor <name> --json` | The reply every plane returns |
+
 ```
 > streamdeck
 Stream Deck daemon: running (mode deck, activity flash)
@@ -523,10 +537,14 @@ reference: [command-interface.md](./command-interface.md).
 | :--- | :--- |
 | `stepout` | Run until the current subroutine returns to its caller. |
 | `skip_until <pc>` | Fast-forward until PC reaches the target (breakpoints skipped, bounded budget). |
+| `pace [show\|presets\|set <preset> [ms]\|interval <ms>\|next\|prev\|start\|stop\|toggle\|step] [--json]` | The paced run ([command-interface.md §2.1](./command-interface.md#21-paced-run-and-runs-to-a-place-stream-deck-d1-d2)): `full`, `25fps`, `5fps`, `1fps`, `frame`, `100lines`, `10lines`, `1line`, `1op`; a frame, lines or an instruction per interval (1..5000 ms), stopping at a breakpoint. `pace` alone shows it. |
+| `ttd reverse-step --scanlines L`, `ttd journal build-cancel` | Back L scanlines of the machine; stop a write-journal build that runs. |
 | (run control) | `step`, `steps`, `stepover`, `stepout`, `skip_until` and every `run_*` answer "Error: Run-control held by <surface>" while another surface (a GDB client) holds the run-control claim. |
 | `companion auth <token>` / `companion logout` | Act as a companion client on this connection: a device acting as the user's hands; its changes open no session. It may do anything within its scopes (run, input, media, machine, rewind, debug, takeback): a scope not granted answers `companion_forbidden`, a change while a session holds the machine `held_by_session`, a step or direct run while the machine runs `not_now` ([companion clients](../../../inprogress/2026-10-16-companion-client/surfaces.md#3-cli)). |
 | `companion` / `companion list` / `companion revoke <id\|name\|all\|me>` | This connection, the machine's control state and what the companion may do now ("Available now", "Not now" with the reasons); the companions and pending pairings; revoke. Pairing is approved at the GUI only. |
 | `companion take-back` / `companion allow-again` | A companion with the `takeback` scope ends the session holding the machine (as the GUI's Take back control) / lifts the re-take cooldowns. |
+| `bpon` / `bpoff` / `bpclear` / `bptoggle <target>` | Breakpoints by selection: an id, `all`, a kind (`mem`, `port`, `read`, `write`, `exec`, `in`, `out`, `nextreg`, `nextreg_read`, `nextreg_write`, `beam`, `copper`, `magic`, `keyboard`), `group <name>` or `group:<name>`; `bptoggle` turns the target all on when one of it is off, else all off. `bpgroup on\|off\|toggle <name>` the same for a group. |
+| `bkey <key\|any> [press\|release\|both]` | Keyboard breakpoint: the first keyboard read that sees the key change (`--hits`, `--group`, a note). `bpnote <id> [text]` sets a note; `--group G` on any `bp*` command puts a new breakpoint in a group. |
 | `find <pattern>` | Search memory for a byte pattern, `??` = any byte (`--space cpu\|ram\|ram5\|rom2\|cache0\|<region>`, `--mask`, `--from`, `--to`, `--align`, `--max`). |
 | `out <port> <value>` | A debugger's port write through the machine's decoder, like a CPU OUT (paging, TS-Conf registers, AY, border): no breakpoints, no device waits, a TTD tool edit; paused, stopped or running. Numbers: `0x13AF`, `#13AF`, `13AFh` or decimal. |
 | `pchist [depth]` / `pchist on\|off` | PC history: the newest instructions the CPU started, each with its window's page (`C000  ram32`), newest first; the first read starts recording; `debug-snapshot --pchist N` adds it to a snapshot. |
@@ -545,13 +563,16 @@ reference: [command-interface.md](./command-interface.md).
 | `capture screen --layer=ula\|layer2\|tilemap\|sprites\|ids [--format=png\|rgba] [--alpha=false] [file]` | ZX Spectrum Next: ONE LAYER of the last completed frame (alpha 0 where the layer does not paint; `ids` = the winner of every pixel, the legend is printed); 640 x 512 like the screenshot; prints the frame and size and a data URI, or saves to `file`. Needs the layer record (`next layer-capture on`, the default). |
 | `capture screen [--area=full\|screen] [--format=png\|gif] [--source=presented\|live\|window] [file]` | Screenshot of the session's emulator: the whole frame with border (default) or the working picture; PNG (default) or GIF; the presented frame (default) or `--source=live`, the frame as drawn now (a paused machine reports where the beam stopped), or `--source=window`, the picture as the unreal-qt window draws it (GUI only). Prints the size, the cut rectangle, the screen window and a data URI, or saves to `file`. An unknown word is an error. |
 | `capture framebuffer <file> [rgba\|index]` | The picture as raw pixels (R,G,B,A, or the Sprinter's u16 pens). |
-| `video window [status \| <key>=<value> ...]` | GUI window display settings: show them, or change any of `gpu`, `crt`, `blending` (on / off), `crt_profile` (one of `crt_profiles`: none, basic, ..., shader:<name>: a libretro preset or a custom shader, with the GPU), `blending_frames` (2..5), `blending_weights` (equal / exponential) the way the View menu does, e.g. `video window crt_profile=basic blending=on`. Headless: `Error (no-window)` (see [command-interface.md](./command-interface.md#gui-window-display-settings)). |
+| `video window [status \| <key>=<value> ...]` | GUI window display settings: show them, or change any of `gpu`, `crt`, `blending`, `fullscreen`, `toolbar`, `status_bar`, `hud`, `osd_keyboard`, `next_layers` (on / off), `crt_profile` (one of `crt_profiles`: none, basic, ..., shader:<name>: a libretro preset or a custom shader, with the GPU), `blending_frames` (2..5), `blending_weights` (equal / exponential), `blending_decay` (0.1..0.9), `scale` (1..4), `hud_theme`, `hud_notice.<id>` (on / off), `osd_keyboard_picture`, `next_layers_mode` (layers / composed / winner), `next_layer.<ula\|layer2\|tilemap\|sprites>` the way the View menu does, e.g. `video window crt_profile=basic blending=on hud_theme=retro_zx`. Headless: `Error (no-window)` (see [command-interface.md](./command-interface.md#gui-window-display-settings)). |
+| `video window crt_params [<name>=<v> \| <name>+=<steps> \| <name>-=<steps> \| reset \| reset=<name> ...]` | The active CRT profile's parameters: list them with their ranges, set, move by a dial's steps, reset; e.g. `video window crt_params CRTgamma=2.4 curvature+=2` ([command-interface.md](./command-interface.md#gui-window-display-settings)). |
+| `video viewport [status \| full \| symmetric \| standard \| screen_only \| next \| prev]` | The Pentagon overscan frame's crop (overscan itself: `feature overscan on`); a crop other than `full` needs overscan on ([command-interface.md](./command-interface.md#overscan-viewport)). |
 | `video temporal [status\|list\|off\|<algorithm>]` | ZX DLSS de-flicker: show its status (algorithm, video / audio delay it causes, timing), list the algorithms, switch it off or on (default `mod-tpgwafsd`, which shows the picture 7 frames later and delays the sound 5 more frames to match; see [command-interface.md §5.9](./command-interface.md)). |
 | `frame_cost` | Per-frame halt/run cost accounting. |
 | `coverage <start\|stop\|clear\|gaps\|status>` | Executed-address coverage analysis. |
 | `aylog <start\|stop\|clear\|dump\|status>` | AY-3-8910 register access log. |
 | `audiocapture <start\|stop\|clear\|result\|save>` | Audio capture with level stats and WAV export; `start <seconds> [source]` records one mixer device. |
-| `videorecord <start\|stop\|pause\|resume\|status>` | Screen recording (requires `ENABLE_RECORDING` build). `start` accepts `--region full\|screen` (default `full`: the whole frame with its border; `screen`: the working picture, fitted into the start window's size when the window changes), `--profile native\|1080p\|1440p\|4k` (a fixed frame, the picture scaled sharply into it with black bars; h264/h265 only), `--acceleration auto\|hardware\|software` (GPU or software encoder), `--audio-rate N\|auto` to pin the core audio rate for the whole recording (one step for fixed-rate captures; fails fast if the emulator is paused so the file cannot be mislabeled — see [command-interface.md §5.8](./command-interface.md)). |
+| `recent [kind] [--json]` / `recent clear [kind]` | The files opened lately, newest first, with each one's index (`kind`: all, snapshot, tape, disk, rzx, image, cd); open one with `action run media.open_recent index=N [kind=K]` ([media.md → Recent files](../../../features/media.md#recent-files)). |
+| `videorecord <start\|stop\|pause\|resume\|toggle\|status\|presets>` | Screen recording (requires `ENABLE_RECORDING` build). `presets` lists the core's presets; `start` accepts `--preset NAME` (gameplay, music, audio, gif, hq, multitrack), `--mode single\|multi\|audio`, `--container EXT`, `--region full\|screen` (default `full`: the whole frame with its border; `screen`: the working picture, fitted into the start window's size when the window changes), `--profile native\|1080p\|1440p\|4k` (a fixed frame, the picture scaled sharply into it with black bars; h264/h265 only), `--acceleration auto\|hardware\|software` (GPU or software encoder), `--audio-rate N\|auto` to pin the core audio rate for the whole recording (one step for fixed-rate captures; fails fast if the emulator is paused so the file cannot be mislabeled — see [command-interface.md §5.8](./command-interface.md)). |
 | `assemble <addr> <code>` (`asm`) | Assemble Z80 source in place (`--write` to patch RAM). |
 | `label resolve <name\|addr>` | Resolve a label by name or an address to labels + context. |
 | `listing <load\|clear\|info\|source_at\|step_line\|run_to_line>` | Source-level debugging via assembler listings. |

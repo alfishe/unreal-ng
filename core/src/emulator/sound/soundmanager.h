@@ -26,6 +26,7 @@
 #include "emulator/sound/chips/soundchip_turbosound.h"
 #include "emulator/sound/audioactivityindicators.h"
 #include "emulator/sound/audiodeviceinfo.h"
+#include "emulator/sound/mixerchannel.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/gs/soundchip_gslw.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
@@ -499,6 +500,7 @@ public:
 
     const AudioFrameDescriptor& getAudioBufferDescriptor();
     Beeper& getBeeper();
+    EmulatorContext* getContext() const { return _context; }
 
     // TurboSound/AY chip access for debugging
     bool hasTurboSound() const
@@ -714,6 +716,40 @@ public:
     void setDeviceSolo(AudioSourceType type, bool solo);
     void setDeviceVolume(AudioSourceType type, float volume);
 
+    /// region <Mixer channels (the channel layer, mixerchannels.h)>
+    /// A row's sub-channel with the user's state. Mute / solo / volume are the user's (visible at once, applied to the
+    /// device at the next frame start); solo is within the row: a soloed channel silences the row's other channels
+    struct MixerChannelState
+    {
+        MixerChannelDesc desc;
+        bool mute = false;
+        bool solo = false;
+        float volume = 1.0f;
+        float peak = 0.0f;  ///< the last frame's level (desc.hasMeter)
+    };
+    /// The channels of row `type` (empty when the row has none or is not fitted). Any thread
+    std::vector<MixerChannelState> mixerChannels(AudioSourceType type) const;
+    /// Change one channel of row `type` by its key ("a", "7"): muted / solo -1 keep, 0 / 1; volume < 0 keep, else 0..1.
+    /// False with `error` when the row has no such channel, or the channel has no volume. Any thread
+    bool setMixerChannel(AudioSourceType type, const std::string& channel, int muted, int solo, float volume,
+                         std::string& error);
+    /// endregion </Mixer channels>
+
+    /// AY stereo mode and chip model of the AY socket's chips (the TurboSound slot; a TSFM's SSG halves take the stereo
+    /// mode only, their YM2149 is fixed). Any thread: applied at the next frame start, and to a socket device fitted
+    /// later. The initial values are [SOUND] AYStereo and the chips' power-on model
+    void setAYStereoMode(AYStereoMode mode);
+    AYStereoMode getAYStereoMode() const
+    {
+        return static_cast<AYStereoMode>(_requestedAYStereo.load(std::memory_order_acquire));
+    }
+    /// False (nothing changed) when the socket holds a TurboSound FM: its SSG halves are fixed YM2149
+    bool setAYChipModel(AYChipModel model);
+    AYChipModel getAYChipModel() const
+    {
+        return static_cast<AYChipModel>(_requestedAYChipModel.load(std::memory_order_acquire));
+    }
+
     /// YM2203 FM loudness trim in dB over the measured hardware level ([SOUND] TSFM_FmLevelDb), applied live to every YM2203 FM in the machine: the
     /// TurboSound FM in the AY socket and every slot card with YM2203 FM (the ZX-MultiSound) - one calibration, shown
     /// as one control. Returns false when the machine has no YM2203 FM
@@ -845,4 +881,35 @@ private:
     const int16_t* slotCardBuffer(AudioSourceType type) const;
     bool wideMixNeeded() const;
     /// endregion </Slot-built cards: state>
+
+    /// region <Mixer channels and parts: state>
+    // At the end of the class too (see above). The channel rows exist for the rows somebody read or changed: built on
+    // demand from MixerChannels::Describe, re-laid out when the device's channels change, dropped with their row
+    struct MixerChannelRow
+    {
+        AudioSourceType type = AudioSourceType::Custom;
+        std::vector<MixerChannelState> channels;
+        bool touched = false;  ///< changed by the user once: applied to the device at every frame start
+    };
+    mutable std::mutex _channelMutex;
+    mutable std::vector<MixerChannelRow> _channelRows;
+    /// The row of `type`, its layout built or refreshed (lock held); nullptr when the row has no channels
+    MixerChannelRow* channelRowLocked(AudioSourceType type) const;
+    /// Frame start (emulation thread): every touched row's effective channel state to its device
+    void applyMixerChannels();
+    /// Frame end (emulation thread): the metered channels' levels
+    void readMixerChannelMeters();
+    /// Frame start: the model audio source's part gains from the parts' rows (mute, solo, volume)
+    void applyModelAudioParts();
+    /// The part index of a row of the model audio source, -1 for another row
+    int modelAudioPart(AudioSourceType type) const;
+
+    // AY stereo mode / chip model: requested on any thread, applied at the frame start to the socket's chips
+    std::atomic<uint8_t> _requestedAYStereo{0};
+    std::atomic<uint8_t> _requestedAYChipModel{0};
+    uint8_t _appliedAYStereo = 0;
+    uint8_t _appliedAYChipModel = 0;
+    const ITurboSoundDevice* _appliedAYDevice = nullptr;
+    void applyAYSocketRequests();
+    /// endregion </Mixer channels and parts: state>
 };

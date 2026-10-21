@@ -378,7 +378,7 @@ POST /api/v1/emulator/{id}/step              Execute single instruction
 POST /api/v1/emulator/{id}/steps             Execute N instructions (body: {"count": N})
 POST /api/v1/emulator/{id}/stepover          Step over CALL instructions
 POST /api/v1/emulator/{id}/stepout            Step out of current subroutine (breakpoints skipped)
-POST /api/v1/emulator/{id}/skip_until         Fast-forward until PC reaches target (body: {"pc": "0x8000", "max_tstates": N})
+POST /api/v1/emulator/{id}/skip_until         Fast-forward until PC reaches target (body: {"pc": "0x8000", "max_tstates": N, "breakpoints": false}; true: a breakpoint stops it first, run to a cursor; answers hit, target, max_tstates, stop)
 POST /api/v1/emulator/{id}/run_tstates       Run N t-states (body: {"count": N})
 POST /api/v1/emulator/{id}/run_to_scanline   Run until scanline N (body: {"scanline": N})
 POST /api/v1/emulator/{id}/run_scanlines     Run N scanlines forward (body: {"count": N})
@@ -386,7 +386,13 @@ POST /api/v1/emulator/{id}/run_to_pixel      Run until next screen pixel boundar
 POST /api/v1/emulator/{id}/run_to_interrupt  Run until Z80 accepts INT
 POST /api/v1/emulator/{id}/run_frame         Run exactly one video frame
 POST /api/v1/emulator/{id}/run_frames        Run N video frames (body: {"count": N})
+GET  /api/v1/emulator/{id}/run_pace          The paced run: {emulator_id, pace: {preset, label, index, unit, count, interval_ms, effective_ms, adjustable, running, ticks, stop_reason, breakpoint?, presets}}
+POST /api/v1/emulator/{id}/run_pace          {op: set|next|prev|by|start|stop|toggle|step, preset?, interval_ms?, delta?} -> {status, message, pace, state} (scope run; 409 "Run-control held", 400 for a bad preset / interval)
 ```
+
+The paced run ([command-interface.md §2.1](./command-interface.md#21-paced-run-and-runs-to-a-place-stream-deck-d1-d2)):
+presets `full`, `25fps`, `5fps`, `1fps`, `frame`, `100lines`, `10lines`, `1line`, `1op`; it steps on its own thread
+and stops at a breakpoint (`stop_reason`). The `run.state` topic of `/api/v1/ws` carries it as `pace`.
 
 > [!NOTE]
 > **Host audio during direct runs.** These commands run at full host speed, not real time. For the run, the
@@ -465,8 +471,10 @@ GET  /api/v1/emulator/{id}/capture/framebuffer ?format=rgba|index&encoding=binar
 GET  /api/v1/emulator/{id}/memory/regions      Device memory regions: declared ones (the Sprinter's 256 KB video RAM "sprinter.vram" / "vram"; TS-Conf palette "tsconf.cram" / "cram" and sprite table "tsconf.sfile" / "sfile", 512 bytes each, word n at offset 2n, low byte first; "rtc.cmos" / "cmos" on every machine with a CMOS clock, a write is a guest write; ZX-Evo "evo-avr.eeprom" / "eeprom", 4 KiB) and every memory time travel records by its engine name ("sprinter.fastram", "gs.ram", "neogs.ram", "neogs.flash", "moonsound.wave", "vdac2.*" read-only, "smuc.eeprom", "evo.flash"): name, aliases, ttd_region, size, pages, writable, write path
 GET  /api/v1/emulator/{id}/memory/region/{name} ?offset=&length=&format=hex|data|sparse|binary - read; /memory/page/{name}/{n} reads 16 KB pages of it
 POST /api/v1/emulator/{id}/memory/region/{name} {"offset", "hex"|"data"} write through the device's path; {"action": "save"|"load", "path", ...}
-GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + host_output (held, holders / holds_taken by reason, stale_holds_cleared, frames_delivered / _audible / _held) + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable)
-PUT  /api/v1/emulator/{id}/audio/mixer/{source} {"muted", "solo", "volume" | "gain_db"} - one device (master: muted); POST too
+GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + host_output (held, holders / holds_taken by reason, stale_holds_cleared, frames_delivered / _audible / _held) + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable, channels[] {key, channel, name, muted, solo, audible, volume, gain_db, peak?})
+PUT  /api/v1/emulator/{id}/audio/mixer/{source} {"muted", "solo", "volume" | "gain_db"} - one device (master: muted) or channel (ay1.a, gs.3, moonsound_fm.7, ms_midi.10, next_dac.c; solo within its row; applied at the next frame start); POST too
+GET  /api/v1/emulator/{id}/audio/mixer/{source} One row (source, name, muted, solo, audible, volume, gain_db, peak, active, channels[]) or channel; 404 when absent
+GET  /api/v1/emulator/{id}/audio/levels        Every row's and channel's peak, active, mute, solo, audible, volume (compact; the WebSocket topic audio.mixer pushes the same)
 GET  /api/v1/emulator/{id}/state/next         ZX Spectrum Next (also /state/next/regs, /state/next/mmu): machine type and timing, CPU clock, DivMMC, interrupts, CTC, SPI, the NextREG table, the 8K MMU slots
 GET  /api/v1/emulator/{id}/state/next/reg-journal ?regs=07,02&sources=nextreg,port,copper,internal&since=&from=&to=&limit= - who wrote which NextREG, when (frame, T, PC), through the NEXTREG instruction, port #253B or the copper; value, previous, name, decoded (NR #02 / #03 / #07)
 POST /api/v1/emulator/{id}/next/reg-journal   {"enabled": true|false, "clear": true, "capacity": N} - switch (off by default), clear or resize the NextREG write journal
@@ -570,13 +578,19 @@ Emulation itself is not delayed. The same status is CLI `video temporal`,
 Lua / Python `video_temporal()`, MCP `capture_media` `temporal_status`.
 
 ```
-GET  /api/v1/emulator/{id}/video/window       GUI window display settings: backend (gpu / software), gpu_available, gpu, crt, crt_profile, crt_profiles[], blending, blending_frames, blending_weights, emulator (the instance the window shows)
-PUT  /api/v1/emulator/{id}/video/window       any of {"gpu": bool, "crt": bool, "crt_profile": "basic", "blending": bool, "blending_frames": 2..5, "blending_weights": "equal"|"exponential"} (POST too); applied the way the View menu does, answers the settings after the change; a custom shader is `"crt_profile": "shader:<name>"` (offered when the host has a GPU; needs `gpu` on, in the same request or before: 409 unavailable otherwise); the window's display, not the machine: no control session opened or needed; 400 bad-parameter, 409 no-window (headless) / unavailable (gpu without OpenGL), {error, kind}
+GET  /api/v1/emulator/{id}/video/window       GUI window display settings: backend (gpu / software), gpu_available, gpu, crt, crt_profile, crt_profiles[], blending, blending_frames, blending_weights, blending_decay, emulator (the instance the window shows), fullscreen, scale (1..4; 0 resized by hand / maximized / full screen), toolbar, status_bar, hud, hud_theme, hud_themes[], hud_notices {id: bool}, osd_keyboard, osd_keyboard_picture, osd_keyboard_pictures[], next_layers, next_layers_mode, next_layers_shown {ula, layer2, tilemap, sprites}
+PUT  /api/v1/emulator/{id}/video/window       any of {"gpu": bool, "crt": bool, "crt_profile": "basic", "blending": bool, "blending_frames": 2..5, "blending_weights": "equal"|"exponential", "blending_decay": 0.1..0.9, "fullscreen": bool, "scale": 1..4, "toolbar": bool, "status_bar": bool, "hud": bool, "hud_theme": "retro_zx", "hud_notices": {"ram-page": false} (or "hud_notice.<id>": bool), "osd_keyboard": bool, "osd_keyboard_picture": "pentagon2plus", "next_layers": bool, "next_layers_mode": "layers"|"composed"|"winner", "next_layers_shown": {"sprites": false} (or "next_layer.<name>": bool)} (POST too); applied the way the View menu does, answers the settings after the change; a custom shader is `"crt_profile": "shader:<name>"` (offered when the host has a GPU; needs `gpu` on, in the same request or before: 409 unavailable otherwise); the window's display, not the machine: no control session opened or needed; 400 bad-parameter, 409 no-window (headless) / unavailable (gpu without OpenGL, a keyboard picture on a machine without one), {error, kind}
+GET  /api/v1/emulator/{id}/video/window/crt_params        the active CRT profile's parameters: {profile, kind (preset | profile | none), parameters [{name, description, value, initial, minimum, maximum, step}]}
+PUT  /api/v1/emulator/{id}/video/window/crt_params        {values: {name: number}, steps: {name: steps}, reset: true | name | [names]} (POST too): reset, then set (clamped), then move by a dial's steps; answers the parameters; 400 an unknown name (lists them), 409 no-window / unavailable (a profile without parameters)
+POST /api/v1/emulator/{id}/video/window/crt_params/reset  every parameter back to its initial value
+GET  /api/v1/emulator/{id}/video/viewport                 the overscan frame and its crop: {overscan, overscan_available, viewport (full | symmetric | standard | screen_only | custom), viewports[], framebuffer, display, video_mode}; the machine's, answers headless too
+PUT  /api/v1/emulator/{id}/video/viewport                 {"viewport": "standard" | "next" | "prev" | ...} (POST too); a crop other than full needs overscan on (409 unavailable); answers the report + changed; changes the picture, not the machine: no control session
 ```
 
 The window belongs to the GUI, which registers it with the core; headless every call answers 409 `no-window`. The
 same settings are CLI `video window`, Lua / Python `window_display()` / `window_display_set()`, MCP `capture_media`
-`window_display` / `window_display_set`; screenshot `source=window` shows their effect.
+`window_display` / `window_display_set` (and the `crt_params` / `viewport` verbs beside them); screenshot
+`source=window` shows their effect. `PUT /state/screen/overscan` answers the `viewport` it set too.
 
 The device reports (AY, FM, GS, Covox, MoonSound, FDC) are built once in the core
 (`core/src/emulator/state/devicestate.h`) and are byte-for-byte the same
@@ -649,13 +663,16 @@ GET  /api/v1/emulator/{id}/ay/log              Get AY log entries (?count=&offse
 POST /api/v1/emulator/{id}/audio/capture       Audio capture control (body: {"action": "start|stop|clear", "seconds"})
 GET  /api/v1/emulator/{id}/audio/capture/status   Capture state and level statistics
 GET  /api/v1/emulator/{id}/audio/capture/result   Captured samples (?format=wav&path=... to export)
-POST /api/v1/emulator/{id}/video/record        Video recording control (body: {"action": "start|stop|pause|resume",
+POST /api/v1/emulator/{id}/video/record        Video recording control (body: {"action": "start|stop|pause|resume|toggle|status", "preset", "mode": "single|multi|audio", "container",
                                                "format", "filename", "fps", "scale", "region",
                                                "audio": "aac" (optional, default video only), "video_bitrate", "audio_bitrate",
                                                "profile": "native|1080p|1440p|4k" (a fixed frame, h264/h265 only),
                                                "acceleration": "auto|hardware|software"})
 GET  /api/v1/emulator/{id}/video/record/status    Recording state, stats and the audio track (audio_codec,
                                                audio_sample_rate, audio_channels, audio_samples_recorded, audio_duration; profile, acceleration)
+GET  /api/v1/recording/presets                  The core's recording presets (id, title, mode, format, container, audio, bitrates, fps, scale)
+GET  /api/v1/recent[?kind=]                     The files opened lately (snapshot, tape, disk, rzx, image, cd), newest first
+DELETE /api/v1/recent[?kind=]                   Forget them (open one: POST /api/v1/controllers/actions/media.open_recent)
 ```
 
 #### Disassembly Response
@@ -783,6 +800,21 @@ PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/enable    Enable
 PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/disable   Disable
 GET    /api/v1/emulator/{id}/breakpoints/status            Last triggered breakpoint info (+ last_triggered_hit_count)
 POST   /api/v1/emulator/{id}/breakpoints/hits/reset        Hit counters to 0 ({"id": N}: one; no id: all)
+GET    /api/v1/emulator/{id}/breakpoints/active?select=    Is a selection on (all, an id, a kind, group:<name>)
+PUT    /api/v1/emulator/{id}/breakpoints/active            {select, active: true | false | "toggle"}: switch a selection
+POST   /api/v1/emulator/{id}/breakpoints/remove            {select}: remove a selection
+GET    /api/v1/emulator/{id}/breakpoints/groups            The groups: {groups: [{name, total, active, ids}]}
+PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/group     {group}: move to a group ("" / "default": back)
+PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/note      {note}: the annotation ("" clears)
+```
+
+A selection names the user's breakpoints only: `all`, an id, a kind (`exec`, `read`, `write`, `mem`, `port`, `in`,
+`out`, `nextreg`, `nextreg_read`, `nextreg_write`, `beam`, `copper`, `magic`, `keyboard`) or `group:<name>`; the body
+may give `id`, `kind` or `group` on its own instead. A keyboard breakpoint is `POST /breakpoints {"type": "keyboard",
+"key": "space", "on": "press" | "release" | "both"}` (`key` "any" or none: any key): it stops on the first keyboard
+read that sees the key change. Each route is a WebSocket `call` too; a change is pushed as `breakpoints_changed`.
+
+```
 ```
 
 #### Add Breakpoint Request
@@ -1726,6 +1758,21 @@ unreal-qt supervises `unreal-streamdeck`; without unreal-qt (headless, the video
 the daemon's automation (`409 not_running` without one, `502 daemon_refused` with its answer in `daemon`); they run off
 the I/O thread. The topic `streamdeck.status` on `/api/v1/ws` pushes the changes.
 
+```
+GET    /api/v1/monitor[?instance=]                       everything: {host, clients, instances: [{instance, index, model, emulator.stats, ...}]}
+GET    /api/v1/monitor/{name}[?instance=]                one name: host.stats, host.clients, emulator.stats, debug.breakpoints,
+                                                         media.slots, recording.state, debug.labels, ttd.status, debug.analyzers,
+                                                         controllers.state, breakpoint_groups
+GET    /api/v1/emulator/{id}/breakpoints/groups          {groups: [{name, total, active, ids}]} (the user breakpoints)
+```
+
+Monitoring ([command-interface.md section 17](./command-interface.md#17-monitoring)): the host process, the clients,
+each instance's measured pace and its summaries; read-only, published state only (the I/O thread answers, no
+emulation thread waits). `instance=` takes an id or an index (default the followed instance); `404` no such name or
+instance. Each name but `breakpoint_groups` is a topic of the same name on `/api/v1/ws` and a surface readout. The
+host's counts: `rest` counts every HTTP request but `/mcp` (that is `mcp`), the WebSocket `call`s (those are `ws`) and
+an MCP tool's own calls back (`X-Unreal-Source: mcp`).
+
 Control surface targets ([command-interface.md section 16.1](./command-interface.md#161-surface-targets-readouts-activity),
 Stream Deck integration [targeting.md](../../../inprogress/2026-10-19-streamdeck-integration/targeting.md)). **"No id"
 (T-1)**: every route that takes an optional instance (`/controllers/actions`, `/surfaces/context`, `/surfaces/readouts`,
@@ -1831,7 +1878,7 @@ Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset
 | `POST` | `/ttd/step-back` | — | `stepped`, `frame`, `tinframe` (one frame back, same position inside the frame) | ✅ Implemented |
 | `POST` | `/ttd/step-forward` | — | `stepped`, `frame`, `tinframe` (one frame forward, inside recorded history) | ✅ Implemented |
 | `POST` | `/ttd/step-instruction` | Optional `{"dir": "back"\|"forward"\|"fwd"}` (default `back`) | `stepped`, `dir` (`back`/`forward`), `frame`, `tinframe` | ✅ Implemented |
-| `POST` | `/ttd/reverse-step` | Exactly one of `{"count": N}` (instructions) or `{"tstates": T}` (lands on the nearest instruction start at or before the target). 400 for both or neither. | `reached`, `mode` (`count`/`tstates`), `frame`, `tinframe` | ✅ Implemented |
+| `POST` | `/ttd/reverse-step` | Exactly one of `{"count": N}` (instructions), `{"tstates": T}` or `{"scanlines": L}` (L lines of the machine's `t_line`; the t-state forms land on the nearest instruction start at or before the target). 400 for more than one or none. | `reached`, `mode` (`count`/`tstates`/`scanlines`), `tstates` (scanlines), `frame`, `tinframe` | ✅ Implemented |
 | `POST` | `/ttd/reverse-continue` | `{"pcs": [A, B, ...]}` — non-empty array of addresses 0..65535: numbers, or strings (decimal, `"0x.."`, `"#.."`, `"$.."`) | `matched`, `pc`, `frame`, `tinframe`, `blocked_by_marker {kind, reason, frame, tinframe}` (only when a marker stopped it), `covered_from`, `covered_from_tinframe`, `covered_to`, `covered_to_tinframe` (the searched span; see [Search window](./command-interface.md#ttd-session-rules)) | ✅ Implemented |
 | `POST` | `/ttd/memory-at` | `{space, frame, tinframe?, offset?, length?}` (`tinframe`: a point inside the frame - its writes up to there are applied from the write journal, built for that frame by replay when missing; `ram` / `vram` / `cache` only, 400 for other memories): space `ram`, `ramN` or a memory the session records by name or alias (`sprinter.vram` / `vram`, `cache`, `neogs.ram`, `gs.ram`, `moonsound.wave`, `evo.flash` ...) | `space` (the engine's region), `offset`, `length`, `frame`, `at_frame` (the checkpoint read: the newest at or before `frame`), `exact`, `hex`. The machine does not move. 400 for a memory not recorded or a frame before the first checkpoint; 501 on backend v1 | ✅ Implemented |
 | `POST` | `/ttd/memory-diff` | `{space, from_frame, to_frame, limit?}` | `space`, `at_from`, `at_to`, `changed_bytes`, `ranges` [{`offset`, `length`}] (default limit 100), `truncated`; `ramN` compares that page only | ✅ Implemented |

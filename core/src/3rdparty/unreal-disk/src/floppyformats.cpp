@@ -445,8 +445,11 @@ FormatResult FloppyFormats::CreateBlank(bool plus3Machine, BlankFloppySpec& spec
         format = "unformatted";
     else if (format == "+3" || format == "+3dos")
         format = "plus3";
-    if (format != "unformatted" && format != "plus3")
-        return FormatResult::Fail(FormatResult::Error::BadRequest, "blank format '" + spec.format + "': expected auto, unformatted or plus3");
+    else if (format == "tr-dos" || format == "trd")
+        format = "trdos";
+    if (format != "unformatted" && format != "plus3" && format != "trdos")
+        return FormatResult::Fail(FormatResult::Error::BadRequest,
+                                  "blank format '" + spec.format + "': expected auto, trdos, plus3 or unformatted (raw)");
 
     const bool plus3 = format == "plus3";
     const uint8_t cylinders = spec.cylinders ? spec.cylinders : (plus3 ? 40 : 80);
@@ -459,6 +462,17 @@ FormatResult FloppyFormats::CreateBlank(bool plus3Machine, BlankFloppySpec& spec
     disk = plus3 ? std::make_unique<DiskImage>(cylinders, sides, DiskImage::TrackFormatSpec::plus3())
                  : std::make_unique<DiskImage>(cylinders, sides);
     disk->setFortyTrack(cylinders == 40);
+    // A TR-DOS disk as FORMAT leaves it: 16 x 256-byte sectors on every track, an empty catalogue and the system
+    // sector (track 0, sector 9) naming the geometry and the free space
+    if (format == "trdos")
+    {
+        LoaderTRD trd(LoaderOptions{}, "");
+        if (!trd.format(disk.get()))
+        {
+            disk.reset();
+            return FormatResult::Fail(FormatResult::Error::BadRequest, "cannot format a TR-DOS disk of that shape");
+        }
+    }
     spec.format = format;
     spec.cylinders = cylinders;
     spec.sides = sides;

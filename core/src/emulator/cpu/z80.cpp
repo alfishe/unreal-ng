@@ -1974,6 +1974,7 @@ bool Z80::IntClearedByAcknowledge() const
 void Z80::HandleINT(uint8_t vector)
 {
     Z80& cpu = *this;
+    interruptsAccepted++;
 
     // A machine on its own engine: the acknowledge cycle, the pushes and the vector read are the engine's
     // (ICpuEngine); one test per accepted INT, not per instruction

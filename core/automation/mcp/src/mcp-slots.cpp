@@ -180,6 +180,9 @@ void RegisterMediaSlots(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     for (const auto& [verb, verbOptions] : MediaToolActions())
         schema["properties"]["action"]["enum"].append(verb);
+    // Not MediaControl verbs: the files opened lately (RecentFiles, GET / DELETE /api/v1/recent)
+    schema["properties"]["action"]["enum"].append("recent");
+    schema["properties"]["action"]["enum"].append("recent_clear");
     schema["properties"]["slot"]["type"] = "string";
     schema["properties"]["slot"]["description"] =
         "Slot selector: id (fdd.b, sd.zc), alias (A, B, b:, sd, tape, hd), kind:index (floppy:1), tag query "
@@ -251,7 +254,7 @@ void RegisterMediaSlots(ToolRegistry& registry)
     schema["properties"]["format"]["description"] =
         "insert / swap: 'audio-cd' - a folder of MP3 / FLAC / WAV files into a CD-ROM drive as a Red Book audio CD (a "
         "folder in a CD slot is one anyway; the reply's report lists the tracks and every file not taken); create: auto, "
-        "unformatted or plus3 (floppies)";
+        "unformatted (raw), plus3 or trdos (floppies; trdos is formatted with an empty catalogue); create on an IDE / SD slot: size in bytes";
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
         "insert / swap on an IDE unit: disk, cdrom or cf (a CompactFlash card on an IDE adapter) - swap the unit's drive first (the unit must be empty)";
@@ -273,11 +276,46 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "save:true, export:'<path>' or discard:true; save:true follows the composite's writes.save (or strategy), and a "
         "commit / write-back that fails keeps the writes as a session delta. rescan leaves a medium whose sources did "
         "not change as it is. The reply's 'revision' increases with every change. "
+        "recent lists the files opened lately, newest first (kind: all, snapshot, tape, disk, rzx, image, cd; open one "
+        "with the actions tool: run media.open_recent {index, kind}); recent_clear forgets them. "
         "Options per action:" + perVerb,
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string action = args["action"].asString();
             const std::string slot = args.isMember("slot") ? args["slot"].asString() : "";
+
+            if (action == "recent" || action == "recent_clear")
+            {
+                const std::string kind = args.get("kind", "all").asString();
+                const std::string path = "/api/v1/recent" + (kind.empty() || kind == "all" ? std::string()
+                                                                                             : "?kind=" + EncodeSegment(kind));
+                caller.Call(action == "recent" ? "GET" : "DELETE", path, nullptr, [action, done](int status, Json::Value reply) {
+                    if (status < 200 || status >= 300)
+                    {
+                        done(ToolResult::Error("media " + action + ": " +
+                                               (status == 0 ? std::string("WebAPI unreachable") : DescribeErrorBody(reply))));
+                        return;
+                    }
+                    std::ostringstream out;
+                    const Json::Value& files = reply.isMember("files") ? reply["files"] : reply["all"];
+                    if (action == "recent_clear")
+                        out << "Recent files cleared (" << reply.get("cleared", "all").asString() << ")";
+                    else if (files.empty())
+                        out << "No recent files";
+                    else
+                    {
+                        const std::string kind = reply.get("kind", "all").asString();
+                        out << files.size() << " recent file(s), newest first (open: actions run media.open_recent "
+                            << (kind == "all" ? std::string("{index}") : "{index, kind: " + kind + "}") << "):";
+                        for (const Json::Value& file : files)
+                            out << "\n" << file["index"].asUInt() << " " << file["kind"].asString() << " "
+                                << file["name"].asString() << " - " << file["path"].asString();
+                    }
+                    const std::string text = out.str();
+                    done(ToolResult::Ok(text, std::move(reply)));
+                });
+                return;
+            }
 
             auto body = std::make_shared<Json::Value>(Json::objectValue);
             for (const std::string& name : args.getMemberNames())

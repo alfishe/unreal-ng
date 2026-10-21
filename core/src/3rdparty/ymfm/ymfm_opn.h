@@ -475,6 +475,10 @@ protected:
 	bool fm_idle() const;
 	void clock_fm_idle(uint32_t count);
 
+	// [unreal-ng patch 7] clock_fm() with a host gain per FM channel (PATCHES.md §7): 'gain_q15' (3 values,
+	// 32768 = unity, 0 = silent) scales each channel's clamped output before the sum
+	void clock_fm_gained(const int32_t *gain_q15);
+
 	// internal state
 	opn_fidelity m_fidelity;            // configured fidelity
 	uint8_t m_address;                  // address register

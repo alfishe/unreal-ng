@@ -24,6 +24,18 @@ class RegistrationHandle;
 /// Registers them on `registry`; they stay while the handles live (ActionRegistry::Instance keeps them for good)
 std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry);
 
+/// The machine area's actions (hostactions_machine.cpp): mach.switch, mach.previous, the media verbs (insert, swap,
+/// export, discard, rescan), media.open_recent, rzx.*, input.joystick_type, the mouse buttons, cap.record_toggle,
+/// cap.record_pause, cap.clip_last, cap.audio_capture, ttd.export_clip. RegisterHostActions registers them
+std::vector<RegistrationHandle> RegisterMachineAreaActions(ActionRegistry& registry);
+
+struct ActionCall;
+struct ActionResult;
+/// mach.start's executor (mach.previous starts the previous model through it)
+ActionResult HostStartMachine(const ActionCall& call);
+/// media.open's executor (media.open_recent opens through it)
+ActionResult HostOpenMedia(const ActionCall& call);
+
 /// The current value of a bool setting `set.toggle` flips (turbo_mode, fast_tape, turbo_tape, fast_disk,
 /// turbo_audio, trdos_traps, the bool sound-character settings); nullopt for a name it does not know. Reads only
 /// (the readout `toggle.set.<name>`)

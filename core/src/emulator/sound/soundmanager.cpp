@@ -115,6 +115,16 @@ SoundManager::SoundManager(EmulatorContext* context)
                 chip->setStereoMode(_context->config.sound.ayStereo);
         }
     }
+    // The AY socket's stereo mode and chip model as requested so far: what the chips start with
+    _requestedAYStereo.store(static_cast<uint8_t>(_context->config.sound.ayStereo), std::memory_order_relaxed);
+    _appliedAYStereo = static_cast<uint8_t>(_context->config.sound.ayStereo);
+    {
+        SoundChip_AY8910* chip0 = _turboSound ? _turboSound->getChip(0) : nullptr;
+        const AYChipModel model = chip0 && !_turboSound->hasFm() ? chip0->getChipModel() : AYChipModel::AY8910;
+        _requestedAYChipModel.store(static_cast<uint8_t>(model), std::memory_order_relaxed);
+        _appliedAYChipModel = static_cast<uint8_t>(model);
+    }
+    _appliedAYDevice = _turboSound;
     // TSFM at the board's measured FM level: one chip's full FM word is 0.70 of full scale, two chips 1.4, with the
     // SSGs up to 2.4 (TSFM ISSUES.md #6). The float bus and the master limiter own the master mix, as for MoonSound
     if (_turboSound && _turboSound->hasFm())
@@ -1040,6 +1050,12 @@ void SoundManager::handleFrameStart()
     if (_gs)
         _gs->setStereoMode(neoGSStereoMode()); // NeoGS listening choice; the others ignore it
 
+    // The user's AY socket settings, the Next's part gains and the mixer's channel state (host-side), before the
+    // devices start their frame: a device that steps its level for a change does it at the frame's start
+    applyAYSocketRequests();
+    applyModelAudioParts();
+    applyMixerChannels();
+
     // Turbo mode without audio: no synthesis at all this frame. Decided once here so
     // the per-step and per-edge paths only test a cached bool. Recording keeps the
     // full path so captured audio stays intact.
@@ -1541,6 +1557,18 @@ void SoundManager::handleFrameEnd()
         // otherwise, non-muted devices are audible
         bool audible = soloActive ? d.solo : !d.mute;
 
+        // A part of the model audio source (the Next's AYs and DAC): its mute / solo / volume are in the device's own
+        // mix already (applyModelAudioParts), its meter is the device's. The device's one buffer is mixed with the
+        // first part, at unity, where the COVOX row of a device without parts mixes it
+        if (const int part = _modelAudio ? modelAudioPart(d.type) : -1; part >= 0)
+        {
+            d.peak = _modelAudio->AudioPartPeak(static_cast<size_t>(part));
+            d.activeRecently = _modelAudio->AudioPartActive(static_cast<size_t>(part));
+            if (part != 0)
+                continue;
+            audible = true;
+        }
+
         // Get the device's buffer
         const int16_t* srcBuffer = nullptr;
         switch (d.type)
@@ -1562,6 +1590,9 @@ void SoundManager::handleFrameEnd()
                 break;
             case AudioSourceType::COVOX:
                 srcBuffer = _modelAudio ? _modelAudio->AudioBuffer() : _covox ? _covox->getBuffer() : nullptr;
+                break;
+            case AudioSourceType::NextAy1:  // the lead part (the others continued above)
+                srcBuffer = _modelAudio ? _modelAudio->AudioBuffer() : nullptr;
                 break;
             case AudioSourceType::GeneralSound:
                 srcBuffer = _gs ? _gs->getBuffer() : nullptr;
@@ -1603,8 +1634,14 @@ void SoundManager::handleFrameEnd()
         for (size_t i = 0; i < samplesThisFrame * AUDIO_CHANNELS; i++)
             peakAbs = std::max(peakAbs, std::abs(static_cast<int32_t>(srcBuffer[i])));
         const float peak = static_cast<float>(peakAbs) / 32768.0f;
-        d.peak = peak;
-        if (d.type == AudioSourceType::GeneralSound)
+        const bool modelPart = _modelAudio && modelAudioPart(d.type) >= 0;  // the meter came from the device
+        if (!modelPart)
+            d.peak = peak;
+        if (modelPart)
+        {
+            // Peak and activity: the device's part meter (read above), not the shared buffer's
+        }
+        else if (d.type == AudioSourceType::GeneralSound)
         {
             // Peak amplitude alone is the wrong signal for GS: a DAC channel
             // latched away from centre by a command (a one-shot digi sample's
@@ -1645,9 +1682,9 @@ void SoundManager::handleFrameEnd()
         }
 
         // Mix into output if audible. A silent buffer adds +0 to every sample: nothing to mix
-        if (audible && d.volume > 0.0f && peakAbs != 0)
+        if (audible && (modelPart || d.volume > 0.0f) && peakAbs != 0)
         {
-            float vol = d.volume;
+            float vol = modelPart ? 1.0f : d.volume;
             if (_wideMix)
             {
                 // Wide path (5.2): unclipped float accumulation - clipping
@@ -1667,6 +1704,10 @@ void SoundManager::handleFrameEnd()
         }
     }
     /// endregion </Registry-driven mixing>
+
+    // The metered channels (MoonSound's FM channels and PCM slots) of the rows somebody reads
+    if (!soundOff)
+        readMixerChannelMeters();
 
     // HUD audio nudges: the LEDs just computed, held for a second - one
     // measurement, so every nudge agrees with its LED
@@ -2376,6 +2417,15 @@ void SoundManager::attachModelAudioSource(IModelAudioSource* source)
     _modelAudio = source;
     source->AudioSetSampleRate(_coreRate);
 
+    // A device with parts (the Next): one row per part, where the COVOX row would be; the device's one buffer is
+    // mixed with the first part (handleFrameEnd)
+    if (const size_t parts = source->AudioPartCount(); parts > 0)
+    {
+        for (size_t p = 0; p < parts; p++)
+            _devices.push_back({source->AudioPartType(p), source->AudioPartName(p), false, false, 1.0f, 0.0f, false});
+        return;
+    }
+
     // The COVOX row carries the device's name; one row only
     for (AudioDeviceInfo& d : _devices)
     {
@@ -2396,6 +2446,15 @@ void SoundManager::detachModelAudioSource(IModelAudioSource* source)
     if (!source || _modelAudio != source)
         return;
     _modelAudio = nullptr;
+    if (const size_t parts = source->AudioPartCount(); parts > 0)
+    {
+        for (size_t p = 0; p < parts; p++)
+        {
+            const AudioSourceType type = source->AudioPartType(p);
+            std::erase_if(_devices, [type](const AudioDeviceInfo& d) { return d.type == type; });
+        }
+        return;
+    }
     for (auto it = _devices.begin(); it != _devices.end(); ++it)
     {
         if (it->type != AudioSourceType::COVOX)

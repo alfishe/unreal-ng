@@ -86,6 +86,9 @@ public:
 
     // Taps (R7). Mute affects the tap sum path only, never chip state.
     void SetChannelMute(ChannelId id, bool mute);
+    // Host gain of one channel / slot in the tap sum, Q15 (32768 = unity: the output is untouched). Render path only,
+    // never chip state; meters (ChannelPeak) see the channel before it
+    void SetChannelGain(ChannelId id, int32_t gainQ15);
     float ChannelPeak(ChannelId id) const;
     size_t ChannelCount(ChannelGroup g) const;
 

@@ -11,6 +11,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
+#include "emulator/sound/mixerchannel.h"
 #include "gshostclock.h"
 
 namespace
@@ -1160,6 +1161,12 @@ void SoundChip_GSLightweight::handleFrameStart()
                                                      gsCyclesPerZxTact());
     _frameStartZxTacts = zxNow;
     _frameGsCycles = frameGsLength();
+    // A channel volume changed (the mixer's channel layer): the level steps at the frame's start
+    if (_hostGainDirty)
+    {
+        _hostGainDirty = false;
+        emitSample();
+    }
 }
 
 void SoundChip_GSLightweight::handleFrameEnd(size_t expectedSamples)
@@ -1217,6 +1224,9 @@ void SoundChip_GSLightweight::computeStereo(int32_t& outL, int32_t& outR) const
     {
         int32_t centered = static_cast<int8_t>(static_cast<uint8_t>(_channelData[ch] - 0x80));
         v[ch] = centered * static_cast<int32_t>(_vfx[_channelVol[ch]]) / 256;
+        // The mixer's channel volume (host-side; the level itself at unity)
+        if (!_hostGainUnity)
+            v[ch] = ApplyMixerGainQ15(v[ch], _hostGain[ch]);
     }
 
     int32_t l = v[0] + v[1];
