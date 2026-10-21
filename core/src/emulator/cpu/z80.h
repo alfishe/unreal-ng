@@ -774,9 +774,15 @@ public:
     /// may change, the frame end or idleSkipLimit (no-op while idleSkipLimit is 0), then OnCPUStep. true: time moved
     bool RunHaltedIdle(bool skipBreakpoints);
     /// Another idle fetch at `fetch` through the current memory interface reads a byte and nothing else: a plain
-    /// interface, or a contended one with the fetch and the refresh (I) outside slow memory; no bus overlay
-    /// watching the address; the board's M1 hook and the memory model agree
-    bool HaltedFetchIsPure(uint16_t fetch) const;
+    /// interface, or a contended one with the fetch and the refresh (I) outside slow memory; a bus overlay
+    /// watching the address only with waits by the start's phase (`period`: its phase period, 1 without one);
+    /// the board's M1 hook and the memory model agree
+    bool HaltedFetchIsPure(uint16_t fetch, uint32_t& period) const;
+    /// The frame T-state up to which the fetches that start from t keep HaltedFetchIsPure's rule (the overlay's
+    /// RepeatFetchPureUntil); UINT32_MAX: the frame end
+    uint32_t HaltedFetchPureUntil(uint16_t fetch) const;
+    /// The longest phase period of the idle fetch RunHaltedIdle learns lengths for
+    static constexpr uint32_t kMaxHaltedIdlePeriod = 8;
     /// Sets idleSkipLimit for a scope and restores it
     class IdleSkipScope
     {

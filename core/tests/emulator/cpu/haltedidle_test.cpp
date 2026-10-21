@@ -26,6 +26,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/mainloop.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/soundchip_moonsound.h"
 #include "emulator/sound/soundmanager.h"
@@ -82,6 +83,17 @@ protected:
         run.context = run.emulator->GetContext();
         run.z80 = run.context->pCore->GetZ80();
         run.z80->haltedIdleInOneGo = inOneGo;
+        if (_profiWaitPhase >= 0)
+        {
+            // The board's power-on phase of the v5 wait, reinstalled as ProfiWaitOverlay_Test does
+            auto* profi = dynamic_cast<PortDecoder_Profi*>(run.context->pPortDecoder);
+            ASSERT_NE(profi, nullptr) << model;
+            run.context->config.profi_wait_phase = static_cast<uint8_t>(_profiWaitPhase);
+            run.context->config.profi_wait_pentagon = 1;
+            profi->SyncWaits();
+            run.context->config.profi_wait_pentagon = 0;
+            profi->SyncWaits();
+        }
     }
 
     /// Boot to the ROM's idle in turbo, then the program (a snapshot, or the HALT loop at `loopAt`)
@@ -207,6 +219,7 @@ protected:
 
     Run _perStep;
     Run _inOneGo;
+    int _profiWaitPhase = -1;  ///< >= 0: the Profi's [PROFI] WaitPhase for both machines
 };
 
 // The HALT in fast memory: every model whose plain step runs it (no machine engine, no interrupt source)
@@ -216,8 +229,24 @@ TEST_F(HaltedIdle_Test, HaltLoop128K) { Compare("128K", nullptr, 0x8000, true); 
 TEST_F(HaltedIdle_Test, HaltLoopPlus3) { Compare("PLUS3", nullptr, 0x8000, true); }
 // The Scorpion's Even M1: a fetch that starts on an odd T is a T longer
 TEST_F(HaltedIdle_Test, HaltLoopScorpion) { Compare("SCORPION", nullptr, 0x8000, true); }
-// The Profi v5's waits follow the paper fetch window, like contention: the fetch runs in one go only without them
-TEST_F(HaltedIdle_Test, HaltLoopProfi) { Compare("PROFI", nullptr, 0x8000, true, 100, 1000, true); }
+// The Profi v5's waits follow the paper fetch window by the start's parity: the fetches run in one go per stretch
+// (a line's window, the border between two), their lengths learned again in each
+TEST_F(HaltedIdle_Test, HaltLoopProfi) { Compare("PROFI", nullptr, 0x8000, true); }
+TEST_F(HaltedIdle_Test, HaltLoopProfiWaitPhase0)
+{
+    _profiWaitPhase = 0;
+    Compare("PROFI", nullptr, 0x8000, true);
+}
+TEST_F(HaltedIdle_Test, HaltLoopProfiWaitPhase1)
+{
+    _profiWaitPhase = 1;
+    Compare("PROFI", nullptr, 0x8000, true);
+}
+TEST_F(HaltedIdle_Test, HaltLoopProfiWaitPhase2)
+{
+    _profiWaitPhase = 2;
+    Compare("PROFI", nullptr, 0x8000, true);
+}
 TEST_F(HaltedIdle_Test, HaltLoopAtm3) { Compare("ATM3", nullptr, 0x8000, true); }
 
 // The HALT in slow memory: the fetch after it is contended, so it runs one per step (on the Pentagon it is not)
