@@ -31,6 +31,18 @@ namespace
         return out;
     }
 
+    std::string ContextSummary(const Json::Value& reply)
+    {
+        std::ostringstream out;
+        out << "context " << reply["context"].asString();
+        if (reply["set"].asBool())
+            out << " (set by " << reply["by"].asString() << ")";
+        else
+            out << " (the default: ttd with a time travel history, else play)";
+        out << " on instance " << reply["instance"].asString() << "; set it with actions run ctx.set";
+        return out.str();
+    }
+
     /// One line per action: "* id [kind] label" (* = can run now), else " ", the reason after it
     std::string ListSummary(const Json::Value& reply)
     {
@@ -68,6 +80,28 @@ namespace
             out << "; pc " << result["pc"].asInt() << ", sp " << result["sp"].asInt();
         if (result.isMember("state"))
             out << "; state " << result["state"].asString();
+        // ttd.seek_by: where it went from and to, and the marks crossed (a dial's feedback)
+        if (result.isMember("marks") && result.isMember("from"))
+        {
+            out << "; frame " << result["from"].asUInt64() << " -> " << result["frame"].asUInt64();
+            if (result.isMember("arrived_at"))
+                out << " (arrived " << result["arrived_at"].get("frame", 0).asUInt64() << ")";
+            out << "; marks:";
+            if (result["marks"].empty())
+                out << " none";
+            for (const Json::Value& mark : result["marks"])
+                out << " " << mark["kind"].asString() << "@" << mark["frame"].asUInt64();
+        }
+        // run.step_by: the steps done, and what stopped them
+        if (result.isMember("steps") && result.isMember("direction"))
+        {
+            out << "; " << result["steps"].asInt() << " step(s) " << result["direction"].asString();
+            if (result.isMember("stopped_by"))
+                out << ", stopped by " << result["stopped_by"].asString();
+        }
+        // ctx.set: the context in force now
+        if (result.isMember("context") && result.isMember("default"))
+            out << "; context " << result["context"].asString() << " (was " << result["previous"].asString() << ")";
         if (reply.isMember("automation_session"))
             out << "\nnote: " << reply["automation_session"].get("advice", "").asString();
         return out.str();
@@ -83,14 +117,18 @@ void RegisterActions(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"].append("list");
     schema["properties"]["action"]["enum"].append("run");
+    schema["properties"]["action"]["enum"].append("context");
     schema["properties"]["id"]["type"] = "string";
     schema["properties"]["id"]["description"] =
-        "run: the action id as list shows it (run.pause_toggle, run.step_in, ttd.jog_frames, mach.nmi, ...)";
+        "run: the action id as list shows it (run.pause_toggle, run.step_in, run.step_by, ttd.seek_by, ttd.jog_frames, "
+        "ctx.set, mach.nmi, ...)";
     schema["properties"]["value"]["description"] =
         "run: by the action's kind - press: omit (a press) or false (a release, for held actions); delta: signed "
         "steps (a number) or {delta, rate}; level: 0..1; text: a string";
     schema["properties"]["params"]["type"] = "object";
-    schema["properties"]["params"]["description"] = "run: parameters (run.to_scanline: line; run.n_scanlines: count)";
+    schema["properties"]["params"]["description"] =
+        "run: parameters (run.to_scanline: line; run.n_scanlines: count; ttd.seek_by: unit frames | seconds, min, "
+        "max, rate_lo, rate_hi, rate)";
     schema["required"].append("action");
 
     registry.Register(
@@ -99,14 +137,16 @@ void RegisterActions(ToolRegistry& registry)
         "machine). list: every action with its kind (press, delta, level, text), the companion scope it needs, and "
         "whether it can run now or why not (needs a pause, no history, run-control held). run: one action by id on "
         "the target, with its value; it runs on the instance's actions worker, in order, and answers when done "
-        "(a step answers pc, sp, state). An action that changes the machine opens the implicit run-control session "
-        "like the other tools; take control first for a longer sequence.",
+        "(a step answers pc, sp, state; ttd.seek_by the frames and the marks crossed: second, ten_seconds, bookmark, "
+        "edge, barrier). context: the instance's surface context (play, ttd, ttd.timecode, ...; set it with run "
+        "ctx.set). An action that changes the machine opens the implicit run-control session like the other tools; "
+        "take control first for a longer sequence.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string action = args["action"].asString();
-            if (action != "list" && action != "run")
+            if (action != "list" && action != "run" && action != "context")
             {
-                done(ToolResult::Error("actions: action is list or run"));
+                done(ToolResult::Error("actions: action is list, run or context"));
                 return;
             }
             if (action == "run" && args["id"].asString().empty())
@@ -134,12 +174,19 @@ void RegisterActions(ToolRegistry& registry)
                                                "] " + reply.get("message", DescribeErrorBody(reply)).asString()));
                         return;
                     }
-                    const std::string text = action == "list" ? ListSummary(reply) : RunSummary(reply);
+                    const std::string text = action == "list"      ? ListSummary(reply)
+                                             : action == "context" ? ContextSummary(reply)
+                                                                   : RunSummary(reply);
                     done(ToolResult::Ok(text, std::move(reply)));
                 };
                 if (action == "list")
                 {
                     caller.Call("GET", "/api/v1/controllers/actions?instance=" + EncodeSegment(id), nullptr, answer);
+                    return;
+                }
+                if (action == "context")
+                {
+                    caller.Call("GET", "/api/v1/surfaces/context?instance=" + EncodeSegment(id), nullptr, answer);
                     return;
                 }
                 auto body = std::make_shared<Json::Value>(Json::objectValue);

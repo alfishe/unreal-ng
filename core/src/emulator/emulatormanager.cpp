@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "emulator/actions/actionregistry.h"
+#include "emulator/actions/contextstate.h"
 #include "emulator/machinevariants.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 
@@ -768,6 +769,7 @@ bool EmulatorManager::RemoveEmulatorInstance(const std::string& emulatorId)
         RetireRemoved(removed, "RemoveEmulator");
         // Its actions worker ends: queued actions answer "Not Found" (the machine is stopped, a running one ends)
         actions::ActionRegistry::Instance().DropInstance(emulatorId);
+        actions::ContextState::Instance().Drop(emulatorId);
         LOGINFO("EmulatorManager::RemoveEmulator - Removed emulator with ID '%s'", emulatorId.c_str());
         // The last reference frees it: here when nobody else holds it, else when the GUI or a request lets go
         return true;
@@ -1259,6 +1261,7 @@ void EmulatorManager::ShutdownAllEmulators()
     {
         RetireRemoved(emulator, "ShutdownAllEmulators");
         actions::ActionRegistry::Instance().DropInstance(uuid);
+        actions::ContextState::Instance().Drop(uuid);
     }
     all.clear();   // the manager's references: an instance nobody else holds is freed here
 

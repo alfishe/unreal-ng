@@ -34,6 +34,7 @@
 #include <emulator/slots/slotcontrol.h>
 #include <emulator/io/controllers/controllercontrol.h>
 #include <emulator/actions/actionregistry.h>
+#include <emulator/actions/contextstate.h>
 #include <emulator/execution/automationgate.h>
 #include <emulator/sound/midi/midicontrol.h>
 #ifdef ENABLE_CONTROLLERS
@@ -1963,6 +1964,28 @@ public:
                 out["error"] = result.error;
             out["message"] = result.message;
             out["result"] = result.body;
+            return StateNodeToLua(s, out);
+        });
+        // context() -> {instance, context, set, by, default}: the instance's surface context (actions::ContextState,
+        // control surfaces architecture §6), as the CLI `action context`, WebAPI GET /api/v1/controllers/context, MCP
+        // `actions` context and Python context(); set it with action("ctx.set", "ttd") ("" returns to the default)
+        lua.set_function("context", [this](sol::this_state s) {
+            Emulator* emulator = effectiveEmulator();
+            StateNode out = StateNode::Object();
+            if (!emulator)
+            {
+                out["ok"] = false;
+                out["error"] = "Not Found";
+                out["message"] = "no emulator selected";
+                return StateNodeToLua(s, out);
+            }
+            const actions::ContextInfo info = actions::ContextState::Instance().Get(emulator->GetId(), emulator);
+            out["ok"] = true;
+            out["instance"] = emulator->GetId();
+            out["context"] = info.context;
+            out["set"] = info.set;
+            out["by"] = info.by;
+            out["default"] = info.fallback;
             return StateNodeToLua(s, out);
         });
         // controllers_host(verb, {options}) -> the reply table every surface returns: the host game controllers

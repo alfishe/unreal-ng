@@ -2812,7 +2812,7 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 | `ttd reverse-step` | `ttd rs` | `[--count N]` *or* `[--tstates T]` | Step back N instructions (default 1), or back T t-states (lands on the nearest instruction start at or before the target). If both are given, `--tstates` wins. | ✅ Implemented |
 | `ttd reverse-continue` | `ttd rc` | `--pc <A> [--pc <B> ...]` | Run backward until the PC equals any of the given addresses. Reports the hit, a blocking marker, or "no match (reached session start)", and the part of history it searched (`Searched: frame … .. frame …`). | ✅ Implemented |
 | `ttd resume` | — | `[frame] [tinframe] [media=ask\|empty\|keep]` | Resume recording from the current position, or from the given point. Everything recorded after that point is discarded. Every medium goes back to that point when it can; one that cannot (another medium in the slot, a write beyond its undo log) is decided by `media`: `empty` (default) takes it out, `keep` leaves it, `ask` resumes nothing and lists them (`needs_decision`); the decision is in the operation log (`timeline-cut`). Needs a session that is `detached` or `recording`; from `idle` (for example straight after `ttd stop`) it fails, so seek first. | ✅ Implemented |
-| `ttd position` | `ttd pos` | — | Current position and session end, each as `(frame, tInFrame)`. | ✅ Implemented |
+| `ttd position` | `ttd pos` | — | Current position and session end, each as `(frame, tInFrame)`; the history's first frame, the state, whether the machine is paused, the frame rate (`fps`, the machine's unscaled clock: turbo does not change it). The bounds come from the TTD's published cursor (control surfaces [architecture §7](../../../inprogress/2026-10-18-control-surfaces/architecture.md#7-the-ttd-published-cursor-and-readouts)): the read never parks the machine, a companion may poll it at 50 Hz. | ✅ Implemented |
 | `ttd markers` | `ttd barriers` | — | List external-event markers (replay barriers): index, frame, tInFrame, kind, reason. | ✅ Implemented |
 | `ttd bookmark` | `ttd bookmarks`, `ttd bm` | `[list \| ls]`, `add <label> [frame] [tinframe]` (alias `mark`), `del <label>` (aliases `delete`, `remove`, `rm`) | Agent bookmarks: named positions, advisory only, never replay barriers. `add` without a frame marks the current position. Labels are non-empty, at most 63 characters, unique per session. | ✅ Implemented |
 | `ttd find-last` | `ttd fl` | `[--addr <A>] [--addr-from <F>] [--addr-to <T>] [--access write\|read\|execute\|io] [--value V] [--pc-from <A>] [--pc-to <A>] [--phys-page <P>] [--space ram\|vram\|cache] [--before-frame <F>] [--before-tin <T>]` | Reverse search: the most recent access that matches, looking back from the current position (or from `--before-frame`/`--before-tin`). Needs at least one of `--addr`, `--addr-from`, `--addr-to`, `--pc-from`, `--pc-to`, `--value`. `--access` defaults to `write`. `--phys-page` (0..255) pins the search to one physical RAM page. `--space vram` / `cache` searches the Sprinter's video RAM (256 KB) / fast RAM (64 KB): the address options are then offsets in it, inside one 16 KB page, and the answer adds `Offset:`. Numbers accept `0x` hex. Prints frame, tInFrame, PC, value, physical page (`none` for ROM / no RAM page) and access; or the blocking marker; or `No match found`; then the part of history it searched (`Searched: frame … .. frame …`). | ✅ Implemented |
@@ -3676,7 +3676,16 @@ control.
 | Command | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- |
 | `action [list]` | `[--json]` | Every action: id, label, group, kind (`press`, `delta`, `level`, `text`), `held`, `gui`, the companion scope it needs now, `needs_pause`, and whether it can run now for this caller or why not (`not_now` "needs a pause", `Not Implemented` for the stubs, `Run-control held`, `companion_forbidden`, `held_by_other`) | ✅ Implemented |
-| `action run` | `<id> [value] [param=val ...] [--json]` | Run one on the selected instance and wait for it. Value by kind: press `press` (default) / `release`; delta signed steps; level 0..1; text. Parameters: `run.to_scanline line=N`, `run.n_scanlines count=N`. The reply: `ok`, `error`, `message`, `result` (a step: `pc`, `sp`, `state`, `stop`) | ✅ Implemented |
+| `action run` | `<id> [value] [param=val ...] [--json]` | Run one on the selected instance and wait for it. Value by kind: press `press` (default) / `release`; delta signed steps; level 0..1; text. Parameters: `run.to_scanline line=N`, `run.n_scanlines count=N`, `ttd.seek_by unit= min= max= rate_lo= rate_hi= rate=`. The reply: `ok`, `error`, `message`, `result` (a step: `pc`, `sp`, `state`, `stop`) | ✅ Implemented |
+| `action context` | `[--json]` | The instance's surface context: the one in force, whether somebody set it and who (`by`), the default it returns to | ✅ Implemented |
+
+The control-surface actions of phase S2 ([actions.md §2-§4](../../../inprogress/2026-10-18-control-surfaces/actions.md#2-ttdseek_by)):
+
+| Action | Kind | What |
+| :--- | :--- | :--- |
+| `ttd.seek_by` | delta | A dial's seek: `delta` steps at `rate` steps/s through the acceleration curve (`params`: `unit` `frames` (1 -> 100 per step) or `seconds` (0.02 -> 2), `min`, `max`, `rate_lo` 4, `rate_hi` 40; `rate` as a parameter where the plane has no rate field), clamped to the history (never past its end), one seek to the target frame's start. The result: the seek's body (`reached`, `arrived_at`, `halt_reason`, `state`) plus `from`, `frame` (the target), `frames`, `fps` and `marks` [{`kind`, `frame`}], strongest first: `edge` (clamped), `barrier` (stopped at a replay barrier), `bookmark`, `ten_seconds`, `second` (counted from the history's first frame). Without a history: `not_now` "record first" |
+| `run.step_by` | delta | Forward: step in, at most 16 times, a breakpoint ends it (`stopped_by: breakpoint`); back: instruction steps back through the history, at most 16 (without a history `not_now` "record first"). Needs a pause. The result: the last step's body plus `steps` (instructions executed), `direction` |
+| `ctx.set` | text | Set the instance's surface context (`play`, `ttd`, `ttd.timecode`, `debug.disasm`: lowercase letters, digits, `.`, `_`, `-`); the last setter wins; `""` returns to the default (`ttd` when the instance has a history, else `play`). A change posts `NC_SURFACE_CONTEXT`. Needs no scope. The result: `context`, `previous`, `set`, `by`, `default` |
 
 | Surface | List | Run |
 | :--- | :--- | :--- |
@@ -3686,6 +3695,21 @@ control.
 | MCP | `actions` action `list` (`target`) | `actions` action `run` (`id`, `value`, `params`, `target`) |
 | Python | `emu.actions()` | `emu.action(id, value=None, **params)` |
 | Lua | `actions()` | `action(id, [value], [params])` |
+
+The context (read; set with `ctx.set`) and a dial's seek on every surface:
+
+| Surface | Context | Seek by |
+| :--- | :--- | :--- |
+| CLI | `action context` | `action run ttd.seek_by -3 rate=18 unit=frames` |
+| WebAPI | `GET /api/v1/surfaces/context[?instance=]` | `POST /api/v1/controllers/actions/ttd.seek_by` `{"value":{"delta":-3,"rate":18},"params":{"unit":"seconds"}}` |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/surfaces/context"}` | the same POST as a `call`; the `ctx` push and the `ttd.position` readout come with the `surface` topic (S4) |
+| MCP | `actions` action `context` | `actions` action `run`, `id` `ttd.seek_by`, `value` `{delta, rate}`, `params` |
+| Python | `emu.context()` | `emu.action("ttd.seek_by", -3, rate=18, unit="seconds")` |
+| Lua | `context()` | `action("ttd.seek_by", {delta = -3, rate = 18}, {unit = "seconds"})` |
+
+The TTD cursor (the position, the history's bounds, the state, paused, `fps`) is the `ttd position` verb on every
+surface (CLI `ttd position`, `GET /api/v1/emulator/{id}/ttd/position` and its `call`, MCP `time_travel` `position`,
+`ttd_position()` in Lua and Python).
 
 Errors, the same on every surface: `Not Found` (no such action or instance), `Bad Request` (a value of the wrong
 kind), `not_now`, `Run-control held`, `held_by_other`, `revoked_by_user`, `companion_forbidden`, `held_by_session`,

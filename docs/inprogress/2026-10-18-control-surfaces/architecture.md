@@ -232,6 +232,23 @@ arbiter and the op log.
   ([targeting.md](../2026-10-19-streamdeck-integration/targeting.md)), not the selected instance the Qt client sets:
   each surface follows the focused view or pins a view or an instance.
 
+### 6.1 As built (S2, 2026-10-20)
+
+- `actions::ContextState` (`core/src/emulator/actions/contextstate.h`), process-wide, keyed by instance id; dropped
+  with the instance (`EmulatorManager`). A stored name or the default (Q-7: `ttd` while the TTD cursor says there is
+  a history, else `play`); the default follows the history without a notification. Names: lowercase letters, digits,
+  `.`, `_`, `-`, starting with a letter, at most 64.
+- `ctx.set` (kind text, no scope): the last setter wins (Q-5); `""` returns to the default. `NC_SURFACE_CONTEXT`
+  (`SurfaceContextPayload {emulatorId, context, previous, by}`) is posted when the context in force changes, not
+  when the same one is set again. `by`: `companion:<id>`, `host-device:<id>`, `webapi:<client>`, `gui`, `cli:cli`.
+- Read on every plane: `GET /api/v1/surfaces/context` (`/api/v1/controllers/context` was taken: it is the host
+  controllers' own verb), MCP `actions` `context`, CLI `action context`, Lua / Python `context()`. The `ctx` push is
+  the `surface` topic (S4).
+- Not in S2: the Qt client as a setter (pane focus, the TTD panel) and as a follower (`InputRouter::SetContext`):
+  S3 with the `@` layers. The instance a surface acts on stays the plane's own rule (the WebAPI: `instance`, else the
+  selected, else the only one); `TargetState` (Stream Deck SD4) is not a prerequisite of S2: the context is keyed by
+  the instance whichever rule picked it.
+
 ## 7. The TTD published cursor and readouts
 
 `GetPublishedSessionInfo` copies a struct under a mutex at most every 100 ms and only after an observer asked
@@ -254,6 +271,22 @@ virtual TTDCursor PublishedCursor() const = 0;
 - Readouts in v1: `ttd.position` = the cursor plus `fps`; `run.state` = `running` / `paused` and the speed.
 - The hub reads them at the highest `max_hz` any session asked for (≤ 50) and sends a session the values that
   changed since its last message. No subscriber: no tick.
+
+### 7.1 As built (S2, 2026-10-20)
+
+- `TTDCursor` (`timetravelhooks.h`) carries `frame`, `tinframe`, `first`, `end`, `endTinframe`, `state`, `history`
+  and `paused`: the end's T-state (a paused or stopped recording ends inside its last frame) and `history` (first
+  and end are meaningful) were added. `paused` is read live (`Emulator::IsPaused`), not published.
+- The cell is `ttd::TTDCursorCell` (`ttdcursorcell.h`): a seqlock over relaxed atomics; writers are serialized by
+  a mutex (the machine's thread and a control thread ending an operation may meet), readers never take it. An equal
+  cursor does not move `Sequence()`, so a readout hub (S4) can tell a change by one load.
+- Both backends publish at every frame boundary (a guard at the top of `OnFrameBoundary`, whichever way it returns;
+  not a control thread's throwaway replays) and in every `GetSessionInfo`, which the end of every changing
+  operation calls: a seek, a step, a start, a stop, a load leave the cursor where they left the machine. A debugger
+  step inside a frame does not publish (the next boundary or operation does): `tinframe` may lag there.
+- `ttd.position` is the TTD `position` verb (`ttdcontrol.cpp`) on every plane: the live position, the bounds from the
+  cursor, `history`, `first_frame`, `paused`, `fps` (`ttd::TTDFrameRate`). It no longer calls `SessionEndPosition`,
+  so it never takes a session operation (which held the CPU for a detached machine that ran).
 
 ## 8. The surface hub
 

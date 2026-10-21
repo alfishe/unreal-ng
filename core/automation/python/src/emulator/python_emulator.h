@@ -19,6 +19,7 @@
 #include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/io/controllers/controllercontrol.h>
 #include <emulator/actions/actionregistry.h>
+#include <emulator/actions/contextstate.h>
 #include <emulator/execution/automationgate.h>
 #ifdef ENABLE_CONTROLLERS
 #include "hostinputcontrol.h"
@@ -442,6 +443,21 @@ inline pybind11::object ActionsPy(Emulator& self)
         rows.push(std::move(row));
     }
     return StateNodeToPy(body);
+}
+
+/// The instance's surface context (actions::ContextState, control surfaces architecture §6): {ok, instance, context,
+/// set, by, default}; set it with action("ctx.set", "ttd")
+inline pybind11::object ContextPy(Emulator& self)
+{
+    const actions::ContextInfo info = actions::ContextState::Instance().Get(self.GetId(), &self);
+    StateNode out = StateNode::Object();
+    out["ok"] = true;
+    out["instance"] = self.GetId();
+    out["context"] = info.context;
+    out["set"] = info.set;
+    out["by"] = info.by;
+    out["default"] = info.fallback;
+    return StateNodeToPy(out);
 }
 
 inline pybind11::object ActionPy(Emulator& self, const std::string& id, const pybind11::object& raw,

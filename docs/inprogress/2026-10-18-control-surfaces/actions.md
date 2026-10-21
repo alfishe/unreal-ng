@@ -78,6 +78,13 @@ Seek {frame: target, tinframe: 0}                      // tinframe 0: the frame'
 - The curve is applied here only. A router binding passes its parameters in `params`; a companion passes them in its
   call (the Stream Deck's three dials: 1 → 100, 10 → 1000, 100 → 10 000).
 
+As built (S2, 2026-10-20, `builtinactions.cpp` `SeekBy`): the base is the published cursor's frame; `rate` comes
+from the value, else from `params.rate` (the CLI and Python pass it as a parameter); `min` / `max` default to 1 / 100
+frames or 0.02 / 2 s; a parameter out of range is `Bad Request`. A move that rounds to 0 frames, or a clamped target
+equal to the position, sends no seek: success with the place it stands (and `edge` when clamped). The body adds
+`from`, `frame` (the target), `frames`, `fps`, `marks` [{`kind`, `frame`}] strongest first. The v1 backend refuses a
+seek while it records (its rule); the engine pauses the recording for browsing (D8).
+
 ## 3. Timeline marks
 
 `TimelineMarks::Crossed(from, to, first, fps, bookmarks)` (`core/src/debugger/ttd/timelinemarks.*`): pure, cheap
@@ -91,6 +98,10 @@ Seek {frame: target, tinframe: 0}                      // tinframe 0: the frame'
 | `barrier` | the seek halted at an external-event marker | `buzz` |
 | `bookmark` | a bookmark lies in the interval | `double` |
 
+As built: at most one `second` / `ten_seconds` mark per seek, at the boundary nearest the target (forward the start of
+the target's second, back the start of the second after it), and one `bookmark`, the nearest the target in
+`(from, to]` forward, `[to, from)` back (`ttd::timeline_marks::Crossed`, `timelinemarks.h`).
+
 Several marks in one seek: the strongest plays (`edge`/`barrier` > `bookmark` = `ten_seconds` > `second`); the
 40 ms rate limit of [architecture §9](architecture.md#9-haptic-feedback) merges the rest.
 
@@ -102,6 +113,11 @@ One dial both ways (owner, 2026-10-17: "step in forward, step back backward"):
 - `delta < 0`: `TTDControl` instruction step back, `min(-delta, 16)` times; needs a history (else `not_now`, "record
   first").
 - A breakpoint hit while stepping stops the loop; the result names it.
+
+As built (S2): the result is the last step's body plus `steps` (instructions executed: the step that met an execution
+breakpoint executed none), `direction` (`forward` / `back`) and `stopped_by` (`breakpoint`, or the error that ended
+the loop after the first step). Availability: back without a history is `not_now` "record first"; both ways need a
+pause.
 
 ## 5. Readouts
 

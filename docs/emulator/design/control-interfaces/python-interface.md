@@ -715,6 +715,16 @@ emu.action("run.turbo_hold", False)        # the release of a held action
 emu.action("run.n_scanlines", count=8)     # parameters as keywords
 ```
 
+The control-surface actions and the context (control surfaces phase S2):
+
+```python
+r = emu.action("ttd.seek_by", -3, rate=18, unit="seconds")   # the rate and the curve as keywords
+r["result"]["marks"]                       # [{"kind": "ten_seconds", "frame": 1954}, ...] strongest first
+emu.action("run.step_by", -4)              # back through the history (forward: step in), 16 at most
+emu.action("ctx.set", "ttd.timecode")      # the last setter wins; "" returns to the default
+emu.context()                              # {"ok", "instance", "context", "set", "by", "default"}
+```
+
 ### Disk Operations
 
 `Emulator` methods for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands and the WebAPI `/disk/{drive}/*` endpoints.
@@ -1386,7 +1396,7 @@ emu.ttd_resume()                            # -> bool; record again from the exa
 emu.ttd_resume(frame=4823, tinframe=0)      # ...or from a given point; the future is discarded
                                             # fails from idle: seek first
 
-emu.ttd_position()
+emu.ttd_position()   # current, session_end, first_frame, history, state, paused, fps; never parks the machine
 # -> {'current': {'frame': ..., 'tinframe': ...}, 'session_end': {'frame': ..., 'tinframe': ...}}
 ```
 

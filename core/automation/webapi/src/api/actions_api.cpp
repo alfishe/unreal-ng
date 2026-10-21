@@ -14,6 +14,7 @@
 #include <json/json.h>
 
 #include <emulator/actions/actionregistry.h>
+#include <emulator/actions/contextstate.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/execution/automationgate.h>
@@ -231,6 +232,29 @@ void EmulatorAPI::getActions(const HttpRequestPtr& req, std::function<void(const
         }
         body["actions"].append(row);
     }
+    RespondJson(callback, 200, body);
+}
+
+void EmulatorAPI::getContext(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    std::string error;
+    const std::string named = req->getParameter("instance");
+    const std::string instance = InstanceOf(named, error);
+    if (instance.empty())
+    {
+        const bool notFound = !named.empty() || error == "no machine";
+        RespondJson(callback, notFound ? 404 : 400, ErrorJson(notFound ? "Not Found" : "Bad Request", error));
+        return;
+    }
+    std::shared_ptr<Emulator> emulator = EmulatorManager::GetInstance()->GetEmulator(instance);
+    const actions::ContextInfo info = actions::ContextState::Instance().Get(instance, emulator.get());
+    Json::Value body;
+    body["ok"] = true;
+    body["instance"] = instance;
+    body["context"] = info.context;
+    body["set"] = info.set;
+    body["by"] = info.set ? Json::Value(info.by) : Json::Value(Json::nullValue);
+    body["default"] = info.fallback;
     RespondJson(callback, 200, body);
 }
 

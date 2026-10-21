@@ -1672,6 +1672,18 @@ scopes. The reply: `{ok, action, instance, message, result}`; errors `404` Not F
 companion_forbidden, `409` not_now / Run-control held / held_by_other / held_by_session / revoked_by_user, `501` Not
 Implemented (a stub). Every route is also a WebSocket call on `/api/v1/ws` ([websocket-interface.md](./websocket-interface.md)).
 
+```
+GET  /api/v1/surfaces/context[?instance=<id|index>]       the surface context: {ok, instance, context, set, by,
+                                                          default}; set it with POST …/actions/ctx.set {"value":"ttd"}
+```
+
+The control-surface actions ([command-interface.md section 16](./command-interface.md#16-host-actions)):
+`POST /api/v1/controllers/actions/ttd.seek_by` `{"value": {"delta": -3, "rate": 18.5}, "params": {"unit": "frames",
+"min": 1, "max": 100}}` answers the seek's body plus `from`, `frame`, `frames`, `fps`, `marks`;
+`POST …/run.step_by` `{"value": -4}` steps back through the history (forward: step in); `POST …/ctx.set`
+`{"value": "ttd.timecode"}`. `/api/v1/controllers/context` stays the host controllers' own verb (the router's
+focused instance), not this context.
+
 ### Snapshots (Implemented Separately)
 ```
 POST /api/v1/emulator/{id}/snapshot/save  ✅ Implemented
@@ -1775,7 +1787,7 @@ Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset
 | `POST` | `/ttd/find-last` | See "find-last request" below | `found`; on a hit `frame`, `tinframe`, `pc`, `value`, `phys_page` (`null` for ROM / no RAM page / another space), `access`, `space`, and `addr` (space `ram`) or `offset` (space `vram` / `cache`); when a marker blocked the search `blocked: true`, `marker_frame`, `marker_tinframe`, `marker_kind`, `marker_reason`; always (unless refused) `covered_from`, `covered_from_tinframe`, `covered_to`, `covered_to_tinframe` - the searched span | ✅ Implemented |
 | `POST` | `/ttd/port-events` | `{"event": "key", "arg": "space", ...options}` | "When did the program ...": `event`, `direction` (`in`/`out`), `count`, `truncated`, `scanned`, `hits` (`index`, `frame`, `tinframe`, `port`, `value`, `pc`, `ay_register` for AY queries). 409 without port journals or while a recording runs. See "port-events request" below | ✅ Implemented |
 | `POST` | `/ttd/resume` | Optional `{"frame": N, "tinframe"?: T}`; default is the current position | `resumed`, `frame`, `tinframe`, `state`. Truncates everything after the point and records again; resumes the emulator on success. Fails (`resumed: false`) from `idle` — seek first. | ✅ Implemented |
-| `GET`  | `/ttd/position` | — | `current {frame, tinframe}`, `session_end {frame, tinframe}`, `state` | ✅ Implemented |
+| `GET`  | `/ttd/position` | — | `current {frame, tinframe}`, `session_end {frame, tinframe}`, `state`, `history`, `first_frame`, `paused`, `fps` (the machine's unscaled frame rate). The bounds come from the TTD's published cursor: the read never parks the machine (companions poll it at 50 Hz) | ✅ Implemented |
 | `GET`  | `/ttd/markers` | — | `count`, `markers[] {frame, tinframe, kind, reason}` — kinds `tape_control`, `disk_write`, `debugger_edit` (a tool edit made while recording), `other`; `hardware_reset` is reserved and never written (a reset stops the recording instead) | ✅ Implemented |
 | `GET`  | `/ttd/bookmarks` | — | `count`, `bookmarks[] {frame, tinframe, label}` (time-sorted) | ✅ Implemented |
 | `POST` | `/ttd/bookmarks` | `{"label": "...", "frame"?: N, "tinframe"?: T}` — no `frame` = current position. Label: non-empty, at most 63 characters, unique per session. | **201** with `added`, `label`, `frame`, `tinframe`. 400 for a missing/empty/overlong label; 409 for a duplicate label or a position outside the timeline. | ✅ Implemented |

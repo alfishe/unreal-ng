@@ -935,10 +935,17 @@ bool TTDControlBackend<S>::RefuseWhileRecording(TTDReply& reply, bool browses) c
 template <class S>
 TTDReply TTDControlBackend<S>::Position()
 {
+    // A read companions poll (a Stream Deck strip, 50 times a second): the machine's live position and the
+    // published cursor (the history's bounds), never a session operation, so it never parks the machine
+    const TTDCursor cursor = _manager->PublishedCursor();
     TTDReply reply;
     reply.body["current"] = TimePointNode(_manager->CurrentPosition());
-    reply.body["session_end"] = TimePointNode(_manager->SessionEndPosition());
+    reply.body["session_end"] = TimePointNode(TTDTimePoint{cursor.end, cursor.endTinframe});
     reply.body["state"] = TTDSessionStateToString(_manager->GetState());
+    reply.body["history"] = cursor.history;
+    reply.body["first_frame"] = cursor.first;
+    reply.body["paused"] = cursor.paused;
+    reply.body["fps"] = TTDFrameRate(_context);
     return reply;
 }
 

@@ -448,6 +448,24 @@ public:
     virtual ~RunControlChangedPayload() = default;
 };
 
+/// Payload of NC_SURFACE_CONTEXT: the context in force on an instance changed (actions::ContextState). `by` names
+/// the setter ("companion:<id>", "webapi:<client>", "gui", "host-device:<id>"); `context` is the new one in force
+/// (the default after a ctx.set "")
+class SurfaceContextPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string context;
+    std::string previous;
+    std::string by;
+
+    SurfaceContextPayload(const unreal::UUID& id, std::string now, std::string before, std::string setter)
+        : emulatorId(id), context(std::move(now)), previous(std::move(before)), by(std::move(setter))
+    {
+    }
+    virtual ~SurfaceContextPayload() = default;
+};
+
 /// Payload of NC_COMPANION_CHANGED: the companion registry changed (companionregistry.h). `event`: "pairing_requested",
 /// "pairing_cancelled", "pairing_expired", "paired", "denied", "revoked"
 class CompanionChangedPayload : public MessagePayload

@@ -11,8 +11,12 @@ Depends on the control-surfaces phases ([control surfaces TODO](../2026-10-18-co
 `ActionRegistry` + RunControl + `/controllers/actions` - **done 2026-10-20** (worktree `scratch/wt-control-surfaces-s1`,
 not landed yet): the registry with one worker per instance and the gates of every origin, `RunControl`, REST, MCP
 `actions`, CLI `action`, Lua / Python `action()`, and `/api/v1/ws` with calls (`call`, `auth`; topics come with S4);
-S2 `ContextState`, TTD published cursor, `seek_by`; S4 the surface protocol, served as the `surface` topic of
-`/api/v1/ws` (D7).
+S2 `ContextState`, TTD published cursor, `seek_by`, `step_by` - **done 2026-10-20** (worktree
+`scratch/wt-control-surfaces-s2`, not landed yet): `ctx.set` and `GET /api/v1/surfaces/context` on every plane, the
+cursor behind the `position` verb (a 50 Hz poll never parks the machine). The boundary with SD4: S2 keys the context
+by instance and did not build `TargetState` (not needed for it); SD4 keeps `TargetState`, view registration, the
+`target` op and `GET /api/v1/surfaces/views` / `sessions` (the `/api/v1/surfaces/` prefix now has `context`); S4 the
+surface protocol, served as the `surface` topic of `/api/v1/ws` (D7).
 
 | # | Phase | Needs | State |
 |:--|:--|:--|:--|
