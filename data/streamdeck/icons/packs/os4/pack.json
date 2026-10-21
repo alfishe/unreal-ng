@@ -1,0 +1,20 @@
+{
+ "format": "streamdeck-icon-pack",
+ "version": 1,
+ "name": "os4",
+ "author": "unreal-ng",
+ "licence": "Original drawings made for unreal-ng (the MagicWB pack's drawings, rendered smooth), the licence of unreal-ng",
+ "source": "png-smooth",
+ "sizes": [
+  72,
+  80,
+  96,
+  112,
+  120
+ ],
+ "fallback": "magicwb",
+ "generated_by": "tools/icons/streamdeck_packs/os4.py",
+ "title": "AmigaOS 4",
+ "style": "Smooth 32-bit icons: gentle gradients per shape, a thin dark rim, a soft drop shadow on a dark blue backdrop, no gloss; on = a lit blue backdrop",
+ "background": "#222E48"
+}

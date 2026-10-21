@@ -1,0 +1,28 @@
+{
+ "format": "streamdeck-icon-pack",
+ "version": 1,
+ "name": "newicons",
+ "author": "unreal-ng",
+ "sizes": [
+  72,
+  80,
+  96,
+  112,
+  120
+ ],
+ "fallback": "magicwb",
+ "generated_by": "tools/icons/streamdeck_packs/newicons.py",
+ "title": "NewIcons",
+ "style": "Amiga NewIcons: 32 x 32 hard pixels, black outline, 5-step pastel ramps lit from the top left, no shadow; on = a lit blue-grey backdrop",
+ "licence": "Original drawings made for unreal-ng (the MagicWB pack's drawings re-skinned), the licence of unreal-ng; the palette and shading technique of the style are imitated, no original artwork is used",
+ "source": "png-pixel",
+ "native": [
+  32,
+  32
+ ],
+ "pixel_aspect": [
+  1,
+  1
+ ],
+ "background": "#808490"
+}

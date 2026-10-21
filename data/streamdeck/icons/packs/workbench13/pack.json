@@ -1,0 +1,28 @@
+{
+ "format": "streamdeck-icon-pack",
+ "version": 1,
+ "name": "workbench13",
+ "author": "unreal-ng",
+ "sizes": [
+  72,
+  80,
+  96,
+  112,
+  120
+ ],
+ "fallback": "magicwb",
+ "generated_by": "tools/icons/streamdeck_packs/workbench13.py",
+ "title": "Workbench 1.3",
+ "style": "Amiga Workbench 1.3: 4 colours (blue, white, black, orange), no shading, tall pixels (32 x 16 native, pixel aspect 1:2); on = an orange backdrop",
+ "licence": "Original drawings made for unreal-ng (the MagicWB pack's drawings re-skinned), the licence of unreal-ng; the palette and shading technique of the style are imitated, no original artwork is used",
+ "source": "png-pixel",
+ "native": [
+  32,
+  16
+ ],
+ "pixel_aspect": [
+  1,
+  2
+ ],
+ "background": "#0055AA"
+}
