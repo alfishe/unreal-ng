@@ -20,6 +20,7 @@
 #include "controllers/controllerpicture.h"
 #include "controllers/hostcontrollers.h"
 #include "controllers/profilesdialog.h"
+#include "controllers/surfacestable.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 
@@ -52,6 +53,7 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
     resize(1180, 760);
 
     auto* root = new QVBoxLayout(this);
+    _root = root;
     _profileLabel = new QLabel(this);
     _profileLabel->setWordWrap(true);
     auto* top = new QHBoxLayout();
@@ -230,7 +232,7 @@ std::string ControllersDialog::selectedLayout() const
     return item != nullptr ? item->data(Qt::UserRole + 2).toString().toStdString() : std::string{};
 }
 
-void ControllersDialog::setActions(const ActionRegistry* actions)
+void ControllersDialog::setActions(const actions::ActionRegistry* actions)
 {
     _table->setActions(actions);
     _table->refresh();
@@ -437,4 +439,12 @@ void ControllersDialog::tick()
             }
     }
 #endif
+}
+
+void ControllersDialog::setSurfaceTargets(SurfaceTargets* targets)
+{
+    if (_surfaces != nullptr || targets == nullptr || _root == nullptr)
+        return;
+    _surfaces = new SurfacesTable(targets, this);
+    _root->addWidget(_surfaces);
 }

@@ -117,12 +117,8 @@ protected:
     size_t _ssgZeroRun[4] = {};
     bool _syncDeferred = false;
     bool _deferAllowed = true;
-    // The step gate (handleStep): the audio T before which a step completes no output sample - the lazy deferral of the
-    // step that set it holds until then, so a step only notes its T (_pendingT) and the deferral's bookkeeping is done
-    // once (settleSteps). 0: every step the full way. Set only by that full way; every other entry clears it first
-    uint64_t _stepDeadline = 0;
-    uint64_t _pendingT = 0;
-    bool _stepPending = false;
+    // The step gate (ITurboSoundDevice::_stepDeadline): the lazy deferral of the step that set it holds until then, so
+    // a step only notes its T and the deferral's bookkeeping is done once (settleSteps)
     // The quiet deferral: the gate holds until the next entry (a port, the frame end...) because the device is quiet at
     // rest - every output is +0.0 until a write; settleSteps then runs the step at the last noted T, which renders the
     // outputs due in one quiet run (renderQuietOutputs)

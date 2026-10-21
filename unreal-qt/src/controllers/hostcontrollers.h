@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef ENABLE_CONTROLLERS
@@ -23,6 +24,19 @@
 
 class Emulator;
 class EmulatorContext;
+
+/// A device's host action (debug-and-ttd.md §3, control surfaces architecture.md §5), for the owner that hands it to
+/// the core ActionRegistry
+struct HostActionEvent
+{
+    QString action;
+    bool pressed = false;
+    float value = 0;  ///< 1 for a press, a scrub level, an encoder's steps
+    QString device;   ///< the host device's id
+    bool turn = false;  ///< an encoder's turn: `value` steps at `rate` steps/s
+    double rate = 0;
+    QString params;     ///< the binding's `curve` object as JSON (the action's parameters); empty when none
+};
 class EmulatorBinding;
 class QKeyEvent;
 class QWidget;
@@ -95,6 +109,20 @@ public:
     /// The keyboard control of a key event (`key.ctrl.f10`); empty for a modifier alone or an unknown key
     static std::string KeyControlOf(const QKeyEvent* event);
 
+    /// region <Contexts (control surfaces architecture.md §6)>
+    /// The widgets whose focus sets the bound instance's context through actions::ContextState (last setter wins,
+    /// Q-5): the debugger's panes (`debug.disasm`, `debug.registers`, `debug.memory`, `debug.stack`) and the TTD panel
+    /// (`ttd`). Entering one sets its context; the TTD panel shown sets `ttd`, hidden returns a `ttd` the GUI set to
+    /// the default; the debugger window hidden returns a `debug.*` the GUI set to the default
+    void SetContextWidgets(std::vector<std::pair<QWidget*, std::string>> widgets, QWidget* ttdPanel);
+    /// The TTD panel was shown or hidden
+    void OnTtdPanelVisible(bool visible);
+    /// The debugger window was shown or hidden
+    void OnDebuggerVisible(bool visible);
+    /// A seek's marks felt on the device that moved (its top layer's feel; architecture.md §9)
+    void PlayMarks(const std::string& device, const std::vector<std::string>& marks);
+    /// endregion </Contexts>
+
     /// The Haptics panel (haptics.md §7): the feed, the gate, the motors of @p device and the sources' levels
     QString HapticsStatus(const std::string& device) const;
 
@@ -107,9 +135,9 @@ public:
 signals:
     /// A device arrived or left, or the profiles changed
     void changed();
-    /// A host action (debug-and-ttd.md §3) from a device: run on the GUI thread. @p value: 1 for a press, a scrub
-    /// level, an encoder's steps
-    void actionTriggered(const QString& action, bool pressed, float value);
+    /// A host action (debug-and-ttd.md §3) from a device, on the GUI thread; the owner hands it to the core
+    /// ActionRegistry. @p value: 1 for a press, a scrub level, an encoder's steps; @p device: the host device's id
+    void actionTriggered(const HostActionEvent& event);
     /// For the status bar: "Xbox Elite 2 connected → kempston"
     void notice(const QString& text);
     /// The port-read heuristic plugged a device for the loaded program (ui-ux.md §3.8): the toast's line
@@ -126,6 +154,14 @@ private:
     void onBound();
     void onUnbound();
     void poll();
+    /// The bound instance's context (actions::ContextState, its default included) into the router
+    void followContext();
+    /// The focus moved: the pane or panel it entered sets the context
+    void updateGuiContext();
+    /// Set the bound instance's context as the GUI ("" = back to the default)
+    void setGuiContext(const std::string& context);
+    /// The GUI set the context in force and it matches @p prefix: back to the default
+    void releaseGuiContext(const std::string& prefix);
 #ifdef ENABLE_CONTROLLERS
     void assignPlayers(const std::vector<controllers::HostDeviceInfo>& devices);
     /// Plug what the resolved profiles' connectors name, where the machine holds something else
@@ -143,6 +179,7 @@ private:
     std::shared_ptr<controllers::IHapticFeed> _hapticFeed;
     std::string _hapticsKey;  ///< what _hapticFeed was made from: a re-resolve to the same keeps its state
     uint64_t _fileObserver = 0;
+    uint64_t _contextObserver = 0;
     uint64_t _breakpointObserver = 0;
     std::string _fileSha256;  ///< of the program loaded last into the bound emulator
     QString _fileName;
@@ -169,6 +206,9 @@ private:
     bool _globalShortcuts = false;
     QWidget* _mainWindow = nullptr;
     QWidget* _debuggerWindow = nullptr;
+    std::vector<std::pair<QWidget*, std::string>> _contextWidgets;
+    QWidget* _ttdPanel = nullptr;
+    std::string _guiPane;  ///< the context of the widget the focus entered last ("" none): set once per entry
     struct HeldKey
     {
         std::string control;

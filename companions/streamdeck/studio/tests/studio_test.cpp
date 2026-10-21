@@ -1,8 +1,8 @@
 // Stream Deck Studio without a window: the device wire v2 client (Join, Welcome and its errors, replay, input both
 // ways, own-role feature reports, Leave, reconnect) against a small fake daemon in this process, and the --listen v1
 // server. Qt offscreen, one thread; waits spin the event loop until a condition holds (no sleeps).
+#include <QApplication>
 #include <QElapsedTimer>
-#include <QGuiApplication>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QtEndian>
@@ -14,8 +14,8 @@
 #include "check.h"
 #include "daemoncontrol.h"
 #include "deckclient.h"
-#include "sdb/automation.h"
 #include "listenserver.h"
+#include "sdb/automation.h"
 #include "sdb/devicewire.h"
 #include "sdb/emuwire.h"
 #include "virtualdeck.h"
@@ -114,6 +114,7 @@ struct FakeDaemon
 
 json Welcome(const char* serial, int pid, bool real)
 {
+    // "model" unknown here: the pid fallback (a daemon with a token this studio does not know)
     return {{"v", 2}, {"deck", serial}, {"model", "whatever"}, {"pid", pid}, {"real", real}, {"daemon", "test"}};
 }
 
@@ -202,6 +203,17 @@ void TestMirrorSession()
     d.SendJson(wire::DeckState, {{"connected", true}, {"target", "W2 #3"}});
     CHECK(WaitFor([&] { return c.DeckConnected(); }));
     CHECK(c.Target() == QStringLiteral("W2 #3"));
+
+    // another deck (a mirror of "the first deck" follows it): the model comes from the token, the pid only backs it
+    d.SendJson(wire::Welcome, {{"v", 2},
+                               {"deck", "B2"},
+                               {"model", "neo"},
+                               {"model_name", "Stream Deck Neo"},
+                               {"pid", 0x0084},
+                               {"real", true},
+                               {"daemon", "test"}});
+    CHECK(WaitFor([&] { return deck.GetModel().pid == 0x009A; }));
+    CHECK(deck.Serial() == QStringLiteral("B2"));
 
     // an own-role-only request is not answered by a mirror
     d.Send(wire::GetFeature, std::string(32, '\x06'));
@@ -414,10 +426,12 @@ void TestDaemonControl()
 }
 }  // namespace
 
+void TestEditor();  // editor_test.cpp
+
 int main(int argc, char** argv)
 {
     qputenv("QT_QPA_PLATFORM", "offscreen");
-    QGuiApplication app(argc, argv);
+    QApplication app(argc, argv);  // widgets: the editor tests (editor_test.cpp)
     TestJoinPayload();
     TestMirrorSession();
     TestWaitingForDeck();
@@ -426,6 +440,7 @@ int main(int argc, char** argv)
     TestReconnect();
     TestListenServer();
     TestDaemonControl();
+    TestEditor();
     std::printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

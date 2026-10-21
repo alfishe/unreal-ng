@@ -38,7 +38,10 @@ The studio's other routes (device, input, screenshots, log, recording, window, c
 | `GET /api/v1/editor` | | Status: `path`, `dirty`, `name`, `model`, `selected`, `canvas_menu`, `can_undo`, `can_redo`, `issues` (`errors`, `warnings`), `run` ([below](#run)) |
 | `POST /api/v1/editor/new` | `model` (default `plusxl`), `name` | A new empty scenario (root `home`) |
 | `POST /api/v1/editor/open` | `path` (required) | Open `.json`, `.yaml`, `.yml`, `.csv`, `.tsv` |
-| `POST /api/v1/editor/save` | `path` | Save, to `path` or the current file (400 when untitled without `path`); the format follows the extension |
+| `POST /api/v1/editor/save` | `path` | Save, to `path` or the current file (400 when untitled without `path`); the format follows the extension; always format v2: a v1 document is converted first (`converted`: the notes) |
+| `POST /api/v1/editor/convert` | | v1 -> v2 as one undo step: `converted` (false when v2 already), `version`, `notes` (what changed, which REST steps stayed), `issues` |
+| `GET /api/v1/editor/catalogue` | | The action catalogue the editor offers: `source` (the shipped file or the emulator), `actions` (`id`, `label`, `group`, `kind`, `held`, `gui`, `params`) |
+| `POST /api/v1/editor/catalogue/refresh` | `webapi` (default the daemon's host, `http://127.0.0.1:8090`) | Take the catalogue from a running emulator (`GET /api/v1/controllers/actions`); validation runs again; 502 when it does not answer |
 | `POST /api/v1/editor/export` | `path` (required) | A copy in another format; the document keeps its file |
 | `GET /api/v1/editor/document` | `format` (`json` default, `yaml`, `csv`, `tsv`), `resolved` | The whole scenario: the JSON, or `{format, text}`; `resolved=true` replaces includes by what they link to |
 | `PUT /api/v1/editor/document` | `document`, or `format` + `text` | Replace the whole scenario (one undo step); answers the issues |

@@ -44,15 +44,6 @@ QString Qs(const std::string& s)
 const char* kFilter =
     "Scenarios (*.json *.yaml *.yml *.csv *.tsv);;JSON (*.json);;YAML (*.yaml *.yml);;CSV (*.csv);;TSV (*.tsv)";
 
-// A copy of an included subtree is the document's own: no "included_from" marks.
-void StripIncluded(json& n)
-{
-    n.erase("included_from");
-    if (n.contains("items"))
-        for (auto& c : n["items"])
-            StripIncluded(c);
-}
-
 // The palette: presets dragged onto the canvas carry their name.
 class PaletteTree : public QTreeWidget
 {
@@ -91,6 +82,15 @@ EditorWidget::EditorWidget(DaemonControl* daemon, QWidget* parent) : QWidget(par
     bar->addAction(QStringLiteral("Save as"), this, &EditorWidget::CmdSaveAs);
     bar->addAction(QStringLiteral("Export"), this, &EditorWidget::CmdExportCopy);
     bar->addAction(QStringLiteral("Import"), this, [this] { CmdImport(QStringLiteral("menu")); });
+    auto* toV2 = bar->addAction(QStringLiteral("Convert to v2"), this, [this] {
+        QStringList notes;
+        if (!_doc->ConvertToV2(&notes))
+            ShowMessage(QStringLiteral("the scenario is v2 already"));
+        else
+            ShowMessage(notes.isEmpty() ? QStringLiteral("converted to v2") : notes.join(QStringLiteral("; ")));
+    });
+    toV2->setToolTip(QStringLiteral("format v1 -> v2: REST steps with a catalogue action become action steps (Save "
+                                    "converts too)"));
     bar->addSeparator();
     _undo = _doc->UndoStack()->createUndoAction(this, QStringLiteral("Undo"));
     _undo->setShortcut(QKeySequence::Undo);
@@ -340,11 +340,8 @@ EditorWidget::EditorWidget(DaemonControl* daemon, QWidget* parent) : QWidget(par
     });
     shortcut(QKeySequence(Qt::CTRL | Qt::Key_D), [this] { CmdDuplicate(); });
     shortcut(QKeySequence(Qt::Key_Escape), [this] { _doc->Up(); });
-    shortcut(QKeySequence::Save, [this] {
-        QString e;
-        if (!SaveFile({}, &e))
-            ShowMessage(e);
-    });
+    // Cmd+S is the studio's File > Save Scenario (docked and floating alike): a second binding here would make the
+    // key ambiguous inside the editor, and Qt then runs neither
 
     RebuildTree();
     RebuildIssues();
@@ -630,7 +627,9 @@ bool EditorWidget::SaveFile(const QString& path, QString* error)
     }
     if (!_doc->Save(target, error))
         return false;
-    ShowMessage(QStringLiteral("saved ") + _doc->Path());
+    ShowMessage(_doc->LastNotes().isEmpty()
+                    ? QStringLiteral("saved ") + _doc->Path()
+                    : QStringLiteral("saved %1 as v2: %2").arg(_doc->Path(), _doc->LastNotes().join(QStringLiteral("; "))));
     return true;
 }
 
@@ -665,7 +664,7 @@ bool EditorWidget::ExportSubtree(const QString& id, const QString& path, bool li
         return false;
     }
     json clean = frag;
-    StripIncluded(clean["root"]);
+    io::StripIncludeMarks(clean["root"]);  // a copy of an included subtree is the file's own
     std::string err;
     if (!io::SaveFile(path.toStdString(), clean, &err))
     {
@@ -711,7 +710,7 @@ bool EditorWidget::ImportFile(const QString& path, const QString& parent, std::o
             *error = Qs(err);
         return false;
     }
-    StripIncluded((*frag)["root"]);
+    io::StripIncludeMarks((*frag)["root"]);
     const auto m = mode == QLatin1String("items") ? ops::ImportMode::Items : ops::ImportMode::Menu;
     return _doc->Apply(
         QStringLiteral("Import %1").arg(path),
@@ -753,12 +752,16 @@ bool EditorWidget::Paste(QString* error)
     }
     json node = json::parse(_clipboard.toStdString());
     node.erase("at");
+    io::StripIncludeMarks(node);  // a copy of an included node is the document's own (editable, saved as written)
     const std::string menu = _doc->CanvasMenu().toStdString();
     std::optional<Slot> at;
     if (const int k = _canvas->SelectedSlotKey(); k >= 0)
         at = Slot{k / _doc->GetModel().cols, k % _doc->GetModel().cols};
     std::string nid;
-    if (!_doc->Apply(QStringLiteral("Paste"), [&](json& d) { return ops::InsertNode(d, menu, at, node); }, error, &nid))
+    const json resolved = _doc->Resolved();  // a copy from an include: its ids are taken there
+    if (!_doc->Apply(
+            QStringLiteral("Paste"), [&](json& d) { return ops::InsertNode(d, menu, at, node, &resolved); }, error,
+            &nid))
         return false;
     _doc->Select(Qs(nid), false);
     return true;

@@ -25,6 +25,8 @@
 #include <vector>
 
 #include "emulator/io/controllers/controllertypes.h"
+#include "haptics/surfacehaptics.h"
+#include "hostbackend.h"
 #include "hostdevice.h"
 #include "router/binding.h"
 
@@ -39,6 +41,35 @@ struct ActionEvent
     bool pressed = false;
     /// 1 for a press; a `curve: scrub` binding's level (0..1, 0 = released); an encoder's signed steps
     float value = 0;
+    /// An encoder's turn (control surfaces architecture.md §5): `value` is its steps, `rate` its speed in steps/s.
+    /// A Delta action takes both; a Press action gets one press per step (the owner caps them at 16)
+    bool turn = false;
+    double rate = 0;
+    /// The binding's `curve` object (the action's parameters, `ttd.seek_by`'s scrub curve); null when it has none
+    JsonValue params{};
+};
+
+/// The speed of an encoder (control surfaces controls-and-feedback.md §2): the Stream Deck bridge's rule, retuned for
+/// the Dial in S3: inst = |steps| / interval; rate = 0.5 x rate + 0.5 x inst; after kRestNs without a step rate =
+/// 0.3 x inst. Bluetooth LE delivers reports in connection-interval bunches, so an interval counts at least kMinNs:
+/// two reports of one bunch do not read as a spin of thousands of steps per second
+class EncoderRate
+{
+public:
+    static constexpr uint64_t kRestNs = 400'000'000;
+    static constexpr uint64_t kMinNs = 7'500'000;  ///< the shortest BLE connection interval
+
+    /// A turn of @p steps at @p nowNs: the speed in steps per second
+    double Step(float steps, uint64_t nowNs);
+    double Rate() const
+    {
+        return _rate;
+    }
+
+private:
+    double _rate = 0;
+    uint64_t _lastNs = 0;
+    bool _moved = false;
 };
 
 class InputRouter
@@ -75,6 +106,11 @@ public:
     void SetInstanceMode(const HostDeviceId& device, InstanceMode mode, const std::string& pinned = {});
     /// The connector a device's `auto:` targets drive (the player's connector); empty = none
     void SetPlayerConnector(const HostDeviceId& device, const std::string& connector);
+    /// The device's default role (its family's: the device database's `role`), what Role answers until SetRole sets
+    /// one (control surfaces Q-8: a Surface Dial starts as a debugger remote, a pad as a player)
+    void SetDefaultRole(const HostDeviceId& device, DeviceRole role);
+    /// SetRole chose the device's role (else it has its default)
+    bool RoleSet(const HostDeviceId& device) const;
     /// The instance whose window has focus: what follow-focus devices drive. Empty (the default) = every instance
     void SetFocus(const std::string& instance);
     /// The debugger window has the focus: every player device acts as a debugger remote (its `debug` layer alone,
@@ -83,13 +119,35 @@ public:
     /// The device drives that instance now (a player that follows the focus, is pinned to it, or drives all)
     bool Drives(const HostDeviceId& device, const std::string& instance) const;
 
-    /// The layers a device has up, bottom to top ("" = play; a debugger remote has `debug` alone)
+    /// The layers a device has up, bottom to top ("" = play; a debugger remote has `debug` alone; above `debug` the
+    /// context layer of its instance's context)
     std::vector<std::string> Layers(const HostDeviceId& device) const;
     /// The control drives a consuming binding of the device's current layers, or is a layer key: the window's
     /// keyboard keeps it from the machine (mapping-and-profiles.md §4.2)
     bool Consumes(const HostDeviceId& device, const std::string& control) const;
 
     /// endregion </Devices>
+
+    /// region <Contexts and surface feedback (control surfaces profiles.md §1, architecture.md §9)>
+
+    /// The context of an instance (`play`, `ttd`, `ttd.timecode`, `debug.disasm`): the owner pushes it from the
+    /// core's ContextState. While a device's `debug` layer is up, the context layer of its instance's context (`@ttd`,
+    /// or the longest `@<prefix>.*` match) is up above it; a change releases what is held, as a layer switch does
+    void SetContext(const std::string& instance, const std::string& context);
+    /// The context of the instance a device acts on (its pinned one, else the focused one); "" when none was pushed
+    std::string Context(const HostDeviceId& device) const;
+    /// What a scope's devices feel per layer (a debug profile's `haptics`); set and cleared with the bindings
+    void SetSurfaceHaptics(const std::string& scope, SurfaceHaptics haptics);
+    void ClearSurfaceHaptics(const std::string& scope);
+    /// The feel of the device's top layer that has one; false when none of its layers has
+    bool Feel(const HostDeviceId& device, LayerHaptics& out) const;
+    /// Where steps / clicks requests go when a device's feel changes (a context change, a layer switch, new profiles,
+    /// the device arriving), outside the lock as the actions. A device whose scope has surface haptics gets its top
+    /// layer's steps, or clicks off where none of its layers has a feel (`play`: the knob is unbound)
+    using OutputSink = std::function<void(const HostDeviceId&, const StepsOut&)>;
+    void SetOutputSink(OutputSink sink);
+
+    /// endregion </Contexts and surface feedback>
 
     /// region <Actions and time>
 
@@ -191,10 +249,15 @@ private:
         std::map<std::string, Gate> gates;
         std::vector<LayerEntry> layers;  ///< above `play`, bottom to top
         uint32_t epoch = 0;
+        std::map<std::string, EncoderRate> rates;  ///< per encoder control
+        bool feelSent = false;     ///< the output sink got its steps
+        StepsOut feel;             ///< what it got
     };
     struct Settings
     {
+        bool roleSet = false;  ///< SetRole chose it; else defaultRole
         DeviceRole role = DeviceRole::Player;
+        DeviceRole defaultRole = DeviceRole::Player;
         InstanceMode mode = InstanceMode::FollowFocus;
         std::string pinned;
         std::string connector;
@@ -225,8 +288,15 @@ private:
     DeviceRole RoleLocked(const HostDeviceId& device) const;
     /// The layers whose bindings act, bottom to top: `debug` hides what is below it
     std::vector<std::string> ActiveLayersLocked(const Device& device) const;
-    /// `play`, or a layer a layer key raised (`debug` may hide it)
+    /// `play`, or a layer a layer key raised (`debug` may hide it), or the context layer above a raised `debug`
     bool RaisedLocked(const Device& device, const std::string& layer) const;
+    /// The context layer the device's bindings or haptics name that its instance's context selects; "" none
+    std::string ContextLayerLocked(const Device& device) const;
+    /// The instance the device acts on: its pinned one, else the focused one
+    const std::string& InstanceLocked(const HostDeviceId& device) const;
+    const SurfaceHaptics* SurfaceHapticsForLocked(const Device& device) const;
+    /// Queue a steps request when the device's feel changed (Dispatch sends it)
+    void FeelLocked(Device& device);
     /// A debugger remote by its role, or a player while the debugger window has the focus
     bool RemoteLocked(const Device& device) const;
     /// The bits of a binding's sources as @p value gives them (the hysteresis memory advances)
@@ -246,6 +316,10 @@ private:
 
     mutable std::mutex _mutex;
     std::map<std::string, CompiledSet> _bindings;
+    std::map<std::string, SurfaceHaptics> _surfaceHaptics;  ///< by scope, as _bindings
+    std::map<std::string, std::string> _contexts;           ///< instance -> context
+    mutable std::vector<std::pair<HostDeviceId, StepsOut>> _feelQueue;  ///< under _mutex; Dispatch sends them
+    OutputSink _outputs;
     std::map<HostDeviceId, Device> _devices;
     std::map<HostDeviceId, Settings> _settings;
     std::map<std::string, Instance> _instances;

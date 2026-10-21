@@ -7,6 +7,7 @@
 #include "../common/statenode_json.h"
 #include "../emulator_api.h"
 
+#include "emulator/actions/targetstate.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
@@ -50,6 +51,8 @@ Json::Value MeJson(const companion::CompanionInfo& me)
     Json::Value emulators(Json::arrayValue);
     EmulatorManager* manager = EmulatorManager::GetInstance();
     const std::string selected = manager->GetSelectedEmulatorId();
+    // The instance a surface following the focus drives (Stream Deck targeting.md): the focused window's
+    const std::string followed = actions::TargetState::Instance().Followed();
     int index = 0;
     for (const std::string& id : manager->GetEmulatorIds())
     {
@@ -64,6 +67,7 @@ Json::Value MeJson(const companion::CompanionInfo& me)
         e["model"] = identity.Valid ? Json::Value(identity.Model) : Json::Value();
         e["state"] = stateToString(emulator->GetState());
         e["selected"] = id == selected;
+        e["followed"] = id == followed;
         const EmulatorContext::RunControlState state = context->GetRunControlState();
         Json::Value control = state.claimed ? webapi_companion::HolderJson(state) : Json::Value(Json::objectValue);
         control["held"] = state.claimed;

@@ -20,6 +20,7 @@ base `instance` message is replaced by `target`.
 - [6. Machine lifecycle without REST](#6-machine-lifecycle-without-rest)
 - [7. Errors](#7-errors)
 - [8. Example](#8-example)
+- [9. As built in the core (SD4, 2026-10-20)](#9-as-built-in-the-core-sd4-2026-10-20)
 
 ## 0. Transport: one WebSocket
 
@@ -198,3 +199,19 @@ a headless host (no views).
 ← {"op":"target","instance":"7c21…","index":2,"model":"SPRINTER","view":{"id":"v2","name":"Window 2"},"mode":"follow"}
 ← {"op":"ctx","instance":"7c21…","context":"debug","by":"gui"}
 ```
+
+## 9. As built in the core (SD4, 2026-10-20)
+
+The core side of §1-§5; the socket messages themselves are the `surface` topic (control surfaces S4), which reads
+these (the hook: [targeting.md §10.1](targeting.md#101-the-hook-for-the-surface-topic-s4)). Every value here is also
+a REST / CLI / MCP / script verb ([command-interface.md §16.1](../../emulator/design/control-interfaces/command-interface.md#161-surface-targets-readouts-activity)).
+
+| Part | As built |
+|:--|:--|
+| §2 target | `actions::surfaces::TargetNode`: `instance`, `index`, `model`, `ram_kb`, `view` {`id`, `name`} or null, `mode` (`follow`, `view`, `instance`), plus `pin` (`follow`, `view:<id>`, `instance:<id>`) and `source` (`view`, `selected`, `sole`, `none`) |
+| §3 readouts | `core/src/emulator/actions/readouts.h`. `ttd.position` is the TTD `position` verb's body (S2's cursor: `frame`, `tinframe`, the bounds, `state`, `history`, `paused`, `fps`) plus `available`. `run.state` `{state, speed (the host multiplier 1..16), turbo}`. `machine` `{model, ram_kb, index}` from the config (not `GetMachineIdentity`, heavy on ZX-Poly). `media.tape` `{loaded, name, playing, block, blocks, progress}`: progress is blocks done / blocks (within a block needs the tape's position, which only a paused machine may read). `media.disk` `{drives: [{letter, loaded, name, protect, busy}]}`: busy is the drive's motor. `audio.mute` `{muted}`: the host has no master volume (the mixer's master mutes only). `debug.mode` `{enabled}` (the feature, not `Emulator::IsDebug`). `toggle.<id>` `{on}` (null when not known), `toggle.feature.<name>` for every feature, `toggle.set.<name>` by name. Matching: exact, `prefix.*`, `*` |
+| §4 activity | `actions::ActivityFeed` (`activityfeed.h`): the actions worker records each job it ran (after the result, before the callers learn it); ring of 256; a delta of the same action, instance, origin, identity and session within 100 ms of the entry's first job is merged (summed, the higher rate, a new seq). Entry: `seq`, `instance`, `id`, `value` (`{p}`, `{d, rate}`, `{level}`, `{text}`, `params`), `origin` (`gui`, `host_device`, `companion`, `webapi`, `mcp`, `cli`, `lua`, `python`), `surface` (the client name, `GUI`, else the identity), `ok`, `error`, `message`, `t_ms`, `merged`. The session filter (own actions), the target-instance filter, 20 per second and `dropped` per socket are the topic's |
+| §4 look (Q-3) | The daemon's (SD5): the scenario's `settings.activity` defaults to the key flash only, `strip: "none"`, `ignore: ["ttd.seek_by"]`; the core sends everything |
+| §5 catalogue | `ActionInfo.description` (every core and GUI action: `catalogue.cpp`), `ActionInfo.toggle` (from `ActionRules::state`: `run.pause_toggle`, `ttd.record_toggle`, `mach.turbo_toggle`, `audio.mute_toggle`, `video.overscan_toggle`, `video.temporal`, `dbg.mode_toggle`, `feature.toggle`, `set.toggle`), `scope` (the rule's scope now, as S1 built it), `params` (SD6's one-line form: a typed schema is open), `rev` (`ActionRegistry::Revision()`, bumped by every registration and unregistration; `NC_ACTION_CATALOGUE`) |
+| §7 errors | `not_now` only for a **view** pin on a host without views (an instance pin works headless); `Not Found` for an unknown session, view or instance |
+

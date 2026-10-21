@@ -138,12 +138,17 @@ namespace
 void EmulatorAPI::getHostControllers(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                      const std::string& verb) const
 {
+    if (verb == "actions")
+    {
+        getActions(req, std::move(callback));  // the core's actions: there with or without ENABLE_CONTROLLERS
+        return;
+    }
     RespondHost(callback, req, verb, false);
 }
 
 /// @brief POST /api/v1/controllers/{verb}: save {text}, delete {id}, apply {id}, bind {control, spec, layer, family,
 /// device, profile}, unbind {control, layer, family, device, profile}, scheme {id, family, device, profile}, rumble
-/// {device, effect}
+/// {device, effect}, output {device, pattern | steps, clicks | marks}
 void EmulatorAPI::postHostControllers(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                       const std::string& verb) const
 {

@@ -37,6 +37,8 @@ class Failure(Exception):
 COMPANION_TOKEN = os.environ.get('UNREAL_COMPANION_VERIFY_TOKEN', 'unc_verification-companion-0001')
 # ... and one with the run scope only, for the refusals of a scope the user did not grant
 COMPANION_NARROW_TOKEN = 'unc_verification-narrow-0001'
+# ... and one for the surface topic of /api/v1/ws (test_ws_surface.py; test_companion.py revokes 'verify')
+COMPANION_SURFACE_TOKEN = 'unc_verification-surface-0001'
 
 
 def expect(condition, what, details=''):
@@ -105,6 +107,9 @@ class Session:
             self.call('emulator_manage', {'action': 'destroy', 'target': emulator['id']}, ok=False)
         self.call('emulator_manage', {'action': 'create', 'model': model or self.model})
         self.call('emulator_manage', {'action': 'start'}, ok=False)  # create starts it on most builds
+        # Silent: a verification run makes no sound on the host
+        self.call('invoke_api', {'method': 'PUT', 'path': '/api/v1/emulator/{id}/audio/mixer/master',
+                                 'body': {'muted': True}}, ok=False)
         self.call('control_execution', {'action': 'run_frames', 'frames': 100})
         self.call('control_execution', {'action': 'pause'})
 
@@ -112,6 +117,120 @@ class Session:
         listing = self.call('emulator_manage', {'action': 'list'}, ok=False)
         for emulator in (listing.structured or {}).get('emulators', []):
             self.call('emulator_manage', {'action': 'destroy', 'target': emulator['id']}, ok=False)
+
+
+class WebSocket:
+    """A WebSocket client of the WebAPI (stdlib only: text frames, client-masked, pings answered): JSON objects in and
+    out. `headers`: extra handshake lines ({'X-Unreal-Source': 'mcp'}). With upgrade=False a refused handshake is no
+    failure: `status` is its status line (the HTTP gates refuse a bad token before the upgrade)"""
+
+    def __init__(self, port, path='/api/v1/ws', token=None, headers=None, upgrade=True, rcvbuf=None):
+        import base64
+        if rcvbuf:  # a small receive window, set before connect (a slow consumer)
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, rcvbuf)
+            self.sock.settimeout(10)
+            self.sock.connect(('127.0.0.1', port))
+        else:
+            self.sock = socket.create_connection(('127.0.0.1', port), timeout=10)
+        key = base64.b64encode(os.urandom(16)).decode()
+        extra = f'Authorization: Bearer {token}\r\n' if token else ''
+        for name, value in (headers or {}).items():
+            extra += f'{name}: {value}\r\n'
+        self.sock.sendall((f'GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\n'
+                           f'Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n'
+                           f'{extra}\r\n').encode())
+        head = b''
+        while b'\r\n\r\n' not in head:
+            chunk = self.sock.recv(4096)
+            expect(chunk, 'the handshake answer', head)
+            head += chunk
+        head, self.buffer = head.split(b'\r\n\r\n', 1)
+        self.status = head.split(b'\r\n', 1)[0].decode()
+        self.closed = not head.startswith(b'HTTP/1.1 101')
+        if upgrade:
+            expect(not self.closed, 'the WebSocket upgrade', head)
+
+    def _frame(self, opcode, data):
+        mask = os.urandom(4)
+        n = len(data)
+        header = bytes([0x80 | opcode]) + (bytes([0x80 | n]) if n < 126 else
+                                           bytes([0x80 | 126]) + n.to_bytes(2, 'big') if n < 65536 else
+                                           bytes([0x80 | 127]) + n.to_bytes(8, 'big'))
+        self.sock.sendall(header + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data)))
+
+    def send(self, value):
+        self._frame(0x1, json.dumps(value).encode())
+
+    def _read(self, n):
+        while len(self.buffer) < n:
+            chunk = self.sock.recv(65536)
+            if not chunk:
+                raise EOFError
+            self.buffer += chunk
+        data, self.buffer = self.buffer[:n], self.buffer[n:]
+        return data
+
+    def recv(self, timeout=5):
+        """The next JSON text message; None once the server closed (or nothing came in `timeout`: self.closed stays
+        False then)"""
+        self.sock.settimeout(timeout)
+        while True:
+            try:
+                b0, b1 = self._read(2)
+                n = b1 & 0x7f
+                if n == 126:
+                    n = int.from_bytes(self._read(2), 'big')
+                elif n == 127:
+                    n = int.from_bytes(self._read(8), 'big')
+                payload = self._read(n)
+            except socket.timeout:
+                return None
+            except (EOFError, ConnectionError, OSError):
+                self.closed = True
+                return None
+            opcode = b0 & 0x0f
+            if opcode == 0x8:
+                self.closed = True
+                return None
+            if opcode == 0x9:
+                self._frame(0xA, payload)
+            elif opcode == 0x1:
+                return json.loads(payload)
+
+    def until(self, predicate, what, timeout=5):
+        """Reads until a message satisfies `predicate`; returns it (fails with what was seen otherwise)"""
+        deadline = time.time() + timeout
+        seen = []
+        while time.time() < deadline:
+            message = self.recv(max(0.05, deadline - time.time()))
+            if message is None:
+                if self.closed:
+                    break
+                continue
+            seen.append(message)
+            if predicate(message):
+                return message
+        expect(False, what, seen[-12:])
+
+    def drain(self, seconds=0.2):
+        """Every message that comes within `seconds`"""
+        out = []
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            message = self.recv(max(0.01, deadline - time.time()))
+            if message is None:
+                if self.closed:
+                    break
+                continue
+            out.append(message)
+        return out
+
+    def close(self):
+        try:
+            self.sock.close()
+        except OSError:
+            pass
 
 
 def launch(binary, port_base):
@@ -126,7 +245,12 @@ def launch(binary, port_base):
                          ('UNREAL_GDB_PORT', 300), ('UNREAL_DEZOG_PORT', 400), ('UNREAL_ZRCP_PORT', 500)):
         env[name] = str(port_base + offset)
     # A companion client for test_companion.py (a paired device acting as the user's hands)
-    env.setdefault('UNREAL_COMPANION_TOKENS', f'verify:{COMPANION_TOKEN}:all;narrow:{COMPANION_NARROW_TOKEN}:run')
+    env.setdefault('UNREAL_COMPANION_TOKENS', f'verify:{COMPANION_TOKEN}:all;narrow:{COMPANION_NARROW_TOKEN}:run;'
+                                              f'surface:{COMPANION_SURFACE_TOKEN}:all')
+    # /api/v1/ws backpressure in a test's time (test_ws_surface.py reads them too: the scripts inherit them)
+    for name, value in (('UNREAL_WS_HIGH_WATER_BYTES', '16384'), ('UNREAL_WS_SLOW_CONSUMER_MS', '1500')):
+        os.environ.setdefault(name, value)
+        env.setdefault(name, os.environ[name])
     process = subprocess.Popen([binary, '-platform', 'offscreen'], env=env, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL)
     session = Session(f'http://127.0.0.1:{port_base + 200}/mcp', 'PENTAGON')

@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 
+#include "sdb/datadir.h"
 #include "sdb/icons.h"
 #include "sdb/svg.h"
 
@@ -118,16 +119,18 @@ void Place(Rgb& out, const Rgb& in, int x0, int y0)
 }
 }  // namespace
 
-Rgb RenderFace(const Face& f, const std::string& fallbackTitle, bool pressed, bool isMenu, int safePad, int size)
+Rgb RenderFace(const Face& f, const std::string& fallbackTitle, bool pressed, bool isMenu, int safePad, int size,
+               const std::string& scenarioDir)
 {
     if (pressed)
-        return PressedKey(size, safePad, [&](int s) { return RenderFace(f, fallbackTitle, false, isMenu, 0, s); });
+        return PressedKey(size, safePad,
+                          [&](int s) { return RenderFace(f, fallbackTitle, false, isMenu, 0, s, scenarioDir); });
     if (safePad > 0 && f.image.empty() && size > 2 * safePad)
     {
         // the bezel hides the edges: draw the content straight at the visible size and centre it (no shrinking after,
         // which would blur the pixel font); a picture keeps the whole key
         Rgb out(size, size, f.bg.r, f.bg.g, f.bg.b);
-        Place(out, RenderFace(f, fallbackTitle, false, isMenu, 0, size - 2 * safePad), safePad, safePad);
+        Place(out, RenderFace(f, fallbackTitle, false, isMenu, 0, size - 2 * safePad, scenarioDir), safePad, safePad);
         return out;
     }
     const Grid g(size);
@@ -140,7 +143,7 @@ Rgb RenderFace(const Face& f, const std::string& fallbackTitle, bool pressed, bo
     const bool hasLabel = !label.empty();
     if (!f.image.empty())
     {
-        if (auto src = LoadImage(f.image))
+        if (auto src = LoadImageRef(f.image, scenarioDir))
         {
             const auto* p = src->At(0, 0);
             im = FitImage(*src, s, s, FitByName(f.fit).value_or(Fit::Contain), p[0], p[1], p[2]);
@@ -149,7 +152,8 @@ Rgb RenderFace(const Face& f, const std::string& fallbackTitle, bool pressed, bo
     else if (!f.svg.empty() || !f.icon.empty())
     {
         const int sz = g(hasLabel ? 92 : 112);
-        bool drawn = !f.svg.empty() && DrawSvg(im, f.svg, (s - sz) / 2, g(hasLabel ? 6 : 16), sz, f.fg, 0.08f);
+        bool drawn = !f.svg.empty() && DrawSvg(im, data::Resolve(f.svg, scenarioDir), (s - sz) / 2,
+                                               g(hasLabel ? 6 : 16), sz, f.fg, 0.08f);
         if (!drawn)
             if (auto ic = IconByName(f.icon))
                 DrawIcon(im, *ic, (s - sz) / 2, g(hasLabel ? 8 : 16), sz, f.fg, {255, 215, 0});
@@ -255,7 +259,7 @@ int CrumbHit(const std::vector<std::string>& path, int stripW, int x)
 }
 
 Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string& banner, double autoExitLeft,
-                const std::string& status)
+                const std::string& status, const std::string& scenarioDir)
 {
     Rgb im(w, h, 8, 8, 14);
     int contentX = 12;
@@ -283,7 +287,12 @@ Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string
     // the status line (time travel): it takes the content area, one line as large as its longest form fits, laid out
     // from the left at a fixed place (the font is monospaced): changing digits never move anything
     const bool scrubs = std::any_of(page.dials.begin(), page.dials.end(),
-                                    [](const Dial* d) { return d && d->turn && d->turn->kind == "ttd_seek"; });
+                                    [](const Dial* d) {
+                                        return d && d->turn &&
+                                               (d->turn->kind == "ttd_seek" ||
+                                                (d->turn->kind == "action" &&
+                                                 d->turn->spec.value("id", "") == "ttd.seek_by"));
+                                    });
     const bool statusLine = !status.empty() || (page.strip && !page.strip->status.empty()) || scrubs;
     if (statusLine && banner.empty())
     {
@@ -366,8 +375,10 @@ Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string
         }
         else if (c == "image" && !page.strip->image.empty())
         {
-            if (auto src = LoadImage(page.strip->image))
-                Blit(im, FitImage(*src, cw, areaH, Fit::Contain), contentX, 0);
+            // a picture takes its whole area, edge to edge: from the crumbs (or the left edge) to the right edge
+            const int x0 = page.crumbs == Crumbs::Strip ? contentX : 0, iw = w - x0;
+            if (auto src = LoadImageRef(page.strip->image, scenarioDir); src && iw > 0)
+                Blit(im, FitImage(*src, iw, areaH, Fit::Contain), x0, 0);
         }
     }
     if (autoExitLeft >= 0 && page.autoExit > 0)

@@ -52,6 +52,10 @@ add_library(sdb STATIC ${SD_LIB_SOURCES})
 target_include_directories(sdb PUBLIC ${SD_DIR}/lib/include)
 target_include_directories(sdb SYSTEM PUBLIC ${SD_3RDPARTY})   # nlohmann/json is part of the public headers
 target_compile_options(sdb PRIVATE ${SD_WARNINGS})
+# the source tree's data/: the last place the data directory is looked for (sdb/datadir.h), for a build not installed
+get_filename_component(SD_SOURCE_DATA ${SD_DIR}/../../data ABSOLUTE)
+set_source_files_properties(${SD_DIR}/lib/src/datadir.cpp PROPERTIES
+    COMPILE_DEFINITIONS "SDB_SOURCE_DATA_DIR=\"${SD_SOURCE_DATA}\"")
 if(NOT MSVC)
     set_source_files_properties(${SD_DIR}/lib/src/svg.cpp PROPERTIES COMPILE_OPTIONS "-Wno-error")   # nanosvg inside
 endif()
@@ -91,6 +95,9 @@ file(GLOB SD_TEST_SOURCES CONFIGURE_DEPENDS ${SD_DIR}/tests/*.cpp)
 add_executable(streamdeck-tests EXCLUDE_FROM_ALL ${SD_TEST_SOURCES})
 target_compile_options(streamdeck-tests PRIVATE ${SD_WARNINGS})
 target_link_libraries(streamdeck-tests PRIVATE sdb)
+# the source tree's data/ (the shipped catalogue, $data paths; not a copy in bin/) and the generator's fixture
+target_compile_definitions(streamdeck-tests PRIVATE "SDB_TEST_SOURCE_DATA=\"${SD_SOURCE_DATA}\""
+    "SDB_TEST_TOOLS_DIR=\"${SD_DIR}/tools\"")
 
 # ---------------------------------------------------------------- Stream Deck Studio (Qt; skipped without Qt)
 add_subdirectory(studio)

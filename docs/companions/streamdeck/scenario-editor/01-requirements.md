@@ -43,7 +43,7 @@ State: **done** = in the code today; **planned** = designed, with the phase that
 | R7 | Validation: missing or duplicate ids, slots outside the grid, two items on one slot, an item under the back key, unknown action kinds, missing fields per kind, nav targets that do not exist, nesting deeper than 8, dial bindings on a model without dials, a dial index out of range or bound twice, bad colours | done |
 | R8 | Tags on nodes (`["debug", "ttd"]`), for search and for agents | done |
 | R9 | Includes: a node links to a subtree in another file (`{"type": "include", "file", "node"?}`), resolved before playing; nested up to 8, cycles are errors | done |
-| R10 | Format v2: `format: "streamdeck-scenario"`, `version: 2`; `settings.webapi`, `emulator`, `companion_file` leave the scenario (the daemon's configuration); targets; activity settings | planned (SD5) |
+| R10 | Format v2: `format: "streamdeck-scenario"`, `version: 2`; `settings.webapi`, `emulator`, `companion_file` leave the scenario (the daemon's configuration); targets; activity settings | done 2026-10-20 (v1 still read, converted on Save) |
 | R11 | Path roots in scenario paths: `$data`, `$testdata`, `$user`, `$icons`, `$scenario` ([scenarios.md §3](../../../inprogress/2026-10-19-streamdeck-integration/scenarios.md#3-paths)) | planned (SD5) |
 
 ## 3. Navigation
@@ -68,7 +68,7 @@ State: **done** = in the code today; **planned** = designed, with the phase that
 | R22 | `nav` (back, home, a node, another scenario file), `brightness` (value or delta) | done |
 | R23 | Time travel on a dial: `ttd_seek` (frames or seconds a detent, faster with the turning speed), `run_toggle` (run or pause by the machine's state); the strip shows the position (`strip.status: "ttd"`) | done (v1; replaced by catalogue actions in SD5) |
 | R24 | Actions run off the input thread, one at a time, in order; failures show on the strip ("<id> FAILED") and in the log | done |
-| R25 | `action` kind: an action of the host's catalogue by id (`{"kind": "action", "id": "ttd.seek_by", "value": ...}`); `webapi` stays as the escape hatch | planned (SD5) |
+| R25 | `action` kind: an action of the host's catalogue by id (`{"kind": "action", "id": "ttd.seek_by", "value": ...}`); `webapi` stays as the escape hatch | done 2026-10-20 (REST fallback; the surface client: S4 / SD4) |
 | R26 | State-bound faces: `state` names a readout, the face is `face_on` while it is true | planned (SD5) |
 
 ## 5. Editor
@@ -83,9 +83,9 @@ State: **done** = in the code today; **planned** = designed, with the phase that
 | R32 | Subtrees between files: export, move to a file (replaced by an include), import as a submenu, import its keys, link (include), inline an include | done |
 | R33 | Included nodes are shown (italic) and read-only; edit them in their own file, or inline | done |
 | R34 | Run on the deck the window shows, through the daemon; edits go live; Stop gives the deck back | done |
-| R35 | The palette from the host's action catalogue, action forms from their parameters, unknown ids as issues | planned (SD4, SD5) |
+| R35 | The palette from the host's action catalogue, action forms from their parameters, unknown ids as issues | done 2026-10-20: palette, picker (shipped or live catalogue), unknown ids and held actions as warnings; forms per param: SD4 |
 | R36 | User presets from `<config>/unreal-ng/streamdeck/presets/*.json` | done |
-| R37 | Open the shipped example scenarios (`data/streamdeck/scenarios/`), the default scenario v2 among them | planned (SD5) |
+| R37 | Open the shipped example scenarios (`data/streamdeck/scenarios/`), the default scenario v2 among them | waits for the icon set and the use-case document (owner, 2026-10-20) |
 
 ## 6. Automation
 

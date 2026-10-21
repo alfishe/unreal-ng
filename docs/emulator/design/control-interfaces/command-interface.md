@@ -35,7 +35,7 @@ The command interfaces are responsible for handling the specific protocol (e.g.,
 | :--- | :--- | :--- | :--- | :--- |
 | **CLI** | Human interaction & Simple Automation | TCP Socket (Text-based) | ✅ Implemented | Stateful connection. Interactive (REPL-like) or scripted via netcat/telnet. Human-readable text protocol. Session maintains selected emulator context. Default port: TBD |
 | **WebAPI** | UI Frontends & Remote Management | HTTP/1.1 REST (JSON) | ✅ Partially Implemented | Stateless request/response. Standard web compatibility. CORS-enabled. Ideal for web dashboards, SPAs, and microservice integration. Uses Drogon framework. |
-| **WebSocket** | Push & low-latency calls | WebSocket `/api/v1/ws` (JSON) | 🔮 Planned | One socket, one auth. Every REST route callable (`call`, same handler), state and events pushed by topic, no polling. Async I/O on the WebAPI's event loops. Older sockets `/api/v1/websocket`, `/api/v1/companions/events` stay as adapters. |
+| **WebSocket** | Push & low-latency calls | WebSocket `/api/v1/ws` (JSON) | 🔧 In Progress (calls, topics `run.state`, `ttd.position`, `surfaces.context`, `instances`, `debug.*` and `surface` implemented, backpressure too) | One socket, one auth. Every REST route callable (`call`, same handler, same gates), state and events pushed by topic, no polling; a slow consumer gets the latest values, then `slow_consumer`. Async I/O on the WebAPI's event loops. Older sockets `/api/v1/websocket`, `/api/v1/companions/events` keep serving. |
 | **Python** | Deep Integration & AI/ML | Direct C++ Bindings (pybind11) | ✅ Implemented | In-process execution. Zero-copy data access. Full Python ecosystem available. Ideal for ML/AI agents, data analysis, test automation, and complex scripting. Embedded interpreter or module import. |
 | **Lua** | Embedded Logic & Macros | Direct C++ Bindings (sol2) | ✅ Implemented | In-process execution. Minimal overhead. Sandboxed execution. Best for game scripts, hotkey macros, event handlers, and rapid prototyping. |
 | **GDB Protocol** | Source-level Debugging | GDB Remote Serial Protocol (Binary) | 🔮 Planned | Standard GDB/MI protocol. Attach with GDB, LLDB, or IDE debuggers (VS Code, CLion). Full breakpoint/watchpoint support. Z80 register mapping. |
@@ -878,6 +878,8 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | Automation session (take / release run control) | `session take [name]` / `session release` / `session` | `POST` / `DELETE` / `GET /control/session` + `X-Unreal-Session` | `take_control(name)` / `release_control()` | `take_control(name)` / `release_control()` | `control_execution take_control` / `release_control` |
 | Act as a companion client (no session; [companion clients](../../../inprogress/2026-10-16-companion-client/surfaces.md)) | `companion auth <token>` / `companion logout` | `Authorization: Bearer <token>` | - (never) | - (never) | - (never) |
 | Companion: status, take back, allow again | `companion` / `companion take-back` / `companion allow-again` | `GET /api/v1/companions/me`, `POST /control/take-back`, `POST /control/allow-again` | - | - | - |
+| Companion: the instances' live status, pushed (state, control, actions, model, selected; instances coming and going) | - | WebSocket `/api/v1/companions/events`; or topic `instances` on `/api/v1/ws` ([websocket-interface.md §3.2](websocket-interface.md#32-the-instances-topic)) | - | - | - |
+| Debugger events, pushed (paused, resumed, step done, breakpoints changed, asm sync) | - | WebSocket `/api/v1/websocket`; or topics `debug.events`, `debug.asm_sync` on `/api/v1/ws` ([websocket-interface.md §3.3](websocket-interface.md#33-the-debug-topics)) | - | - | - |
 | Companions: list, revoke (approval: GUI only) | `companion list` / `companion revoke <id\|name\|all\|me>` | `GET /api/v1/companions`, `DELETE /api/v1/companions[/{id}]` | `companions()` / `companion_revoke(id)` | `companions()` / `companion_revoke(id)` | `companion_manage list` / `revoke` / `revoke_all` |
 | ZX Profi board chips (report) | `state profi` | `GET /state/profi` | `profi_state()` | `profi_state()` | `profi` |
 | Network adapters (report) | `network` / `net` | `GET /state/network` | `network_state()` | `network_state()` | `network` |
@@ -2812,7 +2814,7 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 | `ttd reverse-step` | `ttd rs` | `[--count N]` *or* `[--tstates T]` | Step back N instructions (default 1), or back T t-states (lands on the nearest instruction start at or before the target). If both are given, `--tstates` wins. | ✅ Implemented |
 | `ttd reverse-continue` | `ttd rc` | `--pc <A> [--pc <B> ...]` | Run backward until the PC equals any of the given addresses. Reports the hit, a blocking marker, or "no match (reached session start)", and the part of history it searched (`Searched: frame … .. frame …`). | ✅ Implemented |
 | `ttd resume` | — | `[frame] [tinframe] [media=ask\|empty\|keep]` | Resume recording from the current position, or from the given point. Everything recorded after that point is discarded. Every medium goes back to that point when it can; one that cannot (another medium in the slot, a write beyond its undo log) is decided by `media`: `empty` (default) takes it out, `keep` leaves it, `ask` resumes nothing and lists them (`needs_decision`); the decision is in the operation log (`timeline-cut`). Needs a session that is `detached` or `recording`; from `idle` (for example straight after `ttd stop`) it fails, so seek first. | ✅ Implemented |
-| `ttd position` | `ttd pos` | — | Current position and session end, each as `(frame, tInFrame)`. | ✅ Implemented |
+| `ttd position` | `ttd pos` | — | Current position and session end, each as `(frame, tInFrame)`; the history's first frame, the state, whether the machine is paused, the frame rate (`fps`, the machine's unscaled clock: turbo does not change it). The bounds come from the TTD's published cursor (control surfaces [architecture §7](../../../inprogress/2026-10-18-control-surfaces/architecture.md#7-the-ttd-published-cursor-and-readouts)): the read never parks the machine, a companion may poll it at 50 Hz. | ✅ Implemented |
 | `ttd markers` | `ttd barriers` | — | List external-event markers (replay barriers): index, frame, tInFrame, kind, reason. | ✅ Implemented |
 | `ttd bookmark` | `ttd bookmarks`, `ttd bm` | `[list \| ls]`, `add <label> [frame] [tinframe]` (alias `mark`), `del <label>` (aliases `delete`, `remove`, `rm`) | Agent bookmarks: named positions, advisory only, never replay barriers. `add` without a frame marks the current position. Labels are non-empty, at most 63 characters, unique per session. | ✅ Implemented |
 | `ttd find-last` | `ttd fl` | `[--addr <A>] [--addr-from <F>] [--addr-to <T>] [--access write\|read\|execute\|io] [--value V] [--pc-from <A>] [--pc-to <A>] [--phys-page <P>] [--space ram\|vram\|cache] [--before-frame <F>] [--before-tin <T>]` | Reverse search: the most recent access that matches, looking back from the current position (or from `--before-frame`/`--before-tin`). Needs at least one of `--addr`, `--addr-from`, `--addr-to`, `--pc-from`, `--pc-to`, `--value`. `--access` defaults to `write`. `--phys-page` (0..255) pins the search to one physical RAM page. `--space vram` / `cache` searches the Sprinter's video RAM (256 KB) / fast RAM (64 KB): the address options are then offsets in it, inside one 16 KB page, and the answer adds `Offset:`. Numbers accept `0x` hex. Prints frame, tInFrame, PC, value, physical page (`none` for ROM / no RAM page) and access; or the blocking marker; or `No match found`; then the part of history it searched (`Searched: frame … .. frame …`). | ✅ Implemented |
@@ -3620,7 +3622,7 @@ client's game controllers) holds the host devices, their profiles and bindings, 
 | `controllers options` | `<connector> opt=val ...` | Change the options of the device a connector holds | ✅ Implemented |
 | `controllers targets` | `<device>` | The connectors that take a retro device, in order, with the default | ✅ Implemented |
 | `controllers auto` | `[apply]` | The port-read evidence and the joystick it points to; `apply` runs the watch again | ✅ Implemented |
-| `controllers devices` | | The connected host devices: id, name, family, layout, backend | ✅ Implemented |
+| `controllers devices` | | The connected host devices: id, name, family, layout, backend; with the Qt client also `role` (`role_set`: chosen, else the family's default), `layers` (up, bottom to top: `play`, `debug`, a context layer such as `@ttd`), `context` (of the instance it acts on), `outputs` (`haptic`, `steps`) and `feel` (its top layer's `steps`, `clicks`, `marks`, `min_interval_ms`) | ✅ Implemented |
 | `controllers context` | | Machine, the loaded file's SHA-256, the manual game profile, the applied profiles, warnings | ✅ Implemented |
 | `controllers profiles` | `[set=game\|play\|debug\|scheme] [machine=..]` | Every profile with kind, scope, specificity and whether it applies | ✅ Implemented |
 | `controllers profile` | `<id>` | One profile as YAML | ✅ Implemented |
@@ -3630,6 +3632,7 @@ client's game controllers) holds the host devices, their profiles and bindings, 
 | `controllers scheme` | `<scheme/kempston\|scheme/qaop-space\|none> [family=..\|device=..\|profile=..]` | How the pad works: the scheme the user profile extends | ✅ Implemented |
 | `controllers haptics` | `[device]` | Per host device: whether the emulator drives its motors (`available`, else the `reason`), its `actuators` (`low`, `high`, `left-trigger`, `right-trigger`) and the test `effects` (`id`, `label`, `ms`) | ✅ Implemented |
 | `controllers rumble` | `<device> [effect]` | Play a test effect on a host device: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell` (a Surface Dial: `identify`, `click`, `clicks`, `buzz`) - the ones `haptics` lists for it | ✅ Implemented |
+| `controllers output` | `<device> <tick\|double\|buzz>` \| `<device> steps=N clicks=on\|off` \| `<device> marks=second,edge` | A control surface's outputs (the Surface Dial): play a haptic pattern; set its steps per turn (1..3600) and whether each step clicks (`off`: a free wheel) until its context or layers change; or play a seek's marks (strongest first) as its top layer's feel plays them, with the marks' rate limit (`played`, `mark`, `pattern`, else `reason`) | ✅ Implemented |
 
 **Haptics.** The test effects are debug feedback: they play while the game's haptics are held back (paused machine,
 TTD replay, turbo), and they are the effects of the dialog's **Test haptics** (Tools > Controllers). A device the
@@ -3647,19 +3650,136 @@ controllers rumble bt:045e:0b22:c6928f45 clicks
 # OK: Three clicks on Xbox Elite Wireless Controller Series 2
 ```
 
+**Control surfaces** (control surfaces design [profiles.md](../../../inprogress/2026-10-18-control-surfaces/profiles.md),
+[controls-and-feedback.md](../../../inprogress/2026-10-18-control-surfaces/controls-and-feedback.md)). A debug profile
+has context layers besides `debug`: `@ttd` is up while the instance's context (§16, `ctx.set`) is `ttd`,
+`@debug.*` while it starts with `debug.`; the longest match wins, above `debug`. Its `haptics` section is per layer
+(`{steps, clicks, marks, min_interval_ms}`), and an action binding's `curve` object (`{unit, min, max, rate_lo,
+rate_hi}`) reaches the action as its params. A Surface Dial starts in role `debugger-remote` (its family's
+default role) and runs the shipped `builtin/debug/surface-dial`: in `ttd` it scrubs with `ttd.seek_by` and feels the
+marks the seek crosses. The Qt client sets the context from the debugger's panes (`debug.disasm`,
+`debug.registers`, `debug.memory`, `debug.stack`) and the TTD panel (`ttd`), and the Dial follows it.
+
+```
+controllers devices
+# Host devices:
+#   bt:045e:091b:3c1e2f4a  Surface Dial (surface-dial)
+#     role debugger-remote (default); layers debug, @ttd; context ttd
+#     feel {"steps":36,"clicks":true,"marks":{"bookmark":"double","edge":"buzz",...},"min_interval_ms":40}
+controllers output bt:045e:091b:3c1e2f4a marks=ten_seconds,second
+# OK: ten_seconds -> double on Surface Dial
+```
+
 Every surface offers the same verbs:
 
 | Surface | Machine side | Host side | Haptics |
 | :--- | :--- | :--- | :--- |
-| CLI | `controllers <verb> ...` | `controllers <verb> ...` | `controllers haptics [device]`, `controllers rumble <device> [effect]` |
-| WebAPI | `GET /emulator/{id}/controllers[/{connector}]`, `POST .../controllers/{connector}/{verb}` | `GET` / `POST /api/v1/controllers/{verb}` (the wrong method answers 405) | `GET /api/v1/controllers/haptics?device=`, `POST /api/v1/controllers/rumble {device, effect}` |
-| MCP | `controllers` actions `list` ... `input` (with `target`) | `controllers` actions `devices` ... `scheme` (no target) | `controllers` actions `haptics` (`device`), `rumble` (`device`, `effect`) |
-| Python | `controllers_list()`, `controllers_plug()`, ... `controllers_input()` | `controllers_host(verb, **options)` and `controllers_profiles()`, `controllers_bind()`, ... | `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")` |
-| Lua | `controllers(verb, connector, device, opts)` | `controllers_host(verb, opts)` | `controllers_haptics([device])`, `controllers_rumble(device, [effect])` |
+| CLI | `controllers <verb> ...` | `controllers <verb> ...` | `controllers haptics [device]`, `controllers rumble <device> [effect]`, `controllers output <device> ...` |
+| WebAPI | `GET /emulator/{id}/controllers[/{connector}]`, `POST .../controllers/{connector}/{verb}` | `GET` / `POST /api/v1/controllers/{verb}` (the wrong method answers 405) | `GET /api/v1/controllers/haptics?device=`, `POST /api/v1/controllers/rumble {device, effect}`, `POST /api/v1/controllers/output {device, pattern \| steps, clicks \| marks}` |
+| WebSocket | | `{"op":"call","method":"GET","path":"/api/v1/controllers/devices"}` on `/api/v1/ws` (every route is a call) | `{"op":"call","method":"POST","path":"/api/v1/controllers/output","body":{...}}` |
+| MCP | `controllers` actions `list` ... `input` (with `target`) | `controllers` actions `devices` ... `scheme` (no target) | `controllers` actions `haptics` (`device`), `rumble` (`device`, `effect`), `output` (`device`, `pattern`, `steps`, `clicks`, `marks`) |
+| Python | `controllers_list()`, `controllers_plug()`, ... `controllers_input()` | `controllers_host(verb, **options)` and `controllers_profiles()`, `controllers_bind()`, ... | `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device, pattern=, steps=, clicks=, marks=)` |
+| Lua | `controllers(verb, connector, device, opts)` | `controllers_host(verb, opts)` | `controllers_haptics([device])`, `controllers_rumble(device, [effect])`, `controllers_output(device, pattern \| {steps=, clicks=, marks=})` |
 
 Each returns the reply every surface returns: `ok`, `error` (`bad-request`, `unknown-device`, `unknown-profile`,
 `unavailable`, `read-only`), `message` and the verb's fields; `--json` in the CLI prints it as is. The host side needs
 the Qt client (it owns the game controllers): a headless process answers `unavailable`.
+
+### 16. Host Actions
+
+The host actions by id (control surfaces design
+[actions.md](../../../inprogress/2026-10-18-control-surfaces/actions.md)): run control (`run.pause_toggle`,
+`run.step_in`, `run.turbo_hold`, ...), time travel (`ttd.step_back_frame`, `ttd.jog_frames`, ...), the machine
+(`mach.reset`, `mach.nmi`, `mach.turbo_toggle`, `mach.start`, `mach.cold_reset`), and the actions a Stream Deck
+scenario runs instead of REST steps (`input.key`, `input.type`, `input.joystick`, `basic.run`, `feature.toggle`,
+`set.speed`, `set.toggle`, `audio.mute_toggle`, `audio.volume_by`, `media.open`, `media.tape`, `media.eject`,
+`snapshot.quick`, `video.overscan_toggle`, `dbg.mode_toggle`, `ttd.seek`, ...: the full list with their params in
+[actions.md §1.1](../../../inprogress/2026-10-18-control-surfaces/actions.md#11-scenario-actions-sd6)) and, with the
+Qt client, its GUI actions (`dbg.open`, the debugger panes, `cap.screenshot`, `ttd.scrub_*`). Each takes the companion
+scope of the REST route it replaces. The core `ActionRegistry` (`core/src/emulator/actions/`) holds them; a pad,
+the Surface Dial, a Stream Deck and every plane below run the same ids, on one actions worker per instance, in order.
+The gate of the caller's origin applies: an automation client that changes the machine gets the implicit run-control
+session, a companion is checked against its scopes, the GUI and host devices are refused while another surface holds
+control.
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `action [list]` | `[--json]` | Every action: id, label, group, kind (`press`, `delta`, `level`, `text`), `held`, `gui`, the companion scope it needs now, `needs_pause`, the `params` it reads (one line, `?` = optional), and whether it can run now for this caller or why not (`not_now` "needs a pause", `Not Implemented` for the stubs, `Run-control held`, `companion_forbidden`, `held_by_other`) | ✅ Implemented |
+| `action run` | `<id> [value] [param=val ...] [--json]` | Run one on the selected instance and wait for it. Value by kind: press `press` (default) / `release`; delta signed steps; level 0..1; text. Parameters as `name=value` words: `run.to_scanline line=N`, `run.frames count=N`, `input.key key=caps+1`, `media.open path=game.tap`, `feature.toggle name=turbomode`, `ttd.seek_by unit= min= max= rate_lo= rate_hi= rate=`. The reply: `ok`, `error`, `message`, `result` (a step: `pc`, `sp`, `state`, `stop`) | ✅ Implemented |
+| `action context` | `[--json]` | The instance's surface context: the one in force, whether somebody set it and who (`by`), the default it returns to | ✅ Implemented |
+
+The control-surface actions of phase S2 ([actions.md §2-§4](../../../inprogress/2026-10-18-control-surfaces/actions.md#2-ttdseek_by)):
+
+| Action | Kind | What |
+| :--- | :--- | :--- |
+| `ttd.seek_by` | delta | A dial's seek: `delta` steps at `rate` steps/s through the acceleration curve (`params`: `unit` `frames` (1 -> 100 per step) or `seconds` (0.02 -> 2), `min`, `max`, `rate_lo` 4, `rate_hi` 40; `rate` as a parameter where the plane has no rate field), clamped to the history (never past its end), one seek to the target frame's start. The result: the seek's body (`reached`, `arrived_at`, `halt_reason`, `state`) plus `from`, `frame` (the target), `frames`, `fps` and `marks` [{`kind`, `frame`}], strongest first: `edge` (clamped), `barrier` (stopped at a replay barrier), `bookmark`, `ten_seconds`, `second` (counted from the history's first frame). Without a history: `not_now` "record first" |
+| `run.step_by` | delta | Forward: step in, at most 16 times, a breakpoint ends it (`stopped_by: breakpoint`); back: instruction steps back through the history, at most 16 (without a history `not_now` "record first"). Needs a pause. The result: the last step's body plus `steps` (instructions executed), `direction` |
+| `ctx.set` | text | Set the instance's surface context (`play`, `ttd`, `ttd.timecode`, `debug.disasm`: lowercase letters, digits, `.`, `_`, `-`); the last setter wins; `""` returns to the default (`ttd` when the instance has a history, else `play`). A change posts `NC_SURFACE_CONTEXT`. Needs no scope. The result: `context`, `previous`, `set`, `by`, `default` |
+
+| Surface | List | Run |
+| :--- | :--- | :--- |
+| CLI | `action list` | `action run ttd.jog_frames -10` |
+| WebAPI | `GET /api/v1/controllers/actions[?instance=]` | `POST /api/v1/controllers/actions/{id}` `{instance?, value?, params?}` |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/controllers/actions"}` | `{"op":"call","method":"POST","path":"/api/v1/controllers/actions/{id}","body":{...}}`; or `join` + `{"op":"action","id":…,"value":…,"rid":…}` on the `surface` topic ([websocket-interface.md §3.1](websocket-interface.md#31-the-surface-topic)) |
+| MCP | `actions` action `list` (`target`) | `actions` action `run` (`id`, `value`, `params`, `target`) |
+| Python | `emu.actions()` | `emu.action(id, value=None, **params)` |
+| Lua | `actions()` | `action(id, [value], [params])` |
+
+The context (read; set with `ctx.set`) and a dial's seek on every surface:
+
+| Surface | Context | Seek by |
+| :--- | :--- | :--- |
+| CLI | `action context` | `action run ttd.seek_by -3 rate=18 unit=frames` |
+| WebAPI | `GET /api/v1/surfaces/context[?instance=]` | `POST /api/v1/controllers/actions/ttd.seek_by` `{"value":{"delta":-3,"rate":18},"params":{"unit":"seconds"}}` |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/surfaces/context"}`; push: topic `surfaces.context`, or `ctx` on the `surface` topic | the same POST as a `call`, or `{"op":"action","id":"ttd.seek_by","value":{"d":-3,"rate":18,"unit":"seconds"},"rid":1}` on the `surface` topic; the cursor: topic `ttd.position` or the `ttd.position` readout ([websocket-interface.md §3](websocket-interface.md#3-topics)) |
+| MCP | `actions` action `context` | `actions` action `run`, `id` `ttd.seek_by`, `value` `{delta, rate}`, `params` |
+| Python | `emu.context()` | `emu.action("ttd.seek_by", -3, rate=18, unit="seconds")` |
+| Lua | `context()` | `action("ttd.seek_by", {delta = -3, rate = 18}, {unit = "seconds"})` |
+
+The TTD cursor (the position, the history's bounds, the state, paused, `fps`) is the `ttd position` verb on every
+surface (CLI `ttd position`, `GET /api/v1/emulator/{id}/ttd/position` and its `call`, MCP `time_travel` `position`,
+`ttd_position()` in Lua and Python).
+
+Errors, the same on every surface: `Not Found` (no such action or instance), `Bad Request` (a value of the wrong
+kind), `not_now`, `Run-control held`, `held_by_other`, `revoked_by_user`, `companion_forbidden`, `held_by_session`,
+`Not Implemented`; the WebAPI answers 404, 400, 409, 403, 501.
+
+The catalogue rows also carry `description` (one sentence, for a palette's tooltip) and `toggle` (the action has an
+on / off state, shown by the readout `toggle.<id>`); the list has `rev`, the catalogue's revision (bumped when the Qt
+client registers or drops its GUI actions; `NC_ACTION_CATALOGUE`).
+
+#### 16.1 Surface targets, readouts, activity
+
+Which instance each control surface drives (Stream Deck integration
+[targeting.md](../../../inprogress/2026-10-19-streamdeck-integration/targeting.md)): the core's `TargetState` holds
+the **views** (a window with one active instance: unreal-qt's main window, the video wall), their focus order, and the
+**surface sessions** (a Stream Deck, one per serial; a REST surface) with their **pins**. The **followed instance** is
+the active instance of the front view that has one; headless, the selected instance, else the sole one. A WebAPI
+request without an instance id acts on the followed instance (T-1). The verbs are `actions::surfaces::Call`
+(`core/src/emulator/actions/surfacesapi.h`), the same on every plane:
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `surface views` | | The views in focus order (`id`, `name`, `owner`, `active`, `index`) and the followed instance as a target object | ✅ Implemented |
+| `surface target` | `[session]` | A target object: `instance`, `index`, `model`, `ram_kb`, `view` {`id`, `name`} or null, `mode` (`follow`, `view`, `instance`), `pin`, `source` (`view`, `selected`, `sole`, `none`); the followed instance's, or a session's | ✅ Implemented |
+| `surface sessions` | | Every surface session: `id`, `name`, `kind`, `serial`, `pin`, `target`, `notice` (why a pin fell back) | ✅ Implemented |
+| `surface pin` | `<session> <target>` | Pin a session: `follow` (unpin), `view:<id>` (that window's active instance), `instance:<id|index>`. `Not Found`: no such session, view or instance; `not_now`: a view pin on a headless host | ✅ Implemented |
+| `surface readouts` | `[names] [instance=]` | The readouts now (names or prefixes: `ttd.position`, `run.state`, `machine`, `media.tape`, `media.disk`, `audio.mute`, `debug.mode`, `toggle.*`); default all, of the followed instance. Unknown names are listed in `unknown` | ✅ Implemented |
+| `surface activity` | `[since] [instance=] [limit=]` | The activity feed: each action the registry ran (`seq`, `id`, `value`, `origin`, `surface`, `ok`, `error`, `t_ms`, `merged`), deltas of one surface within 100 ms merged; `last` (the next `since`), `dropped` | ✅ Implemented |
+| `surface view_add` / `view_update` / `view_remove` | `<name> [active=]` / `<view> [active=] [activate=true]` / `<view>` | A view of the automation plane (a window of another process, tests); `activate` moves any view to the front as a focus would; the active instance of a client's window is its own (`Conflict`) | ✅ Implemented |
+| `surface session_open` / `session` / `session_close` | `<name> [kind=] [target=]` / `<id>` / `<id>` | A surface session of the automation plane (a REST surface with a target of its own); a deck's session comes with the surface topic's `join` (S4) | ✅ Implemented |
+
+| Surface | Views / target | Pin | Readouts / activity |
+| :--- | :--- | :--- | :--- |
+| CLI | `surface views`, `surface target [s1]` | `surface pin s1 view:v1` | `surface readouts run.state,media.*`, `surface activity 12` |
+| WebAPI | `GET /api/v1/surfaces/views`, `GET /api/v1/surfaces/target[?session=]`, `GET /api/v1/surfaces/sessions[/{id}]` | `PUT /api/v1/surfaces/sessions/{id}/pin` `{"target":"view:v1"}` | `GET /api/v1/surfaces/readouts?names=`, `GET /api/v1/surfaces/activity?since=` |
+| WebSocket | each route as a `call` | the same `call`; the push: `target` on the `surface` topic (S4, on `NC_SURFACE_TARGET`) | `call`s; the pushes `readout`, `activity` on the `surface` topic (S4) |
+| MCP | `actions` action `views`, `target` (`session`), `sessions` | `actions` action `pin` (`session`, `pin`) | `actions` action `readouts` (`names`, `target`), `activity` (`since`, `limit`) |
+| Python | `emu.surfaces("views")`, `emu.surfaces("target", session="s1")` | `emu.surfaces("pin", session="s1", target="view:v1")` | `emu.surfaces("readouts", names=["run.state"])`, `emu.surfaces("activity", since=12)` |
+| Lua | `surfaces("views")` | `surfaces("pin", {session = "s1", target = "view:v1"})` | `surfaces("readouts", {names = {"run.state"}})`, `surfaces("activity", {since = 12})` |
+
+In the GUI (T-2): the status bar's surface icon (lit while a surface drives the window; a click lists every surface
+with "Pin here" / "Unpin") and the surfaces table of Tools > Controllers (each surface, what it drives, its pin).
 
 ## Future Capabilities
 

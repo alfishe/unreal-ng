@@ -126,20 +126,10 @@ void Retarget(json& doc, const std::string& from, const std::string& to)
 
 json NewScenario(const Model& m, const std::string& name)
 {
-    std::string model;
-    for (const char* n :
-         {"original", "classic", "mk2", "scissor", "xl", "xl2", "neo", "plus", "plusxl", "mini", "mini2", "pedal"})
-        if (FindModelByName(n) == &m)
-        {
-            model = n;
-            break;
-        }
-    if (model.empty())
-        model = sdb::Format("0x{:04X}", m.pid);
     return {{"format", "streamdeck-scenario"},
             {"version", kFormatVersion},
             {"name", name},
-            {"model", model},
+            {"model", ModelToken(m)},
             {"root", {{"id", "home"}, {"type", "menu"}, {"title", "Home"}, {"items", json::array()}}}};
 }
 
@@ -239,7 +229,7 @@ std::optional<Slot> FreeSlot(const json& doc, std::string_view menu)
     return std::nullopt;
 }
 
-Result InsertNode(json& doc, std::string_view parent, std::optional<Slot> at, json node)
+Result InsertNode(json& doc, std::string_view parent, std::optional<Slot> at, json node, const json* alsoTaken)
 {
     json* p = FindNode(doc, parent);
     if (!p)
@@ -263,6 +253,8 @@ Result InsertNode(json& doc, std::string_view parent, std::optional<Slot> at, js
     if (auto rs = ReservedSlot(doc, parent); rs && *rs == *at)
         return Result::Fail(sdb::Format("slot [{}, {}] is the back key", at->row, at->col));
     auto taken = AllIds(doc);
+    if (alsoTaken)
+        taken.merge(AllIds(*alsoTaken));
     Uniquify(node, taken);
     node["at"] = json::array({at->row, at->col});
     const std::string id = node["id"];

@@ -56,14 +56,14 @@ Daemon → viewer:
 
 | Type | Name | Payload |
 |:--|:--|:--|
-| `0x21` | `Welcome` | JSON: `{"v":2,"deck":"A1B2C3","model":"plusxl","pid":198,"real":true,"daemon":"<version>"}`, or an `error` (`no_deck`, `bad_role`, `version`) |
+| `0x21` | `Welcome` | JSON: `{"v":2,"deck":"A1B2C3","model":"plusxl","model_name":"Stream Deck + XL","pid":198,"real":true,"daemon":"<version>"}` (`model` is the model's token, the name `Join`'s `model` takes (`ModelToken()` in `sdb/models.h`: `plusxl`, `neo`, `mini`, ..., `0x` and four hex digits for a PID without a name); `model_name` is the display name; `pid` backs the token for a viewer that does not know it), or `{"v":2,"error":..}`: `bad_request` (not a JSON object, a field of the wrong type), `version`, `bad_role`, `bad_model` (own role: an unknown model), each followed by the close; `no_deck` (`"waiting":true`) keeps the connection: the mirror waits, a `Welcome` follows when its deck comes |
 | `0x01` | `Output` | output report |
 | `0x02` | `SetFeature` | feature report |
 | `0x03` | `GetFeature` | own role only |
 | `0x06` | `HostInput` | an input report from the real deck (mirror role) |
 | `0x07` | `HostNote` | UTF-8 log line |
 | `0x08` | `HostPage` | `describePage` JSON |
-| `0x23` | `DeckState` | JSON: `{"connected":true,"busy_by":null,"target":"W2 · #3 PENTAGON 128"}` (deck unplugged / replugged; what the runtime targets) |
+| `0x23` | `DeckState` | JSON: `{"connected":true,"busy_by":null,"target":"W2 · #3 PENTAGON 128"}` (deck unplugged / replugged; what the runtime targets). Sent today: `{"connected":bool}` only (`busy_by`, `target`: SD5 / SD7) |
 | `0x24` | `ReplayBegin` / `0x25` `ReplayEnd` | brackets the replay of the current picture ([§5](#5-replay-on-join)) |
 
 Gone: `SetModel 0x11` (a mirror follows the deck, an own deck chooses its model in `Join`), `HostMirror 0x09`
@@ -89,7 +89,9 @@ sequenceDiagram
     V->>M: Leave
 ```
 
-- A viewer that does not send `Join` within 2 s is closed.
+- A viewer that does not send `Join` within 2 s is closed; so is one whose first frame is not a `Join`, and one that
+  announces a frame over 16 MB (`kMaxFrame`). Frame types the daemon does not know are ignored (a newer viewer).
+- Conformance: `companions/streamdeck/tests/conformance_test.cpp` ([testing.md §3.1](testing.md#31-device-wire-and-daemon-routes-hardware-free-in-ci)).
 - Own role: the daemon creates a logical deck and a runtime for it with the scenario configured for `own` decks
   (default: the same default scenario) and joins the host for it ([daemon.md §4](daemon.md#4-surface-client)).
 - Several studios mirror the same deck: each gets the same frames; their inputs all reach the deck's runtime.

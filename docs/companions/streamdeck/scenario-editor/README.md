@@ -8,7 +8,7 @@ over WebAPI and MCP. The studio as a whole: [studio.md](../studio.md); the daemo
 |:--|:--|
 | [01-requirements.md](01-requirements.md) | What a scenario is, goals, requirements with their state (done / planned), scope |
 | [02-ux-design.md](02-ux-design.md) | On the deck: stack navigation, the back key, breadcrumbs, gestures, feedback. The editor window, gestures, menus and shortcuts, the agent flow |
-| [03-technical-design.md](03-technical-design.md) | File format v1 (JSON, YAML, CSV, TSV, includes), the model, validation, navigation, rendering, actions, document operations, the editor's classes, Run and autosave, tests |
+| [03-technical-design.md](03-technical-design.md) | File format v2, v1 still read (JSON, YAML, CSV, TSV, includes), the model, validation, navigation, rendering, actions, document operations, the editor's classes, Run and autosave, tests |
 | [04-automation.md](04-automation.md) | The editor's routes on `127.0.0.1:37052`, the runtime proxy, the daemon routes Run uses, MCP |
 
 ```mermaid

@@ -1143,8 +1143,14 @@ void SoundManager::handleStep()
     // work is unobservable to the program: the AY register file is written
     // by PortDecoder on OUT. Recording keeps the full path so DSD
     // native-rate capture and recorded audio stay intact.
-    if (_turboSound)
-        _turboSound->handleStep();
+    if (!_turboSound)
+        return;
+    // The device's step gate tested here, without the call: most steps only note where they ended
+    Core* core = _context->pCore;
+    const EmulatorState& state = _context->emulatorState;
+    if (core && _turboSound->noteGatedStep(state.AudioTstate(core->GetZ80()->t), state.HostSpeedMultiplier()))
+        return;
+    _turboSound->handleStep();
 }
 
 void SoundManager::renderCdAudio(size_t samples)

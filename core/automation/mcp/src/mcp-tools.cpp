@@ -20,6 +20,7 @@
 #include "mcp-media.h"
 #include "mcp-bus.h"
 #include "mcp-slots.h"
+#include "mcp-actions.h"
 #include "mcp-controllers.h"
 #include "mcp-router.h"
 #include "mcp-symbols.h"
@@ -5066,9 +5067,21 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 else if (action == "position")
                 {
                     CallAndSummarize("GET", Endpoint(id, "/ttd/position"), nullptr, caller, [](const Json::Value& b) {
-                        return "At " + FormatTimePoint(b["current"]["frame"], b["current"]["tinframe"]) + ", session ends at " +
-                               FormatTimePoint(b["session_end"]["frame"], b["session_end"]["tinframe"]) + " (state " +
-                               b["state"].asString() + ")";
+                        std::string text = "At " + FormatTimePoint(b["current"]["frame"], b["current"]["tinframe"]) +
+                                           ", session ends at " +
+                                           FormatTimePoint(b["session_end"]["frame"], b["session_end"]["tinframe"]) +
+                                           " (state " + b["state"].asString() +
+                                           (b.get("paused", false).asBool() ? ", paused" : "") + ")";
+                        if (b.get("history", false).asBool())
+                            text += "; history from frame " + std::to_string(b["first_frame"].asUInt64());
+                        if (b.isMember("fps"))
+                        {
+                            std::ostringstream fps;
+                            fps.precision(4);
+                            fps << b["fps"].asDouble();
+                            text += "; " + fps.str() + " frames/s";
+                        }
+                        return text;
                     }, done);
                 }
                 else if (action == "markers")
@@ -5990,6 +6003,8 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterMediaSlots(*registry);
     // controllers: connectors and retro devices (docs/inprogress/2026-10-17-controller-manager/surfaces.md §7)
     RegisterControllers(*registry);
+    // actions: the core ActionRegistry by id (docs/inprogress/2026-10-18-control-surfaces/actions.md §6)
+    RegisterActions(*registry);
     // bus_analyzer: peripheral bus traces, checks, SD card timing (docs/inprogress/2026-10-11-bus-analyzer)
     RegisterBusAnalyzer(*registry);
 

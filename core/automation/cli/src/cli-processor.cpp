@@ -231,6 +231,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"slots", &CLIProcessor::HandleSlots},
                         // Joystick connectors: the retro devices plugged into them, live input (ControllerControl)
                         {"controllers", &CLIProcessor::HandleControllers},
+                        {"action", &CLIProcessor::HandleAction},
+                        {"surface", &CLIProcessor::HandleSurface},
 
                         // ZX-MultiSound card and its MIDI synthesizer
                         {"multisound", &CLIProcessor::HandleMultiSound},
@@ -832,6 +834,9 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  controllers plug <connector|auto> <device> [opt=val ..] | unplug <connector>" << NEWLINE;
     oss << "  controllers input <connector> press=up+fire | release=fire | set=none" << NEWLINE;
     oss << "  controllers help       - All verbs and flags" << NEWLINE;
+    oss << "  action [list]          - Host actions (run control, time travel, machine) and whether they can run" << NEWLINE;
+    oss << "  action run <id> [value] - Run one, e.g. action run run.pause_toggle, action run ttd.jog_frames -10" << NEWLINE;
+    oss << "  surface [views]        - Control surface targets: views, target, sessions, pin, readouts, activity" << NEWLINE;
     oss << NEWLINE;
     oss << "ZX-MultiSound and MIDI:" << NEWLINE;
     oss << "  multisound [--full|--json] - The card: options, CPLD, YM2203 pair, SAA1099, GS, DACs, MIDI" << NEWLINE;

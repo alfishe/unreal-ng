@@ -95,6 +95,15 @@ struct Model
 // "0x0084", "84", or a name: original classic mk2 scissor module15 xl xl2 module32 neo plus plusxl mini mini2 discord
 // module6 pedal
 [[nodiscard]] const Model* FindModelByName(const std::string& name);
+// The names FindModelByName knows (the first one of each model is its token), and a model's token: what a scenario's
+// "model", the studio and the wire write ("0x00C6" style for a model without a name).
+struct ModelAlias
+{
+    std::string_view name;
+    std::uint16_t pid;
+};
+[[nodiscard]] std::span<const ModelAlias> ModelAliases();
+[[nodiscard]] std::string ModelToken(const Model& m);
 
 // Where every key (and the window strip) sits inside the full-panel image, in logical pixels.
 // Source: Elgato HID docs, "Unit Pixel Layout" drawings (2025-11). Empty colX for models without a full-panel image.

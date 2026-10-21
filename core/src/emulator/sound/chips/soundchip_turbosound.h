@@ -109,12 +109,8 @@ protected:
     // the TTD base. false until the first one after reset / restore
     int64_t _lastSeenT = 0;
     bool _seenT = false;
-    // The step gate (handleStep): the audio T before which a step completes no output sample - such a step only moves
-    // the timeline and the sample phase, so it notes its T (_pendingT) and settleSteps books it once. 0: every step the
-    // full way. Set only by the full way; every other entry clears it first
-    int64_t _stepDeadline = 0;
-    int64_t _pendingT = 0;
-    bool _stepPending = false;
+    // The step gate (ITurboSoundDevice::_stepDeadline): a step before the deadline only moves the timeline and the
+    // sample phase. Off: every step the full way (tests)
     bool _stepGate = true;
     // The quiet deferral: the gate holds until the next entry (a port, the frame end...) because the device is quiet at
     // rest - every output is +0.0 until a write; settleSteps then runs the step at the last noted T, which renders the
@@ -506,14 +502,14 @@ private:
             // The step at the last noted T, as handleStep would have taken it; the entry that called this then acts on
             // the device, so the gate stays open after it
             _quietDeferral = false;
-            stepAt(_pendingT);
+            stepAt(int64_t(_pendingT));
             _stepDeadline = 0;
             _quietDeferral = false;
             return;
         }
-        _lastSeenT = _pendingT;
+        _lastSeenT = int64_t(_pendingT);
         _seenT = true;
-        const int64_t frameT = int64_t(_context->config.frame);
+        const uint64_t frameT = uint64_t(_context->config.frame);
         const uint32_t scaled = uint32_t(frameT > 0 ? std::min(_pendingT, frameT) : _pendingT);  // x1 speed only
         if (scaled > _lastTStates)
             _samplePhase += uint64_t(scaled - _lastTStates) * _coreRate;

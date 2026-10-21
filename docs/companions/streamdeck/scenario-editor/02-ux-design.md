@@ -116,8 +116,8 @@ it beside the deck in one window.
 | Tree | Every node with its key (`row,col`) and kind (`menu (n)` for menus); menus bold, nodes with errors red, `#tags` after the title. Included nodes italic and grey, an include placeholder marked `↪`. Selecting a node shows its menu on the canvas; double-click enters a menu |
 | Breadcrumbs | Above the canvas: the path of the shown menu; a click shows that level (the editor's view, not the deck's) |
 | Canvas | The shown menu on the model's panel, faces drawn by the runtime's renderer at the key's own size. The back key hatched (reserved); keys with errors get a red dot; the selection a cyan frame; a click on the strip or a dial selects the menu itself |
-| Inspector | A form for the selection; with nothing selected, the scenario (name, model, stack navigation, breadcrumbs, hold = home, the WebAPI URL and the emulator id). Below it the node's JSON: Apply replaces the node's fields (not `items`, not `at`) as one undo step |
-| Palette | Presets by category, a search box; drag one onto a key. Generic: Menu, Menu (back key), HTTP request, Multi action, Toggle, Delay, Shell command, Open URL / file, Keystroke, Type text, Back, Home, Go to menu, Brighter, Dimmer. The user's own from `<config>/unreal-ng/streamdeck/presets/*.json` ([studio.md §5](../studio.md#5-the-scenario-editor)) |
+| Inspector | A form for the selection; with nothing selected, the scenario (name, model — every model by its token, stack navigation, breadcrumbs, hold = home, the WebAPI URL and the emulator id). Below it the node's JSON: Apply replaces the node's fields (not `items`, not `at`) as one undo step |
+| Palette | Presets by category, a search box; drag one onto a key. Generic: Menu, Menu (back key), HTTP request, Multi action, Toggle, Delay, Shell command, Open URL / file, Keystroke, Type text, Back, Home, Go to menu, Brighter, Dimmer. One per action of the catalogue (`unreal-ng: <group>`, the `action` kind). The user's own from `<config>/unreal-ng/streamdeck/presets/*.json` ([studio.md §5](../studio.md#5-the-scenario-editor)) |
 | Issues | Validation, errors (✖) and warnings (⚠); double-click selects the node. Errors block Run |
 | Runtime | The run's lines (see [§3](#3-running-on-the-deck)) |
 
@@ -126,8 +126,9 @@ The inspector's form, by node:
 | Node | Fields |
 |:--|:--|
 | Every node | Id (a rename makes it unique; `nav` targets follow), Title, Tags (comma separated), Key (shown; moved on the canvas), Label, Icon (the built-in icon names), Background / Foreground (hex or a colour picker), Image (a file picker) |
-| Action | Action kind (`webapi`, `http`, `multi`, `toggle`, `shell`, `open`, `keys`, `nav`, `delay`, `brightness`; a new kind starts from a template), Method (`webapi`, `http`), the kind's main argument (path, url, command, target, combo, to, ms, value), `node` for `nav` to a node, `body` (JSON, `webapi` / `http`), Then |
-| Menu | Breadcrumbs (inherit, strip, key, none), Back key (`row, col`; `none`; empty = inherit), Auto exit (seconds, `inherit`), Dials (inherit, own), Strip (content), Strip text, the item count |
+| Action | Action kind (the 15 kinds: `action`, `webapi`, `http`, `multi`, `toggle`, `first`, `dir`, `delay`, `ttd_seek`, `run_toggle`, `shell`, `open`, `keys`, `nav`, `brightness`; a new kind starts from a template, an unknown kind is shown as it is). `action`: the action picker ("Group: Label  [id]", from the shipped catalogue or, after "Catalogue from the running emulator", the host's; a typed id is taken; an unknown id is shown as it is and warned about), its kind / held / params line, Value (JSON or plain text; empty = a press), Hold. `webapi` is marked "REST, breaks when the route changes". Method (`webapi`, `http`), the kind's main argument (path, url, command, target, combo, to, ms, value), `node` for `nav` to a node, `body` (JSON, `webapi` / `http`), State (a readout path for `face_on`), Then |
+| Scenario (nothing selected) | Name, Model, navigation settings; v1: WebAPI, Emulator, "Convert to v2 now" (Save converts too, one undo step); v2: Target (follow, view 1-4), Activity (on, flash keys, strip none / line) |
+| Menu | Context, Breadcrumbs (inherit, strip, key, none), Back key (`row, col`; `none`; empty = inherit), Auto exit (seconds, `inherit`), Dials (inherit, own), Strip (content), Strip text, the item count |
 | Include | File (relative to the scenario's folder), Node, Title; buttons "Open the file in the editor", "Inline here (editable copy)" |
 | Included node | Read-only: the file it comes from, "Open <file>" |
 
@@ -149,11 +150,11 @@ the JSON box.
 | Double-click a menu key / the back key | Enter / up one level |
 | Right-click a key | Enter, Duplicate, Inline (an include), Export subtree..., Move to file (link)..., Delete; on an empty key: Import file as submenu..., Link file here (include)..., Import file items into this menu..., Add <category> > <preset>; Up one level |
 | Delete; Backspace on the canvas or the tree | Delete the selected node and its subtree |
-| Cmd+C / Cmd+V | Copy the selected node / paste it into the shown menu (the clicked empty key, else the first free one) |
+| Cmd+C / Cmd+V | Copy the selected node / paste it into the shown menu (the clicked empty key, else the first free one); a copy of an included node is an ordinary editable node, its ids made unique against the included ones |
 | Cmd+D | Duplicate into the next free key |
 | Cmd+Z / Shift+Cmd+Z | Undo / redo |
 | Esc | Up one level |
-| Cmd+S | Save (asks for a file when untitled) |
+| Cmd+S | File › Save Scenario, docked or floating (asks for a file when untitled) |
 
 In a text field (the inspector, the JSON box, the runtime log) the edit keys work on the text.
 

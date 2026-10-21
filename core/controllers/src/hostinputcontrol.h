@@ -11,7 +11,8 @@
 ///
 /// Verbs: devices, context, profiles, profile, save, delete, apply, bindings, bind, unbind, scheme (the scheme a user
 /// profile extends: how the pad works, Kempston, Sinclair 1, QAOP + Space), haptics (what a device's motors can do, or
-/// why not), rumble (play a test effect on a device, haptics.md §10).
+/// why not), rumble (play a test effect on a device, haptics.md §10), output (a control surface's pattern, steps and
+/// clicks, or a seek's marks as its layer plays them: control surfaces controls-and-feedback.md §3).
 ///
 /// @code
 ///   HostRequest request{"apply", {{"id", "builtin/game/vradarks-revenge"}}};
@@ -116,6 +117,9 @@ private:
     HostReply Scheme(const HostRequest& request);
     HostReply Haptics(const HostRequest& request);
     HostReply Rumble(const HostRequest& request);
+    /// A surface's outputs (control surfaces controls-and-feedback.md §3): a pattern, the steps / clicks, or a seek's
+    /// marks as the device's top layer plays them
+    HostReply Output(const HostRequest& request);
     /// The user profile a request edits (profile=, else by device / family), copied from the store or new
     bool EditProfile(const HostRequest& request, bool mustExist, Profile& profile, std::string& id, HostReply& failure);
     /// Check through the reader, save, keep and apply

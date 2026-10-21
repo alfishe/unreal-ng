@@ -1,9 +1,11 @@
 #include "sdb/daemondecks.h"
 
 #include <algorithm>
-#include <thread>
+#include <filesystem>
 
+#include "sdb/datadir.h"
 #include "sdb/deckhub.h"
+#include "sdb/idlescenario.h"
 #include "sdb/runtime.h"
 #include "sdb/scenarioio.h"
 
@@ -16,9 +18,6 @@ using automation::Request;
 
 namespace
 {
-constexpr const char* kIdle = R"({"name": "idle", "model": "plusxl",
-  "root": {"id": "home", "type": "menu", "title": "unreal-streamdeck", "items": []}})";
-
 std::string ModelName(const Model* m)
 {
     return m ? std::string(m->name) : std::string();
@@ -38,6 +37,12 @@ std::optional<scn::Scenario> DaemonDecks::LoadFile(const std::string& file, std:
         return std::nullopt;
     std::vector<scn::Issue> issues;
     auto s = scn::Parse(*doc, issues);
+    if (s)
+    {  // $scenario and relative picture paths: the file's folder, not the working directory
+        std::error_code ec;
+        const auto abs = std::filesystem::absolute(file, ec);
+        s->dir = (ec ? std::filesystem::path(file) : abs).parent_path().lexically_normal().generic_string();
+    }
     for (const auto& i : issues)
         if (!i.error && log)
             log("warning: " + file + ": " + i.node + ": " + i.message);
@@ -51,17 +56,28 @@ std::optional<scn::Scenario> DaemonDecks::LoadFile(const std::string& file, std:
     return s;
 }
 
-scn::Scenario DaemonDecks::Idle()
+json DaemonDecks::IdleDocument(const Model* model)
+{
+    return idle::Document(model ? *model : *FindModelByName("plusxl"), data::Root());
+}
+
+scn::Scenario DaemonDecks::Idle(const Model* model)
 {
     std::vector<scn::Issue> issues;
-    return *scn::Parse(json::parse(kIdle), issues);
+    if (auto s = scn::Parse(IdleDocument(model), issues))
+        return *s;
+    // not expected (the tests parse it for every model); the bare menu keeps the deck usable
+    return *scn::Parse(json{{"name", "idle"},
+                            {"model", model ? ModelToken(*model) : std::string("plusxl")},
+                            {"root", {{"id", "home"}, {"type", "menu"}, {"title", idle::kTitle}}}},
+                       issues);
 }
 
 bool DaemonDecks::LoadStart(std::string* error)
 {
     if (_options.startFile.empty())
     {
-        _start = Idle();
+        _start.reset();  // made per deck: the idle screen is laid out for the deck's model
         return true;
     }
     std::string e;
@@ -71,10 +87,10 @@ bool DaemonDecks::LoadStart(std::string* error)
     return _start.has_value();
 }
 
-scn::Scenario DaemonDecks::StartScenario() const
+scn::Scenario DaemonDecks::StartScenario(const Model* model) const
 {
     std::lock_guard lock(_mutex);
-    return _start ? *_start : Idle();
+    return _start ? *_start : Idle(model);
 }
 
 std::map<std::string, DaemonDecks::Clock> DaemonDecks::Stamp(const std::vector<std::string>& files)
@@ -161,7 +177,13 @@ bool DaemonDecks::LoadScenario(const std::string& serial, const std::string& fil
     std::string e;
     if (start)
     {  // the start scenario as the daemon loaded it (its file may have changed since: then read it again)
-        s = StartScenario();
+        const Model* model = nullptr;
+        {
+            std::lock_guard lock(_mutex);
+            if (auto it = _decks.find(target); it != _decks.end())
+                model = it->second.model;
+        }
+        s = StartScenario(model);
         files = _startFiles;
     }
     else
@@ -356,6 +378,21 @@ void DaemonDecks::AddRoutes(automation::Api& api)
 {
     const automation::Param deckQuery{"deck", "query", "string", "deck serial (default: the first real deck)"};
     const automation::Param serialPath{"serial", "path", "string", "deck serial, or \"first\"", true};
+    // The answer of a route that posted to a runtime: its state once the device thread has applied the request (one
+    // step, ~10 ms), without holding the decks' lock meanwhile and without a fixed sleep. A device thread that does not
+    // come round within the bound (stopping, stuck): 202 with the state as it is, the request stays queued.
+    const auto afterStep = [this](const std::string& deck, const scn::Runtime::Ticket& ticket) {
+        const bool applied = ticket.Wait(std::chrono::milliseconds(_options.applyTimeoutMs));
+        Reply r = WithDeck(deck, [&](Entry& e) {
+            json s = e.runtime->State();
+            s["deck"] = e.serial;
+            s["applied"] = applied;
+            return Reply::Ok(std::move(s));
+        });
+        if (!r.IsError() && !applied)
+            r.status = 202;
+        return r;
+    };
 
     api.Add({"GET",
              "/api/v1/health",
@@ -450,7 +487,7 @@ void DaemonDecks::AddRoutes(automation::Api& api)
                      if (r.Flag("document"))
                      {
                          std::string err;
-                         auto doc = e.file.empty() ? std::optional<json>(json::parse(kIdle))
+                         auto doc = e.file.empty() ? std::optional<json>(IdleDocument(e.model))
                                                    : scn::io::LoadFile(e.file, &err);
                          j["document"] = doc ? *doc : json();
                          if (!doc)
@@ -585,16 +622,17 @@ void DaemonDecks::AddRoutes(automation::Api& api)
               {"to", "body", "string", "back | home | node", true, {"back", "home", "node"}},
               {"node", "body", "string", "node id for to=node"}},
              json{{"to", "node"}, {"node", "debug"}},
-             [this](const Request& r) {
+             [this, afterStep](const Request& r) {
                  const std::string deck = r.Str("deck");
+                 scn::Runtime::Ticket ticket;
                  Reply first = WithDeck(deck, [&](Entry& e) {
                      e.runtime->Navigate(r.body);
+                     ticket = e.runtime->Posted();
                      return Reply::Ok();
                  });
                  if (first.IsError())
                      return first;
-                 std::this_thread::sleep_for(std::chrono::milliseconds(40));  // applied by the device thread
-                 return WithDeck(deck, [](Entry& e) { return Reply::Ok(e.runtime->State()); });
+                 return afterStep(deck, ticket);
              }});
     api.Add({"POST",
              "/api/v1/press",
@@ -605,22 +643,26 @@ void DaemonDecks::AddRoutes(automation::Api& api)
               {"node", "body", "string", "node id on the current page"},
               {"key", "body", "integer", "key index"}},
              json{{"node", "pause"}},
-             [this](const Request& r) {
+             [this, afterStep](const Request& r) {
                  const std::string deck = r.Str("deck");
+                 scn::Runtime::Ticket ticket;
                  Reply first = WithDeck(deck, [&](Entry& e) {
                      if (r.Has("key"))
                      {
                          e.runtime->Inject({EventType::KeyDown, static_cast<int>(r.Num("key"))});
                          e.runtime->Inject({EventType::KeyUp, static_cast<int>(r.Num("key"))});
+                         ticket = e.runtime->Posted();
                          return Reply::Ok();
                      }
                      std::string err;
-                     return e.runtime->PressNode(r.Str("node"), &err) ? Reply::Ok() : Reply::Error(404, err);
+                     if (!e.runtime->PressNode(r.Str("node"), &err))
+                         return Reply::Error(404, err);
+                     ticket = e.runtime->Posted();
+                     return Reply::Ok();
                  });
                  if (first.IsError())
                      return first;
-                 std::this_thread::sleep_for(std::chrono::milliseconds(60));
-                 return WithDeck(deck, [](Entry& e) { return Reply::Ok(e.runtime->State()); });
+                 return afterStep(deck, ticket);
              }});
     api.Add({"POST",
              "/api/v1/reload",
@@ -668,14 +710,16 @@ void DaemonDecks::AddRoutes(automation::Api& api)
              nullptr,
              [this](const Request& r) {
                  std::string file;
+                 const Model* model = nullptr;
                  Reply rep = WithDeck(r.Str("deck"), [&](Entry& e) {
                      file = e.file;
+                     model = e.model;
                      return Reply::Ok({{"deck", e.serial}});
                  });
                  if (rep.IsError())
                      return rep;
                  std::string e;
-                 auto doc = file.empty() ? std::optional<json>(json::parse(kIdle)) : scn::io::LoadFile(file, &e);
+                 auto doc = file.empty() ? std::optional<json>(IdleDocument(model)) : scn::io::LoadFile(file, &e);
                  if (!doc)
                      return Reply::Error(500, e);
                  rep.body["file"] = file;

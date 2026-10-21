@@ -1643,7 +1643,7 @@ GET  /api/v1/emulator/{id}/controllers                   the machine's connector
 GET  /api/v1/emulator/{id}/controllers/{connector}       one connector
 POST /api/v1/emulator/{id}/controllers/{connector}/{verb} plug {device, options} | unplug | options | input
 GET  /api/v1/controllers/{verb}                          devices | context | profiles | profile | bindings | haptics
-POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble
+POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble | output
 ```
 
 The machine routes are ControllerControl, the host routes HostInputControl
@@ -1653,6 +1653,68 @@ called with the wrong method answers `405`. `GET /api/v1/controllers/haptics[?de
 `POST /api/v1/controllers/rumble {"device": "...", "effect": "clicks"}` plays one (`identify` by default): `200` with
 `message`, `404` `unknown-device`, `400` `bad-request` for an effect the device lacks, `503` `unavailable` with the
 reason for a device without drivable motors or a process without the Qt client.
+
+`POST /api/v1/controllers/output` drives a control surface's outputs (the Surface Dial): `{"device", "pattern":
+"tick|double|buzz"}` plays a pattern; `{"device", "steps": 36, "clicks": false}` sets its feel until its context or
+layers change; `{"device", "marks": ["ten_seconds", "second"]}` plays what its top layer's feel names for a seek's
+marks (`played`, `mark`, `pattern`, else `reason`, e.g. the marks' rate limit). `GET /api/v1/controllers/devices`
+gives each device's `role` (`role_set`), `layers`, `context`, `outputs` and `feel`. On the WebSocket `/api/v1/ws`
+both are `call`s, as every route.
+
+### Host Actions
+
+```
+GET  /api/v1/controllers/actions[?instance=<id|index>]   the catalogue: id, label, group, kind, held, gui, scope,
+                                                          needs_pause, available (+ error, reason)
+POST /api/v1/controllers/actions/{id}                     {instance?, value?, params?}: run it, answer when done
+```
+
+The core `ActionRegistry` ([command-interface.md section 16](./command-interface.md#16-host-actions); OpenAPI tag
+`Controllers`). `instance` defaults to the followed instance (below: the focused window's), else the selected one, else
+the only one. The catalogue rows carry `description` and `toggle` too, the list `rev`. `value` by the action's kind: press -
+omitted / `true` / `false` / `{pressed}`; delta - steps or `{delta, rate}`; level - 0..1; text - a string. The routes
+are outside `/api/v1/emulator/`, so the registry applies the caller's gate itself, with the same answers: a changing
+action without a session opens the implicit run-control session (`automation_session` in the reply and the
+`X-Unreal-Session*` headers), `X-Unreal-Session` runs as that session, a companion token is checked against its
+scopes. The reply: `{ok, action, instance, message, result}`; errors `404` Not Found, `400` Bad Request, `403`
+companion_forbidden, `409` not_now / Run-control held / held_by_other / held_by_session / revoked_by_user, `501` Not
+Implemented (a stub). Every route is also a WebSocket call on `/api/v1/ws` ([websocket-interface.md](./websocket-interface.md)).
+
+```
+GET  /api/v1/surfaces/context[?instance=<id|index>]       the surface context: {ok, instance, context, set, by,
+                                                          default}; set it with POST …/actions/ctx.set {"value":"ttd"}
+```
+
+The control-surface actions ([command-interface.md section 16](./command-interface.md#16-host-actions)):
+`POST /api/v1/controllers/actions/ttd.seek_by` `{"value": {"delta": -3, "rate": 18.5}, "params": {"unit": "frames",
+"min": 1, "max": 100}}` answers the seek's body plus `from`, `frame`, `frames`, `fps`, `marks`;
+`POST …/run.step_by` `{"value": -4}` steps back through the history (forward: step in); `POST …/ctx.set`
+`{"value": "ttd.timecode"}`. `/api/v1/controllers/context` stays the host controllers' own verb (the router's
+focused instance), not this context.
+
+```
+GET    /api/v1/surfaces/views                            the views (windows) in focus order + the followed instance
+POST   /api/v1/surfaces/views                            {name, active?, activate?}: a view of the automation plane
+PUT    /api/v1/surfaces/views/{view}                     {active?, activate?}
+DELETE /api/v1/surfaces/views/{view}
+GET    /api/v1/surfaces/target[?session=]                the followed instance's target object, or a session's
+GET    /api/v1/surfaces/sessions                         every surface session and its target
+POST   /api/v1/surfaces/sessions                         {name, kind?, serial?, target?}: a REST surface's session
+GET    /api/v1/surfaces/sessions/{session}
+DELETE /api/v1/surfaces/sessions/{session}
+PUT    /api/v1/surfaces/sessions/{session}/pin           {target: follow | view:<id> | instance:<id|index> | {view} | {instance}}
+GET    /api/v1/surfaces/readouts[?instance=&names=]      the readout vocabulary now: {values, unknown}
+GET    /api/v1/surfaces/activity[?since=&instance=&limit=] the activity feed: {entries, last, dropped}
+```
+
+Control surface targets ([command-interface.md section 16.1](./command-interface.md#161-surface-targets-readouts-activity),
+Stream Deck integration [targeting.md](../../../inprogress/2026-10-19-streamdeck-integration/targeting.md)). **"No id"
+(T-1)**: every route that takes an optional instance (`/controllers/actions`, `/surfaces/context`, `/surfaces/readouts`,
+the `/audio` and device routes without an id) acts on the followed instance - the active instance of the window the
+user focused last - when the host has views (unreal-qt, the video wall); headless it stays the selected instance, else
+the only one. A target object: `{instance, index, model, ram_kb, view: {id, name} | null, mode, pin, source}`.
+Errors: `404` no such view, session or instance; `400` a target that does not parse, a session without a name; `409`
+`not_now` (a view pin on a headless host), `Conflict` (a client's window, a surface's own session).
 
 ### Snapshots (Implemented Separately)
 ```
@@ -1757,7 +1819,7 @@ Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset
 | `POST` | `/ttd/find-last` | See "find-last request" below | `found`; on a hit `frame`, `tinframe`, `pc`, `value`, `phys_page` (`null` for ROM / no RAM page / another space), `access`, `space`, and `addr` (space `ram`) or `offset` (space `vram` / `cache`); when a marker blocked the search `blocked: true`, `marker_frame`, `marker_tinframe`, `marker_kind`, `marker_reason`; always (unless refused) `covered_from`, `covered_from_tinframe`, `covered_to`, `covered_to_tinframe` - the searched span | ✅ Implemented |
 | `POST` | `/ttd/port-events` | `{"event": "key", "arg": "space", ...options}` | "When did the program ...": `event`, `direction` (`in`/`out`), `count`, `truncated`, `scanned`, `hits` (`index`, `frame`, `tinframe`, `port`, `value`, `pc`, `ay_register` for AY queries). 409 without port journals or while a recording runs. See "port-events request" below | ✅ Implemented |
 | `POST` | `/ttd/resume` | Optional `{"frame": N, "tinframe"?: T}`; default is the current position | `resumed`, `frame`, `tinframe`, `state`. Truncates everything after the point and records again; resumes the emulator on success. Fails (`resumed: false`) from `idle` — seek first. | ✅ Implemented |
-| `GET`  | `/ttd/position` | — | `current {frame, tinframe}`, `session_end {frame, tinframe}`, `state` | ✅ Implemented |
+| `GET`  | `/ttd/position` | — | `current {frame, tinframe}`, `session_end {frame, tinframe}`, `state`, `history`, `first_frame`, `paused`, `fps` (the machine's unscaled frame rate). The bounds come from the TTD's published cursor: the read never parks the machine (companions poll it at 50 Hz) | ✅ Implemented |
 | `GET`  | `/ttd/markers` | — | `count`, `markers[] {frame, tinframe, kind, reason}` — kinds `tape_control`, `disk_write`, `debugger_edit` (a tool edit made while recording), `other`; `hardware_reset` is reserved and never written (a reset stops the recording instead) | ✅ Implemented |
 | `GET`  | `/ttd/bookmarks` | — | `count`, `bookmarks[] {frame, tinframe, label}` (time-sorted) | ✅ Implemented |
 | `POST` | `/ttd/bookmarks` | `{"label": "...", "frame"?: N, "tinframe"?: T}` — no `frame` = current position. Label: non-empty, at most 63 characters, unique per session. | **201** with `added`, `label`, `frame`, `tinframe`. 400 for a missing/empty/overlong label; 409 for a duplicate label or a position outside the timeline. | ✅ Implemented |

@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
 
+#include "sdb/datadir.h"
 #include "sdb/jpeg.h"
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -259,6 +261,67 @@ std::optional<Rgb> LoadImage(const std::filesystem::path& file)
     }
     stbi_image_free(data);
     return o;
+}
+
+std::optional<ImageRef> ParseImageRef(const std::string& ref)
+{
+    ImageRef r;
+    const auto hash = ref.rfind("#xywh=");
+    if (hash == std::string::npos)
+    {
+        r.file = ref;
+        return r;
+    }
+    r.file = ref.substr(0, hash);
+    std::string v = ref.substr(hash + 6);
+    if (v.rfind("pixel:", 0) == 0)
+        v = v.substr(6);
+    int n[4] = {};
+    size_t at = 0;
+    for (int i = 0; i < 4; ++i)
+    {
+        const size_t end = i < 3 ? v.find(',', at) : v.size();
+        if (end == std::string::npos || end == at)
+            return std::nullopt;
+        const std::string t = v.substr(at, end - at);
+        const size_t digits = t[0] == '-' ? 1 : 0;
+        if (t.size() == digits || t.size() > 6 || t.find_first_not_of("0123456789", digits) != std::string::npos)
+            return std::nullopt;
+        n[i] = std::atoi(t.c_str());
+        at = end + 1;
+    }
+    if (n[2] <= 0 || n[3] <= 0)
+        return std::nullopt;
+    r.region = true;
+    r.x = n[0];
+    r.y = n[1];
+    r.w = n[2];
+    r.h = n[3];
+    return r;
+}
+
+std::optional<Rgb> LoadImageRef(const std::string& ref, const std::filesystem::path& scenarioDir)
+{
+    const auto r = ParseImageRef(ref);
+    if (!r)
+        return std::nullopt;
+    auto img = LoadImage(data::Resolve(r->file, scenarioDir));
+    if (!img || !r->region)
+        return img;
+    Rgb out(r->w, r->h);
+    for (int y = 0; y < r->h; ++y)
+    {
+        const int sy = r->y + y;
+        if (sy < 0 || sy >= img->h)
+            continue;
+        for (int x = 0; x < r->w; ++x)
+        {
+            const int sx = r->x + x;
+            if (sx >= 0 && sx < img->w)
+                std::memcpy(out.At(x, y), img->At(sx, sy), 3);
+        }
+    }
+    return out;
 }
 
 std::vector<std::uint8_t> EncodeJpeg(const Rgb& img, int quality)

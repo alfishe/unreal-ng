@@ -93,6 +93,28 @@ public:
     }
     /// endregion </Haptics>
 
+    /// region <Surface outputs (control surfaces controls-and-feedback.md §3, architecture.md §9)>
+    /// OutputKind bits of @p device (0: none)
+    uint8_t Outputs(const HostDeviceId& device) const;
+    /// Play a pattern / set the steps on a surface; never blocks (the device's writer queues it). False for a device
+    /// without that output. The router's feel changes (context, layers, profiles) come here by themselves
+    bool Output(const HostDeviceId& device, const HapticOut& out);
+    bool Output(const HostDeviceId& device, const StepsOut& out);
+
+    /// What PlayMarks did
+    struct MarksPlayed
+    {
+        bool played = false;
+        std::string mark;     ///< the mark that played (the strongest one the layer has a pattern for)
+        HapticPattern pattern = HapticPattern::Tick;
+        std::string reason;   ///< why nothing played
+    };
+    /// A seek's marks (strongest first, as `ttd.seek_by` returns them) felt on the device that moved: the pattern its
+    /// top layer's feel names for the strongest of them, unless a mark played less than `min_interval_ms` ago (an
+    /// `edge` or a `barrier` always plays). @p nowMs 0: the steady clock
+    MarksPlayed PlayMarks(const HostDeviceId& device, const std::vector<std::string>& marks, uint64_t nowMs = 0);
+    /// endregion </Surface outputs>
+
     /// region <IBackendSink>
     void OnDeviceAdded(const HostDeviceInfo& device) override;
     void OnDeviceRemoved(const HostDeviceId& device) override;
@@ -119,6 +141,8 @@ private:
     mutable std::mutex _liveMutex;
     std::map<HostDeviceId, std::map<std::string, float>> _live;
     std::map<HostDeviceId, std::string> _deviceBackend;  ///< under _mutex: the backend that reported a device
+    std::mutex _marksMutex;
+    MarkLimiter _marks;  ///< under _marksMutex
     /// Last member: destroyed first, while the backends it writes to still exist
     std::unique_ptr<HapticMixer> _haptics;
 };

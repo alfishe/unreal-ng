@@ -9,6 +9,7 @@
 
 #include "fkYAML.hpp"
 #include "rapidcsv.h"
+#include "sdb/scenario.h"
 
 namespace sdb::scn::io
 {
@@ -59,8 +60,9 @@ std::string WriteTable(const json& doc, char sep)
         if (doc.contains("settings"))
             extra["settings"] = doc["settings"];
         for (const auto& [k, v] : doc.items())
-            if (k != "settings" && k != "root" && k != "name" && k != "model" && k != "format" && k != "version")
-                extra[k] = v;
+            if (k != "settings" && k != "root" && k != "name" && k != "model" && k != "format" &&
+                !(k == "version" && v == kFormatVersion))
+                extra[k] = v;  // an older version stays said (the reader takes the current one otherwise)
         const std::string name = doc.value("name", "");
         rows.push_back({name, "", "scenario", name, "", "", "", "", "", "", doc.value("model", ""), "", "", "", "",
                         extra.empty() ? "" : extra.dump()});
@@ -174,7 +176,7 @@ std::optional<json> ReadTable(const std::string& text, char sep, std::string* er
         const auto r = d.GetRow<std::string>(row);
         return it->second < r.size() ? r[it->second] : std::string();
     };
-    json doc{{"format", "streamdeck-scenario"}, {"version", 1}};
+    json doc{{"format", "streamdeck-scenario"}, {"version", kFormatVersion}};
     std::map<std::string, json> nodes;
     std::vector<std::pair<std::string, std::string>> order;  // (id, parent) in file order
     std::string rootId;
@@ -520,6 +522,16 @@ std::optional<json> ResolveIncludes(const json& doc, const std::filesystem::path
         return std::nullopt;
     }
     return out;
+}
+
+void StripIncludeMarks(json& node)
+{
+    if (!node.is_object())
+        return;
+    node.erase("included_from");
+    if (node.contains("items") && node["items"].is_array())
+        for (auto& c : node["items"])
+            StripIncludeMarks(c);
 }
 
 std::optional<json> LoadResolved(const std::filesystem::path& file, std::string* error, std::vector<std::string>* files)

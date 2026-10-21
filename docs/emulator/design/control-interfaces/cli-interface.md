@@ -259,7 +259,7 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd step-back` | `ttd sb`, `back` | One frame back. | ✅ Implemented |
 | `ttd step-forward` | `ttd sf`, `forward` | One frame forward. | ✅ Implemented |
 | `ttd resume [frame [tinframe]] [media=ask\|empty\|keep]` | — | Truncate future at the current (detached) position, or the given one, and record again; the machine runs. Every medium goes back there when it can; one that cannot (another medium in the slot, a write beyond its undo log): `empty` (default) takes it out, `keep` leaves it, `ask` lists them and resumes nothing. | ✅ Implemented |
-| `ttd position` | `ttd pos` | Current time point (frame/tstate) and session bounds. | ✅ Implemented |
+| `ttd position` | `ttd pos` | Current time point (frame/tstate), session bounds, the history's first frame, state, paused, frame rate. Never parks the machine (the TTD's published cursor). | ✅ Implemented |
 | `ttd markers` | `ttd barriers` | List external-event markers in the timeline. | ✅ Implemented |
 | `ttd dump <path>` | `ttd save` | Serialize the session to a `.ttd` file. | ✅ Implemented |
 | `ttd load <path>` | `ttd open` | Restore a dumped session (model must match the recording). | ✅ Implemented |
@@ -416,6 +416,7 @@ surfaces: [command-interface.md §15](./command-interface.md#15-game-controllers
 | `controllers bindings`, `bind <control> field=val ..`, `unbind <control>`, `scheme <id\|none>` | The effective bindings and their changes in a user profile |
 | `controllers haptics [device]` | Whether the emulator drives each device's motors (or why not) and its test effects |
 | `controllers rumble <device> [effect]` | Play a test effect: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz` |
+| `controllers output <device> <tick\|double\|buzz>`, `output <device> steps=N clicks=on\|off`, `output <device> marks=a,b` | A control surface's outputs (the Surface Dial): a haptic pattern; its steps per turn and clicks (until its context changes); a seek's marks as its top layer plays them |
 
 `--json` prints the reply every surface returns. The host verbs need the Qt client (it owns the game controllers).
 
@@ -424,6 +425,69 @@ surfaces: [command-interface.md §15](./command-interface.md#15-game-controllers
 OK: Swell (attack, hold, release) on Xbox Elite Wireless Controller Series 2
 > controllers rumble usb:045e:0b00:0516:3032 identify
 Error: Xbox Elite Wireless Controller Series 2: macOS drives no motors of an Xbox pad over USB: connect the pad over Bluetooth
+> controllers output bt:045e:091b:3c1e2f4a steps=36 clicks=off
+OK: 36 steps per turn, free wheel on Surface Dial (until its context or layers change)
+```
+
+### Host Action Commands
+
+The `action` verb (source: `core/automation/cli/src/commands/cli-processor-action.cpp`): the host actions of the core
+`ActionRegistry` - the ids a pad, the Surface Dial or a Stream Deck runs. Full table and the other surfaces:
+[command-interface.md §16](./command-interface.md#16-host-actions).
+
+| CLI Command | Description |
+| :--- | :--- |
+| `action [list] [--json]` | Every action, `*` when it can run now on the selected instance, else why not |
+| `action run <id> [value] [param=val ..] [--json]` | Run one and wait for it: press (default) / `release`, signed steps, a 0..1 level or text |
+| `action context [--json]` | The selected instance's surface context (`play`, `ttd`, ...), who set it, its default; set it with `action run ctx.set <name>` |
+
+The registry applies this connection's gate: a changing action without a session opens the implicit one (it ends
+with the connection, as for any other changing command); a companion connection (`companion auth`) is checked
+against its scopes.
+
+```
+> action run run.pause_toggle
+OK: run.pause_toggle - Emulator paused
+> action run run.step_in --json
+{"ok":true,"action":"run.step_in","instance":"…","message":"Executed 1 instruction","result":{"status":"success",…}}
+> action run ttd.jog_frames -10
+Error: Conflict - no time travel history
+> action run ttd.seek_by -3 rate=18 unit=seconds
+OK: ttd.seek_by
+{"reached":true,"arrived_at":{"frame":1834,"tinframe":0},"halt_reason":"target",…,"from":1981,"frame":1834,"frames":-147,"fps":48.828125,"marks":[{"kind":"ten_seconds","frame":1954}]}
+> action run ctx.set ttd.timecode
+OK: ctx.set
+{"context":"ttd.timecode","previous":"ttd","set":true,"by":"cli:cli","default":"ttd"}
+> action context
+Context: ttd.timecode (set by cli:cli)
+```
+
+`ttd.seek_by` takes its rate and curve as parameters here (`rate=`, `unit=frames|seconds`, `min=`, `max=`,
+`rate_lo=`, `rate_hi=`); `run.step_by` steps in forward and back through the history (`action run run.step_by -4`).
+
+The `surface` verb (source: `core/automation/cli/src/commands/cli-processor-surface.cpp`): the control surfaces'
+targets, readouts and activity ([command-interface.md §16.1](./command-interface.md#161-surface-targets-readouts-activity)).
+Positional words fill the verb's arguments in order, `name=value` words name them, `--json` prints the reply.
+
+| CLI Command | Description |
+| :--- | :--- |
+| `surface [views]` | The views in focus order and the followed instance (what a WebAPI call without an id acts on) |
+| `surface target [session]` | The followed instance's target, or a session's |
+| `surface sessions` | Every surface session and its target |
+| `surface pin <session> <target>` | `follow`, `view:<id>`, `instance:<id|index>` |
+| `surface readouts [names] [instance=]` | The readout values (`run.state,media.*`; default all) |
+| `surface activity [since] [limit=] [instance=]` | The activity feed |
+| `surface view_add <name> [active=]`, `view_update <view> [active=] [activate=true]`, `view_remove <view>` | Views of the automation plane |
+| `surface session_open <name> [target=]`, `session <id>`, `session_close <id>` | Sessions of the automation plane |
+
+```
+> surface views
+Followed: #0 PENTAGON 128K (0f3a…) in v1 Main window, follow [view]
+  v1 Main window [unreal-qt] active 0f3a…
+> surface session_open "my script"
+OK: s1 my script -> #0 PENTAGON 128K (0f3a…) in v1 Main window, follow [view]
+> surface pin s1 instance:1
+OK: s1 my script -> #1 48K 48K (7c21…), instance:7c21… [none]
 ```
 
 ### Analysis, Capture & Assembly Commands

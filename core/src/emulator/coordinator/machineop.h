@@ -63,6 +63,7 @@ enum class OpSource : uint8_t
     Machine,   ///< the machine thread: a trap, a device, an RZX playback
     Core,      ///< the emulator's own code (a model's start-up, a composite operation)
     Test,
+    HostDevice, ///< a host input device bound to an action (a pad, the Surface Dial): the user's hands
 
     Count
 };

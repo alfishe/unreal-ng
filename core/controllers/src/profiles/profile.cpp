@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "haptics/hapticprofile.h"
+#include "haptics/surfacehaptics.h"
 #include "profiles/yaml.h"
 
 namespace controllers
@@ -86,6 +87,53 @@ bool Fraction(const JsonValue& value, float& out, const std::string& field, std:
     return true;
 }
 
+/// `curve: {unit, min, max, rate_lo, rate_hi}` (control surfaces actions.md §2): kept as the action's parameters, which
+/// the action checks against its own ranges; here the fields, their types and their order
+bool CurveParams(const JsonValue& value, BindingOptions& options, std::string& error)
+{
+    for (const auto& [field, member] : value.GetMembers())
+    {
+        if (field == "unit")
+        {
+            if (!member.IsString() || (member.AsString() != "frames" && member.AsString() != "seconds"))
+            {
+                error = "curve.unit is frames or seconds";
+                return false;
+            }
+        }
+        else if (field == "min" || field == "max" || field == "rate_lo" || field == "rate_hi")
+        {
+            if (!member.IsNumber() || !(member.AsNumber() > 0))
+            {
+                error = "curve." + field + " is a number above 0";
+                return false;
+            }
+        }
+        else
+        {
+            error = "curve: unknown field '" + field + "' (known: unit, min, max, rate_lo, rate_hi)";
+            return false;
+        }
+    }
+    const auto number = [&value](const char* field, double fallback) {
+        const JsonValue* member = value.Find(field);
+        return member != nullptr ? member->AsNumber() : fallback;
+    };
+    if (value.Find("min") != nullptr && value.Find("max") != nullptr && number("min", 0) > number("max", 0))
+    {
+        error = "curve.min is at most curve.max";
+        return false;
+    }
+    if (value.Find("rate_lo") != nullptr && value.Find("rate_hi") != nullptr &&
+        number("rate_lo", 0) >= number("rate_hi", 0))
+    {
+        error = "curve.rate_lo is below curve.rate_hi";
+        return false;
+    }
+    options.params = value;
+    return true;
+}
+
 /// One option field into the binding's options
 bool ApplyOption(const std::string& field, const JsonValue& value, BindingOptions& options, std::string& error)
 {
@@ -157,9 +205,11 @@ bool ApplyOption(const std::string& field, const JsonValue& value, BindingOption
     }
     if (field == "curve")
     {
+        if (value.IsObject())
+            return CurveParams(value, options, error);
         if (!value.IsString() || value.AsString() != "scrub")
         {
-            error = "'curve' is scrub";
+            error = "'curve' is scrub (an analog scrub) or an action's scrub curve {unit, min, max, rate_lo, rate_hi}";
             return false;
         }
         options.level = true;
@@ -514,8 +564,11 @@ bool ParseProfile(const JsonValue& root, Profile& out, std::string& error)
 
     if (const JsonValue* haptics = root.Find("haptics"))
     {
-        HapticProfile parsed;
-        if (!ParseHapticProfile(*haptics, parsed, error))
+        // A play profile's are the game's (sources and rules); a debug profile's what a surface feels per layer
+        HapticProfile game;
+        SurfaceHaptics surface;
+        if (profile.kind == ProfileKind::Debug ? !ParseSurfaceHaptics(*haptics, surface, error)
+                                               : !ParseHapticProfile(*haptics, game, error))
             return false;
         profile.haptics = *haptics;
     }
@@ -528,11 +581,19 @@ bool ParseProfile(const JsonValue& root, Profile& out, std::string& error)
         }
         for (const auto& [layer, bindings] : layers->GetMembers())
         {
-            if (profile.kind == ProfileKind::Debug && layer != "debug")
+            if (profile.kind == ProfileKind::Debug && layer != "debug" && !IsContextLayer(layer))
             {
-                error = "a debug profile binds the debug layer only, not '" + layer + "'";
+                error = "a debug profile binds the debug layer and context layers (@ttd, @debug.*) only, not '" +
+                        layer + "'";
                 return false;
             }
+            if (IsContextLayer(layer) && profile.kind != ProfileKind::Debug)
+            {
+                error = "layer '" + layer + "': context layers belong to debug profiles";
+                return false;
+            }
+            if (IsContextLayer(layer) && !ValidContextLayer(layer, error))
+                return false;
             if (!bindings.IsObject())
             {
                 error = "layers." + layer + " is an object";

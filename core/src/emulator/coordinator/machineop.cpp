@@ -77,6 +77,7 @@ const char* OpSourceName(OpSource source)
         case OpSource::Machine: return "machine";
         case OpSource::Core: return "core";
         case OpSource::Test: return "test";
+        case OpSource::HostDevice: return "host-device";
         case OpSource::Count: break;
     }
     return "unknown";

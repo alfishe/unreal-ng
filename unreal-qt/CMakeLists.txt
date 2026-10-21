@@ -433,7 +433,7 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/boot" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/configs" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/controllers" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/controllers"
-        COMMAND ${CMAKE_COMMAND} -DDEST="${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs" -P "${ROOT_DIR}/cmake/ExtractConfigImages.cmake"
+        COMMAND ${CMAKE_COMMAND} "-DDEST=${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs" -P "${ROOT_DIR}/cmake/ExtractConfigImages.cmake"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/html"
 
         # 4. Deploy Qt frameworks
@@ -472,7 +472,7 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/boot" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/configs" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/configs"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/controllers" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/controllers"
-        COMMAND ${CMAKE_COMMAND} -DDEST="$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/configs" -P "${ROOT_DIR}/cmake/ExtractConfigImages.cmake"
+        COMMAND ${CMAKE_COMMAND} "-DDEST=$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/configs" -P "${ROOT_DIR}/cmake/ExtractConfigImages.cmake"
         # WebAPI HTML resources (404 page, index, etc.)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/core/automation/webapi/resources/html" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/html"
         # Bump the bundle mtime so Finder/Dock drop their cached icon for this path
@@ -630,6 +630,16 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tintedsvgicon.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tintedsvgicon.h"
+        # The window as a view of TargetState, the surface icon and the surfaces table (Stream Deck targeting.md)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/surfacetargets_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacetargets.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacetargets.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestable.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestable.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestatusicon.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestatusicon.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusindicator.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusindicator.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/statusbarvideomode_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.h"
@@ -644,6 +654,12 @@ if (TESTS)
         # The Slots window: plan preview, plug with the confirmation, removed cards named with Undo (ZX-bus slots)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/slotswindow_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/nextlayerswindow_test.cpp"
+        # The on-screen keyboard: the machines' own keyboards (POC 031 pictures), what a click posts
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/osdkeyboardwindow_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/osdkeyboard/osdkeyboardwindow.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/osdkeyboard/osdkeyboardwindow.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/osdkeyboard/keyboardpicture.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/osdkeyboard/keyboardpicture.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/nextlayers/nextlayerswindow.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/nextlayers/nextlayerswindow.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotchangecontroller.cpp"

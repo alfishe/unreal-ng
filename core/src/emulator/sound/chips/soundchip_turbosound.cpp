@@ -247,13 +247,8 @@ void SoundChip_TurboSound::handleStep()
     // The step gate: before the deadline a step only notes where it ended (settleSteps books it)
     if (_stepDeadline != 0)
     {
-        const int64_t now = nowT();
-        if (now < _stepDeadline && _context->emulatorState.HostSpeedMultiplier() == 1)
-        {
-            _pendingT = now;
-            _stepPending = true;
+        if (noteGatedStep(uint64_t(nowT()), _context->emulatorState.HostSpeedMultiplier()))
             return;
-        }
         settleSteps();
     }
     stepAt(nowT());
@@ -482,7 +477,7 @@ void SoundChip_TurboSound::stepAt(int64_t now)
     // samplePhase) / rate)
     if (_stepGate && speedMultiplier == 1 && _samplePhase < CPU_CLOCK_RATE &&
         _ayBufferIndex < MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS)
-        _stepDeadline = int64_t(_lastTStates) + int64_t((CPU_CLOCK_RATE - _samplePhase + _coreRate - 1) / _coreRate);
+        _stepDeadline = uint64_t(_lastTStates) + (CPU_CLOCK_RATE - _samplePhase + _coreRate - 1) / _coreRate;
 
     // Quiet at rest with nothing queued: every output stays +0.0 until something enters the device, so the gate holds
     // until then and the step at the last noted T renders them in one run (settleSteps)
@@ -491,7 +486,7 @@ void SoundChip_TurboSound::stepAt(int64_t now)
         _ssgZeroRun[0] >= FilterDecimator::history() && _ssgZeroRun[1] >= FilterDecimator::history() &&
         _ssgZeroRun[2] >= FilterDecimator::history() && _ssgZeroRun[3] >= FilterDecimator::history())
     {
-        _stepDeadline = std::numeric_limits<int64_t>::max();
+        _stepDeadline = std::numeric_limits<uint64_t>::max();
         _quietDeferral = true;
     }
 }

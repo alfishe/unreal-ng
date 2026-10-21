@@ -59,6 +59,19 @@ enum class Fit
 
 // Alpha-composites onto black when the file has transparency.
 [[nodiscard]] std::optional<Rgb> LoadImage(const std::filesystem::path& file);
+// A picture as a scenario or a theme names it: its path roots ($data, $icons, $testdata, $user, $scenario) resolved
+// (sdb/datadir.h; `scenarioDir` = the scenario's folder: $scenario and relative paths), and an optional
+// media fragment "#xywh=x,y,w,h" (W3C Media Fragments, pixels of the file, "pixel:" allowed) that cuts that region
+// out; the parts of the region outside the picture are black. One picture spread over several keys is one file with
+// a region per key.
+[[nodiscard]] std::optional<Rgb> LoadImageRef(const std::string& ref, const std::filesystem::path& scenarioDir = {});
+struct ImageRef
+{
+    std::string file;  // as written ($data not resolved)
+    bool region = false;
+    int x = 0, y = 0, w = 0, h = 0;
+};
+[[nodiscard]] std::optional<ImageRef> ParseImageRef(const std::string& ref);  // nullopt: a bad fragment
 
 [[nodiscard]] std::vector<std::uint8_t> EncodeJpeg(const Rgb& img, int quality = 90);
 [[nodiscard]] std::vector<std::uint8_t> EncodeBmp(const Rgb& img);

@@ -6,11 +6,13 @@
 
 #include "../gui.h"
 #include "../virtualdeck.h"
+#include "actioncatalogue.h"
 #include "designcanvas.h"
 #include "editordocument.h"
 #include "editorwidget.h"
 #include "presets.h"
 #include "runcontroller.h"
+#include "sdb/catalogue.h"
 #include "sdb/http.h"
 #include "sdb/navigator.h"
 #include "sdb/scenarioio.h"
@@ -167,7 +169,53 @@ void AddEditorRoutes(automation::Api& api, EditorWidget* e, std::function<QWidge
                 QString err;
                 if (!e->Document()->Save(Qs(r.Str("path")), &err))
                     return Reply::Error(500, err.toStdString());
-                return Reply::Ok(Status(e));
+                json out = Status(e);
+                json notes = json::array();
+                for (const QString& n : e->Document()->LastNotes())
+                    notes.push_back(n.toStdString());
+                if (!notes.empty())
+                    out["converted"] = notes;  // a v1 document was converted to v2 before writing
+                return Reply::Ok(out);
+            });
+        });
+    add("POST", "/api/v1/editor/convert",
+        "Convert a v1 scenario to format v2 (one undo step): the v1 kinds and the REST steps that have a catalogue "
+        "action become action steps, the daemon's settings go; notes say what changed and what stayed REST",
+        {"file", "v2"}, {}, nullptr, [e](const Request&) {
+            return OnGui([&] {
+                QStringList notes;
+                const bool done = e->Document()->ConvertToV2(&notes);
+                json n = json::array();
+                for (const QString& line : notes)
+                    n.push_back(line.toStdString());
+                return Reply::Ok({{"converted", done}, {"version", e->Document()->Version()}, {"notes", n},
+                                  {"issues", IssuesJson(e->Document())}});
+            });
+        });
+    add("GET", "/api/v1/editor/catalogue",
+        "The action catalogue the editor offers (the shipped one, or the emulator's after a refresh): source and "
+        "actions {id, label, group, kind, held, gui, params}",
+        {"catalogue", "actions"}, {}, nullptr, [](const Request&) {
+            return OnGui([] {
+                EditorCatalogue& c = EditorCatalogue::Instance();
+                json out = cat::ToJson(c.Get());
+                out["source"] = c.Source().toStdString();
+                return Reply::Ok(out);
+            });
+        });
+    add("POST", "/api/v1/editor/catalogue/refresh",
+        "Take the catalogue from a running emulator (GET /api/v1/controllers/actions at `webapi`, default the "
+        "daemon's host); validation runs again",
+        {"catalogue", "actions"}, {{"webapi", "body", "string", "http://127.0.0.1:8090"}}, nullptr,
+        [e](const Request& r) {
+            return OnGui([&] {
+                QString msg;
+                const bool ok = EditorCatalogue::Instance().Refresh(r.Str("webapi", DefaultHost()), &msg);
+                e->Document()->Recheck();
+                if (!ok)
+                    return Reply::Error(502, msg.toStdString());
+                return Reply::Ok({{"message", msg.toStdString()},
+                                  {"actions", EditorCatalogue::Instance().Get().actions.size()}});
             });
         });
     add("POST", "/api/v1/editor/export", "Write a copy in another format (the document keeps its file)",
@@ -275,8 +323,9 @@ void AddEditorRoutes(automation::Api& api, EditorWidget* e, std::function<QWidge
         {{"parent", "body", "string", "menu id (default: the menu on the canvas)"},
          {"at", "body", "array", "[row, col]; default the first free key"},
          {"node", "body", "object", "a node: {type: menu|action, title, face, do, tags ...}"},
-         {"preset", "body", "string", "a palette preset name (GET /api/v1/editor/presets)"}},
-        json{{"parent", "home"}, {"at", {0, 1}}, {"preset", "Pause"}}, [e](const Request& r) {
+         {"preset", "body", "string",
+          "a palette preset name, e.g. Home, Menu, Shell command (GET /api/v1/editor/presets)"}},
+        json{{"parent", "home"}, {"at", {0, 1}}, {"preset", "Home"}}, [e](const Request& r) {
             json node;
             if (r.Has("preset"))
             {

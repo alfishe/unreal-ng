@@ -445,6 +445,9 @@ public:
     /// The matrix key an extended key presses besides its shift (LEFT -> 5,
     /// '"' -> P); a plain key is its own matrix key. Shifts map to themselves.
     ZXKeysEnum GetMatrixKey(ZXKeysEnum key) { return getExtendedKeyBase(key); }
+    /// The shift an extended key presses (LEFT -> Caps Shift, '"' -> Symbol Shift); ZXKEY_NONE for a plain key,
+    /// a shift for itself
+    ZXKeysEnum GetMatrixModifier(ZXKeysEnum key) { return getExtendedKeyModifier(key); }
 
 protected:
     bool isExtendedKey(ZXKeysEnum key);

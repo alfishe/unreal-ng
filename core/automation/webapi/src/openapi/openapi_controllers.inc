@@ -95,7 +95,10 @@
         Json::Value& get = paths["/api/v1/controllers/{verb}"]["get"];
         get["summary"] = "Host game controllers: devices, context, profiles, profile, bindings, haptics";
         get["description"] =
-            "devices: the connected host devices. context: the machine, the loaded file's SHA-256, the manual game "
+            "devices: the connected host devices; with the Qt client each has its role (role_set: chosen, else its "
+            "family's default: a Surface Dial starts as a debugger-remote), the layers up (play, debug, a context "
+            "layer such as @ttd), the context of the instance it acts on, its outputs (haptic, steps) and the feel of "
+            "its top layer (steps, clicks, marks, min_interval_ms). context: the machine, the loaded file's SHA-256, the manual game "
             "profile, the applied profiles and the warnings. profiles (?set=all|play|debug|scheme|game&machine=): "
             "every profile with its kind, scope, specificity, match and whether it applies; shipped games not parsed "
             "yet have loaded=false. profile (?id=): one profile as JSON ('profile') and YAML ('yaml'). bindings "
@@ -109,7 +112,8 @@
 
         Json::Value& post = paths["/api/v1/controllers/{verb}"]["post"];
         post["summary"] =
-            "Host game controllers: save, delete, apply a profile; bind, unbind a control; the scheme; rumble";
+            "Host game controllers: save, delete, apply a profile; bind, unbind a control; the scheme; rumble; "
+            "output";
         post["description"] =
             "Body (JSON) or query. save {text}: a profile as YAML or JSON (schema 1) into the user's profiles, applied "
             "at once. delete {id}: a user profile (a built-in of the same id comes back). apply {id}: the game profile "
@@ -121,8 +125,167 @@
             "scheme/sinclair-1; 'none' = no scheme). rumble {device, effect}: play a test effect on a host device "
             "(identify by default; low, high, clicks, left-trigger, right-trigger, swell as haptics lists them), as "
             "debug feedback that plays while the game's haptics are held back; unavailable with the reason when the "
-            "emulator cannot drive the device's motors";
+            "emulator cannot drive the device's motors. output {device, pattern | steps, clicks | marks}: a control "
+            "surface's outputs (the Surface Dial): play a pattern (tick, double, buzz); set its steps per turn "
+            "(1..3600) and clicks (on: a click at each step, off: a free wheel) until its context or layers change; "
+            "or play a seek's marks (second, ten_seconds, bookmark, edge, barrier; strongest first) as its top "
+            "layer's feel plays them, with the marks' rate limit (played, mark, pattern, else reason)";
         post["tags"].append("Controllers");
-        verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble"});
+        verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble", "output"});
         replies(post);
     }
+
+    // The host actions (core ActionRegistry, control surfaces actions.md §1, §6): the same ids a pad, the Surface Dial,
+    // a companion, MCP `actions`, the CLI `action` and the scripts' action() run
+    {
+        auto instanceParameter = [](Json::Value& operation, const char* in) {
+            Json::Value parameter;
+            parameter["name"] = "instance";
+            parameter["in"] = in;
+            parameter["required"] = false;
+            parameter["description"] = "Emulator id or index; default: the selected instance, else the only one";
+            parameter["schema"]["type"] = "string";
+            operation["parameters"].append(parameter);
+        };
+        Json::Value& get = paths["/api/v1/controllers/actions"]["get"];
+        get["summary"] = "Host actions: the catalogue and whether each can run now for this caller";
+        get["description"] =
+            "Every action (core and, with the Qt client, its GUI ones) in registration order: id, label, group, kind "
+            "(press, delta, level, text), held (the release matters too), gui (only with the Qt client), scope (the "
+            "companion scope it needs now: run, debug, rewind, ...; null = it changes nothing), needs_pause, params "
+            "(the params it reads, one line: \"key, hold?, frames?\"; absent when none), available and, when not, error (not_now, Not Implemented, Run-control held, companion_forbidden, "
+            "held_by_session, held_by_other) and reason. A dry run of the gates: no session is opened";
+        get["tags"].append("Controllers");
+        instanceParameter(get, "query");
+        get["responses"]["200"]["description"] = "{ok, instance, actions[]}";
+        get["responses"]["404"]["description"] = "Not Found: no such instance";
+
+        Json::Value& post = paths["/api/v1/controllers/actions/{action}"]["post"];
+        post["summary"] = "Run a host action on an instance (its actions worker, in order)";
+        post["description"] =
+            "Body {instance?, value?}. value by the action's kind: press - omitted / true (a press), false (a "
+            "release, for held actions), or {pressed}; delta - a number of steps or {delta, rate}; level - 0..1; "
+            "text - a string. {params: {...}} adds parameters (run.to_scanline: line; run.n_scanlines: count). The "
+            "gates of every origin apply: a changing action without a session opens the implicit run-control session "
+            "(automation_session in the reply), a companion token is checked against its scopes. The reply waits for "
+            "the action: {ok, action, instance, message, result} or {ok: false, error, message}";
+        post["tags"].append("Controllers");
+        Json::Value action;
+        action["name"] = "action";
+        action["in"] = "path";
+        action["required"] = true;
+        action["description"] = "The action id (GET /api/v1/controllers/actions lists them): run.pause_toggle, "
+                                "ttd.jog_frames, mach.nmi, ...";
+        action["schema"]["type"] = "string";
+        post["parameters"].append(action);
+        post["responses"]["200"]["description"] = "Done; result is the action's body (a step: pc, sp, state, stop)";
+        post["responses"]["400"]["description"] = "Bad Request: a value of the wrong kind, no instance named";
+        post["responses"]["403"]["description"] = "companion_forbidden: the companion lacks the scope";
+        post["responses"]["404"]["description"] = "Not Found: no such action or instance";
+        post["responses"]["409"]["description"] =
+            "not_now (needs a pause), Run-control held, held_by_session, held_by_other, revoked_by_user, Conflict";
+        post["responses"]["501"]["description"] = "Not Implemented: a stub of the catalogue";
+    }
+
+    // The control surfaces' context and targets (actions::ContextState, actions::TargetState; Stream Deck integration
+    // targeting.md), the readouts and the activity feed: the verbs of actions::surfaces::Call, as the CLI `surface`,
+    // MCP `actions`, Lua / Python surfaces(); every route is also a WebSocket call
+    {
+        auto op = [&paths](const char* path, const char* method, const char* summary, const char* description,
+                           const char* ok) -> Json::Value& {
+            Json::Value& operation = paths[path][method];
+            operation["summary"] = summary;
+            operation["description"] = description;
+            operation["tags"].append("Controllers");
+            operation["responses"]["200"]["description"] = ok;
+            return operation;
+        };
+        auto param = [](Json::Value& operation, const char* name, const char* in, bool required,
+                        const char* description) {
+            Json::Value parameter;
+            parameter["name"] = name;
+            parameter["in"] = in;
+            parameter["required"] = required;
+            parameter["description"] = description;
+            parameter["schema"]["type"] = "string";
+            operation["parameters"].append(parameter);
+        };
+        const char* targetObject =
+            "a target is {instance, index, model, ram_kb, view: {id, name} | null, mode: follow | view | instance, pin, "
+            "source: view | selected | sole | none}; instance null when there is no machine";
+
+        Json::Value& context = op("/api/v1/surfaces/context", "get", "The instance's surface context",
+                                  "The context in force (play, ttd, ttd.timecode, debug.*), whether somebody set it, by "
+                                  "whom, and the default it returns to; set it with the ctx.set action",
+                                  "{ok, instance, context, set, by, default}");
+        param(context, "instance", "query", false, "Emulator id or index; default: the followed instance");
+
+        op("/api/v1/surfaces/views", "get", "The views (windows) in focus order and the followed instance",
+           "Each view shows one active instance; the followed instance is the active instance of the front view that "
+           "has one, else (headless) the selected instance, else the sole one. A WebAPI call without an id acts on it "
+           "(T-1). followed is a target object",
+           "{ok, followed, views: [{id, name, owner, position, active, index}], revision}");
+        Json::Value& addView = op("/api/v1/surfaces/views", "post", "Register a view of the automation plane",
+                                  "Body {name, active?: id | index, activate?: bool}. For a window of another process "
+                                  "and for tests; it stays until DELETE. The Qt clients register their own windows",
+                                  "{ok, view, followed}");
+        addView["responses"]["404"]["description"] = "Not Found: no such instance";
+        Json::Value& putView = op("/api/v1/surfaces/views/{view}", "put", "Change a view",
+                                  "Body {active?: id | index | \"\" (only a view of the automation plane), activate?: "
+                                  "true (to the front of the focus order, as a focus would)}",
+                                  "{ok, view, followed}");
+        param(putView, "view", "path", true, "The view id (v1)");
+        putView["responses"]["409"]["description"] = "Conflict: the active instance of a window is its client's";
+        Json::Value& deleteView = op("/api/v1/surfaces/views/{view}", "delete", "Remove a view of the automation plane",
+                                     "Its view: pins fall back to following, with a notice", "{ok, removed, followed}");
+        param(deleteView, "view", "path", true, "The view id");
+        deleteView["responses"]["409"]["description"] = "Conflict: a window of a client";
+
+        Json::Value& target = op("/api/v1/surfaces/target", "get", "A target: the followed instance or a session's",
+                                 targetObject, "{ok, target, session?}");
+        param(target, "session", "query", false, "A surface session id; default: the followed instance");
+
+        op("/api/v1/surfaces/sessions", "get", "The surface sessions and their targets",
+           "Each surface (a Stream Deck, one session per serial; a REST surface): id, name, kind, serial, pin (follow, "
+           "view:<id>, instance:<id>), target, notice (why a pin fell back)",
+           "{ok, sessions: [...]}");
+        Json::Value& openSession = op("/api/v1/surfaces/sessions", "post", "Open a surface session of the automation plane",
+                                      "Body {name, kind?: api, serial?, target?: follow | view:<id> | instance:<id> | "
+                                      "{view} | {instance}}. A REST surface that wants a target of its own; it stays "
+                                      "until DELETE. A deck's session comes with the surface topic's join",
+                                      "{ok, session}");
+        openSession["responses"]["400"]["description"] = "Bad Request: no name, a target that does not parse";
+        Json::Value& getSession = op("/api/v1/surfaces/sessions/{session}", "get", "One surface session", "",
+                                     "{ok, session}");
+        param(getSession, "session", "path", true, "The session id (s1)");
+        Json::Value& closeSession = op("/api/v1/surfaces/sessions/{session}", "delete",
+                                       "Close a surface session of the automation plane", "", "{ok, closed}");
+        param(closeSession, "session", "path", true, "The session id");
+        closeSession["responses"]["409"]["description"] = "Conflict: a session of a surface (it closes it itself)";
+        Json::Value& pin = op("/api/v1/surfaces/sessions/{session}/pin", "put", "Pin or unpin a surface session",
+                              "Body {target: follow | view:<id> | instance:<id|index> | {view} | {instance}}. A view pin "
+                              "follows that window's active instance; an instance pin stays on it; follow unpins",
+                              "{ok, session}");
+        param(pin, "session", "path", true, "The session id");
+        pin["responses"]["404"]["description"] = "Not Found: no such session, view or instance";
+        pin["responses"]["409"]["description"] = "not_now: a view pin on a headless host (no views)";
+
+        Json::Value& readouts = op("/api/v1/surfaces/readouts", "get", "The readouts' values now",
+                                   "The vocabulary a surface draws from, all from published state: ttd.position, "
+                                   "run.state, machine, media.tape, media.disk, audio.mute, debug.mode, toggle.<id> "
+                                   "(toggle.feature.<name>, toggle.set.<name>). The surface topic pushes their changes",
+                                   "{ok, instance, values: {name: value}, unknown: []}");
+        param(readouts, "instance", "query", false, "Emulator id or index; default: the followed instance");
+        param(readouts, "names", "query", false, "Names or prefixes, comma separated (run.state,media.*); default all");
+
+        Json::Value& activity = op("/api/v1/surfaces/activity", "get", "The activity feed: who ran which action",
+                                   "Display only: each action the registry ran, with its value, origin (gui, "
+                                   "host_device, companion, webapi, mcp, cli, lua, python), surface name and result; "
+                                   "deltas of one surface within 100 ms are one entry. The ring keeps 256",
+                                   "{ok, entries: [{seq, instance, id, value, origin, surface, ok, error?, t_ms, "
+                                   "merged}], last, dropped}");
+        param(activity, "since", "query", false, "Entries after this seq (the previous answer's last)");
+        param(activity, "instance", "query", false, "Only this instance's");
+        param(activity, "limit", "query", false, "At most this many, the newest (1..256, 64)");
+    }
+
