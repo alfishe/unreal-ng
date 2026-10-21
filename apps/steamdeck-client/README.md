@@ -12,7 +12,7 @@ the goal, how to run it, and the measured results. The verdicts are copied into 
 apps/steamdeck-client/build.sh                       # every POC
 apps/steamdeck-client/build.sh p08-input-inspector   # one target
 
-# 2. Copy to the Deck (SSH enabled in Desktop Mode)
+# 2. Copy to the Deck (SSH enabled in Desktop Mode) and install "Unreal NG" (menu, desktop, Steam library)
 DECK=deck@steamdeck.local apps/steamdeck-client/deploy.sh
 
 # 3. Fetch the logs back (~/steamdeck-poc-logs on the Deck -> build/deck-logs/)
@@ -48,6 +48,7 @@ DECK=deck@steamdeck.local apps/steamdeck-client/deploy.sh --logs
 
 | How | When |
 |---|---|
+| **The "Unreal NG" app.** `deploy.sh` runs `deck-install.sh` on the Deck: a launcher in the KDE menu and on the desktop, and a non-Steam game in the Steam library (Game Mode: Library → Non-Steam). It starts p01 with `--boot` fullscreen: the ROM boots, the WebAPI drives it. Steam has to be running for the library entry (Desktop Mode or Game Mode); otherwise run `~/steamdeck-poc/deck-install.sh` again later. `--remove` takes the launchers away | using the emulator on the Deck |
 | **Game Mode, non-Steam game.** In Desktop Mode, Steam → *Add a Non-Steam Game* → browse to `~/steamdeck-poc/<binary>`, put arguments in *Launch Options*, then switch to Game Mode and start it from the library | every measurement: this is the real environment (gamescope, Steam Input) |
 | Game Mode, inside the runtime: the non-Steam game's target is `~/steamdeck-poc/run-in-slr.sh` and its Launch Options are `./<binary> [args]` (see [p19](p19-runtime-packaging/README.md)) | P-19 |
 | Desktop Mode, terminal | quick checks only (KWin, not gamescope) |
@@ -63,7 +64,7 @@ Every POC writes its logs to `~/steamdeck-poc-logs/` (Game Mode has no visible s
 | USB-C stick or microSD card | Run `apps/steamdeck-client/deploy.sh --stage` and copy `build/deck/deploy/` (the stripped copy, ~110 MB) to it, plug it into the Deck, in Desktop Mode copy the folder to `~/steamdeck-poc/` with Dolphin. Make the binaries executable: `chmod +x ~/steamdeck-poc/p*` |
 | Steam Devkit Management Tool | Valve's tool for Steamworks titles; needs an app ID. Not used here |
 
-Then add the binary as a non-Steam game (table above) and start it in Game Mode.
+`deploy.sh` then installs the app (table above); from a stick, run `~/steamdeck-poc/deck-install.sh` once.
 
 ### Remote control (WebAPI, MCP)
 

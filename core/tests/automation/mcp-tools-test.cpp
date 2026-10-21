@@ -2558,6 +2558,8 @@ TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_GetsAndPutsTheWindowRoute)
     settings["gpu"] = true;
     settings["crt"] = true;
     settings["crt_profile"] = "crt-lottes";
+    for (const char* name : {"none", "basic", "crt-lottes", "shader:crt-royale"})
+        settings["crt_profiles"].append(name);
     settings["blending"] = false;
     settings["blending_frames"] = 3;
     settings["blending_weights"] = "exponential";
@@ -2571,6 +2573,15 @@ TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_GetsAndPutsTheWindowRoute)
     EXPECT_NE(read.text.find("window gpu on (available), crt crt-lottes, blending off (3 frames, exponential)"),
               std::string::npos)
         << read.text;
+    // the words for crt_profile are in the text: an agent may see nothing else
+    EXPECT_NE(read.text.find("crt_profiles: none basic crt-lottes shader:crt-royale"), std::string::npos) << read.text;
+
+    // CRT off still names the chosen profile (switching CRT on shows it)
+    settings["crt"] = false;
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+    mcp::ToolResult off = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(off.isError) << off.text;
+    EXPECT_NE(off.text.find("crt off (profile crt-lottes)"), std::string::npos) << off.text;
 
     args["action"] = "window_display_set";
     args["display"]["crt_profile"] = "crt-lottes";

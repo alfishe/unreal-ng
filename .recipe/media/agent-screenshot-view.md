@@ -88,7 +88,8 @@ working picture sits inside the frame.
 ### The window's display settings
 
 The window's View menu settings are automatable too: GPU acceleration, CRT effects and profile, temporal blending.
-Change them, then grab `source=window` to see the effect. Same GUI-only rule: headless, 409 `no-window`.
+Change them, then grab `source=window` to see the effect. Same GUI-only rule: headless, 409 `no-window`. CRT profiles, presets and
+the GPU vs software check: [crt-effects.md](crt-effects.md).
 
 - `capture_media {"action":"window_display"}` reads; `{"action":"window_display_set","display":{"crt_profile":"basic"}}`
   changes (any of `gpu`, `crt`, `crt_profile`, `blending`, `blending_frames`, `blending_weights`).

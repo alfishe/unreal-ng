@@ -34,8 +34,11 @@ public:
     void Home();
     bool PopTo(size_t depth);        // 0 = root
     bool GoTo(std::string_view id);  // a menu: its path; an action: its menu's path
-    // After a reload: keep the longest prefix of ids that still exist (by id) in the new scenario.
+    // After a reload: keep the longest prefix of ids that still exist (by id) in the new scenario. The one-argument
+    // form reads the ids from the current stack, so the old scenario must still be alive; when it has been replaced
+    // in place (the runtime's reload), take Ids() before and pass them.
     void Rebind(const Scenario& s);
+    void Rebind(const Scenario& s, const std::vector<std::string>& old);
 
 private:
     const Scenario* _s;

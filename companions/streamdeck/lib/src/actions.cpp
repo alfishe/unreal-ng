@@ -16,6 +16,8 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#else
+#include <windows.h>
 #endif
 #ifdef __APPLE__
 #include <ApplicationServices/ApplicationServices.h>
@@ -363,6 +365,121 @@ int RunProcess(const std::vector<std::string>& argv, int timeoutMs, std::string&
     }
     return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
 }
+#else
+std::wstring Widen(const std::string& s)
+{
+    if (s.empty())
+        return {};
+    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+    std::wstring w(static_cast<size_t>(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
+    return w;
+}
+
+// Runs a command through cmd.exe (no console window), collects stdout+stderr, kills the whole process tree (a job
+// object) after timeoutMs (<0: do not wait).
+int RunCommand(const std::string& command, int timeoutMs, std::string& out)
+{
+    std::wstring line = L"cmd.exe /d /s /c \"" + Widen(command) + L"\"";
+    STARTUPINFOW si{};
+    si.cb = sizeof si;
+    PROCESS_INFORMATION pi{};
+    if (timeoutMs < 0)
+    {
+        if (!CreateProcessW(nullptr, line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si,
+                            &pi))
+            return -1;
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return 0;
+    }
+    SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
+    HANDLE rd = nullptr;
+    HANDLE wr = nullptr;
+    if (!CreatePipe(&rd, &wr, &sa, 0))
+        return -1;
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    HANDLE in = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = in;
+    si.hStdOutput = wr;
+    si.hStdError = wr;
+    HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    if (job)
+    {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION li{};
+        li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(job, JobObjectExtendedLimitInformation, &li, sizeof li);
+    }
+    const BOOL started = CreateProcessW(nullptr, line.data(), nullptr, nullptr, TRUE,
+                                        CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &si, &pi);
+    CloseHandle(wr);  // the child holds its copy; ours would keep the pipe open
+    if (in != INVALID_HANDLE_VALUE)
+        CloseHandle(in);
+    if (!started)
+    {
+        CloseHandle(rd);
+        if (job)
+            CloseHandle(job);
+        return -1;
+    }
+    if (job)
+        AssignProcessToJobObject(job, pi.hProcess);
+    ResumeThread(pi.hThread);
+    CloseHandle(pi.hThread);
+
+    char buf[4096];
+    auto drain = [&] {
+        DWORD avail = 0;
+        while (PeekNamedPipe(rd, nullptr, 0, nullptr, &avail, nullptr) && avail > 0)
+        {
+            DWORD n = 0;
+            if (!ReadFile(rd, buf, static_cast<DWORD>(std::min<size_t>(avail, sizeof buf)), &n, nullptr) || n == 0)
+                break;
+            if (out.size() < 64 * 1024)
+                out.append(buf, n);
+        }
+    };
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    bool timedOut = false;
+    for (;;)
+    {
+        drain();
+        const auto left =
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+        if (left <= 0)
+        {
+            timedOut = true;
+            break;
+        }
+        if (WaitForSingleObject(pi.hProcess, static_cast<DWORD>(std::min<long long>(left, 10))) == WAIT_OBJECT_0)
+        {
+            drain();
+            break;
+        }
+    }
+    DWORD code = 0;
+    if (timedOut)
+    {
+        if (job)
+            TerminateJobObject(job, 1);
+        else
+            TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, 1000);
+    }
+    else
+        GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(rd);
+    if (job)
+        CloseHandle(job);  // KILL_ON_JOB_CLOSE: what the command left running goes too
+    if (timedOut)
+    {
+        out += "\n(timeout)";
+        return -1;
+    }
+    return static_cast<int>(code);
+}
 #endif
 
 #ifdef __APPLE__
@@ -695,9 +812,7 @@ public:
 #ifndef _WIN32
         return RunProcess({"/bin/sh", "-c", command}, timeoutMs, output);
 #else
-        (void)timeoutMs;
-        output.clear();
-        return std::system(command.c_str());
+        return RunCommand(command, timeoutMs, output);
 #endif
     }
 
@@ -707,10 +822,11 @@ public:
         std::string out;
         return RunProcess({"open", target}, 5000, out) == 0;
 #elif defined(_WIN32)
-        return std::system(("start \"\" \"" + target + "\"").c_str()) == 0;
+        std::string out;
+        return RunCommand("start \"\" \"" + target + "\"", -1, out) == 0;
 #else
         std::string out;
-        return runProcess({"xdg-open", target}, -1, out) == 0;
+        return RunProcess({"xdg-open", target}, -1, out) == 0;
 #endif
     }
 
@@ -780,9 +896,9 @@ public:
         return ok;
 #elif !defined(_WIN32)
         std::string out;
-        if (!combo.empty() && runProcess({"xdotool", "key", combo}, 3000, out) != 0)
+        if (!combo.empty() && RunProcess({"xdotool", "key", combo}, 3000, out) != 0)
             return false;
-        if (!text.empty() && runProcess({"xdotool", "type", "--", text}, 10000, out) != 0)
+        if (!text.empty() && RunProcess({"xdotool", "type", "--", text}, 10000, out) != 0)
             return false;
         return true;
 #else
