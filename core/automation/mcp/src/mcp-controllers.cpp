@@ -43,6 +43,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControl
         {"scheme", {"id", "family", "device", "profile"}},
         {"haptics", {"device"}},
         {"rumble", {"device", "effect"}},
+        {"output", {"device", "pattern", "steps", "clicks", "marks"}},
     };
     return actions;
 }
@@ -70,8 +71,23 @@ namespace
         if (action == "devices")
         {
             for (const Json::Value& device : reply["devices"])
+            {
                 out << device["id"].asString() << ": " << device["name"].asString() << " ("
-                    << device["family"].asString() << ")\n";
+                    << device["family"].asString() << ")";
+                // A control surface's role, the layers up and its context, the feel of its top layer
+                if (device.isMember("role"))
+                {
+                    out << " - role " << device["role"].asString() << (device["role_set"].asBool() ? "" : " (default)")
+                        << ", layers";
+                    for (const Json::Value& layer : device["layers"])
+                        out << " " << layer.asString();
+                    if (!device["context"].asString().empty())
+                        out << ", context " << device["context"].asString();
+                }
+                if (device.isMember("feel"))
+                    out << ", feel " << Compact(device["feel"]);
+                out << "\n";
+            }
             if (reply["devices"].empty())
                 out << "no host game controllers connected";
             return out.str();
@@ -242,7 +258,8 @@ void RegisterControllers(ToolRegistry& registry)
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
         "plug / targets: the retro device (kempston-joystick, sinclair-joystick, cursor-joystick, keys-joystick, "
-        "fuller-joystick, md6-pad); bindings / bind / unbind / haptics / rumble: a host device id (devices lists them)";
+        "fuller-joystick, md6-pad); bindings / bind / unbind / haptics / rumble / output: a host device id (devices lists "
+        "them)";
     std::string perVerb;
     std::set<std::string> options;
     for (const auto& [verb, verbOptions] : ControllerToolActions())
@@ -285,6 +302,13 @@ void RegisterControllers(ToolRegistry& registry)
     schema["properties"]["effect"]["description"] =
         "rumble: the test effect (identify by default; low, high, clicks, left-trigger, right-trigger, swell: haptics "
         "lists a device's)";
+    schema["properties"]["pattern"]["description"] = "output: a haptic pattern (tick, double, buzz)";
+    schema["properties"]["steps"]["description"] =
+        "output: steps per turn (1..3600; the Dial's default 36), with clicks; lasts until its context or layers change";
+    schema["properties"]["clicks"]["description"] = "output: on (a click at each step) or off (a free wheel)";
+    schema["properties"]["marks"]["description"] =
+        "output: a seek's marks, strongest first (second, ten_seconds, bookmark, edge, barrier): the pattern the "
+        "device's top layer plays for them";
     schema["properties"]["control"]["description"] = "bind / unbind: south, lt.click, rstick.x, view+menu, dpad.*";
     schema["properties"]["spec"]["type"] = "object";
     schema["properties"]["spec"]["description"] =
@@ -308,8 +332,9 @@ void RegisterControllers(ToolRegistry& registry)
         "game profile by hand, for a program started from the machine itself), bindings (effective, with the profile "
         "each came from), bind, unbind (in a user profile, saved and applied at once), scheme (how the pad works: "
         "Kempston, Sinclair 1, QAOP + Space; the scheme the user profile extends), haptics (whether the emulator "
-        "drives a device's motors, else why; its test effects), rumble (play a test effect on a host device). Options "
-        "per action:" +
+        "drives a device's motors, else why; its test effects), rumble (play a test effect on a host device), output (a "
+        "control surface such as the Surface Dial: a haptic pattern, its steps per turn and clicks, or a seek's marks "
+        "as its context layer plays them). Options per action:" +
             perVerb,
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {

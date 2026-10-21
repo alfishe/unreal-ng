@@ -318,9 +318,10 @@ TEST(ProfileStore_Test, KeyboardShortcuts_WithoutTheDebugLayer)
     EXPECT_EQ(stepOver->target.name, "run.step_over");
     EXPECT_NE(Find(resolved, "family:keyboard", "", "key.kp8"), nullptr) << "the numpad joystick stays";
     EXPECT_EQ(Find(resolved, "family:xbox-elite-2", "debug", "rb"), nullptr) << "the pads' debug profiles wait";
-    const Binding* knob = Find(resolved, "family:surface-dial", "debug", "knob");
+    const Binding* knob = Find(resolved, "family:surface-dial", "@ttd", "knob");
     ASSERT_NE(knob, nullptr) << "a control surface is a remote by nature";
-    EXPECT_EQ(knob->target.name, "ttd.jog_frames");
+    EXPECT_EQ(knob->target.name, "ttd.seek_by");
+    EXPECT_NE(Find(resolved, "family:surface-dial", "debug", "push"), nullptr);
 
     InputRouter router;
     std::vector<std::string> actions;
