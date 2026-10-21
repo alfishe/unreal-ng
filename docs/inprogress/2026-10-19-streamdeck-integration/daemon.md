@@ -88,7 +88,7 @@ flowchart LR
 | `getFeature` | From the real deck only (as Tee). Own viewers answer their own. |
 | Slow viewer | Each viewer has a bounded queue (64 frames); on overflow the oldest image chains are dropped and the viewer gets a full replay when it drains; the deck is never stalled. |
 | No real deck | Mirror viewers wait ("no deck" on their window); own viewers work. |
-| Hot plug | The multiplexer rescans every second (as `UsbListener` did); a replugged serial gets its runtime back on its page. |
+| Hot plug | A failed read or write closes the deck; its runtime and viewers stay. The device thread's own read rescans every second (as `UsbListener` did, no thread of its own); a replugged serial gets its picture replayed and goes on on its page. Another deck after 3 s gets a runtime of its own. Done: `sdb/reconnect.h`, [reference](../../companions/streamdeck/daemon.md#hot-plug). |
 | Exclusive open | The daemon opens decks **exclusive** where the OS allows it (macOS: `hid_darwin_set_open_exclusive(1)`); the per-deck `/tmp` lock goes: there is one writer. Other Stream Deck software (the Elgato app) holding the deck is reported as "busy" with the holder if known. |
 | `--emulate` | A runtime may present a smaller model on a larger real deck (`Device::emulate`), as today; mirrors then show the physical model (as today's order: mirror before emulate). |
 

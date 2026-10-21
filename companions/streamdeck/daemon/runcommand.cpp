@@ -6,6 +6,8 @@
 //               mirrors of the deck, or decks of their own with their own runtime
 //   --wait      no deck attached: serve the viewers (own decks work, mirrors wait) and take the first USB deck that
 //               appears
+//   The USB deck may be unplugged and plugged back in: the runtime and the viewers stay, the deck gets its picture
+//   back (sdb/reconnect.h). Another deck plugged in instead (after 3 s) gets a runtime of its own.
 //   --watch     reload the file when it changes (the menu stack is kept)
 //   --api PORT  automation planes on 127.0.0.1:PORT: WebAPI (/api/v1/decks, state, navigate, press, reload,
 //               scenario, brightness) + MCP (/mcp); sdb/daemondecks.h
@@ -40,9 +42,15 @@ namespace cli
 namespace
 {
 std::atomic<bool> runStop{false};
-void OnRunSig(int)
+std::atomic<bool> deckStop{false};  // the real deck's runtime ends: the run ends, or another deck takes its place
+void StopRun()
 {
     runStop = true;
+    deckStop = true;
+}
+void OnRunSig(int)
+{
+    StopRun();
 }
 
 // A viewer's deck of its own: a device on the viewer, a runtime with the same scenario, its thread.
@@ -55,32 +63,50 @@ struct OwnDeck
 };
 
 // The deck to play on, or null. quiet: no error lines (--wait polls). mirror: an older Stream Deck Studio listening
-// on the wire port may get a copy (only when this daemon's hub does not listen there itself).
+// on the wire port may get a copy (only when this daemon's hub does not listen there itself). A USB deck reconnects
+// after an unplug (sdb/reconnect.h); another deck there instead ends this one's runtime (deckStop).
 std::unique_ptr<Device> TryOpen(const Args& a, bool quiet, bool mirror)
 {
     Args sel = a;
     if (!mirror && !sel.Has("mirror"))
         sel.opt["no-mirror"] = "1";
-    if (!quiet)
-        return OpenOrExplain(sel);
-    if (sel.Str("device").rfind("emu", 0) == 0)
-        return nullptr;  // a studio address is not polled
-    for (const auto& d : ListDevices())
-        if (sel.Str("device").empty() || d.info.serial.find(sel.Str("device")) != std::string::npos)
+    const bool emulator = sel.Str("device").rfind("emu", 0) == 0;
+    if (quiet && (emulator || (sel.Has("emulate") && !FindModelByName(sel.Str("emulate")))))
+        return nullptr;  // a studio address is not polled; a bad --emulate was said once already
+    std::string err = "no matching device";
+    std::unique_ptr<Device> dev;
+    if (auto f = FindTarget(sel))
+    {
+        if (!emulator)
         {
-            Found f = d;
-            if (sel.Has("emulate"))
-            {
-                const Model* v = FindModelByName(sel.Str("emulate"));
-                if (!v)
-                    return nullptr;
-                f.physical = f.model;
-                f.model = v;
-            }
-            std::string err;
-            return OpenDevice(f, &err);
+            ReconnectOptions ro;
+            ro.filter = sel.Str("device");
+            ro.onChange = [serial = f->info.serial](bool connected, const std::string& why) {
+                if (connected)
+                    std::printf("deck %s is back: picture restored\n", serial.c_str());
+                else
+                    std::printf("deck %s unplugged (%s): the runtime and the viewers wait for it\n", serial.c_str(),
+                                why.c_str());
+                std::fflush(stdout);
+            };
+            ro.onOtherDeck = [serial = f->info.serial](const std::string& other) {
+                std::printf("deck %s stays away, %s is here: it gets a runtime of its own\n", serial.c_str(),
+                            other.c_str());
+                std::fflush(stdout);
+                deckStop = true;
+            };
+            f->reconnect = std::move(ro);
         }
-    return nullptr;
+        dev = OpenDevice(*f, &err);
+    }
+    if (!dev && !quiet)
+    {
+        std::fprintf(stderr, "error: cannot open device (%s)\n", err.c_str());
+        std::fprintf(
+            stderr,
+            "hint: quit other Stream Deck software (the Elgato app) first; it holds the device. Run `sdctl info`.\n");
+    }
+    return dev;
 }
 }  // namespace
 
@@ -198,7 +224,7 @@ int CmdRun(const Args& a)
         {
             std::fprintf(stderr, "error: %s\n", err.c_str());
             rc = kDeviceError;
-            runStop = true;
+            StopRun();
         }
         else
             std::printf("automation: http://127.0.0.1:%d/api/v1/decks, MCP http://127.0.0.1:%d/mcp\n", server.Port(),
@@ -213,7 +239,7 @@ int CmdRun(const Args& a)
     if (const double secs = a.Dbl("seconds", 0); secs > 0)
         std::thread([secs] {
             std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(secs * 1000)));
-            runStop = true;
+            StopRun();
         }).detach();
 #ifndef _WIN32
     // --with-parent: started by an app (Stream Deck Studio, unreal-qt); when it goes away, so does this run, not
@@ -222,23 +248,31 @@ int CmdRun(const Args& a)
         std::thread([parent = getppid()] {
             while (!runStop && getppid() == parent)
                 std::this_thread::sleep_for(std::chrono::milliseconds(300));
-            runStop = true;
+            StopRun();
         }).detach();
 #endif
 
-    if (!dev && !runStop)
+    // The real deck: one runtime per deck. An unplug is handled underneath (the runtime goes on); the loop turns only
+    // when another deck takes the place of the one that stayed away.
+    while (!runStop)
     {
-        std::printf("waiting for a Stream Deck (viewers%s are served meanwhile)\n", hub ? "" : " are not");
-        std::fflush(stdout);
-    }
-    for (int tick = 0; !dev && !runStop; ++tick)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        if (tick % 10 == 9)
+        if (!dev)
+        {
             dev = TryOpen(a, true, !hub);
-    }
-    if (dev && !runStop)
-    {
+            if (!dev)
+            {
+                std::printf("waiting for a Stream Deck (viewers%s are served meanwhile)\n", hub ? "" : " are not");
+                std::fflush(stdout);
+            }
+            for (int tick = 0; !dev && !runStop; ++tick)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                if (tick % 10 == 9)
+                    dev = TryOpen(a, true, !hub);
+            }
+            if (!dev)
+                break;
+        }
         const Scenario start = decks.StartScenario();
         if (!decks.StartFile().empty() && &dev->GetModel() != start.model)
             std::printf("note: scenario made for %s, playing on %s (keys outside the grid are not shown)\n",
@@ -248,15 +282,21 @@ int CmdRun(const Args& a)
                 return hub->AttachDeck(std::move(t), dev->GetModel(), dev->Serial());
             });
         const std::string serial = dev->Serial();
-        Runtime rt(*dev, start, nullptr, opt);
-        rt.onSwitchScenario = [&decks, serial](const std::string& f) { decks.RequestLoad(serial, f); };
-        decks.Add(serial, dev->GetModel(), true, rt);
-        std::printf("playing %s on %s %s%s (Ctrl-C to stop)\n",
-                    decks.StartFile().empty() ? "the idle scenario" : decks.StartFile().c_str(),
-                    std::string(dev->GetModel().name).c_str(), serial.c_str(), opt.dryRun ? ", dry run" : "");
-        std::fflush(stdout);
-        rt.Run(runStop);
-        decks.Remove(serial);
+        {
+            Runtime rt(*dev, start, nullptr, opt);
+            rt.onSwitchScenario = [&decks, serial](const std::string& f) { decks.RequestLoad(serial, f); };
+            decks.Add(serial, dev->GetModel(), true, rt);
+            std::printf("playing %s on %s %s%s (Ctrl-C to stop)\n",
+                        decks.StartFile().empty() ? "the idle scenario" : decks.StartFile().c_str(),
+                        std::string(dev->GetModel().name).c_str(), serial.c_str(), opt.dryRun ? ", dry run" : "");
+            std::fflush(stdout);
+            deckStop = false;
+            if (runStop)
+                deckStop = true;  // a stop between the loop's check and the reset above
+            rt.Run(deckStop);
+            decks.Remove(serial);
+        }
+        dev.reset();  // its viewers are told; mirrors of the first deck follow the next one
     }
     decks.Wake();
     watcher.join();

@@ -42,7 +42,38 @@ two roles:
 A slow viewer never stalls the deck. It has a bounded queue (64 frames, 256 KB of kernel buffer); when it falls
 behind, the images queued for it are dropped and it gets the whole current picture once it catches up. A viewer that
 does not join within 2 s is closed. Unplugging the deck keeps its viewers (they are told), and plugging it back in
-continues.
+continues ([below](#hot-plug)).
+
+## Hot plug
+
+The USB deck may be unplugged and plugged back in at any time, on macOS, Linux (hidraw) and Windows alike:
+
+1. **Unplugged.** The first read, write or feature report that fails (hidapi's `-1`: macOS reports the removal, hidraw
+   a `POLLHUP`, Windows a failed `ReadFile` / `WriteFile`) closes the handle. `GET /api/v1/decks` shows
+   `"connected": false` at once; the deck's viewers get `DeckState {"connected": false}` and stay; a mirror that
+   joins meanwhile waits for the deck. The runtime goes on: navigation, actions, brightness and scenario changes from
+   the routes, viewers' presses. What it draws is kept (the picture cache of the deck: every key, the strip, the
+   brightness), not sent.
+2. **Looked for.** Once a second the device thread's own read enumerates the USB decks again (no thread or timer of
+   its own) and opens the deck with the same serial and model when it is there. A handle that cannot be opened yet
+   (the deck still settling, the Elgato app holding it) is tried again a second later.
+3. **Back.** The deck gets its picture back from the cache (brightness first, then every key and the strip), so it
+   shows what it showed, with the changes made while it was away. Same runtime, same menu stack, same scenario; the
+   viewers get `DeckState {"connected": true}` (no new picture: they never lost theirs). The daemon prints
+   `deck SERIAL unplugged (...)` and `deck SERIAL is back`.
+
+**Another deck instead.** When the lost deck stays away 3 s and another deck is plugged in (one whose serial matches
+`--device`; any deck without it), that deck is a new logical deck: the old runtime ends, the new deck gets a runtime
+of its own on the start scenario, at its own model (a scenario `PUT` for the old deck does not carry over, its menu
+stack neither: the grids differ). Mirrors that asked for "the first deck" move to it (a new `Welcome` with the new
+model, then its picture); a mirror of the old serial keeps waiting for that deck. A short glitch never swaps decks:
+within the 3 s only the same serial is taken. A deck with the same serial and another product ID (another mode of the
+device) counts as another deck.
+
+`POST /api/v1/decks/{serial}/reconnect` does what an unplug does, on purpose: the handle is closed on the device
+thread's next call, stays closed `away_ms` (default 0), and the deck is opened again and redrawn the same way. It
+mends a deck that shows garbage after a USB hiccup, and it is how the reopen path is checked on a real deck without
+pulling the cable.
 
 An older Stream Deck Studio that listens on 37050 itself takes the port: `run` then says so and runs without viewers.
 `--mirror` / `--device emu` still talk to such a studio (the device wire v1).
@@ -66,6 +97,7 @@ deck, else the first deck); the runtime routes take `?deck=SERIAL` with the same
 | `GET /api/v1/decks/{serial}/scenario` | The deck's file, whether it is the start scenario, watched, the scenario's name; `?document=true` adds the document |
 | `PUT /api/v1/decks/{serial}/scenario` | `{"file": path, "watch": true}`: this deck plays another file (the other decks keep theirs), the menu stack kept; watched by default, so edits reload it. A file with errors is refused (422) and the deck keeps what it plays |
 | `DELETE /api/v1/decks/{serial}/scenario` | The deck plays the daemon's start scenario again |
+| `POST /api/v1/decks/{serial}/reconnect` | `{"away_ms": 0..60000}`: close the real deck's USB handle and open it again after that long (an unplug on purpose, [hot plug](#hot-plug)); 409 for an own deck |
 | `POST /api/v1/decks/{serial}/snapshot` | `{"path": file}`: every viewer of the deck saves a PNG there (a `Control` frame); answers how many viewers it went to, 409 when nobody views the deck |
 | `GET /api/v1/state`, `/page`, `/nodes` | The runtime of one deck: menu stack, page, toggles, last actions; what the keys mean now; the scenario's nodes (filters `tag`, `type`, `kind`, `menu`, `text`) |
 | `POST /api/v1/navigate`, `/press` | `{"to": back\|home\|node, "node"}`; a key by `node` id or `key` index |
@@ -81,13 +113,14 @@ curl -s localhost:37053/api/v1/decks
 curl -s -X PUT localhost:37053/api/v1/decks/first/brightness -d '{"value":40}'
 curl -s -X PUT localhost:37053/api/v1/decks/EMU1/scenario -d '{"file":"/path/my.deck.json"}'
 curl -s -X DELETE localhost:37053/api/v1/decks/EMU1/scenario
+curl -s -X POST localhost:37053/api/v1/decks/first/reconnect -d '{"away_ms":2000}'
 ```
 
 ## Threads
 
 | Thread | Does |
 |:--|:--|
-| Device (one per deck, the main one for the real deck) | Reads input, runs the scenario, writes HID reports |
+| Device (one per deck, the main one for the real deck) | Reads input, runs the scenario, writes HID reports; while the deck is unplugged, its reads look for it again once a second ([hot plug](#hot-plug)) |
 | Network | The event loop: viewers and the device wire (`sdb/eventloop.h`, `sdb/deckhub.h`) |
 | Runtime workers | Actions and the time-travel readout, per runtime (both go with the surface client, SD5) |
 | Automation | With `--api`: one worker |
