@@ -179,9 +179,11 @@ void Runtime::Step(int timeoutMs)
         }
         if (_pendingReload)
         {
+            // the stack's ids first: its nodes live in the scenario the assignment below destroys
+            const auto ids = _nav.Ids();
             _s = std::move(*_pendingReload);
             _pendingReload.reset();
-            _nav.Rebind(_s);
+            _nav.Rebind(_s, ids);
             _toggles.clear();
             force = true;
             _dev.Note("scenario reloaded: " + _s.name + ", menu " + JoinPath(Layout(_s, _nav, _m).path));
@@ -563,6 +565,19 @@ void Runtime::Navigate(const json& request)
 {
     std::lock_guard l(_mu);
     _navRequests.push_back(request);
+}
+
+void Runtime::SetBrightness(int percent)
+{
+    std::lock_guard l(_mu);
+    _brightness = std::clamp(percent, 0, 100);
+    _brightnessDirty = true;
+}
+
+int Runtime::Brightness() const
+{
+    std::lock_guard l(_mu);
+    return _brightness;
 }
 
 json Runtime::CurrentPage() const

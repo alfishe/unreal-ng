@@ -127,6 +127,21 @@ Also: `orel-bk08-chm-4.jpg`, `-5.jpg` (the manual's covers), `-6.jpg` (the box).
 | ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/profi-v50-keyboard-schematic-album-p29.png) `clones/profi-v50-keyboard-schematic-album-p29.png` | the album's v5.0 keyboard: the keys, their order and wiring (a drawing, not to scale) |
 | ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/profi-v32-homemade-reed-kbd-es1840-caps-zxpk26525.jpg) `clones/profi-v32-homemade-reed-kbd-es1840-caps-zxpk26525.jpg` | a home-made reed keyboard with ЕС-1840 caps (not drawn) |
 
+## PC keyboards (`pcxt`, `pcat`, `pcps2`)
+
+![2D](../../../tools/poc/031-authentic-osd-keyboards/atlas/pcxt.photo.atlas.png)
+
+![2D](../../../tools/poc/031-authentic-osd-keyboards/atlas/pcat.photo.atlas.png)
+
+![2D](../../../tools/poc/031-authentic-osd-keyboards/atlas/pcps2.photo.atlas.png)
+
+| Photo | Use |
+|---|---|
+| ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/pc/xt-83-ibm-model-f-top.jpg) `pc/xt-83-ibm-model-f-top.jpg` | top: the XT's layout (measured), case, the two wells |
+| ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/pc/at-84-ibm-model-f-top.jpg) `pc/at-84-ibm-model-f-top.jpg` | top: the AT 84, the LED window, the caps' two tones |
+| ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/pc/russian-ps2-genius-cyrillic-legends.jpg) `pc/russian-ps2-genius-cyrillic-legends.jpg` | top: the 104-key clone, the red Cyrillic, the L Enter, the block frames |
+| ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/pc/genius-kb-06xe-beige.jpg) `pc/genius-kb-06xe-beige.jpg` | 3/4: a clone's case profile and cap sculpt |
+
 ## ZX Spectrum Next (`zxnext`)
 
 ![2D](../../../tools/poc/031-authentic-osd-keyboards/atlas/zxnext.photo.atlas.png)
@@ -142,12 +157,6 @@ Also: `orel-bk08-chm-4.jpg`, `-5.jpg` (the manual's covers), `-6.jpg` (the box).
 
 Also: `next-issue2-render-commons.jpg`, `next-topdown-festival-commons.jpg`, `next-rainbow-right-end-timeextension.jpg`,
 `next-ks1-vs-ks2-interior-makerspace.jpg`, `next-zesarux-keyboard-bitmap.jpg`.
-
-## Still to come in 2D
-
-| Keyboard | Photos |
-|---|---|
-| PC keyboards | `pc/xt-83-ibm-model-f-top.jpg`, `pc/at-84-ibm-model-f-top.jpg`, `pc/genius-kb-06xe-beige.jpg`, `pc/russian-ps2-genius-cyrillic-legends.jpg`, `pc/ms7004-soviet-keyboard.jpg` |
 
 ## Missing
 

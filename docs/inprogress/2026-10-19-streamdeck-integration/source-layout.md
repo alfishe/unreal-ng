@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-19 |
-| **Status** | **Proposal, open**: the owner chooses the paths and names (D6 fixes only the grouping by role) |
+| **Status** | **Proposal, open**: the owner chooses the paths and names (D6 fixes only the grouping by role); **§7 moves done 2026-10-20** (`plugins/`, `utilities/`) |
 | **Decision** | D6 in [README.md](README.md#decisions-owner-2026-10-19): clients, companions, plugins, utilities apart; `tools/` internal |
 
 ## Contents
@@ -147,7 +147,8 @@ The clients do not move with this work; their centralised move later touches CMa
 With this work: create `companions/`, `plugins/`, `utilities/`; put
 the Stream Deck companion in `companions/streamdeck/`; move the plugin and utility entries of `tools/` (table below)
 in one mechanical commit of its own (`git mv` only, plus the paths in docs and recipes that name them), so
-`git log --follow` stays readable.
+`git log --follow` stays readable. **Done 2026-10-20 (SD10):** the rows below marked `plugins/` and `utilities/` moved with `git mv`, every
+reference updated; each group has a README ([plugins/README.md](../../../plugins/README.md), [utilities/README.md](../../../utilities/README.md)).
 
 | From `tools/` | To | Why |
 |:--|:--|:--|

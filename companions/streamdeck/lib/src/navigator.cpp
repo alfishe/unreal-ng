@@ -66,12 +66,16 @@ bool Navigator::GoTo(std::string_view id)
 
 void Navigator::Rebind(const Scenario& s)
 {
-    const auto old = Ids();
+    Rebind(s, Ids());
+}
+
+void Navigator::Rebind(const Scenario& s, const std::vector<std::string>& old)
+{
     _s = &s;
     _stack = {&s.root};
     if (!s.settings.stack)
     {
-        if (const Node* n = Find(s.root, old.back()); n && n->IsMenu())
+        if (const Node* n = old.empty() ? nullptr : Find(s.root, old.back()); n && n->IsMenu())
             _stack = {n};
         return;
     }

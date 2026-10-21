@@ -195,9 +195,16 @@ void TestActions()
     std::vector<std::string> navs;
     cb.navigate = [&](const json& j) { navs.push_back(j.value("to", "")); };
     auto sys = MakeSystemHost(Settings{}, cb);
-    r = Execute(Act({{"kind", "shell"}, {"command", "echo hello; exit 3"}}), *sys);
+#ifdef _WIN32  // cmd.exe there
+    const char* exit3 = "echo hello& exit 3";
+    const char* sleep5 = "ping -n 6 127.0.0.1 > nul";
+#else
+    const char* exit3 = "echo hello; exit 3";
+    const char* sleep5 = "sleep 5";
+#endif
+    r = Execute(Act({{"kind", "shell"}, {"command", exit3}}), *sys);
     CHECK(!r.ok && r.message == "shell exit 3: hello");
-    r = Execute(Act({{"kind", "shell"}, {"command", "sleep 5"}, {"timeout_ms", 200}}), *sys);
+    r = Execute(Act({{"kind", "shell"}, {"command", sleep5}, {"timeout_ms", 200}}), *sys);
     CHECK(!r.ok && r.message.find("timeout") != std::string::npos);
     Execute(Act({{"kind", "nav"}, {"to", "back"}}), *sys);
     CHECK(navs.size() == 1 && navs[0] == "back");

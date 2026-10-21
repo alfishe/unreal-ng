@@ -47,6 +47,17 @@ public:
     void Inject(const Event& e);                                          // as if the device sent it
     bool PressNode(const std::string& id, std::string* error = nullptr);  // a key on the current page
     void Navigate(const json& request);                                   // {to: back|home|node, node}
+    void SetBrightness(int percent);                                      // 0..100, sent on the next step
+    [[nodiscard]] int Brightness() const;
+    // The device: there or unplugged (it reconnects underneath, the runtime goes on), and a reconnect on purpose.
+    [[nodiscard]] bool Connected() const
+    {
+        return _dev.Connected();
+    }
+    bool Reconnect(std::chrono::milliseconds away)
+    {
+        return _dev.Reconnect(away);
+    }
     [[nodiscard]] json State() const;
     [[nodiscard]] json CurrentPage() const;              // describePage of the current menu
     [[nodiscard]] json Nodes(const json& filter) const;  // listNodes of the loaded scenario

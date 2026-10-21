@@ -14,8 +14,10 @@ class QComboBox;
 class QDockWidget;
 class QLabel;
 class QPlainTextEdit;
+class QSlider;
 class QTimer;
 class QToolButton;
+class DaemonControl;
 class DeckClient;
 class DeckLink;
 class DeckWidget;
@@ -36,6 +38,8 @@ struct StudioOptions
     quint16 listenPort = 37050;
     bool anyInterface = false;
     int apiPort = 37052;  // 0 = off
+    int daemonApiPort = 37053;  // the daemon's automation (decks, brightness, scenario per deck)
+    bool startDaemon = true;    // no daemon answers at launch: start one (unreal-streamdeck run --wait)
 };
 
 class MainWindow : public QMainWindow
@@ -82,6 +86,9 @@ private:
     void BuildMenus();
     void OnSnapshot(const QString& path);
     QImage Screenshot(const QString& area);  // lcd | deck | window | canvas | editor
+    void StartDaemonIfNone();
+    [[nodiscard]] QString ShownDeck() const;  // the serial of the deck this window shows (joined), else ""
+    void FetchBrightness();                   // the shown deck's brightness from the daemon into the slider
 
     StudioOptions _options;
     VirtualDeck* _deck;
@@ -90,6 +97,10 @@ private:
     ListenServer* _server = nullptr;  // --listen
     DeckWidget* _view;
     QComboBox* _roles;  // client: "mirror" + own models; listen: the models
+    DaemonControl* _daemon = nullptr;
+    QSlider* _brightness = nullptr;  // the shown deck's brightness, set through the daemon
+    QTimer* _brightnessSend = nullptr;
+    QString _brightnessDeck;  // the deck the slider shows
     QLabel* _status;
     QPlainTextEdit* _log;
     QTimer* _tick;

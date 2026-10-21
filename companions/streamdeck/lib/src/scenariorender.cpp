@@ -314,7 +314,7 @@ Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string
             const draw::Color halo{static_cast<std::uint8_t>(c.r * 0.35), static_cast<std::uint8_t>(c.g * 0.35),
                                    static_cast<std::uint8_t>(c.b * 0.35)};
             const int x = contentX + (a ? draw::TextWidth(t.substr(0, a) + "0", sc) - draw::TextWidth("0", sc) : 0);
-            for (const auto [dx, dy] : {std::pair{-1, 0}, std::pair{1, 0}, std::pair{0, -1}, std::pair{0, 1}})
+            for (const auto& [dx, dy] : {std::pair{-1, 0}, std::pair{1, 0}, std::pair{0, -1}, std::pair{0, 1}})
                 draw::Text(im, x + dx, y + dy, word, sc, halo);
             draw::Text(im, x, y, word, sc, c);
             a = b;

@@ -88,6 +88,8 @@ struct Viewer
     bool waiting = false;  // a mirror without its deck yet
     std::string wanted;    // the serial a waiting mirror asked for, or "first"
     std::string deck;      // bound deck serial
+    std::string name;      // the Join's "name" and "pid": who the viewer is (GET /api/v1/decks)
+    long long pid = 0;
     bool needsReplay = false;
     net::EventLoop::TimerId joinTimer = 0;
 };
@@ -118,6 +120,8 @@ struct DeckHub::Impl : std::enable_shared_from_this<DeckHub::Impl>
     std::vector<std::string> attachOrder;  // real decks, the first attached first
     int nextViewer = 1;
     int nextOwn = 1;
+    mutable std::mutex infoMutex;  // guards `info`: read from any thread, written on the loop
+    DeckHub::Snapshot info;
 
     Impl(net::EventLoop& l, Options o, DeckHub* h) : loop(l), options(std::move(o)), owner(h) {}
 
@@ -194,6 +198,7 @@ struct DeckHub::Impl : std::enable_shared_from_this<DeckHub::Impl>
         {
             case wire::Join:
                 HandleJoin(id, f.payload);
+                Publish();
                 return;
             case wire::Input:
                 if (auto d = decks.find(v.deck); d != decks.end() && d->second.input)
@@ -253,6 +258,10 @@ struct DeckHub::Impl : std::enable_shared_from_this<DeckHub::Impl>
             return;
         }
         v.joined = true;
+        if (const auto n = j.find("name"); n != j.end() && n->is_string())
+            v.name = n->get<std::string>();
+        if (const auto p = j.find("pid"); p != j.end() && p->is_number_integer())
+            v.pid = p->get<long long>();
         if (v.joinTimer)
         {
             loop.Cancel(v.joinTimer);
@@ -294,9 +303,11 @@ struct DeckHub::Impl : std::enable_shared_from_this<DeckHub::Impl>
             v.own = true;
             v.deck = serial;
             d.viewers.insert(id);
-            SendWelcome(id, d);
+            // the runtime first: once the viewer has its Welcome, the daemon's routes know its deck (its frames are
+            // posted to this loop, so they still follow the Welcome)
             if (owner->onOwnDeck)
                 owner->onOwnDeck(MakeOwnTransport(id, serial, d.input), *model, serial);
+            SendWelcome(id, decks[serial]);
             return;
         }
         SendJson(id, wire::Welcome, {{"v", wire::kVersion}, {"error", "bad_role"}});
@@ -439,6 +450,40 @@ struct DeckHub::Impl : std::enable_shared_from_this<DeckHub::Impl>
             }
         }
         viewers.erase(it);
+        Publish();
+    }
+
+    // The copy Info() hands out: decks in attach order (own decks after the real ones), their viewers.
+    void Publish()
+    {
+        DeckHub::Snapshot s;
+        auto add = [&](const Deck& d) {
+            DeckHub::DeckInfo di{d.serial, d.model, d.real, d.connected, {}};
+            for (int id : d.viewers)
+                if (const auto v = viewers.find(id); v != viewers.end())
+                    di.viewers.push_back({id, v->second.own ? "own" : "mirror", v->second.name, v->second.pid});
+            s.decks.push_back(std::move(di));
+        };
+        for (const std::string& serial : attachOrder)
+            if (const auto d = decks.find(serial); d != decks.end())
+                add(d->second);
+        for (const auto& [serial, d] : decks)
+            if (!d.real)
+                add(d);
+        for (const auto& [id, v] : viewers)
+            s.waiting += v.waiting ? 1 : 0;
+        std::lock_guard lock(infoMutex);
+        info = std::move(s);
+    }
+
+    void SendControl(const std::string& serial, const std::string& payload)
+    {
+        const auto d = decks.find(serial);
+        if (d == decks.end())
+            return;
+        const std::string frame = wire::EncodeFrame(wire::Control, payload);
+        for (int id : d->second.viewers)
+            Enqueue(id, frame, false, true);
     }
 
     // ------------------------------------------------------------------ decks (posted from device threads)
@@ -459,20 +504,50 @@ struct DeckHub::Impl : std::enable_shared_from_this<DeckHub::Impl>
             SendJson(id, wire::DeckState, {{"connected", true}});
         std::vector<int> waiting;
         for (const auto& [id, v] : viewers)
+        {
             if (v.waiting && (v.wanted == "first" || v.wanted == serial))
                 waiting.push_back(id);
+            else if (!v.own && !v.waiting && v.wanted == "first" && v.deck != serial)
+                if (const auto old = decks.find(v.deck); old != decks.end() && old->second.real && !old->second.connected)
+                {
+                    old->second.viewers.erase(id);  // a mirror of "the first deck" follows the deck the daemon took
+                    waiting.push_back(id);
+                }
+        }
         for (int id : waiting)
-            Bind(id, serial);
+            Bind(id, serial);  // a new Welcome (model, serial) and the picture
+        // an unplugged deck no runtime plays any more (the daemon took this one instead) and nobody watches is forgotten
+        for (auto it = decks.begin(); it != decks.end();)
+        {
+            const Deck& old = it->second;
+            if (old.real && old.serial != serial && !old.connected && !old.input && old.viewers.empty())
+            {
+                std::erase(attachOrder, old.serial);
+                it = decks.erase(it);
+            }
+            else
+                ++it;
+        }
+        Publish();
+    }
+
+    // The runtime let the deck go (its transport is gone): unplugged for its viewers, no more input to it.
+    void DeckReleased(const std::string& serial)
+    {
+        DeckDetached(serial);
+        if (auto it = decks.find(serial); it != decks.end())
+            it->second.input.reset();
     }
 
     void DeckDetached(const std::string& serial)
     {
         auto it = decks.find(serial);
-        if (it == decks.end())
+        if (it == decks.end() || !it->second.connected)
             return;
         it->second.connected = false;
         for (int id : it->second.viewers)
             SendJson(id, wire::DeckState, {{"connected", false}});
+        Publish();
     }
 
     void DeckFrame(const std::string& serial, std::uint8_t type, std::string bytes)
@@ -504,26 +579,33 @@ namespace
 class MirrorTransport final : public Transport
 {
 public:
-    MirrorTransport(std::unique_ptr<Transport> usb, std::weak_ptr<DeckHub::Impl> hub, std::string serial,
-                    std::shared_ptr<DeckInput> input)
-        : _usb(std::move(usb)), _hub(std::move(hub)), _serial(std::move(serial)), _input(std::move(input))
+    MirrorTransport(std::unique_ptr<Transport> usb, std::weak_ptr<DeckHub::Impl> hub, const Model& model,
+                    std::string serial, std::shared_ptr<DeckInput> input)
+        : _usb(std::move(usb)),
+          _hub(std::move(hub)),
+          _model(&model),
+          _serial(std::move(serial)),
+          _input(std::move(input)),
+          _connected(_usb->Connected())
     {
     }
     ~MirrorTransport() override
     {
-        Post([s = _serial](DeckHub::Impl& h) { h.DeckDetached(s); });
+        Post([s = _serial](DeckHub::Impl& h) { h.DeckReleased(s); });
     }
 
     int Write(std::span<const std::uint8_t> r) override
     {
         const int n = _usb->Write(r);
         Publish(wire::Output, r);
+        Follow();
         return n;
     }
     int SendFeature(std::span<const std::uint8_t> r) override
     {
         const int n = _usb->SendFeature(r);
         Publish(wire::SetFeature, r);
+        Follow();
         return n;
     }
     int GetFeature(std::span<std::uint8_t> buf) override
@@ -542,7 +624,9 @@ public:
             }  // a viewer's input never waits
             const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - clk::now()).count();
             const int slice = static_cast<int>(std::clamp<long long>(left, 0, 5));
-            if (const int n = _usb->Read(buf, slice); n != 0)
+            const int n = _usb->Read(buf, slice);
+            Follow();
+            if (n != 0)
             {
                 if (n > 0)
                 {
@@ -571,6 +655,14 @@ public:
     {
         Publish(wire::HostPage, std::span(reinterpret_cast<const std::uint8_t*>(j.data()), j.size()));
     }
+    [[nodiscard]] bool Connected() const override
+    {
+        return _usb->Connected();
+    }
+    bool Reconnect(std::chrono::milliseconds away) override
+    {
+        return _usb->Reconnect(away);
+    }
 
 private:
     void Post(std::function<void(DeckHub::Impl&)> fn)
@@ -582,12 +674,26 @@ private:
     {
         Post([s = _serial, type, b = Bytes(r)](DeckHub::Impl& h) mutable { h.DeckFrame(s, type, std::move(b)); });
     }
+    // The deck underneath went or came back (sdb/reconnect.h): its viewers are told (DeckState), it stays attached.
+    void Follow()
+    {
+        const bool c = _usb->Connected();
+        if (c == _connected)
+            return;
+        _connected = c;
+        if (c)
+            Post([s = _serial, m = _model, in = _input](DeckHub::Impl& h) { h.DeckAttached(s, m, in); });
+        else
+            Post([s = _serial](DeckHub::Impl& h) { h.DeckDetached(s); });
+    }
 
     std::unique_ptr<Transport> _usb;
     std::weak_ptr<DeckHub::Impl> _hub;
+    const Model* _model;
     std::string _serial;
     std::shared_ptr<DeckInput> _input;
     InputSource _last = InputSource::Usb;
+    bool _connected;  // as last told to the hub
 };
 
 // A viewer's own deck: the viewer is the device.
@@ -725,12 +831,37 @@ std::size_t DeckHub::ViewerCount() const
     return _impl->viewers.size();
 }
 
+DeckHub::Snapshot DeckHub::Info() const
+{
+    std::lock_guard lock(_impl->infoMutex);
+    return _impl->info;
+}
+
+int DeckHub::SendControl(const std::string& serial, const std::string& json)
+{
+    int viewers = 0;
+    {
+        std::lock_guard lock(_impl->infoMutex);
+        for (const auto& d : _impl->info.decks)
+            if (d.serial == serial)
+                viewers = static_cast<int>(d.viewers.size());
+    }
+    if (viewers > 0)
+        _impl->Post([serial, json](Impl& h) { h.SendControl(serial, json); });
+    return viewers;
+}
+
 std::unique_ptr<Transport> DeckHub::AttachDeck(std::unique_ptr<Transport> usb, const Model& model,
                                                const std::string& serial)
 {
     auto input = std::make_shared<DeckInput>();
-    _impl->Post([serial, model = &model, input](Impl& h) { h.DeckAttached(serial, model, input); });
-    return std::make_unique<MirrorTransport>(std::move(usb), _impl, serial, std::move(input));
+    const bool connected = usb->Connected();
+    _impl->Post([serial, model = &model, input, connected](Impl& h) {
+        h.DeckAttached(serial, model, input);
+        if (!connected)
+            h.DeckDetached(serial);
+    });
+    return std::make_unique<MirrorTransport>(std::move(usb), _impl, model, serial, std::move(input));
 }
 
 }  // namespace sdb

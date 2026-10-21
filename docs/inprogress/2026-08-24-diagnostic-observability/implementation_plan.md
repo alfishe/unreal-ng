@@ -114,7 +114,7 @@ All transports are always compiled in and always register their commands; when t
 
 ### Offline Tools
 
-#### [NEW] `tools/porttrace/porttrace_convert.py`
+#### [NEW] `utilities/porttrace/porttrace_convert.py`
 - Standalone converter/analyzer per `automation-and-export.md` §7.
 - Reads the decode-rule table from the trace header (no hardcoded per-model masks) for `--analyze-strictness`.
 
@@ -159,7 +159,7 @@ All transports are always compiled in and always register their commands; when t
 - [x] Python bindings `core/automation/python/src/bindings/python_porttrace.h` (registered from `python_emulator.h`): lifecycle, `porttrace_include(port=..., direction=...)` kwargs = AND / separate calls = OR, `porttrace_events[_last|_since]()` as dicts, `porttrace_status()`, config, presets, `porttrace_save()`
 - [x] Lua bindings `core/automation/lua/src/bindings/lua_porttrace.h` (registered from `lua_emulator.h`): same surface, tables in/tables out (`porttrace_include({port=0xFFFD, direction="out"})`)
 - [x] `saveToFile()` in core (`PortDiagnosticRecorder`): JSON / CSV / Binary; headers embed `tStatesPerFrame` + the model's decode-rule table (`PortDecoder::getPortTraceDecodeRules()`, overridden by Pentagon128 to export its mask/match table). Binary layout is static_assert-pinned to the Python struct `"<QIHHHBBBBxx"`
-- [x] Export tests: `PortTrace_Test.ExportAllFormats` (all three formats + binary header fields + embedded rule table) and `PortTrace_Test.FilterDescription`; `tools/porttrace/porttrace_convert.py --selftest` round-trips binary/JSON/CSV; converter additionally verified against real C++-generated artifacts (all 3 formats parse identically)
+- [x] Export tests: `PortTrace_Test.ExportAllFormats` (all three formats + binary header fields + embedded rule table) and `PortTrace_Test.FilterDescription`; `utilities/porttrace/porttrace_convert.py --selftest` round-trips binary/JSON/CSV; converter additionally verified against real C++-generated artifacts (all 3 formats parse identically)
 
 ### Phase 3: Cross-Model Verification Tests
 - [ ] `CrossModelDecodeTest` parameterized across all 7 models, all 65536 addresses, under **pinned machine states** (at minimum TR-DOS on/off — `decodePort()` is state-dependent in some models)
@@ -174,12 +174,12 @@ All transports are always compiled in and always register their commands; when t
 - [x] Python: `porttrace_convert` reads/writes `.binz` (zstd source order: stdlib 3.14+ → `zstandard` → `zstd` CLI → `--via-webapi` fallback); selftest covers the v2 round-trip; all three read paths (json / local binz / via-webapi) verified byte-identical on a live capture
 - [x] Preset parity across all transports per `recording-control.md` table: added `no-fe`, `sound`, `paging` (core + CLI + WebAPI + Python + Lua + tools); Lua gained the missing `porttrace_events_since`
 - [x] Save-integrity contract: stop is an atomic flip (no streaming writer to flush), save is a locked snapshot + full in-memory encode + verified write (explicit flush before the success check catches close-time errors); tests `StopThenSaveLosesNothing`, `SaveWhileCapturingIsConsistentSnapshot`, `SaveToUnwritablePathReportsFailure`
-- [x] `tools/porttrace/porttrace_gui.py`: PySide6 GUI — Capture tab (connect/instance picker, presets + compound rules, capacity/overflow, start/pause/resume/stop/clear, 2 Hz live counters incl. per-frame activity, server-side save in all formats) and Convert/Analyze tab (open any trace, preview/convert/summary/strictness, export incl. `.binz`); exercised end-to-end offscreen against a live Pentagon instance
+- [x] `utilities/porttrace/porttrace_gui.py`: PySide6 GUI — Capture tab (connect/instance picker, presets + compound rules, capacity/overflow, start/pause/resume/stop/clear, 2 Hz live counters incl. per-frame activity, server-side save in all formats) and Convert/Analyze tab (open any trace, preview/convert/summary/strictness, export incl. `.binz`); exercised end-to-end offscreen against a live Pentagon instance
 
 ### Phase 4: Offline Tools & UI — converter DONE (2026-08-25), UI pending
-- [x] `tools/porttrace/porttrace_convert.py`: readers (json/csv/bin, auto-detected by magic/extension), writers (json/csv/markdown/text), `--summary` (direction/device/port histograms, unmapped raw addresses, gated count, decode-rule distribution), filters (`--filter-port/device/direction/pc/unmapped`), `--selftest` (binary+JSON+CSV round-trip)
+- [x] `utilities/porttrace/porttrace_convert.py`: readers (json/csv/bin, auto-detected by magic/extension), writers (json/csv/markdown/text), `--summary` (direction/device/port histograms, unmapped raw addresses, gated count, decode-rule distribution), filters (`--filter-port/device/direction/pc/unmapped`), `--selftest` (binary+JSON+CSV round-trip)
 - [x] `--analyze-strictness`: single-bit near-miss analysis of unmapped events driven by the decode-rule table **from the trace header** — reports every candidate rule with the exact address line that would need to be dropped from the mask (no hardcoded per-model masks in Python)
-- [x] `tools/porttrace/porttrace_capture.py`: one-command capture driver over the WebAPI — enables the `porttrace` feature, applies preset/compound filter rules and buffer config, captures for `--duration` (or until Enter with `--wait-key`), saves the canonical JSON server-side, and converts to any of json/csv/text/markdown/bin via `porttrace_convert`. **Verified live** (2026-08-25): against a running Pentagon instance via the automation binary — 1984 real boot events captured unfiltered with correct device/rule attribution, and a filtered AY-OUTs-only session (184 kept / 1160 filtered at capture)
+- [x] `utilities/porttrace/porttrace_capture.py`: one-command capture driver over the WebAPI — enables the `porttrace` feature, applies preset/compound filter rules and buffer config, captures for `--duration` (or until Enter with `--wait-key`), saves the canonical JSON server-side, and converts to any of json/csv/text/markdown/bin via `porttrace_convert`. **Verified live** (2026-08-25): against a running Pentagon instance via the automation binary — 1984 real boot events captured unfiltered with correct device/rule attribution, and a filtered AY-OUTs-only session (184 kept / 1160 filtered at capture)
 - [ ] Debugger status panel reads `PortActivitySummary` once per frame (core side ready — `PortDecoder::getActivitySummary()`; UI wiring pending)
 - [ ] Optional: port heatmap visualization in the memory viewer
 - [ ] Optional: capture trigger ("start recording on first unmapped event / when PC hits X") layered on the filter machinery, pairs with `stop-when-full`

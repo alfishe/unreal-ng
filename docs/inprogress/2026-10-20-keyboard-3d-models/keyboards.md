@@ -20,6 +20,9 @@ Footprints are the POC 031 data in mm (W × D); heights are published figures or
 | `orel` | LSY256 | 67 | `soviet` | 386 × 176 (the keyboard unit) | UNVERIFIED | approved (2026-10-20) |
 | `profi` | PROFI, PROFI3 | 58 | `soviet` | 379 × 202 (the БК-0010 case) | UNVERIFIED | approved (2026-10-20) |
 | `profiplus` | PROFI, PROFI3 | 46 | `soviet` | 325 × 138 | UNVERIFIED (no photo) | approved (2026-10-20) |
+| `pcxt` | ATM710 (XT firmware), KAY | 83 | `soviet` (PC sculpt) | 485 × 180 | UNVERIFIED (IBM XT ≈ 60 mm at the back) | approved (2026-10-20) |
+| `pcat` | ATM710 (AT firmware), SPRINTER | 101 | `soviet` (PC sculpt) | 470 × 190 | UNVERIFIED (Model M ≈ 50 mm at the back) | approved (2026-10-20) |
+| `pcps2` | ATM3, TSL, PHOENIX | 104 | `soviet` (PC sculpt) | 449 × 162 | UNVERIFIED | approved (2026-10-20) |
 | `zxnext` | NEXT | 58 | `next` | 330 × 146 | UNVERIFIED (a wedge, ≈35–40 mm at the back) | approved |
 
 The 2D atlas of each is `tools/poc/031-authentic-osd-keyboards/atlas/<id>.photo.atlas.png`; its keys
@@ -29,7 +32,6 @@ The 2D atlas of each is `tools/poc/031-authentic-osd-keyboards/atlas/<id>.photo.
 
 | Keyboard | Models | What | Source |
 |---|---|---|---|
-| PC keyboards | ATM710, ATM3, TSL, SPRINTER, PHOENIX, KAY | the PC keyboard of the era (XT 83, AT 84, Enhanced 101/102, MS 7004) plus the 40-key ZX matrix, switchable | refs-pc §0, §7 |
 | ZX matrix only | ATM450 | the 40-key matrix (it had no PC keyboard) | refs-pc §1 |
 
 The 3D project starts on the keyboards of section 1 and takes these as POC 031 draws them.
@@ -97,6 +99,13 @@ The 3D project starts on the keyboards of section 1 and takes these as POC 031 d
   modifiers, a red BREAK; `profiplus` the same caps on the album's 40 ZX keys, the inverted-T cursor keys and "*".
 - **Unknown**: every height, the palm rest's slope (only a top view); `profiplus` everything beyond the album's
   wiring drawing.
+
+### `pcxt`, `pcat`, `pcps2` (one generator, `keyboards/pc.py`)
+- **Case**: plain PC keyboard cases, no brand: the XT's broad raised top over two wells; the Model M-like case with
+  the LED window over the keypad; the low PS/2 clone with each block in a shallow frame and three LEDs.
+- **Caps**: the standard cylindrical PC sculpt (rows sculpted, OEM-like); two-tone grey on `pcxt` and `pcat`, one
+  colour on `pcps2`; Latin black, Cyrillic red; the L Enter on `pcps2`, the tall XT Enter on `pcxt`.
+- **Unknown**: the cases' heights and slopes, the per-row cap profile (refs-pc §7: OEM-like, not measured).
 
 ### `zxnext`
 - **Case**: the wedge case, the rainbow insert in a groove, the vent, the logo moulded black on black, the front DB9

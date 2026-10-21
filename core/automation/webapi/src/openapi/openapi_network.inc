@@ -237,7 +237,7 @@
             "packet into that pcapng file from now on, unbounded, until {\"action\": \"stop\"}; {\"action\": \"ring\", "
             "\"ring_bytes\": 33554432} sets the ring's budget; {\"action\": \"stream\", \"port\": 0} serves the traffic as a live pcapng "
             "stream on a TCP port (0 = any free port; the port is in GET's stream.port; Wireshark: wireshark -k -i "
-            "TCP@127.0.0.1:<port>, or the extcap script tools/wireshark/unreal-ng-extcap.py), {\"action\": \"stream-stop\"} ends it. "
+            "TCP@127.0.0.1:<port>, or the extcap script plugins/wireshark/unreal-ng-extcap.py), {\"action\": \"stream-stop\"} ends it. "
             "Replies with the tap's state.";
         paths[kTraffic]["post"]["parameters"][0]["name"] = "id";
         paths[kTraffic]["post"]["parameters"][0]["in"] = "path";
