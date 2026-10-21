@@ -84,12 +84,19 @@ fixed in `core/` after the POC, as its own task.
 | NEXT | a ZX extended key pressed through the key layer does not set its NR 0xB0 / 0xB1 bit (only host PC keys reach `NextExtendedInput`) | zxnext.vhd:6155-6164 |
 | NEXT | NR 0x68 bit 4 (cancel the extended keys' matrix entries) is not modelled | zxnext.vhd:5451 |
 | ATM3, TSL | `pckey.h:126`, `pckey.cpp:406-415`: Symbol Shift on Left Ctrl "as the AVR maps them back"; the AVR's default map has Symbol Shift on Right Shift, BREAK on Tab, Ctrl and Alt unmapped; the matrix is built from the host keys, not from that map | tslabs/zx-evo `kbmap.c`, `zx.c` |
-| ATM710 | the host route "Both" sends each host key to the matrix and to the AT controller (`keyboard.cpp:121-129`); a PC-picture key must reach the controller only | `atm_at41.asm` `L_527` |
+| ATM710 | the host route "Both" sends each host key to the matrix and to the AT controller (`keyboard.cpp:121-129`); a PC-picture key must reach the controller only; done in the app: the on-screen keyboard posts a PC picture's key as the PC key alone (`unreal-qt/src/osdkeyboard`, 2026-10-20) | `atm_at41.asm` `L_527` |
 | SPRINTER | the FPGA's PC→matrix table (`KBD_INI2.MIF`) and its sixth matrix line (FN: F1-F10 = FN + digit) are not applied; the matrix comes from the host keys | `KBD_INI2.MIF` |
 | QUORUM | the 48 keys off the ZX matrix (F1-F5, RUS / LAT, the boxed E and G, EDIT = TAB, CAPS LOCK, BS, DEL, the punctuation, the keypad) are read through port #7E (A7 = A0 = 0, A4 = A3 = 1, D0-D5); the model cannot be created yet (no port decoder for `MM_QUORUM`, `portdecoder.cpp:126-153`); its decoder needs #7E, FIRE on 0 and the arrows on 5-8 without CAPS SHIFT | quorum-kbd-extended-schematic.jpg, refs-clones §4 |
 | LSY256 | the Orel BK-08's 16 keys beyond the 40 (the ten punctuation keys with their Cyrillic letters, ~, TAB, УПР, РУС, two Р/А; with the 40 they make the manual's 56 keys a program sees) are read through spare bits of the keyboard ports, which bits is not decoded (the schematic `Orel_BK08_Schematic.djvu`); the model cannot be created yet (no port decoder for `MM_LSY256`, `portdecoder.cpp:126-153`) | refs-clones §5 |
 | PROFI, PROFI3 | the album keyboard's cursor keys and "*" are wired to their own joystick lines (RIGHT, DOWN, UP, LEFT, FIRE on pin 18), not the matrix; which port they land on is not known (the manuals: the Sinclair joystick on keyboard lines); the OSD sends them as `JOY:<line>` | refs-clones §6.1 |
 | PHOENIX | the model cannot be created: no port decoder for `MM_PHOENIX` (`portdecoder.cpp:126-153`, `:155-233`) | — |
+
+## In the app
+
+The pictures are the app's on-screen keyboard (View → On-screen Keyboard, the `osd.keyboard` action; owner
+2026-10-20: a window of its own, a switch between a model's keyboards): `unreal-qt/src/osdkeyboard/` reads
+`data/controllers/keyboards/` (this POC's output) and posts a click as the matrix keys or the PC key of the key
+(docs/features/keyboard.md "On-screen keyboard").
 
 ## Progress
 
@@ -110,6 +117,7 @@ fixed in `core/` after the POC, as its own task.
 | `pcxt` | ATM710 (XT firmware), KAY (the IBM PC/XT 83-key: F1-F10 at the left, no editing block, two-tone caps, red Cyrillic, refs-pc §7.1, refs-clones §3) | done, approved (2026-10-20) | — | — |
 | `pcat` | ATM710 (AT firmware), SPRINTER (the AT Enhanced 101-key in the Model M geometry, two-tone caps, red Cyrillic, refs-pc §7.3) | done, approved (2026-10-20) | — | — |
 | `pcps2` | ATM3, TSL, PHOENIX (the PS/2 104-key Russian clone keyboard: one off-white colour, red Cyrillic, L Enter, refs-pc §7.3) | done, approved (2026-10-20) | — | — |
+| `zxmatrix` | ATM450 (its only one), the switchable second of ATM710, KAY, SPRINTER, ATM3, TSL, PHOENIX (the homemade 40-key block: the 48K's stagger, MS 7004 caps, ЙЦУКЕН, owner 2026-10-20) | done, accepted (2026-10-20: "synthetic, but let it be") | — | — |
 | `zxnext` | NEXT | done, approved by the owner (2026-10-19) | — | — |
 
 ## Files
@@ -121,7 +129,7 @@ fixed in `core/` after the POC, as its own task.
 | `generate.py`, `model.py`, `svgkit.py` | the model → each style's SVG + the keys JSON |
 | `styles/` | `photo` (phase 1), `schematic` (phase 2), hybrids (phase 3) |
 | `qtrender/` | renders an SVG with QSvgRenderer, as unreal-qt does, for the check |
-| `keyboards/` | the data per keyboard; `out/<id>.<style>.svg` the pictures, `out/<id>.keys.json` their key maps |
+| `keyboards/` | the data per keyboard; the output goes to `data/controllers/keyboards/` (the app loads it): `<id>.<style>.svg` the pictures, `<id>.keys.json` their key maps, `index.json` the keyboards per model |
 | `atlas.py` | renders every SVG in every mode (Qt, rsvg, each layer alone, the key map, Qt vs rsvg) for review |
 | `trace.py` | rectifies a printed plate in a reference photo and traces its inks into path data (`references/traces/`): the Profi badge |
 | `atlas/<id>.<style>.atlas.png` | one sheet per keyboard and style with all those modes |

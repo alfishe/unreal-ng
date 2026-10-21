@@ -34,7 +34,7 @@ so the 3D generator can read it as it is.
 ## Starting points
 
 - The data: `tools/poc/031-authentic-osd-keyboards/keyboards/<id>.py` (`layout()` → `Model`), `model.py`;
-  `keyboards/out/<id>.keys.json` (the keys, their rectangles and mappings).
+  `data/controllers/keyboards/<id>.keys.json` (the keys, their rectangles and mappings).
 - The 2D renders to match, colours and placement: `tools/poc/031-authentic-osd-keyboards/atlas/<id>.photo.atlas.png`.
 - The references: `tools/poc/031-authentic-osd-keyboards/references/` (`sinclair.md`, `clones.md`, `next.md`,
   `pc.md`, `photos/`).

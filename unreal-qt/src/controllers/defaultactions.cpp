@@ -381,6 +381,13 @@ void RegisterDefaultActions(ActionRegistry& registry, EmulatorBinding* binding, 
             return {};
         },
         noMachine);
-    for (const char* id : {"cap.record_toggle", "cap.clip_last", "osd.keyboard", "osd.quick_menu"})
+    add("osd.keyboard", Tr("On-screen keyboard"), machine,
+        [hooks](bool) -> QString {
+            if (hooks.toggleKeyboard)
+                hooks.toggleKeyboard();
+            return {};
+        },
+        nullptr);
+    for (const char* id : {"cap.record_toggle", "cap.clip_last", "osd.quick_menu"})
         add(id, QString::fromLatin1(id), machine, nullptr, [later] { return later; });
 }

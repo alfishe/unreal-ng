@@ -78,6 +78,10 @@ public:
     /// The keys posted as held (tests)
     static size_t heldPcKeyCount() { return _heldPcKeys.size(); }
     static size_t heldMatrixKeyCount() { return _heldMatrixKeys.size(); }
+    /// A key held on the host keyboard (the on-screen keyboard lights it)
+    static bool pcKeyHeld(PcKey key) { return _heldPcKeys.count(static_cast<uint8_t>(key)) != 0; }
+    /// The matrix keys held on the host keyboard as posted: an extended key (host Left: ZXKEY_EXT_LEFT) as itself
+    static const std::multiset<uint8_t>& heldMatrixKeys() { return _heldMatrixKeys; }
 
     /// Menu shortcuts and PC keyboards (docs/features/keyboard.md "Function keys on PC-keyboard machines"):
     /// while the emulator view has focus, a bare function key F1-F12 (Shift allowed; no Ctrl / Alt / Cmd)
