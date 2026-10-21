@@ -38,7 +38,7 @@ Asked one at a time.
 | L-6 | JPEG encoder | **Decided 2026-10-19:** small vendored baseline 4:4:4 encoder after a measurement against turbojpeg; libjpeg-turbo vendored if much worse. **Measured 2026-10-20 (POC 032): own encoder `sdb::jpeg`** (TooJpeg + libjpeg's integer arithmetic): turbojpeg's scan data, 1.37x its encode time (2.37 ms per + XL frame vs ~90 ms of USB) |
 | T-1 | "No id" on the WebAPI with views | **Decided 2026-10-19:** the followed instance when views exist; selected (else sole) headless |
 | T-2 | Where pins are set in the GUI | **Decided 2026-10-19:** the settings' surfaces table + each window's status-bar surface icons (Pin here / Unpin) |
-| Q-1 | Default for starting the daemon | **Decided 2026-10-19:** when a deck is attached |
+| Q-1 | Default for starting the daemon | **Decided 2026-10-19:** when a deck is attached. **Added 2026-10-20:** the studio also starts it when none answers, deck or not (`run --wait --with-parent`: its own decks need the daemon; a deck plugged in later is taken), and stops it on quit |
 | Q-2 | The studio on macOS | **Decided 2026-10-19:** nested in UnrealNG.app (shared Qt), alias at the DMG root |
 | Q-3 | Activity look by default | **Decided 2026-10-19:** key flash only; options: off, or flash + strip message; `ttd.seek_by` ignored |
 
