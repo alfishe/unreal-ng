@@ -1,6 +1,6 @@
 # CRT shaders: the libretro set in unreal-qt
 
-Status: phases 1-3 and the GPU part of 5 landed 2026-10-19 (all 19 presets in View > CRT Profile and as
+Status: **complete 2026-10-20** ([DONE.md](DONE.md)). Phases 1-3 and the GPU part of 5 landed 2026-10-19 (all 19 presets in View > CRT Profile and as
 `shader:<key>`, see [crt-effects.md](../../features/crt-effects.md)); phase 4 (the seven integer models, CPU = GPU
 bit for bit, `CRTBeamModel`) done 2026-10-20; the gallery and comparison tools moved to
 [tools/crt-shaders](../../../tools/crt-shaders/README.md) the same day, and the models' CPU path got twice as fast (SIMD, reused rows) and builds the same bits on every compiler (crtmath.h, no FMA contraction). Owner decisions: implement every candidate that survived the gallery and the motion review

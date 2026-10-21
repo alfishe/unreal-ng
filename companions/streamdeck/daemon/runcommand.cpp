@@ -325,17 +325,18 @@ int CmdRun(const Args& a)
     return rc;
 }
 
-// sdctl scenario check <file> | convert <in> <out> | extract <in> <node> <out> | resolve <in> <out>
+// unreal-streamdeck scenario check <file> | convert <in> <out> | extract <in> <node> <out> | resolve <in> <out>
 int CmdScenario(const Args& a)
 {
     const std::string sub = a.pos.size() > 1 ? a.pos[1] : "";
     const size_t need = sub == "check" ? 3 : sub == "extract" ? 5 : 4;
     if ((sub != "check" && sub != "convert" && sub != "extract" && sub != "resolve") || a.pos.size() < need)
     {
-        std::fprintf(stderr,
-                     "usage: sdctl scenario check <file> | convert <in> <out> | extract <in> <node-id> <out> | resolve "
-                     "<in> <out>\n"
-                     "  (.json .yaml .yml .csv .tsv; resolve = inline every include)\n");
+        std::fprintf(
+            stderr,
+            "usage: unreal-streamdeck scenario check <file> | convert <in> <out> | extract <in> <node-id> <out> "
+            "| resolve <in> <out>\n"
+            "  (.json .yaml .yml .csv .tsv; resolve = inline every include)\n");
         return kBadUsage;
     }
     std::string err;
@@ -392,6 +393,8 @@ int CmdScenario(const Args& a)
             std::printf("ok: %s, %s\n", s->name.c_str(), std::string(s->model->name).c_str());
         return s ? kOk : kBadContent;
     }
+    if (doc->contains("root"))
+        io::StripIncludeMarks((*doc)["root"]);  // a document of its own: no absolute paths of the files it came from
     if (!io::SaveFile(a.pos[3], *doc, &err))
     {
         std::fprintf(stderr, "error: %s\n", err.c_str());

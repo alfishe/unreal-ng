@@ -275,8 +275,9 @@ void AddEditorRoutes(automation::Api& api, EditorWidget* e, std::function<QWidge
         {{"parent", "body", "string", "menu id (default: the menu on the canvas)"},
          {"at", "body", "array", "[row, col]; default the first free key"},
          {"node", "body", "object", "a node: {type: menu|action, title, face, do, tags ...}"},
-         {"preset", "body", "string", "a palette preset name (GET /api/v1/editor/presets)"}},
-        json{{"parent", "home"}, {"at", {0, 1}}, {"preset", "Pause"}}, [e](const Request& r) {
+         {"preset", "body", "string",
+          "a palette preset name, e.g. Home, Menu, Shell command (GET /api/v1/editor/presets)"}},
+        json{{"parent", "home"}, {"at", {0, 1}}, {"preset", "Home"}}, [e](const Request& r) {
             json node;
             if (r.Has("preset"))
             {

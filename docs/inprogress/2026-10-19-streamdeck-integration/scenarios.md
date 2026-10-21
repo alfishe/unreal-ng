@@ -9,6 +9,12 @@
 v2 adds fields; a v1 file loads (its `webapi` steps keep working through the REST escape hatch, §2) and the studio
 offers to convert it.
 
+Format and version as the code handles them today (`lib/include/sdb/scenario.h`, `lib/src/scenario.cpp`): a document
+says `"format": "streamdeck-scenario"` and `"version"` (new documents and the CSV / TSV reader write both; a file
+without them loads as the current version). `kFormatVersion` is **1**: the loader accepts any version up to it and
+refuses a newer one ("made by a newer version"), so a v2 file does not load until the v2 fields below are implemented
+and `kFormatVersion` becomes 2. From then on v1 files keep loading and new documents say `version: 2`.
+
 ## Contents
 
 - [1. Settings](#1-settings)
@@ -29,7 +35,7 @@ offers to convert it.
 | `emulator: "auto" \| id \| symbolic` | Gone: targeting is the host's ([targeting.md](targeting.md)); a scenario may ask `target: "follow"` (default) or `{"view": 1}` |
 | `companion_file` | Gone: the token is the daemon's |
 | `brightness`, `navigation.*` | Kept |
-| — | `format: "sdeck-scenario"`, `version: 2` |
+| `format: "streamdeck-scenario"`, `version: 1` | `format: "streamdeck-scenario"`, `version: 2` |
 | — | `strip.target: true` (default on decks with a strip): the target line ([targeting.md §6](targeting.md#6-showing-the-target)) |
 
 ## 2. The action kind
@@ -123,7 +129,7 @@ Entering sets the context, a `ctx` from the core navigates to the nearest menu w
 
 ```json
 {
-  "format": "sdeck-scenario", "version": 2,
+  "format": "streamdeck-scenario", "version": 2,
   "name": "unreal-ng control", "model": "plusxl",
   "settings": { "brightness": 70, "target": "follow",
                 "activity": { "flash_keys": true, "ignore": ["ttd.seek_by"] } },

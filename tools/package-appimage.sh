@@ -15,10 +15,20 @@ done
 rm -rf "$appdir"
 mkdir -p "$appdir/usr/bin" "$appdir/usr/share/doc/unreal-ng"
 cp -a "$suite/." "$appdir/usr/bin/"
+# The Stream Deck companion's udev rule (-DUNREAL_STREAMDECK=ON): an AppImage cannot install it; it rides along in
+# the image's usr/lib/udev/rules.d, the place the DEB uses, for the user to copy (unreal-qt's settings page is to
+# show its text)
+if [[ -d "$appdir/usr/bin/lib/udev" ]]; then
+    mkdir -p "$appdir/usr/lib"
+    mv "$appdir/usr/bin/lib/udev" "$appdir/usr/lib/udev"
+    rmdir "$appdir/usr/bin/lib"
+fi
 cp "$repo_dir/LICENSE" "$repo_dir/THIRD_PARTY_NOTICES.md" "$appdir/usr/share/doc/unreal-ng/"
 
 executables=()
-for app in unreal-qt unreal-screen-viewer unreal-videowall unreal-mcp-bridge; do
+# the Stream Deck daemon and studio when the build has them; the studio is deployed with the same Qt
+for app in unreal-qt unreal-screen-viewer unreal-videowall unreal-mcp-bridge \
+        unreal-streamdeck unreal-streamdeck-studio; do
     if [[ -x "$appdir/usr/bin/$app" ]]; then
         executables+=(--executable "$appdir/usr/bin/$app")
     fi

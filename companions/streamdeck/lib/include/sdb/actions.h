@@ -3,7 +3,10 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 
 #include "sdb/http.h"
 #include "sdb/scenario.h"
@@ -42,7 +45,8 @@ public:
     virtual int Shell(const std::string& command, int timeoutMs,
                       std::string& output) = 0;  // exit code, -1 = could not run / timeout
     virtual bool Open(const std::string& target) = 0;
-    virtual bool Keys(const std::string& combo, const std::string& text) = 0;
+    // a key combination (ParseKeyCombo) and / or text typed; false with `error` saying why
+    virtual bool Keys(const std::string& combo, const std::string& text, std::string& error) = 0;
     virtual void Navigate(const json& request) = 0;    // {to: back|home|node|scenario, node, file}
     virtual void Brightness(const json& request) = 0;  // {value} or {delta}
     virtual void SleepMs(int ms) = 0;
@@ -52,6 +56,20 @@ public:
         return false;
     }
 };
+
+// A "keys" combo: modifiers and one key joined by '+', any case ("cmd+shift+4", "ctrl+return"). Modifiers: cmd
+// (command, meta: Command on macOS, the Windows key, Super on Linux), ctrl (control), alt (option, opt), shift, fn
+// (macOS only; ignored elsewhere). Keys: KeyNames(), the same on every platform (US layout positions).
+struct KeyCombo
+{
+    bool cmd = false, ctrl = false, alt = false, shift = false, fn = false;
+    std::string key;  // one of KeyNames()
+};
+// nullopt with `error` for an unknown key name, two keys, or no key
+[[nodiscard]] std::optional<KeyCombo> ParseKeyCombo(const std::string& combo, std::string* error = nullptr);
+// a-z 0-9 = - [ ] ' ; \ , / . ` return enter tab space delete backspace escape esc f1-f12 home end pageup pagedown
+// forwarddelete left right up down
+[[nodiscard]] std::span<const std::string_view> KeyNames();
 
 // `vars` fills "$name" placeholders in the action (e.g. "$ticks" for a dial turn; "rate" = its detents per second).
 // `toggleState` is the state of a toggle node (flipped on success); nested toggles without state run "on".

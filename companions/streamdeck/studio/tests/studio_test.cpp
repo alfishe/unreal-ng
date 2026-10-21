@@ -1,8 +1,8 @@
 // Stream Deck Studio without a window: the device wire v2 client (Join, Welcome and its errors, replay, input both
 // ways, own-role feature reports, Leave, reconnect) against a small fake daemon in this process, and the --listen v1
 // server. Qt offscreen, one thread; waits spin the event loop until a condition holds (no sleeps).
+#include <QApplication>
 #include <QElapsedTimer>
-#include <QGuiApplication>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QtEndian>
@@ -14,8 +14,8 @@
 #include "check.h"
 #include "daemoncontrol.h"
 #include "deckclient.h"
-#include "sdb/automation.h"
 #include "listenserver.h"
+#include "sdb/automation.h"
 #include "sdb/devicewire.h"
 #include "sdb/emuwire.h"
 #include "virtualdeck.h"
@@ -414,10 +414,12 @@ void TestDaemonControl()
 }
 }  // namespace
 
+void TestEditor();  // editor_test.cpp
+
 int main(int argc, char** argv)
 {
     qputenv("QT_QPA_PLATFORM", "offscreen");
-    QGuiApplication app(argc, argv);
+    QApplication app(argc, argv);  // widgets: the editor tests (editor_test.cpp)
     TestJoinPayload();
     TestMirrorSession();
     TestWaitingForDeck();
@@ -426,6 +428,7 @@ int main(int argc, char** argv)
     TestReconnect();
     TestListenServer();
     TestDaemonControl();
+    TestEditor();
     std::printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }
