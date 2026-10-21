@@ -67,6 +67,9 @@ public:
     void MixerRows(std::vector<CardMixerRow>& out) const override;
     const int16_t* MixerBuffer(AudioSourceType type) const override;
     int16_t* SsgMixerBuffer(AudioSourceType type) override;
+    /// ay3.a / .b / .c: the chip's channel mute and volume
+    void MixerChannels(AudioSourceType type, std::vector<MixerChannelDesc>& out) const override;
+    void SetMixerChannel(AudioSourceType type, size_t index, bool muted, float volume) override;
     void Connectors(std::vector<CardConnector>& out) const override;
     /// Time travel: one blob, the card's time base and its AY (FullerBoxTtd)
     void CollectTtdDevices(std::vector<CardTtdDevice>& out) override;

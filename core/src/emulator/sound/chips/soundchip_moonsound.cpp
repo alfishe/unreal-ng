@@ -289,6 +289,14 @@ void SoundChip_Moonsound::setChannelMute(opl4::ChannelGroup group, size_t index,
     _opl4.SetChannelMute(id, mute);
 }
 
+void SoundChip_Moonsound::setChannelGain(opl4::ChannelGroup group, size_t index, int32_t gainQ15)
+{
+    opl4::ChannelId id;
+    id.group = group;
+    id.index = static_cast<uint8_t>(index);
+    _opl4.SetChannelGain(id, gainQ15);
+}
+
 float SoundChip_Moonsound::channelPeak(opl4::ChannelGroup group, size_t index) const
 {
     opl4::ChannelId id;

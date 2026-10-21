@@ -35,6 +35,7 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/slots/slotplanner.h"
 #include "emulator/sound/audiodeviceinfo.h"
+#include "emulator/sound/mixerchannel.h"
 
 class EmulatorContext;
 namespace ttd
@@ -180,6 +181,22 @@ public:
     {
         (void)db;
         return false;
+    }
+    /// The channels of one of the card's rows (the mixer's channel layer: ay3.a, ms_fm1.2, ms_midi.10); a card adds
+    /// nothing for a row it does not own
+    virtual void MixerChannels(AudioSourceType type, std::vector<MixerChannelDesc>& out) const
+    {
+        (void)type;
+        (void)out;
+    }
+    /// One channel's effective state (muted: by the user or another channel's solo; volume 0..1), host-side; called at
+    /// frame boundaries for every row, a card ignores a row it does not own
+    virtual void SetMixerChannel(AudioSourceType type, size_t index, bool muted, float volume)
+    {
+        (void)type;
+        (void)index;
+        (void)muted;
+        (void)volume;
     }
     /// endregion </Frames and audio (SoundManager)>
 

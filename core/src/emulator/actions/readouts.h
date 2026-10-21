@@ -12,6 +12,8 @@
 /// | `media.tape` | {loaded, playing, block, blocks, progress (blocks done / blocks), name} |
 /// | `media.disk` | {drives: [{letter, loaded, name, busy (the motor), protect}]} |
 /// | `audio.mute` | {muted} (the host has no master volume: the mixer's master mutes only) |
+/// | `audio.mixer` | the mixer's levels: {master: {muted}, solo, devices: [{source, muted, solo, audible, volume, peak, active, channels?}]} |
+/// | `audio.source.<key>` | one row or channel (audio.source.ay1, audio.source.ay1.a): {source, name, muted, solo, audible, volume, gain_db, peak, active}; by name only |
 /// | `debug.mode` | {enabled} |
 /// | `toggle.<id>` | {on} for every toggle of the catalogue (`toggle.feature.<name>` for the features) |
 ///

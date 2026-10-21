@@ -248,6 +248,8 @@ public:
     // Per-device mixer (implementation: api/state_audio_api.cpp; core AudioMixer, DeviceState::AudioMixer)
     ADD_METHOD_TO(EmulatorAPI::getAudioMixer, "/api/v1/emulator/{id}/audio/mixer", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::setAudioMixer, "/api/v1/emulator/{id}/audio/mixer/{source}", drogon::Put, drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getAudioMixerSource, "/api/v1/emulator/{id}/audio/mixer/{source}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getAudioLevels, "/api/v1/emulator/{id}/audio/levels", drogon::Get);
     // endregion Analyzer Management
 
     // region Video Recording (implementation: api/recording_api.cpp)
@@ -1089,6 +1091,14 @@ public:
                        const std::string& id) const;
     void setAudioMixer(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                        const std::string& id, const std::string& source) const;
+    /// @brief GET /api/v1/emulator/{id}/audio/mixer/{source} - one row or channel (AudioMixer::Read)
+    void getAudioMixerSource(const drogon::HttpRequestPtr& req,
+                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                             const std::string& source) const;
+    /// @brief GET /api/v1/emulator/{id}/audio/levels - every row's and channel's levels (AudioMixer::Levels, the
+    /// WebSocket topic audio.mixer)
+    void getAudioLevels(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
     /// @brief POST /api/v1/emulator/{id}/audio/capture — body: {"action":"start|stop|clear", "seconds":1.0}
     void audioCapture(const drogon::HttpRequestPtr& req,
                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;

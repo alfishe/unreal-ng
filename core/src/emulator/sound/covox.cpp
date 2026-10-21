@@ -10,6 +10,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/cpu/core.h"
 #include "emulator/notifications.h"
+#include "emulator/sound/mixerchannel.h"
 #include "emulator/platform.h"
 
 /// region <Constructors / destructors>
@@ -123,6 +124,9 @@ void Covox::handleFrameStart()
         }
         _writtenThisFrame[i] = false;
     }
+    // A channel mute or volume changed since the last frame: the level steps at the frame's start
+    if (_levelsDirty)
+        emitLevelsAtFrameStart();
 }
 
 void Covox::handleFrameEnd(size_t expectedSamples)
@@ -329,7 +333,12 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
 void Covox::decayStaleChannel(Channel ch)
 {
     _dacValue[static_cast<int>(ch)] = 0x80;
+    emitLevelsAtFrameStart();
+}
 
+void Covox::emitLevelsAtFrameStart()
+{
+    _levelsDirty = false;
     int32_t newL, newR;
     computeStereoAmplitudes(newL, newR);
 
@@ -370,14 +379,18 @@ void Covox::setSynthesisSuppressed(bool suppressed)
 
 void Covox::computeStereoAmplitudes(int32_t& outL, int32_t& outR) const
 {
-    // Each channel: (value - 128) gives signed range [-128, +127].
-    // Sum of two channels: [-256, +254].
-    // Multiply by 128 (half of 256): gives [-32768, +32512] — fits int16
-    // with no clipping when both channels are at full amplitude.
-    int32_t la = _channelMute[0] ? 0 : (static_cast<int32_t>(_dacValue[0]) - 128);
-    int32_t lb = _channelMute[1] ? 0 : (static_cast<int32_t>(_dacValue[1]) - 128);
-    int32_t ra = _channelMute[2] ? 0 : (static_cast<int32_t>(_dacValue[2]) - 128);
-    int32_t rb = _channelMute[3] ? 0 : (static_cast<int32_t>(_dacValue[3]) - 128);
+    // Each channel: (value - 128) gives signed range [-128, +127]; x 128 (half of 256): a sum of two channels is
+    // [-32768, +32512], int16 with no clipping when both are at full amplitude. Then the mixer's host gain (Q15: the
+    // value itself at unity)
+    auto level = [this](int i) -> int32_t {
+        if (_channelMute[i])
+            return 0;
+        return ApplyMixerGainQ15((static_cast<int32_t>(_dacValue[i]) - 128) * 128, _channelGain[i]);
+    };
+    const int32_t la = level(0);
+    const int32_t lb = level(1);
+    const int32_t ra = level(2);
+    const int32_t rb = level(3);
 
     // Mono COVOX compatibility: classic single-DAC covox software only ever
     // drives one of the four channels (traditionally #FB/RightB, but the
@@ -396,14 +409,14 @@ void Covox::computeStereoAmplitudes(int32_t& outL, int32_t& outR) const
     if (activeChannels <= 1)
     {
         // Silence, or exactly one channel driven: center it on both speakers
-        outL = soleActive * 128;
-        outR = soleActive * 128;
+        outL = soleActive;
+        outR = soleActive;
     }
     else
     {
         // Stereo Soundrive: L = LeftA + LeftB, R = RightA + RightB
-        outL = (la + lb) * 128;
-        outR = (ra + rb) * 128;
+        outL = la + lb;
+        outR = ra + rb;
     }
 }
 

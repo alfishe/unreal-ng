@@ -284,8 +284,9 @@
         op["tags"].append("Capture");
         op["description"] =
             "Body {\"muted\": true, \"solo\": false, \"volume\": 0.5} or {\"gain_db\": -6}; every field optional. "
-            "source = a key from GET /audio/mixer, or master (muted only). Answers the mixer. A monitor setting of "
-            "this instance (not saved).";
+            "source = a key from GET /audio/mixer, master (muted only), or a channel <row>.<channel> (ay1.a, gs.3, "
+            "moonsound_fm.7, ms_midi.10 - mute and solo only -, next_dac.c; solo within its row; applied at the next "
+            "frame start). Answers the mixer. A monitor setting of this instance (not saved).";
         op["parameters"][0]["name"] = "id";
         op["parameters"][0]["in"] = "path";
         op["parameters"][0]["required"] = true;
@@ -297,6 +298,41 @@
         op["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
         op["responses"]["200"]["description"] = "The mixer after the change";
         op["responses"]["400"]["description"] = "Unknown or absent source, bad value";
+    }
+    // The mixer's channels and levels (docs/emulator/design/audio/mixer-channels-and-settings.md)
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/audio/mixer/{source}"]["get"];
+        op["summary"] = "One mixer row or channel";
+        op["tags"].append("Capture");
+        op["description"] =
+            "source = a row key (ay1) or a channel <row>.<channel> (ay1.a, covox.lb, gs.3, fm1.2, moonsound_fm.18, "
+            "moonsound_pcm.24, ms_midi.10, next_dac.c). A row: source, name, muted, solo, audible, volume, gain_db, "
+            "peak, active, channels[] {key, channel, name, muted, solo, audible, volume, gain_db, peak (metered "
+            "channels)}; a channel: its entry. The same as the readout audio.source.<key>.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        op["parameters"][1]["name"] = "source";
+        op["parameters"][1]["in"] = "path";
+        op["parameters"][1]["required"] = true;
+        op["parameters"][1]["schema"]["type"] = "string";
+        op["responses"]["200"]["description"] = "The row or channel";
+        op["responses"]["404"]["description"] = "Unknown or absent source or channel";
+    }
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/audio/levels"]["get"];
+        op["summary"] = "Mixer levels of every row and channel";
+        op["tags"].append("Capture");
+        op["description"] =
+            "Compact: master {muted}, solo (any row soloed), devices[] {source, muted, solo, audible, volume, peak, "
+            "active, channels[] {key, muted, solo, audible, volume, peak}}. The WebSocket topic audio.mixer pushes "
+            "the same value when it changes (the readout audio.mixer).";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        op["responses"]["200"]["description"] = "The levels";
     }
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["responses"]["200"]["description"] =
         "Capture session updated (armed/target_samples/sample_rate/channels)";

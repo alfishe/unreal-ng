@@ -140,6 +140,10 @@ next nextreg <reg> <value> [nextreg|port|internal]  ZX Spectrum Next: write a Ne
 state sprinter [ports|port <hex>|text|video|palette [k]|ring|bios [<name> ...]]  Sprinter Sp2000 reports; bios <3.04|3.06|3.07|file> selects
 memory regions          Device memory regions (the Sprinter's video RAM "vram", the TS-Conf palette "cram" and sprite table "sfile", the CMOS clock's "cmos", the ZX-Evo AVR's "eeprom"); memory region read|write|save|load <name> ...
 mixer [<source> [muted=0|1] [solo=0|1] [volume=0..1] [gain_db=..]]  Per-device audio mixer (beeper, ay1, covox, gs, ...)
+mixer <source>                                    One row and its channels (mute, solo, volume, peak where metered)
+mixer channels                                    Every row with its channels
+mixer <source>.<channel> [muted=] [solo=] [volume=] [gain_db=]  One channel: ay1.a, covox.lb, gs.3, fm1.2, moonsound_fm.7, ms_midi.10, next_dac.c (solo within its row)
+setting ay_stereo|ay_chip|fm_trim_db|neogs_stereo|covox_dc_removal|fir_filter [value]  Sound settings (also ay_voicing, ay_room, ay_punch, beeper_punch, audio_rate)
 ```
 
 The screen reports ([command-interface.md §6.6](./command-interface.md#66-screen-configuration)) are rendered from the same core reports.

@@ -408,6 +408,11 @@ private:
     {
         return _snd.mix(right, _gscfg0) * static_cast<int32_t>(_config.volume) / 16384;
     }
+    /// One side with the mixer's channel volumes (host-side, setHostChannelGain): what the listener hears of it
+    int32_t hostMixerLevel(bool right) const
+    {
+        return _snd.mixGained(right, _gscfg0, _hostGain) * static_cast<int32_t>(_config.volume) / 16384;
+    }
     /// Both sides after the listening choice (stereo mode): what the output stage is given
     void listeningMix(int32_t& left, int32_t& right) const;
     int64_t blipPosition() const { return _runner.now() / TICKS_PER_CRYSTAL - _frameStartTicks / TICKS_PER_CRYSTAL; }
@@ -527,6 +532,9 @@ private:
     bool _synthesisSuppressed = false;
     int32_t _outL = 0; // each side as the board's DAC gets it
     int32_t _outR = 0;
+    // Each side with the mixer's channel volumes (host-side, not state; read only while a gain is not unity)
+    int32_t _hostOutL = 0;
+    int32_t _hostOutR = 0;
     NeoGSConfig::StereoMode _stereoMode = NeoGSConfig::StereoMode::Separated; // listening choice, not state
     bool _frameHadActivity = false;
     bool _wasActive = false;

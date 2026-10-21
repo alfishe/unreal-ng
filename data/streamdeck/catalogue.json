@@ -431,7 +431,7 @@
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "name (turbo_mode, fast_tape, turbo_tape, fast_disk, turbo_audio, trdos_traps, ay_punch, beeper_punch), on?"
+   "params": "name (turbo_mode, fast_tape, turbo_tape, fast_disk, turbo_audio, trdos_traps, ay_punch, beeper_punch, covox_dc_removal, fir_filter), on?"
   },
   {
    "id": "set.value",
@@ -440,7 +440,7 @@
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "name, value (speed, the bool ones, ay_voicing, ay_room, ay_punch, beeper_punch)"
+   "params": "name, value (speed, audio_rate, the bool ones, ay_voicing, ay_room, ay_punch, beeper_punch, ay_stereo, ay_chip, fm_trim_db, neogs_stereo, covox_dc_removal, fir_filter)"
   },
   {
    "id": "audio.mute_toggle",
@@ -458,7 +458,25 @@
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "source (beeper, ay1, ay2, fm1, fm2, covox, gs, gs_mp3, moonsound_fm, moonsound_pcm, cd0..cd3), on?"
+   "params": "source (beeper, ay1, ay2, ay3, fm1, fm2, covox, gs, gs_mp3, moonsound_fm, moonsound_pcm, cd0..cd3, ms_*, next_ay1..3, next_dac; a channel: ay1.a, covox.lb, gs.3, ...), channel?, on? (else flips)"
+  },
+  {
+   "id": "audio.source_solo",
+   "label": "Solo a source",
+   "group": "Audio",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "source (a row: only soloed rows are heard; a channel ay1.a: only the soloed channels of its row), channel?, on? (else flips)"
+  },
+  {
+   "id": "audio.source_volume",
+   "label": "Set a volume",
+   "group": "Audio",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "source (a row or a channel), channel?, volume (0..1) or gain_db (-120..0)"
   },
   {
    "id": "audio.volume_by",
@@ -467,7 +485,7 @@
    "kind": "delta",
    "held": false,
    "gui": false,
-   "params": "source? (all), step? (0.05 per detent)"
+   "params": "source? (all rows; a row, or a channel ay1.a), channel?, step? (0.05 per detent)"
   },
   {
    "id": "media.open",
