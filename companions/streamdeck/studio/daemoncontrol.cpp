@@ -62,7 +62,8 @@ QString DaemonControl::Path()
 #else
     const QString exe = QStringLiteral("unreal-streamdeck");
 #endif
-    const QDir app(QCoreApplication::applicationDirPath());
+    // the real directory: on macOS the suite's DMG links to the nested studio app, and Qt keeps the link's path
+    const QDir app(QFileInfo(QCoreApplication::applicationFilePath()).canonicalPath());
     // beside the studio; beside its bundle (a build tree); in the suite's bundle (nested studio app)
     for (const QString& rel : {QStringLiteral("."), QStringLiteral("../../.."), QStringLiteral("../../../../MacOS")})
         if (const QString p = QDir::cleanPath(app.filePath(rel + QLatin1Char('/') + exe)); QFileInfo::exists(p))
