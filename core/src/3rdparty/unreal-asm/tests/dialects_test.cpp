@@ -308,6 +308,121 @@ TEST(Dialects_Test, TheObjectSaversTableBecomesSavebin)
     EXPECT_TRUE(has("SAVEBIN \"table.0\",#8000,16"));      // another type: after a dot
 }
 
+TEST(Dialects_Test, AWalkingMacroOfAnotherFileIsExpanded)
+{
+    // RAR's packer calls `c HUFFMAN`, a macro walking its parameter (\C, \N) defined in another file of the project:
+    // the call is expanded as in the file that defines it
+    const std::vector<ProjectFile> project = {
+        {"MAIN", SourceDocument::FromText("        INCLUDE \"MACROS\"\n        DOWN HL", "alasm")},
+        {"MACROS", SourceDocument::FromText("        MACRO DOWN\n        INC \\C\n        INC \\N\\C\n        ENDM", "alasm")}};
+    const ProjectResult r = ConvertProject(project, "sjasmplus");
+    ASSERT_EQ(r.files.size(), 2u);
+    std::vector<std::string> lines;
+    for (const SourceLine& l : r.files[0].document.lines)
+        if (const size_t at = l.text.find_first_not_of(' '); at != std::string::npos)
+            lines.push_back(l.text.substr(at));
+    EXPECT_NE(std::find(lines.begin(), lines.end(), "INC H"), lines.end());
+    EXPECT_NE(std::find(lines.begin(), lines.end(), "INC L"), lines.end());
+}
+
+TEST(Dialects_Test, LocalBlockAroundAnIncludeIsAModule)
+{
+    // ALASM's LOCAL ... ENDL around an INCLUDE makes the included file's labels local (Pro Tracker's PLAYTSmK includes
+    // its player twice, once in a block): the block becomes a sjasmplus MODULE; the file's macros, defined again by
+    // the second INCLUDE, are defined once
+    const std::vector<ProjectFile> project = {
+        {"MAIN", SourceDocument::FromText("        ORG #8000\n        LOCAL\nts=1\n        INCLUDE \"PLAY\"\n        ENDL\nts=0\n"
+                                          "        INCLUDE \"PLAY\"", "alasm")},
+        {"PLAY", SourceDocument::FromText("        MACRO m\nEef     NOP\n        ENDM\n        LD A,ts\n        m\n        DW Eef", "alasm")}};
+    const ProjectResult r = ConvertProject(project, "sjasmplus");
+    ASSERT_TRUE(r.ok);
+    ASSERT_EQ(r.files.size(), 2u);
+    auto text = [](const ProjectFile& f) {
+        std::vector<std::string> lines;
+        for (const SourceLine& l : f.document.lines)
+            if (const size_t at = l.text.find_first_not_of(' '); at != std::string::npos)
+                lines.push_back(l.text.substr(at));
+        return lines;
+    };
+    const std::vector<std::string> main = text(r.files[0]), play = text(r.files[1]);
+    EXPECT_NE(std::find(main.begin(), main.end(), "MODULE __UNREALASM_LB1"), main.end());
+    EXPECT_NE(std::find(main.begin(), main.end(), "ENDMODULE"), main.end());
+    EXPECT_NE(std::find(play.begin(), play.end(), "IFNDEF __UNREALASM_M_m"), play.end());
+
+    const char* sjasmplus = std::getenv("UNREAL_ASM_SJASMPLUS");
+    if (!sjasmplus)
+        return;
+    const std::filesystem::path dir = ScratchDirectory();
+    for (const ProjectFile& f : r.files)
+    {
+        std::string body;
+        for (const SourceLine& l : f.document.lines)
+            body += l.text + "\n";
+        WriteBytes(dir / (f.name + ".asm"), std::vector<uint8_t>(body.begin(), body.end()));   // as the INCLUDEs name them
+    }
+    const std::string harness = "        DEVICE ZXSPECTRUM48\n        INCLUDE \"MAIN.asm\"\n        SAVEBIN \"out.bin\",#8000,$-#8000\n";
+    WriteBytes(dir / "harness.asm", std::vector<uint8_t>(harness.begin(), harness.end()));
+    const bool assembled = RunSjasmplus(sjasmplus, dir, "harness.asm");
+    const std::vector<uint8_t> log = ReadBytes(dir / "out.txt");
+    EXPECT_TRUE(assembled) << std::string(log.begin(), log.end());
+    EXPECT_EQ(ReadBytes(dir / "out.bin"), (std::vector<uint8_t>{0x3E, 0x01, 0x00, 0x02, 0x80, 0x3E, 0x00, 0x00, 0x07, 0x80}));
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Dialects_Test, NameDefinedOnceInEachBranchIsAnEqu)
+{
+    // ACE: the routine's label in one branch, JUSTIFY=RETER (a later label) in the other; sjasmplus' "=" cannot refer
+    // forward, its EQU can. A name assigned once stays "="
+    EXPECT_EQ(ToSjasmplus("        IF 0\nJUSTIFY  NOP\n        ELSE\nJUSTIFY=RETER\n        ENDIF\nN=5\nRETER   RET"),
+              (std::vector<std::string>{"IF (0)==0", "JUSTIFY NOP", "ELSE", "JUSTIFY EQU RETER", "ENDIF", "N=5", "RETER   RET"}));
+}
+
+TEST(Dialects_Test, AWordAfterALabelIsACommandNotAReference)
+{
+    // ACE's acemem: "bof" is a macro of another file, called alone and after labels (LASTLN0 bof); a call after a
+    // label is no reference to a name, so the lone call stays a call
+    const FrontendResult r =
+        DialectRegistry::Builtin().Frontend("alasm")->Parse(SourceDocument::FromText("        LD DE,1\n        bof\nL0      bof", "alasm"));
+    ASSERT_EQ(r.program.lines.size(), 3u);
+    EXPECT_TRUE(r.program.lines[1].label.empty());
+    ASSERT_EQ(r.program.lines[1].statements.size(), 1u);
+    EXPECT_EQ(r.program.lines[1].statements[0].kind, ir::Statement::Kind::MacroCall);
+}
+
+TEST(Dialects_Test, ATestBeforeTheDefinitionSeesTheNameUndefined)
+{
+    // ALASM is one pass: ?x before x's definition says "not defined" (ACE's aceTO wraps its library routines in
+    // IFN ?H2PAG ... H2PAG ... ENDIF); sjasmplus' exist would see the label of pass 1 and drop the block
+    EXPECT_EQ(ToSjasmplus("        IFN ?H2PAG\nH2PAG   RET\n        ENDIF\n        IFN ?H2PAG\n        NOP\n        ENDIF"),
+              (std::vector<std::string>{"IFNDEF __UNREALASM_DEF_H2PAG", "H2PAG   RET", "DEFINE __UNREALASM_DEF_H2PAG", "ENDIF",
+                                        "IFNDEF __UNREALASM_DEF_H2PAG", "NOP", "ENDIF"}));
+    // a name defined before the test, or nowhere, stays exist
+    EXPECT_EQ(ToSjasmplus("X       NOP\n        IFN ?X\n        NOP\n        ENDIF"),
+              (std::vector<std::string>{"X       NOP", "IF !exist X", "NOP", "ENDIF"}));
+}
+
+TEST(Dialects_Test, AControlCharacterInATextGoesAsANumberAlone)
+{
+    // ACE's aceFROM: DB "Ё<DEL>Ї<" was written as the UTF-8 bytes 208,129,127,208,135,60; the text around stays quoted
+    EXPECT_EQ(ToSjasmplus("        DB \"\xD0\x81\x7F\xD0\x87<\"\n        DB 7,\"a\x07'\"\"\""),
+              (std::vector<std::string>{"DB '\xD0\x81',127,'\xD0\x87<'", "DB 7,'a',7,39,34"}));
+}
+
+TEST(Dialects_Test, TheTestOfAMacroNameIsTwo)
+{
+    // ?name of a macro is 2 (ALASM help, "?label"): "IFN ?j\1-2" in RAR's macro c tells a call with two parameters
+    EXPECT_EQ(ToSjasmplus("        MACRO j\n        NOP\n        ENDM\n        IFN ?j-2\n        DB 1\n        ENDIF"),
+              (std::vector<std::string>{"MACRO j", "NOP", "ENDM", "IF 2-2", "DB 1", "ENDIF"}));
+}
+
+TEST(Dialects_Test, EntAfterAConditionalDispEndsItWhenActive)
+{
+    // ACE's aceTO: DISP only when v1 is defined, ENT for both; sjasmplus refuses an ENT without DISP
+    EXPECT_EQ(ToSjasmplus("        IF0 ?v1\n        DISP #6000\n        ENDIF\n        NOP\n        ENT"),
+              (std::vector<std::string>{"IF exist v1", "DISP #6000", "DEFINE __UNREALASM_DISP", "ENDIF", "NOP", "IFDEF __UNREALASM_DISP", "ENT",
+                                        "UNDEFINE __UNREALASM_DISP", "ENDIF"}));
+}
+
 TEST(Dialects_Test, AssembleOnceMarksInColumnZeroAreAssembled)
 {
     // ALASM 5.09 assembled this to 3E 01 06 02 16 04 04 60 C9 (LBL = #6004): "+" / "-" in column 0 mark a line it

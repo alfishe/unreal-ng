@@ -233,4 +233,22 @@ void TestRuntime()
     rt.Step(0);
     CHECK((StackIds(rt) == V{"home", "debug"}));
     CHECK(rt.State()["scenario"] == "rt" && rt.State()["path"].size() == 2);
+
+    // tickets: a request is applied by the next step; a runtime gone first ends the wait at once
+    {
+        Device dev2(m, std::make_unique<NullTransport>(), "T2");
+        auto rt2 = std::make_unique<Runtime>(dev2, Load(Doc()), std::make_unique<Host>(), opt);
+        CHECK(rt2->Posted().Wait(std::chrono::milliseconds(0)));  // nothing posted yet
+        rt2->Navigate({{"to", "node"}, {"node", "bp"}});
+        const Runtime::Ticket t = rt2->Posted();
+        CHECK(!t.Wait(std::chrono::milliseconds(0)));
+        rt2->Step(0);
+        CHECK(t.Wait(std::chrono::milliseconds(0)));
+        CHECK(rt2->PressNode("bp.add"));
+        const Runtime::Ticket pending = rt2->Posted();
+        rt2.reset();
+        const auto t0 = std::chrono::steady_clock::now();
+        CHECK(!pending.Wait(std::chrono::seconds(5)));
+        CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(1));
+    }
 }

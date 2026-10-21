@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include "hostdevice.h"
+
 namespace controllers
 {
 
@@ -37,6 +39,9 @@ struct DeviceMatch
     bool ignore = false;  ///< a device to filter out (the macOS synthetic pad)
     /// It takes a player connector (a pad, a stick); false for a control surface (the Surface Dial): `"player": false`
     bool player = true;
+    /// The role a device of the family starts in (`"role"`, control surfaces Q-8): `debugger-remote` for a debug
+    /// device such as the Surface Dial (its debug profile acts without the debug layer switch); a user's choice wins
+    DeviceRole role = DeviceRole::Player;
     int score = 0;        ///< device-database.md §3: 100 exact, 80 VID + PID, 20 name, 0 unknown
     std::string step;     ///< "exact", "vid-pid", "name", "unknown"
 };

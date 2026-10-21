@@ -7,10 +7,13 @@
 #include <drogon/HttpAppFramework.h>
 #include <drogon/utils/Utilities.h>
 #include <json/json.h>
+#include <trantor/net/EventLoop.h>
+#include <trantor/net/TcpConnection.h>
 
 #include "common/companion_helper.h"
 #include "common/request_gates.h"
 #include "common/session_helper.h"
+#include "ws-hub.h"
 
 namespace api
 {
@@ -28,6 +31,17 @@ struct Connection
     std::string peerHost;
     std::atomic<int> inFlight{0};
 };
+
+/// The socket's queue as trantor measures it (WsFlow): its high-water mark callback fires on a send that leaves more
+/// than the mark queued; a probe (a ping frame through the same queue, on the connection's loop) that does not fire
+/// it means the queue drained below the mark. trantor has no write-complete callback and no queue size getter
+struct Flow : WsFlow
+{
+    std::atomic<bool> hit{false};  ///< the mark fired since the probe began (the connection's loop only)
+};
+
+/// A client that does not read never completes the close handshake: dropped this long after `shutdown`
+constexpr double kCloseGraceSeconds = 2.0;
 
 std::string Compact(const Json::Value& value)
 {
@@ -107,10 +121,72 @@ void ApiWebSocket::handleNewConnection(const drogon::HttpRequestPtr& req, const 
     connection->peer = req->getPeerAddr().toIpPort();
     connection->peerHost = req->getPeerAddr().toIp();
     wsConnPtr->setContext(connection);
+
+    // The topics and the surface topic (ws-hub.h): the hub sends and closes through these, from its loop
+    std::weak_ptr<drogon::WebSocketConnection> weak = wsConnPtr;
+    WsHub::Peer peer;
+    peer.token = connection->token;
+    peer.source = connection->source;
+    peer.host = connection->peerHost;
+
+    // Backpressure: the TCP connection the socket was upgraded from measures its queue on its own loop
+    std::shared_ptr<Flow> flow;
+    std::function<void()> probe;
+    trantor::EventLoop* loop = nullptr;
+    const std::weak_ptr<trantor::TcpConnection> tcpWeak = req->getConnectionPtr();
+    if (const trantor::TcpConnectionPtr tcp = tcpWeak.lock())
+    {
+        loop = tcp->getLoop();
+        flow = std::make_shared<Flow>();
+        const size_t mark = static_cast<size_t>(WsHub::Instance().HighWaterMark());
+        loop->runInLoop([tcpWeak, flow, mark] {
+            if (const trantor::TcpConnectionPtr tcp = tcpWeak.lock())
+                tcp->setHighWaterMarkCallback(
+                    [flow](const trantor::TcpConnectionPtr&, size_t queued) {
+                        flow->hit.store(true, std::memory_order_relaxed);
+                        flow->queued.store(queued, std::memory_order_relaxed);
+                        flow->congested.store(true, std::memory_order_relaxed);
+                    },
+                    mark);
+        });
+        probe = [weak, flow, loop] {
+            loop->queueInLoop([weak, flow] {
+                const auto socket = weak.lock();
+                if (!socket || !socket->connected())
+                    return;
+                flow->hit.store(false, std::memory_order_relaxed);
+                socket->send("", 0, drogon::WebSocketMessageType::Ping);  // 2 bytes behind everything queued
+                if (!flow->hit.load(std::memory_order_relaxed))
+                {
+                    flow->queued.store(0, std::memory_order_relaxed);
+                    flow->congested.store(false, std::memory_order_relaxed);
+                }
+            });
+        };
+    }
+    WsHub::Instance().Open(
+        wsConnPtr.get(), std::move(peer),
+        [weak](const std::string& text) {
+            if (auto socket = weak.lock(); socket && socket->connected())
+                socket->send(text);
+        },
+        [weak, loop] {
+            const auto socket = weak.lock();
+            if (!socket || !socket->connected())
+                return;
+            socket->shutdown(drogon::CloseCode::kNormalClosure);
+            if (loop != nullptr)
+                loop->runAfter(kCloseGraceSeconds, [weak] {
+                    if (const auto late = weak.lock(); late && late->connected())
+                        late->forceClose();
+                });
+        },
+        flow, std::move(probe));
 }
 
 void ApiWebSocket::handleConnectionClosed(const drogon::WebSocketConnectionPtr& wsConnPtr)
 {
+    WsHub::Instance().Remove(wsConnPtr.get());
     wsConnPtr->clearContext();
 }
 
@@ -144,6 +220,7 @@ void ApiWebSocket::handleNewMessage(const drogon::WebSocketConnectionPtr& wsConn
             return;
         }
         connection->token = token;
+        WsHub::Instance().SetToken(wsConnPtr.get(), token);
         Json::Value ok;
         ok["op"] = "auth";
         ok["t"] = "call";
@@ -153,7 +230,10 @@ void ApiWebSocket::handleNewMessage(const drogon::WebSocketConnectionPtr& wsConn
     }
     if (op != "call")
     {
-        Send(weak, Error(rid, "bad_request", "unknown op '" + op + "' (call, auth; topics come later)"));
+        // Topics and the surface topic: the hub
+        if (!WsHub::Instance().HandleMessage(wsConnPtr.get(), request))
+            Send(weak, Error(rid, "bad_request",
+                             "unknown op '" + op + "' (call, auth, subscribe, unsubscribe, snapshot, join, action, bye)"));
         return;
     }
 

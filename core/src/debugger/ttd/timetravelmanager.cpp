@@ -882,6 +882,7 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
         info.writeJournalSpans.emplace_back(TimePointOf(s.from, FrameSpan()), TimePointOf(s.to, FrameSpan()));
     info.writeJournalComplete = JournalCoversSession(info.writeJournalSegments);
 
+    PublishCursor();
     PublishSessionInfo(info);
     return info;
 }
@@ -1197,6 +1198,19 @@ void TimeTravelManager::OnFrameBoundary()
 {
     if (!_context)
         return;
+
+    // The published cursor follows the machine: written as the boundary is left, whichever way this function ends.
+    // A control thread's throwaway replays cross boundaries of a restored machine: those are not published, the
+    // operation's end publishes where it left the machine
+    struct CursorAtExit
+    {
+        const TimeTravelManager& self;
+        ~CursorAtExit()
+        {
+            if (!self._inReplayMode || self.OnMachineThread())
+                self.PublishCursor();
+        }
+    } cursorAtExit{*this};
 
     // A device TTD cannot follow was used during the frame that just ended:
     // its checkpoint would not be restorable, so the session ends here
@@ -2836,6 +2850,32 @@ TTDTimePoint TimeTravelManager::SessionEndPosition() const
     if (_timeline.empty())
         return TTDTimePoint{};
     return _timeline.back().time;
+}
+
+void TimeTravelManager::PublishCursor() const
+{
+    TTDCursor cursor;
+    const TTDTimePoint position = CurrentPosition();
+    cursor.frame = position.frame;
+    cursor.tinframe = position.tInFrame;
+    cursor.state = _state.load();
+    cursor.history = !_timeline.empty();
+    if (cursor.history)
+    {
+        cursor.first = _timeline.front().time.frame;
+        cursor.end = _timeline.back().time.frame;
+        cursor.endTinframe = _timeline.back().time.tInFrame;
+    }
+    if (_cursor.Publish(cursor))
+        NoteHistoryChange(_context, cursor.history);
+}
+
+TTDCursor TimeTravelManager::PublishedCursor() const
+{
+    TTDCursor cursor = _cursor.Read();
+    Emulator* emulator = _context ? _context->pEmulator : nullptr;
+    cursor.paused = emulator != nullptr && emulator->IsPaused();
+    return cursor;
 }
 
 bool TimeTravelManager::SeekTo(const TTDTimePoint& target, TTDSeekResult* outResult)

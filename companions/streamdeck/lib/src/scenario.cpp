@@ -1,10 +1,15 @@
 #include "sdb/scenario.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <filesystem>
 #include <map>
+#include <mutex>
 #include <set>
 
 #include "sdb/actions.h"
+#include "sdb/datadir.h"
 #include "sdb/format.h"
 
 namespace sdb::scn
@@ -153,6 +158,13 @@ struct Parser
         n.face = ParseFace(j.value("face", json::object()), n.id);
         if (n.IsMenu())
         {
+            if (j.contains("context"))
+            {
+                if (j["context"].is_string())
+                    n.context = j["context"].get<std::string>();
+                else
+                    Error(n.id, "context must be a string");
+            }
             for (const auto& it : j.value("items", json::array()))
                 n.items.push_back(ParseNode(it, false));
             for (const auto& d : j.value("dials", json::array()))
@@ -173,8 +185,16 @@ struct Parser
                 n.strip.image = st.value("image", "");
                 n.strip.status = st.value("status", "");
                 n.strip.fps = st.value("fps", 50.0);
-                if (!n.strip.status.empty() && n.strip.status != "ttd")
-                    Error(n.id, "strip.status: ttd (or none)");
+                if (st.contains("target"))
+                {
+                    if (st["target"].is_boolean())
+                        n.strip.target = st["target"].get<bool>();
+                    else
+                        Error(n.id, "strip.target must be true or false");
+                }
+                static const std::set<std::string> statuses{"ttd", "run", "tape", "target"};
+                if (!n.strip.status.empty() && !statuses.count(n.strip.status))
+                    Error(n.id, "strip.status: ttd, run, tape or target (or none)");
                 if (n.strip.fps <= 0)
                     Error(n.id, "strip.fps must be > 0");
                 static const std::set<std::string> kinds{"breadcrumbs", "title", "text", "image", "none"};
@@ -224,6 +244,20 @@ struct Parser
                 Error(n.id, "then must be stay, back or home");
             if (j.contains("face_on"))
                 n.faceOn = ParseFace(j["face_on"], n.id);
+            if (j.contains("state"))
+            {
+                if (j["state"].is_string())
+                    n.state = j["state"].get<std::string>();
+                else
+                    Error(n.id, "state must be a readout path (a string)");
+            }
+        }
+        if (j.contains("activity"))
+        {
+            if (j["activity"].is_boolean())
+                n.activity = j["activity"].get<bool>();
+            else
+                Error(n.id, "activity must be true or false");
         }
         return n;
     }
@@ -252,6 +286,50 @@ struct Validator
             Collect(c, seen);
     }
 
+    void Warn(const std::string& node, const std::string& msg)
+    {
+        out.push_back({node, msg, false});
+    }
+
+    // A scenario path (scenarios.md §3): a known root, else a relative path (the scenario's folder) or, with a
+    // warning, an absolute one
+    void CheckPath(const std::string& node, const std::string& field, std::string path)
+    {
+        if (path.empty())
+            return;
+        if (const size_t hash = path.find('#'); hash != std::string::npos)
+            path.erase(hash);  // #xywh=...
+        if (path[0] == '$')
+        {
+            const std::string root = data::RootOf(path);
+            const auto& roots = data::PathRoots();
+            if (std::find(roots.begin(), roots.end(), root) == roots.end())
+                Error(node, field + ": unknown path root '$" + root + "' ($data, $icons, $testdata, $user, $scenario)");
+            return;
+        }
+        const std::filesystem::path p(path);
+        if (p.is_absolute() || p.has_root_directory() || p.has_root_name())
+            Warn(node, field + ": absolute path '" + path + "' (use $data, $testdata, $user or $scenario)");
+    }
+    void CheckFace(const Face& f, const std::string& node, const std::string& what)
+    {
+        CheckPath(node, what + ".image", f.image);
+        CheckPath(node, what + ".svg", f.svg);
+    }
+    // "$root/..." strings inside an action's value (media.open path, snapshot.save path, ...)
+    void CheckValuePaths(const json& v, const std::string& node)
+    {
+        if (v.is_string())
+        {
+            const std::string t = v.get<std::string>();
+            if (t.size() > 2 && t[0] == '$' && t.find_first_of("/\\") != std::string::npos)
+                CheckPath(node, "value", t);
+        }
+        else if (v.is_object() || v.is_array())
+            for (const auto& x : v)
+                CheckValuePaths(x, node);
+    }
+
     void CheckAction(const Action& a, const std::string& id, int depth)
     {
         if (depth > kMaxMultiDepth)
@@ -272,7 +350,27 @@ struct Validator
             }
             CheckAction(Action{step.value("kind", ""), step}, id, depth + 1);
         };
-        if (a.kind == "webapi")
+        if (a.kind == "action")
+        {
+            const std::string aid = j.contains("id") && j["id"].is_string() ? j["id"].get<std::string>() : "";
+            if (aid.empty())
+                Error(id, "action needs 'id' (a catalogue id, e.g. run.pause_toggle)");
+            else if (aid.find('.') == std::string::npos || aid.front() == '.' || aid.back() == '.' ||
+                     aid.find_first_of(" \t/") != std::string::npos)
+                Error(id, "action id '" + aid + "' is not a catalogue id (group.name)");
+            if (j.contains("hold") && !j["hold"].is_boolean())
+                Error(id, "action: hold must be true or false");
+            if (j.contains("params") && !j["params"].is_object())
+                Error(id, "action: params must be an object");
+            if (j.contains("value"))
+            {
+                const json& v = j["value"];
+                if (v.is_null() || v.is_array())
+                    Error(id, "action: value must be an object, a string, a number or a boolean");
+                CheckValuePaths(v, id);
+            }
+        }
+        else if (a.kind == "webapi")
             need("path");
         else if (a.kind == "http")
             need("url");
@@ -309,6 +407,8 @@ struct Validator
         }
         else if (a.kind == "ttd_seek")
         {  // a dial: frames a detent, min..max with the turning speed
+            if (s.version >= 2)
+                Warn(id, "ttd_seek is a v1 kind (kept by a shim): use the action ttd.seek_by");
             const bool secs = j.value("unit", "frames") == "seconds";
             const double lo = j.value("min", 1.0), hi = j.value("max", lo);
             if (secs ? lo <= 0 || hi < lo : lo < 1 || hi < lo)
@@ -318,6 +418,8 @@ struct Validator
         }
         else if (a.kind == "run_toggle")
         {  // no fields
+            if (s.version >= 2)
+                Warn(id, "run_toggle is a v1 kind (kept by a shim): use the action run.pause_toggle");
         }
         else if (a.kind == "first")
         {
@@ -366,6 +468,11 @@ struct Validator
     void Menu(const Node& n, std::vector<const Node*>& path)
     {
         path.push_back(&n);
+        CheckFace(n.face, n.id, "face");
+        CheckPath(n.id, "strip.image", n.strip.image);
+        if (!n.context.empty() && n.context.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789._-") !=
+                                      std::string::npos)
+            Error(n.id, "context '" + n.context + "': lower-case letters, digits, '.', '_', '-'");
         const Model& m = *s.model;
         const ResolvedNav rn = ResolveNav(s, path);
         std::map<std::pair<int, int>, std::string> used;
@@ -404,7 +511,16 @@ struct Validator
             if (c.IsMenu())
                 Menu(c, path);
             else
+            {
                 CheckAction(c.action, c.id, 0);
+                CheckFace(c.face, c.id, "face");
+                if (c.faceOn)
+                    CheckFace(*c.faceOn, c.id, "face_on");
+                if (!c.state.empty() && !IsReadoutPath(c.state))
+                    Error(c.id, "state '" + c.state + "' is not a readout path (run.state.paused, toggle.<id>, ...)");
+                if (!c.state.empty() && !c.faceOn)
+                    Warn(c.id, "state without face_on: the face does not change");
+            }
         }
         path.pop_back();
     }
@@ -447,10 +563,40 @@ std::optional<Crumbs> CrumbsByName(std::string_view s)
 
 std::span<const std::string_view> ActionKinds()
 {
-    static constexpr std::string_view kKinds[] = {"webapi", "http",  "multi",    "toggle",     "first",
-                                                  "dir",    "delay", "ttd_seek", "run_toggle", "shell",
-                                                  "open",   "keys",  "nav",      "brightness"};
+    static constexpr std::string_view kKinds[] = {"action", "webapi",     "http",  "multi", "toggle",
+                                                  "first",  "dir",        "delay", "ttd_seek", "run_toggle",
+                                                  "shell",  "open",       "keys",  "nav",      "brightness"};
     return kKinds;
+}
+
+namespace
+{
+std::mutex g_hostMutex;
+std::string g_defaultHost = "http://127.0.0.1:8090";
+}  // namespace
+
+std::string DefaultHost()
+{
+    std::lock_guard l(g_hostMutex);
+    return g_defaultHost;
+}
+
+void SetDefaultHost(const std::string& url)
+{
+    std::lock_guard l(g_hostMutex);
+    g_defaultHost = url.empty() ? std::string("http://127.0.0.1:8090") : url;
+}
+
+bool IsReadoutPath(std::string_view path)
+{
+    // two parts at least, each [a-z0-9_-]+ (a part may hold upper case for feature names: toggle.feature.TurboSound)
+    if (path.empty() || path.front() == '.' || path.back() == '.' || path.find("..") != std::string_view::npos ||
+        path.find('.') == std::string_view::npos)
+        return false;
+    for (char c : path)
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '_' || c == '-'))
+            return false;
+    return std::islower(static_cast<unsigned char>(path.front())) != 0;
 }
 
 std::optional<Scenario> Parse(const json& doc, std::vector<Issue>& issues)
@@ -463,9 +609,13 @@ std::optional<Scenario> Parse(const json& doc, std::vector<Issue>& issues)
     }
     if (doc.contains("format") && doc["format"] != "streamdeck-scenario")
         p.Error("", "format must be \"streamdeck-scenario\"");
-    if (doc.value("version", kFormatVersion) > kFormatVersion)
-        p.Error("", "made by a newer version (format " + std::to_string(doc.value("version", 0)) + ")");
+    const json& ver = doc.contains("version") ? doc["version"] : json(kFormatVersion);
+    if (!ver.is_number_integer() || ver.get<int>() < 1)
+        p.Error("", "version must be 1 or 2");
+    else if (ver.get<int>() > kFormatVersion)
+        p.Error("", "made by a newer version (format " + std::to_string(ver.get<int>()) + ")");
     Scenario s;
+    s.version = ver.is_number_integer() ? std::clamp(ver.get<int>(), 1, kFormatVersion) : kFormatVersion;
     s.name = doc.value("name", "");
     const std::string model = doc.value("model", "plusxl");
     s.model = FindModelByName(model);
@@ -476,6 +626,49 @@ std::optional<Scenario> Parse(const json& doc, std::vector<Issue>& issues)
     s.settings.webapi = st.value("webapi", s.settings.webapi);
     s.settings.emulator = st.value("emulator", s.settings.emulator);
     s.settings.companionFile = st.value("companion_file", "");
+    if (s.version >= 2)
+        for (const char* legacy : {"webapi", "emulator", "companion_file"})
+            if (st.contains(legacy))
+                p.issues.push_back({"", std::string("settings.") + legacy +
+                                            " is v1: the host, the target and the token are the daemon's (still used)",
+                                    false});
+    if (st.contains("target"))
+    {
+        const json& t = st["target"];
+        if (t == "follow" || (t.is_object() && t.size() == 1 && t.contains("view") && t["view"].is_number_integer() &&
+                              t["view"].get<int>() >= 1))
+            s.settings.target = t;
+        else
+            p.Error("", "settings.target must be \"follow\" or {\"view\": n} (n >= 1)");
+    }
+    if (st.contains("activity"))
+    {
+        const json& a = st["activity"];
+        if (!a.is_object())
+            p.Error("", "settings.activity must be an object");
+        else
+        {
+            Activity& act = s.settings.activity;
+            for (const auto& [k, v] : a.items())
+            {
+                if (k == "enabled" && v.is_boolean())
+                    act.enabled = v.get<bool>();
+                else if (k == "flash_keys" && v.is_boolean())
+                    act.flashKeys = v.get<bool>();
+                else if (k == "strip" && (v == "none" || v == "line"))
+                    act.strip = v.get<std::string>();
+                else if (k == "seconds" && v.is_number() && v.get<double>() > 0)
+                    act.seconds = v.get<double>();
+                else if (k == "ignore" && v.is_array() &&
+                         std::all_of(v.begin(), v.end(), [](const json& x) { return x.is_string(); }))
+                    act.ignore = v.get<std::vector<std::string>>();
+                else
+                    p.Error("", "settings.activity." + k +
+                                    ": enabled / flash_keys (true, false), strip (none, line), seconds (> 0), ignore "
+                                    "(action ids)");
+            }
+        }
+    }
     const json nv = st.value("navigation", json::object());
     s.settings.stack = nv.value("stack", true);
     if (nv.contains("breadcrumbs"))
@@ -527,6 +720,8 @@ std::optional<Scenario> ParseLoose(const json& doc)
     Scenario s;
     s.name = doc.value("name", "");
     s.model = FindModelByName(doc.value("model", "plusxl"));
+    if (doc.contains("version") && doc["version"].is_number_integer())
+        s.version = std::clamp(doc["version"].get<int>(), 1, kFormatVersion);
     const json nv = doc.value("settings", json::object()).value("navigation", json::object());
     s.settings.stack = nv.value("stack", true);
     if (auto c = CrumbsByName(nv.value("breadcrumbs", "auto")); c && *c != Crumbs::Inherit)
@@ -596,8 +791,12 @@ json ToJson(const Node& n)
         j["at"] = SlotJson(n.at);
     if (auto f = FaceJson(n.face); !f.empty())
         j["face"] = f;
+    if (!n.activity)
+        j["activity"] = false;
     if (n.IsMenu())
     {
+        if (!n.context.empty())
+            j["context"] = n.context;
         json nav = json::object();
         if (n.nav.crumbs != Crumbs::Inherit)
             nav["breadcrumbs"] = ToString(n.nav.crumbs);
@@ -611,7 +810,8 @@ json ToJson(const Node& n)
             nav["dials"] = n.nav.dials;
         if (!nav.empty())
             j["nav"] = nav;
-        if (n.strip.content != "title" || !n.strip.text.empty() || !n.strip.image.empty() || !n.strip.status.empty())
+        if (n.strip.content != "title" || !n.strip.text.empty() || !n.strip.image.empty() || !n.strip.status.empty() ||
+            n.strip.target)
         {
             json st{{"content", n.strip.content}};
             if (!n.strip.text.empty())
@@ -623,6 +823,8 @@ json ToJson(const Node& n)
                 st["status"] = n.strip.status;
                 st["fps"] = n.strip.fps;
             }
+            if (n.strip.target)
+                st["target"] = *n.strip.target;
             j["strip"] = st;
         }
         if (!n.dials.empty())
@@ -655,6 +857,8 @@ json ToJson(const Node& n)
             j["then"] = n.then;
         if (n.faceOn)
             j["face_on"] = FaceJson(*n.faceOn);
+        if (!n.state.empty())
+            j["state"] = n.state;
     }
     return j;
 }
@@ -686,9 +890,28 @@ json ToJson(const Scenario& s)
         st["emulator"] = s.settings.emulator;
     if (!s.settings.companionFile.empty())
         st["companion_file"] = s.settings.companionFile;
+    if (s.settings.target != d.target)
+        st["target"] = s.settings.target;
+    {
+        const Activity& a = s.settings.activity;
+        const Activity da;
+        json aj = json::object();
+        if (a.enabled != da.enabled)
+            aj["enabled"] = a.enabled;
+        if (a.flashKeys != da.flashKeys)
+            aj["flash_keys"] = a.flashKeys;
+        if (a.strip != da.strip)
+            aj["strip"] = a.strip;
+        if (a.seconds != da.seconds)
+            aj["seconds"] = a.seconds;
+        if (a.ignore != da.ignore)
+            aj["ignore"] = a.ignore;
+        if (!aj.empty())
+            st["activity"] = aj;
+    }
     if (!nav.empty())
         st["navigation"] = nav;
-    json j{{"format", "streamdeck-scenario"}, {"version", kFormatVersion}, {"name", s.name}};
+    json j{{"format", "streamdeck-scenario"}, {"version", s.version}, {"name", s.name}};
     if (s.model)
         j["model"] = ModelToken(*s.model);
     if (!st.empty())

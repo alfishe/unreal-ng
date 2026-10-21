@@ -39,7 +39,7 @@
 | Wire v2 | Frame round trips, `Join` roles, 32-bit lengths (a `HostPage` > 64 KB), `Welcome` errors |
 | Surface client | Against an in-process fake hub: join, subscribe, action / result by `rid`, delta merge before send, reconnect with pin and resubscribe, `revoked` |
 | Runtime | `action` kind, state-bound faces from readouts, context → navigation without echo, activity flashes, target line |
-| Core side | `TargetState` rules 1-6 and lifetime ([targeting.md](targeting.md)); activity merge and rate; readout vocabulary; catalogue fields (in `core-tests`, `*Surface*`, `*Target*`) |
+| Core side | `TargetState` rules 1-6 and lifetime ([targeting.md](targeting.md)); activity merge and rate; readout vocabulary; catalogue fields (in `core-tests`, `*Surface*`, `*Target*`). Done SD4 2026-10-20: `TargetState_Test`, `TargetPin_Test`, `TargetStateNotification_Test`, `ActivityFeed_Test`, `ActionCatalogue_Test`, `SurfacesApi_Test`, `McpActions_Test.SurfaceVerbsBecomeTheSurfacesRoutes`; unreal-qt-tests `SurfaceTargets_Test` (the window as a view, the status icon, the surfaces table); live `tools/verification/mcp/test_surfaces.py` `test_no_id_follows_the_focused_view_and_pins_hold`. The per-session rate (20 / s) is the topic's (S4) |
 
 Rules of `core/tests/README.md` apply on the core side (no `sleep_for`, ≤ 50 ms, `TestWait`).
 
@@ -57,7 +57,7 @@ own event loop until the condition holds.
 |:--|:--|
 | Frames: `[u8][u32 LE][payload]`, a stream cut anywhere, `kMaxFrame` accepted, one byte more breaks the reader for good | `TestWireCodec` (deckhub), `FrameBoundaries` |
 | 32-bit lengths: a `HostPage` over 64 KB, live and in the replay | `FrameBoundaries`, `ReplayFraming` |
-| `Join` roles: mirror `first` / by serial / no deck field, own with a serial, a taken serial replaced, the default model; `Welcome` fields (`v`, `deck`, `model`, `pid`, `real`, `daemon`) | `JoinRoles`, `TestMirror`, `TestOwnDeck` (deckhub) |
+| `Join` roles: mirror `first` / by serial / no deck field, own with a serial, a taken serial replaced, the default model; `Welcome` fields (`v`, `deck`, `model` (the token, every model's token reads back), `model_name`, `pid`, `real`, `daemon`) | `JoinRoles`, `TestMirror`, `TestOwnDeck` (deckhub) |
 | `Welcome` errors, then the connection closes: `bad_request` (not JSON, not an object, a field of the wrong type), `version` (missing, 1, 3, a string), `bad_role` (missing, unknown), `bad_model`; `no_deck` with `waiting` keeps it open; a frame before `Join` closes without a `Welcome`; no `Join` within the timeout closes | `WelcomeErrors`, `TestJoinRules`, `TestMirrorWaitsForDeck` (deckhub) |
 | Replay: `Welcome`, `ReplayBegin`, the state (brightness) first, the key chains, the page, `ReplayEnd`, nothing else in between; the replayed reports are the deck's own; live frames only after it, in the deck's order | `ReplayFraming`, `TestPictureCache`, `TestMirror` (deckhub) |
 | Fan-out: two mirrors get the same bytes | `ReplayFraming` |
@@ -70,10 +70,9 @@ own event loop until the condition holds.
 | Slow viewer: images dropped, feature reports kept, a replay when it drains; a fast neighbour gets every frame and no extra replay; its input still arrives; the deck's writes never wait | `TestSlowViewer` (deckhub), `SlowViewerBesideFast` |
 | `Control` to the deck's viewers only | `TestHubInfo` (deckhub), `DaemonRoutesOverHub` |
 | Routes over a live hub: `/health` (decks, viewers, waiting mirrors, wire port), `/decks` (real, own, a deck only the hub has: `runtime: false`, unplugged), `/decks/{serial}`, `snapshot` (200 to its viewers, 404, 409 nobody views / no hub), `reconnect` (200, 400, 404, 409 own deck), `/state` `/page` `/nodes` `/scenario` by `?deck=`, `/press` `/navigate` refusals, MCP `invoke_api` | `DaemonRoutesOverHub`, `TestHubWithDaemonDecks`, `TestHubReconnect` (deckhub), `TestDaemonDecks` (brightness, scenario per deck, watch, reload, MCP) |
+| `/press` (by node, by key: the back key) and `/navigate` (node, back, home) that succeed: the state after the device thread's step, `applied`; a device thread that does not step: 202 within the bound, applied by the next step; a ticket outlives its runtime (the wait ends at once) | `PressAndNavigate`, `TestRuntime` (tickets) |
 
-Not covered here: `POST /press` and `/navigate` that succeed (the routes wait a fixed 60 / 40 ms for the device
-thread, over the per-test budget; `PressNode` / `Navigate` themselves are in `runtime_test.cpp`), and `DeckState`'s
-`busy_by` / `target` (not sent yet: SD5 / SD7).
+Not covered here: `DeckState`'s `busy_by` / `target` (not sent yet: SD5 / SD7).
 
 ### 3.2 With a host (needs SD7)
 

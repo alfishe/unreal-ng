@@ -5067,9 +5067,21 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 else if (action == "position")
                 {
                     CallAndSummarize("GET", Endpoint(id, "/ttd/position"), nullptr, caller, [](const Json::Value& b) {
-                        return "At " + FormatTimePoint(b["current"]["frame"], b["current"]["tinframe"]) + ", session ends at " +
-                               FormatTimePoint(b["session_end"]["frame"], b["session_end"]["tinframe"]) + " (state " +
-                               b["state"].asString() + ")";
+                        std::string text = "At " + FormatTimePoint(b["current"]["frame"], b["current"]["tinframe"]) +
+                                           ", session ends at " +
+                                           FormatTimePoint(b["session_end"]["frame"], b["session_end"]["tinframe"]) +
+                                           " (state " + b["state"].asString() +
+                                           (b.get("paused", false).asBool() ? ", paused" : "") + ")";
+                        if (b.get("history", false).asBool())
+                            text += "; history from frame " + std::to_string(b["first_frame"].asUInt64());
+                        if (b.isMember("fps"))
+                        {
+                            std::ostringstream fps;
+                            fps.precision(4);
+                            fps << b["fps"].asDouble();
+                            text += "; " + fps.str() + " frames/s";
+                        }
+                        return text;
                     }, done);
                 }
                 else if (action == "markers")

@@ -76,6 +76,20 @@ tools/build/land.sh --publish-only                              # push HEAD with
 It refuses when a push would publish another session's unpushed commits. Do not push `master` by hand, do not
 merge or land other sessions' branches. Details: [`tools/build/README.md`](tools/build/README.md#landing-on-master).
 
+## Shared machines (scratch, scratchpads, remote hosts)
+
+Several sessions and their agents work on the same machines at once; nothing outside your own worktree is yours.
+
+- **Your files live in your worktree.** Scripts, patches, bundles and logs go in `scratch/wt-<name>/scratch/`,
+  named after the task. A session scratchpad or `/tmp` may be shared with other sessions: never keep a script there
+  that you will run again.
+- **Run only what you wrote for this task.** Before running a script, read it; a file with a familiar name in a shared
+  place may be another session's and may act on its worktree (a `sync.sh` once reset another agent's remote worktree).
+- **On a remote host** (build hosts, the Windows host) touch only the worktree, branch and build folder you created
+  there, named after your task (`scratch/wt-<name>`); never reset, sync, delete or reuse another one, even if it looks
+  stale. Remove yours when done; leave the host's master fast-forward only.
+- **Something of yours vanished or changed**: stop, report it, do not "fix" it by overwriting others' state.
+
 ## Writing Tests
 
 Full guide: [`core/tests/README.md`](core/tests/README.md). Non-negotiables:
@@ -86,6 +100,7 @@ Full guide: [`core/tests/README.md`](core/tests/README.md). Non-negotiables:
 - **`EnableTurboMode()`** on boot-bound tests (not when asserting on pixels)
 - **Scratch files**: `TestPathHelper::GetUniqueTestScratchPath()`
 - **Avoid `vector::resize(n,0)`** on large buffers - use `ZeroInitBuffer`
+- **Second thread in a test**: wait for it to start, bound the loop by both sides, assert the race happened ([concurrency tests](core/tests/README.md#concurrency-tests))
 
 ## Running Tests
 

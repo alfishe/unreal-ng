@@ -44,6 +44,7 @@ regression tests: [`docs/testing/sanitizers.md`](../../docs/testing/sanitizers.m
 13. **Stop when the assertion is satisfied**: Do not keep looping once the test can no longer fail
 14. **Turn off audio work for boot-bound tests**: `EnableTurboMode()` - but never when asserting on rendered pixels
 15. **Avoid heavy buffer fills in test paths**: Use value-initialization (`new T[n]()`) or `ZeroInitBuffer` instead of `std::vector::resize(n, 0)` on multi-megabyte POD buffers to prevent 50+ ms per-element scalar loops in Debug builds
+16. **A thread you start may not have run yet**: a test with a second thread waits for it to start and bounds its loop by what *both* sides did, never by one side's count alone (see [Concurrency tests](#concurrency-tests))
 
 ---
 
@@ -538,6 +539,30 @@ Real case: `ScorpionMachine_Test.TurboStrobePostsCpuFreqChanged` spent 50 ms of
 its 57 ms in one fixed sleep that existed only to prove no extra notification
 arrived. Swapping it for `ForExactly` took the test to 9 ms with a *stronger*
 assertion.
+
+### Concurrency tests
+
+The scheduler owes a new thread nothing. `core-tests` runs in 20+ shards beside
+other builds; a thread a test starts can sit without a core for many
+milliseconds. A test that counts only its own side ("200000 reads beside the
+writer") then passes or fails by luck: the reads all finish before the writer's
+first store, and every assertion about the race is vacuous.
+
+- **Wait for the other thread to start** before counting: `ASSERT_TRUE(TestWait::For([&] { return writes.load() > 0; }));`
+- **Bound the loop by both sides**: run until this side did N *and* the other
+  did M, with a deadline from `TestWait::Scaled(TestWait::kDefaultTimeout)`, not
+  until one counter reaches N.
+- **Assert that the race happened**: check the other side's count (`EXPECT_GE(writes, 1000)`)
+  with a message saying what it means, so a starved run reports itself instead
+  of looking like a pass.
+- **Run it under load before landing**: `tools/build/test.sh` while a build runs,
+  or `--gtest_repeat=200` beside `stress`; a test that only passes on an idle
+  machine is not done.
+
+Real case: `TTDCursorCell_Test.ReadersNeverSeeATornCursorWhileItIsWritten` ran a
+fixed 200000 reads; under a full test run its writer never got a core
+(`writes` = 0) and the test failed on master. It now waits for the writer and
+reads until both sides did enough.
 
 ### EmulatorTestHelper
 

@@ -15,9 +15,14 @@
 /// Shared by every OS backend that reads the raw reports (IOHID; Windows HID and Linux hidraw later); Linux evdev
 /// gives REL_DIAL and BTN_0 instead and maps them to the same names.
 
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <mutex>
+#include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "hid/hiddescriptor.h"
@@ -103,6 +108,15 @@ public:
     /// 4 buzz), Retrigger Period (uint16 LE, ms). The Dial plays the waveform @p clicks.count times (1..255; 0 is 1)
     static std::vector<uint8_t> HapticReport(const HapticClicks& clicks);
 
+    /// Output report 1 for a pattern (control surfaces controls-and-feedback.md §4): `tick` one click, `double` two
+    /// clicks 60 ms apart, `buzz` one buzz (its length is the device's Waveform Cutoff). Repeat Count is the number of
+    /// plays (01 03 03 00 00 gave three clicks)
+    static std::vector<uint8_t> PatternReport(HapticPattern pattern);
+    /// Feature report 1 for the steps and clicks (devices.md §1.2): the Resolution Multiplier, Repeat Count 0, Auto
+    /// Trigger 3 (a click at each step) or 1 (none: a free wheel, the steps kept), and @p base's cutoff and retrigger
+    /// (the device's own: a write keeps them)
+    static std::vector<uint8_t> FeatureReport(const StepsOut& steps, const SurfaceDialFeature& base = {});
+
     /// Feature report 1 -> @p out; false for a report of another id or too short
     static bool ParseFeature(const uint8_t* report, size_t size, SurfaceDialFeature& out);
     /// The settings last read from the device (the defaults until a feature report is read)
@@ -126,6 +140,50 @@ private:
     bool _touched = false;
     DialTouch _hand;
     SurfaceDialFeature _feature;
+};
+
+/// The Dial's writer thread (control surfaces architecture.md §9, §11): a report write blocks for a Bluetooth LE
+/// round trip, so feature and output reports never leave from the IOHID run loop or the actions worker. Requests only
+/// queue, the latest of each kind wins (a pattern not written yet is replaced: a fast turn never builds a backlog of
+/// clicks), and the steps go before a pattern. Shared by every backend that writes raw reports
+class SurfaceDialWriter
+{
+public:
+    enum class ReportType : uint8_t
+    {
+        Feature,
+        Output,
+    };
+    /// Writes one report (its first byte is the report id); false when the device refused it
+    using Write = std::function<bool(ReportType type, const std::vector<uint8_t>& report)>;
+
+    explicit SurfaceDialWriter(Write write);
+    /// What is queued is dropped; a write in flight finishes first
+    ~SurfaceDialWriter();
+    SurfaceDialWriter(const SurfaceDialWriter&) = delete;
+    SurfaceDialWriter& operator=(const SurfaceDialWriter&) = delete;
+
+    void Steps(const StepsOut& steps);
+    void Pattern(HapticPattern pattern);
+    /// A test effect's clicks (haptics.md §10): the same slot as a pattern
+    void Clicks(const HapticClicks& clicks);
+
+    /// Reports written / refused so far (the tests, the live check)
+    uint64_t Written() const;
+    uint64_t Failed() const;
+
+private:
+    void Run();
+
+    Write _write;
+    mutable std::mutex _mutex;
+    std::condition_variable _wake;
+    std::optional<std::vector<uint8_t>> _feature;
+    std::optional<std::vector<uint8_t>> _output;
+    uint64_t _written = 0;
+    uint64_t _failed = 0;
+    bool _stopping = false;
+    std::thread _thread;  ///< last: started when the rest exists
 };
 
 }  // namespace controllers

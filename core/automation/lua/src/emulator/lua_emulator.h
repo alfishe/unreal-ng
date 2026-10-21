@@ -34,6 +34,8 @@
 #include <emulator/slots/slotcontrol.h>
 #include <emulator/io/controllers/controllercontrol.h>
 #include <emulator/actions/actionregistry.h>
+#include <emulator/actions/contextstate.h>
+#include <emulator/actions/surfacesapi.h>
 #include <emulator/execution/automationgate.h>
 #include <emulator/sound/midi/midicontrol.h>
 #ifdef ENABLE_CONTROLLERS
@@ -1862,6 +1864,7 @@ public:
             origin.identity = "lua|script";
             StateNode body = StateNode::Object();
             body["instance"] = instance;
+            body["rev"] = static_cast<int64_t>(actions::ActionRegistry::Instance().Revision());
             StateNode& rows = body["actions"];
             rows = StateNode::Array();
             for (const actions::ActionStatus& status : actions::ActionRegistry::Instance().Statuses(instance, origin))
@@ -1875,6 +1878,10 @@ public:
                 row["gui"] = status.info.gui;
                 row["scope"] = automation_gate::CompanionScopeName(status.scope);
                 row["needs_pause"] = status.needsPause;
+                row["toggle"] = status.info.toggle;
+                row["description"] = status.info.description;
+                if (!status.info.params.empty())
+                    row["params"] = status.info.params;
                 row["available"] = status.available;
                 if (!status.available)
                 {
@@ -1965,6 +1972,68 @@ public:
             out["result"] = result.body;
             return StateNodeToLua(s, out);
         });
+        // context() -> {instance, context, set, by, default}: the instance's surface context (actions::ContextState,
+        // control surfaces architecture §6), as the CLI `action context`, WebAPI GET /api/v1/controllers/context, MCP
+        // `actions` context and Python context(); set it with action("ctx.set", "ttd") ("" returns to the default)
+        lua.set_function("context", [this](sol::this_state s) {
+            Emulator* emulator = effectiveEmulator();
+            StateNode out = StateNode::Object();
+            if (!emulator)
+            {
+                out["ok"] = false;
+                out["error"] = "Not Found";
+                out["message"] = "no emulator selected";
+                return StateNodeToLua(s, out);
+            }
+            const actions::ContextInfo info = actions::ContextState::Instance().Get(emulator->GetId(), emulator);
+            out["ok"] = true;
+            out["instance"] = emulator->GetId();
+            out["context"] = info.context;
+            out["set"] = info.set;
+            out["by"] = info.by;
+            out["default"] = info.fallback;
+            return StateNodeToLua(s, out);
+        });
+        // surfaces(verb, {args}) -> the reply table of a control surfaces verb (actions::surfaces::Call: views, target,
+        // sessions, session, pin, readouts, activity, view_add, view_update, view_remove, session_open,
+        // session_close), as WebAPI /api/v1/surfaces/..., the CLI `surface`, MCP `actions` and Python surfaces()
+        lua.set_function("surfaces", [](sol::this_state s, sol::optional<std::string> verb, sol::optional<sol::table> opts) {
+            std::function<StateNode(const sol::object&)> toNode = [&toNode](const sol::object& value) -> StateNode {
+                if (value.is<bool>())
+                    return StateNode(value.as<bool>());
+                if (value.get_type() == sol::type::number)
+                {
+                    const double number = value.as<double>();
+                    return number == std::floor(number) ? StateNode(static_cast<int64_t>(number)) : StateNode(number);
+                }
+                if (value.is<std::string>())
+                    return StateNode(value.as<std::string>());
+                if (value.get_type() == sol::type::table)
+                {
+                    const sol::table table = value.as<sol::table>();
+                    // A sequence is a list ({"run.state", "media.*"}), anything else an object ({view = "v1"})
+                    if (table.size() > 0)
+                    {
+                        StateNode array = StateNode::Array();
+                        for (size_t i = 1; i <= table.size(); i++)
+                            array.push(toNode(table[i]));
+                        return array;
+                    }
+                    StateNode object = StateNode::Object();
+                    for (const auto& [key, item] : table)
+                        if (key.is<std::string>())
+                            object[key.as<std::string>()] = toNode(item);
+                    return object;
+                }
+                return StateNode();
+            };
+            StateNode args = StateNode::Object();
+            if (opts)
+                for (const auto& [key, item] : *opts)
+                    if (key.is<std::string>())
+                        args[key.as<std::string>()] = toNode(item);
+            return StateNodeToLua(s, actions::surfaces::Call(verb.value_or("views"), args).body);
+        });
         // controllers_host(verb, {options}) -> the reply table every surface returns: the host game controllers
         // (devices, profiles, bindings, haptics, rumble; HostInputControl, the process's, not the machine's)
         auto hostControllersCall = [](sol::this_state s, const std::string& verb, sol::optional<sol::table> opts) {
@@ -2012,6 +2081,20 @@ public:
             opts["device"] = device;
             opts["effect"] = effect.value_or("identify");
             return hostControllersCall(s, "rumble", opts);
+        });
+        // controllers_output(device, pattern | {steps=, clicks=, marks=}) -> a control surface's outputs (the Surface
+        // Dial): a haptic pattern (tick, double, buzz), its steps per turn and clicks, or a seek's marks as its layer
+        // plays them
+        lua.set_function("controllers_output", [hostControllersCall](sol::this_state s, const std::string& device,
+                                                                     sol::object what) {
+            sol::table opts = sol::state_view(s).create_table();
+            if (what.is<sol::table>())
+                for (const auto& [key, value] : what.as<sol::table>())
+                    opts[key] = value;
+            else if (what.is<std::string>())
+                opts["pattern"] = what.as<std::string>();
+            opts["device"] = device;
+            return hostControllersCall(s, "output", opts);
         });
         lua.set_function("media", [mediaCall](sol::this_state s, const std::string& verb, sol::optional<std::string> slot,
                                               sol::optional<std::string> path, sol::optional<sol::table> opts) {

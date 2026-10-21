@@ -54,12 +54,14 @@
 class AudioSettingsWidget;
 class MidiActivityWindow;
 class HostControllers;
+class SurfaceTargets;
 class ControllersDialog;
 class ControllerToast;
 class GuiActions;
 class SlotChangeController;
 class SlotsWindow;
 class NextLayersWindow;
+class OsdKeyboardWindow;
 class HudOverlayWrapper;
 class HudModel;
 class TtdWidget;
@@ -187,6 +189,7 @@ private slots:
     void handleNetworkWindowToggled(bool visible);
     void handleSlotsWindowToggled(bool visible);
     void handleNextLayersToggled(bool visible);
+    void handleOsdKeyboardToggled(bool visible);
     void handleMidiActivityToggled(bool visible);
     void handleTrafficWindowToggled(bool visible);
     void handleFt812DebugToggled(bool visible);
@@ -415,12 +418,14 @@ private:
     LogWindow* logWindow = nullptr;
     TapeManagerWindow* tapeManagerWindow = nullptr;
     MediaPanelWindow* mediaPanelWindow = nullptr;
+    SurfaceTargets* _surfaceTargets = nullptr;           // this window as a view of TargetState (Stream Deck targeting)
     HostControllers* _hostControllers = nullptr;        // host game controllers: service, profiles, player connectors
     ControllersDialog* _controllersDialog = nullptr;    // Tools -> Controllers
     ControllerToast* _controllerToast = nullptr;        // the auto-profile toast (port reads)
     std::unique_ptr<GuiActions> _guiActions;            // the GUI host actions in the core registry; device events
     NetworkWindow* networkWindow = nullptr;
     NextLayersWindow* _nextLayersWindow = nullptr;          // View -> Next Layers (per-layer capture view)
+    OsdKeyboardWindow* _osdKeyboardWindow = nullptr;        // View -> On-screen Keyboard, the osd.keyboard action
     SlotsWindow* _slotsWindow = nullptr;                   // Machine -> Slots (ZX-bus slots)
     MidiActivityWindow* _midiActivityWindow = nullptr;     // Tools -> MIDI Activity
     SlotChangeController* _slotChangeController = nullptr;   // plan, confirm, restart, Undo (every slot change)

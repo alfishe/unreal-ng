@@ -983,17 +983,36 @@ void CLIProcessor::HandleTTDResume(const ClientSession& session, EmulatorContext
 
 void CLIProcessor::HandleTTDPosition(const ClientSession& session, EmulatorContext* context)
 {
-    const ttd::TTDSessionView view(context);
-    const ttd::TTDSessionView* mgr = &view;
-
-    ttd::TTDTimePoint pos = mgr->CurrentPosition();
-    ttd::TTDTimePoint end = mgr->SessionEndPosition();
+    // The position verb every surface answers from (the live position and the published cursor: never parks)
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"position", {}});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    auto number = [&reply](const char* object, const char* key) -> int64_t {
+        const StateNode* node = object ? reply.body.find(object) : &reply.body;
+        const StateNode* value = node ? node->find(key) : nullptr;
+        return value ? value->i : 0;
+    };
+    const StateNode* history = reply.body.find("history");
+    const StateNode* paused = reply.body.find("paused");
+    const StateNode* fps = reply.body.find("fps");
+    const StateNode* state = reply.body.find("state");
 
     std::stringstream ss;
     ss << "TTD Position" << NEWLINE;
     ss << "============" << NEWLINE;
-    ss << "  Current: (frame=" << pos.frame << ", tInFrame=" << pos.tInFrame << ")" << NEWLINE;
-    ss << "  End:     (frame=" << end.frame << ", tInFrame=" << end.tInFrame << ")" << NEWLINE;
+    ss << "  Current: (frame=" << number("current", "frame") << ", tInFrame=" << number("current", "tinframe") << ")"
+       << NEWLINE;
+    ss << "  End:     (frame=" << number("session_end", "frame") << ", tInFrame=" << number("session_end", "tinframe")
+       << ")" << NEWLINE;
+    if (history && history->b)
+        ss << "  First:   frame=" << number(nullptr, "first_frame") << NEWLINE;
+    ss << "  State:   " << (state ? state->s : std::string("?")) << (paused && paused->b ? ", paused" : "")
+       << NEWLINE;
+    if (fps)
+        ss << "  Fps:     " << fps->d << NEWLINE;
 
     session.SendResponse(ss.str());
 }

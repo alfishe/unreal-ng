@@ -52,9 +52,12 @@ struct ResolvedProfiles
     std::vector<PlayerPin> players;
     std::vector<std::string> applied;   ///< the profile ids of the "" scope, lowest first
     std::vector<std::string> warnings;  ///< bindings dropped because their merge does not compile
-    /// The haptics of the most specific profile that has a `haptics` section (whole, not merged), and its id
+    /// The game haptics of the most specific play profile that has a `haptics` section (whole, not merged), and its id
     JsonValue haptics;
     std::string hapticsProfile;
+    /// Per router scope (as `scopes`), the surface haptics of the most specific debug profile that has a `haptics`
+    /// section (control surfaces profiles.md §1: per layer, whole, not merged); a scope without one is absent
+    std::vector<std::pair<std::string, JsonValue>> surfaceHaptics;
 };
 
 /// One shipped game profile as the index lists it (mapping-and-profiles.md §7.5)
@@ -150,6 +153,7 @@ public:
 private:
     std::vector<Profile> _profiles;
     std::vector<std::string> _appliedScopes;
+    std::vector<std::string> _hapticScopes;  ///< the scopes Apply gave surface haptics
     GameLibrary _games;
 };
 

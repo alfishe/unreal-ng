@@ -71,7 +71,7 @@ What the studio does with each answer:
 
 | Daemon sends | The studio |
 |:--|:--|
-| `Welcome` with a deck | takes the deck's model (a mirror follows it) and serial; the deck is live |
+| `Welcome` with a deck | takes the deck's model (its `model` token, else `pid`; a mirror follows it) and serial; the deck is live |
 | `Welcome` `error: no_deck`, `waiting: true` | stays connected and shows "waiting for a Stream Deck"; the next `Welcome` makes it live |
 | `Welcome` `error: version`, `bad_role`, `bad_model`, `bad_request` | shows the reason over the deck and does not retry (Deck > Reconnect, or another role, tries again) |
 | `Output`, `SetFeature` | applied to the software deck exactly as a device would |
@@ -237,6 +237,6 @@ cmake-build-agent-release/bin/streamdeck-studio-tests
 |:--|:--|
 | A single daemon per session (lock), adopting one started elsewhere, `--parent` instead of `--with-parent` | the daemon's supervision rules (daemon.md §7, §8; SD7) |
 | A deck list in the window (the Deck box offers "the first real deck" and own models) | several real decks (later) |
-| Palette from the host's catalogue, action forms, contexts, activity | the `action` kind and the catalogue (SD4, SD5) |
-| Open shipped example scenarios | `data/streamdeck/scenarios/` (SD5) |
+| Palette from the host's catalogue, action forms, contexts, activity | done 2026-10-20: palette presets per catalogue action, the action picker (shipped or live catalogue), State / Context / target / activity fields, v2 save ([scenario-editor/02-ux-design.md](scenario-editor/02-ux-design.md)); forms per param: SD4 |
+| Open shipped example scenarios | `data/streamdeck/scenarios/`: after the icon set and the use-case document (owner, 2026-10-20) |
 | Windows and Linux builds checked | SD8 |

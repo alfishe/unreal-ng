@@ -185,5 +185,5 @@ TEST(Z80n_Sjasmplus_Test, DoubleQuotedStringsReadTheEscapesInEitherCase)
     const ConvertResult r = Convert(Sjasmplus("        DB \"\\A\\a\\D\\?\\N\"\n"), "sjasmplus");
     EXPECT_TRUE(r.ok);
     const std::string text = r.document.Text();
-    EXPECT_NE(text.find("7,7,127,63,10"), std::string::npos) << text;
+    EXPECT_NE(text.find("7,7,127,'?',10"), std::string::npos) << text;   // control characters as numbers, the rest quoted
 }

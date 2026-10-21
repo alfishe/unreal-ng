@@ -26,7 +26,7 @@ Footprints are the POC 031 data in mm (W × D); heights are published figures or
 | `zxnext` | NEXT | 58 | `next` | 330 × 146 | UNVERIFIED (a wedge, ≈35–40 mm at the back) | approved |
 
 The 2D atlas of each is `tools/poc/031-authentic-osd-keyboards/atlas/<id>.photo.atlas.png`; its keys
-`keyboards/out/<id>.keys.json`.
+`data/controllers/keyboards/<id>.keys.json`.
 
 ## 2. Keyboards still to come in 2D
 

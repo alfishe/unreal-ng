@@ -281,7 +281,17 @@ bool ValidateBinding(const Binding& binding, std::string& error)
                 error = "layer '" + target.name + "' cannot switch itself";
                 return false;
             }
+            if (target.kind == TargetKind::Layer && IsContextLayer(target.name))
+            {
+                error = "layer '" + target.name + "' is a context layer: the context switches it, not a layer key";
+                return false;
+            }
             break;
+    }
+    if (!binding.options.params.IsNull() && target.kind != TargetKind::Action)
+    {
+        error = "a 'curve' object is an action's parameters: it needs an action target";
+        return false;
     }
     const BindingOptions& options = binding.options;
     const bool pulses = options.turbo != Turbo::Off && options.turbo != Turbo::Hold;
@@ -324,6 +334,42 @@ const char* TurboName(Turbo turbo)
             return entry.name;
     }
     return "off";
+}
+
+bool IsContextLayer(const std::string& layer)
+{
+    return !layer.empty() && layer[0] == '@';
+}
+
+bool ValidContextLayer(const std::string& layer, std::string& error)
+{
+    std::string name = layer.substr(layer.empty() ? 0 : 1);
+    const bool wildcard = name.size() > 2 && name.compare(name.size() - 2, 2, ".*") == 0;
+    if (wildcard)
+        name.resize(name.size() - 2);
+    bool ok = IsContextLayer(layer) && !name.empty() && name.size() <= 64 && name[0] >= 'a' && name[0] <= 'z';
+    for (const char c : name)
+        ok = ok && ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-');
+    if (!ok)
+        error = "context layer '" + layer +
+                "' is '@' and a context (lowercase letters, digits, '.', '_', '-', starting with a letter), maybe "
+                "ending in '.*'";
+    return ok;
+}
+
+int ContextLayerMatch(const std::string& layer, const std::string& context)
+{
+    if (!IsContextLayer(layer) || context.empty())
+        return -1;
+    const std::string name = layer.substr(1);
+    if (name.size() > 2 && name.compare(name.size() - 2, 2, ".*") == 0)
+    {
+        const std::string prefix = name.substr(0, name.size() - 1);  // "debug."
+        return context.size() > prefix.size() && context.compare(0, prefix.size(), prefix) == 0
+                   ? static_cast<int>(layer.size())
+                   : -1;
+    }
+    return name == context ? static_cast<int>(layer.size()) : -1;
 }
 
 }  // namespace controllers

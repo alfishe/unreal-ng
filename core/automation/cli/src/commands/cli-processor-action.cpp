@@ -1,4 +1,4 @@
-// action [list | run <id> [value] [param=value ..] | help]: the host actions of the core ActionRegistry
+// action [list | run <id> [value] [param=value ..] | context | help]: the host actions of the core ActionRegistry
 // (core/src/emulator/actions/actionregistry.h; control surfaces actions.md §6), the same ids, values, gates and errors
 // as WebAPI /api/v1/controllers/actions, MCP `actions`, Lua / Python action(). The registry applies this connection's
 // gate itself: a companion connection is checked against its scopes, an ordinary one gets the implicit session of the
@@ -12,6 +12,7 @@
 
 #include "cli-processor.h"
 #include "emulator/actions/actionregistry.h"
+#include "emulator/actions/contextstate.h"
 #include "emulator/emulator.h"
 #include "emulator/execution/automationgate.h"
 #include "emulator/state/statenodejson.h"
@@ -23,7 +24,9 @@ const char* const kActionUsage =
     "action [list]                          - Every host action, its kind, whether it can run now (* = yes) or why not\n"
     "action run <id> [value] [param=val ..] - Run one on the selected instance and wait for it, e.g.\n"
     "                                         action run run.pause_toggle, action run ttd.jog_frames -10,\n"
-    "                                         action run run.turbo_hold release, action run run.n_scanlines count=8\n"
+    "                                         action run run.turbo_hold release, action run run.n_scanlines count=8,\n"
+    "                                         action run ttd.seek_by -3 rate=18 unit=seconds, action run ctx.set ttd\n"
+    "action context                         - The instance's surface context (set it: action run ctx.set <name>)\n"
     "Values by kind: press - press (default) | release; delta - signed steps; level - 0..1; text - the text.\n"
     "Flags: --json (the reply every surface returns)\n";
 
@@ -114,6 +117,8 @@ void CLIProcessor::HandleAction(const ClientSession& session, const std::vector<
             line.resize(std::max<size_t>(line.size() + 1, 32), ' ');
             line += std::string("[") + actions::ValueKindName(status.info.kind) + (status.info.held ? ", held" : "") +
                     (status.info.gui ? ", gui" : "") + "] " + status.info.label;
+            if (!status.info.params.empty())
+                line += " (" + status.info.params + ")";
             if (!status.available)
                 line += " - " + status.reason;
             out << line << NEWLINE;
@@ -122,6 +127,7 @@ void CLIProcessor::HandleAction(const ClientSession& session, const std::vector<
         {
             StateNode body = StateNode::Object();
             body["instance"] = instance;
+            body["rev"] = static_cast<int64_t>(registry.Revision());
             StateNode& rows = body["actions"];
             rows = StateNode::Array();
             for (const actions::ActionStatus& status : registry.Statuses(instance, origin))
@@ -135,6 +141,10 @@ void CLIProcessor::HandleAction(const ClientSession& session, const std::vector<
                 row["gui"] = status.info.gui;
                 row["scope"] = automation_gate::CompanionScopeName(status.scope);
                 row["needs_pause"] = status.needsPause;
+                row["toggle"] = status.info.toggle;
+                row["description"] = status.info.description;
+                if (!status.info.params.empty())
+                    row["params"] = status.info.params;
                 row["available"] = status.available;
                 if (!status.available)
                 {
@@ -147,6 +157,30 @@ void CLIProcessor::HandleAction(const ClientSession& session, const std::vector<
             return;
         }
         session.SendResponse(out.str());
+        return;
+    }
+
+    if (verb == "context")
+    {
+        if (!emulator)
+        {
+            session.SendResponse(std::string("Error: no emulator selected") + NEWLINE);
+            return;
+        }
+        const actions::ContextInfo info = actions::ContextState::Instance().Get(instance, emulator.get());
+        if (json)
+        {
+            StateNode body = StateNode::Object();
+            body["instance"] = instance;
+            body["context"] = info.context;
+            body["set"] = info.set;
+            body["by"] = info.by;
+            body["default"] = info.fallback;
+            session.SendResponse(StateNodeToJsonText(body) + NEWLINE);
+            return;
+        }
+        session.SendResponse("Context: " + info.context +
+                             (info.set ? " (set by " + info.by + ")" : std::string(" (the default)")) + NEWLINE);
         return;
     }
 

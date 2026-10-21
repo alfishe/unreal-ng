@@ -39,6 +39,7 @@ add_library(sdb-studio-editor STATIC
     ${SD_STUDIO}/gui.h ${SD_STUDIO}/textedit.h
     ${SD_STUDIO}/editor/editordocument.h ${SD_STUDIO}/editor/editordocument.cpp
     ${SD_STUDIO}/editor/presets.h ${SD_STUDIO}/editor/presets.cpp
+    ${SD_STUDIO}/editor/actioncatalogue.h ${SD_STUDIO}/editor/actioncatalogue.cpp
     ${SD_STUDIO}/editor/designcanvas.h ${SD_STUDIO}/editor/designcanvas.cpp
     ${SD_STUDIO}/editor/inspector.h ${SD_STUDIO}/editor/inspector.cpp
     ${SD_STUDIO}/editor/runcontroller.h ${SD_STUDIO}/editor/runcontroller.cpp

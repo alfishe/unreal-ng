@@ -36,3 +36,32 @@ inline Json::Value StateNodeToJson(const StateNode& node)
             return Json::Value(Json::nullValue);
     }
 }
+
+/// Json::Value -> StateNode (an action's params, a WebSocket value): bool, integer, double, string, array, object;
+/// null for anything else
+inline StateNode JsonToStateNode(const Json::Value& value)
+{
+    if (value.isBool())
+        return StateNode(value.asBool());
+    if (value.isInt64() || value.isUInt64())
+        return StateNode(static_cast<int64_t>(value.asInt64()));
+    if (value.isDouble())
+        return StateNode(value.asDouble());
+    if (value.isString())
+        return StateNode(value.asString());
+    if (value.isArray())
+    {
+        StateNode array = StateNode::Array();
+        for (const Json::Value& item : value)
+            array.push(JsonToStateNode(item));
+        return array;
+    }
+    if (value.isObject())
+    {
+        StateNode object = StateNode::Object();
+        for (const std::string& name : value.getMemberNames())
+            object[name] = JsonToStateNode(value[name]);
+        return object;
+    }
+    return {};
+}

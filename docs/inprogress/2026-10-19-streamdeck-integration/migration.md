@@ -36,7 +36,7 @@ Tracked files only (`build/`, `.cache/`, `__pycache__/`, `.DS_Store` are never c
 | `streamdeck-bridge/third_party/` httplib, fkYAML, nanosvg, nanosvgrast, rapidcsv, stb_image, README | `companions/streamdeck/3rdparty/` | rows in `THIRD_PARTY_NOTICES.md` |
 | `streamdeck-bridge/examples/themes/unrealng/` (30 files) | `data/streamdeck/themes/unrealng/` | boot / idle theme |
 | — | — | the example scenarios are **not** needed as fixtures: the tests write their own files |
-| `streamdeck-bridge/examples/make_unrealng_control.py`, `capture_zx.py` | `companions/streamdeck/tools/` | the default-scenario generator and its thumbnail capture: **SD5**, rewritten for v2 when the catalogue exists (they read the REST presets, which are not imported) |
+| `streamdeck-bridge/examples/make_unrealng_control.py`, `capture_zx.py` | `companions/streamdeck/tools/` | **SD5, 2026-10-20:** written new as `make_deck_scenario.py`, a v2 generator from a menu-hierarchy spec and the action catalogue (the old one read the REST presets and hard-coded its layout); the layout itself waits for the icon set and the use-case document ([scenarios.md §9](scenarios.md#9-the-default-scenario)); `capture_zx.py` (thumbnails) not imported, it waits with them |
 | `streamdeck-emulator/src/` main, mainwindow, deckwidget, virtualdeck, emulatorapi, recorder, gui.h, textedit.h | `companions/streamdeck/studio/` | **SD3, done 2026-10-20**: a wire v2 client (`deckclient.*`, `decklink.h`), the v1 server rewritten as `--listen` only (`listenserver.*`), `emulatorapi` became `studioapi` (USB routes gone, `/connection` GET / PUT); the recorder links `core/recording` |
 | `streamdeck-emulator/src/editor/*` (14) | `companions/streamdeck/studio/editor/` | **SD3, done 2026-10-20**; `presets.cpp`: generic presets only (no unreal-ng REST paths); `runcontroller` plays the scenario through the daemon (reload of a running one, else `unreal-streamdeck run`) |
 | `docs/hid/*` (8) | `docs/companions/streamdeck/hid/` | the protocol reference, checked against Elgato's docs and hardware |
@@ -54,7 +54,7 @@ Tracked files only (`build/`, `.cache/`, `__pycache__/`, `.DS_Store` are never c
 | `streamdeck-bridge/tools/mcp-bridge/` | Duplicates `unreal-mcp-bridge` |
 | `streamdeck-bridge/examples/*.py` demos (`unrealng_demo`, `unrealng_effects_demo`, `capture_screens`, `navigation_tour`, `mcp_editor_demo`, `make_bridge_config`, `make_scenario`, `_deck.py`) | Demos of the REST flows and the legacy bridge; screenshots for the old README |
 | `streamdeck-bridge/examples/screens/*.png` (17) | Screenshots for the old README; the new docs take new ones |
-| `streamdeck-bridge/examples/scenarios/unrealng-control.deck.json` | Generated, 98 absolute paths, REST steps; regenerated as v2 into `data/streamdeck/scenarios/` |
+| `streamdeck-bridge/examples/scenarios/unrealng-control.deck.json` | Generated, 98 absolute paths, REST steps, mostly test material (owner, 2026-10-20); the v2 default scenario is generated anew from the use-case document's spec into `data/streamdeck/scenarios/` |
 | `streamdeck-emulator/src/recording/` (33) | Duplicates `core/recording`; the studio links it |
 | `streamdeck-emulator/src/usblistener.*` | The daemon is the only USB owner |
 | `streamdeck-emulator/src/server.*` | The studio becomes a client (wire v2); kept only as the test `--listen` mode if needed, written new |
@@ -83,8 +83,8 @@ application's name, `/Volumes/`, `/Users/`, `/tmp/` must return nothing (plus `t
 
 | Area | Change | Doc |
 |:--|:--|:--|
-| unreal-ng calls | `webapi` REST steps → `action` ids; the `UnrealHost` on the surface socket | [daemon.md §5](daemon.md#5-runtime-changes), [scenarios.md §2](scenarios.md#2-the-action-kind) |
-| State | Polling and local toggles → readouts and state-bound faces | [scenarios.md §4](scenarios.md#4-state-bound-faces) |
+| unreal-ng calls | `webapi` REST steps → `action` ids; the `UnrealHost` on the surface socket | [daemon.md §5](daemon.md#5-runtime-changes), [scenarios.md §2](scenarios.md#2-the-action-kind). Done 2026-10-20: the `action` kind with a REST fallback behind `ActionExecutor` (the surface client is S4 / SD4), `ConvertToV2` / `scenario upgrade` maps the REST steps of §4 that have an action |
+| State | Polling and local toggles → readouts and state-bound faces | [scenarios.md §4](scenarios.md#4-state-bound-faces). Done 2026-10-20: `state` / `face_on`, `Runtime::SetReadout` for the surface client, a polled `run.state.paused` and the local flip until then |
 | Instance choice | `GET /api/v1/emulator` + `symbolic_id == "unreal-qt"` → host targeting | [targeting.md](targeting.md) |
 | Device ownership | Shared open + `/tmp` lock + the studio's own USB reader → the multiplexer, exclusive open | [daemon.md §3](daemon.md#3-device-multiplexer) |
 | Wire | The studio listens, v1 → the daemon listens, v2 | [device-wire.md](device-wire.md) |
@@ -97,28 +97,37 @@ application's name, `/Volumes/`, `/Users/`, `/tmp/` must return nothing (plus `t
 
 The prototype's control scenario uses 123 distinct REST paths in 598 steps. By group (step counts):
 
-| Group (steps) | Today | Then |
-|:--|:--|:--|
-| Machine start / replace (90) | `POST /api/v1/emulator/start {replace}` + delays | `mach.start` ([protocol.md §6](protocol.md#6-machine-lifecycle-without-rest)) |
-| Keyboard (66) | `/keyboard/*` (type, press keys, ZX and PC keys) | `input.key` `{key, hold?}`, `input.type` `{text}` |
-| Features (56) | `/feature/<name>` | `feature.toggle` `{name}` with `toggle.feature.<name>` readouts |
-| TTD (55) | `/ttd/*` | `ttd.*` (seek_by, steps, bookmarks, record, resume_live) |
-| Tape (52) | `/tape/*` | `media.tape` `{op}`, `media.open` |
-| Audio (44) | `/audio/mixer/*` | `audio.mute_toggle`, `audio.volume_by` (delta), `audio.source_mute` `{source}` |
-| Settings (43) | `PUT /settings/<name>` | `set.speed` `{value}`, `set.toggle` `{name}` (turbo, fast tape, turbo tape, fast disk) |
-| BASIC (36) | `/basic/*` | `basic.*` (enter, run, list) |
-| Joystick (28) | `/joystick/*` | `input.joystick` `{dir, fire, hold}` |
-| Snapshot (26) | `/snapshot/*` | `snapshot.quick`, `media.open` |
-| Run (≈ 40) | `/pause`, `/resume`, `/reset`, `/nmi`, `/run_frames`, `/run_scanlines`, `/run_to_interrupt`, `/run_tstates`, `/skip_until`, `/step*`, `/stop`, `/start`, `/state` | `run.*`, `mach.reset`, `mach.nmi`, `run.frames` `{count}`, `run.tstates` `{count}` |
-| Media (16), Disk (10) | `/media/X/*`, `/disk/X/insert` | `media.open`, `media.eject` `{drive}` |
-| Video (15) | `/video/*` | `video.*` (filters, overscan, fullscreen) |
-| Debug (≈ 12) | `/debugmode`, `/breakpoints`, `/debug`, `/coverage`, `/profiler`, `/memory` | `dbg.mode_toggle`, `dbg.*` |
-| Capture (2) | `/capture/screen` | `cap.screenshot` |
-| Control (1) | `/control/session` | gone (companion token) |
+| Group (steps) | Today | Then | SD6 (2026-10-20) |
+|:--|:--|:--|:--|
+| Machine start / replace (90) | `POST /api/v1/emulator/start {replace}` + delays | `mach.start` ([protocol.md §6](protocol.md#6-machine-lifecycle-without-rest)) | done: `mach.start` `{model, ram_kb?, replace?}` (in place through `ModelSwitch`, no delay step), `mach.cold_reset` |
+| Keyboard (66) | `/keyboard/*` (type, press keys, ZX and PC keys) | `input.key` `{key, hold?}`, `input.type` `{text}` | done: `input.key` (tap, combo, held), `input.type`, `input.macro`, `input.release_all` |
+| Features (56) | `/feature/<name>` | `feature.toggle` `{name}` with `toggle.feature.<name>` readouts | done: `feature.toggle` `{name, on?}`; the readouts: SD4 |
+| TTD (55) | `/ttd/*` | `ttd.*` (seek_by, steps, bookmarks, record, resume_live) | done: `ttd.start`, `ttd.stop`, `ttd.seek`, `ttd.bookmark_delete`, `ttd.invalidate`, `ttd.history_limit`, `ttd.journal`, `ttd.dump`, `ttd.load`; `ttd.bookmark_add {label}`, `ttd.reverse_step {count}` take params; `ttd.seek_by`: S2 |
+| Tape (52) | `/tape/*` | `media.tape` `{op}`, `media.open` | done |
+| Audio (44) | `/audio/mixer/*` | `audio.mute_toggle`, `audio.volume_by` (delta), `audio.source_mute` `{source}` | done (`volume_by` on the devices: the core has no master volume) |
+| Settings (43) | `PUT /settings/<name>` | `set.speed` `{value}`, `set.toggle` `{name}` (turbo, fast tape, turbo tape, fast disk) | done, plus `set.value` `{name, value}` (ay_voicing, ay_room) |
+| BASIC (36) | `/basic/*` | `basic.*` (enter, run, list) | done: `basic.run` `{command}`, `basic.inject`, `basic.clear`, `basic.mode` |
+| Joystick (28) | `/joystick/*` | `input.joystick` `{dir, fire, hold}` | done |
+| Snapshot (26) | `/snapshot/*` | `snapshot.quick`, `media.open` | done, plus `snapshot.save` `{path}` |
+| Run (≈ 40) | `/pause`, `/resume`, `/reset`, `/nmi`, `/run_frames`, `/run_scanlines`, `/run_to_interrupt`, `/run_tstates`, `/skip_until`, `/step*`, `/stop`, `/start`, `/state` | `run.*`, `mach.reset`, `mach.nmi`, `run.frames` `{count}`, `run.tstates` `{count}` | done: `run.pause`, `run.resume`, `run.frames`, `run.tstates`, `run.steps`; `/skip_until`, `/stop`, `/start` stay REST; `run.step_by`: S2 |
+| Media (16), Disk (10) | `/media/X/*`, `/disk/X/insert` | `media.open`, `media.eject` `{drive}` | done, plus `media.protect`, `media.save`, `media.create` |
+| Video (15) | `/video/*` | `video.*` (filters, overscan, fullscreen) | done: `video.overscan_toggle`, `video.temporal`; `/video/record` stays REST (`cap.record_toggle` a stub), fullscreen is the GUI's |
+| Debug (≈ 12) | `/debugmode`, `/breakpoints`, `/debug`, `/coverage`, `/profiler`, `/memory` | `dbg.mode_toggle`, `dbg.*` | done: `dbg.mode_toggle`, `dbg.breakpoints_clear`, `dbg.breakpoint_hits_reset`; coverage, profiler, pchist, ROM protect stay REST |
+| Capture (2) | `/capture/screen` | `cap.screenshot` | done: `cap.screenshot_save` `{path}` (the GUI's `cap.screenshot` copies to the clipboard) |
+| Control (1) | `/control/session` | gone (companion token) | |
 
-- The exact list is written with the registry work (control surfaces S1); this table sizes it: about 40 new actions,
-  most with a value, many thin wrappers over a control object the route already calls.
+- The exact list, with each action's params, scope and executor:
+  [control surfaces actions.md §1.1](../2026-10-18-control-surfaces/actions.md#11-scenario-actions-sd6): 46 new
+  actions, most with params, thin wrappers over the control object the route already calls, each with the companion
+  scope of its route.
 - Every route keeps working for automation; the actions call the same control objects.
+- The conversion (`scn::ConvertToV2`, 2026-10-20) maps the POST paths of this table that have an action with the same
+  meaning: run (`/pause`, `/resume`, `/step`, `/stepover`, `/stepout`, `/steps`, `/run_frames`, `/run_tstates`,
+  `/run_scanlines`, `/run_to_interrupt`), `/nmi`, TTD (`start`, `stop`, `resume`, `step-back`, `step-forward`,
+  `step-instruction` back / forward, `reverse-step`, `seek`, `invalidate`), machine start, snapshot / tape / disk
+  loads (`media.open`), the tape ops (`media.tape`), `/basic/run`. Not mapped (meaning or body differ): `/reset` (the
+  action is the 1 s hold), GETs, the mixer, settings and feature routes (their bodies name values differently), the
+  `/api/` routes outside the instance; they stay `webapi` and the notes list them.
 
 ## 5. Order
 

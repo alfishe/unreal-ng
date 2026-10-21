@@ -235,8 +235,13 @@ for _, device in ipairs(h.devices) do
 end
 ```
 
+A control surface's outputs (the Surface Dial; [command-interface.md §15](./command-interface.md#15-game-controllers)):
+`controllers_output(dial, "buzz")`, `controllers_output(dial, {steps = 36, clicks = "off"})`,
+`controllers_output(dial, {marks = "second,edge"})`.
+
 `controllers(verb, [connector], [device], [opts])`, `controllers_host(verb, [opts])`, `controllers_haptics([device])`,
-`controllers_rumble(device, [effect])` (`identify` by default). Each returns the reply table: `ok`, `error`, `message`
+`controllers_rumble(device, [effect])` (`identify` by default), `controllers_output(device, pattern | {steps, clicks,
+marks})`. Each returns the reply table: `ok`, `error`, `message`
 and the verb's fields. The host side needs the Qt client (a headless process answers `unavailable`).
 
 ### Host Actions
@@ -256,6 +261,29 @@ action("run.n_scanlines", nil, {count = 8})
 
 `actions()`, `action(id, [value], [params])`; value nil (a press), a boolean, a number (steps or a 0..1 level), a
 string or a table `{pressed, delta, rate, level, text}`. Each returns a table: `ok`, `error`, `message`, `result`.
+
+The control-surface actions and the context (control surfaces phase S2):
+
+```lua
+local r = action("ttd.seek_by", {delta = -3, rate = 18}, {unit = "seconds"})
+for _, m in ipairs(r.result.marks) do print(m.kind, m.frame) end   -- second, ten_seconds, bookmark, edge, barrier
+action("run.step_by", -4)                  -- back through the history (forward: step in), 16 at most
+action("ctx.set", "ttd.timecode")          -- the last setter wins; "" returns to the default
+print(context().context, context().by)     -- {ok, instance, context, set, by, default}
+```
+
+The control surface targets, readouts and activity (`surfaces(verb, {args})`,
+[command-interface.md §16.1](./command-interface.md#161-surface-targets-readouts-activity)):
+
+```lua
+local v = surfaces("views")                -- {ok, followed = {instance, index, model, view, mode, pin, source}, views}
+local s = surfaces("session_open", {name = "my script"}).session.id
+surfaces("pin", {session = s, target = "view:v1"})       -- follow | view:<id> | instance:<id|index>
+print(surfaces("target", {session = s}).target.instance)
+local r = surfaces("readouts", {names = {"run.state", "media.*"}})   -- r.values["run.state"].state
+local a = surfaces("activity", {since = 0})                          -- a.entries, a.last, a.dropped
+surfaces("session_close", {session = s})
+```
 
 ### Disk Operations
 
@@ -1051,7 +1079,7 @@ ttd_resume()                     --> bool  -- record again from the exact curren
 ttd_resume(4823, 0)              --> bool  -- ...or from (frame, tinframe; tinframe defaults to 0); future is discarded
                                             -- fails from idle: seek first
 
-ttd_position()
+ttd_position()   -- current, session_end, first_frame, history, state, paused, fps; never parks the machine
 -- --> { current = {frame, tinframe}, session_end = {frame, tinframe} }
 ```
 

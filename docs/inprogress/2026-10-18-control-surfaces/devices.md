@@ -113,5 +113,7 @@ A family in `data/controllers/devices.json`, in its schema (`families[]` with `i
   "controls": ["knob", "push", "touch"] }
 ```
 
-The control types and outputs come from the driver, not from the database. No role field: a default role per
-family would need a new `DeviceMatch` field and a caller of `InputRouter::SetRole` (none today); that is Q-8.
+The control types and outputs come from the driver, not from the database. As built (S3, Q-8): a family's
+`"role"` (`player`, `debugger-remote`, `disabled`; default `player`) is `DeviceMatch::role`; the Dial has
+`"role": "debugger-remote"`, set as the device's default role on arrival (`InputRouter::SetDefaultRole`), which a
+chosen role overrides.

@@ -172,6 +172,25 @@ TEST(PasmoBackend_Test, MacroParametersNamedLikeRegisters)
               (std::vector<std::string>{"T MACRO L_a,L_b", "LD A,0+L_a", "LD B,0+L_b", "LD HL,(L_b)", "LD HL,0+L_a+L_b", "ENDM", "T 5,7"}));
 }
 
+TEST(PasmoBackend_Test, AnAlasmArgumentThatIsTheWholeOperandIsPutIn)
+{
+    // ALASM puts the argument's text in: RAR's "MACRO l / LD \0,\1" is called "l A,(KOLODIN)", where "0+" would make
+    // "LD 0+A" (pasmo: "expanding macro")
+    const std::vector<std::string> lines = ToPasmo("        MACRO l\n        LD \\0,\\1\n        ENDM\n        l A,(5)", "alasm");
+    EXPECT_NE(std::find(lines.begin(), lines.end(), "LD _arg0,_arg1"), lines.end());
+}
+
+TEST(PasmoBackend_Test, ANameDefinedInTheTakenBranchOnlyIsAnEqu)
+{
+    // RAR's rarLZ4: IFN fastCPIQ / MAXPOSL=$+1 / ENDIF, then IF0 fastCPIQ / MAXPOSL=$+1 / ENDIF, used before both: the
+    // layout decides the IFs, so MAXPOSL is defined once (pasmo refuses a DEFL name used before its definition)
+    const std::vector<std::string> lines = ToPasmo("fast=1\n        ORG #8000\n        LD A,(MX)\n        IFN fast\nMX=$+1\n        LD A,0\n"
+                                                   "        ENDIF\n        IF0 fast\nMX=$+1\n        LD B,0\n        ENDIF",
+                                                   "alasm");
+    EXPECT_TRUE(std::any_of(lines.begin(), lines.end(), [](const std::string& l) { return l.rfind("MX EQU", 0) == 0; })) << lines.size();
+    EXPECT_FALSE(std::any_of(lines.begin(), lines.end(), [](const std::string& l) { return l.rfind("MX DEFL", 0) == 0; }));
+}
+
 TEST(PasmoBackend_Test, SjasmplusTemporaryLabelsAndStructures)
 {
     // a temporary label (2 ... 2_B / 2F) gets a name of each one's own; a STRUCT is its EQUs, an instance its data, an

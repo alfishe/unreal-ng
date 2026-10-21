@@ -1,0 +1,250 @@
+{
+ "schema": 1,
+ "models": {
+  "48K": [
+   "zx48k"
+  ],
+  "128k": [
+   "zx128"
+  ],
+  "PLUS2": [
+   "zxplus2"
+  ],
+  "PLUS2A": [
+   "zxplus2a"
+  ],
+  "PLUS3": [
+   "zxplus3"
+  ],
+  "PENTAGON": [
+   "pentagon",
+   "pentagon2plus"
+  ],
+  "SCORPION": [
+   "scorpion"
+  ],
+  "PROFSCORP": [
+   "scorpion"
+  ],
+  "GMX": [
+   "scorpion"
+  ],
+  "QUORUM": [
+   "quorum"
+  ],
+  "LSY256": [
+   "orel"
+  ],
+  "PROFI": [
+   "profi",
+   "profiplus"
+  ],
+  "PROFI3": [
+   "profi",
+   "profiplus"
+  ],
+  "ATM710": [
+   "pcat",
+   "pcxt",
+   "zxmatrix"
+  ],
+  "SPRINTER": [
+   "pcat",
+   "zxmatrix"
+  ],
+  "KAY": [
+   "pcxt",
+   "zxmatrix"
+  ],
+  "ATM3": [
+   "pcps2",
+   "zxmatrix"
+  ],
+  "TSL": [
+   "pcps2",
+   "zxmatrix"
+  ],
+  "PHOENIX": [
+   "pcps2",
+   "zxmatrix"
+  ],
+  "ATM450": [
+   "zxmatrix"
+  ],
+  "NEXT": [
+   "zxnext"
+  ]
+ },
+ "keyboards": {
+  "zx48k": {
+   "name": "ZX Spectrum 16K / 48K",
+   "matrix": "zx",
+   "size": [
+    233,
+    144
+   ],
+   "picture": "zx48k.photo.svg",
+   "keys": "zx48k.keys.json"
+  },
+  "zx128": {
+   "name": "ZX Spectrum 128",
+   "matrix": "zx",
+   "size": [
+    343,
+    149
+   ],
+   "picture": "zx128.photo.svg",
+   "keys": "zx128.keys.json"
+  },
+  "zxplus2": {
+   "name": "ZX Spectrum +2",
+   "matrix": "zx",
+   "size": [
+    440,
+    171
+   ],
+   "picture": "zxplus2.photo.svg",
+   "keys": "zxplus2.keys.json"
+  },
+  "zxplus2a": {
+   "name": "ZX Spectrum +2A",
+   "matrix": "zx",
+   "size": [
+    440,
+    171
+   ],
+   "picture": "zxplus2a.photo.svg",
+   "keys": "zxplus2a.keys.json"
+  },
+  "zxplus3": {
+   "name": "ZX Spectrum +3",
+   "matrix": "zx",
+   "size": [
+    440,
+    171
+   ],
+   "picture": "zxplus3.photo.svg",
+   "keys": "zxplus3.keys.json"
+  },
+  "pentagon": {
+   "name": "Pentagon 128",
+   "matrix": "zx",
+   "size": [
+    220,
+    106
+   ],
+   "picture": "pentagon.photo.svg",
+   "keys": "pentagon.keys.json"
+  },
+  "pentagon2plus": {
+   "name": "Pentagon 128 2+",
+   "matrix": "zx",
+   "size": [
+    343,
+    165
+   ],
+   "picture": "pentagon2plus.photo.svg",
+   "keys": "pentagon2plus.keys.json"
+  },
+  "scorpion": {
+   "name": "ZS Scorpion ZS-256",
+   "matrix": "zx",
+   "size": [
+    327,
+    155
+   ],
+   "picture": "scorpion.photo.svg",
+   "keys": "scorpion.keys.json"
+  },
+  "quorum": {
+   "name": "Quorum 128+",
+   "matrix": "zx",
+   "size": [
+    438,
+    281
+   ],
+   "picture": "quorum.photo.svg",
+   "keys": "quorum.keys.json"
+  },
+  "orel": {
+   "name": "Orel BK-08",
+   "matrix": "zx",
+   "size": [
+    386,
+    176
+   ],
+   "picture": "orel.photo.svg",
+   "keys": "orel.keys.json"
+  },
+  "profi": {
+   "name": "Profi (БК-0010 case)",
+   "matrix": "zx",
+   "size": [
+    379,
+    202
+   ],
+   "picture": "profi.photo.svg",
+   "keys": "profi.keys.json"
+  },
+  "profiplus": {
+   "name": "Profi (album keyboard)",
+   "matrix": "zx",
+   "size": [
+    325,
+    138
+   ],
+   "picture": "profiplus.photo.svg",
+   "keys": "profiplus.keys.json"
+  },
+  "pcat": {
+   "name": "AT Enhanced 101-key (Russian)",
+   "matrix": "pc",
+   "size": [
+    470,
+    190
+   ],
+   "picture": "pcat.photo.svg",
+   "keys": "pcat.keys.json"
+  },
+  "pcxt": {
+   "name": "PC/XT 83-key (Russian)",
+   "matrix": "pc",
+   "size": [
+    485,
+    180
+   ],
+   "picture": "pcxt.photo.svg",
+   "keys": "pcxt.keys.json"
+  },
+  "pcps2": {
+   "name": "PS/2 104-key (Russian)",
+   "matrix": "pc",
+   "size": [
+    449,
+    162
+   ],
+   "picture": "pcps2.photo.svg",
+   "keys": "pcps2.keys.json"
+  },
+  "zxmatrix": {
+   "name": "ZX 40-key (homemade)",
+   "matrix": "zx",
+   "size": [
+    236,
+    132
+   ],
+   "picture": "zxmatrix.photo.svg",
+   "keys": "zxmatrix.keys.json"
+  },
+  "zxnext": {
+   "name": "ZX Spectrum Next",
+   "matrix": "zx",
+   "size": [
+    330,
+    146
+   ],
+   "picture": "zxnext.photo.svg",
+   "keys": "zxnext.keys.json"
+  }
+ }
+}

@@ -42,6 +42,7 @@
 #include <QScreen>
 #include <QShortcut>
 #include <QTimer>
+#include <QWindow>
 #include <QtConcurrent/QtConcurrent>
 #include <future>
 #include <unordered_set>
@@ -152,6 +153,28 @@ VideoWallWindow::VideoWallWindow(QWidget* parent) : QMainWindow(parent)
 
     resize(800, 600);
     setWindowTitle(tr("Unreal Speccy Video Wall"));
+
+    // One view of TargetState: its active instance is the focused tile's; it moves to the front when a window of the
+    // process gets the focus (focus moving to another program changes nothing: targeting.md §3 rule 2)
+    _surfaceView = actions::TargetState::Instance().RegisterView(tr("Video wall").toStdString(), "videowall");
+    actions::TargetState::Instance().Activated(_surfaceView);
+    connect(qApp, &QGuiApplication::focusWindowChanged, this, [this](QWindow* window) {
+        if (window != nullptr)
+            actions::TargetState::Instance().Activated(_surfaceView);
+    });
+    _surfaceTimer = new QTimer(this);
+    connect(_surfaceTimer, &QTimer::timeout, this, &VideoWallWindow::updateSurfaceView);
+    _surfaceTimer->start(200);
+}
+
+void VideoWallWindow::updateSurfaceView()
+{
+    std::shared_ptr<Emulator> focused = focusedEmulator();
+    const std::string id = focused ? focused->GetId() : std::string();
+    if (id == _surfaceActive)
+        return;
+    _surfaceActive = id;
+    actions::TargetState::Instance().SetActive(_surfaceView, id);
 }
 
 VideoWallWindow::~VideoWallWindow()
@@ -172,6 +195,10 @@ VideoWallWindow::~VideoWallWindow()
             shutdownMessageCenter.RemoveObserverById(NC_EMULATOR_INSTANCE_CREATED, _instanceCreatedObserverId);
         if (_singleSyncObserverId != 0)
             shutdownMessageCenter.RemoveObserverById(NC_VIDEOWALL_SINGLE_SYNC_MODE, _singleSyncObserverId);
+        // The view closes: `view:` pins on it fall back to following the focus
+        if (_surfaceTimer != nullptr)
+            _surfaceTimer->stop();
+        _surfaceView.Reset();
 
         // CRITICAL: Stop automation FIRST, before any Qt objects are destroyed.
         // The automation threads may reference Qt objects, so we must join all threads
@@ -1516,6 +1543,8 @@ void VideoWallWindow::toggleFastTapeForAllTiles()
 
 void VideoWallWindow::bindAudioToTile(EmulatorTile* tile)
 {
+    // The focused tile changes with the audio: report it once the focus has settled
+    QTimer::singleShot(0, this, &VideoWallWindow::updateSurfaceView);
     if (!_soundManager || !tile || !tile->emulator())
     {
         qWarning() << "VideoWallWindow::bindAudioToTile - Invalid parameters";
@@ -1599,6 +1628,8 @@ void VideoWallWindow::onTileClicked(EmulatorTile* tile)
 
 void VideoWallWindow::unbindAudioFromTile()
 {
+    // The focused tile changes with the audio: report it once the focus has settled
+    QTimer::singleShot(0, this, &VideoWallWindow::updateSurfaceView);
     // Clear pointer FIRST to prevent infinite recursion on secondary events
     EmulatorTile* tile = _audioBoundTile;
     _audioBoundTile = nullptr;
@@ -1925,6 +1956,7 @@ void VideoWallWindow::handleGpuAccelerationToggled(bool enabled)
 
             _audioBoundIndex = index;
             _tileGridWrapper->setFocusedIndex(index);
+            updateSurfaceView();
             qDebug() << "Audio bound to tile" << index;
         });
 

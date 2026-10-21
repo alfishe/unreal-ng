@@ -30,6 +30,13 @@ constexpr int kTreeLevels = 4;
 
 std::mutex g_mutex;
 std::optional<fs::path> g_root;  // looked up (or set) once
+fs::path g_userRoot;             // SetUserRoot (tests); empty = the home directory's .unreal-ng
+
+bool IsDir(const fs::path& p)
+{
+    std::error_code ec;
+    return !p.empty() && fs::is_directory(p, ec);
+}
 }  // namespace
 
 std::vector<fs::path> Candidates(const fs::path& exeDir, const std::string& env, const fs::path& sourceData)
@@ -137,27 +144,88 @@ void SetRoot(const fs::path& root)
         g_root = root;
 }
 
-std::string Resolve(const std::string& path)
+fs::path TestdataRoot()
 {
-    auto under = [&](const std::string& prefix, const char* sub) -> std::optional<std::string> {
-        if (path.compare(0, prefix.size(), prefix) != 0)
-            return std::nullopt;
-        if (path.size() > prefix.size() && path[prefix.size()] != '/' && path[prefix.size()] != '\\')
-            return std::nullopt;  // "$database/..." is not "$data"
-        const fs::path root = Root();
-        if (root.empty())
+    const fs::path root = Root();
+    if (!root.empty() && IsDir(root.parent_path() / "testdata"))
+        return (root.parent_path() / "testdata").lexically_normal();
+#ifdef SDB_SOURCE_DATA_DIR
+    const fs::path source = fs::path(SDB_SOURCE_DATA_DIR).parent_path() / "testdata";
+    if (IsDir(source))
+        return source.lexically_normal();
+#endif
+    return {};
+}
+
+fs::path UserRoot()
+{
+    {
+        std::lock_guard lock(g_mutex);
+        if (!g_userRoot.empty())
+            return g_userRoot;
+    }
+#ifdef _WIN32
+    const char* home = std::getenv("USERPROFILE");
+#else
+    const char* home = std::getenv("HOME");
+#endif
+    if (!home || !*home)
+        return {};
+    return fs::path(home) / ".unreal-ng";
+}
+
+void SetUserRoot(const fs::path& root)
+{
+    std::lock_guard lock(g_mutex);
+    g_userRoot = root;
+}
+
+const std::vector<std::string>& PathRoots()
+{
+    static const std::vector<std::string> roots{"data", "icons", "testdata", "user", "scenario"};
+    return roots;
+}
+
+std::string RootOf(const std::string& path)
+{
+    if (path.size() < 2 || path[0] != '$')
+        return {};
+    const size_t end = path.find_first_of("/\\", 1);
+    return path.substr(1, end == std::string::npos ? std::string::npos : end - 1);
+}
+
+std::string Resolve(const std::string& path, const fs::path& scenarioDir)
+{
+    const std::string root = RootOf(path);
+    if (root.empty())
+    {
+        if (path.empty() || scenarioDir.empty() || path[0] == '$')
             return path;
-        fs::path p = sub ? root / sub : root;
-        const std::string rest = path.size() > prefix.size() + 1 ? path.substr(prefix.size() + 1) : std::string();
-        if (!rest.empty())
-            p /= fs::path(rest);
-        return p.lexically_normal().generic_string();
-    };
-    if (auto r = under("$data", nullptr))
-        return *r;
-    if (auto r = under("$icons", "icons"))
-        return *r;
-    return path;
+        const fs::path p(path);
+        if (p.is_absolute() || p.has_root_name() || p.has_root_directory())
+            return path;
+        return (scenarioDir / p).lexically_normal().generic_string();
+    }
+    fs::path base;
+    if (root == "data")
+        base = Root();
+    else if (root == "icons")
+        base = Root().empty() ? fs::path() : Root() / "icons";
+    else if (root == "testdata")
+        base = TestdataRoot();
+    else if (root == "user")
+        base = UserRoot();
+    else if (root == "scenario")
+        base = scenarioDir;
+    else
+        return path;  // "$database/...": not a root
+    if (base.empty())
+        return path;
+    const std::string rest = path.size() > root.size() + 2 ? path.substr(root.size() + 2) : std::string();
+    fs::path p = base;
+    if (!rest.empty())
+        p /= fs::path(rest);
+    return p.lexically_normal().generic_string();
 }
 
 }  // namespace sdb::data

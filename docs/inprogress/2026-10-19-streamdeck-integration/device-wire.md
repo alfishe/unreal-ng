@@ -56,7 +56,7 @@ Daemon → viewer:
 
 | Type | Name | Payload |
 |:--|:--|:--|
-| `0x21` | `Welcome` | JSON: `{"v":2,"deck":"A1B2C3","model":"Stream Deck + XL","pid":198,"real":true,"daemon":"<version>"}` (`pid` identifies the model, `model` is its display name), or `{"v":2,"error":..}`: `bad_request` (not a JSON object, a field of the wrong type), `version`, `bad_role`, `bad_model` (own role: an unknown model), each followed by the close; `no_deck` (`"waiting":true`) keeps the connection: the mirror waits, a `Welcome` follows when its deck comes |
+| `0x21` | `Welcome` | JSON: `{"v":2,"deck":"A1B2C3","model":"plusxl","model_name":"Stream Deck + XL","pid":198,"real":true,"daemon":"<version>"}` (`model` is the model's token, the name `Join`'s `model` takes (`ModelToken()` in `sdb/models.h`: `plusxl`, `neo`, `mini`, ..., `0x` and four hex digits for a PID without a name); `model_name` is the display name; `pid` backs the token for a viewer that does not know it), or `{"v":2,"error":..}`: `bad_request` (not a JSON object, a field of the wrong type), `version`, `bad_role`, `bad_model` (own role: an unknown model), each followed by the close; `no_deck` (`"waiting":true`) keeps the connection: the mirror waits, a `Welcome` follows when its deck comes |
 | `0x01` | `Output` | output report |
 | `0x02` | `SetFeature` | feature report |
 | `0x03` | `GetFeature` | own role only |

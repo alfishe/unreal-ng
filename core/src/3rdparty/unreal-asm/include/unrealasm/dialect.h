@@ -79,6 +79,9 @@ struct BackendOptions
     /// many, each INCLUDEd where it stood (at a line outside any block); 0 = files as they are. For a target whose file
     /// cannot hold the whole text (ALASM's 64K)
     size_t splitLines = 0;
+    /// The file is INCLUDEd more than once (ConvertProject fills it): a target that defines a macro once (sjasmplus)
+    /// writes its definitions for the first time only
+    bool includedRepeatedly = false;
 };
 
 /// A label of the source and the name the backend wrote it under (a reserved word renamed, a LOCAL block's label made

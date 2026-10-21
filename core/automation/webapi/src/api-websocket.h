@@ -2,9 +2,9 @@
 
 /// @file api-websocket.h
 /// @brief /api/v1/ws, the WebSocket plane (docs/emulator/design/control-interfaces/websocket-interface.md,
-/// docs/guidelines/automation-planes-guidelines.md §3). This first slice serves calls: every REST route is a call
-/// that runs the same handler with the same gates and answers a `result`. Topics come with the surface hub (control
-/// surfaces S4, Stream Deck SD4).
+/// docs/guidelines/automation-planes-guidelines.md §3). Calls: every REST route is a call that runs the same handler
+/// with the same gates and answers a `result`. Every other op (subscribe / unsubscribe topics, the surface topic's
+/// join / action / bye) goes to the shared hub, WsHub (ws-hub.h), which owns topics, readouts and SurfaceHub.
 ///
 ///   → {"op":"call","rid":7,"method":"POST","path":"/api/v1/controllers/actions/run.pause_toggle","body":{...}}
 ///   ← {"op":"result","t":"call","rid":7,"status":200,"body":{...}}

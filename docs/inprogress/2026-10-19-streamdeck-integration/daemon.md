@@ -105,16 +105,23 @@ flowchart LR
   per send slot.
 - Results come back with `rid`; the runtime maps them to the job (strip banner on failure, `then: back|home`).
 
+As built (SD5, 2026-10-21; [protocol.md §10](protocol.md#10-as-built-the-surface-topic-and-the-daemons-client-sd5-2026-10-21),
+[reference](../../companions/streamdeck/daemon.md#the-surface-client)): **one** WebSocket for every logical deck (the
+hub takes several `join`s per connection, one per serial, each op naming its `session`), on the daemon's network loop
+(the device wire's loop; no thread of its own). Backoff 0.25 s .. 5 s. Deltas are not merged in the client: the
+runtime's job queue already merges a dial's waiting turns, and the registry merges queued deltas (its §6).
+`revoked` or a 401 handshake stops it; the companion file is watched for a new token.
+
 ## 5. Runtime changes
 
 | Today (`runtime.cpp`, `actions.cpp`) | Then |
 |:--|:--|
-| Monitor thread polls `/ttd/position` 50 Hz, `/ttd/status` 2 Hz while a page shows `strip.status: ttd` | Readout `ttd.position` drives the strip; no monitor thread |
+| Monitor thread polls `/ttd/position` 50 Hz, `/ttd/status` 2 Hz while a page shows `strip.status: ttd` | Readout `ttd.position` drives the strip; no monitor thread. As built: the poller is the REST fallback's only, started while the deck has no session and ended when it joins |
 | Toggle state flipped locally on success | Faces bound to `toggle.<id>` / `run.state` readouts ([scenarios.md §4](scenarios.md#4-state-bound-faces)) |
 | `ttd_seek` curve computed in the deck (`actions.cpp:95-124`) and clamped with `ttdNow()` | `ttd.seek_by` with `{d, rate, unit, min, max}`; the curve is the core's (one implementation for the deck, the Dial, pads) |
 | `run_toggle` reads the state over REST then posts | `run.pause_toggle` |
 | `dir`, `first`, `multi`, `toggle`, `delay`, `nav` kinds | Kept: they compose steps; steps may be `action` |
-| Action worker thread with a FIFO, one mutex with the monitor | Asynchronous sends, results by `rid`; no shared mutex with drawing |
+| Action worker thread with a FIFO, one mutex with the monitor | Asynchronous sends, results by `rid`; no shared mutex with drawing. As built: the worker stays (it also runs `shell`, `delay`, `multi`); an `action` step waits there for its `result`, which the network loop delivers by `rid` |
 | `describePage` published to the emulator as `HostPage` | Kept (agents and viewers read it) |
 | `HostNote` log lines | Kept |
 | Strip status line from `ActionResult.status` | Kept for `ttd.seek_by` (from `result.body`), plus the target line and the activity lines |

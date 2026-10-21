@@ -59,6 +59,8 @@
 #include "controllers/controllertoast.h"
 #include "controllers/guiactions.h"
 #include "controllers/hostcontrollers.h"
+#include "controllers/surfacestatusicon.h"
+#include "controllers/surfacetargets.h"
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
@@ -77,6 +79,7 @@
 #include "cardslots/slotchangecontroller.h"
 #include "cardslots/slotswindow.h"
 #include "nextlayers/nextlayerswindow.h"
+#include "osdkeyboard/osdkeyboardwindow.h"
 #include "ui/temporaleffectsdialog.h"
 #include "hud/qt/hudoverlaywrapper.h"
 #include "hud/qt/hudsettingsdialog.h"
@@ -297,6 +300,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Create central UI binding for emulator state
     m_binding = new EmulatorBinding(this);
     connect(m_binding, &EmulatorBinding::stateChanged, this, &MainWindow::onBindingStateChanged);
+    // This window as a view of the core's TargetState (Stream Deck targeting.md): the instance it shows and the focus
+    // order decide what a surface following the focus drives, and what a WebAPI call without an id acts on (T-1)
+    _surfaceTargets = new SurfaceTargets(m_binding, tr("Main window"), this);
 
     // Init audio subsystem (initialize once, keep running)
     _soundManager = new AppSoundManager();
@@ -365,19 +371,25 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _hostControllers = new HostControllers(m_binding, this);
     _hostControllers->SetShortcutWindows(this, debuggerWindow);
     _controllersDialog = new ControllersDialog(_hostControllers, this);
+    _controllersDialog->setSurfaceTargets(_surfaceTargets);
     connect(_hostControllers, &HostControllers::notice, this,
             [this](const QString& text) { statusBar()->showMessage(text, 5000); });
     // Host actions (debug-and-ttd.md §3, control surfaces architecture §3): the core ActionRegistry runs them on the
     // instance's actions worker; the GUI ones are registered here, and a device's action bindings go there
+    // A seek's marks come back to the device that moved: it feels them (control surfaces architecture.md §9)
     _guiActions = std::make_unique<GuiActions>(
         m_binding, GuiActionHooks{debuggerWindow, [this] { handleDebuggerToggled(true); },
                                   [this] { handleScreenshotRequested(); },
-                                  [this](const QString& text) { statusBar()->showMessage(text, 3000); }});
+                                  [this](const QString& text) { statusBar()->showMessage(text, 3000); },
+                                  [this] { handleOsdKeyboardToggled(!_osdKeyboardWindow || !_osdKeyboardWindow->isVisible()); },
+                                  [this](const std::string& device, const std::vector<std::string>& marks) {
+                                      _hostControllers->PlayMarks(device, marks);
+                                  }});
     _controllersDialog->setActions(&_guiActions->Registry());
     connect(_hostControllers, &HostControllers::actionTriggered, this,
-            [this](const QString& action, bool pressed, float value, const QString& device) {
-                _guiActions->Trigger(action, pressed, value, device);
-            });
+            [this](const HostActionEvent& event) { _guiActions->Trigger(event); });
+    // The debugger closed: a debug.* context the GUI set returns to the default
+    connect(debuggerWindow, &DebuggerWindow::visibilityChanged, _hostControllers, &HostControllers::OnDebuggerVisible);
     _controllerToast = new ControllerToast(this);
     connect(_hostControllers, &HostControllers::autoDecided, this, [this](const QString& text) {
         _controllerToast->showText(text, QRect(mapToGlobal(QPoint(0, 0)), size()));
@@ -426,6 +438,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _nextLayersWindow = new NextLayersWindow();
     _nextLayersWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(_nextLayersWindow, Qt::RightEdge);
+
+    // The on-screen keyboard: a tool window of its own, hidden until View -> On-screen Keyboard or osd.keyboard
+    _osdKeyboardWindow = new OsdKeyboardWindow(this);
+    _osdKeyboardWindow->setBinding(m_binding);
 
     // MIDI activity: hidden by default, Tools -> MIDI Activity
     _midiActivityWindow = new MidiActivityWindow();
@@ -525,6 +541,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::slotsWindowToggled, this, &MainWindow::handleSlotsWindowToggled);
     connect(_menuManager, &MenuManager::nextLayersToggled, this, &MainWindow::handleNextLayersToggled);
     connect(_nextLayersWindow, &NextLayersWindow::visibilityChanged, _menuManager, &MenuManager::setNextLayersChecked);
+    connect(_menuManager, &MenuManager::osdKeyboardToggled, this, &MainWindow::handleOsdKeyboardToggled);
+    connect(_osdKeyboardWindow, &OsdKeyboardWindow::visibilityChanged, _menuManager, &MenuManager::setOsdKeyboardChecked);
     connect(_slotsWindow, &SlotsWindow::visibilityChanged, _menuManager, &MenuManager::setSlotsWindowChecked);
     connect(_menuManager, &MenuManager::midiActivityToggled, this, &MainWindow::handleMidiActivityToggled);
     connect(_midiActivityWindow, &MidiActivityWindow::visibilityChanged, _menuManager, &MenuManager::setMidiActivityChecked);
@@ -642,6 +660,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
             }
         }
     });
+    // The surfaces' context (control surfaces architecture.md §6): the debugger's panes and the TTD panel set it
+    _hostControllers->SetContextWidgets(debuggerWindow->contextPanes(), _ttdWidget);
+    connect(_ttdWidget, &TtdWidget::visibilityChanged, _hostControllers, &HostControllers::OnTtdPanelVisible);
     connect(_ttdWidget, &TtdWidget::recordingStateChanged, this, [this](bool isRecording) {
         if (_toolBarManager)
         {
@@ -692,6 +713,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     // Create the status bar (device LEDs + FPS)
     _statusBarManager = new StatusBarManager(this, _menuManager, this);
+    // The surfaces driving this window, with Pin here / Unpin (targeting.md T-2); hidden while none is connected
+    statusBar()->insertPermanentWidget(0, new SurfaceStatusIcon(_surfaceTargets, statusBar()));
     connect(_menuManager, &MenuManager::statusBarToggled, this, &MainWindow::handleStatusBarToggled);
     connect(_menuManager, &MenuManager::hudOverlayToggled, this, &MainWindow::handleHudOverlayToggled);
     connect(_menuManager, &MenuManager::gpuAccelerationToggled, this, &MainWindow::handleGpuAccelerationToggled);
@@ -907,6 +930,10 @@ MainWindow::~MainWindow()
         delete _menuManager;
         _menuManager = nullptr;
     }
+
+    // The view closes before its binding: `view:` pins on it fall back to following
+    delete _surfaceTargets;
+    _surfaceTargets = nullptr;
 
     // Clean up binding (must be before ui)
     if (m_binding)
@@ -3844,6 +3871,12 @@ void MainWindow::handleNextLayersToggled(bool visible)
         _nextLayersWindow->setVisible(visible);
 }
 
+void MainWindow::handleOsdKeyboardToggled(bool visible)
+{
+    if (_osdKeyboardWindow)
+        _osdKeyboardWindow->setVisible(visible);
+}
+
 void MainWindow::handleSlotsWindowToggled(bool visible)
 {
     if (_slotsWindow)
@@ -3907,7 +3940,7 @@ void MainWindow::openStressWindows(const QString& list)
         {"media", &MainWindow::handleMediaPanelToggled},       {"network", &MainWindow::handleNetworkWindowToggled},
         {"slots", &MainWindow::handleSlotsWindowToggled},      {"nextlayers", &MainWindow::handleNextLayersToggled},      {"traffic", &MainWindow::handleTrafficWindowToggled},
         {"midi", &MainWindow::handleMidiActivityToggled},      {"tape", &MainWindow::handleTapeManagerToggled},
-        {"log", &MainWindow::handleLogWindowToggled},
+        {"log", &MainWindow::handleLogWindowToggled},          {"keyboard", &MainWindow::handleOsdKeyboardToggled},
     };
     for (const QString& rawName : list.split(',', Qt::SkipEmptyParts))
     {

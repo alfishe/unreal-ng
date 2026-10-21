@@ -12,7 +12,11 @@
 
 #include "common/logger.h"
 #include "common/uuid.h"
+#include "3rdparty/message-center/messagecenter.h"
+#include "emulator/actions/activityfeed.h"
 #include "emulator/actions/builtinactions.h"
+#include "emulator/actions/catalogue.h"
+#include "emulator/actions/hostactions.h"
 #include "emulator/coordinator/machineop.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -21,6 +25,8 @@
 #include "emulator/execution/companionregistry.h"
 #include "emulator/execution/runcontrol.h"
 #include "emulator/execution/scriptsession.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
 
 namespace actions
 {
@@ -410,14 +416,15 @@ public:
         std::vector<Done> done;
     };
 
-    Worker(std::string instanceId, Resolver resolver) : _instanceId(std::move(instanceId)), _resolver(std::move(resolver))
+    Worker(std::string instanceId, Resolver resolver, ActivityFeed* feed)
+        : _instanceId(std::move(instanceId)), _resolver(std::move(resolver)), _feed(feed)
     {
     }
 
     /// The thread keeps its worker alive: a worker left to finish a long action on its own is never freed under it
-    static std::shared_ptr<Worker> Start(std::string instanceId, Resolver resolver)
+    static std::shared_ptr<Worker> Start(std::string instanceId, Resolver resolver, ActivityFeed* feed)
     {
-        auto worker = std::make_shared<Worker>(std::move(instanceId), std::move(resolver));
+        auto worker = std::make_shared<Worker>(std::move(instanceId), std::move(resolver), feed);
         worker->_thread = std::thread([self = worker] { self->Loop(); });
         return worker;
     }
@@ -559,6 +566,9 @@ private:
                 _queue.pop_front();
             }
             const ActionResult result = Execute(job);
+            // Display only (the activity feed): what ran, with the merged value, before the callers learn it
+            if (_feed != nullptr)
+                _feed->Record(_instanceId, job.entry->info, job.value, job.origin, result);
             Answer(job, result);
         }
         std::lock_guard<std::mutex> lock(_mutex);
@@ -568,6 +578,7 @@ private:
 
     const std::string _instanceId;
     const Resolver _resolver;
+    ActivityFeed* const _feed;
     std::mutex _mutex;
     std::condition_variable _wake;
     std::condition_variable _finishedCv;
@@ -624,6 +635,10 @@ ActionRegistry& ActionRegistry::Instance()
     static ActionRegistry* registry = [] {
         auto* created = new ActionRegistry();
         created->_builtin = RegisterBuiltinActions(*created);
+        for (RegistrationHandle& handle : RegisterHostActions(*created))
+            created->_builtin.push_back(std::move(handle));
+        created->_feed = &ActivityFeed::Instance();
+        created->_post = true;  // from now on: the Qt client's GUI actions come and go
         return created;
     }();
     return *registry;
@@ -649,30 +664,118 @@ ActionRegistry::~ActionRegistry()
     builtin.clear();
 }
 
+namespace
+{
+void PostCatalogue(uint64_t revision)
+{
+    MessageCenter::DefaultMessageCenter().Post(NC_ACTION_CATALOGUE, new ActionCatalogueChangedPayload(revision));
+}
+}  // namespace
+
 RegistrationHandle ActionRegistry::Register(ActionInfo info, Executor run, ActionRules rules)
 {
     auto entry = std::make_shared<Entry>();
     entry->info = std::move(info);
     entry->run = std::move(run);
     entry->rules = std::move(rules);
-    std::lock_guard<std::mutex> lock(_mutex);
-    entry->serial = _nextSerial++;
-    const std::string id = entry->info.id;
-    if (_entries.find(id) == _entries.end())
-        _order.push_back(id);
-    _entries[id] = entry;
-    return RegistrationHandle(this, id, entry->serial);
+    // The catalogue fields the core knows for its ids (catalogue.h): a description, a toggle's state
+    if (entry->info.description.empty())
+        entry->info.description = DefaultDescription(entry->info.id);
+    if (!entry->rules.state)
+        if (const DefaultToggle* toggle = DefaultToggleOf(entry->info.id))
+        {
+            entry->rules.state = toggle->state;
+            if (entry->rules.toggleStem.empty())
+                entry->rules.toggleStem = toggle->stem;
+            if (entry->rules.toggleParam.empty())
+                entry->rules.toggleParam = toggle->param;
+        }
+    entry->info.toggle = static_cast<bool>(entry->rules.state);
+    uint64_t revision = 0;
+    bool post = false;
+    RegistrationHandle handle;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        entry->serial = _nextSerial++;
+        const std::string id = entry->info.id;
+        if (_entries.find(id) == _entries.end())
+            _order.push_back(id);
+        _entries[id] = entry;
+        revision = ++_revision;
+        post = _post;
+        handle = RegistrationHandle(this, id, entry->serial);
+    }
+    if (post)
+        PostCatalogue(revision);
+    return handle;
 }
 
 void ActionRegistry::Unregister(const std::string& id, uint64_t serial)
 {
+    uint64_t revision = 0;
+    bool post = false;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto it = _entries.find(id);
+        // A newer registration of the same id replaced this one: it stays
+        if (it == _entries.end() || it->second->serial != serial)
+            return;
+        _entries.erase(it);
+        _order.erase(std::remove(_order.begin(), _order.end(), id), _order.end());
+        revision = ++_revision;
+        post = _post;
+    }
+    if (post)
+        PostCatalogue(revision);
+}
+
+uint64_t ActionRegistry::Revision() const
+{
     std::lock_guard<std::mutex> lock(_mutex);
-    auto it = _entries.find(id);
-    // A newer registration of the same id replaced this one: it stays
-    if (it == _entries.end() || it->second->serial != serial)
-        return;
-    _entries.erase(it);
-    _order.erase(std::remove(_order.begin(), _order.end(), id), _order.end());
+    return _revision;
+}
+
+std::optional<bool> ActionRegistry::ToggleState(std::string_view id, const std::string& instanceId,
+                                                const StateNode& params) const
+{
+    std::shared_ptr<const Entry> entry = Lookup(id);
+    if (!entry || !entry->rules.state)
+        return std::nullopt;
+    std::shared_ptr<Emulator> emulator = Resolve(instanceId);
+    if (!emulator || emulator->GetContext() == nullptr || emulator->GetState() == StateRetired)
+        return std::nullopt;
+    ActionValue value;
+    value.kind = entry->info.kind;
+    value.params = params;
+    try
+    {
+        return entry->rules.state(*emulator, value);
+    }
+    catch (const std::exception&)
+    {
+        return std::nullopt;
+    }
+}
+
+std::vector<ActionRegistry::ToggleReadout> ActionRegistry::ToggleReadouts() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    std::vector<ToggleReadout> out;
+    for (const std::string& id : _order)
+    {
+        const Entry& entry = *_entries.find(id)->second;
+        if (!entry.rules.state)
+            continue;
+        const std::string stem = entry.rules.toggleStem.empty() ? id : entry.rules.toggleStem;
+        out.push_back({"toggle." + stem, id, entry.rules.toggleParam});
+    }
+    return out;
+}
+
+void ActionRegistry::SetActivityFeed(ActivityFeed* feed)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _feed = feed;
 }
 
 std::shared_ptr<const ActionRegistry::Entry> ActionRegistry::Lookup(std::string_view id) const
@@ -804,7 +907,7 @@ void ActionRegistry::Submit(std::string_view id, ActionValue value, const std::s
         }
         std::shared_ptr<Worker>& slot = _workers[instanceId];
         if (!slot)
-            slot = Worker::Start(instanceId, _resolver);
+            slot = Worker::Start(instanceId, _resolver, _feed);
         worker = slot;
     }
     Worker::Job job{entry, std::move(value), std::move(origin), {}};

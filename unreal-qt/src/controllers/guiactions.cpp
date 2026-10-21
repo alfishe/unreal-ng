@@ -7,11 +7,14 @@
 #include <QWidget>
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #include "emulator/emulator.h"
 #include "emulator/emulatorbinding.h"
 #include "emulator/execution/automationgate.h"
+#include "controllers/hostcontrollers.h"
+#include "profiles/json.h"
 #include "router/analog.h"
 
 namespace
@@ -19,6 +22,42 @@ namespace
 QString Tr(const char* text)
 {
     return QObject::tr(text);
+}
+
+/// A binding's parameters (its `curve` object, JSON) as the action's
+StateNode ToNode(const controllers::JsonValue& value)
+{
+    switch (value.GetType())
+    {
+        case controllers::JsonValue::Type::Bool: return StateNode(value.AsBool());
+        case controllers::JsonValue::Type::Number: return StateNode(value.AsNumber());
+        case controllers::JsonValue::Type::String: return StateNode(value.AsString());
+        case controllers::JsonValue::Type::Array:
+        {
+            StateNode node = StateNode::Array();
+            for (const controllers::JsonValue& item : value.Items())
+                node.push(ToNode(item));
+            return node;
+        }
+        case controllers::JsonValue::Type::Object:
+        {
+            StateNode node = StateNode::Object();
+            for (const auto& [key, member] : value.GetMembers())
+                node[key] = ToNode(member);
+            return node;
+        }
+        case controllers::JsonValue::Type::Null: break;
+    }
+    return {};
+}
+
+StateNode ParamsNode(const std::string& json)
+{
+    controllers::JsonValue value;
+    std::string error;
+    if (!controllers::ParseJson(json, value, error) || !value.IsObject())
+        return StateNode::Object();
+    return ToNode(value);
 }
 
 /// Run `fn` on the GUI thread while `alive` holds (the application object outlives every window)
@@ -211,13 +250,22 @@ GuiActions::GuiActions(EmulatorBinding* binding, GuiActionHooks hooks, QObject* 
             return {};
         });
 
+    // The on-screen keyboard window (the main window's)
+    std::function<void()> toggleKeyboard = _hooks.toggleKeyboard;
+    Add("osd.keyboard", Tr("On-screen keyboard"), machine, ValueKind::Press,
+        [toggleKeyboard](const std::string&, const actions::ActionValue&, const actions::ActionOrigin&) -> QString {
+            if (toggleKeyboard)
+                toggleKeyboard();
+            return {};
+        });
+
     // Stubs of the catalogue: a binding to one says why instead of doing nothing
     actions::ActionRules later;
     later.unavailable = [](Emulator&, const actions::ActionValue&) { return std::string("not available yet"); };
     later.unavailableError = "Not Implemented";
     for (const char* id : {"dbg.breakpoint_toggle_pc", "dbg.labels_toggle"})
         Add(id, QString::fromLatin1(id), debug, ValueKind::Press, nullptr, later);
-    for (const char* id : {"osd.keyboard", "osd.quick_menu"})
+    for (const char* id : {"osd.quick_menu"})
         Add(id, QString::fromLatin1(id), machine, ValueKind::Press, nullptr, later);
 }
 
@@ -253,7 +301,7 @@ actions::Executor GuiActions::OnGui(GuiRun run)
 void GuiActions::Add(const char* id, const QString& label, const QString& group, actions::ValueKind kind, GuiRun run,
                      actions::ActionRules rules, bool held)
 {
-    actions::ActionInfo info{id, label.toStdString(), group.toStdString(), kind, held, true};
+    actions::ActionInfo info{id, label.toStdString(), group.toStdString(), kind, held, true, {}, {}, false};
     _handles.push_back(actions::ActionRegistry::Instance().Register(std::move(info), OnGui(std::move(run)),
                                                                     std::move(rules)));
 }
@@ -267,8 +315,12 @@ void GuiActions::Notice(const QString& text)
     });
 }
 
-void GuiActions::Trigger(const QString& action, bool pressed, float value, const QString& device)
+void GuiActions::Trigger(const HostActionEvent& event)
 {
+    const QString& action = event.action;
+    const bool pressed = event.pressed;
+    const float value = event.value;
+    const QString& device = event.device;
     actions::ActionRegistry& registry = actions::ActionRegistry::Instance();
     const std::string id = action.toStdString();
     const std::optional<actions::ActionInfo> info = registry.Find(id);
@@ -289,19 +341,49 @@ void GuiActions::Trigger(const QString& action, bool pressed, float value, const
     actionValue.pressed = pressed;
     actionValue.delta = pressed ? static_cast<double>(value) : 0.0;
     actionValue.level = pressed ? static_cast<double>(value) : 0.0;
+    actionValue.rate = event.rate;
+    if (!event.params.isEmpty())
+        actionValue.params = ParamsNode(event.params.toStdString());
     actions::ActionOrigin origin;
     // The window keyboard is the GUI's own; every other device is a host device, by its id
-    origin.origin = device == QLatin1String("keyboard") ? execution::Origin::Gui : execution::Origin::HostDevice;
+    const bool keyboard = device == QLatin1String("keyboard") || device == QLatin1String("kbd:system");
+    origin.origin = keyboard ? execution::Origin::Gui : execution::Origin::HostDevice;
     origin.identity = device.toStdString();
     origin.client = device.toStdString();
     const QString label = QString::fromStdString(info->label);
     auto alive = _alive;
     auto notice = _hooks.notice;
-    registry.Submit(id, std::move(actionValue), emulator->GetId(), std::move(origin),
-                    [alive, notice, label](actions::ActionResult result) {
-                        if (result.ok || !notice)
-                            return;
-                        const QString text = Tr("%1: %2").arg(label, QString::fromStdString(result.message));
-                        PostToGui(alive, [notice, text] { notice(text); });
-                    });
+    auto marks = _hooks.marks;
+    const std::string deviceId = device.toStdString();
+    auto done = [alive, notice, marks, label, deviceId, keyboard](actions::ActionResult result) {
+        // The device that moved feels the marks the seek crossed (control surfaces architecture.md §9)
+        if (result.ok && marks && !keyboard)
+            if (const StateNode* list = result.body.find("marks"); list != nullptr && list->isArray())
+            {
+                std::vector<std::string> kinds;
+                for (const StateNode& mark : list->items)
+                    if (const StateNode* kind = mark.find("kind"); kind != nullptr && kind->kind == StateNode::Kind::String)
+                        kinds.push_back(kind->s);
+                if (!kinds.empty())
+                    PostToGui(alive, [marks, deviceId, kinds] { marks(deviceId, kinds); });
+            }
+        if (result.ok || !notice)
+            return;
+        const QString text = Tr("%1: %2").arg(label, QString::fromStdString(result.message));
+        PostToGui(alive, [notice, text] { notice(text); });
+    };
+    // An encoder bound to a Press action: one press per step (architecture.md §5), at most 16 per turn
+    if (event.turn && info->kind == actions::ValueKind::Press)
+    {
+        const int presses = std::min(16, static_cast<int>(std::lround(std::fabs(value))));
+        for (int n = 0; n < presses; n++)
+            for (const bool down : {true, false})
+            {
+                actions::ActionValue press = actionValue;
+                press.pressed = down;
+                registry.Submit(id, std::move(press), emulator->GetId(), origin, done);
+            }
+        return;
+    }
+    registry.Submit(id, std::move(actionValue), emulator->GetId(), std::move(origin), std::move(done));
 }

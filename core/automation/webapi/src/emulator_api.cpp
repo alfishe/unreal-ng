@@ -1,5 +1,7 @@
 #include "emulator_api.h"
 
+#include <emulator/actions/surfacesapi.h>
+
 #include <drogon/HttpResponse.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -149,26 +151,14 @@ std::shared_ptr<Emulator> getEmulatorByIdOrIndex(const std::string& idOrIndex)
     return manager->GetEmulator(idOrIndex);
 }
 
-/// @brief Helper method for emulator selection with global selection priority
-/// First checks for globally selected emulator, then falls back to stateless behavior
-/// Returns nullptr if no emulator can be selected (requires explicit selection)
+/// @brief The instance a request without an id acts on (rule T-1, Stream Deck targeting.md §9): the followed instance
+/// when the host has views (the active instance of the window the user focused last), else the selected one, else the
+/// sole one. Returns nullptr when none fits (requires explicit selection)
 std::shared_ptr<Emulator> EmulatorAPI::getEmulatorWithGlobalSelection() const
 {
-    auto manager = EmulatorManager::GetInstance();
-
-    // First priority: Check if there's a globally selected emulator
-    std::string selectedId = manager->GetSelectedEmulatorId();
-    if (!selectedId.empty())
-    {
-        auto emulator = manager->GetEmulator(selectedId);
-        if (emulator)
-        {
-            return emulator;
-        }
-    }
-
-    // Second priority: Fallback to stateless behavior (only one emulator)
-    return getEmulatorStateless();
+    std::string error;
+    const std::string id = actions::surfaces::DefaultInstance(error);
+    return id.empty() ? nullptr : EmulatorManager::GetInstance()->GetEmulator(id);
 }
 
 /// @brief Helper method for stateless emulator auto-selection

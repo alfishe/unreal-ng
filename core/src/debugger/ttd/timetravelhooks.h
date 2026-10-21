@@ -41,6 +41,30 @@ enum class TTDSessionState : uint8_t
     Detached   = 2,  ///< Emulator paused at a historical point (future seek state).
 };
 
+/// @brief Where the session's position is, as the backend last published it (control surfaces architecture §7):
+/// what a readout, a dial's seek and a companion polling the position read, from any thread, without a lock and
+/// without the machine (ITimeTravelHooks::PublishedCursor). Written at every frame boundary and at the end of every
+/// session operation (a seek, a step, a start, a stop), so it is at most one frame old while the machine runs.
+struct TTDCursor
+{
+    uint64_t frame = 0;        ///< the position: the frame...
+    uint32_t tinframe = 0;     ///< ...and the T-state in it (the frame's start between boundaries of a running machine)
+    uint64_t first = 0;        ///< the earliest frame the history keeps (its first checkpoint)
+    uint64_t end = 0;          ///< where the history ends (SessionEndPosition): the frame...
+    uint32_t endTinframe = 0;  ///< ...and the T-state in it
+    TTDSessionState state = TTDSessionState::Idle;
+    bool history = false;      ///< the session holds a recorded history (first / end are meaningful)
+    bool paused = false;       ///< the machine is paused (read live, not published)
+
+    bool operator==(const TTDCursor& other) const
+    {
+        return frame == other.frame && tinframe == other.tinframe && first == other.first && end == other.end &&
+               endTinframe == other.endTinframe && state == other.state && history == other.history &&
+               paused == other.paused;
+    }
+    bool operator!=(const TTDCursor& other) const { return !(*this == other); }
+};
+
 /// @brief Stable string identifier for a TTDSessionState.
 ///
 /// The values ("idle" / "recording" / "detached") are part of the public
@@ -183,6 +207,9 @@ public:
     /// and the last one published (what observers on other threads read)
     virtual TTDSessionInfo ReadSessionInfo() const = 0;
     virtual TTDSessionInfo GetPublishedSessionInfo() const = 0;
+    /// The position and the history's bounds as last published (TTDCursor): lock-free, never waits for the machine
+    /// and never parks it, so a companion may poll it at 50 Hz (a seqlock, ttdcursorcell.h)
+    virtual TTDCursor PublishedCursor() const = 0;
     /// Empty when @p action may run now; otherwise one sentence saying why not
     virtual std::string RecordingGuard(TTDGuardedAction action) const = 0;
     /// Time travel is not available for this instance (a ZX-Poly member); empty: available

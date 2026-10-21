@@ -791,29 +791,65 @@ std::string ColonParameters(const std::string& line)
     return out;
 }
 
-FrontendResult AlasmFrontend::Parse(const SourceDocument& original) const
+namespace
+{
+/// The macro bodies a source defines (their lines, parameters written with colons as \0..\9)
+std::map<std::string, std::vector<std::string>> MacroBodies(const SourceDocument& source)
+{
+    std::map<std::string, std::vector<std::string>> bodies;
+    std::string current;
+    for (const SourceLine& l : source.lines)
+    {
+        const std::string& t = l.text;
+        const size_t first = t.find_first_not_of(' ');
+        const std::string rest = first == std::string::npos ? std::string() : t.substr(first);
+        if (rest.rfind("MACRO ", 0) == 0)
+        {
+            current = rest.substr(6);
+            current = current.substr(0, current.find_first_of(" ;"));
+            bodies[current].clear();
+        }
+        else if (rest.rfind("ENDM", 0) == 0 && (rest.size() == 4 || rest[4] == ' ' || rest[4] == ';'))
+            current.clear();
+        else if (!current.empty())
+            bodies[current].push_back(t);
+    }
+    return bodies;
+}
+
+SourceDocument WithColonParameters(const SourceDocument& original)
 {
     SourceDocument source = original;
+    bool inMacro = false;
+    for (SourceLine& l : source.lines)
     {
-        bool inMacro = false;
-        for (SourceLine& l : source.lines)
-        {
-            const size_t first = l.text.find_first_not_of(' ');
-            const std::string rest = first == std::string::npos ? std::string() : l.text.substr(first);
-            if (rest.rfind("MACRO ", 0) == 0)
-                inMacro = true;
-            else if (rest.rfind("ENDM", 0) == 0)
-                inMacro = false;
-            else if (inMacro)
-                l.text = ColonParameters(l.text);
-        }
+        const size_t first = l.text.find_first_not_of(' ');
+        const std::string rest = first == std::string::npos ? std::string() : l.text.substr(first);
+        if (rest.rfind("MACRO ", 0) == 0)
+            inMacro = true;
+        else if (rest.rfind("ENDM", 0) == 0)
+            inMacro = false;
+        else if (inMacro)
+            l.text = ColonParameters(l.text);
     }
+    return source;
+}
+}  // namespace
+
+FrontendResult AlasmFrontend::Parse(const SourceDocument& source) const
+{
+    return ParseInProject(source, {});
+}
+
+FrontendResult AlasmFrontend::ParseInProject(const SourceDocument& original, const std::vector<const SourceDocument*>& project) const
+{
+    const SourceDocument source = WithColonParameters(original);
     FrontendResult result;
     result.program.dialect = "alasm";
     result.program.expressionBits = 16;          // ALASM help §5: 16-bit integers
     result.program.unsignedArithmetic = true;    // (65536-46)*98/256 = #EE in ALASM, not -17
     std::set<std::string> macros;
-    // Names the source refers to (words after the first one of a line, outside comments and strings)
+    // Names the source refers to (words after a line's command, outside comments and strings)
     std::set<std::string> referenced;
     for (const SourceLine& l : source.lines)
     {
@@ -835,6 +871,12 @@ FrontendResult AlasmFrontend::Parse(const SourceDocument& original) const
         if (w0 == std::string::npos)
             continue;
         size_t k = t.find(' ', w0);
+        if (w0 == 0 && k != std::string::npos)
+        {
+            // after a label in column 0 the command's word (LASTLN0 bof: a macro call), not a reference
+            k = t.find_first_not_of(' ', k);
+            k = k == std::string::npos ? k : t.find(' ', k);
+        }
         while (k != std::string::npos && k < t.size())
         {
             while (k < t.size() && !(std::isalpha(static_cast<unsigned char>(t[k])) || t[k] == '_' || t[k] == '@'))
@@ -848,33 +890,47 @@ FrontendResult AlasmFrontend::Parse(const SourceDocument& original) const
         }
     }
 
-    // Macro bodies (their source lines) and the ones expanded at their calls
-    std::map<std::string, std::vector<std::string>> bodies;
-    {
-        std::string current;
+    // Macro bodies (their source lines) and the ones expanded at their calls; a project's other files give theirs
+    // (RAR's rarPACK calls "c", which rarcon30 defines and walks its parameters)
+    std::map<std::string, std::vector<std::string>> bodies = MacroBodies(source);
+    std::set<std::string> own;
+    for (const auto& [name, body] : bodies)
+        own.insert(name);
+    // With the project known, an indented lone word no file of it defines as a macro is a label (rarLZ4's
+    // " CRUNNACH3"): ALASM calls only a macro defined
+    std::set<std::string> projectMacros = own;
+    bool alasmProject = false;
+    for (const SourceDocument* other : project)
+        if (other && other->dialect == "alasm")
+        {
+            alasmProject = true;
+            for (auto& [name, body] : MacroBodies(WithColonParameters(*other)))
+            {
+                projectMacros.insert(name);
+                if (NeedsExpansion(body))
+                    bodies.emplace(name, std::move(body));   // the file's own definition first
+            }
+        }
+    if (alasmProject)
         for (const SourceLine& l : source.lines)
         {
-            const std::string& t = l.text;
-            const size_t first = t.find_first_not_of(' ');
-            const std::string rest = first == std::string::npos ? std::string() : t.substr(first);
-            if (rest.rfind("MACRO ", 0) == 0)
-            {
-                current = rest.substr(6);
-                current = current.substr(0, current.find_first_of(" ;"));
-                bodies[current].clear();
-            }
-            else if (rest.rfind("ENDM", 0) == 0 && (rest.size() == 4 || rest[4] == ' ' || rest[4] == ';'))
-                current.clear();
-            else if (!current.empty())
-                bodies[current].push_back(t);
+            const std::string t = l.text.substr(0, l.text.find(';'));
+            const size_t w0 = t.find_first_not_of(' ');
+            if (w0 == 0 || w0 == std::string::npos)
+                continue;
+            const size_t w1 = t.find_first_of(" =", w0);
+            const std::string word = t.substr(w0, w1 == std::string::npos ? std::string::npos : w1 - w0);
+            if ((w1 == std::string::npos || t.find_first_not_of(' ', w1) == std::string::npos) && !IsKeyword(word) &&
+                !projectMacros.count(word))
+                referenced.insert(word);
         }
-    }
     std::set<std::string> expanded;
     for (const auto& [name, body] : bodies)
         if (NeedsExpansion(body))
         {
             expanded.insert(name);
-            result.diagnostics.push_back({Severity::Info, 0, 0, "macro " + name + " glues or walks its parameters: expanded at its calls"});
+            if (own.count(name))
+                result.diagnostics.push_back({Severity::Info, 0, 0, "macro " + name + " glues or walks its parameters: expanded at its calls"});
         }
 
     std::function<void(const std::string&, uint32_t, int)> emit = [&](const std::string& text, uint32_t number, int depth) {
@@ -931,6 +987,58 @@ FrontendResult AlasmFrontend::Parse(const SourceDocument& original) const
         }
         emit(t, number, 0);
     }
+    // A DISP inside an IF that closes before its ENT (ACE's aceTO: IF0 ?v1 / DISP #6000 / ENDIF ... ENT): ALASM ends the
+    // displacement when there is one, sjasmplus refuses an ENT without DISP, so such an ENT ends it only when active
+    int depth = 0, dispDepth = -1;   // the IF depth of the open DISP (-1: none)
+    bool conditional = false;        // the open DISP's IF closed
+    for (ir::Line& l : result.program.lines)
+        for (Statement& st : l.statements)
+        {
+            if (st.kind != Statement::Kind::Directive)
+                continue;
+            if (st.directive == ir::DirectiveKind::If || st.directive == ir::DirectiveKind::IfUsed)
+                ++depth;
+            else if (st.directive == ir::DirectiveKind::EndIf && depth > 0)
+            {
+                conditional = conditional || (dispDepth >= 0 && depth == dispDepth);
+                dispDepth = dispDepth >= depth ? depth - 1 : dispDepth;
+                --depth;
+            }
+            else if (st.directive == ir::DirectiveKind::Disp)
+            {
+                dispDepth = depth;
+                conditional = false;
+            }
+            else if (st.directive == ir::DirectiveKind::Ent)
+            {
+                if (conditional)
+                {
+                    st.text = "if-displaced";
+                    result.program.displacementAcrossFiles = true;
+                }
+                dispDepth = -1;
+                conditional = false;
+            }
+        }
+    // ?name of a macro is 2 (help, "?label"): RAR's "IFN ?j\1-2" tells a call with a second parameter from one without
+    std::function<void(Expr&)> macroTests = [&](Expr& e) {
+        if (e.kind == Expr::Kind::Defined && e.args.size() == 1 && e.args[0].kind == Expr::Kind::Symbol &&
+            projectMacros.count(e.args[0].text))
+        {
+            e = Expr::Number(2);
+            return;
+        }
+        for (Expr& a : e.args)
+            macroTests(a);
+    };
+    for (ir::Line& l : result.program.lines)
+        for (Statement& st : l.statements)
+        {
+            for (Expr& a : st.args)
+                macroTests(a);
+            for (ir::Operand& o : st.operands)
+                macroTests(o.expr);
+        }
     return result;
 }
 }  // namespace unrealasm::dialects

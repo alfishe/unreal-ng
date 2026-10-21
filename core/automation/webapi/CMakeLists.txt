@@ -193,6 +193,7 @@ set(COMMON_SOURCES
     src/api/slots_api.cpp
     src/api/controllers_api.cpp
     src/api/actions_api.cpp
+    src/api/surfaces_api.cpp
     src/api/cdaudio_api.cpp
     src/api/snapshot_api.cpp
     src/common/upload_helper.h
@@ -222,6 +223,10 @@ set(COMMON_SOURCES
     src/common/request_gates.h
     src/companion-event-hub.cpp
     src/companion-event-hub.h
+    src/ws-hub.cpp
+    src/ws-hub.h
+    src/surface-hub.cpp
+    src/surface-hub.h
     src/debug-event-hub.cpp
     src/debug-event-hub.h
     src/automation-webapi.cpp
