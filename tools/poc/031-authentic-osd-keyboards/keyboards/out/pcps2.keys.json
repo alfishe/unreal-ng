@@ -1,0 +1,1185 @@
+{
+ "schema": 1,
+ "id": "pcps2",
+ "models": [
+  "ATM3",
+  "TSL",
+  "PHOENIX"
+ ],
+ "size": [
+  449,
+  162
+ ],
+ "keys": [
+  {
+   "id": "escape",
+   "rect": [
+    10.0,
+    28.0,
+    19.05,
+    16.19
+   ],
+   "label": "Escape",
+   "pc": "Escape"
+  },
+  {
+   "id": "function1",
+   "rect": [
+    48.1,
+    28.0,
+    19.05,
+    16.19
+   ],
+   "label": "F1",
+   "pc": "Function1"
+  },
+  {
+   "id": "function2",
+   "rect": [
+    67.15,
+    28.0,
+    19.05,
+    16.19
+   ],
+   "label": "F2",
+   "pc": "Function2"
+  },
+  {
+   "id": "function3",
+   "rect": [
+    86.2,
+    28.0,
+    19.05,
+    16.19
+   ],
+   "label": "F3",
+   "pc": "Function3"
+  },
+  {
+   "id": "function4",
+   "rect": [
+    105.25,
+    28.0,
+    19.05,
+    16.19
+   ],
+   "label": "F4",
+   "pc": "Function4"
+  },
+  {
+   "id": "function5",
+   "rect": [
+    133.82,
+    28.0,
+    19.05,
+    16.19
+   ],
+   "label": "F5",
+   "pc": "Function5"
+  },
+  {
+   "id": "function6",
+   "rect": [
+    152.88,
+    28.0,
+    19.05,
+    16.19
+   ],
+   "label": "F6",
+   "pc": "Function6"
+  },
+  {
+   "id": "function7",
+   "rect": [
+    171.93,
+    28.0,
+    19.05,
+    16.19
+   ],
+   "label": "F7",
+   "pc": "Function7"
+  },
+  {
+   "id": "function8",
+   "rect": [
+    190.97,
+    28.0,
+    19.05,
+    16.19
+   ],
+   "label": "F8",
+   "pc": "Function8"
+  },
+  {
+   "id": "function9",
+   "rect": [
+    219.55,
+    28.0,
+    19.05,
+    16.19
+   ],
+   "label": "F9",
+   "pc": "Function9"
+  },
+  {
+   "id": "function10",
+   "rect": [
+    238.6,
+    28.0,
+    19.05,
+    16.19
+   ],
+   "label": "F10",
+   "pc": "Function10"
+  },
+  {
+   "id": "function11",
+   "rect": [
+    257.65,
+    28.0,
+    19.05,
+    16.19
+   ],
+   "label": "F11",
+   "pc": "Function11"
+  },
+  {
+   "id": "function12",
+   "rect": [
+    276.7,
+    28.0,
+    19.05,
+    16.19
+   ],
+   "label": "F12",
+   "pc": "Function12"
+  },
+  {
+   "id": "printscreen",
+   "rect": [
+    300.51,
+    28.0,
+    19.05,
+    16.19
+   ],
+   "label": "PrintScreen",
+   "pc": "PrintScreen"
+  },
+  {
+   "id": "scrolllock",
+   "rect": [
+    319.56,
+    28.0,
+    19.05,
+    16.19
+   ],
+   "label": "ScrollLock",
+   "pc": "ScrollLock"
+  },
+  {
+   "id": "pause",
+   "rect": [
+    338.61,
+    28.0,
+    19.05,
+    16.19
+   ],
+   "label": "Pause",
+   "pc": "Pause"
+  },
+  {
+   "id": "backquote",
+   "rect": [
+    10.0,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "`",
+   "pc": "Backquote"
+  },
+  {
+   "id": "digit1",
+   "rect": [
+    29.05,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "1",
+   "pc": "Digit1"
+  },
+  {
+   "id": "digit2",
+   "rect": [
+    48.1,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "2",
+   "pc": "Digit2"
+  },
+  {
+   "id": "digit3",
+   "rect": [
+    67.15,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "3",
+   "pc": "Digit3"
+  },
+  {
+   "id": "digit4",
+   "rect": [
+    86.2,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "4",
+   "pc": "Digit4"
+  },
+  {
+   "id": "digit5",
+   "rect": [
+    105.25,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "5",
+   "pc": "Digit5"
+  },
+  {
+   "id": "digit6",
+   "rect": [
+    124.3,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "6",
+   "pc": "Digit6"
+  },
+  {
+   "id": "digit7",
+   "rect": [
+    143.35,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "7",
+   "pc": "Digit7"
+  },
+  {
+   "id": "digit8",
+   "rect": [
+    162.4,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "8",
+   "pc": "Digit8"
+  },
+  {
+   "id": "digit9",
+   "rect": [
+    181.45,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "9",
+   "pc": "Digit9"
+  },
+  {
+   "id": "digit0",
+   "rect": [
+    200.5,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "0",
+   "pc": "Digit0"
+  },
+  {
+   "id": "minus",
+   "rect": [
+    219.55,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "-",
+   "pc": "Minus"
+  },
+  {
+   "id": "equal",
+   "rect": [
+    238.6,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "=",
+   "pc": "Equal"
+  },
+  {
+   "id": "backslash",
+   "rect": [
+    257.65,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "\\",
+   "pc": "Backslash"
+  },
+  {
+   "id": "backspace",
+   "rect": [
+    276.7,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "Backspace",
+   "pc": "Backspace"
+  },
+  {
+   "id": "tab",
+   "rect": [
+    10.0,
+    67.05,
+    28.58,
+    19.05
+   ],
+   "label": "Tab",
+   "pc": "Tab"
+  },
+  {
+   "id": "q",
+   "rect": [
+    38.58,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "Q",
+   "pc": "Q"
+  },
+  {
+   "id": "w",
+   "rect": [
+    57.62,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "W",
+   "pc": "W"
+  },
+  {
+   "id": "e",
+   "rect": [
+    76.67,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "E",
+   "pc": "E"
+  },
+  {
+   "id": "r",
+   "rect": [
+    95.73,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "R",
+   "pc": "R"
+  },
+  {
+   "id": "t",
+   "rect": [
+    114.78,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "T",
+   "pc": "T"
+  },
+  {
+   "id": "y",
+   "rect": [
+    133.82,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "Y",
+   "pc": "Y"
+  },
+  {
+   "id": "u",
+   "rect": [
+    152.88,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "U",
+   "pc": "U"
+  },
+  {
+   "id": "i",
+   "rect": [
+    171.93,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "I",
+   "pc": "I"
+  },
+  {
+   "id": "o",
+   "rect": [
+    190.97,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "O",
+   "pc": "O"
+  },
+  {
+   "id": "p",
+   "rect": [
+    210.03,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "P",
+   "pc": "P"
+  },
+  {
+   "id": "leftbracket",
+   "rect": [
+    229.08,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "[",
+   "pc": "LeftBracket"
+  },
+  {
+   "id": "rightbracket",
+   "rect": [
+    248.12,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "]",
+   "pc": "RightBracket"
+  },
+  {
+   "id": "enter",
+   "rect": [
+    252.89,
+    67.05,
+    42.86,
+    38.1
+   ],
+   "label": "Enter",
+   "shape": [
+    [
+     267.18,
+     67.05
+    ],
+    [
+     295.75,
+     67.05
+    ],
+    [
+     295.75,
+     105.15
+    ],
+    [
+     252.89,
+     105.15
+    ],
+    [
+     252.89,
+     86.1
+    ],
+    [
+     267.18,
+     86.1
+    ]
+   ],
+   "pc": "Enter"
+  },
+  {
+   "id": "capslock",
+   "rect": [
+    10.0,
+    86.1,
+    33.34,
+    19.05
+   ],
+   "label": "CapsLock",
+   "pc": "CapsLock"
+  },
+  {
+   "id": "a",
+   "rect": [
+    43.34,
+    86.1,
+    19.05,
+    19.05
+   ],
+   "label": "A",
+   "pc": "A"
+  },
+  {
+   "id": "s",
+   "rect": [
+    62.39,
+    86.1,
+    19.05,
+    19.05
+   ],
+   "label": "S",
+   "pc": "S"
+  },
+  {
+   "id": "d",
+   "rect": [
+    81.44,
+    86.1,
+    19.05,
+    19.05
+   ],
+   "label": "D",
+   "pc": "D"
+  },
+  {
+   "id": "f",
+   "rect": [
+    100.49,
+    86.1,
+    19.05,
+    19.05
+   ],
+   "label": "F",
+   "pc": "F"
+  },
+  {
+   "id": "g",
+   "rect": [
+    119.54,
+    86.1,
+    19.05,
+    19.05
+   ],
+   "label": "G",
+   "pc": "G"
+  },
+  {
+   "id": "h",
+   "rect": [
+    138.59,
+    86.1,
+    19.05,
+    19.05
+   ],
+   "label": "H",
+   "pc": "H"
+  },
+  {
+   "id": "j",
+   "rect": [
+    157.64,
+    86.1,
+    19.05,
+    19.05
+   ],
+   "label": "J",
+   "pc": "J"
+  },
+  {
+   "id": "k",
+   "rect": [
+    176.69,
+    86.1,
+    19.05,
+    19.05
+   ],
+   "label": "K",
+   "pc": "K"
+  },
+  {
+   "id": "l",
+   "rect": [
+    195.74,
+    86.1,
+    19.05,
+    19.05
+   ],
+   "label": "L",
+   "pc": "L"
+  },
+  {
+   "id": "semicolon",
+   "rect": [
+    214.79,
+    86.1,
+    19.05,
+    19.05
+   ],
+   "label": ";",
+   "pc": "Semicolon"
+  },
+  {
+   "id": "quote",
+   "rect": [
+    233.84,
+    86.1,
+    19.05,
+    19.05
+   ],
+   "label": "'",
+   "pc": "Quote"
+  },
+  {
+   "id": "leftshift",
+   "rect": [
+    10.0,
+    105.15,
+    42.86,
+    19.05
+   ],
+   "label": "LeftShift",
+   "pc": "LeftShift"
+  },
+  {
+   "id": "z",
+   "rect": [
+    52.86,
+    105.15,
+    19.05,
+    19.05
+   ],
+   "label": "Z",
+   "pc": "Z"
+  },
+  {
+   "id": "x",
+   "rect": [
+    71.91,
+    105.15,
+    19.05,
+    19.05
+   ],
+   "label": "X",
+   "pc": "X"
+  },
+  {
+   "id": "c",
+   "rect": [
+    90.96,
+    105.15,
+    19.05,
+    19.05
+   ],
+   "label": "C",
+   "pc": "C"
+  },
+  {
+   "id": "v",
+   "rect": [
+    110.01,
+    105.15,
+    19.05,
+    19.05
+   ],
+   "label": "V",
+   "pc": "V"
+  },
+  {
+   "id": "b",
+   "rect": [
+    129.06,
+    105.15,
+    19.05,
+    19.05
+   ],
+   "label": "B",
+   "pc": "B"
+  },
+  {
+   "id": "n",
+   "rect": [
+    148.11,
+    105.15,
+    19.05,
+    19.05
+   ],
+   "label": "N",
+   "pc": "N"
+  },
+  {
+   "id": "m",
+   "rect": [
+    167.16,
+    105.15,
+    19.05,
+    19.05
+   ],
+   "label": "M",
+   "pc": "M"
+  },
+  {
+   "id": "comma",
+   "rect": [
+    186.21,
+    105.15,
+    19.05,
+    19.05
+   ],
+   "label": ",",
+   "pc": "Comma"
+  },
+  {
+   "id": "period",
+   "rect": [
+    205.26,
+    105.15,
+    19.05,
+    19.05
+   ],
+   "label": ".",
+   "pc": "Period"
+  },
+  {
+   "id": "slash",
+   "rect": [
+    224.31,
+    105.15,
+    19.05,
+    19.05
+   ],
+   "label": "/",
+   "pc": "Slash"
+  },
+  {
+   "id": "rightshift",
+   "rect": [
+    243.36,
+    105.15,
+    52.39,
+    19.05
+   ],
+   "label": "RightShift",
+   "pc": "RightShift"
+  },
+  {
+   "id": "leftctrl",
+   "rect": [
+    10.0,
+    124.2,
+    23.81,
+    19.05
+   ],
+   "label": "LeftCtrl",
+   "pc": "LeftCtrl"
+  },
+  {
+   "id": "leftgui",
+   "rect": [
+    33.81,
+    124.2,
+    23.81,
+    19.05
+   ],
+   "label": "LeftGui",
+   "pc": "LeftGui"
+  },
+  {
+   "id": "leftalt",
+   "rect": [
+    57.62,
+    124.2,
+    23.81,
+    19.05
+   ],
+   "label": "LeftAlt",
+   "pc": "LeftAlt"
+  },
+  {
+   "id": "space",
+   "rect": [
+    81.44,
+    124.2,
+    119.06,
+    19.05
+   ],
+   "label": "Space",
+   "pc": "Space"
+  },
+  {
+   "id": "rightalt",
+   "rect": [
+    200.5,
+    124.2,
+    23.81,
+    19.05
+   ],
+   "label": "RightAlt",
+   "pc": "RightAlt"
+  },
+  {
+   "id": "rightgui",
+   "rect": [
+    224.31,
+    124.2,
+    23.81,
+    19.05
+   ],
+   "label": "RightGui",
+   "pc": "RightGui"
+  },
+  {
+   "id": "menu",
+   "rect": [
+    248.12,
+    124.2,
+    23.81,
+    19.05
+   ],
+   "label": "Menu",
+   "pc": "Menu"
+  },
+  {
+   "id": "rightctrl",
+   "rect": [
+    271.94,
+    124.2,
+    23.81,
+    19.05
+   ],
+   "label": "RightCtrl",
+   "pc": "RightCtrl"
+  },
+  {
+   "id": "insert",
+   "rect": [
+    300.51,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "Insert",
+   "pc": "Insert"
+  },
+  {
+   "id": "delete",
+   "rect": [
+    300.51,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "Delete",
+   "pc": "Delete"
+  },
+  {
+   "id": "home",
+   "rect": [
+    319.56,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "Home",
+   "pc": "Home"
+  },
+  {
+   "id": "end",
+   "rect": [
+    319.56,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "End",
+   "pc": "End"
+  },
+  {
+   "id": "pageup",
+   "rect": [
+    338.61,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "PageUp",
+   "pc": "PageUp"
+  },
+  {
+   "id": "pagedown",
+   "rect": [
+    338.61,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "PageDown",
+   "pc": "PageDown"
+  },
+  {
+   "id": "up",
+   "rect": [
+    319.56,
+    105.15,
+    19.05,
+    19.05
+   ],
+   "label": "Up",
+   "pc": "Up"
+  },
+  {
+   "id": "left",
+   "rect": [
+    300.51,
+    124.2,
+    19.05,
+    19.05
+   ],
+   "label": "Left",
+   "pc": "Left"
+  },
+  {
+   "id": "down",
+   "rect": [
+    319.56,
+    124.2,
+    19.05,
+    19.05
+   ],
+   "label": "Down",
+   "pc": "Down"
+  },
+  {
+   "id": "right",
+   "rect": [
+    338.61,
+    124.2,
+    19.05,
+    19.05
+   ],
+   "label": "Right",
+   "pc": "Right"
+  },
+  {
+   "id": "numlock",
+   "rect": [
+    362.43,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "NumLock",
+   "pc": "NumLock"
+  },
+  {
+   "id": "keypaddivide",
+   "rect": [
+    381.48,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "KeypadDivide",
+   "pc": "KeypadDivide"
+  },
+  {
+   "id": "keypadmultiply",
+   "rect": [
+    400.53,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "KeypadMultiply",
+   "pc": "KeypadMultiply"
+  },
+  {
+   "id": "keypadminus",
+   "rect": [
+    419.57,
+    48.0,
+    19.05,
+    19.05
+   ],
+   "label": "KeypadMinus",
+   "pc": "KeypadMinus"
+  },
+  {
+   "id": "keypad7",
+   "rect": [
+    362.43,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "Keypad7",
+   "pc": "Keypad7"
+  },
+  {
+   "id": "keypad8",
+   "rect": [
+    381.48,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "Keypad8",
+   "pc": "Keypad8"
+  },
+  {
+   "id": "keypad9",
+   "rect": [
+    400.53,
+    67.05,
+    19.05,
+    19.05
+   ],
+   "label": "Keypad9",
+   "pc": "Keypad9"
+  },
+  {
+   "id": "keypad4",
+   "rect": [
+    362.43,
+    86.1,
+    19.05,
+    19.05
+   ],
+   "label": "Keypad4",
+   "pc": "Keypad4"
+  },
+  {
+   "id": "keypad5",
+   "rect": [
+    381.48,
+    86.1,
+    19.05,
+    19.05
+   ],
+   "label": "Keypad5",
+   "pc": "Keypad5"
+  },
+  {
+   "id": "keypad6",
+   "rect": [
+    400.53,
+    86.1,
+    19.05,
+    19.05
+   ],
+   "label": "Keypad6",
+   "pc": "Keypad6"
+  },
+  {
+   "id": "keypad1",
+   "rect": [
+    362.43,
+    105.15,
+    19.05,
+    19.05
+   ],
+   "label": "Keypad1",
+   "pc": "Keypad1"
+  },
+  {
+   "id": "keypad2",
+   "rect": [
+    381.48,
+    105.15,
+    19.05,
+    19.05
+   ],
+   "label": "Keypad2",
+   "pc": "Keypad2"
+  },
+  {
+   "id": "keypad3",
+   "rect": [
+    400.53,
+    105.15,
+    19.05,
+    19.05
+   ],
+   "label": "Keypad3",
+   "pc": "Keypad3"
+  },
+  {
+   "id": "keypadplus",
+   "rect": [
+    419.57,
+    67.05,
+    19.05,
+    38.1
+   ],
+   "label": "KeypadPlus",
+   "pc": "KeypadPlus"
+  },
+  {
+   "id": "keypadenter",
+   "rect": [
+    419.57,
+    105.15,
+    19.05,
+    38.1
+   ],
+   "label": "KeypadEnter",
+   "pc": "KeypadEnter"
+  },
+  {
+   "id": "keypad0",
+   "rect": [
+    362.43,
+    124.2,
+    38.1,
+    19.05
+   ],
+   "label": "Keypad0",
+   "pc": "Keypad0"
+  },
+  {
+   "id": "keypaddecimal",
+   "rect": [
+    400.53,
+    124.2,
+    19.05,
+    19.05
+   ],
+   "label": "KeypadDecimal",
+   "pc": "KeypadDecimal"
+  }
+ ]
+}

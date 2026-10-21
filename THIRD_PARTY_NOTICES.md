@@ -81,7 +81,7 @@ contributors) as the format reference; no MAME source is vendored.
 | ownShell | `testclient/src/3rdparty/ownshell/` | MIT |
 | FastLZ 0.5.0 | `tools/poc/010-ttd-compression/cpp/vendored/fastlz/` | MIT |
 | python-cmake-buildsystem, cmake-python-build | `core/automation/python/3rdparty/` | Apache-2.0 (unused) |
-| NeoGS flash parts (loader, main ROM v1.11, FPGA boot + configuration) from the NedoPC `ngs` sources | `tools/neogs/parts/`, packed into `data/rom/neogs/full_ngs.rom` | treated as MIT (no licence file upstream) |
+| NeoGS flash parts (loader, main ROM v1.11, FPGA boot + configuration) from the NedoPC `ngs` sources | `utilities/neogs/parts/`, packed into `data/rom/neogs/full_ngs.rom` | treated as MIT (no licence file upstream) |
 | Z80 test suites: ZEXALL (GPL-2.0-or-later), z80test by Patrik Rak (MIT), z80bltst (MIT), Z80 XCF Flavor (GPL-3.0-or-later), FUSE test vectors (GPL-2.0-or-later) | `data/testsoft/`, `core/tests/z80/`, `testdata/z80/` | as listed |
 | Timing Test v0.3 by Patrik Rak (contention / I/O timing, GPL) | `testdata/contention/rak-timing-test/` | GPL |
 | libspectrum 1.5.0 (Fuse's library; linked by the SZX reference tool only, not by unreal-ng; installed from the system) | `tools/verification/szx/szxtool.c` | GPL-2.0-or-later |

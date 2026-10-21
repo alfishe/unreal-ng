@@ -19,12 +19,14 @@ class QTabWidget;
 class QTreeWidget;
 class QAction;
 class RunController;
+class DaemonControl;
 
 class EditorWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit EditorWidget(QWidget* parent = nullptr);
+    // daemon: the studio's link to unreal-streamdeck's automation (Run uses it)
+    EditorWidget(DaemonControl* daemon, QWidget* parent = nullptr);
 
     [[nodiscard]] EditorDocument* Document() const
     {

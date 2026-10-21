@@ -149,7 +149,7 @@ Plan: [`neogs-tdd.md`](neogs-tdd.md) §9; as built, findings and open items:
 **Test assets** (`testdata/sound/neogs/`, see its `SOURCES.md`)
 - [x] MP3 streams recorded from `eyeache1.sna` (CBR 44.1 kHz, VBR mono with
       ID3v2 + Xing, Layer II)
-- [x] SD images FAT16+MBR, FAT16 no MBR, FAT32+MBR, built at run time by the tests (`core/tests/_helpers/fatimagebuilder.h`); `tools/neogs/make_sd_image.py` for manual use
+- [x] SD images FAT16+MBR, FAT16 no MBR, FAT32+MBR, built at run time by the tests (`core/tests/_helpers/fatimagebuilder.h`); `utilities/neogs/make_sd_image.py` for manual use
 - [x] NedoPC programs: test_ngs, test_emu_ngs, flasher, Neo Player Light
       v0.60 and v0.44 (SCL checksums appended)
 
@@ -163,7 +163,7 @@ Plan: [`neogs-tdd.md`](neogs-tdd.md) §9; as built, findings and open items:
 
 **Phase 1 - NeoGS core**
 - [x] `[NGS]` config (`NeoGSConfig`); BUG-6 guard kept
-- [x] Shipped `data/rom/neogs/full_ngs.rom` + `tools/neogs/pack_flash.py`; digests
+- [x] Shipped `data/rom/neogs/full_ngs.rom` + `utilities/neogs/pack_flash.py`; digests
 - [x] Memory, interrupts + timer, sound, card ports, resets, boot modes
 - [x] Gate: GS module plays; `test_ngs` passes (4 MB reports the RAMRO quirk)
 

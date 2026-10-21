@@ -10,6 +10,7 @@
 #include <chrono>
 #include <thread>
 
+#include "daemoncontrol.h"
 #include "decklink.h"
 #include "deckwidget.h"
 #include "gui.h"
@@ -193,6 +194,60 @@ void StudioApi::AddDeviceRoutes()
                  return Reply::Ok(w->_link->Describe());
              });
          }});
+    // The daemon's decks and the shown deck's brightness: asked of unreal-streamdeck's automation (the studio has no
+    // USB); the slider in the toolbar follows.
+    _api.Add({"GET",
+              "/api/v1/decks",
+              "The daemon's logical decks: the real ones and the viewers' own (serial, model, real, connected, "
+              "scenario, brightness, viewers)",
+              "Forwarded to unreal-streamdeck (GET /api/v1/decks on its automation port)",
+              {"decks", "daemon", "devices"},
+              {},
+              nullptr,
+              [w](const Request&) {
+                  const DaemonControl* d = OnGui([w] { return w->_daemon; });
+                  const auto r = d->Call("GET", "/api/v1/decks");
+                  if (r.status == 0)
+                      return Reply::Error(502, r.error.toStdString(), "is unreal-streamdeck running with --api?");
+                  return Reply{r.status, r.body, {}, {}};
+              }});
+    auto brightness = [w](const Request& r) {
+        const auto [d, deck] = OnGui([w] { return std::pair(w->_daemon, w->ShownDeck()); });
+        if (deck.isEmpty())
+            return Reply::Error(409, "no deck shown: the window is not joined to a deck");
+        QString err;
+        int value = 0;
+        if (r.method == "PUT")
+        {
+            if (!r.Has("value"))
+                return Reply::Error(400, "missing parameter 'value'", "percent, 0..100");
+            if (!d->SetBrightness(deck, static_cast<int>(r.Num("value")), &err))
+                return Reply::Error(502, err.toStdString());
+        }
+        if (!d->Brightness(deck, &value, &err))
+            return Reply::Error(502, err.toStdString());
+        OnGui([w] {
+            w->_brightnessDeck.clear();  // the slider takes the new value without sending it back
+            w->FetchBrightness();
+        });
+        return Reply::Ok({{"deck", deck.toStdString()}, {"brightness", value}});
+    };
+    _api.Add({"GET",
+              "/api/v1/deck/brightness",
+              "The brightness of the deck this window shows (from unreal-streamdeck)",
+              "",
+              {"device", "brightness", "decks"},
+              {},
+              nullptr,
+              brightness});
+    _api.Add({"PUT",
+              "/api/v1/deck/brightness",
+              "Set the brightness of the deck this window shows (the real deck for a mirror) through unreal-streamdeck",
+              "",
+              {"device", "brightness", "decks"},
+              {{"value", "body", "integer", "percent, 0..100", true}},
+              json{{"value", 60}},
+              brightness});
     _api.Add({"GET",
               "/api/v1/settings",
               "View settings: bezel mask, visible-area guide, firmware quirks",

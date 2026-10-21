@@ -2,7 +2,7 @@
 
 Standalone Python CLI to inspect ZX-Spectrum/TR-DOS disk images: a brief geometry
 summary plus full dumps (sector data, sectors with ID fields, raw MFM tracks).
-Reads every format the sibling `tools/diskconverter` reads — **SCL, TRD, FDI, UDI
+Reads every format the sibling `utilities/diskconverter` reads — **SCL, TRD, FDI, UDI
 and uncompressed TD0** — by importing its `diskconverter` package directly, so the
 two tools always agree on parsing.
 

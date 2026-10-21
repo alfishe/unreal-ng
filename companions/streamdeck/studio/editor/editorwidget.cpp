@@ -75,10 +75,10 @@ protected:
 };
 }  // namespace
 
-EditorWidget::EditorWidget(QWidget* parent) : QWidget(parent)
+EditorWidget::EditorWidget(DaemonControl* daemon, QWidget* parent) : QWidget(parent)
 {
     _doc = new EditorDocument(this);
-    _run = new RunController(_doc, this);
+    _run = new RunController(_doc, daemon, this);
     _canvas = new DesignCanvas(_doc, this);
     _inspector = new Inspector(_doc, this);
 

@@ -187,6 +187,11 @@ void DeckClient::CloseSocket(bool leave)
         s->flush();
         if (s->bytesToWrite() > 0)
             s->waitForBytesWritten(200);  // only when closing: the daemon then sees a clean disconnect
+        // Read what the daemon sent meanwhile (a mirror gets images all the time): closing with unread data makes
+        // the stack send a reset instead of a FIN, and on Windows a reset discards what the daemon has received but
+        // not read yet, the Leave with it.
+        s->waitForReadyRead(0);
+        s->readAll();
     }
     s->abort();
     s->deleteLater();

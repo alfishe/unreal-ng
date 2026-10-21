@@ -472,7 +472,8 @@ void TestNoServer()
     int code = 0;
     client.onClose = [&](int c, std::string_view) { code = c; };
     client.Start();
-    CHECK(RunUntil(loop, [&] { return code != 0; }));
+    // 5 s: Windows retries a refused loopback connect for about 2 s before it reports the failure
+    CHECK(RunUntil(loop, [&] { return code != 0; }, 5000ms));
     CHECK(code == ws::kCloseAbnormal && client.GetState() == ws::Client::State::Stopped);
     CHECK_EQ(loop.WatchCount(), 0u);
 

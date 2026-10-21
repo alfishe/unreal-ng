@@ -23,8 +23,8 @@ It knows nothing about Z80s, frames or Qt. Platform-specific formats, file syste
 live in **platform packs** loaded as static or dynamic plugins ([plugins-and-usage.md](plugins-and-usage.md)).
 The emulator plugs into it through a handful of small
 **ports** (host state, recording guard, events, logging, configuration). The same library powers a
-command-line tool (`umedia`) and a Python module (`umedia`), which replace `tools/diskinfo` and
-`tools/diskconverter`.
+command-line tool (`umedia`) and a Python module (`umedia`), which replace `utilities/diskinfo` and
+`utilities/diskconverter`.
 
 Design rules:
 

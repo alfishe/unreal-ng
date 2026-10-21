@@ -52,8 +52,8 @@ tools) and scripted differential comparisons.
 ### Stage 1 — structural scan, host side (no emulator)
 
 ```bash
-python3 tools/diskinfo/diskinfo.py scratch/title.udi --tracks
-python3 tools/diskinfo/diskinfo.py scratch/title.udi --dump idam | head -40
+python3 utilities/diskinfo/diskinfo.py scratch/title.udi --tracks
+python3 utilities/diskinfo/diskinfo.py scratch/title.udi --dump idam | head -40
 ```
 
 Read out, in order:
@@ -109,7 +109,7 @@ on save with a warning.
 # 1. original HFE (weak bits live) — protection passes / title boots
 # 2. same disk re-saved as UDI through the emulator: insert the HFE, then
 #    Qt Disk → Save As .udi — the save warns "UDI cannot store weak bits"
-#    (tools/diskconverter cannot do this conversion: it reads SCL/TRD/FDI/UDI/TD0 only)
+#    (utilities/diskconverter cannot do this conversion: it reads SCL/TRD/FDI/UDI/TD0 only)
 # 3. insert the UDI copy and boot again
 ```
 

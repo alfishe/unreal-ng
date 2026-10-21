@@ -262,9 +262,9 @@ call.
 - Universal track model / UDI / flaky sectors: `docs/inprogress/2026-09-02-universal-track-model/`,
   `docs/WD1793/FlakySectorEmulator.md`; worked protection case study:
   `docs/disasm/black-raven-voron-protection/`
-- Host-side disk forensics: `tools/diskinfo/diskinfo.py`, conversion/authoring:
-  `tools/diskconverter/diskconvert.py`
-- Ready-made Python capture tools: `tools/porttrace/porttrace_capture.py`,
+- Host-side disk forensics: `utilities/diskinfo/diskinfo.py`, conversion/authoring:
+  `utilities/diskconverter/diskconvert.py`
+- Ready-made Python capture tools: `utilities/porttrace/porttrace_capture.py`,
   `tools/verification/debugger/capture_debug_session.py`
 
 ## Rules of engagement (the ones agents forget)

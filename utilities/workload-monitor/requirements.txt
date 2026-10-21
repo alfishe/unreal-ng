@@ -1,4 +1,4 @@
-# Dependencies for tools/workload-monitor/process-workload.py
+# Dependencies for utilities/workload-monitor/process-workload.py
 #
 # NOTE: On Linux, process-workload.py requires ZERO external dependencies
 # and runs with standard Python 3 (reading directly from /proc).

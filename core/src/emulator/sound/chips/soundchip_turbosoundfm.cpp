@@ -182,6 +182,13 @@ void SoundChip_TurboSoundFM::stepAt(uint64_t now)
     {
         _deferredT = now;
         _syncDeferred = true;
+        // Every step up to the next entry takes this branch with the same outcome (the flags change only through
+        // entries that settle): the gate holds them, settleSteps takes the last one here
+        if (_stepGate)
+        {
+            _stepDeadline = std::numeric_limits<uint64_t>::max();
+            _quietDeferral = true;
+        }
         return;
     }
     if (_pair.synthesisSuppressed())

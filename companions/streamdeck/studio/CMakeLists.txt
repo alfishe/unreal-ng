@@ -26,6 +26,7 @@ add_library(sdb-studio-deck STATIC
     ${SD_STUDIO}/virtualdeck.h ${SD_STUDIO}/virtualdeck.cpp
     ${SD_STUDIO}/decklink.h
     ${SD_STUDIO}/deckclient.h ${SD_STUDIO}/deckclient.cpp
+    ${SD_STUDIO}/daemoncontrol.h ${SD_STUDIO}/daemoncontrol.cpp
     ${SD_STUDIO}/listenserver.h ${SD_STUDIO}/listenserver.cpp)
 set_target_properties(sdb-studio-deck PROPERTIES AUTOMOC ON)
 target_include_directories(sdb-studio-deck PUBLIC ${SD_STUDIO})
