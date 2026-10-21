@@ -178,6 +178,24 @@ public:
         return _renderEpoch;
     }
 
+    /// The step gate's test (handleStep) without the call, as SoundManager::handleStep makes it: a step that ends at
+    /// audio T `now` before the deadline, at 1x host speed, only notes where it ended (settleSteps books it). true:
+    /// noted, the device's handleStep is not needed for this step
+    bool noteGatedStep(uint64_t now, uint8_t hostSpeed)
+    {
+        if (now >= _stepDeadline || hostSpeed != 1)
+            return false;
+        _pendingT = now;
+        _stepPending = true;
+        return true;
+    }
+
 protected:
     uint64_t _renderEpoch = 0;
+    // The step gate (handleStep): the audio T before which a step only notes its T (_pendingT) and settleSteps books it
+    // once - a step that completes no output sample, or any step while the device sleeps (the quiet deferral, max).
+    // 0: every step the full way. Set only by the full way; every other entry clears it first
+    uint64_t _stepDeadline = 0;
+    uint64_t _pendingT = 0;
+    bool _stepPending = false;
 };

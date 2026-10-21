@@ -160,13 +160,8 @@ void SoundChip_TurboSoundFM::handleStep()
     // The step gate: before the deadline a step only notes where it ended (settleSteps books it)
     if (_stepDeadline != 0)
     {
-        const uint64_t now = nowT();
-        if (now < _stepDeadline && _context->emulatorState.HostSpeedMultiplier() == 1)
-        {
-            _pendingT = now;
-            _stepPending = true;
+        if (noteGatedStep(nowT(), _context->emulatorState.HostSpeedMultiplier()))
             return;
-        }
         settleSteps();
     }
     stepAt(nowT());
