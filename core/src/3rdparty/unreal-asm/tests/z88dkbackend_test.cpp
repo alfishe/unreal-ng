@@ -238,6 +238,13 @@ TEST(Z88dkBackend_Test, LabelsSectionsAndPhase)
         ASSERT_EQ(p.files.size(), 2u);
         EXPECT_FALSE(Contains(Statements(p.files[1].document), "ENDIF"));
     }
+    // A DUP whose body only assigns a DEFL stays a REPT (isosurf's ENDBITS: a body made a macro with LOCAL BITS, inside
+    // the macro, was unbalanced for z80asm)
+    {
+        const std::vector<std::string> z = ToZ80asm("        MACRO END\n        DUP 3\nBITS=BITS+BITS\n        EDUP\n        DB BITS\n        ENDM\nBITS=1\n        END", "alasm");
+        EXPECT_TRUE(Contains(z, "REPT 3")) << ::testing::PrintToString(z);
+        EXPECT_FALSE(Contains(z, "LOCAL BITS")) << ::testing::PrintToString(z);
+    }
     // A name made of an address beyond a sum stops z80asm 2.3 on an assertion where an address expression uses it: the
     // layout's value (TDU's CAT_PLC)
     EXPECT_TRUE(Contains(ToZ80asm("        ORG #8000\nTR      NOP\nCAT     EQU (HIGH TR+1)<<8\n        LD HL,CAT+TR", "sjasmplus"),

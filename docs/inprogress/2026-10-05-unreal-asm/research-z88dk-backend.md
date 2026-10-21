@@ -44,7 +44,7 @@ ABC     NOP                          L_ABC:                    ; ABC, MOV, TEST 
 | `(IX+(D)-K)`, `(IX+(D))`, `(IX-(D-K))` are syntax errors | a displacement with parentheses written `(IX+0+...+0)` (2026-10-20) |
 | An EQU of an address under HIGH, a shift or AND is a computed symbol; an expression using it fails an assertion (`expr1.c:656`) | such an EQU written as the layout's value (2026-10-20) |
 | `REPT n ... ENDR`; EXITM leaves the pass, but every pass is still expanded | fill sequences as REPT; WHILE / REPEAT ... UNTIL as REPT with an exit, at most 1024 passes |
-| `LOCAL` works in MACRO (also in its middle), not in REPT; no PROC | a REPT body with labels becomes a macro; a local block outside a macro gets its labels numbered |
+| `LOCAL` works in MACRO (also in its middle), not in REPT; no PROC | a REPT body with labels becomes a macro (a DEFL it assigns is no such label: the same name each pass); a local block outside a macro gets its labels numbered |
 | `BINARY "f"` takes the whole file | a part given by numbers cut out by `zxasm convert`, as for pasmo |
 | `IN F,(C)`, `OUT (C),0`, `SLL`, `IXH` ... | as such |
 | A second `MACRO` of a name is `duplicate definition` (a file INCLUDEd twice; pasmo 0.5.5 takes it again) | in a file included more than once the definition goes under `IFNDEF __UNREALASM_M_<name>` / `DEFINE` / `ENDIF` (2026-10-21) |

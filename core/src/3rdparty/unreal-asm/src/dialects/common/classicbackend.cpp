@@ -1762,8 +1762,9 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
 
     // REPT bodies that define labels: pasmo's LOCAL does not work in REPT, so the body becomes a macro called n times
     std::map<size_t, size_t> repeatEnd;   // the line of a REPT with labels -> the line of its ENDM
-    auto only = [](const ir::Line& l, ir::DirectiveKind kind) {
-        return l.statements.size() == 1 && l.statements[0].kind == Statement::Kind::Directive && l.statements[0].directive == kind && l.label.empty();
+    auto only = [](const ir::Line& l, ir::DirectiveKind kind, bool labelled = false) {
+        return l.statements.size() == 1 && l.statements[0].kind == Statement::Kind::Directive && l.statements[0].directive == kind &&
+               (labelled || l.label.empty());
     };
     for (size_t k = 0; k < program.lines.size(); ++k)
     {
@@ -1786,7 +1787,8 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
             for (const Statement& s : l.statements)
                 if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::EndRepeat)
                     --depth;
-            labels = labels || !l.label.empty();
+            // a DEFL assigned in the body (ALASM's BITS=BITS+BITS) is the same name each pass: no label to make local
+            labels = labels || (!l.label.empty() && !only(l, ir::DirectiveKind::Defl, true));
         }
     }
     std::map<size_t, std::string> pendingRepeat;   // line of the ENDM -> the REPT count and macro name to call

@@ -1,8 +1,10 @@
 #include "dialects/alasm/alasmfrontend.h"
 
+#include <algorithm>
 #include <cctype>
 #include <functional>
 #include <map>
+#include <optional>
 #include <set>
 
 #include "dialects/common/macros.h"
@@ -818,7 +820,7 @@ std::map<std::string, std::vector<std::string>> MacroBodies(const SourceDocument
         const std::string rest = first == std::string::npos ? std::string() : t.substr(first);
         if (rest.rfind("MACRO ", 0) == 0)
         {
-            current = rest.substr(6);
+            current = rest.substr(rest.find_first_not_of(' ', 6) == std::string::npos ? rest.size() : rest.find_first_not_of(' ', 6));
             current = current.substr(0, current.find_first_of(" ;"));
             bodies[current].clear();
         }
@@ -828,6 +830,68 @@ std::map<std::string, std::vector<std::string>> MacroBodies(const SourceDocument
             bodies[current].push_back(t);
     }
     return bodies;
+}
+
+/// The command word of a source line (after a label in column 0), upper case
+std::string CommandWord(const std::string& line)
+{
+    const std::string t = line.substr(0, line.find(';'));
+    size_t k = 0;
+    if (!t.empty() && t[0] != ' ')
+        k = t.find(' ');
+    k = k == std::string::npos ? k : t.find_first_not_of(' ', k);
+    if (k == std::string::npos)
+        return {};
+    return z80::Upper(t.substr(k, t.find(' ', k) == std::string::npos ? std::string::npos : t.find(' ', k) - k));
+}
+
+/// A macro body with the arguments put in. ALASM reads a DUP's body again each pass, so a DUP whose body walks the
+/// parameters (\C \N \S \P \R) with a constant count is unrolled, each pass taking the pointer where the last left it
+std::vector<std::string> Unrolled(const std::vector<std::string>& body, MacroArguments& args)
+{
+    std::vector<std::string> out;
+    for (size_t k = 0; k < body.size(); ++k)
+    {
+        const std::string line = Substitute(body[k], args);
+        if (CommandWord(body[k]) != "DUP")
+        {
+            out.push_back(line);
+            continue;
+        }
+        size_t end = k + 1;
+        for (int depth = 1; end < body.size(); ++end)
+        {
+            const std::string word = CommandWord(body[end]);
+            depth += word == "DUP" ? 1 : word == "EDUP" ? -1 : 0;
+            if (depth == 0)
+                break;
+        }
+        const std::vector<std::string> inner(body.begin() + static_cast<std::ptrdiff_t>(k + 1),
+                                             body.begin() + static_cast<std::ptrdiff_t>(std::min(end, body.size())));
+        bool walks = false;
+        for (const std::string& t : inner)
+            for (size_t c = 0; c + 1 < t.size() && !walks; ++c)
+                walks = t[c] == '\\' && std::string("CNSPRcnspr").find(t[c + 1]) != std::string::npos;
+        std::optional<int64_t> count;
+        if (walks && end < body.size())
+        {
+            const size_t at = line.find("DUP");
+            bool failed = false;
+            const Expr e = ParseExpression(line.substr(at + 3, line.find(';') == std::string::npos ? std::string::npos : line.find(';') - at - 3), &failed);
+            if (!failed && e.kind == Expr::Kind::Number && e.value >= 0 && e.value <= 4096)
+                count = e.value;
+        }
+        if (!count)
+        {
+            out.push_back(line);
+            continue;
+        }
+        for (int64_t pass = 0; pass < *count; ++pass)
+            for (std::string& t : Unrolled(inner, args))
+                out.push_back(std::move(t));
+        k = end;   // the EDUP
+    }
+    return out;
 }
 
 SourceDocument WithColonParameters(const SourceDocument& original)
@@ -967,8 +1031,8 @@ FrontendResult AlasmFrontend::ParseInProject(const SourceDocument& original, con
         head.comment = " macro " + name + " expanded" + (call.hasComment ? ";" + call.comment : std::string());
         head.hasComment = true;
         result.program.lines.push_back(std::move(head));
-        for (const std::string& bodyLine : bodies[name])
-            emit(Substitute(bodyLine, args), number, depth + 1);
+        for (const std::string& bodyLine : Unrolled(bodies[name], args))
+            emit(bodyLine, number, depth + 1);
     };
 
     uint32_t number = 0;
@@ -981,7 +1045,7 @@ FrontendResult AlasmFrontend::ParseInProject(const SourceDocument& original, con
         const std::string rest = first == std::string::npos ? std::string() : t.substr(first);
         if (skipping.empty() && rest.rfind("MACRO ", 0) == 0)
         {
-            std::string name = rest.substr(6);
+            std::string name = rest.substr(rest.find_first_not_of(' ', 6) == std::string::npos ? rest.size() : rest.find_first_not_of(' ', 6));
             name = name.substr(0, name.find_first_of(" ;"));
             if (expanded.count(name))
                 skipping = name;

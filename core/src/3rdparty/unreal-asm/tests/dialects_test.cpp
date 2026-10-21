@@ -232,6 +232,12 @@ TEST(Dialects_Test, MacrosGluingOrWalkingParametersAreExpanded)
     const std::vector<std::string> walked = ToSjasmplus("        MACRO DOWN\n        INC \\C\n        INC \\N\\C\n        INC \\R\\C\n        ENDM\n        DOWN HL");
     EXPECT_NE(std::find(walked.begin(), walked.end(), "INC H"), walked.end());
     EXPECT_NE(std::find(walked.begin(), walked.end(), "INC L"), walked.end());
+    // A DUP in a walking macro takes the next symbol each pass (isosurf's ADDQUAD 0010: DUP 4 / ADDBIT \C\N); the
+    // name after MACRO may follow several blanks
+    const std::vector<std::string> quad = ToSjasmplus("        MACRO   QUAD\n        DUP 4\n        DB \\C\\N\n        EDUP\n        ENDM\n        QUAD 0010");
+    std::vector<std::string> bytes;
+    std::copy_if(quad.begin(), quad.end(), std::back_inserter(bytes), [](const std::string& t) { return t.rfind("DB", 0) == 0 || t.rfind("DUP", 0) == 0; });
+    EXPECT_EQ(bytes, (std::vector<std::string>{"DB 0", "DB 0", "DB 1", "DB 0"})) << ::testing::PrintToString(quad);
 }
 
 TEST(Dialects_Test, RepeatUntilBecomesWhile)
