@@ -1,6 +1,15 @@
-# The Surface Dial is a time travel remote (debug-and-ttd.md §4.4): a control surface takes no player connector, so
-# this works without the debug layer. A turn moves through the history a frame per step, clockwise forward; held
-# down, an instruction per step. A press alone pauses / continues, on its release
+# The Surface Dial (control surfaces profiles.md §2): a debug device, its family starts as a debugger remote (Q-8), so
+# this works without the debug layer switch. What the knob does follows the instance's context (ctx.set on any plane,
+# the debugger's panes, the TTD panel; with a history and nothing set it is `ttd`):
+#   ttd           scrub with marks: a step seeks 1 frame turned slowly, up to 100 turned fast; a click at each step,
+#                 and the marks it crosses: a tick each second, a double at ten seconds and bookmarks, a buzz at the
+#                 ends of the history and at a replay barrier
+#   ttd.timecode  the same by seconds (0.02 .. 2 s a step) as a free wheel: the hand feels only the marks (Q-6)
+#   debug.*       an instruction a step: forward steps in, back steps back through the history
+# Held down while turning (ttd): an instruction a step through the history. A press alone pauses / continues, on its
+# release. Elsewhere (play) the knob does nothing and does not click.
+# Q-6, both feels: `clicks: true` clicks at each step (the marks play over them), `clicks: false` is a free wheel with
+# the mark clicks only; change either layer's `clicks` in a user copy of this profile to try the other
 schema: 1
 kind: debug
 id: builtin/debug/surface-dial
@@ -8,6 +17,16 @@ label: Time travel on the Dial
 applies_to: { families: [surface-dial] }
 layers:
   debug:
-    knob:      { action: ttd.jog_frames }
+    push: { action: run.pause_toggle }
+  "@ttd":
+    knob:      { action: ttd.seek_by, curve: { unit: frames, min: 1, max: 100 } }
     push+knob: { action: ttd.jog_instructions }
     push:      { action: run.pause_toggle }
+  "@ttd.timecode":
+    knob: { action: ttd.seek_by, curve: { unit: seconds, min: 0.02, max: 2.0 } }
+  "@debug.*":
+    knob: { action: run.step_by }
+haptics:
+  "@ttd":          { steps: 36, clicks: true,  marks: { second: tick, ten_seconds: double, bookmark: double, edge: buzz, barrier: buzz } }
+  "@ttd.timecode": { steps: 36, clicks: false, marks: { second: tick, ten_seconds: double, bookmark: double, edge: buzz, barrier: buzz } }
+  "@debug.*":      { steps: 36, clicks: true }

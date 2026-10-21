@@ -1408,6 +1408,14 @@ void DebuggerWindow::showBreakpointManager()
     updateState();
 }
 
+std::vector<std::pair<QWidget*, std::string>> DebuggerWindow::contextPanes() const
+{
+    return {{ui->disassemblerWidget, "debug.disasm"},
+            {ui->registersWidget, "debug.registers"},
+            {ui->hexView, "debug.memory"},
+            {ui->stackWidget, "debug.stack"}};
+}
+
 void DebuggerWindow::focusNextPane()
 {
     _paneFocus->Move(1);

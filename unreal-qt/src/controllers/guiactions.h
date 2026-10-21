@@ -30,7 +30,11 @@ struct GuiActionHooks
     std::function<void()> screenshot;
     std::function<void(const QString&)> notice;  ///< the status bar
     std::function<void()> toggleKeyboard;        ///< the on-screen keyboard shown / hidden
+    /// A host device's action came back with timeline marks (`ttd.seek_by`): the device feels them (GUI thread)
+    std::function<void(const std::string& device, const std::vector<std::string>& marks)> marks;
 };
+
+struct HostActionEvent;
 
 class GuiActions : public QObject
 {
@@ -44,8 +48,9 @@ public:
     const actions::ActionRegistry& Registry() const;
 
     /// A device's action event (HostControllers::actionTriggered): `value` 1 for a press, a scrub level, an encoder's
-    /// steps; `device` the host device id ("keyboard" = the window keyboard: the GUI's own origin)
-    void Trigger(const QString& action, bool pressed, float value, const QString& device);
+    /// steps (with its rate and the binding's parameters); `device` the host device id (`kbd:system` = the window
+    /// keyboard: the GUI's own origin). An encoder turn bound to a Press action presses once per step, at most 16
+    void Trigger(const HostActionEvent& event);
 
 private:
     class Scrub;

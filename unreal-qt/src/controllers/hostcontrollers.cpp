@@ -24,6 +24,7 @@
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/pckey.h"
+#include "emulator/actions/contextstate.h"
 #include "emulator/keyboardmanager.h"
 
 #ifdef ENABLE_CONTROLLERS
@@ -108,13 +109,16 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
     for (const std::string& error : errors)
         qWarning("controllers: %s", error.c_str());
     _service->Router().SetActionSink([this](const ActionEvent& event) {
-        const QString action = QString::fromStdString(event.action);
-        const bool pressed = event.pressed;
-        const float value = event.value;
-        const QString device = QString::fromStdString(event.device);
-        QMetaObject::invokeMethod(
-            this, [this, action, pressed, value, device] { emit actionTriggered(action, pressed, value, device); },
-            Qt::QueuedConnection);
+        HostActionEvent out;
+        out.action = QString::fromStdString(event.action);
+        out.pressed = event.pressed;
+        out.value = event.value;
+        out.device = QString::fromStdString(event.device);
+        out.turn = event.turn;
+        out.rate = event.rate;
+        if (!event.params.IsNull())
+            out.params = QString::fromStdString(event.params.Dump());
+        QMetaObject::invokeMethod(this, [this, out] { emit actionTriggered(out); }, Qt::QueuedConnection);
     });
     _service->StartNative();
     // The host verbs of the automation surfaces run here, on the GUI thread
@@ -134,6 +138,10 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
         const QString id = QString::fromStdString(payload->emulatorId.toString());
         const QString path = QString::fromStdString(payload->path);
         QMetaObject::invokeMethod(this, [this, id, path] { onFileLoaded(id, path); }, Qt::QueuedConnection);
+    });
+    // The context of an instance changed (ctx.set on any plane, the GUI's own panes): the router follows it
+    _contextObserver = MessageCenter::DefaultMessageCenter().AddObserver(NC_SURFACE_CONTEXT, [this](int, Message*) {
+        QMetaObject::invokeMethod(this, [this] { followContext(); }, Qt::QueuedConnection);
     });
     _breakpointObserver =
         MessageCenter::DefaultMessageCenter().AddObserver(NC_EXECUTION_BREAKPOINT, [this](int, Message* message) {
@@ -161,6 +169,7 @@ HostControllers::~HostControllers()
 #ifdef ENABLE_CONTROLLERS
     HostInputControl::SetOwner(nullptr);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_FILE_LOADED, _fileObserver);
+    MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_SURFACE_CONTEXT, _contextObserver);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_EXECUTION_BREAKPOINT, _breakpointObserver);
     _service->Router().SetActionSink(nullptr);
     _service->Stop();
@@ -197,6 +206,88 @@ void HostControllers::SetShortcutWindows(QWidget* main, QWidget* debugger)
     }
     _mainWindow = main;
     _debuggerWindow = debugger;
+}
+
+void HostControllers::SetContextWidgets(std::vector<std::pair<QWidget*, std::string>> widgets, QWidget* ttdPanel)
+{
+    _contextWidgets = std::move(widgets);
+    _ttdPanel = ttdPanel;
+    connect(qApp, &QApplication::focusChanged, this, &HostControllers::updateGuiContext, Qt::UniqueConnection);
+}
+
+void HostControllers::OnDebuggerVisible(bool visible)
+{
+    if (visible)
+        return;
+    _guiPane.clear();
+    releaseGuiContext("debug.");
+}
+
+void HostControllers::OnTtdPanelVisible(bool visible)
+{
+    if (visible)
+        setGuiContext(actions::ContextState::kTtd);
+    else
+        releaseGuiContext(actions::ContextState::kTtd);
+}
+
+void HostControllers::updateGuiContext()
+{
+    QWidget* focus = QApplication::focusWidget();
+    std::string pane;
+    for (const auto& [widget, context] : _contextWidgets)
+        if (focus != nullptr && widget != nullptr && (widget == focus || widget->isAncestorOf(focus)))
+            pane = context;
+    if (pane.empty() && focus != nullptr && _ttdPanel != nullptr && (_ttdPanel == focus || _ttdPanel->isAncestorOf(focus)))
+        pane = actions::ContextState::kTtd;
+    if (pane == _guiPane)
+        return;
+    _guiPane = pane;
+    if (!pane.empty())
+        setGuiContext(pane);  // entering a pane sets its context once; another setter's later one stays until then
+}
+
+void HostControllers::setGuiContext(const std::string& context)
+{
+    Emulator* emulator = _binding->emulator();
+    if (emulator == nullptr)
+        return;
+    std::string error;
+    if (!actions::ContextState::Instance().Set(emulator->GetId(), emulator, context, "gui", error))
+        qWarning("controllers: context '%s': %s", context.c_str(), error.c_str());
+    followContext();
+}
+
+void HostControllers::releaseGuiContext(const std::string& prefix)
+{
+    Emulator* emulator = _binding->emulator();
+    if (emulator == nullptr)
+        return;
+    const actions::ContextInfo info = actions::ContextState::Instance().Get(emulator->GetId(), emulator);
+    if (info.set && info.by == "gui" && info.context.compare(0, prefix.size(), prefix) == 0)
+        setGuiContext({});
+}
+
+void HostControllers::followContext()
+{
+#ifdef ENABLE_CONTROLLERS
+    Emulator* emulator = _binding->emulator();
+    if (emulator == nullptr)
+        return;
+    // The default (Q-7: `ttd` while a history exists) changes without a notification: the poll reads it too
+    const actions::ContextInfo info = actions::ContextState::Instance().Get(emulator->GetId(), emulator);
+    _service->Router().SetContext(emulator->GetId(), info.context);
+#endif
+}
+
+void HostControllers::PlayMarks(const std::string& device, const std::vector<std::string>& marks)
+{
+#ifdef ENABLE_CONTROLLERS
+    _service->PlayMarks(device, marks);
+#else
+    (void)device;
+    (void)marks;
+#endif
 }
 
 void HostControllers::updateDebugFocus()
@@ -361,6 +452,7 @@ void HostControllers::onBound()
     _attached = emulator;
     context->pControllerManager->SetHostInputSource(_service->SourceFor(emulator->GetId()));
     _service->Router().SetFocus(emulator->GetId());
+    followContext();
     Reapply();
 #endif
 }
@@ -391,6 +483,7 @@ void HostControllers::poll()
             machine = context->pControllerManager->Revision();
     checkAuto();
     updateHapticsGate();
+    followContext();
     if (_service->Revision() == _revision && machine == _machineRevision)
         return;
     _revision = _service->Revision();
@@ -536,10 +629,8 @@ void HostControllers::assignPlayers(const std::vector<HostDeviceInfo>& devices)
     size_t n = 0;
     for (const HostDeviceInfo& device : devices)
     {
-        // A control surface is a debugger remote (debug-and-ttd.md §4.4): its debug profile acts with no layer key
-        if (device.family != "keyboard" && device.family != "mouse" && !player(device) &&
-            _service->Router().Role(device.id) == DeviceRole::Player)
-            _service->Router().SetRole(device.id, DeviceRole::DebuggerRemote);
+        // A control surface starts as a debugger remote by its family's role (HostInputService, the device
+        // database's `role`): its debug profile acts with no layer key
         if (!player(device))
             continue;
         _service->Router().SetPlayerConnector(device.id, n < order.size() ? order[n] : std::string{});

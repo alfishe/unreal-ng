@@ -36,6 +36,11 @@ Parser changes (`core/controllers/src/profiles/profile.cpp`): a debug profile ac
 does not act on yet, reserved for the scrub curve) to the action as `params`; `haptics` of a debug profile takes the
 per-layer form above.
 
+As built (S3, 2026-10-20): as above; a context layer name is `@` and a context name, maybe ending in `.*`; only a debug
+profile has them; the haptics keys are `debug` or a context layer; the most specific debug profile with `haptics`
+gives a scope its feel, whole (`ResolvedProfiles::surfaceHaptics`). `curve` is still `scrub` (the analog scrub) or now
+the object, whose fields are checked by type (the action checks the ranges).
+
 ## 2. The Surface Dial profile
 
 ```yaml
@@ -64,6 +69,10 @@ haptics:
 - `clicks: false` in time code: the hand feels only the marks (Q-6). Steps stay 36 so a turn keeps its resolution
   (on the Dial steps and clicks share one register, [devices.md §1.2](devices.md#12-haptics)).
 - Outside every context layer (`play`) the knob is unbound; the driver turns clicks off.
+- As built (S3): the shipped file adds `push+knob: ttd.jog_instructions` and `push: run.pause_toggle` to `@ttd` (a
+  chord in a higher layer overrides the lower layer's bindings of its members, so `push` is repeated there), and
+  `@ttd.timecode` lists `bookmark: double` too. Q-8 is decided: the Dial starts as a debugger remote by its family's
+  role, its debug profile needs no debug layer switch.
 - **Debug layer switch**: debug profiles apply only while `Controllers/DebugLayer` is on, and it is off by default
   (`unreal-qt/src/controllers/hostcontrollers.cpp`); non-player roles are set in the dialog's Advanced mode only
   ([ui-ux U6](../2026-10-17-controller-manager/ui-ux.md)). So in v1 the owner turns the debug layer on and sets the

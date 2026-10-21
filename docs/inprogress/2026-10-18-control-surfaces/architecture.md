@@ -217,6 +217,30 @@ arbiter and the op log.
 - Results come back through the owner, which turns marks into `Output(haptic)` for the device that moved
   ([§9](#9-haptic-feedback)).
 
+### 5.1 As built (S3, 2026-10-20)
+
+- `ActionEvent` carries `turn`, `rate` (steps/s) and `params` (the binding's `curve` object, `BindingOptions::params`).
+  The router sends one event per control event (the Dial: one per input report), not one per pass; a Press action
+  bound to an encoder gets one press per step from the Qt owner (`GuiActions::Trigger`, at most 16).
+- `EncoderRate` (`inputrouter.h`): the bridge's rule, with every interval counted as at least 7.5 ms (the shortest BLE
+  connection interval) so two reports of one bunch do not read as a spin; the rate counts every turn, bound or not.
+  To retune by feel in the owner test.
+- Context layers: `SetContext(instance, context)` per instance; a device's instance is its pinned one, else the
+  focused one. The context layer goes right above `debug` (a shift layer raised over `debug` stays on top); it is a
+  context layer of the device's bindings or of its scope's surface haptics. A change of the layers up releases what
+  is held (epoch, stale controls), as a layer switch. A binding cannot raise a context layer with a layer key.
+- Feel: the router keeps each device's last `StepsOut` and queues a new one when it changes (after an evaluation, a
+  context change, new surface haptics); `Dispatch` sends it to the output sink outside the lock. A device whose
+  scope has no surface haptics and never got a feel is never asked. Without a layer feel: clicks off, the steps as
+  they were. `Feel(device)` answers the top layer's `LayerHaptics` (the marks' patterns, the interval).
+- Q-8: `DeviceMatch::role` (`"role"` in `devices.json`, the Dial `debugger-remote`); `HostInputService::OnDeviceAdded`
+  calls `InputRouter::SetDefaultRole`, which `SetRole` overrides (`RoleSet`); the Qt client's former rule (a non-player
+  family becomes a remote in `assignPlayers`) is gone. `RemoteByNature` (`profilestore.cpp`) asks the family's role.
+  There is no role editor in the dialog yet (U6's Advanced mode), so `SetRole` has no GUI caller besides the window
+  keyboard.
+- Not done: the TargetState of SD4 (the router follows the focused instance); a Dial on Linux / Windows (no writer:
+  `Outputs` 0 there).
+
 ## 6. Contexts and the followed instance
 
 - `ContextState` (core, per instance) holds one string, `play` at start. `ctx.set` stores it and posts
@@ -334,6 +358,28 @@ flowchart LR
 - The **driver alone** writes steps and clicks: on a context change the router asks once through `Output`; the
   driver queues it to its writer thread and applies it again after a reconnect.
 - `IOHIDDeviceSetReport` blocks for a BLE round trip: never on the IOHID run-loop thread (`iohidbackend.cpp`).
+
+### 9.1 As built (S3, 2026-10-20)
+
+- `IBackend::Outputs` (`kOutputHaptic`, `kOutputSteps`), `Output(device, HapticOut)`, `Output(device, StepsOut)`; the
+  IOHID backend gives a Dial a `SurfaceDialWriter` (`surfacedial.h`): one thread per Dial, a slot per report kind
+  (the latest wins), the feature report before a pattern, the device `CFRetain`ed for the thread. `PlayClicks` (the
+  test effects) goes through it too, so no caller waits for a BLE round trip any more. The last steps per Dial id are
+  kept and written again when it reconnects.
+- Bytes: `tick` `01 01 03 50 00`, `double` `01 02 03 3C 00`, `buzz` `01 01 04 50 00`; steps `01 nn nn 00 03|01 05 50
+  00` (cutoff 5, retrigger 80: the found values; the feature is not read back first).
+- The owner: `GuiActions::Trigger`'s done callback takes `marks[].kind` of a host device's result and posts them to
+  the GUI thread, where `HostControllers::PlayMarks` → `HostInputService::PlayMarks` picks the strongest mark the
+  device's top layer names a pattern for, applies `min_interval_ms` (default 40; `edge` / `barrier` always play) and
+  queues it. The GUI thread hop adds its latency (normally under a few ms) to NFR-2.
+- Contexts in the Qt client: entering a debugger pane sets `debug.disasm` / `debug.registers` / `debug.memory` /
+  `debug.stack`, entering or showing the TTD panel `ttd` (once per entry: another setter's later context stays until
+  the focus moves again); hiding the TTD panel or the debugger returns a context the GUI set to the default. The
+  follower: `NC_SURFACE_CONTEXT` and the 250 ms poll (the default changes without a notification) push
+  `ContextState::Get` of the bound instance into `InputRouter::SetContext`.
+- Planes: host verb `output` (`pattern`, `steps` / `clicks`, `marks`) and the `devices` fields `role`, `role_set`,
+  `layers`, `context`, `outputs`, `feel` on CLI, WebAPI (+ OpenAPI), WebSocket (`call`), MCP, Python, Lua
+  ([command-interface.md §15](../../emulator/design/control-interfaces/command-interface.md#15-game-controllers)).
 
 ## 10. Flows
 

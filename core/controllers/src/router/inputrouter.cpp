@@ -48,6 +48,17 @@ bool Sampled(TargetKind kind)
 }
 }  // namespace
 
+double EncoderRate::Step(float steps, uint64_t nowNs)
+{
+    const double count = std::fabs(static_cast<double>(steps));
+    const uint64_t interval = _moved && nowNs > _lastNs ? nowNs - _lastNs : kRestNs + 1;
+    const double inst = count * 1e9 / static_cast<double>(std::max(interval, kMinNs));
+    _rate = interval > kRestNs ? 0.3 * inst : 0.5 * _rate + 0.5 * inst;
+    _lastNs = nowNs;
+    _moved = true;
+    return _rate;
+}
+
 InputRouter::InputRouter()
     : _clock([] {
           return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -280,6 +291,7 @@ void InputRouter::SetRole(const HostDeviceId& id, DeviceRole role)
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _settings[id].role = role;
+        _settings[id].roleSet = true;
         const auto it = _devices.find(id);
         if (it != _devices.end())
         {
@@ -307,7 +319,34 @@ DeviceRole InputRouter::Role(const HostDeviceId& device) const
 DeviceRole InputRouter::RoleLocked(const HostDeviceId& device) const
 {
     const auto it = _settings.find(device);
-    return it == _settings.end() ? DeviceRole::Player : it->second.role;
+    if (it == _settings.end())
+        return DeviceRole::Player;
+    return it->second.roleSet ? it->second.role : it->second.defaultRole;
+}
+
+void InputRouter::SetDefaultRole(const HostDeviceId& id, DeviceRole role)
+{
+    std::vector<ActionEvent> actions;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const DeviceRole before = RoleLocked(id);
+        _settings[id].defaultRole = role;
+        const auto it = _devices.find(id);
+        if (it != _devices.end() && RoleLocked(id) != before)
+        {
+            it->second.layers.clear();
+            it->second.epoch++;
+            EvaluateLocked(it->second, Now(), actions);
+        }
+    }
+    Dispatch(actions);
+}
+
+bool InputRouter::RoleSet(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _settings.find(device);
+    return it != _settings.end() && it->second.roleSet;
 }
 
 void InputRouter::SetInstanceMode(const HostDeviceId& device, InstanceMode mode, const std::string& pinned)
@@ -326,8 +365,27 @@ void InputRouter::SetPlayerConnector(const HostDeviceId& device, const std::stri
 
 void InputRouter::SetFocus(const std::string& instance)
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-    _focus = instance;
+    std::vector<ActionEvent> actions;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (instance == _focus)
+            return;
+        // Another instance may have another context: its context layers
+        std::map<HostDeviceId, std::vector<std::string>> before;
+        for (const auto& [id, device] : _devices)
+            before[id] = ActiveLayersLocked(device);
+        _focus = instance;
+        const uint64_t now = Now();
+        for (auto& [id, device] : _devices)
+        {
+            if (ActiveLayersLocked(device) == before[id])
+                continue;
+            device.epoch++;
+            MarkHeldStale(device.values, device.gates, kReleased);
+            EvaluateLocked(device, now, actions);
+        }
+    }
+    Dispatch(actions);
 }
 
 void InputRouter::SetDebugFocus(bool on)
@@ -402,17 +460,71 @@ std::vector<std::string> InputRouter::ActiveLayersLocked(const Device& device) c
     const DeviceRole role = RoleLocked(device.info.id);
     if (role == DeviceRole::Disabled)
         return {};
-    if (RemoteLocked(device))
-        return {kDebugLayer};
     std::vector<std::string> layers = {kPlayLayer};
-    for (const LayerEntry& entry : device.layers)
+    if (RemoteLocked(device))
+        layers = {kDebugLayer};
+    else
     {
-        // `debug` is opaque: what it does not bind does nothing while it is up
-        if (entry.name == kDebugLayer)
-            layers.clear();
-        layers.push_back(entry.name);
+        for (const LayerEntry& entry : device.layers)
+        {
+            // `debug` is opaque: what it does not bind does nothing while it is up
+            if (entry.name == kDebugLayer)
+                layers.clear();
+            layers.push_back(entry.name);
+        }
+    }
+    // The context layer sits right above `debug` (profiles.md §1): a shift layer raised over debug stays on top
+    const auto debug = std::find(layers.begin(), layers.end(), std::string(kDebugLayer));
+    if (debug != layers.end())
+    {
+        const std::string context = ContextLayerLocked(device);
+        if (!context.empty())
+            layers.insert(debug + 1, context);
     }
     return layers;
+}
+
+const std::string& InputRouter::InstanceLocked(const HostDeviceId& device) const
+{
+    const auto it = _settings.find(device);
+    if (it != _settings.end() && it->second.mode == InstanceMode::Pinned)
+        return it->second.pinned;
+    return _focus;
+}
+
+const SurfaceHaptics* InputRouter::SurfaceHapticsForLocked(const Device& device) const
+{
+    for (const std::string& scope : {device.info.id, "family:" + device.info.family, std::string{}})
+    {
+        const auto it = _surfaceHaptics.find(scope);
+        if (it != _surfaceHaptics.end())
+            return &it->second;
+    }
+    return nullptr;
+}
+
+std::string InputRouter::ContextLayerLocked(const Device& device) const
+{
+    const auto context = _contexts.find(InstanceLocked(device.info.id));
+    if (context == _contexts.end() || context->second.empty())
+        return {};
+    std::string best;
+    int length = -1;
+    auto consider = [&](const std::string& layer) {
+        const int match = ContextLayerMatch(layer, context->second);
+        if (match > length)
+        {
+            length = match;
+            best = layer;
+        }
+    };
+    if (const CompiledSet* set = BindingsForLocked(device))
+        for (const std::string& layer : set->liveLayers)
+            consider(layer);
+    if (const SurfaceHaptics* haptics = SurfaceHapticsForLocked(device))
+        for (const auto& [layer, feel] : haptics->layers)
+            consider(layer);
+    return best;
 }
 
 bool InputRouter::RemoteLocked(const Device& device) const
@@ -423,6 +535,8 @@ bool InputRouter::RemoteLocked(const Device& device) const
 
 bool InputRouter::RaisedLocked(const Device& device, const std::string& layer) const
 {
+    if (IsContextLayer(layer))
+        return layer == ContextLayerLocked(device) && RaisedLocked(device, kDebugLayer);
     if (layer == kDebugLayer && RemoteLocked(device))
         return true;
     return layer == kPlayLayer || std::any_of(device.layers.begin(), device.layers.end(),
@@ -549,6 +663,7 @@ void InputRouter::EvaluateLocked(Device& device, uint64_t now, std::vector<Actio
     {
         device.states.clear();
         device.layers.clear();
+        FeelLocked(device);
         return;
     }
     const std::vector<CompiledBinding>& bindings = set->bindings;
@@ -761,7 +876,30 @@ void InputRouter::EvaluateLocked(Device& device, uint64_t now, std::vector<Actio
         MarkHeldStale(device.values, device.gates, kReleased);
         // Once more with the layers left: the bindings it hid act again (the layers only shrink: this ends)
         EvaluateLocked(device, now, actions);
+        return;
     }
+    FeelLocked(device);
+}
+
+void InputRouter::FeelLocked(Device& device)
+{
+    const SurfaceHaptics* haptics = SurfaceHapticsForLocked(device);
+    if (haptics == nullptr && !device.feelSent)
+        return;  // nothing to say to it
+    // The top layer with a feel; none (play, a disabled device): clicks off, the steps as they were
+    StepsOut feel{device.feelSent ? device.feel.perTurn : StepsOut{}.perTurn, false};
+    const std::vector<std::string> active = ActiveLayersLocked(device);
+    for (auto layer = active.rbegin(); haptics != nullptr && layer != active.rend(); ++layer)
+        if (const LayerHaptics* found = haptics->Find(*layer))
+        {
+            feel = found->steps;
+            break;
+        }
+    if (device.feelSent && feel == device.feel)
+        return;
+    device.feelSent = true;
+    device.feel = feel;
+    _feelQueue.emplace_back(device.info.id, feel);
 }
 
 void InputRouter::TurnLocked(Device& device, const std::string& control, float steps, uint64_t now,
@@ -791,6 +929,8 @@ void InputRouter::TurnLocked(Device& device, const std::string& control, float s
             most = buttons;
         }
     }
+    // The speed counts every turn, bound or not: a binding that comes into force mid-spin starts at the right speed
+    const double rate = device.rates[control].Step(steps, now);
     if (best < 0)
         return;
     const CompiledBinding& chosen = set->bindings[static_cast<size_t>(best)];
@@ -803,7 +943,11 @@ void InputRouter::TurnLocked(Device& device, const std::string& control, float s
         gate.pending = false;
         gate.consumed = true;
     }
-    actions.push_back({device.info.id, chosen.binding.target.name, true, steps});
+    ActionEvent event{device.info.id, chosen.binding.target.name, true, steps};
+    event.turn = true;
+    event.rate = rate;
+    event.params = chosen.binding.options.params;
+    actions.push_back(std::move(event));
 }
 
 void InputRouter::ExpireLocked(uint64_t now, std::vector<ActionEvent>& actions)
@@ -824,7 +968,7 @@ bool InputRouter::DrivesLocked(const HostDeviceId& device, const std::string& in
     if (it == _settings.end())
         return _focus.empty() || _focus == instance;
     const Settings& settings = it->second;
-    if (settings.role != DeviceRole::Player)
+    if (RoleLocked(device) != DeviceRole::Player)
         return false;
     switch (settings.mode)
     {
@@ -871,18 +1015,112 @@ uint64_t InputRouter::Now() const
 
 void InputRouter::Dispatch(const std::vector<ActionEvent>& actions) const
 {
-    if (actions.empty())
-        return;
     ActionSink sink;
+    OutputSink outputs;
+    std::vector<std::pair<HostDeviceId, StepsOut>> feel;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         sink = _actions;
+        outputs = _outputs;
+        feel.swap(_feelQueue);
     }
+    if (outputs)
+        for (const auto& [device, steps] : feel)
+            outputs(device, steps);
     if (!sink)
         return;
     for (const ActionEvent& action : actions)
         sink(action);
 }
+
+void InputRouter::SetOutputSink(OutputSink sink)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _outputs = std::move(sink);
+}
+
+/// endregion </Actions and time>
+
+/// region <Contexts and surface feedback>
+
+void InputRouter::SetContext(const std::string& instance, const std::string& context)
+{
+    std::vector<ActionEvent> actions;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const auto it = _contexts.find(instance);
+        if (it != _contexts.end() && it->second == context)
+            return;
+        std::map<HostDeviceId, std::vector<std::string>> before;
+        for (const auto& [id, device] : _devices)
+            before[id] = ActiveLayersLocked(device);
+        _contexts[instance] = context;
+        const uint64_t now = Now();
+        for (auto& [id, device] : _devices)
+        {
+            if (ActiveLayersLocked(device) == before[id])
+                continue;
+            // Another context layer: what was held is released, a control held across it waits for its release
+            device.epoch++;
+            MarkHeldStale(device.values, device.gates, kReleased);
+            EvaluateLocked(device, now, actions);
+        }
+    }
+    Dispatch(actions);
+}
+
+std::string InputRouter::Context(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _contexts.find(InstanceLocked(device));
+    return it == _contexts.end() ? std::string{} : it->second;
+}
+
+void InputRouter::SetSurfaceHaptics(const std::string& scope, SurfaceHaptics haptics)
+{
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _surfaceHaptics[scope] = std::move(haptics);
+        for (auto& [id, device] : _devices)
+            FeelLocked(device);
+    }
+    Dispatch({});
+}
+
+void InputRouter::ClearSurfaceHaptics(const std::string& scope)
+{
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (_surfaceHaptics.erase(scope) == 0)
+            return;
+        for (auto& [id, device] : _devices)
+            FeelLocked(device);
+    }
+    Dispatch({});
+}
+
+bool InputRouter::Feel(const HostDeviceId& id, LayerHaptics& out) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _devices.find(id);
+    if (it == _devices.end())
+        return false;
+    const SurfaceHaptics* haptics = SurfaceHapticsForLocked(it->second);
+    if (haptics == nullptr)
+        return false;
+    const std::vector<std::string> active = ActiveLayersLocked(it->second);
+    for (auto layer = active.rbegin(); layer != active.rend(); ++layer)
+        if (const LayerHaptics* found = haptics->Find(*layer))
+        {
+            out = *found;
+            return true;
+        }
+    return false;
+}
+
+/// endregion </Contexts and surface feedback>
+
+/// region <Actions and time, continued>
 
 /// endregion </Actions and time>
 

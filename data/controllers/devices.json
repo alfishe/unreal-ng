@@ -60,7 +60,7 @@
       "match": [ { "vid": "0e8f", "pid": ["3013"] } ], "layout": "generic", "images": "generic-db9-stick" },
     { "id": "retrobit-adapter", "name": "Retro-bit adapter", "vendor": "Retro-bit",
       "match": [ { "vid": "1292", "pid": ["4745", "4643", "5346"] } ], "layout": "generic", "images": "generic-unknown" },
-    { "id": "surface-dial", "name": "Surface Dial", "vendor": "Microsoft", "player": false,
+    { "id": "surface-dial", "name": "Surface Dial", "vendor": "Microsoft", "player": false, "role": "debugger-remote",
       "match": [ { "bus": "bt", "vid": "045e", "pid": ["091b"] } ], "layout": "generic", "images": "surface-dial",
       "glyphs": "surface-dial", "controls": ["knob", "push", "touch"] },
 
