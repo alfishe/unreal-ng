@@ -58,7 +58,8 @@ unreal-asm/
                                 disk, and no sjasmplus warning (The Link: 18 of 19 equal, baba5's BABAGS is a later
                                 source than the disk's)
     crosscheck.py               the main sources of a set of images to sjasmplus and to pasmo / z88dk (--targets),
-                                each assembled, the bytes compared
+                                each assembled, the bytes compared (--disk-sets: a directory's images are one set,
+                                zxasm convert --with)
     projectcheck.py             real sjasmplus projects (Z5) through a retro target (--to tasm / alasm / storm ...) and
                                 back: the 64K memory sjasmplus builds from each must stay the same (--project: the main
                                 file with what it INCLUDEs and INCBINs, by `zxasm convert --project`, named for a
@@ -155,6 +156,8 @@ python3 $S/emulator/assemble-in-emulator.py zasm315 ZASM315.trd scratch/PROG.\$a
 export UNREAL_ASM_PASMO=<path to pasmo> UNREAL_ASM_Z80ASM=<path to z88dk-z80asm>
 python3 $S/checks/crosscheck.py scratch/xc disk1.trd disk2.scl ... --targets pasmo,z88dk
 #   equal: 245  no code: 5  pasmo errors: 5  skipped (sjasmplus errors or pages): 164
+python3 $S/checks/crosscheck.py scratch/xc --images-from images.txt --targets pasmo,z88dk --disk-sets
+#   2026-10-21, 171 images: pasmo equal 609, z88dk equal 608 (RARB33: a z80asm limit), skipped 292
 ```
 
 pasmo 0.5.5 writes an empty file when the code spans the whole 64K (its size wraps to 16 bits); such sources show as

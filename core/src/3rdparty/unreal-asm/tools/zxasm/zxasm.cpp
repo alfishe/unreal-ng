@@ -80,7 +80,7 @@ int Usage()
                  "       decode <file> [-o out] [--codec id] [--version v] [--codepage cp] |\n"
                  "       encode <file> --codec id [--version v] [-o out] [--codepage cp] [--line-end lf|crlf|cr] |\n"
                  "       check <file> [--codec id] [--version v] |\n"
-                 "       convert <file|dir|image> --to dialect [--to-version v] [--from dialect] [--z80n] [--project] [--out-codepage cp] [-o out]   (--z80n: ZX Spectrum Next sources; --project: a main source with its INCLUDEs and INCBINs into the directory -o)\n"
+                 "       convert <file|dir|image> --to dialect [--to-version v] [--from dialect] [--z80n] [--project] [--with disk ...] [--out-codepage cp] [-o out]   (--z80n: ZX Spectrum Next sources; --project: a main source with its INCLUDEs and INCBINs into the directory -o; --with: an image's other disks, for the files its sources INCLUDE it lacks)\n"
                  "       files <image.trd|.scl|.fdi|.udi|.td0|.tap|.tzx ...> (decode/detect/encoding/check take --file NAME[.T] for a file in an image) |\n"
                  "       probe <snapshot.sna|.z80|.szx> | extract <snapshot> [--assembler id] [--as text|file] [--to dialect] [-o out] |\n"
                  "       inject <source> <snapshot|disk image|file.$X> [-o out] [--assembler id | --codec id [--version v]]\n"
@@ -128,6 +128,7 @@ struct Args
     bool force = false;
     bool z80n = false;   // convert: the sources are for the ZX Spectrum Next (sjasmplus --zxnext)
     bool project = false;   // convert: the main source with what it INCLUDEs and INCBINs, into a directory
+    std::vector<std::string> with;   // convert of an image: other disks of its set, the files its sources INCLUDE it lacks
 };
 
 bool Parse(int argc, char** argv, Args& args)
@@ -152,6 +153,13 @@ bool Parse(int argc, char** argv, Args& args)
         if (a == "--project")
         {
             args.project = true;
+            continue;
+        }
+        if (a == "--with")
+        {
+            if (i + 1 >= argc)
+                return false;
+            args.with.push_back(argv[++i]);
             continue;
         }
         if (a == "--show")
@@ -390,6 +398,25 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
         std::cerr << "zxasm: " << (error.empty() ? "convert of an image needs --to and -o <directory>" : error) << "\n";
         return 2;
     }
+    // Other disks of the set (--with): their files the image lacks by name, for the INCLUDEs and INCBINs of its sources
+    // (ZAsm's own sources on C33_F9.trd include ovldef from the program disk Z33_F9.trd)
+    std::set<std::string> own;
+    for (const containers::TrdosFile& f : files)
+        own.insert(f.TrimmedName());
+    std::set<std::string> present = own;   // the first disk naming a file gives it
+    for (const std::string& disk : args.with)
+    {
+        std::vector<uint8_t> bytes;
+        std::vector<containers::TrdosFile> more;
+        if (!ReadFile(disk, bytes) || !ReadImage(disk, bytes, more, error))
+        {
+            std::cerr << "zxasm: " << (error.empty() ? "cannot read " + disk : error) << "\n";
+            return 2;
+        }
+        for (containers::TrdosFile& f : more)
+            if (present.insert(f.TrimmedName()).second)
+                files.push_back(std::move(f));
+    }
     EncodeOptions encodeOptions;
     if (!OutputEncodeOptions(args, encodeOptions))
         return 2;
@@ -422,7 +449,35 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
         const containers::TrdosFile* file = FindBinary(files, name);
         return file ? std::optional<uint64_t>(file->data.size()) : std::nullopt;
     };
-    const ProjectResult converted = ConvertProject(project, args.to, options);
+    ProjectResult converted = ConvertProject(project, args.to, options);
+    // Of the other disks' files only those the image's sources INCLUDE are written, converted again without the rest
+    // (an other disk's main source would take the constants of the IFUSED tests of a file it INCLUDEs)
+    if (!args.with.empty())
+    {
+        const auto ownFile = [&own](const std::string& name) { return own.count(name) || own.count(name.substr(0, name.rfind('~'))); };
+        std::set<std::string> written;
+        std::vector<std::string> pending;
+        for (const ProjectFile& f : converted.files)
+            if (ownFile(f.name) && written.insert(f.name).second)
+                pending.push_back(f.name);
+        while (!pending.empty())
+        {
+            const std::string name = pending.back();
+            pending.pop_back();
+            for (const ProjectFile& f : converted.files)
+                if (f.name == name)
+                    for (const SourceLine& line : f.document.lines)
+                    {
+                        const size_t at = line.text.find("INCLUDE \"");
+                        const size_t close = at == std::string::npos ? at : line.text.find(".asm\"", at + 9);
+                        if (close != std::string::npos && written.insert(line.text.substr(at + 9, close - at - 9)).second)
+                            pending.push_back(line.text.substr(at + 9, close - at - 9));
+                    }
+        }
+        std::vector<ProjectFile> reached = project;
+        std::erase_if(reached, [&written](const ProjectFile& f) { return !written.count(f.name); });
+        converted = ConvertProject(reached, args.to, options);
+    }
     PrintDiagnostics(converted.diagnostics);
     // A dialect without its own codec (pasmo) is a text file in the document's code page (texts are program bytes)
     const ISourceCodec* target = registry.Find(args.to) ? registry.Find(args.to) : registry.Find("text");

@@ -50,6 +50,8 @@ zxasm convert  'GAME.$H' --to sjasmplus -o game.asm
 zxasm convert  disk.trd --to sjasmplus -o out/ # the whole project: INCLUDE resolved, INCBIN files extracted,
                                                 # ZX-ASM's LOADTAB tables read from the image
 zxasm convert  project/ --codec asm80 --to sjasmplus -o out/   # a host directory (ASM80) as one project
+zxasm convert  C33_F9.trd --with Z33_F9.trd --to pasmo -o out/  # a set of disks: what the sources INCLUDE that their
+                                                # disk lacks comes from the others (the first disk naming a file)
 zxasm check    'GAME.$H'                        # decode + encode: byte-exact?
 ```
 

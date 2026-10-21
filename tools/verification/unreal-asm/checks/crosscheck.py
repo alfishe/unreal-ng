@@ -3,13 +3,16 @@
 sjasmplus and to the other targets (pasmo, z88dk's z80asm), each is assembled, and the memory each assembler built is
 compared byte for byte (sjasmplus' as the reference: its conversions are checked against the original assemblers).
 
-    crosscheck.py <out dir> [<image.trd|.scl>...] [--images-from LIST] [--targets pasmo,z88dk] [--zxasm PATH]
-                  [--sjasmplus PATH] [--pasmo PATH] [--z80asm PATH]
+    crosscheck.py <out dir> [<image.trd|.scl>...] [--images-from LIST] [--targets pasmo,z88dk] [--disk-sets]
+                  [--zxasm PATH] [--sjasmplus PATH] [--pasmo PATH] [--z80asm PATH]
 
 A main source is a file no other file of its image INCLUDEs. Sources sjasmplus does not assemble without errors, or
 whose sjasmplus form needs pages (a DEVICE other than NOSLOT64K, the flat 64K SAVEBIN needs), are skipped. pasmo
 0.5.5 writes an empty file when the code spans the whole 64K (its size wraps to 16 bits): build it with that one line
 fixed or such sources show as "pasmo wrote nothing".
+--disk-sets: the images of one directory are one set of disks, converted with zxasm convert --with: a file a source
+INCLUDEs that its disk lacks comes from another disk of the set (ZAsm's own sources on C33_F9.trd include ovldef, and
+its macros, from the program disk Z33_F9.trd).
 z80asm writes one binary per section (every ORG opens one) and their addresses to its map: they are put together.
 zxasm: --zxasm or UNREAL_ASM_ZXASM; sjasmplus: --sjasmplus or UNREAL_ASM_SJASMPLUS; pasmo: --pasmo or UNREAL_ASM_PASMO;
 z80asm: --z80asm or UNREAL_ASM_Z80ASM.
@@ -120,6 +123,36 @@ def z80asm_image(z80asm, directory, name):
     return image
 
 
+def convert(zxasm, image, base, targets, others=()):
+    """{target: directory} of an image converted to sjasmplus and the targets, under base (others: the other disks of
+    its set, zxasm convert --with)"""
+    shutil.rmtree(base, ignore_errors=True)
+    os.makedirs(base)
+    source = image
+    if image.lower().endswith('.scl'):
+        source = os.path.join(base, 'image.trd')
+        open(source, 'wb').write(zxdisk.scl2trd(open(image, 'rb').read()))
+    with_disks = []
+    for k, other in enumerate(others):
+        if other.lower().endswith('.scl'):
+            path = os.path.join(base, f'with{k}.trd')
+            open(path, 'wb').write(zxdisk.scl2trd(open(other, 'rb').read()))
+            other = path
+        with_disks += ['--with', other]
+    dirs = {}
+    for target in ['sjasmplus'] + targets:
+        dirs[target] = os.path.join(base, target)
+        subprocess.run([zxasm, 'convert', source, '--to', target, '-o', dirs[target]] + with_disks, capture_output=True)
+    return dirs
+
+
+def disk_set(image):
+    """The other images in the directory of an image (one set of disks)"""
+    directory = os.path.dirname(image) or '.'
+    return sorted(os.path.join(os.path.dirname(image), f) for f in os.listdir(directory)
+                  if f.lower().endswith(('.trd', '.scl')) and f != os.path.basename(image))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('out')
@@ -130,6 +163,7 @@ def main():
     parser.add_argument('--pasmo', default=os.environ.get('UNREAL_ASM_PASMO', 'pasmo'))
     parser.add_argument('--z80asm', default=os.environ.get('UNREAL_ASM_Z80ASM', 'z88dk-z80asm'))
     parser.add_argument('--targets', default='pasmo')
+    parser.add_argument('--disk-sets', action='store_true')
     args = parser.parse_args()
     if args.images_from:
         args.images += [line.rstrip('\n') for line in open(args.images_from) if line.strip()]
@@ -138,18 +172,8 @@ def main():
     tally = collections.Counter()
     for n, image in enumerate(args.images, 1):
         index.write(f'{n} {image}\n')
-        base = os.path.join(args.out, str(n))
-        shutil.rmtree(base, ignore_errors=True)
-        os.makedirs(base)
-        source = image
-        if image.lower().endswith('.scl'):
-            source = os.path.join(base, 'image.trd')
-            open(source, 'wb').write(zxdisk.scl2trd(open(image, 'rb').read()))
-        dirs = {}
         targets = args.targets.split(',')
-        for target in ['sjasmplus'] + targets:
-            dirs[target] = os.path.join(base, target)
-            subprocess.run([args.zxasm, 'convert', source, '--to', target, '-o', dirs[target]], capture_output=True)
+        dirs = convert(args.zxasm, image, os.path.join(args.out, str(n)), targets, disk_set(image) if args.disk_sets else ())
         if not all(os.path.isdir(dirs[t]) for t in ['sjasmplus'] + targets):
             continue
         sources = sorted(f for f in os.listdir(dirs['sjasmplus']) if f.endswith('.asm'))
