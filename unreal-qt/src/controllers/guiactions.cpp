@@ -211,13 +211,22 @@ GuiActions::GuiActions(EmulatorBinding* binding, GuiActionHooks hooks, QObject* 
             return {};
         });
 
+    // The on-screen keyboard window (the main window's)
+    std::function<void()> toggleKeyboard = _hooks.toggleKeyboard;
+    Add("osd.keyboard", Tr("On-screen keyboard"), machine, ValueKind::Press,
+        [toggleKeyboard](const std::string&, const actions::ActionValue&, const actions::ActionOrigin&) -> QString {
+            if (toggleKeyboard)
+                toggleKeyboard();
+            return {};
+        });
+
     // Stubs of the catalogue: a binding to one says why instead of doing nothing
     actions::ActionRules later;
     later.unavailable = [](Emulator&, const actions::ActionValue&) { return std::string("not available yet"); };
     later.unavailableError = "Not Implemented";
     for (const char* id : {"dbg.breakpoint_toggle_pc", "dbg.labels_toggle"})
         Add(id, QString::fromLatin1(id), debug, ValueKind::Press, nullptr, later);
-    for (const char* id : {"osd.keyboard", "osd.quick_menu"})
+    for (const char* id : {"osd.quick_menu"})
         Add(id, QString::fromLatin1(id), machine, ValueKind::Press, nullptr, later);
 }
 

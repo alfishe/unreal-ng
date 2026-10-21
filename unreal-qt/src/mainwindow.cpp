@@ -77,6 +77,7 @@
 #include "cardslots/slotchangecontroller.h"
 #include "cardslots/slotswindow.h"
 #include "nextlayers/nextlayerswindow.h"
+#include "osdkeyboard/osdkeyboardwindow.h"
 #include "ui/temporaleffectsdialog.h"
 #include "hud/qt/hudoverlaywrapper.h"
 #include "hud/qt/hudsettingsdialog.h"
@@ -372,7 +373,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _guiActions = std::make_unique<GuiActions>(
         m_binding, GuiActionHooks{debuggerWindow, [this] { handleDebuggerToggled(true); },
                                   [this] { handleScreenshotRequested(); },
-                                  [this](const QString& text) { statusBar()->showMessage(text, 3000); }});
+                                  [this](const QString& text) { statusBar()->showMessage(text, 3000); },
+                                  [this] { handleOsdKeyboardToggled(!_osdKeyboardWindow || !_osdKeyboardWindow->isVisible()); }});
     _controllersDialog->setActions(&_guiActions->Registry());
     connect(_hostControllers, &HostControllers::actionTriggered, this,
             [this](const QString& action, bool pressed, float value, const QString& device) {
@@ -426,6 +428,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _nextLayersWindow = new NextLayersWindow();
     _nextLayersWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(_nextLayersWindow, Qt::RightEdge);
+
+    // The on-screen keyboard: a tool window of its own, hidden until View -> On-screen Keyboard or osd.keyboard
+    _osdKeyboardWindow = new OsdKeyboardWindow(this);
+    _osdKeyboardWindow->setBinding(m_binding);
 
     // MIDI activity: hidden by default, Tools -> MIDI Activity
     _midiActivityWindow = new MidiActivityWindow();
@@ -525,6 +531,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::slotsWindowToggled, this, &MainWindow::handleSlotsWindowToggled);
     connect(_menuManager, &MenuManager::nextLayersToggled, this, &MainWindow::handleNextLayersToggled);
     connect(_nextLayersWindow, &NextLayersWindow::visibilityChanged, _menuManager, &MenuManager::setNextLayersChecked);
+    connect(_menuManager, &MenuManager::osdKeyboardToggled, this, &MainWindow::handleOsdKeyboardToggled);
+    connect(_osdKeyboardWindow, &OsdKeyboardWindow::visibilityChanged, _menuManager, &MenuManager::setOsdKeyboardChecked);
     connect(_slotsWindow, &SlotsWindow::visibilityChanged, _menuManager, &MenuManager::setSlotsWindowChecked);
     connect(_menuManager, &MenuManager::midiActivityToggled, this, &MainWindow::handleMidiActivityToggled);
     connect(_midiActivityWindow, &MidiActivityWindow::visibilityChanged, _menuManager, &MenuManager::setMidiActivityChecked);
@@ -3844,6 +3852,12 @@ void MainWindow::handleNextLayersToggled(bool visible)
         _nextLayersWindow->setVisible(visible);
 }
 
+void MainWindow::handleOsdKeyboardToggled(bool visible)
+{
+    if (_osdKeyboardWindow)
+        _osdKeyboardWindow->setVisible(visible);
+}
+
 void MainWindow::handleSlotsWindowToggled(bool visible)
 {
     if (_slotsWindow)
@@ -3907,7 +3921,7 @@ void MainWindow::openStressWindows(const QString& list)
         {"media", &MainWindow::handleMediaPanelToggled},       {"network", &MainWindow::handleNetworkWindowToggled},
         {"slots", &MainWindow::handleSlotsWindowToggled},      {"nextlayers", &MainWindow::handleNextLayersToggled},      {"traffic", &MainWindow::handleTrafficWindowToggled},
         {"midi", &MainWindow::handleMidiActivityToggled},      {"tape", &MainWindow::handleTapeManagerToggled},
-        {"log", &MainWindow::handleLogWindowToggled},
+        {"log", &MainWindow::handleLogWindowToggled},          {"keyboard", &MainWindow::handleOsdKeyboardToggled},
     };
     for (const QString& rawName : list.split(',', Qt::SkipEmptyParts))
     {

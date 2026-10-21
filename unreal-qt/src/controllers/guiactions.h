@@ -4,7 +4,7 @@
 /// @brief The Qt client's part of the host actions (control surfaces architecture §2, §3): the core
 /// actions::ActionRegistry (core/src/emulator/actions) holds the catalogue and runs every action on the instance's
 /// actions worker; this registers the GUI ones there (the debugger window and its panes, the screenshot to the
-/// clipboard, the analog scrub, the OSD stubs) and turns a device's action events into registry calls with the origin
+/// clipboard, the analog scrub, the on-screen keyboard, the OSD stubs) and turns a device's action events into registry calls with the origin
 /// of the device. GUI executors run on the GUI thread: the worker posts them and answers at once.
 ///
 /// Lifetime: the registrations end with this object; a GUI call still queued then finds the alive token false and does
@@ -29,6 +29,7 @@ struct GuiActionHooks
     std::function<void()> showDebugger;
     std::function<void()> screenshot;
     std::function<void(const QString&)> notice;  ///< the status bar
+    std::function<void()> toggleKeyboard;        ///< the on-screen keyboard shown / hidden
 };
 
 class GuiActions : public QObject

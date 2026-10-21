@@ -60,6 +60,7 @@ class GuiActions;
 class SlotChangeController;
 class SlotsWindow;
 class NextLayersWindow;
+class OsdKeyboardWindow;
 class HudOverlayWrapper;
 class HudModel;
 class TtdWidget;
@@ -187,6 +188,7 @@ private slots:
     void handleNetworkWindowToggled(bool visible);
     void handleSlotsWindowToggled(bool visible);
     void handleNextLayersToggled(bool visible);
+    void handleOsdKeyboardToggled(bool visible);
     void handleMidiActivityToggled(bool visible);
     void handleTrafficWindowToggled(bool visible);
     void handleFt812DebugToggled(bool visible);
@@ -421,6 +423,7 @@ private:
     std::unique_ptr<GuiActions> _guiActions;            // the GUI host actions in the core registry; device events
     NetworkWindow* networkWindow = nullptr;
     NextLayersWindow* _nextLayersWindow = nullptr;          // View -> Next Layers (per-layer capture view)
+    OsdKeyboardWindow* _osdKeyboardWindow = nullptr;        // View -> On-screen Keyboard, the osd.keyboard action
     SlotsWindow* _slotsWindow = nullptr;                   // Machine -> Slots (ZX-bus slots)
     MidiActivityWindow* _midiActivityWindow = nullptr;     // Tools -> MIDI Activity
     SlotChangeController* _slotChangeController = nullptr;   // plan, confirm, restart, Undo (every slot change)

@@ -20,10 +20,9 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from generate import QTRENDER, SCRATCH  # noqa: E402
+from generate import OUT, QTRENDER, SCRATCH  # noqa: E402
 from styles.common import LAYERS  # noqa: E402
 
-OUT = HERE / "keyboards" / "out"
 ATLAS = SCRATCH / "atlas"
 SHEETS = HERE / "atlas"
 LABEL = "/System/Library/Fonts/Helvetica.ttc"
