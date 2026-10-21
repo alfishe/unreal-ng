@@ -140,7 +140,7 @@ Rgb RenderFace(const Face& f, const std::string& fallbackTitle, bool pressed, bo
     const bool hasLabel = !label.empty();
     if (!f.image.empty())
     {
-        if (auto src = LoadImage(f.image))
+        if (auto src = LoadImageRef(f.image))
         {
             const auto* p = src->At(0, 0);
             im = FitImage(*src, s, s, FitByName(f.fit).value_or(Fit::Contain), p[0], p[1], p[2]);
@@ -366,8 +366,10 @@ Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string
         }
         else if (c == "image" && !page.strip->image.empty())
         {
-            if (auto src = LoadImage(page.strip->image))
-                Blit(im, FitImage(*src, cw, areaH, Fit::Contain), contentX, 0);
+            // a picture takes its whole area, edge to edge: from the crumbs (or the left edge) to the right edge
+            const int x0 = page.crumbs == Crumbs::Strip ? contentX : 0, iw = w - x0;
+            if (auto src = LoadImageRef(page.strip->image); src && iw > 0)
+                Blit(im, FitImage(*src, iw, areaH, Fit::Contain), x0, 0);
         }
     }
     if (autoExitLeft >= 0 && page.autoExit > 0)

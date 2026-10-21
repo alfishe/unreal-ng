@@ -111,8 +111,9 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
         const QString action = QString::fromStdString(event.action);
         const bool pressed = event.pressed;
         const float value = event.value;
+        const QString device = QString::fromStdString(event.device);
         QMetaObject::invokeMethod(
-            this, [this, action, pressed, value] { emit actionTriggered(action, pressed, value); },
+            this, [this, action, pressed, value, device] { emit actionTriggered(action, pressed, value, device); },
             Qt::QueuedConnection);
     });
     _service->StartNative();

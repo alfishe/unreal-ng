@@ -192,6 +192,7 @@ set(COMMON_SOURCES
     src/api/media_api.cpp
     src/api/slots_api.cpp
     src/api/controllers_api.cpp
+    src/api/actions_api.cpp
     src/api/cdaudio_api.cpp
     src/api/snapshot_api.cpp
     src/common/upload_helper.h
@@ -216,6 +217,9 @@ set(COMMON_SOURCES
     src/api/asm_api.cpp
     src/emulator_websocket.cpp
     src/emulator_websocket.h
+    src/api-websocket.cpp
+    src/api-websocket.h
+    src/common/request_gates.h
     src/companion-event-hub.cpp
     src/companion-event-hub.h
     src/debug-event-hub.cpp

@@ -12,7 +12,10 @@
 #include <string>
 #include <vector>
 
+namespace actions
+{
 class ActionRegistry;
+}
 class BindingTable;
 class ControllerPicture;
 class HostControllers;
@@ -31,7 +34,7 @@ class ControllersDialog : public QWidget
 public:
     explicit ControllersDialog(HostControllers* host, QWidget* parent = nullptr);
     /// The host actions the bindings offer by name
-    void setActions(const ActionRegistry* actions);
+    void setActions(const actions::ActionRegistry* actions);
 
 signals:
     void visibilityChanged(bool visible);

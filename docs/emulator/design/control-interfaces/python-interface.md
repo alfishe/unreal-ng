@@ -699,6 +699,22 @@ for device in h["devices"]:
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`; the host side needs the Qt client
 (a headless process answers `unavailable`).
 
+### Host Actions
+
+`Emulator` methods over the core `ActionRegistry` - the same ids, values and errors as the CLI `action`, the WebAPI
+`/controllers/actions`, MCP `actions` and Lua ([command-interface.md section 16](./command-interface.md#16-host-actions)).
+A changing action passes the script gate as the script's own control calls (an implicit session without
+`take_control`); the call waits for the action with the GIL released.
+
+```python
+emu.actions()["actions"]                   # [{id, label, group, kind, held, gui, scope, needs_pause, available, ...}]
+emu.action("run.pause_toggle")             # a press
+emu.action("run.step_in")                  # {"ok": True, "result": {"pc": ..., "state": "paused", ...}}
+emu.action("ttd.jog_frames", -10)          # a delta: signed steps
+emu.action("run.turbo_hold", False)        # the release of a held action
+emu.action("run.n_scanlines", count=8)     # parameters as keywords
+```
+
 ### Disk Operations
 
 `Emulator` methods for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands and the WebAPI `/disk/{drive}/*` endpoints.

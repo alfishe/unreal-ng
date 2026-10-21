@@ -74,6 +74,12 @@ void TestModels()
         CHECK(FindModel(kElgatoVid, m.pid) == &m);
         CHECK_EQ(m.rows * m.cols, m.keys);
     }
+    // every model has a token FindModelByName takes back; every alias names a model
+    for (auto& m : AllModels())
+        CHECK(FindModelByName(ModelToken(m)) == &m && ModelToken(m).find("0x") == std::string::npos);
+    for (const auto& a : ModelAliases())
+        CHECK(FindModelByName(std::string(a.name)) && FindModelByName(std::string(a.name))->pid == a.pid);
+    CHECK(ModelToken(ModelOf(0x0080)) == "classic" && ModelToken(ModelOf(0x00C6)) == "plusxl");
     CHECK(FindModel(0x1234, 0x0080) == nullptr);
     CHECK(FindModel(kElgatoVid, 0xFFFF) == nullptr);
     const Model& xl = ModelOf(0x00C6);
@@ -922,8 +928,10 @@ int main()
     TestSubtrees();
     TestWebSocket();
     TestDeckHub();
+    TestConformance();
     TestDaemonDecks();
     TestHotplug();
+    TestIdle();
     std::printf("\n%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

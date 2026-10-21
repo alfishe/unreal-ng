@@ -108,6 +108,18 @@ void TestSubtrees()
               (*ops::FindNode(*res, "dbg2"))["type"] == "action");  // one file twice, no clash
         CHECK(dbg && dbg->contains("included_from"));
         CHECK(files.size() == 3);
+        // the marks off (scenario resolve, the run file, a copy): none left anywhere
+        json clean = *res;
+        io::StripIncludeMarks(clean["root"]);
+        CHECK(clean.dump().find("included_from") == std::string::npos && Parses(clean));
+        CHECK(ops::FindNode(clean, "dbg.bp.clear"));
+        // a copy of an included node pasted into the host: ids clear of the ones the include brings in
+        json h = host, node = *ops::FindNode(clean, "dbg.step");
+        node.erase("at");
+        auto ins = ops::InsertNode(h, "home", std::nullopt, node, &*res);
+        CHECK(ins.ok && ins.id == "dbg.step-2");
+        ins = ops::InsertNode(h, "home", std::nullopt, node);  // the raw host alone does not hold it
+        CHECK(ins.ok && ins.id == "dbg.step");
     }
     // nested include + override of the node
     Write(dir / "lib" / "outer.deck.json",

@@ -4,6 +4,7 @@
 #include <map>
 #include <set>
 
+#include "sdb/actions.h"
 #include "sdb/format.h"
 
 namespace sdb::scn
@@ -285,6 +286,11 @@ struct Validator
         {
             if (!j.contains("combo") && !j.contains("text"))
                 Error(id, "keys needs 'combo' or 'text'");
+            std::string why;
+            if (j.contains("combo") && j["combo"].is_string() && !j["combo"].get<std::string>().empty() &&
+                j["combo"].get<std::string>().find('$') == std::string::npos &&
+                !ParseKeyCombo(j["combo"].get<std::string>(), &why))
+                Error(id, "keys: " + why);
         }
         else if (a.kind == "include")
             Error(id, "include of '" + j.value("file", "") + "' is not resolved (load the file with its includes)");
@@ -437,6 +443,14 @@ std::optional<Crumbs> CrumbsByName(std::string_view s)
     if (s == "none")
         return Crumbs::None;
     return std::nullopt;
+}
+
+std::span<const std::string_view> ActionKinds()
+{
+    static constexpr std::string_view kKinds[] = {"webapi", "http",  "multi",    "toggle",     "first",
+                                                  "dir",    "delay", "ttd_seek", "run_toggle", "shell",
+                                                  "open",   "keys",  "nav",      "brightness"};
+    return kKinds;
 }
 
 std::optional<Scenario> Parse(const json& doc, std::vector<Issue>& issues)
@@ -676,17 +690,7 @@ json ToJson(const Scenario& s)
         st["navigation"] = nav;
     json j{{"format", "streamdeck-scenario"}, {"version", kFormatVersion}, {"name", s.name}};
     if (s.model)
-    {
-        std::string name;
-        for (const char* n : {"original", "classic", "mk2", "scissor", "module15", "xl", "xl2", "module32", "neo",
-                              "plus", "plusxl", "mini", "mini2", "module6", "pedal"})
-            if (FindModelByName(n) == s.model)
-            {
-                name = n;
-                break;
-            }
-        j["model"] = name.empty() ? sdb::Format("0x{:04X}", s.model->pid) : name;
-    }
+        j["model"] = ModelToken(*s.model);
     if (!st.empty())
         j["settings"] = st;
     j["root"] = ToJson(s.root);

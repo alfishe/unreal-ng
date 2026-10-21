@@ -89,11 +89,7 @@ const char* DeckClient::StateName(State s)
 
 QString DeckClient::ModelToken(const Model& m)
 {
-    for (const char* alias : {"plusxl", "plus", "xl", "xl2", "classic", "neo", "mini", "mini2", "original", "original2",
-                              "scissor", "pedal", "module6", "module15", "module32", "discord"})
-        if (FindModelByName(alias) == &m)
-            return QString::fromLatin1(alias);
-    return QStringLiteral("%1").arg(m.pid, 4, 16, QLatin1Char('0'));
+    return QString::fromStdString(sdb::ModelToken(m));
 }
 
 QByteArray DeckClient::JoinPayload(const Role& role, const QString& serial)

@@ -1,8 +1,14 @@
 // Properties of the selected node (or of the scenario when nothing is selected). Every edit is one undo step;
 // the JSON box at the bottom edits anything the form does not show (dials, multi steps, toggle actions ...).
 #pragma once
+#include <QStringList>
 #include <QWidget>
 #include <nlohmann/json.hpp>
+#include <string>
+
+// The action kind box: the engine's kinds (sdb::scn::ActionKinds), and what a node's "do" becomes when one is picked.
+[[nodiscard]] QStringList ActionKindItems();
+[[nodiscard]] nlohmann::json ActionTemplate(const std::string& kind);
 
 class EditorDocument;
 class QPlainTextEdit;

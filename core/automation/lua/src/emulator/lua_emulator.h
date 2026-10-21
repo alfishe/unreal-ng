@@ -33,6 +33,8 @@
 #include <emulator/media/mediacontrol.h>
 #include <emulator/slots/slotcontrol.h>
 #include <emulator/io/controllers/controllercontrol.h>
+#include <emulator/actions/actionregistry.h>
+#include <emulator/execution/automationgate.h>
 #include <emulator/sound/midi/midicontrol.h>
 #ifdef ENABLE_CONTROLLERS
 #include "hostinputcontrol.h"
@@ -1845,6 +1847,123 @@ public:
                 return StateNodeToLua(s, none);
             }
             return StateNodeToLua(s, controllers::ControllerControl(emulator->GetContext()).Execute(request).ToValue());
+        });
+        // actions() -> {instance, actions = {{id, label, group, kind, held, gui, scope, needs_pause, available, error,
+        // reason}, ...}}; action(id, [value], [params]) -> {ok, action, error, message, result}: the core
+        // ActionRegistry (control surfaces actions.md §6), as the CLI `action`, WebAPI /controllers/actions, MCP
+        // `actions` and Python actions() / action(). value by the action's kind: nil (a press), true / false, a number
+        // (delta steps or a 0..1 level), a string (text), or a table {pressed, delta, rate, level, text}. A changing
+        // action passes the script gate as the script's own control calls (an implicit session without one)
+        lua.set_function("actions", [this](sol::this_state s) {
+            Emulator* emulator = effectiveEmulator();
+            const std::string instance = emulator ? emulator->GetId() : std::string();
+            actions::ActionOrigin origin;
+            origin.origin = execution::Origin::Lua;
+            origin.identity = "lua|script";
+            StateNode body = StateNode::Object();
+            body["instance"] = instance;
+            StateNode& rows = body["actions"];
+            rows = StateNode::Array();
+            for (const actions::ActionStatus& status : actions::ActionRegistry::Instance().Statuses(instance, origin))
+            {
+                StateNode row = StateNode::Object();
+                row["id"] = status.info.id;
+                row["label"] = status.info.label;
+                row["group"] = status.info.group;
+                row["kind"] = actions::ValueKindName(status.info.kind);
+                row["held"] = status.info.held;
+                row["gui"] = status.info.gui;
+                row["scope"] = automation_gate::CompanionScopeName(status.scope);
+                row["needs_pause"] = status.needsPause;
+                row["available"] = status.available;
+                if (!status.available)
+                {
+                    row["error"] = status.error;
+                    row["reason"] = status.reason;
+                }
+                rows.push(std::move(row));
+            }
+            return StateNodeToLua(s, body);
+        });
+        lua.set_function("action", [this](sol::this_state s, const std::string& id, sol::optional<sol::object> rawValue,
+                                          sol::optional<sol::table> params) {
+            auto fail = [&s, &id](const std::string& error, const std::string& message) {
+                StateNode out = StateNode::Object();
+                out["ok"] = false;
+                out["action"] = id;
+                out["error"] = error;
+                out["message"] = message;
+                return StateNodeToLua(s, out);
+            };
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return fail("Not Found", "no emulator selected");
+            actions::ActionRegistry& registry = actions::ActionRegistry::Instance();
+            const std::optional<actions::ActionInfo> info = registry.Find(id);
+            if (!info)
+                return fail("Not Found", "unknown action '" + id + "'");
+            auto toNode = [](const sol::object& value) -> StateNode {
+                if (value.is<bool>())
+                    return StateNode(value.as<bool>());
+                if (value.get_type() == sol::type::number)
+                {
+                    const double number = value.as<double>();
+                    return number == std::floor(number) ? StateNode(static_cast<int64_t>(number)) : StateNode(number);
+                }
+                if (value.is<std::string>())
+                    return StateNode(value.as<std::string>());
+                return StateNode();
+            };
+            actions::ActionValue value;
+            value.kind = info->kind;
+            std::string error;
+            if (rawValue && rawValue->valid() && rawValue->get_type() != sol::type::lua_nil)
+            {
+                const sol::object& raw = *rawValue;
+                if (raw.is<bool>())
+                {
+                    value.pressed = raw.as<bool>();
+                    value.level = value.pressed ? 1.0 : 0.0;
+                }
+                else if (raw.get_type() == sol::type::number)
+                {
+                    value.delta = raw.as<double>();
+                    value.level = std::clamp(raw.as<double>(), 0.0, 1.0);
+                    value.pressed = value.level > 0;
+                }
+                else if (raw.is<std::string>())
+                {
+                    if (!actions::ValueFromText(info->kind, raw.as<std::string>(), value, error))
+                        return fail("Bad Request", error);
+                }
+                else if (raw.get_type() == sol::type::table)
+                {
+                    const sol::table table = raw.as<sol::table>();
+                    value.pressed = table.get_or("pressed", true);
+                    value.delta = table.get_or("delta", 0.0);
+                    value.rate = table.get_or("rate", 0.0);
+                    value.level = std::clamp(table.get_or("level", 0.0), 0.0, 1.0);
+                    value.text = table.get_or<std::string>("text", "");
+                }
+                else
+                    return fail("Bad Request", "value: nil, a boolean, a number, a string or a table");
+            }
+            if (params)
+                for (const auto& [key, item] : *params)
+                    if (key.is<std::string>())
+                        value.params[key.as<std::string>()] = toNode(item);
+            actions::ActionOrigin origin;
+            origin.origin = execution::Origin::Lua;
+            origin.identity = "lua|script";
+            const actions::ActionResult result = registry.Run(id, std::move(value), emulator->GetId(), origin);
+            StateNode out = StateNode::Object();
+            out["ok"] = result.ok;
+            out["action"] = id;
+            if (!result.ok)
+                out["error"] = result.error;
+            out["message"] = result.message;
+            out["result"] = result.body;
+            return StateNodeToLua(s, out);
         });
         // controllers_host(verb, {options}) -> the reply table every surface returns: the host game controllers
         // (devices, profiles, bindings, haptics, rumble; HostInputControl, the process's, not the machine's)

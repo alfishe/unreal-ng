@@ -21,7 +21,10 @@
 #include "profiles/json.h"
 #endif
 
+namespace actions
+{
 class ActionRegistry;
+}
 class HostControllers;
 class QComboBox;
 class QLabel;
@@ -44,7 +47,7 @@ public:
 
     explicit BindingTable(HostControllers* host, QWidget* parent = nullptr);
 
-    void setActions(const ActionRegistry* actions)
+    void setActions(const actions::ActionRegistry* actions)
     {
         _actions = actions;
     }
@@ -159,7 +162,7 @@ private:
     std::string _pendingReplace;
 #endif
     HostControllers* _host = nullptr;
-    const ActionRegistry* _actions = nullptr;
+    const actions::ActionRegistry* _actions = nullptr;
     Device _device;
 
     QTabBar* _layers = nullptr;

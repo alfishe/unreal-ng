@@ -7,8 +7,12 @@
 
 ## Phases
 
-Depends on the control-surfaces phases (branch `control-surfaces-design`): S1 core `ActionRegistry` + RunControl +
-`/controllers/actions`; S2 `ContextState`, TTD published cursor, `seek_by`; S4 the surface protocol, served as the `surface` topic of `/api/v1/ws` (D7).
+Depends on the control-surfaces phases ([control surfaces TODO](../2026-10-18-control-surfaces/TODO.md)): S1 core
+`ActionRegistry` + RunControl + `/controllers/actions` - **done 2026-10-20** (worktree `scratch/wt-control-surfaces-s1`,
+not landed yet): the registry with one worker per instance and the gates of every origin, `RunControl`, REST, MCP
+`actions`, CLI `action`, Lua / Python `action()`, and `/api/v1/ws` with calls (`call`, `auth`; topics come with S4);
+S2 `ContextState`, TTD published cursor, `seek_by`; S4 the surface protocol, served as the `surface` topic of
+`/api/v1/ws` (D7).
 
 | # | Phase | Needs | State |
 |:--|:--|:--|:--|
@@ -20,8 +24,8 @@ Depends on the control-surfaces phases (branch `control-surfaces-design`): S1 co
 | SD5 | Daemon surface client, `action` kind, state-bound faces, contexts on menus, activity; default scenario v2 + its generator | SD3, SD4 | open |
 | SD6 | Registry actions for the scenario's REST groups ([migration.md §4](migration.md#4-rest-paths-to-action-ids)), about 40 | S1 | open |
 | SD7 | Supervision in unreal-qt, settings page, pairing from the deck and the studio | SD5 | open |
-| SD8 | Windows and Linux ports, udev rule, packaging on all three | SD5 | ports done 2026-10-20: the daemon, sdctl, the studio and both test binaries build with zero warnings and pass (1011 + 94 checks) on Linux gcc 14 (the CI image, `docker/linux/build.sh --streamdeck --test`), MSVC 2019 and MinGW gcc 15, and on macOS; hidraw backend + `companions/streamdeck/linux/70-unreal-streamdeck.rules`, the DEB installs the daemon, the studio and the rule. Fixes on the way: a use-after-free on reload (the navigator read the replaced scenario), the studio's Leave lost to a reset on Windows, `shell` / `open` on Windows (cmd.exe, output, timeout, job object). Open: DEB/AppImage/ZIP/DMG staging of the daemon and the studio beyond the DEB install rules, the AppImage rule text in the settings page (SD7), the parent watch on Windows / Linux, a hardware run on Windows and Linux (SD9) |
-| SD9 | Conformance suite in CI, hardware acceptance ACC-1 … ACC-7 | SD7, SD8 | open |
+| SD8 | Windows and Linux ports, udev rule, packaging on all three | SD5 | ports done 2026-10-20: the daemon, sdctl, the studio and both test binaries build with zero warnings and pass (1011 + 94 checks) on Linux gcc 14 (the CI image, `docker/linux/build.sh --streamdeck --test`), MSVC 2019 and MinGW gcc 15, and on macOS; hidraw backend + `companions/streamdeck/linux/70-unreal-streamdeck.rules`, the DEB installs the daemon, the studio and the rule. Fixes on the way: a use-after-free on reload (the navigator read the replaced scenario), the studio's Leave lost to a reset on Windows, `shell` / `open` on Windows (cmd.exe, output, timeout, job object). Packaging done 2026-10-20 ([packaging.md](packaging.md) sections 3-5): the release workflow builds with `-DUNREAL_STREAMDECK=ON`; macOS DMG: the daemon a helper in `UnrealNG.app/Contents/MacOS`, the studio nested as `Contents/Applications/Stream Deck Studio.app` on UnrealNG.app's Qt (macdeployqt `-executable=`, `cmake/MacOSNestedRPath.cmake` as a guard, the plugins added from the real path in `main.cpp`; the packaged ad-hoc-signed helper opened a Stream Deck + XL), signed inside-out, a relative link at the DMG root; Windows ZIP: both exes beside `unreal-qt.exe`, windeployqt on the studio; Linux tarball and AppImage: both binaries, the udev rule (`lib/udev/rules.d`, `usr/lib/udev/rules.d`); `unreal-streamdeck --help` (exit 0); release checks per platform (layout, signature, both `--help` from the package). Open: `data/streamdeck/` in the packages (waits on SD5), the companion's debug symbols in the symbol archives, the AppImage rule text in the settings page (SD7), the parent watch on Windows / Linux, a hardware run on Windows and Linux (SD9) |
+| SD9 | Conformance suite in CI, hardware acceptance ACC-1 … ACC-7 | SD7, SD8 | CI and the hardware-free conformance done 2026-10-20: `cmake-ci.yml` builds the 5 companion targets and runs both test binaries on Linux (CI image), macOS, Windows MSVC and MinGW, plus the Qt-free targets with gcc 16 ([testing.md §6](testing.md#6-cross-platform)); the device wire v2 / daemon route conformance suite against the real `DeckHub` and `DaemonDecks` with fake decks (`tests/conformance_test.cpp`, coverage table in [testing.md §3.1](testing.md#31-device-wire-and-daemon-routes-hardware-free-in-ci)). Open: the host-side conformance ([§3.2](testing.md#32-with-a-host-needs-sd7), needs SD7) and the hardware acceptance ACC-1 … ACC-7 |
 | SD10 | Move the plugin and utility entries of `tools/` into `plugins/` and `utilities/` (one mechanical commit) | SD0 | done 2026-10-20: `tools/{wireshark,imhex,idapro}` -> `plugins/`, `tools/{diskconverter,diskinfo,porttrace,python,workload-monitor,neogs}` -> `utilities/` (`git mv`), references in code comments, tests, CI path filters, docs and recipes updated; group READMEs |
 
 ## Owner questions
@@ -61,8 +65,8 @@ Asked one at a time.
 
 | Document | Fix |
 |:--|:--|
-| control surfaces `architecture.md §6` | "the Qt client sets the selected instance when the focused one changes" → `TargetState` ([targeting.md](targeting.md)) |
-| control surfaces `protocol.md` §2, §4, S4 | no own route `/api/v1/surfaces/ws`: the surface protocol is the `surface` topic of the one WebSocket `/api/v1/ws` ([protocol.md §0](protocol.md#0-transport-one-websocket), D7); `SurfaceHub` becomes the topic's handler in the shared hub |
-| control surfaces `protocol.md` `instance` op | replaced by `target` ([protocol.md §2](protocol.md#2-target)) |
-| control surfaces `requirements.md` "what exists" | the Surface Dial driver and `ttd.jog_*` / `ttd.scrub_*` landed on master (`720fbb53e`, `f3d35d587`) after the design |
+| control surfaces `architecture.md §6` | "the Qt client sets the selected instance when the focused one changes" → `TargetState` ([targeting.md](targeting.md)) (applied 2026-10-20, S1) |
+| control surfaces `protocol.md` §2, §4, S4 | no own route `/api/v1/surfaces/ws`: the surface protocol is the `surface` topic of the one WebSocket `/api/v1/ws` ([protocol.md §0](protocol.md#0-transport-one-websocket), D7); `SurfaceHub` becomes the topic's handler in the shared hub (applied 2026-10-20, S1) |
+| control surfaces `protocol.md` `instance` op | replaced by `target` ([protocol.md §2](protocol.md#2-target)) (applied 2026-10-20, S1) |
+| control surfaces `requirements.md` "what exists" | the Surface Dial driver and `ttd.jog_*` / `ttd.scrub_*` landed on master (`720fbb53e`, `f3d35d587`) after the design (applied 2026-10-20, S1) |
 | controller manager `debug-and-ttd.md:252-259` | the Stream Deck integrates as a companion: link this design |

@@ -1,5 +1,6 @@
 #include "sdb/actions.h"
 
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -8,6 +9,7 @@
 #include <mutex>
 #include <optional>
 #include <thread>
+#include <vector>
 
 #include "sdb/format.h"
 
@@ -247,8 +249,10 @@ ActionResult Execute(const Action& a, ActionHost& host, const json& vars, bool* 
     }
     if (k == "keys")
     {
-        const bool ok = host.Keys(j.value("combo", ""), j.value("text", ""));
-        return {ok, "keys " + j.value("combo", j.value("text", "")) + (ok ? "" : " failed")};
+        std::string why;
+        const bool ok = host.Keys(j.value("combo", ""), j.value("text", ""), why);
+        return {ok, "keys " + j.value("combo", j.value("text", "")) +
+                        (ok ? "" : " failed" + (why.empty() ? std::string() : ": " + why))};
     }
     if (k == "nav")
     {
@@ -482,31 +486,101 @@ int RunCommand(const std::string& command, int timeoutMs, std::string& out)
 }
 #endif
 
-#ifdef __APPLE__
-std::optional<CGKeyCode> MacKey(const std::string& name)
+// One table for every platform's "keys" action: the name a scenario writes, the macOS virtual key code, the Windows
+// virtual-key code (+ whether it is an extended key for SendInput) and the X11 keysym name xdotool takes.
+struct KeyCode
 {
-    static const std::map<std::string, CGKeyCode> keys = {
-        {"a", 0},       {"s", 1},          {"d", 2},          {"f", 3},        {"h", 4},
-        {"g", 5},       {"z", 6},          {"x", 7},          {"c", 8},        {"v", 9},
-        {"b", 11},      {"q", 12},         {"w", 13},         {"e", 14},       {"r", 15},
-        {"y", 16},      {"t", 17},         {"1", 18},         {"2", 19},       {"3", 20},
-        {"4", 21},      {"6", 22},         {"5", 23},         {"=", 24},       {"9", 25},
-        {"7", 26},      {"-", 27},         {"8", 28},         {"0", 29},       {"]", 30},
-        {"o", 31},      {"u", 32},         {"[", 33},         {"i", 34},       {"p", 35},
-        {"return", 36}, {"enter", 36},     {"l", 37},         {"j", 38},       {"'", 39},
-        {"k", 40},      {";", 41},         {"\\", 42},        {",", 43},       {"/", 44},
-        {"n", 45},      {"m", 46},         {".", 47},         {"tab", 48},     {"space", 49},
-        {"`", 50},      {"delete", 51},    {"backspace", 51}, {"escape", 53},  {"esc", 53},
-        {"f1", 122},    {"f2", 120},       {"f3", 99},        {"f4", 118},     {"f5", 96},
-        {"f6", 97},     {"f7", 98},        {"f8", 100},       {"f9", 101},     {"f10", 109},
-        {"f11", 103},   {"f12", 111},      {"home", 115},     {"pageup", 116}, {"forwarddelete", 117},
-        {"end", 119},   {"pagedown", 121}, {"left", 123},     {"right", 124},  {"down", 125},
-        {"up", 126}};
-    if (auto it = keys.find(name); it != keys.end())
-        return it->second;
-    return std::nullopt;
+    std::string_view name;
+    std::uint16_t mac, win;
+    bool extended;
+    std::string_view x11;
+};
+constexpr KeyCode kKeyCodes[] = {
+    {"a", 0, 'A', false, "a"},
+    {"b", 11, 'B', false, "b"},
+    {"c", 8, 'C', false, "c"},
+    {"d", 2, 'D', false, "d"},
+    {"e", 14, 'E', false, "e"},
+    {"f", 3, 'F', false, "f"},
+    {"g", 5, 'G', false, "g"},
+    {"h", 4, 'H', false, "h"},
+    {"i", 34, 'I', false, "i"},
+    {"j", 38, 'J', false, "j"},
+    {"k", 40, 'K', false, "k"},
+    {"l", 37, 'L', false, "l"},
+    {"m", 46, 'M', false, "m"},
+    {"n", 45, 'N', false, "n"},
+    {"o", 31, 'O', false, "o"},
+    {"p", 35, 'P', false, "p"},
+    {"q", 12, 'Q', false, "q"},
+    {"r", 15, 'R', false, "r"},
+    {"s", 1, 'S', false, "s"},
+    {"t", 17, 'T', false, "t"},
+    {"u", 32, 'U', false, "u"},
+    {"v", 9, 'V', false, "v"},
+    {"w", 13, 'W', false, "w"},
+    {"x", 7, 'X', false, "x"},
+    {"y", 16, 'Y', false, "y"},
+    {"z", 6, 'Z', false, "z"},
+    {"0", 29, '0', false, "0"},
+    {"1", 18, '1', false, "1"},
+    {"2", 19, '2', false, "2"},
+    {"3", 20, '3', false, "3"},
+    {"4", 21, '4', false, "4"},
+    {"5", 23, '5', false, "5"},
+    {"6", 22, '6', false, "6"},
+    {"7", 26, '7', false, "7"},
+    {"8", 28, '8', false, "8"},
+    {"9", 25, '9', false, "9"},
+    {"=", 24, 0xBB, false, "equal"},         // VK_OEM_PLUS
+    {"-", 27, 0xBD, false, "minus"},         // VK_OEM_MINUS
+    {"[", 33, 0xDB, false, "bracketleft"},   // VK_OEM_4
+    {"]", 30, 0xDD, false, "bracketright"},  // VK_OEM_6
+    {"'", 39, 0xDE, false, "apostrophe"},    // VK_OEM_7
+    {";", 41, 0xBA, false, "semicolon"},     // VK_OEM_1
+    {"\\", 42, 0xDC, false, "backslash"},    // VK_OEM_5
+    {",", 43, 0xBC, false, "comma"},         // VK_OEM_COMMA
+    {"/", 44, 0xBF, false, "slash"},         // VK_OEM_2
+    {".", 47, 0xBE, false, "period"},        // VK_OEM_PERIOD
+    {"`", 50, 0xC0, false, "grave"},         // VK_OEM_3
+    {"return", 36, 0x0D, false, "Return"},
+    {"enter", 36, 0x0D, false, "Return"},
+    {"tab", 48, 0x09, false, "Tab"},
+    {"space", 49, 0x20, false, "space"},
+    {"delete", 51, 0x08, false, "BackSpace"},  // the Mac's delete key: backspace
+    {"backspace", 51, 0x08, false, "BackSpace"},
+    {"escape", 53, 0x1B, false, "Escape"},
+    {"esc", 53, 0x1B, false, "Escape"},
+    {"f1", 122, 0x70, false, "F1"},
+    {"f2", 120, 0x71, false, "F2"},
+    {"f3", 99, 0x72, false, "F3"},
+    {"f4", 118, 0x73, false, "F4"},
+    {"f5", 96, 0x74, false, "F5"},
+    {"f6", 97, 0x75, false, "F6"},
+    {"f7", 98, 0x76, false, "F7"},
+    {"f8", 100, 0x77, false, "F8"},
+    {"f9", 101, 0x78, false, "F9"},
+    {"f10", 109, 0x79, false, "F10"},
+    {"f11", 103, 0x7A, false, "F11"},
+    {"f12", 111, 0x7B, false, "F12"},
+    {"home", 115, 0x24, true, "Home"},
+    {"end", 119, 0x23, true, "End"},
+    {"pageup", 116, 0x21, true, "Prior"},
+    {"pagedown", 121, 0x22, true, "Next"},
+    {"forwarddelete", 117, 0x2E, true, "Delete"},
+    {"left", 123, 0x25, true, "Left"},
+    {"up", 126, 0x26, true, "Up"},
+    {"right", 124, 0x27, true, "Right"},
+    {"down", 125, 0x28, true, "Down"},
+};
+
+const KeyCode* FindKeyCode(std::string_view name)
+{
+    for (const auto& k : kKeyCodes)
+        if (k.name == name)
+            return &k;
+    return nullptr;
 }
-#endif
 
 class SystemHost final : public ActionHost
 {
@@ -830,8 +904,17 @@ public:
 #endif
     }
 
-    bool Keys(const std::string& combo, const std::string& text) override
+    bool Keys(const std::string& combo, const std::string& text, std::string& error) override
     {
+        std::optional<KeyCombo> c;
+        const KeyCode* key = nullptr;
+        if (!combo.empty())
+        {
+            c = ParseKeyCombo(combo, &error);
+            if (!c)
+                return false;
+            key = FindKeyCode(c->key);
+        }
 #ifdef __APPLE__
         CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
         auto post = [&](CGKeyCode code, bool down, CGEventFlags flags) {
@@ -840,43 +923,21 @@ public:
             CGEventPost(kCGHIDEventTap, e);
             CFRelease(e);
         };
-        bool ok = true;
-        if (!combo.empty())
+        if (key)
         {
             CGEventFlags flags = 0;
-            std::optional<CGKeyCode> key;
-            size_t start = 0;
-            while (start <= combo.size())
-            {
-                size_t plus = combo.find('+', start);
-                if (plus == start)
-                    plus = combo.find('+', start + 1);  // "cmd++" = the plus key
-                std::string part = combo.substr(start, plus == std::string::npos ? std::string::npos : plus - start);
-                for (auto& c : part)
-                    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                if (part == "cmd" || part == "command" || part == "meta")
-                    flags |= kCGEventFlagMaskCommand;
-                else if (part == "ctrl" || part == "control")
-                    flags |= kCGEventFlagMaskControl;
-                else if (part == "alt" || part == "option" || part == "opt")
-                    flags |= kCGEventFlagMaskAlternate;
-                else if (part == "shift")
-                    flags |= kCGEventFlagMaskShift;
-                else if (part == "fn")
-                    flags |= kCGEventFlagMaskSecondaryFn;
-                else
-                    key = MacKey(part);
-                if (plus == std::string::npos)
-                    break;
-                start = plus + 1;
-            }
-            if (key)
-            {
-                post(*key, true, flags);
-                post(*key, false, flags);
-            }
-            else
-                ok = false;
+            if (c->cmd)
+                flags |= kCGEventFlagMaskCommand;
+            if (c->ctrl)
+                flags |= kCGEventFlagMaskControl;
+            if (c->alt)
+                flags |= kCGEventFlagMaskAlternate;
+            if (c->shift)
+                flags |= kCGEventFlagMaskShift;
+            if (c->fn)
+                flags |= kCGEventFlagMaskSecondaryFn;
+            post(key->mac, true, flags);
+            post(key->mac, false, flags);
         }
         for (char32_t ch : text)
         {  // ASCII text; one unicode event per character
@@ -893,18 +954,99 @@ public:
         }
         if (src)
             CFRelease(src);
-        return ok;
-#elif !defined(_WIN32)
-        std::string out;
-        if (!combo.empty() && RunProcess({"xdotool", "key", combo}, 3000, out) != 0)
+        return true;
+#elif defined(_WIN32)
+        // SendInput: the modifiers down, the key down and up, the modifiers up (reverse order); text as unicode
+        // key events (KEYEVENTF_UNICODE, UTF-16 units). Windows refuses input to a window of a higher integrity
+        // level (an elevated program) without telling which: SendInput then inserts fewer events.
+        std::vector<INPUT> in;
+        auto vk = [&](WORD code, bool up, bool extended) {
+            INPUT i{};
+            i.type = INPUT_KEYBOARD;
+            i.ki.wVk = code;
+            i.ki.dwFlags = (up ? KEYEVENTF_KEYUP : 0u) | (extended ? KEYEVENTF_EXTENDEDKEY : 0u);
+            in.push_back(i);
+        };
+        if (key)
+        {
+            std::vector<std::pair<WORD, bool>> mods;  // fn: no such key on Windows
+            if (c->ctrl)
+                mods.emplace_back(static_cast<WORD>(VK_CONTROL), false);
+            if (c->alt)
+                mods.emplace_back(static_cast<WORD>(VK_MENU), false);
+            if (c->shift)
+                mods.emplace_back(static_cast<WORD>(VK_SHIFT), false);
+            if (c->cmd)
+                mods.emplace_back(static_cast<WORD>(VK_LWIN), true);
+            for (const auto& [m, ext] : mods)
+                vk(m, false, ext);
+            vk(key->win, false, key->extended);
+            vk(key->win, true, key->extended);
+            for (auto it = mods.rbegin(); it != mods.rend(); ++it)
+                vk(it->first, true, it->second);
+        }
+        if (!text.empty())
+        {
+            const int n = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+            std::wstring w(static_cast<size_t>(n > 0 ? n : 0), L'\0');
+            if (n > 0)
+                MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), w.data(), n);
+            else
+            {
+                error = "text is not UTF-8";
+                return false;
+            }
+            for (wchar_t ch : w)
+                for (bool up : {false, true})
+                {
+                    INPUT i{};
+                    i.type = INPUT_KEYBOARD;
+                    i.ki.wScan = static_cast<WORD>(ch);
+                    i.ki.dwFlags = KEYEVENTF_UNICODE | (up ? KEYEVENTF_KEYUP : 0u);
+                    in.push_back(i);
+                }
+        }
+        if (in.empty())
+            return true;
+        const UINT sent = SendInput(static_cast<UINT>(in.size()), in.data(), sizeof(INPUT));
+        if (sent != in.size())
+        {
+            error = sdb::Format(
+                "SendInput took {} of {} events (error {}; an elevated window does not take input from "
+                "a normal one)",
+                sent, in.size(), static_cast<unsigned long>(GetLastError()));
             return false;
-        if (!text.empty() && RunProcess({"xdotool", "type", "--", text}, 10000, out) != 0)
-            return false;
+        }
         return true;
 #else
-        (void)combo;
-        (void)text;
-        return false;
+        // xdotool (X11; Wayland sessions do not take synthetic input from it): the combo in X keysym names
+        std::string out;
+        auto run = [&](const std::vector<std::string>& argv, int timeoutMs) {
+            const int code = RunProcess(argv, timeoutMs, out);
+            if (code == 0)
+                return true;
+            error = code == 127 ? "xdotool not found (install xdotool; X11 only)"
+                                : sdb::Format("xdotool exit {}{}", code, out.empty() ? "" : ": " + out);
+            return false;
+        };
+        if (key)
+        {
+            std::string x;
+            if (c->ctrl)
+                x += "ctrl+";
+            if (c->alt)
+                x += "alt+";
+            if (c->shift)
+                x += "shift+";
+            if (c->cmd)
+                x += "super+";
+            x += key->x11;  // fn: no such key on X11
+            if (!run({"xdotool", "key", "--", x}, 3000))
+                return false;
+        }
+        if (!text.empty() && !run({"xdotool", "type", "--", text}, 10000))
+            return false;
+        return true;
 #endif
     }
 
@@ -991,6 +1133,59 @@ private:
 };
 
 }  // namespace
+
+std::optional<KeyCombo> ParseKeyCombo(const std::string& combo, std::string* error)
+{
+    auto fail = [&](std::string why) -> std::optional<KeyCombo> {
+        if (error)
+            *error = std::move(why);
+        return std::nullopt;
+    };
+    KeyCombo c;
+    size_t start = 0;
+    while (start <= combo.size())
+    {
+        size_t plus = combo.find('+', start);
+        if (plus == start)
+            plus = combo.find('+', start + 1);  // "cmd++": a part "+" (no such key: an error below)
+        std::string part = combo.substr(start, plus == std::string::npos ? std::string::npos : plus - start);
+        for (auto& ch : part)
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        if (part == "cmd" || part == "command" || part == "meta")
+            c.cmd = true;
+        else if (part == "ctrl" || part == "control")
+            c.ctrl = true;
+        else if (part == "alt" || part == "option" || part == "opt")
+            c.alt = true;
+        else if (part == "shift")
+            c.shift = true;
+        else if (part == "fn")
+            c.fn = true;
+        else if (!FindKeyCode(part))
+            return fail("unknown key '" + part + "' in '" + combo + "'");
+        else if (!c.key.empty())
+            return fail("two keys in '" + combo + "' ('" + c.key + "', '" + part + "')");
+        else
+            c.key = part;
+        if (plus == std::string::npos)
+            break;
+        start = plus + 1;
+    }
+    if (c.key.empty())
+        return fail("no key in '" + combo + "'");
+    return c;
+}
+
+std::span<const std::string_view> KeyNames()
+{
+    static const auto names = [] {
+        std::vector<std::string_view> v;
+        for (const auto& k : kKeyCodes)
+            v.push_back(k.name);
+        return v;
+    }();
+    return names;
+}
 
 std::unique_ptr<ActionHost> MakeSystemHost(const Settings& s, SystemHostCallbacks cb, std::atomic<bool>* cancel)
 {

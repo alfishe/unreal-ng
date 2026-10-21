@@ -63,13 +63,22 @@ QString RunController::How() const
     return _onDeck ? QStringLiteral("deck ") + _deck : Running() ? QStringLiteral("started") : QString();
 }
 
+nlohmann::json RunController::RunDocument() const
+{
+    // includes expanded: the run file lives elsewhere, so relative include paths would not resolve from there; the
+    // editor's "included_from" marks (absolute paths) stay out of it
+    nlohmann::json d = _doc->Resolved();
+    if (d.contains("root"))
+        sdb::scn::io::StripIncludeMarks(d["root"]);
+    return d;
+}
+
 void RunController::WriteRunFile()
 {
     if (_runFile.isEmpty())
         return;
     std::string err;
-    // includes expanded: the run file lives elsewhere, so relative include paths would not resolve from there
-    if (!sdb::scn::io::SaveFile(_runFile.toStdString(), _doc->Resolved(), &err))
+    if (!sdb::scn::io::SaveFile(_runFile.toStdString(), RunDocument(), &err))
         Line(QStringLiteral("autosave failed: ") + QString::fromStdString(err));
 }
 

@@ -230,7 +230,7 @@ std::string ControllersDialog::selectedLayout() const
     return item != nullptr ? item->data(Qt::UserRole + 2).toString().toStdString() : std::string{};
 }
 
-void ControllersDialog::setActions(const ActionRegistry* actions)
+void ControllersDialog::setActions(const actions::ActionRegistry* actions)
 {
     _table->setActions(actions);
     _table->refresh();

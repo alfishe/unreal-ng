@@ -1654,6 +1654,24 @@ called with the wrong method answers `405`. `GET /api/v1/controllers/haptics[?de
 `message`, `404` `unknown-device`, `400` `bad-request` for an effect the device lacks, `503` `unavailable` with the
 reason for a device without drivable motors or a process without the Qt client.
 
+### Host Actions
+
+```
+GET  /api/v1/controllers/actions[?instance=<id|index>]   the catalogue: id, label, group, kind, held, gui, scope,
+                                                          needs_pause, available (+ error, reason)
+POST /api/v1/controllers/actions/{id}                     {instance?, value?, params?}: run it, answer when done
+```
+
+The core `ActionRegistry` ([command-interface.md section 16](./command-interface.md#16-host-actions); OpenAPI tag
+`Controllers`). `instance` defaults to the selected instance, else the only one. `value` by the action's kind: press -
+omitted / `true` / `false` / `{pressed}`; delta - steps or `{delta, rate}`; level - 0..1; text - a string. The routes
+are outside `/api/v1/emulator/`, so the registry applies the caller's gate itself, with the same answers: a changing
+action without a session opens the implicit run-control session (`automation_session` in the reply and the
+`X-Unreal-Session*` headers), `X-Unreal-Session` runs as that session, a companion token is checked against its
+scopes. The reply: `{ok, action, instance, message, result}`; errors `404` Not Found, `400` Bad Request, `403`
+companion_forbidden, `409` not_now / Run-control held / held_by_other / held_by_session / revoked_by_user, `501` Not
+Implemented (a stub). Every route is also a WebSocket call on `/api/v1/ws` ([websocket-interface.md](./websocket-interface.md)).
+
 ### Snapshots (Implemented Separately)
 ```
 POST /api/v1/emulator/{id}/snapshot/save  ✅ Implemented

@@ -38,5 +38,7 @@ void TestTagsAndPages();
 void TestSubtrees();
 void TestWebSocket();
 void TestDeckHub();
+void TestConformance();
 void TestDaemonDecks();
 void TestHotplug();
+void TestIdle();

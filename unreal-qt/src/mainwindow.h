@@ -15,6 +15,7 @@
 #include <QSettings>
 #include <QTimer>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_set>
@@ -55,7 +56,7 @@ class MidiActivityWindow;
 class HostControllers;
 class ControllersDialog;
 class ControllerToast;
-class ActionRegistry;
+class GuiActions;
 class SlotChangeController;
 class SlotsWindow;
 class NextLayersWindow;
@@ -417,7 +418,7 @@ private:
     HostControllers* _hostControllers = nullptr;        // host game controllers: service, profiles, player connectors
     ControllersDialog* _controllersDialog = nullptr;    // Tools -> Controllers
     ControllerToast* _controllerToast = nullptr;        // the auto-profile toast (port reads)
-    ActionRegistry* _actionRegistry = nullptr;          // host actions by id (pad bindings, later shortcuts)
+    std::unique_ptr<GuiActions> _guiActions;            // the GUI host actions in the core registry; device events
     NetworkWindow* networkWindow = nullptr;
     NextLayersWindow* _nextLayersWindow = nullptr;          // View -> Next Layers (per-layer capture view)
     SlotsWindow* _slotsWindow = nullptr;                   // Machine -> Slots (ZX-bus slots)
