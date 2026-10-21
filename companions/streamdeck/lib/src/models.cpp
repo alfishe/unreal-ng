@@ -89,7 +89,31 @@ const std::array<Model, 16> kModels{{
              LcdKind::Region, 1200, 100, R::R270, true, true),
          8),
 }};
+
+// The first name of each model is its token (ModelToken).
+constexpr ModelAlias kAliases[] = {{"original", 0x0060}, {"classic", 0x0080},  {"mk2", 0x0080},  {"original2", 0x006D},
+                                   {"scissor", 0x00A5},  {"module15", 0x00B9}, {"xl", 0x006C},   {"xl2", 0x008F},
+                                   {"module32", 0x00BA}, {"neo", 0x009A},      {"plus", 0x0084}, {"+", 0x0084},
+                                   {"plusxl", 0x00C6},   {"+xl", 0x00C6},      {"mini", 0x0063}, {"mini2", 0x0090},
+                                   {"discord", 0x00B3},  {"module6", 0x00B8},  {"pedal", 0x0086}};
 }  // namespace
+
+std::span<const ModelAlias> ModelAliases()
+{
+    return kAliases;
+}
+
+std::string ModelToken(const Model& m)
+{
+    for (const auto& [a, pid] : kAliases)
+        if (pid == m.pid)
+            return std::string(a);
+    static constexpr char kHex[] = "0123456789ABCDEF";
+    std::string t = "0x";
+    for (int shift = 12; shift >= 0; shift -= 4)
+        t += kHex[(m.pid >> shift) & 0xF];
+    return t;
+}
 
 std::span<const Model> AllModels()
 {
@@ -109,12 +133,7 @@ const Model* FindModelByName(const std::string& n0)
     std::string n;
     for (char c : n0)
         n += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    static const std::pair<const char*, std::uint16_t> alias[] = {
-        {"original", 0x0060}, {"classic", 0x0080}, {"mk2", 0x0080},     {"original2", 0x006D}, {"scissor", 0x00A5},
-        {"module15", 0x00B9}, {"xl", 0x006C},      {"xl2", 0x008F},     {"module32", 0x00BA},  {"neo", 0x009A},
-        {"plus", 0x0084},     {"+", 0x0084},       {"plusxl", 0x00C6},  {"+xl", 0x00C6},       {"mini", 0x0063},
-        {"mini2", 0x0090},    {"discord", 0x00B3}, {"module6", 0x00B8}, {"pedal", 0x0086}};
-    for (auto& [a, pid] : alias)
+    for (const auto& [a, pid] : kAliases)
         if (n == a)
             return FindModel(kElgatoVid, pid);
     try

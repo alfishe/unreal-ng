@@ -188,7 +188,9 @@ cmake-build-agent-release/bin/streamdeck-studio-tests
   daemon in the test (Join for both roles, `Welcome` and its errors, replay, `HostInput`, `HostPage`, `DeckState`,
   `GetFeature` / `FeatureReply`, `Input`, `Leave`, reconnect after the daemon goes and after a broken frame), the
   `--listen` server (`Hello`, `SetModel`, `GetFeature`) and the daemon control against a stand-in automation
-  (health, decks, brightness and scenario per deck, errors, the started process).
+  (health, decks, brightness and scenario per deck, errors, the started process), and the scenario editor's widgets
+  (`editor_test.cpp`: copy and paste of an included node, the inspector's action kind and model boxes against the
+  engine's tables, the run file without include marks, the automation examples).
 
 ## 11. Source map
 

@@ -15,7 +15,7 @@ set(_runtime_bin "${CMAKE_BINARY_DIR}/bin")
 add_custom_target(runtime-data
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${_runtime_data}/fonts" "${_runtime_bin}/fonts"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${_runtime_data}/configs" "${_runtime_bin}/configs"
-    COMMAND ${CMAKE_COMMAND} -DDEST="${_runtime_bin}/configs" -P "${CMAKE_CURRENT_LIST_DIR}/ExtractConfigImages.cmake"
+    COMMAND ${CMAKE_COMMAND} "-DDEST=${_runtime_bin}/configs" -P "${CMAKE_CURRENT_LIST_DIR}/ExtractConfigImages.cmake"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${_runtime_data}/rom" "${_runtime_bin}/rom"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${_runtime_data}/testrom" "${_runtime_bin}/rom"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${_runtime_data}/symbols" "${_runtime_bin}/symbols"

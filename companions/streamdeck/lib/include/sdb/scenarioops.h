@@ -35,8 +35,10 @@ struct Result
 [[nodiscard]] const json* NodeAt(const json& doc, std::string_view menu, Slot at);
 [[nodiscard]] std::optional<Slot> FreeSlot(const json& doc, std::string_view menu);
 
-// `node` gets unique ids (its own and its subtree's); `at` defaults to the first free slot.
-Result InsertNode(json& doc, std::string_view parent, std::optional<Slot> at, json node);
+// `node` gets unique ids (its own and its subtree's); `at` defaults to the first free slot. `alsoTaken`: another
+// document whose ids count as taken too (the resolved view: the ids its includes bring in).
+Result InsertNode(json& doc, std::string_view parent, std::optional<Slot> at, json node,
+                  const json* alsoTaken = nullptr);
 Result RemoveNode(json& doc, std::string_view id);
 // Into another menu or another slot; an occupied target is an error unless `swap` (the occupant takes the old place).
 Result MoveNode(json& doc, std::string_view id, std::string_view parent, Slot at, bool swap);

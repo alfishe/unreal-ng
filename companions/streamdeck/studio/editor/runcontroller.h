@@ -10,6 +10,7 @@
 #include <QStringList>
 #include <QTimer>
 #include <functional>
+#include <nlohmann/json.hpp>
 
 class DaemonControl;
 class EditorDocument;
@@ -38,6 +39,8 @@ public:
     {
         return _runFile;
     }
+    // What the run file holds: the document with its includes resolved, without the editor's "included_from" marks.
+    [[nodiscard]] nlohmann::json RunDocument() const;
     [[nodiscard]] QStringList Output() const
     {
         return _output;

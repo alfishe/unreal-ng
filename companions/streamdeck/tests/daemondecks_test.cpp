@@ -56,7 +56,7 @@ struct QuietHost final : ActionHost
     {
         return true;
     }
-    bool Keys(const std::string&, const std::string&) override
+    bool Keys(const std::string&, const std::string&, std::string&) override
     {
         return true;
     }

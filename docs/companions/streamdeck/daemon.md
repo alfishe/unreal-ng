@@ -131,8 +131,15 @@ curl -s -X POST localhost:37053/api/v1/decks/first/reconnect -d '{"away_ms":2000
 | Platform | Deck access | Actions | Built with |
 |:--|:--|:--|:--|
 | macOS | IOHID (hidapi), exclusive open | `shell` via `/bin/sh`, `open`, `keys` (CGEvent) | Apple clang |
-| Linux | hidraw (hidapi; libudev enumerates): the udev rule below | `shell` via `/bin/sh`, `open` via `xdg-open`, `keys` via `xdotool` (X11, optional) | gcc 14 (the CI image) |
-| Windows | HID.dll (hidapi), no driver | `shell` via `cmd.exe` (output, timeout; the whole process tree ends on timeout), `open` via `start`; no `keys` | MSVC 2019, MinGW gcc 15 |
+| Linux | hidraw (hidapi; libudev enumerates): the udev rule below | `shell` via `/bin/sh`, `open` via `xdg-open`, `keys` via `xdotool` (X11, optional; missing: the action fails with "xdotool not found") | gcc 14 (the CI image) |
+| Windows | HID.dll (hidapi), no driver | `shell` via `cmd.exe` (output, timeout; the whole process tree ends on timeout), `open` via `start`, `keys` via `SendInput` | MSVC 2019, MinGW gcc 15 |
+
+A `keys` combo takes the same names everywhere (`sdb::scn::ParseKeyCombo`, `KeyNames()` in `sdb/actions.h`; US
+layout positions): modifiers `cmd` (`command`, `meta`: Command on macOS, the Windows key, Super on Linux), `ctrl`,
+`alt` (`option`), `shift`, `fn` (macOS only, ignored elsewhere) and one key: `a`-`z`, `0`-`9`,
+`` = - [ ] ' ; \ , / . ` ``, `return` / `enter`, `tab`, `space`, `delete` / `backspace`, `escape` / `esc`,
+`f1`-`f12`, `home`, `end`, `pageup`, `pagedown`, `forwarddelete`, `left`, `right`, `up`, `down`. An unknown name or a
+second key is a scenario error. `text` types characters (macOS: ASCII; Windows and Linux: UTF-8).
 
 All three build the daemon, `sdctl`, the studio and both test suites with zero warnings. Build on Linux in the CI
 image: `docker/linux/build.sh --streamdeck --test` (configures from the root with `-DUNREAL_STREAMDECK=ON`, runs
