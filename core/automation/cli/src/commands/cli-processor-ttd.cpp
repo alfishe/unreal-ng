@@ -369,7 +369,7 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "Phase 4 — Reverse Search + Automation:" << NEWLINE;
     ss << "  ttd dump <path>                  Serialize session to .ttd file" << NEWLINE;
     ss << "  ttd load <path>                  Load a .ttd session for playback (alias: open)" << NEWLINE;
-    ss << "  ttd export-clip <from> <to> <dir> [--chunk N]" << NEWLINE;
+    ss << "  ttd export-clip <from> <to> <dir|file.gif|.mp4|...> [--chunk N]" << NEWLINE;
     ss << "                                   Write frames from..to as a lossless clip into dir (alias: clip)" << NEWLINE;
     ss << "  ttd find-last --addr <A>         Reverse search: find last access at address" << NEWLINE;
     ss << "    [--access write|read|execute|io]  (default: write)" << NEWLINE;
@@ -1101,7 +1101,7 @@ void CLIProcessor::HandleTTDLoad(const ClientSession& session, EmulatorContext* 
 void CLIProcessor::HandleTTDExportClip(const ClientSession& session, EmulatorContext* context,
                                        const std::vector<std::string>& args)
 {
-    // ttd export-clip <from> <to> <dir> [--chunk N]
+    // ttd export-clip <from> <to> <dir | a .gif / .mp4 / .mkv / .webm / .mov / .avi file> [--chunk N]
     std::vector<std::string> positional;
     std::map<std::string, std::string> options;
     for (size_t i = 1; i < args.size(); ++i)
@@ -1114,7 +1114,7 @@ void CLIProcessor::HandleTTDExportClip(const ClientSession& session, EmulatorCon
     if (positional.size() != 3)
     {
         session.SendResponse(std::string("Error: Missing arguments") + NEWLINE +
-                             "Usage: ttd export-clip <from-frame> <to-frame> <dir> [--chunk N]" + NEWLINE);
+                             "Usage: ttd export-clip <from-frame> <to-frame> <dir | file.gif / .mp4 / ...> [--chunk N]" + NEWLINE);
         return;
     }
     options["from"] = positional[0];

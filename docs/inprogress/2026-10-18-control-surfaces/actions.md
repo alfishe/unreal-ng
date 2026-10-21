@@ -106,9 +106,35 @@ The core TTD actions of §1 now pass their params on as the verb's options too: 
 
 Not added (REST stays the way, the `webapi` step of a scenario): `/skip_until` (1 step), `/coverage/*`,
 `/profiler/*`, `/debug/pchist` (analysis sessions, 2 steps each), `/memory/rom/protect` (a WebAPI-only switch of its
-memory writes), `/control/audio/gs` reset (1 step), `/video/record` (`cap.record_toggle` stays a stub: the output
-file and profile need the GUI's choice), `/start` / `/stop` of an instance, video fullscreen (a GUI action, Qt).
-`ttd.seek_by`, `run.step_by` and `ctx.set` come with S2 (§2, §4).
+memory writes), `/control/audio/gs` reset (1 step), `/start` / `/stop` of an instance, video fullscreen (a GUI
+action, Qt). `ttd.seek_by`, `run.step_by` and `ctx.set` come with S2 (§2, §4). `/video/record` is
+`cap.record_toggle` since 2026-10-21 (below).
+
+**The machine area** (2026-10-21, `core/src/emulator/actions/hostactions_machine.cpp`; Stream Deck use cases C1.5,
+C3.3, C4.3, C4.5, C5, C6.4, C6.5, C7, U1.3, U1.5). Readouts of their own in `machinereadouts.h` (§5).
+
+| Id | Kind | Params | Scope (route) | Executor |
+|:--|:--|:--|:--|:--|
+| `mach.start` | P | `model`: a short name, a variant (`TSL-VDAC2`, `PROFI-PLUS`, their aliases) or a ZX-Poly configuration (`ZXPOLY-128K`): `machines::Resolve`, what `EmulatorManager` creates by name (before: short names only) | machine | as above |
+| `mach.switch` | P, toggle | `name` (turbo, cpm), `on?` (flips) | machine (`/switches`) | `Emulator::SetFrontPanelSwitch` (the TTD input journal records it); state `toggle.mach.switch.<name>` |
+| `mach.previous` | P | `replace?`, `stranded?`, `ram_power_on?` (as `mach.start`) | machine | `mach.start` with the newest entry of `machines::MachineHistory` that is not the current model (EmulatorManager notes every machine it creates by name); `not_now` without one |
+| `media.insert` | P | `drive` (a slot selector or `auto`), `path`, `wp?`, `access?`, a disposition | media (`/media/X/insert`) | `MediaControl` `insert` |
+| `media.swap` | P | `drive`, `with` (the two drives exchange their disks) or `path` | media | `eject` + `insert` of the two files, write protect carried (unsaved writes: `save` or `discard`; a blank disk: refused); with `path` the `swap` verb |
+| `media.export` | P | `drive`, `format` (trd, scl, udi, fdi, dsk, td0, mgt, img, hfe, scp; tap, tzx) or `path`, `force?` | media | `MediaControl` `export`; without a path next to the medium's file with the new extension |
+| `media.discard`, `media.rescan` | P | `drive`; `save?` / `discard?` | media | `MediaControl` verbs |
+| `media.create` | P | `drive`, `format?` (auto, trdos, plus3, unformatted / raw), `cylinders?`, `sides?`, `size?` (bytes, `64M`, `2G`) | media | `MediaControl` `create` (`trdos`: formatted, an empty catalogue) |
+| `media.open_recent` | P | `index?` (0), `kind?` (all, snapshot, tape, disk, rzx, image, cd), `autostart?`, `drive?` | media | `RecentFiles`, then `media.open` (an `rzx`: `RzxLauncher::Play`; an `image` / `cd`: `insert auto`) |
+| `rzx.play` | P | `path`, `tolerant?`, `switch_model?` (true) | media (`/rzx/play`) | `RzxLauncher::Play` |
+| `rzx.stop` | P | | media | `Emulator::StopRzx` |
+| `rzx.seek` | P | `frame` or `by` (frames, ±) | media; `not_now` without a playback | `Emulator::SeekRzx` |
+| `input.joystick_type` | P | `kind` (kempston, sinclair1, sinclair2, cursor, fuller, keys, md6, none), `connector?` (auto; none needs one), `keys?` | machine (`/controllers/{connector}/plug`: a plug is hardware) | `ControllerControl` `plug` / `unplug` |
+| `input.mouse_button` | P, held | `button` (left, right, middle), `hold?` (false: a click), `frames?` (2) | input (`/mouse/press`) | `DebugMouseManager` `Click` / `PressButton` / `ReleaseButton` |
+| `input.mouse_release` | P | | input | `DebugMouseManager::ReleaseAllButtons` |
+| `cap.record_toggle` | P, toggle | `preset?` (gameplay, music, audio, gif, hq, multitrack), `format?`, `container?`, `audio?`, `mode?` (single, multi, audio), `profile?`, `path?`, `fps?`, `scale?`, `region?` | free (`/video/record`) | `capture::RecordingControl` `toggle`: start (default folder `<user data>/recordings`) or stop |
+| `cap.record_pause` | P, toggle | | free | `RecordingControl` `pause` / `resume`; `not_now` without a recording |
+| `cap.clip_last` | P | `seconds?` (10), `format?` (gif, mp4, mkv, webm, mov, avi), `path?`, `scale?` | free (`/ttd/export-clip`); `not_now` without a TTD recording | `capture::ClipLast`: the recording pauses for browsing at its end (D8), the last seconds go to a video file, the recording goes on from the paused point, the run state as it was |
+| `ttd.export_clip` | P | `from`, `to`, `path?` (a video file; a folder: the lossless clip), `codec?`, `scale?`, `chunk?` | free | `TTDControl` `export-clip` (a video path: `capture::ExportTtdClip`) |
+| `cap.audio_capture` | P | `source?` (master, beeper, ay1, ...), `seconds?` (5, 0.01..30), `path?` (.wav) | free (`/audio/capture`); `not_now` on a paused machine | the audio capture analyzer for N emulated seconds (waits at most 4x that), then a WAV |
 
 ## 2. ttd.seek_by
 
@@ -185,8 +211,14 @@ pause.
 |:--|:--|:--|
 | `ttd.position` | `{frame, tinframe, first, end, state, fps}` | the cursor changed, ≤ 50 Hz |
 | `run.state` | `{state: running/paused, speed}` | on change |
+| `machine.previous` | `{model, ram_kb, current}` (null fields: no previous model yet) | on change |
+| `machine.switches` | `{switches: [{name, on}]}` | on change |
+| `media.recent` | `{revision, kinds: {snapshot: [...], tape: [...], ...}, all: [{index, kind, name, path, time}]}` | on change |
+| `media.rzx` | `{loaded, active, name, state, frame, total_frames, progress, desyncs}` | on change |
+| `input.connectors` | `{connectors: [{id, kind, device, fixed, port?}]}` | on change |
+| `cap.record` | `{available, recording, paused, frames, seconds, bytes, output}` | on change |
 
-The context is not a readout: it is the `ctx` message ([protocol.md §3](protocol.md#3-messages)).
+`media.disk` also carries each drive's `changed` (unsaved writes). The context is not a readout: it is the `ctx` message ([protocol.md §3](protocol.md#3-messages)).
 
 ## 6. Planes
 

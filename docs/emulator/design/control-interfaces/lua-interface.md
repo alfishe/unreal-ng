@@ -1377,7 +1377,13 @@ emu.video_record("start", {format = "h264", filename = "run.mkv", profile = "4k"
                                      -- profile: "native" (default) | "1080p" | "1440p" | "4k": a fixed frame, the
                                      -- picture fitted into it (aspect kept, nearest, black bars; h264 /
                                      -- h265 only). acceleration: "auto" | "hardware" | "software"
+emu.video_record("start", {preset = "gameplay"})  -- a core preset (recording_presets() lists them); fields win
+emu.video_record("start", {mode = "audio", container = "flac"})  -- audio only; mode "multi": a track per source
+emu.video_record("toggle")           -- stop a running recording, else start one
 emu.video_record("stop")             -- also "pause" / "resume"
+recording_presets()                  -- {{id = "gameplay", title = "Gameplay (MP4)", mode, format, container, audio, ...}, ...}
+recent_files("tape")                 -- the files opened lately: {kind, files = {{index, kind, name, path, time}, ...}}
+recent_clear()                       -- forget them (a kind, or all); open one: action("media.open_recent", nil, {index = 0})
 emu.video_record_status()             -- recording state + live stats (frames, duration, fps,
                                      -- audio, audio_codec, audio_sample_rate, audio_duration)
 

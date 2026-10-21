@@ -713,7 +713,7 @@ void CLIProcessor::HandleDiskCreate(const ClientSession& session, std::shared_pt
     {
         session.SendResponse(std::string("Error: Missing drive parameter") + NEWLINE +
                              "Usage: disk create <drive> [cylinders] [sides] [format]" + NEWLINE +
-                             "  format: auto (plus3 on a +3, unformatted elsewhere), unformatted, plus3" + NEWLINE +
+                             "  format: auto (plus3 on a +3, unformatted elsewhere), unformatted (raw), plus3, trdos" + NEWLINE +
                              "  cylinders: 40 or 80, sides: 1 or 2 (default: the format's, 80/2 or 40/1)" + NEWLINE);
         return;
     }
@@ -747,7 +747,7 @@ void CLIProcessor::HandleDiskCreate(const ClientSession& session, std::shared_pt
         }
         else if (!Emulator::ParseBlankDiskFormat(arg, format))
         {
-            session.SendResponse(std::string("Error: Unknown format '") + arg + "' (auto, unformatted, plus3)" + NEWLINE);
+            session.SendResponse(std::string("Error: Unknown format '") + arg + "' (auto, unformatted, plus3, trdos)" + NEWLINE);
             return;
         }
     }
@@ -773,7 +773,10 @@ void CLIProcessor::HandleDiskCreate(const ClientSession& session, std::shared_pt
     ss << "  Format: " << Emulator::BlankDiskFormatName(created.format) << NEWLINE;
     ss << "  Cylinders: " << (int)created.cylinders << NEWLINE;
     ss << "  Sides: " << (int)created.sides << NEWLINE;
-    ss << (created.format == Emulator::BlankDiskFormat::Plus3 ? "  Ready for +3DOS" : "  Ready for FORMAT") << NEWLINE;
+    ss << (created.format == Emulator::BlankDiskFormat::Plus3   ? "  Ready for +3DOS"
+           : created.format == Emulator::BlankDiskFormat::Trdos ? "  Formatted for TR-DOS"
+                                                                : "  Ready for FORMAT")
+       << NEWLINE;
     session.SendResponse(ss.str());
 }
 

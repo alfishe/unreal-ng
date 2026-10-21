@@ -51,6 +51,7 @@ automation servers live inside it).
 | Variable | Values (default) | What it does | Read by |
 |---|---|---|---|
 | `UNREAL_WEBAPI_PORT` | 1-65535 (8090) | Port of the WebAPI (HTTP/REST) server. Invalid values are ignored. The MCP server's internal client follows it too. | WebAPI server, `core/automation/webapi/src/automation-webapi.cpp:204`; MCP's client `core/automation/mcp/src/webapi-client.cpp:39` |
+| `UNREAL_RECENT_FILES` | a file path, or `off` (unset: `<user data>/recent-files.json`) | Where unreal-qt keeps the files opened lately (File > Recent Files, every plane's `recent` list, [media.md → Recent files](../features/media.md#recent-files)); `off` keeps the list in memory for this run. `tools/verification/mcp/mcplib.py` sets `off` for the instances it launches | unreal-qt, `unreal-qt/src/mainwindow.cpp` (`RecentFiles::SetStoreFile`) |
 | `UNREAL_WEBAPI_PORTS` | `8090-8099` or `8090,8190` (8090-8099) | Where the example scripts look for a running emulator (after `UNREAL_WEBAPI_PORT`). The emulator itself does not read it. | `data/examples/lib/unreal_webapi.py` |
 | `UNREAL_WEBAPI_URL` | a WebAPI base URL (none) | The example scripts talk to this one emulator only, e.g. on another host: `http://192.168.1.5:8090/api/v1`. The emulator itself does not read it. | `data/examples/lib/unreal_webapi.py` |
 | `UNREAL_MCP_PORT` | 1-65535 (8092) | Port of the MCP server (for AI agents). | `core/automation/mcp/src/automation-mcp.cpp:111` |

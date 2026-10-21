@@ -117,6 +117,8 @@ signals:
 
     // Signal emitted when user requests to open a file
     void openFileRequested();
+    /// File > Recent Files: one of the files opened lately (RecentFiles)
+    void openRecentFileRequested(const QString& path);
     void openSnapshotRequested();
     void openTapeRequested();
     void openDiskRequested();
@@ -260,7 +262,7 @@ private:
     QAction* _saveDiskTRDAction;    // Save as TRD
     QAction* _saveDiskSCLAction;    // Save as SCL
     QAction* _saveDiskUDIAction;    // Save as UDI
-    QAction* _recentFilesAction;
+    QMenu* _recentFilesMenu = nullptr;  ///< File > Recent Files: the core's RecentFiles, built when it opens
     QAction* _exitAction;
 
     // Edit Menu Actions

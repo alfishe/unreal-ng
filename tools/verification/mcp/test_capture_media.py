@@ -63,5 +63,12 @@ def test_window_display_changes_and_restores(s):
     expect(after.structured['crt_profile'] == before.structured['crt_profile'], 'restored', after.structured)
 
 
+def test_record_presets_are_listed_in_the_text(s):
+    r = s.call('capture_media', {'action': 'record_presets'})
+    for preset in ('gameplay', 'music', 'audio', 'gif', 'hq', 'multitrack'):
+        expect(preset in r.text, f'{preset} in the text', r.text)
+    expect(len(r.structured.get('presets', [])) == 6, 'six presets', r.structured)
+
+
 if __name__ == '__main__':
     sys.exit(main(globals()))

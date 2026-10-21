@@ -14,6 +14,7 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testwaithelper.h"
+#include "emulator/media/recentfiles.h"
 #include "emulator/actions/actionregistry.h"
 #include "emulator/actions/activityfeed.h"
 #include "emulator/actions/contextstate.h"
@@ -716,6 +717,40 @@ TEST_F(WsHub_Test, TopicsNeedATokenAndPushEachInstancesStateOnceThenChanges)
     EXPECT_EQ(inbox.Last()["op"].asString(), "unsubscribed");
     EXPECT_EQ(inbox.Last()["topics"].size(), 0u);
     EXPECT_EQ(_hub->TimerHz(), 0);
+}
+
+/// The machine area's state topics (the readouts of the same name): pushed once on subscribe, then a change
+TEST_F(WsHub_Test, TheMachineAreaTopicsPushTheirReadoutsAndAChange)
+{
+    RecentFiles::Instance().Clear();
+    Inbox inbox;
+    Connect(inbox);
+    Send(inbox, R"({"op":"subscribe","topics":["media.recent","media.rzx","cap.record","machine.switches","input.connectors"]})");
+    ASSERT_EQ(inbox.Ops("subscribed").size(), 1u);
+    EXPECT_EQ(inbox.Ops("subscribed")[0]["topics"].size(), 5u);
+    auto states = [&](const std::string& topic) {
+        std::vector<Json::Value> out;
+        for (const Json::Value& message : inbox.Ops("state"))
+            if (message["t"].asString() == topic && message["instance"].asString() == _id)
+                out.push_back(message);
+        return out;
+    };
+    ASSERT_EQ(states("media.recent").size(), 1u);
+    EXPECT_EQ(states("media.recent")[0]["value"]["all"].size(), 0u);
+    ASSERT_EQ(states("media.rzx").size(), 1u);
+    EXPECT_FALSE(states("media.rzx")[0]["value"]["loaded"].asBool());
+    ASSERT_EQ(states("cap.record").size(), 1u);
+    ASSERT_EQ(states("machine.switches").size(), 1u);
+    ASSERT_EQ(states("input.connectors").size(), 1u);
+    EXPECT_TRUE(states("input.connectors")[0]["value"]["connectors"].isArray());
+
+    RecentFiles::Instance().Note("tape", "/games/elite.tzx");
+    Advance(100);
+    _hub->Tick();
+    ASSERT_EQ(states("media.recent").size(), 2u) << "the change is pushed";
+    EXPECT_EQ(states("media.recent")[1]["value"]["all"][0]["name"].asString(), "elite.tzx");
+    EXPECT_EQ(states("media.rzx").size(), 1u) << "unchanged: not sent again";
+    RecentFiles::Instance().Clear();
 }
 
 /// endregion </Readouts and topics>

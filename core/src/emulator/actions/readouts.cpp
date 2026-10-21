@@ -6,6 +6,7 @@
 #include "base/featuremanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/actions/actionregistry.h"
+#include "emulator/actions/machinereadouts.h"
 #include "emulator/config.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
@@ -103,6 +104,7 @@ StateNode MediaDisk(Emulator& emulator)
         drive["loaded"] = slot->present;
         drive["name"] = slot->present ? BaseName(slot->source) : std::string();
         drive["protect"] = slot->writeProtect;
+        drive["changed"] = slot->dirty;  // unsaved writes (media.save writes them back)
         FDD* fdd = context->coreState.diskDrives[i];
         drive["busy"] = fdd != nullptr && fdd->getMotor();
         drives.push(std::move(drive));
@@ -173,8 +175,14 @@ bool ToggleOf(const std::string& name, std::string& id, StateNode& params)
 
 const std::vector<std::string>& BaseReadoutNames()
 {
-    static const std::vector<std::string> names = {"ttd.position", "run.state",  "machine",   "media.tape",
-                                                   "media.disk",   "audio.mute", "debug.mode"};
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> all = {"ttd.position", "run.state",  "machine",   "media.tape",
+                                        "media.disk",   "audio.mute", "debug.mode"};
+        // The machine area's (machinereadouts.h)
+        for (const std::string& name : MachineReadoutNames())
+            all.push_back(name);
+        return all;
+    }();
     return names;
 }
 
@@ -224,6 +232,8 @@ StateNode ReadReadout(Emulator& emulator, const std::string& name)
         return AudioMute(emulator);
     if (name == "debug.mode")
         return DebugMode(emulator);
+    if (StateNode area = ReadMachineReadout(emulator, name); area.kind != StateNode::Kind::Null)
+        return area;
     std::string id;
     StateNode params;
     if (name.compare(0, 7, "toggle.") == 0 && ToggleOf(name, id, params))

@@ -10,9 +10,11 @@
 /// | `run.state` | {state: running / paused / stopped, speed (the host multiplier 1..16), turbo} |
 /// | `machine` | {model, ram_kb, index} |
 /// | `media.tape` | {loaded, playing, block, blocks, progress (blocks done / blocks), name} |
-/// | `media.disk` | {drives: [{letter, loaded, name, busy (the motor), protect}]} |
+/// | `media.disk` | {drives: [{letter, loaded, name, busy (the motor), protect, changed (unsaved writes)}]} |
 /// | `audio.mute` | {muted} (the host has no master volume: the mixer's master mutes only) |
 /// | `debug.mode` | {enabled} |
+/// | `machine.previous`, `machine.switches`, `media.recent`, `media.rzx`, `input.connectors`, `cap.record` | the
+/// machine area's (machinereadouts.h) |
 /// | `toggle.<id>` | {on} for every toggle of the catalogue (`toggle.feature.<name>` for the features) |
 ///
 /// Names are matched exactly or by prefix (`media.*`, `toggle.*`; `*` = all). The WebSocket `surface` topic (S4)

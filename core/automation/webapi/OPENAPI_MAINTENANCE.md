@@ -41,6 +41,7 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 | `openapi_media_schemas.inc` | Media (schemas) | `MediaReply`, `MediaSlot`, `MediaMedium`, `MediaFileClass`, `MediaTarget` |
 | `openapi_snapshot.inc` | Snapshot Control | Load, save, info |
 | `openapi_capture.inc` | Capture | Screen capture, OCR |
+| `openapi_machine.inc` | Media, Capture | `/recent` (the files opened lately), `/recording/presets`, the `preset` / `mode` / `container` / `toggle` options of `/video/record`, the video path of `/ttd/export-clip` |
 | `openapi_basic.inc` | BASIC Control | Run, inject, extract, clear, state, mode |
 | `openapi_keyboard.inc` | Keyboard Injection | Tap, press, release, combo, macro, type, abort |
 | `openapi_mouse.inc` | Mouse Injection | Kempston mouse move, press, release, click, buttons, wheel, counters, status |

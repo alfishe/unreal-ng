@@ -22,6 +22,7 @@
 #include "emulator/video/screenshotter.h"
 
 #include "base/featuremanager.h"
+#include "emulator/media/recentfiles.h"
 #include "widgets/ttdwidget.h"
 #include "widgets/windowviewprovider.h"
 #ifdef ENABLE_RECORDING
@@ -87,7 +88,7 @@
 #include "hud/core/hudmodel.h"
 #ifdef ENABLE_RECORDING
 #include "debugger/widgets/videorecordingwidget.h"
-#include "debugger/widgets/recordingpresets.h"
+#include "emulator/capture/recordingcontrol.h"
 #endif
 #include "base/featuremanager.h"
 #include "emulator/video/screen.h"  // For DisplayViewport, ViewportPresets
@@ -475,10 +476,30 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     });
 
     // Create and configure menu system
+    // The files opened lately live in <user data>/recent-files.json (the core keeps the list; every plane shows it);
+    // UNREAL_RECENT_FILES names another file, or "off" keeps it in memory (the verification scripts)
+    {
+        const QString recentEnv = qEnvironmentVariable("UNREAL_RECENT_FILES");
+        std::string store = recentEnv.toStdString();
+        if (store.empty())
+            if (const std::string folder = FileHelper::GetUserDataFolder(""); !folder.empty())
+                store = FileHelper::PathCombine(folder, "recent-files.json");
+        std::string recentError;
+        if (!store.empty() && store != "off" && !RecentFiles::Instance().SetStoreFile(store, &recentError))
+            qWarning() << "Recent files:" << QString::fromStdString(recentError);
+    }
     _menuManager = new MenuManager(this, ui->menubar, this);
 
     // Connect menu signals to handlers
     connect(_menuManager, &MenuManager::openFileRequested, this, &MainWindow::openFileDialog);
+    connect(_menuManager, &MenuManager::openRecentFileRequested, this, [this](const QString& path) {
+        if (!QFileInfo::exists(path))
+        {
+            QMessageBox::warning(this, tr("Recent Files"), tr("%1 is no longer there.").arg(path));
+            return;
+        }
+        loadFile(path);
+    });
     connect(_menuManager, &MenuManager::openSnapshotRequested, this, &MainWindow::openSnapshotDialog);
     connect(_menuManager, &MenuManager::openZXPolyRequested, this, &MainWindow::openZXPolyDialog);
     connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openTapeDialog);
@@ -4433,81 +4454,30 @@ void MainWindow::handleQuickRecord(const QString& presetName)
         qDebug() << "Cannot start Quick Record: No active emulator instance";
         return;
     }
+    Emulator& emulator = *m_binding->emulator();
 
-    EmulatorContext* context = m_binding->emulator()->GetContext();
-    if (!context || !context->pRecordingManager)
+    // The core's preset (capture::RecordingControl, what every plane and cap.record_toggle start); a running
+    // recording is stopped first, as the menu always did
+    QString folder = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+    if (folder.isEmpty())
+        folder = QString::fromStdString(capture::RecordingControl::UserRecordingsFolder());
+    QDir().mkpath(folder);
+    capture::RecordingControl control(emulator, folder.toStdString());
+    const capture::RecordingReply status = control.Execute("status");
+    if (const StateNode* recording = status.body.find("recording"); recording != nullptr && recording->b)
+        control.Execute("stop");
+
+    const capture::RecordingReply started = control.Execute("start", {{"preset", presetName.toStdString()}});
+    if (!started.ok)
     {
-        qDebug() << "Cannot start Quick Record: No recording manager";
+        qWarning() << "Quick Record:" << QString::fromStdString(started.message);
+        QMessageBox::warning(this, tr("Quick Record"),
+                             tr("The recording did not start:\n%1").arg(QString::fromStdString(started.message)));
         return;
     }
-
-    auto* rm = context->pRecordingManager;
-
-    // Recording subsystem is behind a master feature switch — Quick Record
-    // must enable it (the recording dialog does the same on show)
-    if (context->pFeatureManager && !context->pFeatureManager->isEnabled(Features::kRecording))
-    {
-        context->pFeatureManager->setFeature(Features::kRecording, true);
-    }
-
-    // If already recording, stop first
-    if (rm->IsRecording())
-    {
-        rm->StopRecording();
-    }
-
-    // Find the preset
-    static RecordingPresetManager presetManager;
-    const RecordingPreset* preset = presetManager.findPreset(presetName);
-    if (!preset)
-    {
-        qDebug() << "Quick Record: Preset not found:" << presetName;
-        return;
-    }
-
-    // Apply preset to recording manager
-    rm->SetRecordingMode(preset->mode);
-    rm->SetVideoEnabled(!preset->videoCodec.isEmpty());
-
-    // Set audio source
-    rm->SelectAudioSource(AudioSourceType::MasterMix);
-
-    // Set video params via individual setters
-    if (!preset->videoCodec.isEmpty())
-    {
-        rm->SetVideoCodec(preset->videoCodec.toStdString());
-        rm->SetVideoBitrate(preset->videoBitrate);
-        rm->SetVideoFrameRate(preset->frameRate);
-    }
-
-    // Same defaults as the recording dialog: full frame, 2x nearest-neighbor
-    // (preserves multicolor detail through chroma subsampling; GIF ignores it)
-    rm->SetCaptureRegion(VideoCaptureRegion::FullFrame);
-    rm->SetScaleFactor(2);
-    rm->SetVideoResolution(0, 0);  // Derive from screen + capture region
-
-    // Generate output filename
-    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd_HH-mm-ss");
-    QString defaultDir = preset->outputDir.isEmpty()
-        ? QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)
-        : preset->outputDir;
-    QDir().mkpath(defaultDir);
-    QString filename = QString("%1/unreal_%2_%3.%4")
-        .arg(defaultDir)
-        .arg(timestamp)
-        .arg(preset->name.split(' ').first())
-        .arg(preset->container);
-
-    qDebug() << "Quick Record: Starting recording with preset" << presetName << "to" << filename;
-
-    // Start recording (StartRecording takes codec/bitrate directly)
-    std::string vidCodec = preset->videoCodec.toStdString();
-    std::string audCodec = preset->includeAudio ? preset->audioCodec.toStdString() : "";
-    if (!rm->StartRecording(filename.toStdString(), vidCodec, audCodec,
-                            preset->videoBitrate, preset->audioBitrate))
-    {
-        qDebug() << "Quick Record: Failed to start recording";
-    }
+    const StateNode* output = started.body.find("output");
+    qDebug() << "Quick Record: recording with preset" << presetName << "to"
+             << (output != nullptr ? QString::fromStdString(output->s) : QString());
 }
 #endif
 

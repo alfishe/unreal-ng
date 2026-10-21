@@ -254,7 +254,13 @@ public:
     // Video recording control (MCP automation)
     ADD_METHOD_TO(EmulatorAPI::videoRecord, "/api/v1/emulator/{id}/video/record", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::videoRecordStatus, "/api/v1/emulator/{id}/video/record/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::recordingPresets, "/api/v1/recording/presets", drogon::Get);
     // endregion Video Recording
+
+    // region Recent files (implementation: api/recent_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::getRecentFiles, "/api/v1/recent", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::clearRecentFiles, "/api/v1/recent", drogon::Delete);
+    // endregion Recent files
 
     // region Memory State (implementation: api/state_memory_api.cpp)
     // State inspection
@@ -1103,15 +1109,29 @@ public:
     // endregion Analyzer Management Methods
 
     // region Video Recording Methods (implementation: api/recording_api.cpp)
-    /// @brief POST /api/v1/emulator/{id}/video/record — body: {"action":"start|stop|pause|resume",
-    ///        "format":"gif", "fps":50, "scale":1..4, "region":"full"|"screen", "filename":"..."}
+    /// @brief POST /api/v1/emulator/{id}/video/record — body: {"action":"start|stop|pause|resume|toggle|status",
+    ///        "preset":"gameplay", "mode":"single|multi|audio", "format":"gif", "container":"mp4", "fps":50,
+    ///        "scale":1..4, "region":"full"|"screen", "filename":"..."} (capture::RecordingControl)
     void videoRecord(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     /// @brief GET /api/v1/emulator/{id}/video/record/status
     void videoRecordStatus(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    /// @brief GET /api/v1/recording/presets — the core's recording presets
+    void recordingPresets(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     // endregion Video Recording Methods
+
+    // region Recent files Methods (implementation: api/recent_api.cpp)
+    /// @brief GET /api/v1/recent[?kind=snapshot|tape|disk|rzx|image|cd] — the files opened lately (RecentFiles)
+    void getRecentFiles(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    /// @brief DELETE /api/v1/recent[?kind=...] — forget them (one kind, or all)
+    void clearRecentFiles(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    // endregion Recent files Methods
 
     // region Memory State Methods (implementation: api/state_memory_api.cpp)
     // State inspection

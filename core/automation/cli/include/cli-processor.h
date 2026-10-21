@@ -194,6 +194,7 @@ private:
     void HandleAudioCapture(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMixer(const ClientSession& session, const std::vector<std::string>& args);
     void HandleVideoRecord(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleRecent(const ClientSession& session, const std::vector<std::string>& args);
 
     // Interpreter control command handlers (Python)
     void HandlePython(const ClientSession& session, const std::vector<std::string>& args);

@@ -82,6 +82,11 @@
 #include <emulator/video/framebufferexport.h>
 #include <emulator/ports/models/sprinter/sprinterbios.h>
 #include <emulator/video/screendigest.h>
+#include <emulator/capture/recordingcontrol.h>
+#include <emulator/media/recentfiles.h>
+#include <filesystem>
+#include <map>
+#include <system_error>
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
 #include "recordingrequest.h"
@@ -1218,6 +1223,23 @@ namespace PythonBindings
         }, "Which snapshot formats this machine can be saved in right now (reason and what would work for each it cannot)",
            py::arg("emulator_id") = "");
 
+        // The files opened lately (RecentFiles; open one: emu.action("media.open_recent", index=0, kind="tape"))
+        m.def("recent_files", [](const std::string& kind) -> py::object {
+            if (kind != "all" && !kind.empty() && !RecentFiles::IsKind(kind))
+                throw std::invalid_argument("kind '" + kind + "': all, snapshot, tape, disk, rzx, image or cd");
+            return StateNodeToPy(RecentFiles::Instance().ToValue(kind));
+        }, "The files opened lately, newest first ({kinds: {...}, all: [...]} or, with a kind, {kind, files})",
+           py::arg("kind") = "all");
+        m.def("recent_clear", [](const std::string& kind) {
+            if (kind != "all" && !kind.empty() && !RecentFiles::IsKind(kind))
+                throw std::invalid_argument("kind '" + kind + "': all, snapshot, tape, disk, rzx, image or cd");
+            RecentFiles::Instance().Clear(kind);
+        }, "Forget the recent files (one kind, or all)", py::arg("kind") = "all");
+        // The core's recording presets (video_record("start", {"preset": "gameplay"}))
+        m.def("recording_presets", []() -> py::object {
+            return StateNodeToPy(capture::RecordingPresetsValue());
+        }, "The recording presets: id, title, mode, format, container, audio, bitrates, fps, scale");
+
         // RZX input recordings, by emulator id (default: the selected one). A
         // model switch replaces the machine: the answer's emulator_id is the new one
         m.def("rzx_play", [](const std::string& path, const std::string& emulatorId, const std::string& desyncMode,
@@ -2032,7 +2054,7 @@ namespace PythonBindings
                     throw std::runtime_error(refusal);  // TTD is recording: RuntimeError with the reason
                 return self.CreateBlankDisk(static_cast<uint8_t>(drive), parsed, static_cast<uint8_t>(cylinders),
                                             static_cast<uint8_t>(sides));
-            }, "Create blank disk (format: auto = plus3 on a +3, unformatted elsewhere; 0 = the format's geometry)",
+            }, "Create blank disk (format: auto = plus3 on a +3, unformatted elsewhere; unformatted / raw, plus3, trdos (formatted, empty catalogue); 0 = the format's geometry)",
                py::arg("drive"), py::arg("cylinders") = 0, py::arg("sides") = 0, py::arg("format") = "auto")
             .def("disk_load", [](Emulator& self, const std::string& path, int drive, bool autostart) -> py::dict {
                 py::dict result;
@@ -6182,225 +6204,38 @@ namespace PythonBindings
            py::arg("path") = py::none())
 
         .def("video_record", [](Emulator& self, const std::string& action, py::object optsValue) -> py::dict {
-#ifdef ENABLE_RECORDING
-            py::dict d;
-            auto* context = self.GetContext();
-            RecordingManager* rm = context ? context->pRecordingManager : nullptr;
-            if (!rm) { d["error"] = "recording manager not available"; return d; }
-
-            if (action == "start")
+            // capture::RecordingControl: the presets, modes and option rules every plane shares
+            std::map<std::string, std::string> options;
+            if (py::isinstance<py::dict>(optsValue))
             {
-                if (rm->IsRecording() || rm->IsPaused())
+                for (auto item : optsValue.cast<py::dict>())
                 {
-                    d["error"] = "a recording is already active — stop it first";
-                    return d;
-                }
-
-                std::string format = "gif";
-                std::string filename;
-                float fps = 50.0f;
-                int scale = 1;
-                std::string region = "full";
-                std::string profileName;
-                std::string accelerationName;
-                std::string audio;
-                long videoBitrate = 0;
-                long audioBitrate = 0;
-                if (py::isinstance<py::dict>(optsValue))
-                {
-                    py::dict opts = optsValue;
-                    // Optional sound track: "aac" (or True = aac); None/False = video only
-                    if (opts.contains("audio") && !opts["audio"].is_none())
+                    const std::string name = py::str(item.first);
+                    py::handle value = item.second;
+                    if (value.is_none())
+                        continue;
+                    if (py::isinstance<py::bool_>(value))
                     {
-                        if (py::isinstance<py::bool_>(opts["audio"]))
-                            audio = opts["audio"].cast<bool>() ? "aac" : "";
-                        else if (py::isinstance<py::str>(opts["audio"]))
-                            audio = RecordingRequest::NormalizeAudioCodec(opts["audio"].cast<std::string>());
-                        else
-                        {
-                            d["error"] = "audio must be a codec name (aac, mp3, opus, vorbis, flac, pcm_s16le) or a bool";
-                            return d;
-                        }
+                        // audio=True / False: aac or none, as before; other flags as text
+                        const bool on = value.cast<bool>();
+                        options[name] = name == "audio" ? (on ? "aac" : "none") : (on ? "true" : "false");
                     }
-                    if (opts.contains("video_bitrate"))
-                        videoBitrate = opts["video_bitrate"].cast<long>();
-                    if (opts.contains("audio_bitrate"))
-                        audioBitrate = opts["audio_bitrate"].cast<long>();
-                    if (opts.contains("format") && py::isinstance<py::str>(opts["format"]))
-                        format = opts["format"].cast<std::string>();
-                    if (opts.contains("filename") && py::isinstance<py::str>(opts["filename"]))
-                        filename = opts["filename"].cast<std::string>();
-                    if (opts.contains("fps"))
-                        fps = opts["fps"].cast<float>();
-                    if (opts.contains("scale"))
-                        scale = opts["scale"].cast<int>();
-                    if (opts.contains("region") && py::isinstance<py::str>(opts["region"]))
-                        region = opts["region"].cast<std::string>();
-                    if (opts.contains("profile") && py::isinstance<py::str>(opts["profile"]))
-                        profileName = opts["profile"].cast<std::string>();
-                    if (opts.contains("acceleration") && py::isinstance<py::str>(opts["acceleration"]))
-                        accelerationName = opts["acceleration"].cast<std::string>();
+                    else
+                        options[name] = py::str(value);
                 }
-
-                std::string extension = format;
-                if (format == "h264" || format == "h265" || format == "hevc" || format == "vp9")
-                    extension = "mp4";
-                else if (format == "rawvideo")
-                    extension = "avi";
-
-                if (filename.empty())
-                {
-                    std::filesystem::path dir = std::filesystem::temp_directory_path() / "unreal-python";
-                    std::error_code ec;
-                    std::filesystem::create_directories(dir, ec);
-                    static std::atomic<unsigned> counter{0};
-                    const long long stamp =
-                        static_cast<long long>(std::time(nullptr)) * 1000 + (counter++ % 1000);
-                    filename = (dir / ("video-" + std::to_string(stamp) + "." + extension)).string();
-                }
-
-                // Same rules as the WebAPI/CLI/Lua (RecordingRequest): the codec must fit the container
-                if (videoBitrate < 0 || audioBitrate < 0 || videoBitrate > 1000000 || audioBitrate > 1000000)
-                {
-                    d["error"] = "video_bitrate / audio_bitrate must be >= 0 (kbps)";
-                    return d;
-                }
-                // Output profile (native / 1080p / 1440p / 4k) and encoder acceleration (auto / hardware / software)
-                const std::string profile = RecordingRequest::NormalizeProfile(profileName);
-                const std::string acceleration = RecordingRequest::NormalizeAcceleration(accelerationName);
-                {
-                    std::string codecError = profile.empty() ? "unknown profile (native, 1080p, 1440p, 4k)" :
-                                             acceleration.empty() ? "unknown acceleration (auto, hardware, software)" :
-                                             RecordingRequest::ValidateProfile(profile, format);
-                    if (codecError.empty())
-                        codecError = RecordingRequest::ValidateAudio(format, filename, audio);
-                    if (codecError.empty())
-                        codecError = RecordingRequest::ValidateBitrates(static_cast<uint32_t>(videoBitrate),
-                                                                        static_cast<uint32_t>(audioBitrate), audio);
-                    if (!codecError.empty())
-                    {
-                        d["error"] = codecError;
-                        return d;
-                    }
-                }
-
-                if (fps < 1.0f) fps = 1.0f;
-                if (fps > 100.0f) fps = 100.0f;
-                rm->SetVideoFrameRate(fps);
-
-                if (scale < 1) scale = 1;
-                if (scale > 4) scale = 4;
-                rm->SetScaleFactor(static_cast<uint32_t>(scale));
-
-                rm->SetOutputProfile(profile);
-                rm->SetEncoderAcceleration(EncoderAccelerationFromName(acceleration));
-
-                rm->SetCaptureRegion((region == "screen" || region == "main")
-                                         ? VideoCaptureRegion::MainScreen
-                                         : VideoCaptureRegion::FullFrame);
-
-                FeatureManager* fm = context->pFeatureManager;
-                const bool featureWasOff = fm && !fm->isEnabled(Features::kRecording);
-                if (featureWasOff) fm->setFeature(Features::kRecording, true);
-
-                bool started = false;
-                {
-                    Emulator::CpuHold hold(self, "python recording");  // no frame mid-start; the pause stays
-                    started = rm->StartRecording(filename, format, audio, static_cast<uint32_t>(videoBitrate),
-                                                 static_cast<uint32_t>(audioBitrate));
-                }
-
-                if (!started)
-                {
-                    if (featureWasOff) fm->setFeature(Features::kRecording, false);
-                    d["error"] = "recording start failed";
-                    d["message"] = rm->GetLastRecordingError();
-                    return d;
-                }
-
-                d["recording"] = true;
-                d["format"] = format;
-                d["fps"] = fps;
-                d["scale"] = scale;
-                d["profile"] = profile;
-                d["acceleration"] = acceleration;
-                if (rm->HasFixedOutput())
-                {
-                    d["output_width"] = rm->GetOutputWidth();
-                    d["output_height"] = rm->GetOutputHeight();
-                }
-                d["region"] = region;
-                d["audio"] = rm->HasAudio();
-                d["audio_codec"] = audio;
-                d["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
-                d["audio_channels"] = rm->HasAudio() ? rm->GetAudioChannels() : 0u;
-                d["feature_auto_enabled"] = featureWasOff;
-                d["output"] = filename;
-                return d;
             }
-
-            if (action == "stop")
+            std::error_code ec;
+            const std::string folder = (std::filesystem::temp_directory_path(ec) / "unreal-python").string();
+            const capture::RecordingReply reply = capture::RecordingControl(self, folder).Execute(action, options);
+            py::dict d = StateNodeToPy(reply.body).cast<py::dict>();
+            if (!reply.ok)
             {
-                if (!rm->IsRecording() && !rm->IsPaused())
-                {
-                    d["error"] = "no active recording to stop";
-                    return d;
-                }
-                rm->StopRecording();
+                d["error"] = reply.message.empty() ? reply.error : reply.message;
+                d["code"] = reply.error;
             }
-            else if (action == "pause")
-            {
-                if (!rm->IsRecording())
-                {
-                    d["error"] = "no active recording to pause";
-                    return d;
-                }
-                rm->PauseRecording();
-            }
-            else if (action == "resume")
-            {
-                if (!rm->IsPaused())
-                {
-                    d["error"] = "recording is not paused";
-                    return d;
-                }
-                rm->ResumeRecording();
-            }
-            else
-            {
-                d["error"] = "unknown action '" + action + "' (expected start|stop|pause|resume)";
-                return d;
-            }
-
-            const RecordingManager::RecordingStats stats = rm->GetStats();
-            d["recording"] = rm->IsRecording();
-            d["paused"] = rm->IsPaused();
-            d["frames_recorded"] = static_cast<uint64_t>(stats.framesRecorded);
-            d["recorded_duration"] = stats.recordedDuration;
-            d["emulated_duration"] = stats.emulatedDuration;
-            d["output_file_size"] = static_cast<uint64_t>(stats.outputFileSize);
-            d["average_frame_time_ms"] = stats.averageFrameTime;
-            d["recent_fps"] = stats.recentFps;
-            d["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
-            d["video_codec"] = rm->GetVideoCodec();
-            d["profile"] = rm->GetOutputProfile();
-            d["acceleration"] = EncoderAccelerationName(rm->GetEncoderAcceleration());
-            d["audio"] = rm->HasAudio();
-            d["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
-            d["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
-            d["audio_channels"] = rm->HasAudio() ? rm->GetAudioChannels() : 0u;
-            d["audio_duration"] = rm->HasAudio() ? rm->GetAudioDuration() : 0.0;
-            d["output"] = rm->GetOutputFilename();
             return d;
-#else
-            (void)self;
-            (void)action;
-            (void)optsValue;
-            py::dict d;
-            d["error"] = "recording support is disabled in this build (ENABLE_RECORDING=OFF)";
-            return d;
-#endif
-        }, "Video recording control (action=start|stop|pause|resume)",
+        }, "Video recording control (action=start|stop|pause|resume|toggle|status|presets; opts: preset, mode, "
+           "format, container, filename, audio, fps, scale, region, profile, acceleration, video_bitrate, audio_bitrate)",
            py::arg("action"), py::arg("opts") = py::none())
 
         .def("video_record_status", [](Emulator& self) -> py::dict {

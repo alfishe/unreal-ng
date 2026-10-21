@@ -144,7 +144,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                                "gs_stereo_mode",
                                "rom_flash_status", "rom_flash_save", "rom_flash_discard",
                                "slots_catalog", "slots_matrix", "slots_plug", "slots_remove", "slots_set",
-                               "network_configure"})
+                               "network_configure", "switches", "switch"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -193,15 +193,18 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "false, \"hosts\": \"name=10.0.2.7\", ...}, the keys of POST /network/config): a change of the ZX-bus network "
         "cards (zxnetusb, zxwifi) is a slot change applied by a restart like slots_plug ('replace_if_incompatible', "
         "'dry_run', 'media_disposition' apply; the other settings go to the restarted machine), any other setting "
-        "applies in place (status accepted).";
+        "applies in place (status accepted). 'switches' lists the machine's front-panel switches (the Profi's turbo, "
+        "cpm; none on most machines), 'switch' flips one ('switch': turbo | cpm, 'on': true | false; recorded by TTD "
+        "like a key).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance (auto-created when none exists)";
     schema["properties"]["model"]["type"] = "string";
     schema["properties"]["model"]["description"] =
-        "Hardware model short name for 'create' / 'switch_model' / 'transfer_state' (new destination) — e.g. 48K, 128k, PLUS3, TSL, ATM3, ATM710, ATM450, PROFI, "
-        "SCORPION, PROFSCORP, SPRINTER, GMX, KAY, QUORUM, LSY256, PHOENIX (see list_models; creatability is "
-        "build-dependent — check the 'creatable' flags before assuming a machine exists). ZX-Poly "
+        "Hardware model short name for 'create' / 'switch_model' / 'transfer_state' (new destination) — e.g. 48K, 128k, PLUS2, PLUS2A, "
+        "PLUS3, PENTAGON, SCORPION, PROFSCORP, ATM450, ATM710, ATM3, TSL, PROFI, PROFI3, NEXT, SPRINTER; machine variants "
+        "TSL-VDAC2 and PROFI-PLUS (a base model with a fixed board) (see list_models; creatability is build-dependent — "
+        "check the 'creatable' flags: GMX, KAY, QUORUM, LSY256 and PHOENIX are listed but not creatable). ZX-Poly "
         "configurations ZXPOLY-48K, ZXPOLY-128K, ZXPOLY-PENTAGON create the four-instance machine by name "
         "(same as 'zxpoly': true with the base model)";
     schema["properties"]["ram_size"]["type"] = "integer";
@@ -319,6 +322,13 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "network_configure: the [NETWORK] settings, e.g. {\"card\": \"zxwifi\", \"zx_wifi\": \"at\", \"host_access\": true} "
         "(the keys of POST /network/config: card, host_access, dns_mode, hosts, forwards, remote_access, com_port, "
         "zx_wifi, esp_chip, ...)";
+    schema["properties"]["switch"]["type"] = "string";
+    schema["properties"]["switch"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["switch"]["enum"].append("turbo");
+    schema["properties"]["switch"]["enum"].append("cpm");
+    schema["properties"]["switch"]["description"] = "switch: the front-panel switch (turbo: Profi v3 / v5, cpm: Profi v5)";
+    schema["properties"]["on"]["type"] = "boolean";
+    schema["properties"]["on"]["description"] = "switch: the position (true = on)";
     schema["properties"]["slots"]["type"] = "object";
     schema["properties"]["slots"]["description"] =
         "'create': the new machine's slot set in the [SLOTS] key form, replacing its INI's: {\"zxbus.1\": "
@@ -481,6 +491,36 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                     body["action"] = action == "rom_flash_save" ? "save" : "discard";
                     ForwardCall("POST", Endpoint(id, "/memory/rom/flash"), &body, caller,
                                 "Flash " + body["action"].asString() + " on " + id, done);
+                }
+                else if (action == "switches" || action == "switch")
+                {
+                    Json::Value request;
+                    if (action == "switch")
+                    {
+                        if (!args["switch"].isString() || !args["on"].isBool())
+                        {
+                            done(ToolResult::Error("switch needs 'switch' (turbo | cpm) and 'on' (true | false)"));
+                            return;
+                        }
+                        request["name"] = args["switch"].asString();
+                        request["on"] = args["on"].asBool();
+                    }
+                    caller.Call(action == "switch" ? "POST" : "GET", Endpoint(id, "/switches"),
+                                action == "switch" ? &request : nullptr, [id, done](int status, Json::Value body) {
+                                    if (status != 200)
+                                    {
+                                        done(ToolResult::Error(status == 0 ? "WebAPI unreachable"
+                                                                           : "HTTP " + std::to_string(status) + ": " +
+                                                                                 DescribeErrorBody(body)));
+                                        return;
+                                    }
+                                    std::string text = "Front-panel switches of " + id + ":";
+                                    if (body["switches"].empty())
+                                        text += " none on this machine";
+                                    for (const Json::Value& sw : body["switches"])
+                                        text += " " + sw["name"].asString() + (sw["on"].asBool() ? " on" : " off");
+                                    done(ToolResult::Ok(text, std::move(body)));
+                                });
                 }
                 else if (action == "zxpoly_status")
                 {

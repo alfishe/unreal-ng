@@ -466,7 +466,7 @@ void WsHub::SubscribeTopics(WsConnection& connection, const Json::Value& message
             out.Error(connection, pattern.empty() ? std::string("ws") : pattern, "Not Found",
                       "no topic '" + pattern +
                           "' (run.state, ttd.position, surfaces.context, streamdeck.status, instances, debug.events, "
-                          "debug.asm_sync)");
+                          "debug.asm_sync, media.recent, media.rzx, cap.record, machine.switches, input.connectors)");
     }
 
     // The state topics and `instances` need the companion; the debug topics a companion or a loopback peer
@@ -560,13 +560,20 @@ const std::vector<std::string>& WsHub::TopicNames()
 {
     static const std::vector<std::string> names = {"run.state",    "ttd.position",   "surfaces.context",
                                                    kStreamDeck,    kInstances,       "debug.events",
-                                                   "debug.asm_sync"};
+                                                   "debug.asm_sync",
+                                                   // the machine area's state topics (StateTopicNames)
+                                                   "media.recent", "media.rzx", "cap.record", "machine.switches",
+                                                   "input.connectors"};
     return names;
 }
 
 const std::vector<std::string>& WsHub::StateTopicNames()
 {
-    static const std::vector<std::string> names = {"run.state", "ttd.position", "surfaces.context", kStreamDeck};
+    static const std::vector<std::string> names = {"run.state", "ttd.position", "surfaces.context", kStreamDeck,
+                                                   // the machine area: the readouts of the same name
+                                                   // (machinereadouts.h), read by Read below
+                                                   "media.recent", "media.rzx", "cap.record", "machine.switches",
+                                                   "input.connectors"};
     return names;
 }
 
@@ -629,7 +636,8 @@ Json::Value WsHub::Read(const std::string& name, const std::string& instanceId, 
         value["default"] = info.fallback;
         return value;
     }
-    return Json::Value();
+    // The other state topics are readouts of the same name (published state only)
+    return StateNodeToJson(actions::ReadReadout(emulator, name));
 }
 
 std::string WsHub::FollowedInstance()

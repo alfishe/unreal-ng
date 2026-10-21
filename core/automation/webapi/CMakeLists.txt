@@ -206,6 +206,7 @@ set(COMMON_SOURCES
     src/api/debug_api.cpp
     src/api/capture_api.cpp
     src/api/recording_api.cpp
+    src/api/recent_api.cpp
     src/api/profiler_api.cpp
     src/api/porttrace_api.cpp
     src/api/vdac2_api.cpp

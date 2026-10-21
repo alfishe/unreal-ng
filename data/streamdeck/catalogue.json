@@ -243,22 +243,6 @@
    "gui": false
   },
   {
-   "id": "cap.record_toggle",
-   "label": "cap.record_toggle",
-   "group": "Capture and machine",
-   "kind": "press",
-   "held": false,
-   "gui": false
-  },
-  {
-   "id": "cap.clip_last",
-   "label": "cap.clip_last",
-   "group": "Capture and machine",
-   "kind": "press",
-   "held": false,
-   "gui": false
-  },
-  {
    "id": "run.pause",
    "label": "Pause",
    "group": "Run",
@@ -308,7 +292,7 @@
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "model, ram_kb?, replace? (true: in place), stranded? (keep), ram_power_on? (random|zero), select? (true)"
+   "params": "model (a short name, a variant such as TSL-VDAC2 or PROFI-PLUS, a ZX-Poly configuration such as ZXPOLY-128K: GET /emulator/models), ram_kb?, replace? (true: in place), stranded? (keep: refuse|save|discard|keep), ram_power_on? (random|zero), select? (true)"
   },
   {
    "id": "mach.cold_reset",
@@ -521,7 +505,7 @@
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "drive (A..D), format?, cylinders?, sides?"
+   "params": "drive (A..D, or an IDE / SD slot), format? (floppy: auto|trdos|plus3|unformatted (raw)), cylinders? (40|80), sides? (1|2), size? (IDE / SD: bytes, or 64M, 2G), save? / discard? / export? (the disk it replaces)"
   },
   {
    "id": "snapshot.quick",
@@ -664,6 +648,174 @@
    "params": "path"
   },
   {
+   "id": "mach.switch",
+   "label": "Front-panel switch",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "name (turbo|cpm), on? (else flips)"
+  },
+  {
+   "id": "mach.previous",
+   "label": "Previous model",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "replace? (true: in place), stranded? (keep), ram_power_on? (random|zero)"
+  },
+  {
+   "id": "media.insert",
+   "label": "Insert a medium",
+   "group": "Media",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "drive (A..D, tape, ide0.master, sd..., or auto), path, wp?, access? (readonly|session|writethrough), save? / discard? / export? (the medium it replaces)"
+  },
+  {
+   "id": "media.swap",
+   "label": "Swap disks",
+   "group": "Media",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "drive, with (another drive: the two exchange their disks) or path (a file replaces the disk), save? / discard?"
+  },
+  {
+   "id": "media.export",
+   "label": "Save as another format",
+   "group": "Media",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "drive (A..D, tape), format (disk: trd, scl, udi, fdi, dsk, td0, mgt, img, hfe, scp; tape: tap, tzx), path? (else next to its file), force? (false)"
+  },
+  {
+   "id": "media.discard",
+   "label": "Discard changes",
+   "group": "Media",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "drive (A..D, or a slot id)"
+  },
+  {
+   "id": "media.rescan",
+   "label": "Rescan",
+   "group": "Media",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "drive (a folder or composite medium), save? / discard?"
+  },
+  {
+   "id": "media.open_recent",
+   "label": "Open a recent file",
+   "group": "Media",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "index? (0 = the newest), kind? (all|snapshot|tape|disk|rzx|image|cd), autostart? (true), drive?"
+  },
+  {
+   "id": "rzx.play",
+   "label": "Play an RZX",
+   "group": "Media",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "path, tolerant? (false), switch_model? (true)"
+  },
+  {
+   "id": "rzx.stop",
+   "label": "Stop the RZX",
+   "group": "Media",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "rzx.seek",
+   "label": "Seek the RZX",
+   "group": "Media",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "frame (0 = the start) or by (frames, -500)"
+  },
+  {
+   "id": "input.joystick_type",
+   "label": "Joystick type",
+   "group": "Input",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "kind (kempston|sinclair1|sinclair2|cursor|fuller|keys|md6|none), connector? (auto), keys? (keys: up:q,down:a,...)"
+  },
+  {
+   "id": "input.mouse_button",
+   "label": "Mouse button",
+   "group": "Input",
+   "kind": "press",
+   "held": true,
+   "gui": false,
+   "params": "button (left|right|middle), hold? (false: a click), frames? (2)"
+  },
+  {
+   "id": "input.mouse_release",
+   "label": "Release the mouse",
+   "group": "Input",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "cap.record_toggle",
+   "label": "Record video",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "preset? (gameplay|music|audio|gif|hq|multitrack), format?, container?, audio?, mode? (single|multi|audio), profile? (native|1080p|1440p|4k), path?, fps?, scale?, region?"
+  },
+  {
+   "id": "cap.record_pause",
+   "label": "Pause recording",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "cap.clip_last",
+   "label": "Clip the last seconds",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "seconds? (10), format? (gif|mp4|mkv|webm|mov|avi), path?, scale? (1..4)"
+  },
+  {
+   "id": "ttd.export_clip",
+   "label": "Export a range as a clip",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "from, to (frames), path? (a .gif / .mp4 / .mkv / .webm / .mov / .avi file: a video, default a .gif under the recordings folder; a folder: the lossless clip), codec?, scale? (1..4), chunk? (the lossless clip)"
+  },
+  {
+   "id": "cap.audio_capture",
+   "label": "Capture audio",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "source? (master, beeper, ay1, covox, gs, ...), seconds? (5, 0.01..30), path? (a .wav)"
+  },
+  {
    "id": "ttd.scrub_back",
    "label": "Scrub back",
    "group": "Time travel",
@@ -768,6 +920,14 @@
    "gui": true
   },
   {
+   "id": "osd.keyboard",
+   "label": "On-screen keyboard",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
    "id": "dbg.breakpoint_toggle_pc",
    "label": "dbg.breakpoint_toggle_pc",
    "group": "Debugger",
@@ -779,14 +939,6 @@
    "id": "dbg.labels_toggle",
    "label": "dbg.labels_toggle",
    "group": "Debugger",
-   "kind": "press",
-   "held": false,
-   "gui": true
-  },
-  {
-   "id": "osd.keyboard",
-   "label": "osd.keyboard",
-   "group": "Capture and machine",
    "kind": "press",
    "held": false,
    "gui": true
