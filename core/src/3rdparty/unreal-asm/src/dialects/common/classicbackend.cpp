@@ -232,9 +232,15 @@ struct Writer
     bool unsignedWords = false;
     int sections = 0;
     bool phased = false;           // z80asm: a PHASE may be active
+    int loops = 0;                 // the REPT / WHILE blocks the line is in (the layout's line address is their first pass)
+    bool lastStatement = false;    // the statement being written ends its line (the next line's address follows it)
     std::string pcLabel{};         // the label standing for $ in the statement being written
     bool deflText = false;         // z80asm: writing a DEFL, a text macro ($ in it would be the $ where the name is used)
     int pcLabels = 0;
+    // z80asm: DEFL names assigned from each other (their text would double at every assignment): each value an EQU of
+    // its own, the name standing for it
+    std::set<std::string> growing{};
+    int values = 0;
     // The names the assembly defines outside a block that tests them (sjasmplus' "exist" answers from the whole source
     // in the same way): z80asm's tests for a defined name are decided from them
     std::set<std::string> definedNames{};
@@ -383,6 +389,54 @@ struct Writer
             const auto found = constants.find(Name(name));
             return found == constants.end() ? std::nullopt : std::optional<int64_t>(found->second);
         });
+    }
+
+    /// $ at the start of a source line (the one being written by default), as the layout gives it (a sjasmplus
+    /// source's line, or the source line of another dialect through its conversion); none in a macro or a loop, whose
+    /// lines have an address per pass
+    std::optional<int64_t> LineAddress(uint32_t at = 0) const
+    {
+        if (inMacro || loops > 0)
+            return std::nullopt;
+        if (at == 0)
+            at = line;
+        std::string file;
+        for (const char c : options.fileName)
+            file.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
+        for (const char* prefix : {"__UNREALASM_S", "__UNREALASM_L"})
+            for (const std::string& f : {file, std::string()})
+                if (const auto found = options.labelValues.find(prefix + f + "_" + std::to_string(at)); found != options.labelValues.end())
+                    return found->second.value;
+        return std::nullopt;
+    }
+
+    /// z80asm takes one ORG per section: every ORG opens one (each section's binary is written apart, its address is
+    /// __<section>_head in the map)
+    std::string NextSection()
+    {
+        std::string file = options.fileName.empty() ? std::string("main") : options.fileName;
+        for (char& c : file)
+            if (!std::isalnum(static_cast<unsigned char>(c)))
+                c = '_';
+        return "s_" + file + "_" + std::to_string(++sections);
+    }
+
+    /// The value of an expression of numbers, EQU constants and $ (at `here`)
+    std::optional<int64_t> KnownAt(const Expr& e, int64_t here) const
+    {
+        if (e.kind == Expr::Kind::Current)
+            return here;
+        if (e.args.empty())
+            return Known(e);
+        Expr copy = e;
+        for (Expr& a : copy.args)
+        {
+            const auto v = KnownAt(a, here);
+            if (!v)
+                return std::nullopt;
+            a = Expr::Number(*v, ir::NumberSpelling::Decimal, 0);
+        }
+        return Known(copy);
     }
 
     /// A 16-bit source's value beyond #FFFF (X EQU #FFFF+2 is 1 in GENS): masked to its word where z80asm's 32 bits
@@ -964,9 +1018,23 @@ struct Writer
         // put here (pcLabel)
         auto deflOf = [&]() {
             deflText = Z80asm();
-            std::string text = "= " + args();
+            std::string text = args();
             deflText = false;
-            return Checked({text}, "DEFL");
+            if (Z80asm() && growing.count(label))
+            {
+                std::string file = options.fileName.empty() ? std::string("main") : options.fileName;
+                for (char& c : file)
+                    if (!std::isalnum(static_cast<unsigned char>(c)))
+                        c = '_';
+                const std::string value = "__UNREALASM_V_" + file + "_" + std::to_string(++values);
+                std::vector<std::string> out;
+                if (inMacro)
+                    out.push_back("LOCAL " + value);   // a value of each expansion
+                out.push_back("@" + value + " EQU " + text);
+                out.push_back("= " + value);
+                return Checked(out, "DEFL");
+            }
+            return Checked({"= " + text}, "DEFL");
         };
         switch (s.directive)
         {
@@ -989,6 +1057,13 @@ struct Writer
                     }
                     if (a.kind == Expr::Kind::Binary && a.op == Op::Add && a.args[0].kind == Expr::Kind::Current && a.args[1].kind == Expr::Kind::Number)
                         return Checked({"DEFS " + Print(a.args[1])}, "ORG");
+                    // A move back to an address the layout gives (ORG $-2: the next bytes write over the last ones; a
+                    // name the converter does not know, when the ORG ends its line: the next line's address): a section
+                    // of its own at that address, after the one it writes over in the map
+                    if (const auto here = LineAddress(); here && !phased)
+                        if (auto to = KnownAt(a, *here) ? KnownAt(a, *here) : lastStatement ? LineAddress(line + 1) : std::nullopt;
+                            to && (*to & 0xFFFF) < *here)
+                            return {"SECTION " + NextSection(), "ORG " + Hex(*to, 4) + "             ; unreal-asm: ORG " + Print(a) + " (the layout's address)"};
                     if (a.kind == Expr::Kind::Binary && a.op == Op::Sub && a.args[0].kind == Expr::Kind::Current && a.args[1].kind == Expr::Kind::Number &&
                         a.args[1].value > 0)
                         diagnostics.push_back({Severity::Warning, line, 0, "ORG " + Print(a) + ": z80asm cannot move back in a section (its DEFS is an error)"});
@@ -1001,13 +1076,7 @@ struct Writer
                 if (Z80asm())
                 {
                     phased = false;
-                    // z80asm takes one ORG per section: every ORG opens one (each section's binary is written apart,
-                    // its address is __<section>_head in the map)
-                    std::string file = options.fileName.empty() ? std::string("main") : options.fileName;
-                    for (char& c : file)
-                        if (!std::isalnum(static_cast<unsigned char>(c)))
-                            c = '_';
-                    return Checked({"SECTION s_" + file + "_" + std::to_string(++sections), "ORG " + Print(Masked16(s.args[0]))}, "ORG");
+                    return Checked({"SECTION " + NextSection(), "ORG " + Print(Masked16(s.args[0]))}, "ORG");
                 }
                 return Checked({"ORG " + Print(s.args[0])}, "ORG");
             case ir::DirectiveKind::Equ:
@@ -1069,8 +1138,23 @@ struct Writer
                 const std::string incbin = std::string(Z80asm() ? "BINARY" : "INCBIN") + " \"" + name + "\"";
                 if (s.params.empty() || s.params[0] != "sector-slack")
                     return {incbin};
-                if (Z80asm())   // the tail written and the address moved back: z80asm has no ORG back within a section
-                    return {incbin, NotConverted("the rest of the last sector of \"" + name + "\" (TASM copies it; z80asm cannot move back)")};
+                if (Z80asm())
+                {
+                    // z80asm has no ORG back within a section: the tail in a section of its own at the file's end (the
+                    // map's s_tail_ sections first, the code after them writes over them), then the code goes on in a
+                    // new section from there
+                    std::optional<int64_t> end;
+                    if (const auto here = LineAddress(); here && options.fileSize)
+                        if (const auto size = options.fileSize(name))
+                            end = *here + static_cast<int64_t>(*size);
+                    if (!end && lastStatement)
+                        end = LineAddress(line + 1);
+                    if (!end || phased)
+                        return {incbin, NotConverted("the rest of the last sector of \"" + name + "\" (TASM copies it; z80asm cannot move back)")};
+                    std::string tail = NextSection();
+                    tail.insert(2, "tail_");
+                    return {incbin, "SECTION " + tail, "ORG " + Hex(*end, 4), "BINARY \"" + name + ".slack\"", "SECTION " + NextSection(), "ORG " + Hex(*end, 4)};
+                }
                 // The rest of the last sector next, then the address goes back (pasmo keeps the later bytes)
                 return {incbin, "@__UNREALASM_INCBIN_P DEFL $", "INCBIN \"" + name + ".slack\"", "ORG __UNREALASM_INCBIN_P"};
             }
@@ -1691,11 +1775,11 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
     }
 
     // z80asm's DEFL is a text macro (its preprocessor puts the expression's text in place of the name): two names
-    // assigned from each other (X DEFL X+Y/41, Y DEFL Y-X/41) double the text at every assignment
+    // assigned from each other (X DEFL X+Y/41, Y DEFL Y-X/41) would double the text at every assignment, so each of
+    // their values is an EQU of its own
     if (w.Z80asm())
     {
         std::map<std::string, std::set<std::string>> uses;
-        std::map<std::string, uint32_t> at;
         std::function<void(const Expr&, std::set<std::string>&)> names = [&](const Expr& e, std::set<std::string>& into) {
             if (e.kind == Expr::Kind::Symbol)
                 into.insert(e.text);
@@ -1706,16 +1790,14 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
             if (!l.label.empty() && redefinable.count(l.label))
                 for (const Statement& s : l.statements)
                     if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Defl && !s.args.empty())
-                    {
                         names(s.args[0], uses[l.label]);
-                        at.emplace(l.label, l.sourceLine);
-                    }
         for (const auto& [name, used] : uses)
             for (const std::string& other : used)
                 if (other < name && uses.count(other) && uses[other].count(name))
-                    result.diagnostics.push_back({Severity::Warning, at[name], 0,
-                                           "z80asm's DEFL is a text macro: " + other + " and " + name +
-                                               " assigned from each other grow at every assignment (z80asm may not end)"});
+                {
+                    w.growing.insert(name);
+                    w.growing.insert(other);
+                }
     }
 
     size_t nextBlock = 0;
@@ -1725,6 +1807,14 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
         const ir::Line& l = program.lines[index];
         w.line = l.sourceLine;
         w.lineIndex = index;
+        for (const Statement& s : l.statements)
+            if (s.kind == Statement::Kind::Directive)
+            {
+                if (s.directive == ir::DirectiveKind::Repeat || s.directive == ir::DirectiveKind::While || s.directive == ir::DirectiveKind::RepeatUntil)
+                    ++w.loops;
+                if (s.directive == ir::DirectiveKind::EndRepeat || s.directive == ir::DirectiveKind::EndWhile || s.directive == ir::DirectiveKind::UntilZero)
+                    --w.loops;
+            }
         if (const auto decided = decidedLines.find(index); decided != decidedLines.end())
             for (const std::string& text : decided->second)
                 result.document.lines.push_back({text, {}});
@@ -1901,6 +1991,7 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
                 (s.directive == ir::DirectiveKind::LocalBlock || s.directive == ir::DirectiveKind::EndLocalBlock || s.directive == ir::DirectiveKind::Macro))
                 continue;
             w.pcLabel.clear();
+            w.lastStatement = &s == &l.statements.back();
             std::vector<std::string> written = w.StatementText(s, l.label);
             if (!w.pcLabel.empty() && w.inMacro)
                 texts.push_back("LOCAL " + w.pcLabel);   // a label of each expansion

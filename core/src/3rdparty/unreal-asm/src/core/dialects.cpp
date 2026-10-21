@@ -139,6 +139,20 @@ void DialectRegistry::Add(std::unique_ptr<IBackend> backend)
 
 namespace
 {
+/// The size of the file an INCBIN names, for the layout: the one the caller gives (a catalog length), else the data
+/// file's (which may hold a sector's slack)
+std::function<std::optional<uint64_t>(const std::string&)> IncbinSize(const BackendOptions& options)
+{
+    if (options.fileSize)
+        return options.fileSize;
+    if (!options.dataFiles)
+        return nullptr;
+    return [&options](const std::string& name) -> std::optional<uint64_t> {
+        const std::vector<uint8_t> bytes = options.dataFiles(name);
+        return bytes.empty() ? std::nullopt : std::optional<uint64_t>(bytes.size());
+    };
+}
+
 /// The labels of a sjasmplus project as its layout computes them, for a backend that folds with them (project: the
 /// labels name their files)
 std::map<std::string, SourceLabel> LabelValues(const std::vector<ProjectFile>& files, size_t main, const BackendOptions& options,
@@ -148,28 +162,29 @@ std::map<std::string, SourceLabel> LabelValues(const std::vector<ProjectFile>& f
     if (std::any_of(files.begin(), files.end(), [](const ProjectFile& f) { return f.document.dialect != "sjasmplus"; }))
     {
         // another dialect: its labels through its sjasmplus conversion's layout, under their names in the source (the
-        // global ones; a block's local labels and the lines' addresses are not given)
+        // global ones, not a block's local labels), and its lines' addresses
         if (std::any_of(files.begin(), files.end(), [&](const ProjectFile& f) { return f.document.dialect != files[main].document.dialect; }))
             return values;
         symbols::SourceSymbolsOptions symbolOptions;
-        if (options.dataFiles)
-            symbolOptions.layout.fileSize = [&options](const std::string& name) -> std::optional<uint64_t> {
-                const std::vector<uint8_t> bytes = options.dataFiles(name);
-                return bytes.empty() ? std::nullopt : std::optional<uint64_t>(bytes.size());
-            };
+        symbolOptions.layout.fileSize = IncbinSize(options);
         const symbols::SourceSymbolsResult found = symbols::SymbolsFromProject(files, main, symbolOptions);
         for (const symbols::Symbol& symbol : found.set.symbols)
             if (symbol.parent.empty() && symbol.kind != symbols::SymbolKind::Local && !values.count(symbol.name))
                 values[symbol.name] = {static_cast<int64_t>(symbol.location.offset), !project ? std::string() : symbol.source.file,
                                        symbol.source.line, false};
+        // each source line's address, for $ there: __UNREALASM_S<file>_<line> (the file named only in a project)
+        for (const layout::LineAddress& a : found.lines)
+        {
+            std::string file;
+            if (project)
+                for (const char c : a.file)
+                    file.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
+            values["__UNREALASM_S" + file + "_" + std::to_string(a.line)] = {a.address, !project ? std::string() : a.file, a.line, false};
+        }
         return values;
     }
     layout::LayoutOptions layoutOptions;
-    if (options.dataFiles)
-        layoutOptions.fileSize = [&options](const std::string& name) -> std::optional<uint64_t> {
-            const std::vector<uint8_t> bytes = options.dataFiles(name);
-            return bytes.empty() ? std::nullopt : std::optional<uint64_t>(bytes.size());
-        };
+    layoutOptions.fileSize = IncbinSize(options);
     const layout::LayoutResult laid = layout::Layout(files, main, layoutOptions);
     for (const layout::Label& l : laid.labels)
     {

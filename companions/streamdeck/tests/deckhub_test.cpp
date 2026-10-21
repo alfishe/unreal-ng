@@ -5,6 +5,8 @@
 #include "sdb/daemondecks.h"
 #include "sdb/runtime.h"
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <deque>
 #include <functional>
@@ -19,6 +21,7 @@
 #include "sdb/eventloop.h"
 #include "sdb/picturecache.h"
 #include "sdb/protocol.h"
+#include "sdb/reconnect.h"
 
 using namespace sdb;
 using namespace std::chrono_literals;
@@ -542,6 +545,181 @@ void TestHubWithDaemonDecks()
     dev.reset();
 }
 
+// A deck under a ReconnectingTransport (sdb/reconnect.h) that the test unplugs.
+struct PluggableUsb final : Transport
+{
+    std::shared_ptr<std::atomic<bool>> present;
+    std::shared_ptr<FakeUsb::Shared> s;
+    PluggableUsb(std::shared_ptr<std::atomic<bool>> p, std::shared_ptr<FakeUsb::Shared> sh)
+        : present(std::move(p)), s(std::move(sh))
+    {
+    }
+    int Write(std::span<const std::uint8_t> r) override
+    {
+        if (!*present)
+            return -1;
+        std::lock_guard lock(s->mutex);
+        s->writes.emplace_back(r.begin(), r.end());
+        return static_cast<int>(r.size());
+    }
+    int SendFeature(std::span<const std::uint8_t> r) override
+    {
+        if (!*present)
+            return -1;
+        std::lock_guard lock(s->mutex);
+        s->features.emplace_back(r.begin(), r.end());
+        return static_cast<int>(r.size());
+    }
+    int GetFeature(std::span<std::uint8_t> buf) override
+    {
+        return *present ? static_cast<int>(buf.size()) : -1;
+    }
+    int Read(std::span<std::uint8_t>, int) override
+    {
+        return *present ? 0 : -1;
+    }
+};
+
+std::vector<nlohmann::json> DeckStates(const TestViewer& v)
+{
+    std::vector<nlohmann::json> out;
+    for (const auto& f : v.frames)
+        if (f.type == wire::DeckState)
+            out.push_back(nlohmann::json::parse(f.payload));
+    return out;
+}
+
+// Unplug and replug under a running runtime: the viewers are told both ways, the routes show it, the runtime goes on,
+// the deck gets the picture and the brightness set while it was away; POST .../reconnect does the same on purpose.
+void TestHubReconnect()
+{
+    net::EventLoop loop;
+    DeckHub hub(loop, HubOptions());
+    std::string error;
+    CHECK(hub.Listen(&error));
+    DaemonDecks decks(DaemonDecks::Options{});
+    CHECK(decks.LoadStart(&error));
+    decks.SetHub(&hub, hub.Port());
+    automation::Api api("unreal-streamdeck", "1.0");
+    decks.AddRoutes(api);
+    const Model& m = PlusXl();
+    auto present = std::make_shared<std::atomic<bool>>(true);
+    auto shared = std::make_shared<FakeUsb::Shared>();
+    ReconnectOptions ro;
+    ro.retry = 1ms;
+    auto reopen = [present, shared](bool) {
+        ReconnectingTransport::Probe p;
+        if (*present)
+            p.same = std::make_unique<PluggableUsb>(present, shared);
+        return p;
+    };
+    auto dev = std::make_unique<Device>(
+        m,
+        std::make_unique<ReconnectingTransport>(std::make_unique<PluggableUsb>(present, shared), m, "SER1", reopen,
+                                                ro),
+        "SER1");
+    dev->WrapTransport([&](std::unique_ptr<Transport> t) { return hub.AttachDeck(std::move(t), m, "SER1"); });
+    auto rt = std::make_unique<scn::Runtime>(*dev, decks.StartScenario());
+    decks.Add("SER1", m, true, *rt);
+    rt->Step(0);
+    TestViewer v(loop, hub.Port());
+    v.Send(wire::Join, R"({"v":2,"role":"mirror","deck":"first"})");
+    CHECK(RunUntil(loop, [&] { return v.Count(wire::ReplayEnd) == 1; }));
+    automation::Request list;
+    list.method = "GET";
+    list.path = "/api/v1/decks/SER1";
+    CHECK(api.Dispatch(list).body.value("connected", false));
+
+    // Unplugged: found on the device thread's next read; told to the viewer; the route says so at once.
+    *present = false;
+    rt->Step(0);
+    CHECK(!api.Dispatch(list).body.value("connected", true));
+    CHECK(RunUntil(loop, [&] { return DeckStates(v).size() == 1; }));
+    CHECK(!DeckStates(v)[0].value("connected", true) && !v.closed);
+    CHECK(hub.Info().decks.size() == 1 && !hub.Info().decks[0].connected);
+
+    // The runtime goes on while the deck is away.
+    rt->SetBrightness(33);
+    rt->Step(0);
+    {
+        std::lock_guard lock(shared->mutex);
+        shared->writes.clear();
+        shared->features.clear();
+    }
+    *present = true;
+    CHECK(RunUntil(loop, [&] {
+        rt->Step(1);
+        return DeckStates(v).size() == 2;
+    }));
+    CHECK(DeckStates(v)[1].value("connected", false) && api.Dispatch(list).body.value("connected", false));
+    {
+        std::lock_guard lock(shared->mutex);
+        CHECK(std::find(shared->features.begin(), shared->features.end(), Str(proto::Brightness(m, 33))) !=
+              shared->features.end());
+        CHECK(shared->writes.size() >= static_cast<std::size_t>(m.keys));  // every key drawn again
+    }
+    CHECK_EQ(v.Count(wire::Welcome), 1);  // the mirror stayed on its deck
+
+    // On purpose.
+    automation::Request q;
+    q.method = "POST";
+    q.path = "/api/v1/decks/first/reconnect";
+    q.body = {{"away_ms", 0}};
+    const auto r = api.Dispatch(q);
+    CHECK(r.status == 200 && r.body.value("reconnecting", false));
+    q.body = {{"away_ms", -1}};
+    CHECK_EQ(api.Dispatch(q).status, 400);
+    CHECK(RunUntil(loop, [&] {
+        rt->Step(1);
+        return DeckStates(v).size() == 4;
+    }));
+    CHECK(DeckStates(v)[3].value("connected", false) && dev->Connected());
+
+    decks.Remove("SER1");
+    rt.reset();
+    dev.reset();
+}
+
+// The daemon takes another deck after its deck stayed away: mirrors of "the first deck" follow it (a new Welcome with
+// the other model, its picture), a mirror of that very serial keeps waiting for it.
+void TestMirrorFollowsFirstDeck()
+{
+    net::EventLoop loop;
+    DeckHub hub(loop, HubOptions());
+    std::string error;
+    CHECK(hub.Listen(&error));
+    auto a = hub.AttachDeck(std::make_unique<FakeUsb>(), PlusXl(), "SERA");
+    TestViewer first(loop, hub.Port());
+    first.Send(wire::Join, R"({"v":2,"role":"mirror","deck":"first"})");
+    TestViewer pinned(loop, hub.Port());
+    pinned.Send(wire::Join, R"({"v":2,"role":"mirror","deck":"SERA"})");
+    CHECK(RunUntil(loop, [&] { return first.Count(wire::ReplayEnd) == 1 && pinned.Count(wire::ReplayEnd) == 1; }));
+    a.reset();
+    CHECK(RunUntil(loop, [&] { return DeckStates(first).size() == 1 && DeckStates(pinned).size() == 1; }));
+    const Model& neo = *FindModelByName("neo");
+    auto b = hub.AttachDeck(std::make_unique<FakeUsb>(), neo, "SERB");
+    CHECK(RunUntil(loop, [&] { return first.Count(wire::Welcome) == 2 && first.Count(wire::ReplayEnd) == 2; }));
+    nlohmann::json w;
+    for (const auto& f : first.frames)
+        if (f.type == wire::Welcome)
+            w = nlohmann::json::parse(f.payload);
+    CHECK(w.value("deck", "") == "SERB" && w.value("pid", 0) == neo.pid);
+    CHECK(RunUntil(loop, [&] { return hub.Info().decks.size() == 2; }));
+    CHECK_EQ(pinned.Count(wire::Welcome), 1);
+    const auto info = hub.Info();
+    CHECK(info.decks.size() == 2 && info.decks[0].serial == "SERA" && !info.decks[0].connected &&
+          info.decks[0].viewers.size() == 1 && info.decks[1].serial == "SERB" && info.decks[1].viewers.size() == 1);
+
+    // Nobody watches A any more: it is forgotten when the next deck comes.
+    pinned.Send(wire::Leave, {});
+    CHECK(RunUntil(loop, [&] { return hub.ViewerCount() == 1; }));
+    b.reset();
+    auto c = hub.AttachDeck(std::make_unique<FakeUsb>(), PlusXl(), "SERC");
+    CHECK(RunUntil(loop, [&] { return first.Count(wire::Welcome) == 3; }));
+    const auto after = hub.Info();
+    CHECK(after.decks.size() == 1 && after.decks[0].serial == "SERC");
+}
+
 }  // namespace
 
 void TestDeckHub()
@@ -555,4 +733,6 @@ void TestDeckHub()
     TestJoinRules();
     TestHubInfo();
     TestHubWithDaemonDecks();
+    TestHubReconnect();
+    TestMirrorFollowsFirstDeck();
 }

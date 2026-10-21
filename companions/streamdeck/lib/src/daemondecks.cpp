@@ -290,7 +290,7 @@ json DaemonDecks::DescribeLocked(const Entry& e) const
            {"model", ModelName(e.model)},
            {"pid", e.model ? e.model->pid : 0},
            {"real", e.real},
-           {"connected", true},
+           {"connected", e.runtime->Connected()},  // the device's own state: it changes before the hub hears
            {"scenario", e.file},
            {"start_scenario", e.start},
            {"watch", e.watch},
@@ -300,7 +300,6 @@ json DaemonDecks::DescribeLocked(const Entry& e) const
         for (const auto& d : _hub->Info().decks)
             if (d.serial == e.serial)
             {
-                j["connected"] = d.connected;
                 for (const auto& v : d.viewers)
                     j["viewers"].push_back({{"id", v.id}, {"role", v.role}, {"name", v.name}, {"pid", v.pid}});
             }
@@ -509,6 +508,26 @@ void DaemonDecks::AddRoutes(automation::Api& api)
                          _hub->SendControl(e.serial, json{{"op", "snapshot"}, {"path", r.Str("path")}}.dump());
                      return n > 0 ? Reply::Ok({{"serial", e.serial}, {"viewers", n}, {"path", r.Str("path")}})
                                   : Reply::Error(409, "nobody views deck " + e.serial);
+                 });
+             }});
+
+    api.Add({"POST",
+             "/api/v1/decks/{serial}/reconnect",
+             "Close the real deck's USB handle and open it again (what an unplug and a replug do)",
+             "away_ms (default 0, up to 60000): stay away that long first, connected is false meanwhile and the "
+             "viewers are told. The runtime goes on; the deck gets its picture and brightness back. 409 for an own "
+             "deck",
+             {"decks", "usb", "hotplug", "reconnect"},
+             {serialPath, {"away_ms", "body", "integer", "milliseconds without the deck before it is opened again"}},
+             json{{"away_ms", 2000}},
+             [this](const Request& r) {
+                 const long long away = r.Num("away_ms", 0);
+                 if (away < 0 || away > 60000)
+                     return Reply::Error(400, "away_ms: 0..60000");
+                 return WithDeck(r.Str("serial"), [&](Entry& e) {
+                     if (!e.real || !e.runtime->Reconnect(std::chrono::milliseconds(away)))
+                         return Reply::Error(409, "deck " + e.serial + " is not a USB deck that reconnects");
+                     return Reply::Ok({{"serial", e.serial}, {"reconnecting", true}, {"away_ms", away}});
                  });
              }});
 

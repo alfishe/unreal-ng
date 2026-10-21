@@ -16,6 +16,7 @@ import importlib
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -29,13 +30,14 @@ REPO = HERE.parents[2]
 SCRATCH = REPO / "scratch" / "2026-10-19-poc-031"
 QTRENDER = SCRATCH / "qtrender-build" / "qtrender"
 
-KEYBOARDS = ["zx48k", "zx128", "zxplus2", "zxplus2a", "zxplus3", "pentagon", "pentagon2plus", "scorpion", "quorum", "orel", "profi", "profiplus", "zxnext"]
+KEYBOARDS = ["zx48k", "zx128", "zxplus2", "zxplus2a", "zxplus3", "pentagon", "pentagon2plus", "scorpion", "quorum", "orel", "profi", "profiplus", "pcxt", "pcat", "pcps2", "zxnext"]
 STYLES = ["photo"]
 
 
 def check(keyboard, model):
     """Every key presses something; with a ZX matrix, each of the 40 positions is one key's alone (or as many as
-    `twins` says: the Next's two CAPS SHIFT and two SYMBOL SHIFT keys)"""
+    `twins` says: the Next's two CAPS SHIFT and two SYMBOL SHIFT keys); with a PC keyboard, each key is a PcKey of
+    the emulator, once"""
     errors = []
     for key in model.keys:
         if not key.zx and not key.pc and not key.line:
@@ -50,7 +52,22 @@ def check(keyboard, model):
             for name in keys:
                 if alone.count(name) != keyboard.get("twins", {}).get(name, 1):
                     errors.append(f"matrix {row} {name}: {alone.count(name)} keys")
+    if keyboard.get("matrix") == "pc":
+        names, known = [k.pc for k in model.keys if k.pc], pc_keys()
+        for name in sorted(set(names)):
+            if name not in known:
+                errors.append(f"pc {name}: not a PcKey")
+            if names.count(name) > 1:
+                errors.append(f"pc {name}: {names.count(name)} keys")
     return errors
+
+
+def pc_keys():
+    """The emulator's PcKey names (core/src/emulator/io/keyboard/pckey.h)"""
+    text = (REPO / "core/src/emulator/io/keyboard/pckey.h").read_text()
+    body = text[text.index("enum class PcKey"):]
+    body = re.sub(r"//[^\n]*", "", body[body.index("{") + 1:body.index("};")])
+    return {n.strip() for n in body.split(",") if n.strip() and n.strip() not in ("None", "Count")}
 
 
 def area(key):
