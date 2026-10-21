@@ -2,6 +2,11 @@
 // (a mirror joining late gets the picture, input both ways, an own deck with GetFeature, a slow viewer, timeouts).
 #include "sdb/deckhub.h"
 
+#include "sdb/daemondecks.h"
+#include "sdb/runtime.h"
+
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <deque>
 #include <functional>
@@ -12,38 +17,19 @@
 #include <vector>
 
 #include "check.h"
+#include "hubpeer.h"
 #include "sdb/devicewire.h"
 #include "sdb/eventloop.h"
 #include "sdb/picturecache.h"
 #include "sdb/protocol.h"
+#include "sdb/reconnect.h"
 
 using namespace sdb;
+using namespace sdbtest;
 using namespace std::chrono_literals;
 
 namespace
 {
-
-bool RunUntil(net::EventLoop& loop, const std::function<bool()>& done, std::chrono::milliseconds limit = 2000ms)
-{
-    const auto deadline = std::chrono::steady_clock::now() + limit;
-    while (!done())
-    {
-        if (std::chrono::steady_clock::now() > deadline)
-            return false;
-        loop.RunOnce(5);
-    }
-    return true;
-}
-
-std::string Str(const proto::Report& r)
-{
-    return std::string(r.begin(), r.end());
-}
-
-const Model& PlusXl()
-{
-    return *FindModelByName("plusxl");
-}
 
 // ------------------------------------------------------------------ the codec and the cache
 void TestWireCodec()
@@ -155,142 +141,6 @@ void TestPictureCache()
 }
 
 // ------------------------------------------------------------------ DeckHub over loopback
-struct FakeUsb final : Transport
-{
-    struct Shared
-    {
-        std::mutex mutex;
-        std::vector<std::string> writes, features;
-        std::deque<std::string> input;
-    };
-    std::shared_ptr<Shared> s = std::make_shared<Shared>();
-
-    int Write(std::span<const std::uint8_t> r) override
-    {
-        std::lock_guard lock(s->mutex);
-        s->writes.emplace_back(r.begin(), r.end());
-        return static_cast<int>(r.size());
-    }
-    int SendFeature(std::span<const std::uint8_t> r) override
-    {
-        std::lock_guard lock(s->mutex);
-        s->features.emplace_back(r.begin(), r.end());
-        return static_cast<int>(r.size());
-    }
-    int GetFeature(std::span<std::uint8_t> buf) override
-    {
-        buf[1] = 0x42;
-        return static_cast<int>(buf.size());
-    }
-    int Read(std::span<std::uint8_t> buf, int) override
-    {
-        std::lock_guard lock(s->mutex);
-        if (s->input.empty())
-            return 0;
-        const std::string r = s->input.front();
-        s->input.pop_front();
-        std::copy(r.begin(), r.end(), buf.begin());
-        return static_cast<int>(r.size());
-    }
-};
-
-// A viewer on the test's loop: a non-blocking socket, the frames it got.
-struct TestViewer
-{
-    net::EventLoop& loop;
-    net::SocketHandle s = net::kInvalidSocket;
-    wire::FrameReader reader;
-    std::vector<wire::Frame> frames;
-    std::string out;
-    bool closed = false;
-    bool reading = true;
-
-    TestViewer(net::EventLoop& l, int port, int receiveBuffer = 0) : loop(l)
-    {
-        std::string error;
-        s = net::ConnectStart("127.0.0.1", port, &error);
-        if (receiveBuffer > 0)
-            net::SetReceiveBuffer(s, receiveBuffer);
-        loop.Watch(s, true, true, [this](bool r, bool w, bool e) {
-            if (w)
-                Flush();
-            if ((r || e) && reading)
-                Read();
-        });
-    }
-    ~TestViewer()
-    {
-        if (s != net::kInvalidSocket)
-        {
-            loop.Unwatch(s);
-            net::CloseSocket(s);
-        }
-    }
-    void Send(std::uint8_t type, const std::string& payload)
-    {
-        out += wire::EncodeFrame(type, payload);
-        Flush();
-    }
-    void Flush()
-    {
-        while (!out.empty())
-        {
-            const long n = net::Send(s, out.data(), out.size());
-            if (n <= 0)
-                break;
-            out.erase(0, static_cast<std::size_t>(n));
-        }
-        loop.Modify(s, reading, !out.empty());
-    }
-    void PauseReading(bool pause)
-    {
-        reading = !pause;
-        loop.Modify(s, reading, !out.empty());
-    }
-    void Read()
-    {
-        char buf[65536];
-        for (;;)
-        {
-            const long n = net::Recv(s, buf, sizeof buf);
-            if (n == 0)
-                break;
-            if (n < 0)
-            {
-                closed = true;
-                loop.Unwatch(s);
-                break;
-            }
-            reader.Feed(std::string_view(buf, static_cast<std::size_t>(n)));
-        }
-        wire::Frame f;
-        while (reader.Next(f))
-            frames.push_back(f);
-    }
-    [[nodiscard]] int Count(std::uint8_t type) const
-    {
-        int n = 0;
-        for (const auto& f : frames)
-            n += f.type == type;
-        return n;
-    }
-    [[nodiscard]] nlohmann::json Welcome() const
-    {
-        for (const auto& f : frames)
-            if (f.type == wire::Welcome)
-                return nlohmann::json::parse(f.payload);
-        return {};
-    }
-};
-
-DeckHub::Options HubOptions()
-{
-    DeckHub::Options o;
-    o.port = 0;
-    o.joinTimeout = 200ms;
-    return o;
-}
-
 void TestMirror()
 {
     net::EventLoop loop;
@@ -453,6 +303,260 @@ void TestJoinRules()
     CHECK(odd.Welcome().value("error", "") == "version");
 }
 
+// What the daemon's automation reads (GET /api/v1/decks) and the Control frames it sends.
+void TestHubInfo()
+{
+    net::EventLoop loop;
+    DeckHub hub(loop, HubOptions());
+    std::string error;
+    CHECK(hub.Listen(&error));
+    std::unique_ptr<Transport> own;
+    hub.onOwnDeck = [&](std::unique_ptr<Transport> t, const Model&, const std::string&) { own = std::move(t); };
+    auto deck = hub.AttachDeck(std::make_unique<FakeUsb>(), PlusXl(), "SER1");
+    TestViewer mirror(loop, hub.Port());
+    mirror.Send(wire::Join, R"({"v":2,"role":"mirror","name":"Studio","pid":42})");
+    TestViewer mine(loop, hub.Port());
+    mine.Send(wire::Join, R"({"v":2,"role":"own","model":"neo","serial":"EMU7"})");
+    TestViewer waiting(loop, hub.Port());
+    waiting.Send(wire::Join, R"({"v":2,"role":"mirror","deck":"SER9"})");
+    CHECK(RunUntil(loop, [&] {
+        const auto i = hub.Info();
+        return i.decks.size() == 2 && i.decks[0].viewers.size() == 1 && i.waiting == 1 && own != nullptr;
+    }));
+    const auto info = hub.Info();
+    CHECK(info.decks.size() == 2 && info.decks[0].serial == "SER1" && info.decks[0].real && info.decks[0].connected);
+    CHECK(info.decks.size() == 2 && info.decks[0].viewers.size() == 1 && info.decks[0].viewers[0].name == "Studio" &&
+          info.decks[0].viewers[0].pid == 42 && info.decks[0].viewers[0].role == "mirror");
+    CHECK(info.decks.size() == 2 && info.decks[1].serial == "EMU7" && !info.decks[1].real &&
+          info.decks[1].model == FindModelByName("neo") && info.decks[1].viewers.size() == 1 &&
+          info.decks[1].viewers[0].role == "own");
+
+    // Control: to the deck's viewers only; an unknown deck reaches nobody.
+    CHECK_EQ(hub.SendControl("SER1", R"({"op":"snapshot","path":"/tmp/a.png"})"), 1);
+    CHECK_EQ(hub.SendControl("NOPE", "{}"), 0);
+    CHECK(RunUntil(loop, [&] { return mirror.Count(wire::Control) == 1; }));
+    CHECK_EQ(mine.Count(wire::Control), 0);
+
+    // Unplugged and gone: the copy follows.
+    deck.reset();
+    CHECK(RunUntil(loop, [&] { return !hub.Info().decks.empty() && !hub.Info().decks[0].connected; }));
+    mine.Send(wire::Leave, {});
+    CHECK(RunUntil(loop, [&] { return hub.Info().decks.size() == 1; }));
+}
+
+// The daemon's routes over a hub: an own deck's viewer listed with its name, a snapshot reaching it as Control.
+void TestHubWithDaemonDecks()
+{
+    net::EventLoop loop;
+    DeckHub hub(loop, HubOptions());
+    std::string error;
+    CHECK(hub.Listen(&error));
+    DaemonDecks decks(DaemonDecks::Options{});
+    CHECK(decks.LoadStart(&error));
+    decks.SetHub(&hub, hub.Port());
+    automation::Api api("unreal-streamdeck", "1.0");
+    decks.AddRoutes(api);
+    std::unique_ptr<Device> dev;
+    std::unique_ptr<scn::Runtime> rt;
+    hub.onOwnDeck = [&](std::unique_ptr<Transport> t, const Model& m, const std::string& serial) {
+        dev = std::make_unique<Device>(m, std::move(t), serial);
+        rt = std::make_unique<scn::Runtime>(*dev, decks.StartScenario());
+        decks.Add(serial, m, false, *rt);
+    };
+    hub.onOwnDeckGone = [&](const std::string& serial) { decks.Remove(serial); };
+    TestViewer v(loop, hub.Port());
+    v.Send(wire::Join, R"({"v":2,"role":"own","model":"mini","serial":"EMU9","name":"Studio"})");
+    CHECK(RunUntil(loop, [&] { return v.Count(wire::Welcome) == 1; }));
+    // the deck is known to the routes by the time its viewer is welcomed
+    automation::Request q;
+    q.method = "GET";
+    q.path = "/api/v1/decks";
+    const auto list = api.Dispatch(q).body["decks"];
+    CHECK(list.size() == 1 && list[0]["serial"] == "EMU9" && list[0]["viewers"].size() == 1 &&
+          list[0]["viewers"][0]["name"] == "Studio");
+    q.path = "/api/v1/health";
+    CHECK(api.Dispatch(q).body.value("wire_port", 0) == hub.Port());
+    q.method = "POST";
+    q.path = "/api/v1/decks/EMU9/snapshot";
+    q.body = {{"path", "/tmp/emu9.png"}};
+    const auto snap = api.Dispatch(q);
+    CHECK(snap.status == 200 && snap.body.value("viewers", 0) == 1);
+    CHECK(RunUntil(loop, [&] { return v.Count(wire::Control) == 1; }));
+    for (const auto& f : v.frames)
+        if (f.type == wire::Control)
+            CHECK(nlohmann::json::parse(f.payload).value("path", "") == "/tmp/emu9.png");
+    v.Send(wire::Leave, {});
+    CHECK(RunUntil(loop, [&] { return decks.Count() == 0; }));
+    rt.reset();
+    dev.reset();
+}
+
+// A deck under a ReconnectingTransport (sdb/reconnect.h) that the test unplugs.
+struct PluggableUsb final : Transport
+{
+    std::shared_ptr<std::atomic<bool>> present;
+    std::shared_ptr<FakeUsb::Shared> s;
+    PluggableUsb(std::shared_ptr<std::atomic<bool>> p, std::shared_ptr<FakeUsb::Shared> sh)
+        : present(std::move(p)), s(std::move(sh))
+    {
+    }
+    int Write(std::span<const std::uint8_t> r) override
+    {
+        if (!*present)
+            return -1;
+        std::lock_guard lock(s->mutex);
+        s->writes.emplace_back(r.begin(), r.end());
+        return static_cast<int>(r.size());
+    }
+    int SendFeature(std::span<const std::uint8_t> r) override
+    {
+        if (!*present)
+            return -1;
+        std::lock_guard lock(s->mutex);
+        s->features.emplace_back(r.begin(), r.end());
+        return static_cast<int>(r.size());
+    }
+    int GetFeature(std::span<std::uint8_t> buf) override
+    {
+        return *present ? static_cast<int>(buf.size()) : -1;
+    }
+    int Read(std::span<std::uint8_t>, int) override
+    {
+        return *present ? 0 : -1;
+    }
+};
+
+// Unplug and replug under a running runtime: the viewers are told both ways, the routes show it, the runtime goes on,
+// the deck gets the picture and the brightness set while it was away; POST .../reconnect does the same on purpose.
+void TestHubReconnect()
+{
+    net::EventLoop loop;
+    DeckHub hub(loop, HubOptions());
+    std::string error;
+    CHECK(hub.Listen(&error));
+    DaemonDecks decks(DaemonDecks::Options{});
+    CHECK(decks.LoadStart(&error));
+    decks.SetHub(&hub, hub.Port());
+    automation::Api api("unreal-streamdeck", "1.0");
+    decks.AddRoutes(api);
+    const Model& m = PlusXl();
+    auto present = std::make_shared<std::atomic<bool>>(true);
+    auto shared = std::make_shared<FakeUsb::Shared>();
+    ReconnectOptions ro;
+    ro.retry = 1ms;
+    auto reopen = [present, shared](bool) {
+        ReconnectingTransport::Probe p;
+        if (*present)
+            p.same = std::make_unique<PluggableUsb>(present, shared);
+        return p;
+    };
+    auto dev = std::make_unique<Device>(
+        m,
+        std::make_unique<ReconnectingTransport>(std::make_unique<PluggableUsb>(present, shared), m, "SER1", reopen,
+                                                ro),
+        "SER1");
+    dev->WrapTransport([&](std::unique_ptr<Transport> t) { return hub.AttachDeck(std::move(t), m, "SER1"); });
+    auto rt = std::make_unique<scn::Runtime>(*dev, decks.StartScenario());
+    decks.Add("SER1", m, true, *rt);
+    rt->Step(0);
+    TestViewer v(loop, hub.Port());
+    v.Send(wire::Join, R"({"v":2,"role":"mirror","deck":"first"})");
+    CHECK(RunUntil(loop, [&] { return v.Count(wire::ReplayEnd) == 1; }));
+    automation::Request list;
+    list.method = "GET";
+    list.path = "/api/v1/decks/SER1";
+    CHECK(api.Dispatch(list).body.value("connected", false));
+
+    // Unplugged: found on the device thread's next read; told to the viewer; the route says so at once.
+    *present = false;
+    rt->Step(0);
+    CHECK(!api.Dispatch(list).body.value("connected", true));
+    CHECK(RunUntil(loop, [&] { return DeckStates(v).size() == 1; }));
+    CHECK(!DeckStates(v)[0].value("connected", true) && !v.closed);
+    CHECK(hub.Info().decks.size() == 1 && !hub.Info().decks[0].connected);
+
+    // The runtime goes on while the deck is away.
+    rt->SetBrightness(33);
+    rt->Step(0);
+    {
+        std::lock_guard lock(shared->mutex);
+        shared->writes.clear();
+        shared->features.clear();
+    }
+    *present = true;
+    CHECK(RunUntil(loop, [&] {
+        rt->Step(1);
+        return DeckStates(v).size() == 2;
+    }));
+    CHECK(DeckStates(v)[1].value("connected", false) && api.Dispatch(list).body.value("connected", false));
+    {
+        std::lock_guard lock(shared->mutex);
+        CHECK(std::find(shared->features.begin(), shared->features.end(), Str(proto::Brightness(m, 33))) !=
+              shared->features.end());
+        CHECK(shared->writes.size() >= static_cast<std::size_t>(m.keys));  // every key drawn again
+    }
+    CHECK_EQ(v.Count(wire::Welcome), 1);  // the mirror stayed on its deck
+
+    // On purpose.
+    automation::Request q;
+    q.method = "POST";
+    q.path = "/api/v1/decks/first/reconnect";
+    q.body = {{"away_ms", 0}};
+    const auto r = api.Dispatch(q);
+    CHECK(r.status == 200 && r.body.value("reconnecting", false));
+    q.body = {{"away_ms", -1}};
+    CHECK_EQ(api.Dispatch(q).status, 400);
+    CHECK(RunUntil(loop, [&] {
+        rt->Step(1);
+        return DeckStates(v).size() == 4;
+    }));
+    CHECK(DeckStates(v)[3].value("connected", false) && dev->Connected());
+
+    decks.Remove("SER1");
+    rt.reset();
+    dev.reset();
+}
+
+// The daemon takes another deck after its deck stayed away: mirrors of "the first deck" follow it (a new Welcome with
+// the other model, its picture), a mirror of that very serial keeps waiting for it.
+void TestMirrorFollowsFirstDeck()
+{
+    net::EventLoop loop;
+    DeckHub hub(loop, HubOptions());
+    std::string error;
+    CHECK(hub.Listen(&error));
+    auto a = hub.AttachDeck(std::make_unique<FakeUsb>(), PlusXl(), "SERA");
+    TestViewer first(loop, hub.Port());
+    first.Send(wire::Join, R"({"v":2,"role":"mirror","deck":"first"})");
+    TestViewer pinned(loop, hub.Port());
+    pinned.Send(wire::Join, R"({"v":2,"role":"mirror","deck":"SERA"})");
+    CHECK(RunUntil(loop, [&] { return first.Count(wire::ReplayEnd) == 1 && pinned.Count(wire::ReplayEnd) == 1; }));
+    a.reset();
+    CHECK(RunUntil(loop, [&] { return DeckStates(first).size() == 1 && DeckStates(pinned).size() == 1; }));
+    const Model& neo = *FindModelByName("neo");
+    auto b = hub.AttachDeck(std::make_unique<FakeUsb>(), neo, "SERB");
+    CHECK(RunUntil(loop, [&] { return first.Count(wire::Welcome) == 2 && first.Count(wire::ReplayEnd) == 2; }));
+    nlohmann::json w;
+    for (const auto& f : first.frames)
+        if (f.type == wire::Welcome)
+            w = nlohmann::json::parse(f.payload);
+    CHECK(w.value("deck", "") == "SERB" && w.value("pid", 0) == neo.pid);
+    CHECK(RunUntil(loop, [&] { return hub.Info().decks.size() == 2; }));
+    CHECK_EQ(pinned.Count(wire::Welcome), 1);
+    const auto info = hub.Info();
+    CHECK(info.decks.size() == 2 && info.decks[0].serial == "SERA" && !info.decks[0].connected &&
+          info.decks[0].viewers.size() == 1 && info.decks[1].serial == "SERB" && info.decks[1].viewers.size() == 1);
+
+    // Nobody watches A any more: it is forgotten when the next deck comes.
+    pinned.Send(wire::Leave, {});
+    CHECK(RunUntil(loop, [&] { return hub.ViewerCount() == 1; }));
+    b.reset();
+    auto c = hub.AttachDeck(std::make_unique<FakeUsb>(), PlusXl(), "SERC");
+    CHECK(RunUntil(loop, [&] { return first.Count(wire::Welcome) == 3; }));
+    const auto after = hub.Info();
+    CHECK(after.decks.size() == 1 && after.decks[0].serial == "SERC");
+}
+
 }  // namespace
 
 void TestDeckHub()
@@ -464,4 +568,8 @@ void TestDeckHub()
     TestOwnDeck();
     TestSlowViewer();
     TestJoinRules();
+    TestHubInfo();
+    TestHubWithDaemonDecks();
+    TestHubReconnect();
+    TestMirrorFollowsFirstDeck();
 }

@@ -60,6 +60,7 @@
 #include "emulator/io/keyboard/keyboard.h"  // Keyboard::InputState (display sandbox)
 #include "common/modulelogger.h"    // ModuleLogger
 #include "debugger/ttd/timetravelhooks.h"  // ITimeTravelHooks, TTDSessionState, TTDGuardedAction
+#include "debugger/ttd/ttdcursorcell.h"   // the published cursor
 #include "debugger/ttd/ttdsessiontypes.h"  // the session's status, results and options, shared with the controller
 #include "emulator/sound/soundmanager.h"  // SoundManager::HostOutputHold (replay hold)
 #include "ttdcheckpoint.h"
@@ -233,6 +234,9 @@ public:
     /// as it parks, see OnMachineParking) and at most kPublishIntervalMs plus
     /// a frame old while it runs. Never blocks, never pauses the machine.
     TTDSessionInfo ReadSessionInfo() const override;
+    /// The published cursor (TTDCursor, ttdcursorcell.h): written at every frame boundary (not by a control thread's
+    /// throwaway replays) and by every GetSessionInfo (so at the end of every operation); read lock-free
+    TTDCursor PublishedCursor() const override;
 
     /// @brief The machine's thread, about to park (pause): publish the
     /// recording's summary so status reads while paused are exact
@@ -1678,6 +1682,10 @@ private:
     TTDTimePoint _liveEnd{};
     /// After every change of _timeline
     void NoteTimelineEnd();
+    /// The published cursor: PublishCursor stores the live position and bounds, from where reading the session is
+    /// safe (the machine's thread at a frame boundary, GetSessionInfo)
+    mutable TTDCursorCell _cursor;
+    void PublishCursor() const;
 
     /// Backing codec page store (4 KB pages, XOR+zstd-1 compression).
     TTDCodecPageStore _pageStore;

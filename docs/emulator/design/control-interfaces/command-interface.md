@@ -35,7 +35,7 @@ The command interfaces are responsible for handling the specific protocol (e.g.,
 | :--- | :--- | :--- | :--- | :--- |
 | **CLI** | Human interaction & Simple Automation | TCP Socket (Text-based) | ✅ Implemented | Stateful connection. Interactive (REPL-like) or scripted via netcat/telnet. Human-readable text protocol. Session maintains selected emulator context. Default port: TBD |
 | **WebAPI** | UI Frontends & Remote Management | HTTP/1.1 REST (JSON) | ✅ Partially Implemented | Stateless request/response. Standard web compatibility. CORS-enabled. Ideal for web dashboards, SPAs, and microservice integration. Uses Drogon framework. |
-| **WebSocket** | Push & low-latency calls | WebSocket `/api/v1/ws` (JSON) | 🔮 Planned | One socket, one auth. Every REST route callable (`call`, same handler), state and events pushed by topic, no polling. Async I/O on the WebAPI's event loops. Older sockets `/api/v1/websocket`, `/api/v1/companions/events` stay as adapters. |
+| **WebSocket** | Push & low-latency calls | WebSocket `/api/v1/ws` (JSON) | 🔧 In Progress (calls implemented, topics planned) | One socket, one auth. Every REST route callable (`call`, same handler, same gates), state and events pushed by topic (planned), no polling. Async I/O on the WebAPI's event loops. Older sockets `/api/v1/websocket`, `/api/v1/companions/events` stay as adapters. |
 | **Python** | Deep Integration & AI/ML | Direct C++ Bindings (pybind11) | ✅ Implemented | In-process execution. Zero-copy data access. Full Python ecosystem available. Ideal for ML/AI agents, data analysis, test automation, and complex scripting. Embedded interpreter or module import. |
 | **Lua** | Embedded Logic & Macros | Direct C++ Bindings (sol2) | ✅ Implemented | In-process execution. Minimal overhead. Sandboxed execution. Best for game scripts, hotkey macros, event handlers, and rapid prototyping. |
 | **GDB Protocol** | Source-level Debugging | GDB Remote Serial Protocol (Binary) | 🔮 Planned | Standard GDB/MI protocol. Attach with GDB, LLDB, or IDE debuggers (VS Code, CLion). Full breakpoint/watchpoint support. Z80 register mapping. |
@@ -2812,7 +2812,7 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 | `ttd reverse-step` | `ttd rs` | `[--count N]` *or* `[--tstates T]` | Step back N instructions (default 1), or back T t-states (lands on the nearest instruction start at or before the target). If both are given, `--tstates` wins. | ✅ Implemented |
 | `ttd reverse-continue` | `ttd rc` | `--pc <A> [--pc <B> ...]` | Run backward until the PC equals any of the given addresses. Reports the hit, a blocking marker, or "no match (reached session start)", and the part of history it searched (`Searched: frame … .. frame …`). | ✅ Implemented |
 | `ttd resume` | — | `[frame] [tinframe] [media=ask\|empty\|keep]` | Resume recording from the current position, or from the given point. Everything recorded after that point is discarded. Every medium goes back to that point when it can; one that cannot (another medium in the slot, a write beyond its undo log) is decided by `media`: `empty` (default) takes it out, `keep` leaves it, `ask` resumes nothing and lists them (`needs_decision`); the decision is in the operation log (`timeline-cut`). Needs a session that is `detached` or `recording`; from `idle` (for example straight after `ttd stop`) it fails, so seek first. | ✅ Implemented |
-| `ttd position` | `ttd pos` | — | Current position and session end, each as `(frame, tInFrame)`. | ✅ Implemented |
+| `ttd position` | `ttd pos` | — | Current position and session end, each as `(frame, tInFrame)`; the history's first frame, the state, whether the machine is paused, the frame rate (`fps`, the machine's unscaled clock: turbo does not change it). The bounds come from the TTD's published cursor (control surfaces [architecture §7](../../../inprogress/2026-10-18-control-surfaces/architecture.md#7-the-ttd-published-cursor-and-readouts)): the read never parks the machine, a companion may poll it at 50 Hz. | ✅ Implemented |
 | `ttd markers` | `ttd barriers` | — | List external-event markers (replay barriers): index, frame, tInFrame, kind, reason. | ✅ Implemented |
 | `ttd bookmark` | `ttd bookmarks`, `ttd bm` | `[list \| ls]`, `add <label> [frame] [tinframe]` (alias `mark`), `del <label>` (aliases `delete`, `remove`, `rm`) | Agent bookmarks: named positions, advisory only, never replay barriers. `add` without a frame marks the current position. Labels are non-empty, at most 63 characters, unique per session. | ✅ Implemented |
 | `ttd find-last` | `ttd fl` | `[--addr <A>] [--addr-from <F>] [--addr-to <T>] [--access write\|read\|execute\|io] [--value V] [--pc-from <A>] [--pc-to <A>] [--phys-page <P>] [--space ram\|vram\|cache] [--before-frame <F>] [--before-tin <T>]` | Reverse search: the most recent access that matches, looking back from the current position (or from `--before-frame`/`--before-tin`). Needs at least one of `--addr`, `--addr-from`, `--addr-to`, `--pc-from`, `--pc-to`, `--value`. `--access` defaults to `write`. `--phys-page` (0..255) pins the search to one physical RAM page. `--space vram` / `cache` searches the Sprinter's video RAM (256 KB) / fast RAM (64 KB): the address options are then offsets in it, inside one 16 KB page, and the answer adds `Offset:`. Numbers accept `0x` hex. Prints frame, tInFrame, PC, value, physical page (`none` for ROM / no RAM page) and access; or the blocking marker; or `No match found`; then the part of history it searched (`Searched: frame … .. frame …`). | ✅ Implemented |
@@ -3660,6 +3660,65 @@ Every surface offers the same verbs:
 Each returns the reply every surface returns: `ok`, `error` (`bad-request`, `unknown-device`, `unknown-profile`,
 `unavailable`, `read-only`), `message` and the verb's fields; `--json` in the CLI prints it as is. The host side needs
 the Qt client (it owns the game controllers): a headless process answers `unavailable`.
+
+### 16. Host Actions
+
+The host actions by id (control surfaces design
+[actions.md](../../../inprogress/2026-10-18-control-surfaces/actions.md)): run control (`run.pause_toggle`,
+`run.step_in`, `run.turbo_hold`, ...), time travel (`ttd.step_back_frame`, `ttd.jog_frames`, ...), the machine
+(`mach.reset`, `mach.nmi`, `mach.turbo_toggle`, `mach.start`, `mach.cold_reset`), and the actions a Stream Deck
+scenario runs instead of REST steps (`input.key`, `input.type`, `input.joystick`, `basic.run`, `feature.toggle`,
+`set.speed`, `set.toggle`, `audio.mute_toggle`, `audio.volume_by`, `media.open`, `media.tape`, `media.eject`,
+`snapshot.quick`, `video.overscan_toggle`, `dbg.mode_toggle`, `ttd.seek`, ...: the full list with their params in
+[actions.md §1.1](../../../inprogress/2026-10-18-control-surfaces/actions.md#11-scenario-actions-sd6)) and, with the
+Qt client, its GUI actions (`dbg.open`, the debugger panes, `cap.screenshot`, `ttd.scrub_*`). Each takes the companion
+scope of the REST route it replaces. The core `ActionRegistry` (`core/src/emulator/actions/`) holds them; a pad,
+the Surface Dial, a Stream Deck and every plane below run the same ids, on one actions worker per instance, in order.
+The gate of the caller's origin applies: an automation client that changes the machine gets the implicit run-control
+session, a companion is checked against its scopes, the GUI and host devices are refused while another surface holds
+control.
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `action [list]` | `[--json]` | Every action: id, label, group, kind (`press`, `delta`, `level`, `text`), `held`, `gui`, the companion scope it needs now, `needs_pause`, the `params` it reads (one line, `?` = optional), and whether it can run now for this caller or why not (`not_now` "needs a pause", `Not Implemented` for the stubs, `Run-control held`, `companion_forbidden`, `held_by_other`) | ✅ Implemented |
+| `action run` | `<id> [value] [param=val ...] [--json]` | Run one on the selected instance and wait for it. Value by kind: press `press` (default) / `release`; delta signed steps; level 0..1; text. Parameters as `name=value` words: `run.to_scanline line=N`, `run.frames count=N`, `input.key key=caps+1`, `media.open path=game.tap`, `feature.toggle name=turbomode`, `ttd.seek_by unit= min= max= rate_lo= rate_hi= rate=`. The reply: `ok`, `error`, `message`, `result` (a step: `pc`, `sp`, `state`, `stop`) | ✅ Implemented |
+| `action context` | `[--json]` | The instance's surface context: the one in force, whether somebody set it and who (`by`), the default it returns to | ✅ Implemented |
+
+The control-surface actions of phase S2 ([actions.md §2-§4](../../../inprogress/2026-10-18-control-surfaces/actions.md#2-ttdseek_by)):
+
+| Action | Kind | What |
+| :--- | :--- | :--- |
+| `ttd.seek_by` | delta | A dial's seek: `delta` steps at `rate` steps/s through the acceleration curve (`params`: `unit` `frames` (1 -> 100 per step) or `seconds` (0.02 -> 2), `min`, `max`, `rate_lo` 4, `rate_hi` 40; `rate` as a parameter where the plane has no rate field), clamped to the history (never past its end), one seek to the target frame's start. The result: the seek's body (`reached`, `arrived_at`, `halt_reason`, `state`) plus `from`, `frame` (the target), `frames`, `fps` and `marks` [{`kind`, `frame`}], strongest first: `edge` (clamped), `barrier` (stopped at a replay barrier), `bookmark`, `ten_seconds`, `second` (counted from the history's first frame). Without a history: `not_now` "record first" |
+| `run.step_by` | delta | Forward: step in, at most 16 times, a breakpoint ends it (`stopped_by: breakpoint`); back: instruction steps back through the history, at most 16 (without a history `not_now` "record first"). Needs a pause. The result: the last step's body plus `steps` (instructions executed), `direction` |
+| `ctx.set` | text | Set the instance's surface context (`play`, `ttd`, `ttd.timecode`, `debug.disasm`: lowercase letters, digits, `.`, `_`, `-`); the last setter wins; `""` returns to the default (`ttd` when the instance has a history, else `play`). A change posts `NC_SURFACE_CONTEXT`. Needs no scope. The result: `context`, `previous`, `set`, `by`, `default` |
+
+| Surface | List | Run |
+| :--- | :--- | :--- |
+| CLI | `action list` | `action run ttd.jog_frames -10` |
+| WebAPI | `GET /api/v1/controllers/actions[?instance=]` | `POST /api/v1/controllers/actions/{id}` `{instance?, value?, params?}` |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/controllers/actions"}` | `{"op":"call","method":"POST","path":"/api/v1/controllers/actions/{id}","body":{...}}`; topic: `surface` (planned, control surfaces S4) |
+| MCP | `actions` action `list` (`target`) | `actions` action `run` (`id`, `value`, `params`, `target`) |
+| Python | `emu.actions()` | `emu.action(id, value=None, **params)` |
+| Lua | `actions()` | `action(id, [value], [params])` |
+
+The context (read; set with `ctx.set`) and a dial's seek on every surface:
+
+| Surface | Context | Seek by |
+| :--- | :--- | :--- |
+| CLI | `action context` | `action run ttd.seek_by -3 rate=18 unit=frames` |
+| WebAPI | `GET /api/v1/surfaces/context[?instance=]` | `POST /api/v1/controllers/actions/ttd.seek_by` `{"value":{"delta":-3,"rate":18},"params":{"unit":"seconds"}}` |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/surfaces/context"}` | the same POST as a `call`; the `ctx` push and the `ttd.position` readout come with the `surface` topic (S4) |
+| MCP | `actions` action `context` | `actions` action `run`, `id` `ttd.seek_by`, `value` `{delta, rate}`, `params` |
+| Python | `emu.context()` | `emu.action("ttd.seek_by", -3, rate=18, unit="seconds")` |
+| Lua | `context()` | `action("ttd.seek_by", {delta = -3, rate = 18}, {unit = "seconds"})` |
+
+The TTD cursor (the position, the history's bounds, the state, paused, `fps`) is the `ttd position` verb on every
+surface (CLI `ttd position`, `GET /api/v1/emulator/{id}/ttd/position` and its `call`, MCP `time_travel` `position`,
+`ttd_position()` in Lua and Python).
+
+Errors, the same on every surface: `Not Found` (no such action or instance), `Bad Request` (a value of the wrong
+kind), `not_now`, `Run-control held`, `held_by_other`, `revoked_by_user`, `companion_forbidden`, `held_by_session`,
+`Not Implemented`; the WebAPI answers 404, 400, 409, 403, 501.
 
 ## Future Capabilities
 

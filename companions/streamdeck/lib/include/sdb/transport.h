@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -39,6 +40,18 @@ public:
     virtual void PublishPage(std::string_view json)
     {
         (void)json;
+    }
+    // Whether the device is there (a USB deck may be unplugged: sdb/reconnect.h). Any thread.
+    [[nodiscard]] virtual bool Connected() const
+    {
+        return true;
+    }
+    // Close the device and open it again after `away` (the reopen path of an unplug, on purpose). Any thread; it
+    // happens on the device thread's next call. False when the transport cannot reconnect.
+    virtual bool Reconnect(std::chrono::milliseconds away)
+    {
+        (void)away;
+        return false;
     }
 };
 

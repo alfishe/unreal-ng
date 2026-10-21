@@ -3,6 +3,7 @@
 #pragma once
 #include <nlohmann/json.hpp>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -48,9 +49,12 @@ struct Face
 
 struct Action
 {
-    std::string kind;  // webapi http multi delay toggle dir first ttd_seek run_toggle shell open keys nav brightness
+    std::string kind;  // one of ActionKinds()
     json spec;         // the whole "do" object
 };
+// Every action kind Validate accepts and Execute runs, in the order the editor offers them:
+// webapi http multi toggle first dir delay ttd_seek run_toggle shell open keys nav brightness
+[[nodiscard]] std::span<const std::string_view> ActionKinds();
 
 struct Dial
 {

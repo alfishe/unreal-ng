@@ -699,6 +699,32 @@ for device in h["devices"]:
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`; the host side needs the Qt client
 (a headless process answers `unavailable`).
 
+### Host Actions
+
+`Emulator` methods over the core `ActionRegistry` - the same ids, values and errors as the CLI `action`, the WebAPI
+`/controllers/actions`, MCP `actions` and Lua ([command-interface.md section 16](./command-interface.md#16-host-actions)).
+A changing action passes the script gate as the script's own control calls (an implicit session without
+`take_control`); the call waits for the action with the GIL released.
+
+```python
+emu.actions()["actions"]                   # [{id, label, group, kind, held, gui, scope, needs_pause, available, ...}]
+emu.action("run.pause_toggle")             # a press
+emu.action("run.step_in")                  # {"ok": True, "result": {"pc": ..., "state": "paused", ...}}
+emu.action("ttd.jog_frames", -10)          # a delta: signed steps
+emu.action("run.turbo_hold", False)        # the release of a held action
+emu.action("run.n_scanlines", count=8)     # parameters as keywords
+```
+
+The control-surface actions and the context (control surfaces phase S2):
+
+```python
+r = emu.action("ttd.seek_by", -3, rate=18, unit="seconds")   # the rate and the curve as keywords
+r["result"]["marks"]                       # [{"kind": "ten_seconds", "frame": 1954}, ...] strongest first
+emu.action("run.step_by", -4)              # back through the history (forward: step in), 16 at most
+emu.action("ctx.set", "ttd.timecode")      # the last setter wins; "" returns to the default
+emu.context()                              # {"ok", "instance", "context", "set", "by", "default"}
+```
+
 ### Disk Operations
 
 `Emulator` methods for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands and the WebAPI `/disk/{drive}/*` endpoints.
@@ -1370,7 +1396,7 @@ emu.ttd_resume()                            # -> bool; record again from the exa
 emu.ttd_resume(frame=4823, tinframe=0)      # ...or from a given point; the future is discarded
                                             # fails from idle: seek first
 
-emu.ttd_position()
+emu.ttd_position()   # current, session_end, first_frame, history, state, paused, fps; never parks the machine
 # -> {'current': {'frame': ..., 'tinframe': ...}, 'session_end': {'frame': ..., 'tinframe': ...}}
 ```
 

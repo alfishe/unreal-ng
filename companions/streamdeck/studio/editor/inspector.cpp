@@ -60,18 +60,33 @@ const char* ArgField(const std::string& kind)
     return nullptr;
 }
 
+QLineEdit* Line(const std::string& v)
+{
+    auto* e = new QLineEdit(Qs(v));
+    return e;
+}
+}  // namespace
+
 json ActionTemplate(const std::string& kind)
 {
+    const json pause{{"kind", "webapi"}, {"method", "POST"}, {"path", "/pause"}};
+    const json resume{{"kind", "webapi"}, {"method", "POST"}, {"path", "/resume"}};
     if (kind == "webapi")
-        return {{"kind", kind}, {"method", "POST"}, {"path", "/pause"}};
+        return pause;
     if (kind == "http")
         return {{"kind", kind}, {"method", "GET"}, {"url", "http://127.0.0.1/"}};
     if (kind == "multi")
         return {{"kind", kind}, {"steps", json::array({json{{"kind", "delay"}, {"ms", 100}}})}};
     if (kind == "toggle")
+        return {{"kind", kind}, {"on", resume}, {"off", pause}};
+    if (kind == "first")  // the first step that succeeds
+        return {{"kind", kind}, {"try", json::array({resume, pause})}};
+    if (kind == "dir")  // a dial: what a turn to the left / right runs
         return {{"kind", kind},
-                {"on", {{"kind", "webapi"}, {"path", "/resume"}}},
-                {"off", {{"kind", "webapi"}, {"path", "/pause"}}}};
+                {"left", {{"kind", "brightness"}, {"delta", -10}}},
+                {"right", {{"kind", "brightness"}, {"delta", 10}}}};
+    if (kind == "ttd_seek")  // a dial scrubbing time travel: 1..100 frames a detent with the turning speed
+        return {{"kind", kind}, {"unit", "frames"}, {"min", 1}, {"max", 100}};
     if (kind == "shell")
         return {{"kind", kind}, {"command", "echo hello"}};
     if (kind == "open")
@@ -84,15 +99,16 @@ json ActionTemplate(const std::string& kind)
         return {{"kind", kind}, {"ms", 500}};
     if (kind == "brightness")
         return {{"kind", kind}, {"delta", 10}};
-    return {{"kind", kind}};
+    return {{"kind", kind}};  // run_toggle: no fields
 }
 
-QLineEdit* Line(const std::string& v)
+QStringList ActionKindItems()
 {
-    auto* e = new QLineEdit(Qs(v));
-    return e;
+    QStringList v;
+    for (const std::string_view k : ActionKinds())
+        v.append(QString::fromLatin1(k.data(), static_cast<qsizetype>(k.size())));
+    return v;
 }
-}  // namespace
 
 Inspector::Inspector(EditorDocument* doc, QWidget* parent) : QWidget(parent), _doc(doc)
 {
@@ -261,12 +277,23 @@ void Inspector::BuildScenario()
             return ops::Result{};
         });
     });
+    // every model of the model table, by its token; the document's own name for it (an alias such as "mk2") selects
+    // the same entry, an unknown one is shown as is
     auto* model = new QComboBox;
-    for (const char* n : {"plusxl", "plus", "xl", "classic", "mk2", "neo", "mini", "original", "pedal"})
-        if (const Model* m = FindModelByName(n))
-            model->addItem(QStringLiteral("%1 (%2)").arg(Qs(std::string(m->name)), QString::fromLatin1(n)),
-                           QString::fromLatin1(n));
-    model->setCurrentIndex(std::max(0, model->findData(Qs(d.value("model", "plusxl")))));
+    model->setObjectName(QStringLiteral("model"));
+    for (const Model& m : AllModels())
+    {
+        const QString token = Qs(ModelToken(m));
+        model->addItem(QStringLiteral("%1 (%2)").arg(Qs(std::string(m.name)), token), token);
+    }
+    const std::string current = d.value("model", "plusxl");
+    if (const Model* m = FindModelByName(current))
+        model->setCurrentIndex(model->findData(Qs(ModelToken(*m))));
+    else
+    {
+        model->addItem(QStringLiteral("%1 (unknown)").arg(Qs(current)), Qs(current));
+        model->setCurrentIndex(model->count() - 1);
+    }
     form->addRow(QStringLiteral("Model"), model);
     connect(model, &QComboBox::currentIndexChanged, this, [this, model] {
         _doc->Apply(QStringLiteral("Change model"), [&](json& x) {
@@ -429,9 +456,10 @@ void Inspector::BuildNode(const QString& id)
         const json d = n.value("do", json::object());
         const std::string kind = d.value("kind", "");
         auto* kindBox = new QComboBox;
-        for (const char* k :
-             {"webapi", "http", "multi", "toggle", "shell", "open", "keys", "nav", "delay", "brightness"})
-            kindBox->addItem(QString::fromLatin1(k));
+        kindBox->setObjectName(QStringLiteral("kind"));
+        kindBox->addItems(ActionKindItems());
+        if (kindBox->findText(Qs(kind)) < 0)
+            kindBox->addItem(Qs(kind));  // not a kind the engine runs (the issues say so): shown as it is
         kindBox->setCurrentText(Qs(kind));
         form->addRow(QStringLiteral("Action"), kindBox);
         connect(kindBox, &QComboBox::currentTextChanged, this, [this, kind](const QString& k) {

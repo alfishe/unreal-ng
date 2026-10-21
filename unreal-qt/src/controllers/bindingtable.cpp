@@ -21,7 +21,7 @@
 #include <cctype>
 #include <cmath>
 
-#include "controllers/actionregistry.h"
+#include "emulator/actions/actionregistry.h"
 #include "controllers/hostcontrollers.h"
 
 #ifdef ENABLE_CONTROLLERS
@@ -675,15 +675,15 @@ void BindingTable::buildRows()
     if (_device.id.empty())
         return;
     const auto actionTitle = [this](const std::string& id) {
-        const ActionRegistry::Action* action = _actions != nullptr ? _actions->Find(id) : nullptr;
-        return action != nullptr ? action->label : QString::fromStdString(id);
+        const std::optional<actions::ActionInfo> action = _actions != nullptr ? _actions->Find(id) : std::nullopt;
+        return QString::fromStdString(action ? action->label : id);
     };
     if (layer() != "play")
     {
         if (_actions != nullptr)
-            for (const ActionRegistry::Action* action : _actions->Actions())
-                addRow("action:" + action->id, action->group, action->label, QString::fromStdString(action->id),
-                       TargetSpec("action", action->id));
+            for (const actions::ActionInfo& action : _actions->List())
+                addRow("action:" + action.id, QString::fromStdString(action.group), QString::fromStdString(action.label),
+                       QString::fromStdString(action.id), TargetSpec("action", action.id));
         return;
     }
     const QString joystick = tr("Joystick");
@@ -706,7 +706,7 @@ void BindingTable::buildRows()
     const QString emulator = tr("Emulator");
     for (const char* id : {"run.pause_toggle", "osd.keyboard", "osd.quick_menu", "mach.turbo_toggle", "run.turbo_hold",
                            "cap.screenshot", "mach.reset"})
-        if (_actions != nullptr && _actions->Find(id) != nullptr)
+        if (_actions != nullptr && _actions->Find(id).has_value())
             addRow(std::string("action:") + id, emulator, actionTitle(id), QString::fromUtf8(id),
                    TargetSpec("action", id));
 }
@@ -747,9 +747,10 @@ void BindingTable::refresh()
                        TargetSpec("mouse", what));
             else if (key.rfind("action:", 0) == 0)
             {
-                const ActionRegistry::Action* action = _actions != nullptr ? _actions->Find(what) : nullptr;
-                addRow(key, play || action == nullptr ? tr("Emulator") : action->group,
-                       action != nullptr ? action->label : QString::fromStdString(what), QString::fromStdString(what),
+                const std::optional<actions::ActionInfo> action =
+                    _actions != nullptr ? _actions->Find(what) : std::nullopt;
+                addRow(key, play || !action ? tr("Emulator") : QString::fromStdString(action->group),
+                       QString::fromStdString(action ? action->label : what), QString::fromStdString(what),
                        TargetSpec("action", what));
             }
             else if (key.rfind("layer:", 0) == 0)

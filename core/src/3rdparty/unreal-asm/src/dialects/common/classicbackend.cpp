@@ -241,6 +241,15 @@ struct Writer
     // its own, the name standing for it
     std::set<std::string> growing{};
     int values = 0;
+    // z80asm: DEFL names whose text is numbers only ($ outside macros and loops written as the layout's address): an
+    // ORG in a macro computed from them is a constant, a section of its own per expansion
+    std::set<std::string> numericNames{};
+    std::string deflName{};   // the name of the DEFL being written
+    int macroSections = 0;
+    // The macro's own section: its ORG and the bytes written in it so far (nullopt: not counted, an instruction or a
+    // conditional), so that ORG $+n skips to a section of its own instead of writing zeros over the others
+    std::string macroOrg{};
+    std::optional<int64_t> macroBytes{};
     // The names the assembly defines outside a block that tests them (sjasmplus' "exist" answers from the whole source
     // in the same way): z80asm's tests for a defined name are decided from them
     std::set<std::string> definedNames{};
@@ -414,11 +423,58 @@ struct Writer
     /// __<section>_head in the map)
     std::string NextSection()
     {
+        macroOrg.clear();
+        return "s_" + SectionFile() + "_" + std::to_string(++sections);
+    }
+
+    /// The file's name as a part of a section name
+    std::string SectionFile() const
+    {
         std::string file = options.fileName.empty() ? std::string("main") : options.fileName;
         for (char& c : file)
             if (!std::isalnum(static_cast<unsigned char>(c)))
                 c = '_';
-        return "s_" + file + "_" + std::to_string(++sections);
+        return file;
+    }
+
+    /// The bytes a statement adds to the macro's section (nullopt: not known here)
+    std::optional<int64_t> MacroBytes(const Statement& s) const
+    {
+        if (s.kind != Statement::Kind::Directive)
+            return std::nullopt;
+        switch (s.directive)
+        {
+            case ir::DirectiveKind::Org:
+            case ir::DirectiveKind::Equ:
+            case ir::DirectiveKind::Defl:
+            case ir::DirectiveKind::Display: return 0;
+            case ir::DirectiveKind::Db:
+            {
+                int64_t n = 0;
+                for (const Operand& o : s.operands)
+                    n += o.kind == Operand::Kind::String ? static_cast<int64_t>(o.text.size()) : 1;
+                return n;
+            }
+            case ir::DirectiveKind::Dw: return 2 * static_cast<int64_t>(s.operands.size());
+            case ir::DirectiveKind::Ds:
+                if (s.args.size() == 1 && s.operands.empty())
+                    return Known(s.args[0]);
+                return std::nullopt;
+            default: return std::nullopt;
+        }
+    }
+
+    /// An expression of numbers, constants and numeric DEFL names (no address but theirs)
+    bool Numeric(const Expr& e) const
+    {
+        if (e.kind == Expr::Kind::Symbol)
+            return numericNames.count(e.text) || (!addressLabels.count(e.text) && !(redefinable && redefinable->count(e.text)) && !growing.count(e.text));
+        if (e.kind == Expr::Kind::Current || e.kind == Expr::Kind::CurrentPhysical)
+            return false;
+        for (const Expr& a : e.args)
+            if (!Numeric(a))
+                return false;
+        return true;
     }
 
     /// The value of an expression of numbers, EQU constants and $ (at `here`)
@@ -558,6 +614,9 @@ struct Writer
             case Expr::Kind::Current:
                 if (!virtualAddress.empty())
                     return "(" + virtualAddress + ")";
+                if (Z80asm() && deflText && numericNames.count(deflName))
+                    if (const auto here = LineAddress())
+                        return Hex(*here, 4);
                 if (Z80asm() && ((phased && !inMacro) || deflText))   // (a macro keeps $ in PHASE: the label would repeat)
                 {
                     // z80asm 2.3 adds the section's ORG to $ inside PHASE (labels come out right): a label put before
@@ -1018,8 +1077,12 @@ struct Writer
         // put here (pcLabel)
         auto deflOf = [&]() {
             deflText = Z80asm();
+            deflName = label;
             std::string text = args();
             deflText = false;
+            // z80asm puts the text where the name is used, without parentheses (N DEFL N-1 makes P-N P-4-1)
+            if (Z80asm() && s.args.size() == 1 && (s.args[0].kind == Expr::Kind::Binary || s.args[0].kind == Expr::Kind::Unary))
+                text = "(" + text + ")";
             if (Z80asm() && growing.count(label))
             {
                 std::string file = options.fileName.empty() ? std::string("main") : options.fileName;
@@ -1042,6 +1105,15 @@ struct Writer
                 virtualAddress.clear();
                 if (s.args.size() > 1)
                     diagnostics.push_back({Severity::Warning, line, 0, std::string("ORG with a page: ") + TargetName() + " has no pages; the page is left out"});
+                // In a macro, from numbers and names whose text is numbers: a constant at every expansion, so a section of
+                // its own (LOCAL: one per expansion), after the ones it may write over in the map
+                if (Z80asm() && inMacro && !phased && Numeric(s.args[0]))
+                {
+                    const std::string section = "s_m_" + SectionFile() + "_" + std::to_string(++macroSections);
+                    macroOrg = Print(Masked16(s.args[0]));
+                    macroBytes = 0;
+                    return Checked({"LOCAL " + section, "SECTION " + section, "ORG " + macroOrg}, "ORG");
+                }
                 if (Z80asm() && (UsesCurrent(s.args[0]) || UsesAddressLabel(s.args[0])))
                 {
                     // $ and the labels count from the section's start in z80asm (a SECTION's ORG must be a constant):
@@ -1056,7 +1128,16 @@ struct Writer
                         return {"@; ORG " + virtualAddress + " (only labels follow: written as EQU)"};
                     }
                     if (a.kind == Expr::Kind::Binary && a.op == Op::Add && a.args[0].kind == Expr::Kind::Current && a.args[1].kind == Expr::Kind::Number)
+                    {
+                        if (inMacro && macroBytes && !macroOrg.empty())
+                        {
+                            // A skip in the macro's section: the next section starts past it (DEFS would write zeros)
+                            *macroBytes += a.args[1].value;
+                            const std::string section = "s_m_" + SectionFile() + "_" + std::to_string(++macroSections);
+                            return Checked({"LOCAL " + section, "SECTION " + section, "ORG (" + macroOrg + "+" + std::to_string(*macroBytes) + "&$FFFF)"}, "ORG");
+                        }
                         return Checked({"DEFS " + Print(a.args[1])}, "ORG");
+                    }
                     // A move back to an address the layout gives (ORG $-2: the next bytes write over the last ones; a
                     // name the converter does not know, when the ORG ends its line: the next line's address): a section
                     // of its own at that address, after the one it writes over in the map
@@ -1798,6 +1879,61 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
                     w.growing.insert(name);
                     w.growing.insert(other);
                 }
+        // Names whose every assignment is numbers, constants and such names, $ only outside macros and loops
+        std::set<std::string> candidates;
+        std::map<std::string, std::vector<std::pair<const Expr*, bool>>> assignments;   // the expression, $ allowed there
+        int macroDepth = 0, loopDepth = 0;
+        for (const ir::Line& l : program.lines)
+            for (const Statement& s : l.statements)
+            {
+                if (s.kind != Statement::Kind::Directive)
+                    continue;
+                if (s.directive == ir::DirectiveKind::Macro)
+                    ++macroDepth;
+                else if (s.directive == ir::DirectiveKind::EndMacro)
+                    --macroDepth;
+                else if (s.directive == ir::DirectiveKind::Repeat || s.directive == ir::DirectiveKind::While || s.directive == ir::DirectiveKind::RepeatUntil)
+                    ++loopDepth;
+                else if (s.directive == ir::DirectiveKind::EndRepeat || s.directive == ir::DirectiveKind::EndWhile || s.directive == ir::DirectiveKind::UntilZero)
+                    --loopDepth;
+                else if (!l.label.empty() && redefinable.count(l.label) && !w.growing.count(l.label) && !s.args.empty() &&
+                         (s.directive == ir::DirectiveKind::Defl || s.directive == ir::DirectiveKind::Equ))
+                {
+                    candidates.insert(l.label);
+                    assignments[l.label].push_back({&s.args[0], macroDepth == 0 && loopDepth == 0});
+                }
+            }
+        for (const ir::Line& l : program.lines)   // a label of a line: an address in its section
+            if (!l.label.empty() && std::none_of(l.statements.begin(), l.statements.end(), [](const Statement& s) {
+                    return s.kind == Statement::Kind::Directive && (s.directive == ir::DirectiveKind::Defl || s.directive == ir::DirectiveKind::Equ);
+                }))
+                candidates.erase(l.label);
+        w.numericNames = candidates;
+        for (bool shrunk = true; shrunk;)
+        {
+            shrunk = false;
+            for (const std::string& name : candidates)
+            {
+                if (!w.numericNames.count(name))
+                    continue;
+                for (const auto& [e, top] : assignments[name])
+                {
+                    std::function<bool(const Expr&)> numeric = [&](const Expr& x) {
+                        if (x.kind == Expr::Kind::Current)
+                            return top;
+                        if (x.kind == Expr::Kind::Symbol)
+                            return w.numericNames.count(x.text) > 0 || (!w.addressLabels.count(x.text) && !redefinable.count(x.text));
+                        return std::all_of(x.args.begin(), x.args.end(), numeric);
+                    };
+                    if (!numeric(*e))
+                    {
+                        w.numericNames.erase(name);
+                        shrunk = true;
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     size_t nextBlock = 0;
@@ -1993,6 +2129,11 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
             w.pcLabel.clear();
             w.lastStatement = &s == &l.statements.back();
             std::vector<std::string> written = w.StatementText(s, l.label);
+            if (w.inMacro && w.macroBytes && !(s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Org))
+            {
+                const auto bytes = w.MacroBytes(s);
+                w.macroBytes = bytes ? std::optional<int64_t>(*w.macroBytes + *bytes) : std::nullopt;
+            }
             if (!w.pcLabel.empty() && w.inMacro)
                 texts.push_back("LOCAL " + w.pcLabel);   // a label of each expansion
             if (!w.pcLabel.empty())
@@ -2019,6 +2160,7 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
         if (closeMacro)
         {
             w.inMacro = false;
+            w.macroOrg.clear();
             w.parameters.clear();
         }
 

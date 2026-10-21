@@ -1,5 +1,5 @@
 {
-  "name": "UnrealNG icons + screenshot row",
+  "name": "UnrealNG icons + banner strip",
   "brightness": 60,
   "fit": "contain",
   "keys": [
@@ -112,15 +112,13 @@
       "image": "keys/cross.png"
     }
   ],
-  "grids": [
-    {
-      "image": "bottom_row.png",
-      "rows": "3",
-      "cols": "0-8",
-      "fit": "contain"
-    }
-  ],
   "lcd": {
     "image": "strip.png"
+  },
+  "lcd_ttd": {
+    "image": "ttd_strip.png"
+  },
+  "logo": {
+    "image": "logo.png"
   }
 }

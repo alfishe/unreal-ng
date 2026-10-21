@@ -88,7 +88,7 @@ flowchart LR
 | `getFeature` | From the real deck only (as Tee). Own viewers answer their own. |
 | Slow viewer | Each viewer has a bounded queue (64 frames); on overflow the oldest image chains are dropped and the viewer gets a full replay when it drains; the deck is never stalled. |
 | No real deck | Mirror viewers wait ("no deck" on their window); own viewers work. |
-| Hot plug | The multiplexer rescans every second (as `UsbListener` did); a replugged serial gets its runtime back on its page. |
+| Hot plug | A failed read or write closes the deck; its runtime and viewers stay. The device thread's own read rescans every second (as `UsbListener` did, no thread of its own); a replugged serial gets its picture replayed and goes on on its page. Another deck after 3 s gets a runtime of its own. Done: `sdb/reconnect.h`, [reference](../../companions/streamdeck/daemon.md#hot-plug). |
 | Exclusive open | The daemon opens decks **exclusive** where the OS allows it (macOS: `hid_darwin_set_open_exclusive(1)`); the per-deck `/tmp` lock goes: there is one writer. Other Stream Deck software (the Elgato app) holding the deck is reported as "busy" with the holder if known. |
 | `--emulate` | A runtime may present a smaller model on a larger real deck (`Device::emulate`), as today; mirrors then show the physical model (as today's order: mirror before emulate). |
 
@@ -214,5 +214,5 @@ call to the daemon's `/api/v1/pair`; `sdctl run` becomes `unreal-streamdeck --sc
 | Platform | Work |
 |:--|:--|
 | macOS | Built and measured today (Stream Deck + XL). Exclusive open; `kqueue` parent watch. |
-| Windows | Sockets ported 2026-10-20: `http.cpp`, `transporttcp.cpp`, the event loop and the multiplexer go through `sdb/eventloop.h` (Winsock / POSIX); hidapi Windows backend; `keys` action unsupported (returns false) stays; parent watch by process handle. MSVC and MinGW, zero warnings. |
-| Linux | hidapi hidraw backend; a udev rule for `0FD9` (the package installs it); `keys` via `xdotool` stays optional. gcc and clang. |
+| Windows | Sockets ported 2026-10-20: `http.cpp`, `transporttcp.cpp`, the event loop and the multiplexer go through `sdb/eventloop.h` (Winsock / POSIX); hidapi Windows backend (built through `lib/hidapi/windows-hid.c`, which undoes the root's `WIN32_LEAN_AND_MEAN`); the companion builds for Windows 10 (`_WIN32_WINNT=0x0A00`, cpp-httplib's minimum); `shell` runs through `cmd.exe` with output and timeout (a job object ends the whole tree), `open` through `start`; `keys` through `SendInput` (2026-10-20: the scenario's key names and modifiers, `cmd` = the Windows key, text as unicode key events; an elevated target window refuses it and the action says so); parent watch by process handle (open). Built and tested 2026-10-20 with MSVC 2019 and MinGW gcc 15, zero warnings, no hardware run yet. |
+| Linux | hidapi hidraw backend (libudev for enumeration: `libudev-dev` to build); the udev rule `companions/streamdeck/linux/70-unreal-streamdeck.rules` (the DEB installs it to `/usr/lib/udev/rules.d`); `open` via `xdg-open`, `keys` via `xdotool` (optional, X11). Built and tested 2026-10-20 with gcc 14 in the CI image (`docker/linux/build.sh --streamdeck --test`), zero warnings, no hardware run yet. |

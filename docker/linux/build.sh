@@ -23,6 +23,10 @@
 #   --sanitize LIST   build with -DSANITIZE=LIST (cmake/Sanitize.cmake: address,undefined | thread | ...);
 #                     own build directory, ASAN_/LSAN_/UBSAN_/TSAN_OPTIONS passed in,
 #                     SYS_PTRACE granted (LeakSanitizer needs it). docs/testing/sanitizers.md
+#   --streamdeck      the Stream Deck companion instead (companions/streamdeck): configure from the
+#                     repository root with -DUNREAL_STREAMDECK=ON, default targets the daemon, sdctl,
+#                     the studio and both test binaries; --test runs streamdeck-tests and
+#                     streamdeck-studio-tests (offscreen). Own build directory (...-streamdeck)
 #
 # Build output goes to scratch/linux-<arch>-<type>[-san-<list>]/ (git-ignored); remove it
 # when done: rm -rf scratch/linux-*
@@ -44,6 +48,8 @@ CORES="$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
 JOBS=$(( CORES / 2 )); JOBS=$(( JOBS < 1 ? 1 : JOBS ))
 CPUS=""
 SANITIZE=""
+STREAMDECK=0
+TARGET_SET=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -58,9 +64,10 @@ while [ $# -gt 0 ]; do
     --sanitize) SANITIZE="$2"; shift 2 ;;
     --asan) SANITIZE="address,undefined"; shift ;;
     --tsan) SANITIZE="thread"; shift ;;
-    -h|--help) sed -n '2,31p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    --streamdeck) STREAMDECK=1; shift ;;
+    -h|--help) sed -n '2,35p' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
-    *) TARGET="$1"; shift ;;
+    *) TARGET="$1"; TARGET_SET=1; shift ;;
   esac
 done
 
@@ -81,6 +88,10 @@ done
 [ -n "$CPUS" ] || CPUS="$JOBS"
 
 BUILDDIR="scratch/linux-$PLATFORM-$TYPE"
+if [ "$STREAMDECK" = 1 ]; then
+  BUILDDIR="$BUILDDIR-streamdeck"
+  [ "$TARGET_SET" = 1 ] || TARGET="unreal-streamdeck sdctl streamdeck-tests unreal-streamdeck-studio streamdeck-studio-tests"
+fi
 SANITIZER_ARGS=()
 if [ -n "$SANITIZE" ]; then
   BUILDDIR="$BUILDDIR-san-${SANITIZE//,/-}"
@@ -114,7 +125,7 @@ docker run --rm --platform "linux/$PLATFORM" --cpus "$CPUS" \
   ${SANITIZER_ARGS[@]+"${SANITIZER_ARGS[@]}"} \
   --tmpfs /scratch-tmp:exec,size=4g -e UNREAL_TEST_SCRATCH_DIR=/scratch-tmp \
   -e TYPE="$TYPE" -e TARGET="$TARGET" -e JOBS="$JOBS" \
-  -e BUILDDIR="/src/$BUILDDIR" -e RUNTESTS="$RUNTESTS" -e FILTER="$FILTER" \
+  -e BUILDDIR="/src/$BUILDDIR" -e RUNTESTS="$RUNTESTS" -e FILTER="$FILTER" -e STREAMDECK="$STREAMDECK" \
   "$IMAGE" bash -c '
     set -e
     git config --global --add safe.directory "*"
@@ -123,11 +134,29 @@ docker run --rm --platform "linux/$PLATFORM" --cpus "$CPUS" \
       # cmake/Sanitize.cmake: the flags, gcc'"'"'s libstdc++ maybe-uninitialized waiver included
       SAN=("-DSANITIZE=$SANITIZE")
     fi
-    cmake -S . -B "$BUILDDIR" -G Ninja -DCMAKE_BUILD_TYPE="$TYPE" -DTESTS=ON ${SAN[@]+"${SAN[@]}"}
+    if [ "$STREAMDECK" = 1 ]; then
+      # hidapi'"'"'s hidraw backend enumerates through libudev; images built before it was added lack the headers
+      if ! pkg-config --exists libudev; then
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends libudev-dev > /dev/null
+      fi
+      cmake -S /src -B "$BUILDDIR" -G Ninja -DCMAKE_BUILD_TYPE="$TYPE" -DTESTS=OFF -DBUILD_QT_APPS=OFF \
+        -DUNREAL_STREAMDECK=ON ${SAN[@]+"${SAN[@]}"}
+    else
+      cmake -S . -B "$BUILDDIR" -G Ninja -DCMAKE_BUILD_TYPE="$TYPE" -DTESTS=ON ${SAN[@]+"${SAN[@]}"}
+    fi
     RUN=()
     [ "${NOASLR:-}" = 1 ] && RUN=(setarch "$(uname -m)" -R)
-    ${RUN[@]+"${RUN[@]}"} cmake --build "$BUILDDIR" --target "$TARGET" -j "$JOBS"
-    if [ "$RUNTESTS" = 1 ]; then
+    # TARGET may name several targets (the --streamdeck default): word splitting intended
+    KEEP=()
+    [ "$STREAMDECK" = 1 ] && KEEP=(-- -k 0)   # every failing file at once
+    ${RUN[@]+"${RUN[@]}"} cmake --build "$BUILDDIR" --target $TARGET -j "$JOBS" ${KEEP[@]+"${KEEP[@]}"}
+    if [ "$RUNTESTS" = 1 ] && [ "$STREAMDECK" = 1 ]; then
+      cd "$BUILDDIR/bin"
+      ${RUN[@]+"${RUN[@]}"} ./streamdeck-tests
+      if [ -x ./streamdeck-studio-tests ]; then
+        QT_QPA_PLATFORM=offscreen ${RUN[@]+"${RUN[@]}"} ./streamdeck-studio-tests
+      fi
+    elif [ "$RUNTESTS" = 1 ]; then
       # From the binary directory: the tests open testdata/ and rom/ relative to it (the
       # copies CMake puts next to core-tests), and the scratch helper expects the same layout
       cd "$BUILDDIR/bin"

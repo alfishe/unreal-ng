@@ -68,6 +68,7 @@ json Status(EditorWidget* e)
              {{"running", e->Runner()->Running()},
               {"how", e->Runner()->How().toStdString()},
               {"run_file", e->Runner()->RunFile().toStdString()},
+              {"deck", e->Runner()->Deck().toStdString()},
               {"api", "http://127.0.0.1:" + std::to_string(e->Runner()->ApiPort())}}}};
 }
 
@@ -111,8 +112,12 @@ Reply Edit(EditorWidget* e, const QString& what, const std::function<ops::Result
 Reply Proxy(EditorWidget* e, const std::string& method, const std::string& path, const json& body)
 {
     // the daemon's automation, whoever started it
-    const std::string url = OnGui([e] { return e->Runner()->ApiUrl().toStdString(); });
-    auto r = HttpRequest(url, method, path, body.is_null() ? std::string() : body.dump(), {}, 3000);
+    // the deck the run plays on (else the daemon's first deck)
+    const auto [url, deck] = OnGui([e] {
+        return std::pair(e->Runner()->ApiUrl().toStdString(), e->Runner()->Deck().toStdString());
+    });
+    const std::string target = deck.empty() || deck == "first" ? path : path + "?deck=" + deck;
+    auto r = HttpRequest(url, method, target, body.is_null() ? std::string() : body.dump(), {}, 3000);
     if (r.status == 0)
         return Reply::Error(502, "unreal-streamdeck automation at " + url + ": " + r.error, "POST /api/v1/editor/run");
     json b = json::parse(r.body, nullptr, false);
@@ -270,8 +275,9 @@ void AddEditorRoutes(automation::Api& api, EditorWidget* e, std::function<QWidge
         {{"parent", "body", "string", "menu id (default: the menu on the canvas)"},
          {"at", "body", "array", "[row, col]; default the first free key"},
          {"node", "body", "object", "a node: {type: menu|action, title, face, do, tags ...}"},
-         {"preset", "body", "string", "a palette preset name (GET /api/v1/editor/presets)"}},
-        json{{"parent", "home"}, {"at", {0, 1}}, {"preset", "Pause"}}, [e](const Request& r) {
+         {"preset", "body", "string",
+          "a palette preset name, e.g. Home, Menu, Shell command (GET /api/v1/editor/presets)"}},
+        json{{"parent", "home"}, {"at", {0, 1}}, {"preset", "Home"}}, [e](const Request& r) {
             json node;
             if (r.Has("preset"))
             {
@@ -437,10 +443,10 @@ void AddEditorRoutes(automation::Api& api, EditorWidget* e, std::function<QWidge
         });
     });
     add("POST", "/api/v1/editor/run",
-        "Play the scenario on the deck with unreal-streamdeck (live edits): a running daemon reloads it, else one is "
-        "started",
+        "Play the scenario on the deck with unreal-streamdeck (live edits): a running daemon plays it on the deck this "
+        "window shows (that deck only), else one is started",
         {"run", "play", "device"},
-        {{"serial", "body", "string", "USB deck for a daemon the studio starts (default the first)"}}, json::object(),
+        {{"serial", "body", "string", "deck to play it on (default: the deck this window shows)"}}, json::object(),
         [e](const Request& r) {
             return OnGui([&] {
                 QString err;
@@ -449,7 +455,7 @@ void AddEditorRoutes(automation::Api& api, EditorWidget* e, std::function<QWidge
                 return Reply::Ok(Status(e)["run"]);
             });
         });
-    add("POST", "/api/v1/editor/stop", "Stop the run: a started daemon ends, a running one gets its own scenario back",
+    add("POST", "/api/v1/editor/stop", "Stop the run: the deck gets the daemon's start scenario back (a daemon started for the run ends)",
         {"run"}, {}, nullptr, [e](const Request&) {
             return OnGui([e] {
                 e->StopRun();

@@ -20,6 +20,7 @@
 #include <drogon/utils/Utilities.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/execution/runcontrol.h>
 #include <emulator/cpu/z80.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memoryaccesstracker.h>
@@ -109,6 +110,23 @@ static bool RunControlHeldReply(const HttpRequestPtr& req, const std::shared_ptr
     addCorsHeaders(resp);
     callback(resp);
     return true;
+}
+
+/// A RunControl reply as the route answers it: the body; revoked_by_user as every revoked reply; an error with its
+/// phrase and message
+static void ReplyRun(const execution::RunReply& reply, std::function<void(const HttpResponsePtr&)>& callback)
+{
+    Json::Value body = reply.status == execution::RunReply::Status::Revoked ? webapi_session::RevokedBody()
+                                                                            : StateNodeToJson(reply.body);
+    if (!reply.Ok() && reply.status != execution::RunReply::Status::Revoked)
+    {
+        body["error"] = reply.error;
+        body["message"] = reply.message;
+    }
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(static_cast<HttpStatusCode>(reply.HttpStatus()));
+    addCorsHeaders(resp);
+    callback(resp);
 }
 
 // region Stepping Commands
@@ -203,59 +221,18 @@ void EmulatorAPI::step(const HttpRequestPtr& req, std::function<void(const HttpR
                        const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
-    if (!emulator) return;
-
-    // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
-    auto* ctx = emulator->GetContext();
-    if (ctx && ctx->IsRunControlClaimed() && !webapi_session::HoldsControl(req, ctx))
-    {
-        auto state = ctx->GetRunControlState();
-        Json::Value error;
-        error["error"] = "Run-control held";
-        error["message"] = "Run-control held by " + state.surfaceLabel + ". Use that surface to step.";
-
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k409Conflict);
-        addCorsHeaders(resp);
-        callback(resp);
+    if (!emulator)
         return;
-    }
-
     try
     {
-        // Execute single instruction
-        // Don't skip breakpoints: an execution breakpoint stops the step before its instruction,
-        // a memory or port breakpoint after it (the reply's "stop" says which)
-        emulator->RunSingleCPUCycle(false);
-        if (ReplyIfControlTakenBack(emulator, callback))
-            return;
-        const Emulator::BreakpointStop& stop = emulator->LastDirectStop();
-        const bool executed = !(stop.hit && stop.kind == BreakpointHitKind::Execute);
-        
-        Z80State* z80 = emulator->GetZ80State();
-        
-        Json::Value ret;
-        ret["status"] = "success";
-        ret["message"] = executed ? "Executed 1 instruction" : "Stopped at a breakpoint before the instruction";
-        ret["executed"] = executed ? 1 : 0;
-        ret["stop"] = StepStopJson(*emulator);
-        if (z80)
-        {
-            ret["pc"] = z80->pc;
-            ret["sp"] = z80->sp;
-        }
-        ret["state"] = stateToString(emulator->GetState());
-        
-        auto resp = HttpResponse::newHttpJsonResponse(ret);
-        addCorsHeaders(resp);
-        callback(resp);
+        // RunControl (core/src/emulator/execution/runcontrol.h): the claim rule and the reply, shared with the actions
+        ReplyRun(execution::RunControl(emulator).StepIn(webapi_session::RequesterOf(req, emulator->GetContext())), callback);
     }
     catch (const std::exception& e)
     {
         Json::Value error;
         error["error"] = "Step failed";
         error["message"] = e.what();
-        
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
         addCorsHeaders(resp);
@@ -335,53 +312,21 @@ void EmulatorAPI::stepsNow(const HttpRequestPtr& req, std::function<void(const H
 /// @brief POST /api/v1/emulator/{id}/stepover
 /// @brief Step over call instructions
 void EmulatorAPI::stepOverNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
-                           const std::string& id) const
+                       const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
-    if (!emulator) return;
-
-    // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
-    auto* ctx = emulator->GetContext();
-    if (ctx && ctx->IsRunControlClaimed() && !webapi_session::HoldsControl(req, ctx))
-    {
-        auto state = ctx->GetRunControlState();
-        Json::Value error;
-        error["error"] = "Run-control held";
-        error["message"] = "Run-control held by " + state.surfaceLabel + ". Use that surface to step.";
-
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k409Conflict);
-        addCorsHeaders(resp);
-        callback(resp);
+    if (!emulator)
         return;
-    }
-
     try
     {
-        emulator->StepOver();
-        
-        Z80State* z80 = emulator->GetZ80State();
-        
-        Json::Value ret;
-        ret["status"] = "success";
-        ret["message"] = "Step over completed";
-        if (z80)
-        {
-            ret["pc"] = z80->pc;
-            ret["sp"] = z80->sp;
-        }
-        ret["state"] = stateToString(emulator->GetState());
-        
-        auto resp = HttpResponse::newHttpJsonResponse(ret);
-        addCorsHeaders(resp);
-        callback(resp);
+        // RunControl (core/src/emulator/execution/runcontrol.h): the claim rule and the reply, shared with the actions
+        ReplyRun(execution::RunControl(emulator).StepOver(webapi_session::RequesterOf(req, emulator->GetContext())), callback);
     }
     catch (const std::exception& e)
     {
         Json::Value error;
         error["error"] = "Step over failed";
         error["message"] = e.what();
-        
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
         addCorsHeaders(resp);
@@ -392,38 +337,22 @@ void EmulatorAPI::stepOverNow(const HttpRequestPtr& req, std::function<void(cons
 /// @brief POST /api/v1/emulator/{id}/stepout
 /// @brief Step out of the current subroutine (SP-tracking: runs until a RET-family
 /// @brief instruction at/above the entry stack level, then executes it)
-void EmulatorAPI::stepOutNow(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
-                          const std::string& id) const
+void EmulatorAPI::stepOutNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                       const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
-    if (!emulator) return;
-
+    if (!emulator)
+        return;
     try
     {
-        emulator->StepOut();
-
-        Z80State* z80 = emulator->GetZ80State();
-
-        Json::Value ret;
-        ret["status"] = "success";
-        ret["message"] = "Step out completed";
-        if (z80)
-        {
-            ret["pc"] = z80->pc;
-            ret["sp"] = z80->sp;
-        }
-        ret["state"] = stateToString(emulator->GetState());
-
-        auto resp = HttpResponse::newHttpJsonResponse(ret);
-        addCorsHeaders(resp);
-        callback(resp);
+        // RunControl (core/src/emulator/execution/runcontrol.h): the claim rule and the reply, shared with the actions
+        ReplyRun(execution::RunControl(emulator).StepOut(webapi_session::RequesterOf(req, emulator->GetContext())), callback);
     }
     catch (const std::exception& e)
     {
         Json::Value error;
         error["error"] = "Step out failed";
         error["message"] = e.what();
-
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
         addCorsHeaders(resp);
@@ -593,55 +522,34 @@ void EmulatorAPI::runTStatesNow(const HttpRequestPtr& req, std::function<void(co
 /// @brief Run until target scanline
 /// @brief Request body: {"scanline": N}
 void EmulatorAPI::runToScanlineNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
-                                const std::string& id) const
+                       const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
-    if (!emulator) return;
-    
-    try
+    if (!emulator)
+        return;
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("scanline"))
     {
-        auto json = req->getJsonObject();
-        if (!json || !json->isMember("scanline"))
-        {
-            Json::Value error;
-            error["error"] = "Bad Request";
-            error["message"] = "Request body must contain 'scanline' field";
-            
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k400BadRequest);
-            addCorsHeaders(resp);
-            callback(resp);
-            return;
-        }
-        
-        unsigned scanline = (*json)["scanline"].asUInt();
-        emulator->RunUntilScanline(scanline);
-        if (ReplyIfControlTakenBack(emulator, callback))
-            return;
-        
-        Z80State* z80 = emulator->GetZ80State();
-        
-        Json::Value ret;
-        ret["status"] = "success";
-        ret["message"] = "Ran to scanline " + std::to_string(scanline);
-        ret["scanline"] = scanline;
-        if (z80)
-        {
-            ret["pc"] = z80->pc;
-            ret["sp"] = z80->sp;
-        }
-        ret["state"] = stateToString(emulator->GetState());
-        
-        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Request body must contain 'scanline' field";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);
         callback(resp);
+        return;
+    }
+    const unsigned scanline = (*json)["scanline"].asUInt();
+    try
+    {
+        // RunControl (core/src/emulator/execution/runcontrol.h): the claim rule and the reply, shared with the actions
+        ReplyRun(execution::RunControl(emulator).RunToScanline(webapi_session::RequesterOf(req, emulator->GetContext()), scanline), callback);
     }
     catch (const std::exception& e)
     {
         Json::Value error;
         error["error"] = "RunToScanline failed";
         error["message"] = e.what();
-        
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
         addCorsHeaders(resp);
@@ -653,45 +561,23 @@ void EmulatorAPI::runToScanlineNow(const HttpRequestPtr& req, std::function<void
 /// @brief Run N scanlines from current position
 /// @brief Request body: {"count": N}
 void EmulatorAPI::runNScanlinesNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
-                                const std::string& id) const
+                       const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
-    if (!emulator) return;
-    
+    if (!emulator)
+        return;
+    auto json = req->getJsonObject();
+    const unsigned count = json && json->isMember("count") ? (*json)["count"].asUInt() : 1;
     try
     {
-        auto json = req->getJsonObject();
-        unsigned count = json && json->isMember("count") ? (*json)["count"].asUInt() : 1;
-        if (count < 1) count = 1;
-        if (count > 1000) count = 1000; // Safety limit
-        
-        emulator->RunNScanlines(count);
-        if (ReplyIfControlTakenBack(emulator, callback))
-            return;
-        
-        Z80State* z80 = emulator->GetZ80State();
-        
-        Json::Value ret;
-        ret["status"] = "success";
-        ret["message"] = "Ran " + std::to_string(count) + " scanlines";
-        ret["count"] = count;
-        if (z80)
-        {
-            ret["pc"] = z80->pc;
-            ret["sp"] = z80->sp;
-        }
-        ret["state"] = stateToString(emulator->GetState());
-        
-        auto resp = HttpResponse::newHttpJsonResponse(ret);
-        addCorsHeaders(resp);
-        callback(resp);
+        // RunControl (core/src/emulator/execution/runcontrol.h): the claim rule and the reply, shared with the actions
+        ReplyRun(execution::RunControl(emulator).RunNScanlines(webapi_session::RequesterOf(req, emulator->GetContext()), count), callback);
     }
     catch (const std::exception& e)
     {
         Json::Value error;
         error["error"] = "RunNScanlines failed";
         error["message"] = e.what();
-        
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
         addCorsHeaders(resp);
@@ -744,41 +630,22 @@ void EmulatorAPI::runToPixelNow(const HttpRequestPtr& /*req*/, std::function<voi
 
 /// @brief POST /api/v1/emulator/{id}/run_to_interrupt
 /// @brief Run until Z80 accepts maskable interrupt
-void EmulatorAPI::runToInterruptNow(const HttpRequestPtr& /*req*/,
-                                    std::function<void(const HttpResponsePtr&)>&& callback,
-                                 const std::string& id) const
+void EmulatorAPI::runToInterruptNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                       const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
-    if (!emulator) return;
-    
+    if (!emulator)
+        return;
     try
     {
-        emulator->RunUntilInterrupt();
-        if (ReplyIfControlTakenBack(emulator, callback))
-            return;
-        
-        Z80State* z80 = emulator->GetZ80State();
-        
-        Json::Value ret;
-        ret["status"] = "success";
-        ret["message"] = "Ran to interrupt";
-        if (z80)
-        {
-            ret["pc"] = z80->pc;
-            ret["sp"] = z80->sp;
-        }
-        ret["state"] = stateToString(emulator->GetState());
-        
-        auto resp = HttpResponse::newHttpJsonResponse(ret);
-        addCorsHeaders(resp);
-        callback(resp);
+        // RunControl (core/src/emulator/execution/runcontrol.h): the claim rule and the reply, shared with the actions
+        ReplyRun(execution::RunControl(emulator).RunToInterrupt(webapi_session::RequesterOf(req, emulator->GetContext())), callback);
     }
     catch (const std::exception& e)
     {
         Json::Value error;
         error["error"] = "RunToInterrupt failed";
         error["message"] = e.what();
-        
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
         addCorsHeaders(resp);
@@ -788,40 +655,22 @@ void EmulatorAPI::runToInterruptNow(const HttpRequestPtr& /*req*/,
 
 /// @brief POST /api/v1/emulator/{id}/run_frame
 /// @brief Run one complete video frame
-void EmulatorAPI::runFrameNow(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
-                           const std::string& id) const
+void EmulatorAPI::runFrameNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                       const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
-    if (!emulator) return;
-    
+    if (!emulator)
+        return;
     try
     {
-        emulator->RunFrame();
-        if (ReplyIfControlTakenBack(emulator, callback))
-            return;
-        
-        Z80State* z80 = emulator->GetZ80State();
-        
-        Json::Value ret;
-        ret["status"] = "success";
-        ret["message"] = "Ran one frame";
-        if (z80)
-        {
-            ret["pc"] = z80->pc;
-            ret["sp"] = z80->sp;
-        }
-        ret["state"] = stateToString(emulator->GetState());
-        
-        auto resp = HttpResponse::newHttpJsonResponse(ret);
-        addCorsHeaders(resp);
-        callback(resp);
+        // RunControl (core/src/emulator/execution/runcontrol.h): the claim rule and the reply, shared with the actions
+        ReplyRun(execution::RunControl(emulator).FrameStep(webapi_session::RequesterOf(req, emulator->GetContext())), callback);
     }
     catch (const std::exception& e)
     {
         Json::Value error;
         error["error"] = "RunFrame failed";
         error["message"] = e.what();
-        
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
         addCorsHeaders(resp);

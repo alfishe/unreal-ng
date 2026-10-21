@@ -1,7 +1,9 @@
 // Action execution against a fake host: order, delays, nesting, failure, cancel, toggles, substitution.
 #include "sdb/actions.h"
 
+#include <algorithm>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "check.h"
@@ -43,7 +45,7 @@ struct Fake final : ActionHost
         log.push_back("open " + t);
         return true;
     }
-    bool Keys(const std::string& c, const std::string& t) override
+    bool Keys(const std::string& c, const std::string& t, std::string&) override
     {
         log.push_back("keys " + c + t);
         return true;
@@ -195,10 +197,73 @@ void TestActions()
     std::vector<std::string> navs;
     cb.navigate = [&](const json& j) { navs.push_back(j.value("to", "")); };
     auto sys = MakeSystemHost(Settings{}, cb);
-    r = Execute(Act({{"kind", "shell"}, {"command", "echo hello; exit 3"}}), *sys);
+#ifdef _WIN32  // cmd.exe there
+    const char* exit3 = "echo hello& exit 3";
+    const char* sleep5 = "ping -n 6 127.0.0.1 > nul";
+#else
+    const char* exit3 = "echo hello; exit 3";
+    const char* sleep5 = "sleep 5";
+#endif
+    r = Execute(Act({{"kind", "shell"}, {"command", exit3}}), *sys);
     CHECK(!r.ok && r.message == "shell exit 3: hello");
-    r = Execute(Act({{"kind", "shell"}, {"command", "sleep 5"}, {"timeout_ms", 200}}), *sys);
+    r = Execute(Act({{"kind", "shell"}, {"command", sleep5}, {"timeout_ms", 200}}), *sys);
     CHECK(!r.ok && r.message.find("timeout") != std::string::npos);
     Execute(Act({{"kind", "nav"}, {"to", "back"}}), *sys);
     CHECK(navs.size() == 1 && navs[0] == "back");
+
+    // every kind of the table is one Execute runs and Parse knows
+    for (const std::string_view k : ActionKinds())
+    {
+        Fake any;
+        const std::string kind(k);
+        const std::string unknown = "unknown action kind '" + kind + "'";  // (an empty toggle side is another one)
+        CHECK(Execute(Act({{"kind", kind}}), any).message.find(unknown) == std::string::npos);
+        std::vector<Issue> issues;
+        (void)Parse(
+            json{{"model", "plusxl"},
+                 {"root",
+                  {{"id", "home"},
+                   {"type", "menu"},
+                   {"items",
+                    json::array({json{{"id", "a"}, {"type", "action"}, {"at", {0, 0}}, {"do", {{"kind", kind}}}}})}}}},
+            issues);
+        for (const auto& i : issues)
+            CHECK(i.message.find(unknown) == std::string::npos);
+    }
+    CHECK(ActionKinds().size() == 14);
+
+    // keys combos: the same names on every platform
+    auto combo = ParseKeyCombo("Cmd+Shift+4");
+    CHECK(combo && combo->cmd && combo->shift && !combo->ctrl && combo->key == "4");
+    combo = ParseKeyCombo("ctrl+alt+forwarddelete");
+    CHECK(combo && combo->ctrl && combo->alt && combo->key == "forwarddelete");
+    combo = ParseKeyCombo("option+command+fn+F12");
+    CHECK(combo && combo->alt && combo->cmd && combo->fn && combo->key == "f12");
+    combo = ParseKeyCombo("return");
+    CHECK(combo && combo->key == "return" && !combo->cmd);
+    std::string why;
+    CHECK(!ParseKeyCombo("cmd+banana", &why) && why.find("unknown key 'banana'") != std::string::npos);
+    CHECK(!ParseKeyCombo("cmd+shift", &why) && why.find("no key") != std::string::npos);
+    CHECK(!ParseKeyCombo("a+b", &why) && why.find("two keys") != std::string::npos);
+    CHECK(!ParseKeyCombo("cmd++", &why) && why.find("unknown key '+'") != std::string::npos);
+    CHECK(KeyNames().size() == 76);
+    for (const std::string_view k : KeyNames())
+        CHECK(ParseKeyCombo("ctrl+" + std::string(k)).has_value());
+    // a bad combo is an issue in the scenario and a clear failure on the system host (nothing is typed)
+    std::vector<Issue> keyIssues;
+    CHECK(!Parse(json{{"model", "plusxl"},
+                      {"root",
+                       {{"id", "home"},
+                        {"type", "menu"},
+                        {"items", json::array({json{{"id", "k"},
+                                                    {"type", "action"},
+                                                    {"at", {0, 0}},
+                                                    {"do", {{"kind", "keys"}, {"combo", "cmd+banana"}}}}})}}}},
+                 keyIssues)
+               .has_value());
+    CHECK(std::ranges::any_of(keyIssues, [](const Issue& i) {
+        return i.error && i.message.find("unknown key 'banana'") != std::string::npos;
+    }));
+    r = Execute(Act({{"kind", "keys"}, {"combo", "cmd+banana"}}), *sys);
+    CHECK(!r.ok && r.message == "keys cmd+banana failed: unknown key 'banana' in 'cmd+banana'");
 }

@@ -126,3 +126,55 @@
         verbParameter(post, {"save", "delete", "apply", "bind", "unbind", "scheme", "rumble"});
         replies(post);
     }
+
+    // The host actions (core ActionRegistry, control surfaces actions.md §1, §6): the same ids a pad, the Surface Dial,
+    // a companion, MCP `actions`, the CLI `action` and the scripts' action() run
+    {
+        auto instanceParameter = [](Json::Value& operation, const char* in) {
+            Json::Value parameter;
+            parameter["name"] = "instance";
+            parameter["in"] = in;
+            parameter["required"] = false;
+            parameter["description"] = "Emulator id or index; default: the selected instance, else the only one";
+            parameter["schema"]["type"] = "string";
+            operation["parameters"].append(parameter);
+        };
+        Json::Value& get = paths["/api/v1/controllers/actions"]["get"];
+        get["summary"] = "Host actions: the catalogue and whether each can run now for this caller";
+        get["description"] =
+            "Every action (core and, with the Qt client, its GUI ones) in registration order: id, label, group, kind "
+            "(press, delta, level, text), held (the release matters too), gui (only with the Qt client), scope (the "
+            "companion scope it needs now: run, debug, rewind, ...; null = it changes nothing), needs_pause, params "
+            "(the params it reads, one line: \"key, hold?, frames?\"; absent when none), available and, when not, error (not_now, Not Implemented, Run-control held, companion_forbidden, "
+            "held_by_session, held_by_other) and reason. A dry run of the gates: no session is opened";
+        get["tags"].append("Controllers");
+        instanceParameter(get, "query");
+        get["responses"]["200"]["description"] = "{ok, instance, actions[]}";
+        get["responses"]["404"]["description"] = "Not Found: no such instance";
+
+        Json::Value& post = paths["/api/v1/controllers/actions/{action}"]["post"];
+        post["summary"] = "Run a host action on an instance (its actions worker, in order)";
+        post["description"] =
+            "Body {instance?, value?}. value by the action's kind: press - omitted / true (a press), false (a "
+            "release, for held actions), or {pressed}; delta - a number of steps or {delta, rate}; level - 0..1; "
+            "text - a string. {params: {...}} adds parameters (run.to_scanline: line; run.n_scanlines: count). The "
+            "gates of every origin apply: a changing action without a session opens the implicit run-control session "
+            "(automation_session in the reply), a companion token is checked against its scopes. The reply waits for "
+            "the action: {ok, action, instance, message, result} or {ok: false, error, message}";
+        post["tags"].append("Controllers");
+        Json::Value action;
+        action["name"] = "action";
+        action["in"] = "path";
+        action["required"] = true;
+        action["description"] = "The action id (GET /api/v1/controllers/actions lists them): run.pause_toggle, "
+                                "ttd.jog_frames, mach.nmi, ...";
+        action["schema"]["type"] = "string";
+        post["parameters"].append(action);
+        post["responses"]["200"]["description"] = "Done; result is the action's body (a step: pc, sp, state, stop)";
+        post["responses"]["400"]["description"] = "Bad Request: a value of the wrong kind, no instance named";
+        post["responses"]["403"]["description"] = "companion_forbidden: the companion lacks the scope";
+        post["responses"]["404"]["description"] = "Not Found: no such action or instance";
+        post["responses"]["409"]["description"] =
+            "not_now (needs a pause), Run-control held, held_by_session, held_by_other, revoked_by_user, Conflict";
+        post["responses"]["501"]["description"] = "Not Implemented: a stub of the catalogue";
+    }

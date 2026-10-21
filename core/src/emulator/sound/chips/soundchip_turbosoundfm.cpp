@@ -160,13 +160,8 @@ void SoundChip_TurboSoundFM::handleStep()
     // The step gate: before the deadline a step only notes where it ended (settleSteps books it)
     if (_stepDeadline != 0)
     {
-        const uint64_t now = nowT();
-        if (now < _stepDeadline && _context->emulatorState.HostSpeedMultiplier() == 1)
-        {
-            _pendingT = now;
-            _stepPending = true;
+        if (noteGatedStep(nowT(), _context->emulatorState.HostSpeedMultiplier()))
             return;
-        }
         settleSteps();
     }
     stepAt(nowT());
@@ -182,6 +177,13 @@ void SoundChip_TurboSoundFM::stepAt(uint64_t now)
     {
         _deferredT = now;
         _syncDeferred = true;
+        // Every step up to the next entry takes this branch with the same outcome (the flags change only through
+        // entries that settle): the gate holds them, settleSteps takes the last one here
+        if (_stepGate)
+        {
+            _stepDeadline = std::numeric_limits<uint64_t>::max();
+            _quietDeferral = true;
+        }
         return;
     }
     if (_pair.synthesisSuppressed())

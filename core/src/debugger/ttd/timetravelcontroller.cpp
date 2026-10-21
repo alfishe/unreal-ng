@@ -907,6 +907,7 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
         info.writeJournalSpans.emplace_back(TimePointAt(s.from), TimePointAt(s.to));
     info.writeJournalComplete = JournalCoversSession(info.writeJournalSegments);
 
+    PublishCursor();
     PublishSessionInfo(info);
     return info;
 }
@@ -1243,6 +1244,19 @@ void TimeTravelController::OnFrameBoundary()
 {
     if (!_context)
         return;
+
+    // The published cursor follows the machine: written as the boundary is left, whichever way this function ends.
+    // A control thread's throwaway replays (a seek, a frame-cache build) cross boundaries of a restored machine:
+    // those are not published, the operation's end publishes where it left the machine
+    struct CursorAtExit
+    {
+        const TimeTravelController& self;
+        ~CursorAtExit()
+        {
+            if (!self._inReplayMode || self.OnMachineThread())
+                self.PublishCursor();
+        }
+    } cursorAtExit{*this};
 
     // A device TTD cannot follow was used during the frame that just ended:
     // its checkpoint would not be restorable, so the session ends here
@@ -2832,6 +2846,11 @@ TTDTimePoint TimeTravelController::SessionEndPosition() const
         return _liveEnd;
     }
     const SessionOperation op{*this, SessionOperation::Kind::Read};
+    return TimelineEnd();
+}
+
+TTDTimePoint TimeTravelController::TimelineEnd() const
+{
     if (_timeline.empty())
         return TTDTimePoint{};
     // A paused recording reaches to where it paused, inside its last frame;
@@ -2842,6 +2861,32 @@ TTDTimePoint TimeTravelController::SessionEndPosition() const
         _stoppedEnd.frame == _timeline.back().time.frame)
         return _stoppedEnd;
     return _timeline.back().time;
+}
+
+void TimeTravelController::PublishCursor() const
+{
+    TTDCursor cursor;
+    const TTDTimePoint position = CurrentPosition();
+    cursor.frame = position.frame;
+    cursor.tinframe = position.tInFrame;
+    cursor.state = _state.load();
+    cursor.history = !_timeline.empty();
+    if (cursor.history)
+    {
+        const TTDTimePoint end = TimelineEnd();
+        cursor.first = _timeline.front().time.frame;
+        cursor.end = end.frame;
+        cursor.endTinframe = end.tInFrame;
+    }
+    _cursor.Publish(cursor);
+}
+
+TTDCursor TimeTravelController::PublishedCursor() const
+{
+    TTDCursor cursor = _cursor.Read();
+    Emulator* emulator = _context ? _context->pEmulator : nullptr;
+    cursor.paused = emulator != nullptr && emulator->IsPaused();
+    return cursor;
 }
 
 void TimeTravelController::PauseRecordingForBrowsing()

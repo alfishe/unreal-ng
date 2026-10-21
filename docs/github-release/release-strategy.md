@@ -321,7 +321,7 @@ flowchart TB
 | File | Purpose |
 |------|---------|
 | `.github/workflows/release.yml` | Release workflow definition |
-| `.github/workflows/cmake-ci.yml` | CI build (Linux only) |
+| `.github/workflows/cmake-ci.yml` | CI build: the core on Linux (CI image, gcc 16); the Stream Deck companion on Linux, macOS, Windows MSVC and MinGW |
 | `.github/workflows/docker-build.yml` | Docker image build |
 | `docker/Dockerfile.universal` | Linux build environment |
 | `CMakeLists.txt` | Build configuration with packaging targets |

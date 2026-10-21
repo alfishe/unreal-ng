@@ -6,6 +6,8 @@ on:
     paths-ignore:
       - 'docs/**'
       - 'tools/**'
+      - 'plugins/**'
+      - 'utilities/**'
       - 'apps/steamdeck-client/**'   # BUILD_STEAMDECK_POC, off in CI (SDL3, steamrt4 container)
       - 'data/**'
       - 'testdata/**'
@@ -15,6 +17,8 @@ on:
     paths-ignore:
       - 'docs/**'
       - 'tools/**'
+      - 'plugins/**'
+      - 'utilities/**'
       - 'apps/steamdeck-client/**'   # BUILD_STEAMDECK_POC, off in CI (SDL3, steamrt4 container)
       - 'data/**'
       - 'testdata/**'
@@ -165,7 +169,9 @@ jobs:
       - name: Install build dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends cmake ninja-build uuid-dev libssl-dev zlib1g-dev
+          # libudev-dev and pkg-config: the Stream Deck companion's hidraw backend (steps at the end)
+          apt-get install -y --no-install-recommends cmake ninja-build uuid-dev libssl-dev zlib1g-dev \
+            libudev-dev pkg-config
 
       - uses: actions/checkout@v7
         with:
@@ -183,3 +189,249 @@ jobs:
 
       - name: Run core-tests (all, sharded)
         run: cmake --build build --target test-parallel
+
+      # The companion's Qt-free targets with the newest gcc, in the same build directory (one more configure, the
+      # core is not rebuilt: the companion does not link it). After the core tests, so a companion failure never hides
+      # their result. The studio needs Qt and is built by the build-streamdeck-* jobs.
+      - name: Build Stream Deck companion (no Qt)
+        run: |
+          cmake -S . -B build -DUNREAL_STREAMDECK=ON
+          cmake --build build --target unreal-streamdeck sdctl streamdeck-tests --parallel
+
+      - name: Run streamdeck-tests
+        working-directory: build/bin
+        run: ./streamdeck-tests
+
+  # ========================================
+  # Stream Deck companion (companions/streamdeck): the daemon, sdctl, the studio and both test binaries (libsdb unit
+  # tests and the device wire v2 / daemon route conformance suite, docs/inprogress/2026-10-19-streamdeck-integration/
+  # testing.md; the studio's tests offscreen) on every platform. Jobs of their own, not a step of build-linux: the
+  # companion configures from the repository root with BUILD_QT_APPS=OFF and TESTS=OFF (no core build, it does not
+  # link the core; the studio takes the core's recording library only), so it shares nothing with build-linux's
+  # unreal-qt build directory, and a red companion never stops the core gates. A few minutes per job, in parallel.
+  # ========================================
+  build-streamdeck-linux:
+    needs: throttle
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: ci-streamdeck-linux-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
+    container:
+      image: ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # hidapi's hidraw backend enumerates through libudev; an image built before it was added lacks the headers
+          if ! pkg-config --exists libudev; then
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends libudev-dev
+          fi
+          cmake -S . -B build-sd -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DBUILD_QT_APPS=OFF \
+            -DTESTS=OFF \
+            -DUNREAL_STREAMDECK=ON
+
+      - name: Build
+        run: >-
+          cmake --build build-sd --parallel --target
+          unreal-streamdeck sdctl unreal-streamdeck-studio streamdeck-tests streamdeck-studio-tests
+
+      - name: Run streamdeck-tests
+        working-directory: build-sd/bin
+        run: ./streamdeck-tests
+
+      - name: Run streamdeck-studio-tests (offscreen)
+        working-directory: build-sd/bin
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./streamdeck-studio-tests
+
+  build-streamdeck-macos:
+    needs: throttle
+    runs-on: macos-15
+    timeout-minutes: 30
+    concurrency:
+      group: ci-streamdeck-macos-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      # Qt Core, Gui, Widgets and Network only: no extra modules
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.3'
+          host: 'mac'
+          target: 'desktop'
+          arch: 'clang_64'
+          cache: true
+
+      - name: Install build dependencies
+        run: brew install ninja
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-sd -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}" \
+            -DBUILD_QT_APPS=OFF \
+            -DTESTS=OFF \
+            -DTRANTOR_USE_TLS=none \
+            -DBUILD_C-ARES=OFF \
+            -DUNREAL_STREAMDECK=ON
+
+      - name: Build
+        run: >-
+          cmake --build build-sd --parallel --target
+          unreal-streamdeck sdctl unreal-streamdeck-studio streamdeck-tests streamdeck-studio-tests
+
+      - name: Run streamdeck-tests
+        working-directory: build-sd/bin
+        run: ./streamdeck-tests
+
+      - name: Run streamdeck-studio-tests (offscreen)
+        working-directory: build-sd/bin
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./streamdeck-studio-tests
+
+  build-streamdeck-windows-msvc:
+    needs: throttle
+    runs-on: windows-2022
+    timeout-minutes: 30
+    concurrency:
+      group: ci-streamdeck-msvc-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.3'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2022_64'
+          cache: true
+
+      - name: Setup MSVC
+        uses: egor-tensin/vs-shell@v2
+        with:
+          arch: x64
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build-sd -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}" \
+            -DBUILD_QT_APPS=OFF \
+            -DTESTS=OFF \
+            -DENABLE_PYTHON_AUTOMATION=OFF \
+            -DTRANTOR_USE_TLS=none \
+            -DBUILD_C-ARES=OFF \
+            -DUNREAL_STREAMDECK=ON
+
+      - name: Build
+        shell: bash
+        run: >-
+          cmake --build build-sd --parallel --target
+          unreal-streamdeck sdctl unreal-streamdeck-studio streamdeck-tests streamdeck-studio-tests
+
+      # Qt's DLLs from the PATH and its plugins from QT_PLUGIN_PATH, both set by install-qt-action
+      - name: Run streamdeck-tests
+        shell: bash
+        working-directory: build-sd/bin
+        run: ./streamdeck-tests.exe
+
+      - name: Run streamdeck-studio-tests (offscreen)
+        shell: bash
+        working-directory: build-sd/bin
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./streamdeck-studio-tests.exe
+
+  build-streamdeck-windows-mingw:
+    needs: throttle
+    runs-on: windows-latest
+    timeout-minutes: 30
+    concurrency:
+      group: ci-streamdeck-mingw-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.3'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_mingw'
+          cache: true
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          cache: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+
+      - name: Configure
+        shell: msys2 {0}
+        run: |
+          cmake -S . -B build-sd -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_PREFIX_PATH="$(cygpath -u "${{ env.QT_ROOT_DIR }}")" \
+            -DBUILD_QT_APPS=OFF \
+            -DTESTS=OFF \
+            -DENABLE_PYTHON_AUTOMATION=OFF \
+            -DTRANTOR_USE_TLS=none \
+            -DBUILD_C-ARES=OFF \
+            -DUNREAL_STREAMDECK=ON
+
+      - name: Build
+        shell: msys2 {0}
+        run: >-
+          cmake --build build-sd --parallel --target
+          unreal-streamdeck sdctl unreal-streamdeck-studio streamdeck-tests streamdeck-studio-tests
+
+      # MSYS2's gcc runtime first: Qt's mingw_64\bin carries an older libstdc++ the binaries cannot use
+      - name: Run streamdeck-tests
+        shell: msys2 {0}
+        working-directory: build-sd/bin
+        run: |
+          export PATH="/mingw64/bin:$(cygpath -u "${{ env.QT_ROOT_DIR }}")/bin:$PATH"
+          ./streamdeck-tests.exe
+
+      - name: Run streamdeck-studio-tests (offscreen)
+        shell: msys2 {0}
+        working-directory: build-sd/bin
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          export PATH="/mingw64/bin:$(cygpath -u "${{ env.QT_ROOT_DIR }}")/bin:$PATH"
+          ./streamdeck-studio-tests.exe

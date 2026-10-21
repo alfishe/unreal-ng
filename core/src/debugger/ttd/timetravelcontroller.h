@@ -64,6 +64,7 @@
 #include "emulator/io/keyboard/keyboard.h"  // Keyboard::InputState (display sandbox)
 #include "common/modulelogger.h"    // ModuleLogger
 #include "debugger/ttd/timetravelhooks.h"  // ITimeTravelHooks, TTDSessionState, TTDGuardedAction
+#include "debugger/ttd/ttdcursorcell.h"   // the published cursor
 #include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/ttdsessiontypes.h"  // the session's status, results and options, shared with the controller
 #include "emulator/sound/soundmanager.h"  // SoundManager::HostOutputHold (replay hold)
@@ -220,6 +221,9 @@ public:
     /// so the status follows a running recording instead of the last time
     /// somebody looked. Never pauses the machine.
     TTDSessionInfo ReadSessionInfo() const override;
+    /// The published cursor (TTDCursor, ttdcursorcell.h): written at every frame boundary (not by a control thread's
+    /// throwaway replays) and by every GetSessionInfo (so at the end of every operation); read lock-free
+    TTDCursor PublishedCursor() const override;
     /// D8: the recording is paused for browsing (state detached); see PauseRecordingForBrowsing
     bool IsRecordingPaused() const { return _recordingPaused; }
 
@@ -1737,6 +1741,12 @@ private:
     TTDTimePoint _liveEnd{};
     /// After every change of _timeline
     void NoteTimelineEnd();
+    /// SessionEndPosition's answer for a caller that may read the session (the machine's thread, an operation)
+    TTDTimePoint TimelineEnd() const;
+    /// The published cursor: PublishCursor stores the live position and bounds, from where reading the session is
+    /// safe (the machine's thread at a frame boundary, GetSessionInfo)
+    mutable TTDCursorCell _cursor;
+    void PublishCursor() const;
 
     /// Model-specific peripheral serializers. The framework never names a
     /// machine: it registers whatever the active model provides (see

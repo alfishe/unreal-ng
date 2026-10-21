@@ -43,6 +43,7 @@ constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE";       
 constexpr char const* NC_SYSTEM_RESET = "RESET";                                // System reset event
 constexpr char const* NC_EXECUTION_CPU_STEP = "CPU_STEP";                       // CPU step(s) executed; the end of a direct run carries CpuStepPayload (did a breakpoint stop it)
 constexpr char const* NC_RUN_CONTROL_CHANGED = "RUN_CONTROL_CHANGED";             // An automation session took / released control, the user took it back, its lease expired, a re-take was refused - payload: RunControlChangedPayload
+constexpr char const* NC_SURFACE_CONTEXT = "SURFACE_CONTEXT";                     // An instance's control-surface context changed (ctx.set: play, ttd, ttd.timecode, debug.*) - payload: SurfaceContextPayload
 constexpr char const* NC_COMPANION_CHANGED = "COMPANION_CHANGED";                 // A companion client asked to pair, was paired, denied or revoked; a pairing expired or was cancelled - payload: CompanionChangedPayload (process-wide, no emulator id)
 constexpr char const* NC_BREAKPOINTS_CHANGED = "BREAKPOINTS_CHANGED";             // The breakpoint set changed — payload: BreakpointsChangedPayload (posted by BreakpointManager::RebuildFilters)
 constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint triggered — payload: BreakpointTriggeredPayload (instance-tagged since Sprint 0 / GDB TDD §6.3)

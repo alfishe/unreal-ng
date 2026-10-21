@@ -18,6 +18,7 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QSignalBlocker>
+#include <QSlider>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QTime>
@@ -28,6 +29,7 @@
 #include <QVBoxLayout>
 #include <span>
 
+#include "daemoncontrol.h"
 #include "deckclient.h"
 #include "deckwidget.h"
 #include "editor/designcanvas.h"
@@ -36,6 +38,7 @@
 #include "editor/editorwidget.h"
 #include "editor/runcontroller.h"
 #include "listenserver.h"
+#include "sdb/eventloop.h"
 #include "recorder.h"
 #include "studioapi.h"
 #include "textedit.h"
@@ -56,6 +59,8 @@ QString NameOf(const Model& m)
 MainWindow::MainWindow(const StudioOptions& options) : _options(options)
 {
     setWindowTitle(QStringLiteral("Stream Deck Studio"));
+    _daemon = new DaemonControl(this);  // first: the editor's run uses it until the editor is gone
+    _daemon->SetApiPort(_options.daemonApiPort);
     _deck = new VirtualDeck(this);
     _view = new DeckWidget(_deck, this);
     setCentralWidget(_view);
@@ -79,6 +84,26 @@ MainWindow::MainWindow(const StudioOptions& options) : _options(options)
                                        : QStringLiteral("Mirror the real deck, or a deck of its own: the daemon runs "
                                                         "a scenario for it"));
     bar->addWidget(_roles);
+    if (!_options.listen)
+    {
+        bar->addWidget(new QLabel(QStringLiteral("  Brightness ")));
+        _brightness = new QSlider(Qt::Horizontal, this);
+        _brightness->setRange(0, 100);
+        _brightness->setFixedWidth(110);
+        _brightness->setEnabled(false);
+        _brightness->setToolTip(QStringLiteral(
+            "The brightness of the deck this window shows (the real deck for a mirror), set by unreal-streamdeck"));
+        bar->addWidget(_brightness);
+        _brightnessSend = new QTimer(this);  // a drag sends its value at most every 80 ms
+        _brightnessSend->setSingleShot(true);
+        _brightnessSend->setInterval(80);
+        connect(_brightness, &QSlider::valueChanged, _brightnessSend, qOverload<>(&QTimer::start));
+        connect(_brightnessSend, &QTimer::timeout, this, [this] {
+            QString err;
+            if (!_brightnessDeck.isEmpty() && !_daemon->SetBrightness(_brightnessDeck, _brightness->value(), &err))
+                AddLog(Src::Info, QStringLiteral("brightness: ") + err);
+        });
+    }
     bar->addSeparator();
     auto* mask = _mask = new QCheckBox(QStringLiteral("Bezel mask"), this);
     mask->setChecked(true);
@@ -235,8 +260,11 @@ MainWindow::MainWindow(const StudioOptions& options) : _options(options)
         if (!_link->Live())
             _page.clear();
         SyncRoleCombo();
+        FetchBrightness();
         RefreshStatus();
     });
+    connect(_daemon, &DaemonControl::OutputLine, this,
+            [this](const QString& line) { AddLog(Src::Info, QStringLiteral("unreal-streamdeck: ") + line); });
 
     connect(_rec, &QToolButton::clicked, this, [this](bool on) {
         if (!on)
@@ -260,6 +288,14 @@ MainWindow::MainWindow(const StudioOptions& options) : _options(options)
     });
     _tick = new QTimer(this);
     connect(_tick, &QTimer::timeout, this, [this] {
+        if (_brightness && _brightnessDeck != ShownDeck())
+            FetchBrightness();  // the daemon's automation came later than the deck
+        else if (_brightness && !_brightness->isSliderDown() && !_brightnessSend->isActive() &&
+                 _brightness->value() != _deck->Brightness())
+        {  // the deck's brightness changed elsewhere (a scenario action, another client): the slider follows
+            const QSignalBlocker b(_brightness);
+            _brightness->setValue(_deck->Brightness());
+        }
         RefreshStatus();
         if (_deck->Asleep())
             _view->update();
@@ -267,7 +303,8 @@ MainWindow::MainWindow(const StudioOptions& options) : _options(options)
     _tick->start(1000);
 
     resize(1280, 820);
-    _editor = new EditorWidget(this);
+    _editor = new EditorWidget(_daemon, this);
+    _editor->Runner()->SetTarget([this] { return ShownDeck(); });  // Run plays on the deck this window shows
     _editorDock = new QDockWidget(QStringLiteral("Scenario editor"), this);
     _editorDock->setObjectName(QStringLiteral("editor"));
     _editorDock->setWidget(_editor);
@@ -319,6 +356,7 @@ MainWindow::MainWindow(const StudioOptions& options) : _options(options)
         role.own = _options.own;
         role.deck = _options.deck;
         role.model = DeckClient::ModelToken(_deck->GetModel());
+        StartDaemonIfNone();
         _client->Start(role);
     }
     if (_options.apiPort > 0)
@@ -337,7 +375,69 @@ MainWindow::MainWindow(const StudioOptions& options) : _options(options)
 
 MainWindow::~MainWindow()
 {
-    delete _api;  // stop the HTTP threads before the widgets they use go away
+    delete _api;         // stop the HTTP threads before the widgets they use go away
+    delete _editorDock;  // the editor's run gives its deck back through the daemon control, which goes after it
+    _editorDock = nullptr;
+    if (_client)
+        _client->Stop();  // Leave, before a daemon this studio started is ended
+    disconnect(_daemon, nullptr, this, nullptr);  // its last lines would go to a log that is being taken apart
+    delete _daemon;
+    _daemon = nullptr;
+}
+
+QString MainWindow::ShownDeck() const
+{
+    return _client && _client->GetState() == DeckClient::State::Joined ? _client->DeckSerial() : QString();
+}
+
+void MainWindow::FetchBrightness()
+{
+    if (!_brightness)
+        return;
+    const QString deck = ShownDeck();
+    if (deck == _brightnessDeck)
+        return;
+    _brightnessSend->stop();
+    _brightnessDeck.clear();
+    int value = 0;
+    if (!deck.isEmpty() && _daemon->Brightness(deck, &value))
+    {
+        const QSignalBlocker b(_brightness);
+        _brightness->setValue(value);
+        _brightnessDeck = deck;
+    }
+    _brightness->setEnabled(!_brightnessDeck.isEmpty());
+}
+
+// Q-1: the daemon starts when a deck is attached; the studio, a client, starts one when none answers (its own
+// decks need it, and it waits for a real deck: --wait). It ends with the studio (--with-parent).
+void MainWindow::StartDaemonIfNone()
+{
+    if (!_client || !_options.startDaemon)
+        return;
+    const QString host = _options.daemonHost;
+    if (host != QLatin1String("127.0.0.1") && host != QLatin1String("localhost"))
+        return;  // a daemon on another host is not ours to start
+    // sdb's blocking connect: a QTcpSocket probe was seen "connected" to a closed loopback port on a busy macOS
+    std::string err;
+    const net::SocketHandle probe = net::Connect(host.toStdString(), _options.daemonPort, 300, &err);
+    const bool wire = probe != net::kInvalidSocket;
+    if (wire)
+        net::CloseSocket(probe);
+    if (wire || _daemon->Answers(300))
+        return;
+    const QStringList args{QStringLiteral("run"),
+                           QStringLiteral("--wait"),
+                           QStringLiteral("--api"),
+                           QString::number(_options.daemonApiPort),
+                           QStringLiteral("--viewers"),
+                           QString::number(_options.daemonPort),
+                           QStringLiteral("--with-parent")};
+    QString why;
+    if (_daemon->Launch(args, &why, false))
+        AddLog(Src::Info, QStringLiteral("no unreal-streamdeck answered: started %1").arg(DaemonControl::Path()));
+    else
+        AddLog(Src::Info, QStringLiteral("could not start unreal-streamdeck: ") + why);
 }
 
 bool MainWindow::SetRole(bool own, const QString& deckOrModel, QString* error)

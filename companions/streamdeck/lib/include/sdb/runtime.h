@@ -3,7 +3,9 @@
 // when another thread writes the same handle). Actions run on a worker thread, one at a time, FIFO.
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <map>
@@ -47,6 +49,38 @@ public:
     void Inject(const Event& e);                                          // as if the device sent it
     bool PressNode(const std::string& id, std::string* error = nullptr);  // a key on the current page
     void Navigate(const json& request);                                   // {to: back|home|node, node}
+    void SetBrightness(int percent);                                      // 0..100, sent on the next step
+    [[nodiscard]] int Brightness() const;
+    // The device: there or unplugged (it reconnects underneath, the runtime goes on), and a reconnect on purpose.
+    [[nodiscard]] bool Connected() const
+    {
+        return _dev.Connected();
+    }
+    bool Reconnect(std::chrono::milliseconds away)
+    {
+        return _dev.Reconnect(away);
+    }
+    // Everything posted so far (Inject, PressNode, Navigate, Reload), for a caller that answers once the device thread
+    // has applied it (the /press and /navigate routes): Wait returns true after the step that handled it, false on
+    // the timeout or when the runtime is gone first. The ticket may outlive the runtime.
+    class Ticket
+    {
+    public:
+        bool Wait(std::chrono::milliseconds timeout) const;
+
+    private:
+        friend class Runtime;
+        struct Signal
+        {
+            std::mutex m;
+            std::condition_variable cv;
+            std::uint64_t applied = 0;
+            bool closed = false;
+        };
+        std::shared_ptr<Signal> _signal;
+        std::uint64_t _seq = 0;
+    };
+    [[nodiscard]] Ticket Posted() const;
     [[nodiscard]] json State() const;
     [[nodiscard]] json CurrentPage() const;              // describePage of the current menu
     [[nodiscard]] json Nodes(const json& filter) const;  // listNodes of the loaded scenario
@@ -94,6 +128,8 @@ private:
 
     mutable std::recursive_mutex
         _mu;  // guards (recursive: a synchronous action may navigate): s_, nav_, page_, queues, state below
+    std::uint64_t _posted = 0;  // requests posted (the queues below); Ticket's sequence
+    std::shared_ptr<Ticket::Signal> _steps = std::make_shared<Ticket::Signal>();
     std::deque<Event> _injected;
     std::deque<json> _navRequests;
     std::optional<Scenario> _pendingReload;

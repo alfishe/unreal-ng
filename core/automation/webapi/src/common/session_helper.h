@@ -83,14 +83,22 @@ struct GateClient
     std::string identity;
 };
 
+/// Request attributes the WebSocket sets on a call it forwards: the socket's peer (host:port) and host
+constexpr const char* kPeerAttribute = "unreal.peer";
+constexpr const char* kPeerHostAttribute = "unreal.peer_host";
+
 inline GateClient GateClientOf(const drogon::HttpRequestPtr& req)
 {
     GateClient c;
     const bool mcp = req->getHeader("X-Unreal-Source") == "mcp";
     c.surface = mcp ? "mcp" : "webapi";
     c.client = mcp ? std::string("MCP agent") : automation_gate::ClientFromUserAgent(req->getHeader("User-Agent"));
-    c.host = req->getPeerAddr().toIp();
-    c.peer = req->getPeerAddr().toIpPort();
+    // A call the WebSocket forwarded (api-websocket.cpp) has no peer of its own: the socket's, as attributes
+    const auto& attributes = req->attributes();
+    c.host = attributes->find(kPeerHostAttribute) ? attributes->get<std::string>(kPeerHostAttribute)
+                                                  : req->getPeerAddr().toIp();
+    c.peer = attributes->find(kPeerAttribute) ? attributes->get<std::string>(kPeerAttribute)
+                                              : req->getPeerAddr().toIpPort();
     c.identity = c.surface + "|" + c.host + "|" + c.client;
     return c;
 }

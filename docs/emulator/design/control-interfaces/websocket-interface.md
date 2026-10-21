@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🔮 Planned (decided 2026-10-20). Two older sockets are implemented and become adapters. |
+| **Status** | 🔧 In progress. Calls (§2) and auth (§1) are implemented (2026-10-20, `core/automation/webapi/src/api-websocket.cpp`); topics (§3) are planned. Two older sockets are implemented and become adapters. |
 | **Endpoint** | `GET /api/v1/ws` (WebSocket upgrade on the WebAPI port) |
 | **Rules** | [automation-planes-guidelines.md](../../../guidelines/automation-planes-guidelines.md) |
 | **Design** | [Stream Deck integration protocol §0](../../../inprogress/2026-10-19-streamdeck-integration/protocol.md#0-transport-one-websocket) |
@@ -27,6 +27,39 @@ socket, and the socket also pushes state changes, so clients never poll.
 
 The same handler as the REST route: same scopes, body and errors. Calls with different `rid` may be answered out of
 order.
+
+As implemented:
+
+- `method`: `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD`; `path` a WebAPI route `/api/v1/...` with an optional
+  query string; `body` any JSON (sent as the JSON body). The sockets themselves (`/api/v1/ws`, `/api/v1/websocket`,
+  `/api/v1/companions/events`) are not calls.
+- `"session": "<id>"` carries an automation session (the `X-Unreal-Session` header). When the automation gate opens
+  the implicit session for a call, the `result` carries it as `session`, for the next calls.
+- The call passes the checks every HTTP request passes before routing (CORS, companion token and scopes, session
+  revocation, the automation gate), then drogon runs the route's handler; the socket's peer is the call's peer, so the
+  implicit session of a socket client is the client's own.
+- `result`: `{"op":"result","t":"call","rid":…,"status":…,"body":…}` (a body that is not JSON comes as `{"text":…}`).
+  Errors of the socket itself: `{"op":"error","t":"call","rid":…,"error":"bad_request" | "busy","message":…}`;
+  `busy` when 64 calls of the connection are in flight.
+- `{"op":"auth","token":"unc_…"}` is answered `{"op":"auth","t":"call","ok":true}`; every later call carries the
+  token, so the companion gate decides per call (a revoked token is refused at the next call).
+
+Example, a host action ([command-interface.md §16](./command-interface.md#16-host-actions)):
+
+```json
+→ {"op":"call","rid":1,"method":"POST","path":"/api/v1/controllers/actions/run.pause_toggle","body":{}}
+← {"op":"result","t":"call","rid":1,"status":200,"body":{"ok":true,"action":"run.pause_toggle","message":"Emulator paused","result":{…}}}
+```
+
+A dial's seek and the surface context (control surfaces S2) are calls too; their pushes (`ctx`, the `ttd.position`
+readout) come with the `surface` topic (S4):
+
+```json
+→ {"op":"call","rid":2,"method":"POST","path":"/api/v1/controllers/actions/ttd.seek_by","body":{"value":{"delta":-3,"rate":18.5}}}
+← {"op":"result","t":"call","rid":2,"status":200,"body":{"ok":true,"action":"ttd.seek_by","result":{"arrived_at":{"frame":1834,"tinframe":0},…,"from":1852,"frame":1834,"frames":-18,"marks":[]}}}
+→ {"op":"call","rid":3,"method":"GET","path":"/api/v1/surfaces/context"}
+← {"op":"result","t":"call","rid":3,"status":200,"body":{"ok":true,"instance":"0f3a…","context":"ttd","set":false,"by":null,"default":"ttd"}}
+```
 
 ## 3. Topics
 

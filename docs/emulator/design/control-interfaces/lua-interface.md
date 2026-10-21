@@ -239,6 +239,34 @@ end
 `controllers_rumble(device, [effect])` (`identify` by default). Each returns the reply table: `ok`, `error`, `message`
 and the verb's fields. The host side needs the Qt client (a headless process answers `unavailable`).
 
+### Host Actions
+
+Global functions over the core `ActionRegistry` - the same ids, values and errors as the CLI `action`, the WebAPI
+`/controllers/actions`, MCP `actions` and Python ([command-interface.md section 16](./command-interface.md#16-host-actions)).
+A changing action passes the script gate as the script's own control calls.
+
+```lua
+for _, a in ipairs(actions().actions) do print(a.id, a.available, a.reason) end
+action("run.pause_toggle")                 -- a press
+local r = action("run.step_in")            -- {ok = true, result = {pc = ..., state = "paused", ...}}
+action("ttd.jog_frames", -10)              -- a delta: signed steps
+action("run.turbo_hold", false)            -- the release of a held action
+action("run.n_scanlines", nil, {count = 8})
+```
+
+`actions()`, `action(id, [value], [params])`; value nil (a press), a boolean, a number (steps or a 0..1 level), a
+string or a table `{pressed, delta, rate, level, text}`. Each returns a table: `ok`, `error`, `message`, `result`.
+
+The control-surface actions and the context (control surfaces phase S2):
+
+```lua
+local r = action("ttd.seek_by", {delta = -3, rate = 18}, {unit = "seconds"})
+for _, m in ipairs(r.result.marks) do print(m.kind, m.frame) end   -- second, ten_seconds, bookmark, edge, barrier
+action("run.step_by", -4)                  -- back through the history (forward: step in), 16 at most
+action("ctx.set", "ttd.timecode")          -- the last setter wins; "" returns to the default
+print(context().context, context().by)     -- {ok, instance, context, set, by, default}
+```
+
 ### Disk Operations
 
 Global functions for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands
@@ -1033,7 +1061,7 @@ ttd_resume()                     --> bool  -- record again from the exact curren
 ttd_resume(4823, 0)              --> bool  -- ...or from (frame, tinframe; tinframe defaults to 0); future is discarded
                                             -- fails from idle: seek first
 
-ttd_position()
+ttd_position()   -- current, session_end, first_frame, history, state, paused, fps; never parks the machine
 -- --> { current = {frame, tinframe}, session_end = {frame, tinframe} }
 ```
 

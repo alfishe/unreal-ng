@@ -259,7 +259,7 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd step-back` | `ttd sb`, `back` | One frame back. | ✅ Implemented |
 | `ttd step-forward` | `ttd sf`, `forward` | One frame forward. | ✅ Implemented |
 | `ttd resume [frame [tinframe]] [media=ask\|empty\|keep]` | — | Truncate future at the current (detached) position, or the given one, and record again; the machine runs. Every medium goes back there when it can; one that cannot (another medium in the slot, a write beyond its undo log): `empty` (default) takes it out, `keep` leaves it, `ask` lists them and resumes nothing. | ✅ Implemented |
-| `ttd position` | `ttd pos` | Current time point (frame/tstate) and session bounds. | ✅ Implemented |
+| `ttd position` | `ttd pos` | Current time point (frame/tstate), session bounds, the history's first frame, state, paused, frame rate. Never parks the machine (the TTD's published cursor). | ✅ Implemented |
 | `ttd markers` | `ttd barriers` | List external-event markers in the timeline. | ✅ Implemented |
 | `ttd dump <path>` | `ttd save` | Serialize the session to a `.ttd` file. | ✅ Implemented |
 | `ttd load <path>` | `ttd open` | Restore a dumped session (model must match the recording). | ✅ Implemented |
@@ -425,6 +425,42 @@ OK: Swell (attack, hold, release) on Xbox Elite Wireless Controller Series 2
 > controllers rumble usb:045e:0b00:0516:3032 identify
 Error: Xbox Elite Wireless Controller Series 2: macOS drives no motors of an Xbox pad over USB: connect the pad over Bluetooth
 ```
+
+### Host Action Commands
+
+The `action` verb (source: `core/automation/cli/src/commands/cli-processor-action.cpp`): the host actions of the core
+`ActionRegistry` - the ids a pad, the Surface Dial or a Stream Deck runs. Full table and the other surfaces:
+[command-interface.md §16](./command-interface.md#16-host-actions).
+
+| CLI Command | Description |
+| :--- | :--- |
+| `action [list] [--json]` | Every action, `*` when it can run now on the selected instance, else why not |
+| `action run <id> [value] [param=val ..] [--json]` | Run one and wait for it: press (default) / `release`, signed steps, a 0..1 level or text |
+| `action context [--json]` | The selected instance's surface context (`play`, `ttd`, ...), who set it, its default; set it with `action run ctx.set <name>` |
+
+The registry applies this connection's gate: a changing action without a session opens the implicit one (it ends
+with the connection, as for any other changing command); a companion connection (`companion auth`) is checked
+against its scopes.
+
+```
+> action run run.pause_toggle
+OK: run.pause_toggle - Emulator paused
+> action run run.step_in --json
+{"ok":true,"action":"run.step_in","instance":"…","message":"Executed 1 instruction","result":{"status":"success",…}}
+> action run ttd.jog_frames -10
+Error: Conflict - no time travel history
+> action run ttd.seek_by -3 rate=18 unit=seconds
+OK: ttd.seek_by
+{"reached":true,"arrived_at":{"frame":1834,"tinframe":0},"halt_reason":"target",…,"from":1981,"frame":1834,"frames":-147,"fps":48.828125,"marks":[{"kind":"ten_seconds","frame":1954}]}
+> action run ctx.set ttd.timecode
+OK: ctx.set
+{"context":"ttd.timecode","previous":"ttd","set":true,"by":"cli:cli","default":"ttd"}
+> action context
+Context: ttd.timecode (set by cli:cli)
+```
+
+`ttd.seek_by` takes its rate and curve as parameters here (`rate=`, `unit=frames|seconds`, `min=`, `max=`,
+`rate_lo=`, `rate_hi=`); `run.step_by` steps in forward and back through the history (`action run run.step_by -4`).
 
 ### Analysis, Capture & Assembly Commands
 

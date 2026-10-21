@@ -1,8 +1,8 @@
 // Stream Deck Studio without a window: the device wire v2 client (Join, Welcome and its errors, replay, input both
 // ways, own-role feature reports, Leave, reconnect) against a small fake daemon in this process, and the --listen v1
 // server. Qt offscreen, one thread; waits spin the event loop until a condition holds (no sleeps).
+#include <QApplication>
 #include <QElapsedTimer>
-#include <QGuiApplication>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QtEndian>
@@ -12,8 +12,10 @@
 #include <vector>
 
 #include "check.h"
+#include "daemoncontrol.h"
 #include "deckclient.h"
 #include "listenserver.h"
+#include "sdb/automation.h"
 #include "sdb/devicewire.h"
 #include "sdb/emuwire.h"
 #include "virtualdeck.h"
@@ -112,6 +114,7 @@ struct FakeDaemon
 
 json Welcome(const char* serial, int pid, bool real)
 {
+    // "model" unknown here: the pid fallback (a daemon with a token this studio does not know)
     return {{"v", 2}, {"deck", serial}, {"model", "whatever"}, {"pid", pid}, {"real", real}, {"daemon", "test"}};
 }
 
@@ -200,6 +203,17 @@ void TestMirrorSession()
     d.SendJson(wire::DeckState, {{"connected", true}, {"target", "W2 #3"}});
     CHECK(WaitFor([&] { return c.DeckConnected(); }));
     CHECK(c.Target() == QStringLiteral("W2 #3"));
+
+    // another deck (a mirror of "the first deck" follows it): the model comes from the token, the pid only backs it
+    d.SendJson(wire::Welcome, {{"v", 2},
+                               {"deck", "B2"},
+                               {"model", "neo"},
+                               {"model_name", "Stream Deck Neo"},
+                               {"pid", 0x0084},
+                               {"real", true},
+                               {"daemon", "test"}});
+    CHECK(WaitFor([&] { return deck.GetModel().pid == 0x009A; }));
+    CHECK(deck.Serial() == QStringLiteral("B2"));
 
     // an own-role-only request is not answered by a mirror
     d.Send(wire::GetFeature, std::string(32, '\x06'));
@@ -347,12 +361,77 @@ void TestListenServer()
     CHECK_EQ(static_cast<quint8>(rx[0]), emuwire::FeatureReply);
     CHECK(s.Live());
 }
+// The studio's side of the daemon's automation, against a stand-in daemon: health, the deck list, brightness and a
+// scenario per deck (its serial in the path), errors for people; and the daemon process it starts.
+void TestDaemonControl()
+{
+    using namespace sdb::automation;
+    int brightness = 70;
+    std::string playing, played, watch;
+    Api api("unreal-streamdeck", "1.0");
+    api.Add({"GET", "/api/v1/health", "", "", {}, {}, nullptr, [](const Request&) {
+                 return Reply::Ok({{"ok", true}});
+             }});
+    api.Add({"GET", "/api/v1/decks", "", "", {}, {}, nullptr, [](const Request&) {
+                 return Reply::Ok({{"decks", json::array({{{"serial", "SER1"}, {"real", true}}})}});
+             }});
+    api.Add({"GET", "/api/v1/decks/{serial}/brightness", "", "", {}, {}, nullptr, [&](const Request& r) {
+                 if (r.Str("serial") != "EMU 1")
+                     return Reply::Error(404, "no deck '" + r.Str("serial") + "'");
+                 return Reply::Ok({{"brightness", brightness}});
+             }});
+    api.Add({"PUT", "/api/v1/decks/{serial}/brightness", "", "", {}, {}, nullptr, [&](const Request& r) {
+                 brightness = static_cast<int>(r.Num("value"));
+                 return Reply::Ok({{"brightness", brightness}});
+             }});
+    api.Add({"PUT", "/api/v1/decks/{serial}/scenario", "", "", {}, {}, nullptr, [&](const Request& r) {
+                 playing = r.Str("serial") + ":" + r.Str("file");
+                 watch = r.Flag("watch") ? "watch" : "";
+                 return Reply::Ok();
+             }});
+    api.Add({"DELETE", "/api/v1/decks/{serial}/scenario", "", "", {}, {}, nullptr, [&](const Request& r) {
+                 played = r.Str("serial");
+                 return Reply::Ok();
+             }});
+    Server server;
+    std::string err;
+    CHECK(server.Start(api, "127.0.0.1", 0, &err));
+    DaemonControl d;
+    d.SetApiPort(server.Port());
+    CHECK(d.Answers());
+    QString e;
+    const json decks = d.Decks(&e);
+    CHECK(decks.size() == 1 && decks[0].value("serial", "") == "SER1");
+    int value = 0;
+    CHECK(d.Brightness(QStringLiteral("EMU 1"), &value) && value == 70);  // a serial with a space: one path segment
+    CHECK(d.SetBrightness(QStringLiteral("EMU 1"), 25) && brightness == 25);
+    CHECK(!d.Brightness(QStringLiteral("NOPE"), &value, &e) && e.contains(QStringLiteral("no deck 'NOPE'")));
+    CHECK(d.PlayScenario(QStringLiteral("EMU1"), QStringLiteral("/tmp/run.deck.json")));
+    CHECK(playing == "EMU1:/tmp/run.deck.json" && watch == "watch");
+    CHECK(d.RestoreScenario({}) && played == "first");  // no serial: the daemon's first deck
+    server.Stop();
+    CHECK(!d.Answers(100));
+    CHECK(!d.SetBrightness(QStringLiteral("EMU1"), 10, &e) && e.contains(QStringLiteral("automation")));
+
+    // The process: an executable that ends at once is reported with what it printed.
+#ifndef _WIN32
+    qputenv("UNREAL_STREAMDECK_BIN", "/bin/echo");
+    CHECK(DaemonControl::Path() == QStringLiteral("/bin/echo"));
+    QString why;
+    CHECK(!d.Launch({QStringLiteral("run"), QStringLiteral("--wait")}, &why));
+    CHECK(why.contains(QStringLiteral("run --wait")));
+    CHECK(!d.Launched());
+    qunsetenv("UNREAL_STREAMDECK_BIN");
+#endif
+}
 }  // namespace
+
+void TestEditor();  // editor_test.cpp
 
 int main(int argc, char** argv)
 {
     qputenv("QT_QPA_PLATFORM", "offscreen");
-    QGuiApplication app(argc, argv);
+    QApplication app(argc, argv);  // widgets: the editor tests (editor_test.cpp)
     TestJoinPayload();
     TestMirrorSession();
     TestWaitingForDeck();
@@ -360,6 +439,8 @@ int main(int argc, char** argv)
     TestOwnRole();
     TestReconnect();
     TestListenServer();
+    TestDaemonControl();
+    TestEditor();
     std::printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

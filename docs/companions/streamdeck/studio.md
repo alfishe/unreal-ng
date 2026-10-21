@@ -2,7 +2,8 @@
 
 The software Stream Deck and scenario editor of unreal-ng: executable `unreal-streamdeck-studio`, sources in
 `companions/streamdeck/studio/`. Design: [studio.md](../../inprogress/2026-10-19-streamdeck-integration/studio.md),
-[device-wire.md](../../inprogress/2026-10-19-streamdeck-integration/device-wire.md).
+[device-wire.md](../../inprogress/2026-10-19-streamdeck-integration/device-wire.md). The scenario editor in depth:
+[scenario-editor/](scenario-editor/README.md).
 
 ## Contents
 
@@ -41,13 +42,20 @@ unreal-streamdeck run my.deck.json --viewers --watch --api 37053
 unreal-streamdeck-studio
 ```
 
+- On launch, when nothing answers on the device wire (`127.0.0.1:37050`) nor on the daemon's automation (37053),
+  the studio starts one: `unreal-streamdeck run --wait --api 37053 --viewers 37050 --with-parent` (the executable:
+  `UNREAL_STREAMDECK_BIN`, else beside the studio, its bundle or the suite's bundle, else `PATH`). It plays the idle
+  scenario on a deck attached now or later, serves the studio's own decks meanwhile, and ends with the studio.
+  `--no-daemon-start` turns this off; a daemon on another host (`--daemon`) is never started. Its output goes to the
+  protocol log (info).
 - The studio connects to `127.0.0.1:37050` and sends `Join`. While no daemon is there the deck says "waiting for
   unreal-streamdeck on 127.0.0.1:37050" and the studio retries (250 ms, doubling to 4 s); a daemon that starts later
   is picked up without a restart.
 - The daemon answers `Welcome` and replays the current picture (between `ReplayBegin` and `ReplayEnd`), so the deck
   shows at once what the real one shows.
 - The editor's Run also starts a daemon when none runs ([§5](#5-the-scenario-editor)).
-- Closing the window sends `Leave`.
+- Closing the window, Quit, `SIGTERM` and `SIGINT` (macOS, Linux) all end the studio normally: it sends `Leave`, a
+  run gives its deck back, a daemon the studio started is stopped.
 
 ## 3. Roles
 
@@ -63,7 +71,7 @@ What the studio does with each answer:
 
 | Daemon sends | The studio |
 |:--|:--|
-| `Welcome` with a deck | takes the deck's model (a mirror follows it) and serial; the deck is live |
+| `Welcome` with a deck | takes the deck's model (its `model` token, else `pid`; a mirror follows it) and serial; the deck is live |
 | `Welcome` `error: no_deck`, `waiting: true` | stays connected and shows "waiting for a Stream Deck"; the next `Welcome` makes it live |
 | `Welcome` `error: version`, `bad_role`, `bad_model`, `bad_request` | shows the reason over the deck and does not retry (Deck > Reconnect, or another role, tries again) |
 | `Output`, `SetFeature` | applied to the software deck exactly as a device would |
@@ -77,8 +85,11 @@ What the studio does with each answer:
 
 ## 4. The window
 
-- **Toolbar**: Deck (role or model), Bezel mask, Visible area (the part of each key visible head-on, measured on the
-  + XL), Firmware quirks, Rec, Scenario editor.
+- **Toolbar**: Deck (role or model), Brightness, Bezel mask, Visible area (the part of each key visible head-on,
+  measured on the + XL), Firmware quirks, Rec, Scenario editor.
+- **Brightness**: the brightness of the deck the window shows (the real deck for a mirror, the own deck otherwise),
+  set through the daemon (`PUT /api/v1/decks/{serial}/brightness` on 37053). Off while the window is not joined or
+  the daemon has no automation port; it follows changes made elsewhere (a scenario's brightness action, an agent).
 - **The deck**: click = press, wheel over a dial = turn, drag around a dial = turn, a short click on a dial = press
   and indicator reset, hold = long press, drag on the strip = swipe. Cyan glows are this window's input, blue-violet
   ones the real deck's.
@@ -89,7 +100,14 @@ What the studio does with each answer:
 
 ## 5. The scenario editor
 
-Opened with the toolbar button or Cmd+E, in its own window or docked beside the deck.
+Opened with the toolbar button or Cmd+E, in its own window or docked beside the deck. The full reference:
+
+| Document | Contents |
+|:--|:--|
+| [01-requirements.md](scenario-editor/01-requirements.md) | What a scenario is, goals, requirements (done / planned) |
+| [02-ux-design.md](scenario-editor/02-ux-design.md) | Navigation on the deck, the editor window, gestures, menus, Run, the agent flow |
+| [03-technical-design.md](scenario-editor/03-technical-design.md) | File format, includes, the engine, the editor's classes, Run and autosave, tests |
+| [04-automation.md](scenario-editor/04-automation.md) | The editor's routes, the runtime proxy, what Run calls on the daemon |
 
 | Area | What it does |
 |:--|:--|
@@ -102,12 +120,13 @@ Opened with the toolbar button or Cmd+E, in its own window or docked beside the 
 **Run on the deck** (Cmd+R) writes the document, includes resolved, to a run file in the studio's data folder
 (`run/<name>.deck.json`) and:
 
-- when a daemon answers on its automation port `127.0.0.1:37053`, asks it to play the run file
-  (`POST /api/v1/reload`); **Stop** gives it back the file it played before;
-- otherwise starts `unreal-streamdeck run <run file> --watch --api 37053 --with-parent`; **Stop** ends it.
+- when a daemon answers on its automation port `127.0.0.1:37053`, the deck the window shows plays the run file, that
+  deck only (`PUT /api/v1/decks/{serial}/scenario`, watched): an own deck runs the editor's scenario while the real
+  deck keeps the daemon's; a mirror runs it on the real deck. Not joined: the daemon's first deck. **Stop** gives the
+  deck the daemon's start scenario back (`DELETE /api/v1/decks/{serial}/scenario`);
+- otherwise starts `unreal-streamdeck run <run file> --watch --wait --api 37053 --with-parent`; **Stop** ends it.
 
-Edits autosave to the run file after 250 ms and the daemon reloads with the menu stack kept. The deck in the window
-shows the run as a mirror.
+Edits autosave to the run file after 250 ms and the daemon reloads it with the menu stack kept.
 
 ## 6. Recording
 
@@ -123,6 +142,8 @@ WebAPI on `http://127.0.0.1:37052/api/v1/...`, MCP on `/mcp` (Automation > Copy 
 | Route | What |
 |:--|:--|
 | `GET /api/v1/device`, `GET /api/v1/models`, `PUT /api/v1/device/model` | The deck; the models; switch the model (an own deck of it; with `--listen` the deck's model) |
+| `GET /api/v1/decks` | The daemon's logical decks (forwarded: serial, model, real, connected, scenario, brightness, viewers) |
+| `GET` / `PUT /api/v1/deck/brightness` | The shown deck's brightness through the daemon (`{"value": 0..100}`); the toolbar follows |
 | `GET /api/v1/connection` | Daemon address, state (`connecting`, `joining`, `waiting`, `joined`, `failed`, `stopped`), role, deck serial, model, real or own, deck connected, target, error |
 | `PUT /api/v1/connection` | `{"role":"mirror","deck":"first"}` or `{"role":"own","model":"neo"}` |
 | `GET` / `PUT /api/v1/settings` | Bezel mask, visible area, firmware quirks |
@@ -133,7 +154,7 @@ WebAPI on `http://127.0.0.1:37052/api/v1/...`, MCP on `/mcp` (Automation > Copy 
 | `GET` / `POST /api/v1/recording` | Recording status, start / stop |
 | `PUT /api/v1/window` | Raise, resize, protocol panel, editor window / dock / hidden |
 | `/api/v1/editor/...` | Status, new, open, save, export, document (JSON / YAML / CSV / TSV), tree, nodes (add / patch / delete / move / duplicate / export / inline), import, select, enter, canvas, undo, redo, issues, presets, run, stop, screenshot |
-| `/api/v1/runtime/state`, `/page`, `/navigate`, `/press` | Proxied to the daemon's automation on 37053 |
+| `/api/v1/runtime/state`, `/page`, `/navigate`, `/press` | Proxied to the daemon's automation on 37053, for the deck the run plays on |
 
 ## 8. Command line
 
@@ -143,10 +164,12 @@ WebAPI on `http://127.0.0.1:37052/api/v1/...`, MCP on `/mcp` (Automation > Copy 
 | `--deck SERIAL` | `first` | Mirror this real deck |
 | `--own MODEL` | | An own deck of this model (`plusxl`, `plus`, `xl`, `classic`, `neo`, `mini`, `original`, `pedal`, ..., or a PID) |
 | `--api-port PORT` | `37052` | Automation; 0 = off |
+| `--daemon-api PORT` | `37053` | The daemon's automation (decks, brightness, Run); also the port of a daemon the studio starts |
+| `--no-daemon-start` | | Do not start a daemon when none answers at launch |
 | `--record FILE`, `--fps N` | 30 | Record from the start |
 | `--listen [PORT]`, `--model MODEL`, `--any` | 37050, `plusxl` | Protocol tests ([§9](#9-protocol-tests---listen)) |
 
-Environment: `UNREAL_STREAMDECK_BIN`, the daemon the editor's Run starts
+Environment: `UNREAL_STREAMDECK_BIN`, the daemon the studio starts (at launch, or for the editor's Run)
 ([environment-variables.md](../../emulator/environment-variables.md)).
 
 ## 9. Protocol tests: `--listen`
@@ -167,12 +190,22 @@ cmake-build-agent-release/bin/streamdeck-studio-tests
 
 - Built when `UNREAL_STREAMDECK` is on and Qt 6 is found (the same discovery as unreal-qt); a macOS bundle
   `unreal-streamdeck-studio.app` ("Stream Deck Studio", `dev.unrealng.streamdeck-studio`).
-- Links `sdb` (scenario, navigator, render, wire), `unrealng::recording` and Qt Widgets / Network; no hidapi code is
-  called (the USB transport still sits in the same static library until it is split).
+- Packaged in every release ([packaging.md](../../inprogress/2026-10-19-streamdeck-integration/packaging.md#3-macos)):
+  macOS `UnrealNG.app/Contents/Applications/Stream Deck Studio.app`, a nested app on UnrealNG.app's Qt (frameworks through
+  `../../../../Frameworks`; `main.cpp` adds UnrealNG.app's `PlugIns` from the real executable path), linked from the
+  DMG root; Windows
+  `unreal-streamdeck-studio.exe` beside `unreal-qt.exe` on the same Qt DLLs; DEB `/usr/lib/unreal-ng`, linked from
+  `/usr/bin`; AppImage `usr/bin` (deployed with the suite's Qt); tarball at the top. The daemon it starts is beside
+  it, or in the suite's bundle on macOS.
+- Links `sdb` (scenario, navigator, render, wire), `unrealng::recording` and Qt Widgets / Network, not hidapi: USB
+  lives in `sdb-hid` (`lib/src/hid/`), which only the daemon and `sdctl` link.
 - `streamdeck-studio-tests` (not built by default) runs offscreen with no window: the wire v2 client against a fake
   daemon in the test (Join for both roles, `Welcome` and its errors, replay, `HostInput`, `HostPage`, `DeckState`,
-  `GetFeature` / `FeatureReply`, `Input`, `Leave`, reconnect after the daemon goes and after a broken frame) and the
-  `--listen` server (`Hello`, `SetModel`, `GetFeature`).
+  `GetFeature` / `FeatureReply`, `Input`, `Leave`, reconnect after the daemon goes and after a broken frame), the
+  `--listen` server (`Hello`, `SetModel`, `GetFeature`) and the daemon control against a stand-in automation
+  (health, decks, brightness and scenario per deck, errors, the started process), and the scenario editor's widgets
+  (`editor_test.cpp`: copy and paste of an included node, the inspector's action kind and model boxes against the
+  engine's tables, the run file without include marks, the automation examples).
 
 ## 11. Source map
 
@@ -184,6 +217,7 @@ cmake-build-agent-release/bin/streamdeck-studio-tests
 | `deckwidget.*` | Drawing the deck, mouse to input |
 | `decklink.h` | What feeds the deck (the window's view of a link) |
 | `deckclient.*` | Device wire v2 client (default) |
+| `daemoncontrol.*` | The daemon's automation (decks, brightness, scenario per deck) and the daemon process the studio starts |
 | `listenserver.*` | v1 server for `--listen` |
 | `studioapi.*`, `gui.h` | Automation routes; running a handler on the GUI thread |
 | `recorder.*` | Video recording |
@@ -192,7 +226,7 @@ cmake-build-agent-release/bin/streamdeck-studio-tests
 | `editor/designcanvas.*` | The canvas |
 | `editor/inspector.*` | The inspector |
 | `editor/presets.*` | The palette |
-| `editor/runcontroller.*` | Run on the deck through the daemon |
+| `editor/runcontroller.*` | Run on the shown deck through the daemon |
 | `editor/editorwidget.*` | The editor's layout and commands |
 | `editor/editorapi.*` | The editor's routes, the runtime proxy |
 | `tests/studio_test.cpp` | The tests |
@@ -201,9 +235,8 @@ cmake-build-agent-release/bin/streamdeck-studio-tests
 
 | What | Needs |
 |:--|:--|
-| Start the daemon on launch when none runs (the editor's Run does) | the daemon's supervision rules (daemon.md §8) |
-| The deck brightness slider and the list of real decks | `PUT /api/v1/decks/{serial}/brightness`, `GET /api/v1/decks` on the daemon |
-| Run on an own deck; Run without a real deck | `PUT /api/v1/decks/{serial}/scenario` on the daemon (own decks play the daemon's scenario today) |
+| A single daemon per session (lock), adopting one started elsewhere, `--parent` instead of `--with-parent` | the daemon's supervision rules (daemon.md §7, §8; SD7) |
+| A deck list in the window (the Deck box offers "the first real deck" and own models) | several real decks (later) |
 | Palette from the host's catalogue, action forms, contexts, activity | the `action` kind and the catalogue (SD4, SD5) |
 | Open shipped example scenarios | `data/streamdeck/scenarios/` (SD5) |
 | Windows and Linux builds checked | SD8 |

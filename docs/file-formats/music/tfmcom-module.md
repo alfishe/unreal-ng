@@ -348,6 +348,6 @@ Three independent methods, all agreeing:
   player + module into an instant-play `.sna`
 - `docs/inprogress/2026-09-10-turbosound-fm/verification/player-entry-points.md` —
   harness-level player contract
-- [`tools/porttrace/`](../../../tools/porttrace/README.md) — the port-trace
+- [`utilities/porttrace/`](../../../utilities/porttrace/README.md) — the port-trace
   profiler used for runtime validation
 - `core/tests/_helpers/tsfmplayerharness.{h,cpp}` — in-process test harness

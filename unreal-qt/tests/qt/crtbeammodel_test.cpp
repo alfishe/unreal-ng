@@ -232,9 +232,9 @@ INSTANTIATE_TEST_SUITE_P(CRTBeamModel, CRTBeamModelBits_Test,
                                            std::pair{CRTProfile::Consumer, 0x6bb9adbf4394458bull},
                                            std::pair{CRTProfile::Pi, 0x2aaaeb52db431829ull},
                                            std::pair{CRTProfile::Zfast, 0x0f219ab6c5de8d9cull}),
-                         [](const auto& info) {
+                         [](const auto& testInfo) {
                              std::string name;
-                             for (char c : Key(info.param.first))
+                             for (char c : Key(testInfo.param.first))
                                  if (c != '-')
                                      name += c;
                              return name;
