@@ -6,6 +6,10 @@
 //     aspect kept "lcd":  { "image": "lcd/strip.png" },                 // full landscape strip "tiles": [ {"dial": 0,
 //     "image": "lcd/t0.png"} ],      // per-dial 200xH tiles (Plus / Plus XL) "touch_leds": [ {"point": 0, "rgb":
 //     [255,0,0]} ] }    // Neo
+//   Not drawn by ApplyTheme: "logo": {"image": "logo.png"}, the brand mark (the banner's middle) the daemon's idle
+//   screen spreads over a row of keys when the banner (lcd) would be too small there (sdb/idlescenario.h);
+//   "lcd_ttd": {"image": "ttd_strip.png"}, the strip's look while a time-travel history exists (a picture of the
+//   timeline readout; the live one is the runtime's strip status, SD5). The timeline is a strip readout, never keys.
 #pragma once
 #include <chrono>
 #include <filesystem>
@@ -30,6 +34,8 @@ struct GridSpec
 [[nodiscard]] std::vector<std::pair<int, Rgb>> SliceGrid(const Model& m, const Rgb& src, const GridSpec& g,
                                                          Rgb* canvasOut = nullptr);
 [[nodiscard]] bool GridInRange(const Model& m, const GridSpec& g);
+// A grid's "rows" / "cols": "3" or "0-8"
+[[nodiscard]] bool ParseGridRange(const std::string& s, int& lo, int& hi);
 
 struct Theme
 {

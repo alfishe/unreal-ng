@@ -41,3 +41,4 @@ void TestDeckHub();
 void TestConformance();
 void TestDaemonDecks();
 void TestHotplug();
+void TestIdle();

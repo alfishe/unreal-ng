@@ -114,7 +114,7 @@ void TestDaemonDecks()
     WriteScenario(mine, "mine");
     std::ofstream(broken) << "{ not json";
 
-    // No start file: the idle scenario (one empty menu).
+    // No start file: the idle scenario (the UnrealNG look, laid out per model: idle_test.cpp).
     CHECK(DaemonDecks::Idle().name == "idle");
     DaemonDecks decks(DaemonDecks::Options{});
     std::vector<std::string> lines;

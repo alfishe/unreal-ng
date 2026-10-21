@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <thread>
 
+#include "sdb/datadir.h"
 #include "sdb/deckhub.h"
+#include "sdb/idlescenario.h"
 #include "sdb/runtime.h"
 #include "sdb/scenarioio.h"
 
@@ -16,9 +18,6 @@ using automation::Request;
 
 namespace
 {
-constexpr const char* kIdle = R"({"name": "idle", "model": "plusxl",
-  "root": {"id": "home", "type": "menu", "title": "unreal-streamdeck", "items": []}})";
-
 std::string ModelName(const Model* m)
 {
     return m ? std::string(m->name) : std::string();
@@ -51,17 +50,28 @@ std::optional<scn::Scenario> DaemonDecks::LoadFile(const std::string& file, std:
     return s;
 }
 
-scn::Scenario DaemonDecks::Idle()
+json DaemonDecks::IdleDocument(const Model* model)
+{
+    return idle::Document(model ? *model : *FindModelByName("plusxl"), data::Root());
+}
+
+scn::Scenario DaemonDecks::Idle(const Model* model)
 {
     std::vector<scn::Issue> issues;
-    return *scn::Parse(json::parse(kIdle), issues);
+    if (auto s = scn::Parse(IdleDocument(model), issues))
+        return *s;
+    // not expected (the tests parse it for every model); the bare menu keeps the deck usable
+    return *scn::Parse(json{{"name", "idle"},
+                            {"model", model ? std::string(model->name) : std::string("plusxl")},
+                            {"root", {{"id", "home"}, {"type", "menu"}, {"title", idle::kTitle}}}},
+                       issues);
 }
 
 bool DaemonDecks::LoadStart(std::string* error)
 {
     if (_options.startFile.empty())
     {
-        _start = Idle();
+        _start.reset();  // made per deck: the idle screen is laid out for the deck's model
         return true;
     }
     std::string e;
@@ -71,10 +81,10 @@ bool DaemonDecks::LoadStart(std::string* error)
     return _start.has_value();
 }
 
-scn::Scenario DaemonDecks::StartScenario() const
+scn::Scenario DaemonDecks::StartScenario(const Model* model) const
 {
     std::lock_guard lock(_mutex);
-    return _start ? *_start : Idle();
+    return _start ? *_start : Idle(model);
 }
 
 std::map<std::string, DaemonDecks::Clock> DaemonDecks::Stamp(const std::vector<std::string>& files)
@@ -161,7 +171,13 @@ bool DaemonDecks::LoadScenario(const std::string& serial, const std::string& fil
     std::string e;
     if (start)
     {  // the start scenario as the daemon loaded it (its file may have changed since: then read it again)
-        s = StartScenario();
+        const Model* model = nullptr;
+        {
+            std::lock_guard lock(_mutex);
+            if (auto it = _decks.find(target); it != _decks.end())
+                model = it->second.model;
+        }
+        s = StartScenario(model);
         files = _startFiles;
     }
     else
@@ -450,7 +466,7 @@ void DaemonDecks::AddRoutes(automation::Api& api)
                      if (r.Flag("document"))
                      {
                          std::string err;
-                         auto doc = e.file.empty() ? std::optional<json>(json::parse(kIdle))
+                         auto doc = e.file.empty() ? std::optional<json>(IdleDocument(e.model))
                                                    : scn::io::LoadFile(e.file, &err);
                          j["document"] = doc ? *doc : json();
                          if (!doc)
@@ -668,14 +684,16 @@ void DaemonDecks::AddRoutes(automation::Api& api)
              nullptr,
              [this](const Request& r) {
                  std::string file;
+                 const Model* model = nullptr;
                  Reply rep = WithDeck(r.Str("deck"), [&](Entry& e) {
                      file = e.file;
+                     model = e.model;
                      return Reply::Ok({{"deck", e.serial}});
                  });
                  if (rep.IsError())
                      return rep;
                  std::string e;
-                 auto doc = file.empty() ? std::optional<json>(json::parse(kIdle)) : scn::io::LoadFile(file, &e);
+                 auto doc = file.empty() ? std::optional<json>(IdleDocument(model)) : scn::io::LoadFile(file, &e);
                  if (!doc)
                      return Reply::Error(500, e);
                  rep.body["file"] = file;

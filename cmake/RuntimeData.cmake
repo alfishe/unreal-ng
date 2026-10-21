@@ -1,4 +1,5 @@
-# Runtime data (ROMs, symbols, configs, fonts, MIDI bank, boot, controller images) next to the executables.
+# Runtime data (ROMs, symbols, configs, fonts, MIDI bank, boot, controller images, Stream Deck themes) next to the
+# executables.
 # ONE target does the copy and every app depends on it: per-app POST_BUILD copies of the
 # same folders into the shared bin/ run in parallel under ninja and race each other
 # (copy_directory rewrites files another copy is reading) - an intermittent
@@ -22,5 +23,6 @@ add_custom_target(runtime-data
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${_runtime_data}/midi" "${_runtime_bin}/midi"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${_runtime_data}/boot" "${_runtime_bin}/boot"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${_runtime_data}/controllers" "${_runtime_bin}/controllers"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${_runtime_data}/streamdeck" "${_runtime_bin}/streamdeck"
     COMMENT "Copying runtime resource files to output directory"
 )
