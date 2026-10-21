@@ -2,7 +2,8 @@
 
 The software Stream Deck and scenario editor of unreal-ng: executable `unreal-streamdeck-studio`, sources in
 `companions/streamdeck/studio/`. Design: [studio.md](../../inprogress/2026-10-19-streamdeck-integration/studio.md),
-[device-wire.md](../../inprogress/2026-10-19-streamdeck-integration/device-wire.md).
+[device-wire.md](../../inprogress/2026-10-19-streamdeck-integration/device-wire.md). The scenario editor in depth:
+[scenario-editor/](scenario-editor/README.md).
 
 ## Contents
 
@@ -99,7 +100,14 @@ What the studio does with each answer:
 
 ## 5. The scenario editor
 
-Opened with the toolbar button or Cmd+E, in its own window or docked beside the deck.
+Opened with the toolbar button or Cmd+E, in its own window or docked beside the deck. The full reference:
+
+| Document | Contents |
+|:--|:--|
+| [01-requirements.md](scenario-editor/01-requirements.md) | What a scenario is, goals, requirements (done / planned) |
+| [02-ux-design.md](scenario-editor/02-ux-design.md) | Navigation on the deck, the editor window, gestures, menus, Run, the agent flow |
+| [03-technical-design.md](scenario-editor/03-technical-design.md) | File format, includes, the engine, the editor's classes, Run and autosave, tests |
+| [04-automation.md](scenario-editor/04-automation.md) | The editor's routes, the runtime proxy, what Run calls on the daemon |
 
 | Area | What it does |
 |:--|:--|

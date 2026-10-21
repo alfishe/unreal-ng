@@ -106,7 +106,9 @@ deck, else the first deck); the runtime routes take `?deck=SERIAL` with the same
 | `GET /api/v1/scenario` | The deck's file and its document |
 
 Own decks begin on the start scenario. Stream Deck Studio's Run puts the scenario open in its editor on the deck its
-window shows with `PUT /api/v1/decks/{serial}/scenario` and gives the deck back with `DELETE`. A runtime asking for
+window shows with `PUT /api/v1/decks/{serial}/scenario` and gives the deck back with `DELETE`
+([scenario editor](scenario-editor/02-ux-design.md#3-running-on-the-deck); the scenario format:
+[03-technical-design.md](scenario-editor/03-technical-design.md#2-file-format-v1)). A runtime asking for
 another file (`nav {to: scenario}`) loads it for its own deck.
 
 ```bash
