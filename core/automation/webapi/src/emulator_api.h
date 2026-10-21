@@ -490,6 +490,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::runToInterrupt, "/api/v1/emulator/{id}/run_to_interrupt", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::runFrame, "/api/v1/emulator/{id}/run_frame", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::runFrames, "/api/v1/emulator/{id}/run_frames", drogon::Post);
+    // The paced run (implementation: api/runpace_api.cpp, core execution::RunPacer)
+    ADD_METHOD_TO(EmulatorAPI::getRunPace, "/api/v1/emulator/{id}/run_pace", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postRunPace, "/api/v1/emulator/{id}/run_pace", drogon::Post);
 
     // Debug mode
     ADD_METHOD_TO(EmulatorAPI::getDebugMode, "/api/v1/emulator/{id}/debugmode", drogon::Get);
@@ -1810,6 +1813,15 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                   const std::string& id) const;
     void runToLine(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id) const;
+    // The paced run (api/runpace_api.cpp)
+    void getRunPace(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
+    void postRunPace(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
+    void stepLineNow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
+    void runToLineNow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
 
     // Assembler
     void assembleCode(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,

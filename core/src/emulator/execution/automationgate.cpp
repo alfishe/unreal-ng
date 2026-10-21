@@ -83,6 +83,8 @@ bool CliCommandChangesMachine(const std::string& command, const std::vector<std:
         return any({"write", "fill", "load"});
     if (command == "registers" || command == "regs" || command == "r")
         return args.size() >= 2;                            // "r pc 8000": a register set
+    if (command == "pace")                                  // the paced run: `pace` / `pace show` only read
+        return !any({"show", "help", "presets"});
     if (command == "tape")
         return any({"load", "eject", "play", "pause", "rewind", "seek", "stop"});
     if (command == "snapshot")
@@ -180,7 +182,7 @@ uint32_t CompanionScopeOf(const std::string& method, const std::string& subpath)
     const std::string_view head = segments[0];
     const std::string_view second = n > 1 ? segments[1] : std::string_view();
     const std::string_view third = n > 2 ? segments[2] : std::string_view();
-    if (n == 1 && OneOf(head, {"resume", "reset", "nmi"}))
+    if (n == 1 && OneOf(head, {"resume", "reset", "nmi", "run_pace"}))  // run_pace: the paced run (RunPacer)
         return ScopeRun;
     if (head == "settings" && n == 2)
         return SettingScope(second);
@@ -221,7 +223,7 @@ uint32_t CompanionScopeOf(const std::string& method, const std::string& subpath)
 uint32_t CompanionCliScopeOf(const std::string& command, const std::vector<std::string>& args)
 {
     const std::string_view verb = args.empty() ? std::string_view() : std::string_view(args[0]);
-    if (OneOf(command, {"resume", "reset", "nmi", "mni"}))
+    if (OneOf(command, {"resume", "reset", "nmi", "mni", "pace"}))
         return ScopeRun;
     if (OneOf(command, {"setting", "settings", "set"}))
         return SettingScope(verb);

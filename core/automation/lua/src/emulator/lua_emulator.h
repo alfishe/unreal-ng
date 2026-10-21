@@ -2,6 +2,7 @@
 
 #include "emulator/memory/devicememory.h"
 #include "emulator/execution/companionregistry.h"
+#include "emulator/execution/runpacer.h"
 #include "emulator/execution/scriptsession.h"
 #include "emulator/sound/audiomixer.h"
 #include "emulator/video/framebufferexport.h"
@@ -2417,6 +2418,72 @@ public:
             execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunUntilNextScreenPixel(skipBP.value_or(true));
         });
+
+        // The paced run (core execution::RunPacer; the same pacer as WebAPI /run_pace, the actions run.pace_* and the
+        // Qt speed control): pace() -> {preset, label, unit, interval_ms, running, stop_reason, presets}; the others
+        // answer the reply as a table with ok (false: error = the message) and the pace
+        auto paceReply = [](sol::this_state ts, const execution::RunReply& reply) -> sol::object {
+            StateNode value = reply.body;
+            value["ok"] = reply.Ok();
+            if (!reply.Ok())
+                value["error"] = reply.message;
+            return StateNodeToLua(ts, value);
+        };
+        auto pacerOf = [this]() -> std::shared_ptr<execution::RunPacer> {
+            Emulator* emulator = effectiveEmulator();
+            return emulator ? execution::RunPacer::For(EmulatorManager::GetInstance()->GetEmulator(emulator->GetId()))
+                            : nullptr;
+        };
+        lua.set_function("pace", [this](sol::this_state ts) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return sol::lua_nil;
+            const auto pacer = execution::RunPacer::Find(emulator->GetId());
+            return StateNodeToLua(ts, pacer ? pacer->StateBody(true) : execution::RunPacer::DefaultStateBody(true));
+        });
+        // pace_set(preset [, interval_ms]): full, 25fps, 5fps, 1fps, frame, 100lines, 10lines, 1line, 1op
+        lua.set_function("pace_set", [this, paceReply, pacerOf](sol::this_state ts, const std::string& name,
+                                                                sol::optional<int> intervalMs) -> sol::object {
+            const auto pacer = pacerOf();
+            if (!pacer)
+                return sol::lua_nil;
+            size_t index = 0;
+            if (!execution::RunPacer::PresetIndex(name, index))
+                throw std::runtime_error("pace_set: preset full, 25fps, 5fps, 1fps, frame, 100lines, 10lines, 1line or 1op");
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
+            return paceReply(ts, pacer->Set(execution::script::RequesterOf(*effectiveEmulator(), execution::Origin::Lua),
+                                            index, intervalMs ? std::optional<int>(*intervalMs) : std::nullopt));
+        });
+        lua.set_function("pace_interval", [this, paceReply, pacerOf](sol::this_state ts, int intervalMs) -> sol::object {
+            const auto pacer = pacerOf();
+            if (!pacer)
+                return sol::lua_nil;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
+            return paceReply(ts, pacer->Set(execution::script::RequesterOf(*effectiveEmulator(), execution::Origin::Lua),
+                                            std::nullopt, intervalMs));
+        });
+        for (const char* name : {"pace_next", "pace_prev", "pace_start", "pace_stop", "pace_toggle", "pace_step"})
+        {
+            const std::string verb = std::string(name).substr(5);
+            lua.set_function(name, [this, paceReply, pacerOf, verb](sol::this_state ts) -> sol::object {
+                const auto pacer = pacerOf();
+                if (!pacer)
+                    return sol::lua_nil;
+                Emulator& emulator = *effectiveEmulator();
+                if (verb != "stop")
+                    execution::script::Check(emulator, execution::Origin::Lua);
+                const execution::Requester requester = execution::script::RequesterOf(emulator, execution::Origin::Lua);
+                if (verb == "next" || verb == "prev")
+                    return paceReply(ts, pacer->Shift(requester, verb == "next" ? 1 : -1));
+                if (verb == "start")
+                    return paceReply(ts, pacer->Start(requester));
+                if (verb == "stop")
+                    return paceReply(ts, pacer->Stop());
+                if (verb == "toggle")
+                    return paceReply(ts, pacer->Toggle(requester));
+                return paceReply(ts, pacer->Step(requester));
+            });
+        }
 
         lua.set_function("run_to_interrupt", [this](sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
@@ -5320,6 +5387,11 @@ public:
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("journal-build", options)));
         });
 
+        // ttd_cancel_journal_build() -> {cancelled}: stops a write-journal build that runs (another thread's call)
+        lua.set_function("ttd_cancel_journal_build", [this](sol::this_state ts) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("journal-build-cancel")));
+        });
+
         lua.set_function("ttd_get_journal_enabled", [this]() -> bool {
             const ttd::TTDReply reply = TtdRun("journal");
             return reply.Ok() && reply.body.find("write_journal_setting")->b;
@@ -5543,6 +5615,12 @@ public:
 
         lua.set_function("ttd_reverse_step_tstates", [this](uint64_t tstates) -> bool {
             const ttd::TTDReply reply = TtdRun("reverse-step", {{"tstates", std::to_string(tstates)}});
+            return reply.Ok() && reply.body.find("reached")->b;
+        });
+
+        // ttd_reverse_step_scanlines(n): n scanlines of the machine back (lands on an instruction start)
+        lua.set_function("ttd_reverse_step_scanlines", [this](uint64_t scanlines) -> bool {
+            const ttd::TTDReply reply = TtdRun("reverse-step", {{"scanlines", std::to_string(scanlines)}});
             return reply.Ok() && reply.body.find("reached")->b;
         });
 

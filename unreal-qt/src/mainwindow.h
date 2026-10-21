@@ -170,6 +170,10 @@ private slots:
     void handleFrontPanelCpmToggled(bool on);
     void handleStepIn();
     void handleStepOver();
+    /// Step out / run to the cursor: the actions run.step_out / run.to_cursor on the instance's actions worker
+    void handleStepOut();
+    void handleRunToCursor();
+    void submitGuiAction(const char* id);
     void handleToolBarToggled(bool visible);
     void handleScaleRequested(int scale);
     void handleScreenshotRequested();

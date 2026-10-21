@@ -107,6 +107,8 @@ private:
     void HandleRunFrame(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunFrames(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunNCycles(const ClientSession& session, const std::vector<std::string>& args);
+    /// The paced run (core RunPacer): pace [show|presets|set|interval|next|prev|start|stop|toggle|step]
+    void HandlePace(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMemory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRtc(const ClientSession& session, const std::vector<std::string>& args);
     /// Automation session (execution arbiter design §6a): `session take [name]`, `session release`, `session`

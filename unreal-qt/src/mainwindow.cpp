@@ -38,6 +38,7 @@
 
 #include <QCloseEvent>
 #include <QCoreApplication>
+#include <QPointer>
 #include <QDebug>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -58,6 +59,7 @@
 #include "controllers/controllersdialog.h"
 #include "controllers/controllertoast.h"
 #include "controllers/guiactions.h"
+#include "emulator/actions/actionregistry.h"
 #include "controllers/hostcontrollers.h"
 #include "controllers/surfacestatusicon.h"
 #include "controllers/streamdeckpage.h"
@@ -530,6 +532,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     });
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
+    connect(_menuManager, &MenuManager::stepOutRequested, this, &MainWindow::handleStepOut);
+    connect(_menuManager, &MenuManager::runToCursorRequested, this, &MainWindow::handleRunToCursor);
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
     connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
     connect(_menuManager, &MenuManager::tapeManagerToggled, this, &MainWindow::handleTapeManagerToggled);
@@ -3774,6 +3778,41 @@ void MainWindow::handleStepOver()
         _emulator->StepOver();
         qDebug() << "Step over executed";
     }
+}
+
+void MainWindow::handleStepOut()
+{
+    submitGuiAction("run.step_out");
+}
+
+void MainWindow::handleRunToCursor()
+{
+    submitGuiAction("run.to_cursor");
+}
+
+void MainWindow::submitGuiAction(const char* id)
+{
+    if (!_emulator)
+        return;
+    actions::ActionOrigin origin;
+    origin.origin = execution::Origin::Gui;
+    origin.identity = "gui:menu";
+    origin.client = "menu";
+    QPointer<MainWindow> self(this);
+    // The actions worker runs it (a run never blocks the GUI thread); a refusal goes to the status bar
+    actions::ActionRegistry::Instance().Submit(id, actions::ActionValue{}, _emulator->GetId(), std::move(origin),
+                                               [self](actions::ActionResult result) {
+                                                   if (result.ok)
+                                                       return;
+                                                   const QString text = QString::fromStdString(result.message);
+                                                   QMetaObject::invokeMethod(
+                                                       QCoreApplication::instance(),
+                                                       [self, text] {
+                                                           if (self)
+                                                               self->statusBar()->showMessage(text, 5000);
+                                                       },
+                                                       Qt::QueuedConnection);
+                                               });
 }
 
 void MainWindow::handleDebuggerToggled(bool visible)

@@ -427,7 +427,7 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"seek", {"frame", "tinframe", "bookmark"}},
         {"resume", {"frame", "tinframe", "media"}},
         {"step-instruction", {"dir"}},
-        {"reverse-step", {"count", "tstates"}},
+        {"reverse-step", {"count", "tstates", "scanlines"}},
         {"bookmark-add", {"label", "frame", "tinframe"}},
         {"bookmark-delete", {"label"}},
         {"port-events", {"*"}},
@@ -1207,23 +1207,36 @@ TTDReply TTDControlBackend<S>::ReverseStep(const TTDRequest& request)
 {
     const std::string* countText = Option(request, "count");
     const std::string* tstatesText = Option(request, "tstates");
-    if (countText && tstatesText)
-        return Fail(TTDControlError::BadRequest, "Specify exactly one of 'count' or 'tstates' (not both)");
-    if (!countText && !tstatesText)
-        return Fail(TTDControlError::BadRequest, "Missing required field: 'count' or 'tstates'");
+    // scanlines: N lines of the machine's t_line back (Stream Deck D3.1: the scanline unit), as t-states
+    const std::string* scanlinesText = Option(request, "scanlines");
+    const int given = (countText ? 1 : 0) + (tstatesText ? 1 : 0) + (scanlinesText ? 1 : 0);
+    if (given > 1)
+        return Fail(TTDControlError::BadRequest, "Specify exactly one of 'count', 'tstates' or 'scanlines'");
+    if (given == 0)
+        return Fail(TTDControlError::BadRequest, "Missing required field: 'count', 'tstates' or 'scanlines'");
+    const std::string& text = countText ? *countText : tstatesText ? *tstatesText : *scanlinesText;
     uint64_t n = 0;
-    if (!ParseU64(countText ? *countText : *tstatesText, n) || (countText && n > UINT32_MAX))
-        return Fail(TTDControlError::BadRequest, "count and tstates must be non-negative integers");
+    if (!ParseU64(text, n) || (!tstatesText && n > UINT32_MAX))
+        return Fail(TTDControlError::BadRequest, "count, tstates and scanlines must be non-negative integers");
+    uint64_t lineT = 0;
+    if (scanlinesText)
+    {
+        lineT = _context ? _context->config.t_line : 0;
+        if (lineT == 0)
+            return Fail(TTDControlError::Conflict, "the machine's scanline length is not known");
+    }
     if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
 
     PauseAndConfirm();
-    const bool ok = tstatesText ? _manager->ReverseStepTStates(n)
-                                : _manager->ReverseStepInstructions(static_cast<uint32_t>(n));
+    const bool ok = tstatesText || scanlinesText ? _manager->ReverseStepTStates(scanlinesText ? n * lineT : n)
+                                                 : _manager->ReverseStepInstructions(static_cast<uint32_t>(n));
     NotifyFrameRefresh();
     TTDReply reply;
     reply.body["reached"] = ok;
-    reply.body["mode"] = tstatesText ? "tstates" : "count";
+    reply.body["mode"] = tstatesText ? "tstates" : scanlinesText ? "scanlines" : "count";
+    if (scanlinesText)
+        reply.body["tstates"] = n * lineT;
     AddPosition(reply.body, _manager->CurrentPosition());
     return reply;
 }

@@ -4,7 +4,9 @@
 
 #include "emulator/actions/actionregistry.h"
 #include "emulator/actions/contextstate.h"
+#include "emulator/actions/steppingactions.h"
 #include "emulator/actions/targetstate.h"
+#include "emulator/execution/runpacer.h"
 #include "emulator/machinevariants.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 
@@ -770,6 +772,8 @@ bool EmulatorManager::RemoveEmulatorInstance(const std::string& emulatorId)
         RetireRemoved(removed, "RemoveEmulator");
         // Its actions worker ends: queued actions answer "Not Found" (the machine is stopped, a running one ends)
         actions::ActionRegistry::Instance().DropInstance(emulatorId);
+        execution::RunPacer::Drop(emulatorId);  // a paced run ends, its thread is joined
+        actions::DropSteppingState(emulatorId);  // its debugger cursors and scrub unit
         actions::ContextState::Instance().Drop(emulatorId);
         // Views showing it lose it, `instance:` pins on it fall back to following (targeting.md §5)
         actions::TargetState::Instance().InstanceGone(emulatorId);
@@ -1264,6 +1268,8 @@ void EmulatorManager::ShutdownAllEmulators()
     {
         RetireRemoved(emulator, "ShutdownAllEmulators");
         actions::ActionRegistry::Instance().DropInstance(uuid);
+        execution::RunPacer::Drop(uuid);
+        actions::DropSteppingState(uuid);
         actions::ContextState::Instance().Drop(uuid);
         actions::TargetState::Instance().InstanceGone(uuid);
     }

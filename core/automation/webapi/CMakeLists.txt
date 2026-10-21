@@ -216,6 +216,7 @@ set(COMMON_SOURCES
     src/api/joystick_api.cpp
     src/api/ports_api.cpp
     src/api/ttd_api.cpp
+    src/api/runpace_api.cpp
     src/api/symbols_api.cpp
     src/api/asm_api.cpp
     src/emulator_websocket.cpp

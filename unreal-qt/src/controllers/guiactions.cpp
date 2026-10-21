@@ -14,6 +14,8 @@
 #include "emulator/emulatorbinding.h"
 #include "emulator/execution/automationgate.h"
 #include "controllers/hostcontrollers.h"
+#include "debugger/disassemblerwidget.h"
+#include "emulator/actions/steppingactions.h"
 #include "profiles/json.h"
 #include "router/analog.h"
 
@@ -240,6 +242,35 @@ GuiActions::GuiActions(EmulatorBinding* binding, GuiActionHooks hooks, QObject* 
     Add("dbg.memory_follow", Tr("Memory follows the value under the cursor"), debug, ValueKind::Press,
         key(Qt::Key_Return, false), noDebugger, true);
 
+    // The disassembly (Stream Deck D6.4, D6.5): follow PC, labels on / off, byte / command scroll, go to an address
+    Add("dbg.follow_pc", Tr("Disassembly follows PC"), debug, ValueKind::Press, pane("followPc"), noDebugger);
+    {
+        actions::ActionRules labels = noDebugger;
+        labels.state = [](Emulator&, const actions::ActionValue&) -> std::optional<bool> {
+            return DisassemblerWidget::LabelsShown().load();
+        };
+        Add("dbg.labels_toggle", Tr("Labels in the disassembly"), debug, ValueKind::Press, pane("toggleLabels"),
+            std::move(labels));
+    }
+    Add("dbg.scroll_mode_toggle", Tr("Disassembly scrolls by bytes / instructions"), debug, ValueKind::Press,
+        pane("toggleScrollMode"), noDebugger);
+    Add("dbg.goto", Tr("Disassembly at an address"), debug, ValueKind::Press,
+        [debugger, showDebugger](const std::string&, const actions::ActionValue& value,
+                                 const actions::ActionOrigin&) -> QString {
+            uint16_t address = 0;
+            std::string error;
+            if (!actions::AddressParam(value.params, "addr", address, error))
+                return QString::fromStdString(error);
+            auto* window = qobject_cast<QWidget*>(debugger);
+            if (window == nullptr)
+                return Tr("the debugger is not available");
+            if (!window->isVisible() && showDebugger)
+                showDebugger();
+            QMetaObject::invokeMethod(window, "goToDisassemblyAddress", Q_ARG(int, static_cast<int>(address)));
+            return {};
+        },
+        noDebugger, false, "addr (0..#FFFF: decimal, 0x.., #.., $..)");
+
     // 3.4 Capture: the screenshot to the clipboard (the main window's)
     const QString machine = Tr("Capture and machine");
     std::function<void()> screenshot = _hooks.screenshot;
@@ -263,7 +294,7 @@ GuiActions::GuiActions(EmulatorBinding* binding, GuiActionHooks hooks, QObject* 
     actions::ActionRules later;
     later.unavailable = [](Emulator&, const actions::ActionValue&) { return std::string("not available yet"); };
     later.unavailableError = "Not Implemented";
-    for (const char* id : {"dbg.breakpoint_toggle_pc", "dbg.labels_toggle"})
+    for (const char* id : {"dbg.breakpoint_toggle_pc"})
         Add(id, QString::fromLatin1(id), debug, ValueKind::Press, nullptr, later);
     for (const char* id : {"osd.quick_menu"})
         Add(id, QString::fromLatin1(id), machine, ValueKind::Press, nullptr, later);
@@ -299,9 +330,9 @@ actions::Executor GuiActions::OnGui(GuiRun run)
 }
 
 void GuiActions::Add(const char* id, const QString& label, const QString& group, actions::ValueKind kind, GuiRun run,
-                     actions::ActionRules rules, bool held)
+                     actions::ActionRules rules, bool held, const char* params)
 {
-    actions::ActionInfo info{id, label.toStdString(), group.toStdString(), kind, held, true, {}, {}, false};
+    actions::ActionInfo info{id, label.toStdString(), group.toStdString(), kind, held, true, params, {}, false};
     _handles.push_back(actions::ActionRegistry::Instance().Register(std::move(info), OnGui(std::move(run)),
                                                                     std::move(rules)));
 }

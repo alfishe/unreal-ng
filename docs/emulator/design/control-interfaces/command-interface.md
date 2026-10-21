@@ -398,6 +398,7 @@ Commands to control the CPU execution flow for the selected emulator instance. T
 | `run_frame` | | | Run exactly one complete video frame worth of t-states. The beam stops at approximately the same position in the next frame, providing consistent "one frame forward" behavior. |
 | `run_frames <N>` | | `<count>` | Run exactly `<N>` complete video frames. Equivalent to calling `run_frame` N times but more efficient. Max: 10,000. |
 | `run_ncycles <N>` | | `<count>` | Run exactly `<N>` CPU cycles (instructions). Each cycle executes one complete Z80 instruction. Max: 100,000. |
+| `pace [verb]` | | `[show \| presets \| set <preset> [ms] \| interval <ms> \| next \| prev \| start \| stop \| toggle \| step] [--json]` | The paced run (see **2.1 Paced run** below): the machine steps a frame, N scanlines or an instruction per interval on its own and stops at a breakpoint. |
 
 **Implementation Details**:
 
@@ -514,6 +515,56 @@ Python `emu.operations(since=0, limit=0)` and the MCP `emulator_manage` action `
 - `step` commands disable real-time rendering for precision
 - Frequent stepping may impact overall emulation performance
 - Use `resume` to return to full-speed emulation
+
+#### 2.1 Paced run and runs to a place (Stream Deck D1, D2)
+
+**The paced run** (`execution::RunPacer`, `core/src/emulator/execution/runpacer.h`; module doc
+[SPEED-CONTROL.md](../../../inprogress/2026-02-07-speed-control/SPEED-CONTROL.md#2026-10-21-the-pace-in-the-core)):
+the debugger's speed control ladder in the core, one pacer per instance, the same on every surface and in the Qt
+widget (now its client). Presets, coarse to fine: `full` (no pacing: the machine runs at its speed), `25fps`, `5fps`,
+`1fps` (a frame per 40 / 200 / 1000 ms), `frame`, `100lines`, `10lines`, `1line`, `1op` (one unit per the adjustable
+interval, 1..5000 ms, default 1000). A run steps on the pacer's own thread (only while it runs) with breakpoints
+honoured: a breakpoint ends it with the machine paused there (`stop_reason` `breakpoint`, `breakpoint` {id, address});
+so do a resume of the machine (`resumed`), another surface holding run control (`held`), the user taking control back
+(`revoked`) and the instance going (`gone`). Choosing a preset acts as the slider: a paced preset while the machine
+runs at full speed pauses it and starts the pace; `full` while the pace runs stops it and resumes the machine.
+
+| Verb | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| pace (read) | | `{preset, label, index, unit, count, interval_ms, effective_ms, adjustable, running, ticks, stop_reason, breakpoint?, presets}` | ✅ Implemented |
+| pace set | `preset?`, `interval_ms?` | Choose a preset (id, label or index) and / or the adjustable interval | ✅ Implemented |
+| pace next / prev / by | `delta` (by) | A finer / coarser preset, clamped (`edge: true` at an end) | ✅ Implemented |
+| pace start / stop / toggle | | Run at the pace / stop it (the machine stays paused) / the dial's push: a running pace stops, a machine at full speed pauses, else the pace starts | ✅ Implemented |
+| pace step | | One unit of the preset now (a running pace stops first); `stop` as a step's | ✅ Implemented |
+
+| Plane | Read | Change |
+| :--- | :--- | :--- |
+| CLI | `pace`, `pace presets` | `pace set 5fps`, `pace interval 200`, `pace next`, `pace start`, `pace step` |
+| WebAPI | `GET /api/v1/emulator/{id}/run_pace` | `POST /api/v1/emulator/{id}/run_pace` `{op: set\|next\|prev\|by\|start\|stop\|toggle\|step, preset?, interval_ms?, delta?}` (scope run) |
+| WebSocket | the GET as a `call`; push: `pace` in the `run.state` topic and readout (`preset`, `label`, `unit`, `count`, `interval_ms`, `effective_ms`, `running`, `stop_reason`) | the POST as a `call` |
+| MCP | `control_execution` action `pace` (`pace_op` `get`) | `control_execution` action `pace`, `pace_op` `set` / `next` / `prev` / `start` / `stop` / `toggle` / `step`, `preset`, `interval_ms` |
+| Python | `emu.pace()` | `emu.pace_set("5fps", 200)`, `pace_interval(ms)`, `pace_next()`, `pace_prev()`, `pace_start()`, `pace_stop()`, `pace_toggle()`, `pace_step()` (a refusal raises `RuntimeError`) |
+| Lua | `pace()` | `pace_set("5fps", 200)`, `pace_interval(ms)`, `pace_next()`, ... `pace_step()` (a table with `ok`, `error` on a refusal) |
+| Actions | readout `run.state` → `pace`, toggle `toggle.run.pace_toggle` | `run.pace_set`, `run.pace_next`, `run.pace_prev`, `run.pace_by` (a dial), `run.pace_toggle`, `run.pace_stop`, `run.pace_step` |
+| Qt | the debugger's speed control shows the pacer (`NC_RUN_PACE`) | its slider, interval, play / pause and step submit the actions |
+
+**Runs to a place.** Each is a `RunControl` verb (`core/src/emulator/execution/runcontrol.h`: the claim rule, the
+revoked answer, `pc`, `sp`, `state`), on every plane:
+
+| Verb | Arguments | CLI | WebAPI | MCP `control_execution` | Python / Lua | Action |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| run to scanline | `scanline` | `run_to_scanline <N>` | `POST /run_to_scanline` | `run_to_scanline` (`scanline`) | `run_to_scanline(n)` | `run.to_scanline` (`line`) |
+| run N scanlines | `count` 1..1000 | `run_scanlines <N>` | `POST /run_scanlines` | `run_scanlines` (`count`) | `run_scanlines(n)` | `run.n_scanlines` (`count`) |
+| run to the first paper pixel | | `run_to_pixel` | `POST /run_to_pixel` | `run_to_pixel` | `run_to_pixel()` | `run.to_pixel` |
+| run until PC | `pc`, `max_tstates?` (0: 100 frames, at most 700000000), `breakpoints?` (false: skipped) | `skip_until <pc> [max]` | `POST /skip_until` `{pc, max_tstates?, breakpoints?}` | `run_until_pc` (`pc`, `max_tstates`, `breakpoints`) | `skip_until(pc, max)` | `run.until_pc` (`pc`, `max_tstates?`, `breakpoints?`) |
+| run to the cursor | `addr?` (else the Qt disassembly's cursor), `max_tstates?` (0: 500 frames); a breakpoint on the way stops it | `action run run.to_cursor addr=#8000` | `POST /skip_until` `{pc, breakpoints: true}` | `run_until_pc` with `breakpoints` true | `action("run.to_cursor", addr=...)` | `run.to_cursor`; Qt Debug menu "Run to Cursor" |
+| N instructions | `count` 1..100000 | `run_ncycles <N>`, `steps <N>` | `POST /steps` | `step_n` (`count`) | `steps(n)` | `run.steps` (`count`) |
+| step a source line | `max_tstates?` | `listing step_line` | `POST /listing/step_line` | `symbols` `step_line` | `listing_step_line()` | `run.step_line` |
+| run to a source line | `line`, `max_tstates?` | `listing run_to_line <N>` | `POST /listing/run_to_line` | `symbols` `run_to_line` | `listing_run_to_line(n)` | `run.to_line` (`line`) |
+
+The WebAPI's `skip_until`, `run_to_pixel` and the listing routes run on the long-call pool through `RunControl`
+since 2026-10-21 (the listing ones ran on an I/O thread before); `skip_until` answers `hit`, `target`, `max_tstates`
+and `stop`.
 
 ### 3. State Inspection
 
@@ -2851,7 +2902,7 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 | `ttd status` | `ttd info` | — | Print the session: origin, recorded machine, state, frame range, checkpoint count, page store, heap, write journal, coverage index, bookmark count. See "Status fields" below. | ✅ Implemented |
 | `ttd info <path>` | `ttd file-info <path>` | `<path>` | Describe a `.ttd` file **without loading it** and without an emulator: size, frame range, checkpoints, sections and the recorded machine (model, ROM signature, General Sound card, TurboSound slot device, fitted devices). See "Reading a file before loading it" below. | ✅ Implemented |
 | `ttd start` | `ttd record` | `[--journal \| -j] [--black-box [--minutes N]]` | Start recording. Captures a baseline checkpoint, then one checkpoint per frame. `--journal` also records the write journal (off by default; see "The write journal" below). `--black-box` records as the black box (the engine): the last `N` minutes (default 5, 1..1440), turbo and a host speed above 1x stay free - the recording stops before them, history kept; without it the recording holds real speed. v1 refuses `--black-box`. Prints `Already recording (no-op)` if a recording is running. | ✅ Implemented |
-| `ttd journal` | — | `[on \| off \| status]` *or* `build [from-frame] [to-frame]` | The write journal: "who wrote this address last" answered at once. `on` / `off` switch it at any moment, also while recording (each on-off span is a segment). `build` builds it by replaying frames `from`..`to` (default: the whole session), about 2-4 ms per frame; not while recording. No argument or `status`: on/off, records, and the spans it covers. | ✅ Implemented |
+| `ttd journal` | — | `[on \| off \| status]` *or* `build [from-frame] [to-frame]` *or* `build-cancel` | The write journal: "who wrote this address last" answered at once. `on` / `off` switch it at any moment, also while recording (each on-off span is a segment). `build` builds it by replaying frames `from`..`to` (default: the whole session), about 2-4 ms per frame; not while recording. `build-cancel` (alias `cancel`) stops a build that runs (verb `journal-build-cancel`: WebAPI `POST /ttd/journal/build/cancel`, MCP `time_travel` `journal_build_cancel`, Lua `ttd_cancel_journal_build()`, Python `emu.ttd_cancel_journal_build()`, action `ttd.journal_build_cancel`). No argument or `status`: on/off, records, and the spans it covers. | ✅ Implemented |
 | `ttd stop` | — | — | Stop recording. History is kept and can be browsed (seek, step, find-last). Prints `Not recording (no-op)` when nothing records. | ✅ Implemented |
 | `ttd invalidate` | `ttd clear`, `ttd reset` | `[reason]` | Drop all history (checkpoints, journals, markers, bookmarks) and return to `idle`. The live machine is not touched. | ✅ Implemented |
 | `ttd limit` | `ttd history-limit` | `[frames <n>] [bytes <n>[K\|M\|G]]` *or* `off` | Bound the history. While recording, the oldest checkpoints (one per frame) are released once there are more than `frames` of them or their data (RAM pages + device blobs, compressed) exceeds `bytes`; the session start moves forward and the input, port, external-event and bookmark records before it go too, so a file saved afterwards replays its remaining frames exactly. Two checkpoints always stay. `0` = no limit (the default), a value not given is kept, `off` clears both; no arguments prints the limit, the history range, the bytes held and how many checkpoints were released. The limit stays for later recordings of this instance. | ✅ Implemented |
@@ -2859,7 +2910,7 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 | `ttd step-back` | `ttd back`, `ttd sb` | — | Step back one frame, keeping the position inside the frame. | ✅ Implemented |
 | `ttd step-forward` | `ttd forward`, `ttd sf` | — | Step forward one frame inside recorded history (never extends the timeline). | ✅ Implemented |
 | `ttd step-instruction` | `ttd si-back`, `ttd si-forward` | `[back \| forward \| fwd]` | Step one instruction. `step-instruction` alone and `si-back` step back; `step-instruction forward`/`fwd` and `si-forward` step forward. | ✅ Implemented |
-| `ttd reverse-step` | `ttd rs` | `[--count N]` *or* `[--tstates T]` | Step back N instructions (default 1), or back T t-states (lands on the nearest instruction start at or before the target). If both are given, `--tstates` wins. | ✅ Implemented |
+| `ttd reverse-step` | `ttd rs` | `[--count N]` *or* `[--tstates T]` *or* `[--scanlines L]` | Step back N instructions (default 1), back T t-states, or back L scanlines of the machine (`t_line` each; the reply's `tstates` says how many); the t-state forms land on the nearest instruction start at or before the target. More than one: `Bad Request`. The verb's `scanlines` option on every plane: WebAPI `POST /ttd/reverse-step` `{scanlines}`, MCP `time_travel` `reverse_step` `scanlines`, Lua `ttd_reverse_step_scanlines(n)`, Python `emu.ttd_reverse_step_scanlines(n)`, actions `ttd.step_back_scanline` / `ttd.step_forward_scanline` (`count`). | ✅ Implemented |
 | `ttd reverse-continue` | `ttd rc` | `--pc <A> [--pc <B> ...]` | Run backward until the PC equals any of the given addresses. Reports the hit, a blocking marker, or "no match (reached session start)", and the part of history it searched (`Searched: frame … .. frame …`). | ✅ Implemented |
 | `ttd resume` | — | `[frame] [tinframe] [media=ask\|empty\|keep]` | Resume recording from the current position, or from the given point. Everything recorded after that point is discarded. Every medium goes back to that point when it can; one that cannot (another medium in the slot, a write beyond its undo log) is decided by `media`: `empty` (default) takes it out, `keep` leaves it, `ask` resumes nothing and lists them (`needs_decision`); the decision is in the operation log (`timeline-cut`). Needs a session that is `detached` or `recording`; from `idle` (for example straight after `ttd stop`) it fails, so seek first. | ✅ Implemented |
 | `ttd position` | `ttd pos` | — | Current position and session end, each as `(frame, tInFrame)`; the history's first frame, the state, whether the machine is paused, the frame rate (`fps`, the machine's unscaled clock: turbo does not change it). The bounds come from the TTD's published cursor (control surfaces [architecture §7](../../../inprogress/2026-10-18-control-surfaces/architecture.md#7-the-ttd-published-cursor-and-readouts)): the read never parks the machine, a companion may poll it at 50 Hz. | ✅ Implemented |
@@ -2875,7 +2926,7 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 | `ttd coverage` | `ttd cov` | `probe --frame N` / `scan` / `summary`, plus `[--kind executed\|written\|read] [--from-frame F] [--to-frame T] [--addr-from A] [--addr-to B] [--phys-page P] [--space ram\|vram\|cache] [--limit L] [--bucket-size S]` | Query the coverage index. `--space vram` / `cache` asks about the Sprinter's video / fast RAM: the address options are offsets in it, inside one 16 KB page. `probe`: did frame N touch the range? `scan`: which frames in the window touched it (default limit 200). `summary`: activity heatmap per bucket (default limit 100, `--bucket-size 0` = automatic). Address range defaults to the whole 64K; `--to-frame` defaults to the session end. Short forms: `-f`, `-k`, `--from`/`-a`, `--to`/`-b`, `--page`/`-p`, `-l`, `--bucket`. | ✅ Implemented |
 | `ttd help` | `ttd ?`, `ttd` alone | — | Print the subcommand list. | ✅ Implemented |
 
-There is no `ttd timeline` command and no relative-unit `step-back --unit/--count` form; use `ttd step-back` (one frame), `ttd step-instruction` (one instruction) or `ttd reverse-step --count N`.
+There is no `ttd timeline` command and no relative-unit `step-back --unit/--count` form; use `ttd step-back` (one frame), `ttd step-instruction` (one instruction) or `ttd reverse-step --count N` / `--scanlines L`. A dial or a key steps through the history in a unit with the action `ttd.seek_by` (`unit`: frames, seconds, batch, instructions, tstates, scanlines, bookmarks) and `ttd.unit_back` / `ttd.unit_forward` (see §16).
 
 **Sessions on disk (`ttd dump` / `ttd load`).**
 
@@ -3804,6 +3855,35 @@ Readouts: `video.window` (the published WindowDisplay report, `available`), `vid
 | MCP | `actions` action `list` (`target`) | `actions` action `run` (`id`, `value`, `params`, `target`) |
 | Python | `emu.actions()` | `emu.action(id, value=None, **params)` |
 | Lua | `actions()` | `action(id, [value], [params])` |
+
+Run, step and time-travel units (Stream Deck use cases D1, D2, D3, D5, D6; `core/src/emulator/actions/steppingactions.cpp`,
+2026-10-21). Each calls the core verb of its route and takes that route's scope:
+
+| Action | Kind | Params | What |
+| :--- | :--- | :--- | :--- |
+| `run.pace_set` | press | `preset?`, `interval_ms?` | Choose the pace (§2.1); off full speed on a running machine it pauses and paces |
+| `run.pace_next`, `run.pace_prev` | press | | A finer / coarser preset |
+| `run.pace_by` | delta | | A dial walks the ladder |
+| `run.pace_toggle` | press (toggle) | | Run at the pace / stop; at full speed pause / continue (the dial's push); `toggle.run.pace_toggle` |
+| `run.pace_stop`, `run.pace_step` | press | | Stop the pace; one step at it |
+| `run.to_pixel` | press | | To the first paper pixel (needs a pause) |
+| `run.until_pc` | press | `pc`, `max_tstates?`, `breakpoints?` | Until PC = `pc` (needs a pause); `hit`, `stop` |
+| `run.to_cursor` | press | `addr?` (else the disassembly's cursor row), `max_tstates?` | To the cursor; a breakpoint on the way stops it (needs a pause). The cursor row moves with a click, Up / Down, PageUp / PageDown and `dbg.cursor_up` / `_down`, `dbg.page_up` / `_down` on the disassembly pane (from PC when there is none; the view scrolls to keep it visible); the memory pane's keys move its cursor, which `ttd.find_last*` take |
+| `run.step_line`, `run.to_line` | press | `max_tstates?`; `line` | Source level (a loaded listing; `Conflict` "No listing loaded") |
+| `run.step_by` | delta | `unit?` (instructions, frames, scanlines, tstates), `count?` | Forward runs `count` units a step, back steps back through the history in the unit |
+| `ttd.step_back_scanline`, `ttd.step_forward_scanline` | press | `count?` 1..1000 | A scanline (N) back (`reverse-step scanlines`) or forward (a seek to the T-state) |
+| `ttd.bookmark_prev`, `ttd.bookmark_next` | press | | The previous / next bookmark from the position; `Conflict` "no earlier bookmark" / "no later bookmark" |
+| `ttd.bookmarks` | press | | The bookmark list |
+| `ttd.find_last_write`, `ttd.find_last` | press | `addr?` (else the memory view's cursor, then the disassembly's), `access?` (find_last: write, read, execute, io), `seek?` (true), and the find-last filters | The last access before now, then the seek there (`seeked`, `arrived_at`) |
+| `ttd.seek_start`, `ttd.seek_end` | press | | The history's first frame / its end |
+| `ttd.unit_back`, `ttd.unit_forward` | press | `unit?`, `count?` | One step of the scrub unit |
+| `ttd.scrub_unit` | text | `count?` | The unit a dial scrubs in: `frames`, `seconds`, `batch` (10 frames), `instructions`, `tstates` (100), `scanlines`, `bookmarks`, or `next` / `prev`; the `ttd.position` topic and readout show it (`unit`, `unit_count`) |
+| `ttd.journal_build`, `ttd.journal_build_cancel` | press | `from_frame?`, `to_frame?` | Build the write journal / cancel a build |
+| `ttd.export_clip` | press | `path`, `from?` (the start), `to?` (the end), `chunk?` | A range of the history as a lossless clip |
+| `dbg.follow_pc`, `dbg.labels_toggle`, `dbg.scroll_mode_toggle`, `dbg.goto` | press (Qt) | `addr` (goto) | The disassembly: back to PC, labels on / off (`toggle.dbg.labels_toggle`), byte / command scroll, an address |
+
+`ttd.seek_by` takes the same `unit` (else the instance's scrub unit): frames and seconds keep the acceleration
+curve, `batch` moves `count` frames a step, the others answer through the verbs above, with `unit` in the result.
 
 The context (read; set with `ctx.set`) and a dial's seek on every surface:
 

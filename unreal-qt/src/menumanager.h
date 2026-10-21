@@ -165,6 +165,8 @@ signals:
     // Debug signals
     void stepInRequested();
     void stepOverRequested();
+    void stepOutRequested();
+    void runToCursorRequested();
 
     // View signals
     void toolBarToggled(bool visible);

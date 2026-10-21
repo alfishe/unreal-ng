@@ -22,6 +22,7 @@ openapi/
 ├── openapi_breakpoints.inc # Breakpoint management
 ├── openapi_capture.inc    # Screen/OCR/audio/video capture
 ├── openapi_debug.inc      # Memory, registers, disassembly
+├── openapi_pace.inc       # The paced run /run_pace (core RunPacer)
 ├── openapi_features.inc   # Runtime feature toggles
 ├── openapi_interpreter.inc # CLI/Lua/Python interpreters
 ├── openapi_keyboard.inc   # Keyboard injection

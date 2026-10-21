@@ -179,38 +179,6 @@
    "gui": false
   },
   {
-   "id": "ttd.find_last_write",
-   "label": "ttd.find_last_write",
-   "group": "Time travel",
-   "kind": "press",
-   "held": false,
-   "gui": false
-  },
-  {
-   "id": "ttd.bookmark_prev",
-   "label": "ttd.bookmark_prev",
-   "group": "Time travel",
-   "kind": "press",
-   "held": false,
-   "gui": false
-  },
-  {
-   "id": "ttd.bookmark_next",
-   "label": "ttd.bookmark_next",
-   "group": "Time travel",
-   "kind": "press",
-   "held": false,
-   "gui": false
-  },
-  {
-   "id": "ttd.step_back_scanline",
-   "label": "ttd.step_back_scanline",
-   "group": "Time travel",
-   "kind": "press",
-   "held": false,
-   "gui": false
-  },
-  {
    "id": "ctx.set",
    "label": "Set the surface context",
    "group": "Context",
@@ -431,7 +399,7 @@
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "name (turbo_mode, fast_tape, turbo_tape, fast_disk, turbo_audio, trdos_traps, ay_punch, beeper_punch, covox_dc_removal, fir_filter), on?"
+   "params": "name (turbo_mode, fast_tape, turbo_tape, fast_disk, turbo_audio, trdos_traps, ay_punch, beeper_punch), on?"
   },
   {
    "id": "set.value",
@@ -440,7 +408,7 @@
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "name, value (speed, audio_rate, the bool ones, ay_voicing, ay_room, ay_punch, beeper_punch, ay_stereo, ay_chip, fm_trim_db, neogs_stereo, covox_dc_removal, fir_filter)"
+   "params": "name, value (speed, the bool ones, ay_voicing, ay_room, ay_punch, beeper_punch)"
   },
   {
    "id": "audio.mute_toggle",
@@ -458,25 +426,7 @@
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "source (beeper, ay1, ay2, ay3, fm1, fm2, covox, gs, gs_mp3, moonsound_fm, moonsound_pcm, cd0..cd3, ms_*, next_ay1..3, next_dac; a channel: ay1.a, covox.lb, gs.3, ...), channel?, on? (else flips)"
-  },
-  {
-   "id": "audio.source_solo",
-   "label": "Solo a source",
-   "group": "Audio",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "source (a row: only soloed rows are heard; a channel ay1.a: only the soloed channels of its row), channel?, on? (else flips)"
-  },
-  {
-   "id": "audio.source_volume",
-   "label": "Set a volume",
-   "group": "Audio",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "source (a row or a channel), channel?, volume (0..1) or gain_db (-120..0)"
+   "params": "source (beeper, ay1, ay2, fm1, fm2, covox, gs, gs_mp3, moonsound_fm, moonsound_pcm, cd0..cd3), on?"
   },
   {
    "id": "audio.volume_by",
@@ -485,7 +435,7 @@
    "kind": "delta",
    "held": false,
    "gui": false,
-   "params": "source? (all rows; a row, or a channel ay1.a), channel?, step? (0.05 per detent)"
+   "params": "source? (all), step? (0.05 per detent)"
   },
   {
    "id": "media.open",
@@ -576,177 +526,6 @@
    "held": false,
    "gui": false,
    "params": "algorithm? (a name, or off; else flips between off and mod-tpgwafsd)"
-  },
-  {
-   "id": "video.gpu_toggle",
-   "label": "GPU acceleration",
-   "group": "Video",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "on? (else flips)"
-  },
-  {
-   "id": "video.crt_toggle",
-   "label": "CRT effects",
-   "group": "Video",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "on? (else flips)"
-  },
-  {
-   "id": "video.crt_profile",
-   "label": "CRT profile",
-   "group": "Video",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "profile? (a name of crt_profiles, next, prev; next)"
-  },
-  {
-   "id": "video.crt_param_by",
-   "label": "CRT parameter by a dial",
-   "group": "Video",
-   "kind": "delta",
-   "held": false,
-   "gui": false,
-   "params": "name (a parameter of the active profile), delta = steps"
-  },
-  {
-   "id": "video.crt_params_reset",
-   "label": "Reset CRT parameters",
-   "group": "Video",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "name? (one; else all)"
-  },
-  {
-   "id": "video.blending",
-   "label": "Frame blending",
-   "group": "Video",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "on? (else flips), frames? (2..5), weights? (equal|exponential), decay? (0.1..0.9)"
-  },
-  {
-   "id": "video.blending_decay_by",
-   "label": "Blending decay by a dial",
-   "group": "Video",
-   "kind": "delta",
-   "held": false,
-   "gui": false,
-   "params": "delta = tenths"
-  },
-  {
-   "id": "video.viewport",
-   "label": "Overscan viewport",
-   "group": "Video",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "viewport? (full|symmetric|standard|screen_only|next|prev; next)"
-  },
-  {
-   "id": "view.fullscreen",
-   "label": "Full screen",
-   "group": "View",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "on? (else flips)"
-  },
-  {
-   "id": "view.scale",
-   "label": "Window scale",
-   "group": "View",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "scale? (1..4, next, prev; next)"
-  },
-  {
-   "id": "view.toolbar",
-   "label": "Toolbar",
-   "group": "View",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "on? (else flips)"
-  },
-  {
-   "id": "view.status_bar",
-   "label": "Status bar",
-   "group": "View",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "on? (else flips)"
-  },
-  {
-   "id": "view.next_layers",
-   "label": "Next layers window",
-   "group": "View",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "on? (else flips)"
-  },
-  {
-   "id": "view.next_layers_mode",
-   "label": "Next layers mode",
-   "group": "View",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "mode? (layers|composed|winner|next|prev; next)"
-  },
-  {
-   "id": "view.next_layer",
-   "label": "Next layer tick",
-   "group": "View",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "name (ula|layer2|tilemap|sprites), on?"
-  },
-  {
-   "id": "hud.toggle",
-   "label": "HUD",
-   "group": "HUD",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "on? (else flips)"
-  },
-  {
-   "id": "hud.theme",
-   "label": "HUD theme",
-   "group": "HUD",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "theme? (a name of hud_themes, next, prev; next)"
-  },
-  {
-   "id": "hud.notice",
-   "label": "HUD notice",
-   "group": "HUD",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "name (a hud_notices id: ram-page, tape-events, ...), on?"
-  },
-  {
-   "id": "osd.keyboard_picture",
-   "label": "Keyboard picture",
-   "group": "Capture and machine",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "picture? (one of osd_keyboard_pictures, next, prev; next)"
   },
   {
    "id": "dbg.mode_toggle",
@@ -853,6 +632,236 @@
    "params": "path"
   },
   {
+   "id": "run.pace_set",
+   "label": "Pace",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "preset? (full|25fps|5fps|1fps|frame|100lines|10lines|1line|1op), interval_ms? (1..5000)"
+  },
+  {
+   "id": "run.pace_next",
+   "label": "Pace finer",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.pace_prev",
+   "label": "Pace coarser",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.pace_by",
+   "label": "Pace on a dial",
+   "group": "Run",
+   "kind": "delta",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.pace_toggle",
+   "label": "Pace run / pause",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.pace_stop",
+   "label": "Stop the pace",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.pace_step",
+   "label": "One step at the pace",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.to_pixel",
+   "label": "Run to the first paper pixel",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.until_pc",
+   "label": "Run until PC",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "pc, max_tstates? (0: 100 frames), breakpoints? (false: skipped)"
+  },
+  {
+   "id": "run.to_cursor",
+   "label": "Run to the cursor",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "addr? (else the disassembly's cursor), max_tstates? (0: 500 frames)"
+  },
+  {
+   "id": "run.step_line",
+   "label": "Step a source line",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "max_tstates? (0: 100 frames)"
+  },
+  {
+   "id": "run.to_line",
+   "label": "Run to a source line",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "line, max_tstates? (0: 500 frames)"
+  },
+  {
+   "id": "ttd.step_back_scanline",
+   "label": "Back one scanline",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "count? (1..1000, 1)"
+  },
+  {
+   "id": "ttd.step_forward_scanline",
+   "label": "Forward one scanline",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "count? (1..1000, 1)"
+  },
+  {
+   "id": "ttd.bookmark_prev",
+   "label": "Previous bookmark",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.bookmark_next",
+   "label": "Next bookmark",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.bookmarks",
+   "label": "Bookmarks",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.find_last_write",
+   "label": "Last write here",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "addr? (else the memory / disassembly cursor), seek? (true), pc_from?, pc_to?, value?, phys_page?, space?"
+  },
+  {
+   "id": "ttd.find_last",
+   "label": "Last access here",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "addr? (else the cursor), access? (write|read|execute|io), seek? (true), addr_from?, addr_to?, pc_from?, pc_to?, value?, phys_page?, space?"
+  },
+  {
+   "id": "ttd.seek_start",
+   "label": "The history's start",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.seek_end",
+   "label": "The history's end",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.unit_back",
+   "label": "Back one unit",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "unit? (else the chosen one), count?"
+  },
+  {
+   "id": "ttd.unit_forward",
+   "label": "Forward one unit",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "unit? (else the chosen one), count?"
+  },
+  {
+   "id": "ttd.scrub_unit",
+   "label": "Scrub unit",
+   "group": "Time travel",
+   "kind": "text",
+   "held": false,
+   "gui": false,
+   "params": "count? (a step: batch 10, tstates 100, else 1); the text: a unit, next or prev"
+  },
+  {
+   "id": "ttd.journal_build",
+   "label": "Build the write journal",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "from_frame?, to_frame?"
+  },
+  {
+   "id": "ttd.journal_build_cancel",
+   "label": "Cancel the journal build",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.export_clip",
+   "label": "Export a range as a clip",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "path, from? (the history's start), to? (its end), chunk?"
+  },
+  {
    "id": "ttd.scrub_back",
    "label": "Scrub back",
    "group": "Time travel",
@@ -949,8 +958,49 @@
    "gui": true
   },
   {
+   "id": "dbg.follow_pc",
+   "label": "Disassembly follows PC",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "dbg.labels_toggle",
+   "label": "Labels in the disassembly",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "dbg.scroll_mode_toggle",
+   "label": "Disassembly scrolls by bytes / instructions",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "dbg.goto",
+   "label": "Disassembly at an address",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true,
+   "params": "addr (0..#FFFF: decimal, 0x.., #.., $..)"
+  },
+  {
    "id": "cap.screenshot",
    "label": "Screenshot",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "osd.keyboard",
+   "label": "On-screen keyboard",
    "group": "Capture and machine",
    "kind": "press",
    "held": false,
@@ -960,22 +1010,6 @@
    "id": "dbg.breakpoint_toggle_pc",
    "label": "dbg.breakpoint_toggle_pc",
    "group": "Debugger",
-   "kind": "press",
-   "held": false,
-   "gui": true
-  },
-  {
-   "id": "dbg.labels_toggle",
-   "label": "dbg.labels_toggle",
-   "group": "Debugger",
-   "kind": "press",
-   "held": false,
-   "gui": true
-  },
-  {
-   "id": "osd.keyboard",
-   "label": "On-screen keyboard",
-   "group": "Capture and machine",
    "kind": "press",
    "held": false,
    "gui": true

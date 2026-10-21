@@ -1012,6 +1012,7 @@ ttd_set_journal_enabled(b)   --> ok, reason  -- switch the write journal at any 
 ttd_build_journal([from_frame], [to_frame])  --> {ok, error, cancelled, frames_built, frames_covered,
                                        --   frames_refused, records}: build it by replaying frames from..to
                                        --   (default: the whole session), about 2-4 ms per frame; not while recording
+ttd_cancel_journal_build()   --> {cancelled}  -- stop a build that runs (another thread's call)
 ttd_set_history_limit(frames, bytes)   --> frames, bytes  -- keep only the newest history while recording
                                        --   (0 = no limit, nil keeps a value; status: history_* fields)
 ttd_get_journal_enabled()    --> bool
@@ -1112,6 +1113,7 @@ ttd_position()   -- current, session_end, first_frame, history, state, paused, f
 ttd_reverse_step()               --> bool  -- one instruction back
 ttd_reverse_step(10)             --> bool  -- ten instructions back
 ttd_reverse_step_tstates(5000)   --> bool  -- back 5000 t-states (nearest instruction start)
+ttd_reverse_step_scanlines(2)    --> bool  -- back 2 scanlines of the machine (t_line each)
 
 local r = ttd_reverse_continue({0x8000, 0x8010})
 -- --> { matched = true, pc = 0x8000, frame = 4700, tinframe = 812 }
@@ -1269,6 +1271,17 @@ return a result table; on failure the table carries an `error` string.
 emu.step_out()                       -- run until the current subroutine returns
 emu.skip_until(0x8000)               -- fast-forward until PC == target (breakpoints skipped)
 emu.skip_until("0x8000", 70000000)   -- optional explicit t-state budget
+
+-- The paced run (core RunPacer, command-interface.md §2.1): a frame / lines / an instruction per interval,
+-- stops at a breakpoint. The reply: the body with `pace` and ok (false: error = the message)
+pace()                               -- {preset, label, unit, count, interval_ms, effective_ms, running, ticks,
+                                     --  stop_reason, presets}
+pace_set("5fps")                     -- full, 25fps, 5fps, 1fps, frame, 100lines, 10lines, 1line, 1op
+pace_set("1op", 200)                 -- and the interval of frame .. 1op (1..5000 ms)
+pace_interval(50)
+pace_next() pace_prev()              -- finer / coarser
+pace_start() pace_stop() pace_toggle()
+pace_step()                          -- one step at the pace
 
 -- Memory search
 emu.mem_find("AF 3C")                -- hex pattern as string (spaces optional)

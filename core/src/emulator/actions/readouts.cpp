@@ -7,6 +7,7 @@
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/actions/actionregistry.h"
 #include "emulator/actions/pictureactions.h"
+#include "emulator/actions/steppingactions.h"
 #include "emulator/config.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
@@ -41,6 +42,7 @@ StateNode RunState(Emulator& emulator)
                                              ? context->pCore->GetHostSpeedMultiplier()
                                              : 1);
     node["turbo"] = emulator.IsTurboMode();
+    node["pace"] = PaceReadout(emulator.GetId());  // the paced run (D1)
     return node;
 }
 
@@ -144,6 +146,9 @@ StateNode TtdPosition(Emulator& emulator)
     ttd::TTDReply reply = ttd::TTDControl(context).Execute({"position", {}});
     StateNode node = std::move(reply.body);
     node["available"] = reply.Ok();
+    // The unit a dial scrubs in (ttd.scrub_unit, D3.2): the strip shows it
+    node["unit"] = ScrubUnitOf(emulator.GetId());
+    node["unit_count"] = ScrubCountOf(emulator.GetId());
     return node;
 }
 

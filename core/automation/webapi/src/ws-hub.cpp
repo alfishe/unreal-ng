@@ -12,6 +12,7 @@
 #include "emulator/actions/contextstate.h"
 #include "emulator/actions/readouts.h"
 #include "emulator/actions/targetstate.h"
+#include "emulator/actions/steppingactions.h"
 #include "emulator/companions/streamdecksupervisor.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -651,6 +652,8 @@ Json::Value WsHub::Read(const std::string& name, const std::string& instanceId, 
         value["history"] = cursor.history;
         value["paused"] = hooks != nullptr ? cursor.paused : emulator.IsPaused();
         value["fps"] = ttd::TTDFrameRate(context);
+        value["unit"] = actions::ScrubUnitOf(instanceId);  // the scrub unit (ttd.scrub_unit, D3.2)
+        value["unit_count"] = static_cast<Json::Int64>(actions::ScrubCountOf(instanceId));
         return value;
     }
     if (name == "audio.mixer")

@@ -114,6 +114,15 @@ private slots:
     void focusPrevPane();
     void paneKey(int key);  ///< Qt::Key_Up / Down / Left / Right / PageUp / PageDown / Return into the pane in focus
 
+    // The disassembly's GUI actions (controllers/guiactions.cpp: dbg.follow_pc, dbg.labels_toggle,
+    // dbg.scroll_mode_toggle, dbg.goto)
+    void followPc();
+    void toggleLabels();
+    void toggleScrollMode();
+    void goToDisassemblyAddress(int address);
+    /// The memory view's cursor as a Z80 address: the debugger's "memory" cursor (ttd.find_last_write)
+    void publishMemoryCursor();
+
     void changeMemoryViewZ80Address(uint16_t addr);
     void changeMemoryViewBank(uint8_t bank);
     void changeMemoryViewAddress(uint8_t* address, size_t size, uint16_t offset = 0, uint16_t currentAddress = 0);
