@@ -3839,6 +3839,8 @@ void MainWindow::submitGuiAction(const char* id)
                                                        },
                                                        Qt::QueuedConnection);
                                                });
+}
+
 void MainWindow::handleToggleBreakpoint()
 {
     if (debuggerWindow && debuggerWindow->isVisible())

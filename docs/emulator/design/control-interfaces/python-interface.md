@@ -1093,7 +1093,7 @@ id = emu.bp_key("space")            # keyboard: the first keyboard read that see
 emu.bp_select("group:game", "disable")  # a selection (all, an id, a kind: exec, read, write, mem, port, in, out,
                                     # nextreg, beam, copper, magic, keyboard; group:<name>): enable | disable | toggle |
                                     # remove -> {select, selected, changed, active}; a refusal: ok=False, error
-emu.bp_groups()                     # [{name, count, enabled, active}]
+emu.bp_groups()                     # {groups: [{name, total, active, ids}]}
 emu.trace("opcode", "start")        # profilers and traces (tracecontrol): opcode, memory, calltrace, coverage,
                                     # porttrace, gsporttrace, pchist, aylog, audio, all; start | stop | toggle | pause |
 emu.trace("audio", "start", seconds=2, source="ay1")  # resume | pause_toggle | clear | status -> {name, state, can_pause}

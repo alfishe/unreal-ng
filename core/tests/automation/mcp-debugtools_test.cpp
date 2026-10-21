@@ -127,8 +127,8 @@ TEST_F(McpDebugTools_Test, ControlExecution_GroupsNotesAndKeyboard)
 {
     Json::Value groups;
     groups["groups"][0]["name"] = "loop";
-    groups["groups"][0]["count"] = 2;
-    groups["groups"][0]["enabled"] = 1;
+    groups["groups"][0]["total"] = 2;
+    groups["groups"][0]["active"] = 1;
     _caller->routes["GET /api/v1/emulator/emu-1/breakpoints/groups"] = {200, groups};
     Json::Value args;
     args["action"] = "bp_groups";

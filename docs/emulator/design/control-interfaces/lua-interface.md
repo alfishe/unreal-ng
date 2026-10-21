@@ -790,7 +790,7 @@ bp_group(id, "game")           -- group, created on use; switched on / off toget
 id = bp_key("space")           -- keyboard: the first keyboard read that sees SPACE go down; {on="release"|"both", hits=, group=, note=}; "any"
 bp_select("group:game", "disable")  -- a selection (all, an id, a kind, group:<name>): enable | disable | toggle | remove
                                -- -> {select, selected, changed, active}; a refusal: ok = false, error
-bp_groups()                    -- {{name, count, enabled, active}, ...}
+bp_groups()                    -- {ok, instance, groups = {{name, total, active, ids}, ...}}
 trace("opcode", "start")       -- profilers and traces (tracecontrol): opcode, memory, calltrace, coverage, porttrace,
 trace("audio", "start", {seconds = 2, source = "ay1"})  -- gsporttrace, pchist, aylog, audio, all; start | stop | toggle |
                                -- pause | resume | pause_toggle | clear | status -> {name, state, can_pause}

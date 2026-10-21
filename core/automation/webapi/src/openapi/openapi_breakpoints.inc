@@ -160,16 +160,6 @@
     paths["/api/v1/emulator/{id}/breakpoints/remove"]["post"]["responses"]["400"]["description"] = "A bad selection";
     paths["/api/v1/emulator/{id}/breakpoints/remove"]["post"]["responses"]["404"]["description"] = "No breakpoint with that id";
 
-    paths["/api/v1/emulator/{id}/breakpoints/groups"]["get"]["summary"] = "Breakpoint groups";
-    paths["/api/v1/emulator/{id}/breakpoints/groups"]["get"]["description"] =
-        "The groups of the user's breakpoints: name, count, enabled (how many are on), active (all of them on).";
-    paths["/api/v1/emulator/{id}/breakpoints/groups"]["get"]["tags"].append("Debug Commands");
-    paths["/api/v1/emulator/{id}/breakpoints/groups"]["get"]["parameters"][0]["name"] = "id";
-    paths["/api/v1/emulator/{id}/breakpoints/groups"]["get"]["parameters"][0]["in"] = "path";
-    paths["/api/v1/emulator/{id}/breakpoints/groups"]["get"]["parameters"][0]["required"] = true;
-    paths["/api/v1/emulator/{id}/breakpoints/groups"]["get"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/breakpoints/groups"]["get"]["responses"]["200"]["description"] = "The groups";
-
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["summary"] = "Move a breakpoint to a group";
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["description"] =
         "Body {group}: the group (made on use); \"\" or \"default\": back to the default group. Answers the breakpoint.";

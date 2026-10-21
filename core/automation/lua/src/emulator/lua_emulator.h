@@ -3494,11 +3494,6 @@ public:
             out["error"] = error;
             return StateNodeToLua(ts, out);
         });
-        // bp_groups(): {{name, count, enabled, active}, ...}
-        lua.set_function("bp_groups", [this](sol::this_state ts) -> sol::object {
-            BreakpointManager* bpm = effectiveEmulator() ? effectiveEmulator()->GetBreakpointManager() : nullptr;
-            return StateNodeToLua(ts, bpm ? BreakpointSelection::Groups(*bpm) : StateNode::Array());
-        });
         // bp_key(key, {on = "press" | "release" | "both", hits =, group =, note =}): stops on the first keyboard read
         // that sees the key ("any": any key) go down / up. The id, or nil and the reason
         lua.set_function("bp_key", [this](sol::this_state ts, const std::string& key, sol::optional<sol::table> opts)

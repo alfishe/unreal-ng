@@ -517,7 +517,6 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getBreakpointsActive, "/api/v1/emulator/{id}/breakpoints/active", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::setBreakpointsActive, "/api/v1/emulator/{id}/breakpoints/active", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::removeBreakpoints, "/api/v1/emulator/{id}/breakpoints/remove", drogon::Post);
-    ADD_METHOD_TO(EmulatorAPI::getBreakpointGroups, "/api/v1/emulator/{id}/breakpoints/groups", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::setBreakpointGroup, "/api/v1/emulator/{id}/breakpoints/{bp_id}/group", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::setBreakpointNote, "/api/v1/emulator/{id}/breakpoints/{bp_id}/note", drogon::Put);
 
@@ -1732,8 +1731,6 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void removeBreakpoints(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
-    void getBreakpointGroups(const drogon::HttpRequestPtr& req,
-                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void setBreakpointGroup(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
                             const std::string& bpIdStr) const;

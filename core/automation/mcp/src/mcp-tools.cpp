@@ -1492,8 +1492,8 @@ void RegisterControlExecution(ToolRegistry& registry)
                             std::ostringstream out;
                             out << "Breakpoint groups: " << result.structured["groups"].size();
                             for (const Json::Value& group : result.structured["groups"])
-                                out << "\n" << group["name"].asString() << ": " << group["enabled"].asUInt() << " of "
-                                    << group["count"].asUInt() << " on";
+                                out << "\n" << group["name"].asString() << ": " << group["active"].asUInt() << " of "
+                                    << group["total"].asUInt() << " on";
                             result.text = out.str();
                         }
                         done(std::move(result));

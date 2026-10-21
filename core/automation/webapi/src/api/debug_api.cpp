@@ -1580,41 +1580,6 @@ void EmulatorAPI::removeBreakpoints(const HttpRequestPtr& req, std::function<voi
     ReplyJson(callback, ret, HttpStatusCode::k200OK);
 }
 
-/// @brief GET /api/v1/emulator/{id}/breakpoints/groups - the groups of the user's breakpoints: name, count, active
-void EmulatorAPI::getBreakpointGroups(const HttpRequestPtr& /*req*/,
-                                      std::function<void(const HttpResponsePtr&)>&& callback,
-                                      const std::string& id) const
-{
-    auto emulator = getEmulatorOrError(id, callback);
-    if (!emulator)
-        return;
-    BreakpointManager* bpm = ManagerOrError(emulator, callback);
-    if (!bpm)
-        return;
-    std::map<std::string, std::pair<unsigned, unsigned>> groups;  // name -> count, active
-    for (const auto& [bpId, bp] : bpm->GetAllBreakpoints())
-        if (bp && BreakpointManager::IsUserBreakpoint(*bp))
-        {
-            auto& entry = groups[bp->group];
-            entry.first++;
-            entry.second += bp->active ? 1u : 0u;
-        }
-    Json::Value list(Json::arrayValue);
-    for (const auto& [name, counts] : groups)
-    {
-        Json::Value group;
-        group["name"] = name;
-        group["count"] = counts.first;
-        group["enabled"] = counts.second;
-        group["active"] = counts.second == counts.first;
-        list.append(group);
-    }
-    Json::Value ret;
-    ret["count"] = list.size();
-    ret["groups"] = list;
-    ReplyJson(callback, ret, HttpStatusCode::k200OK);
-}
-
 /// @brief PUT /api/v1/emulator/{id}/breakpoints/{bp_id}/group - {group}: move a breakpoint to a group ("" or
 /// "default": back to the default group)
 void EmulatorAPI::setBreakpointGroup(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,

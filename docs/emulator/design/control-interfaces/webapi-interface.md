@@ -803,7 +803,7 @@ POST   /api/v1/emulator/{id}/breakpoints/hits/reset        Hit counters to 0 ({"
 GET    /api/v1/emulator/{id}/breakpoints/active?select=    Is a selection on (all, an id, a kind, group:<name>)
 PUT    /api/v1/emulator/{id}/breakpoints/active            {select, active: true | false | "toggle"}: switch a selection
 POST   /api/v1/emulator/{id}/breakpoints/remove            {select}: remove a selection
-GET    /api/v1/emulator/{id}/breakpoints/groups            The groups: name, count, enabled, active
+GET    /api/v1/emulator/{id}/breakpoints/groups            The groups: {groups: [{name, total, active, ids}]}
 PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/group     {group}: move to a group ("" / "default": back)
 PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/note      {note}: the annotation ("" clears)
 ```

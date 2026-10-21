@@ -2664,10 +2664,6 @@ namespace PythonBindings
             }, "Breakpoints by selection (all, an id, a kind: exec, read, write, mem, port, in, out, nextreg, beam, copper, "
                "magic, keyboard; group:<name>): op enable | disable | toggle | remove. {select, selected, changed, active}; "
                "a refusal: ok = False, error", py::arg("select"), py::arg("op"))
-            .def("bp_groups", [](Emulator& self) -> py::object {
-                BreakpointManager* bpm = self.GetBreakpointManager();
-                return StateNodeToPy(bpm ? BreakpointSelection::Groups(*bpm) : StateNode::Array());
-            }, "The groups of the user's breakpoints: [{name, count, enabled, active}]")
             .def("bp_key", [](Emulator& self, const std::string& key, const std::string& on, const std::string& hits,
                               const std::string& group, const std::string& note) -> int {
                 BreakpointManager* bpm = self.GetBreakpointManager();

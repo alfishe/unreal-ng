@@ -452,12 +452,6 @@ std::vector<RegistrationHandle> RegisterBuiltinActions(ActionRegistry& registry)
         r.unavailable = NoTtd;
         return r;
     };
-    auto stub = [&](const char* id, const char* group) {
-        ActionRules r;
-        r.unavailable = [](Emulator&, const ActionValue&) { return std::string("not available yet"); };
-        r.unavailableError = "Not Implemented";
-        add(id, id, group, ValueKind::Press, nullptr, std::move(r));
-    };
 
     // 3.1 Run control
     const char* run = "Run";
