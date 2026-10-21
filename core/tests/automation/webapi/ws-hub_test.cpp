@@ -3,7 +3,9 @@
 // loop runs tasks at once, its clock is the test's and its timer is recorded. The conformance of the protocol at the
 // unit level: auth and its errors, join, actions with rid / without, coalescing, ctx (a setter and the default
 // following the history), readouts and topics (full, then changed only, at the subscriber's rate), the timer armed
-// only while somebody subscribes, follow and pin, revoked, bye
+// only while somebody subscribes, follow and pin, revoked, bye; the `instances` topic (the events socket's view), the
+// debug.* topics (DebugEventHub's events) and backpressure (a congested connection gets control messages only, then
+// the latest values and the events with `dropped`; too long congested: slow_consumer)
 
 #include "pch.h"
 
@@ -196,13 +198,38 @@ protected:
         _handles.push_back(_registry->Register(std::move(info), std::move(run), std::move(rules)));
     }
 
-    void Connect(Inbox& inbox, const std::string& token = kToken, const std::string& source = "")
+    void Connect(Inbox& inbox, const std::string& token = kToken, const std::string& source = "",
+                 const std::string& host = "127.0.0.1", std::shared_ptr<WsFlow> flow = nullptr,
+                 std::function<void()> probe = nullptr)
     {
         WsHub::Peer peer;
         peer.token = token;
         peer.source = source;
-        peer.host = "127.0.0.1";
-        _hub->Open(&inbox, peer, inbox.Sender(), inbox.Closer());
+        peer.host = host;
+        _hub->Open(&inbox, peer, inbox.Sender(), inbox.Closer(), std::move(flow), std::move(probe));
+    }
+
+    /// A debugger event as DebugEventHub publishes it (numbered)
+    static Json::Value DebugEvent(const std::string& id, uint64_t seq, const std::string& event)
+    {
+        Json::Value out;
+        out["op"] = "event";
+        out["topic"] = "debug";
+        out["seq"] = static_cast<Json::UInt64>(seq);
+        out["emulator"] = id;
+        out["cpu"] = "main";
+        out["event"] = event;
+        return out;
+    }
+
+    /// The messages of topic `t`
+    static std::vector<Json::Value> InTopic(Inbox& inbox, const std::string& t)
+    {
+        std::vector<Json::Value> out;
+        for (const Json::Value& message : inbox.Messages())
+            if (message["t"].asString() == t)
+                out.push_back(message);
+        return out;
     }
 
     bool Send(Inbox& inbox, const std::string& json) { return _hub->HandleMessage(&inbox, Parse(json)); }
@@ -559,6 +586,225 @@ TEST_F(WsHub_Test, TopicsNeedATokenAndPushEachInstancesStateOnceThenChanges)
 }
 
 /// endregion </Readouts and topics>
+
+/// region <instances and debug.*>
+
+TEST_F(WsHub_Test, InstancesSendsTheViewOnceThenEachChangedEntryAndGoneAsTheEventsSocket)
+{
+    // The view a companion is shown (the WebAPI: CompanionMeJson): the test's
+    Json::Value view(Json::objectValue);
+    view["companion"]["id"] = "deck";
+    view["emulators"] = Json::Value(Json::arrayValue);
+    auto entry = [](const std::string& id, const std::string& state) {
+        Json::Value e;
+        e["id"] = id;
+        e["state"] = state;
+        return e;
+    };
+    view["emulators"].append(entry("a", "paused"));
+    view["emulators"].append(entry("b", "running"));
+    std::vector<std::string> askedFor;
+    _hub->SetSnapshot([&](const companion::CompanionInfo& companion) {
+        askedFor.push_back(companion.name);
+        return view;
+    });
+
+    Inbox anonymous;
+    Connect(anonymous, "");
+    Send(anonymous, R"({"op":"subscribe","topics":["instances"]})");
+    EXPECT_EQ(anonymous.Last()["error"].asString(), "companion_required") << "the view is a companion's";
+
+    Inbox inbox;
+    Connect(inbox);
+    Send(inbox, R"({"op":"subscribe","topics":["instances"]})");
+    std::vector<Json::Value> messages = inbox.Messages();
+    ASSERT_EQ(messages.size(), 2u);
+    EXPECT_EQ(messages[0]["op"].asString(), "subscribed");
+    const Json::Value hello = messages[1];
+    EXPECT_EQ(hello["t"].asString(), "instances");
+    EXPECT_EQ(hello["op"].asString(), "hello");
+    EXPECT_EQ(hello["seq"].asUInt64(), 1u);
+    EXPECT_EQ(hello["companion"]["id"].asString(), "deck");
+    ASSERT_EQ(hello["emulators"].size(), 2u);
+    EXPECT_EQ(askedFor, std::vector<std::string>{"deck"}) << "built once per companion and refresh";
+
+    // Nothing changed: nothing sent; one entry changed: that entry
+    inbox.Clear();
+    _hub->RefreshInstances();
+    EXPECT_TRUE(inbox.Messages().empty());
+    view["emulators"][0]["state"] = "running";
+    _hub->RefreshInstances();
+    messages = inbox.Messages();
+    ASSERT_EQ(messages.size(), 1u);
+    EXPECT_EQ(messages[0]["op"].asString(), "emulator");
+    EXPECT_EQ(messages[0]["seq"].asUInt64(), 2u);
+    EXPECT_EQ(messages[0]["emulator"]["id"].asString(), "a");
+    EXPECT_EQ(messages[0]["emulator"]["state"].asString(), "running");
+
+    // An instance closed
+    view["emulators"].resize(1);
+    inbox.Clear();
+    _hub->RefreshInstances();
+    ASSERT_EQ(inbox.Messages().size(), 1u);
+    EXPECT_EQ(inbox.Last()["op"].asString(), "emulator_gone");
+    EXPECT_EQ(inbox.Last()["id"].asString(), "b");
+    EXPECT_EQ(inbox.Last()["seq"].asUInt64(), 3u);
+
+    // {"op":"snapshot"}: the whole view again; the tick re-checks once a second (what changes with time alone)
+    inbox.Clear();
+    EXPECT_TRUE(Send(inbox, R"({"op":"snapshot"})"));
+    ASSERT_EQ(inbox.Ops("snapshot").size(), 1u);
+    EXPECT_EQ(inbox.Ops("snapshot")[0]["emulators"].size(), 1u);
+    view["emulators"].append(entry("c", "paused"));
+    inbox.Clear();
+    Advance(1000);
+    _hub->Tick();
+    ASSERT_EQ(inbox.Ops("emulator").size(), 1u);
+    EXPECT_EQ(inbox.Ops("emulator")[0]["emulator"]["id"].asString(), "c");
+
+    Send(inbox, R"({"op":"unsubscribe","topics":["instances"]})");
+    Send(inbox, R"({"op":"snapshot"})");
+    EXPECT_EQ(inbox.Last()["error"].asString(), "bad_request") << "snapshot needs the topic";
+    EXPECT_EQ(_hub->TimerHz(), 0);
+}
+
+TEST_F(WsHub_Test, DebugTopicsCarryDebugEventHubsEventsAndNeedNoTokenFromThisHost)
+{
+    Inbox remote;
+    Connect(remote, "", "", "192.168.1.5");
+    Send(remote, R"({"op":"subscribe","topics":["debug.*"]})");
+    EXPECT_EQ(remote.Last()["error"].asString(), "companion_required");
+    EXPECT_TRUE(remote.Ops("subscribed").empty()) << "nothing subscribed: no ack, as for the state topics";
+
+    Inbox local;
+    Connect(local, "");
+    Send(local, R"({"op":"subscribe","topics":["debug.*"]})");
+    const Json::Value ack = local.Last();
+    ASSERT_EQ(ack["op"].asString(), "subscribed");
+    ASSERT_EQ(ack["topics"].size(), 2u);
+    EXPECT_EQ(ack["topics"][0].asString(), "debug.asm_sync");
+    EXPECT_EQ(ack["topics"][1].asString(), "debug.events");
+
+    Inbox companionOnly;
+    Connect(companionOnly);
+    Send(companionOnly, R"({"op":"subscribe","topics":["debug.events"]})");
+    local.Clear();
+    companionOnly.Clear();
+
+    _hub->OnDebugEvent("debug", DebugEvent(_id, 7, "paused"));
+    Json::Value asmSync = DebugEvent(_id, 8, "asm_sync_built");
+    asmSync["topic"] = "asm_sync";
+    _hub->OnDebugEvent("asm_sync", asmSync);
+    const std::vector<Json::Value> events = local.Ops("event");
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_EQ(events[0]["t"].asString(), "debug.events");
+    EXPECT_EQ(events[0]["event"].asString(), "paused");
+    EXPECT_EQ(events[0]["seq"].asUInt64(), 7u) << "DebugEventHub's numbering, as /api/v1/websocket";
+    EXPECT_EQ(events[0]["instance"].asString(), _id);
+    EXPECT_EQ(events[0]["emulator"].asString(), _id);
+    EXPECT_FALSE(events[0].isMember("topic")) << "t is the topic";
+    EXPECT_FALSE(events[0].isMember("dropped"));
+    EXPECT_EQ(events[1]["t"].asString(), "debug.asm_sync");
+    ASSERT_EQ(companionOnly.Ops("event").size(), 1u) << "only the topics it subscribed";
+    EXPECT_EQ(_hub->TimerHz(), WsHub::kDefaultHz);
+
+    Send(local, R"({"op":"unsubscribe","topics":["debug.*"]})");
+    Send(companionOnly, R"({"op":"unsubscribe","topics":["*"]})");
+    local.Clear();
+    _hub->OnDebugEvent("debug", DebugEvent(_id, 9, "resumed"));
+    EXPECT_TRUE(local.Messages().empty());
+    EXPECT_EQ(_hub->TimerHz(), 0);
+}
+
+/// endregion </instances and debug.*>
+
+/// region <Backpressure>
+
+TEST_F(WsHub_Test, ACongestedConnectionGetsControlMessagesOnlyThenTheLatestValuesAndEventsWithDropped)
+{
+    auto flow = std::make_shared<WsFlow>();
+    int probes = 0;
+    Inbox inbox;
+    Connect(inbox, kToken, "", "127.0.0.1", flow, [&] { probes++; });
+    Send(inbox, R"({"op":"subscribe","topics":["run.state","debug.events"],"max_hz":50})");
+    ASSERT_EQ(InTopic(inbox, "run.state").size(), 1u);
+    EXPECT_FALSE(InTopic(inbox, "run.state")[0]["value"]["turbo"].asBool());
+
+    // Above the high-water mark: values wait, events queue (the oldest dropped), the transport is asked to measure
+    flow->queued = 300000;
+    flow->congested = true;
+    inbox.Clear();
+    _emulator->EnableTurboMode(false);
+    for (uint64_t seq = 1; seq <= WsHub::kEventQueue + 44; ++seq)
+        _hub->OnDebugEvent("debug", DebugEvent(_id, seq, "step_done"));
+    Advance(20);
+    _hub->Tick();
+    Advance(20);
+    _hub->Tick();
+    EXPECT_TRUE(inbox.Messages().empty()) << "nothing but control messages";
+    EXPECT_EQ(probes, 2) << "one measure per tick while congested";
+    // ...control messages still go at once (the tick a subscribe wakes measures again)
+    Send(inbox, R"({"op":"subscribe","topics":["surfaces.context"]})");
+    ASSERT_EQ(inbox.Messages().size(), 1u);
+    EXPECT_EQ(inbox.Last()["op"].asString(), "subscribed");
+    EXPECT_EQ(probes, 3);
+
+    // Drained: the latest values once, the events kept with how many were lost
+    flow->congested = false;
+    inbox.Clear();
+    Advance(20);
+    _hub->Tick();
+    const std::vector<Json::Value> states = InTopic(inbox, "run.state");
+    ASSERT_EQ(states.size(), 1u);
+    EXPECT_TRUE(states[0]["value"]["turbo"].asBool()) << "the latest value";
+    const std::vector<Json::Value> events = inbox.Ops("event");
+    ASSERT_EQ(events.size(), WsHub::kEventQueue);
+    EXPECT_EQ(events.front()["dropped"].asUInt64(), 44u);
+    EXPECT_EQ(events.front()["seq"].asUInt64(), 45u) << "the oldest were dropped";
+    EXPECT_FALSE(events[1].isMember("dropped"));
+    EXPECT_EQ(events.back()["seq"].asUInt64(), WsHub::kEventQueue + 44);
+    EXPECT_EQ(probes, 3) << "not measured once below the mark";
+    _emulator->DisableTurboMode();
+}
+
+TEST_F(WsHub_Test, AConnectionCongestedLongerThanTheLimitIsClosedAsASlowConsumer)
+{
+    _hub->SetSlowConsumerLimit(std::chrono::milliseconds(500));
+    auto flow = std::make_shared<WsFlow>();
+    Inbox slow;
+    Connect(slow, kToken, "", "127.0.0.1", flow);
+    Send(slow, R"({"op":"subscribe","topics":["run.state"],"max_hz":10})");
+    Inbox other;
+    Connect(other);
+    Send(other, R"({"op":"subscribe","topics":["run.state"],"max_hz":10})");
+
+    flow->queued = 262145;
+    flow->congested = true;
+    _hub->Tick();  // congested from now
+    Advance(400);
+    _hub->Tick();
+    flow->congested = false;  // drained in time: the clock starts again
+    Advance(100);
+    _hub->Tick();
+    flow->congested = true;
+    _hub->Tick();
+    Advance(499);
+    _hub->Tick();
+    EXPECT_FALSE(slow.Closed());
+    Advance(1);
+    _hub->Tick();
+    EXPECT_TRUE(slow.Closed());
+    const Json::Value error = slow.Last();
+    EXPECT_EQ(error["op"].asString(), "error");
+    EXPECT_EQ(error["t"].asString(), "ws");
+    EXPECT_EQ(error["error"].asString(), "slow_consumer");
+    EXPECT_NE(error["message"].asString().find("262145"), std::string::npos) << error["message"].asString();
+    EXPECT_FALSE(other.Closed()) << "the others go on";
+    _hub->Remove(&slow);
+    EXPECT_EQ(_hub->Connections(), 1u);
+}
+
+/// endregion </Backpressure>
 
 /// region <Binding, revocation, bye>
 

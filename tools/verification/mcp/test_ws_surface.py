@@ -4,11 +4,15 @@ control-surfaces/protocol.md; Stream Deck integration protocol.md §0), the conf
 auth and its errors (companion_required, companion_not_for_agents, companion_unknown), join and welcome, actions with
 rid (run.pause_toggle, ctx.set, ttd.seek_by with marks) and their refusals (companion_forbidden, bad_request,
 Not Found), `ctx` from one session reaching another, the default context flipping to `ttd` when a history appears,
-readouts (full, then changed only) and the hub topics (run.state, surfaces.context), and 50 Hz readout subscribers
-beside a running machine measured: the same frames per second. Last: revoking the companion closes its socket.
+readouts (full, then changed only) and the hub topics (run.state, surfaces.context), the `instances` topic (the events
+socket's view: hello, emulator, snapshot) and the debug.* topics (DebugEventHub's events, the same numbering as
+/api/v1/websocket), and 50 Hz readout subscribers beside a running machine measured: the same frames per second. A
+client that stops reading is closed as a slow consumer (backpressure; mcplib.launch sets a small high-water mark and
+limit). Last: revoking the companion closes its socket.
 
 Uses the `surface` companion mcplib.launch provisions (UNREAL_COMPANION_TOKENS); stdlib only."""
 
+import os
 import sys
 import threading
 import time
@@ -285,6 +289,115 @@ def test_readouts_at_50_hz_leave_the_frame_rate_unchanged(s):
     finally:
         http(s, 'POST', f'/api/v1/emulator/{emu}/pause', token=TOKEN)
         http(s, 'POST', f'/api/v1/emulator/{emu}/ttd/stop', token=TOKEN)
+
+
+def test_instances_is_the_events_sockets_view_on_the_one_socket(s):
+    emu = instance(s)
+    http(s, 'POST', f'/api/v1/emulator/{emu}/pause', token=TOKEN)
+    anonymous = connect(s, token=None)
+    anonymous.send({'op': 'subscribe', 'topics': ['instances']})
+    error = anonymous.until(lambda m: m.get('op') == 'error', 'an error')
+    expect(error['error'] == 'companion_required', 'a companion view', error)
+    anonymous.close()
+
+    ws = connect(s)
+    ws.send({'op': 'subscribe', 'topics': ['instances', 'run.state']})
+    ack = ws.until(lambda m: m.get('op') == 'subscribed', 'subscribed')
+    expect(set(ack['topics']) == {'instances', 'run.state'}, 'both topics', ack)
+    hello = ws.until(lambda m: m.get('t') == 'instances', 'hello')
+    expect(hello['op'] == 'hello' and hello['seq'] == 1 and hello['companion']['name'] == 'surface', 'hello: me', hello)
+    entry = next(e for e in hello['emulators'] if e['id'] == emu)
+    expect(entry['state'] == 'paused' and entry['actions']['step']['available'], 'paused: step lit', entry)
+    # The same view as the events socket
+    events = WebSocket(port(s), path='/api/v1/companions/events', token=TOKEN)
+    old = events.until(lambda m: m.get('op') == 'hello', 'the events socket hello')
+    expect(next(e for e in old['emulators'] if e['id'] == emu) == entry, 'the same entry on both sockets', old)
+
+    start = time.time()
+    http(s, 'POST', f'/api/v1/emulator/{emu}/resume', token=TOKEN)
+    running = ws.until(lambda m: m.get('t') == 'instances' and m.get('op') == 'emulator' and
+                       m['emulator']['id'] == emu and not m['emulator']['actions']['step']['available'],
+                       'resumed: step goes dark')
+    expect(running['seq'] >= 2, 'numbered', running)
+    expect(time.time() - start < 0.9, 'at once, not at the next second', time.time() - start)
+    events.until(lambda m: m.get('op') == 'emulator' and m['emulator']['id'] == emu, 'the events socket goes on')
+    http(s, 'POST', f'/api/v1/emulator/{emu}/pause', token=TOKEN)
+    ws.until(lambda m: m.get('t') == 'instances' and m.get('op') == 'emulator' and
+             m['emulator']['actions']['step']['available'], 'paused again')
+    ws.send({'op': 'snapshot'})
+    snapshot = ws.until(lambda m: m.get('t') == 'instances' and m.get('op') == 'snapshot', 'the whole view again')
+    expect(any(e['id'] == emu for e in snapshot['emulators']), 'with the instance', snapshot)
+    events.close()
+    ws.close()
+
+
+def test_debug_topics_carry_the_debugger_events_with_the_old_sockets_numbering(s):
+    emu = instance(s)
+    http(s, 'POST', f'/api/v1/emulator/{emu}/pause', token=TOKEN)
+    ws = connect(s, token=None)  # this host: no token needed, as /api/v1/websocket
+    ws.send({'op': 'subscribe', 'topics': ['debug.*']})
+    ack = ws.until(lambda m: m.get('op') == 'subscribed', 'subscribed')
+    expect(set(ack['topics']) == {'debug.events', 'debug.asm_sync'}, 'the debug topics', ack)
+    old = WebSocket(port(s), path='/api/v1/websocket')
+    old.send({'op': 'subscribe', 'id': 's1', 'emulator': emu, 'topics': ['debug']})
+    old.until(lambda m: m.get('op') == 'subscribed', 'the old socket subscribed')
+
+    http(s, 'POST', f'/api/v1/emulator/{emu}/resume', token=TOKEN)
+    http(s, 'POST', f'/api/v1/emulator/{emu}/pause', token=TOKEN)
+    resumed = ws.until(lambda m: m.get('op') == 'event' and m.get('event') == 'resumed' and m['instance'] == emu,
+                       'resumed')
+    paused = ws.until(lambda m: m.get('op') == 'event' and m.get('event') == 'paused', 'paused')
+    expect(resumed['t'] == 'debug.events' and 'topic' not in resumed, 'in its topic', resumed)
+    expect(paused['seq'] > resumed['seq'] and paused['reason'] == 'pause', 'numbered, with the reason', paused)
+    old_paused = old.until(lambda m: m.get('op') == 'event' and m.get('event') == 'paused', 'the old socket: paused')
+    expect(old_paused['seq'] == paused['seq'], 'one numbering for both sockets', (old_paused, paused))
+    ws.send({'op': 'unsubscribe', 'topics': ['debug.*']})
+    ws.until(lambda m: m.get('op') == 'unsubscribed', 'unsubscribed')
+    old.close()
+    ws.close()
+
+
+def test_a_client_that_stops_reading_is_closed_as_a_slow_consumer(s):
+    """Backpressure: a socket that reads nothing while it asks for the whole instances view again and again. Above the high-water mark the hub sends no more views; past the limit it sends `slow_consumer`
+    and closes. Another client meanwhile is served"""
+    limit = int(os.environ.get('UNREAL_WS_SLOW_CONSUMER_MS', '10000')) / 1000
+    slow = WebSocket(port(s), token=TOKEN, rcvbuf=4096)
+    other = connect(s)
+    other.send({'op': 'subscribe', 'topics': ['run.state']})
+    other.until(lambda m: m.get('op') == 'subscribed', 'another client')
+    slow.send({'op': 'subscribe', 'topics': ['instances']})
+    # Spaced, so each is answered with a view of its own (requests within one loop turn share one) until the kernel's
+    # buffers (several hundred KiB on loopback: macOS raises a small SO_RCVBUF) and then the mark are full
+    asked = 0
+    started = time.time()
+    while time.time() - started < min(1.0, limit / 2):
+        slow.send({'op': 'snapshot'})
+        asked += 1
+        time.sleep(0.001)
+    # Reads nothing: the queue stays above the mark. The limit runs from when it filled (within the sending above);
+    # read before the close's grace (2 s after slow_consumer) drops the connection with what it still queued
+    time.sleep(max(0.0, started + limit + 0.6 - time.time()))
+    other.send({'op': 'unsubscribe', 'topics': ['run.state']})
+    other.until(lambda m: m.get('op') == 'unsubscribed', 'the other client is served meanwhile')
+    seen = 0
+    error = None
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        message = slow.recv(2)
+        if message is None:
+            break
+        seen += 1
+        if message.get('op') == 'error':
+            error = message
+    expect(error is not None and error['error'] == 'slow_consumer' and error['t'] == 'ws', 'slow_consumer',
+           (seen, error))
+    expect(slow.closed, 'and the socket is closed', seen)
+    snapshots = seen - 2  # subscribed, the error
+    expect(snapshots < asked, f'fewer views than asked for ({snapshots} of {asked}): none sent above the mark',
+           snapshots)
+    print(f'        a slow consumer: {snapshots} views sent of {asked} asked for, then slow_consumer')
+    slow.close()
+    other.close()
 
 
 def test_zz_revoking_the_companion_closes_its_socket(s):

@@ -176,6 +176,20 @@ void DebugEventHub::RemoveClient(const void* client)
     _clients.erase(client);
 }
 
+uint64_t DebugEventHub::AddSink(Sink sink)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const uint64_t id = _nextSink++;
+    _sinks.emplace(id, std::move(sink));
+    return id;
+}
+
+void DebugEventHub::RemoveSink(uint64_t id)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _sinks.erase(id);
+}
+
 void DebugEventHub::Publish(const std::string& emulatorId, const std::string& topic, Json::Value event)
 {
     std::vector<Send> targets;
@@ -186,6 +200,10 @@ void DebugEventHub::Publish(const std::string& emulatorId, const std::string& to
         event["seq"] = static_cast<Json::UInt64>(++_seq[emulatorId]);
         event["emulator"] = emulatorId;
         event["cpu"] = "main";
+        // Under the lock: a sink removed is never called again (a sink only queues)
+        for (const auto& [id, sink] : _sinks)
+            if (sink)
+                sink(topic, event);
         for (const auto& [client, entry] : _clients)
         {
             for (const Subscription& subscription : entry.subscriptions)
