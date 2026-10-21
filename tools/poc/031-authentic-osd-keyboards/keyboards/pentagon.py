@@ -1,24 +1,23 @@
 """Pentagon 128 (1989-): the board came bare, its builder fitted a keyboard; this is the early-1990s default, the
 Soviet 40-key mechanical keyboard, low black caps on a square grid without stagger, each with a paper sticker (the
 E-mode word on a grey band at the top, the letter in a yellow disc, the SS symbol in white, the keyword in red, the
-E + SS word on a grey band at the bottom); the shifts and BREAK SPACE yellow, ENTER red. The plate sits in a black box
-in the style of the Pentagon cases: the raised rear with two rows of vent slots, one opening for the key block, no
-badge and no logo (the owner 2026-10-20: the bare plate looked unnatural).
+E + SS word on a grey band at the bottom); the shifts and BREAK SPACE yellow, ENTER red. The plate sits in a plain black
+rectangular box, one opening for the key block, no rear, no badge, no logo (the owner 2026-10-20: the bare plate
+looked unnatural, the Pentagon case's empty rear too).
 
 Sources: references/clones.md §0, §1.2 (pentagon-habr446366-kbd.jpg: the grid measured on it against a 19 mm pitch;
-the stickers read on it); the box after the owner's pentagon-case-top-owner.png (the rear's proportions and its two
-grilles of long slots, the opening below them); the words from the 48K's set (keyboards/zx48k.py).
+the stickers read on it); the box's opening after the owner's pentagon-case-top-owner.png; the words from the 48K's set (keyboards/zx48k.py).
 """
 
 from keyboards.zx48k import LETTERS
 from model import Key, Legend, Model, Part
 from svgkit import text_width
 
-KEYBOARD = {"id": "pentagon", "name": "Pentagon 128", "models": ["PENTAGON"], "size": [250, 182], "matrix": "zx"}
+KEYBOARD = {"id": "pentagon", "name": "Pentagon 128", "models": ["PENTAGON"], "size": [220, 106], "matrix": "zx"}
 
 U = 19.0                 # the grid's pitch, mm
 CAP = 17.4               # the cap's side
-X0, Y0 = 30.8, 92.0      # the first cap's top left: the block centred in the opening
+X0, Y0 = 15.8, 15.8      # the first cap's top left: the block centred in the box
 CASE = "#1e1d21"
 WELL = "#141416"
 KEY = "#1b1b1c"
@@ -93,9 +92,6 @@ def layout():
     block_w, block_h = 9 * U + CAP, 3 * U + CAP
     m.case += [
         Part("body", {"x": 0, "y": 0, "w": W, "h": H, "r": 4.0, "matte": True}, CASE),
-        Part("hump", {"x": 5.0, "y": 3.0, "w": W - 10.0, "h": 72.0, "r": 2.5}, CASE),  # the raised rear
-        Part("grille", {"x": 14.0, "y": 9.0, "w": W - 28.0, "h": 19.0, "slots": 70}, CASE),
-        Part("grille", {"x": 14.0, "y": 50.0, "w": W - 28.0, "h": 19.0, "slots": 70}, CASE),
         Part("well", {"x": X0 - 6.0, "y": Y0 - 6.0, "w": block_w + 12.0, "h": block_h + 12.0, "r": 1.0}, WELL),
     ]
     for r, row in enumerate(ROWS):

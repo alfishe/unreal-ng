@@ -107,7 +107,7 @@ The pictures are the app's on-screen keyboard (View → On-screen Keyboard, the 
 | `zxplus2` | PLUS2 (`keyboards/amstrad.py`, shared with +2A and +3) | done, approved by the owner (2026-10-19) | — | — |
 | `zxplus2a` | PLUS2A | done, approved by the owner (2026-10-19) | — | — |
 | `zxplus3` | PLUS3 | done, approved by the owner (2026-10-19) | — | — |
-| `pentagon` | PENTAGON (the 40-key sticker keyboard, refs-clones §1.2, in a black Pentagon-style box: two vent grilles, one opening, no badge; the owner 2026-10-20) | drawn, shown to the owner | — | — |
+| `pentagon` | PENTAGON (the 40-key sticker keyboard, refs-clones §1.2, in a plain black rectangular box with one opening, no badge; the owner 2026-10-20) | drawn, shown to the owner | — | — |
 | `pentagon2plus` | PENTAGON (the second variant: the "2+" black case with the 58-key layout, the owner's photo) | done, approved by the owner (2026-10-20) | — | — |
 | `scorpion` | SCORPION, PROFSCORP, GMX (the Soviet 58-key keyboard, the Pentagon 2+'s caps, in its grey case with the moulded "ZX SPECTRUM / SINCLAIR" plaque, refs-clones §1.4, §2) | drawn, shown to the owner | — | — |
 | `quorum` | QUORUM (the 88-key Quorum 128+ in its ivory case, refs-clones §4) | done, approved (2026-10-20) | — | — |
