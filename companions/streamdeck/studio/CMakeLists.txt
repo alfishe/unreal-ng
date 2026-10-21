@@ -58,6 +58,8 @@ set_target_properties(unreal-streamdeck-studio PROPERTIES
     AUTOMOC ON
     MACOSX_BUNDLE TRUE
     WIN32_EXECUTABLE TRUE
+    # the suite's template: LSMinimumSystemVersion (the release checks it), high-DPI
+    MACOSX_BUNDLE_INFO_PLIST "${SD_STUDIO}/install/macos/Info.plist"
     MACOSX_BUNDLE_BUNDLE_NAME "Stream Deck Studio"
     MACOSX_BUNDLE_GUI_IDENTIFIER "dev.unrealng.streamdeck-studio")
 target_compile_options(unreal-streamdeck-studio PRIVATE ${SD_WARNINGS})
