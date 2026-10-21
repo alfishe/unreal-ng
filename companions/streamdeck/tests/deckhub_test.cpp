@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "check.h"
+#include "hubpeer.h"
 #include "sdb/devicewire.h"
 #include "sdb/eventloop.h"
 #include "sdb/picturecache.h"
@@ -24,32 +25,11 @@
 #include "sdb/reconnect.h"
 
 using namespace sdb;
+using namespace sdbtest;
 using namespace std::chrono_literals;
 
 namespace
 {
-
-bool RunUntil(net::EventLoop& loop, const std::function<bool()>& done, std::chrono::milliseconds limit = 2000ms)
-{
-    const auto deadline = std::chrono::steady_clock::now() + limit;
-    while (!done())
-    {
-        if (std::chrono::steady_clock::now() > deadline)
-            return false;
-        loop.RunOnce(5);
-    }
-    return true;
-}
-
-std::string Str(const proto::Report& r)
-{
-    return std::string(r.begin(), r.end());
-}
-
-const Model& PlusXl()
-{
-    return *FindModelByName("plusxl");
-}
 
 // ------------------------------------------------------------------ the codec and the cache
 void TestWireCodec()
@@ -161,140 +141,6 @@ void TestPictureCache()
 }
 
 // ------------------------------------------------------------------ DeckHub over loopback
-struct FakeUsb final : Transport
-{
-    struct Shared
-    {
-        std::mutex mutex;
-        std::vector<std::string> writes, features;
-        std::deque<std::string> input;
-    };
-    std::shared_ptr<Shared> s = std::make_shared<Shared>();
-
-    int Write(std::span<const std::uint8_t> r) override
-    {
-        std::lock_guard lock(s->mutex);
-        s->writes.emplace_back(r.begin(), r.end());
-        return static_cast<int>(r.size());
-    }
-    int SendFeature(std::span<const std::uint8_t> r) override
-    {
-        std::lock_guard lock(s->mutex);
-        s->features.emplace_back(r.begin(), r.end());
-        return static_cast<int>(r.size());
-    }
-    int GetFeature(std::span<std::uint8_t> buf) override
-    {
-        buf[1] = 0x42;
-        return static_cast<int>(buf.size());
-    }
-    int Read(std::span<std::uint8_t> buf, int) override
-    {
-        std::lock_guard lock(s->mutex);
-        if (s->input.empty())
-            return 0;
-        const std::string r = s->input.front();
-        s->input.pop_front();
-        std::copy(r.begin(), r.end(), buf.begin());
-        return static_cast<int>(r.size());
-    }
-};
-
-// A viewer on the test's loop: a non-blocking socket, the frames it got.
-struct TestViewer
-{
-    net::EventLoop& loop;
-    net::SocketHandle s = net::kInvalidSocket;
-    wire::FrameReader reader;
-    std::vector<wire::Frame> frames;
-    std::string out;
-    bool closed = false;
-    bool reading = true;
-
-    TestViewer(net::EventLoop& l, int port, int receiveBuffer = 0) : loop(l)
-    {
-        std::string error;
-        s = net::ConnectStart("127.0.0.1", port, &error, receiveBuffer);
-        loop.Watch(s, true, true, [this](bool r, bool w, bool e) {
-            if (w)
-                Flush();
-            if ((r || e) && reading)
-                Read();
-        });
-    }
-    ~TestViewer()
-    {
-        if (s != net::kInvalidSocket)
-        {
-            loop.Unwatch(s);
-            net::CloseSocket(s);
-        }
-    }
-    void Send(std::uint8_t type, const std::string& payload)
-    {
-        out += wire::EncodeFrame(type, payload);
-        Flush();
-    }
-    void Flush()
-    {
-        while (!out.empty())
-        {
-            const long n = net::Send(s, out.data(), out.size());
-            if (n <= 0)
-                break;
-            out.erase(0, static_cast<std::size_t>(n));
-        }
-        loop.Modify(s, reading, !out.empty());
-    }
-    void PauseReading(bool pause)
-    {
-        reading = !pause;
-        loop.Modify(s, reading, !out.empty());
-    }
-    void Read()
-    {
-        char buf[65536];
-        for (;;)
-        {
-            const long n = net::Recv(s, buf, sizeof buf);
-            if (n == 0)
-                break;
-            if (n < 0)
-            {
-                closed = true;
-                loop.Unwatch(s);
-                break;
-            }
-            reader.Feed(std::string_view(buf, static_cast<std::size_t>(n)));
-        }
-        wire::Frame f;
-        while (reader.Next(f))
-            frames.push_back(f);
-    }
-    [[nodiscard]] int Count(std::uint8_t type) const
-    {
-        int n = 0;
-        for (const auto& f : frames)
-            n += f.type == type;
-        return n;
-    }
-    [[nodiscard]] nlohmann::json Welcome() const
-    {
-        for (const auto& f : frames)
-            if (f.type == wire::Welcome)
-                return nlohmann::json::parse(f.payload);
-        return {};
-    }
-};
-
-DeckHub::Options HubOptions()
-{
-    DeckHub::Options o;
-    o.port = 0;
-    o.joinTimeout = 200ms;
-    return o;
-}
-
 void TestMirror()
 {
     net::EventLoop loop;
@@ -579,15 +425,6 @@ struct PluggableUsb final : Transport
         return *present ? 0 : -1;
     }
 };
-
-std::vector<nlohmann::json> DeckStates(const TestViewer& v)
-{
-    std::vector<nlohmann::json> out;
-    for (const auto& f : v.frames)
-        if (f.type == wire::DeckState)
-            out.push_back(nlohmann::json::parse(f.payload));
-    return out;
-}
 
 // Unplug and replug under a running runtime: the viewers are told both ways, the routes show it, the runtime goes on,
 // the deck gets the picture and the brightness set while it was away; POST .../reconnect does the same on purpose.

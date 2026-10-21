@@ -922,6 +922,7 @@ int main()
     TestSubtrees();
     TestWebSocket();
     TestDeckHub();
+    TestConformance();
     TestDaemonDecks();
     TestHotplug();
     std::printf("\n%d checks, %d failed\n", g_checks, g_fail);
