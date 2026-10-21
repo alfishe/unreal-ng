@@ -10,7 +10,12 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
 
+#ifdef ENABLE_AUTOMATION
+#include "automation.h"
+#endif
+
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 
@@ -26,7 +31,18 @@ bool EmuHost::Create(const std::string& model, std::string* error)
 {
     _id = "deck-poc";
     _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel(_id, model, LoggerLevel::LogWarning, error);
-    return _emulator != nullptr;
+    if (!_emulator)
+        return false;
+
+#ifdef ENABLE_AUTOMATION
+    // WebAPI on 0.0.0.0 (UNREAL_WEBAPI_PORT, 8090) and MCP: the instance above is driven over the network
+    const bool started = Automation::GetInstance().start();
+    _automation = true;   // stopped in Stop() even when a module failed to start (a port taken)
+    const char* port = std::getenv("UNREAL_WEBAPI_PORT");
+    SDL_Log("automation %s: WebAPI http://<deck>:%s/api/v1", started ? "started" : "started with errors",
+            port ? port : "8090");
+#endif
+    return true;
 }
 
 bool EmuHost::LoadFile(const std::string& path, std::string* error)
@@ -34,7 +50,11 @@ bool EmuHost::LoadFile(const std::string& path, std::string* error)
     std::string ext = std::filesystem::path(path).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-    auto has = [&](const std::vector<std::string>& list) { return std::find(list.begin(), list.end(), ext) != list.end(); };
+    // The core's lists name extensions without the dot ("sna", "spg"); match either form
+    const std::string bare = !ext.empty() && ext[0] == '.' ? ext.substr(1) : ext;
+    auto has = [&](const std::vector<std::string>& list) {
+        return std::find(list.begin(), list.end(), bare) != list.end() || std::find(list.begin(), list.end(), ext) != list.end();
+    };
     if (has(Emulator::SupportedSnapshotExtensions()))
         return _emulator->LoadSnapshot(path);
     if (has(Emulator::SupportedTapeExtensions()))
@@ -166,6 +186,13 @@ void EmuHost::Start()
 
 void EmuHost::Stop()
 {
+#ifdef ENABLE_AUTOMATION
+    if (_automation)
+    {
+        Automation::GetInstance().stop();
+        _automation = false;
+    }
+#endif
     if (_emulator)
     {
         _emulator->ClearAudioCallback();

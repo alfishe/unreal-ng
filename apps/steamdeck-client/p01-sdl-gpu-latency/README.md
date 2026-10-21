@@ -13,7 +13,7 @@ Each display refresh the app:
 2. copies the newest presented frame with `CopyPresentedFramebuffer` straight into a mapped transfer
    buffer (cycle);
 3. uploads it to an `R8G8B8A8_UNORM` texture;
-4. does one nearest-filter blit with integer scale and crop;
+4. does one linear-filter blit that fills the screen keeping the aspect ratio, with crop;
 5. submits.
 
 The core paces itself (core-clocked). The display-locked tick is P-04. Present delay is 0 by
@@ -43,7 +43,12 @@ cleared and labelled first (48K ROM font from `rom/48.rom`).
 --file /home/deck/ZX/game.tap                          # any program (press logging only works for the border test)
 --windowed                                             # desktop development: a 1280x800 window
 --autofire 137                                         # toggle fire every 137 ms by itself (no human; the phase sweeps the frame)
+--headless                                             # no window, no GPU: the emulator and its WebAPI only (SSH, a container)
+--boot                                                 # the ROM boots instead of the border test (the "Unreal NG" app)
 ```
+
+Built with automation (the default) the instance is driven over the network: WebAPI on `:8090`
+([README.md, Remote control](../README.md#remote-control-webapi-mcp)).
 
 Controls: A (or Space) = Kempston fire; D-pad = directions; View + Menu = quit.
 

@@ -1,5 +1,6 @@
 #include "unrealasm/symbols/fromsource.h"
 
+#include <algorithm>
 #include <map>
 #include <set>
 
@@ -108,6 +109,27 @@ SourceSymbolsResult SymbolsFromProject(const std::vector<ProjectFile>& files, si
         for (Diagnostic& d : laid.diagnostics)
             PointToSource(d, files, laidOut);
     Keep(result.diagnostics, laid.diagnostics, Severity::Info);
+    {
+        std::set<std::pair<std::string, uint32_t>> placed;
+        for (const layout::LineAddress& a : laid.lines)
+        {
+            if (a.bodyLine)
+                continue;
+            layout::LineAddress at = a;
+            if (converted)
+            {
+                const auto k = std::find_if(laidOut.begin(), laidOut.end(), [&](const ProjectFile& f) { return f.name == a.file; }) - laidOut.begin();
+                if (static_cast<size_t>(k) >= files.size() || a.line < 1 || a.line > laidOut[k].document.lines.size())
+                    continue;
+                at.file = files[k].name;
+                at.line = laidOut[k].document.lines[a.line - 1].origin;
+                if (at.line == 0)
+                    continue;
+            }
+            if (placed.insert({at.file, at.line}).second)
+                result.lines.push_back(at);
+        }
+    }
 
     std::map<std::string, const layout::Label*> byName;
     std::set<std::string> reached = {files[main].name};
