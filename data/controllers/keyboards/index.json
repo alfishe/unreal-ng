@@ -130,8 +130,8 @@
    "name": "Pentagon 128",
    "matrix": "zx",
    "size": [
-    222,
-    110
+    250,
+    182
    ],
    "picture": "pentagon.photo.svg",
    "keys": "pentagon.keys.json"
