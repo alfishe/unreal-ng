@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
 #include <map>
 #include <memory>
 #include <string>
@@ -15,6 +16,7 @@
 #include "debugger/ttd/ttdcursorcell.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "_helpers/testwaithelper.h"
 
 using ttd::TTDCursor;
 using ttd::TTDCursorCell;
@@ -41,10 +43,16 @@ TEST(TTDCursorCell_Test, ReadersNeverSeeATornCursorWhileItIsWritten)
             writes.fetch_add(1, std::memory_order_relaxed);
         }
     });
+    // The writer must be running before the reads count: under load it may not get a core for a while, and reads
+    // beside no writer prove nothing
+    ASSERT_TRUE(TestWait::For([&] { return writes.load(std::memory_order_relaxed) > 0; }));
     uint64_t reads = 0;
     uint64_t torn = 0;
-    // A bounded number of reads beside the writer (well under the 50 ms budget)
-    while (reads < 200000)
+    // Reads beside the writer until both sides did enough (well under the 50 ms budget on an idle machine), bounded
+    // by the wait helper's scaled timeout under load
+    const auto deadline = std::chrono::steady_clock::now() + TestWait::Scaled(TestWait::kDefaultTimeout);
+    while ((reads < 200000 || writes.load(std::memory_order_relaxed) < 1000) &&
+           std::chrono::steady_clock::now() < deadline)
     {
         const TTDCursor c = cell.Read();
         reads++;
@@ -58,7 +66,7 @@ TEST(TTDCursorCell_Test, ReadersNeverSeeATornCursorWhileItIsWritten)
     stop = true;
     writer.join();
     EXPECT_EQ(torn, 0u) << "of " << reads << " reads beside " << writes.load() << " writes";
-    EXPECT_GT(writes.load(), 0u);
+    EXPECT_GE(writes.load(), 1000u) << "the writer barely ran beside the reads";
 }
 
 TEST(TTDCursorCell_Test, AnEqualCursorDoesNotMoveTheSequence)
