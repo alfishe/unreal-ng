@@ -600,6 +600,8 @@ const std::vector<std::string>& WsHub::StateTopicNames()
         // Monitoring (monitoring::ProcessNames / InstanceNames: host.stats, emulator.stats, debug.breakpoints, ...)
         all.insert(all.end(), monitoring::ProcessNames().begin(), monitoring::ProcessNames().end());
         all.insert(all.end(), monitoring::InstanceNames().begin(), monitoring::InstanceNames().end());
+        // The machine area: the readouts of the same name (machinereadouts.h), read by Read below
+        all.insert(all.end(), {"media.recent", "media.rzx", "cap.record", "machine.switches", "input.connectors"});
         return all;
     }();
     return names;
@@ -675,7 +677,8 @@ Json::Value WsHub::Read(const std::string& name, const std::string& instanceId, 
         value["default"] = info.fallback;
         return value;
     }
-    return Json::Value();
+    // The other state topics are readouts of the same name (published state only)
+    return StateNodeToJson(actions::ReadReadout(emulator, name));
 }
 
 std::string WsHub::FollowedInstance()

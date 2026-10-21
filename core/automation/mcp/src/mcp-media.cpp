@@ -214,9 +214,10 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"screenshot", "screen_digest", "record_start", "record_stop", "record_status", "record_pause",
-                               "record_resume", "audio_capture", "audio_status", "audio_result", "temporal_status",
-                               "temporal_set", "window_display", "window_display_set", "window_crt_params", "window_crt_params_set",
-                               "viewport", "viewport_set", "vdac2_capture_start", "vdac2_capture_stop", "vdac2_capture_status",
+                               "record_resume", "record_presets", "audio_capture", "audio_status", "audio_result",
+                               "temporal_status", "temporal_set", "window_display", "window_display_set",
+                               "window_crt_params", "window_crt_params_set", "viewport", "viewport_set",
+                               "vdac2_capture_start", "vdac2_capture_stop", "vdac2_capture_status",
                                "framebuffer"})
     {
         schema["properties"]["action"]["enum"].append(action);
@@ -233,7 +234,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["format"]["type"] = "string";
-    schema["properties"]["format"]["description"] = "screenshot: png|gif (default png: lossless; gif has 256 colors). record_start: gif (native) or h264/h265/hevc/vp9/rawvideo (default gif)";
+    schema["properties"]["format"]["description"] = "screenshot: png|gif (default png: lossless; gif has 256 colors). record_start: gif (native) or h264/h265/hevc/vp9/rawvideo (default: the preset's, else gif)";
     schema["properties"]["mode"]["type"] = "string";
     schema["properties"]["mode"]["enum"] = Json::Value(Json::arrayValue);
     schema["properties"]["mode"]["enum"].append("screen");
@@ -261,6 +262,22 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "record_start: audio codec for the emulated sound track (aac, mp3, opus, vorbis, flac, pcm_s16le). Omit "
         "for video only (default). Must fit the container: h264/hevc + aac in .mp4/.mov is native on macOS; "
         "gif has no audio (refused)";
+    schema["properties"]["preset"]["type"] = "string";
+    schema["properties"]["preset"]["description"] =
+        "record_start: a recording preset (record_presets lists them: gameplay = H.264 + AAC mp4, music = FLAC audio only, "
+        "audio = WAV audio only, gif, hq = H.265 + FLAC mkv, multitrack = an audio track per sound source); the other "
+        "fields override it";
+    schema["properties"]["container"]["type"] = "string";
+    schema["properties"]["container"]["description"] =
+        "record_start: the file's extension when no filename is given: mp4, mov, mkv, webm, avi, gif; wav, flac, mp3, "
+        "ogg with record_mode audio";
+    schema["properties"]["record_mode"]["type"] = "string";
+    schema["properties"]["record_mode"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* mode : {"single", "multi", "audio"})
+        schema["properties"]["record_mode"]["enum"].append(mode);
+    schema["properties"]["record_mode"]["description"] =
+        "record_start: single (one mixed audio track, default), multi (a track per fitted sound source, master first), "
+        "audio (audio only: no video)";
     schema["properties"]["video_bitrate"]["type"] = "integer";
     schema["properties"]["video_bitrate"]["description"] = "record_start: video bitrate kbps (0 = default, 100-200000)";
     schema["properties"]["profile"]["type"] = "string";
@@ -373,7 +390,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     registry.Register(
         "capture_media",
         "Media capture: screenshots (PNG/GIF with OCR-friendly metadata or saved to file), deterministic screen digests, video recording "
-        "(GIF native; h264/hevc mp4/mov with an optional audio track: audio:'aac') with optional every_nth:'auto' visual-quantum detection for duplicate-free bounded recordings, and "
+        "(GIF native; h264/hevc mp4/mov with an optional audio track: audio:'aac'; the core's presets: record_presets, "
+        "record_start preset:'gameplay'; record_mode single | multi | audio) with optional every_nth:'auto' visual-quantum detection for duplicate-free bounded recordings, and "
         "one-shot audio capture with DSP analysis (dominant frequency, RMS/peak, optional WAV export), and the ZX DLSS "
         "temporal de-flicker (temporal_status / temporal_set: algorithm, video/audio delay it causes, timing), the GUI "
         "window's display settings (window_display / window_display_set: GPU acceleration, CRT effects and profile, "
@@ -532,6 +550,31 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                 return;
             }
 
+            if (action == "record_presets")
+            {
+                caller.Call("GET", "/api/v1/recording/presets", nullptr, [done](int status, Json::Value body) {
+                    if (status != 200)
+                    {
+                        done(ToolResult::Error(status == 0 ? "WebAPI unreachable" : DescribeErrorBody(body)));
+                        return;
+                    }
+                    std::ostringstream out;
+                    out << "Recording presets (record_start with preset: <id>):";
+                    for (const Json::Value& preset : body["presets"])
+                    {
+                        out << "\n" << preset["id"].asString() << " - " << preset["title"].asString() << ": "
+                            << preset["mode"].asString() << ", ." << preset["container"].asString();
+                        if (!preset["format"].asString().empty())
+                            out << ", " << preset["format"].asString();
+                        if (!preset["audio"].asString().empty())
+                            out << " + " << preset["audio"].asString();
+                    }
+                    const std::string text = out.str();
+                    done(ToolResult::Ok(text, std::move(body)));
+                });
+                return;
+            }
+
             if (action == "record_stop" || action == "record_status" || action == "record_pause" || action == "record_resume")
             {
                 if (action == "record_status")
@@ -601,14 +644,17 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                             if (fps < 1) fps = 1;
                             (*body)["fps"] = fps;
                         }
-                        for (const char* field : {"format", "fps", "scale", "region", "filename", "audio",
-                                                  "video_bitrate", "audio_bitrate", "profile", "acceleration"})
+                        for (const char* field : {"preset", "container", "format", "fps", "scale", "region", "filename",
+                                                  "audio", "video_bitrate", "audio_bitrate", "profile", "acceleration"})
                         {
                             if (args.isMember(field) && !args[field].isNull())
                             {
                                 (*body)[field] = args[field];
                             }
                         }
+                        // 'mode' is the screenshot's area alias here: the recording mode comes as record_mode
+                        if (args.isMember("record_mode") && args["record_mode"].isString())
+                            (*body)["mode"] = args["record_mode"];
 
                         caller.Call("POST", Endpoint(id, "/video/record"), body.get(),
                                     [body, frames, quantum, quantumNote, &caller, id, done, progress](int status, Json::Value startResponse) mutable {

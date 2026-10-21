@@ -19,6 +19,8 @@
 /// | `video.window` | the GUI window's display settings as published (WindowDisplay report + available; headless {available: false}) |
 /// | `video.crt_params` | {available, profile, kind, values: {name: value}} of the active CRT profile, as published |
 /// | `video.viewport` | {overscan, overscan_available, viewport, viewports, framebuffer, display, video_mode} |
+/// | `machine.previous`, `machine.switches`, `media.recent`, `media.rzx`, `input.connectors`, `cap.record` | the
+/// machine area's (machinereadouts.h) |
 /// | `toggle.<id>` | {on} for every toggle of the catalogue (`toggle.feature.<name>` for the features) |
 ///
 /// Names are matched exactly or by prefix (`media.*`, `toggle.*`; `*` = all). The WebSocket `surface` topic (S4)

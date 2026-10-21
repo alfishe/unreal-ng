@@ -81,6 +81,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_bus.inc"
 #include "openapi/openapi_ttd.inc"
 #include "openapi/openapi_ttdfile.inc"
+#include "openapi/openapi_machine.inc"
 }
 
 void buildSchemas(Json::Value& schemas)

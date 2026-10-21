@@ -38,6 +38,7 @@
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
 #include "cli-videorecord-options.h"
+#include <emulator/capture/recordingcontrol.h>
 #include "../../../temporalstatus.h"
 #include "emulator/video/viewportcontrol.h"
 #include "../../../windowdisplay.h"
@@ -62,26 +63,6 @@ bool parseAddress16(const std::string& value, uint16_t& out)
     }
 }
 
-/// Default recording output: temp dir / unreal-cli / <id>_<timestamp>.<ext>
-std::string defaultRecordingPath(const std::string& id, const std::string& extension)
-{
-    std::string safeId = id;
-    for (char& c : safeId)
-    {
-        if (c == '-')
-            c = '_';
-    }
-
-    static unsigned counter = 0;
-    const long long stamp = static_cast<long long>(std::time(nullptr)) * 1000 + (counter++ % 1000);
-
-    std::error_code ec;
-    std::filesystem::path directory = std::filesystem::temp_directory_path(ec) / "unreal-cli";
-    if (!ec)
-        std::filesystem::create_directories(directory, ec);
-    const std::string name = "video-" + safeId + "-" + std::to_string(stamp) + "." + extension;
-    return ec ? name : (directory / name).string();
-}
 }  // namespace
 
 // HandleDigest — FNV-1a-64 digest of the screen area (change detection without
@@ -1091,6 +1072,24 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
 
     const std::string subcommand = args.empty() ? "status" : args[0];
 
+    if (subcommand == "presets")
+    {
+        std::stringstream ss;
+        ss << "Recording presets (videorecord start --preset ID):" << NEWLINE;
+        for (const capture::RecordingPreset& preset : capture::RecordingPresets())
+        {
+            ss << "  " << std::left << std::setw(11) << preset.id << " " << preset.title << " - " << preset.mode
+               << ", ." << preset.container;
+            if (preset.format[0] != '\0')
+                ss << ", " << preset.format;
+            if (preset.audio[0] != '\0')
+                ss << " + " << preset.audio;
+            ss << NEWLINE;
+        }
+        session.SendResponse(ss.str());
+        return;
+    }
+
     if (subcommand == "start")
     {
         if (rm->IsRecording() || rm->IsPaused())
@@ -1099,9 +1098,10 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
             return;
         }
 
-        // videorecord start [format] [filename] [--fps N] [--scale N] [--region full|screen] [--audio-rate N|auto]
-        //                   [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]
-        //                   [--profile native|1080p|1440p|4k] [--acceleration auto|hardware|software]
+        // videorecord start [format] [filename] [--preset NAME] [--mode single|multi|audio] [--container EXT]
+        //                   [--fps N] [--scale N] [--region full|screen] [--audio-rate N|auto] [--audio CODEC]
+        //                   [--video-bitrate KBPS] [--audio-bitrate KBPS] [--profile native|1080p|1440p|4k]
+        //                   [--acceleration auto|hardware|software]
         CliVideoRecord::StartOptions options;
         std::string optionError;
         if (!CliVideoRecord::ParseStart(args, options, optionError))
@@ -1110,35 +1110,11 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
             return;
         }
 
-        if (options.filename.empty())
-            options.filename = defaultRecordingPath(emulator->GetId(), CliVideoRecord::DefaultExtension(options.format));
-
-        // Audio codec vs container (gif has no audio) and bitrate ranges, before anything changes
-        if (!CliVideoRecord::Validate(options, optionError))
-        {
-            session.SendResponse(optionError);
-            return;
-        }
-
-        const std::string& format = options.format;
-        const std::string& filename = options.filename;
-        const float fps = options.fps;
-        const uint32_t scale = options.scale;
-        const bool hasAudioRate = options.hasAudioRate;
-        const uint32_t audioRate = options.audioRate;
-
-        // Configuration setters refuse changes mid-recording — apply while idle
-        rm->SetVideoFrameRate(fps);
-        rm->SetScaleFactor(scale);
-        rm->SetCaptureRegion(options.screenRegion ? VideoCaptureRegion::MainScreen : VideoCaptureRegion::FullFrame);
-        rm->SetOutputProfile(options.profile);
-        rm->SetEncoderAcceleration(EncoderAccelerationFromName(options.acceleration));
-
         // Optional core-rate pin before the first sample is stamped: the
         // recording must start (and stay) at the requested audio rate. The
         // pin applies at the next frame boundary - wait for it so a paused
         // emulator fails here instead of producing a mislabeled file.
-        if (hasAudioRate)
+        if (options.hasAudioRate)
         {
             SoundManager* sound = context->pSoundManager;
             if (!sound)
@@ -1147,7 +1123,7 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
                 return;
             }
 
-            sound->setCoreRatePin(audioRate);
+            sound->setCoreRatePin(options.audioRate);
             for (int attempt = 0; attempt < 100 && sound->getCoreRate() != sound->getTargetCoreRate(); attempt++)
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -1160,23 +1136,52 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
             }
         }
 
-        if (!rm->StartRecording(filename, format, options.audio, options.videoBitrate, options.audioBitrate))
+        // The rules (presets, codecs vs containers, bitrates) are capture::RecordingControl's, as on every plane
+        std::error_code ec;
+        const std::string folder = (std::filesystem::temp_directory_path(ec) / "unreal-cli").string();
+        const capture::RecordingReply reply = capture::RecordingControl(*emulator, folder).Execute("start", options.given);
+        if (!reply.ok)
         {
-            session.SendResponse("Failed to start recording: " + rm->GetLastRecordingError());
+            session.SendResponse((reply.error == "Recording start failed" ? "Failed to start recording: " : "") +
+                                 reply.message);
             return;
         }
 
+        auto text = [&reply](const char* name) {
+            const StateNode* node = reply.body.find(name);
+            if (node == nullptr)
+                return std::string();
+            if (node->kind == StateNode::Kind::String)
+                return node->s;
+            if (node->kind == StateNode::Kind::Int)
+                return std::to_string(node->i);
+            if (node->kind == StateNode::Kind::Double)
+            {
+                std::ostringstream number;
+                number << node->d;
+                return number.str();
+            }
+            return std::string();
+        };
         std::stringstream ss;
-        ss << std::dec << "Recording started: " << filename << " (" << format << ", " << fps << " fps, x" << scale << ", "
-           << (options.screenRegion ? "screen" : "full") << " region";
+        ss << std::dec << "Recording started: " << text("output") << " (";
+        if (!text("preset").empty())
+            ss << "preset " << text("preset") << ", ";
+        if (text("mode") == "audio")
+            ss << "audio only";
+        else
+            ss << text("format") << ", " << text("fps") << " fps, x" << text("scale") << ", " << text("region")
+               << " region";
         if (rm->HasFixedOutput())
             ss << ", profile " << rm->GetOutputProfile() << " " << rm->GetOutputWidth() << "x" << rm->GetOutputHeight();
-        ss << ", acceleration " << options.acceleration;
+        ss << ", acceleration " << text("acceleration");
         if (rm->HasAudio())
             ss << ", audio " << rm->GetAudioCodec() << " " << rm->GetAudioSampleRate() << " Hz "
                << rm->GetAudioChannels() << " ch";
         else
             ss << ", no audio";
+        if (text("mode") == "multi")
+            ss << ", " << text("audio_tracks") << " tracks";
         if (context->pSoundManager)
             ss << ", core " << context->pSoundManager->getCoreRate() << " Hz";
         ss << ")";
@@ -1184,15 +1189,26 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
         return;
     }
 
-    if (subcommand == "stop")
+    if (subcommand == "stop" || subcommand == "pause" || subcommand == "resume" || subcommand == "toggle")
     {
-        if (!rm->IsRecording() && !rm->IsPaused())
+        std::error_code ec;
+        const std::string folder = (std::filesystem::temp_directory_path(ec) / "unreal-cli").string();
+        const capture::RecordingReply reply = capture::RecordingControl(*emulator, folder).Execute(subcommand);
+        if (!reply.ok)
         {
-            session.SendResponse("No recording is active.");
+            session.SendResponse(reply.message.empty() ? reply.error : reply.message);
             return;
         }
-
-        rm->StopRecording();
+        if (subcommand == "pause" || subcommand == "resume")
+        {
+            session.SendResponse(subcommand == "pause" ? "Recording paused." : "Recording resumed.");
+            return;
+        }
+        if (rm->IsRecording())
+        {
+            session.SendResponse("Recording started: " + rm->GetOutputFilename());
+            return;
+        }
         const RecordingManager::RecordingStats stats = rm->GetStats();
         std::stringstream ss;
         ss << std::dec << "Recording stopped: " << rm->GetOutputFilename() << " (" << stats.framesRecorded
@@ -1202,32 +1218,6 @@ void CLIProcessor::HandleVideoRecord(const ClientSession& session, const std::ve
                << rm->GetAudioDuration() << " s audio";
         ss << ")";
         session.SendResponse(ss.str());
-        return;
-    }
-
-    if (subcommand == "pause")
-    {
-        if (!rm->IsRecording())
-        {
-            session.SendResponse("No active recording to pause.");
-            return;
-        }
-
-        rm->PauseRecording();
-        session.SendResponse("Recording paused.");
-        return;
-    }
-
-    if (subcommand == "resume")
-    {
-        if (!rm->IsPaused())
-        {
-            session.SendResponse("No paused recording to resume.");
-            return;
-        }
-
-        rm->ResumeRecording();
-        session.SendResponse("Recording resumed.");
         return;
     }
 

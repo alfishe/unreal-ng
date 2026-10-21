@@ -9,6 +9,7 @@
 #include "emulator/actions/actionregistry.h"
 #include "emulator/actions/pictureactions.h"
 #include "emulator/actions/steppingactions.h"
+#include "emulator/actions/machinereadouts.h"
 #include "emulator/config.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
@@ -194,6 +195,9 @@ const std::vector<std::string>& BaseReadoutNames()
             all.push_back(name);
         for (const std::string& picture : PictureReadoutNames())
             all.push_back(picture);
+        // The machine area's (machinereadouts.h)
+        for (const std::string& name : MachineReadoutNames())
+            all.push_back(name);
         return all;
     }();
     return names;
@@ -264,6 +268,8 @@ StateNode ReadReadout(Emulator& emulator, const std::string& name)
         return monitoring::ReadInstance(name, emulator);
     if (StateNode picture = ReadPictureReadout(emulator, name); picture.kind != StateNode::Kind::Null)
         return picture;  // video.window, video.crt_params, video.viewport (pictureactions.h)
+    if (StateNode area = ReadMachineReadout(emulator, name); area.kind != StateNode::Kind::Null)
+        return area;
     std::string id;
     StateNode params;
     if (name.compare(0, 7, "toggle.") == 0 && ToggleOf(name, id, params))

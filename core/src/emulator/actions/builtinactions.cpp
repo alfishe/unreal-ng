@@ -624,8 +624,7 @@ std::vector<RegistrationHandle> RegisterBuiltinActions(ActionRegistry& registry)
         [](const ActionCall& call) { return FromRun(RunControl(call.emulator).Nmi()); }, rules(ScopeRun));
     add("mach.turbo_toggle", "Turbo", machine, ValueKind::Press,
         [](const ActionCall& call) { return FromRun(RunControl(call.emulator).ToggleTurbo()); }, rules(ScopeRun));
-    for (const char* id : {"cap.record_toggle", "cap.clip_last"})
-        stub(id, machine);
+    // cap.record_toggle and cap.clip_last: hostactions_machine.cpp (over capture::RecordingControl)
     return handles;
 }
 

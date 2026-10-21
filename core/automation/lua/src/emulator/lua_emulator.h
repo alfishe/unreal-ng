@@ -32,6 +32,12 @@
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/media/mediacontrol.h>
+#include <emulator/media/recentfiles.h>
+#include <emulator/capture/recordingcontrol.h>
+#include <cmath>
+#include <filesystem>
+#include <map>
+#include <system_error>
 #include <emulator/slots/slotcontrol.h>
 #include <emulator/io/controllers/controllercontrol.h>
 #include <emulator/actions/actionregistry.h>
@@ -3229,6 +3235,24 @@ public:
         // ld_air_parity_quirk, ignore_later_snapshots, switch_model. The model
         // switches only when this interpreter follows the selected machine (a
         // bound one reports the mismatch: its machine must not be replaced)
+        // The files opened lately (RecentFiles; open one: action("media.open_recent", nil, {index = 0, kind = "tape"}))
+        lua.set_function("recent_files", [](sol::this_state ts, sol::optional<std::string> kind) -> sol::object {
+            const std::string k = kind.value_or("all");
+            if (k != "all" && !RecentFiles::IsKind(k))
+                throw sol::error("kind '" + k + "': all, snapshot, tape, disk, rzx, image or cd");
+            return StateNodeToLua(ts, RecentFiles::Instance().ToValue(k));
+        });
+        lua.set_function("recent_clear", [](sol::optional<std::string> kind) {
+            const std::string k = kind.value_or("all");
+            if (k != "all" && !RecentFiles::IsKind(k))
+                throw sol::error("kind '" + k + "': all, snapshot, tape, disk, rzx, image or cd");
+            RecentFiles::Instance().Clear(k);
+        });
+        // The core's recording presets (video_record("start", {preset = "gameplay"}))
+        lua.set_function("recording_presets", [](sol::this_state ts) -> sol::object {
+            return StateNodeToLua(ts, capture::RecordingPresetsValue());
+        });
+
         lua.set_function("rzx_play", [this](const std::string& path, sol::optional<sol::table> options) -> sol::table {
             sol::state_view view(*_lua);
             sol::table out = view.create_table();
@@ -6893,139 +6917,66 @@ public:
 
         // Video recording control over the RecordingManager (mirrors POST /video/record)
 #ifdef ENABLE_RECORDING
-        lua.set_function("video_record", [this](const std::string& action, sol::optional<sol::table> optsOpt) -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
+        lua.set_function("video_record", [this](sol::this_state ts, const std::string& action,
+                                                sol::optional<sol::table> optsOpt) -> sol::object {
+            sol::state_view lua_view(ts);
             Emulator* emulator = effectiveEmulator();
-            if (!emulator) { result["error"] = "no emulator"; return result; }
-
-            auto* context = emulator->GetContext();
-            RecordingManager* rm = context ? context->pRecordingManager : nullptr;
-            if (!rm) { result["error"] = "recording manager not available"; return result; }
-
-            if (action == "start")
+            if (!emulator)
             {
-                if (rm->IsRecording() || rm->IsPaused())
+                sol::table result = lua_view.create_table();
+                result["error"] = "no emulator";
+                return result;
+            }
+            // capture::RecordingControl: the presets, modes and option rules every plane shares
+            std::map<std::string, std::string> options;
+            if (optsOpt.has_value() && optsOpt->valid())
+            {
+                for (const auto& [key, value] : *optsOpt)
                 {
-                    result["error"] = "a recording is already active — stop it first";
-                    return result;
-                }
-
-                sol::table opts = lua_view.create_table();
-                if (optsOpt.has_value() && optsOpt->valid()) opts = *optsOpt;
-
-                std::string format = opts.get_or<std::string>("format", "gif");
-                std::string extension = format;
-                if (format == "h264" || format == "h265" || format == "hevc" || format == "vp9")
-                    extension = "mp4";
-                else if (format == "rawvideo")
-                    extension = "avi";
-
-                std::string filename = opts.get_or<std::string>("filename", "");
-                if (filename.empty())
-                {
-                    std::filesystem::path dir = std::filesystem::temp_directory_path() / "unreal-lua";
-                    std::error_code ec;
-                    std::filesystem::create_directories(dir, ec);
-                    static std::atomic<unsigned> counter{0};
-                    const long long stamp =
-                        static_cast<long long>(std::time(nullptr)) * 1000 + (counter++ % 1000);
-                    filename = (dir / ("video-" + std::to_string(stamp) + "." + extension)).string();
-                }
-
-                // Optional sound track: audio = "aac" (or true = aac); none = video only. Same rules as the
-                // WebAPI/CLI (RecordingRequest): the codec must fit the container, gif has no audio
-                std::string audio;
-                {
-                    const sol::object audioObj = opts["audio"];
-                    if (audioObj.valid() && audioObj.get_type() != sol::type::lua_nil)
+                    if (!key.is<std::string>())
+                        continue;
+                    const std::string name = key.as<std::string>();
+                    if (value.get_type() == sol::type::boolean)
                     {
-                        if (audioObj.is<bool>())
-                            audio = audioObj.as<bool>() ? "aac" : "";
-                        else if (audioObj.is<std::string>())
-                            audio = RecordingRequest::NormalizeAudioCodec(audioObj.as<std::string>());
-                        else
-                        {
-                            result["error"] = "audio must be a codec name (aac, mp3, opus, vorbis, flac, pcm_s16le) or a boolean";
-                            return result;
-                        }
+                        // audio = true / false: aac or none, as before; other flags as text
+                        const bool on = value.as<bool>();
+                        options[name] = name == "audio" ? (on ? "aac" : "none") : (on ? "true" : "false");
                     }
-                }
-                const int videoBitrate = opts.get_or("video_bitrate", 0);
-                const int audioBitrate = opts.get_or("audio_bitrate", 0);
-                if (videoBitrate < 0 || audioBitrate < 0)
-                {
-                    result["error"] = "video_bitrate / audio_bitrate must be >= 0 (kbps)";
-                    return result;
-                }
-                // Output profile (native / 1080p / 1440p / 4k) and encoder acceleration (auto / hardware / software)
-                const std::string profile = RecordingRequest::NormalizeProfile(opts.get_or<std::string>("profile", ""));
-                const std::string acceleration =
-                    RecordingRequest::NormalizeAcceleration(opts.get_or<std::string>("acceleration", ""));
-                {
-                    std::string codecError = profile.empty() ? "unknown profile (native, 1080p, 1440p, 4k)" :
-                                             acceleration.empty() ? "unknown acceleration (auto, hardware, software)" :
-                                             RecordingRequest::ValidateProfile(profile, format);
-                    if (codecError.empty())
-                        codecError = RecordingRequest::ValidateAudio(format, filename, audio);
-                    if (codecError.empty())
-                        codecError = RecordingRequest::ValidateBitrates(static_cast<uint32_t>(videoBitrate),
-                                                                        static_cast<uint32_t>(audioBitrate), audio);
-                    if (!codecError.empty())
+                    else if (value.get_type() == sol::type::number)
                     {
-                        result["error"] = codecError;
-                        return result;
+                        const double number = value.as<double>();
+                        options[name] = number == std::floor(number) ? std::to_string(static_cast<long long>(number))
+                                                                     : std::to_string(number);
                     }
+                    else if (value.get_type() == sol::type::string)
+                        options[name] = value.as<std::string>();
                 }
-
-                float fps = opts.get_or("fps", 50.0f);
-                if (fps < 1.0f) fps = 1.0f;
-                if (fps > 100.0f) fps = 100.0f;
-                rm->SetVideoFrameRate(fps);
-
-                int scale = opts.get_or("scale", 1);
-                if (scale < 1) scale = 1;
-                if (scale > 4) scale = 4;
-                rm->SetScaleFactor(static_cast<uint32_t>(scale));
-
-                rm->SetOutputProfile(profile);
-                rm->SetEncoderAcceleration(EncoderAccelerationFromName(acceleration));
-
-                const std::string region = opts.get_or<std::string>("region", "full");
-                rm->SetCaptureRegion((region == "screen" || region == "main")
-                                         ? VideoCaptureRegion::MainScreen
-                                         : VideoCaptureRegion::FullFrame);
-
-                // Optional audio-rate pin (same switch as CLI videorecord
-                // --audio-rate): number or "auto"; applied at the next frame
-                // boundary so the recording is stamped with the requested rate
-                SoundManager* sound = context->pSoundManager;
-                bool hasAudioRate = false;
-                uint32_t audioRate = 0;
+            }
+            // audio_rate (a number or "auto", as the CLI's --audio-rate): the core rate pinned before the start, so
+            // the recording is stamped with it; applied at the next frame boundary
+            SoundManager* sound = emulator->GetContext() ? emulator->GetContext()->pSoundManager : nullptr;
+            if (auto rate = options.find("audio_rate"); rate != options.end())
+            {
+                const std::string text = rate->second;
+                options.erase(rate);
+                if (action == "start" || action == "toggle")
                 {
-                    const sol::object rateObj = opts["audio_rate"];
-                    if (rateObj.valid())
+                    uint32_t audioRate = 0;
+                    if (text != "auto")
                     {
-                        hasAudioRate = true;
-                        if (rateObj.is<int>())
+                        char* end = nullptr;
+                        const unsigned long parsed = std::strtoul(text.c_str(), &end, 10);
+                        if (text.empty() || end == nullptr || *end != '\0')
                         {
-                            audioRate = static_cast<uint32_t>(rateObj.as<int>());
-                        }
-                        else if (rateObj.is<std::string>() && rateObj.as<std::string>() == "auto")
-                        {
-                            audioRate = 0;
-                        }
-                        else
-                        {
+                            sol::table result = lua_view.create_table();
                             result["error"] = "audio_rate must be a number or 'auto'";
                             return result;
                         }
+                        audioRate = static_cast<uint32_t>(parsed);
                     }
-                }
-                if (hasAudioRate)
-                {
-                    if (!sound)
+                    if (sound == nullptr)
                     {
+                        sol::table result = lua_view.create_table();
                         result["error"] = "sound manager not available";
                         return result;
                     }
@@ -7034,107 +6985,25 @@ public:
                         std::this_thread::sleep_for(std::chrono::milliseconds(10));
                     if (sound->getCoreRate() != sound->getTargetCoreRate())
                     {
+                        sol::table result = lua_view.create_table();
                         result["error"] = "audio_rate not applied within 1s (emulator paused?) - "
                                           "resume it or call set_audio_rate before pausing";
                         return result;
                     }
                 }
-
-                FeatureManager* fm = context->pFeatureManager;
-                const bool featureWasOff = fm && !fm->isEnabled(Features::kRecording);
-                if (featureWasOff) fm->setFeature(Features::kRecording, true);
-
-                bool started = false;
-                {
-                    Emulator::CpuHold hold(*emulator, "lua recording");  // no frame mid-start; the pause stays
-                    started = rm->StartRecording(filename, format, audio, static_cast<uint32_t>(videoBitrate),
-                                                 static_cast<uint32_t>(audioBitrate));
-                }
-
-                if (!started)
-                {
-                    if (featureWasOff) fm->setFeature(Features::kRecording, false);
-                    result["error"] = "recording start failed";
-                    result["message"] = rm->GetLastRecordingError();
-                    return result;
-                }
-
-                result["recording"] = true;
-                result["format"] = format;
-                result["fps"] = fps;
-                result["scale"] = scale;
-                result["profile"] = profile;
-                result["acceleration"] = acceleration;
-                if (rm->HasFixedOutput())
-                {
-                    result["output_width"] = rm->GetOutputWidth();
-                    result["output_height"] = rm->GetOutputHeight();
-                }
-                result["region"] = region;
-                if (sound)
-                    result["audio_rate"] = static_cast<uint64_t>(sound->getCoreRate());
-                result["audio"] = rm->HasAudio();
-                result["audio_codec"] = audio;
-                result["audio_sample_rate"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioSampleRate() : 0);
-                result["audio_channels"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioChannels() : 0);
-                result["feature_auto_enabled"] = featureWasOff;
-                result["output"] = filename;
-                return result;
             }
-
-            if (action == "stop")
+            std::error_code ec;
+            const std::string folder = (std::filesystem::temp_directory_path(ec) / "unreal-lua").string();
+            const capture::RecordingReply reply = capture::RecordingControl(*emulator, folder).Execute(action, options);
+            StateNode body = reply.body;
+            if (reply.ok && sound != nullptr && (action == "start" || action == "toggle"))
+                body["audio_rate"] = static_cast<uint64_t>(sound->getCoreRate());
+            if (!reply.ok)
             {
-                if (!rm->IsRecording() && !rm->IsPaused())
-                {
-                    result["error"] = "no active recording to stop";
-                    return result;
-                }
-                rm->StopRecording();
+                body["error"] = reply.message.empty() ? reply.error : reply.message;
+                body["code"] = reply.error;
             }
-            else if (action == "pause")
-            {
-                if (!rm->IsRecording())
-                {
-                    result["error"] = "no active recording to pause";
-                    return result;
-                }
-                rm->PauseRecording();
-            }
-            else if (action == "resume")
-            {
-                if (!rm->IsPaused())
-                {
-                    result["error"] = "recording is not paused";
-                    return result;
-                }
-                rm->ResumeRecording();
-            }
-            else
-            {
-                result["error"] = "unknown action '" + action + "' (expected start|stop|pause|resume)";
-                return result;
-            }
-
-            const RecordingManager::RecordingStats stats = rm->GetStats();
-            result["recording"] = rm->IsRecording();
-            result["paused"] = rm->IsPaused();
-            result["frames_recorded"] = static_cast<uint64_t>(stats.framesRecorded);
-            result["recorded_duration"] = stats.recordedDuration;
-            result["emulated_duration"] = stats.emulatedDuration;
-            result["output_file_size"] = static_cast<uint64_t>(stats.outputFileSize);
-            result["average_frame_time_ms"] = stats.averageFrameTime;
-            result["recent_fps"] = stats.recentFps;
-            result["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
-            result["video_codec"] = rm->GetVideoCodec();
-            result["profile"] = rm->GetOutputProfile();
-            result["acceleration"] = EncoderAccelerationName(rm->GetEncoderAcceleration());
-            result["audio"] = rm->HasAudio();
-            result["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
-            result["audio_sample_rate"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioSampleRate() : 0);
-            result["audio_channels"] = static_cast<uint64_t>(rm->HasAudio() ? rm->GetAudioChannels() : 0);
-            result["audio_duration"] = rm->HasAudio() ? rm->GetAudioDuration() : 0.0;
-            result["output"] = rm->GetOutputFilename();
-            return result;
+            return StateNodeToLua(ts, body);
         });
 
         // Current recording state + live statistics (mirrors GET /video/record/status)

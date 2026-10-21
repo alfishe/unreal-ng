@@ -663,13 +663,16 @@ GET  /api/v1/emulator/{id}/ay/log              Get AY log entries (?count=&offse
 POST /api/v1/emulator/{id}/audio/capture       Audio capture control (body: {"action": "start|stop|clear", "seconds"})
 GET  /api/v1/emulator/{id}/audio/capture/status   Capture state and level statistics
 GET  /api/v1/emulator/{id}/audio/capture/result   Captured samples (?format=wav&path=... to export)
-POST /api/v1/emulator/{id}/video/record        Video recording control (body: {"action": "start|stop|pause|resume",
+POST /api/v1/emulator/{id}/video/record        Video recording control (body: {"action": "start|stop|pause|resume|toggle|status", "preset", "mode": "single|multi|audio", "container",
                                                "format", "filename", "fps", "scale", "region",
                                                "audio": "aac" (optional, default video only), "video_bitrate", "audio_bitrate",
                                                "profile": "native|1080p|1440p|4k" (a fixed frame, h264/h265 only),
                                                "acceleration": "auto|hardware|software"})
 GET  /api/v1/emulator/{id}/video/record/status    Recording state, stats and the audio track (audio_codec,
                                                audio_sample_rate, audio_channels, audio_samples_recorded, audio_duration; profile, acceleration)
+GET  /api/v1/recording/presets                  The core's recording presets (id, title, mode, format, container, audio, bitrates, fps, scale)
+GET  /api/v1/recent[?kind=]                     The files opened lately (snapshot, tape, disk, rzx, image, cd), newest first
+DELETE /api/v1/recent[?kind=]                   Forget them (open one: POST /api/v1/controllers/actions/media.open_recent)
 ```
 
 #### Disassembly Response

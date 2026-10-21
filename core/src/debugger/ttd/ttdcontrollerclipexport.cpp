@@ -93,6 +93,13 @@ std::string TimeTravelController::VisitComposedFrames(uint64_t fromFrame, uint64
     return error;
 }
 
+std::string TimeTravelController::VisitComposedFramesAsOperation(uint64_t fromFrame, uint64_t toFrame,
+                                                                 const TTDFrameVisitor& visit)
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    return VisitComposedFrames(fromFrame, toFrame, visit);
+}
+
 TimeTravelController::TTDClipExportResult TimeTravelController::ExportClip(const TTDClipExportOptions& options)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};

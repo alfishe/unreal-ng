@@ -20,6 +20,8 @@
 #include "emulator/platform.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "emulator/machinevariants.h"
+#include "emulator/capture/recordingcontrol.h"
+#include "emulator/media/recentfiles.h"
 #include "emulator/notifications.h"
 #include "recordingmanager.h"
 // Avoid Qt 'signals' and 'slots' macro conflicts with core struct members
@@ -212,9 +214,35 @@ void MenuManager::createFileMenu()
 
     _fileMenu->addSeparator();
 
-    // Recent Files (placeholder)
-    _recentFilesAction = _fileMenu->addAction(tr("Recent Files"));
-    _recentFilesAction->setEnabled(false);  // TODO: Implement recent files
+    // Recent Files: the core's list (RecentFiles, the same every automation plane and the deck's media.open_recent
+    // show), built each time the submenu opens
+    _recentFilesMenu = _fileMenu->addMenu(tr("Recent &Files"));
+    _recentFilesMenu->setStatusTip(tr("Open one of the files opened lately"));
+    connect(_recentFilesMenu, &QMenu::aboutToShow, this, [this]() {
+        _recentFilesMenu->clear();
+        const std::vector<RecentFiles::Entry> files = RecentFiles::Instance().List();
+        if (files.empty())
+        {
+            _recentFilesMenu->addAction(tr("(none yet)"))->setEnabled(false);
+            return;
+        }
+        std::string kind;
+        for (const RecentFiles::Entry& entry : files)
+        {
+            if (!kind.empty() && entry.kind != kind)
+                _recentFilesMenu->addSeparator();
+            kind = entry.kind;
+            const QString path = QString::fromStdString(entry.path);
+            QAction* action = _recentFilesMenu->addAction(
+                QString("%1  (%2)").arg(QString::fromStdString(entry.name), QString::fromStdString(entry.kind)));
+            action->setStatusTip(path);
+            action->setToolTip(path);
+            connect(action, &QAction::triggered, this, [this, path]() { emit openRecentFileRequested(path); });
+        }
+        _recentFilesMenu->addSeparator();
+        connect(_recentFilesMenu->addAction(tr("Clear Recent Files")), &QAction::triggered, this,
+                []() { RecentFiles::Instance().Clear(); });
+    });
 
     _fileMenu->addSeparator();
 
@@ -725,33 +753,13 @@ void MenuManager::createMachineMenu()
     std::vector<TMemModel> models = manager->GetAvailableModels();
     const int ramSizes[] = {48, 128, 256, 512, 1024, 2048, 4096};
 
-    // Only show supported models for now
-    // TODO: Enable other models as they become fully supported
-    std::set<MEM_MODEL> supportedModels = {
-        MM_PENTAGON,      // Pentagon 128K/512K/1024K
-        MM_SPECTRUM48,    // ZX-Spectrum 48K
-        MM_SPECTRUM128,   // ZX-Spectrum 128K
-        MM_PLUS2,         // ZX-Spectrum +2 (grey): 128K hardware, Amstrad ROM
-        MM_PLUS2A,        // ZX-Spectrum +2A (black): +3 without the floppy controller
-        MM_PLUS3,         // ZX-Spectrum +3 (uPD765A, design: docs/inprogress/2026-09-28-plus3-upd765)
-        MM_ATM450,        // ATM Turbo 2 v4.50 (design: docs/inprogress/2026-10-01-atm450)
-        MM_ATM710,        // ATM Turbo 2+ v7.10
-        MM_ATM3,          // ZX-Evo / ATM3 / PentEvo
-        MM_SCORP,         // Scorpion ZS-256 (base ROM bundle; design:
-                          // docs/inprogress/2026-09-07-scorpion-zs256-clone)
-        MM_PROFSCORP,     // Scorpion ZS-256 + ProfROM 4.01 (512 KB scorp_prof401.rom,
-                          // quadrant switching + #7EFD window; same design doc)
-        MM_PROFI,         // Profi v5 1024K (design: docs/inprogress/2026-09-21-profi)
-        MM_PROFI3,        // Profi v3 512K (design: docs/inprogress/2026-10-01-profi-v3-v5)
-        MM_TSL,           // ZX-Evo TS-Conf, 4096K (design: docs/inprogress/2026-09-27-tsconf)
-        MM_SPRINTER,      // Peters Plus Sprinter Sp2000, 4096K (design: docs/inprogress/2026-09-28-sprinter)
-        MM_NEXT           // ZX Spectrum Next, 2048K (design: docs/inprogress/2026-10-07-zx-next); the real boot chain with [NEXT] SdCard
-    };
+    // The models this build can create (a port decoder and a config folder: Config::IsModelCreatable). GMX, KAY,
+    // QUORUM, LSY256 and PHOENIX are in the model table but have neither yet, so they stay out of the menu
 
     for (const auto& model : models)
     {
-        // Skip unsupported models
-        if (supportedModels.find(model.Model) == supportedModels.end())
+        // Skip the models this build cannot create
+        if (!Config::IsModelCreatable(model))
             continue;
 
         QString shortName = QString::fromUtf8(model.ShortName);
@@ -1338,19 +1346,15 @@ void MenuManager::createToolsMenu()
     _quickRecordMenu = _toolsMenu->addMenu(tr("&Quick Record"));
     _quickRecordMenu->setStatusTip(tr("Quickly start recording with a preset"));
 
-    // Populate with preset names (will be connected via lambda to emit quickRecordRequested)
-    auto addPresetAction = [this](const QString& name) {
-        QAction* action = _quickRecordMenu->addAction(name);
-        connect(action, &QAction::triggered, this, [this, name]() {
-            emit quickRecordRequested(name);
-        });
-    };
-
-    addPresetAction(tr("Gameplay (MP4)"));
-    addPresetAction(tr("GIF Animation"));
-    addPresetAction(tr("High Quality (MKV)"));
-    // TODO: Re-add "Music (FLAC)" / "Audio Only (WAV)" when audio-only
-    // recording lands, and "Multi-Track (MKV)" when multi-track encoding lands.
+    // The core's presets (capture::RecordingPresets): the same ones every automation plane and the Stream Deck's
+    // cap.record_toggle start by id
+    for (const capture::RecordingPreset& preset : capture::RecordingPresets())
+    {
+        QAction* action = _quickRecordMenu->addAction(QString::fromUtf8(preset.title));
+        action->setStatusTip(QString::fromUtf8(preset.description));
+        const QString id = QString::fromUtf8(preset.id);
+        connect(action, &QAction::triggered, this, [this, id]() { emit quickRecordRequested(id); });
+    }
 #endif
 }
 

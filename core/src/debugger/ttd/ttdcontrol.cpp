@@ -23,6 +23,7 @@
 #include "debugger/ttd/ttdportsearch.h"
 #include "debugger/ttd/ttdprobe.h"
 #include "debugger/ttd/ttdrecordingfolders.h"
+#include "emulator/capture/recordingcontrol.h"
 #include "emulator/coordinator/ports.h"
 #include "emulator/emulator.h"
 #include "emulator/memory/devicememory.h"
@@ -442,7 +443,7 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"file-info", {"path"}},
         {"dump", {"path"}},
         {"load", {"path"}},
-        {"export-clip", {"from", "to", "path", "chunk"}},
+        {"export-clip", {"from", "to", "path", "chunk", "codec", "scale"}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -2016,7 +2017,7 @@ TTDReply TTDControlBackend<S>::ExportClip(const TTDRequest& request)
     const std::string* toText = Option(request, "to");
     const std::string* path = Option(request, "path");
     if (!fromText || !toText || !path || path->empty())
-        return Fail(TTDControlError::BadRequest, "Required fields: from, to, path (absolute directory)");
+        return Fail(TTDControlError::BadRequest, "Required fields: from, to, path (an absolute directory: the lossless clip; or a .gif / .mp4 / .mkv / .webm / .mov / .avi file: a video)");
     TTDClipExportOptions options;
     uint64_t chunk = options.chunkFrames;
     const std::string* chunkText = Option(request, "chunk");
@@ -2027,6 +2028,52 @@ TTDReply TTDControlBackend<S>::ExportClip(const TTDRequest& request)
     options.chunkFrames = static_cast<uint32_t>(chunk);
     if (TTDReply refusal; RefuseWhileRecording(refusal))
         return refusal;
+
+    // A video file (.gif, .mp4, .mkv, .webm, .mov, .avi) instead of the lossless folder: the frames through the
+    // RecordingManager (capture::ExportTtdClip; the engine only)
+    std::string extension = FileHelper::GetFileExtension(*path);
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (extension == "gif" || extension == "mp4" || extension == "mkv" || extension == "webm" || extension == "mov" ||
+        extension == "avi")
+    {
+        Emulator* emulator = _context ? _context->pEmulator : nullptr;
+        if (emulator == nullptr)
+            return Fail(TTDControlError::Conflict, "no emulator");
+        uint64_t scale = 1;
+        if (const std::string* scaleText = Option(request, "scale"); scaleText && (!ParseU64(*scaleText, scale) || scale < 1 || scale > 4))
+            return Fail(TTDControlError::BadRequest, "scale must be 1..4");
+        const std::string* codec = Option(request, "codec");
+        PauseAndConfirm();
+        const capture::RecordingReply video = capture::ExportTtdClip(
+            *emulator, options.fromFrame, options.toFrame, *path, codec ? *codec : std::string(), static_cast<uint32_t>(scale));
+        NotifyFrameRefresh();
+        StateNode body = video.body;
+        body["ok"] = video.ok;
+        // The fields of the lossless clip's answer too (the CLI prints them)
+        body["path"] = *path;
+        const StateNode* size = video.body.find("file_size");
+        body["bytes"] = size != nullptr ? size->i : int64_t{0};
+        body["planeb"] = false;
+        if (body.find("seconds") == nullptr)
+            body["seconds"] = 0.0;
+        if (body.find("width") == nullptr)
+            body["width"] = 0u;
+        if (body.find("height") == nullptr)
+            body["height"] = 0u;
+        if (body.find("frames") == nullptr)
+            body["frames"] = 0u;
+        if (!video.ok)
+        {
+            body["error"] = video.message;
+            return Fail(video.error == "Bad Request" ? TTDControlError::BadRequest : TTDControlError::Conflict,
+                        video.message, body);
+        }
+        TTDReply reply;
+        reply.body = body;
+        reply.message = video.message;
+        return reply;
+    }
 
     PauseAndConfirm();
     const auto result = _manager->ExportClip(options);

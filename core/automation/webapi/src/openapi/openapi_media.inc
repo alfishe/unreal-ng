@@ -119,7 +119,7 @@
         body["properties"]["format"]["description"] =
             "insert / swap: audio-cd - a folder of MP3 / FLAC / WAV files into a CD-ROM drive as a Red Book audio CD (a folder "
             "in a CD slot is one anyway; the report lists the tracks and every file not taken, info.medium.disc the tracks); "
-            "create: auto, unformatted or plus3 (floppies)";
+            "create: auto, trdos (formatted: an empty TR-DOS catalogue), plus3 or unformatted (raw) (floppies)";
         body["properties"]["cylinders"]["type"] = "integer";
         body["properties"]["sides"]["type"] = "integer";
         body["properties"]["size"]["type"] = "integer";

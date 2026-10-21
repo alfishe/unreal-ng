@@ -1780,7 +1780,13 @@ emu.video_record("start", {"format": "h264", "filename": "run.mkv", "profile": "
                                      # profile: "native" (default) | "1080p" | "1440p" | "4k": a fixed frame, the
                                      # picture fitted into it (aspect kept, nearest, black bars; h264 /
                                      # h265 only). acceleration: "auto" | "hardware" | "software"
+emu.video_record("start", {"preset": "gameplay"})  # a core preset (recording_presets() lists them); fields win
+emu.video_record("start", {"mode": "audio", "container": "flac"})  # audio only; "multi": a track per source
+emu.video_record("toggle")           # stop a running recording, else start one
 emu.video_record("stop")             # also "pause" / "resume"
+unreal_emulator.recording_presets()  # [{"id": "gameplay", "title": "Gameplay (MP4)", "mode", "format", ...}, ...]
+unreal_emulator.recent_files("tape") # the files opened lately: {"kind", "files": [{"index", "name", "path", ...}]}
+unreal_emulator.recent_clear()       # forget them; open one: emu.action("media.open_recent", index=0, kind="tape")
 emu.video_record_status()             # recording state + live stats (frames, duration, fps,
                                      # audio, audio_codec, audio_sample_rate, audio_duration)
 # video_record has no audio-rate option - for a fixed-rate recording pin the

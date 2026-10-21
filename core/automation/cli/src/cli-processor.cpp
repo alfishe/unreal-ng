@@ -180,6 +180,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"audiocapture", &CLIProcessor::HandleAudioCapture},  // Buffered stereo capture
                         {"mixer", &CLIProcessor::HandleMixer},                // Per-device mixer (mute, solo, volume)
                         {"videorecord", &CLIProcessor::HandleVideoRecord},    // Video recording control
+                        {"recent", &CLIProcessor::HandleRecent},              // Files opened lately (RecentFiles)
 
                         // BASIC commands
                         {"basic", &CLIProcessor::HandleBasic},
@@ -812,7 +813,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  coverage start|stop|clear|status|gaps [args] - Code coverage" << NEWLINE;
     oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;
     oss << "  audiocapture start <s>|stop|clear|status|result|save <wav> - Audio" << NEWLINE;
-    oss << "  videorecord start|stop|pause|resume|status [opts]      - Video (--region full|screen, --audio aac, --profile 4k)" << NEWLINE;
+    oss << "  videorecord start|stop|pause|resume|toggle|status|presets [opts] - Video (--preset gameplay, --mode audio, --audio aac, --profile 4k)" << NEWLINE;
+    oss << "  recent [kind] | recent clear [kind]                     - Files opened lately (open: action run media.open_recent index=N)" << NEWLINE;
     oss << NEWLINE;
     oss << "BASIC Program Tools:" << NEWLINE;
     oss << "  basic                  - Show BASIC command help" << NEWLINE;

@@ -1423,7 +1423,7 @@ void EmulatorAPI::createDisk(const HttpRequestPtr& req,
         {
             Json::Value error;
             error["error"] = "Bad Request";
-            error["message"] = "format must be auto, unformatted or plus3";
+            error["message"] = "format must be auto, unformatted (raw), plus3 or trdos";
             auto resp = HttpResponse::newHttpJsonResponse(error);
             resp->setStatusCode(HttpStatusCode::k400BadRequest);
             addCorsHeaders(resp);

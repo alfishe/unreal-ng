@@ -243,22 +243,6 @@
    "gui": false
   },
   {
-   "id": "cap.record_toggle",
-   "label": "cap.record_toggle",
-   "group": "Capture and machine",
-   "kind": "press",
-   "held": false,
-   "gui": false
-  },
-  {
-   "id": "cap.clip_last",
-   "label": "cap.clip_last",
-   "group": "Capture and machine",
-   "kind": "press",
-   "held": false,
-   "gui": false
-  },
-  {
    "id": "run.pause",
    "label": "Pause",
    "group": "Run",
@@ -308,7 +292,7 @@
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "model, ram_kb?, replace? (true: in place), stranded? (keep), ram_power_on? (random|zero), select? (true)"
+   "params": "model (a short name, a variant such as TSL-VDAC2 or PROFI-PLUS, a ZX-Poly configuration such as ZXPOLY-128K: GET /emulator/models), ram_kb?, replace? (true: in place), stranded? (keep: refuse|save|discard|keep), ram_power_on? (random|zero), select? (true)"
   },
   {
    "id": "mach.cold_reset",
@@ -521,7 +505,7 @@
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "drive (A..D), format?, cylinders?, sides?"
+   "params": "drive (A..D, or an IDE / SD slot), format? (floppy: auto|trdos|plus3|unformatted (raw)), cylinders? (40|80), sides? (1|2), size? (IDE / SD: bytes, or 64M, 2G), save? / discard? / export? (the disk it replaces)"
   },
   {
    "id": "snapshot.quick",
@@ -664,193 +648,172 @@
    "params": "path"
   },
   {
-   "id": "dbg.breakpoint_toggle_pc",
-   "label": "Toggle a breakpoint at PC",
-   "group": "Debugger",
+   "id": "mach.switch",
+   "label": "Front-panel switch",
+   "group": "Capture and machine",
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "address? (else PC)"
+   "params": "name (turbo|cpm), on? (else flips)"
   },
   {
-   "id": "dbg.bp_add",
-   "label": "Add a breakpoint",
-   "group": "Debugger",
+   "id": "mach.previous",
+   "label": "Previous model",
+   "group": "Capture and machine",
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "kind (exec|read|write|rw|in|out|io|nextreg_read|nextreg_write|nextreg|beam|copper|magic|keyboard), address (or a label), end?, preset? (fe|7ffd|1ffd|fffd|bffd), mask?, page?, slot_only?, hc?, doors?, value?, value_mask?, opcode? (edff|dd01), key? (any), on? (press|release|both), hits?, note?, group?"
+   "params": "replace? (true: in place), stranded? (keep), ram_power_on? (random|zero)"
   },
   {
-   "id": "dbg.bp_remove",
-   "label": "Remove breakpoints",
-   "group": "Debugger",
+   "id": "media.insert",
+   "label": "Insert a medium",
+   "group": "Media",
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "select? (all | an id | a kind: exec, read, write, mem, port, in, out, nextreg, beam, copper, magic, keyboard | group:<name>; or id, kind, group)"
+   "params": "drive (A..D, tape, ide0.master, sd..., or auto), path, wp?, access? (readonly|session|writethrough), save? / discard? / export? (the medium it replaces)"
   },
   {
-   "id": "dbg.bp_enable",
-   "label": "Enable breakpoints",
-   "group": "Debugger",
+   "id": "media.swap",
+   "label": "Swap disks",
+   "group": "Media",
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "select? (all | an id | a kind: exec, read, write, mem, port, in, out, nextreg, beam, copper, magic, keyboard | group:<name>; or id, kind, group)"
+   "params": "drive, with (another drive: the two exchange their disks) or path (a file replaces the disk), save? / discard?"
   },
   {
-   "id": "dbg.bp_disable",
-   "label": "Disable breakpoints",
-   "group": "Debugger",
+   "id": "media.export",
+   "label": "Save as another format",
+   "group": "Media",
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "select? (all | an id | a kind: exec, read, write, mem, port, in, out, nextreg, beam, copper, magic, keyboard | group:<name>; or id, kind, group)"
+   "params": "drive (A..D, tape), format (disk: trd, scl, udi, fdi, dsk, td0, mgt, img, hfe, scp; tape: tap, tzx), path? (else next to its file), force? (false)"
   },
   {
-   "id": "dbg.bp_toggle",
-   "label": "Toggle breakpoints",
-   "group": "Debugger",
+   "id": "media.discard",
+   "label": "Discard changes",
+   "group": "Media",
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "select? (as dbg.bp_enable; all by default), on? (else flips: on when any is off)"
+   "params": "drive (A..D, or a slot id)"
   },
   {
-   "id": "dbg.bp_group_toggle",
-   "label": "Breakpoint group on / off",
-   "group": "Debugger",
+   "id": "media.rescan",
+   "label": "Rescan",
+   "group": "Media",
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "group, on? (else flips)"
+   "params": "drive (a folder or composite medium), save? / discard?"
   },
   {
-   "id": "dbg.register_set",
-   "label": "Set a register",
-   "group": "Machine state",
+   "id": "media.open_recent",
+   "label": "Open a recent file",
+   "group": "Media",
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "name (a, f, bc, hl, ix, sp, pc, i, r, im, iff1, ... and the alternates af', bc'), value"
+   "params": "index? (0 = the newest), kind? (all|snapshot|tape|disk|rzx|image|cd), autostart? (true), drive?"
   },
   {
-   "id": "mem.write",
-   "label": "Write memory",
-   "group": "Machine state",
+   "id": "rzx.play",
+   "label": "Play an RZX",
+   "group": "Media",
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "address (or a label), bytes (hex: \"3E01C9\" or \"3E 01 C9\"), or value (one byte) with count? (1: a fill)"
+   "params": "path, tolerant? (false), switch_model? (true)"
   },
   {
-   "id": "port.out",
-   "label": "Port OUT",
-   "group": "Machine state",
+   "id": "rzx.stop",
+   "label": "Stop the RZX",
+   "group": "Media",
    "kind": "press",
    "held": false,
-   "gui": false,
-   "params": "port (0..#FFFF, or a preset: fe, 7ffd, 1ffd, fffd, bffd), value (0..#FF)"
+   "gui": false
   },
   {
-   "id": "sym.import",
-   "label": "Load symbols",
-   "group": "Symbols",
+   "id": "rzx.seek",
+   "label": "Seek the RZX",
+   "group": "Media",
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "path, format?, set?, space?, base?, policy? (both|keep|replace|fail)"
+   "params": "frame (0 = the start) or by (frames, -500)"
   },
   {
-   "id": "sym.export",
-   "label": "Save symbols",
-   "group": "Symbols",
+   "id": "input.joystick_type",
+   "label": "Joystick type",
+   "group": "Input",
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "path, format?, sets?, space?, from?, to?, kinds?, name?"
+   "params": "kind (kempston|sinclair1|sinclair2|cursor|fuller|keys|md6|none), connector? (auto), keys? (keys: up:q,down:a,...)"
   },
   {
-   "id": "sym.import_source",
-   "label": "Import labels from a source",
-   "group": "Symbols",
+   "id": "input.mouse_button",
+   "label": "Mouse button",
+   "group": "Input",
    "kind": "press",
-   "held": false,
+   "held": true,
    "gui": false,
-   "params": "path (a source, an image, disk:A/NAME.T), main?, set?, policy?, generated?"
+   "params": "button (left|right|middle), hold? (false: a click), frames? (2)"
   },
   {
-   "id": "sym.import_live",
-   "label": "Import an assembler's labels from RAM",
-   "group": "Symbols",
+   "id": "input.mouse_release",
+   "label": "Release the mouse",
+   "group": "Input",
    "kind": "press",
    "held": false,
-   "gui": false,
-   "params": "scanner? (alasm-table|xas-table), page?, offset?, set?, policy?"
+   "gui": false
   },
   {
-   "id": "sym.drop",
-   "label": "Drop a symbol set",
-   "group": "Symbols",
+   "id": "cap.record_toggle",
+   "label": "Record video",
+   "group": "Capture and machine",
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "id (GET /symbols/sets lists them)"
+   "params": "preset? (gameplay|music|audio|gif|hq|multitrack), format?, container?, audio?, mode? (single|multi|audio), profile? (native|1080p|1440p|4k), path?, fps?, scale?, region?"
   },
   {
-   "id": "sym.set_toggle",
-   "label": "Symbol set on / off",
-   "group": "Symbols",
+   "id": "cap.record_pause",
+   "label": "Pause recording",
+   "group": "Capture and machine",
    "kind": "press",
    "held": false,
-   "gui": false,
-   "params": "id, on? (else flips)"
+   "gui": false
   },
   {
-   "id": "prof.toggle",
-   "label": "Profiler / trace on / off",
-   "group": "Profilers",
+   "id": "cap.clip_last",
+   "label": "Clip the last seconds",
+   "group": "Capture and machine",
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "name (opcode|memory|calltrace|coverage|porttrace|gsporttrace|pchist|aylog|audio|all), on? (else flips), keep? (coverage), capacity? (aylog), seconds? + source? (audio)"
+   "params": "seconds? (10), format? (gif|mp4|mkv|webm|mov|avi), path?, scale? (1..4)"
   },
   {
-   "id": "prof.pause_toggle",
-   "label": "Profiler / trace pause",
-   "group": "Profilers",
+   "id": "ttd.export_clip",
+   "label": "Export a range as a clip",
+   "group": "Time travel",
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "name (opcode|memory|calltrace|porttrace|gsporttrace|all), on? (true: pause, false: resume; else flips)"
+   "params": "from, to (frames), path? (a .gif / .mp4 / .mkv / .webm / .mov / .avi file: a video, default a .gif under the recordings folder; a folder: the lossless clip), codec?, scale? (1..4), chunk? (the lossless clip)"
   },
   {
-   "id": "prof.clear",
-   "label": "Profiler / trace clear",
-   "group": "Profilers",
+   "id": "cap.audio_capture",
+   "label": "Capture audio",
+   "group": "Capture and machine",
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "name (opcode|memory|calltrace|coverage|porttrace|gsporttrace|aylog|audio|all)"
-  },
-  {
-   "id": "analyzer.toggle",
-   "label": "Analyzer on / off",
-   "group": "Profilers",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "name (trdos, editor-input, coverage, aylog, audiocapture: GET /analyzers), on? (else flips)"
-  },
-  {
-   "id": "analyzer.clear",
-   "label": "Analyzer clear",
-   "group": "Profilers",
-   "kind": "press",
-   "held": false,
-   "gui": false,
-   "params": "name (trdos, coverage, aylog, audiocapture)"
+   "params": "source? (master, beeper, ay1, covox, gs, ...), seconds? (5, 0.01..30), path? (a .wav)"
   },
   {
    "id": "ttd.scrub_back",
@@ -949,14 +912,6 @@
    "gui": true
   },
   {
-   "id": "dbg.breakpoint_toggle_cursor",
-   "label": "Toggle a breakpoint at the cursor",
-   "group": "Debugger",
-   "kind": "press",
-   "held": false,
-   "gui": true
-  },
-  {
    "id": "cap.screenshot",
    "label": "Screenshot",
    "group": "Capture and machine",
@@ -968,6 +923,14 @@
    "id": "osd.keyboard",
    "label": "On-screen keyboard",
    "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "dbg.breakpoint_toggle_pc",
+   "label": "dbg.breakpoint_toggle_pc",
+   "group": "Debugger",
    "kind": "press",
    "held": false,
    "gui": true

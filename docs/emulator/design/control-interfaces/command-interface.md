@@ -1597,11 +1597,22 @@ subsystem (`RecordingManager`); requires a build with `ENABLE_RECORDING`
 
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
-| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--region full\|screen] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS] [--profile native\|1080p\|1440p\|4k] [--acceleration auto\|hardware\|software]` | Start recording. Default format `gif`, video only; `--region` `full` (default) records the whole frame with its border, `screen` the working picture (the file keeps the size of the working window at the start, a window that changes later is scaled into it with its aspect kept and black bars); `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`.mkv` for h264/h265/vp9). |
+| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--preset NAME] [--mode single\|multi\|audio] [--container EXT] [--fps N] [--scale N] [--region full\|screen] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS] [--profile native\|1080p\|1440p\|4k] [--acceleration auto\|hardware\|software]` | Start recording. Default format `gif`, video only; `--preset` takes one of the core's presets (below; what the command line names wins); `--mode multi` records an audio track per fitted sound source (master first), `--mode audio` audio only (`wav`, `flac`, `mp3`, `ogg`, `m4a`; `split`, a track per AY channel, is not implemented: 501); `--region` `full` (default) records the whole frame with its border, `screen` the working picture (the file keeps the size of the working window at the start, a window that changes later is scaled into it with its aspect kept and black bars); `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`--container`, else the format's: `.mp4` for h264/h265, `.webm` vp9, `.avi` rawvideo). |
+| `videorecord toggle` | | Stop a running recording, else start one (the `cap.record_toggle` action). |
+| `videorecord presets` | | The core's presets: `gameplay` (Gameplay (MP4): H.264 + AAC, 2x), `music` (Music (FLAC): audio only), `audio` (Audio Only (WAV): PCM), `gif` (GIF Animation), `hq` (High Quality (MKV): H.265 + FLAC, 2x), `multitrack` (Multi-Track (MKV): H.264 + a FLAC track per source). The Qt Tools > Quick Record menu shows the same ones. |
 | `videorecord stop` | | Stop recording and finalize the file. |
 | `videorecord pause` | | Pause recording. |
 | `videorecord resume` | | Resume a paused recording. |
 | `videorecord status` | | Show recording state, output file, frames, region, output profile, acceleration, video codec and the audio track (codec, rate, channels, samples and seconds recorded). |
+
+One layer for every plane: `capture::RecordingControl` (`core/src/emulator/capture/recordingcontrol.h`) takes the
+same option names on the CLI, `POST /api/v1/emulator/{id}/video/record` (`action` start / stop / pause / resume /
+toggle / status, `preset`, `mode`, `container`, ...; `GET /api/v1/recording/presets` lists the presets), MCP
+`capture_media` (`record_start` with `preset`, `container`, `record_mode`; `record_presets`), Lua
+`video_record(action, opts)` / `recording_presets()`, Python `emu.video_record(action, opts)` /
+`unreal_emulator.recording_presets()` and the catalogue actions `cap.record_toggle` / `cap.record_pause`; the
+WebSocket `call` of the route, the topic `cap.record` (recording, paused, frames, seconds, bytes, output) pushes the
+state.
 
 **Sound track**: `--audio CODEC` records the emulated sound with the picture (the default is video
 only). The codec must fit the file's container: `.mp4` aac/mp3/opus/flac, `.mov` aac/mp3/pcm_s16le,
@@ -4006,6 +4017,40 @@ In the GUI: Tools > Stream Deck... (the same status, Start / Stop / Restart, whe
 pairing with Pair / Approve / Revoke, each deck's brightness, "Surfaces..." to the surfaces table, the udev rule on
 Linux). The daemon's own automation (`127.0.0.1:37053`, REST + MCP) is in
 [docs/companions/streamdeck/daemon.md](../../../companions/streamdeck/daemon.md#automation).
+
+#### 16.3 Machine, media, input and recording actions
+
+The catalogue actions of the machine area (Stream Deck use cases C1.5, C3.3, C4.3, C4.5, C5, C6.4, C6.5, C7, U1.3,
+U1.5; `core/src/emulator/actions/hostactions_machine.cpp`, the full table with params, scopes and executors in
+[actions.md §1.1](../../../inprogress/2026-10-18-control-surfaces/actions.md#11-scenario-actions-sd6)): every plane
+runs them as `action run <id>` (CLI), `POST /api/v1/controllers/actions/{id}` (REST and its WebSocket `call`, or
+`action` on the `surface` topic), MCP `actions` `run`, Lua `action(id, value, params)`, Python `emu.action(id, ...)`.
+Their readouts (`readouts.h`, `machinereadouts.h`) are pushed by the `surface` topic, and as WebSocket state topics of
+the same name: `media.recent`, `media.rzx`, `cap.record`, `machine.switches`, `input.connectors`.
+
+| Action | Params | What | Readout |
+| :--- | :--- | :--- | :--- |
+| `mach.start` | `model` (a short name, a variant `TSL-VDAC2` / `PROFI-PLUS` and their aliases, a ZX-Poly configuration), ... | Start a machine (in place by default); the names `machines::Resolve` takes are the ones `EmulatorManager` creates (before 2026-10-21 variants and ZX-Poly configurations were refused here and by `POST /emulator/{id}/model`) | `machine` |
+| `mach.switch` | `name` (`turbo`, `cpm`), `on?` (flips) | The Profi's front panel (v3 / v5 TURBO, v5 CP/M) | `toggle.mach.switch.<name>`, `machine.switches` |
+| `mach.previous` | `replace?`, `stranded?`, `ram_power_on?` | Start the model used before this one (the machine history of the process) | `machine.previous` |
+| `media.insert`, `media.swap`, `media.export`, `media.discard`, `media.rescan`, `media.create` | `drive`, the verb's | The media verbs a key needs; `media.swap` with `with` exchanges two drives' disks; `media.export` writes another format (disk: trd, scl, udi, fdi, dsk, td0, mgt, img, hfe, scp; tape: tap, tzx); `media.create` `format` `trdos` (formatted), `plus3`, `unformatted` (`raw`), `size` for IDE / SD (`64M`) | `media.disk` (with `changed`), `media.tape` |
+| `media.open_recent` | `index?`, `kind?` | Open one of the files opened lately ([media.md → Recent files](../../../features/media.md#recent-files)) | `media.recent` |
+| `rzx.play`, `rzx.stop`, `rzx.seek` | play: `path`, `tolerant?`, `switch_model?`; seek: `frame` or `by` | RZX playback (§12) | `media.rzx` |
+| `input.joystick_type` | `kind` (kempston, sinclair1, sinclair2, cursor, fuller, keys, md6, none), `connector?` | The joystick on a connector (§15) | `input.connectors` |
+| `input.mouse_button`, `input.mouse_release` | `button`, `hold?`, `frames?` | Kempston mouse buttons (§11); the mouse itself is `feature.toggle name=kempstonmouse` | |
+| `cap.record_toggle`, `cap.record_pause` | `preset?`, `format?`, `container?`, `audio?`, `mode?`, `profile?`, `path?`, ... | Video recording (§5.8) over `capture::RecordingControl`; a start without a path writes `<user data>/recordings/` | `toggle.cap.record_toggle`, `cap.record` |
+| `cap.clip_last` | `seconds?` (10), `format?` (gif), `path?`, `scale?` | The last seconds of a running TTD recording as a video file: the recording pauses for browsing at its end, the clip is written, the recording goes on from that point, the run state as it was. Without a recording: `not_now` | |
+| `ttd.export_clip` | `from`, `to`, `path?`, `codec?`, `scale?` | A TTD range as a clip: a `.gif` / `.mp4` / `.mkv` / `.webm` / `.mov` / `.avi` path writes a video (`ttd export-clip` takes such a path on every plane too), a folder the lossless clip | |
+| `cap.audio_capture` | `source?`, `seconds?` (5), `path?` | One sound source (or the mix) for N emulated seconds into a WAV (needs a running machine; waits for the capture) | |
+
+The plane verbs that came with them:
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `switch` | `[turbo\|cpm [on\|off]]` | The front-panel switches: list, read, flip. WebAPI `GET` / `POST /api/v1/emulator/{id}/switches` `{name, on}`, MCP `emulator_manage` `switches` / `switch` (`switch`, `on`), Lua `emu:get_switch(name)` / `emu:set_switch(name, on)`, Python `emu.get_switch(name)` / `emu.set_switch(name, on)`, WebSocket topic `machine.switches` | ✅ Implemented |
+| `recent` | `[kind] [--json]`, `clear [kind]` | The files opened lately per kind (`snapshot`, `tape`, `disk`, `rzx`, `image`, `cd`), newest first. WebAPI `GET` / `DELETE /api/v1/recent[?kind=]`, MCP `media` `recent` / `recent_clear`, Lua `recent_files([kind])` / `recent_clear([kind])`, Python `recent_files(kind)` / `recent_clear(kind)`, WebSocket topic `media.recent`, Qt File > Recent Files | ✅ Implemented |
+| `videorecord presets` | | The recording presets (§5.8). WebAPI `GET /api/v1/recording/presets`, MCP `capture_media` `record_presets`, Lua / Python `recording_presets()` | ✅ Implemented |
+| `media create` | `--format trdos` | A formatted TR-DOS blank (also `disk create <drive> [cyl] [sides] trdos`, `POST /disk/{drive}/create {"format": "trdos"}`, Lua / Python `disk_create`) | ✅ Implemented |
 
 ### 17. Monitoring
 

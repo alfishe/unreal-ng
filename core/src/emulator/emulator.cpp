@@ -7,6 +7,7 @@
 #include "emulator/bus/busmanager.h"
 #include "emulator/media/floppyformats.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/media/recentfiles.h"
 #include "emulator/io/controllers/controllerconfig.h"
 #include <loaders/snapshot/loader_z80.h>
 
@@ -2203,7 +2204,12 @@ bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error, c
 
     // Store snapshot path on success
     if (result)
+    {
         SetSnapshotFilePath(openedPath);
+        // File > Recent Files and every plane's recent list (an RZX's start snapshot names the recording)
+        const std::string extension = StringHelper::ToLower(FileHelper::GetFileExtension(openedPath));
+        RecentFiles::Instance().Note(extension == "rzx" ? "rzx" : "snapshot", openedPath);
+    }
 
     // A new program: the controllers watch its port reads for the auto connector (retro-devices.md §6)
     if (result && _context && _context->pControllerManager)
@@ -2567,6 +2573,7 @@ bool Emulator::LoadTape(const std::string& path, std::string* error)
                                                new FileLoadedPayload(_context->emulatorId, "tape", resolvedPath, inserted.Ok()));
     if (!inserted.Ok())
         return fail(inserted.message);
+    RecentFiles::Instance().Note("tape", resolvedPath);
     if (_context->pControllerManager)
         _context->pControllerManager->WatchPortReads(true);
     return true;
@@ -2612,6 +2619,8 @@ bool Emulator::ParseBlankDiskFormat(const std::string& text, BlankDiskFormat& fo
         format = BlankDiskFormat::Unformatted;
     else if (name == "plus3" || name == "+3" || name == "+3dos")
         format = BlankDiskFormat::Plus3;
+    else if (name == "trdos" || name == "tr-dos" || name == "trd")
+        format = BlankDiskFormat::Trdos;
     else
         return false;
     return true;
@@ -2624,6 +2633,7 @@ const char* Emulator::BlankDiskFormatName(BlankDiskFormat format)
         case BlankDiskFormat::Auto: return "auto";
         case BlankDiskFormat::Unformatted: return "unformatted";
         case BlankDiskFormat::Plus3: return "plus3";
+        case BlankDiskFormat::Trdos: return "trdos";
     }
     return "?";
 }
@@ -2760,6 +2770,7 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
                                                new FileLoadedPayload(_context->emulatorId, "disk", resolvedPath, inserted.Ok()));
     if (!inserted.Ok())
         return fail(inserted.message);
+    RecentFiles::Instance().Note("disk", resolvedPath);
     if (_context->pControllerManager)
         _context->pControllerManager->WatchPortReads(true);
     return true;

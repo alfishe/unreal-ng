@@ -102,8 +102,8 @@ const Descriptions& DescriptionTable()
         {"mach.cold_reset", "Restart the same model from power on."},
         {"cap.screenshot_save", "Save a screenshot to a file (param path)."},
         {"cap.screenshot", "Copy a screenshot of the window to the clipboard."},
-        {"cap.record_toggle", "Start or stop a video recording (not available yet)."},
-        {"cap.clip_last", "Save the last seconds as a clip (not available yet)."},
+        {"cap.record_toggle", "Start a video recording (params preset, format, container, audio, mode, path), or stop it."},
+        {"cap.clip_last", "Save the last seconds of the time travel recording as a video clip (param seconds)."},
         // Input
         {"input.key", "Press a key of the machine (param key), as a tap or held while the control is."},
         {"input.type", "Type a text on the machine's keyboard (param text)."},
