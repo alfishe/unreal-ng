@@ -1,7 +1,7 @@
 // P-01 SDL_GPU latency: the render path of rendering.md §3 with the core's own pacing (core-clocked).
 //
 // Per display refresh: acquire the swapchain image -> CopyPresentedFramebuffer straight into a mapped
-// transfer buffer (cycle) -> upload to the frame texture -> one nearest-filter blit (integer scale, crop)
+// transfer buffer (cycle) -> upload to the frame texture -> one linear blit (fills the screen, aspect kept, crop)
 // -> submit. No shaders yet (P-07 ports the CRT pass).
 //
 // Default program: a border flip on Kempston fire (A / D-pad fire / Space), polled in a tight loop, so the
@@ -12,10 +12,17 @@
 //
 //   p01-sdl-gpu-latency [--model PENTAGON] [--file game.tap] [--present vsync|mailbox|immediate] [--fif 1|2]
 //                       [--delay 0..3] [--crop full|deckfit|paper] [--seconds N] [--windowed] [--autofire MS]
+//                       [--headless] [--boot]
+//
+// Built with automation (build.sh default) the instance is driven over the network: WebAPI on port 8090
+// (UNREAL_WEBAPI_PORT). --headless runs the emulator and automation only, no window and no GPU (a container, an
+// SSH session); Ctrl+C or --seconds ends it. --boot starts the ROM instead of the border test: the app the Deck
+// launcher runs (deck-install.sh), a machine to drive over the WebAPI.
 //
 // Logs: ~/steamdeck-poc-logs/p01-*.csv. Quit: View + Menu, Esc.
 
 #include "emuhost.h"
+#include "emulator/video/displaygeometry.h"
 #include "timinglog.h"
 
 #include <SDL3/SDL.h>
@@ -40,6 +47,8 @@ struct Options
     double seconds = 0;
     double autofireMs = 0;   // > 0: toggle fire on a timer, no human needed (automated latency runs)
     bool windowed = false;   // development on a desktop: a 1280x800 window instead of fullscreen
+    bool headless = false;   // no window, no GPU: the emulator and automation only
+    bool boot = false;       // the ROM boots: no border test program
 };
 
 struct Rect { uint32_t x, y, w, h; };
@@ -57,12 +66,12 @@ Rect CropRect(const std::string& crop, uint32_t w, uint32_t h)
     return {0, 0, w, h};
 }
 
-/// Largest integer scale that fits, centred
-Rect Fit(const Rect& src, uint32_t dw, uint32_t dh)
+/// Fill the screen with a picture of the given width : height, centred (a 352:288 frame -> 978x800 on the Deck)
+Rect Fit(double aspect, uint32_t dw, uint32_t dh)
 {
-    uint32_t scale = std::max(1u, std::min(dw / src.w, dh / src.h));
-    const uint32_t w = src.w * scale, h = src.h * scale;
-    return {(dw - std::min(w, dw)) / 2, (dh - std::min(h, dh)) / 2, std::min(w, dw), std::min(h, dh)};
+    const uint32_t w = std::min(dw, static_cast<uint32_t>(dh * aspect + 0.5));
+    const uint32_t h = std::min(dh, static_cast<uint32_t>(dw / aspect + 0.5));
+    return {(dw - w) / 2, (dh - h) / 2, w, h};
 }
 
 } // namespace
@@ -70,12 +79,22 @@ Rect Fit(const Rect& src, uint32_t dw, uint32_t dh)
 int main(int argc, char** argv)
 {
     Options opt;
+    auto isFlag = [](const char* arg) {
+        return std::strcmp(arg, "--windowed") == 0 || std::strcmp(arg, "--headless") == 0 ||
+               std::strcmp(arg, "--boot") == 0;
+    };
     for (int i = 1; i < argc; i++)
-        if (std::strcmp(argv[i], "--windowed") == 0)
-            opt.windowed = true;
-    for (int i = 1; i + 1 < argc; i += 2)
     {
         if (std::strcmp(argv[i], "--windowed") == 0)
+            opt.windowed = true;
+        if (std::strcmp(argv[i], "--headless") == 0)
+            opt.headless = true;
+        if (std::strcmp(argv[i], "--boot") == 0)
+            opt.boot = true;
+    }
+    for (int i = 1; i + 1 < argc; i += 2)
+    {
+        if (isFlag(argv[i]))
         {
             i--;   // a flag without a value
             continue;
@@ -91,11 +110,13 @@ int main(int argc, char** argv)
         else if (k == "--autofire") opt.autofireMs = std::stod(v);
     }
 
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD))
+    if (!SDL_Init(opt.headless ? SDL_INIT_EVENTS : SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD))
     {
         SDL_Log("SDL_Init: %s", SDL_GetError());
         return 1;
     }
+    if (opt.headless && !SDL_InitSubSystem(SDL_INIT_AUDIO))
+        SDL_Log("audio: %s", SDL_GetError());   // a container has no sound: run silent
 
     // Emulator
     deckpoc::EmuHost emu;
@@ -110,7 +131,7 @@ int main(int argc, char** argv)
         if (!emu.LoadFile(opt.file, &error))
             SDL_Log("load %s: %s", opt.file.c_str(), error.c_str());
     }
-    else
+    else if (!opt.boot)
     {
         // The border test reads Kempston at #1F: a model without it reads #FF there, "fire" always held
         if (!emu.HasKempston())
@@ -131,6 +152,24 @@ int main(int argc, char** argv)
         SDL_Log("audio: %s", error.c_str());
     emu.SetPresentDelayFrames(static_cast<uint8_t>(opt.presentDelay));
     emu.Start();
+
+    if (opt.headless)
+    {
+        // SDL turns SIGINT / SIGTERM into SDL_EVENT_QUIT
+        const uint64_t begin = deckpoc::NowNs();
+        bool done = false;
+        while (!done)
+        {
+            SDL_Event e;
+            while (SDL_PollEvent(&e))
+                done |= e.type == SDL_EVENT_QUIT;
+            done |= opt.seconds > 0 && (deckpoc::NowNs() - begin) / 1e9 >= opt.seconds;
+            SDL_Delay(50);
+        }
+        emu.Stop();
+        SDL_Quit();
+        return 0;
+    }
 
     // GPU
     SDL_Window* window = SDL_CreateWindow("P-01 SDL_GPU latency", 1280, 800, opt.windowed ? 0 : SDL_WINDOW_FULLSCREEN);
@@ -294,7 +333,10 @@ int main(int argc, char** argv)
             SDL_EndGPUCopyPass(copyPass);
 
             const Rect s = CropRect(opt.crop, texW, texH);
-            const Rect d = Fit(s, sw, sh);
+            // Stored pixels are not square (TS-Conf: 720x288): the shape comes from DisplayGeometry, as in unreal-qt
+            const Rect d = Fit(DisplayGeometry::WindowAspect(static_cast<uint16_t>(texW), static_cast<uint16_t>(texH),
+                                                             static_cast<uint16_t>(s.w), static_cast<uint16_t>(s.h)),
+                               sw, sh);
             SDL_GPUBlitInfo blit{};
             blit.source.texture = frameTexture;
             blit.source.x = s.x; blit.source.y = s.y; blit.source.w = s.w; blit.source.h = s.h;
@@ -302,7 +344,7 @@ int main(int argc, char** argv)
             blit.destination.x = d.x; blit.destination.y = d.y; blit.destination.w = d.w; blit.destination.h = d.h;
             blit.load_op = SDL_GPU_LOADOP_CLEAR;
             blit.clear_color = SDL_FColor{0, 0, 0, 1};
-            blit.filter = SDL_GPU_FILTER_NEAREST;
+            blit.filter = SDL_GPU_FILTER_LINEAR;   // a fractional scale: nearest would make uneven pixel columns
             SDL_BlitGPUTexture(cmd, &blit);
         }
         SDL_SubmitGPUCommandBuffer(cmd);

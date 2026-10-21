@@ -34,6 +34,7 @@
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
@@ -160,7 +161,15 @@ void GDBServer::stop()
     _stopping = true;
     _running = false;
 
-    // Close server socket to unblock accept()
+    // The accept loop polls with a timeout and re-checks the flags, so it ends within one poll quantum; the socket
+    // is closed after the join. Closing it under a thread blocked in accept() does not wake it on Linux, and
+    // deadlocks on Darwin (the DeZog and ZRCP servers, dzrpserver.cpp)
+    if (_acceptThread && _acceptThread->joinable())
+    {
+        _acceptThread->join();
+    }
+    _acceptThread.reset();
+
     if (_serverSocket >= 0)
     {
 #ifdef _WIN32
@@ -170,13 +179,6 @@ void GDBServer::stop()
 #endif
         _serverSocket = -1;
     }
-
-    // Wait for accept thread
-    if (_acceptThread && _acceptThread->joinable())
-    {
-        _acceptThread->join();
-    }
-    _acceptThread.reset();
 
     // Close all sessions - shutdown first to unblock recv()
     {
@@ -214,6 +216,20 @@ void GDBServer::acceptLoop()
     {
         struct sockaddr_in clientAddr{};
         socklen_t clientLen = sizeof(clientAddr);
+
+        // Wait at most 100 ms for a client, then re-check the flags: stop() joins this thread before it closes the
+        // socket
+#ifdef _WIN32
+        WSAPOLLFD pfd{static_cast<SOCKET>(_serverSocket), POLLIN, 0};
+        const int ready = WSAPoll(&pfd, 1, 100);
+#else
+        struct pollfd pfd{_serverSocket, POLLIN, 0};
+        const int ready = poll(&pfd, 1, 100);
+#endif
+        if (ready < 0)
+            break;   // listen socket error
+        if (ready == 0)
+            continue;
 
         int clientSocket = accept(_serverSocket, (struct sockaddr*)&clientAddr, &clientLen);
 
