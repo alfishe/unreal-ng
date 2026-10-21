@@ -1,7 +1,6 @@
 #include "sdb/daemondecks.h"
 
 #include <algorithm>
-#include <thread>
 
 #include "sdb/datadir.h"
 #include "sdb/deckhub.h"
@@ -62,7 +61,7 @@ scn::Scenario DaemonDecks::Idle(const Model* model)
         return *s;
     // not expected (the tests parse it for every model); the bare menu keeps the deck usable
     return *scn::Parse(json{{"name", "idle"},
-                            {"model", model ? std::string(model->name) : std::string("plusxl")},
+                            {"model", model ? ModelToken(*model) : std::string("plusxl")},
                             {"root", {{"id", "home"}, {"type", "menu"}, {"title", idle::kTitle}}}},
                        issues);
 }
@@ -372,6 +371,21 @@ void DaemonDecks::AddRoutes(automation::Api& api)
 {
     const automation::Param deckQuery{"deck", "query", "string", "deck serial (default: the first real deck)"};
     const automation::Param serialPath{"serial", "path", "string", "deck serial, or \"first\"", true};
+    // The answer of a route that posted to a runtime: its state once the device thread has applied the request (one
+    // step, ~10 ms), without holding the decks' lock meanwhile and without a fixed sleep. A device thread that does not
+    // come round within the bound (stopping, stuck): 202 with the state as it is, the request stays queued.
+    const auto afterStep = [this](const std::string& deck, const scn::Runtime::Ticket& ticket) {
+        const bool applied = ticket.Wait(std::chrono::milliseconds(_options.applyTimeoutMs));
+        Reply r = WithDeck(deck, [&](Entry& e) {
+            json s = e.runtime->State();
+            s["deck"] = e.serial;
+            s["applied"] = applied;
+            return Reply::Ok(std::move(s));
+        });
+        if (!r.IsError() && !applied)
+            r.status = 202;
+        return r;
+    };
 
     api.Add({"GET",
              "/api/v1/health",
@@ -601,16 +615,17 @@ void DaemonDecks::AddRoutes(automation::Api& api)
               {"to", "body", "string", "back | home | node", true, {"back", "home", "node"}},
               {"node", "body", "string", "node id for to=node"}},
              json{{"to", "node"}, {"node", "debug"}},
-             [this](const Request& r) {
+             [this, afterStep](const Request& r) {
                  const std::string deck = r.Str("deck");
+                 scn::Runtime::Ticket ticket;
                  Reply first = WithDeck(deck, [&](Entry& e) {
                      e.runtime->Navigate(r.body);
+                     ticket = e.runtime->Posted();
                      return Reply::Ok();
                  });
                  if (first.IsError())
                      return first;
-                 std::this_thread::sleep_for(std::chrono::milliseconds(40));  // applied by the device thread
-                 return WithDeck(deck, [](Entry& e) { return Reply::Ok(e.runtime->State()); });
+                 return afterStep(deck, ticket);
              }});
     api.Add({"POST",
              "/api/v1/press",
@@ -621,22 +636,26 @@ void DaemonDecks::AddRoutes(automation::Api& api)
               {"node", "body", "string", "node id on the current page"},
               {"key", "body", "integer", "key index"}},
              json{{"node", "pause"}},
-             [this](const Request& r) {
+             [this, afterStep](const Request& r) {
                  const std::string deck = r.Str("deck");
+                 scn::Runtime::Ticket ticket;
                  Reply first = WithDeck(deck, [&](Entry& e) {
                      if (r.Has("key"))
                      {
                          e.runtime->Inject({EventType::KeyDown, static_cast<int>(r.Num("key"))});
                          e.runtime->Inject({EventType::KeyUp, static_cast<int>(r.Num("key"))});
+                         ticket = e.runtime->Posted();
                          return Reply::Ok();
                      }
                      std::string err;
-                     return e.runtime->PressNode(r.Str("node"), &err) ? Reply::Ok() : Reply::Error(404, err);
+                     if (!e.runtime->PressNode(r.Str("node"), &err))
+                         return Reply::Error(404, err);
+                     ticket = e.runtime->Posted();
+                     return Reply::Ok();
                  });
                  if (first.IsError())
                      return first;
-                 std::this_thread::sleep_for(std::chrono::milliseconds(60));
-                 return WithDeck(deck, [](Entry& e) { return Reply::Ok(e.runtime->State()); });
+                 return afterStep(deck, ticket);
              }});
     api.Add({"POST",
              "/api/v1/reload",

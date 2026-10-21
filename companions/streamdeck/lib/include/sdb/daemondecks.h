@@ -51,6 +51,7 @@ public:
         std::string startFile;       // the daemon's start scenario ("" = the built-in idle one)
         bool watchStart = false;     // reload decks playing it when it (or an include) changes (--watch)
         std::string version = "1.0";
+        int applyTimeoutMs = 1000;  // /press, /navigate: the longest wait for the device thread's step (then 202)
     };
     using Log = std::function<void(const std::string& line)>;
 

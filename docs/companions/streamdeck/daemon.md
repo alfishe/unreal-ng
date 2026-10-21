@@ -70,8 +70,9 @@ The daemon, `sdctl` and Stream Deck Studio look for it the way unreal-qt finds i
 
 The executable's path is the real one (links resolved: `/usr/bin` on the DEB, the DMG root's link to the studio).
 `run` prints the folder it took (`data: ...`), or a note when there is none: then `$data` paths do not load and the
-idle screen is the drawn title. The release packages do not carry `data/streamdeck` yet (packaging SD5: the suite's
-`Contents/Resources`, beside the executables, the DEB's `lib/unreal-ng`).
+idle screen is the drawn title. Every release package carries `data/streamdeck` where row 2 or 3 finds it:
+`UnrealNG.app/Contents/Resources/streamdeck`, `streamdeck/` beside the executables (Windows ZIP, Linux tarball,
+AppImage `usr/bin`), `/usr/lib/unreal-ng/streamdeck` (DEB) ([packaging.md §6](../../inprogress/2026-10-19-streamdeck-integration/packaging.md#6-data)).
 
 Picture paths in faces and the strip (`face.image`, `strip.image`):
 
@@ -157,7 +158,7 @@ deck, else the first deck); the runtime routes take `?deck=SERIAL` with the same
 | `POST /api/v1/decks/{serial}/reconnect` | `{"away_ms": 0..60000}`: close the real deck's USB handle and open it again after that long (an unplug on purpose, [hot plug](#hot-plug)); 409 for an own deck |
 | `POST /api/v1/decks/{serial}/snapshot` | `{"path": file}`: every viewer of the deck saves a PNG there (a `Control` frame); answers how many viewers it went to, 409 when nobody views the deck |
 | `GET /api/v1/state`, `/page`, `/nodes` | The runtime of one deck: menu stack, page, toggles, last actions; what the keys mean now; the scenario's nodes (filters `tag`, `type`, `kind`, `menu`, `text`) |
-| `POST /api/v1/navigate`, `/press` | `{"to": back\|home\|node, "node"}`; a key by `node` id or `key` index |
+| `POST /api/v1/navigate`, `/press` | `{"to": back\|home\|node, "node"}`; a key by `node` id or `key` index (down and up). The answer is `/state` once the deck's device thread has applied it (its next step, ~10 ms; no fixed wait), with `deck` and `"applied": true`; a device thread that does not come round within 1 s answers 202, `"applied": false`, the state as it was (the request stays queued). An action the press starts runs on the runtime's worker: its result is in `last_actions` of a later `/state`. A node that is not on the page: 404 before anything is queued |
 | `POST /api/v1/reload` | Read the deck's file again, or `{"file"}` for another one (as `PUT .../scenario`) |
 | `GET /api/v1/scenario` | The deck's file and its document |
 

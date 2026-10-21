@@ -346,11 +346,10 @@ void DeckClient::HandleWelcome(const std::string& payload)
         SetState(State::Failed);  // the daemon closes the connection; no retry until Start()
         return;
     }
-    const Model* m = nullptr;
-    if (j.contains("pid") && j["pid"].is_number_integer())
+    // "model" is the token (plusxl, neo, ...); "pid" covers a daemon whose token this studio does not know yet
+    const Model* m = FindModelByName(Str(j, "model"));
+    if (!m && j.contains("pid") && j["pid"].is_number_integer())
         m = FindModel(kElgatoVid, static_cast<std::uint16_t>(j["pid"].get<int>()));
-    if (!m)
-        m = FindModelByName(Str(j, "model"));
     if (!m)
     {
         _error = QStringLiteral("unreal-streamdeck's deck is a model this studio does not know (%1)")
