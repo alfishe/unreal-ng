@@ -51,6 +51,18 @@ public:
     /// @brief Prepare for application shutdown - blocks all refreshes
     void prepareForShutdown();
 
+public slots:
+    /// Toggle an execution breakpoint at the disassembly cursor (the Debug menu, the dbg.breakpoint_toggle_cursor
+    /// action); refused while an automation session holds the machine
+    void toggleBreakpointAtCursor();
+    /// The breakpoint list and editor (the Debug menu's Show Breakpoints...)
+    void openBreakpoints();
+    /// Focus the registers / memory pane (the Debug menu's Show Registers / Show Memory)
+    void focusRegistersPane();
+    void focusMemoryPane();
+
+public:
+
     /// region <Helper methods>
 protected:
     void updateState();

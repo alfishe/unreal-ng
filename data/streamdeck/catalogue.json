@@ -664,6 +664,195 @@
    "params": "path"
   },
   {
+   "id": "dbg.breakpoint_toggle_pc",
+   "label": "Toggle a breakpoint at PC",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "address? (else PC)"
+  },
+  {
+   "id": "dbg.bp_add",
+   "label": "Add a breakpoint",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "kind (exec|read|write|rw|in|out|io|nextreg_read|nextreg_write|nextreg|beam|copper|magic|keyboard), address (or a label), end?, preset? (fe|7ffd|1ffd|fffd|bffd), mask?, page?, slot_only?, hc?, doors?, value?, value_mask?, opcode? (edff|dd01), key? (any), on? (press|release|both), hits?, note?, group?"
+  },
+  {
+   "id": "dbg.bp_remove",
+   "label": "Remove breakpoints",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "select? (all | an id | a kind: exec, read, write, mem, port, in, out, nextreg, beam, copper, magic, keyboard | group:<name>; or id, kind, group)"
+  },
+  {
+   "id": "dbg.bp_enable",
+   "label": "Enable breakpoints",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "select? (all | an id | a kind: exec, read, write, mem, port, in, out, nextreg, beam, copper, magic, keyboard | group:<name>; or id, kind, group)"
+  },
+  {
+   "id": "dbg.bp_disable",
+   "label": "Disable breakpoints",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "select? (all | an id | a kind: exec, read, write, mem, port, in, out, nextreg, beam, copper, magic, keyboard | group:<name>; or id, kind, group)"
+  },
+  {
+   "id": "dbg.bp_toggle",
+   "label": "Toggle breakpoints",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "select? (as dbg.bp_enable; all by default), on? (else flips: on when any is off)"
+  },
+  {
+   "id": "dbg.bp_group_toggle",
+   "label": "Breakpoint group on / off",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "group, on? (else flips)"
+  },
+  {
+   "id": "dbg.register_set",
+   "label": "Set a register",
+   "group": "Machine state",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "name (a, f, bc, hl, ix, sp, pc, i, r, im, iff1, ... and the alternates af', bc'), value"
+  },
+  {
+   "id": "mem.write",
+   "label": "Write memory",
+   "group": "Machine state",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "address (or a label), bytes (hex: \"3E01C9\" or \"3E 01 C9\"), or value (one byte) with count? (1: a fill)"
+  },
+  {
+   "id": "port.out",
+   "label": "Port OUT",
+   "group": "Machine state",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "port (0..#FFFF, or a preset: fe, 7ffd, 1ffd, fffd, bffd), value (0..#FF)"
+  },
+  {
+   "id": "sym.import",
+   "label": "Load symbols",
+   "group": "Symbols",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "path, format?, set?, space?, base?, policy? (both|keep|replace|fail)"
+  },
+  {
+   "id": "sym.export",
+   "label": "Save symbols",
+   "group": "Symbols",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "path, format?, sets?, space?, from?, to?, kinds?, name?"
+  },
+  {
+   "id": "sym.import_source",
+   "label": "Import labels from a source",
+   "group": "Symbols",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "path (a source, an image, disk:A/NAME.T), main?, set?, policy?, generated?"
+  },
+  {
+   "id": "sym.import_live",
+   "label": "Import an assembler's labels from RAM",
+   "group": "Symbols",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "scanner? (alasm-table|xas-table), page?, offset?, set?, policy?"
+  },
+  {
+   "id": "sym.drop",
+   "label": "Drop a symbol set",
+   "group": "Symbols",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "id (GET /symbols/sets lists them)"
+  },
+  {
+   "id": "sym.set_toggle",
+   "label": "Symbol set on / off",
+   "group": "Symbols",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "id, on? (else flips)"
+  },
+  {
+   "id": "prof.toggle",
+   "label": "Profiler / trace on / off",
+   "group": "Profilers",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "name (opcode|memory|calltrace|coverage|porttrace|gsporttrace|pchist|aylog|audio|all), on? (else flips), keep? (coverage), capacity? (aylog), seconds? + source? (audio)"
+  },
+  {
+   "id": "prof.pause_toggle",
+   "label": "Profiler / trace pause",
+   "group": "Profilers",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "name (opcode|memory|calltrace|porttrace|gsporttrace|all), on? (true: pause, false: resume; else flips)"
+  },
+  {
+   "id": "prof.clear",
+   "label": "Profiler / trace clear",
+   "group": "Profilers",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "name (opcode|memory|calltrace|coverage|porttrace|gsporttrace|aylog|audio|all)"
+  },
+  {
+   "id": "analyzer.toggle",
+   "label": "Analyzer on / off",
+   "group": "Profilers",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "name (trdos, editor-input, coverage, aylog, audiocapture: GET /analyzers), on? (else flips)"
+  },
+  {
+   "id": "analyzer.clear",
+   "label": "Analyzer clear",
+   "group": "Profilers",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "name (trdos, coverage, aylog, audiocapture)"
+  },
+  {
    "id": "ttd.scrub_back",
    "label": "Scrub back",
    "group": "Time travel",
@@ -760,6 +949,14 @@
    "gui": true
   },
   {
+   "id": "dbg.breakpoint_toggle_cursor",
+   "label": "Toggle a breakpoint at the cursor",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
    "id": "cap.screenshot",
    "label": "Screenshot",
    "group": "Capture and machine",
@@ -768,9 +965,9 @@
    "gui": true
   },
   {
-   "id": "dbg.breakpoint_toggle_pc",
-   "label": "dbg.breakpoint_toggle_pc",
-   "group": "Debugger",
+   "id": "osd.keyboard",
+   "label": "On-screen keyboard",
+   "group": "Capture and machine",
    "kind": "press",
    "held": false,
    "gui": true
@@ -779,14 +976,6 @@
    "id": "dbg.labels_toggle",
    "label": "dbg.labels_toggle",
    "group": "Debugger",
-   "kind": "press",
-   "held": false,
-   "gui": true
-  },
-  {
-   "id": "osd.keyboard",
-   "label": "osd.keyboard",
-   "group": "Capture and machine",
    "kind": "press",
    "held": false,
    "gui": true

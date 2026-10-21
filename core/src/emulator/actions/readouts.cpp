@@ -4,6 +4,7 @@
 #include <memory>
 
 #include "base/featuremanager.h"
+#include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/actions/actionregistry.h"
 #include "emulator/config.h"
@@ -127,6 +128,30 @@ StateNode DebugMode(Emulator& emulator)
     return node;
 }
 
+/// debug.breakpoints (debug tools): the user's breakpoints, how many are on, the last one that fired
+StateNode DebugBreakpoints(Emulator& emulator)
+{
+    StateNode node = StateNode::Object();
+    BreakpointManager* manager = emulator.GetBreakpointManager();
+    int64_t count = 0;
+    int64_t active = 0;
+    if (manager != nullptr)
+        for (const auto& [id, bp] : manager->GetAllBreakpoints())
+            if (bp && BreakpointManager::IsUserBreakpoint(*bp))
+            {
+                count++;
+                active += bp->active ? 1 : 0;
+            }
+    node["count"] = count;
+    node["active"] = active;
+    const uint16_t last = manager != nullptr ? manager->GetLastTriggeredBreakpointID() : BRK_INVALID;
+    if (last != BRK_INVALID)
+        node["last_hit"] = static_cast<int64_t>(last);
+    else
+        node["last_hit"] = StateNode();
+    return node;
+}
+
 StateNode TtdPosition(Emulator& emulator)
 {
     EmulatorContext* context = emulator.GetContext();
@@ -174,7 +199,8 @@ bool ToggleOf(const std::string& name, std::string& id, StateNode& params)
 const std::vector<std::string>& BaseReadoutNames()
 {
     static const std::vector<std::string> names = {"ttd.position", "run.state",  "machine",   "media.tape",
-                                                   "media.disk",   "audio.mute", "debug.mode"};
+                                                   "media.disk",   "audio.mute", "debug.mode",
+                                                   "debug.breakpoints"};
     return names;
 }
 
@@ -224,6 +250,8 @@ StateNode ReadReadout(Emulator& emulator, const std::string& name)
         return AudioMute(emulator);
     if (name == "debug.mode")
         return DebugMode(emulator);
+    if (name == "debug.breakpoints")
+        return DebugBreakpoints(emulator);
     std::string id;
     StateNode params;
     if (name.compare(0, 7, "toggle.") == 0 && ToggleOf(name, id, params))

@@ -1161,30 +1161,31 @@ void MenuManager::createDebugMenu()
 
     // Toggle Breakpoint
     _toggleBreakpointAction = _debugMenu->addAction(tr("&Toggle Breakpoint"));
-    _toggleBreakpointAction->setStatusTip(tr("Toggle breakpoint at current address"));
-    _toggleBreakpointAction->setEnabled(false);  // TODO: Implement
+    _toggleBreakpointAction->setStatusTip(
+        tr("Toggle an execution breakpoint at the disassembly cursor (at PC while the debugger is hidden)"));
+    connect(_toggleBreakpointAction, &QAction::triggered, this, &MenuManager::toggleBreakpointRequested);
 
     // Clear All Breakpoints
     _clearAllBreakpointsAction = _debugMenu->addAction(tr("&Clear All Breakpoints"));
-    _clearAllBreakpointsAction->setStatusTip(tr("Remove all breakpoints"));
-    _clearAllBreakpointsAction->setEnabled(false);  // TODO: Implement
+    _clearAllBreakpointsAction->setStatusTip(tr("Remove all your breakpoints"));
+    connect(_clearAllBreakpointsAction, &QAction::triggered, this, &MenuManager::clearAllBreakpointsRequested);
 
     // Show Breakpoints
     _showBreakpointsAction = _debugMenu->addAction(tr("Show &Breakpoints..."));
-    _showBreakpointsAction->setStatusTip(tr("Show breakpoints window"));
-    _showBreakpointsAction->setEnabled(false);  // TODO: Implement
+    _showBreakpointsAction->setStatusTip(tr("Show the breakpoint list and editor"));
+    connect(_showBreakpointsAction, &QAction::triggered, this, &MenuManager::showBreakpointsRequested);
 
     _debugMenu->addSeparator();
 
     // Show Registers
     _showRegistersAction = _debugMenu->addAction(tr("Show &Registers"));
-    _showRegistersAction->setStatusTip(tr("Show CPU registers"));
-    _showRegistersAction->setEnabled(false);  // TODO: Implement
+    _showRegistersAction->setStatusTip(tr("Show the debugger with the CPU registers in focus"));
+    connect(_showRegistersAction, &QAction::triggered, this, &MenuManager::showRegistersRequested);
 
     // Show Memory
     _showMemoryAction = _debugMenu->addAction(tr("Show &Memory"));
-    _showMemoryAction->setStatusTip(tr("Show memory viewer"));
-    _showMemoryAction->setEnabled(false);  // TODO: Implement
+    _showMemoryAction->setStatusTip(tr("Show the debugger with the memory view in focus"));
+    connect(_showMemoryAction, &QAction::triggered, this, &MenuManager::showMemoryRequested);
 
     // Time Travel: the black box (D29) - every machine this window creates keeps
     // recording its last minutes; turbo and a host speed above 1x stay free (it

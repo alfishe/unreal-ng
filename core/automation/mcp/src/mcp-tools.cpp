@@ -1022,7 +1022,8 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
                                "run_tstates", "run_to_interrupt", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
-                               "bp_list", "bp_reset_hits", "port_out", "wait", "take_control", "release_control"})
+                               "bp_list", "bp_reset_hits", "bp_toggle", "bp_groups", "bp_group_set", "bp_note", "set_register",
+                               "port_out", "wait", "take_control", "release_control"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -1053,7 +1054,8 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["type"]["description"] = "Breakpoint type for bp_add: execution, read, write, port_in, port_out, nextreg_write, nextreg_read, "
         "nextreg (address = the ZX Next register number, address_end a range; see doors / value / value_mask), "
         "beam (address = line of the copper's counter, hc = pixel clock), copper (address = copper list index, address_end a range: "
-        "stops when the copper completes that instruction), magic_ed_ff / magic_dd_01 (ZX Next: stops after the CPU ran that magic "
+        "stops when the copper completes that instruction), keyboard (key, on: stops on the first keyboard read that sees the key "
+        "go down / up), magic_ed_ff / magic_dd_01 (ZX Next: stops after the CPU ran that magic "
         "opcode - a NOP on the hardware, other emulators' debug trap; no address)";
     schema["properties"]["hc"]["type"] = "integer";
     schema["properties"]["hc"]["description"] = "For bp_add of beam: the pixel clock in the row (0..511, default 0)";
@@ -1089,11 +1091,24 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["group"]["type"] = "string";
     schema["properties"]["group"]["description"] = "Optional group for bp_add (created on use; default 'default')";
     schema["properties"]["bp_id"]["type"] = "string";
-    schema["properties"]["bp_id"]["description"] = "Breakpoint id for bp_remove/bp_enable/bp_disable/bp_reset_hits (none: all)";
+    schema["properties"]["bp_id"]["description"] =
+        "Breakpoint id for bp_remove/bp_enable/bp_disable/bp_reset_hits/bp_group_set/bp_note (bp_reset_hits without it: all)";
+    schema["properties"]["select"]["type"] = "string";
+    schema["properties"]["select"]["description"] =
+        "Instead of bp_id, for bp_remove/bp_enable/bp_disable/bp_toggle: all, a kind (exec, read, write, mem, port, in, out, "
+        "nextreg, nextreg_read, nextreg_write, beam, copper, magic, keyboard) or group:<name> (bp_toggle default: all)";
+    schema["properties"]["key"]["type"] = "string";
+    schema["properties"]["key"]["description"] =
+        "For bp_add of keyboard: the key (space, enter, caps, symbol, a..z, 0..9; default any key)";
+    schema["properties"]["on"]["type"] = "string";
+    schema["properties"]["on"]["description"] = "For bp_add of keyboard: press (default), release or both";
+    schema["properties"]["name"]["type"] = "string";
+    schema["properties"]["name"]["description"] = "Register for set_register: a, f, bc, de, hl, ix, iy, sp, pc, i, r, im, "
+                                                  "iff1, iff2 and the alternates (af', bc', ...)";
     schema["properties"]["port"]["type"] = "string";
     schema["properties"]["port"]["description"] = "Port for port_out: 0..#FFFF as 0x13AF, #13AF, 13AFh or decimal";
     schema["properties"]["value"]["type"] = "string";
-    schema["properties"]["value"]["description"] = "Byte for port_out: 0..#FF, the same forms; for bp_add of nextreg*: stop only on this value (0..255)";
+    schema["properties"]["value"]["description"] = "Byte for port_out: 0..#FF, the same forms; for bp_add of nextreg*: stop only on this value (0..255); for set_register: 0..#FFFF";
     schema["properties"]["since"]["type"] = "integer";
     schema["properties"]["since"]["description"] =
         "For wait: the debugger seq last seen (inspect_state snapshot shows it); omitted = the current one";
@@ -1105,7 +1120,9 @@ void RegisterControlExecution(ToolRegistry& registry)
         "control_execution",
         "Advance or halt the CPU: pause/resume/run, step (1 or N instructions), step_over, step_out, run_frame(s), "
         "run_tstates, run_to_interrupt. Also manages breakpoints (bp_add/bp_remove/bp_enable/bp_disable/bp_clear/bp_list/"
-        "bp_reset_hits; bp_add takes ranges, physical pages, port masks and hit policies). "
+        "bp_reset_hits; bp_add takes ranges, physical pages, port masks, hit policies and keyboard keys; bp_remove / "
+        "bp_enable / bp_disable / bp_toggle take a bp_id or a select: all, a kind, group:<name>; bp_groups lists the groups, "
+        "bp_group_set / bp_note change a breakpoint's group / note). set_register writes a CPU register (name, value). "
         "port_out writes a port through the machine's decoder like a CPU OUT (paging, TS-Conf registers, AY, border), "
         "without breakpoints or device waits, as a TTD tool edit; it works paused or running. "
         "wait blocks until something a debugger shows changes (a stop, a run start, a tool edit) or timeout_ms passes. "
@@ -1269,9 +1286,10 @@ void RegisterControlExecution(ToolRegistry& registry)
                 if (action == "bp_add")
                 {
                     const bool magic = args.isMember("type") && args["type"].asString().rfind("magic_", 0) == 0;
-                    if (!magic && !args.isMember("address"))
+                    const bool keyboard = args.isMember("type") && args["type"].asString() == "keyboard";
+                    if (!magic && !keyboard && !args.isMember("address"))
                     {
-                        done(ToolResult::Error("bp_add requires 'address' (not for magic_ed_ff / magic_dd_01)"));
+                        done(ToolResult::Error("bp_add requires 'address' (not for magic_ed_ff / magic_dd_01 / keyboard)"));
                         return;
                     }
                     Json::Value body;
@@ -1279,7 +1297,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                         body["address"] = args["address"];
                     body["type"] = args.isMember("type") ? args["type"].asString() : "execution";
                     for (const char* key : {"address_end", "page", "slot_only", "port_mask", "hits", "hit_mode", "hit_target",
-                                            "note", "group", "doors", "value", "value_mask", "hc"})
+                                            "note", "group", "doors", "value", "value_mask", "hc", "key", "on"})
                         if (args.isMember(key))
                             body[key] = args[key];
                     // A breakpoint never fires while the breakpoints feature is off, and the add itself says nothing:
@@ -1370,11 +1388,97 @@ void RegisterControlExecution(ToolRegistry& registry)
                     });
                     return;
                 }
+                if ((action == "bp_remove" || action == "bp_enable" || action == "bp_disable" || action == "bp_toggle") &&
+                    (args.isMember("select") || action == "bp_toggle") && !args.isMember("bp_id"))
+                {
+                    // A selection: all, a kind, a group (PUT /breakpoints/active, POST /breakpoints/remove)
+                    Json::Value body;
+                    body["select"] = args.isMember("select") ? args["select"].asString() : std::string("all");
+                    if (action == "bp_remove")
+                    {
+                        ForwardCall("POST", Endpoint(id, "/breakpoints/remove"), &body, caller, "Breakpoints removed", done);
+                        return;
+                    }
+                    if (action == "bp_toggle")
+                        body["active"] = "toggle";
+                    else
+                        body["active"] = action == "bp_enable";
+                    ForwardCall("PUT", Endpoint(id, "/breakpoints/active"), &body, caller,
+                                action == "bp_toggle" ? "Breakpoints toggled"
+                                : action == "bp_enable" ? "Breakpoints enabled" : "Breakpoints disabled", done);
+                    return;
+                }
+                if (action == "bp_toggle")
+                {
+                    Json::Value body;
+                    body["select"] = args["bp_id"].asString();
+                    body["active"] = "toggle";
+                    ForwardCall("PUT", Endpoint(id, "/breakpoints/active"), &body, caller, "Breakpoint toggled", done);
+                    return;
+                }
+                if (action == "bp_groups")
+                {
+                    ForwardCall("GET", Endpoint(id, "/breakpoints/groups"), nullptr, caller, "", [done](ToolResult result) {
+                        if (!result.isError)
+                        {
+                            std::ostringstream out;
+                            out << "Breakpoint groups: " << result.structured["groups"].size();
+                            for (const Json::Value& group : result.structured["groups"])
+                                out << "\n" << group["name"].asString() << ": " << group["enabled"].asUInt() << " of "
+                                    << group["count"].asUInt() << " on";
+                            result.text = out.str();
+                        }
+                        done(std::move(result));
+                    });
+                    return;
+                }
+                if (action == "bp_group_set" || action == "bp_note")
+                {
+                    const char* field = action == "bp_note" ? "note" : "group";
+                    if (!args.isMember("bp_id") || !args.isMember(field))
+                    {
+                        done(ToolResult::Error(action + " requires 'bp_id' and '" + field + "'"));
+                        return;
+                    }
+                    Json::Value body;
+                    body[field] = args[field].asString();
+                    ForwardCall("PUT", Endpoint(id, "/breakpoints/" + args["bp_id"].asString() + "/" + field), &body, caller,
+                                action == "bp_note" ? "Note set" : "Group set", done);
+                    return;
+                }
+                if (action == "set_register")
+                {
+                    if (!args.isMember("name") || !args.isMember("value"))
+                    {
+                        done(ToolResult::Error("set_register requires 'name' and 'value'"));
+                        return;
+                    }
+                    Json::Value body;
+                    body["value"] = args["value"];
+                    const std::string name = args["name"].asString();
+                    ForwardCall("PUT", Endpoint(id, "/registers/" + name), &body, caller, "", [id, name, &caller, done](ToolResult set) {
+                        if (set.isError)
+                        {
+                            done(std::move(set));
+                            return;
+                        }
+                        caller.Call("GET", Endpoint(id, "/registers"), nullptr, [name, done](int status, Json::Value registers) {
+                            if (status != 200)
+                            {
+                                done(ToolResult::Ok(name + " set", Json::Value(Json::objectValue)));
+                                return;
+                            }
+                            const std::string text = name + " set. " + FormatRegisters(registers);
+                            done(ToolResult::Ok(text, std::move(registers)));
+                        });
+                    });
+                    return;
+                }
                 if (action == "bp_remove" || action == "bp_enable" || action == "bp_disable")
                 {
                     if (!args.isMember("bp_id"))
                     {
-                        done(ToolResult::Error(action + " requires 'bp_id'"));
+                        done(ToolResult::Error(action + " requires 'bp_id' or 'select'"));
                         return;
                     }
                     std::string bpId = args["bp_id"].asString();

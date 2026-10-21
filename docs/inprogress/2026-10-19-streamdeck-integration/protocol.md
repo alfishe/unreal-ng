@@ -120,6 +120,7 @@ core, one producer each, all from published values (never a read that holds the 
 | `media.disk` | `{drives: [{letter, loaded, name, busy}]}` | disk manager | on change |
 | `audio.mute` | `{muted, master}` | mixer | on change |
 | `debug.mode` | `{enabled}` | debugger | on change |
+| `debug.breakpoints` | `{count, active, last_hit}` (the user's breakpoints) | breakpoint manager | on change |
 | `toggle.<action id>` | `{on}` | the action's `State()` (§5) | on change |
 
 - `subscribe` takes names or prefixes (`media.*`). Unknown names are answered once by `error not_found` and ignored.

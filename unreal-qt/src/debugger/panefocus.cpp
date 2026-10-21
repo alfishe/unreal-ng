@@ -82,6 +82,16 @@ void PaneFocus::Move(int delta)
     Place();
 }
 
+void PaneFocus::Focus(int index)
+{
+    if (index < 0 || index >= static_cast<int>(_panes.size()))
+        return;
+    _pane = index;
+    if (QWidget* receiver = Receiver(_panes[_pane]))
+        receiver->setFocus(Qt::OtherFocusReason);
+    Place();
+}
+
 void PaneFocus::Key(int key)
 {
     if (_panes.empty())

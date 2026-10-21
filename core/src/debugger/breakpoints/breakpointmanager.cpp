@@ -11,6 +11,8 @@
 #include "common/collectionhelper.h"
 #include "common/stringhelper.h"
 #include "emulator/cpu/z80.h"
+#include "debugger/keyboard/debugkeyboardmanager.h"
+#include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/memory.h"
 #include "emulator/emulator.h"
 #include "emulator/notifications.h"
@@ -158,6 +160,9 @@ uint16_t BreakpointManager::AddBreakpointAdopting(BreakpointDescriptor* descript
         case BRK_MAGIC:
             result = AddNextRegBreakpoint(descriptor);
             break;
+        case BRK_KEYBOARD:
+            result = AddKeyboardBreakpoint(descriptor);
+            break;
         default:
 #ifdef _DEBUG
         {
@@ -304,6 +309,26 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
             return BRK_INVALID;
         }
     }
+    else if (spec.type == BRK_KEYBOARD)
+    {
+        if (spec.hasEnd || spec.hasPage || spec.slotOnly || spec.spacePage != 0xFFFF || spec.portMask != 0xFFFF)
+        {
+            error = "a keyboard breakpoint takes a key and press / release only";
+            return BRK_INVALID;
+        }
+        uint8_t row = 0;
+        uint8_t bit = 0;
+        if (spec.address != BRK_KEY_ANY && !Keyboard::MatrixPosition(static_cast<ZXKeysEnum>(spec.address), row, bit))
+        {
+            error = "a keyboard breakpoint takes a key of the matrix (a cursor or other combined key: its base key)";
+            return BRK_INVALID;
+        }
+        if (!(spec.access & (BRK_KEY_PRESS | BRK_KEY_RELEASE)) || (spec.access & ~(BRK_KEY_PRESS | BRK_KEY_RELEASE)))
+        {
+            error = "a keyboard breakpoint watches press or release";
+            return BRK_INVALID;
+        }
+    }
     else if (spec.type == BRK_IO)
     {
         if (spec.hasPage || spec.slotOnly)
@@ -333,6 +358,8 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
     d->type = spec.type;
     if (spec.type == BRK_MEMORY)
         d->memoryType = spec.access;
+    else if (spec.type == BRK_KEYBOARD)
+        d->keyType = spec.access;
     else
         d->ioType = spec.access;
     d->z80address = spec.address;
@@ -377,6 +404,36 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
             SetBreakpointGroup(id, spec.group);
     }
     return id;
+}
+
+bool BreakpointManager::ParseKeyboardInto(const std::string& key, const std::string& on, BreakpointSpec& spec,
+                                          std::string& error)
+{
+    spec.type = BRK_KEYBOARD;
+    if (key.empty() || key == "any")
+        spec.address = BRK_KEY_ANY;
+    else
+    {
+        const ZXKeysEnum code = DebugKeyboardManager::ResolveKeyName(key);
+        if (code == ZXKEY_NONE)
+        {
+            error = "Unknown key '" + key + "' (space, enter, caps, symbol, a..z, 0..9; or any)";
+            return false;
+        }
+        spec.address = static_cast<uint16_t>(code);
+    }
+    if (on.empty() || on == "press")
+        spec.access = BRK_KEY_PRESS;
+    else if (on == "release")
+        spec.access = BRK_KEY_RELEASE;
+    else if (on == "both")
+        spec.access = BRK_KEY_PRESS | BRK_KEY_RELEASE;
+    else
+    {
+        error = "on: press, release or both";
+        return false;
+    }
+    return true;
 }
 
 bool BreakpointManager::ParseHitSpec(const std::string& text, BreakpointHitModeEnum& mode, uint32_t& target, std::string& error)
@@ -708,6 +765,13 @@ BreakpointManager::BreakpointStatusInfo BreakpointManager::GetLastTriggeredBreak
             accessStr += "read,";
         if (bp->ioType & BRK_IO_OUT)
             accessStr += "write,";
+    }
+    else if (bp->type == BRK_KEYBOARD)
+    {
+        if (bp->keyType & BRK_KEY_PRESS)
+            accessStr += "press,";
+        if (bp->keyType & BRK_KEY_RELEASE)
+            accessStr += "release,";
     }
     // Trim trailing comma
     if (!accessStr.empty() && accessStr.back() == ',')
@@ -1227,6 +1291,10 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
             oss << std::setw(8) << std::left << ("#" + std::to_string(bp->z80address));
         else if (bp->type == BRK_MAGIC)
             oss << std::setw(8) << std::left << (bp->z80address == BRK_MAGIC_ED_FF ? "ED FF" : "DD 01");
+        else if (bp->type == BRK_KEYBOARD)
+            oss << std::setw(8) << std::left
+                << (bp->z80address == BRK_KEY_ANY ? std::string("any key")
+                                                  : DebugKeyboardManager::GetKeyDisplayName(static_cast<ZXKeysEnum>(bp->z80address)));
         else if (bp->type == BRK_NEXTREG)
         {
             oss << "NR 0x" << std::hex << std::uppercase << std::right << std::setw(2) << std::setfill('0') << (bp->z80address & 0xFF)
@@ -1269,6 +1337,13 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
                 access += "R";
             if (bp->ioType & BRK_IO_OUT)
                 access += "W";
+        }
+        else if (bp->type == BRK_KEYBOARD)
+        {
+            if (bp->keyType & BRK_KEY_PRESS)
+                access += "P";
+            if (bp->keyType & BRK_KEY_RELEASE)
+                access += "U";
         }
         // Exactly 5 characters for "Access" column
         oss << " " << std::setw(5) << std::left << access;
@@ -2023,6 +2098,49 @@ uint16_t BreakpointManager::ResolveMagic(uint16_t opcodeWord)
     return result;
 }
 
+uint16_t BreakpointManager::ResolveKeyboard(uint8_t selectedRows, const uint8_t rows[8])
+{
+    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
+        return BRK_INVALID;
+    uint16_t result = BRK_INVALID;
+    for (const auto& [id, bp] : _breakpointMapByID)
+    {
+        if (!bp || !bp->active || bp->type != BRK_KEYBOARD)
+            continue;
+        // What this read shows of the key: per selected row, down or not
+        uint8_t downRows = 0;
+        uint8_t seenRows = selectedRows;
+        if (bp->z80address == BRK_KEY_ANY)
+        {
+            for (uint8_t r = 0; r < 8; r++)
+                if ((selectedRows & (1u << r)) && (rows[r] & 0x1F) != 0x1F)
+                    downRows |= static_cast<uint8_t>(1u << r);
+        }
+        else
+        {
+            uint8_t row = 0;
+            uint8_t bit = 0;
+            if (!Keyboard::MatrixPosition(static_cast<ZXKeysEnum>(bp->z80address), row, bit) ||
+                !(selectedRows & (1u << row)))
+                continue;  // the read does not look at the key's row
+            seenRows = static_cast<uint8_t>(1u << row);
+            if (!(rows[row] & (1u << bit)))
+                downRows = seenRows;
+        }
+        const uint8_t before = bp->keySeenRows & seenRows;
+        bp->keySeenRows = static_cast<uint8_t>((bp->keySeenRows & ~seenRows) | downRows);
+        const bool pressed = (downRows & ~before) != 0;   // a row seen up is now seen down
+        const bool released = (before & ~downRows) != 0;  // a row seen down is now seen up
+        if (!((pressed && (bp->keyType & BRK_KEY_PRESS)) || (released && (bp->keyType & BRK_KEY_RELEASE))))
+            continue;
+        if (HitStops(*bp) && result == BRK_INVALID)
+            result = bp->breakpointID;
+    }
+    if (result != BRK_INVALID)
+        _lastTriggeredBreakpointID.store(result, std::memory_order_relaxed);
+    return result;
+}
+
 uint16_t BreakpointManager::ResolveBeam(const std::function<bool(uint16_t line, uint16_t hc)>& crossed)
 {
     if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
@@ -2228,6 +2346,17 @@ uint16_t BreakpointManager::AddNextRegBreakpoint(BreakpointDescriptor* descripto
     return descriptor->breakpointID;
 }
 
+uint16_t BreakpointManager::AddKeyboardBreakpoint(BreakpointDescriptor* descriptor)
+{
+    // Every keyboard breakpoint is its own (press and release, a hit policy make two on one key different)
+    descriptor->breakpointID = GenerateNewBreakpointID();
+    descriptor->keyAddress = 0xFFFF'FFFF;
+    descriptor->keySeenRows = 0;
+    _breakpointMapByID.insert({descriptor->breakpointID, descriptor});
+    RebuildFilters();
+    return descriptor->breakpointID;
+}
+
 BreakpointDescriptor* BreakpointManager::FindAddressBreakpoint(uint16_t address)
 {
     Memory& memory = *_context->pMemory;
@@ -2370,6 +2499,11 @@ void BreakpointManager::RebuildFilters()
         if (bp->type == BRK_MAGIC)
         {
             _hotState.hasMagic = 1;
+            continue;
+        }
+        if (bp->type == BRK_KEYBOARD)
+        {
+            _hotState.hasKeyboard = 1;
             continue;
         }
         if (bp->type == BRK_BEAM || bp->type == BRK_COPPER)

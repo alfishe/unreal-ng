@@ -774,6 +774,14 @@ bp_remove(id); bp_clear()
 bp_enable(id); bp_disable(id)
 bp_note(id, "main loop")       -- annotation (empty clears); false for an unknown id
 bp_group(id, "game")           -- group, created on use; switched on / off together (CLI bpgroup)
+id = bp_key("space")           -- keyboard: the first keyboard read that sees SPACE go down; {on="release"|"both", hits=, group=, note=}; "any"
+bp_select("group:game", "disable")  -- a selection (all, an id, a kind, group:<name>): enable | disable | toggle | remove
+                               -- -> {select, selected, changed, active}; a refusal: ok = false, error
+bp_groups()                    -- {{name, count, enabled, active}, ...}
+trace("opcode", "start")       -- profilers and traces (tracecontrol): opcode, memory, calltrace, coverage, porttrace,
+trace("audio", "start", {seconds = 2, source = "ay1"})  -- gsporttrace, pchist, aylog, audio, all; start | stop | toggle |
+                               -- pause | resume | pause_toggle | clear | status -> {name, state, can_pause}
+analyzer_list(); analyzer_enable("trdos"); analyzer_disable("trdos"); analyzer_active("trdos")
 n = bp_count()
 print(bp_list())               -- the text table: range "to 0x80FF", "in ram32", "mask 0x00FF", "hits >=50", "(hit 12x)"
 st = bp_status()               -- the last hit: {valid, id, type, address, access, active, note, group, hit_count, page = {kind, page}}

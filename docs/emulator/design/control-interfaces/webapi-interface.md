@@ -783,6 +783,21 @@ PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/enable    Enable
 PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/disable   Disable
 GET    /api/v1/emulator/{id}/breakpoints/status            Last triggered breakpoint info (+ last_triggered_hit_count)
 POST   /api/v1/emulator/{id}/breakpoints/hits/reset        Hit counters to 0 ({"id": N}: one; no id: all)
+GET    /api/v1/emulator/{id}/breakpoints/active?select=    Is a selection on (all, an id, a kind, group:<name>)
+PUT    /api/v1/emulator/{id}/breakpoints/active            {select, active: true | false | "toggle"}: switch a selection
+POST   /api/v1/emulator/{id}/breakpoints/remove            {select}: remove a selection
+GET    /api/v1/emulator/{id}/breakpoints/groups            The groups: name, count, enabled, active
+PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/group     {group}: move to a group ("" / "default": back)
+PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/note      {note}: the annotation ("" clears)
+```
+
+A selection names the user's breakpoints only: `all`, an id, a kind (`exec`, `read`, `write`, `mem`, `port`, `in`,
+`out`, `nextreg`, `nextreg_read`, `nextreg_write`, `beam`, `copper`, `magic`, `keyboard`) or `group:<name>`; the body
+may give `id`, `kind` or `group` on its own instead. A keyboard breakpoint is `POST /breakpoints {"type": "keyboard",
+"key": "space", "on": "press" | "release" | "both"}` (`key` "any" or none: any key): it stops on the first keyboard
+read that sees the key change. Each route is a WebSocket `call` too; a change is pushed as `breakpoints_changed`.
+
+```
 ```
 
 #### Add Breakpoint Request

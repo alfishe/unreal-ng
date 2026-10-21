@@ -64,6 +64,8 @@
 #include <debugger/mouse/debugmousemanager.h>
 #include <debugger/joystick/debugjoystickmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/breakpoints/breakpointselection.h>
+#include "debugger/tracecontrol/tracecontrol.h"
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
@@ -3358,6 +3360,53 @@ public:
             return bpm ? bpm->SetBreakpointGroup(id, group) : false;
         });
 
+        // Breakpoints by selection (BreakpointSelection: all, an id, a kind, group:<name>): bp_select(select, op) with op
+        // enable | disable | toggle | remove answers {select, selected, changed, active}; a refusal: ok = false, error
+        lua.set_function("bp_select", [this](sol::this_state ts, const std::string& select, const std::string& op) -> sol::object {
+            StateNode out = StateNode::Object();
+            std::string error;
+            BreakpointManager* bpm = effectiveEmulator() ? effectiveEmulator()->GetBreakpointManager() : nullptr;
+            if (!bpm)
+                error = "no emulator";
+            else if (BreakpointSelection::Run(*bpm, select, op, out, error))
+                return StateNodeToLua(ts, out);
+            out["ok"] = false;
+            out["error"] = error;
+            return StateNodeToLua(ts, out);
+        });
+        // bp_groups(): {{name, count, enabled, active}, ...}
+        lua.set_function("bp_groups", [this](sol::this_state ts) -> sol::object {
+            BreakpointManager* bpm = effectiveEmulator() ? effectiveEmulator()->GetBreakpointManager() : nullptr;
+            return StateNodeToLua(ts, bpm ? BreakpointSelection::Groups(*bpm) : StateNode::Array());
+        });
+        // bp_key(key, {on = "press" | "release" | "both", hits =, group =, note =}): stops on the first keyboard read
+        // that sees the key ("any": any key) go down / up. The id, or nil and the reason
+        lua.set_function("bp_key", [this](sol::this_state ts, const std::string& key, sol::optional<sol::table> opts)
+                                       -> std::tuple<sol::object, sol::object> {
+            auto fail = [&ts](const std::string& why) {
+                return std::make_tuple(sol::make_object(ts, sol::lua_nil), sol::make_object(ts, why));
+            };
+            BreakpointManager* bpm = effectiveEmulator() ? effectiveEmulator()->GetBreakpointManager() : nullptr;
+            if (!bpm)
+                return fail("no emulator");
+            BreakpointSpec spec;
+            std::string error;
+            const std::string on = opts ? opts->get_or<std::string>("on", "press") : std::string("press");
+            if (!BreakpointManager::ParseKeyboardInto(key, on, spec, error) ||
+                (opts && !BreakpointManager::ParseHitSpec(opts->get_or<std::string>("hits", ""), spec.hitMode,
+                                                          spec.hitTarget, error)))
+                return fail(error);
+            if (opts)
+            {
+                spec.group = opts->get_or<std::string>("group", "");
+                spec.note = opts->get_or<std::string>("note", "");
+            }
+            const uint16_t id = bpm->AddBreakpoint(spec, error);
+            if (id == BRK_INVALID)
+                return fail(error);
+            return std::make_tuple(sol::make_object(ts, id), sol::make_object(ts, sol::lua_nil));
+        });
+
         lua.set_function("bp_reset_hits", [this](sol::optional<uint16_t> id) -> bool {
             if (!effectiveEmulator()) return false;
             BreakpointManager* bpm = effectiveEmulator()->GetBreakpointManager();
@@ -6141,6 +6190,60 @@ public:
             average["tstates_active"] = static_cast<uint64_t>(state.tstates_frame_total - state.tstates_halted_total);
             result["average"] = average;
             return result;
+        });
+
+        // Profilers, traces and captures through tracecontrol (the catalogue's prof.* actions): trace(name, op, opts)
+        // with name opcode | memory | calltrace | coverage | porttrace | gsporttrace | pchist | aylog | audio | all, op
+        // start | stop | toggle | pause | resume | pause_toggle | clear | status, opts {keep=, capacity=, seconds=,
+        // source=, on=}. The answer {name, state, can_pause, ...}; a refusal: ok = false, error = why
+        lua.set_function("trace", [this](sol::this_state ts, const std::string& name, sol::optional<std::string> op,
+                                         sol::optional<sol::object> opts) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            tracecontrol::Reply reply;
+            if (!emulator)
+                reply.error = "Conflict", reply.message = "no emulator";
+            else
+                reply = tracecontrol::Execute(*emulator, name, op.value_or("status"),
+                                              opts ? SymbolOptions(*opts, "") : tracecontrol::Options{});
+            StateNode value = reply.body;
+            if (!reply.Ok())
+            {
+                value["ok"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+        // The analyzers (GET /analyzers): analyzer_list(), analyzer_enable(name), analyzer_disable(name),
+        // analyzer_active(name) (nil: no such analyzer)
+        auto analyzers = [this]() -> AnalyzerManager* {
+            Emulator* emulator = effectiveEmulator();
+            auto* context = emulator ? emulator->GetContext() : nullptr;
+            return context && context->pDebugManager ? context->pDebugManager->GetAnalyzerManager() : nullptr;
+        };
+        lua.set_function("analyzer_list", [this, analyzers]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (AnalyzerManager* manager = analyzers())
+            {
+                int index = 1;
+                for (const std::string& id : manager->getRegisteredAnalyzers())
+                    result[index++] = lua_view.create_table_with("id", id, "active", manager->isActive(id));
+            }
+            return result;
+        });
+        lua.set_function("analyzer_enable", [analyzers](const std::string& name) -> bool {
+            AnalyzerManager* manager = analyzers();
+            return manager && manager->activate(name);
+        });
+        lua.set_function("analyzer_disable", [analyzers](const std::string& name) -> bool {
+            AnalyzerManager* manager = analyzers();
+            return manager && manager->deactivate(name);
+        });
+        lua.set_function("analyzer_active", [analyzers](sol::this_state ts, const std::string& name) -> sol::object {
+            AnalyzerManager* manager = analyzers();
+            if (!manager || !manager->hasAnalyzer(name))
+                return sol::make_object(ts, sol::lua_nil);
+            return sol::make_object(ts, manager->isActive(name));
         });
 
         // Code coverage control and queries

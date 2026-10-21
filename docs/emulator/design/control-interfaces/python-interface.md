@@ -1072,6 +1072,15 @@ emu.bp_remove(id); emu.bp_clear()
 emu.bp_enable(id); emu.bp_disable(id)
 emu.bp_note(id, "main loop")        # annotation (empty clears); False for an unknown id
 emu.bp_group(id, "game")            # group, created on use; switched on / off together (CLI bpgroup)
+id = emu.bp_key("space")            # keyboard: the first keyboard read that sees SPACE go down; on="release" / "both",
+                                    # key="any"; hits=, group=, note=
+emu.bp_select("group:game", "disable")  # a selection (all, an id, a kind: exec, read, write, mem, port, in, out,
+                                    # nextreg, beam, copper, magic, keyboard; group:<name>): enable | disable | toggle |
+                                    # remove -> {select, selected, changed, active}; a refusal: ok=False, error
+emu.bp_groups()                     # [{name, count, enabled, active}]
+emu.trace("opcode", "start")        # profilers and traces (tracecontrol): opcode, memory, calltrace, coverage,
+                                    # porttrace, gsporttrace, pchist, aylog, audio, all; start | stop | toggle | pause |
+emu.trace("audio", "start", seconds=2, source="ay1")  # resume | pause_toggle | clear | status -> {name, state, can_pause}
 emu.bp_count()
 print(emu.bp_list())                # the text table: "to 0x80FF", "in ram32", "mask 0x00FF", "hits >=50", "(hit 12x)"
 emu.bp_status()                     # the last hit, see below; 'hit_count', and 'page' = {'kind', 'page'} for a physical one

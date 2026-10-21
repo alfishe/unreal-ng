@@ -158,6 +158,13 @@ private:
     void HandleBPGroup(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPActivate(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPDeactivate(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleKeyBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBPToggle(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBPNote(const ClientSession& session, const std::vector<std::string>& args);
+    /// bpon / bpoff / bpclear / bptoggle on a selection BreakpointSelection names (a kind such as nextreg, beam, keyboard;
+    /// group:<name>); false when `text` is not one (the caller answers)
+    bool ApplyBreakpointSelection(const ClientSession& session, BreakpointManager& manager, const std::string& text,
+                                  const char* verb);
 
     void HandleOpen(const ClientSession& session, const std::vector<std::string>& args);
     void HandleExit(const ClientSession& session, const std::vector<std::string>& args);

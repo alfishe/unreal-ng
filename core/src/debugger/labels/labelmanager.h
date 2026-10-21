@@ -181,6 +181,8 @@ public:
     std::vector<unrealasm::symbols::SymbolSet> GetSymbolSets() const;
     std::shared_ptr<const unrealasm::symbols::SymbolIndex> GetSymbolIndex() const;
     bool SetSymbolSetEnabled(const std::string& id, bool enabled);
+    /// A set's enabled flag (a control surface's key shows it), without copying the set; nullopt: no such set
+    std::optional<bool> IsSymbolSetEnabled(const std::string& id) const;
     bool SetSymbolSetPriority(const std::string& id, int priority);
     bool DropSymbolSet(const std::string& id);
 

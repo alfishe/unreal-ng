@@ -27,7 +27,7 @@ enum BreakpointTypeEnum : uint8_t
 {
     BRK_MEMORY = 0,  // Memory access (Read | Write | Execution)
     BRK_IO,          // I/O port access (Read | Write)
-    BRK_KEYBOARD,    // Key press event
+    BRK_KEYBOARD,    // A key the program sees: the first keyboard read (#xxFE) that finds it pressed / released
     BRK_NEXTREG,     // ZX Next register access (NR read through #253B, NR write by NEXTREG / #253B / the copper)
     BRK_BEAM,        // ZX Next: the beam reaches a place in the raster (line counter cvc of the copper, pixel clock hc)
     BRK_COPPER,      // ZX Next: the copper completes the instruction at a list index (a WAIT that became true, or a MOVE)
@@ -66,6 +66,8 @@ constexpr uint8_t BRK_KEY_NONE = 0x00;
 constexpr uint8_t BRK_KEY_PRESS = 0x01;
 constexpr uint8_t BRK_KEY_RELEASE = 0x02;
 constexpr uint8_t BRK_KEY_ALL = 0xFF;
+/// A keyboard breakpoint's key (z80address): a ZXKeysEnum of the matrix, or any key of the rows the program reads
+constexpr uint16_t BRK_KEY_ANY = 0xFFFF;
 
 enum BreakpointAddressMatchEnum : uint8_t
 {
@@ -123,6 +125,11 @@ struct BreakpointDescriptor
     // list index z80address..EndAddress() (0..BRK_COPPER_LIST_MAX)
     uint16_t beamHc = 0;
 
+    // Keyboard breakpoint (key = z80address, press / release = keyType): what the program last saw of the key, one
+    // bit per half-row (any key: a key of that row was down). Hot-path state, written by the emulation thread: the
+    // breakpoint fires on the read that sees the change it waits for, not on every read of a scanning loop
+    uint8_t keySeenRows = 0;
+
     // Hit counting (design F5)
     BreakpointHitModeEnum hitMode = BRK_HIT_ALWAYS;
     uint32_t hitTarget = 0;
@@ -177,6 +184,7 @@ struct BreakpointHotState
     uint8_t hasBeam = 0;          // 1 if any active beam breakpoint exists
     uint8_t hasCopperPc = 0;      // 1 if any active copper-instruction breakpoint exists
     uint8_t hasMagic = 0;         // 1 if any active magic-opcode breakpoint exists
+    uint8_t hasKeyboard = 0;      // 1 if any active keyboard breakpoint exists
     // 1 if the copper's work must be watched as it happens: a beam or copper-instruction breakpoint, or a NextREG write breakpoint that
     // takes the copper's door. Off: the copper is caught up with the beam once per line, as always (no cost)
     uint8_t copperWatch = 0;
@@ -429,6 +437,9 @@ public:
                                    const std::string& hits, std::string& error);
     /// The options the script surfaces take for a NextREG breakpoint, applied to a spec: the range end `to` (-1: none), doors
     /// "nextreg,port,copper" (empty: all), `value` (-1: any), `valueMask` (-1: #FF with a value), hits as in ApplyScriptOptions
+    /// A keyboard breakpoint's key and edge as the surfaces write them, into the spec: `key` a key name (space, enter,
+    /// caps, symbol, a..z, 0..9; "" or "any": any key of the rows read), `on` press (default), release or both
+    static bool ParseKeyboardInto(const std::string& key, const std::string& on, BreakpointSpec& spec, std::string& error);
     static bool ApplyNextRegOptions(BreakpointSpec& spec, int32_t to, const std::string& doors, int32_t value, int32_t valueMask,
                                     const std::string& hits, std::string& error);
     /// Hit counters back to 0: one breakpoint (false for an unknown id) or all
@@ -555,6 +566,13 @@ public:
     {
         return _hotState.hasMagic ? ResolveMagic(opcodeWord) : BRK_INVALID;
     }
+    /// The program read the keyboard (Keyboard::HandlePortIn): `selectedRows` the half-rows the read selects (a set bit
+    /// per row), `rows` the matrix as the read saw it (a 0 bit: a key down). The keyboard breakpoint that stops, or
+    /// BRK_INVALID
+    uint16_t HandleKeyboardRead(uint8_t selectedRows, const uint8_t rows[8])
+    {
+        return _hotState.hasKeyboard ? ResolveKeyboard(selectedRows, rows) : BRK_INVALID;
+    }
     uint16_t HandleCopperPc(uint16_t pc)
     {
         return _hotState.hasCopperPc ? ResolveCopperPc(pc) : BRK_INVALID;
@@ -584,6 +602,7 @@ protected:
     uint16_t AddMemoryBreakpoint(BreakpointDescriptor* descriptor);
     uint16_t AddPortBreakpoint(BreakpointDescriptor* descriptor);
     uint16_t AddNextRegBreakpoint(BreakpointDescriptor* descriptor);
+    uint16_t AddKeyboardBreakpoint(BreakpointDescriptor* descriptor);
 
     BreakpointDescriptor* FindAddressBreakpoint(uint16_t address);
     BreakpointDescriptor* FindAddressBreakpoint(uint16_t address, const MemoryPageDescriptor& pageInfo);
@@ -597,6 +616,7 @@ protected:
     uint16_t ResolveNextReg(int direction, uint8_t reg, uint8_t value, uint8_t door);
     uint16_t ResolveCopperPc(uint16_t pc);
     uint16_t ResolveMagic(uint16_t opcodeWord);
+    uint16_t ResolveKeyboard(uint8_t selectedRows, const uint8_t rows[8]);
     uint16_t ResolveBeam(const std::function<bool(uint16_t line, uint16_t hc)>& crossed);
     /// Walks one candidate set: counts every candidate that matches, returns the first that stops (or
     /// BRK_INVALID); `slot` is the slot of the access for slot-only physical breakpoints (-1: not physical)

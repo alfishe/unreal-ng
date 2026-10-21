@@ -169,6 +169,12 @@ private slots:
     void handleFrontPanelCpmToggled(bool on);
     void handleStepIn();
     void handleStepOver();
+    // Debug menu: breakpoints and the debugger's panes
+    void handleToggleBreakpoint();
+    void handleClearAllBreakpoints();
+    void handleShowBreakpoints();
+    void handleShowRegisters();
+    void handleShowMemory();
     void handleToolBarToggled(bool visible);
     void handleScaleRequested(int scale);
     void handleScreenshotRequested();

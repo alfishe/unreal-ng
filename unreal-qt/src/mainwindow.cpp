@@ -530,6 +530,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     });
     connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
     connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
+    connect(_menuManager, &MenuManager::toggleBreakpointRequested, this, &MainWindow::handleToggleBreakpoint);
+    connect(_menuManager, &MenuManager::clearAllBreakpointsRequested, this, &MainWindow::handleClearAllBreakpoints);
+    connect(_menuManager, &MenuManager::showBreakpointsRequested, this, &MainWindow::handleShowBreakpoints);
+    connect(_menuManager, &MenuManager::showRegistersRequested, this, &MainWindow::handleShowRegisters);
+    connect(_menuManager, &MenuManager::showMemoryRequested, this, &MainWindow::handleShowMemory);
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
     connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
     connect(_menuManager, &MenuManager::tapeManagerToggled, this, &MainWindow::handleTapeManagerToggled);
@@ -3828,6 +3833,73 @@ void MainWindow::handleStepOver()
         _emulator->StepOver();
         qDebug() << "Step over executed";
     }
+}
+
+void MainWindow::handleToggleBreakpoint()
+{
+    if (debuggerWindow && debuggerWindow->isVisible())
+    {
+        debuggerWindow->toggleBreakpointAtCursor();
+        return;
+    }
+    // The debugger is hidden: at PC, as the core's dbg.breakpoint_toggle_pc
+    if (!_emulator || RemoteControlGuard::Refuse(this))
+        return;
+    BreakpointManager* breakpoints = _emulator->GetBreakpointManager();
+    Z80State* z80 = _emulator->GetZ80State();
+    if (breakpoints == nullptr || z80 == nullptr)
+        return;
+    const uint16_t pc = z80->pc;
+    const QString where = QStringLiteral("#%1").arg(pc, 4, 16, QLatin1Char('0')).toUpper();
+    for (const auto& [id, bp] : breakpoints->GetAllBreakpoints())
+        if (bp && BreakpointManager::IsUserBreakpoint(*bp) && bp->type == BRK_MEMORY && !bp->isRange &&
+            bp->matchType == BRK_MATCH_ADDR && bp->memoryType == BRK_MEM_EXECUTE && bp->z80address == pc)
+        {
+            breakpoints->RemoveBreakpointByID(id);
+            statusBar()->showMessage(tr("Breakpoint at %1 removed").arg(where), 3000);
+            return;
+        }
+    BreakpointSpec spec;
+    spec.access = BRK_MEM_EXECUTE;
+    spec.address = pc;
+    std::string error;
+    if (breakpoints->AddBreakpoint(spec, error) == BRK_INVALID)
+        statusBar()->showMessage(tr("Breakpoint not set: %1").arg(QString::fromStdString(error)), 5000);
+    else
+        statusBar()->showMessage(tr("Breakpoint at %1 set").arg(where), 3000);
+}
+
+void MainWindow::handleClearAllBreakpoints()
+{
+    if (!_emulator || RemoteControlGuard::Refuse(this))
+        return;
+    if (BreakpointManager* breakpoints = _emulator->GetBreakpointManager())
+    {
+        // The user's breakpoints: the BASIC typer's control points and the debugger adapters' stay with their owners
+        breakpoints->ClearUserBreakpoints();
+        statusBar()->showMessage(tr("All breakpoints cleared"), 3000);
+    }
+}
+
+void MainWindow::handleShowBreakpoints()
+{
+    handleDebuggerToggled(true);
+    if (debuggerWindow)
+        debuggerWindow->openBreakpoints();
+}
+
+void MainWindow::handleShowRegisters()
+{
+    handleDebuggerToggled(true);
+    if (debuggerWindow)
+        debuggerWindow->focusRegistersPane();
+}
+
+void MainWindow::handleShowMemory()
+{
+    handleDebuggerToggled(true);
+    if (debuggerWindow)
+        debuggerWindow->focusMemoryPane();
 }
 
 void MainWindow::handleDebuggerToggled(bool visible)

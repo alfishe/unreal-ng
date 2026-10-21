@@ -121,6 +121,12 @@ public:
 
     void setDisassemblerAddress(uint16_t pc);
 
+    /// The address of the disassembly cursor: the line the text cursor stands on (a click puts it there), else the
+    /// top line of the view (the arrows move the view)
+    uint16_t cursorAddress() const;
+    /// Toggle an execution breakpoint at cursorAddress() (as a click in the breakpoint column)
+    void toggleBreakpointAtCursor();
+
     // Helper methods
 protected:
     Emulator* getEmulator();

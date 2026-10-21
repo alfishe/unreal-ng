@@ -88,6 +88,8 @@ public:
 
     std::vector<SymbolSet> Sets() const;
     std::optional<SymbolSet> GetSet(const std::string& id) const;
+    /// A set's enabled flag without copying it (a control surface's key reads it often); nullopt: no such set
+    std::optional<bool> IsEnabled(const std::string& id) const;
     /// The current index (immutable; valid as long as it is held)
     std::shared_ptr<const SymbolIndex> Index() const;
 

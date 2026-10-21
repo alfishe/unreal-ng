@@ -57,12 +57,12 @@ bool ChangesMachine(const std::string& method, const std::string& subpath)
 
 bool CliCommandChangesMachine(const std::string& command, const std::vector<std::string>& args)
 {
-    static const std::array<std::string_view, 46> kAlways = {
+    static const std::array<std::string_view, 49> kAlways = {
         "reset", "nmi", "mni", "switch", "resume", "step", "stepin", "steps", "stepover", "stepout", "skip_until",
         "run_tstates", "run_to_scanline", "run_scanlines", "run_to_pixel", "run_to_interrupt", "run_frame",
         "run_frames", "run_ncycles", "out", "romflash", "open", "assemble",
         "bp", "break", "breakpoint", "wp", "bport", "bnextreg", "bbeam", "bmagic", "bcopper", "bphits", "bpclear",
-        "bpgroup", "bpon", "bpoff",
+        "bpgroup", "bpon", "bpoff", "bptoggle", "bkey", "bpnote",
         "key", "keyboard", "mouse", "joystick", "debugmode", "model", "rzx", "zxpoly", "start"};
     for (std::string_view always : kAlways)
         if (command == always)

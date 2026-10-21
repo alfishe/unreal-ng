@@ -17,6 +17,7 @@
 #include "emulator/actions/builtinactions.h"
 #include "emulator/actions/catalogue.h"
 #include "emulator/actions/hostactions.h"
+#include "emulator/actions/hostactions_debugtools.h"
 #include "emulator/coordinator/machineop.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -636,6 +637,8 @@ ActionRegistry& ActionRegistry::Instance()
         auto* created = new ActionRegistry();
         created->_builtin = RegisterBuiltinActions(*created);
         for (RegistrationHandle& handle : RegisterHostActions(*created))
+            created->_builtin.push_back(std::move(handle));
+        for (RegistrationHandle& handle : RegisterDebugToolsActions(*created))  // breakpoints, profilers, state
             created->_builtin.push_back(std::move(handle));
         created->_feed = &ActivityFeed::Instance();
         created->_post = true;  // from now on: the Qt client's GUI actions come and go

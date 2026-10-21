@@ -8,6 +8,8 @@ constexpr int BYTECODE_COL_WIDTH = 11;   // XX XX XX XX XX
 constexpr int LABEL_COL_WIDTH = 15;      // LABEL_NAME:
 constexpr int MNEMONIC_COL_WIDTH = 24;   // Instruction mnemonic
 
+#include <algorithm>
+
 #include <QApplication>
 #include <QFontDatabase>
 #include <QHBoxLayout>
@@ -983,6 +985,18 @@ void DisassemblerWidget::toggleBreakpointAtAddress(uint16_t address)
 
     // Refresh the disassembly but maintain the current view position
     refreshPreservingPosition(currentViewAddress);
+}
+
+uint16_t DisassemblerWidget::cursorAddress() const
+{
+    const int line = m_disassemblyTextEdit->textCursor().blockNumber();
+    const auto it = m_addressMap.find(static_cast<uint16_t>(std::max(line, 0)));
+    return it != m_addressMap.end() ? it->second : m_displayAddress;
+}
+
+void DisassemblerWidget::toggleBreakpointAtCursor()
+{
+    toggleBreakpointAtAddress(cursorAddress());
 }
 
 void DisassemblerWidget::handleBreakpointClick(int lineNumber)
