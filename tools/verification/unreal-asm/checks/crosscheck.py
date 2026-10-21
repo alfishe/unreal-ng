@@ -7,8 +7,9 @@ compared byte for byte (sjasmplus' as the reference: its conversions are checked
                   [--sjasmplus PATH] [--pasmo PATH] [--z80asm PATH]
 
 A main source is a file no other file of its image INCLUDEs. Sources sjasmplus does not assemble without errors, or
-whose sjasmplus form needs pages (DEVICE), are skipped. pasmo 0.5.5 writes an empty file when the code spans the whole
-64K (its size wraps to 16 bits): build it with that one line fixed or such sources show as "pasmo wrote nothing".
+whose sjasmplus form needs pages (a DEVICE other than NOSLOT64K, the flat 64K SAVEBIN needs), are skipped. pasmo
+0.5.5 writes an empty file when the code spans the whole 64K (its size wraps to 16 bits): build it with that one line
+fixed or such sources show as "pasmo wrote nothing".
 z80asm writes one binary per section (every ORG opens one) and their addresses to its map: they are put together.
 zxasm: --zxasm or UNREAL_ASM_ZXASM; sjasmplus: --sjasmplus or UNREAL_ASM_SJASMPLUS; pasmo: --pasmo or UNREAL_ASM_PASMO;
 z80asm: --z80asm or UNREAL_ASM_Z80ASM.
@@ -53,13 +54,16 @@ def text_with_includes(directory, name, seen=None):
 def sjasmplus_image(sjasmplus, directory, name):
     """{address: byte} sjasmplus wrote for the source, or None when it reports errors or uses pages. Untouched device
     memory is not zero (system variables): the source is built over memory filled with #00 and with #FF, and the
-    bytes equal in both are the ones it wrote"""
-    if b'DEVICE' in open(os.path.join(directory, name), 'rb').read():
+    bytes equal in both are the ones it wrote. A source that says DEVICE NOSLOT64K (no pages: for its SAVEBIN) is
+    built in that device"""
+    devices = set(re.findall(rb'^\s*DEVICE\s+(\w+)', text_with_includes(directory, name), re.M | re.I))
+    if {d.upper() for d in devices} - {b'NOSLOT64K'}:
         return None
+    device = 'NOSLOT64K' if devices else 'ZXSPECTRUM48'
     images = []
     for fill in ('#00', '#FF'):
         harness = os.path.join(directory, '__harness.asm')
-        open(harness, 'w').write(f'        DEVICE ZXSPECTRUM48\n        ORG 0\n        DS 32768,{fill}\n        DS 32768,{fill}\n        ORG 0\n'
+        open(harness, 'w').write(f'        DEVICE {device}\n        ORG 0\n        DS 32768,{fill}\n        DS 32768,{fill}\n        ORG 0\n'
                                  f'        INCLUDE "{name}"\n        SAVEBIN "__sj.bin",0,65536\n')
         run = subprocess.run([sjasmplus, '--nologo', '__harness.asm'], cwd=directory, capture_output=True, text=True, errors='replace')
         if run.returncode != 0 or 'error' in run.stdout.lower().replace('errors: 0', ''):
@@ -174,7 +178,7 @@ def main():
                     tally[f'{target}: errors'] += 1
                     print(f'{target} {n}/{f}: {built}')
                     continue
-                if not built:
+                if not built and not reference:
                     tally[f'{target}: no code'] += 1
                     continue
                 differing = sum(1 for address, b in reference.items() if built.get(address, 0) != b)

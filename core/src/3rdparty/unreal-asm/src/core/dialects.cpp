@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -216,6 +217,220 @@ std::map<std::string, SourceLabel> LabelValues(const std::vector<ProjectFile>& f
     }
     return values;
 }
+
+/// The names an expression mentions
+void Mentioned(const ir::Expr& e, std::set<std::string>& names)
+{
+    if (e.kind == ir::Expr::Kind::Symbol)
+        names.insert(e.text);
+    for (const ir::Expr& a : e.args)
+        Mentioned(a, names);
+}
+
+/// The names a macro argument's text mentions
+void MentionedInText(const std::string& text, std::set<std::string>& names)
+{
+    for (size_t k = 0; k < text.size();)
+    {
+        const auto word = [&](size_t at) {
+            const unsigned char c = static_cast<unsigned char>(text[at]);
+            return std::isalnum(c) || c == '_' || c == '.' || c >= 0x80;
+        };
+        if (!word(k))
+        {
+            ++k;
+            continue;
+        }
+        size_t end = k;
+        while (end < text.size() && word(end))
+            ++end;
+        if (!std::isdigit(static_cast<unsigned char>(text[k])))
+            names.insert(text.substr(k, end - k));
+        k = end;
+    }
+}
+
+/// ZX-ASM's IFUSED X / IFNUSED X (X used and not defined so far) decided for a target that has no such test, as an IF
+/// of 1 or 0. X is used when the code an assembly assembles mentions it, not a block it leaves out: per assembly (a
+/// main source with the files it INCLUDEs, in assembly order), from "nothing used" until the answers stay. A test that
+/// two assemblies answer differently, each one way, tests a constant every main source reaching it defines first
+/// (__UNREALASM_IFU<n> EQU 1 / 0); one that two INCLUDEs of a file in one assembly answer differently stays a test
+void DecideIfUsed(std::vector<ir::Program>& programs, const std::vector<std::string>& names, const std::vector<bool>& included)
+{
+    using Answers = std::map<const ir::Statement*, std::optional<bool>>;   // nullopt: answered both ways
+    bool any = false;
+    for (const ir::Program& p : programs)
+        for (const ir::Line& l : p.lines)
+            for (const ir::Statement& s : l.statements)
+                any = any || (s.kind == ir::Statement::Kind::Directive && s.directive == ir::DirectiveKind::IfUsed);
+    if (!any)
+        return;
+    const auto negated = [](const ir::Statement& s) { return !s.params.empty() && s.params[0] == "not"; };
+    const auto merge = [](Answers& into, const ir::Statement* s, std::optional<bool> v) {
+        const auto [at, fresh] = into.emplace(s, v);
+        if (!fresh && at->second != v)
+            at->second = std::nullopt;
+    };
+    Answers project;
+    struct Assembly
+    {
+        size_t main = 0;
+        Answers answers;
+        std::set<size_t> files;   // the files it reaches
+    };
+    std::vector<Assembly> assemblies;
+    for (size_t main = 0; main < programs.size(); ++main)
+    {
+        if (included[main])
+            continue;
+        Answers answers;
+        std::set<size_t> reached;
+        for (int round = 0; round < 32; ++round)
+        {
+            struct Open
+            {
+                const ir::Statement* test = nullptr;   // nullptr: an IF of another kind (both parts count)
+                bool inElse = false;
+            };
+            std::set<std::string> used, defined;
+            std::vector<std::pair<const ir::Statement*, bool>> tests;   // each test reached, X defined before it
+            std::vector<size_t> active;
+            const auto answer = [&](const ir::Statement* s) -> std::optional<bool> {
+                const auto at = answers.find(s);
+                return at == answers.end() ? std::optional<bool>(negated(*s)) : at->second;
+            };
+            std::function<void(size_t)> walk = [&](size_t file) {
+                if (std::count(active.begin(), active.end(), file) || active.size() > 32)
+                    return;
+                active.push_back(file);
+                reached.insert(file);
+                std::vector<Open> open;
+                const auto taken = [&] {
+                    for (const Open& o : open)
+                        if (o.test)
+                            if (const auto a = answer(o.test); a && *a == o.inElse)
+                                return false;
+                    return true;
+                };
+                for (const ir::Line& l : programs[file].lines)
+                {
+                    if (!l.label.empty() && taken())
+                        defined.insert(l.label);
+                    for (const ir::Statement& s : l.statements)
+                    {
+                        if (s.kind == ir::Statement::Kind::Directive)
+                        {
+                            if (s.directive == ir::DirectiveKind::IfUsed || s.directive == ir::DirectiveKind::If)
+                            {
+                                const bool test = s.directive == ir::DirectiveKind::IfUsed;
+                                if (test && taken())
+                                    tests.push_back({&s, defined.count(s.text) > 0});
+                                if (!test && taken())
+                                    for (const ir::Expr& a : s.args)
+                                        Mentioned(a, used);
+                                open.push_back({test ? &s : nullptr, false});
+                                continue;
+                            }
+                            if (s.directive == ir::DirectiveKind::Else && !open.empty())
+                            {
+                                open.back().inElse = true;
+                                continue;
+                            }
+                            if (s.directive == ir::DirectiveKind::EndIf && !open.empty())
+                            {
+                                open.pop_back();
+                                continue;
+                            }
+                        }
+                        if (!taken())
+                            continue;
+                        for (const ir::Expr& a : s.args)
+                            Mentioned(a, used);
+                        for (const ir::Operand& o : s.operands)
+                            Mentioned(o.expr, used);
+                        if (s.kind == ir::Statement::Kind::MacroCall)
+                            for (const std::string& p : s.params)
+                                MentionedInText(p, used);
+                        if (s.kind == ir::Statement::Kind::Directive && s.directive == ir::DirectiveKind::Include)
+                            for (size_t n = 0; n < programs.size(); ++n)
+                                if (n != file && names[n] == s.text)
+                                {
+                                    walk(n);
+                                    break;
+                                }
+                    }
+                }
+                active.pop_back();
+            };
+            walk(main);
+            Answers next;
+            for (const auto& [s, before] : tests)
+                merge(next, s, (used.count(s->text) > 0 && !before) != negated(*s));
+            if (next == answers)
+                break;
+            answers = std::move(next);
+        }
+        for (const auto& [s, v] : answers)
+            merge(project, s, v);
+        assemblies.push_back({main, std::move(answers), std::move(reached)});
+    }
+    std::map<size_t, std::vector<std::pair<std::string, bool>>> constants;   // a main source's: name, value
+    int flags = 0;
+    for (size_t file = 0; file < programs.size(); ++file)
+        for (ir::Line& l : programs[file].lines)
+            for (ir::Statement& s : l.statements)
+                if (const auto at = project.find(&s); at != project.end())
+                {
+                    std::optional<ir::Expr> value;
+                    if (at->second)
+                        value = ir::Expr::Number(*at->second ? 1 : 0);
+                    else
+                    {
+                        bool each = true;   // every assembly answers it one way
+                        for (const Assembly& a : assemblies)
+                            if (const auto own = a.answers.find(&s); own != a.answers.end() && !own->second)
+                                each = false;
+                        if (!each)
+                            continue;
+                        const std::string name = "__UNREALASM_IFU" + std::to_string(++flags);
+                        for (const Assembly& a : assemblies)
+                            if (a.files.count(file))
+                            {
+                                const auto own = a.answers.find(&s);   // not reached: in a block left out, either value
+                                constants[a.main].push_back({name, own != a.answers.end() && *own->second});
+                            }
+                        value = ir::Expr::Make(ir::Expr::Kind::Symbol);
+                        value->text = name;
+                    }
+                    const std::string test = (negated(s) ? "IFNUSED " : "IFUSED ") + s.text;
+                    s.directive = ir::DirectiveKind::If;
+                    s.args = {*value};
+                    s.params.clear();
+                    s.text.clear();
+                    if (!l.hasComment)
+                    {
+                        l.comment = " " + test + (at->second ? " (decided when converting)" : " (decided per main source)");
+                        l.hasComment = true;
+                    }
+                }
+    for (const auto& [main, defined] : constants)
+    {
+        std::vector<ir::Line> first;
+        for (const auto& [name, value] : defined)
+        {
+            ir::Line line;
+            line.sourceLine = programs[main].lines.empty() ? 0 : programs[main].lines.front().sourceLine;
+            line.label = name;
+            ir::Statement equ;
+            equ.kind = ir::Statement::Kind::Directive;
+            equ.directive = ir::DirectiveKind::Equ;
+            equ.args = {ir::Expr::Number(value ? 1 : 0)};
+            line.statements.push_back(std::move(equ));
+            first.push_back(std::move(line));
+        }
+        programs[main].lines.insert(programs[main].lines.begin(), first.begin(), first.end());
+    }
+}
 }  // namespace
 
 ConvertResult Convert(const SourceDocument& source, std::string_view targetDialect, const BackendOptions& options)
@@ -237,6 +452,13 @@ ConvertResult Convert(const SourceDocument& source, std::string_view targetDiale
         next.z80n = true;
     }
     FrontendResult parsed = frontend->Parse(options.z80n && !source.z80n ? next : source);
+    if (targetDialect != "sjasmplus" && targetDialect != "zxasm")
+    {
+        std::vector<ir::Program> one;
+        one.push_back(std::move(parsed.program));
+        DecideIfUsed(one, {source.name}, {false});
+        parsed.program = std::move(one[0]);
+    }
     BackendOptions withValues = options;
     if (backend->WantsLabelValues() && options.labelValues.empty())
         withValues.labelValues = LabelValues({{source.name, source}}, 0, options, false);
@@ -815,20 +1037,9 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
     }
     if (!backend)
         return result;
-    // First pass: the macros every file defines; second pass: write with all of them known
-    BackendOptions withMacros = options;
-    std::vector<std::map<std::string, int>> definitions;
-    for (const ir::Program& program : programs)
-    {
-        BackendResult written = backend->Write(program, options);
-        withMacros.macroParams.insert(written.macroParams.begin(), written.macroParams.end());
-        withMacros.ifUsedNames.insert(written.ifUsedNames.begin(), written.ifUsedNames.end());
-        definitions.push_back(written.definitions);
-    }
-    // Definitions are counted per assembly: a main source (one no file INCLUDEs) with everything it INCLUDEs. A file
-    // gets the largest count of the assemblies it belongs to (two programs defining the same name apart do not add up)
     std::vector<std::vector<size_t>> includes(programs.size());
     std::vector<bool> included(programs.size(), false);
+    std::vector<int> includeCount(programs.size(), 0);   // the INCLUDEs naming each file
     for (size_t k = 0; k < programs.size(); ++k)
         for (const ir::Line& line : programs[k].lines)
             for (const ir::Statement& s : line.statements)
@@ -838,8 +1049,16 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
                         {
                             includes[k].push_back(n);
                             included[n] = true;
+                            ++includeCount[n];
                         }
-    std::vector<std::map<std::string, int>> unitDefinitions(programs.size());
+    // before the first pass: the constants of IFUSED tests decided per main source are counted as definitions
+    if (targetDialect != "sjasmplus" && targetDialect != "zxasm")
+    {
+        std::vector<std::string> names;
+        for (const ProjectFile& f : files)
+            names.push_back(f.name);
+        DecideIfUsed(programs, names, included);
+    }
     // the main source of the first assembly each file belongs to: its labels are that assembly's layout (a disk of
     // several programs: each one's own values)
     std::vector<size_t> mainOf(programs.size(), programs.size());
@@ -861,18 +1080,11 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
         for (const size_t n : unit)
             if (mainOf[n] == programs.size())
                 mainOf[n] = main;
-        unitOf[main] = unit;
-        std::map<std::string, int> counts;
-        for (const size_t n : unit)
-            for (const auto& [name, count] : definitions[n])
-                counts[name] += count;
-        for (const size_t n : unit)
-            for (const auto& [name, count] : counts)
-                unitDefinitions[n][name] = std::max(unitDefinitions[n][name], count);
+        unitOf[main] = std::move(unit);
     }
     std::map<size_t, std::map<std::string, SourceLabel>> unitValues;
-    for (size_t k = 0; k < programs.size(); ++k)
-    {
+    // the options a file is written with: its assembly's label values for a backend that folds with them
+    const auto optionsFor = [&](size_t k, BackendOptions written) {
         if (backend->WantsLabelValues() && options.labelValues.empty())
         {
             size_t main = mainOf[k];
@@ -889,11 +1101,45 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
                     unitValues[main] = own.empty() ? LabelValues(files, main, options, files.size() > 1)
                                                    : LabelValues(own, 0, options, files.size() > 1);
                 }
-                withMacros.labelValues = unitValues[main];
+                written.labelValues = unitValues[main];
             }
         }
+        return written;
+    };
+    // First pass: the macros every file defines (and its definitions, the IFs the layout decides taking one branch);
+    // second pass: write with all of them known
+    BackendOptions withMacros = options;
+    std::vector<std::map<std::string, int>> definitions;
+    for (size_t k = 0; k < programs.size(); ++k)
+    {
+        const ir::Program& program = programs[k];
+        BackendResult written = backend->Write(program, optionsFor(k, options));
+        withMacros.macroParams.insert(written.macroParams.begin(), written.macroParams.end());
+        withMacros.ifUsedNames.insert(written.ifUsedNames.begin(), written.ifUsedNames.end());
+        definitions.push_back(written.definitions);
+    }
+    // Definitions are counted per assembly: a main source (one no file INCLUDEs) with everything it INCLUDEs. A file
+    // gets the largest count of the assemblies it belongs to (two programs defining the same name apart do not add up)
+    std::vector<std::map<std::string, int>> unitDefinitions(programs.size());
+    for (size_t main = 0; main < programs.size(); ++main)
+    {
+        if (included[main])
+            continue;
+        const std::vector<size_t>& unit = unitOf[main];
+        std::map<std::string, int> counts;
+        for (const size_t n : unit)
+            for (const auto& [name, count] : definitions[n])
+                counts[name] += count;
+        for (const size_t n : unit)
+            for (const auto& [name, count] : counts)
+                unitDefinitions[n][name] = std::max(unitDefinitions[n][name], count);
+    }
+    for (size_t k = 0; k < programs.size(); ++k)
+    {
+        withMacros = optionsFor(k, std::move(withMacros));
         withMacros.definitions = unitDefinitions[k];
         withMacros.fileName = files[k].name;
+        withMacros.includedRepeatedly = includeCount[k] > 1;
         BackendResult written = backend->Write(programs[k], withMacros);
         written.document.name = files[k].name;
         result.files.push_back({files[k].name, std::move(written.document)});
