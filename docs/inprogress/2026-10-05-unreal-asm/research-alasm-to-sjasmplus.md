@@ -57,7 +57,7 @@ in the emulator where marked.
 |---|---|
 | Expressions run left to right, 16-bit unsigned | parentheses by tree; `/` masked to 16 bits |
 | `'x` / `.x` high / low byte, `!` xor, `<` / `>` rotate a 16-bit word, postfix `~` inverts the result so far | `high` / `low`, `^`, the rotation formula, `~(...)` |
-| `?label` is 0 when the label is defined, `#FFFF` when not | `IF exist x` / `IF !exist x`; inside an expression `((!exist x)*#FFFF)` |
+| `?label` is 0 when the label is defined so far (ALASM is one pass), `#FFFF` when not, 1 when not defined but used before, 2 when it names a macro (help, "?label"; RAR's `IFN ?j\1-2` tells a macro call with two parameters from one with one) | `IF exist x` / `IF !exist x`; a test before a definition of x (ACE's `IFN ?H2PAG` around H2PAG itself) `IFNDEF __UNREALASM_DEF_x`, the definitions setting that DEFINE; a macro's name 2; inside an expression `((!exist x)*#FFFF)` |
 | An instruction operand starting with `(` is memory up to the matching `)`; the rest is ignored (**emulator**: `LD DE,(65536-46)*98/256` assembles as `LD DE,(#FFD2)`, the line is shown as a warning) | the same, with a warning |
 | Keywords are capitals; a lower-case `iy`, `b`, `hl` is a label | labels named like registers or conditions get `L_` (also when defined in another file) |
 | `LOCAL` / `ENDL`: labels inside are invisible outside, except `@name` (the `@` is part of the name, **emulator**: `JP shared` does not find `@shared`) and labels used outside the block | block labels get `__L<n>`; inside a macro sjasmplus' `.name`; `@name` is renamed (`L__name`): sjasmplus would read it as `name` |
@@ -76,6 +76,14 @@ in the emulator where marked.
 | `INCBIN "name",size` | `INCBIN "name",0,size` |
 | `ORG addr,page` and `{addr}` reads need memory pages | `DEVICE ZXSPECTRUM4096` added (ALASM's page numbers follow its memory driver: checked per project) |
 | `EXA`, `EXD`, `JZ` / `JNZ` / `JC` / `JNC`, `INF`, several operand groups on one line (`LD L,0,H,1`) | `EX AF,AF'`, `EX DE,HL`, `JR cc`, `IN F,(C)`, one instruction each |
+| A `LOCAL` block may hold an `INCLUDE`: the included file's labels are local too | the block is a sjasmplus `MODULE __UNREALASM_LB<n>`, globals used inside get `@` |
+| A file included more than once may define the same macro each time (ALASM replaces it) | sjasmplus refuses a second `MACRO` of a name: the definition is guarded by `IFNDEF __UNREALASM_M_<name>` / `DEFINE` / `ENDIF` (only in files included more than once) |
+| `label=expr` defined once in each branch of an `IF` (never twice in one pass, not in a loop or macro) | `EQU`: a sjasmplus `=` label cannot be used before its line |
+| A `DISP` inside an `IF` that closes before `ENT` (ACE's `aceTO`: displaced only when `v1` is defined) | the `DISP` also `DEFINE`s `__UNREALASM_DISP`; the `ENT` is written `IFDEF __UNREALASM_DISP` / `ENT` / `UNDEFINE` / `ENDIF`: sjasmplus refuses an `ENT` without `DISP` |
+| A text holding a control character (`DB "Ё<#7F>Ї<"` in ACE's aceFROM) | the control character as a number, the text around it quoted (it was written as the UTF-8 bytes) |
+| An indented lone word no file of the project defines as a macro (rarLZ4's ` CRUNNACH3`) | a label: ALASM calls only a macro defined |
+| An indented word after a label in column 0 is the command (a macro call), not a label reference | a macro call |
+| A macro may be defined in another file of the project and used where it is not visible in the file itself (RAR's `c HUFFMAN`, defined in `rarcon30`) | the project's macros that need expanding (walking `\C` / `\N` parameters) are expanded in every ALASM file of the project |
 
 ## 4. sjasmplus facts the backend relies on
 
@@ -131,8 +139,8 @@ sources from 21 disks (the ALASM releases, Alone Coder's ACE, PT3 and CON source
 
 | Item | Note |
 |---|---|
+| `?label` of a name used before but not defined (1 in ALASM) | read as `#FFFF` (not defined): not reproduced |
 | TASM frontend | D-9 named TASM → sjasmplus as the first pair; ALASM came first because The Link gives binaries to compare with. TASM is the next frontend (A5b) |
 | Column of comments | the IR keeps no columns: comments are written from column 32 |
-| `?label` before the definition | ALASM is one pass: `?x` before `x` is defined says "not defined"; sjasmplus' `exist` sees the whole source |
 | ALASM's `DISPLAY` output | checked in ALASM 5.09 (2026-10-07): during a pass ALASM prints a line counter `#NNNN` at each new screen line, and `DISPLAY` writes after it: texts as they are, numbers as `#` and four hex digits with no separator (`DISPLAY "b",$` gives `b#6001`, `DISPLAY "c",3+4` gives `c#0007`). The `#004A end:` seen before is the line counter and the text. The switches (2026-10-19, typed in 5.09's editor and in a file the codec writes since): DISPLAY reads them as list items, the letter stored as a register keyword (`/D` #F1, `/H` #F3, `/A` #F5, `/L` #F4; `/T` a plain letter). `/D` prints the next number in decimal (`  100`), `/H` in hex (`#0064`), `/A` both (`  100=#0064`), `/T` the expression's text, `=` and the number (`100=#0064`), `/L` first in the line leaves out the line counter and the line break, so the text joins the line before. The earlier syntax errors (#00) came from the codec writing the letter as text. sjasmplus prints numbers as `0x6001` (or decimal with `/D`) and has no `#` form, so the output cannot be made identical; it has no effect on the code |
 | Labels and IR | the IR node set is the union of ALASM and sjasmplus; the TASM, STORM and ZX-ASM frontends may add node kinds (D-7) |

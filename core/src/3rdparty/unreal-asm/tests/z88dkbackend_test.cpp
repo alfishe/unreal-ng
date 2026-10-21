@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <random>
 #include <regex>
@@ -29,15 +30,11 @@ using unrealasm::testing::ReadTestText;
 
 namespace
 {
-/// The z80asm lines of a source in another dialect (blank and comment-only lines dropped, leading blanks trimmed)
-std::vector<std::string> ToZ80asm(const std::string& text, const std::string& dialect, Diagnostics* diagnostics = nullptr)
+/// The statements of a written text: without indentation, comments and blank lines
+std::vector<std::string> Statements(const SourceDocument& document)
 {
-    const ConvertResult r = Convert(SourceDocument::FromText(text, dialect), "z88dk");
-    EXPECT_TRUE(r.ok);
-    if (diagnostics)
-        *diagnostics = r.diagnostics;
     std::vector<std::string> out;
-    for (const SourceLine& l : r.document.lines)
+    for (const SourceLine& l : document.lines)
     {
         const size_t first = l.text.find_first_not_of(' ');
         if (first == std::string::npos || l.text[first] == ';')
@@ -47,6 +44,16 @@ std::vector<std::string> ToZ80asm(const std::string& text, const std::string& di
             out.back().pop_back();
     }
     return out;
+}
+
+/// The z80asm lines of a source in another dialect (blank and comment-only lines dropped, leading blanks trimmed)
+std::vector<std::string> ToZ80asm(const std::string& text, const std::string& dialect, Diagnostics* diagnostics = nullptr)
+{
+    const ConvertResult r = Convert(SourceDocument::FromText(text, dialect), "z88dk");
+    EXPECT_TRUE(r.ok);
+    if (diagnostics)
+        *diagnostics = r.diagnostics;
+    return Statements(r.document);
 }
 
 bool Contains(const std::vector<std::string>& lines, const std::string& line)
@@ -190,6 +197,39 @@ TEST(Z88dkBackend_Test, LabelsSectionsAndPhase)
         EXPECT_TRUE(Contains(tail, "SECTION s_tail_main_2")) << ::testing::PrintToString(tail);
         EXPECT_EQ(std::count(tail.begin(), tail.end(), "ORG $812C"), 2) << ::testing::PrintToString(tail);
     }
+    // ZX-ASM's IFUSED X (used and not defined so far) decided when converting: P1 is called, P2 only from P1's block,
+    // P3 from nowhere; X is defined before its test
+    {
+        const std::vector<std::string> lib = ToZ80asm("        org #8000\n        call P1\n        ifused P1\nP1      call P2\n        ret\n        endif\n"
+                                                      "        ifused P2\nP2      ret\n        endif\n        ifused P3\nP3      nop\n        endif\n"
+                                                      "X       equ 1\n        call X\n        ifused X\nX       halt\n        endif", "zxasm");
+        std::vector<std::string> tests;
+        std::copy_if(lib.begin(), lib.end(), std::back_inserter(tests), [](const std::string& t) { return t.rfind("IF", 0) == 0; });
+        EXPECT_EQ(tests, (std::vector<std::string>{"IF 1", "IF 1", "IF 0", "IF 0"})) << ::testing::PrintToString(lib);
+    }
+    // A library two programs INCLUDE, one of them calling its routine: the test is a constant each main source defines
+    {
+        const ProjectResult r = ConvertProject({{"ONE", SourceDocument::FromText("        call P1\n        include \"LIB\"", "zxasm")},
+                                                {"TWO", SourceDocument::FromText("        nop\n        include \"LIB\"", "zxasm")},
+                                                {"LIB", SourceDocument::FromText("        ifused P1\nP1      ret\n        endif", "zxasm")}},
+                                               "z88dk");
+        ASSERT_TRUE(r.ok);
+        ASSERT_EQ(r.files.size(), 3u);
+        const std::vector<std::string> one = Statements(r.files[0].document), two = Statements(r.files[1].document),
+                                       lib = Statements(r.files[2].document);
+        EXPECT_TRUE(Contains(one, "__UNREALASM_IFU1 EQU 1")) << ::testing::PrintToString(one);
+        EXPECT_TRUE(Contains(two, "__UNREALASM_IFU1 EQU 0")) << ::testing::PrintToString(two);
+        EXPECT_TRUE(Contains(lib, "IF __UNREALASM_IFU1")) << ::testing::PrintToString(lib);
+    }
+    // A name made of an address beyond a sum stops z80asm 2.3 on an assertion where an address expression uses it: the
+    // layout's value (TDU's CAT_PLC)
+    EXPECT_TRUE(Contains(ToZ80asm("        ORG #8000\nTR      NOP\nCAT     EQU (HIGH TR+1)<<8\n        LD HL,CAT+TR", "sjasmplus"),
+                         "CAT EQU $8100"));
+    // z80asm's $ in DEFS counts from the section's start: DS #6010-$ is the layout's count (TSW's DS #6060-$)
+    EXPECT_TRUE(Contains(ToZ80asm("        ORG #6000\n        NOP\n        DS #6010-$\nX1      NOP", "sjasmplus"), "DS 15"));
+    // z80asm rejects a displacement with parentheses next to the index register: it goes between zeros
+    EXPECT_EQ(ToZ80asm("DD EQU 5\nKK EQU 2\n        BIT 7,(IX+(DD-KK))\n        LD A,(IY+3)", "sjasmplus"),
+              (std::vector<std::string>{"DD EQU 5", "KK EQU 2", "BIT 7,(IX+0+(DD-KK)+0)", "LD A,(IY+3)"}));
     // INCBIN is BINARY; IN F,(C) is z80asm's own
     EXPECT_EQ(ToZ80asm("        INCBIN \"F\"\n        IN F,(C)", "sjasmplus"), (std::vector<std::string>{"BINARY \"F\"", "IN F,(C)"}));
 }
@@ -248,9 +288,9 @@ TEST(Z88dkBackend_Test, ProgramsAssembleToWhatTheOriginalsBuilt)
                   expected)
             << name;
     }
-    // ZXT1's return from a nested PHASE to the outer one is an address computed from labels: z80asm's PHASE takes
-    // constants only
-    for (const std::string& name : {std::string("ZXT2"), std::string("ZXT3")})
+    // ZXT1's return from a nested PHASE to the outer one is an address computed from labels: z80asm's PHASE takes a
+    // constant, the layout's address
+    for (const std::string& name : {std::string("ZXT1"), std::string("ZXT2"), std::string("ZXT3")})
     {
         const std::vector<uint8_t> expected = ReadTestData("dialects/zasm315/" + name + ".bin");
         EXPECT_EQ(AssembleWithZ80asm(z80asm, Project(name, Decoded(zxasm, Hobeta("dialects/zasm315/" + name + ".$a"), "3.15")), name, {}, 0x8000,
