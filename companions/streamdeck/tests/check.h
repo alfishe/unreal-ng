@@ -40,3 +40,4 @@ void TestWebSocket();
 void TestDeckHub();
 void TestDaemonDecks();
 void TestHotplug();
+void TestIdle();

@@ -62,8 +62,14 @@ Scenario paths (`face.image`, `face.svg`, `media.open` values, includes) use roo
 | `$icons` | unreal-qt's icon set (shipped in `$data/icons`) | daemon |
 | `$scenario` | The scenario file's own directory | daemon |
 
-An absolute path still works and is a studio warning. The current scenario's 98 absolute paths (72 test programs, 26
+Done 2026-10-20 for pictures (`face.image`, `strip.image`): `$data` and `$icons`, found as in
+[daemon.md](../../companions/streamdeck/daemon.md#data-directory) (`sdb/datadir.h`), and a region of a file
+(`#xywh=x,y,w,h`) for one picture spread over several keys; `$testdata`, `$user`, `$scenario` and includes are still
+to do. An absolute path still works and is a studio warning. The current scenario's 98 absolute paths (72 test programs, 26
 icons, 25 thumbnails, two `/tmp` files) become `$testdata`, `$icons`, `$scenario/thumbnails`, and `$user`.
+
+Rule: the TTD timeline is a strip readout, never keys (`strip.status: "ttd"`, the strip's picture `lcd_ttd` of the
+theme); no scenario, theme or idle screen spreads it over keys.
 
 ## 4. State-bound faces
 

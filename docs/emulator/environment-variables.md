@@ -291,6 +291,7 @@ The last three are in the shared bench code, so they also act in `core-tests`' `
 |---|---|---|
 | `SDCTL_NO_MIRROR` | any value (unset) | A real deck alone: no mirror to a running Stream Deck Studio, as `--no-mirror` (`companions/streamdeck/cli/cli.cpp:49`). |
 | `UNREAL_STREAMDECK_BIN` | path (unset: beside the studio, its bundle or the suite's bundle, then `PATH`) | The `unreal-streamdeck` executable Stream Deck Studio starts when no daemon answers at launch, or for the editor's Run (`companions/streamdeck/studio/daemoncontrol.cpp`, `DaemonControl::Path`). |
+| `UNREAL_STREAMDECK_DATA` | a folder holding `streamdeck/` (unset: the app bundle's `Contents/Resources`, beside the executable, `../share/unreal-ng`, then the source tree's `data/`) | The companion's data directory, `$data` in scenario paths: the idle screen's theme (`streamdeck/themes/unrealng`) and every `$data/...` / `$icons/...` picture. Taken when it has a `streamdeck/` folder, else the usual lookup ([daemon.md](../companions/streamdeck/daemon.md#data-directory); `companions/streamdeck/lib/src/datadir.cpp`, `data::Root`). |
 
 ## 7. Packaging, release and CI
 

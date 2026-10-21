@@ -52,6 +52,10 @@ add_library(sdb STATIC ${SD_LIB_SOURCES})
 target_include_directories(sdb PUBLIC ${SD_DIR}/lib/include)
 target_include_directories(sdb SYSTEM PUBLIC ${SD_3RDPARTY})   # nlohmann/json is part of the public headers
 target_compile_options(sdb PRIVATE ${SD_WARNINGS})
+# the source tree's data/: the last place the data directory is looked for (sdb/datadir.h), for a build not installed
+get_filename_component(SD_SOURCE_DATA ${SD_DIR}/../../data ABSOLUTE)
+set_source_files_properties(${SD_DIR}/lib/src/datadir.cpp PROPERTIES
+    COMPILE_DEFINITIONS "SDB_SOURCE_DATA_DIR=\"${SD_SOURCE_DATA}\"")
 if(NOT MSVC)
     set_source_files_properties(${SD_DIR}/lib/src/svg.cpp PROPERTIES COMPILE_OPTIONS "-Wno-error")   # nanosvg inside
 endif()

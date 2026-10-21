@@ -9,7 +9,7 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 
 | Command | What |
 |:--|:--|
-| `unreal-streamdeck run [scenario] [options]` | Play a scenario (`.json`, `.yaml`, `.csv`, `.tsv`) on the deck; without one, the built-in idle scenario (one empty menu) until a scenario is loaded for a deck |
+| `unreal-streamdeck run [scenario] [options]` | Play a scenario (`.json`, `.yaml`, `.csv`, `.tsv`) on the deck; without one, the built-in [idle scenario](#the-idle-scenario) (the UnrealNG look) until a scenario is loaded for a deck |
 | `unreal-streamdeck pair [--webapi URL] [--name NAME] [--file F]` | Pair with unreal-ng as a companion (approved at the emulator's GUI); the token goes to `~/.config/unreal-streamdeck/companion.json` (mode 0600) |
 | `unreal-streamdeck scenario check \| convert \| extract \| resolve ...` | Check and convert scenario files |
 
@@ -27,6 +27,62 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 | `--dry-run` | Log actions instead of running them |
 | `--seconds N` | Stop after N seconds |
 | `--with-parent` | Stop when the starting process goes away (macOS, Linux) |
+
+## The idle scenario
+
+Without a scenario every deck plays the idle one: the UnrealNG theme of the data directory
+(`$data/streamdeck/themes/unrealng`, [below](#data-directory)), laid out for the deck's model when the deck appears
+(`sdb/idlescenario.h`). Its keys are pictures only: pressing one does nothing (an empty `multi`).
+
+| Deck | Strip / window | Keys |
+|:--|:--|:--|
+| Stream Deck + XL (the theme's own deck) | `strip.png`, the "UNREAL NG / ZX SPECTRUM EMULATOR" banner, edge to edge | the theme's 27 icons at their keys (rows 0-2), row 3 blank |
+| Stream Deck + | the banner | the first 8 icons |
+| Stream Deck Neo | the logo (`logo.png`, the banner's middle; `theme.json` `logo`): the whole banner would be a thin band in the 248 x 58 window | the first 8 icons |
+| XL (4 x 8), Original / MK.2 (3 x 5), Mini (2 x 3) | none | the logo (`logo.png`) spread over the middle row (row 1; the Mini's row 0): the bezel gaps between keys hide parts of it, so the larger letters; the icons in the theme's order on the other keys |
+| Pedal | none | none (no key screens) |
+| any, no data directory | the drawn title "UnrealNG" | the middle key: the drawn title (decks without a strip) |
+
+Never the time-travel timeline: it is a strip readout, never keys (and idle has no emulator, so no history). The
+theme's `ttd_strip.png` (`lcd_ttd` in `theme.json`) is a picture of that readout for the strip; the live one is the
+runtime's strip status (SD5). The brightness is the theme's (60). `GET /api/v1/decks/{serial}/scenario?document=true` shows the document made for
+that deck; a picture spread over several keys is one file with a region per key (`file.png#xywh=x,y,w,h`, below).
+`DELETE .../scenario` and `POST /api/v1/reload` make it again (an edited theme shows).
+
+## Data directory
+
+`$data` in scenario paths ([scenarios.md §3](../../inprogress/2026-10-19-streamdeck-integration/scenarios.md#3-paths))
+is the companion's data directory, laid out as `data/` of the repository (`streamdeck/` with the themes, `icons/`).
+The daemon, `sdctl` and Stream Deck Studio look for it the way unreal-qt finds its resources
+(`FileHelper::GetResourcesPath`), and take the first of these folders that has a `streamdeck/` folder
+(`sdb/datadir.h`):
+
+| # | Where | For |
+|:--|:--|:--|
+| 1 | `UNREAL_STREAMDECK_DATA` | an override ([environment-variables.md](../../emulator/environment-variables.md)) |
+| 2 | `Contents/Resources` of every app bundle round the executable, innermost first | macOS: the daemon in `UnrealNG.app/Contents/MacOS` and the nested `Stream Deck Studio.app` both reach `UnrealNG.app/Contents/Resources` |
+| 3 | the executable's folder | the Windows ZIP, the Linux tarball, the DEB (`/usr/lib/unreal-ng`); a build's `bin/` (`cmake/RuntimeData.cmake` copies `data/streamdeck` there) |
+| 4 | the folder holding the outermost bundle | a build tree: `bin/` beside `bin/unreal-streamdeck-studio.app` |
+| 5 | `../share/unreal-ng` | an FHS install |
+| 6 | `data/` in the executable's folder and in each of the four folders above it | a build inside the source tree (`cmake-build-*/bin` -> `data/`) |
+| 7 | the source tree's `data/` the binary was built from | a build elsewhere, not installed |
+
+The executable's path is the real one (links resolved: `/usr/bin` on the DEB, the DMG root's link to the studio).
+`run` prints the folder it took (`data: ...`), or a note when there is none: then `$data` paths do not load and the
+idle screen is the drawn title. The release packages do not carry `data/streamdeck` yet (packaging SD5: the suite's
+`Contents/Resources`, beside the executables, the DEB's `lib/unreal-ng`).
+
+Picture paths in faces and the strip (`face.image`, `strip.image`):
+
+| Form | Means |
+|:--|:--|
+| `$data/streamdeck/...` | under the data directory |
+| `$icons/name.svg` | `$data/icons/name.svg` |
+| `...png#xywh=x,y,w,h` | a region of the file in its pixels ([W3C media fragment](https://www.w3.org/TR/media-frags/#naming-space), `pixel:` allowed); the parts of the region outside the picture are black |
+| anything else | as written (relative to the daemon's working directory) |
+
+An image strip (`strip.content: image`) is drawn edge to edge, from the crumbs (or the left edge) to the right edge,
+aspect kept.
 
 ## Software decks (device wire v2)
 
@@ -172,7 +228,7 @@ copy the rule with `MODE="0660", GROUP="plugdev"` in place of `TAG+="uaccess"` a
 | `emu-snapshot` (no `--api`), `emu-model`, `emu-record` | v1, against `unreal-streamdeck-studio --listen` | In v2 a viewer's model is the viewer's own choice (a mirror follows the deck, an own deck is picked in the studio or with its `PUT /api/v1/connection`) and recording is the studio's (`POST /api/v1/recording` on its port): there is nothing for the daemon to forward. They stay as the protocol tests of the v1 server, with `sdctl --device emu:...` |
 
 ```
-unreal-streamdeck run my-scenario.yaml &    # the default scenario ships with SD5
+unreal-streamdeck run my-scenario.yaml &    # the default scenario ships with SD5; no file: the idle screen
 sdctl viewer --seconds 3                  # mirror of the first deck: replay, then live frames
 sdctl viewer --own neo --seconds 3        # a Neo of its own, with its own runtime
 ```

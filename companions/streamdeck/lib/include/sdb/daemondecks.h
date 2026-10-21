@@ -62,13 +62,15 @@ public:
     [[nodiscard]] static std::optional<scn::Scenario> LoadFile(const std::string& file, std::string& error,
                                                                std::vector<std::string>* files = nullptr,
                                                                const Log& log = {});
-    // The scenario played when none is given: one empty menu.
-    [[nodiscard]] static scn::Scenario Idle();
+    // The scenario played when none is given: the UnrealNG look laid out for `model` (null = the Plus XL) from the
+    // data directory's theme, or a drawn title without one (sdb/idlescenario.h).
+    [[nodiscard]] static nlohmann::json IdleDocument(const Model* model);
+    [[nodiscard]] static scn::Scenario Idle(const Model* model = nullptr);
 
     // Loads the start scenario (once, before the decks come).
     bool LoadStart(std::string* error);
-    // A copy of the start scenario for a new deck.
-    [[nodiscard]] scn::Scenario StartScenario() const;
+    // A copy of the start scenario for a new deck of `model` (the idle one is laid out for it).
+    [[nodiscard]] scn::Scenario StartScenario(const Model* model = nullptr) const;
     [[nodiscard]] const std::string& StartFile() const
     {
         return _options.startFile;

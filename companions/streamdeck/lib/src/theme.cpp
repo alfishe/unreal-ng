@@ -68,9 +68,7 @@ std::vector<std::pair<int, Rgb>> SliceGrid(const Model& m, const Rgb& src, const
     return out;
 }
 
-namespace
-{
-bool ParseRange(const std::string& s, int& lo, int& hi)
+bool ParseGridRange(const std::string& s, int& lo, int& hi)
 {
     if (s.empty())
         return false;
@@ -85,7 +83,6 @@ bool ParseRange(const std::string& s, int& lo, int& hi)
     hi = std::atoi(b.c_str());
     return true;
 }
-}  // namespace
 
 ThemeLoad LoadTheme(const fs::path& p)
 {
@@ -139,8 +136,8 @@ ThemeLoad LoadTheme(const fs::path& p)
         for (auto& g : j.value("grids", json::array()))
         {
             Theme::Grid grid;
-            if (!ParseRange(g.value("rows", std::string()), grid.spec.r0, grid.spec.r1) ||
-                !ParseRange(g.value("cols", std::string()), grid.spec.c0, grid.spec.c1))
+            if (!ParseGridRange(g.value("rows", std::string()), grid.spec.r0, grid.spec.r1) ||
+                !ParseGridRange(g.value("cols", std::string()), grid.spec.c0, grid.spec.c1))
             {
                 out.warnings.push_back("grid needs rows/cols like \"3\" or \"0-8\"");
                 continue;
