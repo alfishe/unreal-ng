@@ -241,6 +241,19 @@ GuiActions::GuiActions(EmulatorBinding* binding, GuiActionHooks hooks, QObject* 
         true);
     Add("dbg.memory_follow", Tr("Memory follows the value under the cursor"), debug, ValueKind::Press,
         key(Qt::Key_Return, false), noDebugger, true);
+    // An execution breakpoint at the disassembly cursor (dbg.breakpoint_toggle_pc, the core's, takes the PC)
+    Add("dbg.breakpoint_toggle_cursor", Tr("Toggle a breakpoint at the cursor"), debug, ValueKind::Press,
+        [debugger, showDebugger](const std::string&, const actions::ActionValue&,
+                                 const actions::ActionOrigin&) -> QString {
+            auto* window = qobject_cast<QWidget*>(debugger);
+            if (window == nullptr)
+                return Tr("the debugger is not available");
+            if (!window->isVisible() && showDebugger)
+                showDebugger();
+            QMetaObject::invokeMethod(window, "toggleBreakpointAtCursor");
+            return {};
+        },
+        noDebugger);
 
     // The disassembly (Stream Deck D6.4, D6.5): follow PC, labels on / off, byte / command scroll, go to an address
     Add("dbg.follow_pc", Tr("Disassembly follows PC"), debug, ValueKind::Press, pane("followPc"), noDebugger);
@@ -294,8 +307,6 @@ GuiActions::GuiActions(EmulatorBinding* binding, GuiActionHooks hooks, QObject* 
     actions::ActionRules later;
     later.unavailable = [](Emulator&, const actions::ActionValue&) { return std::string("not available yet"); };
     later.unavailableError = "Not Implemented";
-    for (const char* id : {"dbg.breakpoint_toggle_pc"})
-        Add(id, QString::fromLatin1(id), debug, ValueKind::Press, nullptr, later);
     for (const char* id : {"osd.quick_menu"})
         Add(id, QString::fromLatin1(id), machine, ValueKind::Press, nullptr, later);
 }

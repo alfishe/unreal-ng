@@ -29,6 +29,8 @@ public:
 
     /// Focus the pane @p delta places along the ring from the one in focus
     void Move(int delta);
+    /// Focus the pane at @p index of the ring (0 disassembly, 1 registers, 2 memory, 3 stack in the debugger)
+    void Focus(int index);
     /// Qt::Key_Up / Down / Left / Right / PageUp / PageDown / Return into the pane in focus
     void Key(int key);
 

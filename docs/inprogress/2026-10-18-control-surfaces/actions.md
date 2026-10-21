@@ -100,6 +100,17 @@ without `on` the action toggles the current state.
 | `dbg.mode_toggle` | P | `on?` | debug (`/debugmode`) | FeatureManager `debugmode` |
 | `dbg.breakpoints_clear` | P | | debug | `BreakpointManager::ClearUserBreakpoints` |
 | `dbg.breakpoint_hits_reset` | P | `id?` | debug | `ResetHitCount` / `ResetAllHitCounts` |
+| `dbg.breakpoint_toggle_pc` (toggle) | P | `address?` (else PC; a number or a label) | debug (`/breakpoints`) | the user's plain exec breakpoint there removed, else added (`AddBreakpoint(spec)`); the Qt client adds `dbg.breakpoint_toggle_cursor` (the disassembly cursor) |
+| `dbg.bp_add` | P | `kind` (exec, read, write, rw, in, out, io, nextreg*, beam, copper, magic, keyboard), `address` / `end` (labels for memory), `preset?` (fe, 7ffd, 1ffd, fffd, bffd: port + mask), `mask?`, `page?`, `slot_only?`, `hc?`, `doors?`, `value?`, `value_mask?`, `opcode?`, `key?`, `on?`, `hits?`, `note?`, `group?` | debug | `AddBreakpoint(spec)` |
+| `dbg.bp_remove`, `dbg.bp_enable`, `dbg.bp_disable`, `dbg.bp_toggle` (toggle `toggle.bp.<select>`) | P | `select?` (all, an id, a kind, group:<name>; or `id` / `kind` / `group`), `on?` (toggle) | debug (`/breakpoints/active`, `/breakpoints/remove`) | `BreakpointSelection` (the user's breakpoints, one repaint) |
+| `dbg.bp_group_toggle` (toggle `toggle.bp_group.<group>`) | P | `group`, `on?` | debug | `BreakpointSelection::Group` |
+| `dbg.register_set` | P | `name`, `value` | debug (`/registers/{name}`) | `Emulator::SetRegisterFromTool` (refused in the recorded past) |
+| `mem.write` | P | `address`, `bytes` (hex) or `value` + `count?` | debug (`/memory/write`) | `EditMemoryFromTool` + `DirectWriteToZ80Memory` |
+| `port.out` | P | `port` (or a preset), `value` | debug (`/ports/out`) | `PortWrite::Write` |
+| `sym.import`, `sym.export`, `sym.import_source`, `sym.import_live`, `sym.drop` | P | the `SymbolControl` verb's options (`path`, `format`, `set`, `id`, ...) | free (`/symbols/*`) | `SymbolControl` verbs |
+| `sym.set_toggle` (toggle `toggle.sym_set.<id>`) | P | `id`, `on?` | free | `SymbolControl` `set` |
+| `prof.toggle` (toggle `toggle.profiler.<name>`), `prof.pause_toggle` (toggle `toggle.profiler_paused.<name>`), `prof.clear` | P | `name` (opcode, memory, calltrace, coverage, porttrace, gsporttrace, pchist, aylog, audio, all), `on?`, `keep?`, `capacity?`, `seconds?`, `source?` | free (`/profiler/*`) | `tracecontrol::Execute` |
+| `analyzer.toggle` (toggle `toggle.analyzer.<name>`), `analyzer.clear` | P | `name` (trdos, editor-input, coverage, aylog, audiocapture), `on?` | free (`/analyzer/*`) | `AnalyzerManager` |
 | `ttd.start`, `ttd.stop`, `ttd.invalidate` | P | | free (`/ttd/start`, ...) | `TTDControl` verbs |
 | `ttd.seek` | P | `frame` + `tinframe?`, or `bookmark` | rewind (`/ttd/seek`) | `TTDControl` `seek` |
 | `ttd.bookmark_delete`, `ttd.history_limit`, `ttd.journal`, `ttd.dump`, `ttd.load` | P | `label`; `frames?`, `bytes?`; `enabled`; `path` | debug | `TTDControl` verbs |

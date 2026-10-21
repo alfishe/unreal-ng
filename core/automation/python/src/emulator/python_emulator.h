@@ -57,6 +57,8 @@
 #include <debugger/debugmanager.h>
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/breakpoints/breakpointselection.h>
+#include "debugger/tracecontrol/tracecontrol.h"
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
 #include "debugger/asm/asmcontrol.h"
@@ -2628,6 +2630,58 @@ namespace PythonBindings
                 return bpm ? bpm->SetBreakpointGroup(id, group) : false;
             }, "Move a breakpoint into a group (created on use); False for an unknown id or an empty name",
                py::arg("id"), py::arg("group"))
+            .def("bp_select", [](Emulator& self, const std::string& select, const std::string& op) -> py::object {
+                StateNode out = StateNode::Object();
+                std::string error;
+                BreakpointManager* bpm = self.GetBreakpointManager();
+                if (bpm && BreakpointSelection::Run(*bpm, select, op, out, error))
+                    return StateNodeToPy(out);
+                out["ok"] = false;
+                out["error"] = bpm ? error : std::string("no breakpoint manager");
+                return StateNodeToPy(out);
+            }, "Breakpoints by selection (all, an id, a kind: exec, read, write, mem, port, in, out, nextreg, beam, copper, "
+               "magic, keyboard; group:<name>): op enable | disable | toggle | remove. {select, selected, changed, active}; "
+               "a refusal: ok = False, error", py::arg("select"), py::arg("op"))
+            .def("bp_groups", [](Emulator& self) -> py::object {
+                BreakpointManager* bpm = self.GetBreakpointManager();
+                return StateNodeToPy(bpm ? BreakpointSelection::Groups(*bpm) : StateNode::Array());
+            }, "The groups of the user's breakpoints: [{name, count, enabled, active}]")
+            .def("bp_key", [](Emulator& self, const std::string& key, const std::string& on, const std::string& hits,
+                              const std::string& group, const std::string& note) -> int {
+                BreakpointManager* bpm = self.GetBreakpointManager();
+                if (!bpm)
+                    throw std::runtime_error("no breakpoint manager");
+                BreakpointSpec spec;
+                std::string error;
+                if (!BreakpointManager::ParseKeyboardInto(key, on, spec, error) ||
+                    !BreakpointManager::ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error))
+                    throw py::value_error(error);
+                spec.group = group;
+                spec.note = note;
+                const uint16_t id = bpm->AddBreakpoint(spec, error);
+                if (id == BRK_INVALID)
+                    throw py::value_error(error);
+                return id;
+            }, "Keyboard breakpoint: stops on the first keyboard read that sees the key ('any': any key) go down "
+               "(on='press'), up ('release') or both. Returns the id",
+               py::arg("key") = "any", py::arg("on") = "press", py::arg("hits") = "", py::arg("group") = "",
+               py::arg("note") = "")
+            .def("trace", [](Emulator& self, const std::string& name, const std::string& op, const py::kwargs& kwargs) -> py::object {
+                tracecontrol::Options options;
+                for (const auto& [key, value] : kwargs)
+                    options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+                const tracecontrol::Reply reply = tracecontrol::Execute(self, name, op, options);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                {
+                    value["ok"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "Profilers, traces, captures (tracecontrol): name opcode | memory | calltrace | coverage | porttrace | "
+               "gsporttrace | pchist | aylog | audio | all; op start | stop | toggle | pause | resume | pause_toggle | "
+               "clear | status; keyword options keep, capacity, seconds, source, on. {name, state, can_pause, ...}",
+               py::arg("name"), py::arg("op") = "status")
             .def("bp_reset_hits", [](Emulator& self, int id) -> bool {
                 BreakpointManager* bpm = self.GetBreakpointManager();
                 if (!bpm)
@@ -4369,7 +4423,8 @@ namespace PythonBindings
                 OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
                 if (!profiler) return false;
                 FeatureManager* fm = self.GetFeatureManager();
-                if (fm) fm->setFeature("opcode_profiler", true);
+                if (fm) fm->setFeature(Features::kOpcodeProfiler, true);
+                z80->UpdateFeatureCache();  // the feature reaches the CPU's hot path (as POST /profiler/opcode/start)
                 profiler->Start();
                 return true;
             }, "Start opcode profiler session (enables feature, clears data)")
@@ -4401,7 +4456,7 @@ namespace PythonBindings
                 if (!profiler) return result;
                 FeatureManager* fm = self.GetFeatureManager();
                 auto status = profiler->GetStatus();
-                result["feature_enabled"] = fm ? fm->isEnabled("opcode_profiler") : false;
+                result["feature_enabled"] = fm ? fm->isEnabled(Features::kOpcodeProfiler) : false;
                 result["capturing"] = status.capturing;
                 result["total_executions"] = status.totalExecutions;
                 result["trace_size"] = status.traceSize;
@@ -4608,7 +4663,7 @@ namespace PythonBindings
                     fm->setFeature("debugmode", true);
                     fm->setFeature("memorytracking", true);
                     fm->setFeature("calltrace", true);
-                    fm->setFeature("opcode_profiler", true);
+                    fm->setFeature(Features::kOpcodeProfiler, true);
                 }
                 
                 // Start memory and calltrace profilers
@@ -4751,7 +4806,7 @@ namespace PythonBindings
                         if (profiler) {
                             FeatureManager* fm = self.GetFeatureManager();
                             auto status = profiler->GetStatus();
-                            opStatus["feature_enabled"] = fm ? fm->isEnabled("opcode_profiler") : false;
+                            opStatus["feature_enabled"] = fm ? fm->isEnabled(Features::kOpcodeProfiler) : false;
                             opStatus["capturing"] = status.capturing;
                             opStatus["total_executions"] = status.totalExecutions;
                             switch (profiler->GetSessionState()) {

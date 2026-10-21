@@ -319,6 +319,10 @@ void BreakpointDialog::populateBreakpointTable()
     {
         uint16_t id = pair.first;
         const BreakpointDescriptor* bp = pair.second.get();
+        // The user's breakpoints: the step traps, the BASIC typer's control points and the debugger adapters' belong
+        // to their owners (as GET /breakpoints lists them)
+        if (bp == nullptr || !BreakpointManager::IsUserBreakpoint(*bp))
+            continue;
 
         _breakpointTable->insertRow(row);
 
@@ -341,6 +345,18 @@ void BreakpointDialog::populateBreakpointTable()
             case BRK_KEYBOARD:
                 typeStr = "Keyboard";
                 break;
+            case BRK_NEXTREG:
+                typeStr = "NextREG";
+                break;
+            case BRK_BEAM:
+                typeStr = "Beam";
+                break;
+            case BRK_COPPER:
+                typeStr = "Copper";
+                break;
+            case BRK_MAGIC:
+                typeStr = "Magic";
+                break;
             default:
                 typeStr = "Unknown";
                 break;
@@ -350,9 +366,38 @@ void BreakpointDialog::populateBreakpointTable()
         _breakpointTable->setItem(row, 1, typeItem);
 
         // Address column
-        QString addrStr = QString("$%1").arg(bp->z80address, 4, 16, QChar('0')).toUpper();
-        if (bp->isRange)
-            addrStr += QString("-$%1").arg(bp->z80addressEnd, 4, 16, QChar('0')).toUpper();
+        QString addrStr;
+        switch (bp->type)
+        {
+            case BRK_NEXTREG:  // a register or a range, the value it must have
+                addrStr = QString("NR $%1").arg(bp->z80address, 2, 16, QChar('0')).toUpper();
+                if (bp->isRange)
+                    addrStr += QString("-$%1").arg(bp->z80addressEnd, 2, 16, QChar('0')).toUpper();
+                if (bp->nrMask != 0)
+                    addrStr += bp->nrMask == 0xFF
+                                   ? QString(" =$%1").arg(bp->nrValue, 2, 16, QChar('0')).toUpper()
+                                   : QString(" =$%1&$%2")
+                                         .arg(bp->nrValue, 2, 16, QChar('0'))
+                                         .arg(bp->nrMask, 2, 16, QChar('0'))
+                                         .toUpper();
+                break;
+            case BRK_BEAM:
+                addrStr = QString("line %1 hc %2").arg(bp->z80address).arg(bp->beamHc);
+                break;
+            case BRK_COPPER:
+                addrStr = QString("copper %1").arg(bp->z80address);
+                if (bp->isRange)
+                    addrStr += QString("-%1").arg(bp->z80addressEnd);
+                break;
+            case BRK_MAGIC:
+                addrStr = bp->z80address == BRK_MAGIC_ED_FF ? QString("ED FF") : QString("DD 01");
+                break;
+            default:
+                addrStr = QString("$%1").arg(bp->z80address, 4, 16, QChar('0')).toUpper();
+                if (bp->isRange)
+                    addrStr += QString("-$%1").arg(bp->z80addressEnd, 4, 16, QChar('0')).toUpper();
+                break;
+        }
         if (bp->matchType == BRK_MATCH_BANK_ADDR)  // physical: that page in any slot (or one slot)
             addrStr += " " + QString::fromStdString(BreakpointManager::PageSpecName(*bp)) + (bp->slotOnly ? " (slot)" : "");
         if (bp->type == BRK_IO && bp->portMask != 0xFFFF)
@@ -384,6 +429,22 @@ void BreakpointDialog::populateBreakpointTable()
                 accessStr += "I";
             if (bp->ioType & BRK_IO_OUT)
                 accessStr += "O";
+        }
+        else if (bp->type == BRK_NEXTREG)
+        {
+            if (bp->ioType & BRK_IO_IN)
+                accessStr += "R";
+            if (bp->ioType & BRK_IO_OUT)
+                accessStr += "W";
+            if (bp->nrDoors != BRK_NR_DOOR_ALL)
+                accessStr += " " + QString::fromStdString(BreakpointManager::NextRegDoorsName(bp->nrDoors));
+        }
+        else if (bp->type == BRK_KEYBOARD)
+        {
+            if (bp->keyType & BRK_KEY_PRESS)
+                accessStr += "P";
+            if (bp->keyType & BRK_KEY_RELEASE)
+                accessStr += "R";
         }
         QTableWidgetItem* accessItem = new QTableWidgetItem(accessStr);
         accessItem->setTextAlignment(Qt::AlignCenter);

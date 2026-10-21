@@ -1063,11 +1063,13 @@ Breakpoint groups allow logical organization of related breakpoints (e.g., "grap
 
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
-| `bpgroup list` | | List all breakpoint group names. |
-| `bpgroup add <id> <group>` | `<breakpoint-id> <group-name>` | Add breakpoint `<id>` to group `<group>`. If group doesn't exist, creates it automatically. |
+| `bpgroup list` | | List all breakpoint group names with their counts. |
+| `bpgroup set <id> <group>` | `<breakpoint-id> <group-name>` | Move breakpoint `<id>` to group `<group>`. If group doesn't exist, creates it automatically. A new breakpoint takes `--group G` at once (`bp`, `wp`, `bport`, `bnextreg`, `bbeam`, `bcopper`, `bmagic`, `bkey`). |
 | `bpgroup remove <id>` | `<breakpoint-id>` | Remove breakpoint from its current group (moves to "default" group). |
 | `bpgroup show <group>` | `<group-name>` | List all breakpoints in the specified group. |
-| `bpgroup delete <group>` | `<group-name>` | Delete entire group and remove all its breakpoints. |
+| `bpgroup on\|off\|toggle <group>` | `<group-name>` | Switch the group's breakpoints on, off, or all on when one is off (else all off). |
+| `bpclear group <group>` | `<group-name>` | Remove the group's breakpoints. |
+| `bpnote <id> [text]` | `<breakpoint-id> [text]` | Set a breakpoint's note (no text clears it). |
 
 #### 4.3 Breakpoint Activation Control
 
@@ -1075,8 +1077,10 @@ Breakpoints can be temporarily disabled without deleting them. This is useful fo
 
 | Command | Aliases | Arguments | Description |
 | :--- | :--- | :--- | :--- |
-| `bpon <target>` | `enable` | `<id \| group \| all>` | Enable (activate) breakpoints:<br/>• `<id>`: enable specific breakpoint<br/>• `<group-name>`: enable all breakpoints in group<br/>• `all`: enable all breakpoints<br/>Enabled breakpoints will pause execution when hit. |
-| `bpoff <target>` | `disable` | `<id \| group \| all>` | Disable (deactivate) breakpoints:<br/>• `<id>`: disable specific breakpoint<br/>• `<group-name>`: disable all breakpoints in group<br/>• `all`: disable all breakpoints<br/>Disabled breakpoints remain in the list but won't trigger. Useful for temporarily ignoring breakpoints without deletion. |
+| `bpon <target>` | | `<id \| all \| kind \| group <name> \| group:<name>>` | Enable (activate) breakpoints:<br/>• `<id>`: enable specific breakpoint<br/>• `group <name>` or `group:<name>`: enable all breakpoints in group<br/>• `all`: enable all breakpoints<br/>• a kind: `mem`, `port`, `read`, `write`, `exec`, `in`, `out`, `nextreg`, `nextreg_read`, `nextreg_write`, `beam`, `copper`, `magic`, `keyboard`<br/>Enabled breakpoints will pause execution when hit. |
+| `bpoff <target>` | | `<id \| all \| kind \| group <name> \| group:<name>>` | Disable (deactivate) breakpoints, the same targets as `bpon`. Disabled breakpoints remain in the list but won't trigger. |
+| `bptoggle [target]` | | `[id \| all \| kind \| group:<name>]` | All of the target on when one of it is off, else all off (default: all). |
+| `bkey <key\|any> [press\|release\|both]` | | `[--hits N\|>=N\|%N] [--group G] [note]` | A keyboard breakpoint: stops on the first keyboard read (`IN #xxFE`, any model's matrix read) that sees the key go down (`press`, default), up (`release`) or either. It catches the program's key handling, not the host's key event; a scanning loop that reads the key again and again stops once per change. Keys: `space`, `enter`, `caps`, `symbol`, `a`..`z`, `0`..`9` (`any`: any key of the rows read). |
 
 **Implementation Details**:
 
@@ -1175,6 +1179,34 @@ bpgroup show loader
 - Port breakpoints: minimal overhead (~1%)
 - Recommend <100 active breakpoints for real-time debugging
 - Disable unused breakpoints rather than deleting for faster re-enabling
+
+#### 4.3a Debug tools on every plane (status)
+
+The verbs of breakpoints, profilers and traces, machine state and symbols on each plane. A selection (`select`) is
+`all`, an id, a kind (`exec`, `read`, `write`, `mem`, `port`, `in`, `out`, `nextreg`, `nextreg_read`,
+`nextreg_write`, `beam`, `copper`, `magic`, `keyboard`) or `group:<name>` (core `BreakpointSelection`): only the
+user's breakpoints, never the ones the analyzers, debugger adapters and step traps own. Profilers and traces go
+through core `tracecontrol` (names `opcode`, `memory`, `calltrace`, `coverage`, `porttrace`, `gsporttrace`, `pchist`,
+`aylog`, `audio`, `all`). Every REST route is also a WebSocket `call`; breakpoint changes are pushed as
+`breakpoints_changed` on `debug.events`.
+
+| Verb | CLI | Lua | Python | MCP | REST | Catalogue action |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Add a breakpoint of any kind | `bp`, `wp`, `bport`, `bnextreg`, `bbeam`, `bcopper`, `bmagic`, `bkey` | `bp`, `bp_read`, `bp_write`, `bp_port_in/out`, `bp_nextreg*`, `bp_beam`, `bp_copper`, `bp_magic`, `bp_key` | the same | `control_execution` `bp_add` (type ... `keyboard` + key, on) | `POST /breakpoints` (type ... `keyboard`) | `dbg.bp_add` (kind, address, end, preset `fe` / `7ffd` / `1ffd` / `fffd` / `bffd`, mask, page, hits, key, on, note, group) |
+| Toggle at PC / an address | `bp` / `bpclear <id>` | `bp` / `bp_remove` | the same | `bp_add` / `bp_remove` | `POST` / `DELETE /breakpoints` | `dbg.breakpoint_toggle_pc` (state); Qt: `dbg.breakpoint_toggle_cursor` |
+| Enable / disable / toggle a selection | `bpon`, `bpoff`, `bptoggle` | `bp_select(select, op)` | `bp_select(select, op)` | `bp_enable` / `bp_disable` / `bp_toggle` with `select` | `PUT /breakpoints/active {select, active: true\|false\|"toggle"}`, `GET /breakpoints/active?select=` | `dbg.bp_enable`, `dbg.bp_disable`, `dbg.bp_toggle` (state `toggle.bp.<select>`) |
+| Remove a selection | `bpclear` | `bp_select(select, "remove")` | the same | `bp_remove` with `select` | `POST /breakpoints/remove {select}` | `dbg.bp_remove` |
+| Group on / off, list, set | `bpgroup on\|off\|toggle\|list\|set` | `bp_select("group:G", op)`, `bp_groups()`, `bp_group(id, G)` | the same | `bp_toggle select=group:G`, `bp_groups`, `bp_group_set` | `PUT /breakpoints/active`, `GET /breakpoints/groups`, `PUT /breakpoints/{bp_id}/group` | `dbg.bp_group_toggle` (state `toggle.bp_group.<group>`) |
+| Note | `bpnote` | `bp_note` | `bp_note` | `bp_note` | `PUT /breakpoints/{bp_id}/note` | - |
+| Clear all, reset hits | `bpclear all`, `bphits reset` | `bp_clear`, `bp_reset_hits` | the same | `bp_clear`, `bp_reset_hits` | `DELETE /breakpoints`, `POST /breakpoints/hits/reset` | `dbg.breakpoints_clear`, `dbg.breakpoint_hits_reset` |
+| Profiler / trace start, stop, pause, resume, clear | `profiler`, `coverage`, `porttrace`, `gsporttrace`, `pchist`, `aylog`, `audiocapture` | `trace(name, op, opts)` (+ `porttrace_*`, `gs_porttrace_*`, `coverage_*`, `ay_log_*`, `pc_history*`, `audio_capture_*`) | `trace(name, op, **opts)` (+ the per-profiler functions) | `analyze_performance` `profiler` {profiler, op}, `gs_trace`, `aylog`, `pchist`, `coverage_*`, `profile_*`; `capture_media` audio | `/profiler/{opcode,memory,calltrace,porttrace}/*`, `/profiler/*`, `/coverage/*`, `/control/audio/gs/porttrace`, `/debug/pchist`, `/ay/log`, `/audio/capture` | `prof.toggle`, `prof.pause_toggle`, `prof.clear` (state `toggle.profiler.<name>`, `toggle.profiler_paused.<name>`) |
+| Analyzers on / off, clear | `analyzer` | `analyzer_list/enable/disable/active` | `analyzer_*` | `analyze_performance` `analyzers` {op, name} | `GET /analyzers`, `PUT /analyzer/{name}`, `DELETE /analyzer/{name}/events` | `analyzer.toggle` (state `toggle.analyzer.<name>`), `analyzer.clear` |
+| Set a register | `reg <name> <value>` | `set_register` | `set_register` | `control_execution` `set_register` | `PUT /registers/{name}` | `dbg.register_set` |
+| Write / fill memory | `memory write`, `memory fill` | `mem_write*` | `mem_write*` | `memory_access` `write` | `PUT /memory/{addr}`, `POST /memory/write` | `mem.write` (bytes, or value + count) |
+| Port OUT | `out` | `port_out` | `port_out` | `control_execution` `port_out` | `POST /ports/out` | `port.out` (port or a preset, value) |
+| Symbols: load, save, import from source / RAM, drop, set on / off | `symbols ...` | `symbols_*` | `symbols_*` | `manage_symbols` | `/symbols/*` | `sym.import`, `sym.export`, `sym.import_source`, `sym.import_live`, `sym.drop`, `sym.set_toggle` (state `toggle.sym_set.<id>`) |
+
+Readout `debug.breakpoints`: `{total, active, inactive, owned, by_kind, groups, last_hit}` (the monitoring value, `GET /api/v1/monitor/debug.breakpoints`) of the user's breakpoints (the surface topic, `readouts`).
 
 #### 4.4 Labels & Symbol Management
 

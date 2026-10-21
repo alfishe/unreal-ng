@@ -328,7 +328,8 @@ enum class BreakpointHitKind : uint8_t
     NextRegWrite,
     Beam,
     CopperInstruction,
-    Magic
+    Magic,
+    Keyboard  // the program read the keyboard and saw the key change (address: the port read)
 };
 
 /// The automation surfaces' name of a breakpoint access kind
@@ -346,6 +347,7 @@ inline const char* BreakpointHitKindName(BreakpointHitKind kind)
         case BreakpointHitKind::Beam: return "beam";
         case BreakpointHitKind::CopperInstruction: return "copper";
         case BreakpointHitKind::Magic: return "magic";
+        case BreakpointHitKind::Keyboard: return "keyboard";
     }
     return "execute";
 }

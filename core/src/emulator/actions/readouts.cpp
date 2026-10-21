@@ -4,6 +4,7 @@
 #include <memory>
 
 #include "base/featuremanager.h"
+#include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/actions/actionregistry.h"
 #include "emulator/actions/pictureactions.h"
@@ -133,6 +134,7 @@ StateNode DebugMode(Emulator& emulator)
     return node;
 }
 
+/// debug.breakpoints (debug tools): the user's breakpoints, how many are on, the last one that fired
 StateNode TtdPosition(Emulator& emulator)
 {
     EmulatorContext* context = emulator.GetContext();

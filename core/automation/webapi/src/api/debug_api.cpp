@@ -31,6 +31,8 @@
 #include <debugger/ports/portwrite.h>
 #include <debugger/snapshot/debugsnapshot.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/breakpoints/breakpointselection.h>
+#include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
 #include <debugger/listing/listingparser.h>
@@ -172,6 +174,15 @@ Json::Value BreakpointJson(const BreakpointDescriptor& bp)
         j["port_mask"] = bp.portMask;
     if (bp.type == BRK_BEAM)
         j["hc"] = bp.beamHc;
+    if (bp.type == BRK_KEYBOARD)
+    {
+        j["key"] = bp.z80address == BRK_KEY_ANY
+                       ? std::string("any")
+                       : DebugKeyboardManager::GetKeyDisplayName(static_cast<ZXKeysEnum>(bp.z80address));
+        j["on"] = (bp.keyType & BRK_KEY_PRESS) && (bp.keyType & BRK_KEY_RELEASE) ? "both"
+                  : (bp.keyType & BRK_KEY_RELEASE)                               ? "release"
+                                                                                 : "press";
+    }
     if (bp.type == BRK_NEXTREG)
     {
         j["doors"] = BreakpointManager::NextRegDoorsName(bp.nrDoors);
@@ -953,9 +964,11 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         spec.type = BRK_COPPER, spec.access = BRK_IO_OUT;
     else if (type == "magic_ed_ff" || type == "magic_dd_01")
         spec.type = BRK_MAGIC, spec.access = BRK_IO_OUT;
+    else if (type == "keyboard" || type == "key")
+        spec.type = BRK_KEYBOARD, spec.access = BRK_KEY_PRESS;
     else
     {
-        badRequest("Invalid type. Use: execution, read, write, rw, port_in, port_out, port, nextreg_write, nextreg_read, nextreg, beam, copper, magic_ed_ff, magic_dd_01");
+        badRequest("Invalid type. Use: execution, read, write, rw, port_in, port_out, port, nextreg_write, nextreg_read, nextreg, beam, copper, magic_ed_ff, magic_dd_01, keyboard");
         return;
     }
 
@@ -978,6 +991,30 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
     {
         // The opcode is the type (ED FF / DD 01); no address
         value = type == "magic_ed_ff" ? BRK_MAGIC_ED_FF : BRK_MAGIC_DD_01;
+    }
+    else if (spec.type == BRK_KEYBOARD)
+    {
+        // A key of the matrix by name ("key": "space", "caps", "a"; "any" or none: any key), "on": press | release |
+        // both: the first keyboard read that sees the key change stops
+        const std::string key = body.get("key", "any").asString();
+        value = BRK_KEY_ANY;
+        if (key != "any")
+        {
+            const ZXKeysEnum code = DebugKeyboardManager::ResolveKeyName(key);
+            if (code == ZXKEY_NONE)
+            {
+                badRequest("'key': a key name (GET /keyboard/keys lists them) or any");
+                return;
+            }
+            value = static_cast<uint32_t>(code);
+        }
+        const std::string on = body.get("on", "press").asString();
+        if (on != "press" && on != "release" && on != "both")
+        {
+            badRequest("'on': press, release or both");
+            return;
+        }
+        spec.access = on == "press" ? BRK_KEY_PRESS : on == "release" ? BRK_KEY_RELEASE : (BRK_KEY_PRESS | BRK_KEY_RELEASE);
     }
     else if (!parseAddress(body["address"], value))
     {
@@ -1214,7 +1251,11 @@ void EmulatorAPI::removeBreakpoint(const HttpRequestPtr& /*req*/,
         return;
     }
     
-    uint16_t bpId = static_cast<uint16_t>(std::stoul(bpIdStr));
+    // A number, never an exception from a word ("DELETE /breakpoints/abc" threw std::invalid_argument)
+    uint32_t parsedId = BRK_INVALID;
+    if (!ParseJsonUInt(Json::Value(bpIdStr), 0xFFFF, parsedId))
+        parsedId = BRK_INVALID;
+    const uint16_t bpId = static_cast<uint16_t>(parsedId);
     BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
     bool removed = bpm ? bpm->RemoveBreakpointByID(bpId) : false;
     
@@ -1259,7 +1300,11 @@ void EmulatorAPI::enableBreakpoint(const HttpRequestPtr& /*req*/,
         return;
     }
     
-    uint16_t bpId = static_cast<uint16_t>(std::stoul(bpIdStr));
+    // A number, never an exception from a word ("DELETE /breakpoints/abc" threw std::invalid_argument)
+    uint32_t parsedId = BRK_INVALID;
+    if (!ParseJsonUInt(Json::Value(bpIdStr), 0xFFFF, parsedId))
+        parsedId = BRK_INVALID;
+    const uint16_t bpId = static_cast<uint16_t>(parsedId);
     BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
     bool success = bpm ? bpm->ActivateBreakpoint(bpId) : false;
     
@@ -1296,7 +1341,11 @@ void EmulatorAPI::disableBreakpoint(const HttpRequestPtr& /*req*/,
         return;
     }
     
-    uint16_t bpId = static_cast<uint16_t>(std::stoul(bpIdStr));
+    // A number, never an exception from a word ("DELETE /breakpoints/abc" threw std::invalid_argument)
+    uint32_t parsedId = BRK_INVALID;
+    if (!ParseJsonUInt(Json::Value(bpIdStr), 0xFFFF, parsedId))
+        parsedId = BRK_INVALID;
+    const uint16_t bpId = static_cast<uint16_t>(parsedId);
     BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
     bool success = bpm ? bpm->DeactivateBreakpoint(bpId) : false;
     
@@ -1383,6 +1432,257 @@ void EmulatorAPI::getBreakpointStatus(const HttpRequestPtr& /*req*/,
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
+}
+
+namespace
+{
+void ReplyJson(std::function<void(const HttpResponsePtr&)>& callback, const Json::Value& body, HttpStatusCode status)
+{
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(status);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+void ReplyError(std::function<void(const HttpResponsePtr&)>& callback, HttpStatusCode status, const char* error,
+                const std::string& message)
+{
+    Json::Value body;
+    body["error"] = error;
+    body["message"] = message;
+    ReplyJson(callback, body, status);
+}
+
+/// The selection of the bulk routes: "select" (all, an id, a kind, group:<name>), or "id" / "kind" / "group" alone;
+/// none: all. False after a 400 reply
+bool SelectionFromJson(const Json::Value* body, const std::string& query, BreakpointSelection& selection,
+                       std::function<void(const HttpResponsePtr&)>& callback)
+{
+    std::string error;
+    bool ok = true;
+    if (!query.empty())
+        ok = BreakpointSelection::Parse(query, selection, error);
+    else if (body != nullptr && body->isMember("select"))
+        ok = BreakpointSelection::Parse((*body)["select"].asString(), selection, error);
+    else if (body != nullptr && body->isMember("id"))
+        ok = BreakpointSelection::Parse((*body)["id"].asString(), selection, error) &&
+             (selection.GetKind() == BreakpointSelection::Kind::Id || (error = "'id': a breakpoint id", false));
+    else if (body != nullptr && body->isMember("group"))
+        selection = BreakpointSelection::Group((*body)["group"].asString());
+    else if (body != nullptr && body->isMember("kind"))
+        ok = BreakpointSelection::Parse((*body)["kind"].asString(), selection, error);
+    else
+        selection = BreakpointSelection::All();
+    if (!ok)
+        ReplyError(callback, HttpStatusCode::k400BadRequest, "Bad Request", error);
+    return ok;
+}
+
+Json::Value SelectionJson(const BreakpointSelection& selection, const BreakpointManager& manager)
+{
+    Json::Value ret;
+    ret["select"] = selection.Name();
+    Json::Value ids(Json::arrayValue);
+    for (const uint16_t bpId : selection.Select(manager))
+        ids.append(bpId);
+    ret["ids"] = ids;
+    ret["selected"] = ids.size();
+    const std::optional<bool> active = selection.IsActive(manager);
+    ret["active"] = active ? Json::Value(*active) : Json::Value(Json::nullValue);
+    return ret;
+}
+
+BreakpointManager* ManagerOrError(const std::shared_ptr<Emulator>& emulator,
+                                  std::function<void(const HttpResponsePtr&)>& callback)
+{
+    BreakpointManager* bpm = emulator->GetBreakpointManager();
+    if (bpm == nullptr)
+        ReplyError(callback, HttpStatusCode::k500InternalServerError, "Internal Error", "Breakpoint manager not available");
+    return bpm;
+}
+}  // namespace
+
+/// @brief GET /api/v1/emulator/{id}/breakpoints/active?select= - whether a selection is on (null: nothing selected)
+void EmulatorAPI::getBreakpointsActive(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                       const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator)
+        return;
+    BreakpointManager* bpm = ManagerOrError(emulator, callback);
+    BreakpointSelection selection;
+    const std::string query = req->getParameter("select");
+    if (!bpm || !SelectionFromJson(nullptr, query.empty() ? std::string("all") : query, selection, callback))
+        return;
+    ReplyJson(callback, SelectionJson(selection, *bpm), HttpStatusCode::k200OK);
+}
+
+/// @brief PUT /api/v1/emulator/{id}/breakpoints/active - {select, active: true | false | "toggle"}: switch one
+/// breakpoint, all, a kind or a group on or off
+void EmulatorAPI::setBreakpointsActive(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                       const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator)
+        return;
+    BreakpointManager* bpm = ManagerOrError(emulator, callback);
+    auto json = req->getJsonObject();
+    BreakpointSelection selection;
+    if (!bpm || !SelectionFromJson(json.get(), {}, selection, callback))
+        return;
+    const Json::Value active = json ? (*json)["active"] : Json::Value();
+    BreakpointSelection::Outcome outcome;
+    if (active.isBool())
+        outcome = selection.SetActive(*bpm, active.asBool());
+    else if (active.isString() && active.asString() == "toggle")
+    {
+        bool on = false;
+        outcome = selection.Toggle(*bpm, on);
+    }
+    else
+    {
+        ReplyError(callback, HttpStatusCode::k400BadRequest, "Bad Request", "'active': true, false or \"toggle\"");
+        return;
+    }
+    if (outcome.selected == 0 && selection.GetKind() == BreakpointSelection::Kind::Id)
+    {
+        ReplyError(callback, HttpStatusCode::k404NotFound, "Not Found", "No breakpoint " + selection.Name());
+        return;
+    }
+    Json::Value ret = SelectionJson(selection, *bpm);
+    ret["changed"] = static_cast<Json::UInt64>(outcome.changed);
+    ret["status"] = "success";
+    ReplyJson(callback, ret, HttpStatusCode::k200OK);
+}
+
+/// @brief POST /api/v1/emulator/{id}/breakpoints/remove - {select}: remove one breakpoint, all, a kind or a group
+void EmulatorAPI::removeBreakpoints(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator)
+        return;
+    BreakpointManager* bpm = ManagerOrError(emulator, callback);
+    auto json = req->getJsonObject();
+    BreakpointSelection selection;
+    if (!bpm || !SelectionFromJson(json.get(), {}, selection, callback))
+        return;
+    const BreakpointSelection::Outcome outcome = selection.Remove(*bpm);
+    if (outcome.changed == 0 && selection.GetKind() == BreakpointSelection::Kind::Id)
+    {
+        ReplyError(callback, HttpStatusCode::k404NotFound, "Not Found", "No breakpoint " + selection.Name());
+        return;
+    }
+    Json::Value ret;
+    ret["select"] = selection.Name();
+    ret["removed"] = static_cast<Json::UInt64>(outcome.changed);
+    ret["status"] = "success";
+    ReplyJson(callback, ret, HttpStatusCode::k200OK);
+}
+
+/// @brief GET /api/v1/emulator/{id}/breakpoints/groups - the groups of the user's breakpoints: name, count, active
+void EmulatorAPI::getBreakpointGroups(const HttpRequestPtr& /*req*/,
+                                      std::function<void(const HttpResponsePtr&)>&& callback,
+                                      const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator)
+        return;
+    BreakpointManager* bpm = ManagerOrError(emulator, callback);
+    if (!bpm)
+        return;
+    std::map<std::string, std::pair<unsigned, unsigned>> groups;  // name -> count, active
+    for (const auto& [bpId, bp] : bpm->GetAllBreakpoints())
+        if (bp && BreakpointManager::IsUserBreakpoint(*bp))
+        {
+            auto& entry = groups[bp->group];
+            entry.first++;
+            entry.second += bp->active ? 1u : 0u;
+        }
+    Json::Value list(Json::arrayValue);
+    for (const auto& [name, counts] : groups)
+    {
+        Json::Value group;
+        group["name"] = name;
+        group["count"] = counts.first;
+        group["enabled"] = counts.second;
+        group["active"] = counts.second == counts.first;
+        list.append(group);
+    }
+    Json::Value ret;
+    ret["count"] = list.size();
+    ret["groups"] = list;
+    ReplyJson(callback, ret, HttpStatusCode::k200OK);
+}
+
+/// @brief PUT /api/v1/emulator/{id}/breakpoints/{bp_id}/group - {group}: move a breakpoint to a group ("" or
+/// "default": back to the default group)
+void EmulatorAPI::setBreakpointGroup(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id, const std::string& bpIdStr) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator)
+        return;
+    BreakpointManager* bpm = ManagerOrError(emulator, callback);
+    if (!bpm)
+        return;
+    auto json = req->getJsonObject();
+    uint32_t bpId = 0;
+    if (!ParseJsonUInt(Json::Value(bpIdStr), 0xFFFE, bpId))
+    {
+        ReplyError(callback, HttpStatusCode::k400BadRequest, "Bad Request", "The breakpoint id is a number");
+        return;
+    }
+    if (!json || !(*json)["group"].isString())
+    {
+        ReplyError(callback, HttpStatusCode::k400BadRequest, "Bad Request", "Body: {\"group\": \"name\"}");
+        return;
+    }
+    const std::string group = (*json)["group"].asString();
+    const bool ok = group.empty() || group == "default" ? bpm->RemoveBreakpointFromGroup(static_cast<uint16_t>(bpId))
+                                                        : bpm->SetBreakpointGroup(static_cast<uint16_t>(bpId), group);
+    if (!ok)
+    {
+        ReplyError(callback, HttpStatusCode::k404NotFound, "Not Found", "No breakpoint " + bpIdStr);
+        return;
+    }
+    const BreakpointSnapshot bp = bpm->GetBreakpointById(static_cast<uint16_t>(bpId));
+    Json::Value ret = bp ? BreakpointJson(*bp) : Json::Value(Json::objectValue);
+    ret["status"] = "success";
+    ReplyJson(callback, ret, HttpStatusCode::k200OK);
+}
+
+/// @brief PUT /api/v1/emulator/{id}/breakpoints/{bp_id}/note - {note}: the breakpoint's annotation ("" clears it)
+void EmulatorAPI::setBreakpointNote(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id, const std::string& bpIdStr) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator)
+        return;
+    BreakpointManager* bpm = ManagerOrError(emulator, callback);
+    if (!bpm)
+        return;
+    auto json = req->getJsonObject();
+    uint32_t bpId = 0;
+    if (!ParseJsonUInt(Json::Value(bpIdStr), 0xFFFE, bpId))
+    {
+        ReplyError(callback, HttpStatusCode::k400BadRequest, "Bad Request", "The breakpoint id is a number");
+        return;
+    }
+    if (!json || !(*json)["note"].isString())
+    {
+        ReplyError(callback, HttpStatusCode::k400BadRequest, "Bad Request", "Body: {\"note\": \"text\"}");
+        return;
+    }
+    if (!bpm->SetBreakpointNote(static_cast<uint16_t>(bpId), (*json)["note"].asString()))
+    {
+        ReplyError(callback, HttpStatusCode::k404NotFound, "Not Found", "No breakpoint " + bpIdStr);
+        return;
+    }
+    const BreakpointSnapshot bp = bpm->GetBreakpointById(static_cast<uint16_t>(bpId));
+    Json::Value ret = bp ? BreakpointJson(*bp) : Json::Value(Json::objectValue);
+    ret["status"] = "success";
+    ReplyJson(callback, ret, HttpStatusCode::k200OK);
 }
 
 // endregion Breakpoints

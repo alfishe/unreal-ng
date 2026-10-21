@@ -174,6 +174,12 @@ private slots:
     void handleStepOut();
     void handleRunToCursor();
     void submitGuiAction(const char* id);
+    // Debug menu: breakpoints and the debugger's panes
+    void handleToggleBreakpoint();
+    void handleClearAllBreakpoints();
+    void handleShowBreakpoints();
+    void handleShowRegisters();
+    void handleShowMemory();
     void handleToolBarToggled(bool visible);
     void handleScaleRequested(int scale);
     void handleScreenshotRequested();

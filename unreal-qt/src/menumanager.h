@@ -167,6 +167,11 @@ signals:
     void stepOverRequested();
     void stepOutRequested();
     void runToCursorRequested();
+    void toggleBreakpointRequested();     ///< at the disassembly cursor with the debugger shown, else at PC
+    void clearAllBreakpointsRequested();  ///< the user's breakpoints (owned ones stay)
+    void showBreakpointsRequested();
+    void showRegistersRequested();
+    void showMemoryRequested();
 
     // View signals
     void toolBarToggled(bool visible);

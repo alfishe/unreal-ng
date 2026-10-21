@@ -150,6 +150,9 @@ public:
     /// Move the cursor row by `rows` instructions (bytes in byte scroll) - Up / Down, PageUp / PageDown (16) and
     /// dbg.cursor_* / dbg.page_*: from the cursor row, else PC, else the top line; the view scrolls to keep it visible
     void moveCursorBy(int rows);
+    /// Toggle an execution breakpoint at the cursor row, else the top line of the view (as a click in the
+    /// breakpoint column)
+    void toggleBreakpointAtCursor();
     /// endregion </Controls>
 
     // Helper methods

@@ -195,6 +195,9 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     connect(ui->stackWidget, SIGNAL(jumpToAddressInDisassembly(uint16_t)), ui->disassemblerWidget,
             SLOT(goToAddress(uint16_t)));
 
+    // A register set from the registers pane: the disassembly (a new PC) and the stack follow
+    connect(ui->registersWidget, &RegistersWidget::registerEdited, this, [this](const QString&) { updateState(); });
+
     _paneFocus = new PaneFocus(this, {{tr("Disassembly"), ui->disassemblerWidget, {}},
                                       {tr("Registers"), ui->registersWidget, ui->registersWidget->cursorCells()},
                                       {tr("Memory"), ui->hexView, {}},
@@ -1417,6 +1420,27 @@ std::vector<std::pair<QWidget*, std::string>> DebuggerWindow::contextPanes() con
             {ui->registersWidget, "debug.registers"},
             {ui->hexView, "debug.memory"},
             {ui->stackWidget, "debug.stack"}};
+}
+
+void DebuggerWindow::toggleBreakpointAtCursor()
+{
+    // The widget refuses while an automation session holds the machine (RemoteControlGuard) and repaints its marks
+    ui->disassemblerWidget->toggleBreakpointAtCursor();
+}
+
+void DebuggerWindow::openBreakpoints()
+{
+    showBreakpointManager();
+}
+
+void DebuggerWindow::focusRegistersPane()
+{
+    _paneFocus->Focus(1);
+}
+
+void DebuggerWindow::focusMemoryPane()
+{
+    _paneFocus->Focus(2);
 }
 
 void DebuggerWindow::focusNextPane()

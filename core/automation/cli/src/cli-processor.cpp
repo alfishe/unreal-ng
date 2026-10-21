@@ -142,6 +142,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"bpgroup", &CLIProcessor::HandleBPGroup},        // Manage breakpoint groups
                         {"bpon", &CLIProcessor::HandleBPActivate},        // Activate breakpoints
                         {"bpoff", &CLIProcessor::HandleBPDeactivate},     // Deactivate breakpoints
+                        {"bptoggle", &CLIProcessor::HandleBPToggle},      // Toggle a selection of breakpoints
+                        {"bkey", &CLIProcessor::HandleKeyBreakpoint},     // Keyboard breakpoint (the program sees a key)
+                        {"bpnote", &CLIProcessor::HandleBPNote},          // Set a breakpoint's note
 
                         {"open", &CLIProcessor::HandleOpen},
                         {"exit", &CLIProcessor::HandleExit},

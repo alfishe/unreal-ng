@@ -327,6 +327,15 @@ std::optional<SymbolSet> SymbolStore::GetSet(const std::string& id) const
     return std::nullopt;
 }
 
+std::optional<bool> SymbolStore::IsEnabled(const std::string& id) const
+{
+    std::lock_guard lock(_change);
+    for (const SymbolSet& set : *_sets)
+        if (set.id == id)
+            return set.enabled;
+    return std::nullopt;
+}
+
 std::shared_ptr<const SymbolIndex> SymbolStore::Index() const
 {
     std::lock_guard lock(_publish);

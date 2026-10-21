@@ -19,6 +19,7 @@
 #include "emulator/actions/hostactions.h"
 #include "emulator/actions/pictureactions.h"
 #include "emulator/actions/steppingactions.h"
+#include "emulator/actions/hostactions_debugtools.h"
 #include "emulator/coordinator/machineop.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -642,6 +643,8 @@ ActionRegistry& ActionRegistry::Instance()
         for (RegistrationHandle& handle : RegisterPictureActions(*created))  // the window and the viewport (C9)
             created->_builtin.push_back(std::move(handle));
         for (RegistrationHandle& handle : RegisterSteppingActions(*created))  // run pace, runs to a place, TTD units
+            created->_builtin.push_back(std::move(handle));
+        for (RegistrationHandle& handle : RegisterDebugToolsActions(*created))  // breakpoints, profilers, state
             created->_builtin.push_back(std::move(handle));
         created->_feed = &ActivityFeed::Instance();
         created->_post = true;  // from now on: the Qt client's GUI actions come and go
