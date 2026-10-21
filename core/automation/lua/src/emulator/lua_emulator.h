@@ -37,6 +37,7 @@
 #include <emulator/actions/contextstate.h>
 #include <emulator/actions/surfacesapi.h>
 #include <emulator/companions/streamdeckapi.h>
+#include <emulator/monitoring/monitoringapi.h>
 #include <emulator/execution/automationgate.h>
 #include <emulator/sound/midi/midicontrol.h>
 #ifdef ENABLE_CONTROLLERS
@@ -2059,6 +2060,33 @@ public:
                 }
             return StateNodeToLua(s, companion::streamdeck::Call(verb.value_or("status"), args).body);
         });
+        // monitor(name, {instance = }) -> the reply table of a monitoring verb (monitoring::Call: all, host.stats,
+        // host.clients, emulator.stats, debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status,
+        // debug.analyzers, controllers.state; an instance's name defaults to this emulator), as WebAPI
+        // /api/v1/monitor[/{name}], the CLI `monitor`, MCP inspect_state aspect `monitor` and Python monitor()
+        lua.set_function("monitor", [this](sol::this_state s, sol::optional<std::string> verb, sol::optional<sol::table> opts) {
+            Emulator* emulator = effectiveEmulator();
+            StateNode args = StateNode::Object();
+            if (opts)
+                for (const auto& [key, item] : *opts)
+                {
+                    if (!key.is<std::string>())
+                        continue;
+                    const std::string name = key.as<std::string>();
+                    if (item.get_type() == sol::type::number)
+                    {
+                        const double number = item.as<double>();
+                        args[name] = number == std::floor(number) ? StateNode(static_cast<int64_t>(number))
+                                                                  : StateNode(number);
+                    }
+                    else if (item.is<std::string>())
+                        args[name] = StateNode(item.as<std::string>());
+                }
+            const std::string name = verb.value_or("all");
+            if (args.find("instance") == nullptr && name != "all" && emulator != nullptr)
+                args["instance"] = emulator->GetId();
+            return StateNodeToLua(s, monitoring::Call(name, args).body);
+        });
         // controllers_host(verb, {options}) -> the reply table every surface returns: the host game controllers
         // (devices, profiles, bindings, haptics, rumble; HostInputControl, the process's, not the machine's)
         auto hostControllersCall = [](sol::this_state s, const std::string& verb, sol::optional<sol::table> opts) {
@@ -3374,6 +3402,14 @@ public:
             if (!ctx || !ctx->pDebugManager) return 0;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
             return bpm ? bpm->GetBreakpointsCount() : 0;
+        });
+
+        // bp_groups() -> {ok, instance, groups = {{name, total, active, ids}}}: as GET .../breakpoints/groups
+        lua.set_function("bp_groups", [this](sol::this_state s) {
+            StateNode args = StateNode::Object();
+            if (Emulator* emulator = effectiveEmulator())
+                args["instance"] = emulator->GetId();
+            return StateNodeToLua(s, monitoring::Call("breakpoint_groups", args).body);
         });
 
         lua.set_function("bp_list", [this]() -> std::string {

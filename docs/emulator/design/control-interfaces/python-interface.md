@@ -763,6 +763,16 @@ emu.streamdeck("pair")                     # the user approves it at the GUI
 emu.streamdeck("brightness", deck="A1B2C3", value=40)
 ```
 
+Monitoring (`emu.monitor(name="all", **args)`, [command-interface.md §17](./command-interface.md#17-monitoring)); an
+instance's name reads this emulator unless `instance=` names another:
+
+```python
+emu.monitor("emulator.stats")["fps"]         # also speed_percent, frame_time_us, cpu["mhz"], interrupts_per_frame
+emu.monitor("host.stats")["rss_bytes"]       # the process: cpu_percent, threads, ...
+emu.monitor()["instances"]                   # every instance with every summary
+emu.bp_groups()["groups"]                    # [{"name", "total", "active", "ids"}]
+```
+
 ### Disk Operations
 
 `Emulator` methods for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands and the WebAPI `/disk/{drive}/*` endpoints.

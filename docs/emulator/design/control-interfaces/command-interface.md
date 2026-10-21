@@ -3776,7 +3776,7 @@ request without an instance id acts on the followed instance (T-1). The verbs ar
 | `surface target` | `[session]` | A target object: `instance`, `index`, `model`, `ram_kb`, `view` {`id`, `name`} or null, `mode` (`follow`, `view`, `instance`), `pin`, `source` (`view`, `selected`, `sole`, `none`); the followed instance's, or a session's | ✅ Implemented |
 | `surface sessions` | | Every surface session: `id`, `name`, `kind`, `serial`, `pin`, `target`, `notice` (why a pin fell back) | ✅ Implemented |
 | `surface pin` | `<session> <target>` | Pin a session: `follow` (unpin), `view:<id>` (that window's active instance), `instance:<id|index>`. `Not Found`: no such session, view or instance; `not_now`: a view pin on a headless host | ✅ Implemented |
-| `surface readouts` | `[names] [instance=]` | The readouts now (names or prefixes: `ttd.position`, `run.state`, `machine`, `media.tape`, `media.disk`, `audio.mute`, `debug.mode`, `toggle.*`); default all, of the followed instance. Unknown names are listed in `unknown` | ✅ Implemented |
+| `surface readouts` | `[names] [instance=]` | The readouts now (names or prefixes: `ttd.position`, `run.state` (`speed`: the host setting 1..16), `machine`, `media.tape`, `media.disk` (each drive with `dirty`: unsaved changes), `audio.mute`, `debug.mode`, `toggle.*`, and the monitoring names of [§17](#17-monitoring): `host.*`, `emulator.stats`, `debug.breakpoints`, ...); default all, of the followed instance. Unknown names are listed in `unknown` | ✅ Implemented |
 | `surface activity` | `[since] [instance=] [limit=]` | The activity feed: each action the registry ran (`seq`, `id`, `value`, `origin`, `surface`, `ok`, `error`, `t_ms`, `merged`), deltas of one surface within 100 ms merged; `last` (the next `since`), `dropped` | ✅ Implemented |
 | `surface view_add` / `view_update` / `view_remove` | `<name> [active=]` / `<view> [active=] [activate=true]` / `<view>` | A view of the automation plane (a window of another process, tests); `activate` moves any view to the front as a focus would; the active instance of a client's window is its own (`Conflict`) | ✅ Implemented |
 | `surface session_open` / `session` / `session_close` | `<name> [kind=] [target=]` / `<id>` / `<id>` | A surface session of the automation plane (a REST surface with a target of its own); a deck's session comes with the surface topic's `join` (S4) | ✅ Implemented |
@@ -3826,6 +3826,47 @@ In the GUI: Tools > Stream Deck... (the same status, Start / Stop / Restart, whe
 pairing with Pair / Approve / Revoke, each deck's brightness, "Surfaces..." to the surfaces table, the udev rule on
 Linux). The daemon's own automation (`127.0.0.1:37053`, REST + MCP) is in
 [docs/companions/streamdeck/daemon.md](../../../companions/streamdeck/daemon.md#automation).
+
+### 17. Monitoring
+
+What a monitoring page shows (Stream Deck use case C10), read-only: what the host process uses, how fast each
+instance runs, who is connected, and per instance a summary of its breakpoints, media, recording, labels, TTD,
+profilers and controllers. The verbs are `monitoring::Call` (`core/src/emulator/monitoring/monitoringapi.h`), the
+same on every plane. Each name is at once a verb, a WebSocket state topic of the same name (latest value, coalesced at
+the subscriber's `max_hz`, [websocket-interface.md §3](websocket-interface.md#3-topics)) and a surface readout: the
+topic pushes what the verb returns, without `ok` / `instance`. Reads take published state only: never a pause, never
+a wait for an emulation thread; a list that is counted (breakpoints, media slots, symbol sets, connectors) is cached
+by its manager's revision.
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `monitor [all]` | `[instance=]` | Everything: `host`, `clients`, `instances` [{`instance`, `index`, `model`, and each instance name below}] (every instance, or the one named) | ✅ Implemented |
+| `monitor host.stats` | | The process (never per instance): `cpu_percent` (over the last 0.5 s, 100 = one core busy), `cpu_percent_host` (of all `cores`), `rss_bytes`, `peak_rss_bytes`, `virtual_bytes`, `threads`, `cpu_time_s`, `uptime_s`, `interval_s`. macOS task_info / proc_pidinfo, Linux /proc/self/status, Windows GetProcessTimes / GetProcessMemoryInfo; sampled at most twice a second | ✅ Implemented |
+| `monitor host.clients` | | Per plane (`rest` HTTP requests, `ws` `/api/v1/ws` sockets and their `call`s, `events` `/api/v1/companions/events`, `debug_ws` `/api/v1/websocket`, `mcp` POST `/mcp`, `cli` connections and commands): `connections` (open now), `opened`, `requests`; `companions` (paired), `instances`. An MCP tool's own WebAPI calls are not counted as REST | ✅ Implemented |
+| `monitor emulator.stats` | `[instance=]` | The measured pace (MainLoop, a 0.5 s window, no lock on the emulation thread): `state`, `measuring` (false while paused or stopped), `fps`, `nominal_fps`, `speed_percent` (emulated time over wall time: fps / nominal × the host multiplier; 2x shows 200, turbo its rate), `frame_time_us` {`avg`, `max`} (the host time a frame's emulation took), `frame_budget_percent` (avg over the frame period), `halted_percent` (T-states in HALT), `interrupts_per_frame` (INTs the CPU accepted), `frame`, `t_states` (cumulative; while it runs taken at the window's end, so the value changes twice a second), `turbo`, `cpu` {`mhz`, `base_mhz`, `multiplier` (host × the machine's own turbo), `host_multiplier`, `hw_turbo_ratio`} | ✅ Implemented |
+| `monitor debug.breakpoints` | `[instance=]` | The user breakpoints: `total`, `active`, `inactive`, `owned` (analyzers', DeZog's, hidden traps: not counted), `by_kind` {`memory`, `exec`, `read`, `write`, `port`, `port_in`, `port_out`, `keyboard`, `nextreg`, `beam`, `copper`, `magic`}, `groups` [{`name`, `total`, `active`}], `last_hit` {`id`, `type`, `address`, `access`, `group`, `note`} or null | ✅ Implemented |
+| `monitor breakpoint_groups` | `[instance=]` | `groups` [{`name`, `total`, `active`, `ids`}] (also `GET /api/v1/emulator/{id}/breakpoints/groups`, `bp_groups()`; the CLI's `bpgroup list` names them too). Not a topic: `debug.breakpoints` pushes the groups' counts | ✅ Implemented |
+| `monitor media.slots` | `[instance=]` | Every media slot: `slots` [{`id`, `kind`, `present`, `pending`, `name`, `format`, `dirty`, `changed_units`, `protect`}], `loaded`, `dirty` (any slot has unsaved changes) | ✅ Implemented |
+| `monitor recording.state` | `[instance=]` | `available`, `enabled`, `recording`, `paused`, `mode`, `file`, `frames`, `duration_s`, `emulated_s`, `file_bytes`, `fps` | ✅ Implemented |
+| `monitor debug.labels` | `[instance=]` | `total` labels, `sets` [{`id`, `title`, `enabled`, `symbols`}] (recounted on `NC_LABEL_CHANGED`, at most every 2 s) | ✅ Implemented |
+| `monitor ttd.status` | `[instance=]` | From the published cursor: `state`, `recording`, `history`, `frame`, `first`, `end`, `frames`; from the published session summary (refreshed every 2 s at most, never the live session): `checkpoints`, `memory_bytes`, `history_bytes`, `page_store_bytes`, `bookmarks`, `write_journal_records`, `input_events`, `evicted_checkpoints` | ✅ Implemented |
+| `monitor debug.analyzers` | `[instance=]` | Session states: `opcode`, `memory`, `calltrace` (`stopped`, `capturing`, `paused`), `coverage` {`available`, `recording`, `instructions`}, `pchist` (`armed` / `off`) | ✅ Implemented |
+| `monitor controllers.state` | `[instance=]` | `connectors` [{`id`, `kind`, `device`, `plugged`, `fixed`}], `plugged` | ✅ Implemented |
+
+`instance=` takes an id or an index; without it an instance's name reads the followed instance (T-1). Errors:
+`Not Found` (404: no such name, no such instance).
+
+| Surface | Everything | One name | Push |
+| :--- | :--- | :--- | :--- |
+| CLI | `monitor` | `monitor emulator.stats 1`, `monitor host.stats --json` | - |
+| WebAPI | `GET /api/v1/monitor[?instance=]` | `GET /api/v1/monitor/{name}[?instance=]`, `GET /api/v1/emulator/{id}/breakpoints/groups` | - |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/monitor"}` | the same `call` per name | topics `host.stats`, `host.clients` (the process: no `instance`), `emulator.stats`, `debug.breakpoints`, `media.slots`, `recording.state`, `debug.labels`, `ttd.status`, `debug.analyzers`, `controllers.state` (per instance); the same names as surface readouts |
+| MCP | `inspect_state` aspect `monitor` | the aspect's JSON (the `all` body of the instance); `breakpoints` aspect carries `groups` | - |
+| Python | `emu.monitor()` | `emu.monitor("emulator.stats")`, `emu.bp_groups()` | - |
+| Lua | `monitor()` | `monitor("emulator.stats", {instance = 1})`, `bp_groups()` | - |
+
+`run.state`'s `speed` (topic, readout, `GET /api/v1/surfaces/readouts`) is the host setting (1..16) everywhere; the
+composed clock multiplier with the machine's own turbo is `emulator.stats` `cpu.multiplier`.
 
 ## Future Capabilities
 

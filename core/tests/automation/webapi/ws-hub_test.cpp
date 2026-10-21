@@ -4,12 +4,14 @@
 // unit level: auth and its errors, join, actions with rid / without, coalescing, ctx (a setter and the default
 // following the history), readouts and topics (full, then changed only, at the subscriber's rate), the timer armed
 // only while somebody subscribes, follow and pin, revoked, bye; the `instances` topic (the events socket's view), the
-// debug.* topics (DebugEventHub's events) and backpressure (a congested connection gets control messages only, then
+// debug.* topics (DebugEventHub's events), the monitoring topics (host.stats, emulator.stats, debug.breakpoints, ...)
+// and backpressure (a congested connection gets control messages only, then
 // the latest values and the events with `dropped`; too long congested: slow_consumer)
 
 #include "pch.h"
 
 #include "ws-hub.h"
+#include "common/statenode_json.h"
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "_helpers/emulatortesthelper.h"
@@ -18,6 +20,10 @@
 #include "emulator/actions/activityfeed.h"
 #include "emulator/actions/contextstate.h"
 #include "emulator/actions/readouts.h"
+#include "emulator/actions/targetstate.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
+#include "emulator/emulatorcontext.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/execution/automationgate.h"
@@ -1048,3 +1054,112 @@ TEST_F(WsHub_Test, ARevokedCompanionIsToldAndClosedAndByeCloses)
 }
 
 /// endregion </Binding, revocation, bye>
+
+/// region <Monitoring topics>
+
+TEST_F(WsHub_Test, MonitoringTopicsPushOnSubscribeThenOneCoalescedValueAfterABurstOfChanges)
+{
+    Inbox inbox;
+    Connect(inbox);
+    Send(inbox, R"({"op":"subscribe","topics":["debug.breakpoints","host.stats","emulator.stats"],"max_hz":10})");
+    ASSERT_EQ(inbox.Ops("subscribed").size(), 1u) << inbox.Last().toStyledString();
+    auto states = [&](const std::string& topic) {
+        std::vector<Json::Value> out;
+        for (const Json::Value& message : inbox.Ops("state"))
+            if (message["t"].asString() == topic)
+                out.push_back(message);
+        return out;
+    };
+    // At once: each instance's value, and the process's without an instance
+    ASSERT_EQ(states("debug.breakpoints").size(), 1u);
+    EXPECT_EQ(states("debug.breakpoints")[0]["instance"].asString(), _id);
+    EXPECT_EQ(states("debug.breakpoints")[0]["value"]["total"].asInt(), 0);
+    ASSERT_EQ(states("host.stats").size(), 1u);
+    EXPECT_FALSE(states("host.stats")[0].isMember("instance")) << "a topic of the process";
+    EXPECT_GT(states("host.stats")[0]["value"]["rss_bytes"].asInt64(), 0);
+    ASSERT_EQ(states("emulator.stats").size(), 1u);
+    EXPECT_EQ(states("emulator.stats")[0]["value"]["state"].asString(), "stopped");
+    EXPECT_FALSE(states("emulator.stats")[0]["value"]["measuring"].asBool()) << "not started: nothing measured";
+
+    // Three changes within one interval: one message with the last value
+    BreakpointManager* breakpoints = _emulator->GetContext()->pDebugManager->GetBreakpointsManager();
+    const uint16_t a = breakpoints->AddExecutionBreakpoint(0x8000);
+    breakpoints->AddMemWriteBreakpoint(0x4000);
+    breakpoints->AddPortOutBreakpoint(0x00FE);
+    ASSERT_TRUE(breakpoints->DeactivateBreakpoint(a));
+    Advance(40);
+    _hub->Tick();
+    EXPECT_EQ(states("debug.breakpoints").size(), 1u) << "within the subscriber's 100 ms: held back";
+    Advance(60);
+    _hub->Tick();
+    ASSERT_EQ(states("debug.breakpoints").size(), 2u);
+    const Json::Value value = states("debug.breakpoints")[1]["value"];
+    EXPECT_EQ(value["total"].asInt(), 3);
+    EXPECT_EQ(value["active"].asInt(), 2);
+    EXPECT_EQ(value["inactive"].asInt(), 1);
+    EXPECT_EQ(value["by_kind"]["exec"].asInt(), 1);
+    EXPECT_EQ(value["by_kind"]["write"].asInt(), 1);
+    EXPECT_EQ(value["by_kind"]["port_out"].asInt(), 1);
+    ASSERT_EQ(value["groups"].size(), 1u);
+    EXPECT_EQ(value["groups"][0]["name"].asString(), "default");
+    EXPECT_EQ(value["groups"][0]["total"].asInt(), 3);
+    EXPECT_TRUE(value["last_hit"].isNull());
+
+    // Unchanged: nothing more
+    Advance(100);
+    _hub->Tick();
+    EXPECT_EQ(states("debug.breakpoints").size(), 2u);
+    breakpoints->ClearBreakpoints();
+}
+
+TEST_F(WsHub_Test, RunStateSpeedIsTheHostSettingOnTheTopicAndTheReadoutAlike)
+{
+    // The machine's own turbo doubles the composed multiplier; the host setting stays 1x
+    EmulatorState& state = _emulator->GetContext()->emulatorState;
+    const uint8_t current = state.current_z80_frequency_multiplier;
+    const uint8_t next = state.next_z80_frequency_multiplier;
+    state.current_z80_frequency_multiplier = 2;
+    state.next_z80_frequency_multiplier = 1;
+    const Json::Value topic = WsHub::Read("run.state", _id, *_emulator);
+    EXPECT_EQ(topic["speed"].asInt(), 1);
+    EXPECT_EQ(topic, StateNodeToJson(actions::ReadReadout(*_emulator, "run.state"))) << "one producer";
+    const Json::Value stats = WsHub::Read("emulator.stats", _id, *_emulator);
+    EXPECT_EQ(stats["cpu"]["multiplier"].asInt(), 2) << "the composed clock is emulator.stats'";
+    EXPECT_EQ(stats["cpu"]["host_multiplier"].asInt(), 1);
+    state.current_z80_frequency_multiplier = current;
+    state.next_z80_frequency_multiplier = next;
+}
+
+TEST_F(WsHub_Test, AFollowingSurfaceTakesTheFrontViewsInstanceAsTheTargetStateDoes)
+{
+    Emulator* second = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(second, nullptr);
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    ASSERT_TRUE(manager->SetSelectedEmulatorId(_id));
+    {
+        // A window showing the second instance has the focus: rule 3 beats the selection (rule 4)
+        ViewHandle view = TargetState::Instance().RegisterView("Window 2", "test");
+        TargetState::Instance().SetActive(view, second->GetId());
+        TargetState::Instance().Activated(view);
+        EXPECT_EQ(WsHub::FollowedInstance(), TargetState::Instance().Followed());
+        EXPECT_EQ(WsHub::FollowedInstance(), second->GetId());
+
+        Inbox inbox;
+        Connect(inbox);
+        Send(inbox, R"({"op":"join","v":1,"name":"deck","model":"x","target":"follow"})");
+        ASSERT_EQ(inbox.Last()["op"].asString(), "welcome");
+        EXPECT_EQ(inbox.Last()["instance"].asString(), second->GetId());
+        inbox.Clear();
+        view.Reset();  // the window closes: back to the selection
+        _hub->Refresh();
+        ASSERT_FALSE(inbox.Ops("target").empty());
+        EXPECT_EQ(inbox.Ops("target").back()["instance"].asString(), _id);
+        _hub->Remove(&inbox);
+    }
+    manager->SetSelectedEmulatorId("");
+    const std::string secondId = second->GetId();
+    EmulatorTestHelper::CleanupEmulator(second);
+    actions::ContextState::Instance().Drop(secondId);
+}
+
+/// endregion </Monitoring topics>

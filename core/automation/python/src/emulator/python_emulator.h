@@ -22,6 +22,7 @@
 #include <emulator/actions/contextstate.h>
 #include <emulator/actions/surfacesapi.h>
 #include <emulator/companions/streamdeckapi.h>
+#include <emulator/monitoring/monitoringapi.h>
 #include <emulator/execution/automationgate.h>
 #ifdef ENABLE_CONTROLLERS
 #include "hostinputcontrol.h"
@@ -514,6 +515,19 @@ inline pybind11::object StreamDeckPy(const std::string& verb, const pybind11::kw
     for (const auto& item : options)
         args[pybind11::str(item.first).cast<std::string>()] = PyToStateNode(item.second);
     return StateNodeToPy(companion::streamdeck::Call(verb, args).body);
+}
+
+/// A monitoring verb (monitoring::Call: all, host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots,
+/// recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state) with its args as keywords (instance=
+/// an id or an index; default this emulator for an instance's name); the reply every plane returns
+inline pybind11::object MonitorPy(Emulator& self, const std::string& verb, const pybind11::kwargs& options)
+{
+    StateNode args = StateNode::Object();
+    for (const auto& item : options)
+        args[pybind11::str(item.first).cast<std::string>()] = PyToStateNode(item.second);
+    if (args.find("instance") == nullptr && verb != "all")
+        args["instance"] = self.GetId();
+    return StateNodeToPy(monitoring::Call(verb, args).body);
 }
 
 inline pybind11::object ActionPy(Emulator& self, const std::string& id, const pybind11::object& raw,
@@ -1921,6 +1935,12 @@ namespace PythonBindings
                  "A Stream Deck daemon verb (status, start, stop, restart, settings, pairing, pair, pair_cancel, "
                  "revoke, brightness, udev) with its args as keywords: streamdeck('settings', mode='always'); "
                  "{ok, ...} as WebAPI /api/v1/streamdeck")
+            .def("monitor", [](Emulator& self, const std::string& verb, const py::kwargs& options) {
+                     return MonitorPy(self, verb, options);
+                 }, py::arg("verb") = "all",
+                 "Monitoring (all, host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots, "
+                 "recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state): "
+                 "monitor('emulator.stats') -> {ok, instance, fps, speed_percent, ...} as WebAPI /api/v1/monitor")
             .def("surfaces", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return SurfacesPy(verb, options);
                  }, py::arg("verb") = "views",
@@ -2556,6 +2576,12 @@ namespace PythonBindings
                 BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
                 return bpm ? bpm->GetBreakpointsCount() : 0;
             }, "Get breakpoint count")
+            .def("bp_groups", [](Emulator& self) {
+                StateNode args = StateNode::Object();
+                args["instance"] = self.GetId();
+                return StateNodeToPy(monitoring::Call("breakpoint_groups", args).body);
+            }, "The breakpoint groups: {ok, instance, groups: [{name, total, active, ids}]} as WebAPI "
+               "GET /api/v1/emulator/{id}/breakpoints/groups")
             .def("bp_list", [](Emulator& self) -> std::string {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return "";

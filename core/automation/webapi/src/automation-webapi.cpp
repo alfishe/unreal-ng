@@ -20,6 +20,8 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/execution/automationgate.h"
 #include "emulator/execution/companionregistry.h"
+#include "emulator/monitoring/clientstats.h"
+#include "common/processstats.h"
 #include "emulator_api.h"        // Triggers auto-registration for API handlers
 #include "emulator_websocket.h"  // Triggers auto-registration for WebSocket handlers
 #include "api-websocket.h"       // /api/v1/ws
@@ -429,6 +431,9 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
 
     drogon::HttpAppFramework& app = drogon::app();
 
+    // host.stats: the first sample now, so the first reading already has a CPU % and the uptime counts from here
+    (void)ProcessStatsSampler::Instance().Read();
+
     // Setup global CORS support
     // Handle CORS preflight (OPTIONS) requests
     app.registerSyncAdvice([](const drogon::HttpRequestPtr& req) { return webapi_gate::PassRequestGates(req); });
@@ -436,6 +441,16 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     // The operation log names who asked (machine state coordinator): a handler runs on the thread this advice ran
     // on, so the request marks its thread; the MCP server calls the WebAPI and says so in X-Unreal-Source
     app.registerPreHandlingAdvice([](const drogon::HttpRequestPtr& req) {
+        // Monitoring (host.clients): POST /mcp is an MCP request; an MCP tool's own calls back here are not clients
+        // A WebSocket `call` is counted on its socket (ws.requests)
+        const bool mcpLoopback = req->getHeader("X-Unreal-Source") == "mcp";
+        if (!req->attributes()->find("unreal.ws_call"))
+        {
+            if (req->path().rfind("/mcp", 0) == 0)
+                monitoring::ClientStats::Instance().Request(monitoring::ClientPlane::Mcp);
+            else if (!mcpLoopback)
+                monitoring::ClientStats::Instance().Request(monitoring::ClientPlane::Rest);
+        }
         coordinator::SetThreadSource(req->attributes()->find(webapi_companion::kAttribute)
                                          ? coordinator::OpSource::Companion
                                      : req->getHeader("X-Unreal-Source") == "mcp" ? coordinator::OpSource::Mcp

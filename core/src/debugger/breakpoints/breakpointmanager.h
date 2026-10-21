@@ -255,6 +255,8 @@ protected:
 
     // Last triggered breakpoint ID (for automation API queries): written by the hot path, read by the surfaces
     std::atomic<uint16_t> _lastTriggeredBreakpointID{BRK_INVALID};
+    // Changes of the set (NotifyBreakpointsChanged): monitoring caches its summary by it
+    std::atomic<uint64_t> _revision{0};
 
     // The surfaces' threads against each other and against a change the emulation thread makes. The hot path
     // never takes it: a change holds the CPU first (ChangeScope)
@@ -496,6 +498,31 @@ public:
     bool SetBreakpointNote(uint16_t breakpointID, const std::string& note);
     std::vector<std::string> GetBreakpointGroups() const;
     std::vector<uint16_t> GetBreakpointsByGroup(const std::string& groupName) const;
+
+    /// The user breakpoints (IsUserBreakpoint) counted, for monitoring (GET /monitor/debug.breakpoints, the groups
+    /// route): one pass under the lock, no copies of the descriptors
+    struct BreakpointSummary
+    {
+        struct Group
+        {
+            std::string name;
+            uint32_t total = 0;
+            uint32_t active = 0;
+            std::vector<uint16_t> ids;
+        };
+        uint32_t total = 0;
+        uint32_t active = 0;
+        uint32_t owned = 0;  ///< breakpoints of an owner (analyzers, DeZog) and hidden ones (step traps): not counted above
+        /// Per kind, a breakpoint with several accesses counted in each: memory (exec, read, write), port (in, out),
+        /// keyboard, nextreg, beam, copper, magic
+        uint32_t memory = 0, exec = 0, read = 0, write = 0;
+        uint32_t port = 0, portIn = 0, portOut = 0;
+        uint32_t keyboard = 0, nextreg = 0, beam = 0, copper = 0, magic = 0;
+        std::vector<Group> groups;  ///< by name
+    };
+    BreakpointSummary GetSummary() const;
+    /// Bumped on every change of the set (add, remove, enable, group, note; hidden ones too): a reader caches by it
+    uint64_t Revision() const { return _revision.load(std::memory_order_relaxed); }
     std::string GetBreakpointListAsStringByGroup(const std::string& groupName) const;
     void ActivateBreakpointGroup(const std::string& groupName);
     void DeactivateBreakpointGroup(const std::string& groupName);

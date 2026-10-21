@@ -117,10 +117,12 @@ core, one producer each, all from published values (never a read that holds the 
 | `run.state` | `{state: running\|paused\|stopped, speed, turbo}` | run control | on change |
 | `machine` | `{model, ram_kb, index}` | instance | on change |
 | `media.tape` | `{loaded, playing, block, blocks, progress}` | tape manager | ≤ 10 Hz |
-| `media.disk` | `{drives: [{letter, loaded, name, busy}]}` | disk manager | on change |
+| `media.disk` | `{drives: [{letter, loaded, name, busy, protect, dirty}]}` | disk manager | on change |
 | `audio.mute` | `{muted, master}` | mixer | on change |
 | `debug.mode` | `{enabled}` | debugger | on change |
 | `toggle.<action id>` | `{on}` | the action's `State()` (§5) | on change |
+| `host.stats`, `host.clients` | the process's CPU %, memory, threads; connections per plane | monitoring (`monitoringapi.h`) | 2 Hz |
+| `emulator.stats`, `debug.breakpoints`, `media.slots`, `recording.state`, `debug.labels`, `ttd.status`, `debug.analyzers`, `controllers.state` | the use case C10 summaries ([command-interface.md §17](../../emulator/design/control-interfaces/command-interface.md#17-monitoring)) | monitoring | `emulator.stats` 2 Hz, the rest on change |
 
 - `subscribe` takes names or prefixes (`media.*`). Unknown names are answered once by `error not_found` and ignored.
 - `toggle.*` exists for every catalogue action whose kind is a toggle: a deck key bound to `mach.turbo_toggle` shows

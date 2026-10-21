@@ -1728,6 +1728,21 @@ unreal-qt supervises `unreal-streamdeck`; without unreal-qt (headless, the video
 the daemon's automation (`409 not_running` without one, `502 daemon_refused` with its answer in `daemon`); they run off
 the I/O thread. The topic `streamdeck.status` on `/api/v1/ws` pushes the changes.
 
+```
+GET    /api/v1/monitor[?instance=]                       everything: {host, clients, instances: [{instance, index, model, emulator.stats, ...}]}
+GET    /api/v1/monitor/{name}[?instance=]                one name: host.stats, host.clients, emulator.stats, debug.breakpoints,
+                                                         media.slots, recording.state, debug.labels, ttd.status, debug.analyzers,
+                                                         controllers.state, breakpoint_groups
+GET    /api/v1/emulator/{id}/breakpoints/groups          {groups: [{name, total, active, ids}]} (the user breakpoints)
+```
+
+Monitoring ([command-interface.md section 17](./command-interface.md#17-monitoring)): the host process, the clients,
+each instance's measured pace and its summaries; read-only, published state only (the I/O thread answers, no
+emulation thread waits). `instance=` takes an id or an index (default the followed instance); `404` no such name or
+instance. Each name but `breakpoint_groups` is a topic of the same name on `/api/v1/ws` and a surface readout. The
+host's counts: `rest` counts every HTTP request but `/mcp` (that is `mcp`), the WebSocket `call`s (those are `ws`) and
+an MCP tool's own calls back (`X-Unreal-Source: mcp`).
+
 Control surface targets ([command-interface.md section 16.1](./command-interface.md#161-surface-targets-readouts-activity),
 Stream Deck integration [targeting.md](../../../inprogress/2026-10-19-streamdeck-integration/targeting.md)). **"No id"
 (T-1)**: every route that takes an optional instance (`/controllers/actions`, `/surfaces/context`, `/surfaces/readouts`,

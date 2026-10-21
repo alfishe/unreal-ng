@@ -235,6 +235,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"surface", &CLIProcessor::HandleSurface},
                         // The Stream Deck daemon's supervision by unreal-qt, settings, pairing, brightness
                         {"streamdeck", &CLIProcessor::HandleStreamDeck},
+                        // Monitoring: host process, clients, each instance's pace and summaries (monitoring::Call)
+                        {"monitor", &CLIProcessor::HandleMonitor},
 
                         // ZX-MultiSound card and its MIDI synthesizer
                         {"multisound", &CLIProcessor::HandleMultiSound},
@@ -839,6 +841,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  action [list]          - Host actions (run control, time travel, machine) and whether they can run" << NEWLINE;
     oss << "  action run <id> [value] - Run one, e.g. action run run.pause_toggle, action run ttd.jog_frames -10" << NEWLINE;
     oss << "  surface [views]        - Control surface targets: views, target, sessions, pin, readouts, activity" << NEWLINE;
+    oss << "  monitor [name]         - Host CPU / memory / threads, clients, fps / speed, breakpoints, media, TTD ..." << NEWLINE;
     oss << NEWLINE;
     oss << "ZX-MultiSound and MIDI:" << NEWLINE;
     oss << "  multisound [--full|--json] - The card: options, CPLD, YM2203 pair, SAA1099, GS, DACs, MIDI" << NEWLINE;

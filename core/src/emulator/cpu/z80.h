@@ -1039,4 +1039,7 @@ public:
     /// RunHaltedIdle's last refusal: no new check before this T (kHaltedIdleRetryT after it)
     static constexpr uint32_t kHaltedIdleRetryT = 256;
     uint32_t _haltedIdleRetryAt = 0;
+    /// Maskable interrupts accepted since the CPU was made (HandleINT; the monitoring planes' interrupts per frame).
+    /// Statistics only: not machine state, not in snapshots or TTD checkpoints
+    uint64_t interruptsAccepted = 0;
 };

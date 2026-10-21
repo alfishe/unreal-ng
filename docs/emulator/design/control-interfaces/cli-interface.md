@@ -507,6 +507,16 @@ The Stream Deck daemon as unreal-qt supervises it
 | `streamdeck brightness [deck] [value]` | A deck's brightness (`streamdeck brightness 40`: the first deck) |
 | `streamdeck udev` | The Linux udev rule |
 
+Monitoring ([command-interface.md §17](./command-interface.md#17-monitoring)), read-only:
+
+| CLI Command | Description |
+| :--- | :--- |
+| `monitor [all] [instance=]` | Host, clients, every instance's pace and breakpoints |
+| `monitor host.stats` / `host.clients` | The process: CPU %, resident / peak memory, threads; connections and requests per plane |
+| `monitor emulator.stats [instance]` | fps, real-time speed %, frame time, halted %, CPU MHz and multipliers, interrupts per frame |
+| `monitor debug.breakpoints` / `breakpoint_groups` / `media.slots` / `recording.state` / `debug.labels` / `ttd.status` / `debug.analyzers` / `controllers.state` | The summaries (JSON) |
+| `monitor <name> --json` | The reply every plane returns |
+
 ```
 > streamdeck
 Stream Deck daemon: running (mode deck, activity flash)

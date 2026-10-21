@@ -18,6 +18,7 @@ set(SOURCES
     src/commands/cli-processor-action.cpp
     src/commands/cli-processor-surface.cpp
     src/commands/cli-processor-streamdeck.cpp
+    src/commands/cli-processor-monitor.cpp
     src/commands/cli-processor-debug.cpp
     src/commands/cli-processor-asm.cpp
     src/commands/cli-processor-breakpoint.cpp
