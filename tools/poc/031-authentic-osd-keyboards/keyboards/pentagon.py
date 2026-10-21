@@ -1,22 +1,25 @@
 """Pentagon 128 (1989-): the board came bare, its builder fitted a keyboard; this is the early-1990s default, the
-Soviet 40-key mechanical keyboard on a bare textolite plate, low black caps on a square grid without stagger, each
-with a paper sticker (the E-mode word on a grey band at the top, the letter in a yellow disc, the SS symbol in white,
-the keyword in red, the E + SS word on a grey band at the bottom); the shifts and BREAK SPACE yellow, ENTER red.
+Soviet 40-key mechanical keyboard, low black caps on a square grid without stagger, each with a paper sticker (the
+E-mode word on a grey band at the top, the letter in a yellow disc, the SS symbol in white, the keyword in red, the
+E + SS word on a grey band at the bottom); the shifts and BREAK SPACE yellow, ENTER red. The plate sits in a plain black
+rectangular box, one opening for the key block, no rear, no badge, no logo (the owner 2026-10-20: the bare plate
+looked unnatural, the Pentagon case's empty rear too).
 
-Sources: references/clones.md §0, §1.2 (pentagon-habr446366-kbd.jpg: the plate and the grid measured on it against a
-19 mm pitch; the stickers read on it); the words from the 48K's set (keyboards/zx48k.py).
+Sources: references/clones.md §0, §1.2 (pentagon-habr446366-kbd.jpg: the grid measured on it against a 19 mm pitch;
+the stickers read on it); the box's opening after the owner's pentagon-case-top-owner.png; the words from the 48K's set (keyboards/zx48k.py).
 """
 
 from keyboards.zx48k import LETTERS
 from model import Key, Legend, Model, Part
 from svgkit import text_width
 
-KEYBOARD = {"id": "pentagon", "name": "Pentagon 128", "models": ["PENTAGON"], "size": [222, 110], "matrix": "zx"}
+KEYBOARD = {"id": "pentagon", "name": "Pentagon 128", "models": ["PENTAGON"], "size": [220, 106], "matrix": "zx"}
 
 U = 19.0                 # the grid's pitch, mm
 CAP = 17.4               # the cap's side
-X0, Y0 = 17.0, 13.0      # the first cap's top left
-PLATE = "#c98f2c"
+X0, Y0 = 15.8, 15.8      # the first cap's top left: the block centred in the box
+CASE = "#1e1d21"
+WELL = "#141416"
 KEY = "#1b1b1c"
 BAND = "#cacac6"
 YELLOW, RED, WHITE, INK = "#f0c419", "#e2392c", "#f2f2f2", "#141414"
@@ -86,11 +89,11 @@ def plain(name):
 def layout():
     m = Model()
     W, H = KEYBOARD["size"]
-    m.case.append(Part("plate", {"x": 0, "y": 0, "w": W, "h": H, "r": 1.5}, PLATE, {"sheen": 0.04}))
-    for x, y, w, h in [(10, -1.5, 22, 7), (98, -1.5, 22, 7), (186, -1.5, 22, 7),  # the foam pads it was stuck on with
-                       (8, H - 7.5, 22, 9), (98, H - 8.5, 22, 9), (190, H - 7.5, 22, 9)]:
-        m.case.append(Part("stripe", {"points": [(x, max(y, 0)), (x + w, max(y, 0)), (x + w, min(y + h, H)),
-                                                 (x, min(y + h, H))]}, "#ecebe6"))
+    block_w, block_h = 9 * U + CAP, 3 * U + CAP
+    m.case += [
+        Part("body", {"x": 0, "y": 0, "w": W, "h": H, "r": 4.0, "matte": True}, CASE),
+        Part("well", {"x": X0 - 6.0, "y": Y0 - 6.0, "w": block_w + 12.0, "h": block_h + 12.0, "r": 1.0}, WELL),
+    ]
     for r, row in enumerate(ROWS):
         for c, name in enumerate(row):
             rect = (X0 + c * U, Y0 + r * U, CAP, CAP)

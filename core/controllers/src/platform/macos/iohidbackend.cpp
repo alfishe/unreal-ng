@@ -4,10 +4,12 @@
 #include <IOKit/hid/IOHIDKeys.h>
 #include <IOKit/hid/IOHIDManager.h>
 
+#include <mach/mach_time.h>
 #include <pthread.h>
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <future>
 #include <iterator>
@@ -65,6 +67,53 @@ std::string Hash(const std::string& text)
     char out[12];
     snprintf(out, sizeof(out), "%08x", hash);
     return out;
+}
+
+/// An IOHID report's time stamp (mach absolute time) in the steady clock's nanoseconds, the router's clock (libc++
+/// counts it from the same CLOCK_UPTIME_RAW); 0 (the router takes its own time) when it is not plausibly now
+uint64_t ReportTimeNs(uint64_t stamp)
+{
+    static const mach_timebase_info_data_t timebase = [] {
+        mach_timebase_info_data_t info{};
+        mach_timebase_info(&info);
+        return info;
+    }();
+    if (stamp == 0 || timebase.denom == 0)
+        return 0;
+    const uint64_t ns = static_cast<uint64_t>(static_cast<__uint128_t>(stamp) * timebase.numer / timebase.denom);
+    const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count());
+    constexpr uint64_t kPlausibleNs = 1'000'000'000;
+    return ns <= now && now - ns < kPlausibleNs ? ns : 0;
+}
+
+/// An IOHIDDeviceRef kept alive for a writer thread that may outlive the backend's entry
+struct RetainedDevice
+{
+    explicit RetainedDevice(IOHIDDeviceRef device) : ref(device)
+    {
+        CFRetain(ref);
+    }
+    ~RetainedDevice()
+    {
+        CFRelease(ref);
+    }
+    RetainedDevice(const RetainedDevice&) = delete;
+    RetainedDevice& operator=(const RetainedDevice&) = delete;
+    IOHIDDeviceRef ref;
+};
+
+std::unique_ptr<SurfaceDialWriter> MakeDialWriter(IOHIDDeviceRef ref)
+{
+    auto device = std::make_shared<RetainedDevice>(ref);
+    return std::make_unique<SurfaceDialWriter>(
+        [device](SurfaceDialWriter::ReportType type, const std::vector<uint8_t>& report) {
+            const IOHIDReportType kind =
+                type == SurfaceDialWriter::ReportType::Feature ? kIOHIDReportTypeFeature : kIOHIDReportTypeOutput;
+            return IOHIDDeviceSetReport(device->ref, kind, report[0], report.data(),
+                                        static_cast<CFIndex>(report.size())) == kIOReturnSuccess;
+        });
 }
 
 CFDictionaryRef Matching(int usage)
@@ -155,20 +204,49 @@ public:
         return 0;
     }
 
-    /// The Surface Dial's clicks: output report 1 of its Simple Haptic Controller (SurfaceDial::HapticReport)
+    /// The Surface Dial's clicks: output report 1 of its Simple Haptic Controller (SurfaceDial::HapticReport), queued
+    /// for its writer thread
     bool PlayClicks(const HostDeviceId& device, const HapticClicks& clicks) override
     {
         std::lock_guard lock(_mutex);
-        for (const auto& [ref, known] : _devices)
+        if (SurfaceDialWriter* writer = WriterLocked(device))
         {
-            if (known->id != device || !known->dial)
-                continue;
-            const std::vector<uint8_t> report = SurfaceDial::HapticReport(clicks);
-            return IOHIDDeviceSetReport(known->ref, kIOHIDReportTypeOutput, report[0], report.data(),
-                                        static_cast<CFIndex>(report.size())) == kIOReturnSuccess;
+            writer->Clicks(clicks);
+            return true;
         }
         return false;
     }
+
+    /// region <Surface outputs: the Dial's patterns and steps, through its writer thread>
+    uint8_t Outputs(const HostDeviceId& device) const override
+    {
+        std::lock_guard lock(_mutex);
+        return WriterLocked(device) != nullptr ? static_cast<uint8_t>(kOutputHaptic | kOutputSteps) : 0;
+    }
+
+    bool Output(const HostDeviceId& device, const HapticOut& out) override
+    {
+        std::lock_guard lock(_mutex);
+        if (SurfaceDialWriter* writer = WriterLocked(device))
+        {
+            writer->Pattern(out.pattern);
+            return true;
+        }
+        return false;
+    }
+
+    /// Kept by id: the Dial gets it again when it reconnects (it forgets its settings when it sleeps)
+    bool Output(const HostDeviceId& device, const StepsOut& out) override
+    {
+        std::lock_guard lock(_mutex);
+        SurfaceDialWriter* writer = WriterLocked(device);
+        if (writer == nullptr)
+            return false;
+        _dialSteps[device] = out;
+        writer->Steps(out);
+        return true;
+    }
+    /// endregion </Surface outputs>
 
     /// The Xbox Bluetooth rumble report (as SDL's HIDAPI Xbox One driver sends it): 03, enable 0F, left trigger,
     /// right trigger, low motor, high motor (0..100), duration FF, delay 00, repeat EB
@@ -220,6 +298,7 @@ private:
         std::unique_ptr<HidPad> hid;
         std::unique_ptr<XboxGipPad> gip;
         std::unique_ptr<SurfaceDial> dial;
+        std::unique_ptr<SurfaceDialWriter> writer;  ///< a Dial's feature and output reports
         IoHidBackend* owner = nullptr;
         IOHIDDeviceRef ref = nullptr;
         bool xboxBluetooth = false;  ///< rumble through output report 3 (an Xbox One / Series pad over Bluetooth)
@@ -293,10 +372,19 @@ private:
     {
         static_cast<IoHidBackend*>(context)->OnRemoved(ref);
     }
-    static void Report(void* context, IOReturn, void*, IOHIDReportType, uint32_t, uint8_t* report, CFIndex size)
+    static void Report(void* context, IOReturn, void*, IOHIDReportType, uint32_t, uint8_t* report, CFIndex size,
+                       uint64_t stamp)
     {
         Device* device = static_cast<Device*>(context);
-        device->owner->OnReport(*device, report, static_cast<size_t>(size));
+        device->owner->OnReport(*device, report, static_cast<size_t>(size), ReportTimeNs(stamp));
+    }
+
+    SurfaceDialWriter* WriterLocked(const HostDeviceId& device) const
+    {
+        for (const auto& [ref, known] : _devices)
+            if (known->id == device && known->writer)
+                return known->writer.get();
+        return nullptr;
     }
 
     void OnAdded(IOHIDDeviceRef ref)
@@ -367,7 +455,10 @@ private:
             }
         }
         if (device->dial)
+        {
             device->rumbleUnavailable.clear();  // no motors, but its clicks play (PlayClicks)
+            device->writer = MakeDialWriter(ref);
+        }
 
         // architecture.md §5: usb:<vid>:<pid>:<version>:<serial>, usb:...@<path hash>, bt:<vid>:<pid>:<hash>
         const std::string serial = StringProperty(ref, CFSTR(kIOHIDSerialNumberKey));
@@ -395,6 +486,10 @@ private:
             device->id = unique;
             device->buffer.resize(static_cast<size_t>(maxInput > 0 ? maxInput : 64));
             info.id = unique;
+            // A Dial that reconnects gets the steps it had (architecture.md §9: the driver applies them again)
+            if (device->writer)
+                if (const auto steps = _dialSteps.find(unique); steps != _dialSteps.end())
+                    device->writer->Steps(steps->second);
         }
         Device* raw = device.get();
         {
@@ -402,8 +497,10 @@ private:
             _devices[ref] = std::move(device);
         }
         _sink->OnDeviceAdded(info);
-        IOHIDDeviceRegisterInputReportCallback(ref, raw->buffer.data(), static_cast<CFIndex>(raw->buffer.size()),
-                                               &IoHidBackend::Report, raw);
+        // With the report's time stamp: the encoder's speed counts from when the report came, not when it ran
+        IOHIDDeviceRegisterInputReportWithTimeStampCallback(ref, raw->buffer.data(),
+                                                            static_cast<CFIndex>(raw->buffer.size()),
+                                                            &IoHidBackend::Report, raw);
     }
 
     void OnRemoved(IOHIDDeviceRef ref)
@@ -417,9 +514,11 @@ private:
             device = std::move(it->second);
             _devices.erase(it);
         }
-        IOHIDDeviceRegisterInputReportCallback(ref, device->buffer.data(),
-                                               static_cast<CFIndex>(device->buffer.size()), nullptr, nullptr);
+        IOHIDDeviceRegisterInputReportWithTimeStampCallback(ref, device->buffer.data(),
+                                                            static_cast<CFIndex>(device->buffer.size()), nullptr,
+                                                            nullptr);
         _sink->OnDeviceRemoved(device->id);
+        // The writer ends with the device: a write in flight finishes first (a gone device refuses it at once)
     }
 
     void ExpireDials()
@@ -438,10 +537,10 @@ private:
             });
     }
 
-    void OnReport(Device& device, const uint8_t* report, size_t size)
+    void OnReport(Device& device, const uint8_t* report, size_t size, uint64_t timeNs)
     {
-        const auto sink = [this, &device](const std::string& control, float value) {
-            _sink->OnControl({device.id, control, value, 0});
+        const auto sink = [this, &device, timeNs](const std::string& control, float value) {
+            _sink->OnControl({device.id, control, value, timeNs});
         };
         if (device.gip)
             device.gip->Decode(report, size, sink);
@@ -457,6 +556,7 @@ private:
     std::atomic<bool> _stopping{false};
     mutable std::mutex _mutex;
     std::map<IOHIDDeviceRef, std::unique_ptr<Device>> _devices;
+    std::map<HostDeviceId, StepsOut> _dialSteps;  ///< under _mutex: each Dial's last steps, kept across a reconnect
 };
 }  // namespace
 

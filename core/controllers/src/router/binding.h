@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "profiles/json.h"
 #include "router/analog.h"
 
 namespace controllers
@@ -43,6 +44,9 @@ struct BindingOptions
     /// `curve: scrub`: an action gets the source's level (0..1) whenever it changes, not a press
     /// (debug-and-ttd.md §3.2, the scrub curve)
     bool level = false;
+    /// `curve: {unit, min, max, rate_lo, rate_hi}`: the action's parameters (`ttd.seek_by`'s scrub curve), passed on
+    /// with each of its events as written (control surfaces actions.md §2); null when the binding has none
+    JsonValue params{};
     std::string label;  ///< the game's meaning ("Fire"), shown in the picture
 };
 
@@ -111,6 +115,14 @@ struct Binding
     BindingOptions options;
     std::string layer = kPlayLayer;
 };
+
+/// A context layer of a debug profile (control surfaces profiles.md §1): `@<context>` is up while the instance's
+/// context is that one, `@<prefix>.*` while it starts with `<prefix>.`; the longest match wins, above `debug`
+bool IsContextLayer(const std::string& layer);
+/// `@` + a context name (lowercase letters, digits, '.', '_', '-', starting with a letter), maybe ending in `.*`
+bool ValidContextLayer(const std::string& layer, std::string& error);
+/// How well @p layer matches @p context: the layer name's length when it does (the longest wins), -1 when not
+int ContextLayerMatch(const std::string& layer, const std::string& context);
 
 /// "kempston:fire" -> the target; false with the reason (an unknown control lists the known ones)
 bool ParseRetroTarget(const std::string& text, RetroTarget& out, std::string& error);

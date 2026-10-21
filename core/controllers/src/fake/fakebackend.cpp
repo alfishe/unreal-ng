@@ -76,4 +76,51 @@ RumbleLevels FakeBackend::Rumble(const HostDeviceId& device) const
     return it == _rumble.end() ? RumbleLevels{} : it->second;
 }
 
+void FakeBackend::SetOutputs(const HostDeviceId& device, uint8_t outputs)
+{
+    std::lock_guard<std::mutex> lock(_outputMutex);
+    _outputs[device] = outputs;
+}
+
+uint8_t FakeBackend::Outputs(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_outputMutex);
+    const auto it = _outputs.find(device);
+    return it == _outputs.end() ? 0 : it->second;
+}
+
+bool FakeBackend::Output(const HostDeviceId& device, const HapticOut& out)
+{
+    std::lock_guard<std::mutex> lock(_outputMutex);
+    const auto it = _outputs.find(device);
+    if (it == _outputs.end() || (it->second & kOutputHaptic) == 0)
+        return false;
+    _patterns[device].push_back(out.pattern);
+    return true;
+}
+
+bool FakeBackend::Output(const HostDeviceId& device, const StepsOut& out)
+{
+    std::lock_guard<std::mutex> lock(_outputMutex);
+    const auto it = _outputs.find(device);
+    if (it == _outputs.end() || (it->second & kOutputSteps) == 0)
+        return false;
+    _steps[device].push_back(out);
+    return true;
+}
+
+std::vector<HapticPattern> FakeBackend::Patterns(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_outputMutex);
+    const auto it = _patterns.find(device);
+    return it == _patterns.end() ? std::vector<HapticPattern>{} : it->second;
+}
+
+std::vector<StepsOut> FakeBackend::Steps(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_outputMutex);
+    const auto it = _steps.find(device);
+    return it == _steps.end() ? std::vector<StepsOut>{} : it->second;
+}
+
 }  // namespace controllers

@@ -196,5 +196,39 @@ def test_the_position_polled_at_50_hz_does_not_slow_a_recording_machine(s):
         end_session(s, emu, session)
 
 
+def test_host_devices_show_role_layers_context_and_the_output_verb_checks(s):
+    """S3: the devices verb names each device's role, layers and context on MCP, REST and the socket alike; the
+    output verb refuses what is not a control surface's output; a connected Surface Dial plays a pattern"""
+    status, rest = http(s, 'GET', '/api/v1/controllers/devices')
+    if status == 503:
+        return  # a process without the Qt client: no host input
+    expect(status == 200 and rest['ok'], 'the host devices', rest)
+    keyboard = next((d for d in rest['devices'] if d['id'] == 'kbd:system'), None)
+    expect(keyboard is not None and keyboard['role'] == 'debugger-remote' and keyboard['role_set'],
+           'the window keyboard: a remote by choice', rest)
+    expect(keyboard['layers'][0] == 'debug' and keyboard['outputs'] == [], 'its layers, no outputs', keyboard)
+    socket = ws_calls(s, [('GET', '/api/v1/controllers/devices', None)])
+    expect(socket[1]['status'] == 200 and socket[1]['body']['devices'] == rest['devices'], 'the socket agrees', socket)
+    r = s.call('controllers', {'action': 'devices'})
+    expect('kbd:system' in r.text and 'role debugger-remote' in r.text and 'layers debug' in r.text,
+           'MCP names the role and the layers in its text', r.text)
+
+    status, body = http(s, 'POST', '/api/v1/controllers/output', {'device': 'kbd:system', 'pattern': 'tick'})
+    expect(status == 503 and body['error'] == 'unavailable', 'a keyboard plays no patterns', body)
+    status, body = http(s, 'POST', '/api/v1/controllers/output', {'device': 'kbd:system', 'pattern': 'thud'})
+    expect(status == 400 and body['error'] == 'bad-request', 'not a pattern', body)
+    status, body = http(s, 'GET', '/api/v1/controllers/output?device=kbd:system&pattern=tick')
+    expect(status == 405, 'output is a POST', body)
+    r = s.call('controllers', {'action': 'output', 'device': 'kbd:system', 'marks': 'minute'}, ok=False)
+    expect(r.is_error and 'unknown mark' in r.text, 'MCP: an unknown mark', r.text)
+
+    dial = next((d for d in rest['devices'] if d['family'] == 'surface-dial'), None)
+    if dial is None:
+        return  # no Dial connected to this host: the rest is the owner's
+    expect(dial['role'] == 'debugger-remote' and 'haptic' in dial['outputs'], 'the Dial: a remote with outputs', dial)
+    r = s.call('controllers', {'action': 'output', 'device': dial['id'], 'pattern': 'tick'})
+    expect('tick on' in r.text, 'a tick on the Dial', r.text)
+
+
 if __name__ == '__main__':
     sys.exit(main(globals()))

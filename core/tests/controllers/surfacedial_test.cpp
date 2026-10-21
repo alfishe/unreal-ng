@@ -341,7 +341,8 @@ TEST(SurfaceDial_Test, FakeBackend_ListedAndUnboundEventsDoNothing)
     EXPECT_EQ(listed[0].id, kDial.id);
     EXPECT_EQ(listed[0].family, "surface-dial");
     EXPECT_EQ(listed[0].name, "Surface Dial");
-    EXPECT_EQ(service.Router().Role(kDial.id), DeviceRole::Player) << "the router's default, for now";
+    EXPECT_EQ(service.Router().Role(kDial.id), DeviceRole::DebuggerRemote) << "its family's role (Q-8)";
+    EXPECT_FALSE(service.Router().RoleSet(kDial.id)) << "a default, not a choice";
 
     Binding fire;
     fire.sources = {"south"};

@@ -11,6 +11,7 @@
 #include "common/companion_helper.h"
 #include "common/request_gates.h"
 #include "common/session_helper.h"
+#include "ws-hub.h"
 
 namespace api
 {
@@ -107,10 +108,28 @@ void ApiWebSocket::handleNewConnection(const drogon::HttpRequestPtr& req, const 
     connection->peer = req->getPeerAddr().toIpPort();
     connection->peerHost = req->getPeerAddr().toIp();
     wsConnPtr->setContext(connection);
+
+    // The topics and the surface topic (ws-hub.h): the hub sends and closes through these, from its loop
+    std::weak_ptr<drogon::WebSocketConnection> weak = wsConnPtr;
+    WsHub::Peer peer;
+    peer.token = connection->token;
+    peer.source = connection->source;
+    peer.host = connection->peerHost;
+    WsHub::Instance().Open(
+        wsConnPtr.get(), std::move(peer),
+        [weak](const std::string& text) {
+            if (auto socket = weak.lock(); socket && socket->connected())
+                socket->send(text);
+        },
+        [weak] {
+            if (auto socket = weak.lock(); socket && socket->connected())
+                socket->shutdown(drogon::CloseCode::kNormalClosure);
+        });
 }
 
 void ApiWebSocket::handleConnectionClosed(const drogon::WebSocketConnectionPtr& wsConnPtr)
 {
+    WsHub::Instance().Remove(wsConnPtr.get());
     wsConnPtr->clearContext();
 }
 
@@ -144,6 +163,7 @@ void ApiWebSocket::handleNewMessage(const drogon::WebSocketConnectionPtr& wsConn
             return;
         }
         connection->token = token;
+        WsHub::Instance().SetToken(wsConnPtr.get(), token);
         Json::Value ok;
         ok["op"] = "auth";
         ok["t"] = "call";
@@ -153,7 +173,10 @@ void ApiWebSocket::handleNewMessage(const drogon::WebSocketConnectionPtr& wsConn
     }
     if (op != "call")
     {
-        Send(weak, Error(rid, "bad_request", "unknown op '" + op + "' (call, auth; topics come later)"));
+        // Topics and the surface topic: the hub
+        if (!WsHub::Instance().HandleMessage(wsConnPtr.get(), request))
+            Send(weak, Error(rid, "bad_request",
+                             "unknown op '" + op + "' (call, auth, subscribe, unsubscribe, join, action, bye)"));
         return;
     }
 

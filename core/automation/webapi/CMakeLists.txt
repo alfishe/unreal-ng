@@ -222,6 +222,10 @@ set(COMMON_SOURCES
     src/common/request_gates.h
     src/companion-event-hub.cpp
     src/companion-event-hub.h
+    src/ws-hub.cpp
+    src/ws-hub.h
+    src/surface-hub.cpp
+    src/surface-hub.h
     src/debug-event-hub.cpp
     src/debug-event-hub.h
     src/automation-webapi.cpp

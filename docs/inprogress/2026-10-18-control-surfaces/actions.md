@@ -190,7 +190,7 @@ The context is not a readout: it is the `ctx` message ([protocol.md §3](protoco
 
 ## 6. Planes
 
-Every plane (automation planes guidelines; built in S1 except the `surface` topic). Reference:
+Every plane (automation planes guidelines; built in S1, the `surface` topic in S4). Reference:
 [command-interface.md §16](../../emulator/design/control-interfaces/command-interface.md#16-host-actions).
 
 | Plane | List | Run |
@@ -200,7 +200,7 @@ Every plane (automation planes guidelines; built in S1 except the `surface` topi
 | Lua | `actions()` | `action(id, [value], [params])` |
 | MCP | `actions` `list` | `actions` `run` (`id`, `value`, `params`, `target`) |
 | REST | `GET /api/v1/controllers/actions` (`?instance=`: id, label, group, kind, held, gui, scope, `needs_pause`, `available`, `error`, `reason`) | `POST /api/v1/controllers/actions/{id}` `{instance?, value?, params?}` |
-| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/controllers/actions"}` on `/api/v1/ws` | `{"op":"call","method":"POST","path":"/api/v1/controllers/actions/{id}","body":…}`; push: the `surface` topic (`action`, `result`, `ctx`, readouts, S4) |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/controllers/actions"}` on `/api/v1/ws` | `{"op":"call","method":"POST","path":"/api/v1/controllers/actions/{id}","body":…}`; push: the `surface` topic (`join`, `action`, `result`, `ctx`, readouts; [websocket-interface.md §3.1](../../emulator/design/control-interfaces/websocket-interface.md#31-the-surface-topic)) |
 | Qt | menus and toolbars call the registry (C7); a device's action bindings run through it (`unreal-qt/src/controllers/guiactions.cpp`) | |
 
 Rows for the [controller manager parity table](../2026-10-17-controller-manager/surfaces.md#5-parity-table).

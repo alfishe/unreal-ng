@@ -254,6 +254,13 @@ void MenuManager::createViewMenu()
     _nextLayersAction->setChecked(false);
     connect(_nextLayersAction, &QAction::triggered, this, &MenuManager::nextLayersToggled);
 
+    // The machine's own keyboard to click (POC 031 pictures, controller manager osd.keyboard)
+    _osdKeyboardAction = _viewMenu->addAction(tr("On-screen &Keyboard"));
+    _osdKeyboardAction->setStatusTip(tr("Show/hide the emulated machine's keyboard to click"));
+    _osdKeyboardAction->setCheckable(true);
+    _osdKeyboardAction->setChecked(false);
+    connect(_osdKeyboardAction, &QAction::triggered, this, &MenuManager::osdKeyboardToggled);
+
     _viewMenu->addSeparator();
 
     // Toolbar (transport toolbar under the menu bar)
@@ -577,6 +584,12 @@ void MenuManager::setNextLayersChecked(bool checked)
 {
     if (_nextLayersAction)
         _nextLayersAction->setChecked(checked);
+}
+
+void MenuManager::setOsdKeyboardChecked(bool checked)
+{
+    if (_osdKeyboardAction)
+        _osdKeyboardAction->setChecked(checked);
 }
 
 void MenuManager::setSlotsWindowChecked(bool checked)

@@ -2,6 +2,10 @@
 
 #include <chrono>
 
+#if defined(__APPLE__) || defined(__linux__)
+#include <pthread.h>
+#endif
+
 namespace controllers
 {
 
@@ -159,5 +163,117 @@ std::vector<uint8_t> SurfaceDial::HapticReport(const HapticClicks& clicks)
     return {kOutputReport, count, clicks.wave == HapticClicks::Wave::Buzz ? kBuzz : kClick,
             static_cast<uint8_t>(clicks.periodMs & 0xFF), static_cast<uint8_t>(clicks.periodMs >> 8)};
 }
+
+std::vector<uint8_t> SurfaceDial::PatternReport(HapticPattern pattern)
+{
+    switch (pattern)
+    {
+        case HapticPattern::Tick: return HapticReport({HapticClicks::Wave::Click, 1, 80});
+        case HapticPattern::Double: return HapticReport({HapticClicks::Wave::Click, 2, 60});
+        case HapticPattern::Buzz: return HapticReport({HapticClicks::Wave::Buzz, 1, 80});
+    }
+    return HapticReport({});
+}
+
+std::vector<uint8_t> SurfaceDial::FeatureReport(const StepsOut& steps, const SurfaceDialFeature& base)
+{
+    constexpr uint8_t kAutoNone = 1;
+    constexpr uint8_t kAutoClick = 3;
+    const uint16_t perTurn = steps.perTurn == 0 ? 36 : steps.perTurn;
+    // The descriptor's logical minimum of the cutoff and the retrigger is 1: 0 would be ignored by the device
+    const uint8_t cutoff = base.cutoff == 0 ? 5 : base.cutoff;
+    const uint16_t retrigger = base.retriggerMs == 0 ? 80 : base.retriggerMs;
+    return {kFeatureReport,
+            static_cast<uint8_t>(perTurn & 0xFF),
+            static_cast<uint8_t>(perTurn >> 8),
+            0,
+            steps.clicks ? kAutoClick : kAutoNone,
+            cutoff,
+            static_cast<uint8_t>(retrigger & 0xFF),
+            static_cast<uint8_t>(retrigger >> 8)};
+}
+
+/// region <SurfaceDialWriter>
+
+SurfaceDialWriter::SurfaceDialWriter(Write write) : _write(std::move(write)), _thread([this] { Run(); })
+{
+}
+
+SurfaceDialWriter::~SurfaceDialWriter()
+{
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _stopping = true;
+        _feature.reset();
+        _output.reset();
+    }
+    _wake.notify_all();
+    _thread.join();
+}
+
+void SurfaceDialWriter::Steps(const StepsOut& steps)
+{
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _feature = SurfaceDial::FeatureReport(steps);
+    }
+    _wake.notify_all();
+}
+
+void SurfaceDialWriter::Pattern(HapticPattern pattern)
+{
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _output = SurfaceDial::PatternReport(pattern);
+    }
+    _wake.notify_all();
+}
+
+void SurfaceDialWriter::Clicks(const HapticClicks& clicks)
+{
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _output = SurfaceDial::HapticReport(clicks);
+    }
+    _wake.notify_all();
+}
+
+uint64_t SurfaceDialWriter::Written() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _written;
+}
+
+uint64_t SurfaceDialWriter::Failed() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _failed;
+}
+
+void SurfaceDialWriter::Run()
+{
+#if defined(__APPLE__)
+    pthread_setname_np("dial-writer");
+#elif defined(__linux__)
+    pthread_setname_np(pthread_self(), "dial-writer");
+#endif
+    std::unique_lock<std::mutex> lock(_mutex);
+    while (true)
+    {
+        _wake.wait(lock, [this] { return _stopping || _feature || _output; });
+        if (_stopping)
+            return;
+        // The steps first: a pattern after a context change plays in the new feel
+        const ReportType type = _feature ? ReportType::Feature : ReportType::Output;
+        std::vector<uint8_t> report = std::move(type == ReportType::Feature ? *_feature : *_output);
+        (type == ReportType::Feature ? _feature : _output).reset();
+        lock.unlock();
+        const bool ok = _write && _write(type, report);
+        lock.lock();
+        ++(ok ? _written : _failed);
+    }
+}
+
+/// endregion </SurfaceDialWriter>
 
 }  // namespace controllers

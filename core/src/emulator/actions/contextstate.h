@@ -10,7 +10,8 @@
 /// center; followers (the Qt owner pushing it into the router, the surface hub sending `ctx`) react to it.
 ///
 /// Until somebody sets one (or after `ctx.set ""`), the context is the default (owner decision Q-7): `ttd` when the
-/// instance has a time travel history, else `play`. The default follows the history without a notification.
+/// instance has a time travel history, else `play`. The default follows the history: when the history appears or goes
+/// while no context is set, the TTD backend says so (HistoryChanged) and NC_SURFACE_CONTEXT is posted by "default".
 ///
 /// Process-wide, keyed by instance id, thread-safe; reads never touch the machine (the history check reads the TTD's
 /// published cursor). Headless as well: the core owns it, not the Qt client.
@@ -52,6 +53,14 @@ public:
              std::string& error);
     /// The instance is gone (EmulatorManager)
     void Drop(const std::string& instanceId);
+    /// The time travel history of `instanceId` appeared (`history`) or went (ttd::NoteHistoryChange, from the
+    /// backend's cursor publish, possibly on the emulation thread). While no context is set, the default flips
+    /// (`play` <-> `ttd`) and NC_SURFACE_CONTEXT is posted with `by` = kByDefault; a set context stays and nothing is
+    /// posted. One lookup under the lock and at most one post: never waits for anything
+    void HistoryChanged(const std::string& instanceId, bool history);
+
+    /// The `by` of a change of the default (the history appeared or went)
+    static constexpr const char* kByDefault = "default";
 
     /// The default (Q-7): `ttd` when `emulator` has a time travel history, else `play`
     static std::string DefaultFor(Emulator* emulator);

@@ -25,14 +25,17 @@ namespace ttd
 class TTDCursorCell
 {
 public:
-    /// Store `cursor` (its `paused` is not stored: read it live). Equal to the last one: nothing changes
-    void Publish(const TTDCursor& cursor)
+    /// Store `cursor` (its `paused` is not stored: read it live). Equal to the last one: nothing changes. True when
+    /// `history` flipped (a history appeared or went; before the first write there was none): the backend tells the
+    /// surface context (NoteHistoryChange), whose default follows the history
+    bool Publish(const TTDCursor& cursor)
     {
         std::lock_guard<std::mutex> lock(_writer);
         TTDCursor value = cursor;
         value.paused = false;
         if (_written && value == _last)
-            return;
+            return false;
+        const bool flipped = (_written && _last.history) != value.history;
         _last = value;
         _written = true;
         const uint64_t sequence = _sequence.load(std::memory_order_relaxed);
@@ -45,6 +48,7 @@ public:
                        std::memory_order_relaxed);
         _flags.store(static_cast<uint32_t>(value.state) | (value.history ? 0x100u : 0u), std::memory_order_relaxed);
         _sequence.store(sequence + 2, std::memory_order_release);
+        return flipped;
     }
 
     /// The last cursor published (all zero before the first); never blocks on a writer for longer than its stores
@@ -95,5 +99,10 @@ private:
 /// Frames per second of the machine's own clock: base_z80_frequency / the unscaled frame length, so turbo does not
 /// change a time code (Pentagon 3.5 MHz / 71680 T = 48.83 Hz). 50 without a context
 double TTDFrameRate(const EmulatorContext* context);
+
+/// The history of the context's instance appeared (`history`) or went: the surface context's default follows it
+/// (actions::ContextState::HistoryChanged, owner decision Q-7). Called by a backend when Publish says so; one post at
+/// most, never waits
+void NoteHistoryChange(const EmulatorContext* context, bool history);
 
 }  // namespace ttd

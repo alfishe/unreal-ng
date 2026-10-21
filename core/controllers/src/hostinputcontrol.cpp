@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <mutex>
 
@@ -140,6 +141,27 @@ JsonValue Summary(const Profile& profile, const ResolvedProfiles& resolved)
     return item;
 }
 
+std::vector<std::string> OutputNames(uint8_t outputs)
+{
+    std::vector<std::string> names;
+    if ((outputs & kOutputHaptic) != 0)
+        names.emplace_back("haptic");
+    if ((outputs & kOutputSteps) != 0)
+        names.emplace_back("steps");
+    return names;
+}
+
+JsonValue FeelValue(const LayerHaptics& feel)
+{
+    JsonValue marks = JsonValue::Object();
+    for (const auto& [kind, pattern] : feel.marks)
+        marks.Set(kind, JsonValue::String(HapticPatternName(pattern)));
+    return JsonValue::Object({{"steps", JsonValue::Number(feel.steps.perTurn)},
+                              {"clicks", JsonValue::Bool(feel.steps.clicks)},
+                              {"marks", marks},
+                              {"min_interval_ms", JsonValue::Number(feel.minIntervalMs)}});
+}
+
 std::string Sanitized(const std::string& text)
 {
     std::string out = text;
@@ -187,7 +209,7 @@ const std::vector<std::string>& HostInputControl::Verbs()
 {
     static const std::vector<std::string> verbs = {"devices", "context", "profiles", "profile", "save",
                                                    "delete",  "apply",   "bindings", "bind",    "unbind",
-                                                   "scheme",  "haptics", "rumble"};
+                                                   "scheme",  "haptics", "rumble",   "output"};
     return verbs;
 }
 
@@ -207,6 +229,7 @@ const std::vector<std::string>& HostInputControl::OptionsFor(const std::string& 
         {"scheme", {"id", "family", "device", "profile"}},
         {"haptics", {"device"}},
         {"rumble", {"device", "effect"}},
+        {"output", {"device", "pattern", "steps", "clicks", "marks"}},
     };
     static const std::vector<std::string> none;
     const auto it = options.find(verb);
@@ -287,6 +310,8 @@ HostReply HostInputControl::Execute(const HostRequest& request)
         return Haptics(request);
     if (verb == "rumble")
         return Rumble(request);
+    if (verb == "output")
+        return Output(request);
     std::string list;
     for (const std::string& known : Verbs())
         list += (list.empty() ? "" : ", ") + known;
@@ -297,6 +322,7 @@ HostReply HostInputControl::Devices()
 {
     HostReply reply;
     std::vector<JsonValue> devices;
+    HostInputService* input = _owner.Input();
     for (const HostDeviceInfo& device : _owner.Context().devices)
     {
         JsonValue item = JsonValue::Object({{"id", JsonValue::String(device.id)},
@@ -308,6 +334,23 @@ HostReply HostInputControl::Devices()
         const DeviceMatch family = DeviceDatabase::Builtin().ForFamily(device.family, device.layout);
         if (!family.controls.empty())
             item.Set("controls", Strings(family.controls));
+        if (input != nullptr)
+        {
+            // The role (the family's default until somebody sets one), the layers up, the context of the instance it
+            // acts on, the surface outputs and the feel of its top layer (control surfaces profiles.md §1)
+            InputRouter& router = input->Router();
+            item.Set("role", JsonValue::String(DeviceRoleName(router.Role(device.id))));
+            item.Set("role_set", JsonValue::Bool(router.RoleSet(device.id)));
+            std::vector<std::string> layers;
+            for (const std::string& layer : router.Layers(device.id))
+                layers.push_back(layer.empty() ? "play" : layer);
+            item.Set("layers", Strings(layers));
+            item.Set("context", JsonValue::String(router.Context(device.id)));
+            item.Set("outputs", Strings(OutputNames(input->Outputs(device.id))));
+            LayerHaptics feel;
+            if (router.Feel(device.id, feel))
+                item.Set("feel", FeelValue(feel));
+        }
         devices.push_back(std::move(item));
     }
     reply.body.Set("devices", JsonValue::Array(std::move(devices)));
@@ -377,6 +420,100 @@ HostReply HostInputControl::Rumble(const HostRequest& request)
     for (const TestEffect& test : effects)
         list += (list.empty() ? "" : ", ") + test.id;
     return Fail("bad-request", "no effect '" + name + "' on " + device->name + " (it has: " + list + ")");
+}
+
+HostReply HostInputControl::Output(const HostRequest& request)
+{
+    const std::string id = Option(request, "device");
+    if (id.empty())
+        return Fail("bad-request", "output needs device= (devices lists the devices and their outputs)");
+    const std::vector<HostDeviceInfo> devices = _owner.Context().devices;
+    const HostDeviceInfo* device = FindDevice(devices, id);
+    if (device == nullptr)
+        return Fail("unknown-device", "no connected host device '" + id + "' (devices lists them)");
+    HostInputService* input = _owner.Input();
+    if (input == nullptr)
+        return Fail("unavailable", "No host output in this process");
+    const uint8_t outputs = input->Outputs(id);
+    const std::string pattern = Option(request, "pattern");
+    const std::string marks = Option(request, "marks");
+    const bool steps = request.options.count("steps") != 0 || request.options.count("clicks") != 0;
+    if ((pattern.empty() ? 0 : 1) + (marks.empty() ? 0 : 1) + (steps ? 1 : 0) != 1)
+        return Fail("bad-request",
+                    "output takes one of pattern= (tick, double, buzz), steps= / clicks= (the feel), marks= (a seek's "
+                    "marks, as the device's layer plays them)");
+    HostReply reply;
+    reply.body.Set("device", JsonValue::String(id));
+    reply.body.Set("outputs", Strings(OutputNames(outputs)));
+    if (!pattern.empty())
+    {
+        HapticPattern parsed;
+        if (!HapticPatternFromName(pattern, parsed))
+            return Fail("bad-request", "pattern is tick, double or buzz, not '" + pattern + "'");
+        if ((outputs & kOutputHaptic) == 0 || !input->Output(id, HapticOut{parsed}))
+            return Fail("unavailable", device->name + " plays no haptic patterns");
+        reply.message = std::string(HapticPatternName(parsed)) + " on " + device->name;
+        reply.body.Set("pattern", JsonValue::String(HapticPatternName(parsed)));
+        return reply;
+    }
+    if (!marks.empty())
+    {
+        std::vector<std::string> kinds;
+        for (size_t start = 0; start <= marks.size();)
+        {
+            size_t end = marks.find(',', start);
+            if (end == std::string::npos)
+                end = marks.size();
+            const std::string kind = marks.substr(start, end - start);
+            if (std::find(MarkKinds().begin(), MarkKinds().end(), kind) == MarkKinds().end())
+                return Fail("bad-request", "unknown mark '" + kind + "' (known: second, ten_seconds, bookmark, edge, "
+                                           "barrier)");
+            kinds.push_back(kind);
+            start = end + 1;
+        }
+        const HostInputService::MarksPlayed played = input->PlayMarks(id, kinds);
+        reply.body.Set("played", JsonValue::Bool(played.played));
+        if (!played.played)
+        {
+            reply.message = "nothing played on " + device->name + ": " + played.reason;
+            reply.body.Set("reason", JsonValue::String(played.reason));
+            return reply;
+        }
+        reply.message = played.mark + " -> " + HapticPatternName(played.pattern) + " on " + device->name;
+        reply.body.Set("mark", JsonValue::String(played.mark));
+        reply.body.Set("pattern", JsonValue::String(HapticPatternName(played.pattern)));
+        return reply;
+    }
+    StepsOut feel;
+    LayerHaptics current;
+    if (input->Router().Feel(id, current))
+        feel = current.steps;
+    if (const auto it = request.options.find("steps"); it != request.options.end())
+    {
+        // A JSON number may come as "36" or "36.0"
+        char* end = nullptr;
+        const double value = std::strtod(it->second.c_str(), &end);
+        if (it->second.empty() || *end != '\0' || value < 1 || value > 3600 || value != static_cast<double>(static_cast<long>(value)))
+            return Fail("bad-request", "steps is a whole number 1..3600, not '" + it->second + "'");
+        feel.perTurn = static_cast<uint16_t>(value);
+    }
+    if (const auto it = request.options.find("clicks"); it != request.options.end())
+    {
+        const std::string& value = it->second;
+        if (value == "on" || value == "true" || value == "1")
+            feel.clicks = true;
+        else if (value == "off" || value == "false" || value == "0")
+            feel.clicks = false;
+        else
+            return Fail("bad-request", "clicks is on or off, not '" + value + "'");
+    }
+    if ((outputs & kOutputSteps) == 0 || !input->Output(id, feel))
+        return Fail("unavailable", device->name + " has no steps to set");
+    reply.message = std::to_string(feel.perTurn) + " steps per turn, " + (feel.clicks ? "a click at each" : "free wheel") +
+                    " on " + device->name + " (until its context or layers change)";
+    reply.body.Set("steps", JsonValue::Number(feel.perTurn));
+    reply.body.Set("clicks", JsonValue::Bool(feel.clicks));
+    return reply;
 }
 
 HostReply HostInputControl::Context()

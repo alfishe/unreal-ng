@@ -132,7 +132,7 @@ device) counts as another deck.
 `POST /api/v1/decks/{serial}/reconnect` does what an unplug does, on purpose: the handle is closed on the device
 thread's next call, stays closed `away_ms` (default 0), and the deck is opened again and redrawn the same way. It
 mends a deck that shows garbage after a USB hiccup, and it is how the reopen path is checked on a real deck without
-pulling the cable.
+pulling the cable. A real cable pull and replug on the + XL (macOS) was checked by hand: the same picture and menu return.
 
 An older Stream Deck Studio that listens on 37050 itself takes the port: `run` then says so and runs without viewers.
 `--mirror` / `--device emu` still talk to such a studio (the device wire v1).
@@ -244,7 +244,7 @@ Default scenarios and themes (`data/streamdeck/`) are not packaged yet (SD5).
 | Command | What |
 |:--|:--|
 | `sdctl viewer [--port N] [--deck SERIAL \| --own MODEL] [--seconds N]` | Join the daemon as a viewer; prints the welcome, the replayed picture and frame counts per second |
-| `sdctl ws <ws://host:port/path> [message ...] [--token T] [--count N] [--seconds N]` | Open a WebSocket with the daemon's client; prints what arrives |
+| `sdctl ws <ws://host:port/path> [message ...] [--token T] [--count N] [--seconds N]` | Open a WebSocket with the daemon's client; prints what arrives (`ws://127.0.0.1:8090/api/v1/ws '{"op":"join","v":1,"name":"deck","model":"elgato.streamdeck.plus"}' --token unc_…` joins the surface topic) |
 | `sdctl decks [--api PORT] [--json]` | The daemon's logical decks (`GET /api/v1/decks`, port 37053 by default) |
 | `sdctl emu-snapshot --out f.png --api PORT [--deck SERIAL]` | The deck's viewers save a PNG through the daemon (device wire v2 `Control`); waits up to 3 s for the file |
 

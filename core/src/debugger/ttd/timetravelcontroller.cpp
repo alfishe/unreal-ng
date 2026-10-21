@@ -2878,7 +2878,8 @@ void TimeTravelController::PublishCursor() const
         cursor.end = end.frame;
         cursor.endTinframe = end.tInFrame;
     }
-    _cursor.Publish(cursor);
+    if (_cursor.Publish(cursor))
+        NoteHistoryChange(_context, cursor.history);
 }
 
 TTDCursor TimeTravelController::PublishedCursor() const

@@ -25,6 +25,7 @@
 #include "api-websocket.h"       // /api/v1/ws
 #include "companion-event-hub.h"
 #include "debug-event-hub.h"
+#include "ws-hub.h"            // the topics and the surface topic of /api/v1/ws
 #include "hello_world_api.h"     // Triggers auto-registration for API handlers
 #include "interpreter_api.h"     // Triggers auto-registration for Lua/Python API handlers
 #include "common/upload_helper.h"   // MAX_UPLOAD_BODY_SIZE constant
@@ -318,6 +319,8 @@ void AutomationWebAPI::start()
     // Companion events for /api/v1/companions/events: the same view as GET /api/v1/companions/me
     CompanionEventHub::Instance().SetSnapshot(&api::v1::CompanionMeJson);
     CompanionEventHub::Instance().Start();
+    // The topics of /api/v1/ws and its surface topic: contexts, companions, instances, run state
+    WsHub::Instance().Start();
 
     // Create a new thread and run HTTP server in it
     _thread = new std::thread(&AutomationWebAPI::threadFunc, this);
@@ -361,6 +364,7 @@ void AutomationWebAPI::stop()
 
     DebugEventHub::Instance().Stop();
     CompanionEventHub::Instance().Stop();
+    WsHub::Instance().Stop();
 
     std::cout << "AutomationWebAPI stopped" << std::endl;
 }
@@ -407,7 +411,7 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     LOG_INFO << "API Documentation: http://localhost:" << port << "/";
     LOG_INFO << "Emulator API: http://localhost:" << port << "/api/v1/emulator";
     LOG_INFO << "OpenAPI Spec: http://localhost:" << port << "/api/v1/openapi.json";
-    LOG_INFO << "WebSocket: ws://localhost:" << port << "/api/v1/ws (calls), /api/v1/websocket (debugger events)";
+    LOG_INFO << "WebSocket: ws://localhost:" << port << "/api/v1/ws (calls, topics, surface), /api/v1/websocket (debugger events)";
 
     drogon::HttpAppFramework& app = drogon::app();
 
@@ -531,6 +535,16 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     // Companion events: what changes with time alone (a re-take cooldown running out, the first recorded frame of
     // time travel) posts no notification, so the views are compared once a second too; only changes are sent
     app.getLoop()->runEvery(1.0, [] { CompanionEventHub::Instance().Refresh(); });
+
+    // The /api/v1/ws hub runs on the main loop: producers post to it, one timer (armed while somebody subscribes)
+    // drives the readouts and topics. No thread of its own
+    WsHub::Timer timer;
+    timer.arm = [](double seconds, WsHub::Task tick) -> uint64_t {
+        return drogon::app().getLoop()->runEvery(seconds, std::move(tick));
+    };
+    timer.disarm = [](uint64_t id) { drogon::app().getLoop()->invalidateTimer(id); };
+    WsHub::Instance().SetLoop([](WsHub::Task task) { drogon::app().getLoop()->queueInLoop(std::move(task)); },
+                              std::move(timer));
 
     try
     {

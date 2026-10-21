@@ -402,6 +402,7 @@ TEST_P(SurfaceActions_Test, CtxSetPostsTheChangeAndTheLastSetterWins)
 
 TEST_P(SurfaceActions_Test, TheDefaultContextIsTtdOnceAHistoryExists)
 {
+    ContextNotes notes(_emulator->GetId());
     uint64_t first = 0;
     uint64_t end = 0;
     Record(6, first, end);
@@ -409,6 +410,23 @@ TEST_P(SurfaceActions_Test, TheDefaultContextIsTtdOnceAHistoryExists)
     EXPECT_EQ(info.context, "ttd");
     EXPECT_FALSE(info.set);
     EXPECT_EQ(info.fallback, "ttd");
+    // The flip of the default is a change like a ctx.set: the followers (the surface hub's `ctx`) are told
+    ASSERT_TRUE(TestWait::ForAtLeast(notes.count, 1));
+    EXPECT_EQ(notes.At(0), "play>ttd default");
+}
+
+TEST_P(SurfaceActions_Test, ASetContextDoesNotFollowTheHistory)
+{
+    const std::string id = _emulator->GetId();
+    ContextNotes notes(id);
+    std::string error;
+    ASSERT_TRUE(ContextState::Instance().Set(id, _emulator, "debug.disasm", "gui", error)) << error;
+    ContextState::Instance().HistoryChanged(id, true);
+    ContextState::Instance().Set(id, _emulator, "debug.memory", "gui", error);
+    ASSERT_TRUE(TestWait::ForAtLeast(notes.count, 2));
+    EXPECT_EQ(notes.At(0), "play>debug.disasm gui");
+    EXPECT_EQ(notes.At(1), "debug.disasm>debug.memory gui") << "the history flip posted nothing";
+    ContextState::Instance().Set(id, _emulator, "", "gui", error);
 }
 
 /// endregion </ttd.seek_by and ctx.set on both backends>
