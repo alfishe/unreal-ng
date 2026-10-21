@@ -22,6 +22,7 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/execution/automationgate.h"
 #include "emulator/execution/companionregistry.h"
+#include "emulator/execution/runpacer.h"
 
 #include <json/json.h>
 
@@ -716,6 +717,38 @@ TEST_F(WsHub_Test, TopicsNeedATokenAndPushEachInstancesStateOnceThenChanges)
     EXPECT_EQ(inbox.Last()["op"].asString(), "unsubscribed");
     EXPECT_EQ(inbox.Last()["topics"].size(), 0u);
     EXPECT_EQ(_hub->TimerHz(), 0);
+}
+
+TEST_F(WsHub_Test, RunStateCarriesThePaceAndItsChangeIsPushed)
+{
+    Inbox inbox;
+    Connect(inbox);
+    Send(inbox, R"({"op":"subscribe","topics":["run.state","ttd.position"],"max_hz":20})");
+    auto states = [&](const std::string& topic) {
+        std::vector<Json::Value> out;
+        for (const Json::Value& message : inbox.Ops("state"))
+            if (message["t"].asString() == topic && message["instance"].asString() == _id)
+                out.push_back(message);
+        return out;
+    };
+    ASSERT_EQ(states("run.state").size(), 1u);
+    const Json::Value pace = states("run.state")[0]["value"]["pace"];
+    EXPECT_EQ(pace["preset"].asString(), "full") << "no pacer yet: the default";
+    EXPECT_FALSE(pace["running"].asBool());
+    EXPECT_FALSE(pace.isMember("ticks")) << "no tick count: the value changes only with the pace";
+    ASSERT_EQ(states("ttd.position").size(), 1u);
+    EXPECT_EQ(states("ttd.position")[0]["value"]["unit"].asString(), "frames") << "the scrub unit";
+
+    // A preset chosen on a stopped machine: the pace changes, nothing runs; the change is pushed
+    size_t index = 0;
+    ASSERT_TRUE(execution::RunPacer::PresetIndex("1op", index));
+    const auto pacer = execution::RunPacer::For(EmulatorManager::GetInstance()->GetEmulator(_id));
+    ASSERT_TRUE(pacer->Set(execution::Requester{execution::Origin::Gui, {}}, index, 300).Ok());
+    Advance(50);
+    _hub->Tick();
+    ASSERT_EQ(states("run.state").size(), 2u);
+    EXPECT_EQ(states("run.state")[1]["value"]["pace"]["preset"].asString(), "1op");
+    EXPECT_EQ(states("run.state")[1]["value"]["pace"]["interval_ms"].asInt(), 300);
 }
 
 /// endregion </Readouts and topics>

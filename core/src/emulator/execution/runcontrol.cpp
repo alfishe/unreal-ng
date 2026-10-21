@@ -4,6 +4,8 @@
 #include <exception>
 
 #include "common/uuid.h"
+#include "debugger/debugmanager.h"
+#include "debugger/listing/listingparser.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -310,6 +312,194 @@ RunReply RunControl::RunTStates(const Requester& requester, uint64_t count)
     RunReply reply = Finish("Ran " + std::to_string(count) + " t-states");
     if (reply.Ok())
         reply.body["tstates"] = static_cast<int64_t>(count);
+    return reply;
+}
+
+void RunControl::AddStop(RunReply& reply) const
+{
+    const Emulator::BreakpointStop& stop = _emulator->LastDirectStop();
+    StateNode stopNode = StateNode::Object();
+    stopNode["cpu"] = "main";
+    stopNode["reason"] = stop.hit ? "breakpoint" : "step";
+    if (stop.hit)
+    {
+        stopNode["breakpoint_id"] = static_cast<int>(stop.breakpointId);
+        stopNode["address"] = static_cast<int>(stop.address);
+        stopNode["access"] = BreakpointHitKindName(stop.kind);
+    }
+    reply.body["stop"] = std::move(stopNode);
+}
+
+RunReply RunControl::RunToPixel(const Requester& requester)
+{
+    if (!_emulator)
+        return Missing();
+    if (HeldByOther(_emulator->GetContext(), requester))
+        return HeldReply("step");
+    _emulator->RunUntilNextScreenPixel();
+    return Finish("Ran to next screen pixel");
+}
+
+namespace
+{
+/// The run budget of a run-until: `maxTStates`, else `frames` frames of the machine; at most 700000000
+uint64_t Budget(Emulator& emulator, uint64_t maxTStates, unsigned frames)
+{
+    if (maxTStates == 0)
+    {
+        const EmulatorContext* context = emulator.GetContext();
+        maxTStates = context != nullptr && context->config.frame != 0 ? static_cast<uint64_t>(context->config.frame) * frames
+                                                                     : 69888ull * frames;
+    }
+    return std::min<uint64_t>(maxTStates, 700000000ull);
+}
+
+StateNode ListingLineNode(const ListingLine& line)
+{
+    StateNode node = StateNode::Object();
+    node["line"] = line.lineNumber;
+    node["has_code"] = line.hasCode;
+    if (line.hasCode)
+    {
+        node["address"] = static_cast<int>(line.addressStart);
+        node["address_end"] = static_cast<int>(line.addressEnd);
+        node["size"] = static_cast<int64_t>(line.bytes.size());
+    }
+    node["source"] = line.source;
+    return node;
+}
+
+/// The loaded listing, or the refusal: Failed without a debug manager, Conflict "No listing loaded"
+ListingParser* Listing(Emulator& emulator, RunReply& refusal)
+{
+    EmulatorContext* context = emulator.GetContext();
+    ListingParser* parser =
+        context != nullptr && context->pDebugManager != nullptr ? context->pDebugManager->GetListingParser() : nullptr;
+    if (parser == nullptr)
+    {
+        refusal.status = RunReply::Status::Failed;
+        refusal.error = "Internal Error";
+        refusal.message = "Listing parser not available";
+        return nullptr;
+    }
+    if (!parser->IsLoaded())
+    {
+        refusal.status = RunReply::Status::Refused;
+        refusal.error = "Conflict";
+        refusal.message = "No listing loaded";
+        refusal.body["hint"] = "POST /api/v1/emulator/{id}/listing/load first";
+        return nullptr;
+    }
+    return parser;
+}
+}  // namespace
+
+RunReply RunControl::RunUntilPc(const Requester& requester, uint16_t pc, uint64_t maxTStates, bool breakpoints)
+{
+    if (!_emulator)
+        return Missing();
+    if (HeldByOther(_emulator->GetContext(), requester))
+        return HeldReply("step");
+    const uint64_t budget = Budget(*_emulator, maxTStates, 100);
+    _emulator->RunUntilCondition([pc](const Z80State& state) { return state.pc == pc; }, budget, true, !breakpoints);
+    Z80State* z80 = _emulator->GetZ80State();
+    const bool hit = z80 != nullptr && z80->pc == pc;
+    const bool stopped = _emulator->LastDirectStop().hit;
+    RunReply reply = Finish(hit ? "Reached target address"
+                                : stopped ? "Stopped at a breakpoint before the target address"
+                                          : "T-state budget exhausted before reaching target");
+    if (!reply.Ok())
+        return reply;
+    reply.body["hit"] = hit;
+    reply.body["target"] = static_cast<int>(pc);
+    reply.body["max_tstates"] = static_cast<int64_t>(budget);
+    AddStop(reply);
+    return reply;
+}
+
+RunReply RunControl::StepLine(const Requester& requester, uint64_t maxTStates)
+{
+    if (!_emulator)
+        return Missing();
+    if (HeldByOther(_emulator->GetContext(), requester))
+        return HeldReply("step");
+    RunReply refusal;
+    ListingParser* parser = Listing(*_emulator, refusal);
+    Z80State* z80 = _emulator->GetZ80State();
+    if (parser == nullptr)
+        return refusal;
+    if (z80 == nullptr)
+    {
+        refusal.status = RunReply::Status::Failed;
+        refusal.error = "Internal Error";
+        refusal.message = "Z80 state not available";
+        return refusal;
+    }
+    const ListingLine* startLine = parser->FindLineByAddress(z80->pc);
+    const int startLineNumber = startLine != nullptr ? startLine->lineNumber : -1;
+    // The first instruction on another listing line; from an uncovered PC, the first covered one
+    _emulator->RunUntilCondition(
+        [parser, startLineNumber](const Z80State& state) {
+            const ListingLine* line = parser->FindLineByAddress(state.pc);
+            return line != nullptr && line->lineNumber != startLineNumber;
+        },
+        Budget(*_emulator, maxTStates, 100));
+    z80 = _emulator->GetZ80State();
+    const ListingLine* endLine = z80 != nullptr ? parser->FindLineByAddress(z80->pc) : nullptr;
+    const bool lineChanged = endLine != nullptr && endLine->lineNumber != startLineNumber;
+    RunReply reply =
+        Finish(lineChanged ? "Stepped to a different source line" : "Stopped without reaching a different source line");
+    if (!reply.Ok())
+        return reply;
+    reply.body["line_changed"] = lineChanged;
+    if (startLine != nullptr)
+        reply.body["from_line"] = ListingLineNode(*startLine);
+    if (endLine != nullptr)
+        reply.body["to_line"] = ListingLineNode(*endLine);
+    return reply;
+}
+
+RunReply RunControl::RunToLine(const Requester& requester, int line, uint64_t maxTStates)
+{
+    if (!_emulator)
+        return Missing();
+    if (HeldByOther(_emulator->GetContext(), requester))
+        return HeldReply("step");
+    RunReply refusal;
+    ListingParser* parser = Listing(*_emulator, refusal);
+    if (parser == nullptr)
+        return refusal;
+    const ListingLine* target = parser->FindNextCodeLine(line);
+    if (target == nullptr)
+    {
+        refusal.status = RunReply::Status::NotFound;
+        refusal.error = "Not Found";
+        refusal.message = "No code line at or after line " + std::to_string(line) + " in loaded listing";
+        return refusal;
+    }
+    Z80State* z80 = _emulator->GetZ80State();
+    if (z80 == nullptr)
+    {
+        refusal.status = RunReply::Status::Failed;
+        refusal.error = "Internal Error";
+        refusal.message = "Z80 state not available";
+        return refusal;
+    }
+    const uint16_t address = target->addressStart;
+    const bool alreadyAt = z80->pc == address;
+    if (!alreadyAt)
+        _emulator->RunUntilCondition([address](const Z80State& state) { return state.pc == address; },
+                                     Budget(*_emulator, maxTStates, 500));
+    z80 = _emulator->GetZ80State();
+    const bool reached = z80 != nullptr && z80->pc == address;
+    RunReply reply = Finish(alreadyAt ? "Already at target line"
+                                      : reached ? "Reached target line" : "Safety limit reached before target line");
+    if (!reply.Ok())
+        return reply;
+    reply.body["status"] = reached ? "success" : "timeout";
+    reply.body["reached"] = reached;
+    reply.body["already_at"] = alreadyAt;
+    reply.body["target_line"] = ListingLineNode(*target);
     return reply;
 }
 

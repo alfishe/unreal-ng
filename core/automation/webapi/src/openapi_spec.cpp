@@ -67,6 +67,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_temporal.inc"
 #include "openapi/openapi_window.inc"
 #include "openapi/openapi_stepping.inc"
+#include "openapi/openapi_pace.inc"
 #include "openapi/openapi_breakpoints.inc"
 #include "openapi/openapi_debug.inc"
 #include "openapi/openapi_labels.inc"

@@ -87,6 +87,18 @@ public:
     RunReply RunFrames(const Requester& requester, unsigned count);
     /// 1..10000000 t-states (POST /run_tstates), breakpoints skipped
     RunReply RunTStates(const Requester& requester, uint64_t count);
+    /// To the next frame's first paper pixel (POST /run_to_pixel), breakpoints skipped
+    RunReply RunToPixel(const Requester& requester);
+    /// Until PC = `pc` (POST /skip_until; run to the cursor): at most `maxTStates` (0: 100 frames, at most
+    /// 700000000). `breakpoints`: a breakpoint ends it first (run to the cursor); false skips them (skip_until).
+    /// The body says whether it got there: `hit`
+    RunReply RunUntilPc(const Requester& requester, uint16_t pc, uint64_t maxTStates, bool breakpoints);
+    /// Source level (the loaded listing, POST /listing/step_line): until PC is on another listing line; at most
+    /// `maxTStates` (0: 100 frames). Conflict "No listing loaded" without one
+    RunReply StepLine(const Requester& requester, uint64_t maxTStates);
+    /// Until PC is at the first code byte of listing line `line` or the next one with code (POST
+    /// /listing/run_to_line); at most `maxTStates` (0: 500 frames). Not Found for no such line
+    RunReply RunToLine(const Requester& requester, int line, uint64_t maxTStates);
     /// endregion </Steps and runs>
 
     /// region <Machine>
@@ -102,6 +114,8 @@ private:
     /// The common tail of a step or run: revoked, or "status: success" with pc, sp and the state
     RunReply Finish(const std::string& message);
     RunReply HeldReply(const char* verb) const;
+    /// The breakpoint that ended the last direct run, as `stop` ({reason, breakpoint_id, address, access})
+    void AddStop(RunReply& reply) const;
 
     std::shared_ptr<Emulator> _emulator;
 };

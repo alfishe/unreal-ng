@@ -49,7 +49,8 @@ take `params.line` (default 0) and `params.count` (default 1) instead of the Qt 
 action pauses as `POST /pause` does).
 
 The stubs (`ttd.find_last_write`, `ttd.bookmark_prev/next`, `dbg.focus_*`, ...) get executors in C7
-of the [controller manager TODO](../2026-10-17-controller-manager/TODO.md), not here.
+of the [controller manager TODO](../2026-10-17-controller-manager/TODO.md), not here (2026-10-21: `ttd.find_last_write`,
+`ttd.bookmark_prev/next`, `ttd.step_back_scanline`, `dbg.labels_toggle` have them, §1.2).
 
 ### 1.1 Scenario actions (SD6)
 
@@ -109,6 +110,50 @@ Not added (REST stays the way, the `webapi` step of a scenario): `/skip_until` (
 memory writes), `/control/audio/gs` reset (1 step), `/video/record` (`cap.record_toggle` stays a stub: the output
 file and profile need the GUI's choice), `/start` / `/stop` of an instance, video fullscreen (a GUI action, Qt).
 `ttd.seek_by`, `run.step_by` and `ctx.set` come with S2 (§2, §4).
+
+### 1.2 Run, step and time-travel units (2026-10-21)
+
+Stream Deck use cases D1, D2, D3, D5, D6 ([use-cases](../2026-10-19-streamdeck-integration/use-cases.md)), in
+`core/src/emulator/actions/steppingactions.cpp` (registered after the host actions) and, for the disassembly,
+`unreal-qt/src/controllers/guiactions.cpp`. The stubs `ttd.find_last_write`, `ttd.bookmark_prev`, `ttd.bookmark_next`,
+`ttd.step_back_scanline` and `dbg.labels_toggle` got their executors.
+
+| Id | Kind | Params | Scope | Executor |
+|:--|:--|:--|:--|:--|
+| `run.pace_set`, `run.pace_next`, `run.pace_prev` | P | `preset?`, `interval_ms?` | run | `RunPacer::Set` / `Shift` |
+| `run.pace_by` | D | | run | `RunPacer::Shift(delta)` |
+| `run.pace_toggle` (toggle) | P | | run | `RunPacer::Toggle`: a running pace stops, a machine at full speed pauses, else the pace starts |
+| `run.pace_stop`, `run.pace_step` | P | | free; run (as `POST /run_pace`) | `RunPacer::Stop`, `Step` |
+| `run.to_pixel` | P | | debug, pause (`/run_to_pixel`) | `RunControl::RunToPixel` |
+| `run.until_pc` | P | `pc`, `max_tstates?`, `breakpoints?` | debug, pause (`/skip_until`) | `RunControl::RunUntilPc` |
+| `run.to_cursor` | P | `addr?` (else `DebuggerCursors` "disasm"), `max_tstates?` (500 frames) | debug, pause | `RunControl::RunUntilPc`, breakpoints honoured |
+| `run.step_line`, `run.to_line` | P | `max_tstates?`; `line` | debug, pause (`/listing/*`) | `RunControl::StepLine` / `RunToLine` |
+| `ttd.step_back_scanline`, `ttd.step_forward_scanline` | P | `count?` | debug; history | `reverse-step` `scanlines`; a seek to the T-state |
+| `ttd.bookmark_prev`, `ttd.bookmark_next` | P | | rewind; history | a seek to the bookmark before / after the position |
+| `ttd.bookmarks` | P | | free | `bookmarks` |
+| `ttd.find_last_write`, `ttd.find_last` | P | `addr?` (else the "memory" cursor, then "disasm"), `access?`, `seek?` (true), the filters | debug; history | `find-last`, then `seek` there |
+| `ttd.seek_start`, `ttd.seek_end` | P | | rewind; history | `seek` to the published cursor's first / end |
+| `ttd.unit_back`, `ttd.unit_forward` | P | `unit?`, `count?` | rewind; history | `ttd.seek_by` with delta ∓1 |
+| `ttd.scrub_unit` | T | `count?` | free | the instance's unit of `ttd.seek_by`; the `ttd.position` readout shows `unit`, `unit_count` |
+| `ttd.journal_build`, `ttd.journal_build_cancel`, `ttd.export_clip` | P | `from_frame?`, `to_frame?`; —; `path`, `from?`, `to?`, `chunk?` | the routes' | the verbs |
+| `dbg.follow_pc`, `dbg.labels_toggle` (toggle), `dbg.scroll_mode_toggle`, `dbg.goto` | P | `addr` (goto) | GUI | the Qt disassembly |
+
+**The debugger's cursors** (`actions::DebuggerCursors`): the Qt client publishes the address of the disassembly's
+cursor row as `disasm` and the memory view's cursor as `memory`, per instance; `run.to_cursor`, `ttd.find_last*` (and
+the breakpoint actions at the cursor) take them when the call names no `addr`. The cursor row moves with a click, with
+Up / Down (an instruction; a byte in byte scroll) and PageUp / PageDown (16) in the disassembly, and so with a deck's
+`dbg.cursor_up` / `dbg.cursor_down` / `dbg.page_up` / `dbg.page_down` on that pane: it starts at PC when there is no
+row yet, the view scrolls to keep it visible, the row is kept and marked across refreshes. The mouse wheel scrolls the
+view without moving it. In the memory pane the same keys move the hex cursor (the view follows it). Headless there is
+no cursor: the call needs `addr`.
+
+**`ttd.seek_by` units** (§2): `params.unit`, else the instance's (`ttd.scrub_unit`): `frames`, `seconds` (the
+curve), `batch` (`count` frames a step, default 10), `instructions` (back: `reverse-step count`; forward: up to 64
+instruction steps), `tstates` (`count`, default 100; back `reverse-step tstates`, forward a seek), `scanlines` (as
+tstates by `t_line`), `bookmarks` (the N-th bookmark on). The result names `unit`.
+
+**`run.step_by` units** (§4): `params.unit` `frames`, `scanlines` or `tstates` with `count`: forward runs them
+(`RunFrames`, `RunNScanlines`, `RunTStates`), back steps back through the history (`MoveFrames`, `reverse-step`).
 
 ## 2. ttd.seek_by
 

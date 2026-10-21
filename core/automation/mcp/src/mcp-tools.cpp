@@ -1021,7 +1021,8 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
-                               "run_tstates", "run_to_interrupt", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
+                               "run_tstates", "run_to_interrupt", "run_to_scanline", "run_scanlines", "run_to_pixel",
+                               "run_until_pc", "pace", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
                                "bp_list", "bp_reset_hits", "port_out", "wait", "take_control", "release_control"})
     {
         schema["properties"]["action"]["enum"].append(action);
@@ -1029,11 +1030,34 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["action"]["description"] =
         "Execution primitive. Stepping/running actions return the new register state. bp_* actions manage breakpoints "
         "(bp_add switches the breakpoints feature on). run_frame / run_frames / run_tstates / run_to_interrupt skip "
-        "breakpoints: to stop at one, resume and then wait.";
+        "breakpoints: to stop at one, resume and then wait. run_to_scanline / run_scanlines / run_to_pixel skip them too; "
+        "run_until_pc skips them unless breakpoints=true (run to a cursor). pace: the paced run (pace_op).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["count"]["type"] = "integer";
-    schema["properties"]["count"]["description"] = "Instruction count for step_n";
+    schema["properties"]["count"]["description"] = "Instruction count for step_n; scanline count for run_scanlines (1..1000)";
+    schema["properties"]["scanline"]["type"] = "integer";
+    schema["properties"]["scanline"]["description"] = "For run_to_scanline: the scanline to stop at (0..319 on most models)";
+    schema["properties"]["pc"]["oneOf"][0]["type"] = "integer";
+    schema["properties"]["pc"]["oneOf"][1]["type"] = "string";
+    schema["properties"]["pc"]["description"] = "For run_until_pc: the address (number, \"0x8000\", \"#8000\")";
+    schema["properties"]["max_tstates"]["type"] = "integer";
+    schema["properties"]["max_tstates"]["description"] = "For run_until_pc: the t-state budget (0 / absent: 100 frames)";
+    schema["properties"]["breakpoints"]["type"] = "boolean";
+    schema["properties"]["breakpoints"]["description"] = "For run_until_pc: a breakpoint on the way stops it (default false)";
+    schema["properties"]["pace_op"]["type"] = "string";
+    schema["properties"]["pace_op"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* op : {"get", "set", "next", "prev", "start", "stop", "toggle", "step"})
+        schema["properties"]["pace_op"]["enum"].append(op);
+    schema["properties"]["pace_op"]["description"] =
+        "For pace: get (default; the ladder too), set (preset / interval_ms), next (finer) / prev (coarser), start, "
+        "stop, toggle, step (one step at the pace). A paced run steps on its own and stops at a breakpoint";
+    schema["properties"]["preset"]["type"] = "string";
+    schema["properties"]["preset"]["description"] =
+        "For pace set: full, 25fps, 5fps, 1fps (a frame per 40 / 200 / 1000 ms), frame, 100lines, 10lines, 1line, 1op "
+        "(one unit per interval_ms)";
+    schema["properties"]["interval_ms"]["type"] = "integer";
+    schema["properties"]["interval_ms"]["description"] = "For pace set: the interval of frame .. 1op, 1..5000 ms";
     schema["properties"]["client"]["type"] = "string";
     schema["properties"]["client"]["description"] = "For take_control: your name, shown to the user";
     schema["properties"]["lease_seconds"]["type"] = "integer";
@@ -1104,7 +1128,9 @@ void RegisterControlExecution(ToolRegistry& registry)
     registry.Register(
         "control_execution",
         "Advance or halt the CPU: pause/resume/run, step (1 or N instructions), step_over, step_out, run_frame(s), "
-        "run_tstates, run_to_interrupt. Also manages breakpoints (bp_add/bp_remove/bp_enable/bp_disable/bp_clear/bp_list/"
+        "run_tstates, run_to_interrupt, run_to_scanline, run_scanlines, run_to_pixel (the first paper pixel), "
+        "run_until_pc (until PC = pc), pace (run at a pace: 25 / 5 / 1 fps, a frame, lines or an instruction per "
+        "interval). Also manages breakpoints (bp_add/bp_remove/bp_enable/bp_disable/bp_clear/bp_list/"
         "bp_reset_hits; bp_add takes ranges, physical pages, port masks and hit policies). "
         "port_out writes a port through the machine's decoder like a CPU OUT (paging, TS-Conf registers, AY, border), "
         "without breakpoints or device waits, as a TTD tool edit; it works paused or running. "
@@ -1390,6 +1416,41 @@ void RegisterControlExecution(ToolRegistry& registry)
                     return;
                 }
 
+                // The paced run (core RunPacer, POST /run_pace)
+                if (action == "pace")
+                {
+                    const std::string op = args.isMember("pace_op") ? args["pace_op"].asString() : std::string("get");
+                    // The text an agent reads: the message and the pace now
+                    auto describe = [done](ToolResult result) {
+                        if (!result.isError)
+                        {
+                            const Json::Value& pace = result.structured["pace"];
+                            const std::string message = result.structured.get("message", "").asString();
+                            result.text = (message.empty() ? std::string() : message + ". ") + "Pace " +
+                                          pace["preset"].asString() + " (" + pace["label"].asString() + "), " +
+                                          (pace["running"].asBool() ? "running" : "not running") + ", interval " +
+                                          std::to_string(pace["effective_ms"].asInt()) + " ms" +
+                                          (pace["stop_reason"].asString().empty()
+                                               ? std::string()
+                                               : ", last stop: " + pace["stop_reason"].asString());
+                        }
+                        done(std::move(result));
+                    };
+                    if (op == "get")
+                    {
+                        ForwardCall("GET", Endpoint(id, "/run_pace"), nullptr, caller, "", describe);
+                        return;
+                    }
+                    Json::Value body;
+                    body["op"] = op;
+                    if (args.isMember("preset"))
+                        body["preset"] = args["preset"];
+                    if (args.isMember("interval_ms"))
+                        body["interval_ms"] = args["interval_ms"];
+                    ForwardCall("POST", Endpoint(id, "/run_pace"), &body, caller, "", describe);
+                    return;
+                }
+
                 // Execution-advancing actions: perform the call, then append registers
                 auto execute = [action, &args, &caller, id, done]() {
                     std::string method = "POST";
@@ -1435,6 +1496,43 @@ void RegisterControlExecution(ToolRegistry& registry)
                     {
                         path = Endpoint(id, "/run_to_interrupt");
                         summary = "Ran to interrupt. ";
+                    }
+                    else if (action == "run_to_scanline")
+                    {
+                        if (!args.isMember("scanline"))
+                        {
+                            done(ToolResult::Error("run_to_scanline requires 'scanline'"));
+                            return;
+                        }
+                        path = Endpoint(id, "/run_to_scanline");
+                        body["scanline"] = args["scanline"].asUInt();
+                        summary = "Ran to scanline " + std::to_string(body["scanline"].asUInt()) + ". ";
+                    }
+                    else if (action == "run_scanlines")
+                    {
+                        path = Endpoint(id, "/run_scanlines");
+                        body["count"] = args.isMember("count") ? args["count"].asUInt() : 1u;
+                        summary = "Ran " + std::to_string(body["count"].asUInt()) + " scanline(s). ";
+                    }
+                    else if (action == "run_to_pixel")
+                    {
+                        path = Endpoint(id, "/run_to_pixel");
+                        summary = "Ran to the first paper pixel. ";
+                    }
+                    else if (action == "run_until_pc")
+                    {
+                        if (!args.isMember("pc"))
+                        {
+                            done(ToolResult::Error("run_until_pc requires 'pc'"));
+                            return;
+                        }
+                        path = Endpoint(id, "/skip_until");
+                        body["pc"] = args["pc"];
+                        if (args.isMember("max_tstates"))
+                            body["max_tstates"] = args["max_tstates"];
+                        if (args.isMember("breakpoints"))
+                            body["breakpoints"] = args["breakpoints"];
+                        summary = "Ran until PC. ";
                     }
                     else
                     {
@@ -4549,7 +4647,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "reverse_continue", "find_last", "port_events", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_summary",
-                               "history_limit", "journal_on", "journal_off", "journal_build", "export_clip",
+                               "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
+                               "export_clip",
                                "memory_at", "memory_diff"})
     {
         schema["properties"]["action"]["enum"].append(action);
@@ -4564,7 +4663,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "paused point continues it, 'stop' ends it; on backend v1 they return an error while recording): "
         "'seek' (frame + optional tinframe), "
         "'step_back_frame'/'step_forward_frame', 'step_back_instruction'/'step_forward_instruction', "
-        "'reverse_step' (count instructions OR tstates back), 'reverse_continue' (run backward until PC hits one of pcs), "
+        "'reverse_step' (count instructions, tstates OR scanlines back), 'reverse_continue' (run backward until PC hits one of pcs), "
         "'find_last' (latest write/read/execute/io at an address before the current point, or before before_frame). "
         "'port_events' answers 'when did the program ...' from the port journals without replay (needs a stopped or "
         "paused recording, works on a loaded file): event 'key' (saw a key down; event_arg a key name such as 'a', "
@@ -4588,7 +4687,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Write journal (who wrote an address last, answered at once; off by default): 'journal_on' / 'journal_off' "
         "switch it at any moment, also while recording (each on-off span is a segment); 'journal_build' builds it by "
         "replaying frames from_frame..to_frame (default: the whole session; about 2-4 ms per frame; not while "
-        "recording). find_last works without it too: outside the journal it replays one frame.";
+        "recording); 'journal_build_cancel' stops a build that runs. find_last works without it too: outside the journal it replays one frame.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance";
@@ -4627,7 +4726,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "on the engine (the frame's final state and picture); give 0 for the frame's start. memory_at: a point inside "
         "'frame' (default 0 = the frame's start; ram, vram and cache only: the frame's writes up to it are applied)";
     schema["properties"]["count"]["type"] = "integer";
-    schema["properties"]["count"]["description"] = "reverse_step: number of instructions to step back (give count OR tstates)";
+    schema["properties"]["count"]["description"] = "reverse_step: number of instructions to step back (give count, tstates OR scanlines)";
+    schema["properties"]["scanlines"]["type"] = "integer";
+    schema["properties"]["scanlines"]["description"] =
+        "reverse_step: scanlines to step back (the machine's line length each); lands on the nearest instruction start "
+        "at or before the target";
     schema["properties"]["tstates"]["type"] = "integer";
     schema["properties"]["tstates"]["description"] =
         "reverse_step: T-states to step back; lands on the nearest instruction start at or before the target";
@@ -4863,12 +4966,15 @@ void RegisterTimeTravel(ToolRegistry& registry)
             }
             else if (action == "reverse_step")
             {
-                if (args.isMember("count") == args.isMember("tstates"))
+                if ((args.isMember("count") ? 1 : 0) + (args.isMember("tstates") ? 1 : 0) +
+                        (args.isMember("scanlines") ? 1 : 0) != 1)
                 {
-                    done(ToolResult::Error("Action 'reverse_step' needs exactly one of 'count' (instructions) or 'tstates'"));
+                    done(ToolResult::Error("Action 'reverse_step' needs exactly one of 'count' (instructions), 'tstates' "
+                                           "or 'scanlines'"));
                     return;
                 }
-                if (!CopyNumber(args, "count", *body, error) || !CopyNumber(args, "tstates", *body, error))
+                if (!CopyNumber(args, "count", *body, error) || !CopyNumber(args, "tstates", *body, error) ||
+                    !CopyNumber(args, "scanlines", *body, error))
                 {
                     done(ToolResult::Error(error));
                     return;
@@ -5001,6 +5107,16 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                (b["write_journal_enabled"].asBool() ? "on" : "off") + ", " +
                                DescribeJournalSegments(b);
                     }, done);
+                }
+                else if (action == "journal_build_cancel")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/journal/build/cancel"), body.get(), caller,
+                                     [id](const Json::Value& b) {
+                                         return std::string(b.get("cancelling", b.get("cancelled", false)).asBool()
+                                                                ? "TTD write journal build cancelled on "
+                                                                : "No write journal build ran on ") + id;
+                                     },
+                                     done);
                 }
                 else if (action == "journal_build")
                 {

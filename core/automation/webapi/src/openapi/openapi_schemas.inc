@@ -1431,8 +1431,8 @@
     // POST /ttd/reverse-step
     schemas["TTDReverseStepRequest"]["type"] = "object";
     schemas["TTDReverseStepRequest"]["description"] =
-        "Request body for POST /ttd/reverse-step. Exactly one of count or "
-        "tstates must be specified.";
+        "Request body for POST /ttd/reverse-step. Exactly one of count, "
+        "tstates or scanlines must be specified.";
     schemas["TTDReverseStepRequest"]["properties"]["count"]["type"] = "integer";
     schemas["TTDReverseStepRequest"]["properties"]["count"]["format"] = "uint32";
     schemas["TTDReverseStepRequest"]["properties"]["count"]["description"] =
@@ -1441,6 +1441,10 @@
     schemas["TTDReverseStepRequest"]["properties"]["tstates"]["format"] = "uint64";
     schemas["TTDReverseStepRequest"]["properties"]["tstates"]["description"] =
         "Number of T-states to step back (lands at nearest M1 <= target).";
+    schemas["TTDReverseStepRequest"]["properties"]["scanlines"]["type"] = "integer";
+    schemas["TTDReverseStepRequest"]["properties"]["scanlines"]["format"] = "uint32";
+    schemas["TTDReverseStepRequest"]["properties"]["scanlines"]["description"] =
+        "Number of scanlines to step back: the machine's t_line T-states each (lands at nearest M1 <= target).";
 
     schemas["TTDReverseStepResponse"]["type"] = "object";
     schemas["TTDReverseStepResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
@@ -1450,6 +1454,10 @@
     schemas["TTDReverseStepResponse"]["properties"]["mode"]["type"] = "string";
     schemas["TTDReverseStepResponse"]["properties"]["mode"]["enum"].append("count");
     schemas["TTDReverseStepResponse"]["properties"]["mode"]["enum"].append("tstates");
+    schemas["TTDReverseStepResponse"]["properties"]["mode"]["enum"].append("scanlines");
+    schemas["TTDReverseStepResponse"]["properties"]["tstates"]["type"] = "integer";
+    schemas["TTDReverseStepResponse"]["properties"]["tstates"]["description"] =
+        "scanlines mode: the T-states the scanlines came to";
     schemas["TTDReverseStepResponse"]["properties"]["frame"]["type"] = "integer";
     schemas["TTDReverseStepResponse"]["properties"]["frame"]["format"] = "uint64";
     schemas["TTDReverseStepResponse"]["properties"]["tinframe"]["type"] = "integer";

@@ -180,8 +180,9 @@
     paths["/api/v1/emulator/{id}/skip_until"]["post"]["tags"].append("Debug Commands");
     paths["/api/v1/emulator/{id}/skip_until"]["post"]["description"] =
         "Runs until the next instruction to execute is at the target address (or the "
-        "t-state budget is exhausted). Breakpoints are skipped — the walk cannot be "
-        "trapped. Frames rendered during the skip are not captured by recordings.";
+        "t-state budget is exhausted: 0 / absent = 100 frames, at most 700000000). Breakpoints are skipped "
+        "unless breakpoints=true. Frames rendered during the skip are not captured by recordings. "
+        "Answers hit, target, max_tstates, stop, pc, sp, state.";
     paths["/api/v1/emulator/{id}/skip_until"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/skip_until"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/skip_until"]["post"]["parameters"][0]["required"] = true;
@@ -190,7 +191,12 @@
         ["properties"]["pc"]["type"] = "string";
     paths["/api/v1/emulator/{id}/skip_until"]["post"]["requestBody"]["content"]["application/json"]["schema"]
         ["properties"]["max_tstates"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/skip_until"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        ["properties"]["breakpoints"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/skip_until"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        ["properties"]["breakpoints"]["description"] =
+        "true: a breakpoint on the way stops it first (run to a cursor); default false (skipped)";
     paths["/api/v1/emulator/{id}/skip_until"]["post"]["responses"]["200"]["description"] =
-        "Skip result (hit flag, pc/sp/state)";
+        "Skip result (hit flag, target, max_tstates, stop, pc/sp/state)";
     paths["/api/v1/emulator/{id}/skip_until"]["post"]["responses"]["400"]["description"] =
         "Missing/invalid pc field";

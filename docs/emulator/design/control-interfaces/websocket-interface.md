@@ -85,8 +85,8 @@ The surface targets, readouts and activity (Stream Deck SD4: `GET /api/v1/surfac
 
 | Topic | Pushes | Scope | Status |
 |:--|:--|:--|:--|
-| `run.state` | per instance `{state: running \| paused \| stopped, speed, turbo}` | none (a read) | implemented |
-| `ttd.position` | per instance the TTD published cursor `{frame, tinframe, first, end, end_tinframe, state, history, paused, fps}` (the `ttd position` verb's bounds) | none | implemented |
+| `run.state` | per instance `{state: running \| paused \| stopped, speed, turbo, pace: {preset, label, unit, count, interval_ms, effective_ms, running, stop_reason}}` (`pace`: the paced run, `GET /run_pace` without its tick count) | none (a read) | implemented (`pace` 2026-10-21) |
+| `ttd.position` | per instance the TTD published cursor `{frame, tinframe, first, end, end_tinframe, state, history, paused, fps, unit, unit_count}` (the `ttd position` verb's bounds; `unit`: the scrub unit of `ttd.seek_by`, `ttd.scrub_unit`) | none | implemented (`unit` 2026-10-21) |
 | `surfaces.context` | per instance the surface context `{context, set, by, default}` (`GET /api/v1/surfaces/context`) | none | implemented |
 | `streamdeck.status` | the Stream Deck daemon as unreal-qt supervises it, once for the process (no `instance`): `{attached, state, mode, activity, own, pid, deck_attached, restarts, error, version, decks, viewers, surface, pairing: {state, code, paired, companion_id, error}}` (the fields of `GET /api/v1/streamdeck` that change with events, [command-interface.md §16.2](./command-interface.md#162-the-stream-deck-daemon)) | none | implemented (SD7) |
 | `surface` | control surfaces: opened by `join` (not by `subscribe`): `action`, `result`, `ctx`, readouts, `target`, `revoked` ([below](#31-the-surface-topic)) | per action | implemented (S4); `activity`, `catalogue`, the readout vocabulary and views: Stream Deck SD4 |

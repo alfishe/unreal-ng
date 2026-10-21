@@ -179,38 +179,6 @@
    "gui": false
   },
   {
-   "id": "ttd.find_last_write",
-   "label": "ttd.find_last_write",
-   "group": "Time travel",
-   "kind": "press",
-   "held": false,
-   "gui": false
-  },
-  {
-   "id": "ttd.bookmark_prev",
-   "label": "ttd.bookmark_prev",
-   "group": "Time travel",
-   "kind": "press",
-   "held": false,
-   "gui": false
-  },
-  {
-   "id": "ttd.bookmark_next",
-   "label": "ttd.bookmark_next",
-   "group": "Time travel",
-   "kind": "press",
-   "held": false,
-   "gui": false
-  },
-  {
-   "id": "ttd.step_back_scanline",
-   "label": "ttd.step_back_scanline",
-   "group": "Time travel",
-   "kind": "press",
-   "held": false,
-   "gui": false
-  },
-  {
    "id": "ctx.set",
    "label": "Set the surface context",
    "group": "Context",
@@ -664,6 +632,236 @@
    "params": "path"
   },
   {
+   "id": "run.pace_set",
+   "label": "Pace",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "preset? (full|25fps|5fps|1fps|frame|100lines|10lines|1line|1op), interval_ms? (1..5000)"
+  },
+  {
+   "id": "run.pace_next",
+   "label": "Pace finer",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.pace_prev",
+   "label": "Pace coarser",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.pace_by",
+   "label": "Pace on a dial",
+   "group": "Run",
+   "kind": "delta",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.pace_toggle",
+   "label": "Pace run / pause",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.pace_stop",
+   "label": "Stop the pace",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.pace_step",
+   "label": "One step at the pace",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.to_pixel",
+   "label": "Run to the first paper pixel",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.until_pc",
+   "label": "Run until PC",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "pc, max_tstates? (0: 100 frames), breakpoints? (false: skipped)"
+  },
+  {
+   "id": "run.to_cursor",
+   "label": "Run to the cursor",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "addr? (else the disassembly's cursor), max_tstates? (0: 500 frames)"
+  },
+  {
+   "id": "run.step_line",
+   "label": "Step a source line",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "max_tstates? (0: 100 frames)"
+  },
+  {
+   "id": "run.to_line",
+   "label": "Run to a source line",
+   "group": "Run",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "line, max_tstates? (0: 500 frames)"
+  },
+  {
+   "id": "ttd.step_back_scanline",
+   "label": "Back one scanline",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "count? (1..1000, 1)"
+  },
+  {
+   "id": "ttd.step_forward_scanline",
+   "label": "Forward one scanline",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "count? (1..1000, 1)"
+  },
+  {
+   "id": "ttd.bookmark_prev",
+   "label": "Previous bookmark",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.bookmark_next",
+   "label": "Next bookmark",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.bookmarks",
+   "label": "Bookmarks",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.find_last_write",
+   "label": "Last write here",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "addr? (else the memory / disassembly cursor), seek? (true), pc_from?, pc_to?, value?, phys_page?, space?"
+  },
+  {
+   "id": "ttd.find_last",
+   "label": "Last access here",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "addr? (else the cursor), access? (write|read|execute|io), seek? (true), addr_from?, addr_to?, pc_from?, pc_to?, value?, phys_page?, space?"
+  },
+  {
+   "id": "ttd.seek_start",
+   "label": "The history's start",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.seek_end",
+   "label": "The history's end",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.unit_back",
+   "label": "Back one unit",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "unit? (else the chosen one), count?"
+  },
+  {
+   "id": "ttd.unit_forward",
+   "label": "Forward one unit",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "unit? (else the chosen one), count?"
+  },
+  {
+   "id": "ttd.scrub_unit",
+   "label": "Scrub unit",
+   "group": "Time travel",
+   "kind": "text",
+   "held": false,
+   "gui": false,
+   "params": "count? (a step: batch 10, tstates 100, else 1); the text: a unit, next or prev"
+  },
+  {
+   "id": "ttd.journal_build",
+   "label": "Build the write journal",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "from_frame?, to_frame?"
+  },
+  {
+   "id": "ttd.journal_build_cancel",
+   "label": "Cancel the journal build",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "ttd.export_clip",
+   "label": "Export a range as a clip",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "path, from? (the history's start), to? (its end), chunk?"
+  },
+  {
    "id": "ttd.scrub_back",
    "label": "Scrub back",
    "group": "Time travel",
@@ -760,8 +958,49 @@
    "gui": true
   },
   {
+   "id": "dbg.follow_pc",
+   "label": "Disassembly follows PC",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "dbg.labels_toggle",
+   "label": "Labels in the disassembly",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "dbg.scroll_mode_toggle",
+   "label": "Disassembly scrolls by bytes / instructions",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "dbg.goto",
+   "label": "Disassembly at an address",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true,
+   "params": "addr (0..#FFFF: decimal, 0x.., #.., $..)"
+  },
+  {
    "id": "cap.screenshot",
    "label": "Screenshot",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "osd.keyboard",
+   "label": "On-screen keyboard",
    "group": "Capture and machine",
    "kind": "press",
    "held": false,
@@ -771,22 +1010,6 @@
    "id": "dbg.breakpoint_toggle_pc",
    "label": "dbg.breakpoint_toggle_pc",
    "group": "Debugger",
-   "kind": "press",
-   "held": false,
-   "gui": true
-  },
-  {
-   "id": "dbg.labels_toggle",
-   "label": "dbg.labels_toggle",
-   "group": "Debugger",
-   "kind": "press",
-   "held": false,
-   "gui": true
-  },
-  {
-   "id": "osd.keyboard",
-   "label": "osd.keyboard",
-   "group": "Capture and machine",
    "kind": "press",
    "held": false,
    "gui": true

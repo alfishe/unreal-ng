@@ -773,9 +773,10 @@ public:
     void RunUntilNextScreenPixel(bool skipBreakpoints = true);                // Skip vblank/borders to first paper pixel
     void RunUntilInterrupt(bool skipBreakpoints = true);                      // Run until Z80 accepts maskable interrupt (iff1 1→0)
     /// notifyDebugger = false skips the NC_EXECUTION_CPU_STEP post: for machine-internal
-    /// stepping (a ZX-Poly group advancing its slaves after every master instruction)
+    /// stepping (a ZX-Poly group advancing its slaves after every master instruction).
+    /// skipBreakpoints = false: a breakpoint ends the run first (run to the cursor; LastDirectStop says which)
     void RunUntilCondition(std::function<bool(const Z80State&)> predicate, uint64_t maxTStates = 0,
-                           bool notifyDebugger = true);
+                           bool notifyDebugger = true, bool skipBreakpoints = true);
 
     /// Start the current frame again after machine state was replaced from
     /// outside the frame flow (reset, snapshot load). See MainLoop::RestartFrame

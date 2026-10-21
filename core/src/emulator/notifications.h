@@ -448,6 +448,17 @@ public:
     virtual ~RunControlChangedPayload() = default;
 };
 
+/// Payload of NC_RUN_PACE: the paced run of an instance changed (execution::RunPacer); its state is read back from
+/// the pacer (RunPacer::Find(id)->State())
+class RunPacePayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+
+    explicit RunPacePayload(const unreal::UUID& id) : emulatorId(id) {}
+    virtual ~RunPacePayload() = default;
+};
+
 /// Payload of NC_SURFACE_CONTEXT: the context in force on an instance changed (actions::ContextState). `by` names
 /// the setter ("companion:<id>", "webapi:<client>", "gui", "host-device:<id>"); `context` is the new one in force
 /// (the default after a ctx.set "")

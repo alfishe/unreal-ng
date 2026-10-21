@@ -2,6 +2,7 @@
 
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/execution/companionregistry.h"
+#include "emulator/execution/runpacer.h"
 #include "emulator/execution/scriptsession.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memoryread.h"
@@ -13,6 +14,7 @@
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
 #include <algorithm>
+#include <optional>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <emulator/emulator.h>
@@ -265,6 +267,24 @@ inline std::string PyText(const pybind11::object& value)
 }
 
 /// A bus analyzer report; an unknown bus (available: false) raises ValueError with the ids the machine has
+/// A RunPacer reply: the body (with the pace); a refusal raises RuntimeError with its message
+inline pybind11::object PaceReplyPy(const execution::RunReply& reply)
+{
+    if (!reply.Ok())
+        throw std::runtime_error(reply.error + ": " + reply.message);
+    return StateNodeToPy(reply.body);
+}
+
+/// The instance's pacer (made on first use)
+inline std::shared_ptr<execution::RunPacer> PacerOfPy(Emulator& self)
+{
+    const std::shared_ptr<execution::RunPacer> pacer =
+        execution::RunPacer::For(EmulatorManager::GetInstance()->GetEmulator(self.GetId()));
+    if (!pacer)
+        throw std::runtime_error("no emulator");
+    return pacer;
+}
+
 inline pybind11::object BusReplyToPy(const StateNode& node)
 {
     const StateNode* available = node.find("available");
@@ -2133,6 +2153,53 @@ namespace PythonBindings
                 execution::script::Check(self, execution::Origin::Python);
                 self.RunUntilInterrupt(skipBreakpoints);
             }, "Run until next interrupt", py::arg("skip_breakpoints") = true)
+
+            // The paced run (core execution::RunPacer; the same pacer as WebAPI /run_pace, the actions run.pace_* and
+            // the Qt speed control). A refusal raises RuntimeError with its message
+            .def("pace", [](Emulator& self) -> py::object {
+                const auto pacer = execution::RunPacer::Find(self.GetId());
+                return StateNodeToPy(pacer ? pacer->StateBody(true) : execution::RunPacer::DefaultStateBody(true));
+            }, "The paced run: {preset, label, unit, count, interval_ms, effective_ms, running, ticks, stop_reason, presets}")
+            .def("pace_set", [](Emulator& self, const std::string& preset, py::object interval) -> py::object {
+                size_t index = 0;
+                if (!execution::RunPacer::PresetIndex(preset, index))
+                    throw std::invalid_argument("preset: full, 25fps, 5fps, 1fps, frame, 100lines, 10lines, 1line or 1op");
+                execution::script::Check(self, execution::Origin::Python);
+                std::optional<int> ms;
+                if (!interval.is_none())
+                    ms = interval.cast<int>();
+                return PaceReplyPy(PacerOfPy(self)->Set(execution::script::RequesterOf(self, execution::Origin::Python),
+                                                        index, ms));
+            }, "Choose the pace (full, 25fps, 5fps, 1fps, frame, 100lines, 10lines, 1line, 1op) and the interval (ms)",
+               py::arg("preset"), py::arg("interval_ms") = py::none())
+            .def("pace_interval", [](Emulator& self, int intervalMs) -> py::object {
+                execution::script::Check(self, execution::Origin::Python);
+                return PaceReplyPy(PacerOfPy(self)->Set(execution::script::RequesterOf(self, execution::Origin::Python),
+                                                        std::nullopt, intervalMs));
+            }, "The interval of the presets frame .. 1op, 1..5000 ms", py::arg("interval_ms"))
+            .def("pace_next", [](Emulator& self) -> py::object {
+                execution::script::Check(self, execution::Origin::Python);
+                return PaceReplyPy(PacerOfPy(self)->Shift(execution::script::RequesterOf(self, execution::Origin::Python), 1));
+            }, "A finer pace (one preset down the ladder)")
+            .def("pace_prev", [](Emulator& self) -> py::object {
+                execution::script::Check(self, execution::Origin::Python);
+                return PaceReplyPy(PacerOfPy(self)->Shift(execution::script::RequesterOf(self, execution::Origin::Python), -1));
+            }, "A coarser pace (one preset up the ladder)")
+            .def("pace_start", [](Emulator& self) -> py::object {
+                execution::script::Check(self, execution::Origin::Python);
+                return PaceReplyPy(PacerOfPy(self)->Start(execution::script::RequesterOf(self, execution::Origin::Python)));
+            }, "Run at the pace (it steps on its own and stops at a breakpoint)")
+            .def("pace_stop", [](Emulator& self) -> py::object {
+                return PaceReplyPy(PacerOfPy(self)->Stop());
+            }, "Stop the paced run; the machine stays paused")
+            .def("pace_toggle", [](Emulator& self) -> py::object {
+                execution::script::Check(self, execution::Origin::Python);
+                return PaceReplyPy(PacerOfPy(self)->Toggle(execution::script::RequesterOf(self, execution::Origin::Python)));
+            }, "Run at the pace or stop it; at full speed pause or continue")
+            .def("pace_step", [](Emulator& self) -> py::object {
+                execution::script::Check(self, execution::Origin::Python);
+                return PaceReplyPy(PacerOfPy(self)->Step(execution::script::RequesterOf(self, execution::Origin::Python)));
+            }, "One step at the pace")
 
             // Tape operations
             .def("tape_load", [](Emulator& self, const std::string& path) -> bool {
@@ -4951,6 +5018,12 @@ namespace PythonBindings
                 return reply.Ok() && reply.body.find("write_journal_setting")->b;
             }, "Whether the write journal is recorded (off by default)")
 
+            .def("ttd_cancel_journal_build", [](Emulator& self) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "journal-build-cancel", {});
+                if (!reply.Ok())
+                    throw std::runtime_error(reply.message);
+                return StateNodeToPy(reply.body);
+            }, "Stop a write-journal build that runs (from another thread): {cancelled}")
             .def("ttd_build_journal", [](Emulator& self, py::object fromObj, py::object toObj) -> py::object {
                 std::map<std::string, std::string> options;
                 if (!fromObj.is_none())
@@ -5198,6 +5271,12 @@ namespace PythonBindings
                 return reply.Ok() && reply.body.find("reached")->b;
             }, "Step back N t-states (lands at nearest M1 <= target)",
                py::arg("tstates"))
+
+            .def("ttd_reverse_step_scanlines", [](Emulator& self, uint64_t scanlines) -> bool {
+                const ttd::TTDReply reply = TtdRunPy(self, "reverse-step", {{"scanlines", std::to_string(scanlines)}});
+                return reply.Ok() && reply.body.find("reached")->b;
+            }, "Step back N scanlines of the machine (lands at nearest M1 <= target)",
+               py::arg("scanlines") = 1)
 
             .def("ttd_reverse_continue", [](Emulator& self, const std::vector<uint16_t>& pcs) -> py::object {
                 std::string list;

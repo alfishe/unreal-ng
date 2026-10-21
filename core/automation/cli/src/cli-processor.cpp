@@ -107,6 +107,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"run_frame", &CLIProcessor::HandleRunFrame},               // Run one frame
                         {"run_frames", &CLIProcessor::HandleRunFrames},             // Run N frames
                         {"run_ncycles", &CLIProcessor::HandleRunNCycles},           // Run N CPU cycles
+                        {"pace", &CLIProcessor::HandlePace},                        // The paced run (RunPacer)
                         {"memory", &CLIProcessor::HandleMemory},
                         {"session", &CLIProcessor::HandleSession},  // automation session: take / release run control
                         {"companion", &CLIProcessor::HandleCompanion},  // companion client: act as the user's hands
@@ -680,6 +681,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  stepover      - Execute instruction, skip calls and subroutines" << NEWLINE;
     oss << "  stepout       - Run until the current subroutine returns" << NEWLINE;
     oss << "  skip_until <pc> [max_tstates] - Fast-forward until PC reaches target" << NEWLINE;
+    oss << "  pace [show|presets|set <preset> [ms]|interval <ms>|next|prev|start|stop|toggle|step] - Run at a pace (25 / 5 / 1 fps, a frame, lines, an instruction per interval); stops at a breakpoint" << NEWLINE;
     oss << "  memory <addr> - View memory at address" << NEWLINE;
     oss << "  find <hex-pattern, ?? = any> [--space S] [--mask HEX] [--from N] [--to N] [--align 1|2] [--max N] - Search memory" << NEWLINE;
     oss << "  debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]... [--pchist N] - Registers, pages, time, code, stack, memory, PC history at one moment" << NEWLINE;

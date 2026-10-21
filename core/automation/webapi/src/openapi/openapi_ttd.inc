@@ -748,11 +748,11 @@
     // POST /ttd/reverse-step — multi-step backward (Phase 4 reverse execution)
     // =====================================================================
     paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["summary"] =
-        "Step back N instructions or T t-states (Phase 4 reverse execution)";
+        "Step back N instructions, T t-states or L scanlines (Phase 4 reverse execution)";
     paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["tags"].append("Time-Travel Debug");
     paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["description"] =
-        "Multi-step backward jump. Exactly one of 'count' (instructions) or "
-        "'tstates' (T-states) must be specified. For small N (<=4) delegates "
+        "Multi-step backward jump. Exactly one of 'count' (instructions), "
+        "'tstates' (T-states) or 'scanlines' (the machine's t_line each) must be specified. For small N (<=4) delegates "
         "to repeated single-step; for larger N uses a single M1 enumeration "
         "pass. T-state mode aligns the landing to the nearest M1 boundary "
         "at or before the target T-state count.";
@@ -761,7 +761,7 @@
     paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["requestBody"]["description"] =
-        "Step size — exactly one of count or tstates";
+        "Step size — exactly one of count, tstates or scanlines";
     paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["requestBody"]["required"] = true;
     paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["$ref"] = "#/components/schemas/TTDReverseStepRequest";

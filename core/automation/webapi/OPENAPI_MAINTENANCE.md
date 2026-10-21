@@ -52,6 +52,7 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 | `openapi_gsporttrace.inc` | Audio State | General Sound activity counters and port trace |
 | `openapi_analyzers.inc` | Analyzer Management | Analyzer control, events, sessions |
 | `openapi_debug.inc` | Debug Commands | Stepping, breakpoints, registers, disassembly |
+| `openapi_pace.inc` | Debug Commands | The paced run `/run_pace` (GET the pace and its ladder, POST set / next / prev / by / start / stop / toggle / step; core `RunPacer`) |
 | `openapi_profiler.inc` | Profilers | Memory, call trace, opcode, unified profiler |
 | `openapi_schemas.inc` | Component Schemas | Reusable response/request schemas |
 

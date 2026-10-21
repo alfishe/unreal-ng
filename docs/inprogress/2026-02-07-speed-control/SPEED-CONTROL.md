@@ -6,6 +6,45 @@
 **Status**: Implemented
 **Component**: `unreal-qt/src/debugger/widgets/speedcontrolwidget.h/.cpp` + `core/src/emulator/emulator.cpp`
 
+**2026-10-21:** the pace moved into the core (`execution::RunPacer`); the widget is its client. See
+[the pace in the core](#2026-10-21-the-pace-in-the-core) first: the sections after it describe the widget's original
+QTimer design, kept for its history.
+
+---
+
+## 2026-10-21: the pace in the core
+
+The ladder, the interval and the run are the core's now (`core/src/emulator/execution/runpacer.h/.cpp`), one pacer
+per instance, so a Stream Deck dial, a script, the WebAPI and MCP drive the same pace the debugger shows (Stream Deck
+use case D1).
+
+| | Before | Now |
+|:--|:--|:--|
+| Presets | `PresetConfig` in the widget | `RunPacer::Presets()`: `full`, `25fps`, `5fps`, `1fps`, `frame`, `100lines`, `10lines`, `1line`, `1op` (the same labels, intervals and units) |
+| The run | a `QTimer` stepping on the GUI thread, breakpoints skipped | the pacer's own thread (only while it runs), each tick a direct run **with breakpoints honoured** |
+| A stop | the widget's `stop()` | the run ends itself on a breakpoint (`stop_reason` `breakpoint`, the machine paused there), on a resume of the machine (`resumed`), when another surface holds run control (`held`), when the user takes control back (`revoked`) and when the instance goes (`gone`, `RunPacer::Drop` in `EmulatorManager`) |
+| The widget | owned the state | shows the pacer's state (`NC_RUN_PACE` → `syncFromPacer`), submits `run.pace_set` / `run.pace_toggle` / `run.pace_stop` / `run.pace_step` on the instance's actions worker (never blocking the GUI thread), emits `stepped` on the CPU-step posts while the pace runs (the panes and the screen follow) |
+
+Choosing a preset keeps the slider's rules: a paced preset while the machine runs at full speed pauses it and starts
+the pace; `full` while the pace runs stops it and resumes the machine; between paced presets a running pace goes on
+with the new interval at once.
+
+Every plane (the verbs and their status: [command-interface.md §2.1](../../emulator/design/control-interfaces/command-interface.md#21-paced-run-and-runs-to-a-place-stream-deck-d1-d2)):
+
+| Plane | Read | Change |
+|:--|:--|:--|
+| CLI | `pace`, `pace presets` | `pace set 5fps [ms]`, `pace interval <ms>`, `pace next` / `prev`, `pace start` / `stop` / `toggle`, `pace step` |
+| REST | `GET /api/v1/emulator/{id}/run_pace` | `POST /api/v1/emulator/{id}/run_pace` `{op, preset?, interval_ms?, delta?}` |
+| WebSocket | the GET as a `call`; the push: `pace` in the `run.state` topic | the POST as a `call` |
+| MCP | `control_execution` `pace` (`pace_op` `get`) | `control_execution` `pace` with `pace_op` set / next / prev / start / stop / toggle / step |
+| Python | `emu.pace()` | `emu.pace_set(preset, interval_ms=None)`, `pace_interval`, `pace_next`, `pace_prev`, `pace_start`, `pace_stop`, `pace_toggle`, `pace_step` |
+| Lua | `pace()` | `pace_set(preset, [ms])`, `pace_interval`, `pace_next`, ... `pace_step` |
+| Actions | `run.state` readout → `pace`; `toggle.run.pace_toggle` | `run.pace_set`, `run.pace_next`, `run.pace_prev`, `run.pace_by` (a dial), `run.pace_toggle` (the dial's push), `run.pace_stop`, `run.pace_step` |
+
+Tests: `core/tests/emulator/execution/runpacer_test.cpp` (the ladder, a deterministic `Tick`, a run stopped by a
+breakpoint, by a resume, the slider's rules, a held claim, the instance going), the pace actions in
+`core/tests/emulator/actions/steppingactions_test.cpp`.
+
 ---
 
 ## Table of Contents

@@ -3556,7 +3556,7 @@ void Emulator::RunUntilInterrupt(bool skipBreakpoints)
 }
 
 void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate, uint64_t maxTStates,
-                                 bool notifyDebugger)
+                                 bool notifyDebugger, bool skipBreakpoints)
 {
     DirectStepScope directStep(*this, "run_until_condition");
     CancelPendingStepOver();
@@ -3571,13 +3571,17 @@ void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate,
     // maxTStates 0 = no limit
     TStateRunBudget budget(maxTStates);
 
-    while (!_stopRequested)
+    // RunHalted: a stop request, a breakpoint stop (with skipBreakpoints false), an abort (the user took control
+    // back), or a run that did not get the CPU - it never drives the Z80 next to the CPU's holder
+    while (!RunHalted())
     {
         const uint32_t prevT = z80.t;
         const uint32_t limitBefore = z80._frameLimit;
 
         bool frameCompleted = false;
-        ExecuteStep(true, &frameCompleted);  // Skip breakpoints for condition-based execution
+        ExecuteStep(skipBreakpoints, &frameCompleted);
+        if (_directStop.hit && _directStop.kind == BreakpointHitKind::Execute)
+            break;  // stopped before the breakpoint's instruction: nothing ran
 
         budget.Step(prevT, z80.t, limitBefore, z80._frameLimit, frameCompleted);
 

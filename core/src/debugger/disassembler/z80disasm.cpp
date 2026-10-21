@@ -2048,8 +2048,8 @@ std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const std::vect
             decodedInstruction.annotation = getCommandAnnotation(decodedInstruction, registers);
         }
 
-        // Look up and set a label for this instruction if available
-        if (_context && _context->pDebugManager)
+        // Look up and set a label for this instruction if available (not under a NoLabelsScope)
+        if (_context && _context->pDebugManager && !t_noLabels)
         {
             auto labelManager = _context->pDebugManager->GetLabelManager();
             if (labelManager)
@@ -2948,7 +2948,7 @@ std::string Z80Disassembler::formatOperandString(const DecodedInstruction& decod
 
     // Get LabelManager for symbolic resolution
     LabelManager* labelManager = nullptr;
-    if (_context && _context->pDebugManager)
+    if (_context && _context->pDebugManager && !t_noLabels)
     {
         labelManager = _context->pDebugManager->GetLabelManager();
     }

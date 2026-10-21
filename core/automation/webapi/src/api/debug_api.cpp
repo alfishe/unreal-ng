@@ -365,7 +365,7 @@ void EmulatorAPI::stepOutNow(const HttpRequestPtr& req, std::function<void(const
 /// @brief t-state budget is exhausted). Breakpoints are skipped for the walk —
 /// @brief same no-trap rule as step out. Frames rendered during the skip are
 /// @brief not captured by the recording subsystem (raw CPU stepping path).
-/// @brief Request body: {"pc": "0x8000" | 32768, "max_tstates": 70000000}
+/// @brief Request body: {"pc": "0x8000" | 32768, "max_tstates": 70000000, "breakpoints": false}
 void EmulatorAPI::skipUntilNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
 {
@@ -416,44 +416,13 @@ void EmulatorAPI::skipUntilNow(const HttpRequestPtr& req, std::function<void(con
         }
         const uint16_t target = static_cast<uint16_t>(target32);
 
-        // Safety budget: default 100 frames of emulated time (~2 s), hard cap 200 s
-        EmulatorContext* context = emulator->GetContext();
-        unsigned maxTStates = json->isMember("max_tstates") ? (*json)["max_tstates"].asUInt() : 0;
-        if (maxTStates == 0 && context)
-        {
-            maxTStates = context->config.frame * 100;
-        }
-        if (maxTStates == 0)
-        {
-            maxTStates = 6988800;  // Fallback if config is unavailable
-        }
-        if (maxTStates > 700000000u)
-        {
-            maxTStates = 700000000u;
-        }
-
-        emulator->RunUntilCondition([target](const Z80State& state) { return state.pc == target; }, maxTStates);
-        if (ReplyIfControlTakenBack(emulator, callback))
-            return;
-
-        Z80State* z80 = emulator->GetZ80State();
-        const bool hit = z80 && z80->pc == target;
-
-        Json::Value ret;
-        ret["status"] = "success";
-        ret["hit"] = hit;
-        ret["message"] = hit ? "Reached target address" : "T-state budget exhausted before reaching target";
-        ret["max_tstates"] = maxTStates;
-        if (z80)
-        {
-            ret["pc"] = z80->pc;
-            ret["sp"] = z80->sp;
-        }
-        ret["state"] = stateToString(emulator->GetState());
-
-        auto resp = HttpResponse::newHttpJsonResponse(ret);
-        addCorsHeaders(resp);
-        callback(resp);
+        // RunControl (core/src/emulator/execution/runcontrol.h): budget 0 = 100 frames, at most 700000000 t-states;
+        // breakpoints skipped (the no-trap rule of step out) unless "breakpoints": true (run to a cursor)
+        const uint64_t maxTStates = json->isMember("max_tstates") ? (*json)["max_tstates"].asUInt64() : 0;
+        const bool breakpoints = json->isMember("breakpoints") && (*json)["breakpoints"].asBool();
+        ReplyRun(execution::RunControl(emulator).RunUntilPc(webapi_session::RequesterOf(req, emulator->GetContext()),
+                                                            target, maxTStates, breakpoints),
+                 callback);
     }
     catch (const std::exception& e)
     {
@@ -587,7 +556,7 @@ void EmulatorAPI::runNScanlinesNow(const HttpRequestPtr& req, std::function<void
 
 /// @brief POST /api/v1/emulator/{id}/run_to_pixel
 /// @brief Run until next screen pixel (skip vblank/borders)
-void EmulatorAPI::runToPixelNow(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::runToPixelNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -595,25 +564,8 @@ void EmulatorAPI::runToPixelNow(const HttpRequestPtr& /*req*/, std::function<voi
     
     try
     {
-        emulator->RunUntilNextScreenPixel();
-        if (ReplyIfControlTakenBack(emulator, callback))
-            return;
-        
-        Z80State* z80 = emulator->GetZ80State();
-        
-        Json::Value ret;
-        ret["status"] = "success";
-        ret["message"] = "Ran to next screen pixel";
-        if (z80)
-        {
-            ret["pc"] = z80->pc;
-            ret["sp"] = z80->sp;
-        }
-        ret["state"] = stateToString(emulator->GetState());
-        
-        auto resp = HttpResponse::newHttpJsonResponse(ret);
-        addCorsHeaders(resp);
-        callback(resp);
+        ReplyRun(execution::RunControl(emulator).RunToPixel(webapi_session::RequesterOf(req, emulator->GetContext())),
+                 callback);
     }
     catch (const std::exception& e)
     {
@@ -4027,155 +3979,40 @@ void EmulatorAPI::listingSourceAt(const HttpRequestPtr& req, std::function<void(
 }
 
 /// @brief POST /api/v1/emulator/{id}/listing/step_line
-/// @brief Execute until PC reaches a different listing source line.
-/// @brief Body: {max_tstates?: N} — 0/absent = ~2 s of emulated time
+/// @brief Execute until PC reaches a different listing source line (RunControl::StepLine).
+/// @brief Body: {max_tstates?: N} — 0/absent = ~2 s of emulated time. On the long-call pool: never an I/O thread
 void EmulatorAPI::stepLine(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
-    if (!emulator) return;
-
-    auto* ctx = emulator->GetContext();
-    if (!ctx || !ctx->pDebugManager)
-    {
-        Json::Value error;
-        error["error"] = "Internal Error";
-        error["message"] = "Debug manager not available";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
-        addCorsHeaders(resp);
-        callback(resp);
+    if (!emulator || RunControlHeldReply(req, emulator, callback))
         return;
-    }
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { stepLineNow(req, std::move(*answer), id); });
+}
 
-    ListingParser* parser = ctx->pDebugManager->GetListingParser();
-    if (!parser)
-    {
-        Json::Value error;
-        error["error"] = "Internal Error";
-        error["message"] = "Listing parser not available";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
-        addCorsHeaders(resp);
-        callback(resp);
+void EmulatorAPI::stepLineNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator)
         return;
-    }
-
-    if (!parser->IsLoaded())
-    {
-        Json::Value error;
-        error["error"] = "Conflict";
-        error["message"] = "No listing loaded";
-        error["hint"] = "POST /api/v1/emulator/{id}/listing/load first";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k409Conflict);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    Z80State* z80 = emulator->GetZ80State();
-    if (!z80)
-    {
-        Json::Value error;
-        error["error"] = "Internal Error";
-        error["message"] = "Z80 state not available";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    const ListingLine* startLine = parser->FindLineByAddress(z80->pc);
-    int startLineNumber = startLine ? startLine->lineNumber : -1;
-
     auto json = req->getJsonObject();
-    unsigned maxTStates = json && json->isMember("max_tstates") ? (*json)["max_tstates"].asUInt() : 0;
-    if (maxTStates == 0)
-        maxTStates = ctx->config.frame * 100;  // ~2 s of emulated time
-
-    // Stop on the first instruction whose listing line differs from the starting line.
-    // When the current PC is not covered, stop on the first covered line instead.
-    emulator->RunUntilCondition(
-        [parser, startLineNumber](const Z80State& state) {
-            const ListingLine* line = parser->FindLineByAddress(state.pc);
-            return line != nullptr && line->lineNumber != startLineNumber;
-        },
-        maxTStates);
-
-    z80 = emulator->GetZ80State();
-    const ListingLine* endLine = z80 ? parser->FindLineByAddress(z80->pc) : nullptr;
-    bool lineChanged = endLine != nullptr && endLine->lineNumber != startLineNumber;
-
-    Json::Value ret;
-    ret["status"] = "success";
-    ret["message"] = lineChanged ? "Stepped to a different source line" : "Stopped without reaching a different source line";
-    if (z80)
-    {
-        ret["pc"] = z80->pc;
-        ret["sp"] = z80->sp;
-    }
-    ret["state"] = stateToString(emulator->GetState());
-    ret["line_changed"] = lineChanged;
-    if (startLine)
-        ret["from_line"] = listingLineToJson(*startLine);
-    if (endLine)
-        ret["to_line"] = listingLineToJson(*endLine);
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    const uint64_t maxTStates = json && json->isMember("max_tstates") ? (*json)["max_tstates"].asUInt64() : 0;
+    ReplyRun(execution::RunControl(emulator).StepLine(webapi_session::RequesterOf(req, emulator->GetContext()),
+                                                      maxTStates),
+             callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/listing/run_to_line
-/// @brief Run until PC reaches the first code byte of a listing line (at/after the given number).
-/// @brief Body: {line: N, max_tstates?: M} — 0/absent = ~10 s of emulated time
+/// @brief Run until PC reaches the first code byte of a listing line (at/after the given number; RunControl::RunToLine).
+/// @brief Body: {line: N, max_tstates?: M} — 0/absent = ~10 s of emulated time. On the long-call pool
 void EmulatorAPI::runToLine(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
-    if (!emulator) return;
-
-    auto* ctx = emulator->GetContext();
-    if (!ctx || !ctx->pDebugManager)
-    {
-        Json::Value error;
-        error["error"] = "Internal Error";
-        error["message"] = "Debug manager not available";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
-        addCorsHeaders(resp);
-        callback(resp);
+    if (!emulator || RunControlHeldReply(req, emulator, callback))
         return;
-    }
-
-    ListingParser* parser = ctx->pDebugManager->GetListingParser();
-    if (!parser)
-    {
-        Json::Value error;
-        error["error"] = "Internal Error";
-        error["message"] = "Listing parser not available";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    if (!parser->IsLoaded())
-    {
-        Json::Value error;
-        error["error"] = "Conflict";
-        error["message"] = "No listing loaded";
-        error["hint"] = "POST /api/v1/emulator/{id}/listing/load first";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k409Conflict);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
     auto json = req->getJsonObject();
     if (!json || !json->isMember("line"))
     {
@@ -4188,67 +4025,22 @@ void EmulatorAPI::runToLine(const HttpRequestPtr& req, std::function<void(const 
         callback(resp);
         return;
     }
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([this, req, answer, id]() { runToLineNow(req, std::move(*answer), id); });
+}
 
-    int lineNumber = (*json)["line"].asInt();
-    const ListingLine* target = parser->FindNextCodeLine(lineNumber);
-    if (!target)
-    {
-        Json::Value error;
-        error["error"] = "Not Found";
-        error["message"] = "No code line at or after line " + std::to_string(lineNumber) + " in loaded listing";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k404NotFound);
-        addCorsHeaders(resp);
-        callback(resp);
+void EmulatorAPI::runToLineNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator)
         return;
-    }
-
-    Z80State* z80 = emulator->GetZ80State();
-    if (!z80)
-    {
-        Json::Value error;
-        error["error"] = "Internal Error";
-        error["message"] = "Z80 state not available";
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
-    unsigned maxTStates = json->isMember("max_tstates") ? (*json)["max_tstates"].asUInt() : 0;
-    if (maxTStates == 0)
-        maxTStates = ctx->config.frame * 500;  // ~10 s of emulated time
-
-    const uint16_t targetAddress = target->addressStart;
-    bool alreadyAt = z80->pc == targetAddress;
-
-    if (!alreadyAt)
-    {
-        emulator->RunUntilCondition(
-            [targetAddress](const Z80State& state) { return state.pc == targetAddress; },
-            maxTStates);
-    }
-
-    z80 = emulator->GetZ80State();
-    bool reached = z80 && z80->pc == targetAddress;
-
-    Json::Value ret;
-    ret["status"] = reached ? "success" : "timeout";
-    ret["message"] = alreadyAt ? "Already at target line" : (reached ? "Reached target line" : "Safety limit reached before target line");
-    if (z80)
-    {
-        ret["pc"] = z80->pc;
-        ret["sp"] = z80->sp;
-    }
-    ret["state"] = stateToString(emulator->GetState());
-    ret["reached"] = reached;
-    ret["already_at"] = alreadyAt;
-    ret["target_line"] = listingLineToJson(*target);
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+    auto json = req->getJsonObject();
+    const int line = json ? (*json)["line"].asInt() : 0;
+    const uint64_t maxTStates = json && json->isMember("max_tstates") ? (*json)["max_tstates"].asUInt64() : 0;
+    ReplyRun(execution::RunControl(emulator).RunToLine(webapi_session::RequesterOf(req, emulator->GetContext()), line,
+                                                       maxTStates),
+             callback);
 }
 
 // endregion Source Listing

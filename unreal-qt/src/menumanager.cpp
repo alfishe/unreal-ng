@@ -1150,12 +1150,12 @@ void MenuManager::createDebugMenu()
     // Step Out
     _stepOutAction = _debugMenu->addAction(tr("Step O&ut"));
     _stepOutAction->setStatusTip(tr("Execute until return from current function"));
-    _stepOutAction->setEnabled(false);  // TODO: Implement step out
+    connect(_stepOutAction, &QAction::triggered, this, &MenuManager::stepOutRequested);
 
-    // Run to Cursor
+    // Run to Cursor: the line of the disassembly's cursor (click a line); a breakpoint on the way stops it
     _runToCursorAction = _debugMenu->addAction(tr("Run to &Cursor"));
-    _runToCursorAction->setStatusTip(tr("Execute until cursor position"));
-    _runToCursorAction->setEnabled(false);  // TODO: Implement run to cursor
+    _runToCursorAction->setStatusTip(tr("Execute until the line under the disassembly's cursor"));
+    connect(_runToCursorAction, &QAction::triggered, this, &MenuManager::runToCursorRequested);
 
     _debugMenu->addSeparator();
 
@@ -1496,6 +1496,8 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
     // Debug menu states
     _stepInAction->setEnabled(!isRunning || isPaused);
     _stepOverAction->setEnabled(!isRunning || isPaused);
+    _stepOutAction->setEnabled(emulatorExists && (!isRunning || isPaused));
+    _runToCursorAction->setEnabled(emulatorExists && (!isRunning || isPaused));
 
     // Overscan menu states (Pentagon only)
     // Only update overscan visibility when there's an active emulator

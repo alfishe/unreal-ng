@@ -11,6 +11,7 @@
 #include "emulator/actions/activityfeed.h"
 #include "emulator/actions/contextstate.h"
 #include "emulator/actions/readouts.h"
+#include "emulator/actions/steppingactions.h"
 #include "emulator/companions/streamdecksupervisor.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -602,6 +603,7 @@ Json::Value WsHub::Read(const std::string& name, const std::string& instanceId, 
         value["state"] = !emulator.IsRunning() ? "stopped" : emulator.IsPaused() ? "paused" : "running";
         value["speed"] = static_cast<int>(emulator.GetSpeedMultiplier());
         value["turbo"] = emulator.IsTurboMode();
+        value["pace"] = StateNodeToJson(actions::PaceReadout(instanceId));  // the paced run (D1)
         return value;
     }
     if (name == "ttd.position")
@@ -618,6 +620,8 @@ Json::Value WsHub::Read(const std::string& name, const std::string& instanceId, 
         value["history"] = cursor.history;
         value["paused"] = hooks != nullptr ? cursor.paused : emulator.IsPaused();
         value["fps"] = ttd::TTDFrameRate(context);
+        value["unit"] = actions::ScrubUnitOf(instanceId);  // the scrub unit (ttd.scrub_unit, D3.2)
+        value["unit_count"] = static_cast<Json::Int64>(actions::ScrubCountOf(instanceId));
         return value;
     }
     if (name == "surfaces.context")
