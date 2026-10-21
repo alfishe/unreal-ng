@@ -101,13 +101,18 @@ protected:
         {
             const std::string path = (TestPathHelper::FindProjectRoot() / "testdata" / snapshot).string();
             ASSERT_TRUE(run.emulator->LoadSnapshot(path)) << path;
-            return;
         }
-        Memory* memory = run.context->pMemory;
-        for (size_t i = 0; i < kHaltLoop.size(); i++)
-            memory->DirectWriteToZ80Memory(static_cast<uint16_t>(loopAt + i), kHaltLoop[i]);
-        memory->DirectWriteToZ80Memory(0x9000, 0);
-        run.z80->pc = loopAt;
+        else
+        {
+            Memory* memory = run.context->pMemory;
+            for (size_t i = 0; i < kHaltLoop.size(); i++)
+                memory->DirectWriteToZ80Memory(static_cast<uint16_t>(loopAt + i), kHaltLoop[i]);
+            memory->DirectWriteToZ80Memory(0x9000, 0);
+            run.z80->pc = loopAt;
+        }
+        // Turbo draws only the frames the host clock allows, and RunNFrames is not frame-aligned: two whole frames
+        // without turbo, so no pixel of the first checkpoint comes from the boot (it differed under load)
+        run.emulator->RunNFrames(2, true);
     }
 
     static uint64_t CpuHash(const EmulatorContext* context)
