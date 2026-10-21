@@ -192,8 +192,10 @@ struct Writer
                 return "%" + bits;
             }
             case ir::NumberSpelling::Character:
-                if (e.text.size() == 1 && (static_cast<unsigned char>(e.text[0]) < 0x20 || static_cast<unsigned char>(e.text[0]) >= 0x7F))
+                if (e.text.size() == 1 && static_cast<unsigned char>(e.text[0]) < 0x20)
                     return std::to_string(e.value);   // a control character cannot stand in a quoted constant
+                if (std::any_of(e.text.begin(), e.text.end(), [](char c) { return static_cast<unsigned char>(c) >= 0x7F; }))
+                    return std::to_string(e.value);   // its bytes depend on the code page the text is written in: the value
                 if (e.text.size() == 1 && e.text != "'")
                     return "'" + e.text + "'";
                 if (e.text.size() == 1)

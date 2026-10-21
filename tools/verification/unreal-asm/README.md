@@ -59,7 +59,9 @@ unreal-asm/
                                 source than the disk's)
     crosscheck.py               the main sources of a set of images to sjasmplus and to pasmo / z88dk (--targets),
                                 each assembled, the bytes compared (--disk-sets: a directory's images are one set,
-                                zxasm convert --with)
+                                zxasm convert --with); a main source that SAVEBINs a file of its disk (ALASM's
+                                ObjTab, ZX-ASM's SAVE) is assembled as it is, pages too, and each object compared
+                                with the file the original assembler saved
     projectcheck.py             real sjasmplus projects (Z5) through a retro target (--to tasm / alasm / storm ...) and
                                 back: the 64K memory sjasmplus builds from each must stay the same (--project: the main
                                 file with what it INCLUDEs and INCBINs, by `zxasm convert --project`, named for a
@@ -157,7 +159,9 @@ export UNREAL_ASM_PASMO=<path to pasmo> UNREAL_ASM_Z80ASM=<path to z88dk-z80asm>
 python3 $S/checks/crosscheck.py scratch/xc disk1.trd disk2.scl ... --targets pasmo,z88dk
 #   equal: 245  no code: 5  pasmo errors: 5  skipped (sjasmplus errors or pages): 164
 python3 $S/checks/crosscheck.py scratch/xc --images-from images.txt --targets pasmo,z88dk --disk-sets
-#   2026-10-21, 171 images: pasmo equal 609, z88dk equal 608 (RARB33: a z80asm limit), skipped 292
+#   2026-10-21, 171 images: pasmo equal 609, z88dk equal 608 (RARB33: a z80asm limit), skipped 292;
+#   original objects: 8 equal (sts7, HR24SBOR, impetris, TELNUM.B ...), 4 differ by a byte: STS73's sts7 against
+#   the disk's, which STS74 built (its version letter)
 ```
 
 pasmo 0.5.5 writes an empty file when the code spans the whole 64K (its size wraps to 16 bits); such sources show as

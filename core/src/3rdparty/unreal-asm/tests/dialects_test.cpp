@@ -310,8 +310,27 @@ TEST(Dialects_Test, TheObjectSaversTableBecomesSavebin)
     EXPECT_TRUE(has("SLOT 3"));
     EXPECT_TRUE(has("PAGE pgzx"));
     EXPECT_TRUE(has("SAVEBIN \"EFFECTZX\",#C000,LENZX"));   // type C: the name alone, as ALASM's INCBIN names it
-    EXPECT_TRUE(has("PAGE #10"));
+    EXPECT_TRUE(has("PAGE 0"));   // #10 is no ORG's page: the RAM page port #7FFD maps (sts7 of ALASM's own disk)
     EXPECT_TRUE(has("SAVEBIN \"table.0\",#8000,16"));      // another type: after a dot
+}
+
+TEST(Dialects_Test, ACharacterConstantTakesItsCodePagesByte)
+{
+    // CP "Ц in a CP866 source: ALASM compares with the byte #96, not the two bytes of the UTF-8 text the codec decoded
+    // (they made CP low 42704); the sjasmplus text (UTF-8, or another code page) gets the number
+    auto convert = [](const std::string& text, const std::string& dialect) {
+        SourceDocument source = SourceDocument::FromText(text, dialect);
+        source.codePage = encoding::CodePage::Cp866;
+        const ConvertResult r = Convert(source, "sjasmplus");
+        EXPECT_TRUE(r.ok);
+        for (const SourceLine& l : r.document.lines)
+            if (const size_t at = l.text.find_first_not_of(' '); at != std::string::npos)
+                return l.text.substr(at);
+        return std::string();
+    };
+    EXPECT_EQ(convert("        CP \"\xD0\xA6", "alasm"), "CP 150");
+    EXPECT_EQ(convert("        LD HL,\"A\xD0\xA6\"", "alasm"), "LD HL,38465");   // ALASM: the first in the low byte, the last in the high
+    EXPECT_EQ(convert("        LD A,'\xD0\xA6'", "sjasmplus"), "LD A,150");
 }
 
 TEST(Dialects_Test, AWalkingMacroOfAnotherFileIsExpanded)

@@ -7,6 +7,7 @@
 #include <set>
 #include <string_view>
 
+#include "dialects/common/characters.h"
 #include "dialects/common/z80.h"
 
 namespace unrealasm::dialects
@@ -873,6 +874,7 @@ FrontendResult Asm80Frontend::ParseInProject(const SourceDocument& source, const
             }
 
     Canonical(result.program, spelling);
+    CharactersInCodePage(result.program, source.codePage);
     return result;
 }
 }  // namespace unrealasm::dialects

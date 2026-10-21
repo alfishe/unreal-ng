@@ -14,6 +14,10 @@ fixed or such sources show as "pasmo wrote nothing".
 INCLUDEs that its disk lacks comes from another disk of the set (ZAsm's own sources on C33_F9.trd include ovldef, and
 its macros, from the program disk Z33_F9.trd).
 z80asm writes one binary per section (every ORG opens one) and their addresses to its map: they are put together.
+The original assembler's objects: a main source whose sjasmplus form SAVEBINs a file its disk holds (ALASM's object
+saver: the conversion writes a SAVEBIN for each entry of its ObjTab) is assembled as it is, in its own DEVICE with its
+pages, and each object compared with the disk's file of that name (the last of that name, as TR-DOS finds it). Sources
+with pages are compared so too.
 zxasm: --zxasm or UNREAL_ASM_ZXASM; sjasmplus: --sjasmplus or UNREAL_ASM_SJASMPLUS; pasmo: --pasmo or UNREAL_ASM_PASMO;
 z80asm: --z80asm or UNREAL_ASM_Z80ASM.
 """
@@ -73,6 +77,48 @@ def sjasmplus_image(sjasmplus, directory, name):
             return None
         images.append(open(os.path.join(directory, '__sj.bin'), 'rb').read())
     return {a: images[0][a] for a in range(65536) if images[0][a] == images[1][a]}
+
+
+def disk_files(image):
+    """{(name, type): (length, sectors)} of an image's files (of a name given twice, the last)"""
+    return {(name, type_): (length, data) for name, type_, start, length, data in zxdisk.files(open(image, 'rb').read())}
+
+
+def original_objects(sjasmplus, directory, name, disk):
+    """(name, None or the bytes differing) for each SAVEBIN of the source naming a file of its disk, or an error text;
+    None when it names none. sjasmplus assembles the source in a folder of its own (objects/<source>), so the files
+    next to the sources stay as they are"""
+    saves = []
+    for host in re.findall(rb'^\s+SAVEBIN\s+"([^"]+)"', text_with_includes(directory, name), re.M | re.I):
+        stem, _, type_ = host.decode('latin1').partition('.')
+        if (stem, type_ or 'C') in disk:
+            saves.append((host.decode('latin1'), disk[(stem, type_ or 'C')]))
+    if not saves:
+        return None
+    out = os.path.join(os.path.dirname(directory), 'objects', name.removesuffix('.asm'))
+    shutil.rmtree(out, ignore_errors=True)
+    os.makedirs(out)
+    try:
+        run = subprocess.run([sjasmplus, '--nologo', '-I' + os.path.abspath(directory), os.path.abspath(os.path.join(directory, name))], cwd=out,
+                             capture_output=True, text=True, errors='replace', timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return f'sjasmplus did not end in {TIMEOUT} s'
+    # The object saver's own code (SAVEOBJ*, run in ALASM) may be missing from the disk: the SAVEBINs stand for it
+    errors = [line for line in (run.stdout + run.stderr).split('\n') if ': error' in line and 'opening file: SAVEOBJ' not in line]
+    if errors or not re.search(r'Errors: \d+', run.stdout + run.stderr):
+        return errors[0].strip() if errors else 'sjasmplus failed'
+    result = []
+    for host, (length, sectors) in saves:
+        path = os.path.join(out, host)
+        if not os.path.exists(path):
+            result.append((host, 'not written'))
+            continue
+        mine = open(path, 'rb').read()
+        # A BASIC file's catalog length is the program's (ZX-ASM's SAVE of TELNUM.B: 51 of the 256 bytes it wrote)
+        reference = sectors[:len(mine)] if host.upper().endswith('.B') and length <= len(mine) <= len(sectors) else sectors[:length]
+        differing = sum(1 for a, b in zip(mine, reference) if a != b) + abs(len(mine) - len(reference))
+        result.append((host, differing or None))
+    return result
 
 
 def pasmo_image(pasmo, directory, name):
@@ -177,12 +223,21 @@ def main():
         if not all(os.path.isdir(dirs[t]) for t in ['sjasmplus'] + targets):
             continue
         sources = sorted(f for f in os.listdir(dirs['sjasmplus']) if f.endswith('.asm'))
+        disk = disk_files(image)
         included = set()
         for f in sources:
             included |= includes(dirs['sjasmplus'], f)
         for f in sources:
             if f.lower().removesuffix('.asm') in included:
                 continue
+            objects = original_objects(args.sjasmplus, dirs['sjasmplus'], f, disk)
+            if isinstance(objects, str):
+                tally['original objects: sjasmplus errors'] += 1
+                print(f'objects {n}/{f}: {objects}')
+            for host, differing in objects if isinstance(objects, list) else []:
+                tally['original objects: ' + ('equal' if differing is None else 'differ')] += 1
+                if differing is not None:
+                    print(f'differ original {n}/{f} {host}: {differing}' + (' bytes' if isinstance(differing, int) else ''))
             reference = sjasmplus_image(args.sjasmplus, dirs['sjasmplus'], f)
             if reference is None:
                 tally['skipped (sjasmplus errors or pages)'] += 1

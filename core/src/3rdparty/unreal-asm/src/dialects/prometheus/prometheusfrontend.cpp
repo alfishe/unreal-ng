@@ -5,6 +5,7 @@
 #include <set>
 #include <string_view>
 
+#include "dialects/common/characters.h"
 #include "dialects/common/z80.h"
 #include "dialects/prometheus/prometheuscurrent.h"
 
@@ -516,6 +517,7 @@ FrontendResult PrometheusFrontend::Parse(const SourceDocument& source) const
         }
         result.program.lines.push_back(std::move(line));
     }
+    CharactersInCodePage(result.program, source.codePage);
     return result;
 }
 }  // namespace unrealasm::dialects

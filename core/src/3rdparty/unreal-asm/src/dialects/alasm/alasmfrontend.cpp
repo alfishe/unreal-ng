@@ -7,6 +7,7 @@
 #include <optional>
 #include <set>
 
+#include "dialects/common/characters.h"
 #include "dialects/common/macros.h"
 #include "dialects/common/z80.h"
 
@@ -1170,6 +1171,7 @@ FrontendResult AlasmFrontend::ParseInProject(const SourceDocument& original, con
             for (ir::Operand& o : st.operands)
                 macroTests(o.expr);
         }
+    CharactersInCodePage(result.program, original.codePage);
     return result;
 }
 }  // namespace unrealasm::dialects
