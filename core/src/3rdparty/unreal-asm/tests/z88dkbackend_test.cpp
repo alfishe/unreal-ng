@@ -196,11 +196,11 @@ TEST(Z88dkBackend_Test, LabelsSectionsAndPhase)
 
 TEST(Z88dkBackend_Test, TextMacrosAndSectionOffsets)
 {
-    // z80asm's DEFL is a text macro: SV=$ names a label put there (else SV would be the $ where it is used); in a
-    // macro the label is LOCAL
+    // z80asm's DEFL is a text macro: SV=$ is the address the layout gives there (else SV would be the $ where it is
+    // used); in a macro, where the layout has no address, it names a LOCAL label put there
     const std::vector<std::string> defl = ToZ80asm("        ORG #8000\n        NOP\nSV=$\n        NOP\nSV=$\n        DW SV", "sjasmplus");
-    EXPECT_TRUE(Contains(defl, "__UNREALASM_PC_main_1:")) << ::testing::PrintToString(defl);
-    EXPECT_TRUE(Contains(defl, "SV DEFL __UNREALASM_PC_main_1"));
+    EXPECT_TRUE(Contains(defl, "SV DEFL $8001")) << ::testing::PrintToString(defl);
+    EXPECT_TRUE(Contains(defl, "SV DEFL $8002"));
     const std::vector<std::string> macro = ToZ80asm("        MACRO M\nY=$\n        DW Y\nY=$\n        ENDM\n        ORG #8000\n        M", "sjasmplus");
     EXPECT_TRUE(Contains(macro, "LOCAL __UNREALASM_PC_main_1")) << ::testing::PrintToString(macro);
     // Its labels count from their section's start in an IF: an IF on an address is decided from the layout
@@ -211,10 +211,25 @@ TEST(Z88dkBackend_Test, TextMacrosAndSectionOffsets)
     // Names assigned from each other would grow at every assignment: each value an EQU of its own (LOCAL in a macro)
     const std::vector<std::string> grow = ToZ80asm("SX=0\nSY=100\nSX=SX+SY/41\nSY=SY-SX/41", "sjasmplus");
     EXPECT_TRUE(Contains(grow, "SX DEFL __UNREALASM_V_main_3")) << ::testing::PrintToString(grow);
-    EXPECT_TRUE(std::any_of(grow.begin(), grow.end(), [](const std::string& t) { return t.rfind("__UNREALASM_V_main_4 EQU SY-", 0) == 0; }))
+    EXPECT_TRUE(std::any_of(grow.begin(), grow.end(), [](const std::string& t) { return t.rfind("__UNREALASM_V_main_4 EQU (SY-", 0) == 0; }))
         << ::testing::PrintToString(grow);
     const std::vector<std::string> inMacro = ToZ80asm("        MACRO M\nSX=SX+SY/41\nSY=SY-SX/41\n        ENDM\nSX=0\nSY=100\n        M", "sjasmplus");
     EXPECT_TRUE(Contains(inMacro, "LOCAL __UNREALASM_V_main_1")) << ::testing::PrintToString(inMacro);
+    // A text macro has no parentheses of its own: an expression is put in them (ADR*2 must not read ADR+1*2)
+    const std::vector<std::string> paren = ToZ80asm("ADR=#7000\nADR=ADR+1\n        DW ADR*2", "sjasmplus");
+    EXPECT_TRUE(Contains(paren, "ADR DEFL (ADR+1)")) << ::testing::PrintToString(paren);
+    // An ORG in a macro on a name that holds a number (not an address) may move back: a LOCAL section per expansion
+    // (TASM's SINUS steps a pointer and an ORG back and forth at every REPT)
+    const std::vector<std::string> sections =
+        ToZ80asm("        MACRO G\n        ORG ADR\n        NOP\nADR=ADR+1\n        ENDM\nADR=#7000\n        G\n        G", "sjasmplus");
+    EXPECT_TRUE(Contains(sections, "LOCAL s_m_main_1")) << ::testing::PrintToString(sections);
+    EXPECT_TRUE(Contains(sections, "SECTION s_m_main_1")) << ::testing::PrintToString(sections);
+    EXPECT_TRUE(Contains(sections, "ORG (ADR&$FFFF)")) << ::testing::PrintToString(sections);
+    // ORG $+n there skips the bytes (DEFS would write zeros over the other sections): the next section past them
+    const std::vector<std::string> skip =
+        ToZ80asm("        MACRO G\n        ORG ADR\n        DB 1,2\n        ORG $+127\n        DB 3\nADR=ADR+1\n        ENDM\nADR=#7000\n        G", "sjasmplus");
+    EXPECT_TRUE(Contains(skip, "ORG ((ADR&$FFFF)+129&$FFFF)")) << ::testing::PrintToString(skip);
+    EXPECT_FALSE(Contains(skip, "DEFS 127")) << ::testing::PrintToString(skip);
 }
 
 TEST(Z88dkBackend_Test, ProgramsAssembleToWhatTheOriginalsBuilt)
