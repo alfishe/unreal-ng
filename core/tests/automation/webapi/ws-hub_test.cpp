@@ -15,7 +15,9 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testwaithelper.h"
 #include "emulator/actions/actionregistry.h"
+#include "emulator/actions/activityfeed.h"
 #include "emulator/actions/contextstate.h"
+#include "emulator/actions/readouts.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/execution/automationgate.h"
@@ -309,10 +311,61 @@ TEST_F(WsHub_Test, AWelcomeNamesTheVersionSessionInstanceContextScopesAndTarget)
     EXPECT_EQ(welcome["target"]["mode"].asString(), "instance");
     EXPECT_EQ(welcome["target"]["model"].asString(), "PENTAGON");
     EXPECT_TRUE(welcome["target"]["view"].isNull()) << "views: SD4";
-    EXPECT_EQ(welcome["readouts"].size(), WsHub::ReadoutNames().size());
+    EXPECT_EQ(welcome["readouts"].size(), actions::ReadoutNames(*_emulator).size()) << "the whole vocabulary";
+    EXPECT_EQ(welcome["serial"].asString(), "A1");
+    EXPECT_TRUE(welcome["catalogue_rev"].isIntegral());
+    EXPECT_EQ(welcome["features"].size(), 0u);
 
-    Send(inbox, R"({"op":"join","v":1,"name":"deck","model":"x"})");
-    EXPECT_EQ(inbox.Last()["error"].asString(), "bad_request") << "one surface per connection";
+    Send(inbox, R"({"op":"join","v":1,"name":"deck","model":"x","serial":"A1"})");
+    EXPECT_EQ(inbox.Last()["error"].asString(), "bad_request") << "one surface per serial and connection";
+}
+
+TEST_F(WsHub_Test, OneConnectionCarriesASurfacePerSerialAndEveryOpNamesItsSession)
+{
+    Inbox inbox;
+    Connect(inbox);
+    Send(inbox, R"({"op":"join","v":1,"name":"deck","model":"plusxl","serial":"A1","rid":"j1","target":{"instance":")" +
+                    _id + R"("}})");
+    const Json::Value first = inbox.Last();
+    Send(inbox, R"({"op":"join","v":1,"name":"own","model":"plus","serial":"B2","rid":"j2","features":["activity",)"
+                R"("catalogue","bogus"],"target":{"instance":")" + _id + R"("}})");
+    const Json::Value second = inbox.Last();
+    ASSERT_EQ(first["op"].asString(), "welcome") << first.toStyledString();
+    ASSERT_EQ(second["op"].asString(), "welcome") << second.toStyledString();
+    EXPECT_EQ(first["rid"].asString(), "j1") << "the join's rid: the client knows which deck it answers";
+    EXPECT_EQ(second["rid"].asString(), "j2");
+    EXPECT_NE(first["session"].asString(), second["session"].asString());
+    ASSERT_EQ(second["features"].size(), 2u) << "the features it knows";
+    EXPECT_EQ(second["features"][0].asString(), "activity");
+    const std::string a = first["session"].asString();
+    const std::string b = second["session"].asString();
+
+    // Two surfaces: an op without a session is ambiguous; with one it goes to that surface and the answer says so
+    inbox.Clear();
+    Send(inbox, R"({"op":"action","id":"test.echo","value":1,"rid":1})");
+    EXPECT_EQ(inbox.Last()["error"].asString(), "bad_request");
+    EXPECT_EQ(inbox.Last()["rid"].asInt(), 1);
+    inbox.Clear();
+    Send(inbox, R"({"op":"action","session":")" + b + R"(","id":"test.echo","value":2,"rid":2})");
+    ASSERT_TRUE(TestWait::For([&] { return !inbox.Ops("result").empty(); }));
+    EXPECT_EQ(inbox.Ops("result")[0]["session"].asString(), b);
+    Send(inbox, R"({"op":"subscribe","session":")" + a + R"(","readouts":["run.state"]})");
+    ASSERT_FALSE(inbox.Ops("readout").empty());
+    EXPECT_EQ(inbox.Ops("readout")[0]["session"].asString(), a) << "only the surface that subscribed";
+    EXPECT_EQ(inbox.Ops("readout").size(), 1u);
+
+    // bye with a session ends that surface; the socket and the other stay
+    inbox.Clear();
+    Send(inbox, R"({"op":"bye","session":")" + b + R"("})");
+    EXPECT_FALSE(inbox.Closed());
+    Send(inbox, R"({"op":"action","session":")" + b + R"(","id":"test.echo","value":1,"rid":3})");
+    EXPECT_EQ(inbox.Last()["error"].asString(), "Not Found");
+    inbox.Clear();
+    Send(inbox, R"({"op":"action","id":"test.echo","value":4,"rid":4})");
+    ASSERT_TRUE(TestWait::For([&] { return !inbox.Ops("result").empty(); }));
+    EXPECT_EQ(inbox.Ops("result")[0]["session"].asString(), a) << "one surface left: the session may be omitted";
+    Send(inbox, R"({"op":"bye"})");
+    EXPECT_TRUE(inbox.Closed()) << "bye without a session: every surface ends, the socket closes";
 }
 
 TEST_F(WsHub_Test, AJoinWithWrongFieldsOrATargetItCannotBindIsRefused)
@@ -456,6 +509,70 @@ TEST_F(WsHub_Test, TheBoundInstancesContextIsPushedBySetterAndByTheDefaultFollow
     _hub->Stop();
 }
 
+TEST_F(WsHub_Test, ActivityIsTheOtherSurfacesActionsOnTheBoundInstanceAtMostTwentyASecond)
+{
+    _registry->SetActivityFeed(&ActivityFeed::Instance());
+    _hub->Start();
+    Inbox watcher;
+    Connect(watcher);
+    Send(watcher, R"({"op":"join","v":1,"name":"deck","model":"plusxl","serial":"W","features":["activity"],)"
+                  R"("target":{"instance":")" + _id + R"("}})");
+    Inbox actor;
+    Connect(actor);
+    Send(actor, R"({"op":"join","v":1,"name":"pad","model":"plus","serial":"P","features":["activity"],)"
+                R"("target":{"instance":")" + _id + R"("}})");
+    watcher.Clear();
+    actor.Clear();
+
+    Send(actor, R"({"op":"action","id":"test.echo","value":{"d":2},"rid":1})");
+    ASSERT_TRUE(TestWait::For([&] { return !watcher.Ops("activity").empty(); }));
+    const Json::Value activity = watcher.Ops("activity")[0];
+    EXPECT_EQ(activity["t"].asString(), "surface");
+    EXPECT_EQ(activity["id"].asString(), "test.echo");
+    EXPECT_EQ(activity["instance"].asString(), _id);
+    EXPECT_EQ(activity["origin"].asString(), "companion");
+    EXPECT_TRUE(activity["ok"].asBool());
+    EXPECT_EQ(activity["value"]["d"].asDouble(), 2);
+    ASSERT_TRUE(TestWait::For([&] { return !actor.Ops("result").empty(); }));
+    EXPECT_TRUE(actor.Ops("activity").empty()) << "a surface never gets its own actions back";
+
+    // From the GUI, 25 presses in the same second: 20 shown, the next one after the second says 5 were dropped
+    watcher.Clear();
+    Advance(1000);  // a new second: the echo above counted in the last one
+    std::atomic<int> done{0};
+    for (int i = 0; i < 25; i++)
+    {
+        ActionOrigin gui;
+        ActionValue press;
+        _registry->Submit("test.rewind", press, _id, gui, [&](ActionResult) { done++; });
+    }
+    ASSERT_TRUE(TestWait::ForExactly(done, 25));
+    ASSERT_TRUE(TestWait::For([&] { return watcher.Ops("activity").size() >= 20; }));
+    EXPECT_EQ(watcher.Ops("activity").size(), 20u);
+    EXPECT_EQ(watcher.Ops("activity")[0]["origin"].asString(), "gui");
+    Advance(1000);
+    ActionOrigin gui;
+    _registry->Submit("test.rewind", ActionValue{}, _id, gui, [&](ActionResult) { done++; });
+    ASSERT_TRUE(TestWait::For([&] { return watcher.Ops("activity").size() >= 21; }));
+    EXPECT_EQ(watcher.Ops("activity").back()["dropped"].asInt(), 5);
+    _hub->Stop();
+    _registry->SetActivityFeed(nullptr);
+}
+
+TEST_F(WsHub_Test, ACatalogueChangeIsPushedToTheSurfacesThatAskedForIt)
+{
+    Inbox asked;
+    Connect(asked);
+    Send(asked, R"({"op":"join","v":1,"name":"deck","model":"x","features":["catalogue"]})");
+    Inbox other;
+    Join(other);
+    asked.Clear();
+    _hub->OnCatalogue(42);
+    ASSERT_EQ(asked.Ops("catalogue").size(), 1u);
+    EXPECT_EQ(asked.Ops("catalogue")[0]["rev"].asInt(), 42);
+    EXPECT_TRUE(other.Messages().empty());
+}
+
 /// endregion </ctx>
 
 /// region <Readouts and topics>
@@ -506,6 +623,22 @@ TEST_F(WsHub_Test, ReadoutsComeInFullOnSubscribeThenOnlyWhatChangedAtTheSubscrib
     Send(inbox, R"({"op":"unsubscribe","readouts":["*"]})");
     EXPECT_EQ(_hub->TimerHz(), 0) << "the last subscriber left: the timer is disarmed";
     EXPECT_EQ(_armedHz, 0);
+}
+
+TEST_F(WsHub_Test, SurfaceReadoutsAreTheWholeVocabulary)
+{
+    Inbox inbox;
+    Join(inbox);
+    Send(inbox, R"({"op":"subscribe","readouts":["machine","media.*","audio.mute","debug.mode","toggle.set.x"]})");
+    EXPECT_TRUE(inbox.Ops("error").empty()) << inbox.Last().toStyledString();
+    ASSERT_EQ(inbox.Ops("readout").size(), 1u);
+    const Json::Value values = inbox.Ops("readout")[0]["values"];
+    EXPECT_EQ(values["machine"]["model"].asString(), "PENTAGON");
+    EXPECT_TRUE(values.isMember("media.tape"));
+    EXPECT_TRUE(values.isMember("media.disk"));
+    EXPECT_TRUE(values["audio.mute"].isMember("muted"));
+    EXPECT_TRUE(values["debug.mode"].isMember("enabled"));
+    EXPECT_TRUE(values.isMember("toggle.set.x")) << "a toggle by name: read as it is";
 }
 
 TEST_F(WsHub_Test, TheTimerRunsAtTheHighestRateAnyoneAskedFor)

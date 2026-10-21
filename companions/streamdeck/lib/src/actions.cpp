@@ -616,8 +616,8 @@ public:
     SystemHost(Settings s, SystemHostCallbacks cb, std::atomic<bool>* cancel)
         : _s(std::move(s)), _cb(std::move(cb)), _cancel(cancel), _exec(_cb.executor)
     {
-        if (!_exec)
-            _exec = MakeRestActionExecutor(
+        // the REST fallback: the only executor without a surface client, else the one used while it has no socket
+        _rest = MakeRestActionExecutor(
                 [this](const std::string& path, const json& body) {
                     std::string token;
                     {
@@ -643,7 +643,10 @@ public:
 
     ActionResult RunAction(const ActionCall& call) override
     {
-        return _exec->Run(call);
+        if (_exec)
+            if (ActionResult r = _exec->Run(call); !r.notSent)
+                return r;
+        return _rest->Run(call);
     }
 
     // The REST fallback's context follows the instance: a machine start in place (mach.start replace, a snapshot of
@@ -1237,7 +1240,8 @@ private:
     Settings _s;
     SystemHostCallbacks _cb;
     std::atomic<bool>* _cancel;
-    std::shared_ptr<ActionExecutor> _exec;
+    std::shared_ptr<ActionExecutor> _exec;  // the surface client's (null: none)
+    std::shared_ptr<ActionExecutor> _rest;
     std::mutex _actionMutex;  // the REST fallback's instance and context (FollowInstance)
     std::string _lastInstance;
     json _context;  // the body of the last ctx.set that succeeded

@@ -43,6 +43,7 @@ struct ActivityEntry
     std::string identity;  ///< ActionOrigin::identity (a companion's id, a device id, the gate identity)
     std::string session;   ///< ActionOrigin::session (a surface session never gets its own actions back)
     std::string surface;   ///< a human name: the device, the companion, "GUI", the agent's client name
+    std::string surfaceSession;  ///< ActionOrigin::surface: the `surface` topic's session that ran it ("" none)
     bool ok = false;
     std::string error;
     std::string message;

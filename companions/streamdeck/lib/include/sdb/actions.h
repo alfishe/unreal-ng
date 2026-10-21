@@ -20,6 +20,7 @@ struct ActionResult
     bool ok = true;
     std::string message;
     std::string status{};  // a live readout for the strip's status slot (the time-travel position): stays in place
+    bool notSent = false;  // the executor could not send it (the surface client has no socket): try the fallback
 };
 
 class ActionHost

@@ -21,7 +21,9 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 | `--watch` | Reload the start scenario when it or an included file changes (the menu stack is kept) |
 | `--wait` | No deck attached: serve the viewers meanwhile (own decks work, mirrors wait) and take the first deck that appears (checked every second). Without it a missing deck ends `run` at once (exit 5) |
 | `--api PORT` | Automation on `127.0.0.1:PORT`: REST and MCP (`/mcp`), [below](#automation) |
-| `--host URL` | The unreal-ng WebAPI the scenarios' actions go to (default `http://127.0.0.1:8090`; `host:port` is taken too). A v2 scenario names no host; a v1 scenario's `settings.webapi` still wins for it. The `action` kind posts `POST /api/v1/controllers/actions/{id}` there until the surface client comes ([scenarios.md §2](../../inprogress/2026-10-19-streamdeck-integration/scenarios.md#2-the-action-kind)) |
+| `--host URL` | The unreal-ng WebAPI the scenarios' actions go to (default `http://127.0.0.1:8090`; `host:port` is taken too). A v2 scenario names no host; a v1 scenario's `settings.webapi` still wins for it. The [surface client](#the-surface-client) connects to its `/api/v1/ws`; while it has no socket, the `action` kind posts `POST /api/v1/controllers/actions/{id}` there ([scenarios.md §2](../../inprogress/2026-10-19-streamdeck-integration/scenarios.md#2-the-action-kind)) |
+| `--companion FILE` | The companion token the surface client uses (default `~/.config/unreal-streamdeck/companion.json`, what `pair` writes) |
+| `--no-surface` | No surface client: every action goes over REST, readouts are polled (as before SD5) |
 | `--viewers [PORT]` | Software decks join on `127.0.0.1:PORT` (device wire v2, default 37050). On by default |
 | `--no-viewers` | No software decks |
 | `--device S` | The deck whose serial contains S (default: the first one) |
@@ -29,6 +31,44 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 | `--dry-run` | Log actions instead of running them |
 | `--seconds N` | Stop after N seconds |
 | `--with-parent` | Stop when the starting process goes away (macOS, Linux) |
+
+## The surface client
+
+The daemon is one surface client of unreal-qt (`sdb/surfaceclient.h`): **one WebSocket** to the host's `/api/v1/ws`
+([websocket-interface.md §3.1](../../emulator/design/control-interfaces/websocket-interface.md#31-the-surface-topic)),
+on the daemon's network loop (no thread of its own), with the token of `unreal-streamdeck pair` on the handshake.
+
+| What | How |
+|:--|:--|
+| Decks | Every logical deck (the real one, each viewer's own deck) `join`s once on that connection: name, model token (`plusxl`), serial, the scenario's `settings.target`, features `target`, `activity`, `catalogue`. Each gets its own session; every later op names it (`session`). A deck that goes says `bye` for its session; the socket stays |
+| Actions | The `action` kind goes over the socket (`action` with a `rid`, the `result` back; 5 s at most, then the step fails). While the deck has no session (no socket, not paired, revoked), the same step goes the REST way (`POST /api/v1/controllers/actions/{id}`) |
+| Readouts | `subscribe` with exactly what the scenario names: the readouts of the faces' `state` paths (`run.state.paused` -> `run.state`) and of the strips (`ttd` -> `ttd.position`, `run` -> `run.state`, `tape` -> `media.tape`, `target` -> `machine`), at 50 Hz with a TTD timeline, else 10 Hz. Values go into the faces (`Runtime::SetReadout`) and the strip ([below](#strip-readouts)); a deck with a session polls nothing (its REST poller thread ends) |
+| Contexts | `ctx` from the core moves the deck to the nearest menu declaring it (`Runtime::OnContext`); entering a menu with a `context` sends `ctx.set`. After a new instance (a machine replaced, unreal-qt restarted) the deck keeps its page and sends its context to the new instance |
+| Activity | `activity` (an action another surface ran on the target) flashes the visible keys bound to the same id; `settings.activity.strip: "line"` adds a quiet line "LABEL - surface" for `seconds`; `ttd.seek_by` is ignored by default (Q-3) |
+| Target | `target` (the instance the session drives: model, RAM, index, follow / pinned) is the strip's target line. A `{"view": n}` target the host refuses (`not_now`: no views on the surface topic yet) is joined again with `"follow"` |
+| Instances | The `instances` topic on the same connection: the host's instance list (`GET /api/v1/surface`) |
+| Reconnect | A dropped socket (unreal-qt quits or restarts) reconnects with backoff 0.25 s .. 5 s and joins every deck again; meanwhile the strips say `RECONNECTING` and the REST fallback serves |
+| Revoked | `revoked` (or a handshake refused with 401: a token the host no longer knows) stops the client: every strip says `COMPANION REVOKED - PAIR AGAIN`, actions fail at once. The companion file is looked at every 2 s; a new token (`unreal-streamdeck pair`) connects again |
+| Not paired | No companion file: REST only, the file is watched the same way |
+
+`GET /api/v1/surface` (REST and MCP, with `--api`) shows the link: `connected`, `revoked`, `paired`, `url`,
+`connections` (upgrades so far), each deck's `session`, `instance`, `target` and `readouts`, `instances`, `error`.
+
+### Strip readouts
+
+The strip draws the core's readouts while the deck is connected (`StripLive` in `sdb/scenariorender.h`), restrained,
+in the UnrealNG colours, fine lines. The TTD timeline is a strip readout only, never keys.
+
+| `strip.status` | Drawn |
+|:--|:--|
+| `ttd` (also any page whose dial scrubs time: `ttd.seek_by`) | The TTD timeline from `ttd.position`: `TTD` and its state (`REC`, `REPLAY`, `PAUSED`, `AT END`, `NO HISTORY`), the frame counter and the time code at the right; under it the recorded span as a 1 px track with a ruler of seconds and its two end times, the part up to the position in the theme's blue (2 px), the position as a light 2 px line, and the marks of the last seek (`ttd.seek_by`'s `marks`: bookmarks, edges, barriers in amber, seconds in grey) |
+| `run` | `RUNNING`, `RUNNING X4`, `RUNNING TURBO`, `PAUSED`, `STOPPED` (`run.state`) |
+| `tape` | `TAPE name 3/12 PLAYING` and a thin progress line (`media.tape`); `NO TAPE` |
+| `target` | The target: `PENTAGON 128K (0)` (the WebAPI index), `PINNED` when pinned, `NO MACHINE` |
+
+`strip.target` (on by default on decks with a strip): the target line, small, at the top right; amber
+`RECONNECTING` while the link is down. Without a surface client (`--no-surface`, not paired) the strip shows what it
+did before: the polled TTD line.
 
 ## The idle scenario
 
@@ -182,10 +222,17 @@ curl -s -X POST localhost:37053/api/v1/decks/first/reconnect -d '{"away_ms":2000
 | Thread | Does |
 |:--|:--|
 | Device (one per deck, the main one for the real deck) | Reads input, runs the scenario, writes HID reports; while the deck is unplugged, its reads look for it again once a second ([hot plug](#hot-plug)) |
-| Network | The event loop: viewers and the device wire (`sdb/eventloop.h`, `sdb/deckhub.h`) |
-| Runtime workers | Actions and the time-travel readout, per runtime (both go with the surface client, SD5) |
-| Automation | With `--api`: one worker |
+| Network | The event loop: viewers and the device wire (`sdb/eventloop.h`, `sdb/deckhub.h`) and the [surface client](#the-surface-client) (one WebSocket for every deck) |
+| Runtime worker | Per runtime: the scenario's steps one at a time (an `action` step waits there for its `result` from the network loop; `shell`, `delay` and `multi` block there) |
+| Runtime poller | Per runtime, only without a surface session: the REST fallback's TTD line and the faces' readouts. It ends when the deck joins and starts again when the link drops |
+| Automation | With `--api`: the listener and one worker |
 | Watcher | Scenario loads a runtime asks for, and the watched files of every deck (every 250 ms) |
+
+Measured 2026-10-21 (macOS, `ps -M`, `sample`): `run --wait --viewers --api` with one own deck (a Stream Deck
+Studio window) and the surface client connected: **9 threads** - main, network, automation listener and worker,
+watcher, the own deck's device thread and its runtime worker (7 of the daemon's), plus 2 of the OS's dispatch work
+queue. With the link down (unreal-qt quit): 10, the deck's REST poller; joined again after the restart: 9. The
+surface client adds no thread; each further deck adds its device thread and its worker.
 
 ## Platforms
 

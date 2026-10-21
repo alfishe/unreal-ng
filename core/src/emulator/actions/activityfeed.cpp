@@ -110,6 +110,7 @@ void ActivityFeed::Record(const std::string& instance, const ActionInfo& info, c
             ActivityEntry& last = _entries.back();
             if (last.kind == ValueKind::Delta && last.id == info.id && last.instance == instance &&
                 last.origin == origin.origin && last.identity == origin.identity && last.session == origin.session &&
+                last.surfaceSession == origin.surface &&
                 now - last.firstMs <= kMergeMs)
             {
                 last.value.delta += value.delta;
@@ -136,6 +137,7 @@ void ActivityFeed::Record(const std::string& instance, const ActionInfo& info, c
             entry.identity = origin.identity;
             entry.session = origin.session;
             entry.surface = SurfaceName(origin);
+            entry.surfaceSession = origin.surface;
             entry.ok = result.ok;
             entry.error = result.error;
             entry.message = result.message;

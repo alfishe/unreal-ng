@@ -6,8 +6,11 @@
 #include "debug-event-hub.h"
 #include "debugger/ttd/timetravelhooks.h"
 #include "debugger/ttd/ttdcursorcell.h"
+#include "common/statenode_json.h"
 #include "emulator/actions/actionregistry.h"
+#include "emulator/actions/activityfeed.h"
 #include "emulator/actions/contextstate.h"
+#include "emulator/actions/readouts.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
@@ -233,22 +236,41 @@ void WsHub::Start()
                                         PostTask([this] { Tick(); });
                                     WakeInstances();
                                 })));
+    _observers.emplace_back(
+        NC_ACTION_CATALOGUE,
+        center.AddObserver(NC_ACTION_CATALOGUE, ObserverCallbackFunc([this](int, Message* message) {
+                               auto* payload = message != nullptr
+                                                   ? dynamic_cast<ActionCatalogueChangedPayload*>(message->obj)
+                                                   : nullptr;
+                               const uint64_t revision = payload != nullptr ? payload->revision
+                                                                            : Registry().Revision();
+                               PostTask([this, revision] { OnCatalogue(revision); });
+                           })));
     // The debug.* topics: DebugEventHub numbers the events, the hub queues them for its loop
     _debugSink = DebugEventHub::Instance().AddSink(
         [this](const std::string& topic, const Json::Value& event) { OnDebugEvent(topic, event); });
+    // `activity` of the surfaces: called on the actions worker after each job; only a copy and a post
+    _activityListener = actions::ActivityFeed::Instance().AddListener([this](const actions::ActivityEntry& entry) {
+        if (_activitySubscribed.load(std::memory_order_relaxed))
+            PostTask([this, entry] { OnActivity(entry); });
+    });
 }
 
 void WsHub::Stop()
 {
     std::vector<std::pair<std::string, uint64_t>> observers;
     uint64_t sink = 0;
+    uint64_t listener = 0;
     {
         std::lock_guard<std::mutex> lock(_observersMutex);
         observers.swap(_observers);
         std::swap(sink, _debugSink);
+        std::swap(listener, _activityListener);
     }
     if (sink != 0)
         DebugEventHub::Instance().RemoveSink(sink);
+    if (listener != 0)
+        actions::ActivityFeed::Instance().RemoveListener(listener);
     MessageCenter& center = MessageCenter::DefaultMessageCenter();
     for (const auto& [topic, id] : observers)
         center.RemoveObserverById(topic, id);
@@ -314,7 +336,7 @@ bool WsHub::HandleMessage(const void* client, const Json::Value& message)
         else if (op == "action")
             _surface.Action(*connection, message, out);
         else if (op == "bye")
-            _surface.Bye(*connection, out);
+            _surface.Bye(*connection, message, out);
         else
         {
             subscriptions = true;
@@ -337,6 +359,8 @@ bool WsHub::HandleMessage(const void* client, const Json::Value& message)
     // The view at once (before the tick below, which then finds it fresh)
     if (instances)
         PostTask([this] { RefreshInstances(); });
+    if (op == "join" || op == "bye")
+        UpdateTimer();  // who wants `activity`, the readouts of a surface that ended
     if (subscriptions)
     {
         UpdateTimer();
@@ -621,7 +645,7 @@ void WsHub::Tick()
         std::lock_guard<std::mutex> lock(_mutex);
         const auto now = Now();
         std::vector<WsConnection*> topicDue;
-        std::vector<WsConnection*> surfaceDue;
+        SurfaceDue surfaceDue;
         std::set<std::string> topicNames;
         for (auto& [client, connection] : _connections)
         {
@@ -662,8 +686,9 @@ void WsHub::Tick()
                     if (IsStateTopic(name))
                         topicNames.insert(name);
             }
-            if (connection->surface && SurfaceHub::Due(*connection->surface, now))
-                surfaceDue.push_back(connection.get());
+            for (auto& [id, session] : connection->surfaces)
+                if (SurfaceHub::Due(*session, now))
+                    surfaceDue.emplace_back(connection.get(), session.get());
         }
         // `instances`: what changes with time alone (a re-take cooldown, the first recorded frame) once a second
         refreshInstances = _instancesSubscribed.load(std::memory_order_relaxed) &&
@@ -677,8 +702,7 @@ void WsHub::Tick()
 }
 
 void WsHub::DeliverValues(const std::vector<WsConnection*>& topicDue, const std::set<std::string>& topicNames,
-                          const std::vector<WsConnection*>& surfaceDue, std::chrono::steady_clock::time_point now,
-                          WsOutbox& out)
+                          const SurfaceDue& surfaceDue, std::chrono::steady_clock::time_point now, WsOutbox& out)
 {
     // Read each value once: published state only
     EmulatorManager* manager = EmulatorManager::GetInstance();
@@ -691,8 +715,14 @@ void WsHub::DeliverValues(const std::vector<WsConnection*>& topicDue, const std:
         auto it = emulators.find(id);
         if (it == emulators.end())
             it = emulators.emplace(id, manager->GetEmulator(id)).first;
-        if (it->second)
-            values[name] = Compact(Read(name, id, *it->second));
+        if (!it->second)
+            return;
+        // The state topics' own reads (the surface's ttd.position / run.state are the same bytes); the rest of the
+        // readout vocabulary from readouts.h
+        const std::vector<std::string>& own = StateTopicNames();
+        values[name] = std::find(own.begin(), own.end(), name) != own.end()
+                           ? Compact(Read(name, id, *it->second))
+                           : Compact(StateNodeToJson(actions::ReadReadout(*it->second, name)));
     };
     std::vector<std::string> all;
     if (!topicDue.empty())
@@ -702,13 +732,10 @@ void WsHub::DeliverValues(const std::vector<WsConnection*>& topicDue, const std:
             for (const std::string& name : topicNames)
                 read(id, name);
     }
-    for (WsConnection* connection : surfaceDue)
-    {
-        const SurfaceSession& session = *connection->surface;
-        if (!session.instance.empty())
-            for (const std::string& name : session.readouts)
-                read(session.instance, name);
-    }
+    for (const auto& [connection, session] : surfaceDue)
+        if (!session->instance.empty())
+            for (const std::string& name : session->readouts)
+                read(session->instance, name);
 
     // A topic's message of one instance is the same bytes for every subscriber: built once
     std::map<std::string, std::string> built;
@@ -764,8 +791,8 @@ void WsHub::DeliverValues(const std::vector<WsConnection*>& topicDue, const std:
         if (sent)
             connection->topicSentAt = now;
     }
-    for (WsConnection* connection : surfaceDue)
-        _surface.Deliver(*connection, readings, now, out);
+    for (const auto& [connection, session] : surfaceDue)
+        _surface.Deliver(*connection, *session, readings, now, out);
 }
 
 void WsHub::Refresh()
@@ -782,14 +809,14 @@ void WsHub::Refresh()
             {
                 Json::Value revoked;
                 revoked["op"] = "revoked";
-                revoked["t"] = connection->surface ? "surface" : "ws";
+                revoked["t"] = connection->surfaces.empty() ? "ws" : "surface";
                 revoked["message"] = "the user revoked this companion: pair again to use it";
                 out.Message(*connection, revoked);
                 out.Close(*connection);
                 continue;
             }
-            if (connection->surface)
-                _surface.Rebind(*connection, followed, out);
+            for (auto& [id, session] : connection->surfaces)
+                _surface.Rebind(*connection, *session, followed, out);
         }
     }
     out.Flush();
@@ -805,8 +832,9 @@ void WsHub::OnContext(const std::string& instanceId, const std::string& context,
     {
         std::lock_guard<std::mutex> lock(_mutex);
         for (auto& [client, connection] : _connections)
-            if (!connection->closing && connection->surface)
-                _surface.Context(*connection, instanceId, context, by, out);
+            if (!connection->closing)
+                for (auto& [id, session] : connection->surfaces)
+                    _surface.Context(*connection, *session, instanceId, context, by, out);
     }
     out.Flush();
     if (_subscribed.load(std::memory_order_relaxed))
@@ -972,6 +1000,40 @@ void WsHub::DrainEvents()
     out.Flush();
 }
 
+void WsHub::OnActivity(const actions::ActivityEntry& entry)
+{
+    // Serialised once, on the loop; each surface filters (not its own, its bound instance, 20 a second)
+    const Json::Value node = StateNodeToJson(actions::ActivityEntryNode(entry));
+    WsOutbox out;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const auto now = Now();
+        for (auto& [client, connection] : _connections)
+        {
+            if (connection->closing)
+                continue;
+            const bool congested = Congested(*connection);
+            for (auto& [id, session] : connection->surfaces)
+                _surface.Activity(*connection, *session, node, entry.instance, entry.surfaceSession, now, congested,
+                                  out);
+        }
+    }
+    out.Flush();
+}
+
+void WsHub::OnCatalogue(uint64_t revision)
+{
+    WsOutbox out;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (auto& [client, connection] : _connections)
+            if (!connection->closing)
+                for (auto& [id, session] : connection->surfaces)
+                    _surface.Catalogue(*connection, *session, revision, out);
+    }
+    out.Flush();
+}
+
 void WsHub::FlushEvents(WsConnection& connection, WsOutbox& out)
 {
     while (!connection.events.empty())
@@ -1009,6 +1071,7 @@ void WsHub::UpdateTimer()
     double hz = 0;
     bool instances = false;
     bool events = false;
+    bool activity = false;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         for (const auto& [client, connection] : _connections)
@@ -1019,13 +1082,18 @@ void WsHub::UpdateTimer()
             events = events || std::any_of(connection->topics.begin(), connection->topics.end(), IsEventTopic);
             if (!connection->topics.empty())
                 hz = std::max(hz, connection->topicHz);
-            if (connection->surface && !connection->surface->readouts.empty())
-                hz = std::max(hz, connection->surface->hz);
+            for (const auto& [id, session] : connection->surfaces)
+            {
+                if (!session->readouts.empty())
+                    hz = std::max(hz, session->hz);
+                activity = activity || session->activity;
+            }
         }
     }
     _subscribed.store(hz > 0, std::memory_order_relaxed);
     _instancesSubscribed.store(instances, std::memory_order_relaxed);
     _eventsSubscribed.store(events, std::memory_order_relaxed);
+    _activitySubscribed.store(activity, std::memory_order_relaxed);
     std::lock_guard<std::mutex> lock(_timerMutex);
     if (hz == _timerHz && _armed == (hz > 0))
         return;

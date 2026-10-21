@@ -128,13 +128,13 @@ struct Node
 [[nodiscard]] std::string DefaultHost();
 void SetDefaultHost(const std::string& url);
 
-// How the deck shows actions run by other surfaces (scenarios.md §5); the feed itself comes with the surface topic.
+// How the deck shows actions run by other surfaces (scenarios.md §5): the surface client's `activity`.
 struct Activity
 {
     bool enabled = true, flashKeys = true;
     std::string strip = "none";  // none | line
     double seconds = 1.0;
-    std::vector<std::string> ignore;
+    std::vector<std::string> ignore{"ttd.seek_by"};  // Q-3: a Dial scrub already shows on the TTD strip
 };
 
 struct Settings

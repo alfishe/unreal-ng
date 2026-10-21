@@ -19,6 +19,7 @@
 #include "sdb/actions.h"
 #include "sdb/device.h"
 #include "sdb/navigator.h"
+#include "sdb/surfacereadouts.h"
 
 namespace sdb::scn
 {
@@ -103,6 +104,21 @@ public:
     // The surface context the deck asked for last (ctx.set when a menu with "context" is entered; "" = none).
     [[nodiscard]] std::string Context() const;
 
+    // The surface client (SD5, sdb/surfaceclient.h). Live: the host pushes the readouts, nothing is polled (the
+    // monitor idles); not live after live: the strip's target line says the link is down, polling resumes.
+    void SetLive(bool live);
+    // A readout for the strip (ttd.position: the TTD timeline; run.state, media.tape, machine: the status words;
+    // ttd.marks: the marks of the last seek)
+    void SetStripReadout(const std::string& name, const json& value);
+    // The surface's target ({instance, index, model, ram_kb, view, mode}; null: none): strip.target and status target
+    void SetTarget(const json& target);
+    // A lasting line on the strip, over the menu's content ("" clears it): "COMPANION REVOKED - PAIR AGAIN"
+    void SetNotice(const std::string& text);
+    // What the loaded scenario needs from the core: readouts, state paths, target
+    [[nodiscard]] SurfaceNeeds Needs() const;
+    // After a reload is applied (the device thread, no lock held): the surface client asks Needs() again
+    std::function<void()> onScenarioChanged;
+
     struct Stats
     {
         std::size_t keyWrites = 0, stripWrites = 0, actions = 0;
@@ -140,6 +156,7 @@ private:
     [[nodiscard]] bool IsOn(const Node& n) const;
     [[nodiscard]] std::map<std::string, bool> OnStates() const;
     void PollReadouts();
+    void EnsureMonitor();
 
     Device& _dev;
     const Model& _m;
@@ -174,7 +191,15 @@ private:
     std::string _sentPage;  // last published page JSON
     std::string _banner;
     std::string _status;   // the strip's status readout (time-travel position), until the menu changes
-    std::thread _monitor;  // strip.status "ttd": polls time travel
+    bool _live = false, _wasLive = false;  // readouts pushed by the surface client; was so once
+    std::map<std::string, json> _strip;    // strip readouts (SetStripReadout)
+    json _target;                          // the surface's target (null: none)
+    std::string _notice;                   // a lasting strip line
+    std::string _activityLine;             // activity.strip "line": what another surface did
+    std::int64_t _activityUntil = 0;
+    std::thread _monitor;  // the REST fallback's poller (strip.status "ttd", faces' readouts); none while live
+    bool _monitorRunning = false;  // under _mu
+    bool _running = false;         // Run() drives the steps (tests call Step() alone: no threads)
     std::atomic<bool> _monitorKick{false};
     [[nodiscard]] static std::string TtdReadout(const json& t, double fps);
     static constexpr size_t kStatusChars = 36;

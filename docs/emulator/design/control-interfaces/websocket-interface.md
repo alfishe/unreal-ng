@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | 🔧 In progress. Calls (§2) and auth (§1) are implemented (2026-10-20, `core/automation/webapi/src/api-websocket.cpp`); the topic mechanism with the state topics `run.state`, `ttd.position`, `surfaces.context` and the `surface` topic (§3) are implemented (2026-10-20, control surfaces S4, `ws-hub.*`, `surface-hub.*`); the `instances` and `debug.*` topics (§3.2, §3.3) and backpressure (§4.1) too (2026-10-21). Still to come: the Stream Deck SD4 additions of the `surface` topic (`activity`, `catalogue`, more readouts, views). |
+| **Status** | 🔧 In progress. Calls (§2) and auth (§1) are implemented (2026-10-20, `core/automation/webapi/src/api-websocket.cpp`); the topic mechanism with the state topics `run.state`, `ttd.position`, `surfaces.context` and the `surface` topic (§3) are implemented (2026-10-20, control surfaces S4, `ws-hub.*`, `surface-hub.*`); the `instances` and `debug.*` topics (§3.2, §3.3) and backpressure (§4.1) too (2026-10-21); the `surface` topic's Stream Deck additions (several surfaces per connection, `features` with `activity` and `catalogue`, the whole readout vocabulary) too (2026-10-21, SD5). Still to come: views and `pin` on the `surface` topic (`TargetState`). |
 | **Endpoint** | `GET /api/v1/ws` (WebSocket upgrade on the WebAPI port) |
 | **Rules** | [automation-planes-guidelines.md](../../../guidelines/automation-planes-guidelines.md) |
 | **Design** | [Stream Deck integration protocol §0](../../../inprogress/2026-10-19-streamdeck-integration/protocol.md#0-transport-one-websocket) |
@@ -125,20 +125,25 @@ The control surfaces protocol ([protocol.md](../../../inprogress/2026-10-18-cont
 
 | From the client | |
 |:--|:--|
-| `join` | `v` (≥ 1), `name`, `model`, `serial`?, `target`? (`"follow"`, default: the selected instance, else the only one, followed; `{"instance": id or index}`: pinned; `{"view": …}`: `not_now` until Stream Deck SD4). One per connection. |
-| `action` | `id`, `value`?, `rid`?. Value by the action's kind: press `{"p": bool}` / `true`; delta `{"d": n, "rate": r, …params}` / a number; level `{"l": x}` / a number; text a string. The REST spellings (`pressed`, `delta`, `level`, `params`) too. Runs on the instance's actions worker with the companion as origin: the same gate as `POST /api/v1/controllers/actions/{id}` with its token. |
-| `subscribe` / `unsubscribe` | `readouts[]` (`ttd.position`, `run.state`, prefixes), `max_hz` (1 … 50). |
-| `bye` | Ends the surface and closes the socket. |
+| `join` | `v` (≥ 1), `name`, `model`, `serial`?, `target`? (`"follow"`, default: the selected instance, else the only one, followed; `{"instance": id or index}`: pinned; `{"view": …}`: `not_now` until views come to the topic), `features`? (`activity`, `catalogue`; `target` is always pushed), `rid`? (echoed by `welcome` or the error). Several per connection, one per `serial` (the Stream Deck daemon joins once per deck on one socket); a second join with a serial the connection joined already: `bad_request`. |
+| `action` | `id`, `value`?, `rid`?, `session`?. Value by the action's kind: press `{"p": bool}` / `true`; delta `{"d": n, "rate": r, …params}` / a number; level `{"l": x}` / a number; text a string. The REST spellings (`pressed`, `delta`, `level`, `params`) too. Runs on the instance's actions worker with the companion as origin: the same gate as `POST /api/v1/controllers/actions/{id}` with its token. |
+| `subscribe` / `unsubscribe` | `readouts[]`, `max_hz` (1 … 50), `session`?. The names of the readout vocabulary ([Stream Deck protocol §3](../../../inprogress/2026-10-19-streamdeck-integration/protocol.md#3-readouts), `readouts.h`): `ttd.position`, `run.state`, `machine`, `media.tape`, `media.disk`, `audio.mute`, `debug.mode`, `toggle.<id>` (every toggle of the catalogue; `toggle.feature.<name>` per feature, `toggle.set.<name>` by name), and prefixes (`media.*`, `toggle.*`, `*`); expanded again against the instance after a rebind. |
+| `bye` | `session`?: with one, that surface ends and the socket stays; without, every surface of the connection ends and the socket closes. |
+
+`session` names the surface an op is for (the id its `welcome` gave); it may be left out while the connection has one
+surface (`bad_request` with several). Every message of a surface carries its `session`.
 
 | From the core | |
 |:--|:--|
-| `welcome` | `v`, `session`, `instance`, `context`, `scopes[]`, `target`, `readouts[]`. |
+| `welcome` | `v`, `session`, `rid` (the join's), `serial`, `instance`, `context`, `scopes[]`, `target`, `readouts[]` (every name the bound instance has), `features[]` (those taken), `catalogue_rev`. |
 | `result` | `rid`, `ok`, `error`?, `message`?, `body` (the action's result; `ttd.seek_by` has `marks`). Only for an action with a `rid`; a failure without a `rid` is an `error`. Deltas queued behind a running one merge; every merged `rid` gets the merged result. |
 | `ctx` | `instance`, `context`, `by`: the bound instance's context changed (a `ctx.set` anywhere: `by` names the setter; the default flipping when a TTD history appears or goes: `by` `default`), and after a rebind. |
 | `readout` | `instance`, `values{}`: in full after `subscribe` and after a rebind, then only the values that changed, at most `max_hz`. |
 | `target` | `instance` (null: none), `index`, `model`, `ram_kb`, `view` (null), `mode` (`follow` / `instance`): the binding changed (the followed instance changed, a pinned one went). |
+| `activity` | With `features: ["activity"]`: an action another surface (or the GUI, a pad, a script) ran on the bound instance, as `GET /api/v1/surfaces/activity` lists it: `seq`, `instance`, `id`, `value`, `origin`, `surface` (who), `ok`, `error`?, `message`?, `t_ms`, `merged`. Never the surface's own actions (`ActionOrigin::surface`, the session that called), at most 20 a second per surface (`dropped`: how many were not sent before this one, over the rate or while the connection was congested). |
+| `catalogue` | With `features: ["catalogue"]`: `rev`, the action catalogue changed (`NC_ACTION_CATALOGUE`: the Qt client registered or dropped its GUI actions). |
 | `revoked` | The companion was revoked; the socket closes. |
-| `error` | `error`, `message`, `rid`?: `bad_request` (wrong field, `join` missing), `companion_required`, `companion_unknown`, `companion_not_for_agents`, `not_now`, `Not Found`, or an action's refusal (`companion_forbidden`, `held_by_session`, `not_now`, the route's phrase). |
+| `error` | `error`, `message`, `rid`?, `session`?: `bad_request` (wrong field, `join` missing, a surface not named while there are several), `companion_required`, `companion_unknown`, `companion_not_for_agents`, `not_now`, `Not Found` (also an unknown `session`), or an action's refusal (`companion_forbidden`, `held_by_session`, `not_now`, the route's phrase). |
 
 ### 3.2 The instances topic
 

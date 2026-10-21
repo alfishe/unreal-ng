@@ -7,6 +7,7 @@
 #include "common/statenode_json.h"
 #include "emulator/actions/actionregistry.h"
 #include "emulator/actions/contextstate.h"
+#include "emulator/actions/readouts.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/execution/automationgate.h"
@@ -130,28 +131,87 @@ Json::Value Nullable(const std::string& text)
 {
     return text.empty() ? Json::Value(Json::nullValue) : Json::Value(text);
 }
+
+/// A message of one surface: its op, the topic and the session
+Json::Value SessionMessage(const char* op, const SurfaceSession& session)
+{
+    Json::Value message;
+    message["op"] = op;
+    message["t"] = kTopic;
+    message["session"] = session.session;
+    return message;
+}
+
+bool IsPattern(const std::string& name)
+{
+    return name == "*" || (name.size() >= 2 && name.compare(name.size() - 2, 2, ".*") == 0);
+}
 }  // namespace
 
 /// region <Ops>
 
+SurfaceSession* SurfaceHub::SessionOf(WsConnection& connection, const Json::Value& message, WsOutbox& out,
+                                      const Json::Value& rid)
+{
+    if (connection.surfaces.empty())
+    {
+        out.Error(connection, kTopic, "bad_request", "join first: {\"op\":\"join\",\"v\":1,\"name\":…,\"model\":…}",
+                  rid);
+        return nullptr;
+    }
+    const Json::Value& named = message["session"];
+    if (named.isString())
+    {
+        auto it = connection.surfaces.find(named.asString());
+        if (it != connection.surfaces.end())
+            return it->second.get();
+        out.Error(connection, kTopic, "Not Found", "no surface session '" + named.asString() + "' on this connection",
+                  rid);
+        return nullptr;
+    }
+    if (!named.isNull())
+    {
+        out.Error(connection, kTopic, "bad_request", "session: the id its welcome named (a string)", rid);
+        return nullptr;
+    }
+    if (connection.surfaces.size() == 1)
+        return connection.surfaces.begin()->second.get();
+    out.Error(connection, kTopic, "bad_request",
+              "this connection joined " + std::to_string(connection.surfaces.size()) +
+                  " surfaces: name one by \"session\"",
+              rid);
+    return nullptr;
+}
+
 void SurfaceHub::Join(WsConnection& connection, const Json::Value& message, WsOutbox& out)
 {
-    if (connection.surface)
-    {
-        out.Error(connection, kTopic, "bad_request", "this connection joined already: one surface per connection");
-        return;
-    }
+    const Json::Value rid = message.get("rid", Json::Value());
+    const std::string serial = message.get("serial", "").isString() ? message.get("serial", "").asString() : "";
+    for (const auto& [id, joined] : connection.surfaces)
+        if (joined->serial == serial)
+        {
+            out.Error(connection, kTopic, "bad_request",
+                      serial.empty() ? std::string("this connection joined already: a further surface needs a serial "
+                                                   "of its own")
+                                     : "serial '" + serial + "' joined already on this connection (" + id + ")",
+                      rid);
+            return;
+        }
     if (!_hub.Authenticated(connection, kTopic, out))
         return;
     const Json::Value& v = message["v"];
     const Json::Value& name = message["name"];
     const Json::Value& model = message["model"];
+    const Json::Value& features = message["features"];
     if (!v.isIntegral() || v.asInt64() < 1 || !name.isString() || name.asString().empty() || !model.isString() ||
-        model.asString().empty() || (message.isMember("serial") && !message["serial"].isString()))
+        model.asString().empty() || (message.isMember("serial") && !message["serial"].isString()) ||
+        (!features.isNull() && !features.isArray()))
     {
         out.Error(connection, kTopic, "bad_request",
                   "join: v (the highest protocol version the client speaks, 1), name and model (strings), serial? "
-                  "(a string), target? (\"follow\" or {\"instance\": id})");
+                  "(a string), target? (\"follow\" or {\"instance\": id}), features? ([\"activity\", "
+                  "\"catalogue\"])",
+                  rid);
         return;
     }
 
@@ -161,7 +221,8 @@ void SurfaceHub::Join(WsConnection& connection, const Json::Value& message, WsOu
     {
         out.Error(connection, kTopic, "not_now",
                   "views come with the Stream Deck targeting (TargetState, SD4): join with \"follow\" or "
-                  "{\"instance\": id}");
+                  "{\"instance\": id}",
+                  rid);
         return;
     }
     if (target.isObject() && (target["instance"].isString() || target["instance"].isIntegral()))
@@ -172,13 +233,13 @@ void SurfaceHub::Join(WsConnection& connection, const Json::Value& message, WsOu
         session->pinned = true;
         if (session->instance.empty())
         {
-            out.Error(connection, kTopic, "Not Found", "no instance '" + named + "'");
+            out.Error(connection, kTopic, "Not Found", "no instance '" + named + "'", rid);
             return;
         }
     }
     else if (!target.isNull() && !(target.isString() && target.asString() == "follow"))
     {
-        out.Error(connection, kTopic, "bad_request", "target: \"follow\" or {\"instance\": id or index}");
+        out.Error(connection, kTopic, "bad_request", "target: \"follow\" or {\"instance\": id or index}", rid);
         return;
     }
     else
@@ -188,18 +249,30 @@ void SurfaceHub::Join(WsConnection& connection, const Json::Value& message, WsOu
     session->v = static_cast<int>(std::min<int64_t>(v.asInt64(), kVersion));
     session->name = name.asString();
     session->model = model.asString();
-    session->serial = message.get("serial", "").asString();
+    session->serial = serial;
+    Json::Value accepted(Json::arrayValue);
+    for (const Json::Value& feature : features)
+    {
+        const std::string text = feature.isString() ? feature.asString() : std::string();
+        if (text == "activity")
+            session->activity = true;
+        else if (text == "catalogue")
+            session->catalogue = true;
+        else if (text != "target")  // `target` is always pushed
+            continue;
+        accepted.append(text);
+    }
     if (!session->instance.empty())
     {
         std::shared_ptr<Emulator> emulator = EmulatorManager::GetInstance()->GetEmulator(session->instance);
         session->context = actions::ContextState::Instance().Get(session->instance, emulator.get()).context;
     }
 
-    Json::Value welcome;
-    welcome["op"] = "welcome";
-    welcome["t"] = kTopic;
+    Json::Value welcome = SessionMessage("welcome", *session);
+    if (!rid.isNull())
+        welcome["rid"] = rid;
     welcome["v"] = session->v;
-    welcome["session"] = session->session;
+    welcome["serial"] = Nullable(session->serial);
     welcome["instance"] = Nullable(session->instance);
     welcome["context"] = Nullable(session->context);
     welcome["scopes"] = Json::Value(Json::arrayValue);
@@ -207,21 +280,21 @@ void SurfaceHub::Join(WsConnection& connection, const Json::Value& message, WsOu
         welcome["scopes"].append(scope);
     welcome["target"] = TargetOf(*session);
     welcome["readouts"] = Json::Value(Json::arrayValue);
-    for (const std::string& readout : WsHub::ReadoutNames())
+    for (const std::string& readout : ReadoutNamesOf(session->instance))
         welcome["readouts"].append(readout);
-    connection.surface = std::move(session);
+    welcome["features"] = accepted;
+    welcome["catalogue_rev"] = static_cast<Json::UInt64>(_hub.Registry().Revision());
+    const std::string id = session->session;
+    connection.surfaces[id] = std::move(session);
     out.Message(connection, welcome);
 }
 
 void SurfaceHub::Action(WsConnection& connection, const Json::Value& message, WsOutbox& out)
 {
     const Json::Value rid = message.get("rid", Json::Value());
-    if (!connection.surface)
-    {
-        out.Error(connection, kTopic, "bad_request", "join first: {\"op\":\"join\",\"v\":1,\"name\":…,\"model\":…}",
-                  rid);
+    SurfaceSession* session = SessionOf(connection, message, out, rid);
+    if (session == nullptr)
         return;
-    }
     const std::string id = message.get("id", "").asString();
     if (id.empty())
     {
@@ -230,7 +303,8 @@ void SurfaceHub::Action(WsConnection& connection, const Json::Value& message, Ws
     }
     actions::ActionRegistry& registry = _hub.Registry();
     const std::optional<actions::ActionInfo> info = registry.Find(id);
-    const std::string instance = connection.surface->instance;
+    const std::string instance = session->instance;
+    const std::string sessionId = session->session;
     actions::ActionValue value;
     std::string error;
     std::optional<actions::ActionResult> refused;
@@ -247,7 +321,9 @@ void SurfaceHub::Action(WsConnection& connection, const Json::Value& message, Ws
     {
         // Answered as the worker would, through the loop like any result
         const uint64_t connectionId = connection.id;
-        out.after.push_back([this, connectionId, rid, result = *refused] { DeliverResult(connectionId, rid, result); });
+        out.after.push_back([this, connectionId, sessionId, rid, result = *refused] {
+            DeliverResult(connectionId, sessionId, rid, result);
+        });
         return;
     }
 
@@ -256,30 +332,71 @@ void SurfaceHub::Action(WsConnection& connection, const Json::Value& message, Ws
     origin.identity = connection.companion->id;
     origin.client = connection.companion->name;
     origin.peer = connection.host;
+    origin.surface = sessionId;
     const uint64_t connectionId = connection.id;
     WsHub* hub = &_hub;
     out.after.push_back([this, hub, &registry, id, value = std::move(value), instance, origin = std::move(origin),
-                         connectionId, rid]() mutable {
+                         connectionId, sessionId, rid]() mutable {
         hub->BeginDelivery();
         registry.Submit(id, std::move(value), instance, std::move(origin),
-                        [this, hub, connectionId, rid](actions::ActionResult result) {
+                        [this, hub, connectionId, sessionId, rid](actions::ActionResult result) {
                             // On the actions worker: the message is built and sent on the hub's loop
-                            hub->PostTask([this, hub, connectionId, rid, result = std::move(result)] {
-                                DeliverResult(connectionId, rid, result);
+                            hub->PostTask([this, hub, connectionId, sessionId, rid, result = std::move(result)] {
+                                DeliverResult(connectionId, sessionId, rid, result);
                                 hub->EndDelivery();
                             });
                         });
     });
 }
 
+std::vector<std::string> SurfaceHub::ReadoutNamesOf(const std::string& instance)
+{
+    if (!instance.empty())
+        if (std::shared_ptr<Emulator> emulator = EmulatorManager::GetInstance()->GetEmulator(instance))
+            return actions::ReadoutNames(*emulator);
+    std::vector<std::string> names = actions::BaseReadoutNames();
+    for (const actions::ActionRegistry::ToggleReadout& toggle : actions::ActionRegistry::Instance().ToggleReadouts())
+        if (toggle.param.empty())
+            names.push_back(toggle.stem);
+    return names;
+}
+
+std::vector<std::string> SurfaceHub::Expand(SurfaceSession& session)
+{
+    const std::vector<std::string> names = ReadoutNamesOf(session.instance);
+    std::set<std::string> readouts;
+    std::vector<std::string> unknown;
+    for (const std::string& pattern : session.patterns)
+    {
+        bool matched = false;
+        for (const std::string& name : names)
+            if (actions::ReadoutMatches(pattern, name))
+            {
+                readouts.insert(name);
+                matched = true;
+            }
+        // A toggle by name the list does not spell out (`toggle.set.fast_tape`): read as it is ({on: null} when the
+        // instance has no such toggle)
+        if (!matched && !IsPattern(pattern) && pattern.compare(0, 7, "toggle.") == 0)
+        {
+            readouts.insert(pattern);
+            matched = true;
+        }
+        if (!matched)
+            unknown.push_back(pattern);
+    }
+    for (auto it = session.sent.begin(); it != session.sent.end();)
+        it = readouts.count(it->first) == 0 ? session.sent.erase(it) : std::next(it);
+    session.readouts = std::move(readouts);
+    return unknown;
+}
+
 void SurfaceHub::Subscribe(WsConnection& connection, const Json::Value& message, WsOutbox& out)
 {
-    if (!connection.surface)
-    {
-        out.Error(connection, kTopic, "bad_request", "join first: readouts belong to the surface topic");
+    SurfaceSession* found = SessionOf(connection, message, out);
+    if (found == nullptr)
         return;
-    }
-    SurfaceSession& session = *connection.surface;
+    SurfaceSession& session = *found;
     const Json::Value& list = message["readouts"];
     double hz = session.hz;
     if (!list.isArray() || (message.isMember("max_hz") && !message["max_hz"].isNumeric()))
@@ -289,31 +406,37 @@ void SurfaceHub::Subscribe(WsConnection& connection, const Json::Value& message,
     }
     if (message.isMember("max_hz"))
         hz = std::min(WsHub::kMaxHz, std::max(1.0, message["max_hz"].asDouble()));
+    std::vector<std::string> added;
     for (const Json::Value& item : list)
     {
         const std::string pattern = item.isString() ? item.asString() : std::string();
-        bool matched = false;
-        for (const std::string& name : WsHub::ReadoutNames())
-            if (WsHub::Matches(pattern, name))
-            {
-                session.readouts.insert(name);
-                matched = true;
-            }
-        if (!matched)
-            out.Error(connection, kTopic, "Not Found", "no readout '" + pattern + "' (ttd.position, run.state)");
+        if (std::find(session.patterns.begin(), session.patterns.end(), pattern) == session.patterns.end())
+        {
+            session.patterns.push_back(pattern);
+            added.push_back(pattern);
+        }
     }
+    for (const std::string& pattern : Expand(session))
+        if (std::find(added.begin(), added.end(), pattern) != added.end())
+        {
+            Json::Value error = SessionMessage("error", session);
+            error["error"] = "Not Found";
+            error["message"] = "no readout '" + pattern +
+                               "' (ttd.position, run.state, machine, media.tape, media.disk, audio.mute, debug.mode, "
+                               "toggle.*)";
+            out.Message(connection, error);
+            session.patterns.erase(std::find(session.patterns.begin(), session.patterns.end(), pattern));
+        }
     session.hz = hz;
     session.full = true;
 }
 
 void SurfaceHub::Unsubscribe(WsConnection& connection, const Json::Value& message, WsOutbox& out)
 {
-    if (!connection.surface)
-    {
-        out.Error(connection, kTopic, "bad_request", "join first: readouts belong to the surface topic");
+    SurfaceSession* found = SessionOf(connection, message, out);
+    if (found == nullptr)
         return;
-    }
-    SurfaceSession& session = *connection.surface;
+    SurfaceSession& session = *found;
     const Json::Value& list = message["readouts"];
     if (!list.isArray())
     {
@@ -323,6 +446,10 @@ void SurfaceHub::Unsubscribe(WsConnection& connection, const Json::Value& messag
     for (const Json::Value& item : list)
     {
         const std::string pattern = item.isString() ? item.asString() : std::string();
+        // A pattern removes the patterns it covers ("*" every one); a name the patterns that are that name
+        session.patterns.erase(std::remove_if(session.patterns.begin(), session.patterns.end(),
+                                              [&](const std::string& p) { return WsHub::Matches(pattern, p); }),
+                               session.patterns.end());
         for (auto it = session.readouts.begin(); it != session.readouts.end();)
         {
             if (WsHub::Matches(pattern, *it))
@@ -336,9 +463,16 @@ void SurfaceHub::Unsubscribe(WsConnection& connection, const Json::Value& messag
     }
 }
 
-void SurfaceHub::Bye(WsConnection& connection, WsOutbox& out)
+void SurfaceHub::Bye(WsConnection& connection, const Json::Value& message, WsOutbox& out)
 {
-    connection.surface.reset();
+    if (message["session"].isString())
+    {
+        // One surface ends (a deck went), the others and the socket stay
+        if (SurfaceSession* session = SessionOf(connection, message, out))
+            connection.surfaces.erase(session->session);
+        return;
+    }
+    connection.surfaces.clear();
     out.Close(connection);
 }
 
@@ -346,25 +480,22 @@ void SurfaceHub::Bye(WsConnection& connection, WsOutbox& out)
 
 /// region <Pushes>
 
-void SurfaceHub::Context(WsConnection& connection, const std::string& instance, const std::string& context,
-                         const std::string& by, WsOutbox& out)
+void SurfaceHub::Context(WsConnection& connection, SurfaceSession& session, const std::string& instance,
+                         const std::string& context, const std::string& by, WsOutbox& out)
 {
-    SurfaceSession& session = *connection.surface;
     if (session.instance != instance || session.context == context)
         return;
     session.context = context;
-    Json::Value ctx;
-    ctx["op"] = "ctx";
-    ctx["t"] = kTopic;
+    Json::Value ctx = SessionMessage("ctx", session);
     ctx["instance"] = instance;
     ctx["context"] = context;
     ctx["by"] = by;
     out.Message(connection, ctx);
 }
 
-void SurfaceHub::Rebind(WsConnection& connection, const std::string& followed, WsOutbox& out)
+void SurfaceHub::Rebind(WsConnection& connection, SurfaceSession& session, const std::string& followed,
+                        WsOutbox& out)
 {
-    SurfaceSession& session = *connection.surface;
     std::string instance = followed;
     if (session.pinned)
         instance = !session.instance.empty() && EmulatorManager::GetInstance()->GetEmulator(session.instance)
@@ -379,16 +510,18 @@ void SurfaceHub::Bind(SurfaceSession& session, const std::string& instance, WsCo
     session.instance = instance;
     session.sent.clear();
     session.full = true;
+    (void)Expand(session);  // the new instance's toggles (its features)
     Json::Value target = TargetOf(session);
     target["op"] = "target";
     target["t"] = kTopic;
+    target["session"] = session.session;
     out.Message(connection, target);
     session.context.clear();
     if (instance.empty())
         return;
     std::shared_ptr<Emulator> emulator = EmulatorManager::GetInstance()->GetEmulator(instance);
     const actions::ContextInfo info = actions::ContextState::Instance().Get(instance, emulator.get());
-    Context(connection, instance, info.context, info.set ? info.by : actions::ContextState::kByDefault, out);
+    Context(connection, session, instance, info.context, info.set ? info.by : actions::ContextState::kByDefault, out);
 }
 
 bool SurfaceHub::Due(const SurfaceSession& session, std::chrono::steady_clock::time_point now)
@@ -398,10 +531,9 @@ bool SurfaceHub::Due(const SurfaceSession& session, std::chrono::steady_clock::t
     return session.full || now - session.sentAt >= std::chrono::duration<double>(0.75 / session.hz);
 }
 
-void SurfaceHub::Deliver(WsConnection& connection, const WsReadings& readings,
+void SurfaceHub::Deliver(WsConnection& connection, SurfaceSession& session, const WsReadings& readings,
                          std::chrono::steady_clock::time_point now, WsOutbox& out)
 {
-    SurfaceSession& session = *connection.surface;
     if (session.instance.empty())
     {
         session.full = false;
@@ -426,11 +558,52 @@ void SurfaceHub::Deliver(WsConnection& connection, const WsReadings& readings,
     if (text.empty())
         return;
     session.sentAt = now;
-    out.Message(connection, "{\"op\":\"readout\",\"t\":\"surface\",\"instance\":\"" + session.instance +
-                                "\",\"values\":{" + text + "}}");
+    out.Message(connection, "{\"op\":\"readout\",\"t\":\"surface\",\"session\":\"" + session.session +
+                                "\",\"instance\":\"" + session.instance + "\",\"values\":{" + text + "}}");
 }
 
-void SurfaceHub::DeliverResult(uint64_t connectionId, const Json::Value& rid, const actions::ActionResult& result)
+void SurfaceHub::Activity(WsConnection& connection, SurfaceSession& session, const Json::Value& entry,
+                          const std::string& instance, const std::string& surfaceSession,
+                          std::chrono::steady_clock::time_point now, bool congested, WsOutbox& out)
+{
+    // Not its own actions, its bound instance only
+    if (!session.activity || session.instance.empty() || session.instance != instance ||
+        surfaceSession == session.session)
+        return;
+    if (now - session.activityWindow >= std::chrono::seconds(1))
+    {
+        session.activityWindow = now;
+        session.activityCount = 0;
+    }
+    if (congested || session.activityCount >= kActivityPerSecond)
+    {
+        session.activityDropped++;
+        return;
+    }
+    session.activityCount++;
+    Json::Value message = entry;
+    message["op"] = "activity";
+    message["t"] = kTopic;
+    message["session"] = session.session;
+    if (session.activityDropped > 0)
+    {
+        message["dropped"] = static_cast<Json::UInt64>(session.activityDropped);
+        session.activityDropped = 0;
+    }
+    out.Message(connection, message);
+}
+
+void SurfaceHub::Catalogue(WsConnection& connection, SurfaceSession& session, uint64_t revision, WsOutbox& out)
+{
+    if (!session.catalogue)
+        return;
+    Json::Value message = SessionMessage("catalogue", session);
+    message["rev"] = static_cast<Json::UInt64>(revision);
+    out.Message(connection, message);
+}
+
+void SurfaceHub::DeliverResult(uint64_t connectionId, const std::string& sessionId, const Json::Value& rid,
+                               const actions::ActionResult& result)
 {
     WsOutbox out;
     {
@@ -438,11 +611,12 @@ void SurfaceHub::DeliverResult(uint64_t connectionId, const Json::Value& rid, co
         WsConnection* connection = _hub.FindById(connectionId);
         if (connection == nullptr || connection->closing)
             return;
+        auto session = connection->surfaces.find(sessionId);
+        if (session == connection->surfaces.end())
+            return;  // that surface ended meanwhile (bye)
         if (!rid.isNull())
         {
-            Json::Value message;
-            message["op"] = "result";
-            message["t"] = kTopic;
+            Json::Value message = SessionMessage("result", *session->second);
             message["rid"] = rid;
             message["ok"] = result.ok;
             if (!result.ok)
@@ -453,7 +627,12 @@ void SurfaceHub::DeliverResult(uint64_t connectionId, const Json::Value& rid, co
             out.Message(*connection, message);
         }
         else if (!result.ok)
-            out.Error(*connection, kTopic, result.error, result.message);
+        {
+            Json::Value message = SessionMessage("error", *session->second);
+            message["error"] = result.error;
+            message["message"] = result.message;
+            out.Message(*connection, message);
+        }
     }
     out.Flush();
 }

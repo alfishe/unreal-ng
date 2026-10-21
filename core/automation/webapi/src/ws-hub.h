@@ -65,6 +65,7 @@ class Emulator;
 namespace actions
 {
 class ActionRegistry;
+struct ActivityEntry;
 }
 
 /// How full a connection's socket is, as its transport measured it (the I/O loop writes, the hub reads)
@@ -109,7 +110,8 @@ struct WsConnection
     uint64_t eventsDropped = 0;                              ///< dropped since the last event sent
     /// endregion </Event topics>
 
-    std::unique_ptr<SurfaceSession> surface;  ///< after `join`
+    /// After `join`: session id -> the surface (several per connection: the Stream Deck daemon joins once per deck)
+    std::map<std::string, std::unique_ptr<SurfaceSession>> surfaces;
 };
 
 /// What a handler produces under the hub's lock: sent, closed and run after the lock is released
@@ -214,6 +216,10 @@ public:
     void OnDebugEvent(const std::string& topic, const Json::Value& event);
     /// The events queued by OnDebugEvent to the subscribers (the loop)
     void DrainEvents();
+    /// An action the registry ran (ActivityFeed's listener posts it): `activity` to the surfaces that asked for it
+    void OnActivity(const actions::ActivityEntry& entry);
+    /// NC_ACTION_CATALOGUE: `catalogue` {rev} to the surfaces that asked for it
+    void OnCatalogue(uint64_t revision);
     /// endregion </Driven by the loop>
 
     /// region <Introspection (tests, docs)>
@@ -225,9 +231,11 @@ public:
     static const std::vector<std::string>& StateTopicNames();
     /// The event topics: `debug.events`, `debug.asm_sync`
     static const std::vector<std::string>& EventTopicNames();
-    /// The surface readouts
+    /// The state topics' values (`ttd.position`, `run.state`, `surfaces.context`): the surface readouts are the whole
+    /// vocabulary of actions::ReadoutNames (readouts.h), these two among them
     static const std::vector<std::string>& ReadoutNames();
-    /// The value of a topic / readout of one instance (published state only); null when it has none
+    /// The value of a topic / readout of one instance (published state only); null when it has none. The state
+    /// topics' names read here, every other surface readout through actions::ReadReadout
     static Json::Value Read(const std::string& name, const std::string& instanceId, Emulator& emulator);
     /// The instance a following surface takes: the selected one, else the only one; "" none
     static std::string FollowedInstance();
@@ -245,9 +253,9 @@ private:
     void SubscribeTopics(WsConnection& connection, const Json::Value& message, WsOutbox& out);
     void UnsubscribeTopics(WsConnection& connection, const Json::Value& message, WsOutbox& out);
     /// The state topics and readouts of the connections due (the tick, the hub's lock held)
+    using SurfaceDue = std::vector<std::pair<WsConnection*, SurfaceSession*>>;
     void DeliverValues(const std::vector<WsConnection*>& topicDue, const std::set<std::string>& topicNames,
-                       const std::vector<WsConnection*>& surfaceDue, std::chrono::steady_clock::time_point now,
-                       WsOutbox& out);
+                       const SurfaceDue& surfaceDue, std::chrono::steady_clock::time_point now, WsOutbox& out);
     /// Posts RefreshInstances once while somebody subscribes `instances` (coalesced)
     void WakeInstances();
     /// The queued events of a connection that is not congested, the first with `dropped` when some were
@@ -286,6 +294,8 @@ private:
     bool _eventsPosted = false;
     std::atomic<bool> _eventsSubscribed{false};
     uint64_t _debugSink = 0;
+    uint64_t _activityListener = 0;
+    std::atomic<bool> _activitySubscribed{false};  ///< some surface asked for `activity`
 
     mutable std::mutex _timerMutex;
     Timer _timer;

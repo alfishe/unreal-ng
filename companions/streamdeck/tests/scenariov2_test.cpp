@@ -157,7 +157,7 @@ void TestScenarioV2()
         CHECK(back["version"] == 2 && back["format"] == "streamdeck-scenario");
         CHECK(back["root"]["context"] == "play" && back["root"]["strip"]["target"] == true);
         CHECK(back["root"]["items"][0]["state"] == "run.state.paused");
-        CHECK(back["settings"]["activity"]["ignore"][0] == "ttd.seek_by");
+        CHECK(!back["settings"].contains("activity"));  // flash_keys and ignore ttd.seek_by are the defaults (Q-3)
         auto again = ParseDoc(back, issues);
         CHECK(again && ToJson(*again) == back);  // stable
     }

@@ -904,7 +904,7 @@ json ToJson(const Scenario& s)
             aj["strip"] = a.strip;
         if (a.seconds != da.seconds)
             aj["seconds"] = a.seconds;
-        if (!a.ignore.empty())
+        if (a.ignore != da.ignore)
             aj["ignore"] = a.ignore;
         if (!aj.empty())
             st["activity"] = aj;

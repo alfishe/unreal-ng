@@ -15,6 +15,10 @@
 //   --host URL  the unreal-ng WebAPI the scenarios' actions go to (default http://127.0.0.1:8090; a v1 scenario's
 //               settings.webapi still wins for that scenario)
 //   --dry-run   log actions instead of running them
+//   The surface client (sdb/surfaceclient.h): one WebSocket to the host's /api/v1/ws on the network loop, with the
+//   token of `unreal-streamdeck pair` (--companion FILE, default ~/.config/unreal-streamdeck/companion.json); each
+//   deck joins as a surface: actions, readouts, contexts, activity over it, REST only while there is no socket.
+//   --no-surface: REST only.
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -37,6 +41,7 @@
 #include "sdb/runtime.h"
 #include "sdb/scenarioio.h"
 #include "sdb/scenarioops.h"
+#include "sdb/surfaceclient.h"
 
 using namespace sdb;
 using namespace sdb::scn;
@@ -122,7 +127,7 @@ int CmdRun(const Args& a)
         std::fprintf(stderr,
                      "usage: unreal-streamdeck run [scenario: .json .yaml .csv .tsv] [--watch] [--api PORT] "
                      "[--host URL] [--wait] [--dry-run] [--seconds N] [--device S|emu] [--mirror] "
-                     "[--viewers [PORT] | --no-viewers] [--with-parent]\n");
+                     "[--viewers [PORT] | --no-viewers] [--with-parent] [--companion FILE] [--no-surface]\n");
         return kBadUsage;
     }
     if (a.Has("host"))
@@ -172,6 +177,7 @@ int CmdRun(const Args& a)
     net::EventLoop netLoop;
     std::unique_ptr<DeckHub> hub;
     std::thread netThread;
+    std::unique_ptr<surface::Client> client;  // the surface client, on the same loop
     std::mutex ownMu;
     std::map<std::string, std::unique_ptr<OwnDeck>> owns;
     std::vector<std::thread> reapers;  // each takes an ended own deck apart (its runtime joins its threads)
@@ -183,10 +189,22 @@ int CmdRun(const Args& a)
         ho.daemonVersion = "1.0";
         hub = std::make_unique<DeckHub>(netLoop, ho);
         hub->onOwnDeck = [&](std::unique_ptr<Transport> t, const Model& m, const std::string& serial) {
+            // on the network loop: the surface client's calls below are immediate
             auto own = std::make_unique<OwnDeck>();
             own->dev = std::make_unique<Device>(m, std::move(t), serial);
-            own->rt = std::make_unique<Runtime>(*own->dev, decks.StartScenario(&m), nullptr, opt);
+            RuntimeOptions ownOpt = opt;
+            if (client)
+                ownOpt.executor = client->Executor(serial);
+            own->rt = std::make_unique<Runtime>(*own->dev, decks.StartScenario(&m), nullptr, ownOpt);
             own->rt->onSwitchScenario = [&decks, serial](const std::string& f) { decks.RequestLoad(serial, f); };
+            if (client)
+            {
+                client->AddDeck({serial, ModelToken(m), std::string(m.name)}, surface::RuntimeSink(*own->rt));
+                own->rt->onScenarioChanged = [&client, serial] {
+                    if (client)
+                        client->UpdateDeck(serial);
+                };
+            }
             decks.Add(serial, m, false, *own->rt);
             OwnDeck* p = own.get();
             own->thread = std::thread([p] { p->rt->Run(p->stop); });
@@ -197,6 +215,8 @@ int CmdRun(const Args& a)
         };
         hub->onOwnDeckGone = [&](const std::string& serial) {
             decks.Remove(serial);  // no route reaches its runtime from here on
+            if (client)
+                client->RemoveDeck(serial);  // nor the surface client
             std::printf("viewer %s: own deck gone\n", serial.c_str());
             std::fflush(stdout);
             std::lock_guard l(ownMu);
@@ -216,7 +236,6 @@ int CmdRun(const Args& a)
         {
             std::printf("viewers: 127.0.0.1:%d (device wire v2)\n", hub->Port());
             decks.SetHub(hub.get(), hub->Port());
-            netThread = std::thread([&] { netLoop.Run(); });
         }
         else
         {
@@ -224,6 +243,35 @@ int CmdRun(const Args& a)
             hub.reset();
         }
     }
+
+    // The surface client: the host's /api/v1/ws with the companion token (none: REST only, until a pair writes one)
+    if (!a.Has("no-surface") && !opt.dryRun)
+    {
+        surface::Options so;
+        so.companionFile = a.Str("companion", DefaultCompanionFile());
+        so.url = surface::WsUrlOf(DefaultHost());
+        std::string cerr;
+        if (auto c = surface::LoadCompanion(so.companionFile, &cerr))
+        {
+            so.token = c->token;
+            if (!c->webapi.empty() && c->webapi != DefaultHost())
+                std::printf("note: the companion was paired with %s, the host is %s\n", c->webapi.c_str(),
+                            DefaultHost().c_str());
+        }
+        if (so.url.empty())
+            std::printf("note: no surface client (the host %s is not http://)\n", DefaultHost().c_str());
+        else
+        {
+            client = std::make_unique<surface::Client>(netLoop, so);
+            client->log = [](const std::string& line) {
+                std::printf("%s\n", line.c_str());
+                std::fflush(stdout);
+            };
+            client->Start();
+        }
+    }
+    if (hub || client)
+        netThread = std::thread([&] { netLoop.Run(); });
 
     std::signal(SIGINT, OnRunSig);
     std::signal(SIGTERM, OnRunSig);
@@ -236,6 +284,22 @@ int CmdRun(const Args& a)
         "scenario; GET /api/v1/state shows the menu stack and what each key does; press keys by node id, navigate, "
         "reload (?deck=serial, default the first deck).");
     decks.AddRoutes(api);
+    api.Add({"GET",
+             "/api/v1/surface",
+             "The surface client: the link to the host",
+             "connected, revoked, paired, url, connections, each deck's session / instance / target / readouts, the "
+             "host's instances (the instances topic)",
+             {"daemon", "surface"},
+             {},
+             nullptr,
+             [&client](const automation::Request&) {
+                 if (!client)
+                     return automation::Reply::Ok({{"enabled", false}});
+                 json body = client->Status();
+                 body["enabled"] = true;
+                 body["instances"] = client->Instances();
+                 return automation::Reply::Ok(body);
+             }});
     automation::Server server;
     int rc = kOk;
     if (a.Has("api"))
@@ -304,8 +368,17 @@ int CmdRun(const Args& a)
             });
         const std::string serial = dev->Serial();
         {
-            Runtime rt(*dev, start, nullptr, opt);
+            RuntimeOptions deckOpt = opt;
+            if (client)
+                deckOpt.executor = client->Executor(serial);
+            Runtime rt(*dev, start, nullptr, deckOpt);
             rt.onSwitchScenario = [&decks, serial](const std::string& f) { decks.RequestLoad(serial, f); };
+            if (client)
+            {
+                client->AddDeck({serial, ModelToken(dev->GetModel()), std::string(dev->GetModel().name)},
+                                surface::RuntimeSink(rt));
+                rt.onScenarioChanged = [&client, serial] { client->UpdateDeck(serial); };
+            }
             decks.Add(serial, dev->GetModel(), true, rt);
             std::printf("playing %s on %s %s%s (Ctrl-C to stop)\n",
                         decks.StartFile().empty() ? "the idle scenario" : decks.StartFile().c_str(),
@@ -316,12 +389,21 @@ int CmdRun(const Args& a)
                 deckStop = true;  // a stop between the loop's check and the reset above
             rt.Run(deckStop);
             decks.Remove(serial);
+            if (client)
+                client->RemoveDeck(serial);
         }
         dev.reset();  // its viewers are told; mirrors of the first deck follow the next one
     }
     decks.Wake();
     watcher.join();
     server.Stop();
+    if (client)
+    {
+        // bye for every deck and a close frame, while the loop still runs (bounded)
+        client->Stop();
+        for (int i = 0; i < 30 && client->Connected(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
     if (netThread.joinable())
     {
         netLoop.Stop();
@@ -341,6 +423,7 @@ int CmdRun(const Args& a)
     }
     for (auto& reaper : reapers)
         reaper.join();
+    client.reset();  // after the runtimes (their executors hold only a weak link to it)
     dev.reset();
     std::printf("stopped\n");
     return rc;

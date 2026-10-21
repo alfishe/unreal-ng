@@ -105,62 +105,87 @@ void Runtime::Run(const std::atomic<bool>& stop)
                 RunJob(j);
             }
         });
-    if (!_opt.syncActions && !_monitor.joinable())
-        _monitor = std::thread([this] {
-            // time travel on the strip (strip.status "ttd"): the recording span while it records, the position after;
-            // and the readouts of the page's state-bound faces nobody pushes (a few times a second, at once after an
-            // action)
-            auto next = std::chrono::steady_clock::now();
-            auto nextReadouts = next;
-            while (!_workerStop)
-            {
-                // 50 readouts a second on a fixed beat: the poll's own time does not stretch the period
-                next += std::chrono::milliseconds(20);
-                auto now = std::chrono::steady_clock::now();
-                if (next < now)
-                    next = now;
-                std::this_thread::sleep_until(next);
-                now = std::chrono::steady_clock::now();
-                double fps = 50;
-                bool ttd = false;
-                std::vector<std::string> paths;
-                {
-                    std::lock_guard l(_mu);
-                    ttd = _page.strip && _page.strip->status == "ttd";
-                    if (ttd)
-                        fps = _page.strip->fps;
-                    const bool kick = _monitorKick.exchange(false);
-                    if (kick || now >= nextReadouts)
-                    {
-                        nextReadouts = now + std::chrono::milliseconds(std::max(20, _opt.readoutPollMs));
-                        for (const Node* n : _page.keys)
-                            if (n && !n->state.empty() && !_pushed.count(n->state) &&
-                                std::find(paths.begin(), paths.end(), n->state) == paths.end())
-                                paths.push_back(n->state);
-                    }
-                }
-                if (ttd)
-                {
-                    const json t = _host->TtdState();
-                    std::string text = TtdReadout(t, fps);
-                    std::lock_guard l(_mu);
-                    if (_page.strip && _page.strip->status == "ttd")
-                        _status = std::move(text);
-                }
-                for (const auto& path : paths)
-                {
-                    json v = _host->Readout(path);
-                    if (v.is_null())
-                        continue;
-                    std::lock_guard l(_mu);
-                    if (!_pushed.count(path))
-                        _readouts[path] = std::move(v);
-                }
-            }
-        });
+    _running = true;
     NoteMenu();
     while (!stop)
         Step(10);
+}
+
+// The REST fallback's poller: time travel for the strip and the faces' readouts nobody pushes. Started by the device
+// thread while the surface client is not live, ended once it is (a connected deck has no poller thread).
+void Runtime::EnsureMonitor()
+{
+    {
+        std::lock_guard l(_mu);
+        if (_live || _monitorRunning)
+            return;
+    }
+    if (_monitor.joinable())
+        _monitor.join();  // the last one ended (live came): it is gone already
+    _monitorRunning = true;
+    _monitor = std::thread([this] {
+        // time travel on the strip (strip.status "ttd"): the recording span while it records, the position after;
+        // and the readouts of the page's state-bound faces nobody pushes (a few times a second, at once after an
+        // action)
+        auto next = std::chrono::steady_clock::now();
+        auto nextReadouts = next;
+        while (!_workerStop)
+        {
+            {
+                std::lock_guard l(_mu);
+                if (_live)
+                {
+                    _monitorRunning = false;
+                    return;
+                }
+            }
+            // 50 readouts a second on a fixed beat: the poll's own time does not stretch the period
+            next += std::chrono::milliseconds(20);
+            auto now = std::chrono::steady_clock::now();
+            if (next < now)
+                next = now;
+            std::this_thread::sleep_until(next);
+            now = std::chrono::steady_clock::now();
+            double fps = 50;
+            bool ttd = false;
+            std::vector<std::string> paths;
+            {
+                std::lock_guard l(_mu);
+                // live: the surface client pushes the timeline and the readouts; nothing to ask
+                ttd = !_live && _page.strip && _page.strip->status == "ttd";
+                if (ttd)
+                    fps = _page.strip->fps;
+                const bool kick = _monitorKick.exchange(false);
+                if (!_live && (kick || now >= nextReadouts))
+                {
+                    nextReadouts = now + std::chrono::milliseconds(std::max(20, _opt.readoutPollMs));
+                    for (const Node* n : _page.keys)
+                        if (n && !n->state.empty() && !_pushed.count(n->state) &&
+                            std::find(paths.begin(), paths.end(), n->state) == paths.end())
+                            paths.push_back(n->state);
+                }
+            }
+            if (ttd)
+            {
+                const json t = _host->TtdState();
+                std::string text = TtdReadout(t, fps);
+                std::lock_guard l(_mu);
+                if (!_live && _page.strip && _page.strip->status == "ttd")
+                    _status = std::move(text);
+            }
+            for (const auto& path : paths)
+            {
+                json v = _host->Readout(path);
+                if (v.is_null())
+                    continue;
+                std::lock_guard l(_mu);
+                if (!_pushed.count(path))
+                    _readouts[path] = std::move(v);
+            }
+        }
+        std::lock_guard l(_mu);
+        _monitorRunning = false;
+    });
 }
 
 // One line for the strip's status: frames and time codes from the start of the recording. Every form is the same
@@ -196,6 +221,7 @@ void Runtime::Step(int timeoutMs)
         Handle(e, NowMs());
     }
     bool force = false;
+    bool reloaded = false;
     std::uint64_t handled = 0;  // the requests this step applies: everything queued below
     {
         std::lock_guard l(_mu);
@@ -222,6 +248,7 @@ void Runtime::Step(int timeoutMs)
             _toggles.clear();
             _holds.clear();
             force = true;
+            reloaded = true;
             _dev.Note("scenario reloaded: " + _s.name + ", menu " + JoinPath(Layout(_s, _nav, _m).path));
         }
         // auto exit: pop one level after the menu's idle time
@@ -233,7 +260,11 @@ void Runtime::Step(int timeoutMs)
         }
         _page = Layout(_s, _nav, _m);
     }
+    if (_running && !_opt.syncActions)
+        EnsureMonitor();
     Render(force);
+    if (reloaded && onScenarioChanged)
+        onScenarioChanged();
     {
         std::lock_guard l(_steps->m);
         _steps->applied = std::max(_steps->applied, handled);
@@ -314,6 +345,15 @@ void Runtime::Render(bool force)
             if (bannerOn)
                 h = Mix(h, HashStr(_banner));
             h = Mix(h, HashStr(_status) + 3);
+            StripLive live;
+            live.link = _live ? StripLive::Link::Live : _wasLive ? StripLive::Link::Lost : StripLive::Link::None;
+            live.readouts = &_strip;
+            live.target = &_target;
+            live.notice = _notice;
+            if (NowMs() < _activityUntil)
+                live.activity = _activityLine;
+            live.showTarget = _page.strip ? _page.strip->target.value_or(true) : true;
+            h = Mix(h, HashStr(live.Key()) + 5);
             double left = -1;  // auto exit countdown: redrawn at 30 fps so the bar glides
             if (_page.autoExit > 0 && _nav.Depth() > 0)
             {
@@ -323,7 +363,7 @@ void Runtime::Render(bool force)
             if (force || h != _sentStrip)
             {
                 strip = RenderStrip(_page, _m.lcdLogicalW, _m.lcdLogicalH, _m.dialTileW,
-                                    bannerOn ? _banner : std::string(), left, _status, _s.dir);
+                                    bannerOn ? _banner : std::string(), left, _status, _s.dir, &live);
                 _sentStrip = h;
             }
         }
@@ -720,6 +760,49 @@ void Runtime::SetReadout(const std::string& path, const json& value)
     _readouts[path] = value;
 }
 
+void Runtime::SetLive(bool live)
+{
+    std::lock_guard l(_mu);
+    if (live == _live)
+        return;
+    _live = live;
+    if (live)
+    {
+        _wasLive = true;
+        _status.clear();  // the timeline replaces the polled line
+    }
+    else
+    {
+        _pushed.clear();  // the faces' readouts are polled again
+        _strip.clear();
+        _monitorKick = true;
+    }
+}
+
+void Runtime::SetStripReadout(const std::string& name, const json& value)
+{
+    std::lock_guard l(_mu);
+    _strip[name] = value;
+}
+
+void Runtime::SetTarget(const json& target)
+{
+    std::lock_guard l(_mu);
+    _target = target;
+}
+
+void Runtime::SetNotice(const std::string& text)
+{
+    std::lock_guard l(_mu);
+    _notice = text;
+}
+
+SurfaceNeeds Runtime::Needs() const
+{
+    std::lock_guard l(_mu);
+    return NeedsOf(_s);
+}
+
 void Runtime::OnContext(const std::string& context)
 {
     std::lock_guard l(_mu);
@@ -746,7 +829,11 @@ void Runtime::ShowActivity(const std::string& actionId, const std::string& text)
                                                                      n->action.spec.value("id", "") == actionId)
                 _flashUntil[k] = NowMs() + 200;
     if (a.strip == "line" && !text.empty())
-        SetBanner(text, static_cast<int>(a.seconds * 1000));
+    {
+        // a quiet line, not the failure banner
+        _activityLine = text;
+        _activityUntil = NowMs() + static_cast<std::int64_t>(a.seconds * 1000);
+    }
 }
 
 // ---------------------------------------------------------------- controls
@@ -826,6 +913,8 @@ json Runtime::State() const
             {"toggles", _toggles},
             {"readouts", _readouts},
             {"context", _context},
+            {"surface",
+             {{"live", _live}, {"target", _target}, {"notice", _notice}, {"strip", _strip}}},
             {"last_actions", _last},
             {"brightness", _brightness},
             {"stats",

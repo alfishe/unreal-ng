@@ -88,6 +88,9 @@ struct ActionOrigin
     std::string session;
     /// The idle lease of an implicit session the gate opens (WebAPI: 15 s; CLI: 0, it ends with the connection)
     std::chrono::milliseconds lease{0};
+    /// The surface session of the WebSocket `surface` topic that called ("s7"; "" none): the activity feed names it,
+    /// so a surface never gets its own actions back. Not a run-control session: no gate reads it
+    std::string surface;
 };
 
 struct ActionResult
