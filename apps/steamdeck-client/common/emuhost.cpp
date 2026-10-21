@@ -50,7 +50,11 @@ bool EmuHost::LoadFile(const std::string& path, std::string* error)
     std::string ext = std::filesystem::path(path).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-    auto has = [&](const std::vector<std::string>& list) { return std::find(list.begin(), list.end(), ext) != list.end(); };
+    // The core's lists name extensions without the dot ("sna", "spg"); match either form
+    const std::string bare = !ext.empty() && ext[0] == '.' ? ext.substr(1) : ext;
+    auto has = [&](const std::vector<std::string>& list) {
+        return std::find(list.begin(), list.end(), bare) != list.end() || std::find(list.begin(), list.end(), ext) != list.end();
+    };
     if (has(Emulator::SupportedSnapshotExtensions()))
         return _emulator->LoadSnapshot(path);
     if (has(Emulator::SupportedTapeExtensions()))
