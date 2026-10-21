@@ -16,6 +16,7 @@
 #include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <emulator/execution/runcontrol.h>
 #include <emulator/zxpoly/zxpolygroup.h>
 #include <emulator/machinevariants.h>
 #include <emulator/media/modelswitch.h>
@@ -1006,45 +1007,11 @@ void EmulatorAPI::pauseEmulator(const HttpRequestPtr& req, std::function<void(co
         else if (!waitParam.empty() && waitParam.size() <= 9 &&
                  std::all_of(waitParam.begin(), waitParam.end(), [](unsigned char c) { return std::isdigit(c) != 0; }))
             wait = std::chrono::milliseconds(std::min<long long>(std::stoll(waitParam), 60000));
-        const execution::Result result = manager->PauseEmulatorWithResult(
-            id, webapi_session::RequesterOf(req, target ? target->GetContext() : nullptr), wait);
-
-        Json::Value ret;
-        HttpStatusCode code = HttpStatusCode::k200OK;
-        switch (result.outcome)
-        {
-            case execution::Outcome::Applied:
-            case execution::Outcome::Coalesced:
-                ret["status"] = "success";
-                ret["message"] = "Emulator paused";
-                break;
-            case execution::Outcome::Pending:
-                // Honest: the machine still runs the command ahead; registers read now are not the paused ones
-                ret["status"] = "queued";
-                ret["message"] = "The pause is " + result.detail + ". Add ?wait=true to wait for it";
-                ret["waiting_for"] = result.detail;
-                code = HttpStatusCode::k202Accepted;
-                break;
-            case execution::Outcome::Busy:
-                ret["status"] = "busy";
-                ret["message"] = "The pause is " + result.detail + " (it stays queued and applies when that ends)";
-                ret["waiting_for"] = result.detail;
-                code = HttpStatusCode::k202Accepted;
-                break;
-            default:
-                ret["status"] = "error";
-                ret["message"] = "Pause refused: " + result.detail;
-                code = result.detail.find("claim") != std::string::npos ? HttpStatusCode::k409Conflict
-                                                                         : HttpStatusCode::k400BadRequest;
-                break;
-        }
-        ret["emulator_id"] = id;
-
-        auto emulator = manager->GetEmulator(id);
-        if (emulator)
-        {
-            ret["state"] = stateToString(emulator->GetState());
-        }
+        // RunControl (core/src/emulator/execution/runcontrol.h): the pause every surface and the actions share
+        const execution::RunReply reply = execution::RunControl(target).Pause(
+            webapi_session::RequesterOf(req, target ? target->GetContext() : nullptr), wait);
+        Json::Value ret = StateNodeToJson(reply.body);
+        const auto code = static_cast<HttpStatusCode>(reply.HttpStatus());
 
         auto resp = HttpResponse::newHttpJsonResponse(ret);
         resp->setStatusCode(code);
@@ -1085,47 +1052,23 @@ void EmulatorAPI::resumeEmulator(const HttpRequestPtr& req, std::function<void(c
         return;
     }
 
-    // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
-    auto emulator = manager->GetEmulator(id);
-    if (emulator)
-    {
-        auto* ctx = emulator->GetContext();
-        if (ctx && ctx->IsRunControlClaimed() && !webapi_session::HoldsControl(req, ctx))
-        {
-            auto state = ctx->GetRunControlState();
-            Json::Value error;
-            error["error"] = "Run-control held";
-            error["message"] = "Run-control held by " + state.surfaceLabel + ". Use that surface to resume.";
-            error["emulator_id"] = id;
-
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k409Conflict);
-            addCorsHeaders(resp);
-            callback(resp);
-            return;
-        }
-    }
-
     try
     {
-        // The session holding control resumes as itself; the arbiter refuses anybody else's run while it holds it
+        // RunControl: the claim check (409 "Run-control held" for anybody but the holder), then the run as the
+        // session holding control, or as the surface alone; the arbiter refuses anybody else's run while it is held
         auto target = manager->GetEmulator(id);
-        bool success = manager->ResumeEmulator(
-            id, webapi_session::RequesterOf(req, target ? target->GetContext() : nullptr));
-
-        Json::Value ret;
-        ret["status"] = success ? "success" : "error";
-        ret["message"] = success ? "Emulator resumed" : "Failed to resume emulator (not paused or error)";
-        ret["emulator_id"] = id;
-
-        auto emulator = manager->GetEmulator(id);
-        if (emulator)
+        const execution::RunReply reply =
+            execution::RunControl(target).Resume(webapi_session::RequesterOf(req, target ? target->GetContext() : nullptr));
+        Json::Value ret = StateNodeToJson(reply.body);
+        if (reply.status == execution::RunReply::Status::Held)
         {
-            ret["state"] = stateToString(emulator->GetState());
+            ret["error"] = reply.error;
+            ret["message"] = reply.message;
         }
+        const auto code = static_cast<HttpStatusCode>(reply.HttpStatus());
 
         auto resp = HttpResponse::newHttpJsonResponse(ret);
-        resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+        resp->setStatusCode(code);
         addCorsHeaders(resp);
         callback(resp);
     }

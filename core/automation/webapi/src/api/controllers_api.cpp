@@ -138,6 +138,11 @@ namespace
 void EmulatorAPI::getHostControllers(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                      const std::string& verb) const
 {
+    if (verb == "actions")
+    {
+        getActions(req, std::move(callback));  // the core's actions: there with or without ENABLE_CONTROLLERS
+        return;
+    }
     RespondHost(callback, req, verb, false);
 }
 

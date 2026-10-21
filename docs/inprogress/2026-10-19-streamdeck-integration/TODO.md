@@ -7,8 +7,12 @@
 
 ## Phases
 
-Depends on the control-surfaces phases (branch `control-surfaces-design`): S1 core `ActionRegistry` + RunControl +
-`/controllers/actions`; S2 `ContextState`, TTD published cursor, `seek_by`; S4 the surface protocol, served as the `surface` topic of `/api/v1/ws` (D7).
+Depends on the control-surfaces phases ([control surfaces TODO](../2026-10-18-control-surfaces/TODO.md)): S1 core
+`ActionRegistry` + RunControl + `/controllers/actions` - **done 2026-10-20** (worktree `scratch/wt-control-surfaces-s1`,
+not landed yet): the registry with one worker per instance and the gates of every origin, `RunControl`, REST, MCP
+`actions`, CLI `action`, Lua / Python `action()`, and `/api/v1/ws` with calls (`call`, `auth`; topics come with S4);
+S2 `ContextState`, TTD published cursor, `seek_by`; S4 the surface protocol, served as the `surface` topic of
+`/api/v1/ws` (D7).
 
 | # | Phase | Needs | State |
 |:--|:--|:--|:--|
@@ -61,8 +65,8 @@ Asked one at a time.
 
 | Document | Fix |
 |:--|:--|
-| control surfaces `architecture.md §6` | "the Qt client sets the selected instance when the focused one changes" → `TargetState` ([targeting.md](targeting.md)) |
-| control surfaces `protocol.md` §2, §4, S4 | no own route `/api/v1/surfaces/ws`: the surface protocol is the `surface` topic of the one WebSocket `/api/v1/ws` ([protocol.md §0](protocol.md#0-transport-one-websocket), D7); `SurfaceHub` becomes the topic's handler in the shared hub |
-| control surfaces `protocol.md` `instance` op | replaced by `target` ([protocol.md §2](protocol.md#2-target)) |
-| control surfaces `requirements.md` "what exists" | the Surface Dial driver and `ttd.jog_*` / `ttd.scrub_*` landed on master (`720fbb53e`, `f3d35d587`) after the design |
+| control surfaces `architecture.md §6` | "the Qt client sets the selected instance when the focused one changes" → `TargetState` ([targeting.md](targeting.md)) (applied 2026-10-20, S1) |
+| control surfaces `protocol.md` §2, §4, S4 | no own route `/api/v1/surfaces/ws`: the surface protocol is the `surface` topic of the one WebSocket `/api/v1/ws` ([protocol.md §0](protocol.md#0-transport-one-websocket), D7); `SurfaceHub` becomes the topic's handler in the shared hub (applied 2026-10-20, S1) |
+| control surfaces `protocol.md` `instance` op | replaced by `target` ([protocol.md §2](protocol.md#2-target)) (applied 2026-10-20, S1) |
+| control surfaces `requirements.md` "what exists" | the Surface Dial driver and `ttd.jog_*` / `ttd.scrub_*` landed on master (`720fbb53e`, `f3d35d587`) after the design (applied 2026-10-20, S1) |
 | controller manager `debug-and-ttd.md:252-259` | the Stream Deck integrates as a companion: link this design |

@@ -20,6 +20,7 @@
 #include "mcp-media.h"
 #include "mcp-bus.h"
 #include "mcp-slots.h"
+#include "mcp-actions.h"
 #include "mcp-controllers.h"
 #include "mcp-router.h"
 #include "mcp-symbols.h"
@@ -5990,6 +5991,8 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterMediaSlots(*registry);
     // controllers: connectors and retro devices (docs/inprogress/2026-10-17-controller-manager/surfaces.md §7)
     RegisterControllers(*registry);
+    // actions: the core ActionRegistry by id (docs/inprogress/2026-10-18-control-surfaces/actions.md §6)
+    RegisterActions(*registry);
     // bus_analyzer: peripheral bus traces, checks, SD card timing (docs/inprogress/2026-10-11-bus-analyzer)
     RegisterBusAnalyzer(*registry);
 

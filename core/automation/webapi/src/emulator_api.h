@@ -100,6 +100,9 @@ public:
     // delete, apply, bind, unbind (POST)
     ADD_METHOD_TO(EmulatorAPI::getHostControllers, "/api/v1/controllers/{verb}", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postHostControllers, "/api/v1/controllers/{verb}", drogon::Post);
+    // Host actions (core ActionRegistry; implementation: api/actions_api.cpp; control surfaces actions.md §6). GET
+    // /api/v1/controllers/actions is the {verb} route above ("actions"), handled there before the host input verbs
+    ADD_METHOD_TO(EmulatorAPI::postAction, "/api/v1/controllers/actions/{action}", drogon::Post);
 
     // ZX-bus slots: the machine's buses, slots and cards (implementation: api/slots_api.cpp over SlotControl,
     // core/src/emulator/slots/slotcontrol.h; ZX-bus slots architecture.md §9). A change restarts the machine
@@ -794,6 +797,11 @@ public:
     void postControllerVerb(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
                             const std::string& connector, const std::string& verb) const;
+    /// GET /api/v1/controllers/actions (?instance=): the catalogue with availability (api/actions_api.cpp)
+    void getActions(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    /// POST /api/v1/controllers/actions/{action} {instance?, value?}: run it on the instance's actions worker
+    void postAction(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& action) const;
     void getHostControllers(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                             const std::string& verb) const;

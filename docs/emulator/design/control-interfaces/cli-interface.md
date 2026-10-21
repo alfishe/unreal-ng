@@ -426,6 +426,30 @@ OK: Swell (attack, hold, release) on Xbox Elite Wireless Controller Series 2
 Error: Xbox Elite Wireless Controller Series 2: macOS drives no motors of an Xbox pad over USB: connect the pad over Bluetooth
 ```
 
+### Host Action Commands
+
+The `action` verb (source: `core/automation/cli/src/commands/cli-processor-action.cpp`): the host actions of the core
+`ActionRegistry` - the ids a pad, the Surface Dial or a Stream Deck runs. Full table and the other surfaces:
+[command-interface.md §16](./command-interface.md#16-host-actions).
+
+| CLI Command | Description |
+| :--- | :--- |
+| `action [list] [--json]` | Every action, `*` when it can run now on the selected instance, else why not |
+| `action run <id> [value] [param=val ..] [--json]` | Run one and wait for it: press (default) / `release`, signed steps, a 0..1 level or text |
+
+The registry applies this connection's gate: a changing action without a session opens the implicit one (it ends
+with the connection, as for any other changing command); a companion connection (`companion auth`) is checked
+against its scopes.
+
+```
+> action run run.pause_toggle
+OK: run.pause_toggle - Emulator paused
+> action run run.step_in --json
+{"ok":true,"action":"run.step_in","instance":"…","message":"Executed 1 instruction","result":{"status":"success",…}}
+> action run ttd.jog_frames -10
+Error: Conflict - no time travel history
+```
+
 ### Analysis, Capture & Assembly Commands
 
 The analysis, capture and assembly families are available on **all** automation

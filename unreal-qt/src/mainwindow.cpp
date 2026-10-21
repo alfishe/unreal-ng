@@ -55,10 +55,9 @@
 
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/dockingmanager.h"
-#include "controllers/actionregistry.h"
 #include "controllers/controllersdialog.h"
 #include "controllers/controllertoast.h"
-#include "controllers/defaultactions.h"
+#include "controllers/guiactions.h"
 #include "controllers/hostcontrollers.h"
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
@@ -368,18 +367,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _controllersDialog = new ControllersDialog(_hostControllers, this);
     connect(_hostControllers, &HostControllers::notice, this,
             [this](const QString& text) { statusBar()->showMessage(text, 5000); });
-    // Host actions (debug-and-ttd.md §3): a pad's action bindings run here, on the GUI thread
-    _actionRegistry = new ActionRegistry(this);
-    RegisterDefaultActions(*_actionRegistry, m_binding,
-                           {debuggerWindow, [this] { handleDebuggerToggled(true); },
-                            [this] { handleScreenshotRequested(); },
-                            [this](const QString& text) { statusBar()->showMessage(text, 3000); }});
-    _controllersDialog->setActions(_actionRegistry);
+    // Host actions (debug-and-ttd.md §3, control surfaces architecture §3): the core ActionRegistry runs them on the
+    // instance's actions worker; the GUI ones are registered here, and a device's action bindings go there
+    _guiActions = std::make_unique<GuiActions>(
+        m_binding, GuiActionHooks{debuggerWindow, [this] { handleDebuggerToggled(true); },
+                                  [this] { handleScreenshotRequested(); },
+                                  [this](const QString& text) { statusBar()->showMessage(text, 3000); }});
+    _controllersDialog->setActions(&_guiActions->Registry());
     connect(_hostControllers, &HostControllers::actionTriggered, this,
-            [this](const QString& action, bool pressed, float value) {
-                QString error;
-                if (!_actionRegistry->Trigger(action.toStdString(), pressed, value, error))
-                    statusBar()->showMessage(error, 3000);
+            [this](const QString& action, bool pressed, float value, const QString& device) {
+                _guiActions->Trigger(action, pressed, value, device);
             });
     _controllerToast = new ControllerToast(this);
     connect(_hostControllers, &HostControllers::autoDecided, this, [this](const QString& text) {
@@ -820,6 +817,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 MainWindow::~MainWindow()
 {
     setAcceptDrops(false);
+    _guiActions.reset();  // the GUI actions leave the core registry before the windows they drive
     WindowView::SetProvider(nullptr);  // the automation's "window" screenshots end with the window
 
     // Clean up automation resources first

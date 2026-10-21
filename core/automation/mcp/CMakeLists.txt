@@ -37,6 +37,8 @@ add_library(${PROJECT_NAME} STATIC
     src/mcp-slots.cpp
     src/mcp-controllers.h
     src/mcp-controllers.cpp
+    src/mcp-actions.h
+    src/mcp-actions.cpp
     src/mcp-bus.cpp
     src/target-resolver.h
     src/target-resolver.cpp

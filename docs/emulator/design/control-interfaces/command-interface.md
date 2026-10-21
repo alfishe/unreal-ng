@@ -35,7 +35,7 @@ The command interfaces are responsible for handling the specific protocol (e.g.,
 | :--- | :--- | :--- | :--- | :--- |
 | **CLI** | Human interaction & Simple Automation | TCP Socket (Text-based) | ✅ Implemented | Stateful connection. Interactive (REPL-like) or scripted via netcat/telnet. Human-readable text protocol. Session maintains selected emulator context. Default port: TBD |
 | **WebAPI** | UI Frontends & Remote Management | HTTP/1.1 REST (JSON) | ✅ Partially Implemented | Stateless request/response. Standard web compatibility. CORS-enabled. Ideal for web dashboards, SPAs, and microservice integration. Uses Drogon framework. |
-| **WebSocket** | Push & low-latency calls | WebSocket `/api/v1/ws` (JSON) | 🔮 Planned | One socket, one auth. Every REST route callable (`call`, same handler), state and events pushed by topic, no polling. Async I/O on the WebAPI's event loops. Older sockets `/api/v1/websocket`, `/api/v1/companions/events` stay as adapters. |
+| **WebSocket** | Push & low-latency calls | WebSocket `/api/v1/ws` (JSON) | 🔧 In Progress (calls implemented, topics planned) | One socket, one auth. Every REST route callable (`call`, same handler, same gates), state and events pushed by topic (planned), no polling. Async I/O on the WebAPI's event loops. Older sockets `/api/v1/websocket`, `/api/v1/companions/events` stay as adapters. |
 | **Python** | Deep Integration & AI/ML | Direct C++ Bindings (pybind11) | ✅ Implemented | In-process execution. Zero-copy data access. Full Python ecosystem available. Ideal for ML/AI agents, data analysis, test automation, and complex scripting. Embedded interpreter or module import. |
 | **Lua** | Embedded Logic & Macros | Direct C++ Bindings (sol2) | ✅ Implemented | In-process execution. Minimal overhead. Sandboxed execution. Best for game scripts, hotkey macros, event handlers, and rapid prototyping. |
 | **GDB Protocol** | Source-level Debugging | GDB Remote Serial Protocol (Binary) | 🔮 Planned | Standard GDB/MI protocol. Attach with GDB, LLDB, or IDE debuggers (VS Code, CLion). Full breakpoint/watchpoint support. Z80 register mapping. |
@@ -3660,6 +3660,36 @@ Every surface offers the same verbs:
 Each returns the reply every surface returns: `ok`, `error` (`bad-request`, `unknown-device`, `unknown-profile`,
 `unavailable`, `read-only`), `message` and the verb's fields; `--json` in the CLI prints it as is. The host side needs
 the Qt client (it owns the game controllers): a headless process answers `unavailable`.
+
+### 16. Host Actions
+
+The host actions by id (control surfaces design
+[actions.md](../../../inprogress/2026-10-18-control-surfaces/actions.md)): run control (`run.pause_toggle`,
+`run.step_in`, `run.turbo_hold`, ...), time travel (`ttd.step_back_frame`, `ttd.jog_frames`, ...), the machine
+(`mach.reset`, `mach.nmi`, `mach.turbo_toggle`) and, with the Qt client, its GUI actions (`dbg.open`, the debugger
+panes, `cap.screenshot`, `ttd.scrub_*`). The core `ActionRegistry` (`core/src/emulator/actions/`) holds them; a pad,
+the Surface Dial, a Stream Deck and every plane below run the same ids, on one actions worker per instance, in order.
+The gate of the caller's origin applies: an automation client that changes the machine gets the implicit run-control
+session, a companion is checked against its scopes, the GUI and host devices are refused while another surface holds
+control.
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `action [list]` | `[--json]` | Every action: id, label, group, kind (`press`, `delta`, `level`, `text`), `held`, `gui`, the companion scope it needs now, `needs_pause`, and whether it can run now for this caller or why not (`not_now` "needs a pause", `Not Implemented` for the stubs, `Run-control held`, `companion_forbidden`, `held_by_other`) | ✅ Implemented |
+| `action run` | `<id> [value] [param=val ...] [--json]` | Run one on the selected instance and wait for it. Value by kind: press `press` (default) / `release`; delta signed steps; level 0..1; text. Parameters: `run.to_scanline line=N`, `run.n_scanlines count=N`. The reply: `ok`, `error`, `message`, `result` (a step: `pc`, `sp`, `state`, `stop`) | ✅ Implemented |
+
+| Surface | List | Run |
+| :--- | :--- | :--- |
+| CLI | `action list` | `action run ttd.jog_frames -10` |
+| WebAPI | `GET /api/v1/controllers/actions[?instance=]` | `POST /api/v1/controllers/actions/{id}` `{instance?, value?, params?}` |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/controllers/actions"}` | `{"op":"call","method":"POST","path":"/api/v1/controllers/actions/{id}","body":{...}}`; topic: `surface` (planned, control surfaces S4) |
+| MCP | `actions` action `list` (`target`) | `actions` action `run` (`id`, `value`, `params`, `target`) |
+| Python | `emu.actions()` | `emu.action(id, value=None, **params)` |
+| Lua | `actions()` | `action(id, [value], [params])` |
+
+Errors, the same on every surface: `Not Found` (no such action or instance), `Bad Request` (a value of the wrong
+kind), `not_now`, `Run-control held`, `held_by_other`, `revoked_by_user`, `companion_forbidden`, `held_by_session`,
+`Not Implemented`; the WebAPI answers 404, 400, 409, 403, 501.
 
 ## Future Capabilities
 

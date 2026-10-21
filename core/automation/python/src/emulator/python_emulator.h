@@ -18,6 +18,8 @@
 #include <emulator/emulator.h>
 #include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/io/controllers/controllercontrol.h>
+#include <emulator/actions/actionregistry.h>
+#include <emulator/execution/automationgate.h>
 #ifdef ENABLE_CONTROLLERS
 #include "hostinputcontrol.h"
 #endif
@@ -405,6 +407,116 @@ inline pybind11::object MediaCallPy(Emulator& self, const std::string& verb, con
             request.options[name] = py::str(value);
     }
     return StateNodeToPy(MediaControl(self.GetContext()).Execute(request).ToValue());
+}
+
+/// The host actions (core ActionRegistry, control surfaces actions.md §6) as Python sees them: actions() lists the
+/// catalogue with whether each can run now; action(id, value, **params) runs one on the instance's actions worker and
+/// waits for it (the GIL released), the dict every surface returns. A changing action passes the script gate as the
+/// script's own control calls
+inline pybind11::object ActionsPy(Emulator& self)
+{
+    actions::ActionOrigin origin;
+    origin.origin = execution::Origin::Python;
+    origin.identity = "python|script";
+    StateNode body = StateNode::Object();
+    body["instance"] = self.GetId();
+    StateNode& rows = body["actions"];
+    rows = StateNode::Array();
+    for (const actions::ActionStatus& status : actions::ActionRegistry::Instance().Statuses(self.GetId(), origin))
+    {
+        StateNode row = StateNode::Object();
+        row["id"] = status.info.id;
+        row["label"] = status.info.label;
+        row["group"] = status.info.group;
+        row["kind"] = actions::ValueKindName(status.info.kind);
+        row["held"] = status.info.held;
+        row["gui"] = status.info.gui;
+        row["scope"] = automation_gate::CompanionScopeName(status.scope);
+        row["needs_pause"] = status.needsPause;
+        row["available"] = status.available;
+        if (!status.available)
+        {
+            row["error"] = status.error;
+            row["reason"] = status.reason;
+        }
+        rows.push(std::move(row));
+    }
+    return StateNodeToPy(body);
+}
+
+inline pybind11::object ActionPy(Emulator& self, const std::string& id, const pybind11::object& raw,
+                                 const pybind11::kwargs& params)
+{
+    namespace py = pybind11;
+    StateNode out = StateNode::Object();
+    out["action"] = id;
+    actions::ActionRegistry& registry = actions::ActionRegistry::Instance();
+    const std::optional<actions::ActionInfo> info = registry.Find(id);
+    actions::ActionValue value;
+    std::string error;
+    bool ok = info.has_value();
+    if (!info)
+        error = "unknown action '" + id + "'";
+    else
+    {
+        value.kind = info->kind;
+        if (raw.is_none())
+        {
+            // a press, or no steps
+        }
+        else if (py::isinstance<py::bool_>(raw))
+        {
+            value.pressed = raw.cast<bool>();
+            value.level = value.pressed ? 1.0 : 0.0;
+        }
+        else if (py::isinstance<py::int_>(raw) || py::isinstance<py::float_>(raw))
+        {
+            value.delta = raw.cast<double>();
+            value.level = std::clamp(value.delta, 0.0, 1.0);
+            value.pressed = value.level > 0;
+        }
+        else if (py::isinstance<py::str>(raw))
+            ok = actions::ValueFromText(info->kind, raw.cast<std::string>(), value, error);
+        else
+        {
+            ok = false;
+            error = "value: None, a bool, a number or a string";
+        }
+    }
+    if (!ok)
+    {
+        out["ok"] = false;
+        out["error"] = info ? "Bad Request" : "Not Found";
+        out["message"] = error;
+        return StateNodeToPy(out);
+    }
+    for (const auto& item : params)
+    {
+        const std::string name = py::str(item.first);
+        const py::handle param = item.second;
+        if (py::isinstance<py::bool_>(param))
+            value.params[name] = param.cast<bool>();
+        else if (py::isinstance<py::int_>(param))
+            value.params[name] = param.cast<int64_t>();
+        else if (py::isinstance<py::float_>(param))
+            value.params[name] = param.cast<double>();
+        else
+            value.params[name] = py::str(param).cast<std::string>();
+    }
+    actions::ActionOrigin origin;
+    origin.origin = execution::Origin::Python;
+    origin.identity = "python|script";
+    actions::ActionResult result;
+    {
+        py::gil_scoped_release release;  // the action runs on the instance's actions worker
+        result = registry.Run(id, std::move(value), self.GetId(), origin);
+    }
+    out["ok"] = result.ok;
+    if (!result.ok)
+        out["error"] = result.error;
+    out["message"] = result.message;
+    out["result"] = result.body;
+    return StateNodeToPy(out);
 }
 
 /// One controllers verb through ControllerControl (controller manager surfaces.md §2): the options as keyword
@@ -1731,6 +1843,14 @@ namespace PythonBindings
                      return HostControllerCallPy(verb, options);
                  }, py::arg("verb"), "A host controllers verb (devices, context, profiles, profile, save, delete, apply, "
                  "bindings, bind, unbind, scheme, haptics, rumble) with its options as keywords")
+            .def("actions", [](Emulator& self) { return ActionsPy(self); },
+                 "The host actions: {instance, actions: [{id, label, group, kind, held, gui, scope, needs_pause, "
+                 "available, error, reason}]} (the CLI `action list`, WebAPI GET /controllers/actions, MCP actions)")
+            .def("action", [](Emulator& self, const std::string& id, const py::object& value, const py::kwargs& params) {
+                     return ActionPy(self, id, value, params);
+                 }, py::arg("id"), py::arg("value") = py::none(),
+                 "Run a host action and wait for it: value None (a press), True / False, steps (delta), 0..1 "
+                 "(level) or text; keyword params (line=, count=). {ok, action, error, message, result}")
             .def("controllers_haptics", [](Emulator&, const std::string& device) {
                      py::kwargs options;
                      if (!device.empty())
