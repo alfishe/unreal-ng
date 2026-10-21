@@ -1335,14 +1335,33 @@ emu.video_temporal_set("mod-tpgwafsd") -- switch it on; "off" or "" switches it 
                                      --   by the difference (audio_extra_delay_frames, 5 here) to stay in sync.
 emu.window_display()                 -- GUI window display settings: { backend ("gpu" / "software"), gpu_available,
                                      --   gpu, crt, crt_profile, crt_profiles = {...}, blending (temporal blending),
-                                     --   blending_frames (2..5), blending_weights ("equal" / "exponential"), emulator
-                                     --   (the instance the window shows) }; headless { ok = false, error, kind = "no-window" }
-emu.window_display_set({crt_profile = "basic", blending = true})  -- any of gpu, crt, blending (boolean),
+                                     --   blending_frames (2..5), blending_weights ("equal" / "exponential"),
+                                     --   blending_decay (0.1..0.9), emulator (the instance the window shows),
+                                     --   fullscreen, scale (1..4, 0 = resized by hand), toolbar, status_bar, hud,
+                                     --   hud_theme, hud_themes, hud_notices = {id = shown}, osd_keyboard,
+                                     --   osd_keyboard_picture, osd_keyboard_pictures, next_layers, next_layers_mode,
+                                     --   next_layers_shown = {ula, layer2, tilemap, sprites} }; headless
+                                     --   { ok = false, error, kind = "no-window" }
+emu.window_display_set({crt_profile = "basic", blending = true})  -- any of gpu, crt, blending, fullscreen,
+                                     --   toolbar, status_bar, hud, osd_keyboard, next_layers (boolean),
                                      --   crt_profile (one of crt_profiles: none, basic, ...,
                                      --   shader:<name> (a preset or a custom shader) with the GPU; other
-                                     --   than none switches CRT on), blending_frames, blending_weights; applied the
-                                     --   way the View menu does. Returns the settings after the change, or
+                                     --   than none switches CRT on), blending_frames, blending_weights,
+                                     --   blending_decay (0.3), scale (1..4), hud_theme, hud_notices = {["ram-page"]
+                                     --   = false}, osd_keyboard_picture, next_layers_mode ("layers" / "composed" /
+                                     --   "winner"), next_layers_shown = {sprites = false}; applied the way the View
+                                     --   menu does. Returns the settings after the change, or
                                      --   { ok = false, error, kind = "bad-parameter" / "no-window" / "unavailable" }
+emu.window_crt_params()              -- the active CRT profile's parameters: { profile, kind ("preset" / "profile" /
+                                     --   "none"), parameters = {{name, description, value, initial, minimum,
+                                     --   maximum, step}, ...} }; headless { ok = false, error, kind = "no-window" }
+emu.window_crt_params_set({CRTgamma = 2.4}, {steps = {curvature = 2}, reset = true})  -- set values (clamped),
+                                     --   move by a dial's steps, reset all (true) or one ("name"); returns the
+                                     --   parameters after it, or { ok = false, error, kind }
+emu.video_viewport()                 -- the overscan frame and its crop: { overscan, overscan_available, viewport,
+                                     --   viewports, framebuffer, display, video_mode } (the machine's: headless too)
+emu.video_viewport_set("standard")   -- full / symmetric / standard / screen_only / next / prev; a crop other than
+                                     --   full needs overscan on (feature "overscan"); { ok = false, error } refused
 emu.frame_cost()                     -- per-frame halt/run cost accounting
 emu.operations([since [, limit]])    -- the operation log (reset, autostart, snapshot load, media insert / eject /
                                      --   discard, blank disk; refusals too): { mode, last_seq, capacity,

@@ -578,6 +578,177 @@
    "params": "algorithm? (a name, or off; else flips between off and mod-tpgwafsd)"
   },
   {
+   "id": "video.gpu_toggle",
+   "label": "GPU acceleration",
+   "group": "Video",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "on? (else flips)"
+  },
+  {
+   "id": "video.crt_toggle",
+   "label": "CRT effects",
+   "group": "Video",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "on? (else flips)"
+  },
+  {
+   "id": "video.crt_profile",
+   "label": "CRT profile",
+   "group": "Video",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "profile? (a name of crt_profiles, next, prev; next)"
+  },
+  {
+   "id": "video.crt_param_by",
+   "label": "CRT parameter by a dial",
+   "group": "Video",
+   "kind": "delta",
+   "held": false,
+   "gui": false,
+   "params": "name (a parameter of the active profile), delta = steps"
+  },
+  {
+   "id": "video.crt_params_reset",
+   "label": "Reset CRT parameters",
+   "group": "Video",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "name? (one; else all)"
+  },
+  {
+   "id": "video.blending",
+   "label": "Frame blending",
+   "group": "Video",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "on? (else flips), frames? (2..5), weights? (equal|exponential), decay? (0.1..0.9)"
+  },
+  {
+   "id": "video.blending_decay_by",
+   "label": "Blending decay by a dial",
+   "group": "Video",
+   "kind": "delta",
+   "held": false,
+   "gui": false,
+   "params": "delta = tenths"
+  },
+  {
+   "id": "video.viewport",
+   "label": "Overscan viewport",
+   "group": "Video",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "viewport? (full|symmetric|standard|screen_only|next|prev; next)"
+  },
+  {
+   "id": "view.fullscreen",
+   "label": "Full screen",
+   "group": "View",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "on? (else flips)"
+  },
+  {
+   "id": "view.scale",
+   "label": "Window scale",
+   "group": "View",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "scale? (1..4, next, prev; next)"
+  },
+  {
+   "id": "view.toolbar",
+   "label": "Toolbar",
+   "group": "View",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "on? (else flips)"
+  },
+  {
+   "id": "view.status_bar",
+   "label": "Status bar",
+   "group": "View",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "on? (else flips)"
+  },
+  {
+   "id": "view.next_layers",
+   "label": "Next layers window",
+   "group": "View",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "on? (else flips)"
+  },
+  {
+   "id": "view.next_layers_mode",
+   "label": "Next layers mode",
+   "group": "View",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "mode? (layers|composed|winner|next|prev; next)"
+  },
+  {
+   "id": "view.next_layer",
+   "label": "Next layer tick",
+   "group": "View",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "name (ula|layer2|tilemap|sprites), on?"
+  },
+  {
+   "id": "hud.toggle",
+   "label": "HUD",
+   "group": "HUD",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "on? (else flips)"
+  },
+  {
+   "id": "hud.theme",
+   "label": "HUD theme",
+   "group": "HUD",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "theme? (a name of hud_themes, next, prev; next)"
+  },
+  {
+   "id": "hud.notice",
+   "label": "HUD notice",
+   "group": "HUD",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "name (a hud_notices id: ram-page, tape-events, ...), on?"
+  },
+  {
+   "id": "osd.keyboard_picture",
+   "label": "Keyboard picture",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "picture? (one of osd_keyboard_pictures, next, prev; next)"
+  },
+  {
    "id": "dbg.mode_toggle",
    "label": "Debug mode",
    "group": "Debugger",
@@ -803,7 +974,7 @@
   },
   {
    "id": "osd.keyboard",
-   "label": "osd.keyboard",
+   "label": "On-screen keyboard",
    "group": "Capture and machine",
    "kind": "press",
    "held": false,

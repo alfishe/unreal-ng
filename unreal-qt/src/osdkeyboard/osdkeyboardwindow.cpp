@@ -229,13 +229,18 @@ std::string OsdKeyboardWindow::modelName() const
     return {};
 }
 
-void OsdKeyboardWindow::refresh()
+void OsdKeyboardWindow::followModel()
 {
     if (!_indexLoaded)
         _indexLoaded = _pictures.load(_root);
     const std::string model = modelName();
     if (model != _model)
         loadModel(model);
+}
+
+void OsdKeyboardWindow::refresh()
+{
+    followModel();
 
     std::set<std::string> lit = held();
     for (const PictureKey& key : _picture.keys)
@@ -286,6 +291,8 @@ void OsdKeyboardWindow::loadModel(const std::string& model)
     _view->setPicture(nullptr);
     if (!chosen.empty())
         choose(chosen);
+    else
+        emit pictureChanged();
     setWindowTitle(model.empty() ? tr("On-screen Keyboard") : tr("On-screen Keyboard: %1").arg(QString::fromStdString(model)));
 }
 
@@ -311,6 +318,7 @@ void OsdKeyboardWindow::choose(const std::string& id)
     else if (!_model.empty())
         QSettings().remove(SettingsKey(_model));
     updateNotice();
+    emit pictureChanged();
 }
 
 void OsdKeyboardWindow::press(const std::string& id)

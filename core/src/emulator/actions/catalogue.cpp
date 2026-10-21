@@ -11,6 +11,7 @@
 #include "emulator/sound/audiomixer.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
+#include "emulator/video/windowview.h"
 
 namespace actions
 {
@@ -127,7 +128,7 @@ const Descriptions& DescriptionTable()
         {"dbg.memory_follow", "Show the memory at the value under the debugger's cursor."},
         {"dbg.breakpoint_toggle_pc", "Toggle a breakpoint at the cursor (not available yet)."},
         {"dbg.labels_toggle", "Show or hide labels in the disassembly (not available yet)."},
-        {"osd.keyboard", "Show the on-screen keyboard (not available yet)."},
+        {"osd.keyboard", "Show the on-screen keyboard, or hide it (the GUI's window of the machine's own keyboard)."},
         {"osd.quick_menu", "Show the quick menu (not available yet)."},
     };
     return table;
@@ -184,6 +185,13 @@ const Toggles& ToggleTable()
             if (features == nullptr)
                 return std::nullopt;
             return features->isEnabled(Features::kDebugMode);
+        };
+        // The GUI's on-screen keyboard: shown as the window published it (pictureactions.h)
+        t["osd.keyboard"].state = [](Emulator&, const ActionValue&) -> std::optional<bool> {
+            const std::optional<WindowDisplaySettings> settings = WindowView::PublishedSettings();
+            if (!settings)
+                return std::nullopt;
+            return settings->osdKeyboard;
         };
         DefaultToggle& feature = t["feature.toggle"];
         feature.stem = "feature";

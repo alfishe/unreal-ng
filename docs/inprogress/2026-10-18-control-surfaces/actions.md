@@ -94,7 +94,7 @@ without `on` the action toggles the current state.
 | `media.eject`, `media.protect`, `media.save`, `media.create` | P | `drive` (A..D, tape, a slot id), the verb's options (`discard`, `on?` flips, `path`, `cylinders`, ...) | media (`/media/X/*`) | `MediaControl` verbs |
 | `snapshot.quick` | P | `op` (save / load), `slot?` 1..9, `dir?` | save free, load media | `quick-<slot>.szx` in `~/.unreal-ng/snapshots`; a load follows the file's model |
 | `snapshot.save` | P | `path`, `force?` | free (`/snapshot/save`) | `Emulator::SaveSnapshot` (an existing file needs `force`) |
-| `video.overscan_toggle` | P | `on?` | machine (`/state/screen/overscan`) | `Emulator::SetOverscanMode` |
+| `video.overscan_toggle` | P | `on?` | machine (`/state/screen/overscan`) | `VideoViewport::SetOverscan` (the GUI's viewport with it: symmetric on, full off) |
 | `video.temporal` | P | `algorithm?` (a name, off; none flips off / mod-tpgwafsd) | free (`/video/temporal`) | `Screen::SetTemporalAlgorithm` |
 | `dbg.mode_toggle` | P | `on?` | debug (`/debugmode`) | FeatureManager `debugmode` |
 | `dbg.breakpoints_clear` | P | | debug | `BreakpointManager::ClearUserBreakpoints` |
@@ -109,8 +109,28 @@ The core TTD actions of §1 now pass their params on as the verb's options too: 
 Not added (REST stays the way, the `webapi` step of a scenario): `/skip_until` (1 step), `/coverage/*`,
 `/profiler/*`, `/debug/pchist` (analysis sessions, 2 steps each), `/memory/rom/protect` (a WebAPI-only switch of its
 memory writes), `/control/audio/gs` reset (1 step), `/video/record` (`cap.record_toggle` stays a stub: the output
-file and profile need the GUI's choice), `/start` / `/stop` of an instance, video fullscreen (a GUI action, Qt).
+file and profile need the GUI's choice), `/start` / `/stop` of an instance.
 `ttd.seek_by`, `run.step_by` and `ctx.set` come with S2 (§2, §4).
+
+### 1.2 Picture and window actions (C9)
+
+Added 2026-10-21 in `core/src/emulator/actions/pictureactions.cpp`: the window's display settings (WindowDisplay,
+the same validation as `video window` on every plane) and the overscan viewport (VideoViewport). Scope 0 (their
+routes change nothing); headless the window ones answer `not_now` "no window"; their toggles read the settings the
+window published (`WindowView::Publish`). The table with params:
+[command-interface.md §16](../../emulator/design/control-interfaces/command-interface.md#16-host-actions).
+
+| Id | Kind | Params | Core |
+|:--|:--|:--|:--|
+| `video.gpu_toggle`, `video.crt_toggle`, `video.blending` | P | `on?` (`video.blending` also `frames?`, `weights?`, `decay?`) | WindowDisplay `gpu`, `crt`, `blending*` |
+| `video.crt_profile` | P | `profile?` (name, next, prev) | `crt_profile` |
+| `video.crt_param_by`, `video.blending_decay_by` | D | `name` / - | `SetCrtParameters` steps / `blending_decay` |
+| `video.crt_params_reset` | P | `name?` | `SetCrtParameters` reset |
+| `video.viewport` | P | `viewport?` (name, next, prev) | `VideoViewport::SetViewport` |
+| `view.fullscreen`, `view.toolbar`, `view.status_bar`, `view.next_layers` | P | `on?` | `fullscreen`, `toolbar`, `status_bar`, `next_layers` |
+| `view.scale`, `view.next_layers_mode` | P | `scale?` 1..4 / `mode?` (name, next, prev) | `scale`, `next_layers_mode` |
+| `view.next_layer`, `hud.notice` | P | `name`, `on?` | `next_layer.<name>`, `hud_notice.<id>` (toggles `toggle.view.next_layer.<name>`, `toggle.hud.notice.<id>`) |
+| `hud.toggle`, `hud.theme`, `osd.keyboard_picture` | P | `on?` / `theme?` / `picture?` | `hud`, `hud_theme`, `osd_keyboard_picture` |
 
 ## 2. ttd.seek_by
 
@@ -187,6 +207,9 @@ pause.
 |:--|:--|:--|
 | `ttd.position` | `{frame, tinframe, first, end, state, fps}` | the cursor changed, ≤ 50 Hz |
 | `run.state` | `{state: running/paused, speed}` | on change |
+| `video.window` | the window's published display settings (`available`) | on change |
+| `video.crt_params` | `{profile, kind, values}` of the active CRT profile | on change |
+| `video.viewport` | `{overscan, viewport, display, ...}` | on change |
 
 The context is not a readout: it is the `ctx` message ([protocol.md §3](protocol.md#3-messages)).
 

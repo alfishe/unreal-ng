@@ -104,6 +104,7 @@
 #include <debugger/ttd/ttdexternalevents.h>
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
+#include "emulator/video/viewportcontrol.h"
 #include "../../../windowdisplay.h"
 #include "../../../operationsstatus.h"
 #include <emulator/io/rtc/rtcaccess.h>
@@ -5793,7 +5794,9 @@ namespace PythonBindings
             }
             return StateNodeToPy(r.Ok() ? WindowDisplay::Report(r.settings) : WindowDisplay::ErrorNode(r));
         }, "The GUI window's display settings: backend, gpu_available, gpu, crt, crt_profile, crt_profiles, blending, "
-           "blending_frames, blending_weights, emulator; {ok: False, error, kind: 'no-window'} headless")
+           "blending_frames, blending_weights, blending_decay, emulator, fullscreen, scale, toolbar, status_bar, hud, "
+           "hud_theme, hud_themes, hud_notices, osd_keyboard, osd_keyboard_picture, osd_keyboard_pictures, next_layers, "
+           "next_layers_mode, next_layers_shown; {ok: False, error, kind: 'no-window'} headless")
         .def("window_display_set", [](Emulator&, const py::kwargs& changes) -> py::object {
             WindowDisplayChange change;
             for (const auto& item : changes)
@@ -5801,14 +5804,33 @@ namespace PythonBindings
                 const std::string key = py::str(item.first);
                 const py::handle value = item.second;
                 std::string word;
-                if (py::isinstance<py::bool_>(value))
-                    word = value.cast<bool>() ? "on" : "off";
-                else if (py::isinstance<py::int_>(value) || py::isinstance<py::str>(value))
-                    word = py::str(value);
                 WindowDisplay::Result bad;
                 bad.status = WindowDisplay::Status::BadParameter;
+                // hud_notices={'ram-page': False}, next_layers_shown={'sprites': False}: one key each
+                const char* prefix = key == "hud_notices" ? WindowDisplay::kHudNoticePrefix
+                                     : key == "next_layers_shown" ? WindowDisplay::kNextLayerPrefix
+                                                                  : nullptr;
+                if (prefix != nullptr && py::isinstance<py::dict>(value))
+                {
+                    for (const auto& entry : value.cast<py::dict>())
+                    {
+                        const std::string onOff = py::isinstance<py::bool_>(entry.second)
+                                                      ? (entry.second.cast<bool>() ? "on" : "off")
+                                                      : std::string("?");
+                        if (!WindowDisplay::ApplyWord(change, prefix + std::string(py::str(entry.first)), onOff,
+                                                      bad.error))
+                            return StateNodeToPy(WindowDisplay::ErrorNode(bad));
+                    }
+                    continue;
+                }
+                if (py::isinstance<py::bool_>(value))
+                    word = value.cast<bool>() ? "on" : "off";
+                else if (py::isinstance<py::float_>(value))
+                    word = WindowDisplay::NumberWord(value.cast<double>());
+                else if (py::isinstance<py::int_>(value) || py::isinstance<py::str>(value))
+                    word = py::str(value);
                 if (word.empty())
-                    bad.error = "'" + key + "' takes a bool, an int or a str";
+                    bad.error = "'" + key + "' takes a bool, a number or a str";
                 if (!bad.error.empty() || !WindowDisplay::ApplyWord(change, key, word, bad.error))
                     return StateNodeToPy(WindowDisplay::ErrorNode(bad));
             }
@@ -5818,9 +5840,73 @@ namespace PythonBindings
                 r = WindowDisplay::Set(change);
             }
             return StateNodeToPy(r.Ok() ? WindowDisplay::Report(r.settings) : WindowDisplay::ErrorNode(r));
-        }, "Change the GUI window's display settings, the way the View menu does: any of gpu=, crt=, blending= "
-           "(bool), crt_profile= (one of crt_profiles: none, basic, ...), blending_frames= (2..5), "
-           "blending_weights= ('equal', 'exponential'); returns the settings after the change, or {ok: False, error, kind}")
+        }, "Change the GUI window's display settings, the way the View menu does: any of gpu=, crt=, blending=, "
+           "fullscreen=, toolbar=, status_bar=, hud=, osd_keyboard=, next_layers= (bool), crt_profile= (one of "
+           "crt_profiles: none, basic, ...), blending_frames= (2..5), blending_weights= ('equal', 'exponential'), "
+           "blending_decay= (0.1..0.9), scale= (1..4), hud_theme= (one of hud_themes), hud_notices= ({id: bool}), "
+           "osd_keyboard_picture= (one of osd_keyboard_pictures), next_layers_mode= ('layers', 'composed', 'winner'), "
+           "next_layers_shown= ({'ula'|'layer2'|'tilemap'|'sprites': bool}); returns the settings after the change, "
+           "or {ok: False, error, kind}")
+        .def("window_crt_params", [](Emulator&) -> py::object {
+            WindowDisplay::ParametersResult r;
+            {
+                py::gil_scoped_release release;
+                r = WindowDisplay::GetCrtParameters();
+            }
+            return StateNodeToPy(r.Ok() ? WindowDisplay::CrtParametersReport(r.parameters) : WindowDisplay::ErrorNode(r));
+        }, "The active CRT profile's parameters: {profile, kind (preset | profile | none), parameters: [{name, "
+           "description, value, initial, minimum, maximum, step}]}; {ok: False, error, kind} headless")
+        .def("window_crt_params_set", [](Emulator&, const py::dict& values, const py::dict& steps,
+                                          const py::object& reset) -> py::object {
+            CrtParameterChange change;
+            WindowDisplay::ParametersResult bad;
+            bad.status = WindowDisplay::Status::BadParameter;
+            auto numbers = [&](const py::dict& dict, std::vector<std::pair<std::string, double>>& out) {
+                for (const auto& entry : dict)
+                {
+                    if (!py::isinstance<py::float_>(entry.second) && !py::isinstance<py::int_>(entry.second))
+                    {
+                        bad.error = "A parameter takes a number: {name: value}";
+                        return false;
+                    }
+                    out.emplace_back(std::string(py::str(entry.first)), entry.second.cast<double>());
+                }
+                return true;
+            };
+            if (!numbers(values, change.values) || !numbers(steps, change.steps))
+                return StateNodeToPy(WindowDisplay::ErrorNode(bad));
+            if (py::isinstance<py::bool_>(reset))
+                change.resetAll = reset.cast<bool>();
+            else if (py::isinstance<py::str>(reset))
+                change.reset.push_back(reset.cast<std::string>());
+            else if (py::isinstance<py::list>(reset))
+                for (const py::handle name : reset.cast<py::list>())
+                    change.reset.push_back(std::string(py::str(name)));
+            WindowDisplay::ParametersResult r;
+            {
+                py::gil_scoped_release release;
+                r = WindowDisplay::SetCrtParameters(change);
+            }
+            return StateNodeToPy(r.Ok() ? WindowDisplay::CrtParametersReport(r.parameters) : WindowDisplay::ErrorNode(r));
+        }, "Change the active CRT profile's parameters: values={name: value}, steps={name: steps} (a dial's), "
+           "reset=True | name | [names]; returns the parameters after it, or {ok: False, error, kind}",
+           py::arg("values") = py::dict(), py::arg("steps") = py::dict(), py::arg("reset") = py::none())
+        .def("video_viewport", [](Emulator& self) -> py::object {
+            return StateNodeToPy(VideoViewport::Report(self));
+        }, "The overscan frame and its viewport: {overscan, overscan_available, viewport, viewports, framebuffer, "
+           "display, video_mode}")
+        .def("video_viewport_set", [](Emulator& self, const std::string& name) -> py::object {
+            const VideoViewport::Result r = VideoViewport::SetViewport(self, name);
+            if (!r.Ok())
+            {
+                StateNode error = StateNode::Object();
+                error["ok"] = false;
+                error["error"] = r.error;
+                return StateNodeToPy(error);
+            }
+            return StateNodeToPy(VideoViewport::Report(self));
+        }, "Crop the overscan frame: 'full', 'symmetric', 'standard', 'screen_only', 'next' or 'prev' (overscan on: "
+           "feature 'overscan'); returns the viewport report, or {ok: False, error}", py::arg("name"))
 
         .def("frame_cost", [](Emulator& self) -> py::dict {
             py::dict d;

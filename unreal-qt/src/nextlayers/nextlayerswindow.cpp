@@ -58,13 +58,19 @@ void NextLayersWindow::buildUi()
     _mode->addItem(tr("Winner (ids)"), 2);
     _mode->setToolTip(tr("Layers: the ticked layers stacked ULA, Layer 2, tilemap, sprites (a fixed order, not the hardware priority); "
                          "Composed: the picture as shown; Winner: which layer won each pixel"));
-    connect(_mode, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() { refresh(); });
+    connect(_mode, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
+        refresh();
+        emit viewChanged();
+    });
     bar->addWidget(_mode);
     for (int i = 0; i < 4; i++)
     {
         _layerBox[i] = new QCheckBox(tr(kLayerNames[i]), this);
         _layerBox[i]->setChecked(true);
-        connect(_layerBox[i], &QCheckBox::toggled, this, [this]() { refresh(); });
+        connect(_layerBox[i], &QCheckBox::toggled, this, [this]() {
+            refresh();
+            emit viewChanged();
+        });
         bar->addWidget(_layerBox[i]);
     }
     bar->addStretch(1);
@@ -95,6 +101,29 @@ void NextLayersWindow::setBinding(EmulatorBinding* binding)
 EmulatorContext* NextLayersWindow::context() const
 {
     return _binding ? _binding->context() : nullptr;  // for this handler only, never stored
+}
+
+int NextLayersWindow::mode() const
+{
+    return _mode->currentData().toInt();
+}
+
+void NextLayersWindow::setMode(int mode)
+{
+    const int index = _mode->findData(mode);
+    if (index >= 0)
+        _mode->setCurrentIndex(index);
+}
+
+bool NextLayersWindow::layerShown(int layer) const
+{
+    return layer >= 0 && layer < 4 && _layerBox[layer]->isChecked();
+}
+
+void NextLayersWindow::setLayerShown(int layer, bool shown)
+{
+    if (layer >= 0 && layer < 4)
+        _layerBox[layer]->setChecked(shown);
 }
 
 void NextLayersWindow::applySwitch(bool on)

@@ -57,6 +57,7 @@
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
+#include "emulator/video/viewportcontrol.h"
 #include "../../../windowdisplay.h"
 #include "../../../operationsstatus.h"
 #include <debugger/ttd/ttdcontrol.h>
@@ -6131,10 +6132,26 @@ public:
             {
                 const std::string key = k.is<std::string>() ? k.as<std::string>() : std::string("?");
                 std::string word;
+                // hud_notices = {["ram-page"] = false}, next_layers_shown = {sprites = false}: one key each
+                const char* prefix = key == "hud_notices" ? WindowDisplay::kHudNoticePrefix
+                                     : key == "next_layers_shown" ? WindowDisplay::kNextLayerPrefix
+                                                                  : nullptr;
+                if (prefix != nullptr && v.get_type() == sol::type::table)
+                {
+                    for (const auto& [id, flag] : v.as<sol::table>())
+                    {
+                        const std::string name = id.is<std::string>() ? id.as<std::string>() : std::string("?");
+                        const std::string onOff = flag.get_type() == sol::type::boolean ? (flag.as<bool>() ? "on" : "off")
+                                                                                        : std::string("?");
+                        if (!WindowDisplay::ApplyWord(change, prefix + name, onOff, bad.error))
+                            return StateNodeToLua(s, WindowDisplay::ErrorNode(bad));
+                    }
+                    continue;
+                }
                 if (v.get_type() == sol::type::boolean)
                     word = v.as<bool>() ? "on" : "off";
                 else if (v.get_type() == sol::type::number)
-                    word = std::to_string(v.as<long long>());
+                    word = WindowDisplay::NumberWord(v.as<double>());  // 0.3 stays 0.3, whatever the locale
                 else if (v.get_type() == sol::type::string)
                     word = v.as<std::string>();
                 if (word.empty())
@@ -6144,6 +6161,68 @@ public:
             }
             const WindowDisplay::Result r = WindowDisplay::Set(change);
             return StateNodeToLua(s, r.Ok() ? WindowDisplay::Report(r.settings) : WindowDisplay::ErrorNode(r));
+        });
+        // The active CRT profile's parameters: window_crt_params() reads {profile, kind, parameters = {{name, value,
+        // initial, minimum, maximum, step, description}, ...}}; window_crt_params_set({CRTgamma = 2.4}, {steps =
+        // {CRTgamma = -1}, reset = true | "name"}) sets values, moves by steps, resets. Headless: {ok = false, ...}
+        lua.set_function("window_crt_params", [](sol::this_state s) -> sol::object {
+            const WindowDisplay::ParametersResult r = WindowDisplay::GetCrtParameters();
+            return StateNodeToLua(s, r.Ok() ? WindowDisplay::CrtParametersReport(r.parameters) : WindowDisplay::ErrorNode(r));
+        });
+        lua.set_function("window_crt_params_set", [](sol::this_state s, sol::optional<sol::table> values,
+                                                     sol::optional<sol::table> options) -> sol::object {
+            CrtParameterChange change;
+            WindowDisplay::ParametersResult bad;
+            bad.status = WindowDisplay::Status::BadParameter;
+            auto numbers = [&](const sol::table& table, std::vector<std::pair<std::string, double>>& out) {
+                for (const auto& [k, v] : table)
+                {
+                    if (!k.is<std::string>() || v.get_type() != sol::type::number)
+                    {
+                        bad.error = "A parameter takes a number: {name = value}";
+                        return false;
+                    }
+                    out.emplace_back(k.as<std::string>(), v.as<double>());
+                }
+                return true;
+            };
+            if (values && !numbers(*values, change.values))
+                return StateNodeToLua(s, WindowDisplay::ErrorNode(bad));
+            if (options)
+            {
+                const sol::object steps = (*options)["steps"];
+                if (steps.get_type() == sol::type::table && !numbers(steps.as<sol::table>(), change.steps))
+                    return StateNodeToLua(s, WindowDisplay::ErrorNode(bad));
+                const sol::object reset = (*options)["reset"];
+                if (reset.get_type() == sol::type::boolean)
+                    change.resetAll = reset.as<bool>();
+                else if (reset.get_type() == sol::type::string)
+                    change.reset.push_back(reset.as<std::string>());
+            }
+            const WindowDisplay::ParametersResult r = WindowDisplay::SetCrtParameters(change);
+            return StateNodeToLua(s, r.Ok() ? WindowDisplay::CrtParametersReport(r.parameters) : WindowDisplay::ErrorNode(r));
+        });
+        // The overscan frame's viewport (the machine's: answers headless too): video_viewport() reads, video_viewport_set
+        // ("symmetric" | "full" | "standard" | "screen_only" | "next" | "prev") crops it; {ok = false, error} refused
+        lua.set_function("video_viewport", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, VideoViewport::Report(*emulator));
+        });
+        lua.set_function("video_viewport_set", [this](sol::this_state s, const std::string& name) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return sol::make_object(s, sol::lua_nil);
+            const VideoViewport::Result r = VideoViewport::SetViewport(*emulator, name);
+            if (!r.Ok())
+            {
+                StateNode error = StateNode::Object();
+                error["ok"] = false;
+                error["error"] = r.error;
+                return StateNodeToLua(s, error);
+            }
+            return StateNodeToLua(s, VideoViewport::Report(*emulator));
         });
 
         // Halt/active cost of the last frame plus session averages

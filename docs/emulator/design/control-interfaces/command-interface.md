@@ -1221,7 +1221,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | `sharedmemory` | `shm` | OFF | Export emulator memory via POSIX/Windows shared memory for external tool access. Enables real-time memory inspection by debuggers, analyzers, or visualization tools. Memory content preserved during enable/disable transitions. | Low (startup overhead when enabled, minimal runtime impact) |
 | `opcodeprofiler` | `op` | OFF | Track Z80 opcode execution statistics and sequential trace. Records execution counts for all 1792 opcode variants (non-prefixed + CB/DD/ED/FD/DDCB/FDCB prefixes) and maintains a 10,000-entry ring buffer of recent executed instructions with PC, flags, and A register for crash forensics. Required for `profiler opcode` commands. | Medium (~12-18% CPU overhead, ~174KB memory) |
 | `timetravel` | `ttd` | OFF | Record execution history for rewind and reverse debugging (time-travel debug, see the `ttd` commands). | Varies (depends on the recording mode, write journal on or off) |
-| `overscan` | `osc` | OFF | Pentagon overscan mode (384x304): shows the border areas a normal picture hides. Pentagon only; for demo development. | Low (a larger picture to render) |
+| `overscan` | `osc` | OFF | Pentagon overscan mode (384x304): shows the border areas a normal picture hides. Pentagon only; for demo development. The switch of the frame itself (as View > Overscan and `video.overscan_toggle`, with the symmetric viewport): it follows the frame, stays off on a machine without one, and is not restored from `features.ini` or the GUI's settings: every new Pentagon starts without overscan, the viewport full. | Low (a larger picture to render) |
 | `porttrace` | `pt` | OFF | Port I/O trace: a ring buffer of IN/OUT events for diagnosing peripherals. | Low while on (one ring-buffer entry per IN/OUT) |
 | `fasttape` | `ftape` | ON | Fast tape loading: standard ROM tape loads finish at once through the ROM LD-BYTES trap. Custom loaders fall back to playing the tape signal. Same switch as `setting fast_tape`. | None (saves loading time) |
 | `turbotape` | `ttape` | ON | Turbo tape loading: runs the emulator at warp speed while the tape signal plays, so blocks the trap cannot serve (headerless, custom timing, pulse streams) still load fast. Ends with the read-gap watchdog, the end of the tape, or any stop. Same switch as `setting turbo_tape`. | None (saves loading time) |
@@ -1578,22 +1578,59 @@ hear.
 
 #### GUI window display settings
 
-How the unreal-qt window draws the picture: the View menu's GPU acceleration, CRT effects and profile, and temporal
-blending (gigascreen smoothing, the window's own, apart from ZX DLSS). The window belongs to the front end: the GUI
-registers it with the core (`WindowView`), the core has no UI dependency. Headless there is no window and every
-surface answers `no-window`. The settings are the window's, whichever instance it shows; screenshot `source=window`
-shows their effect.
+How the unreal-qt window draws the picture: the View menu's GPU acceleration, CRT effects and profile, temporal
+blending (gigascreen smoothing, the window's own, apart from ZX DLSS) with its frames, weights and decay, full screen
+and the window scale, the toolbar and status bar, the HUD with its theme and notice categories, the on-screen keyboard
+and its picture, the ZX Next layers window. The window belongs to the front end: the GUI registers it with the core
+(`WindowView`), the core has no UI dependency. Headless there is no window and every surface answers `no-window`. The
+settings are the window's, whichever instance it shows; screenshot `source=window` shows their effect. They persist
+across sessions (QSettings `View/*`; `UNREAL_QT_VIEW_SETTINGS=off` neither reads nor writes them). The overscan frame
+and its viewport do not: they are the machine's, off on every new Pentagon.
 
-| Command | Arguments | Description |
-| :--- | :--- | :--- |
-| `video window` / `video window status` | | Show the settings. |
-| `video window <key>=<value> ...` | `gpu`, `crt`, `blending` = on / off; `crt_profile` = one of `crt_profiles` (none, basic, ..., shader:<name>: a libretro preset or a custom shader, GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off. |
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `video window` / `video window status` | | Show the settings. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+| `video window <key>=<value> ...` | `gpu`, `crt`, `blending`, `fullscreen`, `toolbar`, `status_bar`, `hud`, `osd_keyboard`, `next_layers` = on / off; `crt_profile` = one of `crt_profiles` (none, basic, ..., shader:<name>: a libretro preset or a custom shader, GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential; `blending_decay` = 0.1..0.9 (exponential: each older frame's share of the newer one); `scale` = 1..4; `hud_theme` = one of `hud_themes`; `hud_notice.<id>` = on / off (ids of `hud_notices`); `osd_keyboard_picture` = one of `osd_keyboard_pictures`; `next_layers_mode` = layers / composed / winner; `next_layer.<ula\|layer2\|tilemap\|sprites>` = on / off | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off; `scale` leaves full screen and fits the window to the picture; full screen follows after the window system's transition. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+| `video window crt_params` | `[<name>=<value> \| <name>+=<steps> \| <name>-=<steps> \| reset \| reset=<name> ...]` | The active CRT profile's parameters: list them, set one (clamped to its range), move one by a dial's steps (its own step), reset all or one. A libretro preset (`shader:crt-geom`, ...) has its own (its `preset.json`, 3..177); `basic` and a custom shader take the built-in ones (`curvature`, `corner_radius`, `scanline_weight`, `bloom_strength`, `bloom_radius`, `saturation`, `brightness`, `contrast`, `gamma`); `none` and the beam models (`crt-lottes`, ...) have none. A preset's values are kept per preset across a GPU switch and in the settings. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
 
 Fields: `backend` (`gpu` / `software`), `gpu_available`, `gpu`, `crt`, `crt_profile`, `crt_profiles` (offered),
-`blending`, `blending_frames`, `blending_weights`, `emulator` (the instance the window shows). Errors: `bad-parameter`
-(an unknown key or value; an unknown profile lists the offered ones), `unavailable` (`gpu=on` on a host without
-OpenGL), `no-window`. The same as WebAPI `GET` / `PUT /api/v1/emulator/{id}/video/window`, Lua and Python
-`window_display()` / `window_display_set(...)`, MCP `capture_media` `window_display` / `window_display_set`.
+`blending`, `blending_frames`, `blending_weights`, `blending_decay`, `emulator` (the instance the window shows),
+`fullscreen`, `scale` (1..4 while the window is fitted to the picture, 0 when resized by hand, maximized or full
+screen), `toolbar`, `status_bar`, `hud`, `hud_theme`, `hud_themes` (`dark_glass`, `retro_zx`, `cyberpunk`,
+`amber_crt`, `emerald_crt`, `light_modern`), `hud_notices` ({id: shown}, the 22 categories of View > HUD
+Notifications: `ram-page`, `rom-page`, `screen-page`, `audio-beeper`, ..., `breakpoints`, `file-loading`),
+`osd_keyboard`, `osd_keyboard_picture`, `osd_keyboard_pictures` (the shown machine's: Pentagon `pentagon` /
+`pentagon2plus`, the PC clones a PC keyboard and `zxmatrix`, ...), `next_layers`, `next_layers_mode`,
+`next_layers_shown` ({ula, layer2, tilemap, sprites}). CRT parameters: `profile`, `kind` (`preset` / `profile` /
+`none`), `parameters` [{`name`, `description`, `value`, `initial`, `minimum`, `maximum`, `step`}]. Errors:
+`bad-parameter` (an unknown key or value; an unknown profile, theme, notice, picture or parameter lists the offered
+ones), `unavailable` (`gpu=on` on a host without OpenGL, a shader without the GPU, a keyboard picture on a machine
+without one, a parameter of a profile without parameters), `no-window`. The same as WebAPI `GET` / `PUT
+/api/v1/emulator/{id}/video/window` (also `hud_notices: {id: bool}` and `next_layers_shown: {name: bool}` objects) and
+`GET` / `PUT /video/window/crt_params` (`{values: {name: number}, steps: {name: steps}, reset: true | name | [names]}`),
+`POST /video/window/crt_params/reset`, the WebSocket `call` of them, Lua and Python `window_display()` /
+`window_display_set(...)` / `window_crt_params()` / `window_crt_params_set(...)`, MCP `capture_media`
+`window_display` / `window_display_set` / `window_crt_params` / `window_crt_params_set`. The catalogue's
+`video.*`, `view.*`, `hud.*` and `osd.keyboard_picture` actions (§16) change the same settings; the readouts
+`video.window` and `video.crt_params` show what the window published.
+
+#### Overscan viewport
+
+The Pentagon's 384x304 overscan frame (feature `overscan`, View > Overscan, PUT `/state/screen/overscan`, the
+catalogue's `video.overscan_toggle`) and the viewport that crops it, the View > Overscan > Viewport menu's four presets.
+The viewport is the machine's (it answers headless too); the GUI window follows a change made anywhere
+(`NC_VIDEO_VIEWPORT_CHANGED`). Without overscan the picture is the full frame.
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `video viewport` / `video viewport status` | | Overscan, the viewport, the frame and display size. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+| `video viewport <name>` | `full` (384x304), `symmetric` (352x304, the default when overscan goes on), `standard` (352x288), `screen_only` (256x192), `next`, `prev` | Crop the overscan frame. A crop other than `full` needs overscan on (`unavailable` / 409 otherwise). | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+
+Fields: `overscan`, `overscan_available` (a Pentagon), `viewport`, `viewports`, `framebuffer`, `display`,
+`video_mode`. The same as WebAPI `GET` / `PUT /api/v1/emulator/{id}/video/viewport` (`{viewport}`; overscan itself stays
+on `PUT /state/screen/overscan`, which takes the viewport too and now answers it), Lua and Python `video_viewport()` /
+`video_viewport_set(name)`, MCP `capture_media` `viewport` / `viewport_set`, the catalogue's `video.viewport`, the
+readout `video.viewport`.
 
 The same status and switch are available as WebAPI
 `GET` / `PUT /api/v1/emulator/{id}/video/temporal`, Lua and Python
@@ -3727,6 +3764,37 @@ The control-surface actions of phase S2 ([actions.md §2-§4](../../../inprogres
 | `ttd.seek_by` | delta | A dial's seek: `delta` steps at `rate` steps/s through the acceleration curve (`params`: `unit` `frames` (1 -> 100 per step) or `seconds` (0.02 -> 2), `min`, `max`, `rate_lo` 4, `rate_hi` 40; `rate` as a parameter where the plane has no rate field), clamped to the history (never past its end), one seek to the target frame's start. The result: the seek's body (`reached`, `arrived_at`, `halt_reason`, `state`) plus `from`, `frame` (the target), `frames`, `fps` and `marks` [{`kind`, `frame`}], strongest first: `edge` (clamped), `barrier` (stopped at a replay barrier), `bookmark`, `ten_seconds`, `second` (counted from the history's first frame). Without a history: `not_now` "record first" |
 | `run.step_by` | delta | Forward: step in, at most 16 times, a breakpoint ends it (`stopped_by: breakpoint`); back: instruction steps back through the history, at most 16 (without a history `not_now` "record first"). Needs a pause. The result: the last step's body plus `steps` (instructions executed), `direction` |
 | `ctx.set` | text | Set the instance's surface context (`play`, `ttd`, `ttd.timecode`, `debug.disasm`: lowercase letters, digits, `.`, `_`, `-`); the last setter wins; `""` returns to the default (`ttd` when the instance has a history, else `play`). A change posts `NC_SURFACE_CONTEXT`. Needs no scope. The result: `context`, `previous`, `set`, `by`, `default` |
+
+The picture and window actions (Stream Deck use case C9, `core/src/emulator/actions/pictureactions.cpp`): each one
+a change of the [GUI window display settings](#gui-window-display-settings) or the
+[overscan viewport](#overscan-viewport), with the same validation. Headless the window ones are listed and unavailable
+(`not_now` "no window"); their toggles read the copy the window published, never the GUI thread. None needs a
+companion scope (their routes change nothing).
+
+| Action | Kind | Params | What | Toggle readout |
+| :--- | :--- | :--- | :--- | :--- |
+| `video.gpu_toggle` | press | `on?` | GPU acceleration on / off (flips without `on`) | `toggle.video.gpu_toggle` |
+| `video.crt_toggle` | press | `on?` | CRT effects on / off | `toggle.video.crt_toggle` |
+| `video.crt_profile` | press | `profile?` (a name, `next`, `prev`; next) | The CRT profile; cycling skips the shaders without the GPU | |
+| `video.crt_param_by` | delta | `name` | One parameter of the active profile moved by the dial's steps (its own step, clamped); the result has `value` | |
+| `video.crt_params_reset` | press | `name?` | The active profile's parameters (or one) back to their initial values | |
+| `video.blending` | press | `on?`, `frames?`, `weights?`, `decay?` | Temporal blending on / off; with only `frames` / `weights` / `decay` the switch stays | `toggle.video.blending` |
+| `video.blending_decay_by` | delta | | The exponential decay by steps of 0.1 (0.1..0.9; switches the weights to exponential) | |
+| `video.viewport` | press | `viewport?` (a name, `next`, `prev`; next) | The overscan frame's crop | |
+| `view.fullscreen` | press | `on?` | Full screen on / off | `toggle.view.fullscreen` |
+| `view.scale` | press | `scale?` (1..4, `next`, `prev`; next) | Fit the window to the picture at that zoom | |
+| `view.toolbar`, `view.status_bar` | press | `on?` | Show / hide the bar | `toggle.view.toolbar`, `toggle.view.status_bar` |
+| `view.next_layers` | press | `on?` | The ZX Next layers window | `toggle.view.next_layers` |
+| `view.next_layers_mode` | press | `mode?` (layers, composed, winner, `next`, `prev`) | Its mode | |
+| `view.next_layer` | press | `name` (ula, layer2, tilemap, sprites), `on?` | One layer's tick | `toggle.view.next_layer.<name>` |
+| `hud.toggle` | press | `on?` | The HUD | `toggle.hud.toggle` |
+| `hud.theme` | press | `theme?` (a name, `next`, `prev`) | The HUD's theme | |
+| `hud.notice` | press | `name` (a `hud_notices` id), `on?` | One notice category | `toggle.hud.notice.<id>` |
+| `osd.keyboard` | press | | The on-screen keyboard window (the Qt client's GUI action) | `toggle.osd.keyboard` |
+| `osd.keyboard_picture` | press | `picture?` (an id, `next`, `prev`) | The keyboard picture for the machine shown | |
+
+Readouts: `video.window` (the published WindowDisplay report, `available`), `video.crt_params` (`profile`, `kind`,
+`values` {name: value}), `video.viewport` (the VideoViewport report).
 
 | Surface | List | Run |
 | :--- | :--- | :--- |

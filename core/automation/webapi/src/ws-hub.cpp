@@ -376,8 +376,8 @@ bool WsHub::HandleMessage(const void* client, const Json::Value& message)
             if (!topics && !readouts)
                 out.Error(*connection, "ws", "bad_request",
                           op + " takes topics[] (run.state, ttd.position, surfaces.context, instances, debug.events, "
-                               "debug.asm_sync, audio.mixer, host.stats, emulator.stats, ...) or readouts[] (the surface topic, after "
-                               "join)");
+                               "debug.asm_sync, audio.mixer, host.stats, emulator.stats, ...) or readouts[] (the "
+                               "surface topic, after join)");
             if (topics)
                 op == "subscribe" ? SubscribeTopics(*connection, message, out)
                                   : UnsubscribeTopics(*connection, message, out);

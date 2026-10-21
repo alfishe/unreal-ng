@@ -13,6 +13,7 @@
 #include <QImage>
 #include <QSurfaceFormat>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <atomic>
@@ -103,6 +104,20 @@ public:
     void setCRTProfile(const CRTProfileParams& params);
     CRTProfile crtProfile() const { return _crtParams.profile; }
     const CRTProfileParams& crtParams() const { return _crtParams; }
+    /// New values of the profile's parameters (curvature, scanlines, ...), the custom shader kept (its uniforms)
+    void setCRTParams(const CRTProfileParams& params);
+
+    /// The active libretro preset's parameters with their values (none without a preset). Before the context
+    /// exists they come from its preset.json, the values set kept
+    std::vector<SlangPresetRunner::Parameter> presetParameters() const;
+    /// One parameter of the active preset, clamped to its range; kept across a reload of the same preset. False: no
+    /// such parameter
+    bool setPresetParameter(const QString& name, float value);
+    /// Every parameter of the active preset back to its initial value
+    void resetPresetParameters();
+    /// The values set on the active preset (name -> value), carried across a backend switch and kept in the settings
+    const std::map<QString, float>& presetOverrides() const { return _slangOverrides; }
+    void setPresetOverrides(const std::map<QString, float>& overrides);
 
     /// A libretro preset built in (SlangPresetRunner::availablePresets, multi-pass on SlangPresetRunner) or a fragment
     /// shader from CRTShaderManager (legacy uniforms: tex, texSize, outputSize, maskType, curvature, ...) in place of
@@ -118,6 +133,9 @@ public:
     int temporalHistorySize() const;
     void setTemporalWeightMode(int mode);
     int temporalWeightMode() const { return _temporalWeightMode; }
+    /// Exponential weights: each older frame's share of the newer one (0.1..0.9)
+    void setTemporalDecay(float decay);
+    float temporalDecay() const { return _temporalDecay; }
 
 protected:
     void initializeGL() override;
@@ -179,11 +197,13 @@ private:
     QString _customShaderSource;
     std::unique_ptr<SlangPresetRunner> _slangRunner;  ///< the chosen preset, loaded (its GL objects need the context)
     QString _slangPresetName;
+    std::map<QString, float> _slangOverrides;  ///< the values set on _slangPresetName, applied after every load
 
     FrameHistory _frameHistory;
     QImage _blendedFrame;
     bool _temporalEnabled = false;
     int _temporalWeightMode = 0;
+    float _temporalDecay = 0.5f;
 
     static constexpr float kNativeRatio = static_cast<float>(kNativeWidth) / static_cast<float>(kNativeHeight);
     float ratio = kNativeRatio;  // the shape the picture is drawn in (init)

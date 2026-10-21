@@ -16,6 +16,7 @@
 #include <QOpenGLExtraFunctions>
 #include <QOpenGLShaderProgram>
 #include <QVector2D>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -105,6 +106,23 @@ QString PresetDir(const QString& key)
            QLatin1Char('/') + key;
 }
 }  // namespace
+
+/// The parameters the automation lists (video window crt_params) before a context exists: the preset.json's, at their
+/// initial values; no GL needed
+TEST(SlangPresetRunner_Test, ReadParametersWithoutAContext)
+{
+    const std::vector<SlangPresetRunner::Parameter> list = SlangPresetRunner::readParameters(PresetDir("crt-geom"));
+    ASSERT_EQ(list.size(), 22u);
+    const auto gamma = std::find_if(list.begin(), list.end(),
+                                    [](const SlangPresetRunner::Parameter& p) { return p.name == "CRTgamma"; });
+    ASSERT_NE(gamma, list.end());
+    EXPECT_FLOAT_EQ(gamma->initial, 2.4f);
+    EXPECT_FLOAT_EQ(gamma->value, 2.4f);
+    EXPECT_FLOAT_EQ(gamma->minimum, 0.1f);
+    EXPECT_FLOAT_EQ(gamma->maximum, 5.0f);
+    EXPECT_FLOAT_EQ(gamma->step, 0.1f);
+    EXPECT_TRUE(SlangPresetRunner::readParameters(PresetDir("no-such-preset")).empty());
+}
 
 TEST(SlangPresetRunner_Test, EveryPresetShowsThePicture)
 {

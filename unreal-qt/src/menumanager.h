@@ -44,6 +44,8 @@ public:
 
     // Reset viewport selection to default (Full Overscan)
     void resetViewportSelection();
+    // Check the viewport preset shown (0 full, 1 symmetric, 2 standard, 3 screen only) without emitting viewportChanged
+    void setViewportSelection(int presetIndex);
 
     // Sync the Tape Manager check state from the window's own close box
     // (setChecked does not re-emit triggered)

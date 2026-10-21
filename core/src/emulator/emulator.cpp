@@ -3862,33 +3862,38 @@ bool Emulator::SetOverscanMode(bool enable)
     if (!_context || !_context->pScreen)
         return false;
 
-    // The CPU held from the read of the mode on: no framebuffer access during the reallocation, and two callers do not
-    // both see the old mode and both switch (the second read the mode while the first wrote it; TSan, BUGS.md
-    // 2026-10-11 #6)
-    CpuHold hold(*this, "overscan");
-
-    Screen* screen = _context->pScreen;
-    VideoModeEnum currentMode = screen->GetVideoMode();
-
-    // Only Pentagon supports overscan
-    if (currentMode != M_PENTAGON128K && currentMode != M_P384)
+    bool switched = false;
     {
-        return false;  // ZX48/128 have no overscan
+        // The CPU held from the read of the mode on: no framebuffer access during the reallocation, and two callers do
+        // not both see the old mode and both switch (the second read the mode while the first wrote it; TSan, BUGS.md
+        // 2026-10-11 #6)
+        CpuHold hold(*this, "overscan");
+
+        Screen* screen = _context->pScreen;
+        VideoModeEnum currentMode = screen->GetVideoMode();
+
+        // Only Pentagon supports overscan
+        if (currentMode != M_PENTAGON128K && currentMode != M_P384)
+        {
+            return false;  // ZX48/128 have no overscan
+        }
+
+        VideoModeEnum newMode = enable ? M_P384 : M_PENTAGON128K;
+
+        if (newMode != currentMode)
+        {
+            // Record the user's intent FIRST: InitRaster re-detects the video mode
+            // from config/ports every frame and would revert a bare SetVideoMode
+            // back to the model's base mode on the next frame
+            screen->SetOverscanForced(enable);
+            screen->SetVideoMode(newMode);
+            switched = true;
+        }
     }
-
-    VideoModeEnum newMode = enable ? M_P384 : M_PENTAGON128K;
-
-    if (newMode != currentMode)
-    {
-        // Record the user's intent FIRST: InitRaster re-detects the video mode
-        // from config/ports every frame and would revert a bare SetVideoMode
-        // back to the model's base mode on the next frame
-        screen->SetOverscanForced(enable);
-        screen->SetVideoMode(newMode);
-
-        return true;
-    }
-    return false;
+    // The feature `overscan` shows the frame's mode (after the hold: its observers may switch features themselves)
+    if (switched && _featureManager && _featureManager->isEnabled(Features::kOverscan) != enable)
+        _featureManager->setFeature(Features::kOverscan, enable);
+    return switched;
 }
 
 bool Emulator::IsOverscanMode() const

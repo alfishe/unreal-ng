@@ -18,12 +18,17 @@ public:
     using ShownEmulatorId = std::function<std::string()>;
     /// On the GUI thread: apply `change` (none = only read), then fill the settings as they are
     using Display = std::function<bool(const WindowDisplayChange* change, WindowDisplaySettings& out, std::string& error)>;
+    /// On the GUI thread: apply `change` to the active CRT profile's parameters (none = only read), then fill them
+    using Parameters = std::function<bool(const CrtParameterChange* change, CrtParameters& out, std::string& error)>;
 
-    WindowViewProvider(DeviceScreenWrapper* screen, ShownEmulatorId shownEmulatorId, Display display);
+    WindowViewProvider(DeviceScreenWrapper* screen, ShownEmulatorId shownEmulatorId, Display display,
+                       Parameters parameters = {});
 
     bool GrabWindowView(const std::string& emulatorId, WindowViewGrab& out, std::string& error) override;
     bool GetWindowDisplay(WindowDisplaySettings& out, std::string& error) override;
     bool SetWindowDisplay(const WindowDisplayChange& change, WindowDisplaySettings& out, std::string& error) override;
+    bool GetCrtParameters(CrtParameters& out, std::string& error) override;
+    bool SetCrtParameters(const CrtParameterChange& change, CrtParameters& out, std::string& error) override;
 
 private:
     /// On the GUI thread. Static: a grab queued before a timeout may run after the provider is gone
@@ -33,4 +38,5 @@ private:
     QPointer<DeviceScreenWrapper> _screen;
     ShownEmulatorId _shownEmulatorId;
     Display _display;
+    Parameters _parameters;
 };

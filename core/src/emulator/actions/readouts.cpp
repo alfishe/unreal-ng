@@ -6,6 +6,7 @@
 #include "base/featuremanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/actions/actionregistry.h"
+#include "emulator/actions/pictureactions.h"
 #include "emulator/config.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
@@ -184,6 +185,8 @@ const std::vector<std::string>& BaseReadoutNames()
             all.push_back(name);
         for (const std::string& name : monitoring::InstanceNames())
             all.push_back(name);
+        for (const std::string& picture : PictureReadoutNames())
+            all.push_back(picture);
         return all;
     }();
     return names;
@@ -252,6 +255,8 @@ StateNode ReadReadout(Emulator& emulator, const std::string& name)
         return monitoring::ReadProcess(name);
     if (monitoring::IsInstanceName(name))
         return monitoring::ReadInstance(name, emulator);
+    if (StateNode picture = ReadPictureReadout(emulator, name); picture.kind != StateNode::Kind::Null)
+        return picture;  // video.window, video.crt_params, video.viewport (pictureactions.h)
     std::string id;
     StateNode params;
     if (name.compare(0, 7, "toggle.") == 0 && ToggleOf(name, id, params))

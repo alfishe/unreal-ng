@@ -4,11 +4,13 @@
 #include <QPointer>
 #include <QImage>
 #include <functional>
+#include <map>
 #include <memory>
 
 #include "emulator/video/screen.h"
 #include "emulator/video/windowview.h"
 #include "crtprofiles.h"
+#include "slangpresetrunner.h"
 
 class Emulator;
 class DeviceScreen;
@@ -144,6 +146,17 @@ public:
     CRTProfile crtProfile() const;
     /// @brief Get current CRT profile parameters
     CRTProfileParams crtParams() const;
+    /// New values of the profile's parameters (curvature, scanlines, ...): the profile, the switch and a custom shader
+    /// stay
+    void setCRTParams(const CRTProfileParams& params);
+
+    /// The active libretro preset's parameters (GPU only; none without a preset)
+    std::vector<SlangPresetRunner::Parameter> presetParameters() const;
+    bool setPresetParameter(const QString& name, float value);
+    void resetPresetParameters();
+    /// The values set on the active preset, for a backend switch and the settings
+    std::map<QString, float> presetOverrides() const;
+    void setPresetOverrides(const std::map<QString, float>& overrides);
 
     /// @brief Load custom shader from file
     bool loadCustomShader(const QString& name);
@@ -161,6 +174,9 @@ public:
     /// @brief Set temporal weight mode (0=equal, 1=exponential)
     void setTemporalWeightMode(int mode);
     int temporalWeightMode() const;
+    /// @brief Exponential weights: each older frame's share of the newer one (0.1..0.9)
+    void setTemporalDecay(float decay);
+    float temporalDecay() const;
 
 protected:
     /// GPU backend: Tab / Shift+Tab that reach the window container (the container has the Qt focus while the

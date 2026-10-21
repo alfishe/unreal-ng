@@ -92,4 +92,10 @@ public:
 
     /// @brief Get display name of a theme ID
     static std::string ThemeName(HudThemeId id);
+
+    /// @brief The automation word of a theme: "dark_glass", "retro_zx", "cyberpunk", "amber_crt", "emerald_crt",
+    /// "light_modern"
+    static std::string ThemeKey(HudThemeId id);
+    /// @brief The theme of an automation word; false for none of them
+    static bool ThemeFromKey(const std::string& key, HudThemeId& out);
 };

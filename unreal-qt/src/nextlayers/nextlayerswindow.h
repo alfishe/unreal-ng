@@ -33,8 +33,17 @@ public:
     QString inspect(const QPoint& imagePoint) const;
     void refresh();
 
+    /// The view's mode as the automation names it: 0 layers, 1 composed, 2 winner
+    int mode() const;
+    void setMode(int mode);
+    /// The layer ticks: 0 ULA, 1 Layer 2, 2 tilemap, 3 sprites
+    bool layerShown(int layer) const;
+    void setLayerShown(int layer, bool shown);
+
 signals:
     void visibilityChanged(bool visible);
+    /// The mode or a layer tick changed
+    void viewChanged();
 
 protected:
     void showEvent(QShowEvent* event) override;
