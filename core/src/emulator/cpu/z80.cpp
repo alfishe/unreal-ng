@@ -537,6 +537,60 @@ bool Z80::HaltedFetchIsPure(uint16_t fetch) const
     return _memory->RepeatFetchIsPure(fetch);
 }
 
+// CPU-LIBRARY-MIGRATION(m1-cycle): the engine's M1 bus callback (start observers, machineM1Hook, ULA snow)
+// Inline in Z80Step: one fetch per instruction, the call cost 1-4 % of a turbo frame. m1_cycle is the out-of-line copy
+__forceinline uint8_t Z80::FetchM1()
+{
+    /// region <Overriding submodule for module logger>
+    [[maybe_unused]]
+    const uint16_t _SUBMODULE = PlatformZ80SubmodulesEnum::SUBMODULE_Z80_M1;
+    /// endregion </Overriding submodule for module logger>
+
+    [[maybe_unused]] Z80& cpu = *this;
+    [[maybe_unused]] const CONFIG& config = _context->config;
+    [[maybe_unused]] EmulatorState& state = _context->emulatorState;
+    [[maybe_unused]] const TEMP& temporary = _context->temporary;
+    [[maybe_unused]] const PortDecoder& portDecoder = *_context->pPortDecoder;
+
+    // Record PC for current opcode (prefixes should not alter original PC):
+    // only the M1 that starts an instruction runs the instruction-start work.
+    // Prefix handlers set a non-zero prefix BEFORE fetching the next byte, so
+    // the M1s inside an instruction (after CB/ED/DD/FD) do not run it
+    // The fast path stays inline (one store and one observer test); the
+    // observers run out of line only while one is armed
+    if (prefix == 0x0000)
+    {
+        m1_pc = cpu.pc;
+        if (InstructionStartObserved())
+            NotifyInstructionStart();
+    }
+
+    // Z80 CPU M1 cycle logic
+    r_low = ((r_low + 1) & 0x7f) | (r_low & 0x80);  // Keep memory refresh register ticking
+
+    // Board logic that decides what this fetch sees (ZX-Evo trdemu page swap)
+    if (machineM1Hook) [[unlikely]]
+        NotifyMachineM1Before(cpu.pc);
+
+    // The opcode read; the contended interfaces also handle the refresh that follows it (ULA snow)
+    opcode = rdM1(cpu.pc);  // Keep opcode copy for trace / debug purposes
+
+    // Board logic clocked by the M1 refresh (ZX-Evo NMI exit / breakpoint).
+    // Out of line like NotifyInstructionStart: the hot path is one pointer test
+    if (machineM1Hook) [[unlikely]]
+        NotifyMachineM1(cpu.pc);
+
+    // Point PC to next byte
+    cpu.pc++;
+
+    // M1 cycle is always 4 CPU clocks (3 for memory read and 1 for decoding)
+    // +3 will be done in rd() (Memory read) method
+    // +1 will be done here
+    IncrementCPUCyclesCounter(1);
+
+    return opcode;
+}
+
 /// Single CPU command cycle (non-interruptable)
 // CPU-LIBRARY-MIGRATION(native-step): the fetch / execute / Q block below moves into the engine; the work around
 // it is EngineStep's
@@ -630,7 +684,7 @@ void Z80::Z80Step(bool skipBreakpoints)
 
             // Regular Z80 bus cycle
             // 1. Fetch opcode (Z80 M1 bus cycle)
-            cpu.opcode = m1_cycle();
+            cpu.opcode = FetchM1();
         }
 
         // 1a. Call trace hook (pre-execution) — appends control-flow events
@@ -1226,57 +1280,10 @@ void Z80::NotifyMachineM1(uint16_t address)
     machineM1Hook->OnMachineM1(address);
 }
 
-// CPU-LIBRARY-MIGRATION(m1-cycle): the engine's M1 bus callback (start observers, machineM1Hook, ULA snow)
+/// The M1 fetch for the prefix handlers (CB / ED / DD / FD); Z80Step inlines FetchM1 itself
 uint8_t Z80::m1_cycle()
 {
-    /// region <Overriding submodule for module logger>
-    [[maybe_unused]]
-    const uint16_t _SUBMODULE = PlatformZ80SubmodulesEnum::SUBMODULE_Z80_M1;
-    /// endregion </Overriding submodule for module logger>
-
-    [[maybe_unused]] Z80& cpu = *this;
-    [[maybe_unused]] const CONFIG& config = _context->config;
-    [[maybe_unused]] EmulatorState& state = _context->emulatorState;
-    [[maybe_unused]] const TEMP& temporary = _context->temporary;
-    [[maybe_unused]] const PortDecoder& portDecoder = *_context->pPortDecoder;
-
-    // Record PC for current opcode (prefixes should not alter original PC):
-    // only the M1 that starts an instruction runs the instruction-start work.
-    // Prefix handlers set a non-zero prefix BEFORE fetching the next byte, so
-    // the M1s inside an instruction (after CB/ED/DD/FD) do not run it
-    // The fast path stays inline (one store and one observer test); the
-    // observers run out of line only while one is armed
-    if (prefix == 0x0000)
-    {
-        m1_pc = cpu.pc;
-        if (InstructionStartObserved())
-            NotifyInstructionStart();
-    }
-
-    // Z80 CPU M1 cycle logic
-    r_low = ((r_low + 1) & 0x7f) | (r_low & 0x80);  // Keep memory refresh register ticking
-
-    // Board logic that decides what this fetch sees (ZX-Evo trdemu page swap)
-    if (machineM1Hook) [[unlikely]]
-        NotifyMachineM1Before(cpu.pc);
-
-    // The opcode read; the contended interfaces also handle the refresh that follows it (ULA snow)
-    opcode = rdM1(cpu.pc);  // Keep opcode copy for trace / debug purposes
-
-    // Board logic clocked by the M1 refresh (ZX-Evo NMI exit / breakpoint).
-    // Out of line like NotifyInstructionStart: the hot path is one pointer test
-    if (machineM1Hook) [[unlikely]]
-        NotifyMachineM1(cpu.pc);
-
-    // Point PC to next byte
-    cpu.pc++;
-
-    // M1 cycle is always 4 CPU clocks (3 for memory read and 1 for decoding)
-    // +3 will be done in rd() (Memory read) method
-    // +1 will be done here
-    IncrementCPUCyclesCounter(1);
-
-    return opcode;
+    return FetchM1();
 }
 
 /// One idle opcode fetch of the halted CPU (docs/inprogress/2026-10-02-halt-fetch-address). The Z80's program

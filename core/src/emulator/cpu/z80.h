@@ -543,6 +543,7 @@ public:
     /// region <Z80 lifecycle>
 public:
     uint8_t m1_cycle();
+    uint8_t FetchM1();  // m1_cycle's body, inline in Z80Step
     void HaltedM1();  // one idle fetch of the halted CPU, at the byte after the HALT (out of line, cold)
     void RecordInstructionStart(uint16_t addr);  // m1_pc + instruction-start observers (once per instruction)
     bool InstructionStartObserved() const;       // any observer armed (trace hook, TTD coverage/probe)
