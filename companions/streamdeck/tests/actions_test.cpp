@@ -230,7 +230,7 @@ void TestActions()
         for (const auto& i : issues)
             CHECK(i.message.find(unknown) == std::string::npos);
     }
-    CHECK(ActionKinds().size() == 14);
+    CHECK(ActionKinds().size() == 15);
 
     // keys combos: the same names on every platform
     auto combo = ParseKeyCombo("Cmd+Shift+4");

@@ -11,6 +11,7 @@
 #include <thread>
 #include <vector>
 
+#include "sdb/datadir.h"
 #include "sdb/format.h"
 
 #ifndef _WIN32
@@ -61,8 +62,29 @@ json Substitute(const json& j, const json& vars)
     return j;
 }
 
+ActionResult ActionHost::RunAction(const ActionCall& call)
+{
+    return {false, "action " + call.id + ": no action executor here"};
+}
+
 namespace
 {
+// "$data/...", "$testdata/...", "$user/...", "$scenario/..." strings of an action's params: files on this machine
+// (the REST fallback runs beside the host; the surface client will leave them to the host, scenarios.md §3)
+void ResolvePaths(json& j, const std::string& dir)
+{
+    if (j.is_string())
+    {
+        const std::string t = j.get<std::string>();
+        const std::string root = data::RootOf(t);
+        if (t.size() > root.size() + 1 && (root == "data" || root == "testdata" || root == "user" || root == "scenario"))
+            j = data::Resolve(t, dir);
+    }
+    else if (j.is_object() || j.is_array())
+        for (auto& x : j)
+            ResolvePaths(x, dir);
+}
+
 std::string HttpMessage(const std::string& what, const HttpResponse& r)
 {
     if (r.status == 0)
@@ -94,6 +116,12 @@ ActionResult Execute(const Action& a, ActionHost& host, const json& vars, bool* 
         return {false, "cancelled"};
     const json j = Substitute(a.spec, vars);
     const std::string& k = a.kind;
+    if (k == "action")
+    {
+        ActionCall call = MakeActionCall(j, vars.value("phase", 0));
+        ResolvePaths(call.params, vars.value("__dir", ""));
+        return host.RunAction(call);
+    }
     if (k == "webapi")
     {
         const std::string method = j.value("method", "POST"), path = j.value("path", "");
@@ -586,8 +614,94 @@ class SystemHost final : public ActionHost
 {
 public:
     SystemHost(Settings s, SystemHostCallbacks cb, std::atomic<bool>* cancel)
-        : _s(std::move(s)), _cb(std::move(cb)), _cancel(cancel)
+        : _s(std::move(s)), _cb(std::move(cb)), _cancel(cancel), _exec(_cb.executor)
     {
+        if (!_exec)
+            _exec = MakeRestActionExecutor(
+                [this](const std::string& path, const json& body) {
+                    std::string token;
+                    {
+                        std::lock_guard l(_m);
+                        if (!_resolved || _emuId.empty())
+                            Resolve();
+                        token = _token;
+                    }
+                    std::vector<std::pair<std::string, std::string>> hdr;
+                    if (!token.empty())
+                        hdr.emplace_back("Authorization", "Bearer " + token);
+                    // the reply waits for the action: a machine start or a load takes longer than a GET
+                    HttpResponse r = HttpRequest(_s.webapi, "POST", path, body.dump(), hdr, 15000);
+                    FollowInstance(path, body, r, hdr);
+                    return r;
+                },
+                [this] {
+                    // "auto": the host picks (the followed view, else the selected / sole instance); a named one goes
+                    std::lock_guard l(_m);
+                    return _s.emulator == "auto" ? std::string() : _emuId;
+                });
+    }
+
+    ActionResult RunAction(const ActionCall& call) override
+    {
+        return _exec->Run(call);
+    }
+
+    // The REST fallback's context follows the instance: a machine start in place (mach.start replace, a snapshot of
+    // another model) makes a new instance with the default context, so the deck's last ctx.set goes to it again
+    void FollowInstance(const std::string& path, const json& body, const HttpResponse& r,
+                        const std::vector<std::pair<std::string, std::string>>& hdr)
+    {
+        static const std::string kCtx = "/api/v1/controllers/actions/ctx.set";
+        std::string instance;
+        try
+        {
+            // the instance the action ran on; a machine start in place answers the new one (result.emulator_id)
+            const json j = json::parse(r.body);
+            instance = j.value("instance", "");
+            if (j.contains("result") && j["result"].is_object() && j["result"].contains("emulator_id") &&
+                j["result"]["emulator_id"].is_string())
+                instance = j["result"]["emulator_id"].get<std::string>();
+        }
+        catch (...)
+        {
+        }
+        std::lock_guard l(_actionMutex);
+        if (path == kCtx && r.Ok())
+        {
+            _context = body;
+            _context.erase("instance");  // for whichever instance the host targets now
+        }
+        if (instance.empty() || instance == _lastInstance)
+            return;
+        const bool resend = !_lastInstance.empty() && path != kCtx && !_context.is_null();
+        _lastInstance = instance;
+        if (resend)
+            (void)HttpRequest(_s.webapi, "POST", kCtx, _context.dump(), hdr, 3000);
+    }
+
+    json Readout(const std::string& path) override
+    {
+        if (path != "run.state.paused" && path != "run.state.running")
+            return nullptr;
+        std::lock_guard l(_m);
+        if (!_resolved || _emuId.empty())
+            Resolve();
+        if (_emuId.empty())
+            return nullptr;
+        const auto r = Attempt("GET", "", json(), false);
+        if (!r.Ok())
+            return nullptr;
+        try
+        {
+            const auto j = json::parse(r.body);
+            const bool paused =
+                j.value("is_paused", false) || j.value("state", "") == "paused" || !j.value("is_running", true);
+            return path == "run.state.paused" ? paused : !paused;
+        }
+        catch (...)
+        {
+            return nullptr;
+        }
     }
 
     HttpResponse Webapi(const std::string& method, const std::string& path, const json& body, bool control) override
@@ -1123,6 +1237,10 @@ private:
     Settings _s;
     SystemHostCallbacks _cb;
     std::atomic<bool>* _cancel;
+    std::shared_ptr<ActionExecutor> _exec;
+    std::mutex _actionMutex;  // the REST fallback's instance and context (FollowInstance)
+    std::string _lastInstance;
+    json _context;  // the body of the last ctx.set that succeeded
     std::mutex _m;
     bool _resolved = false;
     std::string _emuId, _token;

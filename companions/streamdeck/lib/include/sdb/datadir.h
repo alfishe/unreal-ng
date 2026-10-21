@@ -33,8 +33,24 @@ inline constexpr const char* kEnv = "UNREAL_STREAMDECK_DATA";
 // Replaces the lookup (tests, tools); an empty path restores it.
 void SetRoot(const std::filesystem::path& root);
 
-// "$data/x" -> Root()/x, "$icons/x" -> Root()/icons/x; anything else as it is. Without a data directory the path
-// stays as written (and does not load).
-[[nodiscard]] std::string Resolve(const std::string& path);
+// The repository's testdata/ ($testdata): testdata/ beside the data directory (a source tree), else beside the
+// source tree's data/; empty in a release install (the studio warns about $testdata paths there).
+[[nodiscard]] std::filesystem::path TestdataRoot();
+// The user's unreal-ng directory ($user): ~/.unreal-ng (%USERPROFILE%\.unreal-ng on Windows), as the core's
+// FileHelper::GetUserDataPath; empty when there is no home directory.
+[[nodiscard]] std::filesystem::path UserRoot();
+// Replaces the $user lookup (tests); an empty path restores it.
+void SetUserRoot(const std::filesystem::path& root);
+
+// The roots a scenario path may start with (scenarios.md §3): data icons testdata user scenario
+[[nodiscard]] const std::vector<std::string>& PathRoots();
+// "$name" of "$name/..." (or a bare "$name"); "" when the path names no root ("$" not followed by a name).
+[[nodiscard]] std::string RootOf(const std::string& path);
+
+// A scenario path to a file: "$data/x" -> Root()/x, "$icons/x" -> Root()/icons/x, "$testdata/x" ->
+// TestdataRoot()/x, "$user/x" -> UserRoot()/x, "$scenario/x" -> scenarioDir/x; with a scenarioDir, a relative path
+// is relative to it (the scenario's folder, not the working directory). Anything else as it is. A root that is not
+// there (no data directory, no testdata in a release, no scenarioDir) leaves the path as written (it does not load).
+[[nodiscard]] std::string Resolve(const std::string& path, const std::filesystem::path& scenarioDir = {});
 
 }  // namespace sdb::data

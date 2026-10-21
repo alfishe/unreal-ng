@@ -28,6 +28,10 @@ struct RuntimeOptions
     bool syncActions = false;  // run actions inside step() (tests); otherwise on the worker thread
     bool dryRun = false;       // log actions instead of running them (navigation still works)
     int holdMs = 600;          // back key held this long = home
+    // runs the `action` kind for the system host; null = its REST fallback (sdb/actionexec.h). The daemon's surface
+    // client sets its own here.
+    std::shared_ptr<ActionExecutor> executor{};
+    int readoutPollMs = 250;  // state-bound faces: how often the host is asked for readouts nobody pushes
 };
 
 class Runtime
@@ -88,6 +92,17 @@ public:
     // Called for nav {to: scenario, file} (the owner loads the file and calls reload).
     std::function<void(const std::string&)> onSwitchScenario;
 
+    // State-bound faces (scenarios.md §4): a readout's value (true = face_on). Pushed by the surface client (S4 / SD4)
+    // or polled from the host (ActionHost::Readout) while nobody pushes it.
+    void SetReadout(const std::string& path, const json& value);
+    // A context from the core (ctx, architecture §6): the deck goes to the nearest menu declaring it.
+    void OnContext(const std::string& context);
+    // An action another surface ran (the activity feed, scenarios.md §5): the keys bound to the same id flash, and
+    // with activity.strip "line" the strip says `text` for activity.seconds.
+    void ShowActivity(const std::string& actionId, const std::string& text = {});
+    // The surface context the deck asked for last (ctx.set when a menu with "context" is entered; "" = none).
+    [[nodiscard]] std::string Context() const;
+
     struct Stats
     {
         std::size_t keyWrites = 0, stripWrites = 0, actions = 0;
@@ -101,11 +116,18 @@ public:
 private:
     struct Job
     {
+        Job() = default;
+        Job(Action a, std::string n, json v, std::string t, bool tg = false)
+            : action(std::move(a)), node(std::move(n)), vars(std::move(v)), then(std::move(t)), toggle(tg)
+        {
+        }
         Action action;
         std::string node;
         json vars;
         std::string then;
         bool toggle = false;
+        int phase = 0;          // +1 / -1: press / release of an action step with "hold"
+        std::string state;      // the node's readout path (state-bound face)
     };
     void Handle(const Event& e, std::int64_t nowMs);
     void Activate(int key);
@@ -115,6 +137,9 @@ private:
     void Render(bool force);
     void SetBanner(const std::string& text, int ms);
     void NoteMenu();
+    [[nodiscard]] bool IsOn(const Node& n) const;
+    [[nodiscard]] std::map<std::string, bool> OnStates() const;
+    void PollReadouts();
 
     Device& _dev;
     const Model& _m;
@@ -134,6 +159,12 @@ private:
     std::deque<json> _navRequests;
     std::optional<Scenario> _pendingReload;
     std::map<std::string, bool> _toggles;
+    std::map<std::string, json> _readouts;     // readout path -> value
+    std::map<std::string, bool> _pushed;       // readouts a surface client delivers (not polled)
+    std::map<int, Job> _holds;                 // keys / dials (1000 + index) held down: their release job
+    std::map<int, std::int64_t> _flashUntil;   // activity flash per key
+    std::string _context;                      // the context sent last (ctx.set)
+    bool _contextSent = false;
     std::vector<bool> _pressed;
     std::map<int, std::int64_t> _downAt;
     std::map<int, std::pair<std::int64_t, double>> _turnRate;  // per dial: last turn (ms), detents a second

@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 
+#include "sdb/actionexec.h"
 #include "sdb/http.h"
 #include "sdb/scenario.h"
 
@@ -42,6 +43,15 @@ public:
     {
         return nullptr;
     }
+    // The `action` kind: a call of the host's action registry (sdb/actionexec.h)
+    virtual ActionResult RunAction(const ActionCall& call);
+    // A readout a state-bound face shows (scenarios.md §4), polled while no surface topic delivers it; null =
+    // unknown here. The system host answers run.state.paused.
+    virtual json Readout(const std::string& path)
+    {
+        (void)path;
+        return nullptr;
+    }
     virtual int Shell(const std::string& command, int timeoutMs,
                       std::string& output) = 0;  // exit code, -1 = could not run / timeout
     virtual bool Open(const std::string& target) = 0;
@@ -72,6 +82,8 @@ struct KeyCombo
 [[nodiscard]] std::span<const std::string_view> KeyNames();
 
 // `vars` fills "$name" placeholders in the action (e.g. "$ticks" for a dial turn; "rate" = its detents per second).
+// Reserved: "phase" (+1 the press, -1 the release of an action step with "hold"), "__dir" (the scenario's folder:
+// "$scenario/..." and the other path roots in an action's params are resolved against it before the call).
 // `toggleState` is the state of a toggle node (flipped on success); nested toggles without state run "on".
 ActionResult Execute(const Action& a, ActionHost& host, const json& vars = json::object(), bool* toggleState = nullptr,
                      int depth = 0);
@@ -86,6 +98,8 @@ struct SystemHostCallbacks
 {
     std::function<void(const json&)> navigate, brightness;
     std::function<void(const std::string&)> note;
+    // runs the `action` kind; null = the REST fallback (POST /api/v1/controllers/actions/{id} on settings.webapi)
+    std::shared_ptr<ActionExecutor> executor{};
 };
 /// The companion token store when the scenario names none (mode 0600)
 [[nodiscard]] std::string DefaultCompanionFile();

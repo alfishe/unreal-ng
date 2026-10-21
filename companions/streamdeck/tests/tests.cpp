@@ -932,6 +932,7 @@ int main()
     TestDaemonDecks();
     TestHotplug();
     TestIdle();
+    TestScenarioV2();
     std::printf("\n%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

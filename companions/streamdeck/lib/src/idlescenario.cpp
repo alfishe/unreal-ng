@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "sdb/image.h"
+#include "sdb/scenario.h"
 #include "sdb/theme.h"
 
 namespace sdb::idle
@@ -140,7 +141,7 @@ json Base(const Model& m, int brightness)
     char pid[16];
     std::snprintf(pid, sizeof pid, "0x%04X", m.pid);
     return {{"format", "streamdeck-scenario"},
-            {"version", 1},
+            {"version", scn::kFormatVersion},
             {"name", "idle"},
             {"model", pid},
             {"settings", {{"brightness", brightness}, {"navigation", {{"breadcrumbs", "none"}}}}},

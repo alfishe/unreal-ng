@@ -15,9 +15,10 @@ inline constexpr int kFaceSize = 144;  // the layout grid of a face; drawn at an
 [[nodiscard]] std::string DisplayText(const std::string& s);
 
 // `size`: the square drawn, in px; the device's own key size keeps it sharp (no resize after). `safePad`: inset (in
-// `size` px) that keeps icons and labels clear of the bezel.
+// `size` px) that keeps icons and labels clear of the bezel. `scenarioDir`: the scenario's folder, for $scenario and
+// relative picture paths (sdb/datadir.h).
 [[nodiscard]] Rgb RenderFace(const Face& f, const std::string& fallbackTitle, bool pressed, bool isMenu,
-                             int safePad = 0, int size = kFaceSize);
+                             int safePad = 0, int size = kFaceSize, const std::string& scenarioDir = {});
 [[nodiscard]] Rgb RenderBackKey(const std::string& parentTitle, int depth, bool pressed, int safePad = 0,
                                 int size = kFaceSize);
 [[nodiscard]] Rgb RenderEmptyKey(int size = kFaceSize);
@@ -36,6 +37,7 @@ struct Segment
 // `status`: a live readout in a fixed slot at the right (reserved whenever a dial of the page scrubs time travel, so
 // nothing shifts when it appears or changes).
 [[nodiscard]] Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string& banner = {},
-                              double autoExitLeft = -1, const std::string& status = {});
+                              double autoExitLeft = -1, const std::string& status = {},
+                              const std::string& scenarioDir = {});
 
 }  // namespace sdb::scn

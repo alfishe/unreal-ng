@@ -82,6 +82,15 @@ EditorWidget::EditorWidget(DaemonControl* daemon, QWidget* parent) : QWidget(par
     bar->addAction(QStringLiteral("Save as"), this, &EditorWidget::CmdSaveAs);
     bar->addAction(QStringLiteral("Export"), this, &EditorWidget::CmdExportCopy);
     bar->addAction(QStringLiteral("Import"), this, [this] { CmdImport(QStringLiteral("menu")); });
+    auto* toV2 = bar->addAction(QStringLiteral("Convert to v2"), this, [this] {
+        QStringList notes;
+        if (!_doc->ConvertToV2(&notes))
+            ShowMessage(QStringLiteral("the scenario is v2 already"));
+        else
+            ShowMessage(notes.isEmpty() ? QStringLiteral("converted to v2") : notes.join(QStringLiteral("; ")));
+    });
+    toV2->setToolTip(QStringLiteral("format v1 -> v2: REST steps with a catalogue action become action steps (Save "
+                                    "converts too)"));
     bar->addSeparator();
     _undo = _doc->UndoStack()->createUndoAction(this, QStringLiteral("Undo"));
     _undo->setShortcut(QKeySequence::Undo);
@@ -618,7 +627,9 @@ bool EditorWidget::SaveFile(const QString& path, QString* error)
     }
     if (!_doc->Save(target, error))
         return false;
-    ShowMessage(QStringLiteral("saved ") + _doc->Path());
+    ShowMessage(_doc->LastNotes().isEmpty()
+                    ? QStringLiteral("saved ") + _doc->Path()
+                    : QStringLiteral("saved %1 as v2: %2").arg(_doc->Path(), _doc->LastNotes().join(QStringLiteral("; "))));
     return true;
 }
 

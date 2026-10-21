@@ -95,6 +95,9 @@ file(GLOB SD_TEST_SOURCES CONFIGURE_DEPENDS ${SD_DIR}/tests/*.cpp)
 add_executable(streamdeck-tests EXCLUDE_FROM_ALL ${SD_TEST_SOURCES})
 target_compile_options(streamdeck-tests PRIVATE ${SD_WARNINGS})
 target_link_libraries(streamdeck-tests PRIVATE sdb)
+# the source tree's data/ (the shipped catalogue, $data paths; not a copy in bin/) and the generator's fixture
+target_compile_definitions(streamdeck-tests PRIVATE "SDB_TEST_SOURCE_DATA=\"${SD_SOURCE_DATA}\""
+    "SDB_TEST_TOOLS_DIR=\"${SD_DIR}/tools\"")
 
 # ---------------------------------------------------------------- Stream Deck Studio (Qt; skipped without Qt)
 add_subdirectory(studio)

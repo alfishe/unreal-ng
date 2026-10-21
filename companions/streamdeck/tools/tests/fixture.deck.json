@@ -1,0 +1,190 @@
+{
+ "format": "streamdeck-scenario",
+ "version": 2,
+ "name": "fixture",
+ "model": "plusxl",
+ "settings": {
+  "brightness": 60,
+  "target": "follow",
+  "activity": {
+   "ignore": [
+    "ttd.seek_by"
+   ]
+  }
+ },
+ "root": {
+  "id": "home",
+  "type": "menu",
+  "title": "Home",
+  "context": "play",
+  "face": {
+   "image": "$data/streamdeck/themes/unrealng/keys/play.png"
+  },
+  "nav": {
+   "dials": "own"
+  },
+  "strip": {
+   "content": "title",
+   "status": "ttd",
+   "target": true
+  },
+  "dials": [
+   {
+    "index": 0,
+    "label": "TTD",
+    "turn": {
+     "kind": "action",
+     "id": "ttd.seek_by",
+     "value": {
+      "d": "$ticks",
+      "rate": "$rate",
+      "min": 1,
+      "max": 100
+     }
+    },
+    "press": {
+     "kind": "action",
+     "id": "run.pause_toggle"
+    }
+   }
+  ],
+  "items": [
+   {
+    "id": "run",
+    "type": "action",
+    "title": "Pause / continue",
+    "at": [
+     0,
+     0
+    ],
+    "face": {
+     "image": "$data/streamdeck/themes/unrealng/keys/pause.png"
+    },
+    "face_on": {
+     "image": "$data/streamdeck/themes/unrealng/keys/play.png"
+    },
+    "state": "run.state.paused",
+    "do": {
+     "kind": "action",
+     "id": "run.pause_toggle"
+    }
+   },
+   {
+    "id": "turbo",
+    "type": "action",
+    "title": "Turbo while held",
+    "at": [
+     0,
+     1
+    ],
+    "face": {
+     "image": "$data/streamdeck/themes/unrealng/keys/forward.png"
+    },
+    "do": {
+     "kind": "action",
+     "id": "run.turbo_hold",
+     "hold": true
+    }
+   },
+   {
+    "id": "soft",
+    "type": "menu",
+    "title": "Software",
+    "at": [
+     0,
+     2
+    ],
+    "face": {
+     "image": "$data/streamdeck/themes/unrealng/keys/chip.png"
+    },
+    "nav": {
+     "back": [
+      0,
+      0
+     ]
+    },
+    "items": [
+     {
+      "id": "soft.bench",
+      "type": "action",
+      "title": "newbench",
+      "at": [
+       0,
+       1
+      ],
+      "face": {
+       "label": "BENCH",
+       "icon": "record",
+       "bg": "1A1A10",
+       "fg": "FFD200"
+      },
+      "do": {
+       "kind": "multi",
+       "steps": [
+        {
+         "kind": "action",
+         "id": "mach.start",
+         "value": {
+          "model": "PENTAGON",
+          "ram_kb": 128,
+          "replace": true
+         }
+        },
+        {
+         "kind": "action",
+         "id": "media.open",
+         "value": {
+          "path": "$data/testsnapshots/z80/newbench.z80"
+         }
+        }
+       ]
+      },
+      "then": "home"
+     }
+    ]
+   },
+   {
+    "id": "ttd",
+    "type": "menu",
+    "title": "Time travel",
+    "at": [
+     0,
+     3
+    ],
+    "context": "ttd",
+    "face": {
+     "image": "$data/streamdeck/themes/unrealng/keys/rewind.png"
+    },
+    "nav": {
+     "back": [
+      0,
+      0
+     ]
+    },
+    "strip": {
+     "content": "text",
+     "text": "FASTER = BIGGER",
+     "status": "ttd"
+    },
+    "items": [
+     {
+      "id": "ttd.back",
+      "type": "action",
+      "title": "Back one frame",
+      "at": [
+       0,
+       1
+      ],
+      "face": {
+       "image": "$data/streamdeck/themes/unrealng/keys/stepback.png"
+      },
+      "do": {
+       "kind": "action",
+       "id": "ttd.step_back_frame"
+      }
+     }
+    ]
+   }
+  ]
+ }
+}
