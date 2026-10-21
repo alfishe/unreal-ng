@@ -47,6 +47,7 @@ ABC     NOP                          L_ABC:                    ; ABC, MOV, TEST 
 | `LOCAL` works in MACRO (also in its middle), not in REPT; no PROC | a REPT body with labels becomes a macro; a local block outside a macro gets its labels numbered |
 | `BINARY "f"` takes the whole file | a part given by numbers cut out by `zxasm convert`, as for pasmo |
 | `IN F,(C)`, `OUT (C),0`, `SLL`, `IXH` ... | as such |
+| A second `MACRO` of a name is `duplicate definition` (a file INCLUDEd twice; pasmo 0.5.5 takes it again) | in a file included more than once the definition goes under `IFNDEF __UNREALASM_M_<name>` / `DEFINE` / `ENDIF` (2026-10-21) |
 | Each section is written to its own binary (`<out>_<section>.bin`), its address `__<section>_head` in the map | `crosscheck.py` and the unit tests put them together, in the map's order (a later section writes over an earlier one), the `s_tail_` sections first |
 | TASM's INCBIN copies the rest of the file's last sector, then the address moves back | the tail (`BINARY "name.slack"`) in a section `s_tail_<file>_<n>` at the file's end, the code going on in a new section from there (2026-10-20) |
 

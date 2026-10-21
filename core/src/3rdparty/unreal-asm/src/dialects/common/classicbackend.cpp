@@ -1972,6 +1972,7 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
 
     size_t nextBlock = 0;
     int repeatMacros = 0;
+    bool guardedMacro = false;   // the open macro's definition is guarded (BackendOptions::includedRepeatedly)
     for (size_t index = 0; index < program.lines.size(); ++index)
     {
         const ir::Line& l = program.lines[index];
@@ -2086,6 +2087,14 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
                     params += (k ? "," : "") + std::string("_arg") + std::to_string(k);
                 count = highest + 1;
             }
+            // A file INCLUDEd more than once defines its macros again: pasmo takes the same definition again, z80asm
+            // refuses it ("duplicate definition"), so there it is written once, under a DEFINE
+            if (w.Z80asm() && options.includedRepeatedly)
+            {
+                texts.push_back("IFNDEF __UNREALASM_M_" + w.Name(macroHeader));
+                texts.push_back("DEFINE __UNREALASM_M_" + w.Name(macroHeader));
+                guardedMacro = true;
+            }
             texts.push_back("@" + w.Name(macroHeader) + " MACRO" + (params.empty() ? "" : " " + params));
             result.macroParams[macroHeader] = count;
             w.inMacro = true;
@@ -2196,6 +2205,9 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
             w.inMacro = false;
             w.macroOrg.clear();
             w.parameters.clear();
+            if (guardedMacro)
+                texts.push_back("ENDIF");
+            guardedMacro = false;
         }
 
         // Lay out: label in column 0, statements from column 8; "@" lines own their column; "= x" is label DEFL x

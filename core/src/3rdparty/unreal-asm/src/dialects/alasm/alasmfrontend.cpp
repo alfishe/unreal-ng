@@ -366,6 +366,19 @@ Operand ParseOperand(const std::string& text, bool conditionAllowed, bool* faile
     return o;
 }
 
+/// An operand of DB / DW / DISPLAY: a register's name there is the label of that name (ALASM's calculator has no registers)
+Operand DataOperand(const std::string& text)
+{
+    Operand o = ParseOperand(text, false);
+    if (o.kind == Operand::Kind::Register)
+    {
+        o.kind = Operand::Kind::Immediate;
+        o.expr = Expr::Symbol(text);
+        o.text.clear();
+    }
+    return o;
+}
+
 Operand StringOperand(const std::string& text)
 {
     Operand o;
@@ -477,7 +490,7 @@ Statement ParseStatement(const std::string& word, const std::string& rest, Diagn
                         !(op.size() == 4 && op == "\"\"\"\""))
                         s.operands.push_back(StringOperand(op));
                     else
-                        s.operands.push_back(ParseOperand(op, false));
+                        s.operands.push_back(DataOperand(op));
                 }
                 break;
             case ir::DirectiveKind::Include:
@@ -1020,6 +1033,60 @@ FrontendResult AlasmFrontend::ParseInProject(const SourceDocument& original, con
                 conditional = false;
             }
         }
+    // ?name of a label not defined so far but used before is 1 (help, "?label"): a test before the first definition in this
+    // file, of a name some earlier line outside a macro body uses. A name assigned with "=" or not defined in this file may
+    // come from an INCLUDE before the test: left to the backend
+    {
+        std::map<std::string, size_t> firstDefinition;
+        std::set<std::string> redefinable;
+        for (size_t n = 0; n < result.program.lines.size(); ++n)
+        {
+            const ir::Line& l = result.program.lines[n];
+            if (!l.label.empty())
+                firstDefinition.emplace(l.label, n);
+            for (const Statement& st : l.statements)
+                if (st.kind == Statement::Kind::Directive && st.directive == ir::DirectiveKind::Defl)
+                    redefinable.insert(l.label);
+        }
+        std::set<std::string> used;
+        std::function<void(const Expr&)> collect = [&](const Expr& e) {
+            if (e.kind == Expr::Kind::Symbol)
+                used.insert(e.text);
+            for (const Expr& a : e.args)
+                collect(a);
+        };
+        std::function<void(Expr&, size_t)> usedBefore = [&](Expr& e, size_t n) {
+            if (e.kind == Expr::Kind::Defined && e.args.size() == 1 && e.args[0].kind == Expr::Kind::Symbol)
+            {
+                const std::string& name = e.args[0].text;
+                const auto at = firstDefinition.find(name);
+                if (at != firstDefinition.end() && at->second > n && !redefinable.count(name) && used.count(name))
+                    e = Expr::Number(1);
+                return;
+            }
+            for (Expr& a : e.args)
+                usedBefore(a, n);
+        };
+        int macroDepth = 0;
+        for (size_t n = 0; n < result.program.lines.size(); ++n)
+            for (Statement& st : result.program.lines[n].statements)
+            {
+                if (st.kind == Statement::Kind::Directive && st.directive == ir::DirectiveKind::Macro)
+                    ++macroDepth;
+                else if (st.kind == Statement::Kind::Directive && st.directive == ir::DirectiveKind::EndMacro && macroDepth > 0)
+                    --macroDepth;
+                if (macroDepth > 0)
+                    continue;
+                for (Expr& a : st.args)
+                    usedBefore(a, n);
+                for (ir::Operand& o : st.operands)
+                    usedBefore(o.expr, n);
+                for (const Expr& a : st.args)
+                    collect(a);
+                for (const ir::Operand& o : st.operands)
+                    collect(o.expr);
+            }
+    }
     // ?name of a macro is 2 (help, "?label"): RAR's "IFN ?j\1-2" tells a call with a second parameter from one without
     std::function<void(Expr&)> macroTests = [&](Expr& e) {
         if (e.kind == Expr::Kind::Defined && e.args.size() == 1 && e.args[0].kind == Expr::Kind::Symbol &&
