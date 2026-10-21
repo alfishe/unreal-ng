@@ -50,8 +50,8 @@ int SjasmplusCodec::Detect(std::span<const uint8_t> bytes, const CatalogHints& h
             if (pos == wordStart)
                 break;
             std::string token = Upper(std::string_view(reinterpret_cast<const char*>(bytes.data() + wordStart), pos - wordStart));
-            if (!token.empty() && token.back() == ':')
-                continue;   // a label
+            if ((!token.empty() && token.back() == ':') || (word == 0 && wordStart == i))
+                continue;   // a label (in column 0 a word is one: isosurf's OUTPUT routine)
             for (std::string_view keyword : kSjasmplusKeywords)
                 if (token == keyword)
                     found.insert(keyword);

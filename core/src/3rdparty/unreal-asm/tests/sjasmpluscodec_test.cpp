@@ -15,6 +15,9 @@ TEST(SjasmplusCodec_Test, DetectionByItsOwnDirectives)
     EXPECT_GE(codec.Detect(ReadTestData("sjasmplus/hello.asm"), {}), 76) << "DEVICE + SAVESNA";
     EXPECT_GE(codec.Detect(ReadTestData("sjasmplus/module.asm"), {}), 86) << "DEVICE, MODULE, ENDMODULE, OUTPUT, OUTEND";
     EXPECT_LE(codec.Detect(ReadTestData("sjasmplus/plain.asm"), {}), 30);
+    // A word in column 0 is a label, not a directive (a routine named OUTPUT in another assembler's source)
+    const std::string label = "OUTPUT\r        LD A,1\r        RET\r";
+    EXPECT_LE(codec.Detect(std::vector<uint8_t>(label.begin(), label.end()), {}), 30);
     std::vector<uint8_t> binary = {0, 1, 2, 3, 0, 0, 0xFF};
     EXPECT_EQ(codec.Detect(binary, {}), 0);
 }

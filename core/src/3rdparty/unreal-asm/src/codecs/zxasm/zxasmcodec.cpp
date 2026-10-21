@@ -431,12 +431,17 @@ int ZxasmCodec::Detect(std::span<const uint8_t> bytes, const CatalogHints& hints
     const bool catalog = (hints.type == 'C' && ((hints.start >= 0xA135 && hints.start <= 0xA1DF) || hints.start == 0x2020 || hints.start == 35151)) ||
                          (hints.type == 'z' && hints.start == 0x7361) || (hints.type == 'a' && hints.start == 0x6D73);
     // The bytes: CR lines, blank runs #06 #8x and keyword pairs, nothing else below #20 except a few control codes
-    size_t runs = 0, keywords = 0, crs = 0, odd = 0;
+    size_t runs = 0, keywords = 0, crs = 0, odd = 0, blanks = 0;   // blanks: two spaces in a row outside quotes
+    bool quote = false;
     for (size_t i = 0; i < bytes.size(); ++i)
     {
         const uint8_t b = bytes[i];
+        if (b == '"')
+            quote = !quote;
         if (b == kLineEnd)
-            ++crs;
+            ++crs, quote = false;
+        else if (b == ' ' && !quote && i + 1 < bytes.size() && bytes[i + 1] == ' ')
+            ++blanks;
         else if (b == kBlankRun && i + 1 < bytes.size() && bytes[i + 1] >= 0x80)
             ++runs, ++i;
         else if (b >= 0x02 && b <= 0x05 && i + 1 < bytes.size() && bytes[i + 1] >= 0x20 && bytes[i + 1] < 0x20 + kKeywords.size())
@@ -446,6 +451,10 @@ int ZxasmCodec::Detect(std::span<const uint8_t> bytes, const CatalogHints& hints
     }
     if (odd * 100 > bytes.size() || crs == 0)
         return catalog ? 40 : 0;
+    // Every version's editor writes two blanks or more as a run: text with plain blanks and no run nor keyword was
+    // written by another program, whatever its catalog entry says (isosurf.a, an ALASM source in a 3.10+ entry)
+    if (blanks > 0 && runs == 0 && keywords == 0)
+        return 20;
     if (catalog)
         return 95;
     // ZAsm 3.10+ keeps the last two characters of a file's extension in the start field ("A315.lbl": type l, "bl"), so

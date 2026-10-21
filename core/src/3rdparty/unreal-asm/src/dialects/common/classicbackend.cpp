@@ -1405,6 +1405,8 @@ struct Writer
     }
 };
 
+}  // namespace
+
 /// An expression's value as the layout gives its names (fixed ones only); none when a name is unknown
 std::optional<int64_t> LayoutValue(const Expr& e, const std::map<std::string, SourceLabel>& values)
 {
@@ -1464,8 +1466,6 @@ std::optional<int64_t> LayoutValue(const Expr& e, const std::map<std::string, So
         default: return std::nullopt;
     }
 }
-
-}  // namespace
 
 /// Local labels (.loop) and qualified names (start.loop) exist in sjasmplus and its relatives; pasmo and z80asm have neither.
 /// Each becomes a plain name: a leading period takes the last ordinary label of the source before it, every other period
@@ -1851,6 +1851,12 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
                 continue;
             // the condition's value as the layout gives its names (any true is not 0)
             const auto value = LayoutValue(l.statements[0].args[0], options.labelValues);
+            // a file of several assemblies: the same branch in each
+            if (value && std::any_of(options.otherLabelValues.begin(), options.otherLabelValues.end(), [&](const auto& values) {
+                    const auto other = LayoutValue(l.statements[0].args[0], values);
+                    return !other || (*other != 0) != (*value != 0);
+                }))
+                continue;
             // its ELSE and ENDIF; no block opens or closes in it (their lines are matched by index)
             size_t elseAt = 0, endAt = 0;
             bool plain = value.has_value();

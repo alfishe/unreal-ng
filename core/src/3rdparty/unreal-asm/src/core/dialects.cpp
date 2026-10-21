@@ -14,6 +14,7 @@
 
 #include "dialects/alasm/alasmbackend.h"
 #include "dialects/alasm/alasmfrontend.h"
+#include "dialects/common/classicbackend.h"
 #include "dialects/common/z80.h"
 #include "dialects/storm/stormbackend.h"
 #include "dialects/tasm/tasmbackend.h"
@@ -250,6 +251,25 @@ void MentionedInText(const std::string& text, std::set<std::string>& names)
     }
 }
 
+/// Constants a main source defines before its first line (name EQU 1 / 0)
+void DefineFirst(ir::Program& program, const std::vector<std::pair<std::string, bool>>& defined)
+{
+    std::vector<ir::Line> first;
+    for (const auto& [name, value] : defined)
+    {
+        ir::Line line;
+        line.sourceLine = program.lines.empty() ? 0 : program.lines.front().sourceLine;
+        line.label = name;
+        ir::Statement equ;
+        equ.kind = ir::Statement::Kind::Directive;
+        equ.directive = ir::DirectiveKind::Equ;
+        equ.args = {ir::Expr::Number(value ? 1 : 0)};
+        line.statements.push_back(std::move(equ));
+        first.push_back(std::move(line));
+    }
+    program.lines.insert(program.lines.begin(), first.begin(), first.end());
+}
+
 /// ZX-ASM's IFUSED X / IFNUSED X (X used and not defined so far) decided for a target that has no such test, as an IF
 /// of 1 or 0. X is used when the code an assembly assembles mentions it, not a block it leaves out: per assembly (a
 /// main source with the files it INCLUDEs, in assembly order), from "nothing used" until the answers stay. A test that
@@ -414,22 +434,61 @@ void DecideIfUsed(std::vector<ir::Program>& programs, const std::vector<std::str
                     }
                 }
     for (const auto& [main, defined] : constants)
+        DefineFirst(programs[main], defined);
+}
+
+/// An IF of a file several assemblies INCLUDE that their layouts answer differently, each one way: it tests a
+/// constant every main source reaching it defines first (__UNREALASM_IFL<n> EQU 1 / 0), as an IFUSED test does
+/// (LDLD060 in Info Guide #10: IF high rd&#40, rd in conlt60 for UNRLT60 and in const55 for mkunr060)
+void DecideIfPerMain(std::vector<ir::Program>& programs, const std::vector<std::vector<size_t>>& unitOf,
+                     const std::function<const std::map<std::string, SourceLabel>&(size_t)>& valuesOf)
+{
+    std::map<size_t, std::vector<std::pair<std::string, bool>>> constants;   // a main source's: name, value
+    int flags = 0;
+    for (size_t file = 0; file < programs.size(); ++file)
     {
-        std::vector<ir::Line> first;
-        for (const auto& [name, value] : defined)
-        {
-            ir::Line line;
-            line.sourceLine = programs[main].lines.empty() ? 0 : programs[main].lines.front().sourceLine;
-            line.label = name;
-            ir::Statement equ;
-            equ.kind = ir::Statement::Kind::Directive;
-            equ.directive = ir::DirectiveKind::Equ;
-            equ.args = {ir::Expr::Number(value ? 1 : 0)};
-            line.statements.push_back(std::move(equ));
-            first.push_back(std::move(line));
-        }
-        programs[main].lines.insert(programs[main].lines.begin(), first.begin(), first.end());
+        std::vector<size_t> mains;
+        for (size_t main = 0; main < unitOf.size(); ++main)
+            if (std::find(unitOf[main].begin(), unitOf[main].end(), file) != unitOf[main].end())
+                mains.push_back(main);
+        if (mains.size() < 2)
+            continue;
+        bool inMacro = false;
+        for (ir::Line& l : programs[file].lines)
+            for (ir::Statement& s : l.statements)
+            {
+                if (s.kind != ir::Statement::Kind::Directive)
+                    continue;
+                if (s.directive == ir::DirectiveKind::Macro || s.directive == ir::DirectiveKind::EndMacro)
+                    inMacro = s.directive == ir::DirectiveKind::Macro;
+                if (inMacro || s.directive != ir::DirectiveKind::If || s.args.size() != 1)
+                    continue;
+                std::vector<std::pair<size_t, bool>> answers;
+                bool each = true;
+                for (const size_t main : mains)
+                {
+                    const auto v = dialects::LayoutValue(s.args[0], valuesOf(main));
+                    each = each && v.has_value();
+                    if (v)
+                        answers.push_back({main, *v != 0});
+                }
+                if (!each || std::all_of(answers.begin(), answers.end(), [&](const auto& a) { return a.second == answers[0].second; }))
+                    continue;
+                const std::string name = "__UNREALASM_IFL" + std::to_string(++flags);
+                for (const auto& [main, value] : answers)
+                    constants[main].push_back({name, value});
+                ir::Expr test = ir::Expr::Make(ir::Expr::Kind::Symbol);
+                test.text = name;
+                s.args = {test};
+                if (!l.hasComment)
+                {
+                    l.comment = " the condition decided per main source";
+                    l.hasComment = true;
+                }
+            }
     }
+    for (const auto& [main, defined] : constants)
+        DefineFirst(programs[main], defined);
 }
 }  // namespace
 
@@ -1083,6 +1142,20 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
         unitOf[main] = std::move(unit);
     }
     std::map<size_t, std::map<std::string, SourceLabel>> unitValues;
+    const auto valuesOf = [&](size_t main) -> const std::map<std::string, SourceLabel>& {
+        if (!unitValues.count(main))
+        {
+            // laid out from the assembly's own files only: each one over the whole disk is quadratic
+            std::vector<ProjectFile> own;
+            for (const size_t n : unitOf[main])
+                own.push_back(files[n]);
+            unitValues[main] = own.empty() ? LabelValues(files, main, options, files.size() > 1)
+                                           : LabelValues(own, 0, options, files.size() > 1);
+        }
+        return unitValues[main];
+    };
+    if (backend->WantsLabelValues() && options.labelValues.empty())
+        DecideIfPerMain(programs, unitOf, valuesOf);
     // the options a file is written with: its assembly's label values for a backend that folds with them
     const auto optionsFor = [&](size_t k, BackendOptions written) {
         if (backend->WantsLabelValues() && options.labelValues.empty())
@@ -1092,16 +1165,12 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
                 main = static_cast<size_t>(std::find(included.begin(), included.end(), false) - included.begin());
             if (main < programs.size())
             {
-                if (!unitValues.count(main))
-                {
-                    // laid out from the assembly's own files only: each one over the whole disk is quadratic
-                    std::vector<ProjectFile> own;
-                    for (const size_t n : unitOf[main])
-                        own.push_back(files[n]);
-                    unitValues[main] = own.empty() ? LabelValues(files, main, options, files.size() > 1)
-                                                   : LabelValues(own, 0, options, files.size() > 1);
-                }
-                written.labelValues = unitValues[main];
+                written.labelValues = valuesOf(main);
+                // a file of several assemblies: the others' values too (LDLD060 in Info Guide #10 tests tcrc, 1 in
+                // mkunr060 and 0 in UNRLT60)
+                for (size_t other = 0; other < programs.size(); ++other)
+                    if (other != main && !included[other] && std::find(unitOf[other].begin(), unitOf[other].end(), k) != unitOf[other].end())
+                        written.otherLabelValues.push_back(valuesOf(other));
             }
         }
         return written;
@@ -1164,11 +1233,12 @@ std::vector<ProjectFile> ImageProject(const std::vector<containers::TrdosFile>& 
     const CodecRegistry& registry = CodecRegistry::Builtin();
     std::vector<ProjectFile> project;
     std::vector<size_t> taken;   // the index in `files` of each project file
-    auto add = [&](size_t k, const ISourceCodec& codec, const std::string& subversion) {
+    auto add = [&](size_t k, const ISourceCodec& codec, const std::string& subversion, const std::string& dialect = {}) {
         const containers::TrdosFile& f = files[k];
         DecodeOptions options;
         options.catalog = f.Hints();
         options.subversion = subversion;
+        options.dialect = dialect;
         // A name saved again (another catalog entry): TR-DOS finds the first one, so it keeps the name; the later ones
         // are NAME~2, NAME~3 ...
         std::string name = f.TrimmedName();
@@ -1188,6 +1258,75 @@ std::vector<ProjectFile> ImageProject(const std::vector<containers::TrdosFile>& 
         const DetectResult detected = registry.Detect(files[k].data, files[k].Hints());
         if (detected.chosen && (detected.chosen->Info().family == CodecFamily::Tokenized || detected.chosen->Info().id == "pasm"))
             add(k, *detected.chosen, std::string());
+    }
+    // A text file is the text copy of a source of the disk when nine of ten of its code lines (comments and blanks
+    // aside) are that source's and it reads in its dialect without a warning: isosurf.a, lorenz1k.a (the CR texts of
+    // the ALASM sources isosurf.H, LORENZ1K.H under ZX-ASM 3.10+ catalog entries), megalz d.a (DEC40.H with its
+    // description). Other text files are documents
+    auto code = [](const std::string& t) {
+        std::string out;
+        bool quote = false;
+        for (const char c : t)
+        {
+            if (c == '"')
+                quote = !quote;
+            if (c == ';' && !quote)
+                break;
+            if (c != ' ' && c != '\t')
+                out.push_back(c);
+            else if (!out.empty() && out.back() != ' ')
+                out.push_back(' ');
+        }
+        while (!out.empty() && out.back() == ' ')
+            out.pop_back();
+        return out;
+    };
+    const size_t sources = project.size();
+    const ISourceCodec* text = registry.Find("text");
+    for (size_t k = 0; k < files.size() && text; ++k)
+    {
+        if (std::find(taken.begin(), taken.end(), k) != taken.end())
+            continue;
+        const DetectResult detected = registry.Detect(files[k].data, files[k].Hints());
+        if (!detected.chosen || detected.chosen->Info().family != CodecFamily::Text)
+            continue;
+        for (size_t n = 0; n < sources; ++n)
+        {
+            const std::string& dialect = project[n].document.dialect;
+            const IFrontend* frontend = DialectRegistry::Builtin().Frontend(dialect);
+            if (!frontend)
+                continue;
+            DecodeOptions options;
+            options.catalog = files[k].Hints();
+            options.dialect = dialect;
+            const SourceDocument copy = text->Decode(files[k].data, options).document;
+            std::multiset<std::string> own;
+            for (const SourceLine& l : project[n].document.lines)
+                own.insert(code(l.text));
+            size_t lines = 0, same = 0;
+            for (const SourceLine& l : copy.lines)
+            {
+                const std::string t = code(l.text);
+                if (t.empty())
+                    continue;
+                ++lines;
+                if (const auto at = own.find(t); at != own.end())
+                {
+                    ++same;
+                    own.erase(at);
+                }
+            }
+            if (lines == 0 || same * 10 < lines * 9)
+                continue;
+            const FrontendResult parsed = frontend->Parse(copy);
+            const bool clean = std::none_of(parsed.diagnostics.begin(), parsed.diagnostics.end(),
+                                            [](const Diagnostic& d) { return d.severity >= Severity::Warning; });
+            if (clean)
+            {
+                add(k, *text, std::string(), dialect);
+                break;
+            }
+        }
     }
     // The files the sources INCLUDE that detection left out, read like their includer (until none is left)
     for (size_t at = 0; at < project.size(); ++at)

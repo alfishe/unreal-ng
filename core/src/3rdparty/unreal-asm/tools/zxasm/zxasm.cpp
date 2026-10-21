@@ -62,6 +62,7 @@
 #include <iostream>
 #include <iterator>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -427,8 +428,32 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
     const ISourceCodec* target = registry.Find(args.to) ? registry.Find(args.to) : registry.Find("text");
     std::string extracted;
     std::map<std::string, std::string> imageNames;   // host file name -> the name in the image
+    // TR-DOS names differ in case (UNRLT60 and unrlt60, LORENZ1K.H and its text lorenz1k.a), a host file system's may
+    // not: a later file whose name another has in any case is written NAME~2 ... and the INCLUDEs naming it follow
+    std::map<std::string, std::string> hostNames;   // the name in the project -> the host file's, without .asm
+    {
+        std::set<std::string> taken;
+        for (const ProjectFile& f : converted.files)
+        {
+            std::string host = HostName(f.name);
+            for (int n = 2; taken.count(Lower(host)); ++n)
+                host = HostName(f.name) + "~" + std::to_string(n);
+            taken.insert(Lower(host));
+            hostNames[f.name] = host;
+        }
+    }
     for (ProjectFile f : converted.files)
     {
+        for (SourceLine& line : f.document.lines)
+        {
+            const size_t at = line.text.find("INCLUDE \"");
+            const size_t close = at == std::string::npos ? at : line.text.find(".asm\"", at + 9);
+            if (close == std::string::npos)
+                continue;
+            const auto host = hostNames.find(line.text.substr(at + 9, close - at - 9));
+            if (host != hostNames.end() && host->second != host->first)
+                line.text.replace(at + 9, close - at - 9, host->second);
+        }
         // An INCBIN with wildcards names the file it found (the converted source then assembles anywhere). A sector
         // slack INCBIN gets its length, limited to the end of memory; an empty slack is left out
         for (SourceLine& line : f.document.lines)
@@ -500,9 +525,9 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
             out.assign(text.begin(), text.end());
         }
         // a TR-DOS name may hold '/' or ':' ("SAVEBAS/"): the host file takes '_' there
-        if (!WriteFile(args.output + "/" + HostName(f.name) + ".asm", out))
+        if (!WriteFile(args.output + "/" + hostNames[f.name] + ".asm", out))
         {
-            std::cerr << "zxasm: cannot write " << args.output << "/" << HostName(f.name) << ".asm\n";
+            std::cerr << "zxasm: cannot write " << args.output << "/" << hostNames[f.name] << ".asm\n";
             return 1;
         }
         // INCBIN "name" / "name.T": the file of the image, written under the name the source uses

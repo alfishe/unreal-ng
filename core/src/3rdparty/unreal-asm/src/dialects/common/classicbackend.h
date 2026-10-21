@@ -16,4 +16,7 @@ enum class ClassicTarget
 };
 
 BackendResult WriteClassic(const ir::Program& program, const BackendOptions& options, ClassicTarget target);
+
+/// An expression's value as the layout gives its names (fixed ones only); none when a name is unknown
+std::optional<int64_t> LayoutValue(const ir::Expr& e, const std::map<std::string, SourceLabel>& values);
 }  // namespace unrealasm::dialects
