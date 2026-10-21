@@ -78,6 +78,15 @@ public:
         (void)period;
         return false;
     }
+    /// How far a true RepeatFetchIsPure holds: fetches at `addr` that start at a frame T-state in [t, the result)
+    /// follow it; a rule that follows the frame position (a fetch window) ends its stretch where it changes.
+    /// UINT32_MAX (the default): up to the frame end
+    virtual uint32_t RepeatFetchPureUntil(uint16_t addr, uint32_t t) const
+    {
+        (void)addr;
+        (void)t;
+        return UINT32_MAX;
+    }
 };
 
 /// Two or more installed overlays seen as one (owned by Core, never installed
@@ -103,6 +112,8 @@ public:
     void onInterruptAcknowledge() override;
     /// Every member that sees the fetch is pure; the period is their least common multiple
     bool RepeatFetchIsPure(uint16_t addr, uint32_t& period) const override;
+    /// The shortest stretch of the members that see the fetch
+    uint32_t RepeatFetchPureUntil(uint16_t addr, uint32_t t) const override;
 
 private:
     HostBusOverlay* _members[kMaxOverlays] = {};

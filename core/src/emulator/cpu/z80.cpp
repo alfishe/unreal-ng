@@ -1,5 +1,9 @@
 #include "z80.h"
 
+#include <algorithm>
+#include <iterator>
+#include <numeric>
+
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
@@ -451,15 +455,20 @@ bool Z80::RunHaltedIdle(bool skipBreakpoints)
     if (idleSkipLimit == 0 || !haltedIdleInOneGo || halted != 1 || vm1 || boundary != Z80_BOUNDARY_NONE)
         return false;
     const uint16_t fetch = static_cast<uint16_t>(pc + 1);  // the byte after the HALT (HaltedM1)
-    if (!InterruptsIdle() || !IdleStepsInert() || !HaltedFetchIsPure(fetch))
+    const uint32_t evenM1Period = _context->config.even_M1 ? 2u : 1u;
+    uint32_t busPeriod = 1;
+    if (!InterruptsIdle() || !IdleStepsInert() || !HaltedFetchIsPure(fetch, busPeriod) ||
+        std::lcm(evenM1Period, busPeriod) > kMaxHaltedIdlePeriod)
     {
         _haltedIdleRetryAt = t + kHaltedIdleRetryT;
         return false;
     }
+    // The fetch's length by its start phase: the Even M1's T on an odd start, the bus overlay's waits by its phase
+    const uint32_t period = std::lcm(evenM1Period, busPeriod);
 
     const uint32_t start = t;
-    const uint32_t period = _context->config.even_M1 ? 2u : 1u;
-    uint32_t length[2] = {0, 0};
+    uint32_t length[kMaxHaltedIdlePeriod] = {};
+    uint32_t pureUntil = 0;  // the end of the stretch of the bus rule the learned lengths hold for
     uint32_t fetches = 0;
     for (;;)
     {
@@ -471,6 +480,13 @@ bool Z80::RunHaltedIdle(bool skipBreakpoints)
             break;
         if (t >= target)
             break;
+        // A bus rule that follows the frame position (a fetch window): its lengths are learned again per stretch
+        if (t >= pureUntil)
+        {
+            pureUntil = std::max<uint32_t>(HaltedFetchPureUntil(fetch), t + 1);
+            std::fill(std::begin(length), std::end(length), 0u);
+        }
+        target = std::min(target, pureUntil);
 
         const uint32_t phase = t % period;
         if (length[phase] == 0)
@@ -506,8 +522,9 @@ bool Z80::RunHaltedIdle(bool skipBreakpoints)
     return true;
 }
 
-bool Z80::HaltedFetchIsPure(uint16_t fetch) const
+bool Z80::HaltedFetchIsPure(uint16_t fetch, uint32_t& period) const
 {
+    period = 1;
     const MemoryInterface* const memIf = MemIf;
     const bool contended = memIf == FastContendedMemIf || memIf == OverlayFastContendedMemIf;
     const bool overlay = memIf == OverlayFastMemIf || memIf == OverlayFastContendedMemIf;
@@ -527,14 +544,23 @@ bool Z80::HaltedFetchIsPure(uint16_t fetch) const
         const HostBusOverlay* bus = _memory->GetBusOverlay();
         if (!bus)
             return false;
-        uint32_t period = 1;
         if (bus->observesReads && fetch >= bus->windowStart && fetch < bus->windowEnd &&
-            (!bus->RepeatFetchIsPure(fetch, period) || period != 1))
+            (!bus->RepeatFetchIsPure(fetch, period) || period == 0))
             return false;
     }
     if (machineM1Hook && !machineM1Hook->RepeatM1IsInert(fetch))
         return false;
     return _memory->RepeatFetchIsPure(fetch);
+}
+
+uint32_t Z80::HaltedFetchPureUntil(uint16_t fetch) const
+{
+    if (MemIf != OverlayFastMemIf && MemIf != OverlayFastContendedMemIf)
+        return UINT32_MAX;
+    const HostBusOverlay* bus = _memory->GetBusOverlay();
+    if (!bus || !bus->observesReads || fetch < bus->windowStart || fetch >= bus->windowEnd)
+        return UINT32_MAX;
+    return bus->RepeatFetchPureUntil(fetch, t);
 }
 
 // CPU-LIBRARY-MIGRATION(m1-cycle): the engine's M1 bus callback (start observers, machineM1Hook, ULA snow)

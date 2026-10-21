@@ -265,7 +265,8 @@ bool Z84C15Engine::IdleFetchIsPure(uint16_t fetch, uint8_t opcode, uint32_t& per
     {
         const HostBusOverlay* overlay = _memory->GetBusOverlay();
         if (overlay && overlay->observesReads && fetch >= overlay->windowStart && fetch < overlay->windowEnd &&
-            (!overlay->RepeatFetchIsPure(fetch, period) || period == 0 || period > kMaxIdlePeriod))
+            (!overlay->RepeatFetchIsPure(fetch, period) || period == 0 || period > kMaxIdlePeriod ||
+             overlay->RepeatFetchPureUntil(fetch, z.t) != UINT32_MAX))  // a rule by frame position: one by one
             return false;
     }
     return true;
