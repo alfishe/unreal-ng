@@ -142,7 +142,7 @@ working directory (path roots are planned, [§8](#8-planned)).
 | `toggle` | `on`, `off` (actions, both required) | Runs `on` and `off` in turn; the state flips on success and lives in the runtime (reset by a reload) |
 | `shell` | `command` (required), `timeout_ms` (10000) | `/bin/sh -c` (macOS, Linux), `cmd.exe /c` (Windows); exit code 0 = success |
 | `open` | `target` (required) | `open` (macOS), `xdg-open` (Linux), `start` (Windows) |
-| `keys` | `combo` (`cmd+shift+4`) or `text` | macOS CGEvent (Accessibility permission), Linux `xdotool`; Windows: not implemented (fails) |
+| `keys` | `combo` (`cmd+shift+4`) or `text` | macOS CGEvent (Accessibility permission), Windows `SendInput`, Linux `xdotool` (a clear error when it is missing; X11 only); one key table for all three, unknown keys are validation errors; key names in [daemon.md](../daemon.md) |
 | `nav` | `to`: `back`, `home`, `node` (+ `node`, must exist), `scenario` (+ `file`) | `node` opens the menu (an action's node: its menu) with the path from the root; `scenario` loads another file on this deck |
 | `brightness` | `value` (0..100) or `delta` | The deck's brightness |
 | `ttd_seek` | `unit` (`frames`, `seconds`), `min`, `max` (a detent), `fps` (50) | Time travel by the dial's detents, from `min` at 4 detents a second to `max` at 40; the strip shows the frame or `mm:ss.ff` |
@@ -186,7 +186,7 @@ A spreadsheet edit of the simple columns round-trips without touching JSON. Read
 | Where | `file` relative to the including file's folder |
 | Ids | The included root takes the include's id and slot; its descendants get `<includeId>.` before their ids (one file can be included twice); `nav` targets inside follow |
 | Overrides | `title`, `tags` replace; `face` is merged |
-| Marks | Every resolved node carries `included_from` (the file's canonical path) |
+| Marks | Every resolved node carries `included_from` (the file's canonical path), in the editor only: `scenario resolve`, the run file, Export, Import and Paste strip them |
 | Errors | A missing file or node, a cycle, nesting deeper than 8 |
 
 `ResolveIncludes` (a document and its folder) and `LoadResolved` (a file) do it. `Parse` refuses an unresolved
@@ -198,7 +198,7 @@ Command line, on any of the formats:
 unreal-streamdeck scenario check my.deck.yaml                 # includes resolved, issues listed
 unreal-streamdeck scenario convert my.deck.json my.csv        # as written: includes stay links
 unreal-streamdeck scenario extract my.deck.json debug dbg.yaml   # a subtree as its own scenario
-unreal-streamdeck scenario resolve my.deck.yaml flat.json     # every include inlined
+unreal-streamdeck scenario resolve my.deck.yaml flat.json     # every include inlined, without `included_from` marks
 ```
 
 ## 4. Engine
@@ -356,10 +356,10 @@ sequenceDiagram
 | `io_test.cpp` | Every format round-trips to the same scenario |
 | `ops_test.cpp` | Every operation leaves a document that still parses: insert, move, swap, remove, update with rename, duplicate |
 | `subtrees_test.cpp` | Export, import as a menu and as items, includes (prefixes, overrides, marks, cycles, missing files and nodes), link, inline |
-| `actions_test.cpp` | The kinds against a fake host: order, delays, nesting, failure, cancel, toggles, substitution |
+| `actions_test.cpp` | The kinds against a fake host: order, delays, nesting, failure, cancel, toggles, substitution; the kind table, key combos and key names |
 | `runtime_test.cpp` | The runtime on a mock transport: only changed keys sent, menus, back key (press / hold), strip crumbs, swipe, `then`, dials, toggles, failures, reload keeping the stack, the state JSON |
 | `daemondecks_test.cpp` | Decks, a scenario per deck (`PUT` / `DELETE`, the others keep theirs), watched files, loads asked for by a runtime |
-| `streamdeck-studio-tests` | The daemon control's scenario calls against a stand-in automation; the editor's widgets and routes have no tests yet |
+| `streamdeck-studio-tests` | The daemon control's scenario calls against a stand-in automation; the editor (`editor_test.cpp`, offscreen): Paste without marks, the kind and model boxes, the run document, the route examples |
 
 ```bash
 tools/build/build.sh streamdeck-tests && cmake-build-agent-release/bin/streamdeck-tests
