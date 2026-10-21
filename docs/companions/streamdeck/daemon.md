@@ -131,7 +131,7 @@ device) counts as another deck.
 `POST /api/v1/decks/{serial}/reconnect` does what an unplug does, on purpose: the handle is closed on the device
 thread's next call, stays closed `away_ms` (default 0), and the deck is opened again and redrawn the same way. It
 mends a deck that shows garbage after a USB hiccup, and it is how the reopen path is checked on a real deck without
-pulling the cable.
+pulling the cable. A real cable pull and replug on the + XL (macOS) was checked by hand: the same picture and menu return.
 
 An older Stream Deck Studio that listens on 37050 itself takes the port: `run` then says so and runs without viewers.
 `--mirror` / `--device emu` still talk to such a studio (the device wire v1).

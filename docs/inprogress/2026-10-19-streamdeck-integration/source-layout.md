@@ -161,6 +161,7 @@ reference updated; each group has a README ([plugins/README.md](../../../plugins
 | `workload-monitor/` | `utilities/` | Users run it |
 | `neogs/` (SD image, flash packer) | `utilities/neogs/` | Users build NeoGS media |
 | `build/`, `sanitize/`, `verification/`, `poc/`, `profiling/`, `bench/`, `icons/`, `controllers/`, `cd/`, `chd/`, `ide/`, `machines/`, `symbolicate.py`, `fix-absolute-paths.py`, `package-appimage.sh` | stay | Internal |
+| `crt-shaders/` | stays | Owner 2026-10-20: stays in `tools/` |
 
 ## 8. Open points
 
