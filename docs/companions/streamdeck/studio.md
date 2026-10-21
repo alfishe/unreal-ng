@@ -182,6 +182,13 @@ cmake-build-agent-release/bin/streamdeck-studio-tests
 
 - Built when `UNREAL_STREAMDECK` is on and Qt 6 is found (the same discovery as unreal-qt); a macOS bundle
   `unreal-streamdeck-studio.app` ("Stream Deck Studio", `dev.unrealng.streamdeck-studio`).
+- Packaged in every release ([packaging.md](../../inprogress/2026-10-19-streamdeck-integration/packaging.md#3-macos)):
+  macOS `UnrealNG.app/Contents/Applications/Stream Deck Studio.app`, a nested app on UnrealNG.app's Qt (frameworks through
+  `../../../../Frameworks`; `main.cpp` adds UnrealNG.app's `PlugIns` from the real executable path), linked from the
+  DMG root; Windows
+  `unreal-streamdeck-studio.exe` beside `unreal-qt.exe` on the same Qt DLLs; DEB `/usr/lib/unreal-ng`, linked from
+  `/usr/bin`; AppImage `usr/bin` (deployed with the suite's Qt); tarball at the top. The daemon it starts is beside
+  it, or in the suite's bundle on macOS.
 - Links `sdb` (scenario, navigator, render, wire), `unrealng::recording` and Qt Widgets / Network, not hidapi: USB
   lives in `sdb-hid` (`lib/src/hid/`), which only the daemon and `sdctl` link.
 - `streamdeck-studio-tests` (not built by default) runs offscreen with no window: the wire v2 client against a fake

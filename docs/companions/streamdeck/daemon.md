@@ -12,6 +12,7 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 | `unreal-streamdeck run [scenario] [options]` | Play a scenario (`.json`, `.yaml`, `.csv`, `.tsv`) on the deck; without one, the built-in idle scenario (one empty menu) until a scenario is loaded for a deck |
 | `unreal-streamdeck pair [--webapi URL] [--name NAME] [--file F]` | Pair with unreal-ng as a companion (approved at the emulator's GUI); the token goes to `~/.config/unreal-streamdeck/companion.json` (mode 0600) |
 | `unreal-streamdeck scenario check \| convert \| extract \| resolve ...` | Check and convert scenario files |
+| `unreal-streamdeck --help` | The usage on stdout, exit 0 (without a command: the same, exit 2) |
 
 `run` options:
 
@@ -111,7 +112,8 @@ studio).
 Without it only root can open the deck's `/dev/hidraw*` nodes. The rule
 [`companions/streamdeck/linux/70-unreal-streamdeck.rules`](../../../companions/streamdeck/linux/70-unreal-streamdeck.rules)
 tags every Elgato device (USB vendor `0fd9`) `uaccess`, so the user at the seat gets read and write access. The DEB
-installs it to `/usr/lib/udev/rules.d`; for an AppImage or a build from source:
+installs it to `/usr/lib/udev/rules.d`; the tarball has it in `lib/udev/rules.d` (copy that file instead); for an
+AppImage or a build from source:
 
 ```bash
 sudo install -m 0644 companions/streamdeck/linux/70-unreal-streamdeck.rules /etc/udev/rules.d/
@@ -121,6 +123,21 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 `uaccess` needs a local login session. A user without a seat (SSH only, a service account) needs a group instead:
 copy the rule with `MODE="0660", GROUP="plugdev"` in place of `TAG+="uaccess"` and add the user to the group.
+
+## Installed
+
+Every release package carries the daemon (the release workflow builds with `-DUNREAL_STREAMDECK=ON`; layout and
+rationale: [packaging.md](../../inprogress/2026-10-19-streamdeck-integration/packaging.md)):
+
+| Package | Where |
+|:--|:--|
+| macOS DMG | `UnrealNG.app/Contents/MacOS/unreal-streamdeck`, a helper inside the suite's bundle, signed with it |
+| Windows ZIP | `unreal-streamdeck.exe` beside `unreal-qt.exe` |
+| DEB | `/usr/lib/unreal-ng/unreal-streamdeck`, linked from `/usr/bin`; the udev rule in `/usr/lib/udev/rules.d` |
+| AppImage | `usr/bin/unreal-streamdeck` in the image (`--appimage-extract` to run it alone); the rule in `usr/lib/udev/rules.d`, not installed |
+| Linux tarball | `unreal-streamdeck` at the top; the rule in `lib/udev/rules.d` |
+
+Default scenarios and themes (`data/streamdeck/`) are not packaged yet (SD5).
 
 ## Developer checks (`sdctl`)
 

@@ -6,6 +6,13 @@
 // Design: docs/inprogress/2026-10-19-streamdeck-integration/studio.md
 #include <QApplication>
 #include <QCommandLineParser>
+#ifdef __APPLE__
+#include <QDir>
+#include <QFileInfo>
+#include <mach-o/dyld.h>
+#include <climits>
+#include <cstdlib>
+#endif
 #ifndef _WIN32
 #include <QSocketNotifier>
 #include <csignal>
@@ -51,10 +58,32 @@ void QuitOnSignals(QApplication& app)
     std::signal(SIGINT, OnSignal);
 }
 #endif
+
+#ifdef __APPLE__
+// Nested in the suite (UnrealNG.app/Contents/Applications/Stream Deck Studio.app, packaging.md): the frameworks come
+// through the rpath, the plugins (cocoa first) from UnrealNG.app/Contents/PlugIns. Through the executable's real
+// path: the DMG's link to the nested app (and a copy of that link in /Applications) would put a relative qt.conf
+// prefix next to the link. Before QApplication, which loads the platform plugin.
+void AddSuitePlugins()
+{
+    char exe[PATH_MAX];
+    uint32_t size = sizeof(exe);
+    char real[PATH_MAX];
+    if (_NSGetExecutablePath(exe, &size) != 0 || !::realpath(exe, real))
+        return;
+    const QString plugins =
+        QDir::cleanPath(QFileInfo(QString::fromUtf8(real)).absolutePath() + QStringLiteral("/../../../../PlugIns"));
+    if (QFileInfo::exists(plugins + QStringLiteral("/platforms")))
+        QCoreApplication::addLibraryPath(plugins);
+}
+#endif
 }  // namespace
 
 int main(int argc, char** argv)
 {
+#ifdef __APPLE__
+    AddSuitePlugins();
+#endif
     QApplication app(argc, argv);
 #ifndef _WIN32
     QuitOnSignals(app);
