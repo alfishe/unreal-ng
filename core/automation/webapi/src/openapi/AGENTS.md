@@ -44,6 +44,7 @@ openapi/
 ├── openapi_isa.inc        # ISA slots (Sprinter): report + cycles
 ├── openapi_rzx.inc        # RZX input recording playback
 ├── openapi_state.inc      # State inspection (screen, audio)
+├── openapi_streamdeck.inc # Stream Deck daemon: supervision by unreal-qt, settings, pairing, deck brightness
 ├── openapi_stepping.inc   # Execution control (step, run)
 ├── openapi_temporal.inc   # ZX DLSS de-flicker status / switch + openapi_temporal_schemas.inc
 ├── openapi_window.inc     # GUI window display settings (GPU, CRT, blending) + openapi_window_schemas.inc

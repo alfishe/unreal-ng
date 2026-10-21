@@ -1260,6 +1260,11 @@ void MenuManager::createToolsMenu()
     _companionsAction->setStatusTip(tr("Devices paired to control the emulator for you; revoke them here"));
     connect(_companionsAction, &QAction::triggered, this, &MenuManager::companionsRequested);
 
+    // The Stream Deck companion: its daemon's supervision, pairing, decks (docs/inprogress/2026-10-19-streamdeck-integration)
+    _streamDeckAction = _toolsMenu->addAction(tr("Stream &Deck..."));
+    _streamDeckAction->setStatusTip(tr("The Stream Deck daemon: when it starts, its pairing, its decks' brightness"));
+    connect(_streamDeckAction, &QAction::triggered, this, &MenuManager::streamDeckRequested);
+
     _toolsMenu->addSeparator();
 
     // Tape Manager Window (design §9.2 — checkable show/hide, hidden until

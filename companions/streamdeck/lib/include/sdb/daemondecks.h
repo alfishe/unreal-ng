@@ -2,7 +2,8 @@
 // deck and the viewers' own decks, each with its runtime, its scenario file and its brightness. Serves their
 // automation routes (REST, and MCP through the same automation::Api) and watches their scenario files.
 //
-//   GET  /api/v1/health                       ready, version, decks, viewers
+//   GET  /api/v1/health                       ready, version, decks, viewers (+ healthExtra: pid, parents, pairing)
+//   GET  /api/v1/activity                     the activity look of every deck; PUT {look: scenario|off|flash|line}
 //   GET  /api/v1/decks                        every logical deck: serial, model, real / own, connected, scenario,
 //                                             brightness, viewers
 //   GET  /api/v1/decks/{serial}               one deck ("first" = the first real deck, else the first deck)
@@ -100,6 +101,15 @@ public:
 
     void AddRoutes(automation::Api& api);
 
+    // The activity look of every deck over its scenario's (Q-3): "" = the scenario's, "off", "flash", "line"; a deck
+    // added later gets it too. False for another word
+    bool SetActivityLook(const std::string& look);
+    [[nodiscard]] std::string ActivityLook() const;
+    // fn for every deck's runtime, under the decks' lock (the runtimes' own locks come after it)
+    void ForEach(const std::function<void(const std::string& serial, scn::Runtime& runtime)>& fn);
+    // More fields for GET /api/v1/health (the daemon's pid, parents, pairing): called on the automation's thread
+    std::function<nlohmann::json()> healthExtra;
+
     Log log;  // loads, reloads and their errors (the daemon prints them)
 
 private:
@@ -130,6 +140,7 @@ private:
     mutable std::mutex _mutex;  // _decks, _hub, _nextOrder
     std::map<std::string, Entry> _decks;
     DeckHub* _hub = nullptr;
+    std::string _activityLook;
     int _wirePort = 0;
     std::uint64_t _nextOrder = 0;
 

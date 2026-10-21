@@ -3,8 +3,6 @@
 // file (mode 0600).
 #include <chrono>
 #include <cstdio>
-#include <filesystem>
-#include <fstream>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -12,8 +10,10 @@
 
 #include "cli.h"
 #include "sdb/actions.h"
+#include "sdb/daemonlife.h"
 #include "sdb/device.h"
 #include "sdb/http.h"
+#include "sdb/pairing.h"
 #include "sdb/scenes.h"
 
 using json = nlohmann::json;
@@ -32,6 +32,39 @@ std::string Upper(std::string s)
     return s;
 }
 
+// Pairing through the running daemon: start it there and print its state until it ends
+int PairThroughDaemon(const life::Holder& holder)
+{
+    const std::string api = "http://127.0.0.1:" + std::to_string(holder.api);
+    std::printf("unreal-streamdeck runs (pid %d): pairing through it (%s/api/v1/pair)\n", holder.pid, api.c_str());
+    auto r = HttpRequest(api, "POST", "/api/v1/pair", "{}");
+    std::string last;
+    for (int i = 0; i < 400 && r.Ok(); ++i)
+    {
+        const json j = json::parse(r.body, nullptr, false);
+        const std::string state = j.is_object() ? j.value("state", "") : "";
+        if (state != last)
+        {
+            if (state == "pending")
+                std::printf("Pairing code %s - allow it at the emulator (unreal-qt shows the same code)\n",
+                            j.value("code", "").c_str());
+            else
+                std::printf("%s%s%s\n", state.c_str(), j.value("message", "").empty() ? "" : ": ",
+                            j.value("message", "").c_str());
+            std::fflush(stdout);
+            last = state;
+        }
+        if (state == "paired")
+            return kOk;
+        if (state != "requesting" && state != "pending")
+            return kDeviceError;
+        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        r = HttpRequest(api, "GET", "/api/v1/pair");
+    }
+    std::fprintf(stderr, "error: the daemon's automation: %s\n", r.status ? std::to_string(r.status).c_str() : r.error.c_str());
+    return kDeviceError;
+}
+
 }  // namespace
 
 int CmdPair(const Args& a)
@@ -39,6 +72,10 @@ int CmdPair(const Args& a)
     const std::string url = a.Str("webapi", "http://127.0.0.1:8090");
     const std::string file = a.Str("file", scn::DefaultCompanionFile());
     std::string err;
+    // A running daemon holds the deck: it pairs (POST /api/v1/pair), this only follows it
+    if (const auto holder = life::ReadHolder(life::DefaultLockPath());
+        holder && holder->api > 0 && life::ProcessAlive(holder->pid) && !a.Has("file"))
+        return PairThroughDaemon(*holder);
     std::unique_ptr<Device> dev = OpenFirst(a.Str("device"), &err);
     const std::string devName = dev ? std::string(dev->GetModel().name) : std::string("Stream Deck");
     const json req = {{"name", a.Str("name", devName)}, {"device", devName + " (unreal-streamdeck)"}};
@@ -81,17 +118,14 @@ int CmdPair(const Args& a)
         const std::string state = pj.value("state", p.status == 404 ? "unknown" : "");
         if (state == "approved")
         {
-            std::filesystem::create_directories(std::filesystem::path(file).parent_path());
-            json store = {{"webapi", url},
-                          {"token", pj.value("token", "")},
-                          {"companion_id", pj.value("companion_id", "")},
-                          {"scopes", pj.value("scopes", json::array())}};
+            std::string werr;
+            if (!pairing::WriteCompanion(file, url, pj, &werr))
             {
-                std::ofstream out(file);
-                out << store.dump(2);
+                std::fprintf(stderr, "error: %s\n", werr.c_str());
+                return kDeviceError;
             }
-            std::filesystem::permissions(file, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
-                                         std::filesystem::perm_options::replace);
+            const json store = {{"companion_id", pj.value("companion_id", "")},
+                                {"scopes", pj.value("scopes", json::array())}};
             std::printf("paired as %s, scopes %s; token stored in %s\n",
                         store["companion_id"].get<std::string>().c_str(), store["scopes"].dump().c_str(), file.c_str());
             if (lcd)

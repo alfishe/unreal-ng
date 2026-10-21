@@ -10,7 +10,7 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 | Command | What |
 |:--|:--|
 | `unreal-streamdeck run [scenario] [options]` | Play a scenario (`.json`, `.yaml`, `.csv`, `.tsv`) on the deck; without one, the built-in [idle scenario](#the-idle-scenario) (the UnrealNG look) until a scenario is loaded for a deck |
-| `unreal-streamdeck pair [--webapi URL] [--name NAME] [--file F]` | Pair with unreal-ng as a companion (approved at the emulator's GUI); the token goes to `~/.config/unreal-streamdeck/companion.json` (mode 0600) |
+| `unreal-streamdeck pair [--webapi URL] [--name NAME] [--file F]` | Pair with unreal-ng as a companion (approved at the emulator's GUI); the token goes to `~/.config/unreal-streamdeck/companion.json` (mode 0600). With a daemon running (and no `--file`) it pairs through it (`POST /api/v1/pair`) and prints its state |
 | `unreal-streamdeck scenario check \| convert \| upgrade \| extract \| resolve ...` | Check scenario files (`check` also warns about action ids the catalogue lacks: `$data/streamdeck/catalogue.json` or `--catalogue F`), convert them to another file format, upgrade format v1 to v2 |
 | `unreal-streamdeck --help` | The usage on stdout, exit 0 (without a command: the same, exit 2) |
 
@@ -30,7 +30,10 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 | `--emulate MODEL` | Present a smaller model on the real deck |
 | `--dry-run` | Log actions instead of running them |
 | `--seconds N` | Stop after N seconds |
-| `--with-parent` | Stop when the starting process goes away (macOS, Linux) |
+| `--parent PID[,PID]` | Live for these processes: stop when the last is gone or releases it ([below](#one-daemon-and-its-starters)) |
+| `--with-parent` | The same for the process that started it (all platforms) |
+| `--activity LOOK` | How every deck shows what other surfaces do, over the scenarios' own `settings.activity`: `scenario`, `off`, `flash`, `line` (unreal-qt passes its setting) |
+| `--lock FILE` / `--no-lock` | Another single-instance lock file (default: [below](#one-daemon-and-its-starters)), or none (tests, a second daemon on purpose) |
 
 ## The surface client
 
@@ -48,8 +51,8 @@ on the daemon's network loop (no thread of its own), with the token of `unreal-s
 | Target | `target` (the instance the session drives: model, RAM, index, follow / pinned) is the strip's target line. A `{"view": n}` target the host refuses (`not_now`: no views on the surface topic yet) is joined again with `"follow"` |
 | Instances | The `instances` topic on the same connection: the host's instance list (`GET /api/v1/surface`) |
 | Reconnect | A dropped socket (unreal-qt quits or restarts) reconnects with backoff 0.25 s .. 5 s and joins every deck again; meanwhile the strips say `RECONNECTING` and the REST fallback serves |
-| Revoked | `revoked` (or a handshake refused with 401: a token the host no longer knows) stops the client: every strip says `COMPANION REVOKED - PAIR AGAIN`, actions fail at once. The companion file is looked at every 2 s; a new token (`unreal-streamdeck pair`) connects again |
-| Not paired | No companion file: REST only, the file is watched the same way |
+| Revoked | `revoked` (or a handshake refused with 401: a token the host no longer knows) stops the client: every strip says `COMPANION REVOKED - TOUCH TO PAIR`, actions fail at once. The companion file is looked at every 2 s; a new token ([pairing](#pairing)) connects again |
+| Not paired | No companion file: REST only, every strip says `NOT PAIRED - TOUCH TO PAIR`, the file is watched the same way |
 
 `GET /api/v1/surface` (REST and MCP, with `--api`) shows the link: `connected`, `revoked`, `paired`, `url`,
 `connections` (upgrades so far), each deck's `session`, `instance`, `target` and `readouts`, `instances`, `error`.
@@ -69,6 +72,62 @@ in the UnrealNG colours, fine lines. The TTD timeline is a strip readout only, n
 `strip.target` (on by default on decks with a strip): the target line, small, at the top right; amber
 `RECONNECTING` while the link is down. Without a surface client (`--no-surface`, not paired) the strip shows what it
 did before: the polled TTD line.
+
+## Pairing
+
+The daemon pairs **once** for all its decks (`name: "Stream Deck daemon"`, the companion protocol's
+`POST /api/v1/companions/pairings`); the user approves it in unreal-qt (its pairing prompt, or Tools > Stream Deck...),
+never an automation plane. The token goes to the companion file (`--companion`, default
+`~/.config/unreal-streamdeck/companion.json`, mode 0600, written through a temporary file), and the surface client
+connects within 2 s (`sdb/pairing.h`).
+
+| Started from | How |
+|:--|:--|
+| The deck | A tap on the strip while it says `NOT PAIRED - TOUCH TO PAIR` or `COMPANION REVOKED - TOUCH TO PAIR` (or a failed pairing's line). Decks without a strip pair from the studio or unreal-qt |
+| Stream Deck Studio | Deck > Pair with UnrealNG, or its `POST /api/v1/pair` |
+| unreal-qt | Tools > Stream Deck... > Pair, or `streamdeck pair` on any plane ([command-interface.md §16.2](../../emulator/design/control-interfaces/command-interface.md#162-the-stream-deck-daemon)) |
+| A shell | `unreal-streamdeck pair` (through the running daemon) |
+
+While it lasts every strip says what happens: `PAIRING - ASKING UNREALNG`, `PAIR CODE 418 205 - APPROVE IN UNREALNG`
+(the prompt shows the same code), then nothing (paired), or `PAIRING DENIED - TOUCH TO TRY AGAIN`,
+`PAIRING EXPIRED - TOUCH TO TRY AGAIN`, `PAIRING NEEDS THE UNREALNG WINDOW` (the host has no GUI: the video wall,
+headless; use `UNREAL_COMPANION_TOKENS` there), `PAIRING IS OFF IN UNREALNG` (Tools > Companions... refuses requests),
+`UNREALNG NOT RUNNING - TOUCH TO TRY AGAIN`.
+
+| Route | What |
+|:--|:--|
+| `GET /api/v1/pair` | `state`: `idle`, `requesting`, `pending` (`code`, `pairing_id`, `expires_in`), `paired`, `denied`, `expired`, `refused` (`error`: `pairing_unavailable`, `pairing_disabled`, `too_many_pairings`, ...), `unreachable`; `paired` (a token in the file), `companion_id`, `file`, `host` |
+| `POST /api/v1/pair` | Ask for a pairing (one at a time: a pending one answers its state again) |
+| `DELETE /api/v1/pair` | Cancel a pending one at the host |
+
+## One daemon and its starters
+
+One daemon runs per user (`sdb/daemonlife.h`). It holds a lock for its whole run: `flock` on macOS and Linux,
+`LockFileEx` on Windows, on `unreal-streamdeck.lock` in `$XDG_RUNTIME_DIR`, else `$TMPDIR` (per user on macOS), else
+`/tmp/unreal-streamdeck-<uid>.lock`; `%LOCALAPPDATA%\unreal-streamdeck\unreal-streamdeck.lock` on Windows
+(`UNREAL_STREAMDECK_LOCK` or `--lock` names another file). The file says who holds it:
+`{"pid", "api", "viewers", "version", "host"}`. A second `run` reads it, hands its `--parent`s to the running daemon
+(`POST /api/v1/parents`), prints `unreal-streamdeck runs already: pid N, automation http://127.0.0.1:P, viewers V`
+and exits 0: any starter may start it blindly.
+
+Its starters lease it with their pid (`--parent`, or `POST /api/v1/parents`): unreal-qt (it starts it when a deck is
+attached), Stream Deck Studio (it starts one when none answers). The daemon watches each parent's process (kqueue
+`EVFILT_PROC` on macOS, a pidfd on Linux, a process handle on Windows; looked at every 250 ms by the watcher thread) and
+stops cleanly when the last one is gone or gives its lease back (`DELETE /api/v1/parents/{pid}`): unreal-qt quitting
+leaves it running while a studio still holds it, and the other way round. A daemon started with no parent (by hand)
+is nobody's: leases come and go, it stays until `POST /api/v1/quit` or a signal.
+
+| Route | What |
+|:--|:--|
+| `GET /api/v1/parents` | `parents` (pids), `alone` (started by hand) |
+| `POST /api/v1/parents` | `{pid}`: a lease (404: no such process) |
+| `DELETE /api/v1/parents/{pid}` | Give it back; `ending`: that was the last one |
+| `POST /api/v1/quit` | A clean stop, whoever holds it |
+| `GET` / `PUT /api/v1/activity` | The activity look of every deck (`{look: scenario \| off \| flash \| line}`), as `--activity` |
+
+`GET /api/v1/health` adds `pid`, `parents`, `alone`, `host`, `surface` (`connected`, `disconnected`, `off`),
+`activity` and `pairing` (the `GET /api/v1/pair` state). unreal-qt's supervision of the daemon (when it starts it,
+restarts, adoption) is in [the design](../../inprogress/2026-10-19-streamdeck-integration/daemon.md#7-supervision-by-unreal-qt).
 
 ## The idle scenario
 
@@ -189,7 +248,8 @@ deck, else the first deck); the runtime routes take `?deck=SERIAL` with the same
 
 | Route | What |
 |:--|:--|
-| `GET /api/v1/health` | `ok`, version, the number of decks and viewers, mirrors waiting for a deck, the wire port |
+| `GET /api/v1/health` | `ok`, version, the number of decks and viewers, mirrors waiting for a deck, the wire port; `pid`, `parents`, `host`, `surface`, `activity`, `pairing` |
+| `/api/v1/pair`, `/api/v1/parents`, `/api/v1/quit`, `/api/v1/activity` | [Pairing](#pairing), [one daemon and its starters](#one-daemon-and-its-starters) |
 | `GET /api/v1/decks` | Every logical deck: serial, model, PID, real or own, connected, scenario file (`""` = the idle one), `start_scenario`, watched, brightness, viewers (id, role, name, pid); `waiting_mirrors` |
 | `GET /api/v1/decks/{serial}` | One deck, as in the list |
 | `GET` / `PUT /api/v1/decks/{serial}/brightness` | The deck's brightness; `{"value": 0..100}` or `{"delta": n}` (clamped). The runtime sends it on its next step, viewers get it as a feature report |
@@ -226,7 +286,8 @@ curl -s -X POST localhost:37053/api/v1/decks/first/reconnect -d '{"away_ms":2000
 | Runtime worker | Per runtime: the scenario's steps one at a time (an `action` step waits there for its `result` from the network loop; `shell`, `delay` and `multi` block there) |
 | Runtime poller | Per runtime, only without a surface session: the REST fallback's TTD line and the faces' readouts. It ends when the deck joins and starts again when the link drops |
 | Automation | With `--api`: the listener and one worker |
-| Watcher | Scenario loads a runtime asks for, and the watched files of every deck (every 250 ms) |
+| Watcher | Scenario loads a runtime asks for, and the watched files of every deck (every 250 ms); the parents' processes |
+| Pairing | Only while a pairing lasts: the request and its polls (blocking HTTP to the host) |
 
 Measured 2026-10-21 (macOS, `ps -M`, `sample`): `run --wait --viewers --api` with one own deck (a Stream Deck
 Studio window) and the surface client connected: **9 threads** - main, network, automation listener and worker,

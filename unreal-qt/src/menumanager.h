@@ -89,6 +89,7 @@ public:
     // enabled / checked state is maintained by updateMenuStates()
     QAction* fullScreenAction() const { return _fullScreenAction; }
     QAction* companionsAction() const { return _companionsAction; }
+    QAction* streamDeckAction() const { return _streamDeckAction; }
     QAction* overscanAction() const { return _overscanAction; }  // Pentagon only (hidden otherwise)
     QAction* mediaPanelAction() const { return _mediaPanelAction; }
     QMenu* viewMenu() const { return _viewMenu; }
@@ -202,6 +203,7 @@ signals:
     void hudSettingsRequested();
     void controllersRequested();  ///< Tools > Controllers...: host game controllers, connectors, bindings
     void companionsRequested();  ///< Tools > Companions...: paired companion clients, revoke
+    void streamDeckRequested();  ///< Tools > Stream Deck...: the daemon's supervision, pairing, decks
     void screenshotRequested();
     void saveScreenshotRequested();
 #ifdef ENABLE_RECORDING
@@ -351,6 +353,7 @@ private:
     QAction* _temporalEffectsAction = nullptr;
     QAction* _hudSettingsAction;
     QAction* _companionsAction = nullptr;
+    QAction* _streamDeckAction = nullptr;
     QAction* _screenshotAction;
     QAction* _saveScreenshotAction;
 #ifdef ENABLE_RECORDING

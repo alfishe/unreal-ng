@@ -501,6 +501,11 @@ void Runtime::Handle(const Event& e, std::int64_t now)
             }
             break;
         case EventType::LcdTap:
+            if (!_notice.empty() && onNoticeTap)
+            {
+                onNoticeTap();  // NOT PAIRED / REVOKED: the tap pairs
+                break;
+            }
             if (_page.crumbs == Crumbs::Strip)
             {
                 const int depth = CrumbHit(_page.path, _m.lcdLogicalW, e.x);
@@ -797,6 +802,18 @@ void Runtime::SetNotice(const std::string& text)
     _notice = text;
 }
 
+std::string Runtime::Notice() const
+{
+    std::lock_guard l(_mu);
+    return _notice;
+}
+
+void Runtime::SetActivityLook(const std::string& look)
+{
+    std::lock_guard l(_mu);
+    _activityLook = look;
+}
+
 SurfaceNeeds Runtime::Needs() const
 {
     std::lock_guard l(_mu);
@@ -819,7 +836,15 @@ std::string Runtime::Context() const
 void Runtime::ShowActivity(const std::string& actionId, const std::string& text)
 {
     std::lock_guard l(_mu);
-    const Activity& a = _s.settings.activity;
+    Activity a = _s.settings.activity;
+    if (_activityLook == "off")
+        a.enabled = false;
+    else if (_activityLook == "flash" || _activityLook == "line")
+    {
+        a.enabled = true;
+        a.flashKeys = true;
+        a.strip = _activityLook == "line" ? "line" : "none";
+    }
     if (!a.enabled || std::find(a.ignore.begin(), a.ignore.end(), actionId) != a.ignore.end())
         return;
     if (a.flashKeys)

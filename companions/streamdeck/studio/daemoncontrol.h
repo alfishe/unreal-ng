@@ -58,6 +58,20 @@ public:
     // wait for that (the GUI is not held; an early end shows in Output and StateChanged).
     bool Launch(const QStringList& args, QString* error, bool checkEarlyExit = true);
     void Terminate();  // ends the process this studio started (none: nothing)
+
+    // The daemon the studio shares with unreal-qt (daemon.md §7, §8): started detached with `--parent <studio pid>`
+    // (it ends when its last starter is gone; a second start hands the lease to a running one), or a running one
+    // leased (POST /api/v1/parents). On quit the lease goes back (Release): the daemon ends unless unreal-qt holds it.
+    bool LaunchShared(const QStringList& args, QString* error);
+    bool Lease(QString* error = nullptr);
+    void Release();
+    [[nodiscard]] bool Leased() const
+    {
+        return _leased;
+    }
+    // The daemon's pairing with unreal-ng (POST / GET /api/v1/pair): the user approves it in unreal-qt
+    Result Pair() const;
+    Result Pairing() const;
     [[nodiscard]] bool Launched() const
     {
         return _proc.state() != QProcess::NotRunning;
@@ -75,6 +89,7 @@ private:
     void Line(const QString& line);
 
     int _apiPort = kApiPort;
+    bool _leased = false;  // a lease on the daemon under this studio's pid (LaunchShared or Lease)
     QProcess _proc;
     QStringList _output;
 };

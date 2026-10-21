@@ -21,6 +21,7 @@
 #include <emulator/actions/actionregistry.h>
 #include <emulator/actions/contextstate.h>
 #include <emulator/actions/surfacesapi.h>
+#include <emulator/companions/streamdeckapi.h>
 #include <emulator/execution/automationgate.h>
 #ifdef ENABLE_CONTROLLERS
 #include "hostinputcontrol.h"
@@ -503,6 +504,16 @@ inline pybind11::object SurfacesPy(const std::string& verb, const pybind11::kwar
     for (const auto& item : options)
         args[pybind11::str(item.first).cast<std::string>()] = PyToStateNode(item.second);
     return StateNodeToPy(actions::surfaces::Call(verb, args).body);
+}
+
+/// A Stream Deck daemon verb (companion::streamdeck::Call: status, start, stop, restart, settings, pairing, pair,
+/// pair_cancel, revoke, brightness, udev) with its args as keywords; the reply every plane returns
+inline pybind11::object StreamDeckPy(const std::string& verb, const pybind11::kwargs& options)
+{
+    StateNode args = StateNode::Object();
+    for (const auto& item : options)
+        args[pybind11::str(item.first).cast<std::string>()] = PyToStateNode(item.second);
+    return StateNodeToPy(companion::streamdeck::Call(verb, args).body);
 }
 
 inline pybind11::object ActionPy(Emulator& self, const std::string& id, const pybind11::object& raw,
@@ -1904,6 +1915,12 @@ namespace PythonBindings
                      return HostControllerCallPy(verb, options);
                  }, py::arg("verb"), "A host controllers verb (devices, context, profiles, profile, save, delete, apply, "
                  "bindings, bind, unbind, scheme, haptics, rumble, output) with its options as keywords")
+            .def("streamdeck", [](Emulator&, const std::string& verb, const py::kwargs& options) {
+                     return StreamDeckPy(verb, options);
+                 }, py::arg("verb") = "status",
+                 "A Stream Deck daemon verb (status, start, stop, restart, settings, pairing, pair, pair_cancel, "
+                 "revoke, brightness, udev) with its args as keywords: streamdeck('settings', mode='always'); "
+                 "{ok, ...} as WebAPI /api/v1/streamdeck")
             .def("surfaces", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return SurfacesPy(verb, options);
                  }, py::arg("verb") = "views",

@@ -747,6 +747,16 @@ emu.surfaces("activity", since=0)          # {"entries": [{"seq", "id", "value",
 emu.surfaces("session_close", session=s)
 ```
 
+The Stream Deck daemon (`emu.streamdeck(verb, **args)`,
+[command-interface.md §16.2](./command-interface.md#162-the-stream-deck-daemon)):
+
+```python
+st = emu.streamdeck("status")["status"]    # st["state"]: "running", "waiting", ...; st["daemon"]["version"]
+emu.streamdeck("settings", mode="always", activity="line")
+emu.streamdeck("pair")                     # the user approves it at the GUI
+emu.streamdeck("brightness", deck="A1B2C3", value=40)
+```
+
 ### Disk Operations
 
 `Emulator` methods for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands and the WebAPI `/disk/{drive}/*` endpoints.

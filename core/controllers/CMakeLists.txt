@@ -86,6 +86,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE rapidyaml)
 
 if(APPLE)
     target_link_libraries(${PROJECT_NAME} PUBLIC "-framework IOKit" "-framework CoreFoundation")
+elseif(WIN32)
+    target_link_libraries(${PROJECT_NAME} PUBLIC setupapi)   # usbpresence.cpp: SetupDiGetClassDevs
 endif()
 
 if(CMAKE_BUILD_TYPE MATCHES Debug)

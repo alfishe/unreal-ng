@@ -88,7 +88,7 @@ class Session:
     def call(self, tool, args=None, ok=True):
         """tools/call; with ok=True a tool error fails the test"""
         args = dict(args or {})
-        machineless = tool in ('search_api', 'asm_source') or (
+        machineless = tool in ('search_api', 'asm_source', 'streamdeck') or (
             tool == 'emulator_manage' and args.get('action') in ('list', 'create', 'list_models', 'server'))
         if not machineless:
             args.setdefault('target', 'auto')
@@ -244,6 +244,8 @@ def launch(binary, port_base):
     for name, offset in (('UNREAL_WEBAPI_PORT', 0), ('UNREAL_CLI_PORT', 100), ('UNREAL_MCP_PORT', 200),
                          ('UNREAL_GDB_PORT', 300), ('UNREAL_DEZOG_PORT', 400), ('UNREAL_ZRCP_PORT', 500)):
         env[name] = str(port_base + offset)
+    # No Stream Deck daemon of its own, whatever the user's setting says (test_streamdeck.py)
+    env.setdefault('UNREAL_STREAMDECK_SUPERVISOR', 'off')
     # A companion client for test_companion.py (a paired device acting as the user's hands)
     env.setdefault('UNREAL_COMPANION_TOKENS', f'verify:{COMPANION_TOKEN}:all;narrow:{COMPANION_NARROW_TOKEN}:run;'
                                               f'surface:{COMPANION_SURFACE_TOKEN}:all')

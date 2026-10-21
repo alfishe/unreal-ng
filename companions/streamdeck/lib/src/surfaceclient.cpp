@@ -245,6 +245,8 @@ void Client::Start()
         {
             _error = "not paired: run `unreal-streamdeck pair` (the decks use the REST fallback)";
             Say(_error);
+            for (auto& [serial, deck] : _decks)
+                deck.sink->SetNotice(kNotPairedNotice);
             CheckFile();
             Publish();
             return;
@@ -588,7 +590,7 @@ void Client::Revoked(const std::string& why)
         deck.subscribed.clear();
         deck.sink->SetLive(false);
         deck.sink->SetTarget(nullptr);
-        deck.sink->SetNotice("COMPANION REVOKED - PAIR AGAIN");
+        deck.sink->SetNotice(kRevokedNotice);
     }
     {
         std::lock_guard l(_statusMutex);
@@ -637,7 +639,9 @@ void Client::AddDeck(const DeckSpec& spec, std::shared_ptr<DeckSink> sink)
         deck.sink = sink;
         deck.needs = sink->Needs();
         if (_revoked)
-            sink->SetNotice("COMPANION REVOKED - PAIR AGAIN");
+            sink->SetNotice(kRevokedNotice);
+        else if (_options.token.empty() && !_stopped)
+            sink->SetNotice(kNotPairedNotice);
         if (_open)
             Join(deck);
         Publish();

@@ -120,6 +120,15 @@ public:
     ADD_METHOD_TO(EmulatorAPI::putSurfacePin, "/api/v1/surfaces/sessions/{session}/pin", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::getSurfaceReadouts, "/api/v1/surfaces/readouts", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getSurfaceActivity, "/api/v1/surfaces/activity", drogon::Get);
+    // The Stream Deck daemon's supervision by unreal-qt, its settings, pairing and deck brightness (implementation:
+    // api/streamdeck_api.cpp over companion::streamdeck::Call, the verbs of every plane; Stream Deck daemon.md §7)
+    ADD_METHOD_TO(EmulatorAPI::getStreamDeck, "/api/v1/streamdeck", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStreamDeckVerb, "/api/v1/streamdeck/{verb}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postStreamDeckVerb, "/api/v1/streamdeck/{verb}", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::putStreamDeckVerb, "/api/v1/streamdeck/{verb}", drogon::Put);
+    ADD_METHOD_TO(EmulatorAPI::deleteStreamDeckVerb, "/api/v1/streamdeck/{verb}", drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::getStreamDeckBrightness, "/api/v1/streamdeck/decks/{deck}/brightness", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::putStreamDeckBrightness, "/api/v1/streamdeck/decks/{deck}/brightness", drogon::Put);
 
     // ZX-bus slots: the machine's buses, slots and cards (implementation: api/slots_api.cpp over SlotControl,
     // core/src/emulator/slots/slotcontrol.h; ZX-bus slots architecture.md §9). A change restarts the machine
@@ -837,6 +846,18 @@ public:
     void putSurfacePin(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& session) const;
     void getSurfaceReadouts(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
     void getSurfaceActivity(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
+    /// The Stream Deck daemon's verbs (api/streamdeck_api.cpp; companion::streamdeck::Call): GET /api/v1/streamdeck
+    /// = status; GET settings, udev, pair; POST start, stop, restart, pair, revoke; PUT settings; DELETE pair
+    void getStreamDeck(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
+    void getStreamDeckVerb(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& verb) const;
+    void postStreamDeckVerb(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& verb) const;
+    void putStreamDeckVerb(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& verb) const;
+    void deleteStreamDeckVerb(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback,
+                              const std::string& verb) const;
+    void getStreamDeckBrightness(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback,
+                                 const std::string& deck) const;
+    void putStreamDeckBrightness(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback,
+                                 const std::string& deck) const;
     /// POST /api/v1/controllers/actions/{action} {instance?, value?}: run it on the instance's actions worker
     void postAction(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& action) const;

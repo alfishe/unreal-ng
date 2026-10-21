@@ -1,5 +1,6 @@
 #include "runcontroller.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QRegularExpression>
 #include <QStandardPaths>
@@ -124,7 +125,7 @@ bool RunController::Start(const QString& serial, QString* error)
     QString err;
     if (!_daemon->Launch({QStringLiteral("run"), _runFile, QStringLiteral("--watch"), QStringLiteral("--wait"),
                           QStringLiteral("--api"), QString::number(_daemon->ApiPort()),
-                          QStringLiteral("--with-parent")},
+                          QStringLiteral("--parent"), QString::number(QCoreApplication::applicationPid())},
                          &err))
     {
         for (const QString& l : _daemon->Output())

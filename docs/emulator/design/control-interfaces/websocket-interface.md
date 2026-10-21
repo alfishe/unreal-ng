@@ -88,6 +88,7 @@ The surface targets, readouts and activity (Stream Deck SD4: `GET /api/v1/surfac
 | `run.state` | per instance `{state: running \| paused \| stopped, speed, turbo}` | none (a read) | implemented |
 | `ttd.position` | per instance the TTD published cursor `{frame, tinframe, first, end, end_tinframe, state, history, paused, fps}` (the `ttd position` verb's bounds) | none | implemented |
 | `surfaces.context` | per instance the surface context `{context, set, by, default}` (`GET /api/v1/surfaces/context`) | none | implemented |
+| `streamdeck.status` | the Stream Deck daemon as unreal-qt supervises it, once for the process (no `instance`): `{attached, state, mode, activity, own, pid, deck_attached, restarts, error, version, decks, viewers, surface, pairing: {state, code, paired, companion_id, error}}` (the fields of `GET /api/v1/streamdeck` that change with events, [command-interface.md §16.2](./command-interface.md#162-the-stream-deck-daemon)) | none | implemented (SD7) |
 | `surface` | control surfaces: opened by `join` (not by `subscribe`): `action`, `result`, `ctx`, readouts, `target`, `revoked` ([below](#31-the-surface-topic)) | per action | implemented (S4); `activity`, `catalogue`, the readout vocabulary and views: Stream Deck SD4 |
 | `instances` | the companion's live view of the instances (`hello`, `emulator`, `emulator_gone`, `snapshot`): `/api/v1/companions/events` on this socket ([§3.2](#32-the-instances-topic)) | none (a companion's own view) | implemented |
 | `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
@@ -100,6 +101,8 @@ The surface targets, readouts and activity (Stream Deck SD4: `GET /api/v1/surfac
 - A state topic sends each instance's value at once on `subscribe`, then only values that changed, one `state`
   message per instance, at most `max_hz` times a second (1 … 50, default 10, per connection). `{"op":"gone"}` tells an
   instance went.
+- A topic of the process (`streamdeck.status`) sends one `state` message without `instance`:
+  `{"t":"streamdeck.status","op":"state","value":{…}}`, at once on `subscribe`, then on change.
 - Messages of the hub itself (`subscribed`, `unsubscribed`, their errors, `revoked` before a `join`, `slow_consumer`)
   carry `t: "ws"`; those of the calls (`result`, `auth`) `t: "call"`.
 

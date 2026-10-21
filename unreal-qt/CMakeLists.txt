@@ -638,6 +638,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestable.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestatusicon.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestatusicon.h"
+        # Tools > Stream Deck...: the daemon's supervision, settings, the pairing approved here (Stream Deck daemon.md §7)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/streamdeckdialog_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/streamdeckpage.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/streamdeckpage.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusindicator.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusindicator.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/statusbarvideomode_test.cpp"

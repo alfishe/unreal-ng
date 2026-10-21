@@ -74,6 +74,16 @@ own event loop until the condition holds.
 
 Not covered here: `DeckState`'s `busy_by` / `target` (not sent yet: SD5 / SD7).
 
+The daemon's life and pairing (SD7, `tests/daemonlife_test.cpp`): the lock (held, busy, its holder, released), the
+parents' leases (a pid released, a parent process that dies seen through its handle, a daemon started by hand that
+stays), the routes and `Adopt` (a second start hands its parent to the running daemon over HTTP), the pairing against
+a fake host (pending, approved: the token in a 0600 file; 503 refused; cancelled; unreachable), the strip's lines, a
+tap on a notice. unreal-qt's side: `StreamDeckSupervisor_Test` and `StreamDeckApi_Test` in core-tests (the state
+machine on the test's clock with a fake launcher and a fake daemon: start on a deck, crash backoff 1 / 2 / 4 s then
+60 s, a hang killed after three checks, adopt with a lease, a foreign host, stop, restart, mode off, settings applied,
+a missing binary, a second start that ends and is adopted; the verbs, 503 without unreal-qt, revoke),
+`StreamDeckDialog_Test` in unreal-qt-tests (the page and the approval at the GUI), `McpStreamDeck_Test`.
+
 ### 3.2 With a host (needs SD7)
 
 A headless host + the daemon with no real deck + a virtual viewer, scripted (`tools/verification/streamdeck/`):

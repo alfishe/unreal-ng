@@ -48,6 +48,10 @@ namespace sdb::surface
 
 using json = nlohmann::json;
 
+// The strip's lasting lines without a link (a tap on the strip then pairs: sdb/pairing.h)
+inline constexpr const char* kRevokedNotice = "COMPANION REVOKED - TOUCH TO PAIR";
+inline constexpr const char* kNotPairedNotice = "NOT PAIRED - TOUCH TO PAIR";
+
 // The companion file `unreal-streamdeck pair` writes: {webapi, token, companion_id, scopes}
 struct Companion
 {

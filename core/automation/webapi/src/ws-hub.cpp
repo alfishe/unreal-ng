@@ -11,6 +11,7 @@
 #include "emulator/actions/activityfeed.h"
 #include "emulator/actions/contextstate.h"
 #include "emulator/actions/readouts.h"
+#include "emulator/companions/streamdecksupervisor.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
@@ -60,6 +61,13 @@ const char* const kWakeTriggers[] = {
 };
 
 constexpr const char* kInstances = "instances";
+/// The Stream Deck daemon's supervision (companion::streamdeck::Supervisor): one value for the process, no instance
+constexpr const char* kStreamDeck = "streamdeck.status";
+
+bool IsProcessTopic(const std::string& name)
+{
+    return name == kStreamDeck;
+}
 
 bool IsEventTopic(const std::string& name)
 {
@@ -457,7 +465,8 @@ void WsHub::SubscribeTopics(WsConnection& connection, const Json::Value& message
         if (!matched)
             out.Error(connection, pattern.empty() ? std::string("ws") : pattern, "Not Found",
                       "no topic '" + pattern +
-                          "' (run.state, ttd.position, surfaces.context, instances, debug.events, debug.asm_sync)");
+                          "' (run.state, ttd.position, surfaces.context, streamdeck.status, instances, debug.events, "
+                          "debug.asm_sync)");
     }
 
     // The state topics and `instances` need the companion; the debug topics a companion or a loopback peer
@@ -550,13 +559,14 @@ void WsHub::UnsubscribeTopics(WsConnection& connection, const Json::Value& messa
 const std::vector<std::string>& WsHub::TopicNames()
 {
     static const std::vector<std::string> names = {"run.state",    "ttd.position",   "surfaces.context",
-                                                   kInstances,     "debug.events",   "debug.asm_sync"};
+                                                   kStreamDeck,    kInstances,       "debug.events",
+                                                   "debug.asm_sync"};
     return names;
 }
 
 const std::vector<std::string>& WsHub::StateTopicNames()
 {
-    static const std::vector<std::string> names = {"run.state", "ttd.position", "surfaces.context"};
+    static const std::vector<std::string> names = {"run.state", "ttd.position", "surfaces.context", kStreamDeck};
     return names;
 }
 
@@ -725,12 +735,18 @@ void WsHub::DeliverValues(const std::vector<WsConnection*>& topicDue, const std:
                            : Compact(StateNodeToJson(actions::ReadReadout(*it->second, name)));
     };
     std::vector<std::string> all;
+    // the process's own topics: read once, no instance
+    std::map<std::string, std::string> processValues;
     if (!topicDue.empty())
     {
         all = manager->GetEmulatorIds();
         for (const std::string& id : all)
             for (const std::string& name : topicNames)
-                read(id, name);
+                if (!IsProcessTopic(name))
+                    read(id, name);
+        for (const std::string& name : topicNames)
+            if (IsProcessTopic(name))
+                processValues[name] = Compact(StateNodeToJson(companion::streamdeck::Supervisor::Instance().Summary()));
     }
     for (const auto& [connection, session] : surfaceDue)
         if (!session->instance.empty())
@@ -770,6 +786,19 @@ void WsHub::DeliverValues(const std::vector<WsConnection*>& topicDue, const std:
                 out.Message(*connection, text->second);
                 sent = true;
             }
+        }
+        for (const std::string& topic : connection->topics)
+        {
+            auto value = processValues.find(topic);
+            if (value == processValues.end())
+                continue;
+            present.insert(topic);
+            std::string& last = connection->topicSent[topic];
+            if (!connection->topicFull && last == value->second)
+                continue;
+            last = value->second;
+            out.Message(*connection, "{\"t\":\"" + topic + "\",\"op\":\"state\",\"value\":" + value->second + "}");
+            sent = true;
         }
         for (auto it = connection->topicSent.begin(); it != connection->topicSent.end();)
         {

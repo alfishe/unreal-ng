@@ -285,6 +285,16 @@ local a = surfaces("activity", {since = 0})                          -- a.entrie
 surfaces("session_close", {session = s})
 ```
 
+The Stream Deck daemon (`streamdeck(verb, {args})`,
+[command-interface.md §16.2](./command-interface.md#162-the-stream-deck-daemon)):
+
+```lua
+local st = streamdeck("status").status     -- st.state ("running", "waiting", ...), st.pid, st.daemon.version
+streamdeck("settings", {mode = "always", activity = "line"})
+streamdeck("pair")                         -- the user approves it at the GUI
+streamdeck("brightness", {deck = "A1B2C3", value = 40})
+```
+
 ### Disk Operations
 
 Global functions for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands

@@ -511,6 +511,8 @@ private:
     /// Automation sessions (execution arbiter design §6a): who holds the machine, the GUI locked meanwhile
     class RemoteControlGuard* _remoteControl = nullptr;
     class CompanionController* _companions = nullptr;  ///< companion clients: pairing prompts, the Companions dialog
+    class StreamDeckSupervision* _streamDeckSupervision = nullptr;  ///< the Stream Deck daemon, supervised (daemon.md §7)
+    class StreamDeckDialog* _streamDeckDialog = nullptr;            ///< Tools > Stream Deck...
     class QShortcut* _fullScreenShortcut = nullptr;
     bool _hudShownForRemoteControl = false;
     QString _remoteControlAnnounced;  // the session the "Remote control" toast was shown for  // the HUD was off and is shown for the session

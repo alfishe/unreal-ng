@@ -41,7 +41,7 @@ struct Segment
 //   status "run" (run.state), "tape" (media.tape), "target" (the target): one line of status words
 //   showTarget (strip.target, on by default): the target, small, at the top right ("RECONNECTING" when the link
 //     dropped)
-//   notice: a lasting line over the content ("COMPANION REVOKED - PAIR AGAIN"); activity: a quiet line for a while
+//   notice: a lasting line over the content ("COMPANION REVOKED - TOUCH TO PAIR"); activity: a quiet line for a while
 struct StripLive
 {
     enum class Link

@@ -112,8 +112,16 @@ public:
     void SetStripReadout(const std::string& name, const json& value);
     // The surface's target ({instance, index, model, ram_kb, view, mode}; null: none): strip.target and status target
     void SetTarget(const json& target);
-    // A lasting line on the strip, over the menu's content ("" clears it): "COMPANION REVOKED - PAIR AGAIN"
+    // A lasting line on the strip, over the menu's content ("" clears it): "COMPANION REVOKED - TOUCH TO PAIR"
     void SetNotice(const std::string& text);
+    [[nodiscard]] std::string Notice() const;
+    // A tap on the strip while a notice shows (NOT PAIRED, REVOKED, a pairing's state): this instead of the page's
+    // tap (the daemon starts a pairing). Set before Run; called on the device thread with the runtime's lock held:
+    // it must only start something, never wait or call into the daemon's decks
+    std::function<void()> onNoticeTap;
+    // The activity look over the scenario's settings.activity (Q-3; unreal-qt's settings page, PUT /api/v1/activity):
+    // "" = the scenario's, "off", "flash" (the keys bound to the action), "line" (the keys and a strip line)
+    void SetActivityLook(const std::string& look);
     // What the loaded scenario needs from the core: readouts, state paths, target
     [[nodiscard]] SurfaceNeeds Needs() const;
     // After a reload is applied (the device thread, no lock held): the surface client asks Needs() again
@@ -195,6 +203,7 @@ private:
     std::map<std::string, json> _strip;    // strip readouts (SetStripReadout)
     json _target;                          // the surface's target (null: none)
     std::string _notice;                   // a lasting strip line
+    std::string _activityLook;             // SetActivityLook ("" = the scenario's)
     std::string _activityLine;             // activity.strip "line": what another surface did
     std::int64_t _activityUntil = 0;
     std::thread _monitor;  // the REST fallback's poller (strip.status "ttd", faces' readouts); none while live

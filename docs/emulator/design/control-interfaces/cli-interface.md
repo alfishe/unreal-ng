@@ -490,6 +490,29 @@ OK: s1 my script -> #0 PENTAGON 128K (0f3a…) in v1 Main window, follow [view]
 OK: s1 my script -> #1 48K 48K (7c21…), instance:7c21… [none]
 ```
 
+The Stream Deck daemon as unreal-qt supervises it
+([command-interface.md §16.2](./command-interface.md#162-the-stream-deck-daemon)):
+
+| CLI Command | Description |
+| :--- | :--- |
+| `streamdeck [status]` | The daemon and its supervisor: state, pid, version, decks, viewers, pairing |
+| `streamdeck start`, `stop`, `restart` | Start it (or adopt the one running), stop it, both |
+| `streamdeck settings [mode=] [activity=] [api_port=] [viewers_port=] [binary=]` | Read, or change and read |
+| `streamdeck pairing`, `pair`, `pair_cancel` | The pairing's state; ask for one (approve it at the GUI); cancel it |
+| `streamdeck revoke [id]` | Revoke the daemon's companion |
+| `streamdeck brightness [deck] [value]` | A deck's brightness (`streamdeck brightness 40`: the first deck) |
+| `streamdeck udev` | The Linux udev rule |
+
+```
+> streamdeck
+Stream Deck daemon: running (mode deck, activity flash)
+  pid 51234, ours, automation 127.0.0.1:37053, viewers 37050
+  decks on USB 1, restarts 0
+  version 1.0, decks 1, viewers 0, surface connected
+  pairing paired, paired yes, companion c-5f2a91e0b7c4
+  deck A1B2C3 Stream Deck + XL brightness 70
+```
+
 ### Analysis, Capture & Assembly Commands
 
 The analysis, capture and assembly families are available on **all** automation

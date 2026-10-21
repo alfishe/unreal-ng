@@ -233,6 +233,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"controllers", &CLIProcessor::HandleControllers},
                         {"action", &CLIProcessor::HandleAction},
                         {"surface", &CLIProcessor::HandleSurface},
+                        // The Stream Deck daemon's supervision by unreal-qt, settings, pairing, brightness
+                        {"streamdeck", &CLIProcessor::HandleStreamDeck},
 
                         // ZX-MultiSound card and its MIDI synthesizer
                         {"multisound", &CLIProcessor::HandleMultiSound},

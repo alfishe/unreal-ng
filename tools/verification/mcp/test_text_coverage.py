@@ -33,6 +33,7 @@ CALLS = [
     ('emulator_manage', {'action': 'server'}, 80),
     ('media', {'action': 'formats'}, 80),
     ('bus_analyzer', {'action': 'list'}, 80),
+    ('streamdeck', {'action': 'status'}, 50),
 ]
 
 

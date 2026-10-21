@@ -36,6 +36,7 @@
 #include <emulator/actions/actionregistry.h>
 #include <emulator/actions/contextstate.h>
 #include <emulator/actions/surfacesapi.h>
+#include <emulator/companions/streamdeckapi.h>
 #include <emulator/execution/automationgate.h>
 #include <emulator/sound/midi/midicontrol.h>
 #ifdef ENABLE_CONTROLLERS
@@ -2033,6 +2034,30 @@ public:
                     if (key.is<std::string>())
                         args[key.as<std::string>()] = toNode(item);
             return StateNodeToLua(s, actions::surfaces::Call(verb.value_or("views"), args).body);
+        });
+        // streamdeck(verb, {args}) -> the reply table of a Stream Deck daemon verb (companion::streamdeck::Call:
+        // status, start, stop, restart, settings, pairing, pair, pair_cancel, revoke, brightness, udev), as WebAPI
+        // /api/v1/streamdeck/..., the CLI `streamdeck`, MCP `streamdeck` and Python streamdeck()
+        lua.set_function("streamdeck", [](sol::this_state s, sol::optional<std::string> verb, sol::optional<sol::table> opts) {
+            StateNode args = StateNode::Object();
+            if (opts)
+                for (const auto& [key, item] : *opts)
+                {
+                    if (!key.is<std::string>())
+                        continue;
+                    const std::string name = key.as<std::string>();
+                    if (item.is<bool>())
+                        args[name] = StateNode(item.as<bool>());
+                    else if (item.get_type() == sol::type::number)
+                    {
+                        const double number = item.as<double>();
+                        args[name] = number == std::floor(number) ? StateNode(static_cast<int64_t>(number))
+                                                                  : StateNode(number);
+                    }
+                    else if (item.is<std::string>())
+                        args[name] = StateNode(item.as<std::string>());
+                }
+            return StateNodeToLua(s, companion::streamdeck::Call(verb.value_or("status"), args).body);
         });
         // controllers_host(verb, {options}) -> the reply table every surface returns: the host game controllers
         // (devices, profiles, bindings, haptics, rumble; HostInputControl, the process's, not the machine's)

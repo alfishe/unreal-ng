@@ -93,7 +93,8 @@ as on the other apps (into the same directory, so the DLLs are shared; the daemo
 - AppImage (`tools/package-appimage.sh`, done 2026-10-20): both binaries in `usr/bin`, passed to linuxdeploy as
   `--executable` (the studio's Qt deployed with the rest), the rule moved to `usr/lib/udev/rules.d`. `AppRun` starts
   unreal-qt only; the companion is reached through unreal-qt (SD7) or `--appimage-extract`.
-- AppImage users get the rule text in the settings page (an AppImage cannot install it; SD7).
+- AppImage users get the rule text in the settings page (an AppImage cannot install it): done 2026-10-21 (SD7), Tools >
+  Stream Deck... on Linux, also `streamdeck udev` on every plane.
 - The release job checks: the DEB in clean Ubuntu 24.04 / 26.04 (the rule installed, both `--help`), the extracted
   AppImage (the rule, both `--help` with a bare environment).
 

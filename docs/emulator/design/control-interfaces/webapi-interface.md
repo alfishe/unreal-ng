@@ -1707,6 +1707,25 @@ GET    /api/v1/surfaces/readouts[?instance=&names=]      the readout vocabulary 
 GET    /api/v1/surfaces/activity[?since=&instance=&limit=] the activity feed: {entries, last, dropped}
 ```
 
+```
+GET    /api/v1/streamdeck                                the Stream Deck daemon and its supervisor (= /status)
+POST   /api/v1/streamdeck/start | stop | restart         start (or adopt), stop (quit, then terminate), both
+GET    /api/v1/streamdeck/settings                       {mode, activity, api_port, viewers_port, binary, brightness}
+PUT    /api/v1/streamdeck/settings                       {mode?: off|deck|always, activity?: off|flash|line, api_port?, viewers_port?, binary?}
+GET    /api/v1/streamdeck/pair                           the daemon's pairing: idle | requesting | pending (code) | paired | ...
+POST   /api/v1/streamdeck/pair                           the daemon asks for a pairing (the user approves it at the GUI)
+DELETE /api/v1/streamdeck/pair                           cancel a pending one
+POST   /api/v1/streamdeck/revoke                         {id?}: revoke the daemon's companion (default its own)
+GET    /api/v1/streamdeck/decks/{deck}/brightness        a deck's brightness (deck: serial or first); PUT {value: 0..100}
+GET    /api/v1/streamdeck/udev                           the Linux udev rule text
+```
+
+The Stream Deck daemon ([command-interface.md section 16.2](./command-interface.md#162-the-stream-deck-daemon)):
+unreal-qt supervises `unreal-streamdeck`; without unreal-qt (headless, the video wall) every route but `GET
+/api/v1/streamdeck` and `/udev` answers `503 supervisor_unavailable`. `pair`, `pair` (GET) and `brightness` forward to
+the daemon's automation (`409 not_running` without one, `502 daemon_refused` with its answer in `daemon`); they run off
+the I/O thread. The topic `streamdeck.status` on `/api/v1/ws` pushes the changes.
+
 Control surface targets ([command-interface.md section 16.1](./command-interface.md#161-surface-targets-readouts-activity),
 Stream Deck integration [targeting.md](../../../inprogress/2026-10-19-streamdeck-integration/targeting.md)). **"No id"
 (T-1)**: every route that takes an optional instance (`/controllers/actions`, `/surfaces/context`, `/surfaces/readouts`,

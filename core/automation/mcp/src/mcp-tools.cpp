@@ -21,6 +21,7 @@
 #include "mcp-bus.h"
 #include "mcp-slots.h"
 #include "mcp-actions.h"
+#include "mcp-streamdeck.h"
 #include "mcp-controllers.h"
 #include "mcp-router.h"
 #include "mcp-symbols.h"
@@ -6005,6 +6006,8 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterControllers(*registry);
     // actions: the core ActionRegistry by id (docs/inprogress/2026-10-18-control-surfaces/actions.md §6)
     RegisterActions(*registry);
+    // streamdeck: the Stream Deck daemon as unreal-qt supervises it (docs/inprogress/2026-10-19-streamdeck-integration)
+    RegisterStreamDeck(*registry);
     // bus_analyzer: peripheral bus traces, checks, SD card timing (docs/inprogress/2026-10-11-bus-analyzer)
     RegisterBusAnalyzer(*registry);
 

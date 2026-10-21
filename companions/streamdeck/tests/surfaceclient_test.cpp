@@ -344,7 +344,7 @@ void TestRevokedAndNewToken()
 
     host.Push({{"op", "revoked"}, {"t", "surface"}, {"message", "the user revoked this companion"}});
     CHECK(RunUntil(loop, [&] { return !deck->live; }));
-    CHECK(deck->notice == "COMPANION REVOKED - PAIR AGAIN");
+    CHECK(deck->notice == "COMPANION REVOKED - TOUCH TO PAIR");
     CHECK(client.Status()["revoked"] == true && !client.Connected());
     auto r = client.Executor("A1")->Run({"run.pause_toggle", nullptr, json::object()});
     CHECK(r.notSent);
@@ -489,7 +489,7 @@ void TestStripTimeline()
     CHECK(Count(lost, {220, 170, 60}, x1 - 260, x1, 0, 40) > 20);  // RECONNECTING, amber
     // the revoked notice over everything
     live.link = scn::StripLive::Link::None;
-    live.notice = "COMPANION REVOKED - PAIR AGAIN";
+    live.notice = "COMPANION REVOKED - TOUCH TO PAIR";
     const Rgb revoked = scn::RenderStrip(page, m.lcdLogicalW, m.lcdLogicalH, m.dialTileW, {}, -1, {}, {}, &live);
     CHECK(Count(revoked, {235, 215, 205}, 0, m.lcdLogicalW, 0, m.lcdLogicalH) > 100);
     CHECK(Pink(revoked) == 0);

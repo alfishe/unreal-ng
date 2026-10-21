@@ -60,6 +60,7 @@
 #include "controllers/guiactions.h"
 #include "controllers/hostcontrollers.h"
 #include "controllers/surfacestatusicon.h"
+#include "controllers/streamdeckpage.h"
 #include "controllers/surfacetargets.h"
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
@@ -589,6 +590,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Companion clients (docs/inprogress/2026-10-16-companion-client): pairing is approved here; listing and revoking
     // stay possible during a session (revoking only takes power away)
     _remoteControl->exempt(_menuManager->companionsAction());
+    _remoteControl->exempt(_menuManager->streamDeckAction());
     _companions = new CompanionController(this);
     connect(_menuManager, &MenuManager::controllersRequested, this, [this] {
         if (_controllersDialog)
@@ -599,6 +601,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         }
     });
     connect(_menuManager, &MenuManager::companionsRequested, _companions, &CompanionController::showCompanionsDialog);
+    // The Stream Deck daemon (Stream Deck integration daemon.md §7): started when a deck is attached, watched,
+    // restarted; Tools > Stream Deck... shows it, pairs it, sets its decks
+    _streamDeckSupervision = new StreamDeckSupervision(this);
+    _streamDeckDialog = new StreamDeckDialog(_companions, this);
+    connect(_menuManager, &MenuManager::streamDeckRequested, this, [this] {
+        _streamDeckDialog->show();
+        _streamDeckDialog->raise();
+        _streamDeckDialog->activateWindow();
+    });
+    connect(_streamDeckDialog, &StreamDeckDialog::surfacesRequested, _menuManager, &MenuManager::controllersRequested);
     connect(_companions, &CompanionController::toastRequested, this, [this](const QString& title, const QString& body) {
         if (statusBar())
             statusBar()->showMessage(title + QStringLiteral(": ") + body, 8000);
@@ -894,6 +906,10 @@ MainWindow::~MainWindow()
 
     delete _controllerToast;
     _controllerToast = nullptr;
+    delete _streamDeckDialog;
+    _streamDeckDialog = nullptr;
+    delete _streamDeckSupervision;  // the daemon's lease goes back: it ends unless the studio still holds it
+    _streamDeckSupervision = nullptr;
     delete _controllersDialog;
     _controllersDialog = nullptr;
     delete _hostControllers;
@@ -1305,6 +1321,10 @@ void MainWindow::closeEvent(QCloseEvent* event)
     }
     delete _controllerToast;
     _controllerToast = nullptr;
+    delete _streamDeckDialog;
+    _streamDeckDialog = nullptr;
+    delete _streamDeckSupervision;  // the daemon's lease goes back: it ends unless the studio still holds it
+    _streamDeckSupervision = nullptr;
     delete _controllersDialog;
     _controllersDialog = nullptr;
     delete _hostControllers;

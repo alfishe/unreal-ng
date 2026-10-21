@@ -371,6 +371,8 @@ private:
     /// action [list | run <id> [value] [param=val ..]]: the core ActionRegistry (cli-processor-action.cpp)
     void HandleAction(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSurface(const ClientSession& session, const std::vector<std::string>& args);
+    /// streamdeck <verb>: the Stream Deck daemon's supervision, settings, pairing (companion::streamdeck::Call)
+    void HandleStreamDeck(const ClientSession& session, const std::vector<std::string>& args);
     // ZX-MultiSound and its MIDI synthesizer (cli-processor-multisound.cpp, DeviceState::MultiSound / Midi, MidiControl)
     void HandleMultiSound(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMidi(const ClientSession& session, const std::vector<std::string>& args);
