@@ -8,6 +8,7 @@
 #include "sdb/image.h"
 #include "sdb/input.h"
 #include "sdb/models.h"
+#include "sdb/reconnect.h"
 #include "sdb/transport.h"
 
 namespace sdb
@@ -132,6 +133,16 @@ public:
     {
         return *_t;
     }
+    // Whether the deck is there (false while a reconnecting USB deck is unplugged). Any thread.
+    [[nodiscard]] bool Connected() const
+    {
+        return _t->Connected();
+    }
+    // Close the deck and open it again after `away` (Transport::Reconnect). Any thread.
+    bool Reconnect(std::chrono::milliseconds away)
+    {
+        return _t->Reconnect(away);
+    }
 
     // Puts a transport around the current one (the daemon's multiplexer: AttachDeck). Before the runtime starts.
     template <class Wrap>
@@ -182,6 +193,9 @@ struct Found
     const Model* physical = nullptr;      // set when `model` is emulated on this physical device
     std::optional<std::string> mirror{};  // also drive a Stream Deck Studio at this address ("" = default)
     bool mirrorOptional = false;          // the default mirror: no emulator running = the real deck alone, not an error
+    // A USB deck that survives an unplug: OpenDevice wraps it in a ReconnectingTransport (sdb/reconnect.h) that looks
+    // for the same serial again.
+    std::optional<ReconnectOptions> reconnect{};
 };
 [[nodiscard]] std::vector<Found> ListDevices();
 [[nodiscard]] std::unique_ptr<Device> OpenDevice(const Found& f, std::string* error = nullptr);

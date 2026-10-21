@@ -10,6 +10,7 @@
 //   GET  /api/v1/decks/{serial}/scenario      PUT {file, watch} plays another file on that deck only; DELETE gives
 //                                             the deck the daemon's start scenario back
 //   POST /api/v1/decks/{serial}/snapshot      {path}: the deck's viewers save a PNG there (device wire Control)
+//   POST /api/v1/decks/{serial}/reconnect     {away_ms}: the real deck's USB handle closed and opened again
 //   GET  /api/v1/state, /page, /nodes; POST /navigate, /press, /reload; GET /scenario   the runtime of one deck
 //                                             (?deck=serial, default the first)
 //

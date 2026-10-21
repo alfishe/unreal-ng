@@ -290,6 +290,14 @@ public:
     {
         _b->PublishPage(j);
     }
+    [[nodiscard]] bool Connected() const override
+    {
+        return _a->Connected();
+    }
+    bool Reconnect(std::chrono::milliseconds away) override
+    {
+        return _a->Reconnect(away);
+    }
 
 private:
     std::unique_ptr<Transport> _a;
