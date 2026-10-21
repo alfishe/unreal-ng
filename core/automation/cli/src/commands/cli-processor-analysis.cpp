@@ -39,6 +39,7 @@
 #include "recordingmanager.h"
 #include "cli-videorecord-options.h"
 #include "../../../temporalstatus.h"
+#include "emulator/video/viewportcontrol.h"
 #include "../../../windowdisplay.h"
 #endif
 
@@ -417,9 +418,15 @@ void CLIProcessor::HandleVideo(const ClientSession& session, const std::vector<s
         "  video temporal list            - algorithms that can be switched on\n"
         "  video temporal off             - switch the de-flicker off\n"
         "  video temporal <algorithm>     - switch it on (e.g. mod-tpgwafsd)\n"
-        "  video window [status]          - GUI window display: GPU, CRT effects / profile, temporal blending\n"
-        "  video window <key>=<value> ... - change them: gpu, crt, blending on|off; crt_profile <name>;\n"
-        "                                   blending_frames 2..5; blending_weights equal|exponential\n"
+        "  video window [status]          - GUI window display: GPU, CRT, blending, full screen, scale, HUD, keyboard\n"
+        "  video window <key>=<value> ... - change them: gpu, crt, blending, fullscreen, toolbar, status_bar, hud,\n"
+        "                                   osd_keyboard, next_layers on|off; crt_profile <name>; blending_frames 2..5;\n"
+        "                                   blending_weights equal|exponential; blending_decay 0.1..0.9; scale 1..4;\n"
+        "                                   hud_theme <name>; hud_notice.<id> on|off; osd_keyboard_picture <id>;\n"
+        "                                   next_layers_mode layers|composed|winner; next_layer.<ula|layer2|tilemap|sprites>\n"
+        "  video window crt_params [...]  - the active CRT profile's parameters; <name>=<v>, <name>+=<steps>,\n"
+        "                                   <name>-=<steps>, reset, reset=<name>\n"
+        "  video viewport [<name>]        - the overscan frame's crop: full, symmetric, standard, screen_only, next, prev\n"
         "Numbers are decimal or 0x-hex.";
 
     auto emulator = GetSelectedEmulator(session);
@@ -457,6 +464,11 @@ void CLIProcessor::HandleVideo(const ClientSession& session, const std::vector<s
     if (sub == "window")
     {
         HandleVideoWindow(session, args);
+        return;
+    }
+    if (sub == "viewport")
+    {
+        HandleVideoViewport(session, *emulator, args);
         return;
     }
     unsigned a = 0, b = 0, c = 0;
@@ -526,6 +538,29 @@ void CLIProcessor::HandleVideoTemporal(const ClientSession& session, EmulatorCon
 // (the same WindowDisplay report); headless there is no window.
 void CLIProcessor::HandleVideoWindow(const ClientSession& session, const std::vector<std::string>& args)
 {
+    // `video window crt_params [<name>=<value> | <name>+=<steps> | <name>-=<steps> | reset | reset=<name> ...]`: the
+    // active CRT profile's parameters (GET / PUT /video/window/crt_params)
+    if (args.size() >= 2 && args[1] == "crt_params")
+    {
+        CrtParameterChange change;
+        for (size_t i = 2; i < args.size(); ++i)
+        {
+            std::string error;
+            if (!WindowDisplay::ApplyCrtParameterWord(change, args[i], error))
+            {
+                session.SendResponse(error);
+                return;
+            }
+        }
+        const WindowDisplay::ParametersResult r = WindowDisplay::SetCrtParameters(change);
+        if (!r.Ok())
+        {
+            session.SendResponse(std::string("Error (") + WindowDisplay::StatusName(r.status) + "): " + r.error);
+            return;
+        }
+        session.SendResponse(WindowDisplay::CrtParametersSummary(r.parameters));
+        return;
+    }
     WindowDisplayChange change;
     for (size_t i = 1; i < args.size(); ++i)
     {
@@ -551,6 +586,29 @@ void CLIProcessor::HandleVideoWindow(const ClientSession& session, const std::ve
     }
     session.SendResponse("Window " + WindowDisplay::Summary(r.settings) + NEWLINE +
                          DeviceState::ToText(WindowDisplay::Report(r.settings)));
+}
+
+// HandleVideoViewport — `video viewport [status | full | symmetric | standard | screen_only | next | prev]`: the crop of
+// the Pentagon's overscan frame. Mirrors GET / PUT /api/v1/emulator/{id}/video/viewport (VideoViewport); overscan
+// itself: `feature overscan on` or PUT /state/screen/overscan.
+void CLIProcessor::HandleVideoViewport(const ClientSession& session, Emulator& emulator,
+                                       const std::vector<std::string>& args)
+{
+    if (args.size() > 2)
+    {
+        session.SendResponse("Usage: video viewport [status | " + VideoViewport::NameList() + " | next | prev]");
+        return;
+    }
+    if (args.size() == 2 && args[1] != "status")
+    {
+        const VideoViewport::Result r = VideoViewport::SetViewport(emulator, args[1]);
+        if (!r.Ok())
+        {
+            session.SendResponse("Error: " + r.error);
+            return;
+        }
+    }
+    session.SendResponse(VideoViewport::Summary(emulator) + NEWLINE + DeviceState::ToText(VideoViewport::Report(emulator)));
 }
 
 // HandleFrameCost — halt/active cost of the last frame plus session averages.

@@ -246,6 +246,8 @@ def launch(binary, port_base):
         env[name] = str(port_base + offset)
     # No Stream Deck daemon of its own, whatever the user's setting says (test_streamdeck.py)
     env.setdefault('UNREAL_STREAMDECK_SUPERVISOR', 'off')
+    # The picture as the defaults draw it: the user's View settings (GPU, CRT, scale, HUD) stay out
+    env.setdefault('UNREAL_QT_VIEW_SETTINGS', 'off')
     # A companion client for test_companion.py (a paired device acting as the user's hands)
     env.setdefault('UNREAL_COMPANION_TOKENS', f'verify:{COMPANION_TOKEN}:all;narrow:{COMPANION_NARROW_TOKEN}:run;'
                                               f'surface:{COMPANION_SURFACE_TOKEN}:all')

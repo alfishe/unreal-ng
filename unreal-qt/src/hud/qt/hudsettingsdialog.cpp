@@ -7,7 +7,10 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QStyle>
+
+#include <algorithm>
 
 namespace
 {
@@ -143,6 +146,36 @@ QSet<QString> HudSettingsDialog::enabledCategories()
 {
     ensureInitialized();
     return g_enabledCategories;
+}
+
+bool HudSettingsDialog::setCategoryEnabled(const QString& categoryId, bool enabled)
+{
+    ensureInitialized();
+    const bool known = std::any_of(g_categories.begin(), g_categories.end(),
+                                   [&](const HudCategoryDescriptor& cat) { return cat.id == categoryId; });
+    if (!known)
+        return false;
+    if (enabled)
+        g_enabledCategories.insert(categoryId);
+    else
+        g_enabledCategories.remove(categoryId);
+    saveSettings();
+    for (QWidget* widget : QApplication::topLevelWidgets())
+    {
+        for (auto* dialog : widget->findChildren<HudSettingsDialog*>())
+        {
+            for (QCheckBox* checkbox : dialog->_categoryCheckboxes)
+            {
+                if (checkbox->property("categoryId").toString() != categoryId)
+                    continue;
+                QSignalBlocker blocker(checkbox);
+                checkbox->setChecked(enabled);
+            }
+        }
+    }
+    if (g_changedCallback)
+        g_changedCallback();
+    return true;
 }
 
 void HudSettingsDialog::saveSettings()

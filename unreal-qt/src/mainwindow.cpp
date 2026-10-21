@@ -747,6 +747,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     _statusBarManager->restoreSettings();
 
+    // The picture as the user left it (View/*); the automation's published copy follows every change from here on
+    restoreViewSettings();
+    connectWindowDisplayPublishing();
+
     // Bring application window to foreground
     this->raise();
 
@@ -984,7 +988,7 @@ void MainWindow::showEvent(QShowEvent* event)
     if (!_initialFitDone)
     {
         _initialFitDone = true;
-        QTimer::singleShot(0, this, [this]() { fitWindowToScreen(2); });
+        QTimer::singleShot(0, this, [this]() { fitWindowToScreen(_startScale); });
 
         // Turbo render cap follows the display we are on (and moves with the window)
         applyDisplayRefreshRate();
@@ -1095,89 +1099,28 @@ void MainWindow::registerWindowView()
         if (change)
             window->applyWindowDisplay(*change);
         out = window->windowDisplaySettings();
+        if (change)
+            window->publishWindowDisplay();  // the toggles read it at once
         return true;
     };
-    WindowView::SetProvider(std::make_shared<WindowViewProvider>(_screenWrapper, shownEmulatorId, display));
-}
-
-namespace
-{
-/// The automation word of a custom CRT shader: "shader:<name>"
-const QString kShaderPrefix = QStringLiteral("shader:");
-}  // namespace
-
-WindowDisplaySettings MainWindow::windowDisplaySettings() const
-{
-    WindowDisplaySettings s;
-    s.backend = _screenWrapper->isGPUAccelerated() ? "gpu" : "software";
-    s.gpuAvailable = DeviceScreenWrapper::isGPUAvailable();
-    s.gpu = _screenWrapper->isGPUAccelerated();
-    s.crt = _screenWrapper->crtEffectsEnabled();
-    // A custom shader is "shader:<name>", offered when the host has a GPU (it needs the GPU on: WindowDisplay::Set)
-    const QString shader = _screenWrapper->customShader();
-    s.crtProfile = shader.isEmpty() ? CRTProfileParams::ProfileKey(_screenWrapper->crtProfile()).toStdString()
-                                    : (kShaderPrefix + shader).toStdString();
-    for (CRTProfile profile : CRTProfileParams::AllProfiles())
-        s.crtProfiles.push_back(CRTProfileParams::ProfileKey(profile).toStdString());
-    if (s.gpuAvailable)
-    {
-        for (const QString& name : DeviceScreenWrapper::availableShaders())
-            s.crtProfiles.push_back((kShaderPrefix + name).toStdString());
-    }
-    s.blending = _screenWrapper->temporalBlendingEnabled();
-    s.blendingFrames = _screenWrapper->temporalHistorySize();
-    s.blendingWeights = _screenWrapper->temporalWeightMode() == 1 ? "exponential" : "equal";
-    s.emulatorId = _emulator ? _emulator->GetId() : std::string();
-    return s;
-}
-
-void MainWindow::applyWindowDisplay(const WindowDisplayChange& change)
-{
-    // The order of the menu: the backend first (it re-creates the screen and carries the rest over), then the profile
-    // (it switches CRT on or off by itself), then the switches that name it
-    if (change.gpu)
-    {
-        _menuManager->setGpuAccelerationChecked(*change.gpu);
-        handleGpuAccelerationToggled(*change.gpu);
-    }
-    if (change.crtProfile && QString::fromStdString(*change.crtProfile).startsWith(kShaderPrefix))
-    {
-        const QString name = QString::fromStdString(*change.crtProfile).mid(static_cast<int>(kShaderPrefix.size()));
-        _menuManager->setCrtShader(name);
-        handleCrtShaderChanged(name);
-    }
-    else if (change.crtProfile)
-    {
-        const std::vector<CRTProfile> profiles = CRTProfileParams::AllProfiles();
-        for (int index = 0; index < static_cast<int>(profiles.size()); ++index)
+    auto parameters = [window](const CrtParameterChange* change, CrtParameters& out, std::string& error) {
+        if (!window || !window->_screenWrapper)
         {
-            if (CRTProfileParams::ProfileKey(profiles[index]).toStdString() != *change.crtProfile)
-                continue;
-            _menuManager->setCrtProfile(index);
-            handleCrtProfileChanged(index);
+            error = "The window is closed";
+            return false;
         }
-    }
-    if (change.crt)
-    {
-        _menuManager->setCrtEffectsChecked(*change.crt);
-        handleCrtEffectsToggled(*change.crt);
-    }
-    if (change.blendingFrames)
-        _screenWrapper->setTemporalHistorySize(*change.blendingFrames);
-    if (change.blendingWeights)
-        _screenWrapper->setTemporalWeightMode(*change.blendingWeights == "exponential" ? 1 : 0);
-    if (change.blending)
-    {
-        _menuManager->setTemporalBlendingChecked(*change.blending);
-        handleTemporalBlendingToggled(*change.blending);
-    }
-    // An open Temporal Effects dialog shows what automation set
-    if (change.blending || change.blendingFrames || change.blendingWeights)
-    {
-        for (auto* dialog : findChildren<TemporalEffectsDialog*>())
-            dialog->updateFromScreen();
-    }
+        if (change)
+            window->applyCrtParameters(*change);
+        out = window->crtParameters();
+        if (change)
+            window->publishWindowDisplay();
+        return true;
+    };
+    WindowView::SetProvider(std::make_shared<WindowViewProvider>(_screenWrapper, shownEmulatorId, display, parameters));
+    schedulePublishWindowDisplay();
 }
+
+// windowDisplaySettings / applyWindowDisplay and the rest of the window's automation: mainwindow_picture.cpp
 
 void MainWindow::refitWindowToPicture()
 {
@@ -1234,6 +1177,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
     {
         _statusBarManager->saveSettings();
     }
+    saveViewSettings();
 
     // ============================================================
     // PHASE 1: NOTIFY ALL WINDOWS/WIDGETS (instant)
@@ -1362,6 +1306,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
 void MainWindow::resizeEvent(QResizeEvent* event)
 {
+    schedulePublishWindowDisplay();  // a hand resize ends the whole scale
     if (_screenWrapper && ui->contentFrame) {
         // fitToParent() sets move+resize atomically, so no deferred
         // re-centering dance is needed anymore
@@ -1446,6 +1391,7 @@ void MainWindow::changeEvent(QEvent* event)
 {
     if (event->type() == QEvent::WindowStateChange)
     {
+        schedulePublishWindowDisplay();  // full screen / maximized: the automation's copy follows
         QWindowStateChangeEvent* stateEvent = static_cast<QWindowStateChangeEvent*>(event);
         Qt::WindowStates oldState = stateEvent->oldState();
         Qt::WindowStates newState = windowState();
@@ -4065,7 +4011,9 @@ void MainWindow::handleTemporalEffectsRequested()
     connect(dialog, &TemporalEffectsDialog::blendingChanged, this, [this](bool enabled) {
         if (_menuManager)
             _menuManager->setTemporalBlendingChecked(enabled);
+        schedulePublishWindowDisplay();
     });
+    connect(dialog, &TemporalEffectsDialog::settingsChanged, this, &MainWindow::schedulePublishWindowDisplay);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
     dialog->raise();
@@ -4587,6 +4535,8 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
     bool temporalEnabled = _screenWrapper->temporalBlendingEnabled();
     int temporalHistorySize = _screenWrapper->temporalHistorySize();
     int temporalWeightMode = _screenWrapper->temporalWeightMode();
+    const float temporalDecay = _screenWrapper->temporalDecay();
+    const std::map<QString, float> presetValues = _screenWrapper->presetOverrides();
 
     // Detach from emulator before destroying
     _screenWrapper->detach();
@@ -4631,6 +4581,7 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
     _screenWrapper->setCRTProfile(crtParams);
     if (!crtShader.isEmpty())
         _screenWrapper->loadCustomShader(crtShader);
+    _screenWrapper->setPresetOverrides(presetValues);  // the preset's values set (none: nothing)
     _screenWrapper->setCRTEffectsEnabled(crtEnabled);
 
     // Re-attach to emulator if one is running
@@ -4658,6 +4609,7 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
 
     // Restore temporal blending state
     _screenWrapper->setTemporalBlendingEnabled(temporalEnabled);
+    _screenWrapper->setTemporalDecay(temporalDecay);
     _screenWrapper->setTemporalHistorySize(temporalHistorySize);
     _screenWrapper->setTemporalWeightMode(temporalWeightMode);
 
@@ -4757,6 +4709,7 @@ void MainWindow::handleTemporalBlendingToggled(bool enabled)
 
 void MainWindow::handleScaleRequested(int scale)
 {
+    _userResizedWindow = false;  // a whole scale asked for: the window follows the picture again
     // Leave full screen / maximized first so the resize can take effect
     if (isFullScreen())
         handleFullScreenShortcut();
@@ -5273,6 +5226,10 @@ void MainWindow::subscribeToPerEmulatorEvents()
     ObserverCallbackMethod modeCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoModeChanged);
     messageCenter.AddObserver(NC_VIDEO_MODE_CHANGED, observerInstance, modeCallback);
 
+    ObserverCallbackMethod viewportCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoViewportChanged);
+    messageCenter.AddObserver(NC_VIDEO_VIEWPORT_CHANGED, observerInstance, viewportCallback);
+
     ObserverCallbackMethod resetCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleSystemReset);
     messageCenter.AddObserver(NC_SYSTEM_RESET, observerInstance, resetCallback);
 
@@ -5300,6 +5257,10 @@ void MainWindow::unsubscribeFromPerEmulatorEvents()
 
     ObserverCallbackMethod modeCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoModeChanged);
     messageCenter.RemoveObserver(NC_VIDEO_MODE_CHANGED, observerInstance, modeCallback);
+
+    ObserverCallbackMethod viewportCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoViewportChanged);
+    messageCenter.RemoveObserver(NC_VIDEO_VIEWPORT_CHANGED, observerInstance, viewportCallback);
 
     ObserverCallbackMethod resetCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleSystemReset);
     messageCenter.RemoveObserver(NC_SYSTEM_RESET, observerInstance, resetCallback);
@@ -5538,6 +5499,7 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
         });
 
         _hudModel->setAlwaysShownPrefix("remote");  // the automation session's indicator and toasts
+        _hudModel->setTheme(_hudTheme);             // the theme chosen (View/HudTheme, hud_theme)
         _hudWrapper->setModel(_hudModel);
         updateRemoteControlUi();
 
@@ -5553,6 +5515,9 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
         _hudWrapper->setVisible(_hudOverlayVisible);
         _hudWrapper->syncGeometryWithParent();
     }
+
+    // The published copy follows the new binding
+    schedulePublishWindowDisplay();
 
     if (_ttdWidget)
     {

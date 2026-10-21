@@ -570,13 +570,19 @@ Emulation itself is not delayed. The same status is CLI `video temporal`,
 Lua / Python `video_temporal()`, MCP `capture_media` `temporal_status`.
 
 ```
-GET  /api/v1/emulator/{id}/video/window       GUI window display settings: backend (gpu / software), gpu_available, gpu, crt, crt_profile, crt_profiles[], blending, blending_frames, blending_weights, emulator (the instance the window shows)
-PUT  /api/v1/emulator/{id}/video/window       any of {"gpu": bool, "crt": bool, "crt_profile": "basic", "blending": bool, "blending_frames": 2..5, "blending_weights": "equal"|"exponential"} (POST too); applied the way the View menu does, answers the settings after the change; a custom shader is `"crt_profile": "shader:<name>"` (offered when the host has a GPU; needs `gpu` on, in the same request or before: 409 unavailable otherwise); the window's display, not the machine: no control session opened or needed; 400 bad-parameter, 409 no-window (headless) / unavailable (gpu without OpenGL), {error, kind}
+GET  /api/v1/emulator/{id}/video/window       GUI window display settings: backend (gpu / software), gpu_available, gpu, crt, crt_profile, crt_profiles[], blending, blending_frames, blending_weights, blending_decay, emulator (the instance the window shows), fullscreen, scale (1..4; 0 resized by hand / maximized / full screen), toolbar, status_bar, hud, hud_theme, hud_themes[], hud_notices {id: bool}, osd_keyboard, osd_keyboard_picture, osd_keyboard_pictures[], next_layers, next_layers_mode, next_layers_shown {ula, layer2, tilemap, sprites}
+PUT  /api/v1/emulator/{id}/video/window       any of {"gpu": bool, "crt": bool, "crt_profile": "basic", "blending": bool, "blending_frames": 2..5, "blending_weights": "equal"|"exponential", "blending_decay": 0.1..0.9, "fullscreen": bool, "scale": 1..4, "toolbar": bool, "status_bar": bool, "hud": bool, "hud_theme": "retro_zx", "hud_notices": {"ram-page": false} (or "hud_notice.<id>": bool), "osd_keyboard": bool, "osd_keyboard_picture": "pentagon2plus", "next_layers": bool, "next_layers_mode": "layers"|"composed"|"winner", "next_layers_shown": {"sprites": false} (or "next_layer.<name>": bool)} (POST too); applied the way the View menu does, answers the settings after the change; a custom shader is `"crt_profile": "shader:<name>"` (offered when the host has a GPU; needs `gpu` on, in the same request or before: 409 unavailable otherwise); the window's display, not the machine: no control session opened or needed; 400 bad-parameter, 409 no-window (headless) / unavailable (gpu without OpenGL, a keyboard picture on a machine without one), {error, kind}
+GET  /api/v1/emulator/{id}/video/window/crt_params        the active CRT profile's parameters: {profile, kind (preset | profile | none), parameters [{name, description, value, initial, minimum, maximum, step}]}
+PUT  /api/v1/emulator/{id}/video/window/crt_params        {values: {name: number}, steps: {name: steps}, reset: true | name | [names]} (POST too): reset, then set (clamped), then move by a dial's steps; answers the parameters; 400 an unknown name (lists them), 409 no-window / unavailable (a profile without parameters)
+POST /api/v1/emulator/{id}/video/window/crt_params/reset  every parameter back to its initial value
+GET  /api/v1/emulator/{id}/video/viewport                 the overscan frame and its crop: {overscan, overscan_available, viewport (full | symmetric | standard | screen_only | custom), viewports[], framebuffer, display, video_mode}; the machine's, answers headless too
+PUT  /api/v1/emulator/{id}/video/viewport                 {"viewport": "standard" | "next" | "prev" | ...} (POST too); a crop other than full needs overscan on (409 unavailable); answers the report + changed; changes the picture, not the machine: no control session
 ```
 
 The window belongs to the GUI, which registers it with the core; headless every call answers 409 `no-window`. The
 same settings are CLI `video window`, Lua / Python `window_display()` / `window_display_set()`, MCP `capture_media`
-`window_display` / `window_display_set`; screenshot `source=window` shows their effect.
+`window_display` / `window_display_set` (and the `crt_params` / `viewport` verbs beside them); screenshot
+`source=window` shows their effect. `PUT /state/screen/overscan` answers the `viewport` it set too.
 
 The device reports (AY, FM, GS, Covox, MoonSound, FDC) are built once in the core
 (`core/src/emulator/state/devicestate.h`) and are byte-for-byte the same

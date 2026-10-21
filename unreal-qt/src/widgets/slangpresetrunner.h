@@ -10,6 +10,7 @@
 #include <memory>
 #include <vector>
 
+class QJsonObject;
 class QOpenGLShaderProgram;
 
 /// @brief Runs a libretro slang CRT preset (the passes tools/crt-shaders/import.py made into GLSL 330, in
@@ -42,6 +43,8 @@ public:
     static QStringList availablePresets();
     static bool isPreset(const QString& key);
     static QString presetDirectory(const QString& key) { return QStringLiteral(":/crt/") + key; }
+    /// The parameters a preset declares (its preset.json), at their initial values, without loading it (no context)
+    static std::vector<Parameter> readParameters(const QString& directory);
 
     SlangPresetRunner();
     ~SlangPresetRunner();
@@ -71,6 +74,8 @@ public:
     uint32_t frameCount() const { return _frameCount; }
 
 private:
+    static std::vector<Parameter> parametersOf(const QJsonObject& manifest);
+
     struct Texture
     {
         GLuint id = 0;

@@ -73,6 +73,17 @@ capture_media {"action":"screenshot","source":"window","path":"/abs/path/scratch
      viewport, pixel ratio 1) of the 352x288 Pentagon128K frame, ...)
 ```
 
+Tune the active profile's parameters (a libretro preset's own, or `basic`'s curvature, scanline_weight, ...): list
+them, set, move by a dial's steps, reset:
+
+```text
+capture_media {"action":"window_crt_params"}
+  -> CRT profile shader:crt-geom (preset), 22 parameters
+       CRTgamma = 2.4 (0.1..5, step 0.1) ...
+capture_media {"action":"window_crt_params_set","crt_params":{"values":{"CRTgamma":2.0},"steps":{"scanline_weight":-2}}}
+capture_media {"action":"window_crt_params_set","crt_params":{"reset":true}}
+```
+
 A changing picture makes two grabs differ: pause first when comparing (`control_execution {"action":"pause"}`,
 `{"action":"resume"}` after).
 

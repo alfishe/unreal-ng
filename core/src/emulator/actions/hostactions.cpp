@@ -35,6 +35,7 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/screenshotter.h"
+#include "emulator/video/viewportcontrol.h"
 #include "loaders/snapshot/snapshotlauncher.h"
 
 namespace actions
@@ -641,7 +642,7 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
         Rules(ScopeMachine));
     add(
         "cap.screenshot_save", "Save a screenshot", machine, ValueKind::Press,
-        "path, format? (png|bmp|...), area?, source? (presented|live|window)",
+        "path, format? (png|gif), area?, source? (presented|live|window)",
         [](const ActionCall& call) {
             const std::string path = TextParam(call.value, "path").value_or("");
             if (path.empty())
@@ -1298,10 +1299,11 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
             const bool on = BoolParam(call.value, "on", error).value_or(!call.emulator->IsOverscanMode());
             if (!error.empty())
                 return BadRequest(error);
-            if (!call.emulator->SetOverscanMode(on) && call.emulator->IsOverscanMode() != on)
+            // With the viewport the GUI picks (symmetric on, full off), as the REST route and View > Overscan
+            const VideoViewport::Result set = VideoViewport::SetOverscan(*call.emulator, on);
+            if (!set.Ok())
                 return Conflict("this model has no overscan mode");
-            StateNode body = StateNode::Object();
-            body["overscan"] = call.emulator->IsOverscanMode();
+            StateNode body = VideoViewport::Report(*call.emulator);
             return ActionResult::Success(std::move(body), on ? "Overscan on" : "Overscan off");
         },
         RouteRules("PUT", "/state/screen/overscan"));

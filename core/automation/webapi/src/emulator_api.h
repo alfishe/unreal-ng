@@ -315,6 +315,15 @@ public:
     // GUI window display settings (api/video_window_api.cpp): GPU acceleration, CRT effects, temporal blending
     ADD_METHOD_TO(EmulatorAPI::getVideoWindow, "/api/v1/emulator/{id}/video/window", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::setVideoWindow, "/api/v1/emulator/{id}/video/window", drogon::Put, drogon::Post);
+    // The active CRT profile's parameters (api/video_window_api.cpp): list, set / nudge, reset
+    ADD_METHOD_TO(EmulatorAPI::getVideoWindowCrtParams, "/api/v1/emulator/{id}/video/window/crt_params", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::setVideoWindowCrtParams, "/api/v1/emulator/{id}/video/window/crt_params", drogon::Put,
+                  drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::resetVideoWindowCrtParams, "/api/v1/emulator/{id}/video/window/crt_params/reset",
+                  drogon::Post);
+    // The overscan frame's viewport (api/video_window_api.cpp): full, symmetric, standard, screen_only
+    ADD_METHOD_TO(EmulatorAPI::getVideoViewport, "/api/v1/emulator/{id}/video/viewport", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::setVideoViewport, "/api/v1/emulator/{id}/video/viewport", drogon::Put, drogon::Post);
     // endregion Screen State
 
     // region Audio State (implementation: api/state_audio_api.cpp)
@@ -1223,10 +1232,31 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     /// @brief GET /api/v1/emulator/{id}/video/window — the GUI window's display settings (409 headless)
     void getVideoWindow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                         const std::string& id) const;
-    /// @brief PUT|POST /api/v1/emulator/{id}/video/window — body {gpu, crt, crt_profile, blending, blending_frames,
-    /// blending_weights} (any of them); returns the settings after the change
+    /// @brief PUT|POST /api/v1/emulator/{id}/video/window — body of any WindowDisplay key (gpu, crt, crt_profile,
+    /// blending, ..., fullscreen, scale, hud, hud_theme, hud_notices {id: bool}, osd_keyboard, ...); returns the
+    /// settings after the change
     void setVideoWindow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                         const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/video/window/crt_params — the active CRT profile's parameters (409 headless)
+    void getVideoWindowCrtParams(const drogon::HttpRequestPtr& req,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const;
+    /// @brief PUT|POST /api/v1/emulator/{id}/video/window/crt_params — body {values: {name: number}, steps: {name:
+    /// steps}, reset: [names] | true}; returns the parameters after the change
+    void setVideoWindowCrtParams(const drogon::HttpRequestPtr& req,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/video/window/crt_params/reset — every parameter back to its initial value
+    void resetVideoWindowCrtParams(const drogon::HttpRequestPtr& req,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/video/viewport — overscan and the viewport that crops it
+    void getVideoViewport(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id) const;
+    /// @brief PUT|POST /api/v1/emulator/{id}/video/viewport — body {viewport: name | next | prev} (overscan on: the
+    /// state/screen/overscan route)
+    void setVideoViewport(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id) const;
 
     /// @brief GET /api/v1/emulator/{id}/state/screen/digest?banks=5,7&include_border=true&start=&end=
     /// FNV-1a 64 digest over screen RAM pages (or an explicit Z80 range) with

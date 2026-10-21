@@ -6,6 +6,7 @@
 #include "base/featuremanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/actions/actionregistry.h"
+#include "emulator/actions/pictureactions.h"
 #include "emulator/config.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
@@ -173,8 +174,13 @@ bool ToggleOf(const std::string& name, std::string& id, StateNode& params)
 
 const std::vector<std::string>& BaseReadoutNames()
 {
-    static const std::vector<std::string> names = {"ttd.position", "run.state",  "machine",   "media.tape",
-                                                   "media.disk",   "audio.mute", "debug.mode"};
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> list = {"ttd.position", "run.state",  "machine",   "media.tape",
+                                         "media.disk",   "audio.mute", "debug.mode"};
+        for (const std::string& picture : PictureReadoutNames())
+            list.push_back(picture);
+        return list;
+    }();
     return names;
 }
 
@@ -224,6 +230,8 @@ StateNode ReadReadout(Emulator& emulator, const std::string& name)
         return AudioMute(emulator);
     if (name == "debug.mode")
         return DebugMode(emulator);
+    if (StateNode picture = ReadPictureReadout(emulator, name); picture.kind != StateNode::Kind::Null)
+        return picture;  // video.window, video.crt_params, video.viewport (pictureactions.h)
     std::string id;
     StateNode params;
     if (name.compare(0, 7, "toggle.") == 0 && ToggleOf(name, id, params))

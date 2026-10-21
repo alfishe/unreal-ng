@@ -193,6 +193,7 @@ void TemporalEffectsDialog::updateFromScreen()
     QSignalBlocker algorithmBlocker(_algorithmCombo);
     QSignalBlocker sliderBlocker(_historySizeSlider);
     QSignalBlocker comboBlocker(_weightModeCombo);
+    QSignalBlocker decayBlocker(_decaySpin);
 
     _enabledCheck->setChecked(blend || !dlss.empty());
     if (!dlss.empty())
@@ -209,6 +210,7 @@ void TemporalEffectsDialog::updateFromScreen()
     _historySizeSlider->setValue(historySize);
     _historySizeLabel->setText(QString::number(historySize));
     _weightModeCombo->setCurrentIndex(weightMode);
+    _decaySpin->setValue(static_cast<double>(_screenWrapper->temporalDecay()));
     updateGroups();
     refreshDlssStatus();
 }
@@ -369,6 +371,7 @@ void TemporalEffectsDialog::onHistorySizeChanged(int value)
     {
         _screenWrapper->setTemporalHistorySize(value);
     }
+    emit settingsChanged();
 }
 
 void TemporalEffectsDialog::onWeightModeChanged(int index)
@@ -381,10 +384,12 @@ void TemporalEffectsDialog::onWeightModeChanged(int index)
     {
         _screenWrapper->setTemporalWeightMode(index);
     }
+    emit settingsChanged();
 }
 
 void TemporalEffectsDialog::onDecayChanged(double value)
 {
-    Q_UNUSED(value);
-    // TODO: Add decay setter to wrapper/screen when implementing full exponential control
+    if (_screenWrapper)
+        _screenWrapper->setTemporalDecay(static_cast<float>(value));
+    emit settingsChanged();
 }

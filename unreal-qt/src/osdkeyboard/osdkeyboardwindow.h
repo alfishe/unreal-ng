@@ -89,9 +89,13 @@ public:
     QString notice() const;
     /// Follow the bound machine: its model, the route, the host keys held
     void refresh();
+    /// Follow the bound machine's model only (its pictures and the one chosen), for a report while hidden
+    void followModel();
 
 signals:
     void visibilityChanged(bool visible);
+    /// Another picture is shown (chosen, or the machine's model changed)
+    void pictureChanged();
 
 protected:
     void showEvent(QShowEvent* event) override;

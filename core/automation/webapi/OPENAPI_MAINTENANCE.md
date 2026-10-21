@@ -41,6 +41,7 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 | `openapi_media_schemas.inc` | Media (schemas) | `MediaReply`, `MediaSlot`, `MediaMedium`, `MediaFileClass`, `MediaTarget` |
 | `openapi_snapshot.inc` | Snapshot Control | Load, save, info |
 | `openapi_capture.inc` | Capture | Screen capture, OCR |
+| `openapi_window.inc` | Screen State | The GUI window's display settings `/video/window`, the CRT profile's parameters `/video/window/crt_params` (+ `/reset`), the overscan viewport `/video/viewport`; schemas `WindowDisplay`, `CrtParameters`, `VideoViewport` in `openapi_window_schemas.inc` |
 | `openapi_basic.inc` | BASIC Control | Run, inject, extract, clear, state, mode |
 | `openapi_keyboard.inc` | Keyboard Injection | Tap, press, release, combo, macro, type, abort |
 | `openapi_mouse.inc` | Mouse Injection | Kempston mouse move, press, release, click, buttons, wheel, counters, status |
@@ -72,6 +73,7 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 | `features_api.cpp` | Feature management |
 | `state_memory_api.cpp` | Memory state inspection |
 | `state_screen_api.cpp` | Screen state inspection |
+| `video_window_api.cpp` | The GUI window's display settings, CRT parameters, the overscan viewport (thin over `emulator/video/windowdisplay.h`, `viewportcontrol.h`) |
 | `state_audio_api.cpp` | Audio state inspection |
 | `analyzers_api.cpp` | Analyzer management |
 | `debug_api.cpp` | Debug commands |

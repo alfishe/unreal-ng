@@ -458,3 +458,30 @@ std::string HudTheme::ThemeName(HudThemeId id)
     }
     return "Dark Glass";
 }
+
+std::string HudTheme::ThemeKey(HudThemeId id)
+{
+    switch (id)
+    {
+        case HudThemeId::DarkGlass: return "dark_glass";
+        case HudThemeId::RetroZX: return "retro_zx";
+        case HudThemeId::Cyberpunk: return "cyberpunk";
+        case HudThemeId::AmberCRT: return "amber_crt";
+        case HudThemeId::EmeraldCRT: return "emerald_crt";
+        case HudThemeId::LightModern: return "light_modern";
+    }
+    return "dark_glass";
+}
+
+bool HudTheme::ThemeFromKey(const std::string& key, HudThemeId& out)
+{
+    for (HudThemeId id : AvailableThemes())
+    {
+        if (ThemeKey(id) == key)
+        {
+            out = id;
+            return true;
+        }
+    }
+    return false;
+}

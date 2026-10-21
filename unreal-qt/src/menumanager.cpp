@@ -1674,6 +1674,14 @@ void MenuManager::resetViewportSelection()
     _viewportSymmetricAction->setChecked(true);
 }
 
+void MenuManager::setViewportSelection(int presetIndex)
+{
+    QAction* actions[] = {_viewportFullOverscanAction, _viewportSymmetricAction, _viewportStandardAction,
+                          _viewportScreenOnlyAction};
+    if (presetIndex >= 0 && presetIndex < 4 && actions[presetIndex])
+        actions[presetIndex]->setChecked(true);  // setChecked does not emit triggered
+}
+
 void MenuManager::setActiveEmulator(std::shared_ptr<Emulator> emulator)
 {
     // Update menu states - must be done on main thread since it modifies UI menus
