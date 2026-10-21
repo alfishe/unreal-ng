@@ -48,6 +48,8 @@ namespace
                 << (action["gui"].asBool() ? ", gui" : "") << "] " << action["label"].asString();
             if (action["scope"].isString())
                 out << " (scope " << action["scope"].asString() << ")";
+            if (action["params"].isString())
+                out << " {" << action["params"].asString() << "}";
             if (!action["available"].asBool())
                 out << " - " << action["error"].asString() << ": " << action["reason"].asString();
             out << "\n";
@@ -90,7 +92,9 @@ void RegisterActions(ToolRegistry& registry)
         "run: by the action's kind - press: omit (a press) or false (a release, for held actions); delta: signed "
         "steps (a number) or {delta, rate}; level: 0..1; text: a string";
     schema["properties"]["params"]["type"] = "object";
-    schema["properties"]["params"]["description"] = "run: parameters (run.to_scanline: line; run.n_scanlines: count)";
+    schema["properties"]["params"]["description"] =
+        "run: the action's parameters as list shows them in {} (input.key: key; media.open: path; feature.toggle: name; "
+        "mach.start: model; run.frames: count; run.to_scanline: line)";
     schema["required"].append("action");
 
     registry.Register(

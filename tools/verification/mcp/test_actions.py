@@ -108,6 +108,27 @@ def test_a_step_while_running_is_refused_with_the_reason(s):
     expect(r.is_error and 'Bad Request' in r.text, 'a delta takes a number', r.text)
 
 
+def test_the_scenario_actions_are_listed_with_their_params_and_run(s):
+    r = s.call('actions', {'action': 'list'})
+    for action_id in ('media.open', 'input.key', 'mach.start', 'feature.toggle', 'snapshot.quick', 'audio.mute_toggle',
+                      'run.frames', 'ttd.seek'):
+        expect(action_id in r.text, f'{action_id} in the text', r.text[:4000])
+    expect('{key' in r.text and '{path' in r.text, 'the params an action reads are in the text', r.text[:4000])
+    rows = {a['id']: a for a in r.structured['actions']}
+    expect(rows['input.type']['kind'] == 'text' and rows['input.key']['held'], 'kinds and held', rows['input.key'])
+    expect(rows['input.key']['scope'] == 'input' and rows['media.open']['scope'] == 'media', 'the routes\' scopes',
+           (rows['input.key'], rows['media.open']))
+    r = s.call('actions', {'action': 'run', 'id': 'audio.mute_toggle', 'params': {'on': True}})
+    expect('audio.mute_toggle: ok' in r.text and 'Muted' in r.text, 'muted, in the text', r.text)
+    r = s.call('actions', {'action': 'run', 'id': 'run.frames', 'params': {'count': 2}})
+    expect('run.frames: ok' in r.text and 'Ran 2 frames' in r.text, 'two frames on the paused machine', r.text)
+    r = s.call('actions', {'action': 'run', 'id': 'input.key', 'params': {'key': 'no-such-key'}}, ok=False)
+    expect(r.is_error and 'no-such-key' in r.text, 'an unknown key is named in the text', r.text)
+    r = s.call('actions', {'action': 'run', 'id': 'media.open', 'params': {'path': '/no/such/file.tap'}}, ok=False)
+    expect(r.is_error and 'Not Found' in r.text, 'a missing file', r.text)
+    release_mcp_session(s)
+
+
 def test_rest_and_websocket_answer_the_same(s):
     emu = instance(s)
     release_mcp_session(s)

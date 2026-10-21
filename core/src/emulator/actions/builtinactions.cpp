@@ -9,6 +9,7 @@
 
 #include "debugger/ttd/timetravelhooks.h"
 #include "debugger/ttd/ttdcontrol.h"
+#include "emulator/actions/actionparams.h"
 #include "emulator/actions/actionregistry.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -153,7 +154,7 @@ std::vector<RegistrationHandle> RegisterBuiltinActions(ActionRegistry& registry)
     std::vector<RegistrationHandle> handles;
     auto add = [&](const char* id, const char* label, const char* group, ValueKind kind, Executor run,
                    ActionRules rules, bool held = false) {
-        handles.push_back(registry.Register({id, label, group, kind, held, false}, std::move(run), std::move(rules)));
+        handles.push_back(registry.Register({id, label, group, kind, held, false, {}}, std::move(run), std::move(rules)));
     };
     auto rules = [](uint32_t scope, bool needsPause = false) {
         ActionRules r;
@@ -222,9 +223,13 @@ std::vector<RegistrationHandle> RegisterBuiltinActions(ActionRegistry& registry)
 
     // 3.2 Time travel: the TTDControl verbs (the ones the MCP time_travel tool calls)
     const char* ttdGroup = "Time travel";
+    // The call's params go along as the verb's options (ttd.bookmark_add: label; ttd.reverse_step: count)
     auto verb = [](const char* name, std::map<std::string, std::string> options = {}) {
         return [name, options](const ActionCall& call) {
-            return FromTtd(ttd::TTDControl(call.emulator->GetContext()).Execute({name, options}));
+            std::map<std::string, std::string> all = ParamOptions(call.value.params);
+            for (const auto& [key, text] : options)
+                all[key] = text;
+            return FromTtd(ttd::TTDControl(call.emulator->GetContext()).Execute({name, std::move(all)}));
         };
     };
     add("ttd.record_toggle", "Start / stop recording", ttdGroup, ValueKind::Press,

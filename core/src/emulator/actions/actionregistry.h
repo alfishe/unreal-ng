@@ -116,6 +116,9 @@ struct ActionInfo
     ValueKind kind = ValueKind::Press;
     bool held = false;  ///< a Press whose release matters too (turbo while held, reset after a 1 s hold)
     bool gui = false;   ///< registered by the Qt client; absent headless
+    /// The parameters it reads from ActionValue::params, one line for the catalogue ("key, hold?, frames?"; a `?`
+    /// marks an optional one); "" when it takes none
+    std::string params;
 };
 
 /// What an executor gets: the instance (never null), the value, who asks
@@ -193,8 +196,9 @@ public:
     using Done = std::function<void(ActionResult result)>;
     using Resolver = std::function<std::shared_ptr<Emulator>(const std::string& instanceId)>;
 
-    /// The process's registry, with the core actions (builtinactions.h) registered at its first use; it lives until
-    /// the process ends (never destroyed, so the static EmulatorManager can drop instances in its own destructor)
+    /// The process's registry, with the core actions (builtinactions.h, hostactions.h) registered at its first use; it
+    /// lives until the process ends (never destroyed, so the static EmulatorManager can drop instances in its own
+    /// destructor)
     static ActionRegistry& Instance();
     /// An empty registry over `resolver` (default: EmulatorManager). Tests make their own
     explicit ActionRegistry(Resolver resolver = {});
