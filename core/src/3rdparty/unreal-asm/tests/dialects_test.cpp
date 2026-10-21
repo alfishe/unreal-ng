@@ -415,6 +415,21 @@ TEST(Dialects_Test, TheTestOfAMacroNameIsTwo)
               (std::vector<std::string>{"MACRO j", "NOP", "ENDM", "IF 2-2", "DB 1", "ENDIF"}));
 }
 
+TEST(Dialects_Test, ALabelNamedLikeARegisterInDataIsTheLabel)
+{
+    // ALASM's calculator reads DW E / DB A as the labels E / A: their uses get the definition's rename
+    EXPECT_EQ(ToSjasmplus("E       EQU 5\nA       NOP\n        DW E,A+1\n        DB A\n        LD A,E"),
+              (std::vector<std::string>{"L_E     EQU 5", "L_A     NOP", "DW L_E,L_A+1", "DB L_A", "LD A,E"}));
+}
+
+TEST(Dialects_Test, TheTestOfANameUsedBeforeItsDefinitionIsOne)
+{
+    // ?name of a label not defined yet but used before is 1 (ALASM help, "?label"); unused before, the test reads the DEFINE
+    EXPECT_EQ(ToSjasmplus("        DW X\n        DB ?X\nX       NOP"), (std::vector<std::string>{"DW X", "DB 1", "X       NOP"}));
+    EXPECT_EQ(ToSjasmplus("        IFN ?X\n        DB 1\n        ENDIF\nX       NOP"),
+              (std::vector<std::string>{"IFNDEF __UNREALASM_DEF_X", "DB 1", "ENDIF", "X       NOP", "DEFINE __UNREALASM_DEF_X"}));
+}
+
 TEST(Dialects_Test, EntAfterAConditionalDispEndsItWhenActive)
 {
     // ACE's aceTO: DISP only when v1 is defined, ENT for both; sjasmplus refuses an ENT without DISP

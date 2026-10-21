@@ -221,6 +221,23 @@ TEST(Z88dkBackend_Test, LabelsSectionsAndPhase)
         EXPECT_TRUE(Contains(two, "__UNREALASM_IFU1 EQU 0")) << ::testing::PrintToString(two);
         EXPECT_TRUE(Contains(lib, "IF __UNREALASM_IFU1")) << ::testing::PrintToString(lib);
     }
+    // A file INCLUDEd twice defines its macro again: z80asm refuses that ("duplicate definition"), so the definition is
+    // guarded; pasmo takes it again, unguarded
+    {
+        const std::vector<ProjectFile> project = {
+            {"MAIN", SourceDocument::FromText("        ORG #8000\n        INCLUDE \"LIB\"\n        INCLUDE \"LIB\"\n        m\n        RET", "alasm")},
+            {"LIB", SourceDocument::FromText("        MACRO m\n        NOP\n        ENDM\n        DB 7", "alasm")}};
+        const ProjectResult z = ConvertProject(project, "z88dk");
+        ASSERT_TRUE(z.ok);
+        ASSERT_EQ(z.files.size(), 2u);
+        EXPECT_EQ(Statements(z.files[1].document), (std::vector<std::string>{"IFNDEF __UNREALASM_M_L_m", "DEFINE __UNREALASM_M_L_m",
+                                                                             "L_m MACRO", "NOP", "ENDM", "ENDIF", "DB 7"}))
+            << ::testing::PrintToString(Statements(z.files[1].document));
+        const ProjectResult p = ConvertProject(project, "pasmo");
+        ASSERT_TRUE(p.ok);
+        ASSERT_EQ(p.files.size(), 2u);
+        EXPECT_FALSE(Contains(Statements(p.files[1].document), "ENDIF"));
+    }
     // A name made of an address beyond a sum stops z80asm 2.3 on an assertion where an address expression uses it: the
     // layout's value (TDU's CAT_PLC)
     EXPECT_TRUE(Contains(ToZ80asm("        ORG #8000\nTR      NOP\nCAT     EQU (HIGH TR+1)<<8\n        LD HL,CAT+TR", "sjasmplus"),
