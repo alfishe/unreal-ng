@@ -15,6 +15,7 @@
 
 #include <emulator/actions/actionregistry.h>
 #include <emulator/actions/contextstate.h>
+#include <emulator/actions/surfacesapi.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/execution/automationgate.h>
@@ -78,8 +79,8 @@ StateNode JsonToStateNode(const Json::Value& value)
     return {};
 }
 
-/// The instance a request names (?instance= or the body's "instance": an id or an index); without one the selected
-/// instance, else the only one. "" with `error` set when none fits
+/// The instance a request names (?instance= or the body's "instance": an id or an index); without one the followed
+/// instance (the focused view's) when the host has views, else the selected one, else the only one. "" with `error` set when none fits
 std::string InstanceOf(const std::string& named, std::string& error)
 {
     EmulatorManager* manager = EmulatorManager::GetInstance();
@@ -90,14 +91,9 @@ std::string InstanceOf(const std::string& named, std::string& error)
             error = "no instance '" + named + "'";
         return emulator ? emulator->GetId() : std::string();
     }
-    const std::string selected = manager->GetSelectedEmulatorId();
-    if (!selected.empty() && manager->GetEmulator(selected))
-        return selected;
-    const std::vector<std::string> ids = manager->GetEmulatorIds();
-    if (ids.size() == 1)
-        return ids.front();
-    error = ids.empty() ? "no machine" : "several instances: name one (instance)";
-    return {};
+    (void)manager;
+    // Rule T-1 (Stream Deck targeting.md §9): the followed instance with views, else the selected, else the sole one
+    return actions::surfaces::DefaultInstance(error);
 }
 
 /// Who asks: a companion (its token, checked by the pre-routing advice), else the MCP server or a WebAPI client with
@@ -211,6 +207,7 @@ void EmulatorAPI::getActions(const HttpRequestPtr& req, std::function<void(const
     Json::Value body;
     body["ok"] = true;
     body["instance"] = instance.empty() ? Json::Value(Json::nullValue) : Json::Value(instance);
+    body["rev"] = Json::UInt64(actions::ActionRegistry::Instance().Revision());
     body["actions"] = Json::Value(Json::arrayValue);
     for (const actions::ActionStatus& status : actions::ActionRegistry::Instance().Statuses(instance, OriginOf(req)))
     {
@@ -224,6 +221,8 @@ void EmulatorAPI::getActions(const HttpRequestPtr& req, std::function<void(const
         const std::string scope = automation_gate::CompanionScopeName(status.scope);
         row["scope"] = scope.empty() ? Json::Value(Json::nullValue) : Json::Value(scope);
         row["needs_pause"] = status.needsPause;
+        row["toggle"] = status.info.toggle;
+        row["description"] = status.info.description;
         if (!status.info.params.empty())
             row["params"] = status.info.params;
         row["available"] = status.available;

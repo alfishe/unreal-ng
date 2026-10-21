@@ -106,6 +106,20 @@ public:
     // The instance's surface context (actions::ContextState, control surfaces architecture §6; set by the ctx.set
     // action). /api/v1/controllers/context is the host controllers' own verb (the focused instance of the router)
     ADD_METHOD_TO(EmulatorAPI::getContext, "/api/v1/surfaces/context", drogon::Get);
+    // Targets of the control surfaces (actions::TargetState, Stream Deck targeting.md), the readouts and the
+    // activity feed (implementation: api/surfaces_api.cpp over actions::surfaces::Call, the verbs of every plane)
+    ADD_METHOD_TO(EmulatorAPI::getSurfaceViews, "/api/v1/surfaces/views", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postSurfaceView, "/api/v1/surfaces/views", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::putSurfaceView, "/api/v1/surfaces/views/{view}", drogon::Put);
+    ADD_METHOD_TO(EmulatorAPI::deleteSurfaceView, "/api/v1/surfaces/views/{view}", drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::getSurfaceTarget, "/api/v1/surfaces/target", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getSurfaceSessions, "/api/v1/surfaces/sessions", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postSurfaceSession, "/api/v1/surfaces/sessions", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getSurfaceSession, "/api/v1/surfaces/sessions/{session}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::deleteSurfaceSession, "/api/v1/surfaces/sessions/{session}", drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::putSurfacePin, "/api/v1/surfaces/sessions/{session}/pin", drogon::Put);
+    ADD_METHOD_TO(EmulatorAPI::getSurfaceReadouts, "/api/v1/surfaces/readouts", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getSurfaceActivity, "/api/v1/surfaces/activity", drogon::Get);
 
     // ZX-bus slots: the machine's buses, slots and cards (implementation: api/slots_api.cpp over SlotControl,
     // core/src/emulator/slots/slotcontrol.h; ZX-bus slots architecture.md §9). A change restarts the machine
@@ -806,6 +820,23 @@ public:
     /// with the ctx.set action (api/actions_api.cpp)
     void getContext(const drogon::HttpRequestPtr& req,
                     std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    /// The surface verbs (api/surfaces_api.cpp; actions::surfaces::Call): views, targets, sessions and pins, readouts,
+    /// the activity feed
+    using SurfaceCallback = std::function<void(const drogon::HttpResponsePtr&)>;
+    void getSurfaceViews(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
+    void postSurfaceView(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
+    void putSurfaceView(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& view) const;
+    void deleteSurfaceView(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& view) const;
+    void getSurfaceTarget(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
+    void getSurfaceSessions(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
+    void postSurfaceSession(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
+    void getSurfaceSession(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback,
+                           const std::string& session) const;
+    void deleteSurfaceSession(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback,
+                              const std::string& session) const;
+    void putSurfacePin(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& session) const;
+    void getSurfaceReadouts(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
+    void getSurfaceActivity(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
     /// POST /api/v1/controllers/actions/{action} {instance?, value?}: run it on the instance's actions worker
     void postAction(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& action) const;

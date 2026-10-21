@@ -725,6 +725,18 @@ emu.action("ctx.set", "ttd.timecode")      # the last setter wins; "" returns to
 emu.context()                              # {"ok", "instance", "context", "set", "by", "default"}
 ```
 
+The control surface targets, readouts and activity (`emu.surfaces(verb, **args)`,
+[command-interface.md §16.1](./command-interface.md#161-surface-targets-readouts-activity)):
+
+```python
+emu.surfaces("views")                      # {"ok", "followed": {"instance", "index", "model", "view", "mode", ...}, "views"}
+s = emu.surfaces("session_open", name="my script")["session"]["id"]
+emu.surfaces("pin", session=s, target="view:v1")         # follow | view:<id> | instance:<id|index> | {"instance": id}
+emu.surfaces("readouts", names=["run.state", "media.*"])["values"]
+emu.surfaces("activity", since=0)          # {"entries": [{"seq", "id", "value", "origin", "surface", "ok"}], "last", "dropped"}
+emu.surfaces("session_close", session=s)
+```
+
 ### Disk Operations
 
 `Emulator` methods for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands and the WebAPI `/disk/{drive}/*` endpoints.

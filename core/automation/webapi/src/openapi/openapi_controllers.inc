@@ -178,3 +178,106 @@
             "not_now (needs a pause), Run-control held, held_by_session, held_by_other, revoked_by_user, Conflict";
         post["responses"]["501"]["description"] = "Not Implemented: a stub of the catalogue";
     }
+
+    // The control surfaces' context and targets (actions::ContextState, actions::TargetState; Stream Deck integration
+    // targeting.md), the readouts and the activity feed: the verbs of actions::surfaces::Call, as the CLI `surface`,
+    // MCP `actions`, Lua / Python surfaces(); every route is also a WebSocket call
+    {
+        auto op = [&paths](const char* path, const char* method, const char* summary, const char* description,
+                           const char* ok) -> Json::Value& {
+            Json::Value& operation = paths[path][method];
+            operation["summary"] = summary;
+            operation["description"] = description;
+            operation["tags"].append("Controllers");
+            operation["responses"]["200"]["description"] = ok;
+            return operation;
+        };
+        auto param = [](Json::Value& operation, const char* name, const char* in, bool required,
+                        const char* description) {
+            Json::Value parameter;
+            parameter["name"] = name;
+            parameter["in"] = in;
+            parameter["required"] = required;
+            parameter["description"] = description;
+            parameter["schema"]["type"] = "string";
+            operation["parameters"].append(parameter);
+        };
+        const char* targetObject =
+            "a target is {instance, index, model, ram_kb, view: {id, name} | null, mode: follow | view | instance, pin, "
+            "source: view | selected | sole | none}; instance null when there is no machine";
+
+        Json::Value& context = op("/api/v1/surfaces/context", "get", "The instance's surface context",
+                                  "The context in force (play, ttd, ttd.timecode, debug.*), whether somebody set it, by "
+                                  "whom, and the default it returns to; set it with the ctx.set action",
+                                  "{ok, instance, context, set, by, default}");
+        param(context, "instance", "query", false, "Emulator id or index; default: the followed instance");
+
+        op("/api/v1/surfaces/views", "get", "The views (windows) in focus order and the followed instance",
+           "Each view shows one active instance; the followed instance is the active instance of the front view that "
+           "has one, else (headless) the selected instance, else the sole one. A WebAPI call without an id acts on it "
+           "(T-1). followed is a target object",
+           "{ok, followed, views: [{id, name, owner, position, active, index}], revision}");
+        Json::Value& addView = op("/api/v1/surfaces/views", "post", "Register a view of the automation plane",
+                                  "Body {name, active?: id | index, activate?: bool}. For a window of another process "
+                                  "and for tests; it stays until DELETE. The Qt clients register their own windows",
+                                  "{ok, view, followed}");
+        addView["responses"]["404"]["description"] = "Not Found: no such instance";
+        Json::Value& putView = op("/api/v1/surfaces/views/{view}", "put", "Change a view",
+                                  "Body {active?: id | index | \"\" (only a view of the automation plane), activate?: "
+                                  "true (to the front of the focus order, as a focus would)}",
+                                  "{ok, view, followed}");
+        param(putView, "view", "path", true, "The view id (v1)");
+        putView["responses"]["409"]["description"] = "Conflict: the active instance of a window is its client's";
+        Json::Value& deleteView = op("/api/v1/surfaces/views/{view}", "delete", "Remove a view of the automation plane",
+                                     "Its view: pins fall back to following, with a notice", "{ok, removed, followed}");
+        param(deleteView, "view", "path", true, "The view id");
+        deleteView["responses"]["409"]["description"] = "Conflict: a window of a client";
+
+        Json::Value& target = op("/api/v1/surfaces/target", "get", "A target: the followed instance or a session's",
+                                 targetObject, "{ok, target, session?}");
+        param(target, "session", "query", false, "A surface session id; default: the followed instance");
+
+        op("/api/v1/surfaces/sessions", "get", "The surface sessions and their targets",
+           "Each surface (a Stream Deck, one session per serial; a REST surface): id, name, kind, serial, pin (follow, "
+           "view:<id>, instance:<id>), target, notice (why a pin fell back)",
+           "{ok, sessions: [...]}");
+        Json::Value& openSession = op("/api/v1/surfaces/sessions", "post", "Open a surface session of the automation plane",
+                                      "Body {name, kind?: api, serial?, target?: follow | view:<id> | instance:<id> | "
+                                      "{view} | {instance}}. A REST surface that wants a target of its own; it stays "
+                                      "until DELETE. A deck's session comes with the surface topic's join",
+                                      "{ok, session}");
+        openSession["responses"]["400"]["description"] = "Bad Request: no name, a target that does not parse";
+        Json::Value& getSession = op("/api/v1/surfaces/sessions/{session}", "get", "One surface session", "",
+                                     "{ok, session}");
+        param(getSession, "session", "path", true, "The session id (s1)");
+        Json::Value& closeSession = op("/api/v1/surfaces/sessions/{session}", "delete",
+                                       "Close a surface session of the automation plane", "", "{ok, closed}");
+        param(closeSession, "session", "path", true, "The session id");
+        closeSession["responses"]["409"]["description"] = "Conflict: a session of a surface (it closes it itself)";
+        Json::Value& pin = op("/api/v1/surfaces/sessions/{session}/pin", "put", "Pin or unpin a surface session",
+                              "Body {target: follow | view:<id> | instance:<id|index> | {view} | {instance}}. A view pin "
+                              "follows that window's active instance; an instance pin stays on it; follow unpins",
+                              "{ok, session}");
+        param(pin, "session", "path", true, "The session id");
+        pin["responses"]["404"]["description"] = "Not Found: no such session, view or instance";
+        pin["responses"]["409"]["description"] = "not_now: a view pin on a headless host (no views)";
+
+        Json::Value& readouts = op("/api/v1/surfaces/readouts", "get", "The readouts' values now",
+                                   "The vocabulary a surface draws from, all from published state: ttd.position, "
+                                   "run.state, machine, media.tape, media.disk, audio.mute, debug.mode, toggle.<id> "
+                                   "(toggle.feature.<name>, toggle.set.<name>). The surface topic pushes their changes",
+                                   "{ok, instance, values: {name: value}, unknown: []}");
+        param(readouts, "instance", "query", false, "Emulator id or index; default: the followed instance");
+        param(readouts, "names", "query", false, "Names or prefixes, comma separated (run.state,media.*); default all");
+
+        Json::Value& activity = op("/api/v1/surfaces/activity", "get", "The activity feed: who ran which action",
+                                   "Display only: each action the registry ran, with its value, origin (gui, "
+                                   "host_device, companion, webapi, mcp, cli, lua, python), surface name and result; "
+                                   "deltas of one surface within 100 ms are one entry. The ring keeps 256",
+                                   "{ok, entries: [{seq, instance, id, value, origin, surface, ok, error?, t_ms, "
+                                   "merged}], last, dropped}");
+        param(activity, "since", "query", false, "Entries after this seq (the previous answer's last)");
+        param(activity, "instance", "query", false, "Only this instance's");
+        param(activity, "limit", "query", false, "At most this many, the newest (1..256, 64)");
+    }
+

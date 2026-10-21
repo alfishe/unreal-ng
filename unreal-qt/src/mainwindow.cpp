@@ -59,6 +59,8 @@
 #include "controllers/controllertoast.h"
 #include "controllers/guiactions.h"
 #include "controllers/hostcontrollers.h"
+#include "controllers/surfacestatusicon.h"
+#include "controllers/surfacetargets.h"
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
@@ -297,6 +299,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Create central UI binding for emulator state
     m_binding = new EmulatorBinding(this);
     connect(m_binding, &EmulatorBinding::stateChanged, this, &MainWindow::onBindingStateChanged);
+    // This window as a view of the core's TargetState (Stream Deck targeting.md): the instance it shows and the focus
+    // order decide what a surface following the focus drives, and what a WebAPI call without an id acts on (T-1)
+    _surfaceTargets = new SurfaceTargets(m_binding, tr("Main window"), this);
 
     // Init audio subsystem (initialize once, keep running)
     _soundManager = new AppSoundManager();
@@ -365,6 +370,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _hostControllers = new HostControllers(m_binding, this);
     _hostControllers->SetShortcutWindows(this, debuggerWindow);
     _controllersDialog = new ControllersDialog(_hostControllers, this);
+    _controllersDialog->setSurfaceTargets(_surfaceTargets);
     connect(_hostControllers, &HostControllers::notice, this,
             [this](const QString& text) { statusBar()->showMessage(text, 5000); });
     // Host actions (debug-and-ttd.md §3, control surfaces architecture §3): the core ActionRegistry runs them on the
@@ -692,6 +698,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     // Create the status bar (device LEDs + FPS)
     _statusBarManager = new StatusBarManager(this, _menuManager, this);
+    // The surfaces driving this window, with Pin here / Unpin (targeting.md T-2); hidden while none is connected
+    statusBar()->insertPermanentWidget(0, new SurfaceStatusIcon(_surfaceTargets, statusBar()));
     connect(_menuManager, &MenuManager::statusBarToggled, this, &MainWindow::handleStatusBarToggled);
     connect(_menuManager, &MenuManager::hudOverlayToggled, this, &MainWindow::handleHudOverlayToggled);
     connect(_menuManager, &MenuManager::gpuAccelerationToggled, this, &MainWindow::handleGpuAccelerationToggled);
@@ -907,6 +915,10 @@ MainWindow::~MainWindow()
         delete _menuManager;
         _menuManager = nullptr;
     }
+
+    // The view closes before its binding: `view:` pins on it fall back to following
+    delete _surfaceTargets;
+    _surfaceTargets = nullptr;
 
     // Clean up binding (must be before ui)
     if (m_binding)

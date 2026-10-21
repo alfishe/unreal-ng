@@ -267,6 +267,19 @@ action("ctx.set", "ttd.timecode")          -- the last setter wins; "" returns t
 print(context().context, context().by)     -- {ok, instance, context, set, by, default}
 ```
 
+The control surface targets, readouts and activity (`surfaces(verb, {args})`,
+[command-interface.md §16.1](./command-interface.md#161-surface-targets-readouts-activity)):
+
+```lua
+local v = surfaces("views")                -- {ok, followed = {instance, index, model, view, mode, pin, source}, views}
+local s = surfaces("session_open", {name = "my script"}).session.id
+surfaces("pin", {session = s, target = "view:v1"})       -- follow | view:<id> | instance:<id|index>
+print(surfaces("target", {session = s}).target.instance)
+local r = surfaces("readouts", {names = {"run.state", "media.*"}})   -- r.values["run.state"].state
+local a = surfaces("activity", {since = 0})                          -- a.entries, a.last, a.dropped
+surfaces("session_close", {session = s})
+```
+
 ### Disk Operations
 
 Global functions for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands

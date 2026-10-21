@@ -1663,7 +1663,8 @@ POST /api/v1/controllers/actions/{id}                     {instance?, value?, pa
 ```
 
 The core `ActionRegistry` ([command-interface.md section 16](./command-interface.md#16-host-actions); OpenAPI tag
-`Controllers`). `instance` defaults to the selected instance, else the only one. `value` by the action's kind: press -
+`Controllers`). `instance` defaults to the followed instance (below: the focused window's), else the selected one, else
+the only one. The catalogue rows carry `description` and `toggle` too, the list `rev`. `value` by the action's kind: press -
 omitted / `true` / `false` / `{pressed}`; delta - steps or `{delta, rate}`; level - 0..1; text - a string. The routes
 are outside `/api/v1/emulator/`, so the registry applies the caller's gate itself, with the same answers: a changing
 action without a session opens the implicit run-control session (`automation_session` in the reply and the
@@ -1683,6 +1684,30 @@ The control-surface actions ([command-interface.md section 16](./command-interfa
 `POST …/run.step_by` `{"value": -4}` steps back through the history (forward: step in); `POST …/ctx.set`
 `{"value": "ttd.timecode"}`. `/api/v1/controllers/context` stays the host controllers' own verb (the router's
 focused instance), not this context.
+
+```
+GET    /api/v1/surfaces/views                            the views (windows) in focus order + the followed instance
+POST   /api/v1/surfaces/views                            {name, active?, activate?}: a view of the automation plane
+PUT    /api/v1/surfaces/views/{view}                     {active?, activate?}
+DELETE /api/v1/surfaces/views/{view}
+GET    /api/v1/surfaces/target[?session=]                the followed instance's target object, or a session's
+GET    /api/v1/surfaces/sessions                         every surface session and its target
+POST   /api/v1/surfaces/sessions                         {name, kind?, serial?, target?}: a REST surface's session
+GET    /api/v1/surfaces/sessions/{session}
+DELETE /api/v1/surfaces/sessions/{session}
+PUT    /api/v1/surfaces/sessions/{session}/pin           {target: follow | view:<id> | instance:<id|index> | {view} | {instance}}
+GET    /api/v1/surfaces/readouts[?instance=&names=]      the readout vocabulary now: {values, unknown}
+GET    /api/v1/surfaces/activity[?since=&instance=&limit=] the activity feed: {entries, last, dropped}
+```
+
+Control surface targets ([command-interface.md section 16.1](./command-interface.md#161-surface-targets-readouts-activity),
+Stream Deck integration [targeting.md](../../../inprogress/2026-10-19-streamdeck-integration/targeting.md)). **"No id"
+(T-1)**: every route that takes an optional instance (`/controllers/actions`, `/surfaces/context`, `/surfaces/readouts`,
+the `/audio` and device routes without an id) acts on the followed instance - the active instance of the window the
+user focused last - when the host has views (unreal-qt, the video wall); headless it stays the selected instance, else
+the only one. A target object: `{instance, index, model, ram_kb, view: {id, name} | null, mode, pin, source}`.
+Errors: `404` no such view, session or instance; `400` a target that does not parse, a session without a name; `409`
+`not_now` (a view pin on a headless host), `Conflict` (a client's window, a surface's own session).
 
 ### Snapshots (Implemented Separately)
 ```

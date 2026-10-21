@@ -36,3 +36,31 @@ inline Json::Value StateNodeToJson(const StateNode& node)
             return Json::Value(Json::nullValue);
     }
 }
+
+/// Json::Value -> StateNode (a request body's object for the core's verbs)
+inline StateNode JsonValueToStateNode(const Json::Value& value)
+{
+    if (value.isBool())
+        return StateNode(value.asBool());
+    if (value.isInt64() || value.isUInt64())
+        return StateNode(static_cast<int64_t>(value.asInt64()));
+    if (value.isDouble())
+        return StateNode(value.asDouble());
+    if (value.isString())
+        return StateNode(value.asString());
+    if (value.isArray())
+    {
+        StateNode array = StateNode::Array();
+        for (const Json::Value& item : value)
+            array.push(JsonValueToStateNode(item));
+        return array;
+    }
+    if (value.isObject())
+    {
+        StateNode object = StateNode::Object();
+        for (const std::string& name : value.getMemberNames())
+            object[name] = JsonValueToStateNode(value[name]);
+        return object;
+    }
+    return {};
+}

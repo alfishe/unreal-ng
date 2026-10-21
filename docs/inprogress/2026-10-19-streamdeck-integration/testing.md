@@ -39,7 +39,7 @@
 | Wire v2 | Frame round trips, `Join` roles, 32-bit lengths (a `HostPage` > 64 KB), `Welcome` errors |
 | Surface client | Against an in-process fake hub: join, subscribe, action / result by `rid`, delta merge before send, reconnect with pin and resubscribe, `revoked` |
 | Runtime | `action` kind, state-bound faces from readouts, context → navigation without echo, activity flashes, target line |
-| Core side | `TargetState` rules 1-6 and lifetime ([targeting.md](targeting.md)); activity merge and rate; readout vocabulary; catalogue fields (in `core-tests`, `*Surface*`, `*Target*`) |
+| Core side | `TargetState` rules 1-6 and lifetime ([targeting.md](targeting.md)); activity merge and rate; readout vocabulary; catalogue fields (in `core-tests`, `*Surface*`, `*Target*`). Done SD4 2026-10-20: `TargetState_Test`, `TargetPin_Test`, `TargetStateNotification_Test`, `ActivityFeed_Test`, `ActionCatalogue_Test`, `SurfacesApi_Test`, `McpActions_Test.SurfaceVerbsBecomeTheSurfacesRoutes`; unreal-qt-tests `SurfaceTargets_Test` (the window as a view, the status icon, the surfaces table); live `tools/verification/mcp/test_surfaces.py` `test_no_id_follows_the_focused_view_and_pins_hold`. The per-session rate (20 / s) is the topic's (S4) |
 
 Rules of `core/tests/README.md` apply on the core side (no `sleep_for`, ≤ 50 ms, `TestWait`).
 

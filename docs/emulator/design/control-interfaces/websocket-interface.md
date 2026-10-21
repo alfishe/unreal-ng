@@ -61,6 +61,10 @@ readout) come with the `surface` topic (S4):
 ← {"op":"result","t":"call","rid":3,"status":200,"body":{"ok":true,"instance":"0f3a…","context":"ttd","set":false,"by":null,"default":"ttd"}}
 ```
 
+The surface targets, readouts and activity (Stream Deck SD4: `GET /api/v1/surfaces/views`, `target`, `sessions`,
+`PUT …/sessions/{id}/pin`, `readouts`, `activity`) are calls as well; the `surface` topic (S4) pushes `target` on
+`NC_SURFACE_TARGET`, the readouts and `activity` from the core's `ActivityFeed`.
+
 ## 3. Topics
 
 ```json

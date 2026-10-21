@@ -3720,6 +3720,43 @@ Errors, the same on every surface: `Not Found` (no such action or instance), `Ba
 kind), `not_now`, `Run-control held`, `held_by_other`, `revoked_by_user`, `companion_forbidden`, `held_by_session`,
 `Not Implemented`; the WebAPI answers 404, 400, 409, 403, 501.
 
+The catalogue rows also carry `description` (one sentence, for a palette's tooltip) and `toggle` (the action has an
+on / off state, shown by the readout `toggle.<id>`); the list has `rev`, the catalogue's revision (bumped when the Qt
+client registers or drops its GUI actions; `NC_ACTION_CATALOGUE`).
+
+#### 16.1 Surface targets, readouts, activity
+
+Which instance each control surface drives (Stream Deck integration
+[targeting.md](../../../inprogress/2026-10-19-streamdeck-integration/targeting.md)): the core's `TargetState` holds
+the **views** (a window with one active instance: unreal-qt's main window, the video wall), their focus order, and the
+**surface sessions** (a Stream Deck, one per serial; a REST surface) with their **pins**. The **followed instance** is
+the active instance of the front view that has one; headless, the selected instance, else the sole one. A WebAPI
+request without an instance id acts on the followed instance (T-1). The verbs are `actions::surfaces::Call`
+(`core/src/emulator/actions/surfacesapi.h`), the same on every plane:
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `surface views` | | The views in focus order (`id`, `name`, `owner`, `active`, `index`) and the followed instance as a target object | ✅ Implemented |
+| `surface target` | `[session]` | A target object: `instance`, `index`, `model`, `ram_kb`, `view` {`id`, `name`} or null, `mode` (`follow`, `view`, `instance`), `pin`, `source` (`view`, `selected`, `sole`, `none`); the followed instance's, or a session's | ✅ Implemented |
+| `surface sessions` | | Every surface session: `id`, `name`, `kind`, `serial`, `pin`, `target`, `notice` (why a pin fell back) | ✅ Implemented |
+| `surface pin` | `<session> <target>` | Pin a session: `follow` (unpin), `view:<id>` (that window's active instance), `instance:<id|index>`. `Not Found`: no such session, view or instance; `not_now`: a view pin on a headless host | ✅ Implemented |
+| `surface readouts` | `[names] [instance=]` | The readouts now (names or prefixes: `ttd.position`, `run.state`, `machine`, `media.tape`, `media.disk`, `audio.mute`, `debug.mode`, `toggle.*`); default all, of the followed instance. Unknown names are listed in `unknown` | ✅ Implemented |
+| `surface activity` | `[since] [instance=] [limit=]` | The activity feed: each action the registry ran (`seq`, `id`, `value`, `origin`, `surface`, `ok`, `error`, `t_ms`, `merged`), deltas of one surface within 100 ms merged; `last` (the next `since`), `dropped` | ✅ Implemented |
+| `surface view_add` / `view_update` / `view_remove` | `<name> [active=]` / `<view> [active=] [activate=true]` / `<view>` | A view of the automation plane (a window of another process, tests); `activate` moves any view to the front as a focus would; the active instance of a client's window is its own (`Conflict`) | ✅ Implemented |
+| `surface session_open` / `session` / `session_close` | `<name> [kind=] [target=]` / `<id>` / `<id>` | A surface session of the automation plane (a REST surface with a target of its own); a deck's session comes with the surface topic's `join` (S4) | ✅ Implemented |
+
+| Surface | Views / target | Pin | Readouts / activity |
+| :--- | :--- | :--- | :--- |
+| CLI | `surface views`, `surface target [s1]` | `surface pin s1 view:v1` | `surface readouts run.state,media.*`, `surface activity 12` |
+| WebAPI | `GET /api/v1/surfaces/views`, `GET /api/v1/surfaces/target[?session=]`, `GET /api/v1/surfaces/sessions[/{id}]` | `PUT /api/v1/surfaces/sessions/{id}/pin` `{"target":"view:v1"}` | `GET /api/v1/surfaces/readouts?names=`, `GET /api/v1/surfaces/activity?since=` |
+| WebSocket | each route as a `call` | the same `call`; the push: `target` on the `surface` topic (S4, on `NC_SURFACE_TARGET`) | `call`s; the pushes `readout`, `activity` on the `surface` topic (S4) |
+| MCP | `actions` action `views`, `target` (`session`), `sessions` | `actions` action `pin` (`session`, `pin`) | `actions` action `readouts` (`names`, `target`), `activity` (`since`, `limit`) |
+| Python | `emu.surfaces("views")`, `emu.surfaces("target", session="s1")` | `emu.surfaces("pin", session="s1", target="view:v1")` | `emu.surfaces("readouts", names=["run.state"])`, `emu.surfaces("activity", since=12)` |
+| Lua | `surfaces("views")` | `surfaces("pin", {session = "s1", target = "view:v1"})` | `surfaces("readouts", {names = {"run.state"}})`, `surfaces("activity", {since = 12})` |
+
+In the GUI (T-2): the status bar's surface icon (lit while a surface drives the window; a click lists every surface
+with "Pin here" / "Unpin") and the surfaces table of Tools > Controllers (each surface, what it drives, its pin).
+
 ## Future Capabilities
 
 The following commands and interfaces are planned for future implementation. This section documents the roadmap for expanding the ECI to support more advanced debugging, analysis, and automation workflows.

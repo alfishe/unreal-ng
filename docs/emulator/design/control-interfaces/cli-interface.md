@@ -462,6 +462,31 @@ Context: ttd.timecode (set by cli:cli)
 `ttd.seek_by` takes its rate and curve as parameters here (`rate=`, `unit=frames|seconds`, `min=`, `max=`,
 `rate_lo=`, `rate_hi=`); `run.step_by` steps in forward and back through the history (`action run run.step_by -4`).
 
+The `surface` verb (source: `core/automation/cli/src/commands/cli-processor-surface.cpp`): the control surfaces'
+targets, readouts and activity ([command-interface.md §16.1](./command-interface.md#161-surface-targets-readouts-activity)).
+Positional words fill the verb's arguments in order, `name=value` words name them, `--json` prints the reply.
+
+| CLI Command | Description |
+| :--- | :--- |
+| `surface [views]` | The views in focus order and the followed instance (what a WebAPI call without an id acts on) |
+| `surface target [session]` | The followed instance's target, or a session's |
+| `surface sessions` | Every surface session and its target |
+| `surface pin <session> <target>` | `follow`, `view:<id>`, `instance:<id|index>` |
+| `surface readouts [names] [instance=]` | The readout values (`run.state,media.*`; default all) |
+| `surface activity [since] [limit=] [instance=]` | The activity feed |
+| `surface view_add <name> [active=]`, `view_update <view> [active=] [activate=true]`, `view_remove <view>` | Views of the automation plane |
+| `surface session_open <name> [target=]`, `session <id>`, `session_close <id>` | Sessions of the automation plane |
+
+```
+> surface views
+Followed: #0 PENTAGON 128K (0f3a…) in v1 Main window, follow [view]
+  v1 Main window [unreal-qt] active 0f3a…
+> surface session_open "my script"
+OK: s1 my script -> #0 PENTAGON 128K (0f3a…) in v1 Main window, follow [view]
+> surface pin s1 instance:1
+OK: s1 my script -> #1 48K 48K (7c21…), instance:7c21… [none]
+```
+
 ### Analysis, Capture & Assembly Commands
 
 The analysis, capture and assembly families are available on **all** automation

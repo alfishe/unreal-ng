@@ -54,6 +54,7 @@
 class AudioSettingsWidget;
 class MidiActivityWindow;
 class HostControllers;
+class SurfaceTargets;
 class ControllersDialog;
 class ControllerToast;
 class GuiActions;
@@ -415,6 +416,7 @@ private:
     LogWindow* logWindow = nullptr;
     TapeManagerWindow* tapeManagerWindow = nullptr;
     MediaPanelWindow* mediaPanelWindow = nullptr;
+    SurfaceTargets* _surfaceTargets = nullptr;           // this window as a view of TargetState (Stream Deck targeting)
     HostControllers* _hostControllers = nullptr;        // host game controllers: service, profiles, player connectors
     ControllersDialog* _controllersDialog = nullptr;    // Tools -> Controllers
     ControllerToast* _controllerToast = nullptr;        // the auto-profile toast (port reads)

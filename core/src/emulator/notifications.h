@@ -466,6 +466,38 @@ public:
     virtual ~SurfaceContextPayload() = default;
 };
 
+/// Payload of NC_ACTION_CATALOGUE: the action catalogue changed (actions::ActionRegistry::Revision)
+class ActionCatalogueChangedPayload : public MessagePayload
+{
+public:
+    uint64_t revision = 0;
+
+    explicit ActionCatalogueChangedPayload(uint64_t rev) : revision(rev) {}
+    virtual ~ActionCatalogueChangedPayload() = default;
+};
+
+/// Payload of NC_SURFACE_TARGET: the targets of the control surfaces moved (actions::TargetState, Stream Deck
+/// targeting.md). The state itself is read back from TargetState (Views(), TargetFor(session)): the payload says what
+/// moved. `reason`: "view", "focus", "active", "pin", "session", "instance", "selection"
+class SurfaceTargetPayload : public MessagePayload
+{
+public:
+    std::string followed;               ///< the followed instance now ("" = none)
+    std::string previous;               ///< before the change
+    bool viewsChanged = false;          ///< a view came, went, changed its active instance or the focus order
+    std::vector<std::string> sessions;  ///< the surface sessions whose target changed (closed ones not included)
+    std::string reason;
+    uint64_t revision = 0;              ///< TargetState::Revision() after the change
+
+    SurfaceTargetPayload(std::string now, std::string before, bool views, std::vector<std::string> moved,
+                         std::string why, uint64_t rev)
+        : followed(std::move(now)), previous(std::move(before)), viewsChanged(views), sessions(std::move(moved)),
+          reason(std::move(why)), revision(rev)
+    {
+    }
+    virtual ~SurfaceTargetPayload() = default;
+};
+
 /// Payload of NC_COMPANION_CHANGED: the companion registry changed (companionregistry.h). `event`: "pairing_requested",
 /// "pairing_cancelled", "pairing_expired", "paired", "denied", "revoked"
 class CompanionChangedPayload : public MessagePayload

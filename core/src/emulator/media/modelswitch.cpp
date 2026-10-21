@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include "common/stringhelper.h"
+#include "emulator/actions/targetstate.h"
 #include "emulator/config.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -165,6 +166,9 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
     const bool wasSelected = emulators.GetSelectedEmulatorId() == old->GetId();
     const std::string oldId = old->GetId();
     old.reset();
+    // Views showing the old machine and `instance:` pins on it move to the new one (targeting.md §5) before the
+    // removal would let them fall back
+    actions::TargetState::Instance().InstanceReplaced(oldId, created->GetId());
     emulators.RemoveEmulator(oldId);
 
     out.media = to.AdoptMediaSet(std::move(transfer));

@@ -581,7 +581,7 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
     auto add = [&](const char* id, const char* label, const char* group, ValueKind kind, const char* params,
                    Executor run, ActionRules rules, bool held = false) {
         handles.push_back(
-            registry.Register({id, label, group, kind, held, false, params}, std::move(run), std::move(rules)));
+            registry.Register({id, label, group, kind, held, false, params, {}, false}, std::move(run), std::move(rules)));
     };
 
     // region <Run: explicit pause / resume, counted runs>
@@ -1415,6 +1415,13 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
     add("ttd.load", "Open a session", ttdGroup, ValueKind::Press, "path", verb("load"), ttdRules("POST", "/ttd/load"));
     // endregion </Time travel>
     return handles;
+}
+
+std::optional<bool> HostSettingIsOn(Emulator& emulator, const std::string& name)
+{
+    if (emulator.GetContext() == nullptr)
+        return std::nullopt;
+    return SettingIsOn(emulator, name);
 }
 
 }  // namespace actions

@@ -193,6 +193,7 @@ set(COMMON_SOURCES
     src/api/slots_api.cpp
     src/api/controllers_api.cpp
     src/api/actions_api.cpp
+    src/api/surfaces_api.cpp
     src/api/cdaudio_api.cpp
     src/api/snapshot_api.cpp
     src/common/upload_helper.h

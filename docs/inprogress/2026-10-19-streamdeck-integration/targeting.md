@@ -20,6 +20,7 @@ Which instance a surface drives when there are many windows and instances.
 - [7. Core API](#7-core-api)
 - [8. Several host processes](#8-several-host-processes)
 - [9. Open points](#9-open-points)
+- [10. As built (SD4, 2026-10-20)](#10-as-built-sd4-2026-10-20)
 
 ## 1. What exists
 
@@ -150,3 +151,62 @@ need port allocation, discovery and a focus order shared between processes.
 |:--|:--|
 | T-1 | **Decided 2026-10-19:** the WebAPI's "no id" resolves to the followed instance when views exist; headless it stays the selected instance, else the sole one. |
 | T-2 | **Decided 2026-10-19:** both: the surfaces table in the settings (each surface and its target), and on each window's status bar the icons of the surfaces driving it with "Pin here / Unpin". |
+
+## 10. As built (SD4, 2026-10-20)
+
+`actions::TargetState` (`core/src/emulator/actions/targetstate.h`), process-wide, never destroyed (as
+`ContextState`). Differences from the sketch of §7 and what it adds:
+
+- **Handles.** `RegisterView(name, owner)` and `OpenSession(spec, pin)` return a `TargetHandle` (move-only; the
+  view or session goes when it dies). View ids `v1`, `v2`, ..., session ids `s1`, `s2`, ..., never reused. A new
+  view is at the back of the focus order until `Activated`.
+- **Rule 3 + 4 together**: the followed instance is the active instance of the first view **that has one**; when no
+  view has one (none registered, or all empty) rule 4 applies (the selected instance, else the sole one). `Followed()`
+  / `FollowedTarget()` say which (`FollowSource`: `view`, `selected`, `sole`, `none`).
+- **Pins** are `Pin {Follow | View | Instance, id}`, text `follow`, `view:<id>`, `instance:<id>`. `SetPin` answers
+  `Not Found` (no such session, view or instance) and `not_now` for a **view** pin on a host without views; an
+  instance pin works headless too (a CI companion on one of two instances). A fallen-back pin keeps a `notice`
+  ("the view 'Window 2' closed: following the focus", "the instance is gone ..."), cleared by the next pin.
+- **Lifetime** (§5): `EmulatorManager::RemoveEmulator` / `ShutdownAllEmulators` call `InstanceGone` (views showing it
+  lose it, `instance:` pins fall back); `ModelSwitch::Run` (a model switch, `mach.start` with `replace`,
+  `mach.cold_reset`) calls `InstanceReplaced(old, new)` before it removes the old machine, so views and `instance:`
+  pins move to the new id without a fallback. Rule 4 depends on the selection and the instance list: the process's
+  state observes `NC_EMULATOR_SELECTION_CHANGED` and `NC_EMULATOR_INSTANCE_CREATED` and re-checks (`Refresh`).
+- **Notification**: any change of the followed instance, of the views (list, focus order, active instances) or of a
+  session's target posts `NC_SURFACE_TARGET` with `SurfaceTargetPayload {followed, previous, viewsChanged,
+  sessions (whose target moved), reason, revision}`. A change that moves nothing posts nothing (`Activated` on the
+  front view, a `Refresh` with views).
+- **Clients.** unreal-qt: `SurfaceTargets` (`unreal-qt/src/controllers/surfacetargets.*`) registers the main window
+  ("Main window", owner `unreal-qt`), follows its `EmulatorBinding` (`bound` / `unbound`) and activates the view on
+  `QGuiApplication::focusWindowChanged` to any window of the process (the debugger and the tool windows show the same
+  instance; a null focus window - another program - changes nothing, rule 2). The video wall (`VideoWallWindow`):
+  one view "Video wall" (owner `videowall`), active = `focusedEmulator()` (both renderers), reported on the audio
+  binding's changes and checked every 200 ms. The screen viewer registers nothing yet (it has no WebAPI of its own).
+- **T-1**: `actions::surfaces::DefaultInstance` is the WebAPI's "no id" (`getEmulatorWithGlobalSelection`, the
+  actions and context routes' default); MCP keeps its own `auto` rule (one instance, else name it).
+- **T-2 in the GUI**: the status bar's surface icon (`SurfaceStatusIcon`: hidden without sessions, lit while a
+  session's target is this window, a click lists every session with "Pin here" / "Unpin") and the surfaces table
+  under Tools > Controllers (`SurfacesTable`: surface, kind, what it drives, a target combo: follow, each window, each
+  instance). The controller manager's per-device `pinned` mode is not mapped yet (rule 6 for the Dial and the pads:
+  their router follows the window's bound instance, as before).
+- **Planes**: the verbs of `actions::surfaces::Call` (`views`, `target`, `sessions`, `session`, `pin`, `readouts`,
+  `activity`, and `view_add` / `view_update` / `view_remove`, `session_open` / `session_close` for views and
+  sessions owned by an automation plane - a window of another process, a REST surface, tests) on REST
+  (`/api/v1/surfaces/...`), WebSocket `call`, MCP `actions`, CLI `surface`, Lua / Python `surfaces()`
+  ([command-interface.md §16.1](../../emulator/design/control-interfaces/command-interface.md#161-surface-targets-readouts-activity)).
+
+### 10.1 The hook for the `surface` topic (S4)
+
+What the WebSocket hub uses, without new threads:
+
+| Need | Call |
+|:--|:--|
+| A session per `join` | `TargetState::Instance().OpenSession({name, "companion", serial, companionId}, pin)` - keep the handle in the hub's session; dropping it closes the session. `join.target` → `surfaces::ParseTarget` (text or object) |
+| The `target` op / `welcome.target` | `surfaces::TargetNode(*state.TargetFor(sessionId))` (the protocol's §2 object: instance, index, model, ram_kb, view, mode; plus pin, source) |
+| `welcome.views` | `state.Views()` (or the `views` verb's body) |
+| Client `pin` | `state.SetPin(session, pin, error, message)` → `target` or `error` |
+| When to send `target` | observe `NC_SURFACE_TARGET`; for each session in `payload->sessions` (or all when `followed` changed for followers) read `TargetFor` and send if it differs from the last sent; then that instance's `ctx` and a full `readout` |
+| Readouts | `ReadReadouts(instance, patterns)` (`readouts.h`): names, prefixes, `unknown` for `error not_found`; `ActionRegistry::ToggleReadouts()` for the `toggle.*` names |
+| `activity` | `ActivityFeed::Instance().AddListener` (called on the actions worker: store + `queueInLoop` only) or `Since(seq, instance)` on the loop; filter `entry.session == own session` (own actions), the session's target instance, 20 per second, `dropped` |
+| `catalogue_rev` / `catalogue` op | `ActionRegistry::Instance().Revision()`; `NC_ACTION_CATALOGUE` (`ActionCatalogueChangedPayload {revision}`) |
+

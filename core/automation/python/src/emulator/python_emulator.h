@@ -20,6 +20,7 @@
 #include <emulator/io/controllers/controllercontrol.h>
 #include <emulator/actions/actionregistry.h>
 #include <emulator/actions/contextstate.h>
+#include <emulator/actions/surfacesapi.h>
 #include <emulator/execution/automationgate.h>
 #ifdef ENABLE_CONTROLLERS
 #include "hostinputcontrol.h"
@@ -421,6 +422,7 @@ inline pybind11::object ActionsPy(Emulator& self)
     origin.identity = "python|script";
     StateNode body = StateNode::Object();
     body["instance"] = self.GetId();
+    body["rev"] = static_cast<int64_t>(actions::ActionRegistry::Instance().Revision());
     StateNode& rows = body["actions"];
     rows = StateNode::Array();
     for (const actions::ActionStatus& status : actions::ActionRegistry::Instance().Statuses(self.GetId(), origin))
@@ -434,6 +436,8 @@ inline pybind11::object ActionsPy(Emulator& self)
         row["gui"] = status.info.gui;
         row["scope"] = automation_gate::CompanionScopeName(status.scope);
         row["needs_pause"] = status.needsPause;
+        row["toggle"] = status.info.toggle;
+        row["description"] = status.info.description;
         if (!status.info.params.empty())
             row["params"] = status.info.params;
         row["available"] = status.available;
@@ -460,6 +464,45 @@ inline pybind11::object ContextPy(Emulator& self)
     out["by"] = info.by;
     out["default"] = info.fallback;
     return StateNodeToPy(out);
+}
+
+/// A Python value as a StateNode (a bool, a number, a string, a list or a dict of them)
+inline StateNode PyToStateNode(const pybind11::handle& value)
+{
+    namespace py = pybind11;
+    if (value.is_none())
+        return StateNode();
+    if (py::isinstance<py::bool_>(value))
+        return StateNode(value.cast<bool>());
+    if (py::isinstance<py::int_>(value))
+        return StateNode(value.cast<int64_t>());
+    if (py::isinstance<py::float_>(value))
+        return StateNode(value.cast<double>());
+    if (py::isinstance<py::dict>(value))
+    {
+        StateNode object = StateNode::Object();
+        for (const auto& item : value.cast<py::dict>())
+            object[py::str(item.first).cast<std::string>()] = PyToStateNode(item.second);
+        return object;
+    }
+    if (py::isinstance<py::list>(value) || py::isinstance<py::tuple>(value))
+    {
+        StateNode array = StateNode::Array();
+        for (const auto& item : value)
+            array.push(PyToStateNode(item));
+        return array;
+    }
+    return StateNode(py::str(value).cast<std::string>());
+}
+
+/// A surface verb (actions::surfaces::Call: views, target, sessions, pin, readouts, activity, ...) with its args as
+/// keywords; the reply every plane returns
+inline pybind11::object SurfacesPy(const std::string& verb, const pybind11::kwargs& options)
+{
+    StateNode args = StateNode::Object();
+    for (const auto& item : options)
+        args[pybind11::str(item.first).cast<std::string>()] = PyToStateNode(item.second);
+    return StateNodeToPy(actions::surfaces::Call(verb, args).body);
 }
 
 inline pybind11::object ActionPy(Emulator& self, const std::string& id, const pybind11::object& raw,
@@ -1861,6 +1904,12 @@ namespace PythonBindings
                      return HostControllerCallPy(verb, options);
                  }, py::arg("verb"), "A host controllers verb (devices, context, profiles, profile, save, delete, apply, "
                  "bindings, bind, unbind, scheme, haptics, rumble) with its options as keywords")
+            .def("surfaces", [](Emulator&, const std::string& verb, const py::kwargs& options) {
+                     return SurfacesPy(verb, options);
+                 }, py::arg("verb") = "views",
+                 "A control surfaces verb (views, target, sessions, session, pin, readouts, activity, view_add, "
+                 "view_update, view_remove, session_open, session_close) with its args as keywords: "
+                 "surfaces('pin', session='s1', target='view:v1'); {ok, ...} as WebAPI /api/v1/surfaces")
             .def("actions", [](Emulator& self) { return ActionsPy(self); },
                  "The host actions: {instance, actions: [{id, label, group, kind, held, gui, scope, needs_pause, "
                  "available, error, reason}]} (the CLI `action list`, WebAPI GET /controllers/actions, MCP actions)")

@@ -16,6 +16,7 @@ set(SOURCES
     src/cli-processor.cpp
     src/commands/cli-processor-instance.cpp
     src/commands/cli-processor-action.cpp
+    src/commands/cli-processor-surface.cpp
     src/commands/cli-processor-debug.cpp
     src/commands/cli-processor-asm.cpp
     src/commands/cli-processor-breakpoint.cpp

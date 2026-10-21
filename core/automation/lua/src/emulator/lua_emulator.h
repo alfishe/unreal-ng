@@ -35,6 +35,7 @@
 #include <emulator/io/controllers/controllercontrol.h>
 #include <emulator/actions/actionregistry.h>
 #include <emulator/actions/contextstate.h>
+#include <emulator/actions/surfacesapi.h>
 #include <emulator/execution/automationgate.h>
 #include <emulator/sound/midi/midicontrol.h>
 #ifdef ENABLE_CONTROLLERS
@@ -1863,6 +1864,7 @@ public:
             origin.identity = "lua|script";
             StateNode body = StateNode::Object();
             body["instance"] = instance;
+            body["rev"] = static_cast<int64_t>(actions::ActionRegistry::Instance().Revision());
             StateNode& rows = body["actions"];
             rows = StateNode::Array();
             for (const actions::ActionStatus& status : actions::ActionRegistry::Instance().Statuses(instance, origin))
@@ -1876,6 +1878,8 @@ public:
                 row["gui"] = status.info.gui;
                 row["scope"] = automation_gate::CompanionScopeName(status.scope);
                 row["needs_pause"] = status.needsPause;
+                row["toggle"] = status.info.toggle;
+                row["description"] = status.info.description;
                 if (!status.info.params.empty())
                     row["params"] = status.info.params;
                 row["available"] = status.available;
@@ -1989,6 +1993,46 @@ public:
             out["by"] = info.by;
             out["default"] = info.fallback;
             return StateNodeToLua(s, out);
+        });
+        // surfaces(verb, {args}) -> the reply table of a control surfaces verb (actions::surfaces::Call: views, target,
+        // sessions, session, pin, readouts, activity, view_add, view_update, view_remove, session_open,
+        // session_close), as WebAPI /api/v1/surfaces/..., the CLI `surface`, MCP `actions` and Python surfaces()
+        lua.set_function("surfaces", [](sol::this_state s, sol::optional<std::string> verb, sol::optional<sol::table> opts) {
+            std::function<StateNode(const sol::object&)> toNode = [&toNode](const sol::object& value) -> StateNode {
+                if (value.is<bool>())
+                    return StateNode(value.as<bool>());
+                if (value.get_type() == sol::type::number)
+                {
+                    const double number = value.as<double>();
+                    return number == std::floor(number) ? StateNode(static_cast<int64_t>(number)) : StateNode(number);
+                }
+                if (value.is<std::string>())
+                    return StateNode(value.as<std::string>());
+                if (value.get_type() == sol::type::table)
+                {
+                    const sol::table table = value.as<sol::table>();
+                    // A sequence is a list ({"run.state", "media.*"}), anything else an object ({view = "v1"})
+                    if (table.size() > 0)
+                    {
+                        StateNode array = StateNode::Array();
+                        for (size_t i = 1; i <= table.size(); i++)
+                            array.push(toNode(table[i]));
+                        return array;
+                    }
+                    StateNode object = StateNode::Object();
+                    for (const auto& [key, item] : table)
+                        if (key.is<std::string>())
+                            object[key.as<std::string>()] = toNode(item);
+                    return object;
+                }
+                return StateNode();
+            };
+            StateNode args = StateNode::Object();
+            if (opts)
+                for (const auto& [key, item] : *opts)
+                    if (key.is<std::string>())
+                        args[key.as<std::string>()] = toNode(item);
+            return StateNodeToLua(s, actions::surfaces::Call(verb.value_or("views"), args).body);
         });
         // controllers_host(verb, {options}) -> the reply table every surface returns: the host game controllers
         // (devices, profiles, bindings, haptics, rumble; HostInputControl, the process's, not the machine's)

@@ -224,13 +224,12 @@ arbiter and the op log.
 - Setters: the Stream Deck (a page that names a context), the Qt client (debugger pane focus, the TTD panel), any
   automation plane. The last one wins (Q-5).
 - Followers: the Qt owner (pushes it into the router), the surface hub (`ctx` to sessions).
-- **One followed instance for all surfaces.** The router follows the focused instance
-  (`hostcontrollers.cpp`); the hub binds sessions to `EmulatorManager::GetSelectedEmulatorId`, which the Qt client
-  never sets today. v1: the Qt client sets the selected instance when the focused one changes, so the Dial, the
-  Stream Deck and the WebAPI's selection agree. A session may still pin an instance in `join`.
-- Erratum 2026-10-20: the followed instance is the Stream Deck integration's `TargetState`
-  ([targeting.md](../2026-10-19-streamdeck-integration/targeting.md)), not the selected instance the Qt client sets:
-  each surface follows the focused view or pins a view or an instance.
+- **The followed instance** is the Stream Deck integration's `TargetState`
+  ([targeting.md](../2026-10-19-streamdeck-integration/targeting.md)): the active instance of the window the user
+  focused last (headless: the selected instance, else the sole one). Each surface follows it or pins a view or an
+  instance (`join.target`, the `pin` op). The Qt client does not set the selected instance on focus: it reports its
+  windows as views. (Erratum 2026-10-20: the first version had the Qt client set the selected instance when the
+  focused one changed, making the GUI and automation fight over one global.)
 
 ### 6.1 As built (S2, 2026-10-20)
 
@@ -248,6 +247,14 @@ arbiter and the op log.
   S3 with the `@` layers. The instance a surface acts on stays the plane's own rule (the WebAPI: `instance`, else the
   selected, else the only one); `TargetState` (Stream Deck SD4) is not a prerequisite of S2: the context is keyed by
   the instance whichever rule picked it.
+
+### 6.2 As built (Stream Deck SD4, 2026-10-20)
+
+`actions::TargetState` (`core/src/emulator/actions/targetstate.h`): views registered by unreal-qt's main window and
+the video wall, the focus order, the followed instance, surface sessions with pins, `NC_SURFACE_TARGET`; the WebAPI's
+"no id" is the followed instance (T-1). As built and the hook the `surface` topic uses:
+[targeting.md §10](../2026-10-19-streamdeck-integration/targeting.md#10-as-built-sd4-2026-10-20). The router of the
+Dial and the pads still follows its window's bound instance (the same instance while a process has one window).
 
 ## 7. The TTD published cursor and readouts
 
@@ -296,7 +303,7 @@ erratum 2026-10-20: no own route `/api/v1/surfaces/ws`):
 | Part | What |
 |:--|:--|
 | Sessions | The authenticated companion, the `join` capabilities, the bound instance, subscriptions. |
-| Instance binding | `join.instance` if given; otherwise the selected instance, following it ([§6](#6-contexts-and-the-followed-instance)). |
+| Instance binding | A `TargetState` session per `join`: `join.target` (a pin) if given, otherwise the followed instance, following it ([§6](#6-contexts-and-the-followed-instance)); `target` on every change. |
 | Calls | `action` → `ActionRegistry::Submit` with origin Companion; `result` on completion. |
 | Push | `ctx` on `NC_SURFACE_CONTEXT` for the bound instance; `readout` on the tick; `revoked` then close when the companion is revoked (as the events socket). |
 
@@ -386,5 +393,5 @@ sequenceDiagram
 | `core/controllers/src/hostcontrols.*`, `router/` | `Encoder`, speed, context layers, `SetContext`, the library's `ActionValue` |
 | `core/controllers/src/hid/drivers/surfacedial.*` | Dial reports and writer thread |
 | `core/automation/webapi/src/surface-hub.*`, `api/actions_api.cpp`, `api-websocket.cpp` | the `surface` topic of `/api/v1/ws`, `/api/v1/controllers/actions`, the socket's calls |
-| `unreal-qt/src/controllers/` | the owner: registry bridge, context push, marks → output, GUI actions, the selected instance on focus |
+| `unreal-qt/src/controllers/` | the owner: registry bridge, context push, marks → output, GUI actions, the window as a `TargetState` view (`surfacetargets.*`) |
 | `tools/surfaces/` | `surfacectl` (a virtual companion for tests), the conformance suite |

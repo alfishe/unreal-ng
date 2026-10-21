@@ -127,6 +127,7 @@ void CLIProcessor::HandleAction(const ClientSession& session, const std::vector<
         {
             StateNode body = StateNode::Object();
             body["instance"] = instance;
+            body["rev"] = static_cast<int64_t>(registry.Revision());
             StateNode& rows = body["actions"];
             rows = StateNode::Array();
             for (const actions::ActionStatus& status : registry.Statuses(instance, origin))
@@ -140,6 +141,8 @@ void CLIProcessor::HandleAction(const ClientSession& session, const std::vector<
                 row["gui"] = status.info.gui;
                 row["scope"] = automation_gate::CompanionScopeName(status.scope);
                 row["needs_pause"] = status.needsPause;
+                row["toggle"] = status.info.toggle;
+                row["description"] = status.info.description;
                 if (!status.info.params.empty())
                     row["params"] = status.info.params;
                 row["available"] = status.available;
