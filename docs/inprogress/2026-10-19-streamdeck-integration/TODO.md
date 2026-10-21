@@ -16,7 +16,19 @@ S2 `ContextState`, TTD published cursor, `seek_by`, `step_by` - **done 2026-10-2
 cursor behind the `position` verb (a 50 Hz poll never parks the machine). The boundary with SD4: S2 keys the context
 by instance and did not build `TargetState` (not needed for it); SD4 keeps `TargetState`, view registration, the
 `target` op and `GET /api/v1/surfaces/views` / `sessions` (the `/api/v1/surfaces/` prefix now has `context`); S4 the
-surface protocol, served as the `surface` topic of `/api/v1/ws` (D7).
+surface protocol, served as the `surface` topic of `/api/v1/ws` (D7) - **done 2026-10-20** (worktree
+`scratch/wt-control-surfaces-s4`, not landed yet): `WsHub` (`core/automation/webapi/src/ws-hub.*`) with one auth,
+`subscribe` / `unsubscribe` of the state topics `run.state`, `ttd.position`, `surfaces.context` and one timer armed only
+with subscribers; `SurfaceHub` (`surface-hub.*`) with `join`, `action` / `result`, `ctx` (the default flip to `ttd`
+when a history appears is now posted), the readouts `ttd.position` and `run.state`, `revoked`, `bye`
+([control surfaces protocol.md §10](../2026-10-18-control-surfaces/protocol.md#10-as-built-s4-2026-10-20)). The
+boundary with SD4: S4 binds a surface by the WebAPI's rule (`"follow"` = the selected instance, else the only one;
+`{"instance": …}` pins) and sends a minimal `target` (`instance`, `index`, `model`, `ram_kb`, `view: null`, `mode`)
+when that binding changes; `{"view": …}` is answered `not_now`. SD4 keeps `TargetState`, views and their
+registration, the `pin` op, `join.features`, `activity`, `catalogue` / `catalogue_rev`, `welcome.views` and the larger
+readout vocabulary (§3: `machine`, `media.*`, `audio.mute`, `debug.mode`, `toggle.*`), which plug into the hub's
+readout table (`WsHub::ReadoutNames` / `Read`) and `SurfaceHub::Rebind`. The `instances` topic (the daemon needs it
+beside `surface`) is not on `/api/v1/ws` yet: `/api/v1/companions/events` meanwhile.
 
 | # | Phase | Needs | State |
 |:--|:--|:--|:--|

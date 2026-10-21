@@ -302,6 +302,20 @@ erratum 2026-10-20: no own route `/api/v1/surfaces/ws`):
 
 The protocol is in [protocol.md](protocol.md).
 
+### 8.1 As built (S4, 2026-10-20)
+
+- `SurfaceHub` is the `surface` topic's handler inside `WsHub` (`core/automation/webapi/src/ws-hub.*`,
+  `surface-hub.*`), the shared hub of `/api/v1/ws`; both are drogon-free (a connection is a send and a close
+  function), so `WsHub_Test` drives them with an inline loop and a fake clock.
+- Binding: `follow` is the WebAPI's rule (the selected instance, else the only one) until `TargetState` (SD4) gives
+  the focused view; `{"instance": …}` pins. The hub re-evaluates on `NC_EMULATOR_INSTANCE_CREATED` / `DESTROYED` /
+  `NC_EMULATOR_SELECTION_CHANGED`.
+- The hub tick of §11 is not a thread: one `runEvery` timer on the WebAPI's main loop, armed while somebody
+  subscribes (§7's rule: the highest `max_hz`, nothing without a subscriber).
+- The default context flip (Q-7) posts `NC_SURFACE_CONTEXT` by `default` (`ContextState::HistoryChanged`, called by
+  both TTD backends when the cursor's `history` flips), so the Qt follower of S3 gets it too.
+- Details and what is not built: [protocol.md §10](protocol.md#10-as-built-s4-2026-10-20).
+
 ## 9. Haptic feedback
 
 ```mermaid
@@ -361,7 +375,7 @@ sequenceDiagram
 | Dial writer (new, per Dial) | Feature and output reports. |
 | Actions worker (new, per instance) | Executors in order, coalescing, results. |
 | WebAPI threads (existing) | WebSocket frames, `Submit`. |
-| Hub tick (new, only with subscribers) | Readouts at ≤ 50 Hz. |
+| Hub tick (a timer on the WebAPI's main loop, only with subscribers; no thread) | Readouts at ≤ 50 Hz. |
 | GUI | GUI actions; context from pane focus; the owner's conversions. |
 
 - Core actions register at core start-up and live until shutdown. The Qt client registers its GUI actions with a
@@ -385,6 +399,6 @@ sequenceDiagram
 | `core/src/debugger/ttd/` | `PublishedCursor` on `ITimeTravelHooks` and both backends; `timelinemarks.*` |
 | `core/controllers/src/hostcontrols.*`, `router/` | `Encoder`, speed, context layers, `SetContext`, the library's `ActionValue` |
 | `core/controllers/src/hid/drivers/surfacedial.*` | Dial reports and writer thread |
-| `core/automation/webapi/src/surface-hub.*`, `api/actions_api.cpp`, `api-websocket.cpp` | the `surface` topic of `/api/v1/ws`, `/api/v1/controllers/actions`, the socket's calls |
+| `core/automation/webapi/src/ws-hub.*`, `surface-hub.*`, `api/actions_api.cpp`, `api-websocket.cpp` | the shared hub and its topics, the `surface` topic of `/api/v1/ws`, `/api/v1/controllers/actions`, the socket's calls |
 | `unreal-qt/src/controllers/` | the owner: registry bridge, context push, marks → output, GUI actions, the selected instance on focus |
-| `tools/surfaces/` | `surfacectl` (a virtual companion for tests), the conformance suite |
+| `tools/verification/mcp/test_ws_surface.py` | the conformance suite (S4; a virtual companion over `mcplib.WebSocket`; `surfacectl` not built) |

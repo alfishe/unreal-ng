@@ -3696,7 +3696,7 @@ The control-surface actions of phase S2 ([actions.md §2-§4](../../../inprogres
 | :--- | :--- | :--- |
 | CLI | `action list` | `action run ttd.jog_frames -10` |
 | WebAPI | `GET /api/v1/controllers/actions[?instance=]` | `POST /api/v1/controllers/actions/{id}` `{instance?, value?, params?}` |
-| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/controllers/actions"}` | `{"op":"call","method":"POST","path":"/api/v1/controllers/actions/{id}","body":{...}}`; topic: `surface` (planned, control surfaces S4) |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/controllers/actions"}` | `{"op":"call","method":"POST","path":"/api/v1/controllers/actions/{id}","body":{...}}`; or `join` + `{"op":"action","id":…,"value":…,"rid":…}` on the `surface` topic ([websocket-interface.md §3.1](websocket-interface.md#31-the-surface-topic)) |
 | MCP | `actions` action `list` (`target`) | `actions` action `run` (`id`, `value`, `params`, `target`) |
 | Python | `emu.actions()` | `emu.action(id, value=None, **params)` |
 | Lua | `actions()` | `action(id, [value], [params])` |
@@ -3707,7 +3707,7 @@ The context (read; set with `ctx.set`) and a dial's seek on every surface:
 | :--- | :--- | :--- |
 | CLI | `action context` | `action run ttd.seek_by -3 rate=18 unit=frames` |
 | WebAPI | `GET /api/v1/surfaces/context[?instance=]` | `POST /api/v1/controllers/actions/ttd.seek_by` `{"value":{"delta":-3,"rate":18},"params":{"unit":"seconds"}}` |
-| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/surfaces/context"}` | the same POST as a `call`; the `ctx` push and the `ttd.position` readout come with the `surface` topic (S4) |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/surfaces/context"}`; push: topic `surfaces.context`, or `ctx` on the `surface` topic | the same POST as a `call`, or `{"op":"action","id":"ttd.seek_by","value":{"d":-3,"rate":18,"unit":"seconds"},"rid":1}` on the `surface` topic; the cursor: topic `ttd.position` or the `ttd.position` readout ([websocket-interface.md §3](websocket-interface.md#3-topics)) |
 | MCP | `actions` action `context` | `actions` action `run`, `id` `ttd.seek_by`, `value` `{delta, rate}`, `params` |
 | Python | `emu.context()` | `emu.action("ttd.seek_by", -3, rate=18, unit="seconds")` |
 | Lua | `context()` | `action("ttd.seek_by", {delta = -3, rate = 18}, {unit = "seconds"})` |

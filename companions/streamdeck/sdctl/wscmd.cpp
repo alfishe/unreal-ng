@@ -1,6 +1,7 @@
 // sdctl ws <ws://host:port/path> [message ...] [--token T] [--seconds N] [--count N]: open a WebSocket with the
 // daemon's client, send the messages once it opens, print what comes back (one line per message, ms since start).
-// A developer check of the client against a live unreal-ng (/api/v1/companions/events, /api/v1/websocket).
+// A developer check of the client against a live unreal-ng (/api/v1/companions/events, /api/v1/websocket, and the
+// topics and the surface topic of /api/v1/ws: '{"op":"join","v":1,"name":"deck","model":"elgato.streamdeck.plus"}').
 #include <chrono>
 #include <cstdio>
 #include <string>

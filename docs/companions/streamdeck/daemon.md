@@ -243,7 +243,7 @@ Default scenarios and themes (`data/streamdeck/`) are not packaged yet (SD5).
 | Command | What |
 |:--|:--|
 | `sdctl viewer [--port N] [--deck SERIAL \| --own MODEL] [--seconds N]` | Join the daemon as a viewer; prints the welcome, the replayed picture and frame counts per second |
-| `sdctl ws <ws://host:port/path> [message ...] [--token T] [--count N] [--seconds N]` | Open a WebSocket with the daemon's client; prints what arrives |
+| `sdctl ws <ws://host:port/path> [message ...] [--token T] [--count N] [--seconds N]` | Open a WebSocket with the daemon's client; prints what arrives (`ws://127.0.0.1:8090/api/v1/ws '{"op":"join","v":1,"name":"deck","model":"elgato.streamdeck.plus"}' --token unc_…` joins the surface topic) |
 | `sdctl decks [--api PORT] [--json]` | The daemon's logical decks (`GET /api/v1/decks`, port 37053 by default) |
 | `sdctl emu-snapshot --out f.png --api PORT [--deck SERIAL]` | The deck's viewers save a PNG through the daemon (device wire v2 `Control`); waits up to 3 s for the file |
 

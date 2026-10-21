@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-18 |
-| **Status** | Design, for review |
+| **Status** | v1 built 2026-10-20 (S4): [§10](#10-as-built-s4-2026-10-20) |
 | **Proposals** | P4, P5, P6, P7 in [README.md](README.md#proposals-for-the-owner-2026-10-18) |
 | **Related** | [companion protocol](../2026-10-16-companion-client/protocol.md) (pairing, the events WebSocket), `core/automation/webapi/src/companion-event-hub.cpp` |
 
@@ -18,6 +18,7 @@
 - [7. Errors](#7-errors)
 - [8. Versioning](#8-versioning)
 - [9. Example](#9-example)
+- [10. As built (S4, 2026-10-20)](#10-as-built-s4-2026-10-20)
 
 ## 1. Scope
 
@@ -125,3 +126,29 @@ do not know them; a breaking change is `v: 2`, with `v: 1` kept for a release cy
 ← {"op":"result","rid":41,"ok":true,"body":{"reached":true,"arrived_at":{"frame":1834,"tinframe":0},"halt_reason":"target","state":"stopped","marks":[{"kind":"second","frame":1806}]}}
 ← {"op":"readout","instance":"0f3a…","values":{"ttd.position":{"frame":1834,"tinframe":0,"first":0,"end":9000,"state":"stopped","fps":48.83}}}
 ```
+
+## 10. As built (S4, 2026-10-20)
+
+`WsHub` (`core/automation/webapi/src/ws-hub.*`) is the shared hub of `/api/v1/ws`: connections, the one auth, the
+topic mechanism and the readout timer; `SurfaceHub` (`surface-hub.*`) is the `surface` topic's handler in it. Calls
+(`{"op":"call"}`) stay in `ApiWebSocket`. The plane's reference:
+[websocket-interface.md §3.1](../../emulator/design/control-interfaces/websocket-interface.md#31-the-surface-topic).
+
+| Part | As built |
+|:--|:--|
+| Messages | All of §3 but `target` from the client (`pin`, SD4). Every server message carries `t: "surface"`. `welcome` adds `target` and `readouts[]`. |
+| Auth | The token of the handshake or of `auth`, checked at `join` (`companion_required`, `companion_unknown` + close, `companion_not_for_agents` for an `X-Unreal-Source: mcp` handshake). Revoking the companion (`NC_COMPANION_CHANGED`) sends `revoked` and closes. |
+| `join.target` | `"follow"` (default): the WebAPI's rule, the selected instance else the only one, re-evaluated when instances come and go or the selection changes (then `target`, the new instance's `ctx` and a full `readout`); `{"instance": id or index}`: pinned, `target` with `instance: null` when it goes. `{"view": …}`: `not_now`. Views, `TargetState`, `pin`, `features`, `activity`, `catalogue`: Stream Deck SD4 / SD5. |
+| `action` | The value forms of §3.1 and the REST ones; any other member of a value object is a parameter. `ActionRegistry::Submit` with origin Companion (identity: the companion's id), so the registry's companion gate decides exactly as for REST; coalescing is the registry's (§6). `result` only with a `rid`; a failure without one is an `error`. A value of the wrong kind is `bad_request` (with the `rid`). |
+| `ctx` | On `NC_SURFACE_CONTEXT` for the bound instance, and after a rebind. The default flip of Q-7 is derived now: the TTD backends tell `ContextState::HistoryChanged` when their published cursor's `history` flips (`ttd::NoteHistoryChange`), and while no context is set it posts `NC_SURFACE_CONTEXT` with `by` `default`. |
+| Readouts | `ttd.position` `{frame, tinframe, first, end, end_tinframe, state, history, paused, fps}` (the published cursor) and `run.state` `{state: running/paused/stopped, speed, turbo}`; names or prefixes; unknown: `Not Found` once. Full on `subscribe` and on a rebind, then changed values only, at most the session's `max_hz` (1 … 50, default 10). |
+| Threads | No thread of its own: messages on the WebAPI's I/O loops, results and notifications posted to its main loop, one `runEvery` timer at the highest `max_hz`, armed only while somebody subscribes; each value read once per tick from published state and serialised once. |
+| Hub topics | `run.state`, `ttd.position`, `surfaces.context` for clients that do not join (the planes guideline: state a client would poll is a topic). |
+| Errors | §7's codes. `Not Found` also for an unknown readout or topic, `not_now` for a view target. |
+
+Not built: the byte high-water mark and `slow_consumer` (drogon's `WebSocketConnection` does not expose its TCP
+connection's queue; the rate is bounded by `max_hz` and the hub keeps latest values only), and the `instances` /
+`debug.*` adapters of the older sockets. Tests: `WsHub_Test` (core-tests, the protocol at the unit level),
+`tools/verification/mcp/test_ws_surface.py` (live, the conformance suite against a launched instance, with the 50 Hz
+subscribers beside a running machine).
+
