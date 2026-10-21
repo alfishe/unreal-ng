@@ -14,6 +14,7 @@ for app in unreal-qt unreal-screen-viewer unreal-videowall; do
 done
 rm -rf "$appdir"
 mkdir -p "$appdir/usr/bin" "$appdir/usr/share/doc/unreal-ng"
+# the suite's data with it: the Stream Deck daemon finds usr/bin/streamdeck beside itself
 cp -a "$suite/." "$appdir/usr/bin/"
 # The Stream Deck companion's udev rule (-DUNREAL_STREAMDECK=ON): an AppImage cannot install it; it rides along in
 # the image's usr/lib/udev/rules.d, the place the DEB uses, for the user to copy (unreal-qt's settings page is to

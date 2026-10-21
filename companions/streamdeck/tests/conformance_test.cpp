@@ -6,8 +6,10 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <memory>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <thread>
@@ -120,24 +122,28 @@ void TestJoinRoles()
                defaultModel.Count(wire::Welcome) == 1;
     }));
 
-    // A mirror's Welcome: the deck it got, its model (pid; "model" is the display name), real; "first" (or no deck at
-    // all) is the first attached deck.
+    // A mirror's Welcome: the deck it got, its model ("model" is the token Join takes, "model_name" the display name,
+    // "pid"), real; "first" (or no deck at all) is the first attached deck.
     const json wf = first.Welcome();
-    CHECK(wf.value("v", 0) == 2 && wf.value("deck", "") == "SERA" && wf.value("model", "") == PlusXl().name &&
-          wf.value("pid", 0) == PlusXl().pid && wf.value("real", false) && wf.value("daemon", "") == "conformance-1" &&
-          !wf.contains("error"));
+    CHECK(wf.value("v", 0) == 2 && wf.value("deck", "") == "SERA" && wf.value("model", "") == "plusxl" &&
+          wf.value("model_name", "") == PlusXl().name && wf.value("pid", 0) == PlusXl().pid &&
+          wf.value("real", false) && wf.value("daemon", "") == "conformance-1" && !wf.contains("error"));
     CHECK(noDeckField.Welcome().value("deck", "") == "SERA");
     const json wb = bySerial.Welcome();
-    CHECK(wb.value("deck", "") == "SERB" && wb.value("model", "") == neo.name && wb.value("pid", 0) == neo.pid);
+    CHECK(wb.value("deck", "") == "SERB" && wb.value("model", "") == "neo" && wb.value("model_name", "") == neo.name &&
+          wb.value("pid", 0) == neo.pid);
+    // every model's token reads back as that model: a viewer can Join "own" with the Welcome's "model"
+    for (const auto& m : AllModels())
+        CHECK(FindModelByName(ModelToken(m)) == &m);
 
     // An own deck: the serial asked for, not real; a taken serial is replaced; the model defaults to the + XL.
     const json wo = own.Welcome();
-    CHECK(wo.value("deck", "") == "EMU7" && wo.value("model", "") == neo.name && !wo.value("real", true) &&
+    CHECK(wo.value("deck", "") == "EMU7" && wo.value("model", "") == "neo" && !wo.value("real", true) &&
           wo.value("daemon", "") == "conformance-1");
     const std::string renamed = sameSerial.Welcome().value("deck", "");
-    CHECK(renamed != "EMU7" && renamed.rfind("EMU", 0) == 0 &&
-          sameSerial.Welcome().value("model", "") == FindModelByName("mini")->name);
-    CHECK(defaultModel.Welcome().value("model", "") == PlusXl().name);
+    CHECK(renamed != "EMU7" && renamed.rfind("EMU", 0) == 0 && sameSerial.Welcome().value("model", "") == "mini" &&
+          sameSerial.Welcome().value("model_name", "") == FindModelByName("mini")->name);
+    CHECK(defaultModel.Welcome().value("model", "") == "plusxl");
     CHECK(owns.size() == 3 && ownSerials.size() == 3 && ownSerials[0] == "EMU7" &&
           std::count(ownSerials.begin(), ownSerials.end(), renamed) == 1);
     // An own deck has no replay: nothing was drawn on it yet.
@@ -698,6 +704,111 @@ void TestDaemonRoutesOverHub()
     ownDev.reset();
 }
 
+// A deck with nothing to read: Read waits its timeout like hidapi's, so the device thread does not hold the runtime's
+// lock back to back (a FakeUsb read returns at once: the stepping loop would starve the routes).
+struct IdleUsb final : Transport
+{
+    std::mutex mutex;
+    std::condition_variable never;
+    int Write(std::span<const std::uint8_t> r) override
+    {
+        return static_cast<int>(r.size());
+    }
+    int SendFeature(std::span<const std::uint8_t> r) override
+    {
+        return static_cast<int>(r.size());
+    }
+    int GetFeature(std::span<std::uint8_t> buf) override
+    {
+        return static_cast<int>(buf.size());
+    }
+    int Read(std::span<std::uint8_t>, int timeoutMs) override
+    {
+        std::unique_lock lock(mutex);
+        never.wait_for(lock, std::chrono::milliseconds(timeoutMs));
+        return 0;
+    }
+};
+
+// POST /press and /navigate that succeed: the answer is the state after the device thread's step (no fixed wait),
+// key or node; a device thread that does not come round answers 202 within the bound, the request applied later.
+void TestPressAndNavigate()
+{
+    // a Mini: 6 small keys, so each page change the device thread draws stays cheap (the 50 ms budget)
+    const Model& m = *FindModelByName("mini");
+    std::vector<scn::Issue> issues;
+    auto scenario = scn::Parse(json::parse(R"({ "name": "routes", "model": "mini",
+      "root": { "id": "home", "type": "menu", "title": "Home", "items": [
+        { "id": "pause", "type": "action", "title": "Pause", "at": [0, 1], "do": { "kind": "webapi", "path": "/pause" } },
+        { "id": "debug", "type": "menu", "title": "Debug", "at": [0, 2], "items": [
+          { "id": "bp", "type": "menu", "title": "Breakpoints", "at": [1, 1], "items": [
+            { "id": "bp.add", "type": "action", "title": "Add", "at": [1, 2], "do": { "kind": "webapi", "path": "/bp" } } ] } ] } ] } })"),
+                               issues);
+    for (const auto& i : issues)
+        std::printf("    %s: %s\n", i.node.c_str(), i.message.c_str());
+    CHECK(scenario.has_value());
+    if (!scenario)
+        return;
+    Device dev(m, std::make_unique<IdleUsb>(), "SER1");
+    scn::RuntimeOptions ro;
+    ro.dryRun = true;  // no emulator here: actions are logged
+    scn::Runtime rt(dev, *scenario, nullptr, ro);
+    DaemonDecks decks(DaemonDecks::Options{});
+    decks.Add("SER1", m, true, rt);
+    automation::Api api("unreal-streamdeck", "1.0");
+    decks.AddRoutes(api);
+    DaemonDecks::Options stuckOptions;
+    stuckOptions.applyTimeoutMs = 5;
+    DaemonDecks stuck(stuckOptions);  // the same runtime behind a short bound, for the 202 case
+    stuck.Add("SER1", m, true, rt);
+    automation::Api stuckApi("unreal-streamdeck", "1.0");
+    stuck.AddRoutes(stuckApi);
+
+    auto stack = [](const automation::Reply& r) {
+        std::vector<std::string> ids;
+        for (const auto& n : r.body.value("stack", json::array()))
+            ids.push_back(n.value("id", ""));
+        return ids;
+    };
+    using V = std::vector<std::string>;
+    {
+        std::atomic<bool> stop{false};
+        std::thread device([&] {
+            while (!stop)
+                rt.Step(1);
+        });
+        automation::Reply r = Call(api, "POST", "/api/v1/press", {{"node", "debug"}});
+        CHECK(r.status == 200 && r.body.value("applied", false) && r.body.value("deck", "") == "SER1");
+        CHECK((stack(r) == V{"home", "debug"}));
+        const int back = r.body["page"].value("back_key", -1);
+        r = Call(api, "POST", "/api/v1/navigate", {{"to", "node"}, {"node", "bp"}}, "SER1");
+        CHECK(r.status == 200 && (stack(r) == V{"home", "debug", "bp"}));
+        r = Call(api, "POST", "/api/v1/navigate", {{"to", "back"}});
+        CHECK(r.status == 200 && (stack(r) == V{"home", "debug"}));
+        CHECK(back >= 0);
+        r = Call(api, "POST", "/api/v1/press", {{"key", back}});  // down and up in one step: back, not hold
+        CHECK(r.status == 200 && r.body.value("applied", false) && (stack(r) == V{"home"}));
+        r = Call(api, "POST", "/api/v1/press", {{"node", "pause"}});  // an action: the page stays
+        CHECK(r.status == 200 && (stack(r) == V{"home"}));
+        r = Call(api, "POST", "/api/v1/navigate", {{"to", "node"}, {"node", "bp"}});
+        CHECK(r.status == 200 && (stack(r) == V{"home", "debug", "bp"}));
+        r = Call(api, "POST", "/api/v1/navigate", {{"to", "home"}});
+        CHECK(r.status == 200 && (stack(r) == V{"home"}));
+        stop = true;
+        device.join();
+    }
+
+    // nobody steps: 202 within the bound, the state before; the next step applies it
+    automation::Reply r = Call(stuckApi, "POST", "/api/v1/press", {{"node", "debug"}});
+    CHECK(r.status == 202 && !r.body.value("applied", true) && (stack(r) == V{"home"}));
+    rt.Step(0);
+    CHECK((stack(Call(api, "GET", "/api/v1/state")) == V{"home", "debug"}));
+    CHECK_EQ(Call(api, "POST", "/api/v1/press", {{"node", "nosuch"}}).status, 404);  // refused before it waits
+
+    stuck.Remove("SER1");
+    decks.Remove("SER1");
+}
+
 // Each case runs alone; one over the 50 ms budget is named (not failed: a loaded CI runner may be slow).
 void Timed(const char* name, void (*fn)())
 {
@@ -723,4 +834,5 @@ void TestConformance()
     Timed("OversizeFrame", TestOversizeFrame);
     Timed("SlowViewerBesideFast", TestSlowViewerBesideFast);
     Timed("DaemonRoutesOverHub", TestDaemonRoutesOverHub);
+    Timed("PressAndNavigate", TestPressAndNavigate);
 }

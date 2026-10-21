@@ -330,7 +330,8 @@ struct DeckHub::Impl : std::enable_shared_from_this<DeckHub::Impl>
         SendJson(id, wire::Welcome,
                  {{"v", wire::kVersion},
                   {"deck", d.serial},
-                  {"model", std::string(d.model->name)},
+                  {"model", ModelToken(*d.model)},  // what Join's "model" takes (FindModelByName)
+                  {"model_name", std::string(d.model->name)},
                   {"pid", d.model->pid},
                   {"real", d.real},
                   {"daemon", options.daemonVersion}});

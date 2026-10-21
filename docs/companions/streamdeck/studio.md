@@ -71,7 +71,7 @@ What the studio does with each answer:
 
 | Daemon sends | The studio |
 |:--|:--|
-| `Welcome` with a deck | takes the deck's model (a mirror follows it) and serial; the deck is live |
+| `Welcome` with a deck | takes the deck's model (its `model` token, else `pid`; a mirror follows it) and serial; the deck is live |
 | `Welcome` `error: no_deck`, `waiting: true` | stays connected and shows "waiting for a Stream Deck"; the next `Welcome` makes it live |
 | `Welcome` `error: version`, `bad_role`, `bad_model`, `bad_request` | shows the reason over the deck and does not retry (Deck > Reconnect, or another role, tries again) |
 | `Output`, `SetFeature` | applied to the software deck exactly as a device would |

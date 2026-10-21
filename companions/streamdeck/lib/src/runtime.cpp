@@ -1,5 +1,6 @@
 #include "sdb/runtime.h"
 
+#include <algorithm>
 #include <cstdio>
 
 #include "sdb/format.h"
@@ -77,6 +78,11 @@ Runtime::~Runtime()
         _worker.join();
     if (_monitor.joinable())
         _monitor.join();
+    {
+        std::lock_guard l(_steps->m);
+        _steps->closed = true;  // a waiting route answers now (its ticket keeps the signal alive)
+    }
+    _steps->cv.notify_all();
 }
 
 void Runtime::Run(const std::atomic<bool>& stop)
@@ -163,8 +169,10 @@ void Runtime::Step(int timeoutMs)
         Handle(e, NowMs());
     }
     bool force = false;
+    std::uint64_t handled = 0;  // the requests this step applies: everything queued below
     {
         std::lock_guard l(_mu);
+        handled = _posted;
         while (!_injected.empty())
         {
             const Event e = _injected.front();
@@ -198,6 +206,29 @@ void Runtime::Step(int timeoutMs)
         _page = Layout(_s, _nav, _m);
     }
     Render(force);
+    {
+        std::lock_guard l(_steps->m);
+        _steps->applied = std::max(_steps->applied, handled);
+    }
+    _steps->cv.notify_all();
+}
+
+Runtime::Ticket Runtime::Posted() const
+{
+    std::lock_guard l(_mu);
+    Ticket t;
+    t._signal = _steps;
+    t._seq = _posted;
+    return t;
+}
+
+bool Runtime::Ticket::Wait(std::chrono::milliseconds timeout) const
+{
+    if (!_signal)
+        return false;
+    std::unique_lock l(_signal->m);
+    _signal->cv.wait_for(l, timeout, [&] { return _signal->applied >= _seq || _signal->closed; });
+    return _signal->applied >= _seq;
 }
 
 void Runtime::Render(bool force)
@@ -538,12 +569,14 @@ void Runtime::Reload(Scenario s)
 {
     std::lock_guard l(_mu);
     _pendingReload = std::move(s);
+    ++_posted;
 }
 
 void Runtime::Inject(const Event& e)
 {
     std::lock_guard l(_mu);
     _injected.push_back(e);
+    ++_posted;
 }
 
 bool Runtime::PressNode(const std::string& id, std::string* error)
@@ -554,6 +587,7 @@ bool Runtime::PressNode(const std::string& id, std::string* error)
         {
             _injected.push_back({EventType::KeyDown, k});
             _injected.push_back({EventType::KeyUp, k});
+            ++_posted;
             return true;
         }
     if (error)
@@ -565,6 +599,7 @@ void Runtime::Navigate(const json& request)
 {
     std::lock_guard l(_mu);
     _navRequests.push_back(request);
+    ++_posted;
 }
 
 void Runtime::SetBrightness(int percent)

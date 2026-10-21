@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-19 |
-| **Status** | Staging done 2026-10-20 on all three platforms (sections 3-5); data waits on SD5 (section 6) |
+| **Status** | Staging done 2026-10-20 on all three platforms (sections 3-5); `data/streamdeck` in every package and the companion's symbols in the symbol archives 2026-10-20 (sections 6, 8); the scenarios, thumbnails and catalogue wait on SD5 |
 | **Decision** | D4 in [README.md](README.md#decisions-owner-2026-10-19): in the unreal-ng release |
 
 ## Contents
@@ -15,6 +15,7 @@
 - [5. Linux](#5-linux)
 - [6. Data](#6-data)
 - [7. Sizes](#7-sizes)
+- [8. Debug symbols](#8-debug-symbols)
 
 ## 1. Today
 
@@ -106,20 +107,26 @@ as on the other apps (into the same directory, so the DLLs are shared; the daemo
 | `catalogue.json` (generated at build time) | `$data/streamdeck/catalogue.json` | studio palette offline |
 | unreal-qt icons | `$data/icons` | faces (`$icons`) |
 
-`$data` per package (where the suite's other data already is, `FileHelper::GetResourcesPath()`; not installed yet,
-SD5), the paths a data-directory lookup in the daemon and the studio has to reach:
+`data/streamdeck` ships in every package since 2026-10-20 (today: the idle screen's theme, `themes/unrealng`; the
+rows above that SD5 adds go into the same directory and ship with it). The daemon finds it through
+`companions/streamdeck/lib/src/datadir.cpp` (the first candidate that holds a `streamdeck/` directory; `run` prints
+`data: <dir>`, or a note when none is found):
 
-| Package | `$data` | Seen from the daemon | Seen from the studio |
+| Package | Copied to | The daemon's candidate that finds it | The studio's |
 |:--|:--|:--|:--|
-| macOS DMG | `UnrealNG.app/Contents/Resources` | `../Resources` (helper in `Contents/MacOS`) | `../../../../Resources` (nested app; from the real path) |
-| Windows ZIP | the ZIP's top directory | beside the exe | beside the exe |
-| DEB | `/usr/lib/unreal-ng` | beside the binary (`/usr/bin` holds symlinks: resolve them) | beside the binary |
-| AppImage | `usr/bin` | beside the binary | beside the binary |
-| Linux tarball | the top directory | beside the binary | beside the binary |
-| Build tree | `bin/` (`cmake/RuntimeData.cmake`) | beside the binary | `../../..` (the studio's bundle on macOS) |
+| macOS DMG | `UnrealNG.app/Contents/Resources/streamdeck` | `Contents/Resources` (helper in `Contents/MacOS`) | the outer bundle's `Contents/Resources` (nested app; from the real path) |
+| Windows ZIP | `streamdeck/` beside the exes | beside the exe | beside the exe |
+| DEB | `/usr/lib/unreal-ng/streamdeck` | beside the binary (`/usr/bin` holds symlinks: resolved) | beside the binary |
+| AppImage | `usr/bin/streamdeck` | beside the binary | beside the binary |
+| Linux tarball | `streamdeck/` at the top | beside the binary | beside the binary |
+| Build tree | `bin/streamdeck` (`cmake/RuntimeData.cmake`) | beside the binary | `../../..` (the studio's bundle on macOS) |
 
-`cmake/RuntimeData.cmake` gets `streamdeck` in its list so dev builds find it beside the binaries; the macOS suite
-copy gets it too (today it misses `data/controllers`, harmless there because the controllers data is compiled in).
+`UNREAL_STREAMDECK_DATA` names another directory (the candidate before all others); a source tree's `data/` is the
+last. Targets: `package_suite_macos` / `package_suite_windows` / `package_suite_linux` (`CMakeLists.txt`, with the
+daemon's copy), `cmake/LinuxPackaging.cmake` (DEB), `tools/package-appimage.sh` (takes the tarball's staging tree as
+it is). The release job checks `streamdeck/themes/unrealng/theme.json` in the bundle, the ZIP's tree (MSVC and
+MinGW), the extracted AppImage and the installed DEB. Checked 2026-10-20 on macOS (`package_suite_macos` on the M3
+Ultra): the file in the bundle, and the daemon run from it prints `data: .../UnrealNG.app/Contents/Resources`.
 
 ## 7. Sizes
 
@@ -130,3 +137,18 @@ copy gets it too (today it misses `data/controllers`, harmless there because the
 | `sdeck-mcp-bridge` | 59 KB (not shipped: `unreal-mcp-bridge`) |
 | `unrealng-control.deck.json` | 263 KB |
 | thumbnails | unmeasured |
+
+## 8. Debug symbols
+
+The symbol archives (`-DPACKAGE_SYMBOLS=ON`, release `workflow_dispatch` runs) carry the companion beside the apps
+since 2026-10-20: `unreal-streamdeck` and `unreal-streamdeck-studio` join the MCP bridge in the list of executables
+the symbol targets walk (`SYMBOL_TOOLS` in `CMakeLists.txt`).
+
+| Target | The companion's entries |
+|:--|:--|
+| `package_symbols_macos` | `unreal-streamdeck.dSYM` (`bin/unreal-streamdeck`), `unreal-streamdeck-studio.dSYM` (the binary in `bin/unreal-streamdeck-studio.app`); both stripped (`strip -S`) before `package_suite_macos` copies them |
+| `package_symbols_windows` (MSVC) | `unreal-streamdeck.pdb`, `unreal-streamdeck-studio.pdb` |
+| `package_symbols_mingw`, `package_symbols_linux` | `unreal-streamdeck.debug`, `unreal-streamdeck-studio.debug` (`objcopy --only-keep-debug`, then `strip --strip-debug` and a `.gnu_debuglink` in the binary) |
+
+The release job lists each archive and fails when `unreal-qt`, `unreal-streamdeck` or `unreal-streamdeck-studio` is
+missing from it.

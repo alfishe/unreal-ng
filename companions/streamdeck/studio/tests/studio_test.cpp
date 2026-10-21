@@ -114,6 +114,7 @@ struct FakeDaemon
 
 json Welcome(const char* serial, int pid, bool real)
 {
+    // "model" unknown here: the pid fallback (a daemon with a token this studio does not know)
     return {{"v", 2}, {"deck", serial}, {"model", "whatever"}, {"pid", pid}, {"real", real}, {"daemon", "test"}};
 }
 
@@ -202,6 +203,17 @@ void TestMirrorSession()
     d.SendJson(wire::DeckState, {{"connected", true}, {"target", "W2 #3"}});
     CHECK(WaitFor([&] { return c.DeckConnected(); }));
     CHECK(c.Target() == QStringLiteral("W2 #3"));
+
+    // another deck (a mirror of "the first deck" follows it): the model comes from the token, the pid only backs it
+    d.SendJson(wire::Welcome, {{"v", 2},
+                               {"deck", "B2"},
+                               {"model", "neo"},
+                               {"model_name", "Stream Deck Neo"},
+                               {"pid", 0x0084},
+                               {"real", true},
+                               {"daemon", "test"}});
+    CHECK(WaitFor([&] { return deck.GetModel().pid == 0x009A; }));
+    CHECK(deck.Serial() == QStringLiteral("B2"));
 
     // an own-role-only request is not answered by a mirror
     d.Send(wire::GetFeature, std::string(32, '\x06'));

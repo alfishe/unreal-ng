@@ -161,6 +161,10 @@ jobs:
         run: |
           cmake --build build --parallel 1 --target package_symbols_linux
           mv build/packages/UnrealNG-Symbols-Linux.tar.gz build/packages/UnrealNG-Symbols-Linux-x86_64.tar.gz
+          # the Stream Deck companion's symbols beside the apps'
+          cmake -E tar tf build/packages/UnrealNG-Symbols-Linux-x86_64.tar.gz > symbols.txt
+          for f in unreal-qt unreal-streamdeck unreal-streamdeck-studio; do grep -q "/$f\.debug$" symbols.txt; done
+          rm symbols.txt
 
       - name: Stage suite for AppImage
         run: cmake --build build --parallel 1 --target package_suite_linux
@@ -182,6 +186,7 @@ jobs:
           rm -rf squashfs-root
           APPIMAGE_EXTRACT_AND_RUN=1 ./UnrealNG-Suite-Linux-x86_64.AppImage --appimage-extract > /dev/null
           test -f squashfs-root/usr/lib/udev/rules.d/70-unreal-streamdeck.rules
+          test -f squashfs-root/usr/bin/streamdeck/themes/unrealng/theme.json   # data beside the daemon
           env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QTDIR -u QT_ROOT_DIR -u PATH \
             PATH=/usr/bin:/bin squashfs-root/usr/bin/unreal-streamdeck --help
           env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QTDIR -u QT_ROOT_DIR -u PATH \
@@ -251,6 +256,7 @@ jobs:
           test -f /usr/share/unreal-ng/examples/lib/unreal_webapi.py
           # The Stream Deck companion: the daemon, the studio (the package's Qt) and the udev rule
           test -f /usr/lib/udev/rules.d/70-unreal-streamdeck.rules
+          test -f /usr/lib/unreal-ng/streamdeck/themes/unrealng/theme.json   # data beside the real binaries
           unreal-streamdeck --help
           QT_QPA_PLATFORM=offscreen unreal-streamdeck-studio --help
 
@@ -326,7 +332,11 @@ jobs:
       - name: Package Symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
         shell: bash
-        run: cmake --build build --parallel 1 --target package_symbols_windows
+        run: |
+          cmake --build build --parallel 1 --target package_symbols_windows
+          cmake -E tar tf build/packages/UnrealNG-Symbols-Windows-MSVC.zip | tr -d '\r' > symbols.txt
+          for f in unreal-qt unreal-streamdeck unreal-streamdeck-studio; do grep -q "/$f\.pdb$" symbols.txt; done
+          rm symbols.txt
 
       - name: Package
         shell: bash
@@ -344,7 +354,8 @@ jobs:
           /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
             QT_QPA_PLATFORM=windows QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES=1 \
             /usr/bin/timeout 60 ./unreal-qt.exe --help
-          # The Stream Deck companion beside it: the daemon, the studio on the same Qt DLLs
+          # The Stream Deck companion beside it: the daemon, its data, the studio on the same Qt DLLs
+          test -f streamdeck/themes/unrealng/theme.json
           /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
             /usr/bin/timeout 60 ./unreal-streamdeck.exe --help
           /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
@@ -440,7 +451,11 @@ jobs:
       - name: Package Symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
         shell: msys2 {0}
-        run: cmake --build build --parallel 1 --target package_symbols_mingw
+        run: |
+          cmake --build build --parallel 1 --target package_symbols_mingw
+          cmake -E tar tf build/packages/UnrealNG-Symbols-Windows-MinGW.zip | tr -d '\r' > symbols.txt
+          for f in unreal-qt unreal-streamdeck unreal-streamdeck-studio; do grep -q "/$f\.debug$" symbols.txt; done
+          rm symbols.txt
 
       - name: Package
         shell: msys2 {0}
@@ -458,7 +473,8 @@ jobs:
           /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
             QT_QPA_PLATFORM=windows QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES=1 \
             /usr/bin/timeout 60 ./unreal-qt.exe --help
-          # The Stream Deck companion beside it: the daemon, the studio on the same Qt DLLs
+          # The Stream Deck companion beside it: the daemon, its data, the studio on the same Qt DLLs
+          test -f streamdeck/themes/unrealng/theme.json
           /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
             /usr/bin/timeout 60 ./unreal-streamdeck.exe --help
           /usr/bin/env -u QT_PLUGIN_PATH PATH="/c/Windows/System32:/c/Windows" \
@@ -571,6 +587,9 @@ jobs:
         run: |
           cmake --build build --parallel 1 --target package_symbols_macos
           mv build/packages/UnrealNG-Symbols-macOS.tar.gz build/packages/UnrealNG-Symbols-macOS-${{ matrix.arch }}.tar.gz
+          cmake -E tar tf build/packages/UnrealNG-Symbols-macOS-${{ matrix.arch }}.tar.gz > symbols.txt
+          for f in unreal-qt unreal-streamdeck unreal-streamdeck-studio; do grep -q "/$f\.dSYM/Contents/Info.plist$" symbols.txt; done
+          rm symbols.txt
 
       - name: Package
         run: |
@@ -608,6 +627,7 @@ jobs:
         run: |
           studio="UnrealNG.app/Contents/Applications/Stream Deck Studio.app"
           test -x UnrealNG.app/Contents/MacOS/unreal-streamdeck
+          test -f UnrealNG.app/Contents/Resources/streamdeck/themes/unrealng/theme.json
           test -x "$studio/Contents/MacOS/unreal-streamdeck-studio"
           test "$(readlink "Stream Deck Studio.app")" = "$studio"
           test ! -e "$studio/Contents/Frameworks"   # Qt once, in UnrealNG.app

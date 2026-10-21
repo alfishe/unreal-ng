@@ -66,6 +66,7 @@ struct TestServer
     std::vector<std::string> received;  // text messages
     int pings = 0;
     int closes = 0;
+    int unmasked = 0;  // frames from the client without a mask (checked once, at the end: the frame count is timing's)
     int accepted = 0;
 
     explicit TestServer(net::EventLoop& l) : loop(l)
@@ -91,6 +92,7 @@ struct TestServer
     }
     ~TestServer()
     {
+        CHECK_EQ(unmasked, 0);  // a client masks every frame
         for (auto& c : conns)
             Kill(c.get());
         loop.Unwatch(listener);
@@ -178,7 +180,8 @@ struct TestServer
             const auto r = ws::DecodeFrame(c->in, f, 1u << 20, &code);
             if (r != ws::DecodeResult::Frame)
                 break;
-            CHECK(f.masked);  // a client masks every frame
+            if (!f.masked)
+                ++unmasked;
             if (f.op == ws::Opcode::Ping)
             {
                 ++pings;
@@ -431,10 +434,10 @@ void TestRefusedAndReconnect()
     server.mode = TestServer::Mode::Refuse;
     ws::Client client(loop, Options(server.Url()));
     std::vector<std::string> reasons;
-    int opens = 0;
+    int opens = 0, otherCodes = 0;  // how many closes there are is timing's: their codes are checked once, at the end
     client.onOpen = [&] { ++opens; };
     client.onClose = [&](int code, std::string_view r) {
-        CHECK(code == ws::kCloseAbnormal);
+        otherCodes += code != ws::kCloseAbnormal;
         reasons.emplace_back(r);
     };
     client.Start();
@@ -454,6 +457,7 @@ void TestRefusedAndReconnect()
     server.mode = TestServer::Mode::Echo;
     CHECK(RunUntil(loop, [&] { return client.IsOpen() && opens >= 2; }));
     CHECK(client.Connections() >= 2);
+    CHECK_EQ(otherCodes, 0);  // a refusal and a drop both close abnormally
 }
 
 void TestNoServer()
