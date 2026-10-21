@@ -97,27 +97,29 @@ application's name, `/Volumes/`, `/Users/`, `/tmp/` must return nothing (plus `t
 
 The prototype's control scenario uses 123 distinct REST paths in 598 steps. By group (step counts):
 
-| Group (steps) | Today | Then |
-|:--|:--|:--|
-| Machine start / replace (90) | `POST /api/v1/emulator/start {replace}` + delays | `mach.start` ([protocol.md §6](protocol.md#6-machine-lifecycle-without-rest)) |
-| Keyboard (66) | `/keyboard/*` (type, press keys, ZX and PC keys) | `input.key` `{key, hold?}`, `input.type` `{text}` |
-| Features (56) | `/feature/<name>` | `feature.toggle` `{name}` with `toggle.feature.<name>` readouts |
-| TTD (55) | `/ttd/*` | `ttd.*` (seek_by, steps, bookmarks, record, resume_live) |
-| Tape (52) | `/tape/*` | `media.tape` `{op}`, `media.open` |
-| Audio (44) | `/audio/mixer/*` | `audio.mute_toggle`, `audio.volume_by` (delta), `audio.source_mute` `{source}` |
-| Settings (43) | `PUT /settings/<name>` | `set.speed` `{value}`, `set.toggle` `{name}` (turbo, fast tape, turbo tape, fast disk) |
-| BASIC (36) | `/basic/*` | `basic.*` (enter, run, list) |
-| Joystick (28) | `/joystick/*` | `input.joystick` `{dir, fire, hold}` |
-| Snapshot (26) | `/snapshot/*` | `snapshot.quick`, `media.open` |
-| Run (≈ 40) | `/pause`, `/resume`, `/reset`, `/nmi`, `/run_frames`, `/run_scanlines`, `/run_to_interrupt`, `/run_tstates`, `/skip_until`, `/step*`, `/stop`, `/start`, `/state` | `run.*`, `mach.reset`, `mach.nmi`, `run.frames` `{count}`, `run.tstates` `{count}` |
-| Media (16), Disk (10) | `/media/X/*`, `/disk/X/insert` | `media.open`, `media.eject` `{drive}` |
-| Video (15) | `/video/*` | `video.*` (filters, overscan, fullscreen) |
-| Debug (≈ 12) | `/debugmode`, `/breakpoints`, `/debug`, `/coverage`, `/profiler`, `/memory` | `dbg.mode_toggle`, `dbg.*` |
-| Capture (2) | `/capture/screen` | `cap.screenshot` |
-| Control (1) | `/control/session` | gone (companion token) |
+| Group (steps) | Today | Then | SD6 (2026-10-20) |
+|:--|:--|:--|:--|
+| Machine start / replace (90) | `POST /api/v1/emulator/start {replace}` + delays | `mach.start` ([protocol.md §6](protocol.md#6-machine-lifecycle-without-rest)) | done: `mach.start` `{model, ram_kb?, replace?}` (in place through `ModelSwitch`, no delay step), `mach.cold_reset` |
+| Keyboard (66) | `/keyboard/*` (type, press keys, ZX and PC keys) | `input.key` `{key, hold?}`, `input.type` `{text}` | done: `input.key` (tap, combo, held), `input.type`, `input.macro`, `input.release_all` |
+| Features (56) | `/feature/<name>` | `feature.toggle` `{name}` with `toggle.feature.<name>` readouts | done: `feature.toggle` `{name, on?}`; the readouts: SD4 |
+| TTD (55) | `/ttd/*` | `ttd.*` (seek_by, steps, bookmarks, record, resume_live) | done: `ttd.start`, `ttd.stop`, `ttd.seek`, `ttd.bookmark_delete`, `ttd.invalidate`, `ttd.history_limit`, `ttd.journal`, `ttd.dump`, `ttd.load`; `ttd.bookmark_add {label}`, `ttd.reverse_step {count}` take params; `ttd.seek_by`: S2 |
+| Tape (52) | `/tape/*` | `media.tape` `{op}`, `media.open` | done |
+| Audio (44) | `/audio/mixer/*` | `audio.mute_toggle`, `audio.volume_by` (delta), `audio.source_mute` `{source}` | done (`volume_by` on the devices: the core has no master volume) |
+| Settings (43) | `PUT /settings/<name>` | `set.speed` `{value}`, `set.toggle` `{name}` (turbo, fast tape, turbo tape, fast disk) | done, plus `set.value` `{name, value}` (ay_voicing, ay_room) |
+| BASIC (36) | `/basic/*` | `basic.*` (enter, run, list) | done: `basic.run` `{command}`, `basic.inject`, `basic.clear`, `basic.mode` |
+| Joystick (28) | `/joystick/*` | `input.joystick` `{dir, fire, hold}` | done |
+| Snapshot (26) | `/snapshot/*` | `snapshot.quick`, `media.open` | done, plus `snapshot.save` `{path}` |
+| Run (≈ 40) | `/pause`, `/resume`, `/reset`, `/nmi`, `/run_frames`, `/run_scanlines`, `/run_to_interrupt`, `/run_tstates`, `/skip_until`, `/step*`, `/stop`, `/start`, `/state` | `run.*`, `mach.reset`, `mach.nmi`, `run.frames` `{count}`, `run.tstates` `{count}` | done: `run.pause`, `run.resume`, `run.frames`, `run.tstates`, `run.steps`; `/skip_until`, `/stop`, `/start` stay REST; `run.step_by`: S2 |
+| Media (16), Disk (10) | `/media/X/*`, `/disk/X/insert` | `media.open`, `media.eject` `{drive}` | done, plus `media.protect`, `media.save`, `media.create` |
+| Video (15) | `/video/*` | `video.*` (filters, overscan, fullscreen) | done: `video.overscan_toggle`, `video.temporal`; `/video/record` stays REST (`cap.record_toggle` a stub), fullscreen is the GUI's |
+| Debug (≈ 12) | `/debugmode`, `/breakpoints`, `/debug`, `/coverage`, `/profiler`, `/memory` | `dbg.mode_toggle`, `dbg.*` | done: `dbg.mode_toggle`, `dbg.breakpoints_clear`, `dbg.breakpoint_hits_reset`; coverage, profiler, pchist, ROM protect stay REST |
+| Capture (2) | `/capture/screen` | `cap.screenshot` | done: `cap.screenshot_save` `{path}` (the GUI's `cap.screenshot` copies to the clipboard) |
+| Control (1) | `/control/session` | gone (companion token) | |
 
-- The exact list is written with the registry work (control surfaces S1); this table sizes it: about 40 new actions,
-  most with a value, many thin wrappers over a control object the route already calls.
+- The exact list, with each action's params, scope and executor:
+  [control surfaces actions.md §1.1](../2026-10-18-control-surfaces/actions.md#11-scenario-actions-sd6): 46 new
+  actions, most with params, thin wrappers over the control object the route already calls, each with the companion
+  scope of its route.
 - Every route keeps working for automation; the actions call the same control objects.
 
 ## 5. Order

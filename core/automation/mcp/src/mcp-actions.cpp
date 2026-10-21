@@ -60,6 +60,8 @@ namespace
                 << (action["gui"].asBool() ? ", gui" : "") << "] " << action["label"].asString();
             if (action["scope"].isString())
                 out << " (scope " << action["scope"].asString() << ")";
+            if (action["params"].isString())
+                out << " {" << action["params"].asString() << "}";
             if (!action["available"].asBool())
                 out << " - " << action["error"].asString() << ": " << action["reason"].asString();
             out << "\n";
@@ -127,8 +129,9 @@ void RegisterActions(ToolRegistry& registry)
         "steps (a number) or {delta, rate}; level: 0..1; text: a string";
     schema["properties"]["params"]["type"] = "object";
     schema["properties"]["params"]["description"] =
-        "run: parameters (run.to_scanline: line; run.n_scanlines: count; ttd.seek_by: unit frames | seconds, min, "
-        "max, rate_lo, rate_hi, rate)";
+        "run: the action's parameters as list shows them in {} (input.key: key; media.open: path; feature.toggle: name; "
+        "mach.start: model; run.frames: count; run.to_scanline: line; ttd.seek_by: unit frames | seconds, min, max, "
+        "rate_lo, rate_hi, rate)";
     schema["required"].append("action");
 
     registry.Register(

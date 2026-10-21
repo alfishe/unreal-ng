@@ -1876,6 +1876,8 @@ public:
                 row["gui"] = status.info.gui;
                 row["scope"] = automation_gate::CompanionScopeName(status.scope);
                 row["needs_pause"] = status.needsPause;
+                if (!status.info.params.empty())
+                    row["params"] = status.info.params;
                 row["available"] = status.available;
                 if (!status.available)
                 {

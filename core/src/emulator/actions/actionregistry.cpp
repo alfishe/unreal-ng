@@ -13,6 +13,7 @@
 #include "common/logger.h"
 #include "common/uuid.h"
 #include "emulator/actions/builtinactions.h"
+#include "emulator/actions/hostactions.h"
 #include "emulator/coordinator/machineop.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -624,6 +625,8 @@ ActionRegistry& ActionRegistry::Instance()
     static ActionRegistry* registry = [] {
         auto* created = new ActionRegistry();
         created->_builtin = RegisterBuiltinActions(*created);
+        for (RegistrationHandle& handle : RegisterHostActions(*created))
+            created->_builtin.push_back(std::move(handle));
         return created;
     }();
     return *registry;

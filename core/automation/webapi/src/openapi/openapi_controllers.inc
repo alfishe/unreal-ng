@@ -144,8 +144,8 @@
         get["description"] =
             "Every action (core and, with the Qt client, its GUI ones) in registration order: id, label, group, kind "
             "(press, delta, level, text), held (the release matters too), gui (only with the Qt client), scope (the "
-            "companion scope it needs now: run, debug, rewind, ...; null = it changes nothing), needs_pause, "
-            "available and, when not, error (not_now, Not Implemented, Run-control held, companion_forbidden, "
+            "companion scope it needs now: run, debug, rewind, ...; null = it changes nothing), needs_pause, params "
+            "(the params it reads, one line: \"key, hold?, frames?\"; absent when none), available and, when not, error (not_now, Not Implemented, Run-control held, companion_forbidden, "
             "held_by_session, held_by_other) and reason. A dry run of the gates: no session is opened";
         get["tags"].append("Controllers");
         instanceParameter(get, "query");

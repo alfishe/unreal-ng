@@ -253,7 +253,7 @@ actions::Executor GuiActions::OnGui(GuiRun run)
 void GuiActions::Add(const char* id, const QString& label, const QString& group, actions::ValueKind kind, GuiRun run,
                      actions::ActionRules rules, bool held)
 {
-    actions::ActionInfo info{id, label.toStdString(), group.toStdString(), kind, held, true};
+    actions::ActionInfo info{id, label.toStdString(), group.toStdString(), kind, held, true, {}};
     _handles.push_back(actions::ActionRegistry::Instance().Register(std::move(info), OnGui(std::move(run)),
                                                                     std::move(rules)));
 }

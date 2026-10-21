@@ -268,6 +268,51 @@ RunReply RunControl::RunNScanlines(const Requester& requester, unsigned count)
     return reply;
 }
 
+RunReply RunControl::Steps(const Requester& requester, unsigned count)
+{
+    if (!_emulator)
+        return Missing();
+    if (HeldByOther(_emulator->GetContext(), requester))
+        return HeldReply("step");
+    count = std::clamp(count, 1u, 100000u);  // safety limit, as POST /steps
+    const unsigned executed = _emulator->RunNCPUCycles(count, false);
+    RunReply reply = Finish("Executed " + std::to_string(executed) + " of " + std::to_string(count) + " instructions");
+    if (reply.Ok())
+    {
+        reply.body["count"] = count;
+        reply.body["executed"] = executed;
+    }
+    return reply;
+}
+
+RunReply RunControl::RunFrames(const Requester& requester, unsigned count)
+{
+    if (!_emulator)
+        return Missing();
+    if (HeldByOther(_emulator->GetContext(), requester))
+        return HeldReply("step");
+    count = std::clamp(count, 1u, 10000u);  // safety limit, as POST /run_frames
+    _emulator->RunNFrames(count);
+    RunReply reply = Finish("Ran " + std::to_string(count) + " frames");
+    if (reply.Ok())
+        reply.body["count"] = count;
+    return reply;
+}
+
+RunReply RunControl::RunTStates(const Requester& requester, uint64_t count)
+{
+    if (!_emulator)
+        return Missing();
+    if (HeldByOther(_emulator->GetContext(), requester))
+        return HeldReply("step");
+    count = std::clamp<uint64_t>(count, 1, 10000000);  // safety limit, as POST /run_tstates
+    _emulator->RunTStates(count);
+    RunReply reply = Finish("Ran " + std::to_string(count) + " t-states");
+    if (reply.Ok())
+        reply.body["tstates"] = static_cast<int64_t>(count);
+    return reply;
+}
+
 RunReply RunControl::Reset()
 {
     if (!_emulator)

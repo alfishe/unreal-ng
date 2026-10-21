@@ -3666,8 +3666,13 @@ the Qt client (it owns the game controllers): a headless process answers `unavai
 The host actions by id (control surfaces design
 [actions.md](../../../inprogress/2026-10-18-control-surfaces/actions.md)): run control (`run.pause_toggle`,
 `run.step_in`, `run.turbo_hold`, ...), time travel (`ttd.step_back_frame`, `ttd.jog_frames`, ...), the machine
-(`mach.reset`, `mach.nmi`, `mach.turbo_toggle`) and, with the Qt client, its GUI actions (`dbg.open`, the debugger
-panes, `cap.screenshot`, `ttd.scrub_*`). The core `ActionRegistry` (`core/src/emulator/actions/`) holds them; a pad,
+(`mach.reset`, `mach.nmi`, `mach.turbo_toggle`, `mach.start`, `mach.cold_reset`), and the actions a Stream Deck
+scenario runs instead of REST steps (`input.key`, `input.type`, `input.joystick`, `basic.run`, `feature.toggle`,
+`set.speed`, `set.toggle`, `audio.mute_toggle`, `audio.volume_by`, `media.open`, `media.tape`, `media.eject`,
+`snapshot.quick`, `video.overscan_toggle`, `dbg.mode_toggle`, `ttd.seek`, ...: the full list with their params in
+[actions.md §1.1](../../../inprogress/2026-10-18-control-surfaces/actions.md#11-scenario-actions-sd6)) and, with the
+Qt client, its GUI actions (`dbg.open`, the debugger panes, `cap.screenshot`, `ttd.scrub_*`). Each takes the companion
+scope of the REST route it replaces. The core `ActionRegistry` (`core/src/emulator/actions/`) holds them; a pad,
 the Surface Dial, a Stream Deck and every plane below run the same ids, on one actions worker per instance, in order.
 The gate of the caller's origin applies: an automation client that changes the machine gets the implicit run-control
 session, a companion is checked against its scopes, the GUI and host devices are refused while another surface holds
@@ -3675,8 +3680,8 @@ control.
 
 | Command | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- |
-| `action [list]` | `[--json]` | Every action: id, label, group, kind (`press`, `delta`, `level`, `text`), `held`, `gui`, the companion scope it needs now, `needs_pause`, and whether it can run now for this caller or why not (`not_now` "needs a pause", `Not Implemented` for the stubs, `Run-control held`, `companion_forbidden`, `held_by_other`) | ✅ Implemented |
-| `action run` | `<id> [value] [param=val ...] [--json]` | Run one on the selected instance and wait for it. Value by kind: press `press` (default) / `release`; delta signed steps; level 0..1; text. Parameters: `run.to_scanline line=N`, `run.n_scanlines count=N`, `ttd.seek_by unit= min= max= rate_lo= rate_hi= rate=`. The reply: `ok`, `error`, `message`, `result` (a step: `pc`, `sp`, `state`, `stop`) | ✅ Implemented |
+| `action [list]` | `[--json]` | Every action: id, label, group, kind (`press`, `delta`, `level`, `text`), `held`, `gui`, the companion scope it needs now, `needs_pause`, the `params` it reads (one line, `?` = optional), and whether it can run now for this caller or why not (`not_now` "needs a pause", `Not Implemented` for the stubs, `Run-control held`, `companion_forbidden`, `held_by_other`) | ✅ Implemented |
+| `action run` | `<id> [value] [param=val ...] [--json]` | Run one on the selected instance and wait for it. Value by kind: press `press` (default) / `release`; delta signed steps; level 0..1; text. Parameters as `name=value` words: `run.to_scanline line=N`, `run.frames count=N`, `input.key key=caps+1`, `media.open path=game.tap`, `feature.toggle name=turbomode`, `ttd.seek_by unit= min= max= rate_lo= rate_hi= rate=`. The reply: `ok`, `error`, `message`, `result` (a step: `pc`, `sp`, `state`, `stop`) | ✅ Implemented |
 | `action context` | `[--json]` | The instance's surface context: the one in force, whether somebody set it and who (`by`), the default it returns to | ✅ Implemented |
 
 The control-surface actions of phase S2 ([actions.md §2-§4](../../../inprogress/2026-10-18-control-surfaces/actions.md#2-ttdseek_by)):

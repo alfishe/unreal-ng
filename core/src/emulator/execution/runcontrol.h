@@ -81,6 +81,12 @@ public:
     RunReply RunToScanline(const Requester& requester, unsigned scanline);
     /// 1..1000 scanlines
     RunReply RunNScanlines(const Requester& requester, unsigned count);
+    /// 1..100000 instructions (POST /steps); a breakpoint ends them
+    RunReply Steps(const Requester& requester, unsigned count);
+    /// 1..10000 video frames (POST /run_frames), breakpoints skipped
+    RunReply RunFrames(const Requester& requester, unsigned count);
+    /// 1..10000000 t-states (POST /run_tstates), breakpoints skipped
+    RunReply RunTStates(const Requester& requester, uint64_t count);
     /// endregion </Steps and runs>
 
     /// region <Machine>

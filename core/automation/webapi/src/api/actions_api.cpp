@@ -224,6 +224,8 @@ void EmulatorAPI::getActions(const HttpRequestPtr& req, std::function<void(const
         const std::string scope = automation_gate::CompanionScopeName(status.scope);
         row["scope"] = scope.empty() ? Json::Value(Json::nullValue) : Json::Value(scope);
         row["needs_pause"] = status.needsPause;
+        if (!status.info.params.empty())
+            row["params"] = status.info.params;
         row["available"] = status.available;
         if (!status.available)
         {
