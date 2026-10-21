@@ -13,6 +13,7 @@
 #include "common/companion_helper.h"
 #include "common/request_gates.h"
 #include "common/session_helper.h"
+#include "emulator/monitoring/clientstats.h"
 #include "ws-hub.h"
 
 namespace api
@@ -114,6 +115,7 @@ bool IsSocketPath(const std::string& path)
 
 void ApiWebSocket::handleNewConnection(const drogon::HttpRequestPtr& req, const drogon::WebSocketConnectionPtr& wsConnPtr)
 {
+    monitoring::ClientStats::Instance().Opened(monitoring::ClientPlane::Ws);  // host.clients
     auto connection = std::make_shared<Connection>();
     connection->token = webapi_companion::BearerOf(req).value_or("");
     connection->userAgent = req->getHeader("User-Agent");
@@ -186,6 +188,7 @@ void ApiWebSocket::handleNewConnection(const drogon::HttpRequestPtr& req, const 
 
 void ApiWebSocket::handleConnectionClosed(const drogon::WebSocketConnectionPtr& wsConnPtr)
 {
+    monitoring::ClientStats::Instance().Closed(monitoring::ClientPlane::Ws);
     WsHub::Instance().Remove(wsConnPtr.get());
     wsConnPtr->clearContext();
 }
@@ -295,6 +298,10 @@ void ApiWebSocket::handleNewMessage(const drogon::WebSocketConnectionPtr& wsConn
     call->attributes()->insert(webapi_session::kPeerAttribute, connection->peer);
     call->attributes()->insert(webapi_session::kPeerHostAttribute, connection->peerHost);
 
+    // A `call`: host.clients ws.requests (marked, so a pre-handling advice that sees the forward does not count it
+    // as an HTTP request too)
+    monitoring::ClientStats::Instance().Request(monitoring::ClientPlane::Ws);
+    call->attributes()->insert("unreal.ws_call", true);
     // The checks every HTTP request passes before routing (drogon's forward skips them)
     if (const drogon::HttpResponsePtr refused = webapi_gate::PassRequestGates(call))
     {

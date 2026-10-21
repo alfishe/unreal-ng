@@ -14,6 +14,7 @@
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/tape/tape.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/monitoring/monitoringapi.h"
 #include "emulator/sound/soundmanager.h"
 
 namespace actions
@@ -103,6 +104,7 @@ StateNode MediaDisk(Emulator& emulator)
         drive["loaded"] = slot->present;
         drive["name"] = slot->present ? BaseName(slot->source) : std::string();
         drive["protect"] = slot->writeProtect;
+        drive["dirty"] = slot->dirty;  // unsaved changes (the frame's snapshot while running)
         FDD* fdd = context->coreState.diskDrives[i];
         drive["busy"] = fdd != nullptr && fdd->getMotor();
         drives.push(std::move(drive));
@@ -173,8 +175,16 @@ bool ToggleOf(const std::string& name, std::string& id, StateNode& params)
 
 const std::vector<std::string>& BaseReadoutNames()
 {
-    static const std::vector<std::string> names = {"ttd.position", "run.state",  "machine",   "media.tape",
-                                                   "media.disk",   "audio.mute", "debug.mode"};
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> all = {"ttd.position", "run.state",  "machine",   "media.tape",
+                                        "media.disk",   "audio.mute", "debug.mode"};
+        // Monitoring (monitoring::ReadProcess / ReadInstance; the WebSocket topics of the same names)
+        for (const std::string& name : monitoring::ProcessNames())
+            all.push_back(name);
+        for (const std::string& name : monitoring::InstanceNames())
+            all.push_back(name);
+        return all;
+    }();
     return names;
 }
 
@@ -224,6 +234,11 @@ StateNode ReadReadout(Emulator& emulator, const std::string& name)
         return AudioMute(emulator);
     if (name == "debug.mode")
         return DebugMode(emulator);
+    // Monitoring: the process's values (the same for every instance) and the instance's
+    if (monitoring::IsProcessName(name))
+        return monitoring::ReadProcess(name);
+    if (monitoring::IsInstanceName(name))
+        return monitoring::ReadInstance(name, emulator);
     std::string id;
     StateNode params;
     if (name.compare(0, 7, "toggle.") == 0 && ToggleOf(name, id, params))

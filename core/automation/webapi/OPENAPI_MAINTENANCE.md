@@ -39,6 +39,7 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 | `openapi_tape_disk.inc` | Tape & Disk Control | Load, eject, insert, sector/track inspection |
 | `openapi_media.inc` | Media | The drive collection: `/media`, `/media/{slot}` (also `formats`, `targets?path=`), `/media/{slot}/{verb}`; verbs and options generated from `MediaControl` |
 | `openapi_media_schemas.inc` | Media (schemas) | `MediaReply`, `MediaSlot`, `MediaMedium`, `MediaFileClass`, `MediaTarget` |
+| `openapi_monitoring.inc` | Monitoring | `/monitor`, `/monitor/{name}` (host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots, ...: the /api/v1/ws topics of the same names), `/emulator/{id}/breakpoints/groups` (monitoring::Call) |
 | `openapi_snapshot.inc` | Snapshot Control | Load, save, info |
 | `openapi_capture.inc` | Capture | Screen capture, OCR |
 | `openapi_basic.inc` | BASIC Control | Run, inject, extract, clear, state, mode |

@@ -1658,7 +1658,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_sd", "next_divmmc", "next_nmi", "next_magic_port", "next_audio", "next_input", "next_uart", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
-                               "audio_multisound", "audio_midi", "execution"})
+                               "audio_multisound", "audio_midi", "execution", "monitor"})
     {
         allowed.append(aspect);
     }
@@ -1934,6 +1934,10 @@ void RegisterInspectState(ToolRegistry& registry)
         "interface, contended slots, per-kind waits while debugging (contention), the TS-Conf (tsconf, tsconf_tsu) and the "
         "Sprinter Sp2000 machines (sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, "
         "sprinter_zx_mode, sprinter_pld_journal). "
+        "'monitor' = monitoring (GET /api/v1/monitor?instance=): the host process (CPU %, resident memory, threads), the "
+        "clients per plane, and this instance's emulator.stats (measured fps, real-time speed %, frame time, CPU MHz, "
+        "interrupts per frame), breakpoint counts by kind and groups, media slots with unsaved changes, recording, "
+        "labels, TTD sizes, profiler states, controllers; the WebSocket topics of the same names push them. "
         "Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
@@ -1962,11 +1966,12 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
-                    aspect != "slots" && aspect != "audio_multisound" && aspect != "audio_midi" && aspect != "execution")
+                    aspect != "slots" && aspect != "audio_multisound" && aspect != "audio_midi" && aspect != "execution" &&
+                    aspect != "monitor")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor"));
                     return;
                 }
             }
@@ -2114,9 +2119,19 @@ void RegisterInspectState(ToolRegistry& registry)
                         {
                             std::string suffix = aspect == "registers" ? "/registers" : (aspect == "breakpoints" ? "/breakpoints" : "/state/memory");
                             steps.push_back([&caller, id, aspect, suffix](Json::Value& acc, std::function<void(bool)> next) {
-                                caller.Call("GET", Endpoint(id, suffix), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                caller.Call("GET", Endpoint(id, suffix), nullptr, [&caller, id, aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
-                                    next(true);
+                                    if (aspect != "breakpoints" || !acc[aspect].isObject())
+                                    {
+                                        next(true);
+                                        return;
+                                    }
+                                    // The breakpoints' groups (name, total, active, ids) beside the list: within this
+                                    // aspect's one step (the progress reports one label per step)
+                                    caller.Call("GET", Endpoint(id, "/breakpoints/groups"), nullptr, [aspect, &acc, next](int groupsStatus, Json::Value groups) mutable {
+                                        if (groupsStatus == 200) acc[aspect]["groups"] = groups["groups"];
+                                        next(true);
+                                    });
                                 });
                             });
                         }
@@ -2458,6 +2473,17 @@ void RegisterInspectState(ToolRegistry& registry)
                                                      "&length=" + std::to_string(size) + "&format=hex";
                             steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "monitor")
+                        {
+                            // monitoring::Call `all` for this instance: the process and the instance's values
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", "/api/v1/monitor?instance=" + UrlEncodeSegment(id), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
                                     next(true);
@@ -2996,6 +3022,32 @@ void RegisterInspectState(ToolRegistry& registry)
                                     for (const Json::Value& conflict : value["conflicts"])
                                         out << "\n[isa] conflict: " << (conflict.isString() ? conflict.asString() : conflict.toStyledString());
                                     out << "\n[isa] journal: " << value["journal_entries"].asUInt64() << " accesses (GET /state/isa/journal via invoke_api)";
+                                }
+                            }
+                            else if (aspect == "monitor")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[monitor] " << value["description"].asString();
+                                else
+                                {
+                                    const Json::Value& host = value["host"];
+                                    out << "\n[monitor] host CPU " << host["cpu_percent"].asDouble() << " %, RSS "
+                                        << host["rss_bytes"].asUInt64() / (1024 * 1024) << " MB, threads "
+                                        << host["threads"].asUInt() << "; clients ws " << value["clients"]["ws"]["connections"].asInt64()
+                                        << ", rest requests " << value["clients"]["rest"]["requests"].asUInt64();
+                                    for (const Json::Value& instance : value["instances"])
+                                    {
+                                        const Json::Value& stats = instance["emulator.stats"];
+                                        const Json::Value& bps = instance["debug.breakpoints"];
+                                        out << "\n  " << instance["model"].asString() << " " << stats["state"].asString() << ", "
+                                            << stats["fps"].asDouble() << " fps, speed " << stats["speed_percent"].asDouble()
+                                            << " %, frame " << stats["frame_time_us"]["avg"].asDouble() << " us, CPU "
+                                            << stats["cpu"]["mhz"].asDouble() << " MHz, " << stats["interrupts_per_frame"].asDouble()
+                                            << " int/frame; breakpoints " << bps["total"].asUInt() << " (" << bps["active"].asUInt()
+                                            << " active); media dirty " << (instance["media.slots"]["dirty"].asBool() ? "yes" : "no")
+                                            << "; recording " << (instance["recording.state"]["recording"].asBool() ? "yes" : "no")
+                                            << "; ttd " << instance["ttd.status"]["state"].asString();
+                                    }
                                 }
                             }
                             else if (aspect == "execution")

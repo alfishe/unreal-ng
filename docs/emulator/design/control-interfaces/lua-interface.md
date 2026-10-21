@@ -295,6 +295,15 @@ streamdeck("pair")                         -- the user approves it at the GUI
 streamdeck("brightness", {deck = "A1B2C3", value = 40})
 ```
 
+Monitoring (`monitor(name, {instance = })`, [command-interface.md §17](./command-interface.md#17-monitoring)); an
+instance's name reads this emulator unless `instance` names another:
+
+```lua
+local stats = monitor("emulator.stats")       -- stats.fps, stats.speed_percent, stats.cpu.mhz, stats.interrupts_per_frame
+local host = monitor("host.stats")            -- host.cpu_percent, host.rss_bytes, host.threads
+local groups = bp_groups().groups             -- {{name, total, active, ids}}
+```
+
 ### Disk Operations
 
 Global functions for the four floppy drives (0-3 / A-D), mirroring the CLI `disk` commands

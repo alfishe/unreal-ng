@@ -1612,6 +1612,64 @@ std::vector<std::string> BreakpointManager::GetBreakpointGroups() const
     return std::vector<std::string>(groups.begin(), groups.end());
 }
 
+BreakpointManager::BreakpointSummary BreakpointManager::GetSummary() const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    BreakpointSummary summary;
+    std::map<std::string, BreakpointSummary::Group> groups;
+    for (const auto& [id, bp] : _breakpointMapByID)
+    {
+        if (bp == nullptr)
+            continue;
+        if (!IsUserBreakpoint(*bp))
+        {
+            summary.owned++;
+            continue;
+        }
+        summary.total++;
+        if (bp->active)
+            summary.active++;
+        switch (bp->type)
+        {
+            case BRK_MEMORY:
+                summary.memory++;
+                summary.exec += (bp->memoryType & BRK_MEM_EXECUTE) ? 1u : 0u;
+                summary.read += (bp->memoryType & BRK_MEM_READ) ? 1u : 0u;
+                summary.write += (bp->memoryType & BRK_MEM_WRITE) ? 1u : 0u;
+                break;
+            case BRK_IO:
+                summary.port++;
+                summary.portIn += (bp->ioType & BRK_IO_IN) ? 1u : 0u;
+                summary.portOut += (bp->ioType & BRK_IO_OUT) ? 1u : 0u;
+                break;
+            case BRK_KEYBOARD:
+                summary.keyboard++;
+                break;
+            case BRK_NEXTREG:
+                summary.nextreg++;
+                break;
+            case BRK_BEAM:
+                summary.beam++;
+                break;
+            case BRK_COPPER:
+                summary.copper++;
+                break;
+            case BRK_MAGIC:
+                summary.magic++;
+                break;
+        }
+        BreakpointSummary::Group& group = groups[bp->group];
+        group.name = bp->group;
+        group.total++;
+        if (bp->active)
+            group.active++;
+        group.ids.push_back(id);
+    }
+    for (auto& [name, group] : groups)
+        summary.groups.push_back(std::move(group));
+    return summary;
+}
+
 /// @brief Retrieves all breakpoint IDs belonging to a specific group
 ///
 /// @param groupName The name of the group to query
@@ -2509,6 +2567,7 @@ std::string BreakpointManager::PublishedFields(const BreakpointDescriptor& bp)
 
 void BreakpointManager::NotifyBreakpointsChanged()
 {
+    _revision.fetch_add(1, std::memory_order_relaxed);
     // A manager without an emulator (unit tests) has nobody to tell: the changes wait for the next report
     if (!_context || !_context->pEmulator)
         return;

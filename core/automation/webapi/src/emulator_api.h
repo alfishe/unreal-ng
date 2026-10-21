@@ -129,6 +129,11 @@ public:
     ADD_METHOD_TO(EmulatorAPI::deleteStreamDeckVerb, "/api/v1/streamdeck/{verb}", drogon::Delete);
     ADD_METHOD_TO(EmulatorAPI::getStreamDeckBrightness, "/api/v1/streamdeck/decks/{deck}/brightness", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::putStreamDeckBrightness, "/api/v1/streamdeck/decks/{deck}/brightness", drogon::Put);
+    // Monitoring: the host process, the clients, each instance's pace and summaries (implementation:
+    // api/monitoring_api.cpp over monitoring::Call, the verbs of every plane; the WebSocket topics of the same names)
+    ADD_METHOD_TO(EmulatorAPI::getMonitor, "/api/v1/monitor", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getMonitorName, "/api/v1/monitor/{name}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getBreakpointGroups, "/api/v1/emulator/{id}/breakpoints/groups", drogon::Get);
 
     // ZX-bus slots: the machine's buses, slots and cards (implementation: api/slots_api.cpp over SlotControl,
     // core/src/emulator/slots/slotcontrol.h; ZX-bus slots architecture.md §9). A change restarts the machine
@@ -858,6 +863,13 @@ public:
                                  const std::string& deck) const;
     void putStreamDeckBrightness(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback,
                                  const std::string& deck) const;
+    /// Monitoring (api/monitoring_api.cpp; monitoring::Call): GET /api/v1/monitor = `all`, /api/v1/monitor/{name} one
+    /// name (host.stats, host.clients, emulator.stats, debug.breakpoints, ...); ?instance= an id or an index
+    void getMonitor(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
+    void getMonitorName(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& name) const;
+    /// GET /api/v1/emulator/{id}/breakpoints/groups: monitoring::Call `breakpoint_groups` ({groups: [{name, total,
+    /// active, ids}]}, the user breakpoints)
+    void getBreakpointGroups(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& id) const;
     /// POST /api/v1/controllers/actions/{action} {instance?, value?}: run it on the instance's actions worker
     void postAction(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& action) const;
