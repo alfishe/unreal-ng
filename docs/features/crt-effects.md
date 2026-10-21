@@ -116,7 +116,7 @@ runs them on the window's context with the slang semantics: `Original`, `Source`
 `frame_count_mod`), `FrameDirection`, `FrameTimeDelta`, `OriginalFPS` and the parameters. A pass's output is sampled
 with that pass's filter and wrap (librashader's rule); the last pass draws at the picture's device pixels into the
 window, opaque, whatever its own framebuffer flags say (as librashader). The presets are arbitrary multi-pass code:
-no software twin, greyed out without the GPU; switching the GPU off shows Basic.
+no software twin, greyed out without the GPU; switching the GPU off shows the built-in profile chosen before the preset.
 
 On the same frame and size the window draws what librashader draws: `SlangPresetRunner_Test.MatchesLibrashader`
 (`UNREAL_CRT_REFERENCE=<dir>` with `librashader-cli render` output) gives a mean difference of at most 0.08 / 255 on

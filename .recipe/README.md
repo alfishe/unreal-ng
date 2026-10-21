@@ -133,6 +133,7 @@ call.
 | [media/author-udi-images.md](media/author-udi-images.md) | Creating proper UDI images: format capability matrix, host-side conversion/authoring, in-emulator formatting, weak-bit limits |
 | [media/video-recording.md](media/video-recording.md) | Record the screen to GIF/H.264/HEVC with an optional sound track (`audio: aac`) from MCP, WebAPI, CLI, Lua, Python; codec/container rules; ffprobe checks |
 | [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | Viewing emulator screen as agent: native MCP/WebAPI server-side binary saving without base64 transcript corruption |
+| [media/crt-effects.md](media/crt-effects.md) | CRT effects in the GUI window: read / set `gpu`, `crt`, `crt_profile` (Basic, seven models, libretro `shader:` presets), `source=window` grabs, the GPU-only and no-window errors, a GPU vs software bit-for-bit check |
 | [media/disk-sector-and-catalog-inspection.md](media/disk-sector-and-catalog-inspection.md) | Inspect a loaded disk: catalog, info, sysinfo, decoded and raw sectors and tracks, image download, create / eject |
 | [media/sprinter-hdd.md](media/sprinter-hdd.md) | Sprinter hard disks: IDE slots ide0/ide1, mounting an HDD image, booting DSS from it (DSS 1.71 needs BIOS 3.06), state ide |
 | [media/sprinter-test-images.md](media/sprinter-test-images.md) | A Sprinter disk that boots straight into your program: a composite over the system disk (no copy), a copy with `make-test-image.sh`, or the in-session `SYSTEM.BAT` rewrite of the tests; the same boot every time |

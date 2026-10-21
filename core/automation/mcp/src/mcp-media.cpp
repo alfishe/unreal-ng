@@ -108,16 +108,24 @@ std::string TemporalSummary(const Json::Value& status)
     return out.str();
 }
 
-/// One-line summary of a /video/window answer, e.g. "window gpu on (available), crt basic, blending off (2
-/// frames, equal)"
+/// Summary of a /video/window answer, e.g. "window gpu on (available), crt basic, blending off (2 frames, equal)",
+/// then the profiles the window offers (an agent may see only the text: it needs the words for crt_profile)
 std::string WindowDisplaySummary(const Json::Value& s)
 {
     std::string line = std::string("window gpu ") + (s.get("gpu", false).asBool() ? "on" : "off") +
                        (s.get("gpu_available", false).asBool() ? " (available)" : " (unavailable)");
-    line += ", crt " + (s.get("crt", false).asBool() ? s.get("crt_profile", "").asString() : std::string("off"));
+    const std::string profile = s.get("crt_profile", "").asString();
+    line += ", crt " + (s.get("crt", false).asBool() ? profile : "off (profile " + profile + ")");
     line += std::string(", blending ") + (s.get("blending", false).asBool() ? "on" : "off") + " (" +
             std::to_string(s.get("blending_frames", 0).asInt()) + " frames, " + s.get("blending_weights", "").asString() +
             ")";
+    const Json::Value& offered = s["crt_profiles"];
+    if (offered.isArray() && !offered.empty())
+    {
+        line += "\ncrt_profiles:";
+        for (const Json::Value& name : offered)
+            line += " " + name.asString();
+    }
     return line;
 }
 
