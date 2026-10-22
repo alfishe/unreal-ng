@@ -24,6 +24,7 @@
 #include "base/featuremanager.h"
 #include "emulator/media/recentfiles.h"
 #include "widgets/ttdwidget.h"
+#include "widgets/windowrecorder.h"
 #include "widgets/windowviewprovider.h"
 #ifdef ENABLE_RECORDING
 #include "widgets/recordingwidget.h"
@@ -1133,6 +1134,27 @@ void MainWindow::registerWindowView()
             window->publishWindowDisplay();  // the toggles read it at once
         return true;
     };
+    auto record = [window](WindowViewProvider::RecordAction action, const WindowRecordingRequest* request,
+                           WindowRecordingStatus& out, std::string& error) {
+        if (!window)
+        {
+            error = "The window is closed";
+            return false;
+        }
+        if (!window->_windowRecorder)
+            window->_windowRecorder = new WindowRecorder(window->_osdKeyboardWindow, window);
+        switch (action)
+        {
+            case WindowViewProvider::RecordAction::Start:
+                return window->_windowRecorder->start(window->_screenWrapper, window->_emulator, *request, out, error);
+            case WindowViewProvider::RecordAction::Stop:
+                return window->_windowRecorder->stop(out, error);
+            case WindowViewProvider::RecordAction::Status:
+                window->_windowRecorder->status(out);
+                return true;
+        }
+        return false;
+    };
     auto parameters = [window](const CrtParameterChange* change, CrtParameters& out, std::string& error) {
         if (!window || !window->_screenWrapper)
         {
@@ -1146,7 +1168,8 @@ void MainWindow::registerWindowView()
             window->publishWindowDisplay();
         return true;
     };
-    WindowView::SetProvider(std::make_shared<WindowViewProvider>(_screenWrapper, shownEmulatorId, display, parameters));
+    WindowView::SetProvider(std::make_shared<WindowViewProvider>(_screenWrapper, shownEmulatorId, display, parameters,
+                                                                  record));
     schedulePublishWindowDisplay();
 }
 

@@ -114,6 +114,7 @@
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
 #include "emulator/video/viewportcontrol.h"
+#include "emulator/video/windowrecording.h"
 #include "../../../windowdisplay.h"
 #include "../../../operationsstatus.h"
 #include <emulator/io/rtc/rtcaccess.h>
@@ -6043,6 +6044,72 @@ namespace PythonBindings
         }, "Change the active CRT profile's parameters: values={name: value}, steps={name: steps} (a dial's), "
            "reset=True | name | [names]; returns the parameters after it, or {ok: False, error, kind}",
            py::arg("values") = py::dict(), py::arg("steps") = py::dict(), py::arg("reset") = py::none())
+        // The GUI window recording (the picture as drawn, CRT and all, the on-screen keyboard, the machine's sound): the
+        // WindowRecording report every interface returns. They wait for the GUI thread, which may want the GIL meanwhile
+        .def("window_record", [](Emulator& self, const std::string& path, const py::kwargs& options) -> py::object {
+            WindowRecordingRequest request;
+            request.path = path;
+            for (const auto& item : options)
+            {
+                const std::string key = py::str(item.first);
+                const py::handle value = item.second;
+                WindowRecording::Result bad;
+                bad.status = WindowRecording::Status::BadParameter;
+                std::string word;
+                if (py::isinstance<py::bool_>(value))
+                    word = value.cast<bool>() ? "on" : "off";
+                else if (py::isinstance<py::float_>(value))
+                    word = WindowDisplay::NumberWord(value.cast<double>());
+                else if (py::isinstance<py::int_>(value) || py::isinstance<py::str>(value))
+                    word = py::str(value);
+                else
+                    bad.error = "'" + key + "' takes a bool, a number or a str";
+                if (!bad.error.empty() || !WindowRecording::ApplyWord(request, key, word, bad.error))
+                    return StateNodeToPy(WindowRecording::ErrorNode(bad));
+            }
+            WindowRecording::Result r;
+            {
+                py::gil_scoped_release release;
+                r = WindowRecording::Start(self.GetId(), request);
+            }
+            return StateNodeToPy(r.Ok() ? WindowRecording::Report(r.recording) : WindowRecording::ErrorNode(r));
+        }, "Record the GUI window as it draws (CRT and all) with the on-screen keyboard and the machine's sound, one "
+           "video frame per emulated frame, to path (.mov: prores, .mp4: h264): keyboard= ('default', a picture id, "
+           "False), codec= ('prores', 'h264'), audio= (bool), fps= (1..100, audio=False only), scale= (1..4), "
+           "picture_height= (0..4320, GPU), width= / height= (the frame), layout= ('below', 'side'); returns {recording, "
+           "path, keyboard, frames, width, height, fps, audio, sample_rate, audio_samples} or {ok: False, error, kind}",
+           py::arg("path"))
+        .def("window_record_frames", [](Emulator& self, int frames) -> py::object {
+            execution::script::Check(self, execution::Origin::Python);
+            WindowRecording::Result r;
+            {
+                py::gil_scoped_release release;
+                r = WindowRecording::RunFrames(self, frames);
+            }
+            if (!r.Ok())
+                return StateNodeToPy(WindowRecording::ErrorNode(r));
+            StateNode report = WindowRecording::Report(r.recording);
+            report["ran"] = r.ran;
+            return StateNodeToPy(report);
+        }, "A paused machine runs frames frames (1..100000), each one drawn by the window and recorded before the next; "
+           "returns the recording's status with ran", py::arg("frames"))
+        .def("window_record_stop", [](Emulator&) -> py::object {
+            WindowRecording::Result r;
+            {
+                py::gil_scoped_release release;
+                r = WindowRecording::Stop();
+            }
+            return StateNodeToPy(r.Ok() ? WindowRecording::Report(r.recording) : WindowRecording::ErrorNode(r));
+        }, "Finish the window recording (waits for ffmpeg, muxes the sound in); returns its last status")
+        .def("window_record_status", [](Emulator&) -> py::object {
+            WindowRecording::Result r;
+            {
+                py::gil_scoped_release release;
+                r = WindowRecording::Get();
+            }
+            return StateNodeToPy(r.Ok() ? WindowRecording::Report(r.recording) : WindowRecording::ErrorNode(r));
+        }, "The GUI window recording's status: {recording, path, keyboard, frames, width, height, fps, audio, "
+           "sample_rate, audio_samples}")
         .def("video_viewport", [](Emulator& self) -> py::object {
             return StateNodeToPy(VideoViewport::Report(self));
         }, "The overscan frame and its viewport: {overscan, overscan_available, viewport, viewports, framebuffer, "

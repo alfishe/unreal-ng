@@ -168,5 +168,6 @@ zfast-crt      703x576 same
 - The words come from `crt_profiles`: the list grows with the presets shipped and the user's own shaders.
 - `shader:crt-lottes` (the original preset, GPU) and `crt-lottes` (the integer model, both backends) are different
   profiles; only the models have the bit-for-bit guarantee.
-- `source=presented` / `live` screenshots never show CRT effects: use `source=window`.
+- `source=presented` / `live` screenshots never show CRT effects: use `source=window`. A video with the effects:
+  [window-recording.md](window-recording.md) (`video/record` writes the emulated frame).
 - The window's size decides the picture's size; a test that compares files across runs keeps the window as it is.

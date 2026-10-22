@@ -41,6 +41,7 @@
 #include <emulator/capture/recordingcontrol.h>
 #include "../../../temporalstatus.h"
 #include "emulator/video/viewportcontrol.h"
+#include "emulator/video/windowrecording.h"
 #include "../../../windowdisplay.h"
 #endif
 
@@ -407,6 +408,13 @@ void CLIProcessor::HandleVideo(const ClientSession& session, const std::vector<s
         "                                   next_layers_mode layers|composed|winner; next_layer.<ula|layer2|tilemap|sprites>\n"
         "  video window crt_params [...]  - the active CRT profile's parameters; <name>=<v>, <name>+=<steps>,\n"
         "                                   <name>-=<steps>, reset, reset=<name>\n"
+        "  video window record [status]   - the GUI window recording: file, size, rate, frames, keyboard\n"
+        "  video window record <path> [<key>=<value> ...] - record the window as drawn (CRT, on-screen keyboard,\n"
+        "                                   sound) to a .mov (prores) / .mp4 (h264): keyboard default|<picture id>,\n"
+        "                                   codec prores|h264, audio on|off, fps 1..100 (audio off), scale 1..4,\n"
+        "                                   picture_height 0..4320, width / height, layout below|side\n"
+        "  video window record frames <N> - a paused machine runs N frames, every one recorded\n"
+        "  video window record stop       - finish the file (waits for ffmpeg, muxes the sound in)\n"
         "  video viewport [<name>]        - the overscan frame's crop: full, symmetric, standard, screen_only, next, prev\n"
         "Numbers are decimal or 0x-hex.";
 
@@ -519,6 +527,13 @@ void CLIProcessor::HandleVideoTemporal(const ClientSession& session, EmulatorCon
 // (the same WindowDisplay report); headless there is no window.
 void CLIProcessor::HandleVideoWindow(const ClientSession& session, const std::vector<std::string>& args)
 {
+    // `video window record [status | <path> [<key>=<value> ...] | frames <N> | stop]`: the window recording
+    // (POST / GET /video/window/record, .../frames, .../stop)
+    if (args.size() >= 2 && args[1] == "record")
+    {
+        HandleVideoWindowRecord(session, args);
+        return;
+    }
     // `video window crt_params [<name>=<value> | <name>+=<steps> | <name>-=<steps> | reset | reset=<name> ...]`: the
     // active CRT profile's parameters (GET / PUT /video/window/crt_params)
     if (args.size() >= 2 && args[1] == "crt_params")
@@ -567,6 +582,73 @@ void CLIProcessor::HandleVideoWindow(const ClientSession& session, const std::ve
     }
     session.SendResponse("Window " + WindowDisplay::Summary(r.settings) + NEWLINE +
                          DeviceState::ToText(WindowDisplay::Report(r.settings)));
+}
+
+// HandleVideoWindowRecord — `video window record [status | <path> [<key>=<value> ...] | frames <N> | stop]`: the GUI
+// window recording (the picture as drawn, CRT and all, the on-screen keyboard, the machine's sound). Mirrors
+// /api/v1/emulator/{id}/video/window/record* (the same WindowRecording checks and report); headless there is no window.
+void CLIProcessor::HandleVideoWindowRecord(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto respond = [&session](const WindowRecording::Result& r, const std::string& prefix = {}) {
+        if (!r.Ok())
+        {
+            session.SendResponse(std::string("Error (") + WindowRecording::StatusName(r.status) + "): " + r.error);
+            return;
+        }
+        session.SendResponse(prefix + WindowRecording::Summary(r.recording) + NEWLINE +
+                             DeviceState::ToText(WindowRecording::Report(r.recording)));
+    };
+    const std::string op = args.size() >= 3 ? args[2] : "status";
+    if (op == "status" && args.size() <= 3)
+    {
+        respond(WindowRecording::Get());
+        return;
+    }
+    if (op == "stop" && args.size() == 3)
+    {
+        respond(WindowRecording::Stop());
+        return;
+    }
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected.");
+        return;
+    }
+    if (op == "frames")
+    {
+        int frames = 0;
+        double number = 0;
+        if (args.size() != 4 || !WindowDisplay::ParseNumber(args[3], number) || number < 1 ||
+            number > WindowRecording::kMaxFrames || number != static_cast<double>(static_cast<int>(number)))
+        {
+            session.SendResponse("Usage: video window record frames <1.." + std::to_string(WindowRecording::kMaxFrames) +
+                                 ">");
+            return;
+        }
+        frames = static_cast<int>(number);
+        if (RunControlHeld(session, emulator))
+            return;
+        respond(WindowRecording::RunFrames(*emulator, frames), "Ran " + std::to_string(frames) + " frames, ");
+        return;
+    }
+    WindowRecordingRequest request;
+    request.path = op;
+    for (size_t i = 3; i < args.size(); ++i)
+    {
+        const size_t eq = args[i].find('=');
+        std::string error;
+        if (eq == std::string::npos)
+            error = "Expected <key>=<value>, not '" + args[i] + "': keys " + WindowRecording::kKeys;
+        else
+            WindowRecording::ApplyWord(request, args[i].substr(0, eq), args[i].substr(eq + 1), error);
+        if (!error.empty())
+        {
+            session.SendResponse(error);
+            return;
+        }
+    }
+    respond(WindowRecording::Start(emulator->GetId(), request));
 }
 
 // HandleVideoViewport — `video viewport [status | full | symmetric | standard | screen_only | next | prev]`: the crop of

@@ -197,6 +197,7 @@ private:
     void HandleVideo(const ClientSession& session, const std::vector<std::string>& args);
     void HandleVideoTemporal(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleVideoWindow(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleVideoWindowRecord(const ClientSession& session, const std::vector<std::string>& args);
     void HandleVideoViewport(const ClientSession& session, Emulator& emulator, const std::vector<std::string>& args);
     void HandleFrameCost(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCoverage(const ClientSession& session, const std::vector<std::string>& args);

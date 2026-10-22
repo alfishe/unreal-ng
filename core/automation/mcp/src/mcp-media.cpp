@@ -21,6 +21,10 @@
 //   window_crt_params_set → PUT /video/window/crt_params {values, steps, reset}
 //   viewport           → GET /video/viewport (the overscan frame's crop)
 //   viewport_set       → PUT /video/viewport {viewport}
+//   window_record_start  → POST /video/window/record {path, keyboard, codec, …} (the window as drawn + the OSD keyboard)
+//   window_record_frames → POST /video/window/record/frames {frames} (paused machine: every frame recorded)
+//   window_record_stop   → POST /video/window/record/stop
+//   window_record_status → GET  /video/window/record
 //   vdac2_capture_start  → POST /vdac2/capture/start {path} (TS-Conf VDAC2 card: FT812 bus to an .evr stream)
 //   vdac2_capture_stop   → POST /vdac2/capture/stop
 //   vdac2_capture_status → GET  /vdac2/capture/status
@@ -32,6 +36,7 @@
 #include "mcp-tool-utils.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cmath>
 
 namespace mcp
@@ -110,6 +115,27 @@ std::string TemporalSummary(const Json::Value& status)
         << status.get("processed", 0).asUInt64() << ", shown raw " << status.get("shown_raw", 0).asUInt64()
         << ", late " << status.get("late", 0).asUInt64() << ", restarts " << status.get("restarts", 0).asUInt64();
     return out.str();
+}
+
+/// Summary of a /video/window/record answer: an agent sees the file, its size and the count in the text
+std::string WindowRecordingSummary(const Json::Value& s)
+{
+    std::string line = std::string(s.get("recording", false).asBool() ? "window recording to " : "window recording off, last ") +
+                       s.get("path", "").asString() + ": " + std::to_string(s.get("width", 0).asUInt()) + "x" +
+                       std::to_string(s.get("height", 0).asUInt());
+    if (s.isMember("fps"))
+    {
+        char fps[32];
+        std::snprintf(fps, sizeof(fps), " at %.3f fps", s.get("fps", 0.0).asDouble());
+        line += fps;
+    }
+    line += s.get("audio", false).asBool()
+                ? ", sound " + std::to_string(s.get("sample_rate", 0).asUInt()) + " Hz"
+                : std::string(", no sound");
+    line += ", " + std::to_string(s.get("frames", 0).asUInt64()) + " frames";
+    const std::string keyboard = s.get("keyboard", "").asString();
+    line += keyboard.empty() ? ", no keyboard" : ", keyboard " + keyboard;
+    return line;
 }
 
 /// A number for the text: an integer as it is, else up to 6 decimals ("0.3", not jsoncpp's 0.29999999999999999)
@@ -217,6 +243,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                                "record_resume", "record_presets", "audio_capture", "audio_status", "audio_result",
                                "temporal_status", "temporal_set", "window_display", "window_display_set",
                                "window_crt_params", "window_crt_params_set", "viewport", "viewport_set",
+                               "window_record_start", "window_record_frames", "window_record_stop",
+                               "window_record_status",
                                "vdac2_capture_start", "vdac2_capture_stop", "vdac2_capture_status",
                                "framebuffer"})
     {
@@ -228,7 +256,9 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "GPU acceleration, CRT effects and profile, temporal blending, full screen, scale, toolbar, status bar, HUD and "
         "its theme / notices, on-screen keyboard and its picture, the ZX Next layers window; unreal-qt only), the "
         "active CRT profile's parameters (window_crt_params / window_crt_params_set), the overscan frame's viewport "
-        "(viewport / viewport_set), or the TS-Conf VDAC2 card's FT812 bus capture to an .evr replay stream "
+        "(viewport / viewport_set), the window recording (window_record_start / window_record_frames / "
+        "window_record_stop / window_record_status: the picture as the window draws it, CRT and all, with the "
+        "on-screen keyboard and the sound; unreal-qt only), or the TS-Conf VDAC2 card's FT812 bus capture to an .evr replay stream "
         "(vdac2_capture_start with filename / vdac2_capture_stop / vdac2_capture_status), or the picture as raw "
         "pixels (framebuffer: format rgba | index - the Sprinter's u16 pens; metadata, base64 data with include_image).";
     schema["properties"]["target"]["type"] = "string";
@@ -254,14 +284,17 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["banks"]["type"] = "string";
     schema["properties"]["banks"]["description"] = "Physical RAM banks for screen_digest, e.g. \"5,7\" (default: model screen banks)";
     schema["properties"]["fps"]["type"] = "integer";
-    schema["properties"]["fps"]["description"] = "Recording fps (1-100). With every_nth:Q the default is 50/Q so playback is real-time";
+    schema["properties"]["fps"]["description"] =
+        "Recording fps (1-100). With every_nth:Q the default is 50/Q so playback is real-time. window_record_start: "
+        "leave it out (the machine's own rate, 48.83 on a Pentagon; a sound track needs it)";
     schema["properties"]["scale"]["type"] = "integer";
     schema["properties"]["scale"]["description"] = "Integer upscale for recording (1-4, default 1)";
     schema["properties"]["audio"]["type"] = "string";
     schema["properties"]["audio"]["description"] =
         "record_start: audio codec for the emulated sound track (aac, mp3, opus, vorbis, flac, pcm_s16le). Omit "
         "for video only (default). Must fit the container: h264/hevc + aac in .mp4/.mov is native on macOS; "
-        "gif has no audio (refused)";
+        "gif has no audio (refused). window_record_start: the sound track is on unless audio is \"none\" / false "
+        "(PCM in .mov, AAC in .mp4, frame for frame with the picture)";
     schema["properties"]["preset"]["type"] = "string";
     schema["properties"]["preset"]["description"] =
         "record_start: a recording preset (record_presets lists them: gameplay = H.264 + AAC mp4, music = FLAC audio only, "
@@ -331,7 +364,9 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["alpha"]["type"] = "boolean";
     schema["properties"]["alpha"]["description"] = "screenshot with layer: false flattens the pixels the layer does not paint onto the fallback colour (default true: alpha 0)";
     schema["properties"]["frames"]["type"] = "integer";
-    schema["properties"]["frames"]["description"] = "Bounded recording: captured frames before automatic stop (1-10000)";
+    schema["properties"]["frames"]["description"] =
+        "Bounded recording: captured frames before automatic stop (1-10000). window_record_frames: emulated frames to "
+        "run and record (1-100000; a call must end within 2 minutes: a few hundred at a time)";
     schema["properties"]["seconds"]["type"] = "number";
     schema["properties"]["seconds"]["default"] = 1.0;
     schema["properties"]["seconds"]["description"] = "audio_capture duration in emulated seconds (0.01-30)";
@@ -385,6 +420,32 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["viewport"]["description"] =
         "viewport_set: full, symmetric, standard, screen_only, next or prev (the crop of the Pentagon's overscan "
         "frame; overscan itself: feature overscan or the state/screen/overscan route)";
+    schema["properties"]["keyboard"]["type"] = "string";
+    schema["properties"]["keyboard"]["description"] =
+        "window_record_start: the on-screen keyboard in the file - default (the one the window shows) or a picture "
+        "id of the machine (pentagon2plus, zx48k, ...) or of another with the same matrix (zxnext on a Pentagon); a wrong "
+        "one lists the offered ids; omit for the picture only";
+    schema["properties"]["codec"]["type"] = "string";
+    schema["properties"]["codec"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* codec : {"prores", "h264"})
+        schema["properties"]["codec"]["enum"].append(codec);
+    schema["properties"]["codec"]["description"] =
+        "window_record_start: prores (default: ProRes 4444, .mov) or h264 (4:4:4, .mp4); full colour, a CRT mask "
+        "survives. Needs ffmpeg on the host";
+    schema["properties"]["picture_height"]["type"] = "integer";
+    schema["properties"]["picture_height"]["description"] =
+        "window_record_start: draw the picture (CRT included) at this height instead of the window's (GPU only, "
+        "0 = the window's); with scale 2 and 1080 a 4K frame keeps the mask through YouTube's 4:2:0";
+    schema["properties"]["width"]["type"] = "integer";
+    schema["properties"]["width"]["description"] = "window_record_start: the file's frame width (with height; 0 = picture + keyboard)";
+    schema["properties"]["height"]["type"] = "integer";
+    schema["properties"]["height"]["description"] = "window_record_start: the file's frame height (with width)";
+    schema["properties"]["layout"]["type"] = "string";
+    schema["properties"]["layout"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* layout : {"below", "side"})
+        schema["properties"]["layout"]["enum"].append(layout);
+    schema["properties"]["layout"]["description"] =
+        "window_record_start: the keyboard below the picture (default) or right of it (side, with width / height)";
     schema["required"].append("action");
 
     registry.Register(
@@ -1078,6 +1139,78 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                 return;
             }
 
+            if (action == "window_record_start" || action == "window_record_frames" || action == "window_record_stop" ||
+                action == "window_record_status")
+            {
+                Json::Value body(Json::objectValue);
+                std::string route = "/video/window/record";
+                std::string method = "POST";
+                if (action == "window_record_start")
+                {
+                    const std::string path = args.isMember("filename") ? args["filename"].asString()
+                                                                       : (args.isMember("path") ? args["path"].asString() : "");
+                    if (path.empty())
+                    {
+                        done(ToolResult::Error("window_record_start needs 'filename': the .mov / .mp4 to write (server side)"));
+                        return;
+                    }
+                    body["path"] = path;
+                    for (const char* field : {"keyboard", "codec", "fps", "scale", "picture_height", "width", "height", "layout"})
+                        if (args.isMember(field))
+                            body[field] = args[field];
+                    // The sound track is on unless switched off ("audio": false / "none" / "off")
+                    if (args.isMember("audio"))
+                    {
+                        const Json::Value& audio = args["audio"];
+                        const std::string word = audio.isString() ? audio.asString() : "";
+                        body["audio"] = audio.isBool() ? audio.asBool()
+                                                       : !(word == "none" || word == "off" || word == "false" || word.empty());
+                    }
+                }
+                else if (action == "window_record_frames")
+                {
+                    if (!args.isMember("frames") || !args["frames"].isIntegral() || args["frames"].asInt() < 1)
+                    {
+                        done(ToolResult::Error("window_record_frames needs 'frames': how many frames to run and record"));
+                        return;
+                    }
+                    body["frames"] = args["frames"];
+                    route += "/frames";
+                }
+                else if (action == "window_record_stop")
+                    route += "/stop";
+                else
+                    method = "GET";
+                const std::string what = action;
+                TargetResolver::ResolveFromArgs(args, caller, [what, route, method, body, &caller, done](bool ok, const std::string& idOrError) {
+                    if (!ok)
+                    {
+                        done(ToolResult::Error(idOrError));
+                        return;
+                    }
+                    auto request = std::make_shared<Json::Value>(body);
+                    const std::string id = idOrError;
+                    caller.Call(method, Endpoint(id, route), method == "GET" ? nullptr : request.get(),
+                                [request, what, id, done](int status, Json::Value response) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error(what + " failed (HTTP " + std::to_string(status) +
+                                                   "): " + DescribeErrorBody(response)));
+                            return;
+                        }
+                        std::string text = WindowRecordingSummary(response);
+                        if (what == "window_record_start")
+                            text += "; pause, then window_record_frames {frames:N} records every frame (keys in between: "
+                                    "type_input / keyboard press-release), window_record_stop to finish";
+                        else if (what == "window_record_frames")
+                            text = "ran " + std::to_string(response.get("ran", 0).asInt()) + " frames, " + text;
+                        text += " [target " + id + "]";
+                        done(ToolResult::Ok(text, std::move(response)));
+                    });
+                });
+                return;
+            }
+
             if (action == "vdac2_capture_start")
             {
                 const std::string path = args.isMember("filename") ? args["filename"].asString()
@@ -1141,7 +1274,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                                             "'. Valid: screenshot, screen_digest, record_start, record_stop, record_status, "
                                             "record_pause, record_resume, audio_capture, audio_status, audio_result, "
                                             "temporal_status, temporal_set, window_display, window_display_set, window_crt_params, "
-                                            "window_crt_params_set, viewport, viewport_set, vdac2_capture_start, vdac2_capture_stop, framebuffer, "
+                                            "window_crt_params_set, viewport, viewport_set, window_record_start, window_record_frames, "
+                                            "window_record_stop, window_record_status, vdac2_capture_start, vdac2_capture_stop, framebuffer, "
                                             "vdac2_capture_status"));
         });
 }

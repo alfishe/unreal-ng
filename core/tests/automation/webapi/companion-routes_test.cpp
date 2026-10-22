@@ -103,6 +103,7 @@ const std::set<std::string> kDebugRoutes = {
     "POST /ttd/reverse-continue",
     "POST /ttd/reverse-step",
     "POST /ttd/step-instruction",
+    "POST /video/window/record/frames",
     "PUT /breakpoints/active",
     "PUT /breakpoints/{bp_id}/disable",
     "PUT /breakpoints/{bp_id}/enable",

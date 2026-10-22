@@ -228,7 +228,7 @@ QRectF DeviceScreenWrapper::pictureSourceRect() const
     return {};
 }
 
-bool DeviceScreenWrapper::grabWindowView(WindowViewGrab& out, std::string& error)
+bool DeviceScreenWrapper::grabWindowView(WindowViewGrab& out, std::string& error, bool hud, int pictureHeight)
 {
     QImage image;
     QRect viewport;
@@ -239,7 +239,7 @@ bool DeviceScreenWrapper::grabWindowView(WindowViewGrab& out, std::string& error
         // The GL window fills the screen area; paintGL draws the picture centered in it at drawnPictureSize. Rendered
         // afresh: the back buffer QOpenGLWindow::grabFramebuffer reads holds the frame before the last swap, so a
         // paused machine would show a setting changed after its last frame only on the next one
-        image = _gpuWindow->renderWindowImage();
+        image = _gpuWindow->renderWindowImage(hud, pictureHeight);
         ratio = _gpuWindow->devicePixelRatio();
         viewport = QRect(0, 0, _gpuWindow->width(), _gpuWindow->height());
         const QSize drawn = _gpuWindow->drawnPictureSize();
@@ -265,7 +265,7 @@ bool DeviceScreenWrapper::grabWindowView(WindowViewGrab& out, std::string& error
         return false;
     }
 
-    if (out.backend == "gpu")
+    if (out.backend == "gpu" && pictureHeight <= 0)  // a picture drawn at its own height is the whole image
         image = image.copy(_gpuWindow->pictureDeviceRect().intersected(image.rect()));
     image = image.convertToFormat(QImage::Format_RGBA8888);
 

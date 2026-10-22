@@ -1708,6 +1708,33 @@ without one, a parameter of a profile without parameters), `no-window`. The same
 `video.*`, `view.*`, `hud.*` and `osd.keyboard_picture` actions (§16) change the same settings; the readouts
 `video.window` and `video.crt_params` show what the window published.
 
+#### GUI window recording
+
+The picture as the unreal-qt window draws it (CRT shader and all, no HUD), the on-screen keyboard lighting the keys the
+machine holds next to it, and the machine's sound, to a full-colour file through ffmpeg (ProRes 4444 `.mov` or H.264
+4:4:4 `.mp4`: a CRT mask a pixel wide survives). The clock is the machine's: one video frame per emulated frame at its
+rate (48.828 fps on a Pentagon), each with the samples it mixed, so picture and sound stay together whatever the host's
+load. A paused machine stepped with `record frames` gets every frame; a running one repeats the picture for frames the
+window skipped. The keyboard and the sound are delayed by the window's present delay (A/V sync, ZX DLSS look-ahead), so
+a key lights, clicks and draws in one frame. GUI only: headless every surface answers `no-window`; needs `ffmpeg` on
+the host. Recipe: [.recipe/media/window-recording.md](../../../../.recipe/media/window-recording.md).
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `video window record` / `video window record status` | | The recording: on or off, the file, its frame size and rate, frames and sound samples so far, the keyboard. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+| `video window record <path> [<key>=<value> ...]` | `keyboard` = `default` (the one the window shows) / a picture id of the machine (`pentagon2plus`) or of another with the same matrix (`zxnext` on a Pentagon, for the recording only) / `off`; `codec` = `prores` (default) / `h264`; `audio` = on (default) / off; `fps` = 1..100 (only with `audio=off`; left out = the machine's rate); `scale` = 1..4 (the picture in blocks); `picture_height` = 0..4320 (the CRT drawn at that height, GPU only); `width`, `height` (the file's frame; left out = the picture with the keyboard under it); `layout` = `below` / `side` | Start recording the window showing the selected instance. A wrong keyboard lists the offered ones; a frame smaller than the picture is refused with the sizes. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+| `video window record frames <N>` | 1..100000 | A paused machine runs N frames, each one drawn by the window and written before the next runs; no time limit. Run control held by another surface: refused. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+| `video window record stop` | | Finish the file: waits for ffmpeg, then muxes the sound in (the picture copied, seconds). | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+
+Fields: `recording`, `path`, `keyboard` (the picture in the file, empty = none), `frames`, `width`, `height`, `fps`,
+`audio`, `sample_rate`, `audio_samples` (sample pairs so far); `record frames` adds `ran`. Errors: `bad-parameter` (a
+value out of range, an unknown key, a sound track with an `fps`), `unavailable` (no ffmpeg, not recording, the window
+shows another instance, a keyboard of another matrix, a frame too small), `not-paused`, `revoked` (the user took
+control back), `no-window`. The same as WebAPI `POST` / `GET /api/v1/emulator/{id}/video/window/record`, `POST
+.../record/frames {frames}`, `POST .../record/stop`, the WebSocket `call` of them, Lua and Python `window_record(path,
+...)` / `window_record_frames(n)` / `window_record_stop()` / `window_record_status()`, MCP `capture_media`
+`window_record_start` / `window_record_frames` / `window_record_stop` / `window_record_status`.
+
 #### Overscan viewport
 
 The Pentagon's 384x304 overscan frame (feature `overscan`, View > Overscan, PUT `/state/screen/overscan`, the

@@ -65,6 +65,7 @@
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
 #include "emulator/video/viewportcontrol.h"
+#include "emulator/video/windowrecording.h"
 #include "../../../windowdisplay.h"
 #include "../../../operationsstatus.h"
 #include <debugger/ttd/ttdcontrol.h>
@@ -6347,6 +6348,64 @@ public:
             }
             const WindowDisplay::ParametersResult r = WindowDisplay::SetCrtParameters(change);
             return StateNodeToLua(s, r.Ok() ? WindowDisplay::CrtParametersReport(r.parameters) : WindowDisplay::ErrorNode(r));
+        });
+        // The GUI window recording (the picture as drawn, CRT and all, the on-screen keyboard, the machine's sound):
+        // window_record(path, {keyboard = "default", codec = "h264", audio = true, scale = 2, picture_height = 1080,
+        // width = 3840, height = 2160, layout = "side"}) starts, window_record_frames(n) runs a paused machine n frames
+        // with every one recorded, window_record_stop() finishes the file, window_record_status() reads. The
+        // WindowRecording report every interface returns; refused: {ok = false, error, kind}
+        lua.set_function("window_record", [this](sol::this_state s, const std::string& path,
+                                                 sol::optional<sol::table> options) -> sol::object {
+            WindowRecording::Result bad;
+            bad.status = WindowRecording::Status::BadParameter;
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+            {
+                bad.error = "No emulator selected";
+                return StateNodeToLua(s, WindowRecording::ErrorNode(bad));
+            }
+            WindowRecordingRequest request;
+            request.path = path;
+            if (options)
+            {
+                for (const auto& [k, v] : *options)
+                {
+                    const std::string key = k.is<std::string>() ? k.as<std::string>() : std::string("?");
+                    std::string word;
+                    if (v.get_type() == sol::type::boolean)
+                        word = v.as<bool>() ? "on" : "off";
+                    else if (v.get_type() == sol::type::number)
+                        word = WindowDisplay::NumberWord(v.as<double>());
+                    else if (v.get_type() == sol::type::string)
+                        word = v.as<std::string>();
+                    else
+                        bad.error = "'" + key + "' takes a boolean, a number or a string";
+                    if (!bad.error.empty() || !WindowRecording::ApplyWord(request, key, word, bad.error))
+                        return StateNodeToLua(s, WindowRecording::ErrorNode(bad));
+                }
+            }
+            const WindowRecording::Result r = WindowRecording::Start(emulator->GetId(), request);
+            return StateNodeToLua(s, r.Ok() ? WindowRecording::Report(r.recording) : WindowRecording::ErrorNode(r));
+        });
+        lua.set_function("window_record_frames", [this](sol::this_state s, int frames) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return sol::make_object(s, sol::lua_nil);
+            execution::script::Check(*emulator, execution::Origin::Lua);
+            const WindowRecording::Result r = WindowRecording::RunFrames(*emulator, frames);
+            if (!r.Ok())
+                return StateNodeToLua(s, WindowRecording::ErrorNode(r));
+            StateNode report = WindowRecording::Report(r.recording);
+            report["ran"] = r.ran;
+            return StateNodeToLua(s, report);
+        });
+        lua.set_function("window_record_stop", [](sol::this_state s) -> sol::object {
+            const WindowRecording::Result r = WindowRecording::Stop();
+            return StateNodeToLua(s, r.Ok() ? WindowRecording::Report(r.recording) : WindowRecording::ErrorNode(r));
+        });
+        lua.set_function("window_record_status", [](sol::this_state s) -> sol::object {
+            const WindowRecording::Result r = WindowRecording::Get();
+            return StateNodeToLua(s, r.Ok() ? WindowRecording::Report(r.recording) : WindowRecording::ErrorNode(r));
         });
         // The overscan frame's viewport (the machine's: answers headless too): video_viewport() reads, video_viewport_set
         // ("symmetric" | "full" | "standard" | "screen_only" | "next" | "prev") crops it; {ok = false, error} refused
