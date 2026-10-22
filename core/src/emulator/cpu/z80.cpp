@@ -386,12 +386,10 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     return false;
 }
 
-bool Z80::IdleStepsInert() const
+bool Z80::IdleStepsInert(uint32_t allowedWork) const
 {
-    // The work gate: only the engine and the machine's interrupt source (TTD input, a machine step hook, RZX, a
-    // device INT line, the PC history all act per step)
-    constexpr uint32_t kIdleWork = EmulatorContext::kStepWorkEngine | EmulatorContext::kStepWorkInterruptSource;
-    if (_context->stepWork.load(std::memory_order_relaxed) & ~kIdleWork)
+    // The work gate: only the jobs the caller handles (TTD input, RZX, a device INT line, the PC history act per step)
+    if (_context->stepWork.load(std::memory_order_relaxed) & ~allowedWork)
         return false;
     if (_nmi_pending_count > 0 || _context->emulatorState.nmiAtIntStartPending)
         return false;
@@ -449,37 +447,62 @@ bool Z80::IdleStepsInert() const
 /// INT pulse (t <= _intStart; a wrapping pulse was raised at the frame start), and up to the frame end past it. The
 /// fetches that start before that boundary, the frame end and the driver's limit become T-states and one R tick
 /// each. Their length is learned from real fetches, one per start phase (the Scorpion's Even M1 adds a T to a fetch
-/// that starts on an odd T). The screen and the sound catch up by time on its own OnCPUStep (true: time moved)
+/// that starts on an odd T). The screen and the sound catch up by time on its own OnCPUStep (true: time moved).
+/// A machine that owns INT (IInterruptSource) says when its "no" may change instead (NextAssertT); a machine step
+/// hook says how far it may be caught up once for the fetches between (IdleFetchesUntil, TSConf: to the line end
+/// while each fetch takes a DRAM cycle the line's budget counts) and is told their count (OnIdleFetches)
 bool Z80::RunHaltedIdle(bool skipBreakpoints)
 {
     if (idleSkipLimit == 0 || !haltedIdleInOneGo || halted != 1 || vm1 || boundary != Z80_BOUNDARY_NONE)
         return false;
+    const uint32_t work = _context->stepWork.load(std::memory_order_relaxed);
+    IInterruptSource* const source = (work & EmulatorContext::kStepWorkInterruptSource) ? _interruptSource : nullptr;
+    IMachineStepHook* const hook = (work & EmulatorContext::kStepWorkMachineStep) ? _machineStepHook : nullptr;
     const uint16_t fetch = static_cast<uint16_t>(pc + 1);  // the byte after the HALT (HaltedM1)
     const uint32_t evenM1Period = _context->config.even_M1 ? 2u : 1u;
     uint32_t busPeriod = 1;
-    if (!InterruptsIdle() || !IdleStepsInert() || !HaltedFetchIsPure(fetch, busPeriod) ||
-        std::lcm(evenM1Period, busPeriod) > kMaxHaltedIdlePeriod)
+    constexpr uint32_t kHandledWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep;
+    if (!(source ? SourceIdle(*source) : InterruptsIdle()) || !IdleStepsInert(kHandledWork) ||
+        !HaltedFetchIsPure(fetch, busPeriod) || std::lcm(evenM1Period, busPeriod) > kMaxHaltedIdlePeriod)
     {
-        _haltedIdleRetryAt = t + kHaltedIdleRetryT;
+        NoteHaltedIdleRefused();
         return false;
     }
+    // The source's "no" holds up to its next possible assert (asked at the boundary just checked)
+    const uint32_t sourceDue = source ? source->NextAssertT(t) : UINT32_MAX;
     // The fetch's length by its start phase: the Even M1's T on an odd start, the bus overlay's waits by its phase
     const uint32_t period = std::lcm(evenM1Period, busPeriod);
 
     const uint32_t start = t;
     uint32_t length[kMaxHaltedIdlePeriod] = {};
     uint32_t pureUntil = 0;  // the end of the stretch of the bus rule the learned lengths hold for
+    uint32_t hookUntil = hook ? t : UINT32_MAX;  // the end of the stretch the step hook allows
+    uint32_t hookFetches = 0;  // fetches run as time since the hook last saw a step
     uint32_t fetches = 0;
     for (;;)
     {
         // The first boundary the step loop would treat differently: the INT pulse, the frame end, the driver's limit
         uint32_t target = std::min(idleSkipLimit, _frameLimit);
-        if (!_intWraps && t <= _intStart)
+        if (source)
+            target = std::min(target, sourceDue);
+        else if (!_intWraps && t <= _intStart)
             target = std::min(target, _intStart + 1);
         else if (!_intWraps && t < _intEnd)
             break;
         if (t >= target)
             break;
+        // The step hook sees a step at the end of each stretch it allows, with the fetches run as time in it
+        if (t >= hookUntil)
+        {
+            if (hookFetches)
+                hook->OnIdleFetches(fetch, hookFetches);
+            hookFetches = 0;
+            hook->OnMachineStep(t);
+            hookUntil = hook->IdleFetchesUntil(fetch, t);
+            if (hookUntil <= t)
+                break;
+        }
+        target = std::min(target, hookUntil);
         // A bus rule that follows the frame position (a fetch window): its lengths are learned again per stretch
         if (t >= pureUntil)
         {
@@ -506,18 +529,29 @@ bool Z80::RunHaltedIdle(bool skipBreakpoints)
             const uint32_t n = (target - t + len - 1) / len;
             t += n * len;
             fetches += n;
+            hookFetches += n;
         }
         else
         {
             t += len;
             fetches++;
+            hookFetches++;
         }
     }
     haltedIdleFetchesInOneGo += fetches;
     if (fetches)
         r_low = static_cast<uint8_t>(((r_low + fetches) & 0x7F) | (r_low & 0x80));  // HaltedM1's refresh tick
     if (t == start)
+    {
+        NoteHaltedIdleRefused();
         return false;
+    }
+    if (hook)
+    {
+        if (hookFetches)
+            hook->OnIdleFetches(fetch, hookFetches);
+        hook->OnMachineStep(t);
+    }
     OnCPUStep();  // the peripherals see the end of the idle fetches
     return true;
 }
@@ -551,6 +585,28 @@ bool Z80::HaltedFetchIsPure(uint16_t fetch, uint32_t& period) const
     if (machineM1Hook && !machineM1Hook->RepeatM1IsInert(fetch))
         return false;
     return _memory->RepeatFetchIsPure(fetch);
+}
+
+/// After a step with work that left the CPU halted (an accepted INT or NMI ends the HALT), outside the retry
+/// window: RunHaltedIdle when the work is only the machine's interrupt source and step hook, which it asks itself.
+/// Out of line: the work step keeps nothing live across OnCPUStep for it
+UNREAL_NOINLINE void Z80::RunHaltedIdleAfterWork(bool skipBreakpoints)
+{
+    constexpr uint32_t kIdleWork = EmulatorContext::kStepWorkInterruptSource | EmulatorContext::kStepWorkMachineStep;
+    if (_context->stepWork.load(std::memory_order_relaxed) & ~kIdleWork)
+    {
+        NoteHaltedIdleRefused();
+        return;
+    }
+    RunHaltedIdle(skipBreakpoints);
+}
+
+void Z80::NoteHaltedIdleRefused()
+{
+    // In raster time: a faster CPU clock asks no more often (TS-Conf at 14 MHz refuses on every DRAM wait)
+    const uint32_t multiplier = _context->emulatorState.current_z80_frequency_multiplier;
+    _haltedIdleRetrySpan = kHaltedIdleRetryT * (multiplier ? multiplier : 1u);
+    _haltedIdleRetryAt = t + _haltedIdleRetrySpan;
 }
 
 uint32_t Z80::HaltedFetchPureUntil(uint16_t fetch) const
@@ -972,6 +1028,13 @@ void Z80::BeginFrame()
         int_pending = true;
 }
 
+/// The interrupt decision of a machine that owns INT would decide nothing at this boundary: no NMI, the source's
+/// pin not asserted (ProcessInterruptsImpl<true, false> asks it at every boundary, so asking here changes nothing)
+bool Z80::SourceIdle(IInterruptSource& source)
+{
+    return _nmi_pending_count == 0 && !_context->emulatorState.nmiAtIntStartPending && !source.IsIntAsserted(t);
+}
+
 /// No NMI, no INT pending, nothing to re-arm and the frame INT outside its
 /// pulse - not due yet (raised strictly after _intStart) or over (a pulse
 /// raised at t >= _intEnd drops at once; a wrapping pulse is raised by
@@ -1007,9 +1070,9 @@ Z80::StepResult Z80::StepInstruction(bool skipBreakpoints)
         OnCPUStep();
         // The peripherals saw this step's end (a device starts its time axis at the first step after a reset):
         // the idle fetches after it in one go, then their end
-        // A refusal holds for kHaltedIdleRetryT: a HALT whose fetch is not pure (slow memory, waits) asks again
+        // A refusal holds for kHaltedIdleRetryT raster T-states: a HALT whose fetch is not pure (slow memory, waits) asks again
         // later, not at every fetch (the frame end's wrap of t asks at once)
-        if (halted && static_cast<uint32_t>(_haltedIdleRetryAt - t - 1) >= kHaltedIdleRetryT) [[unlikely]]
+        if (halted && static_cast<uint32_t>(_haltedIdleRetryAt - t - 1) >= _haltedIdleRetrySpan) [[unlikely]]
             RunHaltedIdle(skipBreakpoints);
         return result;
     }
@@ -1111,6 +1174,11 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
         _machineStepHook->OnMachineStep(t);
 
     OnCPUStep();
+
+    // A halted CPU of a machine with its own INT logic and engine (TSConf): the idle fetches in one go. The retry
+    // window is tested here: a call per idle fetch cost TS-Conf at 14 MHz (refused) 3-4 % per frame
+    if (halted && static_cast<uint32_t>(_haltedIdleRetryAt - t - 1) >= _haltedIdleRetrySpan) [[unlikely]]
+        RunHaltedIdleAfterWork(skipBreakpoints);
 
     if (rzxPlayer) [[unlikely]]
     {

@@ -193,6 +193,25 @@ void TsConfInterrupts::ThawFramePulse(uint32_t t)
     }
 }
 
+uint32_t TsConfInterrupts::NextAssertT(uint32_t t)
+{
+    // After IsIntAsserted(t) said no: the events up to t are taken, nothing is latched
+    const uint8_t mask = _ts.regs[TsConfReg::IntMask];
+    if (VdosFrozen() || _ts.intPending || _lineSource || (mask & TsConfInt::WaitPort))
+        return t;
+
+    // An event at raster tact r latches at the first boundary whose raster reaches it (CatchUp)
+    const uint32_t from = _ts.intLastRaster;
+    uint32_t next = kFrameTacts;
+    const uint32_t hs = _ts.regs[TsConfReg::HsInt];
+    const uint32_t vs = _ts.regs[TsConfReg::VsIntL] | ((_ts.regs[TsConfReg::VsIntH] & 0x01u) << 8);
+    if ((mask & TsConfInt::Frame) && hs < kLineTacts && vs < kLines && vs * kLineTacts + hs >= from)
+        next = vs * kLineTacts + hs;
+    if (mask & TsConfInt::Line)
+        next = std::min(next, (from + kLineTacts - 1) / kLineTacts * kLineTacts);
+    return next < kFrameTacts ? next * Multiplier() : UINT32_MAX;
+}
+
 uint8_t TsConfInterrupts::AcknowledgeInterrupt(uint32_t t)
 {
     static constexpr struct

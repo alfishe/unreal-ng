@@ -159,6 +159,7 @@ public:
 
     void BeforeMachineM1(uint16_t address) override;
     void OnMachineM1(uint16_t address) override;
+    bool RepeatM1IsInert(uint16_t address) const override;
     /// endregion </Interface methods>
 
     /// region <TS-Conf state>

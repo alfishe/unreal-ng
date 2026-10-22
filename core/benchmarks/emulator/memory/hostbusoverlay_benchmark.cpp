@@ -85,6 +85,10 @@ static void BM_HostFrame_Scorpion_Debug(benchmark::State& s) { RunHostFrame(s, "
 // instruction (TsConfEngine::OnMachineStep), the per-step path of that machine
 static void BM_HostFrame_TSConf_Fast(benchmark::State& s) { RunHostFrame(s, "TSL", false); }
 static void BM_HostFrame_TSConf_Debug(benchmark::State& s) { RunHostFrame(s, "TSL", true); }
+// TS-BIOS leaves the CPU at 14 MHz, where every DRAM fetch waits for the arbiter: at 3.5 MHz the BASIC idle's HALT runs
+// its idle fetches in one go (Z80::RunHaltedIdle)
+static void SetupTsConf35(EmulatorContext* context) { context->pPortDecoder->DecodePortOut(0x20AF, 0x00, 0); }
+static void BM_HostFrame_TSConf35_Fast(benchmark::State& s) { RunHostFrame(s, "TSL", false, false, SetupTsConf35); }
 
 // TS-Conf at 14 MHz running from DRAM in the 256C 320x200 mode: every M1, read and write waits for the DRAM arbiter
 // (TsConfArbiter), and the writes make video refuse the CPU cycles (the refused-cycle clock stops). The 14 MHz
@@ -135,6 +139,7 @@ BENCHMARK(BM_HostFrame_Scorpion_Fast)->Iterations(1000)->Unit(benchmark::kMicros
 BENCHMARK(BM_HostFrame_Scorpion_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_TSConf_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_TSConf_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_HostFrame_TSConf35_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_TSConf14_256C_Fast)->Iterations(300)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_ATM710_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_ATM710_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);

@@ -35,6 +35,13 @@
     #endif
 #endif
 
+// Cross-compiler no-inline: a rare call that must not grow its hot caller
+#if defined(_MSC_VER)
+    #define UNREAL_NOINLINE __declspec(noinline)
+#else
+    #define UNREAL_NOINLINE __attribute__((noinline))
+#endif
+
 // Cross-compiler version for fastcall (Parameters in registers)
 // See more: https://en.wikipedia.org/wiki/X86_calling_conventions
 #if defined(_MSC_VER)

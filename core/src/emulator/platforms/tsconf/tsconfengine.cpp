@@ -10,6 +10,7 @@
 #include "emulator/platforms/tsconf/tsconfstate.h"
 #include "emulator/platforms/tsconf/tsconftsu.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/tsconf/tsconfmemory.h"
 
 void TsConfEngine::Reset()
 {
@@ -430,6 +431,24 @@ void TsConfEngine::OnMachineStep(uint32_t t)
     _interrupts.OnMachineStep(t);
     CatchUp(t);
     _stepEndRaster = RasterAt(t);
+}
+
+uint32_t TsConfEngine::IdleFetchesUntil(uint16_t fetch, uint32_t t)
+{
+    // A running DMA moves memory with its share of the DRAM cycles at every step
+    if (_dma.Busy() || !_memory)
+        return t;
+    if (!_memory->ReadTakesDram(fetch))
+        return UINT32_MAX;
+    const uint32_t multiplier = std::max<uint32_t>(_context->emulatorState.current_z80_frequency_multiplier, 1u);
+    return (t / multiplier / kLineTacts + 1) * kLineTacts * multiplier;
+}
+
+void TsConfEngine::OnIdleFetches(uint16_t fetch, uint32_t count)
+{
+    // Each one a DRAM read, as TsConfMemory::CacheRead counts it
+    if (_memory && _memory->ReadTakesDram(fetch))
+        _ts.cpuAccesses += count;
 }
 
 void TsConfEngine::OnMachineFrameRollover(uint32_t frameLength)

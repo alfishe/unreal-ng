@@ -128,6 +128,13 @@ public:
     /// region <HostBusOverlay>
     uint8_t onRead(uint16_t addr, uint8_t normal, bool isExecution, bool romPaged) override;
     void onWrite(uint16_t addr, uint8_t value, bool romPaged) override;
+    /// Read-array mode passes the ROM page's byte; a command mode's read answers the chip's status
+    bool RepeatFetchIsPure(uint16_t addr, uint32_t& period) const override
+    {
+        (void)addr;
+        period = 1;
+        return _chip.arrayMode();
+    }
     /// endregion </HostBusOverlay>
 
     /// region <TTD>
