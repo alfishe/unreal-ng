@@ -425,3 +425,26 @@ TEST(EvoAvr_Test, F12HoldIsMeasuredInEmulatedTime)
     avr.OnPcKey(PcKey::Function12, false);
     EXPECT_EQ(softResets, 2) << "the restored press decides: 11 s of emulated time is the power-off";
 }
+
+/// zx.c: only Ctrl+Alt+Del is the hard reset (cb_ctrl_alt_del = func_reset); another key with Ctrl and Alt held is
+/// a key (Windows' AltGr is Ctrl+Alt: an AltGr character must not reset the machine)
+TEST(EvoAvr_Test, OnlyCtrlAltDelIsTheHardReset)
+{
+    EvoAvr avr;
+    int hardResets = 0;
+    avr.SetResetHandler([&hardResets](bool hard) { hardResets += hard ? 1 : 0; });
+
+    avr.OnPcKey(PcKey::LeftCtrl, true);
+    avr.OnPcKey(PcKey::RightAlt, true);
+    avr.OnPcKey(PcKey::Q, true);
+    avr.OnPcKey(PcKey::Q, false);
+    EXPECT_EQ(hardResets, 0) << "AltGr+Q is '@' on a German layout, not a reset";
+
+    avr.OnPcKey(PcKey::Delete, true);
+    avr.OnPcKey(PcKey::Delete, false);
+    EXPECT_EQ(hardResets, 1) << "Ctrl+Alt+Del";
+
+    avr.OnPcKey(PcKey::RightAlt, false);
+    avr.OnPcKey(PcKey::Delete, true);
+    EXPECT_EQ(hardResets, 1) << "Ctrl+Del without Alt is a key";
+}

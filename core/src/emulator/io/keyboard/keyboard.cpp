@@ -42,6 +42,16 @@ ZXKeyMap Keyboard::_zxKeyMap({
 
     {ZXKEY_SPACE, Keyboard::_keys[35]},     {ZXKEY_SYM_SHIFT, Keyboard::_keys[36]}, {ZXKEY_M, Keyboard::_keys[37]},
     {ZXKEY_N, Keyboard::_keys[38]},         {ZXKEY_B, Keyboard::_keys[39]},
+
+    // Orel BK-08: bits 5 and 7 of the half-rows
+    {ZXKEY_BK08_RUS, Keyboard::_bk08Keys[0]},        {ZXKEY_BK08_SHIFT, Keyboard::_bk08Keys[1]},
+    {ZXKEY_BK08_BACKSLASH, Keyboard::_bk08Keys[2]},  {ZXKEY_BK08_SLASH, Keyboard::_bk08Keys[3]},
+    {ZXKEY_BK08_COMMA, Keyboard::_bk08Keys[4]},      {ZXKEY_BK08_PERIOD, Keyboard::_bk08Keys[5]},
+    {ZXKEY_BK08_TILDE, Keyboard::_bk08Keys[6]},      {ZXKEY_BK08_TAB, Keyboard::_bk08Keys[7]},
+    {ZXKEY_BK08_MINUS, Keyboard::_bk08Keys[8]},      {ZXKEY_BK08_EQUALS, Keyboard::_bk08Keys[9]},
+    {ZXKEY_BK08_LBRACKET, Keyboard::_bk08Keys[10]},  {ZXKEY_BK08_RBRACKET, Keyboard::_bk08Keys[11]},
+    {ZXKEY_BK08_SEMICOLON, Keyboard::_bk08Keys[12]}, {ZXKEY_BK08_QUOTE, Keyboard::_bk08Keys[13]},
+    {ZXKEY_BK08_RA, Keyboard::_bk08Keys[14]},        {ZXKEY_BK08_CAPS, Keyboard::_bk08Keys[15]},
 });
 
 // Extended key mappings
@@ -67,6 +77,19 @@ ZXExtendedKeyMap Keyboard::_zxExtendedKeyMap({
     {ZXKEY_EXT_BACKSLASH, {ZXKEY_EXT_BACKSLASH, ZXKEY_SYM_SHIFT, ZXKEY_D}},
 
     {ZXKEY_EXT_DBLQUOTE, {ZXKEY_EXT_DBLQUOTE, ZXKEY_SYM_SHIFT, ZXKEY_P}},
+
+    {ZXKEY_EXT_EXTEND, {ZXKEY_EXT_EXTEND, ZXKEY_CAPS_SHIFT, ZXKEY_SYM_SHIFT}},
+    {ZXKEY_EXT_GRAPH, {ZXKEY_EXT_GRAPH, ZXKEY_CAPS_SHIFT, ZXKEY_9}},
+    {ZXKEY_EXT_TRUEVIDEO, {ZXKEY_EXT_TRUEVIDEO, ZXKEY_CAPS_SHIFT, ZXKEY_3}},
+    {ZXKEY_EXT_INVVIDEO, {ZXKEY_EXT_INVVIDEO, ZXKEY_CAPS_SHIFT, ZXKEY_4}},
+    {ZXKEY_EXT_SEMICOLON, {ZXKEY_EXT_SEMICOLON, ZXKEY_SYM_SHIFT, ZXKEY_O}},
+
+    {ZXKEY_EXT_APOSTROPHE, {ZXKEY_EXT_APOSTROPHE, ZXKEY_SYM_SHIFT, ZXKEY_7}},
+    {ZXKEY_EXT_COLON, {ZXKEY_EXT_COLON, ZXKEY_SYM_SHIFT, ZXKEY_Z}},
+    {ZXKEY_EXT_QUESTION, {ZXKEY_EXT_QUESTION, ZXKEY_SYM_SHIFT, ZXKEY_C}},
+    {ZXKEY_EXT_LESS, {ZXKEY_EXT_LESS, ZXKEY_SYM_SHIFT, ZXKEY_R}},
+    {ZXKEY_EXT_GREATER, {ZXKEY_EXT_GREATER, ZXKEY_SYM_SHIFT, ZXKEY_T}},
+    {ZXKEY_EXT_UNDERSCORE, {ZXKEY_EXT_UNDERSCORE, ZXKEY_SYM_SHIFT, ZXKEY_0}},
 });
 
 /// endregion </Static>
@@ -190,6 +213,10 @@ void Keyboard::Reset()
 
     // Clear list with pressed keys
     _keyboardPressedKeys.clear();
+    _hostExtendedKeys.clear();
+    _capsShiftHeldBack.clear();
+    if (_extendedSink)
+        _extendedSink->ReleaseExtendedKeys();
 }
 
 Keyboard::InputState Keyboard::CaptureInputState() const
@@ -204,6 +231,7 @@ void Keyboard::RestoreInputState(const InputState& state)
 {
     memcpy(_keyboardMatrixState, state.matrix, sizeof(_keyboardMatrixState));
     _keyboardPressedKeys = state.pressedKeys;
+    _capsShiftHeldBack.clear();
 }
 
 /// region <TTD (PeripheralId::KeyboardMatrix)>
@@ -269,6 +297,13 @@ uint64_t Keyboard::TTDHashState() const
 /// @param key ZX Spectrum key pressed
 void Keyboard::PressKey(ZXKeysEnum key)
 {
+    // A key of the machine's own beyond the matrix: the machine presses its matrix keys
+    if (_extendedSink && _extendedSink->OwnsExtendedKey(key))
+    {
+        _extendedSink->OnExtendedKey(key, true);
+        return;
+    }
+
     // Extended keys (cursor / delete / break, ...) are shift combinations and have
     // no matrix entry of their own. Decompose here so direct callers
     // (DebugKeyboardManager, automation) work the same as the MessageCenter path.
@@ -285,12 +320,22 @@ void Keyboard::PressKey(ZXKeysEnum key)
         return;
     }
 
-    KeyDescriptor keyDescriptor = _zxKeyMap[key];
-    uint8_t matrixIndex = keyDescriptor.matrix_offset;
-    uint8_t keyBits = ~keyDescriptor.mask | keyDescriptor.match;
+    // A BK-08 column on a machine without it: nothing there to close
+    if (IsBk08Key(key) && !HasBk08Matrix())
+        return;
+
+    const auto it = _zxKeyMap.find(key);
+    if (it == _zxKeyMap.end())
+        return;
 
     // Resetting the bit that corresponds to ZX-Spectrum key in half-row state byte
-    _keyboardMatrixState[matrixIndex] &= keyBits;
+    const uint8_t keyBit = static_cast<uint8_t>(it->second.mask & ~it->second.match);
+    _keyboardMatrixState[it->second.matrix_offset] &= static_cast<uint8_t>(~keyBit);
+}
+
+bool Keyboard::HasBk08Matrix() const
+{
+    return _context && _context->config.mem_model == MM_LSY256;
 }
 
 void Keyboard::SetOverlay(const uint8_t rows[8])
@@ -306,7 +351,7 @@ bool Keyboard::MatrixPosition(ZXKeysEnum key, uint8_t& row, uint8_t& bit)
         return false;
     // A key clears the bits of `mask` that `match` leaves 0: exactly one
     const uint8_t cleared = static_cast<uint8_t>(it->second.mask & ~it->second.match);
-    for (uint8_t b = 0; b < 5; b++)
+    for (uint8_t b = 0; b < 8; b++)
     {
         if (cleared == (1u << b))
         {
@@ -322,6 +367,12 @@ bool Keyboard::MatrixPosition(ZXKeysEnum key, uint8_t& row, uint8_t& bit)
 /// @param key ZX Spectrum key released
 void Keyboard::ReleaseKey(ZXKeysEnum key)
 {
+    if (_extendedSink && _extendedSink->OwnsExtendedKey(key))
+    {
+        _extendedSink->OnExtendedKey(key, false);
+        return;
+    }
+
     // Decompose extended keys (shift combinations), mirroring PressKey
     if (isExtendedKey(key))
     {
@@ -336,12 +387,14 @@ void Keyboard::ReleaseKey(ZXKeysEnum key)
         return;
     }
 
-    KeyDescriptor keyDescriptor = _zxKeyMap[key];
-    uint8_t matrixIndex = keyDescriptor.matrix_offset;
-    uint8_t keyBits = ~keyDescriptor.mask | ~keyDescriptor.match;
+    const auto it = _zxKeyMap.find(key);
+    if (it == _zxKeyMap.end())
+        return;
 
-    // Setting the bit that corresponds to ZX-Spectrum key in half-row state byte
-    _keyboardMatrixState[matrixIndex] |= keyBits;
+    // Setting the bit that corresponds to ZX-Spectrum key in half-row state byte: that bit only (a BK-08 row holds
+    // keys on bits 5 and 7 too, a release of another key must not let them go)
+    const uint8_t keyBit = static_cast<uint8_t>(it->second.mask & ~it->second.match);
+    _keyboardMatrixState[it->second.matrix_offset] |= keyBit;
 }
 
 void Keyboard::TypeSymbol(char symbol)
@@ -403,6 +456,26 @@ ZXKeysEnum Keyboard::getExtendedKeyModifier(ZXKeysEnum key)
     }
 
     return result;
+}
+
+void Keyboard::HoldBackCapsShift(ZXKeysEnum key, bool pressed)
+{
+    if (!isExtendedKey(key) || getExtendedKeyModifier(key) != ZXKEY_SYM_SHIFT)
+        return;
+    const bool hostShift = key_exists(_keyboardPressedKeys, ZXKEY_CAPS_SHIFT);
+    if (pressed)
+    {
+        if (_capsShiftHeldBack.empty() && hostShift)
+            SubmitHostKey(ZXKEY_CAPS_SHIFT, /*pressed=*/false);
+        _capsShiftHeldBack.insert(key);
+        return;
+    }
+    const auto it = _capsShiftHeldBack.find(key);
+    if (it == _capsShiftHeldBack.end())
+        return;
+    _capsShiftHeldBack.erase(it);
+    if (_capsShiftHeldBack.empty() && hostShift)
+        SubmitHostKey(ZXKEY_CAPS_SHIFT, /*pressed=*/true);
 }
 
 uint8_t Keyboard::increaseKeyPressCounter(ZXKeysEnum key)
@@ -523,6 +596,8 @@ uint8_t Keyboard::HandlePortIn(uint16_t port)
             if (subport_inv & (1 << i))
             {
                 result &= _keyboardMatrixState[i] & _overlay[i];
+                if (_extendedSink)
+                    result &= _extendedSink->ExtendedMatrixRow(i);
             }
         }
     }
@@ -670,6 +745,16 @@ void Keyboard::OnKeyPressed([[maybe_unused]] int id, Message* message)
             return;
 
         ZXKeysEnum zxKey = static_cast<ZXKeysEnum>(event->zxKeyCode);
+        HoldBackCapsShift(zxKey, /*pressed=*/true);
+
+        // The machine's own extended key: one event (journaled as the key itself), the machine presses the matrix
+        if (_extendedSink && _extendedSink->OwnsExtendedKey(zxKey))
+        {
+            if (++_hostExtendedKeys[zxKey] == 1)
+                SubmitHostKey(zxKey, /*pressed=*/true);
+            return;
+        }
+
         ZXKeysEnum zxBase = getExtendedKeyBase(zxKey);
         ZXKeysEnum zxModifier = getExtendedKeyModifier(zxKey);
 
@@ -686,9 +771,10 @@ void Keyboard::OnKeyPressed([[maybe_unused]] int id, Message* message)
             SubmitHostKey(zxModifier, /*pressed=*/true);
         }
 
-        // Base key afterwards
+        // Base key afterwards (a host Shift pressed while a Symbol Shift symbol holds Caps Shift back only counts)
         increaseKeyPressCounter(zxBase);
-        SubmitHostKey(zxBase, /*pressed=*/true);
+        if (zxBase != ZXKEY_CAPS_SHIFT || _capsShiftHeldBack.empty())
+            SubmitHostKey(zxBase, /*pressed=*/true);
 
         MLOGINFO("OnKeyPressed: 0x%02X", zxKey);
         // printf("OnKeyPressed: 0x%02X\n", zxKey);
@@ -729,6 +815,20 @@ void Keyboard::OnKeyReleased([[maybe_unused]] int id, Message* message)
             return;
 
         ZXKeysEnum zxKey = static_cast<ZXKeysEnum>(event->zxKeyCode);
+
+        if (_extendedSink && _extendedSink->OwnsExtendedKey(zxKey))
+        {
+            // The last host press of it goes up (a release with none counted still passes: no stuck key)
+            const auto held = _hostExtendedKeys.find(zxKey);
+            if (held != _hostExtendedKeys.end() && --held->second > 0)
+                return;
+            if (held != _hostExtendedKeys.end())
+                _hostExtendedKeys.erase(held);
+            SubmitHostKey(zxKey, /*pressed=*/false);
+            HoldBackCapsShift(zxKey, /*pressed=*/false);
+            return;
+        }
+
         ZXKeysEnum zxBase = getExtendedKeyBase(zxKey);
         ZXKeysEnum zxModifier = getExtendedKeyModifier(zxKey);
 
@@ -747,11 +847,12 @@ void Keyboard::OnKeyReleased([[maybe_unused]] int id, Message* message)
             }
         }
 
-        // Base key afterwards
-        if (decreaseKeyPressCounter(zxBase) == 0)
+        // Base key afterwards (Caps Shift held back is up already)
+        if (decreaseKeyPressCounter(zxBase) == 0 && (zxBase != ZXKEY_CAPS_SHIFT || _capsShiftHeldBack.empty()))
         {
             SubmitHostKey(zxBase, /*pressed=*/false);
         }
+        HoldBackCapsShift(zxKey, /*pressed=*/false);
 
         MLOGINFO("OnKeyReleased: 0x%02X", zxKey);
         // printf("OnKeyReleased: 0x%02X\n", zxKey);

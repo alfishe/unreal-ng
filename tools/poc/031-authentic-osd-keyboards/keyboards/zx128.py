@@ -121,26 +121,19 @@ def badge():
     return parts
 
 
-def layout():
-    m = Model()
-    W, H = KEYBOARD["size"]
+def deck(m, body_w):
+    """The keyboard's grooves across both side margins and its well, in a case @p body_w mm wide"""
     right = X0 + 13.5 * U
-    m.case += [
-        Part("fins", {"x": BODY_W - 3, "y": 2.0, "w": W - BODY_W + 3, "h": H - 4.0, "fins": 40, "r": 2}, "#1c1c1e"),
-        Part("body", {"x": 0, "y": 0, "w": BODY_W, "h": H, "r": 3, "matte": True}, CASE),
-        Part("grille", {"x": 150.0, "y": 1.0, "w": 150.0, "h": 3.6, "slots": 52}, CASE),
-    ]
     for k in range(1, 5):  # the grooves continue the row lines across both side margins
         y = Y0 + k * U - 0.45
         m.case.append(Part("groove", {"x": 0.6, "y": y, "w": X0 - 1.2, "h": 0.9}, CASE))
-        m.case.append(Part("groove", {"x": right + 0.6, "y": y, "w": BODY_W - right - 1.2, "h": 0.9}, CASE))
-    m.case += [
-        Part("well", {"x": X0 - 0.3, "y": Y0 - 0.3, "w": 13.5 * U + 0.6, "h": 5 * U + 0.6, "r": 0.8}, "#0c0c0d"),
-        Part("logo", {"text": "sinclair", "x": 13.0, "y": 22.0, "size": 13.0, "squeeze": 1.9, "spacing": 0.25,
-                      "face": "rounded"}, RED),
-        Part("logo", {"text": "ZX Spectrum +", "x": 13.5, "y": 30.5, "size": 4.4, "face": "sans"}, RED),
-    ]
-    m.case += badge()
+        m.case.append(Part("groove", {"x": right + 0.6, "y": y, "w": body_w - right - 1.2, "h": 0.9}, CASE))
+    m.case.append(Part("well", {"x": X0 - 0.3, "y": Y0 - 0.3, "w": 13.5 * U + 0.6, "h": 5 * U + 0.6, "r": 0.8},
+                       "#0c0c0d"))
+
+
+def keys(m):
+    """The 58 keys of the Spectrum+ keyboard (the 128's, the same)"""
     for r, row in enumerate(ROWS):
         for name, x, w in row:
             rect = (X0 + x * U, Y0 + r * U, w * U, U)
@@ -151,4 +144,22 @@ def layout():
             zx = EXTRA.get(name) or [SINGLE.get(name, name)]
             m.keys.append(Key(ident, rect, "plus", KEY, legends(name), zx=zx, shape=shape,
                               label=name.title() if len(name) > 1 else name))
+
+
+def layout():
+    m = Model()
+    W, H = KEYBOARD["size"]
+    m.case += [
+        Part("fins", {"x": BODY_W - 3, "y": 2.0, "w": W - BODY_W + 3, "h": H - 4.0, "fins": 40, "r": 2}, "#1c1c1e"),
+        Part("body", {"x": 0, "y": 0, "w": BODY_W, "h": H, "r": 3, "matte": True}, CASE),
+        Part("grille", {"x": 150.0, "y": 1.0, "w": 150.0, "h": 3.6, "slots": 52}, CASE),
+    ]
+    deck(m, BODY_W)
+    m.case += [
+        Part("logo", {"text": "sinclair", "x": 13.0, "y": 22.0, "size": 13.0, "squeeze": 1.9, "spacing": 0.25,
+                      "face": "rounded"}, RED),
+        Part("logo", {"text": "ZX Spectrum +", "x": 13.5, "y": 30.5, "size": 4.4, "face": "sans"}, RED),
+    ]
+    m.case += badge()
+    keys(m)
     return m

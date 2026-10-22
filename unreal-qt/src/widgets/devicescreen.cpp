@@ -349,8 +349,9 @@ void DeviceScreen::setEmulator(std::shared_ptr<Emulator> emulator)
 
 bool DeviceScreen::event(QEvent* event)
 {
-    // A PC-keyboard machine owns the bare F-keys while the view has focus: accepting the
-    // ShortcutOverride keeps the menu's F-key shortcuts from firing, the key press comes here.
+    // The machine owns Ctrl combinations (Symbol Shift) and, with a PC keyboard, Alt combinations and the bare
+    // F-keys while the view has focus: accepting the ShortcutOverride keeps the shortcut from firing, the key
+    // press comes here.
     // Leased: automation may be removing the instance on another thread
     if (event->type() == QEvent::ShortcutOverride)
     {
@@ -366,7 +367,7 @@ bool DeviceScreen::event(QEvent* event)
 
 void DeviceScreen::keyPressEvent(QKeyEvent* event)
 {
-    if (event->key() == Qt::Key_F && (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)))
+    if (KeyboardManager::isFullScreenKey(event))
     {
         event->ignore();
         return;
@@ -393,7 +394,7 @@ void DeviceScreen::keyPressEvent(QKeyEvent* event)
 
 void DeviceScreen::keyReleaseEvent(QKeyEvent* event)
 {
-    if (event->key() == Qt::Key_F && (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)))
+    if (KeyboardManager::isFullScreenKey(event))
     {
         event->ignore();
         return;

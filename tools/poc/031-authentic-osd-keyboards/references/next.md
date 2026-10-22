@@ -261,6 +261,7 @@ the physical membrane is inferred from the state machine (membrane.vhd:90–100,
 | next-issue2-render-commons.jpg | Official Issue 2 render (3/4 view; legends, groove lines, LED dot) | Commons, Olifiers, CC0 |
 | next-ks1-vs-ks2-interior-makerspace.jpg | KS1 (2B) vs KS2 (4) opened cases: same shell | MakerSpace article (copyright, reference only) |
 | next-zesarux-keyboard-bitmap.jpg | ZEsarUX's drawn Next keyboard (layout cross-check) | local collection, GPL |
+| next-white-top-owner.jpg | The white edition, 3/4 top view: case, caps, print, wordmark, rainbow (section 8) | the owner, 2026-10-21 (reference only) |
 
 ## 6. Sources
 
@@ -298,3 +299,24 @@ Web:
 - Any top-visible KS1/KS2 difference (the sources say the cases look the same).
 - Graphic-block glyph detail on the digit keys; the 0 key's inverse "BLACK".
 - That the two CAPS SHIFT / SYMBOL SHIFT keys are wired in parallel (inferred from 58 keys on 56 positions).
+
+## 8. White edition
+
+From the owner's photo `next-white-top-owner.jpg` (2026-10-21, a 3/4 top view, 630 x 500 px). It is the same shell
+and keyboard as the black Next: the geometry of sections 1-2 holds, only the colours differ. Every value below is a
+photo reading, **UNVERIFIED** (one phone photo under room light, no written source).
+
+| Part | White edition | Black (section 1.4) |
+|---|---|---|
+| Case | white, a little warm grey in shade (sampled `#e3e3e1`, `#d5d4d0` on the right end) | black |
+| Caps | white two-tone caps, the matte top a shade cooler than the glossy strip (`#e8eced`) | black |
+| Gaps between the caps | light grey: the well reads grey, not black | black |
+| Legends | black, every one (the colour names too: no coloured print); the 0 key's BLACK is a black box with white print | white; BLACK white box, black print |
+| "sinclair" | moulded white on white; the relief's flanks read as a thin grey contour (sampled ≈ `#8c8a8a`) | glossy black on matte black |
+| "ZX Spectrum Next" | red, deeper than the black edition's orange red (sampled `#8f1220` on the antialiased stroke) | `#d9502a` |
+| Vent ribs, tab | white | black |
+| LED | a red dot (it may be lit in the photo) | dark |
+| Rainbow inserts | red, yellow, green, blue at the right end of the four grooves | the same |
+
+Drawn as `keyboards/zxnextwhite.py`, the Next's second picture (the black one stays the default).
+

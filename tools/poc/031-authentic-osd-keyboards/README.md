@@ -80,12 +80,12 @@ fixed in `core/` after the POC, as its own task.
 
 | Model | Defect | Source |
 |---|---|---|
-| NEXT | `Keyboard::_zxExtendedKeyMap` (`keyboard.cpp:48-71`) has no EXTEND MODE (CS+SS), GRAPH (CS+9), TRUE VIDEO (CS+3), INV VIDEO (CS+4) or `;` (SS+O) | membrane.vhd:186-244 |
-| NEXT | a ZX extended key pressed through the key layer does not set its NR 0xB0 / 0xB1 bit (only host PC keys reach `NextExtendedInput`) | zxnext.vhd:6155-6164 |
-| NEXT | NR 0x68 bit 4 (cancel the extended keys' matrix entries) is not modelled | zxnext.vhd:5451 |
-| ATM3, TSL | `pckey.h:126`, `pckey.cpp:406-415`: Symbol Shift on Left Ctrl "as the AVR maps them back"; the AVR's default map has Symbol Shift on Right Shift, BREAK on Tab, Ctrl and Alt unmapped; the matrix is built from the host keys, not from that map | tslabs/zx-evo `kbmap.c`, `zx.c` |
+| NEXT | `Keyboard::_zxExtendedKeyMap` (`keyboard.cpp:48-71`) has no EXTEND MODE (CS+SS), GRAPH (CS+9), TRUE VIDEO (CS+3), INV VIDEO (CS+4) or `;` (SS+O); fixed 2026-10-21: `ZXKEY_EXT_EXTEND` ... `ZXKEY_EXT_SEMICOLON` | membrane.vhd:186-244 |
+| NEXT | a ZX extended key pressed through the key layer does not set its NR 0xB0 / 0xB1 bit (only host PC keys reach `NextExtendedInput`); fixed 2026-10-21: the 16 membrane keys are one key each, held by `NextExtendedInput` (`IExtendedKeySink`), which presses their matrix keys | zxnext.vhd:6155-6164 |
+| NEXT | NR 0x68 bit 4 (cancel the extended keys' matrix entries) is not modelled; fixed 2026-10-21 | zxnext.vhd:5451 |
+| ATM3, TSL | `pckey.h:126`, `pckey.cpp:406-415`: Symbol Shift on Left Ctrl "as the AVR maps them back"; the AVR's default map has Symbol Shift on Right Shift, BREAK on Tab, Ctrl and Alt unmapped; the matrix is built from the host keys, not from that map. Owner 2026-10-21: keep the host-built matrix for now, make sure every key is reachable without host conflicts on macOS, Windows and Linux; building the matrix from the controller's map is a possible later revision (with SPRINTER). Audit 2026-10-21, fixed: `;` `'` `:` `?` `<` `>` `_` `/` `|` and the keypad symbols had no matrix key, the host Shift turned `"` `+` into EXTEND MODE + key, the digit row followed the layout (German Shift+2), Ctrl+O / S / Q / F and (PS/2) Alt+letter fired app shortcuts, the AVR hard-reset on Ctrl+Alt+any key (AltGr); left for a real Windows / Linux host: Alt alone and F10 activating the menu bar, AltGr's fake Left Ctrl, compositor grabs (docs/features/keyboard.md) | tslabs/zx-evo `kbmap.c`, `zx.c` |
 | ATM710 | the host route "Both" sends each host key to the matrix and to the AT controller (`keyboard.cpp:121-129`); a PC-picture key must reach the controller only; done in the app: the on-screen keyboard posts a PC picture's key as the PC key alone (`unreal-qt/src/osdkeyboard`, 2026-10-20) | `atm_at41.asm` `L_527` |
-| SPRINTER | the FPGA's PC→matrix table (`KBD_INI2.MIF`) and its sixth matrix line (FN: F1-F10 = FN + digit) are not applied; the matrix comes from the host keys | `KBD_INI2.MIF` |
+| SPRINTER | the FPGA's PC→matrix table (`KBD_INI2.MIF`) and its sixth matrix line (FN: F1-F10 = FN + digit) are not applied; the matrix comes from the host keys. Owner 2026-10-21: as ATM3 / TSL, verify reachability and host conflicts now, the controller's map is a possible later revision | `KBD_INI2.MIF` |
 | QUORUM | the 48 keys off the ZX matrix (F1-F5, RUS / LAT, the boxed E and G, EDIT = TAB, CAPS LOCK, BS, DEL, the punctuation, the keypad) are read through port #7E (A7 = A0 = 0, A4 = A3 = 1, D0-D5); the model cannot be created yet (no port decoder for `MM_QUORUM`, `portdecoder.cpp:126-153`); its decoder needs #7E, FIRE on 0 and the arrows on 5-8 without CAPS SHIFT | quorum-kbd-extended-schematic.jpg, refs-clones §4 |
 | LSY256 | the Orel BK-08's 16 keys beyond the 40 (the ten punctuation keys with their Cyrillic letters, ~, TAB, УПР, РУС, two Р/А; with the 40 they make the manual's 56 keys a program sees) are read through spare bits of the keyboard ports, which bits is not decoded (the schematic `Orel_BK08_Schematic.djvu`); the model cannot be created yet (no port decoder for `MM_LSY256`, `portdecoder.cpp:126-153`) | refs-clones §5 |
 | PROFI, PROFI3 | the album keyboard's cursor keys and "*" are wired to their own joystick lines (RIGHT, DOWN, UP, LEFT, FIRE on pin 18), not the matrix; which port they land on is not known (the manuals: the Sinclair joystick on keyboard lines); the OSD sends them as `JOY:<line>` | refs-clones §6.1 |
@@ -103,6 +103,8 @@ The pictures are the app's on-screen keyboard (View → On-screen Keyboard, the 
 | Keyboard | Models | photo | schematic | hybrid |
 |---|---|---|---|---|
 | `zx48k` | 48K | drawn, shown to the owner | — | — |
+| `zxplus` | 48K (the second picture: the Spectrum+ is a 48K in the 58-key case, the emulator has no model of its own; the 128's keys and legends, the moulded black wordmark, "ZX Spectrum+", the rainbow alone, no heatsink; refs-sinclair §2, the owner's photo `plus-top-owner.jpg`) | drawn (2026-10-21) | — | — |
+| `forum` | 48K (the third picture, no name on the case (owner 2026-10-21): the Forum BK-09 Turbo, a Т34ВГ1 48K clone in a black wedge case; only the 40 ZX keys are mapped, the rest press nothing and say nothing (owner 2026-10-21); refs-clones §8, the owner's photo `forum-bk08-turbo-frolov-r86.jpg`, (C) Sergei Frolov 2008) | drawn (2026-10-21) | — | — |
 | `zx128` | 128k (the Spectrum+ keyboard in the 128's case) | drawn, shown to the owner | — | — |
 | `zxplus2` | PLUS2 (`keyboards/amstrad.py`, shared with +2A and +3) | done, approved by the owner (2026-10-19) | — | — |
 | `zxplus2a` | PLUS2A | done, approved by the owner (2026-10-19) | — | — |
@@ -113,12 +115,14 @@ The pictures are the app's on-screen keyboard (View → On-screen Keyboard, the 
 | `quorum` | QUORUM (the 88-key Quorum 128+ in its ivory case, refs-clones §4) | done, approved (2026-10-20) | — | — |
 | `orel` | LSY256 (the Orel BK-08's 67-key reed keyboard unit, refs-clones §5) | done, approved (2026-10-20) | — | — |
 | `profi` | PROFI, PROFI3 (the Soviet 58-key keyboard in the БК-0010 case with the "Profi///" badge, white caps with the Spectrum print and Cyrillic, after the owner's top view of a real Profi keyboard (`references/photos/clones/profi-bk0010-case-top-owner.png`), the badge traced from it, refs-clones §6.1) | done, approved (2026-10-20) | — | — |
+| `profilatin` | PROFI, PROFI3 (the third picture: the Pentagon 2+'s 58-key keyboard and Latin print, ivory caps, in the black case of the owner's photo `profi-keyboard-top-owner.jpg` with the "Profi®" mark; refs-clones §6.1) | drawn (2026-10-21) | — | — |
 | `profiplus` | PROFI, PROFI3 (the album's own keyboard: 40 keys, the inverted-T cursor keys and "*" on the joystick lines, RESET; the real Profi's case and caps, refs-clones §6.1, §6.2) | done, approved (2026-10-20) | — | — |
 | `pcxt` | ATM710 (XT firmware), KAY (the IBM PC/XT 83-key: F1-F10 at the left, no editing block, two-tone caps, red Cyrillic, refs-pc §7.1, refs-clones §3) | done, approved (2026-10-20) | — | — |
 | `pcat` | ATM710 (AT firmware), SPRINTER (the AT Enhanced 101-key in the Model M geometry, two-tone caps, red Cyrillic, refs-pc §7.3) | done, approved (2026-10-20) | — | — |
 | `pcps2` | ATM3, TSL, PHOENIX (the PS/2 104-key Russian clone keyboard: one off-white colour, red Cyrillic, L Enter, refs-pc §7.3) | done, approved (2026-10-20) | — | — |
 | `zxmatrix` | ATM450 (its only one), the switchable second of ATM710, KAY, SPRINTER, ATM3, TSL, PHOENIX (the homemade 40-key block: the 48K's stagger, MS 7004 caps, ЙЦУКЕН, owner 2026-10-20) | done, accepted (2026-10-20: "synthetic, but let it be") | — | — |
 | `zxnext` | NEXT | done, approved by the owner (2026-10-19) | — | — |
+| `zxnextwhite` | NEXT (the second picture: the white edition, the same geometry and keys, white case and caps, black print, red name; refs-next §8, the owner's photo `next-white-top-owner.jpg`) | drawn (2026-10-21) | — | — |
 
 ## Files
 

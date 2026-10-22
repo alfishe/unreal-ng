@@ -14,6 +14,7 @@
 #include "base/featuremanager.h"
 #include "emulator/buildinfo.h"
 #include "emulator/emulator.h"
+#include "emulator/keyboardmanager.h"
 #include "emulator/savesnapshotchoices.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/ports/portdecoder.h"
@@ -315,10 +316,10 @@ void MenuManager::createViewMenu()
     connect(_temporalBlendingAction, &QAction::triggered, this, &MenuManager::temporalBlendingToggled);
 
     // Full Screen
-    // Single full-screen entry: Cmd+F on macOS, Ctrl+F elsewhere (Qt::CTRL maps to Cmd
-    // on macOS). Cocoa's own "Enter Full Screen" View-menu item is suppressed in main().
+    // Single full-screen entry: Cmd+F on macOS, Alt+Enter elsewhere (KeyboardManager::fullScreenKey).
+    // Cocoa's own "Enter Full Screen" View-menu item is suppressed in main().
     _fullScreenAction = _viewMenu->addAction(
-        tr("&Full Screen") + "\t" + QKeySequence(Qt::CTRL | Qt::Key_F).toString(QKeySequence::NativeText));
+        tr("&Full Screen") + "\t" + QKeySequence(KeyboardManager::fullScreenKey()).toString(QKeySequence::NativeText));
     // Shortcut is handled by app-wide QShortcut in MainWindow (works when menu hidden)
     _fullScreenAction->setStatusTip(tr("Toggle full screen mode"));
     _fullScreenAction->setCheckable(true);

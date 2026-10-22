@@ -253,8 +253,10 @@ void OsdKeyboardWindow::refresh()
         std::vector<ZXKeysEnum> parts{base};
         if (modifier != ZXKEY_NONE && modifier != base)
             parts.insert(parts.begin(), modifier);
-        const auto combo = std::find_if(_picture.keys.begin(), _picture.keys.end(),
-                                        [&](const PictureKey& key) { return key.zx == parts; });
+        // The key printed with it: the extended key itself (the Next's LEFT) or its combination (the 128's)
+        const auto combo = std::find_if(_picture.keys.begin(), _picture.keys.end(), [&](const PictureKey& key) {
+            return key.zx == parts || (key.zx.size() == 1 && key.zx[0] == zx);
+        });
         if (combo != _picture.keys.end())
         {
             lit.insert("host:" + combo->id);
@@ -325,6 +327,12 @@ void OsdKeyboardWindow::onKeyPressed(const PictureKey* key)
     _keyNotice.clear();
     if (key->inert())
     {
+        // A key whose wiring nobody knows (the Forum's extra keys) is silent; a known line not taken yet says so
+        if (key->line.empty())
+        {
+            updateNotice();
+            return;
+        }
         _keyNotice = tr("%1 is wired to %2, which the emulator does not take yet")
                          .arg(key->label, QString::fromStdString(key->line));
         updateNotice();

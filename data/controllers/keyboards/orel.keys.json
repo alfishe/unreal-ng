@@ -18,7 +18,9 @@
     19.05
    ],
    "label": "Tilde",
-   "line": "BK08:~"
+   "zx": [
+    "BK08_TILDE"
+   ]
   },
   {
    "id": "1",
@@ -159,7 +161,9 @@
     19.05
    ],
    "label": "Minus",
-   "line": "BK08:-"
+   "zx": [
+    "BK08_MINUS"
+   ]
   },
   {
    "id": "equals",
@@ -170,7 +174,9 @@
     19.05
    ],
    "label": "Equals",
-   "line": "BK08:="
+   "zx": [
+    "BK08_EQUALS"
+   ]
   },
   {
    "id": "bs",
@@ -209,7 +215,9 @@
     19.05
    ],
    "label": "Tab",
-   "line": "BK08:TAB"
+   "zx": [
+    "BK08_TAB"
+   ]
   },
   {
    "id": "q",
@@ -350,7 +358,9 @@
     19.05
    ],
    "label": "Lbracket",
-   "line": "BK08:["
+   "zx": [
+    "BK08_LBRACKET"
+   ]
   },
   {
    "id": "rbracket",
@@ -361,7 +371,9 @@
     19.05
    ],
    "label": "Rbracket",
-   "line": "BK08:]"
+   "zx": [
+    "BK08_RBRACKET"
+   ]
   },
   {
    "id": "true",
@@ -386,7 +398,9 @@
     19.05
    ],
    "label": "Ctrl",
-   "line": "BK08:CTRL"
+   "zx": [
+    "SS"
+   ]
   },
   {
    "id": "caps",
@@ -398,8 +412,7 @@
    ],
    "label": "Caps",
    "zx": [
-    "CS",
-    "2"
+    "BK08_CAPS"
    ]
   },
   {
@@ -528,7 +541,9 @@
     19.05
    ],
    "label": "Semicolon",
-   "line": "BK08:;"
+   "zx": [
+    "BK08_SEMICOLON"
+   ]
   },
   {
    "id": "quote",
@@ -539,7 +554,9 @@
     19.05
    ],
    "label": "Quote",
-   "line": "BK08:'"
+   "zx": [
+    "BK08_QUOTE"
+   ]
   },
   {
    "id": "inv",
@@ -565,7 +582,7 @@
    ],
    "label": "Shift",
    "zx": [
-    "SS"
+    "BK08_SHIFT"
    ]
   },
   {
@@ -577,7 +594,9 @@
     19.05
    ],
    "label": "Backslash",
-   "line": "BK08:\\"
+   "zx": [
+    "BK08_BACKSLASH"
+   ]
   },
   {
    "id": "z",
@@ -679,7 +698,9 @@
     19.05
    ],
    "label": "Comma",
-   "line": "BK08:,"
+   "zx": [
+    "BK08_COMMA"
+   ]
   },
   {
    "id": "period",
@@ -690,7 +711,9 @@
     19.05
    ],
    "label": "Period",
-   "line": "BK08:."
+   "zx": [
+    "BK08_PERIOD"
+   ]
   },
   {
    "id": "slash",
@@ -701,7 +724,9 @@
     19.05
    ],
    "label": "Slash",
-   "line": "BK08:/"
+   "zx": [
+    "BK08_SLASH"
+   ]
   },
   {
    "id": "shift-right",
@@ -713,7 +738,7 @@
    ],
    "label": "Shift",
    "zx": [
-    "SS"
+    "BK08_SHIFT"
    ]
   },
   {
@@ -766,7 +791,9 @@
     19.05
    ],
    "label": "Rus",
-   "line": "BK08:RUS"
+   "zx": [
+    "BK08_RUS"
+   ]
   },
   {
    "id": "ra",
@@ -777,7 +804,9 @@
     19.05
    ],
    "label": "Р/А",
-   "line": "BK08:R/A"
+   "zx": [
+    "BK08_RA"
+   ]
   },
   {
    "id": "space",
@@ -801,7 +830,9 @@
     19.05
    ],
    "label": "Р/А",
-   "line": "BK08:R/A"
+   "zx": [
+    "BK08_RA"
+   ]
   },
   {
    "id": "left",

@@ -58,24 +58,27 @@ def case_fins(pic, part):
 
 
 def case_well(pic, part):
-    """The keyboard's recess: a glossy black deck, its back rim in shadow and its front rim catching the light"""
+    """The keyboard's recess: a glossy black deck, its back rim in shadow and its front rim catching the light; a light
+    deck (the white Next's) sets its @p back rim's colour and its outline's @p shadow"""
     g = part.geometry
     d = pic.defs
     x, y, w, h, r = g["x"], g["y"], g["w"], g["h"], g.get("r", 1)
-    deck = d.linear([(0, "#050607"), (0.06, part.color), (1, shade(part.color, 0.8))])
-    rim = d.linear([(0, "#000000", 0.6), (0.03, "#000000", 0), (0.985, "#ffffff", 0), (1, "#ffffff", 0.2)])
+    deck = d.linear([(0, g.get("back", "#050607")), (0.06, part.color), (1, shade(part.color, 0.8))])
+    rim = d.linear([(0, "#000000", g.get("rim", 0.6)), (0.03, "#000000", 0), (0.985, "#ffffff", 0),
+                    (1, "#ffffff", 0.2)])
     return "\n".join([
-        f'<path d="{rounded(x - 0.4, y - 0.4, w + 0.8, h + 0.8, r + 0.4)}" fill="#000" fill-opacity="0.6"/>',
+        f'<path d="{rounded(x - 0.4, y - 0.4, w + 0.8, h + 0.8, r + 0.4)}" fill="#000" '
+        f'fill-opacity="{g.get("shadow", 0.6)}"/>',
         f'<path d="{rounded(x, y, w, h, r)}" fill="{deck}"/>',
         f'<path d="{rounded(x, y, w, h, r)}" fill="{rim}"/>',
     ])
 
 
 def case_groove(pic, part):
-    """A groove cut across the case: a dark line with a lit lower lip"""
+    """A groove cut across the case: a dark line (@p dark, the case's shade on a light case) with a lit lower lip"""
     g = part.geometry
     x, y, w, h = g["x"], g["y"], g["w"], g["h"]
-    return (f'<rect x="{x:.3f}" y="{y:.3f}" width="{w:.3f}" height="{h * 0.6:.3f}" fill="#060709"/>'
+    return (f'<rect x="{x:.3f}" y="{y:.3f}" width="{w:.3f}" height="{h * 0.6:.3f}" fill="{g.get("dark", "#060709")}"/>'
             f'<rect x="{x:.3f}" y="{y + h * 0.6:.3f}" width="{w:.3f}" height="{h * 0.4:.3f}" '
             f'fill="{shade(part.color, 1.35)}" fill-opacity="0.6"/>')
 
@@ -94,7 +97,7 @@ def case_insert(pic, part):
 
 
 def case_grille(pic, part):
-    """A row of vent slots running front to back"""
+    """A row of vent slots running front to back; on a light case the slots are @p slot dark and the lit edge @p lit"""
     g = part.geometry
     x, y, w, h, n = g["x"], g["y"], g["w"], g["h"], g["slots"]
     pitch = w / n
@@ -102,9 +105,9 @@ def case_grille(pic, part):
     parts = []
     for i in range(n):
         sx = x + i * pitch
-        parts.append(f'<path d="{rounded(sx, y, slot, h, slot / 2)}" fill="#050506"/>')
+        parts.append(f'<path d="{rounded(sx, y, slot, h, slot / 2)}" fill="{g.get("slot", "#050506")}"/>')
         parts.append(f'<path d="{rounded(sx + slot, y + 0.2, 0.25, h - 0.4, 0.12)}" fill="#ffffff" '
-                     f'fill-opacity="0.08"/>')
+                     f'fill-opacity="{g.get("lit", 0.08)}"/>')
     return "\n".join(parts)
 
 
@@ -180,11 +183,16 @@ def case_logo(pic, part):
                           for dy, colour, width, opacity in [(0.25, "#000000", 0.8, 0.6), (-0.15, "#4a4a48", 0.45, 0.5),
                                                              (0, part.color, 0.45, 1)])
     if g.get("emboss"):  # thin letters moulded in relief: a shadow under each stroke, a faint lit top
-        return "\n".join([
-            glyphs(g["text"], g["x"] + 0.1, g["y"] + 0.25, size, face, "#000", opacity=0.45, **kw),
-            glyphs(g["text"], g["x"], g["y"] - 0.12, size, face, "#ffffff", opacity=0.07, **kw),
+        layers = [
+            glyphs(g["text"], g["x"] + 0.1, g["y"] + 0.25, size, face, "#000", opacity=g.get("shadow", 0.45), **kw),
+            glyphs(g["text"], g["x"], g["y"] - 0.12, size, face, "#ffffff", opacity=g.get("lit", 0.07), **kw),
             glyphs(g["text"], *args, part.color, **kw),
-        ])
+        ]
+        if g.get("edge"):  # the relief's flanks read as a thin grey contour (the white Next's "sinclair")
+            d = text_path(g["text"], *args, kw["anchor"], spacing, squeeze)
+            layers.append(f'<path d="{d}" fill="none" stroke="{g["edge"]}" stroke-width="{g.get("edge_width", 0.3)}" '
+                          f'stroke-linejoin="round"/>')
+        return "\n".join(layers)
     if not g.get("gloss"):
         return glyphs(g["text"], *args, part.color, **kw)
     fill = pic.defs.linear([(0, "#3c3e42"), (0.35, part.color), (0.7, "#0a0a0b"), (1, "#26282b")])
@@ -400,6 +408,15 @@ CASE = {"print": case_print, "mesh": case_mesh, "ring": case_ring, "vents": case
         "hump": case_hump, "fins": case_fins}
 
 
+def luminance(color):
+    """0 for black, 1 for white"""
+    color = color.lstrip("#")
+    if len(color) == 3:
+        color = "".join(c * 2 for c in color)
+    r, g, b = (int(color[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
 def lit(pic, key):
     """The key's colour as the photo shows it: the light falls off from the top left across the board, and no two caps
     of an old keyboard have quite the same tint (a fixed spread per key, ±1.5 %)"""
@@ -416,8 +433,8 @@ def cap(pic, key):
         return rubber(pic, x, y, w, h, key.color, skirt=pic.keyboard.get("skirt", 0.0)), (x, y, w, h)
     if key.cap == "hard":
         return hard(pic, x, y, w, h, key.color)
-    if key.cap == "next":
-        return next_cap(pic, x, y, w, h, key.color, key.shape)
+    if key.cap == "next":  # the keyboard may set the frame's finish (the white Next's)
+        return next_cap(pic, x, y, w, h, key.color, key.shape, **pic.keyboard.get("next", {}))
     if key.cap == "plus":  # the Spectrum+ / 128 key: a satin block, the convex glossy pad in front
         return next_cap(pic, x, y, w, h, key.color, key.shape, top_inset=0.31, gloss=0.03, sheen=0.3, relief=(1.05, 0.92), rim=0.15,
                         frame=[(0, "#2c2d30"), (0.1, "#202124"), (0.9, "#18191b"), (1, "#0e0f10")])
@@ -450,7 +467,8 @@ def draw(keyboard, model):
                 left = {"start": lx - pad, "middle": lx - width / 2, "end": lx - text - pad}[legend.anchor]
                 pic.add("legends", f'<rect x="{left:.3f}" y="{ly - legend.size * 0.95:.3f}" '
                                    f'width="{width:.3f}" height="{legend.size * 1.2:.3f}" fill="{legend.color}"/>')
-                pic.add("legends", glyphs(legend.text, lx, ly, legend.size, legend.face, "#141517", legend.anchor,
+                paper = "#141517" if luminance(legend.color) > 0.5 else "#f2f2f2"  # the box's text: its opposite
+                pic.add("legends", glyphs(legend.text, lx, ly, legend.size, legend.face, paper, legend.anchor,
                                           squeeze=legend.squeeze))
                 continue
             if legend.swatch:

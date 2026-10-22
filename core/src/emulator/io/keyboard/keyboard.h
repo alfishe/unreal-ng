@@ -5,6 +5,8 @@
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/platform.h"
 
+#include <set>
+
 class EmulatorContext;
 class ModuleLogger;
 
@@ -70,6 +72,26 @@ enum ZXKeysEnum : uint8_t
     ZXKEY_Y             = 0x59,
     ZXKEY_Z             = 0x5A,
 
+    // The Orel BK-08's (LSY256) matrix keys beyond the 40: columns KD5 and KD7 of its eight rows (keyboard schematic
+    // БУ5.103.474), read on port #FE bits 5 and 7 (the ROM's KEY-SCAN masks with AND #BF). Plain matrix keys, taken
+    // only on a machine with that keyboard (Keyboard::HasBk08Matrix)
+    ZXKEY_BK08_RUS      = 0x60,     // A8  D5  РУС
+    ZXKEY_BK08_SHIFT    = 0x61,     // A8  D7  РЕГ (both keys)
+    ZXKEY_BK08_BACKSLASH= 0x62,     // A9  D5  \ |
+    ZXKEY_BK08_SLASH    = 0x63,     // A9  D7  / ? Ё
+    ZXKEY_BK08_COMMA    = 0x64,     // A10 D5  , < Б
+    ZXKEY_BK08_PERIOD   = 0x65,     // A10 D7  . > Ю
+    ZXKEY_BK08_TILDE    = 0x66,     // A11 D5  ` ~ (left of 1)
+    ZXKEY_BK08_TAB      = 0x67,     // A11 D7  ТАБ
+    ZXKEY_BK08_MINUS    = 0x68,     // A12 D5  - _
+    ZXKEY_BK08_EQUALS   = 0x69,     // A12 D7  = +
+    ZXKEY_BK08_LBRACKET = 0x6A,     // A13 D5  [ { Х
+    ZXKEY_BK08_RBRACKET = 0x6B,     // A13 D7  ] } Ъ
+    ZXKEY_BK08_SEMICOLON= 0x6C,     // A14 D5  ; : Ж
+    ZXKEY_BK08_QUOTE    = 0x6D,     // A14 D7  ' " Э
+    ZXKEY_BK08_RA       = 0x6E,     // A15 D5  Р/А (both keys)
+    ZXKEY_BK08_CAPS     = 0x6F,     // A15 D7  ЗГЛ
+
     // Extended keys for 128k and newer models (combination of existing keys)
     // See mappings: http://slady.net/Sinclair-ZX-Spectrum-keyboard/
     ZXKEY_EXT_CTRL      = 0x80,
@@ -94,6 +116,21 @@ enum ZXKeysEnum : uint8_t
     ZXKEY_EXT_CAPSLOCK,             // ZXKEY_CAPS_SHIFT + ZXKEY_2
 
     ZXKEY_EXT_DBLQUOTE,             // ZXKEY_SYM_SHIFT + ZXKEY_P        '"'
+
+    // The rest of the ZX Next's extended keys (membrane.vhd, columns 5 and 6)
+    ZXKEY_EXT_EXTEND,               // ZXKEY_CAPS_SHIFT + ZXKEY_SYM_SHIFT
+    ZXKEY_EXT_GRAPH,                // ZXKEY_CAPS_SHIFT + ZXKEY_9
+    ZXKEY_EXT_TRUEVIDEO,            // ZXKEY_CAPS_SHIFT + ZXKEY_3
+    ZXKEY_EXT_INVVIDEO,             // ZXKEY_CAPS_SHIFT + ZXKEY_4
+    ZXKEY_EXT_SEMICOLON,            // ZXKEY_SYM_SHIFT  + ZXKEY_O       ';'
+
+    // Symbol Shift symbols of the matrix a host keyboard has keys for
+    ZXKEY_EXT_APOSTROPHE,           // ZXKEY_SYM_SHIFT  + ZXKEY_7       '\''
+    ZXKEY_EXT_COLON,                // ZXKEY_SYM_SHIFT  + ZXKEY_Z       ':'
+    ZXKEY_EXT_QUESTION,             // ZXKEY_SYM_SHIFT  + ZXKEY_C       '?'
+    ZXKEY_EXT_LESS,                 // ZXKEY_SYM_SHIFT  + ZXKEY_R       '<'
+    ZXKEY_EXT_GREATER,              // ZXKEY_SYM_SHIFT  + ZXKEY_T       '>'
+    ZXKEY_EXT_UNDERSCORE,           // ZXKEY_SYM_SHIFT  + ZXKEY_0       '_'
 };
 
 // Standardized keys to map host input events
@@ -131,6 +168,24 @@ typedef std::map<ZXKeysEnum, KeyMapper> ZXExtendedKeyMap;
 // Physical PC keys (pckey.h): only the declarations the keyboard needs
 enum class PcKey : uint8_t;
 class IPs2KeySink;
+
+/// The keys a machine's keyboard has beyond the 40 of the matrix, which press matrix keys of their own accord: the
+/// ZX Next's membrane columns 5 and 6 (membrane.vhd: EXTEND, GRAPH, the arrows, DELETE, ; " , . ...). Such a key is
+/// one event, not its shift combination: the machine sees it apart (NR #B0 / #B1) and decides which matrix keys it
+/// presses (ExtendedMatrixRow; the Next's NR #68 bit 4 cancels them). Called on the thread executing the machine,
+/// from the place that applies journaled input
+class IExtendedKeySink
+{
+public:
+    virtual ~IExtendedKeySink() = default;
+
+    /// The extended ZX key is one of this keyboard's own keys
+    virtual bool OwnsExtendedKey(ZXKeysEnum key) const = 0;
+    virtual void OnExtendedKey(ZXKeysEnum key, bool pressed) = 0;
+    /// The matrix keys the held extended keys press on a half-row (0 = A8 ... 7 = A15), active low
+    virtual uint8_t ExtendedMatrixRow(uint8_t row) const = 0;
+    virtual void ReleaseExtendedKeys() = 0;
+};
 
 class KeyboardEvent : public MessagePayload
 {
@@ -207,9 +262,10 @@ public:
 
     /// region <Constants>
 
-    // [0:5] Lowest 5 bits are used for key half-rows polling
+    // [0:4] Lowest 5 bits are used for key half-rows polling
+    // [5]   Bit 5 - not used (the Orel BK-08: a sixth key per half-row, _bk08Keys)
     // [6]   Bit 6 - Audio in (EAR input)
-    // [7]   Bit 7 - not used
+    // [7]   Bit 7 - not used (the Orel BK-08: a seventh key per half-row)
 
     //    Port	    Dec	    Bin	                    Address line	D0	        D1	        D2	D3	D4
     //    $FEFE	    65278	%1111 1110 1111 1110	A8	            Caps shift	Z	        X	C	V
@@ -270,6 +326,28 @@ public:
         { ZXKEY_M,            0b0001'1111, 0b0001'1011, 0x7FFE, 7, "ZXKEY_M" },
         { ZXKEY_N,            0b0001'1111, 0b0001'0111, 0x7FFE, 7, "ZXKEY_N" },
         { ZXKEY_B,            0b0001'1111, 0b0000'1111, 0x7FFE, 7, "ZXKEY_B" }
+    };
+
+    /// The Orel BK-08's 16 extra positions (ZXKEY_BK08_*): bit 5 and bit 7 of each half-row
+    static constexpr uint8_t BK08_KEYS_COUNT = 16;
+    static constexpr KeyDescriptor _bk08Keys[BK08_KEYS_COUNT] =
+    {
+        { ZXKEY_BK08_RUS,       0b1010'0000, 0b1000'0000, 0xFEFE, 0, "ZXKEY_BK08_RUS" },
+        { ZXKEY_BK08_SHIFT,     0b1010'0000, 0b0010'0000, 0xFEFE, 0, "ZXKEY_BK08_SHIFT" },
+        { ZXKEY_BK08_BACKSLASH, 0b1010'0000, 0b1000'0000, 0xFDFE, 1, "ZXKEY_BK08_BACKSLASH" },
+        { ZXKEY_BK08_SLASH,     0b1010'0000, 0b0010'0000, 0xFDFE, 1, "ZXKEY_BK08_SLASH" },
+        { ZXKEY_BK08_COMMA,     0b1010'0000, 0b1000'0000, 0xFBFE, 2, "ZXKEY_BK08_COMMA" },
+        { ZXKEY_BK08_PERIOD,    0b1010'0000, 0b0010'0000, 0xFBFE, 2, "ZXKEY_BK08_PERIOD" },
+        { ZXKEY_BK08_TILDE,     0b1010'0000, 0b1000'0000, 0xF7FE, 3, "ZXKEY_BK08_TILDE" },
+        { ZXKEY_BK08_TAB,       0b1010'0000, 0b0010'0000, 0xF7FE, 3, "ZXKEY_BK08_TAB" },
+        { ZXKEY_BK08_MINUS,     0b1010'0000, 0b1000'0000, 0xEFFE, 4, "ZXKEY_BK08_MINUS" },
+        { ZXKEY_BK08_EQUALS,    0b1010'0000, 0b0010'0000, 0xEFFE, 4, "ZXKEY_BK08_EQUALS" },
+        { ZXKEY_BK08_LBRACKET,  0b1010'0000, 0b1000'0000, 0xDFFE, 5, "ZXKEY_BK08_LBRACKET" },
+        { ZXKEY_BK08_RBRACKET,  0b1010'0000, 0b0010'0000, 0xDFFE, 5, "ZXKEY_BK08_RBRACKET" },
+        { ZXKEY_BK08_SEMICOLON, 0b1010'0000, 0b1000'0000, 0xBFFE, 6, "ZXKEY_BK08_SEMICOLON" },
+        { ZXKEY_BK08_QUOTE,     0b1010'0000, 0b0010'0000, 0xBFFE, 6, "ZXKEY_BK08_QUOTE" },
+        { ZXKEY_BK08_RA,        0b1010'0000, 0b1000'0000, 0x7FFE, 7, "ZXKEY_BK08_RA" },
+        { ZXKEY_BK08_CAPS,      0b1010'0000, 0b0010'0000, 0x7FFE, 7, "ZXKEY_BK08_CAPS" },
     };
 
     // Mapping special symbols to key combinations
@@ -346,6 +424,13 @@ protected:
     /// without one: physical key events are neither journaled nor applied there
     IPs2KeySink* _ps2Sink = nullptr;
 
+    /// The machine's keys beyond the matrix (the Next's membrane), null on the others
+    IExtendedKeySink* _extendedSink = nullptr;
+    /// Host presses of the extended keys the sink owns, per key (host state, as _keyboardPressedKeys)
+    std::map<ZXKeysEnum, uint8_t> _hostExtendedKeys;
+    /// Host Symbol Shift symbols held down that let go of Caps Shift (HoldBackCapsShift), one entry per press
+    std::multiset<ZXKeysEnum> _capsShiftHeldBack;
+
     /// The host keyboard's route (config [INPUT] HostKeyboard=, runtime SetHostRoute)
     HostKeyboardRoute _hostRoute = HostKeyboardRoute::Auto;
     bool _hostInputDetached = false;   // DetachHostInput: the owner's thread only
@@ -402,6 +487,9 @@ public:
     void SetPs2Sink(IPs2KeySink* sink) { _ps2Sink = sink; }
     IPs2KeySink* GetPs2Sink() const { return _ps2Sink; }
     bool HasPs2Sink() const { return _ps2Sink != nullptr; }
+    /// Attach the machine's keys beyond the matrix (the Next's port decoder); nullptr detaches
+    void SetExtendedKeySink(IExtendedKeySink* sink) { _extendedSink = sink; }
+    IExtendedKeySink* GetExtendedKeySink() const { return _extendedSink; }
 
     /// Something on this machine consumes the physical key: the PS/2 controller (every key), or the
     /// Kempston joystick when the key is bound to a button and the machine decodes the joystick port.
@@ -440,6 +528,15 @@ public:
     static bool MatrixPosition(ZXKeysEnum key, uint8_t& row, uint8_t& bit);
     /// endregion </Keyboard-joystick overlay>
 
+    /// region <Orel BK-08 matrix>
+public:
+    /// One of the Orel BK-08's extra matrix keys (bits 5 and 7 of a half-row)
+    static bool IsBk08Key(ZXKeysEnum key) { return key >= ZXKEY_BK08_RUS && key <= ZXKEY_BK08_CAPS; }
+    /// The machine's keyboard has the BK-08's extra columns (LSY256). Elsewhere a BK-08 key presses nothing: bits 5
+    /// and 7 of #FE stay as the machine drives them
+    bool HasBk08Matrix() const;
+    /// endregion </Orel BK-08 matrix>
+
     /// region <Helper methods>
 public:
     /// The matrix key an extended key presses besides its shift (LEFT -> 5,
@@ -453,6 +550,12 @@ protected:
     bool isExtendedKey(ZXKeysEnum key);
     ZXKeysEnum getExtendedKeyBase(ZXKeysEnum key);
     ZXKeysEnum getExtendedKeyModifier(ZXKeysEnum key);
+
+    /// A host key that is a Symbol Shift symbol ('"' '+' ':' '<' ... on a host keyboard) is typed with the host Shift
+    /// on most layouts, and the host Shift holds Caps Shift: CAPS SHIFT + SYMBOL SHIFT + P is EXTEND MODE + P, not '"'.
+    /// While such a key is down, Caps Shift is let go (journaled as a release) and pressed again after the last of
+    /// them goes up, if the host still holds it. Host bookkeeping only, as the press counters
+    void HoldBackCapsShift(ZXKeysEnum key, bool pressed);
 
     uint8_t increaseKeyPressCounter(ZXKeysEnum key);
     uint8_t decreaseKeyPressCounter(ZXKeysEnum key);

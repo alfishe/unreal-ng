@@ -26,7 +26,9 @@ bool PictureKey::contains(const QPointF& point) const
 bool PictureKey::modifier() const
 {
     if (zx.size() == 1)
-        return zx[0] == ZXKEY_CAPS_SHIFT || zx[0] == ZXKEY_SYM_SHIFT;
+        // The Orel BK-08's ROM takes РЕГ and Р/А as shifts too (KEY-SCAN's K-TEST: codes #EF, #F8)
+        return zx[0] == ZXKEY_CAPS_SHIFT || zx[0] == ZXKEY_SYM_SHIFT || zx[0] == ZXKEY_BK08_SHIFT ||
+               zx[0] == ZXKEY_BK08_RA;
     switch (pc)
     {
         case PcKey::LeftShift:

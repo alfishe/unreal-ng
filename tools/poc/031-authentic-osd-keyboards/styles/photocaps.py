@@ -101,12 +101,13 @@ def polygon(points):
 
 
 def next_cap(canvas, x, y, w, h, color, shape=None, unit=19.0, top_inset=0.25, frame=None, gloss=0.22, sheen=0.07,
-             relief=(1.12, 0.86), rim=0.35):
+             relief=(1.12, 0.86), rim=0.35, edge="#4a4d52", drop=0.55):
     """The Next's two-tone key: a glossy black frame over the whole cell, a low matte top shaped like a D on its back
     (flat back edge, rounded front) set low in the frame; the glossy strip above it carries the E-mode legends.
     The Spectrum+ / 128 key is the same shape with other finishes: a satin @p frame and ledge, a convex glossy pad
     (@p sheen its highlight), the pad starting @p top_inset u down the key; @p relief the top's light at its back
-    and front, @p rim its edge's. Returns the svg and the top's rectangle
+    and front, @p rim its edge's; @p edge the frame's outline, @p drop the top's contact shadow (a white key: lighter
+    both). Returns the svg and the top's rectangle
     (for an L, the bar's)"""
     d = canvas.defs
     gap = 0.35
@@ -122,19 +123,19 @@ def next_cap(canvas, x, y, w, h, color, shape=None, unit=19.0, top_inset=0.25, f
         matte = l_shape(shape, gap + inset, gap + top_inset, 1.0, 0.3 * unit)
         face = (shape[3][0] + gap + inset, shape[4][1] + gap + top_inset, shape[1][0] - shape[3][0] - 2 * gap - 2 * inset,
                 shape[2][1] - shape[4][1] - 2 * gap - inset - top_inset)
-        drop = l_shape(shape, gap + inset - 0.15, gap + top_inset - 0.1, 1.0, 0.3 * unit)
+        shadow = l_shape(shape, gap + inset - 0.15, gap + top_inset - 0.1, 1.0, 0.3 * unit)
     else:
         outer = rounded(fx, fy, fw, fh, 0.8)
         mx, my, mw, mh = fx + inset, fy + top_inset, fw - 2 * inset, fh - top_inset - inset
         matte = d_shape(mx, my, mw, mh, 1.0, 0.3 * unit)
         face = (mx, my, mw, mh)
-        drop = d_shape(mx - 0.15, my - 0.1, mw + 0.3, mh + 0.45, 1.1, 0.3 * unit)
+        shadow = d_shape(mx - 0.15, my - 0.1, mw + 0.3, mh + 0.45, 1.1, 0.3 * unit)
     canvas.add("highlights", f'<path d="{matte}" fill="{sheen}"/>')
     return "\n".join([
         f'<path d="{outer}" fill="{frame}"/>',
         f'<path d="{outer}" fill="{gloss}"/>',
-        f'<path d="{outer}" fill="none" stroke="#4a4d52" stroke-width="0.12" stroke-opacity="0.55"/>',
-        f'<path d="{drop}" fill="#000" fill-opacity="0.55"/>',
+        f'<path d="{outer}" fill="none" stroke="{edge}" stroke-width="0.12" stroke-opacity="0.55"/>',
+        f'<path d="{shadow}" fill="#000" fill-opacity="{drop}"/>',
         f'<path d="{matte}" fill="{top}"/>',
         f'<path d="{matte}" fill="{lip}"/>',
         f'<path d="{matte}" fill="none" stroke="{shade(color, 1.35)}" stroke-width="0.1" stroke-opacity="{rim}"/>',

@@ -30,17 +30,17 @@ OUT = REPO / "data" / "controllers" / "keyboards"  # the app loads them from her
 SCRATCH = REPO / "scratch" / "2026-10-19-poc-031"
 QTRENDER = SCRATCH / "qtrender-build" / "qtrender"
 
-KEYBOARDS = ["zx48k", "zx128", "zxplus2", "zxplus2a", "zxplus3", "pentagon", "pentagon2plus", "scorpion", "quorum", "orel", "profi", "profiplus", "pcat", "pcxt", "pcps2", "zxmatrix", "zxnext"]
+KEYBOARDS = ["zx48k", "zxplus", "forum", "zx128", "zxplus2", "zxplus2a", "zxplus3", "pentagon", "pentagon2plus", "scorpion", "quorum", "orel", "profi", "profiplus", "profilatin", "pcat", "pcxt", "pcps2", "zxmatrix", "zxnext", "zxnextwhite"]
 STYLES = ["photo"]
 
 
 def check(keyboard, model):
-    """Every key presses something; with a ZX matrix, each of the 40 positions is one key's alone (or as many as
+    """Every key presses something (unless the keyboard says `silent`: keys of unknown wiring, the Forum's); with a ZX matrix, each of the 40 positions is one key's alone (or as many as
     `twins` says: the Next's two CAPS SHIFT and two SYMBOL SHIFT keys); with a PC keyboard, each key is a PcKey of
     the emulator, once"""
     errors = []
     for key in model.keys:
-        if not key.zx and not key.pc and not key.line:
+        if not key.zx and not key.pc and not key.line and not keyboard.get("silent"):
             errors.append(f"{key.id}: presses nothing")
     for i, a in enumerate(model.keys):  # the overlay's hit areas: no point belongs to two keys
         for b in model.keys[i + 1:]:

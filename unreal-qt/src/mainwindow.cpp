@@ -197,8 +197,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     // Register fullscreen shortcut with application-wide context
     // (works even when menu bar is hidden in fullscreen mode).
-    // Cmd+F on macOS, Ctrl+F elsewhere (Qt::CTRL maps to Cmd on macOS)
-    auto* fullScreenShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
+    // Cmd+F on macOS, Alt+Enter elsewhere (KeyboardManager::fullScreenKey: Ctrl+F is the machine's Symbol Shift + F)
+    auto* fullScreenShortcut = new QShortcut(QKeySequence(KeyboardManager::fullScreenKey()), this);
     _fullScreenShortcut = fullScreenShortcut;
     fullScreenShortcut->setContext(Qt::ApplicationShortcut);
     connect(fullScreenShortcut, &QShortcut::activated, this, &MainWindow::handleFullScreenShortcut);

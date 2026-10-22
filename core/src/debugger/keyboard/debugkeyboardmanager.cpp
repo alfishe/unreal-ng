@@ -760,6 +760,35 @@ std::string DebugKeyboardManager::GetKeyDisplayName(ZXKeysEnum key)
         case ZXKEY_EXT_RIGHT: return "RIGHT";
         case ZXKEY_EXT_DELETE: return "DELETE";
         case ZXKEY_EXT_BREAK: return "BREAK";
+        case ZXKEY_EXT_EDIT: return "EDIT";
+        case ZXKEY_EXT_CAPSLOCK: return "CAPSLOCK";
+        case ZXKEY_EXT_EXTEND: return "EXTEND";
+        case ZXKEY_EXT_GRAPH: return "GRAPH";
+        case ZXKEY_EXT_TRUEVIDEO: return "TRUEVIDEO";
+        case ZXKEY_EXT_INVVIDEO: return "INVVIDEO";
+        case ZXKEY_EXT_SEMICOLON: return "SEMICOLON";
+        case ZXKEY_EXT_APOSTROPHE: return "APOSTROPHE";
+        case ZXKEY_EXT_COLON: return "COLON";
+        case ZXKEY_EXT_QUESTION: return "QUESTION";
+        case ZXKEY_EXT_LESS: return "LESS";
+        case ZXKEY_EXT_GREATER: return "GREATER";
+        case ZXKEY_EXT_UNDERSCORE: return "UNDERSCORE";
+        case ZXKEY_BK08_RUS: return "BK08_RUS";
+        case ZXKEY_BK08_SHIFT: return "BK08_SHIFT";
+        case ZXKEY_BK08_BACKSLASH: return "BK08_BACKSLASH";
+        case ZXKEY_BK08_SLASH: return "BK08_SLASH";
+        case ZXKEY_BK08_COMMA: return "BK08_COMMA";
+        case ZXKEY_BK08_PERIOD: return "BK08_PERIOD";
+        case ZXKEY_BK08_TILDE: return "BK08_TILDE";
+        case ZXKEY_BK08_TAB: return "BK08_TAB";
+        case ZXKEY_BK08_MINUS: return "BK08_MINUS";
+        case ZXKEY_BK08_EQUALS: return "BK08_EQUALS";
+        case ZXKEY_BK08_LBRACKET: return "BK08_LBRACKET";
+        case ZXKEY_BK08_RBRACKET: return "BK08_RBRACKET";
+        case ZXKEY_BK08_SEMICOLON: return "BK08_SEMICOLON";
+        case ZXKEY_BK08_QUOTE: return "BK08_QUOTE";
+        case ZXKEY_BK08_RA: return "BK08_RA";
+        case ZXKEY_BK08_CAPS: return "BK08_CAPS";
         default: return "UNKNOWN";
     }
 }
@@ -1007,6 +1036,16 @@ void DebugKeyboardManager::InitializeKeyNameMap()
     _keyNameMap["del"] = ZXKEY_EXT_DELETE;
     _keyNameMap["break"] = ZXKEY_EXT_BREAK;
     _keyNameMap["edit"] = ZXKEY_EXT_EDIT;
+    _keyNameMap["capslock"] = ZXKEY_EXT_CAPSLOCK;
+    _keyNameMap["caps_lock"] = ZXKEY_EXT_CAPSLOCK;
+
+    // Extended keys (the ZX Next's own: EXTEND MODE, GRAPH, TRUE VIDEO, INV VIDEO)
+    _keyNameMap["extend"] = ZXKEY_EXT_EXTEND;
+    _keyNameMap["graph"] = ZXKEY_EXT_GRAPH;
+    _keyNameMap["truevideo"] = ZXKEY_EXT_TRUEVIDEO;
+    _keyNameMap["true_video"] = ZXKEY_EXT_TRUEVIDEO;
+    _keyNameMap["invvideo"] = ZXKEY_EXT_INVVIDEO;
+    _keyNameMap["inv_video"] = ZXKEY_EXT_INVVIDEO;
     
     // Extended keys (symbols)
     _keyNameMap["."] = ZXKEY_EXT_DOT;
@@ -1027,6 +1066,38 @@ void DebugKeyboardManager::InitializeKeyNameMap()
     _keyNameMap["\""] = ZXKEY_EXT_DBLQUOTE;
     _keyNameMap["quote"] = ZXKEY_EXT_DBLQUOTE;
     _keyNameMap["dblquote"] = ZXKEY_EXT_DBLQUOTE;
+    _keyNameMap[";"] = ZXKEY_EXT_SEMICOLON;
+    _keyNameMap["semicolon"] = ZXKEY_EXT_SEMICOLON;
+    _keyNameMap["'"] = ZXKEY_EXT_APOSTROPHE;
+    _keyNameMap["apostrophe"] = ZXKEY_EXT_APOSTROPHE;
+    _keyNameMap[":"] = ZXKEY_EXT_COLON;
+    _keyNameMap["colon"] = ZXKEY_EXT_COLON;
+    _keyNameMap["?"] = ZXKEY_EXT_QUESTION;
+    _keyNameMap["question"] = ZXKEY_EXT_QUESTION;
+    _keyNameMap["<"] = ZXKEY_EXT_LESS;
+    _keyNameMap["less"] = ZXKEY_EXT_LESS;
+    _keyNameMap[">"] = ZXKEY_EXT_GREATER;
+    _keyNameMap["greater"] = ZXKEY_EXT_GREATER;
+    _keyNameMap["_"] = ZXKEY_EXT_UNDERSCORE;
+    _keyNameMap["underscore"] = ZXKEY_EXT_UNDERSCORE;
+
+    // The Orel BK-08's own matrix keys (bits 5 and 7 of #FE; LSY256 only)
+    _keyNameMap["bk08_rus"] = ZXKEY_BK08_RUS;
+    _keyNameMap["bk08_shift"] = ZXKEY_BK08_SHIFT;
+    _keyNameMap["bk08_backslash"] = ZXKEY_BK08_BACKSLASH;
+    _keyNameMap["bk08_slash"] = ZXKEY_BK08_SLASH;
+    _keyNameMap["bk08_comma"] = ZXKEY_BK08_COMMA;
+    _keyNameMap["bk08_period"] = ZXKEY_BK08_PERIOD;
+    _keyNameMap["bk08_tilde"] = ZXKEY_BK08_TILDE;
+    _keyNameMap["bk08_tab"] = ZXKEY_BK08_TAB;
+    _keyNameMap["bk08_minus"] = ZXKEY_BK08_MINUS;
+    _keyNameMap["bk08_equals"] = ZXKEY_BK08_EQUALS;
+    _keyNameMap["bk08_lbracket"] = ZXKEY_BK08_LBRACKET;
+    _keyNameMap["bk08_rbracket"] = ZXKEY_BK08_RBRACKET;
+    _keyNameMap["bk08_semicolon"] = ZXKEY_BK08_SEMICOLON;
+    _keyNameMap["bk08_quote"] = ZXKEY_BK08_QUOTE;
+    _keyNameMap["bk08_ra"] = ZXKEY_BK08_RA;
+    _keyNameMap["bk08_caps"] = ZXKEY_BK08_CAPS;
     
     _keyNamesInitialized = true;
 }

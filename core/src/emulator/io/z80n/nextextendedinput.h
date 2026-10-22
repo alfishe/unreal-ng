@@ -10,15 +10,23 @@
 ///
 /// It is the machine's IPs2KeySink: the physical PC keys the host sends (MessageCenter PCKEY_PRESSED / PCKEY_RELEASED) land here. The host's
 /// pad is the LEFT connector; the right one is set by a tool.
+///
+/// It is the keyboard's IExtendedKeySink too: the membrane's 16 extended keys as ZX keys (ZXKEY_EXT_LEFT ..., the host's matrix side and the
+/// on-screen keyboard) are held here, not on the matrix. Each one presses its two matrix keys (membrane.vhd 157-238: LEFT = CAPS SHIFT + 5,
+/// EXTEND = CAPS SHIFT + SYMBOL SHIFT ...) unless NR #68 bit 4 cancels the extended keys' matrix entries (zxnext.vhd 5451), and shows in
+/// NR #B0 / #B1 either way. Not modelled: the membrane's shift advance by one scan (a naive reader of a composite key).
 
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <vector>
 
+#include <functional>
+
+#include "emulator/io/keyboard/keyboard.h"
 #include "emulator/io/keyboard/pckey.h"
 
-class NextExtendedInput final : public IPs2KeySink
+class NextExtendedInput final : public IPs2KeySink, public IExtendedKeySink
 {
 public:
     /// Bit numbers of i_KBD_EXTENDED_KEYS (the comment at zxnext.vhd 6155: bits 15..8 = DOWN LEFT RIGHT DELETE . , " ;  bits 7..0 = EDIT BREAK INV TRU GRAPH CAPSLOCK UP EXTEND)
@@ -41,14 +49,28 @@ public:
     std::string ControllerName() const override { return "ZX Next keyboard"; }
     /// endregion
 
+    /// region <IExtendedKeySink>
+    bool OwnsExtendedKey(ZXKeysEnum key) const override;
+    void OnExtendedKey(ZXKeysEnum key, bool pressed) override;
+    uint8_t ExtendedMatrixRow(uint8_t row) const override;
+    void ReleaseExtendedKeys() override { _membrane.store(0, std::memory_order_relaxed); }
+    /// endregion
+
+    /// NR #68 bit 4 as the machine has it (the port decoder): set, the extended keys press no matrix keys
+    void SetCancelMatrixEntries(std::function<bool()> cancel) { _cancel = std::move(cancel); }
+
     /// region <The registers>
     uint8_t ReadB0() const;  ///< ; " , . UP DOWN LEFT RIGHT (bit 7 .. 0)
     uint8_t ReadB1() const;  ///< DELETE EDIT BREAK INV TRU GRAPH CAPSLOCK EXTEND
     uint8_t ReadB2() const;  ///< right pad X Z Y MODE, left pad X Z Y MODE
     /// endregion
 
-    uint16_t Keys() const { return _keys.load(std::memory_order_relaxed); }
-    void SetKeys(uint16_t keys) { _keys.store(keys, std::memory_order_relaxed); }
+    /// The extended keys held (bits = Key): the PC keys' and the membrane's
+    uint16_t Keys() const { return static_cast<uint16_t>(PcKeys() | MembraneKeys()); }
+    uint16_t PcKeys() const { return _keys.load(std::memory_order_relaxed); }
+    void SetPcKeys(uint16_t keys) { _keys.store(keys, std::memory_order_relaxed); }
+    uint16_t MembraneKeys() const { return _membrane.load(std::memory_order_relaxed); }
+    void SetMembraneKeys(uint16_t keys) { _membrane.store(keys, std::memory_order_relaxed); }
     /// The extra buttons of a side (kPad* bits)
     uint8_t Pad(bool left) const
     {
@@ -89,7 +111,9 @@ public:
     static const char* KeyName(unsigned bit);
 
 private:
-    std::atomic<uint16_t> _keys{0};
+    std::atomic<uint16_t> _keys{0};      ///< from the PC keys (IPs2KeySink)
+    std::atomic<uint16_t> _membrane{0};  ///< from the ZX extended keys (IExtendedKeySink): these press matrix keys
+    std::function<bool()> _cancel;
     std::atomic<uint8_t> _padLeft{0};
     std::atomic<uint16_t> _right{0};  ///< the whole right pad; its extras are bits 11..8
     std::array<std::atomic<uint8_t>, kPadButtons> _padKeys{};  ///< index = the button's bit number; a PcKey, 0 unbound

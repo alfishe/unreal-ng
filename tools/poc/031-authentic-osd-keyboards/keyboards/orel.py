@@ -6,20 +6,22 @@ and right ends, the broad palm rest in front.
 
 Sources: refs-clones §5: the layout and the colours from references/photos/clones/orel-bk08-chm-1.jpg and -2.jpg
 (computinghistory.org.uk, 750 px; widths measured against the white keys' pitch in each row), the key names and the
-mapping from the manual's Рис. 5 and its text (orel-bk08-manual-fig5-key-legends.png). The 40 ZX keys sit at their
-matrix places; АЛТ is CAPS SHIFT (АЛТ + a digit gives the CS + digit functions), РЕГ is SYMBOL SHIFT (its zone holds the
-Spectrum's SS symbols: !, @, <=, STOP, NOT); the dedicated editing keys and the arrows press CS + their digit.
-UNVERIFIED: the widths within ±0.25 key; the wiring of АЛТ, РЕГ and ЗГЛ (the schematic is not decoded); the keys read
-through the spare port bits (the punctuation, ~, TAB, УПР, РУС, Р/А) carry the line "BK08:<key>" until it is; the
-production caps show no BASIC words (Рис. 5 prints them, the photos, at 35 px a key, show none); the blank grey key left
-of 1 (Рис. 5: VERIFY, USR, ~).
+mapping from the keyboard schematic (Orel_BK08_Schematic.djvu sheet 4, "Узел клавиатуры" БУ5.103.474) and the manual
+(Рис. 5, Table 2, section 6.3). The matrix is the ZX one, columns KD0-KD4 and two more, KD5 and KD7, read on #FE bits 5
+and 7: АЛТ is CAPS SHIFT (A8 KD0; АЛТ + a digit gives the CS + digit functions, УПР + АЛТ the E cursor), УПР is
+SYMBOL SHIFT (A15 KD1; its zone holds the function words, Table 2); РЕГ (A8 KD7), РУС (A8 KD5), ЗГЛ (A15 KD7), Р/А
+(A15 KD5), ТАБ, the ` ~ key and the punctuation keys sit on KD5 / KD7 (keyboard.h ZXKEY_BK08_*). The editing keys and
+the arrows are off the matrix: a К561КТ3 switch and two К555ТМ2 flip-flops close CAPS SHIFT and the digit's place
+(ВШ = CS + 0, ГРАФ = CS + 9, ← ↓ ↑ → = CS + 5..8, РЕД = CS + 1, НОРМ = CS + 3, ИНВ = CS + 4).
+UNVERIFIED: the widths within ±0.25 key; the production caps show no BASIC words (Рис. 5 prints them, the photos,
+at 35 px a key, show none); the blank grey key left of 1 (Рис. 5: VERIFY, USR, ~; on A11 KD5 in the schematic).
 """
 
 from model import Key, Legend, Model, Part
 
 U = 19.05
 KEYBOARD = {"id": "orel", "name": "Orel BK-08", "models": ["LSY256"], "size": [386, 176], "matrix": "zx",
-            "twins": {"SS": 2}, "depth": U - 0.9,
+            "depth": U - 0.9,
             # the caps as the photos show them: a short light front skirt, light sides, the gaps between the caps the
             # case's grey (no dark contours), the top face's edge barely marked
             "soviet": {"front": 0.22, "tones": ((0.93, 0.93, 0.93), (0.8, 0.8, 0.81), (0.88, 0.88, 0.89)),
@@ -33,15 +35,17 @@ FACE = "sans"
 
 CYRILLIC = dict(zip("QWERTYUIOPASDFGHJKLZXCVBNM", "ЙЦУКЕНГШЩЗФЫВАПРОЛДЯЧСМИТЬ"))
 SHIFTED = dict(zip("1234567890", "!@#$%^&*()"))
-# The white punctuation keys: the symbol on top, the one below, the Cyrillic letter
-PUNCT = {"MINUS": ("_", "-", ""), "EQUALS": ("+", "=", ""), "LBRACKET": ("{", "[", "Х"), "RBRACKET": ("}", "]", "Ъ"),
-         "SEMICOLON": (":", ";", "Ж"), "QUOTE": ("\"", "'", "Э"), "BACKSLASH": ("|", "\\", ""),
-         "COMMA": ("<", ",", "Б"), "PERIOD": (">", ".", "Ю"), "SLASH": ("?", "/", "Ё")}
+# The white punctuation keys: the symbol on top, the one below, the Cyrillic letter, the matrix key (KD5 / KD7)
+PUNCT = {"MINUS": ("_", "-", "", "BK08_MINUS"), "EQUALS": ("+", "=", "", "BK08_EQUALS"),
+         "LBRACKET": ("{", "[", "Х", "BK08_LBRACKET"), "RBRACKET": ("}", "]", "Ъ", "BK08_RBRACKET"),
+         "SEMICOLON": (":", ";", "Ж", "BK08_SEMICOLON"), "QUOTE": ("\"", "'", "Э", "BK08_QUOTE"),
+         "BACKSLASH": ("|", "\\", "", "BK08_BACKSLASH"), "COMMA": ("<", ",", "Б", "BK08_COMMA"),
+         "PERIOD": (">", ".", "Ю", "BK08_PERIOD"), "SLASH": ("?", "/", "Ё", "BK08_SLASH")}
 # The grey keys: the Russian and the English name, what they press
-GREYS = {"TILDE": ("", "", {"line": "BK08:~"}), "TAB": ("ТАБ", "TAB", {"line": "BK08:TAB"}),
-         "CTRL": ("УПР", "CTRL", {"line": "BK08:CTRL"}), "CAPS": ("ЗГЛ", "CAPS", {"zx": ["CS", "2"]}),
-         "SHIFT": ("РЕГ", "SHIFT", {"zx": ["SS"]}), "ALT": ("АЛТ", "ALT", {"zx": ["CS"]}),
-         "RUS": ("РУС", "", {"line": "BK08:RUS"}), "R/A": ("Р/А", "", {"line": "BK08:R/A"}),
+GREYS = {"TILDE": ("", "", {"zx": ["BK08_TILDE"]}), "TAB": ("ТАБ", "TAB", {"zx": ["BK08_TAB"]}),
+         "CTRL": ("УПР", "CTRL", {"zx": ["SS"]}), "CAPS": ("ЗГЛ", "CAPS", {"zx": ["BK08_CAPS"]}),
+         "SHIFT": ("РЕГ", "SHIFT", {"zx": ["BK08_SHIFT"]}), "ALT": ("АЛТ", "ALT", {"zx": ["CS"]}),
+         "RUS": ("РУС", "", {"zx": ["BK08_RUS"]}), "R/A": ("Р/А", "", {"zx": ["BK08_RA"]}),
          "BS": ("ВШ", "BS", {"zx": ["CS", "0"]}), "GRAPH": ("ГРАФ", "GRAPH", {"zx": ["CS", "9"]}),
          "TRUE": ("НОРМ", "TRUE", {"zx": ["CS", "3"]}), "INV": ("ИНВ", "INV", {"zx": ["CS", "4"]}),
          "EDIT": ("РЕД", "EDIT", {"zx": ["CS", "1"]})}
@@ -71,7 +75,7 @@ def legends(name):
         return [Legend(SHIFTED[name], "symbol", "cap", 0.5, 0.42, 3.0, FACE, INK),
                 Legend(name, "main", "cap", 0.24, 0.9, 2.2, FACE, INK)]
     if name in PUNCT:
-        upper, lower, cyrillic = PUNCT[name]
+        upper, lower, cyrillic, _ = PUNCT[name]
         if not cyrillic:
             return [Legend(upper, "symbol", "cap", 0.5, 0.42, 3.0, FACE, INK),
                     Legend(lower, "symbol", "cap", 0.24, 0.9, 2.4, FACE, INK)]
@@ -90,14 +94,14 @@ def legends(name):
 
 
 def mapping(name):
-    """What a key presses: the ZX matrix keys, or its line"""
+    """What a key presses: its matrix keys"""
     if (len(name) == 1 and name.isalnum()) or name == "SPACE":
         return {"zx": [name]}
     if name in GREYS:
         return GREYS[name][2]
     if name in ARROWS:
         return {"zx": ["CS", ARROWS[name]]}
-    return {"line": f"BK08:{PUNCT[name][1]}"}
+    return {"zx": [PUNCT[name][3]]}
 
 
 def enter_shape():

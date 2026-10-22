@@ -100,15 +100,16 @@ def enter_shape(x0=X0, y0=Y0):
     return [(x2, y1), (x3, y1), (x3, y3), (x1, y3), (x1, y2), (x2, y2)]
 
 
-def keys(m, x0=X0, y0=Y0, grey=GREY):
-    """The 58 caps with their legends, the key block's top left at @p x0, @p y0 (the Scorpion's case uses them too)"""
+def keys(m, x0=X0, y0=Y0, grey=GREY, cream=CREAM, red=RED):
+    """The 58 caps with their legends, the key block's top left at @p x0, @p y0 (the Scorpion's and a Profi's cases
+    use them too, a Profi's in its own plastics)"""
     for r, row in enumerate(ROWS):
         for name, x, w in row:
             rect = (x0 + x * U, y0 + r * U, w * U, U)
             shape = None
             if name == "ENTER":
                 rect, shape = (x0 + 11.75 * U, y0 + U, 1.75 * U, 2 * U), enter_shape(x0, y0)
-            colour = RED if name == "BREAK" else CREAM if name in CREAM_KEYS else grey
+            colour = red if name == "BREAK" else cream if name in CREAM_KEYS else grey
             zx = EXTRA.get(name) or [SINGLE.get(name, name)]
             m.keys.append(Key(name.lower().replace(" ", "-"), rect, "soviet", colour, legends(name), zx=zx,
                               shape=shape, label=name.title() if len(name) > 1 else name))

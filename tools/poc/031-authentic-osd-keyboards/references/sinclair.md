@@ -197,6 +197,7 @@ UNVERIFIED in detail.
 | Badge | Rainbow badge: 4 parallel diagonal parallelograms **red, yellow, green, cyan** (no text), in the bottom-right corner of the top, right of the right SYMBOL SHIFT, ≈25 × 12 mm. Est. red `#E8392C`, yellow `#F5C518`, green `#5DAA3C`, cyan `#2FA8E0` | `plus-top.jpg` (sampled bright `#ff6b5e/#fee241/#9dd177/#9ae1ff`, overexposed) |
 | Keyboard block | ≈257 × 95 mm (13.5 u × 5 u), left margin ≈10 mm, right margin ≈52 mm (the badge sits in that margin), top edge ≈40 mm from the rear | `plus-k1-top.jpg` (measured, ±3 mm) |
 | Reset button | On the left side of the case (not on the top) | Wikipedia (reset button); UNVERIFIED position |
+| The owner's top view (2026-10-21) | `plus-top-owner.jpg`, measured against the key block (≈3.8 px/mm), all **UNVERIFIED** ±3 mm: a groove across the whole width just under the wordmark (≈20.5 mm from the rear) bounds the rear band; "sinclair" ≈85 mm wide from x ≈15 mm, baseline ≈19 mm; "ZX Spectrum+" (no space before "+") ≈38 mm long, baseline ≈27 mm, under the groove; the rainbow is smaller than the 25 × 12 mm above: four stripes ≈2.6 mm wide each, leaning ≈3.6 mm over ≈11.5 mm, its foot from x ≈288 mm level with the keys' front edge (y ≈134.5 mm); the vent comb from x ≈142 mm to ≈304 mm | `plus-top-owner.jpg` |
 
 ### 2.2 Keycaps (+ and 128)
 
@@ -421,7 +422,7 @@ matrix position is unchanged). The external Spanish keypad is out of scope.
 | Machine | Keyboard data | Case picture |
 |---|---|---|
 | 48K | its own (40 rubber keys, §1) | its own |
-| + | 58-key "+" (§2) | + case |
+| + | 58-key "+" (§2) | + case (`keyboards/zxplus.py`, the 48K model's second picture: the emulator has no Spectrum+ model) |
 | 128 UK | = + (§2) | + case + red logo + "128K" badge + heatsink |
 | 128 Spanish | + geometry, Spanish legends (§3.2) | as 128, white "128K" |
 | +2 | 58-key Amstrad (§2.3 + §4.2), grey caps | +2 grey with Datacorder |
@@ -484,6 +485,7 @@ Photos and scans (saved under `photos/sinclair/`)
   `128k-spanish-k1-keyboard.jpg`, `128k-spanish-k1-keypad.jpg`, `plus2-k1-top.jpg`, `plus2-k1-keys.jpg`,
   `plus2a-k1-view.jpg`, `plus2a-k1-logo.jpg`, `plus2a-k1-datacorder.jpg`, `plus3-k1-view.jpg`, `plus3-k1-view2.jpg`,
   `plus3-k1-floppy.jpg`
+- The owner (2026-10-21, reference only): `plus-top-owner.jpg`, a Spectrum+ from above, a little from the front
 - ZEsarUX on-screen keyboard bitmaps (local; converted to PNG): `48k-zesarux-osd.png`, `plus-zesarux-osd.png`,
   `128k-zesarux-osd.png`, `128k-spanish-zesarux-osd.png`, `plus2-zesarux-osd.png`, `plus3-zesarux-osd.png`, from
   `zx-spectrum-data/zx-next/emulators/zesarux/src/keyboards/keyboard_{48,48p,128,128s,p2,p3}.bmp`

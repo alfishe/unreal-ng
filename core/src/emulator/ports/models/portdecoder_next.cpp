@@ -31,7 +31,11 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     _board->SetMachine(this);
     // The Next's keyboard controller: the physical host keys reach the extended keys and the pad's extra buttons (NR #B0-#B2)
     if (_context->pKeyboard)
+    {
         _context->pKeyboard->SetPs2Sink(&_extendedInput);
+        _context->pKeyboard->SetExtendedKeySink(&_extendedInput);
+    }
+    _extendedInput.SetCancelMatrixEntries([this]() { return (_board->Stored(0x68) & 0x10) != 0; });
     // the picture follows the beam: a video register written by the program applies from the line the beam is on
     // (the copper first: its MOVEs that are due come before the program's write, as the bus gives the copper the clock it asks for)
     _board->SetBeforeCpuWrite([this]() {
@@ -174,6 +178,8 @@ PortDecoder_Next::~PortDecoder_Next()
     }
     if (_context->pKeyboard && _context->pKeyboard->GetPs2Sink() == &_extendedInput)
         _context->pKeyboard->SetPs2Sink(nullptr);
+    if (_context->pKeyboard && _context->pKeyboard->GetExtendedKeySink() == &_extendedInput)
+        _context->pKeyboard->SetExtendedKeySink(nullptr);
     if (_context->pMediaManager)
     {
         _context->pMediaManager->UnregisterSlot(_sdSlot0.Descriptor().id);

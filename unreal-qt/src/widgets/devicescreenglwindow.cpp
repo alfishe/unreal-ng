@@ -761,8 +761,8 @@ void DeviceScreenGLWindow::drawSlangPreset(const QRect& picture, int glY)
 
 void DeviceScreenGLWindow::keyPressEvent(QKeyEvent* event)
 {
-    // Ignore shortcut combinations like Cmd+F / Ctrl+F so they bubble up to the application shortcut handler
-    if (event->key() == Qt::Key_F && (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)))
+    // The full screen key (Cmd+F / Alt+Enter) bubbles up to the application shortcut
+    if (KeyboardManager::isFullScreenKey(event))
     {
         event->ignore();
         return;
@@ -788,7 +788,7 @@ void DeviceScreenGLWindow::keyPressEvent(QKeyEvent* event)
 
 void DeviceScreenGLWindow::keyReleaseEvent(QKeyEvent* event)
 {
-    if (event->key() == Qt::Key_F && (event->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)))
+    if (KeyboardManager::isFullScreenKey(event))
     {
         event->ignore();
         return;
@@ -891,12 +891,12 @@ bool DeviceScreenGLWindow::event(QEvent* event)
     if (event->type() == QEvent::ShortcutOverride)
     {
         auto* keyEvent = static_cast<QKeyEvent*>(event);
-        if (keyEvent->key() == Qt::Key_F && (keyEvent->modifiers() & (Qt::ControlModifier | Qt::MetaModifier)))
+        if (KeyboardManager::isFullScreenKey(keyEvent))
         {
             event->ignore();
             return false;
         }
-        // A PC-keyboard machine owns the bare F-keys: no menu shortcut, the key press comes here.
+        // The machine's keys (KeyboardManager::machineOwnsKey): no shortcut, the key press comes here.
         // Leased: automation may be removing the instance on another thread
         const Emulator::ContextLease lease = _emulator ? _emulator->LeaseContext() : Emulator::ContextLease{};
         if (KeyboardManager::machineOwnsKey(keyEvent, lease ? lease->pKeyboard : nullptr))

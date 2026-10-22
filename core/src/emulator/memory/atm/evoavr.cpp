@@ -176,12 +176,11 @@ void EvoAvr::SetSdStatus(bool present, bool writeProtected)
 
 void EvoAvr::OnPcKey(PcKey key, bool pressed)
 {
-    // zx.c to_zu: a key pressed while Ctrl and Alt are both held never reaches
-    // the Z80 - it is the board's hard reset (FLAG_HARD_RESET). F12 included:
-    // the documented Right Alt + Ctrl + F12 "exit to Gluk boot". The modifiers
-    // are checked before this key's own bytes parse, so the Ctrl or Alt press
-    // itself never fires it
-    if (pressed && key != PcKey::None
+    // zx.c: Ctrl+Alt+Del is the board's hard reset (cb_ctrl_alt_del = func_reset, FLAG_HARD_RESET). Ctrl+Alt+F11
+    // and Ctrl+Alt+F12 have callbacks of their own (the egg, setup / service config), not emulated; any other
+    // key with Ctrl and Alt is a key (AltGr on Windows is Ctrl+Alt: AltGr characters must not reset). The
+    // modifiers are checked before this key's own bytes parse
+    if (pressed && key == PcKey::Delete
         && (_ps2.modifiers & (kModLeftCtrl | kModRightCtrl)) != 0
         && (_ps2.modifiers & (kModLeftAlt | kModRightAlt)) != 0
         && _resetHandler)

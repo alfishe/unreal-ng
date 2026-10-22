@@ -29,9 +29,10 @@ struct PictureKey
     std::string line;             ///< a line the core does not take yet ("JOY:UP", "RESET")
 
     bool contains(const QPointF& point) const;
-    /// Nothing to press: a line not wired yet, or a name the core does not know
+    /// Nothing to press: a line not wired yet, a key of unknown wiring (no line), or a name the core does not know
     bool inert() const { return zx.empty() && pc == PcKey::None; }
-    /// A modifier: a click latches it until the next key goes up (CS, SS; PC Shift, Ctrl, Alt, Win)
+    /// A modifier: a click latches it until the next key goes up (CS, SS, the Orel BK-08's РЕГ and Р/А; PC Shift,
+    /// Ctrl, Alt, Win)
     bool modifier() const;
 };
 

@@ -245,3 +245,74 @@ TEST_F(NextExtendedInput_Test, ThePadEventIsAJournaledInputAndAppliesByItself)
     ASSERT_TRUE(NextStateCodec::Load(*_ports, held.data(), held.size()));
     EXPECT_EQ(_ports->PadState(kRightConnector), kPadUp | kPadMode);
 }
+
+// The membrane's extended keys as ZX keys (the host keyboard's matrix side, the on-screen keyboard, automation): one key each, held by the
+// machine, which presses its two matrix keys (membrane.vhd 157-238) unless NR #68 bit 4 cancels them, and shows it in NR #B0 / #B1 either way
+namespace
+{
+constexpr uint16_t kRowCapsShift = 0xFEFE, kRow12345 = 0xF7FE, kRowSpaceSymbol = 0x7FFE;
+constexpr uint8_t kRegUlaControl = 0x68, kCancelExtendedKeys = 0x10;
+}  // namespace
+
+TEST_F(NextExtendedInput_Test, AMembraneKeyPressesItsMatrixKeysAndShowsInNrB0)
+{
+    Keyboard* keyboard = _context->pKeyboard;
+    auto row = [&](uint16_t port) { return static_cast<uint8_t>(keyboard->HandlePortIn(port) & 0x1F); };
+    MessageCenter& center = MessageCenter::DefaultMessageCenter();
+    auto post = [&](ZXKeysEnum key, bool pressed) {
+        center.Post(pressed ? MC_KEY_PRESSED : MC_KEY_RELEASED,
+                    new KeyboardEvent(static_cast<uint8_t>(key), pressed ? KEY_PRESSED : KEY_RELEASED, _emulator->GetUUID()));
+    };
+
+    post(ZXKEY_EXT_LEFT, true);
+    ASSERT_TRUE(WaitFor(kRegExtended0, kB0Left));
+    EXPECT_EQ(row(kRowCapsShift), 0x1E) << "CAPS SHIFT";
+    EXPECT_EQ(row(kRow12345), 0x0F) << "5";
+    EXPECT_EQ(_ports->ExtendedInput().PcKeys(), 0) << "a ZX key, not a PC key";
+
+    // NR #68 bit 4: the matrix entries go, the register keeps the key
+    _ports->Board().Write(kRegUlaControl, kCancelExtendedKeys);
+    EXPECT_EQ(row(kRowCapsShift), 0x1F);
+    EXPECT_EQ(row(kRow12345), 0x1F);
+    EXPECT_EQ(_ports->Board().Read(kRegExtended0), kB0Left);
+    _ports->Board().Write(kRegUlaControl, 0);
+
+    post(ZXKEY_EXT_LEFT, false);
+    ASSERT_TRUE(WaitFor(kRegExtended0, 0));
+    EXPECT_EQ(row(kRowCapsShift), 0x1F);
+    EXPECT_EQ(row(kRow12345), 0x1F);
+
+    // EXTEND MODE is CAPS SHIFT + SYMBOL SHIFT, GRAPH CAPS SHIFT + 9: the keys the 48K's matrix map has no code for
+    keyboard->PressKey(ZXKEY_EXT_EXTEND);
+    EXPECT_EQ(_ports->Board().Read(kRegExtended1), kB1Extend);
+    EXPECT_EQ(row(kRowCapsShift), 0x1E);
+    EXPECT_EQ(row(kRowSpaceSymbol), 0x1D) << "SYMBOL SHIFT";
+    const std::vector<uint8_t> held = NextStateCodec::Save(*_ports);
+    keyboard->ReleaseKey(ZXKEY_EXT_EXTEND);
+    EXPECT_EQ(_ports->Board().Read(kRegExtended1), 0);
+    EXPECT_EQ(row(kRowSpaceSymbol), 0x1F);
+    ASSERT_TRUE(NextStateCodec::Load(*_ports, held.data(), held.size()));
+    EXPECT_EQ(_ports->Board().Read(kRegExtended1), kB1Extend) << "a seek puts the membrane's keys back";
+    EXPECT_EQ(row(kRowSpaceSymbol), 0x1D);
+
+    keyboard->Reset();
+    EXPECT_EQ(_ports->Board().Read(kRegExtended1), 0) << "a keyboard reset lets them go";
+}
+
+TEST_F(NextExtendedInput_Test, TwoHostPressesOfAMembraneKeyHoldItUntilTheLastRelease)
+{
+    MessageCenter& center = MessageCenter::DefaultMessageCenter();
+    auto post = [&](ZXKeysEnum key, bool pressed) {
+        center.Post(pressed ? MC_KEY_PRESSED : MC_KEY_RELEASED,
+                    new KeyboardEvent(static_cast<uint8_t>(key), pressed ? KEY_PRESSED : KEY_RELEASED, _emulator->GetUUID()));
+    };
+    // The host keyboard and the on-screen keyboard both hold "."; then "," marks the end of the stream
+    post(ZXKEY_EXT_DOT, true);
+    post(ZXKEY_EXT_DOT, true);
+    post(ZXKEY_EXT_DOT, false);
+    post(ZXKEY_EXT_COMMA, true);
+    ASSERT_TRUE(WaitFor(kRegExtended0, kB0Period | kB0Comma));
+    post(ZXKEY_EXT_DOT, false);
+    post(ZXKEY_EXT_COMMA, false);
+    ASSERT_TRUE(WaitFor(kRegExtended0, 0));
+}

@@ -2,7 +2,9 @@
  "schema": 1,
  "models": {
   "48K": [
-   "zx48k"
+   "zx48k",
+   "zxplus",
+   "forum"
   ],
   "128k": [
    "zx128"
@@ -37,11 +39,13 @@
   ],
   "PROFI": [
    "profi",
-   "profiplus"
+   "profiplus",
+   "profilatin"
   ],
   "PROFI3": [
    "profi",
-   "profiplus"
+   "profiplus",
+   "profilatin"
   ],
   "ATM710": [
    "pcat",
@@ -72,7 +76,8 @@
    "zxmatrix"
   ],
   "NEXT": [
-   "zxnext"
+   "zxnext",
+   "zxnextwhite"
   ]
  },
  "keyboards": {
@@ -85,6 +90,26 @@
    ],
    "picture": "zx48k.photo.svg",
    "keys": "zx48k.keys.json"
+  },
+  "zxplus": {
+   "name": "ZX Spectrum+",
+   "matrix": "zx",
+   "size": [
+    319,
+    149
+   ],
+   "picture": "zxplus.photo.svg",
+   "keys": "zxplus.keys.json"
+  },
+  "forum": {
+   "name": "Forum",
+   "matrix": "zx",
+   "size": [
+    404,
+    196
+   ],
+   "picture": "forum.photo.svg",
+   "keys": "forum.keys.json"
   },
   "zx128": {
    "name": "ZX Spectrum 128",
@@ -196,6 +221,16 @@
    "picture": "profiplus.photo.svg",
    "keys": "profiplus.keys.json"
   },
+  "profilatin": {
+   "name": "Profi (Spectrum print)",
+   "matrix": "zx",
+   "size": [
+    338.5,
+    187.0
+   ],
+   "picture": "profilatin.photo.svg",
+   "keys": "profilatin.keys.json"
+  },
   "pcat": {
    "name": "AT Enhanced 101-key (Russian)",
    "matrix": "pc",
@@ -245,6 +280,16 @@
    ],
    "picture": "zxnext.photo.svg",
    "keys": "zxnext.keys.json"
+  },
+  "zxnextwhite": {
+   "name": "ZX Spectrum Next (white)",
+   "matrix": "zx",
+   "size": [
+    330,
+    146
+   ],
+   "picture": "zxnextwhite.photo.svg",
+   "keys": "zxnextwhite.keys.json"
   }
  }
 }

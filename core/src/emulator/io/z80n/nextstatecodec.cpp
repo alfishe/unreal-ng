@@ -25,7 +25,7 @@
 
 namespace
 {
-constexpr uint8_t kImageVersion = 11;  // 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
+constexpr uint8_t kImageVersion = 12;  // 12: + the membrane's extended keys; 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -638,20 +638,23 @@ static void LoadSd(Reader& r, SdCardSpi& card)
 
 static void SaveExtendedInput(Writer& w, const NextExtendedInput& e)
 {
-    w.Put(e.Keys());
+    w.Put(e.PcKeys());
     w.Put(e.Pad(true));
     w.Put(e.Right());
+    w.Put(e.MembraneKeys());
 }
 static void LoadExtendedInput(Reader& r, NextExtendedInput& e)
 {
-    uint16_t keys = 0, right = 0;
+    uint16_t keys = 0, right = 0, membrane = 0;
     uint8_t left = 0;
     r.Get(keys);
     r.Get(left);
     r.Get(right);
-    e.SetKeys(keys);
+    r.Get(membrane);
+    e.SetPcKeys(keys);
     e.SetPad(true, left);
     e.SetRight(right);
+    e.SetMembraneKeys(membrane);
 }
 
 static void SaveDecoder(Writer& w, const PortDecoder_Next& p)

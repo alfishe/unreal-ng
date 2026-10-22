@@ -359,9 +359,10 @@ https://github.com/UncleRus/quorum-reborn (resources/Doc/ports.md, the retropc.o
 **Keyboard**
 - Reed switches (герконовая), 67 keys.
 - The alphanumeric zone is laid out like an AT keyboard: QWERTY with ЙЦУКЕН, switched by РУС / Р/А.
-- 56 keys are visible to programs. The rest emulate CS+digit combinations or are read through unused bits of the
-  keyboard ports. Which unused bits these are is **UNVERIFIED**; that needs the schematic `Orel_BK08_Schematic.djvu`,
-  which was not decoded.
+- 58 matrix keys (S1-S18, S21-S28, S31-S38, S41-S48, S50-S57, S60-S67) on 56 positions (РЕГ and Р/А are two
+  keys each, wired in parallel), 8 rows x 7 columns: the ZX columns KD0-KD4 and two more, KD5 and KD7, read on port #FE bits 5
+  and 7. The other 9 keys (S19, S20, S29, S30, S39, S40, S49, S58, S59) are off the matrix and press CS + a digit
+  through a small circuit. Details below, from the schematic.
 - Caps:
   - white/cream alphanumerics `#ece8dc`;
   - dark blue-grey modifiers `#4a5260`;
@@ -394,22 +395,85 @@ The x positions and widths follow standard AT proportions: about 15 keys at 1u i
 CAPS 1.0u; left SHIFT 1.25u; ALT 1.25u, LAT 1.25u, Р/А 1.25u. All of these are **UNVERIFIED** within ±0.25u; take
 them from the figure.
 
+**Wiring (keyboard schematic, verified)**
+- Source: `Orel_BK08_Schematic.djvu` page 4, "УЗЕЛ КЛАВИАТУРЫ. СХЕМА ЭЛЕКТРИЧЕСКАЯ ПРИНЦИПИАЛЬНАЯ БУ5.103.474"
+  (reed switches МК-10-3, pull-ups R1-R7 2.2k on the columns). Rows are the buffered address lines AB8-AB15
+  (main board sheet 1, БУ5.103.476-03: buffers DD2.5-DD2.6, DD3.1-DD3.6 from A8-A15). The matrix labels the
+  letter keys by their Cyrillic legend; the Latin letter is the same cap.
+- The 20-pin connector: 1 RT (the label is hard to read), 2-9 AB10 AB9 AB8 AB15 AB14 AB13 AB12 AB11, 10 +5 V, 11-13 KD3 KD4 KD5,
+  14 /CSPO, 15 KD7, 16 KD2, 17 KD1, 18 KD0, 20 GND. There is no KD6 (bit 6 is the tape input).
+
+| Row | KD0 | KD1 | KD2 | KD3 | KD4 | KD5 | KD7 |
+|---|---|---|---|---|---|---|---|
+| AB8 (#FEFE) | АЛТ (S60) | Я Z | Ч X | С C | М V | РУС (S10) | РЕГ (S1, S2) |
+| AB9 (#FDFE) | Ф A | Ы S | В D | А F | П G | `\` (S11) | Ё `/` (S3) |
+| AB10 (#FBFE) | Й Q | Ц W | У E | К R | Е T | Б `,` (S12) | Ю `.` (S4) |
+| AB11 (#F7FE) | 1 | 2 | 3 | 4 | 5 | `` ` `` `~` (S13, left of 1) | ТАБ (S5) |
+| AB12 (#EFFE) | 0 | 9 | 8 | 7 | 6 | `-` (S14) | `=` (S6) |
+| AB13 (#DFFE) | З P | Щ O | Ш I | Г U | Н Y | Х `[` (S15) | Ъ `]` (S7) |
+| AB14 (#BFFE) | ENTER (S66) | Д L | Л K | О J | Р H | Ж `;` (S16) | Э `'` (S8) |
+| AB15 (#7FFE) | ПРОБЕЛ (S67) | УПР (S57) | Ь M | Т N | И B | Р/А (S17, S18) | ЗГЛ (S9) |
+
+- So АЛТ = CAPS SHIFT, УПР = SYMBOL SHIFT; РЕГ, ЗГЛ, РУС, Р/А, ТАБ, the `` ` `` key and the ten punctuation
+  keys are on KD5 / KD7.
+- Off the matrix: «←» S19, «ИНВ» S29, «НОРМ» S39, «РЕД» S58 join columns KD4, KD3, KD2, KD0 to one line;
+  «↓» S20, «↑» S30, «→» S40, «ГРАФ» S49, «ВШ» S59 join KD4, KD3, KD2, KD1, KD0 to a second line. Diodes VD1-VD2
+  (КД522Б) detect either line; a К561КТ3 (DD1: four analog switches), К555ЛЕ1 (DD2) and К555ТМ2 (DD3, two
+  flip-flops clocked from /CSPO) then switch KD0 onto AB8 (CAPS SHIFT, DD1.2), the first line onto AB11 (DD1.3)
+  and the second onto AB12 (DD1.4). The result: ← = CS + 5, ИНВ = CS + 4, НОРМ = CS + 3, РЕД = CS + 1;
+  ↓ = CS + 6, ↑ = CS + 7, → = CS + 8, ГРАФ = CS + 9, ВШ = CS + 0. There is no dedicated CS + 2 key: CAPS LOCK is
+  ЗГЛ's own contact (A15 KD7), handled by the ROM. The flip-flops sequence the two closures over successive
+  keyboard reads; their exact timing was not traced (the emulation presses both at once).
+- The main board's #FE read path (sheet 1: DD1 three-state buffers for KD0-KD4, DD2.1-DD2.3 for D5-D7) is too
+  coarse in the 300 dpi scan to read pin by pin; the ROM confirms bits 5 and 7 are read (below).
+
+**ROM (data/rom/lsy256.rom, page 1 = 48 BASIC)**
+- KEY-SCAN at #028E: `LD L,#2F / LD DE,#FFFF / LD BC,#FEFE / IN A,(C) / CPL / AND #BF`: the Sinclair ROM's
+  `AND #1F` widened to bits 0-5 and 7. Key codes come out as `L - 8 * (bit + 1)` as in the original.
+- K-TEST at #031E treats four codes as shifts: #27 (CS = АЛТ), #EF (A8 bit 7 = РЕГ), #F8 (A15 bit 5 = Р/А), #18
+  (SS = УПР). РУС and ЗГЛ are ordinary keys that the editor takes as toggles.
+- Page 2 (`XOR A / IN A,(#FE) / CPL / AND #BF`, #009C) checks all rows the same way.
+
 **Mapping (manual)**
-- АЛТ+1 = РЕД (EDIT, CS+1), +2 = ЗГЛ (CAPS LOCK, CS+2), +3 = НОРМ (TRUE VIDEO, CS+3), +4 = ИНВ (INV VIDEO, CS+4),
+- АЛТ+1 = РЕД (EDIT, CS+1), +2 = CAPS LOCK (CS+2), +3 = НОРМ (TRUE VIDEO, CS+3), +4 = ИНВ (INV VIDEO, CS+4),
   +5 = ←, +6 = ↓, +7 = ↑, +8 = → (CS+5..8), +9 = ГРАФ (CS+9), +0 = ВШ (DELETE, CS+0).
-- The dedicated keys НОРМ, ИНВ, РЕД, ГРАФ, ВШ and the arrows produce the same CS+digit codes.
-- The ZX letters and digits sit at their section 0 matrix positions.
-- УПР acts as the SS-like CTRL zone, РЕГ selects the S (shift) zone, and АЛТ the ALT zone.
-- Table 2 of the manual (PDF page 21) gives the per-key zone codes. It was only partly read: **UNVERIFIED** per key.
+- Section 6.3 (PDF pages 17-19): cursor modes K, L, C, P, З (Latin lower / upper, Russian lower / upper) and E;
+  "Курсор E включается одновременным нажатием клавиш УПР и АЛТ" (E = SS + CS); "Переход от одного типа курсора к
+  другому производится клавишами РУС и ЗГЛ"; the CTRL zone is typed with УПР held, the ALT zone with АЛТ held, the
+  S zone with РЕГ held in a letter mode; deletion is ВШ or АЛТ + 0.
+- Table 2 (PDF pages 21-23, columns: key; K, L, C, P, З; УПР +; РЕГ +; АЛТ +), read in full:
+  - УПР + key gives the function words: ` ` ` USR, 1 ABS, 2 EXP, 3 LN, 4 SGN, 5 SQR, 6 MOVE, 7 ERASE, 8 POINT,
+    9 CAT, 0 FORM, - TAB, = FN, Q <=, W <>, E >=, R INT, T RND, Y AND, U OR, I AT, O PEEK, P LEN, [ INKEY$,
+    ] LINE, A STOP, S NOT, D STEP, F TO, G THEN, H BIN, J CODE, K CHR$, L STR$, ; VAL$, ' SCREEN$, \ PI, Z BEEP,
+    X INK, C PAPER, V FLASH, B BRIGHT, N OVER, M INVERSE, , ASN, . ACS, / ATN.
+  - РЕГ + key gives the shifted symbols: ` ~, 1-0 ! @ # $ % ^ & * ( ), - _, = +, [ {, ] }, ; :, ' ", , <, . >,
+    / ?.
+  - АЛТ + key (besides the digits): [ IN, ] OUT, ; VAL, ' ATTR, , SIN, . COS, / TAN.
+  - K mode keywords as on the Spectrum (Q PLOT ... M PAUSE), plus ` VERIFY, - MERGE, = DEF FN, [ OPEN #, ] CLOSE #,
+    ; LLIST, ' LPRINT, \ CIRCLE, , READ, . RESTORE, / DATA. Х, Ъ, Ж, Э, Б, Ю, Ё are typed in the L or C modes only
+    (the same keys give the punctuation there).
 - ENTER = A14/D0 and SPACE = A15/D0.
-- The physical wiring of РЕГ, УПР and АЛТ to CS, SS or the extra bits is **UNVERIFIED** (schematic not decoded).
+
+**Emulation**: the 16 KD5 / KD7 positions are matrix keys `ZXKEY_BK08_*` in `core/src/emulator/io/keyboard/keyboard.h`
+(automation names `bk08_rus`, `bk08_shift`, `bk08_caps`, `bk08_ra`, `bk08_tab`, `bk08_tilde`, `bk08_minus`,
+`bk08_equals`, `bk08_lbracket`, `bk08_rbracket`, `bk08_semicolon`, `bk08_quote`, `bk08_backslash`, `bk08_slash`,
+`bk08_comma`, `bk08_period`), taken on LSY256 only. The model itself has no port decoder yet
+(docs/inprogress/2026-10-07-lsy256).
 
 **PC keyboard**: no. The Orel had its own 67-key keyboard.
 
 Sources: https://speccy.info/Орель_БК-08 (text; Orel_BK08_Manual.pdf and Orel_BK08_Schematic.djvu linked there);
-the manual at https://speccy.info/w/images/0/07/Orel_BK08_Manual.pdf, Рис. 5 (PDF page 20);
+the manual at https://speccy.info/w/images/0/07/Orel_BK08_Manual.pdf, Рис. 5 (PDF page 20), section 6.3 and Table 2;
+the schematic at https://speccy.info/w/images/c/c5/Orel_BK08_Schematic.djvu (6 pages: CPU board, power supply, BP1,
+keyboard БУ5.103.474, two assembly drawings; both files fetched through the Wayback Machine, speccy.info sits behind
+a browser check);
 computinghistory.org.uk photos `orel-bk08-chm-1..6.jpg` (1-2 case views, 3 logo close-up, 4-5 manual covers,
 6 box).
+
+**Unreal Speccy's Orel table**: Unreal Speccy 0.37.1 (by Sergey V. Korop) ships a keyboard table `zxk_bk08`
+(`zx-evo-unreal/Unreal/vars.cpp:449` in the local collection): ALT = CS, CTL = SS, SHF = row 0 bit 7; bit 5 / bit 7
+per row: RUS / SHF, BSL / SL, CMA / PNT, TIL / TAB, MNS / PLS, LB / RB, COL / QUO, R/A / CPS. It agrees with the
+schematic position for position (the earlier `orel.py` guess, РЕГ = SS and ЗГЛ = CS + 2, was wrong).
 
 ## 6. Profi v3 / v5
 
@@ -471,6 +535,23 @@ Profi v3.x in a БК-0010 case (`profi-v3-in-bk0010-case-speccyinfo-screenshot.j
 For the SVG, either draw the album layout (40 + inverted T + "*", RESET, LED) in a neutral style, or reuse
 section 1.4 with the Profi badge.
 
+**The owner's photos.** Two real Profi keyboards, two prints:
+- `profi-bk0010-case-top-owner.png` (and `profi-bk0010-case-thumbnail-owner.png`, 2026-10-20): the БК-0010 case,
+  navy black, a wide textured surround round the keys, the white "Profi///" plate (purple word, red / yellow / green
+  stripes), white caps with the Spectrum print and the Cyrillic letters (`keyboards/profi.py`).
+- `profi-keyboard-top-owner.jpg` (2026-10-21, 750 x 411 px, a straight top view of the keyboard and the case's left
+  rear corner): the Soviet 58-key keyboard of section 1.4 with **the Pentagon 2+'s print**, key by key the same
+  (`keyboards/pentagon2plus.py`: the E + SS item and the SS item on top, the letter and its keyword, the E-mode word
+  on the front; EXT MODE, SYMB SHIFT, CAPS  SHIFT; ":" and ",," on the two punctuation keys; no Cyrillic), ivory
+  caps, grey modifiers (TRUE VIDEO, INV VIDEO, DELETE, GRAPH, EXT MODE, EDIT, CAPS SHIFT, CAPS LOCK, SYMB SHIFT, the
+  space bar, the L-shaped return with its arrow on the upright), the cursor keys ivory, a red BREAK printed in dark
+  red. The case is another one: black, the keys tight in a flat dark grey frame (≈3-4 mm round the block), plain case
+  surface left of it (no panel or frame there in the photo), a step ≈11 mm above the keys (the rear band's edge) and one ≈10 mm below them (the palm rest's),
+  the mark "Profi®" in light grey bold italic with four slanted stripes (red, orange, yellow, cyan) on a dark plate
+  ≈50 × 19 mm at the rear left, its right edge ≈4 mm left of the block. Measured at ≈2.3 px/mm, **UNVERIFIED**: the
+  photo is cool and underexposed (the colours lifted to neutral), it shows neither the case's right, front and rear
+  edges nor its size, and nothing says which Profi version it is (`keyboards/profilatin.py`).
+
 ### 6.2 Album layout key table (v3.2 / v5.0, geometry UNVERIFIED in u)
 
 | Row | x (u) | Keys | Mapping |
@@ -522,4 +603,38 @@ Sources:
 | KAY-1024 | none specific; PC keyboard | Yes, the norm |
 | Quorum 128 | own 88-key built-in (section 4) | No (**UNVERIFIED**) |
 | Orel BK-08 | own 67-key reed (section 5) | No |
+| Forum BK-09 Turbo | own ~88-key keyboard with a keypad (section 8); only the 40 ZX keys are mapped | No (**UNVERIFIED**) |
 | Profi v3 / v5 | album layout 40 + cursor T + "*" (6.1), or 58-key film | Yes; v5 default XT via PROFI-XT |
+
+## 8. Forum BK-09 Turbo (Форум БК-09 Турбо)
+
+**Machine** (written sources):
+- A Soviet 48K clone, Russified, ЙЦУКЕН layout, on the Т34ВГ1 gate array, 30 chips. Not an Orel, not an LSY256.
+- "Турбо" names the modified Sinclair BASIC with fast tape loading.
+- Made by the production cooperative "Форум", Berdsk; designer Михаил Дмитриевич Поцуков; ТУ 9633-001-01150408-93.
+- Later models: БК-10 Турбо (music coprocessor), БК-11 Турбо (plus a disk controller), БК-128 Турбо (128 KB). They
+  had a menu called up by the function keys. All had a SECAM coder.
+- No schematic and no manual found.
+
+**Case and keyboard** (the owner's photo `photos/clones/forum-bk08-turbo-frolov-r86.jpg`, photo (C) Sergei Frolov
+2008, r86.com/frolov, a 3/4 view; all **UNVERIFIED**):
+- A black one-piece wedge. The raised rear band is a wide vent grille, with the yellow "ФОРУМ БК-0? Турбо" at its
+  left and a small yellow square badge at the far left.
+- About 88 sculpted keys:
+  - the 40 ZX keys, ivory, in their Spectrum grouping, each with the Latin letter, the SS symbol, the Cyrillic
+    letter and the keyword on the front;
+  - grey keys: F1-F5 on a row of their own, three blank ones, a speaker key; the modifiers, EDIT, DEL, RUS, LAT,
+    FIRE, two icon keys, a 2x2 arrow block and a big L-shaped return;
+  - a red RES;
+  - an ivory numeric keypad (three blank keys, 7-9, 4-6, 1-3, 0 . ENTER) in a well of its own.
+- The model number: the logo's last digit reads 8 or 9 in the photo; Frolov's own museum page names this machine
+  BK-09, so the picture says BK-09.
+
+**Wiring**: the Т34ВГ1 reads the 8x5 matrix, so the 40 ZX keys sit at their section 0 positions. The wiring of every
+other key (EDIT, DEL, the arrows, the keypad, the function keys, RUS/LAT, FIRE, ESC) is unknown: in
+`keyboards/forum.py` they press nothing and say nothing on a click (the owner, 2026-10-21).
+
+Sources: ru.wikipedia "Клоны ZX Spectrum" (section "Форум", citing
+http://www.leninburg.com/museum/show_calc.php?n=226&lang=1 and the ТУ at standards.ru);
+ru.wikipedia "Т34ВМ1 и Т34ВГ1"; speccy.info "Форум БК-09 Турбо"; Frolov's museum page at r86.com/frolov; zx-pk
+thread 24100.

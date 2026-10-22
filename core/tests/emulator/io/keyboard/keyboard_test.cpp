@@ -442,3 +442,148 @@ TEST_F(Keyboard_Test, TtdStateRoundTripsTheMatrixNotTheHostCounts)
     EXPECT_EQ(std::memcmp(back.matrix, held.matrix, sizeof(held.matrix)), 0) << "the old blob's matrix";
     EXPECT_EQ(back.pressedKeys, hostNow) << "its pairs ignored";
 }
+
+/// A Symbol Shift symbol typed with the host Shift ('"' is Shift+' on a US keyboard): the host Shift holds Caps Shift,
+/// which is let go while the symbol is down (CAPS SHIFT + SYMBOL SHIFT + P would be EXTEND MODE + P) and pressed again
+/// after it, the host Shift still down
+TEST_F(Keyboard_Test, ASymbolShiftSymbolHoldsBackTheHostShift)
+{
+    KeyboardCUT* keyboard = _keyboard;
+    auto down = [keyboard](uint8_t row, uint8_t bit) { return (keyboard->_keyboardMatrixState[row] & (1u << bit)) == 0; };
+
+    PostHostKey(keyboard, ZXKEY_CAPS_SHIFT, PcKey::None, true);
+    ASSERT_TRUE(down(0, 0)) << "the host Shift is Caps Shift";
+    PostHostKey(keyboard, ZXKEY_EXT_DBLQUOTE, PcKey::None, true);
+    EXPECT_FALSE(down(0, 0)) << "Caps Shift let go";
+    EXPECT_TRUE(down(7, 1)) << "Symbol Shift";
+    EXPECT_TRUE(down(5, 0)) << "P";
+    PostHostKey(keyboard, ZXKEY_EXT_COLON, PcKey::None, true);   // a second symbol on top
+    PostHostKey(keyboard, ZXKEY_EXT_DBLQUOTE, PcKey::None, false);
+    EXPECT_FALSE(down(0, 0)) << "still held back: ':' is down";
+    PostHostKey(keyboard, ZXKEY_EXT_COLON, PcKey::None, false);
+    EXPECT_TRUE(down(0, 0)) << "the host Shift is down again after the last symbol";
+    EXPECT_FALSE(down(7, 1));
+
+    // The host Shift goes up before the symbol: nothing comes back down
+    PostHostKey(keyboard, ZXKEY_EXT_PLUS, PcKey::None, true);
+    PostHostKey(keyboard, ZXKEY_CAPS_SHIFT, PcKey::None, false);
+    PostHostKey(keyboard, ZXKEY_EXT_PLUS, PcKey::None, false);
+    for (uint8_t row = 0; row < 8; row++)
+        EXPECT_EQ(keyboard->_keyboardMatrixState[row], 0xFF) << "row " << int(row);
+
+    // Caps Shift keys are not symbols: Shift+Left stays Caps Shift + 5
+    PostHostKey(keyboard, ZXKEY_CAPS_SHIFT, PcKey::None, true);
+    PostHostKey(keyboard, ZXKEY_EXT_LEFT, PcKey::None, true);
+    EXPECT_TRUE(down(0, 0));
+    PostHostKey(keyboard, ZXKEY_EXT_LEFT, PcKey::None, false);
+    PostHostKey(keyboard, ZXKEY_CAPS_SHIFT, PcKey::None, false);
+}
+
+// --- Orel BK-08 (LSY256): the extra columns KD5 / KD7 (keyboard schematic БУ5.103.474) ---
+
+#include "debugger/keyboard/debugkeyboardmanager.h"
+
+namespace
+{
+struct Bk08Position
+{
+    ZXKeysEnum key;
+    uint8_t row;
+    uint8_t bit;
+};
+
+// The schematic's matrix: each half-row's KD5 and KD7 contacts
+constexpr Bk08Position kBk08Positions[] = {
+    {ZXKEY_BK08_RUS, 0, 5},       {ZXKEY_BK08_SHIFT, 0, 7},     {ZXKEY_BK08_BACKSLASH, 1, 5},
+    {ZXKEY_BK08_SLASH, 1, 7},     {ZXKEY_BK08_COMMA, 2, 5},     {ZXKEY_BK08_PERIOD, 2, 7},
+    {ZXKEY_BK08_TILDE, 3, 5},     {ZXKEY_BK08_TAB, 3, 7},       {ZXKEY_BK08_MINUS, 4, 5},
+    {ZXKEY_BK08_EQUALS, 4, 7},    {ZXKEY_BK08_LBRACKET, 5, 5},  {ZXKEY_BK08_RBRACKET, 5, 7},
+    {ZXKEY_BK08_SEMICOLON, 6, 5}, {ZXKEY_BK08_QUOTE, 6, 7},     {ZXKEY_BK08_RA, 7, 5},
+    {ZXKEY_BK08_CAPS, 7, 7},
+};
+
+uint16_t HalfRowPort(uint8_t row)
+{
+    return static_cast<uint16_t>(((~(1u << row) & 0xFFu) << 8) | 0xFEu);
+}
+}  // namespace
+
+TEST_F(Keyboard_Test, Bk08KeysReadOnBits5And7)
+{
+    _context->config.mem_model = MM_LSY256;
+    ASSERT_TRUE(_keyboard->HasBk08Matrix());
+
+    for (const Bk08Position& p : kBk08Positions)
+    {
+        _keyboard->PressKey(p.key);
+        for (uint8_t row = 0; row < 8; row++)
+        {
+            const uint8_t expected = row == p.row ? static_cast<uint8_t>(~(1u << p.bit)) : 0xFF;
+            EXPECT_EQ(_keyboard->HandlePortIn(HalfRowPort(row)), expected)
+                << DebugKeyboardManager::GetKeyDisplayName(p.key) << " row " << int(row);
+        }
+        uint8_t row = 0xFF;
+        uint8_t bit = 0xFF;
+        EXPECT_TRUE(Keyboard::MatrixPosition(p.key, row, bit));
+        EXPECT_EQ(row, p.row);
+        EXPECT_EQ(bit, p.bit);
+        _keyboard->ReleaseKey(p.key);
+        EXPECT_EQ(_keyboard->HandlePortIn(HalfRowPort(p.row)), 0xFF);
+    }
+}
+
+TEST_F(Keyboard_Test, Bk08ModifiersWithZxKeys)
+{
+    // АЛТ is Caps Shift (A8 KD0) and УПР Symbol Shift (A15 KD1): РЕГ + Z reads both on the A8 row, and letting go
+    // of Z leaves РЕГ down
+    _context->config.mem_model = MM_LSY256;
+    _keyboard->PressKey(ZXKEY_BK08_SHIFT);
+    _keyboard->PressKey(ZXKEY_Z);
+    EXPECT_EQ(_keyboard->HandlePortIn(0xFEFE), 0b0111'1101);
+    _keyboard->ReleaseKey(ZXKEY_Z);
+    EXPECT_EQ(_keyboard->HandlePortIn(0xFEFE), 0b0111'1111);
+    _keyboard->ReleaseKey(ZXKEY_BK08_SHIFT);
+    EXPECT_EQ(_keyboard->HandlePortIn(0xFEFE), 0xFF);
+
+    // ЗГЛ and Р/А with SPACE on A15; the ROM's all-rows read (IN A,(#FE) with A = 0) sees them too
+    _keyboard->PressKey(ZXKEY_BK08_CAPS);
+    _keyboard->PressKey(ZXKEY_BK08_RA);
+    _keyboard->PressKey(ZXKEY_SPACE);
+    EXPECT_EQ(_keyboard->HandlePortIn(0x7FFE), 0b0101'1110);
+    EXPECT_EQ(_keyboard->HandlePortIn(0x00FE), 0b0101'1110);
+    _keyboard->Reset();
+}
+
+TEST_F(Keyboard_Test, Bk08KeysPressNothingOnOtherModels)
+{
+    _context->config.mem_model = MM_PENTAGON;
+    EXPECT_FALSE(_keyboard->HasBk08Matrix());
+    for (const Bk08Position& p : kBk08Positions)
+        _keyboard->PressKey(p.key);
+    EXPECT_EQ(_keyboard->HandlePortIn(0x00FE), 0xFF);
+    for (const Bk08Position& p : kBk08Positions)
+        _keyboard->ReleaseKey(p.key);
+    EXPECT_EQ(_keyboard->HandlePortIn(0x00FE), 0xFF);
+}
+
+TEST_F(Keyboard_Test, Bk08HostEventsReachTheMatrix)
+{
+    // The on-screen keyboard's path: a key event, a plain key (no shift of its own)
+    _context->config.mem_model = MM_LSY256;
+    PostHostKey(_keyboard, ZXKEY_BK08_TAB, PcKey::None, true);
+    EXPECT_EQ(_keyboard->HandlePortIn(0xF7FE), 0b0111'1111);
+    PostHostKey(_keyboard, ZXKEY_BK08_TAB, PcKey::None, false);
+    EXPECT_EQ(_keyboard->HandlePortIn(0xF7FE), 0xFF);
+}
+
+TEST_F(Keyboard_Test, Bk08KeyNamesResolve)
+{
+    EXPECT_EQ(DebugKeyboardManager::ResolveKeyName("BK08_RUS"), ZXKEY_BK08_RUS);
+    EXPECT_EQ(DebugKeyboardManager::ResolveKeyName("bk08_caps"), ZXKEY_BK08_CAPS);
+    EXPECT_EQ(DebugKeyboardManager::ResolveKeyName("BK08_RA"), ZXKEY_BK08_RA);
+    for (const Bk08Position& p : kBk08Positions)
+    {
+        const std::string name = DebugKeyboardManager::GetKeyDisplayName(p.key);
+        EXPECT_EQ(DebugKeyboardManager::ResolveKeyName(name), p.key) << name;
+    }
+}

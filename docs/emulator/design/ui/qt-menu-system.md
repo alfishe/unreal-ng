@@ -85,8 +85,10 @@ A comprehensive cross-platform menu system has been implemented for the Unreal S
 
 Only the platform's standard shortcuts are assigned (2026-10-05, owner decision; the earlier ad-hoc keys were
 removed): Open (`QKeySequence::Open`), Save snapshot (`Save`), Quit (`Quit`), Preferences (`Preferences`), Help
-(`HelpContents`); Full Screen is Ctrl+F (Cmd+F on macOS) on every platform (restored 2026-10-06, owner
-decision). Every other command is
+(`HelpContents`); Full Screen is Cmd+F on macOS and Alt+Enter on Windows and Linux (owner decision 2026-10-21: Ctrl+F
+there is the machine's Symbol Shift + F, TO in 48K BASIC; Ctrl+F on every platform before, from 2026-10-06).
+While the emulator screen has focus the machine's keys win over these shortcuts
+([keyboard.md](../../../features/keyboard.md#app-shortcuts-and-the-machines-keys)). Every other command is
 reached through the menus. Dialogs keep their local keys (Delete, Escape, search).
 
 ## Implementation Details
@@ -168,8 +170,8 @@ Called from:
 
 ### Windows/Linux
 - Standard menu bar
-- Ctrl key for shortcuts
-- Ctrl+F for Full Screen
+- Ctrl key for shortcuts (not while the emulator screen has focus: Ctrl is the machine's)
+- Alt+Enter for Full Screen
 - Ctrl+P for Preferences
 
 ## CLI Command Mapping

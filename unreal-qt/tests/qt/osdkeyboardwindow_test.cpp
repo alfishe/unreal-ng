@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -175,6 +176,41 @@ TEST_F(OsdKeyboardWindow_Test, EveryPictureLoadsWithKnownKeys)
     EXPECT_TRUE(pictures.forModel("NOSUCH").empty());
 }
 
+TEST_F(OsdKeyboardWindow_Test, OrelKeysFollowTheSchematic)
+{
+    // Orel BK-08 keyboard schematic БУ5.103.474: АЛТ = CS, УПР = SS, the rest of the grey keys and the punctuation on
+    // the extra columns KD5 / KD7 (ZXKEY_BK08_*); РЕГ and Р/А are shifts to the ROM, so they latch
+    KeyboardPictures pictures;
+    ASSERT_TRUE(pictures.load(Root()));
+    KeyboardPicture picture;
+    QString error;
+    ASSERT_TRUE(pictures.picture("orel", picture, error)) << error.toStdString();
+    std::map<std::string, const PictureKey*> byId;
+    for (const PictureKey& key : picture.keys)
+    {
+        EXPECT_FALSE(key.inert()) << key.id << ": every Orel key is wired";
+        byId[key.id] = &key;
+    }
+    const auto presses = [&](const char* id) {
+        const auto it = byId.find(id);
+        return it == byId.end() ? std::vector<ZXKeysEnum>{} : it->second->zx;
+    };
+    EXPECT_EQ(presses("alt"), std::vector<ZXKeysEnum>{ZXKEY_CAPS_SHIFT});
+    EXPECT_EQ(presses("ctrl"), std::vector<ZXKeysEnum>{ZXKEY_SYM_SHIFT});
+    EXPECT_EQ(presses("shift"), std::vector<ZXKeysEnum>{ZXKEY_BK08_SHIFT});
+    EXPECT_EQ(presses("shift-right"), std::vector<ZXKeysEnum>{ZXKEY_BK08_SHIFT});
+    EXPECT_EQ(presses("caps"), std::vector<ZXKeysEnum>{ZXKEY_BK08_CAPS});
+    EXPECT_EQ(presses("rus"), std::vector<ZXKeysEnum>{ZXKEY_BK08_RUS});
+    EXPECT_EQ(presses("ra"), std::vector<ZXKeysEnum>{ZXKEY_BK08_RA});
+    EXPECT_EQ(presses("tab"), std::vector<ZXKeysEnum>{ZXKEY_BK08_TAB});
+    EXPECT_EQ(presses("slash"), std::vector<ZXKeysEnum>{ZXKEY_BK08_SLASH});
+    EXPECT_EQ(presses("bs"), (std::vector<ZXKeysEnum>{ZXKEY_CAPS_SHIFT, ZXKEY_0}));
+    ASSERT_TRUE(byId.count("shift") && byId.count("ra") && byId.count("caps"));
+    EXPECT_TRUE(byId["shift"]->modifier());
+    EXPECT_TRUE(byId["ra"]->modifier());
+    EXPECT_FALSE(byId["caps"]->modifier()) << "ЗГЛ is a toggle key, not a shift";
+}
+
 TEST_F(OsdKeyboardWindow_Test, ZxKeysAndALatchedModifier)
 {
     auto emulator = Create("48K");
@@ -185,7 +221,8 @@ TEST_F(OsdKeyboardWindow_Test, ZxKeysAndALatchedModifier)
     window.setBinding(&_binding);
     ASSERT_EQ(window.model(), "48K");
     EXPECT_EQ(window.picture().id, "zx48k");
-    EXPECT_EQ(window.choices().size(), 1u) << "one keyboard: no switch";
+    EXPECT_EQ(window.choices(), (std::vector<std::string>{"zx48k", "zxplus", "forum"}))
+        << "the 48K's own, then the Spectrum+ and the Forum";
 
     window.press("a");
     window.release();
@@ -288,6 +325,7 @@ TEST_F(OsdKeyboardWindow_Test, AHostCursorKeyLightsItsKeys)
     for (const auto& [model, lit] : std::vector<std::pair<std::string, std::set<std::string>>>{
              {"48K", {"host:caps-shift", "host:5"}},  // no LEFT key: its two keys
              {"128k", {"host:left"}},                 // the key printed with the combination
+             {"NEXT", {"host:left"}},                 // the membrane's own key
          })
     {
         auto emulator = Create(model);
@@ -305,4 +343,22 @@ TEST_F(OsdKeyboardWindow_Test, AHostCursorKeyLightsItsKeys)
         _binding.unbind();
         EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
     }
+}
+
+TEST_F(OsdKeyboardWindow_Test, ANextExtendedKeyIsOneKeyOfItsOwn)
+{
+    // The Next's LEFT is a membrane key: the machine presses CAPS SHIFT + 5 and shows it in NR #B0
+    auto emulator = Create("NEXT");
+    ASSERT_NE(emulator, nullptr);
+    KeyRecorder recorder(emulator->GetUUID().toString());
+    OsdKeyboardWindow window;
+    window.setRoot(Root());
+    window.setBinding(&_binding);
+    ASSERT_EQ(window.picture().id, "zxnext");
+    window.press("left");
+    window.release();
+    EXPECT_EQ(recorder.Flush(), (std::vector<Posted>{Zx(ZXKEY_EXT_LEFT, true), Zx(ZXKEY_EXT_LEFT, false)}));
+    window.press("extend-mode");
+    window.release();
+    EXPECT_EQ(recorder.Flush(), (std::vector<Posted>{Zx(ZXKEY_EXT_EXTEND, true), Zx(ZXKEY_EXT_EXTEND, false)}));
 }

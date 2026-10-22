@@ -22,6 +22,41 @@ constexpr Mapping kMap[] = {
     {PcKey::Left, NextExtendedInput::kLeft},          {PcKey::Down, NextExtendedInput::kDown},
 };
 
+/// The membrane's extended keys as ZX keys and the two matrix keys each presses (membrane.vhd 157-238, the ex register's bits by row)
+struct Membrane
+{
+    ZXKeysEnum key;
+    NextExtendedInput::Key bit;
+    ZXKeysEnum shift;
+    ZXKeysEnum base;
+};
+constexpr Membrane kMembrane[] = {
+    {ZXKEY_EXT_EXTEND, NextExtendedInput::kExtend, ZXKEY_CAPS_SHIFT, ZXKEY_SYM_SHIFT},
+    {ZXKEY_EXT_UP, NextExtendedInput::kUp, ZXKEY_CAPS_SHIFT, ZXKEY_7},
+    {ZXKEY_EXT_CAPSLOCK, NextExtendedInput::kCapsLock, ZXKEY_CAPS_SHIFT, ZXKEY_2},
+    {ZXKEY_EXT_GRAPH, NextExtendedInput::kGraph, ZXKEY_CAPS_SHIFT, ZXKEY_9},
+    {ZXKEY_EXT_TRUEVIDEO, NextExtendedInput::kTrueVideo, ZXKEY_CAPS_SHIFT, ZXKEY_3},
+    {ZXKEY_EXT_INVVIDEO, NextExtendedInput::kInvVideo, ZXKEY_CAPS_SHIFT, ZXKEY_4},
+    {ZXKEY_EXT_BREAK, NextExtendedInput::kBreak, ZXKEY_CAPS_SHIFT, ZXKEY_SPACE},
+    {ZXKEY_EXT_EDIT, NextExtendedInput::kEdit, ZXKEY_CAPS_SHIFT, ZXKEY_1},
+    {ZXKEY_EXT_SEMICOLON, NextExtendedInput::kSemicolon, ZXKEY_SYM_SHIFT, ZXKEY_O},
+    {ZXKEY_EXT_DBLQUOTE, NextExtendedInput::kQuote, ZXKEY_SYM_SHIFT, ZXKEY_P},
+    {ZXKEY_EXT_COMMA, NextExtendedInput::kComma, ZXKEY_SYM_SHIFT, ZXKEY_N},
+    {ZXKEY_EXT_DOT, NextExtendedInput::kPeriod, ZXKEY_SYM_SHIFT, ZXKEY_M},
+    {ZXKEY_EXT_DELETE, NextExtendedInput::kDelete, ZXKEY_CAPS_SHIFT, ZXKEY_0},
+    {ZXKEY_EXT_RIGHT, NextExtendedInput::kRight, ZXKEY_CAPS_SHIFT, ZXKEY_8},
+    {ZXKEY_EXT_LEFT, NextExtendedInput::kLeft, ZXKEY_CAPS_SHIFT, ZXKEY_5},
+    {ZXKEY_EXT_DOWN, NextExtendedInput::kDown, ZXKEY_CAPS_SHIFT, ZXKEY_6},
+};
+
+const Membrane* FindMembrane(ZXKeysEnum key)
+{
+    for (const Membrane& m : kMembrane)
+        if (m.key == key)
+            return &m;
+    return nullptr;
+}
+
 const char* const kKeyNames[NextExtendedInput::kKeyCount] = {"extend", "up",   "caps_lock", "graph", "true_video", "inv_video", "break", "edit",
                                                              ";",      "\"",   ",",         ".",     "delete",     "right",     "left",  "down"};
 }  // namespace
@@ -57,6 +92,43 @@ void NextExtendedInput::OnPcKey(PcKey key, bool pressed)
         else
             _padLeft.fetch_and(static_cast<uint8_t>(~bit), std::memory_order_relaxed);
     }
+}
+
+bool NextExtendedInput::OwnsExtendedKey(ZXKeysEnum key) const
+{
+    return FindMembrane(key) != nullptr;
+}
+
+void NextExtendedInput::OnExtendedKey(ZXKeysEnum key, bool pressed)
+{
+    const Membrane* m = FindMembrane(key);
+    if (!m)
+        return;
+    const uint16_t bit = static_cast<uint16_t>(1u << m->bit);
+    if (pressed)
+        _membrane.fetch_or(bit, std::memory_order_relaxed);
+    else
+        _membrane.fetch_and(static_cast<uint16_t>(~bit), std::memory_order_relaxed);
+}
+
+uint8_t NextExtendedInput::ExtendedMatrixRow(uint8_t row) const
+{
+    const uint16_t held = MembraneKeys();
+    if (held == 0 || (_cancel && _cancel()))
+        return 0xFF;
+    uint8_t result = 0xFF;
+    for (const Membrane& m : kMembrane)
+    {
+        if (!(held & (1u << m.bit)))
+            continue;
+        for (ZXKeysEnum key : {m.shift, m.base})
+        {
+            uint8_t keyRow = 0, keyBit = 0;
+            if (Keyboard::MatrixPosition(key, keyRow, keyBit) && keyRow == row)
+                result &= static_cast<uint8_t>(~(1u << keyBit));
+        }
+    }
+    return result;
 }
 
 void NextExtendedInput::ReleaseAllPcKeys()
