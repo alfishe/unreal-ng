@@ -111,3 +111,90 @@
     paths["/api/v1/emulator/{id}/breakpoints/hits/reset"]["post"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/breakpoints/hits/reset"]["post"]["responses"]["200"]["description"] = "Counters reset";
     paths["/api/v1/emulator/{id}/breakpoints/hits/reset"]["post"]["responses"]["404"]["description"] = "No such breakpoint";
+
+    // Breakpoints by selection (BreakpointSelection), groups and notes (debug tools: use cases D4.5)
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["get"]["summary"] = "Whether a selection of breakpoints is on";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["get"]["description"] =
+        "select (query; default all): all, an id, a kind (exec, read, write, mem, port, in, out, nextreg, nextreg_read, nextreg_write, beam, copper, magic, keyboard) or group:<name>. Answers select, ids, selected and active (true: all of them on; null: none selected). The user's breakpoints only.";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["get"]["parameters"][1]["name"] = "select";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["get"]["responses"]["200"]["description"] = "The selection";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["get"]["responses"]["400"]["description"] = "A selection that does not parse";
+
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["put"]["summary"] = "Switch a selection of breakpoints on or off";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["put"]["description"] =
+        "Body {select, active}: select is all, an id, a kind (exec, read, write, mem, port, in, out, nextreg, nextreg_read, nextreg_write, beam, copper, magic, keyboard) or group:<name> (or id / kind / group alone; none: all); active true, false or \"toggle\" (all on when one is off, else all off). One repaint for the whole selection. Answers select, ids, selected, changed, active.";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["put"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["put"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["select"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["select"]["description"] = "The selection";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["active"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["active"]["description"] = "true, false or toggle";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["put"]["responses"]["200"]["description"] = "Switched";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["put"]["responses"]["400"]["description"] = "A bad selection or active";
+    paths["/api/v1/emulator/{id}/breakpoints/active"]["put"]["responses"]["404"]["description"] = "No breakpoint with that id";
+
+    paths["/api/v1/emulator/{id}/breakpoints/remove"]["post"]["summary"] = "Remove a selection of breakpoints";
+    paths["/api/v1/emulator/{id}/breakpoints/remove"]["post"]["description"] =
+        "Body {select}: all, an id, a kind (exec, read, write, mem, port, in, out, nextreg, nextreg_read, nextreg_write, beam, copper, magic, keyboard) or group:<name> (none: all). Answers select and removed.";
+    paths["/api/v1/emulator/{id}/breakpoints/remove"]["post"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints/remove"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints/remove"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/remove"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/remove"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/remove"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/breakpoints/remove"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["select"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/remove"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["select"]["description"] = "The selection";
+    paths["/api/v1/emulator/{id}/breakpoints/remove"]["post"]["responses"]["200"]["description"] = "Removed";
+    paths["/api/v1/emulator/{id}/breakpoints/remove"]["post"]["responses"]["400"]["description"] = "A bad selection";
+    paths["/api/v1/emulator/{id}/breakpoints/remove"]["post"]["responses"]["404"]["description"] = "No breakpoint with that id";
+
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["summary"] = "Move a breakpoint to a group";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["description"] =
+        "Body {group}: the group (made on use); \"\" or \"default\": back to the default group. Answers the breakpoint.";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["parameters"][1]["name"] = "bp_id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["group"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["group"]["description"] = "The group";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["responses"]["200"]["description"] = "The breakpoint";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["responses"]["400"]["description"] = "No group in the body";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/group"]["put"]["responses"]["404"]["description"] = "No such breakpoint";
+
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["summary"] = "Set a breakpoint's note";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["description"] =
+        "Body {note}: the annotation (\"\" clears it). Answers the breakpoint.";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["parameters"][1]["name"] = "bp_id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["note"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["note"]["description"] = "The note";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["responses"]["200"]["description"] = "The breakpoint";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["responses"]["400"]["description"] = "No note in the body";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/note"]["put"]["responses"]["404"]["description"] = "No such breakpoint";
+

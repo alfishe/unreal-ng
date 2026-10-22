@@ -346,6 +346,7 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "                                     span is a segment. No argument: its state and segments" << NEWLINE;
     ss << "  ttd journal build [from] [to]    Build it by replaying frames from..to (default: the whole" << NEWLINE;
     ss << "                                     session); about 2-4 ms per frame. Not while recording" << NEWLINE;
+    ss << "  ttd journal build-cancel         Stop a build that runs (from another connection)" << NEWLINE;
     ss << "  ttd stop                         Stop recording (history retained, browsable)" << NEWLINE;
     ss << "  ttd limit [frames <n>] [bytes <n>[K|M|G]]" << NEWLINE;
     ss << "                                   Bound the history: while recording, the oldest frames are" << NEWLINE;
@@ -369,7 +370,7 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "Phase 4 — Reverse Search + Automation:" << NEWLINE;
     ss << "  ttd dump <path>                  Serialize session to .ttd file" << NEWLINE;
     ss << "  ttd load <path>                  Load a .ttd session for playback (alias: open)" << NEWLINE;
-    ss << "  ttd export-clip <from> <to> <dir> [--chunk N]" << NEWLINE;
+    ss << "  ttd export-clip <from> <to> <dir|file.gif|.mp4|...> [--chunk N]" << NEWLINE;
     ss << "                                   Write frames from..to as a lossless clip into dir (alias: clip)" << NEWLINE;
     ss << "  ttd find-last --addr <A>         Reverse search: find last access at address" << NEWLINE;
     ss << "    [--access write|read|execute|io]  (default: write)" << NEWLINE;
@@ -395,6 +396,7 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "Phase 4 — Reverse Execution:" << NEWLINE;
     ss << "  ttd reverse-step [--count N]     Step back N instructions (default: 1)" << NEWLINE;
     ss << "    [--tstates T]                     Step back T t-states (aligns to M1)" << NEWLINE;
+    ss << "    [--scanlines L]                   Step back L scanlines (the machine's line length each)" << NEWLINE;
     ss << "  ttd reverse-continue --pc <A>    Run backward until any PC matches" << NEWLINE;
     ss << "    [--pc <B> ...]                    (repeat --pc for multiple breakpoints)" << NEWLINE;
     ss << "  Aliases: rs=reverse-step, rc=reverse-continue" << NEWLINE;
@@ -595,9 +597,23 @@ void CLIProcessor::HandleTTDJournal(const ClientSession& session, EmulatorContex
         session.SendResponse(ss.str());
         return;
     }
+    if (action == "build-cancel" || action == "cancel")
+    {
+        const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"journal-build-cancel", {}});
+        if (!reply.Ok())
+        {
+            session.SendResponse("TTD: " + reply.message + NEWLINE);
+            return;
+        }
+        const StateNode* cancelled = reply.body.find("cancelled");
+        session.SendResponse(std::string(cancelled != nullptr && cancelled->b ? "TTD: the write journal build is cancelled"
+                                                                               : "TTD: no write journal build runs") +
+                             NEWLINE);
+        return;
+    }
     if (action != "status")
     {
-        session.SendResponse("TTD: unknown journal action '" + action + "' (on, off, build, status)" + NEWLINE);
+        session.SendResponse("TTD: unknown journal action '" + action + "' (on, off, build, build-cancel, status)" + NEWLINE);
         return;
     }
     const ttd::TTDSessionInfo info = mgr->GetSessionInfo();
@@ -1101,7 +1117,7 @@ void CLIProcessor::HandleTTDLoad(const ClientSession& session, EmulatorContext* 
 void CLIProcessor::HandleTTDExportClip(const ClientSession& session, EmulatorContext* context,
                                        const std::vector<std::string>& args)
 {
-    // ttd export-clip <from> <to> <dir> [--chunk N]
+    // ttd export-clip <from> <to> <dir | a .gif / .mp4 / .mkv / .webm / .mov / .avi file> [--chunk N]
     std::vector<std::string> positional;
     std::map<std::string, std::string> options;
     for (size_t i = 1; i < args.size(); ++i)
@@ -1114,7 +1130,7 @@ void CLIProcessor::HandleTTDExportClip(const ClientSession& session, EmulatorCon
     if (positional.size() != 3)
     {
         session.SendResponse(std::string("Error: Missing arguments") + NEWLINE +
-                             "Usage: ttd export-clip <from-frame> <to-frame> <dir> [--chunk N]" + NEWLINE);
+                             "Usage: ttd export-clip <from-frame> <to-frame> <dir | file.gif / .mp4 / ...> [--chunk N]" + NEWLINE);
         return;
     }
     options["from"] = positional[0];
@@ -1295,7 +1311,7 @@ void CLIProcessor::HandleTTDStepInstruction(const ClientSession& session, Emulat
 void CLIProcessor::HandleTTDReverseStep(const ClientSession& session, EmulatorContext* context,
                                           const std::vector<std::string>& args)
 {
-    // --count N or --tstates T; neither: one instruction
+    // --count N, --tstates T or --scanlines L; none: one instruction
     std::map<std::string, std::string> options;
     for (size_t i = 1; i < args.size(); ++i)
     {
@@ -1304,6 +1320,8 @@ void CLIProcessor::HandleTTDReverseStep(const ClientSession& session, EmulatorCo
             options["count"] = args[++i];
         else if (tok == "--tstates" && i + 1 < args.size())
             options["tstates"] = args[++i];
+        else if (tok == "--scanlines" && i + 1 < args.size())
+            options["scanlines"] = args[++i];
     }
     if (options.empty())
         options["count"] = "1";
@@ -1319,6 +1337,9 @@ void CLIProcessor::HandleTTDReverseStep(const ClientSession& session, EmulatorCo
         std::stringstream ss;
         if (options.count("tstates"))
             ss << "TTD: Stepped back " << options["tstates"] << " t-states to ";
+        else if (options.count("scanlines"))
+            ss << "TTD: Stepped back " << options["scanlines"] << " scanline" << (options["scanlines"] == "1" ? "" : "s")
+               << " to ";
         else
             ss << "TTD: Stepped back " << options["count"] << " instruction" << (options["count"] == "1" ? "" : "s")
                << " to ";

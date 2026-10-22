@@ -101,7 +101,7 @@ fulldecode 00FF/007F slot 1
 ttd 0:77 1:72 2:34 3:21 7:20 8:85 10:216 12:137 17:50 26:83 35:52 36:16 56:22 notRecorded 0
 == next
 model 16
-mixer [Beeper] [Next audio]
+mixer [Beeper] [Next AY 1] [Next AY 2] [Next AY 3] [Next DAC]
 turbosound none
 gs none
 covox none

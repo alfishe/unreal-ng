@@ -27,6 +27,7 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/execution/automationgate.h"
 #include "emulator/execution/runcontrol.h"
+#include "emulator/machinenames.h"
 #include "emulator/io/tape/tape.h"
 #include "emulator/media/mediacontrol.h"
 #include "emulator/media/modelswitch.h"
@@ -35,6 +36,7 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/screenshotter.h"
+#include "emulator/video/viewportcontrol.h"
 #include "loaders/snapshot/snapshotlauncher.h"
 
 namespace actions
@@ -262,13 +264,46 @@ ActionResult SetSetting(Emulator& emulator, const std::string& name, const State
             text = value.b ? "on" : "off";
         else if (value.kind == StateNode::Kind::String)
             text = value.s;
+        else if (sound->isNumber && (value.kind == StateNode::Kind::Int || value.kind == StateNode::Kind::Double))
+            text = value.kind == StateNode::Kind::Int ? std::to_string(value.i) : std::to_string(value.d);
         else
-            return BadRequest(name + ": expected a string" + (sound->isBool ? " or a bool" : ""));
+            return BadRequest(name + ": expected a string" + (sound->isBool     ? " or a bool"
+                                                              : sound->isNumber ? " or a number"
+                                                                                : ""));
         std::string error;
         if (!SoundCharacterSettings::Set(*context->pSoundManager, sound->name, text, error))
             return BadRequest(error);
         body["value"] = SoundCharacterSettings::Get(*context->pSoundManager, sound->name);
         return ActionResult::Success(std::move(body), name + " set (applied at the next frame boundary)");
+    }
+    if (name == "audio_rate")
+    {
+        // The core audio rate pin (the route's PUT /settings/audio_rate): a supported rate, or auto / 0 to release it
+        SoundManager* sound = context->pSoundManager;
+        if (sound == nullptr)
+            return Conflict("no sound manager");
+        int64_t rate = -1;
+        if (value.kind == StateNode::Kind::Int)
+            rate = value.i;
+        else if (value.kind == StateNode::Kind::String)
+        {
+            const std::string text = Lower(value.s);
+            if (text == "auto" || text == "device" || text == "default")
+                rate = 0;
+            else if (!text.empty() && std::all_of(text.begin(), text.end(), [](unsigned char c) { return std::isdigit(c); }))
+                rate = std::stoll(text.substr(0, 9));
+        }
+        if (rate < 0 || (rate != 0 && !IsSupportedCoreRate(static_cast<uint32_t>(rate))))
+            return BadRequest("audio_rate: 44100, 48000, 88200, 96000, 176400, 192000 or auto");
+        sound->setCoreRatePin(static_cast<uint32_t>(rate));
+        if (rate == 0)
+            body["value"] = "auto";
+        else
+            body["value"] = rate;
+        body["core_rate_hz"] = static_cast<int64_t>(sound->getCoreRate());
+        return ActionResult::Success(std::move(body), rate == 0 ? "audio_rate auto (the pin released)"
+                                                                : "audio_rate pinned (applied at the next frame "
+                                                                  "boundary, deferred while a recording runs)");
     }
     if (name == "speed")
     {
@@ -462,6 +497,79 @@ ActionResult SaveSnapshotTo(Emulator& emulator, const std::string& path)
     return ActionResult::Failure("Conflict", result.text.empty() ? result.reason : result.text, std::move(body));
 }
 
+/// media.open (and media.open_recent): a snapshot, a tape or a disk by its extension or `kind`
+ActionResult OpenMedia(const ActionCall& call)
+{
+    const std::string path = TextParam(call.value, "path").value_or("");
+    if (path.empty())
+        return BadRequest("path: the file to open");
+    if (!FileHelper::FileExists(path) && !FileHelper::FolderExists(path))
+        return ActionResult::Failure("Not Found", "No such file: " + path);
+    std::string error;
+    const bool autostart = BoolParam(call.value, "autostart", error).value_or(true);
+    const std::optional<bool> switchModel = BoolParam(call.value, "switch_model", error);
+    if (!error.empty())
+        return BadRequest(error);
+    std::string kind = Lower(TextParam(call.value, "kind").value_or("auto"));
+    if (kind == "auto")
+    {
+        const std::string ext = Extension(path);
+        kind = OneOfList(Emulator::SupportedSnapshotExtensions(), ext) ? "snapshot"
+               : Emulator::IsTapeExtension(ext) || OneOfList(Emulator::SupportedTapeExtensions(), ext) ? "tape"
+               : OneOfList(Emulator::SupportedDiskExtensions(), ext)                                   ? "disk"
+                                                                                                       : "";
+        if (kind.empty())
+            return BadRequest("Unknown file type '." + ext + "': give kind (snapshot, tape or disk)");
+    }
+    if (kind == "snapshot")
+        return LoadSnapshot(call.instanceId, path, switchModel);
+    if (kind == "tape")
+        return OpenTape(*call.emulator, path, autostart);
+    if (kind == "disk")
+    {
+        uint8_t drive = 0;
+        if (!DriveIndex(TextParam(call.value, "drive").value_or("A"), drive))
+            return BadRequest("drive: A..D");
+        return OpenDisk(*call.emulator, path, drive, autostart);
+    }
+    return BadRequest("kind: auto, snapshot, tape or disk");
+}
+
+/// A size as bytes: a number, or with a K / M / G suffix (binary: 64M = 64 MiB); false otherwise
+bool ParseSize(const std::string& text, uint64_t& bytes)
+{
+    if (text.empty())
+        return false;
+    uint64_t scale = 1;
+    std::string digits = text;
+    const char last = static_cast<char>(std::toupper(static_cast<unsigned char>(digits.back())));
+    if (last == 'K' || last == 'M' || last == 'G')
+    {
+        scale = last == 'K' ? 1024ull : last == 'M' ? 1024ull * 1024 : 1024ull * 1024 * 1024;
+        digits.pop_back();
+    }
+    if (digits.empty() || digits.size() > 12 ||
+        !std::all_of(digits.begin(), digits.end(), [](unsigned char c) { return std::isdigit(c) != 0; }))
+        return false;
+    bytes = std::stoull(digits) * scale;
+    return true;
+}
+
+/// media.create: MediaControl's create, with a size that may carry a K / M / G suffix
+ActionResult CreateMedium(const ActionCall& call)
+{
+    const std::optional<std::string> size = TextParam(call.value, "size");
+    if (!size)
+        return MediaVerb(call, "create");
+    uint64_t bytes = 0;
+    if (!ParseSize(*size, bytes))
+        return BadRequest("size '" + *size + "': bytes, or a number with K, M or G (64M)");
+    ActionValue value = call.value;
+    value.params["size"] = bytes;
+    const ActionCall sized{call.info, call.emulator, call.instanceId, value, call.origin, call.requester};
+    return MediaVerb(sized, "create");
+}
+
 /// endregion </Media and snapshots>
 
 /// region <Machine>
@@ -475,16 +583,13 @@ ActionResult StartMachine(const ActionCall& call)
     const std::optional<bool> select = BoolParam(call.value, "select", error);
     if (!error.empty())
         return BadRequest(error);
-    if (!model || model->empty())
-        return BadRequest("model: a model short name (GET /api/v1/emulator/models lists them)");
-    const TMemModel* found = Config::FindModelByShortName(*model);
-    if (found == nullptr)
-        return BadRequest("Unknown model '" + *model + "' (GET /api/v1/emulator/models lists them)");
-    if (!Config::IsModelCreatable(*found))
-        return BadRequest("model '" + *model + "' is not creatable on this build");
-    const uint32_t ram = ramKb ? static_cast<uint32_t>(std::max<int64_t>(0, *ramKb)) : 0;
-    if (ram > 0 && (ram & found->AvailRAMs) == 0)
-        return BadRequest("RAM size " + std::to_string(ram) + "KB is not supported by model '" + *model + "'");
+    // A model, a machine variant (TSL-VDAC2, PROFI-PLUS, their aliases) or a ZX-Poly configuration: what
+    // EmulatorManager creates by name
+    machines::ResolvedName found;
+    const uint32_t asked = ramKb ? static_cast<uint32_t>(std::max<int64_t>(0, *ramKb)) : 0;
+    if (!machines::Resolve(model.value_or(""), asked, found, error))
+        return BadRequest(error);
+    const uint32_t ram = found.kind == machines::NameKind::Model ? found.ramKb : 0;
     std::optional<RamPowerOn> powerOn;
     if (const std::optional<std::string> text = TextParam(call.value, "ram_power_on"))
     {
@@ -495,7 +600,7 @@ ActionResult StartMachine(const ActionCall& call)
     }
     EmulatorManager& manager = *EmulatorManager::GetInstance();
     StateNode body = StateNode::Object();
-    body["model"] = std::string(found->ShortName);
+    body["model"] = found.name;
     if (replace.value_or(true))
     {
         // In place: the new machine next to the old one, media and cards carried, the symbolic id and the selection
@@ -504,7 +609,7 @@ ActionResult StartMachine(const ActionCall& call)
             return Conflict(std::move(refusal));
         ModelSwitchRequest request;
         request.emulatorId = call.instanceId;
-        request.model = found->ShortName;
+        request.model = found.name;
         request.ramKb = ram;
         request.stranded = StrandedMedia::Keep;
         if (const std::optional<std::string> text = TextParam(call.value, "stranded");
@@ -518,16 +623,15 @@ ActionResult StartMachine(const ActionCall& call)
         body["replaced"] = call.instanceId;
         body["emulator_id"] = switched.emulator->GetId();
         body["symbolic_id"] = switched.emulator->GetSymbolicId();
-        return ActionResult::Success(std::move(body), std::string("Replaced by a ") + found->ShortName);
+        return ActionResult::Success(std::move(body), "Replaced by a " + found.name);
     }
     std::function<void(CONFIG&)> configOverride;
     if (powerOn)
         configOverride = [mode = *powerOn](CONFIG& config) { config.ramPowerOn = mode; };
     std::shared_ptr<Emulator> created =
-        ram > 0
-            ? manager.CreateEmulatorWithModelAndRAM("", found->ShortName, ram, LoggerLevel::LogWarning, &error,
-                                                    configOverride)
-            : manager.CreateEmulatorWithModel("", found->ShortName, LoggerLevel::LogWarning, &error, configOverride);
+        ram > 0 ? manager.CreateEmulatorWithModelAndRAM("", found.name, ram, LoggerLevel::LogWarning, &error,
+                                                        configOverride)
+                : manager.CreateEmulatorWithModel("", found.name, LoggerLevel::LogWarning, &error, configOverride);
     if (!created)
         return BadRequest(error.empty() ? std::string("Emulator initialization failed") : error);
     const bool started = manager.StartEmulatorAsync(created->GetId());
@@ -535,7 +639,7 @@ ActionResult StartMachine(const ActionCall& call)
         manager.SetSelectedEmulatorId(created->GetId());
     body["emulator_id"] = created->GetId();
     body["started"] = started;
-    return ActionResult::Success(std::move(body), std::string("Started a ") + found->ShortName);
+    return ActionResult::Success(std::move(body), "Started a " + found.name);
 }
 
 ActionResult ColdReset(const ActionCall& call)
@@ -634,14 +738,16 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
     {
         ActionRules rules = Rules(ScopeMachine);
         add("mach.start", "Start a machine", machine, ValueKind::Press,
-            "model, ram_kb?, replace? (true: in place), stranded? (keep), ram_power_on? (random|zero), select? (true)",
+            "model (a short name, a variant such as TSL-VDAC2 or PROFI-PLUS, a ZX-Poly configuration such as "
+            "ZXPOLY-128K: GET /emulator/models), ram_kb?, replace? (true: in place), stranded? (keep: refuse|save|"
+            "discard|keep), ram_power_on? (random|zero), select? (true)",
             StartMachine, std::move(rules));
     }
     add("mach.cold_reset", "Restart (cold)", machine, ValueKind::Press, "ram_power_on? (random|zero)", ColdReset,
         Rules(ScopeMachine));
     add(
         "cap.screenshot_save", "Save a screenshot", machine, ValueKind::Press,
-        "path, format? (png|bmp|...), area?, source? (presented|live|window)",
+        "path, format? (png|gif), area?, source? (presented|live|window)",
         [](const ActionCall& call) {
             const std::string path = TextParam(call.value, "path").value_or("");
             if (path.empty())
@@ -942,7 +1048,8 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
         RouteRules("PUT", "/settings/speed"));
     add(
         "set.toggle", "Toggle a setting", settings, ValueKind::Press,
-        "name (turbo_mode, fast_tape, turbo_tape, fast_disk, turbo_audio, trdos_traps, ay_punch, beeper_punch), on?",
+        "name (turbo_mode, fast_tape, turbo_tape, fast_disk, turbo_audio, trdos_traps, ay_punch, beeper_punch, "
+        "covox_dc_removal, fir_filter), on?",
         [](const ActionCall& call) {
             const std::string name = TextParam(call.value, "name").value_or("");
             const std::optional<bool> current = SettingIsOn(*call.emulator, name);
@@ -958,14 +1065,16 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
         NamedRouteRules("PUT", "/settings/", "name", ""));
     add(
         "set.value", "Set a setting", settings, ValueKind::Press,
-        "name, value (speed, the bool ones, ay_voicing, ay_room, ay_punch, beeper_punch)",
+        "name, value (speed, audio_rate, the bool ones, ay_voicing, ay_room, ay_punch, beeper_punch, ay_stereo, ay_chip, "
+        "fm_trim_db, neogs_stereo, covox_dc_removal, fir_filter)",
         [](const ActionCall& call) {
             const std::string name = TextParam(call.value, "name").value_or("");
             const StateNode* value = call.value.params.find("value");
             if (name.empty() || value == nullptr)
                 return BadRequest("name and value");
             StateNode typed = *value;
-            if (typed.kind == StateNode::Kind::String && name != "ay_voicing" && name != "ay_room")
+            const SoundCharacterSettings::Descriptor* soundText = SoundCharacterSettings::Find(name);
+            if (typed.kind == StateNode::Kind::String && name != "audio_rate" && !(soundText && !soundText->isBool))
             {
                 // The CLI and the scripts give text: a bool or a number as the route's JSON would
                 std::string error;
@@ -1003,46 +1112,115 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
             return ActionResult::Success(std::move(body), on ? "Muted" : "Unmuted");
         },
         RouteRules("PUT", "/audio/mixer/master"));
+    // A source or one of its channels: `source` (beeper, ay1, ... or a channel key ay1.a), or `source` + `channel`
+    auto mixerKey = [](const ActionCall& call) {
+        std::string source = Lower(TextParam(call.value, "source").value_or(""));
+        const std::string channel = Lower(TextParam(call.value, "channel").value_or(""));
+        if (!channel.empty() && source.find('.') == std::string::npos)
+            source += "." + channel;
+        return source;
+    };
+    // Mute or solo one source / channel (toggle without `on`)
+    auto mixerFlag = [mixerKey](const ActionCall& call, const char* what) {
+        EmulatorContext* context = call.emulator->GetContext();
+        if (context->pSoundManager == nullptr)
+            return Conflict("Sound manager not available");
+        const std::string source = mixerKey(call);
+        if (source.empty() || source == "master")
+            return BadRequest("source: beeper, ay1, ay2, fm1, fm2, covox, gs, ... or a channel (ay1.a, gs.3); "
+                              "master: audio.mute_toggle");
+        const std::optional<bool> current = AudioMixer::Flag(context, source, what);
+        if (!current)
+        {
+            std::string error;
+            StateNode ignored;
+            AudioMixer::Read(context, source, ignored, error);
+            return ActionResult::Failure("Not Found", error);
+        }
+        std::string error;
+        const bool on = BoolParam(call.value, "on", error).value_or(!*current);
+        if (!error.empty())
+            return BadRequest(error);
+        AudioMixer::Change change;
+        (std::string(what) == "solo" ? change.solo : change.muted) = on ? 1 : 0;
+        if (!AudioMixer::Apply(context, source, change, error))
+            return Conflict(error);
+        StateNode body;
+        AudioMixer::Read(context, source, body, error);
+        return ActionResult::Success(std::move(body), source + (std::string(what) == "solo" ? (on ? " solo" : " solo off")
+                                                                                         : (on ? " muted" : " unmuted")));
+    };
     add(
         "audio.source_mute", "Mute a source", audio, ValueKind::Press,
-        "source (beeper, ay1, ay2, fm1, fm2, covox, gs, gs_mp3, moonsound_fm, moonsound_pcm, cd0..cd3), on?",
-        [](const ActionCall& call) {
+        "source (beeper, ay1, ay2, ay3, fm1, fm2, covox, gs, gs_mp3, moonsound_fm, moonsound_pcm, cd0..cd3, ms_*, "
+        "next_ay1..3, next_dac; a channel: ay1.a, covox.lb, gs.3, ...), channel?, on? (else flips)",
+        [mixerFlag](const ActionCall& call) { return mixerFlag(call, "muted"); }, RouteRules("PUT", "/audio/mixer/beeper"));
+    add(
+        "audio.source_solo", "Solo a source", audio, ValueKind::Press,
+        "source (a row: only soloed rows are heard; a channel ay1.a: only the soloed channels of its row), channel?, "
+        "on? (else flips)",
+        [mixerFlag](const ActionCall& call) { return mixerFlag(call, "solo"); }, RouteRules("PUT", "/audio/mixer/beeper"));
+    add(
+        "audio.source_volume", "Set a volume", audio, ValueKind::Press,
+        "source (a row or a channel), channel?, volume (0..1) or gain_db (-120..0)",
+        [mixerKey](const ActionCall& call) {
             EmulatorContext* context = call.emulator->GetContext();
-            SoundManager* sound = context->pSoundManager;
-            const std::string source = TextParam(call.value, "source").value_or("");
-            AudioSourceType type{};
-            if (sound == nullptr)
+            if (context->pSoundManager == nullptr)
                 return Conflict("Sound manager not available");
-            if (source.empty() || source == "master" || !AudioMixer::FromKey(source, type))
-                return BadRequest("source: beeper, ay1, ay2, fm1, fm2, covox, gs, ... (master: audio.mute_toggle)");
-            const AudioDeviceInfo* device = sound->device(type);
-            if (device == nullptr)
-                return ActionResult::Failure("Not Found", source + " is not fitted on this machine");
+            const std::string source = mixerKey(call);
+            if (source.empty() || source == "master")
+                return BadRequest("source: a row (beeper, ay1, ...) or a channel (ay1.a); master has no volume");
             std::string error;
-            const bool on = BoolParam(call.value, "on", error).value_or(!device->mute);
+            const std::optional<double> volume = NumberParam(call.value, "volume", error);
+            const std::optional<double> gainDb = NumberParam(call.value, "gain_db", error);
             if (!error.empty())
                 return BadRequest(error);
+            if (!volume && !gainDb)
+                return BadRequest("volume (0..1) or gain_db (-120..0)");
             AudioMixer::Change change;
-            change.muted = on ? 1 : 0;
-            if (!AudioMixer::Apply(context, source, change, error))
-                return Conflict(error);
-            StateNode body = StateNode::Object();
-            body["source"] = source;
-            body["muted"] = on;
-            return ActionResult::Success(std::move(body), source + (on ? " muted" : " unmuted"));
+            if (!AudioMixer::ChangeFromStrings("", "", volume ? std::to_string(*volume) : std::string(),
+                                               gainDb ? std::to_string(*gainDb) : std::string(), change, error) ||
+                !AudioMixer::Apply(context, source, change, error))
+                return BadRequest(error);
+            StateNode body;
+            AudioMixer::Read(context, source, body, error);
+            return ActionResult::Success(std::move(body), source + " volume set");
         },
         RouteRules("PUT", "/audio/mixer/beeper"));
     add(
-        "audio.volume_by", "Volume", audio, ValueKind::Delta, "source? (all), step? (0.05 per detent)",
-        [](const ActionCall& call) {
-            SoundManager* sound = call.emulator->GetContext()->pSoundManager;
+        "audio.volume_by", "Volume", audio, ValueKind::Delta,
+        "source? (all rows; a row, or a channel ay1.a), channel?, step? (0.05 per detent)",
+        [mixerKey](const ActionCall& call) {
+            EmulatorContext* context = call.emulator->GetContext();
+            SoundManager* sound = context->pSoundManager;
             if (sound == nullptr)
                 return Conflict("Sound manager not available");
             std::string error;
             const double step = NumberParam(call.value, "step", error).value_or(0.05);
             if (!error.empty())
                 return BadRequest(error);
-            const std::string source = TextParam(call.value, "source").value_or("all");
+            std::string source = mixerKey(call);
+            if (source.empty())
+                source = "all";
+            StateNode volumes = StateNode::Object();
+            if (source.find('.') != std::string::npos)
+            {
+                // One channel
+                StateNode node;
+                if (!AudioMixer::Read(context, source, node, error))
+                    return ActionResult::Failure("Not Found", error);
+                const StateNode* current = node.find("volume");
+                if (current == nullptr)
+                    return BadRequest(source + " has no volume (muted and solo only)");
+                AudioMixer::Change change;
+                change.volume = std::clamp(current->d + call.value.delta * step, 0.0, 1.0);
+                if (!AudioMixer::Apply(context, source, change, error))
+                    return Conflict(error);
+                volumes[source] = std::round(change.volume * 1000.0) / 1000.0;
+                StateNode body = StateNode::Object();
+                body["volumes"] = std::move(volumes);
+                return ActionResult::Success(std::move(body));
+            }
             std::vector<AudioSourceType> types;
             if (source == "all")
             {
@@ -1054,12 +1232,12 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
             {
                 AudioSourceType type{};
                 if (source == "master" || !AudioMixer::FromKey(source, type))
-                    return BadRequest("source: all, or one device (beeper, ay1, ...); master takes muted only");
+                    return BadRequest("source: all, or one device (beeper, ay1, ...) or channel (ay1.a); master takes "
+                                      "muted only");
                 if (sound->device(type) == nullptr)
                     return ActionResult::Failure("Not Found", source + " is not fitted on this machine");
                 types.push_back(type);
             }
-            StateNode volumes = StateNode::Object();
             for (AudioSourceType type : types)
             {
                 const AudioDeviceInfo* device = sound->device(type);
@@ -1082,41 +1260,7 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
     add(
         "media.open", "Open software", media, ValueKind::Press,
         "path, kind? (auto|snapshot|tape|disk), drive? (A), autostart? (true), switch_model?",
-        [](const ActionCall& call) {
-            const std::string path = TextParam(call.value, "path").value_or("");
-            if (path.empty())
-                return BadRequest("path: the file to open");
-            if (!FileHelper::FileExists(path) && !FileHelper::FolderExists(path))
-                return ActionResult::Failure("Not Found", "No such file: " + path);
-            std::string error;
-            const bool autostart = BoolParam(call.value, "autostart", error).value_or(true);
-            const std::optional<bool> switchModel = BoolParam(call.value, "switch_model", error);
-            if (!error.empty())
-                return BadRequest(error);
-            std::string kind = Lower(TextParam(call.value, "kind").value_or("auto"));
-            if (kind == "auto")
-            {
-                const std::string ext = Extension(path);
-                kind = OneOfList(Emulator::SupportedSnapshotExtensions(), ext) ? "snapshot"
-                       : Emulator::IsTapeExtension(ext) || OneOfList(Emulator::SupportedTapeExtensions(), ext) ? "tape"
-                       : OneOfList(Emulator::SupportedDiskExtensions(), ext)                                   ? "disk"
-                                                                                                               : "";
-                if (kind.empty())
-                    return BadRequest("Unknown file type '." + ext + "': give kind (snapshot, tape or disk)");
-            }
-            if (kind == "snapshot")
-                return LoadSnapshot(call.instanceId, path, switchModel);
-            if (kind == "tape")
-                return OpenTape(*call.emulator, path, autostart);
-            if (kind == "disk")
-            {
-                uint8_t drive = 0;
-                if (!DriveIndex(TextParam(call.value, "drive").value_or("A"), drive))
-                    return BadRequest("drive: A..D");
-                return OpenDisk(*call.emulator, path, drive, autostart);
-            }
-            return BadRequest("kind: auto, snapshot, tape or disk");
-        },
+        OpenMedia,
         RouteRules("POST", "/tape/load"));
     {
         ActionRules rules;
@@ -1235,8 +1379,10 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
         "media.save", "Save the medium", media, ValueKind::Press, "drive (A..D, a slot id), path?",
         [](const ActionCall& call) { return MediaVerb(call, "save"); }, RouteRules("POST", "/media/A/save"));
     add(
-        "media.create", "New blank disk", media, ValueKind::Press, "drive (A..D), format?, cylinders?, sides?",
-        [](const ActionCall& call) { return MediaVerb(call, "create"); }, RouteRules("POST", "/media/A/create"));
+        "media.create", "New blank disk", media, ValueKind::Press,
+        "drive (A..D, or an IDE / SD slot), format? (floppy: auto|trdos|plus3|unformatted (raw)), cylinders? (40|80), "
+        "sides? (1|2), size? (IDE / SD: bytes, or 64M, 2G), save? / discard? / export? (the disk it replaces)",
+        CreateMedium, RouteRules("POST", "/media/A/create"));
     add(
         "snapshot.quick", "Quick snapshot", media, ValueKind::Press, "op (save|load), slot? (1..9, 1), dir?",
         [](const ActionCall& call) {
@@ -1298,10 +1444,11 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
             const bool on = BoolParam(call.value, "on", error).value_or(!call.emulator->IsOverscanMode());
             if (!error.empty())
                 return BadRequest(error);
-            if (!call.emulator->SetOverscanMode(on) && call.emulator->IsOverscanMode() != on)
+            // With the viewport the GUI picks (symmetric on, full off), as the REST route and View > Overscan
+            const VideoViewport::Result set = VideoViewport::SetOverscan(*call.emulator, on);
+            if (!set.Ok())
                 return Conflict("this model has no overscan mode");
-            StateNode body = StateNode::Object();
-            body["overscan"] = call.emulator->IsOverscanMode();
+            StateNode body = VideoViewport::Report(*call.emulator);
             return ActionResult::Success(std::move(body), on ? "Overscan on" : "Overscan off");
         },
         RouteRules("PUT", "/state/screen/overscan"));
@@ -1414,7 +1561,22 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
         ttdRules("POST", "/ttd/dump"));
     add("ttd.load", "Open a session", ttdGroup, ValueKind::Press, "path", verb("load"), ttdRules("POST", "/ttd/load"));
     // endregion </Time travel>
+
+    // The machine area's actions (switches, previous model, media verbs, recent files, RZX, joystick types, mouse,
+    // recording, clips): hostactions_machine.cpp
+    for (RegistrationHandle& handle : RegisterMachineAreaActions(registry))
+        handles.push_back(std::move(handle));
     return handles;
+}
+
+ActionResult HostStartMachine(const ActionCall& call)
+{
+    return StartMachine(call);
+}
+
+ActionResult HostOpenMedia(const ActionCall& call)
+{
+    return OpenMedia(call);
 }
 
 std::optional<bool> HostSettingIsOn(Emulator& emulator, const std::string& name)

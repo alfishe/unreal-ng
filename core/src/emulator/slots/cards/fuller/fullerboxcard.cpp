@@ -301,6 +301,23 @@ int16_t* FullerBoxCard::SsgMixerBuffer(AudioSourceType type)
     return type == AudioSourceType::AY3_All ? _buffer : nullptr;
 }
 
+void FullerBoxCard::MixerChannels(AudioSourceType type, std::vector<MixerChannelDesc>& out) const
+{
+    if (type != AudioSourceType::AY3_All)
+        return;
+    out.push_back({"a", "A", true, false});
+    out.push_back({"b", "B", true, false});
+    out.push_back({"c", "C", true, false});
+}
+
+void FullerBoxCard::SetMixerChannel(AudioSourceType type, size_t index, bool muted, float volume)
+{
+    if (type != AudioSourceType::AY3_All || index >= 3)
+        return;
+    _chip->setChannelMuted(static_cast<uint8_t>(index), muted);
+    _chip->setChannelVolume(static_cast<uint8_t>(index), volume);
+}
+
 /// endregion </Frames>
 
 void FullerBoxCard::Connectors(std::vector<CardConnector>& out) const

@@ -68,6 +68,40 @@ def test_breakpoint_on_a_label(s):
     s.call('invoke_api', {'method': 'DELETE', 'path': '/api/v1/emulator/{id}/labels/McpCheck.End'}, ok=False)
 
 
+def test_runs_to_a_place(s):
+    s.call('memory_access', {'action': 'write', 'address': '0x8000', 'hex': '00 ' * 32 + '18 DE'})  # 32 nops; jr -34
+    s.call('control_execution', {'action': 'pause'})
+    s.call('invoke_api', {'method': 'PUT', 'path': '/api/v1/emulator/{id}/registers/pc', 'body': {'value': 0x8000}})
+    r = s.call('control_execution', {'action': 'run_until_pc', 'pc': '0x8010'})
+    expect(pc_of(r.text) == 0x8010 and r.structured.get('hit') is True, 'ran until PC', r.text)
+    r = s.call('control_execution', {'action': 'run_until_pc'}, ok=False)
+    expect(r.is_error and 'pc' in r.text, 'pc is required', r.text)
+    r = s.call('control_execution', {'action': 'run_scanlines', 'count': 3})
+    expect('3 scanline' in r.text and 'PC=' in r.text, 'ran scanlines', r.text)
+    r = s.call('control_execution', {'action': 'run_to_scanline', 'scanline': 100})
+    expect('scanline 100' in r.text, 'ran to the scanline', r.text)
+    r = s.call('control_execution', {'action': 'run_to_pixel'})
+    expect('paper pixel' in r.text and 'PC=' in r.text, 'ran to the first paper pixel', r.text)
+
+
+def test_pace(s):
+    s.call('control_execution', {'action': 'pause'})
+    r = s.call('control_execution', {'action': 'pace'})
+    expect('Pace ' in r.text and r.structured['pace'].get('presets'), 'the pace and its ladder', r.text)
+    r = s.call('control_execution', {'action': 'pace', 'pace_op': 'set', 'preset': '1op', 'interval_ms': 500})
+    expect('Pace 1op' in r.text and '500 ms' in r.text, 'the preset and interval', r.text)
+    pc = pc_of(s.call('inspect_state', {'aspects': ['registers']}).text)
+    r = s.call('control_execution', {'action': 'pace', 'pace_op': 'step'})
+    expect(not r.is_error and r.structured.get('pc') != pc, 'one step at the pace', r.text)
+    r = s.call('control_execution', {'action': 'pace', 'pace_op': 'start'})
+    expect('running' in r.text, 'the pace runs', r.text)
+    r = s.call('control_execution', {'action': 'pace', 'pace_op': 'stop'})
+    expect('not running' in r.text and 'stopped' in r.text, 'stopped, the reason named', r.text)
+    r = s.call('control_execution', {'action': 'pace', 'pace_op': 'set', 'preset': 'warp'}, ok=False)
+    expect(r.is_error and 'preset' in r.text, 'an unknown preset is refused', r.text)
+    s.call('control_execution', {'action': 'pace', 'pace_op': 'set', 'preset': 'full'})
+
+
 def test_unknown_action_is_an_error(s):
     r = s.call('control_execution', {'action': 'fly'}, ok=False)
     expect(r.is_error, 'refused', r.text)

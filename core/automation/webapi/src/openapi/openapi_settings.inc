@@ -21,7 +21,8 @@
     paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["parameters"][1]["required"] = true;
     paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["parameters"][1]["description"] =
         "Setting name (fast_tape, turbo_tape, fast_disk, turbo_mode, speed, turbo_audio, turbo_active, "
-        "trdos_traps, audio_rate, ay_voicing, ay_punch, ay_room, beeper_punch, ...). speed and the "
+        "trdos_traps, audio_rate, ay_voicing, ay_punch, ay_room, beeper_punch, ay_stereo, ay_chip, fm_trim_db, "
+        "neogs_stereo, covox_dc_removal, fir_filter, ...). speed and the "
         "sound-character settings return 'allowed' with the accepted values; turbo_active returns read_only: true";
     paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["parameters"][1]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["responses"]["200"]["description"] = "Setting value";
@@ -43,7 +44,11 @@
         "New setting value; audio_rate accepts one of 44100, 48000, 88200, 96000, 176400, "
         "192000 or \"auto\" (rate pin, runtime only - never persisted to the ini); "
         "ay_voicing accepts classic (default, alias legacy), headphones, flat, warm, tv or small_speaker; ay_room accepts 9db (default), off, 15db, 14db, 13db, 12db, "
-        "6db, 3db, 2db, 1db; ay_punch / beeper_punch accept on/off or a JSON bool. Sound-character "
+        "6db, 3db, 2db, 1db; ay_punch / beeper_punch accept on/off or a JSON bool; ay_stereo abc / acb / mono; "
+        "ay_chip ay8910 / ym2149 (400 with a TurboSound FM: its SSG halves are fixed); fm_trim_db -12..12 dB in "
+        "0.5 dB steps (a JSON number or text; 400 without YM2203 FM); neogs_stereo separated / gs / mono; "
+        "covox_dc_removal on/off (400 without a Covox); fir_filter on/off (Sound HQ, the soundhq feature). A "
+        "setting the machine does not have reads null in GET /settings. Sound-character "
         "values apply at the next frame boundary, runtime only; unknown values return 400 with 'allowed'. "
         "speed: host speed multiplier 1, 2, 4, 8 or 16 (a JSON number, or a decimal / \"0x..\" string), applied at "
         "the next frame; while a time-travel (TTD) recording runs only 1 is accepted (409 otherwise), and a change "

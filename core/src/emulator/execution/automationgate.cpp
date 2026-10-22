@@ -16,13 +16,14 @@ bool StartsWith(std::string_view text, std::string_view prefix)
 
 /// Requests that do not change the machine, by subpath prefix (a whole segment: "/profiler" covers
 /// "/profiler/opcode/start", not "/profilers")
-constexpr std::array<std::string_view, 28> kNoChange = {
+constexpr std::array<std::string_view, 29> kNoChange = {
     "/pause",                                   // always allowed (execution arbiter design §3.7)
     "/control/session",                         // the session itself
     "/control/take-back", "/control/allow-again",   // a companion's take-back: its handler checks the companion
     "/profiler", "/coverage", "/analyzer",      // observers
     "/capture", "/audio/capture", "/audio/mixer", "/video/record", "/video/temporal",
-    "/video/window",                            // the GUI window's display settings (GPU, CRT, blending)
+    "/video/window",                            // the GUI window's display settings (GPU, CRT, blending, HUD, ...)
+    "/video/viewport",                          // the crop of the overscan frame (overscan itself: /state/screen/overscan)
     "/labels", "/symbols",                      // the debugger's names, not the machine
     "/debug/pchist", "/memory/find",
     "/snapshot/save", "/snapshot/inspect",
@@ -57,12 +58,12 @@ bool ChangesMachine(const std::string& method, const std::string& subpath)
 
 bool CliCommandChangesMachine(const std::string& command, const std::vector<std::string>& args)
 {
-    static const std::array<std::string_view, 46> kAlways = {
+    static const std::array<std::string_view, 49> kAlways = {
         "reset", "nmi", "mni", "switch", "resume", "step", "stepin", "steps", "stepover", "stepout", "skip_until",
         "run_tstates", "run_to_scanline", "run_scanlines", "run_to_pixel", "run_to_interrupt", "run_frame",
         "run_frames", "run_ncycles", "out", "romflash", "open", "assemble",
         "bp", "break", "breakpoint", "wp", "bport", "bnextreg", "bbeam", "bmagic", "bcopper", "bphits", "bpclear",
-        "bpgroup", "bpon", "bpoff",
+        "bpgroup", "bpon", "bpoff", "bptoggle", "bkey", "bpnote",
         "key", "keyboard", "mouse", "joystick", "debugmode", "model", "rzx", "zxpoly", "start"};
     for (std::string_view always : kAlways)
         if (command == always)
@@ -82,6 +83,8 @@ bool CliCommandChangesMachine(const std::string& command, const std::vector<std:
         return any({"write", "fill", "load"});
     if (command == "registers" || command == "regs" || command == "r")
         return args.size() >= 2;                            // "r pc 8000": a register set
+    if (command == "pace")                                  // the paced run: `pace` / `pace show` only read
+        return !any({"show", "help", "presets"});
     if (command == "tape")
         return any({"load", "eject", "play", "pause", "rewind", "seek", "stop"});
     if (command == "snapshot")
@@ -179,7 +182,7 @@ uint32_t CompanionScopeOf(const std::string& method, const std::string& subpath)
     const std::string_view head = segments[0];
     const std::string_view second = n > 1 ? segments[1] : std::string_view();
     const std::string_view third = n > 2 ? segments[2] : std::string_view();
-    if (n == 1 && OneOf(head, {"resume", "reset", "nmi"}))
+    if (n == 1 && OneOf(head, {"resume", "reset", "nmi", "run_pace"}))  // run_pace: the paced run (RunPacer)
         return ScopeRun;
     if (head == "settings" && n == 2)
         return SettingScope(second);
@@ -220,7 +223,7 @@ uint32_t CompanionScopeOf(const std::string& method, const std::string& subpath)
 uint32_t CompanionCliScopeOf(const std::string& command, const std::vector<std::string>& args)
 {
     const std::string_view verb = args.empty() ? std::string_view() : std::string_view(args[0]);
-    if (OneOf(command, {"resume", "reset", "nmi", "mni"}))
+    if (OneOf(command, {"resume", "reset", "nmi", "mni", "pace"}))
         return ScopeRun;
     if (OneOf(command, {"setting", "settings", "set"}))
         return SettingScope(verb);

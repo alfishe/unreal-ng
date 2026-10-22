@@ -129,6 +129,11 @@ public:
     ADD_METHOD_TO(EmulatorAPI::deleteStreamDeckVerb, "/api/v1/streamdeck/{verb}", drogon::Delete);
     ADD_METHOD_TO(EmulatorAPI::getStreamDeckBrightness, "/api/v1/streamdeck/decks/{deck}/brightness", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::putStreamDeckBrightness, "/api/v1/streamdeck/decks/{deck}/brightness", drogon::Put);
+    // Monitoring: the host process, the clients, each instance's pace and summaries (implementation:
+    // api/monitoring_api.cpp over monitoring::Call, the verbs of every plane; the WebSocket topics of the same names)
+    ADD_METHOD_TO(EmulatorAPI::getMonitor, "/api/v1/monitor", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getMonitorName, "/api/v1/monitor/{name}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getBreakpointGroups, "/api/v1/emulator/{id}/breakpoints/groups", drogon::Get);
 
     // ZX-bus slots: the machine's buses, slots and cards (implementation: api/slots_api.cpp over SlotControl,
     // core/src/emulator/slots/slotcontrol.h; ZX-bus slots architecture.md §9). A change restarts the machine
@@ -248,13 +253,21 @@ public:
     // Per-device mixer (implementation: api/state_audio_api.cpp; core AudioMixer, DeviceState::AudioMixer)
     ADD_METHOD_TO(EmulatorAPI::getAudioMixer, "/api/v1/emulator/{id}/audio/mixer", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::setAudioMixer, "/api/v1/emulator/{id}/audio/mixer/{source}", drogon::Put, drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getAudioMixerSource, "/api/v1/emulator/{id}/audio/mixer/{source}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getAudioLevels, "/api/v1/emulator/{id}/audio/levels", drogon::Get);
     // endregion Analyzer Management
 
     // region Video Recording (implementation: api/recording_api.cpp)
     // Video recording control (MCP automation)
     ADD_METHOD_TO(EmulatorAPI::videoRecord, "/api/v1/emulator/{id}/video/record", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::videoRecordStatus, "/api/v1/emulator/{id}/video/record/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::recordingPresets, "/api/v1/recording/presets", drogon::Get);
     // endregion Video Recording
+
+    // region Recent files (implementation: api/recent_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::getRecentFiles, "/api/v1/recent", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::clearRecentFiles, "/api/v1/recent", drogon::Delete);
+    // endregion Recent files
 
     // region Memory State (implementation: api/state_memory_api.cpp)
     // State inspection
@@ -315,6 +328,15 @@ public:
     // GUI window display settings (api/video_window_api.cpp): GPU acceleration, CRT effects, temporal blending
     ADD_METHOD_TO(EmulatorAPI::getVideoWindow, "/api/v1/emulator/{id}/video/window", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::setVideoWindow, "/api/v1/emulator/{id}/video/window", drogon::Put, drogon::Post);
+    // The active CRT profile's parameters (api/video_window_api.cpp): list, set / nudge, reset
+    ADD_METHOD_TO(EmulatorAPI::getVideoWindowCrtParams, "/api/v1/emulator/{id}/video/window/crt_params", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::setVideoWindowCrtParams, "/api/v1/emulator/{id}/video/window/crt_params", drogon::Put,
+                  drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::resetVideoWindowCrtParams, "/api/v1/emulator/{id}/video/window/crt_params/reset",
+                  drogon::Post);
+    // The overscan frame's viewport (api/video_window_api.cpp): full, symmetric, standard, screen_only
+    ADD_METHOD_TO(EmulatorAPI::getVideoViewport, "/api/v1/emulator/{id}/video/viewport", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::setVideoViewport, "/api/v1/emulator/{id}/video/viewport", drogon::Put, drogon::Post);
     // endregion Screen State
 
     // region Audio State (implementation: api/state_audio_api.cpp)
@@ -474,6 +496,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::runToInterrupt, "/api/v1/emulator/{id}/run_to_interrupt", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::runFrame, "/api/v1/emulator/{id}/run_frame", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::runFrames, "/api/v1/emulator/{id}/run_frames", drogon::Post);
+    // The paced run (implementation: api/runpace_api.cpp, core execution::RunPacer)
+    ADD_METHOD_TO(EmulatorAPI::getRunPace, "/api/v1/emulator/{id}/run_pace", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postRunPace, "/api/v1/emulator/{id}/run_pace", drogon::Post);
 
     // Debug mode
     ADD_METHOD_TO(EmulatorAPI::getDebugMode, "/api/v1/emulator/{id}/debugmode", drogon::Get);
@@ -488,6 +513,12 @@ public:
     ADD_METHOD_TO(EmulatorAPI::disableBreakpoint, "/api/v1/emulator/{id}/breakpoints/{bp_id}/disable", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::getBreakpointStatus, "/api/v1/emulator/{id}/breakpoints/status", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::resetBreakpointHits, "/api/v1/emulator/{id}/breakpoints/hits/reset", drogon::Post);
+    // Breakpoints by selection (all, an id, a kind, group:<name>), groups, notes (debug tools gaps, use cases D4.5)
+    ADD_METHOD_TO(EmulatorAPI::getBreakpointsActive, "/api/v1/emulator/{id}/breakpoints/active", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::setBreakpointsActive, "/api/v1/emulator/{id}/breakpoints/active", drogon::Put);
+    ADD_METHOD_TO(EmulatorAPI::removeBreakpoints, "/api/v1/emulator/{id}/breakpoints/remove", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::setBreakpointGroup, "/api/v1/emulator/{id}/breakpoints/{bp_id}/group", drogon::Put);
+    ADD_METHOD_TO(EmulatorAPI::setBreakpointNote, "/api/v1/emulator/{id}/breakpoints/{bp_id}/note", drogon::Put);
 
     // Memory inspection and manipulation
     // NOTE: Route order matters! More specific routes must come BEFORE wildcard routes
@@ -858,6 +889,13 @@ public:
                                  const std::string& deck) const;
     void putStreamDeckBrightness(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback,
                                  const std::string& deck) const;
+    /// Monitoring (api/monitoring_api.cpp; monitoring::Call): GET /api/v1/monitor = `all`, /api/v1/monitor/{name} one
+    /// name (host.stats, host.clients, emulator.stats, debug.breakpoints, ...); ?instance= an id or an index
+    void getMonitor(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
+    void getMonitorName(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& name) const;
+    /// GET /api/v1/emulator/{id}/breakpoints/groups: monitoring::Call `breakpoint_groups` ({groups: [{name, total,
+    /// active, ids}]}, the user breakpoints)
+    void getBreakpointGroups(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& id) const;
     /// POST /api/v1/controllers/actions/{action} {instance?, value?}: run it on the instance's actions worker
     void postAction(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& action) const;
@@ -1089,6 +1127,14 @@ public:
                        const std::string& id) const;
     void setAudioMixer(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                        const std::string& id, const std::string& source) const;
+    /// @brief GET /api/v1/emulator/{id}/audio/mixer/{source} - one row or channel (AudioMixer::Read)
+    void getAudioMixerSource(const drogon::HttpRequestPtr& req,
+                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                             const std::string& source) const;
+    /// @brief GET /api/v1/emulator/{id}/audio/levels - every row's and channel's levels (AudioMixer::Levels, the
+    /// WebSocket topic audio.mixer)
+    void getAudioLevels(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
     /// @brief POST /api/v1/emulator/{id}/audio/capture — body: {"action":"start|stop|clear", "seconds":1.0}
     void audioCapture(const drogon::HttpRequestPtr& req,
                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
@@ -1103,15 +1149,29 @@ public:
     // endregion Analyzer Management Methods
 
     // region Video Recording Methods (implementation: api/recording_api.cpp)
-    /// @brief POST /api/v1/emulator/{id}/video/record — body: {"action":"start|stop|pause|resume",
-    ///        "format":"gif", "fps":50, "scale":1..4, "region":"full"|"screen", "filename":"..."}
+    /// @brief POST /api/v1/emulator/{id}/video/record — body: {"action":"start|stop|pause|resume|toggle|status",
+    ///        "preset":"gameplay", "mode":"single|multi|audio", "format":"gif", "container":"mp4", "fps":50,
+    ///        "scale":1..4, "region":"full"|"screen", "filename":"..."} (capture::RecordingControl)
     void videoRecord(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     /// @brief GET /api/v1/emulator/{id}/video/record/status
     void videoRecordStatus(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    /// @brief GET /api/v1/recording/presets — the core's recording presets
+    void recordingPresets(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     // endregion Video Recording Methods
+
+    // region Recent files Methods (implementation: api/recent_api.cpp)
+    /// @brief GET /api/v1/recent[?kind=snapshot|tape|disk|rzx|image|cd] — the files opened lately (RecentFiles)
+    void getRecentFiles(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    /// @brief DELETE /api/v1/recent[?kind=...] — forget them (one kind, or all)
+    void clearRecentFiles(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    // endregion Recent files Methods
 
     // region Memory State Methods (implementation: api/state_memory_api.cpp)
     // State inspection
@@ -1223,10 +1283,31 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     /// @brief GET /api/v1/emulator/{id}/video/window — the GUI window's display settings (409 headless)
     void getVideoWindow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                         const std::string& id) const;
-    /// @brief PUT|POST /api/v1/emulator/{id}/video/window — body {gpu, crt, crt_profile, blending, blending_frames,
-    /// blending_weights} (any of them); returns the settings after the change
+    /// @brief PUT|POST /api/v1/emulator/{id}/video/window — body of any WindowDisplay key (gpu, crt, crt_profile,
+    /// blending, ..., fullscreen, scale, hud, hud_theme, hud_notices {id: bool}, osd_keyboard, ...); returns the
+    /// settings after the change
     void setVideoWindow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                         const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/video/window/crt_params — the active CRT profile's parameters (409 headless)
+    void getVideoWindowCrtParams(const drogon::HttpRequestPtr& req,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const;
+    /// @brief PUT|POST /api/v1/emulator/{id}/video/window/crt_params — body {values: {name: number}, steps: {name:
+    /// steps}, reset: [names] | true}; returns the parameters after the change
+    void setVideoWindowCrtParams(const drogon::HttpRequestPtr& req,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/video/window/crt_params/reset — every parameter back to its initial value
+    void resetVideoWindowCrtParams(const drogon::HttpRequestPtr& req,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/video/viewport — overscan and the viewport that crops it
+    void getVideoViewport(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id) const;
+    /// @brief PUT|POST /api/v1/emulator/{id}/video/viewport — body {viewport: name | next | prev} (overscan on: the
+    /// state/screen/overscan route)
+    void setVideoViewport(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id) const;
 
     /// @brief GET /api/v1/emulator/{id}/state/screen/digest?banks=5,7&include_border=true&start=&end=
     /// FNV-1a 64 digest over screen RAM pages (or an explicit Z80 range) with
@@ -1643,6 +1724,19 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getBreakpointStatus(const drogon::HttpRequestPtr& req,
                              std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                              const std::string& id) const;
+    // Breakpoints by selection, groups, notes (debug_api.cpp)
+    void getBreakpointsActive(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void setBreakpointsActive(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void removeBreakpoints(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void setBreakpointGroup(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                            const std::string& bpIdStr) const;
+    void setBreakpointNote(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                           const std::string& bpIdStr) const;
 
     // Memory inspection and manipulation
     void getRegisters(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
@@ -1758,6 +1852,15 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                   const std::string& id) const;
     void runToLine(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id) const;
+    // The paced run (api/runpace_api.cpp)
+    void getRunPace(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
+    void postRunPace(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
+    void stepLineNow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
+    void runToLineNow(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
 
     // Assembler
     void assembleCode(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,

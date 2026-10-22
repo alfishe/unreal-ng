@@ -62,8 +62,12 @@ bool OnGuiThread(std::function<bool(Out&, std::string&)> task, Out& out, std::st
 }
 }  // namespace
 
-WindowViewProvider::WindowViewProvider(DeviceScreenWrapper* screen, ShownEmulatorId shownEmulatorId, Display display)
-    : _screen(screen), _shownEmulatorId(std::move(shownEmulatorId)), _display(std::move(display))
+WindowViewProvider::WindowViewProvider(DeviceScreenWrapper* screen, ShownEmulatorId shownEmulatorId, Display display,
+                                       Parameters parameters)
+    : _screen(screen),
+      _shownEmulatorId(std::move(shownEmulatorId)),
+      _display(std::move(display)),
+      _parameters(std::move(parameters))
 {
 }
 
@@ -91,6 +95,34 @@ bool WindowViewProvider::SetWindowDisplay(const WindowDisplayChange& change, Win
     std::function<bool(WindowDisplaySettings&, std::string&)> task = [display = _display,
                                                                       change](WindowDisplaySettings& s, std::string& why) {
         return display ? display(&change, s, why) : false;
+    };
+    return OnGuiThread(std::move(task), out, error);
+}
+
+bool WindowViewProvider::GetCrtParameters(CrtParameters& out, std::string& error)
+{
+    std::function<bool(CrtParameters&, std::string&)> task = [parameters = _parameters](CrtParameters& p,
+                                                                                       std::string& why) {
+        if (!parameters)
+        {
+            why = "This window offers no CRT parameters";
+            return false;
+        }
+        return parameters(nullptr, p, why);
+    };
+    return OnGuiThread(std::move(task), out, error);
+}
+
+bool WindowViewProvider::SetCrtParameters(const CrtParameterChange& change, CrtParameters& out, std::string& error)
+{
+    std::function<bool(CrtParameters&, std::string&)> task = [parameters = _parameters, change](CrtParameters& p,
+                                                                                               std::string& why) {
+        if (!parameters)
+        {
+            why = "This window offers no CRT parameters";
+            return false;
+        }
+        return parameters(&change, p, why);
     };
     return OnGuiThread(std::move(task), out, error);
 }

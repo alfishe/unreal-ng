@@ -1,10 +1,13 @@
 #include "audiosettingswidget.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include <QCursor>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGridLayout>
+#include <QSignalBlocker>
 #include <QToolTip>
 #include "base/featuremanager.h"
 #include "emulator/emulator.h"
@@ -141,6 +144,23 @@ void AudioSettingsWidget::createUI()
     sourcesGroupLayout->addWidget(_soloIndicator);
     layout->addWidget(_sourcesGroup);
 
+    // ============ Channels section (any source with channels) ============
+    // One source at a time (its selector lists the fitted sources that have channels): mute, solo within the source,
+    // volume, and a meter where the device measures the channel. The same channel layer the automation planes use
+    // (<source>.<channel>: ay1.a, gs.3, moonsound_fm.7)
+    _channelsGroup = new QGroupBox("Channels", this);
+    auto* channelsLayout = new QVBoxLayout(_channelsGroup);
+    auto* channelSourceRow = new QHBoxLayout();
+    channelSourceRow->addWidget(new QLabel("Source:", _channelsGroup));
+    _channelSourceCombo = new QComboBox(_channelsGroup);
+    _channelSourceCombo->setToolTip("The source whose channels are shown");
+    channelSourceRow->addWidget(_channelSourceCombo, 1);
+    channelsLayout->addLayout(channelSourceRow);
+    _channelsContainer = new QWidget(_channelsGroup);
+    channelsLayout->addWidget(_channelsContainer);
+    _channelsGroup->setVisible(false);
+    layout->addWidget(_channelsGroup);
+
     // ============ AY/TurboSound section ============
     // Titled "TurboSound FM" when the slot device is TSFM, "TurboSound" otherwise
     // (refreshFromContext); the FM trim row appears only then (§8.3)
@@ -229,49 +249,6 @@ void AudioSettingsWidget::createUI()
     _tsfmControls->setVisible(false);  // Hidden until the slot device is TSFM
     ayLayout->addWidget(_tsfmControls);
 
-    // Channel Mixer (AY1 and AY2 channels, vertical layout)
-    _channelMixerGroup = new QGroupBox("Channels", _ayGroup);
-    auto* chLayout = new QGridLayout(_channelMixerGroup);
-    const char* chNames[] = {"A", "B", "C"};
-    int row = 0;
-
-    // AY1 channels (label retitled "SSG 1" on TSFM)
-    _chip1SectionLabel = new QLabel("AY1", _channelMixerGroup);
-    chLayout->addWidget(_chip1SectionLabel, row++, 0, 1, 3);
-    for (int ch = 0; ch < 3; ch++)
-    {
-        _channelMuteChecks[0][ch] = new QCheckBox(QString("Mute %1").arg(chNames[ch]), _channelMixerGroup);
-        _channelMuteChecks[0][ch]->setToolTip(QString("Mute AY1 channel %1").arg(chNames[ch]));
-        chLayout->addWidget(_channelMuteChecks[0][ch], row, 0);
-        _channelVolumeSliders[0][ch] = new QSlider(Qt::Horizontal, _channelMixerGroup);
-        _channelVolumeSliders[0][ch]->setRange(0, 100);
-        _channelVolumeSliders[0][ch]->setValue(100);
-        chLayout->addWidget(_channelVolumeSliders[0][ch], row, 1);
-        _channelVolumeLabels[0][ch] = new QLabel("100%", _channelMixerGroup);
-        _channelVolumeLabels[0][ch]->setMinimumWidth(40);
-        chLayout->addWidget(_channelVolumeLabels[0][ch], row, 2);
-        row++;
-    }
-
-    // AY2 channels (label retitled "SSG 2" on TSFM)
-    _chip2SectionLabel = new QLabel("AY2", _channelMixerGroup);
-    chLayout->addWidget(_chip2SectionLabel, row++, 0, 1, 3);
-    for (int ch = 0; ch < 3; ch++)
-    {
-        _channelMuteChecks[1][ch] = new QCheckBox(QString("Mute %1").arg(chNames[ch]), _channelMixerGroup);
-        _channelMuteChecks[1][ch]->setToolTip(QString("Mute AY2 channel %1").arg(chNames[ch]));
-        chLayout->addWidget(_channelMuteChecks[1][ch], row, 0);
-        _channelVolumeSliders[1][ch] = new QSlider(Qt::Horizontal, _channelMixerGroup);
-        _channelVolumeSliders[1][ch]->setRange(0, 100);
-        _channelVolumeSliders[1][ch]->setValue(100);
-        chLayout->addWidget(_channelVolumeSliders[1][ch], row, 1);
-        _channelVolumeLabels[1][ch] = new QLabel("100%", _channelMixerGroup);
-        _channelVolumeLabels[1][ch]->setMinimumWidth(40);
-        chLayout->addWidget(_channelVolumeLabels[1][ch], row, 2);
-        row++;
-    }
-    ayLayout->addWidget(_channelMixerGroup);
-
     layout->addWidget(_ayGroup);
 
     // ============ Beeper section ============
@@ -338,17 +315,6 @@ void AudioSettingsWidget::createUI()
     // ============ SOUNDRIVE/COVOX section (shown only when present) ============
     _covoxGroup = new QGroupBox("SOUNDRIVE / COVOX (4x 8-bit DAC)", this);
     auto* covoxLayout = new QVBoxLayout(_covoxGroup);
-
-    // Channel mutes row
-    auto* channelsRow = new QHBoxLayout();
-    const char* covoxChNames[] = {"Left A", "Left B", "Right A", "Right B"};
-    for (int i = 0; i < 4; i++)
-    {
-        _covoxChannelMute[i] = new QCheckBox(QString("Mute %1").arg(covoxChNames[i]), _covoxGroup);
-        _covoxChannelMute[i]->setProperty("channel", i);
-        channelsRow->addWidget(_covoxChannelMute[i]);
-    }
-    covoxLayout->addLayout(channelsRow);
 
     // DC removal row
     auto* dcRow = new QHBoxLayout();
@@ -484,19 +450,9 @@ void AudioSettingsWidget::connectSignals()
     // TSFM FM trim
     connect(_fmTrimSlider, &QSlider::valueChanged, this, &AudioSettingsWidget::onFmTrimChanged);
 
-    // Channel mixer (2 chips x 3 channels)
-    for (int chip = 0; chip < 2; chip++)
-    {
-        for (int ch = 0; ch < 3; ch++)
-        {
-            _channelMuteChecks[chip][ch]->setProperty("chip", chip);
-            _channelMuteChecks[chip][ch]->setProperty("channel", ch);
-            _channelVolumeSliders[chip][ch]->setProperty("chip", chip);
-            _channelVolumeSliders[chip][ch]->setProperty("channel", ch);
-            connect(_channelMuteChecks[chip][ch], &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onChannelMuteChanged);
-            connect(_channelVolumeSliders[chip][ch], &QSlider::valueChanged, this, &AudioSettingsWidget::onChannelVolumeChanged);
-        }
-    }
+    // Channels section: its source selector (the rows connect as they are built)
+    connect(_channelSourceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            &AudioSettingsWidget::onChannelSourceChanged);
 
     // Beeper
     connect(_beeperPunchCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onBeeperPunchChanged);
@@ -509,10 +465,6 @@ void AudioSettingsWidget::connectSignals()
 
     // Covox
     connect(_covoxDCRemovalCheckbox, &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onCovoxDCRemovalChanged);
-    for (int i = 0; i < 4; i++)
-    {
-        connect(_covoxChannelMute[i], &QCheckBox::checkStateChanged, this, &AudioSettingsWidget::onCovoxChannelMuteChanged);
-    }
 
     _signalsConnected = true;
 }
@@ -537,14 +489,7 @@ void AudioSettingsWidget::disconnectSignals()
     disconnect(_ayRoomCombo, nullptr, this, nullptr);
     disconnect(_fmTrimSlider, nullptr, this, nullptr);
 
-    for (int chip = 0; chip < 2; chip++)
-    {
-        for (int ch = 0; ch < 3; ch++)
-        {
-            disconnect(_channelMuteChecks[chip][ch], nullptr, this, nullptr);
-            disconnect(_channelVolumeSliders[chip][ch], nullptr, this, nullptr);
-        }
-    }
+    disconnect(_channelSourceCombo, nullptr, this, nullptr);
 
     disconnect(_beeperPunchCheckbox, nullptr, this, nullptr);
     disconnect(_gsCardCombo, nullptr, this, nullptr);
@@ -552,10 +497,6 @@ void AudioSettingsWidget::disconnectSignals()
     disconnect(_neoGSEjectButton, nullptr, this, nullptr);
     disconnect(_neoGSStereoCombo, nullptr, this, nullptr);
     disconnect(_covoxDCRemovalCheckbox, nullptr, this, nullptr);
-    for (int i = 0; i < 4; i++)
-    {
-        disconnect(_covoxChannelMute[i], nullptr, this, nullptr);
-    }
 
     _signalsConnected = false;
 }
@@ -577,13 +518,9 @@ void AudioSettingsWidget::refreshFromContext()
     {
         SoundManager* sm = context()->pSoundManager;
 
-        // Load AY settings from chip 0 (stereo/model shared across both chips)
-        SoundChip_AY8910* ay0 = sm->getAYChip(0);
-        if (ay0)
-        {
-            _stereoModeCombo->setCurrentIndex(static_cast<int>(ay0->getStereoMode()));
-            _chipModelCombo->setCurrentIndex(static_cast<int>(ay0->getChipModel()));
-        }
+        // The AY socket's stereo mode and chip model as requested (automation and this panel set the same values)
+        _stereoModeCombo->setCurrentIndex(static_cast<int>(sm->getAYStereoMode()));
+        _chipModelCombo->setCurrentIndex(static_cast<int>(sm->getAYChipModel()));
 
         // TurboSound slot kind: the whole AY/TurboSound block retitles and
         // re-labels for TSFM, the FM trim row appears, and the chip-model
@@ -592,8 +529,6 @@ void AudioSettingsWidget::refreshFromContext()
         const bool isFm = tsDevice && tsDevice->hasFm();
         _ayGroup->setTitle(!tsDevice ? "TurboSound (not fitted)" : (isFm ? "TurboSound FM" : "TurboSound"));
         _ayGroup->setEnabled(tsDevice != nullptr);
-        _chip1SectionLabel->setText(isFm ? "SSG 1" : "AY1");
-        _chip2SectionLabel->setText(isFm ? "SSG 2" : "AY2");
         // FM trim: one calibration for every YM2203 FM in the machine - the TurboSound FM in the socket and a
         // ZX-MultiSound in a slot ([SOUND] TSFM_FmLevelDb on both)
         double fmTrim = 0.0;
@@ -627,29 +562,7 @@ void AudioSettingsWidget::refreshFromContext()
             _chipModelCombo->clear();
             _chipModelCombo->addItem("AY-3-8910", 0);
             _chipModelCombo->addItem("YM2149", 1);
-            _chipModelCombo->setCurrentIndex(ay0 ? static_cast<int>(ay0->getChipModel())
-                                                  : static_cast<int>(AYChipModel::AY8910));
-        }
-
-        // Load per-chip channel settings
-        for (int chip = 0; chip < 2; chip++)
-        {
-            SoundChip_AY8910* ay = sm->getAYChip(chip);
-            bool hasChip = (ay != nullptr);
-
-            for (int ch = 0; ch < 3; ch++)
-            {
-                _channelMuteChecks[chip][ch]->setEnabled(hasChip);
-                _channelVolumeSliders[chip][ch]->setEnabled(hasChip);
-
-                if (hasChip)
-                {
-                    _channelMuteChecks[chip][ch]->setChecked(ay->isChannelMuted(ch));
-                    int vol = static_cast<int>(ay->getChannelVolume(ch) * 100);
-                    _channelVolumeSliders[chip][ch]->setValue(vol);
-                    _channelVolumeLabels[chip][ch]->setText(QString("%1%").arg(vol));
-                }
-            }
+            _chipModelCombo->setCurrentIndex(static_cast<int>(sm->getAYChipModel()));
         }
 
         // Sound character: the instance's requested values (a change made
@@ -693,14 +606,13 @@ void AudioSettingsWidget::refreshFromContext()
         {
             Covox* covox = sm->getCovox();
             _covoxDCRemovalCheckbox->setChecked(covox->isDCRemovalEnabled());
-            for (int i = 0; i < 4; i++)
-            {
-                _covoxChannelMute[i]->setChecked(covox->isChannelMuted(static_cast<Covox::Channel>(i)));
-            }
         }
 
         // Solo indicator
         updateSoloIndicator();
+
+        // Channels section
+        rebuildChannelsSection();
 
         // Start meter updates
         _meterTimer->start(100);
@@ -778,36 +690,16 @@ void AudioSettingsWidget::onSourceVolumeChanged(int value)
 
 void AudioSettingsWidget::onStereoModeChanged(int index)
 {
-    if (!context() || !context()->pSoundManager)
-        return;
-
-    // Apply to all AY chips
-    for (int i = 0; i < context()->pSoundManager->getAYChipCount(); i++)
-    {
-        SoundChip_AY8910* ay = context()->pSoundManager->getAYChip(i);
-        if (ay)
-            ay->setStereoMode(static_cast<AYStereoMode>(index));
-    }
+    // The socket's chips at the next frame start (the same request automation makes: setting ay_stereo)
+    if (context() && context()->pSoundManager && index >= 0)
+        context()->pSoundManager->setAYStereoMode(static_cast<AYStereoMode>(index));
 }
 
 void AudioSettingsWidget::onChipModelChanged(int index)
 {
-    if (!context() || !context()->pSoundManager)
-        return;
-
-    // TSFM: the YM2203's SSG half is a fixed YM2149 (§8.3) - the selector is
-    // locked, but ignore stray programmatic changes too
-    ITurboSoundDevice* tsDevice = context()->pSoundManager->getTurboSound();
-    if (tsDevice && tsDevice->hasFm())
-        return;
-
-    // Apply to all AY chips
-    for (int i = 0; i < context()->pSoundManager->getAYChipCount(); i++)
-    {
-        SoundChip_AY8910* ay = context()->pSoundManager->getAYChip(i);
-        if (ay)
-            ay->setChipModel(static_cast<AYChipModel>(index));
-    }
+    // TSFM: the YM2203's SSG half is a fixed YM2149 (§8.3) - the selector is locked, and the request is refused
+    if (context() && context()->pSoundManager && index >= 0)
+        context()->pSoundManager->setAYChipModel(static_cast<AYChipModel>(index));
 }
 
 void AudioSettingsWidget::onAYVoicingChanged(int index)
@@ -874,38 +766,126 @@ void AudioSettingsWidget::onFmTrimChanged(int value)
     _fmTrimLabel->setText(QString("%1%2 dB").arg(db >= 0 ? "+" : "").arg(db, 0, 'f', 1));
 }
 
-// ============ Channel slots ============
+// ============ Channels section ============
 
-void AudioSettingsWidget::onChannelMuteChanged(int state)
+AudioSourceType AudioSettingsWidget::selectedChannelSource() const
 {
-    auto* check = qobject_cast<QCheckBox*>(sender());
-    if (!check || !context() || !context()->pSoundManager)
-        return;
-
-    int chip = check->property("chip").toInt();
-    int channel = check->property("channel").toInt();
-
-    SoundChip_AY8910* ay = context()->pSoundManager->getAYChip(chip);
-    if (ay)
-        ay->setChannelMuted(channel, state == Qt::Checked);
+    const int index = _channelSourceCombo->currentIndex();
+    return index >= 0 && static_cast<size_t>(index) < _channelSources.size() ? _channelSources[static_cast<size_t>(index)]
+                                                                             : AudioSourceType::Custom;
 }
 
-void AudioSettingsWidget::onChannelVolumeChanged(int value)
+void AudioSettingsWidget::rebuildChannelsSection()
 {
-    auto* slider = qobject_cast<QSlider*>(sender());
-    if (!slider || !context() || !context()->pSoundManager)
-        return;
-
-    int chip = slider->property("chip").toInt();
-    int channel = slider->property("channel").toInt();
-    _channelVolumeLabels[chip][channel]->setText(QString("%1%").arg(value));
-
-    SoundChip_AY8910* ay = context()->pSoundManager->getAYChip(chip);
-    if (ay)
-        ay->setChannelVolume(channel, value / 100.0);
+    const AudioSourceType selected = selectedChannelSource();
+    _channelSources.clear();
+    const QSignalBlocker blocker(_channelSourceCombo);
+    _channelSourceCombo->clear();
+    if (context() && context()->pSoundManager)
+    {
+        SoundManager* sm = context()->pSoundManager;
+        for (const AudioDeviceInfo& dev : sm->devices())
+        {
+            if (sm->mixerChannels(dev.type).empty())
+                continue;
+            _channelSources.push_back(dev.type);
+            _channelSourceCombo->addItem(QString::fromStdString(dev.name));
+        }
+    }
+    _channelsGroup->setVisible(!_channelSources.empty());
+    const auto at = std::find(_channelSources.begin(), _channelSources.end(), selected);
+    _channelSourceCombo->setCurrentIndex(at != _channelSources.end() ? static_cast<int>(at - _channelSources.begin()) : 0);
+    rebuildChannelRows();
 }
 
+void AudioSettingsWidget::onChannelSourceChanged(int index)
+{
+    (void)index;
+    rebuildChannelRows();
+}
 
+void AudioSettingsWidget::rebuildChannelRows()
+{
+    for (ChannelRow& row : _channelRows)
+    {
+        delete row.nameLabel;
+        delete row.muteCheck;
+        delete row.soloCheck;
+        delete row.volumeSlider;
+        delete row.volumeLabel;
+        delete row.meter;
+    }
+    _channelRows.clear();
+    delete _channelsContainer->layout();
+
+    auto* grid = new QGridLayout(_channelsContainer);
+    grid->setContentsMargins(0, 0, 0, 0);
+    if (!context() || !context()->pSoundManager)
+        return;
+    SoundManager* sm = context()->pSoundManager;
+    const AudioSourceType type = selectedChannelSource();
+    const std::vector<SoundManager::MixerChannelState> channels = sm->mixerChannels(type);
+    int row = 0;
+    for (const SoundManager::MixerChannelState& c : channels)
+    {
+        ChannelRow cr;
+        cr.key = c.desc.key;
+        cr.nameLabel = new QLabel(QString::fromStdString(c.desc.name), _channelsContainer);
+        grid->addWidget(cr.nameLabel, row, 0);
+
+        cr.muteCheck = new QCheckBox("M", _channelsContainer);
+        cr.muteCheck->setChecked(c.mute);
+        cr.muteCheck->setToolTip("Mute this channel");
+        grid->addWidget(cr.muteCheck, row, 1);
+        cr.soloCheck = new QCheckBox("S", _channelsContainer);
+        cr.soloCheck->setChecked(c.solo);
+        cr.soloCheck->setToolTip("Solo: hear only the soloed channels of this source");
+        grid->addWidget(cr.soloCheck, row, 2);
+
+        const std::string key = c.desc.key;
+        connect(cr.muteCheck, &QCheckBox::checkStateChanged, this, [this, type, key](Qt::CheckState state) {
+            std::string error;
+            if (context() && context()->pSoundManager)
+                context()->pSoundManager->setMixerChannel(type, key, state == Qt::Checked ? 1 : 0, -1, -1.0f, error);
+        });
+        connect(cr.soloCheck, &QCheckBox::checkStateChanged, this, [this, type, key](Qt::CheckState state) {
+            std::string error;
+            if (context() && context()->pSoundManager)
+                context()->pSoundManager->setMixerChannel(type, key, -1, state == Qt::Checked ? 1 : 0, -1.0f, error);
+        });
+
+        if (c.desc.hasVolume)
+        {
+            const int percent = static_cast<int>(std::lround(c.volume * 100.0f));
+            cr.volumeSlider = new QSlider(Qt::Horizontal, _channelsContainer);
+            cr.volumeSlider->setRange(0, 100);
+            cr.volumeSlider->setValue(percent);
+            grid->addWidget(cr.volumeSlider, row, 3);
+            cr.volumeLabel = new QLabel(QString("%1%").arg(percent), _channelsContainer);
+            cr.volumeLabel->setMinimumWidth(40);
+            grid->addWidget(cr.volumeLabel, row, 4);
+            QLabel* label = cr.volumeLabel;
+            connect(cr.volumeSlider, &QSlider::valueChanged, this, [this, type, key, label](int value) {
+                label->setText(QString("%1%").arg(value));
+                std::string error;
+                if (context() && context()->pSoundManager)
+                    context()->pSoundManager->setMixerChannel(type, key, -1, -1, value / 100.0f, error);
+            });
+        }
+        if (c.desc.hasMeter)
+        {
+            cr.meter = new QProgressBar(_channelsContainer);
+            cr.meter->setRange(0, 100);
+            cr.meter->setValue(0);
+            cr.meter->setTextVisible(false);
+            cr.meter->setMaximumHeight(12);
+            cr.meter->setMinimumWidth(60);
+            grid->addWidget(cr.meter, row, 5);
+        }
+        _channelRows.push_back(cr);
+        row++;
+    }
+}
 
 void AudioSettingsWidget::onBeeperPunchChanged(int state)
 {
@@ -923,16 +903,6 @@ void AudioSettingsWidget::onCovoxDCRemovalChanged(int state)
 {
     if (context() && context()->pSoundManager && context()->pSoundManager->hasCovox())
         context()->pSoundManager->getCovox()->setDCRemovalEnabled(state == Qt::Checked);
-}
-
-void AudioSettingsWidget::onCovoxChannelMuteChanged(int state)
-{
-    auto* check = qobject_cast<QCheckBox*>(sender());
-    if (!check || !context() || !context()->pSoundManager || !context()->pSoundManager->hasCovox())
-        return;
-
-    int channel = check->property("channel").toInt();
-    context()->pSoundManager->getCovox()->setChannelMute(static_cast<Covox::Channel>(channel), state == Qt::Checked);
 }
 
 // ============ Meter updates ============
@@ -1080,6 +1050,36 @@ void AudioSettingsWidget::onUpdateMeters()
                 int peakPct = static_cast<int>(dev.peak * 100);
                 row.meter->setValue(peakPct);
                 break;
+            }
+        }
+    }
+
+    // The Channels section: its rows' meters, and a state another surface changed (automation, a deck)
+    const std::vector<SoundManager::MixerChannelState> channels =
+        context()->pSoundManager->mixerChannels(selectedChannelSource());
+    if (channels.size() != _channelRows.size())
+    {
+        rebuildChannelsSection();
+        return;
+    }
+    for (size_t i = 0; i < channels.size(); i++)
+    {
+        ChannelRow& row = _channelRows[i];
+        const SoundManager::MixerChannelState& c = channels[i];
+        if (row.meter)
+            row.meter->setValue(static_cast<int>(c.peak * 100.0f));
+        const QSignalBlocker muteBlocker(row.muteCheck);
+        const QSignalBlocker soloBlocker(row.soloCheck);
+        row.muteCheck->setChecked(c.mute);
+        row.soloCheck->setChecked(c.solo);
+        if (row.volumeSlider && !row.volumeSlider->isSliderDown())
+        {
+            const int percent = static_cast<int>(std::lround(c.volume * 100.0f));
+            if (row.volumeSlider->value() != percent)
+            {
+                const QSignalBlocker volumeBlocker(row.volumeSlider);
+                row.volumeSlider->setValue(percent);
+                row.volumeLabel->setText(QString("%1%").arg(percent));
             }
         }
     }

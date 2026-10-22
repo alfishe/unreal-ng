@@ -5,6 +5,7 @@
 #include <set>
 #include <stdexcept>
 
+#include "dialects/common/characters.h"
 #include "dialects/common/z80.h"
 
 namespace unrealasm::dialects
@@ -869,6 +870,7 @@ FrontendResult XasFrontend::ParseInProject(const SourceDocument& source, const s
     }
     if (source.subversion == "9.10")
         StringsAsXas910(result);
+    CharactersInCodePage(result.program, source.codePage);
     return result;
 }
 }  // namespace unrealasm::dialects

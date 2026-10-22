@@ -13,6 +13,7 @@
 #include "common/filehelper.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "emulator/cpu/core.h"
+#include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/soundmanager.h"
@@ -20,6 +21,7 @@
 #include "recordingmanager.h"
 #endif
 #include "emulator/video/screen.h"
+#include "emulator/video/viewportcontrol.h"
 
 /// region <Logging>
 const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_CORE;
@@ -664,6 +666,8 @@ void FeatureManager::loadFromFile(const std::string& path)
             auto it = _features.find(section);
             if (it == _features.end())
                 continue;  // Only override registered features
+            if (section == Features::kOverscan)
+                continue;  // the machine's frame, not a preference: it starts with the machine's mode
             FeatureInfo& f = it->second;
 
             const char* state = ini.GetValue(section.c_str(), "state", nullptr);
@@ -792,6 +796,19 @@ void FeatureManager::onFeatureChanged(const std::string& changedFeatureId)
     if (changedFeatureId == Features::kTurboMode || changedFeatureId == Features::kTimeTravel)
     {
         syncTurboModeWithTtdState();
+    }
+
+    // The feature `overscan` is the switch of the Pentagon's overscan frame (the WebAPI route, View > Overscan, the
+    // catalogue's video.overscan_toggle): the frame follows it, with the viewport the GUI picks. A machine without the
+    // frame keeps it off (Emulator::SetOverscanMode sets it back to the frame's mode)
+    if (changedFeatureId == Features::kOverscan && _context && _context->pEmulator)
+    {
+        Emulator* emulator = _context->pEmulator;
+        const bool on = isEnabled(Features::kOverscan);
+        if (emulator->IsOverscanMode() != on)
+            VideoViewport::SetOverscan(*emulator, on);
+        if (emulator->IsOverscanMode() != on)
+            setFeature(Features::kOverscan, emulator->IsOverscanMode());  // no frame here: the switch says so
     }
 
     if (_dirty)

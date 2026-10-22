@@ -458,6 +458,45 @@ CRTProfileParams DeviceScreenWrapper::crtParams() const
     return CRTProfileParams::None();
 }
 
+void DeviceScreenWrapper::setCRTParams(const CRTProfileParams& params)
+{
+    if (_useGPU && _gpuWindow)
+        _gpuWindow->setCRTParams(params);
+    else if (_software)
+        _software->setCRTParams(params);
+}
+
+std::vector<SlangPresetRunner::Parameter> DeviceScreenWrapper::presetParameters() const
+{
+    if (_useGPU && _gpuWindow)
+        return _gpuWindow->presetParameters();
+    return {};
+}
+
+bool DeviceScreenWrapper::setPresetParameter(const QString& name, float value)
+{
+    return _useGPU && _gpuWindow && _gpuWindow->setPresetParameter(name, value);
+}
+
+void DeviceScreenWrapper::resetPresetParameters()
+{
+    if (_useGPU && _gpuWindow)
+        _gpuWindow->resetPresetParameters();
+}
+
+std::map<QString, float> DeviceScreenWrapper::presetOverrides() const
+{
+    if (_useGPU && _gpuWindow)
+        return _gpuWindow->presetOverrides();
+    return {};
+}
+
+void DeviceScreenWrapper::setPresetOverrides(const std::map<QString, float>& overrides)
+{
+    if (_useGPU && _gpuWindow)
+        _gpuWindow->setPresetOverrides(overrides);
+}
+
 bool DeviceScreenWrapper::loadCustomShader(const QString& name)
 {
     if (_useGPU && _gpuWindow)
@@ -531,4 +570,21 @@ int DeviceScreenWrapper::temporalWeightMode() const
     else if (_software)
         return _software->temporalWeightMode();
     return 0;
+}
+
+void DeviceScreenWrapper::setTemporalDecay(float decay)
+{
+    if (_useGPU && _gpuWindow)
+        _gpuWindow->setTemporalDecay(decay);
+    else if (_software)
+        _software->setTemporalDecay(decay);
+}
+
+float DeviceScreenWrapper::temporalDecay() const
+{
+    if (_useGPU && _gpuWindow)
+        return _gpuWindow->temporalDecay();
+    else if (_software)
+        return _software->temporalDecay();
+    return 0.5f;
 }

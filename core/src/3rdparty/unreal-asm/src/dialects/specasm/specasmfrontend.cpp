@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 
+#include "dialects/common/characters.h"
 #include "dialects/common/textexpr.h"
 #include "dialects/common/textfrontend.h"
 #include "dialects/common/z80.h"
@@ -218,6 +219,7 @@ FrontendResult SpecasmFrontend::Parse(const SourceDocument& source) const
         }
         finish();
     }
+    CharactersInCodePage(result.program, source.codePage);
     return result;
 }
 }  // namespace unrealasm::dialects

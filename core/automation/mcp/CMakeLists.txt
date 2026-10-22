@@ -42,6 +42,8 @@ add_library(${PROJECT_NAME} STATIC
     src/mcp-streamdeck.h
     src/mcp-streamdeck.cpp
     src/mcp-bus.cpp
+    src/mcp-audio.h
+    src/mcp-audio.cpp
     src/target-resolver.h
     src/target-resolver.cpp
     src/webapi-client.h

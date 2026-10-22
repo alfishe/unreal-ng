@@ -58,6 +58,21 @@ def test_key_value_aspects(s):
         expect(field in r.text, f'{aspect}: {field} in the text', r.text)
 
 
+def test_monitor_aspect_has_host_and_instance_stats_in_the_text(s):
+    r = s.call('inspect_state', {'aspects': ['monitor']})
+    expect('[monitor] host CPU' in r.text and 'MB, threads' in r.text, 'the host line', r.text)
+    expect(' fps, speed ' in r.text and ' MHz' in r.text, 'the instance line', r.text)
+    monitor = r.structured.get('monitor', {})
+    expect(monitor.get('host', {}).get('rss_bytes', 0) > 0, 'host.stats rss_bytes', monitor.get('host'))
+    instances = monitor.get('instances', [])
+    expect(len(instances) == 1 and 'emulator.stats' in instances[0], 'the instance', instances)
+
+
+def test_breakpoints_aspect_carries_the_groups(s):
+    r = s.call('inspect_state', {'aspects': ['breakpoints']})
+    expect('groups' in r.structured.get('breakpoints', {}), 'groups beside the list', r.structured.get('breakpoints'))
+
+
 def test_unknown_aspect_is_an_error(s):
     r = s.call('inspect_state', {'aspects': ['no_such_aspect']}, ok=False)
     expect(r.is_error and 'no_such_aspect' in r.text, 'names the aspect', r.text)

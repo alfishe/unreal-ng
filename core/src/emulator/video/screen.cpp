@@ -1635,7 +1635,17 @@ void Screen::GetRGBAPalette16(uint32_t* colors)
 
 void Screen::SetDisplayViewport(const DisplayViewport& viewport)
 {
+    const bool changed = viewport.cropLeft != _displayViewport.cropLeft ||
+                         viewport.cropRight != _displayViewport.cropRight ||
+                         viewport.cropTop != _displayViewport.cropTop ||
+                         viewport.cropBottom != _displayViewport.cropBottom;
     _displayViewport = viewport;
+    // A front end crops its own picture: it follows a change made elsewhere (the WebAPI, a catalogue action)
+    if (changed && _context && _context->pEmulator)
+    {
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        messageCenter.Post(NC_VIDEO_VIEWPORT_CHANGED, new EmulatorFramePayload(_context->pEmulator->GetUUID(), 0));
+    }
 }
 
 const DisplayViewport& Screen::GetDisplayViewport() const

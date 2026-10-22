@@ -49,6 +49,13 @@ catalog's start field: `ovlib.asm` is type `a` with start "sm", `A315.lbl` type 
 with "xt". Its texts therefore come with any type; the detector takes a start made of two such characters as a ZAsm
 start (phase A6).
 
+Every version's editor writes two blanks or more as a run (`#06 #8x`). A file with plain double blanks and neither a
+run nor a keyword was written by another program, whatever its catalog entry: the detector leaves it to the text codec
+(2026-10-21: `isosurf.a` in isosurf.scl, type `a` with "sm", is the CR text of the ALASM source `isosurf.H` on the same
+disk). An image project takes such a text as the text copy of a source of the disk when nine of ten of its code lines
+(comments and blanks aside) are that source's and it reads in that dialect without a warning, whatever its name
+(`lorenz1k.a` next to `LORENZ1K`, `megalz d.a` next to `DEC40`); other text files stay documents.
+
 2.6 and 3.2x and later write an optional first line `;*a,b,c,…` (the editor state); it is an ordinary line.
 
 ### 3.1 The settings file (type `s`)

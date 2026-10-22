@@ -4,8 +4,12 @@
 #include <memory>
 
 #include "base/featuremanager.h"
+#include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/actions/actionregistry.h"
+#include "emulator/actions/pictureactions.h"
+#include "emulator/actions/steppingactions.h"
+#include "emulator/actions/machinereadouts.h"
 #include "emulator/config.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
@@ -14,6 +18,8 @@
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/tape/tape.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/sound/audiomixer.h"
+#include "emulator/monitoring/monitoringapi.h"
 #include "emulator/sound/soundmanager.h"
 
 namespace actions
@@ -38,6 +44,7 @@ StateNode RunState(Emulator& emulator)
                                              ? context->pCore->GetHostSpeedMultiplier()
                                              : 1);
     node["turbo"] = emulator.IsTurboMode();
+    node["pace"] = PaceReadout(emulator.GetId());  // the paced run (D1)
     return node;
 }
 
@@ -103,6 +110,7 @@ StateNode MediaDisk(Emulator& emulator)
         drive["loaded"] = slot->present;
         drive["name"] = slot->present ? BaseName(slot->source) : std::string();
         drive["protect"] = slot->writeProtect;
+        drive["dirty"] = slot->dirty;  // unsaved changes (the frame's snapshot while running)
         FDD* fdd = context->coreState.diskDrives[i];
         drive["busy"] = fdd != nullptr && fdd->getMotor();
         drives.push(std::move(drive));
@@ -127,6 +135,7 @@ StateNode DebugMode(Emulator& emulator)
     return node;
 }
 
+/// debug.breakpoints (debug tools): the user's breakpoints, how many are on, the last one that fired
 StateNode TtdPosition(Emulator& emulator)
 {
     EmulatorContext* context = emulator.GetContext();
@@ -140,6 +149,9 @@ StateNode TtdPosition(Emulator& emulator)
     ttd::TTDReply reply = ttd::TTDControl(context).Execute({"position", {}});
     StateNode node = std::move(reply.body);
     node["available"] = reply.Ok();
+    // The unit a dial scrubs in (ttd.scrub_unit, D3.2): the strip shows it
+    node["unit"] = ScrubUnitOf(emulator.GetId());
+    node["unit_count"] = ScrubCountOf(emulator.GetId());
     return node;
 }
 
@@ -173,8 +185,21 @@ bool ToggleOf(const std::string& name, std::string& id, StateNode& params)
 
 const std::vector<std::string>& BaseReadoutNames()
 {
-    static const std::vector<std::string> names = {"ttd.position", "run.state",  "machine",   "media.tape",
-                                                   "media.disk",   "audio.mute", "debug.mode"};
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> all = {"ttd.position", "run.state",  "machine",   "media.tape",
+                                        "media.disk",   "audio.mute", "debug.mode", "audio.mixer"};
+        // Monitoring (monitoring::ReadProcess / ReadInstance; the WebSocket topics of the same names)
+        for (const std::string& name : monitoring::ProcessNames())
+            all.push_back(name);
+        for (const std::string& name : monitoring::InstanceNames())
+            all.push_back(name);
+        for (const std::string& picture : PictureReadoutNames())
+            all.push_back(picture);
+        // The machine area's (machinereadouts.h)
+        for (const std::string& name : MachineReadoutNames())
+            all.push_back(name);
+        return all;
+    }();
     return names;
 }
 
@@ -222,8 +247,29 @@ StateNode ReadReadout(Emulator& emulator, const std::string& name)
         return MediaDisk(emulator);
     if (name == "audio.mute")
         return AudioMute(emulator);
+    // The mixer (audiomixer.h): every row's and channel's levels and mute / solo; one source or channel by name,
+    // audio.source.<key> (audio.source.ay1, audio.source.ay1.a), read by name only
+    if (name == "audio.mixer")
+        return AudioMixer::Levels(emulator.GetContext());
+    if (name.compare(0, 13, "audio.source.") == 0)
+    {
+        StateNode node;
+        std::string error;
+        if (!AudioMixer::Read(emulator.GetContext(), name.substr(13), node, error))
+            return {};
+        return node;
+    }
     if (name == "debug.mode")
         return DebugMode(emulator);
+    // Monitoring: the process's values (the same for every instance) and the instance's
+    if (monitoring::IsProcessName(name))
+        return monitoring::ReadProcess(name);
+    if (monitoring::IsInstanceName(name))
+        return monitoring::ReadInstance(name, emulator);
+    if (StateNode picture = ReadPictureReadout(emulator, name); picture.kind != StateNode::Kind::Null)
+        return picture;  // video.window, video.crt_params, video.viewport (pictureactions.h)
+    if (StateNode area = ReadMachineReadout(emulator, name); area.kind != StateNode::Kind::Null)
+        return area;
     std::string id;
     StateNode params;
     if (name.compare(0, 7, "toggle.") == 0 && ToggleOf(name, id, params))

@@ -11,10 +11,13 @@
 #include "emulator/actions/activityfeed.h"
 #include "emulator/actions/contextstate.h"
 #include "emulator/actions/readouts.h"
+#include "emulator/actions/targetstate.h"
+#include "emulator/actions/steppingactions.h"
 #include "emulator/companions/streamdecksupervisor.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/monitoring/monitoringapi.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 
@@ -50,7 +53,8 @@ bool RateOf(const Json::Value& message, double current, double& hz)
 
 /// What can change the instance a following surface takes, or revoke a companion
 const char* const kRefreshTriggers[] = {
-    NC_COMPANION_CHANGED, NC_EMULATOR_INSTANCE_CREATED, NC_EMULATOR_INSTANCE_DESTROYED, NC_EMULATOR_SELECTION_CHANGED,
+    NC_COMPANION_CHANGED,          NC_EMULATOR_INSTANCE_CREATED, NC_EMULATOR_INSTANCE_DESTROYED,
+    NC_EMULATOR_SELECTION_CHANGED, NC_SURFACE_TARGET,  // a view got focus or changed its active instance
 };
 /// What changes a state topic's value or an `instances` entry without a TTD frame: woken at once instead of waiting
 /// for the next tick
@@ -66,7 +70,22 @@ constexpr const char* kStreamDeck = "streamdeck.status";
 
 bool IsProcessTopic(const std::string& name)
 {
-    return name == kStreamDeck;
+    return name == kStreamDeck || monitoring::IsProcessName(name);
+}
+
+/// What changes a monitoring topic's value: a tick soon (coalesced) instead of the next one at the subscriber's rate
+const char* const kMonitorTriggers[] = {
+    NC_BREAKPOINTS_CHANGED, NC_EXECUTION_BREAKPOINT, NC_MEDIA_INSERTED,  NC_MEDIA_EJECTED,
+    NC_MEDIA_DIRTY,         NC_MEDIA_CLEAN,          NC_RECORDING_STATE, NC_LABEL_CHANGED,
+    NC_CONTROLLER_CONNECTOR_CHANGED, NC_SPEED_CHANGED,
+};
+
+std::string TopicList()
+{
+    std::string list;
+    for (const std::string& name : WsHub::TopicNames())
+        list += (list.empty() ? "" : ", ") + name;
+    return list;
 }
 
 bool IsEventTopic(const std::string& name)
@@ -244,6 +263,11 @@ void WsHub::Start()
                                         PostTask([this] { Tick(); });
                                     WakeInstances();
                                 })));
+    // Monitoring: many changes in a row (a symbol file's labels, a disk being written) wake one tick
+    for (const char* topic : kMonitorTriggers)
+        _observers.emplace_back(topic, center.AddObserver(topic, ObserverCallbackFunc([this](int, Message*) {
+                                    WakeTick();
+                                })));
     _observers.emplace_back(
         NC_ACTION_CATALOGUE,
         center.AddObserver(NC_ACTION_CATALOGUE, ObserverCallbackFunc([this](int, Message* message) {
@@ -353,7 +377,8 @@ bool WsHub::HandleMessage(const void* client, const Json::Value& message)
             if (!topics && !readouts)
                 out.Error(*connection, "ws", "bad_request",
                           op + " takes topics[] (run.state, ttd.position, surfaces.context, instances, debug.events, "
-                               "debug.asm_sync) or readouts[] (the surface topic, after join)");
+                               "debug.asm_sync, audio.mixer, host.stats, emulator.stats, ...) or readouts[] (the "
+                               "surface topic, after join)");
             if (topics)
                 op == "subscribe" ? SubscribeTopics(*connection, message, out)
                                   : UnsubscribeTopics(*connection, message, out);
@@ -459,14 +484,16 @@ void WsHub::SubscribeTopics(WsConnection& connection, const Json::Value& message
         for (const std::string& name : TopicNames())
             if (Matches(pattern, name))
             {
-                names.insert(name);
                 matched = true;
+                // A prefix from a peer without a token ("debug.*" from this host, as before the monitoring topics
+                // came) takes the event topics it may have, not an error for the state topics it may not
+                if (pattern != name && !IsEventTopic(name) && connection.token.empty() && !connection.companion)
+                    continue;
+                names.insert(name);
             }
         if (!matched)
             out.Error(connection, pattern.empty() ? std::string("ws") : pattern, "Not Found",
-                      "no topic '" + pattern +
-                          "' (run.state, ttd.position, surfaces.context, streamdeck.status, instances, debug.events, "
-                          "debug.asm_sync)");
+                      "no topic '" + pattern + "' (" + TopicList() + ")");
     }
 
     // The state topics and `instances` need the companion; the debug topics a companion or a loopback peer
@@ -558,15 +585,25 @@ void WsHub::UnsubscribeTopics(WsConnection& connection, const Json::Value& messa
 
 const std::vector<std::string>& WsHub::TopicNames()
 {
-    static const std::vector<std::string> names = {"run.state",    "ttd.position",   "surfaces.context",
-                                                   kStreamDeck,    kInstances,       "debug.events",
-                                                   "debug.asm_sync"};
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> all = StateTopicNames();
+        all.insert(all.end(), {kInstances, "debug.events", "debug.asm_sync"});
+        return all;
+    }();
     return names;
 }
 
 const std::vector<std::string>& WsHub::StateTopicNames()
 {
-    static const std::vector<std::string> names = {"run.state", "ttd.position", "surfaces.context", kStreamDeck};
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> all = {"run.state", "ttd.position", "surfaces.context", kStreamDeck, "audio.mixer"};
+        // Monitoring (monitoring::ProcessNames / InstanceNames: host.stats, emulator.stats, debug.breakpoints, ...)
+        all.insert(all.end(), monitoring::ProcessNames().begin(), monitoring::ProcessNames().end());
+        all.insert(all.end(), monitoring::InstanceNames().begin(), monitoring::InstanceNames().end());
+        // The machine area: the readouts of the same name (machinereadouts.h), read by Read below
+        all.insert(all.end(), {"media.recent", "media.rzx", "cap.record", "machine.switches", "input.connectors"});
+        return all;
+    }();
     return names;
 }
 
@@ -599,10 +636,9 @@ Json::Value WsHub::Read(const std::string& name, const std::string& instanceId, 
     Json::Value value(Json::objectValue);
     if (name == "run.state")
     {
-        value["state"] = !emulator.IsRunning() ? "stopped" : emulator.IsPaused() ? "paused" : "running";
-        value["speed"] = static_cast<int>(emulator.GetSpeedMultiplier());
-        value["turbo"] = emulator.IsTurboMode();
-        return value;
+        // One producer for the topic, the surface readout and GET /api/v1/surfaces/readouts: `speed` is the host
+        // setting (1..16), the composed clock (host x the machine's own turbo) is `emulator.stats` cpu.multiplier
+        return StateNodeToJson(actions::ReadReadout(emulator, name));
     }
     if (name == "ttd.position")
     {
@@ -618,8 +654,20 @@ Json::Value WsHub::Read(const std::string& name, const std::string& instanceId, 
         value["history"] = cursor.history;
         value["paused"] = hooks != nullptr ? cursor.paused : emulator.IsPaused();
         value["fps"] = ttd::TTDFrameRate(context);
+        value["unit"] = actions::ScrubUnitOf(instanceId);  // the scrub unit (ttd.scrub_unit, D3.2)
+        value["unit_count"] = static_cast<Json::Int64>(actions::ScrubCountOf(instanceId));
         return value;
     }
+    if (name == "audio.mixer")
+    {
+        // The mixer's levels and mute / solo of every row and channel (the readout of the same name): latest value,
+        // sent when it changed, at the subscriber's max_hz
+        return StateNodeToJson(actions::ReadReadout(emulator, name));
+    }
+    if (monitoring::IsInstanceName(name))
+        return StateNodeToJson(monitoring::ReadInstance(name, emulator));
+    if (monitoring::IsProcessName(name))
+        return StateNodeToJson(monitoring::ReadProcess(name));  // a surface readout of the process's value
     if (name == "surfaces.context")
     {
         const actions::ContextInfo info = actions::ContextState::Instance().Get(instanceId, &emulator);
@@ -629,17 +677,15 @@ Json::Value WsHub::Read(const std::string& name, const std::string& instanceId, 
         value["default"] = info.fallback;
         return value;
     }
-    return Json::Value();
+    // The other state topics are readouts of the same name (published state only)
+    return StateNodeToJson(actions::ReadReadout(emulator, name));
 }
 
 std::string WsHub::FollowedInstance()
 {
-    EmulatorManager* manager = EmulatorManager::GetInstance();
-    const std::string selected = manager->GetSelectedEmulatorId();
-    if (!selected.empty() && manager->GetEmulator(selected))
-        return selected;
-    const std::vector<std::string> ids = manager->GetEmulatorIds();
-    return ids.size() == 1 ? ids.front() : std::string();
+    // The one rule of every surface (targeting.md §3): the active instance of the front view, else the selected
+    // instance, else the sole one - the instance `instances.followed` and GET /api/v1/surfaces/target name
+    return actions::TargetState::Instance().Followed();
 }
 
 /// endregion </Topics>
@@ -746,7 +792,9 @@ void WsHub::DeliverValues(const std::vector<WsConnection*>& topicDue, const std:
                     read(id, name);
         for (const std::string& name : topicNames)
             if (IsProcessTopic(name))
-                processValues[name] = Compact(StateNodeToJson(companion::streamdeck::Supervisor::Instance().Summary()));
+                processValues[name] =
+                    Compact(StateNodeToJson(name == kStreamDeck ? companion::streamdeck::Supervisor::Instance().Summary()
+                                                                : monitoring::ReadProcess(name)));
     }
     for (const auto& [connection, session] : surfaceDue)
         if (!session->instance.empty())
@@ -952,6 +1000,16 @@ void WsHub::RefreshInstances()
         }
     }
     out.Flush();
+}
+
+void WsHub::WakeTick()
+{
+    if (!_subscribed.load(std::memory_order_relaxed) || _tickPending.exchange(true))
+        return;
+    PostTask([this] {
+        _tickPending.store(false);
+        Tick();
+    });
 }
 
 void WsHub::WakeInstances()

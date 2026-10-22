@@ -2,6 +2,7 @@
 
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/execution/companionregistry.h"
+#include "emulator/execution/runpacer.h"
 #include "emulator/execution/scriptsession.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memoryread.h"
@@ -13,6 +14,7 @@
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
 #include <algorithm>
+#include <optional>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <emulator/emulator.h>
@@ -22,6 +24,7 @@
 #include <emulator/actions/contextstate.h>
 #include <emulator/actions/surfacesapi.h>
 #include <emulator/companions/streamdeckapi.h>
+#include <emulator/monitoring/monitoringapi.h>
 #include <emulator/execution/automationgate.h>
 #ifdef ENABLE_CONTROLLERS
 #include "hostinputcontrol.h"
@@ -54,6 +57,8 @@
 #include <debugger/debugmanager.h>
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/breakpoints/breakpointselection.h>
+#include "debugger/tracecontrol/tracecontrol.h"
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
 #include "debugger/asm/asmcontrol.h"
@@ -82,6 +87,11 @@
 #include <emulator/video/framebufferexport.h>
 #include <emulator/ports/models/sprinter/sprinterbios.h>
 #include <emulator/video/screendigest.h>
+#include <emulator/capture/recordingcontrol.h>
+#include <emulator/media/recentfiles.h>
+#include <filesystem>
+#include <map>
+#include <system_error>
 #ifdef ENABLE_RECORDING
 #include "recordingmanager.h"
 #include "recordingrequest.h"
@@ -103,6 +113,7 @@
 #include <debugger/ttd/ttdexternalevents.h>
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
+#include "emulator/video/viewportcontrol.h"
 #include "../../../windowdisplay.h"
 #include "../../../operationsstatus.h"
 #include <emulator/io/rtc/rtcaccess.h>
@@ -265,6 +276,24 @@ inline std::string PyText(const pybind11::object& value)
 }
 
 /// A bus analyzer report; an unknown bus (available: false) raises ValueError with the ids the machine has
+/// A RunPacer reply: the body (with the pace); a refusal raises RuntimeError with its message
+inline pybind11::object PaceReplyPy(const execution::RunReply& reply)
+{
+    if (!reply.Ok())
+        throw std::runtime_error(reply.error + ": " + reply.message);
+    return StateNodeToPy(reply.body);
+}
+
+/// The instance's pacer (made on first use)
+inline std::shared_ptr<execution::RunPacer> PacerOfPy(Emulator& self)
+{
+    const std::shared_ptr<execution::RunPacer> pacer =
+        execution::RunPacer::For(EmulatorManager::GetInstance()->GetEmulator(self.GetId()));
+    if (!pacer)
+        throw std::runtime_error("no emulator");
+    return pacer;
+}
+
 inline pybind11::object BusReplyToPy(const StateNode& node)
 {
     const StateNode* available = node.find("available");
@@ -514,6 +543,19 @@ inline pybind11::object StreamDeckPy(const std::string& verb, const pybind11::kw
     for (const auto& item : options)
         args[pybind11::str(item.first).cast<std::string>()] = PyToStateNode(item.second);
     return StateNodeToPy(companion::streamdeck::Call(verb, args).body);
+}
+
+/// A monitoring verb (monitoring::Call: all, host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots,
+/// recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state) with its args as keywords (instance=
+/// an id or an index; default this emulator for an instance's name); the reply every plane returns
+inline pybind11::object MonitorPy(Emulator& self, const std::string& verb, const pybind11::kwargs& options)
+{
+    StateNode args = StateNode::Object();
+    for (const auto& item : options)
+        args[pybind11::str(item.first).cast<std::string>()] = PyToStateNode(item.second);
+    if (args.find("instance") == nullptr && verb != "all")
+        args["instance"] = self.GetId();
+    return StateNodeToPy(monitoring::Call(verb, args).body);
 }
 
 inline pybind11::object ActionPy(Emulator& self, const std::string& id, const pybind11::object& raw,
@@ -1218,6 +1260,23 @@ namespace PythonBindings
         }, "Which snapshot formats this machine can be saved in right now (reason and what would work for each it cannot)",
            py::arg("emulator_id") = "");
 
+        // The files opened lately (RecentFiles; open one: emu.action("media.open_recent", index=0, kind="tape"))
+        m.def("recent_files", [](const std::string& kind) -> py::object {
+            if (kind != "all" && !kind.empty() && !RecentFiles::IsKind(kind))
+                throw std::invalid_argument("kind '" + kind + "': all, snapshot, tape, disk, rzx, image or cd");
+            return StateNodeToPy(RecentFiles::Instance().ToValue(kind));
+        }, "The files opened lately, newest first ({kinds: {...}, all: [...]} or, with a kind, {kind, files})",
+           py::arg("kind") = "all");
+        m.def("recent_clear", [](const std::string& kind) {
+            if (kind != "all" && !kind.empty() && !RecentFiles::IsKind(kind))
+                throw std::invalid_argument("kind '" + kind + "': all, snapshot, tape, disk, rzx, image or cd");
+            RecentFiles::Instance().Clear(kind);
+        }, "Forget the recent files (one kind, or all)", py::arg("kind") = "all");
+        // The core's recording presets (video_record("start", {"preset": "gameplay"}))
+        m.def("recording_presets", []() -> py::object {
+            return StateNodeToPy(capture::RecordingPresetsValue());
+        }, "The recording presets: id, title, mode, format, container, audio, bitrates, fps, scale");
+
         // RZX input recordings, by emulator id (default: the selected one). A
         // model switch replaces the machine: the answer's emulator_id is the new one
         m.def("rzx_play", [](const std::string& path, const std::string& emulatorId, const std::string& desyncMode,
@@ -1921,6 +1980,12 @@ namespace PythonBindings
                  "A Stream Deck daemon verb (status, start, stop, restart, settings, pairing, pair, pair_cancel, "
                  "revoke, brightness, udev) with its args as keywords: streamdeck('settings', mode='always'); "
                  "{ok, ...} as WebAPI /api/v1/streamdeck")
+            .def("monitor", [](Emulator& self, const std::string& verb, const py::kwargs& options) {
+                     return MonitorPy(self, verb, options);
+                 }, py::arg("verb") = "all",
+                 "Monitoring (all, host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots, "
+                 "recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state): "
+                 "monitor('emulator.stats') -> {ok, instance, fps, speed_percent, ...} as WebAPI /api/v1/monitor")
             .def("surfaces", [](Emulator&, const std::string& verb, const py::kwargs& options) {
                      return SurfacesPy(verb, options);
                  }, py::arg("verb") = "views",
@@ -2032,7 +2097,7 @@ namespace PythonBindings
                     throw std::runtime_error(refusal);  // TTD is recording: RuntimeError with the reason
                 return self.CreateBlankDisk(static_cast<uint8_t>(drive), parsed, static_cast<uint8_t>(cylinders),
                                             static_cast<uint8_t>(sides));
-            }, "Create blank disk (format: auto = plus3 on a +3, unformatted elsewhere; 0 = the format's geometry)",
+            }, "Create blank disk (format: auto = plus3 on a +3, unformatted elsewhere; unformatted / raw, plus3, trdos (formatted, empty catalogue); 0 = the format's geometry)",
                py::arg("drive"), py::arg("cylinders") = 0, py::arg("sides") = 0, py::arg("format") = "auto")
             .def("disk_load", [](Emulator& self, const std::string& path, int drive, bool autostart) -> py::dict {
                 py::dict result;
@@ -2133,6 +2198,53 @@ namespace PythonBindings
                 execution::script::Check(self, execution::Origin::Python);
                 self.RunUntilInterrupt(skipBreakpoints);
             }, "Run until next interrupt", py::arg("skip_breakpoints") = true)
+
+            // The paced run (core execution::RunPacer; the same pacer as WebAPI /run_pace, the actions run.pace_* and
+            // the Qt speed control). A refusal raises RuntimeError with its message
+            .def("pace", [](Emulator& self) -> py::object {
+                const auto pacer = execution::RunPacer::Find(self.GetId());
+                return StateNodeToPy(pacer ? pacer->StateBody(true) : execution::RunPacer::DefaultStateBody(true));
+            }, "The paced run: {preset, label, unit, count, interval_ms, effective_ms, running, ticks, stop_reason, presets}")
+            .def("pace_set", [](Emulator& self, const std::string& preset, py::object interval) -> py::object {
+                size_t index = 0;
+                if (!execution::RunPacer::PresetIndex(preset, index))
+                    throw std::invalid_argument("preset: full, 25fps, 5fps, 1fps, frame, 100lines, 10lines, 1line or 1op");
+                execution::script::Check(self, execution::Origin::Python);
+                std::optional<int> ms;
+                if (!interval.is_none())
+                    ms = interval.cast<int>();
+                return PaceReplyPy(PacerOfPy(self)->Set(execution::script::RequesterOf(self, execution::Origin::Python),
+                                                        index, ms));
+            }, "Choose the pace (full, 25fps, 5fps, 1fps, frame, 100lines, 10lines, 1line, 1op) and the interval (ms)",
+               py::arg("preset"), py::arg("interval_ms") = py::none())
+            .def("pace_interval", [](Emulator& self, int intervalMs) -> py::object {
+                execution::script::Check(self, execution::Origin::Python);
+                return PaceReplyPy(PacerOfPy(self)->Set(execution::script::RequesterOf(self, execution::Origin::Python),
+                                                        std::nullopt, intervalMs));
+            }, "The interval of the presets frame .. 1op, 1..5000 ms", py::arg("interval_ms"))
+            .def("pace_next", [](Emulator& self) -> py::object {
+                execution::script::Check(self, execution::Origin::Python);
+                return PaceReplyPy(PacerOfPy(self)->Shift(execution::script::RequesterOf(self, execution::Origin::Python), 1));
+            }, "A finer pace (one preset down the ladder)")
+            .def("pace_prev", [](Emulator& self) -> py::object {
+                execution::script::Check(self, execution::Origin::Python);
+                return PaceReplyPy(PacerOfPy(self)->Shift(execution::script::RequesterOf(self, execution::Origin::Python), -1));
+            }, "A coarser pace (one preset up the ladder)")
+            .def("pace_start", [](Emulator& self) -> py::object {
+                execution::script::Check(self, execution::Origin::Python);
+                return PaceReplyPy(PacerOfPy(self)->Start(execution::script::RequesterOf(self, execution::Origin::Python)));
+            }, "Run at the pace (it steps on its own and stops at a breakpoint)")
+            .def("pace_stop", [](Emulator& self) -> py::object {
+                return PaceReplyPy(PacerOfPy(self)->Stop());
+            }, "Stop the paced run; the machine stays paused")
+            .def("pace_toggle", [](Emulator& self) -> py::object {
+                execution::script::Check(self, execution::Origin::Python);
+                return PaceReplyPy(PacerOfPy(self)->Toggle(execution::script::RequesterOf(self, execution::Origin::Python)));
+            }, "Run at the pace or stop it; at full speed pause or continue")
+            .def("pace_step", [](Emulator& self) -> py::object {
+                execution::script::Check(self, execution::Origin::Python);
+                return PaceReplyPy(PacerOfPy(self)->Step(execution::script::RequesterOf(self, execution::Origin::Python)));
+            }, "One step at the pace")
 
             // Tape operations
             .def("tape_load", [](Emulator& self, const std::string& path) -> bool {
@@ -2540,6 +2652,54 @@ namespace PythonBindings
                 return bpm ? bpm->SetBreakpointGroup(id, group) : false;
             }, "Move a breakpoint into a group (created on use); False for an unknown id or an empty name",
                py::arg("id"), py::arg("group"))
+            .def("bp_select", [](Emulator& self, const std::string& select, const std::string& op) -> py::object {
+                StateNode out = StateNode::Object();
+                std::string error;
+                BreakpointManager* bpm = self.GetBreakpointManager();
+                if (bpm && BreakpointSelection::Run(*bpm, select, op, out, error))
+                    return StateNodeToPy(out);
+                out["ok"] = false;
+                out["error"] = bpm ? error : std::string("no breakpoint manager");
+                return StateNodeToPy(out);
+            }, "Breakpoints by selection (all, an id, a kind: exec, read, write, mem, port, in, out, nextreg, beam, copper, "
+               "magic, keyboard; group:<name>): op enable | disable | toggle | remove. {select, selected, changed, active}; "
+               "a refusal: ok = False, error", py::arg("select"), py::arg("op"))
+            .def("bp_key", [](Emulator& self, const std::string& key, const std::string& on, const std::string& hits,
+                              const std::string& group, const std::string& note) -> int {
+                BreakpointManager* bpm = self.GetBreakpointManager();
+                if (!bpm)
+                    throw std::runtime_error("no breakpoint manager");
+                BreakpointSpec spec;
+                std::string error;
+                if (!BreakpointManager::ParseKeyboardInto(key, on, spec, error) ||
+                    !BreakpointManager::ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error))
+                    throw py::value_error(error);
+                spec.group = group;
+                spec.note = note;
+                const uint16_t id = bpm->AddBreakpoint(spec, error);
+                if (id == BRK_INVALID)
+                    throw py::value_error(error);
+                return id;
+            }, "Keyboard breakpoint: stops on the first keyboard read that sees the key ('any': any key) go down "
+               "(on='press'), up ('release') or both. Returns the id",
+               py::arg("key") = "any", py::arg("on") = "press", py::arg("hits") = "", py::arg("group") = "",
+               py::arg("note") = "")
+            .def("trace", [](Emulator& self, const std::string& name, const std::string& op, const py::kwargs& kwargs) -> py::object {
+                tracecontrol::Options options;
+                for (const auto& [key, value] : kwargs)
+                    options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+                const tracecontrol::Reply reply = tracecontrol::Execute(self, name, op, options);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                {
+                    value["ok"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "Profilers, traces, captures (tracecontrol): name opcode | memory | calltrace | coverage | porttrace | "
+               "gsporttrace | pchist | aylog | audio | all; op start | stop | toggle | pause | resume | pause_toggle | "
+               "clear | status; keyword options keep, capacity, seconds, source, on. {name, state, can_pause, ...}",
+               py::arg("name"), py::arg("op") = "status")
             .def("bp_reset_hits", [](Emulator& self, int id) -> bool {
                 BreakpointManager* bpm = self.GetBreakpointManager();
                 if (!bpm)
@@ -2556,6 +2716,12 @@ namespace PythonBindings
                 BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
                 return bpm ? bpm->GetBreakpointsCount() : 0;
             }, "Get breakpoint count")
+            .def("bp_groups", [](Emulator& self) {
+                StateNode args = StateNode::Object();
+                args["instance"] = self.GetId();
+                return StateNodeToPy(monitoring::Call("breakpoint_groups", args).body);
+            }, "The breakpoint groups: {ok, instance, groups: [{name, total, active, ids}]} as WebAPI "
+               "GET /api/v1/emulator/{id}/breakpoints/groups")
             .def("bp_list", [](Emulator& self) -> std::string {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return "";
@@ -4275,7 +4441,8 @@ namespace PythonBindings
                 OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
                 if (!profiler) return false;
                 FeatureManager* fm = self.GetFeatureManager();
-                if (fm) fm->setFeature("opcode_profiler", true);
+                if (fm) fm->setFeature(Features::kOpcodeProfiler, true);
+                z80->UpdateFeatureCache();  // the feature reaches the CPU's hot path (as POST /profiler/opcode/start)
                 profiler->Start();
                 return true;
             }, "Start opcode profiler session (enables feature, clears data)")
@@ -4307,7 +4474,7 @@ namespace PythonBindings
                 if (!profiler) return result;
                 FeatureManager* fm = self.GetFeatureManager();
                 auto status = profiler->GetStatus();
-                result["feature_enabled"] = fm ? fm->isEnabled("opcode_profiler") : false;
+                result["feature_enabled"] = fm ? fm->isEnabled(Features::kOpcodeProfiler) : false;
                 result["capturing"] = status.capturing;
                 result["total_executions"] = status.totalExecutions;
                 result["trace_size"] = status.traceSize;
@@ -4514,7 +4681,7 @@ namespace PythonBindings
                     fm->setFeature("debugmode", true);
                     fm->setFeature("memorytracking", true);
                     fm->setFeature("calltrace", true);
-                    fm->setFeature("opcode_profiler", true);
+                    fm->setFeature(Features::kOpcodeProfiler, true);
                 }
                 
                 // Start memory and calltrace profilers
@@ -4657,7 +4824,7 @@ namespace PythonBindings
                         if (profiler) {
                             FeatureManager* fm = self.GetFeatureManager();
                             auto status = profiler->GetStatus();
-                            opStatus["feature_enabled"] = fm ? fm->isEnabled("opcode_profiler") : false;
+                            opStatus["feature_enabled"] = fm ? fm->isEnabled(Features::kOpcodeProfiler) : false;
                             opStatus["capturing"] = status.capturing;
                             opStatus["total_executions"] = status.totalExecutions;
                             switch (profiler->GetSessionState()) {
@@ -4951,6 +5118,12 @@ namespace PythonBindings
                 return reply.Ok() && reply.body.find("write_journal_setting")->b;
             }, "Whether the write journal is recorded (off by default)")
 
+            .def("ttd_cancel_journal_build", [](Emulator& self) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "journal-build-cancel", {});
+                if (!reply.Ok())
+                    throw std::runtime_error(reply.message);
+                return StateNodeToPy(reply.body);
+            }, "Stop a write-journal build that runs (from another thread): {cancelled}")
             .def("ttd_build_journal", [](Emulator& self, py::object fromObj, py::object toObj) -> py::object {
                 std::map<std::string, std::string> options;
                 if (!fromObj.is_none())
@@ -5198,6 +5371,12 @@ namespace PythonBindings
                 return reply.Ok() && reply.body.find("reached")->b;
             }, "Step back N t-states (lands at nearest M1 <= target)",
                py::arg("tstates"))
+
+            .def("ttd_reverse_step_scanlines", [](Emulator& self, uint64_t scanlines) -> bool {
+                const ttd::TTDReply reply = TtdRunPy(self, "reverse-step", {{"scanlines", std::to_string(scanlines)}});
+                return reply.Ok() && reply.body.find("reached")->b;
+            }, "Step back N scanlines of the machine (lands at nearest M1 <= target)",
+               py::arg("scanlines") = 1)
 
             .def("ttd_reverse_continue", [](Emulator& self, const std::vector<uint16_t>& pcs) -> py::object {
                 std::string list;
@@ -5767,7 +5946,9 @@ namespace PythonBindings
             }
             return StateNodeToPy(r.Ok() ? WindowDisplay::Report(r.settings) : WindowDisplay::ErrorNode(r));
         }, "The GUI window's display settings: backend, gpu_available, gpu, crt, crt_profile, crt_profiles, blending, "
-           "blending_frames, blending_weights, emulator; {ok: False, error, kind: 'no-window'} headless")
+           "blending_frames, blending_weights, blending_decay, emulator, fullscreen, scale, toolbar, status_bar, hud, "
+           "hud_theme, hud_themes, hud_notices, osd_keyboard, osd_keyboard_picture, osd_keyboard_pictures, next_layers, "
+           "next_layers_mode, next_layers_shown; {ok: False, error, kind: 'no-window'} headless")
         .def("window_display_set", [](Emulator&, const py::kwargs& changes) -> py::object {
             WindowDisplayChange change;
             for (const auto& item : changes)
@@ -5775,14 +5956,33 @@ namespace PythonBindings
                 const std::string key = py::str(item.first);
                 const py::handle value = item.second;
                 std::string word;
-                if (py::isinstance<py::bool_>(value))
-                    word = value.cast<bool>() ? "on" : "off";
-                else if (py::isinstance<py::int_>(value) || py::isinstance<py::str>(value))
-                    word = py::str(value);
                 WindowDisplay::Result bad;
                 bad.status = WindowDisplay::Status::BadParameter;
+                // hud_notices={'ram-page': False}, next_layers_shown={'sprites': False}: one key each
+                const char* prefix = key == "hud_notices" ? WindowDisplay::kHudNoticePrefix
+                                     : key == "next_layers_shown" ? WindowDisplay::kNextLayerPrefix
+                                                                  : nullptr;
+                if (prefix != nullptr && py::isinstance<py::dict>(value))
+                {
+                    for (const auto& entry : value.cast<py::dict>())
+                    {
+                        const std::string onOff = py::isinstance<py::bool_>(entry.second)
+                                                      ? (entry.second.cast<bool>() ? "on" : "off")
+                                                      : std::string("?");
+                        if (!WindowDisplay::ApplyWord(change, prefix + std::string(py::str(entry.first)), onOff,
+                                                      bad.error))
+                            return StateNodeToPy(WindowDisplay::ErrorNode(bad));
+                    }
+                    continue;
+                }
+                if (py::isinstance<py::bool_>(value))
+                    word = value.cast<bool>() ? "on" : "off";
+                else if (py::isinstance<py::float_>(value))
+                    word = WindowDisplay::NumberWord(value.cast<double>());
+                else if (py::isinstance<py::int_>(value) || py::isinstance<py::str>(value))
+                    word = py::str(value);
                 if (word.empty())
-                    bad.error = "'" + key + "' takes a bool, an int or a str";
+                    bad.error = "'" + key + "' takes a bool, a number or a str";
                 if (!bad.error.empty() || !WindowDisplay::ApplyWord(change, key, word, bad.error))
                     return StateNodeToPy(WindowDisplay::ErrorNode(bad));
             }
@@ -5792,9 +5992,73 @@ namespace PythonBindings
                 r = WindowDisplay::Set(change);
             }
             return StateNodeToPy(r.Ok() ? WindowDisplay::Report(r.settings) : WindowDisplay::ErrorNode(r));
-        }, "Change the GUI window's display settings, the way the View menu does: any of gpu=, crt=, blending= "
-           "(bool), crt_profile= (one of crt_profiles: none, basic, ...), blending_frames= (2..5), "
-           "blending_weights= ('equal', 'exponential'); returns the settings after the change, or {ok: False, error, kind}")
+        }, "Change the GUI window's display settings, the way the View menu does: any of gpu=, crt=, blending=, "
+           "fullscreen=, toolbar=, status_bar=, hud=, osd_keyboard=, next_layers= (bool), crt_profile= (one of "
+           "crt_profiles: none, basic, ...), blending_frames= (2..5), blending_weights= ('equal', 'exponential'), "
+           "blending_decay= (0.1..0.9), scale= (1..4), hud_theme= (one of hud_themes), hud_notices= ({id: bool}), "
+           "osd_keyboard_picture= (one of osd_keyboard_pictures), next_layers_mode= ('layers', 'composed', 'winner'), "
+           "next_layers_shown= ({'ula'|'layer2'|'tilemap'|'sprites': bool}); returns the settings after the change, "
+           "or {ok: False, error, kind}")
+        .def("window_crt_params", [](Emulator&) -> py::object {
+            WindowDisplay::ParametersResult r;
+            {
+                py::gil_scoped_release release;
+                r = WindowDisplay::GetCrtParameters();
+            }
+            return StateNodeToPy(r.Ok() ? WindowDisplay::CrtParametersReport(r.parameters) : WindowDisplay::ErrorNode(r));
+        }, "The active CRT profile's parameters: {profile, kind (preset | profile | none), parameters: [{name, "
+           "description, value, initial, minimum, maximum, step}]}; {ok: False, error, kind} headless")
+        .def("window_crt_params_set", [](Emulator&, const py::dict& values, const py::dict& steps,
+                                          const py::object& reset) -> py::object {
+            CrtParameterChange change;
+            WindowDisplay::ParametersResult bad;
+            bad.status = WindowDisplay::Status::BadParameter;
+            auto numbers = [&](const py::dict& dict, std::vector<std::pair<std::string, double>>& out) {
+                for (const auto& entry : dict)
+                {
+                    if (!py::isinstance<py::float_>(entry.second) && !py::isinstance<py::int_>(entry.second))
+                    {
+                        bad.error = "A parameter takes a number: {name: value}";
+                        return false;
+                    }
+                    out.emplace_back(std::string(py::str(entry.first)), entry.second.cast<double>());
+                }
+                return true;
+            };
+            if (!numbers(values, change.values) || !numbers(steps, change.steps))
+                return StateNodeToPy(WindowDisplay::ErrorNode(bad));
+            if (py::isinstance<py::bool_>(reset))
+                change.resetAll = reset.cast<bool>();
+            else if (py::isinstance<py::str>(reset))
+                change.reset.push_back(reset.cast<std::string>());
+            else if (py::isinstance<py::list>(reset))
+                for (const py::handle name : reset.cast<py::list>())
+                    change.reset.push_back(std::string(py::str(name)));
+            WindowDisplay::ParametersResult r;
+            {
+                py::gil_scoped_release release;
+                r = WindowDisplay::SetCrtParameters(change);
+            }
+            return StateNodeToPy(r.Ok() ? WindowDisplay::CrtParametersReport(r.parameters) : WindowDisplay::ErrorNode(r));
+        }, "Change the active CRT profile's parameters: values={name: value}, steps={name: steps} (a dial's), "
+           "reset=True | name | [names]; returns the parameters after it, or {ok: False, error, kind}",
+           py::arg("values") = py::dict(), py::arg("steps") = py::dict(), py::arg("reset") = py::none())
+        .def("video_viewport", [](Emulator& self) -> py::object {
+            return StateNodeToPy(VideoViewport::Report(self));
+        }, "The overscan frame and its viewport: {overscan, overscan_available, viewport, viewports, framebuffer, "
+           "display, video_mode}")
+        .def("video_viewport_set", [](Emulator& self, const std::string& name) -> py::object {
+            const VideoViewport::Result r = VideoViewport::SetViewport(self, name);
+            if (!r.Ok())
+            {
+                StateNode error = StateNode::Object();
+                error["ok"] = false;
+                error["error"] = r.error;
+                return StateNodeToPy(error);
+            }
+            return StateNodeToPy(VideoViewport::Report(self));
+        }, "Crop the overscan frame: 'full', 'symmetric', 'standard', 'screen_only', 'next' or 'prev' (overscan on: "
+           "feature 'overscan'); returns the viewport report, or {ok: False, error}", py::arg("name"))
 
         .def("frame_cost", [](Emulator& self) -> py::dict {
             py::dict d;
@@ -5991,7 +6255,17 @@ namespace PythonBindings
                 throw py::value_error(error);
             return StateNodeToPy(DeviceState::AudioMixer(self.GetContext()));
         }, py::arg("source"), py::arg("muted") = py::none(), py::arg("solo") = py::none(), py::arg("volume") = py::none(),
-           py::arg("gain_db") = py::none(), "Set one mixer device (source key from audio_mixer(), or 'master' for muted): returns the mixer")
+           py::arg("gain_db") = py::none(), "Set one mixer device (source key from audio_mixer(), or 'master' for muted) or channel ('ay1.a', 'gs.3'): returns the mixer")
+        .def("audio_mixer_get", [](Emulator& self, const std::string& source) -> py::object {
+            StateNode node;
+            std::string error;
+            if (!AudioMixer::Read(self.GetContext(), source, node, error))
+                throw py::value_error(error);
+            return StateNodeToPy(node);
+        }, py::arg("source"), "One mixer row ('ay1') or channel ('ay1.a'): muted, solo, audible, volume, gain_db, peak, active, channels")
+        .def("audio_levels", [](Emulator& self) -> py::object {
+            return StateNodeToPy(AudioMixer::Levels(self.GetContext()));
+        }, "Every mixer row's and channel's levels and mute / solo (the WebSocket topic audio.mixer)")
         .def("audio_capture_start", [](Emulator& self, double seconds, const std::string& sourceKey) -> py::dict {
             py::dict d;
             auto* context = self.GetContext();
@@ -6182,225 +6456,38 @@ namespace PythonBindings
            py::arg("path") = py::none())
 
         .def("video_record", [](Emulator& self, const std::string& action, py::object optsValue) -> py::dict {
-#ifdef ENABLE_RECORDING
-            py::dict d;
-            auto* context = self.GetContext();
-            RecordingManager* rm = context ? context->pRecordingManager : nullptr;
-            if (!rm) { d["error"] = "recording manager not available"; return d; }
-
-            if (action == "start")
+            // capture::RecordingControl: the presets, modes and option rules every plane shares
+            std::map<std::string, std::string> options;
+            if (py::isinstance<py::dict>(optsValue))
             {
-                if (rm->IsRecording() || rm->IsPaused())
+                for (auto item : optsValue.cast<py::dict>())
                 {
-                    d["error"] = "a recording is already active — stop it first";
-                    return d;
-                }
-
-                std::string format = "gif";
-                std::string filename;
-                float fps = 50.0f;
-                int scale = 1;
-                std::string region = "full";
-                std::string profileName;
-                std::string accelerationName;
-                std::string audio;
-                long videoBitrate = 0;
-                long audioBitrate = 0;
-                if (py::isinstance<py::dict>(optsValue))
-                {
-                    py::dict opts = optsValue;
-                    // Optional sound track: "aac" (or True = aac); None/False = video only
-                    if (opts.contains("audio") && !opts["audio"].is_none())
+                    const std::string name = py::str(item.first);
+                    py::handle value = item.second;
+                    if (value.is_none())
+                        continue;
+                    if (py::isinstance<py::bool_>(value))
                     {
-                        if (py::isinstance<py::bool_>(opts["audio"]))
-                            audio = opts["audio"].cast<bool>() ? "aac" : "";
-                        else if (py::isinstance<py::str>(opts["audio"]))
-                            audio = RecordingRequest::NormalizeAudioCodec(opts["audio"].cast<std::string>());
-                        else
-                        {
-                            d["error"] = "audio must be a codec name (aac, mp3, opus, vorbis, flac, pcm_s16le) or a bool";
-                            return d;
-                        }
+                        // audio=True / False: aac or none, as before; other flags as text
+                        const bool on = value.cast<bool>();
+                        options[name] = name == "audio" ? (on ? "aac" : "none") : (on ? "true" : "false");
                     }
-                    if (opts.contains("video_bitrate"))
-                        videoBitrate = opts["video_bitrate"].cast<long>();
-                    if (opts.contains("audio_bitrate"))
-                        audioBitrate = opts["audio_bitrate"].cast<long>();
-                    if (opts.contains("format") && py::isinstance<py::str>(opts["format"]))
-                        format = opts["format"].cast<std::string>();
-                    if (opts.contains("filename") && py::isinstance<py::str>(opts["filename"]))
-                        filename = opts["filename"].cast<std::string>();
-                    if (opts.contains("fps"))
-                        fps = opts["fps"].cast<float>();
-                    if (opts.contains("scale"))
-                        scale = opts["scale"].cast<int>();
-                    if (opts.contains("region") && py::isinstance<py::str>(opts["region"]))
-                        region = opts["region"].cast<std::string>();
-                    if (opts.contains("profile") && py::isinstance<py::str>(opts["profile"]))
-                        profileName = opts["profile"].cast<std::string>();
-                    if (opts.contains("acceleration") && py::isinstance<py::str>(opts["acceleration"]))
-                        accelerationName = opts["acceleration"].cast<std::string>();
+                    else
+                        options[name] = py::str(value);
                 }
-
-                std::string extension = format;
-                if (format == "h264" || format == "h265" || format == "hevc" || format == "vp9")
-                    extension = "mp4";
-                else if (format == "rawvideo")
-                    extension = "avi";
-
-                if (filename.empty())
-                {
-                    std::filesystem::path dir = std::filesystem::temp_directory_path() / "unreal-python";
-                    std::error_code ec;
-                    std::filesystem::create_directories(dir, ec);
-                    static std::atomic<unsigned> counter{0};
-                    const long long stamp =
-                        static_cast<long long>(std::time(nullptr)) * 1000 + (counter++ % 1000);
-                    filename = (dir / ("video-" + std::to_string(stamp) + "." + extension)).string();
-                }
-
-                // Same rules as the WebAPI/CLI/Lua (RecordingRequest): the codec must fit the container
-                if (videoBitrate < 0 || audioBitrate < 0 || videoBitrate > 1000000 || audioBitrate > 1000000)
-                {
-                    d["error"] = "video_bitrate / audio_bitrate must be >= 0 (kbps)";
-                    return d;
-                }
-                // Output profile (native / 1080p / 1440p / 4k) and encoder acceleration (auto / hardware / software)
-                const std::string profile = RecordingRequest::NormalizeProfile(profileName);
-                const std::string acceleration = RecordingRequest::NormalizeAcceleration(accelerationName);
-                {
-                    std::string codecError = profile.empty() ? "unknown profile (native, 1080p, 1440p, 4k)" :
-                                             acceleration.empty() ? "unknown acceleration (auto, hardware, software)" :
-                                             RecordingRequest::ValidateProfile(profile, format);
-                    if (codecError.empty())
-                        codecError = RecordingRequest::ValidateAudio(format, filename, audio);
-                    if (codecError.empty())
-                        codecError = RecordingRequest::ValidateBitrates(static_cast<uint32_t>(videoBitrate),
-                                                                        static_cast<uint32_t>(audioBitrate), audio);
-                    if (!codecError.empty())
-                    {
-                        d["error"] = codecError;
-                        return d;
-                    }
-                }
-
-                if (fps < 1.0f) fps = 1.0f;
-                if (fps > 100.0f) fps = 100.0f;
-                rm->SetVideoFrameRate(fps);
-
-                if (scale < 1) scale = 1;
-                if (scale > 4) scale = 4;
-                rm->SetScaleFactor(static_cast<uint32_t>(scale));
-
-                rm->SetOutputProfile(profile);
-                rm->SetEncoderAcceleration(EncoderAccelerationFromName(acceleration));
-
-                rm->SetCaptureRegion((region == "screen" || region == "main")
-                                         ? VideoCaptureRegion::MainScreen
-                                         : VideoCaptureRegion::FullFrame);
-
-                FeatureManager* fm = context->pFeatureManager;
-                const bool featureWasOff = fm && !fm->isEnabled(Features::kRecording);
-                if (featureWasOff) fm->setFeature(Features::kRecording, true);
-
-                bool started = false;
-                {
-                    Emulator::CpuHold hold(self, "python recording");  // no frame mid-start; the pause stays
-                    started = rm->StartRecording(filename, format, audio, static_cast<uint32_t>(videoBitrate),
-                                                 static_cast<uint32_t>(audioBitrate));
-                }
-
-                if (!started)
-                {
-                    if (featureWasOff) fm->setFeature(Features::kRecording, false);
-                    d["error"] = "recording start failed";
-                    d["message"] = rm->GetLastRecordingError();
-                    return d;
-                }
-
-                d["recording"] = true;
-                d["format"] = format;
-                d["fps"] = fps;
-                d["scale"] = scale;
-                d["profile"] = profile;
-                d["acceleration"] = acceleration;
-                if (rm->HasFixedOutput())
-                {
-                    d["output_width"] = rm->GetOutputWidth();
-                    d["output_height"] = rm->GetOutputHeight();
-                }
-                d["region"] = region;
-                d["audio"] = rm->HasAudio();
-                d["audio_codec"] = audio;
-                d["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
-                d["audio_channels"] = rm->HasAudio() ? rm->GetAudioChannels() : 0u;
-                d["feature_auto_enabled"] = featureWasOff;
-                d["output"] = filename;
-                return d;
             }
-
-            if (action == "stop")
+            std::error_code ec;
+            const std::string folder = (std::filesystem::temp_directory_path(ec) / "unreal-python").string();
+            const capture::RecordingReply reply = capture::RecordingControl(self, folder).Execute(action, options);
+            py::dict d = StateNodeToPy(reply.body).cast<py::dict>();
+            if (!reply.ok)
             {
-                if (!rm->IsRecording() && !rm->IsPaused())
-                {
-                    d["error"] = "no active recording to stop";
-                    return d;
-                }
-                rm->StopRecording();
+                d["error"] = reply.message.empty() ? reply.error : reply.message;
+                d["code"] = reply.error;
             }
-            else if (action == "pause")
-            {
-                if (!rm->IsRecording())
-                {
-                    d["error"] = "no active recording to pause";
-                    return d;
-                }
-                rm->PauseRecording();
-            }
-            else if (action == "resume")
-            {
-                if (!rm->IsPaused())
-                {
-                    d["error"] = "recording is not paused";
-                    return d;
-                }
-                rm->ResumeRecording();
-            }
-            else
-            {
-                d["error"] = "unknown action '" + action + "' (expected start|stop|pause|resume)";
-                return d;
-            }
-
-            const RecordingManager::RecordingStats stats = rm->GetStats();
-            d["recording"] = rm->IsRecording();
-            d["paused"] = rm->IsPaused();
-            d["frames_recorded"] = static_cast<uint64_t>(stats.framesRecorded);
-            d["recorded_duration"] = stats.recordedDuration;
-            d["emulated_duration"] = stats.emulatedDuration;
-            d["output_file_size"] = static_cast<uint64_t>(stats.outputFileSize);
-            d["average_frame_time_ms"] = stats.averageFrameTime;
-            d["recent_fps"] = stats.recentFps;
-            d["audio_samples_recorded"] = static_cast<uint64_t>(stats.audioSamplesRecorded);
-            d["video_codec"] = rm->GetVideoCodec();
-            d["profile"] = rm->GetOutputProfile();
-            d["acceleration"] = EncoderAccelerationName(rm->GetEncoderAcceleration());
-            d["audio"] = rm->HasAudio();
-            d["audio_codec"] = rm->HasAudio() ? rm->GetAudioCodec() : std::string();
-            d["audio_sample_rate"] = rm->HasAudio() ? rm->GetAudioSampleRate() : 0u;
-            d["audio_channels"] = rm->HasAudio() ? rm->GetAudioChannels() : 0u;
-            d["audio_duration"] = rm->HasAudio() ? rm->GetAudioDuration() : 0.0;
-            d["output"] = rm->GetOutputFilename();
             return d;
-#else
-            (void)self;
-            (void)action;
-            (void)optsValue;
-            py::dict d;
-            d["error"] = "recording support is disabled in this build (ENABLE_RECORDING=OFF)";
-            return d;
-#endif
-        }, "Video recording control (action=start|stop|pause|resume)",
+        }, "Video recording control (action=start|stop|pause|resume|toggle|status|presets; opts: preset, mode, "
+           "format, container, filename, audio, fps, scale, region, profile, acceleration, video_bitrate, audio_bitrate)",
            py::arg("action"), py::arg("opts") = py::none())
 
         .def("video_record_status", [](Emulator& self) -> py::dict {

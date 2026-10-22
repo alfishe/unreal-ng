@@ -42,6 +42,8 @@ protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
     void setupContextMenus();
     void showRegisterContextMenu(QLabel* label, uint16_t address, const QPoint& pos);
+    /// The register a value label shows ("BC", "AF'", "IR", "MEMPTR"), "" for none
+    QString registerOfLabel(const QLabel* label) const;
 
     /// region <Event handlers / Slots>
 public slots:
@@ -60,12 +62,18 @@ public slots:
     void ix_doubleClicked();
     void iy_doubleClicked();
 
+    /// Ask for a new value of the register (a name Z80::FindRegister knows) and set it on a paused machine
+    /// (Emulator::SetRegisterFromTool: a tool edit, refused in the recorded past of time travel)
+    void editRegister(const QString& name);
+
     /// endregion </Event handlers / Slots>
 
 signals:
     void changeMemoryViewZ80Address(uint16_t addr);
     void changeMemoryViewAddress(uint8_t* addr, size_t size, uint16_t offset, uint16_t curaddr);
     void jumpToAddressInDisassembly(uint16_t addr);
+    /// A register was set from here: the other panes (disassembly at a new PC, stack) follow
+    void registerEdited(const QString& name);
 
 private:
     Ui::RegistersWidget* ui;

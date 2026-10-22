@@ -43,7 +43,8 @@ constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE";       
 constexpr char const* NC_SYSTEM_RESET = "RESET";                                // System reset event
 constexpr char const* NC_EXECUTION_CPU_STEP = "CPU_STEP";                       // CPU step(s) executed; the end of a direct run carries CpuStepPayload (did a breakpoint stop it)
 constexpr char const* NC_RUN_CONTROL_CHANGED = "RUN_CONTROL_CHANGED";             // An automation session took / released control, the user took it back, its lease expired, a re-take was refused - payload: RunControlChangedPayload
-constexpr char const* NC_SURFACE_CONTEXT = "SURFACE_CONTEXT";                     // An instance's control-surface context changed (ctx.set: play, ttd, ttd.timecode, debug.*) - payload: SurfaceContextPayload
+constexpr char const* NC_RUN_PACE = "RUN_PACE";                                   // An instance's paced run changed: preset, interval, started, stopped (execution::RunPacer) - payload: RunPacePayload
+constexpr char const* NC_SURFACE_CONTEXT = "SURFACE_CONTEXT";                  // An instance's control-surface context changed (ctx.set: play, ttd, ttd.timecode, debug.*) - payload: SurfaceContextPayload
 constexpr char const* NC_ACTION_CATALOGUE = "ACTION_CATALOGUE";                   // An action was registered or dropped (the Qt client's GUI actions) - payload: ActionCatalogueChangedPayload (the registry's revision, the protocol's catalogue_rev; process-wide)
 constexpr char const* NC_SURFACE_TARGET = "SURFACE_TARGET";                       // The followed instance, the views (focus order, active instances) or a surface session's target changed (actions::TargetState) - payload: SurfaceTargetPayload (process-wide)
 constexpr char const* NC_COMPANION_CHANGED = "COMPANION_CHANGED";                 // A companion client asked to pair, was paired, denied or revoked; a pairing expired or was cancelled - payload: CompanionChangedPayload (process-wide, no emulator id)
@@ -54,6 +55,7 @@ constexpr char const* NC_SCANLINE_BOUNDARY = "SCANLINE_BOUNDARY";               
 constexpr char const* NC_AUDIO_FRAME_REFRESH = "AUDIO_FRAME_REFRESH";           // Audio frame ready (TODO: add emulator ID to payload)
 constexpr char const* NC_VIDEO_FRAME_REFRESH = "VIDEO_FRAME_REFRESH";           // Video frame ready (payload: EmulatorFramePayload with ID)
 constexpr char const* NC_VIDEO_MODE_CHANGED = "VIDEO_MODE_CHANGED";             // Video mode switched: framebuffer geometry (and possibly its address) changed - consumers holding raw pointers or cached dimensions must re-attach (payload: EmulatorFramePayload with ID)
+constexpr char const* NC_VIDEO_VIEWPORT_CHANGED = "VIDEO_VIEWPORT_CHANGED";     // The display viewport (the crop of an overscan frame) changed: a front end crops its picture the same (payload: EmulatorFramePayload with ID)
 constexpr char const* NC_VIDEOWALL_SINGLE_SYNC_MODE = "VIDEOWALL_SINGLE_SYNC_MODE"; // Request videowall single sync mode (payload: VideowallSyncModePayload)
 
 constexpr char const* NC_FDD_MOTOR_STARTED = "FDD_MOTOR_START";                 // Floppy drive motor started

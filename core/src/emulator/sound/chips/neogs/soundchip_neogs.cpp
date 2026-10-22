@@ -748,6 +748,8 @@ bool SoundChip_NeoGS::sleepQuietEventsBefore(int64_t end)
         return false;
     if (mixerLevel(false) != _outL || mixerLevel(true) != _outR)
         return false;
+    if (_hostGainDirty || (!_hostGainUnity && (hostMixerLevel(false) != _hostOutL || hostMixerLevel(true) != _hostOutR)))
+        return false;
     if (_frameTicks > 0)
     {
         int32_t left = 0;
@@ -813,6 +815,8 @@ void SoundChip_NeoGS::dacSideEvent(int64_t crystal)
         _outR = level;
     else
         _outL = level;
+    if (!_hostGainUnity)
+        (right ? _hostOutR : _hostOutL) = hostMixerLevel(right);
 
     if (_frameTicks <= 0)
         return;
@@ -830,16 +834,19 @@ void SoundChip_NeoGS::listeningMix(int32_t& left, int32_t& right) const
     // The listening choice: as on the board, the classic GS's 50% cross-feed
     // (the opposite side at half level, scaled so both sides full stays full)
     // or mono
-    left = _outL;
-    right = _outR;
+    // The mixer's channel volumes (host-side) replace the board's sides while any is not unity
+    const int32_t outL = _hostGainUnity ? _outL : _hostOutL;
+    const int32_t outR = _hostGainUnity ? _outR : _hostOutR;
+    left = outL;
+    right = outR;
     if (_stereoMode == NeoGSConfig::StereoMode::GS)
     {
-        left = (2 * _outL + _outR) / 3;
-        right = (2 * _outR + _outL) / 3;
+        left = (2 * outL + outR) / 3;
+        right = (2 * outR + outL) / 3;
     }
     else if (_stereoMode == NeoGSConfig::StereoMode::Mono)
     {
-        left = right = (_outL + _outR) / 2;
+        left = right = (outL + outR) / 2;
     }
 }
 
@@ -941,6 +948,23 @@ void SoundChip_NeoGS::handleFrameStart()
                                                   GSHostClock::unitsPerZxTact(_context, TICKS_PER_SECOND));
     _frameStartZxTacts = GSHostClock::currentZxTacts(_context, _frameStartZxTacts);
     _frameTicks = GSHostClock::frameUnits(_context, TICKS_PER_SECOND);
+
+    // A channel volume changed (the mixer's channel layer): both sides again from the latches, the level steps at the
+    // frame's start
+    if (_hostGainDirty)
+    {
+        _hostGainDirty = false;
+        _hostOutL = hostMixerLevel(false);
+        _hostOutR = hostMixerLevel(true);
+        if (_frameTicks > 0)
+        {
+            int32_t left = 0;
+            int32_t right = 0;
+            listeningMix(left, right);
+            if (_audio.set(std::max<int64_t>(0, blipPosition()), blipFrameLength(), left, right, !_synthesisSuppressed))
+                _frameHadActivity = true;
+        }
+    }
 }
 
 void SoundChip_NeoGS::handleFrameEnd(size_t expectedSamples)
@@ -1611,6 +1635,11 @@ void SoundChip_NeoGS::TTDLoadState(const uint8_t* src)
     // re-selects the host memory interface
     _zx.loadState(src + TTD_ZX_OFFSET);
 
+    if (!_hostGainUnity)
+    {
+        _hostOutL = hostMixerLevel(false);
+        _hostOutR = hostMixerLevel(true);
+    }
     _audio.setLevels(_outL, _outR);
     _audio.clear();
     _frameHadActivity = false;

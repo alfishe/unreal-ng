@@ -84,4 +84,13 @@
                                         "{ok, deck: {serial, brightness}}");
         param(putBrightness, "deck", "path", true, "The deck's serial, or first");
         putBrightness["responses"]["400"]["description"] = "Bad Request: value 0-100";
+        // The route behind the verbs above: any verb with any method (a verb or a method it does not take: an error)
+        for (const char* method : {"get", "post", "put", "delete"})
+        {
+            Json::Value& verb = op("/api/v1/streamdeck/{verb}", method, "A verb of companion::streamdeck::Call",
+                                   "The verbs above by name (status, start, stop, restart, settings, pair, revoke, udev); "
+                                   "the same as the CLI `streamdeck <verb>`",
+                                   "the verb's answer");
+            param(verb, "verb", "path", true, "status, start, stop, restart, settings, pair, revoke, udev");
+        }
     }

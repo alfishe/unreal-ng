@@ -8,8 +8,10 @@
 #include "emulator/actions/hostactions.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/sound/audiomixer.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
+#include "emulator/video/windowview.h"
 
 namespace actions
 {
@@ -32,7 +34,7 @@ const Descriptions& DescriptionTable()
         {"run.wait_int", "Run to the next interrupt and pause there."},
         {"run.to_scanline", "Run to a scanline (param line) and pause there."},
         {"run.n_scanlines", "Run a number of scanlines (param count) and pause."},
-        {"run.step_by", "Step by a dial's delta: forward runs instructions, backward steps back through the history."},
+        {"run.step_by", "Step by a dial's delta in a unit (param unit: instructions, frames, scanlines, tstates; count): forward runs, backward steps back through the history."},
         {"run.turbo_hold", "Run at the turbo rate while the control is held."},
         {"run.steps", "Run a number of instructions (param count) and pause."},
         {"run.frames", "Run a number of frames (param count) and pause."},
@@ -49,11 +51,11 @@ const Descriptions& DescriptionTable()
         {"ttd.resume_live", "Leave the history and continue the live machine."},
         {"ttd.jog_frames", "Move through the history by a number of frames (a delta)."},
         {"ttd.jog_instructions", "Move through the history by a number of instructions (a delta)."},
-        {"ttd.seek_by", "Seek through the history with a dial's acceleration curve; answers the marks crossed."},
-        {"ttd.find_last_write", "Find the last write to an address in the history (not available yet)."},
-        {"ttd.bookmark_prev", "Go to the previous bookmark (not available yet)."},
-        {"ttd.bookmark_next", "Go to the next bookmark (not available yet)."},
-        {"ttd.step_back_scanline", "Go back one scanline in the history (not available yet)."},
+        {"ttd.seek_by", "Seek through the history by a dial's delta in a unit (param unit, else ttd.scrub_unit's): frames and seconds on an acceleration curve, batch, instructions, tstates, scanlines, bookmarks; answers the marks crossed."},
+        {"ttd.find_last_write", "Find the last write to an address (param addr, else the memory / disassembly cursor) before now, and go there."},
+        {"ttd.bookmark_prev", "Go to the previous bookmark of the history."},
+        {"ttd.bookmark_next", "Go to the next bookmark of the history."},
+        {"ttd.step_back_scanline", "Go back one scanline (param count: N) in the history."},
         {"ttd.start", "Start recording the time travel history."},
         {"ttd.stop", "Stop recording the time travel history."},
         {"ttd.seek", "Go to a frame (param frame, tinframe) or a bookmark (param bookmark) of the history."},
@@ -63,6 +65,33 @@ const Descriptions& DescriptionTable()
         {"ttd.journal", "Record the input journal with the history, or stop it (param enabled)."},
         {"ttd.dump", "Save the time travel session to a file (param path)."},
         {"ttd.load", "Open a saved time travel session (param path)."},
+        // Run / step / time travel units (steppingactions.cpp: the pace, runs to a place, TTD units)
+        {"run.pace_set", "Choose the pace of the paced run (param preset: full, 25fps, 5fps, 1fps, frame, 100lines, 10lines, 1line, 1op; interval_ms 1..5000)."},
+        {"run.pace_next", "A finer pace: one step down the ladder (25 fps .. 1 instruction)."},
+        {"run.pace_prev", "A coarser pace: one step up the ladder (towards full speed)."},
+        {"run.pace_by", "Walk the pace ladder by a dial's delta."},
+        {"run.pace_toggle", "Run at the pace, or stop it; at full speed pause or continue the machine."},
+        {"run.pace_stop", "Stop the paced run; the machine stays paused."},
+        {"run.pace_step", "Run one step of the chosen pace (a frame, N scanlines, an instruction)."},
+        {"run.to_pixel", "Run to the first paper pixel of the next frame and pause."},
+        {"run.until_pc", "Run until PC reaches an address (param pc; max_tstates; breakpoints) and pause."},
+        {"run.to_cursor", "Run to the disassembly's cursor (or param addr); a breakpoint on the way stops it."},
+        {"run.step_line", "Run to the next source line of the loaded listing."},
+        {"run.to_line", "Run to a source line of the loaded listing (param line)."},
+        {"ttd.step_forward_scanline", "Go forward one scanline (param count: N) in the history."},
+        {"ttd.bookmarks", "List the bookmarks of the history."},
+        {"ttd.find_last", "Find the last access (param access: write, read, execute, io) to an address before now, and go there."},
+        {"ttd.seek_start", "Go to the start of the history."},
+        {"ttd.seek_end", "Go to the end of the history."},
+        {"ttd.unit_back", "Go back one step of the scrub unit."},
+        {"ttd.unit_forward", "Go forward one step of the scrub unit."},
+        {"ttd.scrub_unit", "Choose the unit a dial scrubs in: frames, seconds, batch, instructions, tstates, scanlines, bookmarks, or next / prev (param count: a step)."},
+        {"ttd.journal_build", "Build the write journal over the history (params from_frame, to_frame)."},
+        {"ttd.journal_build_cancel", "Cancel a running write-journal build."},
+        {"ttd.export_clip", "Export a range of the history as a lossless clip (params path, from, to)."},
+        {"dbg.follow_pc", "Show the disassembly at PC again."},
+        {"dbg.goto", "Show the disassembly at an address (param addr)."},
+        {"dbg.scroll_mode_toggle", "Scroll the disassembly by bytes or by instructions."},
         // Context
         {"ctx.set", "Set the instance's surface context (play, ttd, ttd.timecode, debug.disasm); \"\" returns to the default."},
         // Machine and capture
@@ -73,8 +102,8 @@ const Descriptions& DescriptionTable()
         {"mach.cold_reset", "Restart the same model from power on."},
         {"cap.screenshot_save", "Save a screenshot to a file (param path)."},
         {"cap.screenshot", "Copy a screenshot of the window to the clipboard."},
-        {"cap.record_toggle", "Start or stop a video recording (not available yet)."},
-        {"cap.clip_last", "Save the last seconds as a clip (not available yet)."},
+        {"cap.record_toggle", "Start a video recording (params preset, format, container, audio, mode, path), or stop it."},
+        {"cap.clip_last", "Save the last seconds of the time travel recording as a video clip (param seconds)."},
         // Input
         {"input.key", "Press a key of the machine (param key), as a tap or held while the control is."},
         {"input.type", "Type a text on the machine's keyboard (param text)."},
@@ -93,8 +122,10 @@ const Descriptions& DescriptionTable()
         {"set.value", "Set a setting to a value (params name, value)."},
         // Audio
         {"audio.mute_toggle", "Mute the sound, or unmute it."},
-        {"audio.source_mute", "Mute or unmute one sound source (param source)."},
-        {"audio.volume_by", "Change the volume of a source by a delta."},
+        {"audio.source_mute", "Mute or unmute one sound source or channel (param source: ay1, or ay1.a for a channel)."},
+        {"audio.source_solo", "Solo a sound source (only soloed sources are heard) or a channel within its source."},
+        {"audio.source_volume", "Set the volume of a source or channel (param volume 0..1, or gain_db)."},
+        {"audio.volume_by", "Change the volume of a source or channel by a delta."},
         // Media and snapshots
         {"media.open", "Open software on the target (param path): a snapshot, a tape or a disk, with the fast-load settings."},
         {"media.tape", "Play, stop, rewind or eject the tape (param op)."},
@@ -122,9 +153,10 @@ const Descriptions& DescriptionTable()
         {"dbg.page_up", "Page the debugger pane up."},
         {"dbg.page_down", "Page the debugger pane down."},
         {"dbg.memory_follow", "Show the memory at the value under the debugger's cursor."},
-        {"dbg.breakpoint_toggle_pc", "Toggle a breakpoint at the cursor (not available yet)."},
-        {"dbg.labels_toggle", "Show or hide labels in the disassembly (not available yet)."},
-        {"osd.keyboard", "Show the on-screen keyboard (not available yet)."},
+        {"dbg.breakpoint_toggle_pc", "Set an execution breakpoint at PC (or at address), or remove the one there."},
+        {"dbg.breakpoint_toggle_cursor", "Set an execution breakpoint at the debugger's disassembly cursor, or remove it."},
+        {"dbg.labels_toggle", "Show or hide the labels in the disassembly."},
+        {"osd.keyboard", "Show the on-screen keyboard, or hide it (the GUI's window of the machine's own keyboard)."},
         {"osd.quick_menu", "Show the quick menu (not available yet)."},
     };
     return table;
@@ -154,6 +186,19 @@ const Toggles& ToggleTable()
                 return std::nullopt;
             return context->pSoundManager->isMuted();
         };
+        // A mixer source or channel (param source: ay1, ay1.a): its mute / solo; the readout toggle.audio.source_mute.ay1.a
+        for (const char* id : {"audio.source_mute", "audio.source_solo"})
+        {
+            DefaultToggle& source = t[id];
+            source.param = "source";
+            const bool solo = std::string_view(id) == "audio.source_solo";
+            source.state = [solo](Emulator& emulator, const ActionValue& value) -> std::optional<bool> {
+                const std::optional<std::string> key = TextParam(value, "source");
+                if (!key)
+                    return std::nullopt;
+                return AudioMixer::Flag(emulator.GetContext(), *key, solo ? "solo" : "muted");
+            };
+        }
         t["video.overscan_toggle"].state = [](Emulator& emulator, const ActionValue&) -> std::optional<bool> {
             return emulator.IsOverscanMode();
         };
@@ -168,6 +213,13 @@ const Toggles& ToggleTable()
             if (features == nullptr)
                 return std::nullopt;
             return features->isEnabled(Features::kDebugMode);
+        };
+        // The GUI's on-screen keyboard: shown as the window published it (pictureactions.h)
+        t["osd.keyboard"].state = [](Emulator&, const ActionValue&) -> std::optional<bool> {
+            const std::optional<WindowDisplaySettings> settings = WindowView::PublishedSettings();
+            if (!settings)
+                return std::nullopt;
+            return settings->osdKeyboard;
         };
         DefaultToggle& feature = t["feature.toggle"];
         feature.stem = "feature";

@@ -310,8 +310,27 @@ TEST(Dialects_Test, TheObjectSaversTableBecomesSavebin)
     EXPECT_TRUE(has("SLOT 3"));
     EXPECT_TRUE(has("PAGE pgzx"));
     EXPECT_TRUE(has("SAVEBIN \"EFFECTZX\",#C000,LENZX"));   // type C: the name alone, as ALASM's INCBIN names it
-    EXPECT_TRUE(has("PAGE #10"));
+    EXPECT_TRUE(has("PAGE 0"));   // #10 is no ORG's page: the RAM page port #7FFD maps (sts7 of ALASM's own disk)
     EXPECT_TRUE(has("SAVEBIN \"table.0\",#8000,16"));      // another type: after a dot
+}
+
+TEST(Dialects_Test, ACharacterConstantTakesItsCodePagesByte)
+{
+    // CP "Ц in a CP866 source: ALASM compares with the byte #96, not the two bytes of the UTF-8 text the codec decoded
+    // (they made CP low 42704); the sjasmplus text (UTF-8, or another code page) gets the number
+    auto convert = [](const std::string& text, const std::string& dialect) {
+        SourceDocument source = SourceDocument::FromText(text, dialect);
+        source.codePage = encoding::CodePage::Cp866;
+        const ConvertResult r = Convert(source, "sjasmplus");
+        EXPECT_TRUE(r.ok);
+        for (const SourceLine& l : r.document.lines)
+            if (const size_t at = l.text.find_first_not_of(' '); at != std::string::npos)
+                return l.text.substr(at);
+        return std::string();
+    };
+    EXPECT_EQ(convert("        CP \"\xD0\xA6", "alasm"), "CP 150");
+    EXPECT_EQ(convert("        LD HL,\"A\xD0\xA6\"", "alasm"), "LD HL,38465");   // ALASM: the first in the low byte, the last in the high
+    EXPECT_EQ(convert("        LD A,'\xD0\xA6'", "sjasmplus"), "LD A,150");
 }
 
 TEST(Dialects_Test, AWalkingMacroOfAnotherFileIsExpanded)
@@ -434,6 +453,33 @@ TEST(Dialects_Test, TheTestOfANameUsedBeforeItsDefinitionIsOne)
     EXPECT_EQ(ToSjasmplus("        DW X\n        DB ?X\nX       NOP"), (std::vector<std::string>{"DW X", "DB 1", "X       NOP"}));
     EXPECT_EQ(ToSjasmplus("        IFN ?X\n        DB 1\n        ENDIF\nX       NOP"),
               (std::vector<std::string>{"IFNDEF __UNREALASM_DEF_X", "DB 1", "ENDIF", "X       NOP", "DEFINE __UNREALASM_DEF_X"}));
+}
+
+TEST(Dialects_Test, ATextWithTheCodeOfASourceOfTheDiskIsItsTextCopy)
+{
+    // isosurf.scl holds the ALASM source isosurf.H and its CR text isosurf.a (a ZX-ASM 3.10+ catalog entry); MEGALZ42.SCL
+    // DEC40.H and "megalz d.a", the same code with a description: such a text is taken in ALASM; another text stays a
+    // document
+    const containers::TrdosFile source = Hobeta("alasm/128KDRV.$H");
+    auto textFile = [&](const std::string& name, std::string body) {
+        containers::TrdosFile f;
+        f.name = name;
+        f.type = 'a';
+        f.start = 0x6D73;
+        std::replace(body.begin(), body.end(), '\n', '\r');
+        f.data.assign(body.begin(), body.end());
+        f.length = static_cast<uint16_t>(f.data.size());
+        return f;
+    };
+    // its first lines, with a description and other blanks
+    const std::string program = "; the 128K page driver\n;  call NPAGE\n  ORG  #7000\nDRIVER\nNPAGE LD A,4 ; page 4\nPAGE\n  LD BC,#7FFD\n";
+    const std::vector<ProjectFile> project =
+        ImageProject({source, textFile("driver  ", program), textFile("letter  ", "Hello,  world: this is a letter.\nBye  now\n")});
+    ASSERT_EQ(project.size(), 2u);
+    EXPECT_EQ(project[0].document.dialect, "alasm");
+    EXPECT_EQ(project[1].name, "driver");
+    EXPECT_EQ(project[1].document.dialect, "alasm");
+    EXPECT_EQ(project[1].document.lines.size(), 7u);
 }
 
 TEST(Dialects_Test, EntAfterAConditionalDispEndsItWhenActive)

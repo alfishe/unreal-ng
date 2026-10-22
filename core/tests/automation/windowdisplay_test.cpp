@@ -9,6 +9,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "../../automation/windowdisplay.h"
 
@@ -177,8 +178,145 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     for (const auto& member : report.members)
         keys += member.first + " ";
     EXPECT_EQ(keys, "backend gpu_available gpu crt crt_profile crt_profiles blending blending_frames blending_weights "
-                    "emulator ");
+                    "blending_decay emulator fullscreen scale toolbar status_bar hud hud_theme hud_themes hud_notices "
+                    "osd_keyboard osd_keyboard_picture osd_keyboard_pictures next_layers next_layers_mode "
+                    "next_layers_shown ");
 
     EXPECT_EQ(WindowDisplay::Summary(fake.settings),
-              "gpu off (unavailable), crt basic, blending off (4 frames, equal)");
+              "gpu off (unavailable), crt basic, blending off (4 frames, equal), scale free, hud off");
+    fake.settings.blendingWeights = "exponential";
+    fake.settings.blendingDecay = 0.3;
+    fake.settings.scale = 2;
+    fake.settings.hud = true;
+    fake.settings.hudTheme = "retro_zx";
+    EXPECT_EQ(WindowDisplay::Summary(fake.settings),
+              "gpu off (unavailable), crt basic, blending off (4 frames, exponential 0.3), scale 2x, hud on (retro_zx)");
+}
+
+TEST(WindowDisplay_Test, TheWindowsOtherWordsMakeAChange)
+{
+    WindowDisplayChange change;
+    std::string error;
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "blending_decay", "0.3", error)) << error;
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "fullscreen", "on", error));
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "scale", "3", error));
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "toolbar", "off", error));
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "status_bar", "false", error));
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "hud", "yes", error));
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "hud_theme", "Retro_ZX", error));
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "hud_notice.ram-page", "off", error));
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "osd_keyboard", "1", error));
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "osd_keyboard_picture", "pentagon2plus", error));
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "next_layers", "on", error));
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "next_layers_mode", "Winner", error));
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "next_layer.sprites", "off", error));
+    EXPECT_DOUBLE_EQ(*change.blendingDecay, 0.3);
+    EXPECT_EQ(change.fullscreen, true);
+    EXPECT_EQ(change.scale, 3);
+    EXPECT_EQ(change.toolbar, false);
+    EXPECT_EQ(change.statusBar, false);
+    EXPECT_EQ(change.hud, true);
+    EXPECT_EQ(change.hudTheme, "retro_zx");
+    EXPECT_EQ(change.hudNotices.at("ram-page"), false);
+    EXPECT_EQ(change.osdKeyboard, true);
+    EXPECT_EQ(change.osdKeyboardPicture, "pentagon2plus");
+    EXPECT_EQ(change.nextLayers, true);
+    EXPECT_EQ(change.nextLayersMode, "winner");
+    EXPECT_EQ(change.nextLayersShown.at("sprites"), false);
+    EXPECT_FALSE(change.Empty());
+
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "blending_decay", "0.95", error));
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "blending_decay", "0,3", error)) << "a locale's comma is no number";
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "scale", "5", error));
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "scale", "2.5", error));
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "next_layers_mode", "stacked", error));
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "next_layer.copper", "on", error));
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "hud_notice.ram-page", "maybe", error));
+}
+
+TEST(WindowDisplay_Test, NumbersInWordsIgnoreTheLocale)
+{
+    double value = 0;
+    EXPECT_TRUE(WindowDisplay::ParseNumber("0.3", value));
+    EXPECT_DOUBLE_EQ(value, 0.3);
+    EXPECT_TRUE(WindowDisplay::ParseNumber("-2", value));
+    EXPECT_DOUBLE_EQ(value, -2.0);
+    EXPECT_TRUE(WindowDisplay::ParseNumber(".5", value));
+    EXPECT_DOUBLE_EQ(value, 0.5);
+    for (const char* bad : {"", "-", ".", "1e3", "0,5", "1.2.3", "x"})
+        EXPECT_FALSE(WindowDisplay::ParseNumber(bad, value)) << bad;
+    EXPECT_EQ(WindowDisplay::NumberWord(0.3), "0.3");
+    EXPECT_EQ(WindowDisplay::NumberWord(2.0), "2");
+    EXPECT_EQ(WindowDisplay::NumberWord(-1.25), "-1.25");
+    EXPECT_EQ(WindowDisplay::NumberWord(0.30000001192092896), "0.3") << "a float's tail is not shown";
+}
+
+TEST(WindowDisplay_Test, SetRefusesAThemeANoticeOrAPictureTheWindowDoesNotOffer)
+{
+    auto fake = std::make_shared<FakeDisplay>();
+    fake->settings.hudThemes = {"dark_glass", "retro_zx"};
+    fake->settings.hudNotices = {{"ram-page", true}};
+    ScopedDisplay registered(fake);
+
+    WindowDisplayChange theme;
+    theme.hudTheme = "neon";
+    const WindowDisplay::Result badTheme = WindowDisplay::Set(theme);
+    EXPECT_EQ(badTheme.status, WindowDisplay::Status::BadParameter);
+    EXPECT_NE(badTheme.error.find("dark_glass, retro_zx"), std::string::npos) << badTheme.error;
+
+    WindowDisplayChange notice;
+    notice.hudNotices["no-such"] = true;
+    EXPECT_EQ(WindowDisplay::Set(notice).status, WindowDisplay::Status::BadParameter);
+
+    WindowDisplayChange picture;
+    picture.osdKeyboardPicture = "zx48k";
+    EXPECT_EQ(WindowDisplay::Set(picture).status, WindowDisplay::Status::Unavailable) << "no pictures for this machine";
+    fake->settings.osdKeyboardPictures = {"pentagon"};
+    EXPECT_EQ(WindowDisplay::Set(picture).status, WindowDisplay::Status::BadParameter);
+    EXPECT_EQ(fake->applied, 0);
+}
+
+TEST(WindowDisplay_Test, CrtParametersHeadlessWordsAndValidation)
+{
+    WindowView::SetProvider(nullptr);
+    EXPECT_EQ(WindowDisplay::GetCrtParameters().status, WindowDisplay::Status::NoWindow);
+
+    CrtParameterChange change;
+    std::string error;
+    EXPECT_TRUE(WindowDisplay::ApplyCrtParameterWord(change, "curvature=0.1", error)) << error;
+    EXPECT_TRUE(WindowDisplay::ApplyCrtParameterWord(change, "gamma+=2", error));
+    EXPECT_TRUE(WindowDisplay::ApplyCrtParameterWord(change, "gamma-=0.5", error));
+    EXPECT_TRUE(WindowDisplay::ApplyCrtParameterWord(change, "reset=bloom_radius", error));
+    EXPECT_TRUE(WindowDisplay::ApplyCrtParameterWord(change, "reset", error));
+    ASSERT_EQ(change.values.size(), 1u);
+    EXPECT_DOUBLE_EQ(change.values[0].second, 0.1);
+    ASSERT_EQ(change.steps.size(), 2u);
+    EXPECT_DOUBLE_EQ(change.steps[0].second, 2.0);
+    EXPECT_DOUBLE_EQ(change.steps[1].second, -0.5);
+    EXPECT_EQ(change.reset, std::vector<std::string>{"bloom_radius"});
+    EXPECT_TRUE(change.resetAll);
+    EXPECT_FALSE(WindowDisplay::ApplyCrtParameterWord(change, "curvature", error));
+    EXPECT_FALSE(WindowDisplay::ApplyCrtParameterWord(change, "curvature=high", error));
+
+    // A window without the parameters' verbs (the default of the interface) answers so
+    auto fake = std::make_shared<FakeDisplay>();
+    ScopedDisplay registered(fake);
+    const WindowDisplay::ParametersResult none = WindowDisplay::GetCrtParameters();
+    EXPECT_EQ(none.status, WindowDisplay::Status::NoWindow);
+    EXPECT_NE(none.error.find("no CRT parameters"), std::string::npos) << none.error;
+}
+
+TEST(WindowDisplay_Test, ThePublishedCopyEndsWithTheWindow)
+{
+    auto fake = std::make_shared<FakeDisplay>();
+    WindowView::SetProvider(fake);
+    WindowDisplaySettings published = fake->settings;
+    published.hud = true;
+    WindowView::Publish(published, CrtParameters());
+    ASSERT_TRUE(WindowView::PublishedSettings());
+    EXPECT_TRUE(WindowView::PublishedSettings()->hud);
+    ASSERT_TRUE(WindowView::PublishedCrtParameters());
+    WindowView::SetProvider(nullptr);
+    EXPECT_FALSE(WindowView::PublishedSettings()) << "no window: nothing published stays";
+    EXPECT_FALSE(WindowView::PublishedCrtParameters());
 }

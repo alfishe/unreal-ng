@@ -37,6 +37,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_slots.inc"
 #include "openapi/openapi_controllers.inc"
 #include "openapi/openapi_streamdeck.inc"
+#include "openapi/openapi_monitoring.inc"
 #include "openapi/openapi_snapshot.inc"
 #include "openapi/openapi_rzx.inc"
 #include "openapi/openapi_capture.inc"
@@ -67,6 +68,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_temporal.inc"
 #include "openapi/openapi_window.inc"
 #include "openapi/openapi_stepping.inc"
+#include "openapi/openapi_pace.inc"
 #include "openapi/openapi_breakpoints.inc"
 #include "openapi/openapi_debug.inc"
 #include "openapi/openapi_labels.inc"
@@ -79,6 +81,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_bus.inc"
 #include "openapi/openapi_ttd.inc"
 #include "openapi/openapi_ttdfile.inc"
+#include "openapi/openapi_machine.inc"
 }
 
 void buildSchemas(Json::Value& schemas)

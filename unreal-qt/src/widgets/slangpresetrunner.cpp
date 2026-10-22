@@ -80,6 +80,32 @@ QStringList SlangPresetRunner::availablePresets()
     return QDir(QStringLiteral(":/crt")).entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
 }
 
+std::vector<SlangPresetRunner::Parameter> SlangPresetRunner::parametersOf(const QJsonObject& manifest)
+{
+    std::vector<Parameter> list;
+    const QJsonObject parameters = manifest.value(QStringLiteral("parameters")).toObject();
+    for (auto it = parameters.begin(); it != parameters.end(); ++it)
+    {
+        const QJsonObject p = it.value().toObject();
+        Parameter parameter;
+        parameter.name = it.key();
+        parameter.description = p.value(QStringLiteral("description")).toString();
+        parameter.initial = static_cast<float>(p.value(QStringLiteral("initial")).toDouble());
+        parameter.minimum = static_cast<float>(p.value(QStringLiteral("minimum")).toDouble());
+        parameter.maximum = static_cast<float>(p.value(QStringLiteral("maximum")).toDouble());
+        parameter.step = static_cast<float>(p.value(QStringLiteral("step")).toDouble());
+        parameter.value = parameter.initial;
+        list.push_back(parameter);
+    }
+    return list;
+}
+
+std::vector<SlangPresetRunner::Parameter> SlangPresetRunner::readParameters(const QString& directory)
+{
+    const QJsonDocument manifest = QJsonDocument::fromJson(ReadFile(directory + QStringLiteral("/preset.json")));
+    return manifest.isObject() ? parametersOf(manifest.object()) : std::vector<Parameter>();
+}
+
 bool SlangPresetRunner::isPreset(const QString& key)
 {
     return !key.isEmpty() && QFileInfo::exists(presetDirectory(key) + QStringLiteral("/preset.json"));
@@ -111,19 +137,9 @@ bool SlangPresetRunner::load(const QString& directory)
     }
     const QJsonObject root = manifest.object();
 
-    const QJsonObject parameters = root.value(QStringLiteral("parameters")).toObject();
     std::map<QString, int> parameterIndex;
-    for (auto it = parameters.begin(); it != parameters.end(); ++it)
+    for (const Parameter& parameter : parametersOf(root))
     {
-        const QJsonObject p = it.value().toObject();
-        Parameter parameter;
-        parameter.name = it.key();
-        parameter.description = p.value(QStringLiteral("description")).toString();
-        parameter.initial = static_cast<float>(p.value(QStringLiteral("initial")).toDouble());
-        parameter.minimum = static_cast<float>(p.value(QStringLiteral("minimum")).toDouble());
-        parameter.maximum = static_cast<float>(p.value(QStringLiteral("maximum")).toDouble());
-        parameter.step = static_cast<float>(p.value(QStringLiteral("step")).toDouble());
-        parameter.value = parameter.initial;
         parameterIndex[parameter.name] = static_cast<int>(_parameters.size());
         _parameters.push_back(parameter);
     }

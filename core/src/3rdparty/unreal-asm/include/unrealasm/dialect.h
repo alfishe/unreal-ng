@@ -68,6 +68,9 @@ struct BackendOptions
     /// Convert / ConvertProject for a backend that asks (IBackend::WantsLabelValues): a one-pass target folds to its
     /// value an expression it cannot compute (a later label in an operation other than + and -, an operator it lacks)
     std::map<std::string, SourceLabel> labelValues;
+    /// A file of several assemblies (main sources INCLUDing it): the label values of the others, each an IF is decided
+    /// by only when it gives every assembly the same branch
+    std::vector<std::map<std::string, SourceLabel>> otherLabelValues;
     /// An INCLUDE of a project file (the IR's name for it) written with these operands instead: the name and the place
     /// the target finds the text in (ALASM `"NAME",4`: the text already in RAM page 4, WriteProjectAs)
     std::map<std::string, std::string> includeAs;

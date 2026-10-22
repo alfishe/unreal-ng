@@ -4,6 +4,7 @@
 #include "hud/qt/hudoverlay.h"
 
 #include <QDebug>
+#include <algorithm>
 #include <QPainter>
 #include <QDragEnterEvent>
 #include <QFocusEvent>
@@ -316,8 +317,70 @@ void DeviceScreenGLWindow::setCRTProfile(const CRTProfileParams& params)
     update();
 }
 
+void DeviceScreenGLWindow::setCRTParams(const CRTProfileParams& params)
+{
+    _crtParams = params;
+    update();
+}
+
+std::vector<SlangPresetRunner::Parameter> DeviceScreenGLWindow::presetParameters() const
+{
+    if (_slangPresetName.isEmpty())
+        return {};
+    if (_slangRunner)
+        return _slangRunner->parameters();
+    std::vector<SlangPresetRunner::Parameter> list =
+        SlangPresetRunner::readParameters(SlangPresetRunner::presetDirectory(_slangPresetName));
+    for (SlangPresetRunner::Parameter& parameter : list)
+    {
+        const auto kept = _slangOverrides.find(parameter.name);
+        if (kept != _slangOverrides.end())
+            parameter.value = std::clamp(kept->second, std::min(parameter.minimum, parameter.maximum),
+                                         std::max(parameter.minimum, parameter.maximum));
+    }
+    return list;
+}
+
+bool DeviceScreenGLWindow::setPresetParameter(const QString& name, float value)
+{
+    for (const SlangPresetRunner::Parameter& parameter : presetParameters())
+    {
+        if (parameter.name != name)
+            continue;
+        const float clamped = std::clamp(value, std::min(parameter.minimum, parameter.maximum),
+                                         std::max(parameter.minimum, parameter.maximum));
+        _slangOverrides[name] = clamped;
+        if (_slangRunner)
+            _slangRunner->setParameter(name, clamped);
+        update();
+        return true;
+    }
+    return false;
+}
+
+void DeviceScreenGLWindow::resetPresetParameters()
+{
+    _slangOverrides.clear();
+    if (_slangRunner)
+        for (const SlangPresetRunner::Parameter& parameter : _slangRunner->parameters())
+            _slangRunner->setParameter(parameter.name, parameter.initial);
+    update();
+}
+
+void DeviceScreenGLWindow::setPresetOverrides(const std::map<QString, float>& overrides)
+{
+    _slangOverrides = overrides;
+    if (_slangRunner)
+        for (const auto& [name, value] : _slangOverrides)
+            _slangRunner->setParameter(name, value);
+    update();
+}
+
 bool DeviceScreenGLWindow::loadCustomShader(const QString& name)
 {
+    if (name != _slangPresetName)
+        _slangOverrides.clear();  // the values set belong to the preset they were set on
+
     // A preset replaces a custom shader and the other way round; the empty name drops both
     const bool preset = SlangPresetRunner::isPreset(name);
     if (preset || name.isEmpty())
@@ -390,6 +453,8 @@ bool DeviceScreenGLWindow::applySlangPreset(const QString& name)
         qWarning() << "CRT preset" << name << "failed:" << runner->error();
         return false;
     }
+    for (const auto& [parameter, value] : _slangOverrides)
+        runner->setParameter(parameter, value);
     _slangRunner = std::move(runner);
     return true;
 }
@@ -436,7 +501,7 @@ void DeviceScreenGLWindow::setTemporalBlendingEnabled(bool enabled)
 void DeviceScreenGLWindow::setTemporalHistorySize(int frames)
 {
     _frameHistory.setHistorySize(frames);
-    update();
+    setTemporalWeightMode(_temporalWeightMode);  // a new size starts with equal weights: the mode chosen stays
 }
 
 int DeviceScreenGLWindow::temporalHistorySize() const
@@ -450,8 +515,14 @@ void DeviceScreenGLWindow::setTemporalWeightMode(int mode)
     if (mode == 0)
         _frameHistory.setEqualWeights();
     else
-        _frameHistory.setExponentialWeights(0.5f);
+        _frameHistory.setExponentialWeights(_temporalDecay);
     update();
+}
+
+void DeviceScreenGLWindow::setTemporalDecay(float decay)
+{
+    _temporalDecay = std::clamp(decay, 0.1f, 0.9f);
+    setTemporalWeightMode(_temporalWeightMode);
 }
 
 void DeviceScreenGLWindow::resizeGL(int w, int h)

@@ -12,6 +12,9 @@
 #include <QInputDialog>
 #include <QRegularExpression>
 
+#include <atomic>
+#include <optional>
+
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -36,6 +39,8 @@ public:
 signals:
     void keyUpPressed();
     void keyDownPressed();
+    void pageUpPressed();
+    void pageDownPressed();
     void enterPressed();
     void toggleScrollMode();
     void goToAddressRequested();
@@ -53,6 +58,16 @@ protected:
         else if (event->key() == Qt::Key_Down)
         {
             emit keyDownPressed();
+            event->accept();
+        }
+        else if (event->key() == Qt::Key_PageUp)
+        {
+            emit pageUpPressed();
+            event->accept();
+        }
+        else if (event->key() == Qt::Key_PageDown)
+        {
+            emit pageDownPressed();
             event->accept();
         }
         else if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)
@@ -121,6 +136,25 @@ public:
 
     void setDisassemblerAddress(uint16_t pc);
 
+    /// region <Controls of the GUI actions (dbg.follow_pc, dbg.labels_toggle, dbg.scroll_mode_toggle, dbg.goto)>
+    /// Show the disassembly at PC again (Enter)
+    void followPc();
+    /// Labels on / off in this view (operands and the label column); process-wide, readable from any thread
+    void setShowLabels(bool show);
+    static std::atomic<bool>& LabelsShown();
+    /// Byte / command scroll (B)
+    void switchScrollMode();
+    /// The address of the line under the text cursor (a click, or the line kept across refreshes); published as the
+    /// debugger's "disasm" cursor (actions::DebuggerCursors) for run.to_cursor
+    std::optional<uint16_t> cursorAddress() const { return m_cursorAddress; }
+    /// Move the cursor row by `rows` instructions (bytes in byte scroll) - Up / Down, PageUp / PageDown (16) and
+    /// dbg.cursor_* / dbg.page_*: from the cursor row, else PC, else the top line; the view scrolls to keep it visible
+    void moveCursorBy(int rows);
+    /// Toggle an execution breakpoint at the cursor row, else the top line of the view (as a click in the
+    /// breakpoint column)
+    void toggleBreakpointAtCursor();
+    /// endregion </Controls>
+
     // Helper methods
 protected:
     Emulator* getEmulator();
@@ -184,6 +218,15 @@ private:
 
     DebuggerWindow* m_debuggerWindow;
     bool m_isShuttingDown = false;  // Flag to block refreshes during shutdown
+
+    // The cursor line (run to the cursor): set by the user's text cursor, kept and marked across refreshes
+    void onTextCursorMoved();
+    void markCursorLine();
+    void publishCursor();
+    bool lineOf(uint16_t address, int& line) const;
+    QTextCharFormat m_cursorFormat;
+    std::optional<uint16_t> m_cursorAddress;
+    bool m_settingContent = false;  ///< setHtml / a programmatic caret move: not the user's cursor
 };
 
 #endif  // DISASSEMBLERWIDGET_H

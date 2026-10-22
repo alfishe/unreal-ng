@@ -4,7 +4,10 @@
 
 #include "emulator/actions/actionregistry.h"
 #include "emulator/actions/contextstate.h"
+#include "emulator/actions/steppingactions.h"
 #include "emulator/actions/targetstate.h"
+#include "emulator/execution/runpacer.h"
+#include "emulator/machinenames.h"
 #include "emulator/machinevariants.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 
@@ -19,6 +22,29 @@
 
 #include <algorithm>
 #include <iomanip>
+
+namespace
+{
+/// The nesting of the create calls on this thread: a variant, a ZX-Poly group and its modules create through the
+/// same methods, and only the outermost call names the machine the caller asked for (machines::MachineHistory)
+thread_local int t_createDepth = 0;
+
+struct CreateDepth
+{
+    CreateDepth() { ++t_createDepth; }
+    ~CreateDepth() { --t_createDepth; }
+    CreateDepth(const CreateDepth&) = delete;
+    CreateDepth& operator=(const CreateDepth&) = delete;
+    bool Outermost() const { return t_createDepth == 1; }
+};
+
+void NoteCreated(const CreateDepth& depth, const std::shared_ptr<Emulator>& created, const std::string& name,
+                 uint32_t ramKb)
+{
+    if (created && depth.Outermost())
+        machines::MachineHistory::Instance().Note(name, ramKb);
+}
+}  // namespace
 
 // Implementation of EmulatorManager methods
 
@@ -143,6 +169,9 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulator(const std::string& sym
         // Sole-instance fallback may make this instance the active one
         UpdateRealtimeSchedulingLocked();
 
+        // The machine the configuration gave (no name was asked for)
+        if (EmulatorContext* context = emulator->GetContext(); context != nullptr && t_createDepth == 0)
+            machines::MachineHistory::Instance().Note(machines::NameOf(context->config), context->config.ramsize);
         return emulator;
     }
 
@@ -228,10 +257,17 @@ std::function<void(CONFIG&)> VariantOverride(const MachineVariant& variant, std:
 
 std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::string& symbolicId, const std::string& modelName, LoggerLevel level, std::string* outError, std::function<void(CONFIG&)> configOverride)
 {
+    const CreateDepth depth;
+
     // A ZX-Poly configuration name creates the whole group; checked before the
     // lock, since the group creates its members through this method
-    if (ZXPolyGroup::FindConfiguration(modelName))
-        return CreateZXPolyMachine(symbolicId, modelName, "", outError, std::move(configOverride));
+    if (const ZXPolyGroup::Configuration* configuration = ZXPolyGroup::FindConfiguration(modelName))
+    {
+        std::shared_ptr<Emulator> master =
+            CreateZXPolyMachine(symbolicId, modelName, "", outError, std::move(configOverride));
+        NoteCreated(depth, master, configuration->name, 0);
+        return master;
+    }
 
     // A machine variant: its base model with the variant's board configuration
     // (the caller's override, if any, applies after it)
@@ -243,8 +279,11 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
             SetCreateError(outError, "'" + std::string(variant->name) + "' is not available: " + reason);
             return nullptr;
         }
-        return CreateEmulatorWithModelAndRAM(symbolicId, variant->baseModel, variant->ramKb, level, outError,
-                                             VariantOverride(*variant, std::move(configOverride)));
+        std::shared_ptr<Emulator> created =
+            CreateEmulatorWithModelAndRAM(symbolicId, variant->baseModel, variant->ramKb, level, outError,
+                                          VariantOverride(*variant, std::move(configOverride)));
+        NoteCreated(depth, created, variant->name, 0);
+        return created;
     }
 
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
@@ -324,6 +363,7 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
         // Sole-instance fallback may make this instance the active one
         UpdateRealtimeSchedulingLocked();
 
+        NoteCreated(depth, emulator, modelInfo->ShortName, 0);
         return emulator;
     }
 
@@ -342,6 +382,8 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
 
 std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level, std::string* outError, std::function<void(CONFIG&)> configOverride)
 {
+    const CreateDepth depth;
+
     // A ZX-Poly configuration fixes its modules' memory (the base model's default)
     if (ZXPolyGroup::FindConfiguration(modelName))
     {
@@ -364,8 +406,11 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
             SetCreateError(outError, "'" + std::string(variant->name) + "' is not available: " + reason);
             return nullptr;
         }
-        return CreateEmulatorWithModelAndRAM(symbolicId, variant->baseModel, ramSize, level, outError,
-                                             VariantOverride(*variant, std::move(configOverride)));
+        std::shared_ptr<Emulator> created =
+            CreateEmulatorWithModelAndRAM(symbolicId, variant->baseModel, ramSize, level, outError,
+                                          VariantOverride(*variant, std::move(configOverride)));
+        NoteCreated(depth, created, variant->name, 0);
+        return created;
     }
 
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
@@ -465,6 +510,7 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
         // Sole-instance fallback may make this instance the active one
         UpdateRealtimeSchedulingLocked();
 
+        NoteCreated(depth, emulator, modelInfo->ShortName, ramSize);
         return emulator;
     }
 
@@ -566,6 +612,7 @@ std::shared_ptr<Emulator> EmulatorManager::CreateZXPolyMachine(const std::string
                                                                const std::string& mediaPath, std::string* outError,
                                                                std::function<void(CONFIG&)> configOverride)
 {
+    const CreateDepth depth;
     auto group = std::make_shared<ZXPolyGroup>(symbolicId.empty() ? std::string("zxpoly") : symbolicId);
     std::string error;
     if (!group->Create(modelName, &error, configOverride) || !group->LoadMedia(mediaPath, &error))
@@ -581,6 +628,8 @@ std::shared_ptr<Emulator> EmulatorManager::CreateZXPolyMachine(const std::string
         std::lock_guard<std::recursive_mutex> lock(_zxpolyMutex);
         _zxpolyGroups[master->GetId()] = group;
     }
+    if (const ZXPolyGroup::Configuration* configuration = ZXPolyGroup::FindConfiguration(modelName))
+        NoteCreated(depth, master, configuration->name, 0);
     return master;
 }
 
@@ -770,6 +819,8 @@ bool EmulatorManager::RemoveEmulatorInstance(const std::string& emulatorId)
         RetireRemoved(removed, "RemoveEmulator");
         // Its actions worker ends: queued actions answer "Not Found" (the machine is stopped, a running one ends)
         actions::ActionRegistry::Instance().DropInstance(emulatorId);
+        execution::RunPacer::Drop(emulatorId);  // a paced run ends, its thread is joined
+        actions::DropSteppingState(emulatorId);  // its debugger cursors and scrub unit
         actions::ContextState::Instance().Drop(emulatorId);
         // Views showing it lose it, `instance:` pins on it fall back to following (targeting.md §5)
         actions::TargetState::Instance().InstanceGone(emulatorId);
@@ -1264,6 +1315,8 @@ void EmulatorManager::ShutdownAllEmulators()
     {
         RetireRemoved(emulator, "ShutdownAllEmulators");
         actions::ActionRegistry::Instance().DropInstance(uuid);
+        execution::RunPacer::Drop(uuid);
+        actions::DropSteppingState(uuid);
         actions::ContextState::Instance().Drop(uuid);
         actions::TargetState::Instance().InstanceGone(uuid);
     }

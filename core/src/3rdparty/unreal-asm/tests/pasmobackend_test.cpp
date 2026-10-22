@@ -264,6 +264,22 @@ TEST(PasmoBackend_Test, PassesAndExclusiveBranches)
     };
     EXPECT_TRUE(has(project.files[0].document, "DB 1"));
     EXPECT_FALSE(has(project.files[1].document, "DB 1"));
+    // A file both include, testing a later name they give different values: each main source answers its IF with a
+    // constant, unless both take the same branch
+    std::vector<ProjectFile> shared = {{"A", SourceDocument::FromText("        INCLUDE \"C\"\nT       EQU 1\n", "sjasmplus")},
+                                       {"B", SourceDocument::FromText("        INCLUDE \"C\"\nT       EQU 0\n", "sjasmplus")},
+                                       {"C", SourceDocument::FromText("        IF T==0\n        DB 1\n        ELSE\n        DB 2\n        ENDIF\n"
+                                                                     "        IF T<5\n        DB 3\n        ELSE\n        DB 4\n        ENDIF\n",
+                                                                     "sjasmplus")}};
+    const ProjectResult both = ConvertProject(shared, "pasmo");
+    ASSERT_EQ(both.files.size(), 3u);
+    EXPECT_TRUE(has(both.files[2].document, "DB 1"));
+    EXPECT_TRUE(has(both.files[2].document, "DB 2"));
+    EXPECT_TRUE(has(both.files[2].document, "DB 3"));
+    EXPECT_FALSE(has(both.files[2].document, "DB 4"));
+    EXPECT_TRUE(has(both.files[2].document, "IF __UNREALASM_IFL1"));
+    EXPECT_TRUE(has(both.files[0].document, "__UNREALASM_IFL1 EQU 0"));
+    EXPECT_TRUE(has(both.files[1].document, "__UNREALASM_IFL1 EQU 1"));
 }
 
 TEST(PasmoBackend_Test, ProgramsAssembleToWhatTheOriginalsBuilt)

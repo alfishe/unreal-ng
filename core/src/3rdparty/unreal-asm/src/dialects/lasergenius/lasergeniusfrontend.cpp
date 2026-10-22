@@ -6,6 +6,7 @@
 #include <set>
 #include <string_view>
 
+#include "dialects/common/characters.h"
 #include "dialects/common/z80.h"
 
 namespace unrealasm::dialects
@@ -899,6 +900,7 @@ FrontendResult LaserGeniusFrontend::Parse(const SourceDocument& source) const
             p.ForgetPutIn();
         }
     }
+    CharactersInCodePage(result.program, source.codePage);
     return result;
 }
 }  // namespace unrealasm::dialects

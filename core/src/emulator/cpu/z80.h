@@ -1059,4 +1059,7 @@ public:
     uint32_t _haltedIdleRetryAt = 0;
     uint32_t _haltedIdleRetrySpan = kHaltedIdleRetryT;
     void NoteHaltedIdleRefused();
+    /// Maskable interrupts accepted since the CPU was made (HandleINT; the monitoring planes' interrupts per frame).
+    /// Statistics only: not machine state, not in snapshots or TTD checkpoints
+    uint64_t interruptsAccepted = 0;
 };

@@ -264,6 +264,7 @@ void DeviceScreen::setTemporalBlendingEnabled(bool enabled)
 void DeviceScreen::setTemporalHistorySize(int frames)
 {
     _frameHistory.setHistorySize(frames);
+    setTemporalWeightMode(_temporalWeightMode);  // a new size starts with equal weights: the mode chosen stays
 }
 
 void DeviceScreen::setTemporalWeightMode(int mode)
@@ -272,7 +273,13 @@ void DeviceScreen::setTemporalWeightMode(int mode)
     if (mode == 0)
         _frameHistory.setEqualWeights();
     else
-        _frameHistory.setExponentialWeights(0.5f);
+        _frameHistory.setExponentialWeights(_temporalDecay);
+}
+
+void DeviceScreen::setTemporalDecay(float decay)
+{
+    _temporalDecay = std::clamp(decay, 0.1f, 0.9f);
+    setTemporalWeightMode(_temporalWeightMode);
 }
 
 void DeviceScreen::setCRTEffectsEnabled(bool enabled)
@@ -290,6 +297,12 @@ void DeviceScreen::setCRTProfile(CRTProfile profile)
     _crtParams = CRTProfileParams::FromProfile(profile);
     _crtEnabled = (profile != CRTProfile::None);
 
+    update();
+}
+
+void DeviceScreen::setCRTParams(const CRTProfileParams& params)
+{
+    _crtParams = params;
     update();
 }
 

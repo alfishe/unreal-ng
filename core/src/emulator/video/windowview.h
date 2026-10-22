@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -11,7 +12,8 @@
 
 /// @file windowview.h
 /// @brief The picture as a GUI window draws it, for the automation surfaces (screenshot source "window"), and the
-/// window's display settings (GPU acceleration, CRT effects, temporal blending).
+/// window's display settings (GPU acceleration, CRT effects and their parameters, temporal blending, full screen and
+/// scale, toolbar / status bar, HUD, on-screen keyboard, the ZX Next layers window).
 ///
 /// The framebuffer and a screenshot say what the machine shows; how a front end puts that on the host display (the
 /// shape it stretches the picture to, the letterbox, the CRT shader, the HUD) only the front end knows. The core has
@@ -43,7 +45,26 @@ struct WindowDisplaySettings
     bool blending = false;                 ///< temporal blending (gigascreen smoothing) on
     int blendingFrames = 2;                ///< frames blended, 2..5
     std::string blendingWeights;           ///< "equal" / "exponential"
+    double blendingDecay = 0.5;            ///< exponential weights: each older frame's share of the newer one, 0.1..0.9
     std::string emulatorId;                ///< the instance the window shows ("" = none)
+
+    bool fullscreen = false;               ///< the window fills the display
+    int scale = 0;                         ///< the whole zoom the window was fitted to, 1..4; 0 = none (resized by hand)
+    bool toolbar = true;                   ///< View > Toolbar
+    bool statusBar = true;                 ///< View > Status Bar
+
+    bool hud = false;                      ///< the HUD overlay shown
+    std::string hudTheme;                  ///< "dark_glass", "retro_zx", ...
+    std::vector<std::string> hudThemes;    ///< every theme the HUD offers
+    std::map<std::string, bool> hudNotices;  ///< the HUD's notice categories ("ram-page", "tape-events", ...): shown
+
+    bool osdKeyboard = false;              ///< the on-screen keyboard window shown
+    std::string osdKeyboardPicture;        ///< the keyboard picture it shows ("" = none for this machine)
+    std::vector<std::string> osdKeyboardPictures;  ///< the pictures the shown machine offers
+
+    bool nextLayers = false;               ///< the ZX Next layers window shown
+    std::string nextLayersMode;            ///< "layers" / "composed" / "winner"
+    std::map<std::string, bool> nextLayersShown;  ///< its layer ticks: ula, layer2, tilemap, sprites
 };
 
 /// A change of the display settings: only the fields set change
@@ -55,11 +76,59 @@ struct WindowDisplayChange
     std::optional<bool> blending;
     std::optional<int> blendingFrames;
     std::optional<std::string> blendingWeights;
+    std::optional<double> blendingDecay;
+    std::optional<bool> fullscreen;
+    std::optional<int> scale;
+    std::optional<bool> toolbar;
+    std::optional<bool> statusBar;
+    std::optional<bool> hud;
+    std::optional<std::string> hudTheme;
+    std::map<std::string, bool> hudNotices;
+    std::optional<bool> osdKeyboard;
+    std::optional<std::string> osdKeyboardPicture;
+    std::optional<bool> nextLayers;
+    std::optional<std::string> nextLayersMode;
+    std::map<std::string, bool> nextLayersShown;
 
     bool Empty() const
     {
-        return !gpu && !crt && !crtProfile && !blending && !blendingFrames && !blendingWeights;
+        return !gpu && !crt && !crtProfile && !blending && !blendingFrames && !blendingWeights && !blendingDecay &&
+               !fullscreen && !scale && !toolbar && !statusBar && !hud && !hudTheme && hudNotices.empty() &&
+               !osdKeyboard && !osdKeyboardPicture && !nextLayers && !nextLayersMode && nextLayersShown.empty();
     }
+};
+
+/// One parameter of the CRT picture the window draws: a libretro preset's (its preset.json) or a built-in profile's
+struct CrtParameter
+{
+    std::string name;
+    std::string description;
+    double value = 0;
+    double initial = 0;  ///< the value reset goes back to
+    double minimum = 0;
+    double maximum = 0;
+    double step = 0;     ///< one notch of a dial
+};
+
+/// The parameters of the active CRT profile
+struct CrtParameters
+{
+    std::string profile;  ///< as WindowDisplaySettings::crtProfile
+    /// "preset" (a libretro preset's own parameters), "profile" (the built-in profile's curvature, scanlines, ...;
+    /// also the uniforms of a custom shader), "none" (a profile without parameters: none, the beam models)
+    std::string kind = "none";
+    std::vector<CrtParameter> parameters;
+};
+
+/// A change of the active profile's parameters, applied in this order: reset, values, steps
+struct CrtParameterChange
+{
+    bool resetAll = false;
+    std::vector<std::string> reset;                       ///< back to their initial values
+    std::vector<std::pair<std::string, double>> values;   ///< set (clamped to the range)
+    std::vector<std::pair<std::string, double>> steps;    ///< moved by this many steps (a dial's delta), clamped
+
+    bool Empty() const { return !resetAll && reset.empty() && values.empty() && steps.empty(); }
 };
 
 /// Implemented by a front end (unreal-qt). Called from any thread: the implementation moves to its UI thread itself
@@ -78,6 +147,23 @@ public:
     /// Apply a change the caller validated (a profile from crtProfiles, gpu only when available, frames 2..5) the
     /// way the View menu does, then answer the settings as they are now
     virtual bool SetWindowDisplay(const WindowDisplayChange& change, WindowDisplaySettings& out, std::string& error) = 0;
+
+    /// The active CRT profile's parameters. False with `error` when the window cannot answer now (default: a front end
+    /// that offers none)
+    virtual bool GetCrtParameters(CrtParameters& out, std::string& error)
+    {
+        (void)out;
+        error = "This window offers no CRT parameters";
+        return false;
+    }
+    /// Apply a change the caller validated (names from GetCrtParameters), then answer the parameters as they are now
+    virtual bool SetCrtParameters(const CrtParameterChange& change, CrtParameters& out, std::string& error)
+    {
+        (void)change;
+        (void)out;
+        error = "This window offers no CRT parameters";
+        return false;
+    }
 };
 
 /// The provider a front end registered (none by default). A call in flight keeps the provider it started with alive
@@ -88,12 +174,40 @@ public:
     {
         std::lock_guard<std::mutex> lock(Mutex());
         Slot() = std::move(provider);
+        if (!Slot())
+        {
+            Published().reset();  // no window: nothing published stays
+            PublishedParameters().reset();
+        }
     }
 
     static std::shared_ptr<IWindowViewProvider> Provider()
     {
         std::lock_guard<std::mutex> lock(Mutex());
         return Slot();
+    }
+
+    /// The front end publishes its settings whenever they change (on its own thread): the readouts and the toggles
+    /// of the catalogue read this copy, never waiting for the GUI. Withdrawn (nullopt) when the window goes
+    static void Publish(std::optional<WindowDisplaySettings> settings, std::optional<CrtParameters> parameters = {})
+    {
+        std::lock_guard<std::mutex> lock(Mutex());
+        Published() = std::move(settings);
+        if (parameters || !Published())
+            PublishedParameters() = std::move(parameters);
+    }
+
+    /// The settings the front end published last; nullopt headless
+    static std::optional<WindowDisplaySettings> PublishedSettings()
+    {
+        std::lock_guard<std::mutex> lock(Mutex());
+        return Published();
+    }
+
+    static std::optional<CrtParameters> PublishedCrtParameters()
+    {
+        std::lock_guard<std::mutex> lock(Mutex());
+        return PublishedParameters();
     }
 
 private:
@@ -106,5 +220,15 @@ private:
     {
         static std::shared_ptr<IWindowViewProvider> provider;
         return provider;
+    }
+    static std::optional<WindowDisplaySettings>& Published()
+    {
+        static std::optional<WindowDisplaySettings> settings;
+        return settings;
+    }
+    static std::optional<CrtParameters>& PublishedParameters()
+    {
+        static std::optional<CrtParameters> parameters;
+        return parameters;
     }
 };

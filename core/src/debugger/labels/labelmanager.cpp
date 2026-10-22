@@ -458,6 +458,11 @@ bool LabelManager::SetSymbolSetEnabled(const std::string& id, bool enabled)
     return true;
 }
 
+std::optional<bool> LabelManager::IsSymbolSetEnabled(const std::string& id) const
+{
+    return _store->IsEnabled(id);
+}
+
 bool LabelManager::SetSymbolSetPriority(const std::string& id, int priority)
 {
     Flush();

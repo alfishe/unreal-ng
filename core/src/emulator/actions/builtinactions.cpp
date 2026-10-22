@@ -15,6 +15,7 @@
 #include "emulator/actions/actionparams.h"
 #include "emulator/actions/actionregistry.h"
 #include "emulator/actions/contextstate.h"
+#include "emulator/actions/steppingactions.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/execution/automationgate.h"
@@ -183,13 +184,94 @@ std::vector<uint64_t> BookmarkFrames(EmulatorContext* context)
     return frames;
 }
 
-/// ttd.seek_by (actions.md §2): the curve, the clamp to the history, one seek to the target frame's start, the marks
+/// run.step_by (actions.md §4): forward steps in (a breakpoint ends the loop), back steps back through the history
+ActionResult StepBy(const ActionCall& call)
+{
+    // Another unit (Stream Deck D2.8: the unit and N on keys, a dial steps): frames, scanlines, tstates
+    if (const StateNode* unit = Param(call.value, "unit"))
+    {
+        const std::string name = unit->kind == StateNode::Kind::String ? ScrubUnitName(unit->s) : std::string();
+        if (name != "instructions")
+        {
+            if (name != "frames" && name != "scanlines" && name != "tstates")
+                return ActionResult::Failure("Bad Request", "unit: instructions, frames, scanlines or tstates");
+            double count = 1;
+            if (const StateNode* given = Param(call.value, "count"); given != nullptr && (!NumberOf(given, count) || count < 1))
+                return ActionResult::Failure("Bad Request", "count: a whole number >= 1");
+            return StepByUnit(call, name, static_cast<int64_t>(std::llround(count)));
+        }
+    }
+    const int64_t steps = static_cast<int64_t>(std::llround(call.value.delta));
+    const int64_t count = std::min<int64_t>(16, steps < 0 ? -steps : steps);
+    StateNode body = StateNode::Object();
+    int64_t done = 0;
+    std::string stoppedBy;
+    for (int64_t i = 0; i < count; i++)
+    {
+        ActionResult step = steps > 0
+                                ? FromRun(RunControl(call.emulator).StepIn(call.requester))
+                                : FromTtd(ttd::TTDControl(call.emulator->GetContext())
+                                              .Execute({"step-instruction", {{"dir", "back"}}}));
+        if (!step.ok)
+        {
+            if (done == 0)
+                return step;
+            stoppedBy = step.error;  // the history's start, a refusal: the steps so far stay
+            break;
+        }
+        body = std::move(step.body);
+        // An execution breakpoint stops a step in before its instruction: that step executed nothing
+        const StateNode* executed = body.find("executed");
+        done += executed != nullptr && executed->kind == StateNode::Kind::Int ? executed->i : 1;
+        const StateNode* stop = body.find("stop");
+        const StateNode* reason = stop != nullptr ? stop->find("reason") : nullptr;
+        if (reason != nullptr && reason->kind == StateNode::Kind::String && reason->s == "breakpoint")
+        {
+            stoppedBy = "breakpoint";
+            break;
+        }
+    }
+    body["direction"] = steps < 0 ? "back" : "forward";
+    body["steps"] = done;
+    if (!stoppedBy.empty())
+        body["stopped_by"] = stoppedBy;
+    return ActionResult::Success(std::move(body));
+}
+}  // namespace
+
+/// ttd.seek_by (actions.md §2): the curve, the clamp to the history, one seek to the target frame's start, the marks.
+/// The unit (Stream Deck D3.1): the call's `unit` param, else the instance's (ttd.scrub_unit); frames, seconds and
+/// batch take the curve, the others SeekByUnit
 ActionResult SeekBy(const ActionCall& call)
 {
     EmulatorContext* context = call.emulator->GetContext();
+    std::string unit = ScrubUnitOf(call.instanceId);
+    int64_t count = ScrubCountOf(call.instanceId);
+    if (const StateNode* named = Param(call.value, "unit"))
+    {
+        unit = named->kind == StateNode::Kind::String ? ScrubUnitName(named->s) : std::string();
+        count = ScrubDefaultCount(unit);
+    }
+    if (const StateNode* given = Param(call.value, "count"))
+    {
+        double number = 0;
+        if (!NumberOf(given, number) || number < 1)
+            return ActionResult::Failure("Bad Request", "count: a whole number >= 1");
+        count = static_cast<int64_t>(std::llround(number));
+    }
+    if (unit != "frames" && unit != "seconds" && unit != "batch" && !unit.empty())
+        return SeekByUnit(call, unit, count);
     SeekCurve curve;
     std::string error;
-    if (!SeekCurveFromParams(call.value.params, curve, error))
+    StateNode params = call.value.params;
+    if (!unit.empty())
+        params["unit"] = unit;
+    if (unit == "batch" && params.find("min") == nullptr && params.find("max") == nullptr)
+    {
+        params["min"] = static_cast<double>(count);
+        params["max"] = static_cast<double>(count);
+    }
+    if (!SeekCurveFromParams(params, curve, error))
         return ActionResult::Failure("Bad Request", error);
     // The rate: the value's, else a parameter (the CLI and the scripts pass it as one)
     double rate = std::fabs(call.value.rate);
@@ -245,62 +327,23 @@ ActionResult SeekBy(const ActionCall& call)
     body["frame"] = static_cast<uint64_t>(target);
     body["frames"] = frames;
     body["fps"] = fps;
+    body["unit"] = unit.empty() ? std::string("frames") : unit;
     body["marks"] = MarksNode(marks);
     return ActionResult::Success(std::move(body));
 }
-
-/// run.step_by (actions.md §4): forward steps in (a breakpoint ends the loop), back steps back through the history
-ActionResult StepBy(const ActionCall& call)
-{
-    const int64_t steps = static_cast<int64_t>(std::llround(call.value.delta));
-    const int64_t count = std::min<int64_t>(16, steps < 0 ? -steps : steps);
-    StateNode body = StateNode::Object();
-    int64_t done = 0;
-    std::string stoppedBy;
-    for (int64_t i = 0; i < count; i++)
-    {
-        ActionResult step = steps > 0
-                                ? FromRun(RunControl(call.emulator).StepIn(call.requester))
-                                : FromTtd(ttd::TTDControl(call.emulator->GetContext())
-                                              .Execute({"step-instruction", {{"dir", "back"}}}));
-        if (!step.ok)
-        {
-            if (done == 0)
-                return step;
-            stoppedBy = step.error;  // the history's start, a refusal: the steps so far stay
-            break;
-        }
-        body = std::move(step.body);
-        // An execution breakpoint stops a step in before its instruction: that step executed nothing
-        const StateNode* executed = body.find("executed");
-        done += executed != nullptr && executed->kind == StateNode::Kind::Int ? executed->i : 1;
-        const StateNode* stop = body.find("stop");
-        const StateNode* reason = stop != nullptr ? stop->find("reason") : nullptr;
-        if (reason != nullptr && reason->kind == StateNode::Kind::String && reason->s == "breakpoint")
-        {
-            stoppedBy = "breakpoint";
-            break;
-        }
-    }
-    body["direction"] = steps < 0 ? "back" : "forward";
-    body["steps"] = done;
-    if (!stoppedBy.empty())
-        body["stopped_by"] = stoppedBy;
-    return ActionResult::Success(std::move(body));
-}
-}  // namespace
 
 bool SeekCurveFromParams(const StateNode& params, SeekCurve& curve, std::string& error)
 {
     curve = SeekCurve{};
     if (const StateNode* unit = params.find("unit"))
     {
-        if (unit->kind != StateNode::Kind::String || (unit->s != "frames" && unit->s != "seconds"))
+        const std::string name = unit->kind == StateNode::Kind::String ? ScrubUnitName(unit->s) : std::string();
+        if (name.empty())
         {
-            error = "unit: frames or seconds";
+            error = "unit: frames, seconds, batch, instructions, tstates, scanlines or bookmarks";
             return false;
         }
-        curve.seconds = unit->s == "seconds";
+        curve.seconds = name == "seconds";
     }
     if (curve.seconds)
     {
@@ -408,12 +451,6 @@ std::vector<RegistrationHandle> RegisterBuiltinActions(ActionRegistry& registry)
         ActionRules r = rules(scope, needsPause);
         r.unavailable = NoTtd;
         return r;
-    };
-    auto stub = [&](const char* id, const char* group) {
-        ActionRules r;
-        r.unavailable = [](Emulator&, const ActionValue&) { return std::string("not available yet"); };
-        r.unavailableError = "Not Implemented";
-        add(id, id, group, ValueKind::Press, nullptr, std::move(r));
     };
 
     // 3.1 Run control
@@ -533,8 +570,7 @@ std::vector<RegistrationHandle> RegisterBuiltinActions(ActionRegistry& registry)
         r.unavailable = NoHistory;
         add("ttd.seek_by", "Seek by (accelerated, with marks)", ttdGroup, ValueKind::Delta, SeekBy, std::move(r));
     }
-    for (const char* id : {"ttd.find_last_write", "ttd.bookmark_prev", "ttd.bookmark_next", "ttd.step_back_scanline"})
-        stub(id, ttdGroup);
+    // ttd.find_last_write, ttd.bookmark_prev / _next, ttd.step_back_scanline: steppingactions.cpp
 
     // 3.5 Contexts (architecture §6): the instance's context, the last setter wins (Q-5); "" returns to the default
     add("ctx.set", "Set the surface context", "Context", ValueKind::Text,
@@ -582,8 +618,7 @@ std::vector<RegistrationHandle> RegisterBuiltinActions(ActionRegistry& registry)
         [](const ActionCall& call) { return FromRun(RunControl(call.emulator).Nmi()); }, rules(ScopeRun));
     add("mach.turbo_toggle", "Turbo", machine, ValueKind::Press,
         [](const ActionCall& call) { return FromRun(RunControl(call.emulator).ToggleTurbo()); }, rules(ScopeRun));
-    for (const char* id : {"cap.record_toggle", "cap.clip_last"})
-        stub(id, machine);
+    // cap.record_toggle and cap.clip_last: hostactions_machine.cpp (over capture::RecordingControl)
     return handles;
 }
 

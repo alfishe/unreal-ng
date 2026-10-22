@@ -1,4 +1,5 @@
 #include "automation-cli.h"
+#include "emulator/monitoring/clientstats.h"
 
 #include <stdio.h>
 
@@ -339,6 +340,8 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
 {
     ThreadHelper::setThreadName("cli-client");
     coordinator::SetThreadSource(coordinator::OpSource::Cli);   // the operation log names this client's operations
+    // host.clients: this connection is open while this function runs (every return)
+    const monitoring::ClientConnection counted(monitoring::ClientPlane::Cli);
 
     // Buffer to store the current line of input
     std::string lineBuffer;
@@ -508,6 +511,7 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
                     try
                     {
                         // Process the command
+                        monitoring::ClientStats::Instance().Request(monitoring::ClientPlane::Cli);
                         processor->ProcessCommand(session, lineBuffer);
                         lineBuffer.clear();
 
