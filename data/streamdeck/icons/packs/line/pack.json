@@ -1,0 +1,20 @@
+{
+ "format": "streamdeck-icon-pack",
+ "version": 1,
+ "name": "line",
+ "author": "unreal-ng",
+ "licence": "Original drawings made for unreal-ng (the MagicWB pack's drawings, rendered smooth), the licence of unreal-ng",
+ "source": "png-smooth",
+ "sizes": [
+  72,
+  80,
+  96,
+  112,
+  120
+ ],
+ "fallback": "magicwb",
+ "generated_by": "tools/icons/streamdeck_packs/line.py",
+ "title": "Crisp line",
+ "style": "Even strokes along every shape's contour, light on near-black, the blue parts in a calm cyan; on = the shapes filled in a dim tone",
+ "background": "#111215"
+}
