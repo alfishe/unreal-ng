@@ -661,7 +661,7 @@ and return the reply dict) - the same verbs, options and replies as the CLI `slo
 [docs/features/slots.md](../../../features/slots.md)):
 
 ```python
-import unreal
+import unreal_emulator as unreal
 unreal.slots_state()                      # buses, slots (card, options, adapter, fit, state), built-ins, plan log
 unreal.slots_catalog()                    # every card: options, functions, ports, media, thisMachine {slot, fit, outcome}
 unreal.slots_matrix("cards")              # the compatibility tables as markdown ("" = all)
