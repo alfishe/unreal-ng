@@ -211,6 +211,32 @@ void StudioApi::AddDeviceRoutes()
                       return Reply::Error(502, r.error.toStdString(), "is unreal-streamdeck running with --api?");
                   return Reply{r.status, r.body, {}, {}};
               }});
+    // Pairing from the studio (daemon.md §6): forwarded to the daemon; the user approves in unreal-qt
+    auto pair = [w](const Request& r) {
+        const DaemonControl* d = OnGui([w] { return w->_daemon; });
+        const auto reply = r.method == "POST" ? d->Pair() : d->Pairing();
+        if (reply.status == 0)
+            return Reply::Error(502, reply.error.toStdString(), "is unreal-streamdeck running with --api?");
+        if (r.method == "POST")
+            OnGui([w] { w->PairWithHost(); });  // the status bar follows the pairing (asks again: the same one)
+        return Reply{reply.status, reply.body, {}, {}};
+    };
+    _api.Add({"GET",
+              "/api/v1/pair",
+              "The daemon's pairing with unreal-ng (forwarded to unreal-streamdeck)",
+              "state: idle | requesting | pending (code) | paired | denied | expired | refused | unreachable",
+              {"pairing", "daemon", "companion"},
+              {},
+              nullptr,
+              pair});
+    _api.Add({"POST",
+              "/api/v1/pair",
+              "Pair the daemon with unreal-ng (Deck > Pair with UnrealNG)",
+              "The daemon asks; the deck's strip and the status bar show the code; the user approves it in unreal-qt",
+              {"pairing", "daemon", "companion"},
+              {},
+              nullptr,
+              pair});
     auto brightness = [w](const Request& r) {
         const auto [d, deck] = OnGui([w] { return std::pair(w->_daemon, w->ShownDeck()); });
         if (deck.isEmpty())

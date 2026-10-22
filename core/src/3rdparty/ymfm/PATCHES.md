@@ -187,6 +187,24 @@ pushing one zero word per sample clock at its own time.
 lockstep, one clocking every sample, random FM traffic with timers and CSM;
 TTD blobs and words equal after every action.
 
+## 7. `ymfm_opn.*` — `ym2203::clock_fm_gained` (the mixer's FM channel volumes)
+
+**What:** `ym2203::clock_fm_gained(const int32_t *gain_q15)`: `clock_fm()` with one Q15 gain per FM channel (32768 =
+unity, 0 = silent). The engine clocks as in `clock_fm()`; the output is built channel by channel
+(`m_fm.output(one, 0, 32767, 1 << ch)`), each channel's clamped word multiplied by its gain (truncated toward zero),
+summed, then `roundtrip_fp()` as before. Defined in `ymfm_opn.cpp`, where the engine's members are instantiated (a
+caller outside could not link `output()`).
+
+**Why:** the host mixer's per-channel mute / volume of the YM2203 FM (`fm1.1`..`fm1.3`, `ms_fm1.2`;
+docs/emulator/design/audio/mixer-channels-and-settings.md). `output()` clamps every channel into the sum on its own,
+so the channels taken one at a time sum exactly as one `output()` of all of them. Never chip state: TTD never sees
+the gains. The caller (`Ym2203Engine::clockFmOnce`) keeps `clock_fm()` while every gain is unity, so the default path
+is upstream's, bit for bit.
+
+**Test:** `MixerChannelChips_Test.Ym2203FmChannelGainIsExactAtUnityAndScalesOneChannel`
+(`core/tests/emulator/sound/mixerchannels_test.cpp`): a silent channel at gain 0 leaves the stream identical; the
+sounding channel at 0 is silent, at one half about half.
+
 ## Furnace changes reviewed and NOT ported (2026-09-13)
 
 Furnace's ymfm copy (`5be1d6b`, 2026-09-13) differs from upstream in nine

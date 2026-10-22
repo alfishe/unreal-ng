@@ -153,6 +153,8 @@ void NextAudio::WriteDac(unsigned channel, uint8_t value)
     if (_now && _timeKnown)
         AdvanceTo(_now());
     _dac[channel & 3] = value;
+    _dacMeter = std::max({_dacMeter, std::fabs(((_dac[0] - 128) + (_dac[1] - 128)) * 16.0),
+                              std::fabs(((_dac[2] - 128) + (_dac[3] - 128)) * 16.0)});
 }
 
 /// One generator tick: the per-chip stereo law of turbosound.vhd (ABC: left = A + B, right = B + C; ACB: left = A + C,
@@ -181,6 +183,20 @@ void NextAudio::Tick()
             l = a + b;
             r = b + c;
         }
+        {
+            // The part's meter (before its gain)
+            double* m = &_meter[i * 4];
+            m[0] = std::min(m[0], l);
+            m[1] = std::max(m[1], l);
+            m[2] = std::min(m[2], r);
+            m[3] = std::max(m[3], r);
+        }
+        // The mixer's part gain (host-side; skipped while every chip's is 1, so the hardware's sum is exact)
+        if (_chipGainActive)
+        {
+            l *= _partGain[i];
+            r *= _partGain[i];
+        }
         const uint8_t pan = _pan[i];
         if (pan & 2)
             left += l;
@@ -196,8 +212,8 @@ void NextAudio::Tick()
     right -= _dcRight;
     if (_dacEnabled)
     {
-        left += ((_dac[0] - 128) + (_dac[1] - 128)) * 16.0;
-        right += ((_dac[2] - 128) + (_dac[3] - 128)) * 16.0;
+        left += DacSide(false);
+        right += DacSide(true);
     }
     // the Pi's I2S: 10 bits unsigned in the 13-bit PCM (audio_mixer.vhd 89-100), x4 here; #200 is silence
     left += (static_cast<double>(_piLeft) - 512.0) * 4.0;
@@ -228,8 +244,8 @@ bool NextAudio::QuietTicks(size_t ticks)
     right -= dcRight;
     if (_dacEnabled)
     {
-        left += ((_dac[0] - 128) + (_dac[1] - 128)) * 16.0;
-        right += ((_dac[2] - 128) + (_dac[3] - 128)) * 16.0;
+        left += DacSide(false);
+        right += DacSide(true);
     }
     left += (static_cast<double>(_piLeft) - 512.0) * 4.0;
     right += (static_cast<double>(_piRight) - 512.0) * 4.0;
@@ -283,6 +299,7 @@ void NextAudio::AudioFrameStart(bool synthesisSuppressed)
     }
     _tickLeft.clear();
     _tickRight.clear();
+    ResetMeters();
 }
 
 void NextAudio::AudioFrameEnd(size_t samples)
@@ -317,6 +334,122 @@ void NextAudio::AudioFrameEnd(size_t samples)
         _buffer[k * 2 + 1] = static_cast<int16_t>(std::clamp(r * 32767.0, -32768.0, 32767.0));
     }
     _hadSound = peak > 0.002f;
+
+    // The parts' meters: each chip's swing (half the largest side's peak-to-peak), the DAC's largest side, in the
+    // 13-bit PCM x 4 of Tick, as a share of full scale
+    for (unsigned i = 0; i < kChips; i++)
+    {
+        const double* m = &_meter[i * 4];
+        const double swing = std::max(m[1] - m[0], m[3] - m[2]) * 0.5 * 4.0;
+        _partPeak[i] = m[1] >= m[0] ? static_cast<float>(std::min(1.0, swing / 32768.0)) : 0.0f;
+    }
+    _partPeak[kChips] = static_cast<float>(std::min(1.0, _dacMeter / 32768.0));
+}
+
+void NextAudio::ResetMeters()
+{
+    for (unsigned i = 0; i < kChips; i++)
+    {
+        double* m = &_meter[i * 4];
+        m[0] = m[2] = 1e30;
+        m[1] = m[3] = -1e30;
+    }
+    // The DAC holds its level between writes: the frame starts at the level it has
+    _dacMeter = _dacEnabled ? std::max(std::fabs(((_dac[0] - 128) + (_dac[1] - 128)) * 16.0),
+                                       std::fabs(((_dac[2] - 128) + (_dac[3] - 128)) * 16.0))
+                            : 0.0;
+}
+
+double NextAudio::DacSide(bool right) const
+{
+    const unsigned a = right ? 2 : 0;
+    if (!_dacGainActive)
+        return ((_dac[a] - 128) + (_dac[a + 1] - 128)) * 16.0;
+    return ((_dac[a] - 128) * _dacGain[a] + (_dac[a + 1] - 128) * _dacGain[a + 1]) * 16.0;
+}
+
+void NextAudio::UpdateDacGains()
+{
+    _dacGainActive = false;
+    for (unsigned c = 0; c < 4; c++)
+    {
+        _dacGain[c] = _dacChannelGain[c] * _partGain[kChips];
+        _dacGainActive = _dacGainActive || _dacGain[c] != 1.0;
+    }
+}
+
+AudioSourceType NextAudio::AudioPartType(size_t part) const
+{
+    static const AudioSourceType kTypes[kParts] = {AudioSourceType::NextAy1, AudioSourceType::NextAy2,
+                                                   AudioSourceType::NextAy3, AudioSourceType::NextDac};
+    return part < kParts ? kTypes[part] : AudioSourceType::Custom;
+}
+
+std::string NextAudio::AudioPartName(size_t part) const
+{
+    static const char* const kNames[kParts] = {"Next AY 1", "Next AY 2", "Next AY 3", "Next DAC"};
+    return part < kParts ? kNames[part] : std::string();
+}
+
+void NextAudio::SetAudioPartGain(size_t part, float gain)
+{
+    if (part >= kParts)
+        return;
+    const double g = std::clamp(static_cast<double>(gain), 0.0, 1.0);
+    if (_partGain[part] == g)
+        return;
+    if (_now && _timeKnown)
+        AdvanceTo(_now());  // the ticks up to now were made with the old gain
+    _partGain[part] = g;
+    _chipGainActive = _partGain[0] != 1.0 || _partGain[1] != 1.0 || _partGain[2] != 1.0;
+    UpdateDacGains();
+}
+
+void NextAudio::AudioChannels(AudioSourceType type, std::vector<MixerChannelDesc>& out) const
+{
+    if (type == AudioSourceType::NextDac)
+    {
+        static const char* const kKeys[4] = {"a", "b", "c", "d"};
+        static const char* const kNames[4] = {"A (left)", "B (left)", "C (right)", "D (right)"};
+        for (unsigned c = 0; c < 4; c++)
+            out.push_back({kKeys[c], kNames[c], true, false});
+        return;
+    }
+    if (type == AudioSourceType::NextAy1 || type == AudioSourceType::NextAy2 || type == AudioSourceType::NextAy3)
+    {
+        out.push_back({"a", "A", true, false});
+        out.push_back({"b", "B", true, false});
+        out.push_back({"c", "C", true, false});
+    }
+}
+
+void NextAudio::SetAudioChannel(AudioSourceType type, size_t index, bool muted, float volume)
+{
+    if (type == AudioSourceType::NextDac && index < 4)
+    {
+        const double g = muted ? 0.0 : std::clamp(static_cast<double>(volume), 0.0, 1.0);
+        if (_dacChannelGain[index] == g)
+            return;
+        if (_now && _timeKnown)
+            AdvanceTo(_now());
+        _dacChannelGain[index] = g;
+        UpdateDacGains();
+        return;
+    }
+    const int chip = type == AudioSourceType::NextAy1   ? 0
+                     : type == AudioSourceType::NextAy2 ? 1
+                     : type == AudioSourceType::NextAy3 ? 2
+                                                        : -1;
+    if (chip < 0 || index >= 3)
+        return;
+    SoundChip_AY8910& ay = *_chips[static_cast<size_t>(chip)];
+    const auto ch = static_cast<uint8_t>(index);
+    if (ay.isChannelMuted(ch) == muted && ay.getChannelVolume(ch) == static_cast<double>(volume))
+        return;
+    if (_now && _timeKnown)
+        AdvanceTo(_now());
+    ay.setChannelMuted(ch, muted);
+    ay.setChannelVolume(ch, volume);
 }
 
 std::vector<std::pair<std::string, std::string>> NextAudio::AudioStateFields() const

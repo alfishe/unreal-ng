@@ -87,6 +87,7 @@ private:
     void OnSnapshot(const QString& path);
     QImage Screenshot(const QString& area);  // lcd | deck | window | canvas | editor
     void StartDaemonIfNone();
+    void PairWithHost();  // Deck > Pair with UnrealNG: the daemon's POST /api/v1/pair, its state on the status bar
     [[nodiscard]] QString ShownDeck() const;  // the serial of the deck this window shows (joined), else ""
     void FetchBrightness();                   // the shown deck's brightness from the daemon into the slider
 
@@ -100,6 +101,8 @@ private:
     DaemonControl* _daemon = nullptr;
     QSlider* _brightness = nullptr;  // the shown deck's brightness, set through the daemon
     QTimer* _brightnessSend = nullptr;
+    QTimer* _pairPoll = nullptr;  // the pairing's state while it waits for the approval
+    QString _pairState;
     QString _brightnessDeck;  // the deck the slider shows
     QLabel* _status;
     QPlainTextEdit* _log;

@@ -2,6 +2,7 @@
 
 #include <cctype>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -152,10 +153,10 @@ bool WrapOperand(std::string& statement, size_t operand)
     return true;
 }
 
-/// ORG address,page: the address is a number in #C000-#FFFF (the page's own slot)
-bool OrgInPageSlot(const std::string& address)
+/// A number as sjasmplus writes it (#C000, $C000, 0xC000, C000h, 49152); none for an expression
+std::optional<unsigned long> PlainNumber(const std::string& text)
 {
-    std::string a = Trim(address);
+    std::string a = Trim(text);
     int base = 10;
     if (!a.empty() && (a[0] == '#' || a[0] == '$'))
     {
@@ -172,13 +173,58 @@ bool OrgInPageSlot(const std::string& address)
         a.pop_back();
         base = 16;
     }
-    if (a.empty())
-        return false;
+    if (a.empty() || a.size() > 8)
+        return std::nullopt;
     for (const char c : a)
         if (!std::isxdigit(static_cast<unsigned char>(c)) || (base == 10 && !std::isdigit(static_cast<unsigned char>(c))))
-            return false;
-    const unsigned long v = std::stoul(a, nullptr, base);
-    return v >= 0xC000 && v <= 0xFFFF;
+            return std::nullopt;
+    return std::stoul(a, nullptr, base);
+}
+
+/// ORG address,page: the address is a number in #C000-#FFFF (the page's own slot)
+bool OrgInPageSlot(const std::string& address)
+{
+    const std::optional<unsigned long> v = PlainNumber(address);
+    return v && *v >= 0xC000 && *v <= 0xFFFF;
+}
+
+/// The page operands of the ORGs of the files (ORG address,page), lower case; a number also as its decimal value
+std::set<std::string> OrgPages(const std::vector<ProjectFile>& files)
+{
+    std::set<std::string> pages;
+    for (const ProjectFile& f : files)
+        for (const SourceLine& line : f.document.lines)
+        {
+            const Statements s = SplitStatements(SplitComment(line.text).first);
+            for (const std::string& part : s.parts)
+            {
+                const std::string statement = Trim(part);
+                if (statement.size() < 4 || z80::Lower(statement.substr(0, 4)) != "org ")
+                    continue;
+                const std::vector<std::string> args = SplitTop(statement.substr(4), ',');
+                if (args.size() < 2)
+                    continue;
+                pages.insert(z80::Lower(Trim(args[1])));
+                if (const std::optional<unsigned long> v = PlainNumber(args[1]))
+                    pages.insert(std::to_string(*v));
+            }
+        }
+    return pages;
+}
+
+/// The page an ObjTab entry names. The object saver writes its byte to port #7FFD; the conversion keeps an ORG's page
+/// as a sjasmplus page of that number (ORG #C000,pgzx), so a value the project's ORGs may name stays as it is (an
+/// expression, when some ORG has a page: pgtunnelzx=pgeffects). Any other value is the RAM page the port maps to #C000,
+/// where a source assembles without an ORG page: bits 0-2, and 6-7 as pages 8-31 on the Pentagon 512 / 1024 (sts7's
+/// #10 = page 0)
+std::string ObjectPage(const std::string& value, const std::set<std::string>& orgPages)
+{
+    const std::optional<unsigned long> v = PlainNumber(value);
+    if (orgPages.count(z80::Lower(Trim(value))) || (v && orgPages.count(std::to_string(*v))) || (!v && !orgPages.empty()))
+        return value;
+    if (v)
+        return std::to_string((*v & 7) | ((*v & 0xC0) >> 3));
+    return "((" + value + ")&7)|((" + value + ")>>3&#18)";
 }
 
 void MarkOrgPages(SourceDocument& document)
@@ -204,7 +250,7 @@ void MarkOrgPages(SourceDocument& document)
 }
 
 /// The object saver's table after the label ObjTab: 9-character name and type, address, length, page, start
-void SaveObjects(SourceDocument& document, Diagnostics& diagnostics, const std::string& file)
+void SaveObjects(SourceDocument& document, Diagnostics& diagnostics, const std::string& file, const std::set<std::string>& orgPages)
 {
     std::vector<std::string> items;
     bool inTable = false;
@@ -244,7 +290,7 @@ void SaveObjects(SourceDocument& document, Diagnostics& diagnostics, const std::
         const char type = quoted[9];
         // As ALASM's INCBIN names a file: the type letter after a dot unless it is C
         const std::string host = type == 'C' ? name : name + "." + std::string(1, type);
-        block.push_back("        PAGE " + items[k + 3]);
+        block.push_back("        PAGE " + ObjectPage(items[k + 3], orgPages));
         block.push_back("        SAVEBIN \"" + host + "\"," + items[k + 1] + "," + items[k + 2]);
     }
     if (block.empty())
@@ -321,6 +367,7 @@ void FinishSjasmplusProject(std::vector<ProjectFile>& files, const std::vector<b
         MarkOrgPages(f.document);
     }
     // The object saver: a unit with an ObjTab that INCLUDEs SAVEOBJ*
+    const std::set<std::string> orgPages = OrgPages(files);
     for (size_t k = 0; k < files.size(); ++k)
     {
         bool saver = false;
@@ -331,7 +378,7 @@ void FinishSjasmplusProject(std::vector<ProjectFile>& files, const std::vector<b
                 saver = true;
         }
         if (saver)
-            SaveObjects(files[k].document, diagnostics, files[k].name);
+            SaveObjects(files[k].document, diagnostics, files[k].name, orgPages);
     }
 }
 }  // namespace unrealasm::dialects

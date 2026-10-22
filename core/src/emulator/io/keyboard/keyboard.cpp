@@ -6,7 +6,10 @@
 #include "common/stringhelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "emulator/notifications.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "stdafx.h"
@@ -598,6 +601,21 @@ uint8_t Keyboard::HandlePortIn(uint16_t port)
                 result &= _keyboardMatrixState[i] & _overlay[i];
                 if (_extendedSink)
                     result &= _extendedSink->ExtendedMatrixRow(i);
+            }
+        }
+
+        // A keyboard breakpoint: the program saw a key it waits for change (press or release)
+        if (_context != nullptr && _context->pDebugManager != nullptr && _context->pEmulator != nullptr) [[unlikely]]
+        {
+            BreakpointManager& breakpoints = *_context->pDebugManager->GetBreakpointsManager();
+            if (breakpoints.GetHotState()->hasKeyboard) [[unlikely]]
+            {
+                uint8_t rows[8];
+                for (uint8_t i = 0; i < 8; i++)
+                    rows[i] = _keyboardMatrixState[i] & _overlay[i];
+                const uint16_t id = breakpoints.HandleKeyboardRead(subport_inv, rows);
+                if (id != BRK_INVALID)
+                    _context->pEmulator->OnBreakpointHit(id, port, BreakpointHitKind::Keyboard);
             }
         }
     }

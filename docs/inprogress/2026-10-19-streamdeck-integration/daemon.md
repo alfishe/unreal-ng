@@ -105,16 +105,23 @@ flowchart LR
   per send slot.
 - Results come back with `rid`; the runtime maps them to the job (strip banner on failure, `then: back|home`).
 
+As built (SD5, 2026-10-21; [protocol.md §10](protocol.md#10-as-built-the-surface-topic-and-the-daemons-client-sd5-2026-10-21),
+[reference](../../companions/streamdeck/daemon.md#the-surface-client)): **one** WebSocket for every logical deck (the
+hub takes several `join`s per connection, one per serial, each op naming its `session`), on the daemon's network loop
+(the device wire's loop; no thread of its own). Backoff 0.25 s .. 5 s. Deltas are not merged in the client: the
+runtime's job queue already merges a dial's waiting turns, and the registry merges queued deltas (its §6).
+`revoked` or a 401 handshake stops it; the companion file is watched for a new token.
+
 ## 5. Runtime changes
 
 | Today (`runtime.cpp`, `actions.cpp`) | Then |
 |:--|:--|
-| Monitor thread polls `/ttd/position` 50 Hz, `/ttd/status` 2 Hz while a page shows `strip.status: ttd` | Readout `ttd.position` drives the strip; no monitor thread |
+| Monitor thread polls `/ttd/position` 50 Hz, `/ttd/status` 2 Hz while a page shows `strip.status: ttd` | Readout `ttd.position` drives the strip; no monitor thread. As built: the poller is the REST fallback's only, started while the deck has no session and ended when it joins |
 | Toggle state flipped locally on success | Faces bound to `toggle.<id>` / `run.state` readouts ([scenarios.md §4](scenarios.md#4-state-bound-faces)) |
 | `ttd_seek` curve computed in the deck (`actions.cpp:95-124`) and clamped with `ttdNow()` | `ttd.seek_by` with `{d, rate, unit, min, max}`; the curve is the core's (one implementation for the deck, the Dial, pads) |
 | `run_toggle` reads the state over REST then posts | `run.pause_toggle` |
 | `dir`, `first`, `multi`, `toggle`, `delay`, `nav` kinds | Kept: they compose steps; steps may be `action` |
-| Action worker thread with a FIFO, one mutex with the monitor | Asynchronous sends, results by `rid`; no shared mutex with drawing |
+| Action worker thread with a FIFO, one mutex with the monitor | Asynchronous sends, results by `rid`; no shared mutex with drawing. As built: the worker stays (it also runs `shell`, `delay`, `multi`); an `action` step waits there for its `result`, which the network loop delivers by `rid` |
 | `describePage` published to the emulator as `HostPage` | Kept (agents and viewers read it) |
 | `HostNote` log lines | Kept |
 | Strip status line from `ActionResult.status` | Kept for `ttd.seek_by` (from `result.body`), plus the target line and the activity lines |
@@ -136,6 +143,17 @@ The companion flow is unchanged (`POST /api/v1/companions/pairings`, approval at
 - Pairing works only with unreal-qt as host (the video wall and headless answer 503 `pairing_unavailable`); the
   settings page says so.
 
+As built (SD7, 2026-10-21): `sdb::pairing::Pairer` (`sdb/pairing.h`) in the daemon, on a thread of its own only while
+a pairing lasts (blocking HTTP to the host: request, poll every 400 ms, the token into the companion file through a
+temporary file, mode 0600); the surface client finds the file within 2 s and connects. Routes `GET` / `POST` /
+`DELETE /api/v1/pair` (REST + MCP). The strips say the state (`NoticeOf`): `NOT PAIRED - TOUCH TO PAIR`,
+`COMPANION REVOKED - TOUCH TO PAIR`, `PAIR CODE 418 205 - APPROVE IN UNREALNG`, `PAIRING DENIED / EXPIRED - TOUCH TO
+TRY AGAIN`, `PAIRING NEEDS THE UNREALNG WINDOW` (503), `PAIRING IS OFF IN UNREALNG` (403); a tap on the strip while it
+shows one starts a pairing (`Runtime::onNoticeTap`; decks without a strip pair from the studio or unreal-qt). The
+studio: Deck > Pair with UnrealNG and its own `GET` / `POST /api/v1/pair` (forwarded). unreal-qt: Tools > Stream
+Deck... shows the code and approves it at the GUI (the prompt opens too); every plane can start (`streamdeck pair`) and
+revoke (`streamdeck revoke`), none can approve. `unreal-streamdeck pair` goes through a running daemon.
+
 ## 7. Supervision by unreal-qt
 
 | Setting (Preferences → Controllers → Stream Deck) | Behaviour |
@@ -153,6 +171,26 @@ The companion flow is unchanged (`POST /api/v1/companions/pairings`, approval at
 - A daemon already running (started by hand, by the studio, by another unreal-qt): the supervisor **adopts** it
   (health check answers, same host) instead of starting another ([§8](#8-single-instance)).
 
+As built (SD7, 2026-10-21): the state machine is the core's `companion::streamdeck::Supervisor`
+(`core/src/emulator/companions/streamdecksupervisor.h`; unreal-qt attaches it, `StreamDeckSupervision`), on a thread
+of its own stepping every 250 ms; the process is `childprocess::Child` (posix_spawn / CreateProcessW, output to
+`<settings folder>/streamdeck/daemon.log`), the checks `netsock::LoopbackHttp` to `127.0.0.1:<api port>`.
+
+| Setting | As built |
+|:--|:--|
+| Modes | `off`, `deck` (default), `always`; plus Start / Stop / Restart by the user (Stop latches until Start) |
+| Deck watch | `controllers::CountUsbDevices(0x0FD9)` (`core/controllers/src/usbpresence.h`) once a second on the supervisor's thread: the I/O registry on macOS, SetupAPI on Windows, sysfs on Linux; matched, never opened. A deck that goes keeps the daemon (its runtime waits; own decks work) |
+| Start | `unreal-streamdeck run --wait --api <37053> --viewers <37050> --host 127.0.0.1:<webapi> --parent <pid> --activity <look>`; the binary is `UNREAL_STREAMDECK_BIN`, else the setting, else beside unreal-qt (`Contents/MacOS` in the bundle, beside the exe, a build tree's `bin/`). No `--ready-fd`: the first health check 200 ms after the start, then every 2 s |
+| Crash | Restarted after 1 s, 2 s, 4 s; the fourth end in a row: `failed`, tried again after 60 s; 30 s healthy starts the count again. A clean end within 5 s counts too (a second start that found one running: after the backoff that one is adopted) |
+| Hang | Three failed checks: killed, then the crash path. Not answering within 10 s of the start: the same |
+| Adopt | A daemon answering on the port with this emulator as `host`: `POST /api/v1/parents {pid}`, state `adopted`; another host's: `foreign`, left alone |
+| Quit | `DELETE /api/v1/parents/<pid>`: the daemon ends unless the studio still holds a lease; never killed |
+| Mode off | The lease back, as at quit (a daemon another starter holds stays) |
+| Applied | The activity look (`PUT /api/v1/activity`) and each deck's kept brightness once per daemon |
+
+Verbs on every plane: [command-interface.md §16.2](../../emulator/design/control-interfaces/command-interface.md#162-the-stream-deck-daemon);
+the WebSocket topic `streamdeck.status`.
+
 ## 8. Single instance
 
 - One daemon per user session: a lock (`<runtime dir>/unreal-streamdeck.lock` with the automation port inside; a named mutex
@@ -160,6 +198,17 @@ The companion flow is unchanged (`POST /api/v1/companions/pairings`, approval at
 - A second start prints the running one's port and exits 0, so any starter (unreal-qt, the studio, a script) can call
   "start" blindly.
 - Several hosts (two unreal-ng processes): out of v1 ([targeting.md §8](targeting.md#8-several-host-processes)).
+
+As built (SD7, 2026-10-21; `sdb/daemonlife.h`): the lock is `flock` on macOS / Linux and `LockFileEx` on Windows (one
+byte past the content, so the content stays readable; no named mutex), in `$XDG_RUNTIME_DIR`, else `$TMPDIR` (per user
+on macOS), else `/tmp/unreal-streamdeck-<uid>.lock`; `%LOCALAPPDATA%\unreal-streamdeck\` on Windows;
+`UNREAL_STREAMDECK_LOCK` or `--lock FILE` names another, `--no-lock` takes none. The file holds `{pid, api, viewers,
+version, host}` once the daemon listens. A second `run` reads it, hands each `--parent` to the running daemon (`POST
+/api/v1/parents`), prints its pid and ports and exits 0. **Leases** (`--parent PID[,PID]`, `--with-parent` = the
+starter, now on Windows too): a process handle per parent (kqueue `EVFILT_PROC` on macOS, a pidfd on Linux, a process
+handle on Windows), polled by the watcher thread every 250 ms (no thread of its own); the daemon ends when the last
+parent is gone or releases it (`DELETE /api/v1/parents/{pid}`). A daemon started with no parent (by hand) stays when
+its leases go. `POST /api/v1/quit` stops it whoever holds it.
 
 ## 9. Configuration
 

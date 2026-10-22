@@ -127,7 +127,7 @@ protected:
 
     void Add(const char* id, ValueKind kind, Executor run, ActionRules rules = {}, bool held = false)
     {
-        _handles.push_back(_registry->Register({id, id, "Test", kind, held, false, {}}, std::move(run), std::move(rules)));
+        _handles.push_back(_registry->Register({id, id, "Test", kind, held, false, {}, {}, false}, std::move(run), std::move(rules)));
     }
 
     Emulator* _emulator = nullptr;
@@ -382,9 +382,9 @@ TEST_F(ActionRegistry_Test, DroppingTheInstanceAnswersQueuedJobsNotFoundAndEndsI
 
 TEST_F(ActionRegistry_Test, AHandleUnregistersOnlyItsOwnRegistration)
 {
-    RegistrationHandle first = _registry->Register({"t.same", "First", "Test", ValueKind::Press, false, true, {}},
+    RegistrationHandle first = _registry->Register({"t.same", "First", "Test", ValueKind::Press, false, true, {}, {}, false},
                                                    [](const ActionCall&) { return ActionResult::Success(); });
-    RegistrationHandle second = _registry->Register({"t.same", "Second", "Test", ValueKind::Press, false, true, {}},
+    RegistrationHandle second = _registry->Register({"t.same", "Second", "Test", ValueKind::Press, false, true, {}, {}, false},
                                                     [](const ActionCall&) { return ActionResult::Success(); });
     first.Reset();  // replaced already: the newer registration stays
     ASSERT_TRUE(_registry->Find("t.same").has_value());

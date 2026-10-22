@@ -235,9 +235,13 @@ if (NOT TARGET ${PROJECT_NAME})
             ${ROOT_DIR}/core/automation/mcp/src/mcp-slots.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-controllers.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-actions.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-streamdeck.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-bus.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-audio.cpp
             ${ROOT_DIR}/core/automation/mcp/src/target-resolver.cpp
             ${ROOT_DIR}/core/automation/webapi/src/companion-event-hub.cpp
+            ${ROOT_DIR}/core/automation/webapi/src/ws-hub.cpp
+            ${ROOT_DIR}/core/automation/webapi/src/surface-hub.cpp
             ${ROOT_DIR}/core/automation/webapi/src/debug-event-hub.cpp
         )
         target_include_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/core/automation/webapi/src)

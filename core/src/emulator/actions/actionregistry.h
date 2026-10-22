@@ -47,6 +47,8 @@ class Emulator;
 namespace actions
 {
 
+class ActivityFeed;
+
 enum class ValueKind : uint8_t
 {
     Press,  ///< a button: down / up (held actions see both)
@@ -86,6 +88,9 @@ struct ActionOrigin
     std::string session;
     /// The idle lease of an implicit session the gate opens (WebAPI: 15 s; CLI: 0, it ends with the connection)
     std::chrono::milliseconds lease{0};
+    /// The surface session of the WebSocket `surface` topic that called ("s7"; "" none): the activity feed names it,
+    /// so a surface never gets its own actions back. Not a run-control session: no gate reads it
+    std::string surface;
 };
 
 struct ActionResult
@@ -119,6 +124,11 @@ struct ActionInfo
     /// The parameters it reads from ActionValue::params, one line for the catalogue ("key, hold?, frames?"; a `?`
     /// marks an optional one); "" when it takes none
     std::string params;
+    /// One sentence for a palette's tooltip and the MCP tool ("" at Register: the core's text for the id, catalogue.h)
+    std::string description;
+    /// It has an on / off state (ActionRules::state): the readout `toggle.<id>` (or `toggle.<stem>.<param>`) shows it.
+    /// Set by Register from the rules
+    bool toggle = false;
 };
 
 /// What an executor gets: the instance (never null), the value, who asks
@@ -147,6 +157,14 @@ struct ActionRules
     std::function<std::string(Emulator& emulator, const ActionValue& value)> unavailable;
     /// The error code of an `unavailable` answer ("not_now"; "Not Implemented" for the stubs)
     std::string unavailableError = "not_now";
+    /// A toggle's state now (on / off; nullopt: not known, such as no machine part for it). Reads published state
+    /// only, never waits for the machine (the readouts call it at up to 50 Hz). Null: not a toggle. `value.params`
+    /// carries `toggleParam` when the action has one (feature.toggle: name)
+    std::function<std::optional<bool>(Emulator& emulator, const ActionValue& value)> state;
+    /// The readout name of a toggle: `toggle.<toggleStem>` ("" = the id), or with a param `toggle.<toggleStem>.<value
+    /// of toggleParam>` (feature.toggle: stem "feature", param "name": `toggle.feature.turbomode`)
+    std::string toggleStem;
+    std::string toggleParam;
 
     static std::function<uint32_t(Emulator&, const ActionValue&)> Fixed(uint32_t scope);
 };
@@ -212,6 +230,21 @@ public:
     /// Every action in registration order
     std::vector<ActionInfo> List() const;
     std::optional<ActionInfo> Find(std::string_view id) const;
+    /// Bumped by every Register and every unregistration (the protocol's `catalogue_rev`)
+    uint64_t Revision() const;
+    /// A toggle's state on `instanceId` (`params`: its toggleParam); nullopt for an unknown action, a non-toggle, no
+    /// machine or no state
+    std::optional<bool> ToggleState(std::string_view id, const std::string& instanceId,
+                                    const StateNode& params = StateNode::Object()) const;
+    /// The toggles as their readouts name them: {readout stem ("toggle.mach.turbo_toggle", "toggle.feature"), action
+    /// id, toggleParam ("" when none)}
+    struct ToggleReadout
+    {
+        std::string stem;
+        std::string id;
+        std::string param;
+    };
+    std::vector<ToggleReadout> ToggleReadouts() const;
     /// Every action with its availability on `instanceId` for `origin` (a dry run of the gates: no session is
     /// opened). Reads published state only. Without the instance every row is unavailable "no machine"
     std::vector<ActionStatus> Statuses(const std::string& instanceId, const ActionOrigin& origin) const;
@@ -236,6 +269,8 @@ public:
     void Shutdown();
     /// Workers alive (tests)
     size_t WorkerCount() const;
+    /// Where the workers record what they ran (ActivityFeed::Instance() for the process's registry; null: nowhere)
+    void SetActivityFeed(ActivityFeed* feed);
     /// endregion </Running>
 
     class Worker;
@@ -255,6 +290,9 @@ private:
     std::map<std::string, std::shared_ptr<Worker>> _workers;
     bool _shutDown = false;
     std::vector<RegistrationHandle> _builtin;  ///< the core actions of Instance()
+    uint64_t _revision = 0;
+    ActivityFeed* _feed = nullptr;
+    bool _post = false;  ///< Instance(): a catalogue change posts NC_ACTION_CATALOGUE
 };
 
 /// The gates of architecture §4 for one call, without running it. `open`: open the implicit session the automation

@@ -100,6 +100,19 @@ bool ContextState::Set(const std::string& instanceId, Emulator* emulator, const 
     return true;
 }
 
+void ContextState::HistoryChanged(const std::string& instanceId, bool history)
+{
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (_entries.count(instanceId) != 0)
+            return;  // a set context does not follow the history
+    }
+    const std::string now = history ? kTtd : kPlay;
+    const std::string previous = history ? kPlay : kTtd;
+    MessageCenter::DefaultMessageCenter().Post(
+        NC_SURFACE_CONTEXT, new SurfaceContextPayload(unreal::UUID(instanceId), now, previous, kByDefault));
+}
+
 void ContextState::Drop(const std::string& instanceId)
 {
     std::lock_guard<std::mutex> lock(_mutex);

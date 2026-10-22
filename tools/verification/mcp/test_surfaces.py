@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """surfaces: the control-surface actions of phase S2 (docs/inprogress/2026-10-18-control-surfaces): the surface
 context (GET /api/v1/surfaces/context, ctx.set; the last setter wins), ttd.seek_by with its curve, clamp and marks,
-run.step_by both ways, on MCP, REST and the WebSocket's calls with the same answers; and the TTD position read a
+run.step_by both ways, on MCP, REST and the WebSocket's calls with the same answers; the targets of Stream Deck SD4
+(docs/inprogress/2026-10-19-streamdeck-integration/targeting.md: the window as a view, "no id" follows the focused
+view, pins hold and fall back, the readouts, the activity feed, the catalogue fields); and the TTD position read a
 companion polls at 50 Hz, measured beside a recording machine (it must not slow the frames)"""
 
 import json
@@ -142,6 +144,93 @@ def test_step_by_steps_in_forward_and_back_through_the_history(s):
     release_mcp_session(s)
 
 
+def test_no_id_follows_the_focused_view_and_pins_hold(s):
+    emu = instance(s)
+    release_mcp_session(s)
+    status, views = http(s, 'GET', '/api/v1/surfaces/views')
+    expect(status == 200 and views['ok'], 'the views', views)
+    main_view = [v for v in views['views'] if v['owner'] == 'unreal-qt']
+    expect(len(main_view) == 1 and main_view[0]['active'] == emu, 'the main window is a view showing the instance',
+           views)
+    main_id = main_view[0]['id']
+    expect(views['followed']['instance'] == emu and views['followed']['view']['id'] == main_id and
+           views['followed']['mode'] == 'follow', 'the followed instance is the window\'s', views['followed'])
+    r = s.call('actions', {'action': 'views'})
+    expect(f'({emu}) in {main_id} Main window' in r.text and r.structured == views, 'MCP: the same, in the text',
+           r.text)
+    socket = ws_calls(s, [('GET', '/api/v1/surfaces/views', None)])
+    expect(socket[1]['status'] == 200 and socket[1]['body'] == views, 'the socket call answers the same', socket[1])
+
+    # A second instance, and a second window showing it (a view of the automation plane, as a test hook)
+    second = s.call('emulator_manage', {'action': 'create', 'model': '48K'}).structured
+    other = second.get('id') or second.get('emulator_id') or second.get('emulator', {}).get('id')
+    expect(other and other != emu, 'a second instance', second)
+    status, views = http(s, 'GET', '/api/v1/surfaces/views')
+    main_active = [v for v in views['views'] if v['id'] == main_id][0]['active']
+    status, added = http(s, 'POST', '/api/v1/surfaces/views', {'name': 'Window 2', 'active': emu, 'activate': True})
+    expect(status == 200 and added['followed']['instance'] == emu and added['followed']['view']['name'] == 'Window 2',
+           'the focused window is followed', added)
+    window2 = added['view']['id']
+    try:
+        # "No id" acts on the followed instance (T-1), whatever is selected
+        status, listed = http(s, 'GET', '/api/v1/controllers/actions')
+        expect(status == 200 and listed['instance'] == emu, '"no id" is the followed instance', listed['instance'])
+        expect(all('description' in a and 'toggle' in a for a in listed['actions']) and listed.get('rev', 0) > 0,
+               'the catalogue fields: description, toggle, rev', listed['actions'][0])
+        toggles = {a['id'] for a in listed['actions'] if a['toggle']}
+        expect({'run.pause_toggle', 'mach.turbo_toggle', 'audio.mute_toggle'} <= toggles, 'the toggles', toggles)
+        status, moved = http(s, 'PUT', f'/api/v1/surfaces/views/{window2}', {'active': other})
+        status, context = http(s, 'GET', '/api/v1/surfaces/context')
+        expect(status == 200 and context['instance'] == other, 'the window shows the other one: no id follows', context)
+
+        # A surface pinned to the main window keeps it while the focus is elsewhere; an instance pin stays put
+        status, opened = http(s, 'POST', '/api/v1/surfaces/sessions', {'name': 'REST deck', 'target': 'view:' + main_id})
+        expect(status == 200 and opened['session']['target']['instance'] == main_active and
+               opened['session']['target']['mode'] == 'view', 'pinned to the main window', opened)
+        deck = opened['session']['id']
+        r = s.call('actions', {'action': 'sessions'})
+        expect(f'{deck} REST deck [api] ->' in r.text, 'MCP lists the session and its target', r.text)
+        r = s.call('actions', {'action': 'pin', 'session': deck, 'pin': 'instance:' + other})
+        expect(f'({other})' in r.text and 'instance:' in r.text, 'MCP pins it to the instance', r.text)
+        status, target = http(s, 'GET', '/api/v1/surfaces/target?session=' + deck)
+        expect(target['target']['instance'] == other and target['target']['view']['id'] == window2,
+               'the target names the window showing it', target)
+        status, bad = http(s, 'PUT', f'/api/v1/surfaces/sessions/{deck}/pin', {'target': 'view:v9999'})
+        expect(status == 404 and bad['error'] == 'Not Found', 'an unknown view', bad)
+
+        # The readouts and the activity feed of the followed instance
+        status, read = http(s, 'GET', '/api/v1/surfaces/readouts?names=run.state,machine,toggle.mach.turbo_toggle')
+        expect(status == 200 and read['instance'] == other and read['values']['machine']['model'] == '48K' and
+               read['values']['run.state']['state'] in ('running', 'paused', 'stopped') and
+               read['values']['toggle.mach.turbo_toggle']['on'] in (True, False), 'the readouts', read)
+        status, feed = http(s, 'GET', '/api/v1/surfaces/activity?limit=1')
+        last = feed['last']
+        status, ran = http(s, 'POST', '/api/v1/controllers/actions/dbg.breakpoint_hits_reset', {'instance': other})
+        expect(status == 200 and ran['ok'], 'an action', ran)
+        status, feed = http(s, 'GET', f'/api/v1/surfaces/activity?since={last}&instance={other}')
+        expect(status == 200 and [e['id'] for e in feed['entries']] == ['dbg.breakpoint_hits_reset'] and
+               feed['entries'][0]['origin'] == 'webapi', 'the activity names it', feed)
+        r = s.call('actions', {'action': 'activity', 'since': last})
+        expect('dbg.breakpoint_hits_reset' in r.text and 'by webapi' in r.text, 'MCP: the activity in the text', r.text)
+
+        # The window closes: the focus falls back to the main window; the instance goes: the pin falls back
+        status, removed = http(s, 'DELETE', f'/api/v1/surfaces/views/{window2}')
+        window2 = None
+        expect(status == 200 and removed['followed']['view']['id'] == main_id, 'back to the main window', removed)
+        s.call('emulator_manage', {'action': 'destroy', 'target': other}, ok=False)
+        status, session = http(s, 'GET', '/api/v1/surfaces/sessions/' + deck)
+        expect(session['session']['pin'] == 'follow' and 'gone' in session['session'].get('notice', ''),
+               'the instance pin fell back, with a notice', session)
+        status, refused = http(s, 'DELETE', f'/api/v1/surfaces/views/{main_id}')
+        expect(status == 409, 'the main window is the client\'s', refused)
+        status, closed = http(s, 'DELETE', '/api/v1/surfaces/sessions/' + deck)
+        expect(status == 200, 'the session closes', closed)
+    finally:
+        if window2:
+            http(s, 'DELETE', f'/api/v1/surfaces/views/{window2}')
+        release_mcp_session(s)
+
+
 def test_the_position_polled_at_50_hz_does_not_slow_a_recording_machine(s):
     """The Stream Deck strip polls /ttd/position 50 times a second (2026-10-18 a poll parked the recording machine
     each time); here the machine records at 1x for 3 s alone and 3 s beside the poller: the same frames per second"""
@@ -194,6 +283,40 @@ def test_the_position_polled_at_50_hz_does_not_slow_a_recording_machine(s):
         rest(s, 'POST', f'/api/v1/emulator/{emu}/pause', None, session)
         rest(s, 'POST', f'/api/v1/emulator/{emu}/ttd/stop', None, session)
         end_session(s, emu, session)
+
+
+def test_host_devices_show_role_layers_context_and_the_output_verb_checks(s):
+    """S3: the devices verb names each device's role, layers and context on MCP, REST and the socket alike; the
+    output verb refuses what is not a control surface's output; a connected Surface Dial plays a pattern"""
+    status, rest = http(s, 'GET', '/api/v1/controllers/devices')
+    if status == 503:
+        return  # a process without the Qt client: no host input
+    expect(status == 200 and rest['ok'], 'the host devices', rest)
+    keyboard = next((d for d in rest['devices'] if d['id'] == 'kbd:system'), None)
+    expect(keyboard is not None and keyboard['role'] == 'debugger-remote' and keyboard['role_set'],
+           'the window keyboard: a remote by choice', rest)
+    expect(keyboard['layers'][0] == 'debug' and keyboard['outputs'] == [], 'its layers, no outputs', keyboard)
+    socket = ws_calls(s, [('GET', '/api/v1/controllers/devices', None)])
+    expect(socket[1]['status'] == 200 and socket[1]['body']['devices'] == rest['devices'], 'the socket agrees', socket)
+    r = s.call('controllers', {'action': 'devices'})
+    expect('kbd:system' in r.text and 'role debugger-remote' in r.text and 'layers debug' in r.text,
+           'MCP names the role and the layers in its text', r.text)
+
+    status, body = http(s, 'POST', '/api/v1/controllers/output', {'device': 'kbd:system', 'pattern': 'tick'})
+    expect(status == 503 and body['error'] == 'unavailable', 'a keyboard plays no patterns', body)
+    status, body = http(s, 'POST', '/api/v1/controllers/output', {'device': 'kbd:system', 'pattern': 'thud'})
+    expect(status == 400 and body['error'] == 'bad-request', 'not a pattern', body)
+    status, body = http(s, 'GET', '/api/v1/controllers/output?device=kbd:system&pattern=tick')
+    expect(status == 405, 'output is a POST', body)
+    r = s.call('controllers', {'action': 'output', 'device': 'kbd:system', 'marks': 'minute'}, ok=False)
+    expect(r.is_error and 'unknown mark' in r.text, 'MCP: an unknown mark', r.text)
+
+    dial = next((d for d in rest['devices'] if d['family'] == 'surface-dial'), None)
+    if dial is None:
+        return  # no Dial connected to this host: the rest is the owner's
+    expect(dial['role'] == 'debugger-remote' and 'haptic' in dial['outputs'], 'the Dial: a remote with outputs', dial)
+    r = s.call('controllers', {'action': 'output', 'device': dial['id'], 'pattern': 'tick'})
+    expect('tick on' in r.text, 'a tick on the Dial', r.text)
 
 
 if __name__ == '__main__':

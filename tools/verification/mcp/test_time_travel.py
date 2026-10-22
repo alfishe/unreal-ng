@@ -35,5 +35,17 @@ def test_seek_past_the_end_is_an_error_and_moves_nothing(s):
            (before[:200], at_after))
 
 
+def test_reverse_step_by_scanlines_and_the_build_cancel(s):
+    # The history of test_record_stop_seek: back two scanlines from inside it
+    r = s.call('time_travel', {'action': 'reverse_step', 'scanlines': 2})
+    expect(not r.is_error and 'back' in r.text.lower(), 'stepped back two scanlines', r.text)
+    expect(r.structured.get('mode') == 'scanlines' and r.structured.get('tstates', 0) > 0, 'the mode and t-states',
+           r.structured)
+    r = s.call('time_travel', {'action': 'reverse_step', 'scanlines': 1, 'count': 1}, ok=False)
+    expect(r.is_error, 'one unit only', r.text)
+    r = s.call('time_travel', {'action': 'journal_build_cancel'})
+    expect(not r.is_error and 'journal' in r.text, 'nothing to cancel, said so', r.text)
+
+
 if __name__ == '__main__':
     sys.exit(main(globals()))

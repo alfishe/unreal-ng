@@ -690,16 +690,17 @@ public:
         Auto,         ///< Plus3 on a +3 (its own controller), Unformatted elsewhere
         Unformatted,  ///< No sectors: for the machine's own FORMAT command (TR-DOS, +3DOS)
         Plus3,        ///< +3DOS: 9 x 512-byte sectors per track, formatted (filler #E5)
+        Trdos,        ///< TR-DOS: 16 x 256-byte sectors per track, formatted with an empty catalogue (as FORMAT leaves it)
     };
 
-    /// Parse "auto" / "unformatted" / "plus3" (case-insensitive); false for anything else
+    /// Parse "auto" / "unformatted" (raw) / "plus3" / "trdos" (case-insensitive); false for anything else
     static bool ParseBlankDiskFormat(const std::string& text, BlankDiskFormat& format);
     static const char* BlankDiskFormatName(BlankDiskFormat format);
 
     /// Create a blank disk and insert it into `drive`, owned like a loaded image (the previous image of
     /// the drive is released). The drive's path reads "<blank>" until the disk is saved.
-    /// @param cylinders 40 or 80; 0 = the format's default (Unformatted 80, Plus3 40)
-    /// @param sides 1 or 2; 0 = the format's default (Unformatted 2, Plus3 1)
+    /// @param cylinders 40 or 80; 0 = the format's default (Unformatted / Trdos 80, Plus3 40)
+    /// @param sides 1 or 2; 0 = the format's default (Unformatted / Trdos 2, Plus3 1)
     /// @param error When non-null and the call fails, receives a human-readable reason
     /// @param resolved When non-null, receives the format and geometry actually used
     /// While a TTD recording runs the insert is an event of the recording: it lands at the next frame boundary (TTD v1:
@@ -773,9 +774,10 @@ public:
     void RunUntilNextScreenPixel(bool skipBreakpoints = true);                // Skip vblank/borders to first paper pixel
     void RunUntilInterrupt(bool skipBreakpoints = true);                      // Run until Z80 accepts maskable interrupt (iff1 1→0)
     /// notifyDebugger = false skips the NC_EXECUTION_CPU_STEP post: for machine-internal
-    /// stepping (a ZX-Poly group advancing its slaves after every master instruction)
+    /// stepping (a ZX-Poly group advancing its slaves after every master instruction).
+    /// skipBreakpoints = false: a breakpoint ends the run first (run to the cursor; LastDirectStop says which)
     void RunUntilCondition(std::function<bool(const Z80State&)> predicate, uint64_t maxTStates = 0,
-                           bool notifyDebugger = true);
+                           bool notifyDebugger = true, bool skipBreakpoints = true);
 
     /// Start the current frame again after machine state was replaced from
     /// outside the frame flow (reset, snapshot load). See MainLoop::RestartFrame

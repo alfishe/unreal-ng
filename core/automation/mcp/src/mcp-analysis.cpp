@@ -17,6 +17,11 @@
 //   porttrace                           → start → run_frames → stop → events
 //   gs_porttrace                        → General Sound coprocessor triage:
 //                                        start → run_frames → stop → counters+events
+//   profiler {profiler, op}             → POST /profiler/{opcode|memory|calltrace|porttrace}/{op}, /profiler/{op}
+//   gs_trace {op}                       → POST /control/audio/gs/porttrace {action}, GET /state/audio/gs/porttrace
+//   aylog {op}                          → POST /ay/log {action, capacity?}, GET /ay/log
+//   pchist {op}                         → POST /debug/pchist {enabled}, GET /debug/pchist?depth=
+//   analyzers {op, name}                → GET /analyzers, PUT /analyzer/{name}, GET|DELETE /analyzer/{name}/events
 //
 // Drogon-free; all calls go through the loopback IApiCaller.
 
@@ -392,7 +397,8 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"coverage_start", "coverage_stop", "coverage_read", "coverage_gaps", "coverage_clear", "frame_cost",
                                "profile_start", "profile_stop", "profile_status", "profile_report", "porttrace", "gs_porttrace",
-                               "vdac2_line_budget", "vdac2_line_budget_set"})
+                               "vdac2_line_budget", "vdac2_line_budget_set", "profiler", "gs_trace", "aylog", "pchist",
+                               "analyzers"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -404,7 +410,25 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
         "frame's per-line cost against the line period; lines / in_flight add the per-line costs and the frame in "
         "flight, the latter on a paused machine) and vdac2_line_budget_set (margin = soft budget percent 0..50, "
         "measure_always = draw and measure every frame, also not shown). The metrics are part of the chip state: "
-        "after a time_travel seek they are those of that moment.";
+        "after a time_travel seek they are those of that moment. "
+        "profiler drives one profiler or trace (profiler: opcode, memory, calltrace, porttrace, or all; op: start, stop, "
+        "pause, resume, clear, status), gs_trace the General Sound port trace step by step (op: start, stop, pause, "
+        "resume, clear, events), aylog the AY register log (op: start + capacity?, stop, clear, status, read + limit?), "
+        "pchist the PC history (op: on, off, read + depth?), analyzers the analyzers (op: list, enable, disable, events, "
+        "clear; name: trdos, editor-input, coverage, aylog, audiocapture).";
+    schema["properties"]["profiler"]["type"] = "string";
+    schema["properties"]["profiler"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* name : {"opcode", "memory", "calltrace", "porttrace", "all"})
+        schema["properties"]["profiler"]["enum"].append(name);
+    schema["properties"]["profiler"]["description"] = "profiler: which one (all: memory + calltrace + opcode together)";
+    schema["properties"]["op"]["type"] = "string";
+    schema["properties"]["op"]["description"] = "profiler / gs_trace / aylog / pchist / analyzers: the operation";
+    schema["properties"]["name"]["type"] = "string";
+    schema["properties"]["name"]["description"] = "analyzers: the analyzer id (trdos, editor-input, coverage, aylog, audiocapture)";
+    schema["properties"]["depth"]["type"] = "integer";
+    schema["properties"]["depth"]["description"] = "pchist read: entries, newest first (default 64)";
+    schema["properties"]["capacity"]["type"] = "integer";
+    schema["properties"]["capacity"]["description"] = "aylog start: the ring's capacity in register writes";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["clear"]["type"] = "boolean";
@@ -748,7 +772,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                         steps.push_back([&caller, id](Json::Value& acc, std::function<void(bool)> next) {
                             auto body = std::make_shared<Json::Value>();
                             (*body)["action"] = "start";
-                            caller.Call("POST", Endpoint(id, "/state/audio/gs/porttrace"), body.get(),
+                            caller.Call("POST", Endpoint(id, "/control/audio/gs/porttrace"), body.get(),
                                         [body, &acc, next](int status, Json::Value respBody) mutable {
                                             if (status < 200 || status >= 300)
                                             {
@@ -773,7 +797,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                         steps.push_back([&caller, id](Json::Value&, std::function<void(bool)> next) {
                             auto body = std::make_shared<Json::Value>();
                             (*body)["action"] = "stop";
-                            caller.Call("POST", Endpoint(id, "/state/audio/gs/porttrace"), body.get(),
+                            caller.Call("POST", Endpoint(id, "/control/audio/gs/porttrace"), body.get(),
                                         [body, next](int, Json::Value) { next(true); });
                         });
                         steps.push_back([&caller, id, limit](Json::Value& acc, std::function<void(bool)> next) {
@@ -817,10 +841,136 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                 return;
             }
 
+            if (action == "profiler" || action == "gs_trace" || action == "aylog" || action == "pchist" || action == "analyzers")
+            {
+                const std::string op = args.get("op", action == "analyzers" ? "list" : "status").asString();
+                std::string method = "POST";
+                std::string path;
+                Json::Value body(Json::objectValue);
+                bool hasBody = false;
+                std::string text;
+                if (action == "profiler")
+                {
+                    const std::string which = args.get("profiler", "all").asString();
+                    if (which != "opcode" && which != "memory" && which != "calltrace" && which != "porttrace" && which != "all")
+                    {
+                        done(ToolResult::Error("profiler: opcode, memory, calltrace, porttrace or all"));
+                        return;
+                    }
+                    if (op != "start" && op != "stop" && op != "pause" && op != "resume" && op != "clear" && op != "status")
+                    {
+                        done(ToolResult::Error("op: start, stop, pause, resume, clear or status"));
+                        return;
+                    }
+                    path = (which == "all" ? std::string("/profiler/") : "/profiler/" + which + "/") + op;
+                    if (op == "status")
+                        method = "GET";
+                    text = "Profiler " + which + ": " + op;
+                }
+                else if (action == "gs_trace")
+                {
+                    if (op == "events" || op == "status")
+                    {
+                        method = "GET";
+                        path = "/state/audio/gs/porttrace?events=" + std::to_string(args.get("limit", 32).asUInt());
+                    }
+                    else if (op == "start" || op == "stop" || op == "pause" || op == "resume" || op == "clear")
+                    {
+                        path = "/control/audio/gs/porttrace";
+                        body["action"] = op;
+                        hasBody = true;
+                    }
+                    else
+                    {
+                        done(ToolResult::Error("op: start, stop, pause, resume, clear or events"));
+                        return;
+                    }
+                    text = "GS port trace: " + op;
+                }
+                else if (action == "aylog")
+                {
+                    if (op == "status" || op == "read")
+                    {
+                        method = "GET";
+                        path = "/ay/log?limit=" + std::to_string(op == "status" ? 0u : args.get("limit", 32).asUInt()) +
+                               "&tail=true";
+                    }
+                    else if (op == "start" || op == "stop" || op == "clear")
+                    {
+                        path = "/ay/log";
+                        body["action"] = op;
+                        if (args.isMember("capacity"))
+                            body["capacity"] = args["capacity"];
+                        hasBody = true;
+                    }
+                    else
+                    {
+                        done(ToolResult::Error("op: start, stop, clear, status or read"));
+                        return;
+                    }
+                    text = "AY log: " + op;
+                }
+                else if (action == "pchist")
+                {
+                    if (op == "read" || op == "status")
+                    {
+                        method = "GET";
+                        path = "/debug/pchist?depth=" + std::to_string(args.get("depth", 64).asUInt());
+                    }
+                    else if (op == "on" || op == "off")
+                    {
+                        path = "/debug/pchist";
+                        body["enabled"] = op == "on";
+                        hasBody = true;
+                    }
+                    else
+                    {
+                        done(ToolResult::Error("op: on, off or read"));
+                        return;
+                    }
+                    text = "PC history: " + op;
+                }
+                else
+                {
+                    const std::string name = args.get("name", "").asString();
+                    if (op == "list")
+                    {
+                        method = "GET";
+                        path = "/analyzers";
+                    }
+                    else if (name.empty())
+                    {
+                        done(ToolResult::Error("analyzers " + op + " requires 'name' (list shows them)"));
+                        return;
+                    }
+                    else if (op == "enable" || op == "disable")
+                    {
+                        method = "PUT";
+                        path = "/analyzer/" + name;
+                        body["enabled"] = op == "enable";
+                        hasBody = true;
+                    }
+                    else if (op == "events" || op == "clear")
+                    {
+                        method = op == "events" ? "GET" : "DELETE";
+                        path = "/analyzer/" + name + "/events";
+                    }
+                    else
+                    {
+                        done(ToolResult::Error("op: list, enable, disable, events or clear"));
+                        return;
+                    }
+                    text = "Analyzers: " + op + (name.empty() ? std::string() : " " + name);
+                }
+                ResolveAndForward(args, method, path, hasBody ? &body : nullptr, caller, text, done);
+                return;
+            }
+
             done(ToolResult::Error("Unknown action '" + action +
                                             "'. Valid: coverage_start, coverage_stop, coverage_read, coverage_gaps, coverage_clear, "
                                             "frame_cost, profile_start, profile_stop, profile_status, profile_report, porttrace, "
-                                            "gs_porttrace, vdac2_line_budget, vdac2_line_budget_set"));
+                                            "gs_porttrace, vdac2_line_budget, vdac2_line_budget_set, profiler, gs_trace, aylog, "
+                                            "pchist, analyzers"));
         });
 }
 

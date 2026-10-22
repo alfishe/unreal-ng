@@ -79,6 +79,7 @@ unrealasmexampledecodeencode   testdata/sjasmplus/module.asm  # round trip: iden
 unrealasmexampleconvertdialect 'testdata/dialects/thelink/gsports.$H'          # ALASM -> sjasmplus
 zxasm convert testdata/dialects/alasm-sjasmplus/constructs.alasm.txt --codec text --from alasm --to sjasmplus
 zxasm convert TheLink.trd --to sjasmplus -o out/              # every source of a disk, INCBIN files extracted
+zxasm convert C33_F9.trd --with Z33_F9.trd --to sjasmplus -o out/   # files it INCLUDEs from another disk of the set
 symconv source TheLink.trd --main GSTUNNE4 --to native         # its labels with values, names and lines (ALASM)
 symconv live 3:ram3.bin 6:ram6.bin --to unreal-map              # ALASM / XAS label tables in dumped RAM pages
 zxasm inject main.asm testdata/templates/alasm-5.09.szx -o work.szx  # a sjasmplus source as ALASM's text, at its prompt; the files

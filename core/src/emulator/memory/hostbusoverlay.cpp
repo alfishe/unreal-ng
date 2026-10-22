@@ -1,5 +1,6 @@
 #include "hostbusoverlay.h"
 
+#include <algorithm>
 #include <numeric>
 
 void HostBusOverlayChain::Assign(HostBusOverlay* const* overlays, size_t count)
@@ -82,4 +83,16 @@ bool HostBusOverlayChain::RepeatFetchIsPure(uint16_t addr, uint32_t& period) con
     }
     period = combined;
     return true;
+}
+
+uint32_t HostBusOverlayChain::RepeatFetchPureUntil(uint16_t addr, uint32_t t) const
+{
+    uint32_t until = UINT32_MAX;
+    for (size_t i = 0; i < _count; i++)
+    {
+        const HostBusOverlay* overlay = _members[i];
+        if (overlay->observesReads && addr >= overlay->windowStart && addr < overlay->windowEnd)
+            until = std::min(until, overlay->RepeatFetchPureUntil(addr, t));
+    }
+    return until;
 }

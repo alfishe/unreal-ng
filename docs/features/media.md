@@ -76,10 +76,10 @@ on a +3) is `unknown-slot`, never drive A.
 | `swap` | slot, path | eject + insert in one step |
 | `eject` | slot | take the medium out |
 | `save` | slot, path? | write the medium back into its file, or to `path` (it then stands for that file): a floppy in its format; a hard disk or card's changed sectors into a raw / HDF / HDI / VHD file, a [CHD](../file-formats/disk-images/chd.md) written again; a [composite](#composite-media-several-sources-in-one-disk) without a path: its session delta file |
-| `export` | slot, path | write a copy of the medium as it is now; the medium keeps its unsaved writes. A hard disk or card goes to a raw image (zero sectors not written: sparse where the host can), a VHD for a `.vhd` path (fixed by default, `vhd: dynamic` for a sparse one), or a CHD for a `.chd` path. Free space a composite or a sparse image knows to be zeros is skipped without being read |
+| `export` | slot, path | write a copy of the medium as it is now; the medium keeps its unsaved writes. The path's extension picks the format ([below](#saving-in-another-format)): a floppy as `.trd`, `.scl`, `.udi`, `.fdi`, `.dsk`, `.td0`, `.mgt`, `.img`, `.hfe` or `.scp`, the tape as `.tap` or `.tzx`. A hard disk or card goes to a raw image (zero sectors not written: sparse where the host can), a VHD for a `.vhd` path (fixed by default, `vhd: dynamic` for a sparse one), or a CHD for a `.chd` path. Free space a composite or a sparse image knows to be zeros is skipped without being read |
 | `discard` | slot | drop the unsaved writes (a floppy is opened again from its file) |
 | `rescan` | slot | build a folder or composite medium again after its sources changed; sources that give the same volume leave it as it is ("unchanged", unsaved writes kept). Unsaved writes over changed sources need `save`, `export <path>` or `discard`: they cannot follow a rebuild |
-| `create` | slot | a blank floppy (`format`, `cylinders`, `sides`) or card (`size`); a blank card or hard disk holds memory only for what the guest writes (64 KiB chunks) |
+| `create` | slot | a blank floppy (`format`, `cylinders`, `sides`) or card (`size`); a blank card or hard disk holds memory only for what the guest writes (64 KiB chunks). A `trdos` floppy comes formatted as TR-DOS FORMAT leaves it (16 x 256-byte sectors, an empty catalogue, the system sector naming the geometry) |
 | `protect` | slot, `on` | the slot's write-protect switch |
 | `compose` | descriptor | build a [composite](#composite-media-several-sources-in-one-disk) (`*.ucompose.yaml`, or its JSON text) without inserting it: the layout and the report |
 | `layers` | slot | a composite's layers (and partitions) |
@@ -97,7 +97,7 @@ on a +3) is `unknown-slot`, never drive A.
 | `codepage` | `cp866`, `cp1251` | the folder's manifest, else `cp866` | insert, swap (folders) |
 | `free` | bytes | 256 MiB | insert, swap (folder volumes: room for guest writes) |
 | `kind` | `floppy`, `tape`, `block` | floppy when the machine has drives | insert `auto` of a folder; `formats` filter |
-| `format` | `auto`, `unformatted`, `plus3` | `auto` | create (floppies) |
+| `format` | `auto` (`plus3` on a +3, else `unformatted`), `trdos` (`tr-dos`, `trd`), `plus3` (`+3`), `unformatted` (`raw`) | `auto` | create (floppies) |
 | `format` | `audio-cd` | a folder in a CD slot is one anyway | insert, swap: a folder of MP3 / FLAC / WAV files into a CD-ROM drive as an audio CD |
 | `cylinders`, `sides` | 40 / 80, 1 / 2 | the format's | create |
 | `size` | bytes, a multiple of 512, up to 128 GiB | — | create (cards, hard disks) |
@@ -476,6 +476,57 @@ NeoGS card:
     ide0.master IDE master (hard disk)    empty
   several targets: name the slot (media insert <slot> <path>)
 ```
+
+### Saving in another format
+
+`export` writes a copy in the format the path's extension names, the medium keeping its own file and its unsaved
+writes (the deck's catalogue action `media.export` picks the path itself: next to the medium's file with the new
+extension, or `<user data>/exports/<slot>-<time>.<ext>` for a blank disk or a folder).
+
+| Medium | Extensions | Refused when |
+|---|---|---|
+| floppy | `trd`, `scl` (TR-DOS: 16 x 256-byte sectors), `udi` (any track layout, lossless), `fdi`, `dsk` (+3 / CPC), `td0`, `mgt` / `img` (+D: 10 x 512), `img` / `ima` (a PC floppy: 9 / 18 x 512 on 80 x 2), `hfe`, `scp` (flux) | the layout does not fit the format: the answer says why (`udi` takes everything) |
+| tape | `tzx` (every block), `tap` (ROM-standard byte blocks only) | a `.tap` of a tape with turbo, pure-tone or direct-recording blocks: save it as `.tzx` |
+
+### Recent files
+
+The emulator keeps the files opened lately, ten per kind, newest first: `snapshot`, `tape`, `disk`, `rzx`, `image`
+(hard disk and card images), `cd` (`RecentFiles`, `core/src/emulator/media/recentfiles.h`). A file is noted when it
+opened: a snapshot or RZX load, a tape or disk load (File > Open, drag and drop, `media.open`, `tape load`, `disk
+insert`), a media `insert` / `swap` of a file or a folder on any surface. Opening one again moves it to the front.
+unreal-qt keeps the list in `<user data>/recent-files.json` (File > Recent Files); headless tools keep it in memory.
+
+| Surface | List | Clear | Open |
+|---|---|---|---|
+| CLI | `recent [kind] [--json]` | `recent clear [kind]` | `action run media.open_recent index=N [kind=K]` |
+| WebAPI | `GET /api/v1/recent[?kind=]` | `DELETE /api/v1/recent[?kind=]` | `POST /api/v1/controllers/actions/media.open_recent {"params": {"index": 0, "kind": "tape"}}` |
+| WebSocket | the `call` of the GET; topic `media.recent` | the `call` of the DELETE | the action `call`, or `{"op":"action","id":"media.open_recent",...}` on the `surface` topic |
+| MCP | `media` action `recent` (`kind`) | `media` action `recent_clear` | `actions` action `run`, id `media.open_recent` |
+| Lua | `recent_files([kind])` | `recent_clear([kind])` | `action("media.open_recent", nil, {index = 0, kind = "tape"})` |
+| Python | `unreal_emulator.recent_files(kind="all")` | `recent_clear(kind="all")` | `emu.action("media.open_recent", index=0, kind="tape")` |
+| Qt | File > Recent Files | File > Recent Files > Clear Recent Files | the menu entry |
+
+The list: `{revision, kinds: {snapshot: [{index, kind, name, path, time}], tape: [...], ...}, all: [...]}` (with a
+kind: `{revision, kind, files: [...]}`); `index` is the entry's place in that list, the one `media.open_recent` takes
+(with the same `kind`, or `all`). The readout `media.recent` (a deck key's label) is the same value.
+
+### The deck's actions
+
+The catalogue actions over these verbs (a Stream Deck key, a pad, any plane's `action run`; control surfaces
+[actions.md §1.1](../inprogress/2026-10-18-control-surfaces/actions.md#11-scenario-actions-sd6)):
+
+| Action | Params | Over |
+|---|---|---|
+| `media.open` | `path`, `kind?`, `drive?`, `autostart?`, `switch_model?` | a snapshot, tape or disk load |
+| `media.insert` | `drive` (a slot selector, or `auto`), `path`, `wp?`, `access?`, `save?` / `discard?` / `export?` | `insert` |
+| `media.swap` | `drive`, `with` (another drive: the two exchange their disks, write protect included; a disk with unsaved writes needs `save` or `discard`, a blank one a file first) or `path` (`swap`) | `eject` + `insert`, or `swap` |
+| `media.eject`, `media.protect`, `media.save` | `drive`, ... | `eject`, `protect` (flips), `save` |
+| `media.create` | `drive`, `format?` (`auto`, `trdos`, `plus3`, `unformatted`), `cylinders?`, `sides?`, `size?` (IDE / SD: bytes or `64M`, `2G`) | `create` |
+| `media.export` | `drive`, `format` (an extension of the table above) or `path`, `force?` | `export` |
+| `media.discard`, `media.rescan` | `drive` (`rescan`: `save?` / `discard?`) | `discard`, `rescan` |
+| `media.open_recent` | `index?` (0), `kind?` (`all`), `autostart?`, `drive?` | the recent list, then the load the kind takes (an RZX plays, an image goes where `insert auto` puts it) |
+
+The readout `media.disk` shows each drive's `dirty` flag (unsaved writes) beside its name, protect and motor.
 
 ## On each surface
 

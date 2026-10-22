@@ -193,6 +193,9 @@ set(COMMON_SOURCES
     src/api/slots_api.cpp
     src/api/controllers_api.cpp
     src/api/actions_api.cpp
+    src/api/surfaces_api.cpp
+    src/api/streamdeck_api.cpp
+    src/api/monitoring_api.cpp
     src/api/cdaudio_api.cpp
     src/api/snapshot_api.cpp
     src/common/upload_helper.h
@@ -204,6 +207,7 @@ set(COMMON_SOURCES
     src/api/debug_api.cpp
     src/api/capture_api.cpp
     src/api/recording_api.cpp
+    src/api/recent_api.cpp
     src/api/profiler_api.cpp
     src/api/porttrace_api.cpp
     src/api/vdac2_api.cpp
@@ -213,6 +217,7 @@ set(COMMON_SOURCES
     src/api/joystick_api.cpp
     src/api/ports_api.cpp
     src/api/ttd_api.cpp
+    src/api/runpace_api.cpp
     src/api/symbols_api.cpp
     src/api/asm_api.cpp
     src/emulator_websocket.cpp
@@ -222,6 +227,10 @@ set(COMMON_SOURCES
     src/common/request_gates.h
     src/companion-event-hub.cpp
     src/companion-event-hub.h
+    src/ws-hub.cpp
+    src/ws-hub.h
+    src/surface-hub.cpp
+    src/surface-hub.h
     src/debug-event-hub.cpp
     src/debug-event-hub.h
     src/automation-webapi.cpp

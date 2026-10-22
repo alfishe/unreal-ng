@@ -191,3 +191,40 @@ TEST_F(DebugEventHub_Test, BreakpointsChangedCarriesTheIds)
     EXPECT_EQ(event["ids"][0].asUInt(), 2u);
     EXPECT_EQ(event["ids"][1].asUInt(), 5u);
 }
+
+TEST_F(DebugEventHub_Test, ASinkGetsEveryEventNumberedWithTheSubscribersAndWithoutThem)
+{
+    std::mutex mutex;
+    std::vector<std::pair<std::string, Json::Value>> sunk;
+    const uint64_t sink = _hub.AddSink([&](const std::string& topic, const Json::Value& event) {
+        std::lock_guard<std::mutex> lock(mutex);
+        sunk.emplace_back(topic, event);
+    });
+    auto count = [&] {
+        std::lock_guard<std::mutex> lock(mutex);
+        return sunk.size();
+    };
+
+    // No subscriber of its own: the sink (the debug.* topics of /api/v1/ws) still gets the events
+    PostPause(kFirst, false);
+    ASSERT_TRUE(TestWait::For([&] { return count() == 1; }, std::chrono::seconds(2)));
+    Inbox inbox;
+    _hub.HandleMessage(&inbox, R"({"op":"subscribe","id":"a","emulator":")" + std::string(kFirst) + R"("})",
+                       inbox.Sender());
+    PostStepDone(kFirst, false);
+    ASSERT_TRUE(TestWait::For([&] { return count() == 2 && inbox.Events().size() == 1; }, std::chrono::seconds(2)));
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        EXPECT_EQ(sunk[0].first, "debug");
+        EXPECT_EQ(sunk[0].second["event"].asString(), "paused");
+        EXPECT_EQ(sunk[0].second["seq"].asUInt64(), 1u);
+        EXPECT_EQ(sunk[1].second["seq"].asUInt64(), 2u) << "one numbering for the socket and the sink";
+        EXPECT_EQ(sunk[1].second["emulator"].asString(), kFirst);
+    }
+    EXPECT_EQ(inbox.Events()[0]["seq"].asUInt64(), 2u);
+
+    _hub.RemoveSink(sink);
+    PostPause(kFirst, false);
+    ASSERT_TRUE(TestWait::For([&] { return inbox.Events().size() == 2; }, std::chrono::seconds(2)));
+    EXPECT_EQ(count(), 2u) << "a removed sink is not called again";
+}

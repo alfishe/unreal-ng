@@ -20,6 +20,7 @@
 /// shared code (gsmailbox.h).
 
 #include <algorithm>
+#include <iterator>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
@@ -321,6 +322,23 @@ public:
     /// DAC channels the card mixes (introspection loops use this, not 4)
     virtual int channelCount() const { return 4; }
 
+    /// The mixer's channel volume on DAC channel `channel` as a Q15 gain (MixerChannelGainQ15, 0 = muted): host-side,
+    /// applied to that channel's level in the card's own output (never to the card's state: TTD and the program see
+    /// nothing), from the next level change or frame start. Unity everywhere renders exactly as without it. Emulation
+    /// thread (SoundManager's channel layer)
+    void setHostChannelGain(int channel, int32_t gainQ15)
+    {
+        if (channel < 0 || channel >= kMaxHostChannels || _hostGain[channel] == gainQ15)
+            return;
+        _hostGain[channel] = gainQ15;
+        _hostGainDirty = true;
+        _hostGainUnity = std::all_of(std::begin(_hostGain), std::end(_hostGain), [](int32_t g) { return g == 32768; });
+    }
+    int32_t hostChannelGain(int channel) const
+    {
+        return channel >= 0 && channel < kMaxHostChannels ? _hostGain[channel] : 32768;
+    }
+
     /// NeoGS extras (other cards: false / no-op)
     virtual bool neogsState(NeoGSStateInfo& out) const
     {
@@ -424,4 +442,12 @@ public:
         (void)startPlayback;
     }
     /// endregion </Runtime personality switch>
+
+protected:
+    /// region <Host channel gains (setHostChannelGain)>
+    static constexpr int kMaxHostChannels = 8;
+    int32_t _hostGain[kMaxHostChannels] = {32768, 32768, 32768, 32768, 32768, 32768, 32768, 32768};
+    bool _hostGainUnity = true;   ///< every gain at unity: the output path is the card's own, untouched
+    bool _hostGainDirty = false;  ///< a gain changed: the card emits its level again at the next frame start
+    /// endregion </Host channel gains>
 };

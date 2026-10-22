@@ -50,6 +50,8 @@ void Info(const JsonValue& entry, DeviceMatch& info)
     }
     if (const JsonValue* player = entry.Find("player"); player != nullptr && player->IsBool())
         info.player = player->AsBool();
+    if (const JsonValue* role = entry.Find("role"); role != nullptr && role->IsString())
+        DeviceRoleFromName(role->AsString(), info.role);  // an unknown name keeps the player role
     if (const JsonValue* controls = entry.Find("controls"); controls != nullptr && controls->IsArray())
         for (const JsonValue& control : controls->Items())
             if (control.IsString())

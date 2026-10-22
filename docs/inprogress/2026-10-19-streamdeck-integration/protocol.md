@@ -20,6 +20,8 @@ base `instance` message is replaced by `target`.
 - [6. Machine lifecycle without REST](#6-machine-lifecycle-without-rest)
 - [7. Errors](#7-errors)
 - [8. Example](#8-example)
+- [9. As built in the core (SD4, 2026-10-20)](#9-as-built-in-the-core-sd4-2026-10-20)
+- [10. As built: the surface topic and the daemon's client (SD5, 2026-10-21)](#10-as-built-the-surface-topic-and-the-daemons-client-sd5-2026-10-21)
 
 ## 0. Transport: one WebSocket
 
@@ -115,10 +117,12 @@ core, one producer each, all from published values (never a read that holds the 
 | `run.state` | `{state: running\|paused\|stopped, speed, turbo}` | run control | on change |
 | `machine` | `{model, ram_kb, index}` | instance | on change |
 | `media.tape` | `{loaded, playing, block, blocks, progress}` | tape manager | ≤ 10 Hz |
-| `media.disk` | `{drives: [{letter, loaded, name, busy}]}` | disk manager | on change |
+| `media.disk` | `{drives: [{letter, loaded, name, busy, protect, dirty}]}` | disk manager | on change |
 | `audio.mute` | `{muted, master}` | mixer | on change |
 | `debug.mode` | `{enabled}` | debugger | on change |
 | `toggle.<action id>` | `{on}` | the action's `State()` (§5) | on change |
+| `host.stats`, `host.clients` | the process's CPU %, memory, threads; connections per plane | monitoring (`monitoringapi.h`) | 2 Hz |
+| `emulator.stats`, `debug.breakpoints`, `media.slots`, `recording.state`, `debug.labels`, `ttd.status`, `debug.analyzers`, `controllers.state` | the use case C10 summaries ([command-interface.md §17](../../emulator/design/control-interfaces/command-interface.md#17-monitoring)) | monitoring | `emulator.stats` 2 Hz, the rest on change |
 
 - `subscribe` takes names or prefixes (`media.*`). Unknown names are answered once by `error not_found` and ignored.
 - `toggle.*` exists for every catalogue action whose kind is a toggle: a deck key bound to `mach.turbo_toggle` shows
@@ -198,3 +202,36 @@ a headless host (no views).
 ← {"op":"target","instance":"7c21…","index":2,"model":"SPRINTER","view":{"id":"v2","name":"Window 2"},"mode":"follow"}
 ← {"op":"ctx","instance":"7c21…","context":"debug","by":"gui"}
 ```
+
+## 9. As built in the core (SD4, 2026-10-20)
+
+The core side of §1-§5; the socket messages themselves are the `surface` topic (control surfaces S4), which reads
+these (the hook: [targeting.md §10.1](targeting.md#101-the-hook-for-the-surface-topic-s4)). Every value here is also
+a REST / CLI / MCP / script verb ([command-interface.md §16.1](../../emulator/design/control-interfaces/command-interface.md#161-surface-targets-readouts-activity)).
+
+| Part | As built |
+|:--|:--|
+| §2 target | `actions::surfaces::TargetNode`: `instance`, `index`, `model`, `ram_kb`, `view` {`id`, `name`} or null, `mode` (`follow`, `view`, `instance`), plus `pin` (`follow`, `view:<id>`, `instance:<id>`) and `source` (`view`, `selected`, `sole`, `none`) |
+| §3 readouts | `core/src/emulator/actions/readouts.h`. `ttd.position` is the TTD `position` verb's body (S2's cursor: `frame`, `tinframe`, the bounds, `state`, `history`, `paused`, `fps`) plus `available`. `run.state` `{state, speed (the host multiplier 1..16), turbo}`. `machine` `{model, ram_kb, index}` from the config (not `GetMachineIdentity`, heavy on ZX-Poly). `media.tape` `{loaded, name, playing, block, blocks, progress}`: progress is blocks done / blocks (within a block needs the tape's position, which only a paused machine may read). `media.disk` `{drives: [{letter, loaded, name, protect, busy}]}`: busy is the drive's motor. `audio.mute` `{muted}`: the host has no master volume (the mixer's master mutes only). `debug.mode` `{enabled}` (the feature, not `Emulator::IsDebug`). `toggle.<id>` `{on}` (null when not known), `toggle.feature.<name>` for every feature, `toggle.set.<name>` by name. Matching: exact, `prefix.*`, `*` |
+| §4 activity | `actions::ActivityFeed` (`activityfeed.h`): the actions worker records each job it ran (after the result, before the callers learn it); ring of 256; a delta of the same action, instance, origin, identity and session within 100 ms of the entry's first job is merged (summed, the higher rate, a new seq). Entry: `seq`, `instance`, `id`, `value` (`{p}`, `{d, rate}`, `{level}`, `{text}`, `params`), `origin` (`gui`, `host_device`, `companion`, `webapi`, `mcp`, `cli`, `lua`, `python`), `surface` (the client name, `GUI`, else the identity), `ok`, `error`, `message`, `t_ms`, `merged`. The session filter (own actions), the target-instance filter, 20 per second and `dropped` per socket are the topic's |
+| §4 look (Q-3) | The daemon's (SD5): the scenario's `settings.activity` defaults to the key flash only, `strip: "none"`, `ignore: ["ttd.seek_by"]`; the core sends everything |
+| §5 catalogue | `ActionInfo.description` (every core and GUI action: `catalogue.cpp`), `ActionInfo.toggle` (from `ActionRules::state`: `run.pause_toggle`, `ttd.record_toggle`, `mach.turbo_toggle`, `audio.mute_toggle`, `video.overscan_toggle`, `video.temporal`, `dbg.mode_toggle`, `feature.toggle`, `set.toggle`), `scope` (the rule's scope now, as S1 built it), `params` (SD6's one-line form: a typed schema is open), `rev` (`ActionRegistry::Revision()`, bumped by every registration and unregistration; `NC_ACTION_CATALOGUE`) |
+| §7 errors | `not_now` only for a **view** pin on a host without views (an instance pin works headless); `Not Found` for an unknown session, view or instance |
+
+## 10. As built: the surface topic and the daemon's client (SD5, 2026-10-21)
+
+The `surface` topic of `/api/v1/ws` (`surface-hub.*`, `ws-hub.*`) and the daemon's client (`sdb/surfaceclient.h`).
+The plane's reference: [websocket-interface.md §3.1](../../emulator/design/control-interfaces/websocket-interface.md#31-the-surface-topic);
+the daemon's: [daemon.md](../../companions/streamdeck/daemon.md#the-surface-client).
+
+| Part | As built |
+|:--|:--|
+| One connection, a session per deck (§0, §1) | `join` may come several times on one connection, one per `serial` (a serial joined twice: `bad_request`). `welcome` echoes the join's `rid` and `serial`; every message of a session carries `session`; `action`, `subscribe`, `unsubscribe` and `bye` name it (optional while the connection has one surface). `bye` with a session ends that surface only; without, all of them and the socket |
+| `join.features` (§1) | `activity`, `catalogue` (`target` is always pushed); `welcome.features` lists those taken, `welcome.catalogue_rev` the registry's revision |
+| Readouts (§3) | The whole vocabulary of `readouts.h` on the surface topic: `ttd.position` and `run.state` as the state topics read them, `machine`, `media.tape`, `media.disk`, `audio.mute`, `debug.mode`, `toggle.<id>` through `actions::ReadReadout` on the hub's tick; patterns kept and expanded again against the instance after a rebind (its features); a toggle by name (`toggle.set.fast_tape`) is taken as it is; `welcome.readouts` lists the bound instance's names |
+| Activity (§4) | `ActivityFeed`'s listener posts each entry to the hub's loop (only while a surface asked for it); the entry is serialised once (`ActivityEntryNode`) and each surface filters: its bound instance, never its own actions (a new `ActionOrigin::surface` = the calling session, kept as `ActivityEntry::surfaceSession`; not a run-control session, no gate reads it), at most 20 a second, `dropped` on the next one sent (over the rate, or while the connection is congested) |
+| Catalogue (§5) | `NC_ACTION_CATALOGUE` -> `{"op":"catalogue","rev":n}` to the surfaces with the feature |
+| Target (§2) | Unchanged from S4 (follow the selected / sole instance, or pin an instance); views and `pin` (`TargetState`) are still to come: the daemon joins a `{"view": n}` target, and on `not_now` joins again with `"follow"` |
+| The daemon's client | One `ws::Client` on the network loop (no thread), the companion token on the handshake; `subscribe` `instances` plus one `join` per logical deck (model token, serial, the scenario's target, all three features); per deck a `subscribe` of exactly the readouts its scenario names (`NeedsOf`: the faces' state paths, the strips' statuses), 50 Hz with a TTD timeline, else 10 Hz; the `action` kind as `action` with an integer `rid` (`ActionExecutor` over the loop, 5 s), REST while the deck has no session (`ActionResult::notSent`); readouts into `Runtime::SetReadout` (paths) and `SetStripReadout` (whole values), `ctx` into `OnContext` (after a new instance its default `ctx` is answered with the deck's own context instead), `activity` into `ShowActivity`, `target` into `SetTarget`; reconnect with backoff 0.25 .. 5 s and every deck joined again; `revoked` or a 401 handshake: stopped, `SetNotice`, the companion file watched for a new token |
+| Strip | `strip.status` `ttd` (the timeline from `ttd.position` plus the last seek's `marks`), `run`, `tape`, `target`; `strip.target` (the target line, `RECONNECTING`); the revoked notice; the activity line (`settings.activity.strip: "line"`), quiet, not the failure banner. `settings.activity.ignore` defaults to `["ttd.seek_by"]` (Q-3) |
+| Tests | Core: `WsHub_Test` (several surfaces on one connection, sessions on every op and message, `bye` per session; activity of other surfaces only, 20 a second with `dropped`; catalogue; the readout vocabulary). Daemon: `surfaceclient_test.cpp` in `streamdeck-tests` against a fake surface server on the event loop (join / welcome, readouts, actions with `rid` and the executor from another thread, the REST fallback without a session, ctx, the context kept on a new instance, activity, a second deck and its `bye`, a refused view target, reconnect, revoked and a new token, a 401 handshake, not paired), readout paths, `NeedsOf`, the strip's timeline pixels (no pink) |

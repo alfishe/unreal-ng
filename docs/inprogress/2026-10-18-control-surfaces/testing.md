@@ -22,9 +22,10 @@
 
 Every test under 50 ms, no `sleep_for` (`TestWait`), scratch paths by `TestPathHelper`.
 
-## 2. Conformance (`tools/surfaces/conformance/`)
+## 2. Conformance (`tools/verification/mcp/test_ws_surface.py`)
 
-Python against a headless instance with `UNREAL_COMPANION_TOKENS`:
+Python against a launched instance with `UNREAL_COMPANION_TOKENS` (built in S4 beside the other live scripts, so
+`run_all.py --launch` runs it; the unit-level counterpart is `WsHub_Test` in core-tests):
 
 - `auth` then `join`; `companion_required` without; `companion_not_for_agents` with an agent token; `companion_unknown` with a revoked token; `companion_forbidden`
   with a token lacking `rewind`; `held_by_session` while a test agent holds a session; `bad_request` cases.

@@ -3,6 +3,9 @@
 // automation examples. One thread; files in a temporary folder.
 #include <QApplication>
 #include <QComboBox>
+#include <QLineEdit>
+#include <QUndoStack>
+#include <algorithm>
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
@@ -11,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "actioncatalogue.h"
 #include "check.h"
 #include "daemoncontrol.h"
 #include "editorapi.h"
@@ -20,6 +24,7 @@
 #include "presets.h"
 #include "runcontroller.h"
 #include "sdb/automation.h"
+#include "sdb/catalogue.h"
 #include "sdb/models.h"
 #include "sdb/scenario.h"
 #include "sdb/scenarioio.h"
@@ -203,6 +208,103 @@ void TestRouteExamples(EditorWidget& w)
         }
     CHECK(presets >= 1);
 }
+// The action kind (scenarios.md §2): the catalogue picker, value, hold; the palette's catalogue presets
+void TestActionStep(EditorWidget& w)
+{
+    std::printf("editor: the action kind\n");
+    cat::Catalogue c;
+    c.actions.push_back({"run.pause_toggle", "Pause / continue", "Run", "press", false, false, ""});
+    c.actions.push_back({"run.turbo_hold", "Turbo while held", "Run", "press", true, false, ""});
+    c.actions.push_back({"mach.start", "Start a machine", "Capture and machine", "press", false, false, "model"});
+    EditorCatalogue::Instance().Set(c, QStringLiteral("the test"));
+    EditorDocument* d = w.Document();
+    d->Replace(Doc(json::array({json{{"id", "a"}, {"type", "action"}, {"at", {0, 0}}, {"do", ActionTemplate("action")}},
+                                json{{"id", "m"}, {"type", "menu"}, {"at", {0, 1}}, {"items", json::array()}}})));
+    CHECK(d->Valid());
+    d->Select(QStringLiteral("a"), false);
+    QComboBox* pick = Box(&w, "action-id");
+    CHECK(pick && pick->count() == 3 && pick->currentData().toString() == QStringLiteral("run.pause_toggle"));
+    if (pick)
+    {
+        const int at = pick->findData(QStringLiteral("mach.start"));
+        pick->setCurrentIndex(at);
+        emit pick->activated(at);
+        const json* n = ops::FindNode(d->Doc(), "a");
+        CHECK(n && (*n)["do"]["id"] == "mach.start");
+    }
+    // value: JSON replaced as a whole (not merged), plain text kept as text, empty removes it
+    auto value = [&]() -> QLineEdit* {
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        const auto v = w.findChildren<QLineEdit*>(QStringLiteral("action-value"));
+        return v.size() == 1 ? v[0] : nullptr;
+    };
+    auto setValue = [&](const QString& t) {
+        if (QLineEdit* e = value())
+        {
+            e->setText(t);
+            emit e->editingFinished();
+        }
+    };
+    setValue(QStringLiteral(R"({"model":"PENTAGON","ram_kb":128})"));
+    setValue(QStringLiteral(R"({"model":"48K"})"));
+    const json* n = ops::FindNode(d->Doc(), "a");
+    CHECK(n && (*n)["do"]["value"] == json({{"model", "48K"}}));
+    setValue(QStringLiteral("ttd"));
+    n = ops::FindNode(d->Doc(), "a");
+    CHECK(n && (*n)["do"]["value"] == "ttd");
+    setValue(QString());
+    n = ops::FindNode(d->Doc(), "a");
+    CHECK(n && !(*n)["do"].contains("value"));
+    // an id the catalogue lacks: shown as it is, a warning
+    d->Replace(Doc(json::array({json{{"id", "a"}, {"type", "action"}, {"at", {0, 0}},
+                                     {"do", {{"kind", "action"}, {"id", "run.nothing"}}}}})));
+    d->Select(QStringLiteral("a"), false);
+    pick = Box(&w, "action-id");
+    CHECK(pick && pick->currentData().toString() == QStringLiteral("run.nothing"));
+    CHECK(d->Valid() && std::any_of(d->Issues().begin(), d->Issues().end(), [](const Issue& i) {
+              return !i.error && i.message.find("not in the host's catalogue") != std::string::npos;
+          }));
+    // the palette: one preset per catalogue action, a held one with hold
+    int fromCatalogue = 0;
+    for (const auto& p : Presets())
+        if (p.category.startsWith(QStringLiteral("unreal-ng: ")))
+        {
+            ++fromCatalogue;
+            CHECK(p.node["do"]["kind"] == "action");
+        }
+    // Presets() is built once, from the shipped catalogue of the data directory the binary finds
+    const auto shipped = cat::DefaultFile().empty() ? std::nullopt : cat::Load(cat::DefaultFile());
+    CHECK(fromCatalogue == (shipped ? static_cast<int>(shipped->actions.size()) : 0));
+    CHECK(CatalogueStep(c.actions[1]).value("hold", false) && !CatalogueStep(c.actions[0]).contains("hold"));
+}
+
+// Save writes format v2: a v1 document is converted first (one undo step), the notes say what changed
+void TestSaveV2(EditorWidget& w, const QTemporaryDir& dir)
+{
+    std::printf("editor: save as v2\n");
+    const QString file = dir.filePath(QStringLiteral("old.deck.json"));
+    Write(file, json::parse(R"({"version":1,"name":"old","model":"plusxl","settings":{"webapi":"http://h:1"},
+      "root":{"id":"home","type":"menu","items":[
+        {"id":"p","type":"action","at":[0,0],"do":{"kind":"webapi","path":"/pause"}},
+        {"id":"r","type":"action","at":[0,1],"do":{"kind":"run_toggle"}}]}})"));
+    QString err;
+    CHECK(w.OpenFile(file, &err));
+    EditorDocument* d = w.Document();
+    CHECK(d->Version() == 1);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    CHECK(!w.findChildren<QWidget*>(QStringLiteral("convert-v2")).isEmpty());  // the scenario form offers it
+    CHECK(d->Save({}, &err));
+    CHECK(d->Version() == 2 && !d->LastNotes().isEmpty());
+    std::string e;
+    const auto saved = io::LoadFile(file.toStdString(), &e);
+    CHECK(saved && (*saved)["version"] == 2 && !(*saved)["settings"].contains("webapi"));
+    CHECK(saved && (*saved)["root"]["items"][0]["do"] == json({{"kind", "action"}, {"id", "run.pause"}}));
+    CHECK(saved && (*saved)["root"]["items"][1]["do"] == json({{"kind", "action"}, {"id", "run.pause_toggle"}}));
+    d->UndoStack()->undo();  // the conversion is one step
+    CHECK(d->Version() == 1);
+    CHECK(!d->ConvertToV2() || d->Version() == 2);
+    CHECK(!d->ConvertToV2());  // v2 already
+}
 }  // namespace
 
 void TestEditor()
@@ -215,4 +317,6 @@ void TestEditor()
     TestKindBox(w);
     TestModelBox(w);
     TestRouteExamples(w);
+    TestActionStep(w);
+    TestSaveV2(w, dir);
 }

@@ -6,7 +6,7 @@
 | **Code** | `src/dialects/pasmo/pasmobackend.cpp` over the writer it shares with z88dk (`src/dialects/common/classicbackend.cpp`); `zxasm convert --to pasmo` |
 | **Target** | [pasmo 0.5.5](https://pasmo.speccy.org/) by Julián Albo (its manual `pasmodoc.html` in the source archive) |
 | **Checks** | `unreal-asm-tests` (`PasmoBackend_Test`, with `UNREAL_ASM_PASMO` the oracle programs too); `tools/verification/unreal-asm/checks/crosscheck.py` on real disks |
-| **Result** | the oracle programs of STORM 1.3, ZAsm 3.15, TASM 5.0 and ALASM 5.09 and the General Sound 1.04 ROM (TASM 4.0) assemble with pasmo to the bytes the original assemblers built; on the collection's disks every main source both sjasmplus and pasmo assemble gives the same bytes (419 sources, 0 differences) |
+| **Result** | the oracle programs of STORM 1.3, ZAsm 3.15, TASM 5.0 and ALASM 5.09 and the General Sound 1.04 ROM (TASM 4.0) assemble with pasmo to the bytes the original assemblers built; on the collection's disks every main source both sjasmplus and pasmo assemble gives the same bytes (434 sources, 0 differences, 2026-10-21; IFUSED decided when converting) |
 
 ## 1. Example first
 
@@ -31,31 +31,30 @@ IN F,(C) / OUT (C),0                DB #ED,#70 / DB #ED,#71
 | Precedence: `* / MOD SHL SHR`, then `+ -`, comparisons, the unary `NOT ~ ! + -`, `AND`, `OR XOR`, `&&`, `\|\|`, and `HIGH LOW` last: `-1+2` is -3, `HIGH #1234+1` is #12 | every unary operation and HIGH / LOW in parentheses; binary ones by priority |
 | 16-bit unsigned words; comparisons give #FFFF | the 16-bit sources (ALASM, TASM, STORM, ZX-ASM) need no masks; STORM's true 1 is negated |
 | A signed 16-bit source (GENS) divides two's complement words | `/` and `MOD` on the magnitudes, the sign put back: `s = 0-(x SHR 15)`, `(x XOR s)-s`; the quotient's sign from `a XOR b`, the remainder's from the dividend; numbers computed when converting |
-| An operand starting with `(` is taken for memory | `0+` in front of a value that starts with a parenthesis, or with a macro parameter (its argument may be `(...)`: `LD DE,_g1*2` with `(+(START+1))` read memory before 2026-10-19) |
+| An operand starting with `(` is taken for memory | `0+` in front of a value that starts with a parenthesis, or with a macro parameter (its argument may be `(...)`: `LD DE,_g1*2` with `(+(START+1))` read memory before 2026-10-19); not before an ALASM parameter that is the whole operand, whose argument ALASM puts in as text (RAR's `MACRO l` / `LD \0,\1` called `l A,(KOLODIN)`: `LD 0+A` before 2026-10-21) |
 | `(IX+e)`: after `+` any byte 0..255, after `-` 0..128 | a numeric offset as is, a negated one with `-`, any other `((e) AND #FF)` |
 | Names: a letter, `_ ? @ .` first; `$` inside a name is ignored; mnemonics, registers, operators and directives are reserved | such labels renamed `L_...` |
 | `'text'` takes every byte, `''` is a quote | texts and one-character constants single-quoted (the file keeps the Spectrum code page) |
 | No PHASE / DISP | the displacement written out: `__UNREALASM_D DEFL run-$` at DISP, 0 at ENT; labels `EQU $+__UNREALASM_D`, `$` as `($+__UNREALASM_D)`, JR / DJNZ targets `-__UNREALASM_D`; a file that may start inside a displacement defines the delta once (`IF !DEFINED`) |
-| A DEFL name may not be used before its definition | a name assigned with `=` once in its assembly (the main source and what it INCLUDEs) is an `EQU`; ConvertProject counts definitions per assembly, a name assigned in exclusive IF / ELSE branches once |
-| IF needs its names defined before it; no value carries over from one pass to the next | an IF outside a macro whose names the layout of its own assembly knows (not redefinable) is decided when converting: the branch left out becomes a comment line, the DEFL names it would define first get the value the layout leaves (TASM 4.12's `.IF PASS`) |
+| A DEFL name may not be used before its definition | a name assigned with `=` once in its assembly (the main source and what it INCLUDEs) is an `EQU`; ConvertProject counts definitions per assembly, a name assigned in exclusive IF / ELSE branches once, and in an IF whose names are defined before it (or in another file) and the layout knows, in its taken branch only (RAR's `IFN fastCPIQ` and `IF0 fastCPIQ` blocks, each `MAXPOSL=$+1`, 2026-10-21) |
+| IF needs its names defined before it; no value carries over from one pass to the next | an IF outside a macro whose names the layout of its own assembly knows (not redefinable) is decided when converting: the branch left out becomes a comment line, the DEFL names it would define first get the value the layout leaves (TASM 4.12's `.IF PASS`). A file several assemblies INCLUDE: an IF they answer differently tests `__UNREALASM_IFL<n>`, defined `EQU 1` / `0` at the top of each main source, and one some layout does not answer stays an IF (Info Guide #10's LDLD060, in UNRLT60 and mkunr060, 2026-10-21) |
 | `LOCAL` works in `MACRO` and `PROC`, not in `REPT` (redeclared in the second pass) | local blocks as `PROC ... ENDP` with `LOCAL`; a `REPT` body that defines labels becomes a macro called by `REPT` |
 | `REPT` with `EXITM` inside `IF` | WHILE and REPEAT ... UNTIL as `REPT 65535` with an exit test |
 | `DS n,fill` takes one fill byte | a fill sequence as `REPT n` / `DB` / `ENDM` |
 | `INCBIN` takes the whole file | a part given by numbers is marked `; unreal-asm: slice offset,length`; `zxasm convert` writes that part to its own file and names it |
 | A later `ORG` may write over earlier bytes (the memory image keeps the last) | TASM's INCBIN sector tail: written, then `ORG` back |
 | No `IN F,(C)`, `OUT (C),0` | their bytes |
-| No IFUSED, no memory reads while assembling, no pages, no SAVEBIN | reported; `IFUSED` blocks are assembled (`IF 1`) with a warning, SAVEBIN kept as a comment |
+| No IFUSED, no memory reads while assembling, no pages, no SAVEBIN | `IFUSED` / `IFNUSED` decided when converting: per assembly (each main source with what it includes) the least fixpoint of "used and not defined so far"; a number when every assembly answers the same, `IF __UNREALASM_IFU<n>` with `__UNREALASM_IFU<n> EQU 1` / `0` at the top of each main source when they differ; a test still open (an answer that changes within one assembly) is assembled (`IF 1`) with a warning. SAVEBIN kept as a comment |
 
 ## 3. Results
 
 | Check | Result |
 |---|---|
 | STORMT1 / STORMT2 (STORM 1.3) | equal (STORMT1 has `ORG run,place`: the written-out displacement) |
-| ZXT1..ZXT3 (ZAsm 3.15) | equal (nested PHASE, macros, REPT labels); ZXT4 needs IFUSED and `.m` |
+| ZXT1..ZXT4 (ZAsm 3.15) | equal (nested PHASE, macros, REPT labels, IFUSED decided when converting, `.m`) |
 | T50PROG (TASM 5.0), constructs (ALASM 5.09) | equal |
 | General Sound 1.04 ROM (TASM 4.0, PHASE across 20 INCLUDEs, INCBIN sector tails) | all 32 768 bytes equal |
-| `crosscheck.py`: STORM and ZX-ASM disks of the collection | 88 equal, 0 differ; 22 need IFUSED; the 2 that referred to a redefinable name before its definition (EM3D13) equal since 2026-10-20 |
-| `crosscheck.py`: TASM and ALASM disks of the collection | 245 equal, 0 differ; TASM 4.12's SINUS (`.IF PASS`) equal since 2026-10-20 |
+| `crosscheck.py`: the STORM, ZX-ASM, TASM and ALASM disks of the collection (169 images, 2026-10-21) | 434 equal, 0 differ, 0 errors (431 before: ACE's aceTO and aceFROM and RAR's RARB33 failed with sjasmplus, see research-alasm-to-sjasmplus.md); the 22 that needed IFUSED equal since IFUSED is decided when converting; EM3D13 and TASM 4.12's SINUS (`.IF PASS`) equal since 2026-10-20 |
 
 pasmo 0.5.5 writes an empty file when the code spans the whole 64K: its output size is a 16-bit sum that wraps to 0
 (the GS ROM conversion places TASM's variables at 0 and the ROM at #8000). `crosscheck.py` was run with a pasmo built
@@ -65,5 +64,5 @@ with that one line widened; the unit tests use programs that stay below.
 
 | Item | Note |
 |---|---|
-| IFUSED, memory reads, pages | pasmo has none of them |
+| memory reads, pages | pasmo has none of them (IFUSED is decided when converting) |
 | A name assigned more than once outside exclusive branches and used before its definition | pasmo refuses; sjasmplus takes the previous pass's value (none left in the collection) |

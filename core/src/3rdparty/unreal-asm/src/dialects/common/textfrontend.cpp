@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 
+#include "dialects/common/characters.h"
 #include "dialects/common/z80.h"
 
 namespace unrealasm::dialects::text
@@ -878,6 +879,7 @@ FrontendResult ParseText(const SourceDocument& source, const TextDialect& dialec
             e.result.program.lines.push_back(std::move(extra));
         e.result.program.lines.push_back(std::move(line));
     }
+    CharactersInCodePage(e.result.program, source.codePage);
     return std::move(e.result);
 }
 }  // namespace unrealasm::dialects::text

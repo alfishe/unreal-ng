@@ -3,6 +3,7 @@
 #include <cctype>
 #include <set>
 
+#include "dialects/common/characters.h"
 #include "dialects/common/z80.h"
 
 namespace unrealasm::dialects
@@ -859,6 +860,7 @@ FrontendResult StormFrontend::Parse(const SourceDocument& source) const
     uint32_t number = 0;
     for (const SourceLine& line : source.lines)
         parser.ParseLine(line.text, ++number);
+    CharactersInCodePage(result.program, source.codePage);
     return result;
 }
 }  // namespace unrealasm::dialects

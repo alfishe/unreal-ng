@@ -92,6 +92,7 @@ void MainLoop::Run(const std::atomic<bool>& stopRequested)
     // previously did this unconditionally with ABOVE_NORMAL - the same policy
     // now lives in ThreadHelper, applied to every platform and gated here
     UpdateRealtimeScheduling();
+    _emulationStats.Restart();
 
     /// region <Info logging>
     uint64_t lastRun = 0;
@@ -123,9 +124,15 @@ void MainLoop::Run(const std::atomic<bool>& stopRequested)
 
         if (emulator)
             emulator->DriverEnter();
+        const uint64_t frameStartUs = EmulationStatsMeter::NowUs();
         [[maybe_unused]] unsigned duration1 = measure_us(&MainLoop::RunFrame, this);
         if (emulator)
             emulator->DriverLeave();
+        // The monitoring planes' pace (emulator.stats): a few integer operations, no lock
+        _emulationStats.OnFrame(frameStartUs, duration1, _context->config.frame_duration_us,
+                                _state->next_z80_frequency_multiplier,
+                                {_cpu->GetZ80()->interruptsAccepted, _state->tstates_halted_total,
+                                 _state->tstates_frame_total, _state->frame_counter, _state->t_states});
 
         if (audioDiag)
         {

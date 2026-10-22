@@ -43,6 +43,7 @@
 #include "ui/intparametersdialog.h"
 #include "ui_mainwindow.h"
 #include "widgets/devicescreenwrapper.h"
+#include "hud/core/hudtheme.h"
 
 #ifdef ENABLE_AUTOMATION
 // Avoid name conflicts between Python and Qt "slot"
@@ -54,6 +55,7 @@
 class AudioSettingsWidget;
 class MidiActivityWindow;
 class HostControllers;
+class SurfaceTargets;
 class ControllersDialog;
 class ControllerToast;
 class GuiActions;
@@ -168,6 +170,16 @@ private slots:
     void handleFrontPanelCpmToggled(bool on);
     void handleStepIn();
     void handleStepOver();
+    /// Step out / run to the cursor: the actions run.step_out / run.to_cursor on the instance's actions worker
+    void handleStepOut();
+    void handleRunToCursor();
+    void submitGuiAction(const char* id);
+    // Debug menu: breakpoints and the debugger's panes
+    void handleToggleBreakpoint();
+    void handleClearAllBreakpoints();
+    void handleShowBreakpoints();
+    void handleShowRegisters();
+    void handleShowMemory();
     void handleToolBarToggled(bool visible);
     void handleScaleRequested(int scale);
     void handleScreenshotRequested();
@@ -261,6 +273,25 @@ protected:
     WindowDisplaySettings windowDisplaySettings() const;
     /// Apply an automation change (validated by the core) through the View menu's handlers, menu checks in step. GUI thread
     void applyWindowDisplay(const WindowDisplayChange& change);
+    /// The active CRT profile's parameters: a libretro preset's own, the built-in profile's (basic, a custom shader's
+    /// uniforms), none for the beam models. GUI thread
+    CrtParameters crtParameters() const;
+    /// Apply an automation change of them (names validated by the core): reset, values, steps. GUI thread
+    void applyCrtParameters(const CrtParameterChange& change);
+    /// Hand the settings to the core's published copy (WindowView::Publish: the readouts and the toggles), and keep
+    /// them in View/* - at once, or coalesced after a burst of changes
+    void publishWindowDisplay();
+    void schedulePublishWindowDisplay();
+    /// The View menu's changes, the side windows and the window state all publish (once, from the constructor)
+    void connectWindowDisplayPublishing();
+    /// QSettings View/*: GPU, CRT profile / shader and its values, blending, scale, HUD and theme (not overscan: the machine's).
+    /// UNREAL_QT_VIEW_SETTINGS=off: neither read nor written
+    void saveViewSettings() const;
+    void restoreViewSettings();
+    /// NC_VIDEO_VIEWPORT_CHANGED: the screen crops as the machine's viewport (a change from the WebAPI, an action)
+    void handleVideoViewportChanged(int id, Message* message);
+    void applyHudTheme(HudThemeId theme);
+    void setFullScreen(bool on);
     /// Menu bar, toolbar, status bar and margins around the screen: the window minus the content frame, measured on a laid-out window
     QSize windowChrome();
     /// The smallest the screen may get is the picture at 1x: a pixel is never squeezed; follows every video mode
@@ -417,6 +448,7 @@ private:
     LogWindow* logWindow = nullptr;
     TapeManagerWindow* tapeManagerWindow = nullptr;
     MediaPanelWindow* mediaPanelWindow = nullptr;
+    SurfaceTargets* _surfaceTargets = nullptr;           // this window as a view of TargetState (Stream Deck targeting)
     HostControllers* _hostControllers = nullptr;        // host game controllers: service, profiles, player connectors
     ControllersDialog* _controllersDialog = nullptr;    // Tools -> Controllers
     ControllerToast* _controllerToast = nullptr;        // the auto-profile toast (port reads)
@@ -487,6 +519,10 @@ private:
     bool _userResizedWindow = false;  // The user dragged the window size: video mode changes no longer resize it
     bool _refitPending = false;  // A refitWindowToPicture() is queued (video mode changes arrive in bursts)
     double _zoomFactor = 2.0;  // Window zoom over the picture's native size, kept across video modes
+    int _startScale = 2;       // the zoom of the first fit (View/Scale)
+    QTimer* _publishTimer = nullptr;  // coalesces publishWindowDisplay after a burst of changes
+    bool _viewSettingsEnabled = true; // UNREAL_QT_VIEW_SETTINGS=off: View/* neither read nor written
+    HudThemeId _hudTheme = HudThemeId::DarkGlass;
     QSize _chrome;  // Last sane windowChrome()
     QElapsedTimer _fitClock;  // Time since our last programmatic resize: the window system animates it with resize events of its own
     QSize _fitTarget;  // Window size of our last programmatic resize (tells it from the user's drag)
@@ -509,6 +545,8 @@ private:
     /// Automation sessions (execution arbiter design §6a): who holds the machine, the GUI locked meanwhile
     class RemoteControlGuard* _remoteControl = nullptr;
     class CompanionController* _companions = nullptr;  ///< companion clients: pairing prompts, the Companions dialog
+    class StreamDeckSupervision* _streamDeckSupervision = nullptr;  ///< the Stream Deck daemon, supervised (daemon.md §7)
+    class StreamDeckDialog* _streamDeckDialog = nullptr;            ///< Tools > Stream Deck...
     class QShortcut* _fullScreenShortcut = nullptr;
     bool _hudShownForRemoteControl = false;
     QString _remoteControlAnnounced;  // the session the "Remote control" toast was shown for  // the HUD was off and is shown for the session

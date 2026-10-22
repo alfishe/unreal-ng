@@ -19,6 +19,7 @@
 #include "sdb/actions.h"
 #include "sdb/device.h"
 #include "sdb/navigator.h"
+#include "sdb/surfacereadouts.h"
 
 namespace sdb::scn
 {
@@ -28,6 +29,10 @@ struct RuntimeOptions
     bool syncActions = false;  // run actions inside step() (tests); otherwise on the worker thread
     bool dryRun = false;       // log actions instead of running them (navigation still works)
     int holdMs = 600;          // back key held this long = home
+    // runs the `action` kind for the system host; null = its REST fallback (sdb/actionexec.h). The daemon's surface
+    // client sets its own here.
+    std::shared_ptr<ActionExecutor> executor{};
+    int readoutPollMs = 250;  // state-bound faces: how often the host is asked for readouts nobody pushes
 };
 
 class Runtime
@@ -88,6 +93,40 @@ public:
     // Called for nav {to: scenario, file} (the owner loads the file and calls reload).
     std::function<void(const std::string&)> onSwitchScenario;
 
+    // State-bound faces (scenarios.md §4): a readout's value (true = face_on). Pushed by the surface client (S4 / SD4)
+    // or polled from the host (ActionHost::Readout) while nobody pushes it.
+    void SetReadout(const std::string& path, const json& value);
+    // A context from the core (ctx, architecture §6): the deck goes to the nearest menu declaring it.
+    void OnContext(const std::string& context);
+    // An action another surface ran (the activity feed, scenarios.md §5): the keys bound to the same id flash, and
+    // with activity.strip "line" the strip says `text` for activity.seconds.
+    void ShowActivity(const std::string& actionId, const std::string& text = {});
+    // The surface context the deck asked for last (ctx.set when a menu with "context" is entered; "" = none).
+    [[nodiscard]] std::string Context() const;
+
+    // The surface client (SD5, sdb/surfaceclient.h). Live: the host pushes the readouts, nothing is polled (the
+    // monitor idles); not live after live: the strip's target line says the link is down, polling resumes.
+    void SetLive(bool live);
+    // A readout for the strip (ttd.position: the TTD timeline; run.state, media.tape, machine: the status words;
+    // ttd.marks: the marks of the last seek)
+    void SetStripReadout(const std::string& name, const json& value);
+    // The surface's target ({instance, index, model, ram_kb, view, mode}; null: none): strip.target and status target
+    void SetTarget(const json& target);
+    // A lasting line on the strip, over the menu's content ("" clears it): "COMPANION REVOKED - TOUCH TO PAIR"
+    void SetNotice(const std::string& text);
+    [[nodiscard]] std::string Notice() const;
+    // A tap on the strip while a notice shows (NOT PAIRED, REVOKED, a pairing's state): this instead of the page's
+    // tap (the daemon starts a pairing). Set before Run; called on the device thread with the runtime's lock held:
+    // it must only start something, never wait or call into the daemon's decks
+    std::function<void()> onNoticeTap;
+    // The activity look over the scenario's settings.activity (Q-3; unreal-qt's settings page, PUT /api/v1/activity):
+    // "" = the scenario's, "off", "flash" (the keys bound to the action), "line" (the keys and a strip line)
+    void SetActivityLook(const std::string& look);
+    // What the loaded scenario needs from the core: readouts, state paths, target
+    [[nodiscard]] SurfaceNeeds Needs() const;
+    // After a reload is applied (the device thread, no lock held): the surface client asks Needs() again
+    std::function<void()> onScenarioChanged;
+
     struct Stats
     {
         std::size_t keyWrites = 0, stripWrites = 0, actions = 0;
@@ -101,11 +140,18 @@ public:
 private:
     struct Job
     {
+        Job() = default;
+        Job(Action a, std::string n, json v, std::string t, bool tg = false)
+            : action(std::move(a)), node(std::move(n)), vars(std::move(v)), then(std::move(t)), toggle(tg)
+        {
+        }
         Action action;
         std::string node;
         json vars;
         std::string then;
         bool toggle = false;
+        int phase = 0;          // +1 / -1: press / release of an action step with "hold"
+        std::string state;      // the node's readout path (state-bound face)
     };
     void Handle(const Event& e, std::int64_t nowMs);
     void Activate(int key);
@@ -115,6 +161,10 @@ private:
     void Render(bool force);
     void SetBanner(const std::string& text, int ms);
     void NoteMenu();
+    [[nodiscard]] bool IsOn(const Node& n) const;
+    [[nodiscard]] std::map<std::string, bool> OnStates() const;
+    void PollReadouts();
+    void EnsureMonitor();
 
     Device& _dev;
     const Model& _m;
@@ -134,6 +184,12 @@ private:
     std::deque<json> _navRequests;
     std::optional<Scenario> _pendingReload;
     std::map<std::string, bool> _toggles;
+    std::map<std::string, json> _readouts;     // readout path -> value
+    std::map<std::string, bool> _pushed;       // readouts a surface client delivers (not polled)
+    std::map<int, Job> _holds;                 // keys / dials (1000 + index) held down: their release job
+    std::map<int, std::int64_t> _flashUntil;   // activity flash per key
+    std::string _context;                      // the context sent last (ctx.set)
+    bool _contextSent = false;
     std::vector<bool> _pressed;
     std::map<int, std::int64_t> _downAt;
     std::map<int, std::pair<std::int64_t, double>> _turnRate;  // per dial: last turn (ms), detents a second
@@ -143,7 +199,16 @@ private:
     std::string _sentPage;  // last published page JSON
     std::string _banner;
     std::string _status;   // the strip's status readout (time-travel position), until the menu changes
-    std::thread _monitor;  // strip.status "ttd": polls time travel
+    bool _live = false, _wasLive = false;  // readouts pushed by the surface client; was so once
+    std::map<std::string, json> _strip;    // strip readouts (SetStripReadout)
+    json _target;                          // the surface's target (null: none)
+    std::string _notice;                   // a lasting strip line
+    std::string _activityLook;             // SetActivityLook ("" = the scenario's)
+    std::string _activityLine;             // activity.strip "line": what another surface did
+    std::int64_t _activityUntil = 0;
+    std::thread _monitor;  // the REST fallback's poller (strip.status "ttd", faces' readouts); none while live
+    bool _monitorRunning = false;  // under _mu
+    bool _running = false;         // Run() drives the steps (tests call Step() alone: no threads)
     std::atomic<bool> _monitorKick{false};
     [[nodiscard]] static std::string TtdReadout(const json& t, double fps);
     static constexpr size_t kStatusChars = 36;

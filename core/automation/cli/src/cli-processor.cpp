@@ -107,6 +107,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"run_frame", &CLIProcessor::HandleRunFrame},               // Run one frame
                         {"run_frames", &CLIProcessor::HandleRunFrames},             // Run N frames
                         {"run_ncycles", &CLIProcessor::HandleRunNCycles},           // Run N CPU cycles
+                        {"pace", &CLIProcessor::HandlePace},                        // The paced run (RunPacer)
                         {"memory", &CLIProcessor::HandleMemory},
                         {"session", &CLIProcessor::HandleSession},  // automation session: take / release run control
                         {"companion", &CLIProcessor::HandleCompanion},  // companion client: act as the user's hands
@@ -141,6 +142,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"bpgroup", &CLIProcessor::HandleBPGroup},        // Manage breakpoint groups
                         {"bpon", &CLIProcessor::HandleBPActivate},        // Activate breakpoints
                         {"bpoff", &CLIProcessor::HandleBPDeactivate},     // Deactivate breakpoints
+                        {"bptoggle", &CLIProcessor::HandleBPToggle},      // Toggle a selection of breakpoints
+                        {"bkey", &CLIProcessor::HandleKeyBreakpoint},     // Keyboard breakpoint (the program sees a key)
+                        {"bpnote", &CLIProcessor::HandleBPNote},          // Set a breakpoint's note
 
                         {"open", &CLIProcessor::HandleOpen},
                         {"exit", &CLIProcessor::HandleExit},
@@ -176,6 +180,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"audiocapture", &CLIProcessor::HandleAudioCapture},  // Buffered stereo capture
                         {"mixer", &CLIProcessor::HandleMixer},                // Per-device mixer (mute, solo, volume)
                         {"videorecord", &CLIProcessor::HandleVideoRecord},    // Video recording control
+                        {"recent", &CLIProcessor::HandleRecent},              // Files opened lately (RecentFiles)
 
                         // BASIC commands
                         {"basic", &CLIProcessor::HandleBasic},
@@ -232,6 +237,11 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // Joystick connectors: the retro devices plugged into them, live input (ControllerControl)
                         {"controllers", &CLIProcessor::HandleControllers},
                         {"action", &CLIProcessor::HandleAction},
+                        {"surface", &CLIProcessor::HandleSurface},
+                        // The Stream Deck daemon's supervision by unreal-qt, settings, pairing, brightness
+                        {"streamdeck", &CLIProcessor::HandleStreamDeck},
+                        // Monitoring: host process, clients, each instance's pace and summaries (monitoring::Call)
+                        {"monitor", &CLIProcessor::HandleMonitor},
 
                         // ZX-MultiSound card and its MIDI synthesizer
                         {"multisound", &CLIProcessor::HandleMultiSound},
@@ -677,6 +687,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  stepover      - Execute instruction, skip calls and subroutines" << NEWLINE;
     oss << "  stepout       - Run until the current subroutine returns" << NEWLINE;
     oss << "  skip_until <pc> [max_tstates] - Fast-forward until PC reaches target" << NEWLINE;
+    oss << "  pace [show|presets|set <preset> [ms]|interval <ms>|next|prev|start|stop|toggle|step] - Run at a pace (25 / 5 / 1 fps, a frame, lines, an instruction per interval); stops at a breakpoint" << NEWLINE;
     oss << "  memory <addr> - View memory at address" << NEWLINE;
     oss << "  find <hex-pattern, ?? = any> [--space S] [--mask HEX] [--from N] [--to N] [--align 1|2] [--max N] - Search memory" << NEWLINE;
     oss << "  debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]... [--pchist N] - Registers, pages, time, code, stack, memory, PC history at one moment" << NEWLINE;
@@ -802,7 +813,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  coverage start|stop|clear|status|gaps [args] - Code coverage" << NEWLINE;
     oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;
     oss << "  audiocapture start <s>|stop|clear|status|result|save <wav> - Audio" << NEWLINE;
-    oss << "  videorecord start|stop|pause|resume|status [opts]      - Video (--region full|screen, --audio aac, --profile 4k)" << NEWLINE;
+    oss << "  videorecord start|stop|pause|resume|toggle|status|presets [opts] - Video (--preset gameplay, --mode audio, --audio aac, --profile 4k)" << NEWLINE;
+    oss << "  recent [kind] | recent clear [kind]                     - Files opened lately (open: action run media.open_recent index=N)" << NEWLINE;
     oss << NEWLINE;
     oss << "BASIC Program Tools:" << NEWLINE;
     oss << "  basic                  - Show BASIC command help" << NEWLINE;
@@ -835,6 +847,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  controllers help       - All verbs and flags" << NEWLINE;
     oss << "  action [list]          - Host actions (run control, time travel, machine) and whether they can run" << NEWLINE;
     oss << "  action run <id> [value] - Run one, e.g. action run run.pause_toggle, action run ttd.jog_frames -10" << NEWLINE;
+    oss << "  surface [views]        - Control surface targets: views, target, sessions, pin, readouts, activity" << NEWLINE;
+    oss << "  monitor [name]         - Host CPU / memory / threads, clients, fps / speed, breakpoints, media, TTD ..." << NEWLINE;
     oss << NEWLINE;
     oss << "ZX-MultiSound and MIDI:" << NEWLINE;
     oss << "  multisound [--full|--json] - The card: options, CPLD, YM2203 pair, SAA1099, GS, DACs, MIDI" << NEWLINE;

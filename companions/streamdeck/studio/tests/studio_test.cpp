@@ -2,6 +2,7 @@
 // ways, own-role feature reports, Leave, reconnect) against a small fake daemon in this process, and the --listen v1
 // server. Qt offscreen, one thread; waits spin the event loop until a condition holds (no sleeps).
 #include <QApplication>
+#include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -16,6 +17,7 @@
 #include "deckclient.h"
 #include "listenserver.h"
 #include "sdb/automation.h"
+#include "sdb/daemonlife.h"
 #include "sdb/devicewire.h"
 #include "sdb/emuwire.h"
 #include "virtualdeck.h"
@@ -393,6 +395,15 @@ void TestDaemonControl()
                  played = r.Str("serial");
                  return Reply::Ok();
              }});
+    // the leases (daemon.md §8) and the pairing (§6)
+    sdb::life::Parents parents(false);
+    sdb::life::AddLifeRoutes(api, parents, nullptr);
+    api.Add({"POST", "/api/v1/pair", "", "", {}, {}, nullptr, [](const Request&) {
+                 return Reply::Ok({{"state", "requesting"}});
+             }});
+    api.Add({"GET", "/api/v1/pair", "", "", {}, {}, nullptr, [](const Request&) {
+                 return Reply::Ok({{"state", "pending"}, {"code", "418205"}});
+             }});
     Server server;
     std::string err;
     CHECK(server.Start(api, "127.0.0.1", 0, &err));
@@ -409,6 +420,14 @@ void TestDaemonControl()
     CHECK(d.PlayScenario(QStringLiteral("EMU1"), QStringLiteral("/tmp/run.deck.json")));
     CHECK(playing == "EMU1:/tmp/run.deck.json" && watch == "watch");
     CHECK(d.RestoreScenario({}) && played == "first");  // no serial: the daemon's first deck
+    // a running daemon is leased for the studio; the lease goes back at quit
+    const int self = static_cast<int>(QCoreApplication::applicationPid());
+    CHECK(d.Lease() && d.Leased());
+    CHECK(parents.List().size() == 1 && parents.List()[0] == self);
+    d.Release();
+    CHECK(!d.Leased() && parents.List().empty());
+    CHECK(d.Pair().body.value("state", "") == "requesting");
+    CHECK(d.Pairing().body.value("code", "") == "418205");
     server.Stop();
     CHECK(!d.Answers(100));
     CHECK(!d.SetBrightness(QStringLiteral("EMU1"), 10, &e) && e.contains(QStringLiteral("automation")));
@@ -421,6 +440,10 @@ void TestDaemonControl()
     CHECK(!d.Launch({QStringLiteral("run"), QStringLiteral("--wait")}, &why));
     CHECK(why.contains(QStringLiteral("run --wait")));
     CHECK(!d.Launched());
+    // the shared daemon: started detached with --parent (its lease is the start's own)
+    CHECK(d.LaunchShared({QStringLiteral("run")}, &why) && d.Leased());
+    d.Release();
+    CHECK(!d.Leased());
     qunsetenv("UNREAL_STREAMDECK_BIN");
 #endif
 }

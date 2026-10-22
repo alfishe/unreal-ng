@@ -386,6 +386,20 @@ public:
     /// The frame ended: Z80::t was just rebased by `frameLength` (the scaled
     /// frame). Frame-relative positions held by the engine are rebased too
     virtual void OnMachineFrameRollover(uint32_t frameLength) { (void)frameLength; }
+    /// A halted CPU's idle fetches at `fetch` from frame T-state t on (Z80::RunHaltedIdle): the fetches that start
+    /// before the result may run as time without a step each; then OnIdleFetches with their count and OnMachineStep
+    /// at the T-state they reached. `t` (the default): every fetch is a step
+    virtual uint32_t IdleFetchesUntil(uint16_t fetch, uint32_t t)
+    {
+        (void)fetch;
+        return t;
+    }
+    /// `count` idle fetches at `fetch` ran as time (no memory read): what each would have left behind in the engine
+    virtual void OnIdleFetches(uint16_t fetch, uint32_t count)
+    {
+        (void)fetch;
+        (void)count;
+    }
 };
 
 /// An instruction engine that replaces the native interpreter for one machine
@@ -543,6 +557,7 @@ public:
     /// region <Z80 lifecycle>
 public:
     uint8_t m1_cycle();
+    uint8_t FetchM1();  // m1_cycle's body, inline in Z80Step
     void HaltedM1();  // one idle fetch of the halted CPU, at the byte after the HALT (out of line, cold)
     void RecordInstructionStart(uint16_t addr);  // m1_pc + instruction-start observers (once per instruction)
     bool InstructionStartObserved() const;       // any observer armed (trace hook, TTD coverage/probe)
@@ -745,6 +760,7 @@ public:
     /// StepInstruction with rare work around the step (the per-step gate was non-zero)
     StepResult StepInstructionWithWork(uint32_t work, bool skipBreakpoints);
     bool InterruptsIdle() const;  // the step needs no interrupt decision (StepInstruction)
+    bool SourceIdle(IInterruptSource& source);  // the same for a machine that owns INT (RunHaltedIdle)
 
     /// LD R,A: the R it replaced minus the new one (7 bits, accumulated), so
     /// that an R delta across a step still counts the step's fetches (the
@@ -761,21 +777,29 @@ public:
     /// time without looking at single steps - the frame loop, Emulator::RunNFrames and RunTStates (IdleSkipScope);
     /// a single step, the debugger's stepping and the run-until loops keep 0, so they still see every idle cycle
     uint32_t idleSkipLimit = 0;
-    /// Every per-step job would be a no-op for another idle step now: no work-gate job but the engine and the
-    /// interrupt source, no NMI request, no debug mode (breakpoints, the debug memory interface), no bus / M1
+    /// Every per-step job would be a no-op for another idle step now: no work-gate job outside `allowedWork` (the
+    /// ones the caller handles itself: EmulatorContext::kStepWork*), no NMI request, no debug mode (breakpoints, the debug memory interface), no bus / M1
     /// tracer, TTD probe or coverage, CPU-step analyzer, call trace, opcode profiler or state dump, no TTD session,
     /// no TR-DOS session switch and no trap at this PC, the tape stopped and the floppy controller idle. The
     /// screen and the sound catch up by time, so their per-step calls need not run (the engine's precondition
-    /// for the idle fast-forward: Z84C15Engine)
-    bool IdleStepsInert() const;
-    /// The plain step's idle fast-forward (StepInstruction with no work-gate job): after a step that left the CPU
-    /// halted, the idle fetches that follow run as arithmetic up to the next boundary where the interrupt decision
-    /// may change, the frame end or idleSkipLimit (no-op while idleSkipLimit is 0), then OnCPUStep. true: time moved
+    /// for the idle fast-forward: Z84C15Engine, RunHaltedIdle)
+    bool IdleStepsInert(uint32_t allowedWork) const;
+    /// The native step's idle fast-forward (StepInstruction with no work-gate job, or only the machine's interrupt
+    /// source and step hook): after a step that left the CPU halted, the idle fetches that follow run as arithmetic
+    /// up to the next boundary where the interrupt decision may change, the frame end or idleSkipLimit (no-op while
+    /// idleSkipLimit is 0), then OnCPUStep. true: time moved
     bool RunHaltedIdle(bool skipBreakpoints);
+    void RunHaltedIdleAfterWork(bool skipBreakpoints);
     /// Another idle fetch at `fetch` through the current memory interface reads a byte and nothing else: a plain
-    /// interface, or a contended one with the fetch and the refresh (I) outside slow memory; no bus overlay
-    /// watching the address; the board's M1 hook and the memory model agree
-    bool HaltedFetchIsPure(uint16_t fetch) const;
+    /// interface, or a contended one with the fetch and the refresh (I) outside slow memory; a bus overlay
+    /// watching the address only with waits by the start's phase (`period`: its phase period, 1 without one);
+    /// the board's M1 hook and the memory model agree
+    bool HaltedFetchIsPure(uint16_t fetch, uint32_t& period) const;
+    /// The frame T-state up to which the fetches that start from t keep HaltedFetchIsPure's rule (the overlay's
+    /// RepeatFetchPureUntil); UINT32_MAX: the frame end
+    uint32_t HaltedFetchPureUntil(uint16_t fetch) const;
+    /// The longest phase period of the idle fetch RunHaltedIdle learns lengths for
+    static constexpr uint32_t kMaxHaltedIdlePeriod = 8;
     /// Sets idleSkipLimit for a scope and restores it
     class IdleSkipScope
     {
@@ -1029,7 +1053,13 @@ public:
     /// RunHaltedIdle's switch (tests compare a machine with it off) and the idle fetches it ran as arithmetic
     bool haltedIdleInOneGo = true;
     uint64_t haltedIdleFetchesInOneGo = 0;
-    /// RunHaltedIdle's last refusal: no new check before this T (kHaltedIdleRetryT after it)
+    /// RunHaltedIdle's last refusal: no new check before this T (_haltedIdleRetrySpan after it: kHaltedIdleRetryT
+    /// raster T-states, scaled by the clock multiplier)
     static constexpr uint32_t kHaltedIdleRetryT = 256;
     uint32_t _haltedIdleRetryAt = 0;
+    uint32_t _haltedIdleRetrySpan = kHaltedIdleRetryT;
+    void NoteHaltedIdleRefused();
+    /// Maskable interrupts accepted since the CPU was made (HandleINT; the monitoring planes' interrupts per frame).
+    /// Statistics only: not machine state, not in snapshots or TTD checkpoints
+    uint64_t interruptsAccepted = 0;
 };

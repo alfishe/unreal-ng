@@ -26,6 +26,9 @@ class QListWidget;
 class QPushButton;
 class QTableWidget;
 class QTimer;
+class QVBoxLayout;
+class SurfaceTargets;
+class SurfacesTable;
 
 class ControllersDialog : public QWidget
 {
@@ -35,6 +38,8 @@ public:
     explicit ControllersDialog(HostControllers* host, QWidget* parent = nullptr);
     /// The host actions the bindings offer by name
     void setActions(const actions::ActionRegistry* actions);
+    /// The control surfaces table under the devices (Stream Deck targeting.md T-2): each surface and its pin
+    void setSurfaceTargets(SurfaceTargets* targets);
 
 signals:
     void visibilityChanged(bool visible);
@@ -75,6 +80,8 @@ private:
     QLabel* _machineLabel = nullptr;
     QLabel* _hapticsLabel = nullptr;  ///< haptics.md §7: the live meters of the feed
     QTimer* _live = nullptr;
+    QVBoxLayout* _root = nullptr;
+    SurfacesTable* _surfaces = nullptr;
     uint64_t _machineRevision = ~0ull;
     bool _rebuildingConnectors = false;
 };

@@ -107,6 +107,8 @@ private:
     void HandleRunFrame(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunFrames(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunNCycles(const ClientSession& session, const std::vector<std::string>& args);
+    /// The paced run (core RunPacer): pace [show|presets|set|interval|next|prev|start|stop|toggle|step]
+    void HandlePace(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMemory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRtc(const ClientSession& session, const std::vector<std::string>& args);
     /// Automation session (execution arbiter design §6a): `session take [name]`, `session release`, `session`
@@ -158,6 +160,13 @@ private:
     void HandleBPGroup(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPActivate(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPDeactivate(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleKeyBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBPToggle(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBPNote(const ClientSession& session, const std::vector<std::string>& args);
+    /// bpon / bpoff / bpclear / bptoggle on a selection BreakpointSelection names (a kind such as nextreg, beam, keyboard;
+    /// group:<name>); false when `text` is not one (the caller answers)
+    bool ApplyBreakpointSelection(const ClientSession& session, BreakpointManager& manager, const std::string& text,
+                                  const char* verb);
 
     void HandleOpen(const ClientSession& session, const std::vector<std::string>& args);
     void HandleExit(const ClientSession& session, const std::vector<std::string>& args);
@@ -188,12 +197,14 @@ private:
     void HandleVideo(const ClientSession& session, const std::vector<std::string>& args);
     void HandleVideoTemporal(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleVideoWindow(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleVideoViewport(const ClientSession& session, Emulator& emulator, const std::vector<std::string>& args);
     void HandleFrameCost(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCoverage(const ClientSession& session, const std::vector<std::string>& args);
     void HandleAyLog(const ClientSession& session, const std::vector<std::string>& args);
     void HandleAudioCapture(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMixer(const ClientSession& session, const std::vector<std::string>& args);
     void HandleVideoRecord(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleRecent(const ClientSession& session, const std::vector<std::string>& args);
 
     // Interpreter control command handlers (Python)
     void HandlePython(const ClientSession& session, const std::vector<std::string>& args);
@@ -370,6 +381,11 @@ private:
     void HandleControllers(const ClientSession& session, const std::vector<std::string>& args);
     /// action [list | run <id> [value] [param=val ..]]: the core ActionRegistry (cli-processor-action.cpp)
     void HandleAction(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleSurface(const ClientSession& session, const std::vector<std::string>& args);
+    /// streamdeck <verb>: the Stream Deck daemon's supervision, settings, pairing (companion::streamdeck::Call)
+    void HandleStreamDeck(const ClientSession& session, const std::vector<std::string>& args);
+    /// monitor [name]: host process, clients, each instance's pace and summaries (monitoring::Call)
+    void HandleMonitor(const ClientSession& session, const std::vector<std::string>& args);
     // ZX-MultiSound and its MIDI synthesizer (cli-processor-multisound.cpp, DeviceState::MultiSound / Midi, MidiControl)
     void HandleMultiSound(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMidi(const ClientSession& session, const std::vector<std::string>& args);

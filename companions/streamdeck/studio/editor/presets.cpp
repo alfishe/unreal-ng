@@ -3,6 +3,10 @@
 #include <QDir>
 #include <QFile>
 #include <QStandardPaths>
+#include <set>
+#include <string>
+
+#include "actioncatalogue.h"
 
 using nlohmann::json;
 
@@ -77,6 +81,21 @@ std::vector<Preset> Build()
         ActionNode("Brighter", FaceOf("BRIGHT +", "eye", "303000"), {{"kind", "brightness"}, {"delta", 10}}));
     add("Device", "Dimmer", "-10 %",
         ActionNode("Dimmer", FaceOf("BRIGHT -", "eye", "202000"), {{"kind", "brightness"}, {"delta", -10}}));
+
+    // unreal-ng: one per catalogue action (scenarios.md §6), from the shipped catalogue (the inspector's picker can
+    // ask the running emulator); the name carries the id, so two actions with one label stay apart
+    std::set<std::string> seen;
+    for (const auto& e : EditorCatalogue::Instance().Get().actions)
+    {
+        if (!seen.insert(e.id).second)
+            continue;
+        json node{{"type", "action"}, {"title", e.label}, {"face", CatalogueFace(e)}, {"do", CatalogueStep(e)}};
+        std::string desc = e.id + " (" + e.kind + (e.held ? ", held" : "") + (e.gui ? ", unreal-qt only" : "") + ")";
+        if (!e.params.empty())
+            desc += "; params: " + e.params;
+        add(("unreal-ng: " + (e.group.empty() ? std::string("Other") : e.group)).c_str(),
+            (e.label + "  [" + e.id + "]").c_str(), desc.c_str(), std::move(node));
+    }
 
     // the user's own
     auto load = [&](const QString& file) {

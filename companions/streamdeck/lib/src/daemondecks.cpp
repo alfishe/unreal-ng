@@ -1,6 +1,7 @@
 #include "sdb/daemondecks.h"
 
 #include <algorithm>
+#include <filesystem>
 
 #include "sdb/datadir.h"
 #include "sdb/deckhub.h"
@@ -36,6 +37,12 @@ std::optional<scn::Scenario> DaemonDecks::LoadFile(const std::string& file, std:
         return std::nullopt;
     std::vector<scn::Issue> issues;
     auto s = scn::Parse(*doc, issues);
+    if (s)
+    {  // $scenario and relative picture paths: the file's folder, not the working directory
+        std::error_code ec;
+        const auto abs = std::filesystem::absolute(file, ec);
+        s->dir = (ec ? std::filesystem::path(file) : abs).parent_path().lexically_normal().generic_string();
+    }
     for (const auto& i : issues)
         if (!i.error && log)
             log("warning: " + file + ": " + i.node + ": " + i.message);
@@ -117,6 +124,32 @@ void DaemonDecks::Add(const std::string& serial, const Model& model, bool real, 
     e.start = true;
     e.watched = Stamp(_startFiles);
     e.order = _nextOrder++;
+    runtime.SetActivityLook(_activityLook);
+}
+
+bool DaemonDecks::SetActivityLook(const std::string& look)
+{
+    const std::string word = look == "scenario" ? std::string() : look;
+    if (!word.empty() && word != "off" && word != "flash" && word != "line")
+        return false;
+    std::lock_guard lock(_mutex);
+    _activityLook = word;
+    for (auto& [serial, e] : _decks)
+        e.runtime->SetActivityLook(word);
+    return true;
+}
+
+std::string DaemonDecks::ActivityLook() const
+{
+    std::lock_guard lock(_mutex);
+    return _activityLook.empty() ? "scenario" : _activityLook;
+}
+
+void DaemonDecks::ForEach(const std::function<void(const std::string& serial, scn::Runtime& runtime)>& fn)
+{
+    std::lock_guard lock(_mutex);
+    for (auto& [serial, e] : _decks)
+        fn(serial, *e.runtime);
 }
 
 void DaemonDecks::Remove(const std::string& serial)
@@ -404,13 +437,43 @@ void DaemonDecks::AddRoutes(automation::Api& api)
                  int viewers = 0;
                  for (const auto& d : l["decks"])
                      viewers += static_cast<int>(d["viewers"].size());
-                 return Reply::Ok({{"ok", true},
-                                   {"name", "unreal-streamdeck"},
-                                   {"version", _options.version},
-                                   {"decks", l["decks"].size()},
-                                   {"viewers", viewers},
-                                   {"waiting_mirrors", l["waiting_mirrors"]},
-                                   {"wire_port", port}});
+                 json body = {{"ok", true},
+                              {"name", "unreal-streamdeck"},
+                              {"version", _options.version},
+                              {"decks", l["decks"].size()},
+                              {"viewers", viewers},
+                              {"waiting_mirrors", l["waiting_mirrors"]},
+                              {"wire_port", port},
+                              {"activity", ActivityLook()}};
+                 if (healthExtra)
+                 {
+                     const json extra = healthExtra();  // kept: a range-for over a temporary's items() dangles
+                     for (const auto& [k, v] : extra.items())
+                         body[k] = v;
+                 }
+                 return Reply::Ok(body);
+             }});
+    api.Add({"GET",
+             "/api/v1/activity",
+             "How the decks show what other surfaces do",
+             "look: scenario (each scenario's settings.activity), off, flash (the keys bound to the action), line (the "
+             "keys and a quiet strip line); unreal-qt's settings page sets it (Q-3, default flash)",
+             {"daemon", "activity"},
+             {},
+             nullptr,
+             [this](const Request&) { return Reply::Ok({{"look", ActivityLook()}}); }});
+    api.Add({"PUT",
+             "/api/v1/activity",
+             "Set how the decks show what other surfaces do",
+             "{look: scenario | off | flash | line}: every deck, now and later ones",
+             {"daemon", "activity"},
+             {{"look", "body", "string", "scenario, off, flash or line", true, {"scenario", "off", "flash", "line"}}},
+             json{{"look", "flash"}},
+             [this](const Request& r) {
+                 const std::string look = r.body.is_object() ? r.body.value("look", "") : r.Str("look");
+                 if (!SetActivityLook(look))
+                     return Reply::Error(400, "look: scenario, off, flash or line");
+                 return Reply::Ok({{"look", ActivityLook()}});
              }});
     api.Add({"GET",
              "/api/v1/decks",

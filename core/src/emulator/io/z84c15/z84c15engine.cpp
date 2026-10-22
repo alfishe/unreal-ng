@@ -162,7 +162,9 @@ void Z84C15Engine::RunIdleCycles()
     Z80& z = *_z80;
     const uint16_t fetch = static_cast<uint16_t>(z.pc + 1);  // the byte after the HALT (Z84HaltT)
     uint32_t period = 1;
-    if (!z.IdleStepsInert() || !IdleFetchIsPure(fetch, _lastM1Value, period))
+    // This engine and the chain's source handle their own per-step work
+    constexpr uint32_t kOwnWork = EmulatorContext::kStepWorkEngine | EmulatorContext::kStepWorkInterruptSource;
+    if (!z.IdleStepsInert(kOwnWork) || !IdleFetchIsPure(fetch, _lastM1Value, period))
         return;
 
     // The cycle's length by its start phase (t mod period), learned from real cycles: only the phases the run
@@ -265,7 +267,8 @@ bool Z84C15Engine::IdleFetchIsPure(uint16_t fetch, uint8_t opcode, uint32_t& per
     {
         const HostBusOverlay* overlay = _memory->GetBusOverlay();
         if (overlay && overlay->observesReads && fetch >= overlay->windowStart && fetch < overlay->windowEnd &&
-            (!overlay->RepeatFetchIsPure(fetch, period) || period == 0 || period > kMaxIdlePeriod))
+            (!overlay->RepeatFetchIsPure(fetch, period) || period == 0 || period > kMaxIdlePeriod ||
+             overlay->RepeatFetchPureUntil(fetch, z.t) != UINT32_MAX))  // a rule by frame position: one by one
             return false;
     }
     return true;

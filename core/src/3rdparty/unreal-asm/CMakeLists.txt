@@ -68,6 +68,8 @@ add_library(unreal-asm STATIC
     src/core/dialects.cpp
     src/dialects/common/z80.cpp
     src/dialects/common/macros.cpp
+    src/dialects/common/characters.cpp
+    src/dialects/common/definitions.cpp
     src/dialects/storm/stormfrontend.cpp
     src/dialects/zxasm/zxasmfrontend.cpp
     src/dialects/xas/xasfrontend.cpp

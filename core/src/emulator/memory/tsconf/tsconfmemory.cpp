@@ -139,6 +139,15 @@ uint8_t TsConfMemory::CacheRead(uint16_t addr, uint8_t normal, bool& dram)
     return normal;
 }
 
+bool TsConfMemory::ReadTakesDram(uint16_t addr) const
+{
+    const uint8_t bank = static_cast<uint8_t>(addr >> 14);
+    if (!_ts || _bank_mode[bank] != BANK_RAM)
+        return false;
+    const uint8_t index = static_cast<uint8_t>(addr >> 1);
+    return _ts->cacheTag[index] != CacheTag(WindowPage(bank), addr) || !((_ts->regs[TsConfReg::CacheConfig] >> bank) & 1);
+}
+
 /// 14 MHz: a CPU access that goes to DRAM waits for the arbiter
 /// (TsConfArbiter: the zmem.v wait by the DRAM phase its request falls in,
 /// plus the cycles video holds, plus the refused cycles that stop the clock

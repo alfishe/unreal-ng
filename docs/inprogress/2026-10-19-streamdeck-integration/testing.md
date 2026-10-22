@@ -39,7 +39,7 @@
 | Wire v2 | Frame round trips, `Join` roles, 32-bit lengths (a `HostPage` > 64 KB), `Welcome` errors |
 | Surface client | Against an in-process fake hub: join, subscribe, action / result by `rid`, delta merge before send, reconnect with pin and resubscribe, `revoked` |
 | Runtime | `action` kind, state-bound faces from readouts, context → navigation without echo, activity flashes, target line |
-| Core side | `TargetState` rules 1-6 and lifetime ([targeting.md](targeting.md)); activity merge and rate; readout vocabulary; catalogue fields (in `core-tests`, `*Surface*`, `*Target*`) |
+| Core side | `TargetState` rules 1-6 and lifetime ([targeting.md](targeting.md)); activity merge and rate; readout vocabulary; catalogue fields (in `core-tests`, `*Surface*`, `*Target*`). Done SD4 2026-10-20: `TargetState_Test`, `TargetPin_Test`, `TargetStateNotification_Test`, `ActivityFeed_Test`, `ActionCatalogue_Test`, `SurfacesApi_Test`, `McpActions_Test.SurfaceVerbsBecomeTheSurfacesRoutes`; unreal-qt-tests `SurfaceTargets_Test` (the window as a view, the status icon, the surfaces table); live `tools/verification/mcp/test_surfaces.py` `test_no_id_follows_the_focused_view_and_pins_hold`. The per-session rate (20 / s) is the topic's (S4) |
 
 Rules of `core/tests/README.md` apply on the core side (no `sleep_for`, ≤ 50 ms, `TestWait`).
 
@@ -73,6 +73,16 @@ own event loop until the condition holds.
 | `/press` (by node, by key: the back key) and `/navigate` (node, back, home) that succeed: the state after the device thread's step, `applied`; a device thread that does not step: 202 within the bound, applied by the next step; a ticket outlives its runtime (the wait ends at once) | `PressAndNavigate`, `TestRuntime` (tickets) |
 
 Not covered here: `DeckState`'s `busy_by` / `target` (not sent yet: SD5 / SD7).
+
+The daemon's life and pairing (SD7, `tests/daemonlife_test.cpp`): the lock (held, busy, its holder, released), the
+parents' leases (a pid released, a parent process that dies seen through its handle, a daemon started by hand that
+stays), the routes and `Adopt` (a second start hands its parent to the running daemon over HTTP), the pairing against
+a fake host (pending, approved: the token in a 0600 file; 503 refused; cancelled; unreachable), the strip's lines, a
+tap on a notice. unreal-qt's side: `StreamDeckSupervisor_Test` and `StreamDeckApi_Test` in core-tests (the state
+machine on the test's clock with a fake launcher and a fake daemon: start on a deck, crash backoff 1 / 2 / 4 s then
+60 s, a hang killed after three checks, adopt with a lease, a foreign host, stop, restart, mode off, settings applied,
+a missing binary, a second start that ends and is adopted; the verbs, 503 without unreal-qt, revoke),
+`StreamDeckDialog_Test` in unreal-qt-tests (the page and the approval at the GUI), `McpStreamDeck_Test`.
 
 ### 3.2 With a host (needs SD7)
 

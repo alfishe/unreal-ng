@@ -7,6 +7,7 @@
 #include <optional>
 #include <set>
 
+#include "dialects/common/characters.h"
 #include "dialects/common/z80.h"
 #include "layout/z80size.h"
 
@@ -1478,6 +1479,7 @@ FrontendResult SjasmplusFrontend::Parse(const SourceDocument& source) const
         result.program.lines.push_back(std::move(line));
     }
     result.program.z80n = z80n;
+    CharactersInCodePage(result.program, source.codePage);
     return result;
 }
 }  // namespace unrealasm::dialects

@@ -23,7 +23,7 @@
     paths["/api/v1/emulator/{id}/state/screen/overscan"]["put"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/state/screen/overscan"]["put"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/state/screen/overscan"]["put"]["responses"]["200"]["description"] =
-        "overscan, changed, video_mode, framebuffer, display";
+        "overscan, changed, video_mode, framebuffer, display, viewport";
 
     paths["/api/v1/emulator/{id}/state/screen/digest"]["get"]["summary"] = "Screen content digest";
     paths["/api/v1/emulator/{id}/state/screen/digest"]["get"]["tags"].append("Screen State");

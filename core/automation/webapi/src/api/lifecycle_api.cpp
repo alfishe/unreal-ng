@@ -18,6 +18,7 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/execution/runcontrol.h>
 #include <emulator/zxpoly/zxpolygroup.h>
+#include <emulator/machinenames.h>
 #include <emulator/machinevariants.h>
 #include <emulator/media/modelswitch.h>
 #include <emulator/slots/slotcontrol.h>
@@ -1356,34 +1357,16 @@ void EmulatorAPI::switchModel(const HttpRequestPtr& req, std::function<void(cons
     // must leave the caller's emulator untouched (the old flow removed the
     // instance first and a bad model then left the caller with nothing).
     // These checks mirror the ones inside EmulatorManager create paths.
-    const TMemModel* requestedModel = Config::FindModelByShortName(modelName);
-    if (!requestedModel)
-    {
-        Json::Value error;
-        error["error"] = "Bad Request";
-        error["message"] = "unknown model '" + modelName + "'";
-        error["requested_model"] = modelName;
-        error["available_models_endpoint"] = "/api/v1/emulator/models";
-
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-
+    // A model, a machine variant (TSL-VDAC2, PROFI-PLUS) or a ZX-Poly configuration: what EmulatorManager creates
+    // by name (machines::Resolve)
+    machines::ResolvedName requested;
+    std::string resolveError;
     const std::string ramNote = RamSizeNote(modelName, ramSize);
-    if (!ramNote.empty())
-    {
-        std::string ignored;
-        ramSize = Config::EffectiveRamSize(requestedModel->Model, ramSize, ignored);
-    }
-    if (ramSize > 0 && (ramSize & requestedModel->AvailRAMs) == 0)
+    if (!machines::Resolve(modelName, ramSize, requested, resolveError))
     {
         Json::Value error;
         error["error"] = "Bad Request";
-        error["message"] = "RAM size " + std::to_string(ramSize) + "KB is not supported by model '" + modelName +
-                           "' (see available_ram_sizes_kb in /api/v1/emulator/models)";
+        error["message"] = resolveError;
         error["requested_model"] = modelName;
         error["available_models_endpoint"] = "/api/v1/emulator/models";
 
@@ -1393,22 +1376,11 @@ void EmulatorAPI::switchModel(const HttpRequestPtr& req, std::function<void(cons
         callback(resp);
         return;
     }
-
-    if (!Config::IsModelCreatable(*requestedModel))
-    {
-        Json::Value error;
-        error["error"] = "Bad Request";
-        error["message"] = "model '" + modelName +
-                           "' is not creatable on this build (port decoder or config folder missing)";
-        error["requested_model"] = modelName;
-        error["available_models_endpoint"] = "/api/v1/emulator/models";
-
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
+    modelName = requested.name;
+    if (requested.kind == machines::NameKind::Model)
+        ramSize = requested.ramKb;
+    else
+        ramSize = 0;  // a variant's / a configuration's own RAM size
 
     // What happens to unsaved writes on media the new model has no slot for
     StrandedMedia stranded = StrandedMedia::Refuse;

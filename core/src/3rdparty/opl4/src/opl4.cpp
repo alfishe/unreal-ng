@@ -102,6 +102,8 @@ struct Opl4::Impl
     std::array<int32_t, FmBus::kChannelCount> fmTaps{};
     std::array<int32_t, Opl4Pcm::kSlotCount> pcmTaps{};
     uint32_t pcmMuteMask = 0; // bit i: PCM slot i
+    std::array<int32_t, Opl4Pcm::kSlotCount> pcmGain{}; // Q15 host gain per slot (valid while anyPcmGain)
+    bool anyPcmGain = false;
     int32_t fmPeak[FmBus::kChannelCount] = {};
     int32_t pcmPeak[Opl4Pcm::kSlotCount] = {};
 
@@ -375,6 +377,15 @@ void Opl4::AdvanceOutputStep()
             pcmL -= VolFactor(tap, pp.left);
             pcmR -= VolFactor(tap, pp.right);
         }
+        else if (im.anyPcmGain && im.pcmGain[i] != 32768)
+        {
+            // A host gain: subtract the part of the slot it takes away, re-panned the same way
+            const int32_t removed =
+                tap - static_cast<int32_t>((static_cast<int64_t>(tap) * im.pcmGain[i]) / 32768);
+            const PanPair pp = kPanTable[slots[i].pan & 0x0F];
+            pcmL -= VolFactor(removed, pp.left);
+            pcmR -= VolFactor(removed, pp.right);
+        }
     }
 
     pcmL = ApplyMixScale(pcmL, (im.mixF9 >> 3) & 7);
@@ -644,6 +655,23 @@ void Opl4::SetChannelMute(ChannelId id, bool mute)
         else
             _impl->pcmMuteMask &= ~(1u << id.index);
     }
+}
+
+void Opl4::SetChannelGain(ChannelId id, int32_t gainQ15)
+{
+    if (id.group == ChannelGroup::Fm)
+    {
+        _impl->fmBus.SetChannelGain(static_cast<int>(id.index), gainQ15);
+        return;
+    }
+    if (id.index >= Opl4Pcm::kSlotCount)
+        return;
+    if (!_impl->anyPcmGain)
+        _impl->pcmGain.fill(32768);
+    _impl->pcmGain[id.index] = gainQ15;
+    _impl->anyPcmGain = false;
+    for (int32_t g : _impl->pcmGain)
+        _impl->anyPcmGain = _impl->anyPcmGain || g != 32768;
 }
 
 void Opl4::EnableSplitStreams(bool on)

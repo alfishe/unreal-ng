@@ -8,6 +8,7 @@
 #include <optional>
 #include <set>
 
+#include "dialects/common/characters.h"
 #include "dialects/common/macros.h"
 #include "dialects/common/z80.h"
 
@@ -1110,6 +1111,7 @@ FrontendResult TasmFrontend::Parse(const SourceDocument& source) const
             if (st.kind == Statement::Kind::Directive && st.directive == ir::DirectiveKind::Equ && redefined.count(l.label))
                 st.directive = ir::DirectiveKind::Defl;
     FlattenConditionals(result.program, result.diagnostics);
+    CharactersInCodePage(result.program, source.codePage);
     return result;
 }
 }  // namespace unrealasm::dialects

@@ -76,7 +76,8 @@ void DesignCanvas::Refresh()
         }
         else if (const Node* n = page.keys[static_cast<size_t>(k)])
         {
-            vd->DrawKey(k, ToQImage(RenderFace(n->face, n->title, false, n->IsMenu(), pad, face)));
+            vd->DrawKey(k, ToQImage(RenderFace(n->face, n->title, false, n->IsMenu(), pad, face,
+                                                 _doc->BaseDir().toStdString())));
             _keyIds[k] = n->id;
         }
     }
@@ -85,7 +86,8 @@ void DesignCanvas::Refresh()
             if (i.error && i.node == id)
                 _keyErrors[k] = true;
     if (m.HasLcd())
-        vd->DrawStrip(ToQImage(RenderStrip(page, m.lcdLogicalW, m.lcdLogicalH, m.dialTileW)));
+        vd->DrawStrip(ToQImage(RenderStrip(page, m.lcdLogicalW, m.lcdLogicalH, m.dialTileW, {}, -1, {},
+                                           _doc->BaseDir().toStdString())));
     update();
 }
 

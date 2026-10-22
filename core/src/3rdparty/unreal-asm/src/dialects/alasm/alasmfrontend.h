@@ -14,5 +14,7 @@ class AlasmFrontend : public IFrontend
 public:
     std::string_view Dialect() const override { return "alasm"; }
     FrontendResult Parse(const SourceDocument& source) const override;
+    /// The macros of the project's other files that walk or glue their parameters are expanded at their calls here too
+    FrontendResult ParseInProject(const SourceDocument& source, const std::vector<const SourceDocument*>& project) const override;
 };
 }  // namespace unrealasm::dialects

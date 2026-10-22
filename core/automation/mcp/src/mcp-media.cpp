@@ -17,6 +17,10 @@
 //   temporal_set    → PUT /video/temporal {algorithm} ("off" / "" switches it off)
 //   window_display     → GET /video/window (GUI window: GPU, CRT effects / profile, temporal blending)
 //   window_display_set → PUT /video/window {display fields} (409 no-window headless)
+//   window_crt_params     → GET /video/window/crt_params (the active CRT profile's parameters)
+//   window_crt_params_set → PUT /video/window/crt_params {values, steps, reset}
+//   viewport           → GET /video/viewport (the overscan frame's crop)
+//   viewport_set       → PUT /video/viewport {viewport}
 //   vdac2_capture_start  → POST /vdac2/capture/start {path} (TS-Conf VDAC2 card: FT812 bus to an .evr stream)
 //   vdac2_capture_stop   → POST /vdac2/capture/stop
 //   vdac2_capture_status → GET  /vdac2/capture/status
@@ -108,6 +112,19 @@ std::string TemporalSummary(const Json::Value& status)
     return out.str();
 }
 
+/// A number for the text: an integer as it is, else up to 6 decimals ("0.3", not jsoncpp's 0.29999999999999999)
+std::string NumberText(double value)
+{
+    const bool negative = value < 0;
+    const auto scaled = static_cast<long long>(std::llround((negative ? -value : value) * 1e6));
+    std::string fraction = std::to_string(scaled % 1000000);
+    fraction.insert(0, 6 - fraction.size(), '0');
+    while (!fraction.empty() && fraction.back() == '0')
+        fraction.pop_back();
+    return std::string(negative && scaled != 0 ? "-" : "") + std::to_string(scaled / 1000000) +
+           (fraction.empty() ? "" : "." + fraction);
+}
+
 /// Summary of a /video/window answer, e.g. "window gpu on (available), crt basic, blending off (2 frames, equal)",
 /// then the profiles the window offers (an agent may see only the text: it needs the words for crt_profile)
 std::string WindowDisplaySummary(const Json::Value& s)
@@ -119,13 +136,74 @@ std::string WindowDisplaySummary(const Json::Value& s)
     line += std::string(", blending ") + (s.get("blending", false).asBool() ? "on" : "off") + " (" +
             std::to_string(s.get("blending_frames", 0).asInt()) + " frames, " + s.get("blending_weights", "").asString() +
             ")";
-    const Json::Value& offered = s["crt_profiles"];
-    if (offered.isArray() && !offered.empty())
+    if (s.get("blending_weights", "").asString() == "exponential" && s.isMember("blending_decay"))
+        line += ", decay " + NumberText(s["blending_decay"].asDouble());
+    if (s.isMember("fullscreen"))
     {
-        line += "\ncrt_profiles:";
+        const int scale = s.get("scale", 0).asInt();
+        line += s.get("fullscreen", false).asBool() ? ", full screen"
+                                                     : (scale > 0 ? ", scale " + std::to_string(scale) + "x" : ", scale free");
+        line += std::string(", toolbar ") + (s.get("toolbar", true).asBool() ? "on" : "off") + ", status bar " +
+                (s.get("status_bar", true).asBool() ? "on" : "off");
+        line += std::string(", hud ") + (s.get("hud", false).asBool() ? "on" : "off") + " (theme " +
+                s.get("hud_theme", "").asString() + ")";
+        line += std::string(", keyboard ") + (s.get("osd_keyboard", false).asBool() ? "on" : "off");
+        if (!s.get("osd_keyboard_picture", "").asString().empty())
+            line += " (" + s["osd_keyboard_picture"].asString() + ")";
+        line += std::string(", next layers ") + (s.get("next_layers", false).asBool() ? "on" : "off");
+    }
+    // The words the setters take: an agent may see only this text
+    for (const char* list : {"crt_profiles", "hud_themes", "osd_keyboard_pictures"})
+    {
+        const Json::Value& offered = s[list];
+        if (!offered.isArray() || offered.empty())
+            continue;
+        line += std::string("\n") + list + ":";
         for (const Json::Value& name : offered)
             line += " " + name.asString();
     }
+    const Json::Value& notices = s["hud_notices"];
+    if (notices.isObject() && !notices.empty())
+    {
+        line += "\nhud_notices (off):";
+        int off = 0;
+        for (const std::string& id : notices.getMemberNames())
+            if (!notices[id].asBool())
+            {
+                line += " " + id;
+                ++off;
+            }
+        if (off == 0)
+            line += " none (" + std::to_string(notices.size()) + " shown)";
+    }
+    return line;
+}
+
+/// Summary of a /video/window/crt_params answer: the profile, then a line per parameter with its range
+std::string CrtParamsSummary(const Json::Value& p)
+{
+    const Json::Value& list = p["parameters"];
+    std::string text = "CRT profile " + p.get("profile", "").asString() + " (" + p.get("kind", "").asString() + "), " +
+                       std::to_string(list.isArray() ? list.size() : 0) + " parameters";
+    if (!list.isArray())
+        return text;
+    for (const Json::Value& item : list)
+        text += "\n  " + item.get("name", "").asString() + " = " +
+                NumberText(item.get("value", 0).asDouble()) + " (" +
+                NumberText(item.get("minimum", 0).asDouble()) + ".." +
+                NumberText(item.get("maximum", 0).asDouble()) + ", step " +
+                NumberText(item.get("step", 0).asDouble()) + ")";
+    return text;
+}
+
+/// Summary of a /video/viewport answer
+std::string ViewportSummary(const Json::Value& v)
+{
+    std::string line = std::string("overscan ") + (v.get("overscan", false).asBool() ? "on" : "off");
+    if (!v.get("overscan_available", true).asBool())
+        line += " (no overscan frame on this machine)";
+    line += ", viewport " + v.get("viewport", "").asString() + " (" + v.get("display", "").asString() + " of " +
+            v.get("framebuffer", "").asString() + ")";
     return line;
 }
 
@@ -136,8 +214,10 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"screenshot", "screen_digest", "record_start", "record_stop", "record_status", "record_pause",
-                               "record_resume", "audio_capture", "audio_status", "audio_result", "temporal_status",
-                               "temporal_set", "window_display", "window_display_set", "vdac2_capture_start", "vdac2_capture_stop", "vdac2_capture_status",
+                               "record_resume", "record_presets", "audio_capture", "audio_status", "audio_result",
+                               "temporal_status", "temporal_set", "window_display", "window_display_set",
+                               "window_crt_params", "window_crt_params_set", "viewport", "viewport_set",
+                               "vdac2_capture_start", "vdac2_capture_stop", "vdac2_capture_status",
                                "framebuffer"})
     {
         schema["properties"]["action"]["enum"].append(action);
@@ -145,13 +225,16 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["action"]["description"] =
         "Media operation: still capture, digest, video recording session, audio capture, the ZX DLSS de-flicker "
         "(temporal_status / temporal_set), the GUI window's display settings (window_display / window_display_set: "
-        "GPU acceleration, CRT effects and profile, temporal blending; unreal-qt only), or the TS-Conf VDAC2 card's FT812 bus capture to an .evr replay stream "
+        "GPU acceleration, CRT effects and profile, temporal blending, full screen, scale, toolbar, status bar, HUD and "
+        "its theme / notices, on-screen keyboard and its picture, the ZX Next layers window; unreal-qt only), the "
+        "active CRT profile's parameters (window_crt_params / window_crt_params_set), the overscan frame's viewport "
+        "(viewport / viewport_set), or the TS-Conf VDAC2 card's FT812 bus capture to an .evr replay stream "
         "(vdac2_capture_start with filename / vdac2_capture_stop / vdac2_capture_status), or the picture as raw "
         "pixels (framebuffer: format rgba | index - the Sprinter's u16 pens; metadata, base64 data with include_image).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["format"]["type"] = "string";
-    schema["properties"]["format"]["description"] = "screenshot: png|gif (default png: lossless; gif has 256 colors). record_start: gif (native) or h264/h265/hevc/vp9/rawvideo (default gif)";
+    schema["properties"]["format"]["description"] = "screenshot: png|gif (default png: lossless; gif has 256 colors). record_start: gif (native) or h264/h265/hevc/vp9/rawvideo (default: the preset's, else gif)";
     schema["properties"]["mode"]["type"] = "string";
     schema["properties"]["mode"]["enum"] = Json::Value(Json::arrayValue);
     schema["properties"]["mode"]["enum"].append("screen");
@@ -179,6 +262,22 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "record_start: audio codec for the emulated sound track (aac, mp3, opus, vorbis, flac, pcm_s16le). Omit "
         "for video only (default). Must fit the container: h264/hevc + aac in .mp4/.mov is native on macOS; "
         "gif has no audio (refused)";
+    schema["properties"]["preset"]["type"] = "string";
+    schema["properties"]["preset"]["description"] =
+        "record_start: a recording preset (record_presets lists them: gameplay = H.264 + AAC mp4, music = FLAC audio only, "
+        "audio = WAV audio only, gif, hq = H.265 + FLAC mkv, multitrack = an audio track per sound source); the other "
+        "fields override it";
+    schema["properties"]["container"]["type"] = "string";
+    schema["properties"]["container"]["description"] =
+        "record_start: the file's extension when no filename is given: mp4, mov, mkv, webm, avi, gif; wav, flac, mp3, "
+        "ogg with record_mode audio";
+    schema["properties"]["record_mode"]["type"] = "string";
+    schema["properties"]["record_mode"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* mode : {"single", "multi", "audio"})
+        schema["properties"]["record_mode"]["enum"].append(mode);
+    schema["properties"]["record_mode"]["description"] =
+        "record_start: single (one mixed audio track, default), multi (a track per fitted sound source, master first), "
+        "audio (audio only: no video)";
     schema["properties"]["video_bitrate"]["type"] = "integer";
     schema["properties"]["video_bitrate"]["description"] = "record_start: video bitrate kbps (0 = default, 100-200000)";
     schema["properties"]["profile"]["type"] = "string";
@@ -258,23 +357,46 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["display"]["description"] =
         "window_display_set: any of gpu (bool), crt (bool), crt_profile (one of the window's crt_profiles: "
         "none, basic, ...; other than none switches CRT on), blending (bool, temporal blending / gigascreen "
-        "smoothing), blending_frames (2..5), blending_weights (equal, exponential); the rest stay. Applied the way "
-        "the View menu does; screenshot source=window shows the effect. Headless: no window (error)";
-    for (const char* flag : {"gpu", "crt", "blending"})
+        "smoothing), blending_frames (2..5), blending_weights (equal, exponential), blending_decay (0.1..0.9), "
+        "fullscreen (bool), scale (1..4), toolbar, status_bar, hud (bool), hud_theme (one of hud_themes), "
+        "hud_notices ({id: bool}, ids from window_display), osd_keyboard (bool), osd_keyboard_picture (one of "
+        "osd_keyboard_pictures), next_layers (bool), next_layers_mode (layers, composed, winner), next_layers_shown "
+        "({ula|layer2|tilemap|sprites: bool}); the rest stay. Applied the way the View menu does; screenshot "
+        "source=window shows the effect. Headless: no window (error)";
+    for (const char* flag : {"gpu", "crt", "blending", "fullscreen", "toolbar", "status_bar", "hud", "osd_keyboard",
+                             "next_layers"})
         schema["properties"]["display"]["properties"][flag]["type"] = "boolean";
-    schema["properties"]["display"]["properties"]["crt_profile"]["type"] = "string";
+    for (const char* word : {"crt_profile", "blending_weights", "hud_theme", "osd_keyboard_picture", "next_layers_mode"})
+        schema["properties"]["display"]["properties"][word]["type"] = "string";
     schema["properties"]["display"]["properties"]["blending_frames"]["type"] = "integer";
-    schema["properties"]["display"]["properties"]["blending_weights"]["type"] = "string";
+    schema["properties"]["display"]["properties"]["scale"]["type"] = "integer";
+    schema["properties"]["display"]["properties"]["blending_decay"]["type"] = "number";
+    for (const char* map : {"hud_notices", "next_layers_shown"})
+    {
+        schema["properties"]["display"]["properties"][map]["type"] = "object";
+        schema["properties"]["display"]["properties"][map]["additionalProperties"]["type"] = "boolean";
+    }
+    schema["properties"]["crt_params"]["type"] = "object";
+    schema["properties"]["crt_params"]["description"] =
+        "window_crt_params_set: {values: {name: number}, steps: {name: steps (a dial's, the parameter's own step)}, "
+        "reset: true | name | [names]}; names from window_crt_params (a libretro preset's own, or basic's curvature, "
+        "scanline_weight, ...)";
+    schema["properties"]["viewport"]["type"] = "string";
+    schema["properties"]["viewport"]["description"] =
+        "viewport_set: full, symmetric, standard, screen_only, next or prev (the crop of the Pentagon's overscan "
+        "frame; overscan itself: feature overscan or the state/screen/overscan route)";
     schema["required"].append("action");
 
     registry.Register(
         "capture_media",
         "Media capture: screenshots (PNG/GIF with OCR-friendly metadata or saved to file), deterministic screen digests, video recording "
-        "(GIF native; h264/hevc mp4/mov with an optional audio track: audio:'aac') with optional every_nth:'auto' visual-quantum detection for duplicate-free bounded recordings, and "
+        "(GIF native; h264/hevc mp4/mov with an optional audio track: audio:'aac'; the core's presets: record_presets, "
+        "record_start preset:'gameplay'; record_mode single | multi | audio) with optional every_nth:'auto' visual-quantum detection for duplicate-free bounded recordings, and "
         "one-shot audio capture with DSP analysis (dominant frequency, RMS/peak, optional WAV export), and the ZX DLSS "
         "temporal de-flicker (temporal_status / temporal_set: algorithm, video/audio delay it causes, timing), the GUI "
         "window's display settings (window_display / window_display_set: GPU acceleration, CRT effects and profile, "
-        "temporal blending), and the "
+        "temporal blending, full screen, scale, bars, HUD, on-screen keyboard, Next layers; window_crt_params / "
+        "window_crt_params_set: the CRT profile's parameters), the overscan viewport (viewport / viewport_set), and the "
         "TS-Conf VDAC2 card's FT812 bus capture (vdac2_capture_start / _stop / _status: every chip select and byte "
         "with FT812 clocks and per-frame picture hashes, an .evr stream that replays the chip alone).",
         std::move(schema),
@@ -428,6 +550,31 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                 return;
             }
 
+            if (action == "record_presets")
+            {
+                caller.Call("GET", "/api/v1/recording/presets", nullptr, [done](int status, Json::Value body) {
+                    if (status != 200)
+                    {
+                        done(ToolResult::Error(status == 0 ? "WebAPI unreachable" : DescribeErrorBody(body)));
+                        return;
+                    }
+                    std::ostringstream out;
+                    out << "Recording presets (record_start with preset: <id>):";
+                    for (const Json::Value& preset : body["presets"])
+                    {
+                        out << "\n" << preset["id"].asString() << " - " << preset["title"].asString() << ": "
+                            << preset["mode"].asString() << ", ." << preset["container"].asString();
+                        if (!preset["format"].asString().empty())
+                            out << ", " << preset["format"].asString();
+                        if (!preset["audio"].asString().empty())
+                            out << " + " << preset["audio"].asString();
+                    }
+                    const std::string text = out.str();
+                    done(ToolResult::Ok(text, std::move(body)));
+                });
+                return;
+            }
+
             if (action == "record_stop" || action == "record_status" || action == "record_pause" || action == "record_resume")
             {
                 if (action == "record_status")
@@ -497,14 +644,17 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                             if (fps < 1) fps = 1;
                             (*body)["fps"] = fps;
                         }
-                        for (const char* field : {"format", "fps", "scale", "region", "filename", "audio",
-                                                  "video_bitrate", "audio_bitrate", "profile", "acceleration"})
+                        for (const char* field : {"preset", "container", "format", "fps", "scale", "region", "filename",
+                                                  "audio", "video_bitrate", "audio_bitrate", "profile", "acceleration"})
                         {
                             if (args.isMember(field) && !args[field].isNull())
                             {
                                 (*body)[field] = args[field];
                             }
                         }
+                        // 'mode' is the screenshot's area alias here: the recording mode comes as record_mode
+                        if (args.isMember("record_mode") && args["record_mode"].isString())
+                            (*body)["mode"] = args["record_mode"];
 
                         caller.Call("POST", Endpoint(id, "/video/record"), body.get(),
                                     [body, frames, quantum, quantumNote, &caller, id, done, progress](int status, Json::Value startResponse) mutable {
@@ -878,6 +1028,56 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                 return;
             }
 
+            if (action == "window_crt_params" || action == "window_crt_params_set" || action == "viewport" ||
+                action == "viewport_set")
+            {
+                const bool params = action == "window_crt_params" || action == "window_crt_params_set";
+                const bool set = action == "window_crt_params_set" || action == "viewport_set";
+                Json::Value body;
+                if (action == "window_crt_params_set")
+                {
+                    if (!args.isMember("crt_params") || !args["crt_params"].isObject() || args["crt_params"].empty())
+                    {
+                        done(ToolResult::Error("window_crt_params_set needs 'crt_params': {values: {name: number}, "
+                                               "steps: {name: steps}, reset: true | name | [names]}"));
+                        return;
+                    }
+                    body = args["crt_params"];
+                }
+                if (action == "viewport_set")
+                {
+                    if (!args.isMember("viewport") || !args["viewport"].isString())
+                    {
+                        done(ToolResult::Error(
+                            "viewport_set needs 'viewport': full, symmetric, standard, screen_only, next or prev"));
+                        return;
+                    }
+                    body["viewport"] = args["viewport"];
+                }
+                const std::string suffix = params ? "/video/window/crt_params" : "/video/viewport";
+                TargetResolver::ResolveFromArgs(args, caller, [set, params, suffix, body, &caller,
+                                                               done](bool ok, const std::string& idOrError) {
+                    if (!ok)
+                    {
+                        done(ToolResult::Error(idOrError));
+                        return;
+                    }
+                    auto request = std::make_shared<Json::Value>(body);
+                    caller.Call(set ? "PUT" : "GET", Endpoint(idOrError, suffix), set ? request.get() : nullptr,
+                                [request, params, done](int status, Json::Value response) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error(std::string(params ? "CRT parameters" : "Viewport") + " failed (HTTP " +
+                                                   std::to_string(status) + "): " + DescribeErrorBody(response)));
+                            return;
+                        }
+                        const std::string text = params ? CrtParamsSummary(response) : ViewportSummary(response);
+                        done(ToolResult::Ok(text, std::move(response)));
+                    });
+                });
+                return;
+            }
+
             if (action == "vdac2_capture_start")
             {
                 const std::string path = args.isMember("filename") ? args["filename"].asString()
@@ -940,7 +1140,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
             done(ToolResult::Error("Unknown action '" + action +
                                             "'. Valid: screenshot, screen_digest, record_start, record_stop, record_status, "
                                             "record_pause, record_resume, audio_capture, audio_status, audio_result, "
-                                            "temporal_status, temporal_set, window_display, window_display_set, vdac2_capture_start, vdac2_capture_stop, framebuffer, "
+                                            "temporal_status, temporal_set, window_display, window_display_set, window_crt_params, "
+                                            "window_crt_params_set, viewport, viewport_set, vdac2_capture_start, vdac2_capture_stop, framebuffer, "
                                             "vdac2_capture_status"));
         });
 }

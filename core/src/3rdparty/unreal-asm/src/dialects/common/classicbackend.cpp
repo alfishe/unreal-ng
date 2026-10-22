@@ -8,6 +8,7 @@
 #include <optional>
 #include <set>
 
+#include "dialects/common/definitions.h"
 #include "dialects/common/z80.h"
 #include "dialects/sjasmplus/sjasmplusfrontend.h"
 #include "dialects/sjasmplus/sjasmpluslower.h"
@@ -224,6 +225,7 @@ struct Writer
     // EQU names whose values the numbers give (a 16-bit source's value beyond #FFFF wrapped, as its assembler does)
     std::map<std::string, int64_t> constants{};
     bool sjasmplus = false;   // the source is sjasmplus': its repeated and fake instructions
+    bool alasm = false;       // the source is ALASM's: a macro argument is put in as text
     bool displaced = false;   // a displacement may be active: labels and $ go through __UNREALASM_D
     int trueValue = 0;
     std::string problem{};    // set when an expression has no pasmo form
@@ -296,6 +298,18 @@ struct Writer
             return true;
         for (const Expr& a : e.args)
             if (UsesAddressLabel(a))
+                return true;
+        return false;
+    }
+
+    /// An address label under an operation other than + and - (HIGH, a shift, AND): z80asm's "computed" type
+    bool AddressBeyondSum(const Expr& e) const
+    {
+        const bool sum = e.kind == Expr::Kind::Group ||
+                         ((e.kind == Expr::Kind::Binary || e.kind == Expr::Kind::Unary) &&
+                          (e.op == Op::Add || e.op == Op::Sub || e.op == Op::Negate || e.op == Op::Plus));
+        for (const Expr& a : e.args)
+            if ((!sum && UsesAddressLabel(a)) || AddressBeyondSum(a))
                 return true;
         return false;
     }
@@ -781,7 +795,12 @@ struct Writer
                 if (Z80asm())   // 32-bit signed words: a negative symbol is a negative offset
                 {
                     const std::string d = Print(o.expr);
-                    return "(" + z80::Upper(o.text) + (d.empty() || d[0] == '+' || d[0] == '-' ? d : "+" + d) + ")";
+                    const std::string offset = d.empty() || d[0] == '+' || d[0] == '-' ? d : "+" + d;
+                    // z80asm reads (IX+(D)), (IX+(D)-K) and (IX-(D-K)) as syntax errors: a displacement with parentheses
+                    // goes between zeros, (IX+0+(D)-K+0)
+                    if (d.find('(') != std::string::npos)
+                        return "(" + z80::Upper(o.text) + "+0" + offset + "+0)";
+                    return "(" + z80::Upper(o.text) + offset + ")";
                 }
                 // pasmo's words are unsigned: (IY+(-3)) would be +#FFFD, so a negated offset is written with "-"
                 if (o.expr.kind == Expr::Kind::Unary && o.expr.op == Op::Negate)
@@ -805,7 +824,9 @@ struct Writer
                 // (also a macro parameter it starts with: its argument may be in parentheses)
                 const std::string v = Print(o.expr);
                 const std::string first = v.substr(0, v.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"));
-                return instruction && !v.empty() && (v[0] == '(' || parameters.count(first)) ? "0+" + v : v;
+                // ALASM puts the argument's text in: a parameter that is the whole operand may be a register or memory
+                const bool wholeArgument = alasm && v == first && parameters.count(first);
+                return instruction && !v.empty() && (v[0] == '(' || (parameters.count(first) && !wholeArgument)) ? "0+" + v : v;
             }
             case Operand::Kind::String: return Quote(o.text);
         }
@@ -1163,6 +1184,12 @@ struct Writer
             case ir::DirectiveKind::Equ:
                 if (redefinable && redefinable->count(label))
                     return deflOf();
+                // z80asm 2.3 stops on an assertion (expr1.c: type != TYPE_COMPUTED) when an expression with an address
+                // uses a name made of an address beyond a sum: the name is the layout's value
+                if (Z80asm() && s.args.size() == 1 && AddressBeyondSum(s.args[0]))
+                    if (const auto v = options.labelValues.find(label); v != options.labelValues.end() && !v->second.redefinable)
+                        return {"EQU " + (v->second.value >= 0 && v->second.value <= 0xFFFF ? Hex(v->second.value, 4) : std::to_string(v->second.value)) +
+                                "             ; unreal-asm: EQU " + Print(s.args[0]) + " (the layout's value)"};
                 if (s.args.size() == 1)
                 {
                     if (const auto v = Known(s.args[0]))
@@ -1177,6 +1204,25 @@ struct Writer
             case ir::DirectiveKind::Db: return Checked({"DB " + Operands(s.operands)}, "DB");
             case ir::DirectiveKind::Dw: return Checked({"DW " + Operands(s.operands)}, "DW");
             case ir::DirectiveKind::Ds:
+                // z80asm's $ and labels count from the section's start in DEFS (DS #6060-$ is #6000 too many): a count
+                // computed from them is the one the layout gives
+                if (Z80asm() && !s.args.empty() && (UsesCurrent(s.args[0]) || UsesAddressLabel(s.args[0])))
+                    if (const auto here = LineAddress())
+                    {
+                        std::optional<int64_t> count = KnownAt(s.args[0], *here);
+                        if (!count && lastStatement)
+                            if (const auto next = LineAddress(line + 1))
+                                count = (*next - *here) & 0xFFFF;
+                        if (count)
+                        {
+                            Statement counted = s;
+                            counted.args[0] = Expr::Number(*count);
+                            std::vector<std::string> out = StatementText(counted, label);
+                            if (!out.empty() && out.back().find(';') == std::string::npos)
+                                out.back() += "             ; unreal-asm: DS " + Print(s.args[0]) + " (the layout's count)";
+                            return out;
+                        }
+                    }
                 if (s.operands.size() > 1 && !s.params.empty() && s.params[0] == "cyclic")
                     return Checked(CyclicFill(s), "DS");
                 if (!s.operands.empty())
@@ -1304,6 +1350,14 @@ struct Writer
                 virtualAddress.clear();
                 if (Z80asm())   // an address is a 16-bit word (z80asm computes in 32 bits)
                 {
+                    // z80asm's PHASE takes a constant: an address computed from $ or labels (ZX-ASM's return to the
+                    // outer PHASE) is the one the layout gives the next line
+                    if (UsesCurrent(s.args[0]) || UsesAddressLabel(s.args[0]))
+                        if (const auto at = lastStatement ? LineAddress(line + 1) : std::nullopt)
+                        {
+                            phased = true;
+                            return {"PHASE " + Hex(*at & 0xFFFF, 4) + "             ; unreal-asm: PHASE " + Print(s.args[0]) + " (the layout's address)"};
+                        }
                     std::vector<std::string> out = Checked({"PHASE " + Print(Masked16(s.args[0]))}, "PHASE");
                     phased = true;
                     return out;
@@ -1350,7 +1404,68 @@ struct Writer
         }
     }
 };
+
 }  // namespace
+
+/// An expression's value as the layout gives its names (fixed ones only); none when a name is unknown
+std::optional<int64_t> LayoutValue(const Expr& e, const std::map<std::string, SourceLabel>& values)
+{
+    switch (e.kind)
+    {
+        case Expr::Kind::Number: return e.value;
+        case Expr::Kind::Symbol:
+        {
+            const auto v = values.find(e.text);
+            return v != values.end() && !v->second.redefinable ? std::optional<int64_t>(v->second.value) : std::nullopt;
+        }
+        case Expr::Kind::Group: return LayoutValue(e.args[0], values);
+        case Expr::Kind::Unary:
+        {
+            const auto a = LayoutValue(e.args[0], values);
+            if (!a)
+                return std::nullopt;
+            switch (e.op)
+            {
+                case Op::Negate: return -*a;
+                case Op::Plus: return *a;
+                case Op::Not: return ~*a;
+                case Op::High: return (*a >> 8) & 0xFF;
+                case Op::Low: return *a & 0xFF;
+                case Op::LogicalNot: return *a == 0;
+                default: return std::nullopt;
+            }
+        }
+        case Expr::Kind::Binary:
+        {
+            const auto a = LayoutValue(e.args[0], values), b = LayoutValue(e.args[1], values);
+            if (!a || !b)
+                return std::nullopt;
+            switch (e.op)
+            {
+                case Op::Add: return *a + *b;
+                case Op::Sub: return *a - *b;
+                case Op::Mul: return *a * *b;
+                case Op::Div: return *b ? std::optional<int64_t>(*a / *b) : std::nullopt;
+                case Op::Mod: return *b ? std::optional<int64_t>(*a % *b) : std::nullopt;
+                case Op::And: return *a & *b;
+                case Op::Or: return *a | *b;
+                case Op::Xor: return *a ^ *b;
+                case Op::Shl: return *b >= 0 && *b < 32 ? std::optional<int64_t>(*a << *b) : std::nullopt;
+                case Op::Shr: return *b >= 0 && *b < 32 ? std::optional<int64_t>(*a >> *b) : std::nullopt;
+                case Op::Equal: return *a == *b;
+                case Op::NotEqual: return *a != *b;
+                case Op::Less: return *a < *b;
+                case Op::Greater: return *a > *b;
+                case Op::LessEqual: return *a <= *b;
+                case Op::GreaterEqual: return *a >= *b;
+                case Op::LogicalAnd: return *a != 0 && *b != 0;
+                case Op::LogicalOr: return *a != 0 || *b != 0;
+                default: return std::nullopt;
+            }
+        }
+        default: return std::nullopt;
+    }
+}
 
 /// Local labels (.loop) and qualified names (start.loop) exist in sjasmplus and its relatives; pasmo and z80asm have neither.
 /// Each becomes a plain name: a leading period takes the last ordinary label of the source before it, every other period
@@ -1417,6 +1532,7 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
     Writer w{options, result.diagnostics, target};
     w.trueValue = program.trueValue;
     w.sjasmplus = program.dialect == "sjasmplus";
+    w.alasm = program.dialect == "alasm";
     w.wordBits = program.expressionBits;
     w.unsignedWords = program.unsignedArithmetic;
     w.phased = program.displacementAcrossFiles;   // a file may start inside a PHASE of the file that INCLUDEs it
@@ -1519,65 +1635,36 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
     // Names assigned with "=" and defined more than once: every definition of them is DEFL. One assignment is an EQU
     // (pasmo refuses a reference to a DEFL name before its definition; "src=$+1" is used before it stands)
     std::set<std::string> redefinable;
-    std::map<std::string, int> definitions;
     std::map<std::string, int> callArguments;
-    bool inMacroBody = false;
-    // The branches of an IF exclude each other: a name defined once in each is defined once (IF x / N=$ / ELSE /
-    // N=#3D13 / ENDIF), the largest count of the branches. Per open IF: the branches so far, the current one
-    struct Branches
-    {
-        std::map<std::string, int> most, current;
-    };
-    std::vector<Branches> ifs;
-    const auto close = [](Branches& b) {
-        for (const auto& [name, count] : b.current)
-            b.most[name] = std::max(b.most[name], count);
-        b.current.clear();
-    };
     for (const ir::Line& l : program.lines)
-    {
-        bool assigned = false;
         for (const Statement& s : l.statements)
         {
-            if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Macro)
-                inMacroBody = true;
             if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Defl && !l.label.empty())
-                assigned = true;
+                redefinable.insert(l.label);
             if (s.kind == Statement::Kind::MacroCall)
                 callArguments[s.mnemonic] = std::max(callArguments[s.mnemonic], static_cast<int>(s.params.size()));
         }
-        if (!l.label.empty())
-            (ifs.empty() ? definitions : ifs.back().current)[l.label] += inMacroBody ? 2 : 1;   // inside a macro: defined at every call
-        if (assigned)
-            redefinable.insert(l.label);
-        for (const Statement& s : l.statements)
+    // an IF on names defined before it (or in another file: RAR's rarLZ4 tests fastCPIQ of RARB33), which the layout
+    // knows, counts its taken branch only (one on a name defined later is decided below, its branch left out still
+    // giving the value the pass before left)
+    std::map<std::string, size_t> firstDefinition;
+    for (size_t k = 0; k < program.lines.size(); ++k)
+        if (!program.lines[k].label.empty())
+            firstDefinition.emplace(program.lines[k].label, k);
+    std::function<bool(const Expr&, size_t)> definedBefore = [&](const Expr& e, size_t at) {
+        if (e.kind == Expr::Kind::Symbol)
         {
-            if (s.kind != Statement::Kind::Directive)
-                continue;
-            if (s.directive == ir::DirectiveKind::EndMacro)
-                inMacroBody = false;
-            else if (s.directive == ir::DirectiveKind::If || s.directive == ir::DirectiveKind::IfUsed)
-                ifs.emplace_back();
-            else if (s.directive == ir::DirectiveKind::Else && !ifs.empty())
-                close(ifs.back());
-            else if (s.directive == ir::DirectiveKind::EndIf && !ifs.empty())
-            {
-                close(ifs.back());
-                const std::map<std::string, int> most = std::move(ifs.back().most);
-                ifs.pop_back();
-                for (const auto& [name, count] : most)
-                    (ifs.empty() ? definitions : ifs.back().current)[name] += count;
-            }
+            const auto first = firstDefinition.find(e.text);
+            return first == firstDefinition.end() || first->second < at;
         }
-    }
-    while (!ifs.empty())   // an IF left open: its branches as they are
-    {
-        close(ifs.back());
-        const std::map<std::string, int> most = std::move(ifs.back().most);
-        ifs.pop_back();
-        for (const auto& [name, count] : most)
-            (ifs.empty() ? definitions : ifs.back().current)[name] += count;
-    }
+        return std::all_of(e.args.begin(), e.args.end(), [&](const Expr& a) { return definedBefore(a, at); });
+    };
+    std::map<std::string, int> definitions = CountDefinitions(program, [&](const Expr& c, size_t at) -> std::optional<bool> {
+        if (!definedBefore(c, at))
+            return std::nullopt;
+        const auto v = LayoutValue(c, options.labelValues);
+        return v ? std::optional<bool>(*v != 0) : std::nullopt;
+    });
     result.definitions = definitions;
     // In a project the other files count too (a name assigned in a source and in a file it INCLUDEs)
     for (auto it = redefinable.begin(); it != redefinable.end();)
@@ -1675,8 +1762,9 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
 
     // REPT bodies that define labels: pasmo's LOCAL does not work in REPT, so the body becomes a macro called n times
     std::map<size_t, size_t> repeatEnd;   // the line of a REPT with labels -> the line of its ENDM
-    auto only = [](const ir::Line& l, ir::DirectiveKind kind) {
-        return l.statements.size() == 1 && l.statements[0].kind == Statement::Kind::Directive && l.statements[0].directive == kind && l.label.empty();
+    auto only = [](const ir::Line& l, ir::DirectiveKind kind, bool labelled = false) {
+        return l.statements.size() == 1 && l.statements[0].kind == Statement::Kind::Directive && l.statements[0].directive == kind &&
+               (labelled || l.label.empty());
     };
     for (size_t k = 0; k < program.lines.size(); ++k)
     {
@@ -1699,7 +1787,8 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
             for (const Statement& s : l.statements)
                 if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::EndRepeat)
                     --depth;
-            labels = labels || !l.label.empty();
+            // a DEFL assigned in the body (ALASM's BITS=BITS+BITS) is the same name each pass: no label to make local
+            labels = labels || (!l.label.empty() && !only(l, ir::DirectiveKind::Defl, true));
         }
     }
     std::map<size_t, std::string> pendingRepeat;   // line of the ENDM -> the REPT count and macro name to call
@@ -1761,60 +1850,13 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
             if (!later || !known)
                 continue;
             // the condition's value as the layout gives its names (any true is not 0)
-            std::function<std::optional<int64_t>(const Expr&)> truth = [&](const Expr& e) -> std::optional<int64_t> {
-                switch (e.kind)
-                {
-                    case Expr::Kind::Number: return e.value;
-                    case Expr::Kind::Symbol: return options.labelValues.at(e.text).value;
-                    case Expr::Kind::Group: return truth(e.args[0]);
-                    case Expr::Kind::Unary:
-                    {
-                        const auto a = truth(e.args[0]);
-                        if (!a)
-                            return std::nullopt;
-                        switch (e.op)
-                        {
-                            case Op::Negate: return -*a;
-                            case Op::Plus: return *a;
-                            case Op::Not: return ~*a;
-                            case Op::High: return (*a >> 8) & 0xFF;
-                            case Op::Low: return *a & 0xFF;
-                            case Op::LogicalNot: return *a == 0;
-                            default: return std::nullopt;
-                        }
-                    }
-                    case Expr::Kind::Binary:
-                    {
-                        const auto a = truth(e.args[0]), b = truth(e.args[1]);
-                        if (!a || !b)
-                            return std::nullopt;
-                        switch (e.op)
-                        {
-                            case Op::Add: return *a + *b;
-                            case Op::Sub: return *a - *b;
-                            case Op::Mul: return *a * *b;
-                            case Op::Div: return *b ? std::optional<int64_t>(*a / *b) : std::nullopt;
-                            case Op::Mod: return *b ? std::optional<int64_t>(*a % *b) : std::nullopt;
-                            case Op::And: return *a & *b;
-                            case Op::Or: return *a | *b;
-                            case Op::Xor: return *a ^ *b;
-                            case Op::Shl: return *b >= 0 && *b < 32 ? std::optional<int64_t>(*a << *b) : std::nullopt;
-                            case Op::Shr: return *b >= 0 && *b < 32 ? std::optional<int64_t>(*a >> *b) : std::nullopt;
-                            case Op::Equal: return *a == *b;
-                            case Op::NotEqual: return *a != *b;
-                            case Op::Less: return *a < *b;
-                            case Op::Greater: return *a > *b;
-                            case Op::LessEqual: return *a <= *b;
-                            case Op::GreaterEqual: return *a >= *b;
-                            case Op::LogicalAnd: return *a != 0 && *b != 0;
-                            case Op::LogicalOr: return *a != 0 || *b != 0;
-                            default: return std::nullopt;
-                        }
-                    }
-                    default: return std::nullopt;
-                }
-            };
-            const auto value = truth(l.statements[0].args[0]);
+            const auto value = LayoutValue(l.statements[0].args[0], options.labelValues);
+            // a file of several assemblies: the same branch in each
+            if (value && std::any_of(options.otherLabelValues.begin(), options.otherLabelValues.end(), [&](const auto& values) {
+                    const auto other = LayoutValue(l.statements[0].args[0], values);
+                    return !other || (*other != 0) != (*value != 0);
+                }))
+                continue;
             // its ELSE and ENDIF; no block opens or closes in it (their lines are matched by index)
             size_t elseAt = 0, endAt = 0;
             bool plain = value.has_value();
@@ -1938,6 +1980,7 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
 
     size_t nextBlock = 0;
     int repeatMacros = 0;
+    bool guardedMacro = false;   // the open macro's definition is guarded (BackendOptions::includedRepeatedly)
     for (size_t index = 0; index < program.lines.size(); ++index)
     {
         const ir::Line& l = program.lines[index];
@@ -2052,6 +2095,14 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
                     params += (k ? "," : "") + std::string("_arg") + std::to_string(k);
                 count = highest + 1;
             }
+            // A file INCLUDEd more than once defines its macros again: pasmo takes the same definition again, z80asm
+            // refuses it ("duplicate definition"), so there it is written once, under a DEFINE
+            if (w.Z80asm() && options.includedRepeatedly)
+            {
+                texts.push_back("IFNDEF __UNREALASM_M_" + w.Name(macroHeader));
+                texts.push_back("DEFINE __UNREALASM_M_" + w.Name(macroHeader));
+                guardedMacro = true;
+            }
             texts.push_back("@" + w.Name(macroHeader) + " MACRO" + (params.empty() ? "" : " " + params));
             result.macroParams[macroHeader] = count;
             w.inMacro = true;
@@ -2162,6 +2213,9 @@ BackendResult WriteClassic(const ir::Program& input, const BackendOptions& optio
             w.inMacro = false;
             w.macroOrg.clear();
             w.parameters.clear();
+            if (guardedMacro)
+                texts.push_back("ENDIF");
+            guardedMacro = false;
         }
 
         // Lay out: label in column 0, statements from column 8; "@" lines own their column; "= x" is label DEFL x

@@ -10,6 +10,7 @@
 class EmulatorContext;
 class TsConfDma;
 class TsConfInterrupts;
+class TsConfMemory;
 struct TsConfState;
 
 /// Registers one raster line is displayed with (the line-latched set of
@@ -127,9 +128,16 @@ public:
     /// when Line(line).tsu; 0 = transparent)
     const uint8_t* TsuRow(uint32_t line) const { return _tsu[line < kLines ? line : kLines - 1]; }
 
+    /// The CPU's memory, whose DRAM reads count in the budget (nullptr: none counted for idle fetches)
+    void AttachMemory(TsConfMemory* memory) { _memory = memory; }
+
     /// region <IMachineStepHook>
     void OnMachineStep(uint32_t t) override;
     void OnMachineFrameRollover(uint32_t frameLength) override;
+    /// Not while the DMA runs; a fetch that takes a DRAM cycle up to the line's end (the TSU budget of the next
+    /// line counts the CPU's cycles of this one, LineStart)
+    uint32_t IdleFetchesUntil(uint16_t fetch, uint32_t t) override;
+    void OnIdleFetches(uint16_t fetch, uint32_t count) override;
     /// endregion
 
 private:
@@ -158,6 +166,7 @@ private:
     TsConfState& _ts;
     TsConfInterrupts& _interrupts;
     TsConfDma& _dma;
+    TsConfMemory* _memory = nullptr;
     uint32_t _cpuLineRunning = 0;  ///< CPU DRAM reads on the current line so far
     std::function<void(uint32_t)> _videoFlush;
     std::function<void()> _videoCatchUp;

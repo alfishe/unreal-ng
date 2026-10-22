@@ -6,6 +6,7 @@
 #include <optional>
 #include <set>
 
+#include "dialects/common/characters.h"
 #include "dialects/common/z80.h"
 #include "unrealasm/encoding.h"
 
@@ -1461,6 +1462,7 @@ FrontendResult ZxasmFrontend::ParseWithData(const SourceDocument& source, const 
         result.program.lines.insert(result.program.lines.begin(), std::move(first));
         result.program.lines.push_back(std::move(last));
     }
+    CharactersInCodePage(result.program, source.codePage);
     return result;
 }
 }  // namespace unrealasm::dialects

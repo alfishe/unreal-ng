@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,9 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/mainloop.h"
 #include "emulator/memory/memory.h"
+#include "emulator/platforms/tsconf/tsconfstate.h"
+#include "emulator/ports/models/portdecoder_profi.h"
+#include "emulator/ports/models/portdecoder_tsconf.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/soundchip_moonsound.h"
 #include "emulator/sound/soundmanager.h"
@@ -82,6 +86,17 @@ protected:
         run.context = run.emulator->GetContext();
         run.z80 = run.context->pCore->GetZ80();
         run.z80->haltedIdleInOneGo = inOneGo;
+        if (_profiWaitPhase >= 0)
+        {
+            // The board's power-on phase of the v5 wait, reinstalled as ProfiWaitOverlay_Test does
+            auto* profi = dynamic_cast<PortDecoder_Profi*>(run.context->pPortDecoder);
+            ASSERT_NE(profi, nullptr) << model;
+            run.context->config.profi_wait_phase = static_cast<uint8_t>(_profiWaitPhase);
+            run.context->config.profi_wait_pentagon = 1;
+            profi->SyncWaits();
+            run.context->config.profi_wait_pentagon = 0;
+            profi->SyncWaits();
+        }
     }
 
     /// Boot to the ROM's idle in turbo, then the program (a snapshot, or the HALT loop at `loopAt`)
@@ -101,13 +116,20 @@ protected:
         {
             const std::string path = (TestPathHelper::FindProjectRoot() / "testdata" / snapshot).string();
             ASSERT_TRUE(run.emulator->LoadSnapshot(path)) << path;
-            return;
         }
-        Memory* memory = run.context->pMemory;
-        for (size_t i = 0; i < kHaltLoop.size(); i++)
-            memory->DirectWriteToZ80Memory(static_cast<uint16_t>(loopAt + i), kHaltLoop[i]);
-        memory->DirectWriteToZ80Memory(0x9000, 0);
-        run.z80->pc = loopAt;
+        else
+        {
+            Memory* memory = run.context->pMemory;
+            for (size_t i = 0; i < kHaltLoop.size(); i++)
+                memory->DirectWriteToZ80Memory(static_cast<uint16_t>(loopAt + i), kHaltLoop[i]);
+            memory->DirectWriteToZ80Memory(0x9000, 0);
+            run.z80->pc = loopAt;
+        }
+        if (_setup)
+            _setup(run);
+        // Turbo draws only the frames the host clock allows, and RunNFrames is not frame-aligned: two whole frames
+        // without turbo, so no pixel of the first checkpoint comes from the boot (it differed under load)
+        run.emulator->RunNFrames(2, true);
     }
 
     static uint64_t CpuHash(const EmulatorContext* context)
@@ -116,6 +138,20 @@ protected:
         const uint32_t words[] = {z->af, z->bc, z->de, z->hl, z->ix, z->iy, z->sp, z->pc, z->i, Z80::RegisterR(z),
                                   z->iff1, z->iff2, z->im, z->halted, z->t, z->q, z->prev_pc, z->opcode};
         return Fnv(words, sizeof(words), context->emulatorState.frame_counter);
+    }
+
+    /// The TS-Conf engine's and interrupt controller's state: the DRAM budget the idle fetches count in, the line
+    /// latches, the latched INTs, the cache (0 on other machines)
+    static uint64_t MachineHash(const EmulatorContext* context)
+    {
+        const auto* tsconf = dynamic_cast<const PortDecoder_TSConf*>(context->pPortDecoder);
+        if (!tsconf)
+            return 0;
+        const TsConfState& ts = tsconf->GetState();
+        const uint32_t words[] = {ts.cpuLineAccesses, ts.cpuAccesses, ts.budgetRaster, ts.engNextLine, ts.cntRow,
+                                  ts.intPending, ts.intLastRaster, static_cast<uint32_t>(ts.intFrameRaster),
+                                  static_cast<uint32_t>(ts.intFrameAdjust), ts.dmaCredit};
+        return Fnv(ts.cacheWord, sizeof(ts.cacheWord), Fnv(ts.cacheTag, sizeof(ts.cacheTag), Fnv(words, sizeof(words))));
     }
 
     static void Checkpoint(Run& run)
@@ -127,7 +163,7 @@ protected:
         const AudioFrameDescriptor& audio = context->pSoundManager->getAudioBufferDescriptor();
         run.trace.push_back(Fnv(fb, size));
         run.trace.push_back(Fnv(audio.memoryBuffer, sizeof(audio.memoryBuffer)));
-        run.trace.push_back(CpuHash(context));
+        run.trace.push_back(CpuHash(context) ^ MachineHash(context));
     }
 
     /// The same driving for both machines: whole frames, RunTStates chunks that end inside idle stretches, then
@@ -160,7 +196,7 @@ protected:
         ASSERT_EQ(_inOneGo.trace.size(), _perStep.trace.size());
         for (size_t i = 0; i < _perStep.trace.size(); i++)
         {
-            static const char* kWhat[] = {"picture", "sound", "CPU (registers, R, T, frame)"};
+            static const char* kWhat[] = {"picture", "sound", "CPU (registers, R, T, frame) or TS-Conf state"};
             ASSERT_EQ(_inOneGo.trace[i], _perStep.trace[i]) << kWhat[i % 3] << " differs at checkpoint " << i / 3;
         }
         Memory* a = _inOneGo.context->pMemory;
@@ -202,6 +238,14 @@ protected:
 
     Run _perStep;
     Run _inOneGo;
+    int _profiWaitPhase = -1;  ///< >= 0: the Profi's [PROFI] WaitPhase for both machines
+    std::function<void(Run&)> _setup;  ///< the machine's settings once the program is in
+
+    /// TS-Conf register `reg` through its port (#rrAF)
+    static void TsConfWrite(Run& run, uint8_t reg, uint8_t value)
+    {
+        run.context->pPortDecoder->DecodePortOut(static_cast<uint16_t>((reg << 8) | 0xAF), value, 0);
+    }
 };
 
 // The HALT in fast memory: every model whose plain step runs it (no machine engine, no interrupt source)
@@ -211,9 +255,71 @@ TEST_F(HaltedIdle_Test, HaltLoop128K) { Compare("128K", nullptr, 0x8000, true); 
 TEST_F(HaltedIdle_Test, HaltLoopPlus3) { Compare("PLUS3", nullptr, 0x8000, true); }
 // The Scorpion's Even M1: a fetch that starts on an odd T is a T longer
 TEST_F(HaltedIdle_Test, HaltLoopScorpion) { Compare("SCORPION", nullptr, 0x8000, true); }
-// The Profi v5's waits follow the paper fetch window, like contention: the fetch runs in one go only without them
-TEST_F(HaltedIdle_Test, HaltLoopProfi) { Compare("PROFI", nullptr, 0x8000, true, 100, 1000, true); }
+// The Profi v5's waits follow the paper fetch window by the start's parity: the fetches run in one go per stretch
+// (a line's window, the border between two), their lengths learned again in each
+TEST_F(HaltedIdle_Test, HaltLoopProfi) { Compare("PROFI", nullptr, 0x8000, true); }
+TEST_F(HaltedIdle_Test, HaltLoopProfiWaitPhase0)
+{
+    _profiWaitPhase = 0;
+    Compare("PROFI", nullptr, 0x8000, true);
+}
+TEST_F(HaltedIdle_Test, HaltLoopProfiWaitPhase1)
+{
+    _profiWaitPhase = 1;
+    Compare("PROFI", nullptr, 0x8000, true);
+}
+TEST_F(HaltedIdle_Test, HaltLoopProfiWaitPhase2)
+{
+    _profiWaitPhase = 2;
+    Compare("PROFI", nullptr, 0x8000, true);
+}
 TEST_F(HaltedIdle_Test, HaltLoopAtm3) { Compare("ATM3", nullptr, 0x8000, true); }
+// TS-Conf: its own INT logic (NextAssertT) and engine. A fetch from DRAM counts in the line's TSU budget: the
+// fetches run in one go per line. TS-BIOS leaves the CPU at 14 MHz: 3.5 MHz set
+TEST_F(HaltedIdle_Test, HaltLoopTsConf)
+{
+    _setup = [](Run& run) { TsConfWrite(run, TsConfReg::SysConfig, 0x00); };
+    Compare("TSL", nullptr, 0x8000, true);
+}
+// A cache hit takes no DRAM cycle: in one go up to the INT
+TEST_F(HaltedIdle_Test, HaltLoopTsConfCached)
+{
+    _setup = [](Run& run) {
+        TsConfWrite(run, TsConfReg::SysConfig, 0x00);
+        TsConfWrite(run, TsConfReg::CacheConfig, 0x04);
+    };
+    Compare("TSL", nullptr, 0x8000, true);
+}
+TEST_F(HaltedIdle_Test, HaltLoopTsConf7MHz)
+{
+    _setup = [](Run& run) { TsConfWrite(run, TsConfReg::SysConfig, 0x01); };
+    Compare("TSL", nullptr, 0x8000, true);
+}
+// 14 MHz: every DRAM fetch waits for the arbiter, one per step
+TEST_F(HaltedIdle_Test, HaltLoopTsConf14MHz)
+{
+    _setup = [](Run& run) { TsConfWrite(run, TsConfReg::SysConfig, 0x02); };
+    Compare("TSL", nullptr, 0x8000, false);
+}
+// The frame and the line INT in IM 2 (EI : RET at #A200): the CPU wakes at every line end
+TEST_F(HaltedIdle_Test, HaltLoopTsConfLineInt)
+{
+    _setup = [](Run& run) {
+        Memory* memory = run.context->pMemory;
+        for (uint16_t vector : {0xA0FD, 0xA0FF})
+        {
+            memory->DirectWriteToZ80Memory(vector, 0x00);
+            memory->DirectWriteToZ80Memory(static_cast<uint16_t>(vector + 1), 0xA2);
+        }
+        memory->DirectWriteToZ80Memory(0xA200, 0xFB);  // EI
+        memory->DirectWriteToZ80Memory(0xA201, 0xC9);  // RET
+        run.z80->i = 0xA0;
+        run.z80->im = 2;
+        TsConfWrite(run, TsConfReg::SysConfig, 0x00);
+        TsConfWrite(run, TsConfReg::IntMask, 0x03);
+    };
+    Compare("TSL", nullptr, 0x8000, true, 100, 100);
+}
 
 // The HALT in slow memory: the fetch after it is contended, so it runs one per step (on the Pentagon it is not)
 TEST_F(HaltedIdle_Test, HaltLoopInContendedMemory48K) { Compare("48K", nullptr, 0x6000, false); }

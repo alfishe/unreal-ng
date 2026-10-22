@@ -1,4 +1,5 @@
 #include "debuggerwindow.h"
+#include "emulator/actions/steppingactions.h"
 #include "emulator/remotecontrolguard.h"
 
 #include <QBoxLayout>
@@ -194,6 +195,9 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     connect(ui->stackWidget, SIGNAL(jumpToAddressInDisassembly(uint16_t)), ui->disassemblerWidget,
             SLOT(goToAddress(uint16_t)));
 
+    // A register set from the registers pane: the disassembly (a new PC) and the stack follow
+    connect(ui->registersWidget, &RegistersWidget::registerEdited, this, [this](const QString&) { updateState(); });
+
     _paneFocus = new PaneFocus(this, {{tr("Disassembly"), ui->disassemblerWidget, {}},
                                       {tr("Registers"), ui->registersWidget, ui->registersWidget->cursorCells()},
                                       {tr("Memory"), ui->hexView, {}},
@@ -239,6 +243,8 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
 
     // Set hex memory viewer to readonly mode
     ui->hexView->setReadOnly(true);
+    // The memory view's cursor is the debugger's "memory" cursor (ttd.find_last_write without an address)
+    connect(ui->hexView, &QHexView::positionChanged, this, &DebuggerWindow::publishMemoryCursor);
 
     // Set up hex viewer
     QHexOptions options = ui->hexView->options();
@@ -1408,6 +1414,35 @@ void DebuggerWindow::showBreakpointManager()
     updateState();
 }
 
+std::vector<std::pair<QWidget*, std::string>> DebuggerWindow::contextPanes() const
+{
+    return {{ui->disassemblerWidget, "debug.disasm"},
+            {ui->registersWidget, "debug.registers"},
+            {ui->hexView, "debug.memory"},
+            {ui->stackWidget, "debug.stack"}};
+}
+
+void DebuggerWindow::toggleBreakpointAtCursor()
+{
+    // The widget refuses while an automation session holds the machine (RemoteControlGuard) and repaints its marks
+    ui->disassemblerWidget->toggleBreakpointAtCursor();
+}
+
+void DebuggerWindow::openBreakpoints()
+{
+    showBreakpointManager();
+}
+
+void DebuggerWindow::focusRegistersPane()
+{
+    _paneFocus->Focus(1);
+}
+
+void DebuggerWindow::focusMemoryPane()
+{
+    _paneFocus->Focus(2);
+}
+
 void DebuggerWindow::focusNextPane()
 {
     _paneFocus->Move(1);
@@ -1421,6 +1456,45 @@ void DebuggerWindow::focusPrevPane()
 void DebuggerWindow::paneKey(int key)
 {
     _paneFocus->Key(key);
+}
+
+void DebuggerWindow::followPc()
+{
+    ui->disassemblerWidget->followPc();
+}
+
+void DebuggerWindow::toggleLabels()
+{
+    ui->disassemblerWidget->setShowLabels(!DisassemblerWidget::LabelsShown().load());
+}
+
+void DebuggerWindow::toggleScrollMode()
+{
+    ui->disassemblerWidget->switchScrollMode();
+}
+
+void DebuggerWindow::goToDisassemblyAddress(int address)
+{
+    ui->disassemblerWidget->goToAddress(static_cast<uint16_t>(address & 0xFFFF));
+}
+
+void DebuggerWindow::publishMemoryCursor()
+{
+    if (!_emulator || !ui->hexView->getDocument())
+        return;
+    // The view shows one 16 KB page: the Z80 window that maps it now names the address
+    Memory* memory = _emulator->GetMemory();
+    if (memory == nullptr)
+        return;
+    const uint16_t offset = static_cast<uint16_t>(ui->hexView->offset() & 0x3FFF);
+    for (uint8_t bank = 0; bank < 4; bank++)
+        if (memory->GetPhysicalOffsetForZ80Bank(bank) == _curPageOffset)
+        {
+            actions::DebuggerCursors::Instance().Set(_emulator->GetId(), "memory",
+                                                     static_cast<uint16_t>(bank * 0x4000 + offset));
+            return;
+        }
+    actions::DebuggerCursors::Instance().Set(_emulator->GetId(), "memory", std::nullopt);  // not mapped now
 }
 
 void DebuggerWindow::changeMemoryViewZ80Address(uint16_t addr)

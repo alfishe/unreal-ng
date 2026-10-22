@@ -424,20 +424,72 @@ void MainWindow::StartDaemonIfNone()
     const bool wire = probe != net::kInvalidSocket;
     if (wire)
         net::CloseSocket(probe);
-    if (wire || _daemon->Answers(300))
+    if (_daemon->Answers(300))
+    {
+        // one runs (unreal-qt's, or one by hand): a lease, so it stays while this studio runs (daemon.md §8)
+        QString why;
+        if (_daemon->Lease(&why))
+            AddLog(Src::Info, QStringLiteral("unreal-streamdeck runs: leased while this studio runs"));
+        else
+            AddLog(Src::Info, QStringLiteral("unreal-streamdeck runs (no lease: %1)").arg(why));
         return;
-    const QStringList args{QStringLiteral("run"),
-                           QStringLiteral("--wait"),
-                           QStringLiteral("--api"),
-                           QString::number(_options.daemonApiPort),
-                           QStringLiteral("--viewers"),
-                           QString::number(_options.daemonPort),
-                           QStringLiteral("--with-parent")};
+    }
+    if (wire)
+        return;  // the wire answers, the automation does not: an older daemon or a studio --listen
+    const QStringList args{QStringLiteral("run"),   QStringLiteral("--wait"),
+                           QStringLiteral("--api"), QString::number(_options.daemonApiPort),
+                           QStringLiteral("--viewers"), QString::number(_options.daemonPort)};
     QString why;
-    if (_daemon->Launch(args, &why, false))
-        AddLog(Src::Info, QStringLiteral("no unreal-streamdeck answered: started %1").arg(DaemonControl::Path()));
+    if (_daemon->LaunchShared(args, &why))
+        AddLog(Src::Info, QStringLiteral("no unreal-streamdeck answered: started %1 (it ends with the last of this "
+                                         "studio and unreal-qt)")
+                              .arg(DaemonControl::Path()));
     else
         AddLog(Src::Info, QStringLiteral("could not start unreal-streamdeck: ") + why);
+}
+
+// Pairing from the studio (daemon.md §6): the daemon asks unreal-ng; its strip and this window show the code, the
+// user approves in unreal-qt
+void MainWindow::PairWithHost()
+{
+    const DaemonControl::Result r = _daemon->Pair();
+    if (!r.Ok())
+    {
+        AddLog(Src::Info, QStringLiteral("pairing: ") + r.error);
+        statusBar()->showMessage(QStringLiteral("Pairing: ") + r.error, 8000);
+        return;
+    }
+    _pairState.clear();
+    if (!_pairPoll)
+    {
+        _pairPoll = new QTimer(this);
+        _pairPoll->setInterval(500);
+        connect(_pairPoll, &QTimer::timeout, this, [this] {
+            const DaemonControl::Result p = _daemon->Pairing();
+            const std::string state = p.Ok() ? p.body.value("state", "") : std::string("unreachable");
+            if (QString::fromStdString(state) == _pairState)
+                return;
+            _pairState = QString::fromStdString(state);
+            QString text;
+            if (state == "pending")
+            {
+                const std::string code = p.body.value("code", "");
+                text = QStringLiteral("Pairing: code %1 %2 - approve it in UnrealNG")
+                           .arg(QString::fromStdString(code.substr(0, 3)),
+                                QString::fromStdString(code.size() > 3 ? code.substr(3) : std::string()));
+            }
+            else if (state == "paired")
+                text = QStringLiteral("Paired with UnrealNG");
+            else
+                text = QStringLiteral("Pairing: %1 %2")
+                           .arg(_pairState, QString::fromStdString(p.Ok() ? p.body.value("error", "") : ""));
+            AddLog(Src::Info, text);
+            statusBar()->showMessage(text, state == "pending" ? 120000 : 8000);
+            if (state != "requesting" && state != "pending")
+                _pairPoll->stop();
+        });
+    }
+    _pairPoll->start();
 }
 
 bool MainWindow::SetRole(bool own, const QString& deckOrModel, QString* error)
@@ -670,6 +722,7 @@ void MainWindow::BuildMenus()
     {
         dev->addAction(QStringLiteral("Reconnect to unreal-streamdeck"), this,
                        [this] { _client->Start(_client->GetRole()); });
+        dev->addAction(QStringLiteral("Pair with UnrealNG"), this, [this] { PairWithHost(); });
         dev->addAction(QStringLiteral("Connection..."), this, [this] {
             QMessageBox::information(this, QStringLiteral("Connection"),
                                      QString::fromStdString(_link->Describe().dump(2)));

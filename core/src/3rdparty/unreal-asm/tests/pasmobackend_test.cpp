@@ -172,6 +172,25 @@ TEST(PasmoBackend_Test, MacroParametersNamedLikeRegisters)
               (std::vector<std::string>{"T MACRO L_a,L_b", "LD A,0+L_a", "LD B,0+L_b", "LD HL,(L_b)", "LD HL,0+L_a+L_b", "ENDM", "T 5,7"}));
 }
 
+TEST(PasmoBackend_Test, AnAlasmArgumentThatIsTheWholeOperandIsPutIn)
+{
+    // ALASM puts the argument's text in: RAR's "MACRO l / LD \0,\1" is called "l A,(KOLODIN)", where "0+" would make
+    // "LD 0+A" (pasmo: "expanding macro")
+    const std::vector<std::string> lines = ToPasmo("        MACRO l\n        LD \\0,\\1\n        ENDM\n        l A,(5)", "alasm");
+    EXPECT_NE(std::find(lines.begin(), lines.end(), "LD _arg0,_arg1"), lines.end());
+}
+
+TEST(PasmoBackend_Test, ANameDefinedInTheTakenBranchOnlyIsAnEqu)
+{
+    // RAR's rarLZ4: IFN fastCPIQ / MAXPOSL=$+1 / ENDIF, then IF0 fastCPIQ / MAXPOSL=$+1 / ENDIF, used before both: the
+    // layout decides the IFs, so MAXPOSL is defined once (pasmo refuses a DEFL name used before its definition)
+    const std::vector<std::string> lines = ToPasmo("fast=1\n        ORG #8000\n        LD A,(MX)\n        IFN fast\nMX=$+1\n        LD A,0\n"
+                                                   "        ENDIF\n        IF0 fast\nMX=$+1\n        LD B,0\n        ENDIF",
+                                                   "alasm");
+    EXPECT_TRUE(std::any_of(lines.begin(), lines.end(), [](const std::string& l) { return l.rfind("MX EQU", 0) == 0; })) << lines.size();
+    EXPECT_FALSE(std::any_of(lines.begin(), lines.end(), [](const std::string& l) { return l.rfind("MX DEFL", 0) == 0; }));
+}
+
 TEST(PasmoBackend_Test, SjasmplusTemporaryLabelsAndStructures)
 {
     // a temporary label (2 ... 2_B / 2F) gets a name of each one's own; a STRUCT is its EQUs, an instance its data, an
@@ -245,6 +264,22 @@ TEST(PasmoBackend_Test, PassesAndExclusiveBranches)
     };
     EXPECT_TRUE(has(project.files[0].document, "DB 1"));
     EXPECT_FALSE(has(project.files[1].document, "DB 1"));
+    // A file both include, testing a later name they give different values: each main source answers its IF with a
+    // constant, unless both take the same branch
+    std::vector<ProjectFile> shared = {{"A", SourceDocument::FromText("        INCLUDE \"C\"\nT       EQU 1\n", "sjasmplus")},
+                                       {"B", SourceDocument::FromText("        INCLUDE \"C\"\nT       EQU 0\n", "sjasmplus")},
+                                       {"C", SourceDocument::FromText("        IF T==0\n        DB 1\n        ELSE\n        DB 2\n        ENDIF\n"
+                                                                     "        IF T<5\n        DB 3\n        ELSE\n        DB 4\n        ENDIF\n",
+                                                                     "sjasmplus")}};
+    const ProjectResult both = ConvertProject(shared, "pasmo");
+    ASSERT_EQ(both.files.size(), 3u);
+    EXPECT_TRUE(has(both.files[2].document, "DB 1"));
+    EXPECT_TRUE(has(both.files[2].document, "DB 2"));
+    EXPECT_TRUE(has(both.files[2].document, "DB 3"));
+    EXPECT_FALSE(has(both.files[2].document, "DB 4"));
+    EXPECT_TRUE(has(both.files[2].document, "IF __UNREALASM_IFL1"));
+    EXPECT_TRUE(has(both.files[0].document, "__UNREALASM_IFL1 EQU 0"));
+    EXPECT_TRUE(has(both.files[1].document, "__UNREALASM_IFL1 EQU 1"));
 }
 
 TEST(PasmoBackend_Test, ProgramsAssembleToWhatTheOriginalsBuilt)

@@ -4,6 +4,7 @@
 #pragma once
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QUndoStack>
 #include <functional>
 #include <optional>
@@ -58,7 +59,17 @@ public:
 
     void NewDocument(const sdb::Model& m, const QString& name);
     bool Open(const QString& path, QString* error);
-    bool Save(const QString& path, QString* error);            // empty = the current path
+    // empty = the current path. Writes format v2: a v1 document is converted first (one undo step, LastNotes says how)
+    bool Save(const QString& path, QString* error);
+    // v1 -> v2 (sdb::scn::ConvertToV2) as one undo step; false when the document is v2 already
+    bool ConvertToV2(QStringList* notes = nullptr);
+    [[nodiscard]] const QStringList& LastNotes() const
+    {
+        return _notes;
+    }
+    [[nodiscard]] int Version() const;
+    // validation again (the catalogue changed): issues, then Changed()
+    void Recheck();
     bool ExportTo(const QString& path, QString* error) const;  // a copy in another format, the document keeps its path
 
     // One undoable change. `op` edits the JSON; false (with `error`) = nothing changes.
@@ -95,6 +106,7 @@ private:
     json _doc, _resolved;
     QString _path, _selected, _canvasMenu = QStringLiteral("home");
     QUndoStack _undo;
+    QStringList _notes;
     std::vector<sdb::scn::Issue> _issues;
     std::optional<sdb::scn::Scenario> _loose;
 };

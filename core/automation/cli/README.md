@@ -86,7 +86,9 @@ nc localhost 8765
 | Command | Description |
 |---------|-------------|
 | `capture screen [--area=full\|screen] [--format=png\|gif] [--source=presented\|live\|window] [file]` | Screenshot of the session's emulator; `--source=live` takes the frame as drawn now instead of the presented one; `--source=window` the picture as the unreal-qt window draws it (its shape, CRT shader, HUD; GUI only, `--area=full`). `--area=full` (default): the whole frame with its border; `screen`: the working picture (the paper of a Spectrum, the graphics window of a TS-Conf, the whole FT812 picture). PNG (default) or GIF. Prints the geometry and a data URI, or saves to `file`. |
-| `video window [status \| <key>=<value> ...]` | The GUI window's display settings: GPU acceleration, CRT effects and profile, temporal blending. `gpu`, `crt`, `blending` = on / off; `crt_profile` = one of `crt_profiles` (none, basic, ..., shader:<name>: a libretro preset or a custom shader, with the GPU); `blending_frames` = 2..5; `blending_weights` = equal / exponential. GUI only (headless: `Error (no-window)`). |
+| `video window [status \| <key>=<value> ...]` | The GUI window's display settings: GPU acceleration, CRT effects and profile, temporal blending, full screen, scale, bars, HUD, on-screen keyboard, Next layers. `gpu`, `crt`, `blending`, `fullscreen`, `toolbar`, `status_bar`, `hud`, `osd_keyboard`, `next_layers` = on / off; `crt_profile` = one of `crt_profiles` (none, basic, ..., shader:<name>: a libretro preset or a custom shader, with the GPU); `blending_frames` = 2..5; `blending_weights` = equal / exponential; `blending_decay` = 0.1..0.9; `scale` = 1..4; `hud_theme`; `hud_notice.<id>`; `osd_keyboard_picture`; `next_layers_mode`; `next_layer.<name>`. GUI only (headless: `Error (no-window)`). |
+| `video window crt_params [...]` | The active CRT profile's parameters: `<name>=<v>`, `<name>+=<steps>`, `<name>-=<steps>`, `reset`, `reset=<name>`. |
+| `video viewport [<name>]` | The overscan frame's crop: full, symmetric, standard, screen_only, next, prev. |
 | `capture framebuffer <file> [rgba\|index]` | Raw pixels of the same frame |
 | `capture ocr` | OCR text from the screen |
 

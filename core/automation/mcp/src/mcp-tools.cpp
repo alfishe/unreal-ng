@@ -21,6 +21,8 @@
 #include "mcp-bus.h"
 #include "mcp-slots.h"
 #include "mcp-actions.h"
+#include "mcp-streamdeck.h"
+#include "mcp-audio.h"
 #include "mcp-controllers.h"
 #include "mcp-router.h"
 #include "mcp-symbols.h"
@@ -143,7 +145,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                                "gs_stereo_mode",
                                "rom_flash_status", "rom_flash_save", "rom_flash_discard",
                                "slots_catalog", "slots_matrix", "slots_plug", "slots_remove", "slots_set",
-                               "network_configure"})
+                               "network_configure", "switches", "switch"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -192,15 +194,18 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "false, \"hosts\": \"name=10.0.2.7\", ...}, the keys of POST /network/config): a change of the ZX-bus network "
         "cards (zxnetusb, zxwifi) is a slot change applied by a restart like slots_plug ('replace_if_incompatible', "
         "'dry_run', 'media_disposition' apply; the other settings go to the restarted machine), any other setting "
-        "applies in place (status accepted).";
+        "applies in place (status accepted). 'switches' lists the machine's front-panel switches (the Profi's turbo, "
+        "cpm; none on most machines), 'switch' flips one ('switch': turbo | cpm, 'on': true | false; recorded by TTD "
+        "like a key).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance (auto-created when none exists)";
     schema["properties"]["model"]["type"] = "string";
     schema["properties"]["model"]["description"] =
-        "Hardware model short name for 'create' / 'switch_model' / 'transfer_state' (new destination) — e.g. 48K, 128k, PLUS3, TSL, ATM3, ATM710, ATM450, PROFI, "
-        "SCORPION, PROFSCORP, SPRINTER, GMX, KAY, QUORUM, LSY256, PHOENIX (see list_models; creatability is "
-        "build-dependent — check the 'creatable' flags before assuming a machine exists). ZX-Poly "
+        "Hardware model short name for 'create' / 'switch_model' / 'transfer_state' (new destination) — e.g. 48K, 128k, PLUS2, PLUS2A, "
+        "PLUS3, PENTAGON, SCORPION, PROFSCORP, ATM450, ATM710, ATM3, TSL, PROFI, PROFI3, NEXT, SPRINTER; machine variants "
+        "TSL-VDAC2 and PROFI-PLUS (a base model with a fixed board) (see list_models; creatability is build-dependent — "
+        "check the 'creatable' flags: GMX, KAY, QUORUM, LSY256 and PHOENIX are listed but not creatable). ZX-Poly "
         "configurations ZXPOLY-48K, ZXPOLY-128K, ZXPOLY-PENTAGON create the four-instance machine by name "
         "(same as 'zxpoly': true with the base model)";
     schema["properties"]["ram_size"]["type"] = "integer";
@@ -318,6 +323,13 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "network_configure: the [NETWORK] settings, e.g. {\"card\": \"zxwifi\", \"zx_wifi\": \"at\", \"host_access\": true} "
         "(the keys of POST /network/config: card, host_access, dns_mode, hosts, forwards, remote_access, com_port, "
         "zx_wifi, esp_chip, ...)";
+    schema["properties"]["switch"]["type"] = "string";
+    schema["properties"]["switch"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["switch"]["enum"].append("turbo");
+    schema["properties"]["switch"]["enum"].append("cpm");
+    schema["properties"]["switch"]["description"] = "switch: the front-panel switch (turbo: Profi v3 / v5, cpm: Profi v5)";
+    schema["properties"]["on"]["type"] = "boolean";
+    schema["properties"]["on"]["description"] = "switch: the position (true = on)";
     schema["properties"]["slots"]["type"] = "object";
     schema["properties"]["slots"]["description"] =
         "'create': the new machine's slot set in the [SLOTS] key form, replacing its INI's: {\"zxbus.1\": "
@@ -480,6 +492,36 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                     body["action"] = action == "rom_flash_save" ? "save" : "discard";
                     ForwardCall("POST", Endpoint(id, "/memory/rom/flash"), &body, caller,
                                 "Flash " + body["action"].asString() + " on " + id, done);
+                }
+                else if (action == "switches" || action == "switch")
+                {
+                    Json::Value request;
+                    if (action == "switch")
+                    {
+                        if (!args["switch"].isString() || !args["on"].isBool())
+                        {
+                            done(ToolResult::Error("switch needs 'switch' (turbo | cpm) and 'on' (true | false)"));
+                            return;
+                        }
+                        request["name"] = args["switch"].asString();
+                        request["on"] = args["on"].asBool();
+                    }
+                    caller.Call(action == "switch" ? "POST" : "GET", Endpoint(id, "/switches"),
+                                action == "switch" ? &request : nullptr, [id, done](int status, Json::Value body) {
+                                    if (status != 200)
+                                    {
+                                        done(ToolResult::Error(status == 0 ? "WebAPI unreachable"
+                                                                           : "HTTP " + std::to_string(status) + ": " +
+                                                                                 DescribeErrorBody(body)));
+                                        return;
+                                    }
+                                    std::string text = "Front-panel switches of " + id + ":";
+                                    if (body["switches"].empty())
+                                        text += " none on this machine";
+                                    for (const Json::Value& sw : body["switches"])
+                                        text += " " + sw["name"].asString() + (sw["on"].asBool() ? " on" : " off");
+                                    done(ToolResult::Ok(text, std::move(body)));
+                                });
                 }
                 else if (action == "zxpoly_status")
                 {
@@ -1020,19 +1062,44 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
-                               "run_tstates", "run_to_interrupt", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
-                               "bp_list", "bp_reset_hits", "port_out", "wait", "take_control", "release_control"})
+                               "run_tstates", "run_to_interrupt", "run_to_scanline", "run_scanlines", "run_to_pixel",
+                               "run_until_pc", "pace", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
+                               "bp_list", "bp_reset_hits", "bp_toggle", "bp_groups", "bp_group_set", "bp_note",
+                               "set_register", "port_out", "wait", "take_control", "release_control"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
         "Execution primitive. Stepping/running actions return the new register state. bp_* actions manage breakpoints "
         "(bp_add switches the breakpoints feature on). run_frame / run_frames / run_tstates / run_to_interrupt skip "
-        "breakpoints: to stop at one, resume and then wait.";
+        "breakpoints: to stop at one, resume and then wait. run_to_scanline / run_scanlines / run_to_pixel skip them too; "
+        "run_until_pc skips them unless breakpoints=true (run to a cursor). pace: the paced run (pace_op).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["count"]["type"] = "integer";
-    schema["properties"]["count"]["description"] = "Instruction count for step_n";
+    schema["properties"]["count"]["description"] = "Instruction count for step_n; scanline count for run_scanlines (1..1000)";
+    schema["properties"]["scanline"]["type"] = "integer";
+    schema["properties"]["scanline"]["description"] = "For run_to_scanline: the scanline to stop at (0..319 on most models)";
+    schema["properties"]["pc"]["oneOf"][0]["type"] = "integer";
+    schema["properties"]["pc"]["oneOf"][1]["type"] = "string";
+    schema["properties"]["pc"]["description"] = "For run_until_pc: the address (number, \"0x8000\", \"#8000\")";
+    schema["properties"]["max_tstates"]["type"] = "integer";
+    schema["properties"]["max_tstates"]["description"] = "For run_until_pc: the t-state budget (0 / absent: 100 frames)";
+    schema["properties"]["breakpoints"]["type"] = "boolean";
+    schema["properties"]["breakpoints"]["description"] = "For run_until_pc: a breakpoint on the way stops it (default false)";
+    schema["properties"]["pace_op"]["type"] = "string";
+    schema["properties"]["pace_op"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* op : {"get", "set", "next", "prev", "start", "stop", "toggle", "step"})
+        schema["properties"]["pace_op"]["enum"].append(op);
+    schema["properties"]["pace_op"]["description"] =
+        "For pace: get (default; the ladder too), set (preset / interval_ms), next (finer) / prev (coarser), start, "
+        "stop, toggle, step (one step at the pace). A paced run steps on its own and stops at a breakpoint";
+    schema["properties"]["preset"]["type"] = "string";
+    schema["properties"]["preset"]["description"] =
+        "For pace set: full, 25fps, 5fps, 1fps (a frame per 40 / 200 / 1000 ms), frame, 100lines, 10lines, 1line, 1op "
+        "(one unit per interval_ms)";
+    schema["properties"]["interval_ms"]["type"] = "integer";
+    schema["properties"]["interval_ms"]["description"] = "For pace set: the interval of frame .. 1op, 1..5000 ms";
     schema["properties"]["client"]["type"] = "string";
     schema["properties"]["client"]["description"] = "For take_control: your name, shown to the user";
     schema["properties"]["lease_seconds"]["type"] = "integer";
@@ -1052,7 +1119,8 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["type"]["description"] = "Breakpoint type for bp_add: execution, read, write, port_in, port_out, nextreg_write, nextreg_read, "
         "nextreg (address = the ZX Next register number, address_end a range; see doors / value / value_mask), "
         "beam (address = line of the copper's counter, hc = pixel clock), copper (address = copper list index, address_end a range: "
-        "stops when the copper completes that instruction), magic_ed_ff / magic_dd_01 (ZX Next: stops after the CPU ran that magic "
+        "stops when the copper completes that instruction), keyboard (key, on: stops on the first keyboard read that sees the key "
+        "go down / up), magic_ed_ff / magic_dd_01 (ZX Next: stops after the CPU ran that magic "
         "opcode - a NOP on the hardware, other emulators' debug trap; no address)";
     schema["properties"]["hc"]["type"] = "integer";
     schema["properties"]["hc"]["description"] = "For bp_add of beam: the pixel clock in the row (0..511, default 0)";
@@ -1088,11 +1156,24 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["group"]["type"] = "string";
     schema["properties"]["group"]["description"] = "Optional group for bp_add (created on use; default 'default')";
     schema["properties"]["bp_id"]["type"] = "string";
-    schema["properties"]["bp_id"]["description"] = "Breakpoint id for bp_remove/bp_enable/bp_disable/bp_reset_hits (none: all)";
+    schema["properties"]["bp_id"]["description"] =
+        "Breakpoint id for bp_remove/bp_enable/bp_disable/bp_reset_hits/bp_group_set/bp_note (bp_reset_hits without it: all)";
+    schema["properties"]["select"]["type"] = "string";
+    schema["properties"]["select"]["description"] =
+        "Instead of bp_id, for bp_remove/bp_enable/bp_disable/bp_toggle: all, a kind (exec, read, write, mem, port, in, out, "
+        "nextreg, nextreg_read, nextreg_write, beam, copper, magic, keyboard) or group:<name> (bp_toggle default: all)";
+    schema["properties"]["key"]["type"] = "string";
+    schema["properties"]["key"]["description"] =
+        "For bp_add of keyboard: the key (space, enter, caps, symbol, a..z, 0..9; default any key)";
+    schema["properties"]["on"]["type"] = "string";
+    schema["properties"]["on"]["description"] = "For bp_add of keyboard: press (default), release or both";
+    schema["properties"]["name"]["type"] = "string";
+    schema["properties"]["name"]["description"] = "Register for set_register: a, f, bc, de, hl, ix, iy, sp, pc, i, r, im, "
+                                                  "iff1, iff2 and the alternates (af', bc', ...)";
     schema["properties"]["port"]["type"] = "string";
     schema["properties"]["port"]["description"] = "Port for port_out: 0..#FFFF as 0x13AF, #13AF, 13AFh or decimal";
     schema["properties"]["value"]["type"] = "string";
-    schema["properties"]["value"]["description"] = "Byte for port_out: 0..#FF, the same forms; for bp_add of nextreg*: stop only on this value (0..255)";
+    schema["properties"]["value"]["description"] = "Byte for port_out: 0..#FF, the same forms; for bp_add of nextreg*: stop only on this value (0..255); for set_register: 0..#FFFF";
     schema["properties"]["since"]["type"] = "integer";
     schema["properties"]["since"]["description"] =
         "For wait: the debugger seq last seen (inspect_state snapshot shows it); omitted = the current one";
@@ -1103,8 +1184,13 @@ void RegisterControlExecution(ToolRegistry& registry)
     registry.Register(
         "control_execution",
         "Advance or halt the CPU: pause/resume/run, step (1 or N instructions), step_over, step_out, run_frame(s), "
-        "run_tstates, run_to_interrupt. Also manages breakpoints (bp_add/bp_remove/bp_enable/bp_disable/bp_clear/bp_list/"
-        "bp_reset_hits; bp_add takes ranges, physical pages, port masks and hit policies). "
+        "run_tstates, run_to_interrupt, run_to_scanline, run_scanlines, run_to_pixel (the first paper pixel), "
+        "run_until_pc (until PC = pc), pace (run at a pace: 25 / 5 / 1 fps, a frame, lines or an instruction per "
+        "interval). Also manages breakpoints (bp_add/bp_remove/bp_enable/bp_disable/bp_clear/bp_list/"
+        "bp_reset_hits; bp_add takes ranges, physical pages, port masks, hit policies and keyboard keys; bp_remove / "
+        "bp_enable / bp_disable / bp_toggle take a bp_id or a select: all, a kind, group:<name>; bp_groups lists the "
+        "groups, bp_group_set / bp_note change a breakpoint's group / note). set_register writes a CPU register (name, "
+        "value). "
         "port_out writes a port through the machine's decoder like a CPU OUT (paging, TS-Conf registers, AY, border), "
         "without breakpoints or device waits, as a TTD tool edit; it works paused or running. "
         "wait blocks until something a debugger shows changes (a stop, a run start, a tool edit) or timeout_ms passes. "
@@ -1268,9 +1354,10 @@ void RegisterControlExecution(ToolRegistry& registry)
                 if (action == "bp_add")
                 {
                     const bool magic = args.isMember("type") && args["type"].asString().rfind("magic_", 0) == 0;
-                    if (!magic && !args.isMember("address"))
+                    const bool keyboard = args.isMember("type") && args["type"].asString() == "keyboard";
+                    if (!magic && !keyboard && !args.isMember("address"))
                     {
-                        done(ToolResult::Error("bp_add requires 'address' (not for magic_ed_ff / magic_dd_01)"));
+                        done(ToolResult::Error("bp_add requires 'address' (not for magic_ed_ff / magic_dd_01 / keyboard)"));
                         return;
                     }
                     Json::Value body;
@@ -1278,7 +1365,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                         body["address"] = args["address"];
                     body["type"] = args.isMember("type") ? args["type"].asString() : "execution";
                     for (const char* key : {"address_end", "page", "slot_only", "port_mask", "hits", "hit_mode", "hit_target",
-                                            "note", "group", "doors", "value", "value_mask", "hc"})
+                                            "note", "group", "doors", "value", "value_mask", "hc", "key", "on"})
                         if (args.isMember(key))
                             body[key] = args[key];
                     // A breakpoint never fires while the breakpoints feature is off, and the add itself says nothing:
@@ -1369,11 +1456,97 @@ void RegisterControlExecution(ToolRegistry& registry)
                     });
                     return;
                 }
+                if ((action == "bp_remove" || action == "bp_enable" || action == "bp_disable" || action == "bp_toggle") &&
+                    (args.isMember("select") || action == "bp_toggle") && !args.isMember("bp_id"))
+                {
+                    // A selection: all, a kind, a group (PUT /breakpoints/active, POST /breakpoints/remove)
+                    Json::Value body;
+                    body["select"] = args.isMember("select") ? args["select"].asString() : std::string("all");
+                    if (action == "bp_remove")
+                    {
+                        ForwardCall("POST", Endpoint(id, "/breakpoints/remove"), &body, caller, "Breakpoints removed", done);
+                        return;
+                    }
+                    if (action == "bp_toggle")
+                        body["active"] = "toggle";
+                    else
+                        body["active"] = action == "bp_enable";
+                    ForwardCall("PUT", Endpoint(id, "/breakpoints/active"), &body, caller,
+                                action == "bp_toggle" ? "Breakpoints toggled"
+                                : action == "bp_enable" ? "Breakpoints enabled" : "Breakpoints disabled", done);
+                    return;
+                }
+                if (action == "bp_toggle")
+                {
+                    Json::Value body;
+                    body["select"] = args["bp_id"].asString();
+                    body["active"] = "toggle";
+                    ForwardCall("PUT", Endpoint(id, "/breakpoints/active"), &body, caller, "Breakpoint toggled", done);
+                    return;
+                }
+                if (action == "bp_groups")
+                {
+                    ForwardCall("GET", Endpoint(id, "/breakpoints/groups"), nullptr, caller, "", [done](ToolResult result) {
+                        if (!result.isError)
+                        {
+                            std::ostringstream out;
+                            out << "Breakpoint groups: " << result.structured["groups"].size();
+                            for (const Json::Value& group : result.structured["groups"])
+                                out << "\n" << group["name"].asString() << ": " << group["active"].asUInt() << " of "
+                                    << group["total"].asUInt() << " on";
+                            result.text = out.str();
+                        }
+                        done(std::move(result));
+                    });
+                    return;
+                }
+                if (action == "bp_group_set" || action == "bp_note")
+                {
+                    const char* field = action == "bp_note" ? "note" : "group";
+                    if (!args.isMember("bp_id") || !args.isMember(field))
+                    {
+                        done(ToolResult::Error(action + " requires 'bp_id' and '" + field + "'"));
+                        return;
+                    }
+                    Json::Value body;
+                    body[field] = args[field].asString();
+                    ForwardCall("PUT", Endpoint(id, "/breakpoints/" + args["bp_id"].asString() + "/" + field), &body, caller,
+                                action == "bp_note" ? "Note set" : "Group set", done);
+                    return;
+                }
+                if (action == "set_register")
+                {
+                    if (!args.isMember("name") || !args.isMember("value"))
+                    {
+                        done(ToolResult::Error("set_register requires 'name' and 'value'"));
+                        return;
+                    }
+                    Json::Value body;
+                    body["value"] = args["value"];
+                    const std::string name = args["name"].asString();
+                    ForwardCall("PUT", Endpoint(id, "/registers/" + name), &body, caller, "", [id, name, &caller, done](ToolResult set) {
+                        if (set.isError)
+                        {
+                            done(std::move(set));
+                            return;
+                        }
+                        caller.Call("GET", Endpoint(id, "/registers"), nullptr, [name, done](int status, Json::Value registers) {
+                            if (status != 200)
+                            {
+                                done(ToolResult::Ok(name + " set", Json::Value(Json::objectValue)));
+                                return;
+                            }
+                            const std::string text = name + " set. " + FormatRegisters(registers);
+                            done(ToolResult::Ok(text, std::move(registers)));
+                        });
+                    });
+                    return;
+                }
                 if (action == "bp_remove" || action == "bp_enable" || action == "bp_disable")
                 {
                     if (!args.isMember("bp_id"))
                     {
-                        done(ToolResult::Error(action + " requires 'bp_id'"));
+                        done(ToolResult::Error(action + " requires 'bp_id' or 'select'"));
                         return;
                     }
                     std::string bpId = args["bp_id"].asString();
@@ -1386,6 +1559,41 @@ void RegisterControlExecution(ToolRegistry& registry)
                         ForwardCall("PUT", Endpoint(id, "/breakpoints/" + bpId + (action == "bp_enable" ? "/enable" : "/disable")),
                                     nullptr, caller, action == "bp_enable" ? "Breakpoint enabled" : "Breakpoint disabled", done);
                     }
+                    return;
+                }
+
+                // The paced run (core RunPacer, POST /run_pace)
+                if (action == "pace")
+                {
+                    const std::string op = args.isMember("pace_op") ? args["pace_op"].asString() : std::string("get");
+                    // The text an agent reads: the message and the pace now
+                    auto describe = [done](ToolResult result) {
+                        if (!result.isError)
+                        {
+                            const Json::Value& pace = result.structured["pace"];
+                            const std::string message = result.structured.get("message", "").asString();
+                            result.text = (message.empty() ? std::string() : message + ". ") + "Pace " +
+                                          pace["preset"].asString() + " (" + pace["label"].asString() + "), " +
+                                          (pace["running"].asBool() ? "running" : "not running") + ", interval " +
+                                          std::to_string(pace["effective_ms"].asInt()) + " ms" +
+                                          (pace["stop_reason"].asString().empty()
+                                               ? std::string()
+                                               : ", last stop: " + pace["stop_reason"].asString());
+                        }
+                        done(std::move(result));
+                    };
+                    if (op == "get")
+                    {
+                        ForwardCall("GET", Endpoint(id, "/run_pace"), nullptr, caller, "", describe);
+                        return;
+                    }
+                    Json::Value body;
+                    body["op"] = op;
+                    if (args.isMember("preset"))
+                        body["preset"] = args["preset"];
+                    if (args.isMember("interval_ms"))
+                        body["interval_ms"] = args["interval_ms"];
+                    ForwardCall("POST", Endpoint(id, "/run_pace"), &body, caller, "", describe);
                     return;
                 }
 
@@ -1434,6 +1642,43 @@ void RegisterControlExecution(ToolRegistry& registry)
                     {
                         path = Endpoint(id, "/run_to_interrupt");
                         summary = "Ran to interrupt. ";
+                    }
+                    else if (action == "run_to_scanline")
+                    {
+                        if (!args.isMember("scanline"))
+                        {
+                            done(ToolResult::Error("run_to_scanline requires 'scanline'"));
+                            return;
+                        }
+                        path = Endpoint(id, "/run_to_scanline");
+                        body["scanline"] = args["scanline"].asUInt();
+                        summary = "Ran to scanline " + std::to_string(body["scanline"].asUInt()) + ". ";
+                    }
+                    else if (action == "run_scanlines")
+                    {
+                        path = Endpoint(id, "/run_scanlines");
+                        body["count"] = args.isMember("count") ? args["count"].asUInt() : 1u;
+                        summary = "Ran " + std::to_string(body["count"].asUInt()) + " scanline(s). ";
+                    }
+                    else if (action == "run_to_pixel")
+                    {
+                        path = Endpoint(id, "/run_to_pixel");
+                        summary = "Ran to the first paper pixel. ";
+                    }
+                    else if (action == "run_until_pc")
+                    {
+                        if (!args.isMember("pc"))
+                        {
+                            done(ToolResult::Error("run_until_pc requires 'pc'"));
+                            return;
+                        }
+                        path = Endpoint(id, "/skip_until");
+                        body["pc"] = args["pc"];
+                        if (args.isMember("max_tstates"))
+                            body["max_tstates"] = args["max_tstates"];
+                        if (args.isMember("breakpoints"))
+                            body["breakpoints"] = args["breakpoints"];
+                        summary = "Ran until PC. ";
                     }
                     else
                     {
@@ -1657,7 +1902,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_sd", "next_divmmc", "next_nmi", "next_magic_port", "next_audio", "next_input", "next_uart", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
-                               "audio_multisound", "audio_midi", "execution"})
+                               "audio_multisound", "audio_midi", "execution", "monitor"})
     {
         allowed.append(aspect);
     }
@@ -1933,6 +2178,10 @@ void RegisterInspectState(ToolRegistry& registry)
         "interface, contended slots, per-kind waits while debugging (contention), the TS-Conf (tsconf, tsconf_tsu) and the "
         "Sprinter Sp2000 machines (sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, "
         "sprinter_zx_mode, sprinter_pld_journal). "
+        "'monitor' = monitoring (GET /api/v1/monitor?instance=): the host process (CPU %, resident memory, threads), the "
+        "clients per plane, and this instance's emulator.stats (measured fps, real-time speed %, frame time, CPU MHz, "
+        "interrupts per frame), breakpoint counts by kind and groups, media slots with unsaved changes, recording, "
+        "labels, TTD sizes, profiler states, controllers; the WebSocket topics of the same names push them. "
         "Combine aspects to reduce round-trips.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn& progress) {
@@ -1961,11 +2210,12 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
-                    aspect != "slots" && aspect != "audio_multisound" && aspect != "audio_midi" && aspect != "execution")
+                    aspect != "slots" && aspect != "audio_multisound" && aspect != "audio_midi" && aspect != "execution" &&
+                    aspect != "monitor")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor"));
                     return;
                 }
             }
@@ -2113,9 +2363,19 @@ void RegisterInspectState(ToolRegistry& registry)
                         {
                             std::string suffix = aspect == "registers" ? "/registers" : (aspect == "breakpoints" ? "/breakpoints" : "/state/memory");
                             steps.push_back([&caller, id, aspect, suffix](Json::Value& acc, std::function<void(bool)> next) {
-                                caller.Call("GET", Endpoint(id, suffix), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                caller.Call("GET", Endpoint(id, suffix), nullptr, [&caller, id, aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
-                                    next(true);
+                                    if (aspect != "breakpoints" || !acc[aspect].isObject())
+                                    {
+                                        next(true);
+                                        return;
+                                    }
+                                    // The breakpoints' groups (name, total, active, ids) beside the list: within this
+                                    // aspect's one step (the progress reports one label per step)
+                                    caller.Call("GET", Endpoint(id, "/breakpoints/groups"), nullptr, [aspect, &acc, next](int groupsStatus, Json::Value groups) mutable {
+                                        if (groupsStatus == 200) acc[aspect]["groups"] = groups["groups"];
+                                        next(true);
+                                    });
                                 });
                             });
                         }
@@ -2457,6 +2717,17 @@ void RegisterInspectState(ToolRegistry& registry)
                                                      "&length=" + std::to_string(size) + "&format=hex";
                             steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "monitor")
+                        {
+                            // monitoring::Call `all` for this instance: the process and the instance's values
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", "/api/v1/monitor?instance=" + UrlEncodeSegment(id), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
                                     next(true);
@@ -2995,6 +3266,32 @@ void RegisterInspectState(ToolRegistry& registry)
                                     for (const Json::Value& conflict : value["conflicts"])
                                         out << "\n[isa] conflict: " << (conflict.isString() ? conflict.asString() : conflict.toStyledString());
                                     out << "\n[isa] journal: " << value["journal_entries"].asUInt64() << " accesses (GET /state/isa/journal via invoke_api)";
+                                }
+                            }
+                            else if (aspect == "monitor")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[monitor] " << value["description"].asString();
+                                else
+                                {
+                                    const Json::Value& host = value["host"];
+                                    out << "\n[monitor] host CPU " << host["cpu_percent"].asDouble() << " %, RSS "
+                                        << host["rss_bytes"].asUInt64() / (1024 * 1024) << " MB, threads "
+                                        << host["threads"].asUInt() << "; clients ws " << value["clients"]["ws"]["connections"].asInt64()
+                                        << ", rest requests " << value["clients"]["rest"]["requests"].asUInt64();
+                                    for (const Json::Value& instance : value["instances"])
+                                    {
+                                        const Json::Value& stats = instance["emulator.stats"];
+                                        const Json::Value& bps = instance["debug.breakpoints"];
+                                        out << "\n  " << instance["model"].asString() << " " << stats["state"].asString() << ", "
+                                            << stats["fps"].asDouble() << " fps, speed " << stats["speed_percent"].asDouble()
+                                            << " %, frame " << stats["frame_time_us"]["avg"].asDouble() << " us, CPU "
+                                            << stats["cpu"]["mhz"].asDouble() << " MHz, " << stats["interrupts_per_frame"].asDouble()
+                                            << " int/frame; breakpoints " << bps["total"].asUInt() << " (" << bps["active"].asUInt()
+                                            << " active); media dirty " << (instance["media.slots"]["dirty"].asBool() ? "yes" : "no")
+                                            << "; recording " << (instance["recording.state"]["recording"].asBool() ? "yes" : "no")
+                                            << "; ttd " << instance["ttd.status"]["state"].asString();
+                                    }
                                 }
                             }
                             else if (aspect == "execution")
@@ -4548,7 +4845,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "reverse_continue", "find_last", "port_events", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_summary",
-                               "history_limit", "journal_on", "journal_off", "journal_build", "export_clip",
+                               "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
+                               "export_clip",
                                "memory_at", "memory_diff"})
     {
         schema["properties"]["action"]["enum"].append(action);
@@ -4563,7 +4861,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "paused point continues it, 'stop' ends it; on backend v1 they return an error while recording): "
         "'seek' (frame + optional tinframe), "
         "'step_back_frame'/'step_forward_frame', 'step_back_instruction'/'step_forward_instruction', "
-        "'reverse_step' (count instructions OR tstates back), 'reverse_continue' (run backward until PC hits one of pcs), "
+        "'reverse_step' (count instructions, tstates OR scanlines back), 'reverse_continue' (run backward until PC hits one of pcs), "
         "'find_last' (latest write/read/execute/io at an address before the current point, or before before_frame). "
         "'port_events' answers 'when did the program ...' from the port journals without replay (needs a stopped or "
         "paused recording, works on a loaded file): event 'key' (saw a key down; event_arg a key name such as 'a', "
@@ -4587,7 +4885,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Write journal (who wrote an address last, answered at once; off by default): 'journal_on' / 'journal_off' "
         "switch it at any moment, also while recording (each on-off span is a segment); 'journal_build' builds it by "
         "replaying frames from_frame..to_frame (default: the whole session; about 2-4 ms per frame; not while "
-        "recording). find_last works without it too: outside the journal it replays one frame.";
+        "recording); 'journal_build_cancel' stops a build that runs. find_last works without it too: outside the journal it replays one frame.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance";
@@ -4626,7 +4924,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "on the engine (the frame's final state and picture); give 0 for the frame's start. memory_at: a point inside "
         "'frame' (default 0 = the frame's start; ram, vram and cache only: the frame's writes up to it are applied)";
     schema["properties"]["count"]["type"] = "integer";
-    schema["properties"]["count"]["description"] = "reverse_step: number of instructions to step back (give count OR tstates)";
+    schema["properties"]["count"]["description"] = "reverse_step: number of instructions to step back (give count, tstates OR scanlines)";
+    schema["properties"]["scanlines"]["type"] = "integer";
+    schema["properties"]["scanlines"]["description"] =
+        "reverse_step: scanlines to step back (the machine's line length each); lands on the nearest instruction start "
+        "at or before the target";
     schema["properties"]["tstates"]["type"] = "integer";
     schema["properties"]["tstates"]["description"] =
         "reverse_step: T-states to step back; lands on the nearest instruction start at or before the target";
@@ -4862,12 +5164,15 @@ void RegisterTimeTravel(ToolRegistry& registry)
             }
             else if (action == "reverse_step")
             {
-                if (args.isMember("count") == args.isMember("tstates"))
+                if ((args.isMember("count") ? 1 : 0) + (args.isMember("tstates") ? 1 : 0) +
+                        (args.isMember("scanlines") ? 1 : 0) != 1)
                 {
-                    done(ToolResult::Error("Action 'reverse_step' needs exactly one of 'count' (instructions) or 'tstates'"));
+                    done(ToolResult::Error("Action 'reverse_step' needs exactly one of 'count' (instructions), 'tstates' "
+                                           "or 'scanlines'"));
                     return;
                 }
-                if (!CopyNumber(args, "count", *body, error) || !CopyNumber(args, "tstates", *body, error))
+                if (!CopyNumber(args, "count", *body, error) || !CopyNumber(args, "tstates", *body, error) ||
+                    !CopyNumber(args, "scanlines", *body, error))
                 {
                     done(ToolResult::Error(error));
                     return;
@@ -5000,6 +5305,16 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                (b["write_journal_enabled"].asBool() ? "on" : "off") + ", " +
                                DescribeJournalSegments(b);
                     }, done);
+                }
+                else if (action == "journal_build_cancel")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/journal/build/cancel"), body.get(), caller,
+                                     [id](const Json::Value& b) {
+                                         return std::string(b.get("cancelling", b.get("cancelled", false)).asBool()
+                                                                ? "TTD write journal build cancelled on "
+                                                                : "No write journal build ran on ") + id;
+                                     },
+                                     done);
                 }
                 else if (action == "journal_build")
                 {
@@ -6005,8 +6320,12 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterControllers(*registry);
     // actions: the core ActionRegistry by id (docs/inprogress/2026-10-18-control-surfaces/actions.md §6)
     RegisterActions(*registry);
+    // streamdeck: the Stream Deck daemon as unreal-qt supervises it (docs/inprogress/2026-10-19-streamdeck-integration)
+    RegisterStreamDeck(*registry);
     // bus_analyzer: peripheral bus traces, checks, SD card timing (docs/inprogress/2026-10-11-bus-analyzer)
     RegisterBusAnalyzer(*registry);
+    // audio_mixer: the mixer's rows and channels, the levels, the sound settings
+    RegisterAudioMixer(*registry);
 
     // Router tools (search_api + invoke_api)
     RegisterRouterTools(*registry, std::move(caller));

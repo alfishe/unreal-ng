@@ -1,5 +1,5 @@
-// unreal-streamdeck run [scenario: .json .yaml .csv .tsv] [--watch] [--api PORT] [--wait] [--dry-run] [--seconds N]
-// [--device S | emu[:addr]] [--mirror [addr]] [--viewers [PORT] | --no-viewers] [--with-parent]
+// unreal-streamdeck run [scenario: .json .yaml .csv .tsv] [--watch] [--api PORT] [--host URL] [--wait] [--dry-run]
+// [--seconds N] [--device S | emu[:addr]] [--mirror [addr]] [--viewers [PORT] | --no-viewers] [--with-parent]
 // Plays a scenario (menus + actions, docs/inprogress/2026-10-19-streamdeck-integration/scenarios.md) on the deck.
 //   (no scenario) the built-in idle scenario: the UnrealNG look for the deck's model (sdb/idlescenario.h), until a
 //               scenario is loaded for a deck
@@ -12,28 +12,40 @@
 //   --watch     reload the file when it changes (the menu stack is kept)
 //   --api PORT  automation planes on 127.0.0.1:PORT: WebAPI (/api/v1/decks, state, navigate, press, reload,
 //               scenario, brightness) + MCP (/mcp); sdb/daemondecks.h
+//   --host URL  the unreal-ng WebAPI the scenarios' actions go to (default http://127.0.0.1:8090; a v1 scenario's
+//               settings.webapi still wins for that scenario)
 //   --dry-run   log actions instead of running them
+//   --parent PID[,PID] / --with-parent   the processes it lives for: it ends when the last is gone (sdb/daemonlife.h)
+//   One daemon per user: a lock (--lock FILE, UNREAL_STREAMDECK_LOCK; --no-lock for none); a second start hands its
+//   parents to the running one and ends with exit 0.
+//   --activity LOOK   scenario | off | flash | line: how activity shows over the scenarios' own setting
+//   The surface client (sdb/surfaceclient.h): one WebSocket to the host's /api/v1/ws on the network loop, with the
+//   token of `unreal-streamdeck pair` (--companion FILE, default ~/.config/unreal-streamdeck/companion.json); each
+//   deck joins as a surface: actions, readouts, contexts, activity over it, REST only while there is no socket.
+//   --no-surface: REST only.
 #include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <map>
 #include <mutex>
+#include <sstream>
 #include <thread>
-#ifndef _WIN32
-#include <unistd.h>
-#endif
 
 #include "cli.h"
 #include "sdb/automation.h"
+#include "sdb/catalogue.h"
+#include "sdb/daemonlife.h"
 #include "sdb/daemondecks.h"
 #include "sdb/datadir.h"
 #include "sdb/deckhub.h"
 #include "sdb/devicewire.h"
 #include "sdb/eventloop.h"
+#include "sdb/pairing.h"
 #include "sdb/runtime.h"
 #include "sdb/scenarioio.h"
 #include "sdb/scenarioops.h"
+#include "sdb/surfaceclient.h"
 
 using namespace sdb;
 using namespace sdb::scn;
@@ -117,10 +129,71 @@ int CmdRun(const Args& a)
     if (a.Has("help"))
     {
         std::fprintf(stderr,
-                     "usage: unreal-streamdeck run [scenario: .json .yaml .csv .tsv] [--watch] [--api PORT] [--wait] "
-                     "[--dry-run] [--seconds N] [--device S|emu] [--mirror] [--viewers [PORT] | --no-viewers] "
-                     "[--with-parent]\n");
+                     "usage: unreal-streamdeck run [scenario: .json .yaml .csv .tsv] [--watch] [--api PORT] "
+                     "[--host URL] [--wait] [--dry-run] [--seconds N] [--device S|emu] [--mirror] "
+                     "[--viewers [PORT] | --no-viewers] [--parent PID[,PID]] [--with-parent] [--companion FILE] "
+                     "[--no-surface] [--activity scenario|off|flash|line] [--lock FILE | --no-lock]\n");
         return kBadUsage;
+    }
+    // The processes this run lives for (daemon.md §7): --parent PID[,PID], --with-parent (the starter)
+    std::vector<int> parentPids;
+    {
+        std::stringstream list(a.Str("parent"));
+        for (std::string item; std::getline(list, item, ',');)
+            if (const int pid = std::atoi(item.c_str()); pid > 0)
+                parentPids.push_back(pid);
+        if (a.Has("with-parent"))
+            if (const int pid = life::ParentPid(); pid > 1)
+                parentPids.push_back(pid);
+    }
+    // One daemon per user (daemon.md §8): a second start hands its parents to the running one and ends (exit 0), so
+    // any starter can call "start" blindly
+    life::InstanceLock lock;
+    if (!a.Has("no-lock") && a.Str("device").rfind("emu", 0) != 0)
+    {
+        const std::string lockPath = a.Str("lock", life::DefaultLockPath());
+        bool busy = false;
+        std::string lerr;
+        if (!lock.Acquire(lockPath, &busy, &lerr))
+        {
+            if (!busy)
+                std::printf("note: no single-instance lock (%s)\n", lerr.c_str());
+            else
+            {
+                std::optional<life::Holder> holder;
+                std::string aerr;
+                for (size_t i = 0; i == 0 || i < parentPids.size(); ++i)
+                    holder = life::Adopt(lockPath, parentPids.empty() ? 0 : parentPids[i], 3000, &aerr);
+                if (!holder)
+                {
+                    std::fprintf(stderr, "error: another unreal-streamdeck holds %s: %s\n", lockPath.c_str(),
+                                 aerr.c_str());
+                    return kDeviceError;
+                }
+                std::printf("unreal-streamdeck runs already: pid %d, automation http://127.0.0.1:%d, viewers %d%s\n",
+                            holder->pid, holder->api, holder->viewers,
+                            parentPids.empty() ? "" : " (leased for the parent)");
+                return kOk;
+            }
+        }
+    }
+    life::Parents parents(parentPids.empty());
+    for (const int pid : parentPids)
+        if (std::string perr; !parents.Add(pid, &perr))
+        {
+            std::fprintf(stderr, "error: --parent: %s\n", perr.c_str());
+            return kBadUsage;
+        }
+
+    if (a.Has("host"))
+    {  // before any scenario is parsed: a document without settings.webapi takes it
+        std::string host = a.Str("host");
+        if (host.find("://") == std::string::npos)
+            host = "http://" + host;
+        while (host.size() > 8 && host.back() == '/')
+            host.pop_back();
+        SetDefaultHost(host);
+        std::printf("host: %s\n", host.c_str());
     }
     DaemonDecks::Options dopt;
     dopt.startFile = a.pos.size() >= 2 ? a.pos[1] : std::string();
@@ -130,6 +203,11 @@ int CmdRun(const Args& a)
         std::fprintf(stderr, "%s\n", line.c_str());
         std::fflush(stderr);
     };
+    if (a.Has("activity") && !decks.SetActivityLook(a.Str("activity")))
+    {
+        std::fprintf(stderr, "error: --activity: scenario, off, flash or line\n");
+        return kBadUsage;
+    }
     std::string err;
     if (!decks.LoadStart(&err))
     {
@@ -154,6 +232,28 @@ int CmdRun(const Args& a)
     RuntimeOptions opt;
     opt.dryRun = a.Has("dry-run");
 
+    // Pairing (daemon.md §6): from the deck (a tap on the strip while it says NOT PAIRED / REVOKED), POST
+    // /api/v1/pair (the studio, unreal-qt's settings page); the strips show its state
+    const std::string companionFile = a.Str("companion", DefaultCompanionFile());
+    std::unique_ptr<surface::Client> client;  // the surface client, on the network loop below
+    pairing::Options po;
+    po.webapi = DefaultHost();
+    po.file = companionFile;
+    auto pairer = std::make_unique<pairing::Pairer>(po);  // ends before the surface client (its onChange reads it)
+    pairer->onChange = [&decks, &client](const json& status) {
+        const bool revoked = client && client->Status().value("revoked", false);
+        const std::string notice = pairing::NoticeOf(status, status.value("paired", false), revoked);
+        decks.ForEach([&](const std::string&, Runtime& rt) { rt.SetNotice(notice); });
+        const std::string state = status.value("state", "");
+        if (state == "pending")
+            std::printf("pairing: code %s - approve it in unreal-qt\n", status.value("code", "").c_str());
+        else
+            std::printf("pairing: %s%s%s\n", state.c_str(), status.value("error", "").empty() ? "" : " ",
+                        status.value("error", "").c_str());
+        std::fflush(stdout);
+    };
+    auto pairTap = [p = pairer.get()] { (void)p->Start(); };
+
     // The device wire v2 on its network loop: viewers mirror the deck or get a deck of their own
     // (device-wire.md). A port taken by an older Stream Deck Studio (which listens itself) leaves it off.
     net::EventLoop netLoop;
@@ -170,10 +270,23 @@ int CmdRun(const Args& a)
         ho.daemonVersion = "1.0";
         hub = std::make_unique<DeckHub>(netLoop, ho);
         hub->onOwnDeck = [&](std::unique_ptr<Transport> t, const Model& m, const std::string& serial) {
+            // on the network loop: the surface client's calls below are immediate
             auto own = std::make_unique<OwnDeck>();
             own->dev = std::make_unique<Device>(m, std::move(t), serial);
-            own->rt = std::make_unique<Runtime>(*own->dev, decks.StartScenario(&m), nullptr, opt);
+            RuntimeOptions ownOpt = opt;
+            if (client)
+                ownOpt.executor = client->Executor(serial);
+            own->rt = std::make_unique<Runtime>(*own->dev, decks.StartScenario(&m), nullptr, ownOpt);
+            own->rt->onNoticeTap = pairTap;
             own->rt->onSwitchScenario = [&decks, serial](const std::string& f) { decks.RequestLoad(serial, f); };
+            if (client)
+            {
+                client->AddDeck({serial, ModelToken(m), std::string(m.name)}, surface::RuntimeSink(*own->rt));
+                own->rt->onScenarioChanged = [&client, serial] {
+                    if (client)
+                        client->UpdateDeck(serial);
+                };
+            }
             decks.Add(serial, m, false, *own->rt);
             OwnDeck* p = own.get();
             own->thread = std::thread([p] { p->rt->Run(p->stop); });
@@ -184,6 +297,8 @@ int CmdRun(const Args& a)
         };
         hub->onOwnDeckGone = [&](const std::string& serial) {
             decks.Remove(serial);  // no route reaches its runtime from here on
+            if (client)
+                client->RemoveDeck(serial);  // nor the surface client
             std::printf("viewer %s: own deck gone\n", serial.c_str());
             std::fflush(stdout);
             std::lock_guard l(ownMu);
@@ -203,7 +318,6 @@ int CmdRun(const Args& a)
         {
             std::printf("viewers: 127.0.0.1:%d (device wire v2)\n", hub->Port());
             decks.SetHub(hub.get(), hub->Port());
-            netThread = std::thread([&] { netLoop.Run(); });
         }
         else
         {
@@ -211,6 +325,35 @@ int CmdRun(const Args& a)
             hub.reset();
         }
     }
+
+    // The surface client: the host's /api/v1/ws with the companion token (none: REST only, until a pair writes one)
+    if (!a.Has("no-surface") && !opt.dryRun)
+    {
+        surface::Options so;
+        so.companionFile = companionFile;
+        so.url = surface::WsUrlOf(DefaultHost());
+        std::string cerr;
+        if (auto c = surface::LoadCompanion(so.companionFile, &cerr))
+        {
+            so.token = c->token;
+            if (!c->webapi.empty() && c->webapi != DefaultHost())
+                std::printf("note: the companion was paired with %s, the host is %s\n", c->webapi.c_str(),
+                            DefaultHost().c_str());
+        }
+        if (so.url.empty())
+            std::printf("note: no surface client (the host %s is not http://)\n", DefaultHost().c_str());
+        else
+        {
+            client = std::make_unique<surface::Client>(netLoop, so);
+            client->log = [](const std::string& line) {
+                std::printf("%s\n", line.c_str());
+                std::fflush(stdout);
+            };
+            client->Start();
+        }
+    }
+    if (hub || client)
+        netThread = std::thread([&] { netLoop.Run(); });
 
     std::signal(SIGINT, OnRunSig);
     std::signal(SIGTERM, OnRunSig);
@@ -223,6 +366,33 @@ int CmdRun(const Args& a)
         "scenario; GET /api/v1/state shows the menu stack and what each key does; press keys by node id, navigate, "
         "reload (?deck=serial, default the first deck).");
     decks.AddRoutes(api);
+    api.Add({"GET",
+             "/api/v1/surface",
+             "The surface client: the link to the host",
+             "connected, revoked, paired, url, connections, each deck's session / instance / target / readouts, the "
+             "host's instances (the instances topic)",
+             {"daemon", "surface"},
+             {},
+             nullptr,
+             [&client](const automation::Request&) {
+                 if (!client)
+                     return automation::Reply::Ok({{"enabled", false}});
+                 json body = client->Status();
+                 body["enabled"] = true;
+                 body["instances"] = client->Instances();
+                 return automation::Reply::Ok(body);
+             }});
+    life::AddLifeRoutes(api, parents, [] { StopRun(); });
+    pairing::AddPairRoutes(api, *pairer);
+    decks.healthExtra = [&parents, &pairer, &client] {
+        json parentList = parents.List();
+        return json{{"pid", life::CurrentPid()},
+                    {"parents", parentList},
+                    {"alone", parents.Alone()},
+                    {"host", DefaultHost()},
+                    {"surface", client ? (client->Connected() ? "connected" : "disconnected") : "off"},
+                    {"pairing", pairer->Status()}};
+    };
     automation::Server server;
     int rc = kOk;
     if (a.Has("api"))
@@ -238,27 +408,41 @@ int CmdRun(const Args& a)
             std::printf("automation: http://127.0.0.1:%d/api/v1/decks, MCP http://127.0.0.1:%d/mcp\n", server.Port(),
                         server.Port());
     }
+    if (lock.Held())
+    {
+        life::Holder self;
+        self.pid = life::CurrentPid();
+        self.api = server.Running() ? server.Port() : 0;
+        self.viewers = hub ? hub->Port() : 0;
+        self.version = "1.0";
+        self.host = DefaultHost();
+        lock.Publish(self);
+    }
 
     // the watcher: requested loads (nav to a scenario) and changed files of watched decks
+    // the watcher: also the parents' watch (their process handles, polled, no thread of its own)
     std::thread watcher([&] {
         while (!runStop)
+        {
             decks.Pump(std::chrono::milliseconds(250));
+            std::vector<int> gone;
+            const bool end = parents.Poll(&gone);
+            for (const int pid : gone)
+                std::printf("parent %d is gone\n", pid);
+            if (end)
+            {
+                std::printf("no parent left: stopping\n");
+                StopRun();
+            }
+            if (!gone.empty() || end)
+                std::fflush(stdout);
+        }
     });
     if (const double secs = a.Dbl("seconds", 0); secs > 0)
         std::thread([secs] {
             std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(secs * 1000)));
             StopRun();
         }).detach();
-#ifndef _WIN32
-    // --with-parent: started by an app (Stream Deck Studio, unreal-qt); when it goes away, so does this run, not
-    // holding the deck
-    if (a.Has("with-parent"))
-        std::thread([parent = getppid()] {
-            while (!runStop && getppid() == parent)
-                std::this_thread::sleep_for(std::chrono::milliseconds(300));
-            StopRun();
-        }).detach();
-#endif
 
     // The real deck: one runtime per deck. An unplug is handled underneath (the runtime goes on); the loop turns only
     // when another deck takes the place of the one that stayed away.
@@ -291,8 +475,18 @@ int CmdRun(const Args& a)
             });
         const std::string serial = dev->Serial();
         {
-            Runtime rt(*dev, start, nullptr, opt);
+            RuntimeOptions deckOpt = opt;
+            if (client)
+                deckOpt.executor = client->Executor(serial);
+            Runtime rt(*dev, start, nullptr, deckOpt);
+            rt.onNoticeTap = pairTap;
             rt.onSwitchScenario = [&decks, serial](const std::string& f) { decks.RequestLoad(serial, f); };
+            if (client)
+            {
+                client->AddDeck({serial, ModelToken(dev->GetModel()), std::string(dev->GetModel().name)},
+                                surface::RuntimeSink(rt));
+                rt.onScenarioChanged = [&client, serial] { client->UpdateDeck(serial); };
+            }
             decks.Add(serial, dev->GetModel(), true, rt);
             std::printf("playing %s on %s %s%s (Ctrl-C to stop)\n",
                         decks.StartFile().empty() ? "the idle scenario" : decks.StartFile().c_str(),
@@ -303,12 +497,21 @@ int CmdRun(const Args& a)
                 deckStop = true;  // a stop between the loop's check and the reset above
             rt.Run(deckStop);
             decks.Remove(serial);
+            if (client)
+                client->RemoveDeck(serial);
         }
         dev.reset();  // its viewers are told; mirrors of the first deck follow the next one
     }
     decks.Wake();
     watcher.join();
     server.Stop();
+    if (client)
+    {
+        // bye for every deck and a close frame, while the loop still runs (bounded)
+        client->Stop();
+        for (int i = 0; i < 30 && client->Connected(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
     if (netThread.joinable())
     {
         netLoop.Stop();
@@ -328,26 +531,53 @@ int CmdRun(const Args& a)
     }
     for (auto& reaper : reapers)
         reaper.join();
+    pairer.reset();  // no route, no runtime reaches it any more
+    client.reset();  // after the runtimes (their executors hold only a weak link to it)
     dev.reset();
+    lock.Release();
     std::printf("stopped\n");
     return rc;
 }
 
-// unreal-streamdeck scenario check <file> | convert <in> <out> | extract <in> <node> <out> | resolve <in> <out>
+// unreal-streamdeck scenario check <file> [--catalogue FILE] | convert <in> <out> | upgrade <in> <out>
+// | extract <in> <node> <out> | resolve <in> <out>
 int CmdScenario(const Args& a)
 {
     const std::string sub = a.pos.size() > 1 ? a.pos[1] : "";
     const size_t need = sub == "check" ? 3 : sub == "extract" ? 5 : 4;
-    if ((sub != "check" && sub != "convert" && sub != "extract" && sub != "resolve") || a.pos.size() < need)
+    if ((sub != "check" && sub != "convert" && sub != "upgrade" && sub != "extract" && sub != "resolve") ||
+        a.pos.size() < need)
     {
         std::fprintf(
             stderr,
-            "usage: unreal-streamdeck scenario check <file> | convert <in> <out> | extract <in> <node-id> <out> "
-            "| resolve <in> <out>\n"
-            "  (.json .yaml .yml .csv .tsv; resolve = inline every include)\n");
+            "usage: unreal-streamdeck scenario check <file> [--catalogue FILE] | convert <in> <out> | upgrade <in> "
+            "<out> | extract <in> <node-id> <out> | resolve <in> <out>\n"
+            "  (.json .yaml .yml .csv .tsv; convert = another file format, upgrade = format v1 -> v2, resolve = "
+            "inline every include; check warns about action ids the catalogue lacks, default "
+            "$data/streamdeck/catalogue.json)\n");
         return kBadUsage;
     }
     std::string err;
+    if (sub == "upgrade")
+    {
+        auto doc = io::LoadFile(a.pos[2], &err);
+        if (!doc)
+        {
+            std::fprintf(stderr, "error: %s\n", err.c_str());
+            return kBadContent;
+        }
+        std::vector<std::string> notes;
+        const json v2 = ConvertToV2(*doc, &notes);
+        for (const auto& n : notes)
+            std::printf("%s\n", n.c_str());
+        if (!io::SaveFile(a.pos[3], v2, &err))
+        {
+            std::fprintf(stderr, "error: %s\n", err.c_str());
+            return kDeviceError;
+        }
+        std::printf("wrote %s (version 2)\n", a.pos[3].c_str());
+        return kOk;
+    }
     if (sub == "extract")
     {
         auto doc = io::LoadFile(a.pos[2], &err);
@@ -392,6 +622,13 @@ int CmdScenario(const Args& a)
     }
     std::vector<Issue> issues;
     auto s = Parse(*doc, issues);
+    if (s && sub == "check")
+    {
+        const std::string file = a.Has("catalogue") ? a.Str("catalogue") : cat::DefaultFile().string();
+        if (auto c = file.empty() ? std::nullopt : cat::Load(file))
+            for (auto& i : cat::Check(*s, *c))
+                issues.push_back(std::move(i));
+    }
     for (const auto& i : issues)
         std::printf("%s %s: %s\n", i.error ? "error" : "warning", i.node.empty() ? "(scenario)" : i.node.c_str(),
                     i.message.c_str());

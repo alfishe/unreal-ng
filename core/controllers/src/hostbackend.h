@@ -67,6 +67,46 @@ struct HapticClicks
     uint16_t periodMs = 0;
 };
 
+/// region <Surface outputs (control surfaces controls-and-feedback.md §3-§4)>
+
+/// The outputs of a control surface: bits of IBackend::Outputs
+enum OutputKind : uint8_t
+{
+    kOutputHaptic = 1,  ///< plays a HapticPattern (a mark the hand feels)
+    kOutputSteps = 2,   ///< steps per turn and whether each step clicks (the context's feel)
+};
+
+/// A pattern a profile names; the driver chooses the bytes (a Surface Dial: SurfaceDial::PatternReport)
+enum class HapticPattern : uint8_t
+{
+    Tick,    ///< one click: a second
+    Double,  ///< two clicks 60 ms apart: ten seconds, a bookmark
+    Buzz,    ///< a buzz: the end of the history, a barrier
+};
+
+struct HapticOut
+{
+    HapticPattern pattern = HapticPattern::Tick;
+};
+
+/// The encoder's feel: steps per turn and a click at each step. clicks false: a free wheel, the steps stay (Q-6)
+struct StepsOut
+{
+    uint16_t perTurn = 36;
+    bool clicks = true;
+
+    bool operator==(const StepsOut& other) const
+    {
+        return perTurn == other.perTurn && clicks == other.clicks;
+    }
+    bool operator!=(const StepsOut& other) const
+    {
+        return !(*this == other);
+    }
+};
+
+/// endregion </Surface outputs>
+
 /// What a backend says about itself (architecture.md §4 rule 3: probes are cheap and explicit)
 struct BackendProbe
 {
@@ -119,6 +159,31 @@ public:
         return false;
     }
     /// endregion </Haptics>
+
+    /// region <Surface outputs (controls-and-feedback.md §3)>
+    /// OutputKind bits of the device; 0 for a device without surface outputs
+    virtual uint8_t Outputs(const HostDeviceId& device) const
+    {
+        (void)device;
+        return 0;
+    }
+    /// Play a pattern. Never blocks: it is queued for the device's writer, a newer pattern replaces one not written
+    /// yet. False for a device without kOutputHaptic
+    virtual bool Output(const HostDeviceId& device, const HapticOut& out)
+    {
+        (void)device;
+        (void)out;
+        return false;
+    }
+    /// Set the steps and clicks. Never blocks, the latest wins; the backend applies it again after a reconnect.
+    /// False for a device without kOutputSteps
+    virtual bool Output(const HostDeviceId& device, const StepsOut& out)
+    {
+        (void)device;
+        (void)out;
+        return false;
+    }
+    /// endregion </Surface outputs>
 };
 
 }  // namespace controllers

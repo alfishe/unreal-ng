@@ -36,7 +36,62 @@ DaemonControl::DaemonControl(QObject* parent) : QObject(parent)
 
 DaemonControl::~DaemonControl()
 {
+    Release();
     Terminate();
+}
+
+bool DaemonControl::LaunchShared(const QStringList& args, QString* error)
+{
+    const qint64 self = QCoreApplication::applicationPid();
+    QStringList all = args;
+    all << QStringLiteral("--parent") << QString::number(self);
+    QProcess detached;
+    detached.setProgram(Path());
+    detached.setArguments(all);
+    // its output: a log beside the run files (a detached process outlives this studio's pipes)
+    const QString log = QDir::temp().filePath(QStringLiteral("unreal-streamdeck-studio.log"));
+    detached.setStandardOutputFile(log);
+    detached.setStandardErrorFile(log, QIODevice::Append);
+    detached.setStandardInputFile(QProcess::nullDevice());
+    Line(Path() + QLatin1Char(' ') + all.join(QLatin1Char(' ')) + QStringLiteral(" (output: ") + log +
+         QLatin1Char(')'));
+    qint64 pid = 0;
+    if (!detached.startDetached(&pid))
+    {
+        if (error)
+            *error = QStringLiteral("cannot start %1: %2").arg(Path(), detached.errorString());
+        return false;
+    }
+    _leased = true;  // --parent: the lease is the start's own
+    emit StateChanged();
+    return true;
+}
+
+bool DaemonControl::Lease(QString* error)
+{
+    const Result r = Call("POST", "/api/v1/parents", json{{"pid", QCoreApplication::applicationPid()}});
+    _leased = r.Ok();
+    if (!r.Ok() && error)
+        *error = r.error;
+    return r.Ok();
+}
+
+void DaemonControl::Release()
+{
+    if (!_leased)
+        return;
+    _leased = false;
+    (void)Call("DELETE", "/api/v1/parents/" + std::to_string(QCoreApplication::applicationPid()), nullptr, 1000);
+}
+
+DaemonControl::Result DaemonControl::Pair() const
+{
+    return Call("POST", "/api/v1/pair", json::object(), 3000);
+}
+
+DaemonControl::Result DaemonControl::Pairing() const
+{
+    return Call("GET", "/api/v1/pair");
 }
 
 void DaemonControl::Line(const QString& line)

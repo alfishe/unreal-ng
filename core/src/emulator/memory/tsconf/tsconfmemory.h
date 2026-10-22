@@ -39,6 +39,15 @@ public:
 public:
     uint8_t MemoryReadFast(uint16_t addr, bool isExecution) override;
     bool HasStockFastRead() const override { return false; }
+    /// The same byte again: a DRAM read refills its cache entry with the same word and counts in the budget, which
+    /// the engine counts for fetches run as time (TsConfEngine::OnIdleFetches). Not at 14 MHz (the arbiter's waits)
+    bool RepeatFetchIsPure(uint16_t addr) const override
+    {
+        (void)addr;
+        return _waitCpu == nullptr;
+    }
+    /// A CPU read at addr takes a DRAM cycle now: a RAM window and not a cache hit (CacheRead)
+    bool ReadTakesDram(uint16_t addr) const;
     uint8_t MemoryReadDebug(uint16_t addr, bool isExecution) override;
 
     void AttachState(TsConfState* state) { _ts = state; }

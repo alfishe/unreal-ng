@@ -4,6 +4,7 @@
 #include <set>
 #include <string_view>
 
+#include "dialects/common/characters.h"
 #include "dialects/common/z80.h"
 #include "dialects/pasm/pasmcurrent.h"
 
@@ -560,6 +561,7 @@ FrontendResult PasmFrontend::Parse(const SourceDocument& source) const
             l.sourceLine = 1;
         result.program.lines.insert(result.program.lines.begin(), head.begin(), head.end());
     }
+    CharactersInCodePage(result.program, source.codePage);
     return result;
 }
 }  // namespace unrealasm::dialects

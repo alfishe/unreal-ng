@@ -42,3 +42,6 @@ void TestConformance();
 void TestDaemonDecks();
 void TestHotplug();
 void TestIdle();
+void TestScenarioV2();
+void TestSurfaceClient();
+void TestDaemonLife();

@@ -1,6 +1,9 @@
 #pragma once
 
 #include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 #ifndef DEBUGGERWINDOW_H
 #define DEBUGGERWINDOW_H
 
@@ -31,6 +34,10 @@ class DebuggerWindow : public QWidget, public Observer
     Q_OBJECT
 public:
     explicit DebuggerWindow(std::shared_ptr<Emulator> emulator = nullptr, QWidget* parent = nullptr);
+
+    /// The panes as control surface contexts (control surfaces architecture.md §6): disassembly `debug.disasm`,
+    /// registers `debug.registers`, memory `debug.memory`, stack `debug.stack`
+    std::vector<std::pair<QWidget*, std::string>> contextPanes() const;
     virtual ~DebuggerWindow() override;
 
     void setEmulator(std::shared_ptr<Emulator> emulator);  // Legacy - will be removed
@@ -43,6 +50,18 @@ public:
 
     /// @brief Prepare for application shutdown - blocks all refreshes
     void prepareForShutdown();
+
+public slots:
+    /// Toggle an execution breakpoint at the disassembly cursor (the Debug menu, the dbg.breakpoint_toggle_cursor
+    /// action); refused while an automation session holds the machine
+    void toggleBreakpointAtCursor();
+    /// The breakpoint list and editor (the Debug menu's Show Breakpoints...)
+    void openBreakpoints();
+    /// Focus the registers / memory pane (the Debug menu's Show Registers / Show Memory)
+    void focusRegistersPane();
+    void focusMemoryPane();
+
+public:
 
     /// region <Helper methods>
 protected:
@@ -106,6 +125,15 @@ private slots:
     void focusNextPane();
     void focusPrevPane();
     void paneKey(int key);  ///< Qt::Key_Up / Down / Left / Right / PageUp / PageDown / Return into the pane in focus
+
+    // The disassembly's GUI actions (controllers/guiactions.cpp: dbg.follow_pc, dbg.labels_toggle,
+    // dbg.scroll_mode_toggle, dbg.goto)
+    void followPc();
+    void toggleLabels();
+    void toggleScrollMode();
+    void goToDisassemblyAddress(int address);
+    /// The memory view's cursor as a Z80 address: the debugger's "memory" cursor (ttd.find_last_write)
+    void publishMemoryCursor();
 
     void changeMemoryViewZ80Address(uint16_t addr);
     void changeMemoryViewBank(uint8_t bank);

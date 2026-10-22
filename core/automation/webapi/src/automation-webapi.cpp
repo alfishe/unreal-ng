@@ -20,11 +20,14 @@
 #include "emulator/emulatormanager.h"
 #include "emulator/execution/automationgate.h"
 #include "emulator/execution/companionregistry.h"
+#include "emulator/monitoring/clientstats.h"
+#include "common/processstats.h"
 #include "emulator_api.h"        // Triggers auto-registration for API handlers
 #include "emulator_websocket.h"  // Triggers auto-registration for WebSocket handlers
 #include "api-websocket.h"       // /api/v1/ws
 #include "companion-event-hub.h"
 #include "debug-event-hub.h"
+#include "ws-hub.h"            // the topics and the surface topic of /api/v1/ws
 #include "hello_world_api.h"     // Triggers auto-registration for API handlers
 #include "interpreter_api.h"     // Triggers auto-registration for Lua/Python API handlers
 #include "common/upload_helper.h"   // MAX_UPLOAD_BODY_SIZE constant
@@ -318,6 +321,22 @@ void AutomationWebAPI::start()
     // Companion events for /api/v1/companions/events: the same view as GET /api/v1/companions/me
     CompanionEventHub::Instance().SetSnapshot(&api::v1::CompanionMeJson);
     CompanionEventHub::Instance().Start();
+    // The topics of /api/v1/ws and its surface topic: contexts, companions, instances, run state, debugger events.
+    // `instances` is the events socket's view; the backpressure limits may be moved for tests
+    WsHub::Instance().SetSnapshot(&api::v1::CompanionMeJson);
+    if (const char* bytes = getenv("UNREAL_WS_HIGH_WATER_BYTES"))
+    {
+        const long long parsed = strtoll(bytes, nullptr, 10);
+        if (parsed > 0)
+            WsHub::Instance().SetHighWaterMark(static_cast<uint64_t>(parsed));
+    }
+    if (const char* ms = getenv("UNREAL_WS_SLOW_CONSUMER_MS"))
+    {
+        const long long parsed = strtoll(ms, nullptr, 10);
+        if (parsed > 0)
+            WsHub::Instance().SetSlowConsumerLimit(std::chrono::milliseconds(parsed));
+    }
+    WsHub::Instance().Start();
 
     // Create a new thread and run HTTP server in it
     _thread = new std::thread(&AutomationWebAPI::threadFunc, this);
@@ -361,6 +380,7 @@ void AutomationWebAPI::stop()
 
     DebugEventHub::Instance().Stop();
     CompanionEventHub::Instance().Stop();
+    WsHub::Instance().Stop();
 
     std::cout << "AutomationWebAPI stopped" << std::endl;
 }
@@ -407,9 +427,12 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     LOG_INFO << "API Documentation: http://localhost:" << port << "/";
     LOG_INFO << "Emulator API: http://localhost:" << port << "/api/v1/emulator";
     LOG_INFO << "OpenAPI Spec: http://localhost:" << port << "/api/v1/openapi.json";
-    LOG_INFO << "WebSocket: ws://localhost:" << port << "/api/v1/ws (calls), /api/v1/websocket (debugger events)";
+    LOG_INFO << "WebSocket: ws://localhost:" << port << "/api/v1/ws (calls, topics, surface), /api/v1/websocket (debugger events)";
 
     drogon::HttpAppFramework& app = drogon::app();
+
+    // host.stats: the first sample now, so the first reading already has a CPU % and the uptime counts from here
+    (void)ProcessStatsSampler::Instance().Read();
 
     // Setup global CORS support
     // Handle CORS preflight (OPTIONS) requests
@@ -418,6 +441,16 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     // The operation log names who asked (machine state coordinator): a handler runs on the thread this advice ran
     // on, so the request marks its thread; the MCP server calls the WebAPI and says so in X-Unreal-Source
     app.registerPreHandlingAdvice([](const drogon::HttpRequestPtr& req) {
+        // Monitoring (host.clients): POST /mcp is an MCP request; an MCP tool's own calls back here are not clients
+        // A WebSocket `call` is counted on its socket (ws.requests)
+        const bool mcpLoopback = req->getHeader("X-Unreal-Source") == "mcp";
+        if (!req->attributes()->find("unreal.ws_call"))
+        {
+            if (req->path().rfind("/mcp", 0) == 0)
+                monitoring::ClientStats::Instance().Request(monitoring::ClientPlane::Mcp);
+            else if (!mcpLoopback)
+                monitoring::ClientStats::Instance().Request(monitoring::ClientPlane::Rest);
+        }
         coordinator::SetThreadSource(req->attributes()->find(webapi_companion::kAttribute)
                                          ? coordinator::OpSource::Companion
                                      : req->getHeader("X-Unreal-Source") == "mcp" ? coordinator::OpSource::Mcp
@@ -531,6 +564,16 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     // Companion events: what changes with time alone (a re-take cooldown running out, the first recorded frame of
     // time travel) posts no notification, so the views are compared once a second too; only changes are sent
     app.getLoop()->runEvery(1.0, [] { CompanionEventHub::Instance().Refresh(); });
+
+    // The /api/v1/ws hub runs on the main loop: producers post to it, one timer (armed while somebody subscribes)
+    // drives the readouts and topics. No thread of its own
+    WsHub::Timer timer;
+    timer.arm = [](double seconds, WsHub::Task tick) -> uint64_t {
+        return drogon::app().getLoop()->runEvery(seconds, std::move(tick));
+    };
+    timer.disarm = [](uint64_t id) { drogon::app().getLoop()->invalidateTimer(id); };
+    WsHub::Instance().SetLoop([](WsHub::Task task) { drogon::app().getLoop()->queueInLoop(std::move(task)); },
+                              std::move(timer));
 
     try
     {

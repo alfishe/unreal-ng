@@ -14,12 +14,15 @@ namespace
 int Usage(int code = cli::kBadUsage)
 {
     std::puts(
-        "unreal-streamdeck run [scenario: .json .yaml .csv .tsv] [--watch] [--api PORT] [--wait] [--dry-run]\n"
-        "                  [--seconds N] [--device S|emu[:host:port]] [--mirror [host:port] | --no-mirror]\n"
-        "                  [--emulate MODEL] [--viewers [PORT] | --no-viewers] [--with-parent]\n"
+        "unreal-streamdeck run [scenario: .json .yaml .csv .tsv] [--watch] [--api PORT] [--host URL] [--wait]\n"
+        "                  [--dry-run] [--seconds N] [--device S|emu[:host:port]] [--mirror [host:port] | --no-mirror]\n"
+        "                  [--emulate MODEL] [--viewers [PORT] | --no-viewers] [--parent PID[,PID]] [--with-parent]\n"
+        "                  [--companion FILE] [--no-surface] [--activity scenario|off|flash|line] [--lock F | --no-lock]\n"
+        "                  (one per user: a second start hands its --parent to the running daemon and exits 0)\n"
+        "                  (--host: the unreal-ng WebAPI the actions go to, default http://127.0.0.1:8090)\n"
         "unreal-streamdeck pair [--webapi URL] [--name NAME] [--file F]   (pair as an unreal-ng companion)\n"
-        "unreal-streamdeck scenario check <file> | convert <in> <out> | extract <in> <node> <out> | resolve <in> "
-        "<out>");
+        "unreal-streamdeck scenario check <file> [--catalogue F] | convert <in> <out> | upgrade <in> <out> (v1 -> v2)\n"
+        "                  | extract <in> <node> <out> | resolve <in> <out>");
     return code;
 }
 

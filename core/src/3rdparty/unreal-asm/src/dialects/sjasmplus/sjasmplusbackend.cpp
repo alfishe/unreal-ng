@@ -6,7 +6,9 @@
 #include <optional>
 #include <set>
 
+#include "dialects/common/definitions.h"
 #include "dialects/common/z80.h"
+#include "unrealasm/encoding.h"
 
 namespace unrealasm::dialects
 {
@@ -128,6 +130,7 @@ struct Writer
     const std::set<std::string>* redefinable = nullptr;   // names some line assigns with "="
     int trueValue = 0;   // what the source's comparisons give when true (ir::Program::trueValue); sjasmplus gives -1
     std::set<std::string> ifUsedNames{};   // labels some file tests with IFUSED: their definitions set a DEFINE
+    std::set<std::string> definedSoFar{};   // ALASM ?x tests before a definition of x: the DEFINE, not `exist`
     // A LOCAL block in a DUP: its labels are sjasmplus' temporary ones, "\x01" + number in localScopes; a reference is
     // number+B once the definition is written, number+F before
     std::set<std::string> temporariesWritten{};
@@ -189,8 +192,10 @@ struct Writer
                 return "%" + bits;
             }
             case ir::NumberSpelling::Character:
-                if (e.text.size() == 1 && (static_cast<unsigned char>(e.text[0]) < 0x20 || static_cast<unsigned char>(e.text[0]) >= 0x7F))
+                if (e.text.size() == 1 && static_cast<unsigned char>(e.text[0]) < 0x20)
                     return std::to_string(e.value);   // a control character cannot stand in a quoted constant
+                if (std::any_of(e.text.begin(), e.text.end(), [](char c) { return static_cast<unsigned char>(c) >= 0x7F; }))
+                    return std::to_string(e.value);   // its bytes depend on the code page the text is written in: the value
                 if (e.text.size() == 1 && e.text != "'")
                     return "'" + e.text + "'";
                 if (e.text.size() == 1)
@@ -424,10 +429,36 @@ struct Writer
                 const std::string q = Quote(o.text, ok);
                 if (ok)
                     return q;
-                std::string bytes;
+                // Quoted runs between the control characters, which go as numbers; a run that cannot be quoted as
+                // its bytes in the Spectrum code page (the text is UTF-8: "Ё" is #F0, not 208,129)
+                std::string out;
+                auto add = [&out](const std::string& item) { out += (out.empty() ? "" : ",") + item; };
+                auto run = [&add](const std::string& text) {
+                    if (text.empty())
+                        return;
+                    bool quoted = true;
+                    const std::string q = Quote(text, quoted);
+                    if (quoted)
+                        return add(q);
+                    std::vector<uint8_t> bytes;
+                    std::string error;
+                    if (!encoding::FromUtf8(text, encoding::CodePage::Cp866, bytes, error))
+                        bytes.assign(text.begin(), text.end());
+                    for (const uint8_t b : bytes)
+                        add(std::to_string(b));
+                };
+                std::string pending;
                 for (const char c : o.text)
-                    bytes += (bytes.empty() ? "" : ",") + std::to_string(static_cast<unsigned char>(c));
-                return bytes;
+                    if (static_cast<unsigned char>(c) < 0x20 || c == 0x7F)
+                    {
+                        run(pending);
+                        pending.clear();
+                        add(std::to_string(static_cast<unsigned char>(c)));
+                    }
+                    else
+                        pending += c;
+                run(pending);
+                return out;
             }
         }
         return {};
@@ -578,7 +609,10 @@ struct Writer
                     if (const auto v = Known(s.args[0]))
                         constants[label] = *v;
                 return {"EQU " + args()};
-            case ir::DirectiveKind::Defl: return {"= " + args()};
+            case ir::DirectiveKind::Defl:
+                if (!sameDialect && redefinable && !redefinable->count(label))
+                    return {"EQU " + args()};   // assigned once: an EQU may refer forward
+                return {"= " + args()};
             case ir::DirectiveKind::Db: return {"DB " + Operands(s.operands)};
             case ir::DirectiveKind::Dw: return {"DW " + Operands(s.operands)};
             case ir::DirectiveKind::Ds:
@@ -645,11 +679,14 @@ struct Writer
                 const Expr& c = s.args[0];
                 // ALASM ?label: 0 when defined -> IFN ?x = IF !exist x, IF0 ?x = IF exist x
                 if (c.kind == Expr::Kind::Defined && c.args[0].kind == Expr::Kind::Symbol)
-                    return {"IF !exist " + Name(c.args[0].text)};
+                    return {definedSoFar.count(c.args[0].text) ? "IFNDEF " + DefinedFlag(c.args[0].text) : "IF !exist " + Name(c.args[0].text)};
                 if (c.kind == Expr::Kind::Binary && c.op == Op::Equal && c.args[0].kind == Expr::Kind::Group &&
                     c.args[0].args[0].kind == Expr::Kind::Defined && c.args[0].args[0].args[0].kind == Expr::Kind::Symbol &&
                     c.args[1].kind == Expr::Kind::Number && c.args[1].value == 0)
-                    return {"IF exist " + Name(c.args[0].args[0].args[0].text)};
+                {
+                    const std::string& name = c.args[0].args[0].args[0].text;
+                    return {definedSoFar.count(name) ? "IFDEF " + DefinedFlag(name) : "IF exist " + Name(name)};
+                }
                 return {"IF " + Print(BeyondWord(c) ? Masked16(c) : c)};
             }
             case ir::DirectiveKind::Else: return {"ELSE"};
@@ -728,6 +765,32 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
                 w.ifUsedNames.insert(s.text);
                 result.ifUsedNames.insert(s.text);
             }
+    // ALASM is one pass: ?x says whether x is defined so far, sjasmplus' `exist` sees the whole source. A test before a
+    // definition of x (ACE's "IF0 ?H2PAG" around H2PAG itself) reads the DEFINE x's definitions set
+    {
+        std::map<std::string, size_t> lastDefinition;
+        for (size_t n = 0; n < program.lines.size(); ++n)
+            if (!program.lines[n].label.empty())
+                lastDefinition[program.lines[n].label] = n;
+        for (size_t n = 0; n < program.lines.size(); ++n)
+            for (const Statement& s : program.lines[n].statements)
+            {
+                if (s.kind != Statement::Kind::Directive || s.directive != ir::DirectiveKind::If || s.args.empty())
+                    continue;
+                const Expr* c = &s.args[0];
+                if (c->kind == Expr::Kind::Binary && c->op == Op::Equal && c->args[0].kind == Expr::Kind::Group)
+                    c = &c->args[0].args[0];
+                if (c->kind != Expr::Kind::Defined || c->args[0].kind != Expr::Kind::Symbol)
+                    continue;
+                const auto at = lastDefinition.find(c->args[0].text);
+                if (at != lastDefinition.end() && at->second > n)
+                {
+                    w.definedSoFar.insert(c->args[0].text);
+                    w.ifUsedNames.insert(c->args[0].text);
+                    result.ifUsedNames.insert(c->args[0].text);
+                }
+            }
+    }
 
     // Macro calls may pass more arguments than the body uses (ALASM ignores the rest, sjasmplus refuses them): a macro
     // declares as many parameters as its longest call
@@ -742,6 +805,43 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
             if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Defl && !l.label.empty())
                 redefinable.insert(l.label);
         }
+    // A name defined in the branches of an IF, once in each (ACE's JUSTIFY=RETER where the routine is left out, the
+    // routine's label JUSTIFY in the other branch), none in a loop, a macro or another file of the project: an EQU and
+    // a plain label, as sjasmplus refuses "=" referring forward. A single "=" stays (a frontend's own assignments); a
+    // sjasmplus source keeps what it wrote
+    result.definitions = CountDefinitions(program);
+    if (!w.sameDialect)
+    {
+        std::map<std::string, int> places;   // the lines defining each name
+        std::set<std::string> repeated;      // defined in a loop or a macro body
+        int depth = 0;
+        for (const ir::Line& l : program.lines)
+        {
+            for (const Statement& s : l.statements)
+                if (s.kind == Statement::Kind::Directive &&
+                    (s.directive == ir::DirectiveKind::Repeat || s.directive == ir::DirectiveKind::While ||
+                     s.directive == ir::DirectiveKind::RepeatUntil || s.directive == ir::DirectiveKind::Macro))
+                    ++depth;
+            if (!l.label.empty())
+            {
+                ++places[l.label];
+                if (depth > 0)
+                    repeated.insert(l.label);
+            }
+            for (const Statement& s : l.statements)
+                if (s.kind == Statement::Kind::Directive &&
+                    (s.directive == ir::DirectiveKind::EndRepeat || s.directive == ir::DirectiveKind::EndWhile ||
+                     s.directive == ir::DirectiveKind::UntilZero || s.directive == ir::DirectiveKind::EndMacro))
+                    depth = std::max(0, depth - 1);
+        }
+        for (auto it = redefinable.begin(); it != redefinable.end();)
+        {
+            const auto project = options.definitions.find(*it);
+            const bool once = places[*it] > 1 && !repeated.count(*it) && result.definitions[*it] <= 1 &&
+                              (project == options.definitions.end() || project->second <= 1);
+            it = once ? redefinable.erase(it) : std::next(it);
+        }
+    }
     w.redefinable = &redefinable;
 
     // Global labels sjasmplus would read as operators or reject
@@ -760,13 +860,16 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
         }
 
     // LOCAL blocks: the labels defined inside (not @labels) get a block suffix, unless used outside the block
-    // (ALASM: a label defined in a block and used outside it is global)
+    // (ALASM: a label defined in a block and used outside it is global). A block that INCLUDEs a file holds that file's
+    // labels too (PT's player INCLUDEd twice, once in a block): it is a MODULE, its labels used outside written @name
     std::vector<std::map<std::string, std::string>> blockRenames;
+    std::vector<bool> blockModules;
     {
         struct Block
         {
             size_t first = 0, last = 0;
             std::set<std::string> defined;
+            bool includes = false;
         };
         std::vector<Block> blocks;
         std::vector<size_t> open;
@@ -781,6 +884,9 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
                 }
             if (!open.empty() && !l.label.empty() && !l.labelGlobal)
                 blocks[open.back()].defined.insert(l.label);
+            for (const Statement& s : l.statements)
+                if (!open.empty() && s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Include)
+                    blocks[open.back()].includes = true;
             for (const Statement& s : l.statements)
                 if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::EndLocalBlock && !open.empty())
                 {
@@ -823,6 +929,18 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
                 if (!outside)
                     blockRenames[b][name] = name + "__L" + std::to_string(b + 1);
             }
+        for (size_t b = 0; b < blocks.size(); ++b)
+        {
+            blockModules.push_back(blocks[b].includes);
+            if (!blocks[b].includes)
+                continue;
+            // in the MODULE a name is the module's by itself; one used outside is global
+            std::map<std::string, std::string> global;
+            for (const std::string& name : blocks[b].defined)
+                if (!blockRenames[b].count(name))
+                    global[name] = "@" + w.Name(name);
+            blockRenames[b] = std::move(global);
+        }
     }
 
     // Pages in ORG and memory reads {..} need a sjasmplus device; the largest one keeps every ALASM page number valid
@@ -867,8 +985,10 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
 
     std::vector<size_t> blockOrder;   // block index by opening order
     size_t nextBlock = 0;
+    std::vector<bool> openModules;    // per open LOCAL block: written as a MODULE
     int repeats = 0;          // DUP blocks open
     int temporaryNames = 0;   // temporary labels given to LOCAL blocks in a DUP
+    bool guardedMacro = false;   // the open macro's definition is guarded (BackendOptions::includedRepeatedly)
     for (const ir::Line& l : program.lines)
     {
         const size_t firstWritten = result.document.lines.size();
@@ -905,6 +1025,13 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
             else if (repeats > 0)
                 for (auto& [name, renamed] : scope)
                     renamed = "\x01" + std::to_string(100 + ++temporaryNames);   // inside a DUP: defined on every pass, temporary labels
+            const bool module = nextBlock < blockModules.size() && blockModules[nextBlock] && !w.inMacro && repeats == 0;
+            if (module)
+            {
+                texts.push_back("MODULE __UNREALASM_LB" + std::to_string(nextBlock + 1));
+                scope = blockRenames[nextBlock];
+            }
+            openModules.push_back(module);
             w.localScopes.push_back(std::move(scope));
             ++nextBlock;
         }
@@ -920,6 +1047,8 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
                 }
             if (label.empty())
                 label = w.Name(l.label);
+            if (l.labelGlobal && std::count(openModules.begin(), openModules.end(), true) && label[0] != '@')
+                label = "@" + label;   // ALASM's @label in a block written as a MODULE: global
         }
         if (w.sameDialect && !l.label.empty() && l.label.find_first_not_of("0123456789") == std::string::npos)
             label = l.label;   // a sjasmplus temporary label (1, referred to as 1B / 1F)
@@ -946,6 +1075,14 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
         for (const Statement& s : l.statements)
             if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Macro)
                 namedParams = s.params;
+        // A file INCLUDEd more than once defines its macros again, sjasmplus once: the definition (the same text) is
+        // written once, under a DEFINE
+        if (openMacro && options.includedRepeatedly)
+        {
+            texts.push_back("IFNDEF __UNREALASM_M_" + MacroName(macroHeader));
+            texts.push_back("DEFINE __UNREALASM_M_" + MacroName(macroHeader));
+            guardedMacro = true;
+        }
         if (openMacro && !namedParams.empty())
         {
             // Named parameters (a sjasmplus source): written as they are
@@ -1022,10 +1159,21 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
                 texts.push_back(t);
             }
         }
+        if (closeMacro && guardedMacro)
+        {
+            texts.push_back("ENDIF");
+            guardedMacro = false;
+        }
         if (closeMacro)
             w.inMacro = false;
         if (closeBlock && !w.localScopes.empty())
             w.localScopes.pop_back();
+        if (closeBlock && !openModules.empty())
+        {
+            if (openModules.back())
+                texts.push_back("ENDMODULE");
+            openModules.pop_back();
+        }
 
         // Lay out: label in column 0, statements from column 8, " : " between them; lines starting with "@" (WHILE
         // counters) and "= expr" assignments need the label column themselves

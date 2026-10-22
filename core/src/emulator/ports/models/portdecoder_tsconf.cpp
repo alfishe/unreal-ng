@@ -93,6 +93,7 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
     {
         _tsMemory->AttachState(&_ts);
         _tsMemory->AttachFlash(&_flash);
+        _engine.AttachMemory(_tsMemory);
     }
     else
         MLOGWARNING("PortDecoder_TSConf: the memory subsystem is not TsConfMemory - windows stay at the reset layout");
@@ -159,6 +160,7 @@ PortDecoder_TSConf::~PortDecoder_TSConf()
         _tsMemory->AttachState(nullptr);
         _tsMemory->AttachFlash(nullptr);
     }
+    _engine.AttachMemory(nullptr);
 
     // Battery-backed state outlives the machine ([EVO] NvramFile, shared with ATM3)
     const char* nvramPath = _context->config.atm.evo_nvram_path;
@@ -1046,6 +1048,18 @@ void PortDecoder_TSConf::BeforeMachineM1(uint16_t address)
         UpdateBanks();
         RefreshM1Hook();
     }
+}
+
+/// Another idle fetch at `address` changes nothing: no 14 MHz wait, no vdos to enter, no DOS switch at it (the auto
+/// LCK128 latch takes the same byte again)
+bool PortDecoder_TSConf::RepeatM1IsInert(uint16_t address) const
+{
+    if ((_ts.regs[TsConfReg::SysConfig] & 0x02) || _ts.preVdos)
+        return false;
+    if (_ts.dos)
+        return address < 0x4000 || _ts.vdos;
+    const uint8_t memConfig = _ts.MemConfig();
+    return (address & 0xFF00) != 0x3D00 || (memConfig & TsConfMemConfig::W0NoMap) || !(memConfig & TsConfMemConfig::Rom128);
 }
 
 /// Auto LCK128: every M1 latches !(D7 ^ D6) of the fetched byte (§2.3)

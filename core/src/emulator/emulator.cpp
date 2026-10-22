@@ -7,6 +7,7 @@
 #include "emulator/bus/busmanager.h"
 #include "emulator/media/floppyformats.h"
 #include "emulator/media/mediamanager.h"
+#include "emulator/media/recentfiles.h"
 #include "emulator/io/controllers/controllerconfig.h"
 #include <loaders/snapshot/loader_z80.h>
 
@@ -2203,7 +2204,12 @@ bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error, c
 
     // Store snapshot path on success
     if (result)
+    {
         SetSnapshotFilePath(openedPath);
+        // File > Recent Files and every plane's recent list (an RZX's start snapshot names the recording)
+        const std::string extension = StringHelper::ToLower(FileHelper::GetFileExtension(openedPath));
+        RecentFiles::Instance().Note(extension == "rzx" ? "rzx" : "snapshot", openedPath);
+    }
 
     // A new program: the controllers watch its port reads for the auto connector (retro-devices.md §6)
     if (result && _context && _context->pControllerManager)
@@ -2567,6 +2573,7 @@ bool Emulator::LoadTape(const std::string& path, std::string* error)
                                                new FileLoadedPayload(_context->emulatorId, "tape", resolvedPath, inserted.Ok()));
     if (!inserted.Ok())
         return fail(inserted.message);
+    RecentFiles::Instance().Note("tape", resolvedPath);
     if (_context->pControllerManager)
         _context->pControllerManager->WatchPortReads(true);
     return true;
@@ -2612,6 +2619,8 @@ bool Emulator::ParseBlankDiskFormat(const std::string& text, BlankDiskFormat& fo
         format = BlankDiskFormat::Unformatted;
     else if (name == "plus3" || name == "+3" || name == "+3dos")
         format = BlankDiskFormat::Plus3;
+    else if (name == "trdos" || name == "tr-dos" || name == "trd")
+        format = BlankDiskFormat::Trdos;
     else
         return false;
     return true;
@@ -2624,6 +2633,7 @@ const char* Emulator::BlankDiskFormatName(BlankDiskFormat format)
         case BlankDiskFormat::Auto: return "auto";
         case BlankDiskFormat::Unformatted: return "unformatted";
         case BlankDiskFormat::Plus3: return "plus3";
+        case BlankDiskFormat::Trdos: return "trdos";
     }
     return "?";
 }
@@ -2760,6 +2770,7 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
                                                new FileLoadedPayload(_context->emulatorId, "disk", resolvedPath, inserted.Ok()));
     if (!inserted.Ok())
         return fail(inserted.message);
+    RecentFiles::Instance().Note("disk", resolvedPath);
     if (_context->pControllerManager)
         _context->pControllerManager->WatchPortReads(true);
     return true;
@@ -3556,7 +3567,7 @@ void Emulator::RunUntilInterrupt(bool skipBreakpoints)
 }
 
 void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate, uint64_t maxTStates,
-                                 bool notifyDebugger)
+                                 bool notifyDebugger, bool skipBreakpoints)
 {
     DirectStepScope directStep(*this, "run_until_condition");
     CancelPendingStepOver();
@@ -3571,13 +3582,17 @@ void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate,
     // maxTStates 0 = no limit
     TStateRunBudget budget(maxTStates);
 
-    while (!_stopRequested)
+    // RunHalted: a stop request, a breakpoint stop (with skipBreakpoints false), an abort (the user took control
+    // back), or a run that did not get the CPU - it never drives the Z80 next to the CPU's holder
+    while (!RunHalted())
     {
         const uint32_t prevT = z80.t;
         const uint32_t limitBefore = z80._frameLimit;
 
         bool frameCompleted = false;
-        ExecuteStep(true, &frameCompleted);  // Skip breakpoints for condition-based execution
+        ExecuteStep(skipBreakpoints, &frameCompleted);
+        if (_directStop.hit && _directStop.kind == BreakpointHitKind::Execute)
+            break;  // stopped before the breakpoint's instruction: nothing ran
 
         budget.Step(prevT, z80.t, limitBefore, z80._frameLimit, frameCompleted);
 
@@ -3862,33 +3877,38 @@ bool Emulator::SetOverscanMode(bool enable)
     if (!_context || !_context->pScreen)
         return false;
 
-    // The CPU held from the read of the mode on: no framebuffer access during the reallocation, and two callers do not
-    // both see the old mode and both switch (the second read the mode while the first wrote it; TSan, BUGS.md
-    // 2026-10-11 #6)
-    CpuHold hold(*this, "overscan");
-
-    Screen* screen = _context->pScreen;
-    VideoModeEnum currentMode = screen->GetVideoMode();
-
-    // Only Pentagon supports overscan
-    if (currentMode != M_PENTAGON128K && currentMode != M_P384)
+    bool switched = false;
     {
-        return false;  // ZX48/128 have no overscan
+        // The CPU held from the read of the mode on: no framebuffer access during the reallocation, and two callers do
+        // not both see the old mode and both switch (the second read the mode while the first wrote it; TSan, BUGS.md
+        // 2026-10-11 #6)
+        CpuHold hold(*this, "overscan");
+
+        Screen* screen = _context->pScreen;
+        VideoModeEnum currentMode = screen->GetVideoMode();
+
+        // Only Pentagon supports overscan
+        if (currentMode != M_PENTAGON128K && currentMode != M_P384)
+        {
+            return false;  // ZX48/128 have no overscan
+        }
+
+        VideoModeEnum newMode = enable ? M_P384 : M_PENTAGON128K;
+
+        if (newMode != currentMode)
+        {
+            // Record the user's intent FIRST: InitRaster re-detects the video mode
+            // from config/ports every frame and would revert a bare SetVideoMode
+            // back to the model's base mode on the next frame
+            screen->SetOverscanForced(enable);
+            screen->SetVideoMode(newMode);
+            switched = true;
+        }
     }
-
-    VideoModeEnum newMode = enable ? M_P384 : M_PENTAGON128K;
-
-    if (newMode != currentMode)
-    {
-        // Record the user's intent FIRST: InitRaster re-detects the video mode
-        // from config/ports every frame and would revert a bare SetVideoMode
-        // back to the model's base mode on the next frame
-        screen->SetOverscanForced(enable);
-        screen->SetVideoMode(newMode);
-
-        return true;
-    }
-    return false;
+    // The feature `overscan` shows the frame's mode (after the hold: its observers may switch features themselves)
+    if (switched && _featureManager && _featureManager->isEnabled(Features::kOverscan) != enable)
+        _featureManager->setFeature(Features::kOverscan, enable);
+    return switched;
 }
 
 bool Emulator::IsOverscanMode() const

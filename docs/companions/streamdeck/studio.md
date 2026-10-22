@@ -42,12 +42,17 @@ unreal-streamdeck run my.deck.json --viewers --watch --api 37053
 unreal-streamdeck-studio
 ```
 
-- On launch, when nothing answers on the device wire (`127.0.0.1:37050`) nor on the daemon's automation (37053),
-  the studio starts one: `unreal-streamdeck run --wait --api 37053 --viewers 37050 --with-parent` (the executable:
+- On launch, when no daemon's automation (37053) answers, the studio starts one, detached:
+  `unreal-streamdeck run --wait --api 37053 --viewers 37050 --parent <studio pid>` (the executable:
   `UNREAL_STREAMDECK_BIN`, else beside the studio, its bundle or the suite's bundle, else `PATH`). It plays the idle
-  scenario on a deck attached now or later, serves the studio's own decks meanwhile, and ends with the studio.
-  `--no-daemon-start` turns this off; a daemon on another host (`--daemon`) is never started. Its output goes to the
-  protocol log (info).
+  scenario on a deck attached now or later and serves the studio's own decks meanwhile. A daemon that answers
+  (unreal-qt's, or one started by hand) is leased instead (`POST /api/v1/parents`). At quit the studio gives its lease
+  back: the daemon ends with it unless unreal-qt holds one too
+  ([one daemon and its starters](daemon.md#one-daemon-and-its-starters)). `--no-daemon-start` turns this off; a daemon
+  on another host (`--daemon`) is never started. The started daemon's output goes to
+  `<temp>/unreal-streamdeck-studio.log` (the protocol log says where).
+- Deck > Pair with UnrealNG asks the daemon to pair with unreal-ng ([pairing](daemon.md#pairing)): the status bar and
+  the protocol log show the code until the user approves it in unreal-qt.
 - The studio connects to `127.0.0.1:37050` and sends `Join`. While no daemon is there the deck says "waiting for
   unreal-streamdeck on 127.0.0.1:37050" and the studio retries (250 ms, doubling to 4 s); a daemon that starts later
   is picked up without a restart.
@@ -144,6 +149,7 @@ WebAPI on `http://127.0.0.1:37052/api/v1/...`, MCP on `/mcp` (Automation > Copy 
 | `GET /api/v1/device`, `GET /api/v1/models`, `PUT /api/v1/device/model` | The deck; the models; switch the model (an own deck of it; with `--listen` the deck's model) |
 | `GET /api/v1/decks` | The daemon's logical decks (forwarded: serial, model, real, connected, scenario, brightness, viewers) |
 | `GET` / `PUT /api/v1/deck/brightness` | The shown deck's brightness through the daemon (`{"value": 0..100}`); the toolbar follows |
+| `GET` / `POST /api/v1/pair` | The daemon's pairing with unreal-ng (forwarded); `POST` asks for one, as Deck > Pair with UnrealNG |
 | `GET /api/v1/connection` | Daemon address, state (`connecting`, `joining`, `waiting`, `joined`, `failed`, `stopped`), role, deck serial, model, real or own, deck connected, target, error |
 | `PUT /api/v1/connection` | `{"role":"mirror","deck":"first"}` or `{"role":"own","model":"neo"}` |
 | `GET` / `PUT /api/v1/settings` | Bezel mask, visible area, firmware quirks |
@@ -237,6 +243,6 @@ cmake-build-agent-release/bin/streamdeck-studio-tests
 |:--|:--|
 | A single daemon per session (lock), adopting one started elsewhere, `--parent` instead of `--with-parent` | the daemon's supervision rules (daemon.md §7, §8; SD7) |
 | A deck list in the window (the Deck box offers "the first real deck" and own models) | several real decks (later) |
-| Palette from the host's catalogue, action forms, contexts, activity | the `action` kind and the catalogue (SD4, SD5) |
-| Open shipped example scenarios | `data/streamdeck/scenarios/` (SD5) |
+| Palette from the host's catalogue, action forms, contexts, activity | done 2026-10-20: palette presets per catalogue action, the action picker (shipped or live catalogue), State / Context / target / activity fields, v2 save ([scenario-editor/02-ux-design.md](scenario-editor/02-ux-design.md)); forms per param: SD4 |
+| Open shipped example scenarios | `data/streamdeck/scenarios/`: after the icon set and the use-case document (owner, 2026-10-20) |
 | Windows and Linux builds checked | SD8 |

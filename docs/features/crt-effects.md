@@ -145,6 +145,16 @@ words above, or `shader:<name>` for a shader preset or a custom shader with the 
 changing them needs no control session. A screenshot with `source=window` shows the result; on the same window size
 the GPU and the software grab are the same image.
 
+The active profile's parameters are on every surface too (WebAPI `GET/PUT /video/window/crt_params`, CLI `video window
+crt_params`, Python / Lua `window_crt_params()` / `window_crt_params_set()`, MCP `capture_media` `window_crt_params` /
+`window_crt_params_set`, the catalogue's `video.crt_param_by` for a dial and `video.crt_params_reset`): a libretro
+preset's own (its `preset.json`: `CRTgamma`, `scanline_weight`, ... - 3 to 177 of them, applied as the preset's
+uniforms; the values set are kept per preset, across a GPU switch and in the settings), `basic`'s and a custom
+shader's `curvature`, `corner_radius`, `scanline_weight`, `bloom_strength`, `bloom_radius`, `saturation`,
+`brightness`, `contrast`, `gamma`; the beam models (`crt-lottes`, ...) have none. A value is clamped to its range, a
+dial moves it by its own step. The profile, the switch, the GPU choice and the parameters persist across sessions
+(QSettings `View/*`).
+
 ## Verification
 
 - `unreal-qt-tests --gtest_filter='CRTRenderer*'`: every profile shows the picture, full white stays bright with

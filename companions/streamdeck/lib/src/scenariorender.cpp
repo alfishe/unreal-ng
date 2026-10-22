@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <tuple>
 
+#include "sdb/datadir.h"
+#include "sdb/format.h"
 #include "sdb/icons.h"
 #include "sdb/svg.h"
 
@@ -118,16 +121,18 @@ void Place(Rgb& out, const Rgb& in, int x0, int y0)
 }
 }  // namespace
 
-Rgb RenderFace(const Face& f, const std::string& fallbackTitle, bool pressed, bool isMenu, int safePad, int size)
+Rgb RenderFace(const Face& f, const std::string& fallbackTitle, bool pressed, bool isMenu, int safePad, int size,
+               const std::string& scenarioDir)
 {
     if (pressed)
-        return PressedKey(size, safePad, [&](int s) { return RenderFace(f, fallbackTitle, false, isMenu, 0, s); });
+        return PressedKey(size, safePad,
+                          [&](int s) { return RenderFace(f, fallbackTitle, false, isMenu, 0, s, scenarioDir); });
     if (safePad > 0 && f.image.empty() && size > 2 * safePad)
     {
         // the bezel hides the edges: draw the content straight at the visible size and centre it (no shrinking after,
         // which would blur the pixel font); a picture keeps the whole key
         Rgb out(size, size, f.bg.r, f.bg.g, f.bg.b);
-        Place(out, RenderFace(f, fallbackTitle, false, isMenu, 0, size - 2 * safePad), safePad, safePad);
+        Place(out, RenderFace(f, fallbackTitle, false, isMenu, 0, size - 2 * safePad, scenarioDir), safePad, safePad);
         return out;
     }
     const Grid g(size);
@@ -140,7 +145,7 @@ Rgb RenderFace(const Face& f, const std::string& fallbackTitle, bool pressed, bo
     const bool hasLabel = !label.empty();
     if (!f.image.empty())
     {
-        if (auto src = LoadImageRef(f.image))
+        if (auto src = LoadImageRef(f.image, scenarioDir))
         {
             const auto* p = src->At(0, 0);
             im = FitImage(*src, s, s, FitByName(f.fit).value_or(Fit::Contain), p[0], p[1], p[2]);
@@ -149,7 +154,8 @@ Rgb RenderFace(const Face& f, const std::string& fallbackTitle, bool pressed, bo
     else if (!f.svg.empty() || !f.icon.empty())
     {
         const int sz = g(hasLabel ? 92 : 112);
-        bool drawn = !f.svg.empty() && DrawSvg(im, f.svg, (s - sz) / 2, g(hasLabel ? 6 : 16), sz, f.fg, 0.08f);
+        bool drawn = !f.svg.empty() && DrawSvg(im, data::Resolve(f.svg, scenarioDir), (s - sz) / 2,
+                                               g(hasLabel ? 6 : 16), sz, f.fg, 0.08f);
         if (!drawn)
             if (auto ic = IconByName(f.icon))
                 DrawIcon(im, *ic, (s - sz) / 2, g(hasLabel ? 8 : 16), sz, f.fg, {255, 215, 0});
@@ -254,8 +260,168 @@ int CrumbHit(const std::vector<std::string>& path, int stripW, int x)
     return -1;
 }
 
+// ---------------------------------------------------------------- the surface client's strip (StripLive)
+namespace
+{
+// The UnrealNG look on a dark strip: grey-blue words, the theme's blue for what has been played, cyan for counters,
+// amber for marks, a muted red for recording only. Fine lines (1-2 px), no fills behind the timeline.
+constexpr draw::Color kLiveText{200, 205, 220}, kLiveDim{120, 128, 158}, kLiveFaint{70, 76, 104},
+    kLiveTrack{52, 58, 84}, kLivePlayed{0, 110, 200}, kLiveCounter{90, 200, 230}, kLiveMark{200, 160, 60},
+    kLiveRec{205, 70, 58}, kLivePos{235, 240, 250}, kLiveAmber{220, 170, 60};
+
+std::string TimeCode(long long frames, double fps)
+{
+    if (fps <= 0)
+        fps = 50;
+    const double sec = std::max(0LL, frames) / fps;
+    const int whole = static_cast<int>(sec);
+    return sdb::Format("{:02}:{:02}.{:02}", whole / 60, whole % 60,
+                       std::min(static_cast<int>(fps) - 1, static_cast<int>(std::fmod(sec, 1.0) * fps)));
+}
+
+long long Num(const json& j, const char* key)
+{
+    auto it = j.find(key);
+    return it != j.end() && it->is_number() ? it->get<long long>() : 0;
+}
+
+// The TTD timeline over [x0, x1) of the strip's area (height areaH); the counters end before `rightEnd`
+void DrawTimeline(Rgb& im, int x0, int x1, int areaH, int rightEnd, const json& t, const json* marks)
+{
+    const long long first = Num(t, "first"), end = std::max(first, Num(t, "end"));
+    const long long frame = std::clamp(Num(t, "frame"), first, end);
+    const std::string state = t.value("state", "");
+    const bool history = t.value("history", end > first);
+    const double fps = t.contains("fps") && t["fps"].is_number() ? t["fps"].get<double>() : 50.0;
+    const int top = areaH >= 90 ? 12 : 6;
+    const int track = areaH - 24;
+
+    // the header: TTD, its state, then the frame counter and the time code at the right
+    int x = x0 + draw::Text(im, x0, top, "TTD", 2, kLiveText) + 14;
+    std::string word = "NO HISTORY";
+    draw::Color wordColor = kLiveFaint;
+    if (t.contains("available") && !t.value("available", true))
+        word = "NOT AVAILABLE";
+    else if (state == "recording")
+        word = "REC", wordColor = kLiveRec;
+    else if (state == "detached")
+        word = "REPLAY", wordColor = kLiveCounter;
+    else if (history)
+        word = t.value("paused", false) ? "PAUSED" : "AT END", wordColor = kLiveDim;
+    draw::Text(im, x, top, word, 2, wordColor);
+    const long long at = frame - first, len = end - first;
+    if (history)
+    {
+        const std::string frames = sdb::Format("{:06} / {:06}", at, len);
+        const std::string code = TimeCode(at, fps) + " / " + TimeCode(len, fps);
+        const int codeW = draw::TextWidth(code, 2), framesW = draw::TextWidth(frames, 2);
+        const int right = std::min(rightEnd, x1);
+        if (right - codeW - framesW - 28 > x + draw::TextWidth(word, 2) + 20)
+        {
+            draw::Text(im, right - codeW, top, code, 2, kLiveDim);
+            draw::Text(im, right - codeW - 28 - framesW, top, frames, 2, kLiveCounter);
+        }
+    }
+
+    // the track: the recorded span, a ruler of seconds under it, the played part, the marks, the position
+    const int span = std::max(1, x1 - x0);
+    draw::FillRect(im, x0, track, span, 1, kLiveTrack);
+    if (!history || len <= 0)
+        return;
+    auto xOf = [&](long long f) {
+        return x0 + static_cast<int>(static_cast<double>(span - 1) * static_cast<double>(f - first) / len);
+    };
+    const double seconds = len / fps;
+    const double steps[] = {1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600};
+    double step = steps[0];
+    for (double candidate : steps)
+        if (step = candidate; seconds / candidate <= 40)
+            break;
+    for (double sec = step; sec < seconds; sec += step)
+        draw::FillRect(im, xOf(first + static_cast<long long>(sec * fps)), track + 4, 1, 3, kLiveFaint);
+    draw::Text(im, x0, track + 10, TimeCode(0, fps).substr(0, 5), 1, kLiveFaint);
+    const std::string last = TimeCode(len, fps).substr(0, 5);
+    draw::Text(im, x1 - draw::TextWidth(last, 1), track + 10, last, 1, kLiveFaint);
+    const int px = std::clamp(xOf(frame), x0, x1 - 2);
+    draw::FillRect(im, x0, track, px - x0, 2, kLivePlayed);
+    if (marks && marks->is_array())
+        for (const auto& m : *marks)
+        {
+            if (!m.is_object())
+                continue;
+            const long long f = Num(m, "frame");
+            if (f < first || f > end)
+                continue;
+            const std::string kind = m.value("kind", "");
+            const bool strong = kind == "bookmark" || kind == "barrier" || kind == "edge";
+            draw::FillRect(im, xOf(f), track - (strong ? 7 : 5), 1, strong ? 6 : 4, strong ? kLiveMark : kLiveDim);
+        }
+    draw::FillRect(im, px, track - 9, 2, 13, state == "recording" ? kLiveRec : kLivePos);
+}
+
+// run.state as status words
+std::pair<std::string, draw::Color> RunWords(const json* r)
+{
+    if (!r || !r->is_object())
+        return {"", kLiveDim};
+    const std::string state = r->value("state", "");
+    if (state == "paused")
+        return {"PAUSED", kLiveAmber};
+    if (state == "stopped")
+        return {"STOPPED", kLiveDim};
+    if (r->value("turbo", false))
+        return {"RUNNING  TURBO", kLiveCounter};
+    const long long speed = Num(*r, "speed");
+    return {speed > 1 ? sdb::Format("RUNNING  X{}", speed) : std::string("RUNNING"), kLiveCounter};
+}
+
+// media.tape as status words; progress 0..1 (-1 none)
+std::pair<std::string, double> TapeWords(const json* t)
+{
+    if (!t || !t->is_object())
+        return {"", -1};
+    if (!t->value("loaded", false))
+        return {"NO TAPE", -1};
+    std::string name = t->value("name", "");
+    if (const auto slash = name.find_last_of("/\\"); slash != std::string::npos)
+        name = name.substr(slash + 1);
+    std::string line = "TAPE  " + name;
+    if (const long long blocks = Num(*t, "blocks"); blocks > 0)
+        line += sdb::Format("  {}/{}", Num(*t, "block") + 1, blocks);
+    line += t->value("playing", false) ? "  PLAYING" : "  STOPPED";
+    const double progress = t->contains("progress") && (*t)["progress"].is_number() ? (*t)["progress"].get<double>()
+                                                                                    : -1;
+    return {line, progress};
+}
+}  // namespace
+
+std::string TargetLine(const json& target)
+{
+    if (!target.is_object() || !target["instance"].is_string())
+        return "NO MACHINE";
+    std::string line = target["model"].is_string() ? target["model"].get<std::string>() : std::string("MACHINE");
+    if (target["ram_kb"].is_number())
+        line += sdb::Format(" {}K", target["ram_kb"].get<long long>());
+    if (target["index"].is_number())
+        line += sdb::Format(" ({})", target["index"].get<long long>());  // the WebAPI index (the font has no #)
+    if (target.value("mode", "") == "instance")
+        line += " PINNED";
+    return line;
+}
+
+std::string StripLive::Key() const
+{
+    std::string k = std::to_string(static_cast<int>(link)) + (showTarget ? "t" : "-") + notice + "|" + activity;
+    if (target)
+        k += target->dump();
+    if (readouts)
+        for (const auto& [name, value] : *readouts)
+            k += name + value.dump();
+    return k;
+}
+
 Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string& banner, double autoExitLeft,
-                const std::string& status)
+                const std::string& status, const std::string& scenarioDir, const StripLive* live)
 {
     Rgb im(w, h, 8, 8, 14);
     int contentX = 12;
@@ -283,9 +449,62 @@ Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string
     // the status line (time travel): it takes the content area, one line as large as its longest form fits, laid out
     // from the left at a fixed place (the font is monospaced): changing digits never move anything
     const bool scrubs = std::any_of(page.dials.begin(), page.dials.end(),
-                                    [](const Dial* d) { return d && d->turn && d->turn->kind == "ttd_seek"; });
+                                    [](const Dial* d) {
+                                        return d && d->turn &&
+                                               (d->turn->kind == "ttd_seek" ||
+                                                (d->turn->kind == "action" &&
+                                                 d->turn->spec.value("id", "") == "ttd.seek_by"));
+                                    });
     const bool statusLine = !status.empty() || (page.strip && !page.strip->status.empty()) || scrubs;
-    if (statusLine && banner.empty())
+    // the surface client's readouts (live): the timeline, the status words, the target line
+    const bool liveOn = live && live->link == StripLive::Link::Live;
+    auto readout = [&](const char* name) -> const json* {
+        if (!liveOn || !live->readouts)
+            return nullptr;
+        auto it = live->readouts->find(name);
+        return it != live->readouts->end() ? &it->second : nullptr;
+    };
+    const std::string statusKind = page.strip ? page.strip->status : std::string();
+    const json* ttdPosition = readout("ttd.position");
+    const bool timeline = ttdPosition && (statusKind == "ttd" || scrubs);
+    std::string words;
+    draw::Color wordsColor = kLiveText;
+    double progress = -1;
+    if (liveOn && !timeline)
+    {
+        if (statusKind == "run")
+            std::tie(words, wordsColor) = RunWords(readout("run.state"));
+        else if (statusKind == "tape")
+            std::tie(words, progress) = TapeWords(readout("media.tape"));
+        else if (statusKind == "target" && live->target)
+            words = TargetLine(*live->target);
+    }
+    std::string targetLine;
+    if (live && live->showTarget && live->link != StripLive::Link::None && statusKind != "target")
+        targetLine = live->link == StripLive::Link::Lost ? std::string("RECONNECTING")
+                                                         : (live->target ? TargetLine(*live->target) : std::string());
+    const int targetW = targetLine.empty() ? 0 : draw::TextWidth(DisplayText(targetLine), 2) + 24;
+    if (timeline && banner.empty())
+    {
+        auto marks = live->readouts->find("ttd.marks");
+        DrawTimeline(im, contentX, w - 12, areaH, w - 12 - targetW, *ttdPosition,
+                     marks != live->readouts->end() ? &marks->second : nullptr);
+    }
+    else if (!words.empty() && banner.empty())
+    {
+        const std::string t = DisplayText(words);
+        const int avail = w - 12 - contentX - targetW;
+        const int sc = FitScale(t, avail, 4);
+        const int y = (areaH - 7 * sc) / 2;
+        draw::Text(im, contentX, y, t, sc, wordsColor);
+        if (progress >= 0)
+        {
+            const int tw = draw::TextWidth(t, sc), py = y + 7 * sc + 8;
+            draw::FillRect(im, contentX, py, tw, 1, kLiveTrack);
+            draw::FillRect(im, contentX, py, static_cast<int>(tw * std::clamp(progress, 0.0, 1.0)), 2, kLivePlayed);
+        }
+    }
+    else if (statusLine && banner.empty())
     {
         constexpr size_t kStatusChars = 36;
         const int avail = w - 12 - contentX;
@@ -308,9 +527,9 @@ Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string
             const bool digits = std::isdigit(static_cast<unsigned char>(word[0])) != 0;
             // REC red, the state light grey, frames violet, time codes amber (as an editing suite's time code); a dim
             // halo one pixel round every stroke
-            const draw::Color c = !digits ? (rec ? draw::Color{255, 50, 90} : draw::Color{205, 205, 220})
-                                  : word.find(':') != std::string::npos ? draw::Color{255, 170, 30}
-                                                                        : draw::Color{175, 120, 255};
+            const draw::Color c = !digits ? (rec ? kLiveRec : draw::Color{205, 205, 220})
+                                  : word.find(':') != std::string::npos ? kLiveAmber
+                                                                        : kLiveCounter;
             const draw::Color halo{static_cast<std::uint8_t>(c.r * 0.35), static_cast<std::uint8_t>(c.g * 0.35),
                                    static_cast<std::uint8_t>(c.b * 0.35)};
             const int x = contentX + (a ? draw::TextWidth(t.substr(0, a) + "0", sc) - draw::TextWidth("0", sc) : 0);
@@ -368,7 +587,7 @@ Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string
         {
             // a picture takes its whole area, edge to edge: from the crumbs (or the left edge) to the right edge
             const int x0 = page.crumbs == Crumbs::Strip ? contentX : 0, iw = w - x0;
-            if (auto src = LoadImageRef(page.strip->image); src && iw > 0)
+            if (auto src = LoadImageRef(page.strip->image, scenarioDir); src && iw > 0)
                 Blit(im, FitImage(*src, iw, areaH, Fit::Contain), x0, 0);
         }
     }
@@ -386,6 +605,26 @@ Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string
             draw::FillRect(im, whole, 0, 1, 6, draw::Mix(track, c, static_cast<float>(end - whole)));
         const std::string t = "BACK IN " + std::to_string(static_cast<int>(std::ceil(autoExitLeft)));
         draw::Text(im, w - draw::TextWidth(t, 2) - 10, 10, t, 2, c);
+    }
+    if (!targetLine.empty() && banner.empty())
+    {
+        const std::string t = DisplayText(targetLine);
+        draw::Text(im, w - 12 - draw::TextWidth(t, 2), areaH >= 90 ? 12 : 6, t, 2,
+                   live->link == StripLive::Link::Lost ? kLiveAmber : kLiveDim);
+    }
+    if (live && (!live->notice.empty() || !live->activity.empty()) && banner.empty())
+    {
+        // a notice stays (revoked) and wins; an activity line is quiet
+        const bool notice = !live->notice.empty();
+        const std::string t = DisplayText(notice ? live->notice : live->activity);
+        const int bw = w - contentX - 12;
+        const int sc = FitScale(t, bw, notice ? 4 : 3);
+        draw::FillRect(im, contentX - 6, 0, w - contentX + 6, areaH, notice ? draw::Color{44, 20, 22}
+                                                                            : draw::Color{14, 18, 30});
+        if (notice)
+            draw::FillRect(im, contentX - 6, areaH - 2, w - contentX + 6, 1, kLiveRec);
+        draw::Text(im, contentX + std::max(0, (bw - draw::TextWidth(t, sc)) / 2), (areaH - 7 * sc) / 2, t, sc,
+                   notice ? draw::Color{235, 215, 205} : kLiveText);
     }
     if (dialLabels)
     {

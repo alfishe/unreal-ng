@@ -2595,6 +2595,83 @@ TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_GetsAndPutsTheWindowRoute)
     EXPECT_EQ(set.structured["crt_profile"].asString(), "crt-lottes");
 }
 
+TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesTheNewSettingsAndTheirWords)
+{
+    Json::Value settings;
+    settings["gpu"] = false;
+    settings["crt_profile"] = "none";
+    settings["blending_weights"] = "exponential";
+    settings["blending_decay"] = 0.3;
+    settings["fullscreen"] = false;
+    settings["scale"] = 3;
+    settings["hud"] = true;
+    settings["hud_theme"] = "retro_zx";
+    for (const char* name : {"dark_glass", "retro_zx"})
+        settings["hud_themes"].append(name);
+    settings["hud_notices"]["ram-page"] = false;
+    settings["hud_notices"]["tape-events"] = true;
+    settings["osd_keyboard"] = true;
+    settings["osd_keyboard_picture"] = "pentagon";
+    settings["osd_keyboard_pictures"].append("pentagon");
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+
+    Json::Value args;
+    args["action"] = "window_display";
+    mcp::ToolResult read = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(read.isError) << read.text;
+    for (const char* part : {"decay 0.3", "scale 3x", "hud on (theme retro_zx)", "keyboard on (pentagon)",
+                             "hud_themes: dark_glass retro_zx", "osd_keyboard_pictures: pentagon",
+                             "hud_notices (off): ram-page"})
+        EXPECT_NE(read.text.find(part), std::string::npos) << part << " in " << read.text;
+}
+
+TEST_F(McpTools_Test, CaptureMedia_CrtParamsAndViewport_UseTheirRoutes)
+{
+    Json::Value params;
+    params["profile"] = "basic";
+    params["kind"] = "profile";
+    Json::Value curvature;
+    curvature["name"] = "curvature";
+    curvature["value"] = 0.02;
+    curvature["minimum"] = 0.0;
+    curvature["maximum"] = 0.5;
+    curvature["step"] = 0.01;
+    params["parameters"].append(curvature);
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window/crt_params"] = {200, params};
+    _caller->routes["PUT /api/v1/emulator/emu-1/video/window/crt_params"] = {200, params};
+
+    Json::Value args;
+    args["action"] = "window_crt_params";
+    mcp::ToolResult read = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(read.isError) << read.text;
+    EXPECT_NE(read.text.find("curvature = 0.02 (0..0.5, step 0.01)"), std::string::npos) << read.text;
+
+    args["action"] = "window_crt_params_set";
+    mcp::ToolResult missing = RunTool(*_registry, "capture_media", args, *_caller);
+    EXPECT_TRUE(missing.isError) << "needs crt_params";
+    args["crt_params"]["steps"]["curvature"] = 2;
+    mcp::ToolResult set = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(set.isError) << set.text;
+    const auto* call = _caller->Last("PUT", "/api/v1/emulator/emu-1/video/window/crt_params");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["steps"]["curvature"].asInt(), 2);
+
+    Json::Value viewport;
+    viewport["overscan"] = true;
+    viewport["viewport"] = "standard";
+    viewport["display"] = "352x288";
+    viewport["framebuffer"] = "384x304";
+    _caller->routes["PUT /api/v1/emulator/emu-1/video/viewport"] = {200, viewport};
+    Json::Value crop;
+    crop["action"] = "viewport_set";
+    crop["viewport"] = "standard";
+    mcp::ToolResult cropped = RunTool(*_registry, "capture_media", crop, *_caller);
+    ASSERT_FALSE(cropped.isError) << cropped.text;
+    EXPECT_NE(cropped.text.find("overscan on, viewport standard (352x288 of 384x304)"), std::string::npos)
+        << cropped.text;
+    EXPECT_EQ(_caller->Last("PUT", "/api/v1/emulator/emu-1/video/viewport")->body["viewport"].asString(), "standard");
+}
+
 TEST_F(McpTools_Test, CaptureMedia_WindowDisplaySet_NeedsDisplayAndReportsNoWindow)
 {
     Json::Value args;

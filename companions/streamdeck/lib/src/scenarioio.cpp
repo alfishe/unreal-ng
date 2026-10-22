@@ -60,8 +60,9 @@ std::string WriteTable(const json& doc, char sep)
         if (doc.contains("settings"))
             extra["settings"] = doc["settings"];
         for (const auto& [k, v] : doc.items())
-            if (k != "settings" && k != "root" && k != "name" && k != "model" && k != "format" && k != "version")
-                extra[k] = v;
+            if (k != "settings" && k != "root" && k != "name" && k != "model" && k != "format" &&
+                !(k == "version" && v == kFormatVersion))
+                extra[k] = v;  // an older version stays said (the reader takes the current one otherwise)
         const std::string name = doc.value("name", "");
         rows.push_back({name, "", "scenario", name, "", "", "", "", "", "", doc.value("model", ""), "", "", "", "",
                         extra.empty() ? "" : extra.dump()});

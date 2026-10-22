@@ -676,6 +676,69 @@ void TestTaps()
 }
 
 // ---------------------------------------------------------------------------
+// Channel gains (the host mixer's channel volume): unity leaves the output
+// exactly as it was, 0 equals a mute, a half gain lowers the channel
+// ---------------------------------------------------------------------------
+float RenderMax(TestChip& tc, uint64_t clocks)
+{
+    float drain[16384];
+    while (tc.chip.Render(drain, 8192) > 0)
+    {
+    }
+    tc.chip.Run(clocks);
+    float maxAbs = 0.0f;
+    size_t n;
+    while ((n = tc.chip.Render(drain, 8192)) > 0)
+        for (size_t i = 0; i < n * 2; i++)
+            maxAbs = std::max(maxAbs, std::fabs(drain[i]));
+    return maxAbs;
+}
+
+void TestChannelGains()
+{
+    std::printf("TestChannelGains\n");
+    // FM channel 0: unity is bit-exact, a gain of 0 silences it, half lowers it
+    TestChip ref, unity, zero, half;
+    for (TestChip* tc : {&ref, &unity, &zero, &half})
+    {
+        KeyOnFmCh0(tc->chip, 1000);
+        tc->chip.Run(1100 * kOutClocks);
+    }
+    unity.chip.SetChannelGain({ChannelGroup::Fm, 0}, 32768);
+    unity.chip.SetChannelGain({ChannelGroup::Fm, 5}, 32768);
+    zero.chip.SetChannelGain({ChannelGroup::Fm, 0}, 0);
+    half.chip.SetChannelGain({ChannelGroup::Fm, 0}, 16384);
+    const float refMax = RenderMax(ref, 2000 * kOutClocks);
+    CHECK(refMax > 0.0f);
+    CHECK_EQ_F(RenderMax(unity, 2000 * kOutClocks), refMax);
+    CHECK_EQ_F(RenderMax(zero, 2000 * kOutClocks), 0.0);
+    const float halfMax = RenderMax(half, 2000 * kOutClocks);
+    CHECK(halfMax > refMax * 0.3f && halfMax < refMax * 0.7f);
+    CHECK(half.chip.ChannelPeak({ChannelGroup::Fm, 0}) > 0.0f);  // the meter is before the gain
+
+    // PCM slot 0: a gain of 0 equals the mute (the FM-only stream); set back to unity, the untouched mix
+    TestChip both, gained, restored, fmOnly;
+    for (TestChip* tc : {&both, &gained, &restored})
+    {
+        WriteToneHeader(tc->mem, kHdrBase, 2, kSmpBase, 0, 4, nullptr);
+        WriteMaxSampleData(tc->mem);
+        KeyOnFmCh0(tc->chip, 1000);
+        KeyOnPcmSlot(tc->chip, 0, 1000);
+        tc->chip.Run(1100 * kOutClocks);
+    }
+    KeyOnFmCh0(fmOnly.chip, 1000);
+    fmOnly.chip.Run(1100 * kOutClocks);
+    gained.chip.SetChannelGain({ChannelGroup::Pcm, 0}, 0);
+    restored.chip.SetChannelGain({ChannelGroup::Pcm, 0}, 0);
+    restored.chip.SetChannelGain({ChannelGroup::Pcm, 0}, 32768);
+    const float fmMax = RenderMax(fmOnly, 2000 * kOutClocks);
+    CHECK_EQ_F(RenderMax(gained, 2000 * kOutClocks), fmMax);
+    const float bothMax = RenderMax(both, 2000 * kOutClocks);
+    CHECK(bothMax > fmMax);
+    CHECK_EQ_F(RenderMax(restored, 2000 * kOutClocks), bothMax);
+}
+
+// ---------------------------------------------------------------------------
 // HiFi at the native 44100 output (regression): Configure used to skip the
 // split resamplers when output == chip rate, so ProcessSplit read an
 // unconfigured resampler. Must render with sane lengths, not crash.
@@ -1044,6 +1107,7 @@ int main()
     TestBlockMixAndClip();
     TestPanRouting();
     TestTaps();
+    TestChannelGains();
     TestHiFiAt44100();
     TestRenderSplit();
     TestDiscardPendingAudio();

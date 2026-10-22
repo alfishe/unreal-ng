@@ -42,7 +42,11 @@ flowchart LR
 ```
 
 - On start the studio connects to the daemon; if none runs it starts one (`unreal-streamdeck`, single instance: a running
-  one is reused, [daemon.md §8](daemon.md#8-single-instance)).
+  one is reused, [daemon.md §8](daemon.md#8-single-instance)). As built (SD7): a daemon that answers gets a lease
+  (`POST /api/v1/parents`); none: one is started detached with `--parent <studio pid>` (its output in
+  `<temp>/unreal-streamdeck-studio.log`). At quit the lease goes back: the daemon ends unless unreal-qt holds it.
+- Pairing (SD7): Deck > Pair with UnrealNG (and `POST /api/v1/pair` on the studio's automation) asks the daemon to pair;
+  the status bar and the protocol log show the code until the user approves it in unreal-qt.
 - Toolbar "Deck": `Real deck <serial>` (mirror, default when a deck is attached), `Own: <model>` (a virtual deck the
   daemon runs a scenario for), the model list for own decks.
 - The window title says the role: "Stream Deck + XL A1B2C3 · mirror" or "Neo · own".

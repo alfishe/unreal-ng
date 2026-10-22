@@ -217,6 +217,30 @@ arbiter and the op log.
 - Results come back through the owner, which turns marks into `Output(haptic)` for the device that moved
   ([§9](#9-haptic-feedback)).
 
+### 5.1 As built (S3, 2026-10-20)
+
+- `ActionEvent` carries `turn`, `rate` (steps/s) and `params` (the binding's `curve` object, `BindingOptions::params`).
+  The router sends one event per control event (the Dial: one per input report), not one per pass; a Press action
+  bound to an encoder gets one press per step from the Qt owner (`GuiActions::Trigger`, at most 16).
+- `EncoderRate` (`inputrouter.h`): the bridge's rule, with every interval counted as at least 7.5 ms (the shortest BLE
+  connection interval) so two reports of one bunch do not read as a spin; the rate counts every turn, bound or not.
+  To retune by feel in the owner test.
+- Context layers: `SetContext(instance, context)` per instance; a device's instance is its pinned one, else the
+  focused one. The context layer goes right above `debug` (a shift layer raised over `debug` stays on top); it is a
+  context layer of the device's bindings or of its scope's surface haptics. A change of the layers up releases what
+  is held (epoch, stale controls), as a layer switch. A binding cannot raise a context layer with a layer key.
+- Feel: the router keeps each device's last `StepsOut` and queues a new one when it changes (after an evaluation, a
+  context change, new surface haptics); `Dispatch` sends it to the output sink outside the lock. A device whose
+  scope has no surface haptics and never got a feel is never asked. Without a layer feel: clicks off, the steps as
+  they were. `Feel(device)` answers the top layer's `LayerHaptics` (the marks' patterns, the interval).
+- Q-8: `DeviceMatch::role` (`"role"` in `devices.json`, the Dial `debugger-remote`); `HostInputService::OnDeviceAdded`
+  calls `InputRouter::SetDefaultRole`, which `SetRole` overrides (`RoleSet`); the Qt client's former rule (a non-player
+  family becomes a remote in `assignPlayers`) is gone. `RemoteByNature` (`profilestore.cpp`) asks the family's role.
+  There is no role editor in the dialog yet (U6's Advanced mode), so `SetRole` has no GUI caller besides the window
+  keyboard.
+- Not done: the TargetState of SD4 (the router follows the focused instance); a Dial on Linux / Windows (no writer:
+  `Outputs` 0 there).
+
 ## 6. Contexts and the followed instance
 
 - `ContextState` (core, per instance) holds one string, `play` at start. `ctx.set` stores it and posts
@@ -224,13 +248,12 @@ arbiter and the op log.
 - Setters: the Stream Deck (a page that names a context), the Qt client (debugger pane focus, the TTD panel), any
   automation plane. The last one wins (Q-5).
 - Followers: the Qt owner (pushes it into the router), the surface hub (`ctx` to sessions).
-- **One followed instance for all surfaces.** The router follows the focused instance
-  (`hostcontrollers.cpp`); the hub binds sessions to `EmulatorManager::GetSelectedEmulatorId`, which the Qt client
-  never sets today. v1: the Qt client sets the selected instance when the focused one changes, so the Dial, the
-  Stream Deck and the WebAPI's selection agree. A session may still pin an instance in `join`.
-- Erratum 2026-10-20: the followed instance is the Stream Deck integration's `TargetState`
-  ([targeting.md](../2026-10-19-streamdeck-integration/targeting.md)), not the selected instance the Qt client sets:
-  each surface follows the focused view or pins a view or an instance.
+- **The followed instance** is the Stream Deck integration's `TargetState`
+  ([targeting.md](../2026-10-19-streamdeck-integration/targeting.md)): the active instance of the window the user
+  focused last (headless: the selected instance, else the sole one). Each surface follows it or pins a view or an
+  instance (`join.target`, the `pin` op). The Qt client does not set the selected instance on focus: it reports its
+  windows as views. (Erratum 2026-10-20: the first version had the Qt client set the selected instance when the
+  focused one changed, making the GUI and automation fight over one global.)
 
 ### 6.1 As built (S2, 2026-10-20)
 
@@ -248,6 +271,14 @@ arbiter and the op log.
   S3 with the `@` layers. The instance a surface acts on stays the plane's own rule (the WebAPI: `instance`, else the
   selected, else the only one); `TargetState` (Stream Deck SD4) is not a prerequisite of S2: the context is keyed by
   the instance whichever rule picked it.
+
+### 6.2 As built (Stream Deck SD4, 2026-10-20)
+
+`actions::TargetState` (`core/src/emulator/actions/targetstate.h`): views registered by unreal-qt's main window and
+the video wall, the focus order, the followed instance, surface sessions with pins, `NC_SURFACE_TARGET`; the WebAPI's
+"no id" is the followed instance (T-1). As built and the hook the `surface` topic uses:
+[targeting.md §10](../2026-10-19-streamdeck-integration/targeting.md#10-as-built-sd4-2026-10-20). The router of the
+Dial and the pads still follows its window's bound instance (the same instance while a process has one window).
 
 ## 7. The TTD published cursor and readouts
 
@@ -296,11 +327,25 @@ erratum 2026-10-20: no own route `/api/v1/surfaces/ws`):
 | Part | What |
 |:--|:--|
 | Sessions | The authenticated companion, the `join` capabilities, the bound instance, subscriptions. |
-| Instance binding | `join.instance` if given; otherwise the selected instance, following it ([§6](#6-contexts-and-the-followed-instance)). |
+| Instance binding | A `TargetState` session per `join`: `join.target` (a pin) if given, otherwise the followed instance, following it ([§6](#6-contexts-and-the-followed-instance)); `target` on every change. |
 | Calls | `action` → `ActionRegistry::Submit` with origin Companion; `result` on completion. |
 | Push | `ctx` on `NC_SURFACE_CONTEXT` for the bound instance; `readout` on the tick; `revoked` then close when the companion is revoked (as the events socket). |
 
 The protocol is in [protocol.md](protocol.md).
+
+### 8.1 As built (S4, 2026-10-20)
+
+- `SurfaceHub` is the `surface` topic's handler inside `WsHub` (`core/automation/webapi/src/ws-hub.*`,
+  `surface-hub.*`), the shared hub of `/api/v1/ws`; both are drogon-free (a connection is a send and a close
+  function), so `WsHub_Test` drives them with an inline loop and a fake clock.
+- Binding: `follow` is the WebAPI's rule (the selected instance, else the only one) until `TargetState` (SD4) gives
+  the focused view; `{"instance": …}` pins. The hub re-evaluates on `NC_EMULATOR_INSTANCE_CREATED` / `DESTROYED` /
+  `NC_EMULATOR_SELECTION_CHANGED`.
+- The hub tick of §11 is not a thread: one `runEvery` timer on the WebAPI's main loop, armed while somebody
+  subscribes (§7's rule: the highest `max_hz`, nothing without a subscriber).
+- The default context flip (Q-7) posts `NC_SURFACE_CONTEXT` by `default` (`ContextState::HistoryChanged`, called by
+  both TTD backends when the cursor's `history` flips), so the Qt follower of S3 gets it too.
+- Details and what is not built: [protocol.md §10](protocol.md#10-as-built-s4-2026-10-20).
 
 ## 9. Haptic feedback
 
@@ -320,6 +365,28 @@ flowchart LR
 - The **driver alone** writes steps and clicks: on a context change the router asks once through `Output`; the
   driver queues it to its writer thread and applies it again after a reconnect.
 - `IOHIDDeviceSetReport` blocks for a BLE round trip: never on the IOHID run-loop thread (`iohidbackend.cpp`).
+
+### 9.1 As built (S3, 2026-10-20)
+
+- `IBackend::Outputs` (`kOutputHaptic`, `kOutputSteps`), `Output(device, HapticOut)`, `Output(device, StepsOut)`; the
+  IOHID backend gives a Dial a `SurfaceDialWriter` (`surfacedial.h`): one thread per Dial, a slot per report kind
+  (the latest wins), the feature report before a pattern, the device `CFRetain`ed for the thread. `PlayClicks` (the
+  test effects) goes through it too, so no caller waits for a BLE round trip any more. The last steps per Dial id are
+  kept and written again when it reconnects.
+- Bytes: `tick` `01 01 03 50 00`, `double` `01 02 03 3C 00`, `buzz` `01 01 04 50 00`; steps `01 nn nn 00 03|01 05 50
+  00` (cutoff 5, retrigger 80: the found values; the feature is not read back first).
+- The owner: `GuiActions::Trigger`'s done callback takes `marks[].kind` of a host device's result and posts them to
+  the GUI thread, where `HostControllers::PlayMarks` → `HostInputService::PlayMarks` picks the strongest mark the
+  device's top layer names a pattern for, applies `min_interval_ms` (default 40; `edge` / `barrier` always play) and
+  queues it. The GUI thread hop adds its latency (normally under a few ms) to NFR-2.
+- Contexts in the Qt client: entering a debugger pane sets `debug.disasm` / `debug.registers` / `debug.memory` /
+  `debug.stack`, entering or showing the TTD panel `ttd` (once per entry: another setter's later context stays until
+  the focus moves again); hiding the TTD panel or the debugger returns a context the GUI set to the default. The
+  follower: `NC_SURFACE_CONTEXT` and the 250 ms poll (the default changes without a notification) push
+  `ContextState::Get` of the bound instance into `InputRouter::SetContext`.
+- Planes: host verb `output` (`pattern`, `steps` / `clicks`, `marks`) and the `devices` fields `role`, `role_set`,
+  `layers`, `context`, `outputs`, `feel` on CLI, WebAPI (+ OpenAPI), WebSocket (`call`), MCP, Python, Lua
+  ([command-interface.md §15](../../emulator/design/control-interfaces/command-interface.md#15-game-controllers)).
 
 ## 10. Flows
 
@@ -361,7 +428,7 @@ sequenceDiagram
 | Dial writer (new, per Dial) | Feature and output reports. |
 | Actions worker (new, per instance) | Executors in order, coalescing, results. |
 | WebAPI threads (existing) | WebSocket frames, `Submit`. |
-| Hub tick (new, only with subscribers) | Readouts at ≤ 50 Hz. |
+| Hub tick (a timer on the WebAPI's main loop, only with subscribers; no thread) | Readouts at ≤ 50 Hz. |
 | GUI | GUI actions; context from pane focus; the owner's conversions. |
 
 - Core actions register at core start-up and live until shutdown. The Qt client registers its GUI actions with a
@@ -385,6 +452,6 @@ sequenceDiagram
 | `core/src/debugger/ttd/` | `PublishedCursor` on `ITimeTravelHooks` and both backends; `timelinemarks.*` |
 | `core/controllers/src/hostcontrols.*`, `router/` | `Encoder`, speed, context layers, `SetContext`, the library's `ActionValue` |
 | `core/controllers/src/hid/drivers/surfacedial.*` | Dial reports and writer thread |
-| `core/automation/webapi/src/surface-hub.*`, `api/actions_api.cpp`, `api-websocket.cpp` | the `surface` topic of `/api/v1/ws`, `/api/v1/controllers/actions`, the socket's calls |
-| `unreal-qt/src/controllers/` | the owner: registry bridge, context push, marks → output, GUI actions, the selected instance on focus |
-| `tools/surfaces/` | `surfacectl` (a virtual companion for tests), the conformance suite |
+| `core/automation/webapi/src/ws-hub.*`, `surface-hub.*`, `api/actions_api.cpp`, `api-websocket.cpp` | the shared hub and its topics, the `surface` topic of `/api/v1/ws`, `/api/v1/controllers/actions`, the socket's calls |
+| `unreal-qt/src/controllers/` | the owner: registry bridge, context push, marks → output, GUI actions, the window as a `TargetState` view (`surfacetargets.*`) |
+| `tools/verification/mcp/test_ws_surface.py` | the conformance suite (S4; a virtual companion over `mcplib.WebSocket`; `surfacectl` not built) |

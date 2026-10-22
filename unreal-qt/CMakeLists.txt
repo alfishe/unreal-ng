@@ -214,7 +214,6 @@ EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/CMakeFiles/" FALSE OUTVAR CPP_FI
 if (NOT ENABLE_RECORDING)
     list(FILTER CPP_FILES EXCLUDE REGEX ".*videorecordingwidget\\.cpp$")
     list(FILTER CPP_FILES EXCLUDE REGEX ".*multitrackdialog\\.cpp$")
-    list(FILTER CPP_FILES EXCLUDE REGEX ".*recordingpresets\\.cpp$")
 endif()
 
 set (SOURCES ${CPP_FILES})
@@ -630,6 +629,20 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tintedsvgicon.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tintedsvgicon.h"
+        # The window as a view of TargetState, the surface icon and the surfaces table (Stream Deck targeting.md)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/surfacetargets_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacetargets.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacetargets.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestable.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestable.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestatusicon.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestatusicon.h"
+        # Tools > Stream Deck...: the daemon's supervision, settings, the pairing approved here (Stream Deck daemon.md §7)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/streamdeckdialog_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/streamdeckpage.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/streamdeckpage.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusindicator.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusindicator.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/statusbarvideomode_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.h"
