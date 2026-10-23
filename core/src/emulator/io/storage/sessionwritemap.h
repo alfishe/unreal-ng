@@ -280,7 +280,6 @@ private:
     uint64_t _journalWaits = 0;
     bool _flushPending = false;
     std::string _journalPath;  ///< empty: a temp journal
-    bool _journalOff = false;
     std::vector<uint64_t> _freeJournalSlots;
     uint64_t _nextJournalSlot = 0;
     std::vector<uint64_t> _headerQueue;  ///< groups whose slot header is to be written

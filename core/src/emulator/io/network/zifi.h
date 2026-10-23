@@ -95,7 +95,6 @@ private:
     /// The AVR's ms counter since the last received byte (saturates at 255)
     uint8_t TimeoutCount(uint64_t lastRx, uint64_t now) const;
 
-    EmulatorContext* _context = nullptr;
     Uart16550& _rs;
     ComPort _line;
     std::function<void()> _raiseInterrupt;

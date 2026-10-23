@@ -12,6 +12,8 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
+#include <string>
 #include <vector>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -322,6 +324,15 @@ TEST_F(OsdKeyboardWindow_Test, AHostCursorKeyLightsItsKeys)
         QKeyEvent event(pressed ? QEvent::KeyPress : QEvent::KeyRelease, Qt::Key_Left, Qt::NoModifier);
         KeyboardManager::postHostKey(&event, pressed ? KEY_PRESSED : KEY_RELEASED, target);
     };
+    // The host keys only: the matrix gets the key through the message center's thread, whenever it runs (under load
+    // the press reached the matrix after the release was checked, "matrix:left" still lit)
+    const auto hostLit = [](const std::set<std::string>& lit) {
+        std::set<std::string> host;
+        for (const std::string& key : lit)
+            if (key.rfind("host:", 0) == 0)
+                host.insert(key);
+        return host;
+    };
     for (const auto& [model, lit] : std::vector<std::pair<std::string, std::set<std::string>>>{
              {"48K", {"host:caps-shift", "host:5"}},  // no LEFT key: its two keys
              {"128k", {"host:left"}},                 // the key printed with the combination
@@ -336,10 +347,10 @@ TEST_F(OsdKeyboardWindow_Test, AHostCursorKeyLightsItsKeys)
         window.setBinding(&_binding);
         hostLeft(true, target);
         window.refresh();
-        EXPECT_EQ(window.lit(), lit) << model;
+        EXPECT_EQ(hostLit(window.lit()), lit) << model;
         hostLeft(false, target);
         window.refresh();
-        EXPECT_TRUE(window.lit().empty()) << model;
+        EXPECT_TRUE(hostLit(window.lit()).empty()) << model;
         _binding.unbind();
         EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
     }
