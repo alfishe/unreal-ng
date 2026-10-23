@@ -12,6 +12,7 @@
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
 #include <debugger/analyzers/coverage/coverageanalyzer.h>
+#include <debugger/analyzers/osaware/osaware_event.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
 #include <emulator/sound/soundmanager.h>
 #include <json/json.h>
@@ -422,6 +423,104 @@ void EmulatorAPI::getAnalyzerEvents(const HttpRequestPtr& req, std::function<voi
             ret["showing"] = static_cast<Json::UInt64>(eventsJson.size());
         }
     }
+    else if (IOSAnalyzer* osAnalyzer = dynamic_cast<IOSAnalyzer*>(analyzerManager->getAnalyzer(name)))
+    {
+        // OS-aware analyzers (nedoos, dss): one branch for every OS
+        auto events = osAnalyzer->getOsEvents();
+        Json::Value eventsJson(Json::arrayValue);
+
+        size_t start = (events.size() > limit) ? events.size() - limit : 0;
+        for (size_t i = start; i < events.size(); i++)
+        {
+            Json::Value ev;
+            ev["timestamp"] = static_cast<Json::UInt64>(events[i].timestamp);
+            ev["frame_number"] = static_cast<Json::UInt64>(events[i].frameNumber);
+            ev["kind"] = OsEventKindName(events[i].kind);
+            ev["severity"] = OsSeverityName(events[i].severity);
+            ev["formatted"] = events[i].format();
+            ev["pc"] = events[i].pc;
+            if (events[i].caller != 0)
+            {
+                ev["caller"] = events[i].caller;
+            }
+            if (events[i].taskId != 0)
+            {
+                ev["task_id"] = events[i].taskId;
+            }
+            if (events[i].syscall != 0)
+            {
+                ev["syscall"] = events[i].syscall;
+            }
+            if (events[i].arg16 != 0)
+            {
+                ev["arg16"] = events[i].arg16;
+            }
+            if (!events[i].message.empty())
+            {
+                ev["message"] = events[i].message;
+            }
+            if (!events[i].detail.empty())
+            {
+                ev["detail"] = events[i].detail;
+            }
+            eventsJson.append(ev);
+        }
+
+        ret["events"] = eventsJson;
+        ret["total_events"] = static_cast<Json::UInt64>(events.size());
+        ret["showing"] = static_cast<Json::UInt64>(eventsJson.size());
+
+        OsSnapshot snapshot = osAnalyzer->getOsSnapshot();
+        ret["os"] = snapshot.os;
+        ret["detected"] = snapshot.detected;
+        ret["profile"] = snapshot.profile;
+
+        if (req->getParameter("include") == "snapshot")
+        {
+            Json::Value snapJson;
+            snapJson["os"] = snapshot.os;
+            snapJson["detected"] = snapshot.detected;
+            snapJson["profile"] = snapshot.profile;
+
+            Json::Value tasksJson(Json::arrayValue);
+            for (const auto& task : snapshot.tasks)
+            {
+                Json::Value t;
+                t["id"] = task.id;
+                t["parent"] = task.parent;
+                t["flags"] = task.flags;
+                t["mainpg"] = task.mainpg;
+                tasksJson.append(t);
+            }
+            snapJson["tasks"] = tasksJson;
+
+            Json::Value blocksJson(Json::arrayValue);
+            for (const auto& block : snapshot.blocks)
+            {
+                Json::Value b;
+                b["index"] = block.index;
+                b["owner"] = block.owner;
+                blocksJson.append(b);
+            }
+            snapJson["blocks"] = blocksJson;
+
+            Json::Value handlesJson(Json::arrayValue);
+            for (const auto& handle : snapshot.handles)
+            {
+                Json::Value h;
+                h["index"] = handle.index;
+                h["owner"] = handle.owner;
+                if (!handle.name.empty())
+                {
+                    h["name"] = handle.name;
+                }
+                handlesJson.append(h);
+            }
+            snapJson["handles"] = handlesJson;
+
+            ret["snapshot"] = snapJson;
+        }
+    }
     else
     {
         ret["events"] = Json::Value(Json::arrayValue);
@@ -479,6 +578,10 @@ void EmulatorAPI::clearAnalyzerEvents(const HttpRequestPtr& req, std::function<v
         {
             trdos->clear();
         }
+    }
+    else if (IOSAnalyzer* osAnalyzer = dynamic_cast<IOSAnalyzer*>(analyzerManager->getAnalyzer(name)))
+    {
+        osAnalyzer->clearOsEvents();
     }
 
     Json::Value ret;
