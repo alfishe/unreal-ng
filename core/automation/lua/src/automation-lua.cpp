@@ -37,9 +37,12 @@ void AutomationLua::stop()
         return;
     }
 
-    _stopThread = true;
-
-    // Notify the thread to wake up and check _stopThread
+    // Set under the queue lock: the thread is either before its wait (and sees the flag) or in it (and gets the
+    // notification), never between the two
+    {
+        std::lock_guard<std::mutex> lock(_queueMutex);
+        _stopThread = true;
+    }
     _queueCV.notify_one();
     
     // CRITICAL: Join thread FIRST before deleting objects it references
@@ -235,8 +238,7 @@ void AutomationLua::threadFunc(AutomationLua* lua)
 
     lua->onStart();
 
-    using namespace std::chrono_literals;
-
+    // The wait blocks until a task or the stop arrives: no sleep after a task, a script waits for nothing
     while (!lua->_stopThread)
     {
         // Process pending tasks from the queue
@@ -260,9 +262,6 @@ void AutomationLua::threadFunc(AutomationLua* lua)
                 lock.lock();
             }
         }
-        
-        // Small sleep to avoid busy-waiting
-        std::this_thread::sleep_for(10ms);
     }
 
     lua->onFinish();
