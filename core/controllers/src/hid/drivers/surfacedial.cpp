@@ -193,9 +193,22 @@ std::vector<uint8_t> SurfaceDial::FeatureReport(const StepsOut& steps, const Sur
             static_cast<uint8_t>(retrigger >> 8)};
 }
 
+std::vector<uint8_t> SurfaceDial::FeatureBytes(const SurfaceDialFeature& feature)
+{
+    return {kFeatureReport,
+            static_cast<uint8_t>(feature.stepsPerTurn & 0xFF),
+            static_cast<uint8_t>(feature.stepsPerTurn >> 8),
+            feature.repeatCount,
+            feature.autoTrigger,
+            feature.cutoff,
+            static_cast<uint8_t>(feature.retriggerMs & 0xFF),
+            static_cast<uint8_t>(feature.retriggerMs >> 8)};
+}
+
 /// region <SurfaceDialWriter>
 
-SurfaceDialWriter::SurfaceDialWriter(Write write) : _write(std::move(write)), _thread([this] { Run(); })
+SurfaceDialWriter::SurfaceDialWriter(Write write, Read read)
+    : _write(std::move(write)), _read(std::move(read)), _thread([this] { Run(); })
 {
 }
 
@@ -204,18 +217,21 @@ SurfaceDialWriter::~SurfaceDialWriter()
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _stopping = true;
-        _feature.reset();
+        _steps.reset();
         _output.reset();
     }
     _wake.notify_all();
     _thread.join();
+    // Only the found settings, never a guess: without a read nothing is restored
+    if (_changed && _found && _write)
+        _write(ReportType::Feature, SurfaceDial::FeatureBytes(*_found));
 }
 
 void SurfaceDialWriter::Steps(const StepsOut& steps)
 {
     {
         std::lock_guard<std::mutex> lock(_mutex);
-        _feature = SurfaceDial::FeatureReport(steps);
+        _steps = steps;
     }
     _wake.notify_all();
 }
@@ -250,6 +266,36 @@ uint64_t SurfaceDialWriter::Failed() const
     return _failed;
 }
 
+std::optional<SurfaceDialFeature> SurfaceDialWriter::Found() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _found;
+}
+
+bool SurfaceDialWriter::WriteSteps(const StepsOut& steps)
+{
+    const std::vector<uint8_t> report = SurfaceDial::FeatureReport(steps, _base);
+    if (!_write || !_write(ReportType::Feature, report))
+        return false;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _changed = true;
+    }
+    if (!_read)
+        return true;
+    // Read back: a write the device accepted but did not apply is a failure (measured: fields outside the logical
+    // range are dropped silently, POC 030)
+    std::vector<uint8_t> back;
+    SurfaceDialFeature applied;
+    if (!_read(back) || !SurfaceDial::ParseFeature(back.data(), back.size(), applied))
+        return false;
+    _base = applied;
+    SurfaceDialFeature wanted;
+    SurfaceDial::ParseFeature(report.data(), report.size(), wanted);
+    return applied.stepsPerTurn == wanted.stepsPerTurn && applied.repeatCount == wanted.repeatCount &&
+           applied.autoTrigger == wanted.autoTrigger;
+}
+
 void SurfaceDialWriter::Run()
 {
 #if defined(__APPLE__)
@@ -257,18 +303,37 @@ void SurfaceDialWriter::Run()
 #elif defined(__linux__)
     pthread_setname_np(pthread_self(), "dial-writer");
 #endif
+    // The settings as found, before anything is written: the steps keep its cutoff and retrigger, the end restores it
+    std::vector<uint8_t> found;
+    SurfaceDialFeature parsed;
+    if (_read && _read(found) && SurfaceDial::ParseFeature(found.data(), found.size(), parsed))
+    {
+        _base = parsed;
+        std::lock_guard<std::mutex> lock(_mutex);
+        _found = parsed;
+    }
     std::unique_lock<std::mutex> lock(_mutex);
     while (true)
     {
-        _wake.wait(lock, [this] { return _stopping || _feature || _output; });
+        _wake.wait(lock, [this] { return _stopping || _steps || _output; });
         if (_stopping)
             return;
         // The steps first: a pattern after a context change plays in the new feel
-        const ReportType type = _feature ? ReportType::Feature : ReportType::Output;
-        std::vector<uint8_t> report = std::move(type == ReportType::Feature ? *_feature : *_output);
-        (type == ReportType::Feature ? _feature : _output).reset();
-        lock.unlock();
-        const bool ok = _write && _write(type, report);
+        bool ok = false;
+        if (_steps)
+        {
+            const StepsOut steps = *_steps;
+            _steps.reset();
+            lock.unlock();
+            ok = WriteSteps(steps);
+        }
+        else
+        {
+            const std::vector<uint8_t> report = std::move(*_output);
+            _output.reset();
+            lock.unlock();
+            ok = _write && _write(ReportType::Output, report);
+        }
         lock.lock();
         ++(ok ? _written : _failed);
     }

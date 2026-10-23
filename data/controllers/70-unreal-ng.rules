@@ -1,0 +1,22 @@
+# unreal-ng: access for the logged-in user to the raw HID (hidraw) nodes of the controllers the emulator reads or
+# writes beyond what evdev gives (docs/inprogress/2026-10-17-controller-manager/research-host-apis.md §3.3).
+#
+# Install:
+#   sudo cp data/controllers/70-unreal-ng.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger
+# then reconnect the device.
+#
+# TAG+="uaccess" gives the user of the active local session an ACL on the node (systemd-logind), so no group
+# membership and no world-writable node are needed. The file must sort before 73-seat-late.rules, which applies the
+# tag: hence 70-.
+
+# Xbox Elite Wireless Controller Series 2 over Bluetooth (Classic 045E:0B05, LE 045E:0B22): read access for the
+# paddles P1-P4 and the onboard profile, which evdev does not report. Over USB the pad is xpad's and has no hidraw node.
+KERNEL=="hidraw*", KERNELS=="*045E:0B05*", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*045E:0B22*", MODE="0660", TAG+="uaccess"
+
+# Microsoft Surface Dial (045E:091B, Bluetooth LE): write access for its clicks (output report 1) and detents
+# (feature report 1); the input node too, which is neither a joystick nor a keyboard, so the default rules may leave it
+# to the input group.
+KERNEL=="hidraw*", KERNELS=="*045E:091B*", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{id/vendor}=="045e", ATTRS{id/product}=="091b", MODE="0660", TAG+="uaccess"

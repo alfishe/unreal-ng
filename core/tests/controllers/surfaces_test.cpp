@@ -499,6 +499,100 @@ TEST(Surfaces_Test, DialWriter_LatestWinsStepsFirst)
     EXPECT_EQ(writer.Failed(), 0u);
 }
 
+namespace
+{
+/// A Dial's feature report 1 as the device holds it: a write applies what is inside the descriptor's logical ranges
+/// (POC 030: a cutoff or retrigger of 0 is dropped), a read returns it
+struct FakeDialFeature
+{
+    std::mutex mutex;
+    std::vector<uint8_t> feature;
+    std::vector<std::vector<uint8_t>> writes;
+    bool ignoreWrites = false;
+
+    SurfaceDialWriter::Write Writer()
+    {
+        return [this](SurfaceDialWriter::ReportType type, const std::vector<uint8_t>& report) {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (type != SurfaceDialWriter::ReportType::Feature)
+                return true;
+            writes.push_back(report);
+            if (!ignoreWrites)
+                feature = report;
+            return true;
+        };
+    }
+    SurfaceDialWriter::Read Reader()
+    {
+        return [this](std::vector<uint8_t>& report) {
+            std::lock_guard<std::mutex> lock(mutex);
+            report = feature;
+            return true;
+        };
+    }
+};
+}  // namespace
+
+/// With a Read: the found settings are read first, the steps keep their cutoff and retrigger, the write is read back,
+/// and the found settings are written back when the writer ends
+TEST(Surfaces_Test, DialWriter_ReadsTheFoundSettingsVerifiesAndRestores)
+{
+    FakeDialFeature dial;
+    const std::vector<uint8_t> found = {0x01, 0x24, 0x00, 0x00, 0x01, 0x07, 0x64, 0x00};  // cutoff 7, retrigger 100
+    dial.feature = found;
+    {
+        SurfaceDialWriter writer(dial.Writer(), dial.Reader());
+        writer.Steps({72, true});
+        ASSERT_TRUE(TestWait::For([&] { return writer.Written() == 1; }));
+        ASSERT_TRUE(writer.Found().has_value());
+        EXPECT_EQ(writer.Found()->stepsPerTurn, 36);
+        EXPECT_EQ(writer.Found()->cutoff, 7);
+        std::lock_guard<std::mutex> lock(dial.mutex);
+        EXPECT_EQ(dial.feature, (std::vector<uint8_t>{0x01, 0x48, 0x00, 0x00, 0x03, 0x07, 0x64, 0x00}))
+            << "72 steps, a click each, the device's own cutoff and retrigger";
+        EXPECT_EQ(writer.Failed(), 0u);
+    }
+    std::lock_guard<std::mutex> lock(dial.mutex);
+    EXPECT_EQ(dial.feature, found) << "restored as found when the writer ends";
+    EXPECT_EQ(dial.writes.size(), 2u);
+}
+
+TEST(Surfaces_Test, DialWriter_AWriteTheDeviceDidNotApplyFails)
+{
+    FakeDialFeature dial;
+    dial.feature = SurfaceDial::FeatureBytes({});
+    dial.ignoreWrites = true;
+    {
+        SurfaceDialWriter writer(dial.Writer(), dial.Reader());
+        writer.Steps({12, true});
+        ASSERT_TRUE(TestWait::For([&] { return writer.Failed() == 1; }));
+        EXPECT_EQ(writer.Written(), 0u);
+    }
+    // Nothing stuck at the end: the restore wrote the found bytes (the device ignores it, they are the same)
+    std::lock_guard<std::mutex> lock(dial.mutex);
+    ASSERT_EQ(dial.writes.size(), 2u);
+    EXPECT_EQ(dial.writes.back(), SurfaceDial::FeatureBytes({}));
+}
+
+TEST(Surfaces_Test, DialWriter_NothingRestoredWithoutAStepsWriteOrARead)
+{
+    FakeDialFeature dial;
+    dial.feature = SurfaceDial::FeatureBytes({});
+    {
+        SurfaceDialWriter writer(dial.Writer(), dial.Reader());
+        writer.Pattern(HapticPattern::Tick);
+        ASSERT_TRUE(TestWait::For([&] { return writer.Written() == 1; }));
+    }
+    {
+        SurfaceDialWriter writer(dial.Writer());  // no Read: no found settings to restore
+        writer.Steps({36, true});
+        ASSERT_TRUE(TestWait::For([&] { return writer.Written() == 1; }));
+        EXPECT_FALSE(writer.Found().has_value());
+    }
+    std::lock_guard<std::mutex> lock(dial.mutex);
+    EXPECT_EQ(dial.writes.size(), 1u) << "only the steps of the writer without a Read";
+}
+
 /// endregion </The Dial's reports and writer>
 
 /// region <Host verbs>

@@ -23,7 +23,7 @@
 | The `instances` and `debug.*` topics on `/api/v1/ws` (adapters of `/api/v1/companions/events` and `/api/v1/websocket`), the byte high-water mark and `slow_consumer` | S4 built the hub, the state topics and `surface`; the older sockets keep their contracts meanwhile |
 | Raw controls from companion processes (a session backend in the router) | needs a trust rule for the `model` a client claims and a companion identity in `ActionEvent` |
 | A core owner of `HostInputService` (the Dial headless) | Q-3 |
-| Windows raw HID backend and the Dial on it; Linux hidraw haptics | Q-4; D6 plans the raw HID backend anyway |
+| Windows raw HID backend and the Dial on it (Linux hidraw haptics: built with controller manager C9, not exercised on hardware) | Q-4; D6 plans the raw HID backend anyway |
 | Generic HID encoder driver, a DIY HID POC | after the Dial driver exists |
 | MIDI backend | after the generic encoder path |
 | Touch strips, keys with displays, text, images, lights | no v1 use case |

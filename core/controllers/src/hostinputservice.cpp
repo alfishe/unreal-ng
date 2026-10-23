@@ -118,6 +118,13 @@ std::vector<BackendProbe> HostInputService::Probe() const
     return list;
 }
 
+std::string HostInputService::DeviceNotice(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const IBackend* backend = BackendOfLocked(device);
+    return backend != nullptr ? backend->DeviceNotice(device) : std::string();
+}
+
 void HostInputService::Stop()
 {
     if (_haptics)

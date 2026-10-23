@@ -17,6 +17,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 
 namespace controllers
 {
@@ -68,6 +69,10 @@ float Axis(SHORT value)
 class XInputBackend : public IBackend
 {
 public:
+    explicit XInputBackend(std::shared_ptr<std::atomic<bool>> xboxServed) : _xboxServed(std::move(xboxServed))
+    {
+    }
+
     ~XInputBackend() override
     {
         Stop();
@@ -84,6 +89,11 @@ public:
     {
         if (_thread.joinable())
             return true;
+        if (_xboxServed && *_xboxServed)
+        {
+            reason = "GameInput serves the Xbox pads";
+            return false;
+        }
         if (_getState == nullptr)
         {
             for (const char* name : {"xinput1_4.dll", "xinput9_1_0.dll", "xinput1_3.dll"})
@@ -239,6 +249,7 @@ private:
         slot.last = now;
     }
 
+    std::shared_ptr<std::atomic<bool>> _xboxServed;
     HMODULE _dll = nullptr;
     XInputGetStateFn _getState = nullptr;
     XInputSetStateFn _setState = nullptr;
@@ -251,9 +262,9 @@ private:
 };
 }  // namespace
 
-std::unique_ptr<IBackend> CreateXInputBackend()
+std::unique_ptr<IBackend> CreateXInputBackend(std::shared_ptr<std::atomic<bool>> xboxServed)
 {
-    return std::make_unique<XInputBackend>();
+    return std::make_unique<XInputBackend>(std::move(xboxServed));
 }
 
 }  // namespace controllers

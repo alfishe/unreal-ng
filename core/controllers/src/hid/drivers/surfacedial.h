@@ -6,8 +6,8 @@
 /// report 1 (9 bytes): byte 1 bit 0 Button 1 (`push`), bit 1 Digitizer Touch 0x0D:0x33 (`touch`, the hand on the
 /// dial), bytes 2-3 the Dial, int16 LE, the steps since the last report (`knob`); the rest is constant. Report 0x32
 /// (System Control, sleep / wake) and the vendor reports 0x2A-0x31 are ignored. Feature report 1 holds the steps per
-/// turn (Resolution Multiplier 0x01:0x48) and the Simple Haptic Controller's settings, kept for the detents of a later
-/// step; output report 1 plays its clicks (HapticReport; layout in
+/// turn (Resolution Multiplier 0x01:0x48) and the Simple Haptic Controller's settings: the detents (FeatureReport,
+/// written by SurfaceDialWriter); output report 1 plays its clicks (HapticReport; layout in
 /// testdata/controllers/hid-captures/surface-dial/macos-ble/README.md).
 /// The Dial's touch sensor is slow: the hand shows up and goes away a second or more late (measured 2026-10-19), and
 /// no other report carries it (vendor page 0xFF07 is the CFU firmware update channel). DialTouch infers the hand from
@@ -116,6 +116,8 @@ public:
     /// Trigger 3 (a click at each step) or 1 (none: a free wheel, the steps kept), and @p base's cutoff and retrigger
     /// (the device's own: a write keeps them)
     static std::vector<uint8_t> FeatureReport(const StepsOut& steps, const SurfaceDialFeature& base = {});
+    /// Feature report 1 holding @p feature as it is (the found settings written back)
+    static std::vector<uint8_t> FeatureBytes(const SurfaceDialFeature& feature);
 
     /// Feature report 1 -> @p out; false for a report of another id or too short
     static bool ParseFeature(const uint8_t* report, size_t size, SurfaceDialFeature& out);
@@ -145,7 +147,11 @@ private:
 /// The Dial's writer thread (control surfaces architecture.md §9, §11): a report write blocks for a Bluetooth LE
 /// round trip, so feature and output reports never leave from the IOHID run loop or the actions worker. Requests only
 /// queue, the latest of each kind wins (a pattern not written yet is replaced: a fast turn never builds a backlog of
-/// clicks), and the steps go before a pattern. Shared by every backend that writes raw reports
+/// clicks), and the steps go before a pattern. Shared by every backend that writes raw reports.
+/// With a Read (a backend that can get feature reports): before its first write the writer reads feature report 1, the
+/// settings as found; the steps keep the found cutoff and retrigger; each feature write is read back, and one the
+/// device did not take counts as failed; when it ends, a writer that changed the steps writes the found settings back
+/// (the Dial keeps detents until it sleeps, so it must not stay clicking after the emulator quits)
 class SurfaceDialWriter
 {
 public:
@@ -156,9 +162,11 @@ public:
     };
     /// Writes one report (its first byte is the report id); false when the device refused it
     using Write = std::function<bool(ReportType type, const std::vector<uint8_t>& report)>;
+    /// Reads feature report 1 into @p report (8 bytes, the id first); false when the device did not answer
+    using Read = std::function<bool(std::vector<uint8_t>& report)>;
 
-    explicit SurfaceDialWriter(Write write);
-    /// What is queued is dropped; a write in flight finishes first
+    explicit SurfaceDialWriter(Write write, Read read = {});
+    /// What is queued is dropped; a write in flight finishes first. Then the found settings are written back (Read)
     ~SurfaceDialWriter();
     SurfaceDialWriter(const SurfaceDialWriter&) = delete;
     SurfaceDialWriter& operator=(const SurfaceDialWriter&) = delete;
@@ -168,18 +176,25 @@ public:
     /// A test effect's clicks (haptics.md §10): the same slot as a pattern
     void Clicks(const HapticClicks& clicks);
 
-    /// Reports written / refused so far (the tests, the live check)
+    /// Reports written / refused so far (the tests, the live check); a feature write whose read-back differs is refused
     uint64_t Written() const;
     uint64_t Failed() const;
+    /// Feature report 1 as the writer found it (Read); empty until it is read or without a Read
+    std::optional<SurfaceDialFeature> Found() const;
 
 private:
     void Run();
+    bool WriteSteps(const StepsOut& steps);
 
     Write _write;
+    Read _read;
     mutable std::mutex _mutex;
     std::condition_variable _wake;
-    std::optional<std::vector<uint8_t>> _feature;
+    std::optional<StepsOut> _steps;
     std::optional<std::vector<uint8_t>> _output;
+    std::optional<SurfaceDialFeature> _found;  ///< under _mutex
+    SurfaceDialFeature _base;                  ///< the writer thread's: the device's cutoff and retrigger
+    bool _changed = false;                     ///< under _mutex: a feature was written (the destructor restores)
     uint64_t _written = 0;
     uint64_t _failed = 0;
     bool _stopping = false;

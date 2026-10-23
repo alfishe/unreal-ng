@@ -76,7 +76,7 @@ v1 driver writes (each value to confirm by feel, POC 030 A3-A6):
 |:--|:--|:--|:--|
 | macOS | IOHID: the backend adds matching `0x01:0x0E` | `IOHIDDeviceSetReport` on the driver's writer thread | yes |
 | Windows | a raw HID backend does not exist yet (only XInput, D6 plans an own raw HID backend); the system also feeds the Dial to `RadialController` and shows its wheel menu | `HidD_SetFeature`, `HidD_SetOutputReport` | later; measure first (Q-4) |
-| Linux | `hid-generic` gives an input device; the evdev backend can read it; haptics need hidraw and a udev rule | hidraw | later |
+| Linux | `hid-generic` gives an input device; the evdev backend reads it | hidraw of the same HID device (`write()` output report 1, `HIDIOCSFEATURE` feature report 1) on the driver's writer thread; needs `data/controllers/70-unreal-ng.rules` | built, not exercised on hardware ([surface-dial.md §4](../2026-10-17-controller-manager/surface-dial.md#4-per-os)) |
 
 ## 2. Stream Deck + XL through streamdeck-bridge
 
