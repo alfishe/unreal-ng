@@ -17,6 +17,12 @@ class DesignCanvas : public DeckWidget
 public:
     explicit DesignCanvas(EditorDocument* doc, QWidget* parent = nullptr);
     void Refresh();
+    // The icon pack the preview draws glyph faces from ("" = the scenario's settings.pack, else magicwb)
+    void SetPack(const std::string& pack);
+    [[nodiscard]] const std::string& Pack() const
+    {
+        return _pack;
+    }
     [[nodiscard]] QImage RenderImage(double scale) const;  // the canvas as shown (for screenshots)
     [[nodiscard]] int SelectedSlotKey() const              // an empty key clicked last (-1 none)
     {
@@ -53,4 +59,5 @@ private:
     std::map<int, bool> _keyErrors;
     int _backKey = -1, _dropKey = -1, _pressKey = -1, _slotKey = -1;
     QPoint _pressPos;
+    std::string _pack;
 };

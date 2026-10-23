@@ -253,6 +253,8 @@ deck, else the first deck); the runtime routes take `?deck=SERIAL` with the same
 | `GET /api/v1/decks` | Every logical deck: serial, model, PID, real or own, connected, scenario file (`""` = the idle one), `start_scenario`, watched, brightness, viewers (id, role, name, pid); `waiting_mirrors` |
 | `GET /api/v1/decks/{serial}` | One deck, as in the list |
 | `GET` / `PUT /api/v1/decks/{serial}/brightness` | The deck's brightness; `{"value": 0..100}` or `{"delta": n}` (clamped). The runtime sends it on its next step, viewers get it as a feature report |
+| `GET` / `PUT /api/v1/decks/{serial}/pack` | The icon pack the deck draws its glyph faces (`face.glyph`) from: `{"pack": "duotone"}` over the scenario's `settings.pack`, `{"pack": "scenario"}` clears it (400: a pack the data directory lacks). The keys with a glyph are drawn again at once; the answer comes once the deck shows them (202 when its thread did not come round). GET: `pack` (drawn), `setting`, `scenario_pack` |
+| `GET /api/v1/packs` | The icon packs of the data directory (`data/streamdeck/icons/packs`): `name`, `title`, `style`, `source`, `fallback`, `background`; `default`: `magicwb` |
 | `GET /api/v1/decks/{serial}/scenario` | The deck's file, whether it is the start scenario, watched, the scenario's name; `?document=true` adds the document |
 | `PUT /api/v1/decks/{serial}/scenario` | `{"file": path, "watch": true}`: this deck plays another file (the other decks keep theirs), the menu stack kept; watched by default, so edits reload it. A file with errors is refused (422) and the deck keeps what it plays |
 | `DELETE /api/v1/decks/{serial}/scenario` | The deck plays the daemon's start scenario again |
@@ -272,6 +274,7 @@ another file (`nav {to: scenario}`) loads it for its own deck.
 ```bash
 curl -s localhost:37053/api/v1/decks
 curl -s -X PUT localhost:37053/api/v1/decks/first/brightness -d '{"value":40}'
+curl -s -X PUT localhost:37053/api/v1/decks/first/pack -d '{"pack":"os4"}'
 curl -s -X PUT localhost:37053/api/v1/decks/EMU1/scenario -d '{"file":"/path/my.deck.json"}'
 curl -s -X DELETE localhost:37053/api/v1/decks/EMU1/scenario
 curl -s -X POST localhost:37053/api/v1/decks/first/reconnect -d '{"away_ms":2000}'
@@ -354,6 +357,7 @@ Default scenarios and themes (`data/streamdeck/`) are not packaged yet (SD5).
 | `sdctl viewer [--port N] [--deck SERIAL \| --own MODEL] [--seconds N]` | Join the daemon as a viewer; prints the welcome, the replayed picture and frame counts per second |
 | `sdctl ws <ws://host:port/path> [message ...] [--token T] [--count N] [--seconds N]` | Open a WebSocket with the daemon's client; prints what arrives (`ws://127.0.0.1:8090/api/v1/ws '{"op":"join","v":1,"name":"deck","model":"elgato.streamdeck.plus"}' --token unc_…` joins the surface topic) |
 | `sdctl decks [--api PORT] [--json]` | The daemon's logical decks (`GET /api/v1/decks`, port 37053 by default) |
+| `sdctl packs [--api PORT]`, `sdctl pack [NAME\|scenario] [--deck SERIAL] [--api PORT]` | The icon packs (`GET /api/v1/packs`); a deck's pack, set with a name (`PUT /api/v1/decks/{serial}/pack`) |
 | `sdctl emu-snapshot --out f.png --api PORT [--deck SERIAL]` | The deck's viewers save a PNG through the daemon (device wire v2 `Control`); waits up to 3 s for the file |
 
 ### `sdctl emu-*` and the device wire

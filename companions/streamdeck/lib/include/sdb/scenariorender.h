@@ -7,6 +7,7 @@
 
 #include "sdb/image.h"
 #include "sdb/navigator.h"
+#include "sdb/valueface.h"
 
 namespace sdb::scn
 {
@@ -18,9 +19,14 @@ inline constexpr int kFaceSize = 144;  // the layout grid of a face; drawn at an
 
 // `size`: the square drawn, in px; the device's own key size keeps it sharp (no resize after). `safePad`: inset (in
 // `size` px) that keeps icons and labels clear of the bezel. `scenarioDir`: the scenario's folder, for $scenario and
-// relative picture paths (sdb/datadir.h).
+// relative picture paths (sdb/datadir.h). `pack`: the icon pack a `glyph` face is drawn from ("" = magicwb; the
+// pack's fallback chain, then magicwb, sdb/iconpacks.h); a glyph no pack has leaves the label alone (the title when
+// the face has no label). A value face (f.value) shows `shown` as big text, the label (else the title) as a caption
+// under it and its glyph shrunk above it when there is room; `shown` null = the template with "--" for every value
+// (a preview). Its level colours the text: amber (warn), a muted red (alert).
 [[nodiscard]] Rgb RenderFace(const Face& f, const std::string& fallbackTitle, bool pressed, bool isMenu,
-                             int safePad = 0, int size = kFaceSize, const std::string& scenarioDir = {});
+                             int safePad = 0, int size = kFaceSize, const std::string& scenarioDir = {},
+                             const std::string& pack = {}, const ValueShown* shown = nullptr);
 [[nodiscard]] Rgb RenderBackKey(const std::string& parentTitle, int depth, bool pressed, int safePad = 0,
                                 int size = kFaceSize);
 [[nodiscard]] Rgb RenderEmptyKey(int size = kFaceSize);

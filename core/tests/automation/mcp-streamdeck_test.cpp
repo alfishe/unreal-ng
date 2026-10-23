@@ -132,6 +132,46 @@ TEST(McpStreamDeck_Test, EachActionIsItsRouteAndTheTextSaysWhatHappened)
     EXPECT_EQ(caller->calls.back().body["value"].asInt(), 40);
     EXPECT_NE(result.text.find("brightness 40"), std::string::npos);
 
+    Json::Value packs;
+    packs["ok"] = true;
+    packs["default"] = "magicwb";
+    Json::Value os4;
+    os4["name"] = "os4";
+    os4["title"] = "AmigaOS 4";
+    os4["style"] = "glossy";
+    packs["packs"].append(os4);
+    caller->routes["GET /api/v1/streamdeck/packs"] = {200, packs};
+    Json::Value list;
+    list["action"] = "packs";
+    result = RunTool(*registry, list, *caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("icon packs (default magicwb)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("os4 - AmigaOS 4 (glossy)"), std::string::npos) << result.text;
+
+    Json::Value pack;
+    pack["ok"] = true;
+    pack["deck"]["serial"] = "A1B2C3";
+    pack["deck"]["pack"] = "os4";
+    pack["deck"]["setting"] = "os4";
+    pack["deck"]["scenario_pack"] = "";
+    caller->routes["PUT /api/v1/streamdeck/decks/A1B2C3/pack"] = {200, pack};
+    caller->routes["GET /api/v1/streamdeck/decks/first/pack"] = {200, pack};
+    Json::Value setPack;
+    setPack["action"] = "pack";
+    setPack["deck"] = "A1B2C3";
+    setPack["pack"] = "os4";
+    result = RunTool(*registry, setPack, *caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(caller->calls.back().method, "PUT");
+    EXPECT_EQ(caller->calls.back().body["pack"].asString(), "os4");
+    EXPECT_NE(result.text.find("deck A1B2C3 draws the icon pack os4 (setting os4"), std::string::npos) << result.text;
+    Json::Value readPack;
+    readPack["action"] = "pack";
+    result = RunTool(*registry, readPack, *caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(caller->calls.back().method, "GET");
+    EXPECT_EQ(caller->calls.back().path, "/api/v1/streamdeck/decks/first/pack");
+
     Json::Value unavailable;
     unavailable["ok"] = false;
     unavailable["error"] = "supervisor_unavailable";

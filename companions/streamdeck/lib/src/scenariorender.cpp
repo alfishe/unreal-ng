@@ -7,6 +7,7 @@
 
 #include "sdb/datadir.h"
 #include "sdb/format.h"
+#include "sdb/iconpacks.h"
 #include "sdb/icons.h"
 #include "sdb/svg.h"
 
@@ -121,34 +122,150 @@ void Place(Rgb& out, const Rgb& in, int x0, int y0)
 }
 }  // namespace
 
+namespace
+{
+// The value colours: amber and a muted red as the strip's marks and recording (kLiveAmber, kLiveRec)
+constexpr draw::Color kValueWarn{220, 170, 60}, kValueAlert{205, 70, 58}, kCaption{150, 156, 184};
+
+// A value face: the value big in the middle, the caption under it, the glyph shrunk above when it fits
+Rgb RenderValue(const Face& f, const std::string& fallbackTitle, bool isMenu, int safePad, int size,
+                const std::string& pack, const ValueShown& shown)
+{
+    const bool glyph = !f.glyph.empty() && !packs::Serving(pack, f.glyph).empty();
+    const draw::Color bg = glyph ? packs::Background(pack, f.glyph) : f.bg;
+    if (safePad > 0 && size > 2 * safePad)
+    {
+        // as a text face: drawn at the visible size and centred (the pixel font stays sharp)
+        Rgb out(size, size, bg.r, bg.g, bg.b);
+        Place(out, RenderValue(f, fallbackTitle, isMenu, 0, size - 2 * safePad, pack, shown), safePad, safePad);
+        return out;
+    }
+    const Grid g(size);
+    const int s = g.s;
+    Rgb im(s, s, bg.r, bg.g, bg.b);
+    std::string caption = DisplayText(f.label.empty() ? fallbackTitle : f.label);
+    while (!caption.empty() && caption.back() == ' ')
+        caption.pop_back();
+    std::vector<std::string> lines;
+    {
+        std::string cur;
+        for (char c : shown.text + "\n")
+            if (c == '\n')
+            {
+                std::string t = DisplayText(cur);
+                while (!t.empty() && t.back() == ' ')
+                    t.pop_back();
+                while (!t.empty() && t.front() == ' ')
+                    t.erase(0, 1);
+                lines.push_back(t);
+                cur.clear();
+            }
+            else
+                cur += c;
+        while (lines.size() > 1 && lines.back().empty())
+            lines.pop_back();
+        if (lines.size() > 3)
+            lines.resize(3);
+    }
+    const int capSc = caption.empty() ? 0 : std::min(g.Font(3), FitScale(caption, s - g(2), g.Font(3)));
+    const int capBand = caption.empty() ? 0 : 7 * capSc + g(10);
+    // the value: the largest scale every line fits at (wider keys of text get smaller)
+    const int maxSc = g.Font(lines.size() > 1 ? 4 : 6);
+    int sc = maxSc;
+    // a thin margin: an 8-letter word (PENTAGON) still fits at scale 2 on a + XL key's visible area
+    for (const auto& l : lines)
+        sc = std::min(sc, FitScale(l, s - g(2), maxSc));
+    const int lineGap = std::max(1, sc * 2);
+    const int block = static_cast<int>(lines.size()) * 7 * sc + (static_cast<int>(lines.size()) - 1) * lineGap;
+    const int top = g(6), bottom = s - capBand;
+    int y0 = top + (bottom - top - block) / 2;
+    if (glyph)
+    {
+        // above the value when at least a third of the key is left for it
+        const int room = bottom - top - block - g(6);
+        const int side = std::min(room, g(56));
+        if (side >= g(40))
+            if (const auto src = packs::Glyph(pack, f.glyph, side))
+            {
+                const int gy = top + std::max(0, (room - side) / 2);
+                Place(im, *src, (s - side) / 2, gy);
+                y0 = gy + side + g(6);
+            }
+    }
+    const draw::Color fg = shown.level >= 2 ? kValueAlert : shown.level == 1 ? kValueWarn : f.fg;
+    for (const auto& l : lines)
+    {
+        draw::Text(im, std::max(0, (s - draw::TextWidth(l, sc)) / 2), y0, l, sc, fg);
+        y0 += 7 * sc + lineGap;
+    }
+    if (!caption.empty())
+        draw::Text(im, std::max(1, (s - draw::TextWidth(caption, capSc)) / 2), s - 7 * capSc - g(6), caption, capSc,
+                   shown.level ? fg : draw::Mix(kCaption, f.fg, 0.45f));
+    if (shown.level)
+        draw::FillRect(im, g(20), s - g(3), s - 2 * g(20), std::max(1, g(2)), fg);  // a fine line: not normal
+    if (isMenu)
+        draw::Tri(im, s - g.F(22), g.F(8), s - g.F(8), g.F(8), s - g.F(8), g.F(22), f.fg);
+    return im;
+}
+}  // namespace
+
 Rgb RenderFace(const Face& f, const std::string& fallbackTitle, bool pressed, bool isMenu, int safePad, int size,
-               const std::string& scenarioDir)
+               const std::string& scenarioDir, const std::string& pack, const ValueShown* shown)
 {
     if (pressed)
-        return PressedKey(size, safePad,
-                          [&](int s) { return RenderFace(f, fallbackTitle, false, isMenu, 0, s, scenarioDir); });
-    if (safePad > 0 && f.image.empty() && size > 2 * safePad)
+        return PressedKey(size, safePad, [&](int s) {
+            return RenderFace(f, fallbackTitle, false, isMenu, 0, s, scenarioDir, pack, shown);
+        });
+    if (f.value)
+        return RenderValue(f, fallbackTitle, isMenu, safePad, size, pack,
+                           shown ? *shown : ValueShown{FormatValue(f.value->format, nullptr), 0});
+    // a glyph any pack of the chain has: drawn as a picture (before image, svg and icon)
+    const bool glyph = !f.glyph.empty() && !packs::Serving(pack, f.glyph).empty();
+    const bool picture = glyph || !f.image.empty();
+    if (safePad > 0 && !picture && size > 2 * safePad)
     {
         // the bezel hides the edges: draw the content straight at the visible size and centre it (no shrinking after,
         // which would blur the pixel font); a picture keeps the whole key
         Rgb out(size, size, f.bg.r, f.bg.g, f.bg.b);
-        Place(out, RenderFace(f, fallbackTitle, false, isMenu, 0, size - 2 * safePad, scenarioDir), safePad, safePad);
+        Place(out, RenderFace(f, fallbackTitle, false, isMenu, 0, size - 2 * safePad, scenarioDir, pack), safePad,
+              safePad);
         return out;
     }
     const Grid g(size);
     const int s = g.s;
     Rgb im(s, s, f.bg.r, f.bg.g, f.bg.b);
     std::string label =
-        DisplayText(f.label.empty() && f.icon.empty() && f.svg.empty() && f.image.empty() ? fallbackTitle : f.label);
+        DisplayText(f.label.empty() && f.icon.empty() && f.svg.empty() && !picture ? fallbackTitle : f.label);
     while (!label.empty() && label.back() == ' ')
         label.pop_back();
     const bool hasLabel = !label.empty();
-    if (!f.image.empty())
+    // a label with a picture (a slot number, a speed, a drive): the picture smaller at the top, the label under it,
+    // both inside the part the bezel leaves visible
+    const int inset = std::max(0, safePad);
+    const int imgSc = std::min(g.Font(3), FitScale(label, s - 2 * inset, g.Font(3)));
+    const int labelBand = hasLabel ? 7 * imgSc + g(12) : 0;
+    const int side = hasLabel ? std::max(8, s - labelBand - inset) : s;
+    if (glyph)
+    {
+        // drawn at its own size from the pack (whole pixel factors for pixel art), on the pack's background
+        const draw::Color bg = packs::Background(pack, f.glyph);
+        im = Rgb(s, s, bg.r, bg.g, bg.b);
+        if (const auto src = packs::Glyph(pack, f.glyph, side))
+            Place(im, *src, (s - side) / 2, hasLabel ? inset / 2 : 0);
+    }
+    else if (!f.image.empty())
     {
         if (auto src = LoadImageRef(f.image, scenarioDir))
         {
             const auto* p = src->At(0, 0);
-            im = FitImage(*src, s, s, FitByName(f.fit).value_or(Fit::Contain), p[0], p[1], p[2]);
+            const Fit fit = FitByName(f.fit).value_or(Fit::Contain);
+            if (!hasLabel)
+                im = FitImage(*src, s, s, fit, p[0], p[1], p[2]);
+            else
+            {
+                im = Rgb(s, s, p[0], p[1], p[2]);
+                Place(im, FitImage(*src, side, side, fit, p[0], p[1], p[2]), (s - side) / 2, inset / 2);
+            }
         }
     }
     else if (!f.svg.empty() || !f.icon.empty())
@@ -160,7 +277,10 @@ Rgb RenderFace(const Face& f, const std::string& fallbackTitle, bool pressed, bo
             if (auto ic = IconByName(f.icon))
                 DrawIcon(im, *ic, (s - sz) / 2, g(hasLabel ? 8 : 16), sz, f.fg, {255, 215, 0});
     }
-    if (hasLabel && f.image.empty())
+    if (hasLabel && picture)
+        draw::Text(im, std::max(inset, (s - draw::TextWidth(label, imgSc)) / 2), s - inset - 7 * imgSc - g(4), label,
+                   imgSc, f.fg);
+    if (hasLabel && !picture)
     {
         const bool alone = f.icon.empty() && f.svg.empty();
         const int maxSc = g.Font(alone ? 4 : 3);

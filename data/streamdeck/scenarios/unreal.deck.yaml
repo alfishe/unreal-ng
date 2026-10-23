@@ -1,0 +1,6145 @@
+format: streamdeck-scenario
+model: plusxl
+name: unreal
+root:
+  context: play
+  dials:
+    -
+      index: 0
+      label: TIME
+      press:
+        id: run.pause_toggle
+        kind: action
+      turn:
+        id: ttd.seek_by
+        kind: action
+        value:
+          d: $ticks
+          max: 50
+          min: 1
+          rate: $rate
+          unit: seconds
+    -
+      index: 1
+      label: VOLUME
+      press:
+        id: audio.mute_toggle
+        kind: action
+      turn:
+        id: audio.volume_by
+        kind: action
+        value:
+          d: $ticks
+    -
+      index: 2
+      label: PACE
+      press:
+        id: run.pace_toggle
+        kind: action
+      turn:
+        id: run.pace_by
+        kind: action
+        value:
+          d: $ticks
+    -
+      index: 3
+      label: STEP
+      press:
+        id: run.step_in
+        kind: action
+      turn:
+        id: run.step_by
+        kind: action
+        value:
+          d: $ticks
+          unit: instructions
+    -
+      index: 4
+      label: FRAMES
+      press:
+        id: ttd.bookmark_add
+        kind: action
+      turn:
+        id: ttd.jog_frames
+        kind: action
+        value:
+          d: $ticks
+    -
+      index: 5
+      label: OPS
+      press:
+        id: ttd.resume_live
+        kind: action
+      turn:
+        id: ttd.jog_instructions
+        kind: action
+        value:
+          d: $ticks
+  face:
+    glyph: nav.folder
+  id: home
+  items:
+    -
+      at:
+        - 0
+        - 0
+      do:
+        id: run.pause_toggle
+        kind: action
+      face:
+        glyph: run.pause
+      face_on:
+        glyph: run.play
+      id: pause
+      state: run.state.paused
+      tags:
+        - uc:C1.1
+      title: "Pause / continue"
+      type: action
+    -
+      at:
+        - 0
+        - 1
+      do:
+        hold: true
+        id: mach.reset
+        kind: action
+      face:
+        glyph: mach.reset
+      id: reset
+      tags:
+        - uc:C1.2
+      title: "Reset (hold 1 s)"
+      type: action
+    -
+      at:
+        - 0
+        - 2
+      do:
+        id: mach.nmi
+        kind: action
+      face:
+        glyph: mach.nmi
+      id: nmi
+      tags:
+        - uc:C1.3
+      title: NMI
+      type: action
+    -
+      at:
+        - 0
+        - 3
+      do:
+        id: mach.turbo_toggle
+        kind: action
+      face:
+        glyph: mach.turbo
+      face_on:
+        glyph: mach.turbo.on
+      id: turbo
+      state: toggle.mach.turbo_toggle
+      tags:
+        - uc:C2.2
+      title: Turbo
+      type: action
+    -
+      at:
+        - 0
+        - 4
+      do:
+        hold: true
+        id: run.turbo_hold
+        kind: action
+      face:
+        glyph: run.turbo_hold
+      id: hold
+      tags:
+        - uc:C2.2
+      title: "Turbo while held"
+      type: action
+    -
+      at:
+        - 0
+        - 5
+      do:
+        id: set.speed
+        kind: action
+        value: 1
+      face:
+        glyph: set.speed
+        label: SPEED
+        value:
+          format: "X{}"
+          readout: run.state.speed
+      id: x1
+      tags:
+        - uc:C2.5
+      title: Speed
+      type: action
+    -
+      at:
+        - 0
+        - 6
+      file: shared/speed.deck.yaml
+      id: speed
+      tags:
+        - open:speed
+      type: include
+    -
+      at:
+        - 0
+        - 7
+      do:
+        id: audio.mute_toggle
+        kind: action
+      face:
+        glyph: audio.sound
+      face_on:
+        glyph: audio.muted
+      id: mute
+      state: audio.mute.muted
+      tags:
+        - uc:C8.1
+      title: Mute
+      type: action
+    -
+      at:
+        - 0
+        - 8
+      do:
+        id: cap.screenshot
+        kind: action
+      face:
+        glyph: cap.screenshot
+      id: shot
+      tags:
+        - uc:C7.5
+      title: Screenshot
+      type: action
+    -
+      at:
+        - 1
+        - 0
+      do:
+        id: snapshot.quick
+        kind: action
+        value:
+          op: save
+          slot: 1
+      face:
+        glyph: snapshot.quick_save
+        label: S1
+      id: qsave
+      tags:
+        - uc:C6.1
+      title: "Quick snapshot"
+      type: action
+    -
+      at:
+        - 1
+        - 1
+      do:
+        id: snapshot.quick
+        kind: action
+        value:
+          op: load
+          slot: 1
+      face:
+        glyph: snapshot.quick_load
+        label: L1
+      id: qload
+      tags:
+        - uc:C6.1
+      title: "Quick snapshot"
+      type: action
+    -
+      at:
+        - 1
+        - 2
+      face:
+        glyph: snapshot.save
+      id: state
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: snapshot.save
+            kind: action
+            value:
+              path: $user/snapshots/deck.szx
+          face:
+            glyph: snapshot.save
+          id: file
+          tags:
+            - uc:C6.2
+          title: "Save a snapshot"
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: media.save
+            kind: action
+            value:
+              drive: A
+          face:
+            glyph: media.save
+            label: A
+          id: diska
+          tags:
+            - uc:C6.3
+          title: "Save the medium"
+          type: action
+        -
+          at:
+            - 0
+            - 3
+          do:
+            id: media.save
+            kind: action
+            value:
+              drive: B
+          face:
+            glyph: media.save
+            label: B
+          id: diskb
+          tags:
+            - uc:C6.3
+          title: "Save the medium"
+          type: action
+        -
+          at:
+            - 0
+            - 4
+          do:
+            id: media.save
+            kind: action
+            value:
+              drive: C
+          face:
+            glyph: media.save
+            label: C
+          id: diskc
+          tags:
+            - uc:C6.3
+          title: "Save the medium"
+          type: action
+        -
+          at:
+            - 0
+            - 5
+          do:
+            id: media.save
+            kind: action
+            value:
+              drive: D
+          face:
+            glyph: media.save
+            label: D
+          id: diskd
+          tags:
+            - uc:C6.3
+          title: "Save the medium"
+          type: action
+        -
+          at:
+            - 0
+            - 6
+          do:
+            id: media.export
+            kind: action
+            value:
+              drive: A
+              format: scl
+          face:
+            glyph: media.export
+            label: "A SCL"
+          id: scl
+          tags:
+            - uc:C6.4
+          title: "Save as another format"
+          type: action
+        -
+          at:
+            - 0
+            - 7
+          do:
+            id: ttd.dump
+            kind: action
+            value:
+              path: $user/sessions/deck.ttd
+          face:
+            glyph: ttd.dump
+          id: tdump
+          tags:
+            - uc:C7.1
+            - uc:D12.1
+          title: "Save the session"
+          type: action
+        -
+          at:
+            - 0
+            - 8
+          do:
+            id: ttd.load
+            kind: action
+            value:
+              path: $user/sessions/deck.ttd
+          face:
+            glyph: ttd.load
+          id: tload
+          tags:
+            - uc:C7.1
+          title: "Open a session"
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: save
+              slot: 1
+          face:
+            glyph: snapshot.quick_save
+            label: S1
+          id: s1
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: save
+              slot: 2
+          face:
+            glyph: snapshot.quick_save
+            label: S2
+          id: s2
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: save
+              slot: 3
+          face:
+            glyph: snapshot.quick_save
+            label: S3
+          id: s3
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 1
+            - 3
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: save
+              slot: 4
+          face:
+            glyph: snapshot.quick_save
+            label: S4
+          id: s4
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 1
+            - 4
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: save
+              slot: 5
+          face:
+            glyph: snapshot.quick_save
+            label: S5
+          id: s5
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 1
+            - 5
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: save
+              slot: 6
+          face:
+            glyph: snapshot.quick_save
+            label: S6
+          id: s6
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 1
+            - 6
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: save
+              slot: 7
+          face:
+            glyph: snapshot.quick_save
+            label: S7
+          id: s7
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 1
+            - 7
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: save
+              slot: 8
+          face:
+            glyph: snapshot.quick_save
+            label: S8
+          id: s8
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 1
+            - 8
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: save
+              slot: 9
+          face:
+            glyph: snapshot.quick_save
+            label: S9
+          id: s9
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 2
+            - 0
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: load
+              slot: 1
+          face:
+            glyph: snapshot.quick_load
+            label: L1
+          id: l1
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: load
+              slot: 2
+          face:
+            glyph: snapshot.quick_load
+            label: L2
+          id: l2
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 2
+            - 2
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: load
+              slot: 3
+          face:
+            glyph: snapshot.quick_load
+            label: L3
+          id: l3
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 2
+            - 3
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: load
+              slot: 4
+          face:
+            glyph: snapshot.quick_load
+            label: L4
+          id: l4
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 2
+            - 4
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: load
+              slot: 5
+          face:
+            glyph: snapshot.quick_load
+            label: L5
+          id: l5
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 2
+            - 5
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: load
+              slot: 6
+          face:
+            glyph: snapshot.quick_load
+            label: L6
+          id: l6
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 2
+            - 6
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: load
+              slot: 7
+          face:
+            glyph: snapshot.quick_load
+            label: L7
+          id: l7
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 2
+            - 7
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: load
+              slot: 8
+          face:
+            glyph: snapshot.quick_load
+            label: L8
+          id: l8
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+        -
+          at:
+            - 2
+            - 8
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: load
+              slot: 9
+          face:
+            glyph: snapshot.quick_load
+            label: L9
+          id: l9
+          tags:
+            - uc:C6.1
+          title: "Quick snapshot"
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+      tags:
+        - uc:C6
+      title: "Save state"
+      type: menu
+    -
+      at:
+        - 1
+        - 3
+      face:
+        glyph: media.open
+      id: media
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: media.open_recent
+            kind: action
+            value:
+              index: 0
+          face:
+            glyph: media.open_recent
+            label: "1"
+          id: r1
+          tags:
+            - uc:C4.3
+          title: "Open a recent file"
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: media.open_recent
+            kind: action
+            value:
+              index: 1
+          face:
+            glyph: media.open_recent
+            label: "2"
+          id: r2
+          tags:
+            - uc:C4.3
+          title: "Open a recent file"
+          type: action
+        -
+          at:
+            - 0
+            - 3
+          do:
+            id: media.open_recent
+            kind: action
+            value:
+              index: 2
+          face:
+            glyph: media.open_recent
+            label: "3"
+          id: r3
+          tags:
+            - uc:C4.3
+          title: "Open a recent file"
+          type: action
+        -
+          at:
+            - 0
+            - 4
+          do:
+            id: media.open_recent
+            kind: action
+            value:
+              index: 3
+          face:
+            glyph: media.open_recent
+            label: "4"
+          id: r4
+          tags:
+            - uc:C4.3
+          title: "Open a recent file"
+          type: action
+        -
+          at:
+            - 0
+            - 5
+          do:
+            id: media.open_recent
+            kind: action
+            value:
+              index: 4
+          face:
+            glyph: media.open_recent
+            label: "5"
+          id: r5
+          tags:
+            - uc:C4.3
+          title: "Open a recent file"
+          type: action
+        -
+          at:
+            - 0
+            - 7
+          do:
+            id: media.open_recent
+            kind: action
+            value:
+              index: 0
+              kind: rzx
+          face:
+            glyph: media.open_recent
+            label: RZX
+          id: rzxlast
+          tags:
+            - uc:C4.4
+          title: "Open a recent file"
+          type: action
+        -
+          at:
+            - 0
+            - 8
+          do:
+            id: rzx.stop
+            kind: action
+          face:
+            glyph: rzx.stop
+          id: rzxstop
+          tags:
+            - uc:C4.4
+          title: "Stop the RZX"
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          do:
+            id: media.tape
+            kind: action
+            value:
+              op: play
+          face:
+            glyph: media.tape.play
+            label: PLAY
+            value:
+              format: "{block}/{blocks}"
+              readout: media.tape
+          id: tplay
+          tags:
+            - uc:C4.2
+          title: Tape
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            id: media.tape
+            kind: action
+            value:
+              op: pause
+          face:
+            glyph: media.tape.pause
+          id: tpause
+          tags:
+            - uc:C4.2
+          title: Tape
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            id: media.tape
+            kind: action
+            value:
+              op: stop
+          face:
+            glyph: media.tape.stop
+          id: tstop
+          tags:
+            - uc:C4.2
+          title: Tape
+          type: action
+        -
+          at:
+            - 1
+            - 3
+          do:
+            id: media.tape
+            kind: action
+            value:
+              op: rewind
+          face:
+            glyph: media.tape.rewind
+          id: trew
+          tags:
+            - uc:C4.2
+          title: Tape
+          type: action
+        -
+          at:
+            - 1
+            - 4
+          do:
+            id: media.tape
+            kind: action
+            value:
+              op: eject
+          face:
+            glyph: media.tape.eject
+          id: teject
+          tags:
+            - uc:C4.2
+          title: Tape
+          type: action
+        -
+          at:
+            - 1
+            - 6
+          do:
+            id: media.swap
+            kind: action
+            value:
+              drive: A
+              with: B
+          face:
+            glyph: media.swap
+            label: A-B
+          id: swapab
+          tags:
+            - uc:C5.2
+          title: "Swap disks"
+          type: action
+        -
+          at:
+            - 1
+            - 7
+          do:
+            id: media.create
+            kind: action
+            value:
+              drive: A
+              format: trdos
+          face:
+            glyph: media.create
+            label: A
+          id: blank
+          tags:
+            - uc:C5.3
+          title: "New blank disk"
+          type: action
+        -
+          at:
+            - 1
+            - 8
+          do:
+            id: media.discard
+            kind: action
+            value:
+              drive: A
+          face:
+            glyph: media.discard
+            label: A
+          id: discard
+          tags:
+            - uc:C5.5
+          title: "Discard changes"
+          type: action
+        -
+          at:
+            - 2
+            - 0
+          do:
+            id: media.protect
+            kind: action
+            value:
+              drive: A
+          face:
+            glyph: media.protect
+            label: A
+            value:
+              format: "{?WP|RW}"
+              readout: media.disk.drives.0.protect
+          id: wpa
+          tags:
+            - uc:C5.1
+          title: "Write protect"
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          do:
+            id: media.protect
+            kind: action
+            value:
+              drive: B
+          face:
+            glyph: media.protect
+            label: B
+            value:
+              format: "{?WP|RW}"
+              readout: media.disk.drives.1.protect
+          id: wpb
+          tags:
+            - uc:C5.1
+          title: "Write protect"
+          type: action
+        -
+          at:
+            - 2
+            - 2
+          do:
+            id: media.protect
+            kind: action
+            value:
+              drive: C
+          face:
+            glyph: media.protect
+            label: C
+            value:
+              format: "{?WP|RW}"
+              readout: media.disk.drives.2.protect
+          id: wpc
+          tags:
+            - uc:C5.1
+          title: "Write protect"
+          type: action
+        -
+          at:
+            - 2
+            - 3
+          do:
+            id: media.protect
+            kind: action
+            value:
+              drive: D
+          face:
+            glyph: media.protect
+            label: D
+            value:
+              format: "{?WP|RW}"
+              readout: media.disk.drives.3.protect
+          id: wpd
+          tags:
+            - uc:C5.1
+          title: "Write protect"
+          type: action
+        -
+          at:
+            - 2
+            - 5
+          do:
+            id: media.save
+            kind: action
+            value:
+              drive: A
+          face:
+            glyph: media.save
+            label: "SAVE A"
+            value:
+              format: "{?CHANGED|-}"
+              readout: media.disk.drives.0.dirty
+          id: savea
+          tags:
+            - uc:C6.3
+          title: "Save the medium"
+          type: action
+        -
+          at:
+            - 2
+            - 6
+          do:
+            id: media.save
+            kind: action
+            value:
+              drive: B
+          face:
+            glyph: media.save
+            label: "SAVE B"
+            value:
+              format: "{?CHANGED|-}"
+              readout: media.disk.drives.1.dirty
+          id: saveb
+          tags:
+            - uc:C6.3
+          title: "Save the medium"
+          type: action
+        -
+          at:
+            - 2
+            - 7
+          do:
+            id: media.save
+            kind: action
+            value:
+              drive: C
+          face:
+            glyph: media.save
+            label: "SAVE C"
+            value:
+              format: "{?CHANGED|-}"
+              readout: media.disk.drives.2.dirty
+          id: savec
+          tags:
+            - uc:C6.3
+          title: "Save the medium"
+          type: action
+        -
+          at:
+            - 2
+            - 8
+          do:
+            id: media.save
+            kind: action
+            value:
+              drive: D
+          face:
+            glyph: media.save
+            label: "SAVE D"
+            value:
+              format: "{?CHANGED|-}"
+              readout: media.disk.drives.3.dirty
+          id: saved
+          tags:
+            - uc:C6.3
+          title: "Save the medium"
+          type: action
+        -
+          at:
+            - 3
+            - 0
+          do:
+            id: media.eject
+            kind: action
+            value:
+              drive: A
+          face:
+            glyph: media.eject
+            label: A
+            value:
+              format: "{}"
+              readout: media.disk.drives.0.name
+          id: eja
+          tags:
+            - uc:C5.1
+          title: Eject
+          type: action
+        -
+          at:
+            - 3
+            - 1
+          do:
+            id: media.eject
+            kind: action
+            value:
+              drive: B
+          face:
+            glyph: media.eject
+            label: B
+            value:
+              format: "{}"
+              readout: media.disk.drives.1.name
+          id: ejb
+          tags:
+            - uc:C5.1
+          title: Eject
+          type: action
+        -
+          at:
+            - 3
+            - 2
+          do:
+            id: media.eject
+            kind: action
+            value:
+              drive: C
+          face:
+            glyph: media.eject
+            label: C
+            value:
+              format: "{}"
+              readout: media.disk.drives.2.name
+          id: ejc
+          tags:
+            - uc:C5.1
+          title: Eject
+          type: action
+        -
+          at:
+            - 3
+            - 3
+          do:
+            id: media.eject
+            kind: action
+            value:
+              drive: D
+          face:
+            glyph: media.eject
+            label: D
+            value:
+              format: "{}"
+              readout: media.disk.drives.3.name
+          id: ejd
+          tags:
+            - uc:C5.1
+          title: Eject
+          type: action
+        -
+          at:
+            - 3
+            - 5
+          do:
+            id: set.toggle
+            kind: action
+            value:
+              name: trdos_traps
+          face:
+            glyph: settings.toggle
+            label: TRAPS
+          face_on:
+            glyph: settings.toggle.on
+          id: trdos
+          state: toggle.set.toggle.trdos_traps
+          tags:
+            - uc:U4.4
+          title: "Toggle a setting"
+          type: action
+        -
+          at:
+            - 3
+            - 6
+          do:
+            id: set.toggle
+            kind: action
+            value:
+              name: fast_tape
+          face:
+            glyph: settings.toggle
+            label: TAPE
+          face_on:
+            glyph: settings.toggle.on
+          id: ftape
+          state: toggle.set.toggle.fast_tape
+          tags:
+            - uc:C2.4
+          title: "Toggle a setting"
+          type: action
+        -
+          at:
+            - 3
+            - 7
+          do:
+            id: set.toggle
+            kind: action
+            value:
+              name: turbo_tape
+          face:
+            glyph: settings.toggle
+            label: TURBO
+          face_on:
+            glyph: settings.toggle.on
+          id: ttape
+          state: toggle.set.toggle.turbo_tape
+          tags:
+            - uc:C2.4
+          title: "Toggle a setting"
+          type: action
+        -
+          at:
+            - 3
+            - 8
+          do:
+            id: set.toggle
+            kind: action
+            value:
+              name: fast_disk
+          face:
+            glyph: settings.toggle
+            label: DISK
+          face_on:
+            glyph: settings.toggle.on
+          id: fdisk
+          state: toggle.set.toggle.fast_disk
+          tags:
+            - uc:C2.4
+          title: "Toggle a setting"
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+      tags:
+        - uc:C4
+        - uc:C5
+      title: Media
+      type: menu
+    -
+      at:
+        - 1
+        - 4
+      face:
+        glyph: mach.start
+      id: machine
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: mach.previous
+            kind: action
+          face:
+            glyph: mach.previous
+            label: PREVIOUS
+            value:
+              format: "{}"
+              readout: machine.previous.model
+          id: prev
+          tags:
+            - uc:C3.3
+          title: "Previous model"
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: mach.cold_reset
+            kind: action
+          face:
+            glyph: mach.cold_reset
+          id: cold
+          tags:
+            - uc:C1.2
+          title: "Restart (cold)"
+          type: action
+        -
+          at:
+            - 0
+            - 3
+          face:
+            label: NOW
+            value:
+              format: "{}"
+              readout: machine.model
+          id: now
+          tags:
+            - uc:C3.1
+          title: now
+          type: action
+        -
+          at:
+            - 0
+            - 7
+          do:
+            id: mach.switch
+            kind: action
+            value:
+              name: turbo
+          face:
+            glyph: mach.switch
+            label: TURBO
+          face_on:
+            glyph: mach.switch.on
+          id: pturbo
+          state: toggle.mach.switch.turbo
+          tags:
+            - uc:C1.5
+          title: "Front-panel switch"
+          type: action
+        -
+          at:
+            - 0
+            - 8
+          do:
+            id: mach.switch
+            kind: action
+            value:
+              name: cpm
+          face:
+            glyph: mach.switch
+            label: CP/M
+          face_on:
+            glyph: mach.switch.on
+          id: pcpm
+          state: toggle.mach.switch.cpm
+          tags:
+            - uc:C1.5
+          title: "Front-panel switch"
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: 48K
+              replace: true
+          face:
+            glyph: mach.start
+            label: 48K
+          id: m48
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: 128K
+              replace: true
+          face:
+            glyph: mach.start
+            label: 128K
+          id: m128
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: PLUS2
+              replace: true
+          face:
+            glyph: mach.start
+            label: "+2"
+          id: mplus2
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 1
+            - 3
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: PLUS2A
+              replace: true
+          face:
+            glyph: mach.start
+            label: +2A
+          id: mplus2a
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 1
+            - 4
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: PLUS3
+              replace: true
+          face:
+            glyph: mach.start
+            label: "+3"
+          id: mplus3
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 1
+            - 6
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: NEXT
+              replace: true
+          face:
+            glyph: mach.start
+            label: NEXT
+          id: mnext
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 1
+            - 7
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: SPRINTER
+              replace: true
+          face:
+            glyph: mach.start
+            label: SPRINTER
+          id: msprint
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 2
+            - 0
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: PENTAGON
+              ram_kb: 128
+              replace: true
+          face:
+            glyph: mach.start
+            label: P128
+          id: mpent
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: PENTAGON
+              ram_kb: 512
+              replace: true
+          face:
+            glyph: mach.start
+            label: P512
+          id: mpent5
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 2
+            - 2
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: PENTAGON
+              ram_kb: 1024
+              replace: true
+          face:
+            glyph: mach.start
+            label: P1024
+          id: mpent1
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 2
+            - 3
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: SCORPION
+              ram_kb: 256
+              replace: true
+          face:
+            glyph: mach.start
+            label: SCORP
+          id: mscorp
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 2
+            - 4
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: SCORPION
+              ram_kb: 1024
+              replace: true
+          face:
+            glyph: mach.start
+            label: SC1024
+          id: mscorp1
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 2
+            - 5
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: PROFSCORP
+              replace: true
+          face:
+            glyph: mach.start
+            label: PROF
+          id: mprofsc
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 2
+            - 6
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: ZXPOLY-48K
+              replace: true
+          face:
+            glyph: mach.start
+            label: POLY48
+          id: mpoly48
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 2
+            - 7
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: ZXPOLY-128K
+              replace: true
+          face:
+            glyph: mach.start
+            label: POLY128
+          id: mpoly
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 2
+            - 8
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: ZXPOLY-PENTAGON
+              replace: true
+          face:
+            glyph: mach.start
+            label: "POLY P"
+          id: mpolyp
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 3
+            - 0
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: ATM450
+              replace: true
+          face:
+            glyph: mach.start
+            label: ATM450
+          id: matm4
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 3
+            - 1
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: ATM710
+              replace: true
+          face:
+            glyph: mach.start
+            label: ATM710
+          id: matm7
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 3
+            - 2
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: ATM3
+              replace: true
+          face:
+            glyph: mach.start
+            label: EVO
+          id: mevo
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 3
+            - 3
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: TSL
+              replace: true
+          face:
+            glyph: mach.start
+            label: TSCONF
+          id: mtsl
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 3
+            - 4
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: TSL-VDAC2
+              replace: true
+          face:
+            glyph: mach.start
+            label: VDAC2
+          id: mvdac
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 3
+            - 5
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: PROFI
+              ram_kb: 1024
+              replace: true
+          face:
+            glyph: mach.start
+            label: PROFI
+          id: mprofi
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 3
+            - 6
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: PROFI
+              ram_kb: 512
+              replace: true
+          face:
+            glyph: mach.start
+            label: PROFI512
+          id: mprofi5
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 3
+            - 7
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: PROFI3
+              replace: true
+          face:
+            glyph: mach.start
+            label: PROFI3
+          id: mprofi3
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 3
+            - 8
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: PROFI-PLUS
+              replace: true
+          face:
+            glyph: mach.start
+            label: PROFI+
+          id: mprofip
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+      tags:
+        - uc:C3
+      title: Machine
+      type: menu
+    -
+      at:
+        - 1
+        - 5
+      face:
+        glyph: cap.record
+      id: record
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: cap.record_toggle
+            kind: action
+            value:
+              preset: gameplay
+          face:
+            glyph: cap.record
+            label: GAME
+          face_on:
+            glyph: cap.record.on
+          id: vgame
+          state: toggle.cap.record_toggle
+          tags:
+            - uc:C7.2
+          title: "Record video"
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: cap.record_toggle
+            kind: action
+            value:
+              preset: hq
+          face:
+            glyph: cap.record
+            label: HQ
+          face_on:
+            glyph: cap.record.on
+          id: vhq
+          state: toggle.cap.record_toggle
+          tags:
+            - uc:C7.2
+          title: "Record video"
+          type: action
+        -
+          at:
+            - 0
+            - 3
+          do:
+            id: cap.record_toggle
+            kind: action
+            value:
+              preset: gif
+          face:
+            glyph: cap.record
+            label: GIF
+          face_on:
+            glyph: cap.record.on
+          id: vgif
+          state: toggle.cap.record_toggle
+          tags:
+            - uc:C7.2
+          title: "Record video"
+          type: action
+        -
+          at:
+            - 0
+            - 4
+          do:
+            id: cap.record_toggle
+            kind: action
+            value:
+              preset: multitrack
+          face:
+            glyph: cap.record
+            label: MULTI
+          face_on:
+            glyph: cap.record.on
+          id: vmulti
+          state: toggle.cap.record_toggle
+          tags:
+            - uc:C7.2
+          title: "Record video"
+          type: action
+        -
+          at:
+            - 0
+            - 5
+          do:
+            id: cap.record_pause
+            kind: action
+          face:
+            glyph: cap.record_pause
+          id: vpause
+          tags:
+            - uc:C7.2
+          title: "Pause recording"
+          type: action
+        -
+          at:
+            - 0
+            - 7
+          face:
+            label: LENGTH
+            value:
+              format: "{:.0f}S"
+              readout: cap.record.seconds
+          id: vlen
+          tags:
+            - uc:C10.9
+          title: vlen
+          type: action
+        -
+          at:
+            - 0
+            - 8
+          face:
+            label: SIZE
+            value:
+              format: "{:b}"
+              readout: cap.record.bytes
+          id: vsize
+          tags:
+            - uc:C10.9
+          title: vsize
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          do:
+            id: cap.record_toggle
+            kind: action
+            value:
+              preset: music
+          face:
+            glyph: cap.record
+            label: FLAC
+          face_on:
+            glyph: cap.record.on
+          id: amusic
+          state: toggle.cap.record_toggle
+          tags:
+            - uc:C7.2a
+          title: "Record video"
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            id: cap.record_toggle
+            kind: action
+            value:
+              preset: audio
+          face:
+            glyph: cap.record
+            label: WAV
+          face_on:
+            glyph: cap.record.on
+          id: awav
+          state: toggle.cap.record_toggle
+          tags:
+            - uc:C7.2a
+          title: "Record video"
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            id: cap.audio_capture
+            kind: action
+            value:
+              seconds: 10
+              source: ay1
+          face:
+            glyph: cap.audio_capture
+            label: "AY 10S"
+          id: aay
+          tags:
+            - uc:C7.4
+          title: "Capture audio"
+          type: action
+        -
+          at:
+            - 1
+            - 4
+          do:
+            id: cap.clip_last
+            kind: action
+            value:
+              format: mp4
+              seconds: 10
+          face:
+            glyph: cap.clip_last
+            label: 10S
+          id: clip
+          tags:
+            - uc:C7.3
+          title: "Clip the last seconds"
+          type: action
+        -
+          at:
+            - 1
+            - 5
+          do:
+            id: cap.clip_last
+            kind: action
+            value:
+              format: gif
+              seconds: 10
+          face:
+            glyph: cap.clip_last
+            label: "GIF 10S"
+          id: clipgif
+          tags:
+            - uc:C7.3
+          title: "Clip the last seconds"
+          type: action
+        -
+          at:
+            - 1
+            - 7
+          do:
+            id: cap.screenshot
+            kind: action
+          face:
+            glyph: cap.screenshot
+          id: recshot
+          tags:
+            - uc:C7.5
+          title: Screenshot
+          type: action
+        -
+          at:
+            - 1
+            - 8
+          do:
+            id: cap.screenshot_save
+            kind: action
+            value:
+              path: $user/screenshots/deck.png
+          face:
+            glyph: cap.screenshot_save
+            label: PNG
+          id: shotpng
+          tags:
+            - uc:C7.5
+          title: "Save a screenshot"
+          type: action
+        -
+          at:
+            - 2
+            - 0
+          do:
+            id: ttd.start
+            kind: action
+          face:
+            glyph: ttd.record.on
+          id: tstart
+          tags:
+            - uc:C7.1
+          title: "Start recording"
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          do:
+            id: ttd.stop
+            kind: action
+          face:
+            glyph: ttd.stop
+          id: rectstop
+          tags:
+            - uc:C7.1
+          title: "Stop recording"
+          type: action
+        -
+          at:
+            - 2
+            - 2
+          do:
+            id: ttd.invalidate
+            kind: action
+          face:
+            glyph: ttd.invalidate
+          id: tdrop
+          tags:
+            - uc:C7.1
+          title: "Drop the history"
+          type: action
+        -
+          at:
+            - 2
+            - 4
+          do:
+            id: ttd.export_clip
+            kind: action
+            value:
+              path: $user/clips/history.mp4
+          face:
+            glyph: ttd.export_clip
+          id: tclip
+          tags:
+            - uc:C7.3
+          title: "Export a range as a clip"
+          type: action
+        -
+          at:
+            - 2
+            - 6
+          do:
+            id: ttd.dump
+            kind: action
+            value:
+              path: $user/sessions/deck.ttd
+          face:
+            glyph: ttd.dump
+          id: rectdump
+          tags:
+            - uc:C7.1
+          title: "Save the session"
+          type: action
+        -
+          at:
+            - 2
+            - 7
+          do:
+            id: ttd.load
+            kind: action
+            value:
+              path: $user/sessions/deck.ttd
+          face:
+            glyph: ttd.load
+          id: rectload
+          tags:
+            - uc:C7.1
+          title: "Open a session"
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+      tags:
+        - uc:C7
+      title: Record
+      type: menu
+    -
+      at:
+        - 1
+        - 6
+      dials:
+        -
+          index: 0
+          label: BEEPER
+          press:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: beeper
+          turn:
+            id: audio.volume_by
+            kind: action
+            value:
+              d: $ticks
+              source: beeper
+        -
+          index: 1
+          label: AY1
+          press:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: ay1
+          turn:
+            id: audio.volume_by
+            kind: action
+            value:
+              d: $ticks
+              source: ay1
+        -
+          index: 2
+          label: AY2
+          press:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: ay2
+          turn:
+            id: audio.volume_by
+            kind: action
+            value:
+              d: $ticks
+              source: ay2
+        -
+          index: 3
+          label: COVOX
+          press:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: covox
+          turn:
+            id: audio.volume_by
+            kind: action
+            value:
+              d: $ticks
+              source: covox
+        -
+          index: 4
+          label: GS
+          press:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: gs
+          turn:
+            id: audio.volume_by
+            kind: action
+            value:
+              d: $ticks
+              source: gs
+        -
+          index: 5
+          label: MASTER
+          press:
+            id: audio.mute_toggle
+            kind: action
+          turn:
+            id: audio.volume_by
+            kind: action
+            value:
+              d: $ticks
+      face:
+        glyph: audio.sound
+      id: sound
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: audio.mute_toggle
+            kind: action
+          face:
+            glyph: audio.sound
+          face_on:
+            glyph: audio.muted
+          id: soumute
+          state: audio.mute.muted
+          tags:
+            - uc:C8.1
+          title: Mute
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          dials:
+            -
+              index: 0
+              label: "AY1 A"
+              press:
+                id: audio.source_mute
+                kind: action
+                value:
+                  source: ay1.a
+              turn:
+                id: audio.volume_by
+                kind: action
+                value:
+                  d: $ticks
+                  source: ay1.a
+            -
+              index: 1
+              label: "AY1 B"
+              press:
+                id: audio.source_mute
+                kind: action
+                value:
+                  source: ay1.b
+              turn:
+                id: audio.volume_by
+                kind: action
+                value:
+                  d: $ticks
+                  source: ay1.b
+            -
+              index: 2
+              label: "AY1 C"
+              press:
+                id: audio.source_mute
+                kind: action
+                value:
+                  source: ay1.c
+              turn:
+                id: audio.volume_by
+                kind: action
+                value:
+                  d: $ticks
+                  source: ay1.c
+            -
+              index: 3
+              label: "AY2 A"
+              press:
+                id: audio.source_mute
+                kind: action
+                value:
+                  source: ay2.a
+              turn:
+                id: audio.volume_by
+                kind: action
+                value:
+                  d: $ticks
+                  source: ay2.a
+            -
+              index: 4
+              label: "AY2 B"
+              press:
+                id: audio.source_mute
+                kind: action
+                value:
+                  source: ay2.b
+              turn:
+                id: audio.volume_by
+                kind: action
+                value:
+                  d: $ticks
+                  source: ay2.b
+            -
+              index: 5
+              label: "AY2 C"
+              press:
+                id: audio.source_mute
+                kind: action
+                value:
+                  source: ay2.c
+              turn:
+                id: audio.volume_by
+                kind: action
+                value:
+                  d: $ticks
+                  source: ay2.c
+          face:
+            glyph: audio.sound
+          id: ay
+          items:
+            -
+              at:
+                - 1
+                - 0
+              do:
+                id: audio.source_mute
+                kind: action
+                value:
+                  source: ay1.a
+              face:
+                glyph: audio.source
+                label: 1A
+              id: m1a
+              tags:
+                - uc:C8.3
+              title: "Mute a source"
+              type: action
+            -
+              at:
+                - 1
+                - 1
+              do:
+                id: audio.source_mute
+                kind: action
+                value:
+                  source: ay1.b
+              face:
+                glyph: audio.source
+                label: 1B
+              id: m1b
+              tags:
+                - uc:C8.3
+              title: "Mute a source"
+              type: action
+            -
+              at:
+                - 1
+                - 2
+              do:
+                id: audio.source_mute
+                kind: action
+                value:
+                  source: ay1.c
+              face:
+                glyph: audio.source
+                label: 1C
+              id: m1c
+              tags:
+                - uc:C8.3
+              title: "Mute a source"
+              type: action
+            -
+              at:
+                - 1
+                - 3
+              do:
+                id: audio.source_mute
+                kind: action
+                value:
+                  source: ay2.a
+              face:
+                glyph: audio.source
+                label: 2A
+              id: m2a
+              tags:
+                - uc:C8.3
+              title: "Mute a source"
+              type: action
+            -
+              at:
+                - 1
+                - 4
+              do:
+                id: audio.source_mute
+                kind: action
+                value:
+                  source: ay2.b
+              face:
+                glyph: audio.source
+                label: 2B
+              id: m2b
+              tags:
+                - uc:C8.3
+              title: "Mute a source"
+              type: action
+            -
+              at:
+                - 1
+                - 5
+              do:
+                id: audio.source_mute
+                kind: action
+                value:
+                  source: ay2.c
+              face:
+                glyph: audio.source
+                label: 2C
+              id: m2c
+              tags:
+                - uc:C8.3
+              title: "Mute a source"
+              type: action
+            -
+              at:
+                - 1
+                - 6
+              do:
+                id: audio.source_mute
+                kind: action
+                value:
+                  source: ay3.a
+              face:
+                glyph: audio.source
+                label: 3A
+              id: m3a
+              tags:
+                - uc:C8.3
+              title: "Mute a source"
+              type: action
+            -
+              at:
+                - 1
+                - 7
+              do:
+                id: audio.source_mute
+                kind: action
+                value:
+                  source: ay3.b
+              face:
+                glyph: audio.source
+                label: 3B
+              id: m3b
+              tags:
+                - uc:C8.3
+              title: "Mute a source"
+              type: action
+            -
+              at:
+                - 1
+                - 8
+              do:
+                id: audio.source_mute
+                kind: action
+                value:
+                  source: ay3.c
+              face:
+                glyph: audio.source
+                label: 3C
+              id: m3c
+              tags:
+                - uc:C8.3
+              title: "Mute a source"
+              type: action
+            -
+              at:
+                - 2
+                - 0
+              do:
+                id: audio.source_solo
+                kind: action
+                value:
+                  source: ay1.a
+              face:
+                glyph: audio.solo
+                label: 1A
+              id: s1a
+              tags:
+                - uc:C8.3
+              title: "Solo a source"
+              type: action
+            -
+              at:
+                - 2
+                - 1
+              do:
+                id: audio.source_solo
+                kind: action
+                value:
+                  source: ay1.b
+              face:
+                glyph: audio.solo
+                label: 1B
+              id: s1b
+              tags:
+                - uc:C8.3
+              title: "Solo a source"
+              type: action
+            -
+              at:
+                - 2
+                - 2
+              do:
+                id: audio.source_solo
+                kind: action
+                value:
+                  source: ay1.c
+              face:
+                glyph: audio.solo
+                label: 1C
+              id: s1c
+              tags:
+                - uc:C8.3
+              title: "Solo a source"
+              type: action
+            -
+              at:
+                - 2
+                - 3
+              do:
+                id: audio.source_solo
+                kind: action
+                value:
+                  source: ay2.a
+              face:
+                glyph: audio.solo
+                label: 2A
+              id: s2a
+              tags:
+                - uc:C8.3
+              title: "Solo a source"
+              type: action
+            -
+              at:
+                - 2
+                - 4
+              do:
+                id: audio.source_solo
+                kind: action
+                value:
+                  source: ay2.b
+              face:
+                glyph: audio.solo
+                label: 2B
+              id: s2b
+              tags:
+                - uc:C8.3
+              title: "Solo a source"
+              type: action
+            -
+              at:
+                - 2
+                - 5
+              do:
+                id: audio.source_solo
+                kind: action
+                value:
+                  source: ay2.c
+              face:
+                glyph: audio.solo
+                label: 2C
+              id: s2c
+              tags:
+                - uc:C8.3
+              title: "Solo a source"
+              type: action
+            -
+              at:
+                - 2
+                - 6
+              do:
+                id: audio.source_solo
+                kind: action
+                value:
+                  source: ay3.a
+              face:
+                glyph: audio.solo
+                label: 3A
+              id: s3a
+              tags:
+                - uc:C8.3
+              title: "Solo a source"
+              type: action
+            -
+              at:
+                - 2
+                - 7
+              do:
+                id: audio.source_solo
+                kind: action
+                value:
+                  source: ay3.b
+              face:
+                glyph: audio.solo
+                label: 3B
+              id: s3b
+              tags:
+                - uc:C8.3
+              title: "Solo a source"
+              type: action
+            -
+              at:
+                - 2
+                - 8
+              do:
+                id: audio.source_solo
+                kind: action
+                value:
+                  source: ay3.c
+              face:
+                glyph: audio.solo
+                label: 3C
+              id: s3c
+              tags:
+                - uc:C8.3
+              title: "Solo a source"
+              type: action
+          nav:
+            back:
+              - 0
+              - 0
+            dials: own
+          tags:
+            - uc:C8.3
+            - dial.0.uc:C8.3
+            - dial.1.uc:C8.3
+            - dial.2.uc:C8.3
+            - dial.3.uc:C8.3
+            - dial.4.uc:C8.3
+            - dial.5.uc:C8.3
+          title: "AY channels"
+          type: menu
+        -
+          at:
+            - 0
+            - 4
+          do:
+            id: set.value
+            kind: action
+            value:
+              name: ay_stereo
+              value: next
+          face:
+            glyph: settings.value
+            label: STEREO
+          id: stereo
+          tags:
+            - uc:C8.4
+          title: "Set a setting"
+          type: action
+        -
+          at:
+            - 0
+            - 5
+          do:
+            id: set.toggle
+            kind: action
+            value:
+              name: fir_filter
+          face:
+            glyph: settings.toggle
+            label: FIR
+          face_on:
+            glyph: settings.toggle.on
+          id: fir
+          state: toggle.set.toggle.fir_filter
+          tags:
+            - uc:C8.4
+          title: "Toggle a setting"
+          type: action
+        -
+          at:
+            - 0
+            - 6
+          do:
+            id: set.toggle
+            kind: action
+            value:
+              name: ay_punch
+          face:
+            glyph: settings.toggle
+            label: PUNCH
+          face_on:
+            glyph: settings.toggle.on
+          id: aypunch
+          state: toggle.set.toggle.ay_punch
+          tags:
+            - uc:C8.4
+          title: "Toggle a setting"
+          type: action
+        -
+          at:
+            - 0
+            - 7
+          do:
+            id: set.toggle
+            kind: action
+            value:
+              name: covox_dc_removal
+          face:
+            glyph: settings.toggle
+            label: DC
+          face_on:
+            glyph: settings.toggle.on
+          id: dc
+          state: toggle.set.toggle.covox_dc_removal
+          tags:
+            - uc:C8.4
+          title: "Toggle a setting"
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: beeper
+          face:
+            glyph: audio.source
+            label: BEEP
+          id: mbeep
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: ay1
+          face:
+            glyph: audio.source
+            label: AY1
+          id: may1
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: ay2
+          face:
+            glyph: audio.source
+            label: AY2
+          id: may2
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+        -
+          at:
+            - 1
+            - 3
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: ay3
+          face:
+            glyph: audio.source
+            label: AY3
+          id: may3
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+        -
+          at:
+            - 1
+            - 4
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: fm1
+          face:
+            glyph: audio.source
+            label: FM1
+          id: mfm1
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+        -
+          at:
+            - 1
+            - 5
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: covox
+          face:
+            glyph: audio.source
+            label: COVOX
+          id: mcov
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+        -
+          at:
+            - 1
+            - 6
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: gs
+          face:
+            glyph: audio.source
+            label: GS
+          id: mgs
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+        -
+          at:
+            - 1
+            - 7
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: moonsound_fm
+          face:
+            glyph: audio.source
+            label: "MS FM"
+          id: mmsfm
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+        -
+          at:
+            - 1
+            - 8
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: moonsound_pcm
+          face:
+            glyph: audio.source
+            label: "MS PCM"
+          id: mmspcm
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+        -
+          at:
+            - 2
+            - 0
+          do:
+            id: audio.source_solo
+            kind: action
+            value:
+              source: beeper
+          face:
+            glyph: audio.solo
+            label: BEEP
+          id: sbeep
+          tags:
+            - uc:C8.2
+          title: "Solo a source"
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          do:
+            id: audio.source_solo
+            kind: action
+            value:
+              source: ay1
+          face:
+            glyph: audio.solo
+            label: AY1
+          id: say1
+          tags:
+            - uc:C8.2
+          title: "Solo a source"
+          type: action
+        -
+          at:
+            - 2
+            - 2
+          do:
+            id: audio.source_solo
+            kind: action
+            value:
+              source: ay2
+          face:
+            glyph: audio.solo
+            label: AY2
+          id: say2
+          tags:
+            - uc:C8.2
+          title: "Solo a source"
+          type: action
+        -
+          at:
+            - 2
+            - 3
+          do:
+            id: audio.source_solo
+            kind: action
+            value:
+              source: ay3
+          face:
+            glyph: audio.solo
+            label: AY3
+          id: say3
+          tags:
+            - uc:C8.2
+          title: "Solo a source"
+          type: action
+        -
+          at:
+            - 2
+            - 4
+          do:
+            id: audio.source_solo
+            kind: action
+            value:
+              source: fm1
+          face:
+            glyph: audio.solo
+            label: FM1
+          id: sfm1
+          tags:
+            - uc:C8.2
+          title: "Solo a source"
+          type: action
+        -
+          at:
+            - 2
+            - 5
+          do:
+            id: audio.source_solo
+            kind: action
+            value:
+              source: covox
+          face:
+            glyph: audio.solo
+            label: COVOX
+          id: scov
+          tags:
+            - uc:C8.2
+          title: "Solo a source"
+          type: action
+        -
+          at:
+            - 2
+            - 6
+          do:
+            id: audio.source_solo
+            kind: action
+            value:
+              source: gs
+          face:
+            glyph: audio.solo
+            label: GS
+          id: sgs
+          tags:
+            - uc:C8.2
+          title: "Solo a source"
+          type: action
+        -
+          at:
+            - 2
+            - 7
+          do:
+            id: audio.source_solo
+            kind: action
+            value:
+              source: moonsound_fm
+          face:
+            glyph: audio.solo
+            label: "MS FM"
+          id: smsfm
+          tags:
+            - uc:C8.2
+          title: "Solo a source"
+          type: action
+        -
+          at:
+            - 2
+            - 8
+          do:
+            id: audio.source_solo
+            kind: action
+            value:
+              source: moonsound_pcm
+          face:
+            glyph: audio.solo
+            label: "MS PCM"
+          id: smspcm
+          tags:
+            - uc:C8.2
+          title: "Solo a source"
+          type: action
+        -
+          at:
+            - 3
+            - 0
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: next_ay1
+          face:
+            glyph: audio.source
+            label: "N AY1"
+          id: mnay1
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+        -
+          at:
+            - 3
+            - 1
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: next_ay2
+          face:
+            glyph: audio.source
+            label: "N AY2"
+          id: mnay2
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+        -
+          at:
+            - 3
+            - 2
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: next_ay3
+          face:
+            glyph: audio.source
+            label: "N AY3"
+          id: mnay3
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+        -
+          at:
+            - 3
+            - 3
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: next_dac
+          face:
+            glyph: audio.source
+            label: "N DAC"
+          id: mndac
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+        -
+          at:
+            - 3
+            - 4
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: fm2
+          face:
+            glyph: audio.source
+            label: FM2
+          id: mfm2
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+        -
+          at:
+            - 3
+            - 5
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: gs_mp3
+          face:
+            glyph: audio.source
+            label: "GS MP3"
+          id: mgsmp3
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+        -
+          at:
+            - 3
+            - 6
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: ms_midi
+          face:
+            glyph: audio.source
+            label: MIDI
+          id: mmidi
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+        -
+          at:
+            - 3
+            - 7
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: cd0
+          face:
+            glyph: audio.source
+            label: CD
+          id: mcd
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+        -
+          at:
+            - 3
+            - 8
+          do:
+            id: audio.source_mute
+            kind: action
+            value:
+              source: ms_saa
+          face:
+            glyph: audio.source
+            label: SAA
+          id: msaa
+          tags:
+            - uc:C8.2
+          title: "Mute a source"
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+        dials: own
+      tags:
+        - uc:C8
+        - dial.0.uc:C8.2
+        - dial.1.uc:C8.2
+        - dial.2.uc:C8.2
+        - dial.3.uc:C8.2
+        - dial.4.uc:C8.2
+        - dial.5.uc:C8.2
+      title: Sound
+      type: menu
+    -
+      at:
+        - 1
+        - 7
+      dials:
+        -
+          index: 0
+          label: DECAY
+          press:
+            id: video.blending
+            kind: action
+          turn:
+            id: video.blending_decay_by
+            kind: action
+            value:
+              d: $ticks
+      face:
+        glyph: nav.folder
+      id: picture
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: view.fullscreen
+            kind: action
+          face:
+            glyph: view.fullscreen
+          face_on:
+            glyph: view.fullscreen.on
+          id: picfull
+          state: toggle.view.fullscreen
+          tags:
+            - uc:C9.1
+          title: "Full screen"
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: view.scale
+            kind: action
+            value:
+              scale: next
+          face:
+            glyph: view.scale
+          id: scale
+          tags:
+            - uc:C9.1
+          title: "Window scale"
+          type: action
+        -
+          at:
+            - 0
+            - 3
+          do:
+            id: video.gpu_toggle
+            kind: action
+          face:
+            glyph: video.gpu
+          face_on:
+            glyph: video.gpu.on
+          id: gpu
+          state: toggle.video.gpu_toggle
+          tags:
+            - uc:C9.2
+          title: "GPU acceleration"
+          type: action
+        -
+          at:
+            - 0
+            - 4
+          do:
+            id: video.overscan_toggle
+            kind: action
+          face:
+            glyph: video.overscan
+          face_on:
+            glyph: video.overscan.on
+          id: over
+          state: toggle.video.overscan_toggle
+          tags:
+            - uc:C9.3
+          title: Overscan
+          type: action
+        -
+          at:
+            - 0
+            - 5
+          do:
+            id: video.viewport
+            kind: action
+            value:
+              viewport: next
+          face:
+            glyph: video.viewport
+            label: CROP
+            value:
+              format: "{}"
+              readout: video.viewport.viewport
+          id: vport
+          tags:
+            - uc:C9.3
+          title: "Overscan viewport"
+          type: action
+        -
+          at:
+            - 0
+            - 7
+          do:
+            id: view.toolbar
+            kind: action
+          face:
+            glyph: view.toolbar
+          face_on:
+            glyph: view.toolbar.on
+          id: toolbar
+          state: toggle.view.toolbar
+          tags:
+            - uc:C9.8
+          title: Toolbar
+          type: action
+        -
+          at:
+            - 0
+            - 8
+          do:
+            id: view.status_bar
+            kind: action
+          face:
+            glyph: view.status_bar
+          face_on:
+            glyph: view.status_bar.on
+          id: status
+          state: toggle.view.status_bar
+          tags:
+            - uc:C9.8
+          title: "Status bar"
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          do:
+            id: video.crt_toggle
+            kind: action
+          face:
+            glyph: video.crt
+          face_on:
+            glyph: video.crt.on
+          id: crt
+          state: toggle.video.crt_toggle
+          tags:
+            - uc:C9.4
+          title: "CRT effects"
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            id: video.crt_profile
+            kind: action
+            value:
+              profile: prev
+          face:
+            glyph: video.crt_profile
+          id: crtprev
+          tags:
+            - uc:C9.4
+          title: "CRT profile"
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            id: video.crt_profile
+            kind: action
+            value:
+              profile: next
+          face:
+            glyph: video.crt_profile
+            label: CRT
+            value:
+              format: "{}"
+              readout: video.window.crt_profile
+          id: crtnext
+          tags:
+            - uc:C9.4
+          title: "CRT profile"
+          type: action
+        -
+          at:
+            - 1
+            - 3
+          do:
+            id: video.crt_params_reset
+            kind: action
+          face:
+            glyph: video.crt_reset
+          id: crtrst
+          tags:
+            - uc:C9.4
+          title: "Reset CRT parameters"
+          type: action
+        -
+          at:
+            - 2
+            - 0
+          do:
+            id: video.temporal
+            kind: action
+          face:
+            glyph: video.temporal
+          face_on:
+            glyph: video.temporal.on
+          id: dlss
+          state: toggle.video.temporal
+          tags:
+            - uc:C9.5
+          title: "De-flicker (ZX DLSS)"
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          do:
+            id: video.blending
+            kind: action
+          face:
+            glyph: video.blending
+          face_on:
+            glyph: video.blending.on
+          id: blend
+          state: toggle.video.blending
+          tags:
+            - uc:C9.5
+          title: "Frame blending"
+          type: action
+        -
+          at:
+            - 3
+            - 0
+          do:
+            id: hud.toggle
+            kind: action
+          face:
+            glyph: hud
+          face_on:
+            glyph: hud.on
+          id: hud
+          state: toggle.hud.toggle
+          tags:
+            - uc:C9.6
+          title: HUD
+          type: action
+        -
+          at:
+            - 3
+            - 1
+          do:
+            id: hud.theme
+            kind: action
+            value:
+              theme: next
+          face:
+            glyph: hud.theme
+          id: hudth
+          tags:
+            - uc:C9.6
+          title: "HUD theme"
+          type: action
+        -
+          at:
+            - 3
+            - 3
+          do:
+            id: osd.keyboard
+            kind: action
+          face:
+            glyph: osd.keyboard
+          id: osdkb
+          tags:
+            - uc:C9.7
+          title: "On-screen keyboard"
+          type: action
+        -
+          at:
+            - 3
+            - 4
+          do:
+            id: osd.keyboard_picture
+            kind: action
+            value:
+              picture: next
+          face:
+            glyph: osd.keyboard_picture
+          id: osdpic
+          tags:
+            - uc:C9.7
+          title: "Keyboard picture"
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+        dials: own
+      tags:
+        - uc:C9
+        - dial.0.uc:C9.5
+      title: Picture
+      type: menu
+    -
+      at:
+        - 1
+        - 8
+      face:
+        glyph: nav.folder
+      id: monitor
+      items:
+        -
+          at:
+            - 0
+            - 1
+          face:
+            label: COUNT
+            value:
+              readout: host.clients.instances
+          id: inst
+          tags:
+            - uc:C10.1
+          title: inst
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          face:
+            label: MODEL
+            value:
+              readout: machine.model
+          id: model
+          tags:
+            - uc:C10.1
+          title: model
+          type: action
+        -
+          at:
+            - 0
+            - 3
+          face:
+            label: STATE
+            value:
+              readout: run.state.state
+          id: runst
+          tags:
+            - uc:C10.1
+          title: runst
+          type: action
+        -
+          at:
+            - 0
+            - 4
+          face:
+            label: CPU
+            value:
+              alert: 200
+              format: "{:.0f}%"
+              readout: host.stats.cpu_percent
+              warn: 100
+          id: cpu
+          tags:
+            - uc:C10.2
+          title: cpu
+          type: action
+        -
+          at:
+            - 0
+            - 5
+          face:
+            label: MEMORY
+            value:
+              format: "{:b}"
+              readout: host.stats.rss_bytes
+          id: mem
+          tags:
+            - uc:C10.2
+          title: mem
+          type: action
+        -
+          at:
+            - 0
+            - 6
+          face:
+            label: THREADS
+            value:
+              readout: host.stats.threads
+          id: threads
+          tags:
+            - uc:C10.2
+          title: threads
+          type: action
+        -
+          at:
+            - 0
+            - 7
+          face:
+            label: CLIENTS
+            value:
+              format: "{ws.connections} WS\n{mcp.connections} MCP"
+              readout: host.clients
+          id: clients
+          tags:
+            - uc:C10.10
+          title: clients
+          type: action
+        -
+          at:
+            - 0
+            - 8
+          face:
+            label: PAIRED
+            value:
+              readout: host.clients.companions
+          id: paired
+          tags:
+            - uc:C10.10
+          title: paired
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          face:
+            label: FPS
+            value:
+              format: "{:.1f}"
+              readout: emulator.stats.fps
+          id: fps
+          tags:
+            - uc:C10.3
+          title: fps
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          face:
+            label: SPEED
+            value:
+              alert: 80
+              format: "{:.0f}%"
+              readout: emulator.stats.speed_percent
+              warn: 95
+          id: spdpct
+          tags:
+            - uc:C10.3
+          title: spdpct
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          face:
+            label: BUDGET
+            value:
+              alert: 100
+              format: "{:.0f}%"
+              readout: emulator.stats.frame_budget_percent
+              warn: 80
+          id: budget
+          tags:
+            - uc:C10.3
+          title: budget
+          type: action
+        -
+          at:
+            - 1
+            - 3
+          face:
+            label: "WORK US"
+            value:
+              format: "{:.0f}"
+              readout: emulator.stats.frame_time_us.avg
+          id: ftime
+          tags:
+            - uc:C10.3
+          title: ftime
+          type: action
+        -
+          at:
+            - 1
+            - 4
+          face:
+            label: MHZ
+            value:
+              format: "{:.2f}"
+              readout: emulator.stats.cpu.mhz
+          id: mhz
+          tags:
+            - uc:C10.3
+          title: mhz
+          type: action
+        -
+          at:
+            - 1
+            - 5
+          face:
+            label: INT/FR
+            value:
+              format: "{:.0f}"
+              readout: emulator.stats.interrupts_per_frame
+          id: ints
+          tags:
+            - uc:C10.3
+          title: ints
+          type: action
+        -
+          at:
+            - 1
+            - 6
+          face:
+            label: MEDIA
+            value:
+              format: "{loaded}/{slots:#}"
+              readout: media.slots
+          id: slots
+          tags:
+            - uc:C10.4
+          title: slots
+          type: action
+        -
+          at:
+            - 1
+            - 7
+          face:
+            label: PLUGGED
+            value:
+              readout: controllers.state.plugged
+          id: pads
+          tags:
+            - uc:C10.4
+          title: pads
+          type: action
+        -
+          at:
+            - 1
+            - 8
+          face:
+            label: AUDIO
+            value:
+              format: "{master.muted?MUTED|ON}"
+              readout: audio.mixer
+          id: audio
+          tags:
+            - uc:C10.4
+          title: audio
+          type: action
+        -
+          at:
+            - 2
+            - 0
+          do:
+            id: dbg.breakpoints_clear
+            kind: action
+          face:
+            glyph: dbg.breakpoints_clear
+          id: bpclear
+          tags:
+            - uc:D4.3
+          title: "Clear breakpoints"
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          do:
+            id: dbg.breakpoint_hits_reset
+            kind: action
+          face:
+            glyph: dbg.breakpoint_hits_reset
+          id: bphits
+          tags:
+            - uc:D4.3
+          title: "Reset hit counts"
+          type: action
+        -
+          at:
+            - 2
+            - 2
+          face:
+            label: BPS
+            value:
+              format: "{active}/{total}"
+              readout: debug.breakpoints
+          id: bps
+          tags:
+            - uc:C10.5
+          title: bps
+          type: action
+        -
+          at:
+            - 2
+            - 3
+          face:
+            label: "HIT AT"
+            value:
+              format: "{:04X}"
+              readout: debug.breakpoints.last_hit.address
+          id: lasthit
+          tags:
+            - uc:C10.5
+          title: lasthit
+          type: action
+        -
+          at:
+            - 2
+            - 4
+          face:
+            label: LABELS
+            value:
+              format: "{:k}"
+              readout: debug.labels.total
+          id: lblcnt
+          tags:
+            - uc:C10.6
+          title: lblcnt
+          type: action
+        -
+          at:
+            - 2
+            - 5
+          face:
+            label: TTD
+            value:
+              format: "{recording?REC|IDLE}"
+              readout: ttd.status
+              warn: 1
+          id: ttdst
+          tags:
+            - uc:C10.7
+          title: ttdst
+          type: action
+        -
+          at:
+            - 2
+            - 6
+          face:
+            label: FRAMES
+            value:
+              format: "{:k}"
+              readout: ttd.status.frames
+          id: ttdlen
+          tags:
+            - uc:C10.7
+          title: ttdlen
+          type: action
+        -
+          at:
+            - 2
+            - 7
+          face:
+            label: "TTD MEM"
+            value:
+              format: "{:b}"
+              readout: ttd.status.memory_bytes
+          id: ttdmem
+          tags:
+            - uc:C10.7
+          title: ttdmem
+          type: action
+        -
+          at:
+            - 2
+            - 8
+          face:
+            label: MARKS
+            value:
+              readout: ttd.status.bookmarks
+          id: marks
+          tags:
+            - uc:C10.7
+          title: marks
+          type: action
+        -
+          at:
+            - 3
+            - 0
+          do:
+            id: prof.toggle
+            kind: action
+            value:
+              name: all
+          face:
+            glyph: prof.toggle
+            label: ALL
+          face_on:
+            glyph: prof.toggle.on
+          id: profall
+          state: toggle.profiler.all
+          tags:
+            - uc:D10.1
+          title: "Profiler / trace on / off"
+          type: action
+        -
+          at:
+            - 3
+            - 1
+          do:
+            id: prof.clear
+            kind: action
+            value:
+              name: all
+          face:
+            glyph: prof.clear
+            label: ALL
+          id: profclr
+          tags:
+            - uc:D10.1
+          title: "Profiler / trace clear"
+          type: action
+        -
+          at:
+            - 3
+            - 2
+          face:
+            label: OPCODES
+            value:
+              readout: debug.analyzers.opcode
+          id: opcodes
+          tags:
+            - uc:C10.8
+          title: opcodes
+          type: action
+        -
+          at:
+            - 3
+            - 3
+          face:
+            label: CALLS
+            value:
+              readout: debug.analyzers.calltrace
+          id: calls
+          tags:
+            - uc:C10.8
+          title: calls
+          type: action
+        -
+          at:
+            - 3
+            - 4
+          face:
+            label: COVER
+            value:
+              format: "{:k}"
+              readout: debug.analyzers.coverage.instructions
+          id: covins
+          tags:
+            - uc:C10.8
+          title: covins
+          type: action
+        -
+          at:
+            - 3
+            - 5
+          face:
+            label: RECORD
+            value:
+              format: "{recording?REC|IDLE}"
+              readout: recording.state
+              warn: 1
+          id: rec
+          tags:
+            - uc:C10.9
+          title: rec
+          type: action
+        -
+          at:
+            - 3
+            - 6
+          face:
+            label: LENGTH
+            value:
+              format: "{:.0f}S"
+              readout: recording.state.duration_s
+          id: rectime
+          tags:
+            - uc:C10.9
+          title: rectime
+          type: action
+        -
+          at:
+            - 3
+            - 7
+          face:
+            label: SIZE
+            value:
+              format: "{:b}"
+              readout: recording.state.file_bytes
+          id: recsize
+          tags:
+            - uc:C10.9
+          title: recsize
+          type: action
+        -
+          at:
+            - 3
+            - 8
+          face:
+            label: VIDEO
+            value:
+              format: "{recording?REC|IDLE}"
+              readout: cap.record
+              warn: 1
+          id: video
+          tags:
+            - uc:C10.9
+          title: video
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+      strip:
+        content: title
+        status: ttd
+        target: true
+      tags:
+        - uc:C10
+      title: Monitoring
+      type: menu
+    -
+      at:
+        - 2
+        - 0
+      do:
+        id: ttd.unit_back
+        kind: action
+        value:
+          count: 5
+          unit: seconds
+      face:
+        glyph: ttd.unit_back
+        label: -5S
+      id: back5
+      tags:
+        - uc:U2.2
+      title: "Back one unit"
+      type: action
+    -
+      at:
+        - 2
+        - 1
+      do:
+        id: ttd.resume_live
+        kind: action
+      face:
+        glyph: ttd.resume_live
+      id: live
+      tags:
+        - uc:U2.3
+        - uc:D3.6
+      title: "Resume live"
+      type: action
+    -
+      at:
+        - 2
+        - 2
+      do:
+        id: ttd.record_toggle
+        kind: action
+      face:
+        glyph: ttd.record
+      face_on:
+        glyph: ttd.record.on
+      id: ttdrec
+      state: toggle.ttd.record_toggle
+      tags:
+        - uc:C7.1
+      title: "Start / stop recording"
+      type: action
+    -
+      at:
+        - 2
+        - 3
+      do:
+        id: ttd.bookmark_add
+        kind: action
+      face:
+        glyph: ttd.bookmark_add
+      id: mark
+      tags:
+        - uc:D3.7
+      title: "Add a bookmark"
+      type: action
+    -
+      at:
+        - 2
+        - 4
+      context: play
+      face:
+        glyph: input.joystick
+      id: game
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: input.joystick_type
+            kind: action
+            value:
+              kind: kempston
+          face:
+            glyph: input.joystick_type
+            label: KEMP
+          id: kemp
+          tags:
+            - uc:U1.3
+          title: "Joystick type"
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: input.joystick_type
+            kind: action
+            value:
+              kind: sinclair1
+          face:
+            glyph: input.joystick_type
+            label: SINC1
+          id: sinc1
+          tags:
+            - uc:U1.3
+          title: "Joystick type"
+          type: action
+        -
+          at:
+            - 0
+            - 3
+          do:
+            id: input.joystick_type
+            kind: action
+            value:
+              kind: sinclair2
+          face:
+            glyph: input.joystick_type
+            label: SINC2
+          id: sinc2
+          tags:
+            - uc:U1.3
+          title: "Joystick type"
+          type: action
+        -
+          at:
+            - 0
+            - 4
+          do:
+            id: input.joystick_type
+            kind: action
+            value:
+              kind: cursor
+          face:
+            glyph: input.joystick_type
+            label: CURSOR
+          id: cursor
+          tags:
+            - uc:U1.3
+          title: "Joystick type"
+          type: action
+        -
+          at:
+            - 0
+            - 5
+          do:
+            id: feature.toggle
+            kind: action
+            value:
+              name: kempstonmouse
+          face:
+            glyph: settings.toggle
+            label: MOUSE
+          face_on:
+            glyph: settings.toggle.on
+          id: mouse
+          state: toggle.feature.kempstonmouse
+          tags:
+            - uc:U1.5
+          title: "Toggle a feature"
+          type: action
+        -
+          at:
+            - 0
+            - 6
+          face:
+            label: JOYSTICK
+            value:
+              format: "{}"
+              readout: input.connectors.connectors.0.kind
+          id: joynow
+          tags:
+            - uc:U1.3
+          title: joynow
+          type: action
+        -
+          at:
+            - 0
+            - 8
+          do:
+            id: input.release_all
+            kind: action
+          face:
+            glyph: input.release_all
+          id: release
+          tags:
+            - uc:U1.4
+          title: "Release all keys and buttons"
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: space
+          face:
+            glyph: input.key
+            label: SPACE
+          id: space
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: enter
+          face:
+            glyph: input.key
+            label: ENTER
+          id: enter
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: caps+space
+          face:
+            glyph: input.key
+            label: BREAK
+          id: brk
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 1
+            - 6
+          do:
+            hold: true
+            id: input.joystick
+            kind: action
+            value:
+              buttons: up
+              hold: true
+          face:
+            glyph: input.joy.up
+            label: UP
+          id: up
+          tags:
+            - uc:U1.2
+          title: Joystick
+          type: action
+        -
+          at:
+            - 1
+            - 8
+          do:
+            hold: true
+            id: input.joystick
+            kind: action
+            value:
+              buttons: fire
+              hold: true
+          face:
+            glyph: input.joy.fire
+            label: FIRE
+          id: fire
+          tags:
+            - uc:U1.2
+          title: Joystick
+          type: action
+        -
+          at:
+            - 2
+            - 0
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: y
+          face:
+            glyph: input.key
+            label: Y
+          id: keyy
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: n
+          face:
+            glyph: input.key
+            label: N
+          id: keyn
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 2
+            - 5
+          do:
+            hold: true
+            id: input.joystick
+            kind: action
+            value:
+              buttons: left
+              hold: true
+          face:
+            glyph: input.joy.left
+            label: LEFT
+          id: left
+          tags:
+            - uc:U1.2
+          title: Joystick
+          type: action
+        -
+          at:
+            - 2
+            - 6
+          do:
+            hold: true
+            id: input.joystick
+            kind: action
+            value:
+              buttons: down
+              hold: true
+          face:
+            glyph: input.joy.down
+            label: DOWN
+          id: down
+          tags:
+            - uc:U1.2
+          title: Joystick
+          type: action
+        -
+          at:
+            - 2
+            - 7
+          do:
+            hold: true
+            id: input.joystick
+            kind: action
+            value:
+              buttons: right
+              hold: true
+          face:
+            glyph: input.joy.right
+            label: RIGHT
+          id: right
+          tags:
+            - uc:U1.2
+          title: Joystick
+          type: action
+        -
+          at:
+            - 3
+            - 0
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "1"
+          face:
+            glyph: input.key
+            label: "1"
+          id: k1
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 3
+            - 1
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "2"
+          face:
+            glyph: input.key
+            label: "2"
+          id: k2
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 3
+            - 2
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "3"
+          face:
+            glyph: input.key
+            label: "3"
+          id: k3
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 3
+            - 3
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "4"
+          face:
+            glyph: input.key
+            label: "4"
+          id: k4
+          tags:
+            - uc:U1.4
+          title: Key
+          type: action
+        -
+          at:
+            - 3
+            - 7
+          do:
+            id: ttd.unit_back
+            kind: action
+            value:
+              count: 5
+              unit: seconds
+          face:
+            glyph: ttd.unit_back
+            label: -5S
+          id: gamback5
+          tags:
+            - uc:U2.2
+          title: "Back one unit"
+          type: action
+        -
+          at:
+            - 3
+            - 8
+          do:
+            id: snapshot.quick
+            kind: action
+            value:
+              op: load
+              slot: 1
+          face:
+            glyph: snapshot.quick_load
+            label: L1
+          id: gamqload
+          tags:
+            - uc:U2.4
+          title: "Quick snapshot"
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+      tags:
+        - uc:U1
+      title: Game
+      type: menu
+    -
+      at:
+        - 2
+        - 5
+      face:
+        glyph: basic.menu
+      id: basic
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: basic.mode
+            kind: action
+            value:
+              mode: 48k
+          face:
+            glyph: basic.mode.48
+            label: 48K
+          id: b48
+          tags:
+            - uc:U4.1
+          title: "BASIC mode from the 128K menu"
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: basic.mode
+            kind: action
+            value:
+              mode: 128k
+          face:
+            glyph: basic.mode.128
+            label: 128K
+          id: b128
+          tags:
+            - uc:U4.1
+          title: "BASIC mode from the 128K menu"
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          do:
+            id: basic.run
+            kind: action
+          face:
+            glyph: basic.run
+            label: RUN
+          id: run
+          tags:
+            - uc:U4.2
+          title: "Run a BASIC command"
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            id: basic.run
+            kind: action
+            value:
+              command: "LOAD \"\""
+          face:
+            glyph: media.tape.load
+            label: LOAD
+          id: load
+          tags:
+            - uc:U4.2
+          title: "Run a BASIC command"
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            id: basic.clear
+            kind: action
+          face:
+            glyph: basic.clear
+          id: new
+          tags:
+            - uc:U4.2
+          title: "NEW (clear the program)"
+          type: action
+        -
+          at:
+            - 2
+            - 0
+          do:
+            id: input.macro
+            kind: action
+            value:
+              name: cat
+          face:
+            glyph: input.macro
+            label: CAT
+          id: cat
+          tags:
+            - uc:U4.3
+          title: "Key macro"
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          do:
+            id: input.macro
+            kind: action
+            value:
+              name: format
+          face:
+            glyph: input.macro
+            label: FORMAT
+          id: format
+          tags:
+            - uc:U4.3
+          title: "Key macro"
+          type: action
+        -
+          at:
+            - 2
+            - 2
+          do:
+            id: input.macro
+            kind: action
+            value:
+              name: erase
+          face:
+            glyph: input.macro
+            label: ERASE
+          id: erase
+          tags:
+            - uc:U4.3
+          title: "Key macro"
+          type: action
+        -
+          at:
+            - 2
+            - 3
+          do:
+            id: input.macro
+            kind: action
+            value:
+              name: move
+          face:
+            glyph: input.macro
+            label: MOVE
+          id: move
+          tags:
+            - uc:U4.3
+          title: "Key macro"
+          type: action
+        -
+          at:
+            - 2
+            - 5
+          do:
+            id: input.macro
+            kind: action
+            value:
+              name: e_mode
+          face:
+            glyph: input.macro
+            label: E
+          id: emode
+          tags:
+            - uc:U4.3
+          title: "Key macro"
+          type: action
+        -
+          at:
+            - 2
+            - 6
+          do:
+            id: input.macro
+            kind: action
+            value:
+              name: g_mode
+          face:
+            glyph: input.macro
+            label: G
+          id: gmode
+          tags:
+            - uc:U4.3
+          title: "Key macro"
+          type: action
+        -
+          at:
+            - 2
+            - 8
+          do:
+            id: input.macro
+            kind: action
+            value:
+              name: break
+          face:
+            glyph: input.macro
+            label: BREAK
+          id: basbrk
+          tags:
+            - uc:U4.3
+          title: "Key macro"
+          type: action
+        -
+          at:
+            - 3
+            - 0
+          do:
+            id: set.toggle
+            kind: action
+            value:
+              name: trdos_traps
+          face:
+            glyph: settings.toggle
+            label: TRAPS
+          face_on:
+            glyph: settings.toggle.on
+          id: traps
+          state: toggle.set.toggle.trdos_traps
+          tags:
+            - uc:U4.4
+          title: "Toggle a setting"
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+      tags:
+        - uc:U4
+      title: BASIC
+      type: menu
+    -
+      at:
+        - 2
+        - 6
+      do:
+        id: media.tape
+        kind: action
+        value:
+          op: toggle
+      face:
+        glyph: media.tape.play
+        label: TAPE
+        value:
+          format: "{block}/{blocks}"
+          readout: media.tape
+      id: tape
+      tags:
+        - uc:C4.2
+      title: Tape
+      type: action
+    -
+      at:
+        - 2
+        - 7
+      do:
+        id: media.open_recent
+        kind: action
+        value:
+          index: 0
+      face:
+        glyph: media.open_recent
+        label: LAST
+      id: recent
+      tags:
+        - uc:C4.3
+      title: "Open a recent file"
+      type: action
+    -
+      at:
+        - 2
+        - 8
+      do:
+        id: view.fullscreen
+        kind: action
+      face:
+        glyph: view.fullscreen
+      face_on:
+        glyph: view.fullscreen.on
+      id: full
+      state: toggle.view.fullscreen
+      tags:
+        - uc:C9.1
+      title: "Full screen"
+      type: action
+    -
+      at:
+        - 3
+        - 0
+      do:
+        id: run.step_in
+        kind: action
+      face:
+        glyph: run.step_in
+      id: stepin
+      tags:
+        - uc:D2.1
+      title: "Step in"
+      type: action
+    -
+      at:
+        - 3
+        - 1
+      do:
+        id: run.step_over
+        kind: action
+      face:
+        glyph: run.step_over
+      id: stepovr
+      tags:
+        - uc:D2.1
+      title: "Step over"
+      type: action
+    -
+      at:
+        - 3
+        - 2
+      do:
+        id: run.step_out
+        kind: action
+      face:
+        glyph: run.step_out
+      id: stepout
+      tags:
+        - uc:D2.1
+      title: "Step out"
+      type: action
+    -
+      at:
+        - 3
+        - 3
+      do:
+        id: run.frame_step
+        kind: action
+      face:
+        glyph: run.frame_step
+      id: frame
+      tags:
+        - uc:D2.3
+      title: "Frame step"
+      type: action
+    -
+      at:
+        - 3
+        - 4
+      do:
+        id: dbg.breakpoint_toggle_pc
+        kind: action
+      face:
+        glyph: dbg.breakpoint_toggle_pc
+      id: bppc
+      tags:
+        - uc:D4.1
+      title: "Toggle a breakpoint at PC"
+      type: action
+    -
+      at:
+        - 3
+        - 5
+      do:
+        id: dbg.mode_toggle
+        kind: action
+      face:
+        glyph: dbg.mode
+      face_on:
+        glyph: dbg.mode.on
+      id: dbgmode
+      state: debug.mode.enabled
+      tags:
+        - uc:D4.4
+      title: "Debug mode"
+      type: action
+    -
+      at:
+        - 3
+        - 6
+      do:
+        id: dbg.open
+        kind: action
+      face:
+        glyph: debug.menu
+      id: dbgopen
+      tags:
+        - uc:D6.1
+      title: "Open the debugger"
+      type: action
+    -
+      at:
+        - 3
+        - 7
+      dials:
+        -
+          index: 0
+          label: SCRUB
+          press:
+            id: ttd.resume_live
+            kind: action
+          turn:
+            id: ttd.seek_by
+            kind: action
+            value:
+              d: $ticks
+              rate: $rate
+        -
+          index: 1
+          label: PACE
+          press:
+            id: run.pace_toggle
+            kind: action
+          turn:
+            id: run.pace_by
+            kind: action
+            value:
+              d: $ticks
+        -
+          index: 2
+          label: LINES
+          press:
+            id: run.to_pixel
+            kind: action
+          turn:
+            id: run.step_by
+            kind: action
+            value:
+              d: $ticks
+              unit: scanlines
+        -
+          index: 3
+          label: T-STATES
+          press:
+            id: run.wait_int
+            kind: action
+          turn:
+            id: run.step_by
+            kind: action
+            value:
+              d: $ticks
+              unit: tstates
+      face:
+        glyph: ttd.menu
+      id: time
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: run.pace_set
+            kind: action
+            value:
+              preset: 25fps
+          face:
+            glyph: run.pace
+            label: 25FPS
+          id: p25
+          tags:
+            - uc:D1.1
+          title: Pace
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: run.pace_set
+            kind: action
+            value:
+              preset: 5fps
+          face:
+            glyph: run.pace
+            label: 5FPS
+          id: p5
+          tags:
+            - uc:D1.1
+          title: Pace
+          type: action
+        -
+          at:
+            - 0
+            - 3
+          do:
+            id: run.pace_set
+            kind: action
+            value:
+              preset: 1fps
+          face:
+            glyph: run.pace
+            label: 1FPS
+          id: p1
+          tags:
+            - uc:D1.1
+          title: Pace
+          type: action
+        -
+          at:
+            - 0
+            - 4
+          do:
+            id: run.pace_set
+            kind: action
+            value:
+              preset: 1line
+          face:
+            glyph: run.pace
+            label: LINE
+          id: pline
+          tags:
+            - uc:D1.1
+          title: Pace
+          type: action
+        -
+          at:
+            - 0
+            - 5
+          do:
+            id: run.pace_set
+            kind: action
+            value:
+              preset: 1op
+          face:
+            glyph: run.pace
+            label: OP
+          id: pop
+          tags:
+            - uc:D1.1
+          title: Pace
+          type: action
+        -
+          at:
+            - 0
+            - 6
+          do:
+            id: run.pace_step
+            kind: action
+          face:
+            glyph: run.pace_step
+            label: PACE
+            value:
+              format: "{}"
+              readout: run.state.pace.label
+          id: pstep
+          tags:
+            - uc:D1.2
+          title: "One step at the pace"
+          type: action
+        -
+          at:
+            - 0
+            - 7
+          do:
+            id: run.pace_stop
+            kind: action
+          face:
+            glyph: run.pace_stop
+          id: pstop
+          tags:
+            - uc:D1.2
+          title: "Stop the pace"
+          type: action
+        -
+          at:
+            - 0
+            - 8
+          do:
+            id: run.pace_set
+            kind: action
+            value:
+              preset: full
+          face:
+            glyph: run.pace
+            label: FULL
+          id: pfull
+          tags:
+            - uc:D1.1
+          title: Pace
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          do:
+            id: ttd.seek_start
+            kind: action
+          face:
+            glyph: ttd.go_start
+          id: start
+          tags:
+            - uc:D3.4
+          title: "The history's start"
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            id: ttd.step_back_frame
+            kind: action
+          face:
+            glyph: ttd.step_back_frame
+          id: bframe
+          tags:
+            - uc:D3.3
+          title: "Back one frame"
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            id: ttd.step_back_scanline
+            kind: action
+          face:
+            glyph: ttd.step_back_scanline
+          id: bline
+          tags:
+            - uc:D3.3
+          title: "Back one scanline"
+          type: action
+        -
+          at:
+            - 1
+            - 3
+          do:
+            id: ttd.step_back_instruction
+            kind: action
+          face:
+            glyph: ttd.step_back_instruction
+          id: bop
+          tags:
+            - uc:D3.3
+          title: "Back one instruction"
+          type: action
+        -
+          at:
+            - 1
+            - 5
+          do:
+            id: ttd.step_forward_instruction
+            kind: action
+          face:
+            glyph: ttd.step_forward_instruction
+          id: fop
+          tags:
+            - uc:D3.3
+          title: "Forward one instruction"
+          type: action
+        -
+          at:
+            - 1
+            - 6
+          do:
+            id: ttd.step_forward_scanline
+            kind: action
+          face:
+            glyph: ttd.step_forward_scanline
+          id: fline
+          tags:
+            - uc:D3.3
+          title: "Forward one scanline"
+          type: action
+        -
+          at:
+            - 1
+            - 7
+          do:
+            id: ttd.step_forward_frame
+            kind: action
+          face:
+            glyph: ttd.step_forward_frame
+          id: fframe
+          tags:
+            - uc:D3.3
+          title: "Forward one frame"
+          type: action
+        -
+          at:
+            - 1
+            - 8
+          do:
+            id: ttd.seek_end
+            kind: action
+          face:
+            glyph: ttd.go_end
+          id: end
+          tags:
+            - uc:D3.4
+          title: "The history's end"
+          type: action
+        -
+          at:
+            - 2
+            - 0
+          do:
+            id: ttd.reverse_continue
+            kind: action
+          face:
+            glyph: ttd.reverse_continue
+          id: rcont
+          tags:
+            - uc:D3.5
+          title: "Reverse continue"
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          do:
+            id: ttd.reverse_step
+            kind: action
+          face:
+            glyph: ttd.reverse_step
+          id: rstep
+          tags:
+            - uc:D3.5
+          title: "Reverse step"
+          type: action
+        -
+          at:
+            - 2
+            - 3
+          do:
+            id: ttd.unit_back
+            kind: action
+          face:
+            glyph: ttd.unit_back
+          id: uback
+          tags:
+            - uc:D3.3
+          title: "Back one unit"
+          type: action
+        -
+          at:
+            - 2
+            - 4
+          face:
+            label: FRAME
+            value:
+              format: "{}"
+              readout: ttd.position.current.frame
+          id: tframe
+          tags:
+            - uc:D3.2
+          title: tframe
+          type: action
+        -
+          at:
+            - 2
+            - 5
+          do:
+            id: ttd.unit_forward
+            kind: action
+          face:
+            glyph: ttd.unit_forward
+          id: ufwd
+          tags:
+            - uc:D3.3
+          title: "Forward one unit"
+          type: action
+        -
+          at:
+            - 2
+            - 8
+          do:
+            id: ttd.resume_live
+            kind: action
+          face:
+            glyph: ttd.resume_live
+          id: timlive
+          tags:
+            - uc:D3.6
+          title: "Resume live"
+          type: action
+        -
+          at:
+            - 3
+            - 0
+          do:
+            id: ttd.bookmark_prev
+            kind: action
+          face:
+            glyph: ttd.bookmark_prev
+          id: bmprev
+          tags:
+            - uc:D3.7
+          title: "Previous bookmark"
+          type: action
+        -
+          at:
+            - 3
+            - 1
+          do:
+            id: ttd.bookmark_add
+            kind: action
+          face:
+            glyph: ttd.bookmark_add
+          id: bmadd
+          tags:
+            - uc:D3.7
+          title: "Add a bookmark"
+          type: action
+        -
+          at:
+            - 3
+            - 2
+          do:
+            id: ttd.bookmark_next
+            kind: action
+          face:
+            glyph: ttd.bookmark_next
+          id: bmnext
+          tags:
+            - uc:D3.7
+          title: "Next bookmark"
+          type: action
+        -
+          at:
+            - 3
+            - 3
+          do:
+            id: ttd.bookmarks
+            kind: action
+          face:
+            glyph: ttd.bookmark
+          id: bmlist
+          tags:
+            - uc:D3.7
+          title: Bookmarks
+          type: action
+        -
+          at:
+            - 3
+            - 5
+          do:
+            id: ttd.find_last_write
+            kind: action
+          face:
+            glyph: ttd.find_last_write
+          id: lastw
+          tags:
+            - uc:D5.1
+          title: "Last write here"
+          type: action
+        -
+          at:
+            - 3
+            - 6
+          do:
+            id: ttd.find_last
+            kind: action
+            value:
+              access: read
+          face:
+            glyph: ttd.find_last
+            label: READ
+          id: lastr
+          tags:
+            - uc:D5.1
+          title: "Last access here"
+          type: action
+        -
+          at:
+            - 3
+            - 7
+          do:
+            id: ttd.find_last
+            kind: action
+            value:
+              access: execute
+          face:
+            glyph: ttd.find_last
+            label: EXEC
+          id: laste
+          tags:
+            - uc:D5.1
+          title: "Last access here"
+          type: action
+        -
+          at:
+            - 3
+            - 8
+          do:
+            id: ttd.record_toggle
+            kind: action
+          face:
+            glyph: ttd.record
+          face_on:
+            glyph: ttd.record.on
+          id: timttdrec
+          state: toggle.ttd.record_toggle
+          tags:
+            - uc:C7.1
+          title: "Start / stop recording"
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+        dials: own
+      strip:
+        content: title
+        status: ttd
+        target: true
+      tags:
+        - uc:D1
+        - uc:D3
+        - dial.0.uc:D3.2
+        - dial.1.uc:D1.1
+        - dial.2.uc:D2.4
+        - dial.3.uc:D2.5
+      title: Time
+      type: menu
+    -
+      at:
+        - 3
+        - 8
+      context: debug
+      dials:
+        -
+          index: 0
+          label: STEP
+          press:
+            id: run.step_in
+            kind: action
+          turn:
+            id: run.step_by
+            kind: action
+            value:
+              d: $ticks
+              unit: instructions
+        -
+          index: 1
+          label: FRAMES
+          press:
+            id: run.frame_step
+            kind: action
+          turn:
+            id: run.step_by
+            kind: action
+            value:
+              d: $ticks
+              unit: frames
+      face:
+        glyph: dbg.mode
+      id: debug
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: run.step_in
+            kind: action
+          face:
+            glyph: run.step_in
+          id: debstepin
+          tags:
+            - uc:D2.1
+          title: "Step in"
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: run.step_over
+            kind: action
+          face:
+            glyph: run.step_over
+          id: debstepovr
+          tags:
+            - uc:D2.1
+          title: "Step over"
+          type: action
+        -
+          at:
+            - 0
+            - 3
+          do:
+            id: run.step_out
+            kind: action
+          face:
+            glyph: run.step_out
+          id: debstepout
+          tags:
+            - uc:D2.1
+          title: "Step out"
+          type: action
+        -
+          at:
+            - 0
+            - 4
+          do:
+            id: run.to_cursor
+            kind: action
+          face:
+            glyph: run.to_cursor
+          id: debcursor
+          tags:
+            - uc:D2.6
+          title: "Run to the cursor"
+          type: action
+        -
+          at:
+            - 0
+            - 5
+          do:
+            id: run.wait_int
+            kind: action
+          face:
+            glyph: run.wait_int
+          id: int
+          tags:
+            - uc:D2.3
+          title: "Run to interrupt"
+          type: action
+        -
+          at:
+            - 0
+            - 6
+          do:
+            id: run.frame_step
+            kind: action
+          face:
+            glyph: run.frame_step
+          id: debframe
+          tags:
+            - uc:D2.3
+          title: "Frame step"
+          type: action
+        -
+          at:
+            - 0
+            - 7
+          do:
+            id: run.step_line
+            kind: action
+          face:
+            glyph: run.step_line
+          id: line
+          tags:
+            - uc:D2.7
+          title: "Step a source line"
+          type: action
+        -
+          at:
+            - 0
+            - 8
+          do:
+            id: run.to_pixel
+            kind: action
+          face:
+            glyph: run.to_pixel
+          id: pixel
+          tags:
+            - uc:D2.4
+          title: "Run to the first paper pixel"
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          do:
+            id: dbg.breakpoint_toggle_pc
+            kind: action
+          face:
+            glyph: dbg.breakpoint_toggle_pc
+          id: debbppc
+          tags:
+            - uc:D4.1
+          title: "Toggle a breakpoint at PC"
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            id: dbg.breakpoint_toggle_cursor
+            kind: action
+          face:
+            glyph: dbg.breakpoint_toggle_cursor
+          id: bpcur
+          tags:
+            - uc:D4.1
+          title: "Toggle a breakpoint at the cursor"
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            id: dbg.bp_add
+            kind: action
+            value:
+              kind: out
+              preset: fe
+          face:
+            glyph: dbg.bp_add
+            label: "OUT FE"
+          id: bpfe
+          tags:
+            - uc:D4.2
+          title: "Add a breakpoint"
+          type: action
+        -
+          at:
+            - 1
+            - 3
+          do:
+            id: dbg.bp_add
+            kind: action
+            value:
+              kind: out
+              preset: 7ffd
+          face:
+            glyph: dbg.bp_add
+            label: 7FFD
+          id: bp7ffd
+          tags:
+            - uc:D4.2
+          title: "Add a breakpoint"
+          type: action
+        -
+          at:
+            - 1
+            - 4
+          do:
+            id: dbg.bp_toggle
+            kind: action
+          face:
+            glyph: dbg.bp_toggle
+          id: bpall
+          tags:
+            - uc:D4.3
+          title: "Toggle breakpoints"
+          type: action
+        -
+          at:
+            - 1
+            - 5
+          do:
+            id: dbg.breakpoints_clear
+            kind: action
+          face:
+            glyph: dbg.breakpoints_clear
+          id: debbpclear
+          tags:
+            - uc:D4.3
+          title: "Clear breakpoints"
+          type: action
+        -
+          at:
+            - 1
+            - 6
+          do:
+            id: dbg.breakpoint_hits_reset
+            kind: action
+          face:
+            glyph: dbg.breakpoint_hits_reset
+          id: debbphits
+          tags:
+            - uc:D4.3
+          title: "Reset hit counts"
+          type: action
+        -
+          at:
+            - 1
+            - 8
+          do:
+            id: dbg.mode_toggle
+            kind: action
+          face:
+            glyph: dbg.mode
+          face_on:
+            glyph: dbg.mode.on
+          id: debdbgmode
+          state: debug.mode.enabled
+          tags:
+            - uc:D4.4
+          title: "Debug mode"
+          type: action
+        -
+          at:
+            - 2
+            - 0
+          do:
+            id: dbg.open
+            kind: action
+          face:
+            glyph: debug.menu
+          id: open
+          tags:
+            - uc:D6.1
+          title: "Open the debugger"
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          do:
+            id: dbg.focus_prev_pane
+            kind: action
+          face:
+            glyph: dbg.focus_prev_pane
+          id: pprev
+          tags:
+            - uc:D6.1
+          title: "Previous debugger pane"
+          type: action
+        -
+          at:
+            - 2
+            - 2
+          do:
+            id: dbg.focus_next_pane
+            kind: action
+          face:
+            glyph: dbg.focus_next_pane
+          id: pnext
+          tags:
+            - uc:D6.1
+          title: "Next debugger pane"
+          type: action
+        -
+          at:
+            - 2
+            - 3
+          do:
+            hold: true
+            id: dbg.page_up
+            kind: action
+          face:
+            glyph: dbg.page_up
+          id: pgup
+          tags:
+            - uc:D6.2
+          title: "Page up in the pane"
+          type: action
+        -
+          at:
+            - 2
+            - 4
+          do:
+            hold: true
+            id: dbg.cursor_up
+            kind: action
+          face:
+            glyph: dbg.cursor_up
+          id: cup
+          tags:
+            - uc:D6.2
+          title: "Cursor up in the pane"
+          type: action
+        -
+          at:
+            - 2
+            - 5
+          do:
+            hold: true
+            id: dbg.page_down
+            kind: action
+          face:
+            glyph: dbg.page_down
+          id: pgdn
+          tags:
+            - uc:D6.2
+          title: "Page down in the pane"
+          type: action
+        -
+          at:
+            - 2
+            - 6
+          do:
+            id: dbg.follow_pc
+            kind: action
+          face:
+            glyph: dbg.follow_pc
+          id: follow
+          tags:
+            - uc:D6.4
+          title: "Disassembly follows PC"
+          type: action
+        -
+          at:
+            - 2
+            - 7
+          do:
+            hold: true
+            id: dbg.memory_follow
+            kind: action
+          face:
+            glyph: dbg.memory_follow
+          id: memf
+          tags:
+            - uc:D6.3
+          title: "Memory follows the value under the cursor"
+          type: action
+        -
+          at:
+            - 2
+            - 8
+          do:
+            id: dbg.labels_toggle
+            kind: action
+          face:
+            glyph: dbg.labels_toggle
+          id: labels
+          tags:
+            - uc:D6.4
+          title: "Labels in the disassembly"
+          type: action
+        -
+          at:
+            - 3
+            - 0
+          do:
+            id: sym.import
+            kind: action
+            value:
+              path: $user/build/main.sym
+          face:
+            glyph: sym.import
+          id: symload
+          tags:
+            - uc:D8.2
+          title: "Load symbols"
+          type: action
+        -
+          at:
+            - 3
+            - 1
+          do:
+            id: sym.import_live
+            kind: action
+          face:
+            glyph: sym.import_live
+          id: symlive
+          tags:
+            - uc:D8.2
+          title: "Import an assembler's labels from RAM"
+          type: action
+        -
+          at:
+            - 3
+            - 2
+          do:
+            id: sym.export
+            kind: action
+            value:
+              path: $user/build/deck.sym
+          face:
+            glyph: sym.export
+          id: symsave
+          tags:
+            - uc:D8.2
+          title: "Save symbols"
+          type: action
+        -
+          at:
+            - 3
+            - 3
+          do:
+            hold: true
+            id: dbg.cursor_left
+            kind: action
+          face:
+            glyph: dbg.cursor_left
+          id: cleft
+          tags:
+            - uc:D6.2
+          title: "Cursor left in the pane"
+          type: action
+        -
+          at:
+            - 3
+            - 4
+          do:
+            hold: true
+            id: dbg.cursor_down
+            kind: action
+          face:
+            glyph: dbg.cursor_down
+          id: cdown
+          tags:
+            - uc:D6.2
+          title: "Cursor down in the pane"
+          type: action
+        -
+          at:
+            - 3
+            - 5
+          do:
+            hold: true
+            id: dbg.cursor_right
+            kind: action
+          face:
+            glyph: dbg.cursor_right
+          id: cright
+          tags:
+            - uc:D6.2
+          title: "Cursor right in the pane"
+          type: action
+        -
+          at:
+            - 3
+            - 6
+          do:
+            id: prof.toggle
+            kind: action
+            value:
+              name: opcode
+          face:
+            glyph: prof.toggle
+            label: OPS
+          face_on:
+            glyph: prof.toggle.on
+          id: prof
+          state: toggle.profiler.opcode
+          tags:
+            - uc:D10.1
+          title: "Profiler / trace on / off"
+          type: action
+        -
+          at:
+            - 3
+            - 7
+          do:
+            id: prof.toggle
+            kind: action
+            value:
+              name: coverage
+          face:
+            glyph: prof.toggle
+            label: COVER
+          face_on:
+            glyph: prof.toggle.on
+          id: cover
+          state: toggle.profiler.coverage
+          tags:
+            - uc:D10.1
+          title: "Profiler / trace on / off"
+          type: action
+        -
+          at:
+            - 3
+            - 8
+          do:
+            id: prof.toggle
+            kind: action
+            value:
+              name: calltrace
+          face:
+            glyph: prof.toggle
+            label: CALLS
+          face_on:
+            glyph: prof.toggle.on
+          id: trace
+          state: toggle.profiler.calltrace
+          tags:
+            - uc:D10.1
+          title: "Profiler / trace on / off"
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+        dials: own
+      tags:
+        - uc:D2
+        - uc:D4
+        - uc:D6
+        - uc:D8
+        - uc:D10
+        - dial.0.uc:D2.2
+        - dial.1.uc:D2.3
+      title: Debugger
+      type: menu
+  nav:
+    dials: own
+  strip:
+    content: title
+    status: ttd
+    target: true
+  tags:
+    - dial.0.uc:U2.1
+    - dial.0.uc:D3.2
+    - dial.1.uc:C8.2
+    - dial.2.uc:D1.1
+    - dial.3.uc:D2.2
+    - dial.4.uc:D3.3
+    - dial.5.uc:D3.3
+  title: Home
+  type: menu
+settings:
+  activity:
+    ignore:
+      - ttd.seek_by
+      - audio.volume_by
+      - run.pace_by
+      - run.step_by
+      - ttd.jog_frames
+      - ttd.jog_instructions
+  brightness: 60
+version: 2

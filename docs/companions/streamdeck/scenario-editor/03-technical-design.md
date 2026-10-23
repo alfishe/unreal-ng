@@ -120,7 +120,7 @@ scenario upgrade`, write it as v2 (`scn::ConvertToV2`). The example below is v1.
 | `title` | every node | text | the id |
 | `tags` | every node | an array of strings (a string `"a, b"` is accepted) | |
 | `at` | not the root | `[row, col]` in the parent menu | required |
-| `face` | every node | `label`, `icon` (a built-in icon: `record tape disk play pause stop reset speaker mute rewind forward stepback flag bug gear check cross warn camera chip stepinto stepover stepout eye memory regs disasm stack`), `svg` (a monochrome SVG file, recoloured to `fg`), `image` (PNG, JPEG, GIF, BMP), `fit` (`contain`, `cover`, `stretch`), `bg`, `fg` (`RRGGBB`, `#` allowed) | bg `10101C`, fg `FFFFFF`, fit `contain`; no label, icon or picture = the title |
+| `face` | every node | `label`, `icon` (a built-in icon: `record tape disk play pause stop reset speaker mute rewind forward stepback flag bug gear check cross warn camera chip stepinto stepover stepout eye memory regs disasm stack`), `svg` (a monochrome SVG file, recoloured to `fg`), `image` (PNG, JPEG, GIF, BMP), `fit` (`contain`, `cover`, `stretch`), `bg`, `fg` (`RRGGBB`, `#` allowed) | bg `10101C`, fg `FFFFFF`, fit `contain`; no label, icon or picture = the title; a label with a picture is drawn under it (the picture shrinks above it) |
 | `items` | menu | nodes | `[]` |
 | `dials` | menu | `{index, label, turn?, press?}`; `turn` / `press` are actions | |
 | `strip` | menu | `content` (`title`, `text`, `image`, `breadcrumbs`, `none`), `text`, `image`, `status` (`ttd`; v2 also `run`, `tape`, `target`, not drawn yet), `fps` (> 0, for the time codes), `target` (v2, true / false) | `title`; fps 50 |
@@ -374,6 +374,7 @@ sequenceDiagram
 | `daemondecks_test.cpp` | Decks, a scenario per deck (`PUT` / `DELETE`, the others keep theirs), watched files, loads asked for by a runtime |
 | `scenariov2_test.cpp` | v2: parse, round trip, versions, validation of every v2 field, `ConvertToV2`, the call mapping, the REST fallback, path roots, the catalogue check, the runtime's held keys, state-bound faces, contexts and activity flash; the generator's fixture output |
 | `tools/tests/test_make_deck_scenario.py` | The generator: the checked-in fixture output is its output, determinism, the spec's mistakes stop it |
+| `tools/tests/test_deckflow.py` | The scenario pipeline ([pipeline.md](../pipeline.md)): spec errors with lines, deterministic builds, the checked-in sample, the 3-way sync and its conflicts, a project saved by the studio |
 | `streamdeck-studio-tests` | The daemon control's scenario calls against a stand-in automation; the editor (`editor_test.cpp`, offscreen): Paste without marks, the kind and model boxes, the run document, the route examples, the action picker / value / catalogue presets, Save of a v1 file as v2 (one undo step) |
 
 ```bash
@@ -387,4 +388,4 @@ tools/build/build.sh streamdeck-tests && cmake-build-agent-release/bin/streamdec
 | Done 2026-10-20 (SD5): format v2 with conversion, the `action` kind, `state`, `context`, activity settings, the path roots, the catalogue picker and palette | SD5 |
 | The surface client behind `ActionExecutor`; readouts pushed into `state`; the activity feed; `target`, `strip.target` and `strip.status` beyond `ttd` drawn | S4, SD4 |
 | Action forms per param (today one JSON value field with the catalogue's `params` line as a hint) | SD4 |
-| The default scenario v2 in `data/streamdeck/scenarios/`: after the icon set and the use-case document, generated from its spec by `tools/make_deck_scenario.py`, opened from the studio | after the owner's icon set |
+| The default scenario v2 in `data/streamdeck/scenarios/`: written as a spec of the scenario pipeline ([pipeline.md](../pipeline.md), done 2026-10-22) from the use-case document, opened from the studio | after the owner's review of the packs and use cases |

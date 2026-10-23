@@ -274,6 +274,44 @@ void StudioApi::AddDeviceRoutes()
               {{"value", "body", "integer", "percent, 0..100", true}},
               json{{"value", 60}},
               brightness});
+    auto pack = [w](const Request& r) {
+        const auto [d, deck] = OnGui([w] { return std::pair(w->_daemon, w->ShownDeck()); });
+        if (deck.isEmpty())
+            return Reply::Error(409, "no deck shown: the window is not joined to a deck");
+        QString err;
+        if (r.method == "PUT")
+        {
+            const std::string p = r.body.is_object() ? r.body.value("pack", "") : r.Str("pack");
+            if (p.empty())
+                return Reply::Error(400, "missing parameter 'pack'", "a pack of GET /api/v1/packs, or scenario");
+            if (!d->SetPack(deck, QString::fromStdString(p), &err))
+                return Reply::Error(400, err.toStdString());
+        }
+        QString setting;
+        if (!d->Pack(deck, &setting, &err))
+            return Reply::Error(502, err.toStdString());
+        OnGui([w] {
+            w->_brightnessDeck.clear();  // the toolbar takes the new setting
+            w->FetchBrightness();
+        });
+        return Reply::Ok({{"deck", deck.toStdString()}, {"setting", setting.toStdString()}});
+    };
+    _api.Add({"GET",
+              "/api/v1/deck/pack",
+              "The icon pack setting of the deck this window shows (from unreal-streamdeck)",
+              "setting: a pack name, or scenario (the scenario's settings.pack, else magicwb)",
+              {"device", "packs", "icons", "decks"},
+              {},
+              nullptr,
+              pack});
+    _api.Add({"PUT",
+              "/api/v1/deck/pack",
+              "Set the icon pack of the deck this window shows through unreal-streamdeck",
+              "",
+              {"device", "packs", "icons", "decks"},
+              {{"pack", "body", "string", "a pack name, or scenario", true}},
+              json{{"pack", "duotone"}},
+              pack});
     _api.Add({"GET",
               "/api/v1/settings",
               "View settings: bezel mask, visible-area guide, firmware quirks",

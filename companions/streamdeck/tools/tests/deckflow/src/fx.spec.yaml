@@ -1,0 +1,30 @@
+# Test fixture of deckflow (tools/tests/test_deckflow.py): no product layout.
+scenario: fx
+model: plusxl
+pack: magicwb
+settings: {brightness: 50}
+
+menu home:
+  title: Home
+  context: play
+  dials:
+    0: {label: TTD, uc: U2.1, turn: {action: ttd.seek_by, value: {d: $ticks, rate: $rate, unit: seconds}}, press: {action: run.pause_toggle}}
+  keys:
+    pause:  {at: [0, 0], uc: C1.1, action: run.pause_toggle}    # the state-bound face
+    reset:  {at: [0, 1], uc: C1.2, action: mach.reset}
+    nmi:    {uc: C1.3, action: mach.nmi}                         # placed by the tool: [0, 2]
+    x4:     {at: [1, 0], uc: C2.1, action: set.speed, value: 4, label: X4}
+    bench:  {at: [1, 1], title: Bench, glyph: mach.start, then: home,
+             steps: [{action: mach.start, value: {model: PENTAGON, ram_kb: 128, replace: true}}, {action: media.open, value: {path: $data/testsnapshots/z80/newbench.z80}}]}
+    speed:  {at: [1, 3], open: fxspeed}
+    tools:  {at: [2, 0], open: tools}
+
+menu tools:
+  title: Tools
+  uc: C6
+  keys:
+    qs:     {at: [0, 1], uc: C6.1, action: snapshot.quick, value: {op: save, slot: 1}, label: S1}
+    ql:     {at: [0, 2], uc: C6.1, action: snapshot.quick, value: {op: load, slot: 1}, label: L1}
+    back:   {at: [3, 8], nav: back}
+    cpu:    {at: [1, 1], uc: C10.2, label: CPU, show: {readout: host.stats.cpu_percent, format: "{:.0f}%", warn: 80, alert: 95}}
+    fps:    {at: [1, 2], uc: C10.3, action: run.pause_toggle, show: {readout: emulator.stats, format: "{fps:.0f} FPS"}}

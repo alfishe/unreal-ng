@@ -10,7 +10,7 @@
 ///   lease goes back: the daemon ends unless Stream Deck Studio still holds it.
 /// - StreamDeckDialog is Tools > Stream Deck...: the daemon's status (state, pid, version, decks, viewers, the link),
 ///   Start / Stop / Restart, when to start it, how activity shows (Q-3), the pairing (Pair, Approve here, Revoke),
-///   each deck's brightness, the surfaces table (Tools > Controllers), the Linux udev rule. It reads and changes the
+///   each deck's brightness and icon pack (the daemon's packs; "its scenario's" clears it), the surfaces table (Tools > Controllers), the Linux udev rule. It reads and changes the
 ///   same verbs every automation plane uses (companion::streamdeck::Call); calls that reach the daemon run off the
 ///   GUI thread.
 
@@ -62,6 +62,8 @@ public:
     QLabel* stateLabel() const { return _state; }
     QLabel* pairingLabel() const { return _pairing; }
     QTableWidget* decksTable() const { return _decks; }
+    /// The icon pack box of a deck's row (null when the row has none)
+    QComboBox* packBox(int row) const;
 
 signals:
     /// "Surfaces...": Tools > Controllers, where the surfaces table is
@@ -75,6 +77,10 @@ private:
     /// A verb on a worker thread (it may wait for the daemon); the answer on the status line
     void callAsync(const QString& verb, const QVariantMap& args);
     void approve();
+    /// The daemon's icon packs (verb packs) on a worker thread, once per daemon pid; the deck rows are built again
+    void loadPacks(const QString& pid);
+    /// The pack choices of a deck's box: its scenario's, then the daemon's packs (and its setting if not among them)
+    void fillPackBox(QComboBox* box, const QString& setting) const;
 
     QPointer<CompanionController> _companions;
     QLabel* _state = nullptr;
@@ -94,4 +100,6 @@ private:
     QTimer* _timer = nullptr;
     QString _pendingPairing;  ///< the daemon's pairing waiting for the user (its id at the registry)
     QString _decksShown;      ///< the deck list the table shows (rebuilt when it changes)
+    QList<QPair<QString, QString>> _packs;  ///< the daemon's icon packs: name, title
+    QString _packsOf;         ///< the daemon pid the packs were asked of ("" = not yet)
 };

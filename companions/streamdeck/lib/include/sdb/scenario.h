@@ -43,9 +43,21 @@ struct Slot
     bool operator==(const Slot&) const = default;
 };
 
+// A value face (scenarios.md §4.2): the key shows a readout's value as big text, the face's label as its caption.
+struct FaceValue
+{
+    std::string readout;  // a readout path: "host.stats.cpu_percent", or a whole readout ("emulator.stats")
+    std::string format;   // a template (sdb/valueface.h): "{:.0f}%", "{fps:.0f} FPS"; "" = "{}"
+    std::optional<double> warn, alert;  // thresholds on the value's number: the text turns amber / red
+    bool operator==(const FaceValue&) const = default;
+};
+
 struct Face
 {
     std::string label, icon, svg, image, fit = "contain";
+    std::string glyph;  // v2: a glyph id of data/streamdeck/icons/glyphs.json, drawn from the deck's icon pack
+                        // (sdb/iconpacks.h); before image, svg and icon
+    std::optional<FaceValue> value;  // v2: a live value, drawn instead of the picture (a glyph shrinks above it)
     draw::Color bg{16, 16, 28}, fg{255, 255, 255};
 };
 
@@ -116,6 +128,7 @@ struct Node
     std::string then = "stay";   // stay | back | home
     std::optional<Face> faceOn;  // toggle / state: face while on
     std::string state;           // v2: a readout path; the face is faceOn while it is true ("run.state.paused")
+                                 // an action without "do" is a display-only key: its face shows a value (face.value)
     bool activity = true;        // v2: false = no activity look for this key
     [[nodiscard]] bool IsMenu() const
     {
@@ -149,6 +162,7 @@ struct Settings
     bool homeOnHold = true;
     int autoExit = 0;
     bool inheritDials = true;
+    std::string pack;  // v2: the icon pack of the glyph faces ("" = magicwb); a deck's own setting overrides it
 };
 
 struct Scenario

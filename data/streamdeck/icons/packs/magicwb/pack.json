@@ -1,0 +1,28 @@
+{
+ "format": "streamdeck-icon-pack",
+ "version": 1,
+ "name": "magicwb",
+ "title": "MagicWB",
+ "style": "Amiga MagicWB: the 8-colour MagicWB palette, black outline, light top-left, shade and a dithered band bottom-right, Workbench 2 button tile; on = the button pressed in, lit blue",
+ "author": "unreal-ng",
+ "licence": "Original drawings made for unreal-ng, the licence of unreal-ng; the MagicWB palette and shading technique are imitated, no original artwork is used",
+ "source": "png-pixel",
+ "native": [
+  32,
+  32
+ ],
+ "pixel_aspect": [
+  1,
+  1
+ ],
+ "background": "#959595",
+ "sizes": [
+  72,
+  80,
+  96,
+  112,
+  120
+ ],
+ "fallback": null,
+ "generated_by": "tools/icons/streamdeck_packs/magicwb.py"
+}

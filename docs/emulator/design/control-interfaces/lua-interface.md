@@ -293,6 +293,8 @@ local st = streamdeck("status").status     -- st.state ("running", "waiting", ..
 streamdeck("settings", {mode = "always", activity = "line"})
 streamdeck("pair")                         -- the user approves it at the GUI
 streamdeck("brightness", {deck = "A1B2C3", value = 40})
+local packs = streamdeck("packs").packs    -- packs[1].name, packs[1].title
+streamdeck("pack", {deck = "A1B2C3", pack = "os4"})   -- pack = "scenario": its scenario's again
 ```
 
 Monitoring (`monitor(name, {instance = })`, [command-interface.md §17](./command-interface.md#17-monitoring)); an

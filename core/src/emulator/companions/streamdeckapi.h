@@ -2,7 +2,7 @@
 
 /// @file streamdeckapi.h
 /// @brief The Stream Deck daemon's verbs on every automation plane, in one place (automation planes guidelines §1):
-/// its supervision by unreal-qt, its settings, its pairing, the brightness of its decks. WebAPI
+/// its supervision by unreal-qt, its settings, its pairing, the brightness and icon pack of its decks. WebAPI
 /// `/api/v1/streamdeck/...` (and so the WebSocket `call`), MCP `streamdeck`, the CLI `streamdeck`, Lua and Python
 /// `streamdeck()` call Call() and serialise its StateNode: the same fields, errors and statuses everywhere. The
 /// settings page in unreal-qt (Tools > Controllers > Stream Deck) shows and changes the same.
@@ -19,6 +19,8 @@
 /// | pair_cancel | | a pending pairing is cancelled |
 /// | revoke | id? | revoke the daemon's companion (its token stops working; the deck offers to pair again) |
 /// | brightness | deck? (first), value? | a deck's brightness (0..100): read, or set and keep for that deck |
+/// | packs | | the daemon's icon packs: packs [{name, title, style, source, fallback, background}], default |
+/// | pack | deck? (first), pack? | a deck's icon pack: read, or set (scenario: its scenario's) and keep for that deck |
 /// | udev | | the Linux udev rule text (an AppImage cannot install it) |
 ///
 /// Statuses: 200, 400 Bad Request, 404 Not Found, 409 Conflict (not running), 502 the daemon refused, 503 no

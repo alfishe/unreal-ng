@@ -8,6 +8,7 @@
 #include <string>
 
 #include "check.h"
+#include "sdb/datadir.h"
 #include "sdb/runtime.h"
 
 using namespace sdb;
@@ -157,6 +158,46 @@ void TestDaemonDecks()
     CHECK_EQ(Call(api, "GET", "/api/v1/decks/EMU1/brightness").body.value("brightness", -1), 100);
     CHECK_EQ(real.rt.Brightness(), realBefore);
     CHECK_EQ(Call(api, "PUT", "/api/v1/decks/NOPE/brightness", {{"value", 5}}).status, 404);
+
+    // The icon pack per deck: over the scenario's settings.pack, the keys with a glyph drawn again at once, the
+    // other deck and the keys without a glyph untouched; an unknown pack is refused
+    {
+        data::SetRoot(SDB_TEST_SOURCE_DATA);
+        const fs::path glyphs = dir / "glyphs.deck.json";
+        std::ofstream(glyphs) << R"({"name": "glyphs", "model": "neo", "settings": {"pack": "os4"},
+          "root": {"id": "home", "type": "menu", "title": "Home", "items": [
+            {"id": "p", "type": "action", "at": [0, 1], "face": {"glyph": "run.pause"},
+             "do": {"kind": "action", "id": "run.pause_toggle"}},
+            {"id": "t", "type": "action", "title": "T", "at": [0, 2], "do": {"kind": "webapi", "path": "/x"}}]}})";
+        CHECK_EQ(Call(api, "PUT", "/api/v1/decks/EMU1/scenario", {{"file", glyphs.string()}}).status, 200);
+        CHECK(own.Playing() == "glyphs");
+        CHECK(Call(api, "GET", "/api/v1/packs").body["packs"].size() >= 8);
+        r = Call(api, "GET", "/api/v1/decks/EMU1/pack");
+        CHECK(r.body.value("pack", "") == "os4" && r.body.value("setting", "") == "scenario" &&
+              r.body.value("scenario_pack", "") == "os4");
+        own.rt.Step(0);
+        const auto ownWrites = own.rt.GetStats().keyWrites, realWrites = real.rt.GetStats().keyWrites;
+        DaemonDecks::Options quick;
+        quick.applyTimeoutMs = 0;  // the test steps the runtime itself: the route answers 202 at once
+        DaemonDecks fast(quick);
+        automation::Api fastApi("unreal-streamdeck", "1.0");
+        fast.AddRoutes(fastApi);
+        fast.Add("EMU1", own.dev.GetModel(), false, own.rt);
+        r = Call(fastApi, "PUT", "/api/v1/decks/EMU1/pack", {{"pack", "keycap"}});
+        CHECK(r.status == 202 && r.body.value("pack", "") == "keycap" && r.body.value("setting", "") == "keycap");
+        own.rt.Step(0);
+        CHECK_EQ(own.rt.GetStats().keyWrites, ownWrites + 1);  // the glyph key only
+        CHECK_EQ(real.rt.GetStats().keyWrites, realWrites);
+        CHECK(Call(fastApi, "GET", "/api/v1/decks/EMU1").body.value("pack", "") == "keycap");
+        CHECK_EQ(Call(fastApi, "PUT", "/api/v1/decks/EMU1/pack", {{"pack", "nosuchpack"}}).status, 400);
+        CHECK_EQ(Call(fastApi, "PUT", "/api/v1/decks/EMU1/pack", json::object()).status, 400);
+        CHECK_EQ(Call(fastApi, "PUT", "/api/v1/decks/NOPE/pack", {{"pack", "os4"}}).status, 404);
+        CHECK(Call(fastApi, "PUT", "/api/v1/decks/EMU1/pack", {{"pack", "scenario"}}).body.value("pack", "") == "os4");
+        own.rt.Step(0);
+        CHECK_EQ(own.rt.GetStats().keyWrites, ownWrites + 2);
+        fast.Remove("EMU1");
+        data::SetRoot({});
+    }
 
     // A scenario for one deck: the own deck plays it, the real one keeps the start scenario.
     r = Call(api, "PUT", "/api/v1/decks/EMU1/scenario", {{"file", mine.string()}});

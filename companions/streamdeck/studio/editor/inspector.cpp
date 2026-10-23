@@ -22,8 +22,10 @@
 #include "actioncatalogue.h"
 #include "editordocument.h"
 #include "sdb/datadir.h"
+#include "sdb/iconpacks.h"
 #include "sdb/icons.h"
 #include "sdb/scenarioops.h"
+#include "sdb/surfacereadouts.h"
 
 using namespace sdb;
 using namespace sdb::scn;
@@ -376,6 +378,22 @@ void Inspector::BuildScenario()
             setSetting(QStringLiteral("Target"), "target",
                        i == 0 ? json(nullptr) : json{{"view", target->itemData(i).toInt()}});
         });
+        auto* pack = new QComboBox;
+        pack->setObjectName(QStringLiteral("pack"));
+        pack->addItem(QStringLiteral("(default: %1)").arg(QLatin1String(packs::kDefaultPack)), QString());
+        for (const auto& p : packs::List())
+            pack->addItem(Qs(p.title.empty() ? p.name : p.title + " (" + p.name + ")"), Qs(p.name));
+        const QString curPack = Qs(st.value("pack", ""));
+        if (!curPack.isEmpty() && pack->findData(curPack) < 0)
+            pack->addItem(curPack, curPack);
+        pack->setCurrentIndex(std::max(0, pack->findData(curPack)));
+        pack->setToolTip(QStringLiteral("settings.pack: the icon pack of the glyph faces; a deck's own pack setting "
+                                        "(the toolbar) wins"));
+        form->addRow(QStringLiteral("Icon pack"), pack);
+        connect(pack, &QComboBox::currentIndexChanged, this, [setSetting, pack](int i) {
+            const QString v = pack->itemData(i).toString();
+            setSetting(QStringLiteral("Icon pack"), "pack", v.isEmpty() ? json(nullptr) : json(v.toStdString()));
+        });
         const json act = st.value("activity", json::object());
         auto setActivity = [this](const char* key, json v) {
             _doc->Apply(QStringLiteral("Activity"), [&](json& x) {
@@ -467,6 +485,86 @@ void Inspector::BuildNode(const QString& id)
         const QString v = icon->currentData().toString();
         Patch(QStringLiteral("Icon"), {{"face", {{"icon", v.isEmpty() ? json(nullptr) : json(v.toStdString())}}}});
     });
+    // glyphs (face.glyph, face_on.glyph): drawn from the deck's icon pack; an id no pack has is shown as typed
+    auto glyphBox = [&](const char* faceKey, const json& fc, const QString& label) {
+        auto* g = new QComboBox;
+        g->setObjectName(QStringLiteral("glyph-") + QLatin1String(faceKey));
+        g->setEditable(true);
+        g->setInsertPolicy(QComboBox::NoInsert);
+        g->addItem(QString());
+        for (const auto& id : packs::GlyphIds())
+            g->addItem(Qs(id));
+        const QString cur = Qs(Str(fc, "glyph"));
+        if (!cur.isEmpty() && g->findText(cur) < 0)
+            g->addItem(cur);
+        g->setCurrentText(cur);
+        g->setToolTip(QStringLiteral("a glyph of data/streamdeck/icons/glyphs.json, drawn from the deck's icon pack "
+                                     "(the label under it); empty = none"));
+        form->addRow(label, g);
+        auto apply = [this, g, faceKey, old = cur] {
+            const QString v = g->currentText().trimmed();
+            if (v == old)
+                return;
+            Patch(QStringLiteral("Glyph"),
+                  {{faceKey, {{"glyph", v.isEmpty() ? json(nullptr) : json(v.toStdString())}}}});
+        };
+        connect(g, &QComboBox::activated, this, apply);
+        connect(g->lineEdit(), &QLineEdit::editingFinished, this, apply);
+    };
+    glyphBox("face", face, QStringLiteral("Glyph"));
+    if (!menu)
+        glyphBox("face_on", n.value("face_on", json::object()), QStringLiteral("Glyph when on"));
+    // a value face (face.value): the key shows a readout's value as big text, the label as its caption
+    {
+        const json v = face.value("value", json::object());
+        auto* readout = new QComboBox;
+        readout->setObjectName(QStringLiteral("value-readout"));
+        readout->setEditable(true);
+        readout->setInsertPolicy(QComboBox::NoInsert);
+        readout->addItem(QString());
+        for (const auto& name : KnownReadouts())
+            readout->addItem(Qs(std::string(name)));
+        const QString cur = Qs(Str(v, "readout"));
+        if (!cur.isEmpty() && readout->findText(cur) < 0)
+            readout->addItem(cur);
+        readout->setCurrentText(cur);
+        readout->setToolTip(QStringLiteral("a readout path the key shows (host.stats.cpu_percent, emulator.stats, "
+                                           "debug.breakpoints.total); empty = no value face"));
+        form->addRow(QStringLiteral("Value"), readout);
+        auto apply = [this, readout, old = cur] {
+            const QString r = readout->currentText().trimmed();
+            if (r == old)
+                return;
+            Patch(QStringLiteral("Value"),
+                  {{"face", {{"value", r.isEmpty() ? json(nullptr) : json{{"readout", r.toStdString()}}}}}});
+        };
+        connect(readout, &QComboBox::activated, this, apply);
+        connect(readout->lineEdit(), &QLineEdit::editingFinished, this, apply);
+        if (!cur.isEmpty())
+        {
+            auto* fmt = text(
+                QStringLiteral("Format"), Str(v, "format"),
+                [](const QString& t) {
+                    return json{{"face", {{"value", {{"format", t.isEmpty() ? json(nullptr) : json(t.toStdString())}}}}}};
+                },
+                QStringLiteral("a template: {:.0f}% (the value), {fps:.0f} FPS (a field), {rss_bytes:b} (bytes), "
+                               "{recording?REC|IDLE}, {slots:#} (a count); empty = {}"));
+            fmt->setObjectName(QStringLiteral("value-format"));
+            for (const char* t : {"warn", "alert"})
+            {
+                const std::string now = v.contains(t) && v[t].is_number() ? v[t].dump() : std::string();
+                text(
+                    std::string(t) == "warn" ? QStringLiteral("Warn at") : QStringLiteral("Alert at"), now,
+                    [t](const QString& s) {
+                        bool ok = false;
+                        const double d = s.trimmed().toDouble(&ok);
+                        return json{{"face", {{"value", {{t, ok ? json(d) : json(nullptr)}}}}}};
+                    },
+                    QStringLiteral("the text turns amber (warn) / red (alert) at this number; warn above alert: "
+                                   "low values are the bad ones; empty = none"));
+            }
+        }
+    }
     for (const char* key : {"bg", "fg"})
     {
         auto* row = new QWidget;

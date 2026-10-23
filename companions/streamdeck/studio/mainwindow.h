@@ -104,6 +104,7 @@ private:
     QTimer* _pairPoll = nullptr;  // the pairing's state while it waits for the approval
     QString _pairState;
     QString _brightnessDeck;  // the deck the slider shows
+    QComboBox* _pack = nullptr;  // the shown deck's icon pack, set through the daemon (the deck the slider shows)
     QLabel* _status;
     QPlainTextEdit* _log;
     QTimer* _tick;

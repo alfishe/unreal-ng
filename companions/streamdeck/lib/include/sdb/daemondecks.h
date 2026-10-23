@@ -8,6 +8,9 @@
 //                                             brightness, viewers
 //   GET  /api/v1/decks/{serial}               one deck ("first" = the first real deck, else the first deck)
 //   GET  /api/v1/decks/{serial}/brightness    PUT {value} | {delta}
+//   GET  /api/v1/decks/{serial}/pack          the icon pack of its glyph faces; PUT {pack} (a pack, or "scenario" =
+//                                             the scenario's settings.pack): the keys are drawn again at once
+//   GET  /api/v1/packs                        the icon packs of the data directory (name, title, style, ...)
 //   GET  /api/v1/decks/{serial}/scenario      PUT {file, watch} plays another file on that deck only; DELETE gives
 //                                             the deck the daemon's start scenario back
 //   POST /api/v1/decks/{serial}/snapshot      {path}: the deck's viewers save a PNG there (device wire Control)
@@ -101,6 +104,10 @@ public:
 
     void AddRoutes(automation::Api& api);
 
+    // A deck's icon pack over its scenario's settings.pack: "" or "scenario" = the scenario's; false (and `error`)
+    // for a pack the data directory does not have or a deck that is not there. Thread-safe.
+    bool SetPack(const std::string& serial, const std::string& pack, std::string* error = nullptr);
+
     // The activity look of every deck over its scenario's (Q-3): "" = the scenario's, "off", "flash", "line"; a deck
     // added later gets it too. False for another word
     bool SetActivityLook(const std::string& look);
@@ -123,6 +130,7 @@ private:
         std::string file;  // "" = the built-in idle scenario
         bool watch = false;
         bool start = true;                     // plays the start scenario
+        std::string pack;                      // the deck's icon pack ("" = the scenario's)
         std::map<std::string, Clock> watched;  // the file and its includes, as last loaded
         std::uint64_t order = 0;
     };

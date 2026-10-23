@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-19 |
-| **Status** | v2 implemented 2026-10-20 (SD5, the parts without the surface topic); the default scenario waits (§9) |
+| **Status** | v2 implemented 2026-10-20 (SD5, the parts without the surface topic); the scenario pipeline 2026-10-22 (§9); the default scenario waits for its spec (§9) |
 | **Base** | `*.deck.json` v1 (`streamdeck-emulator/docs/scenario-editor/03-technical-design.md §2`, `streamdeck-bridge/include/sdb/scenario.hpp`) |
 
 v2 adds fields; a v1 file loads (its `webapi` steps keep working through the REST escape hatch, §2) and the studio
@@ -33,7 +33,7 @@ is.
 - [1. Settings](#1-settings)
 - [2. The action kind](#2-the-action-kind)
 - [3. Paths](#3-paths)
-- [4. State-bound faces](#4-state-bound-faces)
+- [4. State-bound faces](#4-state-bound-faces) (4.1 glyph faces, 4.2 value faces)
 - [5. Activity](#5-activity)
 - [6. The palette](#6-the-palette)
 - [7. Contexts on menus](#7-contexts-on-menus)
@@ -50,6 +50,7 @@ is.
 | `brightness`, `navigation.*` | Kept |
 | `format: "streamdeck-scenario"`, `version: 1` | `format: "streamdeck-scenario"`, `version: 2` |
 | — | `strip.target: true` (default on decks with a strip): the target line ([targeting.md §6](targeting.md#6-showing-the-target)) |
+| — | `pack: "duotone"` (optional): the icon pack of the glyph faces; absent = `magicwb`; a deck's own pack setting wins (§4.1) |
 
 ## 2. The action kind
 
@@ -145,6 +146,87 @@ polled. Until then the runtime asks the host for the page's readouts nobody push
 250 ms and at once after an action; the system host answers `run.state.paused` from `GET /api/v1/emulator/{id}`),
 and a state-bound key whose readout never came flips locally on success, as a toggle does. `GET /page` and `/state`
 show `state`, `on` and the readouts. `strip.status` takes `ttd`, `run`, `tape`, `target`; only `ttd` is drawn yet.
+
+### 4.1 Glyph faces and the icon pack
+
+```json
+"face":    { "glyph": "snapshot.quick", "label": "S1" },
+"face_on": { "glyph": "run.play" }
+```
+
+`glyph` (in `face` and `face_on`) names a glyph of `data/streamdeck/icons/glyphs.json`; the deck draws it from its
+icon pack (`data/streamdeck/icons/packs/<pack>/src/<id>.png`, [icons/README.md](../../companions/streamdeck/icons/README.md))
+at its own key size on the pack's background, so a scenario names no picture file and no pack. With a `label` the
+glyph is shrunk and the label drawn under it (as for an `image`). A glyph is drawn before `image`, `svg` and `icon`.
+
+The pack is chosen at run time, first match wins:
+
+| Where | Set by |
+|:--|:--|
+| The deck's setting | `PUT /api/v1/decks/{serial}/pack {pack}` on the daemon ([daemon.md](../../companions/streamdeck/daemon.md)), Stream Deck Studio's toolbar, `sdctl pack NAME`; `scenario` clears it |
+| The scenario's `settings.pack` | the spec's `pack` (deckflow), the studio's inspector (scenario settings) |
+| `magicwb` | always: every pack's last fallback |
+
+A glyph missing in the pack comes from the pack's own `fallback` (`pack.json`), then from `magicwb`; a glyph no pack
+has leaves the label alone (the title when there is none) and `scenario check` warns. Switching the pack draws the
+visible keys again at once. Decoded and scaled glyphs are cached per (pack, glyph, size) (`sdb/iconpacks.h`).
+
+Done 2026-10-22 (C11.2): `Face::glyph`, `Settings::pack` (parsed, validated: a pack name `[a-z0-9_-]+`, an id
+`[a-z0-9._-]`, a glyph or a pack the data directory lacks is a warning; written back), `RenderFace(..., pack)`, the
+runtime's `SetPack`, the daemon's per-deck route, the studio's glyph pickers, preview pack and deck pack.
+
+### 4.2 Value faces
+
+A key that shows a value (C10, monitoring): the readout's value as big text, the face's `label` (else the node's
+title) as a caption under it, the `glyph` shrunk above it when the key has room.
+
+```json
+{ "id": "cpu", "type": "action", "at": [0, 4],
+  "face": { "label": "CPU", "value": { "readout": "host.stats.cpu_percent", "format": "{:.0f}%", "warn": 100, "alert": 200 } } }
+{ "id": "fps", "type": "action", "at": [1, 0],
+  "face": { "label": "FPS", "value": { "readout": "emulator.stats", "format": "{fps:.1f}\n{speed_percent:.0f}%" } },
+  "do": { "kind": "action", "id": "run.pause_toggle" } }
+```
+
+| Field of `face.value` | Meaning |
+|:--|:--|
+| `readout` | A readout path ([protocol.md §3](protocol.md#3-readouts)): a whole readout (`emulator.stats`) or a field of one, dotted to any depth (`host.stats.cpu_percent`, `emulator.stats.frame_time_us.avg`, `media.slots.slots.0.name`) |
+| `format` | A template (`sdb/valueface.h`); absent = `{}` |
+| `warn`, `alert` | Numbers: at or above them the text turns amber / a muted red (with a fine line under the caption); `warn` above `alert` reverses it (the low values are bad: `speed_percent` warn 95, alert 80). The number is the first placeholder's field (the value itself without one); `true` / `false` count as 1 / 0 |
+
+Template: text with placeholders `{field:spec}` or `{field?yes|no}` (`{{`, `}}` are braces, a line break starts a
+second line, at most three):
+
+| Placeholder | Shows |
+|:--|:--|
+| `{}`, `{field}` | the value / a dotted field of it: an integral number as an integer, another with up to 2 decimals, `true` / `false` as ON / OFF, a text as it is |
+| `{:.1f}`, `{:d}`, `{:04X}`, `{:+d}` | fixed point (precision 6 when not given), a rounded integer, hex; `+`, `0` and a width as in Python |
+| `{:%}` | the number times 100 and `%` |
+| `{:b}` | bytes: `512B`, `1.5K`, `340M`, `2.1G` (one decimal below 10 unless a precision says otherwise) |
+| `{:k}` | SI: `950`, `1.2k`, `3.4M` |
+| `{slots:#}` | the size of an array or object (a text's length) |
+| `{recording?REC\|IDLE}` | `REC` while the field is true (true, a number not 0, a text or list not empty), else `IDLE` |
+
+A field the value lacks, or a value that has not come yet, shows `--`. A key with a value face may go without `do`
+(a display-only key: a press does nothing); with `do` it runs it as any key. `face_on` may carry a value too.
+
+The values come the way `state` does (§4): the surface client subscribes to the readouts the scenario names (the
+values' and the states' together, at the rate it already asks, `max_hz`) and hands each path its field; without a
+surface client the REST fallback polls the visible page's paths with the states' (every 250 ms, at once after an
+action; `GET /api/v1/surfaces/readouts?instance=&names=<readout>`, published state only). A key is drawn again only
+when its text or its level changed (a readout pushed at 10 Hz whose other fields move redraws nothing). `GET /page`
+and `/state` show each value key's `value: {readout, text, level}`.
+
+Validation: `readout` must be a readout path (error); a readout the core does not publish (`readouts.h`'s table,
+`toggle.*`, `audio.source.*`, `KnownReadouts`) is a warning (the key shows `--`); a bad template (unbalanced braces,
+an unknown spec, `?yes` without `|no`) and thresholds that are no numbers are errors; an `image`, `svg` or `icon`
+beside a value is a warning (not drawn). CSV / TSV carry the value in the `extra` column, as a glyph. Stream Deck
+Studio: the inspector's Value (a readout picker), Format, Warn at, Alert at; the canvas previews the template with
+`--`. Deckflow: the key field `show: {readout, format, warn, alert}` ([pipeline.md](../../companions/streamdeck/pipeline.md#3-the-spec)).
+
+Done 2026-10-22 (C10): `Face::value` (`FaceValue`), `sdb/valueface.h` (the template, the thresholds), the nested
+fields of `ReadoutField` / `FieldOf`, `KnownReadouts`, `RenderFace(..., shown)`, the runtime's change-only redraw,
+the system host's readouts route, the studio's fields, deckflow's `show`; the product scenario's `monitor` menu.
 
 ## 5. Activity
 
@@ -251,6 +333,17 @@ generated from that document's spec. No default scenario ships until then; the m
   the output (v2, no issue, clean against the catalogue).
 - Then: the use-case document's spec goes through it into `$data/streamdeck/scenarios/unrealng-control.deck.json`,
   with a test that the shipped file equals the generator's output.
+- **The pipeline (2026-10-22, SD11):** [`deckflow.py`](../../../companions/streamdeck/tools/deckflow.py)
+  ([pipeline.md](../../companions/streamdeck/pipeline.md)) replaces the JSON spec by a compact YAML spec per scenario
+  (`data/streamdeck/scenarios/src/<name>.spec.yaml`, shared menus in `src/shared/`) and makes it and the Stream Deck
+  Studio project (`data/streamdeck/scenarios/<name>.deck.yaml`, v2, shared menus as includes, the meta in `tags`)
+  equal sources: a 3-way sync carries an edit of either side to the other, the same field changed on both is a
+  conflict listed with the spec's line. It builds through the generator above, writes glyph faces (`face.glyph`,
+  §4.1: the deck draws them from its icon pack, the spec's `pack` is `settings.pack`), writes the meta description
+  ([scenarios/](scenarios/): key grids, use-case coverage), checks against the catalogue, glyphs, use cases, readouts
+  and the grid, and plays the result on an own Studio deck that follows every edit (`watch`). The default scenario
+  will be written as such a spec from [use-cases.md](use-cases.md); the sample (`sample`, with the shared `speed`) only
+  proves the loop.
 - Software keys reference `$testdata` only in developer builds; the release scenario uses the software that ships in
   `data/` (`testsoft`, `testtapes`), and the generator checks every path exists. Found 2026-10-20: `data/testsoft`,
   `testtapes` and `testsnapshots` (about 1 MB) are in no package and not in a build's `bin/` (`$data` is the folder

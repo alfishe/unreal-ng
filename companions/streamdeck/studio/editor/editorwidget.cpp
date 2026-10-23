@@ -29,6 +29,7 @@
 #include "inspector.h"
 #include "presets.h"
 #include "runcontroller.h"
+#include "sdb/iconpacks.h"
 #include "sdb/scenarioio.h"
 #include "sdb/scenarioops.h"
 
@@ -108,6 +109,21 @@ EditorWidget::EditorWidget(DaemonControl* daemon, QWidget* parent) : QWidget(par
         QStringLiteral("unreal-streamdeck plays this scenario on the deck; edits go live, the studio shows it"));
     _stopAct = bar->addAction(QStringLiteral("■ Stop"), this, [this] { StopRun(); });
     _stopAct->setEnabled(false);
+    bar->addSeparator();
+    {
+        // the icon pack of the preview: the scenario's (settings.pack, the inspector) unless one is picked here
+        auto* pack = new QComboBox(bar);
+        pack->setObjectName(QStringLiteral("preview-pack"));
+        pack->addItem(QStringLiteral("Pack: the scenario's"), QString());
+        for (const auto& p : sdb::packs::List())
+            pack->addItem(QStringLiteral("Pack: ") + QString::fromStdString(p.title.empty() ? p.name : p.title),
+                          QString::fromStdString(p.name));
+        pack->setToolTip(QStringLiteral("The icon pack the canvas draws the glyph faces from (the preview only; the "
+                                        "scenario's own is settings.pack, a deck's its pack setting)"));
+        bar->addWidget(pack);
+        connect(pack, &QComboBox::currentIndexChanged, this,
+                [this, pack](int i) { _canvas->SetPack(pack->itemData(i).toString().toStdString()); });
+    }
 
     // ---- left: tree + palette
     _tree = new QTreeWidget(this);
