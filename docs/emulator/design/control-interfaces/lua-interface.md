@@ -239,9 +239,13 @@ A control surface's outputs (the Surface Dial; [command-interface.md §15](./com
 `controllers_output(dial, "buzz")`, `controllers_output(dial, {steps = 36, clicks = "off"})`,
 `controllers_output(dial, {marks = "second,edge"})`.
 
+Battery, light and notice: `controllers_host("devices").devices[i]` has `battery` (`text` is `unknown` when the OS
+says nothing), `light.available` and `notice`; `controllers_light(device, "#ff8000")` (or `"255,128,0"`, `"off"`) sets
+the light.
+
 `controllers(verb, [connector], [device], [opts])`, `controllers_host(verb, [opts])`, `controllers_haptics([device])`,
 `controllers_rumble(device, [effect])` (`identify` by default), `controllers_output(device, pattern | {steps, clicks,
-marks})`. Each returns the reply table: `ok`, `error`, `message`
+marks})`, `controllers_light(device, color)`. Each returns the reply table: `ok`, `error`, `message`
 and the verb's fields. The host side needs the Qt client (a headless process answers `unavailable`).
 
 ### Host Actions

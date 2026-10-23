@@ -710,8 +710,18 @@ emu.controllers_output(dial, steps=36, clicks="off")     # its feel until the co
 emu.controllers_output(dial, marks="ten_seconds,second") # what its layer plays for a seek's marks
 ```
 
+Battery, light and notice:
+
+```python
+for device in emu.controllers_host("devices")["devices"]:
+    print(device["name"], device["battery"]["text"], device.get("notice", ""))   # "unknown" when the OS says nothing
+    if device["light"]["available"]:
+        emu.controllers_light(device["id"], "#ff8000")   # or "255,128,0", "off"
+```
+
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device,
-**options)`; `controllers_host("devices")` lists each device's `role`, `layers`, `context`, `outputs` and `feel`. The
+**options)`, `controllers_light(device, color)`; `controllers_host("devices")` lists each device's `role`, `layers`,
+`context`, `outputs`, `feel`, `battery`, `light` and `notice`. The
 host side needs the Qt client
 (a headless process answers `unavailable`).
 

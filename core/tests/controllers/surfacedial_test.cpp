@@ -20,6 +20,7 @@
 #include "hostinputcontrol.h"
 #include "hostinputservice.h"
 #include "router/binding.h"
+#include "wheelclaim.h"
 
 using namespace controllers;
 
@@ -436,4 +437,46 @@ TEST(SurfaceDial_Test, Touch_InferredFromActionsBeforeTheSensor)
     EXPECT_EQ(Expire(pressed, 10 * kWait), Events{}) << "held down: still a hand on it";
     EXPECT_EQ(Decode(pressed, "01 00 00 00 0a 0b 0c 0d 3a", 10 * kWait), (Events{{"push", 0.0f}}));
     EXPECT_EQ(Expire(pressed, 11 * kWait), (Events{{"touch", 0.0f}}));
+}
+
+/// surface-dial.md §4.1: a connected Dial takes the wheel from the OS for each window of the client; a pad does not
+TEST(SurfaceDial_Test, WheelClaim_WhileADialIsConnected)
+{
+    const DeviceDatabase& db = DeviceDatabase::Builtin();
+    const HostDeviceInfo dial{"dial-1", "Surface Dial", "surface-dial", "generic", "rawinput"};
+    const HostDeviceInfo pad{"pad-1", "Xbox Elite 2", "xbox-elite-2", "xbox", "gameinput"};
+    const HostDeviceInfo keyboard{"kbd:system", "Keyboard", "keyboard", "keyboard", "qt"};
+    EXPECT_TRUE(WheelClaim::IsWheel(dial, db));
+    EXPECT_FALSE(WheelClaim::IsWheel(pad, db));
+    EXPECT_FALSE(WheelClaim::IsWheel(keyboard, db));
+    EXPECT_FALSE(WheelClaim::AnyWheel({keyboard, pad}, db));
+    EXPECT_TRUE(WheelClaim::AnyWheel({keyboard, pad, dial}, db));
+
+    using Windows = std::vector<WheelClaim::Window>;
+    WheelClaim claim;
+    WheelClaim::Changes changes = claim.Update(false, {0x100, 0x200});
+    EXPECT_TRUE(changes.Empty()) << "no wheel: the OS keeps it";
+
+    changes = claim.Update(true, {0x100, 0, 0x100});
+    EXPECT_EQ(changes.take, (Windows{0x100})) << "no handle yet and repeats skipped";
+    EXPECT_TRUE(changes.release.empty());
+    EXPECT_TRUE(claim.Update(true, {0x100}).Empty()) << "nothing changed: no OS calls";
+
+    changes = claim.Update(true, {0x100, 0x200});
+    EXPECT_EQ(changes.take, (Windows{0x200})) << "the debugger window got its handle";
+    EXPECT_TRUE(changes.release.empty());
+
+    changes = claim.Update(true, {0x100, 0x300});
+    EXPECT_EQ(changes.release, (Windows{0x200})) << "a window made again has a new handle";
+    EXPECT_EQ(changes.take, (Windows{0x300}));
+
+    changes = claim.Update(false, {0x100, 0x300});
+    EXPECT_EQ(changes.release, (Windows{0x100, 0x300})) << "the last Dial left";
+    EXPECT_TRUE(changes.take.empty());
+    EXPECT_TRUE(claim.Held().empty());
+
+    claim.Update(true, {0x100});
+    changes = claim.ReleaseAll();
+    EXPECT_EQ(changes.release, (Windows{0x100})) << "the client quits";
+    EXPECT_TRUE(claim.ReleaseAll().Empty());
 }

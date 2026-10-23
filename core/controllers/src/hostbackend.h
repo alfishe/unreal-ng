@@ -107,6 +107,131 @@ struct StepsOut
 
 /// endregion </Surface outputs>
 
+/// region <Battery and light (architecture.md §10)>
+
+/// A device's battery as the OS reports it (IBackend::Battery). Unknown is the honest default: GameController gives
+/// no level for an Xbox Elite 2 (research-host-apis.md §2.3), GameInput has no battery API, a wired pad has none
+struct BatteryState
+{
+    bool known = false;     ///< the OS reports something about the battery; nothing else is set while false
+    int level = -1;         ///< percent 0..100; -1 when the OS gives only a state (charging, wired)
+    bool coarse = false;    ///< the level is a step (XInput's four, the kernel's capacity_level), not a measurement
+    bool charging = false;
+    bool wired = false;     ///< on the cable: charging, full or not charging, or a wired pad without a battery
+
+    bool operator==(const BatteryState& other) const
+    {
+        return known == other.known && level == other.level && coarse == other.coarse && charging == other.charging &&
+               wired == other.wired;
+    }
+    bool operator!=(const BatteryState& other) const
+    {
+        return !(*this == other);
+    }
+};
+
+/// "unknown", "80 %", "about 67 %", "charging, 40 %", "wired": the text every surface and the dialog show
+inline std::string BatteryText(const BatteryState& battery)
+{
+    if (!battery.known)
+        return "unknown";
+    std::string level;
+    if (battery.level >= 0)
+        level = std::string(battery.coarse ? "about " : "") + std::to_string(battery.level) + " %";
+    if (battery.charging)
+        return level.empty() ? "charging" : "charging, " + level;
+    if (battery.wired)
+        return level.empty() ? "wired" : "wired, " + level;
+    return level.empty() ? "unknown level" : level;
+}
+
+/// A light's colour (a DualSense / DualShock 4 light bar): 0..255 per channel, all zero = off
+struct LightColor
+{
+    uint8_t red = 0;
+    uint8_t green = 0;
+    uint8_t blue = 0;
+
+    bool operator==(const LightColor& other) const
+    {
+        return red == other.red && green == other.green && blue == other.blue;
+    }
+    bool operator!=(const LightColor& other) const
+    {
+        return !(*this == other);
+    }
+};
+
+/// "#RRGGBB" / "RRGGBB", "r,g,b" (0..255 each) or "off"; false for anything else
+inline bool ParseLightColor(const std::string& text, LightColor& out)
+{
+    auto hex = [](char c) -> int {
+        if (c >= '0' && c <= '9')
+            return c - '0';
+        if (c >= 'a' && c <= 'f')
+            return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F')
+            return c - 'A' + 10;
+        return -1;
+    };
+    if (text == "off")
+    {
+        out = {};
+        return true;
+    }
+    const std::string digits = !text.empty() && text[0] == '#' ? text.substr(1) : text;
+    if (digits.size() == 6 && text.find(',') == std::string::npos)
+    {
+        uint8_t channel[3] = {};
+        for (size_t index = 0; index < 3; index++)
+        {
+            const int high = hex(digits[index * 2]);
+            const int low = hex(digits[index * 2 + 1]);
+            if (high < 0 || low < 0)
+                return false;
+            channel[index] = static_cast<uint8_t>(high * 16 + low);
+        }
+        out = {channel[0], channel[1], channel[2]};
+        return true;
+    }
+    int channel[3] = {};
+    size_t at = 0;
+    for (size_t index = 0; index < 3; index++)
+    {
+        const size_t end = index < 2 ? text.find(',', at) : text.size();
+        if (end == std::string::npos || end == at || end - at > 3)
+            return false;
+        int value = 0;
+        for (size_t c = at; c < end; c++)
+        {
+            if (text[c] < '0' || text[c] > '9')
+                return false;
+            value = value * 10 + (text[c] - '0');
+        }
+        if (value > 255)
+            return false;
+        channel[index] = value;
+        at = end + 1;
+    }
+    out = {static_cast<uint8_t>(channel[0]), static_cast<uint8_t>(channel[1]), static_cast<uint8_t>(channel[2])};
+    return true;
+}
+
+/// "#RRGGBB"
+inline std::string LightColorText(const LightColor& color)
+{
+    static const char* digits = "0123456789abcdef";
+    std::string text = "#";
+    for (const uint8_t channel : {color.red, color.green, color.blue})
+    {
+        text += digits[channel >> 4];
+        text += digits[channel & 0x0F];
+    }
+    return text;
+}
+
+/// endregion </Battery and light>
+
 /// What a backend says about itself (architecture.md §4 rule 3: probes are cheap and explicit)
 struct BackendProbe
 {
@@ -192,6 +317,34 @@ public:
         return false;
     }
     /// endregion </Surface outputs>
+
+    /// region <Battery and light (architecture.md §10)>
+    /// The battery as the OS last reported it. Never blocks: a backend whose OS read may wait (a HID feature report
+    /// over Bluetooth) refreshes a copy on its own thread and returns that
+    virtual BatteryState Battery(const HostDeviceId& device) const
+    {
+        (void)device;
+        return {};
+    }
+    /// The device has a light this backend can set (SetLight)
+    virtual bool HasLight(const HostDeviceId& device) const
+    {
+        (void)device;
+        return false;
+    }
+    /// Why the device's light cannot be set here, in words a user can act on; "" where HasLight
+    virtual std::string LightUnavailable(const HostDeviceId& device) const
+    {
+        return HasLight(device) ? std::string() : "The " + Name() + " backend sets no light";
+    }
+    /// Set the light's colour; never blocks (queued, or a sysfs write). False when the device has no light here
+    virtual bool SetLight(const HostDeviceId& device, const LightColor& color)
+    {
+        (void)device;
+        (void)color;
+        return false;
+    }
+    /// endregion </Battery and light>
 };
 
 }  // namespace controllers

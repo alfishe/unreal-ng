@@ -19,6 +19,8 @@
 #include <thread>
 #include <utility>
 
+#include "devicestatus.h"
+
 namespace controllers
 {
 
@@ -47,6 +49,13 @@ struct XVibration
 };
 using XInputGetStateFn = DWORD(WINAPI*)(DWORD, XState*);
 using XInputSetStateFn = DWORD(WINAPI*)(DWORD, XVibration*);
+struct XBatteryInformation
+{
+    BYTE batteryType;   ///< BATTERY_TYPE_*: 0 disconnected, 1 wired, 2 alkaline, 3 NiMH, 0xFF unknown
+    BYTE batteryLevel;  ///< BATTERY_LEVEL_*: 0 empty .. 3 full
+};
+/// xinput1_4 / xinput1_3 only; BATTERY_DEVTYPE_GAMEPAD = 0
+using XInputGetBatteryInformationFn = DWORD(WINAPI*)(DWORD, BYTE, XBatteryInformation*);
 constexpr DWORD kSlots = 4;
 
 struct ButtonName
@@ -105,6 +114,8 @@ public:
                     reinterpret_cast<void*>(GetProcAddress(_dll, "XInputGetState")));
                 _setState = reinterpret_cast<XInputSetStateFn>(
                     reinterpret_cast<void*>(GetProcAddress(_dll, "XInputSetState")));
+                _getBattery = reinterpret_cast<XInputGetBatteryInformationFn>(
+                    reinterpret_cast<void*>(GetProcAddress(_dll, "XInputGetBatteryInformation")));
             }
             if (_getState == nullptr)
             {
@@ -149,6 +160,16 @@ public:
         return Index(device) < kSlots ? std::string() : "The device is not connected";
     }
 
+    /// XInputGetBatteryInformation, read on the polling thread every 10 s (it may wait for the pad)
+    BatteryState Battery(const HostDeviceId& device) const override
+    {
+        const DWORD index = Index(device);
+        if (index >= kSlots)
+            return {};
+        std::lock_guard lock(_batteryMutex);
+        return _batteries[index];
+    }
+
     bool SetRumble(const HostDeviceId& device, const RumbleLevels& levels) override
     {
         const DWORD index = Index(device);
@@ -168,7 +189,18 @@ private:
         DWORD packet = ~0u;
         XGamepad last{};
         unsigned idleTicks = 0;  ///< an empty slot is asked again after 250 ticks (1 s)
+        unsigned batteryTicks = 0;  ///< a connected slot's battery is read again after 2500 ticks (10 s)
     };
+
+    void ReadBattery(DWORD index, bool connected)
+    {
+        BatteryState battery;
+        XBatteryInformation information{};
+        if (connected && _getBattery != nullptr && _getBattery(index, 0, &information) == ERROR_SUCCESS)
+            battery = BatteryFromXInput(information.batteryType, information.batteryLevel);
+        std::lock_guard lock(_batteryMutex);
+        _batteries[index] = battery;
+    }
 
     void Run()
     {
@@ -214,6 +246,8 @@ private:
         {
             slot.connected = connected;
             slot.idleTicks = 1;
+            ReadBattery(index, connected);
+            slot.batteryTicks = 1;
             if (connected)
             {
                 slot.packet = ~0u;
@@ -228,6 +262,8 @@ private:
                 return;
             }
         }
+        if (connected && slot.batteryTicks++ % 2500 == 0)
+            ReadBattery(index, true);
         if (!connected || state.packet == slot.packet)
             return;
         slot.packet = state.packet;
@@ -253,6 +289,9 @@ private:
     HMODULE _dll = nullptr;
     XInputGetStateFn _getState = nullptr;
     XInputSetStateFn _setState = nullptr;
+    XInputGetBatteryInformationFn _getBattery = nullptr;
+    mutable std::mutex _batteryMutex;
+    std::array<BatteryState, kSlots> _batteries{};  ///< under _batteryMutex: each slot's, as last read
     IBackendSink* _sink = nullptr;
     std::thread _thread;
     std::mutex _mutex;

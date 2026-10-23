@@ -16,16 +16,42 @@
 namespace controllers
 {
 
-/// What a device's hidraw node is opened for
+/// What a device's hidraw node is opened for: bits, one device may want several (the Elite 2 over Bluetooth without
+/// FF_RUMBLE: Input and Rumble)
 enum class HidrawUse : uint8_t
 {
-    None,
-    Input,   ///< read: the Xbox Elite 2 over Bluetooth, whose paddles and onboard profile evdev does not report
-    Output,  ///< write: the Surface Dial's clicks (output report 1) and detents (feature report 1)
+    None = 0,
+    Input = 1,   ///< read: the Xbox Elite 2 over Bluetooth, whose paddles and onboard profile evdev does not report
+    Output = 2,  ///< write: the Surface Dial's clicks (output report 1) and detents (feature report 1)
+    Rumble = 4,  ///< write: an Xbox One / Series pad over Bluetooth whose evdev node gives no FF_RUMBLE (report 3)
 };
 
-/// @p bluetooth: the evdev node's bus; @p family: the device database family
-HidrawUse HidrawUseFor(bool bluetooth, uint16_t vendor, uint16_t product, const std::string& family);
+constexpr HidrawUse operator|(HidrawUse a, HidrawUse b)
+{
+    return static_cast<HidrawUse>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+}
+/// @p uses has the bit of @p use
+constexpr bool HasUse(HidrawUse uses, HidrawUse use)
+{
+    return (static_cast<uint8_t>(uses) & static_cast<uint8_t>(use)) != 0;
+}
+
+/// Where a Linux pad's motors are driven (haptics.md §9)
+enum class LinuxRumble : uint8_t
+{
+    None,
+    Evdev,   ///< FF_RUMBLE on the evdev node: the handle motors (xpad, hid-microsoft, xpadneo, hid-playstation, ...)
+    Hidraw,  ///< output report 3 on the hidraw node (XboxBluetoothOutput): both motors and the impulse triggers
+};
+
+/// @p evdevRumble: the evdev node opened for writing and offers FF_RUMBLE, then evdev drives the motors (a kernel
+/// driver owns them); else an Xbox One / Series pad over Bluetooth (@p xboxBluetooth, XboxBluetoothOutput::Handles)
+/// gets report 3 through hidraw: hid-generic through BlueZ's uhid, without hid-microsoft or xpadneo
+LinuxRumble LinuxRumbleFor(bool evdevRumble, bool xboxBluetooth);
+
+/// @p bluetooth: the evdev node's bus; @p family, @p layout: the device database's; @p evdevRumble as LinuxRumbleFor
+HidrawUse HidrawUseFor(bool bluetooth, uint16_t vendor, uint16_t product, const std::string& family,
+                       const std::string& layout, bool evdevRumble);
 
 /// A HID device's `uevent` (`HID_ID=0005:0000045E:00000B22`, `HID_NAME=`, `HID_PHYS=`, `HID_UNIQ=`)
 struct HidUevent
@@ -56,8 +82,8 @@ bool FindHidrawNode(const std::string& sysRoot, const std::string& devRoot, cons
 /// The udev rule shipped in data/controllers/70-unreal-ng.rules and how to install it
 extern const char* const kHidrawRulesHint;
 
-/// Why a device's hidraw node is not in use, in words a user can act on. @p node empty: no hidraw node was found;
-/// else @p error is the errno of the failed open() and @p errorText its text
+/// Why a device's hidraw node is not in use for @p use (one bit), in words a user can act on. @p node empty: no hidraw
+/// node was found; else @p error is the errno of the failed open() and @p errorText its text
 std::string HidrawUnavailable(HidrawUse use, const std::string& node, int error, const std::string& errorText);
 
 /// The D15 hint for the Elite 2 over USB on Linux: xpad reports the paddles on onboard profile 0 only, and the

@@ -125,6 +125,41 @@ std::string HostInputService::DeviceNotice(const HostDeviceId& device) const
     return backend != nullptr ? backend->DeviceNotice(device) : std::string();
 }
 
+BatteryState HostInputService::Battery(const HostDeviceId& device) const
+{
+    // Under the lock, as DeviceNotice: a backend's Battery returns its copy and never waits for the device
+    std::lock_guard<std::mutex> lock(_mutex);
+    const IBackend* backend = BackendOfLocked(device);
+    return backend != nullptr ? backend->Battery(device) : BatteryState{};
+}
+
+bool HostInputService::HasLight(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const IBackend* backend = BackendOfLocked(device);
+    return backend != nullptr && backend->HasLight(device);
+}
+
+std::string HostInputService::LightUnavailable(const HostDeviceId& device) const
+{
+    for (const HostDeviceInfo& info : _router->Devices())
+        if (info.id == device && (info.family == "keyboard" || info.family == "mouse"))
+            return "The emulator sets no light on keyboards and mice";
+    std::lock_guard<std::mutex> lock(_mutex);
+    const IBackend* backend = BackendOfLocked(device);
+    if (backend == nullptr)
+        return "The device is not connected";
+    return backend->LightUnavailable(device);
+}
+
+bool HostInputService::SetLight(const HostDeviceId& device, const LightColor& color)
+{
+    // Under the lock, as Output: a backend's SetLight queues or writes one sysfs file and never reports into us
+    std::lock_guard<std::mutex> lock(_mutex);
+    IBackend* backend = BackendOfLocked(device);
+    return backend != nullptr && backend->HasLight(device) && backend->SetLight(device, color);
+}
+
 void HostInputService::Stop()
 {
     if (_haptics)

@@ -301,6 +301,14 @@ Source: SDL `src/joystick/usb_ids.h`.
 | Share button | Not on the Elite 2; on the Series X\|S pad (0B12 / 0B13) as SDL MISC1. |
 | Battery | Not from GameController on either transport (state -1, §2.3c); `system_profiler` shows it over Bluetooth, so the source is the Bluetooth stack or a field of the BLE report (`[18]`, unconfirmed). |
 
+Battery sources per OS, as built (2026-10-22, from the SDK headers and kernel sources, not measured with a pad):
+GameController's `GCDeviceBattery` (`batteryLevel` 0..1, `batteryState` -1 unknown, 0 discharging, 1 charging,
+2 full); on Windows `XInputGetBatteryInformation` (xinput1_4 / 1_3: type wired, alkaline, NiMH, unknown; four levels),
+while the GameInput v3 ABI dropped v0's `GetBatteryState`, so a pad GameInput serves has no battery there; on Linux
+the HID device's `power_supply` class (hid-playstation, hid-sony, hid-nintendo with `capacity_level` only, xpadneo;
+xpad over USB registers none), whose reads through hid-input may ask the device a feature report and so run on the
+backend thread.
+
 ### 4.4 Ideas for the debugger and TTD (input for [debug-and-ttd.md](debug-and-ttd.md))
 
 - **Hold a paddle to scrub.** RT = reverse scrub speed, nonlinear from 1 frame/s to 200×; LT = forward. Release

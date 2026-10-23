@@ -224,7 +224,7 @@ asserts that frame hashes are identical with the feed active (§12).
 |:--|:--|:--|:--|
 | macOS | IOHID output reports: Xbox over Bluetooth (report 3), DualSense over USB (report 2), the Surface Dial's clicks (report 1); none for an Xbox pad over USB (below) | GC localities `leftTrigger` / `rightTrigger` | DualSense through CoreHaptics; AHAP patterns |
 | Windows | GameInput `SetRumbleState`; XInput `XInputSetState` as the last resort | GameInput (Xbox) | DualSense raw output reports over Raw Input / HID (no OS API) |
-| Linux | evdev force feedback (`EV_FF`, `FF_RUMBLE`); the Surface Dial's clicks need hidraw (not yet) | hidraw for Xbox (xpad exposes only `FF_RUMBLE`) | hidraw output reports (hid-playstation for basic rumble) |
+| Linux | evdev force feedback (`EV_FF`, `FF_RUMBLE`) where the kernel driver offers it (xpad, hid-microsoft, xpadneo, hid-playstation); else hidraw output report 3 for an Xbox One / Series pad over Bluetooth (below); the Surface Dial's clicks through hidraw (report 1) | hidraw report 3 where it is the path (below); none through evdev (`FF_RUMBLE` has no trigger motors) | hidraw output reports (hid-playstation for basic rumble) |
 | SDL3 (later, D6) | `SDL_RumbleGamepad` | `SDL_RumbleGamepadTriggers` | none |
 
 macOS over USB (2026-10-19): an Xbox pad over USB does not rumble. The `XboxGamepad.dext` endpoint offers only vendor
@@ -233,6 +233,16 @@ drive nothing. GameController lists the pad (vendor name "Controller", all local
 and play without an error, yet no motor turns (a probe on an Elite Series 2, firmware 5.22; SDL reports the same,
 libsdl-org/SDL#14800, and dropped output reports to wired Xbox pads on macOS in 7da728a). The backend says so: the Test
 haptics button is off with "connect the pad over Bluetooth"; over Bluetooth output report 3 drives all four actuators.
+
+Linux over Bluetooth (2026-10-22, built, not exercised on hardware): an Xbox One / Series pad (the Elite 2 included)
+bound to `hid-generic` through BlueZ's uhid has no `FF_RUMBLE` on its evdev node. The evdev backend then writes output
+report 3 to the hidraw node of the same HID device (`hid/hidrawnode`: `LinuxRumbleFor`, `HidrawUse::Rumble`), the bytes
+from the builder macOS uses (`XboxBluetoothOutput::RumbleReport`), so the handle motors and the impulse triggers both
+play. The writes go through a `RumbleWriter` on its own thread: `SetRumble` only queues, the latest levels win, equal
+levels are not written again, two writes are at least 8 ms apart, and zero is written when the device goes away or the
+backend stops. A pad whose driver offers `FF_RUMBLE` (hid-microsoft, xpadneo) keeps evdev (the handle motors only).
+The node needs write access: `data/controllers/70-unreal-ng.rules` (uaccess for the Xbox Bluetooth product ids);
+without it the Test haptics button is off with the node, the rule and the commands.
 
 ## 10. UI
 

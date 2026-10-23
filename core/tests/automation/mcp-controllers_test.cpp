@@ -183,3 +183,67 @@ TEST(McpControllers_Test, HostActionsBecomeHostRoutes)
     EXPECT_EQ(call.body["spec"].asString(), R"({"key":"ENTER"})");
     EXPECT_FALSE(call.body.isMember("action"));
 }
+
+/// An agent may see only the text: devices names each one's battery, whether its light can be set and its notice;
+/// light is a POST with the device and the colour
+TEST(McpControllers_Test, DevicesTextCarriesBatteryLightAndNotice)
+{
+    auto caller = std::make_shared<RecordingCaller>();
+    auto registry = mcp::BuildFullRegistry(caller);
+
+    Json::Value listed;
+    listed["ok"] = true;
+    Json::Value pad;
+    pad["id"] = "bt:054c:0ce6:1";
+    pad["name"] = "DualSense";
+    pad["family"] = "dualsense";
+    pad["role"] = "player";
+    pad["role_set"] = false;
+    pad["layers"].append("play");
+    pad["context"] = "";
+    pad["battery"]["known"] = true;
+    pad["battery"]["level"] = 80;
+    pad["battery"]["text"] = "80 %";
+    pad["light"]["available"] = true;
+    listed["devices"].append(pad);
+    Json::Value elite;
+    elite["id"] = "bt:045e:0b22:2";
+    elite["name"] = "Xbox Elite";
+    elite["family"] = "xbox-elite-2";
+    elite["role"] = "player";
+    elite["role_set"] = false;
+    elite["layers"].append("play");
+    elite["context"] = "";
+    elite["battery"]["known"] = false;
+    elite["battery"]["text"] = "unknown";
+    elite["light"]["available"] = false;
+    elite["light"]["reason"] = "no light";
+    elite["notice"] = "Install the udev rule";
+    listed["devices"].append(elite);
+    caller->routes["GET /api/v1/controllers/devices"] = {200, listed};
+    Json::Value args;
+    args["action"] = "devices";
+    const mcp::ToolResult result = RunControllersTool(*registry, args, *caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("DualSense (dualsense) - role player (default), layers play, battery 80 %, light settable"),
+              std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("battery unknown, light none\n  notice: Install the udev rule"), std::string::npos)
+        << result.text;
+    EXPECT_EQ(result.structured["devices"][1]["notice"].asString(), "Install the udev rule") << "and the JSON as is";
+
+    Json::Value done;
+    done["ok"] = true;
+    done["message"] = "light #ff0000 on DualSense";
+    caller->routes["POST /api/v1/controllers/light"] = {200, done};
+    Json::Value light;
+    light["action"] = "light";
+    light["device"] = "bt:054c:0ce6:1";
+    light["color"] = "#ff0000";
+    const mcp::ToolResult set = RunControllersTool(*registry, light, *caller);
+    ASSERT_FALSE(set.isError) << set.text;
+    EXPECT_EQ(set.text, "light #ff0000 on DualSense");
+    EXPECT_EQ(caller->calls.back().method, "POST");
+    EXPECT_EQ(caller->calls.back().body["color"].asString(), "#ff0000");
+    EXPECT_EQ(caller->calls.back().body["device"].asString(), "bt:054c:0ce6:1");
+}

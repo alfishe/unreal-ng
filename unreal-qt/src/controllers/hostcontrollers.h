@@ -20,6 +20,7 @@
 #include "hostinputservice.h"
 #include "profiles/autodecision.h"
 #include "profiles/profilestore.h"
+#include "wheelclaim.h"
 #endif
 
 class Emulator;
@@ -176,6 +177,13 @@ private:
     void onBreakpointHit(const QString& emulatorId);
     /// The feed for the resolved profiles: a game profile's haptics, else the sound filters when on, else none
     void attachHaptics();
+    /// surface-dial.md §4.1: while a wheel device (the Surface Dial) is connected, the main and debugger windows hold
+    /// the system wheel (Windows: no built-in tools, no wheel menu); released when the last one goes and at the end
+    void updateWheelMenu();
+    void releaseWheelMenu();
+    controllers::WheelClaim _wheelClaim;
+    std::map<controllers::WheelClaim::Window, void*> _wheelHolds;  ///< WheelMenuWindows::Take's holds by window
+    bool _wheelConnected = false;
     std::shared_ptr<controllers::IHapticFeed> _hapticFeed;
     std::string _hapticsKey;  ///< what _hapticFeed was made from: a re-resolve to the same keeps its state
     uint64_t _fileObserver = 0;

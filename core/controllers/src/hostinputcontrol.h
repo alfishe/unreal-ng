@@ -12,7 +12,8 @@
 /// Verbs: devices, context, profiles, profile, save, delete, apply, bindings, bind, unbind, scheme (the scheme a user
 /// profile extends: how the pad works, Kempston, Sinclair 1, QAOP + Space), haptics (what a device's motors can do, or
 /// why not), rumble (play a test effect on a device, haptics.md §10), output (a control surface's pattern, steps and
-/// clicks, or a seek's marks as its layer plays them: control surfaces controls-and-feedback.md §3).
+/// clicks, or a seek's marks as its layer plays them: control surfaces controls-and-feedback.md §3), light (a pad's
+/// light colour: a DualSense / DualShock 4 light bar).
 ///
 /// @code
 ///   HostRequest request{"apply", {{"id", "builtin/game/vradarks-revenge"}}};
@@ -36,7 +37,7 @@ class HostInputService;
 struct HostRequest
 {
     std::string verb;
-    /// Options by name (surfaces.md §2): id, set, text, control, spec, layer, family, device, profile, effect
+    /// Options by name (surfaces.md §2): id, set, text, control, spec, layer, family, device, profile, effect, color
     std::map<std::string, std::string> options;
 };
 
@@ -120,6 +121,8 @@ private:
     /// A surface's outputs (control surfaces controls-and-feedback.md §3): a pattern, the steps / clicks, or a seek's
     /// marks as the device's top layer plays them
     HostReply Output(const HostRequest& request);
+    /// A pad's light colour (architecture.md §10)
+    HostReply Light(const HostRequest& request);
     /// The user profile a request edits (profile=, else by device / family), copied from the store or new
     bool EditProfile(const HostRequest& request, bool mustExist, Profile& profile, std::string& id, HostReply& failure);
     /// Check through the reader, save, keep and apply

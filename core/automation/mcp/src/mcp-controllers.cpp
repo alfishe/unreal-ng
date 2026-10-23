@@ -44,6 +44,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControl
         {"haptics", {"device"}},
         {"rumble", {"device", "effect"}},
         {"output", {"device", "pattern", "steps", "clicks", "marks"}},
+        {"light", {"device", "color"}},
     };
     return actions;
 }
@@ -86,6 +87,12 @@ namespace
                 }
                 if (device.isMember("feel"))
                     out << ", feel " << Compact(device["feel"]);
+                // An agent may see only the text: the battery, the light and what is missing go into it too
+                if (device.isMember("battery"))
+                    out << ", battery " << device["battery"]["text"].asString() << ", light "
+                        << (device["light"]["available"].asBool() ? "settable" : "none");
+                if (device.isMember("notice"))
+                    out << "\n  notice: " << device["notice"].asString();
                 out << "\n";
             }
             if (reply["devices"].empty())
@@ -258,8 +265,8 @@ void RegisterControllers(ToolRegistry& registry)
     schema["properties"]["device"]["type"] = "string";
     schema["properties"]["device"]["description"] =
         "plug / targets: the retro device (kempston-joystick, sinclair-joystick, cursor-joystick, keys-joystick, "
-        "fuller-joystick, md6-pad); bindings / bind / unbind / haptics / rumble / output: a host device id (devices lists "
-        "them)";
+        "fuller-joystick, md6-pad); bindings / bind / unbind / haptics / rumble / output / light: a host device id (devices "
+        "lists them)";
     std::string perVerb;
     std::set<std::string> options;
     for (const auto& [verb, verbOptions] : ControllerToolActions())
@@ -309,6 +316,7 @@ void RegisterControllers(ToolRegistry& registry)
     schema["properties"]["marks"]["description"] =
         "output: a seek's marks, strongest first (second, ten_seconds, bookmark, edge, barrier): the pattern the "
         "device's top layer plays for them";
+    schema["properties"]["color"]["description"] = "light: #RRGGBB, r,g,b (0..255 each) or off";
     schema["properties"]["control"]["description"] = "bind / unbind: south, lt.click, rstick.x, view+menu, dpad.*";
     schema["properties"]["spec"]["type"] = "object";
     schema["properties"]["spec"]["description"] =
@@ -327,14 +335,16 @@ void RegisterControllers(ToolRegistry& registry)
         "options, targets (where a retro device can go, in order, with the default), auto (the automatic choice from "
         "the program's port reads: which joystick it polls; apply re-runs it), input (press / release / set controls "
         "on a connector, as joystick_input with connector). Plugs apply at the next frame boundary and wait for it "
-        "unless async. Host actions (no target: the process's game controllers, the Qt client's): devices, context "
+        "unless async. Host actions (no target: the process's game controllers, the Qt client's): devices (each with "
+        "its battery, whether its light can be set, a notice of what is missing and how to fix it), context "
         "(machine, applied profiles, the manual game profile), profiles, profile (as YAML), save, delete, apply (the "
         "game profile by hand, for a program started from the machine itself), bindings (effective, with the profile "
         "each came from), bind, unbind (in a user profile, saved and applied at once), scheme (how the pad works: "
         "Kempston, Sinclair 1, QAOP + Space; the scheme the user profile extends), haptics (whether the emulator "
         "drives a device's motors, else why; its test effects), rumble (play a test effect on a host device), output (a "
         "control surface such as the Surface Dial: a haptic pattern, its steps per turn and clicks, or a seek's marks "
-        "as its context layer plays them). Options per action:" +
+        "as its context layer plays them), light (a pad's light colour: a DualSense / DualShock 4 light bar). Options per "
+        "action:" +
             perVerb,
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {

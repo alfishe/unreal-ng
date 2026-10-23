@@ -1680,6 +1680,7 @@ GET  /api/v1/emulator/{id}/controllers/{connector}       one connector
 POST /api/v1/emulator/{id}/controllers/{connector}/{verb} plug {device, options} | unplug | options | input
 GET  /api/v1/controllers/{verb}                          devices | context | profiles | profile | bindings | haptics
 POST /api/v1/controllers/{verb}                          save | delete | apply | bind | unbind | scheme | rumble | output
+                                                         | light
 ```
 
 The machine routes are ControllerControl, the host routes HostInputControl
@@ -1694,8 +1695,13 @@ reason for a device without drivable motors or a process without the Qt client.
 "tick|double|buzz"}` plays a pattern; `{"device", "steps": 36, "clicks": false}` sets its feel until its context or
 layers change; `{"device", "marks": ["ten_seconds", "second"]}` plays what its top layer's feel names for a seek's
 marks (`played`, `mark`, `pattern`, else `reason`, e.g. the marks' rate limit). `GET /api/v1/controllers/devices`
-gives each device's `role` (`role_set`), `layers`, `context`, `outputs` and `feel`. On the WebSocket `/api/v1/ws`
-both are `call`s, as every route.
+gives each device's `role` (`role_set`), `layers`, `context`, `outputs` and `feel`, its `battery` (`{known, text}`;
+when known also `level` (absent without one), `coarse`, `charging`, `wired`), `light` (`{available}`, else with the
+`reason`) and `notice` (what the device cannot do here and how to fix it; absent when nothing is missing).
+`POST /api/v1/controllers/light {"device": "...", "color": "#ff8000"}` sets a pad's light (`r,g,b` and `off` too; in a
+query string `#` is `%23`): `200` with `device`, `color`; `400` for another colour text; `503` `unavailable` with the
+reason where the OS does not let the emulator set it. On the WebSocket `/api/v1/ws` all of them are `call`s, as every
+route.
 
 ### Host Actions
 

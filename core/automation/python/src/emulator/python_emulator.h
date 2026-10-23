@@ -2024,6 +2024,15 @@ namespace PythonBindings
                  "A control surface's outputs (the Surface Dial): pattern='tick'|'double'|'buzz', or steps=36 / "
                  "clicks='on'|'off' (its feel until the context changes), or marks='second,edge' (what its layer "
                  "plays for a seek's marks)")
+            .def("controllers_light", [](Emulator&, const std::string& device, const std::string& color) {
+                     py::kwargs options;
+                     options["device"] = device;
+                     options["color"] = color;
+                     return HostControllerCallPy("light", options);
+                 }, py::arg("device"), py::arg("color"),
+                 "A pad's light colour (a DualSense / DualShock 4 light bar): color='#RRGGBB', 'r,g,b' or 'off'; "
+                 "unavailable with the reason where the OS does not let the emulator set it (controllers_host('devices') "
+                 "names each device's battery, light and notice)")
             .def("controllers_profiles", [](Emulator&, const py::kwargs& options) {
                      return HostControllerCallPy("profiles", options);
                  }, "Every controller profile (set='game' / 'play' / 'debug' / 'scheme', machine='next')")

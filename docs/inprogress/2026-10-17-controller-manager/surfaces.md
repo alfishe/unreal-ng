@@ -51,7 +51,7 @@ connector verbs keep working (keyboard joystick, automation input).
 
 | Verb | Does |
 |:--|:--|
-| `devices` | Host devices: id, name, VID:PID, version, transport, family, role, instance pin, battery, capabilities, live state on request. |
+| `devices` | Host devices: id, name, VID:PID, version, transport, family, role, instance pin, battery, capabilities, live state on request. Built: id, name, family, layout, backend, controls; with the Qt client role, layers, context, outputs, feel, `battery`, `light` and `notice` (below). |
 | `device` | One device; `identify` blinks the LED and rumbles. |
 | `role` | Set `player`, `debugger-remote`, `disabled`. |
 | `pin` | Set `follow-focus`, `pinned:<instance>`, `all`. |
@@ -64,6 +64,41 @@ connector verbs keep working (keyboard joystick, automation input).
 | `learn` | Start, step and finish the learn wizard for an unknown device (the UI flow, scriptable). |
 | `haptics` | Built: per device whether the emulator drives its motors (`available`, else the `reason`), its `actuators` and the test `effects` (`id`, `label`, `ms`). Planned: mode (`off`, `game`, `always`) and strength per device, the gate state, `stop` all ([haptics.md §11](haptics.md#11-surfaces)). |
 | `rumble` | Built: play a test effect on a device (`device`, `effect`: `identify` by default, `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz`), the dialog's Test haptics ([haptics.md §10](haptics.md#10-ui)). |
+| `light` | Built: set a pad's light colour (`device`, `color`: `#RRGGBB`, `r,g,b` or `off`), a DualSense / DualShock 4 light bar, where the OS lets the emulator set it; `unavailable` with the reason elsewhere. |
+
+### Battery, light and notice (built)
+
+`devices` carries three things the backend says about each device (`IBackend::Battery`, `HasLight` /
+`LightUnavailable` / `SetLight`, `DeviceNotice`; all defaulted, so a backend without them answers "unknown" and "no
+light"):
+
+- `battery`: `{known, text}`; when known also `level` (percent, absent when the OS gives only a state), `coarse` (a
+  step, not a measurement: XInput's four, the kernel's `capacity_level`), `charging`, `wired`. `text` is what every
+  surface and the dialog show: `unknown`, `80 %`, `about 67 %`, `charging, 40 %`, `wired`. Never a device round trip:
+  the backends keep the last value and refresh it on their own threads (every 30 s; XInput every 10 s).
+- `light`: `{available}`, else `{available: false, reason}`.
+- `notice`: what the device cannot do here and how to fix it (Linux: no hidraw access and the udev rule; the Elite 2
+  over USB: paddles on profile 0 only); absent when nothing is missing.
+
+Where they come from:
+
+| OS | Battery | Light |
+|:--|:--|:--|
+| macOS | GameController's `GCDeviceBattery` of the matched `GCController` (D18). An Xbox Elite 2 reports state unknown and level 0 on both transports, so it stays `unknown` (`system_profiler` knows it from the Bluetooth stack, [research-host-apis.md §2.3c](research-host-apis.md)) | a DualSense over USB through its output report (`DualSenseOutput::UsbLightReport`); otherwise `GCDeviceLight` of the matched `GCController` (a DualSense over Bluetooth, a DualShock 4), after a press confirms the match |
+| Windows | XInput: `XInputGetBatteryInformation` (wired, or four coarse levels). GameInput (v3) has no battery API, Raw Input reads none: `unknown` | a DualSense over USB (Raw Input) through the same output report; nothing else |
+| Linux | the HID device's power supply class (`<hid>/power_supply/<name>`: hid-playstation, hid-sony, hid-nintendo, xpadneo, hid-input): `status`, `capacity`, `capacity_level`. xpad (an Xbox pad over USB) registers none | the HID device's LED class: one multicolor LED (`multi_index` / `multi_intensity`, hid-playstation) or `:red` / `:green` / `:blue` LEDs (hid-sony). Writing needs the LED rules of `data/controllers/70-unreal-ng.rules` (sysfs takes no ACL, so they open the mode) |
+
+| Plane | Read (in `devices`) | Set the light |
+|:--|:--|:--|
+| CLI | `controllers devices` (a `battery ...; light settable` and a `notice:` line per device; `--json` the reply) | `controllers light <device> <#RRGGBB\|r,g,b\|off>` |
+| REST | `GET /api/v1/controllers/devices` | `POST /api/v1/controllers/light {device, color}` |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/controllers/devices"}` | `{"op":"call","method":"POST","path":"/api/v1/controllers/light","body":{"device":"...","color":"#ff0000"}}` |
+| MCP | `controllers` `devices` (the text names battery, light and notice) | `controllers` `light` (`device`, `color`) |
+| Python | `controllers_host("devices")` | `controllers_light(device, color)` |
+| Lua | `controllers_host("devices")` | `controllers_light(device, color)` |
+
+No topic pushes the host devices yet (`devices` is a call; a `controllers.devices` topic for arrivals, battery and
+notices is left, TODO.md).
 
 ## 3. Selectors
 
@@ -126,6 +161,8 @@ POST   /api/v1/controllers/{verb}            save {text} | delete {id} | apply {
                                              | unbind {control, layer?, family?|device?|profile?}
                                              | scheme {id|none, family?|device?|profile?}
                                              | rumble {device, effect?}
+                                             | output {device, pattern | steps, clicks | marks}
+                                             | light {device, color}
        (built: HostInputControl, core/controllers/src/hostinputcontrol.h; the wrong method answers 405)
 POST   /api/v1/controllers/host/{device}/{verb}              role | pin | identify | learn (not built)
 GET    /api/v1/controllers/database?vidpid=045e:0b00 | guid=...
@@ -149,7 +186,8 @@ MCP `controllers` (the same action names, no target), CLI `controllers <verb>` (
 `bind south key=ENTER` builds the spec) and Python `controllers_host(verb, **options)` with the named wrappers
 (`controllers_profiles`, `controllers_profile`, `controllers_save_profile`, `controllers_delete_profile`,
 `controllers_apply_profile`, `controllers_bindings`, `controllers_bind`, `controllers_unbind`, `controllers_haptics`,
-`controllers_rumble`) and Lua `controllers_host(verb, opts)` (with `controllers_haptics`, `controllers_rumble`) all
+`controllers_rumble`, `controllers_output`, `controllers_light`) and Lua `controllers_host(verb, opts)` (with
+`controllers_haptics`, `controllers_rumble`, `controllers_output`, `controllers_light`) all
 build a `HostRequest`; the CLI and Python reach `scheme` through `controllers scheme <id|none>` and
 `controllers_host`. Lua reaches the connectors through `controllers(verb, connector, device, opts)`.
 `bind` without `profile` writes `user/device-<id>` (device=), `user/<family>` (family=) or

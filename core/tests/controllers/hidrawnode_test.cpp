@@ -77,11 +77,38 @@ std::vector<uint8_t> Bytes(const std::string& hex)
 
 TEST(HidrawNode_Test, UseFor_EliteOverBluetoothReadsTheDialWrites)
 {
-    EXPECT_EQ(HidrawUseFor(true, 0x045E, 0x0B22, "xbox-elite-2"), HidrawUse::Input);
-    EXPECT_EQ(HidrawUseFor(true, 0x045E, 0x0B05, "xbox-elite-2"), HidrawUse::Input);
-    EXPECT_EQ(HidrawUseFor(false, 0x045E, 0x0B00, "xbox-elite-2"), HidrawUse::None) << "USB: xpad, no hidraw node";
-    EXPECT_EQ(HidrawUseFor(true, 0x045E, 0x091B, "surface-dial"), HidrawUse::Output);
-    EXPECT_EQ(HidrawUseFor(true, 0x045E, 0x0B13, "xbox-series"), HidrawUse::None) << "evdev gives the whole pad";
+    // With FF_RUMBLE on evdev (hid-microsoft, xpadneo) the Elite's node is read only
+    EXPECT_EQ(HidrawUseFor(true, 0x045E, 0x0B22, "xbox-elite-2", "xbox", true), HidrawUse::Input);
+    EXPECT_EQ(HidrawUseFor(true, 0x045E, 0x0B05, "xbox-elite-2", "xbox", true), HidrawUse::Input);
+    EXPECT_EQ(HidrawUseFor(false, 0x045E, 0x0B00, "xbox-elite-2", "xbox", false), HidrawUse::None)
+        << "USB: xpad, no hidraw node";
+    EXPECT_EQ(HidrawUseFor(true, 0x045E, 0x091B, "surface-dial", "", false), HidrawUse::Output);
+    EXPECT_EQ(HidrawUseFor(true, 0x045E, 0x0B13, "xbox-series", "xbox", true), HidrawUse::None)
+        << "evdev gives the whole pad";
+}
+
+/// haptics.md §9: evdev's FF_RUMBLE where the kernel driver offers it, else report 3 on hidraw for an Xbox One / Series
+/// pad over Bluetooth (hid-generic through uhid)
+TEST(HidrawNode_Test, UseFor_XboxBluetoothRumblesThroughHidrawWithoutFfRumble)
+{
+    EXPECT_EQ(LinuxRumbleFor(true, true), LinuxRumble::Evdev) << "hid-microsoft / xpadneo: keep evdev";
+    EXPECT_EQ(LinuxRumbleFor(true, false), LinuxRumble::Evdev) << "xpad over USB, a DualSense, ...";
+    EXPECT_EQ(LinuxRumbleFor(false, true), LinuxRumble::Hidraw);
+    EXPECT_EQ(LinuxRumbleFor(false, false), LinuxRumble::None);
+
+    EXPECT_EQ(HidrawUseFor(true, 0x045E, 0x0B22, "xbox-elite-2", "xbox", false),
+              HidrawUse::Input | HidrawUse::Rumble)
+        << "the Elite over Bluetooth: paddles read, rumble written";
+    EXPECT_EQ(HidrawUseFor(true, 0x045E, 0x0B13, "xbox-series", "xbox", false), HidrawUse::Rumble);
+    EXPECT_EQ(HidrawUseFor(true, 0x045E, 0x02FD, "xbox-one-s", "xbox", false), HidrawUse::Rumble);
+    EXPECT_EQ(HidrawUseFor(false, 0x045E, 0x0B12, "xbox-series", "xbox", false), HidrawUse::None)
+        << "USB: xpad's, no hidraw node";
+    EXPECT_EQ(HidrawUseFor(true, 0x045E, 0x028E, "xbox-360", "xbox", false), HidrawUse::None)
+        << "the 360 takes no report 3";
+    EXPECT_EQ(HidrawUseFor(true, 0x2DC8, 0x6012, "8bitdo", "xbox", false), HidrawUse::None) << "not Microsoft's";
+
+    EXPECT_TRUE(HasUse(HidrawUse::Input | HidrawUse::Rumble, HidrawUse::Rumble));
+    EXPECT_FALSE(HasUse(HidrawUse::Input, HidrawUse::Rumble));
 }
 
 TEST(HidrawNode_Test, Uevent_ParsesTheIdsAndRefusesANonHidDevice)
@@ -160,6 +187,14 @@ TEST(HidrawNode_Test, Reasons_NameTheNodeAndTheUdevRule)
     const std::string other = HidrawUnavailable(HidrawUse::Input, "/dev/hidraw3", EBUSY, "Device or resource busy");
     EXPECT_NE(other.find("Device or resource busy"), std::string::npos) << other;
     EXPECT_EQ(other.find("udevadm"), std::string::npos) << other;
+
+    const std::string rumble = HidrawUnavailable(HidrawUse::Rumble, "/dev/hidraw4", EACCES, "Permission denied");
+    EXPECT_NE(rumble.find("motors"), std::string::npos) << rumble;
+    EXPECT_NE(rumble.find("write access to /dev/hidraw4"), std::string::npos) << rumble;
+    EXPECT_NE(rumble.find("70-unreal-ng.rules"), std::string::npos) << rumble;
+    EXPECT_NE(rumble.find("FF_RUMBLE"), std::string::npos) << "the other way out: " << rumble;
+    EXPECT_EQ(rumble.find("paddles"), std::string::npos) << rumble;
+    EXPECT_EQ(HidrawUnavailable(HidrawUse::Rumble, {}, 0, {}).find("udevadm"), std::string::npos);
 
     const std::string usb = XpadPaddlesNotice();
     EXPECT_NE(usb.find("profile 0"), std::string::npos) << "D15: " << usb;
@@ -257,19 +292,32 @@ TEST(HidrawNode_Test, Notice_ReachesTheServiceFromTheBackend)
     service.Stop();
 }
 
-TEST(HidrawNode_Test, RulesFile_GivesTheEliteAndTheDialToTheSeatUser)
+TEST(HidrawNode_Test, RulesFile_GivesTheXboxBluetoothPadsAndTheDialToTheSeatUser)
 {
+    bool playstationLight = false;
+    bool sonyLight = false;
     std::ifstream in(TestPathHelper::FindProjectRoot() / "data" / "controllers" / "70-unreal-ng.rules");
     ASSERT_TRUE(in) << "data/controllers/70-unreal-ng.rules, named by kHidrawRulesHint";
     std::stringstream text;
     text << in.rdbuf();
-    std::map<std::string, bool> hidraw = {{"045E:0B05", false}, {"045E:0B22", false}, {"045E:091B", false}};
+    // The Elite (paddles, rumble), the Dial (clicks), the other Xbox One / Series pads over Bluetooth (rumble)
+    std::map<std::string, bool> hidraw = {{"045E:0B05", false}, {"045E:0B22", false}, {"045E:091B", false},
+                                          {"045E:02E0", false}, {"045E:02FD", false}, {"045E:0B20", false},
+                                          {"045E:0B13", false}, {"045E:0B0C", false}, {"045E:0B21", false}};
     std::istringstream lines(text.str());
     std::string line;
     while (std::getline(lines, line))
     {
         if (line.empty() || line[0] == '#')
             continue;
+        if (line.find("SUBSYSTEM==\"leds\"") != std::string::npos)
+        {
+            // A light bar's LED class files: sysfs takes no ACL, so their mode is opened
+            EXPECT_NE(line.find("RUN+=\"/bin/chmod 0666 /sys%p/brightness"), std::string::npos) << line;
+            playstationLight = playstationLight || line.find("DRIVERS==\"playstation\"") != std::string::npos;
+            sonyLight = sonyLight || line.find("DRIVERS==\"sony\"") != std::string::npos;
+            continue;
+        }
         EXPECT_NE(line.find("TAG+=\"uaccess\""), std::string::npos) << line;
         for (auto& [id, seen] : hidraw)
             if (line.find("KERNEL==\"hidraw*\"") != std::string::npos && line.find("*" + id + "*") != std::string::npos)
@@ -277,5 +325,7 @@ TEST(HidrawNode_Test, RulesFile_GivesTheEliteAndTheDialToTheSeatUser)
     }
     for (const auto& [id, seen] : hidraw)
         EXPECT_TRUE(seen) << id;
+    EXPECT_TRUE(playstationLight) << "the DualSense light bar (hid-playstation)";
+    EXPECT_TRUE(sonyLight) << "the DualShock 4 light bar (hid-sony)";
     EXPECT_NE(std::string(kHidrawRulesHint).find("70-unreal-ng.rules"), std::string::npos);
 }

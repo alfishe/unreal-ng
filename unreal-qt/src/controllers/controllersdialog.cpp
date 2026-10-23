@@ -133,6 +133,10 @@ ControllersDialog::ControllersDialog(HostControllers* host, QWidget* parent) : Q
     _deviceTitle->setWordWrap(true);
     _deviceTitle->setTextInteractionFlags(Qt::TextSelectableByMouse);  // a notice's udev command can be copied
     header->addWidget(_deviceTitle, 1);
+    // The battery as the OS reports it, small and honest: "unknown" when it says nothing (tick refreshes it)
+    _battery = new QLabel(centre);
+    _battery->setToolTip(tr("The battery as the operating system reports it"));
+    header->addWidget(_battery, 0, Qt::AlignTop);
     _hapticsEffect = new QComboBox(centre);
     _hapticsEffect->setEnabled(false);
     header->addWidget(_hapticsEffect, 0, Qt::AlignTop);
@@ -423,6 +427,15 @@ void ControllersDialog::tick()
     const QString haptics = _host->HapticsStatus(device);
     if (_hapticsLabel->text() != haptics)
         _hapticsLabel->setText(haptics);
+    // The backends keep the battery and refresh it themselves: reading it here does not wait for the device
+    const QString battery =
+        device.empty() ? QString()
+                       : QString("<small>%1</small>")
+                             .arg(tr("Battery: %1")
+                                      .arg(QString::fromStdString(
+                                          controllers::BatteryText(_host->Service().Battery(device)))));
+    if (_battery->text() != battery)
+        _battery->setText(battery);
     if (!device.empty())
     {
         const std::map<std::string, float> live = _host->Service().Live(device);

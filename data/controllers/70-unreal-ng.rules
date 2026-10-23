@@ -1,5 +1,6 @@
 # unreal-ng: access for the logged-in user to the raw HID (hidraw) nodes of the controllers the emulator reads or
-# writes beyond what evdev gives (docs/inprogress/2026-10-17-controller-manager/research-host-apis.md §3.3).
+# writes beyond what evdev gives (docs/inprogress/2026-10-17-controller-manager/research-host-apis.md §3.3), and to
+# the light bars' LED class files.
 #
 # Install:
 #   sudo cp data/controllers/70-unreal-ng.rules /etc/udev/rules.d/
@@ -11,12 +12,32 @@
 # tag: hence 70-.
 
 # Xbox Elite Wireless Controller Series 2 over Bluetooth (Classic 045E:0B05, LE 045E:0B22): read access for the
-# paddles P1-P4 and the onboard profile, which evdev does not report. Over USB the pad is xpad's and has no hidraw node.
+# paddles P1-P4 and the onboard profile, which evdev does not report, and write access for the rumble (output report 3,
+# with the impulse triggers) where the kernel driver offers no FF_RUMBLE (hid-generic through BlueZ's uhid; with
+# hid-microsoft or xpadneo the emulator drives the motors through evdev). Over USB the pad is xpad's and has no hidraw
+# node.
 KERNEL=="hidraw*", KERNELS=="*045E:0B05*", MODE="0660", TAG+="uaccess"
 KERNEL=="hidraw*", KERNELS=="*045E:0B22*", MODE="0660", TAG+="uaccess"
+
+# The other Xbox One / Series pads over Bluetooth: write access for the rumble (output report 3) where the kernel driver
+# offers no FF_RUMBLE. Xbox One S (045E:02E0, 02FD, LE firmware 0B20), Xbox Wireless Controller (Series X|S, LE 0B13),
+# Xbox Adaptive Controller (045E:0B0C, LE 0B21). Ids: Linux drivers/hid/hid-ids.h (02FD, 0B20, 0B13, 0B05, 0B22) and
+# SDL src/joystick/usb_ids.h (all of them, incl. 02E0, 0B0C, 0B21).
+KERNEL=="hidraw*", KERNELS=="*045E:02E0*", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*045E:02FD*", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*045E:0B20*", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*045E:0B13*", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*045E:0B0C*", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*045E:0B21*", MODE="0660", TAG+="uaccess"
 
 # Microsoft Surface Dial (045E:091B, Bluetooth LE): write access for its clicks (output report 1) and detents
 # (feature report 1); the input node too, which is neither a joystick nor a keyboard, so the default rules may leave it
 # to the input group.
 KERNEL=="hidraw*", KERNELS=="*045E:091B*", MODE="0660", TAG+="uaccess"
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{id/vendor}=="045e", ATTRS{id/product}=="091b", MODE="0660", TAG+="uaccess"
+
+# DualSense / DualSense Edge (hid-playstation: one multicolor LED "<hid>:rgb:indicator") and DualShock 4 (hid-sony:
+# "<hid>:red", ":green", ":blue"): write access to the light bar's LED class files for the `light` verb. Attributes in
+# sysfs take no ACL, so uaccess does not reach them: their mode is opened instead (a light bar's colour is all they set).
+SUBSYSTEM=="leds", DRIVERS=="playstation", KERNEL=="*:rgb:indicator", RUN+="/bin/chmod 0666 /sys%p/brightness /sys%p/multi_intensity"
+SUBSYSTEM=="leds", DRIVERS=="sony", KERNEL=="*:red|*:green|*:blue", RUN+="/bin/chmod 0666 /sys%p/brightness"

@@ -92,6 +92,55 @@ std::string FakeBackend::DeviceNotice(const HostDeviceId& device) const
     return it == _notices.end() ? std::string() : it->second;
 }
 
+void FakeBackend::SetBattery(const HostDeviceId& device, const BatteryState& battery)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _batteries[device] = battery;
+}
+
+BatteryState FakeBackend::Battery(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _batteries.find(device);
+    return it == _batteries.end() || _devices.count(device) == 0 ? BatteryState{} : it->second;
+}
+
+void FakeBackend::SetHasLight(const HostDeviceId& device, bool light)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (light)
+        _lightable.insert(device);
+    else
+        _lightable.erase(device);
+}
+
+bool FakeBackend::HasLight(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _devices.count(device) != 0 && _lightable.count(device) != 0;
+}
+
+std::string FakeBackend::LightUnavailable(const HostDeviceId& device) const
+{
+    return HasLight(device) ? std::string() : "The fake device has no light";
+}
+
+bool FakeBackend::SetLight(const HostDeviceId& device, const LightColor& color)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (_devices.count(device) == 0 || _lightable.count(device) == 0)
+        return false;
+    _lights[device].push_back(color);
+    return true;
+}
+
+std::vector<LightColor> FakeBackend::Lights(const HostDeviceId& device) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _lights.find(device);
+    return it == _lights.end() ? std::vector<LightColor>{} : it->second;
+}
+
 void FakeBackend::SetOutputs(const HostDeviceId& device, uint8_t outputs)
 {
     std::lock_guard<std::mutex> lock(_outputMutex);

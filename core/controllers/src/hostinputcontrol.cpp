@@ -162,6 +162,22 @@ JsonValue FeelValue(const LayerHaptics& feel)
                               {"min_interval_ms", JsonValue::Number(feel.minIntervalMs)}});
 }
 
+/// {known, text} and, when known, level (absent without one), coarse, charging, wired
+JsonValue BatteryValue(const BatteryState& battery)
+{
+    JsonValue value = JsonValue::Object({{"known", JsonValue::Bool(battery.known)}});
+    if (battery.known)
+    {
+        if (battery.level >= 0)
+            value.Set("level", JsonValue::Number(battery.level));
+        value.Set("coarse", JsonValue::Bool(battery.coarse));
+        value.Set("charging", JsonValue::Bool(battery.charging));
+        value.Set("wired", JsonValue::Bool(battery.wired));
+    }
+    value.Set("text", JsonValue::String(BatteryText(battery)));
+    return value;
+}
+
 std::string Sanitized(const std::string& text)
 {
     std::string out = text;
@@ -209,7 +225,7 @@ const std::vector<std::string>& HostInputControl::Verbs()
 {
     static const std::vector<std::string> verbs = {"devices", "context", "profiles", "profile", "save",
                                                    "delete",  "apply",   "bindings", "bind",    "unbind",
-                                                   "scheme",  "haptics", "rumble",   "output"};
+                                                   "scheme",  "haptics", "rumble",   "output",  "light"};
     return verbs;
 }
 
@@ -230,6 +246,7 @@ const std::vector<std::string>& HostInputControl::OptionsFor(const std::string& 
         {"haptics", {"device"}},
         {"rumble", {"device", "effect"}},
         {"output", {"device", "pattern", "steps", "clicks", "marks"}},
+        {"light", {"device", "color"}},
     };
     static const std::vector<std::string> none;
     const auto it = options.find(verb);
@@ -312,6 +329,8 @@ HostReply HostInputControl::Execute(const HostRequest& request)
         return Rumble(request);
     if (verb == "output")
         return Output(request);
+    if (verb == "light")
+        return Light(request);
     std::string list;
     for (const std::string& known : Verbs())
         list += (list.empty() ? "" : ", ") + known;
@@ -350,6 +369,16 @@ HostReply HostInputControl::Devices()
             LayerHaptics feel;
             if (router.Feel(device.id, feel))
                 item.Set("feel", FeelValue(feel));
+            // What the device cannot do here and how to fix it (a missing udev rule), its battery, its light
+            const std::string notice = input->DeviceNotice(device.id);
+            if (!notice.empty())
+                item.Set("notice", JsonValue::String(notice));
+            item.Set("battery", BatteryValue(input->Battery(device.id)));
+            const std::string noLight = input->LightUnavailable(device.id);
+            JsonValue light = JsonValue::Object({{"available", JsonValue::Bool(noLight.empty())}});
+            if (!noLight.empty())
+                light.Set("reason", JsonValue::String(noLight));
+            item.Set("light", light);
         }
         devices.push_back(std::move(item));
     }
@@ -513,6 +542,34 @@ HostReply HostInputControl::Output(const HostRequest& request)
                     " on " + device->name + " (until its context or layers change)";
     reply.body.Set("steps", JsonValue::Number(feel.perTurn));
     reply.body.Set("clicks", JsonValue::Bool(feel.clicks));
+    return reply;
+}
+
+HostReply HostInputControl::Light(const HostRequest& request)
+{
+    const std::string id = Option(request, "device");
+    if (id.empty())
+        return Fail("bad-request", "light needs device= (devices lists the devices and whether their light is settable)");
+    const std::string text = Option(request, "color");
+    LightColor color;
+    if (!ParseLightColor(text, color))
+        return Fail("bad-request", "light needs color= #RRGGBB, r,g,b (0..255 each) or off, not '" + text + "'");
+    const std::vector<HostDeviceInfo> devices = _owner.Context().devices;
+    const HostDeviceInfo* device = FindDevice(devices, id);
+    if (device == nullptr)
+        return Fail("unknown-device", "no connected host device '" + id + "' (devices lists them)");
+    HostInputService* input = _owner.Input();
+    const std::string why =
+        input != nullptr ? input->LightUnavailable(id) : std::string("No host light output in this process");
+    if (!why.empty())
+        return Fail("unavailable", device->name + ": " + why);
+    if (!input->SetLight(id, color))
+        return Fail("unavailable", device->name + ": the light did not take the colour");
+    HostReply reply;
+    const std::string colorText = LightColorText(color);
+    reply.message = (color == LightColor{} ? std::string("light off") : "light " + colorText) + " on " + device->name;
+    reply.body.Set("device", JsonValue::String(id));
+    reply.body.Set("color", JsonValue::String(colorText));
     return reply;
 }
 

@@ -416,11 +416,12 @@ surfaces: [command-interface.md §15](./command-interface.md#15-game-controllers
 | CLI Command | Description |
 | :--- | :--- |
 | `controllers [list]`, `get <connector>`, `plug <connector\|auto> <device> [opt=val ..]`, `unplug`, `options`, `targets <device>`, `auto [apply]` | The machine's connectors and the retro devices in them |
-| `controllers devices`, `context`, `profiles`, `profile <id>`, `save <file>`, `delete <id>`, `apply <id\|none>` | The host devices and the profiles |
+| `controllers devices`, `context`, `profiles`, `profile <id>`, `save <file>`, `delete <id>`, `apply <id\|none>` | The host devices (each with its battery, whether its light can be set, and a `notice:` line of what is missing) and the profiles |
 | `controllers bindings`, `bind <control> field=val ..`, `unbind <control>`, `scheme <id\|none>` | The effective bindings and their changes in a user profile |
 | `controllers haptics [device]` | Whether the emulator drives each device's motors (or why not) and its test effects |
 | `controllers rumble <device> [effect]` | Play a test effect: `identify` (default), `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz` |
 | `controllers output <device> <tick\|double\|buzz>`, `output <device> steps=N clicks=on\|off`, `output <device> marks=a,b` | A control surface's outputs (the Surface Dial): a haptic pattern; its steps per turn and clicks (until its context changes); a seek's marks as its top layer plays them |
+| `controllers light <device> <#RRGGBB\|r,g,b\|off>` | A pad's light colour (a DualSense / DualShock 4 light bar), where the OS lets the emulator set it |
 
 `--json` prints the reply every surface returns. The host verbs need the Qt client (it owns the game controllers).
 
@@ -431,6 +432,13 @@ OK: Swell (attack, hold, release) on Xbox Elite Wireless Controller Series 2
 Error: Xbox Elite Wireless Controller Series 2: macOS drives no motors of an Xbox pad over USB: connect the pad over Bluetooth
 > controllers output bt:045e:091b:3c1e2f4a steps=36 clicks=off
 OK: 36 steps per turn, free wheel on Surface Dial (until its context or layers change)
+> controllers devices
+Host devices:
+  usb:054c:0ce6:0100:a0b1c2d3e4f5  DualSense Wireless Controller (dualsense)
+    role player (default); layers play
+    battery charging, 40 %; light settable
+> controllers light usb:054c:0ce6:0100:a0b1c2d3e4f5 #ff8000
+OK: light #ff8000 on DualSense Wireless Controller
 ```
 
 ### Host Action Commands

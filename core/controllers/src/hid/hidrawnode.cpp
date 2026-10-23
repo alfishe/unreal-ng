@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "hid/drivers/surfacedial.h"
+#include "hid/drivers/xboxbluetoothoutput.h"
 
 namespace controllers
 {
@@ -26,14 +27,26 @@ bool Hex(const std::string& text, unsigned long max, unsigned long& out)
 }
 }  // namespace
 
-HidrawUse HidrawUseFor(bool bluetooth, uint16_t vendor, uint16_t product, const std::string& family)
+LinuxRumble LinuxRumbleFor(bool evdevRumble, bool xboxBluetooth)
+{
+    if (evdevRumble)
+        return LinuxRumble::Evdev;
+    return xboxBluetooth ? LinuxRumble::Hidraw : LinuxRumble::None;
+}
+
+HidrawUse HidrawUseFor(bool bluetooth, uint16_t vendor, uint16_t product, const std::string& family,
+                       const std::string& layout, bool evdevRumble)
 {
     if (SurfaceDial::Handles(vendor, product))
         return HidrawUse::Output;
+    HidrawUse use = HidrawUse::None;
     // Over USB the Elite is xpad's (a USB driver, no HID device, no hidraw node): its paddles are evdev buttons
     if (bluetooth && family == "xbox-elite-2")
-        return HidrawUse::Input;
-    return HidrawUse::None;
+        use = use | HidrawUse::Input;
+    if (LinuxRumbleFor(evdevRumble, XboxBluetoothOutput::Handles(bluetooth, vendor, layout, family)) ==
+        LinuxRumble::Hidraw)
+        use = use | HidrawUse::Rumble;
+    return use;
 }
 
 bool ParseHidUevent(const std::string& text, HidUevent& out)
@@ -122,17 +135,25 @@ const char* const kHidrawRulesHint =
 
 std::string HidrawUnavailable(HidrawUse use, const std::string& node, int error, const std::string& errorText)
 {
-    const bool input = use == HidrawUse::Input;
-    const std::string what = input ? "The paddles and the onboard profile" : "The Surface Dial's clicks and detents";
-    const std::string without =
-        input ? " Until then the paddles are not seen (on onboard profiles 1-3 they arrive as the buttons the profile "
-                "assigns)."
-              : "";
+    std::string what = "The Surface Dial's clicks and detents";
+    std::string without;
+    if (HasUse(use, HidrawUse::Input))
+    {
+        what = "The paddles and the onboard profile";
+        without = " Until then the paddles are not seen (on onboard profiles 1-3 they arrive as the buttons the "
+                  "profile assigns).";
+    }
+    else if (HasUse(use, HidrawUse::Rumble))
+    {
+        what = "The motors and the impulse triggers";
+        without = " Until then the pad does not rumble: its kernel driver offers no FF_RUMBLE (hid-microsoft or "
+                  "xpadneo would).";
+    }
     if (node.empty())
         return what + " need the device's hidraw node, which was not found (is the hidraw module loaded?)." + without;
     if (error == EACCES || error == EPERM)
-        return what + " need " + (input ? "read" : "write") + " access to " + node + ", which this user does not have. " +
-               kHidrawRulesHint + "." + without;
+        return what + " need " + (HasUse(use, HidrawUse::Input) ? "read" : "write") + " access to " + node +
+               ", which this user does not have. " + kHidrawRulesHint + "." + without;
     return what + " need " + node + ", which did not open (" + errorText + ")." + without;
 }
 
